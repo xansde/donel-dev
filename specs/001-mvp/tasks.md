@@ -1,0 +1,68 @@
+# Tasks 001 — Donel Dev MVP (P0)
+
+**Status:** draft — execução só após OK do Alexandre sobre spec+plan
+**Criado:** 2026-07-22
+
+Convenções: [P] = paralelizável com a anterior; DoD = definition of done.
+TDD aplica-se aos módulos puros (CommandBuilder, SessionIndexer, paths de
+perfil); PTY/UI validam por smoke roteirizado.
+
+## Fase 0 — validação
+
+- **T001 — Spike perfis/credenciais** (bloqueante)
+  Executar o roteiro do plan (§Spike T001). DoD: os 3 critérios de saída
+  respondidos por escrito em `specs/001-mvp/spike-t001-resultado.md`.
+
+## Fase 1 — fundação
+
+- **T002 — Scaffold electron-vite**
+  React+TS, contextIsolation, janela única, CI local (`npm run dev` sobe).
+  DoD: janela abre com layout vazio de 3 colunas.
+- **T003 — PTY + xterm, 1 aba**
+  PtyManager no main, xterm no renderer, IPC com batching; spawna PowerShell.
+  DoD: shell interativo completo (cores, setas, Ctrl+C, resize) dentro do app.
+- **T004 — Spawn do claude na aba**
+  Resolver claude.exe (PATH → `~/.local/bin`); estado "sessão encerrada";
+  aviso CA-5 quando não encontrado. DoD: sessão claude plena dentro do app.
+
+## Fase 2 — organização
+
+- **T005 — CommandBuilder (TDD)** [P]
+  `buildClaudeArgs(opts)` cobrindo a tabela FR-003 + escaping + omissões.
+  DoD: suíte vitest verde cobrindo todos os mapeamentos.
+- **T006 — Sidebar de projetos**
+  ProjectScanner (FR-001), favoritos, clique abre aba com defaults.
+  DoD: CA-1 parcial (abrir projeto) passa.
+- **T007 — Launcher**
+  Painel direito (modelo/esforço/permissões/nome) ligado ao CommandBuilder.
+  DoD: CA-1 completo passa.
+- **T008 — Abas múltiplas + ciclo de vida**
+  FR-006 (confirmação ao fechar viva, estado encerrado). DoD: 3 sessões
+  simultâneas estáveis; fechar/reabrir sem vazamento de PTY.
+
+## Fase 3 — sessões e perfis
+
+- **T009 — SessionIndexer (TDD)** [P]
+  Slug de projeto→dir, parse streaming de preview, tolerância a corrompidos.
+  DoD: vitest verde com fixtures reais copiadas de `~/.claude/projects`.
+- **T010 — UI de sessões anteriores**
+  Lista por projeto + retomar/fork (FR-004). DoD: CA-2 passa.
+- **T011 — ProfileManager + UI de perfis**
+  Criar/ativar/doctor conforme resultado do T001; dropdown no topo (FR-005).
+  DoD: CA-3 passa com uma conta de teste.
+
+## Fase 4 — acabamento
+
+- **T012 — ConfigStore + statusbar** [P]
+  FR-007 (escrita atômica) + FR-009. DoD: preferências sobrevivem a restart.
+- **T013 — Empacotamento**
+  electron-builder NSIS; atalho no Desktop via `/create-executable`.
+  DoD: instalar numa pasta limpa e rodar sem ambiente de dev.
+- **T014 — Smoke final roteirizado**
+  Checklist: CA-1..CA-5, teclas especiais, colar multilinha, resize, 3 abas,
+  troca de perfil, restart. DoD: checklist 100% com evidências (prints).
+
+## Fora deste ciclo
+
+P1 (MCP toggles, skills, busca, quota, temas) e P2 (transcript viewer, splits,
+templates, git, atalhos) ganham specs próprias após o P0 em uso real.
