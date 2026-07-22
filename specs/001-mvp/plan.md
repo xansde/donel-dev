@@ -45,7 +45,11 @@
    a aba ser "a sessão". Quando o processo sai, a aba mostra estado encerrado
    (FR-006). Aba de terminal livre (FR-008) spawna `powershell.exe -NoLogo`.
 2. **Env do PTY.** Herdar o env do usuário + `CLAUDE_CONFIG_DIR` quando perfil
-   ≠ principal. Nunca sobrescrever PATH.
+   ≠ principal. Nunca sobrescrever PATH. **Gotcha Windows:** app aberto via
+   atalho do Desktop herda o PATH do Explorer, que pode estar desatualizado —
+   afeta a resolução do `claude.exe` (por isso o fallback de CA-5) e também os
+   subprocessos que o próprio `claude` spawna (MCPs stdio). T014 valida o app
+   aberto via atalho, não só via terminal de dev.
 3. **CommandBuilder puro.** `buildClaudeArgs(opts): string[]` sem I/O — 100%
    coberto por unit tests (tabela FR-003, incluindo omissão de flags e escaping
    do `-n`).
@@ -65,11 +69,21 @@ Roteiro: criar `~/.claude-profiles/teste` com junctions; rodar
 teste com `CLAUDE_CONFIG_DIR` apontado; confirmar que `~/.claude` original não
 foi tocado e que skills/CLAUDE.md aparecem na sessão do perfil.
 
-Critérios de saída: (a) login isolado confirmado; (b) lista definitiva de
-dirs/arquivos a linkar vs copiar; (c) decisão sobre `settings.json` (cópia
-sincronizada vs hardlink). Se a hipótese falhar, plano B: perfis via
-`claude auth` (subcomando de gerenciamento) ou multi-instância com
-`--settings` — decidir com o resultado do spike em mãos.
+**Passo crítico (achado do review):** a identidade da conta também vive em
+`~/.claude.json` — irmão de `~/.claude/`, com `oauthAccount`, `mcpServers`
+globais, `machineID` e projetos confiados. Verificar se, com
+`CLAUDE_CONFIG_DIR` setado, o CLI passa a ler/gravar um `.claude.json` dentro
+do config dir do perfil (e não o global). Se NÃO redirecionar, o isolamento
+por env var não fecha sozinho — avaliar `HOME`/`USERPROFILE` por perfil ou
+outro mecanismo antes de qualquer UI.
+
+Critérios de saída: (a) login isolado confirmado; (b) comportamento do
+`.claude.json` sob `CLAUDE_CONFIG_DIR` documentado, incluindo como manter
+`mcpServers` iguais entre perfis; (c) lista definitiva de dirs/arquivos a
+linkar vs copiar; (d) decisão sobre `settings.json` (cópia sincronizada vs
+hardlink). Se a hipótese falhar, plano B: perfis via `claude auth` (subcomando
+de gerenciamento) ou multi-instância com `--settings` — decidir com o
+resultado do spike em mãos.
 
 ## Riscos e mitigações
 
@@ -80,6 +94,7 @@ sincronizada vs hardlink). Se a hipótese falhar, plano B: perfis via
 | Teclas especiais/resize mal mapeados | UX de terminal ruim | ConPTY default; addon-fit; roteiro de smoke com checklist de teclas |
 | JSONL grandes travarem índice | sidebar lenta | streaming + stat only; índice em cache com invalidação por mtime |
 | OneDrive/AV interferindo em junctions | perfis quebram | profiles fora do OneDrive; profile doctor |
+| SmartScreen/Defender barrando instalador NSIS ou `conpty.node` (binário nativo sem assinatura) | app não instala/abre | decidir assinatura (mesmo autoassinada p/ uso interno) no T013; passo de verificação com Defender ativo |
 
 ## Estrutura do repositório (alvo)
 
@@ -120,5 +135,5 @@ $env:CLAUDE_CONFIG_DIR = "$env:USERPROFILE\.claude-profiles\conta-b"; claude
 ## Sequência de implementação
 
 Detalhada em [tasks.md](tasks.md). Ordem: spike de perfis → scaffold → terminal
-1 aba → abas múltiplas → sidebar/projetos → launcher → sessões anteriores →
-perfis (UI) → statusbar → empacotamento → smoke final.
+1 aba → sidebar/projetos → launcher → abas múltiplas (+ terminal livre) →
+sessões anteriores → perfis (UI) → statusbar → empacotamento → smoke final.

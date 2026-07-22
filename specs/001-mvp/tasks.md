@@ -36,15 +36,20 @@ perfil); PTY/UI validam por smoke roteirizado.
 - **T007 — Launcher**
   Painel direito (modelo/esforço/permissões/nome) ligado ao CommandBuilder.
   DoD: CA-1 completo passa.
-- **T008 — Abas múltiplas + ciclo de vida**
-  FR-006 (confirmação ao fechar viva, estado encerrado). DoD: 3 sessões
-  simultâneas estáveis; fechar/reabrir sem vazamento de PTY.
+- **T008 — Abas múltiplas + ciclo de vida + terminal livre**
+  FR-006 (confirmação ao fechar viva, estado encerrado) e FR-008 (ação "novo
+  terminal" abrindo PowerShell no cwd do projeto). DoD: 3 sessões simultâneas
+  estáveis; fechar/reabrir sem vazamento de PTY; aba de terminal livre
+  funcional.
 
 ## Fase 3 — sessões e perfis
 
 - **T009 — SessionIndexer (TDD)** [P]
-  Slug de projeto→dir, parse streaming de preview, tolerância a corrompidos.
-  DoD: vitest verde com fixtures reais copiadas de `~/.claude/projects`.
+  Slug de projeto→dir (todo não-alfanumérico → `-`; fixture com `.` no path),
+  parse streaming de preview com as regras de filtro do FR-004 (pular tipos de
+  controle, `isMeta:true` e payloads `<command-*>`), tolerância a corrompidos.
+  DoD: vitest verde com fixtures reais copiadas de `~/.claude/projects`,
+  incluindo uma cujas primeiras linhas são registros de controle.
 - **T010 — UI de sessões anteriores**
   Lista por projeto + retomar/fork (FR-004). DoD: CA-2 passa.
 - **T011 — ProfileManager + UI de perfis**
@@ -56,11 +61,16 @@ perfil); PTY/UI validam por smoke roteirizado.
 - **T012 — ConfigStore + statusbar** [P]
   FR-007 (escrita atômica) + FR-009. DoD: preferências sobrevivem a restart.
 - **T013 — Empacotamento**
-  electron-builder NSIS; atalho no Desktop via `/create-executable`.
-  DoD: instalar numa pasta limpa e rodar sem ambiente de dev.
+  electron-builder NSIS; atalho no Desktop via `/create-executable`; decisão
+  de assinatura de código (risco SmartScreen/Defender do plan).
+  DoD: instalar numa pasta limpa com Defender ativo e rodar sem ambiente de
+  dev e sem bloqueio (ou bloqueio documentado com contorno).
 - **T014 — Smoke final roteirizado**
   Checklist: CA-1..CA-5, teclas especiais, colar multilinha, resize, 3 abas,
-  troca de perfil, restart. DoD: checklist 100% com evidências (prints).
+  troca de perfil, restart, **app aberto via atalho do Desktop** (PATH do
+  Explorer: claude.exe e MCPs stdio resolvem), **medição de startup (< 3 s) e
+  RAM com 3 abas (< 400 MB)** via `Get-Process`. DoD: checklist 100% com
+  evidências (prints e números).
 
 ## Fora deste ciclo
 

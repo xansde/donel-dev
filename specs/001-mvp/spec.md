@@ -75,11 +75,16 @@ Cada FR é testável isoladamente.
 
   Controle não preenchido = flag omitida (o CLI usa o default do usuário).
 - **FR-004 Índice de sessões.** Para o projeto selecionado, o app lê
-  `~/.claude/projects/<slug>/*.jsonl` (slug = path absoluto com separadores e
-  `:` trocados por `-`; o mapeamento exato é validado na implementação contra
-  diretórios reais). Exibe: session id (nome do arquivo), data (mtime), tamanho
-  e preview (primeira mensagem de usuário, lida por streaming — nunca o arquivo
-  inteiro). Ações: retomar e forkar, cada uma abrindo nova aba.
+  `~/.claude/projects/<slug>/*.jsonl` (slug = path absoluto com **todo
+  caractere não-alfanumérico trocado por `-`** — confirmado contra diretórios
+  reais, ex.: `.no-mistakes` → `-no-mistakes`; travar com fixtures no T009).
+  Exibe: session id (nome do arquivo), data (mtime), tamanho e preview lido por
+  streaming — nunca o arquivo inteiro. **Regras do preview** (o formato real
+  contém registros de controle antes da conversa): pular linhas cujo `type` não
+  seja `user`; dentro das `user`, pular `isMeta: true` e payloads de
+  slash-command (conteúdo com tags `<command-*>` ou `<local-command-*>`);
+  preview = primeira mensagem de usuário genuína, com fallback "(sem mensagem
+  de usuário)" . Ações: retomar e forkar, cada uma abrindo nova aba.
 - **FR-005 Perfis de conta.** Criar perfil `<nome>` = criar
   `~/.claude-profiles/<slug>/` contendo: junctions (`mklink /J`) para
   `projects`, `skills`, `commands`, `rules`, `plugins` e `templates` de
@@ -87,6 +92,12 @@ Cada FR é testável isoladamente.
   "principal" é o próprio `~/.claude` (sem override de env). Trocar de perfil
   afeta apenas sessões novas; as abas abertas mantêm a conta com que nasceram.
   O app inclui um "profile doctor" que verifica e recria junctions quebradas.
+  **Atenção:** a identidade da conta não vive só em `.credentials.json` — o
+  arquivo `~/.claude.json` (irmão de `~/.claude/`, fora da árvore de junctions)
+  guarda `oauthAccount`, `mcpServers` globais e projetos confiados. O Spike
+  T001 verifica se `CLAUDE_CONFIG_DIR` também o redireciona e define o
+  tratamento por perfil (nunca junction — identidade deve ser isolada; questão
+  aberta: como manter `mcpServers` sincronizados entre perfis).
 - **FR-006 Ciclo de vida de abas.** Fechar aba mata o PTY; se a sessão estiver
   ativa (processo vivo), pede confirmação. Quando o processo `claude` termina
   sozinho, a aba mostra "sessão encerrada" com ações reabrir/fechar.
