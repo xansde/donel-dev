@@ -1,83 +1,92 @@
 # Tasks 001 — Donel Dev MVP (P0)
 
-**Status:** draft — execução só após OK do Alexandre sobre spec+plan
-**Criado:** 2026-07-22
-
-> **Atenção (2026-07-22, pós-entrevista):** a spec ganhou US-3 (semáforo),
-> US-5 (modelo/esforço em sessão viva) e FR-010..012 no P0. Este arquivo ainda
-> reflete o corte anterior — será refeito junto com o clarify pendente
-> (semáforo entra como task própria na Fase 2; quota mínima na Fase 3).
+**Status:** planejamento — implementação gated por (a) referência de design do
+Alexandre (telas geradas na ferramenta de design a partir do
+[design-handoff.md](design-handoff.md)) e (b) OK explícito dele.
+**Atualizado:** 2026-07-22 (refeito pós-discovery/clarify)
 
 Convenções: [P] = paralelizável com a anterior; DoD = definition of done.
-TDD aplica-se aos módulos puros (CommandBuilder, SessionIndexer, paths de
-perfil); PTY/UI validam por smoke roteirizado.
+TDD nos módulos puros (CommandBuilder, SessionIndexer, profile paths,
+SemaphoreStateMachine); PTY/UI validam por smoke roteirizado.
 
-## Fase 0 — validação
+## Fase 0 — spikes (sem UI; podem rodar ANTES da referência de design)
 
-- **T001 — Spike perfis/credenciais** (bloqueante)
-  Executar o roteiro do plan (§Spike T001). DoD: os 3 critérios de saída
-  respondidos por escrito em `specs/001-mvp/spike-t001-resultado.md`.
+- **T001 — Spike perfis/credenciais** (bloqueante p/ Fase 3)
+  Roteiro do plan (§Spike T001), incluindo o comportamento de `~/.claude.json`
+  sob `CLAUDE_CONFIG_DIR`. DoD: 4 critérios de saída respondidos em
+  `specs/001-mvp/spike-t001-resultado.md`.
+- **T002 — Spike semáforo via hooks** [P] (bloqueante p/ T009)
+  Validar FR-010: sessão real com `--settings` extra registrando hooks
+  `Stop`/`Notification` que fazem POST em endpoint localhost; medir latência e
+  cobertura dos 4 estados (trabalhando / aguardando resposta / permissão
+  pendente / encerrada); documentar fallback heurístico se algum estado não
+  for coberto. DoD: matriz estado→sinal em
+  `specs/001-mvp/spike-t002-resultado.md`.
 
 ## Fase 1 — fundação
 
-- **T002 — Scaffold electron-vite**
-  React+TS, contextIsolation, janela única, CI local (`npm run dev` sobe).
-  DoD: janela abre com layout vazio de 3 colunas.
-- **T003 — PTY + xterm, 1 aba**
-  PtyManager no main, xterm no renderer, IPC com batching; spawna PowerShell.
-  DoD: shell interativo completo (cores, setas, Ctrl+C, resize) dentro do app.
-- **T004 — Spawn do claude na aba**
-  Resolver claude.exe (PATH → `~/.local/bin`); estado "sessão encerrada";
-  aviso CA-5 quando não encontrado. DoD: sessão claude plena dentro do app.
+- **T003 — Scaffold electron-vite**
+  React+TS, contextIsolation, janela única com layout do shell (ui-spec §2).
+  DoD: `npm run dev` sobe com as zonas vazias.
+- **T004 — PTY + xterm, 1 aba**
+  PtyManager + IPC com batching; spawna PowerShell. DoD: shell interativo
+  completo (cores, setas, Ctrl+C, colar, resize, scrollback).
+- **T005 — Spawn do claude na aba**
+  Resolução do exe (PATH → `~/.local/bin`), estado "sessão encerrada", aviso
+  CA-5. DoD: sessão claude plena dentro do app.
+- **T006 — CommandBuilder (TDD)** [P]
+  `buildClaudeArgs(opts)` cobrindo FR-003 + escaping + omissões.
+  DoD: vitest verde em todos os mapeamentos.
 
-## Fase 2 — organização
+## Fase 2 — cockpit (coração do P0)
 
-- **T005 — CommandBuilder (TDD)** [P]
-  `buildClaudeArgs(opts)` cobrindo a tabela FR-003 + escaping + omissões.
-  DoD: suíte vitest verde cobrindo todos os mapeamentos.
-- **T006 — Sidebar de projetos**
-  ProjectScanner (FR-001), favoritos, clique abre aba com defaults.
-  DoD: CA-1 parcial (abrir projeto) passa.
-- **T007 — Launcher**
-  Painel direito (modelo/esforço/permissões/nome) ligado ao CommandBuilder.
-  DoD: CA-1 completo passa.
-- **T008 — Abas múltiplas + ciclo de vida + terminal livre**
-  FR-006 (confirmação ao fechar viva, estado encerrado) e FR-008 (ação "novo
-  terminal" abrindo PowerShell no cwd do projeto). DoD: 3 sessões simultâneas
-  estáveis; fechar/reabrir sem vazamento de PTY; aba de terminal livre
-  funcional.
+- **T007 — Sidebar de projetos + sessões fixadas**
+  ProjectScanner (FR-001), favoritos, sessões agrupadas por projeto (US-1).
+  DoD: abrir projeto pela sidebar funciona.
+- **T008 — Launcher**
+  Painel conforme ui-spec §4 ligado ao CommandBuilder. DoD: CA-1 passa.
+- **T009 — Semáforo de sessões (FR-010)**
+  Implementar o mecanismo validado no T002 + SemaphoreStateMachine (TDD) +
+  indicadores na lista de abas/sidebar + notificação Windows opcional.
+  DoD: CA-6 passa (os 4 estados visíveis sem focar a aba).
+- **T010 — Abas múltiplas + ciclo de vida + terminal livre**
+  FR-006 e FR-008. DoD: 6 sessões simultâneas estáveis; fechar/reabrir sem
+  vazamento de PTY; aba de terminal livre funcional.
+- **T011 — Injeção de modelo/esforço em sessão viva (FR-011)**
+  Controle na UI → `/model` no stdin com prompt ocioso (estado do semáforo);
+  degradação p/ reinício com flag. DoD: troca de modelo refletida na sessão
+  sem perder contexto.
 
 ## Fase 3 — sessões e perfis
 
-- **T009 — SessionIndexer (TDD)** [P]
-  Slug de projeto→dir (todo não-alfanumérico → `-`; fixture com `.` no path),
-  parse streaming de preview com as regras de filtro do FR-004 (pular tipos de
-  controle, `isMeta:true` e payloads `<command-*>`), tolerância a corrompidos.
-  DoD: vitest verde com fixtures reais copiadas de `~/.claude/projects`,
-  incluindo uma cujas primeiras linhas são registros de controle.
-- **T010 — UI de sessões anteriores**
-  Lista por projeto + retomar/fork (FR-004). DoD: CA-2 passa.
-- **T011 — ProfileManager + UI de perfis**
-  Criar/ativar/doctor conforme resultado do T001; dropdown no topo (FR-005).
-  DoD: CA-3 passa com uma conta de teste.
+- **T012 — SessionIndexer (TDD)** [P]
+  Slug (não-alfanumérico → `-`, fixture com `.`), preview com filtros do
+  FR-004, tolerância a corrompidos. DoD: vitest verde com fixtures reais,
+  incluindo transcript que abre com registros de controle.
+- **T013 — UI de sessões anteriores**
+  Lista + retomar/fork (FR-004). DoD: CA-2 passa.
+- **T014 — ProfileManager + headroom + UI de perfis**
+  Conforme resultado do T001; dropdown "Tecnologia Claude {n}" com % de quota
+  (`quota-axi` sob o `CLAUDE_CONFIG_DIR` do perfil, FR-012). DoD: CA-3 passa.
 
 ## Fase 4 — acabamento
 
-- **T012 — ConfigStore + statusbar** [P]
+- **T015 — ConfigStore + statusbar** [P]
   FR-007 (escrita atômica) + FR-009. DoD: preferências sobrevivem a restart.
-- **T013 — Empacotamento**
-  electron-builder NSIS; atalho no Desktop via `/create-executable`; decisão
-  de assinatura de código (risco SmartScreen/Defender do plan).
-  DoD: instalar numa pasta limpa com Defender ativo e rodar sem ambiente de
-  dev e sem bloqueio (ou bloqueio documentado com contorno).
-- **T014 — Smoke final roteirizado**
-  Checklist: CA-1..CA-5, teclas especiais, colar multilinha, resize, 3 abas,
-  troca de perfil, restart, **app aberto via atalho do Desktop** (PATH do
-  Explorer: claude.exe e MCPs stdio resolvem), **medição de startup (< 3 s) e
-  RAM com 3 abas (< 400 MB)** via `Get-Process`. DoD: checklist 100% com
-  evidências (prints e números).
+- **T016 — Empacotamento**
+  electron-builder NSIS; atalho via `/create-executable`; decisão de
+  assinatura (risco SmartScreen). DoD: instala e roda numa máquina limpa com
+  Defender ativo (ou bloqueio documentado com contorno).
+- **T017 — Smoke final roteirizado**
+  CA-1..CA-6, teclas especiais, colar multilinha, resize, 6 abas, troca de
+  perfil, restart, app via atalho do Desktop (PATH/MCPs), medição startup
+  (< 3 s) e RAM com 3 abas (< 400 MB) via `Get-Process`. DoD: checklist 100%
+  com evidências.
 
 ## Fora deste ciclo
 
-P1 (MCP toggles, skills, busca, quota, temas) e P2 (transcript viewer, splits,
-templates, git, atalhos) ganham specs próprias após o P0 em uso real.
+P1 (tokens/smart zone, subagentes, post-its, todo, quota claude-monitor,
+rotinas, MCP toggles, skills, busca, temas) e P2 (modo Dev/Esteira, transcript
+viewer, splits, templates, git, atalhos) ganham specs de tasks próprias após o
+P0 em uso real. As TELAS de P1/P2 já estão especificadas no
+[ui-spec.md](ui-spec.md) para o design nascer completo.

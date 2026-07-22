@@ -227,6 +227,10 @@ Cada FR é testável isoladamente.
 - **CA-5** Dado que o `claude` não está no PATH, quando abro o app, então recebo
   um aviso claro com o caminho esperado (`~/.local/bin/claude.exe`) em vez de uma
   aba quebrada.
+- **CA-6** Dadas 3 sessões abertas (uma gerando resposta, uma com pedido de
+  permissão pendente, uma com turno concluído) e a quarta aba em foco, então a
+  lista de sessões mostra simultaneamente os 3 estados corretos sem que eu
+  foque nenhuma delas, e a que aguarda permissão se destaca acima das demais.
 
 ## Edge cases
 
