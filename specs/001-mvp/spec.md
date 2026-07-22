@@ -19,36 +19,87 @@ organização (projetos, sessões anteriores, launcher de modelo/esforço/permis
 perfis de conta). O app **não reimplementa o agente** — orquestra o CLI por fora,
 então hooks, skills, MCPs e Esteira continuam funcionando sem nenhuma adaptação.
 
+## Discovery — uso real (entrevista com o Alexandre, 2026-07-22)
+
+Fatos trazidos por ele, na ordem em que vieram. Tudo nesta seção é **fonte
+primária**; user stories e FRs derivam daqui ou são marcados como hipótese.
+
+- **Rotina:** abre o dia pelo "chat de setup do dia" e alterna entre **~6
+  sessões paralelas**.
+- **O que faz o desktop app ser superior ao terminal (sentiria falta):**
+  1. Conversas fixadas e organizadas por projeto — visualização fácil de onde
+     trabalhar;
+  2. Facilidade de **mudar modelo/esforço durante a sessão**;
+  3. Acompanhamento fácil de **uso de tokens** na conversa;
+  4. Acompanhamento fácil do **andamento dos subagentes**;
+  5. Ver o **status de uma sessão sem estar com ela ativa**.
+- **Contas:** **15 contas compartilhadas** disponíveis para migrar; já existe
+  um projeto para acompanhar os limites de uso delas (integrar, não
+  reinventar — identificar qual no clarify). Sessões sempre locais, com
+  `/resume` quando necessário.
+- **Usuários:** o Alexandre e o Claude — não é ferramenta de squad.
+- **Extras pedidos:** (a) dois modos de operação, **Dev** (sessões dentro da
+  "smart zone", seguindo o processo da Esteira de desenvolvimento; referência
+  citada: HumanLayer) e **Uso geral**; (b) área de **post-its** para capturar
+  ideias rápidas e recapitular depois; (c) acompanhamento fácil da **todo do
+  projeto**.
+
 ## Visão do produto
 
-Uma janela única onde o Alexandre:
+Um cockpit para operar **muitas sessões Claude em paralelo sem perder o fio**:
+saber de relance qual sessão precisa de atenção, quanto cada uma consumiu, o
+que os subagentes estão fazendo — e, em volta disso, organização por projeto,
+retomada de sessões, troca entre as 15 contas compartilhadas e captura rápida
+de ideias. Terminal de primeira classe embaixo; painel de controle em cima.
 
-1. Vê seus projetos (`~/seazone`, `~/pessoal`) numa sidebar e abre uma sessão do
-   Claude em qualquer um com um clique.
-2. Mantém várias sessões simultâneas em abas de terminal de primeira classe.
-3. Configura cada sessão antes de abrir: modelo, esforço, modo de permissão, nome.
-4. Encontra e retoma sessões anteriores de cada projeto (ou forka).
-5. Troca de conta compartilhada num dropdown, sem re-login e sem perder o setup.
+## User stories
 
-## User stories (P0)
+Origem de cada uma: `[E]` = entrevista de 2026-07-22 (número = item da seção
+Discovery); `[H✓]` = hipótese minha confirmada pela entrevista; `[H]` =
+hipótese ainda não confirmada pelo Alexandre.
 
-- **US-1 Projetos** — Como usuário, vejo meus repositórios de `~/seazone` e
-  `~/pessoal` numa sidebar (com favoritos) e abro uma sessão `claude` em qualquer
-  um com um clique.
-- **US-2 Terminal em abas** — Como usuário, mantenho várias sessões em abas; a
-  interação é idêntica a um terminal de verdade (cores, cursor, setas, Ctrl+C,
-  colar, resize, scrollback).
-- **US-3 Launcher** — Como usuário, antes de abrir uma sessão escolho modelo
-  (`fable`/`opus`/`sonnet`/`haiku`), esforço (`low`→`max`), modo de permissão e um
-  nome de exibição para a sessão.
-- **US-4 Sessões anteriores** — Como usuário, vejo as sessões passadas do projeto
-  selecionado (nome, data, preview da primeira mensagem) e as retomo (`-r <id>`)
-  ou forko (`--fork-session`).
-- **US-5 Perfis de conta** — Como usuário, cadastro N contas compartilhadas como
-  perfis; troco de perfil num dropdown; novas sessões usam a conta ativa; skills,
-  rules, CLAUDE.md e histórico são os mesmos em todos os perfis.
-- **US-6 Status** — Como usuário, vejo na statusbar o perfil ativo, o
-  modelo/esforço da aba em foco e quantas sessões estão abertas.
+**P0 — operar o dia seguinte:**
+
+- **US-1 Organização por projeto** `[H✓ E2.1]` — Vejo meus repositórios numa
+  sidebar, com sessões **fixadas** e agrupadas por projeto — visualização
+  fácil de onde trabalhar.
+- **US-2 Sessões paralelas** `[H✓ E1]` — Mantenho ~6 sessões simultâneas em
+  abas de terminal de primeira classe (cores, setas, Ctrl+C, colar, resize,
+  scrollback).
+- **US-3 Semáforo de sessões** `[E2.5]` — Sem estar com a aba ativa, vejo o
+  status de cada sessão (trabalhando / aguardando minha resposta / permissão
+  pendente / encerrada) — é o que permite alternar entre 6 sessões sem perder
+  o fio.
+- **US-4 Launcher** `[H✓]` — Antes de abrir, escolho modelo, esforço, modo de
+  permissão e nome da sessão.
+- **US-5 Mudar modelo/esforço em sessão viva** `[E2.2]` — Com a sessão
+  rodando, troco modelo/esforço por UI, sem digitar comando.
+- **US-6 Retomar sessões** `[H✓ E3]` — Vejo as sessões passadas do projeto
+  (nome, data, preview) e as retomo (`-r`) ou forko (`--fork-session`).
+- **US-7 Perfis das 15 contas** `[H✓ E3]` — Cadastro as contas compartilhadas
+  como perfis; troco num dropdown; skills/rules/CLAUDE.md/histórico idênticos
+  em todas; vejo o headroom de quota de cada uma antes de escolher.
+
+**P1 — logo depois (ordem a validar com o Alexandre):**
+
+- **US-8 Tokens da conversa** `[E2.3]` — Vejo o consumo de tokens da sessão em
+  curso sem pedir — o `/cost` vira indicador sempre visível.
+- **US-9 Subagentes** `[E2.4]` — Vejo quais subagentes/tasks a sessão disparou
+  e o andamento deles.
+- **US-10 Post-its** `[E extra]` — Capturo uma ideia em segundos (atalho
+  global), num quadro de post-its que recapitulo depois, sem interromper a
+  sessão em que estou.
+- **US-11 Todo do projeto** `[E extra]` — Vejo a todo do projeto selecionado
+  ao lado das sessões (fonte a clarificar: todo.md do vault × TaskDex).
+- **US-12 Quota das 15 contas** `[E3]` — Painel integrado ao projeto já
+  existente de acompanhamento de limites (identificar no clarify; não
+  reinventar).
+
+**P2 — modo Dev (não specar antes do clarify):**
+
+- **US-13 Modos Dev / Uso geral** `[E extra]` — No modo Dev, sessões nascem
+  amarradas ao processo da Esteira ("smart zone"; referência citada:
+  HumanLayer); no modo Uso geral, sessão livre como hoje.
 
 ## Requisitos funcionais
 
@@ -108,6 +159,24 @@ Cada FR é testável isoladamente.
   uma aba de terminal comum (PowerShell) no diretório do projeto.
 - **FR-009 Statusbar.** Perfil ativo, modelo/esforço da aba em foco, contagem de
   sessões abertas.
+- **FR-010 Semáforo de sessões (US-3).** Cada aba exibe, na lista de abas e sem
+  estar em foco, um de 4 estados: **trabalhando** (Claude gerando/executando),
+  **aguardando resposta** (turno terminou), **permissão pendente** (aprovação
+  travando a sessão) e **encerrada**. Mecanismo candidato (validar em spike):
+  hooks do Claude Code (`Stop`, `Notification`) registrados pelo app apontando
+  para um endpoint local, com fallback heurístico por output do PTY/título do
+  terminal. Opcional: notificação do Windows quando uma sessão em background
+  passa a aguardar o usuário.
+- **FR-011 Modelo/esforço em sessão viva (US-5).** Controle na UI que injeta o
+  comando correspondente no PTY da sessão (`/model <alias>`; equivalente de
+  esforço a confirmar na implementação). O app só injeta quando o prompt está
+  ocioso (nunca no meio de digitação do usuário); se não houver comando nativo
+  para o ajuste, a UI degrada oferecendo reiniciar a sessão com a flag.
+- **FR-012 Headroom por perfil (US-7).** O dropdown de perfis mostra o % de
+  quota restante de cada conta (leitura sob demanda via `quota-axi` executado
+  com o `CLAUDE_CONFIG_DIR` do perfil; "—" quando indisponível). Painel
+  completo de quota das 15 contas é P1 (US-12), integrado ao projeto já
+  existente.
 
 ## Critérios de aceitação (cenários-chave)
 
@@ -143,12 +212,14 @@ Cada FR é testável isoladamente.
 
 ## Fora de escopo do P0
 
-- **P1:** toggles de MCP por sessão (`--mcp-config`/`--strict-mcp-config`),
-  painel de skills (ativar/desativar), busca full-text em sessões antigas, quota
-  por perfil (integração `quota-axi`), temas/personalização visual.
-- **P2:** viewer de transcript com markdown renderizado, split de terminais,
-  templates de prompt, git status na sidebar, atalhos configuráveis, suporte
-  a worktrees (`-w`) no launcher.
+- **P1** (ordem a validar): tokens da conversa (US-8), subagentes (US-9),
+  post-its (US-10), todo do projeto (US-11), painel de quota das 15 contas
+  (US-12); toggles de MCP por sessão (`--mcp-config`/`--strict-mcp-config`),
+  painel de skills, busca full-text em sessões antigas, temas.
+- **P2:** modos Dev/Uso geral com Esteira (US-13 — specar só após clarify de
+  "smart zone" e da referência HumanLayer); viewer de transcript com markdown,
+  split de terminais, templates de prompt, git status na sidebar, atalhos
+  configuráveis, worktrees (`-w`) no launcher.
 
 ## Requisitos não-funcionais
 

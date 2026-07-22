@@ -3,6 +3,11 @@
 **Status:** draft — execução só após OK do Alexandre sobre spec+plan
 **Criado:** 2026-07-22
 
+> **Atenção (2026-07-22, pós-entrevista):** a spec ganhou US-3 (semáforo),
+> US-5 (modelo/esforço em sessão viva) e FR-010..012 no P0. Este arquivo ainda
+> reflete o corte anterior — será refeito junto com o clarify pendente
+> (semáforo entra como task própria na Fase 2; quota mínima na Fase 3).
+
 Convenções: [P] = paralelizável com a anterior; DoD = definition of done.
 TDD aplica-se aos módulos puros (CommandBuilder, SessionIndexer, paths de
 perfil); PTY/UI validam por smoke roteirizado.

@@ -58,6 +58,15 @@
    última atividade. Transcript gigante nunca é carregado inteiro (NFR).
 5. **Junctions.** `mklink /J` via `fs.symlinkSync(..., 'junction')` (não requer
    admin). Doctor = verificar que cada junction resolve para o alvo esperado.
+6. **Semáforo (FR-010).** Abordagem preferida: o app registra hooks `Stop` e
+   `Notification` (via `--settings` adicional na sessão, para não sujar o
+   settings.json do usuário) que fazem POST num endpoint localhost do app com o
+   session id — estado confiável sem parsing frágil. Fallback: heurística por
+   título do terminal/atividade do PTY. Validar em spike curto junto do T003.
+7. **Injeção de comandos (FR-011).** Escrever `/model <alias>\r` no stdin do
+   PTY só com o prompt ocioso (detectar via estado do semáforo). Existência de
+   comando equivalente para esforço: confirmar na implementação; sem ele, a UI
+   oferece reinício com `--effort`.
 
 ## Spike T001 — validação de perfis (bloqueante, antes de qualquer UI)
 
