@@ -44,6 +44,25 @@ primária**; user stories e FRs derivam daqui ou são marcados como hipótese.
   ideias rápidas e recapitular depois; (c) acompanhamento fácil da **todo do
   projeto**.
 
+**Clarify (mesma data):**
+
+- **Smart zone** = a faixa de contexto em que os tokens ainda não ocuparam
+  mais do que o necessário — na prática, os primeiros **~400k tokens** da
+  sessão. "Funcionar dentro da smart zone" = o app monitora o contexto de cada
+  sessão e ajuda a não passar do ponto (medidor + alerta + incentivo a sessão
+  fresca/handoff por fase).
+- **Modo Dev** = organizar o trabalho como no TaskDex hoje: task (card) com as
+  fases da Esteira — **Discovery, Plano, Implementar, Validar, Concluir** —
+  cada fase com sua(s) sessão(ões), status e artefatos (referência visual: tela
+  de Tasks do CodeLayer/HumanLayer, screenshot compartilhado pelo Alexandre;
+  o preset de fases deles — Questions, Research, Design, Structure, Plan,
+  Implement — fica disponível como alternativa configurável).
+- **Chat de setup do dia** = pode ser um **botão que executa uma sequência de
+  skills** (rotina configurável) ao abrir a sessão.
+- **Quota das 15 contas** = integrar o monitor já existente
+  **https://claude-monitor.seazone.dev/**; as contas seguirão a nomenclatura
+  **"Tecnologia Claude {número}"** (usar como nome default dos perfis).
+
 ## Visão do produto
 
 Um cockpit para operar **muitas sessões Claude em paralelo sem perder o fio**:
@@ -82,8 +101,10 @@ hipótese ainda não confirmada pelo Alexandre.
 
 **P1 — logo depois (ordem a validar com o Alexandre):**
 
-- **US-8 Tokens da conversa** `[E2.3]` — Vejo o consumo de tokens da sessão em
-  curso sem pedir — o `/cost` vira indicador sempre visível.
+- **US-8 Tokens + smart zone** `[E2.3 + clarify]` — Vejo o consumo de tokens
+  da sessão em curso sem pedir, como um medidor de contexto com a smart zone
+  (~400k) marcada: dentro da zona / atenção / hora de handoff. Alerta quando
+  uma sessão sai da zona.
 - **US-9 Subagentes** `[E2.4]` — Vejo quais subagentes/tasks a sessão disparou
   e o andamento deles.
 - **US-10 Post-its** `[E extra]` — Capturo uma ideia em segundos (atalho
@@ -91,15 +112,25 @@ hipótese ainda não confirmada pelo Alexandre.
   sessão em que estou.
 - **US-11 Todo do projeto** `[E extra]` — Vejo a todo do projeto selecionado
   ao lado das sessões (fonte a clarificar: todo.md do vault × TaskDex).
-- **US-12 Quota das 15 contas** `[E3]` — Painel integrado ao projeto já
-  existente de acompanhamento de limites (identificar no clarify; não
-  reinventar).
+- **US-12 Quota das 15 contas** `[E3 + clarify]` — Painel integrado ao
+  **claude-monitor.seazone.dev** (embed/link + API se existir); perfis nomeados
+  "Tecnologia Claude {n}" por default.
+- **US-14 Rotinas** `[E1 + clarify]` — Botões configuráveis (ex.: "Setup do
+  dia") que abrem uma sessão já executando uma sequência de skills definida
+  por mim.
 
-**P2 — modo Dev (não specar antes do clarify):**
+**P2 — modo Dev:**
 
-- **US-13 Modos Dev / Uso geral** `[E extra]` — No modo Dev, sessões nascem
-  amarradas ao processo da Esteira ("smart zone"; referência citada:
-  HumanLayer); no modo Uso geral, sessão livre como hoje.
+- **US-13 Modos Dev / Uso geral** `[E extra + clarify]` — No modo Dev, a
+  navegação vira **task (card) → fases da Esteira** (Discovery, Plano,
+  Implementar, Validar, Concluir — default; preset HumanLayer configurável),
+  cada fase com sua(s) sessão(ões), status do semáforo, medidor de smart zone
+  e artefatos produzidos (referência de UI: tela de Tasks do CodeLayer).
+  Incentivo ativo a **uma sessão fresca por fase** (handoff em vez de arrastar
+  contexto). No modo Uso geral, sessão livre como hoje.
+  *Decisão proposta:* fases default = Esteira, por já ser o processo do squad
+  (cards TaskDex + skills `/esteira-*`); o preset HumanLayer fica como
+  configuração alternativa para experimentar.
 
 ## Requisitos funcionais
 
@@ -212,14 +243,14 @@ Cada FR é testável isoladamente.
 
 ## Fora de escopo do P0
 
-- **P1** (ordem a validar): tokens da conversa (US-8), subagentes (US-9),
-  post-its (US-10), todo do projeto (US-11), painel de quota das 15 contas
-  (US-12); toggles de MCP por sessão (`--mcp-config`/`--strict-mcp-config`),
-  painel de skills, busca full-text em sessões antigas, temas.
-- **P2:** modos Dev/Uso geral com Esteira (US-13 — specar só após clarify de
-  "smart zone" e da referência HumanLayer); viewer de transcript com markdown,
-  split de terminais, templates de prompt, git status na sidebar, atalhos
-  configuráveis, worktrees (`-w`) no launcher.
+- **P1** (ordem a validar): tokens + smart zone (US-8), subagentes (US-9),
+  post-its (US-10), todo do projeto (US-11), quota via claude-monitor (US-12),
+  rotinas/"setup do dia" (US-14); toggles de MCP por sessão
+  (`--mcp-config`/`--strict-mcp-config`), painel de skills, busca full-text em
+  sessões antigas, temas.
+- **P2:** modo Dev com fases da Esteira (US-13, já clarificada); viewer de
+  transcript com markdown, split de terminais, templates de prompt, git status
+  na sidebar, atalhos configuráveis, worktrees (`-w`) no launcher.
 
 ## Requisitos não-funcionais
 
