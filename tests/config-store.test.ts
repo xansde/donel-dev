@@ -1,0 +1,368 @@
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createSystemConfigIoDeps,
+  defaultAppConfig,
+  readAppConfig,
+  sanitizeAppConfig,
+  toAppConfigDto,
+  toggleFavorite,
+  writeAppConfig,
+  type AppConfig,
+  type ConfigIoDeps,
+  type LegacyConfigPaths,
+} from '../src/main/config-store';
+
+// T015 — ConfigStore (FR-007). TDD nos módulos puros: escrita atômica (fs
+// mockado, sem tocar disco), migração dos JSONs legados de T007/T014, e
+// validação de schema. Um bloco final de I/O real (pasta temporária) cobre a
+// integração ponta-a-ponta, mesmo espírito de tests/project-config-store.test.ts
+// (módulo que este arquivo substitui — deletado nesta task).
+
+const FAKE_ROOTS = ['C:\\Users\\fake\\seazone', 'C:\\Users\\fake\\pessoal'];
+
+function baseDefaults(): AppConfig {
+  return defaultAppConfig(FAKE_ROOTS);
+}
+
+describe('defaultAppConfig (puro)', () => {
+  it('monta a config default com os roots recebidos e os demais campos fixos', () => {
+    const config = baseDefaults();
+    expect(config).toEqual({
+      version: 1,
+      projectRoots: FAKE_ROOTS,
+      favorites: [],
+      activeProfileSlug: 'principal',
+      launcherDefaults: { model: 'fable', effort: 'high', permissionMode: 'acceptEdits' },
+      notificationPreference: 'permission-only',
+      theme: 'dark',
+    });
+  });
+});
+
+describe('toAppConfigDto (puro)', () => {
+  it('expõe só o subconjunto que o renderer precisa — sem favorites/activeProfileSlug/version', () => {
+    const config: AppConfig = {
+      ...baseDefaults(),
+      favorites: ['C:\\a'],
+      activeProfileSlug: 'tecnologia-claude-2',
+    };
+    expect(toAppConfigDto(config)).toEqual({
+      projectRoots: FAKE_ROOTS,
+      launcherDefaults: { model: 'fable', effort: 'high', permissionMode: 'acceptEdits' },
+      notificationPreference: 'permission-only',
+      theme: 'dark',
+    });
+  });
+});
+
+describe('toggleFavorite (puro, portado de project-config-store.ts)', () => {
+  it('adiciona um caminho novo', () => {
+    expect(toggleFavorite([], 'C:\\a', true)).toEqual(['C:\\a']);
+  });
+
+  it('não duplica quando o caminho já está favoritado', () => {
+    expect(toggleFavorite(['C:\\a'], 'C:\\a', true)).toEqual(['C:\\a']);
+  });
+
+  it('remove quando favorite=false', () => {
+    expect(toggleFavorite(['C:\\a', 'C:\\b'], 'C:\\a', false)).toEqual(['C:\\b']);
+  });
+
+  it('remover um caminho que não está na lista é no-op', () => {
+    expect(toggleFavorite(['C:\\b'], 'C:\\a', false)).toEqual(['C:\\b']);
+  });
+});
+
+describe('sanitizeAppConfig (puro — validação de schema)', () => {
+  it('aceita um objeto totalmente válido sem alterações', () => {
+    const valid: AppConfig = {
+      version: 1,
+      projectRoots: ['C:\\x'],
+      favorites: ['C:\\y'],
+      activeProfileSlug: 'tecnologia-claude-3',
+      launcherDefaults: { model: 'sonnet', effort: 'max', permissionMode: 'plan' },
+      notificationPreference: 'all',
+      theme: 'dark',
+    };
+    expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
+  });
+
+  it('valor não-objeto (null, array, primitivo) cai inteiro no default', () => {
+    const defaults = baseDefaults();
+    expect(sanitizeAppConfig(null, defaults)).toEqual(defaults);
+    expect(sanitizeAppConfig('lixo', defaults)).toEqual(defaults);
+    expect(sanitizeAppConfig(42, defaults)).toEqual(defaults);
+    expect(sanitizeAppConfig([1, 2, 3], defaults)).toEqual(defaults);
+  });
+
+  it('campo individual corrompido cai no default SÓ daquele campo (resto do objeto bom é preservado)', () => {
+    const defaults = baseDefaults();
+    const partiallyCorrupted = {
+      version: 1,
+      projectRoots: 'não é array', // corrompido
+      favorites: ['C:\\ok'], // bom
+      activeProfileSlug: 42, // corrompido (não é string)
+      launcherDefaults: { model: 'sonnet', effort: 'high', permissionMode: 'plan' }, // bom
+      notificationPreference: 'not-a-real-value', // corrompido
+      theme: 'dark',
+    };
+    expect(sanitizeAppConfig(partiallyCorrupted, defaults)).toEqual({
+      version: 1,
+      projectRoots: defaults.projectRoots, // fallback
+      favorites: ['C:\\ok'],
+      activeProfileSlug: defaults.activeProfileSlug, // fallback
+      launcherDefaults: { model: 'sonnet', effort: 'high', permissionMode: 'plan' },
+      notificationPreference: defaults.notificationPreference, // fallback
+      theme: 'dark',
+    });
+  });
+
+  it('launcherDefaults com alias de modelo/esforço/permissão desconhecido cai no default campo a campo', () => {
+    const defaults = baseDefaults();
+    const parsed = {
+      ...defaults,
+      launcherDefaults: { model: 'gpt-5-nao-existe', effort: 'high', permissionMode: 'bypassPermissions' },
+    };
+    expect(sanitizeAppConfig(parsed, defaults).launcherDefaults).toEqual({
+      model: defaults.launcherDefaults.model, // fallback só no campo inválido
+      effort: 'high',
+      permissionMode: 'bypassPermissions',
+    });
+  });
+
+  it('activeProfileSlug vazio/só espaço cai no default (mesma regra de readActiveProfileConfig)', () => {
+    const defaults = baseDefaults();
+    expect(sanitizeAppConfig({ ...defaults, activeProfileSlug: '   ' }, defaults).activeProfileSlug).toBe(
+      defaults.activeProfileSlug,
+    );
+  });
+
+  it('version sempre normaliza pra CONFIG_SCHEMA_VERSION atual, mesmo se o arquivo trouxer outra', () => {
+    const defaults = baseDefaults();
+    expect(sanitizeAppConfig({ ...defaults, version: 99 }, defaults).version).toBe(1);
+  });
+});
+
+describe('writeAppConfig (escrita atômica — fs mockado, DoD explícito da task)', () => {
+  function makeMockIo(overrides: Partial<ConfigIoDeps> = {}): { io: ConfigIoDeps; calls: string[] } {
+    const calls: string[] = [];
+    const io: ConfigIoDeps = {
+      existsSync: vi.fn(() => true),
+      readFileText: vi.fn(() => null),
+      writeFileText: vi.fn((path: string) => {
+        calls.push(`write:${path}`);
+      }),
+      renameFile: vi.fn((from: string, to: string) => {
+        calls.push(`rename:${from}->${to}`);
+      }),
+      mkdirSync: vi.fn((path: string) => {
+        calls.push(`mkdir:${path}`);
+      }),
+      unlinkFile: vi.fn((path: string) => {
+        calls.push(`unlink:${path}`);
+      }),
+      ...overrides,
+    };
+    return { io, calls };
+  }
+
+  it('grava num arquivo TEMPORÁRIO primeiro, só então faz rename pro path final (nunca escreve o arquivo final direto)', () => {
+    const { io, calls } = makeMockIo();
+    writeAppConfig('C:\\fake\\config.json', baseDefaults(), io);
+
+    expect(calls).toHaveLength(2);
+    const [writeCall, renameCall] = calls;
+    expect(writeCall).toMatch(/^write:C:\\fake\\config\.json\.tmp-/);
+    const tmpPathWritten = writeCall.slice('write:'.length);
+    expect(renameCall).toBe(`rename:${tmpPathWritten}->C:\\fake\\config.json`);
+  });
+
+  it('conteúdo gravado é o JSON serializado da config recebida', () => {
+    const written: Record<string, string> = {};
+    const { io } = makeMockIo({
+      writeFileText: vi.fn((path: string, content: string) => {
+        written[path] = content;
+      }),
+    });
+    const config = baseDefaults();
+    writeAppConfig('C:\\fake\\config.json', config, io);
+
+    const tmpPath = Object.keys(written)[0];
+    expect(JSON.parse(written[tmpPath])).toEqual(config);
+  });
+
+  it('cria o diretório pai quando ele não existe', () => {
+    const { io, calls } = makeMockIo({ existsSync: vi.fn(() => false) });
+    writeAppConfig('C:\\fake\\nested\\config.json', baseDefaults(), io);
+
+    expect(calls[0]).toBe('mkdir:C:\\fake\\nested');
+  });
+
+  it('não cria diretório quando ele já existe', () => {
+    const { io, calls } = makeMockIo({ existsSync: vi.fn(() => true) });
+    writeAppConfig('C:\\fake\\config.json', baseDefaults(), io);
+
+    expect(calls.some((call) => call.startsWith('mkdir:'))).toBe(false);
+  });
+
+  it('rename falhando limpa o arquivo temporário (best-effort) e propaga o erro', () => {
+    const { io, calls } = makeMockIo({
+      renameFile: vi.fn(() => {
+        throw new Error('EPERM simulado');
+      }),
+    });
+
+    expect(() => writeAppConfig('C:\\fake\\config.json', baseDefaults(), io)).toThrow('EPERM simulado');
+    expect(calls.some((call) => call.startsWith('unlink:'))).toBe(true);
+  });
+
+  it('duas escritas seguidas usam nomes de arquivo temporário DIFERENTES (sem colisão)', () => {
+    const { io, calls } = makeMockIo();
+    writeAppConfig('C:\\fake\\config.json', baseDefaults(), io);
+    writeAppConfig('C:\\fake\\config.json', baseDefaults(), io);
+
+    const tmpNames = calls.filter((call) => call.startsWith('write:')).map((call) => call.slice('write:'.length));
+    expect(tmpNames[0]).not.toBe(tmpNames[1]);
+  });
+});
+
+describe('readAppConfig (migração dos JSONs legados T007/T014 — fs mockado)', () => {
+  const legacy: LegacyConfigPaths = {
+    projectConfigPath: 'C:\\fake\\project-config.json',
+    activeProfilePath: 'C:\\fake\\active-profile.json',
+  };
+
+  function makeMockIo(files: Record<string, string>): ConfigIoDeps {
+    return {
+      existsSync: () => true,
+      readFileText: (path: string) => files[path] ?? null,
+      writeFileText: vi.fn(),
+      renameFile: vi.fn(),
+      mkdirSync: vi.fn(),
+      unlinkFile: vi.fn(),
+    };
+  }
+
+  it('config.json presente e válido é a fonte de verdade — legados nunca são consultados', () => {
+    const defaults = baseDefaults();
+    const stored: AppConfig = { ...defaults, favorites: ['C:\\from-config-json'], activeProfileSlug: 'tecnologia-claude-9' };
+    const io = makeMockIo({
+      'C:\\fake\\config.json': JSON.stringify(stored),
+      [legacy.projectConfigPath]: JSON.stringify({ favorites: ['C:\\NUNCA-deveria-aparecer'] }),
+      [legacy.activeProfilePath]: JSON.stringify({ activeSlug: 'nunca-deveria-aparecer' }),
+    });
+
+    expect(readAppConfig('C:\\fake\\config.json', defaults, legacy, io)).toEqual(stored);
+  });
+
+  it('config.json ausente + ambos os legados presentes: migra favorites + activeProfileSlug pros defaults', () => {
+    const defaults = baseDefaults();
+    const io = makeMockIo({
+      [legacy.projectConfigPath]: JSON.stringify({ favorites: ['C:\\a', 'C:\\b'] }),
+      [legacy.activeProfilePath]: JSON.stringify({ activeSlug: 'tecnologia-claude-4' }),
+    });
+
+    expect(readAppConfig('C:\\fake\\config.json', defaults, legacy, io)).toEqual({
+      ...defaults,
+      favorites: ['C:\\a', 'C:\\b'],
+      activeProfileSlug: 'tecnologia-claude-4',
+    });
+  });
+
+  it('config.json ausente + só project-config.json legado presente: favorites migra, activeProfileSlug cai no default', () => {
+    const defaults = baseDefaults();
+    const io = makeMockIo({ [legacy.projectConfigPath]: JSON.stringify({ favorites: ['C:\\a'] }) });
+
+    expect(readAppConfig('C:\\fake\\config.json', defaults, legacy, io)).toEqual({ ...defaults, favorites: ['C:\\a'] });
+  });
+
+  it('config.json ausente + nenhum legado presente: defaults puros (1ª execução real, nunca usou o app antes)', () => {
+    const defaults = baseDefaults();
+    const io = makeMockIo({});
+
+    expect(readAppConfig('C:\\fake\\config.json', defaults, legacy, io)).toEqual(defaults);
+  });
+
+  it('legado com JSON corrompido é ignorado silenciosamente (cai no default daquele campo, nunca lança)', () => {
+    const defaults = baseDefaults();
+    const io = makeMockIo({ [legacy.projectConfigPath]: '{ isso não é json' });
+
+    expect(readAppConfig('C:\\fake\\config.json', defaults, legacy, io)).toEqual(defaults);
+  });
+
+  it('config.json presente mas corrompido: cai nos defaults SEM tentar migrar (config.json já existia, não é "1ª vez")', () => {
+    const defaults = baseDefaults();
+    const io = makeMockIo({
+      'C:\\fake\\config.json': '{ corrompido',
+      [legacy.projectConfigPath]: JSON.stringify({ favorites: ['C:\\NUNCA-deveria-aparecer'] }),
+    });
+
+    expect(readAppConfig('C:\\fake\\config.json', defaults, legacy, io)).toEqual(defaults);
+  });
+});
+
+describe('readAppConfig / writeAppConfig — I/O real em pasta temporária (integração)', () => {
+  let dir: string;
+  let filePath: string;
+  let legacy: LegacyConfigPaths;
+  let io: ConfigIoDeps;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'donel-dev-config-store-'));
+    filePath = join(dir, 'nested', 'config.json');
+    legacy = { projectConfigPath: join(dir, 'project-config.json'), activeProfilePath: join(dir, 'active-profile.json') };
+    io = createSystemConfigIoDeps();
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('grava e relê, criando diretórios intermediários', () => {
+    const config = baseDefaults();
+    writeAppConfig(filePath, config, io);
+
+    expect(readAppConfig(filePath, config, legacy, io)).toEqual(config);
+  });
+
+  it('escrita é atômica de ponta a ponta: o arquivo final nunca fica com conteúdo truncado/parcial, e overwrite funciona', () => {
+    const first = baseDefaults();
+    writeAppConfig(filePath, first, io);
+    expect(JSON.parse(readFileSync(filePath, 'utf8'))).toEqual(first);
+
+    const second: AppConfig = { ...first, favorites: ['C:\\segunda-escrita'], notificationPreference: 'all' };
+    writeAppConfig(filePath, second, io);
+    expect(JSON.parse(readFileSync(filePath, 'utf8'))).toEqual(second);
+
+    // Nenhum arquivo .tmp-* sobra pra trás depois de um rename bem-sucedido.
+    const leftovers = readdirSync(join(filePath, '..')).filter((name) => name.includes('.tmp-'));
+    expect(leftovers).toHaveLength(0);
+  });
+
+  it('migração real: JSONs legados no formato exato de T007/T014 na pasta, config.json ainda não existe', () => {
+    writeFileSync(legacy.projectConfigPath, JSON.stringify({ favorites: ['C:\\legado-a'] }), 'utf8');
+    writeFileSync(legacy.activeProfilePath, JSON.stringify({ activeSlug: 'tecnologia-claude-7' }), 'utf8');
+
+    const defaults = baseDefaults();
+    const migrated = readAppConfig(filePath, defaults, legacy, io);
+    expect(migrated.favorites).toEqual(['C:\\legado-a']);
+    expect(migrated.activeProfileSlug).toBe('tecnologia-claude-7');
+
+    // Persiste o resultado migrado — a partir daqui config.json é a fonte
+    // única (próxima leitura NÃO reconsulta os legados, mesmo que mudem).
+    writeAppConfig(filePath, migrated, io);
+    writeFileSync(legacy.projectConfigPath, JSON.stringify({ favorites: ['C:\\mudou-depois-nao-deveria-aparecer'] }), 'utf8');
+
+    const rereadAfterMigration = readAppConfig(filePath, defaults, legacy, io);
+    expect(rereadAfterMigration.favorites).toEqual(['C:\\legado-a']);
+  });
+
+  it('config.json corrompido no disco (I/O real) cai nos defaults sem lançar', () => {
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, '{ não é json válido', 'utf8');
+    expect(readAppConfig(filePath, baseDefaults(), legacy, io)).toEqual(baseDefaults());
+  });
+});

@@ -392,10 +392,15 @@ export function createSystemProfileListDeps(homedirFn: () => string): ProfileLis
 
 // ---------------------------------------------------------------------------
 // Perfil ativo (persistido) — "trocar de perfil afeta só sessões novas"
-// (FR-005): main/index.ts lê isso uma vez no boot e a cada `profiles:activate`,
-// guarda em memória, e injeta no env de todo `pty:create` de sessão claude
-// subsequente. Mesmo padrão I/O de src/main/project-config-store.ts (nunca
-// lança; dir intermediário criado on-demand).
+// (FR-005). NOTA (2026-07-23, T015 — ConfigStore formal): `main/index.ts`
+// PAROU de chamar `readActiveProfileConfig`/`writeActiveProfileConfig` —
+// o perfil ativo passou a persistir dentro do `config.json` unificado
+// (src/main/config-store.ts, campo `activeProfileSlug`), que MIGRA o
+// conteúdo deste `active-profile.json` legado na 1ª leitura (parsing
+// próprio, sem importar daqui — ver comentário de topo de config-store.ts).
+// As duas funções abaixo continuam aqui, intocadas e testadas
+// (profile-manager.test.ts), como referência do formato legado — módulo já
+// auditado, fora do escopo do T015 reabrir.
 // ---------------------------------------------------------------------------
 
 export interface ActiveProfileConfig {

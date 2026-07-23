@@ -1,6 +1,7 @@
 import { Button, Modal, SplitButton, StatusBar, TerminalTab } from '@donel-dev/design-system';
+import { Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ProjectInfo, SemaphoreStateInfo, SessionSummaryDto } from '../../shared';
+import type { AppConfigDto, NotificationPreference, ProjectInfo, SemaphoreStateInfo, SessionSummaryDto } from '../../shared';
 import {
   buildClaudeArgs,
   DEFAULT_EFFORT_LEVEL,
@@ -21,6 +22,7 @@ import { sessionTabName } from '../../shared/sessions';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import type { LauncherLaunchOptions } from './Launcher';
+import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { ProfileSwitcher } from './ProfileSwitcher';
 import { ProjectSidebar } from './ProjectSidebar';
@@ -28,6 +30,13 @@ import type { SidebarSession } from './ProjectSidebar';
 import { SessionDetails } from './SessionDetails';
 import { TerminalPane } from './TerminalPane';
 import type { TerminalPaneHandle } from './TerminalPane';
+
+// FIX (feedback E2E, batch 3 achado "notificar toda transição vira spam") —
+// default conservador local, usado enquanto `appConfig` ainda não chegou de
+// `window.donel.config.get()` (mesmo valor de config-store.ts
+// `DEFAULT_NOTIFICATION_PREFERENCE`, duplicado aqui só como fallback de
+// PRIMEIRO paint — nunca persistido a partir daqui).
+const FALLBACK_NOTIFICATION_PREFERENCE: NotificationPreference = 'permission-only';
 
 // T007 — sidebar real ligada ao ProjectScanner (FR-001, US-1): abrir um
 // projeto pela sidebar cria (ou foca, se já aberta) uma aba de sessão claude
@@ -102,6 +111,12 @@ export function App(): React.JSX.Element {
   // `handleQuickNewClaudeSession`) sem depender do painel — isso não muda
   // (CA-1/smoke `profiles.spec.ts` já cobrem esse caminho).
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // T015 — ConfigStore (FR-007): roots/notificação/defaults do launcher.
+  // `null` até `window.donel.config.get()` resolver no boot (mesmo padrão de
+  // `projects`/`loadingProjects` acima) — os consumidores abaixo caem em
+  // fallbacks locais enquanto isso.
+  const [appConfig, setAppConfig] = useState<AppConfigDto | null>(null);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const tabIdCounter = useRef(0);
   // T014 — rótulo de conta pra Statusbar (ui-spec §2 zona 5), reportado pelo
   // ProfileSwitcher (que já busca `window.donel.profiles.*` pro dropdown do
@@ -256,6 +271,23 @@ export function App(): React.JSX.Element {
     };
   }, []);
 
+  // T015 — carrega o ConfigStore uma vez no boot (roots/notificação/defaults
+  // do launcher). Falha de IPC aqui não trava o shell (mesmo espírito do
+  // catch de `projects.list` acima) — os consumidores seguem nos fallbacks
+  // locais até uma próxima mutação bem-sucedida repor `appConfig`.
+  useEffect(() => {
+    let cancelled = false;
+    window.donel.config
+      .get()
+      .then((config) => {
+        if (!cancelled) setAppConfig(config);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleOpenProject = (project: ProjectInfo): void => {
     setSelectedProjectPath(project.path);
     const existing = tabs.find((tab) => tab.cwd === project.path);
@@ -361,6 +393,14 @@ export function App(): React.JSX.Element {
     addTab({ name, cwd: options.projectPath, projectName: options.projectName, pinned: false, launchArgs: args, sessionType: 'claude' });
     setSelectedProjectPath(options.projectPath);
     setLastLaunch({ args, cwd: options.projectPath, name });
+    // T015 (FR-007 "defaults do launcher") — cada lançamento configurado vira
+    // o default do PRÓXIMO Launcher aberto (mesmo espírito de "lembra a
+    // última config" que o corpo do "＋ Nova sessão" já tinha via
+    // `lastLaunch` em memória — agora persistido, sobrevive a restart).
+    void window.donel.config
+      .setLauncherDefaults({ model: options.model, effort: options.effort, permissionMode: options.permissionMode })
+      .then(setAppConfig)
+      .catch(() => undefined);
     // FIX (feedback E2E rodada 3) — painel colapsável: "fecha ao lançar".
     setLauncherOpen(false);
   };
@@ -433,6 +473,44 @@ export function App(): React.JSX.Element {
         setProjects(list);
       })
       .catch(() => undefined);
+  };
+
+  // T015 — UI de Preferências (FR-007, feedback E2E rodada 3 "roots
+  // configuráveis"): substitui a lista INTEIRA de roots no ConfigStore
+  // (main/index.ts `sanitizeProjectRoots` descarta vazio/duplicata) e
+  // refaz o scan de projetos em seguida — "re-scan imediato" pedido pelo
+  // feedback, sem esperar um restart.
+  const refreshProjectsAfterRootsChange = (): void => {
+    void window.donel.projects.list().then(setProjects).catch(() => undefined);
+  };
+
+  const handleAddProjectRoot = (root: string): void => {
+    const currentRoots = appConfig?.projectRoots ?? [];
+    void window.donel.config
+      .setProjectRoots([...currentRoots, root])
+      .then((config) => {
+        setAppConfig(config);
+        refreshProjectsAfterRootsChange();
+      })
+      .catch(() => undefined);
+  };
+
+  const handleRemoveProjectRoot = (root: string): void => {
+    const currentRoots = appConfig?.projectRoots ?? [];
+    void window.donel.config
+      .setProjectRoots(currentRoots.filter((existing) => existing !== root))
+      .then((config) => {
+        setAppConfig(config);
+        refreshProjectsAfterRootsChange();
+      })
+      .catch(() => undefined);
+  };
+
+  // FIX (feedback E2E rodada 4, batch 3 achado "notificar toda transição
+  // vira spam") — preferência configurável (all/permission-only/none),
+  // aplicada pelo efeito de notificação mais abaixo.
+  const handleChangeNotificationPreference = (preference: NotificationPreference): void => {
+    void window.donel.config.setNotificationPreference(preference).then(setAppConfig).catch(() => undefined);
   };
 
   const handleTogglePin = (tabId: string): void => {
@@ -604,28 +682,43 @@ export function App(): React.JSX.Element {
   // BACKGROUND passa a precisar de atenção — nunca pra aba já em foco (o
   // usuário já está olhando). `app.setAppUserModelId` (main/index.ts) é o
   // que garante a notificação sair atribuída ao Donel Dev, não a "Electron".
+  //
+  // FIX (feedback E2E rodada 4, batch 3 achado "notificar toda transição
+  // vira spam") — antes SEMPRE disparava pra waiting+permission; agora
+  // filtra pela preferência do ConfigStore (T015): 'all' preserva o
+  // comportamento antigo, 'permission-only' (default) só a transição que de
+  // fato TRAVA a sessão, 'none' desliga. `previousSemaphoreStatesRef` é
+  // atualizado INCONDICIONALMENTE (mesmo com 'none') — trocar a preferência
+  // de volta pra mais permissiva no meio de uma sessão não deve disparar
+  // notificação retroativa de uma transição que já aconteceu enquanto
+  // estava desligado.
   useEffect(() => {
+    const preference = appConfig?.notificationPreference ?? FALLBACK_NOTIFICATION_PREFERENCE;
     const previous = previousSemaphoreStatesRef.current;
-    for (const tab of tabs) {
-      const nextState = semaphoreStates[tab.id]?.state;
-      const prevState = previous[tab.id]?.state;
-      if (!nextState || nextState === prevState) continue; // só na TRANSIÇÃO de estado, não a cada update
-      if (tab.id === activeTabId) continue; // aba em foco não precisa de toast
-      if (nextState !== 'waiting' && nextState !== 'permission') continue;
 
-      try {
-        if (typeof Notification === 'undefined') continue;
-        const title = nextState === 'permission' ? 'Permissão pendente' : 'Aguardando sua resposta';
-        const body =
-          nextState === 'permission' ? `Sessão "${tab.name}" precisa da sua aprovação.` : `Sessão "${tab.name}" terminou o turno.`;
-        const notification = new Notification(title, { body });
-        notification.onclick = () => setActiveTabId(tab.id);
-      } catch {
-        // Notificação é opcional (ui-spec §3) — nunca deve derrubar a UI.
+    if (preference !== 'none') {
+      for (const tab of tabs) {
+        const nextState = semaphoreStates[tab.id]?.state;
+        const prevState = previous[tab.id]?.state;
+        if (!nextState || nextState === prevState) continue; // só na TRANSIÇÃO de estado, não a cada update
+        if (tab.id === activeTabId) continue; // aba em foco não precisa de toast
+        if (nextState !== 'waiting' && nextState !== 'permission') continue;
+        if (preference === 'permission-only' && nextState !== 'permission') continue;
+
+        try {
+          if (typeof Notification === 'undefined') continue;
+          const title = nextState === 'permission' ? 'Permissão pendente' : 'Aguardando sua resposta';
+          const body =
+            nextState === 'permission' ? `Sessão "${tab.name}" precisa da sua aprovação.` : `Sessão "${tab.name}" terminou o turno.`;
+          const notification = new Notification(title, { body });
+          notification.onclick = () => setActiveTabId(tab.id);
+        } catch {
+          // Notificação é opcional (ui-spec §3) — nunca deve derrubar a UI.
+        }
       }
     }
     previousSemaphoreStatesRef.current = semaphoreStates;
-  }, [semaphoreStates, tabs, activeTabId]);
+  }, [semaphoreStates, tabs, activeTabId, appConfig?.notificationPreference]);
 
   // FIX (feedback E2E rodada 3) — painel colapsável: "fecha ao... Esc".
   // Efeito próprio (não reaproveita o listener de atalhos Ctrl+1..9/Ctrl+Tab
@@ -644,6 +737,17 @@ export function App(): React.JSX.Element {
   // T011 — aba em foco, pra decidir se a toolbar de Modelo/Esforço aparece (só sessões 'claude').
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
 
+  // FIX (T015, FR-009 "statusbar completa") — era hardcoded "fable/high"
+  // (sempre o mesmo texto, ignorando a aba real): agora reflete o
+  // modelo/esforço de VERDADE da aba em foco (`sessionModelEffort`, já
+  // mantido pelo T011/T013), e some quando a aba ativa não é uma sessão
+  // claude (terminal livre não tem os dois campos — `StatusBar` omite o
+  // separador quando `modelEffort` é `undefined`).
+  const activeModelEffort =
+    activeTab && activeTab.sessionType === 'claude'
+      ? `${sessionModelEffort[activeTab.id]?.model ?? DEFAULT_MODEL_ALIAS}/${sessionModelEffort[activeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}`
+      : undefined;
+
   return (
     <div className={styles.shell}>
       <header className={styles.titlebar}>
@@ -652,6 +756,16 @@ export function App(): React.JSX.Element {
           <span>Donel Dev</span>
         </div>
         <ProfileSwitcher onActiveProfileLabelChange={setAccountLabel} />
+        {/* T015 — UI de Preferências (FR-007, feedback E2E rodada 3/4). */}
+        <button
+          type="button"
+          className={styles.preferencesButton}
+          onClick={() => setPreferencesOpen(true)}
+          aria-label="Preferências"
+          title="Preferências"
+        >
+          <Settings size={16} strokeWidth={1.5} aria-hidden="true" />
+        </button>
         <SplitButton
           label="＋ Nova sessão"
           onClick={handleQuickNewClaudeSession}
@@ -738,7 +852,12 @@ export function App(): React.JSX.Element {
             `styles.bodyPanelClosed` acima. */}
         {launcherOpen ? (
           <aside className={styles.rightPanel} aria-label="Lançar sessão">
-            <Launcher projects={projects} defaultProjectPath={selectedProjectPath} onLaunch={handleLaunch} />
+            <Launcher
+              projects={projects}
+              defaultProjectPath={selectedProjectPath}
+              launcherDefaults={appConfig?.launcherDefaults}
+              onLaunch={handleLaunch}
+            />
           </aside>
         ) : null}
         {/*
@@ -758,7 +877,7 @@ export function App(): React.JSX.Element {
         </pre>
       </div>
 
-      <StatusBar accountLabel={accountLabel} modelEffort="fable/high" sessionCount={tabs.length} />
+      <StatusBar accountLabel={accountLabel} modelEffort={activeModelEffort} sessionCount={tabs.length} />
 
       {/* T010 — FR-006, ui-spec §2 "fechar aba com sessão ativa": confirmação destrutiva antes de matar um PTY vivo. */}
       <Modal
@@ -788,6 +907,17 @@ export function App(): React.JSX.Element {
         onClose={handleClosePreviousSessions}
         onResume={handleResumeSession}
         onFork={handleForkSession}
+      />
+
+      {/* T015 — Preferências (FR-007, feedback E2E rodada 3/4). */}
+      <Preferences
+        open={preferencesOpen}
+        onClose={() => setPreferencesOpen(false)}
+        projectRoots={appConfig?.projectRoots ?? []}
+        notificationPreference={appConfig?.notificationPreference ?? FALLBACK_NOTIFICATION_PREFERENCE}
+        onAddRoot={handleAddProjectRoot}
+        onRemoveRoot={handleRemoveProjectRoot}
+        onChangeNotificationPreference={handleChangeNotificationPreference}
       />
     </div>
   );

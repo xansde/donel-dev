@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  AppConfigDto,
   DonelApi,
+  LauncherDefaultsDto,
+  NotificationPreference,
   ProfileDoctorReportDto,
   ProfileHeadroomMap,
   ProfileSummaryDto,
@@ -12,14 +15,14 @@ import type {
   SemaphoreUpdate,
   SessionSummaryDto,
 } from '../shared';
-import { PROFILE_CHANNELS, PROJECT_CHANNELS, PTY_CHANNELS, SEMAPHORE_CHANNELS, SESSION_CHANNELS } from '../shared';
+import { CONFIG_CHANNELS, PROFILE_CHANNELS, PROJECT_CHANNELS, PTY_CHANNELS, SEMAPHORE_CHANNELS, SESSION_CHANNELS } from '../shared';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
 // arquivo é o único ponto por onde o renderer alcança o main process, via
 // `window.donel.*` tipado de ponta a ponta (plan.md "Arquitetura de
 // processos"). Canais `pty:*` chegam em T004; `projects:*` chega no T007;
 // `sessions:*` chega no T013; `profiles:*` chega no T014; `config:*` chega
-// junto da task que o implementar (T015).
+// no T015 (ConfigStore formal, FR-007/FR-009).
 
 const donelApi: DonelApi = {
   pty: {
@@ -93,6 +96,18 @@ const donelApi: DonelApi = {
     repair: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.repair, slug) as Promise<ProfileDoctorReportDto>,
 
     headroom: () => ipcRenderer.invoke(PROFILE_CHANNELS.headroom) as Promise<ProfileHeadroomMap>,
+  },
+
+  config: {
+    get: () => ipcRenderer.invoke(CONFIG_CHANNELS.get) as Promise<AppConfigDto>,
+
+    setProjectRoots: (roots: string[]) => ipcRenderer.invoke(CONFIG_CHANNELS.setProjectRoots, roots) as Promise<AppConfigDto>,
+
+    setNotificationPreference: (preference: NotificationPreference) =>
+      ipcRenderer.invoke(CONFIG_CHANNELS.setNotificationPreference, preference) as Promise<AppConfigDto>,
+
+    setLauncherDefaults: (defaults: LauncherDefaultsDto) =>
+      ipcRenderer.invoke(CONFIG_CHANNELS.setLauncherDefaults, defaults) as Promise<AppConfigDto>,
   },
 };
 

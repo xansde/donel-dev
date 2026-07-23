@@ -155,6 +155,12 @@ Cada FR é testável isoladamente.
 - **FR-001 Scan de projetos.** O app varre roots configuráveis (default:
   `~/seazone` e `~/pessoal`), até 2 níveis, listando diretórios que contenham
   `.git/` ou `CLAUDE.md`. Favoritos são persistidos no config e aparecem no topo.
+  > **Nota 2026-07-23 (feedback E2E rodada 3, Batch 5/T015)** — "configuráveis"
+  > deixa de valer só pro default/1ª execução: a UI de Preferências (gear icon
+  > na titlebar) permite adicionar/remover roots a qualquer momento, com
+  > re-scan imediato — persistido em `projectRoots` no ConfigStore (FR-007).
+  > Ver ui-spec.md §2 (nota equivalente, que revoga o "só no fluxo de 1ª
+  > execução" do texto anterior).
 - **FR-002 Abrir sessão.** Abrir projeto = spawn de um PTY (ConPTY) com
   `cwd = <projeto>`, executando o comando montado pelo launcher, com
   `CLAUDE_CONFIG_DIR` do perfil ativo injetado no ambiente (omitido no perfil
@@ -221,6 +227,12 @@ Cada FR é testável isoladamente.
   apontando para um endpoint local, com fallback heurístico por output do
   PTY/título do terminal. Opcional: notificação do Windows quando uma sessão
   em background passa a aguardar o usuário.
+  > **Nota 2026-07-23 (feedback E2E rodada 4, Batch 5/T015)** — achado do
+  > batch 3: notificar TODA transição pra aguardando/permissão virou spam
+  > (aguardando dispara a cada turno). Preferência configurável na UI de
+  > Preferências (`notificationPreference` no ConfigStore, FR-007):
+  > `all` (comportamento original acima) / `permission-only` (default —
+  > só a transição que de fato trava a sessão) / `none`.
 - **FR-011 Modelo/esforço em sessão viva (US-5).** Controle na UI que injeta o
   comando correspondente no PTY da sessão (`/model <alias>`; equivalente de
   esforço a confirmar na implementação). O app só injeta quando o prompt está

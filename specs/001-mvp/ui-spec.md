@@ -125,9 +125,17 @@ será encerrado, botões "Fechar sessão" (perigo) e "Cancelar"); processo
 mensagem central + botões "Reabrir" e "Fechar aba" — distinto do dot cinza da
 lista de sessões).
 
-**Configurações do app (P1):** tela mínima acessível pelo menu do app, com
-edição dos roots de scan de projetos (adicionar/remover pastas) após o
-onboarding. No P0 a única edição de roots é o fluxo de primeira execução.
+**Configurações do app:** tela mínima ("Preferências", acionada pelo gear icon
+na titlebar, entre o ProfileSwitcher e o "＋ Nova sessão") com edição dos
+roots de scan de projetos (adicionar/remover pastas, re-scan imediato) e a
+preferência de notificação do Windows (§3). Tema (P1, "Fora deste ciclo" em
+tasks.md) ainda não tem controle nesta tela — só o campo persistido
+(`theme: 'dark'`, ConfigStore).
+> **Nota 2026-07-23 (feedback E2E rodada 3, Batch 5/T015)** — REVOGA o texto
+> anterior ("P1... No P0 a única edição de roots é o fluxo de primeira
+> execução"): o feedback humano pediu roots editáveis a qualquer momento já
+> no P0 (ui-spec original hospedava isso só no P1) — a tela de Preferências
+> acima entra no P0, sem esperar o ciclo seguinte.
 
 ---
 
@@ -146,6 +154,14 @@ Estados e comportamento (FR-010):
 Ordenação: o estado do semáforo sempre vence (permissão pendente >
 falha/quota > aguardando resposta > trabalhando > encerrada); pin só
 desempata dentro do mesmo estado.
+
+> **Nota 2026-07-23 (feedback E2E rodada 4, Batch 5/T015)** — a notificação
+> Windows da linha "Aguardando resposta"/"Permissão pendente" acima deixa de
+> disparar sempre: fica atrás da preferência `notificationPreference`
+> (Preferências, §2) — default `permission-only` (só a linha "Permissão
+> pendente"), com `all` reativando as duas e `none` desligando. Achado do
+> batch 3: "aguardando" dispara a cada turno normal de conversa, virando
+> spam.
 
 Linha da lista (sidebar e/ou painel dedicado): `dot · nome da sessão ·
 projeto · modelo · tempo desde última atividade`. Clique = foca a aba.

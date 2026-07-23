@@ -1,0 +1,294 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
+import type { AppConfigDto, LauncherDefaultsDto, NotificationPreference } from '../shared/config';
+import { PRINCIPAL_PROFILE_SLUG } from './profile-manager';
+
+// T015 — ConfigStore formal (FR-007): `%APPDATA%\DonelDev\config.json` (na
+// prática `app.getPath('userData')`, que resolve pro nome real do app
+// — `donel-dev`/lowercase, depois do `app.setName` em main/index.ts;
+// case-insensitive no NTFS, então bate com a grafia `DonelDev` dos
+// roteiros/plan.md), escrita ATÔMICA (temp + rename, FR-007), schema
+// versionado (`CONFIG_SCHEMA_VERSION`) e defaults resilientes — nunca lança
+// pra config ausente/corrompida (mesmo espírito de todo módulo *-store deste
+// projeto: ScanDeps, ProfileCreationIoDeps, etc.).
+//
+// ABSORVE (unifica num único arquivo, sem perder dado existente):
+//  - `project-config.json` (T007, `{ favorites }`) — `project-config-store.ts`
+//    foi DELETADO nesta task, exatamente como o comentário de topo dele já
+//    previa ("o ConfigStore formal... chega no T015 e absorve este arquivo").
+//    `toggleFavorite` (pura) foi portada pra cá sem mudança de comportamento.
+//  - `active-profile.json` (T014, `{ activeSlug }`) — `profile-manager.ts`
+//    continua com `ActiveProfileConfig`/`readActiveProfileConfig`/
+//    `writeActiveProfileConfig` INTOCADOS (módulo já auditado, testes
+//    próprios em profile-manager.test.ts) — só deixam de ser CHAMADOS por
+//    `main/index.ts` (o caminho de leitura/escrita ativo passa a ser só este
+//    arquivo). A migração abaixo lê o `active-profile.json` legado de forma
+//    INDEPENDENTE (parsing próprio do formato `{ activeSlug }`, sem importar
+//    de profile-manager.ts) pra não acoplar os dois módulos nem reabrir
+//    escopo do T014 fora desta task.
+//
+// Campos NOVOS neste batch (feedback E2E, specs/001-mvp/feedback-e2e.md):
+//  - `projectRoots` (rodada 3) — era hardcoded em `defaultProjectRoots`,
+//    nunca persistido/editável; agora configurável pela UI de Preferências.
+//  - `notificationPreference` (rodada 4, achado do batch 3) — era binário
+//    fixo (sempre avisa waiting+permission), agora configurável com default
+//    conservador `permission-only`.
+
+export const CONFIG_SCHEMA_VERSION = 1;
+
+export const CONFIG_FILE_NAME = 'config.json';
+
+/** Nomes dos arquivos legados que este módulo absorve (T007/T014) — usados só pela migração, nunca mais escritos. */
+export const LEGACY_PROJECT_CONFIG_FILE_NAME = 'project-config.json';
+export const LEGACY_ACTIVE_PROFILE_FILE_NAME = 'active-profile.json';
+
+/** Mesmos defaults visuais do Brief 3 (Launcher.tsx `DEFAULT_MODEL`/`DEFAULT_EFFORT`/`DEFAULT_PERMISSION`) — ponto de partida até um lançamento real persistir uma escolha diferente. */
+const DEFAULT_LAUNCHER_DEFAULTS: LauncherDefaultsDto = { model: 'fable', effort: 'high', permissionMode: 'acceptEdits' };
+
+/** Conservador por padrão (feedback E2E rodada 4, achado "notificar toda transição vira spam") — só a transição que de fato trava a sessão. */
+const DEFAULT_NOTIFICATION_PREFERENCE: NotificationPreference = 'permission-only';
+
+export interface AppConfig {
+  readonly version: number;
+  readonly projectRoots: readonly string[];
+  readonly favorites: readonly string[];
+  readonly activeProfileSlug: string;
+  readonly launcherDefaults: LauncherDefaultsDto;
+  readonly notificationPreference: NotificationPreference;
+  /** P1 (tasks.md "Fora deste ciclo": temas) — único valor válido no P0. */
+  readonly theme: 'dark';
+}
+
+/** `projectRoots` não tem um default universal (depende do homedir da máquina) — quem chama monta com `defaultProjectRoots(homedir)` (project-scanner.ts) e passa aqui. */
+export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
+  return {
+    version: CONFIG_SCHEMA_VERSION,
+    projectRoots,
+    favorites: [],
+    activeProfileSlug: PRINCIPAL_PROFILE_SLUG,
+    launcherDefaults: DEFAULT_LAUNCHER_DEFAULTS,
+    notificationPreference: DEFAULT_NOTIFICATION_PREFERENCE,
+    theme: 'dark',
+  };
+}
+
+/** Renderer só vê o subconjunto relevante (ver comentário de topo de src/shared/config.ts). */
+export function toAppConfigDto(config: AppConfig): AppConfigDto {
+  return {
+    projectRoots: config.projectRoots,
+    launcherDefaults: config.launcherDefaults,
+    notificationPreference: config.notificationPreference,
+    theme: config.theme,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// I/O injetável — mesmo padrão de ScanDeps/ProfileCreationIoDeps: puro o
+// suficiente pra testar com fs MOCKADO (TDD desta task: escrita atômica,
+// migração, validação de schema — ver tests/config-store.test.ts).
+// ---------------------------------------------------------------------------
+
+export interface ConfigIoDeps {
+  existsSync: (path: string) => boolean;
+  /** `null` = ausente/ilegível — nunca lança. */
+  readFileText: (path: string) => string | null;
+  writeFileText: (path: string, content: string) => void;
+  renameFile: (fromPath: string, toPath: string) => void;
+  /** Recursivo (mesmo contrato de `mkdirSync(path, { recursive: true })`). */
+  mkdirSync: (path: string) => void;
+  /** Best-effort — limpeza do temp file se o rename falhar no meio (nunca deve lançar). */
+  unlinkFile: (path: string) => void;
+}
+
+export function createSystemConfigIoDeps(): ConfigIoDeps {
+  return {
+    existsSync,
+    readFileText: (path) => {
+      try {
+        return readFileSync(path, 'utf8');
+      } catch {
+        return null;
+      }
+    },
+    writeFileText: (path, content) => writeFileSync(path, content, 'utf8'),
+    renameFile: (fromPath, toPath) => renameSync(fromPath, toPath),
+    mkdirSync: (path) => mkdirSync(path, { recursive: true }),
+    unlinkFile: (path) => {
+      try {
+        unlinkSync(path);
+      } catch {
+        // best-effort — ver comentário do campo na interface.
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Validação de schema (puro) — nunca lança; qualquer campo ausente/com tipo
+// errado cai no default CORRESPONDENTE, campo a campo (corrupção parcial não
+// derruba o resto de um config bom — mesmo espírito defensivo do resto do
+// projeto, ex. readProjectConfig/readActiveProfileConfig).
+// ---------------------------------------------------------------------------
+
+const KNOWN_MODEL_ALIASES: readonly ModelAlias[] = ['fable', 'opus', 'sonnet', 'haiku'];
+const KNOWN_EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+const KNOWN_PERMISSION_MODES: readonly PermissionMode[] = [
+  'manual',
+  'acceptEdits',
+  'auto',
+  'plan',
+  'dontAsk',
+  'bypassPermissions',
+];
+const KNOWN_NOTIFICATION_PREFERENCES: readonly NotificationPreference[] = ['all', 'permission-only', 'none'];
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function isOneOf<T extends string>(value: unknown, known: readonly T[]): value is T {
+  return typeof value === 'string' && (known as readonly string[]).includes(value);
+}
+
+function sanitizeLauncherDefaults(value: unknown, fallback: LauncherDefaultsDto): LauncherDefaultsDto {
+  if (typeof value !== 'object' || value === null) return fallback;
+  const candidate = value as Partial<LauncherDefaultsDto>;
+  return {
+    model: isOneOf(candidate.model, KNOWN_MODEL_ALIASES) ? candidate.model : fallback.model,
+    effort: isOneOf(candidate.effort, KNOWN_EFFORT_LEVELS) ? candidate.effort : fallback.effort,
+    permissionMode: isOneOf(candidate.permissionMode, KNOWN_PERMISSION_MODES) ? candidate.permissionMode : fallback.permissionMode,
+  };
+}
+
+/**
+ * Puro (testável sem I/O): preenche campo a campo a partir de `defaults`
+ * quando `parsed` não é um objeto, ou um campo individual tem tipo/valor
+ * inválido — nunca lança, nunca deixa um campo `undefined`. `version`
+ * sempre normaliza pra `CONFIG_SCHEMA_VERSION` atual (a leitura já devolve a
+ * versão corrente); uma migração real de schema (campo renomeado/formato
+ * mudado entre versões) entraria aqui verificando `candidate.version` antes
+ * de sanitizar — não necessária ainda, só existe a versão 1.
+ */
+export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConfig {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return defaults;
+  const candidate = parsed as Partial<AppConfig>;
+
+  return {
+    version: CONFIG_SCHEMA_VERSION,
+    projectRoots: isStringArray(candidate.projectRoots) ? candidate.projectRoots : defaults.projectRoots,
+    favorites: isStringArray(candidate.favorites) ? candidate.favorites : defaults.favorites,
+    activeProfileSlug:
+      typeof candidate.activeProfileSlug === 'string' && candidate.activeProfileSlug.trim()
+        ? candidate.activeProfileSlug
+        : defaults.activeProfileSlug,
+    launcherDefaults: sanitizeLauncherDefaults(candidate.launcherDefaults, defaults.launcherDefaults),
+    notificationPreference: isOneOf(candidate.notificationPreference, KNOWN_NOTIFICATION_PREFERENCES)
+      ? candidate.notificationPreference
+      : defaults.notificationPreference,
+    theme: 'dark',
+  };
+}
+
+/** Toggle puro (sem I/O) — adiciona/remove `path` da lista, sem duplicar. Portado de project-config-store.ts (T007), comportamento idêntico. */
+export function toggleFavorite(favorites: readonly string[], path: string, favorite: boolean): string[] {
+  const set = new Set(favorites);
+  if (favorite) {
+    set.add(path);
+  } else {
+    set.delete(path);
+  }
+  return [...set];
+}
+
+// ---------------------------------------------------------------------------
+// Migração dos JSONs avulsos T007/T014 — só roda quando `config.json` ainda
+// NÃO existe (1ª leitura nesta máquina depois deste batch); um `config.json`
+// já existente é sempre a fonte de verdade única (nunca reconsulta os
+// arquivos legados por cima de um config já migrado, mesmo que eles ainda
+// existam no disco ou mudem depois).
+// ---------------------------------------------------------------------------
+
+export interface LegacyConfigPaths {
+  readonly projectConfigPath: string;
+  readonly activeProfilePath: string;
+}
+
+/** Parsing independente do formato `{ favorites: string[] }` (T007) — não importa de `project-config-store.ts` (deletado nesta task). */
+function extractLegacyFavorites(raw: string | null): string[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { favorites?: unknown };
+    return isStringArray(parsed.favorites) ? parsed.favorites : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Parsing independente do formato `{ activeSlug: string }` (T014, profile-manager.ts `ActiveProfileConfig`) — ver comentário de topo do arquivo (por que não importar de lá). */
+function extractLegacyActiveSlug(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { activeSlug?: unknown };
+    return typeof parsed.activeSlug === 'string' && parsed.activeSlug.trim() ? parsed.activeSlug : null;
+  } catch {
+    return null;
+  }
+}
+
+function migrateFromLegacyFiles(defaults: AppConfig, legacy: LegacyConfigPaths, io: ConfigIoDeps): AppConfig {
+  const favorites = extractLegacyFavorites(io.readFileText(legacy.projectConfigPath));
+  const activeProfileSlug = extractLegacyActiveSlug(io.readFileText(legacy.activeProfilePath));
+
+  return {
+    ...defaults,
+    favorites: favorites ?? defaults.favorites,
+    activeProfileSlug: activeProfileSlug ?? defaults.activeProfileSlug,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Leitura/escrita
+// ---------------------------------------------------------------------------
+
+/**
+ * `config.json` ausente = 1ª execução nesta máquina depois deste batch:
+ * migra dos arquivos legados se existirem (favorites/activeProfileSlug),
+ * senão cai nos defaults puros. `config.json` presente = fonte de verdade
+ * única — JSON corrompido cai nos defaults SEM tentar migrar por cima (o
+ * arquivo já existia, não é "1ª vez"; migrar aqui arriscaria reviver dado
+ * velho por cima de uma escrita mais recente que só falhou em ler agora).
+ */
+export function readAppConfig(filePath: string, defaults: AppConfig, legacy: LegacyConfigPaths, io: ConfigIoDeps): AppConfig {
+  const raw = io.readFileText(filePath);
+  if (raw === null) return migrateFromLegacyFiles(defaults, legacy, io);
+
+  try {
+    return sanitizeAppConfig(JSON.parse(raw), defaults);
+  } catch {
+    return defaults;
+  }
+}
+
+/**
+ * Escrita atômica (FR-007: "temp + rename") — nunca deixa uma janela em que
+ * `config.json` fica truncado: grava tudo num arquivo temporário e só então
+ * troca pelo nome final via `rename` (operação atômica do SO; no Windows,
+ * `fs.renameSync` já sobrescreve o destino existente via `MoveFileExW` com
+ * `MOVEFILE_REPLACE_EXISTING`, o próprio libuv do Node). Nome do temp inclui
+ * pid+timestamp — duas escritas (mesmo daquele improvável de duas instâncias
+ * do app rodando ao mesmo tempo) não colidem no MESMO arquivo temporário.
+ */
+export function writeAppConfig(filePath: string, config: AppConfig, io: ConfigIoDeps): void {
+  const dir = dirname(filePath);
+  if (!io.existsSync(dir)) io.mkdirSync(dir);
+
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  io.writeFileText(tmpPath, JSON.stringify(config, null, 2));
+  try {
+    io.renameFile(tmpPath, filePath);
+  } catch (error) {
+    io.unlinkFile(tmpPath);
+    throw error;
+  }
+}

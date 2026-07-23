@@ -40,9 +40,11 @@ const PERMISSION_OPTIONS: SelectOption[] = [
   { value: 'bypassPermissions', label: 'bypassPermissions', description: 'ignora todas as barreiras (cuidado)' },
 ];
 
-// Defaults do Brief 3 (design reference): fable/high/acceptEdits — batem
-// com o "fable/high" mostrado na Statusbar (App.tsx) e com o check em
-// acceptEdits no mockup do Launcher.
+// Defaults do Brief 3 (design reference): fable/high/acceptEdits — mesmo
+// ponto de partida do ConfigStore (T015, config-store.ts
+// `DEFAULT_LAUNCHER_DEFAULTS`) até o primeiro "▶ Iniciar" real persistir uma
+// escolha diferente (fallback só pra quando `launcherDefaults` ainda não
+// chegou do main process, ex. primeiro paint antes do `config:get` resolver).
 const DEFAULT_MODEL: ModelAlias = 'fable';
 const DEFAULT_EFFORT: EffortLevel = 'high';
 const DEFAULT_PERMISSION: PermissionMode = 'acceptEdits';
@@ -62,13 +64,15 @@ export interface LauncherProps {
   projects: ProjectInfo[];
   /** Herdado da seleção da sidebar (ui-spec §4); o campo abaixo continua editável depois. */
   defaultProjectPath?: string;
+  /** T015 (FR-007 "defaults do launcher") — última escolha persistida no ConfigStore; `undefined` até `config:get` resolver (cai nos `DEFAULT_*` locais). */
+  launcherDefaults?: { model: ModelAlias; effort: EffortLevel; permissionMode: PermissionMode };
   onLaunch: (options: LauncherLaunchOptions) => void;
 }
 
-export function Launcher({ projects, defaultProjectPath, onLaunch }: LauncherProps): React.JSX.Element {
-  const [model, setModel] = useState<ModelAlias>(DEFAULT_MODEL);
-  const [effort, setEffort] = useState<EffortLevel>(DEFAULT_EFFORT);
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>(DEFAULT_PERMISSION);
+export function Launcher({ projects, defaultProjectPath, launcherDefaults, onLaunch }: LauncherProps): React.JSX.Element {
+  const [model, setModel] = useState<ModelAlias>(launcherDefaults?.model ?? DEFAULT_MODEL);
+  const [effort, setEffort] = useState<EffortLevel>(launcherDefaults?.effort ?? DEFAULT_EFFORT);
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>(launcherDefaults?.permissionMode ?? DEFAULT_PERMISSION);
   const [sessionName, setSessionName] = useState('');
   const [projectPath, setProjectPath] = useState(defaultProjectPath ?? '');
 

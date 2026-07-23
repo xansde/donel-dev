@@ -32,6 +32,34 @@
   margin-right: auto;
 }
 
+/* T015 — botão de Preferências (gear icon) na titlebar, entre o
+   ProfileSwitcher e o "＋ Nova sessão" — mesma linguagem visual de
+   .historyButton em ProjectSidebar.module.css (ícone só, sem fundo). */
+.preferencesButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.preferencesButton:hover {
+  color: var(--text-primary);
+  background: var(--bg-raised);
+}
+
+.preferencesButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .body {
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr var(--right-panel-width);

@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type {
+  AppConfigDto,
+  LauncherDefaultsDto,
+  NotificationPreference,
   ProfileDoctorReportDto,
   ProfileHeadroomMap,
   ProfileSummaryDto,
@@ -13,8 +16,28 @@ import type {
   SemaphoreUpdate,
   SessionSummaryDto,
 } from '../shared';
-import { CLAUDE_NOT_FOUND_PREFIX, PROFILE_CHANNELS, PROJECT_CHANNELS, PTY_CHANNELS, SEMAPHORE_CHANNELS, SESSION_CHANNELS } from '../shared';
+import {
+  CLAUDE_NOT_FOUND_PREFIX,
+  CONFIG_CHANNELS,
+  PROFILE_CHANNELS,
+  PROJECT_CHANNELS,
+  PTY_CHANNELS,
+  SEMAPHORE_CHANNELS,
+  SESSION_CHANNELS,
+} from '../shared';
 import { createSystemResolveDeps, resolveClaudeExecutable } from './claude-executable';
+import {
+  CONFIG_FILE_NAME,
+  createSystemConfigIoDeps,
+  defaultAppConfig,
+  LEGACY_ACTIVE_PROFILE_FILE_NAME,
+  LEGACY_PROJECT_CONFIG_FILE_NAME,
+  readAppConfig,
+  toAppConfigDto,
+  toggleFavorite,
+  writeAppConfig,
+  type AppConfig,
+} from './config-store';
 import { writeHooksSettingsFile } from './hooks-settings';
 import {
   claudeHomeDir,
@@ -27,14 +50,11 @@ import {
   PRINCIPAL_PROFILE,
   PRINCIPAL_PROFILE_SLUG,
   profileDirPath,
-  readActiveProfileConfig,
   repairProfileJunctions,
   runProfileDoctor,
   titleCaseFromSlug,
-  writeActiveProfileConfig,
   type ProfileInfo,
 } from './profile-manager';
-import { readProjectConfig, toggleFavorite, writeProjectConfig } from './project-config-store';
 import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects, sortProjects } from './project-scanner';
 import { PtyManager } from './pty-manager';
 import { HeadroomCache, readAllProfilesHeadroom } from './quota-headroom';
@@ -46,20 +66,30 @@ import { SessionSemaphoreManager } from './session-semaphore-manager';
 // PtyManager chega em T004 (este arquivo). ProjectScanner chega no T007
 // (este arquivo). SessionIndexer (T012/T013) e ProfileManager (T014) chegam
 // nas tasks seguintes (plan.md "Arquitetura de processos"). ConfigStore
-// formal (T015) ainda falta — `getProjectConfigPath`/`getActiveProfileConfigPath`
-// abaixo são a versão interina, mesmo espírito do resto do arquivo.
+// formal chega no T015 (config-store.ts) — `appConfig` abaixo é a fonte de
+// verdade única pra favoritos/roots/perfil ativo/defaults do launcher/
+// notificação, substituindo os JSONs avulsos que T007/T014 usavam.
 
 const ptyManager = new PtyManager();
 // Resolvido uma vez (não muda durante a vida do processo) — plan.md ponto 2.
 const claudeResolveDeps = createSystemResolveDeps();
 // Idem para o scan de projetos (T007) — mesmo padrão do claude-executable.
 const projectScanDeps = createSystemScanDeps();
-const projectRoots = defaultProjectRoots(homedir);
+
+// T015 — ConfigStore formal (FR-007): carregado de verdade em
+// `app.whenReady()` (migração dos JSONs legados de T007/T014 incluída, ver
+// config-store.ts) — o valor abaixo é só o placeholder até lá (nunca
+// consultado antes do boot terminar, já que todo IPC handler só é
+// registrado DEPOIS do `whenReady().then(...)`). `projectRoots` deixa de
+// ser uma const fixa: passa a vir de `appConfig.projectRoots` (editável
+// pela UI de Preferências, feedback E2E rodada 3).
+const configIoDeps = createSystemConfigIoDeps();
+let appConfig: AppConfig = defaultAppConfig(defaultProjectRoots(homedir));
 
 // T014 — ProfileManager (FR-005, FR-012, CA-3). `profilePathDeps` é a única
 // dependência de path (homedir) reaproveitada por toda função pura do
 // módulo. `activeProfileSlug`/`activeProfileConfigDir` vivem em memória
-// (persistidos em disco, lidos no boot) — toda sessão `claude` nova (T005/T008)
+// (persistidos no ConfigStore, T015) — toda sessão `claude` nova (T005/T008)
 // nasce com o `CLAUDE_CONFIG_DIR` do perfil ativo NESTE INSTANTE (FR-005:
 // "trocar de perfil afeta apenas sessões novas" — abas já abertas já
 // receberam seu env por VALOR na criação, ver PtyManager.create).
@@ -81,10 +111,10 @@ let hooksSettingsPath: string | null = null;
 // rodar o build direto por caminho de script (`electron out/main/index.js`,
 // exatamente como o smoke roteirizado e a instalação real via atalho fazem),
 // ele cai pro default "Electron", e `app.getPath('userData')` (usado aqui E
-// pelo `project-config.json` do T007) vira `%APPDATA%\Electron` — uma pasta
-// genérica compartilhada por QUALQUER outro app Electron mal-nomeado nesta
-// máquina. `setName` força o nome certo em todo modo de execução, antes de
-// qualquer `getPath('userData')`.
+// pelo `config.json` do ConfigStore, T015) vira `%APPDATA%\Electron` — uma
+// pasta genérica compartilhada por QUALQUER outro app Electron mal-nomeado
+// nesta máquina. `setName` força o nome certo em todo modo de execução,
+// antes de qualquer `getPath('userData')`.
 app.setName('donel-dev');
 
 // Windows: sem isso, `new Notification()` sai atribuída a "Electron" (ou
@@ -214,27 +244,78 @@ function registerPtyIpcHandlers(): void {
   });
 }
 
-/** `%APPDATA%\donel-dev\project-config.json` — só chamável após `app.whenReady()`. */
-function getProjectConfigPath(): string {
-  return join(app.getPath('userData'), 'project-config.json');
+/** `%APPDATA%\donel-dev\config.json` (T015, config-store.ts) — só chamável após `app.whenReady()`. */
+function getAppConfigPath(): string {
+  return join(app.getPath('userData'), CONFIG_FILE_NAME);
 }
 
-/** Scan + merge de favoritos + ordenação — a mesma pipeline usada por list e favorite (T007). */
+/** Paths dos JSONs avulsos legados (T007/T014) — só usados pela migração de 1ª leitura (config-store.ts `readAppConfig`). */
+function legacyConfigPaths(): { projectConfigPath: string; activeProfilePath: string } {
+  const userDataDir = app.getPath('userData');
+  return {
+    projectConfigPath: join(userDataDir, LEGACY_PROJECT_CONFIG_FILE_NAME),
+    activeProfilePath: join(userDataDir, LEGACY_ACTIVE_PROFILE_FILE_NAME),
+  };
+}
+
+/** Escrita atômica (FR-007) do `appConfig` em memória — chamada depois de TODA mutação (favoritos, roots, perfil ativo, defaults do launcher, notificação). */
+function persistAppConfig(): void {
+  writeAppConfig(getAppConfigPath(), appConfig, configIoDeps);
+}
+
+/** Scan + merge de favoritos + ordenação — a mesma pipeline usada por list e favorite (T007), agora sobre `appConfig.projectRoots`/`appConfig.favorites` (T015). */
 function listProjectsWithFavorites(): ProjectInfo[] {
-  const config = readProjectConfig(getProjectConfigPath());
-  const scanned = scanProjects(projectRoots, projectScanDeps);
-  return sortProjects(mergeFavorites(scanned, config.favorites));
+  const scanned = scanProjects(appConfig.projectRoots, projectScanDeps);
+  return sortProjects(mergeFavorites(scanned, appConfig.favorites));
 }
 
 function registerProjectIpcHandlers(): void {
   ipcMain.handle(PROJECT_CHANNELS.list, (): ProjectInfo[] => listProjectsWithFavorites());
 
   ipcMain.handle(PROJECT_CHANNELS.favorite, (_event, path: string, favorite: boolean): ProjectInfo[] => {
-    const configPath = getProjectConfigPath();
-    const config = readProjectConfig(configPath);
-    const favorites = toggleFavorite(config.favorites, path, favorite);
-    writeProjectConfig(configPath, { favorites });
+    appConfig = { ...appConfig, favorites: toggleFavorite(appConfig.favorites, path, favorite) };
+    persistAppConfig();
     return listProjectsWithFavorites();
+  });
+}
+
+/** Roots vazias (após trim)/duplicadas nunca chegam no `appConfig` — mesma disciplina defensiva do resto do ConfigStore (nunca propaga lixo pro scan de projetos). Preserva a ORDEM recebida (1ª ocorrência de cada root). */
+function sanitizeProjectRoots(roots: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const root of roots) {
+    const trimmed = root.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+/**
+ * T015 — UI de Preferências (FR-007, feedback E2E rodada 3 "roots
+ * configuráveis" + rodada 4 "notificação configurável") + `launcherDefaults`
+ * (semeado a cada "▶ Iniciar" do Launcher, App.tsx `handleLaunch`).
+ */
+function registerConfigIpcHandlers(): void {
+  ipcMain.handle(CONFIG_CHANNELS.get, (): AppConfigDto => toAppConfigDto(appConfig));
+
+  ipcMain.handle(CONFIG_CHANNELS.setProjectRoots, (_event, roots: string[]): AppConfigDto => {
+    appConfig = { ...appConfig, projectRoots: sanitizeProjectRoots(roots) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  ipcMain.handle(CONFIG_CHANNELS.setNotificationPreference, (_event, preference: NotificationPreference): AppConfigDto => {
+    appConfig = { ...appConfig, notificationPreference: preference };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  ipcMain.handle(CONFIG_CHANNELS.setLauncherDefaults, (_event, defaults: LauncherDefaultsDto): AppConfigDto => {
+    appConfig = { ...appConfig, launcherDefaults: defaults };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
   });
 }
 
@@ -250,11 +331,6 @@ function registerSessionIpcHandlers(): void {
   ipcMain.handle(SESSION_CHANNELS.list, async (_event, projectPath: string): Promise<SessionSummaryDto[]> => {
     return indexProjectSessions(projectPath);
   });
-}
-
-/** `%APPDATA%\donel-dev\active-profile.json` — só chamável após `app.whenReady()`. Mesmo padrão interino de `getProjectConfigPath` (T015 formaliza um ConfigStore único). */
-function getActiveProfileConfigPath(): string {
-  return join(app.getPath('userData'), 'active-profile.json');
 }
 
 /** Sempre inclui o Principal + varre `~/.claude-profiles/*` de novo a cada chamada (mesmo espírito de `listProjectsWithFavorites` — lista pequena, I/O local, sem necessidade de cache próprio aqui). */
@@ -307,7 +383,10 @@ function registerProfileIpcHandlers(): void {
     if (target) {
       activeProfileSlug = target.slug;
       activeProfileConfigDir = target.configDir;
-      writeActiveProfileConfig(getActiveProfileConfigPath(), { activeSlug: target.slug });
+      // T015 — perfil ativo agora persiste dentro do ConfigStore unificado
+      // (antes: active-profile.json próprio, T014).
+      appConfig = { ...appConfig, activeProfileSlug: target.slug };
+      persistAppConfig();
     }
     return profiles.map(toProfileSummaryDto);
   });
@@ -346,19 +425,32 @@ void app.whenReady().then(async () => {
     console.error('[donel-dev] semáforo de sessões não subiu (T009) — sessões claude vão nascer sem indicador de estado:', error);
   }
 
-  // T014 — carrega o perfil ativo persistido ANTES de registrar os handlers
-  // de PTY (o primeiro `pty:create` de sessão claude já precisa do
+  // T015 — carrega o ConfigStore unificado ANTES de qualquer coisa que
+  // dependa dele: scan de projetos com os roots persistidos, perfil ativo
+  // persistido. Migra dos JSONs avulsos legados (T007/T014) se `config.json`
+  // ainda não existir nesta máquina (ver comentário de topo de
+  // config-store.ts) — nunca lança, cai nos defaults na pior hipótese.
+  appConfig = readAppConfig(getAppConfigPath(), defaultAppConfig(defaultProjectRoots(homedir)), legacyConfigPaths(), configIoDeps);
+
+  // T014 — perfil ativo persistido ANTES de registrar os handlers de PTY (o
+  // primeiro `pty:create` de sessão claude já precisa do
   // `activeProfileConfigDir` certo). Slug persistido que não existe mais
   // (perfil removido do disco manualmente) cai pro Principal, nunca lança.
-  const persistedActive = readActiveProfileConfig(getActiveProfileConfigPath());
-  const bootProfile = currentProfileList().find((profile) => profile.slug === persistedActive.activeSlug) ?? PRINCIPAL_PROFILE;
+  const bootProfile = currentProfileList().find((profile) => profile.slug === appConfig.activeProfileSlug) ?? PRINCIPAL_PROFILE;
   activeProfileSlug = bootProfile.slug;
   activeProfileConfigDir = bootProfile.configDir;
+  // Slug persistido pode ter sido normalizado pro Principal acima (perfil
+  // morto) — reflete de volta no config em memória pra próxima escrita não
+  // reintroduzir um slug inexistente.
+  if (appConfig.activeProfileSlug !== bootProfile.slug) {
+    appConfig = { ...appConfig, activeProfileSlug: bootProfile.slug };
+  }
 
   registerPtyIpcHandlers();
   registerProjectIpcHandlers();
   registerSessionIpcHandlers();
   registerProfileIpcHandlers();
+  registerConfigIpcHandlers();
   createMainWindow();
 
   app.on('activate', () => {
