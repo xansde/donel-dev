@@ -34,11 +34,13 @@ export interface TerminalPaneProps {
   /** 'claude' (T005) = sessão claude direta no PTY; 'shell' = terminal livre (FR-008, default T004). */
   sessionType?: 'shell' | 'claude';
   cwd?: string;
+  /** Argv do Launcher (T008 — CommandBuilder, FR-003). Fixo por aba: só lido no spawn/reabertura, nunca muda no meio da sessão viva (isso é FR-011, T011). */
+  args?: string[];
   /** Ação real de fechar a aba na barra de abas (T010). Sem isso, "Fechar aba" só mostra o estado neutro local. */
   onCloseTab?: () => void;
 }
 
-export function TerminalPane({ sessionType = 'shell', cwd, onCloseTab }: TerminalPaneProps): React.JSX.Element {
+export function TerminalPane({ sessionType = 'shell', cwd, args, onCloseTab }: TerminalPaneProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const ptyIdRef = useRef<string | null>(null);
@@ -64,7 +66,7 @@ export function TerminalPane({ sessionType = 'shell', cwd, onCloseTab }: Termina
     setStatus({ kind: 'connecting' });
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd, sessionType })
+      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args })
       .then((result) => {
         if (disposedRef.current) {
           window.donel.pty.kill(result.ptyId);
@@ -92,7 +94,7 @@ export function TerminalPane({ sessionType = 'shell', cwd, onCloseTab }: Termina
         term.write(`\r\n\x1b[31mFalha ao iniciar o terminal: ${message}\x1b[0m\r\n`);
         setStatus({ kind: 'ended', info: { exitCode: -1 } });
       });
-  }, [cwd, sessionType]);
+  }, [cwd, sessionType, args]);
 
   useEffect(() => {
     const container = containerRef.current;

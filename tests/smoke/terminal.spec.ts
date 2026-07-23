@@ -138,3 +138,76 @@ test('resizing the window does not crash the app', async () => {
   await expect(window.locator('[data-testid="terminal-pane"]:visible')).toBeVisible();
   expect(electronApp.windows().length).toBeGreaterThan(0);
 });
+
+test('launcher builds the exact CommandBuilder argv and opens a tab wired to it (T008, CA-1)', async () => {
+  // CA-1 (spec.md): modelo=sonnet, esforço=high, permissões=acceptEdits,
+  // nome=radar, projeto=donel-dev → aba com `claude --model sonnet --effort
+  // high --permission-mode acceptEdits -n radar` e cwd no projeto.
+  //
+  // "Projeto-alvo" não é tocado aqui de propósito: o teste T007 acima já
+  // clicou em "donel-dev" na sidebar, então o Launcher já herdou esse
+  // projeto (ui-spec §4, "herdado da seleção da sidebar") — é a própria
+  // regra de herança sendo exercitada, não um atalho de teste.
+  //
+  // Não dá pra inspecionar o argv real recebido pelo processo `claude`
+  // spawnado no main process a partir do Playwright/renderer — por isso
+  // App.tsx expõe o comando montado pelo CommandBuilder num elemento oculto
+  // só de teste (`data-testid="launcher-last-command"`, ver comentário lá).
+  // A prova de que os args/cwd realmente funcionam (não só que foram
+  // montados) vem da sessão claude real subindo na aba nova logo abaixo.
+  const launcher = window.locator('[data-testid="launcher"]');
+  await expect(launcher).toBeVisible();
+
+  // Modelo nasce 'fable' (default do Launcher) — CA-1 pede 'sonnet'.
+  await launcher.getByRole('radio', { name: 'sonnet', exact: true }).click();
+  // Esforço já nasce 'high' e Permissões já nasce 'acceptEdits' (defaults
+  // do Launcher, ui-spec §4/Brief 3) — já batem com o CA-1, nada a mudar.
+
+  await launcher.getByLabel('Nome').fill('radar');
+
+  const tabsBefore = await window.locator('[role="tab"]').count();
+  await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
+
+  const newTab = window.locator('[role="tab"]', { hasText: 'radar' });
+  await expect(newTab).toBeVisible();
+  await expect(window.locator('[role="tab"]')).toHaveCount(tabsBefore + 1);
+  await expect(newTab).toHaveAttribute('aria-selected', 'true');
+
+  const lastCommand = window.locator('[data-testid="launcher-last-command"]');
+  await expect(lastCommand).toHaveText('claude --model sonnet --effort high --permission-mode acceptEdits -n radar');
+  const cwd = await lastCommand.getAttribute('data-cwd');
+  expect(cwd).toBeTruthy();
+  expect(cwd).toContain('donel-dev');
+
+  // Prova funcional: a aba lançada pelo Launcher sobe uma sessão claude de
+  // verdade (os args não quebraram o spawn), mesmo padrão do teste T007.
+  const activePane = window.locator('[data-testid="terminal-pane"]:visible');
+  await expect(activePane).toHaveCount(1);
+
+  await expect(async () => {
+    const text = await activePane.innerText();
+    expect(text.length).toBeGreaterThan(0);
+    expect(text).not.toContain('CLAUDE_NOT_FOUND');
+    expect(text).not.toContain('Falha ao iniciar');
+  }).toPass({ timeout: 20_000 });
+
+  // NÃO perseguimos aqui o banner completo "Claude Code" nem diálogos
+  // interativos de onboarding (trust folder / "chrome in extension
+  // detected" / outros que apareçam só a partir da 3ª+ sessão claude desta
+  // run) — tentado nesta task: nem Enter nem Escape fecharam de forma
+  // confiável o prompt "chrome extension detected" que passou a aparecer a
+  // partir daqui (onboarding global do CLI, não por-pasta). O cabeçalho
+  // deste arquivo já documenta (comentário do T005) por que perseguir
+  // diálogos interativos do CLI real é não-determinístico neste ambiente.
+  //
+  // Cobertura que FICA automatizada pro CA-1: o comando exato (asserção
+  // acima) e o processo real permanecendo vivo com esses args — se
+  // `--model/--effort/--permission-mode` fossem flags inválidas, o CLI
+  // falharia rápido e a aba cairia no estado "sessão encerrada"
+  // (session-ended-overlay). Ausência desse overlay após um tempo de
+  // espera é a prova de que o CLI aceitou o argv montado pelo Launcher.
+  await window.waitForTimeout(3_000);
+  await expect(window.locator('[data-testid="session-ended-overlay"]')).toHaveCount(0);
+  // Diálogos de onboarding pós-spawn (trust folder / chrome extension /
+  // etc.) ficam como "Não verificado" — ver dossiê do T008.
+});

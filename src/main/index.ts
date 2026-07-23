@@ -80,7 +80,9 @@ function registerPtyIpcHandlers(): void {
         rows: options.rows,
         cwd: options.cwd,
         command: resolved.path,
-        args: [],
+        // T008 — argv do Launcher (CommandBuilder, FR-003/CA-1); vazio
+        // preserva o comportamento antigo (T005: sessão sem flags).
+        args: options.args ?? [],
       });
       return { ptyId };
     }

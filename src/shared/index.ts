@@ -34,6 +34,12 @@ export interface PtyCreateOptions {
    * `~/.local/bin/claude.exe`) e responde com erro CA-5 se não encontrar.
    */
   sessionType?: 'shell' | 'claude';
+  /**
+   * Argv extra do CommandBuilder (T008 — Launcher, FR-003/CA-1). Só tem
+   * efeito quando `sessionType === 'claude'`; ignorado no terminal livre
+   * (que sempre spawna `powershell.exe -NoLogo`, PtyManager.FREE_TERMINAL_ARGS).
+   */
+  args?: string[];
 }
 
 /**
