@@ -38,6 +38,13 @@
   min-height: 0;
 }
 
+/* FIX (feedback E2E rodada 3, "painel lateral 'Lançar sessão' fixo rouba
+   espaço") — painel do Launcher fechado por default (App.tsx `launcherOpen`):
+   sem a 3ª coluna, o `.center` (terminal, 1fr) ocupa o espaço sozinho. */
+.bodyPanelClosed {
+  grid-template-columns: var(--sidebar-width) 1fr;
+}
+
 .center {
   display: flex;
   flex-direction: column;

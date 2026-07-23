@@ -45,6 +45,17 @@ test.beforeAll(async () => {
   await window.waitForLoadState('domcontentloaded');
 });
 
+// FIX (feedback E2E rodada 3, "painel lateral 'Lançar sessão' fixo rouba
+// espaço") — o Launcher deixou de ser um painel fixo: nasce fechado, abre
+// via item "Sessão Claude" do menu do "＋ Nova sessão" (App.tsx,
+// `launcherOpen`). Testes que interagem direto com `[data-testid="launcher"]`
+// precisam abrir o painel primeiro.
+async function openLauncherPanel(): Promise<void> {
+  await window.getByRole('button', { name: 'Mais opções de ＋ Nova sessão' }).click();
+  await window.getByRole('menuitem', { name: 'Sessão Claude' }).click();
+  await expect(window.locator('[data-testid="launcher"]')).toBeVisible();
+}
+
 test.afterAll(async () => {
   await electronApp.close();
 });
@@ -155,6 +166,7 @@ test('launcher builds the exact CommandBuilder argv and opens a tab wired to it 
   // só de teste (`data-testid="launcher-last-command"`, ver comentário lá).
   // A prova de que os args/cwd realmente funcionam (não só que foram
   // montados) vem da sessão claude real subindo na aba nova logo abaixo.
+  await openLauncherPanel();
   const launcher = window.locator('[data-testid="launcher"]');
   await expect(launcher).toBeVisible();
 
@@ -224,6 +236,7 @@ test('semáforo: o StateDot de uma aba em BACKGROUND muda de trabalhando pra agu
   // claude real, SEM nunca focar a aba de novo depois do prompt enviado —
   // é exatamente isso que uma UI hardcoded (o estado fixo 'working' de
   // antes do T009) não conseguiria fingir.
+  await openLauncherPanel();
   const launcher = window.locator('[data-testid="launcher"]');
   await expect(launcher).toBeVisible();
 

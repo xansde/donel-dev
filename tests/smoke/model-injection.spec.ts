@@ -32,12 +32,22 @@ test.afterAll(async () => {
   await electronApp.close();
 });
 
+// FIX (feedback E2E rodada 3, "painel lateral 'Lançar sessão' fixo rouba
+// espaço") — o Launcher deixou de ser um painel fixo: nasce fechado, abre
+// via item "Sessão Claude" do menu do "＋ Nova sessão" (App.tsx, `launcherOpen`).
+async function openLauncherPanel(): Promise<void> {
+  await window.getByRole('button', { name: 'Mais opções de ＋ Nova sessão' }).click();
+  await window.getByRole('menuitem', { name: 'Sessão Claude' }).click();
+  await expect(window.locator('[data-testid="launcher"]')).toBeVisible();
+}
+
 test('T011 — injetar /model sonnet numa sessão haiku real (prompt ocioso) troca o modelo sem perder o histórico da conversa (FR-011)', async () => {
   test.setTimeout(180_000);
 
   // Mesmo caminho do teste do semáforo (T009): Launcher com projeto
   // 'donel-dev' (o próprio repo sob teste, sempre presente no scan) +
   // modelo haiku (barato) — custo mínimo, conforme a DoD da task.
+  await openLauncherPanel();
   const launcher = window.locator('[data-testid="launcher"]');
   await expect(launcher).toBeVisible();
   await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();

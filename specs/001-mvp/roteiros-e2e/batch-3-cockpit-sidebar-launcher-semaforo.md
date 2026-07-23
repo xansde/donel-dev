@@ -79,7 +79,9 @@ deste roteiro rodam na conta padrão já autenticada da máquina.
 
 ### 3. Launcher monta o comando exato (T008, CA-1)
 
-- [ ] **Ação:** no painel do launcher, escolher Modelo=`sonnet`,
+- [ ] **Ação (nota 2026-07-23, painel agora colapsável — feedback E2E
+  rodada 3):** primeiro abra o painel — seta do "＋ Nova sessão" na
+  titlebar → item "Sessão Claude". No painel do launcher, escolher Modelo=`sonnet`,
   Esforço=`high`, Permissões=`acceptEdits`, Nome=`radar`, com o projeto
   `spotsys` (ou outro disponível) selecionado na sidebar; clicar
   "▶ Iniciar".
@@ -160,11 +162,14 @@ deste roteiro rodam na conta padrão já autenticada da máquina.
 
 ### 9. Terminal livre (T010, FR-008)
 
-- [ ] **Ação:** abrir uma aba de terminal comum (não Claude) no diretório
-  de um projeto.
-- **Resultado esperado:** abre um PowerShell simples no `cwd` do projeto,
-  sem dot de semáforo na lista de abas (mostra ícone de shell no lugar,
-  conforme ui-spec §2).
+- [ ] **Ação:** na titlebar, clicar na seta do botão "＋ Nova sessão" (ícone
+  ▾ à direita do botão, rótulo acessível "Mais opções de ＋ Nova sessão");
+  no menu que abre, clicar em "Terminal (shell livre)" (nota 2026-07-23,
+  feedback E2E rodada 1: rótulo explícito — antes só "Terminal", confuso com
+  uma sessão claude comum).
+- **Resultado esperado:** abre um PowerShell simples no `cwd` do projeto
+  selecionado na sidebar (ou home, se nenhum), sem dot de semáforo na lista
+  de abas (mostra ícone de shell no lugar, conforme ui-spec §2).
 
 ### 10. Injeção de modelo em sessão viva (T011, FR-011)
 

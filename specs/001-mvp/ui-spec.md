@@ -90,8 +90,12 @@ A vista onde o dia inteiro acontece.
 1. **Titlebar** — logo+nome; switch de modo `Uso geral | Dev`; badge da conta
    ativa (abre dropdown de perfis, §6); botão split "＋ Nova sessão" — clique
    no corpo abre direto com a última configuração de sessão Claude usada;
-   seta lateral abre menu com 2 opções: "Sessão Claude" (Launcher, §4) e
-   "Terminal" (aba de terminal comum, sem configuração).
+   seta lateral abre menu com 2 opções: "Sessão Claude" (abre o painel do
+   Launcher, §4) e "Terminal (shell livre)" (aba de terminal comum, sem
+   configuração — rótulo explícito, ver nota 2026-07-23 abaixo).
+   > **Nota 2026-07-23 (feedback E2E rodada 1)** — o rótulo "Terminal" sozinho
+   > não deixava óbvio que era um shell livre (sem sessão claude nenhuma);
+   > passou a "Terminal (shell livre)".
 2. **Sidebar esquerda (240px)** — duas seções: PROJETOS (árvore rasa por root,
    favoritos `★` no topo; favorito removido do disco aparece esmaecido com
    ação "remover") e SESSÕES (todas as sessões abertas, cada linha =
@@ -105,6 +109,9 @@ A vista onde o dia inteiro acontece.
 4. **Painel direito (260px, colapsável)** — Launcher (§4) quando nada
    selecionado; detalhes da sessão selecionada (P1: tokens §7, subagentes §8)
    quando houver.
+   > **Nota 2026-07-23 (feedback E2E rodada 3)** — "colapsável" formalizado:
+   > fechado por DEFAULT (o espaço vai pro terminal), sem ficar fixo
+   > roubando espaço o tempo todo. Ver decisão completa em §4.
 5. **Statusbar** — conta ativa, modelo/esforço da aba em foco, contagem de
    sessões, mini medidor smart zone da aba em foco (P1).
 
@@ -157,6 +164,20 @@ Painel vertical: Modelo (segmented: fable/opus/sonnet/haiku), Esforço
 auto, plan, dontAsk, bypassPermissions — com descrição curta de cada), Nome (input),
 projeto-alvo (herdado da seleção da sidebar, editável). Botão primário
 "▶ Iniciar". Defaults persistidos. Validação: nome vazio = ok (flag omitida).
+
+> **Decisão 2026-07-23 (feedback E2E rodada 3 — "painel lateral 'Lançar
+> sessão' fixo rouba espaço e não parece produtivo")** — o painel deixa de
+> ser fixo no painel direito (zona 4, §2). Comportamento final:
+> - **Fechado por default** — o espaço do painel direito some e o terminal
+>   (zona 3) ocupa a largura inteira.
+> - **Abre** ao clicar no item "Sessão Claude" do menu da seta do "＋ Nova
+>   sessão" (titlebar, zona 1) — esse item deixou de ser um atalho redundante
+>   pro quick-launch (que já existia no CORPO do botão) e passou a abrir
+>   este painel para configurar antes de lançar.
+> - **Fecha** ao lançar uma sessão (botão "▶ Iniciar") ou ao pressionar `Esc`.
+> - O clique no CORPO do "＋ Nova sessão" (quick-launch com a última
+>   configuração usada) **continua sem depender do painel** — não abre nem
+>   fecha nada, comportamento inalterado (T010, CA-1).
 
 **Em sessão viva (FR-011):** os mesmos segmented de Modelo/Esforço aparecem
 nos detalhes da sessão; trocar = injeta `/model` (tooltip: "aplica na sessão

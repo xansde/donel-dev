@@ -14,6 +14,7 @@ import {
   canInjectLiveCommand,
   hasLiveInjectionConfirmation,
 } from '../../shared/liveSessionInjection';
+import { sortProjects } from '../../shared';
 import { sortSessions } from '../../shared/sessionOrdering';
 import { nextAttentionSessionId, sessionIdAtPosition } from '../../shared/sessionShortcuts';
 import { sessionTabName } from '../../shared/sessions';
@@ -91,6 +92,16 @@ export function App(): React.JSX.Element {
   // Projeto-alvo do Launcher; segue o último projeto aberto pela sidebar.
   const [selectedProjectPath, setSelectedProjectPath] = useState<string | undefined>(undefined);
   const [lastLaunch, setLastLaunch] = useState<LastLaunch | null>(null);
+  // FIX (feedback E2E rodada 3 — "painel lateral 'Lançar sessão' fixo rouba
+  // espaço e não parece produtivo") — o painel do Launcher deixa de ser
+  // fixo: fechado por default (espaço vai pro terminal, ver
+  // `styles.bodyPanelClosed`), abre só sob demanda (item "Sessão Claude" do
+  // menu do "＋ Nova sessão", ver SplitButton abaixo), fecha ao lançar
+  // (`handleLaunch`) ou Esc (efeito dedicado mais abaixo). O corpo do "＋
+  // Nova sessão" CONTINUA lançando direto com a última config (T010,
+  // `handleQuickNewClaudeSession`) sem depender do painel — isso não muda
+  // (CA-1/smoke `profiles.spec.ts` já cobrem esse caminho).
+  const [launcherOpen, setLauncherOpen] = useState(false);
   const tabIdCounter = useRef(0);
   // T014 — rótulo de conta pra Statusbar (ui-spec §2 zona 5), reportado pelo
   // ProfileSwitcher (que já busca `window.donel.profiles.*` pro dropdown do
@@ -350,6 +361,8 @@ export function App(): React.JSX.Element {
     addTab({ name, cwd: options.projectPath, projectName: options.projectName, pinned: false, launchArgs: args, sessionType: 'claude' });
     setSelectedProjectPath(options.projectPath);
     setLastLaunch({ args, cwd: options.projectPath, name });
+    // FIX (feedback E2E rodada 3) — painel colapsável: "fecha ao lançar".
+    setLauncherOpen(false);
   };
 
   // T010 — corpo do "＋ Nova sessão" (ui-spec §2, zona 1): "clique no corpo
@@ -387,8 +400,39 @@ export function App(): React.JSX.Element {
     addTab({ name: 'Terminal', cwd: selectedProjectPath, projectName: project?.name, pinned: false, sessionType: 'shell' });
   };
 
+  // FIX (feedback E2E rodada 3 — "favoritar projeto só reflete após
+  // reiniciar o app") — causa raiz: `listProjectsWithFavorites` (main)
+  // refaz um `scanProjects` SÍNCRONO do filesystem a cada toggle (não só a
+  // primeira vez); com vários repos sob os roots configurados, esse
+  // round-trip pode não ser instantâneo o bastante pra parecer "reflete na
+  // hora" — mesmo a lógica de merge/ordenação (`mergeFavorites`/
+  // `sortProjects`) já estando correta e testada (não era bug de lógica).
+  // Fix: atualiza `projects` OTIMISTICAMENTE aqui — mesma função
+  // `sortProjects` que o main usa (agora compartilhada, `shared/projects.ts`)
+  // — a estrela e a reordenação já aparecem no próprio clique, sem esperar
+  // o IPC. `setProjects` no `.then()` continua reconciliando com a resposta
+  // autoritativa do main (persistência real, `missing`/favoritos de outros
+  // projetos que só o scan do main conhece).
+  //
+  // `favoriteRequestIdRef` — achado do PRÓPRIO smoke deste fix
+  // (tests/smoke/sidebar-favorites.spec.ts, 2 cliques em sequência rápida:
+  // favoritar → desfavoritar): sem isso, dois `setFavorite` em voo ao mesmo
+  // tempo podem RESOLVER fora de ordem (o scan síncrono do main não garante
+  // que quem foi chamado primeiro responde primeiro) — a resposta do
+  // clique MAIS ANTIGO chegando DEPOIS da do mais recente sobrescrevia o
+  // estado certo com um snapshot obsoleto. Só aplica `setProjects` da
+  // resposta cujo id ainda é o mais recente disparado.
+  const favoriteRequestIdRef = useRef(0);
   const handleToggleFavorite = (path: string, favorite: boolean): void => {
-    void window.donel.projects.setFavorite(path, favorite).then(setProjects);
+    setProjects((prev) => sortProjects(prev.map((project) => (project.path === path ? { ...project, favorite } : project))));
+    const requestId = (favoriteRequestIdRef.current += 1);
+    void window.donel.projects
+      .setFavorite(path, favorite)
+      .then((list) => {
+        if (requestId !== favoriteRequestIdRef.current) return; // resposta obsoleta — um toggle mais novo já rodou depois deste
+        setProjects(list);
+      })
+      .catch(() => undefined);
   };
 
   const handleTogglePin = (tabId: string): void => {
@@ -583,6 +627,20 @@ export function App(): React.JSX.Element {
     previousSemaphoreStatesRef.current = semaphoreStates;
   }, [semaphoreStates, tabs, activeTabId]);
 
+  // FIX (feedback E2E rodada 3) — painel colapsável: "fecha ao... Esc".
+  // Efeito próprio (não reaproveita o listener de atalhos Ctrl+1..9/Ctrl+Tab
+  // acima — aquele é `capture` + exige Ctrl; Esc aqui é global e só importa
+  // quando o painel está aberto, sem interferir no Esc que o SplitButton já
+  // trata internamente pro PRÓPRIO dropdown, nem no Esc do Modal.tsx).
+  useEffect(() => {
+    if (!launcherOpen) return undefined;
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key === 'Escape') setLauncherOpen(false);
+    }
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [launcherOpen]);
+
   // T011 — aba em foco, pra decidir se a toolbar de Modelo/Esforço aparece (só sessões 'claude').
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
 
@@ -598,13 +656,21 @@ export function App(): React.JSX.Element {
           label="＋ Nova sessão"
           onClick={handleQuickNewClaudeSession}
           items={[
-            { label: 'Sessão Claude', onSelect: handleQuickNewClaudeSession },
-            { label: 'Terminal', onSelect: handleNewFreeTerminal },
+            // FIX (feedback E2E rodada 3, painel colapsável) — "Sessão
+            // Claude" passa a ABRIR o painel de configuração (Launcher, §4)
+            // em vez de repetir o quick-launch do corpo (redundante antes:
+            // as duas ações faziam a MESMA coisa). O corpo do botão
+            // continua sendo o atalho rápido (última config usada).
+            { label: 'Sessão Claude', onSelect: () => setLauncherOpen(true) },
+            // FIX (feedback E2E rodada 1, "terminal livre confuso") — rótulo
+            // explícito no dropdown; "Terminal" sozinho não deixava claro
+            // que era um shell livre (sem sessão claude nenhuma).
+            { label: 'Terminal (shell livre)', onSelect: handleNewFreeTerminal },
           ]}
         />
       </header>
 
-      <div className={styles.body}>
+      <div className={launcherOpen ? styles.body : `${styles.body} ${styles.bodyPanelClosed}`}>
         <ProjectSidebar
           projects={projects}
           loadingProjects={loadingProjects}
@@ -665,20 +731,31 @@ export function App(): React.JSX.Element {
           </div>
         </main>
 
-        <aside className={styles.rightPanel} aria-label="Lançar sessão">
-          <Launcher projects={projects} defaultProjectPath={selectedProjectPath} onLaunch={handleLaunch} />
-          {/*
-            Hook só de teste (T008 DoD — CA-1): não há como inspecionar o
-            argv real recebido pelo processo `claude` a partir do renderer
-            (o node-pty spawna no main process), então expomos aqui o
-            comando exatamente como foi montado pelo CommandBuilder e o cwd
-            usado na criação da aba. `hidden` tira do fluxo visual — o
-            smoke lê via textContent/atributo, não via visibilidade.
-          */}
-          <pre data-testid="launcher-last-command" data-cwd={lastLaunch?.cwd ?? ''} hidden>
-            {lastLaunch ? ['claude', ...lastLaunch.args].join(' ') : ''}
-          </pre>
-        </aside>
+        {/* FIX (feedback E2E rodada 3, painel colapsável) — deixa de ser
+            fixo: só monta quando `launcherOpen` (aberto via item "Sessão
+            Claude" do menu do "＋ Nova sessão", ou fechado ao lançar/Esc);
+            fechado, o espaço vai pro `.center` (terminal), ver
+            `styles.bodyPanelClosed` acima. */}
+        {launcherOpen ? (
+          <aside className={styles.rightPanel} aria-label="Lançar sessão">
+            <Launcher projects={projects} defaultProjectPath={selectedProjectPath} onLaunch={handleLaunch} />
+          </aside>
+        ) : null}
+        {/*
+          Hook só de teste (T008 DoD — CA-1): não há como inspecionar o
+          argv real recebido pelo processo `claude` a partir do renderer (o
+          node-pty spawna no main process), então expomos aqui o comando
+          exatamente como foi montado pelo CommandBuilder e o cwd usado na
+          criação da aba. `hidden` tira do fluxo visual — o smoke lê via
+          textContent/atributo, não via visibilidade. FORA do `<aside>`
+          condicional de propósito: `handleLaunch` fecha o painel no mesmo
+          gesto que preenche este valor (ui-spec §4 "fecha ao lançar") — se
+          este elemento vivesse dentro do `<aside>`, ele desmontaria antes
+          do smoke conseguir ler o comando montado.
+        */}
+        <pre data-testid="launcher-last-command" data-cwd={lastLaunch?.cwd ?? ''} hidden>
+          {lastLaunch ? ['claude', ...lastLaunch.args].join(' ') : ''}
+        </pre>
       </div>
 
       <StatusBar accountLabel={accountLabel} modelEffort="fable/high" sessionCount={tabs.length} />

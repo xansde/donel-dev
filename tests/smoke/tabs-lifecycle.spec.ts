@@ -73,6 +73,16 @@ async function openFreeTerminalTab(): Promise<void> {
   await window.getByRole('menuitem', { name: 'Terminal' }).click();
 }
 
+// FIX (feedback E2E rodada 3, "painel lateral 'Lançar sessão' fixo rouba
+// espaço") — o Launcher deixou de ser um painel fixo: nasce fechado, abre
+// via item "Sessão Claude" do menu do "＋ Nova sessão" (App.tsx,
+// `launcherOpen`).
+async function openLauncherPanel(): Promise<void> {
+  await window.getByRole('button', { name: 'Mais opções de ＋ Nova sessão' }).click();
+  await window.getByRole('menuitem', { name: 'Sessão Claude' }).click();
+  await expect(window.locator('[data-testid="launcher"]')).toBeVisible();
+}
+
 /**
  * Confirma o modal "Fechar sessão?" (FR-006) clicando "Fechar sessão"
  * (danger) — só aparece quando o processo da aba está vivo. `.click()` já
@@ -151,6 +161,7 @@ test('T010 — 6 sessões simultâneas (2 claude + 4 shell); fechar 3 mata só o
   // desabilitado (`canLaunch`, Launcher.tsx). Seleciona `donel-dev` (o próprio
   // repo sob teste) direto no Select do Launcher, sem passar pela sidebar
   // (evita abrir uma 7ª aba redundante).
+  await openLauncherPanel();
   const launcher = window.locator('[data-testid="launcher"]');
   await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
   await window.getByRole('option', { name: 'donel-dev', exact: true }).click();
