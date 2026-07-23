@@ -102,8 +102,26 @@ sessões já é alto, não precisa somar custo de modelo caro.
 
 ### 4. CA-1 — Launcher monta o comando exato
 
-- [ ] **Ação:** Modelo=`sonnet`, Esforço=`high`, Permissões=`acceptEdits`,
-  Nome=`radar`, projeto=`spotsys` (ou disponível), clicar "▶ Iniciar".
+> **Nota (2026-07-23, rodada 5 do feedback E2E):** o painel "Lançar sessão"
+> deixou de ser fixo desde o commit `5c8d254` (feedback E2E rodada 3, "painel
+> lateral fixo rouba espaço") — ele nasce FECHADO; os passos de abertura
+> abaixo são literais, não "está sempre visível" como o texto original deste
+> item sugeria.
+
+- [ ] **Ação:**
+  1. Na titlebar, clicar na **seta** do botão split "＋ Nova sessão" (botão
+     "Mais opções de ＋ Nova sessão", ao lado do botão principal) — **não**
+     no corpo do botão, que dispara o quick-launch direto (última config
+     usada) sem abrir o painel.
+  2. No menu que abre, clicar em **"Sessão Claude"** — o painel "Lançar
+     sessão" abre à direita (`aria-label="Lançar sessão"`). `Esc` fecha o
+     painel a qualquer momento sem lançar nada.
+  3. Preencher os campos do painel: **Modelo**=`sonnet`, **Esforço**=`high`,
+     **Permissões**=`acceptEdits`, **Nome**=`radar`, **Projeto-alvo**
+     (seletor "Selecione um projeto") = `spotsys` (ou outro projeto
+     disponível na sidebar).
+  4. Clicar **"▶ Iniciar"** — o botão fica **desabilitado** até um projeto
+     ser escolhido no passo 3 (é esperado não conseguir clicar antes disso).
 - **Resultado esperado:** aba abre executando exatamente
   `claude --model sonnet --effort high --permission-mode acceptEdits -n "radar"`
   com `cwd` correto. (Repetição intencional do CA-1 já testado no batch 3 —
