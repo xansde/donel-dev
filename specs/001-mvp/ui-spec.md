@@ -228,6 +228,10 @@ Colapsada por default com contador ("3 subagentes · 1 rodando").
   texto claro) — reconhecíveis como post-its sem quebrar o dark.
 - Persistência local (config do app); integração com Inbox do vault Obsidian
   como ação explícita "arquivar no vault" (P2).
+- **Tematização Donel (ver §16):** o quadro é o **Tomo do Donel**; capturar =
+  entregar uma carta a ele; cabeçalho, confirmações e empty state usam a voz
+  do personagem; a mecânica "cartas do dia" devolve 2–3 post-its antigos no
+  Setup do dia.
 
 ---
 
@@ -329,17 +333,67 @@ respostas — o progresso do scaffolding aparece no próprio terminal da sessão
 Estados: validação de nome duplicado (projeto já existe no root escolhido);
 erro da skill = sessão fica aberta para diagnóstico.
 
-## 16. Identidade do personagem — Donel (em definição)
+## 16. Identidade do personagem — Donel
 
-O app carrega o **Donel** (Jobu Donel), buddy de RPG do Alexandre: humor,
-falas próprias, guardião da memória. Direção já decidida: a área de post-its
-(§9) é tematizada como **conversa com o Donel** — capturar = contar a ele;
-recapitular = ele devolver o que guardou. Princípio de calibragem: o app é
-"sala de controle calma" — o Donel vive nos momentos de captura/memória e
-NUNCA interrompe o trabalho (sem mascote animado sobre o terminal, sem
-Clippy). Persona, aparência, tom de voz e demais pontos de presença: **a
-definir no papo de personagem com o Alexandre** — esta seção será expandida
-com o resultado.
+**Lore (canônico, do RPG do Alexandre — papo de 22/07):** Jobu Donel é um
+tengu (homem-corvo) **taumaturgo** de Pathfinder. Corpo preto como a noite
+com **uma única pena branca no peito**. Carrega sempre um **espelho** e um
+**tomo**; coleciona bugigangas esotéricas e **vê padrões onde ninguém vê**.
+Tema de **cartomante**: lia cartas e falava do futuro das pessoas. Anda com
+velas e incensos; respeita todas as divindades e sabe os ritos de todas.
+**Nômade** — vive em passeio, nunca para num lugar. Personalidade: **bobo e
+entusiasmado**, com **ironia pontual** quando necessário; sem bordão — o
+registro dele é a **analogia improvável que acaba fazendo sentido**.
+
+### Mascote (direção visual)
+
+- Corvo estilizado em silhueta preta que se funde com o fundo escuro; a pena
+  branca no peito é A marca — único highlight. Acessórios conforme o
+  contexto: o tomo (memória/post-its) e o espelho (retrospectiva, futuro).
+- Estático ou micro-animação sutil (piscar, inclinar a cabeça). Nunca
+  animação chamativa sobre a área de trabalho.
+- O ícone do app deriva dele: cabeça do corvo ou a pena branca.
+- Dourado de vela (`#E8B44C`, já na paleta) como acento esotérico nas
+  ilustrações do Donel; não usar o roxo (reservado ao estado falha/quota).
+
+### Voz (regras de microcopy)
+
+- Entusiasmado; analogias esotérico-cotidianas improváveis que fazem
+  sentido; ironia RARA e leve (nunca no primeiro contato de um fluxo).
+- Frases de 1 linha (máx. 2); nunca bloqueiam ação; sempre em elemento
+  secundário (caption, header do quadro, tooltip) — nunca modal.
+- Erros, permissões e qualquer fluxo crítico NUNCA usam a voz do Donel —
+  clareza acima de charme.
+
+Falas de exemplo (calibram tom para design e microcopy):
+
+- Captura de post-it: "Guardado no tomo. Ideia solta é incenso apagado —
+  essa aqui fica acesa."
+- Abrir o quadro: "Você voltou! Vamos ver o que as cartas guardaram."
+- Cartas do dia (no Setup): "Rito da manhã: acendi as velas e separei 3
+  cartas de ontem que pedem tua atenção."
+- Padrão detectado: "Essa rima com aquela de terça. Não acredito em
+  coincidência — acredito em padrão."
+- Ironia dosada (tomo lotado): "Trigésima carta no tomo. Em algum momento a
+  gente lê, certo?"
+- Empty state do quadro: "Tomo vazio. Até augúrio precisa de matéria-prima."
+- Fim do formulário de novo projeto: "Caminho novo — o nômade aprova."
+
+### Onde vive / onde nunca entra (direção do papo de 22/07)
+
+- **Vive:** post-its (§9 — capturar = entregar uma carta; quadro = Tomo do
+  Donel), "cartas do dia" no Setup do dia, empty states, fecho do formulário
+  de novo projeto (§15).
+- **Nunca:** sobre o terminal, em notificações de permissão, em mensagens de
+  erro, nos gates do modo Dev. O app é sala de controle calma; o Donel vive
+  nos momentos de memória e rito, não sobre o trabalho.
+
+### Mecânica "ele devolve, não só guarda"
+
+No Setup do dia (§12) e no primeiro open do quadro no dia, o Donel traz 2–3
+post-its antigos como uma "leitura de cartas" — os mais velhos não
+revisitados ou os relacionados ao projeto ativo. Ações por carta: manter no
+tomo · virar prompt · arquivar. É o que o torna útil, não decorativo.
 
 ## 17. Dados de exemplo para o design (LGPD-safe)
 

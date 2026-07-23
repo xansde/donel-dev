@@ -653,3 +653,90 @@ manualmente.
   esforço med.
 
 **Gerar em:** desktop 1440×900, tema dark.
+
+---
+
+## Brief 12 — Novo projeto: formulário dinâmico (P1)
+
+**Contexto:** o usuário cria um projeto novo pelo botão "＋ Novo projeto" no
+rodapé da seção PROJETOS da sidebar. O formulário coleta as respostas e o
+scaffolding real roda numa sessão de terminal depois — a tela é só o
+formulário e o resumo.
+
+**Layout:** modal centrado (~480px de largura) sobre o app escurecido, um
+passo visível por vez com progressão fluida (não wizard de página inteira).
+Campos, na ordem, com os seguintes comportamentos dinâmicos:
+
+1. Tipo: segmented "Pessoal | Profissional" (obrigatório, primeiro passo).
+2. Nome do projeto: input de texto; ao lado, o slug kebab-case gerado
+   automaticamente em fonte mono (ex.: "Radar de PRs" → `radar-de-prs`),
+   editável.
+3. Tema: input opcional, placeholder "ex.: automação de heartbeats".
+4. Tem todo?: toggle simples com descrição "cria todo.md no vault".
+5. Repositório: segmented "Nenhum | Criar novo | Vincular existente"; se
+   "Vincular existente", aparece campo de path/URL; se o Tipo for
+   "Profissional", aparece também a opção de vínculo TaskDex (toggle).
+6. Passo final: resumo do que será criado (diretório, vault, pointer,
+   TaskDex quando aplicável) em lista compacta + botão primário "Criar
+   projeto" e secundário "Cancelar".
+
+**Estados:** validação de nome duplicado (mensagem "Esse projeto já existe em
+~/seazone" sob o campo); erro do scaffolding não aparece aqui (a sessão de
+terminal fica aberta para diagnóstico). Rodapé do passo final traz uma linha
+discreta de personagem (caption, cor muted): "Caminho novo — o nômade
+aprova."
+
+**Dados de exemplo:** nome "Radar de PRs", tipo Profissional, tema "revisão
+de PRs do Spotsys", todo ativado, repositório "Criar novo" com TaskDex
+ativado.
+
+**Gerar em:** desktop 1440×900, tema dark.
+
+---
+
+## Brief 13 — Donel, o buddy: identidade + Tomo de post-its (P1 visual, tema transversal)
+
+**Contexto:** o app se chama Donel Dev por causa do Jobu Donel — personagem
+de RPG do dono: um tengu (homem-corvo) taumaturgo, cartomante esotérico,
+nômade, colecionador de bugigangas, que via padrões onde ninguém via. Ele é
+o guardião da memória do app: a área de post-its é uma conversa com ele.
+Personalidade: bobo e entusiasmado, ironia rara e leve, adora analogias
+improváveis que fazem sentido.
+
+**Mascote (gerar como parte deste brief):** corvo estilizado em silhueta
+preta que se funde com o fundo escuro; UMA pena branca no peito é a marca —
+único highlight. Acessórios opcionais por contexto: um tomo (livro) e um
+espelho pequeno. Acento esotérico em dourado de vela #E8B44C (velas,
+cartas). Nada de roxo. Estático ou micro-gesto (piscar, inclinar a cabeça);
+nunca animação chamativa. Derivar também o ícone do app: cabeça do corvo ou
+a pena branca sozinha.
+
+**Tela A — Tomo do Donel (quadro de post-its tematizado):** vista dedicada;
+header com o mascote pequeno + título "Tomo do Donel" + frase de voz
+("Você voltou! Vamos ver o que as cartas guardaram."). Grid de post-its como
+CARTAS: cartões amarelo-dessaturado (#3A3526 de fundo, texto claro), canto
+com data e projeto de origem. Ações por carta: manter no tomo · virar
+prompt ("enviar para sessão…") · arquivar. Empty state: mascote + "Tomo
+vazio. Até augúrio precisa de matéria-prima."
+
+**Tela B — Cartas do dia:** cartão destacado no início do dia (dentro do
+fluxo "Setup do dia"): o Donel apresenta 2–3 post-its antigos como uma
+leitura de cartas — "Rito da manhã: acendi as velas e separei 3 cartas de
+ontem que pedem tua atenção." Cada carta com as 3 ações acima.
+
+**Tela C — Captura relâmpago:** mini-janela flutuante de UMA linha
+(Ctrl+Alt+N), sem mascote (velocidade acima de charme); após Enter, toast
+discreto de confirmação com voz: "Guardado no tomo."
+
+**Regras duras (respeitar no design):** a voz do Donel aparece SÓ em
+post-its/Tomo, cartas do dia, empty states e no fecho do formulário de novo
+projeto. NUNCA sobre o terminal, em permissões, erros ou fluxos críticos —
+esses seguem o tom neutro do Brief 0. Frases de 1 linha, em elementos
+secundários, nunca em modal bloqueante.
+
+**Dados de exemplo (cartas):** "testar o modo lote da esteira num card
+real" (ontem, bizops-ai-native) · "post-it: ideia de rotina de fechamento do
+dia" (seg, donel-dev) · "perguntar ao César sobre roadmap do TaskDex" (ter,
+sem projeto).
+
+**Gerar em:** desktop 1440×900, tema dark.
