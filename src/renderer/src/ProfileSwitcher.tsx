@@ -104,6 +104,23 @@ export function ProfileSwitcher({ onActiveProfileLabelChange }: ProfileSwitcherP
       .finally(() => setCreating(false));
   };
 
+  // FIX (feedback E2E rodada 4, item 5) — CAUSA RAIZ REAL: não era refresh
+  // periódico de quota nem input recriado (hipótese da auditoria) — o
+  // ProfileSwitcher não tem NENHUM polling. O bug é o `onClose` do Modal:
+  // antes era `() => setOpen(false)` inline, uma identidade NOVA a cada
+  // render deste componente. Cada tecla digitada em "Novo perfil" chama
+  // `setNewProfileName` -> re-render -> novo `onClose` -> o
+  // `useEffect(..., [open, onClose])` do foco-trap do Modal.tsx
+  // (design-system) enxerga a dependência mudar -> roda o cleanup (que
+  // FOCA de volta o elemento anterior ao modal ter aberto) e reexecuta o
+  // efeito (que foca `getFocusable()[0]` dentro do dialog) A CADA TECLA.
+  // `getFocusable()[0]` é o botão/AccountBadge da PRIMEIRA linha de perfil
+  // (a lista `<ul>` vem antes do form no JSX) — nunca o TextInput — por
+  // isso o campo "desseleciona" a cada instante. Fix: estabilizar a
+  // identidade de `onClose` com `useCallback` (nunca muda entre renders),
+  // então o efeito de foco do Modal só roda quando `open` de fato muda.
+  const handleCloseModal = useCallback((): void => setOpen(false), []);
+
   const activeProfile = profiles.find((profile) => profile.active) ?? profiles[0];
   const activeAccountNumber = activeProfile ? parseAccountNumber(activeProfile.name) : null;
   const activeHeadroom = activeProfile ? (headroom[activeProfile.slug] ?? null) : null;
@@ -128,7 +145,7 @@ export function ProfileSwitcher({ onActiveProfileLabelChange }: ProfileSwitcherP
         )}
       </span>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Perfis de conta">
+      <Modal open={open} onClose={handleCloseModal} title="Perfis de conta">
         <div className={styles.body} data-testid="profile-switcher">
           <ul className={styles.list}>
             {profiles.map((profile) => {
