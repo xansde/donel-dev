@@ -5,9 +5,13 @@
 // chegam junto das tasks que os implementam.
 
 import type { DonelProjectsApi } from './projects';
+import type { DonelSessionsApi } from './sessions';
 
 export { PROJECT_CHANNELS } from './projects';
 export type { DonelProjectsApi, ProjectInfo } from './projects';
+
+export { SESSION_CHANNELS } from './sessions';
+export type { DonelSessionsApi, SessionSummaryDto } from './sessions';
 
 /** Nomes dos canais IPC do domínio PTY (plan.md linha 37). */
 export const PTY_CHANNELS = {
@@ -122,4 +126,5 @@ export interface DonelApi {
   pty: DonelPtyApi;
   projects: DonelProjectsApi;
   semaphore: DonelSemaphoreApi;
+  sessions: DonelSessionsApi;
 }

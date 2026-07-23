@@ -1,7 +1,7 @@
 import type { ProjectInfo } from '../../shared';
 import type { SessionState } from '@donel-dev/design-system';
 import { StateDot } from '@donel-dev/design-system';
-import { ChevronDown, ChevronRight, Pin, PinOff, Star } from 'lucide-react';
+import { ChevronDown, ChevronRight, History, Pin, PinOff, Star } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { sortSessions } from '../../shared/sessionOrdering';
 import styles from './ProjectSidebar.module.css';
@@ -32,6 +32,13 @@ export interface ProjectSidebarProps {
   sessions: SidebarSession[];
   onFocusSession: (id: string) => void;
   onTogglePin: (id: string) => void;
+  /**
+   * T013 (FR-004, CA-2, ui-spec §5) — abre o painel "Sessões anteriores" do
+   * projeto. Ícone PRÓPRIO por linha (não o botão do nome, que já abre uma
+   * sessão claude NOVA direto — T007, smoke `terminal.spec.ts` — e não pode
+   * mudar de significado).
+   */
+  onShowPreviousSessions: (project: ProjectInfo) => void;
 }
 
 function rootLabel(root: string): string {
@@ -62,6 +69,7 @@ export function ProjectSidebar({
   sessions,
   onFocusSession,
   onTogglePin,
+  onShowPreviousSessions,
 }: ProjectSidebarProps): React.JSX.Element {
   const [collapsedRoots, setCollapsedRoots] = useState<ReadonlySet<string>>(new Set());
   const groups = useMemo(() => groupByRoot(projects), [projects]);
@@ -132,9 +140,20 @@ export function ProjectSidebar({
                           </button>
                         </>
                       ) : (
-                        <button type="button" className={styles.projectOpenButton} onClick={() => onOpenProject(project)}>
-                          {project.name}
-                        </button>
+                        <>
+                          <button type="button" className={styles.projectOpenButton} onClick={() => onOpenProject(project)}>
+                            {project.name}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.historyButton}
+                            onClick={() => onShowPreviousSessions(project)}
+                            aria-label={`Sessões anteriores de ${project.name}`}
+                            title="Sessões anteriores"
+                          >
+                            <History size={12} strokeWidth={1.5} aria-hidden="true" />
+                          </button>
+                        </>
                       )}
                     </div>
                   ))}

@@ -2,14 +2,15 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { PtyCreateOptions, PtyCreateResult, PtyExitInfo, ProjectInfo, SemaphoreUpdate } from '../shared';
-import { CLAUDE_NOT_FOUND_PREFIX, PROJECT_CHANNELS, PTY_CHANNELS, SEMAPHORE_CHANNELS } from '../shared';
+import type { PtyCreateOptions, PtyCreateResult, PtyExitInfo, ProjectInfo, SemaphoreUpdate, SessionSummaryDto } from '../shared';
+import { CLAUDE_NOT_FOUND_PREFIX, PROJECT_CHANNELS, PTY_CHANNELS, SEMAPHORE_CHANNELS, SESSION_CHANNELS } from '../shared';
 import { createSystemResolveDeps, resolveClaudeExecutable } from './claude-executable';
 import { writeHooksSettingsFile } from './hooks-settings';
 import { readProjectConfig, toggleFavorite, writeProjectConfig } from './project-config-store';
 import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects, sortProjects } from './project-scanner';
 import { PtyManager } from './pty-manager';
 import { resolveClaudeCorrelation } from './session-correlation';
+import { indexProjectSessions } from './session-indexer';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
@@ -191,6 +192,20 @@ function registerProjectIpcHandlers(): void {
   });
 }
 
+/**
+ * T013 — índice de sessões anteriores por projeto (FR-004, CA-2). Delega
+ * inteiramente pro SessionIndexer (T012, TDD já fechado — não reescrito
+ * aqui): stream das primeiras linhas, nunca o arquivo inteiro, `[]` sem
+ * lançar pra projeto que nunca abriu sessão. Handler async porque
+ * `indexProjectSessions` é async (leitura de disco); `ipcMain.handle` já
+ * espera a Promise antes de responder o `invoke` do renderer.
+ */
+function registerSessionIpcHandlers(): void {
+  ipcMain.handle(SESSION_CHANNELS.list, async (_event, projectPath: string): Promise<SessionSummaryDto[]> => {
+    return indexProjectSessions(projectPath);
+  });
+}
+
 void app.whenReady().then(async () => {
   // T009 — sobe o servidor local do semáforo e grava o `--settings` ANTES de
   // registrar os handlers de PTY (o primeiro `pty:create` de uma sessão
@@ -206,6 +221,7 @@ void app.whenReady().then(async () => {
 
   registerPtyIpcHandlers();
   registerProjectIpcHandlers();
+  registerSessionIpcHandlers();
   createMainWindow();
 
   app.on('activate', () => {

@@ -1,6 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { DonelApi, ProjectInfo, PtyCreateOptions, PtyCreateResult, PtyExitInfo, SemaphoreStateInfo, SemaphoreUpdate } from '../shared';
-import { PROJECT_CHANNELS, PTY_CHANNELS, SEMAPHORE_CHANNELS } from '../shared';
+import type {
+  DonelApi,
+  ProjectInfo,
+  PtyCreateOptions,
+  PtyCreateResult,
+  PtyExitInfo,
+  SemaphoreStateInfo,
+  SemaphoreUpdate,
+  SessionSummaryDto,
+} from '../shared';
+import { PROJECT_CHANNELS, PTY_CHANNELS, SEMAPHORE_CHANNELS, SESSION_CHANNELS } from '../shared';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
 // arquivo é o único ponto por onde o renderer alcança o main process, via
@@ -61,6 +70,11 @@ const donelApi: DonelApi = {
       ipcRenderer.on(SEMAPHORE_CHANNELS.update, handler);
       return () => ipcRenderer.removeListener(SEMAPHORE_CHANNELS.update, handler);
     },
+  },
+
+  sessions: {
+    list: (projectPath: string) =>
+      ipcRenderer.invoke(SESSION_CHANNELS.list, projectPath) as Promise<SessionSummaryDto[]>,
   },
 };
 

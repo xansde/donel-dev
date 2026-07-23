@@ -47,10 +47,20 @@ export interface SessionDetailsProps {
   onSelectEffort: (effort: EffortLevel) => void;
   /** Degradação FR-011 ("reiniciar a sessão com a flag") — só relevante/visível quando `alive` é `false`. */
   onRestartWithConfig: () => void;
+  /**
+   * T013 (correção herdada) — 'model'/'effort' quando App.tsx já escreveu a
+   * injeção no stdin mas AINDA não viu a confirmação real do CLI no ring
+   * buffer (App.tsx `watchLiveInjection`); `undefined` = nenhuma injeção em
+   * voo. Desabilita os dois controles enquanto pendente (nunca empilha uma
+   * 2ª injeção sobre uma ainda não confirmada) e troca o hint — ver
+   * shared/liveSessionInjection.ts pro porquê da correção.
+   */
+  pendingKind?: 'model' | 'effort';
 }
 
 /** Texto do aviso ao lado dos segmented — explica POR QUE o controle está desabilitado (ui-spec §4: "tooltip explica"), ou a dica de uso quando está liberado. */
-function statusHint(state: SemaphoreState | undefined, alive: boolean): string {
+function statusHint(state: SemaphoreState | undefined, alive: boolean, pendingKind: 'model' | 'effort' | undefined): string {
+  if (pendingKind) return 'Aguardando o CLI confirmar a troca…';
   if (!alive) return 'Sessão sem processo vivo — troque e clique em "Reiniciar com essa config".';
   switch (state) {
     case 'working':
@@ -72,9 +82,10 @@ export function SessionDetails({
   onSelectModel,
   onSelectEffort,
   onRestartWithConfig,
+  pendingKind,
 }: SessionDetailsProps): React.JSX.Element {
-  const disabled = !canInjectLiveCommand(semaphoreState, alive);
-  const hint = statusHint(semaphoreState, alive);
+  const disabled = pendingKind !== undefined || !canInjectLiveCommand(semaphoreState, alive);
+  const hint = statusHint(semaphoreState, alive, pendingKind);
 
   return (
     <div className={styles.toolbar} data-testid="session-details" aria-label="Modelo e esforço da sessão">

@@ -1,6 +1,6 @@
 import { AccountBadge, Button, Modal, SplitButton, StatusBar, TerminalTab } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ProjectInfo, SemaphoreStateInfo } from '../../shared';
+import type { ProjectInfo, SemaphoreStateInfo, SessionSummaryDto } from '../../shared';
 import {
   buildClaudeArgs,
   DEFAULT_EFFORT_LEVEL,
@@ -8,12 +8,19 @@ import {
   parseModelEffortFromArgs,
 } from '../../shared/commandBuilder';
 import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
-import { buildEffortInjection, buildModelInjection, canInjectLiveCommand } from '../../shared/liveSessionInjection';
+import {
+  buildEffortInjection,
+  buildModelInjection,
+  canInjectLiveCommand,
+  hasLiveInjectionConfirmation,
+} from '../../shared/liveSessionInjection';
 import { sortSessions } from '../../shared/sessionOrdering';
 import { nextAttentionSessionId, sessionIdAtPosition } from '../../shared/sessionShortcuts';
+import { sessionTabName } from '../../shared/sessions';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import type { LauncherLaunchOptions } from './Launcher';
+import { PreviousSessions } from './PreviousSessions';
 import { ProjectSidebar } from './ProjectSidebar';
 import type { SidebarSession } from './ProjectSidebar';
 import { SessionDetails } from './SessionDetails';
@@ -59,6 +66,12 @@ interface LastLaunch {
 }
 
 const INITIAL_TABS: TabState[] = [{ id: 'default', name: 'Sessão', pinned: false, sessionType: 'claude' }];
+
+// T013 (correção herdada) — timeout total de espera pela confirmação real do
+// CLI depois de uma injeção de `/model`/`/effort` (rede de segurança — a
+// checagem em si é orientada a evento, não poll; ver `watchLiveInjection`
+// dentro do componente).
+const LIVE_INJECTION_TIMEOUT_MS = 20_000;
 
 /** Remove uma chave de um record sem mutar o original — usado ao limpar `semaphoreStates`/`aliveTabs` no fechamento de aba. */
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -108,6 +121,27 @@ export function App(): React.JSX.Element {
   // ref callback comum, não state (não precisa re-render quando muda; o
   // próprio React já nula a entrada no unmount da aba).
   const terminalRefs = useRef<Record<string, TerminalPaneHandle | null>>({});
+  // T013 (correção herdada) — troca de modelo/esforço por aba (chave =
+  // tab.id) já ESCRITA no stdin mas ainda sem confirmação real do CLI no
+  // terminal renderizado; `undefined` = nenhuma injeção em voo nesta aba.
+  // Enquanto pendente, a toolbar (SessionDetails) fica desabilitada e mostra
+  // um hint distinto — `sessionModelEffort` só muda quando `watchLiveInjection`
+  // (abaixo) vir a confirmação de verdade. Ver shared/liveSessionInjection.ts.
+  const [pendingInjection, setPendingInjection] = useState<Record<string, 'model' | 'effort' | undefined>>({});
+  // Função de cleanup (unsubscribe de `onRenderedUpdate` + clearTimeout) por
+  // aba com injeção em voo — ver `watchLiveInjection`.
+  const pendingInjectionWatchersRef = useRef<Record<string, (() => void) | undefined>>({});
+
+  // T013 — PARTE PRINCIPAL (FR-004, CA-2): projeto cujo painel "Sessões
+  // anteriores" está aberto (null = painel fechado); dispara o fetch via
+  // `window.donel.sessions.list` no useEffect abaixo. Gatilho é um ícone
+  // dedicado por linha da sidebar (ProjectSidebar `onShowPreviousSessions`),
+  // não o clique no NOME do projeto — esse clique já tem um significado
+  // fixo e testado (T007 smoke: abre uma sessão claude NOVA direto,
+  // `handleOpenProject` abaixo) que este painel não pode sobrescrever.
+  const [previousSessionsProject, setPreviousSessionsProject] = useState<ProjectInfo | null>(null);
+  const [previousSessions, setPreviousSessions] = useState<SessionSummaryDto[]>([]);
+  const [loadingPreviousSessions, setLoadingPreviousSessions] = useState(false);
 
   const handleSemaphoreChange = useCallback((tabId: string, info: SemaphoreStateInfo): void => {
     setSemaphoreStates((prev) => ({ ...prev, [tabId]: info }));
@@ -154,6 +188,14 @@ export function App(): React.JSX.Element {
     setSemaphoreStates((prev) => omitKey(prev, tabId));
     setAliveTabs((prev) => omitKey(prev, tabId));
     setSessionModelEffort((prev) => omitKey(prev, tabId));
+    // T013 — uma injeção pendente cuja confirmação ainda não chegou não pode
+    // continuar rodando pra uma aba que acabou de fechar (nem escreveria
+    // estado errado — `setPendingInjection`/`setSessionModelEffort` seriam
+    // no-ops sem a chave —, mas o listener/timeout ficaria vivo à toa até o
+    // timeout; melhor limpar já).
+    pendingInjectionWatchersRef.current[tabId]?.();
+    delete pendingInjectionWatchersRef.current[tabId];
+    setPendingInjection((prev) => omitKey(prev, tabId));
     delete terminalRefs.current[tabId];
   };
 
@@ -209,6 +251,86 @@ export function App(): React.JSX.Element {
       return;
     }
     addTab({ name: project.name, cwd: project.path, projectName: project.name, pinned: false, sessionType: 'claude' });
+  };
+
+  // T013 — PARTE PRINCIPAL (FR-004, CA-2, ui-spec §5): abre o painel
+  // "Sessões anteriores" pro projeto clicado; o fetch de verdade acontece no
+  // useEffect abaixo (dispara em CIMA de `previousSessionsProject`, não
+  // duplicado aqui) — mesmo padrão do fetch de `projects` no useEffect de
+  // boot logo acima.
+  const handleShowPreviousSessions = (project: ProjectInfo): void => {
+    setPreviousSessionsProject(project);
+  };
+
+  const handleClosePreviousSessions = (): void => {
+    setPreviousSessionsProject(null);
+  };
+
+  useEffect(() => {
+    if (!previousSessionsProject) {
+      setPreviousSessions([]);
+      return undefined;
+    }
+    let cancelled = false;
+    setLoadingPreviousSessions(true);
+    window.donel.sessions
+      .list(previousSessionsProject.path)
+      .then((list) => {
+        if (!cancelled) setPreviousSessions(list);
+      })
+      .catch(() => {
+        // SessionIndexer (main) nunca lança pra caso normal (projeto sem
+        // sessão vira `[]`) — um catch aqui só cobre uma falha de IPC de
+        // verdade; o painel mostra o empty state em vez de travar (mesmo
+        // espírito do catch de `projects.list` no boot).
+        if (!cancelled) setPreviousSessions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPreviousSessions(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [previousSessionsProject]);
+
+  // T013 — Retomar (ui-spec §5, primário): `-r <session-id>` via
+  // CommandBuilder (já testado no T006/CommandBuilder.test.ts, tabela
+  // FR-003) — CONTINUA a mesma sessão (mesmo id). Nome da aba vem do
+  // preview (sessionTabName, shared/sessions.ts) — mais informativo que só
+  // o uuid do arquivo.
+  const handleResumeSession = (session: SessionSummaryDto): void => {
+    if (!previousSessionsProject) return;
+    const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId: session.id } });
+    addTab({
+      name: sessionTabName(session),
+      cwd: previousSessionsProject.path,
+      projectName: previousSessionsProject.name,
+      pinned: false,
+      launchArgs: args,
+      sessionType: 'claude',
+    });
+    setSelectedProjectPath(previousSessionsProject.path);
+    setPreviousSessionsProject(null);
+  };
+
+  // T013 — Fork (ui-spec §5, secundário, "nova sessão a partir desta"):
+  // `-r <session-id> --fork-session` — confirmado em `claude --help` (flag
+  // real: "When resuming, create a new session ID instead of reusing the
+  // original (use with --resume or --continue)") — cria uma sessão com ID
+  // NOVO a partir do histórico da original, que continua intacta.
+  const handleForkSession = (session: SessionSummaryDto): void => {
+    if (!previousSessionsProject) return;
+    const args = buildClaudeArgs({ continuation: { type: 'fork', sessionId: session.id } });
+    addTab({
+      name: sessionTabName(session),
+      cwd: previousSessionsProject.path,
+      projectName: previousSessionsProject.name,
+      pinned: false,
+      launchArgs: args,
+      sessionType: 'claude',
+    });
+    setSelectedProjectPath(previousSessionsProject.path);
+    setPreviousSessionsProject(null);
   };
 
   // T008 — Launcher (ui-spec §4, FR-003, CA-1): monta o argv via
@@ -271,28 +393,96 @@ export function App(): React.JSX.Element {
     setTabs((prev) => prev.map((tab) => (tab.id === tabId ? { ...tab, pinned: !tab.pinned } : tab)));
   };
 
+  // T013 (correção herdada) — assina `onRenderedUpdate` (EVENTO, disparado
+  // no callback de conclusão de cada `term.write`, ver TerminalPane.tsx) em
+  // vez de `setInterval`: a confirmação real do CLI ("Set model to Sonnet
+  // 5") dura só UM frame na tela antes do próximo redraw sobrescrever por
+  // cima (achado do smoke real, ver shared/liveSessionInjection.ts) — um
+  // poll periódico quase sempre chega tarde demais pra ver esse frame; só
+  // checar a CADA chunk processado garante nunca perder. Sem baseline (ver
+  // mesmo comentário — este CLI redesenha um viewport de tamanho FIXO, não
+  // um log sequencial, então "linhas novas desde X" não é um conceito válido
+  // aqui): checa o snapshot ATUAL inteiro a cada evento. `LIVE_INJECTION_
+  // TIMEOUT_MS` continua como rede de segurança (`setTimeout`, não mais
+  // `setInterval`): se a confirmação nunca chegar (usuário nunca responde o
+  // diálogo, ou o CLI falha), desiste de esperar. Só então
+  // `sessionModelEffort` é atualizado — nunca antes, nunca otimisticamente.
+  const watchLiveInjection = useCallback(
+    (tabId: string, kind: 'model' | 'effort', value: ModelAlias | EffortLevel): void => {
+      pendingInjectionWatchersRef.current[tabId]?.(); // cancela qualquer watcher anterior desta aba
+
+      let settled = false;
+      const settle = (confirmed: boolean): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        delete pendingInjectionWatchersRef.current[tabId];
+        setPendingInjection((prev) => omitKey(prev, tabId));
+
+        if (!confirmed) return; // timeout sem confirmação — desiste, valor antigo (correto) permanece
+
+        setSessionModelEffort((prev) => {
+          const base = prev[tabId] ?? { model: DEFAULT_MODEL_ALIAS, effort: DEFAULT_EFFORT_LEVEL };
+          return {
+            ...prev,
+            [tabId]: kind === 'model' ? { ...base, model: value as ModelAlias } : { ...base, effort: value as EffortLevel },
+          };
+        });
+      };
+
+      const checkNow = (): void => {
+        const current = terminalRefs.current[tabId]?.getRenderedLines() ?? [];
+        if (hasLiveInjectionConfirmation(current, kind)) settle(true);
+      };
+
+      const unsubscribe = terminalRefs.current[tabId]?.onRenderedUpdate(checkNow) ?? ((): void => {});
+      const timeoutId = setTimeout(() => settle(false), LIVE_INJECTION_TIMEOUT_MS);
+      const cleanup = (): void => {
+        unsubscribe();
+        clearTimeout(timeoutId);
+      };
+
+      pendingInjectionWatchersRef.current[tabId] = cleanup;
+      checkNow(); // defesa em profundidade: cobre a confirmação já ter acontecido antes desta chamada
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
   // T011 — FR-011: injeta `/model <alias>\r` no stdin da aba `tabId` só com
   // o prompt ocioso. `canInjectLiveCommand` já é o mesmo gate que desabilita
   // o SegmentedControl da toolbar (SessionDetails); reconferido aqui (defesa
   // em profundidade contra a corrida rara clique-vs-mudança-de-estado — o
   // clique nasce de um render que pode já estar um tick atrás do semáforo).
   // Clique na opção já ativa não injeta nada (nenhuma mudança de verdade a
-  // aplicar) — só atualiza se `injectCommand` confirmar que escreveu.
+  // aplicar); uma injeção já em voo na mesma aba também não injeta uma 2ª
+  // por cima (T013 — `pendingInjection`).
+  //
+  // T013 (correção herdada) — NÃO grava `sessionModelEffort` aqui mais: só
+  // marca a troca como pendente e delega a confirmação de verdade pro
+  // watcher orientado a evento (`watchLiveInjection`) — ver comentário de
+  // topo dessas funções e shared/liveSessionInjection.ts pro porquê (o CLI
+  // pode abrir um diálogo interativo de confirmação que o usuário pode
+  // recusar).
   const handleSelectModel = (tabId: string, model: ModelAlias): void => {
     if (sessionModelEffort[tabId]?.model === model) return;
+    if (pendingInjection[tabId]) return;
     if (!canInjectLiveCommand(semaphoreStates[tabId]?.state, aliveTabs[tabId] ?? false)) return;
     const injected = terminalRefs.current[tabId]?.injectCommand(buildModelInjection(model)) ?? false;
     if (!injected) return;
-    setSessionModelEffort((prev) => ({ ...prev, [tabId]: { model, effort: prev[tabId]?.effort ?? DEFAULT_EFFORT_LEVEL } }));
+    setPendingInjection((prev) => ({ ...prev, [tabId]: 'model' }));
+    watchLiveInjection(tabId, 'model', model);
   };
 
-  // T011 — idem `handleSelectModel`, pro campo Esforço (`/effort <level>\r`).
+  // T011/T013 — idem `handleSelectModel`, pro campo Esforço (`/effort <level>\r`).
   const handleSelectEffort = (tabId: string, effort: EffortLevel): void => {
     if (sessionModelEffort[tabId]?.effort === effort) return;
+    if (pendingInjection[tabId]) return;
     if (!canInjectLiveCommand(semaphoreStates[tabId]?.state, aliveTabs[tabId] ?? false)) return;
     const injected = terminalRefs.current[tabId]?.injectCommand(buildEffortInjection(effort)) ?? false;
     if (!injected) return;
-    setSessionModelEffort((prev) => ({ ...prev, [tabId]: { model: prev[tabId]?.model ?? DEFAULT_MODEL_ALIAS, effort } }));
+    setPendingInjection((prev) => ({ ...prev, [tabId]: 'effort' }));
+    watchLiveInjection(tabId, 'effort', effort);
   };
 
   // T011 — degradação do FR-011 quando não há processo vivo pra injetar
@@ -421,6 +611,7 @@ export function App(): React.JSX.Element {
           sessions={sidebarSessions}
           onFocusSession={setActiveTabId}
           onTogglePin={handleTogglePin}
+          onShowPreviousSessions={handleShowPreviousSessions}
         />
 
         <main className={styles.center}>
@@ -449,6 +640,7 @@ export function App(): React.JSX.Element {
               onSelectModel={(model) => handleSelectModel(activeTab.id, model)}
               onSelectEffort={(effort) => handleSelectEffort(activeTab.id, effort)}
               onRestartWithConfig={() => handleRestartWithConfig(activeTab.id)}
+              pendingKind={pendingInjection[activeTab.id]}
             />
           ) : null}
           <div className={styles.terminal}>
@@ -507,6 +699,17 @@ export function App(): React.JSX.Element {
       >
         <p>O processo desta aba será encerrado.</p>
       </Modal>
+
+      {/* T013 — PARTE PRINCIPAL (FR-004, CA-2, ui-spec §5). */}
+      <PreviousSessions
+        open={previousSessionsProject !== null}
+        projectName={previousSessionsProject?.name ?? ''}
+        sessions={previousSessions}
+        loading={loadingPreviousSessions}
+        onClose={handleClosePreviousSessions}
+        onResume={handleResumeSession}
+        onFork={handleForkSession}
+      />
     </div>
   );
 }

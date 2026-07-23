@@ -64,9 +64,45 @@ export interface TerminalPaneProps {
  * (teclado real) já é — o `ptyId` continua nunca subindo pro App.tsx
  * (comentário de `onStateChange` acima), só o efeito de escrever nele.
  */
+/**
+ * Últimas linhas do buffer JÁ RENDERIZADO pelo xterm — generoso o bastante
+ * (200, bem mais que uma tela de terminal normal) pra sobreviver a um
+ * diálogo interativo do CLI (ex.: "Switch model?") sem perder a linha de
+ * confirmação, sem varrer o scrollback inteiro (5000 linhas, `scrollback`
+ * abaixo) a cada checagem.
+ */
+const RENDERED_TAIL_LINES = 200;
+
 export interface TerminalPaneHandle {
   /** Escreve `command` no stdin do PTY desta aba. Devolve `false` (no-op) sem processo vivo — quem chama decide o que fazer com isso (ex.: degradação FR-011 "reiniciar com a flag"). */
   injectCommand: (command: string) => boolean;
+  /**
+   * T013 (correção herdada) — últimas ~200 linhas do buffer JÁ RENDERIZADO
+   * do xterm (`term.buffer.active`). Duas alternativas foram tentadas e
+   * DESCARTADAS rodando contra o CLI real (não fixture) antes desta —
+   * detalhes em shared/liveSessionInjection.ts: (1) o ring buffer do main
+   * process (`window.donel.pty.getPreview`) só fecha linha em `\n`/`\r\n`
+   * real; (2) acumular o BYTE STREAM bruto (ANSI stripado) também falhou —
+   * o achado foi que um redraw incremental (interface tipo Ink) pode
+   * compor o texto final combinando um write NOVO com conteúdo que já
+   * estava na grade do terminal, então "Set model to Sonnet 5" nunca
+   * aparece como substring contígua no stream bruto, só no resultado JÁ
+   * EMULADO pelo parser do xterm. Por isso a fonte tem que ser o buffer
+   * renderizado — e pra não perder um frame TRANSIENTE (a confirmação
+   * também some rápido, sobrescrita pelo próximo redraw), quem chama isso
+   * faz via `onRenderedUpdate` (evento, não poll) logo abaixo, nunca
+   * `setInterval`. `[]` sem terminal montado.
+   */
+  getRenderedLines: () => string[];
+  /**
+   * T013 (correção herdada) — notifica `listener` toda vez que um chunk de
+   * output do PTY terminou de ser processado pelo parser do xterm (usa o
+   * callback de conclusão do `term.write`, não um `setInterval` — só assim
+   * garante ver um frame TRANSIENTE antes do próximo redraw sobrescrever
+   * por cima; ver comentário de `getRenderedLines`). Retorna função de
+   * unsubscribe.
+   */
+  onRenderedUpdate: (listener: () => void) => () => void;
 }
 
 export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(function TerminalPane(
@@ -80,6 +116,10 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   const unsubscribeExitRef = useRef<(() => void) | null>(null);
   const unsubscribeSemaphoreRef = useRef<(() => void) | null>(null);
   const disposedRef = useRef(false);
+  // T013 (correção herdada) — assinantes de `onRenderedUpdate`, notificados a
+  // cada chunk de PTY já processado pelo parser do xterm (ver comentário do
+  // handle acima pro porquê de ser evento, não poll).
+  const renderListenersRef = useRef(new Set<() => void>());
   const [status, setStatus] = useState<PaneStatus>({ kind: 'connecting' });
 
   // Ref pra sempre chamar a versão mais recente do callback sem precisar
@@ -111,6 +151,24 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         if (!ptyIdRef.current) return false;
         window.donel.pty.input(ptyIdRef.current, command);
         return true;
+      },
+      getRenderedLines: (): string[] => {
+        const term = termRef.current;
+        if (!term) return [];
+        const buffer = term.buffer.active;
+        const start = Math.max(0, buffer.length - RENDERED_TAIL_LINES);
+        const lines: string[] = [];
+        for (let i = start; i < buffer.length; i += 1) {
+          const line = buffer.getLine(i);
+          if (line) lines.push(line.translateToString(true));
+        }
+        return lines;
+      },
+      onRenderedUpdate: (listener: () => void): (() => void) => {
+        renderListenersRef.current.add(listener);
+        return () => {
+          renderListenersRef.current.delete(listener);
+        };
       },
     }),
     []
@@ -145,7 +203,15 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         setStatus({ kind: 'running' });
 
         unsubscribeDataRef.current = window.donel.pty.onData(result.ptyId, (data) => {
-          term.write(data);
+          // T013 (correção herdada) — o 2º argumento de `write` é o callback
+          // de CONCLUSÃO do parser (documentado no xterm.js): só dispara
+          // `onRenderedUpdate` depois que ESTE chunk já virou estado real do
+          // buffer (`term.buffer.active`), nunca antes — é o que garante
+          // ver um frame de confirmação transiente ANTES do próximo redraw
+          // sobrescrever por cima (ver comentário do handle acima).
+          term.write(data, () => {
+            renderListenersRef.current.forEach((listener) => listener());
+          });
         });
         unsubscribeExitRef.current = window.donel.pty.onExit(result.ptyId, (info) => {
           ptyIdRef.current = null;
