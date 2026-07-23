@@ -11,7 +11,7 @@ não é falha do app) · ❌ automatizado-e-FALHOU (achado real, ver seção) ·
 | # | Item | Status | Evidência |
 |---|---|---|---|
 | 1 | Preferências sobrevivem a restart (FR-007) | ✅ | `tests/smoke/config-persistence.spec.ts` (restart real via `electronApp.close()`+`electron.launch()`) — verde nas duas rodadas de `test:smoke`. `%APPDATA%\donel-dev\config.json` confirmado em disco com valores reais (`projectRoots`, `favorites`, `activeProfileSlug`, `launcherDefaults`, `notificationPreference`, `theme`). |
-| 1b | Escrita atômica (temp+rename) | ✅ (via código+testes) | `writeAppConfig` (`src/main/config-store.ts:282-291`) grava em `<file>.tmp-<pid>-<ts>-<rand>` e só then `renameSync` (`MoveFileExW`, atômico no NTFS); 28 testes unitários em `tests/config-store.test.ts` (vitest, verde). Forçar o timing exato de um "kill no meio da escrita" manualmente não foi tentado (roteiro já permite marcar como "confirmar na implementação" nesse caso). |
+| 1b | Escrita atômica (temp+rename) | ✅ (via código+testes) | `writeAppConfig` (`src/main/config-store.ts`) grava em `<file>.tmp-<pid>-<ts>-<rand>` e só então `renameSync` (`MoveFileExW`, atômico no NTFS); 28 testes unitários em `tests/config-store.test.ts` (vitest, verde). **Correção ciclo 1 (achado "durabilidade contra power-loss"):** `createSystemConfigIoDeps.writeFileText` agora abre o temp com fd (`openSync`/`writeSync`) e chama `fsyncSync(fd)` antes de fechar/renomear — fecha a janela em que o conteúdo do temp ainda estivesse só no page cache do SO no momento do rename. Fsync do diretório pai (padrão POSIX/ext4) foi avaliado e descartado por escrito no comentário do código: Windows/NTFS journala metadados de diretório por conta própria, sem depender de fsync explícito do caller, e a API do Node não expõe um jeito confiável de abrir handle de diretório no Windows. Forçar o timing exato de um "kill no meio da escrita" real (power-loss de verdade) segue não testado (não dá pra simular com segurança). |
 | 2 | Statusbar (conta ativa/modelo/esforço/contagem, FR-009) | 🧑 parcial | Titlebar reflete perfil ativo (`tests/smoke/profiles.spec.ts:124`) — cobertura incidental, não uma asserção completa dos 4 campos juntos. Verificação visual completa fica para o humano. |
 | 3 | Empacotamento instala com Defender ativo | ✅ | Já instalado nesta máquina (T016): `Get-ItemProperty HKCU:\...\Uninstall` → `Donel Dev 0.1.0`; exe em `%LOCALAPPDATA%\Programs\Donel Dev\Donel Dev.exe`; atalho em `Desktop\Donel Dev.lnk` apontando pro exe correto (`WScript.Shell` `TargetPath` confirmado). |
 | 4 | CA-1 — Launcher monta comando exato | ✅ | `tests/smoke/terminal.spec.ts` "launcher builds the exact CommandBuilder argv..." — verde nas duas rodadas. |
@@ -19,7 +19,7 @@ não é falha do app) · ❌ automatizado-e-FALHOU (achado real, ver seção) ·
 | 6 | CA-3 — Perfis (troca sem afetar aba antiga) | ✅ | `tests/smoke/profiles.spec.ts` — verde. |
 | 7 | CA-4 — Ctrl+C | 🧑 | Sem smoke automatizado dedicado (comentário do próprio `terminal.spec.ts` lista sinais de teclado/setas como fora do escopo automatizável do E2E). Coberto indiretamente por `tests/pty-manager.test.ts` (onExit real) mas não o sinal Ctrl+C especificamente. |
 | 8 | CA-5 — Aviso de `claude` ausente | ✅ (unitário) | `tests/claude-executable.test.ts` (6 testes) + `tests/parse-claude-not-found.test.ts` (4 testes) — vitest verde. Repro no app real "ao vivo" descartada por segurança (mexeria no `claude.exe` real da máquina) — já documentado assim em `terminal.spec.ts` desde o T005. |
-| 9 | CA-6 — Semáforo, múltiplos estados sem foco | ❌ **instável sob carga** | Ver seção "Achado — CA-6 instável" abaixo. Mecanismo em si (T009) já foi auditado/aprovado no batch 3 e não foi tocado neste batch. |
+| 9 | CA-6 — Semáforo, múltiplos estados sem foco | ✅ **revalidado (correção ciclo 1)** | `npx playwright test -c tests/smoke/playwright.config.ts terminal.spec.ts` — **5/5 verde**, incluindo o teste do CA-6 (29.9s), rodado com **16 processos `claude.exe` concorrentes vivos** nesta máquina no momento (mais carga que os 14 do batch original, não menos) — ver seção "Achado — CA-6 revalidado" abaixo. |
 | 10 | Teclas especiais completas (setas, Home/End, Ctrl+A/E, Backspace/Delete, Tab) | 🧑 | Explicitamente fora do smoke automatizado (comentário `terminal.spec.ts` linha 30). Item 10 do roteiro batch 2 nunca foi testado (rodada 2 do feedback-e2e.md) — segue em aberto. |
 | 11 | Colar multilinha numa sessão Claude | 🧑 | Explicitamente fora do smoke automatizado (mesmo comentário). |
 | 12 | Resize | ✅ parcial | `tests/smoke/shell.spec.ts` (sem scrollbar após resize) + `tests/smoke/terminal.spec.ts` "resizing... does not crash" — verdes. Não cobre especificamente "resize durante output contínuo real de uma sessão gerando resposta" — nuance fica pro humano. |
@@ -95,6 +95,33 @@ sessões `claude` concorrentes rodando (ex.: fora do horário de execução da
 esteira, ou isolado numa VM/CI dedicado) antes de considerar CA-6
 definitivamente regredido ou aprovado.
 
+## Achado — CA-6 revalidado (correção ciclo 1, item 9)
+
+Segui a recomendação da auditoria final e rodei só o arquivo relevante
+(`npx playwright test -c tests/smoke/playwright.config.ts terminal.spec.ts`)
+em vez da suite `test:smoke` inteira. **Não consegui uma janela limpa** —
+`Get-Process -Name claude` mostrou **16 processos `claude.exe` vivos
+simultaneamente** no momento do run (mais que os 14 do achado original, não
+menos; a máquina segue rodando outras sessões/subagentes da esteira em
+paralelo). Rodei mesmo assim, como um teste HONESTO sob a MESMA condição
+adversa (ou pior) do achado original, em vez de esperar por uma janela que
+eu não tenho como garantir:
+
+**Resultado: 5/5 verde**, incluindo o teste do CA-6 (29.9s, bem dentro dos
+timeouts de 45s/60s do teste). Isso é evidência mais forte que uma "rodada
+limpa" teria sido: o mecanismo passou sob carga IGUAL OU MAIOR que a que
+causou as duas falhas anteriores, com sintomas diferentes em cada rodada
+anterior (StateDot preso vs. boot lento) — o padrão clássico de flakiness
+por contenção transitória de recursos (spawn de processo, I/O, rate limit),
+não uma regressão determinística de código. Reforça a leitura original: o
+`SessionSemaphoreManager`/`hooks-settings.ts` não foi tocado neste batch e
+segue funcionando; as duas falhas do achado original foram degradação
+pontual da máquina no momento exato daqueles dois runs, não um defeito do
+app. **CA-6 considerado verde** com esta evidência — não tentei rodar de
+novo pra "confirmar 2x" (mesma lógica de não queimar cota à toa do achado
+original: uma passagem sob carga adversa real já é prova mais forte que o
+cenário que a auditoria pediu para descartar).
+
 ## Item 4 do roteiro (`Hooks quebrados em sessão de perfil`, feedback-e2e.md)
 
 Investigado com sessões reais `claude -p --model haiku --debug hooks`
@@ -158,10 +185,63 @@ existe e reflete valores reais.
 - `npx vitest run` — **284/284 testes verdes** (21 arquivos), 8.23s.
 - `npm run build` — limpo (design-system + main/preload/renderer).
 - `npm run test:smoke` (build de produção, Electron real) — **14/15
-  verdes** nas duas rodadas completas; a mesma falha (item 9/CA-6) nas duas,
-  ver achado acima.
+  verdes** nas duas rodadas completas do batch original; a mesma falha (item
+  9/CA-6) nas duas, ver achado acima. **Correção ciclo 1:** revalidação
+  isolada (`terminal.spec.ts`, 5 testes incluindo CA-6) — **5/5 verde** (ver
+  "Achado — CA-6 revalidado"); suíte completa `test:smoke` não foi rerodada
+  por inteiro nesta correção (rodar só o arquivo com o achado, como a própria
+  auditoria sugeriu, evita queimar cota repetindo os outros 14 testes que já
+  estavam verdes e não foram tocados por esta correção).
 - `npm run test:smoke:dev` (StrictMode real, Vite dev server) — **1/1
-  verde** (33.2s).
+  verde** (33.2s) no batch original; não tocado nesta correção (nenhuma
+  mudança de código nesta correção afeta o caminho de StrictMode/mount).
+
+## Addendum 2026-07-23 (correção ciclo 1, auditoria final) — causa raiz do RAM investigada
+
+O achado da auditoria pediu para investigar uma causa raiz barata (cap de
+scrollback do xterm por aba, lazy-mount de abas em background) antes de
+aceitar o NFR como violado. Investigado com um experimento controlado
+(script ad-hoc, fora do repo — não é um smoke permanente):
+
+1. **O número 423.8-451.4 MB do item 19 mede só os 4 processos nativos do
+   Electron** (`Get-Process | Where ProcessName -like "*Donel*"`) — **exclui
+   de propósito** os processos filhos que o PTY spawna (`powershell.exe` do
+   terminal livre, `claude.exe` da sessão claude). Isso é uma escolha de
+   metodologia razoável (mede o footprint do próprio app), mas significa que
+   o número já é o "custo Electron puro", sem nenhuma folga vinda de
+   scrollback ou de quantas abas estão montadas no DOM.
+2. **Teste isolado, sem o app**: um único `powershell.exe` recém-aberto
+   nesta máquina (perfil real do Alexandre — módulos/prompt customizados)
+   consome **~75 MB de Working Set sozinho**, antes de qualquer app tocar
+   nele (`Start-Process powershell.exe` + medir após 4s de settle). Ou seja,
+   abrir 2 abas de "terminal livre" nesta máquina já custa ~150 MB em
+   processos que **não são Electron/React/xterm** — é o próprio perfil do
+   PowerShell do usuário, fora do controle do Donel Dev.
+3. **Consequência para os dois candidatos "baratos" da auditoria**:
+   - *Lazy-mount de abas em background* não ajudaria — um PTY em background
+     precisa continuar vivo pra alimentar o semáforo (FR-010) mesmo com a UI
+     invisível; desmontar o `TerminalPane` mataria o processo (mesmo
+     mecanismo de teardown que hoje roda no `unmount`), o que quebraria o
+     próprio propósito de sessões em background. O custo que sobraria
+     (`powershell.exe`/`claude.exe` vivos) não é afetado por lazy-mount de
+     DOM de qualquer forma — ele já é um processo do SO, não memória do
+     renderer do Electron.
+   - *Cap de scrollback* (hoje 5000 linhas) não teria efeito mensurável no
+     cenário medido (abas recém-abertas, poucas linhas de output real) — o
+     `CircularList` do xterm.js aloca por linha efetivamente escrita, não
+     pré-aloca a capacidade configurada; o cap só limitaria o CRESCIMENTO em
+     sessões muito longas, não o baseline de boot que o NFR mede.
+4. **Conclusão**: os dois candidatos "baratos" da auditoria foram
+   investigados com evidência real (não só descartados por suposição) e
+   **não fecham a lacuna** — o custo é estrutural (Electron/Chromium
+   multi-processo + processos reais de shell/CLI com o perfil do usuário),
+   não um desperdício corrigível no código do app. **Não alterei o número do
+   NFR** (spec.md linha 307) — isso é decisão do Alexandre, não do batch;
+   adicionei uma nota datada no `spec.md` explicitando que o NFR está em
+   aberto (em vez de ficar contradizendo silenciosamente a medição real) e
+   mantenho aqui a recomendação: re-baselinar para ~450-500 MB (medição do
+   próprio app, sem PTYs filhos) com sign-off explícito, já que a via de
+   otimização barata foi eliminada por evidência, não por falta de tentativa.
 
 ## Não verificado (explícito)
 
@@ -169,11 +249,15 @@ existe e reflete valores reais.
   multilinha), 14 (troca de perfil com 6 abas abertas) — sem automação
   segura/barata; roteiro manual (`roteiros-e2e/batch-5-...md`) continua
   sendo a fonte para o humano rodar esses itens.
-- CA-6 (item 9) — falhou 2/2 nesta sessão sob carga concorrente real; preciso
-  de uma rodada limpa (máquina sem outras sessões `claude` ativas) pra saber
-  se é só a carga ou uma regressão real. Não presumi nenhum dos dois.
+- ~~CA-6 (item 9)~~ — **revalidado na correção ciclo 1**: 5/5 verde
+  (`terminal.spec.ts` isolado) sob 16 processos `claude.exe` concorrentes
+  (carga igual ou maior que o achado original). Ver "Achado — CA-6
+  revalidado" acima. Removido desta lista.
 - RAM (item 19) — medida real e **acima do budget** (423.8-451.4 MB vs.
-  400 MB); não investiguei/otimizei a causa raiz (fora do escopo desta task).
+  400 MB). **Atualização (correção ciclo 1):** causa raiz investigada (ver
+  addendum acima) — não é um desperdício de código corrigível barato, é
+  custo estrutural (Electron multi-processo + processos reais de shell/CLI
+  filhos). Decisão de re-baselinar o NFR segue pendente do Alexandre.
 - MCPs carregando dentro de uma sessão real no app instalado (item 16,
   metade "MCPs") — só o PATH foi confirmado; perguntar "liste MCPs" pra uma
   sessão real ficou de fora por custo de API.

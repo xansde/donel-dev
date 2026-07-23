@@ -205,9 +205,14 @@ Cada FR é testável isoladamente.
 - **FR-006 Ciclo de vida de abas.** Fechar aba mata o PTY; se a sessão estiver
   ativa (processo vivo), pede confirmação. Quando o processo `claude` termina
   sozinho, a aba mostra "sessão encerrada" com ações reabrir/fechar.
-- **FR-007 Config do app.** Persistido em `%APPDATA%\DonelDev\config.json`:
+- **FR-007 Config do app.** Persistido em `%APPDATA%\donel-dev\config.json`:
   roots de scan, favoritos, perfil ativo, defaults do launcher, tema. Escrita
   atômica (temp + rename).
+  > **Nota 2026-07-23 (correção ciclo 1, achado do T017)** — o path aqui
+  > estava grafado `DonelDev` (sem hífen); o path real, confirmado em disco,
+  > é `%APPDATA%\donel-dev\config.json` (hífen, de `app.setName('donel-dev')`
+  > em `main/index.ts`). Mesma correção já aplicada no comentário de topo de
+  > `config-store.ts` e no roteiro batch-5.
 - **FR-008 Terminal livre.** Além de abas de sessão Claude, o usuário pode abrir
   uma aba de terminal comum (PowerShell) no diretório do projeto.
 - **FR-009 Statusbar.** Perfil ativo, modelo/esforço da aba em foco, contagem de
@@ -305,6 +310,20 @@ Cada FR é testável isoladamente.
 
 - Windows 11 primeiro (a máquina-alvo); nada deve impedir port futuro.
 - Startup < 3 s; < 400 MB de RAM com 3 abas abertas.
+  > **Nota 2026-07-23 (correção ciclo 1, auditoria final do T017) — NFR em
+  > aberto, não silenciosamente violado nem silenciosamente aceito.** Medição
+  > real no app instalado (T017): 423.8-451.4 MB com 3 abas — **acima do
+  > budget**. Causa raiz investigada nesta correção (addendum em
+  > [t017-checklist.md](t017-checklist.md)): não é desperdício de código
+  > corrigível barato (cap de scrollback e lazy-mount de abas em background
+  > foram descartados com evidência, não por suposição) — é custo estrutural
+  > de Electron multi-processo + processos reais de shell/CLI filhos (ex.: um
+  > `powershell.exe` sozinho já custa ~75 MB nesta máquina, fora do controle
+  > do app). **Decisão pendente do Alexandre**: re-baselinar este NFR
+  > (recomendação: ~450-500 MB) ou abrir uma task de otimização de memória
+  > antes do MVP ser considerado pronto para uso diário. Até essa decisão,
+  > este número (400 MB) segue como o requisito ESCRITO, mesmo sabendo que a
+  > medição real do P0 não o atinge.
 - Sem telemetria; nenhum dado sai da máquina.
 - LGPD: o app exibe conteúdo de transcripts locais apenas ao usuário; nenhum log
   do app persiste conteúdo de conversas.

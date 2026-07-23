@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
 import type { AppConfigDto, LauncherDefaultsDto, NotificationPreference } from '../shared/config';
@@ -116,7 +116,35 @@ export function createSystemConfigIoDeps(): ConfigIoDeps {
         return null;
       }
     },
-    writeFileText: (path, content) => writeFileSync(path, content, 'utf8'),
+    // T017 correção ciclo 1 (achado "durabilidade contra power-loss") —
+    // `renameSync` já torna a TROCA de arquivo atômica pra quem lê
+    // (leitores nunca veem um `config.json` truncado), mas sem fsync do
+    // arquivo temp antes do rename, os bytes podem ainda estar só no cache
+    // de página do SO — uma queda de energia entre o `write` e o flush do
+    // filesystem pode perder a ÚLTIMA escrita (o arquivo final reverte pra
+    // uma versão anterior, não fica corrompido/truncado). `fsyncSync` força
+    // o SO a persistir o conteúdo do temp em disco ANTES do rename, o que
+    // fecha essa janela para o conteúdo em si.
+    // Fsync do DIRETÓRIO pai (padrão comum em POSIX/ext4, onde a entrada de
+    // diretório do rename também precisa de fsync explícito) foi avaliado e
+    // DESCARTADO aqui: o app é Windows-primeiro (NFR, spec.md) e o NTFS já
+    // journala metadados de diretório (incluindo renomes) como parte do seu
+    // próprio log de transações — ao contrário do ext4, não depende de um
+    // fsync explícito do caller pra isso. Abrir um handle de diretório via
+    // `fs.openSync` no Windows também não é uma operação suportada de forma
+    // confiável pela API do Node (não há `O_DIRECTORY` real). Garantia real
+    // desta implementação: conteúdo não-truncado (rename atômico) + conteúdo
+    // durável contra power-loss (fsync do arquivo). NÃO é uma garantia de
+    // durabilidade da entrada de diretório em si além do que o NTFS já dá.
+    writeFileText: (path, content) => {
+      const fd = openSync(path, 'w');
+      try {
+        writeSync(fd, content, null, 'utf8');
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+    },
     renameFile: (fromPath, toPath) => renameSync(fromPath, toPath),
     mkdirSync: (path) => mkdirSync(path, { recursive: true }),
     unlinkFile: (path) => {
@@ -283,6 +311,13 @@ export function readAppConfig(filePath: string, defaults: AppConfig, legacy: Leg
  * `MOVEFILE_REPLACE_EXISTING`, o próprio libuv do Node). Nome do temp inclui
  * pid+timestamp — duas escritas (mesmo daquele improvável de duas instâncias
  * do app rodando ao mesmo tempo) não colidem no MESMO arquivo temporário.
+ *
+ * T017 correção ciclo 1 — `io.writeFileText` (impl real,
+ * `createSystemConfigIoDeps`) faz `fsync` do arquivo temp ANTES deste
+ * `rename`, então a garantia cobre tanto "nunca truncado" (rename atômico)
+ * quanto "conteúdo durável contra power-loss" (fsync). Ver comentário do
+ * `writeFileText` pra por que fsync do DIRETÓRIO pai não se aplica aqui
+ * (Windows/NTFS, não POSIX/ext4).
  */
 export function writeAppConfig(filePath: string, config: AppConfig, io: ConfigIoDeps): void {
   const dir = dirname(filePath);
