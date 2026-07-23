@@ -52,7 +52,11 @@
 .plainRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  /* FIX (feedback E2E rodada 4, item 8) — antes `justify-content:
+     space-between` com só 2 filhos (nome, check opcional); agora um 3º
+     filho (HeadroomSlot) sempre presente entre os dois — `gap` +
+     `.plainName` com `flex: 1` empurra headroom/check pra direita sem o
+     espaçamento ficar estranho com 3 itens. */
   gap: var(--space-1);
   width: 100%;
   padding: 4px 2px;
@@ -70,9 +74,41 @@
 }
 
 .plainName {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* FIX (feedback E2E rodada 4, item 8) — slot de headroom pro branch "nome
+   genérico" (perfis fora da convenção "Tecnologia Claude {n}", incluindo
+   SEMPRE o Principal) — mesmas cores por tier que o AccountBadge do
+   design-system usa (design-system.md §2: verde/dourado/vermelho/cinza),
+   reaproveitando os tokens `--headroom-*` já globais (mesmos usados por
+   `.doctorWarning`/`.doctorOk` acima). */
+.headroomText {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+  font-weight: var(--weight-semibold);
+}
+
+.tier-high {
+  color: var(--headroom-high);
+}
+
+.tier-mid {
+  color: var(--headroom-mid);
+}
+
+.tier-low {
+  color: var(--headroom-low);
+}
+
+.tier-none {
+  color: var(--headroom-none);
+  font-family: var(--font-ui);
+  font-weight: var(--weight-regular);
 }
 
 .doctorWarning {

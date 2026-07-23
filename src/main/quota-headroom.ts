@@ -66,6 +66,42 @@ export function parseQuotaAxiHeadroom(output: QuotaAxiOutput | null | undefined)
   return null;
 }
 
+/**
+ * FIX (feedback E2E rodada 4, item 8, parte a) — evidência real coletada
+ * pelo Alexandre: `npx -y quota-axi --provider claude --json` standalone
+ * devolveu JSON VÁLIDO no stdout (percentUsed 32, five_hour) com EXIT CODE
+ * 255 (não é um código documentado do quota-axi — SKILL.md só documenta
+ * 0/1/2 — indício de que é ruído do wrapper `npx`/`cmd.exe` no Windows, não
+ * do próprio quota-axi). INVESTIGAÇÃO desta task: o `close` handler abaixo
+ * JÁ NÃO checava `code` antes deste fix (só tentava `JSON.parse(stdout)`
+ * incondicionalmente) — a causa raiz do "headroom sumiu" no app não era
+ * esta função (era 100% a UI, ver ProfileSwitcher.tsx `HeadroomSlot`).
+ * Ainda assim, endurece explicitamente o contrato pedido pela task
+ * ("validar pelo CONTEÚDO, nunca pelo exit code"): `parseJsonPayload`
+ * abaixo tenta `JSON.parse` direto e, se falhar, tenta extrair o primeiro
+ * objeto `{...}` balanceado do stdout — defesa contra ruído
+ * extra (warning/prompt do npx) antes/depois do JSON de verdade que
+ * poderia quebrar um `JSON.parse` direto em outra máquina/versão do npx.
+ * `code`/`signal` do processo NUNCA decidem sucesso/falha — só o conteúdo.
+ */
+function parseJsonPayload(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const start = raw.indexOf('{');
+    if (start === -1) throw new Error('quota-axi: nenhum objeto JSON encontrado no stdout');
+    let depth = 0;
+    for (let i = start; i < raw.length; i += 1) {
+      if (raw[i] === '{') depth += 1;
+      else if (raw[i] === '}') {
+        depth -= 1;
+        if (depth === 0) return JSON.parse(raw.slice(start, i + 1));
+      }
+    }
+    throw new Error('quota-axi: objeto JSON no stdout está incompleto/desbalanceado');
+  }
+}
+
 /** FR-012: timeout de 3s por perfil (as leituras dos N perfis rodam em paralelo — ver `readAllProfilesHeadroom` — um perfil lento nunca trava os demais). */
 const DEFAULT_TIMEOUT_MS = 3000;
 
@@ -119,9 +155,13 @@ export function readQuotaAxiHeadroom(options: RunQuotaAxiOptions): Promise<numbe
       stdout += chunk.toString('utf8');
     });
     child.on('error', () => finish(null));
-    child.on('close', () => {
+    // `code`/`signal` recebidos de propósito (documentam a decisão) mas
+    // NUNCA usados pra decidir sucesso/falha — só o conteúdo de `stdout`
+    // decide (ver comentário de `parseJsonPayload` acima, fix rodada 4
+    // item 8: exit code do quota-axi via npx no Windows não é confiável).
+    child.on('close', (_code, _signal) => {
       try {
-        finish(parseQuotaAxiHeadroom(JSON.parse(stdout) as QuotaAxiOutput));
+        finish(parseQuotaAxiHeadroom(parseJsonPayload(stdout) as QuotaAxiOutput));
       } catch {
         finish(null);
       }

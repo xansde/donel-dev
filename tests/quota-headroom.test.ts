@@ -1,5 +1,19 @@
-import { describe, expect, it, vi } from 'vitest';
-import { HeadroomCache, parseQuotaAxiHeadroom, readAllProfilesHeadroom, type QuotaAxiOutput } from '../src/main/quota-headroom';
+import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { HeadroomCache, parseQuotaAxiHeadroom, readAllProfilesHeadroom, readQuotaAxiHeadroom, type QuotaAxiOutput } from '../src/main/quota-headroom';
+
+// Mock de `node:child_process` — só pro bloco `readQuotaAxiHeadroom (I/O)`
+// abaixo (fix rodada 4 item 8, parte a). `vi.mock` é hoisted pelo vitest
+// pro topo do módulo automaticamente (mesmo espírito do jest) — a ordem
+// textual com o `import { spawn }` acima não importa.
+vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
+
+/** Fake mínimo de `ChildProcess` — só o que `readQuotaAxiHeadroom` usa (`stdout`, `on('error'|'close')`, `kill`). */
+class FakeChildProcess extends EventEmitter {
+  readonly stdout = new EventEmitter();
+  readonly kill = vi.fn();
+}
 
 // T014 — FR-012 (headroom por perfil via quota-axi). `parseQuotaAxiHeadroom`
 // é a peça mais crítica (achado desta task: cache global do quota-axi pode
@@ -152,5 +166,58 @@ describe('readAllProfilesHeadroom (orquestração, reader fake)', () => {
     );
 
     expect(result).toEqual({ ok: 88, quebrado: null });
+  });
+});
+
+describe('readQuotaAxiHeadroom (I/O, spawn mockado) — fix rodada 4 item 8, parte a', () => {
+  afterEach(() => {
+    vi.mocked(spawn).mockReset();
+  });
+
+  it('REGRA DURA (achado real, evidência do Alexandre): exit code 255 do quota-axi com JSON válido no stdout ainda retorna o headroom — exit code NUNCA decide sucesso/falha, só o conteúdo', async () => {
+    const fake = new FakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(fake as never);
+
+    const promise = readQuotaAxiHeadroom({ configDir: undefined });
+
+    const payload: QuotaAxiOutput = {
+      providers: [
+        {
+          provider: 'claude',
+          windows: [{ id: 'five_hour', percentRemaining: 68 }], // percentUsed 32 no payload real reportado
+          state: { status: 'fresh', stale: false },
+        },
+      ],
+    };
+    fake.stdout.emit('data', Buffer.from(JSON.stringify(payload)));
+    fake.emit('close', 255, null); // exit code real reportado — não documentado pelo quota-axi (SKILL.md só lista 0/1/2)
+
+    await expect(promise).resolves.toBe(68);
+  });
+
+  it('exit code 0 mas stdout vazio/não-JSON continua null — validação é pelo CONTEÚDO, não pelo exit code (não é "exit 0 = sempre confia")', async () => {
+    const fake = new FakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(fake as never);
+
+    const promise = readQuotaAxiHeadroom({ configDir: undefined });
+    fake.stdout.emit('data', Buffer.from('não é json'));
+    fake.emit('close', 0, null);
+
+    await expect(promise).resolves.toBeNull();
+  });
+
+  it('exit code 255 com ruído (warning do wrapper npx) antes/depois do JSON — extrai o objeto balanceado em vez de desistir no primeiro JSON.parse', async () => {
+    const fake = new FakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(fake as never);
+
+    const promise = readQuotaAxiHeadroom({ configDir: undefined });
+    const payload: QuotaAxiOutput = {
+      providers: [{ provider: 'claude', windows: [{ id: 'five_hour', percentRemaining: 41 }], state: { stale: false } }],
+    };
+    const noisy = `npm warn exec ruído antes\n${JSON.stringify(payload)}\nnpm warn algum aviso depois\n`;
+    fake.stdout.emit('data', Buffer.from(noisy));
+    fake.emit('close', 255, null);
+
+    await expect(promise).resolves.toBe(41);
   });
 });

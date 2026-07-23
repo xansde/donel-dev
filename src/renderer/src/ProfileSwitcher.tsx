@@ -1,4 +1,4 @@
-import { AccountBadge, Button, Modal, TextInput } from '@donel-dev/design-system';
+import { AccountBadge, Button, getHeadroomTier, Modal, TextInput } from '@donel-dev/design-system';
 import { Check } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import type { ProfileDoctorReportDto, ProfileHeadroomMap, ProfileSummaryDto } from '../../shared';
@@ -19,17 +19,46 @@ import styles from './ProfileSwitcher.module.css';
 // ou perfis de teste como "spike-test"/"e2e-profile-test", que o smoke desta
 // task cria pra provar isolamento sem exigir login humano). `parseAccountNumber`
 // (shared/profiles.ts) decide: nome bate com a convenção -> AccountBadge de
-// verdade; senão -> rótulo genérico com o nome cru (mesma cor de headroom).
+// verdade; senão -> rótulo genérico com o nome cru + `HeadroomSlot` (mesmas
+// cores de tier — ver comentário do `HeadroomSlot` abaixo, fix rodada 4 item 8).
 
 const EMPTY_PROFILES: ProfileSummaryDto[] = [{ name: 'Principal', slug: 'principal', isPrimary: true, active: true }];
+
+/**
+ * FIX (feedback E2E rodada 4, item 8) — CAUSA RAIZ REAL: `readQuotaAxiHeadroom`
+ * (main/quota-headroom.ts) já ignorava o exit code do `quota-axi` (o
+ * `close` handler nunca checou `code`, só o conteúdo de `stdout`) — essa
+ * parte não estava quebrada (endurecida mesmo assim, ver comentário lá).
+ * O bug real e 100% reproduzível estava AQUI: `parseAccountNumber` só
+ * reconhece nomes "Tecnologia Claude {n}"; qualquer perfil fora dessa
+ * convenção (INCLUINDO o perfil "Principal", que é o único que TODO
+ * usuário tem por padrão) caía no branch de "nome genérico" — que nunca
+ * renderizava headroom nenhum (nem `%`, nem `—`), nem no badge do
+ * titlebar, nem na linha do dropdown, nem no rótulo da Statusbar. Como
+ * "Principal" é o caso mais comum, a cota parecia não existir em lugar
+ * nenhum ("descoberta hoje é difícil"). Fix: este slot SEMPRE renderiza
+ * (percent ou "—", nunca omite a linha), reaproveitado nos dois branches
+ * de nome genérico — módulo top-level (não inline no corpo de
+ * ProfileSwitcher), mesma lição do fix da input da Tarefa 1.
+ */
+function HeadroomSlot({ percent }: { percent: number | null }): React.JSX.Element {
+  const tier = getHeadroomTier(percent);
+  return (
+    <span className={[styles.headroomText, styles[`tier-${tier}`]].join(' ')} data-testid="profile-headroom-slot">
+      {percent === null ? '—' : `${percent}%`}
+    </span>
+  );
+}
 
 export interface ProfileSwitcherProps {
   /**
    * Reporta pra cima um rótulo pronto pra exibição ("Tecnologia Claude 3 ·
-   * 62%" ou o nome cru quando não segue a convenção) — a Statusbar (ui-spec
-   * §2 zona 5: "conta ativa") não tem acesso direto a `window.donel.profiles`
-   * (App.tsx não busca perfil nenhum) e este componente já é quem faz esse
-   * fetch; evita duplicar a chamada IPC só pra alimentar dois lugares.
+   * 62%" ou "Principal · —" quando o nome não segue a convenção — fix
+   * rodada 4 item 8: o `%`/"—" agora entra SEMPRE, não só pro nome
+   * convencional) — a Statusbar (ui-spec §2 zona 5: "conta ativa") não tem
+   * acesso direto a `window.donel.profiles` (App.tsx não busca perfil
+   * nenhum) e este componente já é quem faz esse fetch; evita duplicar a
+   * chamada IPC só pra alimentar dois lugares.
    */
   onActiveProfileLabelChange?: (label: string) => void;
 }
@@ -125,10 +154,19 @@ export function ProfileSwitcher({ onActiveProfileLabelChange }: ProfileSwitcherP
   const activeAccountNumber = activeProfile ? parseAccountNumber(activeProfile.name) : null;
   const activeHeadroom = activeProfile ? (headroom[activeProfile.slug] ?? null) : null;
 
+  // FIX (feedback E2E rodada 4, item 8, parte c) — antes o `percentText` só
+  // entrava no rótulo pra nomes que batiam a convenção "Tecnologia Claude
+  // {n}"; pro caso mais comum ("Principal", sem convenção) o rótulo da
+  // Statusbar nunca mostrava cota nenhuma. Agora o `percentText` (`%` ou
+  // "—") entra SEMPRE, dando visibilidade da cota no rodapé mesmo pro
+  // perfil default.
   useEffect(() => {
     if (!activeProfile) return;
     const percentText = activeHeadroom === null ? '—' : `${activeHeadroom}%`;
-    const label = activeAccountNumber !== null ? `Tecnologia Claude ${activeAccountNumber} · ${percentText}` : activeProfile.name;
+    const label =
+      activeAccountNumber !== null
+        ? `Tecnologia Claude ${activeAccountNumber} · ${percentText}`
+        : `${activeProfile.name} · ${percentText}`;
     onActiveProfileLabelChange?.(label);
   }, [activeProfile, activeAccountNumber, activeHeadroom, onActiveProfileLabelChange]);
 
@@ -141,6 +179,7 @@ export function ProfileSwitcher({ onActiveProfileLabelChange }: ProfileSwitcherP
         ) : (
           <button type="button" className={styles.genericBadge} onClick={() => setOpen(true)}>
             <span>{activeProfile?.name ?? 'Perfil'}</span>
+            <HeadroomSlot percent={activeHeadroom} />
           </button>
         )}
       </span>
@@ -166,6 +205,7 @@ export function ProfileSwitcher({ onActiveProfileLabelChange }: ProfileSwitcherP
                   ) : (
                     <button type="button" className={styles.plainRow} onClick={() => handleActivate(profile.slug)}>
                       <span className={styles.plainName}>{profile.name}</span>
+                      <HeadroomSlot percent={percent} />
                       {profile.active ? <Check size={14} strokeWidth={1.5} aria-hidden="true" /> : null}
                     </button>
                   )}

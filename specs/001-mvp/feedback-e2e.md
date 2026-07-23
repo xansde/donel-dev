@@ -106,7 +106,7 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
 ## 2026-07-23 — rodada 4 (roteiro batch 4 na worktree e2e)
 
 - [x] **Roteiro E2E batch 4**: passos 1–4, 6–7 e 9 aprovados pelo humano.
-- [ ] **BUG — input do nome do perfil perde o foco enquanto digita** (item 5;
+- [x] **BUG — input do nome do perfil perde o foco enquanto digita** (item 5;
   → **correção pós-gate batch 5**): ao criar perfil no ProfileSwitcher, o
   campo de nome "desseleciona" a cada instante, tornando a digitação muito
   chata. Causa provável: re-render periódico do dropdown/Modal recriando o
@@ -114,7 +114,22 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
   definido inline ou key instável). Corrigir (memoizar/estabilizar o input,
   pausar refresh de quota com o form aberto) + teste que digita nome longo
   e assere foco contínuo.
-- [ ] **BUG — headroom de quota não aparece no dropdown de perfis** (item 8;
+  **Resolvido 2026-07-23 (pós-gate)** — a hipótese da auditoria (refresh
+  periódico recriando o input) estava ERRADA: o ProfileSwitcher não tem
+  nenhum polling. CAUSA RAIZ REAL: `onClose={() => setOpen(false)}` do
+  `Modal` era uma arrow function inline — identidade NOVA a cada tecla
+  digitada (cada tecla chama `setNewProfileName` → re-render). O
+  `useEffect(..., [open, onClose])` de foco-trap do `Modal.tsx`
+  (design-system) via a dependência `onClose` mudar a CADA tecla → rodava
+  o cleanup (refoca o elemento anterior à abertura do modal) e reexecutava
+  o efeito (`getFocusable()[0].focus()`) — `getFocusable()[0]` é o
+  botão/AccountBadge da PRIMEIRA linha de perfil (a `<ul>` vem antes do
+  form no JSX), nunca o `TextInput`. Fix: `onClose` estabilizado com
+  `useCallback` em `ProfileSwitcher.tsx` (`handleCloseModal`). Teste:
+  `tests/smoke/profile-switcher-focus.spec.ts` (novo) — digita um nome
+  longo caractere a caractere, assere `document.activeElement === input`
+  depois de CADA tecla e valor final completo.
+- [x] **BUG — headroom de quota não aparece no dropdown de perfis** (item 8;
   → **correção pós-gate batch 5**): o modal "Perfis de conta" lista os
   perfis (doctor funcionando: "Junctions com problema"/"Perfil OK") mas SEM
   nenhum % nem "—". Evidência: `npx -y quota-axi --provider claude --json`
@@ -126,6 +141,30 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
   sempre mostra o slot ("—" quando faltar) + teste com fixture exit 255.
   UX adicional: mostrar o % do perfil ativo no badge do titlebar e/ou
   statusbar (descoberta hoje é difícil).
+  **Resolvido 2026-07-23 (pós-gate)** — investigação encontrou a causa raiz
+  REAL diferente da suspeita documentada: `readQuotaAxiHeadroom`
+  (main/quota-headroom.ts) **já não checava** `code` no handler de `close`
+  antes deste fix (só tentava `JSON.parse(stdout)` incondicionalmente) —
+  essa parte não era a causa do bug (endurecida mesmo assim: novo
+  `parseJsonPayload` com fallback de extração do objeto `{...}` balanceado
+  pra tolerar ruído de wrapper `npx`/Windows antes/depois do JSON de
+  verdade; `code`/`signal` documentados como recebidos e nunca usados pra
+  decidir sucesso/falha). CAUSA RAIZ REAL e 100% reproduzível: em
+  `ProfileSwitcher.tsx`, `parseAccountNumber` só reconhece nomes
+  "Tecnologia Claude {n}" — qualquer perfil fora da convenção (o que
+  SEMPRE inclui o perfil "Principal", único que todo usuário tem por
+  padrão) caía no branch de "nome genérico", que nunca renderizava
+  headroom nenhum (nem `%`, nem `—`) em NENHUM dos 3 lugares (badge do
+  titlebar, linha do dropdown, rótulo da Statusbar) — por isso "não achei
+  onde ver a cota" mesmo o headroom técnico estando disponível. Fix:
+  componente `HeadroomSlot` (top-level, sempre renderiza `%` ou `—`)
+  reaproveitado no badge do titlebar e na linha do dropdown; rótulo da
+  Statusbar (`onActiveProfileLabelChange`) agora inclui `%`/`—` SEMPRE, não
+  só pro nome convencional. Testes: 3 casos novos em
+  `tests/quota-headroom.test.ts` (`readQuotaAxiHeadroom` com `spawn`
+  mockado — exit 255 + JSON válido retorna o headroom; exit 0 + stdout
+  inválido continua `null`; exit 255 + ruído em volta do JSON extrai o
+  objeto balanceado).
 - [ ] **P1 — troca automática de conta por headroom** (ideia da thread do
   Slack #C0AMDQTDFGF, script `switch_account.py` da Amanda Gois, link no
   Drive na thread): monitorar uso e trocar sozinho para a conta com menos
