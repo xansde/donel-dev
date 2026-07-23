@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import path, { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T013 (UI de sessões anteriores, FR-004/CA-2).
 //
@@ -136,6 +137,7 @@ function removeSessionFile(filePath: string | undefined): void {
 
 let electronApp: ElectronApplication;
 let window: Page;
+let userDataDir: string;
 let resumeSeed: SyntheticSessionSeed;
 let forkSeed: SyntheticSessionSeed;
 let forkOriginalContent: string;
@@ -145,13 +147,15 @@ test.beforeAll(async () => {
   forkSeed = seedSyntheticSession(`MARCADOR-SMOKE-FORK-${randomUUID().slice(0, 8)}`);
   forkOriginalContent = readFileSync(forkSeed.filePath, 'utf8');
 
-  electronApp = await electron.launch({ args: [APP_MAIN], cwd: APP_CWD });
+  userDataDir = createIsolatedUserDataDir('previous-sessions');
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
 });
 
 test.afterAll(async () => {
   await electronApp.close();
+  removeIsolatedUserDataDir(userDataDir);
   removeSessionFile(resumeSeed?.filePath);
   removeSessionFile(forkSeed?.filePath);
 });

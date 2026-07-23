@@ -1,7 +1,14 @@
 import { Button, Modal, SplitButton, StatusBar, TerminalTab } from '@donel-dev/design-system';
 import { Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AppConfigDto, NotificationPreference, ProjectInfo, SemaphoreStateInfo, SessionSummaryDto } from '../../shared';
+import type {
+  AppConfigDto,
+  NotificationPreference,
+  ProfileHeadroomMap,
+  ProjectInfo,
+  SemaphoreStateInfo,
+  SessionSummaryDto,
+} from '../../shared';
 import {
   buildClaudeArgs,
   DEFAULT_EFFORT_LEVEL,
@@ -17,6 +24,7 @@ import {
 } from '../../shared/liveSessionInjection';
 import { sortProjects } from '../../shared';
 import { computeSessionAccountLabel } from '../../shared/sessionAccountLabel';
+import { isTrustDialogVisible } from '../../shared/trustDialog';
 import { sortSessions } from '../../shared/sessionOrdering';
 import { nextAttentionSessionId, sessionIdAtPosition } from '../../shared/sessionShortcuts';
 import { sessionTabName } from '../../shared/sessions';
@@ -130,6 +138,14 @@ export function App(): React.JSX.Element {
   // ProfileSwitcher (que já busca `window.donel.profiles.*` pro dropdown do
   // titlebar — ver comentário de topo de ProfileSwitcher.tsx).
   const [accountLabel, setAccountLabel] = useState('Principal');
+  // FIX (auditoria rodada 5, achado alta "regressão de cota") — mapa
+  // COMPLETO de headroom (slug -> percent|null) reportado por
+  // `ProfileSwitcher.onHeadroomChange`, alimentado só quando o dropdown de
+  // perfis abre (FR-012). Usado por `activeSessionAccountLabel` abaixo pra
+  // compor a cota do perfil de NASCIMENTO da sessão em foco — que pode ser
+  // um perfil diferente do ativo global, por isso não dá pra reusar
+  // `accountLabel` (que só carrega a cota do perfil ATIVO).
+  const [profileHeadroom, setProfileHeadroom] = useState<ProfileHeadroomMap>({});
   // T009 — estado do semáforo por aba (chave = tab.id), alimentado pelo
   // callback que cada TerminalPane levanta via onStateChange.
   const [semaphoreStates, setSemaphoreStates] = useState<Record<string, SemaphoreStateInfo>>({});
@@ -154,11 +170,25 @@ export function App(): React.JSX.Element {
   // até a próxima ação do usuário forçar um re-render. 5s é granularidade
   // suficiente pro limiar de ~20s do diagnóstico (não precisa de setInterval
   // mais fino que isso pra um hint textual).
+  //
+  // FIX (auditoria rodada 5, achado baixa "tick incondicional") — antes
+  // rodava pra sempre, incondicional, mesmo com zero abas abertas ou com
+  // TODAS as abas já tendo recebido evento de semáforo (quando o
+  // diagnóstico nunca mais pode mudar de valor) — trabalho periódico
+  // permanente no renderer, que o NFR de RAM (já acima do budget de 400MB,
+  // decisão pendente em feedback-e2e.md) não pode pagar de graça. Agora só
+  // agenda o `setInterval` enquanto existir ao menos uma aba viva cujo
+  // semáforo ainda não chegou (`semaphoreStates[id] === undefined`) — o
+  // único estado em que o diagnóstico pode efetivamente mudar com o passar
+  // do tempo; some sozinho assim que a última pendência resolve (evento de
+  // semáforo chega) ou a aba fecha.
   const [, forceDiagnosticTick] = useState(0);
   useEffect(() => {
+    const hasPendingDiagnostic = tabs.some((tab) => (aliveTabs[tab.id] ?? false) && semaphoreStates[tab.id] === undefined);
+    if (!hasPendingDiagnostic) return undefined;
     const intervalId = setInterval(() => forceDiagnosticTick((tick) => tick + 1), 5_000);
     return () => clearInterval(intervalId);
-  }, []);
+  }, [tabs, aliveTabs, semaphoreStates]);
   // FIX (feedback E2E rodada 5) — perfil de NASCIMENTO de cada aba claude
   // (chave = tab.id), alimentado por `TerminalPane.onProfileResolved` uma
   // única vez por sessão (`PtyCreateResult.profile`, main/index.ts). Nunca
@@ -797,18 +827,27 @@ export function App(): React.JSX.Element {
   // FIX (feedback E2E rodada 5) — diagnóstico pro hint de SessionDetails
   // (statusHint): `true` só quando a aba em foco está viva, NENHUM evento de
   // hook chegou ainda (`semaphoreStates[id]` continua undefined — ver
-  // comentário de `sidebarSessions` acima sobre o estado inicial otimista)
-  // E já se passaram ~20s desde que ficou viva. `POSSIBLY_BLOCKED_THRESHOLD_MS`
-  // deliberadamente mais folgado que qualquer round-trip normal de boot —
-  // só existe pra separar "ainda conectando" de "provavelmente esperando
-  // resposta no terminal" (ex.: diálogo de confiança de pasta).
+  // comentário de `sidebarSessions` acima sobre o estado inicial otimista),
+  // já se passaram ~20s desde que ficou viva E (FIX auditoria rodada 5,
+  // achado media "sinal invertido") o diálogo de confiança de pasta está DE
+  // FATO visível no buffer renderizado da aba (`isTrustDialogVisible`,
+  // mesma checagem que `TerminalPane.armTrustAutoAccept` usa) — sem essa
+  // última condição, o hint disparava pra QUALQUER aba claude ociosa por
+  // 20s sem nenhum prompt ainda digitado (o caso mais comum que existe,
+  // já que `hooks-settings.ts` não cobre `SessionStart`), virando ruído
+  // constante em vez de sinal real de bloqueio.
+  // `POSSIBLY_BLOCKED_THRESHOLD_MS` deliberadamente mais folgado que
+  // qualquer round-trip normal de boot — só existe pra separar "ainda
+  // conectando" de "provavelmente esperando resposta no terminal".
   const activeAliveSince = activeTab ? aliveSinceRef.current[activeTab.id] : undefined;
+  const activeRenderedLines = activeTab ? (terminalRefs.current[activeTab.id]?.getRenderedLines() ?? []) : [];
   const possiblyBlockedOnPrompt =
     !!activeTab &&
     (aliveTabs[activeTab.id] ?? false) &&
     semaphoreStates[activeTab.id] === undefined &&
     activeAliveSince !== undefined &&
-    Date.now() - activeAliveSince > POSSIBLY_BLOCKED_THRESHOLD_MS;
+    Date.now() - activeAliveSince > POSSIBLY_BLOCKED_THRESHOLD_MS &&
+    isTrustDialogVisible(activeRenderedLines);
 
   // FIX (T015, FR-009 "statusbar completa") — era hardcoded "fable/high"
   // (sempre o mesmo texto, ignorando a aba real): agora reflete o
@@ -829,8 +868,21 @@ export function App(): React.JSX.Element {
   // resolver (ver `computeSessionAccountLabel`). Sem aba ativa (0 sessões
   // abertas), cai no `accountLabel` global também — não há "aba em foco"
   // nesse estado.
+  //
+  // FIX (auditoria rodada 5, achado alta "regressão de cota") — cota do
+  // perfil de NASCIMENTO da aba (`profileHeadroom[slug]`, alimentado por
+  // `ProfileSwitcher.onHeadroomChange`), não a do perfil ativo global —
+  // `?? null` cobre tanto "perfil sem entrada no mapa ainda" (dropdown nunca
+  // foi aberto) quanto "mapa devolveu null pra este slug" (mesmo contrato
+  // "—" da rodada 4).
+  const activeSessionProfile = activeTab ? sessionProfiles[activeTab.id] : undefined;
+  const activeSessionHeadroom = activeSessionProfile ? (profileHeadroom[activeSessionProfile.slug] ?? null) : null;
   const activeSessionAccountLabel = activeTab
-    ? computeSessionAccountLabel({ sessionType: activeTab.sessionType, profile: sessionProfiles[activeTab.id] }, accountLabel)
+    ? computeSessionAccountLabel(
+        { sessionType: activeTab.sessionType, profile: activeSessionProfile },
+        accountLabel,
+        activeSessionHeadroom,
+      )
     : accountLabel;
 
   return (
@@ -840,7 +892,7 @@ export function App(): React.JSX.Element {
           <span aria-hidden="true">◆</span>
           <span>Donel Dev</span>
         </div>
-        <ProfileSwitcher onActiveProfileLabelChange={setAccountLabel} />
+        <ProfileSwitcher onActiveProfileLabelChange={setAccountLabel} onHeadroomChange={setProfileHeadroom} />
         {/* T015 — UI de Preferências (FR-007, feedback E2E rodada 3/4). */}
         <button
           type="button"
@@ -964,7 +1016,12 @@ export function App(): React.JSX.Element {
         </pre>
       </div>
 
-      <StatusBar accountLabel={activeSessionAccountLabel} modelEffort={activeModelEffort} sessionCount={tabs.length} />
+      <StatusBar
+        accountLabel={activeSessionAccountLabel}
+        modelEffort={activeModelEffort}
+        sessionCount={tabs.length}
+        accountTestId="statusbar-account"
+      />
 
       {/* T010 — FR-006, ui-spec §2 "fechar aba com sessão ativa": confirmação destrutiva antes de matar um PTY vivo. */}
       <Modal

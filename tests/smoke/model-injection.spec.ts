@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T011 (injeção de modelo/esforço em sessão viva, FR-011). Instância
 // própria de Electron (mesmo padrão de tabs-lifecycle.spec.ts) — não
@@ -21,15 +22,18 @@ const APP_CWD = path.join(__dirname, '../..');
 
 let electronApp: ElectronApplication;
 let window: Page;
+let userDataDir: string;
 
 test.beforeAll(async () => {
-  electronApp = await electron.launch({ args: [APP_MAIN], cwd: APP_CWD });
+  userDataDir = createIsolatedUserDataDir('model-injection');
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
 });
 
 test.afterAll(async () => {
   await electronApp.close();
+  removeIsolatedUserDataDir(userDataDir);
 });
 
 // FIX (feedback E2E rodada 3, "painel lateral 'Lançar sessão' fixo rouba

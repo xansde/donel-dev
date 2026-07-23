@@ -61,9 +61,20 @@ export interface ProfileSwitcherProps {
    * chamada IPC só pra alimentar dois lugares.
    */
   onActiveProfileLabelChange?: (label: string) => void;
+  /**
+   * FIX (auditoria rodada 5, achado alta "regressão de cota") — reporta pra
+   * cima o `ProfileHeadroomMap` INTEIRO (todos os perfis, não só o ativo)
+   * toda vez que `window.donel.profiles.headroom()` resolve (FR-012, "leitura
+   * sob demanda" — só quando o dropdown abre). App.tsx usa isto pra compor a
+   * cota do perfil de NASCIMENTO da sessão em foco na Statusbar
+   * (`computeSessionAccountLabel`, `shared/sessionAccountLabel.ts`), que pode
+   * ser um perfil DIFERENTE do ativo global — por isso precisa do mapa
+   * completo, não só de `activeHeadroom`.
+   */
+  onHeadroomChange?: (map: ProfileHeadroomMap) => void;
 }
 
-export function ProfileSwitcher({ onActiveProfileLabelChange }: ProfileSwitcherProps): React.JSX.Element {
+export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }: ProfileSwitcherProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [profiles, setProfiles] = useState<ProfileSummaryDto[]>(EMPTY_PROFILES);
   const [headroom, setHeadroom] = useState<ProfileHeadroomMap>({});
@@ -104,8 +115,11 @@ export function ProfileSwitcher({ onActiveProfileLabelChange }: ProfileSwitcherP
       setProfiles(list);
       refreshDoctorFor(list);
     });
-    void window.donel.profiles.headroom().then(setHeadroom);
-  }, [open, refreshDoctorFor]);
+    void window.donel.profiles.headroom().then((map) => {
+      setHeadroom(map);
+      onHeadroomChange?.(map);
+    });
+  }, [open, refreshDoctorFor, onHeadroomChange]);
 
   const handleActivate = (slug: string): void => {
     void window.donel.profiles.activate(slug).then(setProfiles);

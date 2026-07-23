@@ -191,6 +191,14 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
   SegmentedControl fica preso pra sempre. Fix: auto-aceite do diálogo
   restrito à aba boot/home (TerminalPane.tsx), validado com smoke novo
   (tests/smoke/boot-tab-trust.spec.ts) que falha sem o fix e passa com ele.
+  **CORREÇÃO (auditoria rodada 5, achado alta):** a primeira versão deste
+  fix era "tiro único no primeiro match" — o `\r` disparava ANTES do CLI
+  terminar de desenhar o diálogo e armar o leitor de stdin, era engolido, e
+  a aba ficava presa exatamente como antes (achado empírico: o próprio
+  `boot-tab-trust.spec.ts` falhou rodando contra este fix). Reescrito pra
+  "reenvia enquanto o diálogo continuar visível" (`setInterval` próprio,
+  teto de 8 tentativas/15s, exige a assinatura COMPLETA do rodapé
+  interativo — `src/shared/trustDialog.ts`) nesta rodada de correção.
 - [x] **Roteiro batch 5, item 4 desatualizado** (relato: "não existe mais
   aquela aba"; print referenciado NÃO chegou — anexo truncado). **Resolvido
   2026-07-23 (rodada 5).** Confirmado: o item 4 (CA-1 via launcher) foi
@@ -212,7 +220,11 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
   barra inferior mostrar a conta ativa global, sugerindo que a sessão em
   foco trocou de conta. Fix: statusbar mostra o perfil de criação da aba em
   foco (`sessionAccountLabel.ts`); perfil ativo global segue no badge do
-  titlebar/dropdown.
+  titlebar/dropdown. **CORREÇÃO (auditoria rodada 5, achado alta):** a
+  primeira versão deste fix removeu sem querer a cota (headroom) do rótulo
+  — regressão do fix da rodada 4 item 8 ("descoberta hoje é difícil").
+  Corrigido: `Sessão: <nome> · <cota>` restaura o slot, agora com a cota do
+  perfil de NASCIMENTO da aba (não do ativo global).
 - (nota) Item 19 (RAM) da validação humana ficou interrompido no meio do
   relato — sem número reportado. Medição automatizada segue valendo:
   417–451 MB vs. budget 400 MB, decisão de NFR pendente.

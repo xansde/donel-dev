@@ -22,6 +22,14 @@ import type { ElectronApplication, Page } from '@playwright/test';
 // no início do teste — mesma disciplina de higiene de profiles.spec.ts/
 // sidebar-favorites.spec.ts (não deixa a máquina real do Alexandre com
 // config alterado por um teste automatizado).
+//
+// FIX (auditoria rodada 5, achado media "playwright.config.ts") — DIFERENTE
+// dos outros arquivos deste diretório (ver userDataIsolation.ts), este
+// smoke NÃO usa `--user-data-dir` isolado: seu propósito DECLARADO (linha
+// 122 abaixo) é provar persistência no path REAL de produção
+// (`%APPDATA%\donel-dev\config.json`) — isolar quebraria o próprio objeto do
+// teste. A defesa contra vazamento pra OUTROS specs é o `afterAll` acima
+// (restaura os valores originais), não isolamento de diretório.
 
 const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
 const APP_CWD = path.join(__dirname, '../..');

@@ -81,7 +81,7 @@ A vista onde o dia inteiro acontece.
 │ ▲ radar spots │ └─────────────────────────────────────┘ │ (colapsável)  │
 │ ◌ fix build   │  > _                                    │               │
 ├───────────────┴─────────────────────────────────────────┴───────────────┤
-│ Tecnologia Claude 3 · fable/high · 6 sessões · ▂▂▂ smart zone           │ statusbar
+│ Sessão: Tecnologia Claude 3 · 62% · fable/high · 6 sessões · ▂▂▂ smart z │ statusbar
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -112,8 +112,14 @@ A vista onde o dia inteiro acontece.
    > **Nota 2026-07-23 (feedback E2E rodada 3)** — "colapsável" formalizado:
    > fechado por DEFAULT (o espaço vai pro terminal), sem ficar fixo
    > roubando espaço o tempo todo. Ver decisão completa em §4.
-5. **Statusbar** — conta ativa, modelo/esforço da aba em foco, contagem de
+5. **Statusbar** — conta de NASCIMENTO da sessão em foco (perfil sob o qual a
+   aba foi criada, com sua cota), modelo/esforço da aba em foco, contagem de
    sessões, mini medidor smart zone da aba em foco (P1).
+   > **Nota 2026-07-23 (auditoria rodada 5, achado media "spec drift")** —
+   > texto original dizia "conta ativa"; desatualizado desde o fix da rodada
+   > 5 do feedback E2E (mostra a conta de NASCIMENTO da aba em foco, não a
+   > ativa global — essa continua no badge do titlebar/dropdown,
+   > `ProfileSwitcher`). Mockup da linha 84 atualizado no mesmo commit.
 
 **Estados da vista:** primeira execução (sem projetos → empty state com botão
 "Escolher pastas de projetos"); `claude` não encontrado (banner de erro CA-5

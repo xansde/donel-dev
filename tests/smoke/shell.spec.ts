@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke do feedback E2E rodada 2 ("app inteiro tem scrollbar vertical" —
 // item 7 do roteiro batch 2): prova que o documento (body) nunca tem
@@ -14,15 +15,18 @@ const APP_CWD = path.join(__dirname, '../..');
 
 let electronApp: ElectronApplication;
 let window: Page;
+let userDataDir: string;
 
 test.beforeAll(async () => {
-  electronApp = await electron.launch({ args: [APP_MAIN], cwd: APP_CWD });
+  userDataDir = createIsolatedUserDataDir('shell');
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
 });
 
 test.afterAll(async () => {
   await electronApp.close();
+  removeIsolatedUserDataDir(userDataDir);
 });
 
 test('o shell inteiro não tem scrollbar no documento (body.scrollHeight === body.clientHeight)', async () => {

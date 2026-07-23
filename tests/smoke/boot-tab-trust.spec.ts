@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da rodada 5 do feedback E2E (specs/001-mvp/feedback-e2e.md — "BUG
 // modelo/esforço não selecionável SOMENTE na primeira aba").
@@ -45,15 +46,18 @@ const APP_CWD = path.join(__dirname, '../..');
 
 let electronApp: ElectronApplication;
 let window: Page;
+let userDataDir: string;
 
 test.beforeAll(async () => {
-  electronApp = await electron.launch({ args: [APP_MAIN], cwd: APP_CWD });
+  userDataDir = createIsolatedUserDataDir('boot-tab-trust');
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
 });
 
 test.afterAll(async () => {
   await electronApp.close();
+  removeIsolatedUserDataDir(userDataDir);
 });
 
 test('aba boot (home, sem cwd) libera modelo/esforço sozinha, sem contorno manual do diálogo de confiança de pasta', async () => {

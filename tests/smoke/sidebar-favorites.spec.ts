@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke do feedback E2E rodada 3 ("BUG — favoritar projeto só reflete após
 // reiniciar o app", → Batch 5): a lógica de merge/ordenação já estava
@@ -33,9 +34,11 @@ const APP_CWD = path.join(__dirname, '../..');
 
 let electronApp: ElectronApplication;
 let appWindow: Page;
+let userDataDir: string;
 
 test.beforeAll(async () => {
-  electronApp = await electron.launch({ args: [APP_MAIN], cwd: APP_CWD });
+  userDataDir = createIsolatedUserDataDir('sidebar-favorites');
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
   appWindow = await electronApp.firstWindow();
   await appWindow.waitForLoadState('domcontentloaded');
 });
@@ -49,6 +52,7 @@ test.afterAll(async () => {
     })
     .catch(() => undefined);
   await electronApp.close();
+  removeIsolatedUserDataDir(userDataDir);
 });
 
 /** Índice de "donel-dev" entre TODAS as linhas de projeto renderizadas (ordem real do DOM, não pixels — estável mesmo com scroll interno da sidebar). */

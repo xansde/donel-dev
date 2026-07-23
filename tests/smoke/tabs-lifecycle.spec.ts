@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T010 (abas múltiplas + ciclo de vida + terminal livre, FR-006/
 // FR-008). Instância própria de Electron (não compartilha janela com
@@ -19,15 +20,18 @@ const APP_CWD = path.join(__dirname, '../..');
 
 let electronApp: ElectronApplication;
 let window: Page;
+let userDataDir: string;
 
 test.beforeAll(async () => {
-  electronApp = await electron.launch({ args: [APP_MAIN], cwd: APP_CWD });
+  userDataDir = createIsolatedUserDataDir('tabs-lifecycle');
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
 });
 
 test.afterAll(async () => {
   await electronApp.close();
+  removeIsolatedUserDataDir(userDataDir);
 });
 
 /** PIDs vivos de `imageName` agora, via `tasklist` real (não a UI). CSV sem cabeçalho (`/NH`) — 2ª coluna = PID. */

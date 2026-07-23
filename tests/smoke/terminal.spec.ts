@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T004 (overnight, sem humano): abre o app buildado e prova que
 // node-pty carrega dentro do Electron (não só do Node puro). Redimensiona a
@@ -35,10 +36,12 @@ const APP_CWD = path.join(__dirname, '../..');
 
 let electronApp: ElectronApplication;
 let window: Page;
+let userDataDir: string;
 
 test.beforeAll(async () => {
+  userDataDir = createIsolatedUserDataDir('terminal');
   electronApp = await electron.launch({
-    args: [APP_MAIN],
+    args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
     cwd: APP_CWD,
   });
   window = await electronApp.firstWindow();
@@ -58,6 +61,7 @@ async function openLauncherPanel(): Promise<void> {
 
 test.afterAll(async () => {
   await electronApp.close();
+  removeIsolatedUserDataDir(userDataDir);
 });
 
 test('terminal spawns a real claude session inside Electron', async () => {

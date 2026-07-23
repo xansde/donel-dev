@@ -215,8 +215,14 @@ Cada FR é testável isoladamente.
   > `config-store.ts` e no roteiro batch-5.
 - **FR-008 Terminal livre.** Além de abas de sessão Claude, o usuário pode abrir
   uma aba de terminal comum (PowerShell) no diretório do projeto.
-- **FR-009 Statusbar.** Perfil ativo, modelo/esforço da aba em foco, contagem de
-  sessões abertas.
+- **FR-009 Statusbar.** Conta de NASCIMENTO da sessão em foco (perfil sob o
+  qual a aba foi criada, com sua cota — "Sessão: Principal · 62%"; o perfil
+  ATIVO global fica no badge do titlebar/dropdown, `ProfileSwitcher`), modelo/
+  esforço da aba em foco, contagem de sessões abertas. *(Emendado 2026-07-23,
+  auditoria rodada 5 — achado media "spec drift": redação original dizia
+  "Perfil ativo", desatualizada desde o fix da rodada 5 do feedback E2E que
+  passou a mostrar a conta de nascimento da aba, não a ativa global; ver
+  `feedback-e2e.md` rodada 5 e `src/shared/sessionAccountLabel.ts`.)*
 - **FR-010 Semáforo de sessões (US-3).** Cada aba exibe, na lista de abas e sem
   estar em foco, um de 5 estados: **trabalhando** (Claude gerando/executando),
   **aguardando resposta** (turno terminou), **permissão pendente** (aprovação

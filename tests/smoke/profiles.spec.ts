@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import path, { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T014 (ProfileManager + headroom + UI de perfis — FR-005, FR-012,
 // CA-3). Instância própria de Electron (mesmo padrão das outras specs deste
@@ -59,6 +60,7 @@ function cleanupE2eProfileDir(): void {
 
 let electronApp: ElectronApplication;
 let window: Page;
+let userDataDir: string;
 
 test.beforeAll(async () => {
   // Defensivo: uma execução anterior que crashou antes do cleanup não deve
@@ -66,13 +68,15 @@ test.beforeAll(async () => {
   // silencioso sobre um estado velho, mascarando o que este smoke prova).
   cleanupE2eProfileDir();
 
-  electronApp = await electron.launch({ args: [APP_MAIN], cwd: APP_CWD });
+  userDataDir = createIsolatedUserDataDir('profiles');
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
 });
 
 test.afterAll(async () => {
   await electronApp.close();
+  removeIsolatedUserDataDir(userDataDir);
   cleanupE2eProfileDir();
 });
 
@@ -132,8 +136,14 @@ test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar 
   // que continuar mostrando o perfil de NASCIMENTO da aba em foco
   // ("Sessão: Principal") — SEM o fix, ela mostraria o perfil ativo global
   // (`E2E_PROFILE_NAME`), sugerindo (errado) que a aba trocou de conta.
+  //
+  // FIX (auditoria rodada 5, achado alta "regressão de cota") — `toContainText`
+  // em vez de `toHaveText`: o rótulo agora carrega ` · <cota>` (percent ou
+  // "—") depois do nome, e o valor exato da cota não é determinístico neste
+  // ambiente de teste (perfil e2e sem quota-axi real) — a prova AQUI é o
+  // NOME da conta de nascimento, não o número da cota.
   const statusbarAccount = window.locator('[data-testid="statusbar-account"]');
-  await expect(statusbarAccount).toHaveText('Sessão: Principal');
+  await expect(statusbarAccount).toContainText('Sessão: Principal');
 
   // 5. Spawna uma sessão claude nova (corpo do "＋ Nova sessão" — defaults, sem projeto/modelo específico, já que a prova é o estado de auth, não o comportamento do modelo).
   await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
@@ -144,8 +154,8 @@ test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar 
 
   // FIX (feedback E2E rodada 5) — a aba NOVA (em foco agora) nasceu sob o
   // perfil recém-ativado — statusbar troca pra refletir ESTA aba, não mais
-  // a anterior.
-  await expect(statusbarAccount).toHaveText(`Sessão: ${E2E_PROFILE_NAME}`);
+  // a anterior. `toContainText` pelo mesmo motivo do assert acima.
+  await expect(statusbarAccount).toContainText(`Sessão: ${E2E_PROFILE_NAME}`);
 
   // 6. PROVA do isolamento (spike seção 4/5 + addendum 2026-07-23), com uma
   // CORREÇÃO em relação ao texto literal pedido pela task: a task descrevia
