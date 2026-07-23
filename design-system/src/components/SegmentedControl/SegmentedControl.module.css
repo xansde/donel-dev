@@ -37,6 +37,14 @@
   font-weight: var(--weight-semibold);
 }
 
+.disabled {
+  opacity: 0.5;
+}
+
+.segment:disabled {
+  cursor: not-allowed;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .segment {
     transition: none;
