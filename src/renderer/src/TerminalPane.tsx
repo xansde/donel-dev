@@ -5,6 +5,7 @@ import { Button } from '@donel-dev/design-system';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { parseClaudeNotFound } from '../../shared';
 import type { PtyExitInfo, SemaphoreStateInfo } from '../../shared';
+import { formatRingBufferPreview } from './ringBufferPreview';
 import styles from './TerminalPane.module.css';
 
 // T004 deu a base (xterm + PtyManager). T005 liga a aba a uma sessão claude
@@ -223,17 +224,39 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         ptyIdRef.current = result.ptyId;
         setStatus({ kind: 'running' });
 
-        unsubscribeDataRef.current = window.donel.pty.onData(result.ptyId, (data) => {
-          // T013 (correção herdada) — o 2º argumento de `write` é o callback
-          // de CONCLUSÃO do parser (documentado no xterm.js): só dispara
-          // `onRenderedUpdate` depois que ESTE chunk já virou estado real do
-          // buffer (`term.buffer.active`), nunca antes — é o que garante
-          // ver um frame de confirmação transiente ANTES do próximo redraw
-          // sobrescrever por cima (ver comentário do handle acima).
-          term.write(data, () => {
-            renderListenersRef.current.forEach((listener) => listener());
+        // FIX (feedback E2E rodada 1, agravante do bug StrictMode) — replay
+        // do ring buffer ANTES de assinar `onData` (ver comentário de topo
+        // de ringBufferPreview.ts pro porquê do race: `ptyManager.create()`
+        // spawna e começa a alimentar o ring buffer sincronamente no main,
+        // antes do roundtrip do IPC chegar até aqui). `void` — best-effort,
+        // nunca bloqueia a aba: se `pty:preview` falhar, cai pro comportamento
+        // de antes (só o onData daqui pra frente), sem preview nenhum.
+        void window.donel.pty
+          .getPreview(result.ptyId)
+          .catch((): string[] => [])
+          .then((lines) => {
+            // A geração pode ter sido invalidada ENQUANTO o preview estava
+            // em voo (StrictMode / unmount real) — mesma checagem de
+            // `requestEpoch` do `.then()` de fora; sem ela escreveria num
+            // xterm já `dispose()`d.
+            if (requestEpoch !== mountEpochRef.current) return;
+            const preview = formatRingBufferPreview(lines);
+            if (preview) term.write(preview);
+
+            unsubscribeDataRef.current = window.donel.pty.onData(result.ptyId, (data) => {
+              // T013 (correção herdada) — o 2º argumento de `write` é o
+              // callback de CONCLUSÃO do parser (documentado no xterm.js):
+              // só dispara `onRenderedUpdate` depois que ESTE chunk já
+              // virou estado real do buffer (`term.buffer.active`), nunca
+              // antes — é o que garante ver um frame de confirmação
+              // transiente ANTES do próximo redraw sobrescrever por cima
+              // (ver comentário do handle acima).
+              term.write(data, () => {
+                renderListenersRef.current.forEach((listener) => listener());
+              });
+            });
           });
-        });
+
         unsubscribeExitRef.current = window.donel.pty.onExit(result.ptyId, (info) => {
           ptyIdRef.current = null;
           setStatus({ kind: 'ended', info });
