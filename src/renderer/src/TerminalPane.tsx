@@ -36,7 +36,7 @@ export interface TerminalPaneProps {
   cwd?: string;
   /** Argv do Launcher (T008 — CommandBuilder, FR-003). Fixo por aba: só lido no spawn/reabertura, nunca muda no meio da sessão viva (isso é FR-011, T011). */
   args?: string[];
-  /** Ação real de fechar a aba na barra de abas (T010). Sem isso, "Fechar aba" só mostra o estado neutro local. */
+  /** Ação real de fechar a aba na barra de abas (T010): App.tsx remove a aba do array (unmount cuida do teardown do PTY). */
   onCloseTab?: () => void;
   /**
    * T009 — semáforo de sessões (FR-010). TerminalPane é quem conhece o
@@ -46,9 +46,17 @@ export interface TerminalPaneProps {
    * do App.tsx tentar re-derivar o ptyId por fora.
    */
   onStateChange?: (info: SemaphoreStateInfo) => void;
+  /**
+   * T010 — FR-006: "fechar aba com sessão ativa (processo vivo) pede
+   * confirmação". App.tsx só sabe se HÁ um processo vivo através deste sinal
+   * (funciona tanto para sessão claude quanto para terminal livre — o
+   * semáforo, ao contrário, só existe para 'claude'). `true` só quando
+   * `status.kind === 'running'`.
+   */
+  onAliveChange?: (alive: boolean) => void;
 }
 
-export function TerminalPane({ sessionType = 'shell', cwd, args, onCloseTab, onStateChange }: TerminalPaneProps): React.JSX.Element {
+export function TerminalPane({ sessionType = 'shell', cwd, args, onCloseTab, onStateChange, onAliveChange }: TerminalPaneProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const ptyIdRef = useRef<string | null>(null);
@@ -64,6 +72,17 @@ export function TerminalPane({ sessionType = 'shell', cwd, args, onCloseTab, onS
   // ao serem lidos só no spawn inicial, ver eslint-disable mais abaixo).
   const onStateChangeRef = useRef(onStateChange);
   onStateChangeRef.current = onStateChange;
+  const onAliveChangeRef = useRef(onAliveChange);
+  onAliveChangeRef.current = onAliveChange;
+
+  // T010 — reporta pro pai sempre que a "vivacidade" do processo muda (não
+  // a cada render, só quando `status.kind` de fato transiciona) — é o sinal
+  // que o App.tsx usa pra decidir se o "Fechar aba" da barra de abas precisa
+  // de confirmação (FR-006). Roda para 'shell' e 'claude' igualmente.
+  useEffect(() => {
+    onAliveChangeRef.current?.(status.kind === 'running');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status.kind]);
 
   const teardownPty = useCallback(() => {
     unsubscribeDataRef.current?.();

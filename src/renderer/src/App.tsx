@@ -1,4 +1,4 @@
-import { AccountBadge, SplitButton, StatusBar, TerminalTab } from '@donel-dev/design-system';
+import { AccountBadge, Button, Modal, SplitButton, StatusBar, TerminalTab } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectInfo, SemaphoreStateInfo } from '../../shared';
 import { buildClaudeArgs } from '../../shared/commandBuilder';
@@ -14,13 +14,19 @@ import { TerminalPane } from './TerminalPane';
 // T007 — sidebar real ligada ao ProjectScanner (FR-001, US-1): abrir um
 // projeto pela sidebar cria (ou foca, se já aberta) uma aba de sessão claude
 // com `cwd` no projeto. Todas as abas ficam montadas (visibilidade via CSS,
-// não unmount) pra o PTY continuar vivo ao trocar de aba — o ciclo de vida
-// completo (fechar de verdade, limite de 6 sessões) é do T010.
+// não unmount) pra o PTY continuar vivo ao trocar de aba.
 //
 // T009 — o dot de estado (antes fixo em 'working') agora vem de verdade do
 // semáforo (FR-010): cada TerminalPane assina `semaphore.onUpdate` pro seu
 // próprio ptyId (só ele conhece esse id) e levanta o estado pra cá via
 // `onStateChange`, indexado por `tab.id` (ver TerminalPane.tsx).
+//
+// T010 — ciclo de vida real (FR-006) + terminal livre (FR-008): fechar uma
+// aba de verdade REMOVE ela de `tabs` (o unmount do TerminalPane cuida do
+// teardown do PTY + dispose do xterm, ver TerminalPane.tsx); se o processo
+// da aba estiver vivo (`aliveTabs`, sinal levantado por `onAliveChange`),
+// pede confirmação antes (modal, ui-spec §2 "fechar aba com sessão ativa").
+// Aba de terminal livre é só mais um `TabState` com `sessionType: 'shell'`.
 
 interface TabState {
   id: string;
@@ -32,17 +38,28 @@ interface TabState {
   pinned: boolean;
   /** Argv do CommandBuilder (T008 — Launcher); undefined = sessão sem flags (abertura direta pela sidebar). */
   launchArgs?: string[];
+  /** 'claude' (default) = sessão claude direta no PTY; 'shell' = terminal livre (FR-008, powershell.exe). */
+  sessionType: 'claude' | 'shell';
 }
 
-/** Último lançamento do Launcher — CA-1 (comando exato); exposto num elemento oculto pro smoke ler (ver JSX). */
+/** Último lançamento do Launcher — CA-1 (comando exato) + reaproveitado pelo corpo do "＋ Nova sessão" (ui-spec §2, zona 1). */
 interface LastLaunch {
   args: string[];
   cwd: string;
+  name: string;
 }
 
-const INITIAL_TABS: TabState[] = [{ id: 'default', name: 'Sessão', pinned: false }];
+const INITIAL_TABS: TabState[] = [{ id: 'default', name: 'Sessão', pinned: false, sessionType: 'claude' }];
 
-/** Ação real chega nas tasks do Cockpit (T009+); aqui o shell é só layout. */
+/** Remove uma chave de um record sem mutar o original — usado ao limpar `semaphoreStates`/`aliveTabs` no fechamento de aba. */
+function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in record)) return record;
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
+
+/** Ação real (perfis) chega no T014; aqui o badge é só layout. */
 function noop(): void {}
 
 export function App(): React.JSX.Element {
@@ -61,10 +78,70 @@ export function App(): React.JSX.Element {
   const previousSemaphoreStatesRef = useRef<Record<string, SemaphoreStateInfo>>({});
   const activeTabIdRef = useRef(activeTabId);
   activeTabIdRef.current = activeTabId;
+  // T010 — FR-006: "aba ativa" (processo vivo) por tab.id, alimentado por
+  // `onAliveChange` (TerminalPane.tsx). Decide se fechar a aba pede
+  // confirmação (true) ou fecha direto (false/ausente — connecting sem PTY
+  // ainda, ou já 'ended'/'claude-not-found').
+  const [aliveTabs, setAliveTabs] = useState<Record<string, boolean>>({});
+  // T010 — aba com fechamento pendente de confirmação (modal "Fechar sessão?", ui-spec §2); null = nenhum modal aberto.
+  const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
 
   const handleSemaphoreChange = useCallback((tabId: string, info: SemaphoreStateInfo): void => {
     setSemaphoreStates((prev) => ({ ...prev, [tabId]: info }));
   }, []);
+
+  const handleAliveChange = useCallback((tabId: string, alive: boolean): void => {
+    setAliveTabs((prev) => (prev[tabId] === alive ? prev : { ...prev, [tabId]: alive }));
+  }, []);
+
+  /** Cria uma aba nova, foca ela e devolve o id — usado por todo caminho de criação (sidebar, Launcher, "＋ Nova sessão", Terminal). */
+  const addTab = (partial: Omit<TabState, 'id'>): string => {
+    tabIdCounter.current += 1;
+    const id = `tab-${tabIdCounter.current}`;
+    setTabs((prev) => [...prev, { id, ...partial }]);
+    setActiveTabId(id);
+    return id;
+  };
+
+  // T010 — FR-006: fecha a aba de verdade (remove de `tabs`; o unmount do
+  // TerminalPane cuida de matar o PTY + dispose do xterm, TerminalPane.tsx
+  // `useEffect` cleanup). Se a aba fechada era a ativa, foca a vizinha
+  // anterior (ou a próxima, se era a primeira); sem abas restantes, nenhuma
+  // fica em foco.
+  const closeTabImmediately = (tabId: string): void => {
+    const index = tabs.findIndex((tab) => tab.id === tabId);
+    if (index === -1) return;
+    const remaining = tabs.filter((tab) => tab.id !== tabId);
+    setTabs(remaining);
+    if (activeTabId === tabId) {
+      const fallback = remaining[Math.max(0, index - 1)] ?? remaining[0];
+      setActiveTabId(fallback ? fallback.id : '');
+    }
+    setSemaphoreStates((prev) => omitKey(prev, tabId));
+    setAliveTabs((prev) => omitKey(prev, tabId));
+  };
+
+  // T010 — FR-006: "se a sessão estiver ativa (processo vivo), pede
+  // confirmação" — senão fecha direto (ex.: aba já em 'ended'/'claude-not-found').
+  // Função simples (não useCallback) de propósito: lê `aliveTabs`/`tabs`/
+  // `activeTabId` direto do escopo do render, mesmo padrão de
+  // `handleOpenProject`/`handleLaunch` logo acima.
+  const handleRequestCloseTab = (tabId: string): void => {
+    if (aliveTabs[tabId]) {
+      setPendingCloseTabId(tabId);
+      return;
+    }
+    closeTabImmediately(tabId);
+  };
+
+  const handleConfirmCloseTab = (): void => {
+    if (pendingCloseTabId) closeTabImmediately(pendingCloseTabId);
+    setPendingCloseTabId(null);
+  };
+
+  const handleCancelCloseTab = (): void => {
+    setPendingCloseTabId(null);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -95,10 +172,7 @@ export function App(): React.JSX.Element {
       setActiveTabId(existing.id);
       return;
     }
-    tabIdCounter.current += 1;
-    const id = `tab-${tabIdCounter.current}`;
-    setTabs((prev) => [...prev, { id, name: project.name, cwd: project.path, projectName: project.name, pinned: false }]);
-    setActiveTabId(id);
+    addTab({ name: project.name, cwd: project.path, projectName: project.name, pinned: false, sessionType: 'claude' });
   };
 
   // T008 — Launcher (ui-spec §4, FR-003, CA-1): monta o argv via
@@ -112,23 +186,45 @@ export function App(): React.JSX.Element {
       permissionMode: options.permissionMode,
       sessionName: options.sessionName || undefined,
     });
-    tabIdCounter.current += 1;
-    const id = `tab-${tabIdCounter.current}`;
     const name = options.sessionName || options.projectName;
-    setTabs((prev) => [
-      ...prev,
-      {
-        id,
-        name,
-        cwd: options.projectPath,
-        projectName: options.projectName,
-        pinned: false,
-        launchArgs: args,
-      },
-    ]);
-    setActiveTabId(id);
+    addTab({ name, cwd: options.projectPath, projectName: options.projectName, pinned: false, launchArgs: args, sessionType: 'claude' });
     setSelectedProjectPath(options.projectPath);
-    setLastLaunch({ args, cwd: options.projectPath });
+    setLastLaunch({ args, cwd: options.projectPath, name });
+  };
+
+  // T010 — corpo do "＋ Nova sessão" (ui-spec §2, zona 1): "clique no corpo
+  // abre direto com a última configuração de sessão Claude usada" (também o
+  // item de menu "Sessão Claude" — mesma ação, dois gatilhos). Sem
+  // lançamento anterior nesta sessão do app, cai pros defaults do Launcher
+  // (sem args explícitos = CommandBuilder omite tudo, T006) no projeto
+  // selecionado (ou home, se nenhum projeto foi aberto ainda).
+  const handleQuickNewClaudeSession = (): void => {
+    if (lastLaunch) {
+      addTab({
+        name: lastLaunch.name,
+        cwd: lastLaunch.cwd,
+        projectName: projects.find((project) => project.path === lastLaunch.cwd)?.name,
+        pinned: false,
+        launchArgs: lastLaunch.args,
+        sessionType: 'claude',
+      });
+      return;
+    }
+    const project = projects.find((candidate) => candidate.path === selectedProjectPath);
+    addTab({
+      name: project?.name ?? 'Nova sessão',
+      cwd: selectedProjectPath,
+      projectName: project?.name,
+      pinned: false,
+      sessionType: 'claude',
+    });
+  };
+
+  // T010 — FR-008: aba de terminal comum (powershell.exe) no diretório do
+  // projeto selecionado — item "Terminal" do menu do "＋ Nova sessão".
+  const handleNewFreeTerminal = (): void => {
+    const project = projects.find((candidate) => candidate.path === selectedProjectPath);
+    addTab({ name: 'Terminal', cwd: selectedProjectPath, projectName: project?.name, pinned: false, sessionType: 'shell' });
   };
 
   const handleToggleFavorite = (path: string, favorite: boolean): void => {
@@ -227,10 +323,10 @@ export function App(): React.JSX.Element {
         <AccountBadge accountNumber={3} headroomPercent={62} expandable onClick={noop} />
         <SplitButton
           label="＋ Nova sessão"
-          onClick={noop}
+          onClick={handleQuickNewClaudeSession}
           items={[
-            { label: 'Sessão Claude', onSelect: noop },
-            { label: 'Terminal', onSelect: noop },
+            { label: 'Sessão Claude', onSelect: handleQuickNewClaudeSession },
+            { label: 'Terminal', onSelect: handleNewFreeTerminal },
           ]}
         />
       </header>
@@ -252,20 +348,27 @@ export function App(): React.JSX.Element {
               <TerminalTab
                 key={tab.id}
                 name={tab.name}
-                state={semaphoreStates[tab.id]?.state ?? 'working'}
+                // T010 — ui-spec §2 zona 3: abas de terminal comum não têm
+                // dot de semáforo (undefined = TerminalTab troca pelo ícone
+                // de shell); só abas 'claude' mostram o StateDot do T009.
+                state={tab.sessionType === 'shell' ? undefined : (semaphoreStates[tab.id]?.state ?? 'working')}
                 active={tab.id === activeTabId}
                 onClick={() => setActiveTabId(tab.id)}
+                onClose={() => handleRequestCloseTab(tab.id)}
               />
             ))}
           </div>
           <div className={styles.terminal}>
+            {tabs.length === 0 ? <p className={styles.emptyState}>Nenhuma sessão aberta. Use “＋ Nova sessão”.</p> : null}
             {tabs.map((tab) => (
               <div key={tab.id} className={tab.id === activeTabId ? styles.terminalPane : styles.terminalPaneHidden}>
                 <TerminalPane
-                  sessionType="claude"
+                  sessionType={tab.sessionType}
                   cwd={tab.cwd}
                   args={tab.launchArgs}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
+                  onAliveChange={(alive) => handleAliveChange(tab.id, alive)}
+                  onCloseTab={() => handleRequestCloseTab(tab.id)}
                 />
               </div>
             ))}
@@ -289,6 +392,25 @@ export function App(): React.JSX.Element {
       </div>
 
       <StatusBar accountLabel="Tecnologia Claude 3 · 62%" modelEffort="fable/high" sessionCount={tabs.length} />
+
+      {/* T010 — FR-006, ui-spec §2 "fechar aba com sessão ativa": confirmação destrutiva antes de matar um PTY vivo. */}
+      <Modal
+        open={pendingCloseTabId !== null}
+        onClose={handleCancelCloseTab}
+        title="Fechar sessão?"
+        actions={
+          <>
+            <Button variant="secondary" onClick={handleCancelCloseTab}>
+              Cancelar
+            </Button>
+            <Button variant="danger" onClick={handleConfirmCloseTab}>
+              Fechar sessão
+            </Button>
+          </>
+        }
+      >
+        <p>O processo desta aba será encerrado.</p>
+      </Modal>
     </div>
   );
 }

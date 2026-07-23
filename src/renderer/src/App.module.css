@@ -78,6 +78,18 @@
   display: none;
 }
 
+/* T010 — todas as abas fechadas (ui-spec §2 "sem sessões abertas"). Versão
+   mínima do estado vazio: os atalhos completos (retomar recente, rotinas)
+   chegam com T013/rotinas — fora do escopo do ciclo de vida de abas. */
+.emptyState {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: var(--text-body-size);
+}
+
 .rightPanel {
   display: flex;
   flex-direction: column;
