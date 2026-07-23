@@ -118,6 +118,14 @@ hipótese ainda não confirmada pelo Alexandre.
 - **US-14 Rotinas** `[E1 + clarify]` — Botões configuráveis (ex.: "Setup do
   dia") que abrem uma sessão já executando uma sequência de skills definida
   por mim.
+- **US-15 Novo projeto decente** `[E 22/07, adição]` — O botão "＋ Novo
+  projeto" da sidebar abre um **formulário dinâmico**: pessoal × profissional,
+  nome, tema (opcional), tem todo?, tem repositório (criar × vincular)? —
+  campos seguintes dependem das respostas (ex.: profissional → oferecer
+  vínculo TaskDex; repositório → perguntar remoto). Ao confirmar, o app
+  executa o scaffolding via a skill **`/new-project`** já existente
+  (diretório + vault Obsidian + pointer L1 + TaskDex opcional) numa sessão —
+  o formulário coleta, a skill executa.
 
 **P2 — modo Dev:**
 
@@ -131,6 +139,14 @@ hipótese ainda não confirmada pelo Alexandre.
   *Decisão proposta:* fases default = Esteira, por já ser o processo do squad
   (cards TaskDex + skills `/esteira-*`); o preset HumanLayer fica como
   configuração alternativa para experimentar.
+- **US-16 Donel, o buddy** `[E 22/07, adição]` — O app carrega a identidade do
+  **Donel** (Jobu Donel), personagem de RPG do Alexandre — o buddy/companheiro
+  com humor e falas próprias com quem ele jogava conversando. No app: a área
+  de **post-its é uma conversa com o Donel** — eu conto, ele guarda a memória
+  e devolve depois. Explicitamente **não prioritário**; entra no design system
+  desde já (mascote, tom de voz, onde aparece e onde NÃO aparece) para a
+  identidade nascer junto. **Persona em definição — papo de personagem
+  pendente com o Alexandre.**
 
 ## Requisitos funcionais
 

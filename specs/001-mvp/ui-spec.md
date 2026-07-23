@@ -300,13 +300,48 @@ Ativado no switch da titlebar. A navegação muda de "projetos" para **tasks**:
   trabalho.
 - **F4 Trocar de conta por quota:** headroom da ativa < 15% (badge vermelho) →
   dropdown → escolhe conta com folga → novas sessões nascem nela.
-- **F5 Post-it no meio do trabalho:** `Ctrl+Shift+N` → digita → Enter → segue
+- **F5 Post-it no meio do trabalho:** `Ctrl+Alt+N` → digita → Enter → segue
   trabalhando; à tarde abre o quadro e recapitula.
 - **F6 Task pela Esteira (modo Dev):** nova task → Discovery (sessão fresca) →
   ✓ → "Iniciar Plano →" (sessão fresca) → … → Concluir; artefatos acumulam no
   painel direito.
+- **F7 Novo projeto:** "＋ Novo projeto" na sidebar → formulário dinâmico
+  (§15) → confirmar → sessão abre rodando `/new-project` com as respostas →
+  projeto aparece na sidebar ao concluir.
 
-## 14. Dados de exemplo para o design (LGPD-safe)
+## 15. Novo projeto — formulário dinâmico (P1)
+
+Aberto pelo botão "＋ Novo projeto" no rodapé da seção PROJETOS da sidebar.
+Modal centrado (não wizard de página inteira), um passo visível por vez com
+progressão fluida — as perguntas seguintes reagem às respostas:
+
+1. **Tipo:** Pessoal × Profissional (segmented, obrigatório).
+2. **Nome do projeto** (input; slug kebab-case gerado ao lado, editável).
+3. **Tema** (input opcional; placeholder "ex.: automação de heartbeats").
+4. **Tem todo?** (toggle) — cria `todo.md` no vault do projeto.
+5. **Repositório:** Nenhum × Criar novo × Vincular existente (se "vincular":
+   campo de path/URL; se Profissional: oferecer vínculo TaskDex).
+6. Resumo do que será criado (diretório, vault, pointer, TaskDex) + botão
+   primário "Criar projeto".
+
+Ao confirmar, abre uma sessão executando a skill `/new-project` com as
+respostas — o progresso do scaffolding aparece no próprio terminal da sessão.
+Estados: validação de nome duplicado (projeto já existe no root escolhido);
+erro da skill = sessão fica aberta para diagnóstico.
+
+## 16. Identidade do personagem — Donel (em definição)
+
+O app carrega o **Donel** (Jobu Donel), buddy de RPG do Alexandre: humor,
+falas próprias, guardião da memória. Direção já decidida: a área de post-its
+(§9) é tematizada como **conversa com o Donel** — capturar = contar a ele;
+recapitular = ele devolver o que guardou. Princípio de calibragem: o app é
+"sala de controle calma" — o Donel vive nos momentos de captura/memória e
+NUNCA interrompe o trabalho (sem mascote animado sobre o terminal, sem
+Clippy). Persona, aparência, tom de voz e demais pontos de presença: **a
+definir no papo de personagem com o Alexandre** — esta seção será expandida
+com o resultado.
+
+## 17. Dados de exemplo para o design (LGPD-safe)
 
 Projetos: `bizops-ai-native`, `spotsys`, `dalton`, `donel-dev`, `ai-rats`.
 Sessões: "spec do donel", "radar spotsys", "fix build_real.py", "setup do
