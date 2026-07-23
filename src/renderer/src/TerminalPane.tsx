@@ -115,7 +115,21 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   const unsubscribeDataRef = useRef<(() => void) | null>(null);
   const unsubscribeExitRef = useRef<(() => void) | null>(null);
   const unsubscribeSemaphoreRef = useRef<(() => void) | null>(null);
-  const disposedRef = useRef(false);
+  // FIX — geração do mount atual (substitui o antigo `disposedRef` booleano).
+  // Incrementado tanto no INÍCIO do efeito de mount quanto no INÍCIO do
+  // cleanup — cada `spawnSession()` captura o valor vigente no momento da
+  // chamada (`requestEpoch`) e, quando a promise de `pty.create` resolve,
+  // compara contra o valor ATUAL do ref: diferente = essa chamada pertence a
+  // uma geração já descartada (StrictMode double-invoke em dev, ou unmount
+  // real) e o PTY recém-criado é morto sem nunca virar "vivo" pro componente;
+  // igual = ainda é a geração corrente, segue o fluxo normal. Um booleano
+  // único não distingue "geração 1 descartada" de "geração 2, a atual" depois
+  // que as duas já dispararam — as duas ficavam com a mesma flag `true`/
+  // `false`, causando ou os dois pty's sendo mortos (bug original) ou os dois
+  // sendo mantidos vivos (1 deles órfão, nunca gerenciado — 2 processos
+  // `claude.exe` reais por aba em vez de 1). Contador resolve isso porque
+  // cada geração tem um valor PRÓPRIO, nunca reutilizado.
+  const mountEpochRef = useRef(0);
   // T013 (correção herdada) — assinantes de `onRenderedUpdate`, notificados a
   // cada chunk de PTY já processado pelo parser do xterm (ver comentário do
   // handle acima pro porquê de ser evento, não poll).
@@ -191,11 +205,18 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     const term = termRef.current;
     if (!term) return;
     setStatus({ kind: 'connecting' });
+    // Snapshot da geração vigente NO MOMENTO da chamada — não lido de novo
+    // depois (ver comentário de `mountEpochRef` acima).
+    const requestEpoch = mountEpochRef.current;
 
     void window.donel.pty
       .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args })
       .then((result) => {
-        if (disposedRef.current) {
+        if (requestEpoch !== mountEpochRef.current) {
+          // Geração já descartada (StrictMode double-invoke em dev, ou a aba
+          // foi desmontada de verdade antes da promise resolver) — mata o
+          // PTY recém-criado sem nunca setar status:'running' nem assinar
+          // onData/onExit/semaphore (ninguém vai ler essas assinaturas).
           window.donel.pty.kill(result.ptyId);
           return;
         }
@@ -225,7 +246,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         });
       })
       .catch((error: unknown) => {
-        if (disposedRef.current) return;
+        if (requestEpoch !== mountEpochRef.current) return;
         const expectedPath = parseClaudeNotFound(error);
         if (expectedPath) {
           setStatus({ kind: 'claude-not-found', expectedPath });
@@ -240,6 +261,18 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return undefined;
+
+    // FIX — React 18 <StrictMode> (main.tsx) double-invoca este efeito em dev
+    // (mount -> cleanup -> mount) pra achar efeitos impuros. Cada mount é uma
+    // geração NOVA (ver comentário de `mountEpochRef` acima) — sem isso, o
+    // segundo mount herdava o sinal "descartado" do cleanup do primeiro (ou,
+    // com um reset ingênuo pra um único boolean, os dois mounts ficavam
+    // indistinguíveis um do outro depois de resolver). A aba ficava presa em
+    // 'connecting' pra sempre (terminal vazio, digitação sem efeito, toolbar
+    // mostrando "Sessão sem processo vivo") — ou, com o reset ingênuo, dois
+    // processos `claude.exe` reais nasciam por aba e só um ficava gerenciado
+    // (o outro, órfão, seguia vivo escrevendo no mesmo xterm).
+    mountEpochRef.current += 1;
 
     const term = new XTerm({
       fontFamily: '"JetBrains Mono", monospace',
@@ -268,7 +301,11 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     resizeObserver.observe(container);
 
     return () => {
-      disposedRef.current = true;
+      // Fecha esta geração — qualquer `pty.create` ainda pendente desta
+      // geração vai ser reconhecido como stale quando resolver (ver
+      // `mountEpochRef`/`spawnSession` acima), mesmo que um próximo mount
+      // (StrictMode) ainda não tenha rodado pra abrir a geração seguinte.
+      mountEpochRef.current += 1;
       resizeObserver.disconnect();
       teardownPty();
       term.dispose();
@@ -280,7 +317,9 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   }, []);
 
   const handleReopen = useCallback(() => {
-    disposedRef.current = false;
+    // Nova tentativa = nova geração (mesmo raciocínio do mount effect acima)
+    // — invalida qualquer `pty.create` velho ainda pendente desta aba.
+    mountEpochRef.current += 1;
     termRef.current?.clear();
     spawnSession();
   }, [spawnSession]);
