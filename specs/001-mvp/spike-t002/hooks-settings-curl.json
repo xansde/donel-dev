@@ -1,0 +1,64 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl.exe -s -X POST -H \"Content-Type: application/json\" -H \"X-Spike-Event-Label: UserPromptSubmit\" -H \"X-Donel-Tab-Id: %DONEL_TAB_ID%\" --data-binary @- http://127.0.0.1:8765/hook"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl.exe -s -X POST -H \"Content-Type: application/json\" -H \"X-Spike-Event-Label: PreToolUse\" -H \"X-Donel-Tab-Id: %DONEL_TAB_ID%\" --data-binary @- http://127.0.0.1:8765/hook"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl.exe -s -X POST -H \"Content-Type: application/json\" -H \"X-Spike-Event-Label: PostToolUse\" -H \"X-Donel-Tab-Id: %DONEL_TAB_ID%\" --data-binary @- http://127.0.0.1:8765/hook"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl.exe -s -X POST -H \"Content-Type: application/json\" -H \"X-Spike-Event-Label: Stop\" -H \"X-Donel-Tab-Id: %DONEL_TAB_ID%\" --data-binary @- http://127.0.0.1:8765/hook"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl.exe -s -X POST -H \"Content-Type: application/json\" -H \"X-Spike-Event-Label: Notification\" -H \"X-Donel-Tab-Id: %DONEL_TAB_ID%\" --data-binary @- http://127.0.0.1:8765/hook"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl.exe -s -X POST -H \"Content-Type: application/json\" -H \"X-Spike-Event-Label: SessionEnd\" -H \"X-Donel-Tab-Id: %DONEL_TAB_ID%\" --data-binary @- http://127.0.0.1:8765/hook"
+          }
+        ]
+      }
+    ]
+  }
+}

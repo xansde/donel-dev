@@ -1,0 +1,74 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel UserPromptSubmit"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel PreToolUse"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel PostToolUse"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel Stop"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel SubagentStop"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel Notification"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel SessionEnd"
+          }
+        ]
+      }
+    ]
+  }
+}
