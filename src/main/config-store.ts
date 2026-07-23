@@ -4,11 +4,16 @@ import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandB
 import type { AppConfigDto, LauncherDefaultsDto, NotificationPreference } from '../shared/config';
 import { PRINCIPAL_PROFILE_SLUG } from './profile-manager';
 
-// T015 — ConfigStore formal (FR-007): `%APPDATA%\DonelDev\config.json` (na
-// prática `app.getPath('userData')`, que resolve pro nome real do app
-// — `donel-dev`/lowercase, depois do `app.setName` em main/index.ts;
-// case-insensitive no NTFS, então bate com a grafia `DonelDev` dos
-// roteiros/plan.md), escrita ATÔMICA (temp + rename, FR-007), schema
+// T015 — ConfigStore formal (FR-007): `%APPDATA%\donel-dev\config.json` (na
+// prática `app.getPath('userData')`, que resolve pro nome real do app —
+// `donel-dev`, com hífen, via `app.setName('donel-dev')` em main/index.ts,
+// espelhando o campo `name` do package.json raiz). NOTA (T017, 2026-07-23):
+// este comentário dizia "DonelDev" (sem hífen) e alegava que NTFS
+// case-insensitive cobria a diferença — errado, `DonelDev` e `donel-dev` não
+// são a mesma string (falta o hífen, não é só capitalização); confirmado em
+// disco que o path real é `%APPDATA%\donel-dev\`. Corrigido aqui e no roteiro
+// batch-5 (specs/001-mvp/roteiros-e2e/batch-5-acabamento-empacotamento-smoke.md).
+// Escrita ATÔMICA (temp + rename, FR-007), schema
 // versionado (`CONFIG_SCHEMA_VERSION`) e defaults resilientes — nunca lança
 // pra config ausente/corrompida (mesmo espírito de todo módulo *-store deste
 // projeto: ScanDeps, ProfileCreationIoDeps, etc.).
