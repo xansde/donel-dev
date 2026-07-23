@@ -55,6 +55,17 @@ export interface TerminalPaneProps {
    * `status.kind === 'running'`.
    */
   onAliveChange?: (alive: boolean) => void;
+  /**
+   * FIX (feedback E2E rodada 5) — perfil de NASCIMENTO desta sessão
+   * (`PtyCreateResult.profile`, main/index.ts `activeProfileSlug`/`Name` NO
+   * MOMENTO da criação — por valor, como `claudeConfigDir` já é, T014).
+   * Chamado uma única vez, junto com `ptyIdRef.current = result.ptyId`
+   * (mesmo instante que `onAliveChange(true)`/`setStatus('running')`
+   * refletem). `undefined` só chega aqui pra sessão 'shell' (branch shell
+   * do handler `pty:create` nunca preenche `profile`) — App.tsx decide o
+   * que fazer com isso (`sessionAccountLabel.ts`).
+   */
+  onProfileResolved?: (profile: { slug: string; name: string } | undefined) => void;
 }
 
 /**
@@ -117,7 +128,7 @@ export interface TerminalPaneHandle {
 }
 
 export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(function TerminalPane(
-  { sessionType = 'shell', cwd, args, onCloseTab, onStateChange, onAliveChange },
+  { sessionType = 'shell', cwd, args, onCloseTab, onStateChange, onAliveChange, onProfileResolved },
   ref
 ): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -161,6 +172,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   onStateChangeRef.current = onStateChange;
   const onAliveChangeRef = useRef(onAliveChange);
   onAliveChangeRef.current = onAliveChange;
+  const onProfileResolvedRef = useRef(onProfileResolved);
+  onProfileResolvedRef.current = onProfileResolved;
 
   // T010 — reporta pro pai sempre que a "vivacidade" do processo muda (não
   // a cada render, só quando `status.kind` de fato transiciona) — é o sinal
@@ -245,6 +258,12 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         }
         ptyIdRef.current = result.ptyId;
         setStatus({ kind: 'running' });
+        // FIX (feedback E2E rodada 5) — perfil de nascimento desta sessão
+        // (undefined pra 'shell', ver comentário do prop). Levantado uma
+        // única vez, no mesmo instante que `onAliveChange(true)` reflete
+        // (efeito de `status.kind` acima) — App.tsx grava por tab.id, nunca
+        // reconsultado depois (mesmo espírito "por valor" de `claudeConfigDir`).
+        onProfileResolvedRef.current?.(result.profile);
         // FIX (feedback E2E rodada 5) — arma o auto-aceite só pra esta
         // geração desta aba; desarma sozinho no primeiro `\r` enviado
         // (`maybeAutoAcceptTrustDialog`) OU no primeiro evento de hook

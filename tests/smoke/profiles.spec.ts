@@ -124,12 +124,28 @@ test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar 
   // Titlebar reflete o perfil ativo (accountLabel via onActiveProfileLabelChange, App.tsx statusbar também) — confirma que a troca "pegou" antes de spawnar a sessão.
   await expect(window.locator('[data-testid="profile-switcher-trigger"]')).toContainText(E2E_PROFILE_NAME);
 
+  // FIX (feedback E2E rodada 5) — "statusbar deve mostrar a conta com que a
+  // sessão EM FOCO foi criada" (specs/001-mvp/feedback-e2e.md). A aba
+  // default de boot (ainda em foco aqui — nenhuma aba nova foi criada
+  // ainda) nasceu SOB O PERFIL PRINCIPAL, antes da ativação acima; mesmo com
+  // o perfil ATIVO global agora sendo `E2E_PROFILE_NAME`, a statusbar tem
+  // que continuar mostrando o perfil de NASCIMENTO da aba em foco
+  // ("Sessão: Principal") — SEM o fix, ela mostraria o perfil ativo global
+  // (`E2E_PROFILE_NAME`), sugerindo (errado) que a aba trocou de conta.
+  const statusbarAccount = window.locator('[data-testid="statusbar-account"]');
+  await expect(statusbarAccount).toHaveText('Sessão: Principal');
+
   // 5. Spawna uma sessão claude nova (corpo do "＋ Nova sessão" — defaults, sem projeto/modelo específico, já que a prova é o estado de auth, não o comportamento do modelo).
   await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
 
   const newTab = window.locator('[role="tab"]').last();
   await expect(newTab).toBeVisible();
   await expect(newTab).toHaveAttribute('aria-selected', 'true');
+
+  // FIX (feedback E2E rodada 5) — a aba NOVA (em foco agora) nasceu sob o
+  // perfil recém-ativado — statusbar troca pra refletir ESTA aba, não mais
+  // a anterior.
+  await expect(statusbarAccount).toHaveText(`Sessão: ${E2E_PROFILE_NAME}`);
 
   // 6. PROVA do isolamento (spike seção 4/5 + addendum 2026-07-23), com uma
   // CORREÇÃO em relação ao texto literal pedido pela task: a task descrevia
@@ -162,6 +178,16 @@ test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar 
     expect(await activePane.innerText()).toContain('Select login method');
   }).toPass({ timeout: 20_000 });
   // Nunca avança daqui — selecionar uma opção abriria um fluxo OAuth real.
+
+  // FIX (feedback E2E rodada 5) — aba de terminal livre (FR-008) nunca
+  // aplica `CLAUDE_CONFIG_DIR` (PtyManager.create) — não tem "perfil de
+  // nascimento" nenhum, então a statusbar mostra um rótulo neutro em vez de
+  // repetir o nome de um perfil que não se aplica a ela.
+  await window.getByRole('button', { name: 'Mais opções de ＋ Nova sessão' }).click();
+  await window.getByRole('menuitem', { name: 'Terminal (shell livre)' }).click();
+  const shellTab = window.locator('[role="tab"]').last();
+  await expect(shellTab).toHaveAttribute('aria-selected', 'true');
+  await expect(statusbarAccount).toHaveText('Terminal (sem conta)');
 
   // Higiene: devolve a conta ativa pra Principal antes de fechar o app —
   // não deixa esta execução do smoke com um perfil de teste (que vai ser

@@ -26,7 +26,7 @@ export function StatusBar({ accountLabel, modelEffort, sessionCount, smartZone, 
 
   return (
     <div className={[styles.bar, className].filter(Boolean).join(' ')}>
-      <span>{accountLabel}</span>
+      <span data-testid="statusbar-account">{accountLabel}</span>
       {modelEffort ? (
         <>
           <span className={styles.separator} aria-hidden="true">

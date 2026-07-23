@@ -16,6 +16,7 @@ import {
   hasLiveInjectionConfirmation,
 } from '../../shared/liveSessionInjection';
 import { sortProjects } from '../../shared';
+import { computeSessionAccountLabel } from '../../shared/sessionAccountLabel';
 import { sortSessions } from '../../shared/sessionOrdering';
 import { nextAttentionSessionId, sessionIdAtPosition } from '../../shared/sessionShortcuts';
 import { sessionTabName } from '../../shared/sessions';
@@ -158,6 +159,15 @@ export function App(): React.JSX.Element {
     const intervalId = setInterval(() => forceDiagnosticTick((tick) => tick + 1), 5_000);
     return () => clearInterval(intervalId);
   }, []);
+  // FIX (feedback E2E rodada 5) — perfil de NASCIMENTO de cada aba claude
+  // (chave = tab.id), alimentado por `TerminalPane.onProfileResolved` uma
+  // única vez por sessão (`PtyCreateResult.profile`, main/index.ts). Nunca
+  // reescrito depois — trocar o perfil ATIVO global (ProfileSwitcher,
+  // `accountLabel` abaixo) não deve alterar o que já está aqui (FR-005:
+  // "afeta só sessões novas"). `undefined` = aba 'shell' OU ainda não
+  // resolvido (`computeSessionAccountLabel` decide o rótulo pros dois
+  // casos). Limpo em `closeTabImmediately` (mesmo padrão de `sessionModelEffort`).
+  const [sessionProfiles, setSessionProfiles] = useState<Record<string, { slug: string; name: string } | undefined>>({});
   // T010 — aba com fechamento pendente de confirmação (modal "Fechar sessão?", ui-spec §2); null = nenhum modal aberto.
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
   // T011 — modelo/esforço "atual" de cada aba claude (chave = tab.id), pro
@@ -216,6 +226,14 @@ export function App(): React.JSX.Element {
     setAliveTabs((prev) => (prev[tabId] === alive ? prev : { ...prev, [tabId]: alive }));
   }, []);
 
+  // FIX (feedback E2E rodada 5) — grava o perfil de NASCIMENTO da aba uma
+  // única vez (TerminalPane chama isto só uma vez por `spawnSession`, ver
+  // comentário do prop) — nunca sobrescrito por uma troca de perfil ATIVO
+  // global depois (isso é `accountLabel`/ProfileSwitcher, estado separado).
+  const handleProfileResolved = useCallback((tabId: string, profile: { slug: string; name: string } | undefined): void => {
+    setSessionProfiles((prev) => ({ ...prev, [tabId]: profile }));
+  }, []);
+
   /** Cria uma aba nova, foca ela e devolve o id — usado por todo caminho de criação (sidebar, Launcher, "＋ Nova sessão", Terminal). */
   const addTab = (partial: Omit<TabState, 'id'>): string => {
     tabIdCounter.current += 1;
@@ -253,6 +271,7 @@ export function App(): React.JSX.Element {
     setSemaphoreStates((prev) => omitKey(prev, tabId));
     setAliveTabs((prev) => omitKey(prev, tabId));
     delete aliveSinceRef.current[tabId]; // FIX (feedback E2E rodada 5) — mesmo padrão de limpeza dos maps acima.
+    setSessionProfiles((prev) => omitKey(prev, tabId)); // FIX (feedback E2E rodada 5) — idem.
     setSessionModelEffort((prev) => omitKey(prev, tabId));
     // T013 — uma injeção pendente cuja confirmação ainda não chegou não pode
     // continuar rodando pra uma aba que acabou de fechar (nem escreveria
@@ -802,6 +821,18 @@ export function App(): React.JSX.Element {
       ? `${sessionModelEffort[activeTab.id]?.model ?? DEFAULT_MODEL_ALIAS}/${sessionModelEffort[activeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}`
       : undefined;
 
+  // FIX (feedback E2E rodada 5) — "statusbar deve mostrar a conta com que a
+  // sessão EM FOCO foi criada", não a conta ATIVA global (`accountLabel`,
+  // ProfileSwitcher). `accountLabel` continua sendo o badge do
+  // titlebar/dropdown ("que conta a PRÓXIMA sessão usa") — aqui é só o
+  // fallback pra janela curta antes de `sessionProfiles[activeTab.id]`
+  // resolver (ver `computeSessionAccountLabel`). Sem aba ativa (0 sessões
+  // abertas), cai no `accountLabel` global também — não há "aba em foco"
+  // nesse estado.
+  const activeSessionAccountLabel = activeTab
+    ? computeSessionAccountLabel({ sessionType: activeTab.sessionType, profile: sessionProfiles[activeTab.id] }, accountLabel)
+    : accountLabel;
+
   return (
     <div className={styles.shell}>
       <header className={styles.titlebar}>
@@ -893,6 +924,7 @@ export function App(): React.JSX.Element {
                   args={tab.launchArgs}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}
+                  onProfileResolved={(profile) => handleProfileResolved(tab.id, profile)}
                   onCloseTab={() => handleRequestCloseTab(tab.id)}
                 />
               </div>
@@ -932,7 +964,7 @@ export function App(): React.JSX.Element {
         </pre>
       </div>
 
-      <StatusBar accountLabel={accountLabel} modelEffort={activeModelEffort} sessionCount={tabs.length} />
+      <StatusBar accountLabel={activeSessionAccountLabel} modelEffort={activeModelEffort} sessionCount={tabs.length} />
 
       {/* T010 — FR-006, ui-spec §2 "fechar aba com sessão ativa": confirmação destrutiva antes de matar um PTY vivo. */}
       <Modal

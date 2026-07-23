@@ -96,6 +96,14 @@ let appConfig: AppConfig = defaultAppConfig(defaultProjectRoots(homedir));
 const profilePathDeps = { homedir };
 let activeProfileSlug: string = PRINCIPAL_PROFILE_SLUG;
 let activeProfileConfigDir: string | undefined;
+// FIX (feedback E2E rodada 5) — nome de exibição do perfil ativo, mantido ao
+// lado de `activeProfileSlug`/`activeProfileConfigDir` (mesmos pontos de
+// atualização: boot e `profiles:activate` abaixo) só pra devolver no
+// `pty:create` de sessão claude (ver `PtyCreateResult.profile`) — a
+// statusbar (App.tsx) usa isso pra saber com que perfil CADA ABA nasceu,
+// distinto do perfil ATIVO global (que pode já ter mudado quando o foco
+// volta pra essa aba).
+let activeProfileName: string = PRINCIPAL_PROFILE.name;
 const headroomCache = new HeadroomCache();
 
 // T009 — semáforo de sessões (FR-010). `getRecentLines` reaproveita o ring
@@ -220,7 +228,12 @@ function registerPtyIpcHandlers(): void {
         semaphoreManager.registerSession(ptyId, correlationId);
       }
 
-      return { ptyId };
+      // FIX (feedback E2E rodada 5) — perfil de NASCIMENTO desta sessão
+      // (mesmo `activeProfileSlug`/Name usados em `claudeConfigDir` acima,
+      // por VALOR — trocar de perfil depois não reescreve isto). Só pra
+      // 'claude' (branch abaixo, shell, nunca aplica `CLAUDE_CONFIG_DIR` —
+      // não tem "perfil" que fizesse sentido devolver aqui).
+      return { ptyId, profile: { slug: activeProfileSlug, name: activeProfileName } };
     }
 
     const ptyId = ptyManager.create(options);
@@ -383,6 +396,7 @@ function registerProfileIpcHandlers(): void {
     if (target) {
       activeProfileSlug = target.slug;
       activeProfileConfigDir = target.configDir;
+      activeProfileName = target.name; // FIX (feedback E2E rodada 5) — mesmo ponto de atualização de activeProfileSlug/activeProfileConfigDir acima.
       // T015 — perfil ativo agora persiste dentro do ConfigStore unificado
       // (antes: active-profile.json próprio, T014).
       appConfig = { ...appConfig, activeProfileSlug: target.slug };
@@ -439,6 +453,7 @@ void app.whenReady().then(async () => {
   const bootProfile = currentProfileList().find((profile) => profile.slug === appConfig.activeProfileSlug) ?? PRINCIPAL_PROFILE;
   activeProfileSlug = bootProfile.slug;
   activeProfileConfigDir = bootProfile.configDir;
+  activeProfileName = bootProfile.name; // FIX (feedback E2E rodada 5) — mesmo ponto de atualização de activeProfileSlug/activeProfileConfigDir acima.
   // Slug persistido pode ter sido normalizado pro Principal acima (perfil
   // morto) — reflete de volta no config em memória pra próxima escrita não
   // reintroduzir um slug inexistente.

@@ -75,6 +75,17 @@ export function parseClaudeNotFound(error: unknown): string | null {
 
 export interface PtyCreateResult {
   ptyId: string;
+  /**
+   * FIX (feedback E2E rodada 5) — perfil ATIVO no momento em que esta sessão
+   * nasceu (main/index.ts `activeProfileSlug`/`activeProfileName`), o mesmo
+   * valor por trás do `claudeConfigDir` passado a `PtyManager.create`
+   * (T014/FR-005). Só preenchido pra `sessionType: 'claude'` — terminal
+   * livre (shell) nunca aplica `CLAUDE_CONFIG_DIR`, então não tem "perfil de
+   * nascimento" (App.tsx usa isso pra distinguir os dois casos no rótulo da
+   * statusbar, ver `sessionAccountLabel.ts`). `undefined` também é o valor
+   * legítimo de um `pty:create` de shell — não é "ainda não resolvido".
+   */
+  profile?: { slug: string; name: string };
 }
 
 export interface PtyExitInfo {
