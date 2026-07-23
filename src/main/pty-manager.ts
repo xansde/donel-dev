@@ -27,6 +27,14 @@ export interface PtyCreateOptions {
   cols: number;
   rows: number;
   cwd?: string;
+  /**
+   * Comando/args explícitos (T005 — sessão claude direta no PTY). Omitido =
+   * comportamento original do T004 (terminal livre, `FREE_TERMINAL_SHELL`).
+   * PtyManager é agnóstico ao domínio ("claude" vs "shell") — quem resolve o
+   * executável e decide o que spawnar é o chamador (main/index.ts).
+   */
+  command?: string;
+  args?: string[];
 }
 
 export type PtyDataListener = (ptyId: string, data: string) => void;
@@ -53,7 +61,11 @@ export class PtyManager {
 
   create(options: PtyCreateOptions): string {
     const id = randomUUID();
-    const ptyProcess = spawn(FREE_TERMINAL_SHELL, FREE_TERMINAL_ARGS, {
+    const command = options.command ?? FREE_TERMINAL_SHELL;
+    const args = options.args ?? FREE_TERMINAL_ARGS;
+    // Env herdado sem alteração (plan.md ponto 2 — nunca sobrescrever PATH;
+    // gotcha do atalho do Desktop que resolve o `claude.exe`/MCPs stdio).
+    const ptyProcess = spawn(command, args, {
       name: 'xterm-color',
       cols: options.cols,
       rows: options.rows,

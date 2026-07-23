@@ -85,12 +85,13 @@ export function App(): React.JSX.Element {
 
         <main className={styles.center}>
           <div className={styles.tabBar}>
-            {/* T004: 1 aba fixa de terminal livre (FR-008). Abas múltiplas/fechar
-                chegam em T010 — por isso sem onClose ainda. */}
-            <TerminalTab name="Terminal" active />
+            {/* T005: 1 aba fixa com sessão claude direta no PTY (FR-006). Abas
+                múltiplas/fechar-de-verdade/dot de semáforo real chegam em
+                T009/T010 — por isso sem `state`/`onClose` ainda. */}
+            <TerminalTab name="Sessão" active />
           </div>
           <div className={styles.terminal}>
-            <TerminalPane />
+            <TerminalPane sessionType="claude" />
           </div>
         </main>
 

@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { join } from 'node:path';
 import type { PtyCreateOptions, PtyCreateResult, PtyExitInfo } from '../shared';
-import { PTY_CHANNELS } from '../shared';
+import { CLAUDE_NOT_FOUND_PREFIX, PTY_CHANNELS } from '../shared';
+import { createSystemResolveDeps, resolveClaudeExecutable } from './claude-executable';
 import { PtyManager } from './pty-manager';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
@@ -10,6 +11,8 @@ import { PtyManager } from './pty-manager';
 // "Arquitetura de processos").
 
 const ptyManager = new PtyManager();
+// Resolvido uma vez (não muda durante a vida do processo) — plan.md ponto 2.
+const claudeResolveDeps = createSystemResolveDeps();
 
 function createMainWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -57,6 +60,25 @@ function createMainWindow(): void {
 
 function registerPtyIpcHandlers(): void {
   ipcMain.handle(PTY_CHANNELS.create, (_event, options: PtyCreateOptions): PtyCreateResult => {
+    if (options.sessionType === 'claude') {
+      // T005 — spawna o `claude` CLI direto no PTY (plan.md ponto 1), não
+      // dentro de um shell. Sem resolução → CA-5: o renderer reconhece o
+      // prefixo e mostra o banner com o caminho esperado (nunca uma aba
+      // quebrada sem explicação).
+      const resolved = resolveClaudeExecutable(claudeResolveDeps);
+      if (!resolved.found) {
+        throw new Error(`${CLAUDE_NOT_FOUND_PREFIX}${resolved.expectedPath}`);
+      }
+      const ptyId = ptyManager.create({
+        cols: options.cols,
+        rows: options.rows,
+        cwd: options.cwd,
+        command: resolved.path,
+        args: [],
+      });
+      return { ptyId };
+    }
+
     const ptyId = ptyManager.create(options);
     return { ptyId };
   });
