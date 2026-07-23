@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import './global.css';
 import '@donel-dev/design-system';
 // T010 (achado ao testar o dropdown do "＋ Nova sessão") — o import acima
 // carrega só o JS. `design-system/package.json` builda tokens.css/fontes num
