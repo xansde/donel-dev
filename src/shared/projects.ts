@@ -31,3 +31,28 @@ export interface DonelProjectsApi {
   /** Marca/desmarca favorito; retorna a lista já atualizada (evita round-trip extra). */
   setFavorite(path: string, favorite: boolean): Promise<ProjectInfo[]>;
 }
+
+/**
+ * Favoritos no topo (dentro do próprio root); resto alfabético (ui-spec §2).
+ *
+ * Movida de `src/main/project-scanner.ts` (correção do feedback E2E rodada
+ * 3, "favoritar projeto só reflete após reiniciar o app") — função pura, sem
+ * `node:fs`/`node:path`, por isso pode viver em `shared/` e ser importada
+ * pelo RENDERER também: `App.tsx` reordena a lista otimisticamente no
+ * próprio clique da estrela (mesma regra de ordenação do main process,
+ * agora com uma única fonte de verdade), sem esperar o round-trip do IPC
+ * (`projects:favorite`) — o scan de projetos no main é uma varredura
+ * síncrona de filesystem (`scanProjects`) que pode levar dezenas/centenas
+ * de ms com vários repos sob os roots, tempo suficiente pra parecer "não
+ * reflete" a um clique impaciente. `project-scanner.ts` reexporta esta
+ * função (mesmo caminho de import de antes, `main/index.ts` e os testes
+ * existentes não mudam).
+ */
+export function sortProjects(projects: readonly ProjectInfo[]): ProjectInfo[] {
+  return [...projects].sort((a, b) => {
+    const rootCompare = a.root.localeCompare(b.root);
+    if (rootCompare !== 0) return rootCompare;
+    if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+}

@@ -8,7 +8,7 @@ import type { DonelProfilesApi } from './profiles';
 import type { DonelProjectsApi } from './projects';
 import type { DonelSessionsApi } from './sessions';
 
-export { PROJECT_CHANNELS } from './projects';
+export { PROJECT_CHANNELS, sortProjects } from './projects';
 export type { DonelProjectsApi, ProjectInfo } from './projects';
 
 export { SESSION_CHANNELS } from './sessions';

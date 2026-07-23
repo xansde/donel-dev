@@ -114,6 +114,7 @@ export function ProjectSidebar({
                 : group.items.map((project) => (
                     <div
                       key={project.path}
+                      data-testid={`project-row-${project.name}`}
                       className={[styles.projectRow, project.missing ? styles.missing : ''].join(' ')}
                     >
                       <button

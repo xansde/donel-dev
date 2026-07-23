@@ -1,13 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { ProjectInfo } from '../src/shared';
-import {
-  defaultProjectRoots,
-  mergeFavorites,
-  scanProjects,
-  sortProjects,
-  type ScanDeps,
-} from '../src/main/project-scanner';
+import { defaultProjectRoots, mergeFavorites, scanProjects, type ScanDeps } from '../src/main/project-scanner';
 
 // T007 — ProjectScanner (FR-001). Mesmo padrão de DI de
 // tests/claude-executable.test.ts: deps mockadas em memória, sem tocar
@@ -132,17 +125,6 @@ describe('mergeFavorites', () => {
   });
 });
 
-describe('sortProjects', () => {
-  it('agrupa por root (alfabético); dentro do grupo, favoritos no topo e resto alfabético', () => {
-    const input: ProjectInfo[] = [
-      { path: 'C:\\seazone\\spotsys', name: 'spotsys', root: 'C:\\seazone', favorite: false },
-      { path: 'C:\\seazone\\bizops', name: 'bizops', root: 'C:\\seazone', favorite: true },
-      { path: 'C:\\seazone\\dalton', name: 'dalton', root: 'C:\\seazone', favorite: false },
-      { path: 'C:\\pessoal\\blog', name: 'blog', root: 'C:\\pessoal', favorite: false },
-    ];
-
-    const result = sortProjects(input).map((p) => `${p.root}\\${p.name}`);
-
-    expect(result).toEqual(['C:\\pessoal\\blog', 'C:\\seazone\\bizops', 'C:\\seazone\\dalton', 'C:\\seazone\\spotsys']);
-  });
-});
+// `sortProjects` mudou de casa (agora `src/shared/projects.ts`, pura — ver
+// comentário de topo do arquivo) — coberta em tests/projects.test.ts, junto
+// do cenário de reordenação otimista (feedback E2E rodada 3).

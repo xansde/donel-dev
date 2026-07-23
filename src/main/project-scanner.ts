@@ -1,6 +1,15 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { ProjectInfo } from '../shared';
+import { sortProjects } from '../shared/projects';
+
+// `sortProjects` mora em `src/shared/projects.ts` (pura, sem node:fs) desde
+// a correção do feedback E2E rodada 3 ("favoritar só reflete após reiniciar
+// o app") — o renderer (App.tsx) reusa a MESMA função pra reordenar a
+// sidebar otimisticamente no clique da estrela, sem esperar o round-trip do
+// IPC. Reexportada aqui pra `main/index.ts` e os testes existentes
+// continuarem importando de `./project-scanner` sem mudança.
+export { sortProjects };
 
 // T007 — ProjectScanner (FR-001, plan.md "Arquitetura de processos").
 // `scanProjects` é uma função pura — recebe as dependências injetadas
@@ -95,16 +104,6 @@ export function mergeFavorites(
   }
 
   return merged;
-}
-
-/** Favoritos no topo (dentro do próprio root); resto alfabético (ui-spec §2). */
-export function sortProjects(projects: readonly ProjectInfo[]): ProjectInfo[] {
-  return [...projects].sort((a, b) => {
-    const rootCompare = a.root.localeCompare(b.root);
-    if (rootCompare !== 0) return rootCompare;
-    if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
 }
 
 /** Roots default do FR-001: `~/seazone` e `~/pessoal`. */
