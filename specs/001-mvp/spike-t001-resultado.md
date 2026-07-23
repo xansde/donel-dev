@@ -385,3 +385,34 @@ tenha feito dentro do perfil.
    UI de perfis ser considerada definitivamente pronta — o `profile doctor`
    de fato não tem como validar tudo sem uma autenticação real acontecer ao
    menos uma vez.
+
+---
+
+## Addendum — validação humana do login concorrente (2026-07-23, ~10:33)
+
+O gate humano do critério (a) foi **fechado pelo Alexandre** executando o
+roteiro E2E do batch 1 (`specs/001-mvp/roteiros-e2e/batch-1-spikes-perfis-semaforo.md`):
+
+- `/login` real de uma conta compartilhada foi concluído **dentro do perfil**
+  `C:\Users\xansd\.claude-profiles\spike-test` — `.credentials.json` do perfil
+  gravado às `10:33:19`, `.claude.json` do perfil às `10:33:41`.
+- Em paralelo, a conta **global** continuou plenamente autenticada e funcional:
+  duas execuções `claude -p` na sessão global responderam normalmente, com
+  `~/.claude/.credentials.json` (`10:33:49`) e `~/.claude.json` (`10:33:55`)
+  atualizados de forma independente dos arquivos do perfil.
+- Na sessão do perfil, `/model` e um prompt trivial funcionaram ("OK"),
+  confirmando sessão real autenticada no perfil.
+
+**Conclusão: dois logins simultâneos (perfil + global) coexistem sem colisão.**
+O isolamento por `CLAUDE_CONFIG_DIR` está confirmado ponta a ponta — fecha o
+issue médio da auditoria do batch 1 e o critério de entrada humano do T014.
+
+**Observação registrada para investigação (não bloqueia):** na sessão do
+perfil apareceram erros *non-blocking* de hooks: (i) `SessionStart` falhando
+com paths sem barras (`C:Usersxansd.localbin...`) — investigar se o escaping
+dos paths nos hooks do `settings.json` copiado se comporta diferente no
+perfil ou se o erro é pré-existente também na conta global; (ii) traceback do
+plugin hookify (`stop.py` → `config_loader.py:87`,
+`TypeError: 'type' object is not subscriptable`) — bug do plugin com Python
+antigo no PATH, independente do Donel Dev. Roteado para verificação no smoke
+final (T017).
