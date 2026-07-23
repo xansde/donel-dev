@@ -84,7 +84,42 @@ export interface DonelPtyApi {
   onExit(ptyId: string, listener: (info: PtyExitInfo) => void): () => void;
 }
 
+/** Nomes dos canais IPC do domínio semáforo (T009, FR-010). */
+export const SEMAPHORE_CHANNELS = {
+  update: 'semaphore:update',
+} as const;
+
+/**
+ * Estados do semáforo expostos pro renderer. Definido localmente em vez de
+ * reimportar `SessionState` de `@donel-dev/design-system` — este arquivo é
+ * compartilhado com o MAIN process, que não deve puxar um pacote de UI (o
+ * index do design-system importa CSS/fontes como efeito colateral). Os
+ * valores têm que continuar batendo com `SessionState` (StateDot.tsx) —
+ * são só os mesmos 5 nomes.
+ */
+export type SemaphoreState = 'working' | 'waiting' | 'permission' | 'error' | 'done';
+
+export interface SemaphoreUpdate {
+  readonly ptyId: string;
+  readonly state: SemaphoreState;
+  /** Epoch ms de quando `state` passou a valer (ui-spec §3 "há Xmin"; FR-010/CA-6 desempate por idade em `permission`). */
+  readonly stateEnteredAt: number;
+}
+
+/** Payload do listener FILTRADO por ptyId (mesmo padrão de `PtyExitInfo`/`pty.onExit` — o `ptyId` já é conhecido pelo chamador, não precisa vir de novo dentro do payload). */
+export interface SemaphoreStateInfo {
+  readonly state: SemaphoreState;
+  readonly stateEnteredAt: number;
+}
+
+/** API tipada exposta pelo preload em `window.donel.semaphore` (contextBridge). */
+export interface DonelSemaphoreApi {
+  /** Retorna função de unsubscribe. Mesmo padrão de `pty.onData`/`pty.onExit`: um canal IPC só (broadcast de todas as sessões), filtrado por `ptyId` na borda do preload. */
+  onUpdate(ptyId: string, listener: (info: SemaphoreStateInfo) => void): () => void;
+}
+
 export interface DonelApi {
   pty: DonelPtyApi;
   projects: DonelProjectsApi;
+  semaphore: DonelSemaphoreApi;
 }

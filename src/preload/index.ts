@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { DonelApi, ProjectInfo, PtyCreateOptions, PtyCreateResult, PtyExitInfo } from '../shared';
-import { PROJECT_CHANNELS, PTY_CHANNELS } from '../shared';
+import type { DonelApi, ProjectInfo, PtyCreateOptions, PtyCreateResult, PtyExitInfo, SemaphoreStateInfo, SemaphoreUpdate } from '../shared';
+import { PROJECT_CHANNELS, PTY_CHANNELS, SEMAPHORE_CHANNELS } from '../shared';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
 // arquivo é o único ponto por onde o renderer alcança o main process, via
@@ -49,6 +49,18 @@ const donelApi: DonelApi = {
 
     setFavorite: (path: string, favorite: boolean) =>
       ipcRenderer.invoke(PROJECT_CHANNELS.favorite, path, favorite) as Promise<ProjectInfo[]>,
+  },
+
+  semaphore: {
+    // Um canal IPC só (broadcast de todas as sessões) — filtrado por ptyId
+    // aqui, mesmo padrão de pty.onData/pty.onExit acima.
+    onUpdate: (ptyId: string, listener: (info: SemaphoreStateInfo) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, update: SemaphoreUpdate): void => {
+        if (update.ptyId === ptyId) listener({ state: update.state, stateEnteredAt: update.stateEnteredAt });
+      };
+      ipcRenderer.on(SEMAPHORE_CHANNELS.update, handler);
+      return () => ipcRenderer.removeListener(SEMAPHORE_CHANNELS.update, handler);
+    },
   },
 };
 

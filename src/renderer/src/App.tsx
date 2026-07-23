@@ -1,7 +1,9 @@
 import { AccountBadge, SplitButton, StatusBar, TerminalTab } from '@donel-dev/design-system';
-import { useEffect, useRef, useState } from 'react';
-import type { ProjectInfo } from '../../shared';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ProjectInfo, SemaphoreStateInfo } from '../../shared';
 import { buildClaudeArgs } from '../../shared/commandBuilder';
+import { sortSessions } from '../../shared/sessionOrdering';
+import { nextAttentionSessionId, sessionIdAtPosition } from '../../shared/sessionShortcuts';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import type { LauncherLaunchOptions } from './Launcher';
@@ -13,8 +15,12 @@ import { TerminalPane } from './TerminalPane';
 // projeto pela sidebar cria (ou foca, se já aberta) uma aba de sessão claude
 // com `cwd` no projeto. Todas as abas ficam montadas (visibilidade via CSS,
 // não unmount) pra o PTY continuar vivo ao trocar de aba — o ciclo de vida
-// completo (fechar de verdade, limite de 6 sessões) é do T010. O dot de
-// estado é 'working' fixo pra todas as abas até o semáforo real (T009).
+// completo (fechar de verdade, limite de 6 sessões) é do T010.
+//
+// T009 — o dot de estado (antes fixo em 'working') agora vem de verdade do
+// semáforo (FR-010): cada TerminalPane assina `semaphore.onUpdate` pro seu
+// próprio ptyId (só ele conhece esse id) e levanta o estado pra cá via
+// `onStateChange`, indexado por `tab.id` (ver TerminalPane.tsx).
 
 interface TabState {
   id: string;
@@ -49,6 +55,16 @@ export function App(): React.JSX.Element {
   const [selectedProjectPath, setSelectedProjectPath] = useState<string | undefined>(undefined);
   const [lastLaunch, setLastLaunch] = useState<LastLaunch | null>(null);
   const tabIdCounter = useRef(0);
+  // T009 — estado do semáforo por aba (chave = tab.id), alimentado pelo
+  // callback que cada TerminalPane levanta via onStateChange.
+  const [semaphoreStates, setSemaphoreStates] = useState<Record<string, SemaphoreStateInfo>>({});
+  const previousSemaphoreStatesRef = useRef<Record<string, SemaphoreStateInfo>>({});
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
+
+  const handleSemaphoreChange = useCallback((tabId: string, info: SemaphoreStateInfo): void => {
+    setSemaphoreStates((prev) => ({ ...prev, [tabId]: info }));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,14 +139,83 @@ export function App(): React.JSX.Element {
     setTabs((prev) => prev.map((tab) => (tab.id === tabId ? { ...tab, pinned: !tab.pinned } : tab)));
   };
 
+  // T009 — antes do primeiro evento de hook chegar pra uma aba recém-criada,
+  // assume 'working' (spike: estado inicial otimista) com stateEnteredAt=0
+  // (sortSessions trata omitido/0 como "a mais antiga possível" — nunca
+  // perde o desempate de FR-010/CA-6 por causa disso).
   const sidebarSessions: SidebarSession[] = tabs.map((tab) => ({
     id: tab.id,
     name: tab.name,
     projectName: tab.projectName,
-    state: 'working',
+    state: semaphoreStates[tab.id]?.state ?? 'working',
+    stateEnteredAt: semaphoreStates[tab.id]?.stateEnteredAt,
     pinned: tab.pinned,
     active: tab.id === activeTabId,
   }));
+
+  // Mesma ordenação da sidebar (sessionOrdering.ts) — FR-013 usa essa lista
+  // ranqueada tanto pro Ctrl+1..9 (posição N) quanto pro Ctrl+Tab (próxima
+  // sessão que precisa de atenção).
+  const orderedSessions = useMemo(() => sortSessions(sidebarSessions), [sidebarSessions]);
+
+  // FR-013 — Ctrl+1..9 foca a sessão na posição N da lista ranqueada;
+  // Ctrl+Tab foca a próxima que precisa de atenção (permissão > aguardando).
+  // Capture na fase de captura + preventDefault/stopPropagation: sem isso o
+  // xterm embaixo (foco na aba ativa) recebe as teclas como input normal do
+  // terminal em vez do atalho do app.
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (!event.ctrlKey || event.altKey || event.metaKey) return;
+
+      if (event.key === 'Tab') {
+        const target = nextAttentionSessionId(orderedSessions, activeTabIdRef.current);
+        if (!target) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setActiveTabId(target);
+        return;
+      }
+
+      const position = Number(event.key);
+      if (Number.isInteger(position) && position >= 1 && position <= 9) {
+        const target = sessionIdAtPosition(orderedSessions, position);
+        if (!target) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setActiveTabId(target);
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
+  }, [orderedSessions]);
+
+  // Notificação Windows opcional (ui-spec §3, FR-010) quando uma sessão em
+  // BACKGROUND passa a precisar de atenção — nunca pra aba já em foco (o
+  // usuário já está olhando). `app.setAppUserModelId` (main/index.ts) é o
+  // que garante a notificação sair atribuída ao Donel Dev, não a "Electron".
+  useEffect(() => {
+    const previous = previousSemaphoreStatesRef.current;
+    for (const tab of tabs) {
+      const nextState = semaphoreStates[tab.id]?.state;
+      const prevState = previous[tab.id]?.state;
+      if (!nextState || nextState === prevState) continue; // só na TRANSIÇÃO de estado, não a cada update
+      if (tab.id === activeTabId) continue; // aba em foco não precisa de toast
+      if (nextState !== 'waiting' && nextState !== 'permission') continue;
+
+      try {
+        if (typeof Notification === 'undefined') continue;
+        const title = nextState === 'permission' ? 'Permissão pendente' : 'Aguardando sua resposta';
+        const body =
+          nextState === 'permission' ? `Sessão "${tab.name}" precisa da sua aprovação.` : `Sessão "${tab.name}" terminou o turno.`;
+        const notification = new Notification(title, { body });
+        notification.onclick = () => setActiveTabId(tab.id);
+      } catch {
+        // Notificação é opcional (ui-spec §3) — nunca deve derrubar a UI.
+      }
+    }
+    previousSemaphoreStatesRef.current = semaphoreStates;
+  }, [semaphoreStates, tabs, activeTabId]);
 
   return (
     <div className={styles.shell}>
@@ -167,7 +252,7 @@ export function App(): React.JSX.Element {
               <TerminalTab
                 key={tab.id}
                 name={tab.name}
-                state="working"
+                state={semaphoreStates[tab.id]?.state ?? 'working'}
                 active={tab.id === activeTabId}
                 onClick={() => setActiveTabId(tab.id)}
               />
@@ -176,7 +261,12 @@ export function App(): React.JSX.Element {
           <div className={styles.terminal}>
             {tabs.map((tab) => (
               <div key={tab.id} className={tab.id === activeTabId ? styles.terminalPane : styles.terminalPaneHidden}>
-                <TerminalPane sessionType="claude" cwd={tab.cwd} args={tab.launchArgs} />
+                <TerminalPane
+                  sessionType="claude"
+                  cwd={tab.cwd}
+                  args={tab.launchArgs}
+                  onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
+                />
               </div>
             ))}
           </div>

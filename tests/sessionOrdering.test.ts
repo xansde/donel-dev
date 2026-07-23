@@ -38,6 +38,42 @@ describe('sortSessions', () => {
     expect(sortSessions(sessions).map((s) => s.id)).toEqual(['b-pinned', 'a-unpinned', 'c-unpinned']);
   });
 
+  it('FR-010/CA-6: entre 2+ sessões com permissão pendente, a mais antiga (menor stateEnteredAt) aparece primeiro', () => {
+    const sessions: OrderableSession[] = [
+      { id: 'permission-recent', state: 'permission', pinned: false, stateEnteredAt: 6_000 }, // há 1min (agora=7000)
+      { id: 'permission-old', state: 'permission', pinned: false, stateEnteredAt: 1_000 }, // há 6min
+    ];
+
+    expect(sortSessions(sessions).map((s) => s.id)).toEqual(['permission-old', 'permission-recent']);
+  });
+
+  it('desempate por idade em permission vale mesmo com pin — idade decide antes do pin', () => {
+    const sessions: OrderableSession[] = [
+      { id: 'permission-recent-pinned', state: 'permission', pinned: true, stateEnteredAt: 6_000 },
+      { id: 'permission-old-unpinned', state: 'permission', pinned: false, stateEnteredAt: 1_000 },
+    ];
+
+    expect(sortSessions(sessions).map((s) => s.id)).toEqual(['permission-old-unpinned', 'permission-recent-pinned']);
+  });
+
+  it('sessão sem stateEnteredAt em permission é tratada como a mais antiga (0), nunca perde o desempate por omissão', () => {
+    const sessions: OrderableSession[] = [
+      { id: 'permission-with-timestamp', state: 'permission', pinned: false, stateEnteredAt: 500 },
+      { id: 'permission-without-timestamp', state: 'permission', pinned: false },
+    ];
+
+    expect(sortSessions(sessions).map((s) => s.id)).toEqual(['permission-without-timestamp', 'permission-with-timestamp']);
+  });
+
+  it('idade não interfere fora do estado permission — pin continua desempatando normalmente', () => {
+    const sessions: OrderableSession[] = [
+      { id: 'waiting-recent-unpinned', state: 'waiting', pinned: false, stateEnteredAt: 6_000 },
+      { id: 'waiting-old-pinned', state: 'waiting', pinned: true, stateEnteredAt: 1_000 },
+    ];
+
+    expect(sortSessions(sessions).map((s) => s.id)).toEqual(['waiting-old-pinned', 'waiting-recent-unpinned']);
+  });
+
   it('não muta o array recebido', () => {
     const sessions: OrderableSession[] = [
       { id: 'a', state: 'done', pinned: false },

@@ -4,7 +4,7 @@ import '@xterm/xterm/css/xterm.css';
 import { Button } from '@donel-dev/design-system';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { parseClaudeNotFound } from '../../shared';
-import type { PtyExitInfo } from '../../shared';
+import type { PtyExitInfo, SemaphoreStateInfo } from '../../shared';
 import styles from './TerminalPane.module.css';
 
 // T004 deu a base (xterm + PtyManager). T005 liga a aba a uma sessão claude
@@ -38,22 +38,40 @@ export interface TerminalPaneProps {
   args?: string[];
   /** Ação real de fechar a aba na barra de abas (T010). Sem isso, "Fechar aba" só mostra o estado neutro local. */
   onCloseTab?: () => void;
+  /**
+   * T009 — semáforo de sessões (FR-010). TerminalPane é quem conhece o
+   * `ptyId` de verdade (nasce da resposta de `pty.create`, nunca sobe pro
+   * App.tsx) — por isso é ele quem assina `semaphore.onUpdate` e "levanta" o
+   * estado pro pai (sidebar/tab bar, ui-spec §2/§3) via este callback, em vez
+   * do App.tsx tentar re-derivar o ptyId por fora.
+   */
+  onStateChange?: (info: SemaphoreStateInfo) => void;
 }
 
-export function TerminalPane({ sessionType = 'shell', cwd, args, onCloseTab }: TerminalPaneProps): React.JSX.Element {
+export function TerminalPane({ sessionType = 'shell', cwd, args, onCloseTab, onStateChange }: TerminalPaneProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const ptyIdRef = useRef<string | null>(null);
   const unsubscribeDataRef = useRef<(() => void) | null>(null);
   const unsubscribeExitRef = useRef<(() => void) | null>(null);
+  const unsubscribeSemaphoreRef = useRef<(() => void) | null>(null);
   const disposedRef = useRef(false);
   const [status, setStatus] = useState<PaneStatus>({ kind: 'connecting' });
+
+  // Ref pra sempre chamar a versão mais recente do callback sem precisar
+  // re-assinar `semaphore.onUpdate` a cada render (o pai passa uma arrow
+  // function nova a cada vez — o mesmo problema que `cwd`/`args` já evitam
+  // ao serem lidos só no spawn inicial, ver eslint-disable mais abaixo).
+  const onStateChangeRef = useRef(onStateChange);
+  onStateChangeRef.current = onStateChange;
 
   const teardownPty = useCallback(() => {
     unsubscribeDataRef.current?.();
     unsubscribeExitRef.current?.();
+    unsubscribeSemaphoreRef.current?.();
     unsubscribeDataRef.current = null;
     unsubscribeExitRef.current = null;
+    unsubscribeSemaphoreRef.current = null;
     if (ptyIdRef.current) {
       window.donel.pty.kill(ptyIdRef.current);
       ptyIdRef.current = null;
@@ -81,6 +99,12 @@ export function TerminalPane({ sessionType = 'shell', cwd, args, onCloseTab }: T
         unsubscribeExitRef.current = window.donel.pty.onExit(result.ptyId, (info) => {
           ptyIdRef.current = null;
           setStatus({ kind: 'ended', info });
+        });
+        // Sessão de terminal livre (FR-008) nunca é registrada no semáforo
+        // pelo main process — sem sessionType 'claude', simplesmente não
+        // chega update nenhum aqui (nada a filtrar deste lado).
+        unsubscribeSemaphoreRef.current = window.donel.semaphore.onUpdate(result.ptyId, (info) => {
+          onStateChangeRef.current?.(info);
         });
       })
       .catch((error: unknown) => {

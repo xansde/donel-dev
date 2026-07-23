@@ -1,0 +1,67 @@
+{
+  "permissions": {
+    "ask": ["Bash", "PowerShell"]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel UserPromptSubmit -Endpoint http://127.0.0.1:8766/hook"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel PreToolUse -Endpoint http://127.0.0.1:8766/hook"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel PostToolUse -Endpoint http://127.0.0.1:8766/hook"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel Notification -Endpoint http://127.0.0.1:8766/hook"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel Stop -Endpoint http://127.0.0.1:8766/hook"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\xansd\\seazone\\donel-dev\\specs\\001-mvp\\spike-t002\\hook-forward.ps1\" -EventLabel SessionEnd -Endpoint http://127.0.0.1:8766/hook"
+          }
+        ]
+      }
+    ]
+  }
+}

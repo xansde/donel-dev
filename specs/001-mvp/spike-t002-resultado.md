@@ -250,6 +250,70 @@ Nenhum comando de login foi executado; nenhuma credencial foi tocada. Todos os
 testes usaram sessões já autenticadas na conta padrão do usuário (mesma conta
 de sempre, sem troca de perfil).
 
+## Addendum T009 — Notification em TTY real
+
+**Data:** 2026-07-23. **Status:** confirmado — `Notification` DISPARA de
+verdade dentro de um PTY real (node-pty/ConPTY), resolvendo o item mais
+importante de "Não verificado" acima. Script:
+`specs/001-mvp/spike-t002/notification-real-tty-test.cjs` (roda sob
+`ELECTRON_RUN_AS_NODE=1` — node-pty foi rebuildado pra ABI do Electron pelo
+postinstall do projeto, um `node` puro não carrega `conpty.node`). Settings
+usado: `specs/001-mvp/spike-t002/hooks-settings-realtty.json` (mesmos hooks
+do spike original + `"permissions": {"ask": ["Bash","PowerShell"]}` pra
+forçar o cenário de aprovação pendente).
+
+**Resultado:** sessão real (`claude --model haiku --permission-mode default
+--settings hooks-settings-realtty.json --session-id <uuid>`), prompt pedindo
+Bash — a interface interativa de aprovação REAL apareceu no terminal
+("Bash requires confirmation for this command. ... Do you want to proceed?
+❯ 1. Yes 2. No") e o hook `Notification` disparou em paralelo, ~20s após o
+prompt, com payload:
+
+```json
+{
+  "hook_event_name": "Notification",
+  "message": "Claude needs your permission",
+  "notification_type": "permission_prompt",
+  "session_id": "<mesmo uuid do --session-id>"
+}
+```
+
+Sequência completa de eventos observada: `UserPromptSubmit` → `PreToolUse` →
+**`Notification`** → `PostToolUse` → `Stop`. Confirma a hipótese do spike
+original ("é plausível que Notification funcione [em PTY real] e este
+fallback [heurístico] nem seja necessário") — `SemaphoreStateMachine` (T009)
+usa `Notification` como sinal PRIMÁRIO de `permission`, com a heurística por
+timeout+regex mantida só como fallback defensivo (custo zero se nunca
+disparar, como o próprio spike recomendava).
+
+**Bônus:** a mesma rodada capturou `SessionEnd.reason = "prompt_input_exit"`
+ao sair via `/exit` dentro do REPL interativo — um valor de `reason` NUNCA
+observado no spike original (que só viu `"other"`, 10/10 saídas headless via
+`-p`), resolvendo também esse item de "Não verificado".
+
+## Addendum T009 — hook `-Command` inline falha silenciosamente; `-File` é obrigatório
+
+**Achado importante para qualquer implementação futura de hooks via
+`--settings` gerado em runtime:** a primeira versão do `--settings` de
+produção (`src/main/hooks-settings.ts`) usava um comando PowerShell **inline**
+(`powershell -Command "$in=[Console]::In.ReadToEnd(); try { ... } catch {}"`)
+em vez de um arquivo `.ps1` — funcionalmente equivalente ao
+`hook-forward.ps1` do spike, só que sem o arquivo separado. No smoke real do
+app (Electron completo, não o script isolado acima), esse comando inline
+**nunca disparou**: nenhum POST chegou ao servidor local, e nenhum erro
+apareceu no transcript da sessão (diferente dos hooks globais quebrados do
+usuário nesta máquina, que SEMPRE aparecem como "hook error" no transcript
+quando falham) — sugestão forte de que o comando nem chegou a ser
+interpretado como um hook válido pelo parser do Claude Code, possivelmente
+por causa do aninhamento de aspas duplas dentro de `-Command "..."`.
+Trocar para `-File "<script gerado>"` (exatamente o padrão do
+`hook-forward.ps1` original, já validado duas vezes acima) resolveu de
+imediato — confirmado via `UserPromptSubmit`/`Stop` chegando corretamente
+correlacionados por `session_id` no smoke automatizado (CA-6,
+`tests/smoke/terminal.spec.ts`). **Conclusão para qualquer settings gerado
+em runtime: sempre escrever um arquivo `.ps1` e referenciá-lo via `-File`,
+nunca um comando inline via `-Command` com JSON aninhado.**
+
 ## Artefatos mantidos
 
 Todos em `specs/001-mvp/spike-t002/` (nada commitado — cabe ao orquestrador):
@@ -264,3 +328,6 @@ Todos em `specs/001-mvp/spike-t002/` (nada commitado — cabe ao orquestrador):
   cenário de permissão pendente
 - `server.log` — log JSONL bruto de todas as 48 requisições recebidas
   (evidência primária deste relatório)
+- `notification-real-tty-test.cjs` — addendum T009: valida `Notification` +
+  `SessionEnd.reason` num PTY real via node-pty (`ELECTRON_RUN_AS_NODE=1`)
+- `hooks-settings-realtty.json` — settings usado pelo script acima

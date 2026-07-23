@@ -18,6 +18,8 @@ export interface SidebarSession {
   /** Nome curto do projeto, ou undefined pra sessão sem projeto (aba livre/inicial). */
   projectName?: string;
   state: SessionState;
+  /** T009 — epoch ms de quando `state` passou a valer (FR-010/CA-6 desempate por idade em `permission`). */
+  stateEnteredAt?: number;
   pinned: boolean;
   active: boolean;
 }

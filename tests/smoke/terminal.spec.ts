@@ -211,3 +211,80 @@ test('launcher builds the exact CommandBuilder argv and opens a tab wired to it 
   // Diálogos de onboarding pós-spawn (trust folder / chrome extension /
   // etc.) ficam como "Não verificado" — ver dossiê do T008.
 });
+
+test('semáforo: o StateDot de uma aba em BACKGROUND muda de trabalhando pra aguardando resposta sem precisar focá-la (T009, FR-010/CA-6)', async () => {
+  // Timeout default do arquivo (30s, playwright.config.ts) não sobra pro
+  // turno real completar (boot + espera pelo prompt pronto + resposta do
+  // modelo) — as duas esperas de 60s/45s abaixo já somam mais que isso sozinhas.
+  test.setTimeout(180_000);
+
+  // --model haiku (barato) + prompt trivial, conforme a DoD da task: prova
+  // o pipeline completo hook->HTTP local->main->IPC->preload->TerminalPane
+  // ->App.tsx->TerminalTab funcionando de ponta a ponta com uma sessão
+  // claude real, SEM nunca focar a aba de novo depois do prompt enviado —
+  // é exatamente isso que uma UI hardcoded (o estado fixo 'working' de
+  // antes do T009) não conseguiria fingir.
+  const launcher = window.locator('[data-testid="launcher"]');
+  await expect(launcher).toBeVisible();
+
+  await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
+  await launcher.getByLabel('Nome').fill('semaforo-test');
+
+  const tabsBefore = await window.locator('[role="tab"]').count();
+  await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
+
+  const newTab = window.locator('[role="tab"]', { hasText: 'semaforo-test' });
+  await expect(newTab).toBeVisible();
+  await expect(window.locator('[role="tab"]')).toHaveCount(tabsBefore + 1);
+  await expect(newTab).toHaveAttribute('aria-selected', 'true');
+
+  const activePane = window.locator('[data-testid="terminal-pane"]:visible');
+  await expect(activePane).toHaveCount(1);
+  await expect(async () => {
+    const text = await activePane.innerText();
+    expect(text.length).toBeGreaterThan(0);
+    expect(text).not.toContain('CLAUDE_NOT_FOUND');
+    expect(text).not.toContain('Falha ao iniciar');
+  }).toPass({ timeout: 20_000 });
+
+  await activePane.click();
+  if ((await activePane.innerText()).includes('trust this folder')) {
+    await window.keyboard.press('Enter');
+  }
+  await expect(async () => {
+    const text = await activePane.innerText();
+    expect(text.toLowerCase()).toContain('claude code');
+  }).toPass({ timeout: 15_000 });
+
+  // StateDot fica dentro da própria aba na barra de abas — TerminalTab não
+  // passa `label` pro StateDot, então o estado só é exposto via aria-label
+  // (design-system.md §9: "o estado nunca é comunicado só por cor").
+  const dot = newTab.locator('[role="img"]');
+  await expect(dot).toHaveAttribute('aria-label', 'Trabalhando'); // baseline otimista antes de qualquer hook
+
+  // Espera o prompt de verdade ficar pronto pra digitar (status bar "accept
+  // edits on") em vez de assumir que o boot já terminou — em máquinas com
+  // hooks globais do usuário lentos/instáveis (achado do addendum T009), a
+  // tela ainda redesenha por um tempo mesmo depois do banner "Claude Code"
+  // aparecer, e digitar cedo demais faz o prompt se perder.
+  await expect(async () => {
+    expect(await activePane.innerText()).toContain('accept edits on');
+  }).toPass({ timeout: 60_000 });
+
+  await activePane.click();
+  await window.keyboard.type('Responda só OK, sem mais nada.', { delay: 30 });
+  await window.keyboard.press('Enter');
+
+  // Tira o foco da aba ANTES do turno terminar — troca pra "Sessão" (aba
+  // default, sempre presente). O resto do teste nunca mais toca `newTab`.
+  const defaultTab = window.locator('[role="tab"]', { hasText: 'Sessão' }).first();
+  await defaultTab.click();
+  await expect(newTab).toHaveAttribute('aria-selected', 'false');
+  await expect(defaultTab).toHaveAttribute('aria-selected', 'true');
+
+  // A prova de CA-6: sem NUNCA refocar `newTab`, o dot dela na barra de
+  // abas muda pra "Aguardando resposta" quando o turno completa (Stop hook
+  // -> SessionSemaphoreManager -> IPC -> App.tsx, tudo com a aba em segundo
+  // plano, TerminalPane só invisível via CSS mas nunca desmontado).
+  await expect(dot).toHaveAttribute('aria-label', 'Aguardando resposta', { timeout: 45_000 });
+});
