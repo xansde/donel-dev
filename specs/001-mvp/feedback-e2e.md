@@ -50,6 +50,28 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
   viewport ou falta de `overflow: hidden` no root. Corrigir e cobrir com
   asserção no smoke (scrollHeight do body == clientHeight).
 
+## 2026-07-23 — rodada 3 (roteiro batch 3 na worktree e2e)
+
+- [ ] **BUG — favoritar projeto só reflete após reiniciar o app**
+  (→ **Batch 5**): deveria ser instantâneo. `handleToggleFavorite` já chama
+  `setFavorite(...).then(setProjects)` — investigar por que a sidebar não
+  re-renderiza/re-ordena na hora (persistência ok mas resposta do IPC sem a
+  lista atualizada? agrupamento/ordenação de favoritos aplicado só no scan
+  inicial?). Corrigir + teste (unitário da ordenação e/ou smoke: clicar na
+  estrela → projeto muda de posição sem restart).
+- [ ] **UX/portabilidade — roots de projetos precisam ser configuráveis pela
+  UI** (→ **Batch 5 / T015**): o Alexandre quer escolher as pastas-raiz de
+  projetos (hoje a estrutura parece presa ao layout atual do disco; se ele
+  reorganizar o ambiente, quebra). O ConfigStore do T015 deve expor na UI de
+  preferências: adicionar/remover roots de scan (persistidos), com re-scan
+  imediato. Atualizar spec/ui-spec com uma nota do ajuste (FR-001).
+- [ ] **UX — painel lateral "Lançar sessão" fixo rouba espaço e não parece
+  produtivo** (→ **Batch 5**): tornar o painel colapsável/sob demanda —
+  abre ao clicar "＋ Nova sessão" (ou seta do SplitButton), fecha ao lançar
+  ou Esc; por padrão o espaço fica com o terminal. Atualizar ui-spec §4 com
+  a decisão. Cuidar para os smokes que assumem `[data-testid="launcher"]`
+  visível serem ajustados junto.
+
 - [ ] **Hooks do settings falhando na sessão de perfil** (→ **T017**):
   `SessionStart` com path sem barras (`C:Usersxansd.localbin...`) e traceback
   do plugin hookify (Python antigo). Ver addendum do spike T001. Confirmar se
