@@ -178,3 +178,35 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
   `SessionStart` com path sem barras (`C:Usersxansd.localbin...`) e traceback
   do plugin hookify (Python antigo). Ver addendum do spike T001. Confirmar se
   é pré-existente no global ou artefato da cópia de settings do perfil.
+
+## 2026-07-23 — rodada 5 (roteiro batch 5, app INSTALADO com fixes pós-gate)
+
+- [ ] **BUG — modelo/esforço não selecionável SOMENTE na primeira aba**
+  (relato: "Num geral, parece que eu não consigo selecionar modelo/esforço
+  SOMENTE da primeira aba. Que estranho"). Hipótese a investigar: a aba
+  claude default criada no boot nasce por caminho diferente do launcher
+  (sem launchConfig/metadados), deixando o SegmentedControl de injeção
+  (T011) desabilitado para sempre. Investigação de causa raiz em andamento.
+- [ ] **Roteiro batch 5, item 4 desatualizado** (relato: "não existe mais
+  aquela aba"; print referenciado NÃO chegou — anexo truncado). Hipótese:
+  o item 4 (CA-1 via launcher) foi escrito antes do launcher virar painel
+  colapsável (batch 5) e não diz como abrir o painel hoje. Atualizar o
+  roteiro com os passos exatos da UI atual; se o achado real for outro,
+  Alexandre reenvia o print.
+- [ ] **PRODUTO — restart não mantém as sessões ativas abertas** (relato:
+  "Não manteve as sessões ativas abertas"). Comportamento atual é o
+  especificado (PTY não sobrevive; sessões viram "sessões anteriores"),
+  mas a expectativa do dono do produto é restauração. DECISÃO PENDENTE:
+  propor opções (ex.: reabrir abas retomando sessões claude via `-r` no
+  boot; terminal livre não tem resume) — não implementar sem OK.
+- [ ] **UX — statusbar deve mostrar a conta com que a sessão EM FOCO foi
+  criada** (relato: "Mudar de conta não muda a conta utilizada naquela
+  sessão. Na barra inferior deveria mostrar a conta em que a sessão foi
+  criada"). Trocar perfil ativo não mudar sessões vivas é o comportamento
+  CORRETO (CA-3); o incômodo é a barra inferior mostrar a conta ativa
+  global, sugerindo que a sessão em foco trocou de conta. Fix: statusbar
+  mostra o perfil de criação da aba em foco; perfil ativo global fica no
+  badge do titlebar/dropdown.
+- (nota) Item 19 (RAM) da validação humana ficou interrompido no meio do
+  relato — sem número reportado. Medição automatizada segue valendo:
+  417–451 MB vs. budget 400 MB, decisão de NFR pendente.
