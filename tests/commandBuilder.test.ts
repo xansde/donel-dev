@@ -9,7 +9,7 @@
 // just human-readable shorthand for "the flag followed by the value as one
 // argv token" — adding real quote chars would corrupt the session name.
 import { describe, expect, it } from 'vitest';
-import { buildClaudeArgs, type BuildClaudeArgsOptions } from '../src/shared/commandBuilder';
+import { buildClaudeArgs, parseModelEffortFromArgs, type BuildClaudeArgsOptions } from '../src/shared/commandBuilder';
 
 describe('buildClaudeArgs', () => {
   it('returns an empty argv when no option is provided (all flags omitted, CLI uses user default)', () => {
@@ -164,6 +164,46 @@ describe('buildClaudeArgs', () => {
         'zzz-999',
         '--fork-session',
       ]);
+    });
+  });
+
+  describe('parseModelEffortFromArgs (T011 — inverso de --model/--effort, pra semear o valor inicial da SessionDetails)', () => {
+    it('extrai model e effort de um argv com os dois presentes', () => {
+      expect(parseModelEffortFromArgs(['--model', 'sonnet', '--effort', 'high'])).toEqual({
+        model: 'sonnet',
+        effort: 'high',
+      });
+    });
+
+    it('extrai só o model quando --effort não está no argv', () => {
+      expect(parseModelEffortFromArgs(['--model', 'opus'])).toEqual({ model: 'opus' });
+    });
+
+    it('extrai só o effort quando --model não está no argv', () => {
+      expect(parseModelEffortFromArgs(['--effort', 'xhigh'])).toEqual({ effort: 'xhigh' });
+    });
+
+    it('devolve objeto vazio pra argv undefined (aba aberta sem Launcher, ex. clique direto na sidebar)', () => {
+      expect(parseModelEffortFromArgs(undefined)).toEqual({});
+    });
+
+    it('devolve objeto vazio pra argv vazio', () => {
+      expect(parseModelEffortFromArgs([])).toEqual({});
+    });
+
+    it('ignora --model/--effort com valor desconhecido (argv corrompido/futuro) em vez de propagar lixo pro tipo', () => {
+      expect(parseModelEffortFromArgs(['--model', 'gpt5', '--effort', 'ludicrous'])).toEqual({});
+    });
+
+    it('encontra as flags em qualquer posição do argv (ordem real: CA-1 tem --model antes de --effort, mas não é garantido)', () => {
+      expect(parseModelEffortFromArgs(['-n', 'radar', '--effort', 'low', '--permission-mode', 'plan', '--model', 'haiku'])).toEqual({
+        model: 'haiku',
+        effort: 'low',
+      });
+    });
+
+    it('ignora uma flag --model/--effort no fim do array sem valor seguinte (argv truncado)', () => {
+      expect(parseModelEffortFromArgs(['--model'])).toEqual({});
     });
   });
 

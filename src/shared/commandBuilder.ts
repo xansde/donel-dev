@@ -76,3 +76,51 @@ export function buildClaudeArgs(opts: BuildClaudeArgsOptions = {}): string[] {
 
   return args;
 }
+
+// T011 — Defaults do Brief 3 (design reference), mesmos valores que o
+// Launcher.tsx já usa (DEFAULT_MODEL/DEFAULT_EFFORT locais, comentário
+// "Defaults do Brief 3: fable/high/acceptEdits") — exportados aqui pra
+// SessionDetails (right panel, FR-011) semear o valor inicial de uma sessão
+// aberta SEM passar pelo Launcher (ex.: clique direto na sidebar), onde
+// `parseModelEffortFromArgs` abaixo não tem nenhuma flag pra ler.
+export const DEFAULT_MODEL_ALIAS: ModelAlias = 'fable';
+export const DEFAULT_EFFORT_LEVEL: EffortLevel = 'high';
+
+const KNOWN_MODEL_ALIASES: readonly ModelAlias[] = ['fable', 'opus', 'sonnet', 'haiku'];
+const KNOWN_EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+export interface ParsedModelEffort {
+  readonly model?: ModelAlias;
+  readonly effort?: EffortLevel;
+}
+
+/**
+ * Inverso de `buildClaudeArgs` pros dois campos que a sessão viva (T011,
+ * SessionDetails) precisa mostrar pré-selecionados: lê `--model`/`--effort`
+ * de volta de um argv já montado (`TabState.launchArgs`, T008/App.tsx) —
+ * puro, sem I/O, mesmo espírito de `buildClaudeArgs`. Flag ausente, sem
+ * valor seguinte (argv truncado) ou com valor fora do enum conhecido
+ * (argv corrompido ou de uma versão futura do CommandBuilder) é omitida do
+ * resultado em vez de propagar um valor inválido pro tipo `ModelAlias`/
+ * `EffortLevel` — quem chama decide o fallback (SessionDetails cai pros
+ * `DEFAULT_*` acima).
+ */
+export function parseModelEffortFromArgs(args: readonly string[] | undefined): ParsedModelEffort {
+  if (!args || args.length === 0) return {};
+
+  const result: { model?: ModelAlias; effort?: EffortLevel } = {};
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === '--model') {
+      const value = args[i + 1];
+      if (value && (KNOWN_MODEL_ALIASES as readonly string[]).includes(value)) {
+        result.model = value as ModelAlias;
+      }
+    } else if (args[i] === '--effort') {
+      const value = args[i + 1];
+      if (value && (KNOWN_EFFORT_LEVELS as readonly string[]).includes(value)) {
+        result.effort = value as EffortLevel;
+      }
+    }
+  }
+  return result;
+}

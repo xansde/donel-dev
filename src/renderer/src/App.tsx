@@ -1,7 +1,14 @@
 import { AccountBadge, Button, Modal, SplitButton, StatusBar, TerminalTab } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectInfo, SemaphoreStateInfo } from '../../shared';
-import { buildClaudeArgs } from '../../shared/commandBuilder';
+import {
+  buildClaudeArgs,
+  DEFAULT_EFFORT_LEVEL,
+  DEFAULT_MODEL_ALIAS,
+  parseModelEffortFromArgs,
+} from '../../shared/commandBuilder';
+import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
+import { buildEffortInjection, buildModelInjection, canInjectLiveCommand } from '../../shared/liveSessionInjection';
 import { sortSessions } from '../../shared/sessionOrdering';
 import { nextAttentionSessionId, sessionIdAtPosition } from '../../shared/sessionShortcuts';
 import styles from './App.module.css';
@@ -9,7 +16,9 @@ import { Launcher } from './Launcher';
 import type { LauncherLaunchOptions } from './Launcher';
 import { ProjectSidebar } from './ProjectSidebar';
 import type { SidebarSession } from './ProjectSidebar';
+import { SessionDetails } from './SessionDetails';
 import { TerminalPane } from './TerminalPane';
+import type { TerminalPaneHandle } from './TerminalPane';
 
 // T007 — sidebar real ligada ao ProjectScanner (FR-001, US-1): abrir um
 // projeto pela sidebar cria (ou foca, se já aberta) uma aba de sessão claude
@@ -85,6 +94,20 @@ export function App(): React.JSX.Element {
   const [aliveTabs, setAliveTabs] = useState<Record<string, boolean>>({});
   // T010 — aba com fechamento pendente de confirmação (modal "Fechar sessão?", ui-spec §2); null = nenhum modal aberto.
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
+  // T011 — modelo/esforço "atual" de cada aba claude (chave = tab.id), pro
+  // controle da toolbar (SessionDetails) mostrar o valor certo pré-selecionado
+  // e refletir a troca depois de uma injeção bem-sucedida. Semeado no
+  // `addTab` (parseModelEffortFromArgs do launchArgs, se houver, senão os
+  // defaults do Brief 3) — nunca undefined pra uma aba 'claude' já criada.
+  // A aba 'default' de INITIAL_TABS nasce fora do `addTab` (é o estado
+  // inicial), por isso precisa do mesmo seed aqui.
+  const [sessionModelEffort, setSessionModelEffort] = useState<Record<string, { model: ModelAlias; effort: EffortLevel }>>({
+    [INITIAL_TABS[0].id]: { model: DEFAULT_MODEL_ALIAS, effort: DEFAULT_EFFORT_LEVEL },
+  });
+  // T011 — handle imperativo de cada TerminalPane viva (ver TerminalPaneHandle):
+  // ref callback comum, não state (não precisa re-render quando muda; o
+  // próprio React já nula a entrada no unmount da aba).
+  const terminalRefs = useRef<Record<string, TerminalPaneHandle | null>>({});
 
   const handleSemaphoreChange = useCallback((tabId: string, info: SemaphoreStateInfo): void => {
     setSemaphoreStates((prev) => ({ ...prev, [tabId]: info }));
@@ -100,6 +123,17 @@ export function App(): React.JSX.Element {
     const id = `tab-${tabIdCounter.current}`;
     setTabs((prev) => [...prev, { id, ...partial }]);
     setActiveTabId(id);
+    // T011 — semeia o valor inicial da toolbar de Modelo/Esforço só pra
+    // abas claude (terminal livre não tem os dois campos): lê de volta
+    // `launchArgs` (Launcher, T008) quando a aba nasceu configurada; sem
+    // isso (ex.: clique direto na sidebar), cai nos defaults do Brief 3.
+    if (partial.sessionType === 'claude') {
+      const parsed = parseModelEffortFromArgs(partial.launchArgs);
+      setSessionModelEffort((prev) => ({
+        ...prev,
+        [id]: { model: parsed.model ?? DEFAULT_MODEL_ALIAS, effort: parsed.effort ?? DEFAULT_EFFORT_LEVEL },
+      }));
+    }
     return id;
   };
 
@@ -119,6 +153,8 @@ export function App(): React.JSX.Element {
     }
     setSemaphoreStates((prev) => omitKey(prev, tabId));
     setAliveTabs((prev) => omitKey(prev, tabId));
+    setSessionModelEffort((prev) => omitKey(prev, tabId));
+    delete terminalRefs.current[tabId];
   };
 
   // T010 — FR-006: "se a sessão estiver ativa (processo vivo), pede
@@ -235,6 +271,48 @@ export function App(): React.JSX.Element {
     setTabs((prev) => prev.map((tab) => (tab.id === tabId ? { ...tab, pinned: !tab.pinned } : tab)));
   };
 
+  // T011 — FR-011: injeta `/model <alias>\r` no stdin da aba `tabId` só com
+  // o prompt ocioso. `canInjectLiveCommand` já é o mesmo gate que desabilita
+  // o SegmentedControl da toolbar (SessionDetails); reconferido aqui (defesa
+  // em profundidade contra a corrida rara clique-vs-mudança-de-estado — o
+  // clique nasce de um render que pode já estar um tick atrás do semáforo).
+  // Clique na opção já ativa não injeta nada (nenhuma mudança de verdade a
+  // aplicar) — só atualiza se `injectCommand` confirmar que escreveu.
+  const handleSelectModel = (tabId: string, model: ModelAlias): void => {
+    if (sessionModelEffort[tabId]?.model === model) return;
+    if (!canInjectLiveCommand(semaphoreStates[tabId]?.state, aliveTabs[tabId] ?? false)) return;
+    const injected = terminalRefs.current[tabId]?.injectCommand(buildModelInjection(model)) ?? false;
+    if (!injected) return;
+    setSessionModelEffort((prev) => ({ ...prev, [tabId]: { model, effort: prev[tabId]?.effort ?? DEFAULT_EFFORT_LEVEL } }));
+  };
+
+  // T011 — idem `handleSelectModel`, pro campo Esforço (`/effort <level>\r`).
+  const handleSelectEffort = (tabId: string, effort: EffortLevel): void => {
+    if (sessionModelEffort[tabId]?.effort === effort) return;
+    if (!canInjectLiveCommand(semaphoreStates[tabId]?.state, aliveTabs[tabId] ?? false)) return;
+    const injected = terminalRefs.current[tabId]?.injectCommand(buildEffortInjection(effort)) ?? false;
+    if (!injected) return;
+    setSessionModelEffort((prev) => ({ ...prev, [tabId]: { model: prev[tabId]?.model ?? DEFAULT_MODEL_ALIAS, effort } }));
+  };
+
+  // T011 — degradação do FR-011 quando não há processo vivo pra injetar
+  // (sessão 'done'/'error'/ainda conectando): fecha a aba encerrada e abre
+  // uma sessão claude NOVA no mesmo cwd/nome, com `--model`/`--effort` já no
+  // argv de spawn (CommandBuilder, T006) — mesmo caminho do Launcher, só que
+  // disparado pela toolbar em vez do painel. Perde o histórico da conversa
+  // (não tem `-r` aqui — resume real é T012/T013); o próprio texto do
+  // FR-011 já prevê essa perda como o preço aceito da degradação (a garantia
+  // de "sem perder contexto" da DoD é do caminho de injeção ao vivo, não
+  // deste fallback).
+  const handleRestartWithConfig = (tabId: string): void => {
+    const tab = tabs.find((candidate) => candidate.id === tabId);
+    if (!tab) return;
+    const pending = sessionModelEffort[tabId] ?? { model: DEFAULT_MODEL_ALIAS, effort: DEFAULT_EFFORT_LEVEL };
+    const args = buildClaudeArgs({ model: pending.model, effort: pending.effort, sessionName: tab.name || undefined });
+    closeTabImmediately(tabId);
+    addTab({ name: tab.name, cwd: tab.cwd, projectName: tab.projectName, pinned: tab.pinned, launchArgs: args, sessionType: 'claude' });
+  };
+
   // T009 — antes do primeiro evento de hook chegar pra uma aba recém-criada,
   // assume 'working' (spike: estado inicial otimista) com stateEnteredAt=0
   // (sortSessions trata omitido/0 como "a mais antiga possível" — nunca
@@ -313,6 +391,9 @@ export function App(): React.JSX.Element {
     previousSemaphoreStatesRef.current = semaphoreStates;
   }, [semaphoreStates, tabs, activeTabId]);
 
+  // T011 — aba em foco, pra decidir se a toolbar de Modelo/Esforço aparece (só sessões 'claude').
+  const activeTab = tabs.find((tab) => tab.id === activeTabId);
+
   return (
     <div className={styles.shell}>
       <header className={styles.titlebar}>
@@ -358,11 +439,26 @@ export function App(): React.JSX.Element {
               />
             ))}
           </div>
+          {/* T011 (FR-011) — toolbar de Modelo/Esforço da aba ATIVA, só pra sessões claude (terminal livre não tem os dois campos). Ver comentário de topo de SessionDetails.tsx sobre por que aqui e não no painel direito. */}
+          {activeTab && activeTab.sessionType === 'claude' ? (
+            <SessionDetails
+              model={sessionModelEffort[activeTab.id]?.model ?? DEFAULT_MODEL_ALIAS}
+              effort={sessionModelEffort[activeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}
+              semaphoreState={semaphoreStates[activeTab.id]?.state}
+              alive={aliveTabs[activeTab.id] ?? false}
+              onSelectModel={(model) => handleSelectModel(activeTab.id, model)}
+              onSelectEffort={(effort) => handleSelectEffort(activeTab.id, effort)}
+              onRestartWithConfig={() => handleRestartWithConfig(activeTab.id)}
+            />
+          ) : null}
           <div className={styles.terminal}>
             {tabs.length === 0 ? <p className={styles.emptyState}>Nenhuma sessão aberta. Use “＋ Nova sessão”.</p> : null}
             {tabs.map((tab) => (
               <div key={tab.id} className={tab.id === activeTabId ? styles.terminalPane : styles.terminalPaneHidden}>
                 <TerminalPane
+                  ref={(handle) => {
+                    terminalRefs.current[tab.id] = handle;
+                  }}
                   sessionType={tab.sessionType}
                   cwd={tab.cwd}
                   args={tab.launchArgs}

@@ -2,7 +2,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { Button } from '@donel-dev/design-system';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { parseClaudeNotFound } from '../../shared';
 import type { PtyExitInfo, SemaphoreStateInfo } from '../../shared';
 import styles from './TerminalPane.module.css';
@@ -56,7 +56,23 @@ export interface TerminalPaneProps {
   onAliveChange?: (alive: boolean) => void;
 }
 
-export function TerminalPane({ sessionType = 'shell', cwd, args, onCloseTab, onStateChange, onAliveChange }: TerminalPaneProps): React.JSX.Element {
+/**
+ * T011 (FR-011) — handle imperativo exposto via `ref`: quem chama decide
+ * SE deve injetar (gate de estado ocioso, `canInjectLiveCommand` em
+ * `shared/liveSessionInjection.ts`, aplicado em App.tsx/SessionDetails);
+ * este componente só é "a boca pro stdin", igual ao próprio `term.onData`
+ * (teclado real) já é — o `ptyId` continua nunca subindo pro App.tsx
+ * (comentário de `onStateChange` acima), só o efeito de escrever nele.
+ */
+export interface TerminalPaneHandle {
+  /** Escreve `command` no stdin do PTY desta aba. Devolve `false` (no-op) sem processo vivo — quem chama decide o que fazer com isso (ex.: degradação FR-011 "reiniciar com a flag"). */
+  injectCommand: (command: string) => boolean;
+}
+
+export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(function TerminalPane(
+  { sessionType = 'shell', cwd, args, onCloseTab, onStateChange, onAliveChange },
+  ref
+): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const ptyIdRef = useRef<string | null>(null);
@@ -83,6 +99,22 @@ export function TerminalPane({ sessionType = 'shell', cwd, args, onCloseTab, onS
     onAliveChangeRef.current?.(status.kind === 'running');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status.kind]);
+
+  // T011 (FR-011) — `injectCommand` lê `ptyIdRef` no momento da CHAMADA (não
+  // captura o valor no momento em que o handle foi criado), por isso não
+  // precisa de dependências: mesmo padrão de `term.onData` (linha ~161
+  // abaixo), que também lê `ptyIdRef.current` "ao vivo" a cada tecla.
+  useImperativeHandle(
+    ref,
+    () => ({
+      injectCommand: (command: string): boolean => {
+        if (!ptyIdRef.current) return false;
+        window.donel.pty.input(ptyIdRef.current, command);
+        return true;
+      },
+    }),
+    []
+  );
 
   const teardownPty = useCallback(() => {
     unsubscribeDataRef.current?.();
@@ -251,4 +283,4 @@ export function TerminalPane({ sessionType = 'shell', cwd, args, onCloseTab, onS
       ) : null}
     </div>
   );
-}
+});

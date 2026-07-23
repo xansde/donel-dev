@@ -1,0 +1,19 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-half) var(--panel-padding);
+  border-bottom: var(--hairline);
+  flex-wrap: wrap;
+}
+
+.label {
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.hint {
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+  margin-left: auto;
+}
