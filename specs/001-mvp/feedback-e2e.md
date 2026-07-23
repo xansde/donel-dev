@@ -114,11 +114,18 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
   definido inline ou key instável). Corrigir (memoizar/estabilizar o input,
   pausar refresh de quota com o form aberto) + teste que digita nome longo
   e assere foco contínuo.
-- [ ] **UX — headroom de quota não descobrível** (item 8): o % por perfil
-  existe mas o Alexandre não achou onde ver. Caminho atual: clicar no badge
-  do perfil ("Principal", canto superior direito) → dropdown lista cada
-  perfil com o %. Melhorias: mostrar o % do perfil ativo no próprio badge
-  do titlebar (como o placeholder antigo "· 62%" sugeria) e/ou na statusbar.
+- [ ] **BUG — headroom de quota não aparece no dropdown de perfis** (item 8;
+  → **correção pós-gate batch 5**): o modal "Perfis de conta" lista os
+  perfis (doctor funcionando: "Junctions com problema"/"Perfil OK") mas SEM
+  nenhum % nem "—". Evidência: `npx -y quota-axi --provider claude --json`
+  standalone devolve JSON VÁLIDO (percentUsed 32, five_hour) porém com
+  **exit code 255** — se `readQuotaAxiHeadroom` trata exit ≠ 0 como falha,
+  descarta o stdout bom; e a UI omite a linha em vez de renderizar "—"
+  (dupla violação do combinado). Corrigir: aceitar stdout JSON válido
+  independente do exit code (ou mapear os exit codes do quota-axi) + UI
+  sempre mostra o slot ("—" quando faltar) + teste com fixture exit 255.
+  UX adicional: mostrar o % do perfil ativo no badge do titlebar e/ou
+  statusbar (descoberta hoje é difícil).
 - [ ] **P1 — troca automática de conta por headroom** (ideia da thread do
   Slack #C0AMDQTDFGF, script `switch_account.py` da Amanda Gois, link no
   Drive na thread): monitorar uso e trocar sozinho para a conta com menos
