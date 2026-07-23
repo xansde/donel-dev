@@ -119,6 +119,14 @@ describe('mergeMcpServersIntoProfile (puro — achado novo do spike, critério b
     expect(merged.mcpServers).toEqual(global.mcpServers);
     expect(merged.machineID).toBe('profile-machine'); // identidade do PERFIL, nunca sobrescrita
     expect(merged.userID).toBe('profile-user');
+    // Correção da auditoria do batch 4 (ciclo 1, achado [baixa]): trava por
+    // escrito o invariante de segurança central do critério (b) — merge
+    // NUNCA propaga oauthAccount/credencial do global pro perfil. Antes,
+    // isso só era garantido por construção ({...profile, mcpServers:
+    // global.mcpServers} nunca lê oauthAccount do global); sem esta
+    // assertion, um refactor futuro do merge poderia introduzir o vazamento
+    // sem quebrar nenhum teste.
+    expect(merged.oauthAccount).toBeUndefined();
   });
 
   it('é no-op quando o global não tem mcpServers', () => {

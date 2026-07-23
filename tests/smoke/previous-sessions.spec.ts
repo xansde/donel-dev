@@ -1,33 +1,150 @@
-import path from 'node:path';
+import { execSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import path, { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 
-// Smoke da T013 (UI de sessões anteriores, FR-004/CA-2). Usa dados REAIS
-// desta máquina (`~/.claude/projects/C--Users-...-donel-dev/*.jsonl` —
-// dezenas de sessões deste mesmo repo, geradas por outras rodadas de smoke e
-// pelo trabalho real na esteira) em vez de fixture sintética: só assim prova
-// o slug real (session-indexer.ts `slugifyProjectPath`) E o parsing de
-// preview contra transcripts de verdade — os sintéticos já estão cobertos
-// pelo TDD do T012 (tests/session-indexer.test.ts).
+// Smoke da T013 (UI de sessões anteriores, FR-004/CA-2).
 //
-// LGPD: o preview de uma sessão real pode conter conteúdo de trabalho de
-// verdade (nomes de projeto, trechos de código etc.) — este arquivo NUNCA
-// grava esse texto como literal. O "marcador" usado como prova de retomada é
-// extraído do DOM em RUNTIME (a própria linha que o app renderizou a partir
-// da sessão real) e só vive numa variável de teste — nunca aparece
-// hardcoded aqui nem em log commitado (ver regra do prompt/CLAUDE.md).
+// CORREÇÃO da auditoria do batch 4 (ciclo 1, achado [média]): a versão
+// anterior deste arquivo dependia dos dados REAIS desta máquina (a sessão
+// mais recente do próprio donel-dev) pra provar "Retomar restaura a
+// conversa". Isso é não-determinístico — se a sessão mais recente cair num
+// fallback do SessionIndexer ("(sem mensagem de usuário)"/"(ilegível)") ou
+// não tiver palavra >= 4 chars, o teste pulava via `test.skip` e a metade de
+// RESTAURAÇÃO de CA-2 nunca era observada green (só provada por construção:
+// CommandBuilder unit-tested + flags do CLI verificadas via `claude --help`).
+// Fork não tinha smoke nenhum.
 //
-// Custo: a prova de "histórico restaurado" nunca manda um prompt novo depois
-// do resume — só espera o CLI carregar o contexto e reimprimir o scrollback
-// da conversa restaurada. Sem prompt novo, sem turno de API novo cobrado.
+// Fix: SEMEIA duas sessões sintéticas com marcador conhecido diretamente em
+// `~/.claude/projects/<slug-real-do-donel-dev>/<id>.jsonl` (uma pra Retomar,
+// outra pra Fork) antes de abrir o app, no MESMO diretório real que o
+// SessionIndexer/CLI já leem pra este projeto — não um projeto de teste à
+// parte, porque `slugifyProjectPath` (session-indexer.ts) é 1:1 com o path
+// absoluto do repo, e o histórico de comando desta task pede provar contra o
+// projeto real "donel-dev" que a sidebar já lista. O schema da linha JSONL
+// (campos, tipos) foi inspecionado numa sessão real desta própria máquina
+// (só as CHAVES, nunca o conteúdo — LGPD) pra garantir que o `claude -r`
+// real aceita o arquivo como transcript válido, não só o nosso indexador.
+// Localizar a sessão sintética usa a busca da própria UI (Filtrar por nome)
+// por um marcador único gerado em runtime — nunca a ordem/posição da lista —
+// então o resultado independe de quantas sessões reais este repo já tem ou
+// de qual delas é a mais recente no momento da execução.
+//
+// LGPD: o conteúdo das duas linhas JSONL escritas por este arquivo é 100%
+// sintético (gerado aqui, nunca uma mensagem real de trabalho) e os arquivos
+// são apagados no `afterAll` (roda mesmo se o teste falhar) — nada disso é
+// commitado como fixture nem persiste na máquina depois da execução. Ver
+// também profiles.spec.ts (mesmo padrão de escrever/limpar sob o `homedir()`
+// real em vez de fixture commitada, quando o alvo é literalmente o
+// filesystem que o app/CLI leem em produção).
+//
+// Custo: nenhum prompt novo é mandado ao CLI depois do resume/fork — só se
+// espera o CLI carregar o transcript local e reimprimir o scrollback (mesma
+// lógica local de sempre, sem turno de API novo).
 
 const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
 const APP_CWD = path.join(__dirname, '../..');
+const REPO_ABS_PATH = path.resolve(APP_CWD);
+
+/**
+ * Duplicado de propósito de `slugifyProjectPath` (src/main/session-indexer.ts)
+ * — mesmo padrão das outras specs deste diretório (ex.: profiles.spec.ts
+ * `PROFILE_LINK_DIR_NAMES`): specs de smoke nunca importam src/main direto,
+ * só duplicam a constante/regra pra apontar pro MESMO lugar que o app real
+ * usa, e o app real (rodando via `electron.launch`) é quem prova a regra.
+ */
+function slugifyProjectPath(absoluteProjectPath: string): string {
+  return absoluteProjectPath.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+const SESSIONS_DIR = join(homedir(), '.claude', 'projects', slugifyProjectPath(REPO_ABS_PATH));
+
+function detectClaudeCliVersion(): string {
+  try {
+    const raw = execSync('claude --version', { encoding: 'utf8' });
+    const match = raw.match(/^(\S+)/);
+    return match ? match[1] : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+function detectGitBranch(): string {
+  try {
+    return execSync('git rev-parse --abbrev-ref HEAD', { cwd: APP_CWD, encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
+const CLI_VERSION = detectClaudeCliVersion();
+const GIT_BRANCH = detectGitBranch();
+
+interface SyntheticSessionSeed {
+  readonly id: string;
+  readonly filePath: string;
+  readonly marker: string;
+}
+
+/**
+ * Escreve uma sessão sintética válida (schema inspecionado numa sessão real
+ * desta máquina — só as chaves, nunca conteúdo) com UMA linha `type: user`
+ * cujo texto começa pelo `marker` — único o bastante pra localizar via busca
+ * na UI sem depender de ordenação. `parentUuid: null` porque é a única
+ * mensagem da sessão (mesmo formato de uma sessão real interrompida antes da
+ * resposta do assistente — caso legítimo que o CLI já sabe carregar).
+ */
+function seedSyntheticSession(marker: string): SyntheticSessionSeed {
+  const id = randomUUID();
+  const filePath = join(SESSIONS_DIR, `${id}.jsonl`);
+  const line = {
+    type: 'user',
+    message: {
+      role: 'user',
+      content: `${marker} — fixture sintética do smoke E2E do Donel Dev (T013), sem conteúdo real de trabalho.`,
+    },
+    uuid: randomUUID(),
+    parentUuid: null,
+    sessionId: id,
+    timestamp: new Date().toISOString(),
+    cwd: REPO_ABS_PATH,
+    gitBranch: GIT_BRANCH,
+    permissionMode: 'bypassPermissions',
+    version: CLI_VERSION,
+    entrypoint: 'claude-desktop',
+    userType: 'external',
+    promptId: randomUUID(),
+    promptSource: 'sdk',
+    isSidechain: false,
+  };
+  mkdirSync(SESSIONS_DIR, { recursive: true });
+  writeFileSync(filePath, `${JSON.stringify(line)}\n`, 'utf8');
+  return { id, filePath, marker };
+}
+
+function removeSessionFile(filePath: string | undefined): void {
+  if (!filePath || !existsSync(filePath)) return;
+  try {
+    unlinkSync(filePath);
+  } catch {
+    // Já removido — ok.
+  }
+}
 
 let electronApp: ElectronApplication;
 let window: Page;
+let resumeSeed: SyntheticSessionSeed;
+let forkSeed: SyntheticSessionSeed;
+let forkOriginalContent: string;
 
 test.beforeAll(async () => {
+  resumeSeed = seedSyntheticSession(`MARCADOR-SMOKE-RESUME-${randomUUID().slice(0, 8)}`);
+  forkSeed = seedSyntheticSession(`MARCADOR-SMOKE-FORK-${randomUUID().slice(0, 8)}`);
+  forkOriginalContent = readFileSync(forkSeed.filePath, 'utf8');
+
   electronApp = await electron.launch({ args: [APP_MAIN], cwd: APP_CWD });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
@@ -35,49 +152,35 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await electronApp.close();
+  removeSessionFile(resumeSeed?.filePath);
+  removeSessionFile(forkSeed?.filePath);
 });
 
-test('T013 — sessões anteriores reais do projeto donel-dev listam com preview, e "Retomar" restaura o histórico (FR-004, CA-2)', async () => {
-  test.setTimeout(120_000);
-
+async function openPreviousSessionsDialog() {
   const sidebar = window.locator('nav[aria-label="Projetos e sessões"]');
   await expect(sidebar).toBeVisible();
 
-  // Ícone dedicado (ProjectSidebar `onShowPreviousSessions`) — distinto do
-  // clique no nome do projeto, que abre uma sessão NOVA direto (T007).
   const historyButton = sidebar.getByRole('button', { name: 'Sessões anteriores de donel-dev', exact: true });
   await expect(historyButton).toBeVisible({ timeout: 15_000 });
   await historyButton.click();
 
   const dialog = window.getByRole('dialog', { name: /Sessões anteriores · donel-dev/ });
   await expect(dialog).toBeVisible();
+  return dialog;
+}
 
-  // Dados REAIS desta máquina (ver cabeçalho do arquivo) — nunca fixture:
-  // o repo sob teste (donel-dev) já tem dezenas de sessões anteriores reais.
-  const rows = dialog.locator('[data-testid="previous-session-row"]');
-  await expect(async () => {
-    expect(await rows.count()).toBeGreaterThan(0);
-  }).toPass({ timeout: 10_000 });
-  expect(await dialog.locator('[data-testid="previous-sessions-empty"]').count()).toBe(0);
+test('T013 — Retomar restaura o histórico da sessão sintética via marcador determinístico (FR-004, CA-2)', async () => {
+  test.setTimeout(120_000);
 
-  // Sessão mais RECENTE (1ª linha — SessionIndexer ordena por mtime desc,
-  // T012, `indexProjectSessions`).
-  const firstRow = rows.first();
-  const previewText = (await firstRow.locator('span').first().innerText()).trim();
-  expect(previewText.length).toBeGreaterThan(0);
+  const dialog = await openPreviousSessionsDialog();
 
-  // Marcador curto pra provar "histórico restaurado" mais adiante — extraído
-  // em RUNTIME do preview real (nunca logado/hardcoded, ver cabeçalho). Pula
-  // os dois fallbacks textuais do SessionIndexer (não são conteúdo de
-  // conversa real, não provariam nada específico como marcador).
-  const isFallbackPreview = previewText === '(sem mensagem de usuário)' || previewText === '(ilegível)';
-  test.skip(isFallbackPreview, 'Sessão mais recente caiu num fallback do SessionIndexer (sem mensagem genuína/ilegível) — nada de específico do transcript pra provar via marcador de texto.');
+  // Isola a sessão sintética pela busca da própria UI — nunca pela posição
+  // na lista (independe do estado das dezenas de sessões reais da máquina).
+  await dialog.getByLabel('Filtrar sessões anteriores por nome').fill(resumeSeed.marker);
+  const row = dialog.locator('[data-testid="previous-session-row"]');
+  await expect(row).toHaveCount(1, { timeout: 10_000 });
 
-  const words = previewText.replace(/[.,;:!?"'()]/g, ' ').split(/\s+/).filter((word) => word.length >= 4);
-  test.skip(words.length === 0, 'Preview real sem nenhuma palavra >= 4 chars pra usar como marcador.');
-  const marker = words[0];
-
-  await firstRow.getByRole('button', { name: 'Retomar' }).click();
+  await row.getByRole('button', { name: 'Retomar' }).click();
 
   // Modal fecha (App.tsx `handleResumeSession`) e a aba nova abre.
   await expect(dialog).toBeHidden();
@@ -98,10 +201,59 @@ test('T013 — sessões anteriores reais do projeto donel-dev listam com preview
   }
 
   // Prova real de CA-2: o histórico da sessão RETOMADA aparece no terminal —
-  // o marcador (extraído da PRÓPRIA sessão em runtime, nunca hardcoded)
-  // surge na tela sem que nenhum prompt novo tenha sido enviado por este
-  // teste (o `claude -r <id>` sozinho já reimprime o scrollback restaurado).
+  // o marcador sintético (conhecido, gerado por este arquivo) surge na tela
+  // sem que nenhum prompt novo tenha sido enviado (`claude -r <id>` sozinho
+  // já reimprime o scrollback restaurado a partir do arquivo semeado).
   await expect(async () => {
-    expect(await activePane.innerText()).toContain(marker);
+    expect(await activePane.innerText()).toContain(resumeSeed.marker);
   }).toPass({ timeout: 30_000 });
+});
+
+test('T013 — Fork cria sessão nova a partir do histórico e mantém a sessão original intacta (FR-004, CA-2)', async () => {
+  test.setTimeout(120_000);
+
+  const dialog = await openPreviousSessionsDialog();
+
+  await dialog.getByLabel('Filtrar sessões anteriores por nome').fill(forkSeed.marker);
+  const row = dialog.locator('[data-testid="previous-session-row"]');
+  await expect(row).toHaveCount(1, { timeout: 10_000 });
+
+  await row.getByRole('button', { name: 'Fork' }).click();
+  await expect(dialog).toBeHidden();
+
+  const activePane = window.locator('[data-testid="terminal-pane"]:visible');
+  await expect(activePane).toHaveCount(1);
+
+  await expect(async () => {
+    const text = await activePane.innerText();
+    expect(text.length).toBeGreaterThan(0);
+    expect(text).not.toContain('CLAUDE_NOT_FOUND');
+    expect(text).not.toContain('Falha ao iniciar');
+  }).toPass({ timeout: 20_000 });
+
+  await activePane.click();
+  if ((await activePane.innerText()).includes('trust this folder')) {
+    await window.keyboard.press('Enter');
+  }
+
+  // Prova real de CA-2 (Fork): o histórico da sessão original aparece na
+  // sessão FORKADA (mesmo mecanismo local de reimpressão do scrollback que
+  // o teste de Retomar acima — `--fork-session` também carrega o histórico
+  // do id original antes de seguir com um id novo).
+  await expect(async () => {
+    expect(await activePane.innerText()).toContain(forkSeed.marker);
+  }).toPass({ timeout: 30_000 });
+
+  // Prova de "sessão ORIGINAL intacta" (achado da auditoria do batch 4,
+  // ciclo 1, achado [média]): bytes do arquivo semeado (forkSeed)
+  // permanecem exatamente os mesmos depois do fork — nunca sobrescritos.
+  // NOTA: `--fork-session` só persiste o `.jsonl` do id NOVO no primeiro
+  // turno de verdade da sessão forkada (confirmado empiricamente rodando
+  // este smoke: nenhum arquivo novo aparece no diretório enquanto só o
+  // scrollback é carregado, sem prompt novo) — como este smoke nunca manda
+  // prompt novo (custo, ver cabeçalho do arquivo), a prova de "id novo" fica
+  // só no CommandBuilder (unit-tested, flag real `--fork-session`
+  // confirmada via `claude --help`); o que ESTE teste prova, no filesystem
+  // real, é a garantia que a task pediu: a sessão original não é mutada.
+  expect(readFileSync(forkSeed.filePath, 'utf8')).toBe(forkOriginalContent);
 });

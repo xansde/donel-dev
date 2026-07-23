@@ -16,6 +16,24 @@ import { dirname, join, normalize } from 'node:path';
 // verdade" depois desse tipo de teste humano rodar pelo menos uma vez por via
 // de acesso nova (ver roteiro `specs/001-mvp/roteiros-e2e/batch-4-sessoes-perfis.md`).
 //
+// ESCOPO de "o app nunca toca credenciais" (nota da auditoria do batch 4,
+// ciclo 1, achado [baixa]): essa garantia cobre `.credentials.json` e a
+// chave `oauthAccount` do `.claude.json` — nenhum dos dois é lido, escrito
+// ou exibido por este módulo em lugar nenhum (`mergeMcpServersIntoProfile`
+// é estruturalmente incapaz de propagar `oauthAccount`, travado por teste em
+// `tests/profile-manager.test.ts`). Já `mcpServers` (definição de servidores
+// MCP — URL, comando, e possivelmente `env` com valores inline) É copiado do
+// global pro perfil por design (é o próprio spike, critério c, que pede
+// isso pra os MCPs funcionarem dentro do perfil) — se algum MCP do global
+// tiver segredo hardcoded no bloco `env` em vez de referência a variável de
+// ambiente, esse segredo passa a existir também no `.claude.json` do
+// perfil. Isso é o usuário copiando a própria config na mesma máquina, não
+// vazamento cross-conta, e nunca toca tokens OAuth de MCP
+// (`.credentials.json`/`mcpOAuth`) — mas é uma escrita real que vale
+// documentar ao lado da regra acima. Não bloqueia o MVP; oportunidade futura
+// (não implementada aqui): o `doctor` sinalizar `mcpServers` com chaves de
+// `env` de aparência sensível pro usuário revisar antes de confirmar.
+//
 // CORREÇÃO em relação ao texto de "Implicações para o T014" do spike: aquele
 // parágrafo recomenda rodar `claude --version` para gerar o `.claude.json`
 // esqueleto do perfil — mas o PRÓPRIO spike, na seção "3. Versão do CLI"
