@@ -1,4 +1,4 @@
-import { AccountBadge, Button, Modal, SplitButton, StatusBar, TerminalTab } from '@donel-dev/design-system';
+import { Button, Modal, SplitButton, StatusBar, TerminalTab } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectInfo, SemaphoreStateInfo, SessionSummaryDto } from '../../shared';
 import {
@@ -21,6 +21,7 @@ import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import type { LauncherLaunchOptions } from './Launcher';
 import { PreviousSessions } from './PreviousSessions';
+import { ProfileSwitcher } from './ProfileSwitcher';
 import { ProjectSidebar } from './ProjectSidebar';
 import type { SidebarSession } from './ProjectSidebar';
 import { SessionDetails } from './SessionDetails';
@@ -81,9 +82,6 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   return next;
 }
 
-/** Ação real (perfis) chega no T014; aqui o badge é só layout. */
-function noop(): void {}
-
 export function App(): React.JSX.Element {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
@@ -94,6 +92,10 @@ export function App(): React.JSX.Element {
   const [selectedProjectPath, setSelectedProjectPath] = useState<string | undefined>(undefined);
   const [lastLaunch, setLastLaunch] = useState<LastLaunch | null>(null);
   const tabIdCounter = useRef(0);
+  // T014 — rótulo de conta pra Statusbar (ui-spec §2 zona 5), reportado pelo
+  // ProfileSwitcher (que já busca `window.donel.profiles.*` pro dropdown do
+  // titlebar — ver comentário de topo de ProfileSwitcher.tsx).
+  const [accountLabel, setAccountLabel] = useState('Principal');
   // T009 — estado do semáforo por aba (chave = tab.id), alimentado pelo
   // callback que cada TerminalPane levanta via onStateChange.
   const [semaphoreStates, setSemaphoreStates] = useState<Record<string, SemaphoreStateInfo>>({});
@@ -591,7 +593,7 @@ export function App(): React.JSX.Element {
           <span aria-hidden="true">◆</span>
           <span>Donel Dev</span>
         </div>
-        <AccountBadge accountNumber={3} headroomPercent={62} expandable onClick={noop} />
+        <ProfileSwitcher onActiveProfileLabelChange={setAccountLabel} />
         <SplitButton
           label="＋ Nova sessão"
           onClick={handleQuickNewClaudeSession}
@@ -679,7 +681,7 @@ export function App(): React.JSX.Element {
         </aside>
       </div>
 
-      <StatusBar accountLabel="Tecnologia Claude 3 · 62%" modelEffort="fable/high" sessionCount={tabs.length} />
+      <StatusBar accountLabel={accountLabel} modelEffort="fable/high" sessionCount={tabs.length} />
 
       {/* T010 — FR-006, ui-spec §2 "fechar aba com sessão ativa": confirmação destrutiva antes de matar um PTY vivo. */}
       <Modal

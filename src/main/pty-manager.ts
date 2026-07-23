@@ -35,6 +35,35 @@ export interface PtyCreateOptions {
    */
   command?: string;
   args?: string[];
+  /**
+   * T014 (FR-005/CA-3) — `CLAUDE_CONFIG_DIR` do perfil ativo no momento em
+   * que a aba nasceu; `undefined` = perfil Principal (sem override, env
+   * herdado tal qual). PtyManager não sabe o que é um "perfil" — só aplica a
+   * env var; quem resolve o perfil ativo é o chamador (main/index.ts).
+   * Passado por VALOR na criação: trocar de perfil depois não afeta abas já
+   * abertas (FR-005 — "trocar de perfil afeta apenas sessões novas").
+   */
+  claudeConfigDir?: string;
+}
+
+/**
+ * Puro — env efetivo do processo do PTY: copia `baseEnv` e seta/remove
+ * `CLAUDE_CONFIG_DIR` conforme `claudeConfigDir` (nunca deixa vazar um valor
+ * herdado do processo do próprio Electron, se por algum motivo já viesse
+ * setado em `baseEnv`). Nunca mexe em mais nada do env (plan.md ponto 2 —
+ * nunca sobrescrever PATH).
+ */
+export function buildPtyEnv(baseEnv: NodeJS.ProcessEnv, claudeConfigDir: string | undefined): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (value !== undefined) env[key] = value;
+  }
+  if (claudeConfigDir) {
+    env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+  } else {
+    delete env.CLAUDE_CONFIG_DIR;
+  }
+  return env;
 }
 
 export type PtyDataListener = (ptyId: string, data: string) => void;
@@ -64,13 +93,15 @@ export class PtyManager {
     const command = options.command ?? FREE_TERMINAL_SHELL;
     const args = options.args ?? FREE_TERMINAL_ARGS;
     // Env herdado sem alteração (plan.md ponto 2 — nunca sobrescrever PATH;
-    // gotcha do atalho do Desktop que resolve o `claude.exe`/MCPs stdio).
+    // gotcha do atalho do Desktop que resolve o `claude.exe`/MCPs stdio),
+    // exceto `CLAUDE_CONFIG_DIR` quando a aba nasceu sob um perfil não-
+    // Principal (T014, buildPtyEnv acima).
     const ptyProcess = spawn(command, args, {
       name: 'xterm-color',
       cols: options.cols,
       rows: options.rows,
       cwd: options.cwd ?? os.homedir(),
-      env: process.env as Record<string, string>,
+      env: buildPtyEnv(process.env, options.claudeConfigDir),
     });
 
     const record: PtyRecord = {

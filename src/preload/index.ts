@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   DonelApi,
+  ProfileDoctorReportDto,
+  ProfileHeadroomMap,
+  ProfileSummaryDto,
   ProjectInfo,
   PtyCreateOptions,
   PtyCreateResult,
@@ -9,13 +12,14 @@ import type {
   SemaphoreUpdate,
   SessionSummaryDto,
 } from '../shared';
-import { PROJECT_CHANNELS, PTY_CHANNELS, SEMAPHORE_CHANNELS, SESSION_CHANNELS } from '../shared';
+import { PROFILE_CHANNELS, PROJECT_CHANNELS, PTY_CHANNELS, SEMAPHORE_CHANNELS, SESSION_CHANNELS } from '../shared';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
 // arquivo é o único ponto por onde o renderer alcança o main process, via
 // `window.donel.*` tipado de ponta a ponta (plan.md "Arquitetura de
-// processos"). Canais `pty:*` chegam em T004; `projects:*` chega no T007; os
-// demais (sessions:*, profiles:*, config:*) chegam junto das tasks que os implementam.
+// processos"). Canais `pty:*` chegam em T004; `projects:*` chega no T007;
+// `sessions:*` chega no T013; `profiles:*` chega no T014; `config:*` chega
+// junto da task que o implementar (T015).
 
 const donelApi: DonelApi = {
   pty: {
@@ -75,6 +79,20 @@ const donelApi: DonelApi = {
   sessions: {
     list: (projectPath: string) =>
       ipcRenderer.invoke(SESSION_CHANNELS.list, projectPath) as Promise<SessionSummaryDto[]>,
+  },
+
+  profiles: {
+    list: () => ipcRenderer.invoke(PROFILE_CHANNELS.list) as Promise<ProfileSummaryDto[]>,
+
+    create: (name: string) => ipcRenderer.invoke(PROFILE_CHANNELS.create, name) as Promise<ProfileSummaryDto[]>,
+
+    activate: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.activate, slug) as Promise<ProfileSummaryDto[]>,
+
+    doctor: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.doctor, slug) as Promise<ProfileDoctorReportDto>,
+
+    repair: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.repair, slug) as Promise<ProfileDoctorReportDto>,
+
+    headroom: () => ipcRenderer.invoke(PROFILE_CHANNELS.headroom) as Promise<ProfileHeadroomMap>,
   },
 };
 

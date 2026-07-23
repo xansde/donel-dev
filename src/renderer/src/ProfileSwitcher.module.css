@@ -1,0 +1,116 @@
+.genericBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg-panel);
+  border: var(--hairline);
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.genericBadge:hover {
+  background: var(--bg-raised);
+}
+
+.genericBadge:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 320px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  border: var(--hairline);
+}
+
+.plainRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  width: 100%;
+  padding: 4px 2px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  cursor: pointer;
+  text-align: left;
+}
+
+.plainRow:hover {
+  color: var(--accent);
+}
+
+.plainName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doctorWarning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  padding: var(--space-half) var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--headroom-low);
+  font-size: var(--text-caption-size);
+}
+
+.doctorOk {
+  padding: 2px var(--space-1);
+  color: var(--headroom-high);
+  font-size: var(--text-caption-size);
+}
+
+.createForm {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: var(--hairline);
+}
+
+.createForm > *:first-child {
+  flex: 1;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.hint code {
+  font-family: var(--font-mono);
+}

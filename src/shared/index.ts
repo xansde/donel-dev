@@ -4,6 +4,7 @@
 // (src/shared/projects.ts) — os demais (sessions:*, profiles:*, config:*)
 // chegam junto das tasks que os implementam.
 
+import type { DonelProfilesApi } from './profiles';
 import type { DonelProjectsApi } from './projects';
 import type { DonelSessionsApi } from './sessions';
 
@@ -12,6 +13,9 @@ export type { DonelProjectsApi, ProjectInfo } from './projects';
 
 export { SESSION_CHANNELS } from './sessions';
 export type { DonelSessionsApi, SessionSummaryDto } from './sessions';
+
+export { PROFILE_CHANNELS, parseAccountNumber } from './profiles';
+export type { DonelProfilesApi, JunctionIssueDto, ProfileDoctorReportDto, ProfileHeadroomMap, ProfileSummaryDto } from './profiles';
 
 /** Nomes dos canais IPC do domínio PTY (plan.md linha 37). */
 export const PTY_CHANNELS = {
@@ -127,4 +131,5 @@ export interface DonelApi {
   projects: DonelProjectsApi;
   semaphore: DonelSemaphoreApi;
   sessions: DonelSessionsApi;
+  profiles: DonelProfilesApi;
 }
