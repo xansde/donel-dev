@@ -1,8 +1,8 @@
 # Tasks 001 — Donel Dev MVP (P0)
 
 **Status:** planejamento — implementação gated por (a) referência de design do
-Alexandre (telas geradas na ferramenta de design a partir do
-[design-handoff.md](design-handoff.md)) e (b) OK explícito dele.
+Alexandre (telas geradas na ferramenta de design a partir de
+[design/](../../design/)) e (b) OK explícito dele.
 **Atualizado:** 2026-07-22 (refeito pós-discovery/clarify)
 
 Convenções: [P] = paralelizável com a anterior; DoD = definition of done.
