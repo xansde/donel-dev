@@ -103,6 +103,31 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
   Smokes ajustados (`terminal.spec.ts`, `tabs-lifecycle.spec.ts`,
   `model-injection.spec.ts` — abrem o painel antes de usar o Launcher).
 
+## 2026-07-23 — rodada 4 (roteiro batch 4 na worktree e2e)
+
+- [x] **Roteiro E2E batch 4**: passos 1–4, 6–7 e 9 aprovados pelo humano.
+- [ ] **BUG — input do nome do perfil perde o foco enquanto digita** (item 5;
+  → **correção pós-gate batch 5**): ao criar perfil no ProfileSwitcher, o
+  campo de nome "desseleciona" a cada instante, tornando a digitação muito
+  chata. Causa provável: re-render periódico do dropdown/Modal recriando o
+  input (refresh de headroom/quota re-renderizando a árvore; componente
+  definido inline ou key instável). Corrigir (memoizar/estabilizar o input,
+  pausar refresh de quota com o form aberto) + teste que digita nome longo
+  e assere foco contínuo.
+- [ ] **UX — headroom de quota não descobrível** (item 8): o % por perfil
+  existe mas o Alexandre não achou onde ver. Caminho atual: clicar no badge
+  do perfil ("Principal", canto superior direito) → dropdown lista cada
+  perfil com o %. Melhorias: mostrar o % do perfil ativo no próprio badge
+  do titlebar (como o placeholder antigo "· 62%" sugeria) e/ou na statusbar.
+- [ ] **P1 — troca automática de conta por headroom** (ideia da thread do
+  Slack #C0AMDQTDFGF, script `switch_account.py` da Amanda Gois, link no
+  Drive na thread): monitorar uso e trocar sozinho para a conta com menos
+  uso perto do limite. No Donel Dev o encaixe correto é: ao lançar sessão
+  nova, o launcher auto-seleciona o perfil com maior headroom (sessões
+  vivas não trocam de conta); alerta quando o perfil ativo cruza limiar.
+  As peças já existem (ProfileManager + quota-axi/HeadroomCache). FORA do
+  P0 — vai para a fila P1 com spec própria.
+
 - [ ] **Hooks do settings falhando na sessão de perfil** (→ **T017**):
   `SessionStart` com path sem barras (`C:Usersxansd.localbin...`) e traceback
   do plugin hookify (Python antigo). Ver addendum do spike T001. Confirmar se
