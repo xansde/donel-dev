@@ -2,6 +2,7 @@
   "name": "donel-dev",
   "version": "0.1.0",
   "description": "Donel Dev — IDE própria do Alexandre para operar sessões do Claude Code em paralelo.",
+  "author": "Seazone",
   "private": true,
   "main": "out/main/index.js",
   "workspaces": [
@@ -16,7 +17,8 @@
     "preview": "electron-vite preview",
     "test": "vitest run",
     "test:smoke": "playwright test -c tests/smoke/playwright.config.ts",
-    "test:smoke:dev": "playwright test -c tests/smoke-dev/playwright.config.ts"
+    "test:smoke:dev": "playwright test -c tests/smoke-dev/playwright.config.ts",
+    "dist": "npm run build && electron-builder --win nsis"
   },
   "dependencies": {
     "@donel-dev/design-system": "0.1.0",
@@ -34,6 +36,7 @@
     "@types/react-dom": "18.3.7",
     "@vitejs/plugin-react": "4.3.4",
     "electron": "43.2.0",
+    "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
     "patch-package": "^8.0.1",
     "typescript": "5.7.3",
