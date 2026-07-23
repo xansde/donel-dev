@@ -20,6 +20,16 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
   salvo). Worktree `C:\Users\xansd\seazone\donel-dev-e2e` (branch
   `e2e-estavel`) criada fixada no último commit auditado; o orquestrador
   avança essa branch a cada gate aprovado.
+- [ ] **BUG — sessão lançada pelo launcher nasce/vira "sem processo vivo" com
+  terminal vazio e não digitável** (→ **correção prioritária pós-gate batch 4**):
+  reproduzido pelo Alexandre na worktree e2e (estado auditado do batch 3):
+  abas criadas via launcher/sidebar ("argiburgo") mostram banner "Sessão sem
+  processo vivo", terminal central vazio, digitação sem efeito. Flags
+  `--effort high` e `--model fable` validadas como OK no CLI (não são a
+  causa). TerminalPane não faz replay de ring buffer ao montar (agrava o
+  sintoma de tela vazia). Diagnóstico com repro em andamento (agente na
+  worktree e2e). Smokes atuais não cobrem o fluxo real do launcher com
+  sessão claude viva — cobertura a fechar junto do fix.
 - [ ] **Hooks do settings falhando na sessão de perfil** (→ **T017**):
   `SessionStart` com path sem barras (`C:Usersxansd.localbin...`) e traceback
   do plugin hookify (Python antigo). Ver addendum do spike T001. Confirmar se
