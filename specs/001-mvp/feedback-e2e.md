@@ -181,24 +181,46 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
 
 ## 2026-07-23 — rodada 5 (roteiro batch 5, app INSTALADO com fixes pós-gate)
 
-- [x] **BUG — modelo/esforço não selecionável SOMENTE na primeira aba**
+- [ ] **BUG — modelo/esforço não selecionável SOMENTE na primeira aba**
   (relato: "Num geral, parece que eu não consigo selecionar modelo/esforço
-  SOMENTE da primeira aba. Que estranho"). **Resolvido 2026-07-23 (rodada
-  5).** Causa raiz real: a aba boot nasce SEM `cwd`, rodando o CLI em
+  SOMENTE da primeira aba. Que estranho"). **CAUSA RAIZ CONFIRMADA, FIX
+  REPROVADO NO GATE (70/100) — ABERTO, aguardando decisão do Alexandre.**
+  Causa raiz real: a aba boot nasce SEM `cwd`, rodando o CLI em
   `os.homedir()` — o próprio binário mostra o diálogo pré-REPL "Quick
   safety check" TODA vez nesse cwd (trust de home nunca é persistido); sem
   alguém aceitar manualmente, nenhum hook do semáforo dispara e o
-  SegmentedControl fica preso pra sempre. Fix: auto-aceite do diálogo
-  restrito à aba boot/home (TerminalPane.tsx), validado com smoke novo
-  (tests/smoke/boot-tab-trust.spec.ts) que falha sem o fix e passa com ele.
-  **CORREÇÃO (auditoria rodada 5, achado alta):** a primeira versão deste
-  fix era "tiro único no primeiro match" — o `\r` disparava ANTES do CLI
+  SegmentedControl fica preso pra sempre.
+
+  **Tentativa 1 (commit `16596dd`) — REPROVADA (auditoria 45/100):**
+  auto-aceite "tiro único no primeiro match"; o `\r` disparava ANTES do CLI
   terminar de desenhar o diálogo e armar o leitor de stdin, era engolido, e
-  a aba ficava presa exatamente como antes (achado empírico: o próprio
-  `boot-tab-trust.spec.ts` falhou rodando contra este fix). Reescrito pra
-  "reenvia enquanto o diálogo continuar visível" (`setInterval` próprio,
-  teto de 8 tentativas/15s, exige a assinatura COMPLETA do rodapé
-  interativo — `src/shared/trustDialog.ts`) nesta rodada de correção.
+  a aba ficava presa exatamente como antes. O auditor rodou o próprio
+  `boot-tab-trust.spec.ts` e ele FALHOU.
+
+  **Tentativa 2 (commit `8e0128a`) — REPROVADA (re-auditoria 70/100):**
+  reescrito pra "reenvia enquanto o diálogo continuar visível"
+  (`setInterval`, `src/shared/trustDialog.ts` exigindo a assinatura
+  completa do rodapé interativo). Ainda falha sob carga: o teto de 8
+  tentativas × 300 ms dá só **2,4 s** de reenvio, contra a janela de 15 s
+  que o próprio código declara — esgotado o teto, desarma e a aba fica
+  presa PERMANENTEMENTE. Taxa medida pelo auditor: **1 falha em 5
+  execuções** (falhou na suíte completa, passou 4/4 isolado) — ou seja,
+  quebra exatamente sob carga, que é a condição de uso real. Evidência:
+  dump em `test-results/boot-tab-trust-*/error-context.md` com o diálogo
+  inteiro ainda na tela após 20 s.
+
+  **DECISÃO PENDENTE DO ALEXANDRE** (o auto-aceite concede trust em
+  `os.homedir()` — escopo amplo — em nome dele, o que NÃO foi pedido; o
+  pedido foi destravar modelo/esforço):
+  - **(A) aba inicial não abre sessão** (nasce vazia: "escolha um projeto
+    ou ＋ Nova sessão") — mata a causa na raiz, economiza cota e RAM,
+    nenhuma decisão de segurança tomada pelo app. **Recomendada.**
+  - **(B) manter auto-aceite**, com teto redimensionado para cobrir os 15 s
+    (50 tentativas) + suíte completa verde 3× seguidas.
+  - **(C) só o aviso** — o humano responde o diálogo quando quiser.
+  Enquanto a decisão não vem, o código das tentativas 1-2 permanece na
+  branch mas **não foi instalado** (o gate barrou o deploy; o app instalado
+  segue na versão de 16:32, sem esse fix).
 - [x] **Roteiro batch 5, item 4 desatualizado** (relato: "não existe mais
   aquela aba"; print referenciado NÃO chegou — anexo truncado). **Resolvido
   2026-07-23 (rodada 5).** Confirmado: o item 4 (CA-1 via launcher) foi
