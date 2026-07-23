@@ -23,15 +23,29 @@ describe('PtyManager — ciclo de vida de um processo que sai sozinho', () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it('spawna o comando/args default (terminal livre) quando command/args são omitidos', () => {
+  it('spawna o comando/args default (terminal livre, PowerShell) quando command/args são omitidos', async () => {
+    // Ciclo de correção 1 (auditoria batch 2) — antes só afirmava que o id
+    // era string e que não lançava (smoke fraco). Agora exercita o caminho
+    // default de verdade (sem passar command/args) e afirma um sinal
+    // observável: o eco de um marcador único chega pelo onData, provando que
+    // o PowerShell default foi spawnado e está processando input real.
     const manager = new PtyManager();
+    const marker = 'donel-default-shell-probe';
 
-    // Só garante que o comportamento original do T004 (sem command/args)
-    // continua criando um id válido e não lança — não abrimos powershell de
-    // verdade em CI além do necessário; o smoke playwright já cobre isso.
+    const dataPromise = new Promise<string>((resolve) => {
+      let collected = '';
+      manager.onData((_ptyId, data) => {
+        collected += data;
+        if (collected.includes(marker)) resolve(collected);
+      });
+    });
+
     const ptyId = manager.create({ cols: 80, rows: 24 });
+    manager.input(ptyId, `echo ${marker}\r`);
 
-    expect(typeof ptyId).toBe('string');
+    const collected = await dataPromise;
+    expect(collected).toContain(marker);
+
     manager.kill(ptyId);
   });
 });

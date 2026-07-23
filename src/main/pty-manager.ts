@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import type { IPty } from 'node-pty';
 import { spawn } from 'node-pty';
-import { stripAnsi } from './ansi';
+import { appendToRingBuffer } from './ring-buffer';
 
 // PtyManager (main process) — plan.md "Arquitetura de processos" + ponto 8.
 // Responsável por spawn/kill/resize de PTYs via node-pty (ConPTY no Windows),
@@ -85,7 +85,9 @@ export class PtyManager {
 
     ptyProcess.onData((chunk) => {
       record.pendingChunks.push(chunk);
-      this.appendToRingBuffer(record, chunk);
+      const next = appendToRingBuffer({ ringBuffer: record.ringBuffer, rawTail: record.rawTail }, chunk, RING_BUFFER_LINES);
+      record.ringBuffer = next.ringBuffer;
+      record.rawTail = next.rawTail;
       this.scheduleFlush(record);
     });
 
@@ -137,17 +139,5 @@ export class PtyManager {
     const data = record.pendingChunks.join('');
     record.pendingChunks = [];
     for (const listener of this.dataListeners) listener(record.id, data);
-  }
-
-  private appendToRingBuffer(record: PtyRecord, chunk: string): void {
-    const combined = record.rawTail + chunk;
-    const lines = combined.split(/\r?\n/);
-    record.rawTail = lines.pop() ?? '';
-    if (lines.length === 0) return;
-
-    record.ringBuffer.push(...lines.map(stripAnsi));
-    if (record.ringBuffer.length > RING_BUFFER_LINES) {
-      record.ringBuffer.splice(0, record.ringBuffer.length - RING_BUFFER_LINES);
-    }
   }
 }
