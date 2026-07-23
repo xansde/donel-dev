@@ -1,0 +1,11 @@
+.container {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-1);
+}
+
+/* xterm.js cria seu próprio DOM interno; só garantimos que ocupe o espaço. */
+.container :global(.terminal.xterm) {
+  height: 100%;
+}

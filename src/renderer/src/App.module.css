@@ -108,15 +108,12 @@
 .terminal {
   flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  min-height: 0;
   margin: var(--panel-padding);
   border: var(--hairline);
   border-radius: var(--radius-md);
-  background: var(--bg-raised);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-mono-size);
+  background: #0e1116;
+  overflow: hidden;
 }
 
 .rightPanel {

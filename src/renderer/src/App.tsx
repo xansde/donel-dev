@@ -1,6 +1,7 @@
-import { AccountBadge, Button, SplitButton, StateDot, StatusBar } from '@donel-dev/design-system';
+import { AccountBadge, Button, SplitButton, StateDot, StatusBar, TerminalTab } from '@donel-dev/design-system';
 import type { SessionState } from '@donel-dev/design-system';
 import styles from './App.module.css';
+import { TerminalPane } from './TerminalPane';
 
 // Estrutura estática do shell (ui-spec §2). ProjectScanner (FR-001) e
 // SessionIndexer (FR-004) reais chegam em T007 — aqui é só o placeholder de
@@ -84,9 +85,13 @@ export function App(): React.JSX.Element {
 
         <main className={styles.center}>
           <div className={styles.tabBar}>
-            <span className={styles.tabPlaceholder}>Nenhuma sessão aberta</span>
+            {/* T004: 1 aba fixa de terminal livre (FR-008). Abas múltiplas/fechar
+                chegam em T010 — por isso sem onClose ainda. */}
+            <TerminalTab name="Terminal" active />
           </div>
-          <div className={styles.terminal}>terminal (xterm) — chega no T004</div>
+          <div className={styles.terminal}>
+            <TerminalPane />
+          </div>
         </main>
 
         <aside className={styles.rightPanel} aria-label="Lançar sessão">
