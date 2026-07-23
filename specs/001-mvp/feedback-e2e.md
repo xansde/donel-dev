@@ -37,6 +37,19 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
   no TerminalPane.tsx da e2e) + smoke permanente de modo dev
   (`ELECTRON_RENDERER_URL` + Vite dev server, receita no dossiê do agente de
   diagnóstico) + replay do ring buffer ao montar (agravante do sintoma).
+## 2026-07-23 — rodada 2 (roteiro batch 2 na worktree e2e, com fix StrictMode)
+
+- [x] **Roteiro E2E batch 2 aprovado pelo humano** — todos os passos perfeitos,
+  exceto: item 7 (bug abaixo) e item 10 (não testado — revalidar na próxima
+  rodada ou no smoke final T017).
+- [ ] **UX — app inteiro tem scrollbar vertical** (→ **Batch 5 / T015**):
+  a janela mostra barra de scroll global mesmo exibindo todo o conteúdo
+  (item 7 do roteiro batch 2). O shell deve ser fixo (100vh, sem overflow no
+  body/#root); scroll só INTERNO (lista da sidebar, buffer do terminal).
+  Provável: alturas somadas de header + conteúdo + statusbar excedendo o
+  viewport ou falta de `overflow: hidden` no root. Corrigir e cobrir com
+  asserção no smoke (scrollHeight do body == clientHeight).
+
 - [ ] **Hooks do settings falhando na sessão de perfil** (→ **T017**):
   `SessionStart` com path sem barras (`C:Usersxansd.localbin...`) e traceback
   do plugin hookify (Python antigo). Ver addendum do spike T001. Confirmar se
