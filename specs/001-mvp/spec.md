@@ -191,13 +191,20 @@ Cada FR é testável isoladamente.
 - **FR-009 Statusbar.** Perfil ativo, modelo/esforço da aba em foco, contagem de
   sessões abertas.
 - **FR-010 Semáforo de sessões (US-3).** Cada aba exibe, na lista de abas e sem
-  estar em foco, um de 4 estados: **trabalhando** (Claude gerando/executando),
+  estar em foco, um de 5 estados: **trabalhando** (Claude gerando/executando),
   **aguardando resposta** (turno terminou), **permissão pendente** (aprovação
-  travando a sessão) e **encerrada**. Mecanismo candidato (validar em spike):
-  hooks do Claude Code (`Stop`, `Notification`) registrados pelo app apontando
-  para um endpoint local, com fallback heurístico por output do PTY/título do
-  terminal. Opcional: notificação do Windows quando uma sessão em background
-  passa a aguardar o usuário.
+  travando a sessão), **falha/quota esgotada** (sessão morreu por erro ou
+  quota da conta estourada — detecção por exit code ≠ 0 ou padrão de erro do
+  CLI; distinta de "encerrada"; ação inline "trocar de conta e retomar") e
+  **encerrada**. Ordenação da lista: o estado do semáforo sempre vence
+  (permissão pendente > falha/quota > aguardando resposta > trabalhando >
+  encerrada); pin (US-1) só desempata dentro do mesmo estado. Entre 2+ sessões
+  com permissão pendente simultaneamente, a mais antiga aparece primeiro, com
+  contador de tempo visível em cada uma. Mecanismo candidato (validar em
+  spike): hooks do Claude Code (`Stop`, `Notification`) registrados pelo app
+  apontando para um endpoint local, com fallback heurístico por output do
+  PTY/título do terminal. Opcional: notificação do Windows quando uma sessão
+  em background passa a aguardar o usuário.
 - **FR-011 Modelo/esforço em sessão viva (US-5).** Controle na UI que injeta o
   comando correspondente no PTY da sessão (`/model <alias>`; equivalente de
   esforço a confirmar na implementação). O app só injeta quando o prompt está
@@ -205,9 +212,16 @@ Cada FR é testável isoladamente.
   para o ajuste, a UI degrada oferecendo reiniciar a sessão com a flag.
 - **FR-012 Headroom por perfil (US-7).** O dropdown de perfis mostra o % de
   quota restante de cada conta (leitura sob demanda via `quota-axi` executado
-  com o `CLAUDE_CONFIG_DIR` do perfil; "—" quando indisponível). Painel
-  completo de quota das 15 contas é P1 (US-12), integrado ao projeto já
-  existente.
+  com o `CLAUDE_CONFIG_DIR` do perfil; "—" quando indisponível). As leituras
+  dos 15 perfis rodam em paralelo, com timeout de 3s por perfil e cache de
+  60s; "—" aparece apenas no perfil que falhar ou estourar o timeout — o
+  dropdown nunca bloqueia esperando as 15 respostas. Painel completo de quota
+  das 15 contas é P1 (US-12), integrado ao projeto já existente.
+- **FR-013 Atalhos de troca de sessão (US-3).** `Ctrl+1`..`Ctrl+9` focam a
+  sessão na posição N da lista priorizada (ranking do FR-010); `Ctrl+Tab`
+  foca a próxima sessão que precisa de atenção (permissão pendente >
+  aguardando resposta). Atalhos fixos nesta versão — atalhos configuráveis
+  continuam P2.
 
 ## Critérios de aceitação (cenários-chave)
 
@@ -231,6 +245,9 @@ Cada FR é testável isoladamente.
   permissão pendente, uma com turno concluído) e a quarta aba em foco, então a
   lista de sessões mostra simultaneamente os 3 estados corretos sem que eu
   foque nenhuma delas, e a que aguarda permissão se destaca acima das demais.
+  Dadas 2 sessões com permissão pendente simultaneamente (uma pedida há 1min,
+  outra há 6min), então a mais antiga (há 6min) aparece acima da mais recente,
+  cada uma com seu contador de tempo visível.
 
 ## Edge cases
 

@@ -31,6 +31,7 @@ importa.
 | `state-working` | `#4C9CF0` | semáforo: trabalhando (pulso sutil) |
 | `state-waiting` | `#E8B44C` | semáforo: aguardando resposta |
 | `state-permission` | `#F0684C` | semáforo: permissão pendente (pulso forte) |
+| `state-error` | `#B678F0` | semáforo: falha/quota esgotada (fixo) |
 | `state-done` | `#5E6873` | semáforo: encerrada |
 | `zone-ok` | `#3DCE8F` | smart zone: dentro |
 | `zone-warn` | `#E8B44C` | smart zone: atenção |
@@ -87,14 +88,20 @@ A vista onde o dia inteiro acontece.
 **Zonas:**
 
 1. **Titlebar** — logo+nome; switch de modo `Uso geral | Dev`; badge da conta
-   ativa (abre dropdown de perfis, §6); botão primário "＋ Nova sessão".
+   ativa (abre dropdown de perfis, §6); botão split "＋ Nova sessão" — clique
+   no corpo abre direto com a última configuração de sessão Claude usada;
+   seta lateral abre menu com 2 opções: "Sessão Claude" (Launcher, §4) e
+   "Terminal" (aba de terminal comum, sem configuração).
 2. **Sidebar esquerda (240px)** — duas seções: PROJETOS (árvore rasa por root,
-   favoritos `★` no topo) e SESSÕES (todas as sessões abertas, cada linha =
+   favoritos `★` no topo; favorito removido do disco aparece esmaecido com
+   ação "remover") e SESSÕES (todas as sessões abertas, cada linha =
    dot de estado + nome + projeto abreviado + modelo; ordenadas por
-   "precisa de mim primeiro": permission > waiting > working > done). Sessões
-   fixadas têm ícone de pin e ficam acima das demais no seu projeto.
-3. **Centro** — barra de abas (dot de estado + nome + modelo; overflow com
-   scroll horizontal) e o terminal da aba ativa.
+   "precisa de mim primeiro" — o estado do semáforo sempre vence: permission
+   > error/quota > waiting > working > done). Sessões fixadas têm ícone de
+   pin e ficam acima das demais, mas só desempatam DENTRO do mesmo estado.
+3. **Centro** — barra de abas (dot de estado + nome + modelo; abas de
+   terminal comum não têm dot de semáforo, mostram ícone de shell no lugar;
+   overflow com scroll horizontal) e o terminal da aba ativa.
 4. **Painel direito (260px, colapsável)** — Launcher (§4) quando nada
    selecionado; detalhes da sessão selecionada (P1: tokens §7, subagentes §8)
    quando houver.
@@ -104,7 +111,16 @@ A vista onde o dia inteiro acontece.
 **Estados da vista:** primeira execução (sem projetos → empty state com botão
 "Escolher pastas de projetos"); `claude` não encontrado (banner de erro CA-5
 com caminho esperado); sem sessões abertas (centro mostra atalhos: nova
-sessão, retomar recente, rotinas).
+sessão, retomar recente, rotinas); fechar aba com sessão ativa (modal de
+confirmação: título "Fechar sessão?", texto curto avisando que o processo
+será encerrado, botões "Fechar sessão" (perigo) e "Cancelar"); processo
+`claude` termina sozinho (estado "sessão encerrada" no CORPO do terminal —
+mensagem central + botões "Reabrir" e "Fechar aba" — distinto do dot cinza da
+lista de sessões).
+
+**Configurações do app (P1):** tela mínima acessível pelo menu do app, com
+edição dos roots de scan de projetos (adicionar/remover pastas) após o
+onboarding. No P0 a única edição de roots é o fluxo de primeira execução.
 
 ---
 
@@ -116,12 +132,21 @@ Estados e comportamento (FR-010):
 |---|---|---|
 | Trabalhando | azul, pulso lento | nada exige atenção |
 | Aguardando resposta | âmbar, fixo | linha sobe no ranking; contador "há 4min" |
-| Permissão pendente | vermelho-coral, pulso rápido | topo absoluto da lista; toast/notificação Windows opcional |
+| Permissão pendente | vermelho-coral, pulso rápido | topo absoluto da lista; entre 2+ pendências simultâneas, a mais antiga fica acima, cada uma com contador de tempo visível; toast/notificação Windows opcional |
+| Falha/quota esgotada | roxo (`state-error`), fixo | distinto de encerrada; ação inline "trocar de conta e retomar" |
 | Encerrada | cinza | ações inline: reabrir · fechar |
+
+Ordenação: o estado do semáforo sempre vence (permissão pendente >
+falha/quota > aguardando resposta > trabalhando > encerrada); pin só
+desempata dentro do mesmo estado.
 
 Linha da lista (sidebar e/ou painel dedicado): `dot · nome da sessão ·
 projeto · modelo · tempo desde última atividade`. Clique = foca a aba.
-Hover = preview do último output (3 linhas, mono).
+Hover = preview do último output (3 linhas, mono). Atalhos de teclado:
+`Ctrl+1`..`Ctrl+9` focam a sessão na posição N da lista; `Ctrl+Tab` foca a
+próxima sessão que precisa de atenção (permissão > aguardando). Sessões
+rodando sob perfil com headroom < 15% (P1) ganham badge da conta em vermelho
+na própria linha, não só no dropdown de perfis.
 
 ---
 
@@ -129,7 +154,7 @@ Hover = preview do último output (3 linhas, mono).
 
 Painel vertical: Modelo (segmented: fable/opus/sonnet/haiku), Esforço
 (segmented: low/med/high/xhigh/max), Permissões (select: manual, acceptEdits,
-auto, plan, dontAsk, bypass — com descrição curta de cada), Nome (input),
+auto, plan, dontAsk, bypassPermissions — com descrição curta de cada), Nome (input),
 projeto-alvo (herdado da seleção da sidebar, editável). Botão primário
 "▶ Iniciar". Defaults persistidos. Validação: nome vazio = ok (flag omitida).
 
@@ -146,8 +171,9 @@ Lista por projeto (abre ao selecionar projeto na sidebar): `nome ou preview ·
 data relativa · tamanho · modelo`. Ações por linha: **Retomar** (primário) ·
 **Fork** (secundário, tooltip "nova sessão a partir desta"). Busca simples por
 nome no topo (full-text é P1). Preview segue as regras do FR-004 (nunca
-mostrar payload de controle). Empty state: "Nenhuma sessão anterior neste
-projeto — comece uma nova".
+mostrar payload de controle). Edge case: transcript corrompido/truncado
+entra na lista com preview "(ilegível)", sem derrubar o índice. Empty state:
+"Nenhuma sessão anterior neste projeto — comece uma nova".
 
 ---
 
@@ -162,7 +188,8 @@ Trocar conta = afeta apenas sessões novas (aviso sutil na primeira troca).
 última leitura; dados do claude-monitor.seazone.dev (embed ou API). Ação por
 conta: "abrir sessão com esta conta". Estado de conta sem login: badge "login
 pendente" — o login em si SEMPRE acontece dentro do terminal (o app nunca
-manuseia credenciais).
+manuseia credenciais). Estado de conta com junction quebrada (profile doctor,
+FR-005): card exibe aviso + botão "Recriar links".
 
 ---
 
@@ -172,7 +199,9 @@ Barra 4px + rótulo `312k/400k`. Faixas: 0–70% `zone-ok`; 70–100% `zone-warn
 >100% `zone-over` + ação sugerida "Handoff → nova sessão" (abre launcher
 pré-preenchido com o mesmo projeto e nome `<sessão> (cont.)`). Aparece: nos
 detalhes da sessão, na statusbar (aba em foco) e como anel fino em volta do
-dot na lista de sessões quando > 70%.
+dot na lista de sessões quando > 70%. Toast complementar (F3): dispara ao
+entrar em `zone-over`, canto inferior direito, ~6s de duração, texto "Sessão
+passou da smart zone" + botão "Handoff → nova sessão".
 
 ---
 
@@ -186,9 +215,12 @@ Colapsada por default com contador ("3 subagentes · 1 rodando").
 
 ## 9. Post-its (P1)
 
-- **Captura:** atalho global (proposta: `Ctrl+Shift+N`) abre mini-janela
+- **Captura:** atalho global (proposta: `Ctrl+Alt+N`) abre mini-janela
   flutuante de UMA linha ("anota e some") — Enter salva, Esc cancela; nunca
-  rouba o foco por mais de um instante.
+  rouba o foco por mais de um instante. Nota de implementação:
+  `globalShortcut.register()` do Electron retorna `false` silenciosamente se
+  o atalho já estiver tomado por outro app — checar o retorno, avisar o
+  usuário e oferecer reconfigurar em vez de falhar em silêncio.
 - **Quadro:** vista dedicada (ícone na titlebar com contador) — grid de
   post-its (texto, data, projeto de origem opcional). Ações: arquivar,
   transformar em prompt ("enviar para sessão…"), copiar. Ordenação: mais
@@ -202,9 +234,13 @@ Colapsada por default com contador ("3 subagentes · 1 rodando").
 ## 10. Todo do projeto (P1)
 
 Aba no painel direito quando um projeto está selecionado: renderiza o
-`todo.md` do vault do projeto (checkboxes interativos, escrita de volta) e/ou
-cards TaskDex quando o repo tem `.taskdex.json` (fonte indicada no header do
-painel). Read-only na primeira versão exceto marcar checkbox.
+`todo.md` do vault do projeto (checkboxes interativos) e/ou cards TaskDex
+quando o repo tem `.taskdex.json` (fonte indicada no header do painel).
+Read-only na primeira versão exceto marcar checkbox. **Escrita do
+checkbox:** sempre via REST local do Obsidian (mesmo mecanismo do MCP
+`obsidian`, prática já estabelecida) — nunca escrita direta no arquivo sob
+OneDrive. Se o REST estiver indisponível, o painel cai para read-only com
+aviso visível.
 
 ---
 

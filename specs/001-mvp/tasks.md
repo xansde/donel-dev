@@ -48,6 +48,7 @@ SemaphoreStateMachine); PTY/UI validam por smoke roteirizado.
 - **T009 — Semáforo de sessões (FR-010)**
   Implementar o mecanismo validado no T002 + SemaphoreStateMachine (TDD) +
   indicadores na lista de abas/sidebar + notificação Windows opcional.
+  Inclui atalhos de troca de sessão (FR-013): `Ctrl+1..9` e `Ctrl+Tab`.
   DoD: CA-6 passa (os 4 estados visíveis sem focar a aba).
 - **T010 — Abas múltiplas + ciclo de vida + terminal livre**
   FR-006 e FR-008. DoD: 6 sessões simultâneas estáveis; fechar/reabrir sem
@@ -79,9 +80,10 @@ SemaphoreStateMachine); PTY/UI validam por smoke roteirizado.
   Defender ativo (ou bloqueio documentado com contorno).
 - **T017 — Smoke final roteirizado**
   CA-1..CA-6, teclas especiais, colar multilinha, resize, 6 abas, troca de
-  perfil, restart, app via atalho do Desktop (PATH/MCPs), medição startup
-  (< 3 s) e RAM com 3 abas (< 400 MB) via `Get-Process`. DoD: checklist 100%
-  com evidências.
+  perfil, restart, app via atalho do Desktop (PATH/MCPs), notificação do
+  Windows disparando tanto via `npm run dev` quanto via atalho instalado
+  (`app.setAppUserModelId`), medição startup (< 3 s) e RAM com 3 abas
+  (< 400 MB) via `Get-Process`. DoD: checklist 100% com evidências.
 
 ## Fora deste ciclo
 

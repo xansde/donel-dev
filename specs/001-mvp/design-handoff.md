@@ -105,30 +105,41 @@ sessões e os detalhes da sessão selecionada.
    + nome "Donel Dev" + um switch/segmented control de modo com duas opções
    "Uso geral" / "Dev" (item ativo destacado). À direita, nesta ordem: badge
    de conta ativa no formato pílula "Tecnologia Claude {n} · {%} ▾" (abre
-   dropdown ao clicar) e um botão primário "＋ Nova sessão".
+   dropdown ao clicar) e um botão split "＋ Nova sessão" — corpo do botão
+   abre direto com a última configuração de sessão Claude usada; seta
+   lateral abre um menu com 2 opções: "Sessão Claude" (abre o Launcher,
+   Brief 3) e "Terminal" (abre aba de terminal comum, sem passar por
+   configuração).
 2. **Sidebar esquerda**, 240px de largura fixa, fundo `bg-panel`, dividida em
    duas seções empilhadas verticalmente:
    - **PROJETOS**: árvore rasa (2 níveis) agrupada por diretório-raiz (ex.:
      "seazone/", "pessoal/"), com favoritos marcados com ★ sempre no topo da
-     lista. Cada linha de projeto é só o nome, sem dot de estado.
+     lista. Cada linha de projeto é só o nome, sem dot de estado. Favorito
+     cujo diretório foi removido do disco aparece esmaecido, com uma ação
+     inline "remover".
    - **SESSÕES**: lista de todas as sessões abertas no momento, cada linha =
      dot de estado + nome da sessão + projeto abreviado + modelo usado.
-     Ordenação obrigatória "quem precisa de mim primeiro": permissão
-     pendente > aguardando resposta > trabalhando > encerrada. Sessões
-     fixadas (pin) mostram um ícone de pin e ficam acima das demais dentro
-     do seu projeto.
+     Ordenação obrigatória "quem precisa de mim primeiro" — o estado do
+     semáforo sempre vence: permissão pendente > falha/quota esgotada >
+     aguardando resposta > trabalhando > encerrada. Sessões fixadas (pin)
+     mostram um ícone de pin e ficam acima das demais, mas só desempatam
+     DENTRO do mesmo estado — nunca sobrepõem o ranking por estado. (P1 —
+     não incluir no corte do P0): anel fino ao redor do dot quando a sessão
+     passa de 70% de uso da smart zone.
 3. **Centro** (área principal, flexível): barra de abas no topo (uma aba por
-   sessão aberta — dot de estado + nome + modelo; quando não couberem todas,
-   scroll horizontal) e, abaixo, o terminal (emulador tipo xterm) da aba
-   ativa ocupando o restante do espaço vertical, com prompt de input na base
-   ("> _").
+   sessão aberta — dot de estado + nome + modelo; abas de terminal comum não
+   têm dot de semáforo, mostram um ícone de shell no lugar; quando não
+   couberem todas, scroll horizontal) e, abaixo, o terminal (emulador tipo
+   xterm) da aba ativa ocupando o restante do espaço vertical, com prompt de
+   input na base ("> _").
 4. **Painel direito**, 260px de largura, colapsável: quando nenhuma sessão
    está selecionada, mostra o Launcher (Brief 3 completo). Quando uma sessão
    está selecionada, mostra os detalhes dela (smart zone e subagentes —
    telas P1, Briefs 6 e 7).
 5. **Statusbar** (rodapé, altura ~28px — interpretação): conta ativa,
    modelo/esforço da aba em foco, contagem total de sessões abertas, e um
-   mini medidor smart zone (barra de 4px) da aba em foco.
+   mini medidor smart zone (barra de 4px) da aba em foco (P1 — não incluir
+   no corte do P0).
 
 **Estados da vista:**
 - Primeira execução (nenhum projeto configurado): empty state central com
@@ -138,6 +149,12 @@ sessões e os detalhes da sessão selecionada.
   esperado do executável.
 - Sem sessões abertas (mas com projetos configurados): centro mostra
   atalhos em cards: "Nova sessão", "Retomar recente", "Rotinas".
+- Fechar aba com sessão ativa: modal de confirmação centralizado — título
+  "Fechar sessão?", texto curto avisando que o processo será encerrado,
+  botão "Fechar sessão" (cor de perigo/vermelho) e botão "Cancelar".
+- Processo `claude` termina sozinho: estado "sessão encerrada" desenhado no
+  CORPO do terminal (mensagem central + botões "Reabrir" e "Fechar aba"),
+  visualmente distinto do dot cinza da lista de sessões.
 
 **Dados de exemplo (usar exatamente estes):**
 - Projetos na sidebar sob "seazone/": bizops-ai-native (favorito ★),
@@ -174,11 +191,13 @@ ou logo após o modelo.
 |---|---|---|
 | Trabalhando | azul (`state-working` #4C9CF0), pulso lento de opacidade (2s) | nada exige atenção; fica na posição normal do ranking |
 | Aguardando resposta | âmbar (`state-waiting` #E8B44C), fixo, sem pulso | a linha SOBE no ranking; mostra contador de tempo tipo "há 4min" |
-| Permissão pendente | vermelho-coral (`state-permission` #F0684C), pulso rápido (1s) + halo ao redor | vai para o TOPO ABSOLUTO da lista, acima de tudo; opcionalmente exibe um toast/notificação |
+| Permissão pendente | vermelho-coral (`state-permission` #F0684C), pulso rápido (1s) + halo ao redor | vai para o TOPO ABSOLUTO da lista, acima de tudo; entre 2+ pendências simultâneas, a mais antiga fica acima, cada uma com contador de tempo visível; opcionalmente exibe um toast/notificação |
+| Falha/quota esgotada | roxo (`state-error` #B678F0), fixo | sessão morreu por erro ou quota esgotada, distinta de "encerrada"; ação inline "trocar de conta e retomar" |
 | Encerrada | cinza (`state-done` #5E6873), fixo | mostra ações inline na própria linha: "reabrir" · "fechar" |
 
-Ordenação da lista inteira, sempre: permissão pendente > aguardando
-resposta > trabalhando > encerrada.
+Ordenação da lista inteira, sempre: o estado do semáforo vence (permissão
+pendente > falha/quota > aguardando resposta > trabalhando > encerrada); pin
+só desempata dentro do mesmo estado.
 
 **Interações:**
 - Clique na linha: foca a aba correspondente no terminal central.
@@ -187,18 +206,23 @@ resposta > trabalhando > encerrada.
 - Quando o uso de tokens da sessão passa de 70% do limite (smart zone),
   desenhe um anel fino colorido ao redor do dot de estado (cor pela faixa da
   smart zone).
+- Atalhos de teclado: `Ctrl+1`..`Ctrl+9` focam a sessão na posição N da
+  lista; `Ctrl+Tab` foca a próxima sessão que precisa de atenção (permissão
+  > aguardando).
+- (P1) Sessão rodando sob perfil com headroom < 15%: badge da conta em
+  vermelho na própria linha.
 
-**Dados de exemplo** (lista completa a renderizar, ilustrando os 4 estados):
-1. "spec do donel" — trabalhando (azul, pulso), projeto donel-dev, modelo
-   fable.
+**Dados de exemplo** (lista renderizada na ordem do ranking, ilustrando os
+estados):
+1. "revisão PR 214" — permissão pendente (vermelho, pulso rápido + halo),
+   projeto ai-rats, modelo sonnet — deve aparecer no topo absoluto.
 2. "radar spotsys" — aguardando resposta (âmbar), projeto spotsys, modelo
    sonnet, "há 4min".
-3. "fix build_real.py" — permissão pendente (vermelho, pulso rápido +
-   halo), projeto bizops-ai-native, modelo sonnet — deve aparecer no topo
-   absoluto.
+3. "spec do donel" — trabalhando (azul, pulso), projeto donel-dev, modelo
+   fable.
 4. "setup do dia" — trabalhando (azul), projeto donel-dev, modelo fable.
-5. "revisão PR 214" — encerrada (cinza), projeto ai-rats, com ações inline
-   "reabrir · fechar".
+5. "fix build_real.py" — encerrada (cinza), projeto bizops-ai-native,
+   modelo sonnet, com ações inline "reabrir · fechar".
 
 **Gerar em:** desktop 1440×900, tema dark.
 
@@ -223,8 +247,8 @@ viva.
 3. Campo "Esforço": segmented control com 5 opções: low, med, high, xhigh,
    max.
 4. Campo "Permissões": select/dropdown com 6 opções: manual, acceptEdits,
-   auto, plan, dontAsk, bypass — cada opção do dropdown mostra uma descrição
-   curta ao lado ou abaixo do nome quando o dropdown está aberto.
+   auto, plan, dontAsk, bypassPermissions — cada opção do dropdown mostra uma
+   descrição curta ao lado ou abaixo do nome quando o dropdown está aberto.
 5. Campo "Nome": input de texto livre, placeholder indicando que é
    opcional.
 6. Campo "Projeto-alvo": mostra o projeto herdado da seleção atual na
@@ -289,6 +313,8 @@ seleciona um projeto na sidebar do shell principal.
 1. "spec do donel" · há 2 horas · 340KB · modelo fable — ações Retomar /
    Fork.
 2. "setup do dia" · ontem · 85KB · modelo sonnet — ações Retomar / Fork.
+3. "(ilegível)" · há 3 dias · 12KB · transcript corrompido/truncado, entra
+   na lista sem derrubar o índice — ações Retomar / Fork.
 
 **Dados de exemplo** (projeto selecionado: spotsys):
 1. "radar spotsys" · há 4min · 120KB · modelo sonnet — ações Retomar /
@@ -340,12 +366,14 @@ embed ou API). Cada card tem uma ação: "abrir sessão com esta conta"
 - Conta sem login feito: badge "login pendente" no card. Deixe claro que o
   login em si SEMPRE acontece dentro do terminal da sessão — o app nunca
   manuseia credenciais diretamente.
+- Conta com junction quebrada (profile doctor, FR-005): card exibe um aviso
+  + botão "Recriar links".
 
 **Dados de exemplo** (usar para os cards/linhas; repita o padrão para
 completar as 15 contas com variações plausíveis):
-- Tecnologia Claude 1 · 62% (verde)
-- Tecnologia Claude 2 · 38% (âmbar)
-- Tecnologia Claude 3 · 91% (verde) — marcada como ativa no dropdown
+- Tecnologia Claude 1 · 38% (âmbar)
+- Tecnologia Claude 2 · 91% (verde)
+- Tecnologia Claude 3 · 62% (verde) — marcada como ativa no dropdown
 - Tecnologia Claude 4 · 12% (vermelho)
 - Tecnologia Claude 5 · — (cinza, sem leitura / login pendente)
 
@@ -445,11 +473,15 @@ texto de UMA linha (sem título, sem chrome visual pesado — deve parecer
 claro (`text-primary`), cantos arredondados (radius 6px).
 
 **Interações:**
-- Atalho global proposto: `Ctrl+Shift+N` abre a mini-janela.
+- Atalho global proposto: `Ctrl+Alt+N` abre a mini-janela.
 - Enter: salva o conteúdo digitado e fecha a janela.
 - Esc: cancela e fecha sem salvar.
 - A janela nunca deve roubar o foco do sistema por mais de um instante —
   desenhe como algo que aparece, captura o texto rapidamente, e desaparece.
+- Nota de implementação: `globalShortcut.register()` do Electron retorna
+  `false` silenciosamente se o atalho já estiver tomado por outro app —
+  checar o retorno, avisar o usuário e oferecer reconfigurar em vez de
+  falhar em silêncio.
 
 ### Parte B — Quadro de post-its
 
@@ -504,7 +536,10 @@ tem integração configurada, também os cards do TaskDex.
 
 **Interações e estados:**
 - A tela é read-only na primeira versão, EXCETO marcar/desmarcar um
-  checkbox de item do `todo.md` — essa ação escreve de volta no arquivo.
+  checkbox de item do `todo.md` — essa ação escreve de volta via REST local
+  do Obsidian (mesmo mecanismo do MCP `obsidian`), NUNCA escrita direta no
+  arquivo sob OneDrive. Se o REST estiver indisponível, o painel cai para
+  read-only com aviso.
 - Cards do TaskDex não são editáveis nesta tela (somente leitura).
 
 **Dados de exemplo** (projeto selecionado: bizops-ai-native, fonte

@@ -48,7 +48,7 @@
    ≠ principal. Nunca sobrescrever PATH. **Gotcha Windows:** app aberto via
    atalho do Desktop herda o PATH do Explorer, que pode estar desatualizado —
    afeta a resolução do `claude.exe` (por isso o fallback de CA-5) e também os
-   subprocessos que o próprio `claude` spawna (MCPs stdio). T014 valida o app
+   subprocessos que o próprio `claude` spawna (MCPs stdio). T017 valida o app
    aberto via atalho, não só via terminal de dev.
 3. **CommandBuilder puro.** `buildClaudeArgs(opts): string[]` sem I/O — 100%
    coberto por unit tests (tabela FR-003, incluindo omissão de flags e escaping
@@ -62,11 +62,15 @@
    `Notification` (via `--settings` adicional na sessão, para não sujar o
    settings.json do usuário) que fazem POST num endpoint localhost do app com o
    session id — estado confiável sem parsing frágil. Fallback: heurística por
-   título do terminal/atividade do PTY. Validar em spike curto junto do T003.
+   título do terminal/atividade do PTY. Validar em spike curto junto do T002.
 7. **Injeção de comandos (FR-011).** Escrever `/model <alias>\r` no stdin do
    PTY só com o prompt ocioso (detectar via estado do semáforo). Existência de
    comando equivalente para esforço: confirmar na implementação; sem ele, a UI
    oferece reinício com `--effort`.
+8. **Hover-preview de sessões (§3 ui-spec).** O PtyManager (main process)
+   mantém um ring buffer das últimas ~50 linhas por PTY, com ANSI stripado,
+   exposto via IPC sob demanda — o preview de 3 linhas no hover nunca depende
+   do componente xterm do renderer estar montado para a sessão fora de foco.
 
 ## Spike T001 — validação de perfis (bloqueante, antes de qualquer UI)
 
@@ -103,7 +107,10 @@ resultado do spike em mãos.
 | Teclas especiais/resize mal mapeados | UX de terminal ruim | ConPTY default; addon-fit; roteiro de smoke com checklist de teclas |
 | JSONL grandes travarem índice | sidebar lenta | streaming + stat only; índice em cache com invalidação por mtime |
 | OneDrive/AV interferindo em junctions | perfis quebram | profiles fora do OneDrive; profile doctor |
-| SmartScreen/Defender barrando instalador NSIS ou `conpty.node` (binário nativo sem assinatura) | app não instala/abre | decidir assinatura (mesmo autoassinada p/ uso interno) no T013; passo de verificação com Defender ativo |
+| SmartScreen/Defender barrando instalador NSIS ou `conpty.node` (binário nativo sem assinatura) | app não instala/abre | decidir assinatura (mesmo autoassinada p/ uso interno) no T016; passo de verificação com Defender ativo |
+| Escrita concorrente no vault (OneDrive + Obsidian) ao marcar checkbox do todo.md | corrompe o todo.md / vault | escrita via REST local do Obsidian (mesmo mecanismo do MCP `obsidian`); se REST indisponível, painel cai para read-only |
+| X-Frame-Options/CSP do claude-monitor.seazone.dev bloqueia iframe | embed do painel de quota (§6) renderiza em branco sem erro | checar headers antes de comprometer (`curl -I`); fallback API ou manter só o link externo |
+| Notification API do Electron sem `app.setAppUserModelId` no Windows | notificações saem atribuídas a "Electron" ou falham em silêncio fora do dev | setar `app.setAppUserModelId` no main process; validar no smoke do T017 via `npm run dev` e via atalho instalado |
 
 ## Estrutura do repositório (alvo)
 
