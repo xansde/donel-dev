@@ -1,12 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { DonelApi, PtyCreateOptions, PtyCreateResult, PtyExitInfo } from '../shared';
-import { PTY_CHANNELS } from '../shared';
+import type { DonelApi, ProjectInfo, PtyCreateOptions, PtyCreateResult, PtyExitInfo } from '../shared';
+import { PROJECT_CHANNELS, PTY_CHANNELS } from '../shared';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
 // arquivo é o único ponto por onde o renderer alcança o main process, via
 // `window.donel.*` tipado de ponta a ponta (plan.md "Arquitetura de
-// processos"). Canais `pty:*` chegam em T004; os demais (projects:*,
-// sessions:*, profiles:*, config:*) chegam junto das tasks que os implementam.
+// processos"). Canais `pty:*` chegam em T004; `projects:*` chega no T007; os
+// demais (sessions:*, profiles:*, config:*) chegam junto das tasks que os implementam.
 
 const donelApi: DonelApi = {
   pty: {
@@ -42,6 +42,13 @@ const donelApi: DonelApi = {
       ipcRenderer.on(PTY_CHANNELS.exit, handler);
       return () => ipcRenderer.removeListener(PTY_CHANNELS.exit, handler);
     },
+  },
+
+  projects: {
+    list: () => ipcRenderer.invoke(PROJECT_CHANNELS.list) as Promise<ProjectInfo[]>,
+
+    setFavorite: (path: string, favorite: boolean) =>
+      ipcRenderer.invoke(PROJECT_CHANNELS.favorite, path, favorite) as Promise<ProjectInfo[]>,
   },
 };
 

@@ -38,16 +38,6 @@
   min-height: 0;
 }
 
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--panel-padding);
-  background: var(--bg-panel);
-  border-right: var(--hairline);
-  overflow-y: auto;
-}
-
 .sectionTitle {
   font-size: var(--text-caption-size);
   font-weight: var(--weight-semibold);
@@ -55,33 +45,6 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin: 0 0 var(--space-1);
-}
-
-.projectGroup {
-  margin-bottom: var(--space-1);
-}
-
-.projectRoot {
-  display: block;
-  color: var(--text-muted);
-  font-size: var(--text-caption-size);
-  margin-bottom: var(--space-half);
-}
-
-.projectRow,
-.sessionRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: var(--list-row-height-min);
-  padding: 0 var(--space-half);
-  border-radius: var(--radius-sm);
-}
-
-.sessionProject {
-  color: var(--text-muted);
-  font-size: var(--text-caption-size);
-  margin-left: auto;
 }
 
 .center {
@@ -100,11 +63,6 @@
   overflow-x: auto;
 }
 
-.tabPlaceholder {
-  color: var(--text-muted);
-  font-size: var(--text-caption-size);
-}
-
 .terminal {
   flex: 1;
   display: flex;
@@ -114,6 +72,19 @@
   border-radius: var(--radius-md);
   background: #0e1116;
   overflow: hidden;
+}
+
+/* Todas as abas ficam montadas (App.tsx) pra o PTY sobreviver à troca de
+   aba — só a ativa é visível; T010 assume o ciclo de vida completo. */
+.terminalPane {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+.terminalPaneHidden {
+  display: none;
 }
 
 .rightPanel {

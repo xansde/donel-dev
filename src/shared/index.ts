@@ -1,7 +1,13 @@
 // Tipos IPC compartilhados entre main/preload/renderer (plan.md "Arquitetura
 // de processos"). CommandBuilder chega em T006 (TDD); os tipos abaixo cobrem
-// os canais `pty:*` introduzidos em T004 — os demais (projects:*, sessions:*,
-// profiles:*, config:*) chegam junto das tasks que os implementam.
+// os canais `pty:*` introduzidos em T004. Canais `projects:*` chegam no T007
+// (src/shared/projects.ts) — os demais (sessions:*, profiles:*, config:*)
+// chegam junto das tasks que os implementam.
+
+import type { DonelProjectsApi } from './projects';
+
+export { PROJECT_CHANNELS } from './projects';
+export type { DonelProjectsApi, ProjectInfo } from './projects';
 
 /** Nomes dos canais IPC do domínio PTY (plan.md linha 37). */
 export const PTY_CHANNELS = {
@@ -74,4 +80,5 @@ export interface DonelPtyApi {
 
 export interface DonelApi {
   pty: DonelPtyApi;
+  projects: DonelProjectsApi;
 }

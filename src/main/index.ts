@@ -1,18 +1,24 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { PtyCreateOptions, PtyCreateResult, PtyExitInfo } from '../shared';
-import { CLAUDE_NOT_FOUND_PREFIX, PTY_CHANNELS } from '../shared';
+import type { PtyCreateOptions, PtyCreateResult, PtyExitInfo, ProjectInfo } from '../shared';
+import { CLAUDE_NOT_FOUND_PREFIX, PROJECT_CHANNELS, PTY_CHANNELS } from '../shared';
 import { createSystemResolveDeps, resolveClaudeExecutable } from './claude-executable';
+import { readProjectConfig, toggleFavorite, writeProjectConfig } from './project-config-store';
+import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects, sortProjects } from './project-scanner';
 import { PtyManager } from './pty-manager';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
-// PtyManager chega em T004 (este arquivo). ProjectScanner, SessionIndexer,
-// ProfileManager e ConfigStore chegam nas tasks seguintes (plan.md
-// "Arquitetura de processos").
+// PtyManager chega em T004 (este arquivo). ProjectScanner chega no T007
+// (este arquivo). SessionIndexer, ProfileManager e ConfigStore formal chegam
+// nas tasks seguintes (plan.md "Arquitetura de processos").
 
 const ptyManager = new PtyManager();
 // Resolvido uma vez (não muda durante a vida do processo) — plan.md ponto 2.
 const claudeResolveDeps = createSystemResolveDeps();
+// Idem para o scan de projetos (T007) — mesmo padrão do claude-executable.
+const projectScanDeps = createSystemScanDeps();
+const projectRoots = defaultProjectRoots(homedir);
 
 function createMainWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -100,8 +106,33 @@ function registerPtyIpcHandlers(): void {
   });
 }
 
+/** `%APPDATA%\donel-dev\project-config.json` — só chamável após `app.whenReady()`. */
+function getProjectConfigPath(): string {
+  return join(app.getPath('userData'), 'project-config.json');
+}
+
+/** Scan + merge de favoritos + ordenação — a mesma pipeline usada por list e favorite (T007). */
+function listProjectsWithFavorites(): ProjectInfo[] {
+  const config = readProjectConfig(getProjectConfigPath());
+  const scanned = scanProjects(projectRoots, projectScanDeps);
+  return sortProjects(mergeFavorites(scanned, config.favorites));
+}
+
+function registerProjectIpcHandlers(): void {
+  ipcMain.handle(PROJECT_CHANNELS.list, (): ProjectInfo[] => listProjectsWithFavorites());
+
+  ipcMain.handle(PROJECT_CHANNELS.favorite, (_event, path: string, favorite: boolean): ProjectInfo[] => {
+    const configPath = getProjectConfigPath();
+    const config = readProjectConfig(configPath);
+    const favorites = toggleFavorite(config.favorites, path, favorite);
+    writeProjectConfig(configPath, { favorites });
+    return listProjectsWithFavorites();
+  });
+}
+
 void app.whenReady().then(() => {
   registerPtyIpcHandlers();
+  registerProjectIpcHandlers();
   createMainWindow();
 
   app.on('activate', () => {

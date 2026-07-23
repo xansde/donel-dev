@@ -81,13 +81,60 @@ test('terminal spawns a real claude session inside Electron', async () => {
   }).toPass({ timeout: 15_000 });
 });
 
+test('opening a project from the sidebar creates a tab with a claude session in that project cwd', async () => {
+  // T007 — prova o DoD ("abrir projeto pela sidebar funciona", FR-001/FR-002):
+  // clicar num projeto real da sidebar spawna uma sessão claude nova com
+  // `cwd` correto, sem matar a aba "Sessão" default (continua montada, só
+  // fica display:none — App.tsx mantém o PTY vivo ao trocar de aba).
+  // `donel-dev` é o próprio repo sob teste — sempre presente no scan (tem
+  // `.git`) e sempre em `~\seazone\donel-dev` nesta máquina de dev.
+  const sidebar = window.locator('nav[aria-label="Projetos e sessões"]');
+  await expect(sidebar).toBeVisible();
+
+  const projectButton = sidebar.getByRole('button', { name: 'donel-dev', exact: true });
+  await expect(projectButton).toBeVisible({ timeout: 15_000 });
+  await projectButton.click();
+
+  const newTab = window.locator('[role="tab"]', { hasText: 'donel-dev' });
+  await expect(newTab).toBeVisible();
+  await expect(newTab).toHaveAttribute('aria-selected', 'true');
+
+  // Só a aba ativa fica com o terminal-pane visível — a "Sessão" default virou display:none.
+  const activePane = window.locator('[data-testid="terminal-pane"]:visible');
+  await expect(activePane).toHaveCount(1);
+
+  await expect(async () => {
+    const text = await activePane.innerText();
+    expect(text.length).toBeGreaterThan(0);
+    expect(text).not.toContain('CLAUDE_NOT_FOUND');
+    expect(text).not.toContain('Falha ao iniciar');
+  }).toPass({ timeout: 20_000 });
+
+  // Mesmo diálogo de "Quick safety check" do primeiro teste, agora pra uma
+  // pasta possivelmente ainda não confiável na sessão anterior desta run.
+  await activePane.click();
+  if ((await activePane.innerText()).includes('trust this folder')) {
+    await window.keyboard.press('Enter');
+  }
+
+  await expect(async () => {
+    const text = await activePane.innerText();
+    expect(text.toLowerCase()).toContain('claude code');
+    // Prova o cwd: o prompt do claude mostra o path do projeto clicado.
+    expect(text).toContain('donel-dev');
+  }).toPass({ timeout: 15_000 });
+});
+
 test('resizing the window does not crash the app', async () => {
   const originalSize = window.viewportSize();
   await window.setViewportSize({ width: 1000, height: 700 });
   await window.waitForTimeout(500);
   await window.setViewportSize({ width: originalSize?.width ?? 1280, height: originalSize?.height ?? 800 });
 
-  // App ainda vivo e com o terminal renderizado após o resize.
-  await expect(window.locator('[data-testid="terminal-pane"]')).toBeVisible();
+  // App ainda vivo e com o terminal renderizado após o resize. `:visible`
+  // porque o teste anterior (T007) deixa 2 abas montadas (só a ativa fica
+  // visível — a "Sessão" default vira display:none, App.tsx mantém o PTY
+  // vivo ao trocar de aba).
+  await expect(window.locator('[data-testid="terminal-pane"]:visible')).toBeVisible();
   expect(electronApp.windows().length).toBeGreaterThan(0);
 });
