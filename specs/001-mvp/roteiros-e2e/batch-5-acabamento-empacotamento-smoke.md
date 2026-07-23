@@ -63,10 +63,14 @@ sessões já é alto, não precisa somar custo de modelo caro.
   disponível) ou o perfil ativo default, e mudar um default do launcher
   (ex.: modelo default). Fechar o app completamente e reabrir.
 - **Resultado esperado:** as 3 mudanças persistem depois do restart —
-  confirmar também que `%APPDATA%\DonelDev\config.json` existe e reflete
-  os valores (`Get-Content "$env:APPDATA\DonelDev\config.json"`).
+  confirmar também que `%APPDATA%\donel-dev\config.json` existe e reflete
+  os valores (`Get-Content "$env:APPDATA\donel-dev\config.json"`).
+  **Correção (T017, 2026-07-23):** o path real usa `donel-dev` com hífen
+  (`app.setName('donel-dev')`, `src/main/index.ts`), não `DonelDev` — o
+  texto original estava errado (NTFS case-insensitive não cobre um hífen
+  ausente). Confirmado em disco nesta task.
 - [ ] **Ação:** durante uma escrita de config (ex.: favoritar um projeto),
-  se possível observar o diretório `%APPDATA%\DonelDev\` num segundo
+  se possível observar o diretório `%APPDATA%\donel-dev\` num segundo
   terminal.
 - **Resultado esperado:** a escrita é atômica (arquivo temporário +
   rename) — não deve haver uma janela em que o `config.json` fique
@@ -253,10 +257,54 @@ sessões já é alto, não precisa somar custo de modelo caro.
 | 17 (notificação) | Notificação atribuída a "Electron" | `app.setAppUserModelId` no `src/main/index.ts` — conferir se está sendo chamado ANTES de qualquer notificação disparar, e se o instalador NSIS seta o mesmo AppUserModelId usado no código |
 | 18-19 (startup/RAM) | Acima do limite | Perfilar com DevTools do Electron (`--inspect`) ou `Get-Process`; candidatos comuns: excesso de `require`/import síncrono no main process, muitos listeners de IPC, xterm com scrollback grande demais por padrão |
 
+## O que a automação (T017, 2026-07-23) já provou vs. o que resta ao humano
+
+Checklist item a item, com evidência, em
+[t017-checklist.md](../t017-checklist.md). Resumo:
+
+**Já provado por automação (com números reais):**
+- 1-1b (persistência/escrita atômica), 3 (instalador já presente nesta
+  máquina), 4-6 (CA-1/CA-2/CA-3), 8 (CA-5, via testes unitários), 12-13
+  (resize básico, 6 abas), 15 (persistência pós-restart), 16 (PATH do exe
+  instalado — `git`/`gh`/`claude --version` resolvendo), 17 (mecanismo do
+  `appUserModelId`, não o disparo visual), 18 (startup: 917-1913ms, < 3s),
+  19 (RAM: **423.8-451.4 MB — ACIMA do budget de 400MB**, achado real, ver
+  checklist).
+- Item 9 (CA-6) rodou 2x e falhou 2x **por carga concorrente da máquina**
+  (14 processos `claude.exe` simultâneos no momento), não por regressão de
+  código — precisa de uma rodada limpa fora de horário de esteira pra
+  confirmar.
+
+**Lista enxuta do que resta ao humano** (nada disso é automatizável com
+segurança/custo razoável):
+1. **Item 2** — conferir visualmente a statusbar completa (conta + modelo/
+   esforço da aba em foco + contagem), só coberta incidentalmente.
+2. **Item 7** — Ctrl+C numa sessão real (sinal de teclado, sem smoke E2E
+   dedicado).
+3. **Item 10** — teclas especiais completas (setas, Home/End, Ctrl+A/E,
+   Backspace/Delete, Tab). **Este é o mesmo item 10 do roteiro batch 2 que
+   ficou "não testado" na rodada 2 do feedback-e2e.md — segue em aberto,
+   nunca foi validado por ninguém ainda.**
+4. **Item 11** — colar multilinha dentro de uma sessão Claude real (visual).
+5. **Item 14** — troca de perfil com 6 abas já abertas (a combinação exata;
+   as duas metades isoladas já são cobertas).
+6. **Item 17, metade visual** — confirmar que o toast do Windows aparece
+   mesmo, atribuído a "Donel Dev" (o mecanismo/appUserModelId já está
+   confirmado por automação; falta só ver o toast na tela).
+7. **Item 16, metade MCP** — dentro do app instalado, pedir pra uma sessão
+   real listar os MCPs disponíveis (não automatizado pra não gastar cota
+   só nessa checagem).
+8. **Item 19 (RAM)** — decisão do Alexandre: aceitar os ~424-451MB medidos
+   (acima do budget de 400MB) ou abrir uma task de otimização antes do
+   MVP ir pra uso diário.
+9. **Item 9 (CA-6)** — revalidar numa janela sem outras sessões `claude`
+   concorrentes rodando, pra separar "flake de carga" de "regressão real".
+
 ## Ao concluir
 
-Se todos os passos passarem (ou os poucos itens não-testáveis com
-segurança estiverem explicitamente marcados como "(confirmar na
-implementação)"), o MVP P0 do Donel Dev está pronto para uso real no dia a
-dia — atualizar o vault (`Projects/donel-dev/` no Obsidian) com a data de
-conclusão e qualquer achado relevante deste smoke.
+Os itens automatizáveis passaram (ou têm achado real documentado, não
+apenas "não testado") — ver `t017-checklist.md`. Os itens 1-9 da lista
+"resta ao humano" acima ficam pendentes de validação manual antes do MVP
+P0 ser considerado pronto para uso real no dia a dia. Atualizar o vault
+(`Projects/donel-dev/` no Obsidian) com a data de conclusão e os achados
+reais (RAM acima do budget, CA-6 instável sob carga) — não só "concluído".

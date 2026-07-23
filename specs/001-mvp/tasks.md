@@ -95,6 +95,13 @@ SemaphoreStateMachine); PTY/UI validam por smoke roteirizado.
   Windows disparando tanto via `npm run dev` quanto via atalho instalado
   (`app.setAppUserModelId`), medição startup (< 3 s) e RAM com 3 abas
   (< 400 MB) via `Get-Process`. DoD: checklist 100% com evidências.
+  **Status (2026-07-23):** parte automatizável executada — checklist
+  completo em [t017-checklist.md](t017-checklist.md). Startup passou
+  (917-1913ms). **2 achados reais em aberto:** RAM com 3 abas ficou
+  ACIMA do budget (423.8-451.4MB vs. 400MB) e o smoke de CA-6 falhou 2/2
+  por carga concorrente da máquina (precisa revalidação limpa). Itens
+  não-automatizáveis (teclas especiais, colar multilinha, Ctrl+C, etc.)
+  seguem no roteiro manual para o humano — DoD ainda não é 100%.
 
 ## Fora deste ciclo
 
