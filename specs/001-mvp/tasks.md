@@ -1,9 +1,18 @@
 # Tasks 001 — Donel Dev MVP (P0)
 
-**Status:** planejamento — implementação gated por (a) referência de design do
-Alexandre (telas geradas na ferramenta de design a partir de
-[design/](../../design/)) e (b) OK explícito dele.
-**Atualizado:** 2026-07-22 (refeito pós-discovery/clarify)
+**Status:** EM IMPLEMENTAÇÃO (overnight 2026-07-23, branch `feature/mvp-p0`) —
+gate liberado: (a) referência visual recebida em
+`design/referencia/galeria-completa-dos-13-briefs/` (Donel Dev.dc.html, 13
+telas) e (b) OK do Alexandre ("Implement", 23/07).
+**Atualizado:** 2026-07-23
+
+> **Insumo novo:** a branch `feat/design-system-package` trouxe
+> `design-system/` — pacote React + Storybook com 16 componentes prontos
+> (StateDot, SmartZoneMeter, TerminalTab, AccountBadge, PhaseChip,
+> PostItCard, SplitButton, SegmentedControl, Select, TextInput, Toggle,
+> Modal, Toast, StatusBar, Button + tokens.css e lib/smartZone.ts). As tasks
+> de UI **consomem esses componentes** (workspace npm) — nunca recriar. A
+> fidelidade visual segue `Donel Dev.dc.html` + `_ds/*/styles.css`.
 
 Convenções: [P] = paralelizável com a anterior; DoD = definition of done.
 TDD nos módulos puros (CommandBuilder, SessionIndexer, profile paths,
@@ -26,8 +35,10 @@ SemaphoreStateMachine); PTY/UI validam por smoke roteirizado.
 ## Fase 1 — fundação
 
 - **T003 — Scaffold electron-vite**
-  React+TS, contextIsolation, janela única com layout do shell (ui-spec §2).
-  DoD: `npm run dev` sobe com as zonas vazias.
+  React+TS, contextIsolation, janela única com layout do shell (ui-spec §2);
+  npm workspaces integrando `design-system/` como dependência local do app
+  (importar componentes e tokens.css de lá). DoD: `npm run build` verde com
+  um componente do design-system renderizado no shell.
 - **T004 — PTY + xterm, 1 aba**
   PtyManager + IPC com batching; spawna PowerShell. DoD: shell interativo
   completo (cores, setas, Ctrl+C, colar, resize, scrollback).
