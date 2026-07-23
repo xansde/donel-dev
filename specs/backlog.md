@@ -81,6 +81,24 @@ dentro de Projetos). Comportamento pedido:
 Clarify futuro: limite de sub-itens, ordenação, e o que acontece ao
 desfavoritar (sessões voltam para a seção geral).
 
+### B6. Colar imagens na sessão (novo — feedback 23/07, 2ª leva)
+
+"Poder colar imagens." O CLI `claude` aceita imagem colada em terminais que
+repassam o evento (ele lê o clipboard e insere `[Image #N]`); dentro do
+xterm.js o Ctrl+V pode estar sendo interceptado e reduzido a texto. Spike:
+verificar o que chega ao PTY hoje ao colar uma imagem do clipboard; se o
+xterm engole, encaminhar o atalho cru ao CLI (ou implementar handler de
+paste com imagem no TerminalPane). Critério: colar print direto na sessão
+funciona igual ao Windows Terminal.
+
+### B7. Copiar texto fácil (novo — feedback 23/07, 2ª leva)
+
+"Ser fácil de copiar texto." Hoje a seleção/cópia no terminal embedado é o
+default do xterm.js. Melhorias candidatas (clarify): copy-on-select,
+Ctrl+Shift+C, menu de contexto com Copiar, e seleção que sobrevive a
+output novo chegando. Critério: copiar um trecho do terminal tem que ser
+tão fácil quanto no Windows Terminal.
+
 ## Decisões pendentes que alimentam este backlog
 
 - Restauração de sessões no restart (rodada 5 do feedback-e2e): opções
