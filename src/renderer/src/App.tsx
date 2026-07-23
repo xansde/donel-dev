@@ -84,6 +84,13 @@ const INITIAL_TABS: TabState[] = [{ id: 'default', name: 'Sessão', pinned: fals
 // dentro do componente).
 const LIVE_INJECTION_TIMEOUT_MS = 20_000;
 
+// FIX (feedback E2E rodada 5) — limiar do diagnóstico "sem nenhum evento de
+// hook ainda" no hint de SessionDetails (ver `possiblyBlockedOnPrompt` mais
+// abaixo). Mesma ordem de grandeza de `LIVE_INJECTION_TIMEOUT_MS` acima, não
+// reaproveitado direto de propósito: são timeouts de coisas diferentes
+// (confirmação de injeção já em voo vs. "a sessão nunca teve nenhum turno").
+const POSSIBLY_BLOCKED_THRESHOLD_MS = 20_000;
+
 /** Remove uma chave de um record sem mutar o original — usado ao limpar `semaphoreStates`/`aliveTabs` no fechamento de aba. */
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   if (!(key in record)) return record;
@@ -133,6 +140,24 @@ export function App(): React.JSX.Element {
   // confirmação (true) ou fecha direto (false/ausente — connecting sem PTY
   // ainda, ou já 'ended'/'claude-not-found').
   const [aliveTabs, setAliveTabs] = useState<Record<string, boolean>>({});
+  // FIX (feedback E2E rodada 5) — epoch ms de quando cada aba ficou `alive`
+  // pela ÚLTIMA vez (ref, não state — só alimenta o diagnóstico abaixo,
+  // nunca o gate real de injeção). Usado por `possiblyBlockedOnPrompt` pra
+  // saber "há quanto tempo esta sessão está viva sem NENHUM evento de hook
+  // ainda" (ex.: diálogo de confiança de pasta bloqueando o CLI antes do
+  // REPL — TerminalPane.tsx). Limpo em `closeTabImmediately` (mesmo padrão
+  // de `semaphoreStates`/`aliveTabs`).
+  const aliveSinceRef = useRef<Record<string, number>>({});
+  // FIX (feedback E2E rodada 5) — nenhum estado muda sozinho com o passar
+  // do tempo; sem um tick periódico o diagnóstico acima ficaria "atrasado"
+  // até a próxima ação do usuário forçar um re-render. 5s é granularidade
+  // suficiente pro limiar de ~20s do diagnóstico (não precisa de setInterval
+  // mais fino que isso pra um hint textual).
+  const [, forceDiagnosticTick] = useState(0);
+  useEffect(() => {
+    const intervalId = setInterval(() => forceDiagnosticTick((tick) => tick + 1), 5_000);
+    return () => clearInterval(intervalId);
+  }, []);
   // T010 — aba com fechamento pendente de confirmação (modal "Fechar sessão?", ui-spec §2); null = nenhum modal aberto.
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
   // T011 — modelo/esforço "atual" de cada aba claude (chave = tab.id), pro
@@ -176,6 +201,18 @@ export function App(): React.JSX.Element {
   }, []);
 
   const handleAliveChange = useCallback((tabId: string, alive: boolean): void => {
+    // FIX (feedback E2E rodada 5) — marca/limpa o instante em que a aba
+    // ficou viva, pro diagnóstico `possiblyBlockedOnPrompt` abaixo (ver
+    // `aliveSinceRef` acima). `if (alive)` sem checar valor anterior: uma
+    // aba só transiciona pra `alive` a partir de 'connecting'/'ended', nunca
+    // de 'running' pra 'running' de novo sem passar por um novo `spawnSession`
+    // (TerminalPane useEffect [status.kind]), então não há risco de
+    // sobrescrever um timestamp mais antigo com um mais novo indevidamente.
+    if (alive) {
+      aliveSinceRef.current[tabId] = Date.now();
+    } else {
+      delete aliveSinceRef.current[tabId];
+    }
     setAliveTabs((prev) => (prev[tabId] === alive ? prev : { ...prev, [tabId]: alive }));
   }, []);
 
@@ -215,6 +252,7 @@ export function App(): React.JSX.Element {
     }
     setSemaphoreStates((prev) => omitKey(prev, tabId));
     setAliveTabs((prev) => omitKey(prev, tabId));
+    delete aliveSinceRef.current[tabId]; // FIX (feedback E2E rodada 5) — mesmo padrão de limpeza dos maps acima.
     setSessionModelEffort((prev) => omitKey(prev, tabId));
     // T013 — uma injeção pendente cuja confirmação ainda não chegou não pode
     // continuar rodando pra uma aba que acabou de fechar (nem escreveria
@@ -737,6 +775,22 @@ export function App(): React.JSX.Element {
   // T011 — aba em foco, pra decidir se a toolbar de Modelo/Esforço aparece (só sessões 'claude').
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
 
+  // FIX (feedback E2E rodada 5) — diagnóstico pro hint de SessionDetails
+  // (statusHint): `true` só quando a aba em foco está viva, NENHUM evento de
+  // hook chegou ainda (`semaphoreStates[id]` continua undefined — ver
+  // comentário de `sidebarSessions` acima sobre o estado inicial otimista)
+  // E já se passaram ~20s desde que ficou viva. `POSSIBLY_BLOCKED_THRESHOLD_MS`
+  // deliberadamente mais folgado que qualquer round-trip normal de boot —
+  // só existe pra separar "ainda conectando" de "provavelmente esperando
+  // resposta no terminal" (ex.: diálogo de confiança de pasta).
+  const activeAliveSince = activeTab ? aliveSinceRef.current[activeTab.id] : undefined;
+  const possiblyBlockedOnPrompt =
+    !!activeTab &&
+    (aliveTabs[activeTab.id] ?? false) &&
+    semaphoreStates[activeTab.id] === undefined &&
+    activeAliveSince !== undefined &&
+    Date.now() - activeAliveSince > POSSIBLY_BLOCKED_THRESHOLD_MS;
+
   // FIX (T015, FR-009 "statusbar completa") — era hardcoded "fable/high"
   // (sempre o mesmo texto, ignorando a aba real): agora reflete o
   // modelo/esforço de VERDADE da aba em foco (`sessionModelEffort`, já
@@ -823,6 +877,7 @@ export function App(): React.JSX.Element {
               onSelectEffort={(effort) => handleSelectEffort(activeTab.id, effort)}
               onRestartWithConfig={() => handleRestartWithConfig(activeTab.id)}
               pendingKind={pendingInjection[activeTab.id]}
+              possiblyBlockedOnPrompt={possiblyBlockedOnPrompt}
             />
           ) : null}
           <div className={styles.terminal}>

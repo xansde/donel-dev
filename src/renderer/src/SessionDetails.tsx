@@ -56,12 +56,34 @@ export interface SessionDetailsProps {
    * shared/liveSessionInjection.ts pro porquê da correção.
    */
   pendingKind?: 'model' | 'effort';
+  /**
+   * FIX (feedback E2E rodada 5) — `true` quando a aba está viva mas
+   * nenhum evento de hook chegou ainda depois de ~20s (App.tsx calcula a
+   * partir de `aliveSinceRef`/`semaphoreStates`) — troca o hint genérico
+   * "Conectando…" por um diagnóstico acionável. Default `false` (sem essa
+   * defesa, os testes/consumidores existentes que não passam a prop
+   * continuam vendo o comportamento de antes).
+   */
+  possiblyBlockedOnPrompt?: boolean;
 }
 
 /** Texto do aviso ao lado dos segmented — explica POR QUE o controle está desabilitado (ui-spec §4: "tooltip explica"), ou a dica de uso quando está liberado. */
-function statusHint(state: SemaphoreState | undefined, alive: boolean, pendingKind: 'model' | 'effort' | undefined): string {
+function statusHint(
+  state: SemaphoreState | undefined,
+  alive: boolean,
+  pendingKind: 'model' | 'effort' | undefined,
+  possiblyBlockedOnPrompt: boolean
+): string {
   if (pendingKind) return 'Aguardando o CLI confirmar a troca…';
   if (!alive) return 'Sessão sem processo vivo — troque e clique em "Reiniciar com essa config".';
+  // FIX (feedback E2E rodada 5) — App.tsx só liga `possiblyBlockedOnPrompt`
+  // quando a sessão está viva há mais de ~20s sem NENHUM evento de hook
+  // (nem um) — o hint genérico "Conectando…" (default abaixo) escondia o
+  // caso real (ex.: diálogo de confiança de pasta bloqueando o CLI antes do
+  // REPL, ver TerminalPane.tsx) atrás de um texto que soa transitório.
+  if (possiblyBlockedOnPrompt) {
+    return 'O CLI pode estar aguardando resposta no terminal (ex.: confiança de pasta) — clique no terminal e responda.';
+  }
   switch (state) {
     case 'working':
       return 'Sessão trabalhando — aguarde o turno terminar pra trocar.';
@@ -83,9 +105,10 @@ export function SessionDetails({
   onSelectEffort,
   onRestartWithConfig,
   pendingKind,
+  possiblyBlockedOnPrompt = false,
 }: SessionDetailsProps): React.JSX.Element {
   const disabled = pendingKind !== undefined || !canInjectLiveCommand(semaphoreState, alive);
-  const hint = statusHint(semaphoreState, alive, pendingKind);
+  const hint = statusHint(semaphoreState, alive, pendingKind, possiblyBlockedOnPrompt);
 
   return (
     <div className={styles.toolbar} data-testid="session-details" aria-label="Modelo e esforço da sessão">

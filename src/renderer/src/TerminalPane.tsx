@@ -74,6 +74,16 @@ export interface TerminalPaneProps {
  */
 const RENDERED_TAIL_LINES = 200;
 
+/**
+ * FIX (feedback E2E rodada 5) — texto do diálogo pré-REPL de confiança de
+ * pasta ("Quick safety check") do próprio binário `claude`, mesma string já
+ * usada pelos smokes existentes pra tratar esse diálogo manualmente (ver
+ * terminal.spec.ts). Reaproveitado aqui pro auto-aceite da aba boot/home
+ * abaixo — ver comentário de `maybeAutoAcceptTrustDialog` dentro de
+ * `spawnSession`.
+ */
+const TRUST_DIALOG_MARKER = 'trust this folder';
+
 export interface TerminalPaneHandle {
   /** Escreve `command` no stdin do PTY desta aba. Devolve `false` (no-op) sem processo vivo — quem chama decide o que fazer com isso (ex.: degradação FR-011 "reiniciar com a flag"). */
   injectCommand: (command: string) => boolean;
@@ -116,6 +126,12 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   const unsubscribeDataRef = useRef<(() => void) | null>(null);
   const unsubscribeExitRef = useRef<(() => void) | null>(null);
   const unsubscribeSemaphoreRef = useRef<(() => void) | null>(null);
+  // FIX (feedback E2E rodada 5) — "armado" só enquanto a sessão desta aba
+  // ainda não recebeu NENHUM evento de hook/semáforo (ver `spawnSession` ->
+  // `maybeAutoAcceptTrustDialog` e a assinatura de `semaphore.onUpdate`
+  // abaixo, que desarma no primeiro evento). Reset a cada `spawnSession()`
+  // nova (mount inicial ou "Reabrir"), nunca lido fora deste componente.
+  const trustAutoAcceptArmedRef = useRef(false);
   // FIX — geração do mount atual (substitui o antigo `disposedRef` booleano).
   // Incrementado tanto no INÍCIO do efeito de mount quanto no INÍCIO do
   // cleanup — cada `spawnSession()` captura o valor vigente no momento da
@@ -209,6 +225,12 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     // Snapshot da geração vigente NO MOMENTO da chamada — não lido de novo
     // depois (ver comentário de `mountEpochRef` acima).
     const requestEpoch = mountEpochRef.current;
+    // FIX (feedback E2E rodada 5) — só a aba boot/home nasce SEM `cwd`
+    // (App.tsx `INITIAL_TABS`/`handleQuickNewClaudeSession` sem projeto
+    // selecionado), o que faz PtyManager.create spawnar em `os.homedir()`
+    // (pty-manager.ts). Abas com `cwd` de projeto ficam DE FORA de
+    // propósito — ver `maybeAutoAcceptTrustDialog` abaixo pro porquê.
+    const isBootSession = sessionType === 'claude' && cwd === undefined;
 
     void window.donel.pty
       .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args })
@@ -223,6 +245,11 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         }
         ptyIdRef.current = result.ptyId;
         setStatus({ kind: 'running' });
+        // FIX (feedback E2E rodada 5) — arma o auto-aceite só pra esta
+        // geração desta aba; desarma sozinho no primeiro `\r` enviado
+        // (`maybeAutoAcceptTrustDialog`) OU no primeiro evento de hook
+        // (assinatura de `semaphore.onUpdate` abaixo) — o que vier primeiro.
+        trustAutoAcceptArmedRef.current = isBootSession;
 
         // FIX (feedback E2E rodada 1, agravante do bug StrictMode) — replay
         // do ring buffer ANTES de assinar `onData` (ver comentário de topo
@@ -240,8 +267,62 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
             // `requestEpoch` do `.then()` de fora; sem ela escreveria num
             // xterm já `dispose()`d.
             if (requestEpoch !== mountEpochRef.current) return;
+
+            // FIX (feedback E2E rodada 5, CAUSA RAIZ) — a aba boot/home
+            // (`isBootSession` acima) roda o CLI em `os.homedir()`, onde o
+            // trust de pasta NUNCA é persistido pelo binário (string do
+            // próprio `claude`, não algo que este app controle) — o
+            // diálogo pré-REPL ("Quick safety check") aparece TODA vez.
+            // Enquanto ele está na tela, nenhum hook do semáforo dispara
+            // (não houve prompt ainda: hooks-settings.ts só cobre
+            // UserPromptSubmit/PreToolUse/PostToolUse/Stop/Notification/
+            // SessionEnd), então `semaphoreState` da aba nunca sai de
+            // `undefined` e `canInjectLiveCommand` (liveSessionInjection.ts)
+            // fica preso pra sempre — a menos que alguém aperte Enter no
+            // terminal na mão (o que os smokes existentes fazem
+            // manualmente, ver terminal.spec.ts). Aceita o default ("1.
+            // Yes, trust folder") assim que o texto aparece no buffer JÁ
+            // RENDERIZADO (mesma fonte que `getRenderedLines`/
+            // `onRenderedUpdate` — ver comentário de topo do handle: o
+            // stream bruto pode não conter a linha como substring
+            // contígua, só o resultado emulado pelo parser do xterm).
+            const maybeAutoAcceptTrustDialog = (): void => {
+              const buffer = term.buffer.active;
+              const start = Math.max(0, buffer.length - RENDERED_TAIL_LINES);
+              let found = false;
+              for (let i = start; i < buffer.length; i += 1) {
+                const line = buffer.getLine(i);
+                if (line?.translateToString(true).includes(TRUST_DIALOG_MARKER)) {
+                  found = true;
+                  break;
+                }
+              }
+              if (!found) return;
+              trustAutoAcceptArmedRef.current = false; // um único envio por sessão
+              if (ptyIdRef.current) window.donel.pty.input(ptyIdRef.current, '\r');
+            };
+
+            // FIX (feedback E2E rodada 5, achado da validação deste fix) —
+            // o replay do ring buffer ACIMA (comentário "rodada 1") já pode
+            // conter o diálogo INTEIRO: o CLI começa a escrever no PTY
+            // (banner + "Quick safety check") assim que spawna no main
+            // process, ANTES do roundtrip de IPC de `getPreview` voltar pra
+            // cá — exatamente a mesma corrida que aquele FIX de 2026
+            // documenta. Sem checar aqui TAMBÉM (não só no `onData` ao vivo
+            // abaixo), o diálogo podia chegar inteiro só no replay e nunca
+            // disparar o auto-aceite — o app ficava preso do mesmo jeito de
+            // antes do fix, só que silenciosamente (achado real: validado
+            // rodando o smoke novo, terminal parado no diálogo mesmo com o
+            // fix presente, `git log` do commit anterior a este). `term.write`
+            // com callback (2º argumento) pelo mesmo motivo do `onData`
+            // abaixo — só ler `term.buffer.active` DEPOIS do parser confirmar
+            // que este chunk virou estado real do buffer.
             const preview = formatRingBufferPreview(lines);
-            if (preview) term.write(preview);
+            if (preview) {
+              term.write(preview, () => {
+                if (trustAutoAcceptArmedRef.current) maybeAutoAcceptTrustDialog();
+              });
+            }
 
             unsubscribeDataRef.current = window.donel.pty.onData(result.ptyId, (data) => {
               // T013 (correção herdada) — o 2º argumento de `write` é o
@@ -252,6 +333,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
               // transiente ANTES do próximo redraw sobrescrever por cima
               // (ver comentário do handle acima).
               term.write(data, () => {
+                if (trustAutoAcceptArmedRef.current) maybeAutoAcceptTrustDialog();
                 renderListenersRef.current.forEach((listener) => listener());
               });
             });
@@ -265,6 +347,12 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         // pelo main process — sem sessionType 'claude', simplesmente não
         // chega update nenhum aqui (nada a filtrar deste lado).
         unsubscribeSemaphoreRef.current = window.donel.semaphore.onUpdate(result.ptyId, (info) => {
+          // FIX (feedback E2E rodada 5) — primeiro evento de hook = sessão
+          // já em uso normal (usuário/CLI seguiu adiante sozinho); desarma
+          // o auto-aceite pra nunca mais tocar o stdin sozinho depois disso
+          // (mitiga falso positivo de "trust this folder" citado numa
+          // resposta real).
+          trustAutoAcceptArmedRef.current = false;
           onStateChangeRef.current?.(info);
         });
       })
