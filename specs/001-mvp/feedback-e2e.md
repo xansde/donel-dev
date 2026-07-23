@@ -26,10 +26,17 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
   abas criadas via launcher/sidebar ("argiburgo") mostram banner "Sessão sem
   processo vivo", terminal central vazio, digitação sem efeito. Flags
   `--effort high` e `--model fable` validadas como OK no CLI (não são a
-  causa). TerminalPane não faz replay de ring buffer ao montar (agrava o
-  sintoma de tela vazia). Diagnóstico com repro em andamento (agente na
-  worktree e2e). Smokes atuais não cobrem o fluxo real do launcher com
-  sessão claude viva — cobertura a fechar junto do fix.
+  causa). **CAUSA RAIZ ENCONTRADA (23/07): React 18 StrictMode double-invoca
+  o mount do TerminalPane em modo dev; `disposedRef` booleano nunca resetado
+  no 2º mount → todo PTY recém-criado era morto → aba presa em 'connecting'.**
+  Só em `npm run dev` (React dev build) — smokes auditados rodam contra build
+  de produção, por isso não pegaram. Fix validado com repro real (contador de
+  geração `mountEpochRef`, sem leak de processo: +2 claude.exe para 2 abas) e
+  **commitado na worktree e2e** (branch `e2e-estavel`). PENDENTE →
+  **Batch 5, item 0**: aplicar o mesmo fix na `feature/mvp-p0` (diff pronto
+  no TerminalPane.tsx da e2e) + smoke permanente de modo dev
+  (`ELECTRON_RENDERER_URL` + Vite dev server, receita no dossiê do agente de
+  diagnóstico) + replay do ring buffer ao montar (agravante do sintoma).
 - [ ] **Hooks do settings falhando na sessão de perfil** (→ **T017**):
   `SessionStart` com path sem barras (`C:Usersxansd.localbin...`) e traceback
   do plugin hookify (Python antigo). Ver addendum do spike T001. Confirmar se
