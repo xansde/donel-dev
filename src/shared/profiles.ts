@@ -39,8 +39,37 @@ export interface ProfileDoctorReportDto {
   readonly healthy: boolean;
 }
 
-/** `Record<slug, percent>` — `null` = perfil sem leitura confiável ("—", ui-spec §6); slug ausente = ainda não consultado. */
-export type ProfileHeadroomMap = Record<string, number | null>;
+/**
+ * T202 (002-quota-headroom) — uma janela de cota (5h/semana/model:fable) já
+ * lida do payload `quota-axi --json`. `percentRemaining` é sempre um número
+ * (0-100, "% livre"/restante) quando a janela existe no payload — ausência
+ * de janela é modelada por `QuotaWindow | null` no nível de `ProfileQuota`,
+ * não por `percentRemaining` opcional aqui.
+ */
+export interface QuotaWindow {
+  readonly percentRemaining: number;
+  readonly resetsAt: string | null;
+}
+
+/**
+ * T202 — substitui o `Record<slug, number | null>` original (um % só, janela
+ * não explicitada — motivo do bug "não entendi o que essa cota significa",
+ * spec.md problema 2). Contrato IPC: main devolve só `'ok'`/`'unavailable'`
+ * (ver `parseQuotaAxiWindows`/`readQuotaAxiQuota` em `main/quota-headroom.ts`);
+ * `'loading'` é estado de UI PURO — o renderer usa antes da 1ª resposta do
+ * IPC chegar (nunca vem do main, CA-1 "carregando, nunca '—' otimista").
+ * `fable` (janela `model:fable`) é revelado só na expansão da linha (CA-2b) —
+ * o dado já chega no map, a UI decide quando mostrar.
+ */
+export interface ProfileQuota {
+  readonly status: 'loading' | 'ok' | 'unavailable';
+  readonly fiveHour: QuotaWindow | null;
+  readonly sevenDay: QuotaWindow | null;
+  readonly fable: QuotaWindow | null;
+}
+
+/** `Record<slug, ProfileQuota>` — slug ausente = ainda não consultado. */
+export type ProfileHeadroomMap = Record<string, ProfileQuota>;
 
 /** API tipada exposta pelo preload em `window.donel.profiles`. */
 export interface DonelProfilesApi {
@@ -53,7 +82,7 @@ export interface DonelProfilesApi {
   doctor(slug: string): Promise<ProfileDoctorReportDto>;
   /** Recria as junctions quebradas reportadas pelo último `doctor` (ui-spec §6 "Recriar links"); devolve o doctor já re-executado. */
   repair(slug: string): Promise<ProfileDoctorReportDto>;
-  /** Leitura sob demanda, paralela, timeout 3s/cache 60s por perfil (FR-012) — nunca lança, nunca trava esperando todos. */
+  /** Leitura sob demanda, paralela, timeout 8s/cache 60s por perfil (FR-012; `unavailable` NUNCA é cacheado — CA-5) — nunca lança, nunca trava esperando todos. */
   headroom(): Promise<ProfileHeadroomMap>;
 }
 

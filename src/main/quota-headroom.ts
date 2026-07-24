@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { ProfileHeadroomMap, ProfileQuota, QuotaWindow } from '../shared/profiles';
 
 // T014 — FR-012 (US-7): % de headroom de quota por perfil, via `quota-axi`
 // (`npx -y quota-axi --provider claude --json` — SKILL.md do quota-axi,
@@ -27,6 +28,10 @@ export interface QuotaAxiWindow {
   readonly id: string;
   readonly kind?: string;
   readonly percentRemaining?: number;
+  /** T201 — reset da janela (ISO) quando o payload traz; `model:fable` pode vir sem esse campo -> tolerar `undefined`/`null`. */
+  readonly resetsAt?: string | null;
+  /** T201 — rótulo opcional vindo do quota-axi (não usado hoje pela UI — a UI rotula por posição/`id`, não por este campo; mantido pra não descartar dado do payload). */
+  readonly label?: string;
 }
 
 export interface QuotaAxiProviderReport {
@@ -39,34 +44,53 @@ export interface QuotaAxiOutput {
   readonly providers?: readonly QuotaAxiProviderReport[];
 }
 
-/**
- * Janela usada como headroom "principal" do badge (ui-spec §6: um % só por
- * conta) — a sessão de 5h (`five_hour`) é a mais imediatamente acionável
- * ("dá pra continuar trabalhando agora?"); cai pra semanal (`seven_day`) se
- * a janela de sessão não vier no payload (provider ainda sem dado de sessão).
- * Decisão de implementação (não especificada em FR-012/ui-spec, que só pedem
- * "o % de quota restante" sem apontar qual janela).
- */
-const PRIMARY_WINDOW_ORDER = ['five_hour', 'seven_day'] as const;
+/** Ids das janelas do payload `quota-axi --json` mapeados pro shape `ProfileQuota` (T201/T202). `model:fable` é a única janela de modelo suportada nesta entrega (spec.md "fora de escopo": outras `model:*` ficam pro painel US-12). */
+const FIVE_HOUR_WINDOW_ID = 'five_hour';
+const SEVEN_DAY_WINDOW_ID = 'seven_day';
+const FABLE_WINDOW_ID = 'model:fable';
+
+/** `unavailable` fixo — devolvido tanto por payload sem provider `claude`/janelas quanto por `state.stale`/`state.error` (regra dura CA-5, ver comentário de topo do módulo). Const módulo-level: as 3 janelas nulas são reaproveitadas em todo caminho "sem dado confiável", nunca reconstruídas objeto-a-objeto (evita 3 literais divergentes acidentalmente). */
+const UNAVAILABLE_QUOTA: ProfileQuota = { status: 'unavailable', fiveHour: null, sevenDay: null, fable: null };
+
+function extractWindow(windows: readonly QuotaAxiWindow[] | undefined, windowId: string): QuotaWindow | null {
+  const found = windows?.find((w) => w.id === windowId);
+  if (!found || typeof found.percentRemaining !== 'number') return null;
+  return { percentRemaining: Math.round(found.percentRemaining), resetsAt: found.resetsAt ?? null };
+}
 
 /**
- * Puro — extrai o % de headroom (inteiro, 0-100) do payload `--json` do
- * quota-axi pro provider `claude`, ou `null` quando indisponível/não
- * confiável. Regra dura do gotcha acima: `state.stale`/`state.error`
- * SEMPRE vira `null`, mesmo com `windows` populado.
+ * Puro — extrai as 3 janelas (`five_hour`/`seven_day`/`model:fable`) do
+ * payload `--json` do quota-axi pro provider `claude`, no shape
+ * `ProfileQuota` (T202). Regra dura do gotcha de topo do módulo:
+ * `state.stale`/`state.error` (ou ausência do provider `claude`) SEMPRE
+ * vira `UNAVAILABLE_QUOTA` — nunca um número vindo de fallback de cache que
+ * pode ser de OUTRO perfil. Janela ausente/sem `percentRemaining` numérico
+ * vira `null` só NAQUELA janela (sucesso parcial ainda é `status: 'ok'`).
+ */
+export function parseQuotaAxiWindows(output: QuotaAxiOutput | null | undefined): ProfileQuota {
+  const claude = output?.providers?.find((provider) => provider.provider === 'claude');
+  if (!claude) return UNAVAILABLE_QUOTA;
+  if (claude.state?.stale || claude.state?.error) return UNAVAILABLE_QUOTA;
+
+  return {
+    status: 'ok',
+    fiveHour: extractWindow(claude.windows, FIVE_HOUR_WINDOW_ID),
+    sevenDay: extractWindow(claude.windows, SEVEN_DAY_WINDOW_ID),
+    fable: extractWindow(claude.windows, FABLE_WINDOW_ID),
+  };
+}
+
+/**
+ * Seletor derivado (T201) — mantido pra quem só precisa do headroom
+ * "principal" como número (era o contrato original, pré-002). 5h primária
+ * ("dá pra continuar trabalhando agora?"), cai pra semanal quando a janela
+ * de sessão não vier no payload. Construído em cima de
+ * `parseQuotaAxiWindows` — nunca duplica a regra stale/error.
  */
 export function parseQuotaAxiHeadroom(output: QuotaAxiOutput | null | undefined): number | null {
-  const claude = output?.providers?.find((provider) => provider.provider === 'claude');
-  if (!claude) return null;
-  if (claude.state?.stale || claude.state?.error) return null;
-
-  for (const windowId of PRIMARY_WINDOW_ORDER) {
-    const found = claude.windows?.find((w) => w.id === windowId);
-    if (found && typeof found.percentRemaining === 'number') {
-      return Math.round(found.percentRemaining);
-    }
-  }
-  return null;
+  const quota = parseQuotaAxiWindows(output);
+  if (quota.status !== 'ok') return null;
+  return quota.fiveHour?.percentRemaining ?? quota.sevenDay?.percentRemaining ?? null;
 }
 
 /**
@@ -180,7 +204,7 @@ export interface RunQuotaAxiOptions {
  * timeout, erro de spawn ou JSON inválido viram `null` (mesmo espírito de
  * "sem dados" do resto do app — SessionIndexer, ProjectScanner).
  */
-export function readQuotaAxiHeadroom(options: RunQuotaAxiOptions): Promise<number | null> {
+export function readQuotaAxiQuota(options: RunQuotaAxiOptions): Promise<ProfileQuota> {
   return new Promise((resolve) => {
     const env: NodeJS.ProcessEnv = { ...(options.baseEnv ?? process.env) };
     if (options.configDir) {
@@ -204,13 +228,13 @@ export function readQuotaAxiHeadroom(options: RunQuotaAxiOptions): Promise<numbe
         child = spawn('npx', ['-y', 'quota-axi', '--provider', 'claude', '--json'], { env, windowsHide: true, shell: true });
       }
     } catch {
-      resolve(null);
+      resolve(UNAVAILABLE_QUOTA);
       return;
     }
 
     let stdout = '';
     let settled = false;
-    const finish = (result: number | null): void => {
+    const finish = (result: ProfileQuota): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -219,22 +243,22 @@ export function readQuotaAxiHeadroom(options: RunQuotaAxiOptions): Promise<numbe
 
     const timer = setTimeout(() => {
       child.kill();
-      finish(null);
+      finish(UNAVAILABLE_QUOTA);
     }, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf8');
     });
-    child.on('error', () => finish(null));
+    child.on('error', () => finish(UNAVAILABLE_QUOTA));
     // `code`/`signal` recebidos de propósito (documentam a decisão) mas
     // NUNCA usados pra decidir sucesso/falha — só o conteúdo de `stdout`
     // decide (ver comentário de `parseJsonPayload` acima, fix rodada 4
     // item 8: exit code do quota-axi via npx no Windows não é confiável).
     child.on('close', (_code, _signal) => {
       try {
-        finish(parseQuotaAxiHeadroom(parseJsonPayload(stdout) as QuotaAxiOutput));
+        finish(parseQuotaAxiWindows(parseJsonPayload(stdout) as QuotaAxiOutput));
       } catch {
-        finish(null);
+        finish(UNAVAILABLE_QUOTA);
       }
     });
   });
@@ -248,7 +272,7 @@ export function readQuotaAxiHeadroom(options: RunQuotaAxiOptions): Promise<numbe
 const HEADROOM_CACHE_TTL_MS = 60_000;
 
 interface CacheEntry {
-  readonly percent: number | null;
+  readonly quota: ProfileQuota;
   readonly cachedAt: number;
 }
 
@@ -260,16 +284,26 @@ export class HeadroomCache {
     this.now = now;
   }
 
-  /** `undefined` = sem entrada válida (nunca lido, ou TTL expirado) — chamador deve ler de verdade. */
-  get(slug: string): number | null | undefined {
+  /** `undefined` = sem entrada válida (nunca lido, TTL expirado, ou última leitura foi `unavailable`) — chamador deve ler de verdade. */
+  get(slug: string): ProfileQuota | undefined {
     const entry = this.entries.get(slug);
     if (!entry) return undefined;
     if (this.now() - entry.cachedAt > HEADROOM_CACHE_TTL_MS) return undefined;
-    return entry.percent;
+    return entry.quota;
   }
 
-  set(slug: string, percent: number | null): void {
-    this.entries.set(slug, { percent, cachedAt: this.now() });
+  /**
+   * T203 (CA-5, decisão 24/07) — `unavailable` NUNCA é cacheado: só `ok`
+   * respeita o TTL de 60s. Motivo: um perfil sem login que acaba de fazer
+   * `/login` precisa refletir na PRÓXIMA leitura, sem esperar o TTL expirar
+   * (o custo de reler `unavailable` é baixo — o processo falha rápido/dá
+   * timeout; o custo de reler `ok` é caro, ~1.6-8s, por isso esse sim é
+   * cacheado). Ignorar o `set` aqui é suficiente pro `get` nunca devolver
+   * uma entrada `unavailable` — não precisa de checagem extra no `get`.
+   */
+  set(slug: string, quota: ProfileQuota): void {
+    if (quota.status === 'unavailable') return;
+    this.entries.set(slug, { quota, cachedAt: this.now() });
   }
 }
 
@@ -278,25 +312,32 @@ export interface ProfileHeadroomTarget {
   readonly configDir: string | undefined;
 }
 
+export interface ReadAllProfilesHeadroomOptions {
+  /** T205 (botão "Atualizar") — ignora o `cache.get` (mas ainda faz `cache.set` do resultado, se `ok`); pré-requisito da Fase B, não usado ainda nesta fase. */
+  readonly force?: boolean;
+}
+
 /**
  * FR-012 — leituras em PARALELO (`Promise.all`, nunca sequencial: um perfil
  * lento não atrasa os outros); cada leitura individual já carrega seu
- * próprio timeout de 3s (`readQuotaAxiHeadroom`/`reader`). Cache de 60s
- * evita reabrir processo `npx` toda vez que o dropdown é aberto.
+ * próprio timeout de 8s (`readQuotaAxiQuota`/`reader`). Cache de 60s evita
+ * reabrir processo toda vez que o dropdown é aberto — mas só pra `ok`
+ * (`unavailable` sempre relido, ver `HeadroomCache.set`).
  */
 export async function readAllProfilesHeadroom(
   profiles: readonly ProfileHeadroomTarget[],
   cache: HeadroomCache,
-  reader: (options: RunQuotaAxiOptions) => Promise<number | null> = readQuotaAxiHeadroom,
-): Promise<Record<string, number | null>> {
+  reader: (options: RunQuotaAxiOptions) => Promise<ProfileQuota> = readQuotaAxiQuota,
+  options?: ReadAllProfilesHeadroomOptions,
+): Promise<ProfileHeadroomMap> {
   const entries = await Promise.all(
-    profiles.map(async (profile): Promise<readonly [string, number | null]> => {
-      const cached = cache.get(profile.slug);
+    profiles.map(async (profile): Promise<readonly [string, ProfileQuota]> => {
+      const cached = options?.force ? undefined : cache.get(profile.slug);
       if (cached !== undefined) return [profile.slug, cached];
 
-      const percent = await reader({ configDir: profile.configDir });
-      cache.set(profile.slug, percent);
-      return [profile.slug, percent];
+      const quota = await reader({ configDir: profile.configDir });
+      cache.set(profile.slug, quota);
+      return [profile.slug, quota];
     }),
   );
   return Object.fromEntries(entries);

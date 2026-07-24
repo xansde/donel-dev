@@ -16,7 +16,15 @@ export { SESSION_CHANNELS } from './sessions';
 export type { DonelSessionsApi, SessionSummaryDto } from './sessions';
 
 export { PROFILE_CHANNELS, parseAccountNumber } from './profiles';
-export type { DonelProfilesApi, JunctionIssueDto, ProfileDoctorReportDto, ProfileHeadroomMap, ProfileSummaryDto } from './profiles';
+export type {
+  DonelProfilesApi,
+  JunctionIssueDto,
+  ProfileDoctorReportDto,
+  ProfileHeadroomMap,
+  ProfileQuota,
+  ProfileSummaryDto,
+  QuotaWindow,
+} from './profiles';
 
 export { CONFIG_CHANNELS } from './config';
 export type { AppConfigDto, DonelConfigApi, LauncherDefaultsDto, NotificationPreference } from './config';
