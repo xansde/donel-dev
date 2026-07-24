@@ -224,26 +224,68 @@ Trabalho, que não carrega env nenhuma, e o canal de teste cairia no `userData`
 do app de trabalho. Implementação prevista: segundo `electron-builder.beta.yml`
 + script `dist:beta`.
 
-### B11. Smokes quebrados por drift do CLI `claude` (novo — medido 24/07)
+### B11. Vermelhos permanentes da suíte de smokes — DIAGNÓSTICO CORRIGIDO em 24/07
 
-Três smokes falham por mudança de TELA do CLI `claude` instalado
-(v2.1.219), não por código do app: `profiles.spec.ts:83` (T014),
-`model-injection.spec.ts:48` (T011) e `terminal.spec.ts:281` (T009). Eles
-esperam a string `"Let's get started"` do wizard de 1º uso e recebem o banner
-novo (`"Welcome to Claude Code v2.1.219"`) sem esse texto.
+> ⚠️ **A versão anterior desta entrada estava ERRADA e foi substituída.** Ela
+> afirmava que 3 smokes falhavam por "drift de tela do CLI v2.1.219": esperariam
+> `"Let's get started"` e receberiam só o banner novo. **REFUTADO por medição
+> direta** (sonda `node-pty` com `CLAUDE_CONFIG_DIR` fresco, 24/07): o CLI
+> v2.1.219 **imprime** exatamente essa string, com apóstrofo ASCII (U+0027),
+> visível ~9,7 s após o spawn. O diagnóstico antigo tinha sido **inferido dos
+> números de linha** citados no T209 — que apontam a linha do `test(...)`, não a
+> asserção que falhou. Ninguém havia lido a mensagem de erro real.
 
-**Já medido, não é suposição:** a suíte foi rodada no commit pré-entrega da 002
-(`7d1bbf9`) e os três JÁ falhavam lá — ver `specs/002-quota-headroom/tasks.md`
-(T209). Somam-se aos 2 de `previous-sessions.spec.ts` (dívida T013, feature de
-restauração de sessões) e ao flake de contenção de `tabs-lifecycle.spec.ts:174`
-(passa isolado em 9,4s; falha só na suíte completa, com várias instâncias de
-Electron competindo).
+**Causa 1 — teardown estourando o timeout de hook (RESOLVIDA, commit `e2259d5`).**
+A falha era `"afterAll" hook timeout of 30000ms exceeded`, com o CORPO do teste
+passando. Medido: `electronApp.close()` leva **70,5 s** no T014 (3 PTYs vivos,
+incluindo uma sessão claude no wizard de 1º uso) contra os 30 s default de hook.
+Não é vazamento — nenhum `claude.exe`/`electron.exe` órfão depois (`tasklist`),
+e o close é rápido em cenários mais leves (medido: 1,2 s sem sessão · 1,2 s com
+aba shell · 3,4 s com uma sessão claude). Fix: folga de 90 s **só nesse hook**
+(`test.setTimeout` dentro do `afterAll`, API do Playwright) + `try/finally` nas
+limpezas, em `profiles.spec.ts`, `model-injection.spec.ts` e
+`previous-sessions.spec.ts` — mesmo padrão que `tabs-lifecycle.spec.ts` já tinha
+desde a rodada 6 e que esses três não haviam recebido.
 
-**Por que resolver:** com 6 vermelhos permanentes, a suíte deixa de ser um sinal
-— o próximo gate vai ter de reclassificar tudo à mão outra vez, e o risco real é
-alguém ler um vermelho NOVO como "já era vermelho". Proposta: ancorar as
-asserções em algo estável do wizard (ou num marcador determinístico próprio) em
-vez de na cópia da tela do CLI, que muda a cada release.
+> **Ganho colateral, mais importante que o B11:** `previous-sessions.spec.ts`
+> escreve dois `.jsonl` sintéticos sob o `homedir()` **real** e limpava só
+> DEPOIS do `close()`. Com o close estourando — exatamente o cenário acima —
+> esses arquivos ficavam permanentes em `~/.claude/projects/` do usuário. Agora
+> a limpeza está em `finally`.
+
+**Causa 2 — asserção que depende de subir uma sessão claude REAL (ABERTA).**
+Com o teardown corrigido, o T014 passa a falhar no corpo, e o motivo real
+aparece: `expect(...).toContain("Let's get started")` recebe `" "` — o painel
+está **VAZIO**, não com texto diferente. Provado no snapshot DOM da falha: a aba
+nasce, o app mostra o próprio hint "Sessão pronta — digite no terminal", e o
+xterm não tem saída nenhuma do CLI. Ou seja: **o texto não mudou, a sessão não
+pinta em tempo**. Isso é instabilidade estrutural do teste — depende de CLI real,
+rede, cota e da máquina sob contenção (a suíte roda várias instâncias de Electron
+e sessões claude concorrentes). **Não tentar "consertar" com timeout maior sem
+antes decidir o desenho:** a prova de isolamento do perfil (FR-005/FR-012) não
+precisa necessariamente do texto do wizard — um marcador determinístico do
+próprio app seria estável. Fica como decisão de desenho, não como bug.
+
+> **Nota de método (aprendida à força em 24/07):** ao investigar isto, uma
+> hipótese intermediária — "as 6 junctions do perfil quebram o startup do CLI" —
+> foi anunciada como achado e estava **errada**. O grupo de controle (perfil
+> pelado) parou de reproduzir no meio do bisect: o ambiente mudava sob a medição
+> (dezenas de `claude.exe` spawnados pela própria investigação + carga da
+> máquina). Lição: sem controle estável, medição de startup do CLI nesta máquina
+> não é confiável — e é a mesma razão de fundo da Causa 2.
+
+**Reclassificação honesta dos vermelhos (era "6 misteriosos", agora nomeados):**
+
+| Onde | Causa | Estado |
+|---|---|---|
+| `profiles.spec.ts` T014 | teardown 30 s → Causa 1 | **corrigida** |
+| `model-injection.spec.ts` T011 | teardown 30 s → Causa 1 | **corrigida** |
+| `previous-sessions.spec.ts` ×2 | dívida T013 (restauração de sessões) — asserções reais de feature | aberta, fora do B11 |
+| `profiles.spec.ts` T014 (corpo) | Causa 2 — depende de sessão claude real | **aberta, decisão de desenho** |
+| `tabs-lifecycle.spec.ts:174` | flake de contenção (passa isolado em 9,4 s) | mitigada na rodada 6 |
+
+**O risco original do B11 está morto:** não há mais "vermelho misterioso" que
+possa esconder uma regressão nova — cada um tem causa nomeada e verificada.
 
 **Relacionado:** B9 (log de resultado de testes) — um registro carimbado com
 commit tornaria essa reclassificação consultável em vez de re-executável.
