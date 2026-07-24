@@ -1,11 +1,15 @@
-import { promises as fs } from 'node:fs';
+import { mkdtempSync, promises as fs, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   MAX_PREVIEW_LENGTH,
+  TAIL_READ_BYTES,
+  clearSessionTailCache,
   indexProjectSessions,
   readLastActivity,
   readSessionPreview,
+  readSessionTailInfo,
   resolveProjectSessionsDir,
   slugifyProjectPath,
 } from '../src/main/session-indexer';
@@ -177,6 +181,170 @@ describe('readLastActivity — tail opcional (plan.md ponto 4)', () => {
   });
 });
 
+// T403 (004-nomear-sessoes) — o indexer passa a devolver o `custom-title` que
+// o `/rename` do CLI grava no transcript (CA-1). A leitura de cauda é a MESMA
+// do `lastActivityAt` (uma passada só). O gotcha que a task manda resolver, e
+// não contornar: um `/rename` feito no COMEÇO de uma sessão longa fica FORA da
+// cauda de 8 KB — que é exatamente o caso de uso do Alexandre (reachar sessão
+// de semanas atrás). Daí o fallback de varredura completa.
+describe('readSessionTailInfo — custom-title + última atividade numa leitura só (T403)', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'donel-dev-indexer-title-'));
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function writeTranscript(name: string, lines: string[]): Promise<{ path: string; size: number }> {
+    const path = join(dir, name);
+    await fs.writeFile(path, `${lines.join('\n')}\n`, 'utf8');
+    return { path, size: await sizeOf(path) };
+  }
+
+  const titleLine = (title: string): string =>
+    JSON.stringify({ type: 'custom-title', customTitle: title, sessionId: 'abc-123' });
+
+  const userLine = (text: string, timestamp: string): string =>
+    JSON.stringify({ type: 'user', timestamp, message: { role: 'user', content: text } });
+
+  it('devolve o custom-title quando ele está na cauda', async () => {
+    const { path, size } = await writeTranscript('tail-title.jsonl', [
+      userLine('trabalho', '2026-01-02T09:00:00.000Z'),
+      titleLine('Nomear sessões'),
+    ]);
+
+    const info = await readSessionTailInfo(path, size);
+
+    expect(info.customTitle).toBe('Nomear sessões');
+  });
+
+  it('com vários custom-title, o ÚLTIMO vence', async () => {
+    const { path, size } = await writeTranscript('multi-title.jsonl', [
+      titleLine('primeiro'),
+      userLine('trabalho', '2026-01-02T09:00:00.000Z'),
+      titleLine('segundo'),
+      userLine('mais', '2026-01-02T09:01:00.000Z'),
+      titleLine('terceiro'),
+    ]);
+
+    const info = await readSessionTailInfo(path, size);
+
+    expect(info.customTitle).toBe('terceiro');
+  });
+
+  it('acha o custom-title que está SÓ no começo de um arquivo maior que a cauda de 8 KB (o gotcha do caso de uso)', async () => {
+    const filler = Array.from({ length: 700 }, (_, i) =>
+      userLine(`linha de enchimento razoavelmente longa numero ${i} para estourar a cauda`, '2026-01-02T09:00:00.000Z'),
+    );
+    const { path, size } = await writeTranscript('long-head-title.jsonl', [titleLine('Renomeado no começo'), ...filler]);
+
+    expect(size).toBeGreaterThan(TAIL_READ_BYTES);
+    const info = await readSessionTailInfo(path, size);
+
+    expect(info.customTitle).toBe('Renomeado no começo');
+  });
+
+  it('num arquivo longo, um custom-title na cauda ganha do que está no começo', async () => {
+    const filler = Array.from({ length: 700 }, (_, i) =>
+      userLine(`linha de enchimento razoavelmente longa numero ${i} para estourar a cauda`, '2026-01-02T09:00:00.000Z'),
+    );
+    const { path, size } = await writeTranscript('long-both-titles.jsonl', [
+      titleLine('antigo do começo'),
+      ...filler,
+      titleLine('renomeado depois'),
+    ]);
+
+    expect(size).toBeGreaterThan(TAIL_READ_BYTES);
+    const info = await readSessionTailInfo(path, size);
+
+    expect(info.customTitle).toBe('renomeado depois');
+  });
+
+  it('devolve null quando não há custom-title nenhum (CA-2: fallback intacto)', async () => {
+    const { path, size } = await writeTranscript('no-title.jsonl', [
+      userLine('só trabalho', '2026-01-02T09:00:00.000Z'),
+      JSON.stringify({ type: 'assistant', timestamp: '2026-01-02T09:00:10.000Z' }),
+    ]);
+
+    const info = await readSessionTailInfo(path, size);
+
+    expect(info.customTitle).toBeNull();
+  });
+
+  it('devolve o lastActivityAt na MESMA chamada (uma leitura, dois campos)', async () => {
+    const { path, size } = await writeTranscript('both-fields.jsonl', [
+      titleLine('Com os dois'),
+      userLine('trabalho', '2026-01-02T09:05:42.000Z'),
+    ]);
+
+    const info = await readSessionTailInfo(path, size);
+
+    expect(info).toEqual({ customTitle: 'Com os dois', lastActivityAt: Date.parse('2026-01-02T09:05:42.000Z') });
+  });
+
+  it('arquivo de 0 byte e arquivo inexistente não lançam', async () => {
+    const { path } = await writeTranscript('zero.jsonl', []);
+    await fs.writeFile(path, '', 'utf8');
+
+    expect(await readSessionTailInfo(path, 0)).toEqual({ customTitle: null, lastActivityAt: null });
+    expect(await readSessionTailInfo(join(dir, 'nao-existe.jsonl'), 500)).toEqual({
+      customTitle: null,
+      lastActivityAt: null,
+    });
+  });
+
+  it('transcript corrompido não lança e não inventa título', async () => {
+    const { path, size } = await writeTranscript('garbage.jsonl', ['isto não é json', '{quebrado', '}{']);
+
+    expect(await readSessionTailInfo(path, size)).toEqual({ customTitle: null, lastActivityAt: null });
+  });
+
+  // Cache exigido pela medição (754 ms no projeto mais pesado, acima do teto
+  // de ~300 ms da task) — ver specs/004-nomear-sessoes/medicao-t403.md.
+  describe('cache por mtime+size', () => {
+    it('reusa o resultado quando mtime e size não mudaram — mesmo se o conteúdo mudou por baixo', async () => {
+      clearSessionTailCache();
+      const { path, size } = await writeTranscript('cache-hit.jsonl', [titleLine('v1-titulo-teste')]);
+      const { mtimeMs } = await fs.stat(path);
+
+      expect((await readSessionTailInfo(path, size, mtimeMs)).customTitle).toBe('v1-titulo-teste');
+
+      // Reescreve com o MESMO tamanho e força o mesmo mtime: o cache deve
+      // responder o valor antigo (é a prova de que não releu o disco).
+      await fs.writeFile(path, `${titleLine('v2-titulo-teste')}\n`, 'utf8');
+      await fs.utimes(path, new Date(mtimeMs), new Date(mtimeMs));
+      const sameSize = await sizeOf(path);
+      expect(sameSize).toBe(size);
+
+      expect((await readSessionTailInfo(path, size, mtimeMs)).customTitle).toBe('v1-titulo-teste');
+    });
+
+    it('invalida quando o size muda (append é o caso real)', async () => {
+      clearSessionTailCache();
+      const { path, size } = await writeTranscript('cache-append.jsonl', [titleLine('antes')]);
+      const first = await fs.stat(path);
+      expect((await readSessionTailInfo(path, size, first.mtimeMs)).customTitle).toBe('antes');
+
+      await fs.appendFile(path, `${titleLine('depois')}\n`, 'utf8');
+      const second = await fs.stat(path);
+
+      expect((await readSessionTailInfo(path, second.size, second.mtimeMs)).customTitle).toBe('depois');
+    });
+
+    it('sem mtime (chamada de 2 argumentos) nunca usa cache', async () => {
+      clearSessionTailCache();
+      const { path, size } = await writeTranscript('cache-bypass.jsonl', [titleLine('v1')]);
+      expect((await readSessionTailInfo(path, size)).customTitle).toBe('v1');
+
+      await fs.writeFile(path, `${titleLine('v2')}\n`, 'utf8');
+      expect((await readSessionTailInfo(path, await sizeOf(path))).customTitle).toBe('v2');
+    });
+  });
+});
+
 describe('indexProjectSessions — integração (FR-004, CA-2)', () => {
   const claudeHome = fixturePath('claude-home');
   const projectPath = 'C:\\Users\\test\\.acme-app';
@@ -224,6 +392,20 @@ describe('indexProjectSessions — integração (FR-004, CA-2)', () => {
 
     const corrupted = sessions.find((s) => s.id === 'cccccccc-3333-3333-3333-333333333333');
     expect(corrupted?.preview).toBe('(ilegível)');
+    expect(corrupted?.corrupted).toBe(true);
+  });
+
+  // T403 — CA-1 ponta a ponta: o campo chega no SessionSummary que o main
+  // devolve ao renderer, ao lado do `preview` (que continua sendo o fallback).
+  it('propaga customTitle no summary, e null para quem não tem (CA-1 + CA-2)', async () => {
+    const sessions = await indexProjectSessions(projectPath, { claudeHome });
+
+    const withTitle = sessions.find((s) => s.id === 'bbbbbbbb-2222-2222-2222-222222222222');
+    expect(withTitle?.customTitle).toBe('Second placeholder session');
+    expect(withTitle?.preview).toBe('Placeholder request for the newest session in this project fixture.');
+
+    const corrupted = sessions.find((s) => s.id === 'cccccccc-3333-3333-3333-333333333333');
+    expect(corrupted?.customTitle).toBeNull();
     expect(corrupted?.corrupted).toBe(true);
   });
 

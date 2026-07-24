@@ -21,6 +21,7 @@ function makeSession(overrides: Partial<SessionSummaryDto> = {}): SessionSummary
     preview: 'Placeholder preview text',
     corrupted: false,
     lastActivityAt: null,
+    customTitle: null,
     ...overrides,
   };
 }

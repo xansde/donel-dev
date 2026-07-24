@@ -233,7 +233,10 @@ function registerPtyIpcHandlers(): void {
       // por VALOR — trocar de perfil depois não reescreve isto). Só pra
       // 'claude' (branch abaixo, shell, nunca aplica `CLAUDE_CONFIG_DIR` —
       // não tem "perfil" que fizesse sentido devolver aqui).
-      return { ptyId, profile: { slug: activeProfileSlug, name: activeProfileName } };
+      // T404 (004) — `correlationId` é o id da sessão do Claude (imposto no
+      // spawn acima, ou herdado do `-r` numa retomada); devolvê-lo aqui é o
+      // que dá ao renderer a chave para nomear/persistir esta sessão.
+      return { ptyId, claudeSessionId: correlationId, profile: { slug: activeProfileSlug, name: activeProfileName } };
     }
 
     const ptyId = ptyManager.create(options);

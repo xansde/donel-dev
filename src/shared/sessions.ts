@@ -30,6 +30,8 @@ export interface SessionSummaryDto {
   readonly preview: string;
   readonly corrupted: boolean;
   readonly lastActivityAt: number | null;
+  /** T403 (004-nomear-sessoes) — último `custom-title` do transcript (nome dado por `/rename` no CLI); null se nunca renomeada. Entra na resolução do nome exibido (`resolveSessionName`, ./sessionName.ts); o `preview` acima continua sendo o fallback. */
+  readonly customTitle: string | null;
 }
 
 /** API tipada exposta pelo preload em `window.donel.sessions`. */

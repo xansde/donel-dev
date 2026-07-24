@@ -94,6 +94,18 @@ export interface PtyCreateResult {
    * legítimo de um `pty:create` de shell — não é "ainda não resolvido".
    */
   profile?: { slug: string; name: string };
+  /**
+   * T404 (004-nomear-sessoes) — id da sessão do Claude para ESTA aba, o mesmo
+   * que nomeia o `.jsonl` do transcript. O app não descobre esse id: ele o
+   * IMPÕE no spawn (`--session-id <uuid>`, `session-correlation.ts:24-34`),
+   * reusando o id do `-r` quando é retomada. Até aqui ele nunca chegava ao
+   * renderer por caminho nenhum (o `SemaphoreUpdate` só leva
+   * `ptyId`/`state`/`stateEnteredAt`); devolvê-lo no create é o caminho mais
+   * barato — sem canal novo, sem estado novo — e é o que permite ao renderer
+   * persistir o nome da sessão (CA-6). Só para `sessionType: 'claude'`:
+   * terminal livre não tem sessão de Claude, e por isso não persiste nome (C4).
+   */
+  claudeSessionId?: string;
 }
 
 export interface PtyExitInfo {

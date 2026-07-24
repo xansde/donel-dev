@@ -290,6 +290,26 @@ possa esconder uma regressão nova — cada um tem causa nomeada e verificada.
 **Relacionado:** B9 (log de resultado de testes) — um registro carimbado com
 commit tornaria essa reclassificação consultável em vez de re-executável.
 
+### B12. Dívidas conscientes da 004 (nomear sessões) — anotadas durante o Batch A, 24/07
+
+Nenhuma delas é bug; as três foram decididas fora de escopo pela própria
+`004-nomear-sessoes/tasks.md` e ficam registradas aqui para não sumirem.
+
+- **GC de entradas órfãs em `sessionNames`.** Uma sessão renomeada pela UI e
+  depois apagada do disco deixa ~100 bytes mortos no `config.json`. Nada lê
+  essa entrada (a resolução parte da lista de sessões existentes), então o
+  efeito é só tamanho de arquivo. Limpeza exigiria cruzar o mapa com o disco
+  no boot — escopo próprio.
+- **Cache de `custom-title` só em memória.** O cache por `mtime+size` do T403
+  (ver `specs/004-nomear-sessoes/medicao-t403.md`) morre a cada restart do app,
+  então a primeira listagem de um projeto pesado paga a varredura de novo
+  (pior caso medido: 684 ms no `spotometro`, 9 transcripts / 72 MB, quase
+  nenhum com título — provar ausência exige ler o arquivo inteiro). Um cache
+  persistido em disco resolveria; é escopo não pedido.
+- **Aba `shell` não persiste nome** (decisão C4 do clarify, não dívida técnica):
+  o app não restaura abas shell no restart, então não havia o que persistir.
+  Se a restauração de sessões (seção abaixo) chegar, revisitar.
+
 ## Decidido, aguardando spec
 
 - **Restauração de sessões no restart** (rodada 5 do feedback-e2e).

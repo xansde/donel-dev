@@ -52,26 +52,37 @@ export function extractCustomTitle(tailText: string): string | null {
 
   const lines = tailText.split('\n');
   for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const raw = lines[index].trim();
-    if (!raw || raw[0] !== '{') continue;
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      continue; // linha cortada pela leitura de cauda, ou linha corrompida
-    }
-
-    if (typeof parsed !== 'object' || parsed === null) continue;
-    const record = parsed as { type?: unknown; customTitle?: unknown };
-    if (record.type !== CUSTOM_TITLE_TYPE) continue;
-    if (typeof record.customTitle !== 'string') continue;
-
-    const title = record.customTitle.trim();
-    if (title) return title;
+    const title = extractCustomTitleFromLine(lines[index]);
+    if (title !== null) return title;
   }
 
   return null;
+}
+
+/**
+ * Uma linha JSONL → título, ou `null` se a linha não é um `custom-title`
+ * válido. Existe separada para a varredura por streaming do indexer (T403),
+ * que percorre o arquivo linha a linha e não pode ter uma segunda cópia da
+ * regra de parsing.
+ */
+export function extractCustomTitleFromLine(line: string): string | null {
+  const raw = line.trim();
+  if (!raw || raw[0] !== '{') return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null; // linha cortada pela leitura de cauda, ou linha corrompida
+  }
+
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const record = parsed as { type?: unknown; customTitle?: unknown };
+  if (record.type !== CUSTOM_TITLE_TYPE) return null;
+  if (typeof record.customTitle !== 'string') return null;
+
+  const title = record.customTitle.trim();
+  return title || null;
 }
 
 /**
