@@ -111,6 +111,16 @@ começo de um arquivo > 8 KB (cobre o gotcha), e sem nenhum (`null`).
 
 ## Fatia 3 — Reflexo ao vivo: `fs.watch` da sessão viva (C3)
 
+> ⚠️ **PEÇA COMPARTILHADA com a 006 (contexto consumido).** A 006 lê a MESMA
+> cauda do MESMO `.jsonl` para extrair a última `usage`. Decisão registrada em
+> `specs/006-contexto-consumido/plan.md`: **um watcher só**, este, generalizado
+> para `transcript-watcher.ts`, emitindo
+> `{ sessionId, customTitle, contextTokens }` numa leitura única.
+> **Uma mudança obrigatória no que está descrito abaixo:** a regra de emissão
+> não pode ser "só quando o `custom-title` mudar" — o `contextTokens` muda a
+> cada turn sem rename nenhum. Emitir quando **qualquer** dos dois campos
+> mudar. Se a 004 for implementada primeiro, já nascer com os dois campos.
+
 **Arquivos:** `src/main/session-name-watcher.ts` (novo),
 `src/main/session-correlation.ts`, `src/main/index.ts`
 

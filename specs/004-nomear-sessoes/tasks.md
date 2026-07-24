@@ -163,6 +163,17 @@ smoke roteirizado, isolado do `%APPDATA%` real.
 > handle, ciclo de vida) e a única que **não bloqueia** o resto. Se travar, os
 > Batches A+B já entregam US-A, US-B e US-D.
 
+> **⚠️ Acoplamento com a `006-contexto-consumido`** (planejada em paralelo no
+> mesmo dia): as duas features observam **o mesmo `.jsonl`**, e a decisão de lá
+> é que o watcher seja **um só** — este, generalizado para emitir
+> `{ sessionId, customTitle, contextTokens }`. **Isso muda um DoD do T412:** o
+> "emite só quando o `custom-title` mudou" passa a ser "emite quando **qualquer
+> campo** mudou" (o contador de tokens muda a cada turn, sem rename nenhum).
+> Quem implementar o Batch C: leia `specs/006-contexto-consumido/plan.md`
+> primeiro e já construa o watcher com o payload de objeto (não com uma string
+> de título), senão a 006 vai reescrever este código na semana seguinte.
+> Entregar a 004 antes **encolhe** a Fase B da 006 para 2 tasks.
+
 - **T411 — `SessionNameWatcher` (TDD com `fs.watch` real em tmpdir)** — `src/main/session-name-watcher.ts` (novo)
   Abre `fs.watch` no `.jsonl` da sessão, **debounce ~300 ms**, relê a cauda,
   roda `extractCustomTitle` (T401) e emite **só quando o valor mudou**.
