@@ -43,8 +43,19 @@ test.afterAll(async () => {
   // aqui (chamável dentro do hook, Playwright API) dá folga só a ESTE
   // `afterAll`, sem mascarar nenhuma asserção nem virar retry global.
   test.setTimeout(90_000);
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  // FIX (auditoria rodada 6, achado baixa "resíduo em %TEMP% quando o close
+  // estoura") — ANTES a limpeza do diretório temp só rodava DEPOIS de
+  // `electronApp.close()` resolver; se o close estourasse os 90s de folga
+  // acima (sob carga real da máquina — o próprio motivo da folga existir),
+  // o diretório ficava órfão pra sempre (2 resíduos
+  // `donel-dev-smoke-tabs-lifecycle-*` encontrados na auditoria rodada 6,
+  // já limpos manualmente). `finally` garante a limpeza mesmo se o close
+  // falhar/estourar.
+  try {
+    await electronApp.close();
+  } finally {
+    removeIsolatedUserDataDir(userDataDir);
+  }
 });
 
 /** PIDs vivos de `imageName` agora, via `tasklist` real (não a UI). CSV sem cabeçalho (`/NH`) — 2ª coluna = PID. */

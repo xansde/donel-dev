@@ -15,11 +15,18 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 //   2. abrir uma sessão -> empty state some;
 //   3. fechar a única aba aberta -> empty state volta.
 //
-// Usa terminal LIVRE (shell, `powershell.exe`) em vez de sessão claude de
-// propósito — custo zero de cota/API (regra do projeto: sessões claude de
-// teste só quando o cenário exige, ver CLAUDE.md "cota escassa"). O empty
-// state reage a `tabs.length`, não a `sessionType` — uma aba shell prova o
-// mecanismo tão bem quanto uma aba claude.
+// Teste 1 usa terminal LIVRE (shell, `powershell.exe`) de propósito — custo
+// zero de cota/API (regra do projeto: sessões claude de teste só quando o
+// cenário exige, ver CLAUDE.md "cota escassa"). O empty state reage a
+// `tabs.length`, não a `sessionType` — uma aba shell prova o mecanismo tão
+// bem quanto uma aba claude.
+//
+// Teste 2 PRECISA de uma sessão claude real (auditoria rodada 6, achado
+// media "CTA do empty state reproduz o bug em 1 clique") — só assim dá pra
+// provar que o caminho SAUDÁVEL (projeto já confiável, via Launcher) não
+// fica preso no diálogo de confiança do jeito que `os.homedir()` ficava;
+// modelo `haiku` (barato) e nenhum prompt enviado (boot não dispara turno de
+// API) minimizam o custo.
 
 const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
 const APP_CWD = path.join(__dirname, '../..');
@@ -93,25 +100,56 @@ test('app abre com zero abas e empty state; abrir sessão faz o empty state sumi
   await expect(window.locator('[data-testid="terminal-pane"]')).toHaveCount(0);
 });
 
-test('CTA "＋ Nova sessão" dentro do empty state também abre uma sessão claude (mesmo caminho do corpo do SplitButton)', async () => {
+test('CTA "Nova sessão" do empty state abre o Launcher (sem projeto/lastLaunch, em vez de reproduzir o bug em 1 clique); escolher um projeto lança uma sessão claude saudável (auditoria rodada 6, achado media)', async () => {
   test.setTimeout(60_000);
 
-  // Estado limpo herdado do teste anterior (mesma janela/app, mesmo
-  // arquivo): zero abas de novo, empty state visível.
+  // Estado herdado do teste anterior (mesma janela/app, mesmo arquivo):
+  // zero abas de novo, empty state visível. A aba shell do teste 1 usou o
+  // menu do SplitButton (`handleNewFreeTerminal`), que nunca grava
+  // `selectedProjectPath`; `lastLaunch` também nunca foi tocado (só
+  // `handleLaunch`, via Launcher, grava) — este teste ainda reproduz
+  // exatamente o estado "boot limpo, nenhum projeto escolhido ainda" que
+  // o achado mirava.
   const emptyState = window.locator('[data-testid="empty-state"]');
   await expect(emptyState).toBeVisible();
 
-  // O botão DENTRO do empty state (App.tsx, `handleQuickNewClaudeSession`)
-  // é o mesmo handler do corpo do "＋ Nova sessão" do titlebar — rótulo
-  // "Nova sessão" (sem "＋") de propósito, pra não colidir com o nome
-  // acessível do botão do titlebar enquanto os dois estão visíveis (ver
-  // comentário em App.tsx). Única sessão claude real deste arquivo,
-  // propositalmente a última asserção (não precisa de prompt algum, só
-  // provar que o clique liga o cabo certo).
+  // FIX (auditoria rodada 6, achado media "CTA do próprio empty state
+  // reproduz o bug reportado em 1 clique") — ANTES: este clique reaproveitava
+  // `handleQuickNewClaudeSession` direto e, sem `lastLaunch`/
+  // `selectedProjectPath`, spawnava a sessão em `cwd: undefined` ->
+  // `os.homedir()` -> "Quick safety check" preso, semáforo `undefined` pra
+  // sempre — e o teste PASSAVA mesmo assim, porque a única asserção era
+  // "terminal-pane não vazio, sem CLAUDE_NOT_FOUND" (não provava nada sobre o
+  // estado ÚTIL da sessão). App.tsx agora abre o Launcher em vez de
+  // reproduzir esse cenário (`handleEmptyStateNewSession`) — o botão do
+  // titlebar (corpo do "＋ Nova sessão") continua com o atalho antigo de
+  // propósito, coberto por terminal.spec.ts/profiles.spec.ts/shell.spec.ts.
   await emptyState.getByRole('button', { name: 'Nova sessão' }).click();
 
+  const launcher = window.locator('[data-testid="launcher"]');
+  await expect(launcher).toBeVisible();
+  // Nenhuma sessão nasceu só de abrir o painel — prova que o caminho antigo
+  // (spawn direto em home) não roda mais a partir deste botão.
+  await expect(window.locator('[data-testid="terminal-pane"]')).toHaveCount(0);
+  await expect(emptyState).toBeVisible();
+
+  // Escolhe um projeto real e JÁ confiável nesta máquina (o próprio repo sob
+  // teste, usado em centenas de execuções reais do CLI — nunca dispara o
+  // "Quick safety check") — prova o caminho SAUDÁVEL completo até uma sessão
+  // claude de verdade, não só que o Launcher abriu. `haiku` (barato) mesmo
+  // sem nenhum turno de fato disparar (boot não custa API) — convenção do
+  // resto da suíte (model-injection.spec.ts).
+  await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
+  await window.getByRole('option', { name: 'donel-dev', exact: true }).click();
+  await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
+  await launcher.getByLabel('Nome').fill('empty-state-cta-test');
+  await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
+
+  const newTab = window.locator('[role="tab"]', { hasText: 'empty-state-cta-test' });
+  await expect(newTab).toBeVisible();
   await expect(emptyState).toHaveCount(0);
-  const terminalPane = window.locator('[data-testid="terminal-pane"]');
+
+  const terminalPane = window.locator('[data-testid="terminal-pane"]:visible');
   await expect(terminalPane).toBeVisible();
   await expect(async () => {
     const text = await terminalPane.innerText();
@@ -119,4 +157,21 @@ test('CTA "＋ Nova sessão" dentro do empty state também abre uma sessão clau
     expect(text).not.toContain('CLAUDE_NOT_FOUND');
     expect(text).not.toContain('Falha ao iniciar');
   }).toPass({ timeout: 20_000 });
+
+  // FIX (auditoria rodada 6, achado media "teste passa com a sessão presa no
+  // diálogo") — asserção sobre o estado final ÚTIL da sessão (não só "tem
+  // texto"): o hint da toolbar (SessionDetails.tsx, App.tsx
+  // `possiblyBlockedOnPrompt`) prova que a sessão NÃO ficou presa — se
+  // tivesse ficado (o cenário do bug original), o hint mudaria pro texto de
+  // diagnóstico ("O CLI pode estar aguardando resposta...") depois de ~20s.
+  // `donel-dev` já é confiável nesta máquina, então o hint esperado é o de
+  // sessão pronta (toolbar Modelo/Esforço segue desabilitada por design até
+  // o primeiro turno, FR-011 — não mandamos nenhum prompt aqui, custo de
+  // cota; ver `tests/possiblyBlockedOnPrompt.test.ts` pra cobertura de
+  // unidade dos dois sentidos dessa decisão).
+  const hint = window.locator('[data-testid="session-details-hint"]');
+  await expect(hint).toHaveText(
+    'Sessão pronta — digite no terminal; modelo/esforço liberam após o primeiro turno.',
+    { timeout: 25_000 },
+  );
 });

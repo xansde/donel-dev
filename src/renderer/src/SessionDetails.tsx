@@ -106,7 +106,15 @@ function statusHint(
       // ociosa normal — nunca era substituído por nada, porque não havia
       // nenhum evento futuro que tirasse a aba desse estado antes do
       // primeiro prompt do usuário.
-      return 'Sessão pronta — digite no terminal para começar.';
+      //
+      // FIX (auditoria rodada 6, achado baixa) — o contrato deste hint
+      // (comentário de `statusHint` acima) é "explica POR QUE o controle
+      // está desabilitado" (`canInjectLiveCommand` exige `state ===
+      // 'waiting'`, que ainda não existe neste branch). O texto anterior
+      // ("Sessão pronta — digite no terminal para começar.") não respondia
+      // à pergunta original do Alexandre ("não consigo selecionar
+      // modelo/esforço") — nomeia explicitamente a causa agora.
+      return 'Sessão pronta — digite no terminal; modelo/esforço liberam após o primeiro turno.';
   }
 }
 

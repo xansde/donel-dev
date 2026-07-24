@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
@@ -57,6 +58,21 @@ async function openLauncherPanel(): Promise<void> {
   await window.getByRole('button', { name: 'Mais opções de ＋ Nova sessão' }).click();
   await window.getByRole('menuitem', { name: 'Sessão Claude' }).click();
   await expect(window.locator('[data-testid="launcher"]')).toBeVisible();
+}
+
+/**
+ * Nº de processos `claude.exe` vivos AGORA, via `tasklist` real (mesmo
+ * padrão de `tabs-lifecycle.spec.ts`) — só diagnóstico (auditoria rodada 6,
+ * achado baixa CA-6), nunca usado pra decidir pass/fail. `-1` se `tasklist`
+ * falhar (não deve travar o teste por causa disso).
+ */
+function countClaudeProcesses(): number {
+  try {
+    const output = execSync('tasklist /FI "IMAGENAME eq claude.exe" /FO CSV /NH', { encoding: 'utf8' });
+    return output.split(/\r?\n/).filter((line) => line.trim().startsWith('"')).length;
+  } catch {
+    return -1;
+  }
 }
 
 test.afterAll(async () => {
@@ -338,5 +354,23 @@ test('semáforo: o StateDot de uma aba em BACKGROUND muda de trabalhando pra agu
   // terminar. Se mesmo com 240s este teste continuar instável, é sinal de
   // que o gargalo real é a carga da máquina no momento da execução, não o
   // código sob teste (ver dossiê da rodada 6 pro histórico de medições).
+  //
+  // FIX (auditoria rodada 6, achado baixa "240s é ~9x o tempo real
+  // observado, mascararia regressão de latência") — decisão: NÃO apertar o
+  // timeout de volta. A margem É larga (medições da rodada 6: 26-34s em
+  // execuções saudáveis), mas encolher pra ex. 90s reintroduziria a MESMA
+  // instabilidade que motivou o endurecimento 45s->240s (1 falha em 3
+  // execuções completas mesmo já em 240s, sob a carga real desta máquina
+  // compartilhada — ver dossiê). E falhar cedo com uma checagem separada de
+  // carga (ex.: "> N processos claude.exe -> aborta com 'ambiente sob
+  // carga'") trocaria uma fonte de flakiness por outra, agora dependente de
+  // um limiar arbitrário de contagem de processo em vez do comportamento
+  // real do CLI — sem ganho líquido de sinal. Em vez disso: log (não assert)
+  // do nº de `claude.exe` concorrentes bem antes da espera final, só pra
+  // diferenciar no relatório "gargalo de carga" (contagem alta) de uma
+  // possível regressão real de latência (contagem baixa e mesmo assim
+  // estourou) — sem mudar pass/fail.
+  // eslint-disable-next-line no-console
+  console.log(`[CA-6] claude.exe concorrentes antes da espera final (só diagnóstico): ${countClaudeProcesses()}`);
   await expect(dot).toHaveAttribute('aria-label', 'Aguardando resposta', { timeout: 240_000 });
 });

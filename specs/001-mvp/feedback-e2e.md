@@ -243,8 +243,35 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
      ociosa antes do primeiro prompt — a condição antiga virava ruído
      constante). O texto do aviso diz o que fazer ("o CLI está aguardando
      confirmação no terminal — clique e responda"); sem diálogo, aba viva e
-     ociosa mostra "Sessão pronta — digite no terminal para começar"
-     (`SessionDetails.tsx`), nunca mais "Conectando…" eterno.
+     ociosa mostra "Sessão pronta — digite no terminal; modelo/esforço
+     liberam após o primeiro turno" (`SessionDetails.tsx`, texto explicita a
+     causa desde a auditoria rodada 6 — antes só dizia "digite no terminal
+     para começar", sem responder à pergunta original "não consigo
+     selecionar modelo/esforço"), nunca mais "Conectando…" eterno.
+
+  **CORREÇÃO (auditoria rodada 6, achado media "CTA do próprio empty state
+  reproduzia o bug em 1 clique"):** este item estava marcado `[x] Resolvido`
+  SEM ressalva, mas o CTA "Nova sessão" **dentro do empty state**
+  (`handleQuickNewClaudeSession`, reaproveitado do corpo do "＋ Nova sessão"
+  do titlebar) continuava alcançável a um clique de reproduzir exatamente o
+  cenário original: sem `lastLaunch` (nunca persistido) e sem
+  `selectedProjectPath` (nenhum projeto escolhido ainda — o caso de um boot
+  limpo), o handler caía em `cwd: undefined` → `pty-manager.ts` `options.cwd
+  ?? os.homedir()` → o mesmo "Quick safety check" preso, semáforo em
+  `undefined`, toolbar Modelo/Esforço desabilitada. A decisão A eliminou o
+  spawn AUTOMÁTICO no boot (isso está correto), mas não o caminho manual de
+  1 clique a partir do PRIMEIRO contato do usuário com o app. **Fix
+  aplicado:** o CTA do empty state ganhou uma variante do handler
+  (`handleEmptyStateNewSession`, App.tsx) que abre o Launcher (escolha de
+  projeto) em vez de spawnar quando não há `lastLaunch` nem
+  `selectedProjectPath` — fecha o caminho residual pra quem entra pelo empty
+  state. O atalho do titlebar (`handleQuickNewClaudeSession` direto, sem a
+  variante) MANTÉM o comportamento antigo de propósito — é um atalho ad hoc
+  já testado/documentado como intencional em `terminal.spec.ts`/
+  `profiles.spec.ts`/`shell.spec.ts` (sessão rápida em home sem navegar a
+  nenhum projeto); redesenhar esse caminho compartilhado exigiria reescrever
+  essas 3 suítes por uma decisão de escopo diferente da que este achado
+  cobre.
 - [x] **Roteiro batch 5, item 4 desatualizado** (relato: "não existe mais
   aquela aba"; print referenciado NÃO chegou — anexo truncado). **Resolvido
   2026-07-23 (rodada 5).** Confirmado: o item 4 (CA-1 via launcher) foi

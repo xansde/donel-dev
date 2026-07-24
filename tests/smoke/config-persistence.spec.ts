@@ -79,11 +79,24 @@ test.beforeAll(async () => {
   electronApp = await electron.launch({ args: [APP_MAIN], cwd: APP_CWD });
   appWindow = await electronApp.firstWindow();
   await appWindow.waitForLoadState('domcontentloaded');
+
+  // FIX (auditoria rodada 6, achado media "snapshot capturado dentro do
+  // corpo do teste") — ANTES esta captura acontecia nas primeiras linhas do
+  // `test(...)` abaixo; se o teste falhasse (ou o worker morresse) ANTES
+  // dessas linhas rodarem, `original` ficava `undefined` e o `afterAll`
+  // (que roda de qualquer forma) tentava restaurar com um valor inexistente.
+  // Movida pra cá — antes de QUALQUER mutação — pra sempre existir quando o
+  // `afterAll` precisar dela, mesmo que o teste nunca chegue a rodar.
+  original = await readConfig(appWindow);
+  const projectsBefore = await appWindow.evaluate(() => window.donel.projects.list());
+  const donelDevBefore = projectsBefore.find((project) => project.name === 'donel-dev');
+  donelDevPath = donelDevBefore?.path ?? '';
+  originalDonelDevFavorite = donelDevBefore?.favorite ?? false;
 });
 
 test.afterAll(async () => {
-  await appWindow
-    .evaluate(
+  try {
+    await appWindow.evaluate(
       async ({ original, originalDonelDevFavorite, donelDevPath }) => {
         await window.donel.config.setProjectRoots(original.projectRoots);
         await window.donel.config.setNotificationPreference(original.notificationPreference);
@@ -91,19 +104,32 @@ test.afterAll(async () => {
         if (donelDevPath) await window.donel.projects.setFavorite(donelDevPath, originalDonelDevFavorite);
       },
       { original, originalDonelDevFavorite, donelDevPath },
-    )
-    .catch(() => undefined);
-  await electronApp.close();
+    );
+  } catch (error) {
+    // FIX (auditoria rodada 6, achado media "`.catch(() => undefined)`
+    // engole qualquer falha de restauração silenciosamente") — este é o
+    // ÚNICO smoke do diretório que grava no config REAL da máquina
+    // (`%APPDATA%\donel-dev\config.json`, ver cabeçalho do arquivo); uma
+    // falha silenciosa aqui já contaminou a máquina real do Alexandre uma
+    // vez (root fantasma `C:\donel-dev-smoke-t015-root` em `projectRoots`,
+    // limpo manualmente na auditoria rodada 6). Loga BEM visível e RE-LANÇA
+    // — falha o `afterAll` de propósito, pra aparecer no relatório da suíte
+    // em vez de sumir sem rastro.
+    // eslint-disable-next-line no-console
+    console.error(
+      '[config-persistence] FALHA AO RESTAURAR o config real da máquina — projectRoots/notificationPreference/' +
+        'launcherDefaults/favorito de donel-dev podem ter ficado com valores de teste. ' +
+        'Verifique %APPDATA%\\donel-dev\\config.json manualmente.',
+      error,
+    );
+    throw error;
+  } finally {
+    await electronApp.close();
+  }
 });
 
 test('preferências (roots, notificação, launcher defaults, favoritos) sobrevivem a fechar e reabrir o app', async () => {
   test.setTimeout(90_000);
-
-  original = await readConfig(appWindow);
-  const projectsBefore = await appWindow.evaluate(() => window.donel.projects.list());
-  const donelDevBefore = projectsBefore.find((project) => project.name === 'donel-dev');
-  donelDevPath = donelDevBefore?.path ?? '';
-  originalDonelDevFavorite = donelDevBefore?.favorite ?? false;
 
   const targetPreference = original.notificationPreference === 'all' ? 'none' : 'all';
 

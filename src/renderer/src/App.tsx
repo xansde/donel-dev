@@ -23,8 +23,8 @@ import {
   hasLiveInjectionConfirmation,
 } from '../../shared/liveSessionInjection';
 import { sortProjects } from '../../shared';
+import { computePossiblyBlockedOnPrompt } from '../../shared/possiblyBlockedOnPrompt';
 import { computeSessionAccountLabel } from '../../shared/sessionAccountLabel';
-import { isTrustDialogVisible } from '../../shared/trustDialog';
 import { sortSessions } from '../../shared/sessionOrdering';
 import { nextAttentionSessionId, sessionIdAtPosition } from '../../shared/sessionShortcuts';
 import { sessionTabName } from '../../shared/sessions';
@@ -545,6 +545,34 @@ export function App(): React.JSX.Element {
     });
   };
 
+  // FIX (auditoria rodada 6, achado media "CTA do empty state reproduz o
+  // bug em 1 clique") — variante de `handleQuickNewClaudeSession` usada SÓ
+  // pelo botão "Nova sessão" DENTRO do empty state (ver JSX mais abaixo).
+  // Sem `lastLaunch` e sem `selectedProjectPath`, o handler original cai em
+  // `cwd: undefined` -> `pty-manager.ts` `options.cwd ?? os.homedir()` -> o
+  // MESMO "Quick safety check" preso que a decisão A (comentário de
+  // `INITIAL_TABS`) eliminou do BOOT mas continuava alcançável a um clique
+  // do próprio empty state, que é o PRIMEIRO contato do usuário com o app
+  // (boot limpo, nenhum projeto escolhido ainda). Em vez de reproduzir o
+  // cenário travado, abre o Launcher (escolha de projeto) — opção (a) do
+  // achado, exatamente o fluxo que o painel já resolve pra qualquer outro
+  // lançamento configurado.
+  //
+  // O corpo do "＋ Nova sessão" do titlebar (`handleQuickNewClaudeSession`
+  // direto, sem essa variante) MANTÉM o comportamento antigo de propósito —
+  // é um atalho ad hoc já testado/documentado como intencional
+  // (terminal.spec.ts, profiles.spec.ts, shell.spec.ts: sessão rápida em
+  // home sem navegar a nenhum projeto). Redesenhar esse caminho compartilhado
+  // reabriria toda a suíte que depende dele; o achado é especificamente
+  // sobre o CTA do empty state, não sobre o atalho do titlebar.
+  const handleEmptyStateNewSession = (): void => {
+    if (!lastLaunch && !selectedProjectPath) {
+      setLauncherOpen(true);
+      return;
+    }
+    handleQuickNewClaudeSession();
+  };
+
   // T010 — FR-008: aba de terminal comum (powershell.exe) no diretório do
   // projeto selecionado — item "Terminal" do menu do "＋ Nova sessão".
   const handleNewFreeTerminal = (): void => {
@@ -878,17 +906,22 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     const alive = !!activeTab && (aliveTabs[activeTab.id] ?? false);
     const semaphorePending = !!activeTab && semaphoreStates[activeTab.id] === undefined;
-    if (!activeTab || !alive || !semaphorePending) {
-      setPossiblyBlockedOnPrompt(false);
-      return;
-    }
-    const aliveSince = aliveSinceRef.current[activeTab.id];
-    if (aliveSince === undefined || Date.now() - aliveSince <= POSSIBLY_BLOCKED_THRESHOLD_MS) {
-      setPossiblyBlockedOnPrompt(false);
-      return;
-    }
-    const renderedLines = terminalRefs.current[activeTab.id]?.getRenderedLines() ?? [];
-    setPossiblyBlockedOnPrompt(isTrustDialogVisible(renderedLines));
+    const aliveSince = activeTab ? aliveSinceRef.current[activeTab.id] : undefined;
+    // FIX (auditoria rodada 6, achado media "sem testes de unidade pra
+    // possiblyBlockedOnPrompt") — decisão pura extraída pra
+    // `shared/possiblyBlockedOnPrompt.ts` (testada em
+    // `tests/possiblyBlockedOnPrompt.test.ts`); este efeito só junta o
+    // estado do React (aba/vivo/semáforo/buffer renderizado) e repassa.
+    setPossiblyBlockedOnPrompt(
+      computePossiblyBlockedOnPrompt({
+        alive,
+        semaphorePending,
+        aliveSince,
+        now: Date.now(),
+        thresholdMs: POSSIBLY_BLOCKED_THRESHOLD_MS,
+        getRenderedLines: () => (activeTab ? (terminalRefs.current[activeTab.id]?.getRenderedLines() ?? []) : []),
+      }),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, aliveTabs, semaphoreStates, diagnosticTick]);
 
@@ -1025,7 +1058,7 @@ export function App(): React.JSX.Element {
                     ambiguidade de `getByRole('button', { name: ... })` pra
                     qualquer consumidor (smokes, leitor de tela) enquanto os
                     dois estiverem visíveis ao mesmo tempo. */}
-                <Button variant="primary" onClick={handleQuickNewClaudeSession}>
+                <Button variant="primary" onClick={handleEmptyStateNewSession}>
                   Nova sessão
                 </Button>
               </div>
