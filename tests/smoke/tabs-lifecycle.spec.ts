@@ -147,11 +147,17 @@ test('T010 — abrir/fechar um terminal livre 3x não deixa powershell.exe órf�
   }
 });
 
-test('T010 — 6 sessões simultâneas (2 claude + 4 shell); fechar 3 mata só os processos certos, sem vazamento (tasklist)', async () => {
+test('T010 — 5 sessões simultâneas (1 claude + 4 shell); fechar 3 mata só os processos certos, sem vazamento (tasklist)', async () => {
   test.setTimeout(180_000);
 
   const shellBaseline = listPids('powershell.exe');
-  const claudeBaseline = listPids('claude.exe'); // já inclui a aba "Sessão" default, aberta no boot do app, e QUALQUER outra sessão claude alheia rodando na máquina
+  // FIX (decisão A, 2026-07-23) — antes já incluía a aba "Sessão" default,
+  // aberta sozinha no boot do app; essa aba deixou de existir (app nasce com
+  // zero abas). `claudeBaseline` agora só cobre QUALQUER sessão claude alheia
+  // já rodando na máquina (fora do controle deste teste) — a diferença de
+  // PID (`waitForNewPids` abaixo) continua sendo a prova real, nunca uma
+  // contagem absoluta.
+  const claudeBaseline = listPids('claude.exe');
 
   // 4 abas de terminal livre (FR-008) via "+" > Terminal.
   for (let i = 0; i < 4; i += 1) await openFreeTerminalTab();
@@ -159,12 +165,13 @@ test('T010 — 6 sessões simultâneas (2 claude + 4 shell); fechar 3 mata só o
   await expect(shellTabs).toHaveCount(4);
   const shellPidsAdded = await waitForNewPids('powershell.exe', shellBaseline, 4);
 
-  // 2ª sessão claude real (a 1ª é a aba "Sessão" default) — haiku (barato), sem prompt.
-  // Este arquivo nunca abre nada pela sidebar (só pelo "+"/Launcher), então
-  // "Projeto-alvo" nasce vazio — sem selecionar um projeto o "▶ Iniciar" fica
-  // desabilitado (`canLaunch`, Launcher.tsx). Seleciona `donel-dev` (o próprio
-  // repo sob teste) direto no Select do Launcher, sem passar pela sidebar
-  // (evita abrir uma 7ª aba redundante).
+  // Única sessão claude desta run (decisão A removeu a aba "Sessão" default
+  // que antes existia sozinha) — haiku (barato), sem prompt. Este arquivo
+  // nunca abre nada pela sidebar (só pelo "+"/Launcher), então "Projeto-alvo"
+  // nasce vazio — sem selecionar um projeto o "▶ Iniciar" fica desabilitado
+  // (`canLaunch`, Launcher.tsx). Seleciona `donel-dev` (o próprio repo sob
+  // teste) direto no Select do Launcher, sem passar pela sidebar (evita abrir
+  // uma 6ª aba redundante).
   await openLauncherPanel();
   const launcher = window.locator('[data-testid="launcher"]');
   await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
@@ -176,8 +183,9 @@ test('T010 — 6 sessões simultâneas (2 claude + 4 shell); fechar 3 mata só o
   await expect(claudeTab).toBeVisible();
   const claudePidsAdded = await waitForNewPids('claude.exe', claudeBaseline, 1, 30_000);
 
-  // Total: "Sessão" (default, claude) + lifecycle-test (claude) + 4 Terminal (shell) = 6.
-  await expect(window.locator('[role="tab"]')).toHaveCount(6);
+  // Total: lifecycle-test (claude) + 4 Terminal (shell) = 5 (sem aba
+  // "Sessão" default — decisão A).
+  await expect(window.locator('[role="tab"]')).toHaveCount(5);
 
   // Digita echo em 2 das 4 abas de terminal livre (custo mínimo — não toca as sessões claude, DoD da task).
   for (let i = 0; i < 2; i += 1) {
@@ -202,7 +210,10 @@ test('T010 — 6 sessões simultâneas (2 claude + 4 shell); fechar 3 mata só o
   await closeTab(shellTabs.nth(0), 'Fechar aba Terminal'); // depois de fechar a 1ª, a próxima 0-index é a 2ª
   await closeTab(claudeTab, 'Fechar aba lifecycle-test');
 
-  await expect(window.locator('[role="tab"]')).toHaveCount(3); // Sessão + 2 Terminal restantes
+  // 2 Terminal restantes — a única aba claude (lifecycle-test) foi uma das
+  // 3 fechadas acima, então zero abas claude sobram (decisão A: sem aba
+  // "Sessão" default pra sobreviver ao fechamento).
+  await expect(window.locator('[role="tab"]')).toHaveCount(2);
 
   // Prova de leak zero: EXATAMENTE os PIDs das abas fechadas morreram; os das abas que continuam abertas sobrevivem.
   await expect(async () => {

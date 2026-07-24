@@ -30,6 +30,24 @@ test.afterAll(async () => {
 });
 
 test('o shell inteiro não tem scrollbar no documento (body.scrollHeight === body.clientHeight)', async () => {
+  // FIX (decisão A, 2026-07-23) — o app nasce com ZERO abas (empty state,
+  // App.tsx `INITIAL_TABS`); prova o empty state primeiro (nenhum
+  // `terminal-pane` ainda) e só depois abre uma sessão pra provar o mesmo
+  // cenário original (shell inteiro carregado, COM terminal + toolbar de
+  // Modelo/Esforço, que é quem mais rouba espaço vertical/horizontal).
+  const emptyState = window.locator('[data-testid="empty-state"]');
+  await expect(emptyState).toBeVisible();
+
+  const emptyDimensions = await window.evaluate(() => ({
+    scrollHeight: document.body.scrollHeight,
+    clientHeight: document.body.clientHeight,
+    scrollWidth: document.body.scrollWidth,
+    clientWidth: document.body.clientWidth,
+  }));
+  expect(emptyDimensions.scrollHeight).toBe(emptyDimensions.clientHeight);
+  expect(emptyDimensions.scrollWidth).toBe(emptyDimensions.clientWidth);
+
+  await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
   const shell = window.locator('[data-testid="terminal-pane"]');
   await expect(shell).toBeVisible();
 

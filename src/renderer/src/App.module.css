@@ -113,16 +113,32 @@
   display: none;
 }
 
-/* T010 — todas as abas fechadas (ui-spec §2 "sem sessões abertas"). Versão
+/* FIX (decisão A, 2026-07-23) — estado "zero abas abertas" (ui-spec §2 "sem
+   sessões abertas"): agora tanto o estado INICIAL do app (INITIAL_TABS
+   vazio, App.tsx) quanto "fechou a última aba" (T010) caem aqui. Versão
    mínima do estado vazio: os atalhos completos (retomar recente, rotinas)
    chegam com T013/rotinas — fora do escopo do ciclo de vida de abas. */
 .emptyState {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: var(--space-1);
   color: var(--text-muted);
   font-size: var(--text-body-size);
+  text-align: center;
+}
+
+.emptyStateTitle {
+  color: var(--text-primary);
+  font-size: var(--text-heading-size);
+  font-weight: var(--weight-semibold);
+}
+
+.emptyStateHint {
+  color: var(--text-muted);
+  margin-bottom: var(--space-1);
 }
 
 .rightPanel {

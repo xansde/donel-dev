@@ -57,12 +57,15 @@ export interface SessionDetailsProps {
    */
   pendingKind?: 'model' | 'effort';
   /**
-   * FIX (feedback E2E rodada 5) — `true` quando a aba está viva mas
-   * nenhum evento de hook chegou ainda depois de ~20s (App.tsx calcula a
-   * partir de `aliveSinceRef`/`semaphoreStates`) — troca o hint genérico
-   * "Conectando…" por um diagnóstico acionável. Default `false` (sem essa
-   * defesa, os testes/consumidores existentes que não passam a prop
-   * continuam vendo o comportamento de antes).
+   * FIX (feedback E2E rodada 5, condição corrigida na decisão A de
+   * 2026-07-23) — `true` quando a aba está viva, nenhum evento de hook
+   * chegou ainda depois de ~20s (App.tsx calcula a partir de
+   * `aliveSinceRef`/`semaphoreStates`) E o diálogo de confiança de pasta
+   * está DE FATO visível no buffer renderizado (`shared/trustDialog.ts`) —
+   * troca o hint neutro de "sessão ociosa" (ver `default` do switch abaixo)
+   * por um diagnóstico acionável. Default `false` (sem essa defesa, os
+   * testes/consumidores existentes que não passam a prop continuam vendo o
+   * comportamento de antes).
    */
   possiblyBlockedOnPrompt?: boolean;
 }
@@ -76,11 +79,12 @@ function statusHint(
 ): string {
   if (pendingKind) return 'Aguardando o CLI confirmar a troca…';
   if (!alive) return 'Sessão sem processo vivo — troque e clique em "Reiniciar com essa config".';
-  // FIX (feedback E2E rodada 5) — App.tsx só liga `possiblyBlockedOnPrompt`
+  // FIX (decisão A, 2026-07-23) — App.tsx só liga `possiblyBlockedOnPrompt`
   // quando a sessão está viva há mais de ~20s sem NENHUM evento de hook
-  // (nem um) — o hint genérico "Conectando…" (default abaixo) escondia o
-  // caso real (ex.: diálogo de confiança de pasta bloqueando o CLI antes do
-  // REPL, ver TerminalPane.tsx) atrás de um texto que soa transitório.
+  // (nem um) E o diálogo de confiança de pasta está de fato visível no
+  // buffer renderizado — nunca mais só por "nenhum hook ainda" (isso sozinho
+  // é o caso NORMAL de uma sessão ociosa antes do primeiro prompt, ver
+  // `default` do switch abaixo).
   if (possiblyBlockedOnPrompt) {
     return 'O CLI pode estar aguardando resposta no terminal (ex.: confiança de pasta) — clique no terminal e responda.';
   }
@@ -92,7 +96,17 @@ function statusHint(
     case 'waiting':
       return 'Aplica na sessão em andamento, sem perder o histórico.';
     default:
-      return 'Conectando…';
+      // FIX (decisão A, 2026-07-23) — chegar aqui já provou `alive === true`
+      // (o `!alive` acima retornou antes) e `!possiblyBlockedOnPrompt`
+      // (nenhum diálogo bloqueando) — `state === undefined` neste ponto é o
+      // caso NORMAL de uma sessão viva que ainda não teve nenhum turno
+      // (hooks-settings.ts não cobre `SessionStart`), não "ainda
+      // conectando" (isso já aconteceu — o PTY está de pé). O texto antigo
+      // ("Conectando…") ficava preso nesse rótulo pra sempre numa aba
+      // ociosa normal — nunca era substituído por nada, porque não havia
+      // nenhum evento futuro que tirasse a aba desse estado antes do
+      // primeiro prompt do usuário.
+      return 'Sessão pronta — digite no terminal para começar.';
   }
 }
 

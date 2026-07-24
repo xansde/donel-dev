@@ -83,6 +83,20 @@ test.afterAll(async () => {
 test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar sessão claude isolada (tela de login pedida, sem login humano — FR-005/FR-012/CA-3)', async () => {
   test.setTimeout(120_000);
 
+  // 0. FIX (decisão A, 2026-07-23) — o app nasce com ZERO abas agora (empty
+  // state, App.tsx `INITIAL_TABS`); a antiga aba "Sessão" default (nascida
+  // sozinha no boot, sob o perfil Principal — nenhum perfil de teste ainda
+  // ativado) deixou de existir. Este teste ainda precisa de UMA aba nascida
+  // sob Principal ANTES de ativar o perfil e2e (é a prova do passo 4 mais
+  // abaixo: trocar o perfil ATIVO global não muda o perfil de NASCIMENTO de
+  // uma aba já aberta) — reproduz isso clicando no corpo do "＋ Nova sessão"
+  // (handleQuickNewClaudeSession) já aqui no início, com Principal ainda
+  // sendo o único perfil que existe.
+  await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
+  const principalTab = window.locator('[role="tab"]').last();
+  await expect(principalTab).toBeVisible();
+  await expect(principalTab).toHaveAttribute('aria-selected', 'true');
+
   // 1. Abre o dropdown de perfis (badge no titlebar — ProfileSwitcher.tsx).
   const trigger = window.locator('[data-testid="profile-switcher-trigger"] button');
   await expect(trigger).toBeVisible();
@@ -129,10 +143,10 @@ test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar 
   await expect(window.locator('[data-testid="profile-switcher-trigger"]')).toContainText(E2E_PROFILE_NAME);
 
   // FIX (feedback E2E rodada 5) — "statusbar deve mostrar a conta com que a
-  // sessão EM FOCO foi criada" (specs/001-mvp/feedback-e2e.md). A aba
-  // default de boot (ainda em foco aqui — nenhuma aba nova foi criada
-  // ainda) nasceu SOB O PERFIL PRINCIPAL, antes da ativação acima; mesmo com
-  // o perfil ATIVO global agora sendo `E2E_PROFILE_NAME`, a statusbar tem
+  // sessão EM FOCO foi criada" (specs/001-mvp/feedback-e2e.md). `principalTab`
+  // (passo 0, ainda em foco aqui — nenhuma aba nova foi criada desde então)
+  // nasceu SOB O PERFIL PRINCIPAL, antes da ativação acima; mesmo com o
+  // perfil ATIVO global agora sendo `E2E_PROFILE_NAME`, a statusbar tem
   // que continuar mostrando o perfil de NASCIMENTO da aba em foco
   // ("Sessão: Principal") — SEM o fix, ela mostraria o perfil ativo global
   // (`E2E_PROFILE_NAME`), sugerindo (errado) que a aba trocou de conta.

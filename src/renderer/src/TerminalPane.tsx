@@ -5,7 +5,6 @@ import { Button } from '@donel-dev/design-system';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { parseClaudeNotFound } from '../../shared';
 import type { PtyExitInfo, SemaphoreStateInfo } from '../../shared';
-import { isTrustDialogVisible } from '../../shared/trustDialog';
 import { formatRingBufferPreview } from './ringBufferPreview';
 import styles from './TerminalPane.module.css';
 
@@ -86,27 +85,6 @@ export interface TerminalPaneProps {
  */
 const RENDERED_TAIL_LINES = 200;
 
-/**
- * FIX (auditoria rodada 5, achado alta "Fix 1 não funciona") — o auto-aceite
- * deixou de ser "tiro único no primeiro match" (engolido pelo CLI antes dele
- * armar o leitor de stdin, achado real validado empiricamente pela
- * auditoria) e virou "reenvia enquanto o diálogo continuar visível, com
- * teto". `isTrustDialogVisible` (shared/trustDialog.ts) exige a assinatura
- * COMPLETA do rodapé interativo (não a primeira linha pintada) — ver
- * `armTrustAutoAccept` abaixo.
- */
-const TRUST_AUTO_ACCEPT_RETRY_MS = 300;
-/** Teto de tentativas — se o diálogo continuar visível após isso, desiste e deixa o hint diagnóstico (App.tsx `possiblyBlockedOnPrompt`) orientar o usuário a resolver na mão. */
-const TRUST_AUTO_ACCEPT_MAX_ATTEMPTS = 8;
-/**
- * FIX (auditoria rodada 5, achado media "janela sem SessionStart") — desarme
- * INCONDICIONAL por tempo, independente de o diálogo ter aparecido ou não:
- * o diálogo pré-REPL aparece nos primeiros segundos do spawn ou não aparece
- * (pasta já confiável); depois disso, manter o armamento só aumenta a
- * chance de casar texto digitado pelo usuário/ecoado pelo CLI.
- */
-const TRUST_AUTO_ACCEPT_WINDOW_MS = 15_000;
-
 export interface TerminalPaneHandle {
   /** Escreve `command` no stdin do PTY desta aba. Devolve `false` (no-op) sem processo vivo — quem chama decide o que fazer com isso (ex.: degradação FR-011 "reiniciar com a flag"). */
   injectCommand: (command: string) => boolean;
@@ -149,21 +127,6 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   const unsubscribeDataRef = useRef<(() => void) | null>(null);
   const unsubscribeExitRef = useRef<(() => void) | null>(null);
   const unsubscribeSemaphoreRef = useRef<(() => void) | null>(null);
-  // FIX (feedback E2E rodada 5) — "armado" só enquanto a sessão desta aba
-  // ainda não recebeu NENHUM evento de hook/semáforo (ver `armTrustAutoAccept`
-  // abaixo e a assinatura de `semaphore.onUpdate`, que desarma no primeiro
-  // evento) NEM estourou o teto de tentativas/janela de tempo. Reset a cada
-  // `spawnSession()` nova (mount inicial ou "Reabrir"), nunca lido fora deste
-  // componente.
-  const trustAutoAcceptArmedRef = useRef(false);
-  // FIX (auditoria rodada 5) — handle do `setInterval` de retentativa do
-  // auto-aceite (`armTrustAutoAccept`) e do `setTimeout` de desarme
-  // incondicional por janela de tempo; `null` = nenhum dos dois em voo.
-  // Limpos por `disarmTrustAutoAccept` (chamada em TODO ponto de saída:
-  // sucesso, teto de tentativas, evento de semáforo, janela de tempo,
-  // teardown).
-  const trustAutoAcceptIntervalRef = useRef<number | null>(null);
-  const trustAutoAcceptDeadlineTimerRef = useRef<number | null>(null);
   // FIX — geração do mount atual (substitui o antigo `disposedRef` booleano).
   // Incrementado tanto no INÍCIO do efeito de mount quanto no INÍCIO do
   // cleanup — cada `spawnSession()` captura o valor vigente no momento da
@@ -195,70 +158,6 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   onAliveChangeRef.current = onAliveChange;
   const onProfileResolvedRef = useRef(onProfileResolved);
   onProfileResolvedRef.current = onProfileResolved;
-
-  // FIX (auditoria rodada 5, achado alta "Fix 1 não funciona") — ponto ÚNICO
-  // de saída do auto-aceite: desarma a flag E limpa os DOIS timers (retry +
-  // janela), idempotente (seguro chamar de novo com tudo já limpo). Chamado
-  // em todo caminho de término: diálogo resolvido, teto de tentativas
-  // estourado, primeiro evento de semáforo, janela de tempo esgotada, e
-  // teardown do componente (nunca deixa um `setInterval` sobrevivendo à
-  // aba).
-  const disarmTrustAutoAccept = useCallback((): void => {
-    trustAutoAcceptArmedRef.current = false;
-    if (trustAutoAcceptIntervalRef.current !== null) {
-      window.clearInterval(trustAutoAcceptIntervalRef.current);
-      trustAutoAcceptIntervalRef.current = null;
-    }
-    if (trustAutoAcceptDeadlineTimerRef.current !== null) {
-      window.clearTimeout(trustAutoAcceptDeadlineTimerRef.current);
-      trustAutoAcceptDeadlineTimerRef.current = null;
-    }
-  }, []);
-
-  // FIX (auditoria rodada 5, achado alta "Fix 1 não funciona") — CAUSA RAIZ
-  // do bug original: o `\r` era enviado UMA ÚNICA VEZ no primeiro instante em
-  // que o marcador aparecia no buffer, ANTES do CLI terminar de desenhar o
-  // diálogo e armar o leitor de stdin — validado empiricamente pela
-  // auditoria (o smoke `boot-tab-trust.spec.ts` falhou com o diálogo ainda
-  // preso na tela). Substituído por um `setInterval` PRÓPRIO deste
-  // componente (não depende de mais chunks `onData` chegarem depois do
-  // diálogo pintado — não há garantia nenhuma disso): a cada tick, se
-  // `isTrustDialogVisible` (assinatura COMPLETA do rodapé, não a primeira
-  // linha) continuar batendo, reenvia `\r`; se sumiu depois de ao menos um
-  // envio, foi aceito — desarma; se nunca apareceu, só espera; teto de
-  // `TRUST_AUTO_ACCEPT_MAX_ATTEMPTS` evita loop indefinido num diálogo que
-  // por algum motivo nunca fecha. `TRUST_AUTO_ACCEPT_WINDOW_MS` (achado
-  // media "janela sem SessionStart") desarma incondicionalmente por tempo,
-  // pra nunca ficar armado além da janela em que o diálogo pré-REPL
-  // plausivelmente aparece.
-  const armTrustAutoAccept = useCallback(
-    (term: XTerm): void => {
-      disarmTrustAutoAccept(); // defensivo: nunca deixa um timer anterior vazar pra este armamento novo.
-      trustAutoAcceptArmedRef.current = true;
-      let attempts = 0;
-      trustAutoAcceptIntervalRef.current = window.setInterval(() => {
-        if (!trustAutoAcceptArmedRef.current || !ptyIdRef.current) return;
-        const buffer = term.buffer.active;
-        const start = Math.max(0, buffer.length - RENDERED_TAIL_LINES);
-        const lines: string[] = [];
-        for (let i = start; i < buffer.length; i += 1) {
-          const line = buffer.getLine(i);
-          if (line) lines.push(line.translateToString(true));
-        }
-        if (isTrustDialogVisible(lines)) {
-          attempts += 1;
-          window.donel.pty.input(ptyIdRef.current, '\r');
-          if (attempts >= TRUST_AUTO_ACCEPT_MAX_ATTEMPTS) disarmTrustAutoAccept();
-          return;
-        }
-        if (attempts > 0) disarmTrustAutoAccept(); // diálogo sumiu depois de ao menos 1 envio — aceito, sucesso.
-      }, TRUST_AUTO_ACCEPT_RETRY_MS);
-      trustAutoAcceptDeadlineTimerRef.current = window.setTimeout(() => {
-        disarmTrustAutoAccept();
-      }, TRUST_AUTO_ACCEPT_WINDOW_MS);
-    },
-    [disarmTrustAutoAccept],
-  );
 
   // T010 — reporta pro pai sempre que a "vivacidade" do processo muda (não
   // a cada render, só quando `status.kind` de fato transiciona) — é o sinal
@@ -310,12 +209,11 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     unsubscribeDataRef.current = null;
     unsubscribeExitRef.current = null;
     unsubscribeSemaphoreRef.current = null;
-    disarmTrustAutoAccept(); // FIX (auditoria rodada 5) — nunca deixa o retry do auto-aceite sobrevivendo a esta aba.
     if (ptyIdRef.current) {
       window.donel.pty.kill(ptyIdRef.current);
       ptyIdRef.current = null;
     }
-  }, [disarmTrustAutoAccept]);
+  }, []);
 
   const spawnSession = useCallback(() => {
     const term = termRef.current;
@@ -324,12 +222,6 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     // Snapshot da geração vigente NO MOMENTO da chamada — não lido de novo
     // depois (ver comentário de `mountEpochRef` acima).
     const requestEpoch = mountEpochRef.current;
-    // FIX (feedback E2E rodada 5) — só a aba boot/home nasce SEM `cwd`
-    // (App.tsx `INITIAL_TABS`/`handleQuickNewClaudeSession` sem projeto
-    // selecionado), o que faz PtyManager.create spawnar em `os.homedir()`
-    // (pty-manager.ts). Abas com `cwd` de projeto ficam DE FORA de
-    // propósito — ver `armTrustAutoAccept` abaixo pro porquê.
-    const isBootSession = sessionType === 'claude' && cwd === undefined;
 
     void window.donel.pty
       .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args })
@@ -350,12 +242,6 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         // (efeito de `status.kind` acima) — App.tsx grava por tab.id, nunca
         // reconsultado depois (mesmo espírito "por valor" de `claudeConfigDir`).
         onProfileResolvedRef.current?.(result.profile);
-        // FIX (auditoria rodada 5) — arma o retry do auto-aceite só pra esta
-        // geração desta aba; desarma sozinho quando o diálogo sumir do
-        // buffer, no teto de tentativas, na janela de tempo OU no primeiro
-        // evento de hook (assinatura de `semaphore.onUpdate` abaixo) — o que
-        // vier primeiro (ver `armTrustAutoAccept`/`disarmTrustAutoAccept`).
-        if (isBootSession) armTrustAutoAccept(term);
 
         // FIX (feedback E2E rodada 1, agravante do bug StrictMode) — replay
         // do ring buffer ANTES de assinar `onData` (ver comentário de topo
@@ -374,33 +260,23 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
             // xterm já `dispose()`d.
             if (requestEpoch !== mountEpochRef.current) return;
 
-            // FIX (feedback E2E rodada 5, CAUSA RAIZ) — a aba boot/home
-            // (`isBootSession` acima) roda o CLI em `os.homedir()`, onde o
-            // trust de pasta NUNCA é persistido pelo binário (string do
-            // próprio `claude`, não algo que este app controle) — o
-            // diálogo pré-REPL ("Quick safety check") aparece TODA vez.
-            // Enquanto ele está na tela, nenhum hook do semáforo dispara
-            // (não houve prompt ainda: hooks-settings.ts só cobre
-            // UserPromptSubmit/PreToolUse/PostToolUse/Stop/Notification/
-            // SessionEnd), então `semaphoreState` da aba nunca sai de
-            // `undefined` e `canInjectLiveCommand` (liveSessionInjection.ts)
-            // fica preso pra sempre — a menos que alguém aperte Enter no
-            // terminal na mão (o que os smokes existentes fazem
-            // manualmente, ver terminal.spec.ts). O auto-aceite de verdade
-            // é o `setInterval` de `armTrustAutoAccept` (acima), que já
-            // começou a rodar ANTES deste `.then()` resolver — ele lê
-            // `term.buffer.active` no seu próprio ritmo, independente de
-            // `onData`/`term.write` disparar de novo (achado da auditoria:
-            // depender só de chunks futuros de `onData` é o que quebrava o
-            // fix anterior, já que o diálogo pode ser a ÚLTIMA coisa que o
-            // CLI escreve antes de ficar esperando o Enter).
+            // FIX (decisão A, 2026-07-23) — auto-aceite REMOVIDO (ver
+            // dossiê da rodada 5/CLAUDE.md): a única aba que rodava em
+            // `os.homedir()` sem trust persistido era a antiga aba boot
+            // (INITIAL_TABS, App.tsx), que deixou de existir — o app nunca
+            // mais spawna `claude` sozinho sem o usuário escolher um
+            // projeto/lançar uma sessão. Se um diálogo de confiança de
+            // pasta aparecer (ex.: primeira vez que uma pasta é aberta por
+            // uma sessão claude), quem resolve é o usuário, direto no
+            // terminal — `shared/trustDialog.ts` continua detectando a
+            // assinatura completa do diálogo só pra alimentar o aviso
+            // diagnóstico da toolbar (App.tsx `possiblyBlockedOnPrompt`),
+            // nunca mais pra enviar Enter sozinho.
             //
             // FIX (feedback E2E rodada 1, agravante do bug StrictMode) — o
             // replay do ring buffer aqui só cuida de MOSTRAR pro usuário o
             // que já rodou antes de `onData` ser assinado (ver comentário de
-            // topo de ringBufferPreview.ts) — não precisa mais orquestrar
-            // auto-aceite nenhum, o `setInterval` acima já cobre esse caso
-            // (inclusive se o diálogo inteiro só existir neste replay).
+            // topo de ringBufferPreview.ts).
             const preview = formatRingBufferPreview(lines);
             if (preview) term.write(preview);
 
@@ -420,19 +296,12 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
 
         unsubscribeExitRef.current = window.donel.pty.onExit(result.ptyId, (info) => {
           ptyIdRef.current = null;
-          disarmTrustAutoAccept(); // FIX (auditoria rodada 5) — processo morreu; nenhum retry faz sentido continuar (tick seguinte já era no-op via guard de `ptyIdRef`, isto só evita esperar até a janela de tempo).
           setStatus({ kind: 'ended', info });
         });
         // Sessão de terminal livre (FR-008) nunca é registrada no semáforo
         // pelo main process — sem sessionType 'claude', simplesmente não
         // chega update nenhum aqui (nada a filtrar deste lado).
         unsubscribeSemaphoreRef.current = window.donel.semaphore.onUpdate(result.ptyId, (info) => {
-          // FIX (feedback E2E rodada 5) — primeiro evento de hook = sessão
-          // já em uso normal (usuário/CLI seguiu adiante sozinho); desarma
-          // o auto-aceite pra nunca mais tocar o stdin sozinho depois disso
-          // (mitiga falso positivo de "trust this folder" citado numa
-          // resposta real).
-          disarmTrustAutoAccept();
           onStateChangeRef.current?.(info);
         });
       })
@@ -447,7 +316,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         term.write(`\r\n\x1b[31mFalha ao iniciar o terminal: ${message}\x1b[0m\r\n`);
         setStatus({ kind: 'ended', info: { exitCode: -1 } });
       });
-  }, [cwd, sessionType, args, armTrustAutoAccept, disarmTrustAutoAccept]);
+  }, [cwd, sessionType, args]);
 
   useEffect(() => {
     const container = containerRef.current;

@@ -85,7 +85,21 @@ interface LastLaunch {
   name: string;
 }
 
-const INITIAL_TABS: TabState[] = [{ id: 'default', name: 'Sessão', pinned: false, sessionType: 'claude' }];
+// FIX (feedback E2E, decisão do Alexandre 2026-07-23, rodada 5 — "opção A") —
+// antes havia uma aba "default" (id fixo, sem `cwd`) que spawnava `claude`
+// direto em `os.homedir()` no boot do app. Causa raiz do bug reaberto no
+// feedback-e2e.md (2 rodadas reprovadas): o CLI mostra o diálogo pré-REPL
+// "Quick safety check" TODA vez que roda em `os.homedir()` (trust de pasta
+// nunca é persistido pelo binário pra esse cwd), travando o semáforo em
+// `undefined` até alguém responder o diálogo. A opção A elimina a causa raiz
+// na raiz: o app nasce SEM nenhuma sessão aberta — zero PTY, zero CLI, zero
+// diálogo — e mostra um empty state (ver `styles.emptyState` mais abaixo)
+// com call-to-action pra abrir um projeto pela sidebar ou lançar uma sessão
+// nova. Efeito colateral desejado: economiza cota/RAM a cada boot (nenhuma
+// sessão claude sobe sem o usuário pedir). O MESMO empty state já cobria
+// "todas as abas fechadas" (T010) — este caso deixa de ser um estado
+// alcançável só por fechamento manual e passa a ser também o estado INICIAL.
+const INITIAL_TABS: TabState[] = [];
 
 // T013 (correção herdada) — timeout total de espera pela confirmação real do
 // CLI depois de uma injeção de `/model`/`/effort` (rede de segurança — a
@@ -112,7 +126,12 @@ export function App(): React.JSX.Element {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [tabs, setTabs] = useState<TabState[]>(INITIAL_TABS);
-  const [activeTabId, setActiveTabId] = useState(INITIAL_TABS[0].id);
+  // '' = nenhuma aba em foco — estado válido agora que o boot pode nascer
+  // sem nenhuma aba (decisão A, ver comentário de `INITIAL_TABS`); mesmo
+  // sentinela que `closeTabImmediately` já usava pro caso "fechou a última
+  // aba restante" (`remaining[0]` undefined -> `''`), reaproveitado aqui em
+  // vez de introduzir um segundo significado pra "sem aba".
+  const [activeTabId, setActiveTabId] = useState('');
   // "Herdado da seleção da sidebar" (ui-spec §4) — default do campo
   // Projeto-alvo do Launcher; segue o último projeto aberto pela sidebar.
   const [selectedProjectPath, setSelectedProjectPath] = useState<string | undefined>(undefined);
@@ -182,7 +201,14 @@ export function App(): React.JSX.Element {
   // único estado em que o diagnóstico pode efetivamente mudar com o passar
   // do tempo; some sozinho assim que a última pendência resolve (evento de
   // semáforo chega) ou a aba fecha.
-  const [, forceDiagnosticTick] = useState(0);
+  //
+  // FIX (auditoria rodada 5, achado baixa "getRenderedLines fora do
+  // render") — `diagnosticTick` (antes descartado, `[, forceDiagnosticTick]`)
+  // agora também entra como dependência do efeito de `possiblyBlockedOnPrompt`
+  // mais abaixo: é o MESMO tick condicional (nunca um segundo `setInterval`
+  // novo) que faz esse diagnóstico reavaliar o limiar de tempo mesmo sem
+  // nenhum chunk novo de PTY chegando (buffer parado mostrando só o diálogo).
+  const [diagnosticTick, forceDiagnosticTick] = useState(0);
   useEffect(() => {
     const hasPendingDiagnostic = tabs.some((tab) => (aliveTabs[tab.id] ?? false) && semaphoreStates[tab.id] === undefined);
     if (!hasPendingDiagnostic) return undefined;
@@ -205,11 +231,10 @@ export function App(): React.JSX.Element {
   // e refletir a troca depois de uma injeção bem-sucedida. Semeado no
   // `addTab` (parseModelEffortFromArgs do launchArgs, se houver, senão os
   // defaults do Brief 3) — nunca undefined pra uma aba 'claude' já criada.
-  // A aba 'default' de INITIAL_TABS nasce fora do `addTab` (é o estado
-  // inicial), por isso precisa do mesmo seed aqui.
-  const [sessionModelEffort, setSessionModelEffort] = useState<Record<string, { model: ModelAlias; effort: EffortLevel }>>({
-    [INITIAL_TABS[0].id]: { model: DEFAULT_MODEL_ALIAS, effort: DEFAULT_EFFORT_LEVEL },
-  });
+  // FIX (decisão A, 2026-07-23) — `INITIAL_TABS` nasce vazio agora (nenhuma
+  // aba 'default' fora do `addTab`), então não há mais nenhum seed pra fazer
+  // aqui: toda aba 'claude' passa por `addTab`, que já cuida disso sozinho.
+  const [sessionModelEffort, setSessionModelEffort] = useState<Record<string, { model: ModelAlias; effort: EffortLevel }>>({});
   // T011 — handle imperativo de cada TerminalPane viva (ver TerminalPaneHandle):
   // ref callback comum, não state (não precisa re-render quando muda; o
   // próprio React já nula a entrada no unmount da aba).
@@ -830,24 +855,42 @@ export function App(): React.JSX.Element {
   // comentário de `sidebarSessions` acima sobre o estado inicial otimista),
   // já se passaram ~20s desde que ficou viva E (FIX auditoria rodada 5,
   // achado media "sinal invertido") o diálogo de confiança de pasta está DE
-  // FATO visível no buffer renderizado da aba (`isTrustDialogVisible`,
-  // mesma checagem que `TerminalPane.armTrustAutoAccept` usa) — sem essa
-  // última condição, o hint disparava pra QUALQUER aba claude ociosa por
-  // 20s sem nenhum prompt ainda digitado (o caso mais comum que existe,
-  // já que `hooks-settings.ts` não cobre `SessionStart`), virando ruído
+  // FATO visível no buffer renderizado da aba (`isTrustDialogVisible`) — sem
+  // essa última condição, o hint disparava pra QUALQUER aba claude ociosa por
+  // 20s sem nenhum prompt ainda digitado (o caso mais comum que existe, já
+  // que `hooks-settings.ts` não cobre `SessionStart`), virando ruído
   // constante em vez de sinal real de bloqueio.
   // `POSSIBLY_BLOCKED_THRESHOLD_MS` deliberadamente mais folgado que
   // qualquer round-trip normal de boot — só existe pra separar "ainda
   // conectando" de "provavelmente esperando resposta no terminal".
-  const activeAliveSince = activeTab ? aliveSinceRef.current[activeTab.id] : undefined;
-  const activeRenderedLines = activeTab ? (terminalRefs.current[activeTab.id]?.getRenderedLines() ?? []) : [];
-  const possiblyBlockedOnPrompt =
-    !!activeTab &&
-    (aliveTabs[activeTab.id] ?? false) &&
-    semaphoreStates[activeTab.id] === undefined &&
-    activeAliveSince !== undefined &&
-    Date.now() - activeAliveSince > POSSIBLY_BLOCKED_THRESHOLD_MS &&
-    isTrustDialogVisible(activeRenderedLines);
+  //
+  // FIX (auditoria rodada 5, achado baixa "getRenderedLines fora do
+  // render") — antes `activeRenderedLines`/`possiblyBlockedOnPrompt` eram
+  // calculados DIRETO no corpo de render (chamando `getRenderedLines()`,
+  // uma leitura imperativa do buffer mutável do xterm, a cada passada de
+  // render — viola pureza de render do React; em StrictMode o render duplo
+  // podia ler dois snapshots diferentes do mesmo buffer). Agora é estado
+  // (`useState`), recalculado só dentro de um efeito: reage a mudanças de
+  // `activeTab`/`aliveTabs`/`semaphoreStates` OU ao `diagnosticTick`
+  // condicional já existente acima (nunca um `setInterval` novo — reaproveita
+  // o mesmo tick, que só roda enquanto houver aba viva com semáforo pendente).
+  const [possiblyBlockedOnPrompt, setPossiblyBlockedOnPrompt] = useState(false);
+  useEffect(() => {
+    const alive = !!activeTab && (aliveTabs[activeTab.id] ?? false);
+    const semaphorePending = !!activeTab && semaphoreStates[activeTab.id] === undefined;
+    if (!activeTab || !alive || !semaphorePending) {
+      setPossiblyBlockedOnPrompt(false);
+      return;
+    }
+    const aliveSince = aliveSinceRef.current[activeTab.id];
+    if (aliveSince === undefined || Date.now() - aliveSince <= POSSIBLY_BLOCKED_THRESHOLD_MS) {
+      setPossiblyBlockedOnPrompt(false);
+      return;
+    }
+    const renderedLines = terminalRefs.current[activeTab.id]?.getRenderedLines() ?? [];
+    setPossiblyBlockedOnPrompt(isTrustDialogVisible(renderedLines));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, aliveTabs, semaphoreStates, diagnosticTick]);
 
   // FIX (T015, FR-009 "statusbar completa") — era hardcoded "fable/high"
   // (sempre o mesmo texto, ignorando a aba real): agora reflete o
@@ -964,7 +1007,29 @@ export function App(): React.JSX.Element {
             />
           ) : null}
           <div className={styles.terminal}>
-            {tabs.length === 0 ? <p className={styles.emptyState}>Nenhuma sessão aberta. Use “＋ Nova sessão”.</p> : null}
+            {/* FIX (decisão A, 2026-07-23) — mesmo empty state pros dois
+                caminhos que levam a "zero abas": boot do app (INITIAL_TABS
+                vazio, ver comentário lá) e fechar a última aba restante
+                (T010, handleRequestCloseTab/closeTabImmediately) — nenhum
+                estado especial "primeira vez" separado do estado normal
+                "sem sessão nenhuma aberta agora". CTA aponta pros dois
+                caminhos reais de abrir uma sessão (sidebar ou "＋ Nova
+                sessão") em vez de inventar um terceiro botão/atalho. */}
+            {tabs.length === 0 ? (
+              <div className={styles.emptyState} data-testid="empty-state">
+                <p className={styles.emptyStateTitle}>Nenhuma sessão aberta</p>
+                <p className={styles.emptyStateHint}>Escolha um projeto na barra lateral ou</p>
+                {/* Rótulo "Nova sessão" (sem "＋") de propósito — o botão do
+                    titlebar (SplitButton logo abaixo) já usa "＋ Nova sessão"
+                    como nome acessível; texto IDÊNTICO nos dois criaria
+                    ambiguidade de `getByRole('button', { name: ... })` pra
+                    qualquer consumidor (smokes, leitor de tela) enquanto os
+                    dois estiverem visíveis ao mesmo tempo. */}
+                <Button variant="primary" onClick={handleQuickNewClaudeSession}>
+                  Nova sessão
+                </Button>
+              </div>
+            ) : null}
             {tabs.map((tab) => (
               <div key={tab.id} className={tab.id === activeTabId ? styles.terminalPane : styles.terminalPaneHidden}>
                 <TerminalPane

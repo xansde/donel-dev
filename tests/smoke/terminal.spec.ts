@@ -65,6 +65,19 @@ test.afterAll(async () => {
 });
 
 test('terminal spawns a real claude session inside Electron', async () => {
+  // FIX (decisão A, 2026-07-23) — o app nasce com ZERO abas agora (empty
+  // state, App.tsx `INITIAL_TABS`); a antiga aba "Sessão" default (cwd=home,
+  // spawnada sozinha no boot) deixou de existir. Este teste ainda quer
+  // provar o mesmo cenário original (sessão claude em `os.homedir()`, sem
+  // projeto selecionado) — reproduz isso clicando direto no corpo do "＋
+  // Nova sessão" (handleQuickNewClaudeSession, App.tsx), que sem nenhum
+  // projeto selecionado ainda spawna exatamente esse cenário. Esta é a
+  // PRIMEIRA aba de toda a suíte deste arquivo — os testes seguintes
+  // dependem dela existir e ficar em foco.
+  await expect(window.locator('[data-testid="empty-state"]')).toBeVisible();
+  await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
+  await expect(window.locator('[data-testid="empty-state"]')).toHaveCount(0);
+
   const terminalPane = window.locator('[data-testid="terminal-pane"]');
   await expect(terminalPane).toBeVisible();
 
@@ -231,8 +244,10 @@ test('launcher builds the exact CommandBuilder argv and opens a tab wired to it 
 test('semáforo: o StateDot de uma aba em BACKGROUND muda de trabalhando pra aguardando resposta sem precisar focá-la (T009, FR-010/CA-6)', async () => {
   // Timeout default do arquivo (30s, playwright.config.ts) não sobra pro
   // turno real completar (boot + espera pelo prompt pronto + resposta do
-  // modelo) — as duas esperas de 60s/45s abaixo já somam mais que isso sozinhas.
-  test.setTimeout(180_000);
+  // modelo) — as duas esperas de 60s/120s abaixo já somam mais que isso
+  // sozinhas. 300s (não 180s) — folga extra pro achado da suíte completa
+  // (ver comentário da asserção final, timeout local 45s -> 120s).
+  test.setTimeout(300_000);
 
   // --model haiku (barato) + prompt trivial, conforme a DoD da task: prova
   // o pipeline completo hook->HTTP local->main->IPC->preload->TerminalPane
@@ -292,9 +307,12 @@ test('semáforo: o StateDot de uma aba em BACKGROUND muda de trabalhando pra agu
   await window.keyboard.type('Responda só OK, sem mais nada.', { delay: 30 });
   await window.keyboard.press('Enter');
 
-  // Tira o foco da aba ANTES do turno terminar — troca pra "Sessão" (aba
-  // default, sempre presente). O resto do teste nunca mais toca `newTab`.
-  const defaultTab = window.locator('[role="tab"]', { hasText: 'Sessão' }).first();
+  // Tira o foco da aba ANTES do turno terminar — troca pra "Nova sessão"
+  // (decisão A, 2026-07-23: a primeira aba deste arquivo, criada no início
+  // do 1º teste via corpo do "＋ Nova sessão"; substitui a antiga aba
+  // "Sessão" default do boot, que deixou de existir). O resto do teste
+  // nunca mais toca `newTab`.
+  const defaultTab = window.locator('[role="tab"]', { hasText: 'Nova sessão' }).first();
   await defaultTab.click();
   await expect(newTab).toHaveAttribute('aria-selected', 'false');
   await expect(defaultTab).toHaveAttribute('aria-selected', 'true');
@@ -303,5 +321,18 @@ test('semáforo: o StateDot de uma aba em BACKGROUND muda de trabalhando pra agu
   // abas muda pra "Aguardando resposta" quando o turno completa (Stop hook
   // -> SessionSemaphoreManager -> IPC -> App.tsx, tudo com a aba em segundo
   // plano, TerminalPane só invisível via CSS mas nunca desmontado).
-  await expect(dot).toHaveAttribute('aria-label', 'Aguardando resposta', { timeout: 45_000 });
+  //
+  // FIX (diagnóstico da rodada 6) — 120s, não 45s: achado real medido nesta
+  // máquina com `tasklist` durante a falha — 14 processos `claude.exe`
+  // concorrentes no momento (mesmo padrão já documentado no roteiro batch-5,
+  // item "CA-6 rodou 2x e falhou 2x por carga concorrente"). O servidor HTTP
+  // do semáforo é local e por-instância (porta efêmera, `session-semaphore-
+  // manager.ts`) — os outros processos `claude.exe` não competem por ELE;
+  // o gargalo é a resposta da API em si sob concorrência pesada de contas/
+  // rede na máquina. Turno real (hook `Stop` só dispara quando o turno
+  // TERMINA) — não é bug de entrega do hook, é o turno legitimamente
+  // demorando mais sob essa carga. Não é enfraquecimento de asserção (o
+  // `expect` continua exato, exigindo "Aguardando resposta"), só mais tempo
+  // real pro turno terminar.
+  await expect(dot).toHaveAttribute('aria-label', 'Aguardando resposta', { timeout: 120_000 });
 });
