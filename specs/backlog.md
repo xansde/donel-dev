@@ -170,6 +170,37 @@ log, reusável entre repos), não só do Donel Dev. Clarify futuro: formato do
 log, onde vive (repo × global), e como o hook/wrapper se pluga no runner de
 cada projeto (vitest, pytest, etc.).
 
+### B10. Dois canais instalados: app de trabalho + app de teste (novo — pedido 24/07)
+
+"Ter um app de teste e um app de prod, para usar um para trabalhar e outro
+para testar as novidades." **Decisões do Alexandre (2026-07-24):** (a) entra
+DEPOIS de fechar a 002 (dist + reinstalação + E2E da 002 acontecem no app
+atual, como já combinado); (b) isolamento **só do estado do app** —
+`~/.claude` e `~/.claude-profiles` seguem COMPARTILHADOS entre os canais, de
+propósito, para o canal de teste ver as contas e a cota reais (é o que
+permite testar perfis/quota de verdade). Consequência aceita: "Criar perfil"/
+"Recriar links" no canal de teste mexe nas junctions REAIS.
+
+Investigação feita (24/07) — o app já está quase pronto para isso: todo
+estado próprio (config, favoritos, launcher defaults, e o
+`session-hooks-settings.json` + `session-hook-forward.ps1` do semáforo) vive
+em `app.getPath('userData')`, derivado de `app.setName('donel-dev')`
+(`src/main/index.ts:126`), e o `~/.claude/settings.json` nunca é tocado (o
+`--settings` é por-spawn, validado no spike do T009). Trocar o nome do app já
+isola estado, porta do hook e preferências.
+
+O que precisa divergir entre canais: `appId` (senão o NSIS trata como o mesmo
+produto e um DESINSTALA o outro), `productName`/`shortcutName` (nome, atalho e
+pasta de instalação), `app.setName` (o `userData`) e `setAppUserModelId` (senão
+a notificação do canal de teste aparece atribuída ao app de trabalho).
+
+**Gotcha de design (obrigatório, senão o isolamento não existe):** o canal tem
+de ser **assado em tempo de BUILD** (`define` do electron-vite ou equivalente),
+NUNCA lido de `process.env` em runtime — o app é aberto pelo atalho da Área de
+Trabalho, que não carrega env nenhuma, e o canal de teste cairia no `userData`
+do app de trabalho. Implementação prevista: segundo `electron-builder.beta.yml`
++ script `dist:beta`.
+
 ## Decidido, aguardando spec
 
 - **Restauração de sessões no restart** (rodada 5 do feedback-e2e).
