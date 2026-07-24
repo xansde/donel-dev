@@ -63,16 +63,27 @@ five_hour 95% / seven_day 0%), caso stale, caso janela ausente.
 **Arquivo:** `src/renderer/src/ProfileSwitcher.tsx` (+ `.module.css`),
 possível componente novo no design-system.
 
-- Cada linha de perfil passa a renderizar as DUAS janelas: rótulo ("5h" /
-  "semana"), barra colorida por `getHeadroomTier`, "% livre" e reset.
+- **Layout decidido (Alexandre, 2026-07-24): primária + resumo compacto.**
+  A janela **5h** é a primária: barra colorida por `getHeadroomTier`, rótulo
+  "5h", "% livre" e reset. A **semana** aparece como resumo compacto em texto
+  logo abaixo ("semana 100% · reset 31/07"), SEM barra própria. Escopo: só
+  5h + semana; `model:fable` fica fora (US-12). Ver CA-2 da spec.
+- **Enxugar a lista (CA-7):** remover o "Perfil OK" de toda linha saudável
+  (hoje `ProfileSwitcher.tsx:268-272` sempre renderiza esse texto). Perfil
+  saudável = linha sem status. Perfil com problema = ícone de alerta com
+  tooltip no hover ("Junctions com problema") + botão "Recriar links"
+  visível na linha (o bloco `doctorWarning` atual, linhas 256-267, fica; só
+  o branch `doctorOk` some). Isso libera a altura que as duas janelas de
+  cota vão ocupar. Precisa de um componente de tooltip — verificar se o
+  design-system já tem um; se não, tooltip nativo via `title` no ícone é o
+  fallback mais barato (decidir na implementação).
 - **Componente de barra:** o design-system NÃO tem barra genérica de % — o
   `SmartZoneMeter` é específico de tokens (used/max), semântica diferente.
-  Decisão: criar um componente pequeno `QuotaWindowRow` (ou `QuotaBar`) no
-  design-system (não é "recriar" algo existente; é peça nova legítima),
-  reusando os tokens de cor de tier já existentes. Alternativa mais barata:
-  barra local no ProfileSwitcher.module.css sem componentizar — decidir na
-  implementação conforme o reuso esperado (o painel do US-12 vai querer a
-  mesma barra → favorece componentizar).
+  Como agora só a 5h tem barra (a semana é texto), o reuso imediato caiu;
+  ainda assim o painel US-12 vai querer a mesma barra. Decisão pendente pra
+  implementação: componente pequeno `QuotaBar` no design-system × barra
+  local no `ProfileSwitcher.module.css`. Favorece começar local (uma barra
+  só) e extrair pro DS quando o US-12 entrar.
 - **Botão "Atualizar"** no topo do Modal: chama `profiles.headroom()` com um
   flag de bypass do cache. `HeadroomCache` ganha um modo de invalidação
   (ex.: `readAllProfilesHeadroom(..., { force: true })` que ignora `get`).

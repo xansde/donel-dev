@@ -44,10 +44,14 @@ Alexandre em 2026-07-24)
   para elas dentro de ~10 s; enquanto a 1ª leitura não volta, aparece
   "carregando", não "—". "—" só depois de falha/timeout REAL ou conta sem
   login (stale).
-- **CA-2:** cada conta mostra duas linhas — "5h" e "semana" — cada uma com
-  % restante, barra colorida por tier (verde/dourado/vermelho, reusando
-  `getHeadroomTier`) e o reset (ex.: "reset 25/07"). O rótulo deixa
-  explícito que é % LIVRE/restante.
+- **CA-2:** cada conta mostra AS DUAS janelas — "5h" e "semana" — no layout
+  **primária + resumo compacto** (decisão do Alexandre, 2026-07-24, ver nota
+  abaixo): a **5h** é a primária, com barra colorida por tier
+  (verde/dourado/vermelho, reusando `getHeadroomTier`), % restante e reset;
+  a **semana** aparece como resumo compacto em texto embaixo (% restante +
+  reset), SEM barra própria. O rótulo deixa explícito que é % LIVRE/restante.
+  Escopo das janelas: só 5h + semana — a janela do modelo (`model:fable`,
+  presente no payload real) fica FORA desta entrega (vai pro painel US-12).
 - **CA-3:** o botão "Atualizar" força releitura de todas as contas
   ignorando o cache; some/desabilita enquanto relê.
 - **CA-4:** o badge compacto do titlebar e a statusbar continuam
@@ -58,6 +62,14 @@ Alexandre em 2026-07-24)
   de outra conta); vira "—" (ou "login pendente" quando for o caso).
 - **CA-6:** o app continua sem ler credenciais — fonte de dado é só o
   `quota-axi` local, nada de token/endpoint OAuth.
+- **CA-7 (dropdown compacto, decisão do Alexandre 2026-07-24):** a lista de
+  perfis não repete "Perfil OK" em cada linha — perfil saudável renderiza
+  SEM texto de status (linha limpa). Só o perfil COM problema mostra um
+  indicador compacto (ícone de alerta) cujo **hover/tooltip descreve o
+  problema** (ex.: "Junctions com problema"); a ação "Recriar links"
+  permanece VISÍVEL na linha (não dentro do tooltip — ação não vive em
+  tooltip, que some ao mover o mouse). Objetivo: enxugar a lista para caber
+  as duas janelas de cota por perfil sem estufar a altura.
 
 ## Fora de escopo (fica pro US-12 / B8)
 
