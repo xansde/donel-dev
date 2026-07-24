@@ -1,7 +1,8 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
-import type { AppConfigDto, LauncherDefaultsDto, NotificationPreference } from '../shared/config';
+import type { AppConfigDto, LauncherDefaultsDto, NotificationPreference, SessionNamesMap } from '../shared/config';
+import type { StoredSessionName } from '../shared/sessionName';
 import { PRINCIPAL_PROFILE_SLUG } from './profile-manager';
 
 // T015 — ConfigStore formal (FR-007): `%APPDATA%\donel-dev\config.json` (na
@@ -61,6 +62,8 @@ export interface AppConfig {
   readonly activeProfileSlug: string;
   readonly launcherDefaults: LauncherDefaultsDto;
   readonly notificationPreference: NotificationPreference;
+  /** T402 (004) — `sessionId` → nome dado pela UI. Ver `sessionNames` em src/shared/config.ts. */
+  readonly sessionNames: SessionNamesMap;
   /** P1 (tasks.md "Fora deste ciclo": temas) — único valor válido no P0. */
   readonly theme: 'dark';
 }
@@ -74,6 +77,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     activeProfileSlug: PRINCIPAL_PROFILE_SLUG,
     launcherDefaults: DEFAULT_LAUNCHER_DEFAULTS,
     notificationPreference: DEFAULT_NOTIFICATION_PREFERENCE,
+    sessionNames: {},
     theme: 'dark',
   };
 }
@@ -84,6 +88,7 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     projectRoots: config.projectRoots,
     launcherDefaults: config.launcherDefaults,
     notificationPreference: config.notificationPreference,
+    sessionNames: config.sessionNames,
     theme: config.theme,
   };
 }
@@ -184,6 +189,32 @@ function isOneOf<T extends string>(value: unknown, known: readonly T[]): value i
   return typeof value === 'string' && (known as readonly string[]).includes(value);
 }
 
+/**
+ * T402 — sanitiza o mapa `sessionNames` ENTRADA A ENTRADA: uma entrada
+ * malformada (nome vazio, `seenTitle` de tipo errado) é descartada sozinha,
+ * sem levar junto o resto do mapa nem o resto da config (mesmo espírito campo
+ * a campo do `sanitizeAppConfig`). `updatedAt` inválido não invalida a
+ * entrada — é diagnóstico, a precedência do C2 não usa tempo.
+ */
+function sanitizeSessionNames(value: unknown): SessionNamesMap {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+
+  const sanitized: Record<string, StoredSessionName> = {};
+  for (const [sessionId, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!sessionId || typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+    const candidate = entry as Partial<StoredSessionName>;
+    if (typeof candidate.name !== 'string' || !candidate.name.trim()) continue;
+    if (candidate.seenTitle !== null && typeof candidate.seenTitle !== 'string') continue;
+
+    sanitized[sessionId] = {
+      name: candidate.name,
+      seenTitle: candidate.seenTitle ?? null,
+      updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : '',
+    };
+  }
+  return sanitized;
+}
+
 function sanitizeLauncherDefaults(value: unknown, fallback: LauncherDefaultsDto): LauncherDefaultsDto {
   if (typeof value !== 'object' || value === null) return fallback;
   const candidate = value as Partial<LauncherDefaultsDto>;
@@ -219,8 +250,32 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     notificationPreference: isOneOf(candidate.notificationPreference, KNOWN_NOTIFICATION_PREFERENCES)
       ? candidate.notificationPreference
       : defaults.notificationPreference,
+    sessionNames: sanitizeSessionNames(candidate.sessionNames),
     theme: 'dark',
   };
+}
+
+/**
+ * T402 (004) — mutações PURAS do mapa de nomes, no mesmo estilo do
+ * `toggleFavorite`: devolvem um mapa novo, sem I/O (quem chama persiste com
+ * `writeAppConfig`). `entry.seenTitle` carimba o `custom-title` que o `.jsonl`
+ * tinha no instante da escrita — é o insumo do dirty-check do C2
+ * (`resolveSessionName`, src/shared/sessionName.ts).
+ */
+export function setSessionName(
+  sessionNames: SessionNamesMap,
+  sessionId: string,
+  entry: StoredSessionName,
+): SessionNamesMap {
+  return { ...sessionNames, [sessionId]: entry };
+}
+
+/** Remove a entrada da sessão (o "vazio apaga" do C5, e o descarte do caso CLI-vence). No-op se não existir. */
+export function clearSessionName(sessionNames: SessionNamesMap, sessionId: string): SessionNamesMap {
+  if (!(sessionId in sessionNames)) return { ...sessionNames };
+  const next = { ...sessionNames };
+  delete next[sessionId];
+  return next;
 }
 
 /** Toggle puro (sem I/O) — adiciona/remove `path` da lista, sem duplicar. Portado de project-config-store.ts (T007), comportamento idêntico. */

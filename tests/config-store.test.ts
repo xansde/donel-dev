@@ -3,10 +3,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  clearSessionName,
   createSystemConfigIoDeps,
   defaultAppConfig,
   readAppConfig,
   sanitizeAppConfig,
+  setSessionName,
   toAppConfigDto,
   toggleFavorite,
   writeAppConfig,
@@ -37,6 +39,7 @@ describe('defaultAppConfig (puro)', () => {
       activeProfileSlug: 'principal',
       launcherDefaults: { model: 'fable', effort: 'high', permissionMode: 'acceptEdits' },
       notificationPreference: 'permission-only',
+      sessionNames: {},
       theme: 'dark',
     });
   });
@@ -53,8 +56,70 @@ describe('toAppConfigDto (puro)', () => {
       projectRoots: FAKE_ROOTS,
       launcherDefaults: { model: 'fable', effort: 'high', permissionMode: 'acceptEdits' },
       notificationPreference: 'permission-only',
+      sessionNames: {},
       theme: 'dark',
     });
+  });
+
+  // T402 — o renderer resolve o nome exibido (resolveSessionName, T401), então
+  // precisa do mapa; sem ele no DTO a UI não teria como saber o nome custom.
+  it('leva o mapa sessionNames para o renderer', () => {
+    const config: AppConfig = {
+      ...baseDefaults(),
+      sessionNames: { 'abc-123': { name: 'Refatorar', seenTitle: null, updatedAt: '2026-07-24T12:00:00.000Z' } },
+    };
+    expect(toAppConfigDto(config).sessionNames).toEqual({
+      'abc-123': { name: 'Refatorar', seenTitle: null, updatedAt: '2026-07-24T12:00:00.000Z' },
+    });
+  });
+});
+
+// T402 (004-nomear-sessoes) — mutações PURAS do mapa `sessionNames`, no estilo
+// do `toggleFavorite`: I/O fica por fora (writeAppConfig). A entrada guarda o
+// `custom-title` visto no momento da escrita (`seenTitle`) — é o que permite o
+// dirty-check do C2 depois (resolveSessionName, T401).
+describe('setSessionName / clearSessionName (puros)', () => {
+  const NOW = '2026-07-24T15:30:00.000Z';
+
+  it('adiciona uma entrada nova sem mexer nas existentes', () => {
+    const before = { 'outra-sessao': { name: 'Outra', seenTitle: null, updatedAt: NOW } };
+    const after = setSessionName(before, 'abc-123', { name: 'Refatorar', seenTitle: 'do CLI', updatedAt: NOW });
+
+    expect(after).toEqual({
+      'outra-sessao': { name: 'Outra', seenTitle: null, updatedAt: NOW },
+      'abc-123': { name: 'Refatorar', seenTitle: 'do CLI', updatedAt: NOW },
+    });
+  });
+
+  it('não muta o mapa recebido', () => {
+    const before = {};
+    setSessionName(before, 'abc-123', { name: 'X', seenTitle: null, updatedAt: NOW });
+    expect(before).toEqual({});
+  });
+
+  it('sobrescreve a entrada existente da mesma sessão', () => {
+    const before = { 'abc-123': { name: 'Antigo', seenTitle: null, updatedAt: '2026-07-01T00:00:00.000Z' } };
+    const after = setSessionName(before, 'abc-123', { name: 'Novo', seenTitle: 'do CLI', updatedAt: NOW });
+    expect(after['abc-123']).toEqual({ name: 'Novo', seenTitle: 'do CLI', updatedAt: NOW });
+  });
+
+  it('clearSessionName remove só a sessão pedida', () => {
+    const before = {
+      'abc-123': { name: 'Vai sair', seenTitle: null, updatedAt: NOW },
+      'def-456': { name: 'Fica', seenTitle: null, updatedAt: NOW },
+    };
+    expect(clearSessionName(before, 'abc-123')).toEqual({ 'def-456': { name: 'Fica', seenTitle: null, updatedAt: NOW } });
+  });
+
+  it('clearSessionName de sessão inexistente é no-op (não lança)', () => {
+    const before = { 'def-456': { name: 'Fica', seenTitle: null, updatedAt: NOW } };
+    expect(clearSessionName(before, 'nao-existe')).toEqual(before);
+  });
+
+  it('clearSessionName não muta o mapa recebido', () => {
+    const before = { 'abc-123': { name: 'X', seenTitle: null, updatedAt: NOW } };
+    clearSessionName(before, 'abc-123');
+    expect(Object.keys(before)).toEqual(['abc-123']);
   });
 });
 
@@ -85,6 +150,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       activeProfileSlug: 'tecnologia-claude-3',
       launcherDefaults: { model: 'sonnet', effort: 'max', permissionMode: 'plan' },
       notificationPreference: 'all',
+      sessionNames: { 'abc-123': { name: 'Refatorar', seenTitle: 'do CLI', updatedAt: '2026-07-24T12:00:00.000Z' } },
       theme: 'dark',
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -116,8 +182,65 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       activeProfileSlug: defaults.activeProfileSlug, // fallback
       launcherDefaults: { model: 'sonnet', effort: 'high', permissionMode: 'plan' },
       notificationPreference: defaults.notificationPreference, // fallback
+      sessionNames: {}, // ausente no objeto → default
       theme: 'dark',
     });
+  });
+
+  // T402 — a chave é nova: TODO config.json já existente na máquina do
+  // Alexandre não a tem. Se o sanitize a descartasse, o app carregaria sem
+  // nome nenhum; se lançasse, perderia projectRoots/favorites junto.
+  it('config LEGADO sem a chave sessionNames carrega com {} e não perde os demais campos', () => {
+    const defaults = baseDefaults();
+    const legacyShape = {
+      version: 1,
+      projectRoots: ['C:\\meu\\root'],
+      favorites: ['C:\\meu\\projeto'],
+      activeProfileSlug: 'tecnologia-claude-3',
+      launcherDefaults: { model: 'opus', effort: 'max', permissionMode: 'auto' },
+      notificationPreference: 'all',
+      theme: 'dark',
+    };
+    const sanitized = sanitizeAppConfig(legacyShape, defaults);
+
+    expect(sanitized.sessionNames).toEqual({});
+    expect(sanitized.projectRoots).toEqual(['C:\\meu\\root']);
+    expect(sanitized.favorites).toEqual(['C:\\meu\\projeto']);
+    expect(sanitized.activeProfileSlug).toBe('tecnologia-claude-3');
+    expect(sanitized.launcherDefaults).toEqual({ model: 'opus', effort: 'max', permissionMode: 'auto' });
+    expect(sanitized.notificationPreference).toBe('all');
+  });
+
+  it('sessionNames com tipo errado (array, string, null) cai no default {}', () => {
+    const defaults = baseDefaults();
+    expect(sanitizeAppConfig({ ...defaults, sessionNames: ['a'] }, defaults).sessionNames).toEqual({});
+    expect(sanitizeAppConfig({ ...defaults, sessionNames: 'lixo' }, defaults).sessionNames).toEqual({});
+    expect(sanitizeAppConfig({ ...defaults, sessionNames: null }, defaults).sessionNames).toEqual({});
+  });
+
+  it('sessionNames descarta ENTRADA a ENTRADA o que estiver malformado, preservando as boas', () => {
+    const defaults = baseDefaults();
+    const parsed = {
+      ...defaults,
+      sessionNames: {
+        boa: { name: 'Refatorar', seenTitle: 'do CLI', updatedAt: '2026-07-24T12:00:00.000Z' },
+        'boa-sem-seen': { name: 'Sem título do CLI', seenTitle: null, updatedAt: '2026-07-24T12:00:00.000Z' },
+        'ruim-sem-nome': { seenTitle: null, updatedAt: '2026-07-24T12:00:00.000Z' },
+        'ruim-nome-vazio': { name: '   ', seenTitle: null, updatedAt: '2026-07-24T12:00:00.000Z' },
+        'ruim-tipo': 'não é objeto',
+        'ruim-seen-numero': { name: 'X', seenTitle: 7, updatedAt: '2026-07-24T12:00:00.000Z' },
+      },
+    };
+    expect(sanitizeAppConfig(parsed, defaults).sessionNames).toEqual({
+      boa: { name: 'Refatorar', seenTitle: 'do CLI', updatedAt: '2026-07-24T12:00:00.000Z' },
+      'boa-sem-seen': { name: 'Sem título do CLI', seenTitle: null, updatedAt: '2026-07-24T12:00:00.000Z' },
+    });
+  });
+
+  it('entrada sem updatedAt válido ainda carrega (o campo é diagnóstico, não decide precedência)', () => {
+    const defaults = baseDefaults();
+    const parsed = { ...defaults, sessionNames: { abc: { name: 'X', seenTitle: null } } };
+    expect(sanitizeAppConfig(parsed, defaults).sessionNames.abc?.name).toBe('X');
   });
 
   it('launcherDefaults com alias de modelo/esforço/permissão desconhecido cai no default campo a campo', () => {
@@ -358,6 +481,48 @@ describe('readAppConfig / writeAppConfig — I/O real em pasta temporária (inte
 
     const rereadAfterMigration = readAppConfig(filePath, defaults, legacy, io);
     expect(rereadAfterMigration.favorites).toEqual(['C:\\legado-a']);
+  });
+
+  // T402 — CA-6: o nome tem de sobreviver a reiniciar o app, o que na prática
+  // é este round-trip (grava → processo morre → lê de novo).
+  it('sessionNames sobrevive ao round-trip em disco (CA-6)', () => {
+    const config: AppConfig = {
+      ...baseDefaults(),
+      sessionNames: setSessionName({}, 'abc-123', {
+        name: 'Nomear sessões',
+        seenTitle: null,
+        updatedAt: '2026-07-24T15:30:00.000Z',
+      }),
+    };
+    writeAppConfig(filePath, config, io);
+
+    const reread = readAppConfig(filePath, baseDefaults(), legacy, io);
+    expect(reread.sessionNames).toEqual({
+      'abc-123': { name: 'Nomear sessões', seenTitle: null, updatedAt: '2026-07-24T15:30:00.000Z' },
+    });
+  });
+
+  it('config.json LEGADO real no disco (sem a chave) relê com {} e mantém o resto', () => {
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        projectRoots: ['C:\\meu\\root'],
+        favorites: ['C:\\meu\\projeto'],
+        activeProfileSlug: 'tecnologia-claude-3',
+        launcherDefaults: { model: 'opus', effort: 'max', permissionMode: 'auto' },
+        notificationPreference: 'all',
+        theme: 'dark',
+      }),
+      'utf8',
+    );
+
+    const loaded = readAppConfig(filePath, baseDefaults(), legacy, io);
+    expect(loaded.sessionNames).toEqual({});
+    expect(loaded.projectRoots).toEqual(['C:\\meu\\root']);
+    expect(loaded.favorites).toEqual(['C:\\meu\\projeto']);
+    expect(loaded.launcherDefaults).toEqual({ model: 'opus', effort: 'max', permissionMode: 'auto' });
   });
 
   it('config.json corrompido no disco (I/O real) cai nos defaults sem lançar', () => {

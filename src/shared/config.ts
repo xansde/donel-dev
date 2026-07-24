@@ -11,6 +11,7 @@
 // pros dois, só que agora persistidos dentro do MESMO config.json.
 
 import type { EffortLevel, ModelAlias, PermissionMode } from './commandBuilder';
+import type { StoredSessionName } from './sessionName';
 
 export const CONFIG_CHANNELS = {
   get: 'config:get',
@@ -33,11 +34,21 @@ export interface LauncherDefaultsDto {
   readonly permissionMode: PermissionMode;
 }
 
+/**
+ * T402 (004-nomear-sessoes) — `sessionId` → nome que a UI deu à sessão, com o
+ * `custom-title` visto no momento da escrita. Vai para o renderer porque é ele
+ * quem resolve o label exibido (`resolveSessionName`, src/shared/sessionName.ts):
+ * a regra de precedência mora num lugar só, e aba e sidebar consomem o mesmo
+ * valor (CA-5).
+ */
+export type SessionNamesMap = Readonly<Record<string, StoredSessionName>>;
+
 /** Subconjunto do `AppConfig` (main) exposto ao renderer — ver comentário de topo. */
 export interface AppConfigDto {
   readonly projectRoots: readonly string[];
   readonly launcherDefaults: LauncherDefaultsDto;
   readonly notificationPreference: NotificationPreference;
+  readonly sessionNames: SessionNamesMap;
   /** P1 (tasks.md "Fora deste ciclo": temas) — persistido desde já (FR-007), sem UI de troca no P0. */
   readonly theme: 'dark';
 }
