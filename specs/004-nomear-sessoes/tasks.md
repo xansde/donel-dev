@@ -1,9 +1,27 @@
 # Tasks 004 — Nomear sessões (refletir `/rename` + renomear pela UI)
 
-**Status:** PLANEJADO — aguardando OK do Alexandre para implementar (gate de
-execução). **Nenhuma linha de código de produção escrita.** Branch:
-`feature/mvp-p0` (mesma; tudo local, sem push).
+**Status:** **BATCH A e BATCH B ENTREGUES** (2026-07-24) — T401–T410 fechados,
+commitados e empurrados na `feature/mvp-p0`. Batch C (T411–T413, reflexo ao
+vivo) **não iniciado**: espera a validação humana do roteiro
+`roteiro-e2e-batch-b.md`. Branch: `feature/mvp-p0`.
 **Atualizado:** 2026-07-24
+
+> **O que mudou em relação ao plano, durante a execução** (nada de escopo novo):
+> - **T403** — a medição obrigatória mostrou que a janela de cauda de 8 KB
+>   alcançava o `custom-title` de só **44%** dos 317 transcripts reais desta
+>   máquina. Subiu para **64 KB** (99%), o que derrubou a listagem do projeto
+>   mais pesado de 654 ms para 220 ms; como o teto de ~300 ms ainda estourava a
+>   frio, entrou também o **cache por `mtime+size`** (2ª listagem: ~1 ms), como
+>   a task previa. Números em `medicao-t403.md`.
+> - **T408** — um TERCEIRO ponto de consumo do nome resolvido entrou junto dos
+>   dois previstos: a **lista de "Sessões anteriores"** (`PreviousSessions.tsx`).
+>   É onde o US-A de fato acontece (achar sessão de semanas atrás pelo nome); sem
+>   isso a lista continuaria mostrando a 1ª mensagem e a feature perderia o
+>   caso de uso principal.
+> - **T401** — uma borda que o plano não distinguia: `customTitle === null` com
+>   `seenTitle` preenchido (transcript ilegível/apagado) NÃO deixa o CLI vencer.
+>   Leitura que falhou não é um `/rename`, e apagar o nome do usuário por causa
+>   dela seria perda de dado sem ação dele.
 **13 tasks** — `T401`–`T413`, contíguas na ordem de dependência (Batch A → B → C).
 **Referências:** `spec.md` (CA-1..CA-6 + decisões C1..C5 do clarify) e `plan.md`
 (Fatias 0–5) deste diretório. Schema confirmado em transcritos reais:
@@ -28,7 +46,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
 > Nada nesta fase muda a tela. Fecha com `npm run typecheck` + `npm run test`
 > verdes. Não reinstalar o app no fim desta fase — não há nada para ver.
 
-- **T401 — `extractCustomTitle` + `resolveSessionName` (TDD, módulo puro novo)** — `src/shared/sessionName.ts` (novo)
+- **[x] T401 — `extractCustomTitle` + `resolveSessionName` (TDD, módulo puro novo)** — `src/shared/sessionName.ts` (novo)
   `extractCustomTitle(tailText)` devolve o **último** `custom-title` do texto
   (nunca o primeiro), tolerando: primeira linha cortada ao meio (a leitura de
   8 KB corta), JSON inválido, `customTitle` ausente/vazio.
@@ -43,7 +61,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
   `seenTitle: null`), 3 `custom-title` no mesmo texto → último vence, cauda
   cortada no meio de linha, linha não-JSON, `customTitle` string vazia.
 
-- **T402 — `sessionNames` no ConfigStore (TDD na parte pura)** — `src/main/config-store.ts`, `src/shared/config.ts`
+- **[x] T402 — `sessionNames` no ConfigStore (TDD na parte pura)** — `src/main/config-store.ts`, `src/shared/config.ts`
   Chave nova `sessionNames: Record<string, { name; seenTitle; updatedAt }>`
   tocando os **quatro** pontos do padrão do arquivo, senão a chave é
   silenciosamente descartada na leitura: `AppConfig` (`:57-66`),
@@ -57,7 +75,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
   importa: `config.json` **legado sem a chave** carrega com `{}` e não perde
   `projectRoots`/`favorites`/`launcherDefaults`.
 
-- **T403 — Indexer devolve o `customTitle`** (sequencial após T401 — consome o extractor) — `src/main/session-indexer.ts`, `src/shared/sessions.ts`
+- **[x] T403 — Indexer devolve o `customTitle`** (sequencial após T401 — consome o extractor) — `src/main/session-indexer.ts`, `src/shared/sessions.ts`
   `readLastActivity` (`:210`) já lê a cauda de `TAIL_READ_BYTES = 8192`
   (`:67`, uso `:216-219`) — aproveitar **a mesma leitura** para extrair também o
   último `custom-title`, sem segunda passada no arquivo. `SessionSummary`
@@ -77,7 +95,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
   corrompido não regride `corrupted`. **Medição do custo registrada** no
   próprio PR/commit, não "parece rápido".
 
-- **T404 — Expor o `sessionId` ao renderer** [P] com T403 — `src/main/index.ts`, `src/preload/index.ts`, `src/shared/`
+- **[x] T404 — Expor o `sessionId` ao renderer** [P] com T403 — `src/main/index.ts`, `src/preload/index.ts`, `src/shared/`
   O handler `PTY_CHANNELS.create` (`:192`) já calcula o `correlationId`
   (`:212`) e o entrega ao semáforo (`:228`) — passa a **devolvê-lo também na
   resposta do create**. Hoje o id não chega ao renderer por nenhum caminho
@@ -88,7 +106,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
   (main → preload → shared); `tests/session-correlation.test.ts` segue verde
   (a função pura **não** muda).
 
-- **T405 — Gate do Batch A** (sequencial, fecha a fase)
+- **[x] T405 — Gate do Batch A** (sequencial, fecha a fase)
   `npm run typecheck` + `npm run test` COMPLETOS verdes. Auditoria opus ≥95
   (padrão da esteira). **Nada visível mudou** — não empacotar, não reinstalar.
 
@@ -97,7 +115,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
 > Entregável e validável sozinho: renomeia, fecha o app, reabre, o nome está
 > lá (CA-3 + CA-6). **Sem** o reflexo ao vivo ainda (isso é o Batch C).
 
-- **T406 — IPC de escrita + validação de C5 no `main` (TDD na validação)** — `src/main/index.ts` (`registerSessionIpcHandlers`, `:343-347`), `src/preload/index.ts`, `src/shared/sessions.ts`
+- **[x] T406 — IPC de escrita + validação de C5 no `main` (TDD na validação)** — `src/main/index.ts` (`registerSessionIpcHandlers`, `:343-347`), `src/preload/index.ts`, `src/shared/sessions.ts`
   `SESSION_CHANNELS` (`shared/sessions.ts:19-21`) hoje tem só `list`,
   read-only — entra `sessions:setName` (grava/limpa via T402, carimbando
   `seenTitle` com o `customTitle` corrente da sessão). **A validação de C5 mora
@@ -106,7 +124,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
   **DoD:** vitest da validação (módulo puro, sem IPC): trim, 61 chars → 60,
   nome com `\n` → espaço, `"   "` → limpa a entrada. Typecheck verde.
 
-- **T407 — `EditableLabel` no design-system (o gesto, uma vez só)** — `design-system/src/components/…` (novo), `TerminalTab.tsx`, `TerminalTab.module.css`
+- **[x] T407 — `EditableLabel` no design-system (o gesto, uma vez só)** — `design-system/src/components/…` (novo), `TerminalTab.tsx`, `TerminalTab.module.css`
   Aba e sidebar precisam do **mesmo** gesto; escrever duas vezes é garantir dois
   comportamentos diferentes. Componente novo: duplo-clique **ou** F2 abre um
   `input` inline no lugar do label (mesma largura, sem pular layout, texto atual
@@ -124,7 +142,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
   **DoD:** componente renderiza, edita e cancela; `TerminalTab` sem regressão
   visual; **nada** de cor/ícone/indicador novo (`spec.md` §Fora de escopo).
 
-- **T408 — Ligar na App: `updateTab`, nome resolvido, aba + sidebar** (sequencial após T406/T407) — `src/renderer/src/App.tsx`, `src/renderer/src/ProjectSidebar.tsx`
+- **[x] T408 — Ligar na App: `updateTab`, nome resolvido, aba + sidebar** (sequencial após T406/T407) — `src/renderer/src/App.tsx`, `src/renderer/src/ProjectSidebar.tsx`
   `TabState` (`:67-79`) ganha `claudeSessionId?` (do create, T404) e
   `customName?`. **Não existe `updateTab` genérico** — o único update parcial é
   o do pin (`:651`, `setTabs` + `.map` + spread): criar `updateTab(tabId,
@@ -140,7 +158,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
   **DoD:** typecheck + unit COMPLETOS verdes; renomear pela aba reflete na
   sidebar e vice-versa (mesmo valor resolvido, não duas cópias).
 
-- **T409 — Smoke do rename pela UI** [P] com T408 (escrever junto, roda depois) — `tests/smoke/session-rename.spec.ts` (novo)
+- **[x] T409 — Smoke do rename pela UI** [P] com T408 (escrever junto, roda depois) — `tests/smoke/session-rename.spec.ts` (novo)
   Novo spec rodando por `npm run test:smoke`
   (`tests/smoke/playwright.config.ts`), **reusando o isolamento do `%APPDATA%`
   real** de `config-persistence.spec.ts` (vizinho mais próximo: já exercita
@@ -150,7 +168,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
   volta ao fallback**; clicar na aba ainda **ativa**; `×` ainda **fecha**; aba
   shell renomeia; **nome persiste após restart do app** (CA-6).
 
-- **T410 — Gate do Batch B + reinstalação + E2E**
+- **[x] T410 — Gate do Batch B + reinstalação + E2E**
   Suíte COMPLETA verde: `typecheck` + `test` + **`test:smoke`** + o smoke de
   modo dev (`test:smoke:dev` — o StrictMode que já matou PTY uma vez).
   Auditoria opus ≥95. `npm run build` + `npm run dist`, reinstalar, sincronizar

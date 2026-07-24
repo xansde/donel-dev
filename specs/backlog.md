@@ -274,6 +274,25 @@ próprio app seria estável. Fica como decisão de desenho, não como bug.
 > máquina). Lição: sem controle estável, medição de startup do CLI nesta máquina
 > não é confiável — e é a mesma razão de fundo da Causa 2.
 
+**Atualização 24/07 (gate do Batch B da 004) — DOIS vermelhos novos, causa
+nomeada: COTA SEMANAL ESGOTADA.** Na suíte completa rodada nesse gate,
+`model-injection.spec.ts` (T011) e `terminal.spec.ts:281` (semáforo em
+background) falharam. Ambos exigem um **turno real do modelo**, e o pane
+capturado no artefato de falha do `model-injection` traz, impresso pelo próprio
+CLI: `You've hit your weekly limit · resets 1am (America/Sao_Paulo)` +
+`/usage-credits to finish what you're working on`. No `terminal.spec.ts:281` o
+efeito visível é o StateDot parar em **"Permissão pendente"** em vez de
+"Aguardando resposta" — coerente com o CLI exibindo o aviso de limite como
+prompt bloqueante. Não é regressão da 004 (a entrega não toca semáforo, hooks
+nem state machine) e **não** é o teardown da Causa 1, que segue corrigido.
+Re-rodar os dois quando a janela semanal virar; se falharem com cota folgada,
+aí sim é achado novo.
+
+> Nota de método: `terminal.spec.ts:281` **não** roda isolado com `-g` — ele
+> depende do projeto já selecionado por testes anteriores do MESMO arquivo
+> (o "▶ Iniciar" nasce desabilitado sem isso). Para reproduzir, rodar o
+> arquivo inteiro.
+
 **Reclassificação honesta dos vermelhos (era "6 misteriosos", agora nomeados):**
 
 | Onde | Causa | Estado |
@@ -283,6 +302,8 @@ próprio app seria estável. Fica como decisão de desenho, não como bug.
 | `previous-sessions.spec.ts` ×2 | dívida T013 (restauração de sessões) — asserções reais de feature | aberta, fora do B11 |
 | `profiles.spec.ts` T014 (corpo) | Causa 2 — depende de sessão claude real | **aberta, decisão de desenho** |
 | `tabs-lifecycle.spec.ts:174` | flake de contenção (passa isolado em 9,4 s) | mitigada na rodada 6 |
+| `model-injection.spec.ts` T011 | **cota semanal esgotada** (24/07) — precisa de turno real | aberta, ambiental |
+| `terminal.spec.ts:281` | **cota semanal esgotada** (24/07) — dot para em "Permissão pendente" | aberta, ambiental |
 
 **O risco original do B11 está morto:** não há mais "vermelho misterioso" que
 possa esconder uma regressão nova — cada um tem causa nomeada e verificada.
