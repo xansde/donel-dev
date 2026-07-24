@@ -82,6 +82,9 @@ const donelApi: DonelApi = {
   sessions: {
     list: (projectPath: string) =>
       ipcRenderer.invoke(SESSION_CHANNELS.list, projectPath) as Promise<SessionSummaryDto[]>,
+    // T406 (004) — grava/limpa o nome dado pela UI. `name` vazio apaga (C5).
+    setName: (sessionId: string, name: string, seenTitle: string | null) =>
+      ipcRenderer.invoke(SESSION_CHANNELS.setName, sessionId, name, seenTitle) as Promise<AppConfigDto>,
   },
 
   profiles: {

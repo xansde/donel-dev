@@ -35,6 +35,31 @@ export interface ResolveSessionNameInput {
 
 const CUSTOM_TITLE_TYPE = 'custom-title';
 
+/** Decisão C5 do clarify. A aba é estreita; o dado é cortado aqui e a UI ainda trunca com ellipsis. */
+export const SESSION_NAME_MAX_LENGTH = 60;
+
+/**
+ * T406 — normaliza um nome digitado na UI segundo o C5: `trim`, quebras de
+ * linha (e tabs) viram um espaço, corte em 60 caracteres. Devolve `null`
+ * quando não sobra nada — e `null` significa **apagar o nome**, a válvula de
+ * escape do C5 para voltar ao fallback (nome do projeto / 1ª mensagem).
+ *
+ * Vive no `shared` porque as duas pontas precisam da MESMA regra: a UI valida
+ * para dar feedback imediato, o `main` valida porque é ele quem persiste
+ * (nunca confiar só na validação do renderer). Tolera valor não-string —
+ * um IPC malformado não deve derrubar o handler.
+ */
+export function normalizeSessionName(raw: string): string | null {
+  if (typeof raw !== 'string') return null;
+
+  const singleLine = raw.replace(/[\r\n\t]+/g, ' ').trim();
+  if (!singleLine) return null;
+
+  const cut = singleLine.length > SESSION_NAME_MAX_LENGTH ? singleLine.slice(0, SESSION_NAME_MAX_LENGTH) : singleLine;
+  const trimmed = cut.trim();
+  return trimmed || null;
+}
+
 /**
  * Último `custom-title` de um trecho de JSONL, ou `null`.
  *

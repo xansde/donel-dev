@@ -27,7 +27,20 @@ export type {
 } from './profiles';
 
 export { CONFIG_CHANNELS } from './config';
-export type { AppConfigDto, DonelConfigApi, LauncherDefaultsDto, NotificationPreference } from './config';
+export type { AppConfigDto, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, SessionNamesMap } from './config';
+
+// 004-nomear-sessoes — resolução do nome exibido de uma sessão (T401) e
+// validação do nome digitado (T406). Usados no main (persistência) e no
+// renderer (label da aba e da sidebar).
+export {
+  SESSION_NAME_MAX_LENGTH,
+  extractCustomTitle,
+  extractCustomTitleFromLine,
+  normalizeSessionName,
+  reconcileStoredName,
+  resolveSessionName,
+} from './sessionName';
+export type { ResolveSessionNameInput, StoredSessionName } from './sessionName';
 
 /** Nomes dos canais IPC do domínio PTY (plan.md linha 37). */
 export const PTY_CHANNELS = {

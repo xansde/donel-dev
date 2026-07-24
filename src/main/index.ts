@@ -19,6 +19,7 @@ import type {
 import {
   CLAUDE_NOT_FOUND_PREFIX,
   CONFIG_CHANNELS,
+  normalizeSessionName,
   PROFILE_CHANNELS,
   PROJECT_CHANNELS,
   PTY_CHANNELS,
@@ -27,12 +28,14 @@ import {
 } from '../shared';
 import { createSystemResolveDeps, resolveClaudeExecutable } from './claude-executable';
 import {
+  clearSessionName,
   CONFIG_FILE_NAME,
   createSystemConfigIoDeps,
   defaultAppConfig,
   LEGACY_ACTIVE_PROFILE_FILE_NAME,
   LEGACY_PROJECT_CONFIG_FILE_NAME,
   readAppConfig,
+  setSessionName,
   toAppConfigDto,
   toggleFavorite,
   writeAppConfig,
@@ -347,6 +350,38 @@ function registerSessionIpcHandlers(): void {
   ipcMain.handle(SESSION_CHANNELS.list, async (_event, projectPath: string): Promise<SessionSummaryDto[]> => {
     return indexProjectSessions(projectPath);
   });
+
+  /**
+   * T406 (004) — primeira escrita do domínio de sessões. A validação do C5
+   * (`normalizeSessionName`) roda AQUI, não só na UI, porque é este handler
+   * que persiste: nome vazio depois do trim apaga a entrada; senão grava
+   * `{ name, seenTitle, updatedAt }`, onde `seenTitle` é o `custom-title` que a
+   * UI exibia na hora da edição (insumo do dirty-check do C2). `sessionId`
+   * vazio é ignorado — aba `shell` não tem sessão do Claude e nomeia só em
+   * memória (C4), então nunca deveria chegar aqui.
+   */
+  ipcMain.handle(
+    SESSION_CHANNELS.setName,
+    (_event, sessionId: string, name: string, seenTitle: string | null): AppConfigDto => {
+      if (typeof sessionId !== 'string' || !sessionId) return toAppConfigDto(appConfig);
+
+      const normalized = normalizeSessionName(name);
+      const stampedSeenTitle = typeof seenTitle === 'string' && seenTitle ? seenTitle : null;
+
+      const sessionNames =
+        normalized === null
+          ? clearSessionName(appConfig.sessionNames, sessionId)
+          : setSessionName(appConfig.sessionNames, sessionId, {
+              name: normalized,
+              seenTitle: stampedSeenTitle,
+              updatedAt: new Date().toISOString(),
+            });
+
+      appConfig = { ...appConfig, sessionNames };
+      persistAppConfig();
+      return toAppConfigDto(appConfig);
+    },
+  );
 }
 
 /** Sempre inclui o Principal + varre `~/.claude-profiles/*` de novo a cada chamada (mesmo espírito de `listProjectsWithFavorites` — lista pequena, I/O local, sem necessidade de cache próprio aqui). */

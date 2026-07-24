@@ -16,8 +16,12 @@
 // transcript, fora do escopo desta task). Ver "Não verificado" no dossiê da
 // T013.
 
+import type { AppConfigDto } from './config';
+
 export const SESSION_CHANNELS = {
   list: 'sessions:list',
+  /** T406 (004-nomear-sessoes) — primeira ESCRITA deste domínio; grava/limpa o nome dado pela UI no ConfigStore. O `.jsonl` do Claude segue somente-leitura (decisão C1). */
+  setName: 'sessions:setName',
 } as const;
 
 export interface SessionSummaryDto {
@@ -38,6 +42,15 @@ export interface SessionSummaryDto {
 export interface DonelSessionsApi {
   /** Índice das sessões anteriores do projeto (FR-004, CA-2), ordenado por mtime desc; [] se o projeto nunca abriu sessão ou em erro de disco (SessionIndexer nunca lança). */
   list(projectPath: string): Promise<SessionSummaryDto[]>;
+  /**
+   * T406 (004) — grava o nome que o usuário digitou para uma sessão `claude`
+   * (CA-3/CA-6). `name` vazio (ou só espaços) **apaga** a entrada e o nome
+   * volta ao fallback — é a válvula de escape do C5. `seenTitle` é o
+   * `custom-title` que a UI estava exibindo no momento da edição: é o que
+   * alimenta o dirty-check do C2 depois (um `/rename` posterior no CLI vence).
+   * Devolve o config atualizado, no mesmo padrão dos canais `config:set*`.
+   */
+  setName(sessionId: string, name: string, seenTitle: string | null): Promise<AppConfigDto>;
 }
 
 const TAB_NAME_MAX_LENGTH = 40;

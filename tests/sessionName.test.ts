@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SESSION_NAME_MAX_LENGTH,
   extractCustomTitle,
+  normalizeSessionName,
   reconcileStoredName,
   resolveSessionName,
   type StoredSessionName,
@@ -138,6 +140,57 @@ describe('resolveSessionName — dirty-check do C2', () => {
     expect(
       resolveSessionName({ fallback: 'donel-dev', customTitle: null, stored: stored('   ', null) }),
     ).toBe('donel-dev');
+  });
+});
+
+// T406 — validação do C5. Mora aqui (módulo puro, compartilhado) porque quem
+// PERSISTE é o main: a UI valida para dar feedback, o main valida porque é ele
+// que grava. `null` significa "apagar o nome" — a válvula de escape do C5 para
+// voltar ao fallback.
+describe('normalizeSessionName — regras do C5', () => {
+  it('faz trim', () => {
+    expect(normalizeSessionName('  Refatorar o indexer  ')).toBe('Refatorar o indexer');
+  });
+
+  it('corta em 60 caracteres', () => {
+    const long = 'a'.repeat(61);
+    const normalized = normalizeSessionName(long);
+    expect(normalized).toHaveLength(SESSION_NAME_MAX_LENGTH);
+    expect(normalized).toBe('a'.repeat(60));
+  });
+
+  it('não mexe em nome de exatamente 60 caracteres', () => {
+    const exact = 'b'.repeat(60);
+    expect(normalizeSessionName(exact)).toBe(exact);
+  });
+
+  it('quebras de linha (\\n e \\r\\n) viram espaço, sem virar espaço duplo', () => {
+    expect(normalizeSessionName('linha um\nlinha dois')).toBe('linha um linha dois');
+    expect(normalizeSessionName('linha um\r\nlinha dois')).toBe('linha um linha dois');
+    expect(normalizeSessionName('a\n\n\nb')).toBe('a b');
+    expect(normalizeSessionName('a\tb')).toBe('a b');
+  });
+
+  it('string vazia e só-espaços → null (apaga o nome, volta ao fallback)', () => {
+    expect(normalizeSessionName('')).toBeNull();
+    expect(normalizeSessionName('   ')).toBeNull();
+    expect(normalizeSessionName('\n\n')).toBeNull();
+    expect(normalizeSessionName('\t \r\n ')).toBeNull();
+  });
+
+  it('não deixa espaço sobrando quando o corte de 60 cai num espaço', () => {
+    const raw = `${'c'.repeat(59)} palavra cortada`;
+    expect(normalizeSessionName(raw)).toBe('c'.repeat(59));
+  });
+
+  it('preserva acento e emoji (o corte é por caractere, não por byte)', () => {
+    expect(normalizeSessionName('  Sessões — investigação ✅  ')).toBe('Sessões — investigação ✅');
+  });
+
+  it('valor não-string (vindo de IPC malformado) → null, sem lançar', () => {
+    expect(normalizeSessionName(undefined as unknown as string)).toBeNull();
+    expect(normalizeSessionName(42 as unknown as string)).toBeNull();
+    expect(normalizeSessionName(null as unknown as string)).toBeNull();
   });
 });
 
