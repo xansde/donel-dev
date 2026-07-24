@@ -32,8 +32,18 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  // FIX B11 (2026-07-24) — mesmo achado de `profiles.spec.ts` e
+  // `tabs-lifecycle.spec.ts`: a falha registrada como "drift do CLI" era o
+  // `afterAll` estourando os 30s default no `electronApp.close()`, com a
+  // sessão claude real deste teste ainda viva. Folga só neste hook (não
+  // mascara asserção, não é retry) + `finally` para o diretório isolado nunca
+  // ficar órfão se o close estourar mesmo assim.
+  test.setTimeout(90_000);
+  try {
+    await electronApp.close();
+  } finally {
+    removeIsolatedUserDataDir(userDataDir);
+  }
 });
 
 // FIX (feedback E2E rodada 3, "painel lateral 'Lançar sessão' fixo rouba

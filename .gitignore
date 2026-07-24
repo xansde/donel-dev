@@ -7,3 +7,9 @@ release/
 .env
 .env.*
 test-results/
+
+# Sondas exploratórias (spikes de investigação — ex.: B11, TTFB do CLI,
+# junctions de perfil). São one-off, ficam locais de propósito: não são
+# suíte de teste nem evidência versionada.
+probe-*
+tests/probe/

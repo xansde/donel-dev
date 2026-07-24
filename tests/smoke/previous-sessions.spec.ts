@@ -154,10 +154,22 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
-  removeSessionFile(resumeSeed?.filePath);
-  removeSessionFile(forkSeed?.filePath);
+  // FIX B11 (2026-07-24) — mesmo endurecimento de `profiles.spec.ts` /
+  // `model-injection.spec.ts` / `tabs-lifecycle.spec.ts`: folga só neste hook
+  // para o `electronApp.close()` sob carga.
+  // O `finally` aqui é MAIS crítico que nos outros arquivos: os dois seeds
+  // são `.jsonl` sintéticos escritos sob o `homedir()` REAL do usuário (ver
+  // nota de LGPD no topo). Sem `finally`, um close que estoura deixava esses
+  // arquivos permanentes em `~/.claude/projects/` — resíduo no ambiente de
+  // produção do próprio usuário, não só em %TEMP%.
+  test.setTimeout(90_000);
+  try {
+    await electronApp.close();
+  } finally {
+    removeIsolatedUserDataDir(userDataDir);
+    removeSessionFile(resumeSeed?.filePath);
+    removeSessionFile(forkSeed?.filePath);
+  }
 });
 
 async function openPreviousSessionsDialog() {

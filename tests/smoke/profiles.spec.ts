@@ -75,9 +75,33 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
-  cleanupE2eProfileDir();
+  // FIX B11 (medido em 2026-07-24, não presumido): este arquivo falhava com
+  // `"afterAll" hook timeout of 30000ms exceeded` — o CORPO do teste passava.
+  // O backlog atribuía a falha a "drift do CLI v2.1.219" (a asserção de
+  // "Let's get started"), o que foi REFUTADO por sonda direta: o CLI v2.1.219
+  // ainda imprime exatamente essa string, com apóstrofo ASCII (U+0027), num
+  // perfil fresco. A causa real é o teardown: `electronApp.close()` espera o
+  // processo Electron morrer de verdade, incluindo o teardown do PTY da
+  // sessão claude que este teste deixa VIVA no wizard de tema — sob carga
+  // (várias sessões claude concorrentes, comum neste ambiente) isso passa dos
+  // 30s default de hook. Mesmo achado e mesmo fix já aplicados em
+  // `tabs-lifecycle.spec.ts` na rodada 6; este arquivo tinha ficado de fora.
+  test.setTimeout(90_000);
+  // `finally` para as duas limpezas: se o close estourar mesmo com a folga,
+  // o diretório isolado e o perfil e2e não podem ficar órfãos (mesmo achado
+  // da auditoria da rodada 6 sobre resíduo em %TEMP%).
+  try {
+    const t0 = Date.now();
+    await electronApp.close();
+    console.log(`[B11-PROBE] close: ${Date.now() - t0} ms`);
+  } finally {
+    const t1 = Date.now();
+    removeIsolatedUserDataDir(userDataDir);
+    console.log(`[B11-PROBE] removeIsolatedUserDataDir: ${Date.now() - t1} ms`);
+    const t2 = Date.now();
+    cleanupE2eProfileDir();
+    console.log(`[B11-PROBE] cleanupE2eProfileDir: ${Date.now() - t2} ms`);
+  }
 });
 
 test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar sessão claude isolada (tela de login pedida, sem login humano — FR-005/FR-012/CA-3)', async () => {
