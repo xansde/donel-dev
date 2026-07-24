@@ -81,17 +81,39 @@ test.afterAll(async () => {
 });
 
 test('terminal spawns a real claude session inside Electron', async () => {
+  test.setTimeout(60_000);
+
   // FIX (decisão A, 2026-07-23) — o app nasce com ZERO abas agora (empty
   // state, App.tsx `INITIAL_TABS`); a antiga aba "Sessão" default (cwd=home,
-  // spawnada sozinha no boot) deixou de existir. Este teste ainda quer
-  // provar o mesmo cenário original (sessão claude em `os.homedir()`, sem
-  // projeto selecionado) — reproduz isso clicando direto no corpo do "＋
-  // Nova sessão" (handleQuickNewClaudeSession, App.tsx), que sem nenhum
-  // projeto selecionado ainda spawna exatamente esse cenário. Esta é a
-  // PRIMEIRA aba de toda a suíte deste arquivo — os testes seguintes
-  // dependem dela existir e ficar em foco.
+  // spawnada sozinha no boot) deixou de existir. Este teste queria provar o
+  // mesmo cenário original (sessão claude em `os.homedir()`, sem projeto
+  // selecionado) clicando direto no corpo do "＋ Nova sessão".
+  //
+  // FIX (auditoria rodada 6 ciclo 2, achado media "CTA do titlebar reproduz
+  // o bug do empty state em 1 clique") — esse cenário (`cwd: undefined` ->
+  // `os.homedir()` -> "Quick safety check" preso) deixou de ser alcançável
+  // por QUALQUER caminho da UI: o guard que antes só protegia o CTA do empty
+  // state agora vive dentro do próprio `handleQuickNewClaudeSession`
+  // (App.tsx), compartilhado pelo corpo do "＋ Nova sessão" do titlebar. Sem
+  // `lastLaunch`/`selectedProjectPath` (exatamente o estado deste teste — é
+  // a PRIMEIRA aba de toda a suíte), o clique abre o Launcher em vez de
+  // spawnar direto. Escolhe `ai-rats` (repo real sob `~/seazone`, não
+  // `donel-dev`) DE PROPÓSITO — `donel-dev` fica reservado pro teste
+  // seguinte (T007, abaixo), que precisa abrir esse projeto pela SIDEBAR
+  // pela primeira vez nesta run pra provar que a sidebar cria uma aba NOVA
+  // (`handleOpenProject` reaproveita a aba existente quando o `cwd` já tem
+  // uma — se este teste também usasse `donel-dev`, o clique da sidebar no
+  // T007 só focaria esta aba em vez de provar a criação).
   await expect(window.locator('[data-testid="empty-state"]')).toBeVisible();
   await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
+
+  const launcher = window.locator('[data-testid="launcher"]');
+  await expect(launcher).toBeVisible();
+  await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
+  await window.getByRole('option', { name: 'ai-rats', exact: true }).click();
+  await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
+  await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
+
   await expect(window.locator('[data-testid="empty-state"]')).toHaveCount(0);
 
   const terminalPane = window.locator('[data-testid="terminal-pane"]');
@@ -108,12 +130,11 @@ test('terminal spawns a real claude session inside Electron', async () => {
     expect(text).not.toContain('Falha ao iniciar');
   }).toPass({ timeout: 20_000 });
 
-  // cwd = home (T005 não tem contexto de projeto ainda, isso chega no T007)
-  // pode disparar o "Quick safety check" (diálogo de confiança) do próprio
-  // CLI na primeira vez que essa pasta é usada — Enter aceita a opção
-  // default ("1. Yes, trust folder"). Se a pasta já estiver confiável (ex.:
-  // reexecução), o terminal já está no prompt normal e esse Enter no campo
-  // de input vazio não tem efeito nenhum.
+  // `ai-rats` pode não ter sido usada pelo CLI real nesta máquina ainda —
+  // pode disparar o "Quick safety check" (diálogo de confiança) na primeira
+  // vez que essa pasta é usada; Enter aceita a opção default ("1. Yes, trust
+  // folder"). Se a pasta já estiver confiável, o terminal já está no prompt
+  // normal e esse Enter no campo de input vazio não tem efeito nenhum.
   await terminalPane.click();
   if ((await terminalPane.innerText()).includes('trust this folder')) {
     await window.keyboard.press('Enter');
@@ -323,12 +344,11 @@ test('semáforo: o StateDot de uma aba em BACKGROUND muda de trabalhando pra agu
   await window.keyboard.type('Responda só OK, sem mais nada.', { delay: 30 });
   await window.keyboard.press('Enter');
 
-  // Tira o foco da aba ANTES do turno terminar — troca pra "Nova sessão"
-  // (decisão A, 2026-07-23: a primeira aba deste arquivo, criada no início
-  // do 1º teste via corpo do "＋ Nova sessão"; substitui a antiga aba
-  // "Sessão" default do boot, que deixou de existir). O resto do teste
-  // nunca mais toca `newTab`.
-  const defaultTab = window.locator('[role="tab"]', { hasText: 'Nova sessão' }).first();
+  // Tira o foco da aba ANTES do turno terminar — troca pra "ai-rats" (a
+  // primeira aba deste arquivo, criada no início do 1º teste via Launcher —
+  // ver comentário lá, auditoria rodada 6 ciclo 2). O resto do teste nunca
+  // mais toca `newTab`.
+  const defaultTab = window.locator('[role="tab"]', { hasText: 'ai-rats' }).first();
   await defaultTab.click();
   await expect(newTab).toHaveAttribute('aria-selected', 'false');
   await expect(defaultTab).toHaveAttribute('aria-selected', 'true');

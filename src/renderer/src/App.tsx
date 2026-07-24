@@ -522,8 +522,30 @@ export function App(): React.JSX.Element {
   // item de menu "Sessão Claude" — mesma ação, dois gatilhos). Sem
   // lançamento anterior nesta sessão do app, cai pros defaults do Launcher
   // (sem args explícitos = CommandBuilder omite tudo, T006) no projeto
-  // selecionado (ou home, se nenhum projeto foi aberto ainda).
+  // selecionado.
+  //
+  // FIX (auditoria rodada 6 ciclo 2, achado media "CTA do titlebar reproduz
+  // o bug do empty state em 1 clique") — ANTES este era o handler "cru": sem
+  // `lastLaunch` e sem `selectedProjectPath` (exatamente o estado de boot),
+  // caía em `cwd: undefined` -> `pty-manager.ts` `options.cwd ??
+  // os.homedir()` -> o "Quick safety check" preso, semáforo `undefined` pra
+  // sempre. Só o CTA do empty state (`handleEmptyStateNewSession`, agora
+  // removido) tinha o guard — o botão do titlebar, visível na MESMA tela e
+  // fisicamente ao lado do empty state, continuava reproduzindo o defeito
+  // original a um clique. Guard movido pra CÁ: os dois gatilhos (corpo do
+  // "＋ Nova sessão" do titlebar E o CTA "Nova sessão" do empty state, que
+  // agora chama esta mesma função) passam a abrir o Launcher quando não há
+  // nenhum lançamento/projeto anterior, em vez de spawnar em home sem
+  // confiança de pasta — um handler só, sem cenário travado alcançável por
+  // nenhum caminho da UI. `terminal.spec.ts`/`profiles.spec.ts`/
+  // `shell.spec.ts` foram atualizados pra escolher um projeto no Launcher
+  // (não reproduzem mais o cenário "sessão em home sem projeto", que deixou
+  // de ser alcançável de propósito).
   const handleQuickNewClaudeSession = (): void => {
+    if (!lastLaunch && !selectedProjectPath) {
+      setLauncherOpen(true);
+      return;
+    }
     if (lastLaunch) {
       addTab({
         name: lastLaunch.name,
@@ -543,34 +565,6 @@ export function App(): React.JSX.Element {
       pinned: false,
       sessionType: 'claude',
     });
-  };
-
-  // FIX (auditoria rodada 6, achado media "CTA do empty state reproduz o
-  // bug em 1 clique") — variante de `handleQuickNewClaudeSession` usada SÓ
-  // pelo botão "Nova sessão" DENTRO do empty state (ver JSX mais abaixo).
-  // Sem `lastLaunch` e sem `selectedProjectPath`, o handler original cai em
-  // `cwd: undefined` -> `pty-manager.ts` `options.cwd ?? os.homedir()` -> o
-  // MESMO "Quick safety check" preso que a decisão A (comentário de
-  // `INITIAL_TABS`) eliminou do BOOT mas continuava alcançável a um clique
-  // do próprio empty state, que é o PRIMEIRO contato do usuário com o app
-  // (boot limpo, nenhum projeto escolhido ainda). Em vez de reproduzir o
-  // cenário travado, abre o Launcher (escolha de projeto) — opção (a) do
-  // achado, exatamente o fluxo que o painel já resolve pra qualquer outro
-  // lançamento configurado.
-  //
-  // O corpo do "＋ Nova sessão" do titlebar (`handleQuickNewClaudeSession`
-  // direto, sem essa variante) MANTÉM o comportamento antigo de propósito —
-  // é um atalho ad hoc já testado/documentado como intencional
-  // (terminal.spec.ts, profiles.spec.ts, shell.spec.ts: sessão rápida em
-  // home sem navegar a nenhum projeto). Redesenhar esse caminho compartilhado
-  // reabriria toda a suíte que depende dele; o achado é especificamente
-  // sobre o CTA do empty state, não sobre o atalho do titlebar.
-  const handleEmptyStateNewSession = (): void => {
-    if (!lastLaunch && !selectedProjectPath) {
-      setLauncherOpen(true);
-      return;
-    }
-    handleQuickNewClaudeSession();
   };
 
   // T010 — FR-008: aba de terminal comum (powershell.exe) no diretório do
@@ -1058,7 +1052,7 @@ export function App(): React.JSX.Element {
                     ambiguidade de `getByRole('button', { name: ... })` pra
                     qualquer consumidor (smokes, leitor de tela) enquanto os
                     dois estiverem visíveis ao mesmo tempo. */}
-                <Button variant="primary" onClick={handleEmptyStateNewSession}>
+                <Button variant="primary" onClick={handleQuickNewClaudeSession}>
                   Nova sessão
                 </Button>
               </div>

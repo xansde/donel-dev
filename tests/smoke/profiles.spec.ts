@@ -92,7 +92,24 @@ test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar 
   // uma aba já aberta) — reproduz isso clicando no corpo do "＋ Nova sessão"
   // (handleQuickNewClaudeSession) já aqui no início, com Principal ainda
   // sendo o único perfil que existe.
+  //
+  // FIX (auditoria rodada 6 ciclo 2, achado media "CTA do titlebar reproduz
+  // o bug do empty state em 1 clique") — sem `lastLaunch`/
+  // `selectedProjectPath` (boot limpo, primeiro clique de toda a suíte), o
+  // clique agora abre o Launcher (guard movido pra dentro de
+  // `handleQuickNewClaudeSession`) em vez de spawnar direto em home — escolhe
+  // `donel-dev` (já confiável nesta máquina). Isso também grava `lastLaunch`,
+  // então o clique do passo 5 mais abaixo (mesmo corpo do "＋ Nova sessão")
+  // volta a spawnar direto com essa config, sem reabrir o Launcher — nenhuma
+  // mudança necessária lá.
   await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
+  const launcher = window.locator('[data-testid="launcher"]');
+  await expect(launcher).toBeVisible();
+  await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
+  await window.getByRole('option', { name: 'donel-dev', exact: true }).click();
+  await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
+  await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
+
   const principalTab = window.locator('[role="tab"]').last();
   await expect(principalTab).toBeVisible();
   await expect(principalTab).toHaveAttribute('aria-selected', 'true');
@@ -159,7 +176,11 @@ test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar 
   const statusbarAccount = window.locator('[data-testid="statusbar-account"]');
   await expect(statusbarAccount).toContainText('Sessão: Principal');
 
-  // 5. Spawna uma sessão claude nova (corpo do "＋ Nova sessão" — defaults, sem projeto/modelo específico, já que a prova é o estado de auth, não o comportamento do modelo).
+  // 5. Spawna uma sessão claude nova (corpo do "＋ Nova sessão" — reaproveita
+  // o `lastLaunch` gravado no passo 0 acima, auditoria rodada 6 ciclo 2:
+  // não é mais "sem projeto/modelo específico", mas isso não importa pra
+  // esta prova — o que valida o isolamento (passo 6) é o estado de AUTH da
+  // sessão nova, independente de cwd/modelo).
   await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
 
   const newTab = window.locator('[role="tab"]').last();

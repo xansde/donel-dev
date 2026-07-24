@@ -101,7 +101,10 @@ test('app abre com zero abas e empty state; abrir sessão faz o empty state sumi
 });
 
 test('CTA "Nova sessão" do empty state abre o Launcher (sem projeto/lastLaunch, em vez de reproduzir o bug em 1 clique); escolher um projeto lança uma sessão claude saudável (auditoria rodada 6, achado media)', async () => {
-  test.setTimeout(60_000);
+  // FIX (auditoria rodada 6 ciclo 2) — 120s, não 60s: a nova prova de
+  // liveness real ("accept edits on" no buffer, abaixo) soma até 60s ao
+  // orçamento anterior de 20s (texto não-vazio) + interações de UI.
+  test.setTimeout(120_000);
 
   // Estado herdado do teste anterior (mesma janela/app, mesmo arquivo):
   // zero abas de novo, empty state visível. A aba shell do teste 1 usou o
@@ -120,10 +123,16 @@ test('CTA "Nova sessão" do empty state abre o Launcher (sem projeto/lastLaunch,
   // `os.homedir()` -> "Quick safety check" preso, semáforo `undefined` pra
   // sempre — e o teste PASSAVA mesmo assim, porque a única asserção era
   // "terminal-pane não vazio, sem CLAUDE_NOT_FOUND" (não provava nada sobre o
-  // estado ÚTIL da sessão). App.tsx agora abre o Launcher em vez de
-  // reproduzir esse cenário (`handleEmptyStateNewSession`) — o botão do
-  // titlebar (corpo do "＋ Nova sessão") continua com o atalho antigo de
-  // propósito, coberto por terminal.spec.ts/profiles.spec.ts/shell.spec.ts.
+  // estado ÚTIL da sessão).
+  //
+  // FIX (auditoria rodada 6 ciclo 2, achado media "botão do titlebar continua
+  // reproduzindo o bug em 1 clique") — o guard que abre o Launcher em vez de
+  // spawnar em home foi movido pra DENTRO de `handleQuickNewClaudeSession`
+  // (App.tsx) — não existe mais uma variante `handleEmptyStateNewSession`
+  // separada; o CTA deste teste e o corpo do "＋ Nova sessão" do titlebar
+  // agora chamam a MESMA função, e nenhum dos dois reproduz mais o cenário
+  // travado (terminal.spec.ts/profiles.spec.ts/shell.spec.ts também deixaram
+  // de reproduzi-lo — atualizados na mesma rodada).
   await emptyState.getByRole('button', { name: 'Nova sessão' }).click();
 
   const launcher = window.locator('[data-testid="launcher"]');
@@ -159,19 +168,34 @@ test('CTA "Nova sessão" do empty state abre o Launcher (sem projeto/lastLaunch,
   }).toPass({ timeout: 20_000 });
 
   // FIX (auditoria rodada 6, achado media "teste passa com a sessão presa no
-  // diálogo") — asserção sobre o estado final ÚTIL da sessão (não só "tem
-  // texto"): o hint da toolbar (SessionDetails.tsx, App.tsx
-  // `possiblyBlockedOnPrompt`) prova que a sessão NÃO ficou presa — se
-  // tivesse ficado (o cenário do bug original), o hint mudaria pro texto de
-  // diagnóstico ("O CLI pode estar aguardando resposta...") depois de ~20s.
-  // `donel-dev` já é confiável nesta máquina, então o hint esperado é o de
-  // sessão pronta (toolbar Modelo/Esforço segue desabilitada por design até
-  // o primeiro turno, FR-011 — não mandamos nenhum prompt aqui, custo de
-  // cota; ver `tests/possiblyBlockedOnPrompt.test.ts` pra cobertura de
-  // unidade dos dois sentidos dessa decisão).
+  // diálogo") — tentativa original: asserir o hint da toolbar
+  // (SessionDetails.tsx) esperando que ele mudasse pro texto de diagnóstico
+  // se a sessão tivesse ficado presa. NÃO funcionava: `statusHint` devolve
+  // "Sessão pronta…" assim que `alive === true`, mesmo ANTES do limiar de
+  // `POSSIBLY_BLOCKED_THRESHOLD_MS` (20s, App.tsx) — `toHaveText` resolve no
+  // primeiro match, então a asserção passava em ~1s independente de haver
+  // diálogo de confiança preso no buffer ou não (achado media da auditoria
+  // rodada 6 ciclo 2, medido em ~900ms de execução real).
+  //
+  // FIX (auditoria rodada 6 ciclo 2) — prova real de liveness em vez do hint
+  // como proxy: espera "accept edits on" aparecer no BUFFER do terminal
+  // (mesmo sinal que terminal.spec.ts usa pro CA-6, linha ~318-320) — texto
+  // que só aparece depois que o CLI passou de qualquer banner/diálogo
+  // inicial e está de fato pronto pra receber teclas. Se a sessão tivesse
+  // ficado presa no "Quick safety check" (o cenário do bug original), esse
+  // texto NUNCA apareceria e o `toPass` estouraria o timeout com FALHA real
+  // — ao contrário do hint, que passava de qualquer jeito.
+  await expect(async () => {
+    expect(await terminalPane.innerText()).toContain('accept edits on');
+  }).toPass({ timeout: 60_000 });
+
+  // Com a liveness real provada acima, o hint da toolbar como confirmação
+  // adicional (não mais a única prova) — `donel-dev` já é confiável nesta
+  // máquina, então o texto esperado é o de sessão pronta (toolbar
+  // Modelo/Esforço segue desabilitada por design até o primeiro turno,
+  // FR-011 — não mandamos nenhum prompt aqui, custo de cota; ver
+  // `tests/possiblyBlockedOnPrompt.test.ts` pra cobertura de unidade dos
+  // dois sentidos dessa decisão).
   const hint = window.locator('[data-testid="session-details-hint"]');
-  await expect(hint).toHaveText(
-    'Sessão pronta — digite no terminal; modelo/esforço liberam após o primeiro turno.',
-    { timeout: 25_000 },
-  );
+  await expect(hint).toHaveText('Sessão pronta — digite no terminal; modelo/esforço liberam após o primeiro turno.');
 });

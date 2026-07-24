@@ -30,6 +30,8 @@ test.afterAll(async () => {
 });
 
 test('o shell inteiro não tem scrollbar no documento (body.scrollHeight === body.clientHeight)', async () => {
+  test.setTimeout(60_000);
+
   // FIX (decisão A, 2026-07-23) — o app nasce com ZERO abas (empty state,
   // App.tsx `INITIAL_TABS`); prova o empty state primeiro (nenhum
   // `terminal-pane` ainda) e só depois abre uma sessão pra provar o mesmo
@@ -47,7 +49,22 @@ test('o shell inteiro não tem scrollbar no documento (body.scrollHeight === bod
   expect(emptyDimensions.scrollHeight).toBe(emptyDimensions.clientHeight);
   expect(emptyDimensions.scrollWidth).toBe(emptyDimensions.clientWidth);
 
+  // FIX (auditoria rodada 6 ciclo 2, achado media "CTA do titlebar reproduz
+  // o bug do empty state em 1 clique") — sem `lastLaunch`/
+  // `selectedProjectPath` (estado deste boot), o clique no corpo do "＋ Nova
+  // sessão" agora abre o Launcher (guard movido pra dentro de
+  // `handleQuickNewClaudeSession`, App.tsx) em vez de spawnar direto em
+  // `cwd: undefined`/home — escolhe `donel-dev` (repo já confiável nesta
+  // máquina) pra chegar na mesma prova de sempre (shell com terminal +
+  // toolbar Modelo/Esforço carregados).
   await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
+  const launcher = window.locator('[data-testid="launcher"]');
+  await expect(launcher).toBeVisible();
+  await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
+  await window.getByRole('option', { name: 'donel-dev', exact: true }).click();
+  await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
+  await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
+
   const shell = window.locator('[data-testid="terminal-pane"]');
   await expect(shell).toBeVisible();
 
