@@ -1,6 +1,6 @@
 import { AccountBadge, Button, getHeadroomTier, Modal, TextInput } from '@donel-dev/design-system';
 import { Check } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProfileDoctorReportDto, ProfileHeadroomMap, ProfileSummaryDto } from '../../shared';
 import { parseAccountNumber } from '../../shared';
 import styles from './ProfileSwitcher.module.css';
@@ -83,6 +83,25 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
   const [newProfileName, setNewProfileName] = useState('');
   const [creating, setCreating] = useState(false);
 
+  // FIX (auditoria rodada 5, achado baixa "callback de prop nas deps de
+  // efeito") — App.tsx sempre passa os dois direto de `setState` (identidade
+  // ESTÁVEL entre renders, contrato do React), então hoje não há bug
+  // observável; mas um consumidor futuro passando uma arrow inline (nova
+  // identidade a cada render do PAI) faria o efeito correspondente reagendar
+  // a cada render do pai — e como os dois efeitos abaixo terminam chamando
+  // de volta um `setState` do PAI (`setAccountLabel`/`setProfileHeadroom`
+  // em App.tsx), esse reagendamento vira um ciclo: efeito roda -> chama o
+  // callback -> pai re-renderiza -> nova identidade da arrow -> efeito roda
+  // de novo. Mesmo padrão de `onStateChangeRef`/`onAliveChangeRef`/
+  // `onProfileResolvedRef` em TerminalPane.tsx: guarda a versão MAIS
+  // RECENTE do callback numa ref (atualizada a cada render, sem precisar
+  // reassinar nada) e os efeitos abaixo leem `.current` em vez de terem o
+  // callback na própria lista de dependências.
+  const onActiveProfileLabelChangeRef = useRef(onActiveProfileLabelChange);
+  onActiveProfileLabelChangeRef.current = onActiveProfileLabelChange;
+  const onHeadroomChangeRef = useRef(onHeadroomChange);
+  onHeadroomChangeRef.current = onHeadroomChange;
+
   const refreshProfiles = useCallback((): void => {
     void window.donel.profiles.list().then(setProfiles);
   }, []);
@@ -109,6 +128,8 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
 
   // FR-012 — dispara SÓ quando o dropdown abre: headroom (paralelo/timeout/
   // cache já resolvidos no main, ver quota-headroom.ts) + doctor por perfil.
+  // `onHeadroomChange` lido via ref (ver comentário de topo do componente) —
+  // fora da lista de deps de propósito, pra este efeito só reagir a `open`.
   useEffect(() => {
     if (!open) return;
     void window.donel.profiles.list().then((list) => {
@@ -117,9 +138,9 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
     });
     void window.donel.profiles.headroom().then((map) => {
       setHeadroom(map);
-      onHeadroomChange?.(map);
+      onHeadroomChangeRef.current?.(map);
     });
-  }, [open, refreshDoctorFor, onHeadroomChange]);
+  }, [open, refreshDoctorFor]);
 
   const handleActivate = (slug: string): void => {
     void window.donel.profiles.activate(slug).then(setProfiles);
@@ -173,7 +194,8 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
   // {n}"; pro caso mais comum ("Principal", sem convenção) o rótulo da
   // Statusbar nunca mostrava cota nenhuma. Agora o `percentText` (`%` ou
   // "—") entra SEMPRE, dando visibilidade da cota no rodapé mesmo pro
-  // perfil default.
+  // perfil default. `onActiveProfileLabelChange` lido via ref (ver
+  // comentário de topo do componente) — fora da lista de deps de propósito.
   useEffect(() => {
     if (!activeProfile) return;
     const percentText = activeHeadroom === null ? '—' : `${activeHeadroom}%`;
@@ -181,8 +203,8 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
       activeAccountNumber !== null
         ? `Tecnologia Claude ${activeAccountNumber} · ${percentText}`
         : `${activeProfile.name} · ${percentText}`;
-    onActiveProfileLabelChange?.(label);
-  }, [activeProfile, activeAccountNumber, activeHeadroom, onActiveProfileLabelChange]);
+    onActiveProfileLabelChangeRef.current?.(label);
+  }, [activeProfile, activeAccountNumber, activeHeadroom]);
 
   return (
     <>

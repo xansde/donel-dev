@@ -1,8 +1,10 @@
 // FIX (feedback E2E rodada 5, item registrado em specs/001-mvp/feedback-e2e.md
-// rodada 5 — NÃO é FR-009/ui-spec §2 zona 5 original, que ainda descreve o
-// comportamento ANTIGO "conta ATIVA"; ver achado media da auditoria rodada 5
-// sobre esse drift de spec, pendente de correção em spec.md/ui-spec.md) —
-// "statusbar deve mostrar a conta com que a sessão EM FOCO foi criada".
+// rodada 5 — o texto ORIGINAL de FR-009/ui-spec §2 zona 5 descrevia o
+// comportamento ANTIGO "conta ATIVA"; o drift apontado pela auditoria rodada
+// 5 já foi corrigido no commit 8e0128a, que emendou FR-009 (spec.md) e a
+// seção 5/zona 5 (ui-spec.md) — os dois já descrevem "conta de NASCIMENTO da
+// sessão em foco") — "statusbar deve mostrar a conta com que a sessão EM
+// FOCO foi criada".
 //
 // CAUSA RAIZ: StatusBar (App.tsx) recebia `accountLabel` GLOBAL (perfil
 // ATIVO, reportado por ProfileSwitcher.tsx — independente da aba); nenhum
