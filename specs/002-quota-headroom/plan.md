@@ -40,14 +40,18 @@ retorna número; além do timeout retorna null; binário resolvido chamado sem
     status: 'loading' | 'ok' | 'unavailable';
     fiveHour: QuotaWindow | null;
     sevenDay: QuotaWindow | null;
+    fable: QuotaWindow | null; // model:fable — revelado só na expansão (CA-2b)
   };
   type ProfileHeadroomMap = Record<string, ProfileQuota>;
   ```
-- Nova função pura `parseQuotaAxiWindows(output)` que extrai AS DUAS janelas
-  (`five_hour`, `seven_day`) com `percentRemaining` + `resetsAt`, mantendo a
+- Nova função pura `parseQuotaAxiWindows(output)` que extrai as janelas
+  `five_hour`, `seven_day` E `model:fable` com `percentRemaining` + `resetsAt`
+  (o `model:fable` pode não trazer `resetsAt` — tolerar `null`), mantendo a
   regra stale/error → `unavailable`. A `parseQuotaAxiHeadroom` atual (um
   número só) ou é reescrita, ou vira um seletor derivado (5h como primária).
-- `readAllProfilesHeadroom` devolve o novo shape; cache guarda o objeto.
+- `readAllProfilesHeadroom` devolve o novo shape; cache guarda o objeto —
+  **exceto** entradas `unavailable`, que NÃO são cacheadas (sempre relidas,
+  CA-5): só `ok` respeita o TTL de 60s.
 - Propagar o tipo em `shared` (contrato IPC), `preload` e o handler.
 
 **Impacto obrigatório a ajustar (não deixar quebrar):**
@@ -63,11 +67,19 @@ five_hour 95% / seven_day 0%), caso stale, caso janela ausente.
 **Arquivo:** `src/renderer/src/ProfileSwitcher.tsx` (+ `.module.css`),
 possível componente novo no design-system.
 
-- **Layout decidido (Alexandre, 2026-07-24): primária + resumo compacto.**
-  A janela **5h** é a primária: barra colorida por `getHeadroomTier`, rótulo
-  "5h", "% livre" e reset. A **semana** aparece como resumo compacto em texto
-  logo abaixo ("semana 100% · reset 31/07"), SEM barra própria. Escopo: só
-  5h + semana; `model:fable` fica fora (US-12). Ver CA-2 da spec.
+- **Layout decidido (Alexandre, 2026-07-24): primária + resumo compacto,
+  com Fable sob expansão.** Colapsado (default): 5h primária (barra colorida
+  por `getHeadroomTier`, rótulo "5h", "% livre", reset) + semana como resumo
+  compacto em texto ("semana 100% · reset 31/07"), sem barra. Ver CA-2/CA-2b.
+- **Interação (CA-2b) — separar SELECIONAR de EXPANDIR:** o clique no corpo
+  da linha continua ativando a conta (`handleActivate`, `ProfileSwitcher.tsx:249`)
+  — gesto primário, tem de ser fácil. A revelação do **Fable** é um affordance
+  SEPARADO (chevron/`▸` na linha) com seu próprio `onClick` que faz
+  `stopPropagation` (não borbulha pro clique de ativar) e alterna um estado
+  `expandedSlug` local. Expandido → mostra "fable X% livre". Cuidado no
+  branch do `AccountBadge` (`:240-247`): o badge inteiro é clicável pra ativar;
+  o chevron precisa ficar FORA da área de clique do badge ou usar
+  `stopPropagation`.
 - **Enxugar a lista (CA-7):** remover o "Perfil OK" de toda linha saudável
   (hoje `ProfileSwitcher.tsx:268-272` sempre renderiza esse texto). Perfil
   saudável = linha sem status. Perfil com problema = ícone de alerta com

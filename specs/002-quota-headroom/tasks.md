@@ -26,18 +26,20 @@ quota — padrão da rodada 5, nunca abrir sessão real só pra ler cota).
 > build — não reinstalar entre as fases.
 
 - **T201 — `parseQuotaAxiWindows` (TDD, módulo puro)** — `src/main/quota-headroom.ts`
-  Nova função pura que extrai AS DUAS janelas (`five_hour`, `seven_day`) com
-  `{ percentRemaining, resetsAt }`, mantendo a regra dura CA-5:
+  Nova função pura que extrai as janelas `five_hour`, `seven_day` E
+  `model:fable` com `{ percentRemaining, resetsAt }` (`model:fable` pode vir
+  sem `resetsAt` → tolerar `null`), mantendo a regra dura CA-5:
   `state.stale`/`state.error` → `unavailable` (nunca número de fallback de
   cache, que pode ser de outro perfil). Adicionar `resetsAt` e `label`/`kind`
   à interface `QuotaAxiWindow` (`:26-30`, hoje só `id`/`kind?`/`percentRemaining?`).
   `parseQuotaAxiHeadroom` atual (`:58`) vira seletor derivado (5h primária)
   OU é reescrita — decidir sem quebrar quem a chama.
   **DoD:** vitest verde com fixture do payload real (five_hour 97% / seven_day
-  100% + `resetsAt` ISO), caso stale → unavailable, caso janela ausente → null
-  naquela janela. Não confiar em `code`/`signal` (só conteúdo — contrato herdado).
+  100% / model:fable 100% + `resetsAt` ISO), caso stale → unavailable, caso
+  janela ausente → null naquela janela, caso fable sem `resetsAt` → resetsAt
+  null. Não confiar em `code`/`signal` (só conteúdo — contrato herdado).
 
-- **T202 — Shape `ProfileQuota` + contrato IPC** [P] — `src/main/quota-headroom.ts`, `src/shared/`, `src/preload/index.ts`, `src/main/index.ts`
+- **T202 — Shape `ProfileQuota` + contrato IPC** (sequencial após T201 — mesmo arquivo) — `src/main/quota-headroom.ts`, `src/shared/`, `src/preload/index.ts`, `src/main/index.ts`
   Trocar `ProfileHeadroomMap = Record<string, number | null>` por:
   ```ts
   type QuotaWindow = { percentRemaining: number; resetsAt: string | null };
@@ -45,6 +47,7 @@ quota — padrão da rodada 5, nunca abrir sessão real só pra ler cota).
     status: 'loading' | 'ok' | 'unavailable';
     fiveHour: QuotaWindow | null;
     sevenDay: QuotaWindow | null;
+    fable: QuotaWindow | null; // revelado só na expansão (CA-2b)
   };
   type ProfileHeadroomMap = Record<string, ProfileQuota>;
   ```
@@ -52,11 +55,14 @@ quota — padrão da rodada 5, nunca abrir sessão real só pra ler cota).
   `profiles:headroom` (`main/index.ts`).
   **DoD:** typecheck verde; contrato IPC refletindo o novo shape ponta a ponta.
 
-- **T203 — `HeadroomCache` + `readAllProfilesHeadroom` no novo shape** — `src/main/quota-headroom.ts`
+- **T203 — `HeadroomCache` + `readAllProfilesHeadroom` no novo shape** (sequencial após T202) — `src/main/quota-headroom.ts`
   Cache (`:255-274`) passa a guardar o objeto `ProfileQuota`, não `number|null`.
-  `readAllProfilesHeadroom` (`:287`) devolve `ProfileHeadroomMap` novo,
-  mantendo o paralelismo (`Promise.all`) e o TTL de 60s.
-  **DoD:** vitest do cache (get/set/expiração) verde com o novo tipo.
+  **`unavailable` NÃO é cacheado (CA-5, decisão 24/07): sempre relido** — só
+  entradas `ok` respeitam o TTL de 60s (perfil que fez `/login` reflete na
+  próxima leitura, sem esperar o TTL). `readAllProfilesHeadroom` (`:287`)
+  devolve `ProfileHeadroomMap` novo, mantendo o paralelismo (`Promise.all`).
+  **DoD:** vitest do cache (get/set/expiração + `unavailable` nunca servido do
+  cache) verde com o novo tipo.
 
 - **T204 — Ajustar consumidores sem quebrar** — `src/shared/sessionAccountLabel.ts`, `src/renderer/src/App.tsx`, design-system `AccountBadge`
   `computeSessionAccountLabel` (`sessionAccountLabel.ts:61`) hoje recebe
@@ -75,15 +81,20 @@ quota — padrão da rodada 5, nunca abrir sessão real só pra ler cota).
   (custo ~1.6s/perfil resolvido × N — loading cobre).
   **DoD:** smoke dispara releitura ignorando cache; botão desabilita durante.
 
-- **T206 — Dropdown: 5h (barra) + semana (texto) (US-B / CA-2)** — `ProfileSwitcher.tsx` (`:230-276`), `.module.css`
-  Layout **primária + resumo compacto**: 5h com barra colorida
-  (`getHeadroomTier`), rótulo "5h", "% livre" e reset; semana em texto abaixo
-  ("semana 100% livre · reset 31/07"), sem barra. Estado `status==='loading'`
-  → skeleton/"carregando", nunca "—". Barra: começar local no
-  `ProfileSwitcher.module.css` (só a 5h tem barra); extrair `QuotaBar` pro
-  design-system fica pro US-12.
-  **DoD:** smoke — cada perfil mostra as duas janelas rotuladas (% livre +
-  reset), loading→número; reusa mock/fixture de quota (sem sessão real).
+- **T206 — Dropdown: 5h (barra) + semana (texto) + Fable sob expansão (US-B / CA-2 / CA-2b)** — `ProfileSwitcher.tsx` (`:230-276`), `.module.css`
+  Colapsado: 5h com barra colorida (`getHeadroomTier`), rótulo "5h", "% livre"
+  e reset; semana em texto abaixo ("semana 100% livre · reset 31/07"), sem
+  barra. Estado `status==='loading'` → skeleton/"carregando", nunca "—".
+  **Expansão (CA-2b):** chevron dedicado na linha com `onClick` +
+  `stopPropagation` (não ativa a conta) alternando `expandedSlug` local;
+  expandido mostra "fable X% livre". **Clique no corpo da linha continua
+  ativando a conta** (`handleActivate`) — gesto primário, fácil. No branch
+  `AccountBadge` (`:240-247`), o chevron fica FORA da área clicável do badge
+  ou usa `stopPropagation`. Barra: começar local no `.module.css` (só a 5h
+  tem barra); extrair `QuotaBar` pro DS fica pro US-12.
+  **DoD:** smoke — cada perfil mostra 5h+semana rotuladas (% livre + reset),
+  loading→número; expandir revela fable SEM ativar a conta; clicar no corpo
+  ativa a conta SEM expandir. Reusa mock/fixture de quota (sem sessão real).
 
 - **T207 — Lista enxuta: remover "Perfil OK", erro vira ícone+tooltip (CA-7)** — `ProfileSwitcher.tsx` (`:256-272`), `.module.css`
   Remover o branch `doctorOk` (`:268-272`) — perfil saudável = linha sem
@@ -117,7 +128,8 @@ quota — padrão da rodada 5, nunca abrir sessão real só pra ler cota).
 ## Ordem e dependências
 
 - Fase A (T201→T204) é pré-requisito da Fase B (a UI consome o shape novo).
-  T201 e T202 são [P] entre si; T203/T204 dependem de T202.
+  T201→T202→T203→T204 rodam SEQUENCIAIS (todas tocam `quota-headroom.ts` /
+  o contrato — nada de `[P]` aqui, evita conflito no mesmo arquivo).
 - Fase B: T205 (força cache) e T206 (duas janelas) dependem de A; T207/T208
   são independentes entre si. T209 fecha tudo.
 - **B e C numa build só** — o Batch B é invisível, não se reinstala no meio.

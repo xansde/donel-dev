@@ -31,9 +31,11 @@ Alexandre em 2026-07-24)
   número da cota de cada conta — não "—" — mesmo que a leitura demore alguns
   segundos, com um estado de "carregando" enquanto não chega (nunca "—"
   otimista antes da 1ª resposta).
-- **US-B (duas janelas rotuladas):** como usuário, vejo por conta AS DUAS
-  janelas — **5h** e **semana** — cada uma rotulada, com % RESTANTE
-  ("livre") e o horário de reset, para saber de qual limite estou perto.
+- **US-B (janelas rotuladas + seleção fácil):** como usuário, vejo por conta
+  a janela **5h** (barra) e a **semana** (texto) com % RESTANTE ("livre") e
+  reset, e consigo **selecionar uma conta com um clique fácil na linha**; a
+  janela do **Fable** eu revelo sob demanda expandindo a linha (uso não-diário
+  — escolho com calma), sem que isso atrapalhe a seleção.
 - **US-C (refresh manual):** como usuário, tenho um botão "Atualizar" no
   dropdown que relê as cotas ignorando o cache de 60 s, para conferir o
   número agora sem esperar o cache expirar.
@@ -44,14 +46,21 @@ Alexandre em 2026-07-24)
   para elas dentro de ~10 s; enquanto a 1ª leitura não volta, aparece
   "carregando", não "—". "—" só depois de falha/timeout REAL ou conta sem
   login (stale).
-- **CA-2:** cada conta mostra AS DUAS janelas — "5h" e "semana" — no layout
-  **primária + resumo compacto** (decisão do Alexandre, 2026-07-24, ver nota
-  abaixo): a **5h** é a primária, com barra colorida por tier
-  (verde/dourado/vermelho, reusando `getHeadroomTier`), % restante e reset;
-  a **semana** aparece como resumo compacto em texto embaixo (% restante +
-  reset), SEM barra própria. O rótulo deixa explícito que é % LIVRE/restante.
-  Escopo das janelas: só 5h + semana — a janela do modelo (`model:fable`,
-  presente no payload real) fica FORA desta entrega (vai pro painel US-12).
+- **CA-2:** cada conta mostra, no estado **colapsado** (default), o layout
+  **primária + resumo compacto** (decisão do Alexandre, 2026-07-24): a **5h**
+  é a primária, com barra colorida por tier (verde/dourado/vermelho, reusando
+  `getHeadroomTier`), % restante e reset; a **semana** aparece como resumo
+  compacto em texto embaixo (% restante + reset), SEM barra própria. O rótulo
+  deixa explícito que é % LIVRE/restante.
+- **CA-2b (Fable sob expansão + seleção fácil, decisão 2026-07-24):** o
+  **clique na linha do perfil ATIVA a conta** — este é o gesto primário e tem
+  de ser fácil (não pode ser sequestrado por outra ação). A janela do **Fable**
+  (`model:fable` do payload) fica escondida por padrão e é revelada por um
+  **gesto de expansão dedicado** (ex.: chevron na linha), que NÃO ativa a
+  conta. Expandido, a linha mostra também "fable X% livre". Justificativa:
+  Fable é uso não-diário — o usuário escolhe com calma, sem poluir a lista
+  nem competir com o clique de seleção. Outras janelas `model:*` continuam
+  fora (vão pro painel US-12).
 - **CA-3:** o botão "Atualizar" força releitura de todas as contas
   ignorando o cache; some/desabilita enquanto relê.
 - **CA-4:** o badge compacto do titlebar e a statusbar continuam
@@ -60,6 +69,10 @@ Alexandre em 2026-07-24)
 - **CA-5:** a regra de segurança do cache global do quota-axi é mantida —
   leitura marcada `state.stale`/`state.error` NUNCA vira número (poderia ser
   de outra conta); vira "—" (ou "login pendente" quando for o caso).
+  **Cache (decisão 2026-07-24):** o status `unavailable` NÃO é cacheado — é
+  SEMPRE relido. Assim, um perfil sem login que acaba de fazer `/login`
+  reflete na próxima leitura, sem esperar o TTL de 60s expirar (o cache de
+  60s vale só para leituras `ok`, que são caras de reabrir).
 - **CA-6:** o app continua sem ler credenciais — fonte de dado é só o
   `quota-axi` local, nada de token/endpoint OAuth.
 - **CA-7 (dropdown compacto, decisão do Alexandre 2026-07-24):** a lista de
