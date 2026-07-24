@@ -1,7 +1,7 @@
 import { AccountBadge, Button, getHeadroomTier, Modal, TextInput } from '@donel-dev/design-system';
 import { Check } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ProfileDoctorReportDto, ProfileHeadroomMap, ProfileSummaryDto } from '../../shared';
+import type { ProfileDoctorReportDto, ProfileHeadroomMap, ProfileQuota, ProfileSummaryDto } from '../../shared';
 import { parseAccountNumber } from '../../shared';
 import styles from './ProfileSwitcher.module.css';
 
@@ -72,6 +72,19 @@ export interface ProfileSwitcherProps {
    * completo, não só de `activeHeadroom`.
    */
   onHeadroomChange?: (map: ProfileHeadroomMap) => void;
+}
+
+// T204 (002-quota-headroom) — `ProfileHeadroomMap` guarda `ProfileQuota`
+// (status + 3 janelas), não mais `number|null`. Este componente NÃO é
+// redesenhado nesta fase (isso é T206/T207) — só o MÍNIMO pra compilar e
+// preservar o comportamento visual atual: deriva o percentual da 5h de cada
+// `ProfileQuota` pra continuar alimentando `HeadroomSlot`/`AccountBadge`
+// (que ainda só sabem mostrar um número). `status === 'loading'` cobre tanto
+// "dropdown nunca abriu" (endpoint nunca chamado) quanto o próprio estado
+// local `headroomLoading` já existente.
+function fiveHourPercent(quota: ProfileQuota | undefined): number | null {
+  if (!quota || quota.status !== 'ok') return null;
+  return quota.fiveHour?.percentRemaining ?? null;
 }
 
 export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }: ProfileSwitcherProps): React.JSX.Element {
@@ -192,7 +205,7 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
 
   const activeProfile = profiles.find((profile) => profile.active) ?? profiles[0];
   const activeAccountNumber = activeProfile ? parseAccountNumber(activeProfile.name) : null;
-  const activeHeadroom = activeProfile ? (headroom[activeProfile.slug] ?? null) : null;
+  const activeHeadroom = activeProfile ? fiveHourPercent(headroom[activeProfile.slug]) : null;
 
   // FIX (feedback E2E rodada 4, item 8, parte c) — antes o `percentText` só
   // entrava no rótulo pra nomes que batiam a convenção "Tecnologia Claude
@@ -230,7 +243,7 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
           <ul className={styles.list}>
             {profiles.map((profile) => {
               const accountNumber = parseAccountNumber(profile.name);
-              const percent = headroom[profile.slug] ?? null;
+              const percent = fiveHourPercent(headroom[profile.slug]);
               const doctor = doctorReports[profile.slug];
               const unhealthy = doctor ? !doctor.healthy : false;
               const slotLoading = headroomLoading && !(profile.slug in headroom);

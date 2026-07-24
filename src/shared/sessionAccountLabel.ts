@@ -31,7 +31,7 @@
 // fixo pra vida da aba, exatamente como `claudeConfigDir` já é (T014,
 // PtyManager.create, "por VALOR na criação").
 
-import { parseAccountNumber } from './profiles';
+import { parseAccountNumber, type ProfileQuota } from './profiles';
 
 export interface SessionAccountLabelInput {
   /** 'shell' (terminal livre) nunca aplica `CLAUDE_CONFIG_DIR` — não tem "perfil de nascimento" que faça sentido mostrar. */
@@ -50,24 +50,28 @@ export interface SessionAccountLabelInput {
  *   convenção (`parseAccountNumber`, mesma normalização que
  *   ProfileSwitcher.tsx já aplica no badge do titlebar) — perfis fora da
  *   convenção (ex.: "Principal", nomes de teste) mostram o nome cru. `<cota>`
- *   é `${headroomPercent}%` quando conhecida, `—` quando `null`/ausente —
- *   MESMO contrato "sempre mostra o slot" da rodada 4 item 8, aplicado à
- *   cota do perfil de NASCIMENTO da aba (não do perfil ativo global).
+ *   é `${quota.fiveHour.percentRemaining}%` quando conhecida, `—` quando
+ *   ausente — MESMO contrato "sempre mostra o slot" da rodada 4 item 8,
+ *   aplicado à cota do perfil de NASCIMENTO da aba (não do perfil ativo
+ *   global). T204 (002-quota-headroom): o parâmetro passou de `number|null`
+ *   pro shape `ProfileQuota|null` — a rotulagem "5h" explícita no texto
+ *   (ex.: "5h 62%") é T208, OUTRA fase; aqui o formato do texto NÃO muda.
  * - 'claude' sem perfil ainda resolvido -> `fallbackGlobalLabel` (o
  *   `accountLabel` global de ProfileSwitcher, que já embute sua PRÓPRIA cota)
  *   só como placeholder da janela curta até `pty:create` responder — nunca o
- *   estado estável da aba; `headroomPercent` é ignorado neste caso.
+ *   estado estável da aba; `quota` é ignorado neste caso.
  */
 export function computeSessionAccountLabel(
   input: SessionAccountLabelInput,
   fallbackGlobalLabel: string,
-  headroomPercent: number | null = null,
+  quota: ProfileQuota | null = null,
 ): string {
   if (input.sessionType === 'shell') return 'Terminal (sem conta)';
   if (!input.profile) return fallbackGlobalLabel;
 
   const accountNumber = parseAccountNumber(input.profile.name);
   const displayName = accountNumber !== null ? `Tecnologia Claude ${accountNumber}` : input.profile.name;
+  const headroomPercent = quota?.fiveHour?.percentRemaining ?? null;
   const percentText = headroomPercent === null ? '—' : `${headroomPercent}%`;
   return `Sessão: ${displayName} · ${percentText}`;
 }

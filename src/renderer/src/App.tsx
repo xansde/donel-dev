@@ -943,15 +943,17 @@ export function App(): React.JSX.Element {
   // perfil de NASCIMENTO da aba (`profileHeadroom[slug]`, alimentado por
   // `ProfileSwitcher.onHeadroomChange`), não a do perfil ativo global —
   // `?? null` cobre tanto "perfil sem entrada no mapa ainda" (dropdown nunca
-  // foi aberto) quanto "mapa devolveu null pra este slug" (mesmo contrato
-  // "—" da rodada 4).
+  // foi aberto) quanto "mapa devolveu unavailable pra este slug" (mesmo
+  // contrato "—" da rodada 4). T204 (002-quota-headroom): `profileHeadroom`
+  // guarda `ProfileQuota` (não mais `number|null`) — `computeSessionAccountLabel`
+  // já lê `.fiveHour.percentRemaining` internamente.
   const activeSessionProfile = activeTab ? sessionProfiles[activeTab.id] : undefined;
-  const activeSessionHeadroom = activeSessionProfile ? (profileHeadroom[activeSessionProfile.slug] ?? null) : null;
+  const activeSessionQuota = activeSessionProfile ? (profileHeadroom[activeSessionProfile.slug] ?? null) : null;
   const activeSessionAccountLabel = activeTab
     ? computeSessionAccountLabel(
         { sessionType: activeTab.sessionType, profile: activeSessionProfile },
         accountLabel,
-        activeSessionHeadroom,
+        activeSessionQuota,
       )
     : accountLabel;
 
