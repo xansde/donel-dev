@@ -5,6 +5,7 @@ import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { createServer } from 'vite';
 import type { ViteDevServer } from 'vite';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from '../smoke/userDataIsolation';
 
 // Smoke permanente de MODO DEV (receita do diagnóstico do bug StrictMode,
 // 2026-07-23, ver feedback-e2e.md rodada 1 e specs/001-mvp/CLAUDE.md) —
@@ -25,6 +26,7 @@ const RENDERER_ROOT = path.join(__dirname, '../../src/renderer');
 let viteServer: ViteDevServer;
 let electronApp: ElectronApplication;
 let window: Page;
+let userDataDir: string;
 
 /** PIDs vivos de `imageName` agora, via `tasklist` real — mesmo helper de tabs-lifecycle.spec.ts (diferença de PID, nunca contagem absoluta). */
 function listPids(imageName: string): Set<number> {
@@ -71,8 +73,13 @@ test.beforeAll(async () => {
   const rendererUrl = viteServer.resolvedUrls?.local[0];
   if (!rendererUrl) throw new Error('Vite dev server não resolveu nenhuma URL local.');
 
+  // FIX (auditoria rodada 5, achado media "playwright.config.ts") — mesmo
+  // isolamento de `%APPDATA%` real dos smokes em tests/smoke/
+  // (userDataIsolation.ts): sem isto, `launcherDefaults`/config real da
+  // máquina do Alexandre vazava pra este smoke também.
+  userDataDir = createIsolatedUserDataDir('dev-mode');
   electronApp = await electron.launch({
-    args: [APP_MAIN],
+    args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
     cwd: APP_CWD,
     env: { ...process.env, ELECTRON_RENDERER_URL: rendererUrl },
   });
@@ -83,6 +90,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await electronApp?.close();
   await viteServer?.close();
+  if (userDataDir) removeIsolatedUserDataDir(userDataDir);
 });
 
 test('modo dev (StrictMode ativo): aba nova via launcher fica viva e digitável', async () => {

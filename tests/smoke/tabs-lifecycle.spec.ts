@@ -30,6 +30,19 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  // FIX (achado da suíte completa, rodada 6) — este arquivo é o mais pesado
+  // do diretório (6+ sessões PTY/claude.exe simultâneas nos 2 testes); sob
+  // carga real da máquina (outras sessões claude concorrentes, comum neste
+  // ambiente de dev — confirmado via `tasklist`: 14 processos `claude.exe`
+  // concorrentes durante a validação desta suíte) `electronApp.close()` —
+  // que espera o processo Electron encerrar de verdade, incluindo o
+  // teardown de todos os PTYs vivos — pode passar do timeout default de
+  // hook (30s, playwright.config.ts). Não é vazamento (tabs-lifecycle.spec.ts
+  // já prova isso via `tasklist` real dentro dos próprios testes); é só o
+  // fechamento levando mais tempo sob contenção de CPU/IO. `test.setTimeout`
+  // aqui (chamável dentro do hook, Playwright API) dá folga só a ESTE
+  // `afterAll`, sem mascarar nenhuma asserção nem virar retry global.
+  test.setTimeout(90_000);
   await electronApp.close();
   removeIsolatedUserDataDir(userDataDir);
 });
