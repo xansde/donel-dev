@@ -140,6 +140,31 @@ five_hour/seven_day direto, sem o overhead do npx — mas exige ler o token
 do perfil, o que esbarra na regra "o app nunca lê credenciais". Decidir
 explicitamente.
 
+### B9. Log de resultado de testes para consulta rápida (novo — feedback 24/07) · candidato a PADRÃO DE TODOS OS AMBIENTES DE DEV
+
+"Ter um log de testes unitários executados para consulta rápida, sem
+execuções exaustivas." Dor concreta: para saber se a suíte estava verde num
+commit foi preciso re-rodar 6,7 min de smoke — o resultado deveria estar
+gravado. Proposta: cada execução da suíte (unit e smoke) grava um registro
+persistido (ex.: `test-results/last-run.json` + um append em
+`test-results/history.md`) com: timestamp, **commit hash + se a árvore estava
+suja**, comando rodado, contagem passou/falhou, e a lista dos que falharam.
+Consultar o último estado vira leitura de arquivo, não re-execução.
+
+**Gotcha de design (obrigatório, senão o log mente):** o registro só vale se
+for **gerado pelo próprio runner** na execução real e **carimbar o commit** —
+um log escrito à mão ou não amarrado ao commit fica stale e afirma "verde"
+sobre código que já mudou (viola a regra do squad "não declarar sem checar").
+A consulta rápida deve exibir o commit do log e alertar se difere do `HEAD`
+atual / se a árvore está suja ("este resultado é de outro commit — re-rode").
+
+**Tag `todos-os-ambientes-de-dev`:** o Alexandre pediu que, se aprovado, isso
+seja usado em TODOS os ambientes de desenvolvimento — ou seja, é candidato a
+virar padrão do **baseline do squad SZI** (um wrapper de teste que grava o
+log, reusável entre repos), não só do Donel Dev. Clarify futuro: formato do
+log, onde vive (repo × global), e como o hook/wrapper se pluga no runner de
+cada projeto (vitest, pytest, etc.).
+
 ## Decidido, aguardando spec
 
 - **Restauração de sessões no restart** (rodada 5 do feedback-e2e).
