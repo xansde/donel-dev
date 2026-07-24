@@ -4,9 +4,13 @@
 execução). **Nenhuma linha de código de produção escrita.** Branch:
 `feature/mvp-p0` (mesma; tudo local, sem push).
 **Atualizado:** 2026-07-24
+**13 tasks** — `T401`–`T413`, contíguas na ordem de dependência (Batch A → B → C).
 **Referências:** `spec.md` (CA-1..CA-6 + decisões C1..C5 do clarify) e `plan.md`
 (Fatias 0–5) deste diretório. Schema confirmado em transcritos reais:
 `{"type":"custom-title","customTitle":"…","sessionId":"…"}`, o **último vence**.
+**Ordem entre features (24/07):** B11 → **004 (esta)** → 006 → 005. A 004 vem
+antes da 006 porque **constrói o watcher compartilhado** (Fatia 3); invertendo,
+a 006 constrói e a 004 só consome.
 
 > **Fato que barateou a feature** (descoberto no clarify, ver `spec.md` §Notas):
 > o app **impõe** o `sessionId` no spawn via `--session-id <uuid>`

@@ -4,8 +4,12 @@
 produção escrito. Spec clarificada (C1–C5) e **SPIKE-1 fechado**.
 **Atualizado:** 2026-07-24
 **Branch:** `feature/mvp-p0` (mesma; tudo local, **sem push e sem PR**).
+**10 tasks** — `T501`–`T510`, contíguas na ordem de dependência (Fatias 1–4).
 **Referências:** `spec.md` (CA-1..CA-9) · `plan.md` (Fatias 1–4) ·
 `spike-1-imagem-no-conpty.md` (contrato do clipboard, provado em ConPTY real).
+**Ordem entre features (24/07):** B11 → 004 → 006 → **005 (esta)**. É a única
+das três **independente** (mexe em xterm/PTY, não no `.jsonl`) — pode entrar a
+qualquer momento sem esperar 004/006.
 
 Convenções: [P] = paralelizável com a anterior; DoD = definition of done.
 **TDD obrigatório** nos módulos puros (`resolveTerminalKeyAction`,

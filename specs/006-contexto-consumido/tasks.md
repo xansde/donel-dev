@@ -5,6 +5,11 @@ execução). Branch: `feature/mvp-p0` (mesma; tudo local, sem push).
 **Atualizado:** 2026-07-24
 **Referências:** `spec.md` (CA-1..CA-9, tabela S1/C2 fixada via skill
 `claude-api`) + `plan.md` (Fatias 0/1/2) deste diretório.
+**14 tasks** — `T601`–`T614`, numeração contígua na ordem de dependência
+(Fase A: T601–T604 · Fase B: T605–T609 · Fase C: T610–T614).
+**Ordem entre features (24/07):** B11 → 004 → **006 (esta)** → 005. Depende da
+004 ter construído o watcher: se ela veio antes, a Fase B aqui encolhe para
+T608+T609 (pular T607). Nunca rodar as duas em paralelo — colidem no `.jsonl`.
 
 > **Denominador = smart zone de 300k** (decisão do Alexandre, 24/07), não a
 > janela bruta: `zona = min(300_000, janela_do_modelo)`. Em opus/sonnet/fable
@@ -18,8 +23,8 @@ execução). Branch: `feature/mvp-p0` (mesma; tudo local, sem push).
 > `claude` vivas** (não só a em foco), **debounce ~300 ms**, ciclo de vida no
 > `PTY_CHANNELS.create` / `PtyManager.onExit`.
 >
-> - **004 antes da 006 (recomendado):** a Fase B daqui encolhe para T613+T614
->   (adicionar `contextTokens` ao payload + regra de emissão). Pular T612.
+> - **004 antes da 006 (recomendado):** a Fase B daqui encolhe para T608+T609
+>   (adicionar `contextTokens` ao payload + regra de emissão). Pular T607.
 > - **006 antes da 004:** construir o watcher **já com os dois campos**.
 > - **NUNCA dois watchers** lendo o mesmo `.jsonl`. Se a 004 já começou,
 >   estender o arquivo dela.
@@ -92,10 +97,10 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
 
 ## Fase B — Fatia 1: watcher compartilhado com a 004 (main)
 
-> **Se a 004 já entregou o watcher: pular T612 e fazer T613/T614 sobre o
+> **Se a 004 já entregou o watcher: pular T607 e fazer T608/T609 sobre o
 > arquivo dela.** Não construir a peça duas vezes.
 
-- **T610 — Extrair a leitura de cauda para helper compartilhada (refactor
+- **T605 — Extrair a leitura de cauda para helper compartilhada (refactor
   sem mudança de comportamento)** — `src/main/session-indexer.ts` +
   novo `src/main/transcript-tail.ts`
   O bloco de `fs.open` + `read(TAIL_READ_BYTES)` + split/varredura reversa de
@@ -106,7 +111,7 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   (é a prova de "sem mudança de comportamento"); nenhuma duplicação do bloco
   de leitura no repo.
 
-- **T611 — `readTranscriptTail` (TDD)** (sequencial após T610) —
+- **T606 — `readTranscriptTail` (TDD)** (sequencial após T605) —
   `src/main/transcript-watcher.ts` (= o `session-name-watcher.ts` da 004,
   renomeado; se a 004 já criou o arquivo, estender **aquele**)
   Devolve `{ contextTokens, customTitle }` numa **única** varredura reversa da
@@ -123,8 +128,8 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   dispara a re-leitura de 64KB (spy na helper); arquivo vazio → ambos `null`;
   arquivo inexistente → ambos `null` sem lançar.
 
-- **T612 — Watcher (watch + debounce + ciclo de vida)** — *PULAR se a 004 já
-  entregou* — (sequencial após T611) — `src/main/transcript-watcher.ts`
+- **T607 — Watcher (watch + debounce + ciclo de vida)** — *PULAR se a 004 já
+  entregou* — (sequencial após T606) — `src/main/transcript-watcher.ts`
   Implementar conforme a **Fatia 3 da 004**, sem redesenhar: `fs.watch` por
   aba `claude` **viva** (abre no `PTY_CHANNELS.create`, fecha no
   `PtyManager.onExit` — nunca no unmount do renderer, que kill forçado não
@@ -135,8 +140,8 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   `onExit` fecha o watcher daquela sessão (spy no `close`, sem vazar handle);
   `dispose()` idempotente; path inexistente não lança.
 
-- **T613 — Payload com os dois campos + regra de emissão** (sequencial após
-  T612; **é a task mínima se a 004 veio antes**) — `src/shared/`,
+- **T608 — Payload com os dois campos + regra de emissão** (sequencial após
+  T607; **é a task mínima se a 004 veio antes**) — `src/shared/`,
   `src/main/transcript-watcher.ts`, `src/main/index.ts`,
   `src/preload/index.ts`
   Payload tipado `{ sessionId, customTitle, contextTokens }`.
@@ -151,7 +156,7 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   (é a regressão que a regra antiga causaria); append irrelevante que não muda
   nenhum campo → **não** emite.
 
-- **T614 — Antisséptico anti-duplicação** (verificação, não código novo)
+- **T609 — Antisséptico anti-duplicação** (verificação, não código novo)
   Confirmar que existe **um** leitor de cauda no repo e **um** watcher:
   `contextTokens` calculado por `contextTokensFromUsage` (T602), não por uma
   segunda soma inline; nenhum `fs.watch` adicional sobre `.jsonl`.
@@ -165,7 +170,7 @@ entre B e C** — a mudança só aparece para o usuário na Fase C.
 
 ## Fase C — Fatia 2: estado no renderer + UI na toolbar
 
-- **T620 — Estado `sessionId → contextTokens` + assinatura do evento** —
+- **T610 — Estado `sessionId → contextTokens` + assinatura do evento** —
   `src/renderer/src/App.tsx`
   `useState<Record<string, number | null>>` chaveado por **`sessionId`** (o
   watcher cobre todas as abas vivas; não há "aba observada"). **Uma** única
@@ -179,7 +184,7 @@ entre B e C** — a mudança só aparece para o usuário na Fase C.
   **DoD:** typecheck verde; `npm run test:smoke:dev` (smoke de modo dev,
   StrictMode) verde — é o guard-rail contra a regressão histórica.
 
-- **T621 — Render do `%` na toolbar** (sequencial após T620) —
+- **T611 — Render do `%` na toolbar** (sequencial após T610) —
   `src/renderer/src/SessionDetails.tsx` + `.module.css`
   Prop **opcional** `contextPercent?: number | null` (opcional para não
   quebrar smokes que já montam o componente). Renderiza depois do hint:
@@ -190,7 +195,7 @@ entre B e C** — a mudança só aparece para o usuário na Fase C.
   **DoD:** teste de render — `null` → `contexto —`; `45` → `contexto 45%`;
   atributo `title` presente com zona **e** janela.
 
-- **T622 — Cor acima de 100% (CA-9)** (sequencial após T621) —
+- **T612 — Cor acima de 100% (CA-9)** (sequencial após T611) —
   `src/renderer/src/SessionDetails.tsx` + `.module.css`
   Classe `.contextOverZone` aplicada quando `contextPercent > 100`, usando o
   **token de alerta/danger do design-system** — não hex solto no CSS module.
@@ -201,14 +206,14 @@ entre B e C** — a mudança só aparece para o usuário na Fase C.
   (o gatilho é `> 100`, não `>=`); `127` → `data-over-zone="true"`; nenhum
   valor de cor literal no CSS module (só token do design-system).
 
-- **T623 — CA-6 no nível de UI (troca de modelo)** (sequencial após T622)
+- **T613 — CA-6 no nível de UI (troca de modelo)** (sequencial após T612)
   O `%` é derivado de `computeContextPercent(tokens, model)` usando a prop
   `model` **já existente** do `SessionDetails` — nenhum estado novo. Trocar o
   modelo re-renderiza e o denominador muda sozinho.
   **DoD:** teste de render que troca só a prop `model` (mesmos tokens,
   `134602`) e observa **`45%` → `67%`** (opus zona 300k → haiku janela 200k).
 
-- **T624 — Roteiro E2E manual (para o Alexandre)** — novo
+- **T614 — Roteiro E2E manual (para o Alexandre)** — novo
   `specs/006-contexto-consumido/roteiro-e2e.md`
   Passos: (1) abrir sessão claude, mandar um prompt, ver o `%` aparecer e
   subir; (2) hover no número → tooltip com zona **e** janela real; (3) trocar
@@ -232,18 +237,18 @@ com auditoria interrompida em 88/87 por pular isso; não repetir.
 
 | Risco | Mitigação nesta lista |
 |---|---|
-| 8KB de cauda sem nenhuma `usage` (turno longo com muitos `tool_result`) | T611: re-leitura única de 64KB; nunca o arquivo inteiro |
-| Linha cortada no início do chunk lido | T611: caso de teste explícito + `try/catch` por linha |
-| StrictMode matando o watcher (bug histórico do PTY) | T620: cleanup idempotente + `test:smoke:dev` no DoD |
-| Watcher duplicado entre 004 e 006 | Fase B herda o watcher da 004 (não cria outro); T614 é o grep que prova |
-| Regra de emissão da 004 (só quando `custom-title` muda) engolir o update de tokens | T613: emitir se **qualquer** campo mudou — com teste da regressão |
-| Duas assinaturas de `onTranscriptChanged` no App | T620: assinatura única no nível do App, reaproveitada pela 004 |
+| 8KB de cauda sem nenhuma `usage` (turno longo com muitos `tool_result`) | T606: re-leitura única de 64KB; nunca o arquivo inteiro |
+| Linha cortada no início do chunk lido | T606: caso de teste explícito + `try/catch` por linha |
+| StrictMode matando o watcher (bug histórico do PTY) | T610: cleanup idempotente + `test:smoke:dev` no DoD |
+| Watcher duplicado entre 004 e 006 | Fase B herda o watcher da 004 (não cria outro); T609 é o grep que prova |
+| Regra de emissão da 004 (só quando `custom-title` muda) engolir o update de tokens | T608: emitir se **qualquer** campo mudou — com teste da regressão |
+| Duas assinaturas de `onTranscriptChanged` no App | T610: assinatura única no nível do App, reaproveitada pela 004 |
 | Tabela de janelas envelhecer silenciosamente | T601: arquivo isolado com data e fonte da conferência no topo |
 | `%` sempre baixo (1M) parecer bug | **resolvido na origem:** denominador é a smart zone de 300k, não a janela |
 | 300k é heurística, não fato da API | Constante única e comentada (T601); tooltip sempre mostra a janela real ao lado |
 | Alguém "consertar" o `>100%` achando que é bug | T603: teste de `127%` + comentário no código explicando que é intencional (CA-8) |
-| Cor hardcoded fugindo do design-system | T622: DoD proíbe valor de cor literal no CSS module |
-| Confusão com o `%` de cota já na tela | T621: rótulo literal "contexto", posição na toolbar por-aba |
+| Cor hardcoded fugindo do design-system | T612: DoD proíbe valor de cor literal no CSS module |
+| Confusão com o `%` de cota já na tela | T611: rótulo literal "contexto", posição na toolbar por-aba |
 
 ## Fora destas tasks
 
