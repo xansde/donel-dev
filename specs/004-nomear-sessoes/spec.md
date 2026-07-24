@@ -1,6 +1,7 @@
 # Spec — 004 Nomear sessões
 
-**Status:** rascunho pós-discovery (aguarda `/clarify` → `/plan`)
+**Status:** CLARIFICADA (2026-07-24) — C1..C5 decididas pelo Alexandre; `plan.md`
+e `tasks.md` gerados. Aguarda OK dele para implementar (gate de execução).
 **Prioridade:** a definir pelo Alexandre (fila atual: 002-quota → 003-modo-dev)
 **Origem:** entrevista aberta com o Alexandre em 2026-07-24 (lição
 `feedback_entrevistar_uso_antes_de_spec`). Relaciona com B5 do `backlog.md`
@@ -66,47 +67,61 @@
 - **CA-2 (fallback):** sessão **sem** `custom-title` mantém o comportamento
   atual (nome do projeto para sessão nova; `preview` para reaberta). Nada
   regride.
-- **CA-3 (rename pela UI):** existe um gesto de edição inline na aba (e/ou na
-  linha da sidebar) que grava o novo nome e atualiza o label imediatamente.
-- **CA-4 (ao vivo):** um `/rename` disparado na sessão **em foco** reflete na
-  aba/sidebar sem reabrir a sessão nem reiniciar o app (janela de atraso
-  aceitável a definir no clarify — ver C3).
-- **CA-5 (convergência):** o nome definido pela UI e o definido por `/rename`
-  não divergem — há uma **única fonte de verdade** por sessão e uma regra de
-  precedência determinística (ver C1/C2).
-- **CA-6 (persistência):** o nome sobrevive a fechar/reabrir a aba e a
-  reiniciar o app (hoje `tab.name` é só memória — precisa persistir).
+- **CA-3 (rename pela UI):** duplo-clique na aba (ou F2) abre input inline;
+  Enter/blur grava, Esc cancela; o label da aba **e** da sidebar atualizam
+  imediatamente. Vazio apaga o nome e volta ao fallback (C5).
+- **CA-4 (ao vivo):** um `/rename` disparado na sessão viva reflete na
+  aba/sidebar em **menos de 1 s**, sem reabrir a sessão nem reiniciar o app
+  (C3).
+- **CA-5 (convergência):** o nome exibido é resultado de **uma única função
+  pura de resolução** por sessão, com precedência por dirty-check (C2): nome
+  da UI vence enquanto o `custom-title` não mudar; se mudou, o `/rename` vence
+  e o storage é reconciliado. Nunca dois nomes concorrentes.
+- **CA-6 (persistência):** para sessões `claude`, o nome sobrevive a
+  fechar/reabrir a aba e a reiniciar o app (`ConfigStore`, C1). **Não se
+  aplica a abas `shell`**, cujo nome é de memória por decisão (C4).
 
-## Decisões para o `/clarify`
+## Decisões do `/clarify` (2026-07-24, Alexandre)
 
-- **[C1] Onde a UI grava o nome (decisão central):**
-  - **Opção A — escrever no `.jsonl`:** a UI faz *append* de um registro
-    `custom-title` no mesmo arquivo que o CLI usa. Prós: convergência
-    automática (mesma fonte do `/rename`), última-linha-vence resolve tudo.
-    Contras: viola o princípio "`SessionIndexer` é read-only / não reescrever
-    `.jsonl`" (`shared/sessions.ts:1-17`); mexer no arquivo do Claude é
-    invasivo e pode conflitar com o CLI escrevendo ao mesmo tempo.
-  - **Opção B — storage próprio do app:** um mapa `sessionId → customName` no
-    `ConfigStore` (`config-store.ts` já tem escrita atômica temp+rename), que
-    **sobrepõe** o que vier do `.jsonl`. Prós: não toca o arquivo do Claude.
-    Contras: precisa regra de precedência explícita com o `custom-title` do
-    CLI (C2) e a convergência deixa de ser automática.
-  - **Recomendação a debater:** Opção B (não invadir o `.jsonl`) + ler o
-    `custom-title` do transcript para o reflexo (US-A), com precedência
-    definida em C2.
-- **[C2] Precedência** quando existem **os dois** (nome da UI no storage E
-  `custom-title` no `.jsonl`): qual vence? Sugestão: o mais recente por
-  timestamp — mas o registro da UI (Opção B) precisaria carimbar timestamp
-  para comparar com o `custom-title` (que não tem timestamp próprio no schema).
-- **[C3] Reflexo ao vivo (US-C):** file-watch do `.jsonl` da sessão em foco
-  (o `readLastActivity` já lê só a cauda de 8KB — `session-indexer.ts:210-240`
-  — dá pra estender para pescar o último `custom-title`) × polling periódico.
-  Definir latência aceitável.
-- **[C4] Sessões shell:** abas `sessionType: 'shell'` **não têm** `.jsonl`
-  nem `sessionId` de Claude. Renomear aba shell é in-scope? Se sim, persiste
-  onde (o storage da Opção B precisa de outra chave, ex.: id interno da aba)?
-- **[C5] Validação:** nome vazio (rejeita? volta ao fallback?), tamanho
-  máximo, caracteres — e o que a aba mostra enquanto o nome é editado.
+Todas as cinco fechadas na recomendação. **São requisito agora, não sugestão.**
+
+- **[C1 ✔] Storage próprio do app — a UI NUNCA escreve no `.jsonl`.** Um mapa
+  `sessionId → { name, seenTitle, updatedAt }` no `ConfigStore` (escrita
+  atômica temp+rename já existente). O `.jsonl` do Claude permanece
+  **somente leitura** para o Donel: dele se lê o último `custom-title` para
+  atender US-A. Descartadas: escrever no `.jsonl` (invasivo, concorre com o
+  CLI escrevendo — risco de linha truncada) e injetar `/rename` no PTY
+  (só funcionaria em sessão viva, e o caso de uso principal do Alexandre é
+  justamente renomear sessão **antiga** na sidebar).
+- **[C2 ✔] Precedência por *dirty-check*, não por timestamp.** Ao renomear
+  pela UI, o storage guarda também o `custom-title` que existia naquele
+  momento (`seenTitle`, pode ser `null`). Na leitura:
+  - `custom-title` atual **igual** ao `seenTitle` → nada novo veio do CLI →
+    **vence o nome da UI**;
+  - `custom-title` atual **diferente** do `seenTitle` → houve `/rename` depois
+    → **vence o CLI** (e o storage é reconciliado: `seenTitle` passa a ser o
+    novo título, e a entrada de nome da UI é descartada).
+
+    Determinístico e não depende de timestamp — o registro `custom-title` não
+    tem um. Descartado comparar `mtime` do `.jsonl`: qualquer mensagem nova na
+    sessão reverteria um rename recém-feito pela UI.
+- **[C3 ✔] Reflexo ao vivo por `fs.watch` do `.jsonl`, latência alvo < 1 s.**
+  Viável porque o app **já sabe** o `sessionId` de uma sessão viva:
+  `src/main/session-correlation.ts` casa o `session_id` dos hooks com o
+  `ptyId`. Watch com debounce (~300 ms) relendo só a cauda de 8 KB
+  (`readLastActivity` já faz exatamente isso) para pescar o último
+  `custom-title`, e push ao renderer por IPC. Descartado o polling no tick de
+  5 s (latência de até 5 s numa troca de nome que o usuário acabou de digitar).
+- **[C4 ✔] Aba shell é renomeável, só em memória.** Mesmo gesto de edição
+  inline; o nome vive no `tab.name` e morre com a aba. Resolve "3 abas
+  chamadas *Terminal*" sem inventar chave de persistência para algo que o app
+  não restaura no restart (portanto **CA-6 não se aplica a abas shell** —
+  ver CA-6).
+- **[C5 ✔] Gesto e validação:** duplo-clique na aba (ou **F2** na aba em foco)
+  abre input inline. **Enter** confirma, **Esc** cancela, **blur** confirma.
+  `trim` automático; máximo **60 caracteres**; quebras de linha viram espaço.
+  Salvar **vazio apaga** o nome custom — é a válvula de escape para voltar ao
+  fallback (nome do projeto / 1ª mensagem).
 
 ## Fora de escopo
 
@@ -124,3 +139,19 @@
   truncada a 40 chars, não um resumo gerado — ver `[T]` item 3.
 - O `.jsonl` do `/rename` pode ter vários `custom-title`; qualquer leitura
   tem de pegar o **último**, não o primeiro.
+- **[T] O app não só sabe o `sessionId` da sessão — ele o IMPÕE no spawn**
+  (fato descoberto no clarify, ausente do rascunho, e mais forte do que se
+  supunha): `resolveClaudeCorrelation`
+  (`src/main/session-correlation.ts:24-34`) anexa `--session-id <uuid>` ao
+  argv de toda sessão nova, e reaproveita o id do `-r <id>` quando é retomada.
+  O `main` já usa isso em `index.ts:212` e o entrega ao semáforo
+  (`registerSession(ptyId, claudeSessionId)`, `session-semaphore-manager.ts:115`).
+  Ou seja: o path do `.jsonl` é conhecido **desde antes de o CLI subir** —
+  não depende de hook, de parsing de output, nem de heurística. O `fs.watch`
+  do C3 é barato e imediato, **sem** janela cega no início da sessão.
+- **[T] Gap real a preencher:** o `sessionId` **nunca chega ao renderer** hoje.
+  O `SemaphoreUpdate` (`src/shared/index.ts:133-138`) só carrega
+  `{ ptyId, state, stateEnteredAt }`, e o `getSnapshot` do semáforo é chamado
+  só dentro do `main`. Nenhum canal expõe o id — é por isso que a Fatia 4 do
+  plano precisa devolver o `correlationId` ao renderer (custo pequeno: o
+  handler `PTY_CHANNELS.create` já o tem em mãos).
