@@ -194,6 +194,29 @@ produto e um DESINSTALA o outro), `productName`/`shortcutName` (nome, atalho e
 pasta de instalação), `app.setName` (o `userData`) e `setAppUserModelId` (senão
 a notificação do canal de teste aparece atribuída ao app de trabalho).
 
+**Estado medido na máquina em 2026-07-24 (18h) — há DOIS apps instalados, e
+eles NÃO são dois canais:**
+
+| | asar | Instalado em | Atalho |
+|---|---|---|---|
+| Atual (com cota 5h) | 24/07 16:25 | `C:\Program Files\Donel Dev` (24/07 17:06) | "Donel Dev" |
+| Antigo (MVP P0) | 23/07 23:11 | `%LOCALAPPDATA%\Programs\Donel Dev` | "Donel Dev (ANTIGO 23-07 - sem cota 5h)" |
+
+Sobreviveram lado a lado por acidente (`allowToChangeInstallationDirectory:
+true` + diretório trocado à mão na 2ª instalação), não por design. Consequências
+confirmadas: (1) **estado 100% compartilhado** — mesmo `appId`, `productName` e
+`setName`, logo o mesmo `%APPDATA%\donel-dev` (config, favoritos, defaults do
+launcher, `session-hooks-settings.json`); mexer na config de um vaza no outro;
+(2) **uma única entrada de desinstalação** no registro ("Donel Dev 0.1.0", em
+HKLM, GUID derivado do `appId`) — a do install de 23/07 foi sobrescrita, o
+antigo virou **órfão**, e desinstalar "Donel Dev" hoje remove só o de
+`Program Files`. Isso é a evidência prática de por que o B10 precisa divergir
+o `appId`, não só a pasta.
+
+**Vínculo com branch (decidido pelo Alexandre em 2026-07-24):** canal stable =
+`main`, canal teste = `staging` (ver `CLAUDE.md`). `main` foi fast-forwardada
+até `feature/mvp-p0` e o repo ganhou remoto privado nessa data.
+
 **Gotcha de design (obrigatório, senão o isolamento não existe):** o canal tem
 de ser **assado em tempo de BUILD** (`define` do electron-vite ou equivalente),
 NUNCA lido de `process.env` em runtime — o app é aberto pelo atalho da Área de
