@@ -57,9 +57,17 @@ Qualquer vermelho FORA dessa lista é regressão sua — investigue, não normal
 
 ## Fronteiras (inegociáveis)
 
-- Push, PR e merge: NADA sem instrução literal do Alexandre. `main` é o canal
-  stable do app que ele usa para trabalhar; `staging` é o canal de teste.
-  "Comita" NÃO autoriza push.
+- **Push na `feature/mvp-p0`: AUTORIZADO** (remoto `github.com/xansde/donel-dev`,
+  privado). Empurre a cada batch fechado — o Alexandre quer o histórico no
+  GitHub. Já existe upstream configurado.
+- **PR `feature/mvp-p0` → `staging`: pede confirmação** dele antes de abrir.
+  Existe o PR #1 aberto; se ainda não foi mergeado, adicione seus commits nele
+  em vez de abrir outro.
+- **`main`: BLOQUEIO TOTAL.** É o canal stable do app que ele usa para
+  trabalhar. Nada de push/PR/merge sem instrução LITERAL. "Comita", "sobe",
+  "atualiza staging" NÃO autorizam tocar em `main`.
+- **Conta do `gh`:** a ativa é `xansde-seazone` (tem write, não admin). Se um
+  comando de administração der 404, é isso — o repo é do `xansde`.
 - Nunca `--no-verify`.
 - O app não toca credenciais: `/login` é sempre ato humano no terminal.
 - LGPD: nada de nome de proprietário/cliente/hóspede em código, log ou commit.
