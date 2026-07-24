@@ -305,3 +305,49 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
 - (nota) Item 19 (RAM) da validação humana ficou interrompido no meio do
   relato — sem número reportado. Medição automatizada segue valendo:
   417–451 MB vs. budget 400 MB, decisão de NFR pendente.
+
+## 2026-07-23 (noite) — rodada 6 (app instalado, commit b558d3d)
+
+- [x] **Rodada 6 APROVADA pelo humano exceto o headroom** — relato: "todos
+  os outros deram certo". Confirmado funcionando no print: app abre vazio
+  (decisão A), quick-launch sem projeto não trava, Modelo/Esforço
+  habilitados numa sessão viva ("sonnet/low", com o texto "Aplica na sessão
+  em andamento, sem perder o histórico"), e a statusbar mostra
+  **"Sessão: Tec"** enquanto o perfil ativo global é **Principal** — ou
+  seja, o fix da conta de nascimento funciona de verdade.
+- [ ] **BUG — headroom mostra "—" em TODOS os perfis** (titlebar, dropdown
+  "Perfis de conta" e statusbar). **CAUSA RAIZ CONFIRMADA E MEDIDA
+  (2026-07-24 ~00:30):** `readQuotaAxiHeadroom` (main/quota-headroom.ts)
+  usa `DEFAULT_TIMEOUT_MS = 3000`, mas `npx -y quota-axi --provider claude
+  --json` leva **3803 ms** nesta máquina (overhead de resolução do `npx` no
+  Windows, mesmo com o pacote já em cache). O timeout mata o processo antes
+  do JSON chegar → `null` → a UI renderiza "—" (o slot sempre presente é o
+  fix da rodada 4 funcionando; o dado é que nunca chega). Pior com N perfis
+  em paralelo (contenção de `npx`). NÃO é o exit 255 (o comando devolveu
+  exit 0 e JSON válido na medição de agora).
+  **Correções candidatas** (decidir na próxima sessão): (a) subir o timeout
+  para ~15 s — leitura é assíncrona e cacheada por 60 s, não bloqueia UI;
+  (b) chamar o binário resolvido em vez de `npx -y` (elimina o overhead);
+  (c) mostrar "carregando…" em vez de "—" enquanto a primeira leitura não
+  volta, e "—" só depois de falha real.
+- [ ] **UX — a cota não se explica** (relato: "Não entendi o que essa cota
+  significa"). Hoje é um `%` solto, sem dizer QUE janela é (a implementação
+  usa `five_hour` e cai pra `seven_day`, decisão nunca exposta na UI) nem
+  se é usado ou restante (é *restante*: `percentRemaining`). Rotular
+  explicitamente na UI.
+- [ ] **FEATURE — painel de cotas de todas as contas** (pedido do
+  Alexandre): "um botão que rode um script olhando todas as contas ativas e
+  suas cotas de uso disponível (5h e semanal)". Encaixa em **US-12 (P1,
+  quota das 15 contas)**. A infra já existe e é quase isso:
+  `readAllProfilesHeadroom` já roda em paralelo por perfil com
+  `CLAUDE_CONFIG_DIR` apontado — falta (i) expor as DUAS janelas em vez de
+  um número só, (ii) botão de refresh manual que ignora o cache de 60 s,
+  (iii) tela/painel dedicado em vez do dropdown. **Gotcha documentado a
+  respeitar:** o cache do quota-axi (`~/.cache/quota-axi/quotas.json`) é
+  GLOBAL, não escopado por perfil — leitura com `state.stale`/`state.error`
+  pode trazer o número de OUTRO perfil, e por isso vira `null` hoje.
+  Ver `specs/backlog.md` (B8).
+- (nota operacional, medido em 2026-07-24 00:30) a janela **semanal da
+  conta ativa está em 100% de uso (0% restante)**; a de 5 h estava em 5%
+  de uso. Ou seja: mesmo com o fix do timeout, o número que apareceria
+  seria o da janela de 5 h — a semanal está zerada até 25/07 04:00 UTC.
