@@ -99,6 +99,33 @@ Ctrl+Shift+C, menu de contexto com Copiar, e seleção que sobrevive a
 output novo chegando. Critério: copiar um trecho do terminal tem que ser
 tão fácil quanto no Windows Terminal.
 
+### B8. Painel de cotas de todas as contas (novo — feedback 23/07, rodada 6)
+
+"Seria interessante um botão que rode um script olhando todas as contas
+ativas e suas cotas de uso disponível (5h e semanal)." Encaixa em **US-12
+(P1 — quota das 15 contas)** e é o passo natural depois do headroom por
+perfil. O que já existe: `readAllProfilesHeadroom` (main/quota-headroom.ts)
+roda `quota-axi` em paralelo por perfil com `CLAUDE_CONFIG_DIR` apontado,
+com cache de 60 s. O que falta:
+- expor **as duas janelas** (5 h e semanal) em vez de um número só — hoje a
+  implementação escolhe `five_hour` e cai pra `seven_day`, sem dizer qual
+  está mostrando (o que gerou o "não entendi o que essa cota significa");
+- rótulo explícito de que o número é **restante**, não usado;
+- **botão de refresh manual** que ignora o cache de 60 s;
+- painel/tela dedicada listando todos os perfis, em vez do dropdown.
+Gotchas obrigatórios: (1) o cache do quota-axi
+(`~/.cache/quota-axi/quotas.json`) é GLOBAL, não escopado por
+`CLAUDE_CONFIG_DIR` — leitura marcada `state.stale`/`state.error` pode
+trazer o número de OUTRO perfil e por isso vira `null` hoje; (2) `npx -y
+quota-axi` leva ~3,8 s por chamada nesta máquina, então qualquer painel que
+leia N perfis precisa de timeout generoso, leitura assíncrona e estado de
+"carregando" (ver o bug do "—" na rodada 6 do feedback-e2e).
+Alternativa a avaliar no clarify: o endpoint oficial de uso OAuth
+(`api.anthropic.com/api/oauth/usage`, visto no script da Amanda) devolve
+five_hour/seven_day direto, sem o overhead do npx — mas exige ler o token
+do perfil, o que esbarra na regra "o app nunca lê credenciais". Decidir
+explicitamente.
+
 ## Decidido, aguardando spec
 
 - **Restauração de sessões no restart** (rodada 5 do feedback-e2e).
