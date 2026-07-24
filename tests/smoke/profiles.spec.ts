@@ -91,16 +91,10 @@ test.afterAll(async () => {
   // o diretório isolado e o perfil e2e não podem ficar órfãos (mesmo achado
   // da auditoria da rodada 6 sobre resíduo em %TEMP%).
   try {
-    const t0 = Date.now();
     await electronApp.close();
-    console.log(`[B11-PROBE] close: ${Date.now() - t0} ms`);
   } finally {
-    const t1 = Date.now();
     removeIsolatedUserDataDir(userDataDir);
-    console.log(`[B11-PROBE] removeIsolatedUserDataDir: ${Date.now() - t1} ms`);
-    const t2 = Date.now();
     cleanupE2eProfileDir();
-    console.log(`[B11-PROBE] cleanupE2eProfileDir: ${Date.now() - t2} ms`);
   }
 });
 
