@@ -174,11 +174,14 @@ describe('readQuotaAxiHeadroom (I/O, spawn mockado) — fix rodada 4 item 8, par
     vi.mocked(spawn).mockReset();
   });
 
+  // `resolveCli: () => null` força o fallback npx nestes 3 testes — mantém
+  // a semântica original (spawn via npx) intacta enquanto o resolver de
+  // binário é testado separadamente abaixo.
   it('REGRA DURA (achado real, evidência do Alexandre): exit code 255 do quota-axi com JSON válido no stdout ainda retorna o headroom — exit code NUNCA decide sucesso/falha, só o conteúdo', async () => {
     const fake = new FakeChildProcess();
     vi.mocked(spawn).mockReturnValue(fake as never);
 
-    const promise = readQuotaAxiHeadroom({ configDir: undefined });
+    const promise = readQuotaAxiHeadroom({ configDir: undefined, resolveCli: () => null });
 
     const payload: QuotaAxiOutput = {
       providers: [
@@ -199,7 +202,7 @@ describe('readQuotaAxiHeadroom (I/O, spawn mockado) — fix rodada 4 item 8, par
     const fake = new FakeChildProcess();
     vi.mocked(spawn).mockReturnValue(fake as never);
 
-    const promise = readQuotaAxiHeadroom({ configDir: undefined });
+    const promise = readQuotaAxiHeadroom({ configDir: undefined, resolveCli: () => null });
     fake.stdout.emit('data', Buffer.from('não é json'));
     fake.emit('close', 0, null);
 
@@ -210,7 +213,7 @@ describe('readQuotaAxiHeadroom (I/O, spawn mockado) — fix rodada 4 item 8, par
     const fake = new FakeChildProcess();
     vi.mocked(spawn).mockReturnValue(fake as never);
 
-    const promise = readQuotaAxiHeadroom({ configDir: undefined });
+    const promise = readQuotaAxiHeadroom({ configDir: undefined, resolveCli: () => null });
     const payload: QuotaAxiOutput = {
       providers: [{ provider: 'claude', windows: [{ id: 'five_hour', percentRemaining: 41 }], state: { stale: false } }],
     };
@@ -219,5 +222,118 @@ describe('readQuotaAxiHeadroom (I/O, spawn mockado) — fix rodada 4 item 8, par
     fake.emit('close', 255, null);
 
     await expect(promise).resolves.toBe(41);
+  });
+
+  it('quando resolveCli retorna um path, spawna nodeExecPath+cliPath (não npx), sem shell:true, com ELECTRON_RUN_AS_NODE=1', async () => {
+    const fake = new FakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(fake as never);
+
+    const promise = readQuotaAxiHeadroom({
+      configDir: undefined,
+      resolveCli: () => 'C:\\fake\\cli.js',
+      nodeExecPath: 'C:\\fake\\node.exe',
+    });
+
+    const payload: QuotaAxiOutput = {
+      providers: [{ provider: 'claude', windows: [{ id: 'five_hour', percentRemaining: 55 }], state: { stale: false } }],
+    };
+    fake.stdout.emit('data', Buffer.from(JSON.stringify(payload)));
+    fake.emit('close', 0, null);
+    await expect(promise).resolves.toBe(55);
+
+    const call = vi.mocked(spawn).mock.calls[0];
+    expect(call[0]).toBe('C:\\fake\\node.exe');
+    expect(call[1]).toEqual(['C:\\fake\\cli.js', '--provider', 'claude', '--json']);
+    const spawnOptions = call[2] as { shell?: boolean; env?: NodeJS.ProcessEnv };
+    expect(spawnOptions.shell).not.toBe(true);
+    expect(spawnOptions.env?.ELECTRON_RUN_AS_NODE).toBe('1');
+  });
+
+  it('quando resolveCli retorna null, spawna npx com shell:true (fallback)', async () => {
+    const fake = new FakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(fake as never);
+
+    const promise = readQuotaAxiHeadroom({ configDir: undefined, resolveCli: () => null });
+    fake.stdout.emit('data', Buffer.from('{}'));
+    fake.emit('close', 0, null);
+    await promise;
+
+    const call = vi.mocked(spawn).mock.calls[0];
+    expect(call[0]).toBe('npx');
+    expect(call[1]).toEqual(['-y', 'quota-axi', '--provider', 'claude', '--json']);
+    const spawnOptions = call[2] as { shell?: boolean };
+    expect(spawnOptions.shell).toBe(true);
+  });
+
+  describe('timeout (fake timers)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('resolve o número quando o child fecha ANTES do timeout', async () => {
+      vi.useFakeTimers();
+      const fake = new FakeChildProcess();
+      vi.mocked(spawn).mockReturnValue(fake as never);
+
+      const promise = readQuotaAxiHeadroom({ configDir: undefined, resolveCli: () => null, timeoutMs: 8000 });
+      const payload: QuotaAxiOutput = {
+        providers: [{ provider: 'claude', windows: [{ id: 'five_hour', percentRemaining: 30 }], state: { stale: false } }],
+      };
+      fake.stdout.emit('data', Buffer.from(JSON.stringify(payload)));
+      fake.emit('close', 0, null);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await expect(promise).resolves.toBe(30);
+    });
+
+    it('mata o child (kill) e resolve null quando passa do timeout', async () => {
+      vi.useFakeTimers();
+      const fake = new FakeChildProcess();
+      vi.mocked(spawn).mockReturnValue(fake as never);
+
+      const promise = readQuotaAxiHeadroom({ configDir: undefined, resolveCli: () => null, timeoutMs: 8000 });
+      await vi.advanceTimersByTimeAsync(8001);
+
+      await expect(promise).resolves.toBeNull();
+      expect(fake.kill).toHaveBeenCalled();
+    });
+  });
+});
+
+describe('resolveQuotaAxiCli (puro, fs mockado)', () => {
+  afterEach(() => {
+    vi.doUnmock('node:fs');
+    vi.resetModules();
+  });
+
+  it('acha o quota-axi no cache do npx e monta o path do dist/bin', async () => {
+    vi.resetModules();
+    vi.doMock('node:fs', () => ({
+      existsSync: (path: string) => {
+        const normalized = path.replace(/\\/g, '/');
+        if (normalized.endsWith('/npm-cache/_npx')) return true;
+        if (normalized.endsWith('/dist/bin/quota-axi.js')) return normalized.includes('/abc123/');
+        return false;
+      },
+      readdirSync: () => ['abc123'],
+      statSync: () => ({ mtimeMs: 1000 }),
+    }));
+
+    const mod = await import('../src/main/quota-headroom');
+    const result = mod.resolveQuotaAxiCli();
+    expect(result).toContain('abc123');
+    expect(result).toContain('quota-axi.js');
+  });
+
+  it('cache do npx vazio/inexistente -> null', async () => {
+    vi.resetModules();
+    vi.doMock('node:fs', () => ({
+      existsSync: () => false,
+      readdirSync: () => [],
+      statSync: () => ({ mtimeMs: 0 }),
+    }));
+
+    const mod = await import('../src/main/quota-headroom');
+    expect(mod.resolveQuotaAxiCli()).toBeNull();
   });
 });

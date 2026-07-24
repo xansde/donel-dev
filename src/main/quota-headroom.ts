@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 // T014 — FR-012 (US-7): % de headroom de quota por perfil, via `quota-axi`
 // (`npx -y quota-axi --provider claude --json` — SKILL.md do quota-axi,
@@ -102,8 +105,56 @@ function parseJsonPayload(raw: string): unknown {
   }
 }
 
-/** FR-012: timeout de 3s por perfil (as leituras dos N perfis rodam em paralelo — ver `readAllProfilesHeadroom` — um perfil lento nunca trava os demais). */
-const DEFAULT_TIMEOUT_MS = 3000;
+/** FR-012: timeout por perfil (as leituras dos N perfis rodam em paralelo — ver `readAllProfilesHeadroom` — um perfil lento nunca trava os demais). 8s (era 3s) porque `npx -y quota-axi` sozinho já mede ~10.8s de overhead de resolução do npx no Windows; rodar o binário resolvido direto via node (ver `resolveQuotaAxiCli`) roda em ~1.6s, mas o fallback pra npx (quando o resolver não acha nada) ainda precisa da folga. */
+const DEFAULT_TIMEOUT_MS = 8000;
+
+let cachedCliPath: string | null = null;
+
+/**
+ * Varre o cache do npx (`npm-cache/_npx/<hash>/node_modules/quota-axi/dist/bin/quota-axi.js`)
+ * e devolve o path do binário mais recente (por mtime), ou `null` se não
+ * achar. Raízes de busca: `%LOCALAPPDATA%/npm-cache/_npx` (Windows padrão),
+ * fallback `~/AppData/Local/npm-cache/_npx` e `~/.npm/_npx` (POSIX). Nunca
+ * lança — qualquer erro de fs (readdir/stat) é ignorado e a varredura
+ * continua pra próxima raiz. Memoiza só o hit válido (path que ainda existe);
+ * um miss anterior ou um path memoizado que sumiu do disco disparam nova
+ * varredura na próxima chamada.
+ */
+export function resolveQuotaAxiCli(): string | null {
+  if (cachedCliPath && existsSync(cachedCliPath)) return cachedCliPath;
+  cachedCliPath = null;
+
+  const roots: string[] = [];
+  if (process.env.LOCALAPPDATA) roots.push(join(process.env.LOCALAPPDATA, 'npm-cache', '_npx'));
+  roots.push(join(homedir(), 'AppData', 'Local', 'npm-cache', '_npx'));
+  roots.push(join(homedir(), '.npm', '_npx'));
+
+  let best: { path: string; mtimeMs: number } | null = null;
+
+  for (const root of roots) {
+    try {
+      if (!existsSync(root)) continue;
+      const hashes = readdirSync(root);
+      for (const hash of hashes) {
+        const cliPath = join(root, hash, 'node_modules', 'quota-axi', 'dist', 'bin', 'quota-axi.js');
+        try {
+          if (!existsSync(cliPath)) continue;
+          const stat = statSync(cliPath);
+          if (!best || stat.mtimeMs > best.mtimeMs) {
+            best = { path: cliPath, mtimeMs: stat.mtimeMs };
+          }
+        } catch {
+          continue;
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  cachedCliPath = best?.path ?? null;
+  return cachedCliPath;
+}
 
 export interface RunQuotaAxiOptions {
   /** `CLAUDE_CONFIG_DIR` do perfil; `undefined` = perfil Principal (sem override, lê `~/.claude` global). */
@@ -111,14 +162,23 @@ export interface RunQuotaAxiOptions {
   readonly timeoutMs?: number;
   /** Env base a partir do qual montar o env do child (injetável pra teste; default = `process.env` no ponto de chamada real). */
   readonly baseEnv?: NodeJS.ProcessEnv;
+  /** Resolve o path do binário `quota-axi.js` no cache do npx (injetável pra teste; default = `resolveQuotaAxiCli`). `null` => fallback pro `npx -y quota-axi`. */
+  readonly resolveCli?: () => string | null;
+  /** Executável node usado pra rodar o binário resolvido (injetável pra teste; default = `process.execPath`). */
+  readonly nodeExecPath?: string;
 }
 
 /**
- * I/O — spawna `npx -y quota-axi --provider claude --json`. Nunca lança:
+ * I/O — spawna o quota-axi. FIX (batch A, 002-quota-headroom): `npx -y
+ * quota-axi` sozinho tem ~10.8s de overhead de resolução no Windows (matava
+ * no timeout antigo de 3s, resultando em "—" sempre). Preferência: resolver
+ * o binário `quota-axi.js` já baixado no cache do npx
+ * (`resolveQuotaAxiCli`) e rodá-lo direto via `nodeExecPath` (com
+ * `ELECTRON_RUN_AS_NODE=1`, sem `shell: true`) — ~1.6s. Fallback (binário
+ * não encontrado no cache): `npx -y quota-axi --provider claude --json` com
+ * `shell: true` (npx no Windows é `.cmd`/`.ps1`), como antes. Nunca lança:
  * timeout, erro de spawn ou JSON inválido viram `null` (mesmo espírito de
- * "sem dados" do resto do app — SessionIndexer, ProjectScanner). `shell:
- * true` porque `npx` no Windows é um `.cmd`/`.ps1` conforme a instalação
- * (nvm, volta, etc.) — deixar o shell resolver evita hardcodar a extensão.
+ * "sem dados" do resto do app — SessionIndexer, ProjectScanner).
  */
 export function readQuotaAxiHeadroom(options: RunQuotaAxiOptions): Promise<number | null> {
   return new Promise((resolve) => {
@@ -129,9 +189,20 @@ export function readQuotaAxiHeadroom(options: RunQuotaAxiOptions): Promise<numbe
       delete env.CLAUDE_CONFIG_DIR;
     }
 
+    const resolveCli = options.resolveCli ?? resolveQuotaAxiCli;
+    const cliPath = resolveCli();
+
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn('npx', ['-y', 'quota-axi', '--provider', 'claude', '--json'], { env, windowsHide: true, shell: true });
+      if (cliPath) {
+        const nodeExecPath = options.nodeExecPath ?? process.execPath;
+        child = spawn(nodeExecPath, [cliPath, '--provider', 'claude', '--json'], {
+          env: { ...env, ELECTRON_RUN_AS_NODE: '1' },
+          windowsHide: true,
+        });
+      } else {
+        child = spawn('npx', ['-y', 'quota-axi', '--provider', 'claude', '--json'], { env, windowsHide: true, shell: true });
+      }
     } catch {
       resolve(null);
       return;
