@@ -295,6 +295,26 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
         setProfiles(list);
         setNewProfileName('');
         refreshDoctorFor(list); // perfil recém-criado já entra com status de doctor visível, sem precisar fechar/reabrir o dropdown.
+        // CAUSA RAIZ (T206 CA-2b) — `headroom` só era populado no efeito de
+        // abertura do dropdown (`[open, ...]`), então um perfil criado DEPOIS
+        // dessa leitura nunca ganhava entrada no mapa dentro da mesma sessão
+        // do dropdown: `quota` ficava `undefined` (nem "loading", nem "ok")
+        // e `ProfileQuotaDetail` caía no branch de fallback ("5h —"/"semana
+        // —") pra sempre — mesmo expandindo a linha, o fable nunca aparecia
+        // (não é estado de loading, então `expandButton`/CA-2b não ajuda).
+        // Fix: relê o headroom (com cache normal — não é o botão
+        // "Atualizar", não precisa `force`) assim que o perfil novo entra na
+        // lista, mesmo tratamento de `slotLoading` que a leitura inicial já
+        // usa (sem essa chamada as linhas recém-criadas ficam "presas" em —
+        // até o dropdown fechar e reabrir).
+        setHeadroomLoading(true);
+        void window.donel.profiles
+          .headroom()
+          .then((map) => {
+            setHeadroom(map);
+            onHeadroomChangeRef.current?.(map);
+          })
+          .finally(() => setHeadroomLoading(false));
       })
       .finally(() => setCreating(false));
   };
