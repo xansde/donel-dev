@@ -1,5 +1,5 @@
 import { AccountBadge, Button, getHeadroomTier, Modal, TextInput } from '@donel-dev/design-system';
-import { Check } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProfileDoctorReportDto, ProfileHeadroomMap, ProfileQuota, ProfileSummaryDto } from '../../shared';
 import { parseAccountNumber } from '../../shared';
@@ -41,12 +41,104 @@ const EMPTY_PROFILES: ProfileSummaryDto[] = [{ name: 'Principal', slug: 'princip
  * de nome genérico — módulo top-level (não inline no corpo de
  * ProfileSwitcher), mesma lição do fix da input da Tarefa 1.
  */
+// T208 (CA-4) — badge do titlebar (perfil fora da convenção "Tecnologia
+// Claude {n}") rotula a janela explicitamente ("5h 62%"), mesmo motivo do
+// rótulo composto de `onActiveProfileLabelChange` abaixo: um `%` sozinho não
+// diz qual janela é (spec.md problema 2). Usado SÓ pelo badge do titlebar —
+// as linhas do dropdown usam `ProfileQuotaDetail` (T206), não este slot.
 function HeadroomSlot({ percent, loading = false }: { percent: number | null; loading?: boolean }): React.JSX.Element {
   const tier = loading ? 'none' : getHeadroomTier(percent);
   return (
     <span className={[styles.headroomText, styles[`tier-${tier}`]].join(' ')} data-testid="profile-headroom-slot">
-      {loading ? 'carregando…' : percent === null ? '—' : `${percent}%`}
+      {loading ? 'carregando…' : percent === null ? '—' : `5h ${percent}%`}
     </span>
+  );
+}
+
+/**
+ * T206 (CA-2) — formata `resetsAt` (ISO) de forma curta e legível: mesmo dia
+ * do reset -> hora ("14:30"); dia diferente -> data curta ("31/07"). Puro,
+ * sem I/O; ISO inválido/ausente -> `null` (chamador OMITE o trecho de reset,
+ * nunca escreve "reset —" — instrução explícita da task).
+ */
+function formatResetsAt(resetsAt: string | null | undefined): string | null {
+  if (!resetsAt) return null;
+  const date = new Date(resetsAt);
+  if (Number.isNaN(date.getTime())) return null;
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+  return sameDay
+    ? date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+}
+
+/** T206 — texto de uma janela (`5h`/`semana`/`fable`): "{label} {percent}% livre[· reset {data}]"; janela ausente -> "{label} sem dado". */
+function windowText(label: string, window: { percentRemaining: number; resetsAt: string | null } | null): string {
+  if (!window) return `${label} sem dado`;
+  const reset = formatResetsAt(window.resetsAt);
+  return reset ? `${label} ${window.percentRemaining}% livre · reset ${reset}` : `${label} ${window.percentRemaining}% livre`;
+}
+
+interface ProfileQuotaDetailProps {
+  quota: ProfileQuota | undefined;
+  loading: boolean;
+  expanded: boolean;
+}
+
+/**
+ * T206/CA-2/CA-2b — bloco de cota por linha do dropdown: 5h é a PRIMÁRIA (com
+ * barra colorida por tier), semana vem em texto compacto embaixo (sem barra
+ * própria — decisão do Alexandre 2026-07-24), fable só aparece quando a linha
+ * está expandida (gesto de chevron dedicado, nunca ativa a conta). `loading`
+ * cobre tanto "dropdown nunca abriu" quanto a releitura do botão "Atualizar"
+ * (T205) — nunca mostra "—" nesse estado (CA-1).
+ */
+function ProfileQuotaDetail({ quota, loading, expanded }: ProfileQuotaDetailProps): React.JSX.Element {
+  if (loading) {
+    return (
+      <div className={styles.quotaDetail}>
+        <span className={styles.quotaLoading} data-testid="profile-quota-fivehour">
+          5h carregando…
+        </span>
+        <span className={styles.quotaLoading} data-testid="profile-quota-sevenday">
+          semana carregando…
+        </span>
+      </div>
+    );
+  }
+
+  if (!quota || quota.status !== 'ok') {
+    return (
+      <div className={styles.quotaDetail}>
+        <span data-testid="profile-quota-fivehour">5h —</span>
+        <span data-testid="profile-quota-sevenday">semana —</span>
+      </div>
+    );
+  }
+
+  const tier = getHeadroomTier(quota.fiveHour?.percentRemaining ?? null);
+  const fiveHourPercentValue = quota.fiveHour?.percentRemaining ?? 0;
+
+  return (
+    <div className={styles.quotaDetail}>
+      <div className={styles.fiveHourRow} data-testid="profile-quota-fivehour">
+        {quota.fiveHour ? (
+          <div className={styles.barTrack} aria-hidden="true">
+            <div className={[styles.barFill, styles[`tier-${tier}`]].join(' ')} style={{ width: `${fiveHourPercentValue}%` }} />
+          </div>
+        ) : null}
+        <span className={styles.fiveHourLabel}>{windowText('5h', quota.fiveHour)}</span>
+      </div>
+      <span className={styles.sevenDayText} data-testid="profile-quota-sevenday">
+        {windowText('semana', quota.sevenDay)}
+      </span>
+      {expanded ? (
+        <span className={styles.fableText} data-testid="profile-quota-fable">
+          {windowText('fable', quota.fable)}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -96,6 +188,10 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
   const [repairingSlug, setRepairingSlug] = useState<string | null>(null);
   const [newProfileName, setNewProfileName] = useState('');
   const [creating, setCreating] = useState(false);
+  /** T206/CA-2b — linha expandida (revela `fable`); no máximo uma por vez, nunca ativa a conta. */
+  const [expandedSlug, setExpandedSlug] = useState<string | null>(null);
+  /** T205/CA-3 — releitura forçada (botão "Atualizar"), distinta de `headroomLoading` (1ª leitura da abertura) só pro texto do botão; ambas cobrem o mesmo `slotLoading` das linhas. */
+  const [refreshing, setRefreshing] = useState(false);
 
   // FIX (auditoria rodada 5, achado baixa "callback de prop nas deps de
   // efeito") — App.tsx sempre passa os dois direto de `setState` (identidade
@@ -160,6 +256,23 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
       .finally(() => setHeadroomLoading(false));
   }, [open, refreshDoctorFor]);
 
+  // T205 (US-C/CA-3) — botão "Atualizar": releitura ignorando o cache de 60s
+  // (`{ force: true }`, ver quota-headroom.ts `HeadroomCache`/
+  // `readAllProfilesHeadroom`). Reaproveita `slotLoading` das linhas (mesmo
+  // "carregando…" da 1ª leitura) via `refreshing` — nenhuma linha some, só
+  // volta a mostrar o estado de carregamento até a promise resolver.
+  const handleRefreshHeadroom = useCallback((): void => {
+    if (refreshing) return;
+    setRefreshing(true);
+    void window.donel.profiles
+      .headroom({ force: true })
+      .then((map) => {
+        setHeadroom(map);
+        onHeadroomChangeRef.current?.(map);
+      })
+      .finally(() => setRefreshing(false));
+  }, [refreshing]);
+
   const handleActivate = (slug: string): void => {
     void window.donel.profiles.activate(slug).then(setProfiles);
   };
@@ -216,7 +329,10 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
   // comentário de topo do componente) — fora da lista de deps de propósito.
   useEffect(() => {
     if (!activeProfile) return;
-    const percentText = activeHeadroom === null ? '—' : `${activeHeadroom}%`;
+    // T208 (CA-4) — "5h" explícita antes do percentual (mesmo motivo do
+    // `computeSessionAccountLabel`/`sessionAccountLabel.ts`): um `%` sozinho
+    // não diz qual janela é. Sem leitura -> só "—" (nunca "5h —").
+    const percentText = activeHeadroom === null ? '—' : `5h ${activeHeadroom}%`;
     const label =
       activeAccountNumber !== null
         ? `Tecnologia Claude ${activeAccountNumber} · ${percentText}`
@@ -240,35 +356,92 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
 
       <Modal open={open} onClose={handleCloseModal} title="Perfis de conta">
         <div className={styles.body} data-testid="profile-switcher">
+          <Button
+            variant="secondary"
+            className={styles.refreshButton}
+            data-testid="profile-headroom-refresh"
+            onClick={handleRefreshHeadroom}
+            disabled={refreshing}
+          >
+            {refreshing ? 'Atualizando…' : 'Atualizar'}
+          </Button>
+
           <ul className={styles.list}>
             {profiles.map((profile) => {
               const accountNumber = parseAccountNumber(profile.name);
-              const percent = fiveHourPercent(headroom[profile.slug]);
+              const quota = headroom[profile.slug];
+              const percent = fiveHourPercent(quota);
               const doctor = doctorReports[profile.slug];
               const unhealthy = doctor ? !doctor.healthy : false;
-              const slotLoading = headroomLoading && !(profile.slug in headroom);
+              // T205 — durante a releitura forçada (`refreshing`), TODA linha
+              // volta a "carregando…", mesmo as que já tinham entrada no mapa
+              // (senão o botão "Atualizar" pareceria não fazer nada até a
+              // promise resolver — CA-1 exige "carregando" nunca "—" também
+              // aqui).
+              const slotLoading = (headroomLoading && !(profile.slug in headroom)) || refreshing;
+              const expanded = expandedSlug === profile.slug;
+
+              const toggleExpanded = (event: React.MouseEvent): void => {
+                // CA-2b — gesto de expansão é SEPARADO do de seleção: nunca
+                // deixa o clique borbulhar pro `<button>` de ativação (seja o
+                // `AccountBadge`, seja `.plainRow`), senão expandir a linha
+                // ativaria a conta junto — o oposto do pedido.
+                event.stopPropagation();
+                event.preventDefault();
+                setExpandedSlug((prev) => (prev === profile.slug ? null : profile.slug));
+              };
+
+              const expandButton = (
+                <button
+                  type="button"
+                  className={styles.expandButton}
+                  data-testid="profile-quota-expand"
+                  aria-expanded={expanded}
+                  aria-label={expanded ? 'Ocultar cota do Fable' : 'Mostrar cota do Fable'}
+                  onClick={toggleExpanded}
+                >
+                  <ChevronDown
+                    size={14}
+                    strokeWidth={1.5}
+                    className={expanded ? styles.chevronExpanded : undefined}
+                    aria-hidden="true"
+                  />
+                </button>
+              );
 
               return (
                 <li key={profile.slug} className={styles.row} data-testid="profile-row" data-slug={profile.slug}>
-                  {accountNumber !== null ? (
-                    <AccountBadge
-                      accountNumber={accountNumber}
-                      headroomPercent={percent}
-                      loading={slotLoading}
-                      active={profile.active}
-                      onClick={() => handleActivate(profile.slug)}
-                    />
-                  ) : (
-                    <button type="button" className={styles.plainRow} onClick={() => handleActivate(profile.slug)}>
-                      <span className={styles.plainName}>{profile.name}</span>
-                      <HeadroomSlot percent={percent} loading={slotLoading} />
-                      {profile.active ? <Check size={14} strokeWidth={1.5} aria-hidden="true" /> : null}
-                    </button>
-                  )}
+                  {/* CA-2b: o chevron é SEMPRE irmão do controle de ativação, nunca filho dele — `AccountBadge`/`.plainRow` já são `<button>`, e botão dentro de botão é HTML inválido (o `stopPropagation` não salva isso). */}
+                  <div className={styles.rowHeader}>
+                    {accountNumber !== null ? (
+                      <AccountBadge
+                        accountNumber={accountNumber}
+                        headroomPercent={percent}
+                        loading={slotLoading}
+                        active={profile.active}
+                        onClick={() => handleActivate(profile.slug)}
+                      />
+                    ) : (
+                      <button type="button" className={styles.plainRow} onClick={() => handleActivate(profile.slug)}>
+                        <span className={styles.plainName}>{profile.name}</span>
+                        {profile.active ? <Check size={14} strokeWidth={1.5} aria-hidden="true" /> : null}
+                      </button>
+                    )}
+                    {expandButton}
+                  </div>
+
+                  <ProfileQuotaDetail quota={quota} loading={slotLoading} expanded={expanded} />
 
                   {doctor && unhealthy ? (
                     <div className={styles.doctorWarning} data-testid="profile-doctor-warning">
-                      <span>Junctions com problema</span>
+                      <span
+                        className={styles.doctorWarningIcon}
+                        role="img"
+                        aria-label="Junctions com problema"
+                        title="Junctions com problema"
+                      >
+                        <AlertTriangle size={14} strokeWidth={1.5} aria-hidden="true" />
+                      </span>
                       <Button
                         variant="secondary"
                         onClick={() => handleRepair(profile.slug)}
@@ -277,11 +450,6 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
                         {repairingSlug === profile.slug ? 'Recriando…' : 'Recriar links'}
                       </Button>
                     </div>
-                  ) : null}
-                  {doctor && !unhealthy ? (
-                    <span className={styles.doctorOk} data-testid="profile-doctor-ok">
-                      Perfil OK
-                    </span>
                   ) : null}
                 </li>
               );
