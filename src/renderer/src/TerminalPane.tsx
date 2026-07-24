@@ -66,6 +66,15 @@ export interface TerminalPaneProps {
    * que fazer com isso (`sessionAccountLabel.ts`).
    */
   onProfileResolved?: (profile: { slug: string; name: string } | undefined) => void;
+  /**
+   * T404/T408 (004-nomear-sessoes) — id da sessão do Claude desta aba
+   * (`PtyCreateResult.claudeSessionId`, imposto pelo main no spawn via
+   * `--session-id`). Mesmo espírito de `onProfileResolved`: o `ptyId` continua
+   * não subindo pro App.tsx, mas o id da SESSÃO precisa subir, porque é a
+   * chave com que o nome dado na UI é persistido (CA-6). `undefined` só para
+   * aba 'shell'.
+   */
+  onClaudeSessionIdResolved?: (claudeSessionId: string | undefined) => void;
 }
 
 /**
@@ -118,7 +127,16 @@ export interface TerminalPaneHandle {
 }
 
 export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(function TerminalPane(
-  { sessionType = 'shell', cwd, args, onCloseTab, onStateChange, onAliveChange, onProfileResolved },
+  {
+    sessionType = 'shell',
+    cwd,
+    args,
+    onCloseTab,
+    onStateChange,
+    onAliveChange,
+    onProfileResolved,
+    onClaudeSessionIdResolved,
+  },
   ref
 ): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -158,6 +176,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   onAliveChangeRef.current = onAliveChange;
   const onProfileResolvedRef = useRef(onProfileResolved);
   onProfileResolvedRef.current = onProfileResolved;
+  const onClaudeSessionIdResolvedRef = useRef(onClaudeSessionIdResolved);
+  onClaudeSessionIdResolvedRef.current = onClaudeSessionIdResolved;
 
   // T010 — reporta pro pai sempre que a "vivacidade" do processo muda (não
   // a cada render, só quando `status.kind` de fato transiciona) — é o sinal
@@ -242,6 +262,9 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         // (efeito de `status.kind` acima) — App.tsx grava por tab.id, nunca
         // reconsultado depois (mesmo espírito "por valor" de `claudeConfigDir`).
         onProfileResolvedRef.current?.(result.profile);
+        // T404 (004) — id da sessão do Claude desta aba, no mesmo instante e pelo
+        // mesmo motivo do perfil acima: é a chave de persistência do nome (CA-6).
+        onClaudeSessionIdResolvedRef.current?.(result.claudeSessionId);
 
         // FIX (feedback E2E rodada 1, agravante do bug StrictMode) — replay
         // do ring buffer ANTES de assinar `onData` (ver comentário de topo

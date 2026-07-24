@@ -1,9 +1,10 @@
 import type { ProjectInfo } from '../../shared';
-import type { SessionState } from '@donel-dev/design-system';
-import { StateDot } from '@donel-dev/design-system';
+import type { EditableLabelHandle, SessionState } from '@donel-dev/design-system';
+import { EditableLabel, StateDot } from '@donel-dev/design-system';
 import { ChevronDown, ChevronRight, History, Pin, PinOff, Star } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { sortSessions } from '../../shared/sessionOrdering';
+import { SESSION_NAME_MAX_LENGTH } from '../../shared/sessionName';
 import styles from './ProjectSidebar.module.css';
 
 // T007 — sidebar real (ui-spec §2, US-1, FR-001): PROJETOS (árvore rasa por
@@ -33,6 +34,12 @@ export interface ProjectSidebarProps {
   onFocusSession: (id: string) => void;
   onTogglePin: (id: string) => void;
   /**
+   * T407/T408 (004-nomear-sessoes) — renomear a sessão pela própria linha
+   * (CA-3), com o MESMO gesto da aba de topo (duplo-clique ou F2). O App
+   * decide o que fazer com o texto: aba claude persiste, aba shell é memória.
+   */
+  onRenameSession: (id: string, name: string) => void;
+  /**
    * T013 (FR-004, CA-2, ui-spec §5) — abre o painel "Sessões anteriores" do
    * projeto. Ícone PRÓPRIO por linha (não o botão do nome, que já abre uma
    * sessão claude NOVA direto — T007, smoke `terminal.spec.ts` — e não pode
@@ -61,6 +68,66 @@ function groupByRoot(projects: ProjectInfo[]): { root: string; items: ProjectInf
   return groups;
 }
 
+/**
+ * T407/T408 (004-nomear-sessoes) — a linha de sessão virou componente próprio
+ * porque o gesto de renomear precisa de um `ref` por linha (F2 abre a edição
+ * da linha em foco). Antes era markup inline; nenhum comportamento existente
+ * mudou aqui além disso.
+ */
+function SessionRow({
+  session,
+  onFocusSession,
+  onTogglePin,
+  onRenameSession,
+}: {
+  session: SidebarSession;
+  onFocusSession: (id: string) => void;
+  onTogglePin: (id: string) => void;
+  onRenameSession: (id: string, name: string) => void;
+}): React.JSX.Element {
+  const labelRef = useRef<EditableLabelHandle>(null);
+
+  return (
+    <div className={[styles.sessionRow, session.active ? styles.sessionRowActive : ''].join(' ')}>
+      <button
+        type="button"
+        className={styles.sessionOpenButton}
+        onClick={() => onFocusSession(session.id)}
+        onKeyDown={(event) => {
+          if (event.key !== 'F2') return;
+          event.preventDefault();
+          event.stopPropagation();
+          labelRef.current?.startEditing();
+        }}
+      >
+        <StateDot state={session.state} />
+        <EditableLabel
+          ref={labelRef}
+          className={styles.sessionName}
+          value={session.name}
+          maxLength={SESSION_NAME_MAX_LENGTH}
+          onCommit={(next) => onRenameSession(session.id, next)}
+          inputAriaLabel={`Renomear sessão ${session.name}`}
+        />
+        {session.projectName ? <span className={styles.sessionProject}>{session.projectName}</span> : null}
+      </button>
+      <button
+        type="button"
+        className={styles.pinButton}
+        onClick={() => onTogglePin(session.id)}
+        aria-pressed={session.pinned}
+        aria-label={session.pinned ? `Desafixar sessão ${session.name}` : `Fixar sessão ${session.name}`}
+      >
+        {session.pinned ? (
+          <Pin size={12} strokeWidth={1.5} fill="currentColor" aria-hidden="true" />
+        ) : (
+          <PinOff size={12} strokeWidth={1.5} aria-hidden="true" />
+        )}
+      </button>
+    </div>
+  );
+}
+
 export function ProjectSidebar({
   projects,
   loadingProjects,
@@ -69,6 +136,7 @@ export function ProjectSidebar({
   sessions,
   onFocusSession,
   onTogglePin,
+  onRenameSession,
   onShowPreviousSessions,
 }: ProjectSidebarProps): React.JSX.Element {
   const [collapsedRoots, setCollapsedRoots] = useState<ReadonlySet<string>>(new Set());
@@ -167,26 +235,13 @@ export function ProjectSidebar({
         <h2 className={styles.sectionTitle}>Sessões</h2>
         {orderedSessions.length === 0 ? <p className={styles.hint}>Nenhuma sessão aberta.</p> : null}
         {orderedSessions.map((session) => (
-          <div key={session.id} className={[styles.sessionRow, session.active ? styles.sessionRowActive : ''].join(' ')}>
-            <button type="button" className={styles.sessionOpenButton} onClick={() => onFocusSession(session.id)}>
-              <StateDot state={session.state} />
-              <span>{session.name}</span>
-              {session.projectName ? <span className={styles.sessionProject}>{session.projectName}</span> : null}
-            </button>
-            <button
-              type="button"
-              className={styles.pinButton}
-              onClick={() => onTogglePin(session.id)}
-              aria-pressed={session.pinned}
-              aria-label={session.pinned ? `Desafixar sessão ${session.name}` : `Fixar sessão ${session.name}`}
-            >
-              {session.pinned ? (
-                <Pin size={12} strokeWidth={1.5} fill="currentColor" aria-hidden="true" />
-              ) : (
-                <PinOff size={12} strokeWidth={1.5} aria-hidden="true" />
-              )}
-            </button>
-          </div>
+          <SessionRow
+            key={session.id}
+            session={session}
+            onFocusSession={onFocusSession}
+            onTogglePin={onTogglePin}
+            onRenameSession={onRenameSession}
+          />
         ))}
       </section>
     </nav>

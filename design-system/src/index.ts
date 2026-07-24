@@ -48,6 +48,9 @@ export type { SegmentedControlProps, SegmentedControlOption } from './components
 export { TerminalTab } from './components/TerminalTab';
 export type { TerminalTabProps } from './components/TerminalTab';
 
+export { EditableLabel } from './components/EditableLabel';
+export type { EditableLabelHandle, EditableLabelProps } from './components/EditableLabel';
+
 export { PostItCard } from './components/PostItCard';
 export type { PostItCardProps } from './components/PostItCard';
 

@@ -159,10 +159,17 @@
   cursor: pointer;
 }
 
-.sessionOpenButton span:first-of-type {
+/*
+ * T407 — o nome da sessão saiu de um `<span>` inline para o EditableLabel
+ * (renomear pela linha, CA-3), então a truncagem passou a ter classe própria
+ * em vez de depender do seletor posicional `span:first-of-type` — que, com o
+ * label virando `<input>` em modo edição, deixaria de casar.
+ */
+.sessionName {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .sessionProject {

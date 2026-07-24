@@ -1,6 +1,7 @@
 import { Button, Modal, TextInput } from '@donel-dev/design-system';
 import { useMemo, useState } from 'react';
-import type { SessionSummaryDto } from '../../shared';
+import type { SessionNamesMap, SessionSummaryDto } from '../../shared';
+import { resolveSessionName } from '../../shared/sessionName';
 import { filterSessionsByQuery, formatFileSize, formatRelativeTime } from '../../shared/sessions';
 import styles from './PreviousSessions.module.css';
 
@@ -28,6 +29,13 @@ export interface PreviousSessionsProps {
   onClose: () => void;
   onResume: (session: SessionSummaryDto) => void;
   onFork: (session: SessionSummaryDto) => void;
+  /**
+   * T408 (004-nomear-sessoes) — mapa de nomes do ConfigStore, para esta lista
+   * exibir o MESMO nome resolvido que a aba e a sidebar (CA-1/CA-5). É aqui
+   * que o caso de uso principal acontece: reachar pelo nome uma sessão de
+   * semanas atrás (US-A). Sem isso, a lista mostraria só a 1ª mensagem.
+   */
+  sessionNames: SessionNamesMap;
 }
 
 export function PreviousSessions({
@@ -38,6 +46,7 @@ export function PreviousSessions({
   onClose,
   onResume,
   onFork,
+  sessionNames,
 }: PreviousSessionsProps): React.JSX.Element {
   // Query de busca reseta implicitamente a cada abertura (o componente some
   // do DOM quando `open` é false — Modal.tsx `if (!open) return null` — o
@@ -76,7 +85,11 @@ export function PreviousSessions({
                 <div className={styles.info}>
                   {/* ui-spec §5: transcript corrompido/truncado entra na lista com preview "(ilegível)", sem derrubar o índice — o SessionIndexer já garante isso; aqui só um tom visual diferente. */}
                   <span className={[styles.preview, session.corrupted ? styles.corrupted : ''].join(' ')}>
-                    {session.preview}
+                    {resolveSessionName({
+                      fallback: session.preview,
+                      customTitle: session.customTitle,
+                      stored: sessionNames[session.id] ?? null,
+                    })}
                   </span>
                   <span className={styles.meta}>
                     {formatRelativeTime(session.lastActivityAt ?? session.mtimeMs)} · {formatFileSize(session.size)}

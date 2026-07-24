@@ -27,6 +27,9 @@ import { computePossiblyBlockedOnPrompt } from '../../shared/possiblyBlockedOnPr
 import { computeSessionAccountLabel } from '../../shared/sessionAccountLabel';
 import { sortSessions } from '../../shared/sessionOrdering';
 import { nextAttentionSessionId, sessionIdAtPosition } from '../../shared/sessionShortcuts';
+// 004-nomear-sessoes (T401/T406/T408) — a regra de qual nome aparece e a
+// validação do nome digitado moram no shared, iguais para main e renderer.
+import { SESSION_NAME_MAX_LENGTH, normalizeSessionName, resolveSessionName } from '../../shared/sessionName';
 import { sessionTabName } from '../../shared/sessions';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
@@ -66,7 +69,14 @@ const FALLBACK_NOTIFICATION_PREFERENCE: NotificationPreference = 'permission-onl
 
 interface TabState {
   id: string;
-  /** Nome da aba/sessão — nome do projeto quando aberta pela sidebar. */
+  /**
+   * FALLBACK do nome da aba (004-nomear-sessoes, T408) — nome do projeto
+   * quando aberta pela sidebar, `sessionTabName(preview)` quando reaberta.
+   * Deixou de ser "o nome": o label exibido é `resolveSessionName(...)`, que
+   * pode preferir o `custom-title` do CLI ou o nome dado na UI. Para aba
+   * `shell` (sem sessão do Claude) este campo continua sendo o nome de fato,
+   * só em memória (decisão C4).
+   */
   name: string;
   /** cwd do PTY; undefined = home (aba inicial, sem projeto associado). */
   cwd?: string;
@@ -76,6 +86,20 @@ interface TabState {
   launchArgs?: string[];
   /** 'claude' (default) = sessão claude direta no PTY; 'shell' = terminal livre (FR-008, powershell.exe). */
   sessionType: 'claude' | 'shell';
+  /**
+   * T404/T408 — id da sessão do Claude desta aba (o mesmo que nomeia o
+   * `.jsonl`), devolvido por `pty.create` e levantado pelo TerminalPane. É a
+   * chave de persistência do nome (CA-6). `undefined` em aba `shell` e antes
+   * da promise do create resolver.
+   */
+  claudeSessionId?: string;
+  /**
+   * T403/T408 — último `custom-title` conhecido desta sessão (o nome dado por
+   * `/rename` no CLI). Vem do `SessionSummaryDto` quando a aba nasce de uma
+   * sessão anterior; `null` numa sessão nova. É um dos insumos de
+   * `resolveSessionName` e o que se carimba como `seenTitle` ao renomear.
+   */
+  customTitle?: string | null;
 }
 
 /** Último lançamento do Launcher — CA-1 (comando exato) + reaproveitado pelo corpo do "＋ Nova sessão" (ui-spec §2, zona 1). */
@@ -465,6 +489,9 @@ export function App(): React.JSX.Element {
       pinned: false,
       launchArgs: args,
       sessionType: 'claude',
+      // T403/T408 (004) — o `/rename` que esta sessão levou no CLI já veio no
+      // índice; semeado aqui, `resolveSessionName` prefere ele ao preview (CA-1).
+      customTitle: session.customTitle,
     });
     setSelectedProjectPath(previousSessionsProject.path);
     setPreviousSessionsProject(null);
@@ -485,6 +512,9 @@ export function App(): React.JSX.Element {
       pinned: false,
       launchArgs: args,
       sessionType: 'claude',
+      // T403/T408 (004) — o `/rename` que esta sessão levou no CLI já veio no
+      // índice; semeado aqui, `resolveSessionName` prefere ele ao preview (CA-1).
+      customTitle: session.customTitle,
     });
     setSelectedProjectPath(previousSessionsProject.path);
     setPreviousSessionsProject(null);
@@ -647,8 +677,49 @@ export function App(): React.JSX.Element {
     void window.donel.config.setNotificationPreference(preference).then(setAppConfig).catch(() => undefined);
   };
 
+  /**
+   * T408 (004) — update parcial de UMA aba. Antes existia só o `.map` inline
+   * do pin; com nome, `claudeSessionId` e `customTitle` chegando, virariam
+   * três `.map` espalhados fazendo a mesma coisa. O pin passou a usar este
+   * (`handleTogglePin` abaixo), então há um caminho só de mutação de aba.
+   */
+  const updateTab = useCallback((tabId: string, partial: Partial<Omit<TabState, 'id'>>): void => {
+    setTabs((prev) => prev.map((tab) => (tab.id === tabId ? { ...tab, ...partial } : tab)));
+  }, []);
+
   const handleTogglePin = (tabId: string): void => {
-    setTabs((prev) => prev.map((tab) => (tab.id === tabId ? { ...tab, pinned: !tab.pinned } : tab)));
+    const tab = tabs.find((candidate) => candidate.id === tabId);
+    if (!tab) return;
+    updateTab(tabId, { pinned: !tab.pinned });
+  };
+
+  /**
+   * T408 (004) — CA-3: renomear pela aba ou pela linha da sidebar. Dois
+   * caminhos, por decisão do clarify:
+   * - aba `claude`: persiste no ConfigStore via `sessions:setName` (CA-6), com
+   *   `seenTitle` = o `custom-title` que esta aba conhece agora (dirty-check
+   *   do C2). Vazio APAGA a entrada e o nome volta ao fallback (C5).
+   * - aba `shell` (ou aba cujo create ainda não resolveu): só memória, em
+   *   `tab.name` — não há `sessionId` onde persistir (C4). Nesse caso um nome
+   *   vazio é ignorado: sem entrada no store, não existe fallback para onde
+   *   voltar, e uma aba sem rótulo nenhum não é um estado útil.
+   */
+  const handleRenameTab = (tabId: string, rawName: string): void => {
+    const tab = tabs.find((candidate) => candidate.id === tabId);
+    if (!tab) return;
+
+    const normalized = normalizeSessionName(rawName);
+
+    if (tab.sessionType !== 'claude' || !tab.claudeSessionId) {
+      if (normalized === null) return;
+      updateTab(tabId, { name: normalized });
+      return;
+    }
+
+    void window.donel.sessions
+      .setName(tab.claudeSessionId, rawName, tab.customTitle ?? null)
+      .then(setAppConfig)
+      .catch(() => undefined);
   };
 
   // T013 (correção herdada) — assina `onRenderedUpdate` (EVENTO, disparado
@@ -765,9 +836,24 @@ export function App(): React.JSX.Element {
   // assume 'working' (spike: estado inicial otimista) com stateEnteredAt=0
   // (sortSessions trata omitido/0 como "a mais antiga possível" — nunca
   // perde o desempate de FR-010/CA-6 por causa disso).
+  /**
+   * T408 (004) — CA-5: UMA função de resolução por sessão, consumida pela aba,
+   * pela linha da sidebar e pela lista de sessões anteriores. Se cada lugar
+   * decidisse o nome por conta própria, os três divergiriam.
+   * Aba `shell` não tem sessão do Claude: seu nome é o `tab.name` e ponto (C4).
+   */
+  const resolveTabName = (tab: TabState): string => {
+    if (tab.sessionType !== 'claude') return tab.name;
+    return resolveSessionName({
+      fallback: tab.name,
+      customTitle: tab.customTitle ?? null,
+      stored: (tab.claudeSessionId ? appConfig?.sessionNames[tab.claudeSessionId] : undefined) ?? null,
+    });
+  };
+
   const sidebarSessions: SidebarSession[] = tabs.map((tab) => ({
     id: tab.id,
-    name: tab.name,
+    name: resolveTabName(tab),
     projectName: tab.projectName,
     state: semaphoreStates[tab.id]?.state ?? 'working',
     stateEnteredAt: semaphoreStates[tab.id]?.stateEnteredAt,
@@ -1002,6 +1088,7 @@ export function App(): React.JSX.Element {
           sessions={sidebarSessions}
           onFocusSession={setActiveTabId}
           onTogglePin={handleTogglePin}
+          onRenameSession={handleRenameTab}
           onShowPreviousSessions={handleShowPreviousSessions}
         />
 
@@ -1010,7 +1097,11 @@ export function App(): React.JSX.Element {
             {tabs.map((tab) => (
               <TerminalTab
                 key={tab.id}
-                name={tab.name}
+                name={resolveTabName(tab)}
+                // T408 (004) — CA-3: duplo-clique no nome, ou F2 na aba em
+                // foco. Vale para aba claude (persiste) e shell (memória, C4).
+                onRename={(next) => handleRenameTab(tab.id, next)}
+                nameMaxLength={SESSION_NAME_MAX_LENGTH}
                 // T010 — ui-spec §2 zona 3: abas de terminal comum não têm
                 // dot de semáforo (undefined = TerminalTab troca pelo ícone
                 // de shell); só abas 'claude' mostram o StateDot do T009.
@@ -1071,6 +1162,9 @@ export function App(): React.JSX.Element {
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}
                   onProfileResolved={(profile) => handleProfileResolved(tab.id, profile)}
+                  // T404/T408 — o id da sessão chega aqui e vira a chave de
+                  // persistência do nome desta aba (CA-6).
+                  onClaudeSessionIdResolved={(claudeSessionId) => updateTab(tab.id, { claudeSessionId })}
                   onCloseTab={() => handleRequestCloseTab(tab.id)}
                 />
               </div>
@@ -1145,6 +1239,9 @@ export function App(): React.JSX.Element {
         onClose={handleClosePreviousSessions}
         onResume={handleResumeSession}
         onFork={handleForkSession}
+        // T408 (004) — a lista mostra o nome resolvido (custom-title do CLI ou
+        // nome dado na UI), não só a 1ª mensagem: é o caminho do US-A.
+        sessionNames={appConfig?.sessionNames ?? {}}
       />
 
       {/* T015 — Preferências (FR-007, feedback E2E rodada 3/4). */}
