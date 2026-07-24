@@ -201,6 +201,30 @@ Trabalho, que não carrega env nenhuma, e o canal de teste cairia no `userData`
 do app de trabalho. Implementação prevista: segundo `electron-builder.beta.yml`
 + script `dist:beta`.
 
+### B11. Smokes quebrados por drift do CLI `claude` (novo — medido 24/07)
+
+Três smokes falham por mudança de TELA do CLI `claude` instalado
+(v2.1.219), não por código do app: `profiles.spec.ts:83` (T014),
+`model-injection.spec.ts:48` (T011) e `terminal.spec.ts:281` (T009). Eles
+esperam a string `"Let's get started"` do wizard de 1º uso e recebem o banner
+novo (`"Welcome to Claude Code v2.1.219"`) sem esse texto.
+
+**Já medido, não é suposição:** a suíte foi rodada no commit pré-entrega da 002
+(`7d1bbf9`) e os três JÁ falhavam lá — ver `specs/002-quota-headroom/tasks.md`
+(T209). Somam-se aos 2 de `previous-sessions.spec.ts` (dívida T013, feature de
+restauração de sessões) e ao flake de contenção de `tabs-lifecycle.spec.ts:174`
+(passa isolado em 9,4s; falha só na suíte completa, com várias instâncias de
+Electron competindo).
+
+**Por que resolver:** com 6 vermelhos permanentes, a suíte deixa de ser um sinal
+— o próximo gate vai ter de reclassificar tudo à mão outra vez, e o risco real é
+alguém ler um vermelho NOVO como "já era vermelho". Proposta: ancorar as
+asserções em algo estável do wizard (ou num marcador determinístico próprio) em
+vez de na cópia da tela do CLI, que muda a cada release.
+
+**Relacionado:** B9 (log de resultado de testes) — um registro carimbado com
+commit tornaria essa reclassificação consultável em vez de re-executável.
+
 ## Decidido, aguardando spec
 
 - **Restauração de sessões no restart** (rodada 5 do feedback-e2e).

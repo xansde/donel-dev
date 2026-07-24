@@ -1,7 +1,19 @@
 # Tasks 002 — Quota headroom (destravar + dropdown enriquecido)
 
-**Status:** PLANEJADO — aguardando OK do Alexandre para implementar (gate de
-execução). Branch: `feature/mvp-p0` (mesma; tudo local, sem push).
+**Status:** ✅ **CONCLUÍDA — T201..T209 entregues e VALIDADAS por E2E do
+Alexandre em 2026-07-24 ("funcionou tudo perfeitamente")**. Branch:
+`feature/mvp-p0` (tudo local, **sem push e sem PR**).
+Commits: `c909753` (T201–T203) · `e0d0580` (T204) · `d76038c` (T205) ·
+`bac6a00` (T206–T208) · `3e04f57` (smokes) · `1e537f6` (fix CA-2b).
+Gate real: typecheck 0 erros · **322/322** unit · 3 smokes da 002 verdes.
+Roteiro usado na validação: `roteiro-e2e.md` deste diretório.
+
+> **Correção de escopo em relação ao texto original abaixo:** a nota da linha
+> "escopo das janelas: só 5h + semana — `model:fable` fica fora" foi
+> SUPERADA pela decisão CA-2b da `spec.md` (24/07): o Fable ENTROU, revelado
+> só na expansão. Foi assim que se implementou.
+
+> **Fatia 0 (US-A) JÁ ENTREGUE** — ver nota abaixo.
 **Atualizado:** 2026-07-24
 **Referências:** `spec.md` (CA-1..CA-7) + `plan.md` (Fatias 0/1/2) deste
 diretório. Payload real do `quota-axi --json` medido em 2026-07-24 (janelas
@@ -114,7 +126,20 @@ quota — padrão da rodada 5, nunca abrir sessão real só pra ler cota).
 
 ## Gate final (antes de declarar pronto)
 
-- **T209 — Gate de qualidade + reinstalação + E2E**
+- **T209 — Gate de qualidade + reinstalação + E2E** ✅ **FEITO (24/07)**
+  Resultado REAL medido: `npm run typecheck` exit 0 · `npm test` **322/322** ·
+  `npm run test:smoke` 15/21 passed, e os **3 smokes da 002 verdes**.
+  `npm run build` + `npm run dist` rodados (installer 16:27), reinstalação e
+  E2E feitos pelo Alexandre — **aprovado sem ressalvas**.
+  **Classificação dos 6 vermelhos (nenhum é regressão da 002 — medido, não
+  presumido):** 2 de `previous-sessions.spec.ts` = dívida T013 já conhecida;
+  `profiles.spec.ts:83` + `model-injection.spec.ts:48` +
+  `terminal.spec.ts:281` = **drift do CLI `claude` v2.1.219**, PROVADO rodando
+  a suíte no commit pré-entrega `7d1bbf9`, onde já falhavam;
+  `tabs-lifecycle.spec.ts:174` = flake de contenção (passa isolado em 9,4s).
+  **Nota de método:** rodar os smokes exige `npm run build` antes — eles
+  lançam `out/main/index.js` compilado, e sem build testam o bundle ANTIGO
+  (a 1ª execução desta entrega deu 4 vermelhos fantasmas exatamente por isso).
   Suíte COMPLETA verde: typecheck + unit + **smokes** (lição da rodada 5 — não
   interromper antes do gate). Auditoria opus ≥95 (padrão da esteira).
   `npm run build` + `npm run dist`, reinstalar, e roteiro E2E novo pra
