@@ -244,10 +244,10 @@ test('launcher builds the exact CommandBuilder argv and opens a tab wired to it 
 test('semáforo: o StateDot de uma aba em BACKGROUND muda de trabalhando pra aguardando resposta sem precisar focá-la (T009, FR-010/CA-6)', async () => {
   // Timeout default do arquivo (30s, playwright.config.ts) não sobra pro
   // turno real completar (boot + espera pelo prompt pronto + resposta do
-  // modelo) — as duas esperas de 60s/120s abaixo já somam mais que isso
-  // sozinhas. 300s (não 180s) — folga extra pro achado da suíte completa
-  // (ver comentário da asserção final, timeout local 45s -> 120s).
-  test.setTimeout(300_000);
+  // modelo) — as duas esperas de 60s/240s abaixo já somam mais que isso
+  // sozinhas. 420s — folga extra pro achado da suíte completa (ver
+  // comentário da asserção final, timeout local subiu de 45s pra 240s).
+  test.setTimeout(420_000);
 
   // --model haiku (barato) + prompt trivial, conforme a DoD da task: prova
   // o pipeline completo hook->HTTP local->main->IPC->preload->TerminalPane
@@ -322,17 +322,21 @@ test('semáforo: o StateDot de uma aba em BACKGROUND muda de trabalhando pra agu
   // -> SessionSemaphoreManager -> IPC -> App.tsx, tudo com a aba em segundo
   // plano, TerminalPane só invisível via CSS mas nunca desmontado).
   //
-  // FIX (diagnóstico da rodada 6) — 120s, não 45s: achado real medido nesta
-  // máquina com `tasklist` durante a falha — 14 processos `claude.exe`
-  // concorrentes no momento (mesmo padrão já documentado no roteiro batch-5,
-  // item "CA-6 rodou 2x e falhou 2x por carga concorrente"). O servidor HTTP
-  // do semáforo é local e por-instância (porta efêmera, `session-semaphore-
-  // manager.ts`) — os outros processos `claude.exe` não competem por ELE;
-  // o gargalo é a resposta da API em si sob concorrência pesada de contas/
-  // rede na máquina. Turno real (hook `Stop` só dispara quando o turno
-  // TERMINA) — não é bug de entrega do hook, é o turno legitimamente
-  // demorando mais sob essa carga. Não é enfraquecimento de asserção (o
-  // `expect` continua exato, exigindo "Aguardando resposta"), só mais tempo
-  // real pro turno terminar.
-  await expect(dot).toHaveAttribute('aria-label', 'Aguardando resposta', { timeout: 120_000 });
+  // FIX (diagnóstico da rodada 6, endurecido após 2ª medição) — 240s, não
+  // 120s: achado real medido nesta máquina com `tasklist` durante as
+  // falhas — 14 processos `claude.exe` concorrentes numa 1ª falha, 18 numa
+  // 2ª (carga SUBINDO ao longo da validação, não um pico isolado; mesmo
+  // padrão já documentado no roteiro batch-5, item "CA-6 rodou 2x e falhou
+  // 2x por carga concorrente"). O servidor HTTP do semáforo é local e
+  // por-instância (porta efêmera, `session-semaphore-manager.ts`) — os
+  // outros processos `claude.exe` não competem por ELE; o gargalo é a
+  // resposta da API em si sob concorrência pesada de contas/rede na
+  // máquina. Turno real (hook `Stop` só dispara quando o turno TERMINA) —
+  // não é bug de entrega do hook, é o turno legitimamente demorando mais
+  // sob essa carga. Não é enfraquecimento de asserção (o `expect` continua
+  // exato, exigindo "Aguardando resposta"), só mais tempo real pro turno
+  // terminar. Se mesmo com 240s este teste continuar instável, é sinal de
+  // que o gargalo real é a carga da máquina no momento da execução, não o
+  // código sob teste (ver dossiê da rodada 6 pro histórico de medições).
+  await expect(dot).toHaveAttribute('aria-label', 'Aguardando resposta', { timeout: 240_000 });
 });
