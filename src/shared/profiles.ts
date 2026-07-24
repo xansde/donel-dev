@@ -82,8 +82,14 @@ export interface DonelProfilesApi {
   doctor(slug: string): Promise<ProfileDoctorReportDto>;
   /** Recria as junctions quebradas reportadas pelo último `doctor` (ui-spec §6 "Recriar links"); devolve o doctor já re-executado. */
   repair(slug: string): Promise<ProfileDoctorReportDto>;
-  /** Leitura sob demanda, paralela, timeout 8s/cache 60s por perfil (FR-012; `unavailable` NUNCA é cacheado — CA-5) — nunca lança, nunca trava esperando todos. */
-  headroom(): Promise<ProfileHeadroomMap>;
+  /**
+   * Leitura sob demanda, paralela, timeout 8s/cache 60s por perfil (FR-012;
+   * `unavailable` NUNCA é cacheado — CA-5) — nunca lança, nunca trava
+   * esperando todos. T205 (US-C/CA-3): `{ force: true }` ignora o cache de
+   * 60s (botão "Atualizar" do dropdown) — omitir o argumento preserva o
+   * comportamento anterior (respeita cache).
+   */
+  headroom(options?: { force?: boolean }): Promise<ProfileHeadroomMap>;
 }
 
 const ACCOUNT_NAME_PATTERN = /^Tecnologia Claude (\d+)$/;

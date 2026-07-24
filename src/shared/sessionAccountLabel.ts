@@ -72,6 +72,11 @@ export function computeSessionAccountLabel(
   const accountNumber = parseAccountNumber(input.profile.name);
   const displayName = accountNumber !== null ? `Tecnologia Claude ${accountNumber}` : input.profile.name;
   const headroomPercent = quota?.fiveHour?.percentRemaining ?? null;
-  const percentText = headroomPercent === null ? '—' : `${headroomPercent}%`;
+  // T208 (002-quota-headroom, CA-4) — "5h" explícita no rótulo: antes o `%`
+  // era ambíguo (o problema 2 da spec.md — "não entendi o que essa cota
+  // significa" — vinha exatamente daqui, um número solto sem dizer QUAL
+  // janela). Sem leitura -> continua só "—" (nunca "5h —", que sugeriria
+  // falsamente que já se sabe que é a janela de 5h vazia).
+  const percentText = headroomPercent === null ? '—' : `5h ${headroomPercent}%`;
   return `Sessão: ${displayName} · ${percentText}`;
 }

@@ -2,7 +2,8 @@
 // sessão em foco, não a conta ATIVA global (ver comentário de topo de
 // src/shared/sessionAccountLabel.ts pra causa raiz completa).
 // T204 (002-quota-headroom) — 3º parâmetro passou de `number|null` pro shape
-// `ProfileQuota|null`; o TEXTO do rótulo não muda nesta fase (T208 depois).
+// `ProfileQuota|null`. T208: o rótulo agora explicita "5h" antes do percentual
+// (CA-4) — "—" continua "—" (nunca "5h —") quando não há leitura.
 import { describe, expect, it } from 'vitest';
 import type { ProfileQuota } from '../src/shared/profiles';
 import { computeSessionAccountLabel } from '../src/shared/sessionAccountLabel';
@@ -21,7 +22,7 @@ describe('computeSessionAccountLabel', () => {
       'FALLBACK_NAO_USADO',
       quotaWithFiveHour(62),
     );
-    expect(label).toBe('Sessão: Principal · 62%');
+    expect(label).toBe('Sessão: Principal · 5h 62%');
   });
 
   it('aba claude com perfil no formato "Tecnologia Claude {n}" normaliza via parseAccountNumber + cota', () => {
@@ -30,7 +31,7 @@ describe('computeSessionAccountLabel', () => {
       'FALLBACK_NAO_USADO',
       quotaWithFiveHour(45),
     );
-    expect(label).toBe('Sessão: Tecnologia Claude 3 · 45%');
+    expect(label).toBe('Sessão: Tecnologia Claude 3 · 5h 45%');
   });
 
   it('aba claude com perfil de teste (nome arbitrário) e quota unavailable (sem fiveHour) mostra o nome cru prefixado + —', () => {

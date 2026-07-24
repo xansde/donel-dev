@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ProfileHeadroomMap, ProfileQuota, QuotaWindow } from '../shared/profiles';
@@ -205,14 +205,36 @@ export interface RunQuotaAxiOptions {
  * "sem dados" do resto do app — SessionIndexer, ProjectScanner).
  */
 export function readQuotaAxiQuota(options: RunQuotaAxiOptions): Promise<ProfileQuota> {
-  return new Promise((resolve) => {
-    const env: NodeJS.ProcessEnv = { ...(options.baseEnv ?? process.env) };
-    if (options.configDir) {
-      env.CLAUDE_CONFIG_DIR = options.configDir;
-    } else {
-      delete env.CLAUDE_CONFIG_DIR;
-    }
+  const env: NodeJS.ProcessEnv = { ...(options.baseEnv ?? process.env) };
+  if (options.configDir) {
+    env.CLAUDE_CONFIG_DIR = options.configDir;
+  } else {
+    delete env.CLAUDE_CONFIG_DIR;
+  }
 
+  // SEAM DE TESTE (T205, 002-quota-headroom) — os smokes deste app rodam
+  // isolados do `%APPDATA%` real e a regra do projeto proíbe abrir sessão
+  // claude real só pra ler cota (nenhum número determinístico disponível em
+  // CI/dev). Quando `DONEL_QUOTA_AXI_FIXTURE` aponta pra um arquivo JSON, o
+  // conteúdo dele SUBSTITUI o payload que normalmente viria do stdout do
+  // processo `quota-axi` — mas passa pelo MESMO `parseQuotaAxiWindows` que o
+  // caminho real usa (a costura injeta o payload bruto, nunca o resultado
+  // já parseado, pra continuar exercitando a regra CA-5 de verdade). Nunca
+  // spawna processo nenhum neste ramo. Fora de teste a variável não existe
+  // -> comportamento normal abaixo, inalterado.
+  const fixturePath = env.DONEL_QUOTA_AXI_FIXTURE;
+  if (fixturePath) {
+    return Promise.resolve().then(() => {
+      try {
+        const raw = readFileSync(fixturePath, 'utf8');
+        return parseQuotaAxiWindows(JSON.parse(raw) as QuotaAxiOutput);
+      } catch {
+        return UNAVAILABLE_QUOTA;
+      }
+    });
+  }
+
+  return new Promise((resolve) => {
     const resolveCli = options.resolveCli ?? resolveQuotaAxiCli;
     const cliPath = resolveCli();
 

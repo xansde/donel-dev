@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   HeadroomCache,
@@ -405,6 +408,51 @@ describe('readQuotaAxiQuota (I/O, spawn mockado) — fix rodada 4 item 8, parte 
       await expect(promise).resolves.toEqual(UNAVAILABLE);
       expect(fake.kill).toHaveBeenCalled();
     });
+  });
+});
+
+describe('readQuotaAxiQuota — seam de teste DONEL_QUOTA_AXI_FIXTURE (T205)', () => {
+  afterEach(() => {
+    vi.mocked(spawn).mockReset();
+  });
+
+  it('quando a env aponta pra um arquivo fixture, lê o payload dele e NUNCA spawna processo', async () => {
+    const fixturePath = path.join(os.tmpdir(), `donel-quota-fixture-${Date.now()}.json`);
+    const payload: QuotaAxiOutput = {
+      providers: [
+        {
+          provider: 'claude',
+          windows: [
+            { id: 'five_hour', percentRemaining: 97, resetsAt: '2026-07-24T14:00:00.000Z' },
+            { id: 'seven_day', percentRemaining: 100, resetsAt: '2026-07-31T04:00:00.000Z' },
+          ],
+          state: { status: 'fresh', stale: false },
+        },
+      ],
+    };
+    writeFileSync(fixturePath, JSON.stringify(payload));
+
+    try {
+      const result = await readQuotaAxiQuota({
+        configDir: undefined,
+        baseEnv: { DONEL_QUOTA_AXI_FIXTURE: fixturePath },
+      });
+
+      expect(result.status).toBe('ok');
+      expect(result.fiveHour?.percentRemaining).toBe(97);
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      rmSync(fixturePath, { force: true });
+    }
+  });
+
+  it('fixture apontando pra arquivo inexistente -> unavailable (nunca lança)', async () => {
+    const result = await readQuotaAxiQuota({
+      configDir: undefined,
+      baseEnv: { DONEL_QUOTA_AXI_FIXTURE: 'C:\\caminho\\que\\nao\\existe.json' },
+    });
+    expect(result).toEqual(UNAVAILABLE);
+    expect(spawn).not.toHaveBeenCalled();
   });
 });
 

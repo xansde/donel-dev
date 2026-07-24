@@ -420,9 +420,15 @@ function registerProfileIpcHandlers(): void {
     return runProfileDoctor(profile, claudeHome, doctorDeps);
   });
 
-  ipcMain.handle(PROFILE_CHANNELS.headroom, async (): Promise<ProfileHeadroomMap> => {
+  ipcMain.handle(PROFILE_CHANNELS.headroom, async (_event, rawOptions?: unknown): Promise<ProfileHeadroomMap> => {
+    // T205 — payload vem do renderer via IPC; nunca confiar cegamente
+    // (poderia ser qualquer coisa vinda de um preload comprometido/versão
+    // desalinhada) — só aceita `{ force: true }`, qualquer outra forma vira
+    // `force: false` (comportamento anterior, respeita cache).
+    const force =
+      typeof rawOptions === 'object' && rawOptions !== null && (rawOptions as { force?: unknown }).force === true;
     const targets = currentProfileList().map((profile) => ({ slug: profile.slug, configDir: profile.configDir }));
-    return readAllProfilesHeadroom(targets, headroomCache);
+    return readAllProfilesHeadroom(targets, headroomCache, undefined, { force });
   });
 }
 

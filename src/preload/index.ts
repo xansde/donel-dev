@@ -95,7 +95,9 @@ const donelApi: DonelApi = {
 
     repair: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.repair, slug) as Promise<ProfileDoctorReportDto>,
 
-    headroom: () => ipcRenderer.invoke(PROFILE_CHANNELS.headroom) as Promise<ProfileHeadroomMap>,
+    // T205 — repassa `{ force }` cru pro main; o main é quem valida/normaliza
+    // o payload (é IPC, não confia cegamente no que o renderer manda).
+    headroom: (options?: { force?: boolean }) => ipcRenderer.invoke(PROFILE_CHANNELS.headroom, options) as Promise<ProfileHeadroomMap>,
   },
 
   config: {
