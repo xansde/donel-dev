@@ -1,10 +1,15 @@
-# Tasks 006 — Contexto consumido (% da janela na toolbar da sessão)
+# Tasks 006 — Contexto consumido (% da smart zone na toolbar da sessão)
 
 **Status:** PLANEJADO — aguardando OK do Alexandre para implementar (gate de
 execução). Branch: `feature/mvp-p0` (mesma; tudo local, sem push).
 **Atualizado:** 2026-07-24
-**Referências:** `spec.md` (CA-1..CA-8, tabela S1/C2 fixada via skill
+**Referências:** `spec.md` (CA-1..CA-9, tabela S1/C2 fixada via skill
 `claude-api`) + `plan.md` (Fatias 0/1/2) deste diretório.
+
+> **Denominador = smart zone de 300k** (decisão do Alexandre, 24/07), não a
+> janela bruta: `zona = min(300_000, janela_do_modelo)`. Em opus/sonnet/fable
+> a zona vence (300k); em haiku a janela vence (200k). O `%` **não tem teto** —
+> passar da zona mostra `127%`, e acima de 100% o número muda de cor (CA-9).
 
 > **Dependência cruzada com a 004 — LER ANTES DE COMEÇAR.** A 004 já está
 > clarificada, planejada e commitada (`fc65258`) e a **Fatia 3 dela** constrói
@@ -40,9 +45,14 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   Anthropic mudar janelas. `normalizeModelAlias(raw)` faz strip de sufixos de
   deployment (`sonnet[1m]` → `sonnet`) e devolve `null` para alias
   desconhecido (o chamador exibe `—`; **nunca chutar uma janela**).
+  Adicionar também `SMART_ZONE_TOKENS = 300_000` (decisão do Alexandre,
+  24/07 — comentar que **não** é limite de API nem gatilho de auto-compact) e
+  `effectiveContextZone(model) = min(SMART_ZONE_TOKENS, janela)`.
   **DoD:** vitest verde — cada alias devolve a janela da tabela; `'opus[1m]'`
   → `opus`; `'gpt-4'` → `null`; a tabela cobre exaustivamente `ModelAlias`
-  (typecheck garante via `Record<ModelAlias, number>`, sem `Partial`).
+  (typecheck garante via `Record<ModelAlias, number>`, sem `Partial`);
+  `effectiveContextZone('opus')` → `300_000`; `('haiku')` → `200_000` (a janela
+  vence o `min` — é o caso que prova a regra).
 
 - **T602 — `contextTokensFromUsage` (TDD)** (sequencial após T601 — mesmo
   arquivo) — `src/shared/contextWindow.ts`
@@ -54,19 +64,26 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   (`290 + 1505 + 132807 = 134602`); usage `{}` → null; só `input_tokens: 500`
   → 500; `{output_tokens: 900}` → null; usage não-objeto/`null` → null.
 
-- **T603 — `computeContextPercent` com clamp (TDD)** (sequencial após T602)
+- **T603 — `computeContextPercent` SEM teto (TDD)** (sequencial após T602)
   — `src/shared/contextWindow.ts`
-  `% = round(tokens / janela * 100)`, **clampado em 0–100** (CA-8).
-  `tokens === null` → `null` (CA-4, nunca `0%`). Alias desconhecido → `null`.
-  **DoD:** vitest verde — `134602` em `opus` → `13`; o mesmo em `haiku` → `67`
-  (prova o CA-6 no nível puro); `tokens > janela` → `100`; `tokens = 0` → `0`;
-  `null` → `null`. **Este teste é a evidência de CA-2/CA-6/CA-8.**
+  `% = round(tokens / effectiveContextZone(model) * 100)`, com **piso em 0 e
+  SEM teto** (CA-8 revisado 24/07). `tokens === null` → `null` (CA-4, nunca
+  `0%`). Alias desconhecido → `null`.
+  ⚠️ **Não usar `Math.min(100, ...)`** — travar em 100% tornaria 305k e 700k
+  indistinguíveis, que é exatamente a visibilidade que a feature existe para dar.
+  **DoD:** vitest verde — `134602` em `opus` → **`45`**; o mesmo em `haiku` →
+  **`67`** (prova CA-6 no nível puro); **`380000` em `opus` → `127`** (prova a
+  ausência de teto); `tokens = 0` → `0`; `null` → `null`.
+  **Este teste é a evidência de CA-2/CA-6/CA-8.**
 
 - **T604 [P] — Helper de tooltip** — `src/shared/contextWindow.ts`
-  `formatContextTooltip(tokens, model)` → `"134.602 / 1.000.000 tokens · opus"`
-  (separador de milhar pt-BR via `toLocaleString('pt-BR')`). `null` → string
-  vazia (sem tooltip).
-  **DoD:** vitest verde com o caso real; `null` → `''`.
+  `formatContextTooltip(tokens, model)` →
+  `"134.602 / 300.000 tokens da smart zone · janela opus 1.000.000"`
+  (separador de milhar pt-BR via `toLocaleString('pt-BR')`). Mostra a **zona**
+  como denominador **e** a janela real do modelo — o número da zona não pode
+  esconder a verdade técnica. `null` → string vazia (sem tooltip).
+  **DoD:** vitest verde com o caso real; em `haiku` o tooltip mostra zona
+  200.000 = janela 200.000; `null` → `''`.
 
 **Gate da Fase A:** `npm run typecheck` + suíte unit verdes. Commitar
 (commit de progresso é default nesta branch de feature).
@@ -168,27 +185,42 @@ entre B e C** — a mudança só aparece para o usuário na Fase C.
   quebrar smokes que já montam o componente). Renderiza depois do hint:
   `contexto {n}%` ou `contexto —`, com `data-testid="session-context"` e
   `title` = `formatContextTooltip(...)` (T604, CA-7). Rótulo literal
-  **"contexto"** — nunca "cota" nem `%` solto (CA-5, lição da rodada 6). Sem
-  cor, sem barra, sem ícone: escopo é só o número.
-  **DoD:** teste de render — `null` → `contexto —`; `13` → `contexto 13%`;
-  atributo `title` presente com tokens/janela/modelo.
+  **"contexto"** — nunca "cota" nem `%` solto (CA-5, lição da rodada 6).
+  Sem barra, sem ícone, sem gradiente por faixa.
+  **DoD:** teste de render — `null` → `contexto —`; `45` → `contexto 45%`;
+  atributo `title` presente com zona **e** janela.
 
-- **T622 — CA-6 no nível de UI (troca de modelo)** (sequencial após T621)
+- **T622 — Cor acima de 100% (CA-9)** (sequencial após T621) —
+  `src/renderer/src/SessionDetails.tsx` + `.module.css`
+  Classe `.contextOverZone` aplicada quando `contextPercent > 100`, usando o
+  **token de alerta/danger do design-system** — não hex solto no CSS module.
+  Expor `data-over-zone="true"` para o teste asseverar sem depender de classe.
+  ⚠️ Isto **revisa** o "nada de cor/ícone" da entrevista — aquele veto era
+  sobre a **aba** (feature 004); a cor aqui foi decidida por ele em 24/07.
+  **DoD:** teste de render — `45` → sem `data-over-zone`; `100` → **sem**
+  (o gatilho é `> 100`, não `>=`); `127` → `data-over-zone="true"`; nenhum
+  valor de cor literal no CSS module (só token do design-system).
+
+- **T623 — CA-6 no nível de UI (troca de modelo)** (sequencial após T622)
   O `%` é derivado de `computeContextPercent(tokens, model)` usando a prop
   `model` **já existente** do `SessionDetails` — nenhum estado novo. Trocar o
   modelo re-renderiza e o denominador muda sozinho.
-  **DoD:** teste de render que troca só a prop `model` (mesmos tokens) e
-  observa `13%` → `67%`.
+  **DoD:** teste de render que troca só a prop `model` (mesmos tokens,
+  `134602`) e observa **`45%` → `67%`** (opus zona 300k → haiku janela 200k).
 
-- **T623 — Roteiro E2E manual (para o Alexandre)** — novo
+- **T624 — Roteiro E2E manual (para o Alexandre)** — novo
   `specs/006-contexto-consumido/roteiro-e2e.md`
   Passos: (1) abrir sessão claude, mandar um prompt, ver o `%` aparecer e
-  subir; (2) hover no número → tooltip com tokens/janela/modelo; (3) trocar
-  opus→haiku na toolbar → `%` salta; (4) rodar `/compact` → `%` **cai**
-  (prova de C1: última usage, não acumulado); (5) aba shell → `contexto —`;
-  (6) aba recém-nascida sem turno → `—`, nunca `0%`; (7) trocar de aba →
-  cada aba mostra o próprio número.
-  **DoD:** roteiro escrito; execução é ato do Alexandre.
+  subir; (2) hover no número → tooltip com zona **e** janela real; (3) trocar
+  opus→haiku na toolbar → `%` salta (45% → 67%); (4) rodar `/compact` → `%`
+  **cai** (prova de C1: última usage, não acumulado); (5) **sessão longa passando
+  de 300k → `%` passa de 100% e muda de cor** (CA-8/CA-9 — o cenário que ele
+  pediu para ter visibilidade); (6) aba shell → `contexto —`; (7) aba
+  recém-nascida sem turno → `—`, nunca `0%`; (8) trocar de aba → cada aba
+  mostra o próprio número.
+  **DoD:** roteiro escrito; execução é ato do Alexandre. O passo (5) é o único
+  que exige uma sessão real grande — anotar que pode ser validado numa sessão
+  de trabalho normal ao longo do dia, não num teste dedicado.
 
 **Gate da Fase C:** suíte completa (unit + 16 smokes de produção + smoke de
 modo dev) verde **antes** de considerar a entrega fechada — a rodada 5/6 ficou
@@ -207,7 +239,10 @@ com auditoria interrompida em 88/87 por pular isso; não repetir.
 | Regra de emissão da 004 (só quando `custom-title` muda) engolir o update de tokens | T613: emitir se **qualquer** campo mudou — com teste da regressão |
 | Duas assinaturas de `onTranscriptChanged` no App | T620: assinatura única no nível do App, reaproveitada pela 004 |
 | Tabela de janelas envelhecer silenciosamente | T601: arquivo isolado com data e fonte da conferência no topo |
-| `%` sempre baixo (1M) parecer bug | CA-7/T621: rótulo + tooltip explicando tokens/janela |
+| `%` sempre baixo (1M) parecer bug | **resolvido na origem:** denominador é a smart zone de 300k, não a janela |
+| 300k é heurística, não fato da API | Constante única e comentada (T601); tooltip sempre mostra a janela real ao lado |
+| Alguém "consertar" o `>100%` achando que é bug | T603: teste de `127%` + comentário no código explicando que é intencional (CA-8) |
+| Cor hardcoded fugindo do design-system | T622: DoD proíbe valor de cor literal no CSS module |
 | Confusão com o `%` de cota já na tela | T621: rótulo literal "contexto", posição na toolbar por-aba |
 
 ## Fora destas tasks

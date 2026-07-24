@@ -48,12 +48,14 @@ reduzida ao que ele pediu.
 
 ## Critérios de aceite
 
-- **CA-1:** a sessão em foco mostra um `%` de 0–100 do contexto consumido,
-  derivado do transcript (última mensagem com `usage`).
-- **CA-2:** `% = tokens_de_contexto / janela_do_modelo_ativo`, arredondado
-  para inteiro, onde `tokens_de_contexto` = `input_tokens + cache_read +
-  cache_creation` da **última** usage (C1) e a janela vem da tabela fixada em
-  S1/C2 abaixo.
+- **CA-1:** a sessão em foco mostra o `%` do contexto consumido em relação à
+  **smart zone**, derivado do transcript (última mensagem com `usage`).
+- **CA-2:** `% = tokens_de_contexto / zona_efetiva`, arredondado para inteiro,
+  onde `tokens_de_contexto` = `input_tokens + cache_read + cache_creation` da
+  **última** usage (C1) e
+  `zona_efetiva = min(SMART_ZONE_TOKENS, janela_do_modelo_ativo)` — ver
+  §"Smart zone" e a tabela S1/C2 abaixo. **O denominador é a smart zone
+  (300k), não a janela bruta do modelo.**
 - **CA-3:** o valor **atualiza** ao longo da sessão via o observador único
   compartilhado com a 004 (C3), com latência ≤ ~1 s após o CLI escrever.
 - **CA-4:** sessão recém-criada (sem `usage` ainda), aba **shell**, ou
@@ -61,16 +63,57 @@ reduzida ao que ele pediu.
 - **CA-5:** aparece na toolbar por-sessão (`SessionDetails`), junto do modelo
   — não no titlebar global. Não conflita com o `%` de **quota** já existente
   (rótulos distintos: "contexto" × "cota").
-- **CA-6 (C4):** ao trocar o modelo na toolbar, o `%` **recalcula** com a
-  janela do modelo vigente (mesmo `tokens_de_contexto`, denominador novo).
+- **CA-6 (C4):** ao trocar o modelo na toolbar, o `%` **recalcula** com a zona
+  efetiva do modelo vigente. Na prática só muda em `haiku`, onde a janela
+  (200k) é **menor** que a zona (300k) e portanto vence o `min`.
 - **CA-7 (C5):** o número tem rótulo explícito `contexto` e um tooltip com
-  `<tokens> / <janela> tokens · <modelo>`. Sem tooltip, um `13%` solto repete
-  o problema "não entendi o que esse número significa" (rodada 6).
-- **CA-8:** o `%` é **clampado em 0–100**. Uma usage acima da janela (modelo
-  trocado para um de janela menor, ou dado inesperado) exibe `100%`, nunca
-  `>100%` nem número negativo.
+  `<tokens> / <zona> da smart zone · janela <modelo> <janela>`. Sem tooltip, um
+  `%` solto repete o problema "não entendi o que esse número significa"
+  (rodada 6).
+- **CA-8 (REVISADO 24/07):** o `%` **não tem teto**. Passar da smart zone é
+  legítimo e informativo — `380k / 300k` exibe **127%**, não `100%`. Travar em
+  100% tornaria 305k e 700k indistinguíveis, matando exatamente a visibilidade
+  que é o ponto da feature. **Piso em 0** (nunca negativo).
+- **CA-9 (NOVO 24/07):** acima de **100%** o número muda para o tom de alerta
+  do design-system (sinal de "fora da smart zone"); abaixo, cor normal. Só a
+  cor do próprio número — sem barra, sem ícone, sem gradiente por faixa.
 
 ## Decisões resolvidas
+
+### Smart zone = 300k (decisão do Alexandre, 2026-07-24) — o denominador real
+
+Pedido literal dele, depois de ver a consequência de usar a janela bruta:
+*"Podes considerar algo como mostrar o % da smart zone (Considere 300k tokens).
+Assim terei uma ótima visibilidade."*
+
+```ts
+export const SMART_ZONE_TOKENS = 300_000;
+// Zona de trabalho efetiva — decisão do Alexandre (2026-07-24).
+// NÃO é limite de API, NÃO é o gatilho de auto-compact do Claude Code:
+// é a régua DELE de "até aqui a sessão rende bem".
+```
+
+`zona_efetiva(model) = min(SMART_ZONE_TOKENS, MODEL_CONTEXT_WINDOWS[model])`
+
+| Modelo | Janela | Zona efetiva | 135k tokens exibem |
+|---|---|---|---|
+| `opus` / `sonnet` / `fable` | 1.000.000 | **300.000** | **45%** |
+| `haiku` | 200.000 | **200.000** (a janela vence) | **68%** |
+
+**Por que o `min`:** uma zona de 300k num modelo de janela 200k seria mentira —
+a sessão morre na janela antes de chegar ao fim da zona. Em `haiku` a régua é
+a janela real.
+
+**O que isso resolve:** a versão anterior (janela bruta) exibiria 135k como
+**13%** — número tecnicamente correto e praticamente inútil. Com a zona, 135k
+= **45%**, e a faixa 0–100% cobre o intervalo em que ele realmente decide
+"continuo ou abro sessão nova". Isso **substitui** o alerta que estava
+registrado no fim da seção S1 abaixo.
+
+**Trade-off assumido:** 300k é heurística, não fato da API. Se ele recalibrar,
+é uma linha num módulo (constante, não configuração — decisão de 24/07 para
+não inflar o escopo). O tooltip sempre mostra a janela real do modelo ao lado,
+para o número nunca esconder a verdade técnica.
 
 ### [S1 / C2] Tabela `modelo → janela de contexto` — FIXADA
 
@@ -92,9 +135,11 @@ de quando o default era 200k; **hoje é redundante**, porque em opus/sonnet/
 fable 1M já é o default *e* o máximo. Regra de implementação: se um sufixo
 `[1m]` aparecer num alias, normalizar (strip) e resolver 1M — nunca falhar.
 
-Corolário importante para as expectativas: com 1M de janela, uma sessão de
-~135k tokens mostra **13%**. O número vai parecer baixo — é a verdade da
-janela, e é justamente por isso que o tooltip de CA-7 existe.
+> **Nota histórica (resolvida):** esta seção alertava que 1M de janela faria
+> ~135k aparecer como **13%** — baixo e pouco útil. Foi exatamente esse alerta
+> que levou o Alexandre a definir a smart zone de 300k (seção acima). A janela
+> continua sendo o **teto** do `min` e aparece no tooltip; **ela não é mais o
+> denominador**.
 
 ### Demais decisões (clarify de 2026-07-24)
 
@@ -124,10 +169,19 @@ janela, e é justamente por isso que o tooltip de CA-7 existe.
 
 ## Fora de escopo
 
-- **[D]** Custo em $, contagem de mensagens, distância até o auto-compact,
-  barra de "smart zone" elaborada — ele disse "só isso basta".
+- **[D]** Custo em $, contagem de mensagens, distância até o auto-compact —
+  ele disse "só isso basta".
+- **Barra/medidor visual** de smart zone (gradiente, faixas, gauge). O `%` da
+  smart zone (300k) **entrou** no escopo em 24/07, mas como **número + cor
+  acima de 100%** (CA-9) — não como widget gráfico.
+- Tornar os 300k editáveis por UI/config (decisão 24/07: constante no código).
 - Histórico/gráfico de consumo ao longo do tempo.
 - O restante do US-8 (medidor smart zone completo do Modo Dev) — fica no 003.
+
+> **Revisão explícita de um "fora de escopo" anterior:** na entrevista o
+> Alexandre disse "nada de cor/ícone/estado extra". Isso valia para a **aba**
+> (feature 004). Em 24/07 ele decidiu que o **indicador de contexto** muda de
+> cor acima de 100% — CA-9 substitui a restrição neste ponto específico.
 
 ## Notas de realidade
 

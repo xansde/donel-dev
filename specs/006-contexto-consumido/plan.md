@@ -66,10 +66,20 @@ export const MODEL_CONTEXT_WINDOWS: Record<ModelAlias, number> = {
   haiku: 200_000,     // claude-haiku-4-5
 };
 
+/**
+ * Zona de trabalho efetiva — decisão do Alexandre (2026-07-24).
+ * NÃO é limite de API nem o gatilho de auto-compact do Claude Code: é a régua
+ * dele de "até aqui a sessão rende bem". É o DENOMINADOR do % exibido.
+ */
+export const SMART_ZONE_TOKENS = 300_000;
+
+/** min(smart zone, janela do modelo) — em haiku a janela (200k) vence. */
+export function effectiveContextZone(model: ModelAlias): number;
+
 /** Soma que representa o tamanho do contexto no turn (CA-2 / C1). */
 export function contextTokensFromUsage(usage: unknown): number | null;
 
-/** % 0–100 arredondado, ou null quando não há como calcular (CA-4). */
+/** % da smart zone, SEM teto (CA-8); null quando não há como calcular (CA-4). */
 export function computeContextPercent(
   tokens: number | null,
   model: ModelAlias,
@@ -85,15 +95,23 @@ export function normalizeModelAlias(raw: string): ModelAlias | null;
    cache_creation_input_tokens`. Campo ausente conta como 0; **usage sem
    nenhum dos três** → `null` (não 0). `output_tokens` **não** entra (é
    geração, não contexto de entrada).
-2. `computeContextPercent(null, _)` → `null` (CA-4). Nunca 0.
-3. **Clamp 0–100** (CA-8): `Math.min(100, Math.max(0, Math.round(...)))`.
-4. `normalizeModelAlias('sonnet[1m]')` → `'sonnet'`; alias desconhecido →
+2. `effectiveContextZone(model) = Math.min(SMART_ZONE_TOKENS,
+   MODEL_CONTEXT_WINDOWS[model])`. O `min` não é decoração: zona de 300k num
+   modelo de 200k seria mentira — a sessão morre na janela antes do fim da zona.
+3. `computeContextPercent(null, _)` → `null` (CA-4). Nunca 0.
+4. **Piso em 0, SEM teto** (CA-8 revisado):
+   `Math.max(0, Math.round(tokens / effectiveContextZone(model) * 100))`.
+   `380k` em opus → **127%**. Não usar `Math.min(100, ...)` — travar em 100%
+   apaga a diferença entre 305k e 700k, que é o ponto da feature.
+5. `normalizeModelAlias('sonnet[1m]')` → `'sonnet'`; alias desconhecido →
    `null` (o chamador exibe `—`, não escolhe uma janela chutada).
 
 **Testes (DoD):** vitest verde com a usage real da spec (290 + 1505 + 132807 =
-134.602 → 13% em opus, 67% em haiku); usage vazia → null; usage parcial (só
-`input_tokens`) → soma parcial; tokens > janela → 100%; alias `[1m]` → 1M;
-alias inválido → null. Sem mock nenhum — é função pura.
+134.602 → **45%** em opus, **67%** em haiku); usage vazia → null; usage parcial
+(só `input_tokens`) → soma parcial; **`380_000` em opus → 127%** (prova de que
+não há teto); `0` → 0; `effectiveContextZone('haiku')` → 200_000 e
+`('opus')` → 300_000; alias `[1m]` → `opus`/`sonnet`; alias inválido → null.
+Sem mock nenhum — é função pura.
 
 ---
 
@@ -206,9 +224,10 @@ Claude em teste.
 
   ```tsx
   <span
-    className={styles.context}
+    className={`${styles.context} ${contextPercent !== null && contextPercent > 100 ? styles.contextOverZone : ''}`}
     data-testid="session-context"
-    title={contextTooltip(contextTokens, model)}   // CA-7
+    data-over-zone={contextPercent !== null && contextPercent > 100 ? 'true' : undefined}
+    title={formatContextTooltip(contextTokens, model)}   // CA-7
   >
     contexto {contextPercent === null ? '—' : `${contextPercent}%`}
   </span>
@@ -218,15 +237,21 @@ Claude em teste.
     própria prop já existente** — daí CA-6 (troca de modelo) sai de graça: o
     componente re-renderiza no `onSelectModel` e o denominador muda sem nenhum
     estado novo.
-  - Tooltip: `134.602 / 1.000.000 tokens · opus` (separador de milhar pt-BR).
+  - **Cor acima de 100% (CA-9):** classe `.contextOverZone` no CSS module
+    usando o **token de alerta/danger do design-system** — não hex solto. O
+    `data-over-zone` existe para o teste asseverar sem depender de classe CSS.
+  - Tooltip: `134.602 / 300.000 tokens da smart zone · janela opus 1.000.000`
+    (separador de milhar pt-BR). Mostra a janela real ao lado para o número da
+    zona nunca esconder a verdade técnica.
   - Rótulo literal **"contexto"** — nunca "cota"/"%" solto (CA-5, lição da
-    rodada 6). Sem cor/barra: escopo é só o número.
+    rodada 6). Sem barra, sem ícone, sem gradiente: só o número e a cor dele.
 
 **Testes (DoD):** teste de componente/render puro do `SessionDetails` com
-`contextPercent` = null → `—`; = 13 → `contexto 13%`; tooltip presente.
-Smoke roteirizado da toolbar isolado do `%APPDATA%` real, com fixture de
-transcript — **nunca** abrindo sessão real só para ler contexto (padrão da
-rodada 5).
+`contextPercent` = null → `contexto —`; = 45 → `contexto 45%` **sem**
+`data-over-zone`; = 127 → `contexto 127%` **com** `data-over-zone="true"`
+(CA-9); tooltip presente com zona **e** janela. Smoke roteirizado da toolbar
+isolado do `%APPDATA%` real, com fixture de transcript — **nunca** abrindo
+sessão real só para ler contexto (padrão da rodada 5).
 
 ---
 
@@ -252,7 +277,10 @@ Fatia 1 (watcher + IPC) ────┘
 
 ## Fora deste plano (não implementar)
 
-- Barra visual/gradiente, cor por faixa, "smart zone" — é o US-8 completo (003).
+- Barra visual/gradiente/gauge e cor por **faixa** — é o US-8 completo (003).
+  O `%` da smart zone entrou no escopo (CA-2) e a cor **acima de 100%** também
+  (CA-9), mas como número + um estado de cor, não como widget gráfico.
+- Tornar os 300k editáveis por config/UI (decisão 24/07: constante no código).
 - Consultar `GET /v1/models` em runtime para `max_input_tokens` (o app não tem
   chave de API; tabela codificada é a decisão).
 - Histórico do consumo, custo em $, contagem de mensagens, distância até o
