@@ -56,6 +56,11 @@ export const LoginPending: Story = {
   args: { accountNumber: 6, headroomPercent: null, loginPending: true },
 };
 
+/** Leitura de headroom em andamento (dropdown acabou de abrir, batch A 002-quota-headroom). */
+export const Loading: Story = {
+  args: { accountNumber: 7, headroomPercent: null, loading: true },
+};
+
 /** As 15 contas do dropdown (Brief 5A), com a conta 3 marcada ativa. */
 export const AccountDropdownList: Story = {
   render: () => (

@@ -22,6 +22,13 @@ export interface AccountBadgeProps {
    * nunca manuseia credenciais.
    */
   loginPending?: boolean;
+  /**
+   * Leitura de headroom em andamento (dropdown acabou de abrir, ainda sem
+   * resposta de `profiles:headroom` pra este slug) — substitui o percentual
+   * por "carregando…", tier `none` (cinza). Precedência: `loginPending` >
+   * `loading` > percent/—. Batch A (002-quota-headroom).
+   */
+  loading?: boolean;
   /** Marca esta conta como a ativa no momento (check no dropdown, Brief 5A). */
   active?: boolean;
   /** Mostra a seta de dropdown — uso no badge do titlebar (Brief 1). */
@@ -35,6 +42,7 @@ export function AccountBadge({
   accountNumber,
   headroomPercent,
   loginPending = false,
+  loading = false,
   active = false,
   expandable = false,
   onClick,
@@ -59,6 +67,8 @@ export function AccountBadge({
       </span>
       {loginPending ? (
         <span className={[styles.headroom, styles['tier-none']].join(' ')}>login pendente</span>
+      ) : loading ? (
+        <span className={[styles.headroom, styles['tier-none']].join(' ')}>carregando…</span>
       ) : (
         <span className={[styles.headroom, styles[`tier-${tier}`]].join(' ')}>
           {headroomPercent === null ? '—' : `${headroomPercent}%`}

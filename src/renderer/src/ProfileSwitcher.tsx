@@ -41,11 +41,11 @@ const EMPTY_PROFILES: ProfileSummaryDto[] = [{ name: 'Principal', slug: 'princip
  * de nome genérico — módulo top-level (não inline no corpo de
  * ProfileSwitcher), mesma lição do fix da input da Tarefa 1.
  */
-function HeadroomSlot({ percent }: { percent: number | null }): React.JSX.Element {
-  const tier = getHeadroomTier(percent);
+function HeadroomSlot({ percent, loading = false }: { percent: number | null; loading?: boolean }): React.JSX.Element {
+  const tier = loading ? 'none' : getHeadroomTier(percent);
   return (
     <span className={[styles.headroomText, styles[`tier-${tier}`]].join(' ')} data-testid="profile-headroom-slot">
-      {percent === null ? '—' : `${percent}%`}
+      {loading ? 'carregando…' : percent === null ? '—' : `${percent}%`}
     </span>
   );
 }
@@ -78,6 +78,7 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
   const [open, setOpen] = useState(false);
   const [profiles, setProfiles] = useState<ProfileSummaryDto[]>(EMPTY_PROFILES);
   const [headroom, setHeadroom] = useState<ProfileHeadroomMap>({});
+  const [headroomLoading, setHeadroomLoading] = useState(false);
   const [doctorReports, setDoctorReports] = useState<Record<string, ProfileDoctorReportDto>>({});
   const [repairingSlug, setRepairingSlug] = useState<string | null>(null);
   const [newProfileName, setNewProfileName] = useState('');
@@ -136,10 +137,14 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
       setProfiles(list);
       refreshDoctorFor(list);
     });
-    void window.donel.profiles.headroom().then((map) => {
-      setHeadroom(map);
-      onHeadroomChangeRef.current?.(map);
-    });
+    setHeadroomLoading(true);
+    void window.donel.profiles
+      .headroom()
+      .then((map) => {
+        setHeadroom(map);
+        onHeadroomChangeRef.current?.(map);
+      })
+      .finally(() => setHeadroomLoading(false));
   }, [open, refreshDoctorFor]);
 
   const handleActivate = (slug: string): void => {
@@ -228,6 +233,7 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
               const percent = headroom[profile.slug] ?? null;
               const doctor = doctorReports[profile.slug];
               const unhealthy = doctor ? !doctor.healthy : false;
+              const slotLoading = headroomLoading && !(profile.slug in headroom);
 
               return (
                 <li key={profile.slug} className={styles.row} data-testid="profile-row" data-slug={profile.slug}>
@@ -235,13 +241,14 @@ export function ProfileSwitcher({ onActiveProfileLabelChange, onHeadroomChange }
                     <AccountBadge
                       accountNumber={accountNumber}
                       headroomPercent={percent}
+                      loading={slotLoading}
                       active={profile.active}
                       onClick={() => handleActivate(profile.slug)}
                     />
                   ) : (
                     <button type="button" className={styles.plainRow} onClick={() => handleActivate(profile.slug)}>
                       <span className={styles.plainName}>{profile.name}</span>
-                      <HeadroomSlot percent={percent} />
+                      <HeadroomSlot percent={percent} loading={slotLoading} />
                       {profile.active ? <Check size={14} strokeWidth={1.5} aria-hidden="true" /> : null}
                     </button>
                   )}
