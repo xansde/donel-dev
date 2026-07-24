@@ -90,6 +90,11 @@ dentro de Projetos). Comportamento pedido:
 Clarify futuro: limite de sub-itens, ordenação, e o que acontece ao
 desfavoritar (sessões voltam para a seção geral).
 
+> **B6 + B7 viraram `specs/005-terminal-copy-paste/` (discovery 24/07).**
+> Nomear conversas → `specs/004-nomear-sessoes/`; % de contexto consumido
+> (fatia do US-8) → `specs/006-contexto-consumido/`. Todas em rascunho
+> pós-discovery, aguardando priorização/`clarify`.
+
 ### B6. Colar imagens na sessão (novo — feedback 23/07, 2ª leva)
 
 "Poder colar imagens." O CLI `claude` aceita imagem colada em terminais que
