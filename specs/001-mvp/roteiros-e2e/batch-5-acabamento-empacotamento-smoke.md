@@ -56,6 +56,13 @@ sessões já é alto, não precisa somar custo de modelo caro.
 
 ## Passos
 
+> **Nota 2026-07-23 (feedback E2E rodada 5, decisão A)** — o app passa a
+> nascer com ZERO abas (empty state central: "Nenhuma sessão aberta");
+> nenhum passo abaixo dependia da antiga aba "Sessão" default (verificado —
+> todos já instruem abrir sessão/aba explicitamente), mas fica registrado
+> aqui pra quem rodar este roteiro contra uma build pós-rodada-5 não estranhar
+> a tela vazia ao abrir o app pela primeira vez.
+
 ### 1. Preferências sobrevivem a restart (T015, FR-007)
 
 - [ ] **Ação:** com o app rodando (`npm run dev` ou instalado), mudar ao

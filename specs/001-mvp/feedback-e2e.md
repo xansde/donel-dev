@@ -181,10 +181,10 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
 
 ## 2026-07-23 — rodada 5 (roteiro batch 5, app INSTALADO com fixes pós-gate)
 
-- [ ] **BUG — modelo/esforço não selecionável SOMENTE na primeira aba**
+- [x] **BUG — modelo/esforço não selecionável SOMENTE na primeira aba**
   (relato: "Num geral, parece que eu não consigo selecionar modelo/esforço
-  SOMENTE da primeira aba. Que estranho"). **CAUSA RAIZ CONFIRMADA, FIX
-  REPROVADO NO GATE (70/100) — ABERTO, aguardando decisão do Alexandre.**
+  SOMENTE da primeira aba. Que estranho"). **Resolvido 2026-07-23 (rodada 5,
+  opção A escolhida pelo Alexandre).**
   Causa raiz real: a aba boot nasce SEM `cwd`, rodando o CLI em
   `os.homedir()` — o próprio binário mostra o diálogo pré-REPL "Quick
   safety check" TODA vez nesse cwd (trust de home nunca é persistido); sem
@@ -209,18 +209,42 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
   dump em `test-results/boot-tab-trust-*/error-context.md` com o diálogo
   inteiro ainda na tela após 20 s.
 
-  **DECISÃO PENDENTE DO ALEXANDRE** (o auto-aceite concede trust em
-  `os.homedir()` — escopo amplo — em nome dele, o que NÃO foi pedido; o
-  pedido foi destravar modelo/esforço):
+  **Decisão do Alexandre (2026-07-23): opção A.** As duas tentativas
+  acima concediam trust em `os.homedir()` em nome dele (escopo amplo, não
+  pedido — o pedido era só destravar modelo/esforço); a opção A elimina a
+  causa raiz sem o app tomar nenhuma decisão de segurança:
   - **(A) aba inicial não abre sessão** (nasce vazia: "escolha um projeto
     ou ＋ Nova sessão") — mata a causa na raiz, economiza cota e RAM,
-    nenhuma decisão de segurança tomada pelo app. **Recomendada.**
-  - **(B) manter auto-aceite**, com teto redimensionado para cobrir os 15 s
-    (50 tentativas) + suíte completa verde 3× seguidas.
-  - **(C) só o aviso** — o humano responde o diálogo quando quiser.
-  Enquanto a decisão não vem, o código das tentativas 1-2 permanece na
-  branch mas **não foi instalado** (o gate barrou o deploy; o app instalado
-  segue na versão de 16:32, sem esse fix).
+    nenhuma decisão de segurança tomada pelo app. **Escolhida.**
+  - (B) manter auto-aceite, com teto redimensionado pra cobrir os 15 s (50
+    tentativas) + suíte completa verde 3× seguidas — descartada.
+  - (C) só o aviso, humano resolve quando quiser — descartada como única
+    medida (o aviso sozinho não digita nada; ver terceira parte do fix
+    abaixo).
+
+  **Solução implementada:**
+  1. `App.tsx` — `INITIAL_TABS` vazio: o app nasce com ZERO abas e mostra um
+     empty state na área do terminal ("Nenhuma sessão aberta — escolha um
+     projeto na barra lateral ou clique em ＋ Nova sessão", com botão
+     reaproveitando `handleQuickNewClaudeSession`). Nenhum `claude` é
+     spawnado sem o usuário pedir — elimina o cwd `os.homedir()` automático
+     que causava o diálogo. O MESMO empty state já cobria "fechou a última
+     aba" (T010); os dois caminhos convergem pro mesmo estado agora.
+  2. `TerminalPane.tsx` — auto-aceite REMOVIDO por completo (o
+     `setInterval` de retry, `armTrustAutoAccept`/`disarmTrustAutoAccept`,
+     as constantes `TRUST_AUTO_ACCEPT_*`): sem spawn automático em home, o
+     cenário que ele existia pra cobrir deixou de existir. O smoke
+     `boot-tab-trust.spec.ts` (cobria exatamente esse cenário) foi deletado.
+  3. `shared/trustDialog.ts` (detecção pela assinatura completa do rodapé)
+     PRESERVADA — passa a servir só ao aviso diagnóstico: `App.tsx`
+     `possiblyBlockedOnPrompt` agora exige o diálogo estar DE FATO visível
+     no buffer renderizado (`isTrustDialogVisible`), não mais só "nenhum
+     evento de semáforo ainda" (que também é o caso normal de qualquer aba
+     ociosa antes do primeiro prompt — a condição antiga virava ruído
+     constante). O texto do aviso diz o que fazer ("o CLI está aguardando
+     confirmação no terminal — clique e responda"); sem diálogo, aba viva e
+     ociosa mostra "Sessão pronta — digite no terminal para começar"
+     (`SessionDetails.tsx`), nunca mais "Conectando…" eterno.
 - [x] **Roteiro batch 5, item 4 desatualizado** (relato: "não existe mais
   aquela aba"; print referenciado NÃO chegou — anexo truncado). **Resolvido
   2026-07-23 (rodada 5).** Confirmado: o item 4 (CA-1 via launcher) foi
@@ -231,9 +255,13 @@ pelo batch indicado (ou justificados no dossiê se improcedentes).
 - [ ] **PRODUTO — restart não mantém as sessões ativas abertas** (relato:
   "Não manteve as sessões ativas abertas"). Comportamento atual é o
   especificado (PTY não sobrevive; sessões viram "sessões anteriores"),
-  mas a expectativa do dono do produto é restauração. DECISÃO PENDENTE:
-  propor opções (ex.: reabrir abas retomando sessões claude via `-r` no
-  boot; terminal livre não tem resume) — não implementar sem OK.
+  mas a expectativa do dono do produto é restauração. **Decisão do
+  Alexandre (2026-07-23): restaurar as sessões que tiveram ATIVIDADE NO DIA
+  ANTERIOR** é o comportamento desejado (critério de corte = atividade no
+  dia anterior ao boot, não "toda sessão anterior sem limite"). **Ainda
+  PRECISA DE SPEC** antes de qualquer código — decisão registrada aqui,
+  fica na fila (ver `specs/backlog.md`); NÃO implementada nesta rodada
+  (rodada 5) nem em nenhuma rodada anterior.
 - [x] **UX — statusbar deve mostrar a conta com que a sessão EM FOCO foi
   criada** (relato: "Mudar de conta não muda a conta utilizada naquela
   sessão. Na barra inferior deveria mostrar a conta em que a sessão foi

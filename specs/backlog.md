@@ -99,10 +99,22 @@ Ctrl+Shift+C, menu de contexto com Copiar, e seleção que sobrevive a
 output novo chegando. Critério: copiar um trecho do terminal tem que ser
 tão fácil quanto no Windows Terminal.
 
+## Decidido, aguardando spec
+
+- **Restauração de sessões no restart** (rodada 5 do feedback-e2e).
+  **Decisão do Alexandre (2026-07-23):** restaurar as sessões que tiveram
+  ATIVIDADE NO DIA ANTERIOR ao boot (critério de corte = atividade no dia
+  anterior, não "toda sessão anterior sem limite"). Comportamento desejado
+  registrado; feature NÃO implementada — ainda precisa do ciclo de spec
+  completo (specify → clarify → plan) antes de qualquer código, incluindo
+  detalhar: o que conta como "atividade" (última mensagem? último turno
+  completo?), sessões `shell` (sem transcript, sem `-r` — provavelmente fora
+  do escopo), e interação com a decisão A (aba inicial vazia, ver
+  `001-mvp/feedback-e2e.md`) — a restauração passaria a ser a ÚNICA forma de
+  o app abrir uma sessão claude sozinho no boot, então o clarify precisa
+  reconciliar as duas decisões explicitamente.
+
 ## Decisões pendentes que alimentam este backlog
 
-- Restauração de sessões no restart (rodada 5 do feedback-e2e): opções
-  i/ii/iii investigadas, recomendação técnica = (iii) atalho "Retomar
-  última sessão"; aguardando escolha do Alexandre.
 - NFR de RAM (spec 001): re-baseline ~450–500 MB × task de otimização.
 - Priorização geral da fila P1/P2 + itens B1–B5 acima.

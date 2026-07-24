@@ -130,6 +130,14 @@ será encerrado, botões "Fechar sessão" (perigo) e "Cancelar"); processo
 `claude` termina sozinho (estado "sessão encerrada" no CORPO do terminal —
 mensagem central + botões "Reabrir" e "Fechar aba" — distinto do dot cinza da
 lista de sessões).
+> **Nota 2026-07-23 (feedback E2E rodada 5, decisão A)** — "sem sessões
+> abertas" deixa de ser só o estado pós-fechar-todas: é também o estado
+> INICIAL do app (boot com zero abas, `App.tsx` `INITIAL_TABS` vazio).
+> Versão implementada no P0: título "Nenhuma sessão aberta" + texto
+> apontando pra sidebar/"＋ Nova sessão" + botão reaproveitando o mesmo
+> handler do corpo do "＋ Nova sessão" (`data-testid="empty-state"`);
+> "retomar recente"/"rotinas" seguem fora do escopo do P0 (ver comentário
+> de `App.module.css` `.emptyState`).
 
 **Configurações do app:** tela mínima ("Preferências", acionada pelo gear icon
 na titlebar, entre o ProfileSwitcher e o "＋ Nova sessão") com edição dos

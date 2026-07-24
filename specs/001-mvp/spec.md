@@ -205,6 +205,15 @@ Cada FR é testável isoladamente.
 - **FR-006 Ciclo de vida de abas.** Fechar aba mata o PTY; se a sessão estiver
   ativa (processo vivo), pede confirmação. Quando o processo `claude` termina
   sozinho, a aba mostra "sessão encerrada" com ações reabrir/fechar.
+  > **Nota 2026-07-23 (feedback E2E rodada 5, decisão A)** — o app passa a
+  > nascer com ZERO abas (nenhuma sessão `claude` spawnada automaticamente no
+  > boot); o "sem sessões abertas" da vista central (ui-spec §2) deixa de ser
+  > alcançável só fechando todas as abas manualmente e vira também o estado
+  > INICIAL. Causa: a antiga aba boot (sem `cwd`) rodava `claude` em
+  > `os.homedir()`, onde o diálogo pré-REPL de confiança de pasta aparecia
+  > toda vez (trust de home nunca persiste) — ver histórico completo em
+  > `feedback-e2e.md`, item "BUG — modelo/esforço não selecionável SOMENTE na
+  > primeira aba".
 - **FR-007 Config do app.** Persistido em `%APPDATA%\donel-dev\config.json`:
   roots de scan, favoritos, perfil ativo, defaults do launcher, tema. Escrita
   atômica (temp + rename).
