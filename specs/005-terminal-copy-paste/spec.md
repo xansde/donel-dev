@@ -1,6 +1,8 @@
 # Spec — 005 Terminal: copiar/colar/imagem por tipo de sessão
 
-**Status:** rascunho pós-discovery (aguarda `/clarify` → `/plan`)
+**Status:** ✅ clarificada (C1–C5 respondidos em 2026-07-24) + **SPIKE-1 FECHADO**
+(`spike-1-imagem-no-conpty.md`). Pronta para implementar — aguarda OK do
+Alexandre no gate (`plan.md` + `tasks.md` deste diretório já gerados).
 **Prioridade:** a definir pelo Alexandre (fila atual: 002-quota → 003-modo-dev)
 **Origem:** entrevista aberta com o Alexandre em 2026-07-24. Consolida
 **B6** (colar imagens) e **B7** (copiar texto fácil) do `backlog.md` + os
@@ -55,14 +57,30 @@ Comportamento **por tipo de sessão** (decisão do Alexandre):
 
 - **CA-1 (claude / copiar):** com texto selecionado numa aba claude, `Ctrl+C`
   copia para o clipboard e **não** envia `\x03` ao PTY (execução segue).
-- **CA-2 (claude / sem seleção):** `Ctrl+C` sem seleção numa aba claude
-  **não interrompe** (ver C1 para o comportamento exato — no-op recomendado);
-  interromper é responsabilidade do `Esc`.
-- **CA-3 (claude / colar texto):** `Ctrl+V` numa aba claude escreve o texto
-  do clipboard no PTY (multilinha inclusa — item do batch-5).
-- **CA-4 (claude / colar imagem):** `Ctrl+V` (ou o evento `paste`) com imagem
-  no clipboard entrega a imagem ao claude CLI de forma que ele a reconheça
-  (equivalente a `[Image #N]`) — **depende do SPIKE-1**.
+- **CA-2 (claude / sem seleção):** `Ctrl+C` sem seleção numa aba claude é
+  **no-op silencioso** (decisão C1) — **nunca** envia `\x03` em aba claude,
+  em nenhuma circunstância. Interromper é responsabilidade exclusiva do `Esc`.
+- **CA-3 (claude / colar texto):** `Ctrl+V` numa aba claude escreve o texto do
+  clipboard no PTY envolvido em **bracketed paste** (`\x1b[200~` … `\x1b[201~`),
+  de modo que multilinha entre como **um bloco colado** (o CLI mostra
+  `[Pasted text #N]`) e **não** como N Enters — fecha o item "colar multilinha"
+  do batch-5.
+- **CA-4 (claude / colar imagem):** `Ctrl+V` com **imagem** no clipboard numa
+  aba claude escreve `\x1b\x76` (= `alt+v`) no PTY, e o CLI insere `[Image #N]`
+  no input. **SPIKE-1 FECHADO e provado** em ConPTY real: `[Image #1]` em
+  ~1,5 s; `\x16` (Ctrl+V cru) não faz nada; sem imagem o CLI responde
+  "No image found in clipboard. Use alt+v to paste images". Ver
+  `spike-1-imagem-no-conpty.md`. O app **não** salva arquivo temp, **não**
+  insere path e **não** manuseia base64 — quem lê o clipboard é o CLI.
+- **CA-4b (feedback visual é do CLI):** o `Pasting…` e o `[Image #N]` são
+  desenhados pelo próprio CLI. O Donel **não** cria spinner, toast ou
+  placeholder próprio para a colagem de imagem.
+- **CA-8 (Alt+V não regride):** quem já usa `Alt+V` continua podendo usá-lo —
+  o handler intercepta apenas `Ctrl+C`/`Ctrl+V`; `Alt+V` segue descendo cru.
+- **CA-9 (teclas especiais não são engolidas):** setas, `Home`/`End`,
+  `PgUp`/`PgDn`, `Del`, `Tab`, `Shift+Tab` continuam chegando ao PTY em
+  **ambos** os tipos de aba (decisão C3 — regressão coberta no roteiro E2E;
+  nenhum código específico para elas).
 - **CA-5 (claude / Esc):** `Esc` interrompe a geração/execução do claude
   (hoje o `Esc` já desce cru e o CLI o trata; validar que continua após
   introduzir o handler custom).
@@ -72,29 +90,35 @@ Comportamento **por tipo de sessão** (decisão do Alexandre):
 - **CA-7 (compat):** `Ctrl+Shift+C`/`Ctrl+Shift+V` continuam copiando/colando
   (não quebrar o hábito atual enquanto o novo é aprendido).
 
-## Spikes e decisões
+## Spikes e decisões — todos resolvidos (2026-07-24)
 
-- **[S1] (crítico) Como entregar a imagem colada ao claude CLI dentro do
-  ConPTY.** É o gotcha do B6. Investigar o contrato: o Windows Terminal
-  repassa o evento e o CLI lê o clipboard nativamente? Ou o app precisa
-  (a) salvar a imagem num arquivo temp e inserir o caminho, (b) inserir um
-  marcador, (c) reencaminhar a sequência crua que o CLI espera? **Sem fechar
-  este spike, US-C/CA-4 não fecham.** Testar num app instalado (não só dev).
-- **[C1] `Ctrl+C` sem seleção (aba claude):** no-op silencioso (recomendado) ×
-  beep × fallback para enviar `\x03`. O Alexandre disse "`Ctrl+C` sempre
-  copia" e "matar processo fica só no Esc" → recomendação: **no-op** quando
-  não há seleção (nunca envia SIGINT em aba claude).
-- **[C2] Ponto de interceptação:** `term.attachCustomKeyEventHandler` (ainda
-  não usado) ramificando pela prop `sessionType`, decidindo copiar/colar vs
-  repassar ao PTY. Confirmar no `/plan`.
-- **[C3] Escopo das "teclas especiais nunca testadas"** (batch-5): setas,
-  Home/End, PgUp/PgDn, Del — entram nesta spec (garantir que descem ao PTY) ou
-  ficam num smoke à parte?
-- **[C4] Extras do B7 (opcionais):** copy-on-select, menu de contexto (botão
-  direito) com Copiar/Colar, seleção que sobrevive a output novo. O Alexandre
-  **não** pediu explicitamente — manter fora salvo decisão no clarify.
-- **[C5] Atalhos configuráveis:** hard-code por ora (não há schema) × estender
-  `config-store.ts`. Recomendação: hard-code nesta entrega.
+- **[S1] ✅ FECHADO — como entregar a imagem ao claude CLI no ConPTY.**
+  Resposta: **o CLI lê o clipboard sozinho**; o Donel só precisa acionar o
+  keybinding `chat:imagePaste`, que no Windows é **`alt+v` = `\x1b\x76`**
+  (`ctrl+v` só vale no WSL). Provado por leitura do binário do CLI (tabela de
+  bindings + o próprio `checkImage`/`saveImage` em PowerShell) **e** por teste
+  empírico em ConPTY real com node-pty 1.1.0 — a mesma versão que o app
+  **instalado** empacota. Nenhuma das hipóteses (a) temp+path, (b) marcador,
+  (c) sequência exótica era necessária. Detalhes, tabela de resultados e
+  ressalva de método: `spike-1-imagem-no-conpty.md`.
+- **[C1] ✅ Resolvido — `Ctrl+C` sem seleção (aba claude): no-op silencioso.**
+  Nunca envia `\x03` em aba claude; interromper é só `Esc` (CA-2).
+- **[C2] ✅ Resolvido — ponto de interceptação:**
+  `term.attachCustomKeyEventHandler` (ainda não usado no repo), ramificando
+  pela prop `sessionType` já existente. Confirmado no `plan.md`; a decisão
+  técnica de por que **não** usar o evento `paste` do DOM nem `term.onKey`
+  está registrada lá.
+- **[C3] ✅ Resolvido — teclas especiais entram como teste de regressão.**
+  Nenhum código específico (o handler só intercepta `Ctrl+C`/`Ctrl+V` e deixa
+  o resto passar cru), mas entram no roteiro E2E desta spec, porque é esta
+  entrega que cria o risco de engolir tecla (CA-9).
+- **[C4] ✅ Resolvido — extras do B7 ficam FORA** (copy-on-select, menu de
+  contexto, seleção persistente). Seguem no backlog B7 para decidir depois de
+  uso real.
+- **[C5] ✅ Resolvido — atalhos hard-coded** nesta entrega. Não criar schema de
+  keybindings em `config-store.ts`. **Também não** mexer em
+  `~/.claude/keybindings.json` do usuário (config global, afetaria o claude
+  fora do Donel) — ver `spike-1-imagem-no-conpty.md`, consequência 5.
 
 ## Fora de escopo
 
