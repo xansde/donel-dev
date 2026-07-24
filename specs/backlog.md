@@ -8,10 +8,19 @@ Nada aqui entra em implementação sem passar pelo ciclo de spec
 
 - **P1**: US-8 tokens/smart zone · US-9 subagentes · US-10 post-its ·
   US-11 todo do projeto · US-12 quota das 15 contas · US-14 rotinas ·
-  US-15 novo projeto decente · **002-auto-switch** (auto-seleção de perfil
+  US-15 novo projeto decente · **auto-switch** (auto-seleção de perfil
   por headroom; insumo em `001-mvp/analise-switch-account-amanda.md`).
 - **P2**: US-13 Modo Dev (task → fases da Esteira, ui-spec §11) ·
   US-16 Donel buddy.
+
+> **DECISÃO 2026-07-24 (Alexandre):** **`002-quota-headroom` é a PRÓXIMA
+> ENTREGA** — fura a fila inclusive do Modo Dev. Spec+plan em
+> `specs/002-quota-headroom/`. Escopo: destravar o headroom (fix do timeout
+> do quota-axi) + dropdown "Perfis de conta" enriquecido com AS DUAS janelas
+> (5h e semanal) rotuladas + botão "Atualizar". Ordem de entrega agora:
+> **002-quota-headroom → 003-modo-dev → auto-switch**. Numeração das pastas:
+> quota=002, modo-dev=003; a reserva "002" do auto-switch foi liberada (segue
+> a ordem de criação).
 
 > **DECISÃO 2026-07-23 (Alexandre):** o **Modo Dev (US-13) fura a fila e é a
 > PRÓXIMA feature** — ciclo de spec (specify → clarify → plan) abre assim que
@@ -120,6 +129,11 @@ trazer o número de OUTRO perfil e por isso vira `null` hoje; (2) `npx -y
 quota-axi` leva ~3,8 s por chamada nesta máquina, então qualquer painel que
 leia N perfis precisa de timeout generoso, leitura assíncrona e estado de
 "carregando" (ver o bug do "—" na rodada 6 do feedback-e2e).
+**Parte deste pedido já virou entrega:** o destravar + as duas janelas no
+dropdown estão especificados em `specs/002-quota-headroom/` (próxima
+entrega). O que continua como B8/US-12 pós-002: a TELA/painel dedicado de
+todas as contas com histórico, ordenação por folga e reset.
+
 Alternativa a avaliar no clarify: o endpoint oficial de uso OAuth
 (`api.anthropic.com/api/oauth/usage`, visto no script da Amanda) devolve
 five_hour/seven_day direto, sem o overhead do npx — mas exige ler o token
