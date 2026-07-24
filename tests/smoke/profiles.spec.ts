@@ -141,9 +141,18 @@ test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar 
     expect(entries).toContain('.donel-profile.json');
   }).toPass({ timeout: 5_000 });
 
-  // 3. Doctor verde (DoD explícito da task) — badge "Perfil OK" na própria linha do dropdown; nenhum aviso de junction quebrada.
-  await expect(newRow.locator('[data-testid="profile-doctor-ok"]')).toBeVisible({ timeout: 15_000 });
-  await expect(newRow.locator('[data-testid="profile-doctor-warning"]')).toHaveCount(0);
+  // 3. Doctor verde (DoD explícito da task). MUDANÇA (T207/CA-7, 002-quota-headroom):
+  // a lista ficou enxuta — perfil saudável não renderiza MAIS nenhum texto de
+  // status ("Perfil OK" removido, testid `profile-doctor-ok` não existe mais).
+  // A prova de "doctor rodou e está verde" agora é a AUSÊNCIA do aviso de erro
+  // (`profile-doctor-warning`) — `toPass` dá tempo do doctor assíncrono
+  // (`refreshDoctorFor`, disparado na abertura do dropdown/criação do perfil)
+  // responder antes de considerar a ausência como prova (mesma janela de 15s
+  // do wait antigo, sem depender de um testid que não existe mais).
+  await expect(async () => {
+    expect(await newRow.locator('[data-testid="profile-doctor-warning"]').count()).toBe(0);
+  }).toPass({ timeout: 15_000 });
+  await expect(newRow).not.toContainText('Junctions com problema');
 
   // 4. Ativar o perfil (CA-3 — "troco pra B") — a linha não segue a
   // convenção "Tecnologia Claude {n}" (nome de teste arbitrário), então
