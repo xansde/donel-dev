@@ -29,7 +29,12 @@ import { sortSessions } from '../../shared/sessionOrdering';
 import { nextAttentionSessionId, sessionIdAtPosition } from '../../shared/sessionShortcuts';
 // 004-nomear-sessoes (T401/T406/T408) — a regra de qual nome aparece e a
 // validação do nome digitado moram no shared, iguais para main e renderer.
-import { SESSION_NAME_MAX_LENGTH, normalizeSessionName, resolveSessionName } from '../../shared/sessionName';
+import {
+  SESSION_NAME_MAX_LENGTH,
+  normalizeSessionName,
+  reconcileStoredName,
+  resolveSessionName,
+} from '../../shared/sessionName';
 import { sessionTabName } from '../../shared/sessions';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
@@ -195,6 +200,10 @@ export function App(): React.JSX.Element {
   const previousSemaphoreStatesRef = useRef<Record<string, SemaphoreStateInfo>>({});
   const activeTabIdRef = useRef(activeTabId);
   activeTabIdRef.current = activeTabId;
+  // T412 (004) — a assinatura do evento de transcript é ÚNICA e montada uma vez
+  // só; sem esta ref ela leria o `appConfig` do primeiro render pra sempre.
+  const appConfigRef = useRef(appConfig);
+  appConfigRef.current = appConfig;
   // T010 — FR-006: "aba ativa" (processo vivo) por tab.id, alimentado por
   // `onAliveChange` (TerminalPane.tsx). Decide se fechar a aba pede
   // confirmação (true) ou fecha direto (false/ausente — connecting sem PTY
@@ -721,6 +730,36 @@ export function App(): React.JSX.Element {
       .then(setAppConfig)
       .catch(() => undefined);
   };
+
+  /**
+   * T412 (004) — CA-4: o `/rename` digitado no CLI reflete na aba/sidebar em
+   * menos de 1 s, sem reabrir a sessão. UMA assinatura para TODAS as abas (o
+   * watcher do main já cobre toda aba `claude` viva e o payload traz o
+   * `sessionId`) — e é aqui que o "CLI vence" do C2 finalmente fecha: quando o
+   * título novo difere do `seenTitle` gravado, a entrada da UI é DESCARTADA,
+   * em vez de ficar um nome morto competindo no storage (`reconcileStoredName`).
+   *
+   * Deps vazias de propósito: a assinatura é montada uma vez e lê estado atual
+   * por ref. O `unsubscribe` remove só o próprio listener (preload usa
+   * `removeListener` com a mesma função), então o double-invoke do StrictMode
+   * não deixa listener órfão nem cancela o da montagem nova.
+   */
+  useEffect(() => {
+    const unsubscribe = window.donel.sessions.onTranscriptChanged(({ sessionId, customTitle }) => {
+      // Chave é o `sessionId`, não o `tabId` — daí o `.map` próprio em vez do
+      // `updateTab`. Uma mesma sessão retomada pode estar em mais de uma aba.
+      setTabs((prev) =>
+        prev.map((tab) => (tab.claudeSessionId === sessionId ? { ...tab, customTitle } : tab)),
+      );
+
+      const stored = appConfigRef.current?.sessionNames[sessionId] ?? null;
+      if (stored && reconcileStoredName(stored, customTitle) === null) {
+        // Nome vazio = apagar a entrada (mesmo canal do C5, sem inventar outro).
+        void window.donel.sessions.setName(sessionId, '', null).then(setAppConfig).catch(() => undefined);
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   // T013 (correção herdada) — assina `onRenderedUpdate` (EVENTO, disparado
   // no callback de conclusão de cada `term.write`, ver TerminalPane.tsx) em

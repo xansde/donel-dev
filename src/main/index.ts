@@ -15,6 +15,7 @@ import type {
   PtyExitInfo,
   SemaphoreUpdate,
   SessionSummaryDto,
+  TranscriptChangedPayload,
 } from '../shared';
 import {
   CLAUDE_NOT_FOUND_PREFIX,
@@ -25,6 +26,7 @@ import {
   PTY_CHANNELS,
   SEMAPHORE_CHANNELS,
   SESSION_CHANNELS,
+  TRANSCRIPT_CHANNELS,
 } from '../shared';
 import { createSystemResolveDeps, resolveClaudeExecutable } from './claude-executable';
 import {
@@ -62,8 +64,9 @@ import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects
 import { PtyManager } from './pty-manager';
 import { HeadroomCache, readAllProfilesHeadroom } from './quota-headroom';
 import { resolveClaudeCorrelation } from './session-correlation';
-import { indexProjectSessions } from './session-indexer';
+import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
+import { TranscriptWatcherRegistry } from './transcript-watcher';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
 // PtyManager chega em T004 (este arquivo). ProjectScanner chega no T007
@@ -170,6 +173,11 @@ function createMainWindow(): void {
       semaphoreManager.onProcessExit(ptyId, exitCode);
       semaphoreManager.unregisterSession(ptyId);
     }
+
+    // T412 (004) — baixa do watcher de transcript. AQUI e não no `SessionEnd`:
+    // kill forçado não dispara o hook, e um watcher sobrevivente é handle
+    // vazado. No-op para aba de terminal livre (nunca abriu watcher).
+    transcriptWatchers.stop(ptyId);
   });
   const unsubscribeSemaphore = semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
     mainWindow.webContents.send(SEMAPHORE_CHANNELS.update, update);
@@ -181,6 +189,10 @@ function createMainWindow(): void {
     unsubscribeData();
     unsubscribeExit();
     unsubscribeSemaphore();
+    // A janela morrendo mata os PTYs; os watchers deles vão junto (o `onExit`
+    // de cada um já daria baixa, mas não depender disso é o que garante zero
+    // handle sobrevivendo ao fechamento).
+    transcriptWatchers.disposeAll();
     ptyManager.killAll();
   });
 
@@ -189,6 +201,41 @@ function createMainWindow(): void {
   } else {
     void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
+}
+
+/**
+ * T412 (004-nomear-sessoes) — um watcher de transcript por aba `claude` VIVA
+ * (não só a em foco: senão "troco de aba e o nome não segue"). Chave = `ptyId`,
+ * porque é o `PtyManager.onExit` — a fonte de verdade de morte de sessão,
+ * inclusive em kill forçado, onde o `SessionEnd` NÃO dispara (spike T002) — que
+ * dá baixa neles.
+ */
+const transcriptWatchers = new TranscriptWatcherRegistry();
+
+/**
+ * Path do `.jsonl` da sessão. O CLI o deriva do `cwd` (slug do path absoluto) e
+ * do diretório de config ATIVO — com um perfil ativo, `CLAUDE_CONFIG_DIR`
+ * aponta para o diretório do perfil, e o transcript vive lá dentro, não em
+ * `~/.claude`. Usa o mesmo `activeProfileConfigDir` passado ao spawn, para o
+ * watcher não vigiar um arquivo que nunca vai aparecer.
+ */
+function resolveTranscriptPath(sessionId: string, cwd: string | undefined, claudeConfigDir: string | undefined): string {
+  const claudeHome = claudeConfigDir ?? defaultClaudeHome();
+  return join(resolveProjectSessionsDir(cwd ?? homedir(), claudeHome), `${sessionId}.jsonl`);
+}
+
+function startTranscriptWatcher(ptyId: string, filePath: string, sessionId: string): void {
+  transcriptWatchers.start(ptyId, {
+    sessionId,
+    filePath,
+    onChange: (payload: TranscriptChangedPayload) => {
+      // Mesmo mecanismo de push do semáforo e do `pty:data` — nada de um
+      // segundo caminho de notificação para o renderer.
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send(TRANSCRIPT_CHANNELS.changed, payload);
+      }
+    },
+  });
 }
 
 function registerPtyIpcHandlers(): void {
@@ -230,6 +277,10 @@ function registerPtyIpcHandlers(): void {
       if (hooksSettingsPath) {
         semaphoreManager.registerSession(ptyId, correlationId);
       }
+
+      // T412 (004) — reflexo AO VIVO do `/rename` (CA-4). O path do `.jsonl` já
+      // é conhecido aqui: o id da sessão foi IMPOSTO no spawn logo acima.
+      startTranscriptWatcher(ptyId, resolveTranscriptPath(correlationId, options.cwd, activeProfileConfigDir), correlationId);
 
       // FIX (feedback E2E rodada 5) — perfil de NASCIMENTO desta sessão
       // (mesmo `activeProfileSlug`/Name usados em `claudeConfigDir` acima,

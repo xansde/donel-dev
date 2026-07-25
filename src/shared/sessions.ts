@@ -24,6 +24,28 @@ export const SESSION_CHANNELS = {
   setName: 'sessions:setName',
 } as const;
 
+/**
+ * T412 (004) — push do `main` quando o transcript de uma sessão VIVA muda o que
+ * a UI mostra (hoje: o `custom-title` de um `/rename`; a 006 acrescenta o
+ * `contextTokens` no MESMO evento).
+ *
+ * O nome do canal é `transcript:changed`, e não `sessions:nameChanged` como a
+ * task da 004 rascunhou, porque o watcher é **peça compartilhada** com a 006 e é
+ * este o nome fixado no plano dela — batizá-lo de "nameChanged" agora obrigaria
+ * a 006 a renomear um canal já em uso. Mesma razão do payload ser um objeto.
+ */
+export const TRANSCRIPT_CHANNELS = {
+  changed: 'transcript:changed',
+} as const;
+
+export interface TranscriptChangedPayload {
+  readonly sessionId: string;
+  /** Último `custom-title` do transcript. Uma leitura que não acha título NÃO chega aqui como `null` — ver `transcript-watcher.ts`. */
+  readonly customTitle: string | null;
+  /** Reservado para a 006 (contexto consumido) — sempre `null` até ela implementar a extração da `usage`. */
+  readonly contextTokens: number | null;
+}
+
 export interface SessionSummaryDto {
   /** Session id — nome do arquivo sem `.jsonl` (spec: "nome do arquivo"). */
   readonly id: string;
@@ -51,6 +73,13 @@ export interface DonelSessionsApi {
    * Devolve o config atualizado, no mesmo padrão dos canais `config:set*`.
    */
   setName(sessionId: string, name: string, seenTitle: string | null): Promise<AppConfigDto>;
+  /**
+   * T412 (004) — assina o push de mudança de transcript das sessões vivas
+   * (CA-4). UMA assinatura no nível do App cobre todas as abas: o watcher do
+   * `main` observa toda aba `claude` viva e o payload traz o `sessionId`.
+   * Devolve a função de cancelamento (mesmo padrão de `pty.onData`).
+   */
+  onTranscriptChanged(listener: (payload: TranscriptChangedPayload) => void): () => void;
 }
 
 const TAB_NAME_MAX_LENGTH = 40;

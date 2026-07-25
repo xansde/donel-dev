@@ -279,21 +279,37 @@ export async function readSessionTailInfo(
   return info;
 }
 
-async function readSessionTailInfoUncached(filePath: string, size: number): Promise<SessionTailInfo> {
-  let tailText: string;
+/**
+ * Últimos `maxBytes` do arquivo como texto, ou `null` em qualquer falha (nunca
+ * lança). Extraído para helper porque o `transcript-watcher.ts` (T411) precisa
+ * da MESMA leitura de cauda — duplicar o bloco de `fs.open`/`read` seria manter
+ * duas versões da mesma mecânica.
+ */
+export async function readFileTail(
+  filePath: string,
+  size: number,
+  maxBytes: number = TAIL_READ_BYTES,
+): Promise<string | null> {
+  if (size <= 0) return null;
+
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
   try {
     handle = await fs.open(filePath, 'r');
-    const start = Math.max(0, size - TAIL_READ_BYTES);
+    const start = Math.max(0, size - maxBytes);
     const length = size - start;
     const buffer = Buffer.alloc(length);
     await handle.read(buffer, 0, length, start);
-    tailText = buffer.toString('utf8');
+    return buffer.toString('utf8');
   } catch {
-    return EMPTY_TAIL_INFO;
+    return null;
   } finally {
     await handle?.close().catch(() => undefined);
   }
+}
+
+async function readSessionTailInfoUncached(filePath: string, size: number): Promise<SessionTailInfo> {
+  const tailText = await readFileTail(filePath, size);
+  if (tailText === null) return EMPTY_TAIL_INFO;
 
   const lastActivityAt = extractLastTimestamp(tailText);
   const tailTitle = extractCustomTitle(tailText);

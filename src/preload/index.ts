@@ -14,8 +14,17 @@ import type {
   SemaphoreStateInfo,
   SemaphoreUpdate,
   SessionSummaryDto,
+  TranscriptChangedPayload,
 } from '../shared';
-import { CONFIG_CHANNELS, PROFILE_CHANNELS, PROJECT_CHANNELS, PTY_CHANNELS, SEMAPHORE_CHANNELS, SESSION_CHANNELS } from '../shared';
+import {
+  CONFIG_CHANNELS,
+  PROFILE_CHANNELS,
+  PROJECT_CHANNELS,
+  PTY_CHANNELS,
+  SEMAPHORE_CHANNELS,
+  SESSION_CHANNELS,
+  TRANSCRIPT_CHANNELS,
+} from '../shared';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
 // arquivo é o único ponto por onde o renderer alcança o main process, via
@@ -85,6 +94,17 @@ const donelApi: DonelApi = {
     // T406 (004) — grava/limpa o nome dado pela UI. `name` vazio apaga (C5).
     setName: (sessionId: string, name: string, seenTitle: string | null) =>
       ipcRenderer.invoke(SESSION_CHANNELS.setName, sessionId, name, seenTitle) as Promise<AppConfigDto>,
+
+    // T412 (004) — push do watcher de transcript (CA-4). Sem filtro por
+    // sessionId aqui, ao contrário de `pty.onData`: é UMA assinatura no App
+    // para TODAS as abas vivas, e quem despacha por sessão é o renderer.
+    onTranscriptChanged: (listener: (payload: TranscriptChangedPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: TranscriptChangedPayload): void => {
+        listener(payload);
+      };
+      ipcRenderer.on(TRANSCRIPT_CHANNELS.changed, handler);
+      return () => ipcRenderer.removeListener(TRANSCRIPT_CHANNELS.changed, handler);
+    },
   },
 
   profiles: {

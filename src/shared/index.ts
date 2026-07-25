@@ -12,8 +12,8 @@ import type { DonelSessionsApi } from './sessions';
 export { PROJECT_CHANNELS, sortProjects } from './projects';
 export type { DonelProjectsApi, ProjectInfo } from './projects';
 
-export { SESSION_CHANNELS } from './sessions';
-export type { DonelSessionsApi, SessionSummaryDto } from './sessions';
+export { SESSION_CHANNELS, TRANSCRIPT_CHANNELS } from './sessions';
+export type { DonelSessionsApi, SessionSummaryDto, TranscriptChangedPayload } from './sessions';
 
 export { PROFILE_CHANNELS, parseAccountNumber } from './profiles';
 export type {
