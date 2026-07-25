@@ -331,6 +331,37 @@ Nenhuma delas é bug; as três foram decididas fora de escopo pela própria
   o app não restaura abas shell no restart, então não havia o que persistir.
   Se a restauração de sessões (seção abaixo) chegar, revisitar.
 
+### B13. Suíte de smokes: o vaivém de janelas incomoda, mas o custo é outro (medido em 24/07)
+
+Reclamação real dele ao ver a suíte rodar: "ficava abrindo e fechando, abrindo e
+fechando" — com a hipótese de que fazer cada ação uma vez só seria mais rápido.
+**Medido antes de decidir:** a suíte sobe o app **16 vezes** (13 arquivos de spec
++ 3 restarts que são o próprio objeto do teste: `config-persistence` e
+`session-rename` provam persistência através de restart, `previous-sessions`
+relança). Cada launch custa ~1–3 s → os 16 somam **< 1 min** dos **9,2 min** da
+suíte. O caro é outra coisa: **`terminal.spec.ts:281` sozinho queimou 4,4 min
+(48% da suíte)** esperando um turno que a cota esgotada não deixa chegar, e o
+`model-injection` outros 57 s.
+
+Portanto: fundir launches deixaria a tela mais calma e economizaria menos de 10%
+do tempo — e **ressuscitaria o bug que o isolamento resolveu** na rodada 5
+(specs compartilhando o `%APPDATA%` real; `launcherDefaults` de uma execução
+anterior era a causa raiz de dois vermelhos que pareciam bug de código, ver
+`userDataIsolation.ts`).
+
+O que de fato vale fazer, quando entrar na fila:
+
+1. **Falhar rápido quando a causa é ambiental** — detectar no pane o aviso de
+   limite de cota do CLI ("You've hit your weekly limit") e abortar o teste com
+   mensagem clara em vez de esperar o timeout de 240 s. Corta ~4 min da suíte e
+   substitui um vermelho enigmático por um diagnóstico.
+2. **Não abrir sessão `claude` real onde ela não é o objeto do teste** — foi o
+   que deixou os smokes da 004 em ~5,7 s no total (fixture sintética + descobrir
+   o `sessionId` pelo próprio rename, sem consumir turno).
+3. **Janela do Electron sem roubar foco durante a suíte** (o incômodo visual em
+   si): exigiria o app nascer oculto sob um flag de teste — mudança de código de
+   produção para servir teste, avaliar com cuidado antes.
+
 ## Decidido, aguardando spec
 
 - **Restauração de sessões no restart** (rodada 5 do feedback-e2e).

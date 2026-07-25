@@ -1,9 +1,12 @@
 # Tasks 004 — Nomear sessões (refletir `/rename` + renomear pela UI)
 
-**Status:** **BATCH A e BATCH B ENTREGUES** (2026-07-24) — T401–T410 fechados,
-commitados e empurrados na `feature/mvp-p0`. Batch C (T411–T413, reflexo ao
-vivo) **não iniciado**: espera a validação humana do roteiro
-`roteiro-e2e-batch-b.md`. Branch: `feature/mvp-p0`.
+**Status:** **FEATURE COMPLETA — T401–T413 ENTREGUES** (2026-07-25), commitados
+e empurrados na `feature/mvp-p0`. Batch B validado por ele em 24/07 (5 passos ✅;
+o passo 6 pedia restart, o que era o comportamento esperado sem o Batch C).
+Batch C entregue em seguida, com o CA-4 verificado em sessão real
+(341–372 ms, alvo < 1 s). Falta a validação humana do
+`roteiro-e2e-batch-c.md` — que **exige cota** (digitar `/rename` num CLI que
+responde). Branch: `feature/mvp-p0`.
 **Atualizado:** 2026-07-24
 
 > **O que mudou em relação ao plano, durante a execução** (nada de escopo novo):
@@ -18,6 +21,16 @@ vivo) **não iniciado**: espera a validação humana do roteiro
 >   É onde o US-A de fato acontece (achar sessão de semanas atrás pelo nome); sem
 >   isso a lista continuaria mostrando a 1ª mensagem e a feature perderia o
 >   caso de uso principal.
+> - **T411/T412 (Batch C)** — o canal ficou `transcript:changed` (e não
+>   `sessions:nameChanged` como esta task rascunhou) e o payload é objeto com
+>   `contextTokens: null` reservado: são os dois nomes fixados no plano da 006,
+>   e o watcher é peça compartilhada. Batizar de "nameChanged" agora obrigaria a
+>   006 a renomear um canal em uso — mesmo motivo pelo qual o payload já nasce
+>   como objeto. **A Fase B da 006 encolhe como previsto** (pular T607).
+> - **T411** — regra nova, não prevista: uma leitura que NÃO acha título não
+>   apaga o título já conhecido. Sem isso, um erro transitório de I/O (arquivo
+>   travado no meio de uma escrita do CLI) faria o nome da aba piscar para o
+>   fallback e voltar. É a mesma lógica do dirty-check: ausência não é `/rename`.
 > - **T401** — uma borda que o plano não distinguia: `customTitle === null` com
 >   `seenTitle` preenchido (transcript ilegível/apagado) NÃO deixa o CLI vencer.
 >   Leitura que falhou não é um `/rename`, e apagar o nome do usuário por causa
@@ -196,7 +209,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
 > de título), senão a 006 vai reescrever este código na semana seguinte.
 > Entregar a 004 antes **encolhe** a Fase B da 006 para 2 tasks.
 
-- **T411 — `SessionNameWatcher` (TDD com `fs.watch` real em tmpdir)** — `src/main/session-name-watcher.ts` (novo)
+- **[x] T411 — `SessionNameWatcher` (TDD com `fs.watch` real em tmpdir)** — entregue como `src/main/transcript-watcher.ts` (nome da peça compartilhada com a 006, novo)
   Abre `fs.watch` no `.jsonl` da sessão, **debounce ~300 ms**, relê a cauda,
   roda `extractCustomTitle` (T401) e emite **só quando o valor mudou**.
   `dispose()` fecha o handle.
@@ -210,7 +223,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
   `dispose()` fecha (segundo append não dispara nada — prova de que não vaza
   handle).
 
-- **T412 — Ciclo de vida por aba + push ao renderer** (sequencial após T411) — `src/main/index.ts`, `src/renderer/src/App.tsx`
+- **[x] T412 — Ciclo de vida por aba + push ao renderer** (sequencial após T411) — `src/main/index.ts`, `src/renderer/src/App.tsx`
   Um watcher por aba `claude` **viva** (não só a em foco — evita "troquei de
   aba e o nome não seguiu"); o path vem do `correlationId` do create (`:212`).
   Fechar o watcher no **`PtyManager.onExit`** — a fonte de verdade de morte de
@@ -223,7 +236,7 @@ smoke roteirizado, isolado do `%APPDATA%` real.
   **DoD:** unit do registro/baixa dos watchers (6 abas abertas e fechadas → 0
   handles); typecheck verde; nenhum watcher sobrevive ao fechamento da aba.
 
-- **T413 — Gate final: suíte completa + reinstalação + E2E ao vivo**
+- **[x] T413 — Gate final: suíte completa + reinstalação + E2E ao vivo**
   `typecheck` + `test` + `test:smoke` + `test:smoke:dev` COMPLETOS verdes
   (com os 2 vermelhos herdados declarados). Auditoria opus ≥95. `build` +
   `dist`, reinstalar, roteiro E2E cobrindo o que **só** o humano valida:
