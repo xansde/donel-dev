@@ -69,12 +69,20 @@ seus dados.
 
 ## Passo 6 — Precedência: `/rename` novo vence o nome da UI (CA-5 / C2)
 
+> ⚠️ **Neste batch, o nome NÃO muda na hora.** Nada relê o transcript enquanto a
+> sessão está viva — isso é o CA-4, entregue pelo Batch C (`fs.watch` com
+> debounce). Aqui, o que se valida é a PRECEDÊNCIA depois de uma releitura, e a
+> forma confiável de forçar releitura é **reiniciar o app**.
+
 1. Numa sessão viva, renomeie pela UI (ex.: `nome da UI`).
 2. No terminal daquela sessão, rode `/rename nome do CLI`.
-3. Feche e reabra a sessão pela lista (o reflexo **ao vivo** é o Batch C — aqui
-   é reabrindo).
+3. **Reinicie o app** (fechar e reabrir a aba não basta — o índice de sessões é
+   lido no boot).
 4. ✅ Aparece `nome do CLI`: o `/rename` veio depois, então ele vence, e o nome
    antigo da UI é descartado (não fica um nome zumbi competindo).
+
+**Validado por ele em 24/07:** ✅ com restart. O "não mudou durante a sessão" é o
+comportamento esperado deste batch, não falha.
 
 ## O que reportar
 
