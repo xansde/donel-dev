@@ -220,3 +220,31 @@ conflito).
 
 `npm run dist` executado pelo cockpit: instalador em
 `donel-dev-wt-007/release/`. **Instalar segue sendo ato do Alexandre** (§B14).
+
+## E2E aprovado por ele em 2026-07-26
+
+Ele instalou o build **integrado** (005 + 007 no mesmo instalador, branch
+`lote/005-007-e2e`) e rodou o roteiro único
+`specs/roteiro-e2e-lote-005-007.md` — resultado reportado: *"O e2e rodou
+corretamente!"*.
+
+**Por que integrado e não dois apps lado a lado:** os dois installs compartilham
+`%APPDATA%\donel-dev\config.json`, e o `AppConfig` do build da 005 tem lista
+fechada de campos — não conhece `sessionRegistry` nem `collapsedFavorites`. Toda
+escrita do app da 005 reescreveria o config **sem** o registro, apagando os
+favoritos montados durante o teste. Verificado no código antes de decidir.
+
+O que o E2E cobriu desta feature: grupo no topo, colapso persistido, pin
+sobrevivendo ao restart, clique focando aba aberta × retomando aba fechada,
+cabeçalho acendendo com grupo colapsado, desfavoritar devolvendo as sessões, e o
+boot já com o grupo pronto. Os passos 21–22 (o grupo se mantendo sozinho ao longo
+de dias) são de observação continuada e seguem em aberto por natureza, não por
+pendência.
+
+**Continua pendente de decisão dele, e o E2E não resolve:**
+- **CA-7** — 103–149 ms medidos contra alvo de < 100 ms (`medicao-ca7.md`).
+  Aceitar o desvio ou abrir task de otimização de boot. Enquanto não decidir,
+  `ca7-measurement.spec.ts` fica vermelho **por desenho**.
+- **T710** — "esquecer entrada órfã quando a retomada falha": exige coordenar com
+  `TerminalPane.tsx` depois que a 005 mergear, ou verificar contra o binário real
+  o texto de erro do CLI para `-r <id inválido>`.
