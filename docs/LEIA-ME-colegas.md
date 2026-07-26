@@ -96,6 +96,40 @@ Depois disso:
 - O **semáforo** de cada sessão mostra quem está trabalhando, quem terminou e
   quem está esperando você; quem pede permissão sobe para o topo.
 
+### Copiar, colar e colar print no terminal
+
+O terminal do app trata `Ctrl+C` e `Ctrl+V` do jeito que você espera de um
+terminal moderno, e o comportamento **depende do tipo de aba**:
+
+| | Aba de sessão `claude` | Aba de terminal livre |
+|---|---|---|
+| `Ctrl+C` **com** texto selecionado | copia | copia |
+| `Ctrl+C` **sem** seleção | **não faz nada** — a execução continua | **interrompe** o processo (como sempre) |
+| Interromper o modelo | use **`Esc`** | — |
+| `Ctrl+V` com texto | cola (várias linhas entram como **um** bloco) | cola no prompt |
+| `Ctrl+V` com **imagem** no clipboard | cola o print na conversa (`[Image #N]`) | — |
+
+O ponto que mais muda o dia a dia: na aba de sessão, apertar `Ctrl+C` por reflexo
+**não derruba mais** o que o modelo está fazendo. Para interromper, `Esc`.
+`Ctrl+Shift+C`/`Ctrl+Shift+V` e `Alt+V` continuam funcionando como antes.
+
+### Favoritos com as sessões recentes
+
+Favoritando um projeto (estrela na sidebar), ele ganha uma linha num grupo
+**"Favoritos"** no topo, que abre mostrando as **5 sessões mais recentes** dele —
+mais as que você **fixar**, que ficam sempre visíveis. Clicar numa sessão foca a
+aba se ela já estiver aberta, ou retoma se não estiver. O grupo é colapsável, e o
+estado (aberto/fechado) e as fixadas sobrevivem a fechar e reabrir o app.
+
+Duas coisas que valem saber para não estranhar:
+
+- O app **não reabre sessões sozinho** ao iniciar — é acesso rápido, não
+  restauração. Nada consome cota sem você pedir.
+- Se um grupo estiver **fechado** e alguma sessão dele pedir permissão, o
+  cabeçalho do projeto acende de todo jeito — você não perde o sinal.
+- Um `/rename` feito fora do app pode deixar o nome na lista desatualizado até
+  você abrir aquela sessão de novo.
+
 ### Suas contas são suas
 
 O app **não vem com conta nenhuma configurada** — não há como: o instalador
@@ -122,9 +156,6 @@ avisa.
 
 ## Limitações conhecidas nesta versão
 
-- **`Ctrl+C` no terminal interrompe a execução** em vez de copiar (é o
-  comportamento do terminal, não um bug do app). Para copiar, use
-  **`Ctrl+Shift+C`**. Correção já planejada.
 - **Sem atualização automática** — veja a seção acima.
 - Ícone ainda é o padrão do Electron.
 
