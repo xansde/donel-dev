@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Donel Dev — roadmap</title>
+
+<style>
+  /* Reset mínimo — arquivo autocontido, abre com duplo clique. */
+  html { -webkit-text-size-adjust: 100%; }
+  body, h1, h2, h3, p { margin: 0; }
+  button { font-family: inherit; font-size: inherit; }
+</style>
+
+<style>
+  /* ─────────────────────────────────────────────────────────────
+     Paleta herdada do design-system do próprio app
+     (design-system/src/tokens.css). As cores de trilha reusam o
+     significado que elas já têm no app: âmbar = esperando você,
+     verde = saudável, azul = trabalhando, roxo = outro estado.
+     ───────────────────────────────────────────────────────────── */
+  :root {
+    --ground: #0e1116;
+    --panel: #151a21;
+    --raised: #1c232c;
+    --hairline: #28303b;
+    --ink: #d7dde5;
+    --ink-dim: #97a1af;
+    --muted: #828d9c;
+    --done: #5e6873;
+
+    --t-decisao: #e8b44c;
+    --t-confianca: #3dce8f;
+    --t-distribuicao: #4c9cf0;
+    --t-produto: #b678f0;
+    --alerta: #f0684c;
+
+    --glow: 0 0 0 4px rgb(76 156 240 / 0.14);
+    --shadow: 0 18px 40px -18px rgb(0 0 0 / 0.7);
+
+    --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Cascadia Mono', ui-monospace, Consolas, monospace;
+
+    --lane-gap: 22px;
+    --gutter-x: 12px;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ground: #f6f7f9;
+      --panel: #ffffff;
+      --raised: #eff2f6;
+      --hairline: #d7dde6;
+      --ink: #161b22;
+      --ink-dim: #3f4854;
+      --muted: #5f6b7a;
+      --done: #8b95a3;
+
+      --t-decisao: #9a6606;
+      --t-confianca: #0d7a54;
+      --t-distribuicao: #1f66c8;
+      --t-produto: #7434be;
+      --alerta: #cc3d1f;
+
+      --glow: 0 0 0 4px rgb(31 102 200 / 0.13);
+      --shadow: 0 16px 36px -20px rgb(22 27 34 / 0.32);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0e1116;
+    --panel: #151a21;
+    --raised: #1c232c;
+    --hairline: #28303b;
+    --ink: #d7dde5;
+    --ink-dim: #97a1af;
+    --muted: #828d9c;
+    --done: #5e6873;
+    --t-decisao: #e8b44c;
+    --t-confianca: #3dce8f;
+    --t-distribuicao: #4c9cf0;
+    --t-produto: #b678f0;
+    --alerta: #f0684c;
+    --glow: 0 0 0 4px rgb(76 156 240 / 0.14);
+    --shadow: 0 18px 40px -18px rgb(0 0 0 / 0.7);
+  }
+
+  :root[data-theme="light"] {
+    --ground: #f6f7f9;
+    --panel: #ffffff;
+    --raised: #eff2f6;
+    --hairline: #d7dde6;
+    --ink: #161b22;
+    --ink-dim: #3f4854;
+    --muted: #5f6b7a;
+    --done: #8b95a3;
+    --t-decisao: #9a6606;
+    --t-confianca: #0d7a54;
+    --t-distribuicao: #1f66c8;
+    --t-produto: #7434be;
+    --alerta: #cc3d1f;
+    --glow: 0 0 0 4px rgb(31 102 200 / 0.13);
+    --shadow: 0 16px 36px -20px rgb(22 27 34 / 0.32);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 940px;
+    margin: 0 auto;
+    padding: 40px 20px 72px;
+  }
+
+  /* ───────────── cabeçalho ───────────── */
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+
+  h1 {
+    font-family: var(--font-mono);
+    font-size: clamp(28px, 5vw, 40px);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    text-wrap: balance;
+    margin: 0 0 14px;
+  }
+
+  .lede {
+    max-width: 62ch;
+    color: var(--ink-dim);
+    margin: 0 0 6px;
+  }
+
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin: 26px 0 0;
+    padding: 14px 16px;
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--ink-dim);
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--c);
+    flex: none;
+  }
+
+  .hint {
+    margin: 14px 0 0;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  /* ───────────── faixas de tempo ───────────── */
+
+  .band { margin-top: 46px; }
+
+  .band-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+
+  .band-when {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .band-title {
+    font-family: var(--font-mono);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+
+  .band-note {
+    margin: 0 0 16px;
+    font-size: 13.5px;
+    color: var(--muted);
+    max-width: 66ch;
+  }
+
+  /* ───────────── grafo (rails + fãs) ───────────── */
+
+  .fan { display: block; overflow: visible; }
+  .fan path { fill: none; stroke-width: 2; }
+
+  .row {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  .gutter {
+    position: relative;
+    flex: none;
+    width: var(--gw);
+  }
+
+  .rail {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--rc);
+    left: calc(var(--gutter-x) + var(--lane) * var(--lane-gap) - 1px);
+    opacity: 0.55;
+  }
+
+  .row.is-trunk .rail { opacity: 0.4; }
+
+  .node {
+    position: absolute;
+    top: 30px;
+    left: calc(var(--gutter-x) + var(--lane) * var(--lane-gap));
+    transform: translate(-50%, -50%);
+    width: 15px;
+    height: 15px;
+    padding: 0;
+    border-radius: 50%;
+    border: 2px solid var(--nc);
+    background: var(--ground);
+    cursor: pointer;
+    z-index: 2;
+    transition: box-shadow 140ms ease, transform 140ms ease;
+  }
+
+  .node::after {
+    content: "";
+    position: absolute;
+    inset: 2.5px;
+    border-radius: 50%;
+    background: var(--nc);
+    transform: scale(0);
+    transition: transform 140ms ease;
+  }
+
+  .row.is-trunk .node { width: 19px; height: 19px; }
+
+  .node:focus-visible { outline: 2px solid var(--nc); outline-offset: 3px; }
+
+  .card {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 8px 0;
+    padding: 14px 16px;
+    text-align: left;
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    border-left: 3px solid var(--nc);
+    border-radius: 8px;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    display: grid;
+    gap: 4px;
+    transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+  }
+
+  .card:hover,
+  .card:focus-visible { background: var(--raised); transform: translateX(2px); }
+  .card:focus-visible { outline: 2px solid var(--nc); outline-offset: 2px; }
+
+  .row:hover .node,
+  .row:focus-within .node { box-shadow: 0 0 0 4px color-mix(in srgb, var(--nc) 20%, transparent); }
+  .row:hover .node::after,
+  .row:focus-within .node::after { transform: scale(1); }
+
+  .card-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .card-id {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--nc);
+  }
+
+  .card-size {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    padding: 2px 7px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: var(--raised);
+  }
+
+  .card-title {
+    font-size: 15.5px;
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+  }
+
+  .card-sub {
+    font-size: 13.5px;
+    color: var(--ink-dim);
+  }
+
+  .card.is-gate {
+    border-left-width: 3px;
+    background: color-mix(in srgb, var(--t-decisao) 8%, var(--panel));
+    border-color: color-mix(in srgb, var(--t-decisao) 30%, var(--hairline));
+  }
+
+  .card.is-gate:hover,
+  .card.is-gate:focus-visible { background: color-mix(in srgb, var(--t-decisao) 14%, var(--panel)); }
+
+  .parallel-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 2px 0 10px;
+    padding-left: calc(var(--gutter-x) + 8px);
+  }
+
+  /* ───────────── modal ───────────── */
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: color-mix(in srgb, var(--ground) 78%, black);
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    z-index: 50;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease;
+  }
+
+  .overlay[data-open="true"] { opacity: 1; pointer-events: auto; }
+
+  .sheet {
+    width: min(620px, 100%);
+    max-height: min(86vh, 780px);
+    overflow-y: auto;
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    border-top: 3px solid var(--nc, var(--t-distribuicao));
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 26px 26px 24px;
+    transform: translateY(8px) scale(0.99);
+    transition: transform 180ms ease;
+  }
+
+  .overlay[data-open="true"] .sheet { transform: none; }
+
+  .sheet-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 4px;
+  }
+
+  .sheet-track {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--nc);
+    margin: 0 0 8px;
+  }
+
+  .sheet h2 {
+    font-size: 22px;
+    font-weight: 650;
+    line-height: 1.22;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    margin: 0 0 16px;
+  }
+
+  .close {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--hairline);
+    background: var(--raised);
+    color: var(--ink-dim);
+    font-family: var(--font-mono);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .close:hover { color: var(--ink); border-color: var(--nc); }
+  .close:focus-visible { outline: 2px solid var(--nc); outline-offset: 2px; }
+
+  .sheet-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 18px;
+  }
+
+  .chip {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--raised);
+    border: 1px solid var(--hairline);
+    color: var(--ink-dim);
+  }
+
+  .sheet section { margin-bottom: 18px; }
+
+  .sheet h3 {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 6px;
+  }
+
+  .sheet p { margin: 0 0 10px; color: var(--ink-dim); }
+  .sheet p:last-child { margin-bottom: 0; }
+  .sheet strong { color: var(--ink); font-weight: 600; }
+
+  .flag {
+    display: grid;
+    gap: 4px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--alerta) 9%, var(--panel));
+    border: 1px solid color-mix(in srgb, var(--alerta) 26%, var(--hairline));
+  }
+
+  .flag h3 { color: var(--alerta); margin: 0; }
+  .flag p { color: var(--ink-dim); margin: 0; }
+
+  .trace {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    border-top: 1px solid var(--hairline);
+    padding-top: 12px;
+    margin: 20px 0 0;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 18px;
+    border-top: 1px solid var(--hairline);
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+
+  footer code {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+  }
+
+  /* Atenção: --lane-gap e --gutter-x são espelhados no JS que desenha os
+     leques (LANE_GAP / GUTTER_X). Mudar aqui sem mudar lá desalinha as
+     curvas das raias — por isso não há override desses dois no mobile. */
+  @media (max-width: 640px) {
+    .wrap { padding: 28px 14px 56px; }
+    .card { padding: 12px 13px; }
+    .card-title { font-size: 15px; }
+    .sheet { padding: 22px 18px 20px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Donel Dev · 26 de julho de 2026</p>
+    <h1>O que vem agora</h1>
+    <p class="lede">
+      A versão <strong>0.1.0</strong> está empacotada e pronta para outras pessoas — com nomes de
+      sessão, porcentagem de contexto, copiar e colar decente no terminal e favoritos com as
+      sessões recentes. O que sobra daqui para frente se divide em <strong>três decisões suas</strong>
+      e <strong>quatro frentes de trabalho</strong>, das quais três podem correr ao mesmo tempo.
+    </p>
+    <p class="hint">Clique em qualquer bolinha para ler do que se trata.</p>
+
+    <div class="legend" role="list">
+      <span class="legend-item" role="listitem"><span class="legend-dot" style="--c: var(--t-decisao)"></span> Você decide</span>
+      <span class="legend-item" role="listitem"><span class="legend-dot" style="--c: var(--t-confianca)"></span> Confiança nos testes</span>
+      <span class="legend-item" role="listitem"><span class="legend-dot" style="--c: var(--t-distribuicao)"></span> App na mão de outros</span>
+      <span class="legend-item" role="listitem"><span class="legend-dot" style="--c: var(--t-produto)"></span> Produto</span>
+    </div>
+  </header>
+
+  <main id="graph"></main>
+
+  <footer>
+    O detalhe de cada item vive no vault, em <code>Projects/donel-dev/todo.md</code>, e as dívidas
+    numeradas em <code>specs/backlog.md</code> do repositório. Esta página é um retrato de 26/07 —
+    o vault é a fonte de verdade.
+  </footer>
+</div>
+
+<div class="overlay" id="overlay" data-open="false" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+  <div class="sheet" id="sheet">
+    <div class="sheet-head">
+      <div>
+        <p class="sheet-track" id="sheet-track"></p>
+        <h2 id="sheet-title"></h2>
+      </div>
+      <button class="close" id="close" type="button" aria-label="Fechar">✕</button>
+    </div>
+    <div class="sheet-meta" id="sheet-meta"></div>
+    <div id="sheet-body"></div>
+    <p class="trace" id="sheet-trace"></p>
+  </div>
+</div>
+
+<script>
+  const TRACKS = {
+    decisao:      { label: "Você decide",           color: "var(--t-decisao)" },
+    confianca:    { label: "Confiança nos testes",  color: "var(--t-confianca)" },
+    distribuicao: { label: "App na mão de outros",  color: "var(--t-distribuicao)" },
+    produto:      { label: "Produto",               color: "var(--t-produto)" }
+  };
+
+  const BANDS = [
+    {
+      when: "Agora",
+      title: "Três coisas que só você resolve",
+      note: "Nenhuma exige sessão de trabalho: uma é arrastar arquivo, duas são escolher entre dois caminhos. Mas as três seguram o que vem depois.",
+      parallel: false,
+      tasks: [
+        {
+          id: "Drive",
+          track: "decisao",
+          size: "1 minuto",
+          title: "Subir o app no Drive e mandar o link",
+          sub: "O pacote está pronto no seu Downloads, esperando o arrasta-e-solta.",
+          o_que: "Os três arquivos que a pessoa precisa já estão numa pasta no seu <strong>Downloads</strong>: o instalador, um guia de instalação de uma página e a lista do que mudou. Falta criar uma pasta no Drive da Seazone, arrastar os três para lá, marcar como <strong>Leitor</strong> e mandar o link.",
+          porque: "Enquanto isso não acontece, a entrega de hoje não existe para ninguém — está tudo num Downloads que só você vê.",
+          atencao: "Mande o link <strong>da pasta</strong>, não o do arquivo. O link da pasta é o único que continua valendo quando você publicar versão nova por cima.",
+          trace: "C:\\Users\\xansd\\Downloads\\Donel Dev - subir pro Drive · docs/distribuicao.md"
+        },
+        {
+          id: "Abertura",
+          track: "decisao",
+          size: "1 mensagem",
+          title: "Aceitar o tempo de abertura da lista, ou mandar otimizar",
+          sub: "A meta escrita era menos de 100 ms. A medição real deu 103 a 149 ms.",
+          o_que: "Quando o app abre, a lista de projetos favoritos com as sessões recentes leva de <strong>103 a 149 milésimos de segundo</strong> para aparecer. A meta que estava escrita na especificação era \"menos de 100\". Na prática, é a diferença entre um piscar de olhos e um piscar de olhos.",
+          porque: "A investigação já está feita e não tem mistério: a demora não foi criada por essa funcionalidade — é o custo de abertura do app, que nunca havia sido medido com esse rigor antes. As duas saídas são <strong>aceitar o número e corrigir a meta escrita</strong>, ou <strong>abrir uma tarefa de deixar a abertura mais rápida</strong>.",
+          atencao: "Enquanto você não decidir, um teste fica vermelho de propósito. Teste vermelho sem motivo escrito é exatamente o que faz uma equipe parar de olhar os testes.",
+          trace: "specs/007-favoritos-sessoes/medicao-ca7.md · CA-7"
+        },
+        {
+          id: "Revisão",
+          track: "decisao",
+          size: "1 decisão",
+          title: "Resolver o pedido de revisão que envelheceu",
+          sub: "Aberto em 24/07 com o título de duas entregas; hoje carrega quatro e 47 mudanças.",
+          o_que: "Existe um pedido de revisão aberto desde 24 de julho. O título dele fala de duas entregas, mas a branch andou e hoje ele carrega <strong>quatro entregas e 47 mudanças</strong> de uma vez.",
+          porque: "Ninguém revisa 47 mudanças de verdade — sai um \"tá bom\" de fachada, que é pior do que não ter revisão, porque dá a sensação de que alguém olhou. Ou você atualiza o título e a descrição e pede revisão de fato, ou fecha e abre um pedido por assunto.",
+          trace: "PR #1 · feature/mvp-p0 → staging"
+        }
+      ]
+    },
+    {
+      when: "Em seguida",
+      title: "Três frentes que rodam ao mesmo tempo",
+      note: "São independentes entre si em objetivo, mas duas mexem em telas vizinhas — se forem para sessões simultâneas, cada uma na sua cópia de trabalho, como foi feito no último lote.",
+      parallel: true,
+      tasks: [
+        {
+          id: "Testes honestos",
+          track: "confianca",
+          size: "meia sessão",
+          title: "Consertar os testes que mentem fora da pasta original",
+          sub: "Cinco testes falham sozinhos quando o trabalho acontece numa cópia paralela.",
+          o_que: "Cinco testes assumem que estão rodando na pasta original do projeto. Quando o trabalho acontece numa <strong>cópia de trabalho paralela</strong> — que é justamente como duas funcionalidades foram feitas ao mesmo tempo na semana passada — eles falham sem que nada esteja errado.",
+          porque: "Isso deixa a conferência final <strong>parcialmente cega</strong>: falha que não significa nada ensina a ignorar falha, e aí a que significa passa batido. Você vai usar o modelo de duas frentes em paralelo de novo — vale consertar antes, não depois.",
+          atencao: "A correção já está diagnosticada e é pequena: o teste tem que <strong>descobrir</strong> o nome da pasta em vez de assumir um nome fixo.",
+          trace: "specs/backlog.md §B19"
+        },
+        {
+          id: "Primeiro contato",
+          track: "distribuicao",
+          size: "1 sessão",
+          title: "Fazer a primeira abertura funcionar na máquina de outra pessoa",
+          sub: "Hoje o app abre procurando código em duas pastas que só existem na sua máquina.",
+          o_que: "Ao abrir pela primeira vez, o app procura projetos em duas pastas que são a <strong>sua</strong> convenção. Na máquina de quem guarda código em outro lugar, a barra lateral abre vazia — e a mensagem de \"nada encontrado\" continua citando as suas pastas mesmo depois que a pessoa troca. Também não existe um botão \"Procurar…\": o caminho tem que ser digitado ou colado.",
+          porque: "Isso era teórico até hoje. Agora vai ter gente de fora abrindo o app, e é literalmente a primeira tela que ela vê.",
+          atencao: "O guia de instalação já avisa que a lista vem vazia e ensina o caminho da engrenagem — mas explicar um atrito no manual é remendo, não conserto.",
+          trace: "specs/backlog.md §B18 · Preferências → Pastas-raiz"
+        },
+        {
+          id: "Sessão fixada",
+          track: "produto",
+          size: "meia sessão",
+          title: "Tirar da lista a sessão fixada que não volta mais",
+          sub: "Se a retomada falha, a entrada fica na lista para sempre.",
+          o_que: "Você pode <strong>fixar</strong> uma sessão para ela ficar sempre à mão. Se um dia essa sessão não puder mais ser retomada, a entrada continua ali, ocupando espaço e prometendo algo que não acontece.",
+          porque: "Ficou de fora do lote anterior porque a correção mexe num arquivo que a outra frente estava usando ao mesmo tempo. As duas já entraram — o caminho está livre.",
+          trace: "specs/007-favoritos-sessoes · T710"
+        }
+      ]
+    },
+    {
+      when: "Quando as três fecharem",
+      title: "Conferir tudo junto e republicar",
+      note: "Aqui as frentes se juntam de novo: a bateria completa só vale a pena depois que os testes pararem de mentir, e a republicação só depois de você decidir a abertura.",
+      parallel: false,
+      tasks: [
+        {
+          id: "Bateria",
+          track: "confianca",
+          size: "1 sessão",
+          title: "Rodar a bateria completa no código já integrado",
+          sub: "Faltam também dois testes que a cota semanal do modelo barrou.",
+          o_que: "A bateria inteira ainda não rodou no código com as quatro entregas juntas. E dois testes ficaram sem rodar porque a <strong>cota semanal do modelo</strong> tinha acabado — os dois precisam de uma resposta real do Claude para valer.",
+          porque: "É o que separa \"deve estar bom\" de \"está bom\". Existe uma lista curta de falhas já conhecidas e com causa escrita; qualquer vermelho fora dessa lista é coisa nova e merece investigação, não normalização.",
+          atencao: "Depende de os testes pararem de mentir fora da pasta — senão a bateria produz falha que não significa nada.",
+          trace: "specs/backlog.md §B11 (falhas conhecidas) · dívida T013"
+        },
+        {
+          id: "Republicar",
+          track: "distribuicao",
+          size: "1 comando",
+          title: "Publicar de novo — com número de versão novo",
+          sub: "Um comando: npm run publicar. O único cuidado é o número.",
+          o_que: "A rotina de publicação é um comando só, que empacota, publica com nome de arquivo fixo, guarda a versão anterior para poder voltar atrás, atualiza o guia e a lista do que mudou, e imprime o aviso pronto para você copiar. Ele <strong>não manda nada para ninguém</strong>.",
+          porque: "O único cuidado de verdade é <strong>subir o número da versão</strong>. A 0.1.0 já está na mão de alguém; duas publicações com o mesmo número é o que faz uma pessoa dizer \"estou na 0.1.0 e não tem esse botão\" e ninguém saber quem está certo.",
+          trace: "npm run publicar · docs/distribuicao.md"
+        }
+      ]
+    },
+    {
+      when: "Depois",
+      title: "As duas próximas funcionalidades de verdade",
+      note: "Fila já declarada por você. A primeira tem um pré-requisito que está em aberto desde 22 de julho.",
+      parallel: true,
+      tasks: [
+        {
+          id: "Modo Dev",
+          track: "produto",
+          size: "ciclo inteiro",
+          title: "Modo Dev — a tarefa virando fases dentro do app",
+          sub: "A próxima funcionalidade grande, já declarada como prioridade.",
+          o_que: "Trazer o fluxo de trabalho para dentro do app: uma tarefa aparece com suas fases, seus artefatos e seu andamento, em vez de viver só no board e na sua cabeça.",
+          porque: "É a prioridade que você mesmo declarou depois da fila de melhorias. Um pedaço dela — o medidor de contexto — já foi entregue por fora e pode ser reaproveitado.",
+          atencao: "Tem um <strong>pré-requisito em aberto desde 22 de julho</strong>: ligar o repositório ao board de tarefas. Sem isso, o Modo Dev não tem de onde ler a tarefa.",
+          trace: "specs/backlog.md US-13 · ciclo 003-modo-dev"
+        },
+        {
+          id: "Conta certa",
+          track: "produto",
+          size: "1 ciclo",
+          title: "O app escolher sozinho a conta com mais cota",
+          sub: "Hoje você escolhe o perfil na mão, sem saber quem tem folga.",
+          o_que: "Ao abrir uma sessão, o app olha quanta cota cada conta ainda tem e já sugere (ou usa) a que está mais folgada, em vez de você lembrar qual foi a última que estourou.",
+          porque: "Você tem várias contas e a cota é o recurso que trava o dia. Metade do caminho já existe: o app já sabe ler a folga de cada conta.",
+          trace: "specs/backlog.md · spec 002-auto-switch"
+        },
+        {
+          id: "Se pegar",
+          track: "distribuicao",
+          size: "1 ciclo",
+          title: "Atualização automática e um ícone de verdade",
+          sub: "Só faz sentido se outras pessoas realmente adotarem.",
+          o_que: "Hoje quem usa só descobre que saiu versão nova quando você avisa. E o instalador não tem ícone próprio nem assinatura digital — é de onde vem o aviso azul do Windows que toda pessoa nova encontra.",
+          porque: "Nada disso vale a pena antes de saber se as pessoas vão usar. Se virar hábito, o caminho está desenhado: o app passa a olhar sozinho um endereço interno e se atualizar.",
+          atencao: "A assinatura digital é decisão de <strong>custo</strong>, não técnica — certificado desses exige compra e um dispositivo de segurança.",
+          trace: "specs/backlog.md §B17"
+        }
+      ]
+    },
+    {
+      when: "Mais adiante",
+      title: "O que está anotado e ainda não tem data",
+      note: "Registrado para não se perder, sem competir com o que está acima.",
+      parallel: true,
+      tasks: [
+        {
+          id: "Canal estável",
+          track: "confianca",
+          size: "1 ciclo",
+          title: "Separar de verdade o app de trabalho do app de teste",
+          sub: "Hoje as duas instalações dividem a mesma configuração.",
+          o_que: "Existem duas instalações na sua máquina e elas <strong>compartilham o mesmo arquivo de configuração</strong>. Testar uma versão nova pode mexer no estado da versão que você usa para trabalhar.",
+          porque: "Já causou um risco real na semana passada: instalar duas versões lado a lado teria apagado a lista de favoritos, e a saída foi montar um build único para o teste.",
+          trace: "specs/backlog.md §B10 · §B14"
+        },
+        {
+          id: "Memória",
+          track: "decisao",
+          size: "1 decisão",
+          title: "Decidir o limite de memória do app",
+          sub: "A medição real ficou acima do orçamento que a especificação previa.",
+          o_que: "O app consome entre <strong>417 e 451 MB</strong>. O número que a especificação previa era mais baixo. Ou o orçamento sobe (com o motivo escrito), ou entra uma tarefa de reduzir consumo.",
+          porque: "É pendência antiga e sem urgência — mas continua sendo um alvo escrito que a realidade não cumpre, e alvo assim envelhece mal.",
+          trace: "specs/001-mvp · NFR de RAM"
+        },
+        {
+          id: "Pedidos seus",
+          track: "produto",
+          size: "vários ciclos",
+          title: "O resto da sua lista de desejos",
+          sub: "Acompanhar revisões abertas, ver os widgets, post-its do Donel, artefatos por sessão.",
+          o_que: "A lista que você mesmo ditou depois de usar o app: acompanhar os pedidos de revisão abertos, ver os artefatos que cada sessão produziu, os post-its do Donel e — o mais espinhoso — conseguir ver os <strong>painéis interativos</strong> que hoje só aparecem no app oficial e desaparecem dentro de um terminal.",
+          porque: "O dos painéis interativos exige investigação antes de virar especificação: ninguém sabe ainda se o programa de linha de comando expõe esse conteúdo de algum jeito.",
+          trace: "specs/backlog.md §B1–B4 · US-8 a US-16"
+        }
+      ]
+    }
+  ];
+
+  /* ── desenho do grafo ─────────────────────────────────────────
+     Cada faixa é um trecho do grafo: quando há trabalho paralelo,
+     um leque abre do tronco para as raias e outro fecha embaixo.
+     Cada linha desenha TODAS as raias ativas da faixa (é assim que
+     um grafo de commits funciona), e a bolinha fica na raia dela.
+     ───────────────────────────────────────────────────────────── */
+
+  const GUTTER_X = 12;
+  const LANE_GAP = 22;
+  const laneX = (i) => GUTTER_X + i * LANE_GAP;
+
+  function fanSvg(lanes, colors, direction) {
+    const width = laneX(lanes.length) + 10;
+    const h = 26;
+    const paths = lanes.map((lane, i) => {
+      const x = laneX(lane);
+      const c = colors[i];
+      const d = direction === "out"
+        ? `M ${GUTTER_X} 0 C ${GUTTER_X} ${h * 0.6}, ${x} ${h * 0.4}, ${x} ${h}`
+        : `M ${x} 0 C ${x} ${h * 0.6}, ${GUTTER_X} ${h * 0.4}, ${GUTTER_X} ${h}`;
+      return `<path d="${d}" stroke="${c}" opacity="0.55" />`;
+    }).join("");
+    return `<svg class="fan" width="${width}" height="${h}" viewBox="0 0 ${width} ${h}" aria-hidden="true">${paths}</svg>`;
+  }
+
+  function render() {
+    const root = document.getElementById("graph");
+    const registry = {};
+    let html = "";
+
+    BANDS.forEach((band, bandIndex) => {
+      const parallel = band.parallel && band.tasks.length > 1;
+      const lanes = band.tasks.map((_, i) => (parallel ? i + 1 : 0));
+      const colors = band.tasks.map((t) => TRACKS[t.track].color);
+      const gw = (parallel ? laneX(band.tasks.length) : laneX(1)) + 10;
+
+      html += `<section class="band">
+        <div class="band-head">
+          <span class="band-when">${band.when}</span>
+          <h2 class="band-title">${band.title}</h2>
+        </div>
+        <p class="band-note">${band.note}</p>`;
+
+      if (parallel) {
+        html += fanSvg(lanes, colors, "out") +
+          `<p class="parallel-tag">↕ rodam ao mesmo tempo</p>`;
+      }
+
+      band.tasks.forEach((task, i) => {
+        const key = `b${bandIndex}t${i}`;
+        registry[key] = task;
+        const color = TRACKS[task.track].color;
+        const rails = lanes
+          .map((lane, j) => `<span class="rail" style="--lane:${lane}; --rc:${colors[j]}"></span>`)
+          .join("");
+
+        html += `<div class="row ${parallel ? "" : "is-trunk"}" style="--gw:${gw}px; --nc:${color}">
+          <div class="gutter">
+            ${rails}
+            <button class="node" style="--lane:${lanes[i]}; --nc:${color}" data-key="${key}"
+              aria-label="Abrir resumo: ${task.title}"></button>
+          </div>
+          <button class="card ${task.track === "decisao" ? "is-gate" : ""}" data-key="${key}" style="--nc:${color}">
+            <span class="card-top">
+              <span class="card-id">${task.id}</span>
+              <span class="card-size">${task.size}</span>
+            </span>
+            <span class="card-title">${task.title}</span>
+            <span class="card-sub">${task.sub}</span>
+          </button>
+        </div>`;
+      });
+
+      if (parallel) {
+        html += fanSvg(lanes, colors, "in");
+      }
+
+      html += `</section>`;
+    });
+
+    root.innerHTML = html;
+    return registry;
+  }
+
+  const REGISTRY = render();
+
+  /* ── modal ───────────────────────────────────────────────────── */
+
+  const overlay = document.getElementById("overlay");
+  const sheet = document.getElementById("sheet");
+  const closeBtn = document.getElementById("close");
+  let lastFocus = null;
+
+  function open(key) {
+    const task = REGISTRY[key];
+    if (!task) return;
+    const track = TRACKS[task.track];
+
+    sheet.style.setProperty("--nc", track.color);
+    document.getElementById("sheet-track").textContent = track.label;
+    document.getElementById("sheet-title").textContent = task.title;
+    document.getElementById("sheet-meta").innerHTML =
+      `<span class="chip">${task.id}</span><span class="chip">${task.size}</span>`;
+
+    let body = `<section><h3>Do que se trata</h3><p>${task.o_que}</p></section>
+      <section><h3>Por que entra agora</h3><p>${task.porque}</p></section>`;
+    if (task.atencao) {
+      body += `<section class="flag"><h3>Preste atenção</h3><p>${task.atencao}</p></section>`;
+    }
+    document.getElementById("sheet-body").innerHTML = body;
+    document.getElementById("sheet-trace").textContent = task.trace;
+
+    lastFocus = document.activeElement;
+    overlay.dataset.open = "true";
+    overlay.removeAttribute("aria-hidden");
+    sheet.scrollTop = 0;
+    closeBtn.focus();
+  }
+
+  function close() {
+    overlay.dataset.open = "false";
+    overlay.setAttribute("aria-hidden", "true");
+    if (lastFocus) lastFocus.focus();
+  }
+
+  overlay.setAttribute("aria-hidden", "true");
+
+  document.getElementById("graph").addEventListener("click", (event) => {
+    const target = event.target.closest("[data-key]");
+    if (target) open(target.dataset.key);
+  });
+
+  closeBtn.addEventListener("click", close);
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) close();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && overlay.dataset.open === "true") close();
+  });
+</script>
+
+</body>
+</html>
