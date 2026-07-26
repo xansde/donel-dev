@@ -135,7 +135,29 @@ Convenções: [P] = paralelizável com a anterior; DoD = definition of done.
   PgUp/PgDn/Del/Tab nas duas abas (CA-9, C3).
   **DoD:** roteiro escrito, com resultado esperado por passo.
 
-- ⏸️ **PENDENTE — ATO HUMANO, depende de cota real** — **T510 — Build + reinstalação + E2E do Alexandre** (sequencial após T509)
+- ✅ **T510 EXECUTADO E APROVADO por ele em 2026-07-26** — o E2E rodou no build
+  **integrado** (005 + 007 no mesmo instalador, branch `lote/005-007-e2e`, merge
+  `--no-ff` das duas sobre `6894d00`), pelo roteiro único
+  `specs/roteiro-e2e-lote-005-007.md`, e ele reportou: *"O e2e rodou
+  corretamente!"*.
+  **Por que num build integrado e não dois apps lado a lado:** os dois installs
+  compartilham `%APPDATA%\donel-dev\config.json` e o `AppConfig` do build da 005
+  tem lista fechada de campos — sem `sessionRegistry`/`collapsedFavorites`. Toda
+  escrita do app da 005 apagaria o registro de favoritos da 007 (verificado no
+  código, não suposto), sabotando o E2E da 007.
+  **O que isso fecha:** a prova ponta-a-ponta que faltava desde 25/07 por cota
+  esgotada — antes desta rodada, CA-1..CA-5, CA-7 e CA-8 tinham só prova unit
+  (`tests/terminalKeymap.test.ts` prova a DECISÃO, não o fio até o PTY real).
+  **Detalhe não capturado:** ele aprovou o roteiro como um todo, sem reportar
+  resultado passo a passo — em particular não confirmou explicitamente se o passo
+  3 (`Ctrl+C` sem seleção DURANTE uma execução longa, o único que exige turno real
+  de modelo) rodou com cota folgada ou foi pulado. Se foi pulado, esse CA
+  específico segue sem prova E2E.
+  **Consequência para o §B14/`docs/LEIA-ME-colegas.md`:** o item "Ctrl+C" em
+  "Limitações conhecidas" fica FALSO quando esta branch mergear — é edição à mão,
+  o `scripts/publicar.ps1` não sabe disso (já está no `todo.md` do vault).
+
+- ⏸️ ~~PENDENTE — ATO HUMANO, depende de cota real~~ — **T510 — Build + reinstalação + E2E do Alexandre** (sequencial após T509)
   **Uma única** build/reinstalação, ao fim (não reinstalar entre fatias).
   Rodar o T509 no atalho "Donel Dev" do Desktop, com um print real no
   clipboard. **Ato humano** — não declarar a entrega pronta sem esta rodada.
