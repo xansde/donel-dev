@@ -279,6 +279,14 @@ export function App(): React.JSX.Element {
   // um hint distinto — `sessionModelEffort` só muda quando `watchLiveInjection`
   // (abaixo) vir a confirmação de verdade. Ver shared/liveSessionInjection.ts.
   const [pendingInjection, setPendingInjection] = useState<Record<string, 'model' | 'effort' | undefined>>({});
+  // T610 (006) — tokens de contexto do último turn, chaveados por
+  // **`sessionId`** (não `tab.id`): o watcher do main cobre TODA aba `claude`
+  // viva, não existe "aba observada", e a mesma sessão retomada pode aparecer em
+  // mais de uma aba — as duas mostram o mesmo número sem estado duplicado.
+  // Preenchido pela assinatura ÚNICA de `onTranscriptChanged` (a mesma da 004,
+  // logo abaixo); `undefined`/`null` = sem leitura ainda → a toolbar mostra `—`
+  // (CA-4), nunca `0%`.
+  const [contextTokens, setContextTokens] = useState<Record<string, number | null>>({});
   // Função de cleanup (unsubscribe de `onRenderedUpdate` + clearTimeout) por
   // aba com injeção em voo — ver `watchLiveInjection`.
   const pendingInjectionWatchersRef = useRef<Record<string, (() => void) | undefined>>({});
@@ -745,12 +753,18 @@ export function App(): React.JSX.Element {
    * não deixa listener órfão nem cancela o da montagem nova.
    */
   useEffect(() => {
-    const unsubscribe = window.donel.sessions.onTranscriptChanged(({ sessionId, customTitle }) => {
+    const unsubscribe = window.donel.sessions.onTranscriptChanged(({ sessionId, customTitle, contextTokens: tokens }) => {
       // Chave é o `sessionId`, não o `tabId` — daí o `.map` próprio em vez do
       // `updateTab`. Uma mesma sessão retomada pode estar em mais de uma aba.
       setTabs((prev) =>
         prev.map((tab) => (tab.claudeSessionId === sessionId ? { ...tab, customTitle } : tab)),
       );
+
+      // T610 (006) — MESMA assinatura, MESMO evento: a 006 só lê o segundo campo
+      // do payload. Abrir uma segunda assinatura aqui era risco nomeado na
+      // tabela de riscos do tasks.md (dois listeners no mesmo canal, um deles
+      // órfão no double-invoke do StrictMode).
+      setContextTokens((prev) => (prev[sessionId] === tokens ? prev : { ...prev, [sessionId]: tokens }));
 
       const stored = appConfigRef.current?.sessionNames[sessionId] ?? null;
       if (stored && reconcileStoredName(stored, customTitle) === null) {
@@ -1163,6 +1177,10 @@ export function App(): React.JSX.Element {
               onRestartWithConfig={() => handleRestartWithConfig(activeTab.id)}
               pendingKind={pendingInjection[activeTab.id]}
               possiblyBlockedOnPrompt={possiblyBlockedOnPrompt}
+              // T611 (006) — a aba resolve o próprio número pelo `sessionId`
+              // dela; sem `claudeSessionId` (create ainda não resolveu) não há o
+              // que mostrar → `—` (CA-4). Abas `shell` nem chegam aqui.
+              contextTokens={activeTab.claudeSessionId ? contextTokens[activeTab.claudeSessionId] ?? null : null}
             />
           ) : null}
           <div className={styles.terminal}>

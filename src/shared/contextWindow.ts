@@ -174,6 +174,17 @@ export function computeContextPercent(tokens: number | null, model: string): num
 }
 
 /**
+ * CA-9: o número muda para o tom de alerta quando passa da smart zone.
+ *
+ * O gatilho é **`> 100`**, não `>= 100`: exatamente 100% é o limite da zona
+ * ainda cumprido, não um estouro. Sem leitura (`null`) não há alerta — `—` é
+ * ausência de informação, não problema.
+ */
+export function isOverSmartZone(percent: number | null): boolean {
+  return percent !== null && percent > 100;
+}
+
+/**
  * Tooltip do indicador (CA-7): mostra a zona usada como denominador **e** a
  * janela real do modelo ao lado — o número da zona nunca deve esconder a
  * verdade técnica ("300k" é régua dele, "1M" é o fato da API).

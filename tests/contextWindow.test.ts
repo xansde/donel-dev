@@ -7,6 +7,7 @@ import {
   contextTokensFromUsage,
   effectiveContextZone,
   formatContextTooltip,
+  isOverSmartZone,
   normalizeModelAlias,
 } from '../src/shared/contextWindow';
 
@@ -179,6 +180,19 @@ describe('computeContextPercent (T603)', () => {
 
   it('aceita alias com sufixo de deployment', () => {
     expect(computeContextPercent(134_602, 'opus[1m]')).toBe(45);
+  });
+});
+
+describe('isOverSmartZone (T612 / CA-9)', () => {
+  it('o gatilho da cor de alerta é > 100, não >= 100', () => {
+    expect(isOverSmartZone(45)).toBe(false);
+    expect(isOverSmartZone(100)).toBe(false); // limite cumprido não é estouro
+    expect(isOverSmartZone(101)).toBe(true);
+    expect(isOverSmartZone(127)).toBe(true);
+  });
+
+  it('sem leitura não há alerta — `—` é ausência de informação, não problema', () => {
+    expect(isOverSmartZone(null)).toBe(false);
   });
 });
 

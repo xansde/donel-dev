@@ -2,6 +2,7 @@ import { Button, SegmentedControl } from '@donel-dev/design-system';
 import type { SegmentedControlOption } from '@donel-dev/design-system';
 import type { SemaphoreState } from '../../shared';
 import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
+import { computeContextPercent, formatContextTooltip, isOverSmartZone } from '../../shared/contextWindow';
 import { canInjectLiveCommand } from '../../shared/liveSessionInjection';
 import styles from './SessionDetails.module.css';
 
@@ -68,6 +69,17 @@ export interface SessionDetailsProps {
    * comportamento de antes).
    */
   possiblyBlockedOnPrompt?: boolean;
+  /**
+   * T611 (006) — tokens de contexto do último turn desta sessão
+   * (`App.tsx` → `contextTokens[sessionId]`, vindo do watcher de transcript).
+   *
+   * Recebe TOKENS, não o `%` já calculado: o denominador depende do `model`, que
+   * é prop deste mesmo componente — calcular aqui é o que faz o CA-6 (trocar o
+   * modelo recalcula o `%`) sair sem nenhum estado novo. `null`/ausente =
+   * nenhuma leitura ainda, aba `shell`, ou transcript ilegível → `—` (CA-4).
+   * Opcional para não quebrar os smokes/consumidores que já montam o componente.
+   */
+  contextTokens?: number | null;
 }
 
 /** Texto do aviso ao lado dos segmented — explica POR QUE o controle está desabilitado (ui-spec §4: "tooltip explica"), ou a dica de uso quando está liberado. */
@@ -128,9 +140,14 @@ export function SessionDetails({
   onRestartWithConfig,
   pendingKind,
   possiblyBlockedOnPrompt = false,
+  contextTokens = null,
 }: SessionDetailsProps): React.JSX.Element {
   const disabled = pendingKind !== undefined || !canInjectLiveCommand(semaphoreState, alive);
   const hint = statusHint(semaphoreState, alive, pendingKind, possiblyBlockedOnPrompt);
+  // T611–T613 (006) — as três derivações vêm do módulo puro `contextWindow`
+  // (testado sozinho): nada de aritmética de tokens dentro do componente.
+  const contextPercent = computeContextPercent(contextTokens, model);
+  const overZone = isOverSmartZone(contextPercent);
 
   return (
     <div className={styles.toolbar} data-testid="session-details" aria-label="Modelo e esforço da sessão">
@@ -148,6 +165,23 @@ export function SessionDetails({
 
       <span className={styles.hint} data-testid="session-details-hint">
         {hint}
+      </span>
+
+      {/* T611 (006) — CA-1/CA-5: `%` da smart zone consumido, na toolbar POR
+          ABA (contexto é por-sessão; o titlebar é global/por-perfil). O rótulo
+          literal "contexto" é obrigatório: o app já mostra um `%` de COTA
+          (rate-limit) e um número solto repetiria o "não entendi o que esse
+          número significa" da rodada 6. Sem barra, sem ícone, sem gradiente por
+          faixa — só o número e, acima de 100%, a cor (CA-9). */}
+      <span
+        className={overZone ? `${styles.context} ${styles.contextOverZone}` : styles.context}
+        data-testid="session-context"
+        // Atributo (e não a classe do CSS module) é o que o teste assevera —
+        // classe hasheada pelo bundler não é contrato.
+        data-over-zone={overZone ? 'true' : undefined}
+        title={formatContextTooltip(contextTokens, model)}
+      >
+        contexto {contextPercent === null ? '—' : `${contextPercent}%`}
       </span>
 
       {!alive ? (

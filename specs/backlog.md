@@ -400,6 +400,60 @@ dos dois será sobrescrito.
 Quando o B10 for implementado, precisa considerar os dois MODOS de instalação,
 não só nomes divergentes.
 
+### B15. `fs.watch` pode perder um evento — número velho até o próximo (achado na 006, 26/07)
+
+Observado UMA vez, ao rodar o smoke novo `session-context.spec.ts`: depois de dois
+appends refletidos normalmente na tela, o terceiro ficou **5 s inteiros** sem
+aparecer (o indicador seguia mostrando o valor anterior) e passou com folga maior.
+Investigado antes de normalizar:
+
+- **Não é a mecânica do watcher.** Um diagnóstico dedicado repetiu a mesma
+  sequência de três appends com o `watchTranscript` real, tanto em `tmpdir` quanto
+  **no diretório real e movimentado** `~/.claude/projects/C--Users-xansd-seazone-donel-dev/`:
+  3 de 3 emissões, nas duas condições, em ~1 s. O teste foi descartado depois de
+  responder a pergunta.
+- **Hipótese que sobra:** `fs.watch` no Windows coalesce/descarta notificação sob
+  carga (o app tem PTY, xterm e Electron concorrendo). Um append ÚNICO seguido de
+  silêncio é o pior caso possível — não vem nada depois para "consertar" o evento
+  perdido.
+
+**Por que fica como dívida e não como correção agora:** numa sessão real o CLI
+escreve várias linhas por turno, então um evento perdido é seguido por outro em
+seguida e o número se conserta sozinho. O cenário do smoke (uma linha e silêncio)
+não existe no uso real. Corrigir mexeria no desenho do watcher compartilhado com a
+004 — que ele já validou em produção ("funcionou perfeitamente") — para um sintoma
+que ainda não apareceu no uso dele.
+
+**Mitigação desenhada, se aparecer:** re-leitura de segurança de baixa frequência
+(uma leitura de cauda a cada ~5 s por aba viva, além do `fs.watch`). Custo: ~64 KB
+de leitura por sessão a cada 5 s, ordem de 0,1 ms. Gatilho para implementar: o
+Alexandre relatar `%` (ou nome de aba) preso com a conversa andando — está no
+`006-contexto-consumido/roteiro-e2e.md` como item a observar.
+
+**Efeito colateral no teste:** o passo 6 do smoke usa timeout de 20 s em vez de
+5 s, com o motivo escrito no arquivo. Não é "timeout maior até passar": é a
+tolerância explícita a um evento perdido, num passo cuja latência já foi medida
+nos outros passos do mesmo teste.
+
+### B16. Token morto do design-system: `--smart-zone-max-tokens: 400000` (achado na 006, 26/07)
+
+`design-system/src/tokens.css` declara `--smart-zone-max-tokens: 400000` (e o
+comentário fala de "medidor de contexto, ~400k tokens"), herdado do
+`design-system.md`. A smart zone da 006 é **300.000**, decisão do Alexandre em
+24/07, e vive em `src/shared/contextWindow.ts` (`SMART_ZONE_TOKENS`).
+
+**Nada está errado no comportamento:** o token CSS não é lido por código nenhum —
+`grep` confirma que só o `SMART_ZONE_TOKENS` do módulo puro decide o denominador,
+e a 006 usa do design-system apenas a **cor** `--zone-over`. Mas dois números
+diferentes para a mesma ideia, em dois arquivos, é a receita de alguém "corrigir"
+o certo pelo errado depois.
+
+O que fazer quando o `SmartZoneMeter` (componente do design-system, hoje sem
+consumidor) entrar de verdade — provavelmente no US-8 completo do Modo Dev (003):
+decidir UMA fonte para o número (o módulo puro) e apagar o token, ou alinhar o
+token em 300k com comentário apontando para a decisão. Não mexer agora: mudar
+token de design-system fora de uma feature que o use é escopo alheio.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo

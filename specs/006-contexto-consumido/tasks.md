@@ -1,8 +1,39 @@
 # Tasks 006 — Contexto consumido (% da smart zone na toolbar da sessão)
 
-**Status:** PLANEJADO — aguardando OK do Alexandre para implementar (gate de
-execução). Branch: `feature/mvp-p0` (mesma; tudo local, sem push).
-**Atualizado:** 2026-07-24
+**Status:** IMPLEMENTADO em 2026-07-26 — T601–T614 fechadas (T605 e T607 já
+vinham prontas da 004). Falta a validação humana dos passos que exigem turno
+real de modelo (`roteiro-e2e.md`, itens 1/4/5). Branch: `feature/mvp-p0`.
+**Atualizado:** 2026-07-26
+
+> **O que mudou em relação ao plano de 24/07** (a 004 entrou antes e mudou o
+> terreno; medições novas mudaram duas regras):
+> - **T605 e T607 não foram feitas aqui** — `readFileTail` já estava extraído no
+>   `session-indexer.ts` e o watcher já existia (`transcript-watcher.ts`, com
+>   registry e 15 testes). A Fase B encolheu para T606/T608/T609, como a nota de
+>   dependência cruzada previa.
+> - **A cauda é de 64 KB, não 8 KB** (a 004 subiu por medição), então a regra
+>   "se 8 KB não trouxerem `usage`, re-ler com 64 KB" morreu. **Decisão nova,
+>   medida sobre 313 transcripts / 590 MB: uma leitura de 64 KB, SEM re-leitura
+>   maior** — 99,7% de cobertura; cobrir o pior momento custaria ~2 MB por
+>   rajada. Números em `medicao-t606.md`.
+> - **A `usage` fica em `message.usage`**, não no topo da linha (a spec citava um
+>   recorte). Conferido no disco antes de escrever o parser.
+> - **Decisão que o handoff deixou aberta: a regra "leitura vazia não apaga o
+>   valor conhecido" VALE para os tokens** — cauda sem `usage` é lacuna de
+>   leitura, não contexto zerado. Com teste dedicado.
+> - **Turno de subagente (`isSidechain: true`) é descartado** — o contexto dele
+>   não é o da sessão. 0 ocorrências em 319 transcripts; o filtro é seguro
+>   contra mudança futura do CLI.
+> - **`SessionDetails` recebe `contextTokens`, não `contextPercent`** — é o que
+>   faz o CA-6 sair de graça (o denominador depende do `model`, que é prop do
+>   mesmo componente), como o próprio `plan.md` descreve na Fatia 2.
+> - **UI validada por smoke + módulo puro, não por teste de render** — o repo não
+>   tem jsdom/testing-library, e instalar dependência exige OK dele. A lógica de
+>   apresentação virou função pura testada (`isOverSmartZone`, `computeContextPercent`,
+>   `formatContextTooltip`) e o DOM é asseverado no smoke `session-context.spec.ts`.
+> - **Dívida nova nomeada:** `specs/backlog.md` §B15 (`fs.watch` pode perder um
+>   evento) e §B16 (token morto `--smart-zone-max-tokens: 400000`).
+
 **Referências:** `spec.md` (CA-1..CA-9, tabela S1/C2 fixada via skill
 `claude-api`) + `plan.md` (Fatias 0/1/2) deste diretório.
 **14 tasks** — `T601`–`T614`, numeração contígua na ordem de dependência
@@ -41,7 +72,7 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
 > Nada nesta fase muda a tela. É a parte que **não pode estar errada** — a
 > tabela de janelas e a aritmética — e é 100% pura, sem Electron/fs/React.
 
-- **T601 — `MODEL_CONTEXT_WINDOWS` + `normalizeModelAlias` (TDD)** — novo
+- ✅ **T601 — `MODEL_CONTEXT_WINDOWS` + `normalizeModelAlias` (TDD)** (feito 26/07) — novo
   `src/shared/contextWindow.ts`
   Tabela `ModelAlias → max_input_tokens` conforme spec §S1/C2:
   `fable`/`opus`/`sonnet` = `1_000_000`, `haiku` = `200_000`. Comentário no
@@ -59,7 +90,7 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   `effectiveContextZone('opus')` → `300_000`; `('haiku')` → `200_000` (a janela
   vence o `min` — é o caso que prova a regra).
 
-- **T602 — `contextTokensFromUsage` (TDD)** (sequencial após T601 — mesmo
+- ✅ **T602 — `contextTokensFromUsage` (TDD)** (feito 26/07) (sequencial após T601 — mesmo
   arquivo) — `src/shared/contextWindow.ts`
   Soma `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`
   (C1). `output_tokens` **não entra** (é geração, não contexto de entrada).
@@ -69,7 +100,7 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   (`290 + 1505 + 132807 = 134602`); usage `{}` → null; só `input_tokens: 500`
   → 500; `{output_tokens: 900}` → null; usage não-objeto/`null` → null.
 
-- **T603 — `computeContextPercent` SEM teto (TDD)** (sequencial após T602)
+- ✅ **T603 — `computeContextPercent` SEM teto (TDD)** (feito 26/07) (sequencial após T602)
   — `src/shared/contextWindow.ts`
   `% = round(tokens / effectiveContextZone(model) * 100)`, com **piso em 0 e
   SEM teto** (CA-8 revisado 24/07). `tokens === null` → `null` (CA-4, nunca
@@ -81,7 +112,7 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   ausência de teto); `tokens = 0` → `0`; `null` → `null`.
   **Este teste é a evidência de CA-2/CA-6/CA-8.**
 
-- **T604 [P] — Helper de tooltip** — `src/shared/contextWindow.ts`
+- ✅ **T604 — Helper de tooltip** (feito 26/07) — `src/shared/contextWindow.ts`
   `formatContextTooltip(tokens, model)` →
   `"134.602 / 300.000 tokens da smart zone · janela opus 1.000.000"`
   (separador de milhar pt-BR via `toLocaleString('pt-BR')`). Mostra a **zona**
@@ -100,8 +131,7 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
 > **Se a 004 já entregou o watcher: pular T607 e fazer T608/T609 sobre o
 > arquivo dela.** Não construir a peça duas vezes.
 
-- **T605 — Extrair a leitura de cauda para helper compartilhada (refactor
-  sem mudança de comportamento)** — `src/main/session-indexer.ts` +
+- ⏭️ **T605 — Extrair a leitura de cauda para helper compartilhada** — JÁ ESTAVA FEITO na 004 (`readFileTail`, `session-indexer.ts:288`) — `src/main/session-indexer.ts` +
   novo `src/main/transcript-tail.ts`
   O bloco de `fs.open` + `read(TAIL_READ_BYTES)` + split/varredura reversa de
   `readLastActivity` (`session-indexer.ts:210-240`) passa a ser uma helper
@@ -111,7 +141,7 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   (é a prova de "sem mudança de comportamento"); nenhuma duplicação do bloco
   de leitura no repo.
 
-- **T606 — `readTranscriptTail` (TDD)** (sequencial após T605) —
+- ✅ **T606 — `readTranscriptTail` (TDD)** (feito 26/07, regra da re-leitura REVISADA por medição) (sequencial após T605) —
   `src/main/transcript-watcher.ts` (= o `session-name-watcher.ts` da 004,
   renomeado; se a 004 já criou o arquivo, estender **aquele**)
   Devolve `{ contextTokens, customTitle }` numa **única** varredura reversa da
@@ -128,8 +158,7 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   dispara a re-leitura de 64KB (spy na helper); arquivo vazio → ambos `null`;
   arquivo inexistente → ambos `null` sem lançar.
 
-- **T607 — Watcher (watch + debounce + ciclo de vida)** — *PULAR se a 004 já
-  entregou* — (sequencial após T606) — `src/main/transcript-watcher.ts`
+- ⏭️ **T607 — Watcher (watch + debounce + ciclo de vida)** — PULADA: o watcher veio da 004, com 15 testes verdes — (sequencial após T606) — `src/main/transcript-watcher.ts`
   Implementar conforme a **Fatia 3 da 004**, sem redesenhar: `fs.watch` por
   aba `claude` **viva** (abre no `PTY_CHANNELS.create`, fecha no
   `PtyManager.onExit` — nunca no unmount do renderer, que kill forçado não
@@ -140,7 +169,7 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   `onExit` fecha o watcher daquela sessão (spy no `close`, sem vazar handle);
   `dispose()` idempotente; path inexistente não lança.
 
-- **T608 — Payload com os dois campos + regra de emissão** (sequencial após
+- ✅ **T608 — Payload com os dois campos + regra de emissão** (payload/canal já existiam da 004; aqui o `contextTokens` deixou de ser `null`) (sequencial após
   T607; **é a task mínima se a 004 veio antes**) — `src/shared/`,
   `src/main/transcript-watcher.ts`, `src/main/index.ts`,
   `src/preload/index.ts`
@@ -156,7 +185,7 @@ smoke roteirizado isolado do `%APPDATA%` real, com fixture de transcript —
   (é a regressão que a regra antiga causaria); append irrelevante que não muda
   nenhum campo → **não** emite.
 
-- **T609 — Antisséptico anti-duplicação** (verificação, não código novo)
+- ✅ **T609 — Antisséptico anti-duplicação** (verificado 26/07: um `watch()`, um `readFileTail`, nomes de campo só em `contextWindow.ts`)
   Confirmar que existe **um** leitor de cauda no repo e **um** watcher:
   `contextTokens` calculado por `contextTokensFromUsage` (T602), não por uma
   segunda soma inline; nenhum `fs.watch` adicional sobre `.jsonl`.
@@ -170,7 +199,7 @@ entre B e C** — a mudança só aparece para o usuário na Fase C.
 
 ## Fase C — Fatia 2: estado no renderer + UI na toolbar
 
-- **T610 — Estado `sessionId → contextTokens` + assinatura do evento** —
+- ✅ **T610 — Estado `sessionId → contextTokens` + assinatura do evento** (feito 26/07, REAPROVEITANDO a assinatura única da 004) —
   `src/renderer/src/App.tsx`
   `useState<Record<string, number | null>>` chaveado por **`sessionId`** (o
   watcher cobre todas as abas vivas; não há "aba observada"). **Uma** única
@@ -184,7 +213,7 @@ entre B e C** — a mudança só aparece para o usuário na Fase C.
   **DoD:** typecheck verde; `npm run test:smoke:dev` (smoke de modo dev,
   StrictMode) verde — é o guard-rail contra a regressão histórica.
 
-- **T611 — Render do `%` na toolbar** (sequencial após T610) —
+- ✅ **T611 — Render do `%` na toolbar** (feito 26/07) (sequencial após T610) —
   `src/renderer/src/SessionDetails.tsx` + `.module.css`
   Prop **opcional** `contextPercent?: number | null` (opcional para não
   quebrar smokes que já montam o componente). Renderiza depois do hint:
@@ -195,7 +224,7 @@ entre B e C** — a mudança só aparece para o usuário na Fase C.
   **DoD:** teste de render — `null` → `contexto —`; `45` → `contexto 45%`;
   atributo `title` presente com zona **e** janela.
 
-- **T612 — Cor acima de 100% (CA-9)** (sequencial após T611) —
+- ✅ **T612 — Cor acima de 100% (CA-9)** (feito 26/07, token `--zone-over` do design-system) (sequencial após T611) —
   `src/renderer/src/SessionDetails.tsx` + `.module.css`
   Classe `.contextOverZone` aplicada quando `contextPercent > 100`, usando o
   **token de alerta/danger do design-system** — não hex solto no CSS module.
@@ -206,14 +235,14 @@ entre B e C** — a mudança só aparece para o usuário na Fase C.
   (o gatilho é `> 100`, não `>=`); `127` → `data-over-zone="true"`; nenhum
   valor de cor literal no CSS module (só token do design-system).
 
-- **T613 — CA-6 no nível de UI (troca de modelo)** (sequencial após T612)
+- ✅ **T613 — CA-6 no nível de UI (troca de modelo)** (coberto pelo unit puro; passo com sessão viva no roteiro E2E) (sequencial após T612)
   O `%` é derivado de `computeContextPercent(tokens, model)` usando a prop
   `model` **já existente** do `SessionDetails` — nenhum estado novo. Trocar o
   modelo re-renderiza e o denominador muda sozinho.
   **DoD:** teste de render que troca só a prop `model` (mesmos tokens,
   `134602`) e observa **`45%` → `67%`** (opus zona 300k → haiku janela 200k).
 
-- **T614 — Roteiro E2E manual (para o Alexandre)** — novo
+- ✅ **T614 — Roteiro E2E manual (para o Alexandre)** (feito 26/07: `roteiro-e2e.md`) — novo
   `specs/006-contexto-consumido/roteiro-e2e.md`
   Passos: (1) abrir sessão claude, mandar um prompt, ver o `%` aparecer e
   subir; (2) hover no número → tooltip com zona **e** janela real; (3) trocar
