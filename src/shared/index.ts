@@ -42,6 +42,12 @@ export {
 } from './sessionName';
 export type { ResolveSessionNameInput, StoredSessionName } from './sessionName';
 
+// 005-terminal-copy-paste (T502) — decisor puro tecla -> ação (copiar/colar/
+// interromper por tipo de aba), usado pelo TerminalPane via
+// `attachCustomKeyEventHandler`. Ver src/shared/terminalKeymap.ts.
+export { IMAGE_PASTE_SEQUENCE, resolveTerminalKeyAction } from './terminalKeymap';
+export type { TerminalKeyAction, TerminalKeyContext, TerminalKeyDescriptor } from './terminalKeymap';
+
 /** Nomes dos canais IPC do domínio PTY (plan.md linha 37). */
 export const PTY_CHANNELS = {
   create: 'pty:create',
@@ -174,6 +180,26 @@ export interface DonelSemaphoreApi {
   onUpdate(ptyId: string, listener: (info: SemaphoreStateInfo) => void): () => void;
 }
 
+/** Nomes dos canais IPC do domínio clipboard (T504, plan.md Fatia 2 — mesmo padrão de PTY_CHANNELS). */
+export const CLIPBOARD_CHANNELS = {
+  hasImage: 'clipboard:hasImage',
+  readText: 'clipboard:readText',
+  writeText: 'clipboard:writeText',
+} as const;
+
+/**
+ * API tipada exposta pelo preload em `window.donel.clipboard` (contextBridge).
+ * O clipboard de verdade (`electron.clipboard`) vive no main process
+ * (`src/main/clipboard-bridge.ts`) — o renderer nunca o alcança direto
+ * (`contextIsolation: true`, sem `nodeIntegration`; plan.md decisão 6, não
+ * usar `navigator.clipboard`).
+ */
+export interface DonelClipboardApi {
+  hasImage(): Promise<boolean>;
+  readText(): Promise<string>;
+  writeText(text: string): Promise<void>;
+}
+
 export interface DonelApi {
   pty: DonelPtyApi;
   projects: DonelProjectsApi;
@@ -182,4 +208,6 @@ export interface DonelApi {
   profiles: DonelProfilesApi;
   /** T015 — ConfigStore (FR-007/FR-009); ver src/shared/config.ts. */
   config: DonelConfigApi;
+  /** T504 (005-terminal-copy-paste) — clipboard-bridge no main, atrás de IPC. */
+  clipboard: DonelClipboardApi;
 }

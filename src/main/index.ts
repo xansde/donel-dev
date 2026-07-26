@@ -62,6 +62,10 @@ import {
 } from './profile-manager';
 import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects, sortProjects } from './project-scanner';
 import { PtyManager } from './pty-manager';
+// T504 (005-terminal-copy-paste) — clipboard-bridge (T503), aditivo aos
+// imports acima (não reordena o bloco existente).
+import { hasImage, readText, writeText } from './clipboard-bridge';
+import { CLIPBOARD_CHANNELS } from '../shared';
 import { HeadroomCache, readAllProfilesHeadroom } from './quota-headroom';
 import { resolveClaudeCorrelation } from './session-correlation';
 import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
@@ -314,6 +318,20 @@ function registerPtyIpcHandlers(): void {
   });
 }
 
+// T504 (005-terminal-copy-paste) — canais `clipboard:*` (T503 clipboard-bridge,
+// plan.md decisão 6: clipboard vive no main, nunca no renderer). As três
+// funções já degradam sozinhas em caso de exceção (clipboard-bridge.ts) —
+// nada a fazer aqui além de repassar.
+function registerClipboardIpcHandlers(): void {
+  ipcMain.handle(CLIPBOARD_CHANNELS.hasImage, (): boolean => hasImage());
+
+  ipcMain.handle(CLIPBOARD_CHANNELS.readText, (): string => readText());
+
+  ipcMain.handle(CLIPBOARD_CHANNELS.writeText, (_event, text: string): void => {
+    writeText(text);
+  });
+}
+
 /** `%APPDATA%\donel-dev\config.json` (T015, config-store.ts) — só chamável após `app.whenReady()`. */
 function getAppConfigPath(): string {
   return join(app.getPath('userData'), CONFIG_FILE_NAME);
@@ -561,6 +579,7 @@ void app.whenReady().then(async () => {
   registerSessionIpcHandlers();
   registerProfileIpcHandlers();
   registerConfigIpcHandlers();
+  registerClipboardIpcHandlers(); // T504 (005-terminal-copy-paste)
   createMainWindow();
 
   app.on('activate', () => {

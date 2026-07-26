@@ -25,6 +25,9 @@ import {
   SESSION_CHANNELS,
   TRANSCRIPT_CHANNELS,
 } from '../shared';
+// T504 (005-terminal-copy-paste) — canal do clipboard-bridge (main), aditivo
+// aos imports acima (não reordena o bloco existente).
+import { CLIPBOARD_CHANNELS } from '../shared';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
 // arquivo é o único ponto por onde o renderer alcança o main process, via
@@ -133,6 +136,16 @@ const donelApi: DonelApi = {
 
     setLauncherDefaults: (defaults: LauncherDefaultsDto) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setLauncherDefaults, defaults) as Promise<AppConfigDto>,
+  },
+
+  // T504 (005-terminal-copy-paste) — clipboard-bridge do main atrás de IPC
+  // (plan.md decisão 6: nunca `navigator.clipboard` no renderer).
+  clipboard: {
+    hasImage: () => ipcRenderer.invoke(CLIPBOARD_CHANNELS.hasImage) as Promise<boolean>,
+
+    readText: () => ipcRenderer.invoke(CLIPBOARD_CHANNELS.readText) as Promise<string>,
+
+    writeText: (text: string) => ipcRenderer.invoke(CLIPBOARD_CHANNELS.writeText, text) as Promise<void>,
   },
 };
 
