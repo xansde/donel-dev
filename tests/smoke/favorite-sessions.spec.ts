@@ -218,10 +218,11 @@ test('T711/T710 — poda na 6ª visita, fixada além das 5, colapso sobrevive ao
   // exit tem de vir do CLI desistindo, não do kill do teste. Medido AQUI, com o
   // app real: a linha sumiu 5.969 ms depois do 2º clique (≈7,5 s do spawn).
   //
-  // Se este passo estourar numa PASTA NOVA (worktree), suspeite do §B21 antes
-  // de suspeitar de regressão: o CLI 2.1.220 mostra o diálogo "Accessing
-  // workspace … trust this folder?" na primeira sessão de cada pasta, e com ele
-  // na frente o processo nunca sai — o sinal não chega.
+  // Se este passo estourar, suspeite do §B21 antes de suspeitar de regressão: o
+  // CLI 2.1.220 pode mostrar o diálogo "Accessing workspace … trust this
+  // folder?" na PRIMEIRA sessão de um workspace, e com ele na frente o processo
+  // nunca sai — o sinal não chega. (Medido: numa worktree nova o diálogo NÃO
+  // apareceu; a aceitação não é por pasta, mas a chave exata é desconhecida.)
   await expect(syntheticRow).toHaveCount(0, { timeout: 60_000 });
   const afterFailure = await appWindow.evaluate(() => window.donel.config.get());
   expect(afterFailure.sessionRegistry[syntheticIds[5]], 'a órfã fixada tem de ter sido esquecida').toBeUndefined();

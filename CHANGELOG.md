@@ -1,5 +1,28 @@
 # Donel Dev — o que mudou
 
+## 0.2.0 — 26/07/2026
+
+Faxina antes de abrir o Modo Dev. Nada muda no jeito de usar; o que muda é uma
+lista que enganava e uma rede de segurança que estava furada.
+
+- **A sessão que não existe mais desaparece da lista.** Antes, se você clicava
+  numa sessão do grupo Favoritos e ela já tinha sido apagada do disco, o app
+  tentava retomar, a aba nascia morta e a linha **continuava lá** — convidando
+  ao mesmo clique inútil amanhã. Agora, quando a retomada falha, a linha sai da
+  lista sozinha, sem aviso e sem perguntar, **inclusive se estava fixada**.
+  Antes de apagar, o app confere que o arquivo da sessão realmente não existe
+  mais — sessão que só falhou por outro motivo (cota, `claude` fora do PATH,
+  você fechando a aba na hora) **não** é esquecida.
+- **A bateria de testes automáticos voltou a valer em qualquer pasta.** Cinco
+  testes falhavam sempre que a bateria rodava de uma cópia de trabalho paralela
+  do projeto — e é assim que as entregas em lote são conferidas. Falhavam por
+  erro do próprio teste, não do app: eles procuravam o projeto pelo nome fixo
+  `donel-dev` e acabavam clicando na pasta errada. Efeito prático: o crivo de
+  qualidade das entregas em lote estava parcialmente cego, e cinco vermelhos
+  falsos podiam ser lidos como defeito novo. Agora o nome é calculado, há uma
+  cerca automática que impede o erro de voltar, e a correção foi provada
+  rodando a bateria **nos dois lugares**.
+
 ## 0.1.0 — 26/07/2026
 
 Primeira versão compartilhada.

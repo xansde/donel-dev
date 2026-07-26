@@ -72,16 +72,22 @@ nenhum exit code chega. Depois de responder "1" uma vez, ele não voltou a
 aparecer em nenhuma execução seguinte, e o `-r` inválido passou a sair em ~8,5 s
 como na tabela do Achado 2.
 
-Consequências (as duas registradas no backlog como **§B21**):
+Consequência (registrada no backlog como **§B21**): é **condição de contorno do
+sinal** — aba que nasce num workspace ainda não confiado não produz `onExit`
+nenhum. Não é falso positivo (nada é esquecido), é ausência de sinal: o usuário
+responde o diálogo e a retomada segue (ou falha, e aí o sinal chega).
 
-1. **É condição de contorno do sinal:** aba que nasce num workspace ainda não
-   confiado não produz `onExit` nenhum. Não é falso positivo (nada é
-   esquecido), é ausência de sinal — o usuário responde o diálogo e a retomada
-   segue (ou falha, e aí o sinal chega).
-2. **Afeta a verificação em worktree (Passo 5), não só o T710:** toda worktree
-   nova é um workspace novo para o CLI 2.1.220, então **qualquer** smoke que
-   suba `claude` de lá pode travar nesse diálogo. Antes de rodar a suíte de uma
-   worktree, aceitar o workspace uma vez naquela pasta.
+> **Correção do que este achado dizia antes (medido depois, na verificação do
+> §B19):** a primeira redação afirmava que "toda worktree nova é um workspace
+> novo, então qualquer smoke que suba `claude` de lá pode travar nesse diálogo".
+> **Refutado por medição:** numa worktree recém-criada
+> (`donel-dev-wt-check`), o CLI **não** mostrou o diálogo — foi direto para
+> `No conversation found` (mensagem em 4.930 ms, exit 1 em 7.319 ms). Ou seja, a
+> aceitação não é por pasta; pelo que se observou, aceitar uma vez bastou para as
+> pastas irmãs. Qual é a chave exata (repo, `~/seazone`, uma vez por versão do
+> CLI) **não foi determinado** — só o comportamento observado está registrado.
+> Não é precondição de rodar a suíte em worktree, como a versão anterior deste
+> arquivo (e do `plan.md`) afirmava.
 
 Também não foi possível medir o caso "usuário responde **2. No, exit**" — o
 diálogo não reaparece depois de aceito. Fica **sem medição**; é um dos motivos

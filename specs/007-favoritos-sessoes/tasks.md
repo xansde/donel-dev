@@ -5,9 +5,10 @@ smoke próprio verdes) e mergeadas em `feature/mvp-p0`. **T712 fechada em 26/07
 pela decisão dele: desvio do CA-7 ACEITO** — o alvo de < 100 ms cai, o número
 aceito é o medido (103–167 ms), e `ca7-measurement.spec.ts` passa a ser cerca de
 regressão em 250 ms (verificado verde: **114,90 ms**). Candidatos de otimização
-preservados no §B20 do backlog. Único gap remanescente: **T710** (esquecer
-entrada órfã quando a retomada falha).
-**Atualizado:** 2026-07-26 (decisão do CA-7)
+preservados no §B20 do backlog. **O último gap — T710, esquecer a entrada órfã
+quando a retomada falha — foi fechado em 26/07 pela `008-fechar-pendencias`.
+Nada mais pendente nesta feature.**
+**Atualizado:** 2026-07-26 (T710 fechada pela 008)
 **12 tasks** — `T701`–`T712`, contíguas na ordem de dependência
 (Batch A: T701–T706 · Batch B: T707–T712).
 **Referências:** `spec.md` (CA-1..CA-11 + D1–D9 + C1–C6) e `plan.md`
@@ -39,7 +40,7 @@ fixture de transcript; **nunca** abrir sessão claude real só para popular a li
 | T707 | ✅ entregue | `src/renderer/src/App.tsx` (3 gatilhos + `maybeRegisterVisit`, debounce de 10s) |
 | T708 | ✅ entregue | `src/renderer/src/ProjectSidebar.tsx` + `App.tsx` (seção "Favoritos", colapso persistido, semeadura no expand) |
 | T709 | ✅ entregue | `src/shared/sessionOrdering.ts` (`worstState`) + dedupe em `App.tsx` |
-| T710 | ⚠️ **parcialmente entregue** | clique foca/retoma + pin unificado: ✅. "Falha ao retomar → `sessions:forget`" (2º momento do CA-11): **não implementado** — exigiria tocar `TerminalPane.tsx` (fora de escopo, pertence à 005) ou inventar o texto de erro do CLI pra sessão inválida (não verificado contra o binário real). Ver `summary` do `result.json`. |
+| T710 | ✅ **entregue — fechada em 26/07 pela 008** | clique foca/retoma + pin unificado: ✅ (na 007). "Falha ao retomar → esquecer a órfã" (2º momento do CA-11): ✅ na `008-fechar-pendencias`, commit `a86a15f` — `src/shared/resumeFailure.ts` + canal `sessions:forgetIfOrphan` + `TerminalPane.onProcessExit`. O bloqueio era "inventar o texto de erro do CLI"; resolvido MEDINDO o binário (`specs/008-fechar-pendencias/medicao-t710.md`): o sinal é o **exit code** do PTY (código 1 em ~8,5–10,4 s, 3/3), nunca o texto — e o main **confere o `.jsonl` no disco** antes de remover. `TerminalPane.tsx` deixou de ser bloqueio quando a 005 mergeou. |
 | T711 | ✅ entregue | `tests/smoke/favorite-sessions.spec.ts` (3 testes) |
 | T712 | ✅ **fechada — desvio aceito por ele em 26/07** | `tests/smoke/ca7-measurement.spec.ts` + `medicao-ca7.md`: CA-7 pedia < 100 ms, medido 103–167 ms; ele aceitou o número medido. Teste virou cerca de regressão em 250 ms e passa (114,90 ms). Otimização preservada no §B20. Suíte COMPLETA (`test:smoke`/`test:smoke:dev`) **não foi rodada por esta sessão** — regra do lote é o cockpit rodar serializado no fim. `npm run dist` também não foi rodado (empacotamento é decisão do cockpit/merge final, não de uma branch de feature paralela). |
 

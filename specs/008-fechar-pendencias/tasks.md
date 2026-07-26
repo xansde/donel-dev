@@ -113,9 +113,9 @@ batch, Conventional Commits, **por caminho explícito** (nunca `git add -A`).
   2. Worktree descartável (`git worktree add ../donel-dev-wt-check HEAD` +
      `npm install` + `npm run build`), suíte de smokes rodada **de lá**, com os 5
      specs do §B19 passando; remover a worktree depois.
-  **Precondição (§B21):** aceitar o diálogo de workspace do CLI 2.1.220 uma vez
-  na worktree antes de rodar — senão qualquer smoke que suba `claude` trava sem
-  sinal (`medicao-t710.md`, Achado 4).
+  **Corrigido na execução:** a precondição "aceitar o diálogo de workspace na
+  worktree" que esta task previa foi REFUTADA por medição — o diálogo não
+  apareceu na worktree nova (ver correção do Achado 4 em `medicao-t710.md`).
   **DoD:** as duas saídas REAIS colhidas e coladas no relatório final. Vermelhos
   declarados com causa (T013 ×2, §B15 intermitente). **Sem a 2ª execução o §B19
   não foi verificado — foi escrito.**

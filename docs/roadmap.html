@@ -685,9 +685,9 @@
       ]
     },
     {
-      when: "Próxima sessão",
-      title: "Uma sessão para fechar as pendências",
-      note: "Você escolheu duas das três frentes. Elas vão numa sessão só, na ordem abaixo, com uma parada no meio para você aprovar o plano antes de qualquer código. O prompt para abrir essa sessão já está pronto no repositório.",
+      when: "Feito em 26/07",
+      title: "A sessão que fechou as pendências",
+      note: "Você escolheu duas das três frentes. As duas saíram, com a parada no meio para você aprovar o plano. Falta só o seu roteiro de teste e a decisão de instalar — o instalador da 0.2.0 está pronto e instalar continua sendo seu ato.",
       parallel: false,
       tasks: [
         {
@@ -699,6 +699,9 @@
           o_que: "Cinco testes preparam seus dados numa pasta calculada corretamente, mas depois procuram o projeto na tela por <strong>nome fixo</strong>. Numa cópia de trabalho paralela, o nome muda — e como a pasta original também aparece na lista, o teste clica no projeto <strong>errado</strong> e não encontra nada. Falha 100% das vezes, e não é bug do app.",
           porque: "Isso deixa a conferência final <strong>parcialmente cega</strong> justamente no modo de trabalho que você acabou de usar (duas funcionalidades em paralelo, cada uma na sua cópia) e vai usar de novo. Falha que não significa nada ensina a ignorar falha — e aí a que significa passa batido.",
           atencao: "Tem uma armadilha já mapeada no prompt: num dos arquivos o nome \"donel-dev\" se refere à pasta do <strong>aplicativo</strong>, não à do projeto. Trocar ali quebra o teste em qualquer cópia. Só se prova consertado rodando a bateria <strong>nos dois lugares</strong> — pasta original e cópia.",
+          done: true,
+          stamp: "✓ feito",
+          resolvedNote: "<strong>Resolvido em 26/07.</strong> O nome do projeto agora é calculado num helper único (<code>tests/smoke/repoUnderTest.ts</code>), da mesma fonte que os dados da fixture. Provado <strong>nos dois lugares</strong>: numa cópia de trabalho paralela descartável, os cinco testes que falhavam sempre passaram (4/4, 1/1, 2/2). A armadilha da pasta do aplicativo ficou intacta, e uma cerca automática impede o erro de voltar.",
           trace: "specs/backlog.md §B19 · referência: favorite-sessions.spec.ts:20-27"
         },
         {
@@ -710,6 +713,9 @@
           o_que: "Você pode <strong>fixar</strong> uma sessão para ela ficar sempre à mão. Se um dia essa sessão não puder mais ser retomada, a entrada continua ali, ocupando espaço e prometendo algo que não acontece.",
           porque: "Ficou de fora antes por dois motivos, e os dois caíram: mexia num arquivo que a outra frente estava usando (já integrada), e exigiria <strong>adivinhar</strong> como o programa avisa que a retomada falhou.",
           atencao: "A sessão nova começa <strong>medindo</strong> em vez de adivinhar: roda o programa pedindo uma sessão que não existe e registra o que ele de fato faz. A aposta é usar o código de saída do processo, não o texto do erro — texto de programa muda sem avisar.",
+          done: true,
+          stamp: "✓ feito",
+          resolvedNote: "<strong>Resolvido em 26/07 — medindo, não adivinhando.</strong> O programa foi rodado de verdade pedindo uma sessão que não existe: ele avisa e <strong>sai com código 1</strong> em ~8,5–10,4 s (3 de 3), enquanto sessão válida e sessão nova seguem vivas. A aposta do código de saída se confirmou. Mais: antes de apagar, o app <strong>confere que o arquivo da sessão realmente não existe</strong> — falha por outro motivo (cota, você fechando a aba) não apaga nada.",
           trace: "specs/007-favoritos-sessoes · T710 · CA-11 (2º momento)"
         },
         {
@@ -721,7 +727,10 @@
           o_que: "No fim da sessão você recebe <strong>um</strong> roteiro numerado, com o resultado esperado ao lado de cada passo, cobrindo o que é novo e também o que você usa todo dia: favoritos, copiar e colar no terminal, renomear sessão, porcentagem de contexto. Junto vem o instalador da <strong>0.2.0</strong>.",
           porque: "Este build vai substituir o app que você usa para trabalhar — então o roteiro não testa só a novidade, testa regressão do que já funcionava. E os passos que exigem resposta real do modelo vêm agrupados, para uma execução longa servir todos e a cota ser gasta uma vez.",
           atencao: "O número da versão sobe para <strong>0.2.0</strong> de propósito: a 0.1.0 já está na mão de outra pessoa, e duas versões diferentes com o mesmo número é o que faz alguém dizer \"estou na 0.1.0 e não tem esse botão\". Instalar continua sendo seu ato — o instalador all-users substitui o app de trabalho, e o de 23/07 é o ponto de retorno.",
-          trace: "specs/prompt-fechar-pendencias.md · roteiro-e2e-fechamento.md (a criar)"
+          done: true,
+          stamp: "✓ feito",
+          resolvedNote: "<strong>Entregue em 26/07.</strong> Roteiro em <code>specs/roteiro-e2e-fechamento.md</code>: um só, numerado, com a cota marcada passo a passo (só o passo 5 precisa de turno real do modelo). Versão 0.2.0 e instalador empacotados.",
+          trace: "specs/roteiro-e2e-fechamento.md · CHANGELOG 0.2.0 · release/"
         }
       ]
     },

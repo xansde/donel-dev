@@ -181,9 +181,12 @@ Notas de desenho:
    `npm run test:smoke` → `npm run test:smoke:dev`.
 2. **Worktree descartável** (`git worktree add ../donel-dev-wt-check HEAD`, com
    `npm install` + `npm run build` lá dentro): rodar a suíte **de lá** e mostrar
-   os 5 specs do §B19 passando. **Precondição nova (§B21):** aceitar o diálogo
-   de workspace do CLI 2.1.220 uma vez naquela pasta antes de rodar, senão
-   qualquer smoke que suba `claude` trava sem sinal.
+   os 5 specs do §B19 passando.
+
+> **Corrigido depois da execução:** a versão anterior deste plano punha como
+> precondição "aceitar o diálogo de workspace do CLI na worktree antes de rodar".
+> Medido na hora: o diálogo **não** apareceu na worktree nova (ver a correção do
+> Achado 4 em `medicao-t710.md`). A precondição não existe.
 
 Vermelhos esperados, declarados e não mascarados: 2 de `previous-sessions.spec.ts`
 (dívida T013) e o intermitente do §B15. Os dois de cota (`model-injection`,

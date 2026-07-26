@@ -562,7 +562,30 @@ mudar). Fica de dívida, em ordem de incômodo:
    por reflexo. Está no LEIA-ME como limitação conhecida — sai de lá quando a
    **005** entrar (e o LEIA-ME precisa ser editado à mão nesse momento:
    `docs/LEIA-ME-colegas.md`, seção "Limitações conhecidas").
-### B19. A suíte de smokes não é válida fora da pasta `donel-dev` (achado no gate do lote 005+007, 26/07)
+### B19. ~~A suíte de smokes não é válida fora da pasta `donel-dev`~~ — **RESOLVIDO em 2026-07-26 (008-fechar-pendencias)**
+
+> **Fechado.** O nome do projeto passou a sair de `tests/smoke/repoUnderTest.ts`
+> (`basename` da pasta de onde a suíte roda), da MESMA fonte que o `SESSIONS_DIR`
+> da fixture — 13 arquivos de spec + o helper novo, commit `3469fb7`. As 4 cópias
+> locais de `slugifyProjectPath` sumiram. Uma cerca de regressão
+> (`tests/smoke-project-name.test.ts`) falha se `'donel-dev'` voltar a aparecer em
+> código executável de smoke fora de uma allowlist explícita (as 3 ocorrências que
+> são o nome do APP, o root fantasma do T015 e o prefixo de `mkdtemp`).
+>
+> **Provado nos dois lugares** (a prova que faltava): numa worktree descartável
+> (`donel-dev-wt-check`), rodados isolados — `session-rename` **4/4**,
+> `session-rename-live` **1/1**, `session-context` **2/2**. Eram 5 vermelhos
+> determinísticos ali; agora não sobra nenhum por causa de nome. `previous-sessions`
+> segue com os 2 vermelhos da dívida **T013**, com a MESMA falha da pasta
+> principal (`Received string: " "` — o marcador não pinta), ou seja, não é
+> artefato de worktree.
+>
+> **Achado colateral, anotado como §B22:** os vermelhos que sobram na suíte
+> completa (não isolada) são de LATÊNCIA do CLI, não de worktree.
+>
+> O texto original do achado fica abaixo, como registro do diagnóstico.
+
+**Estado original (26/07, antes do conserto):**
 
 **5 specs falham deterministicamente quando a suíte roda de uma worktree** cujo
 nome de pasta não é exatamente `donel-dev` — e falham por motivo de teste, não de
@@ -602,6 +625,66 @@ hardcodar `donel-dev`, no mesmo helper que já calcula o `SESSIONS_DIR`. Uma
 constante por arquivo, mesma fonte para os dois lados. 12 dos 14 specs hardcodam
 `donel-dev`; os outros 7 passam por sorte (só precisam de *um* projeto com esse
 nome existindo, não cruzam fixture com sidebar).
+
+### B21. Diálogo de workspace do CLI 2.1.220 engole o sinal de saída (achado na 008, 26/07)
+
+O CLI **2.1.220** tem um gate que não existia na 2.1.219 e aparece **antes** de
+qualquer validação de argumento:
+
+```
+Accessing workspace: C:\Users\xansd\seazone\donel-dev
+Quick safety check: Is this a project you created or one you trust? …
+❯ 1. Yes, I trust this folder   2. No, exit
+```
+
+**Por que importa:** com ele na frente, o processo `claude` fica **VIVO** e nunca
+sai — medido em 25 s e 40 s numa sonda `node-pty`. Isso significa **ausência de
+sinal** para o T710 (nenhum `onExit`, nenhum exit code): a aba fica aberta
+esperando o humano responder. Não é falso positivo (nada é esquecido); é o sinal
+não chegando. Depois de respondido "1" uma vez, o diálogo não voltou a aparecer.
+
+**O que NÃO é verdade** (hipótese levantada e refutada na mesma sessão): "toda
+pasta nova mostra o diálogo, então worktree precisa aceitar antes de rodar a
+suíte". Medido: numa worktree recém-criada o diálogo **não** apareceu — o CLI foi
+direto para `No conversation found` (4.930 ms) e saiu com código 1 (7.319 ms).
+A aceitação não é por pasta. **Qual é a chave exata — repo, `~/seazone`, uma vez
+por versão do CLI — não foi determinado.**
+
+Sem medição: o caminho "**2. No, exit**". O diálogo não reaparece depois de
+aceito e não se achou como forçá-lo de novo.
+
+Vários smokes já tratam o caso (`terminal.spec.ts:182`, `if (…includes('trust
+this folder')) keyboard.press('Enter')`), o que só funciona porque o diálogo
+aparece DENTRO do pane. Se um dia o CLI mudar essa tela, esses smokes travam
+juntos.
+
+### B22. Os vermelhos da suíte COMPLETA são latência de startup do CLI, não regressão (medido na 008, 26/07)
+
+Medido com sonda `node-pty` durante a verificação da 008: o tempo até o CLI
+pintar o banner `▐▛███▜▌ Claude Code v2.1.220` foi de **14,5 s numa worktree** e
+**20,9 s na pasta principal** (com `⚠ 3 MCP servers need authentication` chegando
+aos 21–28 s). Vários smokes esperam texto real do CLI com orçamento de **15 s** —
+`terminal.spec.ts:150/191`, `previous-sessions.spec.ts:250`,
+`session-context.spec.ts:81`. Quando o startup passa do orçamento, o pane vem
+como `" "` (vazio) e o teste falha.
+
+Consequências práticas, já observadas:
+
+- **Cascata dentro do arquivo:** quando o primeiro teste de `terminal.spec.ts`
+  falha assim, os seguintes falham por *"Target page, context or browser has been
+  closed"* / *"element(s) not found"* — a instância do Electron é compartilhada
+  pelo arquivo. Foi o caso de `:194` e `:208` na rodada de worktree da 008.
+- **O mesmo teste passa isolado:** `terminal.spec.ts:282` falhou na suíte
+  completa e passou isolado em 1,9 min, com cota folgada (verificada com um turno
+  real: `claude -p --model haiku` respondeu em 37 s). Ou seja: **não** é o §B11
+  "cota esgotada" de 24/07.
+- A dívida **T013** (`previous-sessions` ×2) falha com a MESMA assinatura
+  (`Received string: " "`), o que sugere que parte dela também é latência, não só
+  feature faltando. **Não investigado** — fica como hipótese.
+
+Encaminhamento possível (não decidido, fora do escopo da 008): esperar um
+marcador determinístico do próprio app em vez de texto do CLI, ou dar orçamento
+proporcional medido. Relacionado ao §B11 Causa 2 e ao §B13.
 
 ## Decidido, aguardando spec
 
