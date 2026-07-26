@@ -26,6 +26,9 @@ import { sortProjects } from '../../shared';
 import { computePossiblyBlockedOnPrompt } from '../../shared/possiblyBlockedOnPrompt';
 import { computeSessionAccountLabel } from '../../shared/sessionAccountLabel';
 import { sortSessions } from '../../shared/sessionOrdering';
+// 007-favoritos-sessoes (T707) — decisão pura de gravar uma visita no
+// registro (debounce de ~10s); a UI só chama, a regra mora no shared.
+import { shouldRecordVisit } from '../../shared/sessionRegistry';
 import { nextAttentionSessionId, sessionIdAtPosition } from '../../shared/sessionShortcuts';
 // 004-nomear-sessoes (T401/T406/T408) — a regra de qual nome aparece e a
 // validação do nome digitado moram no shared, iguais para main e renderer.
@@ -204,6 +207,15 @@ export function App(): React.JSX.Element {
   // só; sem esta ref ela leria o `appConfig` do primeiro render pra sempre.
   const appConfigRef = useRef(appConfig);
   appConfigRef.current = appConfig;
+  // T707 (007) — mesma razão da ref acima: a assinatura de onTranscriptChanged
+  // (gatilho 3 da visita, deps vazias) precisa do `tabs` ATUAL pra achar o cwd
+  // da sessão que mudou, não o do primeiro render.
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  // T707 — debounce de ~10s POR SESSÃO (chave = claudeSessionId): última
+  // gravação (epoch ms) + o que foi gravado, pra `shouldRecordVisit` decidir
+  // sem reler o ConfigStore inteiro a cada turn.
+  const visitWriteStateRef = useRef<Record<string, { lastWriteMs: number; label: string; projectPath: string }>>({});
   // T010 — FR-006: "aba ativa" (processo vivo) por tab.id, alimentado por
   // `onAliveChange` (TerminalPane.tsx). Decide se fechar a aba pede
   // confirmação (true) ou fecha direto (false/ausente — connecting sem PTY
@@ -328,6 +340,31 @@ export function App(): React.JSX.Element {
   // global depois (isso é `accountLabel`/ProfileSwitcher, estado separado).
   const handleProfileResolved = useCallback((tabId: string, profile: { slug: string; name: string } | undefined): void => {
     setSessionProfiles((prev) => ({ ...prev, [tabId]: profile }));
+  }, []);
+
+  /**
+   * T707 (007-favoritos-sessoes) — grava uma visita no registro (D9: "mantenha
+   * registro durante o trabalho") quando `shouldRecordVisit` decidir que vale a
+   * pena. `label`/`projectPath` já vêm resolvidos pelo chamador (`resolveTabName`/
+   * `resolveSessionName`) — esta função só decide SE grava e faz o IPC. É o
+   * ÚNICO escritor do registro (plan.md §Fatia 2) — o main só valida o payload.
+   */
+  const maybeRegisterVisit = useCallback((sessionId: string, projectPath: string, label: string): void => {
+    const trimmedLabel = label.trim();
+    if (!trimmedLabel) return;
+
+    const nowMs = Date.now();
+    const previousWrite = visitWriteStateRef.current[sessionId];
+    const shouldWrite = shouldRecordVisit({
+      lastWriteMs: previousWrite?.lastWriteMs,
+      nowMs,
+      previous: previousWrite ? { label: previousWrite.label, projectPath: previousWrite.projectPath } : null,
+      next: { label: trimmedLabel, projectPath },
+    });
+    if (!shouldWrite) return;
+
+    visitWriteStateRef.current[sessionId] = { lastWriteMs: nowMs, label: trimmedLabel, projectPath };
+    void window.donel.sessions.registerVisit(sessionId, projectPath, trimmedLabel).then(setAppConfig).catch(() => undefined);
   }, []);
 
   /** Cria uma aba nova, foca ela e devolve o id — usado por todo caminho de criação (sidebar, Launcher, "＋ Nova sessão", Terminal). */
@@ -735,7 +772,20 @@ export function App(): React.JSX.Element {
 
     void window.donel.sessions
       .setName(tab.claudeSessionId, rawName, tab.customTitle ?? null)
-      .then(setAppConfig)
+      .then((config) => {
+        setAppConfig(config);
+        // T707 (007) — gatilho 2: rename muda o rótulo. `config` já tem o
+        // `sessionNames` fresco desta escrita — mais preciso que reler o
+        // estado `appConfig` (ainda não re-renderizou).
+        if (tab.cwd && tab.claudeSessionId) {
+          const resolvedLabel = resolveSessionName({
+            fallback: tab.name,
+            customTitle: tab.customTitle ?? null,
+            stored: config.sessionNames[tab.claudeSessionId] ?? null,
+          });
+          maybeRegisterVisit(tab.claudeSessionId, tab.cwd, resolvedLabel);
+        }
+      })
       .catch(() => undefined);
   };
 
@@ -767,12 +817,25 @@ export function App(): React.JSX.Element {
       setContextTokens((prev) => (prev[sessionId] === tokens ? prev : { ...prev, [sessionId]: tokens }));
 
       const stored = appConfigRef.current?.sessionNames[sessionId] ?? null;
-      if (stored && reconcileStoredName(stored, customTitle) === null) {
+      const cliWins = !!stored && reconcileStoredName(stored, customTitle) === null;
+      if (cliWins) {
         // Nome vazio = apagar a entrada (mesmo canal do C5, sem inventar outro).
         void window.donel.sessions.setName(sessionId, '', null).then(setAppConfig).catch(() => undefined);
       }
+
+      // T707 (007) — gatilho 3: "durante o trabalho" do D9. `tabsRef` (não
+      // `tabs`) porque esta assinatura tem deps vazias (montada uma vez só,
+      // mesmo motivo do `appConfigRef` acima). `stored: null` quando o CLI
+      // acabou de vencer (a entrada já foi limpa acima) — sem isso o rótulo
+      // gravado usaria um nome que já deixou de valer.
+      const matchingTab = tabsRef.current.find((tab) => tab.claudeSessionId === sessionId);
+      if (matchingTab?.cwd) {
+        const label = resolveSessionName({ fallback: matchingTab.name, customTitle, stored: cliWins ? null : stored });
+        maybeRegisterVisit(sessionId, matchingTab.cwd, label);
+      }
     });
     return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // T013 (correção herdada) — assina `onRenderedUpdate` (EVENTO, disparado
@@ -1221,7 +1284,17 @@ export function App(): React.JSX.Element {
                   onProfileResolved={(profile) => handleProfileResolved(tab.id, profile)}
                   // T404/T408 — o id da sessão chega aqui e vira a chave de
                   // persistência do nome desta aba (CA-6).
-                  onClaudeSessionIdResolved={(claudeSessionId) => updateTab(tab.id, { claudeSessionId })}
+                  onClaudeSessionIdResolved={(claudeSessionId) => {
+                    updateTab(tab.id, { claudeSessionId });
+                    // T707 (007) — gatilho 1: a sessão nasce. `resolveTabName`
+                    // já sabe compor fallback/customTitle/nome da UI; o
+                    // `claudeSessionId` chega só agora, então é passado por
+                    // fora do `tab` (que só é atualizado no próximo render).
+                    const projectPath = tab.cwd;
+                    if (projectPath && claudeSessionId) {
+                      maybeRegisterVisit(claudeSessionId, projectPath, resolveTabName({ ...tab, claudeSessionId }));
+                    }
+                  }}
                   onCloseTab={() => handleRequestCloseTab(tab.id)}
                 />
               </div>
