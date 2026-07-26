@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
 
 // Smoke da T015 (ConfigStore + statusbar — FR-007, FR-009): prova de
 // persistência REAL através de um restart COMPLETO do app (fechar + reabrir
@@ -31,8 +32,9 @@ import type { ElectronApplication, Page } from '@playwright/test';
 // teste. A defesa contra vazamento pra OUTROS specs é o `afterAll` acima
 // (restaura os valores originais), não isolamento de diretório.
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
+// T801/§B19 (008) — `APP_MAIN`/`REPO_ROOT`/`PROJECT_NAME` vêm de
+// `repoUnderTest.ts`: o projeto na sidebar é o `basename` da PASTA de onde a
+// suíte roda (numa worktree, `donel-dev-wt-x`), nunca o literal `donel-dev`.
 const TEST_ROOT = 'C:\\donel-dev-smoke-t015-root';
 const NEW_LAUNCHER_DEFAULTS = { model: 'haiku', effort: 'low', permissionMode: 'plan' } as const;
 
@@ -76,7 +78,7 @@ async function openPreferences(win: Page): Promise<import('@playwright/test').Lo
 }
 
 test.beforeAll(async () => {
-  electronApp = await electron.launch({ args: [APP_MAIN], cwd: APP_CWD });
+  electronApp = await electron.launch({ args: [APP_MAIN], cwd: REPO_ROOT });
   appWindow = await electronApp.firstWindow();
   await appWindow.waitForLoadState('domcontentloaded');
 
@@ -89,7 +91,7 @@ test.beforeAll(async () => {
   // `afterAll` precisar dela, mesmo que o teste nunca chegue a rodar.
   original = await readConfig(appWindow);
   const projectsBefore = await appWindow.evaluate(() => window.donel.projects.list());
-  const donelDevBefore = projectsBefore.find((project) => project.name === 'donel-dev');
+  const donelDevBefore = projectsBefore.find((project) => project.name === PROJECT_NAME);
   donelDevPath = donelDevBefore?.path ?? '';
   originalDonelDevFavorite = donelDevBefore?.favorite ?? false;
 });
@@ -118,7 +120,8 @@ test.afterAll(async () => {
     // eslint-disable-next-line no-console
     console.error(
       '[config-persistence] FALHA AO RESTAURAR o config real da máquina — projectRoots/notificationPreference/' +
-        'launcherDefaults/favorito de donel-dev podem ter ficado com valores de teste. ' +
+        `launcherDefaults/favorito de ${PROJECT_NAME} podem ter ficado com valores de teste. ` +
+        // `donel-dev` aqui é o nome do APP (userData), não da pasta do repo — constante em qualquer worktree.
         'Verifique %APPDATA%\\donel-dev\\config.json manualmente.',
       error,
     );
@@ -166,7 +169,7 @@ test('preferências (roots, notificação, launcher defaults, favoritos) sobrevi
 
   // 4. Restart COMPLETO — fecha o processo inteiro e relança do zero.
   await electronApp.close();
-  electronApp = await electron.launch({ args: [APP_MAIN], cwd: APP_CWD });
+  electronApp = await electron.launch({ args: [APP_MAIN], cwd: REPO_ROOT });
   appWindow = await electronApp.firstWindow();
   await appWindow.waitForLoadState('domcontentloaded');
 
@@ -177,7 +180,7 @@ test('preferências (roots, notificação, launcher defaults, favoritos) sobrevi
   expect(afterRestart.launcherDefaults).toEqual(NEW_LAUNCHER_DEFAULTS);
 
   const projectsAfter = await appWindow.evaluate(() => window.donel.projects.list());
-  expect(projectsAfter.find((project) => project.name === 'donel-dev')?.favorite).toBe(true);
+  expect(projectsAfter.find((project) => project.name === PROJECT_NAME)?.favorite).toBe(true);
 
   // 6. UI também reflete (reabre Preferências na instância NOVA do app).
   dialog = await openPreferences(appWindow);

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import path, { join } from 'node:path';
+import { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT, SESSIONS_DIR } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T409 (004-nomear-sessoes): renomear sessão pela UI (CA-3),
@@ -31,16 +31,11 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // LGPD: todo conteúdo das fixtures é sintético, gerado aqui, e o `.jsonl`
 // semeado é apagado no `afterAll` (roda mesmo se o teste falhar).
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
-const REPO_ABS_PATH = path.resolve(APP_CWD);
+// T801/§B19 (008) — `APP_MAIN`/`PROJECT_NAME`/`REPO_ROOT`/`SESSIONS_DIR` vêm de `repoUnderTest.ts`: o nome do projeto na
+// sidebar é o `basename` da PASTA (numa worktree, `donel-dev-wt-x`), e sai da
+// MESMA fonte que o `SESSIONS_DIR` da fixture — divergir entre os dois era o
+// bug do §B19 (o clique achava o `donel-dev` de verdade e a lista voltava vazia).
 
-/** Duplicado de propósito de `slugifyProjectPath` (src/main/session-indexer.ts) — specs de smoke não importam de src/main (mesmo padrão de previous-sessions.spec.ts). */
-function slugifyProjectPath(absoluteProjectPath: string): string {
-  return absoluteProjectPath.replace(/[^a-zA-Z0-9]/g, '-');
-}
-
-const SESSIONS_DIR = join(homedir(), '.claude', 'projects', slugifyProjectPath(REPO_ABS_PATH));
 
 interface SeededSession {
   readonly id: string;
@@ -67,7 +62,7 @@ function seedSessionWithCustomTitle(): SeededSession {
     parentUuid: null,
     sessionId: id,
     timestamp: new Date().toISOString(),
-    cwd: REPO_ABS_PATH,
+    cwd: REPO_ROOT,
     isSidechain: false,
   };
   // Dois registros de propósito: o ÚLTIMO tem de vencer (spec.md §Notas).
@@ -98,7 +93,7 @@ let userDataDir: string;
 let seeded: SeededSession;
 
 async function launchApp(): Promise<void> {
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
   appWindow = await electronApp.firstWindow();
   await appWindow.waitForLoadState('domcontentloaded');
 }
@@ -117,10 +112,10 @@ async function openFreeTerminalTab(): Promise<void> {
 async function openPreviousSessionsDialog() {
   const sidebar = appWindow.locator('nav[aria-label="Projetos e sessões"]');
   await expect(sidebar).toBeVisible();
-  const historyButton = sidebar.getByRole('button', { name: 'Sessões anteriores de donel-dev', exact: true });
+  const historyButton = sidebar.getByRole('button', { name: `Sessões anteriores de ${PROJECT_NAME}`, exact: true });
   await expect(historyButton).toBeVisible({ timeout: 15_000 });
   await historyButton.click();
-  const dialog = appWindow.getByRole('dialog', { name: /Sessões anteriores · donel-dev/ });
+  const dialog = appWindow.getByRole('dialog', { name: new RegExp(`Sessões anteriores · ${PROJECT_NAME}`) });
   await expect(dialog).toBeVisible();
   return dialog;
 }

@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process';
-import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T004 (overnight, sem humano): abre o app buildado e prova que
@@ -32,8 +32,9 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // O que este smoke NÃO cobre (setas interativas, colar multilinha visual,
 // scrollback com mouse) fica em "Não verificado" para o T017 — ver dossiê.
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
+// T801/§B19 (008) — `APP_MAIN`/`REPO_ROOT`/`PROJECT_NAME` vêm de
+// `repoUnderTest.ts`: o projeto na sidebar é o `basename` da PASTA de onde a
+// suíte roda (numa worktree, `donel-dev-wt-x`), nunca o literal `donel-dev`.
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -43,7 +44,7 @@ test.beforeAll(async () => {
   userDataDir = createIsolatedUserDataDir('terminal');
   electronApp = await electron.launch({
     args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
-    cwd: APP_CWD,
+    cwd: REPO_ROOT,
   });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
@@ -156,11 +157,11 @@ test('opening a project from the sidebar creates a tab with a claude session in 
   const sidebar = window.locator('nav[aria-label="Projetos e sessões"]');
   await expect(sidebar).toBeVisible();
 
-  const projectButton = sidebar.getByRole('button', { name: 'donel-dev', exact: true });
+  const projectButton = sidebar.getByRole('button', { name: PROJECT_NAME, exact: true });
   await expect(projectButton).toBeVisible({ timeout: 15_000 });
   await projectButton.click();
 
-  const newTab = window.locator('[role="tab"]', { hasText: 'donel-dev' });
+  const newTab = window.locator('[role="tab"]', { hasText: PROJECT_NAME });
   await expect(newTab).toBeVisible();
   await expect(newTab).toHaveAttribute('aria-selected', 'true');
 
@@ -186,7 +187,7 @@ test('opening a project from the sidebar creates a tab with a claude session in 
     const text = await activePane.innerText();
     expect(text.toLowerCase()).toContain('claude code');
     // Prova o cwd: o prompt do claude mostra o path do projeto clicado.
-    expect(text).toContain('donel-dev');
+    expect(text).toContain(PROJECT_NAME);
   }).toPass({ timeout: 15_000 });
 });
 
@@ -243,7 +244,7 @@ test('launcher builds the exact CommandBuilder argv and opens a tab wired to it 
   await expect(lastCommand).toHaveText('claude --model sonnet --effort high --permission-mode acceptEdits -n radar');
   const cwd = await lastCommand.getAttribute('data-cwd');
   expect(cwd).toBeTruthy();
-  expect(cwd).toContain('donel-dev');
+  expect(cwd).toContain(PROJECT_NAME);
 
   // Prova funcional: a aba lançada pelo Launcher sobe uma sessão claude de
   // verdade (os args não quebraram o spawn), mesmo padrão do teste T007.

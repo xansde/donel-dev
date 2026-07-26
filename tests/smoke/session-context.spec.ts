@@ -1,8 +1,8 @@
 import { appendFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
-import { homedir } from 'node:os';
-import path, { join } from 'node:path';
+import { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT, SESSIONS_DIR } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da Fase C da 006 (T611/T612) — o `%` de contexto consumido aparece na
@@ -27,16 +27,11 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // (`tests/contextWindow.test.ts`: os mesmos 134.602 tokens dão 45% em opus e 67%
 // em haiku) e o passo com sessão viva fica no roteiro E2E humano (T614).
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
-const REPO_ABS_PATH = path.resolve(APP_CWD);
+// T801/§B19 (008) — `APP_MAIN`/`PROJECT_NAME`/`REPO_ROOT`/`SESSIONS_DIR` vêm de `repoUnderTest.ts`: o nome do projeto na
+// sidebar é o `basename` da PASTA (numa worktree, `donel-dev-wt-x`), e sai da
+// MESMA fonte que o `SESSIONS_DIR` da fixture — divergir entre os dois era o
+// bug do §B19 (o clique achava o `donel-dev` de verdade e a lista voltava vazia).
 
-/** Duplicado de propósito de `slugifyProjectPath` (src/main/session-indexer.ts) — padrão dos smokes deste diretório. */
-function slugifyProjectPath(absoluteProjectPath: string): string {
-  return absoluteProjectPath.replace(/[^a-zA-Z0-9]/g, '-');
-}
-
-const SESSIONS_DIR = join(homedir(), '.claude', 'projects', slugifyProjectPath(REPO_ABS_PATH));
 
 /** Linha `assistant` como o CLI escreve: a `usage` fica em `message.usage`. */
 function usageLine(input: number, cacheRead: number, cacheCreation: number): string {
@@ -62,7 +57,7 @@ let createdTranscriptPath: string | null = null;
 
 test.beforeAll(async () => {
   userDataDir = createIsolatedUserDataDir('session-context');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
   appWindow = await electronApp.firstWindow();
   await appWindow.waitForLoadState('domcontentloaded');
 });
@@ -94,9 +89,9 @@ test('T611/T612 — o % de contexto aparece na toolbar da aba, atualiza com o tu
 
   // 1. Abre uma sessão claude real clicando no projeto na sidebar.
   const sidebar = appWindow.locator('nav[aria-label="Projetos e sessões"]');
-  const projectRow = sidebar.locator('[data-testid="project-row-donel-dev"]');
+  const projectRow = sidebar.locator(`[data-testid="project-row-${PROJECT_NAME}"]`);
   await expect(projectRow).toBeVisible({ timeout: 15_000 });
-  await projectRow.getByRole('button', { name: 'donel-dev', exact: true }).click();
+  await projectRow.getByRole('button', { name: PROJECT_NAME, exact: true }).click();
 
   const tab = appWindow.locator('[role="tab"]').first();
   await expect(tab).toBeVisible();
@@ -124,7 +119,7 @@ test('T611/T612 — o % de contexto aparece na toolbar da aba, atualiza com o tu
   // 3. Descobre o `sessionId` da sessão viva renomeando pela UI (o main persiste
   //    sob essa chave) — nenhuma API de teste nova.
   const uiName = `ctx-${Date.now().toString(36)}`;
-  await tab.getByText('donel-dev', { exact: true }).dblclick();
+  await tab.getByText(PROJECT_NAME, { exact: true }).dblclick();
   const input = tab.getByRole('textbox');
   await expect(input).toBeVisible();
   await input.fill(uiName);

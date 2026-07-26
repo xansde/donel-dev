@@ -1,10 +1,10 @@
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import path, { join } from 'node:path';
+import { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT, SESSIONS_DIR } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T013 (UI de sessões anteriores, FR-004/CA-2).
@@ -46,22 +46,11 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // espera o CLI carregar o transcript local e reimprimir o scrollback (mesma
 // lógica local de sempre, sem turno de API novo).
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
-const REPO_ABS_PATH = path.resolve(APP_CWD);
+// T801/§B19 (008) — `APP_MAIN`/`PROJECT_NAME`/`REPO_ROOT`/`SESSIONS_DIR` vêm de `repoUnderTest.ts`: o nome do projeto na
+// sidebar é o `basename` da PASTA (numa worktree, `donel-dev-wt-x`), e sai da
+// MESMA fonte que o `SESSIONS_DIR` da fixture — divergir entre os dois era o
+// bug do §B19 (o clique achava o `donel-dev` de verdade e a lista voltava vazia).
 
-/**
- * Duplicado de propósito de `slugifyProjectPath` (src/main/session-indexer.ts)
- * — mesmo padrão das outras specs deste diretório (ex.: profiles.spec.ts
- * `PROFILE_LINK_DIR_NAMES`): specs de smoke nunca importam src/main direto,
- * só duplicam a constante/regra pra apontar pro MESMO lugar que o app real
- * usa, e o app real (rodando via `electron.launch`) é quem prova a regra.
- */
-function slugifyProjectPath(absoluteProjectPath: string): string {
-  return absoluteProjectPath.replace(/[^a-zA-Z0-9]/g, '-');
-}
-
-const SESSIONS_DIR = join(homedir(), '.claude', 'projects', slugifyProjectPath(REPO_ABS_PATH));
 
 function detectClaudeCliVersion(): string {
   try {
@@ -75,7 +64,7 @@ function detectClaudeCliVersion(): string {
 
 function detectGitBranch(): string {
   try {
-    return execSync('git rev-parse --abbrev-ref HEAD', { cwd: APP_CWD, encoding: 'utf8' }).trim();
+    return execSync('git rev-parse --abbrev-ref HEAD', { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
   } catch {
     return '';
   }
@@ -111,7 +100,7 @@ function seedSyntheticSession(marker: string): SyntheticSessionSeed {
     parentUuid: null,
     sessionId: id,
     timestamp: new Date().toISOString(),
-    cwd: REPO_ABS_PATH,
+    cwd: REPO_ROOT,
     gitBranch: GIT_BRANCH,
     permissionMode: 'bypassPermissions',
     version: CLI_VERSION,
@@ -148,7 +137,7 @@ test.beforeAll(async () => {
   forkOriginalContent = readFileSync(forkSeed.filePath, 'utf8');
 
   userDataDir = createIsolatedUserDataDir('previous-sessions');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
 });
@@ -176,11 +165,11 @@ async function openPreviousSessionsDialog() {
   const sidebar = window.locator('nav[aria-label="Projetos e sessões"]');
   await expect(sidebar).toBeVisible();
 
-  const historyButton = sidebar.getByRole('button', { name: 'Sessões anteriores de donel-dev', exact: true });
+  const historyButton = sidebar.getByRole('button', { name: `Sessões anteriores de ${PROJECT_NAME}`, exact: true });
   await expect(historyButton).toBeVisible({ timeout: 15_000 });
   await historyButton.click();
 
-  const dialog = window.getByRole('dialog', { name: /Sessões anteriores · donel-dev/ });
+  const dialog = window.getByRole('dialog', { name: new RegExp(`Sessões anteriores · ${PROJECT_NAME}`) });
   await expect(dialog).toBeVisible();
   return dialog;
 }

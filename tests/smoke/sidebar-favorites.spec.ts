@@ -1,6 +1,6 @@
-import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke do feedback E2E rodada 3 ("BUG — favoritar projeto só reflete após
@@ -29,8 +29,9 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // sombrearia `window` léxicamente pro TypeScript dentro do callback do
 // `evaluate` (ele resolveria pro tipo `Page`, não pro `Window` do DOM).
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
+// T801/§B19 (008) — `APP_MAIN`/`REPO_ROOT`/`PROJECT_NAME` vêm de
+// `repoUnderTest.ts`: o projeto na sidebar é o `basename` da PASTA de onde a
+// suíte roda (numa worktree, `donel-dev-wt-x`), nunca o literal `donel-dev`.
 
 let electronApp: ElectronApplication;
 let appWindow: Page;
@@ -38,7 +39,7 @@ let userDataDir: string;
 
 test.beforeAll(async () => {
   userDataDir = createIsolatedUserDataDir('sidebar-favorites');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
   appWindow = await electronApp.firstWindow();
   await appWindow.waitForLoadState('domcontentloaded');
 });
@@ -47,7 +48,7 @@ test.afterAll(async () => {
   await appWindow
     .evaluate(async () => {
       const projects = await window.donel.projects.list();
-      const target = projects.find((project) => project.name === 'donel-dev');
+      const target = projects.find((project) => project.name === PROJECT_NAME);
       if (target?.favorite) await window.donel.projects.setFavorite(target.path, false);
     })
     .catch(() => undefined);
@@ -58,14 +59,14 @@ test.afterAll(async () => {
 /** Índice de "donel-dev" entre TODAS as linhas de projeto renderizadas (ordem real do DOM, não pixels — estável mesmo com scroll interno da sidebar). */
 async function donelDevIndex(sidebar: Locator): Promise<number> {
   const testIds = await sidebar.locator('[data-testid^="project-row-"]').evaluateAll((rows) => rows.map((row) => row.getAttribute('data-testid')));
-  return testIds.indexOf('project-row-donel-dev');
+  return testIds.indexOf(`project-row-${PROJECT_NAME}`);
 }
 
 test('favoritar um projeto reordena a sidebar imediatamente, sem restart', async () => {
   const sidebar = appWindow.locator('nav[aria-label="Projetos e sessões"]');
   await expect(sidebar).toBeVisible();
 
-  const row = sidebar.locator('[data-testid="project-row-donel-dev"]');
+  const row = sidebar.locator(`[data-testid="project-row-${PROJECT_NAME}"]`);
   await expect(row).toBeVisible({ timeout: 15_000 });
   const favoriteButton = row.getByRole('button').first();
 

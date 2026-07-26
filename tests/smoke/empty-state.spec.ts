@@ -1,6 +1,6 @@
-import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da decisão A (2026-07-23, CLAUDE.md/feedback-e2e.md rodada 5) — a
@@ -28,8 +28,9 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // modelo `haiku` (barato) e nenhum prompt enviado (boot não dispara turno de
 // API) minimizam o custo.
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
+// T801/§B19 (008) — `APP_MAIN`/`REPO_ROOT`/`PROJECT_NAME` vêm de
+// `repoUnderTest.ts`: o projeto na sidebar é o `basename` da PASTA de onde a
+// suíte roda (numa worktree, `donel-dev-wt-x`), nunca o literal `donel-dev`.
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -37,7 +38,7 @@ let userDataDir: string;
 
 test.beforeAll(async () => {
   userDataDir = createIsolatedUserDataDir('empty-state');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
 });
@@ -149,7 +150,7 @@ test('CTA "Nova sessão" do empty state abre o Launcher (sem projeto/lastLaunch,
   // sem nenhum turno de fato disparar (boot não custa API) — convenção do
   // resto da suíte (model-injection.spec.ts).
   await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
-  await window.getByRole('option', { name: 'donel-dev', exact: true }).click();
+  await window.getByRole('option', { name: PROJECT_NAME, exact: true }).click();
   await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
   await launcher.getByLabel('Nome').fill('empty-state-cta-test');
   await launcher.getByRole('button', { name: '▶ Iniciar' }).click();

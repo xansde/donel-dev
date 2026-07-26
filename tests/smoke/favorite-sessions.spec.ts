@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // T711 (007-favoritos-sessoes) — o grupo "Favoritos" no topo da sidebar:
@@ -18,13 +18,9 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // real só para popular a lista, como o tasks.md exige. Isolado do `%APPDATA%`
 // real (`userDataIsolation.ts`).
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
-const REPO_ABS_PATH = path.resolve(APP_CWD);
-// O ProjectScanner usa o nome da PASTA, não o `name` do package.json — numa
-// worktree (`donel-dev-wt-007`) o projeto aparece com ESSE nome, não
-// "donel-dev". Calculado, nunca hardcoded, pra rodar igual em qualquer worktree.
-const PROJECT_NAME = path.basename(REPO_ABS_PATH);
+// T801 (008) — `REPO_ROOT`/`PROJECT_NAME`/`APP_MAIN` vêm de `repoUnderTest.ts`:
+// este spec já calculava o nome do projeto (era a referência do §B19) e agora a
+// conta mora num lugar só, junto do `SESSIONS_DIR`, pra nunca divergirem.
 const RECENT_PER_PROJECT = 5; // duplicado de propósito — mesmo padrão dos outros smokes (não importam de src/shared).
 
 let electronApp: ElectronApplication;
@@ -32,7 +28,7 @@ let appWindow: Page;
 let userDataDir: string;
 
 async function launchApp(): Promise<void> {
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
   appWindow = await electronApp.firstWindow();
   await appWindow.waitForLoadState('domcontentloaded');
 }
@@ -40,7 +36,7 @@ async function launchApp(): Promise<void> {
 async function favoriteRepo(favorite: boolean): Promise<void> {
   await appWindow.evaluate(
     ({ path: projectPath, favorite: fav }) => window.donel.projects.setFavorite(projectPath, fav),
-    { path: REPO_ABS_PATH, favorite },
+    { path: REPO_ROOT, favorite },
   );
 }
 
@@ -102,7 +98,7 @@ test('T711 — grupo aparece só com favoritados, dedupe da lista geral, cabeça
   let sessionId = '';
   await expect(async () => {
     const config = await appWindow.evaluate(() => window.donel.config.get());
-    const entry = Object.values(config.sessionRegistry).find((candidate) => candidate.projectPath === REPO_ABS_PATH);
+    const entry = Object.values(config.sessionRegistry).find((candidate) => candidate.projectPath === REPO_ROOT);
     expect(entry).toBeDefined();
     sessionId = entry!.sessionId;
   }).toPass({ timeout: 15_000 });
@@ -135,7 +131,7 @@ test('T711 — poda na 6ª visita, fixada além das 5, colapso e registro sobrev
 
   // 1. Fixa a sessão real que já está no registro (do teste anterior).
   const before = await appWindow.evaluate(() => window.donel.config.get());
-  const realEntry = Object.values(before.sessionRegistry).find((candidate) => candidate.projectPath === REPO_ABS_PATH);
+  const realEntry = Object.values(before.sessionRegistry).find((candidate) => candidate.projectPath === REPO_ROOT);
   expect(realEntry, 'a sessão real do teste anterior deveria seguir no registro').toBeDefined();
   const pinnedSessionId = realEntry!.sessionId;
 
@@ -155,12 +151,12 @@ test('T711 — poda na 6ª visita, fixada além das 5, colapso e registro sobrev
     // eslint-disable-next-line no-await-in-loop
     await appWindow.evaluate(
       ({ id: sessionId, projectPath }) => window.donel.sessions.registerVisit(sessionId, projectPath, `sintética ${sessionId.slice(0, 8)}`),
-      { id, projectPath: REPO_ABS_PATH },
+      { id, projectPath: REPO_ROOT },
     );
   }
 
   const afterVisits = await appWindow.evaluate(() => window.donel.config.get());
-  const projectEntries = Object.values(afterVisits.sessionRegistry).filter((entry) => entry.projectPath === REPO_ABS_PATH);
+  const projectEntries = Object.values(afterVisits.sessionRegistry).filter((entry) => entry.projectPath === REPO_ROOT);
   // 5 sintéticas mais recentes + a real fixada = RECENT_PER_PROJECT + 1.
   expect(projectEntries).toHaveLength(RECENT_PER_PROJECT + 1);
   expect(projectEntries.find((entry) => entry.sessionId === syntheticIds[0])).toBeUndefined(); // a mais antiga foi podada
@@ -173,10 +169,10 @@ test('T711 — poda na 6ª visita, fixada além das 5, colapso e registro sobrev
   await launchApp();
 
   const persisted = await appWindow.evaluate(() => window.donel.config.get());
-  const persistedEntries = Object.values(persisted.sessionRegistry).filter((entry) => entry.projectPath === REPO_ABS_PATH);
+  const persistedEntries = Object.values(persisted.sessionRegistry).filter((entry) => entry.projectPath === REPO_ROOT);
   expect(persistedEntries).toHaveLength(RECENT_PER_PROJECT + 1);
   expect(persistedEntries.find((entry) => entry.sessionId === pinnedSessionId)?.pinned).toBe(true);
-  expect(persisted.collapsedFavorites).toContain(REPO_ABS_PATH);
+  expect(persisted.collapsedFavorites).toContain(REPO_ROOT);
 
   const groupAfterRestart = appWindow.locator(`[data-testid="favorite-group-${PROJECT_NAME}"]`);
   await expect(groupAfterRestart).toBeVisible({ timeout: 15_000 });
@@ -220,6 +216,6 @@ test('T711 — CA-9: desfavoritar remove o grupo e devolve as sessões à lista 
 
   // A fixada continua gravada — nada se perde ao desfavoritar (CA-9).
   const config = await appWindow.evaluate(() => window.donel.config.get());
-  const stillThere = Object.values(config.sessionRegistry).some((entry) => entry.projectPath === REPO_ABS_PATH && entry.pinned);
+  const stillThere = Object.values(config.sessionRegistry).some((entry) => entry.projectPath === REPO_ROOT && entry.pinned);
   expect(stillThere).toBe(true);
 });

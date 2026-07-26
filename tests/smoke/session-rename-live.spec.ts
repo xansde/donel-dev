@@ -1,8 +1,8 @@
 import { appendFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
-import { homedir } from 'node:os';
-import path, { join } from 'node:path';
+import { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT, SESSIONS_DIR } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T413 (004-nomear-sessoes, Fase C) — o CA-4: um `/rename` feito no CLI
@@ -25,16 +25,11 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // `afterAll`; se o CLI já o tinha criado, só a linha extra fica, e ela é
 // sintética (nome de sessão, sem conteúdo de conversa — LGPD).
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
-const REPO_ABS_PATH = path.resolve(APP_CWD);
+// T801/§B19 (008) — `APP_MAIN`/`PROJECT_NAME`/`REPO_ROOT`/`SESSIONS_DIR` vêm de `repoUnderTest.ts`: o nome do projeto na
+// sidebar é o `basename` da PASTA (numa worktree, `donel-dev-wt-x`), e sai da
+// MESMA fonte que o `SESSIONS_DIR` da fixture — divergir entre os dois era o
+// bug do §B19 (o clique achava o `donel-dev` de verdade e a lista voltava vazia).
 
-/** Duplicado de propósito de `slugifyProjectPath` (src/main/session-indexer.ts) — padrão dos smokes deste diretório. */
-function slugifyProjectPath(absoluteProjectPath: string): string {
-  return absoluteProjectPath.replace(/[^a-zA-Z0-9]/g, '-');
-}
-
-const SESSIONS_DIR = join(homedir(), '.claude', 'projects', slugifyProjectPath(REPO_ABS_PATH));
 
 let electronApp: ElectronApplication;
 let appWindow: Page;
@@ -44,7 +39,7 @@ let createdTranscriptPath: string | null = null;
 
 test.beforeAll(async () => {
   userDataDir = createIsolatedUserDataDir('session-rename-live');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
   appWindow = await electronApp.firstWindow();
   await appWindow.waitForLoadState('domcontentloaded');
 });
@@ -77,9 +72,9 @@ test('T413 — CA-4: custom-title escrito no transcript da sessão VIVA reflete 
   // 1. Abre uma sessão claude real clicando no projeto na sidebar (1 clique,
   //    sem Launcher — o watcher nasce no `pty:create`, não no launcher).
   const sidebar = appWindow.locator('nav[aria-label="Projetos e sessões"]');
-  const projectRow = sidebar.locator('[data-testid="project-row-donel-dev"]');
+  const projectRow = sidebar.locator(`[data-testid="project-row-${PROJECT_NAME}"]`);
   await expect(projectRow).toBeVisible({ timeout: 15_000 });
-  await projectRow.getByRole('button', { name: 'donel-dev', exact: true }).click();
+  await projectRow.getByRole('button', { name: PROJECT_NAME, exact: true }).click();
 
   const tab = appWindow.locator('[role="tab"]').first();
   await expect(tab).toBeVisible();
@@ -94,7 +89,7 @@ test('T413 — CA-4: custom-title escrito no transcript da sessão VIVA reflete 
   // 2. Renomeia pela UI — é o que revela o `sessionId` desta sessão viva
   //    (o main persiste sob essa chave) sem inventar API de teste.
   const uiName = `ui-${Date.now().toString(36)}`;
-  await tab.getByText('donel-dev', { exact: true }).dblclick();
+  await tab.getByText(PROJECT_NAME, { exact: true }).dblclick();
   const input = tab.getByRole('textbox');
   await expect(input).toBeVisible();
   await input.fill(uiName);

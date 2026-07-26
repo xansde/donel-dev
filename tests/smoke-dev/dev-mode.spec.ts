@@ -5,6 +5,7 @@ import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { createServer } from 'vite';
 import type { ViteDevServer } from 'vite';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from '../smoke/repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from '../smoke/userDataIsolation';
 
 // Smoke permanente de MODO DEV (receita do diagnóstico do bug StrictMode,
@@ -19,8 +20,9 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from '../smoke/u
 // pegaram. `main`/`preload` continuam sendo o build de produção normal —
 // só o RENDERER precisa vir de um dev server pra StrictMode valer.
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
+// T801/§B19 (008) — `APP_MAIN`/`REPO_ROOT`/`PROJECT_NAME` vêm de
+// `repoUnderTest.ts`: o projeto na sidebar é o `basename` da PASTA de onde a
+// suíte roda (numa worktree, `donel-dev-wt-x`), nunca o literal `donel-dev`.
 const RENDERER_ROOT = path.join(__dirname, '../../src/renderer');
 
 let viteServer: ViteDevServer;
@@ -80,7 +82,7 @@ test.beforeAll(async () => {
   userDataDir = createIsolatedUserDataDir('dev-mode');
   electronApp = await electron.launch({
     args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
-    cwd: APP_CWD,
+    cwd: REPO_ROOT,
     env: { ...process.env, ELECTRON_RENDERER_URL: rendererUrl },
   });
   window = await electronApp.firstWindow();
@@ -114,7 +116,7 @@ test('modo dev (StrictMode ativo): aba nova via launcher fica viva e digitável'
   const launcher = window.locator('[data-testid="launcher"]');
   await expect(launcher).toBeVisible();
   await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
-  await window.getByRole('option', { name: 'donel-dev', exact: true }).click();
+  await window.getByRole('option', { name: PROJECT_NAME, exact: true }).click();
   await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
   await launcher.getByLabel('Nome').fill('dev-mode-smoke');
   await launcher.getByRole('button', { name: '▶ Iniciar' }).click();

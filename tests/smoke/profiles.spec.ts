@@ -1,8 +1,9 @@
 import { existsSync, readdirSync, rmdirSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import path, { join } from 'node:path';
+import { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T014 (ProfileManager + headroom + UI de perfis — FR-005, FR-012,
@@ -34,8 +35,9 @@ const PROFILE_LINK_DIR_NAMES = ['projects', 'skills', 'commands', 'rules', 'plug
 const E2E_PROFILE_NAME = 'e2e-profile-test';
 const E2E_PROFILE_DIR = join(homedir(), '.claude-profiles', E2E_PROFILE_NAME);
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
+// T801/§B19 (008) — `APP_MAIN`/`REPO_ROOT`/`PROJECT_NAME` vêm de
+// `repoUnderTest.ts`: o projeto na sidebar é o `basename` da PASTA de onde a
+// suíte roda (numa worktree, `donel-dev-wt-x`), nunca o literal `donel-dev`.
 
 /**
  * Remove o diretório do perfil e2e com segurança: as 6 junctions são
@@ -69,7 +71,7 @@ test.beforeAll(async () => {
   cleanupE2eProfileDir();
 
   userDataDir = createIsolatedUserDataDir('profiles');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
 });
@@ -124,7 +126,7 @@ test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar 
   const launcher = window.locator('[data-testid="launcher"]');
   await expect(launcher).toBeVisible();
   await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
-  await window.getByRole('option', { name: 'donel-dev', exact: true }).click();
+  await window.getByRole('option', { name: PROJECT_NAME, exact: true }).click();
   await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
   await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
 

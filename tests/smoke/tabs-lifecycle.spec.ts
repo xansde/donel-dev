@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process';
-import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T010 (abas múltiplas + ciclo de vida + terminal livre, FR-006/
@@ -15,8 +15,9 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // absolutas são inúteis — cada asserção usa DIFERENÇA de PID (snapshot antes
 // vs. depois de uma ação específica), nunca tamanho absoluto do conjunto.
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
+// T801/§B19 (008) — `APP_MAIN`/`REPO_ROOT`/`PROJECT_NAME` vêm de
+// `repoUnderTest.ts`: o projeto na sidebar é o `basename` da PASTA de onde a
+// suíte roda (numa worktree, `donel-dev-wt-x`), nunca o literal `donel-dev`.
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -24,7 +25,7 @@ let userDataDir: string;
 
 test.beforeAll(async () => {
   userDataDir = createIsolatedUserDataDir('tabs-lifecycle');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
 });
@@ -199,7 +200,7 @@ test('T010 — 5 sessões simultâneas (1 claude + 4 shell); fechar 3 mata só o
   await openLauncherPanel();
   const launcher = window.locator('[data-testid="launcher"]');
   await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
-  await window.getByRole('option', { name: 'donel-dev', exact: true }).click();
+  await window.getByRole('option', { name: PROJECT_NAME, exact: true }).click();
   await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
   await launcher.getByLabel('Nome').fill('lifecycle-test');
   await launcher.getByRole('button', { name: '▶ Iniciar' }).click();

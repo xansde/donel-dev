@@ -1,6 +1,6 @@
-import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke do feedback E2E rodada 2 ("app inteiro tem scrollbar vertical" —
@@ -10,8 +10,9 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // NADA pra rolar no nível do documento — scroll continua existindo, mas
 // sempre interno aos painéis (sidebar/terminal), nunca na janela.
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
+// T801/§B19 (008) — `APP_MAIN`/`REPO_ROOT`/`PROJECT_NAME` vêm de
+// `repoUnderTest.ts`: o projeto na sidebar é o `basename` da PASTA de onde a
+// suíte roda (numa worktree, `donel-dev-wt-x`), nunca o literal `donel-dev`.
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -19,7 +20,7 @@ let userDataDir: string;
 
 test.beforeAll(async () => {
   userDataDir = createIsolatedUserDataDir('shell');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
+  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
 });
@@ -61,7 +62,7 @@ test('o shell inteiro não tem scrollbar no documento (body.scrollHeight === bod
   const launcher = window.locator('[data-testid="launcher"]');
   await expect(launcher).toBeVisible();
   await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
-  await window.getByRole('option', { name: 'donel-dev', exact: true }).click();
+  await window.getByRole('option', { name: PROJECT_NAME, exact: true }).click();
   await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
   await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
 
