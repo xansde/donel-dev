@@ -90,6 +90,15 @@ dentro de Projetos). Comportamento pedido:
 Clarify futuro: limite de sub-itens, ordenação, e o que acontece ao
 desfavoritar (sessões voltam para a seção geral).
 
+> ✅ **B5 VIROU `specs/007-favoritos-sessoes/` (discovery 25/07).** Os três
+> clarifys acima foram respondidos por ele: **ambas** (5 recentes + fixadas
+> ALÉM das 5), colapsável por projeto com estado persistido, e desfavoritar
+> devolve as sessões à lista geral. Duas coisas novas saíram da entrevista e
+> não estavam no B5: o pin passa a ser da **sessão** e **persistido** (o de
+> hoje é da aba e volátil), e a fonte da lista é um **registro próprio do app**
+> mantido durante o trabalho — não uma varredura de `~/.claude` no boot
+> (evita ~2 s de sidebar em branco com favoritos pesados, medição da 004).
+
 > **B6 + B7 viraram `specs/005-terminal-copy-paste/` (discovery 24/07).**
 > Nomear conversas → `specs/004-nomear-sessoes/`; % de contexto consumido
 > (fatia do US-8) → `specs/006-contexto-consumido/`. Todas em rascunho
@@ -393,18 +402,17 @@ não só nomes divergentes.
 
 ## Decidido, aguardando spec
 
-- **Restauração de sessões no restart** (rodada 5 do feedback-e2e).
-  **Decisão do Alexandre (2026-07-23):** restaurar as sessões que tiveram
-  ATIVIDADE NO DIA ANTERIOR ao boot (critério de corte = atividade no dia
-  anterior, não "toda sessão anterior sem limite"). Comportamento desejado
-  registrado; feature NÃO implementada — ainda precisa do ciclo de spec
-  completo (specify → clarify → plan) antes de qualquer código, incluindo
-  detalhar: o que conta como "atividade" (última mensagem? último turno
-  completo?), sessões `shell` (sem transcript, sem `-r` — provavelmente fora
-  do escopo), e interação com a decisão A (aba inicial vazia, ver
-  `001-mvp/feedback-e2e.md`) — a restauração passaria a ser a ÚNICA forma de
-  o app abrir uma sessão claude sozinho no boot, então o clarify precisa
-  reconciliar as duas decisões explicitamente.
+- ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
+  próprio Alexandre.** A decisão de 23/07 era restaurar no boot as sessões com
+  atividade no dia anterior. No discovery da **007** ele disse o oposto, e de
+  forma direta: *"Não quero manter as sessões ativas, apenas acessar as últimas
+  sessões de trabalho de maneira rápida."* O problema que motivava a
+  restauração (voltar rápido ao trabalho de ontem) passa a ser resolvido pela
+  `specs/007-favoritos-sessoes/` — grupo de projetos favoritados com as 5
+  sessões mais recentes + as fixadas, em um clique. **Não implementar a
+  restauração**: subir N sessões `claude` no boot custaria RAM e cota sem ele
+  pedir. Se algum dia voltar, vira spec nova. Contexto original em
+  `001-mvp/feedback-e2e.md` (rodada 5).
 
 ## Decisões pendentes que alimentam este backlog
 
