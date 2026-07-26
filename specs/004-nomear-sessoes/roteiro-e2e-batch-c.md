@@ -1,5 +1,11 @@
 # Roteiro E2E — Batch C da 004 (reflexo ao vivo do `/rename`)
 
+> ✅ **VALIDADO por ele em 2026-07-25: "funcionou perfeitamente".** O teste real
+> foi o mais direto possível — ele rodou `/rename` **duas vezes na própria
+> sessão em que estava trabalhando dentro do Donel Dev** ("testes donel dev" →
+> "nome de teste") e viu a aba acompanhar ao vivo. Dogfood de verdade: a feature
+> foi validada pelo app sendo usado para construir o app.
+
 **Para:** Alexandre · **Gerado em:** 2026-07-25 · **Instalador:**
 `release/Donel Dev-Setup-0.1.0.exe` (reempacotado com o Batch C).
 **O que este batch entrega:** o CA-4 — rodar `/rename` no meio de uma sessão

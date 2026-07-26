@@ -4,9 +4,10 @@
 e empurrados na `feature/mvp-p0`. Batch B validado por ele em 24/07 (5 passos ✅;
 o passo 6 pedia restart, o que era o comportamento esperado sem o Batch C).
 Batch C entregue em seguida, com o CA-4 verificado em sessão real
-(341–372 ms, alvo < 1 s). Falta a validação humana do
-`roteiro-e2e-batch-c.md` — que **exige cota** (digitar `/rename` num CLI que
-responde). Branch: `feature/mvp-p0`.
+(341–372 ms, alvo < 1 s) e **VALIDADO por ele em 2026-07-25**: rodou `/rename`
+duas vezes na própria sessão em que estava trabalhando dentro do app e a aba
+acompanhou ao vivo ("funcionou perfeitamente"). **A feature está fechada de
+ponta a ponta — nada pendente.** Branch: `feature/mvp-p0`.
 **Atualizado:** 2026-07-24
 
 > **O que mudou em relação ao plano, durante a execução** (nada de escopo novo):
