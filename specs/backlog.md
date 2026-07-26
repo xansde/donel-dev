@@ -540,6 +540,46 @@ mudar). Fica de dívida, em ordem de incômodo:
    por reflexo. Está no LEIA-ME como limitação conhecida — sai de lá quando a
    **005** entrar (e o LEIA-ME precisa ser editado à mão nesse momento:
    `docs/LEIA-ME-colegas.md`, seção "Limitações conhecidas").
+### B19. A suíte de smokes não é válida fora da pasta `donel-dev` (achado no gate do lote 005+007, 26/07)
+
+**5 specs falham deterministicamente quando a suíte roda de uma worktree** cujo
+nome de pasta não é exatamente `donel-dev` — e falham por motivo de teste, não de
+produto. Achado ao gatear o lote 005+007, que por desenho roda cada feature na sua
+própria worktree (`donel-dev-wt-005`, `donel-dev-wt-007`).
+
+**Mecanismo, verificado no código:** os specs semeiam a fixture `.jsonl` num
+diretório derivado da PRÓPRIA pasta —
+`SESSIONS_DIR = ~/.claude/projects/` + `slugify(path.resolve(__dirname/../..))`,
+que numa worktree dá `C--Users-xansd-seazone-donel-dev-wt-005` — mas localizam o
+projeto na sidebar por **nome hardcoded**, com `exact: true`:
+
+- `session-rename.spec.ts:120` — `getByRole('button', { name: 'Sessões anteriores de donel-dev', exact: true })`
+- `session-rename-live.spec.ts:80,82` — `[data-testid="project-row-donel-dev"]`
+- `session-context.spec.ts:97,99` — idem
+
+Como o scanner varre `~/seazone`, a pasta `donel-dev` de verdade TAMBÉM aparece na
+sidebar da worktree — então o clique acha um projeto, só que o **errado**. O teste
+dirige o projeto `donel-dev` enquanto a fixture está sob `donel-dev-wt-005`, e a
+lista volta com 0 linhas. Não é flake: reproduziu 100% das vezes, isolado.
+
+**Prova por grupo de controle:** os mesmos 3 arquivos rodados na pasta principal
+`donel-dev`, no mesmo commit base (`fda3e49`), passaram — `session-rename` 4/4 e
+`session-rename-live` 1/1. Ou seja: 4 dos 5 vermelhos são artefato de worktree, não
+regressão. (O 5º, `session-context.spec.ts:86`, falha por §B15 — passou nas duas
+retentativas na base.)
+
+**Consequência para o processo, que é o que importa:** um gate rodado só de
+worktree **não valida** esses 5 specs — e o modelo de lote da esteira roda sempre
+em worktree. Hoje isso é compensado à mão (rodar o controle na pasta principal), o
+que é frágil: quem não souber do achado vai ler 5 vermelhos como regressão da
+própria feature, ou pior, mascarar como "vermelho conhecido".
+
+**Correção quando entrar na fila** (não feita aqui — é escopo próprio, mexe em 12
+arquivos de spec): derivar o nome do projeto do `basename(REPO_ABS_PATH)` em vez de
+hardcodar `donel-dev`, no mesmo helper que já calcula o `SESSIONS_DIR`. Uma
+constante por arquivo, mesma fonte para os dois lados. 12 dos 14 specs hardcodam
+`donel-dev`; os outros 7 passam por sorte (só precisam de *um* projeto com esse
+nome existindo, não cruzam fixture com sidebar).
 
 ## Decidido, aguardando spec
 

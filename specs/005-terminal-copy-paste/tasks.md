@@ -160,3 +160,34 @@ Convenções: [P] = paralelizável com a anterior; DoD = definition of done.
   fora do Donel — `spike-1-imagem-no-conpty.md`, consequência 5).
 - Colar imagem em aba **shell** (US-C é só aba claude).
 - Overlay/máscara sobre o output bruto do PTY (spec própria, no `todo.md`).
+
+## Gate do cockpit — 2026-07-26 (rodado pelo orquestrador, não pelo implementador)
+
+Suíte rodada **serializada** (uma worktree por vez), na worktree
+`donel-dev-wt-005`, commit de topo `91ae2a2`:
+
+| Verificação | Resultado medido |
+|---|---|
+| `npm run build` | ok (bundle 767 KB) |
+| `npm run typecheck` | limpo |
+| `npm test` | **488 passed / 0 failed** (29 arquivos) |
+| `test:smoke` | **22 passed / 7 failed**, 8,2 min |
+| `test:smoke:dev` | **1 passed / 0 failed** |
+
+**Nenhuma regressão desta feature.** Os 7 vermelhos, todos com causa nomeada e
+verificada:
+
+- 2 × `previous-sessions.spec.ts` → dívida T013, é o baseline do §B11.
+- 3 × `session-rename.spec.ts` + 1 × `session-rename-live.spec.ts` → **artefato de
+  worktree** (§B17, achado neste gate): os specs semeiam a fixture no diretório
+  derivado da pasta atual (`...donel-dev-wt-005`) e clicam no projeto pelo nome
+  hardcoded `donel-dev`. **Grupo de controle:** os mesmos arquivos na pasta
+  principal `donel-dev`, no mesmo base `fda3e49`, passaram 4/4 e 1/1.
+- 1 × `session-context.spec.ts:86` → §B15 (`fs.watch` perde evento). Falhou também
+  na base `fda3e49` na pasta principal e **passou nas duas retentativas** ali.
+
+**Merge com a `feat/007-favoritos-sessoes`: limpo** (`git merge-tree`, sem
+conflito) — a disciplina aditiva nos três arquivos compartilhados funcionou.
+
+`npm run dist` executado pelo cockpit: instalador em
+`donel-dev-wt-005/release/`. **Instalar segue sendo ato do Alexandre** (§B14).
