@@ -114,11 +114,23 @@ if (-not (Test-Path $Destino)) {
     Escreva "  + pasta de destino criada: $Destino" DarkGray
 }
 
-# Memoriza o destino para as proximas publicacoes.
+# Memoriza o destino para as proximas publicacoes. Se um destino explicito
+# DIFERE do memorizado, o memorizado e atualizado — senao o proximo
+# `npm run publicar` sem argumento voltaria a publicar na pasta antiga,
+# silenciosamente.
 $conf = Join-Path $PSScriptRoot 'publicar.local.json'
-if (-not (Test-Path $conf)) {
+$memorizado = $null
+if (Test-Path $conf) {
+    $lidoConf = (Get-Content -Raw -Encoding UTF8 $conf | ConvertFrom-Json)
+    if ($lidoConf.destino) { $memorizado = $lidoConf.destino }
+}
+if ($memorizado -ne $Destino) {
     GravaUtf8 $conf (@{ destino = $Destino } | ConvertTo-Json)
-    Escreva "  + destino memorizado em scripts\publicar.local.json" DarkGray
+    if ($memorizado) {
+        Escreva "  ! destino memorizado ATUALIZADO (antes: $memorizado)" Yellow
+    } else {
+        Escreva "  + destino memorizado em scripts\publicar.local.json" DarkGray
+    }
 }
 
 # ------------------------------------------------------- 2. Versao e contexto

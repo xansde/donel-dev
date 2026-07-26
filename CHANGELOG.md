@@ -18,6 +18,17 @@ Primeira versão compartilhada.
   dentro da sessão — o app acompanha e reflete na hora.
 - **% de contexto consumido** na barra da sessão, para saber quando fazer
   handoff antes de a janela apertar.
+- **Copiar e colar como num terminal moderno**: `Ctrl+C` com texto selecionado
+  copia; **sem seleção, numa aba de sessão, não derruba mais a execução** (para
+  interromper o modelo, `Esc`). Numa aba de terminal livre o `Ctrl+C` continua
+  interrompendo o processo, como sempre. `Ctrl+V` cola texto em bloco único — e
+  **cola print** direto na conversa quando há imagem no clipboard.
+- **Favoritos com as sessões recentes**: favoritou um projeto, ele ganha um
+  grupo no topo da sidebar com as **5 sessões mais recentes** + as que você
+  **fixar**. Clicar foca a aba se já estiver aberta, ou retoma. Grupo
+  colapsável, e o estado sobrevive a fechar o app. O app não reabre sessão
+  sozinho — é acesso rápido, não restauração, e nada consome cota sem você
+  pedir.
 - **Perfis de conta**: mais de uma conta Claude na mesma máquina, isoladas por
   `CLAUDE_CONFIG_DIR`.
 - Instalação **por usuário, sem admin**.
