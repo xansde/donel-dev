@@ -479,6 +479,40 @@ decidir UMA fonte para o número (o módulo puro) e apagar o token, ou alinhar o
 token em 300k com comentário apontando para a decisão. Não mexer agora: mudar
 token de design-system fora de uma feature que o use é escopo alheio.
 
+### B18. Primeira abertura numa máquina que não é a dele (verificado no código, 26/07)
+
+Levantado ao responder "o sistema de pastas será intuitivo para as outras
+pessoas?". **Nada de estado dele viaja** — isso está verificado e é o menor dos
+problemas (`app.asar` = `out/` + `package.json`; config vive em
+`%APPDATA%\donel-dev\config.json`, criado na máquina de cada um; perfis são
+listados varrendo `~/.claude-profiles` do próprio usuário, com guarda de
+`existsSync`, então a lista nasce só com o **Principal**, que é o `~/.claude`
+dele mesmo). O problema é o **primeiro contato**:
+
+1. **`defaultProjectRoots` é a convenção de pastas do Alexandre** —
+   `project-scanner.ts:110` devolve `~/seazone` e `~/pessoal`. Numa máquina que
+   guarda código em `C:\dev` ou `~\source\repos`, as duas não existem, o scan
+   volta vazio e a sidebar abre em branco.
+2. **O empty state afirma o caminho errado e não ensina a saída** —
+   `ProjectSidebar.tsx:161` tem o texto fixo *"Nenhum projeto encontrado em
+   ~/seazone ou ~/pessoal"*, que ignora os roots realmente configurados (se o
+   colega trocar por `C:\dev`, a mensagem continua falando de `~/seazone`) e não
+   diz "abra Preferências". Deveria citar os roots configurados de verdade e
+   apontar o caminho.
+3. **Adicionar pasta-raiz é campo de TEXTO, sem "Procurar…"** —
+   `Preferences.tsx` tem lista, lixeira, input e botão Adicionar (com re-scan
+   imediato, o que é bom), mas não existe `dialog.showOpenDialog` em lugar nenhum
+   do main. Colar caminho do Explorer funciona; escolher pasta num diálogo é o
+   que a pessoa espera.
+
+**Onde isso deve ser corrigido:** os itens 1 e 2 caem exatamente na
+`007-favoritos-sessoes`, que já reescreve a sidebar de projetos — resolver lá
+evita mexer duas vezes no mesmo arquivo e um conflito bobo com a worktree dela.
+O item 3 é independente (main + Preferences) e pode virar task própria.
+Mitigação enquanto não houver código: o `docs/LEIA-ME-colegas.md` já abre
+dizendo que a sidebar vem vazia, que os caminhos padrão são de outra máquina, e
+ensina o passo da engrenagem.
+
 ### B17. Dívidas da distribuição para colegas (canal decidido em 26/07)
 
 Canal e rotina de publicação estão em `docs/distribuicao.md` (pasta compartilhada

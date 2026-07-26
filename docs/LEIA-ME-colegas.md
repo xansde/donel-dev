@@ -73,14 +73,38 @@ tentar contornar.
 
 ---
 
-## Primeiro uso
+## Primeiro uso — comece configurando suas pastas
 
-1. **Adicione suas pastas de projeto** no painel da esquerda — é a partir delas
-   que o app lista projetos e sessões anteriores.
-2. Abra uma aba: escolha **modelo**, **esforço** e **modo de permissões** antes
-   de subir a sessão.
-3. Renomeie as abas (duplo-clique ou **F2**) — ou use `/rename` dentro da
-   sessão, que o app acompanha sozinho.
+Na primeira abertura a sidebar provavelmente vai estar **vazia**, dizendo que não
+achou projeto em `~/seazone` ou `~/pessoal`. Isso é esperado: esses são os
+caminhos padrão da máquina de quem construiu o app, e quase certamente não são os
+seus. **Troque pelos seus** — leva 30 segundos:
+
+1. Clique na **engrenagem** (canto da janela) → **Preferências**.
+2. Em **"Pastas-raiz de projetos"**, remova as que não existem (ícone de lixeira)
+   e **digite o caminho** da sua pasta de código — ex. `C:\Users\voce\dev` — e
+   clique **Adicionar**. O campo é de texto: cole o caminho do Explorer.
+3. A sidebar recarrega na hora. O app procura projetos **até 2 níveis** dentro de
+   cada pasta-raiz, reconhecendo o que tem `.git/` ou `CLAUDE.md`.
+
+Depois disso:
+
+- Abra uma aba escolhendo **modelo**, **esforço** e **modo de permissões** antes
+  de subir a sessão.
+- Renomeie as abas (duplo-clique ou **F2**) — ou use `/rename` dentro da sessão,
+  que o app acompanha sozinho.
+- O **semáforo** de cada sessão mostra quem está trabalhando, quem terminou e
+  quem está esperando você; quem pede permissão sobe para o topo.
+
+### Suas contas são suas
+
+O app **não vem com conta nenhuma configurada** — não há como: o instalador
+carrega só o programa, e a lista de contas é montada lendo a **sua** máquina
+(`~/.claude` e `~/.claude-profiles`) a cada abertura. Você começa com um único
+perfil, **Principal**, que é o seu `~/.claude` de sempre — a mesma conta que já
+usa no terminal. Se quiser mais de uma conta na mesma máquina, o app cria perfis
+isolados por `CLAUDE_CONFIG_DIR`; o `/login` de cada um continua sendo ato seu,
+no terminal.
 
 ---
 
