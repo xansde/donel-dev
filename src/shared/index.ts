@@ -42,6 +42,12 @@ export {
 } from './sessionName';
 export type { ResolveSessionNameInput, StoredSessionName } from './sessionName';
 
+// 005-terminal-copy-paste (T502) — decisor puro tecla -> ação (copiar/colar/
+// interromper por tipo de aba), usado pelo TerminalPane via
+// `attachCustomKeyEventHandler`. Ver src/shared/terminalKeymap.ts.
+export { IMAGE_PASTE_SEQUENCE, resolveTerminalKeyAction } from './terminalKeymap';
+export type { TerminalKeyAction, TerminalKeyContext, TerminalKeyDescriptor } from './terminalKeymap';
+
 /** Nomes dos canais IPC do domínio PTY (plan.md linha 37). */
 export const PTY_CHANNELS = {
   create: 'pty:create',
