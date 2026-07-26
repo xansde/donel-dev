@@ -25,10 +25,12 @@ import {
 import { sortProjects } from '../../shared';
 import { computePossiblyBlockedOnPrompt } from '../../shared/possiblyBlockedOnPrompt';
 import { computeSessionAccountLabel } from '../../shared/sessionAccountLabel';
-import { sortSessions } from '../../shared/sessionOrdering';
-// 007-favoritos-sessoes (T707) — decisão pura de gravar uma visita no
-// registro (debounce de ~10s); a UI só chama, a regra mora no shared.
-import { shouldRecordVisit } from '../../shared/sessionRegistry';
+// T709 (007) — pior estado do grupo (CA-6), mesma precedência de sortSessions.
+import { sortSessions, worstState } from '../../shared/sessionOrdering';
+// 007-favoritos-sessoes (T707/T709) — decisão pura de gravar uma visita
+// (debounce de ~10s) e seleção do que aparece sob cada projeto favoritado
+// (CA-2/CA-3); a UI só chama, a regra mora no shared.
+import { selectProjectSessions, selectRegisteredIds, shouldRecordVisit } from '../../shared/sessionRegistry';
 import { nextAttentionSessionId, sessionIdAtPosition } from '../../shared/sessionShortcuts';
 // 004-nomear-sessoes (T401/T406/T408) — a regra de qual nome aparece e a
 // validação do nome digitado moram no shared, iguais para main e renderer.
@@ -46,7 +48,7 @@ import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { ProfileSwitcher } from './ProfileSwitcher';
 import { ProjectSidebar } from './ProjectSidebar';
-import type { SidebarSession } from './ProjectSidebar';
+import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from './ProjectSidebar';
 import { SessionDetails } from './SessionDetails';
 import { TerminalPane } from './TerminalPane';
 import type { TerminalPaneHandle } from './TerminalPane';
@@ -366,6 +368,45 @@ export function App(): React.JSX.Element {
     visitWriteStateRef.current[sessionId] = { lastWriteMs: nowMs, label: trimmedLabel, projectPath };
     void window.donel.sessions.registerVisit(sessionId, projectPath, trimmedLabel).then(setAppConfig).catch(() => undefined);
   }, []);
+
+  // T708/CA-8 — semeadura única por projeto: `seedAttemptedRef` garante UMA
+  // tentativa por projeto NESTA sessão do app, mesmo que `indexProjectSessions`
+  // devolva `[]` de novo (projeto genuinamente sem sessão nenhuma) — sem isso,
+  // o efeito abaixo tentaria de novo a cada render enquanto o registro
+  // continuasse vazio. `seedingProjects` é só o estado de "carregando" da linha.
+  const seedAttemptedRef = useRef<Set<string>>(new Set());
+  const [seedingProjects, setSeedingProjects] = useState<ReadonlySet<string>>(new Set());
+
+  const maybeSeedFavoriteProject = useCallback((projectPath: string): void => {
+    if (seedAttemptedRef.current.has(projectPath)) return;
+    seedAttemptedRef.current.add(projectPath);
+    setSeedingProjects((prev) => new Set(prev).add(projectPath));
+    void window.donel.sessions
+      .seedProject(projectPath)
+      .then(setAppConfig)
+      .catch(() => undefined)
+      .finally(() => {
+        setSeedingProjects((prev) => {
+          if (!prev.has(projectPath)) return prev;
+          const next = new Set(prev);
+          next.delete(projectPath);
+          return next;
+        });
+      });
+  }, []);
+
+  // T708/CA-8 — dispara a semeadura pra todo projeto favoritado EXPANDIDO que
+  // ainda não tem nenhuma entrada no registro (guarda dura real vive no main,
+  // ver session-seed.ts — este efeito só evita a chamada óbvia).
+  useEffect(() => {
+    if (!appConfig) return;
+    const collapsedSet = new Set(appConfig.collapsedFavorites);
+    for (const project of projects) {
+      if (!project.favorite || collapsedSet.has(project.path)) continue;
+      const hasEntry = Object.values(appConfig.sessionRegistry).some((entry) => entry.projectPath === project.path);
+      if (!hasEntry) maybeSeedFavoriteProject(project.path);
+    }
+  }, [projects, appConfig, maybeSeedFavoriteProject]);
 
   /** Cria uma aba nova, foca ela e devolve o id — usado por todo caminho de criação (sidebar, Launcher, "＋ Nova sessão", Terminal). */
   const addTab = (partial: Omit<TabState, 'id'>): string => {
@@ -693,6 +734,63 @@ export function App(): React.JSX.Element {
       .catch(() => undefined);
   };
 
+  // T708 (007) — colapsar/expandir o grupo "Favoritos" de um projeto; estado
+  // persiste (CA-1). Substitui a lista INTEIRA (mesmo padrão de `setFavorite`
+  // acima) — poucos favoritos, sem necessidade de um canal incremental.
+  const handleToggleFavoriteGroupCollapsed = (projectPath: string): void => {
+    const current = new Set(appConfig?.collapsedFavorites ?? []);
+    if (current.has(projectPath)) current.delete(projectPath);
+    else current.add(projectPath);
+    void window.donel.config.setCollapsedFavorites([...current]).then(setAppConfig).catch(() => undefined);
+  };
+
+  /**
+   * T710 (007) — CA-4: clique numa linha do grupo "Favoritos". Se já existe
+   * uma aba aberta com esse `claudeSessionId`, FOCA (nunca abre a mesma sessão
+   * duas vezes); senão retoma pelo mesmo caminho de `handleResumeSession`
+   * (`-r <id>`). Entrada que já sumiu do registro (órfã removida por outro
+   * caminho) é no-op — nada a focar nem a retomar.
+   */
+  const handleFocusOrResumeFavoriteSession = (sessionId: string): void => {
+    const existingTab = tabs.find((tab) => tab.claudeSessionId === sessionId);
+    if (existingTab) {
+      setActiveTabId(existingTab.id);
+      return;
+    }
+
+    const entry = appConfig?.sessionRegistry[sessionId];
+    if (!entry) return;
+
+    const project = projects.find((candidate) => candidate.path === entry.projectPath);
+    const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId } });
+    addTab({
+      name: entry.label,
+      cwd: entry.projectPath,
+      projectName: project?.name,
+      pinned: false,
+      launchArgs: args,
+      sessionType: 'claude',
+      customTitle: null,
+    });
+    setSelectedProjectPath(entry.projectPath);
+  };
+
+  /**
+   * T710/C2 (007) — CA-5: UM gesto de pin na linha do grupo. Persiste no
+   * registro (`sessions:setPinned`) E, se a sessão tem aba aberta agora,
+   * também atualiza `TabState.pinned` — é o que continua alimentando
+   * `sortSessions`/o desempate da lista geral (comportamento de hoje
+   * preservado, C2: "nada de dois pins parecidos").
+   */
+  const handleToggleFavoriteSessionPinned = (sessionId: string): void => {
+    const entry = appConfig?.sessionRegistry[sessionId];
+    const nextPinned = !(entry?.pinned ?? false);
+    void window.donel.sessions.setPinned(sessionId, nextPinned).then(setAppConfig).catch(() => undefined);
+
+    const openTab = tabs.find((tab) => tab.claudeSessionId === sessionId);
+    if (openTab) updateTab(openTab.id, { pinned: nextPinned });
+  };
+
   // T015 — UI de Preferências (FR-007, feedback E2E rodada 3 "roots
   // configuráveis"): substitui a lista INTEIRA de roots no ConfigStore
   // (main/index.ts `sanitizeProjectRoots` descarta vazio/duplicata) e
@@ -967,15 +1065,65 @@ export function App(): React.JSX.Element {
     });
   };
 
-  const sidebarSessions: SidebarSession[] = tabs.map((tab) => ({
-    id: tab.id,
-    name: resolveTabName(tab),
-    projectName: tab.projectName,
-    state: semaphoreStates[tab.id]?.state ?? 'working',
-    stateEnteredAt: semaphoreStates[tab.id]?.stateEnteredAt,
-    pinned: tab.pinned,
-    active: tab.id === activeTabId,
-  }));
+  // T709/CA-3 (007) — dedupe: sessões exibidas sob um projeto FAVORITADO saem
+  // da lista geral. Escopado só aos favoritados (D6) — sessão de projeto
+  // comum nunca é afetada. Vem DEPOIS do cabeçalho (favoriteGroups, abaixo)
+  // já estar computado com o pior estado — a ordem é a mesma do tasks.md T709
+  // (cabeçalho antes do dedupe), aqui expressa como "o dot nunca depende do
+  // dedupe", não como ordem de linhas de código.
+  const favoritedProjectPaths = useMemo(
+    () => projects.filter((project) => project.favorite).map((project) => project.path),
+    [projects],
+  );
+  const registeredFavoriteIds = useMemo(
+    () => selectRegisteredIds(appConfig?.sessionRegistry ?? {}, favoritedProjectPaths),
+    [appConfig, favoritedProjectPaths],
+  );
+
+  const sidebarSessions: SidebarSession[] = tabs
+    .filter((tab) => !(tab.claudeSessionId && registeredFavoriteIds.has(tab.claudeSessionId)))
+    .map((tab) => ({
+      id: tab.id,
+      name: resolveTabName(tab),
+      projectName: tab.projectName,
+      state: semaphoreStates[tab.id]?.state ?? 'working',
+      stateEnteredAt: semaphoreStates[tab.id]?.stateEnteredAt,
+      pinned: tab.pinned,
+      active: tab.id === activeTabId,
+    }));
+
+  /**
+   * T708/T709 (007) — grupo "Favoritos": um projeto por linha, colapsável
+   * (CA-1), com o cabeçalho mostrando o PIOR estado das abas vivas dele (CA-6,
+   * `worstState` reusa a precedência de `sessionOrdering.ts`) — é o que
+   * impede o dedupe acima de esconder uma sessão em `permission` dentro de um
+   * grupo colapsado (conflito nº 1 do discovery). Rótulo de cada linha:
+   * `registry.label` (cache do CA-7), substituído pelo nome resolvido AO VIVO
+   * quando a sessão já tem aba aberta (dado fresco de graça).
+   */
+  const favoriteGroups: FavoriteProjectGroup[] = useMemo(() => {
+    const registry = appConfig?.sessionRegistry ?? {};
+    const collapsedSet = new Set(appConfig?.collapsedFavorites ?? []);
+    return projects
+      .filter((project) => project.favorite)
+      .map((project) => {
+        const liveTabs = tabs.filter((tab) => tab.sessionType === 'claude' && tab.cwd === project.path);
+        const liveStates = liveTabs.map((tab) => semaphoreStates[tab.id]?.state ?? 'working');
+        const sessions: FavoriteSessionRow[] = selectProjectSessions(registry, project.path).map((entry) => {
+          const liveTab = tabs.find((tab) => tab.claudeSessionId === entry.sessionId);
+          return { sessionId: entry.sessionId, label: liveTab ? resolveTabName(liveTab) : entry.label, pinned: entry.pinned };
+        });
+        return {
+          project,
+          collapsed: collapsedSet.has(project.path),
+          loading: seedingProjects.has(project.path),
+          sessions,
+          liveState: worstState(liveStates),
+          liveCount: liveTabs.length,
+        };
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, appConfig, tabs, semaphoreStates, seedingProjects]);
 
   // Mesma ordenação da sidebar (sessionOrdering.ts) — FR-013 usa essa lista
   // ranqueada tanto pro Ctrl+1..9 (posição N) quanto pro Ctrl+Tab (próxima
@@ -1206,6 +1354,10 @@ export function App(): React.JSX.Element {
           onTogglePin={handleTogglePin}
           onRenameSession={handleRenameTab}
           onShowPreviousSessions={handleShowPreviousSessions}
+          favoriteGroups={favoriteGroups}
+          onToggleFavoriteGroupCollapsed={handleToggleFavoriteGroupCollapsed}
+          onFocusOrResumeFavoriteSession={handleFocusOrResumeFavoriteSession}
+          onToggleFavoriteSessionPinned={handleToggleFavoriteSessionPinned}
         />
 
         <main className={styles.center}>

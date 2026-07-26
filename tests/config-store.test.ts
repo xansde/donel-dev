@@ -43,6 +43,7 @@ describe('defaultAppConfig (puro)', () => {
       sessionNames: {},
       theme: 'dark',
       sessionRegistry: {},
+      collapsedFavorites: [],
     });
   });
 });
@@ -61,6 +62,7 @@ describe('toAppConfigDto (puro)', () => {
       sessionNames: {},
       theme: 'dark',
       sessionRegistry: {},
+      collapsedFavorites: [],
     });
   });
 
@@ -158,6 +160,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       sessionRegistry: {
         'sess-1': { sessionId: 'sess-1', projectPath: 'C:\\x', label: 'Trabalhando', lastActivityAt: 1000, pinned: true },
       },
+      collapsedFavorites: ['C:\\x'],
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
   });
@@ -191,6 +194,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       sessionNames: {}, // ausente no objeto → default
       theme: 'dark',
       sessionRegistry: {}, // ausente no objeto → default
+      collapsedFavorites: [], // ausente no objeto → default
     });
   });
 
@@ -212,6 +216,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
 
     expect(sanitized.sessionNames).toEqual({});
     expect(sanitized.sessionRegistry).toEqual({});
+    expect(sanitized.collapsedFavorites).toEqual([]);
     expect(sanitized.projectRoots).toEqual(['C:\\meu\\root']);
     expect(sanitized.favorites).toEqual(['C:\\meu\\projeto']);
     expect(sanitized.activeProfileSlug).toBe('tecnologia-claude-3');
@@ -322,6 +327,23 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       sessionRegistry: { 'chave-real': { sessionId: 'outro-id-no-valor', projectPath: 'C:\\a', label: 'X', lastActivityAt: 1000, pinned: false } },
     };
     expect(sanitizeAppConfig(parsed, defaults).sessionRegistry['chave-real']?.sessionId).toBe('chave-real');
+  });
+
+  // T708 — mesma chave nova, mesmo cuidado: array com tipo errado cai no
+  // default [] em vez de derrubar o resto da config.
+  it('collapsedFavorites com tipo errado (objeto, número, array de não-strings) cai no default []', () => {
+    const defaults = baseDefaults();
+    expect(sanitizeAppConfig({ ...defaults, collapsedFavorites: { a: true } }, defaults).collapsedFavorites).toEqual([]);
+    expect(sanitizeAppConfig({ ...defaults, collapsedFavorites: 42 }, defaults).collapsedFavorites).toEqual([]);
+    expect(sanitizeAppConfig({ ...defaults, collapsedFavorites: [1, 2] }, defaults).collapsedFavorites).toEqual([]);
+  });
+
+  it('collapsedFavorites válido é preservado', () => {
+    const defaults = baseDefaults();
+    expect(sanitizeAppConfig({ ...defaults, collapsedFavorites: ['C:\\a', 'C:\\b'] }, defaults).collapsedFavorites).toEqual([
+      'C:\\a',
+      'C:\\b',
+    ]);
   });
 });
 

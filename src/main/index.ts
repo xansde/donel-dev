@@ -389,6 +389,13 @@ function registerConfigIpcHandlers(): void {
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });
+
+  /** T708 (007) — substitui a lista INTEIRA de projetos com o grupo "Favoritos" colapsado (CA-1). */
+  ipcMain.handle(CONFIG_CHANNELS.setCollapsedFavorites, (_event, collapsed: string[]): AppConfigDto => {
+    appConfig = { ...appConfig, collapsedFavorites: Array.isArray(collapsed) ? collapsed.filter((path) => typeof path === 'string') : [] };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
 }
 
 /**

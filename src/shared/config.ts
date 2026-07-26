@@ -19,6 +19,8 @@ export const CONFIG_CHANNELS = {
   setProjectRoots: 'config:setProjectRoots',
   setNotificationPreference: 'config:setNotificationPreference',
   setLauncherDefaults: 'config:setLauncherDefaults',
+  /** T708 (007-favoritos-sessoes) — estado de colapso do grupo "Favoritos" (CA-1), persistido por projeto. */
+  setCollapsedFavorites: 'config:setCollapsedFavorites',
 } as const;
 
 /**
@@ -59,6 +61,12 @@ export interface AppConfigDto {
    * quem monta o grupo "Favoritos" da sidebar a partir deste mapa.
    */
   readonly sessionRegistry: SessionRegistry;
+  /**
+   * T708 (007) — caminhos de projetos favoritados cujo grupo está COLAPSADO
+   * (CA-1: estado de colapso persiste entre execuções). Ausência = expandido
+   * (default) — evita crescer a lista a cada favorito novo.
+   */
+  readonly collapsedFavorites: readonly string[];
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */
@@ -69,4 +77,6 @@ export interface DonelConfigApi {
   setNotificationPreference(preference: NotificationPreference): Promise<AppConfigDto>;
   /** Gravado a cada "▶ Iniciar" do Launcher — semeia a config do PRÓXIMO Launcher aberto (FR-007 "defaults do launcher"). */
   setLauncherDefaults(defaults: LauncherDefaultsDto): Promise<AppConfigDto>;
+  /** T708 (007) — substitui a lista INTEIRA de projetos favoritados colapsados (CA-1). */
+  setCollapsedFavorites(collapsed: string[]): Promise<AppConfigDto>;
 }

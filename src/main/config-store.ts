@@ -69,6 +69,8 @@ export interface AppConfig {
   readonly theme: 'dark';
   /** T704 (007) — registro de sessões recentes/fixadas por projeto favoritado. Ver src/shared/sessionRegistry.ts. */
   readonly sessionRegistry: SessionRegistry;
+  /** T708 (007) — projetos favoritados com o grupo COLAPSADO (CA-1). Ausência = expandido. */
+  readonly collapsedFavorites: readonly string[];
 }
 
 /** `projectRoots` não tem um default universal (depende do homedir da máquina) — quem chama monta com `defaultProjectRoots(homedir)` (project-scanner.ts) e passa aqui. */
@@ -83,6 +85,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     sessionNames: {},
     theme: 'dark',
     sessionRegistry: {},
+    collapsedFavorites: [],
   };
 }
 
@@ -95,6 +98,7 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     sessionNames: config.sessionNames,
     theme: config.theme,
     sessionRegistry: config.sessionRegistry,
+    collapsedFavorites: config.collapsedFavorites,
   };
 }
 
@@ -289,6 +293,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     sessionNames: sanitizeSessionNames(candidate.sessionNames),
     theme: 'dark',
     sessionRegistry: sanitizeSessionRegistry(candidate.sessionRegistry),
+    collapsedFavorites: isStringArray(candidate.collapsedFavorites) ? candidate.collapsedFavorites : defaults.collapsedFavorites,
   };
 }
 

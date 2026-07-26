@@ -46,6 +46,38 @@ export interface ProjectSidebarProps {
    * mudar de significado).
    */
   onShowPreviousSessions: (project: ProjectInfo) => void;
+  /** T708 (007-favoritos-sessoes) — grupo novo NO TOPO (C5), só projetos favoritados (D6). */
+  favoriteGroups: FavoriteProjectGroup[];
+  /** T708 — colapsar/expandir o grupo de um projeto favoritado; estado persiste (CA-1). */
+  onToggleFavoriteGroupCollapsed: (projectPath: string) => void;
+  /** T710 — clique numa linha do grupo: foca a aba se já aberta, senão retoma (CA-4). */
+  onFocusOrResumeFavoriteSession: (sessionId: string) => void;
+  /** T710/CA-5 — pin da SESSÃO (persistido), gesto único que também alimenta o desempate da lista geral (C2). */
+  onToggleFavoriteSessionPinned: (sessionId: string) => void;
+}
+
+/** Linha de sessão dentro de um grupo "Favoritos" (T708). */
+export interface FavoriteSessionRow {
+  readonly sessionId: string;
+  readonly label: string;
+  readonly pinned: boolean;
+}
+
+/**
+ * Um projeto favoritado + as sessões que aparecem sob ele (T708/CA-2: 5
+ * recentes + fixadas). `liveState`/`liveCount` chegam no T709 (CA-6, cabeçalho
+ * que "grita"); `undefined` = nenhuma aba viva desse projeto agora.
+ */
+export interface FavoriteProjectGroup {
+  readonly project: ProjectInfo;
+  readonly collapsed: boolean;
+  /** T708/CA-8 — semeadura em andamento (única espera visível da feature). */
+  readonly loading: boolean;
+  readonly sessions: FavoriteSessionRow[];
+  /** T709/CA-6 — pior estado do semáforo entre as abas VIVAS deste projeto; `undefined` = nenhuma aba viva. */
+  readonly liveState?: SessionState;
+  /** T709/CA-6 — contagem de abas vivas deste projeto (o "com contagem" do CA-6). */
+  readonly liveCount: number;
 }
 
 function rootLabel(root: string): string {
@@ -128,6 +160,86 @@ function SessionRow({
   );
 }
 
+/**
+ * T708/T710 (007) — uma linha do grupo "Favoritos": rótulo (registro, CA-10) +
+ * pin. Renomear pelo grupo está FORA de escopo (é a 004; o rótulo aqui só
+ * CONSOME a resolução) — sem `EditableLabel`, de propósito.
+ */
+function FavoriteSessionRowView({
+  session,
+  onFocus,
+  onTogglePinned,
+}: {
+  session: FavoriteSessionRow;
+  onFocus: (sessionId: string) => void;
+  onTogglePinned: (sessionId: string) => void;
+}): React.JSX.Element {
+  return (
+    <div className={styles.sessionRow}>
+      <button type="button" className={styles.sessionOpenButton} onClick={() => onFocus(session.sessionId)}>
+        <span className={styles.sessionName}>{session.label}</span>
+      </button>
+      <button
+        type="button"
+        className={styles.pinButton}
+        onClick={() => onTogglePinned(session.sessionId)}
+        aria-pressed={session.pinned}
+        aria-label={session.pinned ? `Desafixar sessão ${session.label}` : `Fixar sessão ${session.label}`}
+      >
+        {session.pinned ? (
+          <Pin size={12} strokeWidth={1.5} fill="currentColor" aria-hidden="true" />
+        ) : (
+          <PinOff size={12} strokeWidth={1.5} aria-hidden="true" />
+        )}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * T708/T709 (007) — um projeto favoritado, colapsável (CA-1), com o
+ * cabeçalho que "grita" o pior estado das abas vivas (CA-6) e as sessões sob
+ * ele (CA-2).
+ */
+function FavoriteGroupView({
+  group,
+  onToggleCollapsed,
+  onFocusSession,
+  onTogglePinned,
+}: {
+  group: FavoriteProjectGroup;
+  onToggleCollapsed: (projectPath: string) => void;
+  onFocusSession: (sessionId: string) => void;
+  onTogglePinned: (sessionId: string) => void;
+}): React.JSX.Element {
+  return (
+    <div className={styles.projectGroup} data-testid={`favorite-group-${group.project.name}`}>
+      <button
+        type="button"
+        className={styles.projectRootToggle}
+        onClick={() => onToggleCollapsed(group.project.path)}
+        aria-expanded={!group.collapsed}
+      >
+        {group.collapsed ? (
+          <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" />
+        ) : (
+          <ChevronDown size={12} strokeWidth={1.5} aria-hidden="true" />
+        )}
+        {/* CA-6 — o cabeçalho acende mesmo com o grupo FECHADO: sem aba viva, sem dot. */}
+        {group.liveState ? <StateDot state={group.liveState} /> : null}
+        <span className={styles.projectRoot}>{group.project.name}</span>
+        {group.liveCount > 0 ? <span className={styles.sessionProject}>{group.liveCount}</span> : null}
+        {group.loading ? <span className={styles.hint}>carregando…</span> : null}
+      </button>
+      {group.collapsed
+        ? null
+        : group.sessions.map((session) => (
+            <FavoriteSessionRowView key={session.sessionId} session={session} onFocus={onFocusSession} onTogglePinned={onTogglePinned} />
+          ))}
+    </div>
+  );
+}
+
 export function ProjectSidebar({
   projects,
   loadingProjects,
@@ -138,6 +250,10 @@ export function ProjectSidebar({
   onTogglePin,
   onRenameSession,
   onShowPreviousSessions,
+  favoriteGroups,
+  onToggleFavoriteGroupCollapsed,
+  onFocusOrResumeFavoriteSession,
+  onToggleFavoriteSessionPinned,
 }: ProjectSidebarProps): React.JSX.Element {
   const [collapsedRoots, setCollapsedRoots] = useState<ReadonlySet<string>>(new Set());
   const groups = useMemo(() => groupByRoot(projects), [projects]);
@@ -154,6 +270,24 @@ export function ProjectSidebar({
 
   return (
     <nav className={styles.sidebar} aria-label="Projetos e sessões">
+      {/* T708 (007) — C5: grupo novo NO TOPO, ANTES de "Projetos". Só existe
+          quando há ao menos um projeto favoritado (D6) — sem CTA de seção
+          vazia, mesmo espírito do resto da sidebar. */}
+      {favoriteGroups.length > 0 ? (
+        <section aria-label="Favoritos">
+          <h2 className={styles.sectionTitle}>Favoritos</h2>
+          {favoriteGroups.map((group) => (
+            <FavoriteGroupView
+              key={group.project.path}
+              group={group}
+              onToggleCollapsed={onToggleFavoriteGroupCollapsed}
+              onFocusSession={onFocusOrResumeFavoriteSession}
+              onTogglePinned={onToggleFavoriteSessionPinned}
+            />
+          ))}
+        </section>
+      ) : null}
+
       <section>
         <h2 className={styles.sectionTitle}>Projetos</h2>
         {loadingProjects ? <p className={styles.hint}>Carregando projetos…</p> : null}

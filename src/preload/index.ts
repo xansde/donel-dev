@@ -145,6 +145,9 @@ const donelApi: DonelApi = {
 
     setLauncherDefaults: (defaults: LauncherDefaultsDto) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setLauncherDefaults, defaults) as Promise<AppConfigDto>,
+
+    setCollapsedFavorites: (collapsed: string[]) =>
+      ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },
 };
 

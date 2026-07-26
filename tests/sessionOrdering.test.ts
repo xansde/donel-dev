@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sortSessions, type OrderableSession } from '../src/shared/sessionOrdering';
+import { sortSessions, worstState, type OrderableSession } from '../src/shared/sessionOrdering';
 
 // T007 — ordenação da lista de SESSÕES (ui-spec §2/§3, título da task
 // "sessões fixadas"): o estado do semáforo sempre vence; pin só desempata
@@ -84,5 +84,40 @@ describe('sortSessions', () => {
     sortSessions(sessions);
 
     expect(sessions.map((s) => s.id)).toEqual(originalOrder);
+  });
+});
+
+// T709 (007-favoritos-sessoes) — CA-6: o cabeçalho do projeto colapsado
+// "grita" o pior estado das abas vivas. Mesma precedência do sortSessions
+// acima (permission > error > waiting > working > done) — sem 2ª tabela.
+describe('worstState', () => {
+  it('vazio (nenhuma aba viva) devolve undefined', () => {
+    expect(worstState([])).toBeUndefined();
+  });
+
+  it('uma sessão só devolve o próprio estado', () => {
+    expect(worstState(['working'])).toBe('working');
+  });
+
+  it('permission vence qualquer combinação', () => {
+    expect(worstState(['done', 'working', 'waiting', 'error', 'permission'])).toBe('permission');
+  });
+
+  it('sem permission, error vence', () => {
+    expect(worstState(['done', 'working', 'waiting', 'error'])).toBe('error');
+  });
+
+  it('sem permission/error, waiting vence', () => {
+    expect(worstState(['done', 'working', 'waiting'])).toBe('waiting');
+  });
+
+  it('só working/done: working vence', () => {
+    expect(worstState(['done', 'working'])).toBe('working');
+  });
+
+  it('não muta o array recebido', () => {
+    const states: ('done' | 'working')[] = ['done', 'working'];
+    worstState(states);
+    expect(states).toEqual(['done', 'working']);
   });
 });
