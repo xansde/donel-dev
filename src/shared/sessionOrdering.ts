@@ -28,6 +28,18 @@ export interface OrderableSession {
   readonly stateEnteredAt?: number;
 }
 
+/**
+ * T709 (007-favoritos-sessoes) — pior estado entre um conjunto de sessões
+ * VIVAS (CA-6: o cabeçalho do projeto colapsado "grita" o pior estado de
+ * dentro). Reusa a MESMA `STATE_RANK` do `sortSessions` acima — não escreve
+ * uma segunda tabela de precedência. `undefined` = nenhuma sessão (sem aba
+ * viva daquele projeto agora).
+ */
+export function worstState(states: readonly SessionState[]): SessionState | undefined {
+  if (states.length === 0) return undefined;
+  return [...states].sort((a, b) => STATE_RANK[a] - STATE_RANK[b])[0];
+}
+
 /** Ordena sessões pelo semáforo primeiro; dentro de `permission`, a mais antiga (FR-010/CA-6) vem primeiro; pin desempata dentro do mesmo estado (nos demais casos). */
 export function sortSessions<T extends OrderableSession>(sessions: readonly T[]): T[] {
   return [...sessions].sort((a, b) => {

@@ -16,6 +16,7 @@ import {
   type ConfigIoDeps,
   type LegacyConfigPaths,
 } from '../src/main/config-store';
+import { upsertVisit } from '../src/shared/sessionRegistry';
 
 // T015 — ConfigStore (FR-007). TDD nos módulos puros: escrita atômica (fs
 // mockado, sem tocar disco), migração dos JSONs legados de T007/T014, e
@@ -41,6 +42,8 @@ describe('defaultAppConfig (puro)', () => {
       notificationPreference: 'permission-only',
       sessionNames: {},
       theme: 'dark',
+      sessionRegistry: {},
+      collapsedFavorites: [],
     });
   });
 });
@@ -58,6 +61,8 @@ describe('toAppConfigDto (puro)', () => {
       notificationPreference: 'permission-only',
       sessionNames: {},
       theme: 'dark',
+      sessionRegistry: {},
+      collapsedFavorites: [],
     });
   });
 
@@ -152,6 +157,10 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       notificationPreference: 'all',
       sessionNames: { 'abc-123': { name: 'Refatorar', seenTitle: 'do CLI', updatedAt: '2026-07-24T12:00:00.000Z' } },
       theme: 'dark',
+      sessionRegistry: {
+        'sess-1': { sessionId: 'sess-1', projectPath: 'C:\\x', label: 'Trabalhando', lastActivityAt: 1000, pinned: true },
+      },
+      collapsedFavorites: ['C:\\x'],
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
   });
@@ -184,6 +193,8 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       notificationPreference: defaults.notificationPreference, // fallback
       sessionNames: {}, // ausente no objeto → default
       theme: 'dark',
+      sessionRegistry: {}, // ausente no objeto → default
+      collapsedFavorites: [], // ausente no objeto → default
     });
   });
 
@@ -204,6 +215,8 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
     const sanitized = sanitizeAppConfig(legacyShape, defaults);
 
     expect(sanitized.sessionNames).toEqual({});
+    expect(sanitized.sessionRegistry).toEqual({});
+    expect(sanitized.collapsedFavorites).toEqual([]);
     expect(sanitized.projectRoots).toEqual(['C:\\meu\\root']);
     expect(sanitized.favorites).toEqual(['C:\\meu\\projeto']);
     expect(sanitized.activeProfileSlug).toBe('tecnologia-claude-3');
@@ -266,6 +279,71 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
   it('version sempre normaliza pra CONFIG_SCHEMA_VERSION atual, mesmo se o arquivo trouxer outra', () => {
     const defaults = baseDefaults();
     expect(sanitizeAppConfig({ ...defaults, version: 99 }, defaults).version).toBe(1);
+  });
+
+  // T704 (007-favoritos-sessoes) — chave nova, mesma armadilha da T402/004:
+  // se um campo faltar/tiver tipo errado ela é descartada em silêncio na
+  // leitura. Testada aqui (não só em tests/sessionRegistry.test.ts) porque é
+  // este arquivo que prova os "quatro pontos" do config-store.ts.
+  it('sessionRegistry com tipo errado (array, string, null) cai no default {}', () => {
+    const defaults = baseDefaults();
+    expect(sanitizeAppConfig({ ...defaults, sessionRegistry: ['a'] }, defaults).sessionRegistry).toEqual({});
+    expect(sanitizeAppConfig({ ...defaults, sessionRegistry: 'lixo' }, defaults).sessionRegistry).toEqual({});
+    expect(sanitizeAppConfig({ ...defaults, sessionRegistry: null }, defaults).sessionRegistry).toEqual({});
+  });
+
+  it('sessionRegistry descarta ENTRADA a ENTRADA o que estiver malformado, preservando as boas', () => {
+    const defaults = baseDefaults();
+    const parsed = {
+      ...defaults,
+      sessionRegistry: {
+        boa: { sessionId: 'boa', projectPath: 'C:\\a', label: 'Refatorar', lastActivityAt: 1000, pinned: true },
+        'boa-nao-fixada': { sessionId: 'boa-nao-fixada', projectPath: 'C:\\a', label: 'Outra', lastActivityAt: 2000, pinned: false },
+        'ruim-sem-project': { sessionId: 'ruim-sem-project', label: 'X', lastActivityAt: 1000, pinned: false },
+        'ruim-label-vazio': { sessionId: 'ruim-label-vazio', projectPath: 'C:\\a', label: '   ', lastActivityAt: 1000, pinned: false },
+        'ruim-sem-atividade': { sessionId: 'ruim-sem-atividade', projectPath: 'C:\\a', label: 'X', lastActivityAt: 'ontem', pinned: false },
+        'ruim-tipo': 'não é objeto',
+      },
+    };
+    expect(sanitizeAppConfig(parsed, defaults).sessionRegistry).toEqual({
+      boa: { sessionId: 'boa', projectPath: 'C:\\a', label: 'Refatorar', lastActivityAt: 1000, pinned: true },
+      'boa-nao-fixada': { sessionId: 'boa-nao-fixada', projectPath: 'C:\\a', label: 'Outra', lastActivityAt: 2000, pinned: false },
+    });
+  });
+
+  it('sessionRegistry: pinned ausente/não-booleano vira false (nunca "fixada" por acidente)', () => {
+    const defaults = baseDefaults();
+    const parsed = {
+      ...defaults,
+      sessionRegistry: { s1: { sessionId: 's1', projectPath: 'C:\\a', label: 'X', lastActivityAt: 1000 } },
+    };
+    expect(sanitizeAppConfig(parsed, defaults).sessionRegistry.s1?.pinned).toBe(false);
+  });
+
+  it('sessionRegistry: o sessionId vem da CHAVE do mapa, não do valor (evita divergência)', () => {
+    const defaults = baseDefaults();
+    const parsed = {
+      ...defaults,
+      sessionRegistry: { 'chave-real': { sessionId: 'outro-id-no-valor', projectPath: 'C:\\a', label: 'X', lastActivityAt: 1000, pinned: false } },
+    };
+    expect(sanitizeAppConfig(parsed, defaults).sessionRegistry['chave-real']?.sessionId).toBe('chave-real');
+  });
+
+  // T708 — mesma chave nova, mesmo cuidado: array com tipo errado cai no
+  // default [] em vez de derrubar o resto da config.
+  it('collapsedFavorites com tipo errado (objeto, número, array de não-strings) cai no default []', () => {
+    const defaults = baseDefaults();
+    expect(sanitizeAppConfig({ ...defaults, collapsedFavorites: { a: true } }, defaults).collapsedFavorites).toEqual([]);
+    expect(sanitizeAppConfig({ ...defaults, collapsedFavorites: 42 }, defaults).collapsedFavorites).toEqual([]);
+    expect(sanitizeAppConfig({ ...defaults, collapsedFavorites: [1, 2] }, defaults).collapsedFavorites).toEqual([]);
+  });
+
+  it('collapsedFavorites válido é preservado', () => {
+    const defaults = baseDefaults();
+    expect(sanitizeAppConfig({ ...defaults, collapsedFavorites: ['C:\\a', 'C:\\b'] }, defaults).collapsedFavorites).toEqual([
+      'C:\\a',
+      'C:\\b',
+    ]);
   });
 });
 
@@ -520,9 +598,20 @@ describe('readAppConfig / writeAppConfig — I/O real em pasta temporária (inte
 
     const loaded = readAppConfig(filePath, baseDefaults(), legacy, io);
     expect(loaded.sessionNames).toEqual({});
+    expect(loaded.sessionRegistry).toEqual({});
     expect(loaded.projectRoots).toEqual(['C:\\meu\\root']);
     expect(loaded.favorites).toEqual(['C:\\meu\\projeto']);
     expect(loaded.launcherDefaults).toEqual({ model: 'opus', effort: 'max', permissionMode: 'auto' });
+  });
+
+  // T704 — CA-5: fixar/registro tem de sobreviver a fechar e reabrir o app.
+  it('sessionRegistry sobrevive ao round-trip em disco', () => {
+    const registry = upsertVisit({}, { sessionId: 'sess-1', projectPath: 'C:\\meu\\projeto', label: 'Trabalhando', atMs: 1000 });
+    const config: AppConfig = { ...baseDefaults(), sessionRegistry: registry };
+    writeAppConfig(filePath, config, io);
+
+    const reread = readAppConfig(filePath, baseDefaults(), legacy, io);
+    expect(reread.sessionRegistry).toEqual(registry);
   });
 
   it('config.json corrompido no disco (I/O real) cai nos defaults sem lançar', () => {

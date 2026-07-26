@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
 import type { AppConfigDto, LauncherDefaultsDto, NotificationPreference, SessionNamesMap } from '../shared/config';
 import type { StoredSessionName } from '../shared/sessionName';
+import type { RegisteredSession, SessionRegistry } from '../shared/sessionRegistry';
 import { PRINCIPAL_PROFILE_SLUG } from './profile-manager';
 
 // T015 — ConfigStore formal (FR-007): `%APPDATA%\donel-dev\config.json` (na
@@ -66,6 +67,10 @@ export interface AppConfig {
   readonly sessionNames: SessionNamesMap;
   /** P1 (tasks.md "Fora deste ciclo": temas) — único valor válido no P0. */
   readonly theme: 'dark';
+  /** T704 (007) — registro de sessões recentes/fixadas por projeto favoritado. Ver src/shared/sessionRegistry.ts. */
+  readonly sessionRegistry: SessionRegistry;
+  /** T708 (007) — projetos favoritados com o grupo COLAPSADO (CA-1). Ausência = expandido. */
+  readonly collapsedFavorites: readonly string[];
 }
 
 /** `projectRoots` não tem um default universal (depende do homedir da máquina) — quem chama monta com `defaultProjectRoots(homedir)` (project-scanner.ts) e passa aqui. */
@@ -79,6 +84,8 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     notificationPreference: DEFAULT_NOTIFICATION_PREFERENCE,
     sessionNames: {},
     theme: 'dark',
+    sessionRegistry: {},
+    collapsedFavorites: [],
   };
 }
 
@@ -90,6 +97,8 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     notificationPreference: config.notificationPreference,
     sessionNames: config.sessionNames,
     theme: config.theme,
+    sessionRegistry: config.sessionRegistry,
+    collapsedFavorites: config.collapsedFavorites,
   };
 }
 
@@ -215,6 +224,37 @@ function sanitizeSessionNames(value: unknown): SessionNamesMap {
   return sanitized;
 }
 
+/**
+ * T704 (007-favoritos-sessoes) — sanitiza `sessionRegistry` ENTRADA A ENTRADA,
+ * mesmo espírito de `sanitizeSessionNames`: um projeto novo (chave nova neste
+ * batch) chega SEMPRE sem esta chave em todo `config.json` já existente na
+ * máquina do Alexandre — se o sanitize a descartasse por completo por engano,
+ * ok (vira `{}`, semeadura do CA-8 cobre); mas uma entrada malformada não pode
+ * levar as demais junto. `sessionId` vem da CHAVE do mapa (nunca do valor —
+ * evita um `sessionId` interno divergente da chave que indexa o registro).
+ */
+function sanitizeSessionRegistry(value: unknown): SessionRegistry {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+
+  const sanitized: Record<string, RegisteredSession> = {};
+  for (const [sessionId, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!sessionId || typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+    const candidate = entry as Partial<RegisteredSession>;
+    if (typeof candidate.projectPath !== 'string' || !candidate.projectPath) continue;
+    if (typeof candidate.label !== 'string' || !candidate.label.trim()) continue;
+    if (typeof candidate.lastActivityAt !== 'number' || !Number.isFinite(candidate.lastActivityAt)) continue;
+
+    sanitized[sessionId] = {
+      sessionId,
+      projectPath: candidate.projectPath,
+      label: candidate.label,
+      lastActivityAt: candidate.lastActivityAt,
+      pinned: candidate.pinned === true,
+    };
+  }
+  return sanitized;
+}
+
 function sanitizeLauncherDefaults(value: unknown, fallback: LauncherDefaultsDto): LauncherDefaultsDto {
   if (typeof value !== 'object' || value === null) return fallback;
   const candidate = value as Partial<LauncherDefaultsDto>;
@@ -252,6 +292,8 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
       : defaults.notificationPreference,
     sessionNames: sanitizeSessionNames(candidate.sessionNames),
     theme: 'dark',
+    sessionRegistry: sanitizeSessionRegistry(candidate.sessionRegistry),
+    collapsedFavorites: isStringArray(candidate.collapsedFavorites) ? candidate.collapsedFavorites : defaults.collapsedFavorites,
   };
 }
 

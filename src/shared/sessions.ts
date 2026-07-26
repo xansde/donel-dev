@@ -22,6 +22,19 @@ export const SESSION_CHANNELS = {
   list: 'sessions:list',
   /** T406 (004-nomear-sessoes) — primeira ESCRITA deste domínio; grava/limpa o nome dado pela UI no ConfigStore. O `.jsonl` do Claude segue somente-leitura (decisão C1). */
   setName: 'sessions:setName',
+  /**
+   * T705 (007-favoritos-sessoes) — upsert de uma visita no registro (plan.md
+   * §Fatia 2). Só o RENDERER chama: é ele quem resolve o `label`
+   * (`resolveSessionName`) nos três gatilhos do T707. O `main` valida o
+   * payload porque é ele que persiste (mesmo espírito do `setName` acima).
+   */
+  registerVisit: 'sessions:registerVisit',
+  /** T705 — fixar/desfixar a SESSÃO (por `sessionId`, persistido — CA-5), distinto do pin volátil de hoje (`TabState.pinned`, por aba). */
+  setPinned: 'sessions:setPinned',
+  /** T705/CA-11 — "esquecer" uma entrada órfã (retomar falhou, `.jsonl` sumiu). Canal PRÓPRIO, não reaproveita `setPinned`: desfixar e esquecer são operações diferentes. */
+  forget: 'sessions:forget',
+  /** T706/CA-8 — a única leitura de disco desta feature; só roda quando o projeto não tem NENHUMA entrada no registro (guarda dura no main). */
+  seedProject: 'sessions:seedProject',
 } as const;
 
 /**
@@ -87,6 +100,14 @@ export interface DonelSessionsApi {
    * Devolve a função de cancelamento (mesmo padrão de `pty.onData`).
    */
   onTranscriptChanged(listener: (payload: TranscriptChangedPayload) => void): () => void;
+  /** T705 (007) — upsert de uma visita (CA-7/D9). `label` já vem resolvido (`resolveSessionName`) pelo chamador — o main não recalcula. */
+  registerVisit(sessionId: string, projectPath: string, label: string): Promise<AppConfigDto>;
+  /** T705/CA-5 — fixa/desfixa a SESSÃO, persistido; continua servindo de desempate na lista geral (C2). */
+  setPinned(sessionId: string, pinned: boolean): Promise<AppConfigDto>;
+  /** T705/CA-11 — esquece uma entrada órfã (nunca falha por sessionId inexistente — no-op). */
+  forget(sessionId: string): Promise<AppConfigDto>;
+  /** T706/CA-8 — semeadura única de um projeto sem NENHUMA entrada no registro. */
+  seedProject(projectPath: string): Promise<AppConfigDto>;
 }
 
 const TAB_NAME_MAX_LENGTH = 40;

@@ -69,8 +69,10 @@ import { CLIPBOARD_CHANNELS } from '../shared';
 import { HeadroomCache, readAllProfilesHeadroom } from './quota-headroom';
 import { resolveClaudeCorrelation } from './session-correlation';
 import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
+import { seedProject } from './session-seed';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
 import { TranscriptWatcherRegistry } from './transcript-watcher';
+import { removeSession, setPinned, upsertVisit } from '../shared/sessionRegistry';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
 // PtyManager chega em T004 (este arquivo). ProjectScanner chega no T007
@@ -405,6 +407,13 @@ function registerConfigIpcHandlers(): void {
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });
+
+  /** T708 (007) — substitui a lista INTEIRA de projetos com o grupo "Favoritos" colapsado (CA-1). */
+  ipcMain.handle(CONFIG_CHANNELS.setCollapsedFavorites, (_event, collapsed: string[]): AppConfigDto => {
+    appConfig = { ...appConfig, collapsedFavorites: Array.isArray(collapsed) ? collapsed.filter((path) => typeof path === 'string') : [] };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
 }
 
 /**
@@ -451,6 +460,64 @@ function registerSessionIpcHandlers(): void {
       return toAppConfigDto(appConfig);
     },
   );
+
+  /**
+   * T705 (007-favoritos-sessoes) — upsert de uma visita no registro (D9/CA-7).
+   * Só o RENDERER chama (plan.md §Fatia 2: um escritor só, o main só valida o
+   * payload — a mesma disciplina defensiva do `setName` acima, com `typeof`
+   * explícito mesmo o contrato TS já dizendo `string`). `upsertVisit` já é
+   * no-op para `sessionId`/`projectPath`/`label` vazios (sessionRegistry.ts),
+   * então a checagem aqui é só a primeira linha de defesa contra IPC malformado.
+   */
+  ipcMain.handle(
+    SESSION_CHANNELS.registerVisit,
+    (_event, sessionId: string, projectPath: string, label: string): AppConfigDto => {
+      if (typeof sessionId !== 'string' || typeof projectPath !== 'string' || typeof label !== 'string') {
+        return toAppConfigDto(appConfig);
+      }
+      appConfig = { ...appConfig, sessionRegistry: upsertVisit(appConfig.sessionRegistry, { sessionId, projectPath, label, atMs: Date.now() }) };
+      persistAppConfig();
+      return toAppConfigDto(appConfig);
+    },
+  );
+
+  /** T705/CA-5 — fixa/desfixa a SESSÃO (persistido); `setPinned` (sessionRegistry.ts) já é no-op pra sessionId inexistente. */
+  ipcMain.handle(SESSION_CHANNELS.setPinned, (_event, sessionId: string, pinned: boolean): AppConfigDto => {
+    if (typeof sessionId !== 'string' || !sessionId) return toAppConfigDto(appConfig);
+    appConfig = { ...appConfig, sessionRegistry: setPinned(appConfig.sessionRegistry, sessionId, pinned === true) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** T705/CA-11 — "esquecer" uma entrada órfã (retomar falhou, `.jsonl` sumiu). Canal PRÓPRIO — não reaproveita `setPinned` (desfixar e esquecer são operações diferentes). */
+  ipcMain.handle(SESSION_CHANNELS.forget, (_event, sessionId: string): AppConfigDto => {
+    if (typeof sessionId !== 'string' || !sessionId) return toAppConfigDto(appConfig);
+    appConfig = { ...appConfig, sessionRegistry: removeSession(appConfig.sessionRegistry, sessionId) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /**
+   * T706/CA-8 — a ÚNICA leitura de disco desta feature; delega inteiramente
+   * pro `seedProject` (T706, TDD já fechado): a guarda dura ("projeto já tem
+   * entrada → não lê disco") vive lá, não aqui, para ser testável sem subir o
+   * Electron. `claudeHome` é o do PERFIL ATIVO (mesmo valor usado em
+   * `resolveTranscriptPath`/`claudeConfigDir` do spawn) — os transcripts do
+   * perfil ativo vivem lá, não necessariamente em `~/.claude`.
+   */
+  ipcMain.handle(SESSION_CHANNELS.seedProject, async (_event, projectPath: string): Promise<AppConfigDto> => {
+    if (typeof projectPath !== 'string' || !projectPath) return toAppConfigDto(appConfig);
+    const sessionRegistry = await seedProject(
+      appConfig.sessionRegistry,
+      projectPath,
+      appConfig.sessionNames,
+      { indexProjectSessions },
+      activeProfileConfigDir,
+    );
+    appConfig = { ...appConfig, sessionRegistry };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
 }
 
 /** Sempre inclui o Principal + varre `~/.claude-profiles/*` de novo a cada chamada (mesmo espírito de `listProjectsWithFavorites` — lista pequena, I/O local, sem necessidade de cache próprio aqui). */

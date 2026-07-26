@@ -1,8 +1,10 @@
 # Tasks 007 — Favoritos com sessões recentes na sidebar
 
-**Status:** ⏸️ **PLANEJADO — aguardando OK dele no gate de execução.** Nenhuma
-linha de código. Branch: `feature/mvp-p0`.
-**Atualizado:** 2026-07-25
+**Status:** ✅ **T701–T711 ENTREGUES** (typecheck + 493 unit + smoke próprio
+verdes). ⚠️ **T712 com achado pendente de decisão** — CA-7 (< 100 ms) **não
+foi atingido** (medido 103–149 ms, ver `medicao-ca7.md`). Branch:
+`feat/007-favoritos-sessoes`.
+**Atualizado:** 2026-07-26 (implementação)
 **12 tasks** — `T701`–`T712`, contíguas na ordem de dependência
 (Batch A: T701–T706 · Batch B: T707–T712).
 **Referências:** `spec.md` (CA-1..CA-11 + D1–D9 + C1–C6) e `plan.md`
@@ -20,6 +22,23 @@ Convenções: [P] = paralelizável com a anterior; DoD = definition of done.
 TDD nos módulos puros (registro, seleção, decisão de gravar) — é onde a feature
 se decide. UI valida por smoke roteirizado isolado do `%APPDATA%` real, com
 fixture de transcript; **nunca** abrir sessão claude real só para popular a lista.
+
+## Status de entrega (2026-07-26)
+
+| Task | Status | Commit / arquivo |
+|---|---|---|
+| T701 | ✅ entregue | `src/shared/sessionRegistry.ts` (`upsertVisit`/`pruneProject`) |
+| T702 | ✅ entregue | `src/shared/sessionRegistry.ts` (`setPinned`/`removeSession`) |
+| T703 | ✅ entregue | `src/shared/sessionRegistry.ts` (`selectProjectSessions`/`selectRegisteredIds`) |
+| T704 | ✅ entregue | `src/main/config-store.ts` + `src/shared/config.ts` (chave `sessionRegistry`) |
+| T705 | ✅ entregue | `src/shared/sessions.ts` + `src/main/index.ts` + `src/preload/index.ts` (`registerVisit`/`setPinned`/`forget`) |
+| T706 | ✅ entregue | `src/main/session-seed.ts` (`seedProject`, extraído para ser testável sem Electron) |
+| T707 | ✅ entregue | `src/renderer/src/App.tsx` (3 gatilhos + `maybeRegisterVisit`, debounce de 10s) |
+| T708 | ✅ entregue | `src/renderer/src/ProjectSidebar.tsx` + `App.tsx` (seção "Favoritos", colapso persistido, semeadura no expand) |
+| T709 | ✅ entregue | `src/shared/sessionOrdering.ts` (`worstState`) + dedupe em `App.tsx` |
+| T710 | ⚠️ **parcialmente entregue** | clique foca/retoma + pin unificado: ✅. "Falha ao retomar → `sessions:forget`" (2º momento do CA-11): **não implementado** — exigiria tocar `TerminalPane.tsx` (fora de escopo, pertence à 005) ou inventar o texto de erro do CLI pra sessão inválida (não verificado contra o binário real). Ver `summary` do `result.json`. |
+| T711 | ✅ entregue | `tests/smoke/favorite-sessions.spec.ts` (3 testes) |
+| T712 | ⚠️ **medição feita, alvo não atingido** | `tests/smoke/ca7-measurement.spec.ts` + `medicao-ca7.md`: CA-7 pede < 100 ms, medido 103–149 ms. Suíte COMPLETA (`test:smoke`/`test:smoke:dev`) **não foi rodada por esta sessão** — regra do lote é o cockpit rodar serializado no fim. `npm run dist` também não foi rodado (empacotamento é decisão do cockpit/merge final, não de uma branch de feature paralela). |
 
 ## Batch A — registro, persistência e contrato (invisível ao usuário)
 
@@ -170,3 +189,62 @@ fixture de transcript; **nunca** abrir sessão claude real só para popular a li
 - Reconciliação periódica com o disco e botão de atualizar (C6 fechou como
   fora); sessão criada fora do Donel segue pelo painel "Sessões anteriores".
 - GC geral do `config.json` (§B12 do backlog).
+
+## Gate do cockpit — 2026-07-26 (rodado pelo orquestrador, não pelo implementador)
+
+Suíte rodada **serializada** (uma worktree por vez), na worktree
+`donel-dev-wt-007`, commit de topo `b662e90`:
+
+| Verificação | Resultado medido |
+|---|---|
+| `npm run build` | ok (bundle 776 KB) |
+| `npm run typecheck` | limpo |
+| `npm test` | **493 passed / 0 failed** (29 arquivos) |
+| `test:smoke` | **24 passed / 8 failed**, 6,6 min |
+| `test:smoke:dev` | **1 passed / 0 failed** |
+
+O smoke próprio da feature (`favorite-sessions.spec.ts`, 3 testes) passou dentro
+da suíte completa. **Nenhuma regressão desta feature.** Os 8 vermelhos:
+
+- 2 × `previous-sessions.spec.ts` → dívida T013, baseline do §B11.
+- 3 × `session-rename.spec.ts` + 1 × `session-rename-live.spec.ts` → **artefato de
+  worktree** (§B17, achado neste gate; controle na pasta principal passou).
+- 1 × `session-context.spec.ts:86` → §B15, falha também na base e passa em retry.
+- 1 × `ca7-measurement.spec.ts` → **vermelho por desenho**: o teste mede e falha
+  porque o alvo do CA-7 (< 100 ms) não é atingido. Faixa real **103,20–148,90 ms**
+  em 5 execuções (média ~129 ms), metodologia em `medicao-ca7.md`. **Decisão do
+  Alexandre pendente:** aceitar o desvio ou abrir task de otimização de boot.
+
+**Merge com a `feat/005-terminal-copy-paste`: limpo** (`git merge-tree`, sem
+conflito).
+
+`npm run dist` executado pelo cockpit: instalador em
+`donel-dev-wt-007/release/`. **Instalar segue sendo ato do Alexandre** (§B14).
+
+## E2E aprovado por ele em 2026-07-26
+
+Ele instalou o build **integrado** (005 + 007 no mesmo instalador, branch
+`lote/005-007-e2e`) e rodou o roteiro único
+`specs/roteiro-e2e-lote-005-007.md` — resultado reportado: *"O e2e rodou
+corretamente!"*.
+
+**Por que integrado e não dois apps lado a lado:** os dois installs compartilham
+`%APPDATA%\donel-dev\config.json`, e o `AppConfig` do build da 005 tem lista
+fechada de campos — não conhece `sessionRegistry` nem `collapsedFavorites`. Toda
+escrita do app da 005 reescreveria o config **sem** o registro, apagando os
+favoritos montados durante o teste. Verificado no código antes de decidir.
+
+O que o E2E cobriu desta feature: grupo no topo, colapso persistido, pin
+sobrevivendo ao restart, clique focando aba aberta × retomando aba fechada,
+cabeçalho acendendo com grupo colapsado, desfavoritar devolvendo as sessões, e o
+boot já com o grupo pronto. Os passos 21–22 (o grupo se mantendo sozinho ao longo
+de dias) são de observação continuada e seguem em aberto por natureza, não por
+pendência.
+
+**Continua pendente de decisão dele, e o E2E não resolve:**
+- **CA-7** — 103–149 ms medidos contra alvo de < 100 ms (`medicao-ca7.md`).
+  Aceitar o desvio ou abrir task de otimização de boot. Enquanto não decidir,
+  `ca7-measurement.spec.ts` fica vermelho **por desenho**.
+- **T710** — "esquecer entrada órfã quando a retomada falha": exige coordenar com
+  `TerminalPane.tsx` depois que a 005 mergear, ou verificar contra o binário real
+  o texto de erro do CLI para `-r <id inválido>`.
