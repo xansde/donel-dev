@@ -189,3 +189,34 @@ fixture de transcript; **nunca** abrir sessão claude real só para popular a li
 - Reconciliação periódica com o disco e botão de atualizar (C6 fechou como
   fora); sessão criada fora do Donel segue pelo painel "Sessões anteriores".
 - GC geral do `config.json` (§B12 do backlog).
+
+## Gate do cockpit — 2026-07-26 (rodado pelo orquestrador, não pelo implementador)
+
+Suíte rodada **serializada** (uma worktree por vez), na worktree
+`donel-dev-wt-007`, commit de topo `b662e90`:
+
+| Verificação | Resultado medido |
+|---|---|
+| `npm run build` | ok (bundle 776 KB) |
+| `npm run typecheck` | limpo |
+| `npm test` | **493 passed / 0 failed** (29 arquivos) |
+| `test:smoke` | **24 passed / 8 failed**, 6,6 min |
+| `test:smoke:dev` | **1 passed / 0 failed** |
+
+O smoke próprio da feature (`favorite-sessions.spec.ts`, 3 testes) passou dentro
+da suíte completa. **Nenhuma regressão desta feature.** Os 8 vermelhos:
+
+- 2 × `previous-sessions.spec.ts` → dívida T013, baseline do §B11.
+- 3 × `session-rename.spec.ts` + 1 × `session-rename-live.spec.ts` → **artefato de
+  worktree** (§B17, achado neste gate; controle na pasta principal passou).
+- 1 × `session-context.spec.ts:86` → §B15, falha também na base e passa em retry.
+- 1 × `ca7-measurement.spec.ts` → **vermelho por desenho**: o teste mede e falha
+  porque o alvo do CA-7 (< 100 ms) não é atingido. Faixa real **103,20–148,90 ms**
+  em 5 execuções (média ~129 ms), metodologia em `medicao-ca7.md`. **Decisão do
+  Alexandre pendente:** aceitar o desvio ou abrir task de otimização de boot.
+
+**Merge com a `feat/005-terminal-copy-paste`: limpo** (`git merge-tree`, sem
+conflito).
+
+`npm run dist` executado pelo cockpit: instalador em
+`donel-dev-wt-007/release/`. **Instalar segue sendo ato do Alexandre** (§B14).
