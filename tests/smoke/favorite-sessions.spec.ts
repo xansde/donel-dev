@@ -4,6 +4,11 @@ import type { ElectronApplication, Page } from '@playwright/test';
 import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
+// T710 (008-fechar-pendencias) — o 2º momento do CA-11 entra no 2º teste deste
+// arquivo (passo 7): a sessão SINTÉTICA que ele já usa para provar a retomada
+// nunca existiu no disco, então é exatamente a órfã do CA-11 — a prova sai de
+// graça, sem uma sessão `claude` a mais e sem gastar cota.
+//
 // T711 (007-favoritos-sessoes) — o grupo "Favoritos" no topo da sidebar:
 // CA-1 (colapsável, persistido), CA-2 (5 recentes + fixadas além das 5),
 // CA-3 (dedupe da lista geral), CA-4 (foca aberta / retoma fechada),
@@ -126,8 +131,10 @@ test('T711 — grupo aparece só com favoritados, dedupe da lista geral, cabeça
   await expect(tabs).toHaveCount(0);
 });
 
-test('T711 — poda na 6ª visita, fixada além das 5, colapso e registro sobrevivem ao restart', async () => {
-  test.setTimeout(120_000);
+test('T711/T710 — poda na 6ª visita, fixada além das 5, colapso sobrevive ao restart e a órfã sai quando a retomada falha', async () => {
+  // 180 s: os 120 s originais + a espera do CLI desistir da retomada (passo 7,
+  // ~8,5–10,4 s medidos, com folga para a contenção da suíte).
+  test.setTimeout(180_000);
 
   // 1. Fixa a sessão real que já está no registro (do teste anterior).
   const before = await appWindow.evaluate(() => window.donel.config.get());
@@ -184,6 +191,9 @@ test('T711 — poda na 6ª visita, fixada além das 5, colapso e registro sobrev
 
   const tabs = appWindow.locator('[role="tab"]');
   await expect(tabs).toHaveCount(0);
+  // Fixa a sintética que vai ser clicada — o CA-11/C3 diz que a órfã sai da
+  // lista INCLUSIVE fixada, e é isso que o passo 7 abaixo prova.
+  await appWindow.evaluate((sessionId) => window.donel.sessions.setPinned(sessionId, true), syntheticIds[5]);
   const syntheticRow = groupAfterRestart.locator(`button:has-text("sintética ${syntheticIds[5].slice(0, 8)}")`);
   await expect(syntheticRow).toBeVisible();
   await syntheticRow.click();
@@ -192,9 +202,32 @@ test('T711 — poda na 6ª visita, fixada além das 5, colapso e registro sobrev
   // `--session-id`/`-r` foi imposto — é o que prova o CAMINHO de retomada).
   await expect(tabs).toHaveCount(1, { timeout: 15_000 });
 
-  // Clicar de NOVO na mesma linha FOCA (não duplica) — CA-4 completo.
+  // 6. Clicar de NOVO na mesma linha FOCA (não duplica) — CA-4 completo.
+  // Roda ANTES do passo 7 de propósito: o CLI só desiste da retomada uns 8 s
+  // depois do spawn, então a linha ainda está lá.
   await syntheticRow.click();
   await expect(tabs).toHaveCount(1);
+
+  // 7. T710 (008) — CA-11, 2º momento: a retomada FALHA (esta sessão nunca
+  // existiu no disco) e a entrada órfã sai da lista sozinha, sem aviso.
+  //
+  // Quem dá o sinal é o próprio CLI: `claude -r <uuid inexistente>` imprime
+  // "No conversation found with session ID" e SAI COM CÓDIGO 1 em ~8,5–10,4 s
+  // (medido em specs/008-fechar-pendencias/medicao-t710.md) — nenhum turno de
+  // API é consumido, nada de cota. A aba NÃO é fechada aqui de propósito: o
+  // exit tem de vir do CLI desistindo, não do kill do teste. Medido AQUI, com o
+  // app real: a linha sumiu 5.969 ms depois do 2º clique (≈7,5 s do spawn).
+  //
+  // Se este passo estourar numa PASTA NOVA (worktree), suspeite do §B21 antes
+  // de suspeitar de regressão: o CLI 2.1.220 mostra o diálogo "Accessing
+  // workspace … trust this folder?" na primeira sessão de cada pasta, e com ele
+  // na frente o processo nunca sai — o sinal não chega.
+  await expect(syntheticRow).toHaveCount(0, { timeout: 60_000 });
+  const afterFailure = await appWindow.evaluate(() => window.donel.config.get());
+  expect(afterFailure.sessionRegistry[syntheticIds[5]], 'a órfã fixada tem de ter sido esquecida').toBeUndefined();
+  // A entrada REAL (que existe no disco) continua intacta — a prova de que o
+  // esquecer é verificado, e não "todo exit != 0 apaga".
+  expect(afterFailure.sessionRegistry[pinnedSessionId]?.pinned).toBe(true);
 
   // Limpa a aba antes do próximo teste.
   await tabs.first().getByRole('button', { name: /^Fechar aba /, exact: false }).click();

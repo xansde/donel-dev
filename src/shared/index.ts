@@ -26,6 +26,11 @@ export type {
   QuotaWindow,
 } from './profiles';
 
+// T710 (007/CA-11 2º momento) — decisão de esquecer a entrada órfã quando a
+// retomada falha. Puro; medição do sinal em specs/008-fechar-pendencias/.
+export { RESUME_FAILURE_WINDOW_MS, forgetIfOrphan, resumedSessionIdFromArgs, shouldForgetOnResumeFailure } from './resumeFailure';
+export type { ResumeFailureSignal } from './resumeFailure';
+
 export { CONFIG_CHANNELS } from './config';
 export type { AppConfigDto, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, SessionNamesMap } from './config';
 

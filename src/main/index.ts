@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -72,6 +73,7 @@ import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } fr
 import { seedProject } from './session-seed';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
 import { TranscriptWatcherRegistry } from './transcript-watcher';
+import { forgetIfOrphan } from '../shared/resumeFailure';
 import { removeSession, setPinned, upsertVisit } from '../shared/sessionRegistry';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
@@ -230,6 +232,19 @@ function resolveTranscriptPath(sessionId: string, cwd: string | undefined, claud
   return join(resolveProjectSessionsDir(cwd ?? homedir(), claudeHome), `${sessionId}.jsonl`);
 }
 
+/**
+ * T710/CA-11 (2º momento) — caminho do `.jsonl` de cada sessão spawnada NESTA
+ * execução do app, gravado no momento do spawn.
+ *
+ * Existe para o `sessions:forgetIfOrphan` conferir o arquivo EXATO: o caminho
+ * depende do perfil de NASCIMENTO da aba (`CLAUDE_CONFIG_DIR`), e o perfil ativo
+ * pode ter mudado entre o spawn e a falha — re-derivar pelo perfil de agora
+ * poderia dar "arquivo ausente" para uma sessão que existe no home de outro
+ * perfil, e apagar uma entrada boa. Chave = `sessionId` (não `ptyId`) porque é
+ * essa a chave do registro de sessões.
+ */
+const spawnedTranscriptPaths = new Map<string, string>();
+
 function startTranscriptWatcher(ptyId: string, filePath: string, sessionId: string): void {
   transcriptWatchers.start(ptyId, {
     sessionId,
@@ -286,7 +301,12 @@ function registerPtyIpcHandlers(): void {
 
       // T412 (004) — reflexo AO VIVO do `/rename` (CA-4). O path do `.jsonl` já
       // é conhecido aqui: o id da sessão foi IMPOSTO no spawn logo acima.
-      startTranscriptWatcher(ptyId, resolveTranscriptPath(correlationId, options.cwd, activeProfileConfigDir), correlationId);
+      const transcriptPath = resolveTranscriptPath(correlationId, options.cwd, activeProfileConfigDir);
+      // T710 — guardado ANTES de qualquer coisa poder falhar: é o caminho que o
+      // `forgetIfOrphan` vai conferir se esta retomada morrer (ver comentário de
+      // `spawnedTranscriptPaths`).
+      spawnedTranscriptPaths.set(correlationId, transcriptPath);
+      startTranscriptWatcher(ptyId, transcriptPath, correlationId);
 
       // FIX (feedback E2E rodada 5) — perfil de NASCIMENTO desta sessão
       // (mesmo `activeProfileSlug`/Name usados em `claudeConfigDir` acima,
@@ -493,6 +513,32 @@ function registerSessionIpcHandlers(): void {
   ipcMain.handle(SESSION_CHANNELS.forget, (_event, sessionId: string): AppConfigDto => {
     if (typeof sessionId !== 'string' || !sessionId) return toAppConfigDto(appConfig);
     appConfig = { ...appConfig, sessionRegistry: removeSession(appConfig.sessionRegistry, sessionId) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /**
+   * T710/CA-11 (2º momento) — o renderer viu a retomada morrer com código != 0
+   * (`shouldForgetOnResumeFailure`, sinal medido em
+   * `specs/008-fechar-pendencias/medicao-t710.md`) e pede o esquecimento. Aqui
+   * mora a PROVA: só remove se o `.jsonl` daquela sessão não existir mesmo.
+   * É o que impede um exit code != 0 de outra origem (cota estourada, `claude`
+   * não encontrado, Ctrl+C precoce) de apagar uma entrada boa.
+   *
+   * O caminho conferido é o gravado NO SPAWN (`spawnedTranscriptPaths`, perfil
+   * de nascimento da aba); o fallback re-deriva pelo `projectPath` da entrada
+   * com o perfil ATIVO, para a sessão que nasceu em outra execução do app.
+   */
+  ipcMain.handle(SESSION_CHANNELS.forgetIfOrphan, (_event, sessionId: string): AppConfigDto => {
+    if (typeof sessionId !== 'string' || !sessionId) return toAppConfigDto(appConfig);
+    const entry = appConfig.sessionRegistry[sessionId];
+    if (!entry) return toAppConfigDto(appConfig);
+
+    const transcriptPath = spawnedTranscriptPaths.get(sessionId) ?? resolveTranscriptPath(sessionId, entry.projectPath, activeProfileConfigDir);
+    appConfig = {
+      ...appConfig,
+      sessionRegistry: forgetIfOrphan(appConfig.sessionRegistry, sessionId, existsSync(transcriptPath)),
+    };
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });

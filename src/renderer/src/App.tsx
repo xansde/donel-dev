@@ -24,6 +24,9 @@ import {
 } from '../../shared/liveSessionInjection';
 import { sortProjects } from '../../shared';
 import { computePossiblyBlockedOnPrompt } from '../../shared/possiblyBlockedOnPrompt';
+// T710 (007/CA-11 2º momento) — o sinal de "a retomada falhou" é o exit code do
+// PTY (medido em specs/008-fechar-pendencias/medicao-t710.md), não texto de CLI.
+import { resumedSessionIdFromArgs, shouldForgetOnResumeFailure } from '../../shared/resumeFailure';
 import { computeSessionAccountLabel } from '../../shared/sessionAccountLabel';
 // T709 (007) — pior estado do grupo (CA-6), mesma precedência de sortSessions.
 import { sortSessions, worstState } from '../../shared/sessionOrdering';
@@ -776,6 +779,29 @@ export function App(): React.JSX.Element {
   };
 
   /**
+   * T710 (007) — CA-11, **2º momento**: "perceber" que a sessão sumiu quando uma
+   * tentativa de RETOMAR aquela sessão falha.
+   *
+   * O sinal é o exit code, não o texto do CLI — medido contra o binário real em
+   * `specs/008-fechar-pendencias/medicao-t710.md`: no PTY, `claude -r <uuid
+   * inexistente>` sai com código 1 em ~8,5–10,4 s, enquanto sessão válida e
+   * sessão nova seguem vivas. A decisão vive em `shared/resumeFailure.ts`
+   * (puro, testado), e a PROVA antes de apagar é do main: ele confere o `.jsonl`
+   * e só remove se não existir (`sessions:forgetIfOrphan`) — por isso um exit
+   * != 0 de outra origem (cota, `claude` não encontrado, Ctrl+C precoce) não
+   * apaga nada. Sem aviso na tela, como o CA-11 pede.
+   */
+  const handleTabProcessExit = (tab: TabState, info: { exitCode: number | undefined; msSinceSpawn: number }): void => {
+    const resumedSessionId = resumedSessionIdFromArgs(tab.launchArgs);
+    if (!resumedSessionId) return; // sessão nova nunca é candidata
+    if (!shouldForgetOnResumeFailure({ resumedSessionId, exitCode: info.exitCode, msSinceSpawn: info.msSinceSpawn })) return;
+    void window.donel.sessions
+      .forgetIfOrphan(resumedSessionId)
+      .then(setAppConfig)
+      .catch(() => undefined);
+  };
+
+  /**
    * T710/C2 (007) — CA-5: UM gesto de pin na linha do grupo. Persiste no
    * registro (`sessions:setPinned`) E, se a sessão tem aba aberta agora,
    * também atualiza `TabState.pinned` — é o que continua alimentando
@@ -1447,6 +1473,9 @@ export function App(): React.JSX.Element {
                       maybeRegisterVisit(claudeSessionId, projectPath, resolveTabName({ ...tab, claudeSessionId }));
                     }
                   }}
+                  // T710 (CA-11, 2º momento) — retomada que morre logo depois do
+                  // spawn faz a entrada órfã sair da lista.
+                  onProcessExit={(info) => handleTabProcessExit(tab, info)}
                   onCloseTab={() => handleRequestCloseTab(tab.id)}
                 />
               </div>

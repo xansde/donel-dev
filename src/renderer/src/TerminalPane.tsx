@@ -75,6 +75,20 @@ export interface TerminalPaneProps {
    * aba 'shell'.
    */
   onClaudeSessionIdResolved?: (claudeSessionId: string | undefined) => void;
+  /**
+   * T710 (007/CA-11 2º momento) — o processo desta aba SAIU: código, sinal e
+   * quanto tempo passou desde o spawn. Mesmo espírito dos callbacks acima (o
+   * `ptyId` continua não subindo pro App.tsx, só o efeito): quem sabe a hora
+   * exata do spawn é este componente, então é ele que mede `msSinceSpawn`.
+   *
+   * Serve para o App.tsx decidir, com `shouldForgetOnResumeFailure`
+   * (shared/resumeFailure.ts), se uma aba que nasceu com `-r <id>` morreu
+   * porque a sessão não existe mais — a medição do sinal está em
+   * `specs/008-fechar-pendencias/medicao-t710.md`. Disparado apenas no
+   * `pty.onExit` REAL, nunca na falha de spawn (`claude` não encontrado é outro
+   * assunto, e tem estado próprio na vista).
+   */
+  onProcessExit?: (info: { exitCode: number | undefined; signal: number | undefined; msSinceSpawn: number }) => void;
 }
 
 /**
@@ -136,6 +150,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     onAliveChange,
     onProfileResolved,
     onClaudeSessionIdResolved,
+    onProcessExit,
   },
   ref
 ): React.JSX.Element {
@@ -178,6 +193,10 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   onProfileResolvedRef.current = onProfileResolved;
   const onClaudeSessionIdResolvedRef = useRef(onClaudeSessionIdResolved);
   onClaudeSessionIdResolvedRef.current = onClaudeSessionIdResolved;
+  const onProcessExitRef = useRef(onProcessExit);
+  onProcessExitRef.current = onProcessExit;
+  /** T710 — instante em que o PTY desta geração nasceu; base do `msSinceSpawn` levantado no `onExit`. */
+  const spawnedAtRef = useRef<number | null>(null);
   // T505 (005-terminal-copy-paste) — atualizada a cada render, mesmo padrão
   // acima: o handler de teclado (T506) é registrado uma vez no mount do
   // `term` (efeito com deps `[]`, ver useEffect abaixo) e sobrevive a
@@ -263,6 +282,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
           return;
         }
         ptyIdRef.current = result.ptyId;
+        spawnedAtRef.current = Date.now(); // T710 — base do msSinceSpawn (ver onExit abaixo)
         setStatus({ kind: 'running' });
         // FIX (feedback E2E rodada 5) — perfil de nascimento desta sessão
         // (undefined pra 'shell', ver comentário do prop). Levantado uma
@@ -328,6 +348,15 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         unsubscribeExitRef.current = window.donel.pty.onExit(result.ptyId, (info) => {
           ptyIdRef.current = null;
           setStatus({ kind: 'ended', info });
+          // T710 — levanta o exit pro pai junto do tempo desde o spawn (só este
+          // componente sabe a hora do spawn). O pai é quem decide o que fazer:
+          // aba que nasceu com `-r <id>` e morre com código != 0 aqui é
+          // candidata a "a sessão não existe mais" (CA-11).
+          onProcessExitRef.current?.({
+            exitCode: info.exitCode,
+            signal: info.signal,
+            msSinceSpawn: spawnedAtRef.current === null ? Number.POSITIVE_INFINITY : Date.now() - spawnedAtRef.current,
+          });
         });
         // Sessão de terminal livre (FR-008) nunca é registrada no semáforo
         // pelo main process — sem sessionType 'claude', simplesmente não

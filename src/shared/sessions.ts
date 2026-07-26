@@ -33,6 +33,15 @@ export const SESSION_CHANNELS = {
   setPinned: 'sessions:setPinned',
   /** T705/CA-11 — "esquecer" uma entrada órfã (retomar falhou, `.jsonl` sumiu). Canal PRÓPRIO, não reaproveita `setPinned`: desfixar e esquecer são operações diferentes. */
   forget: 'sessions:forget',
+  /**
+   * T710/CA-11 (2º momento) — esquecer VERIFICADO: o main confere se o
+   * `.jsonl` da sessão existe e só remove se NÃO existir. Canal separado do
+   * `forget` de propósito — "esquecer porque a sessão sumiu do disco" e
+   * "esquecer porque pedi" são decisões diferentes, e misturá-las faria um
+   * exit code != 0 por outro motivo (cota, Ctrl+C precoce) apagar uma entrada
+   * boa.
+   */
+  forgetIfOrphan: 'sessions:forgetIfOrphan',
   /** T706/CA-8 — a única leitura de disco desta feature; só roda quando o projeto não tem NENHUMA entrada no registro (guarda dura no main). */
   seedProject: 'sessions:seedProject',
 } as const;
@@ -106,6 +115,8 @@ export interface DonelSessionsApi {
   setPinned(sessionId: string, pinned: boolean): Promise<AppConfigDto>;
   /** T705/CA-11 — esquece uma entrada órfã (nunca falha por sessionId inexistente — no-op). */
   forget(sessionId: string): Promise<AppConfigDto>;
+  /** T710/CA-11 — esquece SÓ se o `.jsonl` daquela sessão não existir mais (o main é quem confere o disco). */
+  forgetIfOrphan(sessionId: string): Promise<AppConfigDto>;
   /** T706/CA-8 — semeadura única de um projeto sem NENHUMA entrada no registro. */
   seedProject(projectPath: string): Promise<AppConfigDto>;
 }

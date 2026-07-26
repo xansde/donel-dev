@@ -118,6 +118,9 @@ const donelApi: DonelApi = {
 
     forget: (sessionId: string) => ipcRenderer.invoke(SESSION_CHANNELS.forget, sessionId) as Promise<AppConfigDto>,
 
+    // T710/CA-11 (2º momento) — o main confere o `.jsonl` antes de remover.
+    forgetIfOrphan: (sessionId: string) => ipcRenderer.invoke(SESSION_CHANNELS.forgetIfOrphan, sessionId) as Promise<AppConfigDto>,
+
     // T706/CA-8 — a única leitura de disco da feature, guardada no main.
     seedProject: (projectPath: string) => ipcRenderer.invoke(SESSION_CHANNELS.seedProject, projectPath) as Promise<AppConfigDto>,
   },
