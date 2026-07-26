@@ -12,6 +12,7 @@
 
 import type { EffortLevel, ModelAlias, PermissionMode } from './commandBuilder';
 import type { StoredSessionName } from './sessionName';
+import type { SessionRegistry } from './sessionRegistry';
 
 export const CONFIG_CHANNELS = {
   get: 'config:get',
@@ -51,6 +52,13 @@ export interface AppConfigDto {
   readonly sessionNames: SessionNamesMap;
   /** P1 (tasks.md "Fora deste ciclo": temas) — persistido desde já (FR-007), sem UI de troca no P0. */
   readonly theme: 'dark';
+  /**
+   * T704 (007-favoritos-sessoes) — registro de sessões recentes/fixadas por
+   * projeto favoritado (CA-7/D9: fonte da lista no boot, sem varrer disco).
+   * O RENDERER é o único escritor (plan.md §Fatia 2); vai no DTO porque é ele
+   * quem monta o grupo "Favoritos" da sidebar a partir deste mapa.
+   */
+  readonly sessionRegistry: SessionRegistry;
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */
