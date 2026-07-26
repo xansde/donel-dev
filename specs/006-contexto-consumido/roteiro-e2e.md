@@ -16,6 +16,19 @@ zona e à queda pós-`/compact` (smoke `session-context.spec.ts`).
 turno de modelo de verdade; em 24–25/07 a cota semanal estava esgotada, então
 eles ficaram sem validação humana.
 
+> ## ✅ EXECUTADO E APROVADO — 2026-07-26
+>
+> O Alexandre instalou o build, reiniciou o app e rodou este roteiro numa sessão
+> real de trabalho: *"acho que funcionou! Tudo funcionando bem!"*. **Nenhum dos
+> sintomas da seção "o que reportar" apareceu** — em especial, `%` **não** ficou
+> preso com a conversa andando, que era o gatilho para implementar a mitigação da
+> dívida `specs/backlog.md` §B15 (`fs.watch` coalescendo evento no Windows). A
+> §B15 segue como dívida NÃO implementada, agora com uma evidência de uso real
+> contra ela.
+>
+> O roteiro fica no repo como regressão manual: reexecutar quando o watcher, a
+> leitura de cauda ou a tabela de janelas por modelo mudarem.
+
 ## Passos
 
 1. **O número aparece e sobe.** Abra uma sessão `claude` num projeto e mande um

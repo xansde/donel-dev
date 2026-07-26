@@ -1,8 +1,11 @@
 # Tasks 006 — Contexto consumido (% da smart zone na toolbar da sessão)
 
-**Status:** IMPLEMENTADO em 2026-07-26 — T601–T614 fechadas (T605 e T607 já
-vinham prontas da 004). Falta a validação humana dos passos que exigem turno
-real de modelo (`roteiro-e2e.md`, itens 1/4/5). Branch: `feature/mvp-p0`.
+**Status:** **CONCLUÍDA em 2026-07-26** — T601–T614 fechadas (T605 e T607 já
+vinham prontas da 004) **e validação humana feita**: o Alexandre instalou o
+build, rodou o `roteiro-e2e.md` numa sessão real e aprovou ("acho que funcionou!
+Tudo funcionando bem!"), incluindo os itens 1/4/5 que exigiam turno de modelo de
+verdade e ficaram pendentes em 24–25/07 por cota esgotada. Branch:
+`feature/mvp-p0`.
 **Atualizado:** 2026-07-26
 
 > **O que mudou em relação ao plano de 24/07** (a 004 entrou antes e mudou o

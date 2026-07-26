@@ -447,6 +447,14 @@ de leitura por sessão a cada 5 s, ordem de 0,1 ms. Gatilho para implementar: o
 Alexandre relatar `%` (ou nome de aba) preso com a conversa andando — está no
 `006-contexto-consumido/roteiro-e2e.md` como item a observar.
 
+**Uso real em 26/07 NÃO reproduziu o sintoma.** O Alexandre rodou o roteiro E2E da
+006 no build instalado, em sessão de trabalho de verdade, e aprovou sem relatar `%`
+parado. Some-se ao diagnóstico dedicado (3/3 emissões em tmpdir e no diretório
+real) e o placar fica: **uma única ocorrência, só no cenário artificial do smoke
+(append único seguido de silêncio), nunca em uso real.** O gatilho para implementar
+a mitigação continua o mesmo — só muda que agora há evidência contra a urgência,
+não a favor.
+
 **Efeito colateral no teste:** o passo 6 do smoke usa timeout de 20 s em vez de
 5 s, com o motivo escrito no arquivo. Não é "timeout maior até passar": é a
 tolerância explícita a um evento perdido, num passo cuja latência já foi medida
