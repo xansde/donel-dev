@@ -1,8 +1,9 @@
 # Spec — 007 Favoritos com sessões recentes na sidebar
 
-**Status:** RASCUNHO pós-discovery (2026-07-25) — D1–D9 fechados na entrevista
-(`discovery.md` deste diretório). Restam os `[C]` marcados abaixo para o
-`/clarify`. **Nenhuma linha de código.** Aguarda OK dele no gate.
+**Status:** ✅ **CLARIFICADA** (2026-07-25) — D1–D9 fechados na entrevista
+(`discovery.md` deste diretório) e C1–C6 respondidos por ele no clarify.
+`plan.md` + `tasks.md` gerados. **Nenhuma linha de código.** Aguarda OK dele no
+gate de execução.
 **Prioridade:** a definir. Fila atual: 006 (em implementação, outra sessão) →
 005 → **esta**.
 **Origem:** pedido dele em 2026-07-25; consolida o **B5** do `backlog.md` e
@@ -56,34 +57,40 @@
 
 ## Critérios de aceite
 
-- **CA-1 (grupo):** existe um grupo novo na sidebar, **separado** de "Projetos" e
-  de "Sessões", contendo **só os projetos favoritados** (D6). Cada projeto é uma
+- **CA-1 (grupo):** existe um grupo novo **no TOPO da sidebar** (C5), antes de
+  "Projetos", contendo **só os projetos favoritados** (D6). Cada projeto é uma
   linha colapsável, e o estado aberto/fechado de cada um **persiste** entre
   execuções.
 - **CA-2 (conteúdo):** cada projeto lista **até 5** sessões, as mais recentes por
   última atividade, **mais todas as sessões fixadas** daquele projeto. Uma
   fixada que já esteja entre as 5 **não** duplica; uma fixada fora das 5 aparece
-  **além** delas (D2).
+  **além** delas (D2). **Sem teto de fixadas** (C4).
 - **CA-3 (dedupe):** as sessões exibidas sob um projeto favoritado **não**
   aparecem na lista geral de "Sessões" (D4) — com a exceção que o CA-6 obriga.
 - **CA-4 (um clique):** clicar numa linha **foca a aba** daquela sessão se ela já
   estiver aberta; se não estiver, **retoma** (`-r <id>`, o mesmo caminho do
   botão "Retomar" de hoje) (D5).
-- **CA-5 (fixar é da sessão e persiste):** o gesto de fixar passa a valer para a
-  **sessão** (por `sessionId`), gravado no `ConfigStore`, e **sobrevive a fechar
-  e reabrir o app**. Desfixar devolve a sessão à regra das 5.
+- **CA-5 (fixar é da sessão e persiste):** **um gesto só** de pin (C2), que
+  passa a valer para a **sessão** (por `sessionId`), é gravado no `ConfigStore` e
+  **sobrevive a fechar e reabrir o app** — e que **continua servindo de
+  desempate** na lista geral dentro do mesmo estado de semáforo, como
+  `sessionOrdering.ts` faz hoje. Desfixar devolve a sessão à regra das 5.
 - **CA-6 (o colapsado grita):** o cabeçalho de cada projeto mostra o **pior
   estado do semáforo** entre as sessões **vivas** dele, com contagem — permissão
   pendente acende no cabeçalho mesmo com o grupo fechado (D8). É o que impede o
   dedupe do CA-3 de apagar o sinal de FR-010/CA-6 do MVP.
 - **CA-7 (boot instantâneo, sem varredura):** ao abrir o app, o grupo é montado a
   partir de um **registro próprio do app** (mantido enquanto ele trabalha, D9),
-  **sem** ler nenhum `.jsonl`. Alvo: sidebar pintada em **< 100 ms**, medido —
-  não "parece rápido".
-- **CA-8 (preenchimento sob demanda):** projeto favoritado que ainda não tem nada
-  no registro — primeira execução depois desta feature, ou sessão criada fora do
-  Donel — preenche por **uma** leitura de disco quando o grupo é expandido, e o
-  resultado **entra no registro**. Nunca varre no boot.
+  **sem** ler nenhum `.jsonl`. O registro guarda, por sessão, `sessionId`,
+  `projectPath`, `lastActivityAt` e o **rótulo em cache** (C1). Alvo: sidebar
+  pintada em **< 100 ms**, medido — não "parece rápido".
+- **CA-8 (semeadura única, só quando não há nada):** projeto favoritado **sem
+  nenhuma** entrada no registro (primeira execução depois desta feature) preenche
+  por **uma** leitura de disco na primeira vez que o grupo é expandido, e o
+  resultado entra no registro. Projeto que **já tem** registro nunca lê o disco
+  por conta própria — nem no boot, nem ao expandir (C6). Sessão criada fora do
+  Donel fica de fora do grupo, por decisão (C6): o caminho dela é o painel
+  "Sessões anteriores".
 - **CA-9 (nada se perde ao desfavoritar):** desfavoritar um projeto remove o
   grupo dele e as sessões voltam a aparecer na lista geral / no painel de sessões
   anteriores. Nenhuma fixada é esquecida (a marca continua gravada).
@@ -91,6 +98,10 @@
   004 (`resolveSessionName`: nome do `/rename` × nome dado na UI × preview), o
   mesmo que a aba e a lista de sessões anteriores mostram. Nunca um segundo
   jeito de nomear a mesma sessão.
+- **CA-11 (órfã some):** entrada do registro cujo `.jsonl` não existe mais é
+  **removida sem aviso**, inclusive se estiver fixada (C3). Como não há varredura
+  de disco, "perceber" acontece em dois momentos: na semeadura do CA-8 e quando
+  uma tentativa de retomar aquela sessão falha.
 
 ## Decisões já fechadas (discovery de 2026-07-25) — são requisito
 
@@ -109,29 +120,38 @@
   registro durante o trabalho. Na próxima execução do app, já tem salvo as
   últimas sessões/fixadas sem ter que carregar sessões claude."*
 
-## Para o `/clarify` (não decidir sozinho)
+## Decisões do `/clarify` (2026-07-25) — todas fechadas por ele
 
-- **[C1] O que o registro guarda por sessão?** Mínimo viável: `sessionId`,
-  `projectPath`, `lastActivityAt`. A dúvida é se guarda também um **rótulo em
-  cache** — sem ele, uma sessão no registro precisa de leitura de disco para
-  saber o nome (o que reintroduz I/O no boot); com ele, o rótulo pode ficar
-  **velho** se o nome mudar por fora. Candidato: guardar o rótulo como cache e
-  reconciliar quando a sessão for aberta.
-- **[C2] Os dois "fixar" viram um só gesto?** Hoje existe o pin da aba (volátil,
-  desempate do semáforo). Se o pin passa a ser da sessão e persistido, o pin da
-  aba deve **desaparecer**, virar o mesmo botão, ou continuar existindo em
-  paralelo? Recomendação: **um gesto só** — evita "fixei e não ficou fixado".
-- **[C3] Entrada obsoleta.** Registro aponta para uma sessão cujo `.jsonl` foi
-  apagado do disco. Ao clicar: mensagem e remoção silenciosa da linha, ou a linha
-  já nasce marcada como indisponível? (Rima com a dívida de GC do §B12.)
-- **[C4] Limite de fixadas por projeto.** Sem limite, ou um teto (ex.: 10) para o
-  grupo não crescer sem controle?
-- **[C5] Posição do grupo na sidebar.** Topo (antes de "Projetos") ou dentro da
-  área de sessões? O B5 dizia "candidato: no topo ou dentro da área de sessões,
-  mas SEPARADO da lista de projetos".
-- **[C6] O registro cobre sessão criada fora do Donel?** O CA-8 cobre por leitura
-  sob demanda ao expandir. Isso basta, ou o grupo deve reconciliar com o disco
-  em algum outro momento (ex.: ao focar a janela)?
+- **[C1 ✔] O registro guarda o NOME em cache**, junto de `sessionId`,
+  `projectPath` e `lastActivityAt`. É o que permite a sidebar pintar com nome sem
+  tocar em disco. **Consequência aceita:** um `/rename` feito fora do Donel pode
+  deixar o rótulo do grupo velho até aquela sessão ser aberta. Sem revalidação
+  silenciosa (a opção de revalidar ao expandir foi descartada).
+- **[C2 ✔] Um gesto só de pin, e ele CONTINUA desempatando.** O mesmo botão fixa
+  a sessão (persistido) e segue servindo de desempate na lista geral dentro do
+  mesmo estado de semáforo (comportamento atual de `sessionOrdering.ts`
+  preservado). Nada de dois pins parecidos.
+- **[C3 ✔] Entrada órfã some sozinha, SEMPRE** — inclusive fixada.
+  **Consequência aceita, registrada de propósito:** uma sessão que ele fixou pode
+  desaparecer do grupo sem aviso se o `.jsonl` for apagado. Ele escolheu simples
+  em vez de avisado; se incomodar na prática, é ajuste de UI depois.
+- **[C4 ✔] Sem teto de fixadas** por projeto. O grupo é colapsável; tamanho é
+  decisão dele. Nenhum estado de erro do tipo "não pode fixar mais".
+- **[C5 ✔] O grupo fica no TOPO da sidebar**, antes de "Projetos" — é a primeira
+  coisa na tela quando ele abre o app, que é o momento de voltar ao trabalho de
+  ontem. "Projetos" e "Sessões" descem.
+- **[C6 ✔] Sessão criada FORA do Donel não é coberta.** O grupo mostra o que ele
+  trabalhou dentro do app; sessão feita num terminal comum continua alcançável
+  pelo painel "Sessões anteriores", como hoje. **Não** há reconciliação
+  periódica com o disco, nem botão de atualizar.
+
+> **Interpretação adotada do C6 (vetável numa palavra):** o C6 elimina
+> reconciliação **contínua**, não a **semeadura inicial** do CA-8. Sem o CA-8, no
+> primeiro dia depois desta feature todo projeto favoritado apareceria **vazio**
+> (o registro nasce sem nada), e a feature entregaria uma tela em branco. Então:
+> projeto que ainda não tem NENHUMA entrada no registro faz **uma** leitura de
+> disco quando é expandido pela primeira vez; projeto que já tem registro nunca
+> mais lê o disco por conta própria.
 
 ## Fora de escopo
 
