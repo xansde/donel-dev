@@ -362,6 +362,35 @@ O que de fato vale fazer, quando entrar na fila:
    si): exigiria o app nascer oculto sob um flag de teste — mudança de código de
    produção para servir teste, avaliar com cuidado antes.
 
+### B14. As duas instalações na máquina dele — levantamento real (25/07)
+
+Feito para responder "o instalador vai instalar por cima do app de teste?". O que
+existe de fato hoje, medido (`Get-Process` para saber qual binário estava no ar,
+atalhos resolvidos via `WScript.Shell`, chaves de Uninstall em HKCU e HKLM):
+
+| Atalho | Aponta para | Registro | Build |
+|---|---|---|---|
+| `Donel Dev.lnk` em **`C:\Users\Public\Desktop`** | `C:\Program Files\Donel Dev\` | **HKLM** (all-users) | 24/07 20:20 — o que ele testou, e estava rodando |
+| `Donel Dev (ANTIGO 23-07 - sem cota 5h).lnk` no Desktop dele | `%LOCALAPPDATA%\Programs\Donel Dev\` | per-user | 23/07 23:11 |
+
+**Corrige uma suposição do B10 e do `CLAUDE.md`** ("os dois installs compartilham
+`appId`/`productName` … é só pasta e nome de atalho diferentes"): eles diferem em
+mais que isso — um é **per-machine** (Program Files, HKLM, atalho no Desktop
+PÚBLICO) e o outro **per-user**. Acontece porque o NSIS está com
+`oneClick: false` e elevação permitida, então o modo é escolhido no diálogo do
+instalador, e numa das vezes ele escolheu all-users. O que o B10 afirma e
+**continua verdadeiro**: o `userData` é compartilhado
+(`%APPDATA%\donel-dev\config.json` para as duas), então nome de sessão,
+favoritos e preferências valem para ambas.
+
+Consequência prática ao entregar build novo: instalar em all-users substitui o
+app que ele usa; instalar "só para mim" substitui o ANTIGO, que é o ponto de
+retorno dele. **Instalar é ato dele, não do agente** — quem empacota avisa qual
+dos dois será sobrescrito.
+
+Quando o B10 for implementado, precisa considerar os dois MODOS de instalação,
+não só nomes divergentes.
+
 ## Decidido, aguardando spec
 
 - **Restauração de sessões no restart** (rodada 5 do feedback-e2e).
