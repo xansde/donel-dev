@@ -17,6 +17,13 @@ directories:
 # (não usados em runtime) inflariam o instalador à toa.
 files:
   - "!specs/**"
+  # docs/ e scripts/ existem para PUBLICAR o app, não para rodá-lo. O
+  # `scripts/publicar.local.json` (gitignored) guarda o caminho da pasta
+  # compartilhada da máquina de quem publica — o electron-builder empacota a
+  # partir do disco, não do git, então sem esta exclusão esse caminho local
+  # viajaria dentro do instalador de todo colega.
+  - "!docs/**"
+  - "!scripts/**"
   - "!design/**"
   - "!design-system/**"
   - "!src/**"

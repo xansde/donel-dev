@@ -479,6 +479,34 @@ decidir UMA fonte para o número (o módulo puro) e apagar o token, ou alinhar o
 token em 300k com comentário apontando para a decisão. Não mexer agora: mudar
 token de design-system fora de uma feature que o use é escopo alheio.
 
+### B17. Dívidas da distribuição para colegas (canal decidido em 26/07)
+
+Canal e rotina de publicação estão em `docs/distribuicao.md` (pasta compartilhada
+no Google Drive + `npm run publicar`, nome de arquivo fixo para o link nunca
+mudar). Fica de dívida, em ordem de incômodo:
+
+1. **Instalador sem assinatura digital** — todo colega vê "O Windows protegeu o
+   seu PC" e precisa de *Mais informações → Executar assim mesmo*. Documentado no
+   LEIA-ME com o motivo e o SHA256 para conferência. Resolver = comprar
+   certificado de code signing (OV exige token em hardware/HSM desde 2023):
+   decisão de **custo**, não técnica. Enquanto não houver, cada colega novo
+   passa por esse susto uma vez.
+2. **Sem atualização automática** — o colega só descobre versão nova quando o
+   Alexandre avisa. Caminho desenhado, se a adoção justificar: `electron-updater`
+   com `provider: generic` apontando para `latest.yml` + `.exe` numa URL interna
+   (EKS/Cloudflare que a Seazone já tem). Evita o token embutido que o feed de
+   GitHub Release privado exigiria. **É feature, não ajuste** — entra por spec.
+3. **Ícone padrão do Electron** — num instalador já não assinado, ícone genérico
+   é o segundo sinal de "app suspeito". Custa um `build/icon.ico` quando o design
+   entregar (já anotado no `electron-builder.yml`).
+4. **O script não confere se a pasta está compartilhada** com quem precisa —
+   publica em silêncio e o colega não consegue baixar. O relatório final lembra
+   de conferir, mas é lembrete, não gate.
+5. **`Ctrl+C` interrompendo execução** é a primeira coisa que um colega novo faz
+   por reflexo. Está no LEIA-ME como limitação conhecida — sai de lá quando a
+   **005** entrar (e o LEIA-ME precisa ser editado à mão nesse momento:
+   `docs/LEIA-ME-colegas.md`, seção "Limitações conhecidas").
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
