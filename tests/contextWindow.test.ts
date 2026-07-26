@@ -3,6 +3,7 @@ import {
   MODEL_CONTEXT_WINDOWS,
   SMART_ZONE_TOKENS,
   computeContextPercent,
+  contextTokensFromLine,
   contextTokensFromUsage,
   effectiveContextZone,
   formatContextTooltip,
@@ -102,6 +103,47 @@ describe('contextTokensFromUsage (T602)', () => {
   it('campo dos três com tipo errado é ignorado em vez de virar NaN', () => {
     expect(contextTokensFromUsage({ input_tokens: 'muitos', cache_read_input_tokens: 100 })).toBe(100);
     expect(contextTokensFromUsage({ input_tokens: Number.NaN })).toBeNull();
+  });
+});
+
+// A `usage` fica em `message.usage`, NÃO no topo da linha — conferido no disco
+// em 26/07 (o fragmento `"usage":{…}` da spec é um recorte). Ver
+// `specs/006-contexto-consumido/medicao-t606.md`.
+describe('contextTokensFromLine (T602 — forma real da linha do transcript)', () => {
+  const assistantLine = (usage: unknown, extra: Record<string, unknown> = {}): string =>
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', usage }, ...extra });
+
+  it('lê a soma de `message.usage` de uma linha assistant real', () => {
+    const line = assistantLine({
+      input_tokens: 528,
+      cache_creation_input_tokens: 7309,
+      cache_read_input_tokens: 817_148,
+      output_tokens: 3514,
+      // A usage real também traz `iterations[]` repetindo os mesmos nomes por
+      // iteração — só o nível de cima conta, sob pena de dupla contagem.
+      iterations: [{ input_tokens: 528, cache_read_input_tokens: 817_148, cache_creation_input_tokens: 7309 }],
+    });
+    expect(contextTokensFromLine(line)).toBe(824_985);
+  });
+
+  it('ignora linha que não é assistant (user, custom-title, tool_result)', () => {
+    expect(contextTokensFromLine(JSON.stringify({ type: 'user', message: { usage: { input_tokens: 9 } } }))).toBeNull();
+    expect(contextTokensFromLine(JSON.stringify({ type: 'custom-title', customTitle: 'x' }))).toBeNull();
+  });
+
+  it('ignora turno de SUBAGENTE (`isSidechain: true`) — o contexto dele não é o da sessão', () => {
+    expect(contextTokensFromLine(assistantLine({ input_tokens: 30_000 }, { isSidechain: true }))).toBeNull();
+  });
+
+  it('linha cortada ao meio pela leitura de cauda não lança — devolve null', () => {
+    expect(contextTokensFromLine('_tokens":528,"cache_read_input_tokens":817148}}')).toBeNull();
+    expect(contextTokensFromLine('')).toBeNull();
+    expect(contextTokensFromLine('   ')).toBeNull();
+  });
+
+  it('assistant sem usage (ou com usage inútil) → null', () => {
+    expect(contextTokensFromLine(JSON.stringify({ type: 'assistant', message: { role: 'assistant' } }))).toBeNull();
+    expect(contextTokensFromLine(assistantLine({ output_tokens: 100 }))).toBeNull();
   });
 });
 

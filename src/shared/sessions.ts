@@ -25,9 +25,10 @@ export const SESSION_CHANNELS = {
 } as const;
 
 /**
- * T412 (004) — push do `main` quando o transcript de uma sessão VIVA muda o que
- * a UI mostra (hoje: o `custom-title` de um `/rename`; a 006 acrescenta o
- * `contextTokens` no MESMO evento).
+ * T412 (004) + T608 (006) — push do `main` quando o transcript de uma sessão
+ * VIVA muda o que a UI mostra: o `custom-title` de um `/rename` (004) **e** os
+ * tokens de contexto do último turn (006), no MESMO evento, vindos da MESMA
+ * leitura de cauda.
  *
  * O nome do canal é `transcript:changed`, e não `sessions:nameChanged` como a
  * task da 004 rascunhou, porque o watcher é **peça compartilhada** com a 006 e é
@@ -42,7 +43,13 @@ export interface TranscriptChangedPayload {
   readonly sessionId: string;
   /** Último `custom-title` do transcript. Uma leitura que não acha título NÃO chega aqui como `null` — ver `transcript-watcher.ts`. */
   readonly customTitle: string | null;
-  /** Reservado para a 006 (contexto consumido) — sempre `null` até ela implementar a extração da `usage`. */
+  /**
+   * T606 (006) — soma `input + cache_read + cache_creation` da última `usage`
+   * do transcript (o tamanho REAL do contexto agora, que cai após um
+   * `/compact`). `null` só enquanto nenhuma leitura tiver achado `usage`; uma
+   * leitura vazia depois disso NÃO zera o valor conhecido — mesma regra do
+   * título, ver `transcript-watcher.ts` e `medicao-t606.md`.
+   */
   readonly contextTokens: number | null;
 }
 

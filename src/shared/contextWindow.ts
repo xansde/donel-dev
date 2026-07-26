@@ -111,6 +111,48 @@ export function contextTokensFromUsage(usage: unknown): number | null {
 }
 
 /**
+ * Uma linha do `.jsonl` → tokens de contexto daquele turn, ou `null` se a linha
+ * não é um turno de assistant com `usage` utilizável.
+ *
+ * Existe separada de `contextTokensFromUsage` pela mesma razão que
+ * `extractCustomTitleFromLine` existe em `sessionName.ts`: a varredura reversa
+ * da cauda (`transcript-watcher.ts`) percorre linha a linha e não pode ter uma
+ * segunda cópia da regra de parsing. É aqui que os nomes dos campos da `usage`
+ * ficam confinados (antisséptico do T609).
+ *
+ * **A `usage` fica em `message.usage`**, não no topo da linha — conferido num
+ * transcript real em 26/07 (`specs/006-contexto-consumido/medicao-t606.md`); o
+ * fragmento `"usage":{…}` da spec é um recorte.
+ *
+ * `isSidechain: true` é descartado: turno de subagente tem contexto PRÓPRIO e
+ * mostrá-lo como se fosse o da sessão faria o `%` despencar sem motivo. Zero
+ * ocorrências em 319 transcripts desta máquina — o filtro é seguro contra uma
+ * mudança futura do CLI, não conserto de um problema observado.
+ *
+ * Nunca lança: a cauda começa no meio de uma linha, então JSON inválido é o
+ * caso NORMAL da primeira linha lida, não uma exceção.
+ */
+export function contextTokensFromLine(line: string): number | null {
+  const raw = typeof line === 'string' ? line.trim() : '';
+  if (!raw || raw[0] !== '{') return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const record = parsed as { type?: unknown; isSidechain?: unknown; message?: unknown };
+  if (record.type !== 'assistant') return null;
+  if (record.isSidechain === true) return null;
+  if (typeof record.message !== 'object' || record.message === null) return null;
+
+  return contextTokensFromUsage((record.message as { usage?: unknown }).usage);
+}
+
+/**
  * `%` da smart zone consumido, arredondado para inteiro.
  *
  * ⚠️ **SEM TETO, por decisão explícita (CA-8, revisada em 24/07).** Não

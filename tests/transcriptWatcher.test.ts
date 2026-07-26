@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   TranscriptWatcherRegistry,
+  readTranscriptTail,
   watchTranscript,
   type TranscriptChange,
   type TranscriptWatcherHandle,
@@ -49,6 +50,33 @@ const titleLine = (title: string, sessionId = 'abc-123'): string =>
 
 const userLine = (text: string): string =>
   `${JSON.stringify({ type: 'user', message: { role: 'user', content: text }, timestamp: new Date().toISOString() })}\n`;
+
+/**
+ * T606 (006) — turno do assistant com `usage`. A forma bate com o transcript
+ * REAL conferido em 26/07: a `usage` fica em `message.usage`, não no topo da
+ * linha (ver `specs/006-contexto-consumido/medicao-t606.md`).
+ */
+const assistantUsageLine = (
+  { input = 0, cacheRead = 0, cacheCreation = 0, sidechain = false } = {} as {
+    input?: number;
+    cacheRead?: number;
+    cacheCreation?: number;
+    sidechain?: boolean;
+  },
+): string =>
+  `${JSON.stringify({
+    type: 'assistant',
+    isSidechain: sidechain,
+    message: {
+      role: 'assistant',
+      usage: {
+        input_tokens: input,
+        cache_read_input_tokens: cacheRead,
+        cache_creation_input_tokens: cacheCreation,
+        output_tokens: 999,
+      },
+    },
+  })}\n`;
 
 describe('watchTranscript', () => {
   let dir: string;
@@ -209,6 +237,172 @@ describe('watchTranscript', () => {
 
     expect(changes).toHaveLength(1);
     expect(changes[0].customTitle).toBe('vai sumir');
+  });
+
+  // ---------------------------------------------------------------------------
+  // T606/T608 (006-contexto-consumido) — o MESMO watcher passa a emitir também
+  // o `contextTokens`. Estes casos são a prova de que a 006 não precisou de um
+  // segundo leitor nem de um segundo canal.
+  // ---------------------------------------------------------------------------
+
+  it('emite contextTokens do turno novo (a soma da última usage)', async () => {
+    await fs.writeFile(filePath, userLine('primeira pergunta'), 'utf8');
+    start();
+    await settle();
+    expect(changes).toEqual([]);
+
+    await fs.appendFile(filePath, assistantUsageLine({ input: 290, cacheCreation: 1505, cacheRead: 132_807 }), 'utf8');
+
+    await waitFor(() => changes.length === 1);
+    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: null, contextTokens: 134_602 });
+  });
+
+  it('turno seguinte que só muda a usage EMITE (regressão que a regra antiga da 004 causaria)', async () => {
+    await fs.writeFile(filePath, assistantUsageLine({ input: 100, cacheRead: 50_000 }), 'utf8');
+    start();
+    await waitFor(() => changes.length === 1);
+    expect(changes[0].contextTokens).toBe(50_100);
+
+    // Nenhum rename: só um turno novo, com contexto maior.
+    await fs.appendFile(filePath, assistantUsageLine({ input: 120, cacheRead: 90_000 }), 'utf8');
+
+    await waitFor(() => changes.length === 2);
+    expect(changes[1].contextTokens).toBe(90_120);
+    expect(changes[1].customTitle).toBeNull();
+  });
+
+  it('a ÚLTIMA usage vence quando há várias na cauda', async () => {
+    await fs.writeFile(
+      filePath,
+      `${assistantUsageLine({ input: 1, cacheRead: 10_000 })}${userLine('segue')}${assistantUsageLine({ input: 2, cacheRead: 200_000 })}`,
+      'utf8',
+    );
+    start();
+
+    await waitFor(() => changes.length === 1);
+    expect(changes[0].contextTokens).toBe(200_002);
+  });
+
+  it('o % CAI depois de um /compact — a usage nova é menor, e isso não é lacuna de leitura', async () => {
+    await fs.writeFile(filePath, assistantUsageLine({ input: 200, cacheRead: 280_000 }), 'utf8');
+    start();
+    await waitFor(() => changes.length === 1);
+
+    // Pós-compact: o contexto real encolheu, e o número tem de acompanhar.
+    await fs.appendFile(filePath, assistantUsageLine({ input: 150, cacheRead: 20_000 }), 'utf8');
+
+    await waitFor(() => changes.length === 2);
+    expect(changes[1].contextTokens).toBe(20_150);
+  });
+
+  // Decisão explícita desta sessão (o handoff da 004 deixou em aberto e exigiu
+  // teste): a regra do "não apaga o que já sabe" vale IGUAL para os tokens.
+  // Cauda sem `usage` é lacuna de leitura — uma linha gigante de `tool_result`
+  // empurrando a usage para fora da janela de 64 KB acontece no meio de 35% das
+  // sessões (medicao-t606.md §B) — não é "o contexto voltou a zero". Sem esta
+  // regra o `%` piscaria para `—` no meio de um turno longo, exatamente quando
+  // o número mais importa.
+  it('leitura sem usage NÃO apaga os tokens já conhecidos (nem emite evento novo)', async () => {
+    await fs.writeFile(filePath, assistantUsageLine({ input: 100, cacheRead: 130_000 }), 'utf8');
+    start();
+    await waitFor(() => changes.length === 1);
+    expect(changes[0].contextTokens).toBe(130_100);
+
+    // Linha grande o bastante para empurrar a usage fora da cauda de 64 KB.
+    await fs.appendFile(filePath, userLine('x'.repeat(70 * 1024)), 'utf8');
+    await settle();
+
+    expect(changes).toHaveLength(1); // nada novo: o valor conhecido permanece
+  });
+
+  it('turno de SUBAGENTE (isSidechain) não é confundido com o contexto da sessão', async () => {
+    await fs.writeFile(filePath, assistantUsageLine({ input: 100, cacheRead: 130_000 }), 'utf8');
+    start();
+    await waitFor(() => changes.length === 1);
+
+    await fs.appendFile(filePath, assistantUsageLine({ input: 10, cacheRead: 5_000, sidechain: true }), 'utf8');
+    await settle();
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0].contextTokens).toBe(130_100);
+  });
+
+  it('emite os DOIS campos numa rajada que muda título e usage ao mesmo tempo', async () => {
+    await fs.writeFile(filePath, userLine('oi'), 'utf8');
+    start();
+    await settle();
+
+    await fs.appendFile(filePath, `${assistantUsageLine({ input: 10, cacheRead: 60_000 })}${titleLine('com nome')}`, 'utf8');
+
+    await waitFor(() => changes.length === 1);
+    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'com nome', contextTokens: 60_010 });
+  });
+});
+
+// T606 — a leitura de cauda em si, isolada do watcher: uma passada, dois
+// campos. `fs` real em tmpdir (o que pode dar errado aqui é justamente o que um
+// mock esconderia: linha cortada, arquivo ausente, arquivo vazio).
+describe('readTranscriptTail', () => {
+  let dir: string;
+  let filePath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'donel-dev-transcript-tail-'));
+    filePath = join(dir, 'abc-123.jsonl');
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('devolve os dois campos numa leitura só', async () => {
+    await fs.writeFile(
+      filePath,
+      `${userLine('oi')}${assistantUsageLine({ input: 290, cacheCreation: 1505, cacheRead: 132_807 })}${titleLine('nome')}`,
+      'utf8',
+    );
+
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'nome', contextTokens: 134_602 });
+  });
+
+  it('último de cada um vence, independente da ordem entre eles', async () => {
+    await fs.writeFile(
+      filePath,
+      [
+        titleLine('nome antigo'),
+        assistantUsageLine({ input: 1, cacheRead: 1_000 }),
+        titleLine('nome novo'),
+        assistantUsageLine({ input: 2, cacheRead: 2_000 }),
+      ].join(''),
+      'utf8',
+    );
+
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'nome novo', contextTokens: 2_002 });
+  });
+
+  it('linha cortada no início do chunk (a cauda corta no meio de uma linha) não lança', async () => {
+    // Arquivo maior que a cauda: a leitura começa no meio de uma linha gigante.
+    const giant = `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'x'.repeat(70 * 1024) } })}\n`;
+    await fs.writeFile(filePath, `${giant}${assistantUsageLine({ input: 5, cacheRead: 500 })}${titleLine('sobreviveu')}`, 'utf8');
+
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'sobreviveu', contextTokens: 505 });
+  });
+
+  it('arquivo vazio → os dois null', async () => {
+    await fs.writeFile(filePath, '', 'utf8');
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: null, contextTokens: null });
+  });
+
+  it('arquivo inexistente → os dois null, sem lançar', async () => {
+    await expect(readTranscriptTail(join(dir, 'nao-existe.jsonl'))).resolves.toEqual({
+      customTitle: null,
+      contextTokens: null,
+    });
+  });
+
+  it('transcript sem nenhuma usage e sem título → os dois null (não 0)', async () => {
+    await fs.writeFile(filePath, `${userLine('só conversa')}${userLine('mais conversa')}`, 'utf8');
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: null, contextTokens: null });
   });
 });
 
