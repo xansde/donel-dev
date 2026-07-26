@@ -3,6 +3,24 @@
 **Task:** T712 · **Data:** 2026-07-26 · **Ambiente:** máquina do agente, build de
 produção (`npm run build`), Electron 43.2.0, `out/main/index.js`.
 
+> ## ✅ DECIDIDO EM 2026-07-26 — desvio ACEITO pelo Alexandre
+>
+> Palavras dele: *"Aceito o tempo de abertura da lista."* O alvo de **< 100 ms**
+> escrito na spec **cai**; o número aceito é o **medido: 103–167 ms**.
+>
+> O que mudou em consequência, para ninguém "corrigir" isso depois:
+> - `spec.md` CA-7 registra o alvo revisado e o motivo (o < 100 ms era estimativa
+>   sem medição prévia do boot; citava os 684 ms de varredura de disco da 004,
+>   que é o problema que esta feature EVITA, não uma medição deste caminho).
+> - `tests/smoke/ca7-measurement.spec.ts` deixa de ser alvo e passa a ser **cerca
+>   de regressão em 250 ms** (~1,5× o pior caso observado). Vermelho ali agora
+>   significa boot piorou de verdade — não o desvio conhecido. Antes desta
+>   decisão o teste ficava **vermelho por desenho**, o que a lição do §B11 manda
+>   não deixar acumular.
+> - Os candidatos de otimização levantados no diagnóstico abaixo **não foram
+>   descartados** — foram para o **§B20** do backlog. Se um dia entrarem, a cerca
+>   de 250 ms deve ser apertada junto.
+
 ## O que foi medido
 
 CA-7 exige: *"ao abrir o app, o grupo é montado a partir de um registro

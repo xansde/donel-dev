@@ -82,8 +82,20 @@ gate de execução.
 - **CA-7 (boot instantâneo, sem varredura):** ao abrir o app, o grupo é montado a
   partir de um **registro próprio do app** (mantido enquanto ele trabalha, D9),
   **sem** ler nenhum `.jsonl`. O registro guarda, por sessão, `sessionId`,
-  `projectPath`, `lastActivityAt` e o **rótulo em cache** (C1). Alvo: sidebar
-  pintada em **< 100 ms**, medido — não "parece rápido".
+  `projectPath`, `lastActivityAt` e o **rótulo em cache** (C1). O tempo de
+  pintura da sidebar é **medido**, não "parece rápido".
+  **Alvo revisado em 2026-07-26 (decisão do Alexandre): 103–167 ms, medido e
+  ACEITO.** O alvo original escrito aqui era < 100 ms — estimativa sem medição
+  prévia do boot (ele citava os 684 ms de varredura de disco da 004, que é um
+  problema DIFERENTE: o que esta feature evita). A medição com polling apertado
+  deu 103–167 ms e o diagnóstico mostrou que o custo é de **boot pré-existente**
+  (a bundle bloqueia o `domcontentloaded` por ~158 ms; depois dele vêm
+  `config:get` e `projects:list` em dois `useEffect` sequenciais) — nada disso
+  foi introduzido pela 007, que só foi a primeira feature a pôr número duro
+  nesse caminho. O teste `ca7-measurement.spec.ts` passa a ser **cerca de
+  regressão em 250 ms** (~1,5× o pior caso), não alvo. Candidatos de otimização
+  ficaram registrados no **§B20** do backlog, para quando/se valer a pena.
+  Diagnóstico completo: `medicao-ca7.md`.
 - **CA-8 (semeadura única, só quando não há nada):** projeto favoritado **sem
   nenhuma** entrada no registro (primeira execução depois desta feature) preenche
   por **uma** leitura de disco na primeira vez que o grupo é expandido, e o

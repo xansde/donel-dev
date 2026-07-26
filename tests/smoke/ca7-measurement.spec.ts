@@ -7,7 +7,18 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 
 // T712 (007-favoritos-sessoes) — MEDIÇÃO OBRIGATÓRIA do CA-7: tempo do
 // `domcontentloaded` até a sidebar pintada com o registro CHEIO (5 favoritos
-// × 5 sessões recentes + 1 fixada cada = 30 linhas), alvo < 100 ms.
+// × 5 sessões recentes + 1 fixada cada = 30 linhas).
+//
+// DECISÃO DO ALEXANDRE, 2026-07-26: **desvio aceito**. O alvo original da spec
+// era < 100 ms; a medição real deu 103–167 ms, e o diagnóstico mostrou que o
+// custo é de BOOT PRÉ-EXISTENTE (bundle bloqueando o `domcontentloaded` +
+// `config:get` e `projects:list` em dois `useEffect` sequenciais), não algo
+// introduzido pela 007. Ele aceitou o número medido.
+// Consequência para este teste: `CA7_TARGET_MS` deixa de ser ALVO e passa a ser
+// CERCA DE REGRESSÃO — larga o suficiente (~1,5× o pior caso observado) para
+// falhar só quando o boot piorar de verdade, e não por variação de carga da
+// máquina. Se algum dia a otimização de boot entrar (§B20 do backlog), aperte
+// esta cerca junto.
 //
 // Polling APERTADO (loop próprio abaixo, checando a cada round-trip do
 // `locator.count()`), nunca `expect().toPass` — lição da 004
@@ -26,7 +37,8 @@ const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
 const APP_CWD = path.join(__dirname, '../..');
 const RECENT_PER_PROJECT = 5;
 const FAVORITES_COUNT = 5;
-const CA7_TARGET_MS = 100;
+/** Cerca de regressão, não alvo (ver decisão de 26/07 no topo). Pior caso medido: 167 ms. */
+const CA7_REGRESSION_FENCE_MS = 250;
 
 let electronApp: ElectronApplication;
 let appWindow: Page;
@@ -139,12 +151,12 @@ test('T712/CA-7 — domcontentloaded → sidebar com o registro cheio (5×6 linh
   }
 
   // eslint-disable-next-line no-console
-  console.log(`CA-7 medido: ${elapsedMs!.toFixed(2)} ms (alvo < ${CA7_TARGET_MS} ms) — ${expectedRows} linhas`);
-  // NOTA (ver specs/007-favoritos-sessoes/medicao-ca7.md): medições reais
-  // ficaram na faixa de 103–167 ms, acima do alvo de < 100 ms. Mantido como
-  // asserção estrita de propósito — vermelho aqui é SINAL, não bug do teste
-  // (o número já foi verificado com polling apertado numa única chamada de
-  // `evaluate`, sem o erro de amostrador da 004). Decisão de aceitar o desvio
-  // ou investir em otimização é dele — ver o documento de medição.
-  expect(elapsedMs).toBeLessThan(CA7_TARGET_MS);
+  console.log(
+    `CA-7 medido: ${elapsedMs!.toFixed(2)} ms (faixa aceita em 26/07: 103–167 ms · cerca de regressão: ${CA7_REGRESSION_FENCE_MS} ms) — ${expectedRows} linhas`,
+  );
+  // Vermelho aqui significa **regressão de boot**, não o desvio já aceito: o
+  // número sai de polling apertado numa única chamada de `evaluate` (sem o erro
+  // de amostrador da 004), então não é ruído de medição. Diagnóstico e candidatos
+  // de otimização: specs/007-favoritos-sessoes/medicao-ca7.md e §B20 do backlog.
+  expect(elapsedMs).toBeLessThan(CA7_REGRESSION_FENCE_MS);
 });

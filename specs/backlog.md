@@ -479,6 +479,28 @@ decidir UMA fonte para o número (o módulo puro) e apagar o token, ou alinhar o
 token em 300k com comentário apontando para a decisão. Não mexer agora: mudar
 token de design-system fora de uma feature que o use é escopo alheio.
 
+### B20. Otimizar o boot do app — candidatos que sobraram da decisão do CA-7 (26/07)
+
+O CA-7 da 007 pedia sidebar pintada em < 100 ms; medido deu **103–167 ms** e o
+Alexandre **aceitou o desvio** em 26/07 (`007-favoritos-sessoes/medicao-ca7.md`).
+Os candidatos de otimização levantados no diagnóstico ficam aqui para não se
+perderem — nenhum é urgente, e nenhum é culpa da 007:
+
+1. **Unificar `config:get` + `projects:list` num canal só** (`boot:get`). Hoje são
+   duas chamadas IPC em dois `useEffect` sequenciais no `App.tsx`; o segundo
+   round-trip só começa depois do primeiro re-render. Melhor retorno por esforço.
+2. **Atacar os ~158 ms que a bundle bloqueia ANTES do `domcontentloaded`** — a
+   bundle de produção (~776 KB) não tem `defer`/`async`, e a execução síncrona do
+   módulo trava o fim do parse do HTML. Mexe em `electron.vite.config.ts`, não na
+   feature.
+3. **Adiar a montagem das linhas fora da viewport inicial** — com registro cheio
+   são 30 linhas montadas de uma vez; só as visíveis precisam existir no primeiro
+   paint.
+
+**Se algum destes entrar, apertar junto a cerca de regressão de 250 ms do
+`tests/smoke/ca7-measurement.spec.ts`** — senão a melhoria não fica protegida por
+teste nenhum.
+
 ### B18. Primeira abertura numa máquina que não é a dele (verificado no código, 26/07)
 
 Levantado ao responder "o sistema de pastas será intuitivo para as outras

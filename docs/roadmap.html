@@ -351,6 +351,46 @@
   .card.is-gate:hover,
   .card.is-gate:focus-visible { background: color-mix(in srgb, var(--t-decisao) 14%, var(--panel)); }
 
+  /* Resolvido: sai do caminho visual sem sair da página — o registro de que
+     foi decidido é parte da informação. */
+  .card.is-done,
+  .card.is-gate.is-done {
+    background: var(--panel);
+    border-color: var(--hairline);
+    border-left-color: var(--done);
+  }
+
+  .card.is-done .card-title { color: var(--ink-dim); font-weight: 550; }
+  .card.is-done .card-id { color: var(--done); }
+  .node.is-done { border-color: var(--done); }
+  .node.is-done::after { background: var(--done); transform: scale(1); }
+
+  .stamp {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--t-confianca);
+    padding: 2px 7px;
+    border: 1px solid color-mix(in srgb, var(--t-confianca) 34%, var(--hairline));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--t-confianca) 10%, var(--panel));
+  }
+
+  .resolved {
+    display: grid;
+    gap: 4px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--t-confianca) 9%, var(--panel));
+    border: 1px solid color-mix(in srgb, var(--t-confianca) 26%, var(--hairline));
+    margin-bottom: 18px;
+  }
+
+  .resolved h3 { color: var(--t-confianca); margin: 0; }
+  .resolved p { color: var(--ink-dim); margin: 0; }
+  .resolved a { color: var(--t-distribuicao); }
+
   .parallel-tag {
     display: inline-flex;
     align-items: center;
@@ -531,12 +571,13 @@
     <p class="eyebrow">Donel Dev · 26 de julho de 2026</p>
     <h1>O que vem agora</h1>
     <p class="lede">
-      A versão <strong>0.1.0</strong> está empacotada e pronta para outras pessoas — com nomes de
-      sessão, porcentagem de contexto, copiar e colar decente no terminal e favoritos com as
-      sessões recentes. O que sobra daqui para frente se divide em <strong>três decisões suas</strong>
-      e <strong>quatro frentes de trabalho</strong>, das quais três podem correr ao mesmo tempo.
+      A versão <strong>0.1.0</strong> está <strong>no Drive</strong>, pronta para outras pessoas — com
+      nomes de sessão, porcentagem de contexto, copiar e colar decente no terminal e favoritos com
+      as sessões recentes. Das três decisões que estavam na sua mão, <strong>duas saíram em
+      26/07</strong>. O que sobra são <strong>quatro frentes de trabalho</strong>, das quais três
+      podem correr ao mesmo tempo.
     </p>
-    <p class="hint">Clique em qualquer bolinha para ler do que se trata.</p>
+    <p class="hint">Clique em qualquer bolinha para ler do que se trata. Bolinha cinza = já resolvido.</p>
 
     <div class="legend" role="list">
       <span class="legend-item" role="listitem"><span class="legend-dot" style="--c: var(--t-decisao)"></span> Você decide</span>
@@ -582,40 +623,43 @@
     {
       when: "Agora",
       title: "Três coisas que só você resolve",
-      note: "Nenhuma exige sessão de trabalho: uma é arrastar arquivo, duas são escolher entre dois caminhos. Mas as três seguram o que vem depois.",
+      note: "Duas já saíram em 26/07 — a pasta no Drive e o tempo de abertura da lista. Sobrou uma, e ela não bloqueia nada: só limpa uma página velha no GitHub.",
       parallel: false,
       tasks: [
         {
           id: "Drive",
           track: "decisao",
-          size: "1 minuto",
+          size: "feito",
+          done: true,
           title: "Subir o app no Drive e mandar o link",
-          sub: "O pacote está pronto no seu Downloads, esperando o arrasta-e-solta.",
-          o_que: "Os três arquivos que a pessoa precisa já estão numa pasta no seu <strong>Downloads</strong>: o instalador, um guia de instalação de uma página e a lista do que mudou. Falta criar uma pasta no Drive da Seazone, arrastar os três para lá, marcar como <strong>Leitor</strong> e mandar o link.",
-          porque: "Enquanto isso não acontece, a entrega de hoje não existe para ninguém — está tudo num Downloads que só você vê.",
-          atencao: "Mande o link <strong>da pasta</strong>, não o do arquivo. O link da pasta é o único que continua valendo quando você publicar versão nova por cima.",
-          trace: "C:\\Users\\xansd\\Downloads\\Donel Dev - subir pro Drive · docs/distribuicao.md"
+          sub: "Pasta criada em 26/07. Falta só confirmar que o compartilhamento está aberto.",
+          o_que: "Os três arquivos — instalador, guia de instalação de uma página e lista do que mudou — foram para uma pasta no Drive: <a href=\"https://drive.google.com/drive/folders/1mmwA8aM6Hbh5CxkvI41Bpx_012Amkc9V\" target=\"_blank\" rel=\"noreferrer\">abrir a pasta</a>.",
+          porque: "É o link que você manda uma vez e não muda mais. Toda republicação sobrescreve o arquivo de nome fixo lá dentro, então quem guardou o link continua baixando a versão atual.",
+          atencao: "Duas conferências que eu <strong>não consigo fazer daqui</strong> (a conta de Google que eu alcanço não é a sua, então a pasta aparece como inexistente para mim): que o compartilhamento está como <strong>Leitor</strong> para quem precisa, e que você mandou o link <strong>da pasta</strong>, não o do arquivo.",
+          trace: "1mmwA8aM6Hbh5CxkvI41Bpx_012Amkc9V · docs/distribuicao.md"
         },
         {
           id: "Abertura",
           track: "decisao",
-          size: "1 mensagem",
-          title: "Aceitar o tempo de abertura da lista, ou mandar otimizar",
-          sub: "A meta escrita era menos de 100 ms. A medição real deu 103 a 149 ms.",
-          o_que: "Quando o app abre, a lista de projetos favoritos com as sessões recentes leva de <strong>103 a 149 milésimos de segundo</strong> para aparecer. A meta que estava escrita na especificação era \"menos de 100\". Na prática, é a diferença entre um piscar de olhos e um piscar de olhos.",
-          porque: "A investigação já está feita e não tem mistério: a demora não foi criada por essa funcionalidade — é o custo de abertura do app, que nunca havia sido medido com esse rigor antes. As duas saídas são <strong>aceitar o número e corrigir a meta escrita</strong>, ou <strong>abrir uma tarefa de deixar a abertura mais rápida</strong>.",
-          atencao: "Enquanto você não decidir, um teste fica vermelho de propósito. Teste vermelho sem motivo escrito é exatamente o que faz uma equipe parar de olhar os testes.",
-          trace: "specs/007-favoritos-sessoes/medicao-ca7.md · CA-7"
+          size: "decidido",
+          done: true,
+          title: "Tempo de abertura da lista — desvio aceito",
+          sub: "Você aceitou o número medido em 26/07. O alvo escrito foi corrigido e o teste virou cerca de regressão.",
+          o_que: "A lista de favoritos com as sessões recentes aparece entre <strong>103 e 167 milésimos de segundo</strong> depois que a janela abre. A meta escrita era \"menos de 100\" — uma estimativa feita antes de qualquer medição do tempo de abertura do app.",
+          porque: "Você aceitou o número real. A meta na especificação foi corrigida com o motivo escrito, e o teste que media isso <strong>parou de ser vermelho de propósito</strong>: ele agora falha só se a abertura piorar de verdade (acima de 250 ms). Rodei depois da mudança: passou em 114,90 ms.",
+          atencao: "As ideias de deixar a abertura mais rápida não foram jogadas fora — ficaram anotadas para quando/se valer a pena, e quem mexer nelas deve apertar o teste junto.",
+          trace: "specs/007-favoritos-sessoes/medicao-ca7.md · §B20 do backlog"
         },
         {
           id: "Revisão",
           track: "decisao",
           size: "1 decisão",
-          title: "Resolver o pedido de revisão que envelheceu",
-          sub: "Aberto em 24/07 com o título de duas entregas; hoje carrega quatro e 47 mudanças.",
-          o_que: "Existe um pedido de revisão aberto desde 24 de julho. O título dele fala de duas entregas, mas a branch andou e hoje ele carrega <strong>quatro entregas e 47 mudanças</strong> de uma vez.",
-          porque: "Ninguém revisa 47 mudanças de verdade — sai um \"tá bom\" de fachada, que é pior do que não ter revisão, porque dá a sensação de que alguém olhou. Ou você atualiza o título e a descrição e pede revisão de fato, ou fecha e abre um pedido por assunto.",
-          trace: "PR #1 · feature/mvp-p0 → staging"
+          title: "Fechar ou renomear o pedido de revisão que ficou velho no GitHub",
+          sub: "Uma página aberta no GitHub em 24/07 pedindo revisão do código — o título dela hoje mente.",
+          o_que: "No GitHub existe um <em>pull request</em> — uma página que diz \"olha essas mudanças e me diz se pode entrar\". Você abriu uma em 24 de julho para levar o código de <strong>nomear sessões</strong> e <strong>porcentagem de contexto</strong> para a área comum. Ela ficou aberta, sem ninguém revisar. E como você continuou trabalhando na mesma linha de código, ela foi <strong>engordando sozinha</strong>: hoje carrega quatro entregas e 47 alterações, mas o título ainda anuncia duas.",
+          porque: "Quem abrir aquela página vê um título que não corresponde ao conteúdo e um volume que ninguém revisa de verdade — sai um \"tá bom\" de fachada, que é pior do que não ter revisão nenhuma, porque parece que alguém olhou. Nada está quebrado: o código está no lugar certo e publicado. O que está errado é o pedido.",
+          atencao: "Três saídas, todas de um clique ou dois: <strong>renomear</strong> para o que ela virou e pedir revisão de fato; <strong>fechar</strong> sem revisar, se você não quer revisão de outra pessoa neste momento; ou fechar e abrir uma por assunto quando quiser revisão de verdade.",
+          trace: "PR #1 · feature/mvp-p0 → staging · 47 commits"
         }
       ]
     },
@@ -827,13 +871,15 @@
         html += `<div class="row ${parallel ? "" : "is-trunk"}" style="--gw:${gw}px; --nc:${color}">
           <div class="gutter">
             ${rails}
-            <button class="node" style="--lane:${lanes[i]}; --nc:${color}" data-key="${key}"
+            <button class="node ${task.done ? "is-done" : ""}" style="--lane:${lanes[i]}; --nc:${color}" data-key="${key}"
               aria-label="Abrir resumo: ${task.title}"></button>
           </div>
-          <button class="card ${task.track === "decisao" ? "is-gate" : ""}" data-key="${key}" style="--nc:${color}">
+          <button class="card ${task.track === "decisao" ? "is-gate" : ""} ${task.done ? "is-done" : ""}" data-key="${key}" style="--nc:${color}">
             <span class="card-top">
               <span class="card-id">${task.id}</span>
-              <span class="card-size">${task.size}</span>
+              ${task.done
+                ? `<span class="stamp">✓ ${task.size}</span>`
+                : `<span class="card-size">${task.size}</span>`}
             </span>
             <span class="card-title">${task.title}</span>
             <span class="card-sub">${task.sub}</span>
@@ -872,8 +918,12 @@
     document.getElementById("sheet-meta").innerHTML =
       `<span class="chip">${task.id}</span><span class="chip">${task.size}</span>`;
 
-    let body = `<section><h3>Do que se trata</h3><p>${task.o_que}</p></section>
-      <section><h3>Por que entra agora</h3><p>${task.porque}</p></section>`;
+    let body = "";
+    if (task.done) {
+      body += `<div class="resolved"><h3>✓ Resolvido em 26/07</h3><p>Fica registrado aqui para o histórico da decisão.</p></div>`;
+    }
+    body += `<section><h3>Do que se trata</h3><p>${task.o_que}</p></section>
+      <section><h3>${task.done ? "O que ficou decidido" : "Por que entra agora"}</h3><p>${task.porque}</p></section>`;
     if (task.atencao) {
       body += `<section class="flag"><h3>Preste atenção</h3><p>${task.atencao}</p></section>`;
     }
