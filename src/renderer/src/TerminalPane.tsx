@@ -3,7 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { Button } from '@donel-dev/design-system';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { parseClaudeNotFound } from '../../shared';
+import { IMAGE_PASTE_SEQUENCE, parseClaudeNotFound, resolveTerminalKeyAction } from '../../shared';
 import type { PtyExitInfo, SemaphoreStateInfo } from '../../shared';
 import { formatRingBufferPreview } from './ringBufferPreview';
 import styles from './TerminalPane.module.css';
@@ -178,6 +178,14 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   onProfileResolvedRef.current = onProfileResolved;
   const onClaudeSessionIdResolvedRef = useRef(onClaudeSessionIdResolved);
   onClaudeSessionIdResolvedRef.current = onClaudeSessionIdResolved;
+  // T505 (005-terminal-copy-paste) — atualizada a cada render, mesmo padrão
+  // acima: o handler de teclado (T506) é registrado uma vez no mount do
+  // `term` (efeito com deps `[]`, ver useEffect abaixo) e sobrevive a
+  // re-renders; ler `sessionType` direto do closure congelaria o valor do
+  // PRIMEIRO render. A aba não muda de tipo hoje, mas é o mesmo cuidado que
+  // `ptyIdRef`/`mountEpochRef` já têm no arquivo.
+  const sessionTypeRef = useRef(sessionType);
+  sessionTypeRef.current = sessionType;
 
   // T010 — reporta pro pai sempre que a "vivacidade" do processo muda (não
   // a cada render, só quando `status.kind` de fato transiciona) — é o sinal
@@ -370,6 +378,82 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     term.open(container);
     fitAddon.fit();
     termRef.current = term;
+
+    // T506/T507 (005-terminal-copy-paste, plan.md Fatia 3) — decisor de
+    // Ctrl+C/Ctrl+V por tipo de aba, registrado ANTES da tradução tecla->bytes
+    // do xterm (é o único gancho cujo `false` cancela o `onData` abaixo,
+    // impedindo o `\x03` de nascer — CA-1/CA-2). `term.onData` continua o
+    // ÚNICO caminho de saída pro PTY (decisão técnica 2 do plan.md): este
+    // handler nunca escreve no PTY como alternativa a ele, só decide se ele
+    // roda ('passthrough', devolve true) ou não (devolve false + ação própria).
+    //
+    // Registrado no `term` DESTE mount (StrictMode/`mountEpochRef`, comentário
+    // acima) — morre junto com `term.dispose()` no cleanup, sem desregistro
+    // próprio.
+    term.attachCustomKeyEventHandler((event): boolean => {
+      const action = resolveTerminalKeyAction(event, {
+        sessionType: sessionTypeRef.current,
+        hasSelection: term.hasSelection(),
+        // `hasImage()` é IPC assíncrono; este handler é SÍNCRONO (contrato do
+        // xterm). Aqui só decidimos copySelection/noop/passthrough — nenhum
+        // deles depende de saber se há imagem. Ctrl+V (candidato a colagem)
+        // sempre cai em 'pasteText' com este `false` fixo (nunca 'pasteImage'
+        // sem saber de verdade); a dança async da imagem é feita NO PRÓPRIO
+        // branch abaixo, sem reconsultar `resolveTerminalKeyAction`.
+        clipboardHasImage: false,
+      });
+
+      if (action.kind === 'passthrough') return true;
+      if (action.kind === 'noop') return false; // C1/CA-2 — Ctrl+C sem seleção em aba claude: nunca `\x03`.
+
+      if (action.kind === 'copySelection') {
+        void window.donel.clipboard.writeText(term.getSelection());
+        return false;
+      }
+
+      // T507 — só resta 'pasteText', que aqui significa "Ctrl+V, candidato a
+      // colagem" (o `clipboardHasImage: false` acima nunca deixa
+      // `resolveTerminalKeyAction` devolver 'pasteImage'). Padrão do plan.md
+      // (Fatia 2, "padrão adotado"): cancela JÁ (`return false`, abaixo) e
+      // resolve ASYNC qual colagem fazer. Em aba claude as duas saídas
+      // (imagem/texto) são sempre ações nossas. Em aba shell, colar imagem é
+      // fora de escopo (US-C só claude) — o único caso não coberto por esta
+      // dança é "Ctrl+V com imagem no clipboard em aba shell": como
+      // `readText()` de um clipboard só-com-imagem devolve string vazia, o
+      // efeito observável (nada é escrito) já é equivalente ao passthrough
+      // que a tabela pediria — não há como "deixar passar cru" depois de já
+      // ter cancelado o keydown (contrato síncrono do xterm).
+      const isClaudeTab = sessionTypeRef.current === 'claude';
+
+      void window.donel.clipboard
+        .hasImage()
+        .then((hasImg) => {
+          if (hasImg && isClaudeTab) {
+            // CA-4/CA-4b — só a tecla, nada mais: sem arquivo temp, sem
+            // base64, sem spinner nosso (o `Pasting…`/`[Image #N]` são
+            // desenhados pelo próprio CLI). Sequência provada no SPIKE-1.
+            if (ptyIdRef.current) window.donel.pty.input(ptyIdRef.current, IMAGE_PASTE_SEQUENCE);
+            return undefined;
+          }
+
+          return window.donel.clipboard.readText().then((text) => {
+            if (!text) return; // Texto vazio -> não escreve nada (nenhum byte espúrio).
+            const normalized = text.replace(/\r\n/g, '\r');
+            // CA-3 — bracketed paste só em aba claude (o CLI liga `\x1b[?2004h`
+            // no boot); em aba shell o PowerShell não pede isso, escreve cru.
+            const payload = isClaudeTab ? `\x1b[200~${normalized}\x1b[201~` : normalized;
+            if (ptyIdRef.current) window.donel.pty.input(ptyIdRef.current, payload);
+          });
+        })
+        .catch((error: unknown) => {
+          // Regra dura (spec.md) — clipboard indisponível NUNCA derruba a
+          // digitação; engolido aqui, nunca vira unhandled rejection.
+          // eslint-disable-next-line no-console
+          console.error('[donel-dev] falha ao colar do clipboard:', error);
+        });
+
+      return false;
+    });
 
     term.onData((data) => {
       if (ptyIdRef.current) window.donel.pty.input(ptyIdRef.current, data);
