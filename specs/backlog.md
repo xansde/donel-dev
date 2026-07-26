@@ -317,6 +317,23 @@ aí sim é achado novo.
 **O risco original do B11 está morto:** não há mais "vermelho misterioso" que
 possa esconder uma regressão nova — cada um tem causa nomeada e verificada.
 
+**Atualização 2026-07-26 (gate da 006) — os DOIS vermelhos de cota viraram
+verdes.** Suíte completa no HEAD da `feature/mvp-p0` (com os 2 testes novos do
+`session-context.spec.ts`): **26 verdes, 2 vermelhos, 5,9 min**. Os vermelhos são
+só a dívida da T013 (`previous-sessions.spec.ts` ×2, marcador determinístico que
+não aparece no pane). O que mudou:
+
+- `model-injection.spec.ts` (T011): **verde** — exigia turno real e a janela
+  semanal de cota virou.
+- `terminal.spec.ts:281` (semáforo em background): **verde em 1,4 min**, contra
+  os 4,4 min que queimava esperando um turno que a cota não deixava chegar. Isso
+  também explica a suíte cair de 9,2 para 5,9 min — a causa nomeada no §B13 era
+  essa mesma.
+
+Ou seja: a hipótese "cota esgotada" de 24/07 ficou **confirmada por refutação
+inversa** (com cota, passa). Os únicos vermelhos restantes são feature real não
+implementada (T013), não ambiente.
+
 **Relacionado:** B9 (log de resultado de testes) — um registro carimbado com
 commit tornaria essa reclassificação consultável em vez de re-executável.
 

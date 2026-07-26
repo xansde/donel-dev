@@ -256,9 +256,17 @@ entre B e C** — a mudança só aparece para o usuário na Fase C.
   que exige uma sessão real grande — anotar que pode ser validado numa sessão
   de trabalho normal ao longo do dia, não num teste dedicado.
 
-**Gate da Fase C:** suíte completa (unit + 16 smokes de produção + smoke de
-modo dev) verde **antes** de considerar a entrega fechada — a rodada 5/6 ficou
-com auditoria interrompida em 88/87 por pular isso; não repetir.
+**Gate da Fase C — EXECUTADO em 2026-07-26, com a saída real:**
+- `npm run typecheck` ✅
+- `npm test` (vitest) ✅ **439 testes / 27 arquivos** (eram 394 no gate da 004:
+  +32 do novo `contextWindow.test.ts` e +13 no `transcriptWatcher.test.ts`)
+- `npm run test:smoke` ✅ **26 verdes / 2 vermelhos, 5,9 min** — os 2 vermelhos
+  são a dívida da T013 (`previous-sessions.spec.ts`), única causa aberta do §B11;
+  os 2 que estavam vermelhos por **cota esgotada** (`model-injection`,
+  `terminal.spec.ts:281`) passaram, e a suíte caiu de 9,2 para 5,9 min pelo mesmo
+  motivo (§B13). Os 2 testes novos de `session-context.spec.ts` estão entre os
+  verdes.
+- `npm run test:smoke:dev` ✅ (guard de StrictMode do T610)
 
 ---
 
