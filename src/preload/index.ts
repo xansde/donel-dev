@@ -105,6 +105,18 @@ const donelApi: DonelApi = {
       ipcRenderer.on(TRANSCRIPT_CHANNELS.changed, handler);
       return () => ipcRenderer.removeListener(TRANSCRIPT_CHANNELS.changed, handler);
     },
+
+    // T705 (007-favoritos-sessoes) — os três canais de escrita do registro.
+    registerVisit: (sessionId: string, projectPath: string, label: string) =>
+      ipcRenderer.invoke(SESSION_CHANNELS.registerVisit, sessionId, projectPath, label) as Promise<AppConfigDto>,
+
+    setPinned: (sessionId: string, pinned: boolean) =>
+      ipcRenderer.invoke(SESSION_CHANNELS.setPinned, sessionId, pinned) as Promise<AppConfigDto>,
+
+    forget: (sessionId: string) => ipcRenderer.invoke(SESSION_CHANNELS.forget, sessionId) as Promise<AppConfigDto>,
+
+    // T706/CA-8 — a única leitura de disco da feature, guardada no main.
+    seedProject: (projectPath: string) => ipcRenderer.invoke(SESSION_CHANNELS.seedProject, projectPath) as Promise<AppConfigDto>,
   },
 
   profiles: {
