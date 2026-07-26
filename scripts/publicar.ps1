@@ -35,7 +35,16 @@
 .EXAMPLE
     npm run publicar
 .EXAMPLE
-    powershell -File scripts\publicar.ps1 -Destino "G:\Meu Drive\Donel Dev" -SkipBuild
+    # Primeira vez, informando o destino. ATENÇÃO: forma POSICIONAL, sem
+    # `-Destino`. Medido em 26/07: o npm no Windows engole argumentos que
+    # começam com um traço só (`-Destino`, `-SkipBuild` chegaram vazios ao
+    # script), e o único token repassado foi o valor solto — que casa com
+    # $Destino por posição. Por isso `-SkipBuild` virou o script
+    # `npm run publicar:rapido` em vez de um argumento.
+    npm run publicar -- "G:\Meu Drive\Donel Dev"
+.EXAMPLE
+    # Publica o que já está em release\ (sem empacotar de novo).
+    npm run publicar:rapido
 #>
 [CmdletBinding()]
 param(
@@ -92,7 +101,8 @@ if (-not $Destino) {
     Escreva '  Passo unico, uma vez so:' Gray
     Escreva '    1. Instale o Google Drive para Desktop e entre com alexandre.lentz@seazone.com.br' Gray
     Escreva '    2. Crie a pasta "Donel Dev" no Meu Drive e compartilhe com os colegas (leitor)' Gray
-    Escreva '    3. Rode:  npm run publicar -- -Destino "G:\Meu Drive\Donel Dev"' Gray
+    Escreva '    3. Rode (sem -Destino, so o caminho — o npm engole argumentos com traco):' Gray
+    Escreva '         npm run publicar -- "G:\Meu Drive\Donel Dev"' White
     Write-Host ''
     Escreva '  O caminho fica gravado em scripts\publicar.local.json e nao precisa ser repetido.' DarkGray
     Write-Host ''

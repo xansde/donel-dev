@@ -46,11 +46,19 @@ todo link direto morreria a cada publicação.
    `alexandre.lentz@seazone.com.br` (não a conta pessoal — ver abaixo).
 2. Criar a pasta **`Donel Dev`** no *Meu Drive* e compartilhar com os colegas
    como **Leitor**.
-3. Rodar uma vez com o caminho:
-   `npm run publicar -- -Destino "G:\Meu Drive\Donel Dev"`
+3. Rodar uma vez com o caminho — **forma posicional, sem `-Destino`**:
+   `npm run publicar -- "G:\Meu Drive\Donel Dev"`
 
 O caminho fica gravado em `scripts/publicar.local.json` (gitignored) e das
 próximas vezes basta `npm run publicar`.
+
+> **Por que sem `-Destino`:** medido em 26/07 — o npm no Windows engole
+> argumentos que começam com um traço só. `npm run publicar -- -Destino "X"
+> -SkipBuild` chegou ao script como apenas `X`, e o `-SkipBuild` foi
+> silenciosamente perdido (o script empacotou quando não devia). Daí o caminho
+> ser passado por posição e o `-SkipBuild` ter virado um script próprio:
+> **`npm run publicar:rapido`** publica o instalador que já está em `release\`
+> sem empacotar de novo.
 
 ## O que foi descartado, e por quê
 

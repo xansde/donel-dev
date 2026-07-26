@@ -19,7 +19,8 @@
     "test:smoke": "playwright test -c tests/smoke/playwright.config.ts",
     "test:smoke:dev": "playwright test -c tests/smoke-dev/playwright.config.ts",
     "dist": "npm run build && electron-builder --win nsis",
-    "publicar": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publicar.ps1"
+    "publicar": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publicar.ps1",
+    "publicar:rapido": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publicar.ps1 -SkipBuild"
   },
   "dependencies": {
     "@donel-dev/design-system": "0.1.0",
