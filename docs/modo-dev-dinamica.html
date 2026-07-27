@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modo Dev — como vai funcionar</title>
+<style>
+  :root{
+    --bg:#faf9f7; --card:#fff; --ink:#1c1b19; --dim:#6b6862; --line:#e5e1da;
+    --accent:#8b5cf6; --ok:#2f9e63; --wait:#b8860b; --off:#a8a49c;
+    --focus:#f3eeff;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#141312; --card:#1c1b1a; --ink:#f0ede8; --dim:#9c968c; --line:#302e2b;
+           --accent:#a78bfa; --focus:#231d33; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.65 -apple-system,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:860px;margin:0 auto;padding:48px 24px 96px}
+  h1{font-size:34px;line-height:1.2;margin:0 0 8px;letter-spacing:-.02em}
+  .sub{color:var(--dim);font-size:18px;margin:0 0 40px}
+  h2{font-size:22px;margin:56px 0 4px;letter-spacing:-.01em}
+  h2 .n{color:var(--accent);font-variant-numeric:tabular-nums;margin-right:10px}
+  .lead{color:var(--dim);margin:0 0 20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:16px 0}
+  .big{font-size:19px;line-height:1.5}
+  strong{font-weight:640}
+  .three{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+  .three .card{margin:0}
+  .three h3{margin:0 0 6px;font-size:17px}
+  .three p{margin:0;color:var(--dim);font-size:15px}
+  .three .eg{margin-top:10px;font-size:14px;color:var(--ink);opacity:.85;
+             border-left:3px solid var(--accent);padding-left:10px}
+  ol.scenes{list-style:none;counter-reset:s;padding:0;margin:0}
+  ol.scenes li{counter-increment:s;position:relative;padding:0 0 26px 46px;border-left:2px solid var(--line);margin-left:14px}
+  ol.scenes li:last-child{border-left-color:transparent}
+  ol.scenes li::before{content:counter(s);position:absolute;left:-15px;top:-2px;width:28px;height:28px;
+    border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;
+    font-size:14px;font-weight:700}
+  ol.scenes h3{margin:0 0 4px;font-size:17px}
+  ol.scenes p{margin:0;color:var(--dim)}
+  .you{color:var(--ink);font-weight:600}
+  /* mock */
+  .mock{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card);margin:20px 0}
+  .mock .bar{display:flex;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line);align-items:center}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--line)}
+  .bar .t{margin-left:10px;font-size:13px;color:var(--dim)}
+  .cols{display:grid;grid-template-columns:1fr 260px;min-height:330px}
+  @media(max-width:680px){.cols{grid-template-columns:1fr}}
+  .stage{padding:22px;border-right:1px solid var(--line)}
+  .stage .kicker{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+  .stage h4{margin:6px 0 14px;font-size:20px}
+  .term{background:#0f0e0d;color:#d9d5cd;border-radius:10px;padding:14px;font:13px/1.6 ui-monospace,Consolas,monospace;white-space:pre-wrap}
+  .term .p{color:#7fd39a}
+  .side{padding:18px;background:linear-gradient(180deg,var(--focus),transparent 60%)}
+  .side .h{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);margin-bottom:12px}
+  .tree{font-size:14px}
+  .tree .root{font-weight:680;margin-bottom:8px}
+  .tree ul{list-style:none;margin:0 0 0 4px;padding:0 0 0 14px;border-left:1px dashed var(--line)}
+  .tree li{padding:5px 0}
+  .tree .m{display:flex;align-items:center;gap:8px}
+  .pill{font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+  .pill.ok{color:var(--ok);border-color:var(--ok)}
+  .pill.now{color:var(--accent);border-color:var(--accent);background:var(--card)}
+  .pill.wait{color:var(--wait);border-color:var(--wait)}
+  .foc{background:var(--card);border:1px solid var(--accent);border-radius:9px;padding:6px 8px;margin:2px -8px}
+  .sm{font-size:12.5px;color:var(--dim);margin:2px 0 0 18px}
+  .cap{font-size:14px;color:var(--dim);margin:8px 2px 0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:15px}
+  th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);font-weight:600}
+  .no li{margin-bottom:10px}
+  .no b{display:block}
+  .open{background:var(--card);border:1px dashed var(--line);border-radius:14px;padding:20px 22px;margin-top:16px}
+  .open ul{margin:8px 0 0;padding-left:18px}
+  .open li{margin-bottom:8px;color:var(--dim)}
+  .open li b{color:var(--ink);font-weight:640}
+  footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);font-size:14px;color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Modo Dev — como vai funcionar</h1>
+<p class="sub">O que ficou decidido no MD-01, em português normal. Se algo aqui não for
+o que você quis dizer, é aqui que a gente corrige — antes de virar spec.</p>
+
+<div class="card big">
+Hoje você abre o Donel Dev e precisa <strong>lembrar o que digitar</strong> em cada etapa.
+No Modo Dev, o app passa a saber <strong>em que ponto do trabalho você está</strong> e te
+conduz de etapa em etapa — com um mapa do lado mostrando a frente inteira: o que já ficou
+pronto, o que está rodando agora e o que ainda falta.
+</div>
+
+<h2><span class="n">1</span>Três palavras, e só três</h2>
+<p class="lead">Tudo no Modo Dev é uma dessas três coisas. Nada mais.</p>
+<div class="three">
+  <div class="card">
+    <h3>Frente de trabalho</h3>
+    <p>A coisa grande que você abriu para <strong>investigar antes de agir</strong>. Nasce de
+    um card do seu board. É o que o mapa do lado acompanha.</p>
+    <div class="eg">"Modo Dev do Donel Dev"</div>
+  </div>
+  <div class="card">
+    <h3>Entrega</h3>
+    <p>Um pedaço da frente que vira <strong>uma branch e um PR</strong>. Uma frente pode ter
+    uma só ou várias. É o tamanho de uma feature.</p>
+    <div class="eg">"M1 — mapa lateral", "M2 — o botão de trocar de modo"</div>
+  </div>
+  <div class="card">
+    <h3>Etapa</h3>
+    <p>As cinco fases que cada entrega percorre. São as mesmas da sua esteira de hoje — o app
+    não inventou nomes novos.</p>
+    <div class="eg">investigar → planejar → construir → conferir → fechar</div>
+  </div>
+</div>
+
+<h2><span class="n">2</span>Um dia usando</h2>
+<p class="lead">A sequência inteira, do zero ao PR.</p>
+<ol class="scenes">
+  <li>
+    <h3>Você liga o Modo Dev</h3>
+    <p>Um botão. A tela se reorganiza: a etapa do momento no meio, o mapa da frente na
+    lateral. <span class="you">Desliga e volta a tela de hoje</span> — nada é aposentado.</p>
+  </li>
+  <li>
+    <h3>Abre uma frente escolhendo um card</h3>
+    <p>O app mostra os cards do seu board; você clica em um. É só isso que você faz —
+    o app dispara a etapa de investigação sozinho, com o card certo.</p>
+  </li>
+  <li>
+    <h3>A investigação divide a frente em entregas</h3>
+    <p>No fim da conversa de investigação, a frente se abre em quantas entregas o escopo
+    pedir. Elas aparecem na hora como ramos no mapa lateral.</p>
+  </li>
+  <li>
+    <h3>Você trabalha uma entrega por vez</h3>
+    <p>Uma entrega fica <span class="you">em foco</span> e é ela que ocupa o centro da tela.
+    As outras continuam visíveis no mapa, cada uma marcando em que etapa parou.</p>
+  </li>
+  <li>
+    <h3>O mapa registra sozinho o que aconteceu</h3>
+    <p>Cada etapa concluída acende no mapa e guarda o que produziu — a spec, o plano, as
+    tarefas, o roteiro de teste. Clicando na etapa você vê o detalhe e abre os arquivos.</p>
+  </li>
+  <li>
+    <h3>A frente se fecha sozinha</h3>
+    <p>Quando a última entrega chega no fim (com PR e aprovação), a frente sai do mapa.
+    Você não precisa arquivar nada.</p>
+  </li>
+</ol>
+
+<h2><span class="n">3</span>Como fica na tela</h2>
+<p class="lead">Rascunho grosseiro só para mostrar <em>o que</em> aparece — a aparência de
+verdade é a sessão de design, depois da spec.</p>
+
+<div class="mock">
+  <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span class="t">Donel Dev — Modo Dev ligado</span></div>
+  <div class="cols">
+    <div class="stage">
+      <div class="kicker">Etapa em foco · entrega M2</div>
+      <h4>Construir</h4>
+      <div class="term"><span class="p">›</span> /esteira-implementar SZI-412
+Rodando testes… 41 passaram
+Commit: feat: painel lateral com a árvore da frente</div>
+      <p class="cap">O terminal continua sendo o terminal. O Modo Dev não substitui
+      o que você digita — ele só para de exigir que você lembre.</p>
+    </div>
+    <div class="side">
+      <div class="h">A frente</div>
+      <div class="tree">
+        <div class="root">Modo Dev do Donel Dev</div>
+        <ul>
+          <li>
+            <div class="m">M1 — mapa lateral <span class="pill ok">fechada</span></div>
+            <div class="sm">spec · plano · 14 tarefas · PR #31</div>
+          </li>
+          <li class="foc">
+            <div class="m">M2 — trocar de modo <span class="pill now">construindo</span></div>
+            <div class="sm">spec · plano · 9 tarefas · 41 testes</div>
+          </li>
+          <li>
+            <div class="m">M3 — abrir a frente <span class="pill wait">a planejar</span></div>
+            <div class="sm">ainda sem artefatos</div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2><span class="n">4</span>De onde o app tira o que mostra</h2>
+<p class="lead">Regra que fecha a porta para o pior tipo de bug: o app mostrando uma coisa e
+o disco dizendo outra.</p>
+<table>
+  <tr><th>O que</th><th>Quem é dono</th><th>Por quê</th></tr>
+  <tr>
+    <td>Etapas que rodaram, com resultado e arquivos</td>
+    <td>Os arquivos que a esteira já grava no repo. <strong>O app só lê.</strong></td>
+    <td>Já existe e já é verdade. Copiar seria criar uma segunda versão da verdade.</td>
+  </tr>
+  <tr>
+    <td>Quais frentes estão abertas e qual está em foco</td>
+    <td><strong>O app.</strong> Só isso ele guarda.</td>
+    <td>Isso não está escrito em lugar nenhum — é dele.</td>
+  </tr>
+  <tr>
+    <td>Coluna do card, PR, aprovação</td>
+    <td>O board, em modo <strong>só leitura</strong>.</td>
+    <td>O app acompanha, não escreve. Quanto disso ele precisa de fato ainda está em aberto.</td>
+  </tr>
+</table>
+
+<h2><span class="n">5</span>O que o Modo Dev <em>não</em> faz</h2>
+<ul class="no">
+  <li><b>Não mexe no seu board.</b> Ele lê e mostra. Mover card continua sendo ato seu (ou
+  da esteira, como hoje).</li>
+  <li><b>Não mostra todos os seus projetos.</b> Uma frente em foco por vez. Panorama geral é
+  o Mission Control, não aqui.</li>
+  <li><b>Não funciona em repo sem card</b> — inclusive no próprio Donel Dev. Foi o preço de
+  manter tudo o resto simples; esse trabalho continua na tela de hoje.</li>
+  <li><b>Não reimplementa o Claude.</b> O app continua por fora, olhando o terminal. Isso é
+  o princípio do projeto e não muda.</li>
+</ul>
+
+<h2><span class="n">6</span>O que ainda está em aberto</h2>
+<div class="open">
+  <p style="margin:0;color:var(--dim)">Quatro decisões, uma sessão cada. Nenhuma delas
+  reabre o que está acima.</p>
+  <ul>
+    <li><b>Quem aperta o botão da próxima etapa</b> — o app deixa o comando digitado e
+    espera você, ou dispara no clique? Disparar por engano custa cota.</li>
+    <li><b>O que o board mostra dentro do app</b> — e o Modo Dev continua servindo
+    sem internet?</li>
+    <li><b>Quatro fatos que hoje só existem no board</b> — o app passa a guardá-los, ou
+    continua dependendo do board para saber?</li>
+    <li><b>Onde a spec para e o design começa</b> — para a spec não sair sem tela nem o
+    design sair sem regra.</li>
+  </ul>
+</div>
+
+<footer>
+Decisões de 26/07/2026 — ticket MD-01 do mapa "Modo Dev do Donel Dev".
+Nada disso foi implementado: é planejamento, e vira spec depois que as quatro perguntas
+acima estiverem respondidas.
+</footer>
+
+</div>
+</body>
+</html>
