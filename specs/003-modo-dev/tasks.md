@@ -460,7 +460,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
 > Só começa depois da Fatia 1 ter PR aberto (não precisa estar mergeada,
 > mas não reabre o C5 rodando em paralelo sem depender do resultado dela).
 
-- **T324 — Cliente de leitura do TaskDex, lista fechada de tools (CA-11)** (sequencial após T309) — `src/main/taskdex-board-client.ts` (estende T309)
+- ✅ **ENTREGUE** (commit `8984afe`, 27/07) — **T324 — Cliente de leitura do TaskDex, lista fechada de tools (CA-11)** (sequencial após T309) — `src/main/taskdex-board-client.ts` (estende T309)
   Credencial de serviço **dedicada** (fora do repo, mesmo padrão de
   `~/.claude/esteira-config/` — nunca em log nem versionada), restrita a uma
   **lista fechada** de tools de leitura (as mesmas exigidas por CA-12: coluna
@@ -473,7 +473,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   mockada mapeia coluna/labels/PR corretamente; token nunca aparece em log
   (assert em captura de console/stdout do teste).
 
-- **T325 — Anotação dos 4 fatos no nó (pure mapping)** (sequencial após T324/T305) — `src/shared/boardAnnotation.ts` (novo)
+- ✅ **ENTREGUE** (commit `e09ace1`, 27/07) — **T325 — Anotação dos 4 fatos no nó (pure mapping)** (sequencial após T324/T305) — `src/shared/boardAnnotation.ts` (novo)
   `annotateTree(tree: DiscoveryTree, boardFacts): AnnotatedDiscoveryTree` —
   sobrepõe coluna real, trava ativa, etiquetas de atenção
   (`esteira:escalado`/`esteira:precisa-atencao`) e PR+aprovação a cada nó,
@@ -485,7 +485,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   card fora do discovery em foco nunca entra na anotação (CA-12: "nunca
   cards fora do discovery em foco").
 
-- **T326 — Detecção de divergência disco×board** (sequencial após T325) — `src/shared/boardAnnotation.ts` (extensão)
+- ✅ **ENTREGUE** (commit `e09ace1`, 27/07) — **T326 — Detecção de divergência disco×board** (sequencial após T325) — `src/shared/boardAnnotation.ts` (extensão)
   Quando disco e board discordam (ex.: fase mostra `done` no disco mas o
   card ainda está na coluna anterior), marca o nó com os **dois fatos** +
   marcador de divergência. Divergência **esperada** pelo processo (Validar
@@ -497,7 +497,16 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   ainda na coluna de antes de Validar → **não** marca (é o caso esperado,
   citado explicitamente na spec).
 
-- **Gate do Batch C:** `npm run typecheck` + `npm test` verdes. Nada visível.
+- ✅ **Gate do Batch C ENTREGUE** (27/07, commit de fechamento após `8984afe`/`e09ace1`):
+  `npm run typecheck` limpo, `npm test` 100% verde (44 arquivos, 721 testes —
+  inclui os 2 arquivos novos deste lote: `taskdex-board-client.test.ts`
+  ampliado com 18 testes, `boardAnnotation.test.ts` novo com 16 testes).
+  Nada visível — nenhum canal IPC novo (Batch C é 100% main/shared,
+  a ligação com a UI é T327/Batch D). Token de credencial de serviço
+  permanece fora do repo (`~/.claude/esteira-config/donel-board-credential.json`,
+  carregado só por `loadTaskdexServiceCredential`, nunca versionado nem logado).
+  **`npm run dist` NÃO foi rodado** (empacotar não é ato desta sessão, mesma
+  regra do Batch B) e **o PR desta fatia não foi aberto** (ato humano).
 
 ## Fatia 2 — Batch D: UI do espelho
 
