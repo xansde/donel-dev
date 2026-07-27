@@ -555,6 +555,11 @@ todo.md):
 
 ## Brief 10 — Modo Dev (P2 — referência visual: tela de Tasks do CodeLayer/HumanLayer)
 
+> ⚠️ **SUPERADO — não cole este brief.** O mapa Wayfinder "Modo Dev do Donel Dev"
+> (MD-01 a MD-08, 26–27/07/2026) trocou a unidade de trabalho de *task* para
+> *discovery* e mudou várias regras de produto. Use **`brief-modo-dev-v2.md`**
+> nesta mesma pasta. O texto abaixo fica só como histórico.
+
 *(cole junto com o Brief 0)*
 
 **Contexto:** modo alternativo do app, ativado pelo switch "Uso geral | Dev"
