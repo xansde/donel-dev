@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import type { DevModeBoardConfig } from '../shared/devMode';
 
 // T309 (003-modo-dev, Batch A) — cliente MÍNIMO de leitura do board (CA-1/
@@ -115,4 +116,143 @@ export function resolveBoardReader(env: Record<string, string | undefined>, read
   const fixturePath = env[BOARD_FIXTURE_ENV_VAR];
   if (!fixturePath) return EMPTY_BOARD_READER;
   return createFixtureTaskdexBoardReader(fixturePath, readFileText);
+}
+
+// ---------------------------------------------------------------------------
+// T324 (003-modo-dev, Batch C) — cliente de leitura REAL do board (CA-11):
+// credencial de serviço DEDICADA (fora do repo, mesmo padrão de
+// `~/.claude/esteira-config/` — nunca em log nem versionada), restrita a uma
+// LISTA FECHADA de tools de leitura. A lista é o próprio TIPO do parâmetro
+// (`BoardReadTool`, união de literais) — não uma allowlist checada em
+// runtime: chamar com uma tool fora da união falha em `npm run typecheck`,
+// nunca em produção. Nenhuma tool de escrita entra neste arquivo (garantia
+// estrutural, CA-11).
+// ---------------------------------------------------------------------------
+
+/**
+ * Lista fechada de tools de leitura do MCP TaskDex usadas pelo espelho
+ * (CA-11/CA-12). Cresce por PR (mais um literal na união), nunca por
+ * allowlist de runtime que alguém possa esquecer de checar. Hoje contém a
+ * única tool necessária: um `get_task_details` devolve, num payload só, os 4
+ * fatos do CA-12 (coluna, trava/etiquetas via labels, PR+aprovação).
+ */
+export type BoardReadTool = 'get_task_details';
+
+/** Assinatura restrita ao `BoardReadTool` — nem o fake de teste nem a implementação real aceitam `string` solto. */
+export type CallBoardReadTool = (tool: BoardReadTool, params: { readonly cardId: string }) => Promise<unknown>;
+
+/** Credencial de serviço dedicada (nunca a pessoal do usuário) — carregada de fora do repo. */
+export interface TaskdexServiceCredential {
+  readonly token: string;
+  readonly baseUrl: string;
+}
+
+/** Os 4 fatos do CA-12 já mapeados, mais o título cru (usado pela conferência `[Mx]` do CA-14 em `boardAnnotation.ts`). */
+export interface BoardFacts {
+  readonly column: string;
+  readonly title: string;
+  /** `esteira:em-andamento:<fase>` do board, já sem o prefixo — `null` = sem trava (CA-13/D1). */
+  readonly lockedPhase: string | null;
+  /** Subconjunto presente entre `esteira:escalado`/`esteira:precisa-atencao` (CA-12). */
+  readonly attentionLabels: readonly string[];
+  readonly prUrl: string | null;
+  readonly prApproved: boolean;
+}
+
+export interface BoardFactsReader {
+  fetchBoardFacts(cardId: string): Promise<BoardFacts | null>;
+}
+
+const LOCK_LABEL_PREFIX = 'esteira:em-andamento:';
+const ATTENTION_LABELS = ['esteira:escalado', 'esteira:precisa-atencao'] as const;
+
+function lockedPhaseFromLabels(labels: readonly string[]): string | null {
+  const lockLabel = labels.find((label) => label.startsWith(LOCK_LABEL_PREFIX));
+  return lockLabel ? lockLabel.slice(LOCK_LABEL_PREFIX.length) : null;
+}
+
+function attentionLabelsFrom(labels: readonly string[]): readonly string[] {
+  return ATTENTION_LABELS.filter((known) => labels.includes(known));
+}
+
+/** Shape cru esperado da resposta de `get_task_details` — validado campo a campo, nunca lançado (degrada para `null`). */
+function toBoardFacts(raw: unknown): BoardFacts | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const candidate = raw as {
+    column?: unknown;
+    title?: unknown;
+    labels?: unknown;
+    pullRequest?: { url?: unknown; approved?: unknown } | null;
+  };
+  if (typeof candidate.column !== 'string' || !candidate.column) return null;
+
+  const labels = Array.isArray(candidate.labels) ? candidate.labels.filter((l): l is string => typeof l === 'string') : [];
+  const pr = candidate.pullRequest;
+  const prUrl = pr && typeof pr.url === 'string' && pr.url ? pr.url : null;
+  const prApproved = !!pr && typeof pr.approved === 'boolean' && pr.approved;
+
+  return {
+    column: candidate.column,
+    title: typeof candidate.title === 'string' ? candidate.title : '',
+    lockedPhase: lockedPhaseFromLabels(labels),
+    attentionLabels: attentionLabelsFrom(labels),
+    prUrl,
+    prApproved,
+  };
+}
+
+/**
+ * Reader de sistema (CA-11) — a chamada de rede/MCP em si é INJETADA
+ * (`callTool`), nunca hardcoded aqui: quem monta o `callTool` real (fora do
+ * escopo desta task) é quem sabe autenticar com a credencial dedicada. Este
+ * módulo não loga nada — nem o payload, nem erro de chamada — então o token
+ * nunca pode vazar por aqui (ele nem chega a este arquivo: mora em quem
+ * implementa `callTool`).
+ */
+export function createSystemBoardFactsReader(callTool: CallBoardReadTool): BoardFactsReader {
+  return {
+    fetchBoardFacts: async (cardId: string): Promise<BoardFacts | null> => {
+      if (!cardId) return null;
+      const raw = await callTool('get_task_details', { cardId });
+      return toBoardFacts(raw);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Credencial de serviço dedicada — fora do repo, nunca versionada, nunca logada.
+// ---------------------------------------------------------------------------
+
+export interface TaskdexCredentialIoDeps {
+  readonly readFileText: ReadFileText;
+  readonly homedir: () => string;
+}
+
+/** Mesmo diretório de `~/.claude/esteira-config/` (spec.md) — arquivo dedicado deste app, nunca commitado. */
+export function taskdexCredentialPath(homedirFn: () => string): string {
+  return join(homedirFn(), '.claude', 'esteira-config', 'donel-board-credential.json');
+}
+
+function toCredential(raw: unknown): TaskdexServiceCredential | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const candidate = raw as Partial<TaskdexServiceCredential>;
+  if (typeof candidate.token !== 'string' || !candidate.token) return null;
+  if (typeof candidate.baseUrl !== 'string' || !candidate.baseUrl) return null;
+  return { token: candidate.token, baseUrl: candidate.baseUrl };
+}
+
+/**
+ * `null` = ausente/ilegível/incompleta — o espelho fica sem fonte de fatos
+ * (mesma degradação de `boardConfig` ausente, C4): nunca lança, e nunca loga
+ * o conteúdo do arquivo (só campos booleanos de sucesso/falha em quem chama).
+ */
+export function loadTaskdexServiceCredential(io: TaskdexCredentialIoDeps): TaskdexServiceCredential | null {
+  const text = io.readFileText(taskdexCredentialPath(io.homedir));
+  if (text === null) return null;
+
+  try {
+    return toCredential(JSON.parse(text));
+  } catch {
+    return null;
+  }
 }
