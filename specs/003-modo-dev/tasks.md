@@ -202,7 +202,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
 > deste pacote. **Nenhuma task do Batch B começa antes do Batch A2 fechar**
 > (Batch B consome estas 4 peças — ver dependências ajustadas abaixo).
 
-- **T331 — `PhaseStateGlyph`** [P] com T332/T334 (T333 depende deste) — `design-system/src/components/PhaseStateGlyph/{PhaseStateGlyph.tsx,PhaseStateGlyph.module.css,PhaseStateGlyph.stories.tsx,index.ts}`, `design-system/src/index.ts`
+- ✅ **ENTREGUE** (commit `e049583`, 27/07) — **T331 — `PhaseStateGlyph`** [P] com T332/T334 (T333 depende deste) — `design-system/src/components/PhaseStateGlyph/{PhaseStateGlyph.tsx,PhaseStateGlyph.module.css,PhaseStateGlyph.stories.tsx,index.ts}`, `design-system/src/index.ts`
   Glifo de 16px para os 5 estados de fase do CA-15 (`not-started`/`running`/
   `done`/`failed`/`stuck`), com **dupla codificação** (caractere + cor) —
   nunca só cor. Preenchimento **sólido** reservado a `failed`/`stuck`
@@ -217,7 +217,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   sólidos e os outros 3 em contorno, e cada um com caractere distinto (não
   só cor) — confirma a dupla codificação por inspeção da story.
 
-- **T332 — `AnnotationTag`** [P] com T331/T334 (e com T333, que só depende de T331) — `design-system/src/components/AnnotationTag/{AnnotationTag.tsx,AnnotationTag.module.css,AnnotationTag.stories.tsx,index.ts}`, `design-system/src/index.ts`
+- ✅ **ENTREGUE** (commit `e049583`, 27/07) — **T332 — `AnnotationTag`** [P] com T331/T334 (e com T333, que só depende de T331) — `design-system/src/components/AnnotationTag/{AnnotationTag.tsx,AnnotationTag.module.css,AnnotationTag.stories.tsx,index.ts}`, `design-system/src/index.ts`
   Etiqueta curta com tom semântico `muted | ok | warn | error | lock | accent`
   — veste as anotações do board (CA-12: coluna real, trava ativa, etiquetas
   de atenção `esteira:escalado`/`esteira:precisa-atencao`, PR+aprovação) e o
@@ -228,7 +228,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   lado, incluindo o tom `lock` (trava) e `error` (falha/divergência) para
   conferir que são visualmente distintos entre si.
 
-- **T333 — `WorktreeCard`** (sequencial após T331 — compõe `PhaseStateGlyph`; paralelizável com T332/T334) — `design-system/src/components/WorktreeCard/{WorktreeCard.tsx,WorktreeCard.module.css,WorktreeCard.stories.tsx,index.ts}`, `design-system/src/index.ts`
+- ✅ **ENTREGUE** (commit `e049583`, 27/07) — **T333 — `WorktreeCard`** (sequencial após T331 — compõe `PhaseStateGlyph`; paralelizável com T332/T334) — `design-system/src/components/WorktreeCard/{WorktreeCard.tsx,WorktreeCard.module.css,WorktreeCard.stories.tsx,index.ts}`, `design-system/src/index.ts`
   Cartão do carrossel de marcos (CA-7): cabeçalho, resumo em linguagem
   simples, faixa de worktree (pasta + branch + etiquetas — **D3**: os dois
   campos novos que `esteira-reader.ts`/T303 passam a expor do frontmatter do
@@ -242,7 +242,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   cobre as duas variantes e o caso "sem `worktree_path`/`branch`" (`ctx.md`
   antigo, campos ausentes — D3 não pode quebrar fixture pré-existente).
 
-- **T334 — `ArmedPrompt`** [P] com T331/T332 (e com T333, que só depende de T331) — `design-system/src/components/ArmedPrompt/{ArmedPrompt.tsx,ArmedPrompt.module.css,ArmedPrompt.stories.tsx,index.ts}`, `design-system/src/index.ts`
+- ✅ **ENTREGUE** (commit `e049583`, 27/07) — **T334 — `ArmedPrompt`** [P] com T331/T332 (e com T333, que só depende de T331) — `design-system/src/components/ArmedPrompt/{ArmedPrompt.tsx,ArmedPrompt.module.css,ArmedPrompt.stories.tsx,index.ts}`, `design-system/src/index.ts`
   O gesto central do CA-3: comando escrito e **não enviado**, com a tecla
   `Enter` desenhada explicitamente como tecla (não texto solto), um aviso
   opcional (ex.: fase travada/falhou) e uma ação de **descartar**. Nem
@@ -254,7 +254,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   disparar o comando a partir da peça visual; a story cobre com aviso, sem
   aviso e o estado "descartado".
 
-- **Gate do Batch A2:** `npm run typecheck` (design-system) + `npm run
+- ✅ **ENTREGUE** (commit `e049583`, 27/07) — **Gate do Batch A2:** `npm run typecheck` (design-system) + `npm run
   build-storybook` verdes. Commitar. **Nada no app renderer consome ainda —
   isso é o Batch B.**
 
