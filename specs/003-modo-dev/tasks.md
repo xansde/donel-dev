@@ -562,7 +562,8 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   pré-digitada (T328), ausência total de escrita no board em qualquer
   caminho exercitado.
   **DoD:** suíte nova verde.
-  **Como ficou:** 1 teste, 40,6s, verde (rodada do gate do Batch D, 27/07).
+  **Como ficou:** 1 teste, verde — 13,5s de teste / 20,0s de wall-clock na
+  rodada do gate do Batch D (27/07). Saída bruta colada em T330.
   UMA sessão `claude` real (a da conciliação) e um único Enter — o do diálogo
   de confiança, nunca sobre texto armado. O assert de I/O é a impressão
   digital (path+tamanho+mtime+conteúdo) de TODO arquivo da fixture antes e
@@ -583,6 +584,98 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   `taskdex-board-client` 24, `devMode` 19, `openPhaseSession` 19,
   `boardAnnotation` 16) e o smoke novo verde. Divergência e conciliação
   exercitadas por teste.
+
+  **Saída bruta do gate do Batch D (rodada única, 27/07, `feature/mvp-p0`,
+  cwd `C:/Users/xansd/seazone/donel-dev`)** — copiada verbatim do terminal,
+  na ordem em que os comandos rodaram:
+
+  ```text
+  $ npm run typecheck
+
+  > donel-dev@0.2.0 typecheck
+  > tsc --noEmit -p tsconfig.json
+
+  EXIT=0
+  ```
+
+  ```text
+  $ npx vitest run tests/taskdex-board-client.test.ts tests/devMode.test.ts \
+      tests/openPhaseSession.test.ts tests/boardAnnotation.test.ts
+
+  The CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.
+
+   RUN  v2.1.9 C:/Users/xansd/seazone/donel-dev
+
+   ✓ tests/boardAnnotation.test.ts (16 tests) 10ms
+   ✓ tests/devMode.test.ts (19 tests) 14ms
+   ✓ tests/taskdex-board-client.test.ts (24 tests) 25ms
+   ✓ tests/openPhaseSession.test.ts (19 tests) 14ms
+
+   Test Files  4 passed (4)
+        Tests  78 passed (78)
+     Start at  19:16:51
+     Duration  707ms (transform 246ms, setup 0ms, collect 440ms, tests 63ms, environment 2ms, prepare 649ms)
+
+  EXIT=0
+  ```
+
+  ```text
+  $ npm run build            # (últimas linhas; o prebuild do design system vem antes)
+
+  dist/donel-design-system.js   36.24 kB │ gzip:   9.95 kB │ map: 92.25 kB
+  [unplugin:dts] Declaration files built in 4940ms.
+
+  dist/style.css               485.20 kB │ gzip: 350.33 kB
+  dist/donel-design-system.cjs  26.78 kB │ gzip:   8.77 kB │ map: 89.25 kB
+  ✓ built in 7.03s
+
+  > donel-dev@0.2.0 build
+  > electron-vite build
+
+  vite v5.4.20 building SSR bundle for production...
+  transforming...
+  ✓ 35 modules transformed.
+  rendering chunks...
+  out/main/index.js  101.89 kB
+  ✓ built in 329ms
+  vite v5.4.20 building SSR bundle for production...
+  transforming...
+  ✓ 13 modules transformed.
+  rendering chunks...
+  out/preload/index.js  11.16 kB
+  ✓ built in 46ms
+  vite v5.4.20 building for production...
+  transforming...
+  ✓ 1839 modules transformed.
+  rendering chunks...
+  ../../out/renderer/index.html                   0.59 kB
+  ../../out/renderer/assets/index-DxpjfIEE.css  520.05 kB
+  ../../out/renderer/assets/index-CfbTr-80.js   833.79 kB
+  ✓ built in 2.77s
+
+  EXIT=0
+  ```
+
+  ```text
+  $ npx playwright test -c tests/smoke/playwright.config.ts dev-mode-espelho
+
+  Running 1 test using 1 worker
+
+    ok 1 tests\smoke\dev-mode-espelho.spec.ts:238:5 › Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca divergência e prepara a conciliação (13.5s)
+
+    1 passed (20.0s)
+
+  EXIT=0
+  ```
+
+  **Escopo declarado desta rodada:** foram executados o `typecheck`, o `build`,
+  os units dos 4 arquivos do lote e **só o smoke do espelho**
+  (`dev-mode-espelho`) — não a bateria `test:smoke`/`test:smoke:dev` inteira,
+  por ordem explícita de não re-rodar suítes já verdes dos Batches A/A2/B. A
+  regressão desses lotes fica coberta pela bateria E2E final, ainda pendente
+  (ver "O que NÃO foi feito" abaixo). `npm run test` completo também **não**
+  rodou nesta sessão — os vermelhos herdados que o DoD pede declarar continuam
+  sendo item do gate final da feature, não deste lote.
   **O que NÃO foi feito (ato humano/fora do mandato do lote):** `npm run dist`
   (empacotar não é ato desta sessão, mesma regra dos Batches B/C), o **PR**
   (sempre humano) e o **roteiro E2E com token de serviço real** — este último
