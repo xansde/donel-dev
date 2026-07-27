@@ -256,6 +256,31 @@ discovery   = frente a investigar  = 1 card de entrada do board (papel orquestra
   roda **em paralelo** e entra como insumo de execução, sem reabrir esta spec. Brief
   pronto: `design/brief-modo-dev-v2.md` + o Brief 0 de `design/design-handoff.md`.
 
+## Decisões pós-design (2026-07-27, depois do retorno do Claude Design)
+
+O design voltou e foi confrontado com estes 26 CA — relatório completo em
+`design/modo-dev-verificacao.md`. Ele respeitou o CA-25 (declarou as extensões, não
+recriou componente) e usou só tokens existentes. Duas decisões dele fecharam o ciclo:
+
+- **[E ✔] As 4 extensões ao design system estão aprovadas** — `PhaseStateGlyph` (os 5
+  estados de fase em glifo, dupla codificação, dono do token `--state-error`),
+  `AnnotationTag` (etiqueta curta com tom semântico), `WorktreeCard` (cartão do
+  carrossel, com variante orquestrador) e `ArmedPrompt` (o comando escrito e não
+  enviado). Entram no pacote `design-system/`, como Batch A2 (`T331`–`T334`),
+  pré-requisito das tasks de UI. Satisfaz o CA-25: nomeadas e aprovadas.
+- **[S ✔] O subconjunto do Validar é contexto humano** (opção 1). O comando
+  pré-digitado é sempre o real, sem flag; **o app não exibe subconjunto estruturado**.
+  Motivo verificado: o `plano-result.json` não tem campo de subconjunto
+  (`esteira-plano/SKILL.md:452-487`) — exibir seria inventar dado. O humano alcança o
+  `tasks.md` do marco pela pool do CA-10 e sabe o que testar. Consequência: a anotação
+  "subconjunto N de M" que o mockup mostrava **sai**; "não move o card" fica, porque é
+  invariante da fase.
+
+Correções que o design exigiu e que já estão no `tasks.md`: a trava é a **etiqueta do
+board**, nunca arquivo `.lock` (era o erro mais sério do mockup); `worktree_path` e
+`branch` entram na pool do CA-10; o Toast de troca de foco não tem "desfazer"; e a
+**legenda dos dois eixos** (fase × sessão) no rodapé do mapa vira item verificável.
+
 ## Invariantes (não negociáveis, valem para toda a implementação)
 
 1. **O app orquestra o CLI por fora e nunca reimplementa o agente.**

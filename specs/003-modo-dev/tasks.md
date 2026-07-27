@@ -83,16 +83,24 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   subconjunto — o mockup do design pré-digitava `--subset 1-4`, que não
   existe).
 
-  > **Decisão pendente (D2, não escolhida aqui — é sua):** a decisão do
-  > MD-05 ("Validar testa subconjuntos definidos no Plano") não tem mecanismo
-  > hoje na esteira. Três saídas possíveis, nenhuma implementada por esta
-  > task: **(1)** subconjunto é contexto humano — o app só *exibe* o que o
-  > Plano registrou, o comando pré-digitado continua o real, sem flag
-  > (**recomendação da verificação**: zero código novo, cumpre o espírito da
-  > decisão); **(2)** o Plano passa a gravar o subconjunto no manifesto e o
-  > app exibe como anotação; **(3)** a esteira ganha a flag — viola a
-  > invariante 3 (zero código novo em `preflight.py`/`gate_concluir.py`) e
-  > fica fora desta entrega. Ver `design/modo-dev-verificacao.md` §D2.
+  > **D2 — RESOLVIDO por ele em 27/07: opção 1.** O subconjunto do Validar é
+  > **contexto humano**, não dado do app. O comando pré-digitado é sempre o
+  > real (`/esteira-validar {card_id}`) e **o app não exibe nenhum
+  > subconjunto estruturado** — verificado nesta sessão: o
+  > `plano-result.json` **não tem campo de subconjunto** (o schema em
+  > `esteira-plano/SKILL.md:452-487` traz `spec_path`, `plan_path`,
+  > `tasks_path`, `commits`, `epic_id`, `checklist_items` e `knowledge`, e
+  > nada sobre agrupamento de testes). Logo, "o app exibe o que o Plano
+  > registrou" **não tem fonte**: exibir seria inventar dado.
+  >
+  > O que o app entrega no lugar, a custo zero: o `tasks_path` já está na
+  > pool consultável do CA-10 — o humano abre o `tasks.md` do marco e sabe o
+  > que testar. Nenhum código novo, nenhuma anotação fabricada.
+  >
+  > **Consequência no design (D5):** a anotação "subconjunto 1 de 3" que o
+  > mockup mostra no nó `[M1] · Validar` **não tem fonte de dado e sai**. A
+  > anotação "não move o card" fica — ela é invariante da fase, não dado.
+  > Ver `design/modo-dev-verificacao.md` §D2/§D5.
 
 - **T303 — Leitura dos artefatos de fase no disco (TDD)** (sequencial após T301/T302 — usa os tipos) — `src/main/esteira-reader.ts`
   `readPhaseArtifacts`, `readDiscoveryFanout`, I/O injetável (mesmo padrão de

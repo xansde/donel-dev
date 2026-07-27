@@ -13,6 +13,15 @@
 > da sessão de design. Nunca editar e nunca usar como fonte de verdade — a fonte é
 > `design-system/src/`.
 
+## Estado das decisões (atualizado 27/07, depois da leitura dele)
+
+- ✅ **As 4 extensões estão APROVADAS** — `PhaseStateGlyph`, `AnnotationTag`,
+  `WorktreeCard`, `ArmedPrompt`. Entram como o **Batch A2** (`T331`–`T334`) do
+  `tasks.md`, no pacote `design-system/`, pré-requisito do Batch B.
+- ✅ **D2 resolvido pela opção 1** — o subconjunto do Validar é **contexto humano**;
+  ver §D2 abaixo, com a consequência §D5 que a decisão produziu.
+- ✅ **D1, D3, D4 aplicados** no `tasks.md` (commit `1c409d9`).
+
 ## Veredito
 
 O design **cumpre as 4 zonas e os 5 estados de fase**, usa **só tokens existentes**
@@ -89,17 +98,30 @@ card, e "lote" ali significa apenas que o card enxerga o epic. Como a invariante
 spec proíbe código novo na esteira, o comando pré-digitado **tem de ser o real**:
 `/esteira-validar <card_id>`, sem flag inventada.
 
-Isso expõe uma lacuna verdadeira: a decisão do MD-05 ("Validar é modular, testa
-subconjuntos definidos no Plano") **não tem mecanismo hoje**. Três saídas possíveis —
-**é decisão sua**, e por isso não escolhi nenhuma:
+Isso expôs uma lacuna verdadeira: a decisão do MD-05 ("Validar é modular, testa
+subconjuntos definidos no Plano") **não tem mecanismo hoje**.
 
-1. **O subconjunto é contexto humano**: o comando é o real, e o que você quer testar
-   você diz dentro da sessão. O app só *exibe* qual subconjunto o Plano registrou.
-   (Minha recomendação: zero código novo, cumpre o espírito da decisão.)
-2. **O Plano grava o subconjunto no manifesto** e o app o mostra como anotação — ainda
-   sem flag, mas exige que o Plano passe a declarar isso.
-3. **A esteira ganha a flag** — viola a invariante 3 e vira esforço próprio, fora
-   desta entrega.
+**✅ RESOLVIDO em 27/07 — opção 1: o subconjunto é contexto humano.** O comando
+pré-digitado é sempre o real (`/esteira-validar <card_id>`), e **o app não exibe
+subconjunto estruturado nenhum**.
+
+A checagem que a decisão obrigou a fazer: o `plano-result.json` **não tem campo de
+subconjunto** — o schema (`esteira-plano/SKILL.md:452-487`) traz `spec_path`,
+`plan_path`, `tasks_path`, `commits`, `epic_id`, `checklist_items` e `knowledge`, e
+nada sobre agrupamento de testes. Então a segunda metade da opção 1 como eu a havia
+redigido ("o app exibe o que o Plano registrou") **não tem fonte** — exibir seria
+inventar dado. O que o app entrega no lugar, a custo zero: o `tasks_path` já está na
+pool do CA-10, então o humano abre o `tasks.md` do marco e sabe o que testar.
+
+As alternativas descartadas: (2) o Plano passar a gravar o subconjunto no manifesto —
+exigiria mudar a fase Plano; (3) a esteira ganhar a flag — violaria a invariante 3.
+
+### D5 — "subconjunto 1 de 3" no nó do Validar 🟡 **sai** (consequência do D2)
+
+O mockup mostra a anotação `subconjunto 1 de 3` no nó `[M1] · Validar`. Como o D2
+fechou na opção 1, **essa anotação não tem fonte de dado e sai** — seria número
+fabricado. A anotação `não move o card`, do mesmo nó, **fica**: ela é invariante da
+fase, não dado lido de lugar nenhum.
 
 ### D3 — Worktree e branch não estavam na spec 🟡 **adicionar, não remover**
 
@@ -129,8 +151,8 @@ Toast informativo, **sem** ação de desfazer.
    UI que as consomem.
 2. **D1**: a trava é etiqueta do board, não arquivo — corrigir a task de anotação de
    trava e manter o slot vazio na Fatia 1.
-3. **D2**: o comando pré-digitado do Validar é o real, sem flag inventada; o
-   subconjunto exibido depende da sua decisão acima.
+3. **D2/D5**: o comando pré-digitado do Validar é o real, sem flag inventada, e
+   nenhuma anotação de subconjunto é exibida (não há fonte).
 4. **D3**: leitor de disco passa a expor `worktree_path` e `branch`; a pool do CA-10
    ganha os dois.
 5. **D4**: Toast sem "desfazer".
