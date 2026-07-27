@@ -47,6 +47,22 @@ TaskDex: o Donel Dev é ferramenta pessoal, sem `.taskdex.json`.
 convenção acima — divergência conhecida, resolver movendo se incomodar).
 Pedido "**wayfinder no próximo MD**" = abrir `PROXIMO.md` daquela pasta e pegar
 o primeiro `⬜`; a ordem **não é numérica**. Prompts prontos em `sessoes.md`.
+**O mapa está CUMPRIDO desde 27/07** (MD-01..MD-08 resolvidos) — ele virou a
+entrega `specs/003-modo-dev/`. Só voltar ao mapa se a spec parecer contraditória.
+
+## Gatilho — "implementar melhorias Modo Dev"
+
+Pedido "**implementar melhorias Modo Dev**" (ou "implementar o próximo lote do
+Modo Dev") = abrir a fila
+`Claude Seazone/Projects/donel-dev/implementar-modo-dev/PROXIMO.md` no vault e
+pegar o **primeiro lote `⬜`**. Aqui a ordem **é** sequencial. Prompt pronto (e a
+variante de retomada) em `prompt.md`, na mesma pasta.
+
+Fonte de verdade do escopo: `specs/003-modo-dev/spec.md` (26 CA). Forma da UI:
+`design/modo-dev-handoff/project/Modo Dev.dc.html` **lido junto de**
+`design/modo-dev-verificacao.md` — onde o mockup e a spec discordam, **vence a
+spec** (o mockup tem 5 divergências conhecidas, D1–D5; a mais séria: a trava é
+etiqueta do board, nunca arquivo `.lock`). Um lote por sessão; PR é ato humano.
 
 ## Gotchas conhecidos (do planejamento)
 
