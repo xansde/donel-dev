@@ -35,6 +35,13 @@ via `CLAUDE_CONFIG_DIR`.
   módulos puros com vitest; PTY/UI validam por smoke roteirizado (T014).
 - UI em pt-BR; código, comentários e identificadores em inglês.
 
+## Issue tracker (para skills que precisam de um)
+
+Este repo usa **local-markdown**: mapa e tickets em `.scratch/<effort>/`,
+versionados. A convenção completa está em `.claude/issue-tracker.md` — ler antes
+de rodar `/wayfinder` ou qualquer skill que fale em "issue tracker". Não é
+TaskDex: o Donel Dev é ferramenta pessoal, sem `.taskdex.json`.
+
 ## Gotchas conhecidos (do planejamento)
 
 - node-pty precisa casar com a ABI do Electron — prebuilds/@electron/rebuild;
