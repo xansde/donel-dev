@@ -86,6 +86,36 @@ export function resolveCommandSequence(input: ResolveCommandSequenceInput): read
   return [phaseCommand];
 }
 
+export interface ConciliationPromptInput {
+  readonly cardId: string;
+  readonly marcoId: string;
+  readonly phase: EsteiraPhase;
+  /** Fato do DISCO (`.esteira/<fase>/handoffs/.../<fase>-result.json`). */
+  readonly diskStatus: PhaseStatus;
+  /** Fato do BOARD (coluna real do card, lida pelo espelho). */
+  readonly boardColumn: string;
+}
+
+/**
+ * T328/CA-13 — o prompt da sessão de conciliação. É **texto**, não comando:
+ * não existe skill `/esteira-conciliar` na Esteira, e inventar uma seria o
+ * mesmo erro do `--subset` já barrado no D2 (invariante 3: zero código novo
+ * nas skills). O mockup mostra `/esteira-conciliar ... --disco=... --board=...`;
+ * onde mockup e spec discordam, vence a spec — que pede "um prompt já
+ * preparado descrevendo os pontos divergentes".
+ *
+ * Uma linha só, sem `\r`/`\n` (invariante 2): o texto é ESCRITO no prompt do
+ * CLI e o Enter é do humano — uma quebra de linha aqui submeteria sozinha.
+ */
+export function buildConciliationPrompt(input: ConciliationPromptInput): string {
+  return [
+    `Conciliação de divergência no card ${input.cardId} (marco ${input.marcoId}).`,
+    `Fato do disco: a fase ${input.phase} está "${input.diskStatus}" no manifesto da Esteira.`,
+    `Fato do board: o card está na coluna "${input.boardColumn}".`,
+    'Levante o que aconteceu e me diga o que corrigir — não altere o board, a decisão é minha.',
+  ].join(' ');
+}
+
 export interface PrimeSequencer {
   /** `true` quando não há mais nada a pré-digitar. */
   readonly done: boolean;

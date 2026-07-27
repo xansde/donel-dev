@@ -190,6 +190,10 @@ export const DEVMODE_CHANNELS = {
   watchPhase: 'devMode:watchPhase',
   unwatchPhase: 'devMode:unwatchPhase',
   phaseArchived: 'devMode:phaseArchived',
+  // T327 (Batch D) — o ÚNICO canal novo da Fatia 2: leitura dos 4 fatos do
+  // board (CA-12) para os cards do discovery em foco. Continua sem nenhum
+  // canal de ESCRITA para TaskDex/vault (invariante 5/CA-14/CA-19).
+  readBoardFacts: 'devMode:readBoardFacts',
 } as const;
 
 export interface OpenDiscoveryIpcInput {
@@ -240,6 +244,11 @@ export function isValidArchivePhaseSessionIpcInput(input: unknown): input is Arc
 /** Usado por `focusDiscovery`/`closeDiscovery`/`readTree` — payload é só um `cardId`. */
 export function isValidCardId(cardId: unknown): cardId is string {
   return typeof cardId === 'string' && cardId.trim().length > 0;
+}
+
+/** T327 — payload de `readBoardFacts`: a lista de cards do discovery EM FOCO (CA-12). Lista vazia é válida (nada a anotar), qualquer elemento inválido invalida o payload inteiro (main faz no-op). */
+export function isValidCardIdList(input: unknown): input is readonly string[] {
+  return Array.isArray(input) && input.every((cardId) => isValidCardId(cardId));
 }
 
 /** T315 — payload de `watchPhase`/`unwatchPhase`: qual etapa (do discovery em foco) o watcher de manifesto deve vigiar (CA-6). */
@@ -293,6 +302,8 @@ export interface DonelDevModeApi {
   readTree(cardId: string): Promise<import('../main/discovery-tree').DiscoveryTree>;
   /** CA-1 — cards das 3 colunas de entrada do board configurado; `[]` sem board/fonte (porta desligada, não erro). */
   listEntryCards(): Promise<readonly import('../main/taskdex-board-client').EntryColumnCard[]>;
+  /** T327/CA-12 — os 4 fatos do board para os cards do discovery EM FOCO. Card sem fato some do mapa (espelho sem fonte é omissão, não erro). Leitura pura: nada é escrito no board. */
+  readBoardFacts(cardIds: readonly string[]): Promise<Record<string, import('../main/taskdex-board-client').BoardFacts>>;
   /** CA-6 — liga o watcher do manifesto daquela etapa; idempotente por etapa. */
   watchPhase(input: WatchPhaseIpcInput): Promise<void>;
   unwatchPhase(input: WatchPhaseIpcInput): Promise<void>;

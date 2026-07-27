@@ -6,6 +6,7 @@ import {
   isArchivedSessionProfileMismatch,
   isValidArchivePhaseSessionIpcInput,
   isValidCardId,
+  isValidCardIdList,
   isValidOpenDiscoveryIpcInput,
   linkDiscoveryRepo,
   openDiscovery,
@@ -218,5 +219,22 @@ describe('isValidCardId', () => {
     expect(isValidCardId('   ')).toBe(false);
     expect(isValidCardId(null)).toBe(false);
     expect(isValidCardId(42)).toBe(false);
+  });
+});
+
+// T327 (Batch D) — payload do canal de LEITURA `devMode:readBoardFacts`: a
+// lista de cards do discovery EM FOCO (CA-12). Continua valendo a invariante
+// 5 — nenhum canal de ESCRITA para TaskDex/vault existe nesta API.
+describe('isValidCardIdList', () => {
+  it('aceita lista de strings não vazias', () => {
+    expect(isValidCardIdList(['SZI-901', 'SZI-902'])).toBe(true);
+    expect(isValidCardIdList([])).toBe(true);
+  });
+
+  it('rejeita não-array, elemento vazio ou de outro tipo (main faz no-op)', () => {
+    expect(isValidCardIdList(null)).toBe(false);
+    expect(isValidCardIdList('SZI-901')).toBe(false);
+    expect(isValidCardIdList(['SZI-901', ''])).toBe(false);
+    expect(isValidCardIdList(['SZI-901', 42])).toBe(false);
   });
 });

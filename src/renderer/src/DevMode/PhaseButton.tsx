@@ -1,4 +1,4 @@
-import { AnnotationTag, ESTEIRA_PHASE_LABEL_PT, PhaseStateGlyph, PHASE_STATE_LABEL_PT } from '@donel-dev/design-system';
+import { AnnotationTag, Button, ESTEIRA_PHASE_LABEL_PT, PhaseStateGlyph, PHASE_STATE_LABEL_PT } from '@donel-dev/design-system';
 import type { AnnotationTone } from '@donel-dev/design-system';
 import type { EsteiraPhase } from '../../../shared/devMode';
 import type { PhaseStatus } from '../../../shared/phaseState';
@@ -24,8 +24,10 @@ import styles from './PhaseButton.module.css';
 export interface PhaseButtonProps {
   phase: EsteiraPhase;
   status: PhaseStatus;
-  /** CA-5 (Fatia 2) — conteúdo do slot de aviso de trava. `null` na Fatia 1: não há fonte de dado. */
+  /** CA-5 — conteúdo do slot de aviso de trava. T327 (Fatia 2) liga o dado real: a etiqueta `esteira:em-andamento:<fase>` LIDA DO BOARD. */
   lockAnnotation?: string | null;
+  /** T327/CA-16 — "Liberar trava…": pré-digita `/esteira-liberar <card_id>`. Não apaga arquivo nenhum (D1 — a trava é etiqueta do board). Só aparece quando há trava. */
+  onReleaseLock?: (() => void) | null;
   /** CA-22 — "essa etapa rodou na conta X"; avisa, nunca bloqueia. */
   profileWarning?: string | null;
   /** C4 — marcador discreto de manifesto ilegível; nunca vira um 6º estado. */
@@ -46,6 +48,7 @@ export function PhaseButton({
   phase,
   status,
   lockAnnotation = null,
+  onReleaseLock = null,
   profileWarning = null,
   resultUnreadable = false,
   active = false,
@@ -65,9 +68,14 @@ export function PhaseButton({
         <span className={styles.state}>{PHASE_STATE_LABEL_PT[status]}</span>
       </button>
 
-      {/* Slot de aviso (CA-5). Vazio na Fatia 1 — ver comentário de topo. */}
+      {/* Slot de aviso (CA-5). Acende com o dado REAL do board a partir do T327. */}
       <div className={styles.slot} data-testid={`devmode-phase-slot-${phase}`}>
         {lockAnnotation ? <AnnotationTag tone="lock">{lockAnnotation}</AnnotationTag> : null}
+        {lockAnnotation && onReleaseLock ? (
+          <Button variant="danger" onClick={onReleaseLock} data-testid={`devmode-phase-release-lock-${phase}`}>
+            Liberar trava…
+          </Button>
+        ) : null}
         {profileWarning ? (
           <AnnotationTag tone="warn">
             <span data-testid={`devmode-phase-profile-warning-${phase}`}>{profileWarning}</span>

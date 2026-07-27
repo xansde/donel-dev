@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppConfigDto,
   ArchivePhaseSessionIpcInput,
+  BoardFacts,
   DiscoveryTree,
   DonelApi,
   EntryColumnCard,
@@ -196,6 +197,11 @@ const donelApi: DonelApi = {
 
     // T311 (Batch B) — CA-1: consulta restrita da porta de entrada.
     listEntryCards: () => ipcRenderer.invoke(DEVMODE_CHANNELS.listEntryCards) as Promise<readonly EntryColumnCard[]>,
+
+    // T327 (Batch D) — CA-12: os 4 fatos do board para os cards do discovery
+    // em foco. Leitura pura — não existe canal simétrico de escrita.
+    readBoardFacts: (cardIds: readonly string[]) =>
+      ipcRenderer.invoke(DEVMODE_CHANNELS.readBoardFacts, cardIds) as Promise<Record<string, BoardFacts>>,
 
     // T315 (Batch B) — CA-6: watcher do manifesto por etapa + push do evento.
     watchPhase: (input: WatchPhaseIpcInput) => ipcRenderer.invoke(DEVMODE_CHANNELS.watchPhase, input) as Promise<void>,

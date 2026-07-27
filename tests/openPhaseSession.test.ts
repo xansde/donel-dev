@@ -3,6 +3,7 @@ import type { ArchivedPhaseSession } from '../src/shared/devMode';
 import { DEFAULT_PHASE_DEFAULTS } from '../src/shared/devModeDefaults';
 import {
   LIBERAR_COMMAND_TEMPLATE,
+  buildConciliationPrompt,
   createPrimeSequencer,
   decidePhaseOpen,
   resolveCommandSequence,
@@ -185,5 +186,49 @@ describe('createPrimeSequencer (CA-16 — cada comando com seu próprio Enter)',
     const first = sequencer.next();
     expect(first).toBe('a');
     expect(first).not.toContain('b');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T328 (003-modo-dev, Batch D) — prompt da sessão de CONCILIAÇÃO (CA-13).
+//
+// Duas regras que o mockup violava e a spec manda (mockup × spec: vence a
+// spec): (a) não existe skill `/esteira-conciliar` — inventar uma seria o
+// mesmo erro do `--subset` já barrado no D2, e a invariante 3 proíbe criar
+// código novo na Esteira; então o prompt é TEXTO, descrevendo os dois fatos.
+// (b) o app nunca corrige o board — o prompt diz isso explicitamente.
+// ---------------------------------------------------------------------------
+
+describe('buildConciliationPrompt', () => {
+  const INPUT = {
+    cardId: 'SZI-901',
+    marcoId: 'M1',
+    phase: 'implementar' as const,
+    diskStatus: 'done' as const,
+    boardColumn: 'plano',
+  };
+
+  it('cita os DOIS fatos divergentes (disco e board) e o card/marco/fase', () => {
+    const prompt = buildConciliationPrompt(INPUT);
+
+    expect(prompt).toContain('SZI-901');
+    expect(prompt).toContain('M1');
+    expect(prompt).toContain('implementar');
+    expect(prompt).toContain('done'); // fato do DISCO
+    expect(prompt).toContain('plano'); // fato do BOARD
+  });
+
+  it('invariante 2 — nenhum `\r`/`\n` no texto: o Enter é gesto humano', () => {
+    const prompt = buildConciliationPrompt(INPUT);
+    expect(prompt).not.toContain('\r');
+    expect(prompt).not.toContain('\n');
+  });
+
+  it('não inventa skill da Esteira (nada de `/esteira-conciliar`) — invariante 3', () => {
+    expect(buildConciliationPrompt(INPUT)).not.toContain('/esteira-');
+  });
+
+  it('diz explicitamente que o board não deve ser alterado (CA-13/invariante 5)', () => {
+    expect(buildConciliationPrompt(INPUT).toLowerCase()).toContain('não altere o board');
   });
 });

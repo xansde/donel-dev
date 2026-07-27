@@ -1,14 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DevModeBoardConfig } from '../src/shared/devMode';
 import {
+  createFixtureBoardFactsReader,
   createFixtureTaskdexBoardReader,
   createSystemBoardFactsReader,
   listEntryColumnCards,
   loadTaskdexServiceCredential,
+  readBoardFactsFor,
+  resolveBoardFactsReader,
   resolveBoardReader,
   taskdexCredentialPath,
+  type BoardFacts,
+  type BoardFactsReader,
   type BoardReadTool,
   type CallBoardReadTool,
+  type ReadFileText,
   type TaskdexBoardCard,
   type TaskdexBoardReader,
   type TaskdexCredentialIoDeps,
@@ -250,5 +256,108 @@ describe('loadTaskdexServiceCredential', () => {
     const allLoggedText = consoleSpy.mock.calls.flat().join(' ');
     expect(allLoggedText).not.toContain('segredo-xyz');
     consoleSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T327 (003-modo-dev, Batch D) — de onde os 4 FATOS do espelho vêm até existir
+// um `callTool` real: o mesmo arquivo de fixture da porta de entrada
+// (`DONEL_DEVMODE_BOARD_FIXTURE`), agora com uma chave `facts`. O mapeamento
+// cru→`BoardFacts` é o MESMO do reader de sistema (`toBoardFacts`), então o
+// smoke exercita o código de produção, não um atalho de teste.
+// ---------------------------------------------------------------------------
+
+describe('createFixtureBoardFactsReader / resolveBoardFactsReader (T327)', () => {
+  const FIXTURE = 'C:/tmp/board-fixture.json';
+
+  function io(files: Record<string, string>): ReadFileText {
+    return (path) => files[path] ?? null;
+  }
+
+  it('lê os 4 fatos do card pela chave `facts` do mesmo arquivo da porta de entrada', async () => {
+    const reader = createFixtureBoardFactsReader(
+      FIXTURE,
+      io({
+        [FIXTURE]: JSON.stringify({
+          cards: [{ cardId: 'SZI-901', column: 'plano', title: '[M1] Marco 1' }],
+          facts: {
+            'SZI-901': {
+              column: 'plano',
+              title: '[M1] Marco 1',
+              labels: ['esteira:em-andamento:implementar', 'esteira:precisa-atencao'],
+              pullRequest: { url: 'https://github.com/org/repo/pull/1', approved: false },
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(await reader.fetchBoardFacts('SZI-901')).toEqual({
+      column: 'plano',
+      title: '[M1] Marco 1',
+      lockedPhase: 'implementar',
+      attentionLabels: ['esteira:precisa-atencao'],
+      prUrl: 'https://github.com/org/repo/pull/1',
+      prApproved: false,
+    });
+  });
+
+  it('card sem entrada em `facts`, arquivo ausente ou JSON corrompido → null, nunca lança', async () => {
+    const withFacts = createFixtureBoardFactsReader(FIXTURE, io({ [FIXTURE]: JSON.stringify({ facts: {} }) }));
+    expect(await withFacts.fetchBoardFacts('SZI-901')).toBeNull();
+
+    expect(await createFixtureBoardFactsReader(FIXTURE, io({})).fetchBoardFacts('SZI-901')).toBeNull();
+    expect(await createFixtureBoardFactsReader(FIXTURE, io({ [FIXTURE]: '{{{' })).fetchBoardFacts('SZI-901')).toBeNull();
+  });
+
+  it('sem `DONEL_DEVMODE_BOARD_FIXTURE` o espelho fica SEM fonte (null), nunca erro na cara do usuário', async () => {
+    const reader = resolveBoardFactsReader({}, io({}));
+    expect(await reader.fetchBoardFacts('SZI-901')).toBeNull();
+  });
+});
+
+describe('readBoardFactsFor (T327)', () => {
+  function readerOf(facts: Record<string, BoardFacts>, seen?: string[]): BoardFactsReader {
+    return {
+      fetchBoardFacts: async (cardId) => {
+        seen?.push(cardId);
+        return facts[cardId] ?? null;
+      },
+    };
+  }
+
+  const FACTS_901: BoardFacts = {
+    column: 'implementar',
+    title: '[M1] Marco 1',
+    lockedPhase: null,
+    attentionLabels: [],
+    prUrl: null,
+    prApproved: false,
+  };
+
+  it('CA-12 — consulta SÓ os cards pedidos (os do discovery em foco), nunca o board inteiro', async () => {
+    const seen: string[] = [];
+    const result = await readBoardFactsFor(['SZI-901'], readerOf({ 'SZI-901': FACTS_901, 'SZI-999': FACTS_901 }, seen));
+
+    expect(seen).toEqual(['SZI-901']);
+    expect(Object.keys(result)).toEqual(['SZI-901']);
+  });
+
+  it('id repetido vira UMA consulta; id vazio nunca vira consulta', async () => {
+    const seen: string[] = [];
+    await readBoardFactsFor(['SZI-901', 'SZI-901', '', '   '], readerOf({ 'SZI-901': FACTS_901 }, seen));
+    expect(seen).toEqual(['SZI-901']);
+  });
+
+  it('card sem fato ou consulta que falha somem do mapa — o espelho degrada, nunca lança', async () => {
+    const reader: BoardFactsReader = {
+      fetchBoardFacts: async (cardId) => {
+        if (cardId === 'SZI-902') throw new Error('rede fora do ar');
+        return cardId === 'SZI-901' ? FACTS_901 : null;
+      },
+    };
+
+    const result = await readBoardFactsFor(['SZI-901', 'SZI-902', 'SZI-903'], reader);
+    expect(Object.keys(result)).toEqual(['SZI-901']);
   });
 });

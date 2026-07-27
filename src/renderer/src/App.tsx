@@ -3,6 +3,7 @@ import { Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppConfigDto,
+  BoardFacts,
   DiscoveryTree,
   EntryColumnCard,
   EsteiraPhase,
@@ -53,11 +54,21 @@ import { sessionTabName } from '../../shared/sessions';
 // vive nos módulos de `DevMode/`; aqui fica só o encanamento com PTY/IPC.
 import { DEFAULT_PHASE_DEFAULTS } from '../../shared/devModeDefaults';
 import { isReadyToPreType } from '../../shared/preTypeReadiness';
+// 003-modo-dev (Batch D) — o espelho do board (CA-12/CA-13): anotação PURA em
+// cima da árvore de disco. `annotateTree` não persiste nada e o app não tem
+// canal de escrita para o TaskDex (invariante 5/CA-14).
+import { annotateTree } from '../../shared/boardAnnotation';
 import { DevModeEntry } from './DevMode/DevModeEntry';
 import { DiscoveryMap, type SelectedPhaseNode } from './DevMode/DiscoveryMap';
 import { PhaseButton } from './DevMode/PhaseButton';
 import { discoveriesToClose, resolveEntrySelection } from './DevMode/devModeSelection';
-import { createPrimeSequencer, decidePhaseOpen, resolveCommandSequence } from './DevMode/openPhaseSession';
+import {
+  LIBERAR_COMMAND_TEMPLATE,
+  buildConciliationPrompt,
+  createPrimeSequencer,
+  decidePhaseOpen,
+  resolveCommandSequence,
+} from './DevMode/openPhaseSession';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import type { LauncherLaunchOptions } from './Launcher';
@@ -359,6 +370,10 @@ export function App(): React.JSX.Element {
   const [entryLoading, setEntryLoading] = useState(false);
   /** Árvore por discovery ABERTO (`devMode:readTree`) — disco puro, relida sob demanda. */
   const [discoveryTrees, setDiscoveryTrees] = useState<Record<string, DiscoveryTree>>({});
+  /** T327/CA-12 — os 4 fatos do board por card do discovery EM FOCO. `{}` = espelho sem fonte: a árvore aparece inteira, só sem anotação. */
+  const [boardFacts, setBoardFacts] = useState<Record<string, BoardFacts>>({});
+  /** T327/CA-16 — trava a liberar, confirmada antes de pré-digitar `/esteira-liberar` (a confirmação fala em ETIQUETA no board, nunca em arquivo). */
+  const [lockToRelease, setLockToRelease] = useState<{ marcoId: string; phase: EsteiraPhase; cardId: string } | null>(null);
   const [focusedMarcoId, setFocusedMarcoId] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<SelectedPhaseNode | null>(null);
   /** CA-3 — o comando ESCRITO e não enviado, exibido pelo `ArmedPrompt`. */
@@ -1166,11 +1181,22 @@ export function App(): React.JSX.Element {
   const devModeState = appConfig?.devMode;
   const focusedDiscoveryId = devModeState?.focusedDiscoveryId ?? null;
   const focusedDiscovery = focusedDiscoveryId ? (devModeState?.discoveries[focusedDiscoveryId] ?? null) : null;
-  const focusedTree = focusedDiscoveryId ? (discoveryTrees[focusedDiscoveryId] ?? null) : null;
+  const rawFocusedTree = focusedDiscoveryId ? (discoveryTrees[focusedDiscoveryId] ?? null) : null;
+  /**
+   * T327/CA-12 — a MESMA árvore de disco, com os 4 fatos do board sobrepostos.
+   * `annotateTree` é puro: não persiste nada e ignora qualquer card que não
+   * seja marco desta árvore ("nunca cards fora do discovery em foco").
+   */
+  const focusedTree = useMemo(
+    () => (rawFocusedTree ? annotateTree(rawFocusedTree, boardFacts) : null),
+    [rawFocusedTree, boardFacts],
+  );
   const phaseDefaults = devModeState?.phaseDefaults ?? DEFAULT_PHASE_DEFAULTS;
   /** Marco EM FOCO (CA-7): a escolha explícita do usuário, ou o primeiro marco enquanto ele não escolheu. */
   const focusedMarcoDisplay =
     focusedTree?.marcos.find((marco) => marco.marcoId === focusedMarcoId) ?? focusedTree?.marcos[0] ?? null;
+  /** T327/D1 — a fase travada segundo o BOARD (etiqueta `esteira:em-andamento:<fase>`), nunca um arquivo em disco. */
+  const focusedLockedPhase = focusedMarcoDisplay?.boardFacts?.lockedPhase ?? null;
 
   /** CA-1 — lista de candidatos do board. Sem fonte configurada volta `[]` (porta desligada, não erro). */
   const refreshEntryCards = useCallback((): void => {
@@ -1209,6 +1235,28 @@ export function App(): React.JSX.Element {
     if (!devModeOn || openDiscoveryIds.length === 0) return;
     refreshDiscoveryTrees(openDiscoveryIds);
   }, [devModeOn, openDiscoveryIds, refreshDiscoveryTrees]);
+
+  /**
+   * T327/CA-12 — os 4 fatos do board, SÓ dos cards do discovery em foco. A
+   * lista consultada é a dos marcos desta árvore: nenhum card fora do foco é
+   * pedido, e nada é escrito de volta (invariante 5). Board sem fonte devolve
+   * `{}` — o mapa continua idêntico ao da Fatia 1, sem erro na tela.
+   */
+  const focusedMarcoCardIds = useMemo(
+    () => (rawFocusedTree ? rawFocusedTree.marcos.map((marco) => marco.cardId) : []),
+    [rawFocusedTree],
+  );
+
+  useEffect(() => {
+    if (!devModeOn || focusedMarcoCardIds.length === 0) {
+      setBoardFacts({});
+      return;
+    }
+    void window.donel.devMode
+      .readBoardFacts(focusedMarcoCardIds)
+      .then(setBoardFacts)
+      .catch(() => setBoardFacts({}));
+  }, [devModeOn, focusedMarcoCardIds]);
 
   // T321/CA-23 — encerramento automático: o discovery some da lista de abertos
   // quando TODO marco tem `concluir: success`. Fato verificável (gate de
@@ -1404,6 +1452,57 @@ export function App(): React.JSX.Element {
         return;
       }
     }
+  };
+
+  /**
+   * T327/CA-16 — confirmada a liberação, pré-digita `/esteira-liberar
+   * <card_id>` na aba EM FOCO (mesma regra do `concluir`: nenhuma sessão nova
+   * nasce só para digitar um comando). **Nenhum arquivo é tocado** — a trava é
+   * a etiqueta `esteira:em-andamento:<fase>` no board (D1), e quem a remove é
+   * a skill, depois do Enter do humano.
+   */
+  const confirmReleaseLock = (): void => {
+    const target = lockToRelease;
+    setLockToRelease(null);
+    if (!target) return;
+
+    const tab = tabs.find((candidate) => candidate.id === activeTabId && candidate.sessionType === 'claude');
+    if (!tab) {
+      setDevModeToast('Sem sessão Claude em foco — abra ou foque uma aba para preparar o /esteira-liberar.');
+      return;
+    }
+
+    armPhaseCommands(tab.id, [LIBERAR_COMMAND_TEMPLATE.replace('{card_id}', target.cardId)]);
+  };
+
+  /**
+   * T328/CA-13 — sessão de CONCILIAÇÃO: sessão nova, com o prompt que descreve
+   * os dois fatos divergentes já ESCRITO e não enviado (mesma regra do CA-3).
+   * O app não corrige o board — não existe canal para isso.
+   */
+  const handleConciliate = (marcoId: string, phase: EsteiraPhase): void => {
+    if (!focusedDiscovery || !focusedTree) return;
+    const marco = focusedTree.marcos.find((candidate) => candidate.marcoId === marcoId);
+    const divergence = marco?.phases[phase].divergence;
+    if (!marco || !divergence) return;
+
+    const tabId = addTab({
+      name: `[${marcoId}] conciliação`,
+      cwd: focusedDiscovery.repoPath,
+      projectName: projects.find((project) => project.path === focusedDiscovery.repoPath)?.name,
+      pinned: false,
+      launchArgs: buildClaudeArgs({}),
+      sessionType: 'claude',
+    });
+    armPhaseCommands(tabId, [
+      buildConciliationPrompt({
+        cardId: marco.cardId,
+        marcoId,
+        phase,
+        diskStatus: divergence.diskStatus,
+        boardColumn: divergence.boardColumn,
+      }),
+    ]);
   };
 
   /** T311/CA-2 — clique num card da porta de entrada. `resolveEntrySelection` (puro) decide focar × criar. */
@@ -1870,8 +1969,21 @@ export function App(): React.JSX.Element {
                           key={phase}
                           phase={phase}
                           status={node.status}
-                          // Fatia 1: sem fonte para a trava do board (D1) — slot vazio de propósito, ver plan.md §Nota CA-5.
-                          lockAnnotation={null}
+                          // T327/CA-5/D1 — dado REAL: a etiqueta de trava lida do
+                          // board. Sem fonte de board o slot segue vazio (Fatia 1).
+                          lockAnnotation={
+                            focusedLockedPhase === phase ? `trava no board desde a etiqueta esteira:em-andamento:${phase}` : null
+                          }
+                          onReleaseLock={
+                            focusedLockedPhase === phase
+                              ? () =>
+                                  setLockToRelease({
+                                    marcoId: focusedMarcoDisplay.marcoId,
+                                    phase,
+                                    cardId: focusedMarcoDisplay.cardId,
+                                  })
+                              : null
+                          }
                           profileWarning={
                             archived && archived.profileSlug !== activeProfileSlug ? `rodou na conta ${archived.profileSlug}` : null
                           }
@@ -2018,6 +2130,7 @@ export function App(): React.JSX.Element {
             activeProfileSlug={activeProfileSlug}
             onFocusMarco={(marcoId) => setFocusedMarcoId(marcoId)}
             onSelectPhase={handlePhaseAction}
+            onConciliate={handleConciliate}
           />
         ) : null}
 
@@ -2091,6 +2204,32 @@ export function App(): React.JSX.Element {
         // nome dado na UI), não só a 1ª mensagem: é o caminho do US-A.
         sessionNames={appConfig?.sessionNames ?? {}}
       />
+
+      {/* T327/CA-16/D1 — confirmação de "Liberar trava…". O texto fala em
+          REMOVER A ETIQUETA DE TRAVA NO BOARD (nunca em "arquivo de trava":
+          esse arquivo não existe) e deixa claro que o app só PREPARA o
+          comando — nada é enviado sem o Enter dele. */}
+      <Modal
+        open={lockToRelease !== null}
+        onClose={() => setLockToRelease(null)}
+        title={lockToRelease ? `Liberar a trava de [${lockToRelease.marcoId}] · ${lockToRelease.phase}?` : ''}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setLockToRelease(null)}>
+              Cancelar
+            </Button>
+            <Button variant="danger" onClick={confirmReleaseLock} data-testid="devmode-confirm-release-lock">
+              Preparar /esteira-liberar
+            </Button>
+          </>
+        }
+      >
+        <p>
+          A trava é a etiqueta <code>esteira:em-andamento:{lockToRelease?.phase}</code> no card do board — não há arquivo de
+          trava em disco. Quem remove a etiqueta é a skill <code>/esteira-liberar</code>: o app apenas escreve o comando no
+          prompt, e o Enter continua sendo seu.
+        </p>
+      </Modal>
 
       {/* D4 — Toast do Modo Dev: uma linha, SEM ação de desfazer. Trocar o
           foco já é reversível pelo próprio gesto (clicar no outro card); uma

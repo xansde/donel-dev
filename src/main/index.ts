@@ -33,6 +33,7 @@ import {
   focusDiscovery,
   isValidArchivePhaseSessionIpcInput,
   isValidCardId,
+  isValidCardIdList,
   isValidOpenDiscoveryIpcInput,
   isValidWatchPhaseIpcInput,
   normalizeSessionName,
@@ -63,7 +64,14 @@ import {
 import { buildDiscoveryTree } from './discovery-tree';
 import { createSystemEsteiraReaderIoDeps } from './esteira-reader';
 import { watchEsteiraResult, type EsteiraResultWatcherHandle } from './esteira-result-watcher';
-import { listEntryColumnCards, resolveBoardReader, type EntryColumnCard } from './taskdex-board-client';
+import {
+  listEntryColumnCards,
+  readBoardFactsFor,
+  resolveBoardFactsReader,
+  resolveBoardReader,
+  type BoardFacts,
+  type EntryColumnCard,
+} from './taskdex-board-client';
 import { writeHooksSettingsFile } from './hooks-settings';
 import {
   claudeHomeDir,
@@ -129,6 +137,12 @@ const esteiraReaderIoDeps = createSystemEsteiraReaderIoDeps();
 // dedicada): sem `DONEL_DEVMODE_BOARD_FIXTURE` este leitor devolve lista
 // vazia — a porta de entrada existe e não mente, só não tem fonte ainda.
 const boardReader = resolveBoardReader(process.env, esteiraReaderIoDeps.readFileText);
+
+// T327 (Batch D) — fonte dos 4 fatos do espelho (CA-12). Mesma degradação do
+// `boardReader`: sem fixture (e enquanto não houver um `callTool` real para
+// `createSystemBoardFactsReader`), nenhum card tem fato — a árvore continua
+// inteira, só não recebe anotação. Leitura pura, nunca escreve no board.
+const boardFactsReader = resolveBoardFactsReader(process.env, esteiraReaderIoDeps.readFileText);
 
 /**
  * T315 (Batch B) — um watcher de manifesto por ETAPA vigiada (CA-6), chave =
@@ -559,6 +573,17 @@ function registerDevModeIpcHandlers(): void {
   /** T311/CA-1 — cards das 3 colunas de entrada do board configurado. Sem board/sem fonte = `[]` (porta desligada, nunca erro). */
   ipcMain.handle(DEVMODE_CHANNELS.listEntryCards, async (): Promise<readonly EntryColumnCard[]> => {
     return listEntryColumnCards(appConfig.devMode.boardConfig, boardReader);
+  });
+
+  /**
+   * T327/CA-12 — os 4 fatos do board para os cards do discovery EM FOCO (a
+   * lista vem do renderer; o main nunca varre o board). Payload inválido é
+   * no-op (`{}`), card sem fato some do mapa. **Leitura pura** — não existe
+   * canal simétrico de escrita (invariante 5/CA-14).
+   */
+  ipcMain.handle(DEVMODE_CHANNELS.readBoardFacts, async (_event, cardIds: readonly string[]): Promise<Record<string, BoardFacts>> => {
+    if (!isValidCardIdList(cardIds)) return {};
+    return readBoardFactsFor(cardIds, boardFactsReader);
   });
 
   /**

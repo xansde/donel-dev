@@ -220,6 +220,80 @@ export function createSystemBoardFactsReader(callTool: CallBoardReadTool): Board
 }
 
 // ---------------------------------------------------------------------------
+// T327 (003-modo-dev, Batch D) — a FONTE dos 4 fatos que chega até a UI.
+//
+// `createSystemBoardFactsReader` (T324) já existe, mas depende de um
+// `callTool` real — o transporte MCP/rede autenticado pela credencial
+// dedicada, que nenhuma task desta entrega especificou (nem endpoint, nem
+// protocolo). Enquanto ele não existe, o espelho tem UMA fonte isolada: o
+// mesmo arquivo de fixture da porta de entrada (`DONEL_DEVMODE_BOARD_FIXTURE`),
+// agora também com uma chave `facts`. Sem fixture, o espelho fica sem fonte —
+// `null` por card, exatamente a mesma degradação de `boardConfig` ausente
+// (C4): a árvore continua inteira, só não recebe anotação. Nunca um erro na
+// cara do usuário, e **nenhuma escrita** em lugar nenhum (invariante 5).
+// ---------------------------------------------------------------------------
+
+/** Leitor de fatos por fixture: reusa `toBoardFacts`, o MESMO mapeamento do reader de sistema — o teste exercita produção, não um atalho. */
+export function createFixtureBoardFactsReader(fixturePath: string, readFileText: ReadFileText): BoardFactsReader {
+  return {
+    fetchBoardFacts: async (cardId: string): Promise<BoardFacts | null> => {
+      const text = readFileText(fixturePath);
+      if (text === null) return null;
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return null;
+      }
+
+      if (typeof parsed !== 'object' || parsed === null) return null;
+      const facts = (parsed as { facts?: unknown }).facts;
+      if (typeof facts !== 'object' || facts === null) return null;
+
+      return toBoardFacts((facts as Record<string, unknown>)[cardId]);
+    },
+  };
+}
+
+/** Espelho sem fonte — a Fatia 2 sem fixture e sem `callTool` real: nenhum fato, nenhum erro. */
+const EMPTY_BOARD_FACTS_READER: BoardFactsReader = { fetchBoardFacts: async () => null };
+
+/** Mesmo espírito de `resolveBoardReader`: escolhe a fonte a partir do ambiente do processo (main). */
+export function resolveBoardFactsReader(env: Record<string, string | undefined>, readFileText: ReadFileText): BoardFactsReader {
+  const fixturePath = env[BOARD_FIXTURE_ENV_VAR];
+  if (!fixturePath) return EMPTY_BOARD_FACTS_READER;
+  return createFixtureBoardFactsReader(fixturePath, readFileText);
+}
+
+/**
+ * CA-12 — os fatos dos cards do discovery EM FOCO, e só deles: a consulta é
+ * card a card, a partir da lista que o renderer manda, nunca uma varredura do
+ * board. Card sem fato (ou consulta que falha) simplesmente não entra no mapa
+ * — o espelho degrada por omissão, nunca lança nem loga (o token vive em quem
+ * implementa `callTool`, e nada aqui escreve em log).
+ */
+export async function readBoardFactsFor(
+  cardIds: readonly string[],
+  reader: BoardFactsReader,
+): Promise<Record<string, BoardFacts>> {
+  const unique = [...new Set(cardIds.map((cardId) => cardId.trim()).filter((cardId) => cardId.length > 0))];
+  const facts: Record<string, BoardFacts> = {};
+
+  for (const cardId of unique) {
+    try {
+      const card = await reader.fetchBoardFacts(cardId);
+      if (card) facts[cardId] = card;
+    } catch {
+      // Board indisponível para ESTE card: some do mapa. Um espelho que
+      // derruba a árvore quando a rede oscila seria pior que um sem anotação.
+    }
+  }
+
+  return facts;
+}
+
+// ---------------------------------------------------------------------------
 // Credencial de serviço dedicada — fora do repo, nunca versionada, nunca logada.
 // ---------------------------------------------------------------------------
 
