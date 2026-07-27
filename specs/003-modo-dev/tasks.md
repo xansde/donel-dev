@@ -510,7 +510,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
 
 ## Fatia 2 — Batch D: UI do espelho
 
-- **T327 — Overlay dos 4 fatos no mapa** (sequencial após T325/T316/T332) — `src/renderer/src/DevMode/DiscoveryMap.tsx`
+- ✅ **ENTREGUE** (commit `01d0a4a`, 27/07) — **T327 — Overlay dos 4 fatos no mapa** (sequencial após T325/T316/T332) — `src/renderer/src/DevMode/DiscoveryMap.tsx`, `src/renderer/src/DevMode/PhaseButton.tsx`, `src/renderer/src/App.tsx`, `src/main/taskdex-board-client.ts`, `src/main/index.ts`, `src/preload/index.ts`, `src/shared/devMode.ts`
   Liga `annotateTree` (T325) ao componente de T316/T317: cada nó passa a
   mostrar coluna real, trava ativa (fecha o slot vazio do T314 — a Fatia 2 só
   entrega o DADO, o slot já existe), etiquetas de atenção, PR+aprovação, todos
@@ -528,8 +528,18 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   clicar "Liberar trava…" pré-digita `/esteira-liberar {card_id}` sem `\r` e
   sem tocar em nenhum arquivo do disco (assert de I/O); comentário/descrição/
   checklist do card **nunca** aparecem (fora do escopo do CA-12).
+  **Como ficou:** o espelho reusa os slots que o design system já expunha —
+  `tags` do `WorktreeCard` (marco: coluna real, etiquetas de atenção,
+  PR+aprovação, conferência do `[Mx]`) e `annotations` do nó de fase (trava,
+  divergência); nenhuma peça nova (CA-25). Canal de LEITURA novo
+  `devMode:readBoardFacts` (o único da fatia; nenhum canal de escrita existe).
+  **Sobra declarada:** `createSystemBoardFactsReader` (T324) continua sem um
+  `callTool` real — nenhuma task desta entrega especificou endpoint/protocolo
+  do MCP, então a fonte hoje é a fixture (`DONEL_DEVMODE_BOARD_FIXTURE`) e,
+  sem ela, o espelho fica sem fonte (árvore inteira, sem anotação — mesma
+  degradação do C4). Ligar o transporte real é pré-requisito do E2E do T330.
 
-- **T328 — Marcador de divergência + sessão de conciliação** (sequencial após T326/T312) — `src/renderer/src/DevMode/DiscoveryMap.tsx`, `openPhaseSession.ts`
+- ✅ **ENTREGUE** (commit `01d0a4a`, 27/07) — **T328 — Marcador de divergência + sessão de conciliação** (sequencial após T326/T312) — `src/renderer/src/DevMode/DiscoveryMap.tsx`, `openPhaseSession.ts`, `src/renderer/src/App.tsx`
   Nó com divergência (T326) mostra os dois fatos + marcador; oferece abrir
   sessão de conciliação com um prompt **pré-digitado** descrevendo os pontos
   divergentes — mesma regra do CA-3 (T312: espera `'waiting'`, nunca envia
@@ -538,15 +548,27 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   **DoD:** smoke — clicar "conciliar" pré-digita um texto que cita os dois
   fatos divergentes, sem `\r`; nenhuma chamada de escrita ao TaskDex acontece
   nesse fluxo (assert de rede/log).
+  **Decisão registrada (mockup × spec — venceu a spec):** o mockup pré-digita
+  `/esteira-conciliar <card> --disco=… --board=…`. Essa skill **não existe** na
+  Esteira, e inventá-la repetiria exatamente o erro do `--subset` barrado no
+  D2 (invariante 3: zero código novo nas skills). O que a spec pede é "um
+  prompt já preparado descrevendo os pontos divergentes" — então
+  `buildConciliationPrompt` produz **texto** (uma linha, sem `\r`/`\n`) que
+  cita os dois fatos e diz, no próprio prompt, para não alterar o board.
 
-- **T329 — Smoke completo da Fatia 2** [P] com T328 — `tests/smoke/dev-mode-espelho.spec.ts` (novo)
+- ✅ **ENTREGUE** (commit `68391d1`, 27/07) — **T329 — Smoke completo da Fatia 2** [P] com T328 — `tests/smoke/dev-mode-espelho.spec.ts` (novo)
   Isolado de board real (mock do cliente T324). Cobre: overlay dos 4 fatos
   (T327), divergência não-alarmante filtrada (T326), sessão de conciliação
   pré-digitada (T328), ausência total de escrita no board em qualquer
   caminho exercitado.
   **DoD:** suíte nova verde.
+  **Como ficou:** 1 teste, 40,6s, verde (rodada do gate do Batch D, 27/07).
+  UMA sessão `claude` real (a da conciliação) e um único Enter — o do diálogo
+  de confiança, nunca sobre texto armado. O assert de I/O é a impressão
+  digital (path+tamanho+mtime+conteúdo) de TODO arquivo da fixture antes e
+  depois: byte-idêntica no fim, e nenhum `.lock` criado.
 
-- **T330 — Gate final da Fatia 2** — suíte completa + dist + roteiro E2E
+- ⏳ **PARCIAL — Batch D fez a parte automatizável** — **T330 — Gate final da Fatia 2** — suíte completa + dist + roteiro E2E
   Suíte completa (`typecheck`+`test`+`test:smoke`+`test:smoke:dev`) com
   vermelhos herdados declarados; `npm run build`+`npm run dist`; roteiro E2E
   cobrindo o que só ele valida: abrir o espelho com token de serviço real (ou
@@ -556,6 +578,19 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   **DoD:** `medicao-*.md` da Fatia 1 seguem valendo (nenhuma regressão de RAM/
   tempo introduzida pela Fatia 2 — medir de novo se o overlay for pesado);
   **PR da Fatia 2 pronto para revisão**.
+  **O que o Batch D fechou (27/07):** `npm run typecheck` limpo,
+  `npm run build` OK, units dos 4 arquivos do lote verdes (78 testes:
+  `taskdex-board-client` 24, `devMode` 19, `openPhaseSession` 19,
+  `boardAnnotation` 16) e o smoke novo verde. Divergência e conciliação
+  exercitadas por teste.
+  **O que NÃO foi feito (ato humano/fora do mandato do lote):** `npm run dist`
+  (empacotar não é ato desta sessão, mesma regra dos Batches B/C), o **PR**
+  (sempre humano) e o **roteiro E2E com token de serviço real** — este último
+  está BLOQUEADO por dependência de código: não existe `callTool` real para
+  `createSystemBoardFactsReader` (ver sobra declarada em T327). Sem ele o
+  espelho só tem fonte de fixture, então "ver os 4 fatos com token real" não é
+  executável hoje. Nenhuma medição nova foi feita (nenhum número sem medição):
+  se o overlay precisar de RAM/tempo medidos, é medição própria, não estimativa.
 
 ---
 
