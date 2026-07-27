@@ -42,7 +42,7 @@ const DISCOVERY_5 = 'MED-500';
 const PHASES = ['discovery', 'plano', 'implementar', 'validar', 'concluir'] as const;
 
 let electronApp: ElectronApplication;
-let window: Page;
+let appWindow: Page;
 let userDataDir: string;
 let fixtureRepo: string;
 
@@ -97,7 +97,7 @@ function seedDiscovery(discoveryCardId: string, marcoCount: number): void {
 }
 
 test.beforeAll(async () => {
-  fixtureRepo = mkdtempSync(path.join(os.tmpdir(), 'donel-dev-medicao-'));
+  fixtureRepo = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-medicao-'));
   seedDiscovery(DISCOVERY_3, 3);
   seedDiscovery(DISCOVERY_5, 5);
 
@@ -126,8 +126,8 @@ test.beforeAll(async () => {
   );
 
   electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
-  window = await electronApp.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
+  appWindow = await electronApp.firstWindow();
+  await appWindow.waitForLoadState('domcontentloaded');
 });
 
 test.afterAll(async () => {
@@ -156,7 +156,7 @@ async function medianWorkingSetMb(samples: number): Promise<number> {
   const values: number[] = [];
   for (let i = 0; i < samples; i += 1) {
     values.push(await workingSetMb());
-    await window.waitForTimeout(400);
+    await appWindow.waitForTimeout(400);
   }
   values.sort((a, b) => a - b);
   return values[Math.floor(values.length / 2)];
@@ -167,7 +167,7 @@ test('C2 — montagem do mapa (5 marcos) fica abaixo da cerca de regressão', as
 
   // O número é calculado inteiramente do lado do RENDERER, numa única chamada
   // de `evaluate`: nada do relógio do processo Node/Playwright entra nele.
-  const result = await window.evaluate(async (cardId) => {
+  const result = await appWindow.evaluate(async (cardId) => {
     const times: number[] = [];
     for (let i = 0; i < 20; i += 1) {
       const started = performance.now();
@@ -197,12 +197,12 @@ test('C1 — RAM: ligar o Modo Dev com um discovery de 3 marcos fica abaixo da c
   test.setTimeout(120_000);
 
   // Baseline "Uso geral": app aberto, Modo Dev DESLIGADO, sem sessão nenhuma.
-  await expect(window.locator('[data-testid="devmode-toggle"]')).toBeVisible();
+  await expect(appWindow.locator('[data-testid="devmode-toggle"]')).toBeVisible();
   const baselineMb = await medianWorkingSetMb(5);
 
-  await window.locator('[data-testid="devmode-toggle"] input[role="switch"]').check();
-  await expect(window.locator('[data-testid="devmode-map"]')).toBeVisible();
-  await expect(window.locator('[data-testid="devmode-map-marco-M3"]')).toBeVisible();
+  await appWindow.locator('[data-testid="devmode-toggle"] input[role="switch"]').check();
+  await expect(appWindow.locator('[data-testid="devmode-map"]')).toBeVisible();
+  await expect(appWindow.locator('[data-testid="devmode-map-marco-M3"]')).toBeVisible();
   const devModeMb = await medianWorkingSetMb(5);
 
   const deltaMb = devModeMb - baselineMb;

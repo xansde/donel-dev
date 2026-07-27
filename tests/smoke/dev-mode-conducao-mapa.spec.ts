@@ -92,8 +92,8 @@ function newPids(before: Set<number>): number[] {
 }
 
 test.beforeAll(async () => {
-  fixtureRepo = mkdtempSync(path.join(os.tmpdir(), 'donel-dev-esteira-'));
-  worktreeDir = mkdtempSync(path.join(os.tmpdir(), 'donel-dev-worktree-'));
+  fixtureRepo = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-esteira-'));
+  worktreeDir = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-worktree-'));
   worktreeDeclared = worktreeDir.split(path.sep).join('/');
 
   // --- Fixture do `.esteira/` (o que a Esteira já grava em disco) ---------

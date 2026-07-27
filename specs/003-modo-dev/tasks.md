@@ -260,7 +260,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
 
 ## Fatia 1 — Batch B: o que ele vê
 
-- **T310 — Modo Dev: toggle e layout (CA-20)** (sequencial após T307) — `src/renderer/src/App.tsx`
+- ✅ **ENTREGUE** (commit `ede9772`, 27/07) — **T310 — Modo Dev: toggle e layout (CA-20)** (sequencial após T307) — `src/renderer/src/App.tsx`
   Liga/desliga reorganiza o layout da janela; a tela de hoje (tabs/sidebar
   atuais) **não é desmontada**, só ocultada — mesmo princípio de visibilidade
   via CSS já usado nas abas de terminal (T007, "todas as abas ficam
@@ -269,7 +269,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   **DoD:** smoke — ligar/desligar preserva as abas abertas e seu estado (PTY
   não é recriado); typecheck limpo.
 
-- **T311 — Zona 1: porta de entrada (lista de candidatos)** (sequencial após T309/T310/T332) — `src/renderer/src/DevMode/DevModeEntry.tsx` (novo)
+- ✅ **ENTREGUE** (commit `ede9772`, 27/07) — **T311 — Zona 1: porta de entrada (lista de candidatos)** (sequencial após T309/T310/T332) — `src/renderer/src/DevMode/DevModeEntry.tsx` (novo)
   Lista os cards de `listEntryColumnCards` (T309); card com discovery já aberto
   (via `devMode:get`) aparece marcado com `AnnotationTag` (T332, tom `accent`),
   selecioná-lo foca aquele discovery (`devMode:focusDiscovery`); selecionar
@@ -285,7 +285,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   aparece; o `Toast` de troca de foco não tem nenhuma ação de desfazer
   (assert de ausência de handler/botão de undo).
 
-- **T312 — Zona 2: abrir fase + pré-digitar (o gesto central)** (sequencial após T302/T305/T310/T334) — `src/renderer/src/DevMode/openPhaseSession.ts` (novo, núcleo puro + wiring), `src/renderer/src/App.tsx`
+- ✅ **ENTREGUE** (commit `9c96830 + ede9772`, 27/07) — **T312 — Zona 2: abrir fase + pré-digitar (o gesto central)** (sequencial após T302/T305/T310/T334) — `src/renderer/src/DevMode/openPhaseSession.ts` (novo, núcleo puro + wiring), `src/renderer/src/App.tsx`
   Núcleo puro testável: decide `create` (fase normal) vs. resolver o `ptyId`
   em foco (fase `concluir`, ver T313) vs. `resume` (CA-9, ver T318) a partir
   de `PhaseDefault.opensOwnSession` + o estado da fase. Wiring: cria/foca PTY,
@@ -302,7 +302,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   texto exato aparece no buffer do PTY sem ter sido "enviado" (nenhuma nova
   linha de output do CLI processando o comando) até o Enter humano do teste.
 
-- **T313 — Zona 2: exceção da fase `concluir`** (sequencial após T312, mesma dependência de T334 herdada) — mesmos arquivos de T312
+- ✅ **ENTREGUE** (commit `9c96830 + ede9772`, 27/07) — **T313 — Zona 2: exceção da fase `concluir`** (sequencial após T312, mesma dependência de T334 herdada) — mesmos arquivos de T312
   Quando a fase é `concluir`, resolve o `ptyId` da aba **em foco no momento do
   clique** e pré-digita nela via o mesmo `ArmedPrompt` (T334) — **nunca** cria
   PTY nova (única exceção ao "uma sessão por etapa", C6). Sem aba em foco
@@ -313,7 +313,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   nela; sem aba nenhuma aberta, nenhuma sessão nova é criada e um aviso
   aparece.
 
-- **T314 — Zona 2: slot de aviso de trava (estrutura, sem dado ainda)** [P] com T313/T332 (depende de T332 para tipar o conteúdo do slot) — `src/renderer/src/DevMode/PhaseButton.tsx` (novo)
+- ✅ **ENTREGUE** (commit `ede9772`, 27/07) — **T314 — Zona 2: slot de aviso de trava (estrutura, sem dado ainda)** [P] com T313/T332 (depende de T332 para tipar o conteúdo do slot) — `src/renderer/src/DevMode/PhaseButton.tsx` (novo)
   Botão da próxima fase **sempre clicável** (nunca desabilitado por trava —
   invariante 4/CA-5), com um slot de aviso tipado como `AnnotationTag`
   (T332, tom `lock`) que fica **vazio nesta fatia** (ver `plan.md`
@@ -326,7 +326,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   fonte de dado nesta fatia); nenhum código desta task lê ou escreve arquivo
   `.lock` em disco (não existe tal arquivo, D1).
 
-- **T315 — Zona 2: arquivamento de sessão concluída** (sequencial após T308/T312) — `src/renderer/src/App.tsx`
+- ✅ **ENTREGUE** (commit `ede9772`, 27/07) — **T315 — Zona 2: arquivamento de sessão concluída** (sequencial após T308/T312) — `src/renderer/src/App.tsx`
   Assina o evento do watcher (T308); ao chegar `{cardId, marcoId, fase}` com
   sucesso, localiza a aba cujo `claudeSessionId` corresponde à sessão daquela
   etapa, **fecha a aba** e chama `devMode:archivePhaseSession` (grava
@@ -338,7 +338,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   `session-id`; manifesto de falha mantém a aba aberta; transcript nunca é
   tocado (só lido).
 
-- **T316 — Zona 3: árvore do mapa lateral** (sequencial após T305/T310/T331/T333) — `src/renderer/src/DevMode/DiscoveryMap.tsx` (novo)
+- ✅ **ENTREGUE** (commit `ede9772`, 27/07) — **T316 — Zona 3: árvore do mapa lateral** (sequencial após T305/T310/T331/T333) — `src/renderer/src/DevMode/DiscoveryMap.tsx` (novo)
   Desenha o discovery em foco por completo via `devMode:readTree` — um ramo
   por marco `[Mx]` representado por `WorktreeCard` (T333, variante `marco`;
   variante `orquestrador` para o card do discovery-pai), nó = fase da Esteira
@@ -354,7 +354,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   disco fora de `devMode:readTree`; a legenda dos dois eixos está presente no
   rodapé do mapa (item verificável, não apenas visual).
 
-- **T317 — Zona 3: expandir nó (skills, artefatos, recibos)** (sequencial após T316/T332) — mesmos arquivos de T316
+- ✅ **ENTREGUE** (commit `ede9772`, 27/07) — **T317 — Zona 3: expandir nó (skills, artefatos, recibos)** (sequencial após T316/T332) — mesmos arquivos de T316
   Expandir um nó mostra: a skill fixa daquela fase (tabela do CA-4/plan.md,
   **não** um dado novo do manifesto — ver `plan.md`), os artefatos declarados
   (`artifact_paths`/`e2e_path`/`documents[]` + `ctx.md` + o próprio
@@ -369,7 +369,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   nenhuma chamada de escrita é feita a partir da expansão (asswinatura só de
   leitura, CA-19).
 
-- **T318 — Zona 3: retomar fase concluída / degradação de discovery antigo** (sequencial após T317) — `src/renderer/src/DevMode/DiscoveryMap.tsx`, `openPhaseSession.ts`
+- ✅ **ENTREGUE** (commit `9c96830 + ede9772`, 27/07) — **T318 — Zona 3: retomar fase concluída / degradação de discovery antigo** (sequencial após T317) — `src/renderer/src/DevMode/DiscoveryMap.tsx`, `openPhaseSession.ts`
   Clicar numa fase **concluída** com `archivedSession` presente retoma via
   `continuation.resume` (CA-9). Discovery antigo (C4) sem `session-id`
   arquivado: o clique **abre o artefato** (`result.json`/`ctx.md`, não uma
@@ -378,7 +378,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   com `-r <sessionId>`); fixture "antiga" sem `archivedSession` abre o
   artefato em vez de tentar retomar.
 
-- **T319 — Estados de fase na UI + retomada por estado (CA-15/CA-16)** (sequencial após T304/T314/T316/T331) — `src/renderer/src/DevMode/PhaseButton.tsx`, `src/renderer/src/DevMode/openPhaseSession.ts`
+- ✅ **ENTREGUE** (commit `9c96830 + ede9772`, 27/07) — **T319 — Estados de fase na UI + retomada por estado (CA-15/CA-16)** (sequencial após T304/T314/T316/T331) — `src/renderer/src/DevMode/PhaseButton.tsx`, `src/renderer/src/DevMode/openPhaseSession.ts`
   Os 5 estados do CA-15 ficam **inconfundíveis** via `PhaseStateGlyph` (T331)
   — requisito literal: "falha tem de ser a coisa mais clara da tela" (a
   REPRESENTAÇÃO visual da peça é da sessão de design/T331; esta task garante
@@ -396,7 +396,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   depois do "Enter" simulado do teste e do semáforo voltar a `waiting`, o
   segundo comando aparece pré-digitado — nunca os dois ao mesmo tempo.
 
-- **T320 — Perfil de conta por etapa arquivada (CA-22 na UI)** [P] com T319 — `src/renderer/src/DevMode/PhaseButton.tsx` ou `SessionDetails.tsx`
+- ✅ **ENTREGUE** (commit `ede9772`, 27/07) — **T320 — Perfil de conta por etapa arquivada (CA-22 na UI)** [P] com T319 — `src/renderer/src/DevMode/PhaseButton.tsx` ou `SessionDetails.tsx`
   Ao retomar uma etapa arquivada (T318) cujo `profileSlug` difere do perfil
   ATIVO agora, mostra aviso inline "essa etapa rodou na conta X" — **nunca
   falha em silêncio, nunca bloqueia** (distribuir etapas entre contas é uso
@@ -404,7 +404,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   **DoD:** smoke — retomar etapa arquivada em perfil B com perfil A ativo
   mostra o aviso e retoma normalmente; mesmo perfil não mostra aviso.
 
-- **T321 — Encerramento automático do discovery (CA-23)** (sequencial após T305) — `src/renderer/src/App.tsx`, `src/shared/devMode.ts`
+- ✅ **ENTREGUE** (commit `9c96830 + ede9772`, 27/07) — **T321 — Encerramento automático do discovery (CA-23)** (sequencial após T305) — `src/renderer/src/App.tsx`, `src/shared/devMode.ts`
   Quando `discoveryTree.allMarcosComplete` vira `true`, o discovery some da
   lista de "abertos" (CA-21) sem passo manual — fato verificável (gate de
   `esteira-concluir` de cada marco), não opinião do app. **CA-23.**
@@ -412,7 +412,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   discovery desaparecer da lista de abertos no próximo `devMode:get`; um
   marco pendente mantém o discovery na lista.
 
-- **T322 — Smoke completo da Fatia 1** [P] com T321 (escrito junto, roda depois) — `tests/smoke/dev-mode-conducao-mapa.spec.ts` (novo)
+- ✅ **ENTREGUE** (commit `7d72d92`, 27/07) — **T322 — Smoke completo da Fatia 1** [P] com T321 (escrito junto, roda depois) — `tests/smoke/dev-mode-conducao-mapa.spec.ts` (novo)
   Isolado de `%APPDATA%` real e do board real — fixture de `.esteira/` +
   board mockado (T309). Cobre, ponta a ponta: abrir discovery pela porta de
   entrada (T311), pré-digitar sem `\r` (T312, o teste mais importante da
@@ -423,7 +423,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   **DoD:** suíte nova verde, tempo total dentro do orçamento dos smokes
   existentes (referência: `favorite-sessions.spec.ts` ~6 s).
 
-- **T323 — Medição C1/C2 (gate final da Fatia 1)** — `specs/003-modo-dev/medicao-ram.md`, `specs/003-modo-dev/medicao-mapa.md` (novos)
+- ✅ **ENTREGUE** (commit `7d72d92`, 27/07) — **T323 — Medição C1/C2 (gate final da Fatia 1)** — `specs/003-modo-dev/medicao-ram.md`, `specs/003-modo-dev/medicao-mapa.md` (novos)
   Medir e **registrar o número**, nunca estimar: (a) delta de RAM entre modo
   Uso geral e Modo Dev ligado com discovery de ~3 marcos (alvo `+50 MB`); (b)
   tempo de montagem da árvore para até 5 marcos (alvo `< 200 ms`), com
@@ -435,6 +435,23 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   **DoD:** os dois `medicao-*.md` com o número medido e a cerca de regressão
   correspondente já commitada como teste; **PR da Fatia 1 pronto para
   revisão** (Fatia 2 não é pré-requisito).
+
+- ✅ **Gate do Batch B CUMPRIDO em 27/07** (commits `9c96830` + `ede9772` +
+  `7d72d92`): `npm run typecheck` limpo, `npm test` 100% verde (43 arquivos,
+  696 testes), `npm run test:smoke:dev` verde, `npm run test:smoke` verde
+  (incluindo os dois arquivos novos), `npm run build` OK. Números medidos em
+  `medicao-mapa.md` (C2: frio 53,8–169,0 ms · quente 4,0–23,2 ms, alvo 200 ms)
+  e `medicao-ram.md` (C1: +28,2 a +40,7 MB, alvo +50 MB).
+  **Dois desvios declarados, ambos deliberados:**
+  1. **`npm run dist` NÃO foi rodado** — empacotar não é ato desta sessão
+     (regra do lote). O `npm run build` (que é o que os smokes exercitam)
+     rodou e está verde.
+  2. **O PR não foi aberto** — abrir PR é sempre ato humano; a Fatia 1 fica
+     pronta para revisão na branch, nada mais.
+  **Dois achados corrigidos no caminho** (ver `medicao-*.md` e os comentários
+  no código): o sinal de prontidão do `plan.md` não existia para sessão nova
+  (`shared/preTypeReadiness.ts`), e o watcher do CA-6 desistia em 30 s, antes
+  de qualquer fase real terminar (`src/main/index.ts`, `watchPhase`).
 
 ---
 
