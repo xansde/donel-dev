@@ -1,9 +1,10 @@
 # Spec — 003 Modo Dev
 
-**Status:** 🟡 **ESPECIFICADA** (2026-07-27) — nasce do mapa Wayfinder
+**Status:** ✅ **CLARIFICADA** (2026-07-27) — nasce do mapa Wayfinder
 "Modo Dev do Donel Dev", **cumprido** com 8 tickets resolvidos (MD-01 a MD-08,
-26–27/07). **Nenhuma linha de código.** Próximo passo: `/clarify` sobre os `[C]`
-desta spec.
+26–27/07); os seis `[C]` foram fechados por ele no `/clarify` do mesmo dia (seção
+"Decisões do `/clarify`"). **Nenhuma linha de código.** Próximo passo: `plan.md` +
+`tasks.md`, depois o gate de execução.
 **Prioridade:** era a próxima entrega desde a decisão de 23/07, com a numeração
 `003` já reservada para ela na decisão de 24/07 (ver `backlog.md`, topo).
 **Origem:** US-13 do backlog. As decisões vêm todas do mapa Wayfinder no vault
@@ -126,9 +127,11 @@ discovery   = frente a investigar  = 1 card de entrada do board (papel orquestra
   etapa e **escreve o comando no PTY sem enviá-lo** (`donel.pty.input` sem `\r`, via
   o canal do achado 8). **O disparo é sempre o Enter do humano.** Nenhum caminho do
   app envia `\r` em nome dele.
-- **CA-4 (defaults por fase) [MD-04]:** o app aplica automaticamente modelo e esforço
-  de uma **tabela fase → modelo/esforço própria do app**, em config editável — **não**
-  parseada dos `SKILL.md`. Fugir do default é abrir pelo launcher de hoje.
+- **CA-4 (defaults por fase) [MD-04][C6]:** o app aplica automaticamente, de uma
+  **tabela própria em config editável** (**não** parseada dos `SKILL.md`), três coisas
+  por fase: **modelo**, **esforço** e o **texto exato do comando a pré-digitar** — que
+  não é só a invocação da skill (a fase `implementar` leva a palavra-chave de
+  orquestração multi-agente, ver C6). Fugir do default é abrir pelo launcher de hoje.
 - **CA-5 (trava avisa, nunca bloqueia) [MD-07]:** o botão da próxima fase **continua
   sempre clicável**. Havendo trava registrada para a fase-alvo, o app exibe **aviso
   visível** com desde quando. **Invariante:** a UI avisa; o `preflight.py` é o único
@@ -221,25 +224,32 @@ discovery   = frente a investigar  = 1 card de entrada do board (papel orquestra
   janela; desligar volta à tela de hoje, que **não é aposentada** nesta versão.
 - **CA-21 (o app só persiste o que o disco não sabe) [MD-01][MD-04]:** o estado
   próprio do app se limita a: discoveries abertos, qual está em foco, o vínculo
-  discovery ↔ repo ↔ card, os `session-id` das etapas arquivadas e a tabela de
-  defaults do CA-4. Todo o resto é **leitura** (disco ou board). Um fato, um dono.
-- **CA-22 (encerramento) [MD-01]:** o discovery **encerra sozinho** quando todos os
+  discovery ↔ repo ↔ card, os `session-id` das etapas arquivadas (com o **perfil de
+  conta** em que cada uma rodou) e a tabela de defaults do CA-4. Todo o resto é
+  **leitura** (disco ou board). Um fato, um dono.
+- **CA-22 (estado global ao app, não por perfil) [C3]:** existe **um único** conjunto
+  de discoveries/foco/vínculos, compartilhado por todos os perfis de conta — o
+  discovery é do trabalho, não da conta, e etapas de um mesmo marco podem
+  deliberadamente rodar em contas diferentes (por cota). Cada etapa registra **em que
+  perfil rodou**; retomar uma etapa de outro perfil **avisa qual conta** em vez de
+  falhar em silêncio.
+- **CA-23 (encerramento) [MD-01]:** o discovery **encerra sozinho** quando todos os
   marcos chegam a Done — fato verificável pelo gate de `esteira-concluir`, não
   opinião. Sem passo manual de arquivar nesta versão.
 
 ### Fronteira com o design
 
-- **CA-23 (a spec fixa alcance, não forma) [MD-06]:** esta spec fixa **quais zonas
+- **CA-24 (a spec fixa alcance, não forma) [MD-06]:** esta spec fixa **quais zonas
   existem, o que cada uma entrega e como se comporta**. Ficam **inteiramente para a
   sessão de design**: representação do mapa (trilha/grafo/lista/colunas), disposição e
   dimensões das zonas, hierarquia visual, densidade, representação visual dos cinco
   estados e microinterações.
-- **CA-24 (vocabulário de componentes) [MD-06]:** a UI compõe com as peças do design
+- **CA-25 (vocabulário de componentes) [MD-06]:** a UI compõe com as peças do design
   system (achado 12) e **não recria componente**. Alcance não componível exige
   **extensão nomeada e aprovada** — nunca silenciosa. Colisão já conhecida a resolver
   no design: `StateDot` é semáforo de **sessão**; os estados do CA-15 são de **fase**,
   um eixo diferente, e ambos coexistem na tela.
-- **CA-25 (a spec não espera o design) [MD-06]:** `plan.md` e `tasks.md` fecham sem o
+- **CA-26 (a spec não espera o design) [MD-06]:** `plan.md` e `tasks.md` fecham sem o
   design; as tasks de UI são escritas em termos de **alcance**, não de forma. O design
   roda **em paralelo** e entra como insumo de execução, sem reabrir esta spec. Brief
   pronto: `design/brief-modo-dev-v2.md` + o Brief 0 de `design/design-handoff.md`.
@@ -267,32 +277,70 @@ discovery   = frente a investigar  = 1 card de entrada do board (papel orquestra
 - **Visão de portfólio** de todos os cards ativos — é território do Mission Control.
 - **Trabalho sem card do board**, incluindo o próprio `donel-dev` (achado 13) — segue
   na tela de hoje.
-- **Resolver a aparência** — é a sessão de design (CA-23).
+- **Resolver a aparência** — é a sessão de design (CA-24).
 - **Requisito de operação offline** [MD-05] — descartado por decisão explícita dele
   ("sem rede eu nem trabalho"). O produto pode assumir rede disponível.
 - **Reconhecer skill parseando o transcript** além do que o achado 11 já extrai — as
   skills internas do CA-8 saem do manifesto, não de parsing novo.
 
-## Perguntas para o `/clarify`
+## Decisões do `/clarify` (2026-07-27) — todas fechadas por ele
 
-- **[C1] NFR de RAM.** O app já roda em **417–451 MB** contra budget de 400 MB
-  (medição pré-existente). O mapa lateral e as sessões arquivadas mexem nos dois
-  sentidos — arquivar libera processo, mas a árvore custa. Qual é o alvo aceito, e ele
-  é cerca de regressão ou meta?
-- **[C2] Tempo de montagem do mapa lateral.** Qual o orçamento para pintar a árvore de
-  um discovery com N marcos? (Precedente da 007: alvo virou cerca medida, não
-  impressão.)
-- **[C3] Multi-perfil.** O Modo Dev é por perfil `CLAUDE_CONFIG_DIR` ou global ao app?
-  Muda onde o estado do CA-21 mora.
-- **[C4] `.esteira/` antigos.** O que aparece no mapa quando o discovery tem artefatos
-  de cards já fechados, de antes desta feature? (Fog que o mapa Wayfinder deixou
-  aberta de propósito.)
-- **[C5] Fatiamento.** Esta spec cobre as quatro zonas. Ela entra em uma entrega ou
-  fatiada — por exemplo, fatia 1 sem o espelho do board (CA-11 a CA-14), que é a parte
-  com dependência de rede e token?
-- **[C6] Tabela de defaults do CA-4.** Qual o conteúdo inicial (fase → modelo/esforço)?
-  Recomendação a confirmar: plano = opus/high, implementar = sonnet/medium,
-  validar = sonnet/high, discovery = opus/high, concluir = haiku/low.
+- **[C5 ✔] Duas fatias.**
+  - **Fatia 1 — condução e mapa:** zonas 1–3 e os estados de fase (CA-1 a CA-10,
+    CA-15 a CA-23), alimentadas por **disco + processo próprio**. A leitura do board
+    entra **já nesta fatia, só para a porta de entrada** (CA-1/CA-2) — sem ela não há
+    como abrir discovery.
+  - **Fatia 2 — espelho:** CA-11 a CA-14 (anotações nos nós, divergência, sessão de
+    conciliação).
+  - Razão: a fatia 2 é a única que precisa de credencial dedicada e de superfície de
+    rede nova, e é a única cujo valor depende de o board estar em dia. Fatiar entrega
+    o gesto mais valioso mais cedo e mantém dois PRs revisáveis.
+- **[C3 ✔] Estado global ao app, não por perfil.** Um único conjunto de
+  discoveries/foco/vínculos (CA-22). Palavras dele: *"global do app. Se eu precisar,
+  cada terminal vai ser em uma conta"* — ou seja, distribuir etapas entre contas é
+  **uso pretendido** (gestão de cota), não anomalia. Cada etapa registra o perfil em
+  que rodou.
+- **[C4 ✔] `.esteira/` antigos: sem migração, sem varredura.**
+  - O mapa desenha **só o discovery em foco** e busca apenas os caminhos dos cards
+    dele. Card antigo de outra frente não existe para o Modo Dev (coerente com CA-8).
+  - **Discovery antigo é abrível** e se monta inteiro, com as fases concluídas — o
+    passado não é caso especial, é o caso normal com estado "concluída".
+  - **Nenhum backfill ou conversão de formato.** Manifesto ilegível → o nó mostra o
+    que der para ler mais um marcador discreto, nunca crash nem tela vazia.
+  - **Degradação aceita:** etapas antigas não têm `session-id` registrado (o app não
+    existia), então clicar nelas **abre o artefato, não a sessão**.
+- **[C6 ✔] Tabela inicial de defaults** (editável — muda sem tocar em código):
+
+  | Fase | Modelo | Esforço | Observação |
+  |---|---|---|---|
+  | discovery | **fable** | high | entrevista e modelagem de domínio |
+  | plano | opus | high | erro aqui se propaga por toda a implementação |
+  | implementar | **opus + ultracode** | high | escolha dele: orquestração de múltiplos subagentes, uma task por subagente |
+  | validar | sonnet | high | code-review e verify pedem rigor, não modelagem |
+  | concluir | haiku | low | gate determinístico: roda um script e move um card |
+
+  **Consequência que virou requisito (CA-4):** como `implementar` roda com
+  **ultracode**, o comando pré-digitado **não é só a invocação da skill** — leva a
+  palavra-chave que liga a orquestração. A tabela é, portanto, *fase → modelo,
+  esforço **e texto exato do comando***.
+  **Nota de cota:** `fable` é o modelo escasso dele; a tabela ser editável é o que
+  permite trocar num dia apertado sem mexer em código.
+  **Exceção da fase `concluir`:** a skill `esteira-concluir` se declara "gate
+  determinístico e trivial (roda um script + um move de coluna)" que **roda inline na
+  sessão-cockpit, sem spawn** — então ela **não abre sessão própria por marco**; roda
+  na sessão em foco. É a única exceção ao "uma sessão por etapa" do MD-01.
+- **[C1 + C2 ✔] Número só entra medido — cerca de regressão, não meta.** Repete o
+  padrão da 007 (alvo estimado → medição real → cerca em ~2× o pior caso).
+  - **RAM:** a 003 **não herda** a dívida dos 400 MB (o app já roda em 417–451 MB por
+    razões pré-existentes). O requisito é **delta**: ligar o Modo Dev com um discovery
+    de ~3 marcos não deve custar mais de **+50 MB** sobre o modo Uso geral, e o
+    arquivamento de abas (CA-6) deve empurrar isso para baixo. **Melhorar o consumo
+    geral de memória do app é trabalho futuro** (decisão dele), não desta entrega.
+  - **Montagem do mapa:** alvo de **< 200 ms** para a árvore de um discovery com até
+    5 marcos, partindo dos manifestos em disco; vira cerca de regressão em ~2× o pior
+    caso medido.
+  - **Regra geral:** nenhum número entra sem medição própria — cada um ganha seu
+    `medicao-*.md`, como 006/007/008 fizeram.
 
 ## Riscos e o que pode dar errado
 
@@ -304,7 +352,7 @@ discovery   = frente a investigar  = 1 card de entrada do board (papel orquestra
 | Varredura de disco entrar "só para completar" a lista de artefatos | CA-8 — declarado pela fase, nunca adivinhado |
 | O espelho alarmar divergência normal e virar ruído que se ignora | CA-13 — Validar nunca move coluna |
 | Token do board acabar no repo ou em log | CA-11 — credencial de serviço, fora do repo |
-| Recriar componente do design system por conveniência | CA-24 — extensão é nomeada e aprovada |
+| Recriar componente do design system por conveniência | CA-25 — extensão é nomeada e aprovada |
 | A árvore custar RAM num app que já estoura o budget | C1/C2 — medir, não estimar |
 | Modo Dev nascer inútil para desenvolver o próprio Donel Dev | Achado 13 — custo assumido no MD-01, não descoberta tardia |
 
