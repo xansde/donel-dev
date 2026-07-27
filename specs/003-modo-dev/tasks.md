@@ -57,7 +57,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
 > Nada nesta fase muda a tela. Fecha com `npm run typecheck` + `npm test`
 > verdes. **Não empacotar.**
 
-- **T301 — Modelo de estado do Modo Dev (TDD, módulo puro novo)** — `src/shared/devMode.ts`
+- ✅ **ENTREGUE** (commit `aebee4b`, 27/07) — **T301 — Modelo de estado do Modo Dev (TDD, módulo puro novo)** — `src/shared/devMode.ts`
   Tipos `DevModeDiscovery`, `ArchivedPhaseSession`, `DevModeState` (ver
   `plan.md` §Modelo de dados) + funções puras `openDiscovery`,
   `focusDiscovery`, `closeDiscovery`, `archivePhaseSession`,
@@ -68,7 +68,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   arquivada num perfil diferente do ativo é detectável (não falha, só sinaliza
   divergência de perfil — CA-22); `closeDiscovery` de id inexistente é no-op.
 
-- **T302 — Tabela de defaults por fase (TDD)** [P] com T301 — `src/shared/devModeDefaults.ts`
+- ✅ **ENTREGUE** (commit `aebee4b`, 27/07) — **T302 — Tabela de defaults por fase (TDD)** [P] com T301 — `src/shared/devModeDefaults.ts`
   `PhaseDefaultsTable`, `DEFAULT_PHASE_DEFAULTS` (a tabela do C6) e
   `resolveCommandText(entry, cardId)` — substituição pura de `{card_id}`.
   **CA-4.**
@@ -102,7 +102,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   > anotação "não move o card" fica — ela é invariante da fase, não dado.
   > Ver `design/modo-dev-verificacao.md` §D2/§D5.
 
-- **T303 — Leitura dos artefatos de fase no disco (TDD)** (sequencial após T301/T302 — usa os tipos) — `src/main/esteira-reader.ts`
+- ✅ **ENTREGUE** (commit `aebee4b`, 27/07) — **T303 — Leitura dos artefatos de fase no disco (TDD)** (sequencial após T301/T302 — usa os tipos) — `src/main/esteira-reader.ts`
   `readPhaseArtifacts`, `readDiscoveryFanout`, I/O injetável (mesmo padrão de
   `ConfigIoDeps`, nunca lança). **D3:** passa também a expor `worktreePath` e
   `branch`, lidos do frontmatter do `ctx.md` daquela fase (medido no MD-03 —
@@ -119,7 +119,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   devolve os dois valores; frontmatter sem um dos dois (ou sem nenhum, `ctx.md`
   antigo) → o(s) campo(s) ausente(s) vira(m) `null`, nunca lança** (D3).
 
-- **T304 — Derivação dos 5 estados de fase (TDD, pure)** [P] com T303 — `src/shared/phaseState.ts`
+- ✅ **ENTREGUE** (commit `aebee4b`, 27/07) — **T304 — Derivação dos 5 estados de fase (TDD, pure)** [P] com T303 — `src/shared/phaseState.ts`
   `derivePhaseStatus({ ctxExists, result, resultUnreadable, sessionAlive })` —
   as 5 linhas da tabela do CA-15. **CA-15.**
   **Teste primeiro:** sem `ctx.md` → `not-started`; sessão viva → `running`
@@ -129,7 +129,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   próprio (nunca `done`/`failed` por adivinhação) — marcador discreto, não um
   6º estado inventado.
 
-- **T305 — Montagem da árvore do discovery (TDD)** (sequencial após T303/T304) — `src/main/discovery-tree.ts`
+- ✅ **ENTREGUE** (commit `aebee4b`, 27/07) — **T305 — Montagem da árvore do discovery (TDD)** (sequencial após T303/T304) — `src/main/discovery-tree.ts`
   `buildDiscoveryTree` (marcos × fases, `allMarcosComplete` do CA-23) +
   `resolveArtifactPool` (lista fixa de candidatos do CA-10). **CA-7, CA-9
   (liga `archivedPhaseSessions` ao nó), CA-10, CA-23, C4.**
@@ -139,7 +139,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   igual, com os cliques degradando para "abre artefato" (verificado no smoke,
   T322); `resolveArtifactPool` nunca lista um path fora da constante fixa.
 
-- **T306 — `devMode` no ConfigStore (TDD na parte pura)** (sequencial após T301/T302) — `src/main/config-store.ts`, `src/shared/config.ts`
+- ✅ **ENTREGUE** (commit `aebee4b`, 27/07) — **T306 — `devMode` no ConfigStore (TDD na parte pura)** (sequencial após T301/T302) — `src/main/config-store.ts`, `src/shared/config.ts`
   Chave nova tocando os **quatro pontos** do padrão do arquivo (`AppConfig`,
   `defaultAppConfig`, `sanitizeAppConfig` entrada a entrada, `toAppConfigDto`+
   `AppConfigDto`) — mesma armadilha real já paga pela T704/007.
@@ -151,7 +151,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   malformado cai no `DEFAULT_PHASE_DEFAULTS` inteiro (não mistura fase boa com
   fase quebrada, evita tabela inconsistente).
 
-- **T307 — IPC `devMode:*`** (sequencial após T305/T306) — `src/shared/devMode.ts` (canais), `src/main/index.ts`, `src/preload/index.ts`
+- ✅ **ENTREGUE** (commit `aebee4b`, 27/07) — **T307 — IPC `devMode:*`** (sequencial após T305/T306) — `src/shared/devMode.ts` (canais), `src/main/index.ts`, `src/preload/index.ts`
   Canais: `get`, `openDiscovery`, `focusDiscovery`, `closeDiscovery`,
   `archivePhaseSession`, `getDefaults`, `setDefaults`, `readTree(cardId)` —
   todos devolvendo `AppConfigDto` ou `DiscoveryTree` (padrão dos `config:set*`/
@@ -162,7 +162,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   validação de payload; grep de auditoria confirma que nenhum canal novo
   chama `mcp__taskdex` de escrita nem grava arquivo fora de `%APPDATA%`.
 
-- **T308 — Watcher de arquivamento por manifesto (TDD)** (sequencial após T303) — `src/main/esteira-result-watcher.ts`
+- ✅ **ENTREGUE** (commit `5d96ce4`, 27/07) — **T308 — Watcher de arquivamento por manifesto (TDD)** (sequencial após T303) — `src/main/esteira-result-watcher.ts`
   Mesmo padrão de `transcript-watcher.ts` (`fs.watch` do **diretório**
   `handoffs/<card_id>/`, nunca do arquivo, com retry limitado): quando
   `<fase>-result.json` aparece com `status: "success"`, emite evento
@@ -174,7 +174,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   nunca lança; dois manifestos da mesma fase (reprocessamento) não duplicam
   evento.
 
-- **T309 — Cliente mínimo de leitura do board (porta de entrada)** [P] com T308 — `src/main/taskdex-board-client.ts` (+ tipos em `src/shared/devMode.ts`)
+- ✅ **ENTREGUE** (commit `5d96ce4`, 27/07) — **T309 — Cliente mínimo de leitura do board (porta de entrada)** [P] com T308 — `src/main/taskdex-board-client.ts` (+ tipos em `src/shared/devMode.ts`)
   **Escopo estritamente Fatia 1**: uma função,
   `listEntryColumnCards(boardConfig)`, restrita às colunas Backlog/Discovery/
   Plano de UM board configurado (CA-1) — nenhuma outra tool de leitura entra
@@ -183,8 +183,9 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   permitidas voltam; card sem coluna reconhecida é ignorado (nunca lança);
   `boardConfig` ausente → lista vazia (porta de entrada desligada, não erro).
 
-- **Gate do Batch A:** `npm run typecheck` + `npm test` completos verdes.
-  Commitar (commit em branch de feature é default). **Nada visível mudou.**
+- ✅ **Gate do Batch A CUMPRIDO em 27/07** (commits `aebee4b` + `5d96ce4`):
+  `npm run typecheck` limpo e `npm test` 100% verde (40 arquivos, 651 testes).
+  **Nada visível mudou.**
 
 ## Fatia 1 — Batch A2: extensões do design system (aprovadas em 27/07)
 
