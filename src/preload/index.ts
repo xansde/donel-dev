@@ -4,9 +4,11 @@ import type {
   ArchivePhaseSessionIpcInput,
   DiscoveryTree,
   DonelApi,
+  EntryColumnCard,
   LauncherDefaultsDto,
   NotificationPreference,
   OpenDiscoveryIpcInput,
+  PhaseArchivedPayload,
   PhaseDefaultsTable,
   ProfileDoctorReportDto,
   ProfileHeadroomMap,
@@ -19,6 +21,7 @@ import type {
   SemaphoreUpdate,
   SessionSummaryDto,
   TranscriptChangedPayload,
+  WatchPhaseIpcInput,
 } from '../shared';
 import {
   CONFIG_CHANNELS,
@@ -190,6 +193,22 @@ const donelApi: DonelApi = {
     setDefaults: (defaults: PhaseDefaultsTable) => ipcRenderer.invoke(DEVMODE_CHANNELS.setDefaults, defaults) as Promise<AppConfigDto>,
 
     readTree: (cardId: string) => ipcRenderer.invoke(DEVMODE_CHANNELS.readTree, cardId) as Promise<DiscoveryTree>,
+
+    // T311 (Batch B) — CA-1: consulta restrita da porta de entrada.
+    listEntryCards: () => ipcRenderer.invoke(DEVMODE_CHANNELS.listEntryCards) as Promise<readonly EntryColumnCard[]>,
+
+    // T315 (Batch B) — CA-6: watcher do manifesto por etapa + push do evento.
+    watchPhase: (input: WatchPhaseIpcInput) => ipcRenderer.invoke(DEVMODE_CHANNELS.watchPhase, input) as Promise<void>,
+
+    unwatchPhase: (input: WatchPhaseIpcInput) => ipcRenderer.invoke(DEVMODE_CHANNELS.unwatchPhase, input) as Promise<void>,
+
+    onPhaseArchived: (listener: (payload: PhaseArchivedPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: PhaseArchivedPayload): void => {
+        listener(payload);
+      };
+      ipcRenderer.on(DEVMODE_CHANNELS.phaseArchived, handler);
+      return () => ipcRenderer.removeListener(DEVMODE_CHANNELS.phaseArchived, handler);
+    },
   },
 };
 

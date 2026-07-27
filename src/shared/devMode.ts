@@ -180,6 +180,16 @@ export const DEVMODE_CHANNELS = {
   getDefaults: 'devMode:getDefaults',
   setDefaults: 'devMode:setDefaults',
   readTree: 'devMode:readTree',
+  // T311/T315 (Batch B) — os dois canais de LEITURA que a UI precisou e a
+  // Fatia 1 ainda não tinha. `listEntryCards` é a consulta restrita da porta
+  // de entrada (CA-1, colunas Backlog/Discovery/Plano de UM board);
+  // `watchPhase`/`unwatchPhase`/`phaseArchived` ligam o watcher de manifesto
+  // (T308/CA-6) ao renderer. **Nenhum deles escreve no board ou no vault**
+  // (invariante 5/CA-19) — `watchPhase` só abre um `fs.watch` de leitura.
+  listEntryCards: 'devMode:listEntryCards',
+  watchPhase: 'devMode:watchPhase',
+  unwatchPhase: 'devMode:unwatchPhase',
+  phaseArchived: 'devMode:phaseArchived',
 } as const;
 
 export interface OpenDiscoveryIpcInput {
@@ -232,6 +242,38 @@ export function isValidCardId(cardId: unknown): cardId is string {
   return typeof cardId === 'string' && cardId.trim().length > 0;
 }
 
+/** T315 — payload de `watchPhase`/`unwatchPhase`: qual etapa (do discovery em foco) o watcher de manifesto deve vigiar (CA-6). */
+export interface WatchPhaseIpcInput {
+  readonly discoveryCardId: string;
+  readonly cardId: string;
+  readonly marcoId: string;
+  readonly phase: EsteiraPhase;
+}
+
+export function isValidWatchPhaseIpcInput(input: unknown): input is WatchPhaseIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<WatchPhaseIpcInput>;
+  return (
+    typeof candidate.discoveryCardId === 'string' &&
+    candidate.discoveryCardId.trim().length > 0 &&
+    typeof candidate.cardId === 'string' &&
+    candidate.cardId.trim().length > 0 &&
+    typeof candidate.marcoId === 'string' &&
+    candidate.marcoId.trim().length > 0 &&
+    typeof candidate.phase === 'string' &&
+    (ALL_ESTEIRA_PHASES as readonly string[]).includes(candidate.phase)
+  );
+}
+
+/** T315 — evento empurrado pelo main quando o `<fase>-result.json` aparece com `status: "success"` (CA-6). */
+export interface PhaseArchivedPayload {
+  readonly discoveryCardId: string;
+  readonly cardId: string;
+  readonly marcoId: string;
+  readonly phase: EsteiraPhase;
+  readonly manifestPath: string;
+}
+
 /**
  * API tipada exposta pelo preload em `window.donel.devMode` (contextBridge).
  * Todos os canais devolvem o `AppConfigDto` inteiro (mesmo padrão de
@@ -249,4 +291,11 @@ export interface DonelDevModeApi {
   getDefaults(): Promise<import('./config').AppConfigDto>;
   setDefaults(defaults: PhaseDefaultsTable): Promise<import('./config').AppConfigDto>;
   readTree(cardId: string): Promise<import('../main/discovery-tree').DiscoveryTree>;
+  /** CA-1 — cards das 3 colunas de entrada do board configurado; `[]` sem board/fonte (porta desligada, não erro). */
+  listEntryCards(): Promise<readonly import('../main/taskdex-board-client').EntryColumnCard[]>;
+  /** CA-6 — liga o watcher do manifesto daquela etapa; idempotente por etapa. */
+  watchPhase(input: WatchPhaseIpcInput): Promise<void>;
+  unwatchPhase(input: WatchPhaseIpcInput): Promise<void>;
+  /** CA-6 — push do main quando o manifesto de sucesso aparece. Devolve unsubscribe (mesmo padrão de `sessions.onTranscriptChanged`). */
+  onPhaseArchived(listener: (payload: PhaseArchivedPayload) => void): () => void;
 }

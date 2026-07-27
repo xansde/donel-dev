@@ -46,6 +46,7 @@ export {
   isValidArchivePhaseSessionIpcInput,
   isValidCardId,
   isValidOpenDiscoveryIpcInput,
+  isValidWatchPhaseIpcInput,
   linkDiscoveryRepo,
   openDiscovery,
 } from './devMode';
@@ -61,8 +62,10 @@ export type {
   DonelDevModeApi,
   EsteiraPhase,
   OpenDiscoveryIpcInput,
+  PhaseArchivedPayload,
   PhaseDefault,
   PhaseDefaultsTable,
+  WatchPhaseIpcInput,
 } from './devMode';
 
 export { DEFAULT_PHASE_DEFAULTS, resolveCommandText } from './devModeDefaults';
@@ -73,6 +76,8 @@ export { DEFAULT_PHASE_DEFAULTS, resolveCommandText } from './devModeDefaults';
 // todo o resto desta API. `import type` erasa no build: nenhum runtime do
 // renderer/preload passa a depender de `node:fs`.
 export type { ArtifactCandidate, ArtifactCandidateKind, DiscoveryTree, MarcoNode, PhaseNode } from '../main/discovery-tree';
+/** T311 — card da porta de entrada (CA-1); mesmo motivo do `DiscoveryTree` acima: tipo só, `import type` erasa no build. */
+export type { EntryColumn, EntryColumnCard } from '../main/taskdex-board-client';
 export type { EsteiraResultManifest, PhaseArtifacts } from '../main/esteira-reader';
 export type { PhaseStatus } from './phaseState';
 

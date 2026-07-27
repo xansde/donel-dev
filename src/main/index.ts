@@ -17,10 +17,12 @@ import type {
   ProjectInfo,
   PtyCreateOptions,
   PtyCreateResult,
+  PhaseArchivedPayload,
   PtyExitInfo,
   SemaphoreUpdate,
   SessionSummaryDto,
   TranscriptChangedPayload,
+  WatchPhaseIpcInput,
 } from '../shared';
 import {
   archivePhaseSession,
@@ -32,6 +34,7 @@ import {
   isValidArchivePhaseSessionIpcInput,
   isValidCardId,
   isValidOpenDiscoveryIpcInput,
+  isValidWatchPhaseIpcInput,
   normalizeSessionName,
   openDiscovery,
   PROFILE_CHANNELS,
@@ -59,6 +62,8 @@ import {
 } from './config-store';
 import { buildDiscoveryTree } from './discovery-tree';
 import { createSystemEsteiraReaderIoDeps } from './esteira-reader';
+import { watchEsteiraResult, type EsteiraResultWatcherHandle } from './esteira-result-watcher';
+import { listEntryColumnCards, resolveBoardReader, type EntryColumnCard } from './taskdex-board-client';
 import { writeHooksSettingsFile } from './hooks-settings';
 import {
   claudeHomeDir,
@@ -118,6 +123,29 @@ let appConfig: AppConfig = defaultAppConfig(defaultProjectRoots(homedir));
 // T303/T305 (003-modo-dev) — leitura dos artefatos `.esteira/` em disco;
 // injetável (mesmo padrão de `configIoDeps`), resolvido uma vez.
 const esteiraReaderIoDeps = createSystemEsteiraReaderIoDeps();
+
+// T311 (Batch B) — de onde vêm os cards da porta de entrada (CA-1). Na Fatia
+// 1 não existe cliente de rede ainda (isso é T324/CA-11, com credencial
+// dedicada): sem `DONEL_DEVMODE_BOARD_FIXTURE` este leitor devolve lista
+// vazia — a porta de entrada existe e não mente, só não tem fonte ainda.
+const boardReader = resolveBoardReader(process.env, esteiraReaderIoDeps.readFileText);
+
+/**
+ * T315 (Batch B) — um watcher de manifesto por ETAPA vigiada (CA-6), chave =
+ * `discovery:card:marco:fase`. Vive aqui (e não no renderer) porque `fs.watch`
+ * é main; o renderer só assina o push `devMode:phaseArchived`. Nada aqui
+ * ESCREVE em disco — é watch de leitura, invariante 5 preservada.
+ */
+const esteiraResultWatchers = new Map<string, EsteiraResultWatcherHandle>();
+
+function phaseWatchKey(input: { discoveryCardId: string; cardId: string; marcoId: string; phase: string }): string {
+  return `${input.discoveryCardId}:${input.cardId}:${input.marcoId}:${input.phase}`;
+}
+
+function disposeAllEsteiraResultWatchers(): void {
+  for (const handle of esteiraResultWatchers.values()) handle.dispose();
+  esteiraResultWatchers.clear();
+}
 
 // T014 — ProfileManager (FR-005, FR-012, CA-3). `profilePathDeps` é a única
 // dependência de path (homedir) reaproveitada por toda função pura do
@@ -220,6 +248,9 @@ function createMainWindow(): void {
     // de cada um já daria baixa, mas não depender disso é o que garante zero
     // handle sobrevivendo ao fechamento).
     transcriptWatchers.disposeAll();
+    // T315 (003-modo-dev) — mesma higiene do registry de transcript: nenhum
+    // `fs.watch` sobrevive ao fechamento da janela.
+    disposeAllEsteiraResultWatchers();
     ptyManager.killAll();
   });
 
@@ -523,6 +554,52 @@ function registerDevModeIpcHandlers(): void {
     const repoPath = isValidCardId(cardId) ? (appConfig.devMode.discoveries[cardId]?.repoPath ?? '') : '';
     if (!repoPath) return { discoveryCardId: cardId, marcos: [], focusedMarcoId: null, allMarcosComplete: false };
     return buildDiscoveryTree(repoPath, cardId, appConfig.devMode.archivedPhaseSessions, esteiraReaderIoDeps);
+  });
+
+  /** T311/CA-1 — cards das 3 colunas de entrada do board configurado. Sem board/sem fonte = `[]` (porta desligada, nunca erro). */
+  ipcMain.handle(DEVMODE_CHANNELS.listEntryCards, async (): Promise<readonly EntryColumnCard[]> => {
+    return listEntryColumnCards(appConfig.devMode.boardConfig, boardReader);
+  });
+
+  /**
+   * T315/CA-6 — liga o watcher do `<fase>-result.json` daquela etapa. O
+   * evento volta pelo `sender` que pediu o watch (nunca um broadcast global).
+   * Idempotente: pedir duas vezes a mesma etapa não abre dois `fs.watch`.
+   */
+  ipcMain.handle(DEVMODE_CHANNELS.watchPhase, (event, input: WatchPhaseIpcInput): void => {
+    if (!isValidWatchPhaseIpcInput(input)) return;
+    const repoPath = appConfig.devMode.discoveries[input.discoveryCardId]?.repoPath;
+    if (!repoPath) return;
+
+    const key = phaseWatchKey(input);
+    if (esteiraResultWatchers.has(key)) return;
+
+    const sender = event.sender;
+    const handle = watchEsteiraResult({
+      repoPath,
+      fase: input.phase,
+      cardId: input.cardId,
+      marcoId: input.marcoId,
+      onArchived: (archived) => {
+        if (sender.isDestroyed()) return;
+        const payload: PhaseArchivedPayload = {
+          discoveryCardId: input.discoveryCardId,
+          cardId: archived.cardId,
+          marcoId: archived.marcoId,
+          phase: archived.fase,
+          manifestPath: archived.manifestPath,
+        };
+        sender.send(DEVMODE_CHANNELS.phaseArchived, payload);
+      },
+    });
+    esteiraResultWatchers.set(key, handle);
+  });
+
+  ipcMain.handle(DEVMODE_CHANNELS.unwatchPhase, (_event, input: WatchPhaseIpcInput): void => {
+    if (!isValidWatchPhaseIpcInput(input)) return;
+    const key = phaseWatchKey(input);
+    esteiraResultWatchers.get(key)?.dispose();
+    esteiraResultWatchers.delete(key);
   });
 }
 
