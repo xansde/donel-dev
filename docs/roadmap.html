@@ -585,12 +585,12 @@
     <p class="eyebrow">Donel Dev · 26 de julho de 2026</p>
     <h1>O que vem agora</h1>
     <p class="lede">
-      A versão <strong>0.1.0</strong> está <strong>no Drive</strong>, pronta para outras pessoas — com
-      nomes de sessão, porcentagem de contexto, copiar e colar decente no terminal e favoritos com
-      as sessões recentes. As <strong>três decisões</strong> que estavam na sua mão saíram todas em
-      26/07. O caminho até o Modo Dev agora é curto: <strong>uma sessão</strong> que fecha duas
-      pendências e devolve um <strong>E2E único</strong> — e só depois disso as duas próximas
-      funcionalidades grandes.
+      A versão <strong>0.2.0</strong> passou no seu roteiro de teste em <strong>26/07</strong> —
+      tudo o que é novo (a sessão fixada que some quando não existe mais) e tudo o que você usa todo
+      dia (favoritos, copiar e colar no terminal, renomear sessão, porcentagem de contexto). As
+      <strong>três decisões</strong> que estavam na sua mão saíram no mesmo dia, e as duas pendências
+      da última sessão estão fechadas. Não sobrou pendência: falta <strong>um comando</strong> para
+      republicar e o caminho fica livre para o <strong>Modo Dev</strong>.
     </p>
     <p class="hint">Clique em qualquer bolinha para ler do que se trata. Bolinha cinza = resolvido ou parado de propósito.</p>
 
@@ -687,7 +687,7 @@
     {
       when: "Feito em 26/07",
       title: "A sessão que fechou as pendências",
-      note: "Você escolheu duas das três frentes. As duas saíram, com a parada no meio para você aprovar o plano. Falta só o seu roteiro de teste e a decisão de instalar — o instalador da 0.2.0 está pronto e instalar continua sendo seu ato.",
+      note: "Você escolheu duas das três frentes. As duas saíram, com a parada no meio para você aprovar o plano — e o roteiro de teste já foi rodado por você na 0.2.0, com aprovação em todos os passos. Nada aqui ficou pendente.",
       parallel: false,
       tasks: [
         {
@@ -729,15 +729,15 @@
           atencao: "O número da versão sobe para <strong>0.2.0</strong> de propósito: a 0.1.0 já está na mão de outra pessoa, e duas versões diferentes com o mesmo número é o que faz alguém dizer \"estou na 0.1.0 e não tem esse botão\". Instalar continua sendo seu ato — o instalador all-users substitui o app de trabalho, e o de 23/07 é o ponto de retorno.",
           done: true,
           stamp: "✓ feito",
-          resolvedNote: "<strong>Entregue em 26/07.</strong> Roteiro em <code>specs/roteiro-e2e-fechamento.md</code>: um só, numerado, com a cota marcada passo a passo (só o passo 5 precisa de turno real do modelo). Versão 0.2.0 e instalador empacotados.",
+          resolvedNote: "<strong>Entregue e APROVADO em 26/07.</strong> Roteiro em <code>specs/roteiro-e2e-fechamento.md</code>: um só, numerado, com a cota marcada passo a passo (só o passo 5 precisa de turno real do modelo). Você rodou de ponta a ponta na 0.2.0 e <strong>passou em tudo</strong> — o novo e a regressão do que usa todo dia. Único atrito foi de roteiro, não de app: o passo 3b pedia dois valores preenchidos na mão e travou; resolvido lendo a sessão fixada direto da configuração do app, e o arquivo movido já voltou ao lugar.",
           trace: "specs/roteiro-e2e-fechamento.md · CHANGELOG 0.2.0 · release/"
         }
       ]
     },
     {
-      when: "Quando o E2E passar",
+      when: "Liberado — o E2E passou em 26/07",
       title: "Republicar e virar a chave para o Modo Dev",
-      note: "Aqui o app fica \"tinindo sem pendências\", que é a condição que você colocou para abrir a próxima funcionalidade grande.",
+      note: "A condição que você colocou para abrir a próxima funcionalidade grande — o app \"tinindo sem pendências\" — está cumprida. Este é o único passo entre hoje e o Modo Dev.",
       parallel: false,
       tasks: [
         {
@@ -745,7 +745,7 @@
           track: "distribuicao",
           size: "1 comando",
           title: "Publicar a 0.2.0 para quem já tem o link",
-          sub: "Um comando, mesmo link, sem avisar ninguém automaticamente.",
+          sub: "Um comando, mesmo link, sem avisar ninguém automaticamente. É a sua próxima ação.",
           o_que: "A rotina é um comando só (<code>npm run publicar</code>), que empacota, guarda a versão anterior para poder voltar atrás, publica no arquivo de nome fixo, atualiza o guia e a lista do que mudou, e <strong>imprime</strong> o aviso pronto para você copiar. Não manda nada para ninguém.",
           porque: "Quem baixou a 0.1.0 continua com ela até você republicar — o app ainda não se atualiza sozinho. Como o link da pasta não muda, republicar é a única ação necessária do seu lado.",
           trace: "npm run publicar · docs/distribuicao.md"
