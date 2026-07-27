@@ -42,6 +42,12 @@ versionados. A convenção completa está em `.claude/issue-tracker.md` — ler 
 de rodar `/wayfinder` ou qualquer skill que fale em "issue tracker". Não é
 TaskDex: o Donel Dev é ferramenta pessoal, sem `.taskdex.json`.
 
+**Mapa ativo — "Modo Dev do Donel Dev".** Mora no vault Claude Seazone, em
+`Projects/donel-dev/wayfinder-modo-dev/` (não em `.scratch/`, apesar da
+convenção acima — divergência conhecida, resolver movendo se incomodar).
+Pedido "**wayfinder no próximo MD**" = abrir `PROXIMO.md` daquela pasta e pegar
+o primeiro `⬜`; a ordem **não é numérica**. Prompts prontos em `sessoes.md`.
+
 ## Gotchas conhecidos (do planejamento)
 
 - node-pty precisa casar com a ABI do Electron — prebuilds/@electron/rebuild;
