@@ -17,12 +17,17 @@
 
 [CmdletBinding()]
 param(
-  [string]$Publico = (Join-Path (Split-Path -Parent $PSScriptRoot) '..\donel-dev-publico')
+  # Default resolvido no corpo: $PSScriptRoot nao esta populado durante a
+  # ligacao dos parametros, so depois que o script comeca a rodar.
+  [string]$Publico
 )
 
 $ErrorActionPreference = 'Stop'
 
 $origem = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($Publico)) {
+  $Publico = Join-Path (Split-Path -Parent $origem) 'donel-dev-publico'
+}
 $destino = [System.IO.Path]::GetFullPath($Publico)
 
 if (-not (Test-Path (Join-Path $destino '.git'))) {
@@ -51,6 +56,7 @@ foreach ($pasta in $pastas) {
 # Arquivos soltos copiados um a um (sem /MIR — nao ha delecao a propagar).
 $arquivos = @(
   '.gitignore',
+  '.gitattributes',
   'CHANGELOG.md',
   'electron-builder.yml',
   'electron.vite.config.ts',
