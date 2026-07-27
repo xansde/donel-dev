@@ -1237,6 +1237,7 @@ export function App(): React.JSX.Element {
     let armedAt = 0;
     let isFirstStep = true;
     let settled = false;
+    let armedAny = false;
 
     const cleanup = (): void => {
       unsubscribe();
@@ -1273,6 +1274,7 @@ export function App(): React.JSX.Element {
 
       armedAt = Date.now();
       isFirstStep = false;
+      armedAny = true;
       setArmedPrompt({ tabId, command, warning });
       if (sequencer.done) stop();
     };
@@ -1282,7 +1284,10 @@ export function App(): React.JSX.Element {
     const timeoutId = setTimeout(() => {
       if (settled) return;
       stop();
-      setDevModeToast('A sessão não ficou pronta a tempo — o comando não foi preparado.');
+      // Só avisa quando NADA foi preparado. Numa sequência do CA-16, o 2º
+      // passo depende do Enter humano do 1º — o humano demorar não é falha,
+      // é o fluxo normal; um aviso aqui seria ruído (e mentira).
+      if (!armedAny) setDevModeToast('A sessão não ficou pronta a tempo — o comando não foi preparado.');
     }, PRE_TYPE_READY_TIMEOUT_MS);
 
     armWatchersRef.current[tabId] = cleanup;
@@ -1885,12 +1890,14 @@ export function App(): React.JSX.Element {
               )}
 
               {armedPrompt ? (
+                <div data-testid="devmode-armed">
                 <ArmedPrompt
                   command={armedPrompt.command}
                   hint="escrito no prompt — o Enter é seu"
                   warning={armedPrompt.warning ? { text: armedPrompt.warning } : undefined}
                   onDismiss={() => setArmedPrompt(null)}
                 />
+                </div>
               ) : null}
 
               {openedArtifactPath ? (

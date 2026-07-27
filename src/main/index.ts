@@ -580,6 +580,15 @@ function registerDevModeIpcHandlers(): void {
       fase: input.phase,
       cardId: input.cardId,
       marcoId: input.marcoId,
+      // ACHADO DO SMOKE (T322): o diretório `handoffs/<card_id>/` só nasce
+      // quando a SKILL chega ao fim — e uma fase da Esteira leva minutos ou
+      // horas. Com o default do módulo (1s × 30 = 30s) o watcher desistia
+      // muito antes do manifesto existir, e o arquivamento do CA-6 nunca
+      // disparava fora de um teste. Janela de espera aqui é ~1h (3s × 1200),
+      // um timer barato; passado isso a fase segue visível como travada
+      // (CA-15) — só o arquivamento automático deixa de acontecer.
+      retryMs: 3_000,
+      maxRetries: 1_200,
       onArchived: (archived) => {
         if (sender.isDestroyed()) return;
         const payload: PhaseArchivedPayload = {
