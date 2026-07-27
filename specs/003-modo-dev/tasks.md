@@ -1,14 +1,29 @@
 # Tasks 003 — Modo Dev
 
+> **Revisado em 2026-07-27** após o retorno do design (ver
+> `design/modo-dev-verificacao.md`) — 4 extensões do design system aprovadas
+> (novo Batch A2: `PhaseStateGlyph`, `AnnotationTag`, `WorktreeCard`,
+> `ArmedPrompt`) e as divergências D1–D4 aplicadas: trava é etiqueta do board
+> lida na Fatia 2, nunca arquivo em disco (D1); comando pré-digitado do
+> Validar é o real, sem flag inventada (D2, decisão do subconjunto exibido
+> pendente — ver nota em T302); leitor de disco passa a expor `worktree_path`/
+> `branch` (D3); Toast de troca de foco é só informativo, sem desfazer (D4).
+> Total de tasks agora: **34**.
+
 **Referências:** `spec.md` (CA-1..CA-26, invariantes 1–6, `[MD-0x]`, `[C1]`–`[C6]`)
 e `plan.md` (arquitetura, modelo de dados, tabela CA-4, caminho do CA-3, riscos,
 estratégia de teste) deste diretório.
 
-**30 tasks — `T301`–`T330`**, contíguas na ordem de dependência, **agrupadas
-pelas duas fatias do C5** (cada fatia fecha com seu próprio PR):
+**34 tasks — `T301`–`T330` + `T331`–`T334`**, contíguas na ordem de
+dependência dentro de cada faixa (`T331`–`T334` usam ids fora de sequência de
+propósito, para não renumerar nada já existente), **agrupadas pelas duas
+fatias do C5** (cada fatia fecha com seu próprio PR):
 
 - **Fatia 1 — condução e mapa** (CA-1 a CA-10, CA-15 a CA-23): Batch A
-  (T301–T309, invisível) → Batch B (T310–T323, o que ele vê).
+  (T301–T309, invisível) → **Batch A2** (T331–T334, extensões do design
+  system aprovadas em 27/07, invisível ao app) → Batch B (T310–T323, o que
+  ele vê — **depende do Batch A2**, ver linhas de dependência ajustadas
+  abaixo).
 - **Fatia 2 — espelho** (CA-11 a CA-14): Batch C (T324–T326, invisível) →
   Batch D (T327–T330, o que ele vê).
 
@@ -60,17 +75,41 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   **Teste primeiro:** as 5 fases existem na tabela default; `implementar`
   contém a palavra-chave `ultracode` no `commandTemplate`; `concluir` tem
   `opensOwnSession: false` e todas as outras `true`; `resolveCommandText`
-  substitui o placeholder sem deixar `{card_id}` literal no resultado.
+  substitui o placeholder sem deixar `{card_id}` literal no resultado;
+  **nenhum `commandTemplate` de `DEFAULT_PHASE_DEFAULTS` contém flag
+  inexistente na skill real** — em particular `validar` é literalmente
+  `/esteira-validar {card_id}`, **sem** `--subset` ou qualquer outra flag (D2
+  da verificação de design: o `SKILL.md` de `esteira-validar` não tem
+  subconjunto — o mockup do design pré-digitava `--subset 1-4`, que não
+  existe).
+
+  > **Decisão pendente (D2, não escolhida aqui — é sua):** a decisão do
+  > MD-05 ("Validar testa subconjuntos definidos no Plano") não tem mecanismo
+  > hoje na esteira. Três saídas possíveis, nenhuma implementada por esta
+  > task: **(1)** subconjunto é contexto humano — o app só *exibe* o que o
+  > Plano registrou, o comando pré-digitado continua o real, sem flag
+  > (**recomendação da verificação**: zero código novo, cumpre o espírito da
+  > decisão); **(2)** o Plano passa a gravar o subconjunto no manifesto e o
+  > app exibe como anotação; **(3)** a esteira ganha a flag — viola a
+  > invariante 3 (zero código novo em `preflight.py`/`gate_concluir.py`) e
+  > fica fora desta entrega. Ver `design/modo-dev-verificacao.md` §D2.
 
 - **T303 — Leitura dos artefatos de fase no disco (TDD)** (sequencial após T301/T302 — usa os tipos) — `src/main/esteira-reader.ts`
   `readPhaseArtifacts`, `readDiscoveryFanout`, I/O injetável (mesmo padrão de
-  `ConfigIoDeps`, nunca lança). **CA-8, CA-10 (parte da leitura), C4.**
+  `ConfigIoDeps`, nunca lança). **D3:** passa também a expor `worktreePath` e
+  `branch`, lidos do frontmatter do `ctx.md` daquela fase (medido no MD-03 —
+  o `ctx.md` já traz os dois campos); ausência de qualquer um dos dois é
+  `null`, nunca erro. Esses dois campos entram na pool consultável do CA-10
+  (consumidos pelo `WorktreeCard`, T333). **CA-8, CA-10 (parte da leitura,
+  agora incl. worktree/branch), C4.**
   **Teste primeiro:** `ctx.md` presente + `result.json` ausente → `ctxExists:
   true`, `result: null`, `resultUnreadable: false`; `result.json` com JSON
   corrompido → `resultUnreadable: true`, nunca lança; `fanout_cards` ausente
   (fase que não é discovery) → `[]`; `result.json` bem formado devolve os
   campos `outputs.artifact_paths`/`e2e_path`/`documents` tal como estão, sem
-  transformação.
+  transformação; **frontmatter do `ctx.md` com `worktree_path`/`branch` →
+  devolve os dois valores; frontmatter sem um dos dois (ou sem nenhum, `ctx.md`
+  antigo) → o(s) campo(s) ausente(s) vira(m) `null`, nunca lança** (D3).
 
 - **T304 — Derivação dos 5 estados de fase (TDD, pure)** [P] com T303 — `src/shared/phaseState.ts`
   `derivePhaseStatus({ ctxExists, result, resultUnreadable, sessionAlive })` —
@@ -139,6 +178,77 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
 - **Gate do Batch A:** `npm run typecheck` + `npm test` completos verdes.
   Commitar (commit em branch de feature é default). **Nada visível mudou.**
 
+## Fatia 1 — Batch A2: extensões do design system (aprovadas em 27/07)
+
+> As 4 extensões que a verificação do design aprovou (`design/modo-dev-
+> verificacao.md`, seção "As 4 extensões propostas"). Vivem no pacote
+> `design-system/` (nunca no app), seguem a estrutura de componente da casa
+> (`src/components/<Nome>/<Nome>.tsx` + `.module.css` + `.stories.tsx` +
+> `index.ts`, exportado em `src/index.ts`) e usam **só tokens já existentes**
+> em `design-system/src/tokens.css` — proibido hex novo. O pacote não tem
+> test runner (só `typecheck`/`build`/Storybook, ver `design-system/
+> package.json`): aqui "teste primeiro" é o **contrato de tipos** (union
+> types que barram valor inválido em tempo de compilação) mais a **story**
+> que enumera todos os estados/tons como fixture visual — a story É o teste
+> deste pacote. **Nenhuma task do Batch B começa antes do Batch A2 fechar**
+> (Batch B consome estas 4 peças — ver dependências ajustadas abaixo).
+
+- **T331 — `PhaseStateGlyph`** [P] com T332/T334 (T333 depende deste) — `design-system/src/components/PhaseStateGlyph/{PhaseStateGlyph.tsx,PhaseStateGlyph.module.css,PhaseStateGlyph.stories.tsx,index.ts}`, `design-system/src/index.ts`
+  Glifo de 16px para os 5 estados de fase do CA-15 (`not-started`/`running`/
+  `done`/`failed`/`stuck`), com **dupla codificação** (caractere + cor) —
+  nunca só cor. Preenchimento **sólido** reservado a `failed`/`stuck`
+  (falha tem de ser "a coisa mais clara da tela"); os demais 3 estados usam
+  contorno. É o **dono** do token `--state-error` (`#b678f0`, hoje reservado
+  e sem uso em nenhum componente — confirmado em `tokens.css`). Distinto de
+  `StateDot` (eixo **sessão**, 4 estados, 8px, redondo) — os dois coexistem
+  lado a lado no mesmo nó sem ambiguidade. **CA-15, CA-25.**
+  **Teste primeiro:** o `typecheck` do pacote falha se `status` receber
+  qualquer valor fora do union dos 5 estados (nenhuma prop `string` livre); a
+  story enumera os 5 estados lado a lado, com `failed`/`stuck` visualmente
+  sólidos e os outros 3 em contorno, e cada um com caractere distinto (não
+  só cor) — confirma a dupla codificação por inspeção da story.
+
+- **T332 — `AnnotationTag`** [P] com T331/T334 (e com T333, que só depende de T331) — `design-system/src/components/AnnotationTag/{AnnotationTag.tsx,AnnotationTag.module.css,AnnotationTag.stories.tsx,index.ts}`, `design-system/src/index.ts`
+  Etiqueta curta com tom semântico `muted | ok | warn | error | lock | accent`
+  — veste as anotações do board (CA-12: coluna real, trava ativa, etiquetas
+  de atenção `esteira:escalado`/`esteira:precisa-atencao`, PR+aprovação) e o
+  conteúdo do slot de aviso de trava da Zona 2 (T314/T327). Só tokens
+  existentes (mapeamento tom→token de cor, sem hex novo). **CA-12, CA-25.**
+  **Teste primeiro:** `typecheck` restringe `tone` ao enum de 6 valores
+  (nenhuma string livre passa); a story cobre as 6 combinações de tom lado a
+  lado, incluindo o tom `lock` (trava) e `error` (falha/divergência) para
+  conferir que são visualmente distintos entre si.
+
+- **T333 — `WorktreeCard`** (sequencial após T331 — compõe `PhaseStateGlyph`; paralelizável com T332/T334) — `design-system/src/components/WorktreeCard/{WorktreeCard.tsx,WorktreeCard.module.css,WorktreeCard.stories.tsx,index.ts}`, `design-system/src/index.ts`
+  Cartão do carrossel de marcos (CA-7): cabeçalho, resumo em linguagem
+  simples, faixa de worktree (pasta + branch + etiquetas — **D3**: os dois
+  campos novos que `esteira-reader.ts`/T303 passam a expor do frontmatter do
+  `ctx.md`) e os 5 nós de fase (compõe `PhaseStateGlyph`, T331, um por fase).
+  **Variante `orquestrador`**: **sem** faixa de worktree e **sem** os nós de
+  fase — usada no card do discovery-pai, que não roda etapas próprias.
+  **CA-7, CA-10 (worktree/branch, D3), CA-25.**
+  **Teste primeiro:** `typecheck` garante que a variante `orquestrador` **não
+  aceita** as props `worktreePath`/`branch`/`phases` (omitidas no tipo, não
+  apenas escondidas via CSS — union discriminada por `variant`); a story
+  cobre as duas variantes e o caso "sem `worktree_path`/`branch`" (`ctx.md`
+  antigo, campos ausentes — D3 não pode quebrar fixture pré-existente).
+
+- **T334 — `ArmedPrompt`** [P] com T331/T332 (e com T333, que só depende de T331) — `design-system/src/components/ArmedPrompt/{ArmedPrompt.tsx,ArmedPrompt.module.css,ArmedPrompt.stories.tsx,index.ts}`, `design-system/src/index.ts`
+  O gesto central do CA-3: comando escrito e **não enviado**, com a tecla
+  `Enter` desenhada explicitamente como tecla (não texto solto), um aviso
+  opcional (ex.: fase travada/falhou) e uma ação de **descartar**. Nem
+  `TerminalTab` nem `Button` expressam "armado, aguardando o humano". **CA-3,
+  CA-25.**
+  **Teste primeiro:** `typecheck` confirma que o componente **não expõe**
+  nenhuma prop de callback que dispare envio (`onEnter`/`onSubmit` não
+  existem no tipo — só `onDismiss`), tornando estruturalmente impossível
+  disparar o comando a partir da peça visual; a story cobre com aviso, sem
+  aviso e o estado "descartado".
+
+- **Gate do Batch A2:** `npm run typecheck` (design-system) + `npm run
+  build-storybook` verdes. Commitar. **Nada no app renderer consome ainda —
+  isso é o Batch B.**
+
 ## Fatia 1 — Batch B: o que ele vê
 
 - **T310 — Modo Dev: toggle e layout (CA-20)** (sequencial após T307) — `src/renderer/src/App.tsx`
@@ -150,25 +260,30 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   **DoD:** smoke — ligar/desligar preserva as abas abertas e seu estado (PTY
   não é recriado); typecheck limpo.
 
-- **T311 — Zona 1: porta de entrada (lista de candidatos)** (sequencial após T309/T310) — `src/renderer/src/DevMode/DevModeEntry.tsx` (novo)
+- **T311 — Zona 1: porta de entrada (lista de candidatos)** (sequencial após T309/T310/T332) — `src/renderer/src/DevMode/DevModeEntry.tsx` (novo)
   Lista os cards de `listEntryColumnCards` (T309); card com discovery já aberto
-  (via `devMode:get`) aparece marcado, selecioná-lo foca aquele discovery
-  (`devMode:focusDiscovery`); selecionar card de **Plano** resolve o
-  `cardId` do discovery **pai** (o card de entrada, não o de marco) antes de
-  focar; criar novo dispara o fluxo do CA-3 (T312) com a skill
-  `/esteira-discovery`. **CA-1, CA-2, CA-24/25 (composição só com peças do
-  design system).**
+  (via `devMode:get`) aparece marcado com `AnnotationTag` (T332, tom `accent`),
+  selecioná-lo foca aquele discovery (`devMode:focusDiscovery`); selecionar
+  card de **Plano** resolve o `cardId` do discovery **pai** (o card de
+  entrada, não o de marco) antes de focar; criar novo dispara o fluxo do CA-3
+  (T312) com a skill `/esteira-discovery`. **D4:** trazer um discovery ao
+  foco mostra um `Toast` de confirmação **informativo, sem ação de
+  desfazer** — trocar foco é reversível pelo próprio gesto (clicar no outro
+  card), então uma máquina de "desfazer" não agrega valor. **CA-1, CA-2,
+  CA-24/25 (composição só com peças do design system).**
   **DoD:** smoke — card vinculado aparece marcado; selecionar card de Plano
   abre o discovery pai, não um discovery novo; card fora das 3 colunas nunca
-  aparece.
+  aparece; o `Toast` de troca de foco não tem nenhuma ação de desfazer
+  (assert de ausência de handler/botão de undo).
 
-- **T312 — Zona 2: abrir fase + pré-digitar (o gesto central)** (sequencial após T302/T305/T310) — `src/renderer/src/DevMode/openPhaseSession.ts` (novo, núcleo puro + wiring), `src/renderer/src/App.tsx`
+- **T312 — Zona 2: abrir fase + pré-digitar (o gesto central)** (sequencial após T302/T305/T310/T334) — `src/renderer/src/DevMode/openPhaseSession.ts` (novo, núcleo puro + wiring), `src/renderer/src/App.tsx`
   Núcleo puro testável: decide `create` (fase normal) vs. resolver o `ptyId`
   em foco (fase `concluir`, ver T313) vs. `resume` (CA-9, ver T318) a partir
   de `PhaseDefault.opensOwnSession` + o estado da fase. Wiring: cria/foca PTY,
   **espera o semáforo (`semaphore.onUpdate`) entrar em `'waiting'` pela
   primeira vez**, então chama `window.donel.pty.input(ptyId, resolveCommandText
-  (defaults, cardId))` **sem `\r`**. **CA-3, CA-4 (usa o texto exato da
+  (defaults, cardId))` **sem `\r`**, exibido na UI via `ArmedPrompt` (T334
+  — comando visível, Enter é gesto humano). **CA-3, CA-4 (usa o texto exato da
   tabela, incl. `ultracode` em `implementar`), invariante 2.**
   **Teste primeiro (núcleo puro):** dado `opensOwnSession: true` → decide
   `create`; dado `false` → decide "usar aba em foco"; o texto passado a
@@ -178,22 +293,29 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   texto exato aparece no buffer do PTY sem ter sido "enviado" (nenhuma nova
   linha de output do CLI processando o comando) até o Enter humano do teste.
 
-- **T313 — Zona 2: exceção da fase `concluir`** (sequencial após T312) — mesmos arquivos de T312
+- **T313 — Zona 2: exceção da fase `concluir`** (sequencial após T312, mesma dependência de T334 herdada) — mesmos arquivos de T312
   Quando a fase é `concluir`, resolve o `ptyId` da aba **em foco no momento do
-  clique** e pré-digita nela — **nunca** cria PTY nova (única exceção ao "uma
-  sessão por etapa", C6). Sem aba em foco (nenhuma aberta): mostra aviso e não
-  faz nada (nunca cria uma sessão "vazia" só pra ter onde digitar).
+  clique** e pré-digita nela via o mesmo `ArmedPrompt` (T334) — **nunca** cria
+  PTY nova (única exceção ao "uma sessão por etapa", C6). Sem aba em foco
+  (nenhuma aberta): mostra aviso e não faz nada (nunca cria uma sessão "vazia"
+  só pra ter onde digitar).
   **CA-4 (consequência do C6).**
   **DoD:** smoke — clicar `concluir` com uma aba `claude` em foco pré-digita
   nela; sem aba nenhuma aberta, nenhuma sessão nova é criada e um aviso
   aparece.
 
-- **T314 — Zona 2: slot de aviso de trava (estrutura, sem dado ainda)** [P] com T313 — `src/renderer/src/DevMode/PhaseButton.tsx` (novo)
+- **T314 — Zona 2: slot de aviso de trava (estrutura, sem dado ainda)** [P] com T313/T332 (depende de T332 para tipar o conteúdo do slot) — `src/renderer/src/DevMode/PhaseButton.tsx` (novo)
   Botão da próxima fase **sempre clicável** (nunca desabilitado por trava —
-  invariante 4/CA-5), com um slot de aviso que fica vazio nesta fatia (ver
-  `plan.md` §"Nota — CA-5"; o dado chega na Fatia 2 via T327). **CA-5.**
+  invariante 4/CA-5), com um slot de aviso tipado como `AnnotationTag`
+  (T332, tom `lock`) que fica **vazio nesta fatia** (ver `plan.md`
+  §"Nota — CA-5"; o dado chega na Fatia 2 via T327). **D1: a trava NUNCA é
+  arquivo em disco** — é a etiqueta `esteira:em-andamento:<fase>` lida do
+  **board** (Fatia 2), checada pelo `preflight.py`; o app não persiste esse
+  fato, por isso o slot fica vazio até T327 ligar o dado real. **CA-5.**
   **DoD:** smoke — botão permanece clicável mesmo com estado simulado de
-  trava; nenhum aviso aparece ainda (comportamento esperado, não bug).
+  trava; nenhum aviso aparece ainda (comportamento esperado, não bug — não há
+  fonte de dado nesta fatia); nenhum código desta task lê ou escreve arquivo
+  `.lock` em disco (não existe tal arquivo, D1).
 
 - **T315 — Zona 2: arquivamento de sessão concluída** (sequencial após T308/T312) — `src/renderer/src/App.tsx`
   Assina o evento do watcher (T308); ao chegar `{cardId, marcoId, fase}` com
@@ -207,23 +329,31 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   `session-id`; manifesto de falha mantém a aba aberta; transcript nunca é
   tocado (só lido).
 
-- **T316 — Zona 3: árvore do mapa lateral** (sequencial após T305/T310) — `src/renderer/src/DevMode/DiscoveryMap.tsx` (novo)
+- **T316 — Zona 3: árvore do mapa lateral** (sequencial após T305/T310/T331/T333) — `src/renderer/src/DevMode/DiscoveryMap.tsx` (novo)
   Desenha o discovery em foco por completo via `devMode:readTree` — um ramo
-  por marco `[Mx]`, nó = fase da Esteira, marco em foco destacado. **Não**
+  por marco `[Mx]` representado por `WorktreeCard` (T333, variante `marco`;
+  variante `orquestrador` para o card do discovery-pai), nó = fase da Esteira
+  com estado via `PhaseStateGlyph` (T331), marco em foco destacado. **Não**
   repete o presente da zona de terminal (não duplica o que a Zona 2 já
-  mostra). **CA-7, CA-24/25.**
+  mostra). Inclui a **legenda no rodapé do mapa** distinguindo os dois eixos
+  — estado de **fase** (`PhaseStateGlyph`, 5 estados) × estado de **sessão**
+  (`StateDot`, 4 estados) — reforçando que a cor nunca é o único portador do
+  estado (achado de acessibilidade da verificação do design). **CA-7,
+  CA-24/25.**
   **DoD:** smoke — árvore de discovery com 3 marcos monta 3 ramos × 5 nós;
   marco em foco tem marcação distinta; nenhuma chamada a git/varredura de
-  disco fora de `devMode:readTree`.
+  disco fora de `devMode:readTree`; a legenda dos dois eixos está presente no
+  rodapé do mapa (item verificável, não apenas visual).
 
-- **T317 — Zona 3: expandir nó (skills, artefatos, recibos)** (sequencial após T316) — mesmos arquivos de T316
+- **T317 — Zona 3: expandir nó (skills, artefatos, recibos)** (sequencial após T316/T332) — mesmos arquivos de T316
   Expandir um nó mostra: a skill fixa daquela fase (tabela do CA-4/plan.md,
   **não** um dado novo do manifesto — ver `plan.md`), os artefatos declarados
   (`artifact_paths`/`e2e_path`/`documents[]` + `ctx.md` + o próprio
   `result.json`, **nunca** `git diff`/varredura), e os recibos de
   conhecimento (`registrations`/`outputs.knowledge` do manifesto — indicador
-  discreto quando ausente, **sem** cobrar nada quando não há vault
-  configurado). **CA-8, CA-10, CA-17, CA-18, CA-19.**
+  discreto via `AnnotationTag` (T332, tom `muted`) quando ausente, **sem**
+  cobrar nada quando não há vault configurado). **CA-8, CA-10, CA-17, CA-18,
+  CA-19.**
   **DoD:** smoke — nó expandido lista exatamente os artefatos do
   `result.json` de fixture (nenhum a mais, nenhum a menos); etapa sem
   `registrations.vault` mostra indicador discreto, não erro nem "incompleto";
@@ -239,11 +369,12 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
   com `-r <sessionId>`); fixture "antiga" sem `archivedSession` abre o
   artefato em vez de tentar retomar.
 
-- **T319 — Estados de fase na UI + retomada por estado (CA-15/CA-16)** (sequencial após T304/T314/T316) — `src/renderer/src/DevMode/PhaseButton.tsx`, `src/renderer/src/DevMode/openPhaseSession.ts`
-  Os 5 estados do CA-15 ficam **inconfundíveis** — requisito literal: "falha
-  tem de ser a coisa mais clara da tela" (a REPRESENTAÇÃO visual é da sessão
-  de design; esta task garante que o **dado certo chega** à peça certa).
-  Clicar fase **falhou** pré-digita a mesma skill; clicar fase **travada**
+- **T319 — Estados de fase na UI + retomada por estado (CA-15/CA-16)** (sequencial após T304/T314/T316/T331) — `src/renderer/src/DevMode/PhaseButton.tsx`, `src/renderer/src/DevMode/openPhaseSession.ts`
+  Os 5 estados do CA-15 ficam **inconfundíveis** via `PhaseStateGlyph` (T331)
+  — requisito literal: "falha tem de ser a coisa mais clara da tela" (a
+  REPRESENTAÇÃO visual da peça é da sessão de design/T331; esta task garante
+  que o **dado certo chega** à peça certa). Clicar fase **falhou** pré-digita
+  a mesma skill; clicar fase **travada**
   pré-digita `/esteira-liberar {card_id}` e, só depois do semáforo voltar a
   `'waiting'`, pré-digita o comando da fase — **dois Enters humanos
   distintos, nunca um só para os dois comandos**. **CA-15, CA-16, invariante
@@ -344,15 +475,24 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
 
 ## Fatia 2 — Batch D: UI do espelho
 
-- **T327 — Overlay dos 4 fatos no mapa** (sequencial após T325/T316) — `src/renderer/src/DevMode/DiscoveryMap.tsx`
+- **T327 — Overlay dos 4 fatos no mapa** (sequencial após T325/T316/T332) — `src/renderer/src/DevMode/DiscoveryMap.tsx`
   Liga `annotateTree` (T325) ao componente de T316/T317: cada nó passa a
   mostrar coluna real, trava ativa (fecha o slot vazio do T314 — a Fatia 2 só
-  entrega o DADO, o slot já existe), etiquetas de atenção, PR+aprovação. O
-  espelho **não tem tela própria** — é só anotação em cima da árvore que já
-  existe. **CA-12, CA-24/25.**
+  entrega o DADO, o slot já existe), etiquetas de atenção, PR+aprovação, todos
+  via `AnnotationTag` (T332, tons `accent`/`lock`/`warn`/`ok` conforme o
+  fato). **D1:** a trava exibida é literalmente a etiqueta
+  `esteira:em-andamento:<fase>` **lida do board** — nunca um arquivo em
+  disco. A ação "Liberar trava…" associada ao slot **pré-digita
+  `/esteira-liberar {card_id}`** (CA-16, mesma regra do CA-3 — só o texto,
+  Enter é humano) e **não apaga arquivo nenhum**; o texto de confirmação
+  fala em **remover a etiqueta de trava no board**, nunca em "arquivo de
+  trava". O espelho **não tem tela própria** — é só anotação em cima da
+  árvore que já existe. **CA-5 (dado real), CA-12, CA-16, CA-24/25.**
   **DoD:** smoke — nó com trava ativa (fixture de board) acende o slot do
-  T314; nó sem trava permanece vazio; comentário/descrição/checklist do card
-  **nunca** aparecem (fora do escopo do CA-12).
+  T314 com o `AnnotationTag` tom `lock`; nó sem trava permanece vazio;
+  clicar "Liberar trava…" pré-digita `/esteira-liberar {card_id}` sem `\r` e
+  sem tocar em nenhum arquivo do disco (assert de I/O); comentário/descrição/
+  checklist do card **nunca** aparecem (fora do escopo do CA-12).
 
 - **T328 — Marcador de divergência + sessão de conciliação** (sequencial após T326/T312) — `src/renderer/src/DevMode/DiscoveryMap.tsx`, `openPhaseSession.ts`
   Nó com divergência (T326) mostra os dois fatos + marcador; oferece abrir
@@ -390,7 +530,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
 |---|---|
 | CA-1 | T309, T311 |
 | CA-2 | T309, T311 |
-| CA-3 | T312, T322 |
+| CA-3 | T312, T322, T334 (`ArmedPrompt`) |
 | CA-4 | T302, T312, T313 |
 | CA-5 | T314, T327 (dado real) |
 | CA-6 | T308, T315 |
@@ -399,10 +539,10 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
 | CA-9 | T305, T318 |
 | CA-10 | T303, T305, T317 |
 | CA-11 | T324 |
-| CA-12 | T325, T327 |
+| CA-12 | T325, T327, T332 (`AnnotationTag`) |
 | CA-13 | T326, T328 |
 | CA-14 | T325 |
-| CA-15 | T304, T319 |
+| CA-15 | T304, T319, T331 (`PhaseStateGlyph`) |
 | CA-16 | T319 |
 | CA-17 | T303, T317 |
 | CA-18 | T317 |
@@ -412,7 +552,7 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
 | CA-22 | T301, T320 |
 | CA-23 | T305, T321 |
 | CA-24 | T310, T311, T314, T316, T317, T327 (alcance, não forma — todas as tasks de UI) |
-| CA-25 | T310, T311, T314, T316, T317, T327 (peças do design system, nenhuma recriada) |
+| CA-25 | T310, T311, T314, T316, T317, T327, T331, T332, T333, T334 (peças do design system, nenhuma recriada — T331–T334 são as 4 extensões nomeadas e aprovadas em 27/07, ver `design/modo-dev-verificacao.md`) |
 | CA-26 | T323, T330 (gates fecham sem esperar a sessão de design) |
 
 **Nenhum CA órfão** — CA-1 a CA-26 aparecem todos em pelo menos uma task.
@@ -420,19 +560,25 @@ real, com fixture de `.esteira/` e board mockado — **nunca** abrindo sessão
 ## Ordem e dependências (resumo)
 
 - **Fatia 1 → Fatia 2**, PRs separados (C5). Dentro da Fatia 1: Batch A →
-  Batch B. Dentro do Batch A: T301/T302 em paralelo → T303/T304 (paralelo
-  entre si, dependem de T301/T302) → T305 → T306 (paralelo com T301/T302,
-  mas precisa deles para compilar) → T307 (depende de T305+T306) → T308
-  (depende de T303) → T309 (paralelo com T308).
-- Dentro do Batch B: T310 (depende de T307) → T311 (depende de T309/T310) →
-  T312 (depende de T302/T305/T310) → T313 (depende de T312) → T314 (paralelo
-  com T313) → T315 (depende de T308/T312) → T316 (depende de T305/T310) →
-  T317 (depende de T316) → T318 (depende de T317) → T319 (depende de
-  T304/T314/T316) → T320 (paralelo com T319) → T321 (depende de T305) → T322
-  (depende de tudo acima, escreve-se junto de T321) → T323 fecha.
+  **Batch A2 → Batch B** (Batch B depende do Batch A2 inteiro — consome as 4
+  peças novas do design system). Dentro do Batch A: T301/T302 em paralelo →
+  T303/T304 (paralelo entre si, dependem de T301/T302) → T305 → T306
+  (paralelo com T301/T302, mas precisa deles para compilar) → T307 (depende
+  de T305+T306) → T308 (depende de T303) → T309 (paralelo com T308).
+- Dentro do Batch A2: T331/T332/T334 em paralelo entre si (só dependem de
+  `tokens.css`, já existente); T333 depende só de T331 (compõe
+  `PhaseStateGlyph`) e roda em paralelo com T332/T334 → gate do Batch A2
+  (`typecheck`+`build-storybook`, depende de T331/T332/T333/T334).
+- Dentro do Batch B: T310 (depende de T307) → T311 (depende de T309/T310/
+  T332) → T312 (depende de T302/T305/T310/T334) → T313 (depende de T312,
+  herda T334) → T314 (paralelo com T313, depende de T332) → T315 (depende de
+  T308/T312) → T316 (depende de T305/T310/T331/T333) → T317 (depende de
+  T316/T332) → T318 (depende de T317) → T319 (depende de T304/T314/T316/
+  T331) → T320 (paralelo com T319) → T321 (depende de T305) → T322 (depende
+  de tudo acima, escreve-se junto de T321) → T323 fecha.
 - Dentro da Fatia 2: T324 (depende de T309) → T325 (depende de T324/T305) →
-  T326 (depende de T325) → gate Batch C → T327 (depende de T325/T316) → T328
-  (depende de T326/T312) → T329 (junto de T328) → T330 fecha.
+  T326 (depende de T325) → gate Batch C → T327 (depende de T325/T316/T332) →
+  T328 (depende de T326/T312) → T329 (junto de T328) → T330 fecha.
 
 ## Fora destas tasks (não implementar por conta própria)
 
