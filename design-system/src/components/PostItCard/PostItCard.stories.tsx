@@ -53,7 +53,7 @@ export const ReadOnly: Story = {
   args: {
     text: 'testar o modo lote da esteira num card real',
     date: 'ontem',
-    project: 'bizops-ai-native',
+    project: 'atlas-app',
     onArchive: undefined,
     onSendToSession: undefined,
     onCopy: undefined,

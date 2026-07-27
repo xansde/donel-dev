@@ -75,7 +75,7 @@ export const NewProjectSummaryStep: Story = {
           }
         >
           <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <li>Diretório: ~/seazone/radar-de-prs</li>
+            <li>Diretório: ~/dev/radar-de-prs</li>
             <li>Vault: Projects/radar-de-prs</li>
             <li>Pointer L1 registrado</li>
             <li>TaskDex vinculado</li>

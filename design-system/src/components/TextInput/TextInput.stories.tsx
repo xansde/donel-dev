@@ -34,8 +34,8 @@ export const ProjectNameWithFilledValue: Story = {
 export const DuplicateNameValidation: Story = {
   args: {
     label: 'Nome do projeto',
-    defaultValue: 'spotsys',
-    hint: 'Esse projeto já existe em ~/seazone',
+    defaultValue: 'vega',
+    hint: 'Esse projeto já existe em ~/dev',
     hintTone: 'danger',
   },
 };

@@ -20,6 +20,29 @@ via `CLAUDE_CONFIG_DIR`.
   mesmo `userData`. O isolamento é o item **B10** do `specs/backlog.md`; até ele
   ser implementado, "stable × teste" é só pasta e nome de atalho diferentes.
 
+## Repo público (canal estável) — aberto em 2026-07-27
+
+- **Remoto**: `https://github.com/xansde/donel` (**público**, MIT). Cópia de
+  trabalho local: `../donel-dev-publico`.
+- **Papéis**: este repo é o de **trabalho** (specs, docs de processo, histórico
+  completo); o público é o **estável** — só o app, para quem quiser clonar e
+  buildar na própria máquina. Não há histórico compartilhado entre os dois.
+- **Nunca vão para o público**: `specs/`, `docs/`, `scripts/`, `design/`,
+  `.claude/`. O público tem `README.md`, `LICENSE` e `CLAUDE.md` **próprios**,
+  editados à mão — o sync não os sobrescreve.
+- **Promover**: `powershell -File scripts/sincronizar-publico.ps1` espelha
+  `src/ tests/ patches/ design-system/` + configs de build e imprime o `git
+  status` do lado público. Ele **não** commita nem faz push — revisar, rodar
+  `npm test` lá e commitar à mão. `package.json` diverge de propósito
+  (license/repository/author + scripts `publicar*`): o script avisa quando
+  versão ou dependência mudou, para levar a mão.
+- **Vocabulário interno fica fora**: nomes de projeto real em fixture/story
+  foram trocados por genéricos (`atlas`, `beacon`, `vega`) **nos dois repos**,
+  justamente para as árvores continuarem idênticas. Ao criar fixture nova, usar
+  nome genérico. Ainda expostos e assumidos: `Esteira`/`EsteiraPhase` e
+  `TaskDex` (intenção de design real, não placeholder) e `seazone` como nome de
+  pasta-raiz default.
+
 ## Regras do projeto
 
 - **Fonte de verdade do escopo**: `specs/001-mvp/` (spec → plan → tasks).
