@@ -40,8 +40,10 @@ Claude Seazone (`Projects/donel-dev/wayfinder-modo-dev/`), não desta sessão.
 6. **[T]** O app **não tem nenhuma superfície de automação externa**: sem parsing
    de `process.argv` no boot, sem `setAsDefaultProtocolClient`/`open-url`, sem
    `requestSingleInstanceLock`, sem servidor local. `config.json` é lido no boot
-   (`src/main/index.ts:357`) e **não** guarda sessões pendentes; abas vivas não
-   sobrevivem a restart. Abrir sessão é exclusivamente ato de UI.
+   (`readAppConfig` em `src/main/index.ts:673`; `getAppConfigPath` em
+   `src/main/index.ts:357` só resolve o caminho — citação corrigida em 27/07 durante
+   o `plan.md`) e **não** guarda sessões pendentes; abas vivas não sobrevivem a
+   restart. Abrir sessão é exclusivamente ato de UI.
 7. **[T]** **Não existe campo de prompt inicial** em nenhum caminho:
    `PtyCreateOptions` (`src/shared/index.ts:67-87`), `LauncherLaunchOptions`
    (`src/renderer/src/Launcher.tsx:52-60`), `buildClaudeArgs`
