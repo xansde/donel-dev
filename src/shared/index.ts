@@ -5,6 +5,7 @@
 // chegam junto das tasks que os implementam.
 
 import type { DonelConfigApi } from './config';
+import type { DonelDevModeApi } from './devMode';
 import type { DonelProfilesApi } from './profiles';
 import type { DonelProjectsApi } from './projects';
 import type { DonelSessionsApi } from './sessions';
@@ -33,6 +34,47 @@ export type { ResumeFailureSignal } from './resumeFailure';
 
 export { CONFIG_CHANNELS } from './config';
 export type { AppConfigDto, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, SessionNamesMap } from './config';
+
+// 003-modo-dev (T301/T307) — estado próprio do Modo Dev + canais `devMode:*`.
+export {
+  DEVMODE_CHANNELS,
+  archivePhaseSession,
+  archivedPhaseSessionKey,
+  closeDiscovery,
+  focusDiscovery,
+  isArchivedSessionProfileMismatch,
+  isValidArchivePhaseSessionIpcInput,
+  isValidCardId,
+  isValidOpenDiscoveryIpcInput,
+  linkDiscoveryRepo,
+  openDiscovery,
+} from './devMode';
+export type {
+  ArchivedPhaseSession,
+  ArchivedPhaseSessions,
+  ArchivePhaseSessionIpcInput,
+  ArchivePhaseSessionKey,
+  DevModeBoardConfig,
+  DevModeDiscoveries,
+  DevModeDiscovery,
+  DevModeState,
+  DonelDevModeApi,
+  EsteiraPhase,
+  OpenDiscoveryIpcInput,
+  PhaseDefault,
+  PhaseDefaultsTable,
+} from './devMode';
+
+export { DEFAULT_PHASE_DEFAULTS, resolveCommandText } from './devModeDefaults';
+
+// T307 — `DiscoveryTree` é o retorno de `devMode:readTree`; definido em
+// `../main/discovery-tree.ts` (módulo com fs) mas reexportado aqui como TIPO
+// só, para preload/renderer importarem de um lugar só (`../shared`), como
+// todo o resto desta API. `import type` erasa no build: nenhum runtime do
+// renderer/preload passa a depender de `node:fs`.
+export type { ArtifactCandidate, ArtifactCandidateKind, DiscoveryTree, MarcoNode, PhaseNode } from '../main/discovery-tree';
+export type { EsteiraResultManifest, PhaseArtifacts } from '../main/esteira-reader';
+export type { PhaseStatus } from './phaseState';
 
 // 004-nomear-sessoes — resolução do nome exibido de uma sessão (T401) e
 // validação do nome digitado (T406). Usados no main (persistência) e no
@@ -215,4 +257,6 @@ export interface DonelApi {
   config: DonelConfigApi;
   /** T504 (005-terminal-copy-paste) — clipboard-bridge no main, atrás de IPC. */
   clipboard: DonelClipboardApi;
+  /** T307 (003-modo-dev) — estado do Modo Dev + leitura da árvore do discovery. */
+  devMode: DonelDevModeApi;
 }

@@ -1,9 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppConfigDto,
+  ArchivePhaseSessionIpcInput,
+  DiscoveryTree,
   DonelApi,
   LauncherDefaultsDto,
   NotificationPreference,
+  OpenDiscoveryIpcInput,
+  PhaseDefaultsTable,
   ProfileDoctorReportDto,
   ProfileHeadroomMap,
   ProfileSummaryDto,
@@ -18,6 +22,7 @@ import type {
 } from '../shared';
 import {
   CONFIG_CHANNELS,
+  DEVMODE_CHANNELS,
   PROFILE_CHANNELS,
   PROJECT_CHANNELS,
   PTY_CHANNELS,
@@ -164,6 +169,27 @@ const donelApi: DonelApi = {
     readText: () => ipcRenderer.invoke(CLIPBOARD_CHANNELS.readText) as Promise<string>,
 
     writeText: (text: string) => ipcRenderer.invoke(CLIPBOARD_CHANNELS.writeText, text) as Promise<void>,
+  },
+
+  // T307 (003-modo-dev) — estado do Modo Dev (CA-21/CA-4) + leitura da árvore
+  // do discovery (CA-7). Nenhum canal aqui escreve no TaskDex/vault.
+  devMode: {
+    get: () => ipcRenderer.invoke(DEVMODE_CHANNELS.get) as Promise<AppConfigDto>,
+
+    openDiscovery: (input: OpenDiscoveryIpcInput) => ipcRenderer.invoke(DEVMODE_CHANNELS.openDiscovery, input) as Promise<AppConfigDto>,
+
+    focusDiscovery: (cardId: string) => ipcRenderer.invoke(DEVMODE_CHANNELS.focusDiscovery, cardId) as Promise<AppConfigDto>,
+
+    closeDiscovery: (cardId: string) => ipcRenderer.invoke(DEVMODE_CHANNELS.closeDiscovery, cardId) as Promise<AppConfigDto>,
+
+    archivePhaseSession: (input: ArchivePhaseSessionIpcInput) =>
+      ipcRenderer.invoke(DEVMODE_CHANNELS.archivePhaseSession, input) as Promise<AppConfigDto>,
+
+    getDefaults: () => ipcRenderer.invoke(DEVMODE_CHANNELS.getDefaults) as Promise<AppConfigDto>,
+
+    setDefaults: (defaults: PhaseDefaultsTable) => ipcRenderer.invoke(DEVMODE_CHANNELS.setDefaults, defaults) as Promise<AppConfigDto>,
+
+    readTree: (cardId: string) => ipcRenderer.invoke(DEVMODE_CHANNELS.readTree, cardId) as Promise<DiscoveryTree>,
   },
 };
 

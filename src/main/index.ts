@@ -5,8 +5,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type {
   AppConfigDto,
+  ArchivePhaseSessionIpcInput,
+  DiscoveryTree,
   LauncherDefaultsDto,
   NotificationPreference,
+  OpenDiscoveryIpcInput,
+  PhaseDefaultsTable,
   ProfileDoctorReportDto,
   ProfileHeadroomMap,
   ProfileSummaryDto,
@@ -19,9 +23,17 @@ import type {
   TranscriptChangedPayload,
 } from '../shared';
 import {
+  archivePhaseSession,
   CLAUDE_NOT_FOUND_PREFIX,
+  closeDiscovery,
   CONFIG_CHANNELS,
+  DEVMODE_CHANNELS,
+  focusDiscovery,
+  isValidArchivePhaseSessionIpcInput,
+  isValidCardId,
+  isValidOpenDiscoveryIpcInput,
   normalizeSessionName,
+  openDiscovery,
   PROFILE_CHANNELS,
   PROJECT_CHANNELS,
   PTY_CHANNELS,
@@ -38,12 +50,15 @@ import {
   LEGACY_ACTIVE_PROFILE_FILE_NAME,
   LEGACY_PROJECT_CONFIG_FILE_NAME,
   readAppConfig,
+  sanitizePhaseDefaultsTable,
   setSessionName,
   toAppConfigDto,
   toggleFavorite,
   writeAppConfig,
   type AppConfig,
 } from './config-store';
+import { buildDiscoveryTree } from './discovery-tree';
+import { createSystemEsteiraReaderIoDeps } from './esteira-reader';
 import { writeHooksSettingsFile } from './hooks-settings';
 import {
   claudeHomeDir,
@@ -99,6 +114,10 @@ const projectScanDeps = createSystemScanDeps();
 // pela UI de Preferências, feedback E2E rodada 3).
 const configIoDeps = createSystemConfigIoDeps();
 let appConfig: AppConfig = defaultAppConfig(defaultProjectRoots(homedir));
+
+// T303/T305 (003-modo-dev) — leitura dos artefatos `.esteira/` em disco;
+// injetável (mesmo padrão de `configIoDeps`), resolvido uma vez.
+const esteiraReaderIoDeps = createSystemEsteiraReaderIoDeps();
 
 // T014 — ProfileManager (FR-005, FR-012, CA-3). `profilePathDeps` é a única
 // dependência de path (homedir) reaproveitada por toda função pura do
@@ -437,6 +456,77 @@ function registerConfigIpcHandlers(): void {
 }
 
 /**
+ * T307 (003-modo-dev, Batch A) — canais `devMode:*` (CA-21/CA-4/CA-19).
+ * Payload inválido (cardId/repoPath vazios, fase desconhecida) é NO-OP — o
+ * main devolve o `AppConfigDto` atual sem mutar (validação pura em
+ * `src/shared/devMode.ts`, testada isolada). **Nenhum canal aqui escreve no
+ * TaskDex ou no vault** (invariante 5/CA-19) — só disco de leitura
+ * (`esteira-reader.ts`/`discovery-tree.ts`) e o `ConfigStore` local.
+ */
+function registerDevModeIpcHandlers(): void {
+  ipcMain.handle(DEVMODE_CHANNELS.get, (): AppConfigDto => toAppConfigDto(appConfig));
+
+  ipcMain.handle(DEVMODE_CHANNELS.openDiscovery, (_event, input: OpenDiscoveryIpcInput): AppConfigDto => {
+    if (!isValidOpenDiscoveryIpcInput(input)) return toAppConfigDto(appConfig);
+    appConfig = {
+      ...appConfig,
+      devMode: openDiscovery(appConfig.devMode, {
+        cardId: input.cardId,
+        repoPath: input.repoPath,
+        epicId: input.epicId,
+        openedAt: Date.now(),
+      }),
+    };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  ipcMain.handle(DEVMODE_CHANNELS.focusDiscovery, (_event, cardId: string): AppConfigDto => {
+    if (!isValidCardId(cardId)) return toAppConfigDto(appConfig);
+    appConfig = { ...appConfig, devMode: focusDiscovery(appConfig.devMode, cardId) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  ipcMain.handle(DEVMODE_CHANNELS.closeDiscovery, (_event, cardId: string): AppConfigDto => {
+    if (!isValidCardId(cardId)) return toAppConfigDto(appConfig);
+    appConfig = { ...appConfig, devMode: closeDiscovery(appConfig.devMode, cardId, Date.now()) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  ipcMain.handle(DEVMODE_CHANNELS.archivePhaseSession, (_event, input: ArchivePhaseSessionIpcInput): AppConfigDto => {
+    if (!isValidArchivePhaseSessionIpcInput(input)) return toAppConfigDto(appConfig);
+    appConfig = {
+      ...appConfig,
+      devMode: archivePhaseSession(
+        appConfig.devMode,
+        { cardId: input.cardId, marcoId: input.marcoId, phase: input.phase },
+        { sessionId: input.sessionId, profileSlug: input.profileSlug, archivedAt: Date.now() },
+      ),
+    };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  ipcMain.handle(DEVMODE_CHANNELS.getDefaults, (): AppConfigDto => toAppConfigDto(appConfig));
+
+  /** Tudo ou nada (mesma regra de `sanitizePhaseDefaultsTable`, T306): tabela malformada não muda o que já estava salvo. */
+  ipcMain.handle(DEVMODE_CHANNELS.setDefaults, (_event, defaults: PhaseDefaultsTable): AppConfigDto => {
+    appConfig = { ...appConfig, devMode: { ...appConfig.devMode, phaseDefaults: sanitizePhaseDefaultsTable(defaults) } };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** CA-7 — monta a árvore do discovery pedido a partir do disco. `cardId` sem discovery aberto devolve árvore vazia (nunca lança). */
+  ipcMain.handle(DEVMODE_CHANNELS.readTree, (_event, cardId: string): DiscoveryTree => {
+    const repoPath = isValidCardId(cardId) ? (appConfig.devMode.discoveries[cardId]?.repoPath ?? '') : '';
+    if (!repoPath) return { discoveryCardId: cardId, marcos: [], focusedMarcoId: null, allMarcosComplete: false };
+    return buildDiscoveryTree(repoPath, cardId, appConfig.devMode.archivedPhaseSessions, esteiraReaderIoDeps);
+  });
+}
+
+/**
  * T013 — índice de sessões anteriores por projeto (FR-004, CA-2). Delega
  * inteiramente pro SessionIndexer (T012, TDD já fechado — não reescrito
  * aqui): stream das primeiras linhas, nunca o arquivo inteiro, `[]` sem
@@ -693,6 +783,7 @@ void app.whenReady().then(async () => {
   registerProfileIpcHandlers();
   registerConfigIpcHandlers();
   registerClipboardIpcHandlers(); // T504 (005-terminal-copy-paste)
+  registerDevModeIpcHandlers(); // T307 (003-modo-dev)
   createMainWindow();
 
   app.on('activate', () => {
