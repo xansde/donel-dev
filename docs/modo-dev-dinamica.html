@@ -140,6 +140,13 @@ pronto, o que está rodando agora e o que ainda falta.
     As outras continuam visíveis no mapa, cada uma marcando em que etapa parou.</p>
   </li>
   <li>
+    <h3>Cada etapa abre o seu próprio terminal</h3>
+    <p>Planejar não continua a conversa de investigar: começa <span class="you">do zero, com
+    a memória limpa</span>, e pega da etapa anterior só o arquivo de resultado que ela
+    deixou. É o que mantém o gasto baixo — nenhuma etapa arrasta o histórico da frente
+    inteira nas costas.</p>
+  </li>
+  <li>
     <h3>O mapa registra sozinho o que aconteceu</h3>
     <p>Cada etapa concluída acende no mapa e guarda o que produziu — a spec, o plano, as
     tarefas, o roteiro de teste. Clicando na etapa você vê o detalhe e abre os arquivos.</p>
@@ -160,13 +167,15 @@ verdade é a sessão de design, depois da spec.</p>
     <span class="t">Donel Dev — Modo Dev ligado</span></div>
   <div class="cols">
     <div class="stage">
-      <div class="kicker">Etapa em foco · entrega M2</div>
+      <div class="kicker">Etapa em foco · entrega M2 · terminal próprio desta etapa</div>
       <h4>Construir</h4>
       <div class="term"><span class="p">›</span> /esteira-implementar SZI-412
+Lendo o resultado que "planejar" deixou…
 Rodando testes… 41 passaram
 Commit: feat: painel lateral com a árvore da frente</div>
-      <p class="cap">O terminal continua sendo o terminal. O Modo Dev não substitui
-      o que você digita — ele só para de exigir que você lembre.</p>
+      <p class="cap">O terminal continua sendo o terminal. O Modo Dev não substitui o que
+      você digita — ele só para de exigir que você lembre. E esta janela é <b>só desta
+      etapa</b>: memória limpa, gasto baixo.</p>
     </div>
     <div class="side">
       <div class="h">A frente</div>
@@ -231,7 +240,9 @@ o disco dizendo outra.</p>
   reabre o que está acima.</p>
   <ul>
     <li><b>Quem aperta o botão da próxima etapa</b> — o app deixa o comando digitado e
-    espera você, ou dispara no clique? Disparar por engano custa cota.</li>
+    espera você, ou dispara no clique? Disparar por engano custa cota. Entra aqui também
+    o que fazer com o terminal de uma etapa já terminada: guardar para reabrir, arquivar
+    ou descartar — porque três entregas × cinco etapas já são quinze janelas.</li>
     <li><b>O que o board mostra dentro do app</b> — e o Modo Dev continua servindo
     sem internet?</li>
     <li><b>Quatro fatos que hoje só existem no board</b> — o app passa a guardá-los, ou
