@@ -108,9 +108,10 @@ export function DevModeEntry({
                 onClick={() => onSelectCard(card.cardId, repoPath)}
                 className={styles.rowButton}
                 disabled={!linked && !repoPath}
+                title={card.cardId}
               >
-                <span className={styles.cardId}>{card.cardId}</span>
                 <span className={styles.cardTitle}>{card.title}</span>
+                <span className={styles.cardId}>{card.cardId}</span>
               </Button>
               <div className={styles.rowTags}>
                 <AnnotationTag tone="muted">{COLUMN_LABEL[card.column]}</AnnotationTag>

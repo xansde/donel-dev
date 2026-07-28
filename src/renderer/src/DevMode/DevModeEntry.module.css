@@ -10,6 +10,10 @@
   background: var(--bg-panel);
   border-right: var(--hairline);
   overflow-y: auto;
+  /* Âncora de coluna do grid do .body — ver comentário em App.module.css
+     (.center): desmontar um painel não pode deslocar os outros. */
+  grid-column: 1;
+  grid-row: 1;
 }
 
 .header {
@@ -46,8 +50,9 @@
 
 .rowButton {
   display: flex;
-  justify-content: flex-start;
-  gap: var(--space-1);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-half);
   width: 100%;
   height: auto;
   min-height: var(--control-height);
@@ -64,13 +69,15 @@
   font-family: var(--font-mono);
   font-size: var(--text-caption-size);
   color: var(--text-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cardTitle {
   color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .empty {

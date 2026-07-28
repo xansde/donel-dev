@@ -45,6 +45,7 @@ export {
   isArchivedSessionProfileMismatch,
   isValidArchivePhaseSessionIpcInput,
   isValidCardId,
+  isValidCardIdList,
   isValidOpenDiscoveryIpcInput,
   isValidWatchPhaseIpcInput,
   linkDiscoveryRepo,
@@ -76,8 +77,12 @@ export { DEFAULT_PHASE_DEFAULTS, resolveCommandText } from './devModeDefaults';
 // todo o resto desta API. `import type` erasa no build: nenhum runtime do
 // renderer/preload passa a depender de `node:fs`.
 export type { ArtifactCandidate, ArtifactCandidateKind, DiscoveryTree, MarcoNode, PhaseNode } from '../main/discovery-tree';
-/** T311 — card da porta de entrada (CA-1); mesmo motivo do `DiscoveryTree` acima: tipo só, `import type` erasa no build. */
-export type { EntryColumn, EntryColumnCard } from '../main/taskdex-board-client';
+/** T311/T327 — card da porta de entrada (CA-1) e os 4 fatos do espelho (CA-12); mesmo motivo do `DiscoveryTree` acima: tipo só, `import type` erasa no build. */
+export type { BoardFacts, EntryColumn, EntryColumnCard } from '../main/taskdex-board-client';
+
+/** T325/T326 (Batch C) — a árvore já anotada pelo espelho, consumida pela UI do mapa (T327/T328). */
+export type { AnnotatedDiscoveryTree, AnnotatedMarcoNode, AnnotatedPhaseNode, PhaseDivergence } from './boardAnnotation';
+export { annotateTree, detectPhaseDivergence } from './boardAnnotation';
 export type { EsteiraResultManifest, PhaseArtifacts } from '../main/esteira-reader';
 export type { PhaseStatus } from './phaseState';
 

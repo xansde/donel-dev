@@ -15,8 +15,8 @@ import { isTrustDialogVisible } from './trustDialog';
 // deixaria o gesto central do CA-3 sem nunca disparar. O mesmo já está
 // documentado em `App.tsx` ("hooks-settings.ts não cobre SessionStart").
 //
-// Correção adotada, sem delay fixo (que o plano descartou com razão): DOIS
-// sinais, ambos orientados a evento e já usados neste repo —
+// Correção adotada, sem delay fixo (que o plano descartou com razão): TRÊS
+// sinais, todos orientados a evento e já usados neste repo —
 //  1. semáforo em `'waiting'` (o sinal do plano; é o que vale para o SEGUNDO
 //     passo do CA-16, onde de fato existe um turno terminando);
 //  2. o REPL do CLI já desenhado no buffer JÁ RENDERIZADO do xterm — mesma
@@ -24,7 +24,21 @@ import { isTrustDialogVisible } from './trustDialog';
 //     `isTrustDialogVisible`. O marcador é o banner do CLI, o mesmo que o
 //     smoke permanente `tests/smoke-dev/dev-mode.spec.ts` usa como pré-
 //     condição antes de digitar e obter eco: ele espera uma linha com
-//     "claude code" e só então digita.
+//     "claude code" e só então digita;
+//  3. a barra de status do rodapé do prompt interativo (achado do T329,
+//     003-modo-dev Batch D — ver `hasIdlePromptFooter` abaixo). O sinal 2 só
+//     cobre a sessão RECÉM-criada: o banner de boas-vindas é uma tela ÚNICA
+//     que desaparece do viewport de tamanho fixo do xterm (achado já
+//     documentado em `liveSessionInjection.ts`) assim que QUALQUER texto é
+//     digitado ou o CLI redesenha por outro motivo (ex.: aviso de MCP sem
+//     autenticação, comum numa sessão RAIZ com boot pesado — commit
+//     e75fd59). Uma SEGUNDA chamada independente de `armPhaseCommands` na
+//     MESMA aba (ex.: "Liberar trava…" depois de uma conciliação já
+//     pré-digitada e nunca enviada, CA-16/D1) também nasce com
+//     `isFirstStep: true` (é o primeiro passo da SUA própria sequência), mas
+//     roda contra uma sessão que já passou do boot — sem banner, e sem
+//     `'waiting'` porque nenhum turno real jamais foi submetido. Faltava um
+//     sinal que sobrevivesse a esse redraw: a barra de status do rodapé.
 //
 // E um sinal NEGATIVO em qualquer caso: com o diálogo de confiança de pasta
 // na tela, o CLI ainda não armou o leitor de stdin — pré-digitar ali cairia
@@ -49,11 +63,32 @@ export function hasClaudeReadyMarker(lines: readonly string[]): boolean {
 }
 
 /**
+ * Barra de status do rodapé do prompt interativo — "⏵⏵ <modo> on (shift+tab
+ * to cycle)" ("accept edits"/"bypass permissions"/etc., o modo varia, o
+ * parêntese não). Achado em `liveSessionInjection.ts` (comentário (3)): esse
+ * CLI redesenha um viewport de TAMANHO FIXO, e essa barra "se repete em
+ * quase todo frame" enquanto o prompt está OCIOSO aceitando input — um turno
+ * em andamento troca essa barra por um indicador de progresso ("esc to
+ * interrupt"), nunca os dois juntos. Ao contrário do banner de boas-vindas
+ * (`CLI_READY_MARKER`, tela ÚNICA que só existe antes do primeiro redraw),
+ * esta barra sobrevive a qualquer redraw seguinte — inclusive depois que um
+ * texto já foi pré-digitado nessa mesma sessão sem nunca ter sido enviado.
+ */
+const IDLE_PROMPT_FOOTER_PATTERN = /shift\+tab to cycle/i;
+
+/** `true` quando a barra de status do rodapé do prompt ocioso está no viewport atual — ver comentário acima. */
+export function hasIdlePromptFooter(lines: readonly string[]): boolean {
+  return lines.some((line) => IDLE_PROMPT_FOOTER_PATTERN.test(line));
+}
+
+/**
  * CA-3/CA-16 — decide se o próximo comando da sequência pode ser ESCRITO
  * (nunca enviado) agora.
  *
  * - Diálogo de confiança visível: **nunca** (o stdin ainda não é o prompt).
- * - Primeiro passo: semáforo em `'waiting'` **ou** banner do CLI presente.
+ * - Primeiro passo: semáforo em `'waiting'` **ou** banner do CLI presente
+ *   **ou** barra de status do prompt ocioso presente (essa última cobre a
+ *   sessão que já passou do boot — ver comentário de topo do arquivo).
  * - Passos seguintes (CA-16): só um `'waiting'` NOVO — entrado depois do
  *   passo anterior ter sido escrito — libera o próximo. É isso que garante
  *   "dois Enters humanos distintos, nunca um só para os dois comandos".
@@ -67,5 +102,5 @@ export function isReadyToPreType(input: PreTypeReadinessInput): boolean {
     return waiting && (input.semaphore?.stateEnteredAt ?? 0) > input.armedAt;
   }
 
-  return waiting || hasClaudeReadyMarker(input.renderedLines);
+  return waiting || hasClaudeReadyMarker(input.renderedLines) || hasIdlePromptFooter(input.renderedLines);
 }

@@ -9,6 +9,10 @@
   background: var(--bg-panel);
   border-left: var(--hairline);
   overflow-y: auto;
+  /* Âncora de coluna do grid do .body — ver comentário em App.module.css
+     (.center): desmontar um painel não pode deslocar os outros. */
+  grid-column: 3;
+  grid-row: 1;
 }
 
 .marcos {
@@ -110,4 +114,18 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-half);
+}
+
+/* T328 — bloco de divergência disco × board (CA-13). Só tokens existentes. */
+.divergence {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-half);
+  padding: var(--space-1);
+  background: var(--bg-panel);
+  border: 1px solid var(--state-error);
+  border-radius: var(--radius-md);
+  font-size: var(--text-caption-size);
+  color: var(--text-primary);
 }

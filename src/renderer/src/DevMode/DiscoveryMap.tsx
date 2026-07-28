@@ -1,6 +1,15 @@
-import { AnnotationTag, PhaseStateGlyph, PHASE_STATE_LABEL_PT, SESSION_STATE_LABEL_PT, StateDot, WorktreeCard } from '@donel-dev/design-system';
-import type { WorktreeCardPhaseNode } from '@donel-dev/design-system';
-import type { DiscoveryTree, MarcoNode, PhaseNode } from '../../../main/discovery-tree';
+import {
+  AnnotationTag,
+  Button,
+  PhaseStateGlyph,
+  PHASE_STATE_LABEL_PT,
+  SESSION_STATE_LABEL_PT,
+  StateDot,
+  WorktreeCard,
+} from '@donel-dev/design-system';
+import type { WorktreeCardAnnotation, WorktreeCardPhaseNode } from '@donel-dev/design-system';
+import type { PhaseNode } from '../../../main/discovery-tree';
+import type { AnnotatedDiscoveryTree, AnnotatedMarcoNode } from '../../../shared/boardAnnotation';
 import type { EsteiraPhase, PhaseDefaultsTable } from '../../../shared/devMode';
 import type { PhaseStatus } from '../../../shared/phaseState';
 import styles from './DiscoveryMap.module.css';
@@ -19,6 +28,16 @@ import styles from './DiscoveryMap.module.css';
 // SESSÃO, só na legenda) e `AnnotationTag`. A legenda do rodapé distinguindo
 // os dois eixos é item verificável (achado de acessibilidade da verificação
 // de design).
+//
+// T327/T328 (Batch D) — o ESPELHO entra aqui, e **não tem tela própria**
+// (CA-12): os 4 fatos que o disco não sabe (coluna real, trava ativa,
+// etiquetas de atenção, PR+aprovação) viram anotação em cima da árvore que já
+// existe, pelos slots que o `WorktreeCard` (T333) já expõe — `tags` no marco
+// e `annotations` no nó de fase. **D1:** a trava exibida é literalmente a
+// etiqueta `esteira:em-andamento:<fase>` lida do BOARD, nunca um arquivo em
+// disco. Comentário, descrição e checklist do card NUNCA aparecem (fora do
+// escopo do CA-12), e nenhum card fora do discovery em foco entra (a lista de
+// cards consultados é a dos marcos desta árvore).
 
 const ALL_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'implementar', 'validar', 'concluir'];
 
@@ -28,7 +47,8 @@ export interface SelectedPhaseNode {
 }
 
 export interface DiscoveryMapProps {
-  tree: DiscoveryTree;
+  /** T327 — a árvore JÁ ANOTADA pelo espelho (`annotateTree`, T325). Sem fonte de board, os campos de anotação chegam vazios e o mapa fica idêntico ao da Fatia 1. */
+  tree: AnnotatedDiscoveryTree;
   phaseDefaults: PhaseDefaultsTable;
   focusedMarcoId: string | null;
   selectedNode: SelectedPhaseNode | null;
@@ -36,6 +56,8 @@ export interface DiscoveryMapProps {
   activeProfileSlug: string;
   onFocusMarco: (marcoId: string) => void;
   onSelectPhase: (marcoId: string, phase: EsteiraPhase) => void;
+  /** T328/CA-13 — abre a sessão de conciliação do nó divergente (prompt pré-digitado; o app nunca corrige o board). */
+  onConciliate?: (marcoId: string, phase: EsteiraPhase) => void;
 }
 
 /** A skill de cada fase é DADO FIXO da tabela do CA-4 — nunca um campo novo do manifesto (plan.md). */
@@ -53,7 +75,61 @@ function declaredArtifacts(node: PhaseNode): readonly string[] {
   return declared;
 }
 
-function marcoStatusSummary(marco: MarcoNode): PhaseStatus {
+/**
+ * T327/CA-12 — os fatos do MARCO na faixa do `WorktreeCard`: coluna real,
+ * etiquetas de atenção e PR+aprovação. Sem fatos de board (`boardFacts` nulo)
+ * a faixa fica como estava na Fatia 1 — nenhuma etiqueta inventada.
+ */
+function marcoBoardTags(marco: AnnotatedMarcoNode): WorktreeCardAnnotation[] {
+  const facts = marco.boardFacts;
+  if (!facts) return [];
+
+  const tags: WorktreeCardAnnotation[] = [{ text: `coluna: ${facts.column}`, tone: 'accent' }];
+
+  for (const label of facts.attentionLabels) {
+    tags.push({ text: label, tone: 'warn' });
+  }
+
+  if (facts.prUrl) {
+    tags.push({
+      text: facts.prApproved ? `PR aprovado · ${facts.prUrl}` : `PR sem aprovação · ${facts.prUrl}`,
+      tone: facts.prApproved ? 'ok' : 'warn',
+    });
+  }
+
+  // CA-14 — `[Mx]` do título do card diverge do `marco_id` de disco: marcador
+  // de CONFERÊNCIA. O `marco_id` exibido continua sendo o do disco.
+  if (marco.marcoIdMismatch) {
+    tags.push({ text: 'conferir: [Mx] do board difere do disco', tone: 'warn' });
+  }
+
+  return tags;
+}
+
+/**
+ * T327/T328 — as anotações do NÓ de fase: trava ativa (D1 — etiqueta do
+ * board, tom `lock`) e divergência disco×board (CA-13, tom `error`, com os
+ * DOIS fatos no texto).
+ */
+function phaseBoardAnnotations(marco: AnnotatedMarcoNode, phase: EsteiraPhase): WorktreeCardAnnotation[] {
+  const annotations: WorktreeCardAnnotation[] = [];
+
+  if (marco.boardFacts?.lockedPhase === phase) {
+    annotations.push({ text: `trava no board: ${LOCK_LABEL_PREFIX}${phase}`, tone: 'lock' });
+  }
+
+  const divergence = marco.phases[phase].divergence;
+  if (divergence) {
+    annotations.push({ text: `⇄ disco: ${divergence.diskStatus} · board: ${divergence.boardColumn}`, tone: 'error' });
+  }
+
+  return annotations;
+}
+
+/** D1 — a trava é ESTA etiqueta no board, e o texto da UI diz isso literalmente (nunca "arquivo de trava"). */
+const LOCK_LABEL_PREFIX = 'esteira:em-andamento:';
+
+function marcoStatusSummary(marco: AnnotatedMarcoNode): PhaseStatus {
   const running = ALL_PHASES.find((phase) => marco.phases[phase].status === 'running');
   if (running) return 'running';
   const failed = ALL_PHASES.find((phase) => marco.phases[phase].status === 'failed');
@@ -69,6 +145,7 @@ export function DiscoveryMap({
   activeProfileSlug,
   onFocusMarco,
   onSelectPhase,
+  onConciliate,
 }: DiscoveryMapProps): React.JSX.Element {
   const selectedMarco = selectedNode ? tree.marcos.find((marco) => marco.marcoId === selectedNode.marcoId) : undefined;
   const selectedPhaseNode = selectedMarco && selectedNode ? selectedMarco.phases[selectedNode.phase] : undefined;
@@ -91,6 +168,7 @@ export function DiscoveryMap({
           const phases: WorktreeCardPhaseNode[] = ALL_PHASES.map((phase) => ({
             phase,
             state: marco.phases[phase].status,
+            annotations: phaseBoardAnnotations(marco, phase),
             onSelect: () => onSelectPhase(marco.marcoId, phase),
           }));
 
@@ -108,6 +186,7 @@ export function DiscoveryMap({
                 summary={`Fatia vertical do discovery — uma branch, um PR. Estado agregado: ${PHASE_STATE_LABEL_PT[marcoStatusSummary(marco)]}.`}
                 worktreePath={marco.phases.implementar.artifacts.worktreePath ?? undefined}
                 branch={marco.phases.implementar.artifacts.branch ?? undefined}
+                tags={marcoBoardTags(marco)}
                 phases={phases}
                 onFocus={() => onFocusMarco(marco.marcoId)}
               />
@@ -130,6 +209,33 @@ export function DiscoveryMap({
               [{selectedNode.marcoId}] · {selectedNode.phase}
             </span>
           </header>
+
+          {/* T328/CA-13 — divergência: os DOIS fatos lado a lado e a oferta de
+              conciliar. O app NUNCA corrige o board sozinho: o botão só
+              prepara o prompt, e o Enter continua sendo do humano. */}
+          {selectedPhaseNode.divergence ? (
+            <div className={styles.divergence} data-testid="devmode-node-divergence">
+              <AnnotationTag tone="error">⇄ divergência disco × board</AnnotationTag>
+              <p data-testid="devmode-node-divergence-disk">
+                disco: fase {selectedNode.phase} está {selectedPhaseNode.divergence.diskStatus}
+              </p>
+              <p data-testid="devmode-node-divergence-board">
+                board: card na coluna {selectedPhaseNode.divergence.boardColumn}
+              </p>
+              <p className={styles.muted}>
+                O app não corrige o board. A conciliação abre uma sessão com o texto já escrito — o Enter é seu.
+              </p>
+              {onConciliate ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => onConciliate(selectedNode.marcoId, selectedNode.phase)}
+                  data-testid="devmode-node-conciliar"
+                >
+                  Preparar conciliação
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
 
           <h3 className={styles.detailsTitle}>Skill rodada</h3>
           <p className={styles.mono} data-testid="devmode-node-skill">
