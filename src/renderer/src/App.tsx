@@ -1948,6 +1948,17 @@ export function App(): React.JSX.Element {
 
         {launcherOpen ? (
           <aside className={styles.rightPanel} aria-label="Lançar sessão">
+            {/* Teste manual 27/07 — fechar o painel precisa de um gesto
+                VISÍVEL (Esc continua valendo; lançar também fecha). */}
+            <button
+              type="button"
+              className={styles.rightPanelClose}
+              onClick={() => setLauncherOpen(false)}
+              aria-label="Fechar painel de nova sessão"
+              title="Fechar (Esc)"
+            >
+              <PanelRightClose size={16} strokeWidth={1.5} aria-hidden="true" />
+            </button>
             <Launcher
               projects={projects}
               defaultProjectPath={selectedProjectPath}

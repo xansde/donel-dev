@@ -62,6 +62,12 @@
   box-shadow: var(--focus-ring);
 }
 
+/* Teste manual 27/07 — X do painel "Lançar sessão" (mesmo visual do gear). */
+.rightPanelClose {
+  composes: preferencesButton;
+  align-self: flex-end;
+}
+
 .body {
   /* FIX (teste manual 27/07, "compactar as laterais") — as três colunas viram
      variáveis para os estados de colapso comporem sem explosão de classes:
@@ -79,23 +85,20 @@
   min-height: 0;
 }
 
-/* FIX (feedback E2E rodada 3, "painel lateral 'Lançar sessão' fixo rouba
-   espaço") — coluna direita zerada quando não há Launcher aberto (clássico)
-   ou quando o mapa do Modo Dev foi colapsado: o `.center` ocupa o espaço. */
-.bodyRightCollapsed {
-  --col-right: 0px;
-}
-
-/* Teste manual 27/07 — sidebar (projetos ou porta de entrada) colapsável
-   pra facilitar o foco no terminal. */
-.bodySidebarCollapsed {
-  --col-left: 0px;
-}
+/* Os estados de colapso (.bodyRightCollapsed/.bodySidebarCollapsed) vivem
+   DEPOIS de .bodyDevMode no arquivo — mesma especificidade, a ordem decide
+   qual var vence, e colapso precisa vencer o default do Modo Dev. */
 
 .center {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* FIX (teste manual 27/07, "recolher desloca tudo") — colunas ANCORADAS:
+     quando um painel lateral desmonta, o auto-placement do grid deslizava os
+     itens restantes de coluna (o terminal caía na coluna colapsada de 0px e
+     "não carregava"). Cada peça declara sua coluna; desmontar não desloca. */
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .tabBar {
@@ -167,6 +170,11 @@
   padding: var(--panel-padding);
   background: var(--bg-panel);
   border-left: var(--hairline);
+  /* Âncora de coluna — ver comentário em .center. */
+  grid-column: 3;
+  grid-row: 1;
+  min-height: 0;
+  overflow-y: auto;
   overflow-y: auto;
 }
 
@@ -195,6 +203,19 @@
 .bodyDevMode {
   --col-left: 280px;
   --col-right: 320px;
+}
+
+/* FIX (feedback E2E rodada 3 + teste manual 27/07) — coluna direita zerada
+   quando não há Launcher aberto (clássico) ou o mapa do Modo Dev foi
+   recolhido. Depois de .bodyDevMode de propósito (a ordem decide a var). */
+.bodyRightCollapsed {
+  --col-right: 0px;
+}
+
+/* Teste manual 27/07 — sidebar (projetos ou porta de entrada) colapsável
+   pra facilitar o foco no terminal. */
+.bodySidebarCollapsed {
+  --col-left: 0px;
 }
 
 .devModeZone2 {

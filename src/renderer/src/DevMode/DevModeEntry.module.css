@@ -10,6 +10,10 @@
   background: var(--bg-panel);
   border-right: var(--hairline);
   overflow-y: auto;
+  /* Âncora de coluna do grid do .body — ver comentário em App.module.css
+     (.center): desmontar um painel não pode deslocar os outros. */
+  grid-column: 1;
+  grid-row: 1;
 }
 
 .header {
