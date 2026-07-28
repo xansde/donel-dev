@@ -21,10 +21,19 @@ via `CLAUDE_CONFIG_DIR`.
 - **Regra dura (inalterada)**: push/PR/merge em `main` e publicação no repo
   público só com instrução literal do Alexandre. "Comita", "deploya",
   "atualiza staging" NÃO autorizam tocar em `main` nem no público.
-- **Os canais instalados ainda NÃO estão isolados no app** — os instaladores
-  compartilham `appId`, `productName`, `app.setName('donel-dev')` e portanto o
-  mesmo `userData`. O isolamento é o item **B10** do `specs/backlog.md`; até ele
-  ser implementado, a distinção entre canais instalados é só pasta e atalho.
+- **Canais instalados coexistindo (decisão de 2026-07-28)**: `npm run
+  dist:alfa` / `dist:beta` / `dist` empacotam com identidade própria de
+  INSTALADOR (`appId`/`productName`/atalho "Donel Dev Alfa"/"Donel Dev
+  Beta"/"Donel Dev"), então os três instalam lado a lado sem se sobrescrever.
+  Buildar cada um do checkout do seu canal (alfa←`staging`, beta←`main`,
+  stable←público). O `userData` segue COMPARTILHADO de propósito
+  (`app.setName('donel-dev')` é igual nos três — pedido dele: mesmos dados,
+  escolhe qual versão abrir). Riscos aceitos e conhecidos: (1) canal antigo
+  aberto pode sanitizar/derrubar chave de config que só o canal novo conhece
+  (item de produto "sanitize com passthrough"); (2) `setAppUserModelId` é um
+  só — notificações e agrupamento de taskbar tratam os três como o mesmo app.
+  O isolamento COMPLETO (userData por canal) continua sendo o **B10** do
+  `specs/backlog.md`, agora opcional.
 
 ## Repo público (canal stable) — aberto em 2026-07-27
 
