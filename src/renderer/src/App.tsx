@@ -21,14 +21,7 @@ import {
   parseModelEffortFromArgs,
 } from '../../shared/commandBuilder';
 import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
-import {
-  buildEffortInjection,
-  buildModelInjection,
-  canInjectLiveCommand,
-  hasLiveInjectionConfirmation,
-} from '../../shared/liveSessionInjection';
 import { sortProjects } from '../../shared';
-import { computePossiblyBlockedOnPrompt } from '../../shared/possiblyBlockedOnPrompt';
 // T710 (007/CA-11 2º momento) — o sinal de "a retomada falhou" é o exit code do
 // PTY (medido em specs/008-fechar-pendencias/medicao-t710.md), não texto de CLI.
 import { resumedSessionIdFromArgs, shouldForgetOnResumeFailure } from '../../shared/resumeFailure';
@@ -77,7 +70,6 @@ import { PreviousSessions } from './PreviousSessions';
 import { ProfileSwitcher } from './ProfileSwitcher';
 import { ProjectSidebar } from './ProjectSidebar';
 import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from './ProjectSidebar';
-import { SessionDetails } from './SessionDetails';
 import { TerminalPane } from './TerminalPane';
 import type { TerminalPaneHandle } from './TerminalPane';
 
@@ -163,18 +155,6 @@ interface LastLaunch {
 // alcançável só por fechamento manual e passa a ser também o estado INICIAL.
 const INITIAL_TABS: TabState[] = [];
 
-// T013 (correção herdada) — timeout total de espera pela confirmação real do
-// CLI depois de uma injeção de `/model`/`/effort` (rede de segurança — a
-// checagem em si é orientada a evento, não poll; ver `watchLiveInjection`
-// dentro do componente).
-const LIVE_INJECTION_TIMEOUT_MS = 20_000;
-
-// FIX (feedback E2E rodada 5) — limiar do diagnóstico "sem nenhum evento de
-// hook ainda" no hint de SessionDetails (ver `possiblyBlockedOnPrompt` mais
-// abaixo). Mesma ordem de grandeza de `LIVE_INJECTION_TIMEOUT_MS` acima, não
-// reaproveitado direto de propósito: são timeouts de coisas diferentes
-// (confirmação de injeção já em voo vs. "a sessão nunca teve nenhum turno").
-const POSSIBLY_BLOCKED_THRESHOLD_MS = 20_000;
 
 // 003-modo-dev/T312 — teto de espera pelo sinal de "pronto para receber
 // input" antes de pré-digitar (plan.md, tabela de riscos: "se não voltar a
@@ -275,37 +255,6 @@ export function App(): React.JSX.Element {
   // REPL — TerminalPane.tsx). Limpo em `closeTabImmediately` (mesmo padrão
   // de `semaphoreStates`/`aliveTabs`).
   const aliveSinceRef = useRef<Record<string, number>>({});
-  // FIX (feedback E2E rodada 5) — nenhum estado muda sozinho com o passar
-  // do tempo; sem um tick periódico o diagnóstico acima ficaria "atrasado"
-  // até a próxima ação do usuário forçar um re-render. 5s é granularidade
-  // suficiente pro limiar de ~20s do diagnóstico (não precisa de setInterval
-  // mais fino que isso pra um hint textual).
-  //
-  // FIX (auditoria rodada 5, achado baixa "tick incondicional") — antes
-  // rodava pra sempre, incondicional, mesmo com zero abas abertas ou com
-  // TODAS as abas já tendo recebido evento de semáforo (quando o
-  // diagnóstico nunca mais pode mudar de valor) — trabalho periódico
-  // permanente no renderer, que o NFR de RAM (já acima do budget de 400MB,
-  // decisão pendente em feedback-e2e.md) não pode pagar de graça. Agora só
-  // agenda o `setInterval` enquanto existir ao menos uma aba viva cujo
-  // semáforo ainda não chegou (`semaphoreStates[id] === undefined`) — o
-  // único estado em que o diagnóstico pode efetivamente mudar com o passar
-  // do tempo; some sozinho assim que a última pendência resolve (evento de
-  // semáforo chega) ou a aba fecha.
-  //
-  // FIX (auditoria rodada 5, achado baixa "getRenderedLines fora do
-  // render") — `diagnosticTick` (antes descartado, `[, forceDiagnosticTick]`)
-  // agora também entra como dependência do efeito de `possiblyBlockedOnPrompt`
-  // mais abaixo: é o MESMO tick condicional (nunca um segundo `setInterval`
-  // novo) que faz esse diagnóstico reavaliar o limiar de tempo mesmo sem
-  // nenhum chunk novo de PTY chegando (buffer parado mostrando só o diálogo).
-  const [diagnosticTick, forceDiagnosticTick] = useState(0);
-  useEffect(() => {
-    const hasPendingDiagnostic = tabs.some((tab) => (aliveTabs[tab.id] ?? false) && semaphoreStates[tab.id] === undefined);
-    if (!hasPendingDiagnostic) return undefined;
-    const intervalId = setInterval(() => forceDiagnosticTick((tick) => tick + 1), 5_000);
-    return () => clearInterval(intervalId);
-  }, [tabs, aliveTabs, semaphoreStates]);
   // FIX (feedback E2E rodada 5) — perfil de NASCIMENTO de cada aba claude
   // (chave = tab.id), alimentado por `TerminalPane.onProfileResolved` uma
   // única vez por sessão (`PtyCreateResult.profile`, main/index.ts). Nunca
@@ -330,13 +279,6 @@ export function App(): React.JSX.Element {
   // ref callback comum, não state (não precisa re-render quando muda; o
   // próprio React já nula a entrada no unmount da aba).
   const terminalRefs = useRef<Record<string, TerminalPaneHandle | null>>({});
-  // T013 (correção herdada) — troca de modelo/esforço por aba (chave =
-  // tab.id) já ESCRITA no stdin mas ainda sem confirmação real do CLI no
-  // terminal renderizado; `undefined` = nenhuma injeção em voo nesta aba.
-  // Enquanto pendente, a toolbar (SessionDetails) fica desabilitada e mostra
-  // um hint distinto — `sessionModelEffort` só muda quando `watchLiveInjection`
-  // (abaixo) vir a confirmação de verdade. Ver shared/liveSessionInjection.ts.
-  const [pendingInjection, setPendingInjection] = useState<Record<string, 'model' | 'effort' | undefined>>({});
   // T610 (006) — tokens de contexto do último turn, chaveados por
   // **`sessionId`** (não `tab.id`): o watcher do main cobre TODA aba `claude`
   // viva, não existe "aba observada", e a mesma sessão retomada pode aparecer em
@@ -345,9 +287,6 @@ export function App(): React.JSX.Element {
   // logo abaixo); `undefined`/`null` = sem leitura ainda → a toolbar mostra `—`
   // (CA-4), nunca `0%`.
   const [contextTokens, setContextTokens] = useState<Record<string, number | null>>({});
-  // Função de cleanup (unsubscribe de `onRenderedUpdate` + clearTimeout) por
-  // aba com injeção em voo — ver `watchLiveInjection`.
-  const pendingInjectionWatchersRef = useRef<Record<string, (() => void) | undefined>>({});
 
   // T013 — PARTE PRINCIPAL (FR-004, CA-2): projeto cujo painel "Sessões
   // anteriores" está aberto (null = painel fechado); dispara o fetch via
@@ -533,14 +472,6 @@ export function App(): React.JSX.Element {
     delete aliveSinceRef.current[tabId]; // FIX (feedback E2E rodada 5) — mesmo padrão de limpeza dos maps acima.
     setSessionProfiles((prev) => omitKey(prev, tabId)); // FIX (feedback E2E rodada 5) — idem.
     setSessionModelEffort((prev) => omitKey(prev, tabId));
-    // T013 — uma injeção pendente cuja confirmação ainda não chegou não pode
-    // continuar rodando pra uma aba que acabou de fechar (nem escreveria
-    // estado errado — `setPendingInjection`/`setSessionModelEffort` seriam
-    // no-ops sem a chave —, mas o listener/timeout ficaria vivo à toa até o
-    // timeout; melhor limpar já).
-    pendingInjectionWatchersRef.current[tabId]?.();
-    delete pendingInjectionWatchersRef.current[tabId];
-    setPendingInjection((prev) => omitKey(prev, tabId));
     delete terminalRefs.current[tabId];
     // 003-modo-dev/T312 — nenhum watcher de prontidão sobrevive à aba que ele
     // vigiava (senão tentaria escrever num PTY que já não existe).
@@ -1058,116 +989,6 @@ export function App(): React.JSX.Element {
     return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // T013 (correção herdada) — assina `onRenderedUpdate` (EVENTO, disparado
-  // no callback de conclusão de cada `term.write`, ver TerminalPane.tsx) em
-  // vez de `setInterval`: a confirmação real do CLI ("Set model to Sonnet
-  // 5") dura só UM frame na tela antes do próximo redraw sobrescrever por
-  // cima (achado do smoke real, ver shared/liveSessionInjection.ts) — um
-  // poll periódico quase sempre chega tarde demais pra ver esse frame; só
-  // checar a CADA chunk processado garante nunca perder. Sem baseline (ver
-  // mesmo comentário — este CLI redesenha um viewport de tamanho FIXO, não
-  // um log sequencial, então "linhas novas desde X" não é um conceito válido
-  // aqui): checa o snapshot ATUAL inteiro a cada evento. `LIVE_INJECTION_
-  // TIMEOUT_MS` continua como rede de segurança (`setTimeout`, não mais
-  // `setInterval`): se a confirmação nunca chegar (usuário nunca responde o
-  // diálogo, ou o CLI falha), desiste de esperar. Só então
-  // `sessionModelEffort` é atualizado — nunca antes, nunca otimisticamente.
-  const watchLiveInjection = useCallback(
-    (tabId: string, kind: 'model' | 'effort', value: ModelAlias | EffortLevel): void => {
-      pendingInjectionWatchersRef.current[tabId]?.(); // cancela qualquer watcher anterior desta aba
-
-      let settled = false;
-      const settle = (confirmed: boolean): void => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        delete pendingInjectionWatchersRef.current[tabId];
-        setPendingInjection((prev) => omitKey(prev, tabId));
-
-        if (!confirmed) return; // timeout sem confirmação — desiste, valor antigo (correto) permanece
-
-        setSessionModelEffort((prev) => {
-          const base = prev[tabId] ?? { model: DEFAULT_MODEL_ALIAS, effort: DEFAULT_EFFORT_LEVEL };
-          return {
-            ...prev,
-            [tabId]: kind === 'model' ? { ...base, model: value as ModelAlias } : { ...base, effort: value as EffortLevel },
-          };
-        });
-      };
-
-      const checkNow = (): void => {
-        const current = terminalRefs.current[tabId]?.getRenderedLines() ?? [];
-        if (hasLiveInjectionConfirmation(current, kind)) settle(true);
-      };
-
-      const unsubscribe = terminalRefs.current[tabId]?.onRenderedUpdate(checkNow) ?? ((): void => {});
-      const timeoutId = setTimeout(() => settle(false), LIVE_INJECTION_TIMEOUT_MS);
-      const cleanup = (): void => {
-        unsubscribe();
-        clearTimeout(timeoutId);
-      };
-
-      pendingInjectionWatchersRef.current[tabId] = cleanup;
-      checkNow(); // defesa em profundidade: cobre a confirmação já ter acontecido antes desta chamada
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
-
-  // T011 — FR-011: injeta `/model <alias>\r` no stdin da aba `tabId` só com
-  // o prompt ocioso. `canInjectLiveCommand` já é o mesmo gate que desabilita
-  // o SegmentedControl da toolbar (SessionDetails); reconferido aqui (defesa
-  // em profundidade contra a corrida rara clique-vs-mudança-de-estado — o
-  // clique nasce de um render que pode já estar um tick atrás do semáforo).
-  // Clique na opção já ativa não injeta nada (nenhuma mudança de verdade a
-  // aplicar); uma injeção já em voo na mesma aba também não injeta uma 2ª
-  // por cima (T013 — `pendingInjection`).
-  //
-  // T013 (correção herdada) — NÃO grava `sessionModelEffort` aqui mais: só
-  // marca a troca como pendente e delega a confirmação de verdade pro
-  // watcher orientado a evento (`watchLiveInjection`) — ver comentário de
-  // topo dessas funções e shared/liveSessionInjection.ts pro porquê (o CLI
-  // pode abrir um diálogo interativo de confirmação que o usuário pode
-  // recusar).
-  const handleSelectModel = (tabId: string, model: ModelAlias): void => {
-    if (sessionModelEffort[tabId]?.model === model) return;
-    if (pendingInjection[tabId]) return;
-    if (!canInjectLiveCommand(semaphoreStates[tabId]?.state, aliveTabs[tabId] ?? false)) return;
-    const injected = terminalRefs.current[tabId]?.injectCommand(buildModelInjection(model)) ?? false;
-    if (!injected) return;
-    setPendingInjection((prev) => ({ ...prev, [tabId]: 'model' }));
-    watchLiveInjection(tabId, 'model', model);
-  };
-
-  // T011/T013 — idem `handleSelectModel`, pro campo Esforço (`/effort <level>\r`).
-  const handleSelectEffort = (tabId: string, effort: EffortLevel): void => {
-    if (sessionModelEffort[tabId]?.effort === effort) return;
-    if (pendingInjection[tabId]) return;
-    if (!canInjectLiveCommand(semaphoreStates[tabId]?.state, aliveTabs[tabId] ?? false)) return;
-    const injected = terminalRefs.current[tabId]?.injectCommand(buildEffortInjection(effort)) ?? false;
-    if (!injected) return;
-    setPendingInjection((prev) => ({ ...prev, [tabId]: 'effort' }));
-    watchLiveInjection(tabId, 'effort', effort);
-  };
-
-  // T011 — degradação do FR-011 quando não há processo vivo pra injetar
-  // (sessão 'done'/'error'/ainda conectando): fecha a aba encerrada e abre
-  // uma sessão claude NOVA no mesmo cwd/nome, com `--model`/`--effort` já no
-  // argv de spawn (CommandBuilder, T006) — mesmo caminho do Launcher, só que
-  // disparado pela toolbar em vez do painel. Perde o histórico da conversa
-  // (não tem `-r` aqui — resume real é T012/T013); o próprio texto do
-  // FR-011 já prevê essa perda como o preço aceito da degradação (a garantia
-  // de "sem perder contexto" da DoD é do caminho de injeção ao vivo, não
-  // deste fallback).
-  const handleRestartWithConfig = (tabId: string): void => {
-    const tab = tabs.find((candidate) => candidate.id === tabId);
-    if (!tab) return;
-    const pending = sessionModelEffort[tabId] ?? { model: DEFAULT_MODEL_ALIAS, effort: DEFAULT_EFFORT_LEVEL };
-    const args = buildClaudeArgs({ model: pending.model, effort: pending.effort, sessionName: tab.name || undefined });
-    closeTabImmediately(tabId);
-    addTab({ name: tab.name, cwd: tab.cwd, projectName: tab.projectName, pinned: tab.pinned, launchArgs: args, sessionType: 'claude' });
-  };
 
   // =========================================================================
   // 003-modo-dev (Batch B) — Zonas 1/2/3
@@ -1776,53 +1597,6 @@ export function App(): React.JSX.Element {
   // T011 — aba em foco, pra decidir se a toolbar de Modelo/Esforço aparece (só sessões 'claude').
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
 
-  // FIX (feedback E2E rodada 5) — diagnóstico pro hint de SessionDetails
-  // (statusHint): `true` só quando a aba em foco está viva, NENHUM evento de
-  // hook chegou ainda (`semaphoreStates[id]` continua undefined — ver
-  // comentário de `sidebarSessions` acima sobre o estado inicial otimista),
-  // já se passaram ~20s desde que ficou viva E (FIX auditoria rodada 5,
-  // achado media "sinal invertido") o diálogo de confiança de pasta está DE
-  // FATO visível no buffer renderizado da aba (`isTrustDialogVisible`) — sem
-  // essa última condição, o hint disparava pra QUALQUER aba claude ociosa por
-  // 20s sem nenhum prompt ainda digitado (o caso mais comum que existe, já
-  // que `hooks-settings.ts` não cobre `SessionStart`), virando ruído
-  // constante em vez de sinal real de bloqueio.
-  // `POSSIBLY_BLOCKED_THRESHOLD_MS` deliberadamente mais folgado que
-  // qualquer round-trip normal de boot — só existe pra separar "ainda
-  // conectando" de "provavelmente esperando resposta no terminal".
-  //
-  // FIX (auditoria rodada 5, achado baixa "getRenderedLines fora do
-  // render") — antes `activeRenderedLines`/`possiblyBlockedOnPrompt` eram
-  // calculados DIRETO no corpo de render (chamando `getRenderedLines()`,
-  // uma leitura imperativa do buffer mutável do xterm, a cada passada de
-  // render — viola pureza de render do React; em StrictMode o render duplo
-  // podia ler dois snapshots diferentes do mesmo buffer). Agora é estado
-  // (`useState`), recalculado só dentro de um efeito: reage a mudanças de
-  // `activeTab`/`aliveTabs`/`semaphoreStates` OU ao `diagnosticTick`
-  // condicional já existente acima (nunca um `setInterval` novo — reaproveita
-  // o mesmo tick, que só roda enquanto houver aba viva com semáforo pendente).
-  const [possiblyBlockedOnPrompt, setPossiblyBlockedOnPrompt] = useState(false);
-  useEffect(() => {
-    const alive = !!activeTab && (aliveTabs[activeTab.id] ?? false);
-    const semaphorePending = !!activeTab && semaphoreStates[activeTab.id] === undefined;
-    const aliveSince = activeTab ? aliveSinceRef.current[activeTab.id] : undefined;
-    // FIX (auditoria rodada 6, achado media "sem testes de unidade pra
-    // possiblyBlockedOnPrompt") — decisão pura extraída pra
-    // `shared/possiblyBlockedOnPrompt.ts` (testada em
-    // `tests/possiblyBlockedOnPrompt.test.ts`); este efeito só junta o
-    // estado do React (aba/vivo/semáforo/buffer renderizado) e repassa.
-    setPossiblyBlockedOnPrompt(
-      computePossiblyBlockedOnPrompt({
-        alive,
-        semaphorePending,
-        aliveSince,
-        now: Date.now(),
-        thresholdMs: POSSIBLY_BLOCKED_THRESHOLD_MS,
-        getRenderedLines: () => (activeTab ? (terminalRefs.current[activeTab.id]?.getRenderedLines() ?? []) : []),
-      }),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, aliveTabs, semaphoreStates, diagnosticTick]);
 
   // FIX (T015, FR-009 "statusbar completa") — era hardcoded "fable/high"
   // (sempre o mesmo texto, ignorando a aba real): agora reflete o
@@ -1830,9 +1604,18 @@ export function App(): React.JSX.Element {
   // mantido pelo T011/T013), e some quando a aba ativa não é uma sessão
   // claude (terminal livre não tem os dois campos — `StatusBar` omite o
   // separador quando `modelEffort` é `undefined`).
+  // FIX (teste manual 27/07) — com a toolbar SessionDetails removida, o rodapé
+  // é a única leitura de modelo/esforço; ganha também o contexto REAL do último
+  // turno (T610, transcript-watcher — nunca estimado, some sem leitura).
+  const activeContextTokens = activeTab?.claudeSessionId ? (contextTokens[activeTab.claudeSessionId] ?? null) : null;
   const activeModelEffort =
     activeTab && activeTab.sessionType === 'claude'
-      ? `${sessionModelEffort[activeTab.id]?.model ?? DEFAULT_MODEL_ALIAS}/${sessionModelEffort[activeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}`
+      ? [
+          `${sessionModelEffort[activeTab.id]?.model ?? DEFAULT_MODEL_ALIAS}/${sessionModelEffort[activeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}`,
+          activeContextTokens !== null ? `ctx ${Math.round(activeContextTokens / 1000)}k` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')
       : undefined;
 
   // FIX (feedback E2E rodada 5) — "statusbar deve mostrar a conta com que a
@@ -1894,14 +1677,14 @@ export function App(): React.JSX.Element {
         </button>
         <SplitButton
           label="＋ Nova sessão"
-          onClick={handleQuickNewClaudeSession}
+          // FIX (teste manual 27/07) — o corpo do botão passa a ABRIR o
+          // Launcher (escolher modelo/esforço/projeto) em vez do quick-launch
+          // cego: pedido do dono ("sempre que eu aperte em Nova sessão
+          // apareça a barra lateral para escolher o modelo e afins"). O
+          // atalho rápido com a última config vira item do dropdown.
+          onClick={() => setLauncherOpen(true)}
           items={[
-            // FIX (feedback E2E rodada 3, painel colapsável) — "Sessão
-            // Claude" passa a ABRIR o painel de configuração (Launcher, §4)
-            // em vez de repetir o quick-launch do corpo (redundante antes:
-            // as duas ações faziam a MESMA coisa). O corpo do botão
-            // continua sendo o atalho rápido (última config usada).
-            { label: 'Sessão Claude', onSelect: () => setLauncherOpen(true) },
+            { label: 'Rápida (última config)', onSelect: handleQuickNewClaudeSession },
             // FIX (feedback E2E rodada 1, "terminal livre confuso") — rótulo
             // explícito no dropdown; "Terminal" sozinho não deixava claro
             // que era um shell livre (sem sessão claude nenhuma).
@@ -1911,7 +1694,7 @@ export function App(): React.JSX.Element {
       </header>
 
       <div
-        className={[styles.body, launcherOpen && !devModeOn ? '' : styles.bodyPanelClosed, devModeOn ? styles.bodyDevMode : '']
+        className={[styles.body, launcherOpen ? '' : styles.bodyPanelClosed, devModeOn ? styles.bodyDevMode : '']
           .filter(Boolean)
           .join(' ')}
       >
@@ -2038,24 +1821,11 @@ export function App(): React.JSX.Element {
               />
             ))}
           </div>
-          {/* T011 (FR-011) — toolbar de Modelo/Esforço da aba ATIVA, só pra sessões claude (terminal livre não tem os dois campos). Ver comentário de topo de SessionDetails.tsx sobre por que aqui e não no painel direito. */}
-          {activeTab && activeTab.sessionType === 'claude' ? (
-            <SessionDetails
-              model={sessionModelEffort[activeTab.id]?.model ?? DEFAULT_MODEL_ALIAS}
-              effort={sessionModelEffort[activeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}
-              semaphoreState={semaphoreStates[activeTab.id]?.state}
-              alive={aliveTabs[activeTab.id] ?? false}
-              onSelectModel={(model) => handleSelectModel(activeTab.id, model)}
-              onSelectEffort={(effort) => handleSelectEffort(activeTab.id, effort)}
-              onRestartWithConfig={() => handleRestartWithConfig(activeTab.id)}
-              pendingKind={pendingInjection[activeTab.id]}
-              possiblyBlockedOnPrompt={possiblyBlockedOnPrompt}
-              // T611 (006) — a aba resolve o próprio número pelo `sessionId`
-              // dela; sem `claudeSessionId` (create ainda não resolveu) não há o
-              // que mostrar → `—` (CA-4). Abas `shell` nem chegam aqui.
-              contextTokens={activeTab.claudeSessionId ? contextTokens[activeTab.claudeSessionId] ?? null : null}
-            />
-          ) : null}
+          {/* FIX (teste manual 27/07) — a toolbar de Modelo/Esforço
+              (SessionDetails) foi REMOVIDA dos dois modos a pedido do dono
+              ("não tem sido nem um pouco útil"): modelo/esforço agora se
+              escolhe no Launcher ao criar a sessão, e a leitura do que a
+              sessão usa vive na StatusBar (rodapé). */}
           <div className={styles.terminal}>
             {/* FIX (decisão A, 2026-07-23) — mesmo empty state pros dois
                 caminhos que levam a "zero abas": boot do app (INITIAL_TABS
@@ -2120,8 +1890,10 @@ export function App(): React.JSX.Element {
             Claude" do menu do "＋ Nova sessão", ou fechado ao lançar/Esc);
             fechado, o espaço vai pro `.center` (terminal), ver
             `styles.bodyPanelClosed` acima. */}
-        {/* Zona 3 — o mapa do discovery em foco (CA-7..CA-10). */}
-        {devModeOn && focusedTree ? (
+        {/* Zona 3 — o mapa do discovery em foco (CA-7..CA-10). Quando o
+            Launcher está aberto no Modo Dev, ele ocupa esta mesma coluna
+            (o mapa volta ao fechar — Esc ou lançar). */}
+        {devModeOn && focusedTree && !launcherOpen ? (
           <DiscoveryMap
             tree={focusedTree}
             phaseDefaults={phaseDefaults}
@@ -2134,7 +1906,7 @@ export function App(): React.JSX.Element {
           />
         ) : null}
 
-        {launcherOpen && !devModeOn ? (
+        {launcherOpen ? (
           <aside className={styles.rightPanel} aria-label="Lançar sessão">
             <Launcher
               projects={projects}
