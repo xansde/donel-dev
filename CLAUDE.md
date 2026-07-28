@@ -5,22 +5,28 @@ CLI, com sidebar de projetos, abas de terminal, launcher (modelo/esforço/
 permissões), sessões anteriores (retomar/fork) e perfis de conta compartilhada
 via `CLAUDE_CONFIG_DIR`.
 
-## Repositório e canais (definido em 2026-07-24)
+## Repositório e canais (modelo alfa/beta/stable — redefinido em 2026-07-28)
 
 - **Remoto**: `https://github.com/xansde/donel-dev` (privado, conta pessoal
   `xansde`; `xansde-seazone` é colaborador com permissão de escrita).
-- **Modelo de branch = modelo de canal**:
-  - `main` → canal **stable**, o app que o Alexandre usa para trabalhar.
-  - `staging` → canal **teste**, onde a novidade é instalada e olhada primeiro.
-  - `feature/*` → trabalho em andamento; integra em `staging`.
-- **Regra dura**: push/PR/merge em `main` só com instrução literal do Alexandre.
-  "Comita", "deploya", "atualiza staging" NÃO autorizam tocar em `main`.
-- **Os dois canais ainda NÃO estão isolados no app** — hoje os dois instaladores
+- **Modelo de branch = modelo de canal** (escada de maturidade, do mais cru ao
+  fechado):
+  - `feature/*` → trabalho em andamento; integra em `staging` por PR.
+  - `staging` → canal **alfa**: a novidade cai aqui primeiro e é olhada aqui.
+  - `main` → canal **beta**: sobe quando o Alexandre validou o alfa e confia.
+  - `xansde/donel` (repo público) → canal **stable**: só release fechado e
+    versionado — ver a seção abaixo.
+- Versão anterior deste modelo (24/07, pré-repo público) chamava `main` de
+  stable; o público assumiu esse papel e o `main` privado desceu para beta.
+- **Regra dura (inalterada)**: push/PR/merge em `main` e publicação no repo
+  público só com instrução literal do Alexandre. "Comita", "deploya",
+  "atualiza staging" NÃO autorizam tocar em `main` nem no público.
+- **Os canais instalados ainda NÃO estão isolados no app** — os instaladores
   compartilham `appId`, `productName`, `app.setName('donel-dev')` e portanto o
   mesmo `userData`. O isolamento é o item **B10** do `specs/backlog.md`; até ele
-  ser implementado, "stable × teste" é só pasta e nome de atalho diferentes.
+  ser implementado, a distinção entre canais instalados é só pasta e atalho.
 
-## Repo público (canal estável) — aberto em 2026-07-27
+## Repo público (canal stable) — aberto em 2026-07-27
 
 - **Remoto**: `https://github.com/xansde/donel` (**público**, MIT). Cópia de
   trabalho local: `../donel-dev-publico`.
