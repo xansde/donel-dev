@@ -63,6 +63,12 @@
 .body {
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr var(--right-panel-width);
+  /* FIX (teste manual 27/07, Modo Dev): sem conter a row, o conteúdo do
+     .center (zona 2 + terminal com rows fixas do xterm) cresce além do 1fr
+     do .shell e empurra a caixa de prompt do CLI pra baixo da dobra. A row
+     contida força o .terminal (flex:1 + min-height:0) a encolher e o fit do
+     xterm a recalcular as rows. */
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
 }
 
