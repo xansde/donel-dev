@@ -1,6 +1,6 @@
 {
   "name": "donel-dev",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Donel Dev — IDE própria do Alexandre para operar sessões do Claude Code em paralelo.",
   "author": "Seazone",
   "private": true,
