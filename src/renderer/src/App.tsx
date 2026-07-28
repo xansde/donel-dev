@@ -1,5 +1,5 @@
 import { ArmedPrompt, Button, Modal, SplitButton, StatusBar, TerminalTab, Toast, Toggle } from '@donel-dev/design-system';
-import { Settings } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppConfigDto,
@@ -204,6 +204,11 @@ export function App(): React.JSX.Element {
   // `handleQuickNewClaudeSession`) sem depender do painel — isso não muda
   // (CA-1/smoke `profiles.spec.ts` já cobrem esse caminho).
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // Teste manual 27/07 — colapso das laterais pra focar no terminal: sidebar
+  // (projetos/porta de entrada) e, no Modo Dev, o mapa da direita. Estado de
+  // UI puro (não persiste no config de propósito).
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
   // T015 — ConfigStore (FR-007): roots/notificação/defaults do launcher.
   // `null` até `window.donel.config.get()` resolver no boot (mesmo padrão de
   // `projects`/`loadingProjects` acima) — os consumidores abaixo caem em
@@ -1669,6 +1674,34 @@ export function App(): React.JSX.Element {
         <button
           type="button"
           className={styles.preferencesButton}
+          onClick={() => setSidebarCollapsed((prev) => !prev)}
+          aria-label={sidebarCollapsed ? 'Mostrar barra lateral' : 'Recolher barra lateral'}
+          title={sidebarCollapsed ? 'Mostrar barra lateral' : 'Recolher barra lateral'}
+        >
+          {sidebarCollapsed ? (
+            <PanelLeftOpen size={16} strokeWidth={1.5} aria-hidden="true" />
+          ) : (
+            <PanelLeftClose size={16} strokeWidth={1.5} aria-hidden="true" />
+          )}
+        </button>
+        {devModeOn ? (
+          <button
+            type="button"
+            className={styles.preferencesButton}
+            onClick={() => setRightCollapsed((prev) => !prev)}
+            aria-label={rightCollapsed ? 'Mostrar mapa do discovery' : 'Recolher mapa do discovery'}
+            title={rightCollapsed ? 'Mostrar mapa do discovery' : 'Recolher mapa do discovery'}
+          >
+            {rightCollapsed ? (
+              <PanelRightOpen size={16} strokeWidth={1.5} aria-hidden="true" />
+            ) : (
+              <PanelRightClose size={16} strokeWidth={1.5} aria-hidden="true" />
+            )}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className={styles.preferencesButton}
           onClick={() => setPreferencesOpen(true)}
           aria-label="Preferências"
           title="Preferências"
@@ -1694,14 +1727,21 @@ export function App(): React.JSX.Element {
       </header>
 
       <div
-        className={[styles.body, launcherOpen ? '' : styles.bodyPanelClosed, devModeOn ? styles.bodyDevMode : '']
+        className={[
+          styles.body,
+          devModeOn ? styles.bodyDevMode : '',
+          sidebarCollapsed ? styles.bodySidebarCollapsed : '',
+          // Direita zerada: no clássico sem Launcher; no Modo Dev quando o
+          // mapa foi recolhido e o Launcher não está aberto por cima.
+          (!devModeOn && !launcherOpen) || (devModeOn && rightCollapsed && !launcherOpen) ? styles.bodyRightCollapsed : '',
+        ]
           .filter(Boolean)
           .join(' ')}
       >
         {/* CA-20 — a tela de hoje continua MONTADA quando o Modo Dev liga
             (só oculta por CSS): nada de remontar sidebar/abas, nada de PTY
             recriado. Mesmo princípio já usado nas abas de terminal (T007). */}
-        <div className={devModeOn ? styles.zoneHidden : styles.zone} data-testid="today-sidebar">
+        <div className={devModeOn || sidebarCollapsed ? styles.zoneHidden : styles.zone} data-testid="today-sidebar">
         <ProjectSidebar
           projects={projects}
           loadingProjects={loadingProjects}
@@ -1720,7 +1760,7 @@ export function App(): React.JSX.Element {
         </div>
 
         {/* Zona 1 — porta de entrada (CA-1/CA-2), só no Modo Dev. */}
-        {devModeOn ? (
+        {devModeOn && !sidebarCollapsed ? (
           <DevModeEntry
             cards={entryCards}
             discoveries={devModeState?.discoveries ?? {}}
@@ -1893,7 +1933,7 @@ export function App(): React.JSX.Element {
         {/* Zona 3 — o mapa do discovery em foco (CA-7..CA-10). Quando o
             Launcher está aberto no Modo Dev, ele ocupa esta mesma coluna
             (o mapa volta ao fechar — Esc ou lançar). */}
-        {devModeOn && focusedTree && !launcherOpen ? (
+        {devModeOn && focusedTree && !launcherOpen && !rightCollapsed ? (
           <DiscoveryMap
             tree={focusedTree}
             phaseDefaults={phaseDefaults}

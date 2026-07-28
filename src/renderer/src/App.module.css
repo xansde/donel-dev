@@ -11,9 +11,11 @@
 .titlebar {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  height: 44px;
-  padding: 0 var(--space-2);
+  gap: var(--space-1);
+  /* Teste manual 27/07 — linha superior compacta (era 44px) pra devolver
+     altura ao terminal e facilitar o foco. */
+  height: 34px;
+  padding: 0 var(--space-1);
   background: var(--bg-panel);
   border-bottom: var(--hairline);
   -webkit-app-region: drag;
@@ -61,8 +63,13 @@
 }
 
 .body {
+  /* FIX (teste manual 27/07, "compactar as laterais") — as três colunas viram
+     variáveis para os estados de colapso comporem sem explosão de classes:
+     devMode × sidebar colapsada × direita colapsada/Launcher. */
+  --col-left: var(--sidebar-width);
+  --col-right: var(--right-panel-width);
   display: grid;
-  grid-template-columns: var(--sidebar-width) 1fr var(--right-panel-width);
+  grid-template-columns: var(--col-left) 1fr var(--col-right);
   /* FIX (teste manual 27/07, Modo Dev): sem conter a row, o conteúdo do
      .center (zona 2 + terminal com rows fixas do xterm) cresce além do 1fr
      do .shell e empurra a caixa de prompt do CLI pra baixo da dobra. A row
@@ -73,10 +80,16 @@
 }
 
 /* FIX (feedback E2E rodada 3, "painel lateral 'Lançar sessão' fixo rouba
-   espaço") — painel do Launcher fechado por default (App.tsx `launcherOpen`):
-   sem a 3ª coluna, o `.center` (terminal, 1fr) ocupa o espaço sozinho. */
-.bodyPanelClosed {
-  grid-template-columns: var(--sidebar-width) 1fr;
+   espaço") — coluna direita zerada quando não há Launcher aberto (clássico)
+   ou quando o mapa do Modo Dev foi colapsado: o `.center` ocupa o espaço. */
+.bodyRightCollapsed {
+  --col-right: 0px;
+}
+
+/* Teste manual 27/07 — sidebar (projetos ou porta de entrada) colapsável
+   pra facilitar o foco no terminal. */
+.bodySidebarCollapsed {
+  --col-left: 0px;
 }
 
 .center {
@@ -180,7 +193,8 @@
 
 /* Zona 1 (280px) · terminal (1fr) · Zona 3 (320px) */
 .bodyDevMode {
-  grid-template-columns: 280px 1fr 320px;
+  --col-left: 280px;
+  --col-right: 320px;
 }
 
 .devModeZone2 {
