@@ -85,10 +85,20 @@ describe('annotateTree — overlay dos fatos do board (T325/CA-12)', () => {
   });
 });
 
-describe('detectPhaseDivergence — detecção disco×board (T326/CA-13)', () => {
+describe('detectPhaseDivergence — detecção disco×board (T326/CA-13, ajustada ao modelo v3 no CA-19)', () => {
   it('fase done + card ainda na coluna anterior à esperada → marca divergência com os dois fatos', () => {
-    const divergence = detectPhaseDivergence('implementar', 'done', 'implementar');
-    expect(divergence).toEqual({ diskStatus: 'done', boardColumn: 'implementar' });
+    const divergence = detectPhaseDivergence('plano', 'done', 'plano');
+    expect(divergence).toEqual({ diskStatus: 'done', boardColumn: 'plano' });
+  });
+
+  it('CA-19 — implementar done + card ainda na coluna implementar → NÃO marca (D20 do contrato: Implementar não move o card na v3)', () => {
+    expect(detectPhaseDivergence('implementar', 'done', 'implementar')).toBeNull();
+  });
+
+  it('CA-19 — implementar done + card em QUALQUER coluna → nunca marca (implementar não tem próxima coluna esperada na v3)', () => {
+    expect(detectPhaseDivergence('implementar', 'done', 'plano')).toBeNull();
+    expect(detectPhaseDivergence('implementar', 'done', 'validar')).toBeNull();
+    expect(detectPhaseDivergence('implementar', 'done', 'backlog')).toBeNull();
   });
 
   it('fase validar done + card ainda na coluna de antes de Validar → NÃO marca (caso esperado pela Esteira)', () => {
@@ -116,12 +126,19 @@ describe('detectPhaseDivergence — detecção disco×board (T326/CA-13)', () =>
   });
 });
 
-describe('annotateTree — wiring da divergência por fase (T326)', () => {
-  it('fase implementar done + coluna do board ainda em implementar → PhaseNode.divergence com os dois fatos', () => {
+describe('annotateTree — wiring da divergência por fase (T326, ajustada ao modelo v3 no CA-19)', () => {
+  it('CA-19 — fase implementar done + coluna do board ainda em implementar → SEM divergência (a v3 tornou isso normal: o card fica em Implementar até o PR mergear, D20)', () => {
     const t = tree([planCard('card-1', { implementar: 'done' })]);
     const annotated = annotateTree(t, { 'card-1': boardFacts({ column: 'implementar' }) });
 
-    expect(annotated.planCards[0].phases.implementar.divergence).toEqual({ diskStatus: 'done', boardColumn: 'implementar' });
+    expect(annotated.planCards[0].phases.implementar.divergence).toBeNull();
+  });
+
+  it('fase plano done + coluna do board ainda em plano → PhaseNode.divergence com os dois fatos (Plano continua movendo o card, D20)', () => {
+    const t = tree([planCard('card-1', { plano: 'done' })]);
+    const annotated = annotateTree(t, { 'card-1': boardFacts({ column: 'plano' }) });
+
+    expect(annotated.planCards[0].phases.plano.divergence).toEqual({ diskStatus: 'done', boardColumn: 'plano' });
   });
 
   it('fase validar done + coluna ainda em implementar → sem divergência (caso esperado, CA-13)', () => {

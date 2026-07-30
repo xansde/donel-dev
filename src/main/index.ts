@@ -6,6 +6,8 @@ import { basename, join } from 'node:path';
 import type {
   AppConfigDto,
   ArchivePhaseSessionIpcInput,
+  CopyTranscriptForResumeIpcInput,
+  CopyTranscriptForResumeResult,
   DiscoveryTree,
   GhAvailabilityDto,
   GithubReadRequest,
@@ -41,6 +43,7 @@ import {
   isValidArchivePhaseSessionIpcInput,
   isValidCardId,
   isValidCardIdList,
+  isValidCopyTranscriptForResumeIpcInput,
   isValidGithubReadRequest,
   isValidOpenDiscoveryIpcInput,
   isValidSaveProjectBindingIpcInput,
@@ -55,7 +58,9 @@ import {
   SESSION_CHANNELS,
   TAB_CHANNELS,
   TRANSCRIPT_CHANNELS,
+  TRANSCRIPT_COPY_CHANNELS,
 } from '../shared';
+import { copyTranscriptForResume, createSystemTranscriptCopyIoDeps } from './transcript-copy';
 import { createSystemResolveDeps, resolveClaudeExecutable } from './claude-executable';
 import {
   clearSessionName,
@@ -909,6 +914,26 @@ function registerProjectBindingIpcHandlers(): void {
 }
 
 /**
+ * Lote 8 (009-modo-dev-v3), CA-24 — "Reiniciar sessão em foco" na conta
+ * SELECIONADA: copia o `.jsonl` do perfil de origem pro perfil ativo quando
+ * são diferentes (achado 14). Payload inválido é no-op (`same-profile`,
+ * nunca lança) — mesmo espírito defensivo do resto dos handlers deste
+ * arquivo. Nenhuma escrita fora do `.jsonl` da própria sessão sendo
+ * reiniciada; nenhuma leitura/escrita de credencial (`.credentials.json`/
+ * `oauthAccount`) — regra dura do projeto, preservada aqui como em
+ * profile-manager.ts.
+ */
+function registerTranscriptCopyIpcHandlers(): void {
+  const transcriptCopyIoDeps = createSystemTranscriptCopyIoDeps();
+
+  ipcMain.handle(TRANSCRIPT_COPY_CHANNELS.copyForResume, (_event, input: unknown): CopyTranscriptForResumeResult => {
+    if (!isValidCopyTranscriptForResumeIpcInput(input)) return { copied: false, reason: 'invalid-payload' };
+    const typed = input as CopyTranscriptForResumeIpcInput;
+    return copyTranscriptForResume(typed, { homedir }, transcriptCopyIoDeps);
+  });
+}
+
+/**
  * CA-3/CA-5 (009-modo-dev-v3, lote 4) — GitHub por `gh` CLI (spec-issue,
  * sub-issues nativas, PR da fase + etiquetas homologado/revertido-ciclo).
  * `github:read` cobre os 3 fatos do CA-3 num canal só, discriminado por
@@ -1080,6 +1105,7 @@ void app.whenReady().then(async () => {
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
   registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)
+  registerTranscriptCopyIpcHandlers(); // CA-24 (009-modo-dev-v3, lote 8)
   createMainWindow();
 
   app.on('activate', () => {

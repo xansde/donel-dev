@@ -1,5 +1,9 @@
 /* Lote 7 (009-modo-dev-v3), CA-7 — painel próprio de 316px, EXATO (o smoke
-   de geometria mede a largura real). */
+   de geometria mede a largura real). Lote 8 (CA-18/CA-20) preenche o
+   conteúdo: garantia, PR, artefatos, recibos — mockup linhas 236-312. O
+   breadcrumb (linhas 176-188) NÃO mora aqui — é forma do header de 44px
+   acima do terminal (App.module.css `.sessionHeader`), revisão do
+   orquestrador no mesmo lote. */
 
 .panel {
   width: 316px;
@@ -15,12 +19,16 @@
   grid-row: 1;
 }
 
+/* === Cabeçalho "Etapa em foco" === */
+
 .header {
   flex: none;
   padding: var(--panel-padding);
+  border-bottom: var(--hairline);
 }
 
-.label {
+.label,
+.sectionLabel {
   display: block;
   margin-bottom: var(--space-1);
   font-size: var(--text-caption-size);
@@ -42,15 +50,168 @@
   color: var(--text-muted);
 }
 
-.placeholder {
-  margin-top: var(--space-1);
+.summaryText {
+  margin: var(--space-1) 0 0;
   font-size: var(--text-caption-size);
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--text-muted);
+}
+
+/* CA-25 — conta da sessão arquivada da etapa. */
+.accountTag {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 6px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  background: var(--bg-app);
+  border: var(--hairline);
+}
+
+.accountTagWarn {
+  color: var(--state-waiting);
+  border-color: color-mix(in srgb, var(--state-waiting) 45%, transparent);
 }
 
 .empty {
   padding: var(--panel-padding);
   font-size: var(--text-caption-size);
   color: var(--text-muted);
+}
+
+/* === Seções (garantia / PR / artefatos / recibos) — mockup linhas 253-311 === */
+
+.section {
+  flex: none;
+  padding: var(--panel-padding);
+  border-bottom: var(--hairline);
+}
+
+.mono {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* Garantia */
+
+.garantiaRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.garantiaTipo {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  white-space: nowrap;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.garantiaStatus {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.garantiaDescricao {
+  margin: 6px 0 0;
+  font-size: var(--text-caption-size);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+/* PR — pares chave/valor (mockup linhas 267-273) */
+
+.kvList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kvRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.kvKey {
+  width: 56px;
+  flex: none;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.kvValue {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+/* Artefatos declarados (mockup linhas 278-288) */
+
+.artifactList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.artifactRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.artifactIcon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.artifactPath {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Recibos de conhecimento (mockup linhas 290-311) */
+
+.receiptList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.receiptRow {
+  padding: 6px 8px;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  font-size: 11px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.receiptEmpty {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  opacity: 0.8;
 }

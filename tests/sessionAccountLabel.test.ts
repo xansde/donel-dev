@@ -6,7 +6,7 @@
 // (CA-4) — "—" continua "—" (nunca "5h —") quando não há leitura.
 import { describe, expect, it } from 'vitest';
 import type { ProfileQuota } from '../src/shared/profiles';
-import { computeSessionAccountLabel } from '../src/shared/sessionAccountLabel';
+import { computeSessionAccountLabel, formatArchivedAccountLabel } from '../src/shared/sessionAccountLabel';
 
 const quotaWithFiveHour = (percentRemaining: number): ProfileQuota => ({
   status: 'ok',
@@ -84,5 +84,21 @@ describe('computeSessionAccountLabel', () => {
   it('aba shell sem perfil também mostra o rótulo neutro', () => {
     const label = computeSessionAccountLabel({ sessionType: 'shell', profile: undefined }, 'FALLBACK_NAO_USADO');
     expect(label).toBe('Terminal (sem conta)');
+  });
+});
+
+// CA-25 (009-modo-dev-v3, lote 8) — extensão pra ENTRADAS ARQUIVADAS (sessão
+// de etapa concluída no mapa; "sessões anteriores" fica de fora — sem
+// mapeamento sessão→perfil persistido pra sessões gerais, ver report do
+// lote). Mesma sessão pode existir em duas contas depois de um "Reiniciar"
+// cross-conta (CA-24): a original congela, a copiada segue — as duas nunca
+// devem aparecer indistinguíveis.
+describe('formatArchivedAccountLabel', () => {
+  it('conta arquivada igual à ativa agora → rótulo com o slug, mismatch false', () => {
+    expect(formatArchivedAccountLabel('tech-2', 'tech-2')).toEqual({ label: 'conta: tech-2', mismatch: false });
+  });
+
+  it('conta arquivada diferente da ativa agora → mismatch true (mesmo rótulo, tom de aviso é decisão da UI)', () => {
+    expect(formatArchivedAccountLabel('tech-1', 'tech-2')).toEqual({ label: 'conta: tech-1', mismatch: true });
   });
 });

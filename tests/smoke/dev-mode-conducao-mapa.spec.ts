@@ -134,11 +134,18 @@ test.beforeAll(async () => {
     manifest(CARD_M1, 'plano', 'success', {
       summary: 'plano ok',
       artifact_paths: ['specs/003/spec.md', 'specs/003/plan.md'],
-      garantia: { tipo: 'roteiro_e2e', roteiro_path: 'specs/003/e2e.md' },
       // Lote 7 (CA-11) — o plano declara 1 fase (unidade de PR); sem isto,
       // `PlanCardNode.fases` fica vazio e Implementação/Validação não nascem
-      // no mapa (CA-14) — a trilha ficaria só em [discovery, plano].
-      fases: [{ fase_num: 1, titulo: 'Implementação única' }],
+      // no mapa (CA-14) — a trilha ficaria só em [discovery, plano]. Lote 8
+      // (CA-20) — a garantia mora DENTRO da fase (contrato §D.3), não solta
+      // em `outputs.garantia`: é essa a fonte que o painel de 316px lê.
+      fases: [
+        {
+          fase_num: 1,
+          titulo: 'Implementação única',
+          garantia: { tipo: 'roteiro_e2e', descricao: 'Cobre o fluxo ponta a ponta', roteiro_path: 'specs/003/e2e.md' },
+        },
+      ],
     }),
   );
   // D3 — worktree/branch no frontmatter do ctx.md da fase implementar.
@@ -330,6 +337,24 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   // sessão daquela etapa — é o que o CA-13 pede literalmente ("clicar numa
   // passada retoma a sessão arquivada").
   await window.locator(`[data-testid="devmode-trilha-step-${CARD_M1}-plano"]`).click();
+
+  // === Lote 8/CA-18/CA-20 — header de 44px (breadcrumb) + painel (artefatos) =
+  // Revisão do orquestrador (mesmo lote): o breadcrumb mora no HEADER de
+  // 44px acima do terminal (mockup linhas 175-196), não no painel de 316px
+  // (que só tem glifo+chip+fase+resumo, mockup linhas 236-250). A fase
+  // `plano` não é fase-indexada (`faseNum: null`): sem seção de garantia
+  // nem de PR (essas são 1:1 com `fase_num`, CA-20) — só os artefatos
+  // declarados no `plano-result.json` (linha ~136).
+  const detailsPanel = window.locator('[data-testid="devmode-details-panel"]');
+  const sessionHeader = window.locator('[data-testid="session-header"]');
+  await expect(sessionHeader).toContainText(CARD_DISCOVERY);
+  await expect(sessionHeader).toContainText(CARD_M1);
+  await expect(detailsPanel.locator('[data-testid="devmode-details-garantia"]')).toHaveCount(0);
+  await expect(detailsPanel.locator('[data-testid="devmode-details-pr"]')).toHaveCount(0);
+  const artifacts = window.locator('[data-testid="devmode-details-artifacts"]');
+  await expect(artifacts).toContainText('specs/003/spec.md');
+  await expect(artifacts).toContainText('specs/003/plan.md');
+
   // CA-9 — retomada pelo `-r <session-id>` arquivado (argv real, hook de teste).
   await expect(window.locator('[data-testid="devmode-last-session"]')).toHaveText('claude -r sess-antiga');
   // CA-22 — a etapa rodou em outra conta: avisa, e retoma assim mesmo (o
@@ -355,6 +380,18 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   // WORKTREE declarada no ctx.md (D3), não no repo.
   await expect(window.locator('[data-testid="devmode-last-session"]')).toHaveText('claude --model haiku --effort low');
   await expect(window.locator('[data-testid="devmode-last-session"]')).toHaveAttribute('data-cwd', worktreeDeclared);
+
+  // === Lote 8/CA-18/CA-20 — header (breadcrumb) + painel (garantia + PR) ===
+  // `implementar-1` É fase-indexada (`faseNum: 1`): garantia (da fase do
+  // PLANO, contrato §D.3) e PR (branch do frontmatter do ctx.md, D3 — sem
+  // `gh`/repo configurado neste smoke, "sem PR ainda" é o degradado correto).
+  await expect(sessionHeader).toContainText('fase 1');
+  const garantia = window.locator('[data-testid="devmode-details-garantia"]');
+  await expect(garantia).toContainText('roteiro_e2e');
+  await expect(garantia).toContainText('specs/003/e2e.md');
+  const prSection = window.locator('[data-testid="devmode-details-pr"]');
+  await expect(prSection).toContainText('sem PR ainda');
+  await expect(prSection).toContainText('feature/szi-901');
 
   const activePane = window.locator('[data-testid="terminal-pane"]:visible');
   await expect(activePane).toHaveCount(1);
@@ -419,10 +456,21 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   write(resultPath('implementar', CARD_M1), manifest(CARD_M1, 'implementar', 'success', { summary: 'ok' }));
   await expect(window.locator('[role="tab"]')).toHaveCount(tabsBefore - 1, { timeout: 30_000 });
 
-  // === T321/CA-23 — encerramento automático ===============================
+  // === T321/CA-23/CA-21 — encerramento automático ==========================
+  // CA-21 (009-modo-dev-v3, lote 8) — o sinal de "card de plano concluído"
+  // deixou de ser `phases.concluir.status === 'done'` (a v3 nunca grava
+  // `concluir-result.json`, contrato §D.7 — era por isso que o auto-close
+  // nunca disparava de verdade na v3, problema 3 da spec). Agora é: track
+  // código, QUALQUER fase declarada com `validar-result.json.outputs.
+  // plano_completo === true` (§D.5 — "todas as fases deste plano estão
+  // homologadas"). M1 já tem `plano-result.json` com uma fase declarada
+  // (linha ~141); M2 ainda não tinha NENHUM — ganha um aqui, senão
+  // `fases: []` faria `allPlanCardsComplete` nunca fechar (CA-14, nunca
+  // fabrica conclusão por ausência).
+  write(resultPath('plano', CARD_M2), manifest(CARD_M2, 'plano', 'success', { fases: [{ fase_num: 1, titulo: 'Implementação única' }] }));
   for (const cardId of [CARD_M1, CARD_M2]) {
-    write(ctxPath('concluir', cardId), `---\ncard_id: ${cardId}\n---\n\n# ctx\n`);
-    write(resultPath('concluir', cardId), manifest(cardId, 'concluir', 'success', { summary: 'done' }));
+    write(ctxPath('validar', cardId), `---\ncard_id: ${cardId}\n---\n\n# ctx\n`);
+    write(resultPath('validar', cardId), manifest(cardId, 'validar', 'success', { fase_num: 1, plano_completo: true }));
   }
   // Força uma releitura do disco pelo mesmo caminho que o usuário usaria.
   await window.locator('[data-testid="devmode-toggle"] input[role="switch"]').uncheck();

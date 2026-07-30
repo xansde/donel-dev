@@ -3,6 +3,8 @@ import type {
   AppConfigDto,
   ArchivePhaseSessionIpcInput,
   BoardFacts,
+  CopyTranscriptForResumeIpcInput,
+  CopyTranscriptForResumeResult,
   DiscoveryTree,
   DonelApi,
   EntryColumnCard,
@@ -43,6 +45,7 @@ import {
   SESSION_CHANNELS,
   TAB_CHANNELS,
   TRANSCRIPT_CHANNELS,
+  TRANSCRIPT_COPY_CHANNELS,
 } from '../shared';
 // T504 (005-terminal-copy-paste) — canal do clipboard-bridge (main), aditivo
 // aos imports acima (não reordena o bloco existente).
@@ -254,6 +257,13 @@ const donelApi: DonelApi = {
     read: (request: GithubReadRequest) => ipcRenderer.invoke(GITHUB_CHANNELS.read, request) as Promise<GithubReadResponse>,
 
     checkAvailability: () => ipcRenderer.invoke(GITHUB_CHANNELS.checkAvailability) as Promise<GhAvailabilityDto>,
+  },
+
+  // CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": copia o
+  // `.jsonl` pro perfil ATIVO quando a sessão rodou em outro (achado 14).
+  transcripts: {
+    copyForResume: (input: CopyTranscriptForResumeIpcInput) =>
+      ipcRenderer.invoke(TRANSCRIPT_COPY_CHANNELS.copyForResume, input) as Promise<CopyTranscriptForResumeResult>,
   },
 };
 

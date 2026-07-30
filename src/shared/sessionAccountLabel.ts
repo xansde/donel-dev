@@ -80,3 +80,26 @@ export function computeSessionAccountLabel(
   const percentText = headroomPercent === null ? '—' : `5h ${headroomPercent}%`;
   return `Sessão: ${displayName} · ${percentText}`;
 }
+
+// ---------------------------------------------------------------------------
+// CA-25 (009-modo-dev-v3, lote 8) — extensão pra ENTRADAS ARQUIVADAS: o mapa
+// mostra a etapa concluída de um card de plano (`ArchivedPhaseSession`,
+// devMode.ts) com o `profileSlug` de quando ela rodou. CA-24 pode produzir
+// duas entradas com o MESMO `sessionId` em contas diferentes (a "Reiniciar"
+// copia o transcript e a original congela) — nunca podem aparecer
+// indistinguíveis. Raw slug, sem reconstrução de nome de exibição: mesma
+// convenção que o toast já usava antes deste lote ("Essa etapa rodou na
+// conta ${profileSlug}.", App.tsx T313) — introduzir uma segunda forma de
+// mostrar conta (nome bonito aqui, slug cru ali) seria inconsistência nova.
+// ---------------------------------------------------------------------------
+
+export interface ArchivedAccountLabel {
+  readonly label: string;
+  /** `true` quando o perfil arquivado é diferente do perfil ATIVO agora — sinal pra UI aplicar um tom de aviso (nunca de erro: rodar numa conta diferente é esperado, não uma falha). */
+  readonly mismatch: boolean;
+}
+
+/** CA-25 — rótulo curto + sinal de divergência pra uma entrada arquivada (etapa do mapa; "sessões anteriores" não tem esse dado hoje, ver report do lote). */
+export function formatArchivedAccountLabel(profileSlug: string, activeProfileSlug: string): ArchivedAccountLabel {
+  return { label: `conta: ${profileSlug}`, mismatch: profileSlug !== activeProfileSlug };
+}
