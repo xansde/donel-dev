@@ -6,6 +6,7 @@
 
 import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
+import type { DonelGithubApi } from './github';
 import type { DonelProfilesApi } from './profiles';
 import type { DonelProjectBindingApi } from './projectBinding';
 import type { DonelProjectsApi } from './projects';
@@ -96,6 +97,12 @@ export {
   readRepoGithub,
 } from './projectBinding';
 export type { DonelProjectBindingApi, ProjectBindingDto, RepoGithubUpdate, SaveProjectBindingIpcInput } from './projectBinding';
+
+// CA-3/CA-5 (009-modo-dev-v3, lote 4) — canal IPC do GitHub reader
+// (src/main/github-reader.ts): spec-issue, sub-issues nativas, PR da fase +
+// etiquetas homologado/revertido-ciclo, por `gh` CLI via spawn. Só leitura.
+export { GITHUB_CHANNELS, isValidGithubReadRequest } from './github';
+export type { DonelGithubApi, GhAvailabilityDto, GithubReadRequest, GithubReadResponse } from './github';
 
 // T307 — `DiscoveryTree` é o retorno de `devMode:readTree`; definido em
 // `../main/discovery-tree.ts` (módulo com fs) mas reexportado aqui como TIPO
@@ -299,4 +306,6 @@ export interface DonelApi {
   tabs: DonelTabsApi;
   /** CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto (board + repo GitHub). */
   projectBinding: DonelProjectBindingApi;
+  /** CA-3/CA-5 (009-modo-dev-v3, lote 4) — leitura do GitHub por `gh` CLI (spec-issue, sub-issues, PR da fase). Só leitura. */
+  github: DonelGithubApi;
 }

@@ -1,0 +1,9 @@
+{
+  "_captured": "gh pr view 3 --repo xansde/donel-dev --json number,url,state,mergedAt,baseRefName,labels (2026-07-30, real, read-only)",
+  "baseRefName": "staging",
+  "labels": [],
+  "mergedAt": "2026-07-28T16:29:11Z",
+  "number": 3,
+  "state": "MERGED",
+  "url": "https://github.com/xansde/donel-dev/pull/3"
+}
