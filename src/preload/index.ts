@@ -6,6 +6,9 @@ import type {
   DiscoveryTree,
   DonelApi,
   EntryColumnCard,
+  GhAvailabilityDto,
+  GithubReadRequest,
+  GithubReadResponse,
   LauncherDefaultsDto,
   NotificationPreference,
   OpenDiscoveryIpcInput,
@@ -31,6 +34,7 @@ import type {
 import {
   CONFIG_CHANNELS,
   DEVMODE_CHANNELS,
+  GITHUB_CHANNELS,
   PROFILE_CHANNELS,
   PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
@@ -242,6 +246,14 @@ const donelApi: DonelApi = {
 
     save: (input: SaveProjectBindingIpcInput) =>
       ipcRenderer.invoke(PROJECT_BINDING_CHANNELS.save, input) as Promise<ProjectBindingDto>,
+  },
+
+  // CA-3/CA-5 (009-modo-dev-v3, lote 4) — GitHub por `gh` CLI (spec-issue,
+  // sub-issues, PR da fase). Nenhum canal escreve no GitHub.
+  github: {
+    read: (request: GithubReadRequest) => ipcRenderer.invoke(GITHUB_CHANNELS.read, request) as Promise<GithubReadResponse>,
+
+    checkAvailability: () => ipcRenderer.invoke(GITHUB_CHANNELS.checkAvailability) as Promise<GhAvailabilityDto>,
   },
 };
 

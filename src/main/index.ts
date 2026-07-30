@@ -7,6 +7,9 @@ import type {
   AppConfigDto,
   ArchivePhaseSessionIpcInput,
   DiscoveryTree,
+  GhAvailabilityDto,
+  GithubReadRequest,
+  GithubReadResponse,
   LauncherDefaultsDto,
   NotificationPreference,
   OpenDiscoveryIpcInput,
@@ -34,9 +37,11 @@ import {
   CONFIG_CHANNELS,
   DEVMODE_CHANNELS,
   focusDiscovery,
+  GITHUB_CHANNELS,
   isValidArchivePhaseSessionIpcInput,
   isValidCardId,
   isValidCardIdList,
+  isValidGithubReadRequest,
   isValidOpenDiscoveryIpcInput,
   isValidSaveProjectBindingIpcInput,
   isValidWatchPhaseIpcInput,
@@ -76,6 +81,13 @@ import {
 } from './esteira-config';
 import { createSystemEsteiraReaderIoDeps } from './esteira-reader';
 import { watchEsteiraResult, type EsteiraResultWatcherHandle } from './esteira-result-watcher';
+import {
+  checkGhAvailability,
+  GithubReadCache,
+  readPhasePullRequestFacts,
+  readSpecIssueFacts,
+  readSubIssueFacts,
+} from './github-reader';
 import {
   listEntryColumnCards,
   readBoardFactsFor,
@@ -178,6 +190,15 @@ const ESTEIRA_STATE_ROOT = process.env.DONEL_ESTEIRA_STATE_ROOT || join(homedir(
  */
 const ESTEIRA_CONFIG_DIR = esteiraConfigDir(process.env, homedir);
 const esteiraConfigIoDeps = createSystemEsteiraConfigIoDeps();
+
+/**
+ * CA-3 (009-modo-dev-v3, lote 4) — cache de TTL curto (20s,
+ * github-reader.ts) compartilhado por todo o processo main: o mapa/painel
+ * (lotes 7/8) podem reler o mesmo card/PR a cada render sem martelar `gh` de
+ * novo. `checkGhAvailability` (mesmo módulo) já é memoizado à parte, por
+ * sessão de app.
+ */
+const githubReadCache = new GithubReadCache();
 
 /**
  * CA-4 — `repo_slug` é a CHAVE do repo-alvo em `repos.json → repos`
@@ -887,6 +908,47 @@ function registerProjectBindingIpcHandlers(): void {
   });
 }
 
+/**
+ * CA-3/CA-5 (009-modo-dev-v3, lote 4) — GitHub por `gh` CLI (spec-issue,
+ * sub-issues nativas, PR da fase + etiquetas homologado/revertido-ciclo).
+ * `github:read` cobre os 3 fatos do CA-3 num canal só, discriminado por
+ * `kind` (mesma allowlist de `github-reader.ts` — só leitura, achado 13).
+ * `github:checkAvailability` é a degradação standalone (CA-6): `gh`
+ * ausente/não autenticado vira `available: false`, nunca erro na tela nem
+ * valor fabricado. Nenhum canal aqui escreve no GitHub.
+ */
+function registerGithubIpcHandlers(): void {
+  ipcMain.handle(GITHUB_CHANNELS.read, async (_event, input: unknown): Promise<GithubReadResponse> => {
+    if (!isValidGithubReadRequest(input)) return { status: 'unavailable' };
+    const request = input as GithubReadRequest;
+
+    switch (request.kind) {
+      case 'spec-issue': {
+        const data = await readSpecIssueFacts({ repo: request.repo, number: request.number }, { cache: githubReadCache });
+        return data ? { status: 'ok', data } : { status: 'unavailable' };
+      }
+      case 'sub-issues': {
+        // `[]` é resultado válido (spec-issue sem sub-issues) — sempre 'ok',
+        // mesma degradação por omissão de `readDiscoveryPlanCards`.
+        const data = await readSubIssueFacts({ repo: request.repo, number: request.number }, { cache: githubReadCache });
+        return { status: 'ok', data };
+      }
+      case 'phase-pull-request': {
+        const data = await readPhasePullRequestFacts(
+          { repo: request.repo, number: request.number, head: request.head },
+          { cache: githubReadCache },
+        );
+        return data ? { status: 'ok', data } : { status: 'unavailable' };
+      }
+    }
+  });
+
+  ipcMain.handle(GITHUB_CHANNELS.checkAvailability, async (): Promise<GhAvailabilityDto> => {
+    const availability = await checkGhAvailability();
+    return availability.available ? { available: true, reason: null } : { available: false, reason: availability.reason };
+  });
+}
+
 /** Sempre inclui o Principal + varre `~/.claude-profiles/*` de novo a cada chamada (mesmo espírito de `listProjectsWithFavorites` — lista pequena, I/O local, sem necessidade de cache próprio aqui). */
 function currentProfileList(): ProfileInfo[] {
   return listProfiles(createSystemProfileListDeps(homedir));
@@ -1017,6 +1079,7 @@ void app.whenReady().then(async () => {
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
+  registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)
   createMainWindow();
 
   app.on('activate', () => {
