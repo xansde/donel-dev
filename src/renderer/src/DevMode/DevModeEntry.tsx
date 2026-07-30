@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import type { EntryColumn, EntryColumnCard, ProjectInfo } from '../../../shared';
 import type { DiscoveryTree } from '../../../main/discovery-tree';
 import type { DevModeDiscoveries } from '../../../shared/devMode';
-import { isCardLinked } from './devModeSelection';
+import { isCardLinked, localOnlyDiscoveryIds } from './devModeSelection';
 import styles from './DevModeEntry.module.css';
 
 // T311 (003-modo-dev, Batch B) — porta de entrada (CA-1/CA-2).
@@ -65,14 +65,23 @@ export function DevModeEntry({
   const [column, setColumn] = useState<ColumnFilter>('todas');
   const [repoPath, setRepoPath] = useState(defaultRepoPath ?? projects[0]?.path ?? '');
 
+  // FIX (E2E 30/07, achado F8) — discoveries abertos no disco/estado próprio
+  // que o board não trouxe (ex.: o `SZI-DEMO` do mock) entram na lista mesmo
+  // sem card de board — sem título/coluna fabricados, ver `localOnlyDiscoveryIds`.
+  const allCards = useMemo(() => {
+    const localOnlyIds = localOnlyDiscoveryIds(cards, discoveries);
+    if (localOnlyIds.length === 0) return cards;
+    return [...cards, ...localOnlyIds.map((cardId) => ({ cardId, column: 'discovery' as const, title: cardId }))];
+  }, [cards, discoveries]);
+
   const visibleCards = useMemo(() => {
     const needle = filter.trim().toLowerCase();
-    return cards.filter((card) => {
+    return allCards.filter((card) => {
       if (column !== 'todas' && card.column !== column) return false;
       if (!needle) return true;
       return `${card.cardId} ${card.title}`.toLowerCase().includes(needle);
     });
-  }, [cards, column, filter]);
+  }, [allCards, column, filter]);
 
   if (!open) return null;
 

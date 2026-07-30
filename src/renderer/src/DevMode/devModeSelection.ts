@@ -56,6 +56,25 @@ export function isCardLinked(cardId: string, discoveries: DevModeDiscoveries, tr
 }
 
 /**
+ * FIX (E2E 30/07, achado F8) — o modal "Abrir ou trocar discovery" só
+ * listava cards vindos do BOARD (`listEntryColumnCards`). Um discovery já
+ * aberto no disco (`~/.claude/esteira-state/<slug>/<card_id>/`) e registrado
+ * no estado próprio do app (`config.json` → `discoveries`, CA-21) — como o
+ * `SZI-DEMO` do mock, ou qualquer card que o board não trouxe nesta consulta
+ * — não aparecia nem MARCADO nem ao menos LISTADO: sem porta de volta depois
+ * de trocar o foco. `cardId` já vinculado a um discovery aberto entra na
+ * lista mesmo sem card de board — nunca fabrica coluna/título de fonte que
+ * não tem (`column: 'discovery'` é o fato mínimo verdadeiro: discovery É
+ * sempre a fase que abre um card; título degrada por omissão pro próprio
+ * `cardId`, igual `planCardTitle` faz no resto do app quando falta
+ * `boardFacts?.title`).
+ */
+export function localOnlyDiscoveryIds(cards: readonly { readonly cardId: string }[], discoveries: DevModeDiscoveries): readonly string[] {
+  const knownIds = new Set(cards.map((card) => card.cardId));
+  return Object.keys(discoveries).filter((cardId) => isOpen(discoveries, cardId) && !knownIds.has(cardId));
+}
+
+/**
  * CA-23 — discoveries que devem encerrar sozinhos: `allPlanCardsComplete` é
  * fato verificável do disco (gate de `esteira-concluir` de cada card de
  * plano), não opinião do app. Já encerrado nunca reaparece aqui (evita IPC

@@ -5,6 +5,7 @@ import type { PhaseStatus } from '../src/shared/phaseState';
 import {
   discoveriesToClose,
   isCardLinked,
+  localOnlyDiscoveryIds,
   resolveEntrySelection,
 } from '../src/renderer/src/DevMode/devModeSelection';
 
@@ -106,6 +107,31 @@ describe('isCardLinked (CA-2 — o card vinculado aparece marcado)', () => {
 
   it('não marca card sem vínculo', () => {
     expect(isCardLinked('SZI-777', DISCOVERIES, TREES)).toBe(false);
+  });
+});
+
+// FIX (E2E 30/07, achado F8) — o modal "Abrir ou trocar discovery" só
+// listava cards do board; um discovery aberto no disco/estado próprio que o
+// board não trouxe (mock local, ou qualquer card fora da consulta) não tinha
+// porta de volta.
+describe('localOnlyDiscoveryIds (F8)', () => {
+  it('discovery aberto que NÃO está nos cards do board entra na lista', () => {
+    expect(localOnlyDiscoveryIds([], DISCOVERIES)).toEqual(['SZI-100']);
+  });
+
+  it('discovery aberto que JÁ está nos cards do board não duplica', () => {
+    expect(localOnlyDiscoveryIds([{ cardId: 'SZI-100' }], DISCOVERIES)).toEqual([]);
+  });
+
+  it('discovery encerrado (CA-23) nunca entra — não é mais "aberto"', () => {
+    const closed: DevModeDiscoveries = {
+      'SZI-100': { cardId: 'SZI-100', repoPath: 'C:/repo', epicId: null, openedAt: 1, closedAt: 2 },
+    };
+    expect(localOnlyDiscoveryIds([], closed)).toEqual([]);
+  });
+
+  it('sem discoveries abertos nenhum → lista vazia', () => {
+    expect(localOnlyDiscoveryIds([{ cardId: 'SZI-999' }], {})).toEqual([]);
   });
 });
 
