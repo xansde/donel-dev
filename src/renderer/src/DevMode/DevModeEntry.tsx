@@ -49,6 +49,18 @@ export interface DevModeEntryProps {
   /** Card já vinculado → foca o discovery; card sem vínculo → cria (com o repo escolhido). Quem decide é `resolveEntrySelection` (puro). */
   onSelectCard: (cardId: string, repoPath: string) => void;
   loading: boolean;
+  /**
+   * FIX (#23, e2e-30-07 onda 2) — "mostrar o nome do board" + "filtrar por
+   * board": projetos com board configurado (`workspaceId`+`teamId` em
+   * `repos.json`) — as opções do seletor. Sem entidade "board" própria no
+   * app (só o par opaco workspaceId/teamId), o NOME DO PROJETO é o rótulo
+   * legível (1:1 com o board configurado nele, `effectiveBoardConfig`).
+   */
+  boardProjects: readonly ProjectInfo[];
+  /** Board cujos `cards` estão sendo mostrados agora (repoPath do projeto). */
+  activeBoardRepoPath?: string;
+  /** Troca o board em foco — App.tsx reconsulta `listEntryCards` para ele. */
+  onSwitchBoard: (repoPath: string) => void;
 }
 
 export function DevModeEntry({
@@ -61,6 +73,9 @@ export function DevModeEntry({
   defaultRepoPath,
   onSelectCard,
   loading,
+  boardProjects,
+  activeBoardRepoPath,
+  onSwitchBoard,
 }: DevModeEntryProps): React.JSX.Element | null {
   const [filter, setFilter] = useState('');
   const [column, setColumn] = useState<ColumnFilter>('todas');
@@ -105,15 +120,44 @@ export function DevModeEntry({
     });
   }, [allCards, column, filter]);
 
+  // FIX (#23) — nome do board em foco: o nome do projeto dono dele. Busca em
+  // `projects` (não só `boardProjects`) porque o board ativo é o do projeto
+  // selecionado GLOBALMENTE (App.tsx `selectedProjectPath`) por default —
+  // pode não ter sido confirmado ainda como "tem board" quando o modal abre.
+  const activeBoardProject = projects.find((project) => project.path === activeBoardRepoPath);
+  const activeBoardLabel = activeBoardProject?.name ?? null;
+
   if (!open) return null;
 
   return (
     <Modal open={open} onClose={onClose} title="Abrir ou trocar discovery" className={styles.dialog}>
       <section className={styles.entry} aria-label="Porta de entrada do Modo Dev" data-testid="devmode-entry">
-        <p className={styles.hint}>
-          Board único · colunas Backlog, Discovery, Plano, Implementar, Validar e Documentar. Cards concluídos não
-          aparecem.
+        {/* FIX (#23) — "o id não ajuda em nada": o nome do board (= projeto
+            dono dele) substitui a frase genérica "Board único" — agora se sabe
+            DE ONDE os cards abaixo vêm. */}
+        <p className={styles.hint} data-testid="devmode-entry-board-label">
+          {activeBoardLabel ? `Board: ${activeBoardLabel}` : 'Sem board configurado'} · colunas Backlog, Discovery,
+          Plano, Implementar, Validar e Documentar. Cards concluídos não aparecem.
         </p>
+
+        {/* FIX (#23) — "filtrar por board": só aparece quando há MAIS de um
+            projeto com board configurado — com um só (o caso comum), trocar
+            não seria uma opção de verdade. */}
+        {boardProjects.length > 1 ? (
+          <div className={styles.boardSwitcher} data-testid="devmode-entry-board-switcher">
+            {boardProjects.map((project) => (
+              <button
+                key={project.path}
+                type="button"
+                className={project.path === activeBoardRepoPath ? styles.boardOptionActive : styles.boardOption}
+                onClick={() => onSwitchBoard(project.path)}
+                aria-pressed={project.path === activeBoardRepoPath}
+              >
+                {project.name}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <div className={styles.filterRow}>
           <TextInput

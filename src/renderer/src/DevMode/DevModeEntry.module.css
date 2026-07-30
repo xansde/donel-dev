@@ -60,6 +60,36 @@
   overflow-x: auto;
 }
 
+/* FIX (#23, e2e-30-07 onda 2) — seletor de board (= projeto dono dele), só
+   quando há mais de 1 configurado. Mesma linguagem de "pill" do
+   SegmentedControl, sem introduzir peça nova do design-system (CA-25). */
+.boardSwitcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-half);
+}
+
+.boardOption,
+.boardOptionActive {
+  padding: 3px var(--space-1);
+  border-radius: 999px;
+  border: var(--hairline);
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+  cursor: pointer;
+}
+
+.boardOption:hover {
+  color: var(--text-primary);
+}
+
+.boardOptionActive {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
 /* FIX (#22, e2e-30-07 onda 2) — busca textual do repo, mesma linguagem visual
    do popover "Projetos" (ProjectSwitcher.module.css `.list`/`.projectOpenButton`). */
 .repoField {

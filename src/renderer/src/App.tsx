@@ -434,6 +434,18 @@ export function App(): React.JSX.Element {
   const [devModeOn, setDevModeOn] = useState(false);
   const [entryCards, setEntryCards] = useState<readonly EntryColumnCard[]>([]);
   const [entryLoading, setEntryLoading] = useState(false);
+  // FIX (#23, e2e-30-07 onda 2) — "filtrar por board": o app assume um board
+  // POR PROJETO (repos.json → repos.<repoSlug>.board, comentário de
+  // `effectiveBoardConfig` em main/index.ts) — não existe uma entidade "board"
+  // com nome próprio, só o par opaco workspaceId/teamId. Na ausência de um
+  // nome de board de verdade, o NOME DO PROJETO é o rótulo legível (1:1 com o
+  // board configurado nele). `null` = usa o board do projeto selecionado
+  // globalmente (`selectedProjectPath`, default de sempre); só vira um path
+  // diferente quando o operador troca de board DENTRO do modal, sem mexer no
+  // projeto selecionado em toda a app.
+  const [entryBoardRepoPath, setEntryBoardRepoPath] = useState<string | null>(null);
+  /** Projetos com board configurado (`workspaceId`+`teamId`) — as opções do seletor "Board" da porta de entrada. Recalculado toda vez que o modal abre. */
+  const [boardProjects, setBoardProjects] = useState<readonly ProjectInfo[]>([]);
   /**
    * 009-modo-dev-v3, lote 5 (CA-2) — a porta de entrada virou modal
    * ("Trocar…", `Modal v3.dc.html:397-431`). `entradaOpen` é DERIVADO, não só
@@ -1274,12 +1286,14 @@ export function App(): React.JSX.Element {
     // Item 1 (frente 2, rodada de feedback 30/07) — board é POR PROJETO agora
     // (repos.json → repos.<repoSlug>.board); passa o projeto selecionado pro
     // main preferir esse board e só cair pro global sem ele.
+    // FIX (#23) — `entryBoardRepoPath` vence quando o operador trocou de board
+    // DENTRO do modal (sem mexer no projeto selecionado globalmente).
     void window.donel.devMode
-      .listEntryCards(selectedProjectPath)
+      .listEntryCards(entryBoardRepoPath ?? selectedProjectPath)
       .then(setEntryCards)
       .catch(() => setEntryCards([]))
       .finally(() => setEntryLoading(false));
-  }, [selectedProjectPath]);
+  }, [selectedProjectPath, entryBoardRepoPath]);
 
   /** Relê do DISCO a árvore de todo discovery aberto (CA-7). Barato: `readTree` é só `existsSync`/`readFile` de manifesto. */
   const refreshDiscoveryTrees = useCallback((discoveryIds: readonly string[]): void => {
@@ -1303,6 +1317,34 @@ export function App(): React.JSX.Element {
     if (!devModeOn) return;
     refreshEntryCards();
   }, [devModeOn, refreshEntryCards]);
+
+  // FIX (#23) — descobre QUAIS projetos têm board configurado (repos.json →
+  // repos.<repoSlug>.board), pra alimentar o seletor "Board" do modal
+  // "Abrir ou trocar discovery". Roda só quando o modal abre de fato
+  // (`entradaOpen`, nunca em todo boot) — são N leituras de disco locais
+  // (`projectBinding.get` por projeto), baratas mas sem motivo de repetir
+  // enquanto o modal segue fechado. `entryBoardRepoPath` volta a `null`
+  // (board do projeto selecionado globalmente) toda vez que reabre — nunca
+  // carrega uma escolha "esquecida" de uma sessão anterior do modal.
+  useEffect(() => {
+    if (!entradaOpen) return;
+    setEntryBoardRepoPath(null);
+    let cancelled = false;
+    void Promise.all(
+      projects.map((project) =>
+        window.donel.projectBinding
+          .get(project.path)
+          .then((binding) => (binding.workspaceId && binding.teamId ? project : null))
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      setBoardProjects(results.filter((project): project is ProjectInfo => project !== null));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [entradaOpen, projects]);
 
   useEffect(() => {
     if (!devModeOn || openDiscoveryIds.length === 0) return;
@@ -2332,6 +2374,13 @@ export function App(): React.JSX.Element {
             defaultRepoPath={selectedProjectPath}
             onSelectCard={handleSelectEntryCard}
             loading={entryLoading}
+            // FIX (#23) — "mostrar o nome do board" + "filtrar por board":
+            // sem entidade "board" própria (só o par opaco workspaceId/
+            // teamId), o nome do PROJETO é o rótulo — 1:1 com o board
+            // configurado nele (`effectiveBoardConfig`, main/index.ts).
+            boardProjects={boardProjects}
+            activeBoardRepoPath={entryBoardRepoPath ?? selectedProjectPath}
+            onSwitchBoard={setEntryBoardRepoPath}
           />
         ) : null}
 
