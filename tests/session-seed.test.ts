@@ -18,6 +18,7 @@ function summary(id: string, overrides: Partial<SessionSummary> = {}): SessionSu
     corrupted: false,
     lastActivityAt: 1000,
     customTitle: null,
+    firstCommandLine: null,
     ...overrides,
   };
 }

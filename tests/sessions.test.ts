@@ -23,6 +23,7 @@ function makeSession(overrides: Partial<SessionSummaryDto> = {}): SessionSummary
     corrupted: false,
     lastActivityAt: null,
     customTitle: null,
+    firstCommandLine: null,
     ...overrides,
   };
 }

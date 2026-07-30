@@ -48,6 +48,8 @@ export interface SessionSummary {
   readonly lastActivityAt: number | null;
   /** T403 (004) — último `custom-title` do transcript (o nome dado por `/rename` no CLI); null se a sessão nunca foi renomeada. */
   readonly customTitle: string | null;
+  /** Fix #20 (E2E 30/07) — comando `/esteira-*` cru que abriu a sessão, para `deriveSessionEtapa` (`src/shared/sessions.ts`); null quando a sessão não nasceu de um slash-command. */
+  readonly firstCommandLine: string | null;
 }
 
 export interface IndexSessionsOptions {
@@ -140,6 +142,60 @@ function extractGenuineText(content: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+/** Casa `<command-name>/foo</command-name>` e `<command-args>bar</command-args>`, nessa ordem, em qualquer lugar do texto. */
+const COMMAND_NAME_PATTERN = /<command-name>\s*([^<]*?)\s*<\/command-name>/;
+const COMMAND_ARGS_PATTERN = /<command-args>\s*([^<]*?)\s*<\/command-args>/;
+
+/**
+ * Fix #20 (E2E 30/07, onda 2) — a coluna ETAPA (`deriveSessionEtapa`,
+ * `src/shared/sessions.ts`) espera receber o comando CRU digitado
+ * (`/esteira-implementar PRJ-143 --fase=1`), mas quando a sessão nasce de um
+ * slash-command (é sempre o caso das sessões que a esteira prepara, CA-16 do
+ * mapa: "⌁ Preparar" arma um `/esteira-*`) o transcript NUNCA grava esse
+ * texto cru — grava `<command-name>/esteira-implementar</command-name>` +
+ * `<command-args>PRJ-143 --fase=1</command-args>` em linhas/tags separadas
+ * (ver `tests/fixtures/sessions/slash-command-and-meta.jsonl`), e
+ * `extractGenuineText` acima DESCARTA esse payload de propósito (não é uma
+ * mensagem "genuína" digitada à mão, FR-004). Resultado: `preview` nunca
+ * contém o comando, e toda sessão da esteira caía em "terminal comum".
+ *
+ * Reconstrói o texto `/comando args` a partir das duas tags, INDEPENDENTE do
+ * filtro de `extractGenuineText` — só para alimentar `deriveSessionEtapa`,
+ * nunca vira o `preview` exibido (esse continua pulando o slash-command,
+ * comportamento coberto por `tests/session-indexer.test.ts`).
+ */
+function extractCommandLine(content: unknown): string | null {
+  let raw: string | null = null;
+
+  if (typeof content === 'string') {
+    raw = content;
+  } else if (Array.isArray(content)) {
+    for (const block of content) {
+      if (
+        block &&
+        typeof block === 'object' &&
+        (block as { type?: unknown }).type === 'text' &&
+        typeof (block as { text?: unknown }).text === 'string'
+      ) {
+        raw = (block as { text: string }).text;
+        break;
+      }
+    }
+  }
+
+  if (raw === null) return null;
+
+  const nameMatch = raw.match(COMMAND_NAME_PATTERN);
+  if (!nameMatch) return null;
+  const name = nameMatch[1].trim();
+  if (name.length === 0) return null;
+
+  const argsMatch = raw.match(COMMAND_ARGS_PATTERN);
+  const args = argsMatch ? argsMatch[1].trim() : '';
+
+  return args.length > 0 ? `${name} ${args}` : name;
+}
+
 interface RawTranscriptLine {
   readonly type?: unknown;
   readonly isMeta?: unknown;
@@ -149,6 +205,8 @@ interface RawTranscriptLine {
 interface PreviewResult {
   readonly preview: string;
   readonly corrupted: boolean;
+  /** Fix #20 — comando `/esteira-*` cru da PRIMEIRA linha `type: user` que for um slash-command, para `deriveSessionEtapa`; null quando a sessão não abriu com um. */
+  readonly firstCommandLine: string | null;
 }
 
 /**
@@ -164,7 +222,7 @@ interface PreviewResult {
  */
 export async function readSessionPreview(filePath: string, sizeHint?: number): Promise<PreviewResult> {
   if (sizeHint === 0) {
-    return { preview: NO_USER_MESSAGE_FALLBACK, corrupted: false };
+    return { preview: NO_USER_MESSAGE_FALLBACK, corrupted: false, firstCommandLine: null };
   }
 
   const stream = createReadStream(filePath, { encoding: 'utf8' });
@@ -173,6 +231,7 @@ export async function readSessionPreview(filePath: string, sizeHint?: number): P
   let sawAnyValidJsonLine = false;
   let linesScanned = 0;
   let genuine: string | null = null;
+  let firstCommandLine: string | null = null;
 
   try {
     for await (const rawLine of rl) {
@@ -190,6 +249,9 @@ export async function readSessionPreview(filePath: string, sizeHint?: number): P
       }
 
       if (parsed && parsed.type === 'user' && parsed.isMeta !== true) {
+        if (firstCommandLine === null) {
+          firstCommandLine = extractCommandLine(parsed.message?.content);
+        }
         const text = extractGenuineText(parsed.message?.content);
         if (text !== null) {
           genuine = text;
@@ -205,12 +267,12 @@ export async function readSessionPreview(filePath: string, sizeHint?: number): P
   }
 
   if (genuine !== null) {
-    return { preview: truncatePreview(genuine), corrupted: false };
+    return { preview: truncatePreview(genuine), corrupted: false, firstCommandLine };
   }
   if (sawAnyValidJsonLine) {
-    return { preview: NO_USER_MESSAGE_FALLBACK, corrupted: false };
+    return { preview: NO_USER_MESSAGE_FALLBACK, corrupted: false, firstCommandLine };
   }
-  return { preview: UNREADABLE_FALLBACK, corrupted: true };
+  return { preview: UNREADABLE_FALLBACK, corrupted: true, firstCommandLine: null };
 }
 
 interface TailLine {
@@ -400,7 +462,7 @@ export async function indexProjectSessions(
     jsonlFiles.map(async (entry): Promise<SessionSummary> => {
       const filePath = join(dir, entry.name);
       const stats = await fs.stat(filePath);
-      const [{ preview, corrupted }, { lastActivityAt, customTitle }] = await Promise.all([
+      const [{ preview, corrupted, firstCommandLine }, { lastActivityAt, customTitle }] = await Promise.all([
         readSessionPreview(filePath, stats.size),
         readSessionTailInfo(filePath, stats.size, stats.mtimeMs),
       ]);
@@ -413,6 +475,7 @@ export async function indexProjectSessions(
         corrupted,
         lastActivityAt,
         customTitle,
+        firstCommandLine,
       };
     }),
   );
