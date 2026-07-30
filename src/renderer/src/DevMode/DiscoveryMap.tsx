@@ -210,14 +210,27 @@ function faseFooterMeta(garantiaTipo: string | null, mergedAt: string | null, no
 // fonte pra ela) e a trilha pararia ali no 1º passo pra todo card de plano.
 // Um card de plano só existe porque a discovery da árvore já rodou e
 // declarou `plan_cards[]` — a etapa "discovery" da trilha é, por construção,
-// sempre `done` (mesmo dado do mockup: `{id:'discovery', st:'concluida'}`
-// em toda fixture de trilha, sem exceção).
-const DISCOVERY_STEP = { phase: 'discovery' as const, status: 'done' as const, key: 'discovery' };
+// (quase) sempre `done`.
+//
+// FIX (E2E 30/07, achado F4) — antes este status vinha HARDCODED (`'done'`),
+// nunca lido do disco: o painel de 316px (`PhaseDetailsPanel`), ao mostrar a
+// MESMA etapa `discovery` selecionada, lia `marco.phases.discovery.status`
+// (a fonte que o comentário acima já explica que não existe — sempre
+// `not-started`) e discordava da trilha, achando `CA-16` ("cada fato num
+// lugar só"). Agora as duas fontes usam o MESMO campo — `tree.discoveryStatus`
+// (`buildDiscoveryTree`, já lido do `discovery-result.json` do card raiz) —
+// nunca mais duas versões concorrentes do mesmo fato.
+function discoveryStep(discoveryStatus: PhaseStatus): { phase: 'discovery'; status: PhaseStatus; key: string } {
+  return { phase: 'discovery', status: discoveryStatus, key: 'discovery' };
+}
 
 /** CA-13 — as etapas do CAMINHO DE CÓDIGO: discovery, plano, e cada fase declarada (implementar-N, validar-N), na ordem. */
-function codigoTrilhaSteps(planCard: AnnotatedPlanCardNode): readonly { phase: EsteiraPhase; faseNum?: number; status: PhaseStatus; key: string }[] {
+function codigoTrilhaSteps(
+  planCard: AnnotatedPlanCardNode,
+  discoveryStatus: PhaseStatus,
+): readonly { phase: EsteiraPhase; faseNum?: number; status: PhaseStatus; key: string }[] {
   const steps: { phase: EsteiraPhase; faseNum?: number; status: PhaseStatus; key: string }[] = [
-    DISCOVERY_STEP,
+    discoveryStep(discoveryStatus),
     { phase: 'plano', status: planCard.phases.plano.status, key: 'plano' },
   ];
   for (const fase of planCard.fases) {
@@ -228,8 +241,11 @@ function codigoTrilhaSteps(planCard: AnnotatedPlanCardNode): readonly { phase: E
 }
 
 /** CA-18 — o caminho DOCUMENTAL é só Discovery → Documentar (D-V5: o valor é `documentar`; "Documentação" é rótulo do chip). */
-function documentalTrilhaSteps(planCard: AnnotatedPlanCardNode): readonly { phase: EsteiraPhase; faseNum?: number; status: PhaseStatus; key: string }[] {
-  return [DISCOVERY_STEP, { phase: 'documentar', status: planCard.phases.documentar.status, key: 'documentar' }];
+function documentalTrilhaSteps(
+  planCard: AnnotatedPlanCardNode,
+  discoveryStatus: PhaseStatus,
+): readonly { phase: EsteiraPhase; faseNum?: number; status: PhaseStatus; key: string }[] {
+  return [discoveryStep(discoveryStatus), { phase: 'documentar', status: planCard.phases.documentar.status, key: 'documentar' }];
 }
 
 export function DiscoveryMap({
@@ -406,7 +422,10 @@ export function DiscoveryMap({
                   )
                 : null,
           });
-          const steps = planCard.track === 'documental' ? documentalTrilhaSteps(planCard) : codigoTrilhaSteps(planCard);
+          const steps =
+            planCard.track === 'documental'
+              ? documentalTrilhaSteps(planCard, tree.discoveryStatus)
+              : codigoTrilhaSteps(planCard, tree.discoveryStatus);
           const trilhaSteps = buildTrilha(steps.map((s) => ({ id: s.key, status: s.status })));
           const trilha: TrilhaRenderItem[] | null = focused
             ? trilhaSteps.map((step, index) => {

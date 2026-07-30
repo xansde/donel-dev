@@ -24,6 +24,8 @@ import type {
   EsteiraPhase,
   NotificationPreference,
   PhaseArchivedPayload,
+  PhaseNode,
+  PlanCardNode,
   ProfileHeadroomMap,
   ProjectInfo,
   ProjectScanMode,
@@ -48,6 +50,7 @@ import { sortProjects } from '../../shared';
 // Lote 4/7 (009-modo-dev-v3) — PR da fase por `gh` (CA-3), consumido pelo
 // mapa (estado do PR desce pro card da fase, CA-16) via o canal já existente.
 import type { PhasePullRequestFacts } from '../../shared/githubFacts';
+import type { PhaseStatus } from '../../shared/phaseState';
 // Lote 7 (CA-11) — `--fase=n` no comando pré-digitado (D-V4: `=`, nunca espaço).
 import { formatFaseCommand } from '../../shared/mapLevels';
 // Lote 8 (CA-18/CA-20) — monta o conteúdo rico do painel direito (breadcrumb,
@@ -227,6 +230,42 @@ const PRE_TYPE_POLL_MS = 250;
 function phaseKey(discoveryCardId: string, cardId: string, phase: EsteiraPhase, faseNum?: number): string {
   const base = `${discoveryCardId}:${cardId}:${phase}`;
   return faseNum ? `${base}:${faseNum}` : base;
+}
+
+/**
+ * FIX (E2E 30/07, achado F4) — `discovery` é a fase do CARD RAIZ, nunca do
+ * card de plano (nada escreve `<planCardId>/discovery/…` em disco —
+ * `marco.phases.discovery` é sempre `not-started`, uma fonte que não existe).
+ * A trilha do mapa (`DiscoveryMap.tsx`) já sabia disso e usava
+ * `tree.discoveryStatus`; esta função dá ao resto do app (painel de 316px +
+ * `handlePhaseAction`, que decide o QUE arma no prompt) a MESMA fonte — CA-16,
+ * um fato num lugar só, nunca duas versões concorrentes do mesmo card.
+ * Sem artefatos/PR/sessão arquivada próprios — a etapa não é fase-indexada e
+ * não tem `ctx.md` dela mesma.
+ */
+function resolveSelectedPhaseNode(
+  marco: PlanCardNode,
+  phase: EsteiraPhase,
+  faseEntry: PlanCardNode['fases'][number] | undefined,
+  discoveryStatus: PhaseStatus,
+): PhaseNode {
+  if (phase === 'discovery') {
+    return {
+      phase: 'discovery',
+      status: discoveryStatus,
+      artifacts: {
+        ctxPath: '',
+        resultPath: null,
+        ctxExists: false,
+        result: null,
+        resultUnreadable: false,
+        worktreePath: null,
+        branch: null,
+      },
+      archivedSession: null,
+    };
+  }
+  return faseEntry && (phase === 'implementar' || phase === 'validar') ? faseEntry[phase] : marco.phases[phase];
 }
 
 /** Fallback quando quem chama não sabe (ainda) a fase do plano — implementar/validar sem `faseNum` explícito caem na fase 1 (mesmo ponto de partida do lote 2). */
@@ -1192,10 +1231,7 @@ export function App(): React.JSX.Element {
     const marco = focusedTree.planCards.find((planCard) => planCard.cardId === selectedNode.cardId);
     if (!marco) return null;
     const faseEntry = selectedNode.faseNum ? marco.fases.find((fase) => fase.faseNum === selectedNode.faseNum) : undefined;
-    const node =
-      faseEntry && (selectedNode.phase === 'implementar' || selectedNode.phase === 'validar')
-        ? faseEntry[selectedNode.phase]
-        : marco.phases[selectedNode.phase];
+    const node = resolveSelectedPhaseNode(marco, selectedNode.phase, faseEntry, focusedTree.discoveryStatus);
     const faseNum = selectedNode.faseNum ?? null;
     const pr = faseNum !== null ? (phasePullRequestFacts[`${selectedNode.cardId}:${faseNum}`] ?? null) : null;
     return buildPhaseDetailsView({
@@ -1443,7 +1479,7 @@ export function App(): React.JSX.Element {
     if (!marco) return;
 
     const faseEntry = faseNum ? marco.fases.find((f) => f.faseNum === faseNum) : undefined;
-    const node = faseEntry && (phase === 'implementar' || phase === 'validar') ? faseEntry[phase] : marco.phases[phase];
+    const node = resolveSelectedPhaseNode(marco, phase, faseEntry, focusedTree.discoveryStatus);
     const key = phaseKey(focusedDiscovery.cardId, cardId, phase, faseNum);
     setSelectedNode({ cardId, phase, faseNum: faseNum ?? null });
     setOpenedArtifactPath(null);
