@@ -111,6 +111,58 @@
   overflow-x: auto;
 }
 
+/* Lote 8 (009-modo-dev-v3) — header de 44px acima do terminal (mockup
+   linhas 175-196 Modo Dev / 341-356 Uso geral): breadcrumb OU nome+path,
+   StateDot, "⟳ Reiniciar" (CA-24). Números do mockup são requisito. */
+.sessionHeader {
+  flex: none;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--panel-padding);
+  border-bottom: var(--hairline);
+}
+
+.sessionHeaderId {
+  flex: none;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--accent);
+}
+
+.sessionHeaderTitle {
+  flex: none;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.sessionHeaderPath {
+  flex: none;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.sessionHeaderFase {
+  flex: none;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.sessionHeaderSep {
+  flex: none;
+  color: var(--state-done);
+}
+
+.sessionHeaderSpacer {
+  flex: 1;
+}
+
 .terminal {
   flex: 1;
   display: flex;
@@ -199,17 +251,25 @@
   display: none;
 }
 
-/* Zona 1 (280px) · terminal (1fr) · Zona 3 (320px) */
+/* Lote 7 (009-modo-dev-v3), CA-7 — mapa (480px) · terminal (1fr) · detalhe
+   (316px). A compressão da v2 (280/320, mapa espremido na coluna direita)
+   saiu: o mapa vive na ESQUERDA agora, do tamanho real do handoff. */
 .bodyDevMode {
-  --col-left: 280px;
-  --col-right: 320px;
+  --col-left: 480px;
+  --col-right: 316px;
 }
 
 /* FIX (feedback E2E rodada 3 + teste manual 27/07) — coluna direita zerada
-   quando não há Launcher aberto (clássico) ou o mapa do Modo Dev foi
-   recolhido. Depois de .bodyDevMode de propósito (a ordem decide a var). */
+   quando não há Launcher aberto no modo CLÁSSICO. */
 .bodyRightCollapsed {
   --col-right: 0px;
+}
+
+/* Lote 7 — "Recolher mapa" (botão do titlebar) no Modo Dev zera a coluna
+   ESQUERDA agora (o mapa mudou de lado, CA-7). Depois de `.bodyDevMode` de
+   propósito (a ordem decide a var). */
+.bodyMapCollapsed {
+  --col-left: 0px;
 }
 
 /* Teste manual 27/07 — sidebar (projetos ou porta de entrada) colapsável
@@ -224,18 +284,6 @@
   gap: var(--space-1);
   padding: var(--space-1) var(--panel-padding);
   border-bottom: var(--hairline);
-}
-
-.devModeMarcoLabel {
-  font-family: var(--font-mono);
-  font-size: var(--text-caption-size);
-  color: var(--text-muted);
-}
-
-.devModePhases {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
 }
 
 .devModeHint {

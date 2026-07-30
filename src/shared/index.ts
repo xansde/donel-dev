@@ -6,12 +6,30 @@
 
 import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
+import type { DonelGithubApi } from './github';
 import type { DonelProfilesApi } from './profiles';
+import type { DonelProjectBindingApi } from './projectBinding';
 import type { DonelProjectsApi } from './projects';
 import type { DonelSessionsApi } from './sessions';
+import type { DonelTabsApi } from './tabChannels';
+import type { DonelTranscriptsApi } from './transcriptCopy';
 
 export { PROJECT_CHANNELS, sortProjects } from './projects';
 export type { DonelProjectsApi, ProjectInfo } from './projects';
+
+// CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero pelo app"
+// (US-15 do backlog.md). Validação pura do nome da pasta + contrato IPC
+// aqui; o encanamento de disco (mkdir, marcador CLAUDE.md, `git init`
+// best-effort) vive em src/main/project-creator.ts.
+export { isValidCreateProjectIpcInput, NEW_PROJECT_CHANNEL, validateProjectFolderName } from './newProject';
+export type {
+  CreateProjectErrorReason,
+  CreateProjectIpcInput,
+  CreateProjectResponse,
+  CreateProjectResult,
+  ProjectFolderNameErrorReason,
+  ProjectFolderNameValidation,
+} from './newProject';
 
 export { SESSION_CHANNELS, TRANSCRIPT_CHANNELS } from './sessions';
 export type { DonelSessionsApi, SessionSummaryDto, TranscriptChangedPayload } from './sessions';
@@ -34,6 +52,14 @@ export type { ResumeFailureSignal } from './resumeFailure';
 
 export { CONFIG_CHANNELS } from './config';
 export type { AppConfigDto, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, ProjectScanMode, SessionNamesMap } from './config';
+
+// CA-26/CA-27 (009-modo-dev-v3, lote 1) — aba v3: reordenar (CA-26) e cor por
+// aba (CA-27). Lógica pura em tabAppearance.ts; canais `tabs:*` em
+// tabChannels.ts (arquivo separado — ver comentário de topo de lá).
+export { isTabColorToken, reorderTabs, setTabColor, setTabOrder, TAB_COLOR_TOKENS } from './tabAppearance';
+export type { TabAppearance, TabAppearanceMap, TabColorToken } from './tabAppearance';
+export { TAB_CHANNELS } from './tabChannels';
+export type { DonelTabsApi } from './tabChannels';
 
 // 003-modo-dev (T301/T307) — estado próprio do Modo Dev + canais `devMode:*`.
 export {
@@ -71,20 +97,63 @@ export type {
 
 export { DEFAULT_PHASE_DEFAULTS, resolveCommandText } from './devModeDefaults';
 
+// CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto:
+// board (workspaceId/teamId) + repo do GitHub, hoje editados à mão fora do
+// app (spec.md problema 8). Lógica pura + contrato IPC em src/shared/
+// projectBinding.ts; o encanamento de disco (paths reais, atomicidade) vive
+// em src/main/esteira-config.ts.
+export {
+  isValidSaveProjectBindingIpcInput,
+  mergeBoardIds,
+  mergeRepoGithub,
+  PROJECT_BINDING_CHANNELS,
+  readBoardIds,
+  readProjectBinding,
+  readRepoGithub,
+} from './projectBinding';
+export type { DonelProjectBindingApi, ProjectBindingDto, RepoGithubUpdate, SaveProjectBindingIpcInput } from './projectBinding';
+
+// CA-3/CA-5 (009-modo-dev-v3, lote 4) — canal IPC do GitHub reader
+// (src/main/github-reader.ts): spec-issue, sub-issues nativas, PR da fase +
+// etiquetas homologado/revertido-ciclo, por `gh` CLI via spawn. Só leitura.
+export { GITHUB_CHANNELS, isValidGithubReadRequest } from './github';
+export type { DonelGithubApi, GhAvailabilityDto, GithubReadRequest, GithubReadResponse } from './github';
+
 // T307 — `DiscoveryTree` é o retorno de `devMode:readTree`; definido em
 // `../main/discovery-tree.ts` (módulo com fs) mas reexportado aqui como TIPO
 // só, para preload/renderer importarem de um lugar só (`../shared`), como
 // todo o resto desta API. `import type` erasa no build: nenhum runtime do
 // renderer/preload passa a depender de `node:fs`.
-export type { ArtifactCandidate, ArtifactCandidateKind, DiscoveryTree, MarcoNode, PhaseNode } from '../main/discovery-tree';
+export type { ArtifactCandidate, ArtifactCandidateKind, DiscoveryTree, PlanCardNode, PhaseNode } from '../main/discovery-tree';
 /** T311/T327 — card da porta de entrada (CA-1) e os 4 fatos do espelho (CA-12); mesmo motivo do `DiscoveryTree` acima: tipo só, `import type` erasa no build. */
 export type { BoardFacts, EntryColumn, EntryColumnCard } from '../main/taskdex-board-client';
 
 /** T325/T326 (Batch C) — a árvore já anotada pelo espelho, consumida pela UI do mapa (T327/T328). */
-export type { AnnotatedDiscoveryTree, AnnotatedMarcoNode, AnnotatedPhaseNode, PhaseDivergence } from './boardAnnotation';
+export type { AnnotatedDiscoveryTree, AnnotatedPlanCardNode, AnnotatedPhaseNode, PhaseDivergence } from './boardAnnotation';
 export { annotateTree, detectPhaseDivergence } from './boardAnnotation';
 export type { EsteiraResultManifest, PhaseArtifacts } from '../main/esteira-reader';
 export type { PhaseStatus } from './phaseState';
+
+// Lote 8 (009-modo-dev-v3), CA-24 — "Reiniciar sessão em foco" retoma na
+// conta SELECIONADA, copiando o `.jsonl` pro perfil dela quando a sessão
+// rodou em outro perfil (achado 14). Lógica pura + contrato IPC em
+// src/shared/transcriptCopy.ts; o fs real vive em src/main/transcript-copy.ts.
+export { isValidCopyTranscriptForResumeIpcInput, planTranscriptCopy, TRANSCRIPT_COPY_CHANNELS } from './transcriptCopy';
+export type { CopyTranscriptForResumeIpcInput, CopyTranscriptForResumeResult, DonelTranscriptsApi, TranscriptCopyPlan } from './transcriptCopy';
+
+// Lote 8 (009-modo-dev-v3), CA-18/CA-20 — o conteúdo rico do painel direito
+// (breadcrumb, garantia, PR, artefatos, recibos). Puro, testado; a UI só
+// renderiza (PhaseDetailsPanel.tsx).
+export { buildPhaseDetailsView } from './phaseDetailsView';
+export type {
+  BuildPhaseDetailsViewInput,
+  PhaseDetailsArtifact,
+  PhaseDetailsBreadcrumb,
+  PhaseDetailsGarantiaView,
+  PhaseDetailsPrRow,
+  PhaseDetailsReceipt,
+  PhaseDetailsViewModel,
+} from './phaseDetailsView';
 
 // 004-nomear-sessoes — resolução do nome exibido de uma sessão (T401) e
 // validação do nome digitado (T406). Usados no main (persistência) e no
@@ -269,4 +338,12 @@ export interface DonelApi {
   clipboard: DonelClipboardApi;
   /** T307 (003-modo-dev) — estado do Modo Dev + leitura da árvore do discovery. */
   devMode: DonelDevModeApi;
+  /** CA-26/CA-27 (009-modo-dev-v3) — cor + ordem da aba v3, persistidas por sessão claude. */
+  tabs: DonelTabsApi;
+  /** CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto (board + repo GitHub). */
+  projectBinding: DonelProjectBindingApi;
+  /** CA-3/CA-5 (009-modo-dev-v3, lote 4) — leitura do GitHub por `gh` CLI (spec-issue, sub-issues, PR da fase). Só leitura. */
+  github: DonelGithubApi;
+  /** CA-24 (009-modo-dev-v3, lote 8) — cópia de transcript entre perfis pro "Reiniciar sessão em foco". */
+  transcripts: DonelTranscriptsApi;
 }

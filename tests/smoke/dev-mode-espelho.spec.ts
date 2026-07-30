@@ -10,10 +10,11 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // T329 (003-modo-dev, Batch D) — smoke completo da Fatia 2: o ESPELHO.
 //
 // Isolado do board real (fixture em arquivo, `DONEL_DEVMODE_BOARD_FIXTURE` —
-// nenhuma chamada de rede, nenhum token) e do `%APPDATA%` real (userData
-// temp). O `.esteira/` é fixture em tmpdir, escrita por este arquivo.
+// nenhuma chamada de rede, nenhum token), do `%APPDATA%` real (userData temp)
+// e da raiz v3 do handoff (`DONEL_ESTEIRA_STATE_ROOT`, CA-4, 009-modo-dev-v3
+// — `~/.claude/esteira-state` isolada em tmpdir, escrita por este arquivo).
 //
-// Cobre: overlay dos 4 fatos (T327), trava do BOARD acendendo o slot do T314
+// Cobre: overlay dos fatos do board (T327), trava do BOARD acendendo o slot do T314
 // e a ação "Liberar trava…" (D1/CA-16), divergência marcada e divergência
 // ESPERADA filtrada (T326/CA-13), sessão de conciliação pré-digitada (T328) e
 // a ausência total de escrita — nem no disco, nem no board — em qualquer
@@ -31,6 +32,10 @@ let electronApp: ElectronApplication;
 let window: Page;
 let userDataDir: string;
 let fixtureRepo: string;
+/** CA-4 (009-modo-dev-v3) — raiz v3 do handoff, `~/.claude/esteira-state` isolada via `DONEL_ESTEIRA_STATE_ROOT`. */
+let stateRoot: string;
+/** `repo_slug` é o basename do checkout local — mesma resolução de `resolveRepoSlug` (main/index.ts). */
+let repoSlug: string;
 let boardFixturePath: string;
 
 function write(file: string, content: string): void {
@@ -39,11 +44,16 @@ function write(file: string, content: string): void {
 }
 
 function ctxPath(fase: string, cardId: string): string {
-  return path.join(fixtureRepo, '.esteira', fase, `${cardId}-ctx.md`);
+  return path.join(stateRoot, repoSlug, cardId, fase, `${cardId}-ctx.md`);
 }
 
-function resultPath(fase: string, cardId: string): string {
-  return path.join(fixtureRepo, '.esteira', fase, 'handoffs', cardId, `${fase}-result.json`);
+/** CA-4/D.0-bis — implementar/validar arquivam por `fase-<n>`; as demais fases gravam direto em `handoffs/`. */
+function resultPath(fase: string, cardId: string, faseNum?: number): string {
+  const handoffsDir = path.join(stateRoot, repoSlug, cardId, fase, 'handoffs');
+  if (fase === 'implementar' || fase === 'validar') {
+    return path.join(handoffsDir, `fase-${faseNum ?? 1}`, `${fase}-result.json`);
+  }
+  return path.join(handoffsDir, `${fase}-result.json`);
 }
 
 function manifest(cardId: string, fase: string, status: string, outputs: Record<string, unknown> = {}): string {
@@ -108,32 +118,39 @@ function newPids(before: Set<number>): number[] {
 
 test.beforeAll(async () => {
   fixtureRepo = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-espelho-'));
+  stateRoot = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-espelho-state-'));
+  repoSlug = path.basename(fixtureRepo);
 
-  // --- Fixture do `.esteira/` (o que a Esteira já gravou em disco) ---------
+  // --- Fixture da raiz v3 do handoff (o que a Esteira já gravou em disco) --
   write(ctxPath('discovery', CARD_DISCOVERY), '---\ncard_id: SZI-900\n---\n\n# ctx\n');
   write(
     resultPath('discovery', CARD_DISCOVERY),
     manifest(CARD_DISCOVERY, 'discovery', 'success', {
       summary: 'discovery ok',
-      fanout_cards: [
-        { card_id: CARD_M1, marco_id: 'M1' },
-        { card_id: CARD_M2, marco_id: 'M2' },
+      // CA-17 — plan_cards[] substitui fanout_cards[]: sem marco_id, com track/shadow.
+      plan_cards: [
+        { card_id: CARD_M1, track: 'codigo', shadow: false },
+        { card_id: CARD_M2, track: 'codigo', shadow: false },
       ],
     }),
   );
 
   // M1 — `plano` concluído e o board JÁ na coluna `implementar`: progresso
-  // normal, nenhuma divergência. É o marco que carrega a TRAVA do board.
+  // normal, nenhuma divergência. É o card de plano que carrega a TRAVA do board.
   write(ctxPath('plano', CARD_M1), '---\ncard_id: SZI-901\n---\n\n# ctx do plano\n');
   write(resultPath('plano', CARD_M1), manifest(CARD_M1, 'plano', 'success', { summary: 'plano ok' }));
   write(ctxPath('implementar', CARD_M1), '---\ncard_id: SZI-901\n---\n\n# ctx\n');
 
-  // M2 — os DOIS casos do CA-13 no mesmo marco:
-  //  · `implementar` concluída no disco e card ainda na coluna `plano` →
-  //    divergência de verdade (marca);
-  //  · `validar` concluída no disco e card ainda na coluna `plano` → NÃO
-  //    marca: por invariante da Esteira, Validar nunca move o card de coluna.
-  for (const fase of ['implementar', 'validar']) {
+  // M2 — os DOIS casos do CA-13/CA-19 no mesmo card de plano:
+  //  · `plano` concluído no disco e card ainda na coluna `plano` →
+  //    divergência de verdade (marca): Plano MOVE o card pra Implementar
+  //    (contrato v3 §B), então ficar em `plano` é atraso real.
+  //  · `implementar`/`validar` concluídas no disco e card ainda na coluna
+  //    `plano` → NÃO marcam: CA-19 (009-modo-dev-v3, lote 8) — Implementar
+  //    NÃO move o card na v3 (fica em Implementar até o PR mergear, D20) e
+  //    Validar nunca moveu (invariante antiga, preservada). Duas fases sem
+  //    divergência simultânea prova que o fix não é "sorte" de uma só.
+  for (const fase of ['plano', 'implementar', 'validar']) {
     write(ctxPath(fase, CARD_M2), `---\ncard_id: ${CARD_M2}\n---\n\n# ctx\n`);
     write(resultPath(fase, CARD_M2), manifest(CARD_M2, fase, 'success', { summary: `${fase} ok` }));
   }
@@ -213,11 +230,15 @@ test.beforeAll(async () => {
         // entrada (essa é a Fatia 1, coberta por `dev-mode-conducao-mapa`).
         focusedDiscoveryId: CARD_DISCOVERY,
         archivedPhaseSessions: {},
+        // "Tudo ou nada" (config-store.ts sanitizePhaseDefaultsTable): as 7
+        // fases têm de estar presentes, senão cai no default inteiro.
         phaseDefaults: {
           discovery: phaseEntry('/esteira-discovery {card_id}', true),
           plano: phaseEntry('/esteira-plano {card_id}', true),
           implementar: phaseEntry('/esteira-implementar {card_id} ultracode', true),
           validar: phaseEntry('/esteira-validar {card_id}', true),
+          documentar: phaseEntry('/esteira-documentar {card_id}', true),
+          cliente: phaseEntry('/esteira-cliente {card_id}', false),
           concluir: phaseEntry('/esteira-concluir {card_id}', false),
         },
         boardConfig: { workspaceId: 'ws-smoke', teamId: 'team-smoke' },
@@ -228,7 +249,7 @@ test.beforeAll(async () => {
   electronApp = await electron.launch({
     args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
     cwd: REPO_ROOT,
-    env: { ...process.env, DONEL_DEVMODE_BOARD_FIXTURE: boardFixturePath },
+    env: { ...process.env, DONEL_DEVMODE_BOARD_FIXTURE: boardFixturePath, DONEL_ESTEIRA_STATE_ROOT: stateRoot },
   });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
@@ -240,10 +261,12 @@ test.afterAll(async () => {
   // Limpeza best-effort: no Windows o `claude.exe` pode segurar o handle do
   // diretório por alguns ms depois do app fechar (EBUSY). Falhar a suíte por
   // um rmdir de fixture seria falso vermelho — o diretório é temp.
-  try {
-    rmSync(fixtureRepo, { recursive: true, force: true });
-  } catch {
-    // ignorado de propósito — ver comentário acima
+  for (const dir of [fixtureRepo, stateRoot]) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // ignorado de propósito — ver comentário acima
+    }
   }
 });
 
@@ -251,18 +274,24 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   test.setTimeout(240_000);
   const claudeBaseline = listPids('claude.exe');
   const diskBefore = fingerprint(fixtureRepo);
+  const stateBefore = fingerprint(stateRoot);
 
   await window.locator('[data-testid="devmode-toggle"] input[role="switch"]').check();
   await expect(window.locator('[data-testid="devmode-map"]')).toBeVisible();
 
-  // === T327/CA-12 — os 4 fatos anotados no marco ==========================
-  const marcoM1 = window.locator('[data-testid="devmode-map-marco-M1"]');
-  await expect(marcoM1).toContainText('coluna: implementar', { timeout: 30_000 });
+  // === T327/CA-12/Decisão B — as 4 etiquetas do card de plano =============
+  // CA-17 — o testid usa o card_id real (não há mais marco_id no disco). M1
+  // é `planCards[0]`: foco default, sem precisar clicar.
+  const marcoM1 = window.locator(`[data-testid="devmode-map-plano-${CARD_M1}"]`);
+  await expect(marcoM1).toHaveAttribute('data-focused', 'true');
+  await expect(marcoM1).toContainText('board: implementar', { timeout: 30_000 });
   await expect(marcoM1).toContainText('esteira:precisa-atencao');
-  await expect(marcoM1).toContainText('PR sem aprovação');
-  await expect(marcoM1).toContainText('https://github.com/org/repo/pull/482');
-  // D1 — a trava exibida é a ETIQUETA do board, com esse nome literal.
-  await expect(marcoM1).toContainText('esteira:em-andamento:implementar');
+  // D1/Decisão B — a trava exibida é a ETIQUETA do board, com esse nome
+  // literal (nunca "arquivo de trava").
+  await expect(marcoM1).toContainText('trava: esteira:em-andamento:implementar');
+  // Decisão B — a URL do PR e "PR sem aprovação" MORRERAM como etiqueta.
+  await expect(marcoM1).not.toContainText('PR sem aprovação');
+  await expect(marcoM1).not.toContainText('https://github.com/org/repo/pull/482');
 
   // === CA-12 (negativa) — o que o espelho NÃO mostra ======================
   const map = window.locator('[data-testid="devmode-map"]');
@@ -272,38 +301,33 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   // Card fora do discovery em foco nunca entra na anotação.
   await expect(window.locator('body')).not.toContainText('CARD-FORA-DO-FOCO');
 
-  // === T327/CA-5 — o slot do T314 ACENDE com o dado real ==================
-  const lockSlot = window.locator('[data-testid="devmode-phase-slot-implementar"]');
-  await expect(lockSlot).toContainText('esteira:em-andamento:implementar');
-  // Fase sem trava continua com o slot vazio — a trava é UMA, não um enfeite.
-  await expect(window.locator('[data-testid="devmode-phase-slot-validar"]')).toHaveText('');
-  // Invariante 4/CA-5 — o botão nunca é desabilitado pela trava.
-  await expect(window.locator('[data-testid="devmode-phase-button-implementar"]')).toBeEnabled();
+  // === Invariante 4/CA-5 — a ação da trava (foco atual) é SEMPRE clicável =
+  await expect(window.locator(`[data-testid="devmode-map-plano-action-${CARD_M1}"]`)).toContainText('Liberar trava');
+  await expect(window.locator(`[data-testid="devmode-map-plano-action-${CARD_M1}"]`)).toBeEnabled();
 
-  // === T326/CA-13 — divergência marcada × divergência ESPERADA filtrada ===
-  const marcoM2 = window.locator('[data-testid="devmode-map-marco-M2"]');
+  // === T326/CA-13/CA-19 — divergência marcada × divergência ESPERADA filtrada ===
+  const marcoM2 = window.locator(`[data-testid="devmode-map-plano-${CARD_M2}"]`);
   await expect(marcoM2).toContainText('⇄ disco: done · board: plano');
-  // `validar` concluída com o card ainda em `plano` é o caso esperado pela
-  // spec (Validar nunca move coluna): UMA divergência no marco, não duas.
+  // `implementar`/`validar` concluídas com o card ainda em `plano` são os
+  // casos esperados na v3 (CA-19: Implementar não move; Validar nunca
+  // moveu): só `plano` diverge — UMA etiqueta de divergência, não três.
   expect((await marcoM2.innerText()).match(/⇄ disco/g)?.length).toBe(1);
 
-  // === T328/CA-13 — o nó divergente mostra os DOIS fatos ==================
-  // `implementar` do M2 está `done` sem sessão arquivada: o clique abre o
-  // ARTEFATO (C4), não uma sessão — nenhum processo novo aqui.
-  await marcoM2.locator('button').nth(2).click();
-  await expect(window.locator('[data-testid="devmode-node-divergence"]')).toBeVisible();
-  await expect(window.locator('[data-testid="devmode-node-divergence-disk"]')).toContainText('done');
-  await expect(window.locator('[data-testid="devmode-node-divergence-board"]')).toContainText('plano');
-  // Regressão da tela preta (28/07): com `artifact_paths` no formato objeto
-  // do manifesto real, o painel lista os paths — antes o spread de um
-  // não-iterável desmontava a árvore React inteira aqui.
-  const artifactList = window.locator('[data-testid="devmode-node-artifacts"]');
-  await expect(artifactList).toContainText('specs/demo/spec.md');
-  await expect(artifactList).toContainText('specs/demo/plan.md');
+  // === T328/Decisão B — a ação de conciliar mora NA ETIQUETA, sem passo
+  // intermediário (o card em foco já mostra "⇄ Preparar conciliação"). Focar
+  // M2 (clique no card, LevelCarousel move o foco no eixo X) e disparar. O
+  // conteúdo rico do nó (artefatos, disco×board lado a lado) migrou pro
+  // painel de 316px, que o lote 8 povoa — a regressão do `artifact_paths`
+  // objeto (tela preta 28/07) continua coberta por unidade
+  // (`tests/esteira-reader.test.ts`).
+  await marcoM2.click();
+  await expect(marcoM2).toHaveAttribute('data-focused', 'true');
+  const conciliateAction = window.locator(`[data-testid="devmode-map-plano-action-${CARD_M2}"]`);
+  await expect(conciliateAction).toContainText('Preparar conciliação');
   expect(newPids(claudeBaseline)).toHaveLength(0);
 
   // === T328 — a sessão de conciliação: texto ESCRITO, nada enviado ========
-  await window.locator('[data-testid="devmode-node-conciliar"]').click();
+  await conciliateAction.click();
 
   const activePane = window.locator('[data-testid="terminal-pane"]:visible');
   await expect(activePane).toHaveCount(1);
@@ -321,8 +345,10 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
 
   const armed = window.locator('[data-testid="devmode-armed"]');
   await expect(armed).toContainText('Conciliação de divergência no card SZI-902', { timeout: 60_000 });
-  // Os DOIS fatos divergentes estão no texto preparado.
-  await expect(armed).toContainText('a fase implementar está "done"');
+  // Os DOIS fatos divergentes estão no texto preparado (CA-19: a fase que
+  // diverge agora é `plano`, não mais `implementar` — ver comentário da
+  // fixture do M2 acima).
+  await expect(armed).toContainText('a fase plano está "done"');
   await expect(armed).toContainText('coluna "plano"');
   // O app não corrige o board — e diz isso no próprio prompt.
   await expect(armed).toContainText('não altere o board');
@@ -334,12 +360,12 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   expect(await activePane.innerText()).not.toContain('Unknown slash command');
 
   // === T327/CA-16/D1 — "Liberar trava…" pré-digita, e não apaga nada ======
-  // Selecionar um nó do M2 trouxe o M2 ao foco (comportamento da Fatia 1), e
-  // a trava é do M1: devolve o foco ao M1 clicando no RESUMO do card (área
-  // sem botão — clicar num nó de fase abriria sessão).
-  await marcoM1.locator('p').first().click();
-  await expect(window.locator('[data-testid="devmode-zone2"]')).toContainText(CARD_M1);
-  await window.locator('[data-testid="devmode-phase-release-lock-implementar"]').click();
+  // Focar M2 (acima) trouxe o M2 ao foco, e a trava é do M1: devolve o foco
+  // clicando no CARD de M1 (a trilha só aparece no card focado — clicar uma
+  // linha dela abriria sessão, então o clique aqui é fora da trilha).
+  await marcoM1.click();
+  await expect(marcoM1).toHaveAttribute('data-focused', 'true');
+  await window.locator(`[data-testid="devmode-map-plano-action-${CARD_M1}"]`).click();
   const modal = window.locator('[role="dialog"]');
   await expect(modal).toBeVisible();
   // D1 — o texto fala em remover a ETIQUETA do board e NEGA explicitamente o
@@ -369,7 +395,11 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   // O board deste teste É o arquivo de fixture: byte-idêntico depois de todo
   // o fluxo. (A garantia principal é estrutural: o tipo `BoardReadTool` não
   // admite nenhuma tool de escrita — este assert é a rede de segurança.)
+  // Cobre os DOIS diretórios: o repo (`fixtureRepo`, onde mora o
+  // `board-fixture.json`) e a raiz v3 do handoff (`stateRoot`, CA-4) — o app
+  // só LÊ dos dois.
   expect(fingerprint(fixtureRepo)).toEqual(diskBefore);
+  expect(fingerprint(stateRoot)).toEqual(stateBefore);
   // E nenhum arquivo de trava foi criado (D1: ele não existe).
-  expect(Object.keys(fingerprint(fixtureRepo)).filter((file) => file.includes('.lock'))).toHaveLength(0);
+  expect(Object.keys(fingerprint(stateRoot)).filter((file) => file.includes('.lock'))).toHaveLength(0);
 });

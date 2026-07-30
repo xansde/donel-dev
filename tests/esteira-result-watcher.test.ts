@@ -6,10 +6,12 @@ import { watchEsteiraResult, type EsteiraResultEvent, type EsteiraResultWatcherH
 
 // T308 (003-modo-dev, Batch A) — watcher de arquivamento por manifesto
 // (CA-6): mesmo padrão de `transcript-watcher.ts` — vigia o DIRETÓRIO
-// `handoffs/<card_id>/` (nunca o arquivo), `fs.watch` REAL em tmpdir (o que
-// este módulo pode errar é justamente o que um mock esconderia).
+// `handoffs/…` (nunca o arquivo), `fs.watch` REAL em tmpdir (o que este
+// módulo pode errar é justamente o que um mock esconderia). Raiz v3 (CA-4):
+// `<esteiraStateRoot>/<repoSlug>/<cardId>/<fase>/handoffs/…`, fora do repo.
 
 const RETRY_MS = 40;
+const REPO_SLUG = 'donel-dev';
 
 async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
   const startedAt = Date.now();
@@ -38,29 +40,29 @@ function resultManifest(status: string): string {
 }
 
 describe('watchEsteiraResult', () => {
-  let repoDir: string;
+  let stateRoot: string;
   let handoffsDir: string;
   let events: EsteiraResultEvent[];
   let handle: EsteiraResultWatcherHandle | undefined;
 
   beforeEach(() => {
-    repoDir = mkdtempSync(join(tmpdir(), 'donel-dev-esteira-result-watcher-'));
-    handoffsDir = join(repoDir, '.esteira', 'plano', 'handoffs', 'card-1');
+    stateRoot = mkdtempSync(join(tmpdir(), 'donel-dev-esteira-result-watcher-'));
+    handoffsDir = join(stateRoot, REPO_SLUG, 'card-1', 'plano', 'handoffs');
     events = [];
   });
 
   afterEach(() => {
     handle?.dispose();
-    rmSync(repoDir, { recursive: true, force: true });
+    rmSync(stateRoot, { recursive: true, force: true });
   });
 
-  it("manifesto aparecendo com status success dispara o evento", async () => {
+  it('manifesto aparecendo com status success dispara o evento', async () => {
     mkdirSync(handoffsDir, { recursive: true });
     handle = watchEsteiraResult({
-      repoPath: repoDir,
+      esteiraStateRoot: stateRoot,
+      repoSlug: REPO_SLUG,
       fase: 'plano',
       cardId: 'card-1',
-      marcoId: 'M1',
       onArchived: (event) => events.push(event),
       retryMs: RETRY_MS,
     });
@@ -70,8 +72,8 @@ describe('watchEsteiraResult', () => {
 
     expect(events[0]).toEqual({
       cardId: 'card-1',
-      marcoId: 'M1',
       fase: 'plano',
+      faseNum: undefined,
       manifestPath: join(handoffsDir, 'plano-result.json'),
     });
   });
@@ -79,10 +81,10 @@ describe('watchEsteiraResult', () => {
   it("status diferente de success NÃO dispara (etapa que falhou fica aberta, CA-6)", async () => {
     mkdirSync(handoffsDir, { recursive: true });
     handle = watchEsteiraResult({
-      repoPath: repoDir,
+      esteiraStateRoot: stateRoot,
+      repoSlug: REPO_SLUG,
       fase: 'plano',
       cardId: 'card-1',
-      marcoId: 'M1',
       onArchived: (event) => events.push(event),
       retryMs: RETRY_MS,
     });
@@ -96,10 +98,10 @@ describe('watchEsteiraResult', () => {
   it('diretório inexistente no boot faz retry limitado, nunca lança', async () => {
     expect(() => {
       handle = watchEsteiraResult({
-        repoPath: repoDir,
+        esteiraStateRoot: stateRoot,
+        repoSlug: REPO_SLUG,
         fase: 'plano',
         cardId: 'card-1',
-        marcoId: 'M1',
         onArchived: (event) => events.push(event),
         retryMs: RETRY_MS,
         maxRetries: 2,
@@ -117,10 +119,10 @@ describe('watchEsteiraResult', () => {
   it('dois manifestos da mesma fase (reprocessamento) não duplicam evento', async () => {
     mkdirSync(handoffsDir, { recursive: true });
     handle = watchEsteiraResult({
-      repoPath: repoDir,
+      esteiraStateRoot: stateRoot,
+      repoSlug: REPO_SLUG,
       fase: 'plano',
       cardId: 'card-1',
-      marcoId: 'M1',
       onArchived: (event) => events.push(event),
       retryMs: RETRY_MS,
     });
@@ -138,10 +140,10 @@ describe('watchEsteiraResult', () => {
   it('dispose() fecha o watcher — escrita depois não emite mais nada', async () => {
     mkdirSync(handoffsDir, { recursive: true });
     handle = watchEsteiraResult({
-      repoPath: repoDir,
+      esteiraStateRoot: stateRoot,
+      repoSlug: REPO_SLUG,
       fase: 'plano',
       cardId: 'card-1',
-      marcoId: 'M1',
       onArchived: (event) => events.push(event),
       retryMs: RETRY_MS,
     });
@@ -151,5 +153,64 @@ describe('watchEsteiraResult', () => {
     await settle();
 
     expect(events).toEqual([]);
+  });
+
+  // CA-4/D.0-bis — implementar/validar arquivam sob handoffs/fase-<n>/.
+  describe('implementar/validar — arquivamento por fase do plano', () => {
+    it('com faseNum, vigia handoffs/fase-<n>/ e dispara com o faseNum ecoado', async () => {
+      const implHandoffsDir = join(stateRoot, REPO_SLUG, 'card-1', 'implementar', 'handoffs', 'fase-1');
+      mkdirSync(implHandoffsDir, { recursive: true });
+      handle = watchEsteiraResult({
+        esteiraStateRoot: stateRoot,
+        repoSlug: REPO_SLUG,
+        fase: 'implementar',
+        cardId: 'card-1',
+        faseNum: 1,
+        onArchived: (event) => events.push(event),
+        retryMs: RETRY_MS,
+      });
+
+      await fs.writeFile(
+        join(implHandoffsDir, 'implementar-result.json'),
+        JSON.stringify({
+          card_id: 'card-1',
+          fase: 'implementar',
+          status: 'success',
+          started_at: 'x',
+          finished_at: 'x',
+          executor: 'claude',
+          model: 'opus',
+          effort: 'high',
+          outputs: {},
+        }),
+      );
+      await waitFor(() => events.length === 1);
+
+      expect(events[0].faseNum).toBe(1);
+      expect(events[0].manifestPath).toBe(join(implHandoffsDir, 'implementar-result.json'));
+    });
+
+    it('sem faseNum, fica inerte — nunca observa fase-1 por chute, dispose() é no-op', async () => {
+      const implHandoffsDir = join(stateRoot, REPO_SLUG, 'card-1', 'implementar', 'handoffs', 'fase-1');
+      mkdirSync(implHandoffsDir, { recursive: true });
+
+      handle = watchEsteiraResult({
+        esteiraStateRoot: stateRoot,
+        repoSlug: REPO_SLUG,
+        fase: 'implementar',
+        cardId: 'card-1',
+        onArchived: (event) => events.push(event),
+        retryMs: RETRY_MS,
+      });
+
+      await fs.writeFile(
+        join(implHandoffsDir, 'implementar-result.json'),
+        JSON.stringify({ card_id: 'card-1', fase: 'implementar', status: 'success', outputs: {} }),
+      );
+      await settle();
+
+      expect(events).toEqual([]);
+      expect(() => handle?.dispose()).not.toThrow();
+    });
   });
 });

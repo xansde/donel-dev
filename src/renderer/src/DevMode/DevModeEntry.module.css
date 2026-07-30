@@ -1,31 +1,22 @@
-/* T311 (003-modo-dev) — Zona 1. Só tokens existentes (design-system.md);
-   nenhum hex novo, nenhuma peça visual nova (CA-25). */
+/* T311 (003-modo-dev) — porta de entrada. Só tokens existentes
+   (design-system.md); nenhuma peça visual nova (CA-25).
+
+   009-modo-dev-v3, lote 5 — forma de MODAL (não mais painel embutido no
+   grid): `.dialog` alarga o `Modal` compartilhado para os 620px do mockup
+   (`Modal v3.dc.html:399`); `.entry` é só o conteúdo interno, sem âncora de
+   grid (o `Modal` já cuida do overlay/centralização/portal). */
+
+.dialog {
+  width: 620px;
+  max-width: 90vw;
+  max-height: 640px;
+}
 
 .entry {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
   min-height: 0;
-  padding: var(--panel-padding);
-  background: var(--bg-panel);
-  border-right: var(--hairline);
-  overflow-y: auto;
-  /* Âncora de coluna do grid do .body — ver comentário em App.module.css
-     (.center): desmontar um painel não pode deslocar os outros. */
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.header {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-half);
-}
-
-.title {
-  font-size: var(--text-heading-size);
-  font-weight: var(--weight-semibold);
-  color: var(--text-primary);
 }
 
 .hint {
@@ -33,13 +24,24 @@
   color: var(--text-muted);
 }
 
+.filterRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.filterInput {
+  flex: 1;
+}
+
 .list {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  margin-top: var(--space-1);
   list-style: none;
   min-height: 0;
+  max-height: 340px;
+  overflow-y: auto;
 }
 
 .row {
@@ -83,4 +85,11 @@
 .empty {
   font-size: var(--text-caption-size);
   color: var(--text-muted);
+}
+
+.footerNote {
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+  border-top: var(--hairline);
+  padding-top: var(--space-1);
 }

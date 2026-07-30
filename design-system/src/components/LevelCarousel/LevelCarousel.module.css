@@ -1,0 +1,170 @@
+/*
+ * 009-modo-dev-v3, extensão 5 — geometria medida em
+ * `Modo Dev v3.dc.html:82-149`. Os números (392px de card, 404px de passo
+ * horizontal, alturas 402/206/124, gap de 14px, opacidades 1/0.34/0.22) são
+ * requisito (`design/modo-dev-v3-verificacao.md` §2) — a aritmética que os
+ * produz vive em `../../lib/carouselGeometry.ts`, testada à parte; este CSS
+ * só desenha o resultado.
+ */
+
+.root {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.track {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: transform 320ms var(--ease-standard);
+  will-change: transform;
+}
+
+.level {
+  display: flex;
+  flex: none;
+  transition: height 320ms var(--ease-standard);
+}
+
+.rail {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  width: 26px;
+  padding-top: 20px;
+}
+
+.node {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-raised);
+  transition:
+    background 200ms var(--ease-standard),
+    border-color 200ms var(--ease-standard),
+    box-shadow 200ms var(--ease-standard);
+}
+
+.nodeFocused {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.line {
+  flex: 1;
+  width: 1px;
+  background: var(--border);
+}
+
+.levelBody {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.levelHeader {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 20px;
+}
+
+.levelLabel {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.levelLabel[role='button'] {
+  cursor: pointer;
+}
+
+.levelLabel[role='button']:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.levelLabelFocused {
+  color: var(--text-primary);
+}
+
+/* CA-11/CA-13 — só existe quando `cards.length > 1`; um item só não ganha enfeite. */
+.ornament {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.counter {
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.arrow {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.arrow:hover {
+  color: var(--text-primary);
+}
+
+.arrow:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.cardTrack {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 12px;
+  transition: transform 320ms var(--ease-standard);
+  will-change: transform;
+}
+
+.card {
+  display: flex;
+  flex: none;
+  width: 392px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  transition:
+    opacity 300ms var(--ease-standard),
+    box-shadow 300ms var(--ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track,
+  .level,
+  .node,
+  .cardTrack,
+  .card {
+    transition: none;
+  }
+}

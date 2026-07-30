@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import type { DiscoveryTree, MarcoNode, PhaseNode } from '../src/main/discovery-tree';
+import type { DiscoveryTree, PhaseNode, PlanCardNode } from '../src/main/discovery-tree';
 import type { BoardFacts } from '../src/main/taskdex-board-client';
 import type { EsteiraPhase } from '../src/shared/devMode';
 import type { PhaseStatus } from '../src/shared/phaseState';
 import { annotateTree, detectPhaseDivergence } from '../src/shared/boardAnnotation';
 
-// T325/T326 (003-modo-dev, Batch C) — anotação dos 4 fatos do CA-12 na árvore
+// T325/T326 (003-modo-dev, Batch C) — anotação dos fatos do CA-12 na árvore
 // do discovery + detecção de divergência disco×board (CA-13, parte de
 // detecção — a sessão de conciliação é T328/Batch D). Pure mapping: sem I/O,
-// sem persistência (CA-14 — marco_id continua vindo do disco, o `[Mx]` do
-// board é só conferência).
+// sem persistência.
+//
+// CA-17 (009-modo-dev-v3) — `marco`/`MarcoNode` → `card de plano`/
+// `PlanCardNode`. A conferência `[Mx]`/`marcoIdMismatch` saiu (consequência
+// FORÇADA: `marco_id` não existe mais em `plan_cards[]`, não há mais nada a
+// comparar — ver comentário de topo de boardAnnotation.ts).
 
-const ALL_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'implementar', 'validar', 'concluir'];
+const ALL_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'implementar', 'validar', 'documentar', 'cliente', 'concluir'];
 
 function phaseNode(phase: EsteiraPhase, status: PhaseStatus): PhaseNode {
   return {
@@ -22,14 +26,14 @@ function phaseNode(phase: EsteiraPhase, status: PhaseStatus): PhaseNode {
   };
 }
 
-function marco(marcoId: string, cardId: string, statuses: Partial<Record<EsteiraPhase, PhaseStatus>> = {}): MarcoNode {
+function planCard(cardId: string, statuses: Partial<Record<EsteiraPhase, PhaseStatus>> = {}): PlanCardNode {
   const phases = {} as Record<EsteiraPhase, PhaseNode>;
   for (const phase of ALL_PHASES) phases[phase] = phaseNode(phase, statuses[phase] ?? 'not-started');
-  return { marcoId, cardId, phases };
+  return { cardId, track: 'codigo', shadow: false, phases, fases: [] };
 }
 
-function tree(marcos: readonly MarcoNode[]): DiscoveryTree {
-  return { discoveryCardId: 'disc-1', marcos, focusedMarcoId: null, allMarcosComplete: false };
+function tree(planCards: readonly PlanCardNode[]): DiscoveryTree {
+  return { discoveryCardId: 'disc-1', planCards, focusedPlanCardId: null, allPlanCardsComplete: false };
 }
 
 function boardFacts(overrides: Partial<BoardFacts> = {}): BoardFacts {
@@ -44,24 +48,24 @@ function boardFacts(overrides: Partial<BoardFacts> = {}): BoardFacts {
   };
 }
 
-describe('annotateTree — overlay dos 4 fatos (T325/CA-12)', () => {
-  it('sobrepõe os 4 fatos do board no marco correspondente (por cardId)', () => {
-    const t = tree([marco('M1', 'card-1')]);
+describe('annotateTree — overlay dos fatos do board (T325/CA-12)', () => {
+  it('sobrepõe os fatos do board no card de plano correspondente (por cardId)', () => {
+    const t = tree([planCard('card-1')]);
     const facts = boardFacts({ column: 'implementar', lockedPhase: 'implementar', attentionLabels: ['esteira:precisa-atencao'], prUrl: 'https://x/pr/1', prApproved: true });
 
     const annotated = annotateTree(t, { 'card-1': facts });
 
-    expect(annotated.marcos[0].boardFacts).toEqual(facts);
+    expect(annotated.planCards[0].boardFacts).toEqual(facts);
   });
 
-  it('marco sem fato correspondente no board → boardFacts null (nunca lança)', () => {
-    const t = tree([marco('M1', 'card-1')]);
+  it('card de plano sem fato correspondente no board → boardFacts null (nunca lança)', () => {
+    const t = tree([planCard('card-1')]);
     const annotated = annotateTree(t, {});
-    expect(annotated.marcos[0].boardFacts).toBeNull();
+    expect(annotated.planCards[0].boardFacts).toBeNull();
   });
 
-  it('não altera o PhaseNode/MarcoNode original — imutabilidade', () => {
-    const t = tree([marco('M1', 'card-1', { plano: 'done' })]);
+  it('não altera o PhaseNode/PlanCardNode original — imutabilidade', () => {
+    const t = tree([planCard('card-1', { plano: 'done' })]);
     const snapshotBefore = JSON.parse(JSON.stringify(t));
 
     annotateTree(t, { 'card-1': boardFacts() });
@@ -69,42 +73,32 @@ describe('annotateTree — overlay dos 4 fatos (T325/CA-12)', () => {
     expect(JSON.parse(JSON.stringify(t))).toEqual(snapshotBefore);
   });
 
-  it('"[Mx]" do título do card divergindo do marco_id de disco gera marcador de conferência, nunca substitui marco_id (CA-14)', () => {
-    const t = tree([marco('M1', 'card-1')]);
-    const annotated = annotateTree(t, { 'card-1': boardFacts({ title: '[M2] Card com prefixo errado' }) });
-
-    expect(annotated.marcos[0].marcoIdMismatch).toBe(true);
-    expect(annotated.marcos[0].marcoId).toBe('M1'); // nunca substituído — CA-14
-  });
-
-  it('"[Mx]" do título batendo com o marco_id de disco → sem marcador', () => {
-    const t = tree([marco('M1', 'card-1')]);
-    const annotated = annotateTree(t, { 'card-1': boardFacts({ title: '[M1] Card certo' }) });
-    expect(annotated.marcos[0].marcoIdMismatch).toBe(false);
-  });
-
-  it('título sem prefixo "[Mx]" não gera marcador (card antigo, sem convenção ainda)', () => {
-    const t = tree([marco('M1', 'card-1')]);
-    const annotated = annotateTree(t, { 'card-1': boardFacts({ title: 'Card sem prefixo' }) });
-    expect(annotated.marcos[0].marcoIdMismatch).toBe(false);
-  });
-
   it('card fora do discovery em foco nunca entra na anotação — chaves extras do board são ignoradas (CA-12)', () => {
-    const t = tree([marco('M1', 'card-1')]);
+    const t = tree([planCard('card-1')]);
     const annotated = annotateTree(t, {
       'card-1': boardFacts(),
       'card-fora-do-foco': boardFacts({ column: 'concluir' }),
     });
 
-    expect(annotated.marcos).toHaveLength(1);
-    expect(annotated.marcos[0].cardId).toBe('card-1');
+    expect(annotated.planCards).toHaveLength(1);
+    expect(annotated.planCards[0].cardId).toBe('card-1');
   });
 });
 
-describe('detectPhaseDivergence — detecção disco×board (T326/CA-13)', () => {
+describe('detectPhaseDivergence — detecção disco×board (T326/CA-13, ajustada ao modelo v3 no CA-19)', () => {
   it('fase done + card ainda na coluna anterior à esperada → marca divergência com os dois fatos', () => {
-    const divergence = detectPhaseDivergence('implementar', 'done', 'implementar');
-    expect(divergence).toEqual({ diskStatus: 'done', boardColumn: 'implementar' });
+    const divergence = detectPhaseDivergence('plano', 'done', 'plano');
+    expect(divergence).toEqual({ diskStatus: 'done', boardColumn: 'plano' });
+  });
+
+  it('CA-19 — implementar done + card ainda na coluna implementar → NÃO marca (D20 do contrato: Implementar não move o card na v3)', () => {
+    expect(detectPhaseDivergence('implementar', 'done', 'implementar')).toBeNull();
+  });
+
+  it('CA-19 — implementar done + card em QUALQUER coluna → nunca marca (implementar não tem próxima coluna esperada na v3)', () => {
+    expect(detectPhaseDivergence('implementar', 'done', 'plano')).toBeNull();
+    expect(detectPhaseDivergence('implementar', 'done', 'validar')).toBeNull();
+    expect(detectPhaseDivergence('implementar', 'done', 'backlog')).toBeNull();
   });
 
   it('fase validar done + card ainda na coluna de antes de Validar → NÃO marca (caso esperado pela Esteira)', () => {
@@ -132,27 +126,34 @@ describe('detectPhaseDivergence — detecção disco×board (T326/CA-13)', () =>
   });
 });
 
-describe('annotateTree — wiring da divergência por fase (T326)', () => {
-  it('fase implementar done + coluna do board ainda em implementar → PhaseNode.divergence com os dois fatos', () => {
-    const t = tree([marco('M1', 'card-1', { implementar: 'done' })]);
+describe('annotateTree — wiring da divergência por fase (T326, ajustada ao modelo v3 no CA-19)', () => {
+  it('CA-19 — fase implementar done + coluna do board ainda em implementar → SEM divergência (a v3 tornou isso normal: o card fica em Implementar até o PR mergear, D20)', () => {
+    const t = tree([planCard('card-1', { implementar: 'done' })]);
     const annotated = annotateTree(t, { 'card-1': boardFacts({ column: 'implementar' }) });
 
-    expect(annotated.marcos[0].phases.implementar.divergence).toEqual({ diskStatus: 'done', boardColumn: 'implementar' });
+    expect(annotated.planCards[0].phases.implementar.divergence).toBeNull();
+  });
+
+  it('fase plano done + coluna do board ainda em plano → PhaseNode.divergence com os dois fatos (Plano continua movendo o card, D20)', () => {
+    const t = tree([planCard('card-1', { plano: 'done' })]);
+    const annotated = annotateTree(t, { 'card-1': boardFacts({ column: 'plano' }) });
+
+    expect(annotated.planCards[0].phases.plano.divergence).toEqual({ diskStatus: 'done', boardColumn: 'plano' });
   });
 
   it('fase validar done + coluna ainda em implementar → sem divergência (caso esperado, CA-13)', () => {
-    const t = tree([marco('M1', 'card-1', { implementar: 'done', validar: 'done' })]);
+    const t = tree([planCard('card-1', { implementar: 'done', validar: 'done' })]);
     const annotated = annotateTree(t, { 'card-1': boardFacts({ column: 'implementar' }) });
 
-    expect(annotated.marcos[0].phases.validar.divergence).toBeNull();
+    expect(annotated.planCards[0].phases.validar.divergence).toBeNull();
   });
 
-  it('sem boardFacts (marco fora do board) → nenhuma fase marca divergência', () => {
-    const t = tree([marco('M1', 'card-1', { implementar: 'done' })]);
+  it('sem boardFacts (card de plano fora do board) → nenhuma fase marca divergência', () => {
+    const t = tree([planCard('card-1', { implementar: 'done' })]);
     const annotated = annotateTree(t, {});
 
     for (const phase of ALL_PHASES) {
-      expect(annotated.marcos[0].phases[phase].divergence).toBeNull();
+      expect(annotated.planCards[0].phases[phase].divergence).toBeNull();
     }
   });
 });

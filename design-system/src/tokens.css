@@ -59,6 +59,12 @@
   --phase-implementar: #5fb0a8; /* teal dessaturado */
   --phase-validar: #d9a05f; /* ocre dessaturado */
   --phase-concluir: #7fbf83; /* verde-sálvia dessaturado */
+  /* 009-modo-dev-v3, extensão 8 (D-V5): o 6º valor de chip, para o caminho
+     documental — o mockup pede explicitamente `--donel-accent` (nenhum hex
+     novo, `design/modo-dev-v3-verificacao.md` §3), então este NÃO é um tom
+     dessaturado novo como os 5 acima: é um alias do token de identidade do
+     Donel já existente. */
+  --phase-documentar: var(--donel-accent);
 
   /* === Tipografia (§3) === */
   --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;

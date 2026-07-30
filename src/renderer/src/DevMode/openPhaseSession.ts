@@ -86,11 +86,13 @@ export function resolveCommandSequence(input: ResolveCommandSequenceInput): read
   return [phaseCommand];
 }
 
+// CA-17 (009-modo-dev-v3) — `marcoId` saiu de `ConciliationPromptInput`:
+// `marco_id` morreu no disco (não existe mais em `plan_cards[]`), e o
+// `cardId` já identifica o card de plano sozinho.
 export interface ConciliationPromptInput {
   readonly cardId: string;
-  readonly marcoId: string;
   readonly phase: EsteiraPhase;
-  /** Fato do DISCO (`.esteira/<fase>/handoffs/.../<fase>-result.json`). */
+  /** Fato do DISCO (raiz v3, CA-4: `~/.claude/esteira-state/<repo_slug>/<card_id>/<fase>/handoffs/.../<fase>-result.json`). */
   readonly diskStatus: PhaseStatus;
   /** Fato do BOARD (coluna real do card, lida pelo espelho). */
   readonly boardColumn: string;
@@ -109,7 +111,7 @@ export interface ConciliationPromptInput {
  */
 export function buildConciliationPrompt(input: ConciliationPromptInput): string {
   return [
-    `Conciliação de divergência no card ${input.cardId} (marco ${input.marcoId}).`,
+    `Conciliação de divergência no card ${input.cardId}.`,
     `Fato do disco: a fase ${input.phase} está "${input.diskStatus}" no manifesto da Esteira.`,
     `Fato do board: o card está na coluna "${input.boardColumn}".`,
     'Levante o que aconteceu e me diga o que corrigir — não altere o board, a decisão é minha.',

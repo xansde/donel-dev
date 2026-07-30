@@ -3,9 +3,16 @@ import type {
   AppConfigDto,
   ArchivePhaseSessionIpcInput,
   BoardFacts,
+  CopyTranscriptForResumeIpcInput,
+  CopyTranscriptForResumeResult,
+  CreateProjectIpcInput,
+  CreateProjectResponse,
   DiscoveryTree,
   DonelApi,
   EntryColumnCard,
+  GhAvailabilityDto,
+  GithubReadRequest,
+  GithubReadResponse,
   LauncherDefaultsDto,
   NotificationPreference,
   OpenDiscoveryIpcInput,
@@ -14,26 +21,33 @@ import type {
   ProfileDoctorReportDto,
   ProfileHeadroomMap,
   ProfileSummaryDto,
+  ProjectBindingDto,
   ProjectInfo,
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
   PtyExitInfo,
+  SaveProjectBindingIpcInput,
   SemaphoreStateInfo,
   SemaphoreUpdate,
   SessionSummaryDto,
+  TabColorToken,
   TranscriptChangedPayload,
   WatchPhaseIpcInput,
 } from '../shared';
 import {
   CONFIG_CHANNELS,
   DEVMODE_CHANNELS,
+  GITHUB_CHANNELS,
   PROFILE_CHANNELS,
+  PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
   PTY_CHANNELS,
   SEMAPHORE_CHANNELS,
   SESSION_CHANNELS,
+  TAB_CHANNELS,
   TRANSCRIPT_CHANNELS,
+  TRANSCRIPT_COPY_CHANNELS,
 } from '../shared';
 // T504 (005-terminal-copy-paste) — canal do clipboard-bridge (main), aditivo
 // aos imports acima (não reordena o bloco existente).
@@ -87,6 +101,9 @@ const donelApi: DonelApi = {
 
     setFavorite: (path: string, favorite: boolean) =>
       ipcRenderer.invoke(PROJECT_CHANNELS.favorite, path, favorite) as Promise<ProjectInfo[]>,
+
+    // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
+    create: (input: CreateProjectIpcInput) => ipcRenderer.invoke(PROJECT_CHANNELS.create, input) as Promise<CreateProjectResponse>,
   },
 
   semaphore: {
@@ -180,6 +197,15 @@ const donelApi: DonelApi = {
 
   // T307 (003-modo-dev) — estado do Modo Dev (CA-21/CA-4) + leitura da árvore
   // do discovery (CA-7). Nenhum canal aqui escreve no TaskDex/vault.
+  // CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
+  tabs: {
+    setColor: (sessionId: string, color: TabColorToken) =>
+      ipcRenderer.invoke(TAB_CHANNELS.setColor, sessionId, color) as Promise<AppConfigDto>,
+
+    setOrder: (sessionId: string, order: number) =>
+      ipcRenderer.invoke(TAB_CHANNELS.setOrder, sessionId, order) as Promise<AppConfigDto>,
+  },
+
   devMode: {
     get: () => ipcRenderer.invoke(DEVMODE_CHANNELS.get) as Promise<AppConfigDto>,
 
@@ -218,6 +244,31 @@ const donelApi: DonelApi = {
       ipcRenderer.on(DEVMODE_CHANNELS.phaseArchived, handler);
       return () => ipcRenderer.removeListener(DEVMODE_CHANNELS.phaseArchived, handler);
     },
+  },
+
+  // CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto
+  // (board TaskDex + repo GitHub). Nenhum canal escreve em TaskDex/GitHub —
+  // só nos dois arquivos de config locais que a esteira já lia.
+  projectBinding: {
+    get: (repoPath: string) => ipcRenderer.invoke(PROJECT_BINDING_CHANNELS.get, repoPath) as Promise<ProjectBindingDto>,
+
+    save: (input: SaveProjectBindingIpcInput) =>
+      ipcRenderer.invoke(PROJECT_BINDING_CHANNELS.save, input) as Promise<ProjectBindingDto>,
+  },
+
+  // CA-3/CA-5 (009-modo-dev-v3, lote 4) — GitHub por `gh` CLI (spec-issue,
+  // sub-issues, PR da fase). Nenhum canal escreve no GitHub.
+  github: {
+    read: (request: GithubReadRequest) => ipcRenderer.invoke(GITHUB_CHANNELS.read, request) as Promise<GithubReadResponse>,
+
+    checkAvailability: () => ipcRenderer.invoke(GITHUB_CHANNELS.checkAvailability) as Promise<GhAvailabilityDto>,
+  },
+
+  // CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": copia o
+  // `.jsonl` pro perfil ATIVO quando a sessão rodou em outro (achado 14).
+  transcripts: {
+    copyForResume: (input: CopyTranscriptForResumeIpcInput) =>
+      ipcRenderer.invoke(TRANSCRIPT_COPY_CHANNELS.copyForResume, input) as Promise<CopyTranscriptForResumeResult>,
   },
 };
 

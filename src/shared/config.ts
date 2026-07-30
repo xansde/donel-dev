@@ -14,6 +14,10 @@ import type { EffortLevel, ModelAlias, PermissionMode } from './commandBuilder';
 import type { DevModeState } from './devMode';
 import type { StoredSessionName } from './sessionName';
 import type { SessionRegistry } from './sessionRegistry';
+// CA-26/CA-27 (009-modo-dev-v3) — cor+ordem da aba v3 por sessão claude, ver
+// src/shared/tabAppearance.ts (lógica pura) e src/shared/tabChannels.ts
+// (canais `tabs:*`).
+import type { TabAppearanceMap } from './tabAppearance';
 
 export const CONFIG_CHANNELS = {
   get: 'config:get',
@@ -88,6 +92,14 @@ export interface AppConfigDto {
    * "só do main").
    */
   readonly devMode: DevModeState;
+  /**
+   * CA-26/CA-27 (009-modo-dev-v3) — cor + ordem da aba v3, por `claudeSessionId`
+   * (chave a mesma de `sessionNames`). Ausência de entrada = cor `'none'` e
+   * ordem "no fim" (App.tsx decide o índice na hora de renderizar) — nunca um
+   * valor fabricado. Abas `shell` (terminal comum) não entram aqui (ver
+   * comentário de `TabAppearanceMap`, src/shared/tabAppearance.ts).
+   */
+  readonly tabAppearance: TabAppearanceMap;
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */

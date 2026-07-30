@@ -42,6 +42,12 @@ const ALLOWLIST: Record<string, readonly { readonly snippet: string; readonly re
       reason: 'prefixo de mkdtemp (pasta temporária do teste), não o projeto escaneado',
     },
   ],
+  'new-project.spec.ts': [
+    {
+      snippet: "mkdtempSync(join(tmpdir(), 'donel-dev-smoke-new-project-root-'))",
+      reason: 'prefixo de mkdtemp (root temporário onde o projeto novo é criado), não a pasta do repo',
+    },
+  ],
 };
 
 /** Remove comentários de linha e de bloco — o que sobra é o que o runtime enxerga. */

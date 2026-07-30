@@ -22,6 +22,17 @@ export const DEFAULT_PHASE_DEFAULTS: PhaseDefaultsTable = {
   },
   // D2: sem `--subset` — o texto exato da skill, nada inventado.
   validar: { model: 'sonnet', effort: 'high', commandTemplate: '/esteira-validar {card_id}', opensOwnSession: true },
+  // CA-18 (009-modo-dev-v3) — track documental: modelo/esforço/modo herdados
+  // literalmente do contrato v3 (§G). `documentar` roda como subagente
+  // in-session (mesmo padrão de discovery/plano/implementar/validar).
+  documentar: { model: 'opus', effort: 'high', commandTemplate: '/esteira-documentar {card_id}', opensOwnSession: true },
+  // `cliente` (§G do contrato, condicional a D26): inline, nunca abre sessão
+  // própria — mesmo espírito do `concluir`. Nome de skill conforme §B/§D.6 do
+  // contrato (`esteira-cliente`); a tabela §J do mesmo documento diverge para
+  // `esteira-validar-cliente` — divergência interna do próprio contrato,
+  // registrada no report desta entrega; sem chamador algum hoje (fase ainda
+  // não aprovada), o nome exato não tem efeito observável neste lote.
+  cliente: { model: 'haiku', effort: 'low', commandTemplate: '/esteira-cliente {card_id}', opensOwnSession: false },
   // C6: gate determinístico, roda inline na sessão em foco (não abre sessão própria).
   concluir: { model: 'haiku', effort: 'low', commandTemplate: '/esteira-concluir {card_id}', opensOwnSession: false },
 };

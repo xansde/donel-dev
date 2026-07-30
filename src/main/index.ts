@@ -2,11 +2,17 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type {
   AppConfigDto,
   ArchivePhaseSessionIpcInput,
+  CopyTranscriptForResumeIpcInput,
+  CopyTranscriptForResumeResult,
+  CreateProjectResponse,
   DiscoveryTree,
+  GhAvailabilityDto,
+  GithubReadRequest,
+  GithubReadResponse,
   LauncherDefaultsDto,
   NotificationPreference,
   OpenDiscoveryIpcInput,
@@ -14,12 +20,14 @@ import type {
   ProfileDoctorReportDto,
   ProfileHeadroomMap,
   ProfileSummaryDto,
+  ProjectBindingDto,
   ProjectInfo,
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
   PhaseArchivedPayload,
   PtyExitInfo,
+  SaveProjectBindingIpcInput,
   SemaphoreUpdate,
   SessionSummaryDto,
   TranscriptChangedPayload,
@@ -32,20 +40,29 @@ import {
   CONFIG_CHANNELS,
   DEVMODE_CHANNELS,
   focusDiscovery,
+  GITHUB_CHANNELS,
   isValidArchivePhaseSessionIpcInput,
   isValidCardId,
   isValidCardIdList,
+  isValidCopyTranscriptForResumeIpcInput,
+  isValidCreateProjectIpcInput,
+  isValidGithubReadRequest,
   isValidOpenDiscoveryIpcInput,
+  isValidSaveProjectBindingIpcInput,
   isValidWatchPhaseIpcInput,
   normalizeSessionName,
   openDiscovery,
   PROFILE_CHANNELS,
+  PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
   PTY_CHANNELS,
   SEMAPHORE_CHANNELS,
   SESSION_CHANNELS,
+  TAB_CHANNELS,
   TRANSCRIPT_CHANNELS,
+  TRANSCRIPT_COPY_CHANNELS,
 } from '../shared';
+import { copyTranscriptForResume, createSystemTranscriptCopyIoDeps } from './transcript-copy';
 import { createSystemResolveDeps, resolveClaudeExecutable } from './claude-executable';
 import {
   clearSessionName,
@@ -63,8 +80,21 @@ import {
   type AppConfig,
 } from './config-store';
 import { buildDiscoveryTree } from './discovery-tree';
+import {
+  createSystemEsteiraConfigIoDeps,
+  esteiraConfigDir,
+  readProjectBindingFromDisk,
+  saveProjectBindingToDisk,
+} from './esteira-config';
 import { createSystemEsteiraReaderIoDeps } from './esteira-reader';
 import { watchEsteiraResult, type EsteiraResultWatcherHandle } from './esteira-result-watcher';
+import {
+  checkGhAvailability,
+  GithubReadCache,
+  readPhasePullRequestFacts,
+  readSpecIssueFacts,
+  readSubIssueFacts,
+} from './github-reader';
 import {
   listEntryColumnCards,
   readBoardFactsFor,
@@ -91,6 +121,8 @@ import {
   type ProfileInfo,
 } from './profile-manager';
 import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects, sortProjects } from './project-scanner';
+// CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
+import { createNewProject, createSystemCreateProjectDeps } from './project-creator';
 import { PtyManager } from './pty-manager';
 // T504 (005-terminal-copy-paste) — clipboard-bridge (T503), aditivo aos
 // imports acima (não reordena o bloco existente).
@@ -104,6 +136,8 @@ import { SessionSemaphoreManager } from './session-semaphore-manager';
 import { TranscriptWatcherRegistry } from './transcript-watcher';
 import { forgetIfOrphan } from '../shared/resumeFailure';
 import { removeSession, setPinned, upsertVisit } from '../shared/sessionRegistry';
+// CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
+import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearance';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
 // PtyManager chega em T004 (este arquivo). ProjectScanner chega no T007
@@ -118,6 +152,8 @@ const ptyManager = new PtyManager();
 const claudeResolveDeps = createSystemResolveDeps();
 // Idem para o scan de projetos (T007) — mesmo padrão do claude-executable.
 const projectScanDeps = createSystemScanDeps();
+// CA-30 (009-modo-dev-v3, lote 9) — idem para a criação de projeto novo.
+const createProjectDeps = createSystemCreateProjectDeps();
 
 // T015 — ConfigStore formal (FR-007): carregado de verdade em
 // `app.whenReady()` (migração dos JSONs legados de T007/T014 incluída, ver
@@ -129,8 +165,9 @@ const projectScanDeps = createSystemScanDeps();
 const configIoDeps = createSystemConfigIoDeps();
 let appConfig: AppConfig = defaultAppConfig(defaultProjectRoots(homedir));
 
-// T303/T305 (003-modo-dev) — leitura dos artefatos `.esteira/` em disco;
-// injetável (mesmo padrão de `configIoDeps`), resolvido uma vez.
+// T303/T305 (003-modo-dev) — leitura dos artefatos da Esteira em disco (raiz
+// v3, CA-4: `~/.claude/esteira-state/<repo_slug>/`); injetável (mesmo padrão
+// de `configIoDeps`), resolvido uma vez.
 const esteiraReaderIoDeps = createSystemEsteiraReaderIoDeps();
 
 // T311 (Batch B) — de onde vêm os cards da porta de entrada (CA-1). Na Fatia
@@ -146,15 +183,63 @@ const boardReader = resolveBoardReader(process.env, esteiraReaderIoDeps.readFile
 const boardFactsReader = resolveBoardFactsReader(process.env, esteiraReaderIoDeps.readFileText);
 
 /**
+ * CA-4 (009-modo-dev-v3) — raiz durável do handoff v3, fora de qualquer
+ * checkout git (contrato `handoff-v3.md` §D.0-bis): `~/.claude/esteira-state`.
+ * `DONEL_ESTEIRA_STATE_ROOT` (mesmo padrão de `DONEL_DEVMODE_BOARD_FIXTURE`,
+ * `taskdex-board-client.ts`) permite ao smoke apontar para um tmpdir — sem
+ * isso, um teste de disco real sujaria (ou dependeria de) o
+ * `~/.claude/esteira-state` de verdade da máquina que roda o smoke.
+ */
+const ESTEIRA_STATE_ROOT = process.env.DONEL_ESTEIRA_STATE_ROOT || join(homedir(), '.claude', 'esteira-state');
+
+/**
+ * CA-23 (009-modo-dev-v3, lote 3) — mesmo diretório `~/.claude/esteira-config/`
+ * que as skills da esteira já usam (`donel-board-credential.json`,
+ * `repos.json`, contrato §D.0-bis/§I), com override de ambiente
+ * (`DONEL_ESTEIRA_CONFIG_DIR`, mesmo espírito de `DONEL_ESTEIRA_STATE_ROOT`)
+ * pra isolar o smoke do diretório REAL da máquina.
+ */
+const ESTEIRA_CONFIG_DIR = esteiraConfigDir(process.env, homedir);
+const esteiraConfigIoDeps = createSystemEsteiraConfigIoDeps();
+
+/**
+ * CA-3 (009-modo-dev-v3, lote 4) — cache de TTL curto (20s,
+ * github-reader.ts) compartilhado por todo o processo main: o mapa/painel
+ * (lotes 7/8) podem reler o mesmo card/PR a cada render sem martelar `gh` de
+ * novo. `checkGhAvailability` (mesmo módulo) já é memoizado à parte, por
+ * sessão de app.
+ */
+const githubReadCache = new GithubReadCache();
+
+/**
+ * CA-4 — `repo_slug` é a CHAVE do repo-alvo em `repos.json → repos`
+ * (`~/.claude/esteira-config/repos.json`, contrato §D.0-bis/§I), não o path.
+ * A leitura da árvore (CA-4/CA-7) ainda usa o nome da pasta do checkout local
+ * como aproximação — na prática a chave costuma coincidir com o basename do
+ * repo (`spotsys`, `dalton`, ver exemplos do contrato), mas diverge se o
+ * board apontar um checkout cujo nome de pasta não bate com a chave
+ * escolhida em `repos.json` (risco conhecido, registrado no report do lote
+ * 2). A engrenagem (CA-23, abaixo) usa a MESMA resolução para decidir em
+ * qual entrada de `repos.json` gravar o campo `github` — é a chave que todo
+ * o resto do app já assume, então divergir aqui criaria uma segunda noção de
+ * "qual é o repo" dentro do mesmo processo.
+ */
+function resolveRepoSlug(repoPath: string): string {
+  return basename(repoPath);
+}
+
+/**
  * T315 (Batch B) — um watcher de manifesto por ETAPA vigiada (CA-6), chave =
- * `discovery:card:marco:fase`. Vive aqui (e não no renderer) porque `fs.watch`
- * é main; o renderer só assina o push `devMode:phaseArchived`. Nada aqui
- * ESCREVE em disco — é watch de leitura, invariante 5 preservada.
+ * `discovery:card:fase:faseNum`. Vive aqui (e não no renderer) porque
+ * `fs.watch` é main; o renderer só assina o push `devMode:phaseArchived`.
+ * Nada aqui ESCREVE em disco — é watch de leitura, invariante 5 preservada.
+ * `faseNum` entra na chave (CA-4/D.0-bis) para não colidir implementar/validar
+ * de fases diferentes do mesmo card.
  */
 const esteiraResultWatchers = new Map<string, EsteiraResultWatcherHandle>();
 
-function phaseWatchKey(input: { discoveryCardId: string; cardId: string; marcoId: string; phase: string }): string {
-  return `${input.discoveryCardId}:${input.cardId}:${input.marcoId}:${input.phase}`;
+function phaseWatchKey(input: { discoveryCardId: string; cardId: string; phase: string; faseNum?: number | null }): string {
+  return `${input.discoveryCardId}:${input.cardId}:${input.phase}:${input.faseNum ?? ''}`;
 }
 
 function disposeAllEsteiraResultWatchers(): void {
@@ -454,6 +539,22 @@ function registerProjectIpcHandlers(): void {
     persistAppConfig();
     return listProjectsWithFavorites();
   });
+
+  /**
+   * CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero pelo app"
+   * (US-15). `allowedRoots` é SEMPRE `appConfig.projectRoots` (nunca uma
+   * lista vinda do renderer — a allowlist de destino é decidida aqui, não
+   * pelo payload IPC). Devolve resultado + lista já re-escaneada (mesmo
+   * idioma de `PROJECT_CHANNELS.favorite`): projeto criado aparece na
+   * sidebar/seletor sem round-trip extra.
+   */
+  ipcMain.handle(PROJECT_CHANNELS.create, async (_event, input: unknown): Promise<CreateProjectResponse> => {
+    if (!isValidCreateProjectIpcInput(input)) {
+      return { result: { ok: false, reason: 'empty' }, projects: listProjectsWithFavorites() };
+    }
+    const result = await createNewProject(input, appConfig.projectRoots, createProjectDeps);
+    return { result, projects: listProjectsWithFavorites() };
+  });
 }
 
 /** Roots vazias (após trim)/duplicadas nunca chegam no `appConfig` — mesma disciplina defensiva do resto do ConfigStore (nunca propaga lixo pro scan de projetos). Preserva a ORDEM recebida (1ª ocorrência de cada root). */
@@ -556,7 +657,7 @@ function registerDevModeIpcHandlers(): void {
       ...appConfig,
       devMode: archivePhaseSession(
         appConfig.devMode,
-        { cardId: input.cardId, marcoId: input.marcoId, phase: input.phase },
+        { cardId: input.cardId, phase: input.phase },
         { sessionId: input.sessionId, profileSlug: input.profileSlug, archivedAt: Date.now() },
       ),
     };
@@ -573,11 +674,12 @@ function registerDevModeIpcHandlers(): void {
     return toAppConfigDto(appConfig);
   });
 
-  /** CA-7 — monta a árvore do discovery pedido a partir do disco. `cardId` sem discovery aberto devolve árvore vazia (nunca lança). */
+  /** CA-4/CA-7 — monta a árvore do discovery pedido a partir do disco (raiz v3, `~/.claude/esteira-state/<repo_slug>`). `cardId` sem discovery aberto devolve árvore vazia (nunca lança). */
   ipcMain.handle(DEVMODE_CHANNELS.readTree, (_event, cardId: string): DiscoveryTree => {
     const repoPath = isValidCardId(cardId) ? (appConfig.devMode.discoveries[cardId]?.repoPath ?? '') : '';
-    if (!repoPath) return { discoveryCardId: cardId, marcos: [], focusedMarcoId: null, allMarcosComplete: false };
-    return buildDiscoveryTree(repoPath, cardId, appConfig.devMode.archivedPhaseSessions, esteiraReaderIoDeps);
+    if (!repoPath) return { discoveryCardId: cardId, planCards: [], focusedPlanCardId: null, allPlanCardsComplete: false };
+    const root = { esteiraStateRoot: ESTEIRA_STATE_ROOT, repoSlug: resolveRepoSlug(repoPath) };
+    return buildDiscoveryTree(root, cardId, appConfig.devMode.archivedPhaseSessions, esteiraReaderIoDeps);
   });
 
   /** T311/CA-1 — cards das 3 colunas de entrada do board configurado. Sem board/sem fonte = `[]` (porta desligada, nunca erro). */
@@ -611,17 +713,18 @@ function registerDevModeIpcHandlers(): void {
 
     const sender = event.sender;
     const handle = watchEsteiraResult({
-      repoPath,
+      esteiraStateRoot: ESTEIRA_STATE_ROOT,
+      repoSlug: resolveRepoSlug(repoPath),
       fase: input.phase,
       cardId: input.cardId,
-      marcoId: input.marcoId,
-      // ACHADO DO SMOKE (T322): o diretório `handoffs/<card_id>/` só nasce
-      // quando a SKILL chega ao fim — e uma fase da Esteira leva minutos ou
-      // horas. Com o default do módulo (1s × 30 = 30s) o watcher desistia
-      // muito antes do manifesto existir, e o arquivamento do CA-6 nunca
-      // disparava fora de um teste. Janela de espera aqui é ~1h (3s × 1200),
-      // um timer barato; passado isso a fase segue visível como travada
-      // (CA-15) — só o arquivamento automático deixa de acontecer.
+      faseNum: input.faseNum,
+      // ACHADO DO SMOKE (T322): o diretório `handoffs/…` só nasce quando a
+      // SKILL chega ao fim — e uma fase da Esteira leva minutos ou horas. Com
+      // o default do módulo (1s × 30 = 30s) o watcher desistia muito antes do
+      // manifesto existir, e o arquivamento do CA-6 nunca disparava fora de
+      // um teste. Janela de espera aqui é ~1h (3s × 1200), um timer barato;
+      // passado isso a fase segue visível como travada (CA-15) — só o
+      // arquivamento automático deixa de acontecer.
       retryMs: 3_000,
       maxRetries: 1_200,
       onArchived: (archived) => {
@@ -629,8 +732,8 @@ function registerDevModeIpcHandlers(): void {
         const payload: PhaseArchivedPayload = {
           discoveryCardId: input.discoveryCardId,
           cardId: archived.cardId,
-          marcoId: archived.marcoId,
           phase: archived.fase,
+          faseNum: archived.faseNum,
           manifestPath: archived.manifestPath,
         };
         sender.send(DEVMODE_CHANNELS.phaseArchived, payload);
@@ -777,6 +880,122 @@ function registerSessionIpcHandlers(): void {
   });
 }
 
+/**
+ * CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão
+ * claude. `sessionId` vazio ou payload malformado (cor fora dos 4 tokens,
+ * `order` não-finita) é no-op — o handler nunca confia cegamente no que o
+ * renderer manda, mesmo padrão de `SESSION_CHANNELS.setName`/`setPinned`.
+ */
+function registerTabIpcHandlers(): void {
+  ipcMain.handle(TAB_CHANNELS.setColor, (_event, sessionId: string, color: unknown): AppConfigDto => {
+    if (typeof sessionId !== 'string' || !sessionId || !isTabColorToken(color)) return toAppConfigDto(appConfig);
+    appConfig = { ...appConfig, tabAppearance: setTabColor(appConfig.tabAppearance, sessionId, color) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  ipcMain.handle(TAB_CHANNELS.setOrder, (_event, sessionId: string, order: unknown): AppConfigDto => {
+    if (typeof sessionId !== 'string' || !sessionId || typeof order !== 'number') return toAppConfigDto(appConfig);
+    appConfig = { ...appConfig, tabAppearance: setTabOrder(appConfig.tabAppearance, sessionId, order) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+}
+
+/**
+ * CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto:
+ * lê/grava os dois JSONs externos que a esteira já lia (board TaskDex + repo
+ * do GitHub), hoje editados à mão fora do app (spec.md problema 8).
+ * `repoSlug` usa a MESMA resolução de `resolveRepoSlug` (comentário acima) —
+ * é a chave que `repos.json → repos` já assume em todo o resto do app.
+ * Payload inválido (`repoPath` vazio/ausente) é no-op: devolve DTO vazio,
+ * nunca lança (mesmo espírito defensivo do resto dos handlers deste
+ * arquivo). Nenhuma escrita em TaskDex/GitHub — só nestes dois arquivos de
+ * config locais (invariante 5/CA-19 preservada: a Esteira em si continua só
+ * lida).
+ */
+function registerProjectBindingIpcHandlers(): void {
+  const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '' };
+
+  ipcMain.handle(PROJECT_BINDING_CHANNELS.get, (_event, repoPath: unknown): ProjectBindingDto => {
+    if (typeof repoPath !== 'string' || !repoPath.trim()) return EMPTY_BINDING;
+    return readProjectBindingFromDisk(ESTEIRA_CONFIG_DIR, resolveRepoSlug(repoPath), esteiraConfigIoDeps);
+  });
+
+  ipcMain.handle(PROJECT_BINDING_CHANNELS.save, (_event, input: unknown): ProjectBindingDto => {
+    if (!isValidSaveProjectBindingIpcInput(input)) return EMPTY_BINDING;
+    const typed = input as SaveProjectBindingIpcInput;
+    return saveProjectBindingToDisk(
+      ESTEIRA_CONFIG_DIR,
+      resolveRepoSlug(typed.repoPath),
+      typed.repoPath,
+      { workspaceId: typed.workspaceId, teamId: typed.teamId, github: typed.github },
+      esteiraConfigIoDeps,
+    );
+  });
+}
+
+/**
+ * Lote 8 (009-modo-dev-v3), CA-24 — "Reiniciar sessão em foco" na conta
+ * SELECIONADA: copia o `.jsonl` do perfil de origem pro perfil ativo quando
+ * são diferentes (achado 14). Payload inválido é no-op (`same-profile`,
+ * nunca lança) — mesmo espírito defensivo do resto dos handlers deste
+ * arquivo. Nenhuma escrita fora do `.jsonl` da própria sessão sendo
+ * reiniciada; nenhuma leitura/escrita de credencial (`.credentials.json`/
+ * `oauthAccount`) — regra dura do projeto, preservada aqui como em
+ * profile-manager.ts.
+ */
+function registerTranscriptCopyIpcHandlers(): void {
+  const transcriptCopyIoDeps = createSystemTranscriptCopyIoDeps();
+
+  ipcMain.handle(TRANSCRIPT_COPY_CHANNELS.copyForResume, (_event, input: unknown): CopyTranscriptForResumeResult => {
+    if (!isValidCopyTranscriptForResumeIpcInput(input)) return { copied: false, reason: 'invalid-payload' };
+    const typed = input as CopyTranscriptForResumeIpcInput;
+    return copyTranscriptForResume(typed, { homedir }, transcriptCopyIoDeps);
+  });
+}
+
+/**
+ * CA-3/CA-5 (009-modo-dev-v3, lote 4) — GitHub por `gh` CLI (spec-issue,
+ * sub-issues nativas, PR da fase + etiquetas homologado/revertido-ciclo).
+ * `github:read` cobre os 3 fatos do CA-3 num canal só, discriminado por
+ * `kind` (mesma allowlist de `github-reader.ts` — só leitura, achado 13).
+ * `github:checkAvailability` é a degradação standalone (CA-6): `gh`
+ * ausente/não autenticado vira `available: false`, nunca erro na tela nem
+ * valor fabricado. Nenhum canal aqui escreve no GitHub.
+ */
+function registerGithubIpcHandlers(): void {
+  ipcMain.handle(GITHUB_CHANNELS.read, async (_event, input: unknown): Promise<GithubReadResponse> => {
+    if (!isValidGithubReadRequest(input)) return { status: 'unavailable' };
+    const request = input as GithubReadRequest;
+
+    switch (request.kind) {
+      case 'spec-issue': {
+        const data = await readSpecIssueFacts({ repo: request.repo, number: request.number }, { cache: githubReadCache });
+        return data ? { status: 'ok', data } : { status: 'unavailable' };
+      }
+      case 'sub-issues': {
+        // `[]` é resultado válido (spec-issue sem sub-issues) — sempre 'ok',
+        // mesma degradação por omissão de `readDiscoveryPlanCards`.
+        const data = await readSubIssueFacts({ repo: request.repo, number: request.number }, { cache: githubReadCache });
+        return { status: 'ok', data };
+      }
+      case 'phase-pull-request': {
+        const data = await readPhasePullRequestFacts(
+          { repo: request.repo, number: request.number, head: request.head },
+          { cache: githubReadCache },
+        );
+        return data ? { status: 'ok', data } : { status: 'unavailable' };
+      }
+    }
+  });
+
+  ipcMain.handle(GITHUB_CHANNELS.checkAvailability, async (): Promise<GhAvailabilityDto> => {
+    const availability = await checkGhAvailability();
+    return availability.available ? { available: true, reason: null } : { available: false, reason: availability.reason };
+  });
+}
+
 /** Sempre inclui o Principal + varre `~/.claude-profiles/*` de novo a cada chamada (mesmo espírito de `listProjectsWithFavorites` — lista pequena, I/O local, sem necessidade de cache próprio aqui). */
 function currentProfileList(): ProfileInfo[] {
   return listProfiles(createSystemProfileListDeps(homedir));
@@ -905,6 +1124,10 @@ void app.whenReady().then(async () => {
   registerConfigIpcHandlers();
   registerClipboardIpcHandlers(); // T504 (005-terminal-copy-paste)
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
+  registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
+  registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
+  registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)
+  registerTranscriptCopyIpcHandlers(); // CA-24 (009-modo-dev-v3, lote 8)
   createMainWindow();
 
   app.on('activate', () => {

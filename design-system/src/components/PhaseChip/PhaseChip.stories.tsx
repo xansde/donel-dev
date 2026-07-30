@@ -26,7 +26,14 @@ export const Implementar: Story = { args: { phase: 'implementar' } };
 export const Validar: Story = { args: { phase: 'validar' } };
 export const Concluir: Story = { args: { phase: 'concluir' } };
 
-/** As 5 fases lado a lado — como aparecem espalhadas pelas linhas da sidebar de tasks (Brief 10). */
+/**
+ * 6º valor (009-modo-dev-v3, extensão 8 — D-V5): caminho documental, sem
+ * branch nem PR. Rótulo "Documentação"; o valor de domínio continua
+ * `documentar` (mesmo nome que a spec e as skills usam).
+ */
+export const Documentar: Story = { args: { phase: 'documentar' } };
+
+/** As 6 fases lado a lado — como aparecem espalhadas pelas linhas da sidebar de tasks (Brief 10) e no nível Documentação do mapa v3. */
 export const AllPhases: Story = {
   render: () => (
     <div style={{ display: 'flex', gap: 8 }}>
@@ -35,6 +42,7 @@ export const AllPhases: Story = {
       <PhaseChip phase="implementar" />
       <PhaseChip phase="validar" />
       <PhaseChip phase="concluir" />
+      <PhaseChip phase="documentar" />
     </div>
   ),
 };
@@ -47,6 +55,7 @@ export const TaskSidebarExample: Story = {
         { id: 'SZI-142 · Ajuste parcelas CUB', phase: 'implementar' as const },
         { id: 'SZI-155 · Webhook medalhas', phase: 'plano' as const },
         { id: 'SZI-160 · Radar de PRs', phase: 'discovery' as const },
+        { id: 'PRJ-150 · Mapa do processo de repasse', phase: 'documentar' as const },
       ].map((task) => (
         <div
           key={task.id}

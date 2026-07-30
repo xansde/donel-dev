@@ -53,6 +53,7 @@ describe('defaultAppConfig (puro)', () => {
         phaseDefaults: DEFAULT_PHASE_DEFAULTS,
         boardConfig: null,
       },
+      tabAppearance: {},
     });
   });
 });
@@ -80,6 +81,7 @@ describe('toAppConfigDto (puro)', () => {
         phaseDefaults: DEFAULT_PHASE_DEFAULTS,
         boardConfig: null,
       },
+      tabAppearance: {},
     });
   });
 
@@ -182,10 +184,12 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       devMode: {
         discoveries: { 'card-1': { cardId: 'card-1', repoPath: 'C:\\repo', epicId: 'epic-1', openedAt: 100, closedAt: null } },
         focusedDiscoveryId: 'card-1',
-        archivedPhaseSessions: { 'card-1:M1:plano': { sessionId: 'sess-1', profileSlug: 'principal', archivedAt: 100 } },
+        // Chave v3 (CA-31): cardId:fase, sem marco_id — já no formato final, a migração não altera.
+        archivedPhaseSessions: { 'card-1:plano': { sessionId: 'sess-1', profileSlug: 'principal', archivedAt: 100 } },
         phaseDefaults: DEFAULT_PHASE_DEFAULTS,
         boardConfig: { workspaceId: 'ws-1', teamId: 'team-1' },
       },
+      tabAppearance: { 'sess-1': { color: 'accent', order: 0 } },
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
   });
@@ -234,6 +238,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       sessionRegistry: {}, // ausente no objeto → default
       collapsedFavorites: [], // ausente no objeto → default
       devMode: defaults.devMode, // ausente no objeto → default
+      tabAppearance: {}, // ausente no objeto → default
     });
   });
 
@@ -668,7 +673,8 @@ describe('readAppConfig / writeAppConfig — I/O real em pasta temporária (inte
       devMode: {
         discoveries: { 'card-1': { cardId: 'card-1', repoPath: 'C:\\repo', epicId: null, openedAt: 100, closedAt: null } },
         focusedDiscoveryId: 'card-1',
-        archivedPhaseSessions: { 'card-1:M1:plano': { sessionId: 'sess-1', profileSlug: 'principal', archivedAt: 200 } },
+        // Chave v3 (CA-31): já cardId:fase — round-trip é identidade, sem migração de por meio.
+        archivedPhaseSessions: { 'card-1:plano': { sessionId: 'sess-1', profileSlug: 'principal', archivedAt: 200 } },
         phaseDefaults: DEFAULT_PHASE_DEFAULTS,
         boardConfig: { workspaceId: 'ws-1', teamId: 'team-1' },
       },
@@ -758,6 +764,9 @@ describe('sanitizeAppConfig — devMode (T306)', () => {
     expect(sanitized.devMode.phaseDefaults).toEqual(DEFAULT_PHASE_DEFAULTS);
   });
 
+  // Chaves no formato v2 (cardId:marcoId:fase) — a migração CA-31 roda por
+  // cima da sanitização de schema, então a sobrevivente aparece já como
+  // cardId:fase (marco_id descartado).
   it('archivedPhaseSessions descarta entrada malformada (sessionId vazio) isolada', () => {
     const parsed = {
       devMode: {
@@ -773,7 +782,87 @@ describe('sanitizeAppConfig — devMode (T306)', () => {
     };
 
     const sanitized = sanitizeAppConfig(parsed, baseDefaults());
-    expect(Object.keys(sanitized.devMode.archivedPhaseSessions)).toEqual(['card-1:M1:plano']);
+    expect(Object.keys(sanitized.devMode.archivedPhaseSessions)).toEqual(['card-1:plano']);
+  });
+
+  // CA-31 (009-modo-dev-v3) — migração da chave v2→v3 na leitura do config.
+  describe('archivedPhaseSessions — migração CA-31 (cardId:marcoId:fase → cardId:fase)', () => {
+    it('discovery/plano migram para cardId:fase, sem marco_id', () => {
+      const parsed = {
+        devMode: {
+          discoveries: {},
+          focusedDiscoveryId: null,
+          archivedPhaseSessions: {
+            'card-1:M1:discovery': { sessionId: 'sess-a', profileSlug: 'principal', archivedAt: 100 },
+            'card-2:M2:plano': { sessionId: 'sess-b', profileSlug: 'principal', archivedAt: 200 },
+          },
+          phaseDefaults: DEFAULT_PHASE_DEFAULTS,
+          boardConfig: null,
+        },
+      };
+
+      const sanitized = sanitizeAppConfig(parsed, baseDefaults());
+      expect(sanitized.devMode.archivedPhaseSessions).toEqual({
+        'card-1:discovery': { sessionId: 'sess-a', profileSlug: 'principal', archivedAt: 100 },
+        'card-2:plano': { sessionId: 'sess-b', profileSlug: 'principal', archivedAt: 200 },
+      });
+    });
+
+    it('implementar/validar são descartadas (registro antigo não tem fase_num — D16 do discovery)', () => {
+      const parsed = {
+        devMode: {
+          discoveries: {},
+          focusedDiscoveryId: null,
+          archivedPhaseSessions: {
+            'card-1:M1:implementar': { sessionId: 'sess-a', profileSlug: 'principal', archivedAt: 100 },
+            'card-1:M1:validar': { sessionId: 'sess-b', profileSlug: 'principal', archivedAt: 200 },
+            'card-1:M1:concluir': { sessionId: 'sess-c', profileSlug: 'principal', archivedAt: 300 },
+          },
+          phaseDefaults: DEFAULT_PHASE_DEFAULTS,
+          boardConfig: null,
+        },
+      };
+
+      const sanitized = sanitizeAppConfig(parsed, baseDefaults());
+      expect(sanitized.devMode.archivedPhaseSessions).toEqual({});
+    });
+
+    it('chave já no formato v3 (2 partes) passa direto — migração idempotente', () => {
+      const parsed = {
+        devMode: {
+          discoveries: {},
+          focusedDiscoveryId: null,
+          archivedPhaseSessions: {
+            'card-1:plano': { sessionId: 'sess-a', profileSlug: 'principal', archivedAt: 100 },
+          },
+          phaseDefaults: DEFAULT_PHASE_DEFAULTS,
+          boardConfig: null,
+        },
+      };
+
+      const sanitized = sanitizeAppConfig(parsed, baseDefaults());
+      expect(sanitized.devMode.archivedPhaseSessions).toEqual({
+        'card-1:plano': { sessionId: 'sess-a', profileSlug: 'principal', archivedAt: 100 },
+      });
+    });
+
+    it('chave em formato desconhecido (1 ou 4+ partes) é descartada, nunca fabricada', () => {
+      const parsed = {
+        devMode: {
+          discoveries: {},
+          focusedDiscoveryId: null,
+          archivedPhaseSessions: {
+            'card-sozinho': { sessionId: 'sess-a', profileSlug: 'principal', archivedAt: 100 },
+            'a:b:c:d': { sessionId: 'sess-b', profileSlug: 'principal', archivedAt: 200 },
+          },
+          phaseDefaults: DEFAULT_PHASE_DEFAULTS,
+          boardConfig: null,
+        },
+      };
+
+      const sanitized = sanitizeAppConfig(parsed, baseDefaults());
+      expect(sanitized.devMode.archivedPhaseSessions).toEqual({});
+    });
   });
 
   it('boardConfig malformado (sem teamId) cai em null', () => {

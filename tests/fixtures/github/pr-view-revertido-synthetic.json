@@ -1,0 +1,11 @@
+{
+  "_synthetic": "Mesma justificativa de pr-view-homologado-synthetic.json — label revertido-ciclo exigiria escrita real no GitHub.",
+  "baseRefName": "staging",
+  "labels": [
+    { "id": "2", "name": "revertido-ciclo", "description": "PR desfeito pela rotina de promoção por falta de homologação na janela", "color": "B60205" }
+  ],
+  "mergedAt": null,
+  "number": 13,
+  "state": "OPEN",
+  "url": "https://github.com/seazone-tech/spotsys/pull/13"
+}
