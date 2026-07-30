@@ -144,7 +144,12 @@ export function ProjectSwitcher({
         aria-haspopup="dialog"
         data-testid="project-switcher-trigger"
       >
-        <span className={styles.triggerLabel}>{activeProject?.name ?? 'Selecionar projeto'}</span>
+        {/* Item 1 (rodada de forma fix/009-board-real-e-modal) — este pill É o
+            titlebar do mockup v3 (linha 46: `{{ project.path }} ▾`): mostra o
+            PATH real do projeto selecionado, não só o nome. */}
+        <span className={styles.triggerLabel} title={activeProject?.path}>
+          {activeProject?.path ?? 'Selecionar projeto'}
+        </span>
         <span aria-hidden="true">▾</span>
       </button>
 
