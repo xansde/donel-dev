@@ -1,0 +1,162 @@
+/*
+ * 009-modo-dev-v3, extensão 6 — geometria e cor medidas em
+ * `Modo Dev v3.dc.html:119-132` (card de Validação) e `:567-583` (estudo
+ * `clockStudy`, 2c). `--clock-color` é o token do degrau (`tier.colorVar`),
+ * propagado pelo componente via custom property — nenhum hex novo.
+ */
+
+.root {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--clock-color) 40%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--clock-color) 10%, transparent);
+  font-family: var(--font-ui);
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.icon {
+  flex: none;
+  font-size: 11px;
+  color: var(--clock-color);
+}
+
+.headerLabel {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.relative {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.absolute {
+  margin-top: 2px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--clock-color);
+}
+
+.barTrack {
+  height: 4px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--bg-raised);
+}
+
+.barFill {
+  height: 100%;
+  background: var(--clock-color);
+  transition: width var(--duration-panel) var(--ease-standard);
+}
+
+.note {
+  margin-top: 5px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/*
+ * `blink` (degrau urgente) e `blink-fast` (estourado) pulsam na MESMA
+ * cadência de 1s — medido literal no mockup (`clockData`: os dois `anim`
+ * usam `1s ease-in-out infinite`). O que diferencia os dois é o mergulho de
+ * opacidade: `blink` desce a .35, `blink-fast` desce mais fundo, a .15 —
+ * mais dramático sem ser mais rápido. Ver `lib/homologationClock.ts`.
+ */
+.pulse-blink {
+  animation: clock-pulse-blink 1000ms ease-in-out infinite;
+}
+
+.pulse-blink-fast {
+  animation: clock-pulse-blink-fast 1000ms ease-in-out infinite;
+}
+
+@keyframes clock-pulse-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes clock-pulse-blink-fast {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-blink,
+  .pulse-blink-fast {
+    animation: none;
+  }
+}
+
+/*
+ * Variante compacta — "promoção, não duplicação" à barra de status
+ * (decisão A do handoff v3), só usada no degrau `urgente`. Sem markup
+ * literal no mockup para copiar; a forma segue o precedente já aprovado do
+ * pacote (`SmartZoneMeter` variant="compact" dentro de `StatusBar`): rótulo
+ * mono + barra fina de 4px encolhida, tudo em uma linha de 28px.
+ */
+.compact {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+}
+
+.compact .icon {
+  font-size: 10px;
+}
+
+.compactAbsolute {
+  white-space: nowrap;
+  color: var(--clock-color);
+}
+
+.compactBarTrack {
+  display: inline-block;
+  width: 48px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.compactBarFill {
+  display: block;
+  height: 100%;
+  background: var(--clock-color);
+  transition: width var(--duration-panel) var(--ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compactBarFill,
+  .barFill {
+    transition: none;
+  }
+}

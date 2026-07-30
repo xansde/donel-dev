@@ -91,3 +91,39 @@ export type {
 
 export { ArmedPrompt } from './components/ArmedPrompt';
 export type { ArmedPromptProps, ArmedPromptWarning } from './components/ArmedPrompt';
+
+// === Lote 6 (009-modo-dev-v3) — extensões 5, 6 e 8 do handoff v3 ===
+
+export { LevelCarousel } from './components/LevelCarousel';
+export type {
+  LevelCarouselProps,
+  LevelCarouselLevel,
+  LevelCarouselCard,
+  LevelCarouselCardContext,
+} from './components/LevelCarousel';
+
+export { HomologationClock } from './components/HomologationClock';
+export type { HomologationClockProps } from './components/HomologationClock';
+
+export {
+  CAROUSEL_CARD_WIDTH,
+  CAROUSEL_CARD_GAP,
+  CAROUSEL_CARD_STEP,
+  CAROUSEL_LEVEL_GAP,
+  CAROUSEL_FOCUS_Y,
+  CAROUSEL_HEIGHT_FOCUSED_TALL,
+  CAROUSEL_HEIGHT_FOCUSED,
+  CAROUSEL_HEIGHT_UNFOCUSED,
+  CAROUSEL_OPACITY_FOCUSED,
+  CAROUSEL_OPACITY_LEVEL_FOCUSED,
+  CAROUSEL_OPACITY_UNFOCUSED,
+  levelHeight,
+  computeLevelOffsets,
+  verticalTranslate,
+  horizontalTranslate,
+  cardOpacity,
+} from './lib/carouselGeometry';
+export type { CarouselLevelInput } from './lib/carouselGeometry';
+
+export { computeClockTier } from './lib/homologationClock';
+export type { ClockTier, ClockTierResult } from './lib/homologationClock';

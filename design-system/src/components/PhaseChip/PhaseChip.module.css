@@ -12,3 +12,14 @@
   line-height: 1.4;
   white-space: nowrap;
 }
+
+/*
+ * 009-modo-dev-v3, extensão 8 — o chip "Documentação" do mockup
+ * (`Modo Dev v3.dc.html:148,186`) usa 14% de opacidade de fundo, não os 16%
+ * dos outros 5 (`color-mix(in srgb, var(--donel-accent) 14%, transparent)`,
+ * medido duas vezes, literal). Divergência pequena mas é FORMA — vence o
+ * design sem abrandar (regra do D1): as outras 5 fases continuam em 16%.
+ */
+.chip[data-phase='documentar'] {
+  background: color-mix(in srgb, var(--phase-color) 14%, transparent);
+}
