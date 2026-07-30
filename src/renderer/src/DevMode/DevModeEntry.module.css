@@ -28,10 +28,25 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-1);
+  /* Item 9 (rodada de forma fix/009-board-real-e-modal) — sem `min-width: 0`
+     num filho de flex row, ele nunca encolhe abaixo do próprio conteúdo; era
+     isso que empurrava o SegmentedControl (7 segmentos, largura intrínseca
+     grande) pra fora da borda direita do modal (screenshot app-04). */
+  min-width: 0;
 }
 
 .filterInput {
   flex: 1;
+  min-width: 0;
+}
+
+/* O SegmentedControl de coluna nunca encolhe os próprios segmentos (cada um
+   é texto + padding fixo) — quando não cabe, rola CONTIDO na largura do
+   modal em vez de vazar por cima da borda. */
+.columnFilter {
+  flex: none;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .list {
@@ -67,19 +82,32 @@
   gap: var(--space-half);
 }
 
+/* Item 10 — título + id na MESMA linha, id à direita com gap (nunca
+   grudados). `.cardTitleRow` é a linha; `.cardTitle` encolhe com ellipsis
+   antes de deixar o id espremer. */
+.cardTitleRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  width: 100%;
+  min-width: 0;
+}
+
 .cardId {
+  flex: none;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-caption-size);
   color: var(--text-muted);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .cardTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-primary);
-  overflow-wrap: anywhere;
 }
 
 .empty {
