@@ -202,12 +202,32 @@ export function readPhaseArtifacts(location: PhaseArtifactsLocation, io: Esteira
   const ctxPath = esteiraCtxPath(location);
   const resultPath = esteiraResultPath(location);
 
-  const ctxExists = io.existsSync(ctxPath);
-  const ctxText = ctxExists ? io.readFileText(ctxPath) : null;
+  const ctxFileExists = io.existsSync(ctxPath);
+  const ctxText = ctxFileExists ? io.readFileText(ctxPath) : null;
   const worktreePath = ctxText ? extractFrontmatterField(ctxText, 'worktree_path') : null;
   const branch = ctxText ? extractFrontmatterField(ctxText, 'branch') : null;
 
   const resultExists = resultPath !== null && io.existsSync(resultPath);
+  // FIX (E2E 30/07, achado F3) — `<cardId>-ctx.md` mora em `<fase>/`, um
+  // arquivo só POR TIPO de fase (`implementar`/`validar`), reescrito a cada
+  // `fase_num` que passa por ali (contrato v3, não muda aqui). Pra
+  // implementar/validar (arquivam por `fase-<n>`, D.0-bis), a mera EXISTÊNCIA
+  // desse arquivo compartilhado não prova que ESTE `faseNum` específico já
+  // rodou — a fase 2 herdava o ctx.md que a fase 1 escreveu e virava "stuck"
+  // (nenhum result.json ainda, mas ctx "existe") em vez de "not-started"
+  // (CA-13: só a etapa que JÁ teve sessão entra na trilha antes da próxima).
+  // O único sinal por-fase-num que temos é o próprio `handoffs/fase-<n>/…`
+  // (o mesmo arquivo que `esteiraResultPath` lê) — sem ele, a fase 2 nunca
+  // arquivou nada, e `ctxExists` (o campo que `derivePhaseStatus` consulta)
+  // reflete isso, mesmo com `worktreePath`/`branch` acima ainda lidos do
+  // ctx.md compartilhado (esses dois continuam válidos — o worktree é o
+  // mesmo pro card inteiro). Sem `faseNum` conhecido, comportamento
+  // INALTERADO (mesma degradação "sem resultado" já documentada abaixo,
+  // C4/CA-6).
+  const ctxExists =
+    PHASE_ARCHIVES_BY_FASE_NUM.includes(location.fase) && location.faseNum !== undefined && location.faseNum !== null
+      ? ctxFileExists && resultExists
+      : ctxFileExists;
   const resultText = resultExists && resultPath !== null ? io.readFileText(resultPath) : null;
 
   let result: EsteiraResultManifest | null = null;

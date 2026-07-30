@@ -313,14 +313,18 @@ describe('buildDiscoveryTree', () => {
       expect(p1.fases.map((f) => f.titulo)).toEqual(['Tabela de coeficientes', 'Serviço de parcelas']);
       expect(p1.fases[0].implementar.status).toBe('done');
       expect(p1.fases[0].validar.status).toBe('done');
-      // `ctx.md` NÃO é por fase_num (`phaseDir`/`esteiraCtxPath` ignoram
-      // `faseNum` — layout do lote 2): o ctx.md de `implementar`/`validar`
-      // escrito acima é COMPARTILHADO entre fase 1 e fase 2. Por isso a fase
-      // 2 (sem result.json) deriva `stuck` (ctx existe, result não), nunca
-      // `not-started` — quirk pré-existente do lote 2, fora do escopo deste
-      // lote (nomeado no report como divergência conhecida).
-      expect(p1.fases[1].implementar.status).toBe('stuck');
-      expect(p1.fases[1].validar.status).toBe('stuck');
+      // FIX (E2E 30/07, achado F3) — `ctx.md` mora em `<fase>/`, COMPARTILHADO
+      // entre todo `fase_num` daquele tipo de fase (`phaseDir`/`esteiraCtxPath`
+      // não sabem de `faseNum` — layout externo, contrato v3, não muda). O
+      // quirk pré-existente era `esteira-reader.ts` tratar a mera existência
+      // desse arquivo compartilhado como prova de que a fase 2 já rodou,
+      // derivando `stuck` (ctx "existe", result não) em vez de `not-started`.
+      // O reader agora também exige o diretório `handoffs/fase-<n>/` daquele
+      // fase_num (o mesmo que guarda o result.json) — sem ele, a fase 2 nunca
+      // rodou de verdade, e é isso que a trilha (CA-13) precisa saber pra
+      // marcá-la "é a próxima" em vez de "travada".
+      expect(p1.fases[1].implementar.status).toBe('not-started');
+      expect(p1.fases[1].validar.status).toBe('not-started');
     });
 
     it('fases[] NÃO some com o legado phases.implementar/phases.validar (fase 1 hardcoded, preservado)', () => {
