@@ -79,6 +79,22 @@ export function needsCarousel(cardCount: number): boolean {
   return cardCount > 1;
 }
 
+/**
+ * FIX (E2E 30/07, achado F1) — "uma regra, dois eixos": o eixo vertical
+ * (níveis) precisa navegar nos dois sentidos, igual o horizontal (cards) já
+ * faz via `onPrevCard`/`onNextCard`. Antes só existia `onFocusLevel` (clique
+ * no rótulo) — nem roda do mouse nem seta do teclado moviam o foco pra CIMA
+ * (ou pra baixo). Pura: só aritmética de índice sobre a lista JÁ FILTRADA de
+ * `levelKeys` (CA-14) — clampa nas pontas, nunca dá a volta (nunca "roda"
+ * de Validação de volta pra Discovery).
+ */
+export function moveLevelFocus(levelKeys: readonly MapLevelKey[], current: MapLevelKey, direction: 1 | -1): MapLevelKey {
+  const index = levelKeys.indexOf(current);
+  if (index === -1) return current;
+  const nextIndex = Math.min(levelKeys.length - 1, Math.max(0, index + direction));
+  return levelKeys[nextIndex] ?? current;
+}
+
 export interface TrilhaStepInput<TId> {
   readonly id: TId;
   readonly status: PhaseStatus;

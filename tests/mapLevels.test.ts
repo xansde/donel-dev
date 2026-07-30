@@ -6,6 +6,7 @@ import {
   computeHomologationDeadline,
   formatDeadlineAbsolute,
   formatFaseCommand,
+  moveLevelFocus,
   needsCarousel,
   nextLevelPreview,
   planCardToneColor,
@@ -80,6 +81,29 @@ describe('nextLevelPreview', () => {
       label: 'PLANOS',
       hint: null,
     });
+  });
+});
+
+// FIX (E2E 30/07, achado F1) — eixo vertical navega nos dois sentidos.
+describe('moveLevelFocus', () => {
+  const LEVELS = ['discovery', 'planos', 'implementacao', 'validacao'] as const;
+
+  it('desce um nível (mesma direção que já funcionava)', () => {
+    expect(moveLevelFocus(LEVELS, 'planos', 1)).toBe('implementacao');
+  });
+
+  it('sobe um nível — o eixo que estava travado só descendo (F1)', () => {
+    expect(moveLevelFocus(LEVELS, 'planos', -1)).toBe('discovery');
+    expect(moveLevelFocus(LEVELS, 'implementacao', -1)).toBe('planos');
+  });
+
+  it('clampa nas pontas, nunca dá a volta', () => {
+    expect(moveLevelFocus(LEVELS, 'discovery', -1)).toBe('discovery');
+    expect(moveLevelFocus(LEVELS, 'validacao', 1)).toBe('validacao');
+  });
+
+  it('nível atual fora da lista (ex.: card sem fase ainda) devolve ele mesmo, sem lançar', () => {
+    expect(moveLevelFocus(['discovery', 'planos'], 'validacao', -1)).toBe('validacao');
   });
 });
 

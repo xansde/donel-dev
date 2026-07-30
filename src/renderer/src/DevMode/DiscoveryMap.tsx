@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AnnotationTag,
   Button,
@@ -21,6 +21,7 @@ import {
   canonicalLevelKeys,
   computeHomologationDeadline,
   formatDeadlineAbsolute,
+  moveLevelFocus,
   nextLevelPreview,
   planCardToneColor,
   resolvePlanCardTone,
@@ -268,6 +269,40 @@ export function DiscoveryMap({
 
   const clampedImplIndex = Math.min(implFaseIndex, Math.max(0, faseCount - 1));
   const clampedValIndex = Math.min(valFaseIndex, Math.max(0, faseCount - 1));
+
+  // FIX (E2E 30/07, F1) — eixo vertical navega nos dois sentidos, como o
+  // horizontal já faz (`onPrevCard`/`onNextCard`). `moveLevelFocus` é a MESMA
+  // aritmética pura de `mapLevels.ts`; aqui só os dois gestos que faltavam
+  // (roda do mouse + setas ↑/↓). Debounce no wheel: cada "degrau" de scroll
+  // do trackpad dispara várias dezenas de eventos — sem represar, o mapa
+  // saltaria vários níveis por um gesto só.
+  const lastWheelAtRef = useRef(0);
+  const moveLevel = useCallback(
+    (direction: 1 | -1) => setFocusedLevelKey((current) => moveLevelFocus(levelKeys, current, direction)),
+    [levelKeys],
+  );
+  const handleMapWheel = useCallback(
+    (event: React.WheelEvent<HTMLElement>) => {
+      if (Math.abs(event.deltaY) < 4) return;
+      const now = Date.now();
+      if (now - lastWheelAtRef.current < 260) return;
+      lastWheelAtRef.current = now;
+      moveLevel(event.deltaY > 0 ? 1 : -1);
+    },
+    [moveLevel],
+  );
+  const handleMapKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLElement>) => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        moveLevel(1);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        moveLevel(-1);
+      }
+    },
+    [moveLevel],
+  );
 
   // Decisão A — a fase "aberta" (com janela de homologação correndo): a
   // primeira cujo PR mergeado ainda não foi homologado/revertido.
@@ -547,7 +582,14 @@ export function DiscoveryMap({
   ]);
 
   return (
-    <aside className={styles.map} aria-label="Mapa do discovery" data-testid="devmode-map">
+    <aside
+      className={styles.map}
+      aria-label="Mapa do discovery"
+      data-testid="devmode-map"
+      tabIndex={0}
+      onWheel={handleMapWheel}
+      onKeyDown={handleMapKeyDown}
+    >
       {/* CA-7 (mockup linhas 71-79) — o cabeçalho "Esteira · id · Trocar…"
           mora DENTRO do painel de 480px, não numa faixa à parte. */}
       <header className={styles.header}>
