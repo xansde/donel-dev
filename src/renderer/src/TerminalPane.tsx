@@ -16,6 +16,38 @@ import styles from './TerminalPane.module.css';
 // barra de abas chegam em T010 — `onCloseTab` ausente = a própria aba mostra
 // um estado neutro de "fechada" em vez de fingir remover a aba da barra.
 
+/**
+ * CA-29 (009) — "a janela do terminal embedado tem uma pequena moldura
+ * cortada". Medido com sonda de geometria em 29/07, numa janela de 1266×763 e
+ * `devicePixelRatio` 1,25 (Windows a 125%): o `fit()` propôs 37 linhas cujo
+ * `.xterm-screen` somava **634px** dentro de um `.xterm` de **623,6px** — o
+ * excesso vaza para fora da área visível e o `overflow: hidden` da moldura
+ * (`App.module.css .terminal`) corta os últimos ~2,4px do glifo, que é a
+ * "moldura cortada" que ele vê.
+ *
+ * A causa é o DPR fracionário: o addon divide a altura disponível pela altura
+ * *ideal* da célula, e o renderer DOM arredonda a altura *renderizada* de cada
+ * linha para cima até fechar em pixel de dispositivo. O erro é sublinear por
+ * linha (~0,28px) e só aparece somado nas ~37 linhas.
+ *
+ * Em vez de tentar prever o arredondamento do xterm (que muda entre renderers
+ * e versões), mede-se o resultado real e encolhe-se uma linha por vez enquanto
+ * o conteúdo transbordar. Duas tentativas cobrem folgadamente o erro
+ * observado; o limite existe para não haver laço em nenhuma geometria
+ * degenerada (ex.: contêiner de altura zero durante uma transição).
+ */
+function fitWithoutOvershoot(term: XTerm, fitAddon: FitAddon): void {
+  fitAddon.fit();
+
+  const element = term.element;
+  if (!element) return;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (element.scrollHeight <= element.clientHeight || term.rows <= 1) return;
+    term.resize(term.cols, term.rows - 1);
+  }
+}
+
 const XTERM_THEME = {
   background: '#0e1116',
   foreground: '#d7dde5',
@@ -405,7 +437,10 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(container);
-    fitAddon.fit();
+    // CA-29 — antes do `spawnSession()` abaixo de propósito: é `term.rows` que
+    // vai no `pty.create` (linha do `.create({ cols, rows })`), então corrigir
+    // aqui faz o PTY nascer já com o número de linhas que de fato cabe.
+    fitWithoutOvershoot(term, fitAddon);
     termRef.current = term;
 
     // T506/T507 (005-terminal-copy-paste, plan.md Fatia 3) — decisor de
@@ -497,7 +532,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     spawnSession();
 
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
+      // CA-29 — o PTY é avisado DEPOIS da correção, com as linhas reais.
+      fitWithoutOvershoot(term, fitAddon);
       if (ptyIdRef.current) window.donel.pty.resize(ptyIdRef.current, term.cols, term.rows);
     });
     resizeObserver.observe(container);

@@ -479,6 +479,20 @@ decidir UMA fonte para o número (o módulo puro) e apagar o token, ou alinhar o
 token em 300k com comentário apontando para a decisão. Não mexer agora: mudar
 token de design-system fora de uma feature que o use é escopo alheio.
 
+**ATUALIZAÇÃO 29/07 (CA-22 da 009) — o consumidor chegou, o token continua morto.**
+O `SmartZoneMeter` entrou de verdade: a `StatusBar` liga o slot `smartZone` e o
+`App.tsx` passa `maxTokens={effectiveContextZone(model)}` explícito. Então a
+**fonte única já é o módulo puro**, como este item pedia — o default
+`DEFAULT_MAX_TOKENS = 400_000` do `lib/smartZone.ts` só é alcançado por story do
+Storybook, nunca pelo app.
+
+O que sobra é só o **token CSS**, e ele fica: `--smart-zone-max-tokens` consta da
+referência do design-sync (`design-system/.design-sync/conventions.md` e o
+`_ds_bundle.css` dos handoffs), então apagá-lo criaria divergência permanente
+contra a referência gerada no Claude Design — um problema maior que a armadilha
+que ele representa. Fica registrado que o número que MANDA é
+`shared/contextWindow.SMART_ZONE_TOKENS` (300k) e que ninguém lê o token.
+
 ### B20. Otimizar o boot do app — candidatos que sobraram da decisão do CA-7 (26/07)
 
 O CA-7 da 007 pedia sidebar pintada em < 100 ms; medido deu **103–167 ms** e o
@@ -685,6 +699,53 @@ Consequências práticas, já observadas:
 Encaminhamento possível (não decidido, fora do escopo da 008): esperar um
 marcador determinístico do próprio app em vez de texto do CLI, ou dar orçamento
 proporcional medido. Relacionado ao §B11 Causa 2 e ao §B13.
+
+**Reincidência confirmada em 29/07 (CA-29 da 009).** Rodando 6 arquivos de smoke
+em sequência, `terminal.spec.ts:284` (semáforo em background) falhou com
+exatamente a assinatura deste item — `Received string: " "` depois de 15 s
+esperando "claude code" no buffer. Rodando o MESMO arquivo sozinho, passou em
+44,1 s, e o diagnóstico que o próprio teste imprime mostrou **21 `claude.exe`
+concorrentes** na máquina naquele momento. Confirma latência de startup por
+contenção, não regressão. Também confirma que `--grep` num teste isolado deste
+arquivo NÃO serve de grupo de controle: os testes de `terminal.spec.ts`
+compartilham estado de UI (projeto selecionado no Launcher), e o isolado falha
+em "▶ Iniciar desabilitado", que não diz nada sobre a hipótese.
+
+### B23. A moldura do terminal cortava por DUAS causas independentes — ~~aberto~~ **RESOLVIDO em 29/07 (CA-29 da 009)**
+
+Registro da medição, porque o sintoma volta em qualquer máquina com escala de
+tela diferente e o próximo a olhar precisa dos números, não da conclusão.
+
+Sonda de geometria (`tests/smoke/probe-terminal-frame.spec.ts`, não versionada —
+`probe-*` no `.gitignore`), janela 1266×763, `devicePixelRatio` **1,25**
+(Windows a 125%). Antes:
+
+| caixa | altura | conteúdo | veredito |
+|---|---|---|---|
+| `.xterm` | 623,6px | `scrollHeight` **634** | transborda 10,4px |
+| `.xterm-screen` | 634px | — | 37 linhas onde cabiam 36 |
+| `.terminal` (moldura) | 640px client | `scrollHeight` **642** | `overflow:hidden` corta 2px do glifo |
+| `.xterm-viewport` | — | `background-color` | **`rgb(0,0,0)`** contra `rgb(14,17,22)` da moldura |
+
+**Causa 1 — transbordo de linha.** O `FitAddon` divide a altura disponível pela
+altura *ideal* da célula; o renderer DOM arredonda a altura *renderizada* de cada
+linha para fechar em pixel de dispositivo. Com DPR fracionário o erro (~0,28px por
+linha) só aparece somado nas ~37 linhas. Correção: `fitWithoutOvershoot` em
+`TerminalPane.tsx` mede o resultado real (`scrollHeight > clientHeight`) e encolhe
+uma linha por vez, no máximo duas — em vez de tentar prever o arredondamento do
+xterm, que muda entre renderers e versões. Roda antes do `pty.create`, então o PTY
+nasce com as linhas certas.
+
+**Causa 2 — listra preta.** O `xterm.css` da própria lib pinta `.xterm-viewport`
+com `#000` fixo, e o tema do app é `#0e1116`. A diferença aparece onde o viewport
+sobra: a calha de ~15px da barra de rolagem, à direita, encostada na borda
+arredondada. Correção: `background-color: transparent` no viewport
+(`TerminalPane.module.css`), deixando a moldura aparecer por baixo.
+
+Depois das duas: `scrollHeight == clientHeight` em **todos** os níveis da cadeia
+(`.xterm` 624/624, moldura 640/640), `.xterm-screen` em 619px e viewport
+transparente. Sobram 4,6px de folga no rodapé do terminal, na cor da moldura —
+invisíveis por serem a mesma superfície.
 
 ## Decidido, aguardando spec
 

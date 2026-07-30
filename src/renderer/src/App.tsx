@@ -22,6 +22,10 @@ import {
   parseModelEffortFromArgs,
 } from '../../shared/commandBuilder';
 import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
+// CA-22 (009) — só o DENOMINADOR do `%` de contexto vem daqui (`min(300k,
+// janela do modelo)`, decisão de 24/07); a formatação e as faixas de cor são do
+// `SmartZoneMeter` do design-system.
+import { effectiveContextZone } from '../../shared/contextWindow';
 import { sortProjects } from '../../shared';
 // T710 (007/CA-11 2º momento) — o sinal de "a retomada falhou" é o exit code do
 // PTY (medido em specs/008-fechar-pendencias/medicao-t710.md), não texto de CLI.
@@ -1625,15 +1629,26 @@ export function App(): React.JSX.Element {
   // FIX (teste manual 27/07) — com a toolbar SessionDetails removida, o rodapé
   // é a única leitura de modelo/esforço; ganha também o contexto REAL do último
   // turno (T610, transcript-watcher — nunca estimado, some sem leitura).
+  // CA-22 (009) — "o acompanhamento de contexto % sumiu". O que existia até
+  // aqui era o token bruto (`ctx 135k`), herdado do teste manual de 27/07: sem
+  // denominador, 135k não responde "dá pra continuar nesta sessão?". Volta o
+  // `%` da smart zone, na forma que o design já previa para o rodapé (o
+  // `SmartZoneMeter` compacto do slot `smartZone` da StatusBar, que a app nunca
+  // tinha ligado), com a régua real da 006: `min(300k, janela do modelo)`.
+  //
+  // O denominador segue vindo de `effectiveContextZone` — a decisão de 24/07
+  // dele — e NÃO do default de 400k do design-system.
   const activeContextTokens = activeTab?.claudeSessionId ? (contextTokens[activeTab.claudeSessionId] ?? null) : null;
-  const activeModelEffort =
-    activeTab && activeTab.sessionType === 'claude'
-      ? [
-          `${sessionModelEffort[activeTab.id]?.model ?? DEFAULT_MODEL_ALIAS}/${sessionModelEffort[activeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}`,
-          activeContextTokens !== null ? `ctx ${Math.round(activeContextTokens / 1000)}k` : null,
-        ]
-          .filter(Boolean)
-          .join(' · ')
+  const activeClaudeTab = activeTab && activeTab.sessionType === 'claude' ? activeTab : null;
+  const activeModel = activeClaudeTab ? (sessionModelEffort[activeClaudeTab.id]?.model ?? DEFAULT_MODEL_ALIAS) : null;
+  const activeModelEffort = activeClaudeTab
+    ? `${activeModel}/${sessionModelEffort[activeClaudeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}`
+    : undefined;
+  // Sem leitura ainda (ou aba shell) o medidor NÃO aparece — nunca um `0%`
+  // fabricado no lugar de "não há leitura" (CA-4 da 006).
+  const activeSmartZone =
+    activeModel !== null && activeContextTokens !== null
+      ? { usedTokens: activeContextTokens, maxTokens: effectiveContextZone(activeModel) }
       : undefined;
 
   // FIX (feedback E2E rodada 5) — "statusbar deve mostrar a conta com que a
@@ -2005,6 +2020,7 @@ export function App(): React.JSX.Element {
         accountLabel={activeSessionAccountLabel}
         modelEffort={activeModelEffort}
         sessionCount={tabs.length}
+        smartZone={activeSmartZone}
         accountTestId="statusbar-account"
       />
 

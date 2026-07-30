@@ -53,6 +53,11 @@ export function StatusBar({ accountLabel, modelEffort, sessionCount, smartZone, 
           <span className={styles.separator} aria-hidden="true">
             ·
           </span>
+          {/* CA-22 (009) — o rótulo "contexto" NÃO é decoração: o
+              `accountLabel` à esquerda já mostra um `%` (a COTA do perfil), e
+              dois números percentuais no mesmo rodapé sem dizer de quê foi
+              exatamente a confusão relatada na rodada 6 da 006. */}
+          <span>contexto</span>
           <SmartZoneMeter
             variant="compact"
             usedTokens={smartZone.usedTokens}

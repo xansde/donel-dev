@@ -1,0 +1,8 @@
+# Assets de runtime do Claude Design — presentes no disco para renderizar o
+# mockup (e tirar os prints), fora do git de propósito: são byte-a-byte os
+# mesmos de ../modo-dev-handoff/project/ (mesmo UUID de design system) e somam
+# ~600 KB de binário duplicado. O README explica como recriá-los em um comando.
+project/_ds/
+project/support.js
+project/uploads/
+project/.thumbnail

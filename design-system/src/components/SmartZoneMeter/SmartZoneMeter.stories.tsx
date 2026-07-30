@@ -8,7 +8,7 @@ const meta: Meta<typeof SmartZoneMeter> = {
     docs: {
       description: {
         component:
-          'Medidor de contexto consumido (design-system.md §6, Brief 6 do handoff). As três faixas de exemplo abaixo reproduzem exatamente os três casos do brief: "spec do donel" (180k, ok), "radar spotsys" (312k, warn) e "fix build_real.py" (410k, over).',
+          'Medidor de contexto consumido (design-system.md §6, Brief 6 do handoff). As três faixas de exemplo abaixo reproduzem exatamente os três casos do brief: "spec do donel" (180k, ok), "radar spotsys" (312k, warn) e "fix build_real.py" (410k, over). O rótulo mostra `%` e tokens ("45% · 135k/300k") desde o CA-22 da 009 — o `%` é o número que o dono acompanha, e sem teto acima de 100%.',
       },
     },
   },
@@ -25,7 +25,7 @@ export const ZoneOk: Story = {
   args: { usedTokens: 180_000 },
 };
 
-/** "radar spotsys": 312k/400k — zone-warn (âmbar), tooltip "312k/400k · atenção". */
+/** "radar spotsys": 312k/400k — zone-warn (âmbar), tooltip "78% · 312k/400k · atenção". */
 export const ZoneWarn: Story = {
   args: { usedTokens: 312_000 },
 };
@@ -46,6 +46,15 @@ export const ZoneOverWithoutHandler: Story = {
 /** Variante mini usada na statusbar (Brief 6, variante 2) — só barra + rótulo compacto. */
 export const CompactVariant: Story = {
   args: { usedTokens: 312_000, variant: 'compact' },
+};
+
+/**
+ * Como o rodapé do app usa de verdade (CA-22 da 009): a régua é a smart zone de
+ * 300k da 006 (`min(300k, janela do modelo)`), não o default de 400k da lib —
+ * 135k viram "45% · 135k/300k".
+ */
+export const CompactAppDenominator: Story = {
+  args: { usedTokens: 135_000, maxTokens: 300_000, variant: 'compact' },
 };
 
 /** As três faixas lado a lado, como no painel de detalhes de sessão (Brief 6). */

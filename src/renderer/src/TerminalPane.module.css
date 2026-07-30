@@ -19,6 +19,23 @@
 }
 
 /*
+ * CA-29 (009) — a segunda metade da "moldura cortada" (a primeira é o
+ * transbordo de linha, ver `fitWithoutOvershoot` em TerminalPane.tsx).
+ * O `xterm.css` da própria lib pinta `.xterm-viewport` com `#000` fixo, e o
+ * tema do terminal (`XTERM_THEME.background`) é `#0e1116` — medido na sonda de
+ * 29/07: `rgb(0, 0, 0)` no viewport contra `rgb(14, 17, 22)` na moldura. A
+ * diferença aparece exatamente onde o viewport sobra e o conteúdo não cobre:
+ * a calha de ~15px da barra de rolagem, à direita, e a faixa do último resto
+ * de linha — uma listra preta encostada na borda arredondada.
+ *
+ * `transparent` deixa o `#0e1116` da moldura (`App.module.css .terminal`)
+ * aparecer por baixo: uma superfície só, sem listra.
+ */
+.container :global(.xterm-viewport) {
+  background-color: transparent;
+}
+
+/*
  * T005 — estados sobre o corpo do terminal (ui-spec §2 "Estados da vista"):
  * "sessão encerrada" (FR-006) e "claude não encontrado" (CA-5). Cobre o
  * terminal inteiro para deixar claro que não há sessão viva por trás.

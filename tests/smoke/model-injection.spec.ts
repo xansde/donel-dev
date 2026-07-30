@@ -115,7 +115,10 @@ test('corpo do "＋ Nova sessão" abre o Launcher; escolher modelo/esforço ali 
   await expect(statusBar).toContainText('sonnet/high');
 
   // Nenhuma leitura de contexto ainda (nenhum turno rodou) — a StatusBar não
-  // acrescenta "· ctx Nk" sem uma leitura real do transcript-watcher (T610).
-  // Cobertura completa do "ctx Nk" ao vivo fica em session-context.spec.ts.
-  await expect(statusBar).not.toContainText('ctx ');
+  // acrescenta o medidor de contexto sem uma leitura real do transcript-watcher
+  // (T610): `activeSmartZone` fica `undefined` e o slot não renderiza. Desde o
+  // CA-22 da 009 o que se procura é o medidor (`[data-zone]`), não mais o texto
+  // "ctx Nk"; cobertura completa do `%` ao vivo em session-context.spec.ts.
+  await expect(statusBar.locator('[data-zone]')).toHaveCount(0);
+  await expect(statusBar).not.toContainText('contexto');
 });

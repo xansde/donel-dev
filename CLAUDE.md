@@ -92,15 +92,23 @@ entrega `specs/003-modo-dev/`. Só voltar ao mapa se a spec parecer contraditór
 
 Pedido "**implementar melhorias Modo Dev**" (ou "implementar o próximo lote do
 Modo Dev") = abrir a fila
-`Claude Seazone/Projects/donel-dev/implementar-modo-dev/PROXIMO.md` no vault e
-pegar o **primeiro lote `⬜`**. Aqui a ordem **é** sequencial. Prompt pronto (e a
-variante de retomada) em `prompt.md`, na mesma pasta.
+`Claude Seazone/Projects/donel-dev/implementar-009-modo-dev-v3/PROXIMO.md` no
+vault e pegar o **primeiro lote `⬜`**. Aqui a ordem **é** sequencial. Prompt
+pronto (e a variante de retomada) em `prompt.md`, na mesma pasta.
 
-Fonte de verdade do escopo: `specs/003-modo-dev/spec.md` (26 CA). Forma da UI:
-`design/modo-dev-handoff/project/Modo Dev.dc.html` **lido junto de**
-`design/modo-dev-verificacao.md` — onde o mockup e a spec discordam, **vence a
-spec** (o mockup tem 5 divergências conhecidas, D1–D5; a mais séria: a trava é
-etiqueta do board, nunca arquivo `.lock`). Um lote por sessão; PR é ato humano.
+Fonte de verdade do escopo: `specs/009-modo-dev-v3/spec.md` (31 CA). Forma da UI:
+`design/modo-dev-v3-handoff/project/Modo Dev v3.dc.html` **lido junto de**
+`design/modo-dev-v3-verificacao.md`, que nomeia **7 divergências (D-V1..D-V7)** —
+ler ANTES de implementar. Regra de conflito: **forma** → vence o design, sem
+abrandar; **alcance ou comportamento** → vence a spec. Um lote por sessão; PR é
+ato humano.
+
+> **Fila anterior (003), cumprida:** `implementar-modo-dev/PROXIMO.md` zerou em
+> 28/07 (PRs #2 e #3). A forma da v2 (`design/modo-dev-handoff/` +
+> `design/modo-dev-verificacao.md`, divergências D1–D5) fica como registro do que
+> foi construído — a v3 a sucede. A divergência mais séria de lá **reincidiu** na
+> leva nova e continua valendo: a trava é **etiqueta do board**, nunca arquivo
+> `.lock` (D-V3).
 
 ## Gotchas conhecidos (do planejamento)
 

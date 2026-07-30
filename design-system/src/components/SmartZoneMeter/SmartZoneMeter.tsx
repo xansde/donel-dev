@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { DEFAULT_MAX_TOKENS, formatSmartZoneLabel, getSmartZone } from '../../lib/smartZone';
+import { DEFAULT_MAX_TOKENS, formatSmartZoneLabel, getSmartZone, smartZonePercent } from '../../lib/smartZone';
 import styles from './SmartZoneMeter.module.css';
 
 export interface SmartZoneMeterProps {
@@ -42,6 +42,10 @@ export function SmartZoneMeter({
   const zone = getSmartZone(usedTokens, maxTokens);
   const fillPercent = Math.min((usedTokens / maxTokens) * 100, 100);
   const label = formatSmartZoneLabel(usedTokens, maxTokens);
+  // CA-22 (009) — o `%` é o número que ele acompanha ("o acompanhamento de
+  // contexto % sumiu"); os tokens brutos ficam ao lado porque `45%` sozinho não
+  // diz de qual régua. Sem teto: ver `smartZonePercent`.
+  const percent = smartZonePercent(usedTokens, maxTokens);
   const tooltipId = useId();
 
   return (
@@ -49,6 +53,9 @@ export function SmartZoneMeter({
       className={[styles.root, styles[variant], className].filter(Boolean).join(' ')}
       tabIndex={0}
       aria-describedby={tooltipId}
+      // Atributo, e não a classe do CSS module, é o contrato para teste e para
+      // quem consome: classe hasheada pelo bundler não é API.
+      data-zone={zone}
     >
       <div
         className={styles.barTrack}
@@ -56,18 +63,20 @@ export function SmartZoneMeter({
         aria-valuenow={Math.round(fillPercent)}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-label={`Smart zone: ${label} tokens usados, ${ZONE_DESCRIPTION_PT[zone]}`}
+        aria-label={`Smart zone: ${percent}%, ${label} tokens usados, ${ZONE_DESCRIPTION_PT[zone]}`}
       >
         <div
           className={[styles.barFill, styles[`fill-${zone}`]].join(' ')}
           style={{ width: `${fillPercent}%` }}
         />
       </div>
-      <span className={styles.label}>{label}</span>
+      <span className={styles.label}>
+        <span className={styles.percent}>{percent}%</span> · {label}
+      </span>
 
       <div id={tooltipId} role="tooltip" className={styles.tooltip}>
         <span>
-          {label} · {ZONE_DESCRIPTION_PT[zone]}
+          {percent}% · {label} · {ZONE_DESCRIPTION_PT[zone]}
         </span>
         {zone === 'over' && onHandoff ? (
           <button type="button" className={styles.handoffButton} onClick={onHandoff}>

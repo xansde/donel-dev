@@ -9,7 +9,7 @@ const meta: Meta<typeof StatusBar> = {
     docs: {
       description: {
         component:
-          'Statusbar do shell principal (Brief 1). Dados de exemplo exatos: "Tecnologia Claude 3 · fable/high · 6 sessões · [mini smart zone]".',
+          'Statusbar do shell principal (Brief 1). Dados de exemplo exatos: "Tecnologia Claude 3 · fable/high · 6 sessões · contexto [mini smart zone]". O rótulo "contexto" antes do medidor existe porque o `accountLabel` já traz um `%` (a cota do perfil) — dois percentuais sem dizer de quê foi confusão relatada na 006.',
       },
     },
   },
@@ -43,5 +43,18 @@ export const SingleSession: Story = {
     modelEffort: 'sonnet/med',
     sessionCount: 1,
     smartZone: { usedTokens: 45_000 },
+  },
+};
+
+/**
+ * Como o app monta o rodapé (CA-22 da 009): régua de 300k (a smart zone da 006)
+ * e a sessão passando dela — o `%` fica em vermelho e NÃO trava em 100%.
+ */
+export const ContextOverZone: Story = {
+  args: {
+    accountLabel: 'Tecnologia Claude 3 · 62%',
+    modelEffort: 'opus/high',
+    sessionCount: 3,
+    smartZone: { usedTokens: 380_000, maxTokens: 300_000 },
   },
 };
