@@ -6,12 +6,19 @@ import styles from './PhaseDetailsPanel.module.css';
 // Lote 7 (009-modo-dev-v3), CA-7 — o painel PRÓPRIO de 316px à direita: o
 // mapa (`DiscoveryMap.tsx`) NUNCA carrega o detalhe dentro de si.
 //
-// Lote 8, CA-18/CA-20 — o CONTEÚDO rico (breadcrumb, garantia, PR desta
-// fase, artefatos declarados, recibos de conhecimento — mockup linhas
-// 236-312) chega aqui. Cada seção degrada por OMISSÃO (C4/CA-6): sem dado,
-// a seção simplesmente não aparece — nunca um "em construção" nem um erro.
-// O view-model inteiro é montado por `buildPhaseDetailsView`
-// (shared/phaseDetailsView.ts, puro/testado) — este componente só renderiza.
+// Lote 8, CA-18/CA-20 — o CONTEÚDO rico (garantia, PR desta fase, artefatos
+// declarados, recibos de conhecimento — mockup linhas 236-312) chega aqui.
+// Cada seção degrada por OMISSÃO (C4/CA-6): sem dado, a seção simplesmente
+// não aparece — nunca um "em construção" nem um erro. O view-model inteiro é
+// montado por `buildPhaseDetailsView` (shared/phaseDetailsView.ts, puro/
+// testado) — este componente só renderiza.
+//
+// REVISÃO do orquestrador (mesmo lote) — o breadcrumb (disc.id › card de
+// plano › fase) NÃO mora aqui: o "Etapa em foco" do mockup (linhas 236-250)
+// só tem glifo+chip+fase+estado+resumo, sem disc.id/planoId/planoTitle. O
+// breadcrumb é forma do HEADER de 44px acima do terminal (mockup linhas
+// 175-196), implementado em App.tsx — `buildPhaseDetailsView` continua
+// calculando `breadcrumb` (é dado útil, só mudou de consumidor).
 
 const CHIP_PHASES: ReadonlySet<string> = new Set<ChipPhase>(['discovery', 'plano', 'implementar', 'validar', 'concluir', 'documentar']);
 
@@ -35,30 +42,10 @@ export function PhaseDetailsPanel({ selection }: PhaseDetailsPanelProps): React.
     );
   }
 
-  const { breadcrumb, garantia, pr, artifacts, receipts, showReceipts } = selection;
+  const { garantia, pr, artifacts, receipts, showReceipts } = selection;
 
   return (
     <aside className={styles.panel} aria-label="Detalhe da etapa" data-testid="devmode-details-panel">
-      {/* Breadcrumb do nó focado (mockup linhas 176-188): discovery › card de
-          plano › fase. Sem ação própria — é orientação, não navegação nova
-          (a navegação já vive no mapa/trilha, CA-16 "cada fato num lugar só"). */}
-      <div className={styles.breadcrumb} data-testid="devmode-details-breadcrumb">
-        <span className={styles.breadcrumbId}>{breadcrumb.discoveryCardId}</span>
-        <span className={styles.breadcrumbSep} aria-hidden="true">
-          ›
-        </span>
-        <span className={styles.breadcrumbId}>{breadcrumb.planCardId}</span>
-        <span className={styles.breadcrumbTitle}>{breadcrumb.planCardTitle}</span>
-        {breadcrumb.faseNum ? (
-          <>
-            <span className={styles.breadcrumbSep} aria-hidden="true">
-              ›
-            </span>
-            <span className={styles.breadcrumbFase}>fase {breadcrumb.faseNum}</span>
-          </>
-        ) : null}
-      </div>
-
       <div className={styles.header}>
         <span className={styles.label}>Etapa em foco</span>
         <div className={styles.summary}>

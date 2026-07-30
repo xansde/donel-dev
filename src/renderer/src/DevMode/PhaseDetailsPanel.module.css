@@ -1,7 +1,9 @@
 /* Lote 7 (009-modo-dev-v3), CA-7 — painel próprio de 316px, EXATO (o smoke
    de geometria mede a largura real). Lote 8 (CA-18/CA-20) preenche o
-   conteúdo: breadcrumb, garantia, PR, artefatos, recibos — mockup linhas
-   176-312. */
+   conteúdo: garantia, PR, artefatos, recibos — mockup linhas 236-312. O
+   breadcrumb (linhas 176-188) NÃO mora aqui — é forma do header de 44px
+   acima do terminal (App.module.css `.sessionHeader`), revisão do
+   orquestrador no mesmo lote. */
 
 .panel {
   width: 316px;
@@ -15,44 +17,6 @@
   /* Âncora de coluna do grid do .body (App.module.css). */
   grid-column: 3;
   grid-row: 1;
-}
-
-/* === Breadcrumb (mockup linhas 176-188) === */
-
-.breadcrumb {
-  flex: none;
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 10px var(--panel-padding) 0;
-}
-
-.breadcrumbId {
-  font-family: var(--font-mono);
-  font-size: var(--text-caption-size);
-  color: var(--accent);
-  white-space: nowrap;
-}
-
-.breadcrumbTitle {
-  font-size: var(--text-caption-size);
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.breadcrumbFase {
-  font-family: var(--font-mono);
-  font-size: var(--text-caption-size);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.breadcrumbSep {
-  color: var(--state-done);
-  flex: none;
 }
 
 /* === Cabeçalho "Etapa em foco" === */

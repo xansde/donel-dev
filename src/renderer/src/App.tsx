@@ -1,5 +1,19 @@
-import { ArmedPrompt, Button, HomologationClock, Modal, SplitButton, StatusBar, TerminalTab, Toast, Toggle } from '@donel-dev/design-system';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, Settings } from 'lucide-react';
+import {
+  ArmedPrompt,
+  Button,
+  HomologationClock,
+  Modal,
+  PhaseChip,
+  SESSION_STATE_LABEL_PT,
+  SplitButton,
+  StateDot,
+  StatusBar,
+  TerminalTab,
+  Toast,
+  Toggle,
+  type EsteiraPhase as ChipPhase,
+} from '@donel-dev/design-system';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppConfigDto,
@@ -223,6 +237,16 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   const next = { ...record };
   delete next[key];
   return next;
+}
+
+// Lote 8 (009-modo-dev-v3) — mesmo `CHIP_PHASES`/`isChipPhase` local de
+// `DiscoveryMap.tsx`/`PhaseDetailsPanel.tsx` (o `PhaseChip` do design-system
+// só desenha 6 das 7 fases do domínio, sem `cliente`) — usado no breadcrumb
+// do header de 44px (`.sessionHeader`).
+const CHIP_PHASES: ReadonlySet<string> = new Set<ChipPhase>(['discovery', 'plano', 'implementar', 'validar', 'concluir', 'documentar']);
+
+function isChipPhase(phase: EsteiraPhase): phase is ChipPhase {
+  return CHIP_PHASES.has(phase);
 }
 
 export function App(): React.JSX.Element {
@@ -2035,23 +2059,6 @@ export function App(): React.JSX.Element {
             )}
           </button>
         ) : null}
-        {/* CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco":
-            mesmo padrão de gesto dos botões vizinhos (ícone no titlebar,
-            `preferencesButton`) — funciona nos dois modos (Dev e Uso geral),
-            por isso NÃO fica dentro do bloco `devModeOn` acima. Só aparece
-            com uma sessão claude em foco (nada a reiniciar sem isso). */}
-        {activeClaudeTab?.claudeSessionId ? (
-          <button
-            type="button"
-            className={styles.preferencesButton}
-            onClick={handleOpenRestart}
-            aria-label="Reiniciar sessão em foco"
-            title="Reiniciar sessão em foco (retoma na conta selecionada)"
-            data-testid="restart-session-button"
-          >
-            <RotateCcw size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-        ) : null}
         <button
           type="button"
           className={styles.preferencesButton}
@@ -2210,6 +2217,51 @@ export function App(): React.JSX.Element {
               ("não tem sido nem um pouco útil"): modelo/esforço agora se
               escolhe no Launcher ao criar a sessão, e a leitura do que a
               sessão usa vive na StatusBar (rodapé). */}
+          {/* REVISÃO do orquestrador (lote 8, 009-modo-dev-v3) — o header de
+              44px do mockup (linhas 175-196 Modo Dev / 341-356 Uso geral)
+              tinha sido comprimido pro titlebar (ícone solto); D1 "confia no
+              design sempre" manda a forma desenhada, sem abrandar. D-V6
+              continua valendo: isto NÃO é o SessionDetails (modelo/esforço/
+              permissões) — só o que o mockup desenha aqui: breadcrumb (Dev)
+              ou nome+path (Uso geral), StateDot e "⟳ Reiniciar" (CA-24). */}
+          {tabs.length > 0 ? (
+            <div className={styles.sessionHeader} data-testid="session-header">
+              {devModeOn && selectedPhaseDetails ? (
+                <>
+                  <span className={styles.sessionHeaderId}>{selectedPhaseDetails.breadcrumb.discoveryCardId}</span>
+                  <span className={styles.sessionHeaderSep} aria-hidden="true">
+                    ›
+                  </span>
+                  <span className={styles.sessionHeaderId}>{selectedPhaseDetails.breadcrumb.planCardId}</span>
+                  <span className={styles.sessionHeaderTitle}>{selectedPhaseDetails.breadcrumb.planCardTitle}</span>
+                  <span className={styles.sessionHeaderSep} aria-hidden="true">
+                    ›
+                  </span>
+                  {isChipPhase(selectedPhaseDetails.phase) ? <PhaseChip phase={selectedPhaseDetails.phase} /> : null}
+                  {selectedPhaseDetails.faseNum ? (
+                    <span className={styles.sessionHeaderFase}>fase {selectedPhaseDetails.faseNum}</span>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <span className={styles.sessionHeaderTitle}>{activeTab ? resolveTabName(activeTab) : ''}</span>
+                  {activeTab?.cwd ? <span className={styles.sessionHeaderPath}>{activeTab.cwd}</span> : null}
+                </>
+              )}
+              <div className={styles.sessionHeaderSpacer} />
+              {activeClaudeTab ? (
+                <StateDot
+                  state={semaphoreStates[activeClaudeTab.id]?.state ?? 'working'}
+                  label={SESSION_STATE_LABEL_PT[semaphoreStates[activeClaudeTab.id]?.state ?? 'working']}
+                />
+              ) : null}
+              {activeClaudeTab?.claudeSessionId ? (
+                <Button variant="ghost" onClick={handleOpenRestart} data-testid="restart-session-button">
+                  ⟳ Reiniciar
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           <div className={styles.terminal}>
             {/* FIX (decisão A, 2026-07-23) — mesmo empty state pros dois
                 caminhos que levam a "zero abas": boot do app (INITIAL_TABS

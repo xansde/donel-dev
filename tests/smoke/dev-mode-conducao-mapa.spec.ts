@@ -338,14 +338,17 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   // passada retoma a sessão arquivada").
   await window.locator(`[data-testid="devmode-trilha-step-${CARD_M1}-plano"]`).click();
 
-  // === Lote 8/CA-18/CA-20 — painel direito: breadcrumb + artefatos ========
-  // A fase `plano` não é fase-indexada (`faseNum: null`): sem seção de
-  // garantia nem de PR (essas são 1:1 com `fase_num`, CA-20) — só breadcrumb
-  // e os artefatos declarados no `plano-result.json` (linha ~136).
+  // === Lote 8/CA-18/CA-20 — header de 44px (breadcrumb) + painel (artefatos) =
+  // Revisão do orquestrador (mesmo lote): o breadcrumb mora no HEADER de
+  // 44px acima do terminal (mockup linhas 175-196), não no painel de 316px
+  // (que só tem glifo+chip+fase+resumo, mockup linhas 236-250). A fase
+  // `plano` não é fase-indexada (`faseNum: null`): sem seção de garantia
+  // nem de PR (essas são 1:1 com `fase_num`, CA-20) — só os artefatos
+  // declarados no `plano-result.json` (linha ~136).
   const detailsPanel = window.locator('[data-testid="devmode-details-panel"]');
-  const breadcrumb = window.locator('[data-testid="devmode-details-breadcrumb"]');
-  await expect(breadcrumb).toContainText(CARD_DISCOVERY);
-  await expect(breadcrumb).toContainText(CARD_M1);
+  const sessionHeader = window.locator('[data-testid="session-header"]');
+  await expect(sessionHeader).toContainText(CARD_DISCOVERY);
+  await expect(sessionHeader).toContainText(CARD_M1);
   await expect(detailsPanel.locator('[data-testid="devmode-details-garantia"]')).toHaveCount(0);
   await expect(detailsPanel.locator('[data-testid="devmode-details-pr"]')).toHaveCount(0);
   const artifacts = window.locator('[data-testid="devmode-details-artifacts"]');
@@ -378,11 +381,11 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   await expect(window.locator('[data-testid="devmode-last-session"]')).toHaveText('claude --model haiku --effort low');
   await expect(window.locator('[data-testid="devmode-last-session"]')).toHaveAttribute('data-cwd', worktreeDeclared);
 
-  // === Lote 8/CA-18/CA-20 — painel direito: breadcrumb + garantia + PR ====
+  // === Lote 8/CA-18/CA-20 — header (breadcrumb) + painel (garantia + PR) ===
   // `implementar-1` É fase-indexada (`faseNum: 1`): garantia (da fase do
   // PLANO, contrato §D.3) e PR (branch do frontmatter do ctx.md, D3 — sem
   // `gh`/repo configurado neste smoke, "sem PR ainda" é o degradado correto).
-  await expect(breadcrumb).toContainText('fase 1');
+  await expect(sessionHeader).toContainText('fase 1');
   const garantia = window.locator('[data-testid="devmode-details-garantia"]');
   await expect(garantia).toContainText('roteiro_e2e');
   await expect(garantia).toContainText('specs/003/e2e.md');
