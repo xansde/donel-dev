@@ -1580,14 +1580,25 @@ export function App(): React.JSX.Element {
   const handleOpenRestart = (): void => {
     if (!activeClaudeTab?.claudeSessionId) return;
     const tab = activeClaudeTab;
-    setRestartTarget({
-      tabId: tab.id,
-      sessionId: tab.claudeSessionId as string,
-      cwd: tab.cwd,
-      projectName: tab.projectName,
-      // CA-25 — perfil de NASCIMENTO da aba (`sessionProfiles`, T707/handleProfileResolved), nunca o perfil ATIVO agora.
-      sourceProfileSlug: sessionProfiles[tab.id]?.slug ?? activeProfileSlug,
-    });
+    // FIX (rodada de feedback 30/07, item 1) — degradação por exceção: nenhum
+    // handler de gesto do usuário pode lançar sem ser pego (uma exceção não
+    // tratada num handler de evento do React derruba a árvore inteira — a
+    // "tela preta" já conhecida do projeto). `setRestartTarget` só monta um
+    // objeto plano a partir de campos já lidos — não deveria lançar nunca —
+    // mas o try/catch é a rede de segurança: pior caso vira um toast, nunca
+    // um app travado.
+    try {
+      setRestartTarget({
+        tabId: tab.id,
+        sessionId: tab.claudeSessionId as string,
+        cwd: tab.cwd,
+        projectName: tab.projectName,
+        // CA-25 — perfil de NASCIMENTO da aba (`sessionProfiles`, T707/handleProfileResolved), nunca o perfil ATIVO agora.
+        sourceProfileSlug: sessionProfiles[tab.id]?.slug ?? activeProfileSlug,
+      });
+    } catch {
+      setDevModeToast('Não foi possível preparar o reinício desta sessão.');
+    }
   };
 
   /**
@@ -1611,30 +1622,40 @@ export function App(): React.JSX.Element {
     const crossProfile = target.sourceProfileSlug !== targetProfileSlug;
 
     const resumeWithNewTab = (): void => {
-      // ORDEM IMPORTA (bug pego pelo smoke restart-session.spec.ts): `addTab`/
-      // `closeTabImmediately` fazem `setTabs(<array direto>)` a partir do
-      // `tabs` do CLOSURE desta render — não são updates funcionais. Chamar
-      // `addTab` e DEPOIS `closeTabImmediately` faz o `setTabs` do close
-      // sobrescrever o array já com a aba nova por um array calculado ANTES
-      // dela existir (o `tabs` capturado no fechamento nunca viu o `addTab`),
-      // apagando a aba recém-criada — 0 abas no fim, não 1. Fechar PRIMEIRO
-      // (sobre o `tabs` desta render, ainda correto) e só then criar a nova
-      // evita a corrida: o `setTabs` de `addTab` (que É funcional,
-      // `prev => [...prev, novo]`) compõe corretamente em cima do resultado
-      // do close, processado antes dele na mesma fila de updates do React.
-      closeTabImmediately(target.tabId);
-      const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId: target.sessionId } });
-      setLastRestartSession({ args, cwd: target.cwd });
-      addTab({
-        name: target.projectName ?? 'Sessão reiniciada',
-        cwd: target.cwd,
-        projectName: target.projectName,
-        pinned: false,
-        launchArgs: args,
-        sessionType: 'claude',
-      });
-      if (crossProfile) {
-        setDevModeToast(`Sessão reiniciada na conta ${targetProfileSlug} — a sessão original (conta ${target.sourceProfileSlug}) continua congelada.`);
+      // FIX (rodada de feedback 30/07, item 1) — degradação por exceção:
+      // qualquer falha aqui dentro (ex.: `buildClaudeArgs` recebendo um
+      // `sessionId` degenerado numa sessão recém-nascida sem transcript
+      // ainda) vira um toast, nunca uma exceção não tratada dentro de um
+      // handler de evento — essa é a "tela preta" conhecida do projeto (uma
+      // exceção em render/handler desmonta a árvore React inteira).
+      try {
+        // ORDEM IMPORTA (bug pego pelo smoke restart-session.spec.ts): `addTab`/
+        // `closeTabImmediately` fazem `setTabs(<array direto>)` a partir do
+        // `tabs` do CLOSURE desta render — não são updates funcionais. Chamar
+        // `addTab` e DEPOIS `closeTabImmediately` faz o `setTabs` do close
+        // sobrescrever o array já com a aba nova por um array calculado ANTES
+        // dela existir (o `tabs` capturado no fechamento nunca viu o `addTab`),
+        // apagando a aba recém-criada — 0 abas no fim, não 1. Fechar PRIMEIRO
+        // (sobre o `tabs` desta render, ainda correto) e só then criar a nova
+        // evita a corrida: o `setTabs` de `addTab` (que É funcional,
+        // `prev => [...prev, novo]`) compõe corretamente em cima do resultado
+        // do close, processado antes dele na mesma fila de updates do React.
+        closeTabImmediately(target.tabId);
+        const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId: target.sessionId } });
+        setLastRestartSession({ args, cwd: target.cwd });
+        addTab({
+          name: target.projectName ?? 'Sessão reiniciada',
+          cwd: target.cwd,
+          projectName: target.projectName,
+          pinned: false,
+          launchArgs: args,
+          sessionType: 'claude',
+        });
+        if (crossProfile) {
+          setDevModeToast(`Sessão reiniciada na conta ${targetProfileSlug} — a sessão original (conta ${target.sourceProfileSlug}) continua congelada.`);
+        }
+      } catch {
+        setDevModeToast('Não foi possível reiniciar esta sessão.');
       }
     };
 
@@ -1646,15 +1667,22 @@ export function App(): React.JSX.Element {
       return;
     }
 
-    window.donel.transcripts
-      .copyForResume({
-        sessionId: target.sessionId,
-        projectPath: target.cwd,
-        sourceProfileSlug: target.sourceProfileSlug,
-        targetProfileSlug,
-      })
-      .catch(() => undefined) // best-effort (C4) — a cópia falhar não impede o resume.
-      .finally(resumeWithNewTab);
+    try {
+      window.donel.transcripts
+        .copyForResume({
+          sessionId: target.sessionId,
+          projectPath: target.cwd,
+          sourceProfileSlug: target.sourceProfileSlug,
+          targetProfileSlug,
+        })
+        .catch(() => undefined) // best-effort (C4) — a cópia falhar não impede o resume.
+        .finally(resumeWithNewTab);
+    } catch {
+      // FIX (item 1) — `window.donel.transcripts` ausente/quebrado lançaria
+      // SINCRONAMENTE aqui (fora de qualquer promise, um `.catch` não pegaria):
+      // degrada pro mesmo caminho best-effort, resume segue sem a cópia.
+      resumeWithNewTab();
+    }
   };
 
   /**
@@ -2114,12 +2142,21 @@ export function App(): React.JSX.Element {
           )}
         </button>
         {devModeOn ? (
+          // FIX (rodada de feedback 30/07, item 2) — "o botão de ocultar
+          // barra lateral não oculta a barra direita": o ícone é
+          // Panel-RIGHT-Close/Open, mas até aqui `rightCollapsed` só zerava
+          // a coluna ESQUERDA (o mapa, que migrou de lado no lote 7 —
+          // `bodyMapCollapsed`). O painel de 316px à direita
+          // (`PhaseDetailsPanel`) nunca obedecia a este botão. Mesmo
+          // estado, agora os dois painéis do Modo Dev — mapa e detalhe —
+          // respondem ao mesmo gesto (ver `.bodyMapCollapsed` no CSS e a
+          // condição de `PhaseDetailsPanel` logo abaixo).
           <button
             type="button"
             className={styles.preferencesButton}
             onClick={() => setRightCollapsed((prev) => !prev)}
-            aria-label={rightCollapsed ? 'Mostrar mapa do discovery' : 'Recolher mapa do discovery'}
-            title={rightCollapsed ? 'Mostrar mapa do discovery' : 'Recolher mapa do discovery'}
+            aria-label={rightCollapsed ? 'Mostrar painéis do Modo Dev' : 'Recolher painéis do Modo Dev'}
+            title={rightCollapsed ? 'Mostrar painéis do Modo Dev' : 'Recolher painéis do Modo Dev'}
           >
             {rightCollapsed ? (
               <PanelRightOpen size={16} strokeWidth={1.5} aria-hidden="true" />
@@ -2246,7 +2283,6 @@ export function App(): React.JSX.Element {
                 <div data-testid="devmode-armed">
                 <ArmedPrompt
                   command={armedPrompt.command}
-                  hint="escrito no prompt — o Enter é seu"
                   warning={armedPrompt.warning ? { text: armedPrompt.warning } : undefined}
                   onDismiss={() => setArmedPrompt(null)}
                 />
@@ -2483,8 +2519,10 @@ export function App(): React.JSX.Element {
         {/* Painel de 316px à direita (CA-7) — o mapa NUNCA carrega o detalhe
             dentro de si; esqueleto aqui, conteúdo rico no lote 8. Quando o
             Launcher está aberto, ele ocupa esta mesma coluna (mesmo padrão
-            de antes). */}
-        {devModeOn && !launcherOpen ? <PhaseDetailsPanel selection={selectedPhaseDetails} /> : null}
+            de antes). FIX (item 2, rodada 30/07) — `!rightCollapsed`: o
+            botão "Recolher painéis" do titlebar agora também esconde este
+            painel, não só o mapa (ver comentário do botão e `.bodyMapCollapsed`). */}
+        {devModeOn && !launcherOpen && !rightCollapsed ? <PhaseDetailsPanel selection={selectedPhaseDetails} /> : null}
 
         {launcherOpen ? (
           <aside className={styles.rightPanel} aria-label="Lançar sessão">

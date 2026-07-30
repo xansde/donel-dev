@@ -357,6 +357,20 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   await expect(artifacts).toContainText('specs/003/spec.md');
   await expect(artifacts).toContainText('specs/003/plan.md');
 
+  // FIX (rodada de feedback 30/07, item 2) — "o botão de ocultar barra
+  // lateral não oculta a barra direita": o botão do titlebar (ícone
+  // Panel-Right-Close/Open, `rightCollapsed`) tinha de esconder os DOIS
+  // painéis do Modo Dev (mapa à esquerda + `PhaseDetailsPanel` de 316px à
+  // direita) — antes só o mapa obedecia.
+  const devMap = window.locator('[data-testid="devmode-map"]');
+  const collapsePanelsButton = window.getByRole('button', { name: 'Recolher painéis do Modo Dev' });
+  await collapsePanelsButton.click();
+  await expect(devMap).toHaveCount(0);
+  await expect(detailsPanel).toHaveCount(0);
+  await window.getByRole('button', { name: 'Mostrar painéis do Modo Dev' }).click();
+  await expect(devMap).toBeVisible();
+  await expect(detailsPanel).toBeVisible();
+
   // CA-9 — retomada pelo `-r <session-id>` arquivado (argv real, hook de teste).
   await expect(window.locator('[data-testid="devmode-last-session"]')).toHaveText('claude -r sess-antiga');
   // CA-22 — a etapa rodou em outra conta: avisa, e retoma assim mesmo (o

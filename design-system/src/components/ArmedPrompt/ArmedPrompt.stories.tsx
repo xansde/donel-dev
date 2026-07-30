@@ -9,13 +9,12 @@ const meta: Meta<typeof ArmedPrompt> = {
     docs: {
       description: {
         component:
-          'O gesto central do CA-3: comando escrito e não enviado, tecla Enter desenhada explicitamente, aviso opcional e descartar — a única ação exposta pelo tipo é `onDismiss` (sem `onEnter`/`onSubmit`, invariante 2).',
+          'O gesto central do CA-3: comando escrito e não enviado, tecla Enter desenhada explicitamente, aviso opcional e descartar — a única ação exposta pelo tipo é `onDismiss` (sem `onEnter`/`onSubmit`, invariante 2). FIX (item 3, rodada de feedback 30/07): sem texto explicativo ("Comando preparado — nada foi enviado" / `hint` livre) — só Enter + descartar + o comando.',
       },
     },
   },
   args: {
     command: '/esteira-validar SZI-142-M2',
-    hint: 'escreve no prompt e para — o Enter é seu',
   },
 };
 

@@ -16,16 +16,6 @@
   color: var(--accent);
 }
 
-.barLabel {
-  flex: 1;
-  min-width: 0;
-}
-
-.hint {
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
 .enterKey {
   display: inline-flex;
   flex: none;
@@ -47,6 +37,11 @@
   flex: none;
   align-items: center;
   gap: 3px;
+  /* FIX (item 3, rodada 30/07) — sem `.barLabel` (flex:1) empurrando o resto
+     da barra pra direita, o próprio botão assume esse papel: Enter fica à
+     esquerda, descartar cola na borda direita — a barra continua os dois
+     extremos ocupados, só sem o texto explicativo do meio. */
+  margin-left: auto;
   background: none;
   border: none;
   padding: 0;
