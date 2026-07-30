@@ -5,6 +5,140 @@
   min-width: 0;
 }
 
+/*
+ * CA-23 (009-modo-dev-v3, lote 3) — o `Modal` base é fixo em 480px
+ * (Modal.module.css, comentário de topo: "usado só para confirmação
+ * destrutiva... Máx. 480px"). A engrenagem precisa de espaço pro painel de
+ * 380px (mesma medida do mockup, `design/modo-dev-v3-handoff/project/Modo
+ * Dev v3.dc.html` linha 509) ao lado da lista — `!important` é o único jeito
+ * de vencer a regra mais específica do módulo do Modal sem tocar num
+ * componente do design system que é usado por telas que NÃO precisam ser
+ * largas (Preferências, confirmações).
+ */
+.dialogWide {
+  max-width: 920px !important;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.searchInput {
+  flex: 1;
+}
+
+/* Mesma forma do gear do mockup (linha 485 do handoff): 26x26, borda, radius-sm — diferente do `.preferencesButton` sem borda da titlebar (App.module.css), porque aqui o ícone abre um painel PERSISTENTE, não uma ação instantânea. */
+.gearButton {
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  border: var(--hairline);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  padding: 0;
+  cursor: pointer;
+}
+
+.gearButton:hover {
+  color: var(--text-primary);
+}
+
+.gearButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.gearButton[aria-expanded='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.content {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.sessionsColumn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Painel lateral da engrenagem — mesma largura (380px) e composição (gap 14px, bg-panel, borda esquerda) do mockup, linha 509. */
+.settingsPanel {
+  width: 380px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: var(--space-2);
+  background: var(--bg-panel);
+  border-left: var(--hairline);
+  border-radius: var(--radius-sm);
+}
+
+.settingsHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.settingsTitle {
+  flex: 1;
+  font-size: 13px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.settingsClose {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settingsClose:hover {
+  color: var(--text-primary);
+}
+
+.settingsClose:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.settingsIntro {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.settingsActions {
+  display: flex;
+  gap: 8px;
+}
+
+.settingsFooter {
+  margin: auto 0 0;
+  padding-top: 12px;
+  border-top: var(--hairline);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
 .hint {
   margin: 0;
   color: var(--text-muted);

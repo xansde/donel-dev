@@ -14,12 +14,14 @@ import type {
   ProfileDoctorReportDto,
   ProfileHeadroomMap,
   ProfileSummaryDto,
+  ProjectBindingDto,
   ProjectInfo,
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
   PhaseArchivedPayload,
   PtyExitInfo,
+  SaveProjectBindingIpcInput,
   SemaphoreUpdate,
   SessionSummaryDto,
   TranscriptChangedPayload,
@@ -36,10 +38,12 @@ import {
   isValidCardId,
   isValidCardIdList,
   isValidOpenDiscoveryIpcInput,
+  isValidSaveProjectBindingIpcInput,
   isValidWatchPhaseIpcInput,
   normalizeSessionName,
   openDiscovery,
   PROFILE_CHANNELS,
+  PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
   PTY_CHANNELS,
   SEMAPHORE_CHANNELS,
@@ -64,6 +68,12 @@ import {
   type AppConfig,
 } from './config-store';
 import { buildDiscoveryTree } from './discovery-tree';
+import {
+  createSystemEsteiraConfigIoDeps,
+  esteiraConfigDir,
+  readProjectBindingFromDisk,
+  saveProjectBindingToDisk,
+} from './esteira-config';
 import { createSystemEsteiraReaderIoDeps } from './esteira-reader';
 import { watchEsteiraResult, type EsteiraResultWatcherHandle } from './esteira-result-watcher';
 import {
@@ -160,15 +170,27 @@ const boardFactsReader = resolveBoardFactsReader(process.env, esteiraReaderIoDep
 const ESTEIRA_STATE_ROOT = process.env.DONEL_ESTEIRA_STATE_ROOT || join(homedir(), '.claude', 'esteira-state');
 
 /**
+ * CA-23 (009-modo-dev-v3, lote 3) — mesmo diretório `~/.claude/esteira-config/`
+ * que as skills da esteira já usam (`donel-board-credential.json`,
+ * `repos.json`, contrato §D.0-bis/§I), com override de ambiente
+ * (`DONEL_ESTEIRA_CONFIG_DIR`, mesmo espírito de `DONEL_ESTEIRA_STATE_ROOT`)
+ * pra isolar o smoke do diretório REAL da máquina.
+ */
+const ESTEIRA_CONFIG_DIR = esteiraConfigDir(process.env, homedir);
+const esteiraConfigIoDeps = createSystemEsteiraConfigIoDeps();
+
+/**
  * CA-4 — `repo_slug` é a CHAVE do repo-alvo em `repos.json → repos`
  * (`~/.claude/esteira-config/repos.json`, contrato §D.0-bis/§I), não o path.
- * Este app ainda não lê `repos.json` (isso é a engrenagem do lote 3, CA-23) —
- * até lá, usa o nome da pasta do checkout local como aproximação. Na prática
- * a chave costuma coincidir com o basename do repo (`spotsys`, `dalton`, ver
- * exemplos do contrato), mas diverge se o board apontar um checkout cujo
- * nome de pasta não bate com a chave escolhida em `repos.json` — risco
- * conhecido, registrado no report do lote 2, a fechar quando a engrenagem
- * ganhar um campo próprio para o slug (ou o app passar a ler `repos.json`).
+ * A leitura da árvore (CA-4/CA-7) ainda usa o nome da pasta do checkout local
+ * como aproximação — na prática a chave costuma coincidir com o basename do
+ * repo (`spotsys`, `dalton`, ver exemplos do contrato), mas diverge se o
+ * board apontar um checkout cujo nome de pasta não bate com a chave
+ * escolhida em `repos.json` (risco conhecido, registrado no report do lote
+ * 2). A engrenagem (CA-23, abaixo) usa a MESMA resolução para decidir em
+ * qual entrada de `repos.json` gravar o campo `github` — é a chave que todo
+ * o resto do app já assume, então divergir aqui criaria uma segunda noção de
+ * "qual é o repo" dentro do mesmo processo.
  */
 function resolveRepoSlug(repoPath: string): string {
   return basename(repoPath);
@@ -832,6 +854,39 @@ function registerTabIpcHandlers(): void {
   });
 }
 
+/**
+ * CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto:
+ * lê/grava os dois JSONs externos que a esteira já lia (board TaskDex + repo
+ * do GitHub), hoje editados à mão fora do app (spec.md problema 8).
+ * `repoSlug` usa a MESMA resolução de `resolveRepoSlug` (comentário acima) —
+ * é a chave que `repos.json → repos` já assume em todo o resto do app.
+ * Payload inválido (`repoPath` vazio/ausente) é no-op: devolve DTO vazio,
+ * nunca lança (mesmo espírito defensivo do resto dos handlers deste
+ * arquivo). Nenhuma escrita em TaskDex/GitHub — só nestes dois arquivos de
+ * config locais (invariante 5/CA-19 preservada: a Esteira em si continua só
+ * lida).
+ */
+function registerProjectBindingIpcHandlers(): void {
+  const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '' };
+
+  ipcMain.handle(PROJECT_BINDING_CHANNELS.get, (_event, repoPath: unknown): ProjectBindingDto => {
+    if (typeof repoPath !== 'string' || !repoPath.trim()) return EMPTY_BINDING;
+    return readProjectBindingFromDisk(ESTEIRA_CONFIG_DIR, resolveRepoSlug(repoPath), esteiraConfigIoDeps);
+  });
+
+  ipcMain.handle(PROJECT_BINDING_CHANNELS.save, (_event, input: unknown): ProjectBindingDto => {
+    if (!isValidSaveProjectBindingIpcInput(input)) return EMPTY_BINDING;
+    const typed = input as SaveProjectBindingIpcInput;
+    return saveProjectBindingToDisk(
+      ESTEIRA_CONFIG_DIR,
+      resolveRepoSlug(typed.repoPath),
+      typed.repoPath,
+      { workspaceId: typed.workspaceId, teamId: typed.teamId, github: typed.github },
+      esteiraConfigIoDeps,
+    );
+  });
+}
+
 /** Sempre inclui o Principal + varre `~/.claude-profiles/*` de novo a cada chamada (mesmo espírito de `listProjectsWithFavorites` — lista pequena, I/O local, sem necessidade de cache próprio aqui). */
 function currentProfileList(): ProfileInfo[] {
   return listProfiles(createSystemProfileListDeps(homedir));
@@ -961,6 +1016,7 @@ void app.whenReady().then(async () => {
   registerClipboardIpcHandlers(); // T504 (005-terminal-copy-paste)
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
+  registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
   createMainWindow();
 
   app.on('activate', () => {

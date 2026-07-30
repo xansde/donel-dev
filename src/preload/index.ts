@@ -14,11 +14,13 @@ import type {
   ProfileDoctorReportDto,
   ProfileHeadroomMap,
   ProfileSummaryDto,
+  ProjectBindingDto,
   ProjectInfo,
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
   PtyExitInfo,
+  SaveProjectBindingIpcInput,
   SemaphoreStateInfo,
   SemaphoreUpdate,
   SessionSummaryDto,
@@ -30,6 +32,7 @@ import {
   CONFIG_CHANNELS,
   DEVMODE_CHANNELS,
   PROFILE_CHANNELS,
+  PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
   PTY_CHANNELS,
   SEMAPHORE_CHANNELS,
@@ -229,6 +232,16 @@ const donelApi: DonelApi = {
       ipcRenderer.on(DEVMODE_CHANNELS.phaseArchived, handler);
       return () => ipcRenderer.removeListener(DEVMODE_CHANNELS.phaseArchived, handler);
     },
+  },
+
+  // CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto
+  // (board TaskDex + repo GitHub). Nenhum canal escreve em TaskDex/GitHub —
+  // só nos dois arquivos de config locais que a esteira já lia.
+  projectBinding: {
+    get: (repoPath: string) => ipcRenderer.invoke(PROJECT_BINDING_CHANNELS.get, repoPath) as Promise<ProjectBindingDto>,
+
+    save: (input: SaveProjectBindingIpcInput) =>
+      ipcRenderer.invoke(PROJECT_BINDING_CHANNELS.save, input) as Promise<ProjectBindingDto>,
   },
 };
 

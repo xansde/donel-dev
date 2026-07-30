@@ -7,6 +7,7 @@
 import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
 import type { DonelProfilesApi } from './profiles';
+import type { DonelProjectBindingApi } from './projectBinding';
 import type { DonelProjectsApi } from './projects';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
@@ -79,6 +80,22 @@ export type {
 } from './devMode';
 
 export { DEFAULT_PHASE_DEFAULTS, resolveCommandText } from './devModeDefaults';
+
+// CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto:
+// board (workspaceId/teamId) + repo do GitHub, hoje editados à mão fora do
+// app (spec.md problema 8). Lógica pura + contrato IPC em src/shared/
+// projectBinding.ts; o encanamento de disco (paths reais, atomicidade) vive
+// em src/main/esteira-config.ts.
+export {
+  isValidSaveProjectBindingIpcInput,
+  mergeBoardIds,
+  mergeRepoGithub,
+  PROJECT_BINDING_CHANNELS,
+  readBoardIds,
+  readProjectBinding,
+  readRepoGithub,
+} from './projectBinding';
+export type { DonelProjectBindingApi, ProjectBindingDto, RepoGithubUpdate, SaveProjectBindingIpcInput } from './projectBinding';
 
 // T307 — `DiscoveryTree` é o retorno de `devMode:readTree`; definido em
 // `../main/discovery-tree.ts` (módulo com fs) mas reexportado aqui como TIPO
@@ -280,4 +297,6 @@ export interface DonelApi {
   devMode: DonelDevModeApi;
   /** CA-26/CA-27 (009-modo-dev-v3) — cor + ordem da aba v3, persistidas por sessão claude. */
   tabs: DonelTabsApi;
+  /** CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto (board + repo GitHub). */
+  projectBinding: DonelProjectBindingApi;
 }

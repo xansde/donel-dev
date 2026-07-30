@@ -2116,6 +2116,7 @@ export function App(): React.JSX.Element {
       <PreviousSessions
         open={previousSessionsProject !== null}
         projectName={previousSessionsProject?.name ?? ''}
+        projectPath={previousSessionsProject?.path ?? ''}
         sessions={previousSessions}
         loading={loadingPreviousSessions}
         onClose={handleClosePreviousSessions}
