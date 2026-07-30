@@ -203,8 +203,8 @@ test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar 
   // convenção "Tecnologia Claude {n}" (nome de teste arbitrário), então
   // ProfileSwitcher.tsx renderiza um botão genérico com o nome cru em vez do
   // AccountBadge do design-system.
-  await newRow.getByRole('button', { name: E2E_PROFILE_NAME }).click();
-  await expect(newRow.getByRole('button', { name: E2E_PROFILE_NAME })).toContainText(E2E_PROFILE_NAME);
+  await newRow.getByRole('button', { name: E2E_PROFILE_NAME, exact: true }).click();
+  await expect(newRow.getByRole('button', { name: E2E_PROFILE_NAME, exact: true })).toContainText(E2E_PROFILE_NAME);
 
   // Fecha o dropdown (Escape — Modal.tsx) antes de abrir a sessão nova.
   await window.keyboard.press('Escape');
