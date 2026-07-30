@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deriveSessionEtapa,
   filterSessionsByQuery,
   formatFileSize,
   formatRelativeTime,
@@ -119,5 +120,29 @@ describe('formatFileSize', () => {
 
   it('rolls over to MB', () => {
     expect(formatFileSize(3 * 1024 * 1024)).toBe('3.0 MB');
+  });
+});
+
+// Item 11 (rodada de forma fix/009-board-real-e-modal) — coluna ETAPA da
+// tela "Sessões anteriores" v3.
+describe('deriveSessionEtapa', () => {
+  it('fase numerada (implementar/validar) — "--fase=n" com "=" (D-V4), não espaço; verbo REAL do contrato (não o da mockup, "validacao")', () => {
+    expect(deriveSessionEtapa('/esteira-validar PRJ-143 --fase=2')).toBe('PRJ-143 · Validação fase 2');
+    expect(deriveSessionEtapa('/esteira-implementar PRJ-143 --fase=1')).toBe('PRJ-143 · Implementação fase 1');
+  });
+
+  it('fase sem número (discovery/plano/documentar/cliente/concluir) — sem "fase N" no rótulo', () => {
+    expect(deriveSessionEtapa('/esteira-plano PRJ-143')).toBe('PRJ-143 · Plano');
+    expect(deriveSessionEtapa('/esteira-documentar PRJ-150')).toBe('PRJ-150 · Documentação');
+  });
+
+  it('texto livre (sessão comum, sem comando /esteira-*) vira "terminal comum"', () => {
+    expect(deriveSessionEtapa('git status')).toBe('terminal comum');
+    expect(deriveSessionEtapa('Investigar timeout do webhook de cobrança')).toBe('terminal comum');
+    expect(deriveSessionEtapa('')).toBe('terminal comum');
+  });
+
+  it('espaços em volta do comando não impedem o casamento', () => {
+    expect(deriveSessionEtapa('  /esteira-validar PRJ-1 --fase=3  ')).toBe('PRJ-1 · Validação fase 3');
   });
 });
