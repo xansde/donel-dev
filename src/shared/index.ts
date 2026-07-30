@@ -36,6 +36,8 @@ export type { DonelSessionsApi, SessionSummaryDto, TranscriptChangedPayload } fr
 
 export { PROFILE_CHANNELS, parseAccountNumber } from './profiles';
 export type {
+  DeleteProfileErrorReason,
+  DeleteProfileOutcome,
   DonelProfilesApi,
   JunctionIssueDto,
   ProfileDoctorReportDto,
@@ -105,13 +107,16 @@ export { DEFAULT_PHASE_DEFAULTS, resolveCommandText } from './devModeDefaults';
 export {
   isValidSaveProjectBindingIpcInput,
   mergeBoardIds,
+  mergeRepoEntry,
   mergeRepoGithub,
   PROJECT_BINDING_CHANNELS,
   readBoardIds,
   readProjectBinding,
+  readRepoBoard,
   readRepoGithub,
+  readRepoGithubExtra,
 } from './projectBinding';
-export type { DonelProjectBindingApi, ProjectBindingDto, RepoGithubUpdate, SaveProjectBindingIpcInput } from './projectBinding';
+export type { DonelProjectBindingApi, ProjectBindingDto, RepoEntryUpdate, RepoGithubUpdate, SaveProjectBindingIpcInput } from './projectBinding';
 
 // CA-3/CA-5 (009-modo-dev-v3, lote 4) — canal IPC do GitHub reader
 // (src/main/github-reader.ts): spec-issue, sub-issues nativas, PR da fase +

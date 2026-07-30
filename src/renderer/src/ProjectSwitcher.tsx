@@ -4,6 +4,7 @@ import { History, Star } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { CreateProjectErrorReason, ProjectInfo } from '../../shared';
 import { filterProjectsByName, groupProjectsByRoot, projectRootLabel } from '../../shared/projectCatalog';
+import { ProjectConfigForm } from './ProjectConfigForm';
 import styles from './ProjectSwitcher.module.css';
 
 // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero pelo app"
@@ -35,14 +36,21 @@ import styles from './ProjectSwitcher.module.css';
 // scan como "missing", não como "registrado") — nenhuma das duas cabe no
 // mesmo encanamento validado aqui.
 //
-// "Pasta local" é um preview SÓ-LEITURA (o mockup usa `TextInput` com
-// `onChange`, mas deixá-lo editável reabriria a mesma pergunta de conter
-// path arbitrário fora de um root permitido). O campo "ID do board de
-// tarefas" do mockup foi OMITIDO deste modal: CA-23 (lote 3) já resolveu a
-// mesma ambiguidade (1 campo no mockup × workspaceId/teamId separados no
-// app) dividindo em dois campos — repetir isso aqui, ou resolver diferente,
-// duplicaria uma decisão já fechada. "Repositório GitHub" continua (mapeia
-// 1:1 pro `github` do `projectBinding.save`, sem ambiguidade).
+// FIX (rodada de feedback 30/07, item 2) — "não ter que selecionar a pasta
+// local, mas ele criar em um dos diretórios já configurados": o campo/preview
+// "Pasta local" SAIU do modal. Com 1 root configurado, a criação usa ele
+// direto (sem pergunta nenhuma); com vários, um `Select` simples escolhe
+// ENTRE os já configurados — nunca um path digitado livre (a allowlist de
+// destino continua sendo `appConfig.projectRoots`, decidida no main).
+//
+// FIX (rodada de feedback 30/07, item 1) — "adicionar vários repositórios
+// github e o board do taskdex" também no modal "Novo projeto": o mesmo
+// `ProjectConfigForm` da engrenagem (`PreviousSessions.tsx`, lote 3) entra
+// aqui. O board do mockup era 1 campo só; junto com CA-23 (lote 3) isso já
+// tinha virado `workspaceId`/`teamId` separados — o formulário unificado é
+// quem resolve os dois de uma vez agora. `projectBinding.save` só roda
+// DEPOIS da criação (o projeto ainda não existe antes disso — `repoPath` é o
+// path recém-criado).
 
 export interface ProjectSwitcherProps {
   projects: readonly ProjectInfo[];
@@ -109,7 +117,10 @@ export function ProjectSwitcher({
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [name, setName] = useState('');
   const [source, setSource] = useState('vazio');
-  const [repo, setRepo] = useState('');
+  const [selectedRoot, setSelectedRoot] = useState('');
+  const [repos, setRepos] = useState<string[]>([]);
+  const [workspaceId, setWorkspaceId] = useState('');
+  const [teamId, setTeamId] = useState('');
   const [creating, setCreating] = useState(false);
   const [errorReason, setErrorReason] = useState<CreateProjectErrorReason | null>(null);
   // Item 2 — filtro textual do popover "Projetos" (case/acento-insensível,
@@ -127,8 +138,8 @@ export function ProjectSwitcher({
   );
 
   const activeProject = projects.find((project) => project.path === activeProjectPath);
-  const defaultRoot = projectRoots[0];
-  const previewPath = defaultRoot ? `${defaultRoot}\\${name.trim() || '…'}` : '';
+  const targetRoot = projectRoots.includes(selectedRoot) ? selectedRoot : projectRoots[0];
+  const rootOptions: SelectOption[] = projectRoots.map((root) => ({ value: root, label: root }));
 
   const openProjectsPopover = (): void => setProjectsOpen(true);
   const closeProjectsPopover = (): void => {
@@ -140,18 +151,21 @@ export function ProjectSwitcher({
     setProjectsOpen(false);
     setName('');
     setSource('vazio');
-    setRepo('');
+    setSelectedRoot(projectRoots[0] ?? '');
+    setRepos([]);
+    setWorkspaceId('');
+    setTeamId('');
     setErrorReason(null);
     setNewProjectOpen(true);
   };
   const closeNewProjectModal = (): void => setNewProjectOpen(false);
 
   const handleCreate = (): void => {
-    if (creating || source !== 'vazio' || !name.trim() || !defaultRoot) return;
+    if (creating || source !== 'vazio' || !name.trim() || !targetRoot) return;
     setCreating(true);
     setErrorReason(null);
     window.donel.projects
-      .create({ name, root: defaultRoot })
+      .create({ name, root: targetRoot })
       .then((response) => {
         onProjectsChanged(response.projects);
         if (!response.result.ok) {
@@ -160,11 +174,17 @@ export function ProjectSwitcher({
         }
         const { path, name: createdName } = response.result;
         setNewProjectOpen(false);
-        if (repo.trim()) {
-          void window.donel.projectBinding.save({ repoPath: path, workspaceId: '', teamId: '', github: repo.trim() });
+        if (repos.length > 0 || (workspaceId.trim() && teamId.trim())) {
+          void window.donel.projectBinding.save({
+            repoPath: path,
+            workspaceId,
+            teamId,
+            github: repos[0] ?? '',
+            githubExtra: repos.slice(1),
+          });
         }
         const created = response.projects.find((project) => project.path === path);
-        onOpenProject(created ?? { path, name: createdName, root: defaultRoot, favorite: false });
+        onOpenProject(created ?? { path, name: createdName, root: targetRoot, favorite: false });
       })
       .finally(() => setCreating(false));
   };
@@ -275,7 +295,7 @@ export function ProjectSwitcher({
             <Button
               variant="primary"
               onClick={handleCreate}
-              disabled={creating || source !== 'vazio' || !name.trim() || !defaultRoot}
+              disabled={creating || source !== 'vazio' || !name.trim() || !targetRoot}
             >
               {creating ? 'Criando…' : 'Criar projeto'}
             </Button>
@@ -284,8 +304,8 @@ export function ProjectSwitcher({
       >
         <div className={styles.newProjectBody} data-testid="new-project-form">
           <p className={styles.hint}>
-            O app cria a pasta do projeto e o registro local. Repositório pode ficar em branco agora e ser preenchido depois
-            pela engrenagem.
+            O app cria a pasta do projeto e o registro local, dentro de uma pasta-raiz já configurada. Repositório e board
+            podem ficar em branco agora e ser preenchidos depois pela engrenagem.
           </p>
 
           <TextInput
@@ -304,23 +324,31 @@ export function ProjectSwitcher({
             </p>
           ) : null}
 
-          <TextInput
-            label="Pasta local"
-            value={previewPath}
-            readOnly
-            hint="as worktrees dos planos nascem ao lado dela"
-            hintTone="muted"
-          />
+          {/* Item 2 (rodada de feedback 30/07) — "não ter que selecionar a
+              pasta local, mas ele criar em um dos diretórios já configurados":
+              1 root -> cria direto nele, sem pergunta nenhuma; vários roots ->
+              Select ENTRE eles (nunca um path digitado livre). */}
+          {rootOptions.length > 1 ? (
+            <Select
+              label="Pasta-raiz"
+              value={targetRoot ?? ''}
+              options={rootOptions}
+              onChange={setSelectedRoot}
+              disabled={creating}
+            />
+          ) : null}
 
-          <TextInput
-            label="Repositório GitHub (opcional)"
-            value={repo}
-            onChange={(event) => setRepo(event.target.value)}
-            placeholder="org/repo"
+          <ProjectConfigForm
+            repos={repos}
+            onReposChange={setRepos}
+            workspaceId={workspaceId}
+            onWorkspaceIdChange={setWorkspaceId}
+            teamId={teamId}
+            onTeamIdChange={setTeamId}
             disabled={creating}
           />
 
-          {!defaultRoot ? (
+          {!targetRoot ? (
             <p className={styles.hintDanger}>Nenhuma pasta-raiz configurada — adicione uma em Preferências antes de criar.</p>
           ) : null}
           {errorReason ? (

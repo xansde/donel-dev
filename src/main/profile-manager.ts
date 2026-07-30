@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmdirSync, symlinkSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmdirSync, rmSync, symlinkSync, writeFileSync, copyFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join, normalize } from 'node:path';
 import type { ClaudeLaunchSpec } from './claude-executable';
@@ -578,5 +578,96 @@ export function createSystemProfileRepairIoDeps(): ProfileRepairIoDeps {
     },
     removeJunction: (linkPath) => rmdirSync(linkPath),
     createJunction: (targetPath, linkPath) => symlinkSync(targetPath, linkPath, 'junction'),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Item 3 (rodada de feedback 30/07) — "gostaria que fosse possível excluir um
+// perfil, não apenas os adicionar". REGRAS DURAS (spec do orquestrador):
+// NUNCA excluir o Principal (`PRINCIPAL_PROFILE_SLUG`); NUNCA excluir o
+// perfil ATIVO agora (peça pra trocar antes). ACHADO CRÍTICO (spike +
+// CLAUDE.md gotcha "~/.claude-profiles fica no home local... Junction em
+// Node: fs.symlinkSync(target, path, 'junction') — não pede admin"):
+// `~/.claude-profiles/<slug>/projects` (e as outras 5 de `PROFILE_LINK_DIRS`)
+// são JUNCTIONS pro `~/.claude/<dirName>` GLOBAL — se a exclusão seguisse o
+// link e apagasse recursivamente o que ele aponta, destruiria os transcripts/
+// skills/etc. GLOBAIS do usuário (não só o perfil). A ordem importa: cada
+// junction é desfeita com `rmdir` NÃO-recursivo (remove só o reparse point,
+// nunca desce no alvo — mesmo `removeJunction` de `repairProfileJunctions`
+// acima), e SÓ DEPOIS o resto do diretório do perfil (agora livre de
+// junctions) é removido recursivamente — nesse ponto é seguro, só sobra
+// conteúdo próprio do perfil (settings.json, .claude.json, metadata).
+// ---------------------------------------------------------------------------
+
+export type DeleteProfileErrorReason = 'is-primary' | 'is-active' | 'not-found';
+
+export type DeleteProfileGuardResult = { readonly ok: true } | { readonly ok: false; readonly reason: DeleteProfileErrorReason };
+
+/** Puro — decide SE pode excluir, sem tocar disco. `profile` ausente (slug que não existe mais na lista) é `not-found`, checado antes de qualquer outra regra. */
+export function canDeleteProfile(profile: ProfileInfo | undefined, activeSlug: string): DeleteProfileGuardResult {
+  if (!profile) return { ok: false, reason: 'not-found' };
+  if (profile.isPrimary) return { ok: false, reason: 'is-primary' };
+  if (profile.slug === activeSlug) return { ok: false, reason: 'is-active' };
+  return { ok: true };
+}
+
+export interface ProfileDeletionIoDeps {
+  /** `lstat` — true se HÁ uma entrada no path (mesmo contrato de `ProfileDoctorDeps.linkEntryExists`). */
+  linkEntryExists: (path: string) => boolean;
+  /** `fs.rmdirSync` — remove SÓ o reparse point da junction, nunca desce no alvo (mesmo contrato de `ProfileRepairIoDeps.removeJunction`). */
+  removeJunction: (linkPath: string) => void;
+  /** Remoção recursiva de verdade — só chamada DEPOIS que todas as junctions já foram desfeitas, então nunca atravessa um link. */
+  removeDirRecursive: (path: string) => void;
+}
+
+/**
+ * Desfaz as 6 junctions (`PROFILE_LINK_DIRS`) ANTES de remover o resto do
+ * diretório do perfil — ordem é a garantia de segurança (ver comentário de
+ * topo do bloco). Perfil sem `configDir` (só o Principal) é sempre no-op:
+ * ele não é isolado por junctions, não há o que excluir.
+ */
+export function deleteProfileDirectory(profile: ProfileInfo, io: ProfileDeletionIoDeps): void {
+  if (!profile.configDir) return;
+  const configDir = profile.configDir;
+
+  for (const dirName of PROFILE_LINK_DIRS) {
+    const linkPath = join(configDir, dirName);
+    if (io.linkEntryExists(linkPath)) io.removeJunction(linkPath);
+  }
+
+  io.removeDirRecursive(configDir);
+}
+
+/**
+ * Conveniência ponta-a-ponta usada pelo IPC handler (main/index.ts,
+ * `profiles:delete`): checa a guarda (`canDeleteProfile`) e só toca disco se
+ * ela passar — nenhuma I/O de remoção roda antes da checagem.
+ */
+export function deleteProfile(
+  slug: string,
+  activeSlug: string,
+  profiles: readonly ProfileInfo[],
+  io: ProfileDeletionIoDeps,
+): DeleteProfileGuardResult {
+  const profile = profiles.find((candidate) => candidate.slug === slug);
+  const guard = canDeleteProfile(profile, activeSlug);
+  if (!guard.ok) return guard;
+
+  deleteProfileDirectory(profile as ProfileInfo, io);
+  return { ok: true };
+}
+
+export function createSystemProfileDeletionIoDeps(): ProfileDeletionIoDeps {
+  return {
+    linkEntryExists: (path) => {
+      try {
+        lstatSync(path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    removeJunction: (linkPath) => rmdirSync(linkPath),
+    removeDirRecursive: (path) => rmSync(path, { recursive: true, force: true }),
   };
 }
