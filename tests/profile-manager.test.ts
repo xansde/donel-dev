@@ -1,16 +1,21 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildProfileCreationPlan,
+  canDeleteProfile,
   createProfile,
+  createSystemProfileDeletionIoDeps,
+  deleteProfile,
+  deleteProfileDirectory,
   executeProfileCreationPlan,
   hasMcpServersDrift,
   listProfiles,
   mergeMcpServersIntoProfile,
   normalizeWindowsPath,
   PRINCIPAL_PROFILE,
+  PRINCIPAL_PROFILE_SLUG,
   PROFILE_COPY_FILES,
   PROFILE_LINK_DIRS,
   profileDirPath,
@@ -21,6 +26,7 @@ import {
   titleCaseFromSlug,
   writeActiveProfileConfig,
   type ProfileCreationIoDeps,
+  type ProfileDeletionIoDeps,
   type ProfileDoctorDeps,
   type ProfileInfo,
   type ProfileListDeps,
@@ -542,5 +548,179 @@ describe('repairProfileJunctions (I/O injetada, fake)', () => {
 describe('profileDirPath (puro)', () => {
   it('junta o root de perfis com o slug', () => {
     expect(profileDirPath('conta-b', fakePathDeps)).toBe('C:\\Users\\fake-user\\.claude-profiles\\conta-b');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Item 3 (rodada de feedback 30/07) — "excluir um perfil, não apenas
+// adicionar". REGRAS DURAS: nunca o Principal, nunca o perfil ATIVO. O
+// ACHADO da junction (spike + CLAUDE.md gotcha): `~/.claude-profiles/<slug>/
+// projects` pode ser junction pro `~/.claude/projects` GLOBAL — remover o
+// perfil precisa desfazer a junction com `rmdir` (não recursivo NO ALVO,
+// só no reparse point), nunca seguir o link apagando o conteúdo apontado.
+// ---------------------------------------------------------------------------
+
+describe('canDeleteProfile (puro)', () => {
+  const contaB: ProfileInfo = { name: 'Conta B', slug: 'conta-b', configDir: 'C:\\perfis\\conta-b', isPrimary: false };
+
+  it('perfil comum, não ativo: ok', () => {
+    expect(canDeleteProfile(contaB, 'outro-slug')).toEqual({ ok: true });
+  });
+
+  it('Principal: nunca — mesmo se "ativo" viria de outro slug', () => {
+    expect(canDeleteProfile(PRINCIPAL_PROFILE, 'outro-slug')).toEqual({ ok: false, reason: 'is-primary' });
+  });
+
+  it('perfil ATIVO (mesmo não-Principal): nunca — troque antes de excluir', () => {
+    expect(canDeleteProfile(contaB, 'conta-b')).toEqual({ ok: false, reason: 'is-active' });
+  });
+
+  it('perfil inexistente (undefined): not-found', () => {
+    expect(canDeleteProfile(undefined, 'conta-b')).toEqual({ ok: false, reason: 'not-found' });
+  });
+
+  it('Principal ativo E Principal — is-primary vence (checagem mais forte primeiro)', () => {
+    expect(canDeleteProfile(PRINCIPAL_PROFILE, PRINCIPAL_PROFILE_SLUG)).toEqual({ ok: false, reason: 'is-primary' });
+  });
+});
+
+describe('deleteProfileDirectory (I/O injetada, fake)', () => {
+  const profile: ProfileInfo = { name: 'Conta B', slug: 'conta-b', configDir: 'C:\\perfis\\conta-b', isPrimary: false };
+
+  function fakeDeletionIo(overrides: Partial<ProfileDeletionIoDeps> = {}): {
+    io: ProfileDeletionIoDeps;
+    removedJunctions: string[];
+    removedDirs: string[];
+  } {
+    const removedJunctions: string[] = [];
+    const removedDirs: string[] = [];
+    const io: ProfileDeletionIoDeps = {
+      linkEntryExists: () => true,
+      removeJunction: (linkPath) => removedJunctions.push(linkPath),
+      removeDirRecursive: (path) => removedDirs.push(path),
+      ...overrides,
+    };
+    return { io, removedJunctions, removedDirs };
+  }
+
+  it('remove as 6 junctions ANTES do resto do diretório — nunca através do link', () => {
+    const { io, removedJunctions, removedDirs } = fakeDeletionIo();
+    deleteProfileDirectory(profile, io);
+
+    expect(removedJunctions).toEqual(PROFILE_LINK_DIRS.map((dirName) => join(profile.configDir!, dirName)));
+    expect(removedDirs).toEqual([profile.configDir]);
+  });
+
+  it('junction ausente (já quebrada/removida): pula o removeJunction daquela, segue pras outras', () => {
+    const { io, removedJunctions } = fakeDeletionIo({
+      linkEntryExists: (path) => !path.endsWith('skills'),
+    });
+    deleteProfileDirectory(profile, io);
+    expect(removedJunctions.some((path) => path.endsWith('skills'))).toBe(false);
+    expect(removedJunctions).toHaveLength(PROFILE_LINK_DIRS.length - 1);
+  });
+
+  it('Principal (sem configDir): no-op — nunca chama nenhuma I/O de remoção', () => {
+    const { io, removedJunctions, removedDirs } = fakeDeletionIo();
+    deleteProfileDirectory(PRINCIPAL_PROFILE, io);
+    expect(removedJunctions).toEqual([]);
+    expect(removedDirs).toEqual([]);
+  });
+});
+
+describe('deleteProfile (orquestração — guarda + deleção, I/O injetada fake)', () => {
+  const contaB: ProfileInfo = { name: 'Conta B', slug: 'conta-b', configDir: 'C:\\perfis\\conta-b', isPrimary: false };
+  const profiles = [PRINCIPAL_PROFILE, contaB];
+
+  function fakeDeletionIo(): { io: ProfileDeletionIoDeps; removedDirs: string[] } {
+    const removedDirs: string[] = [];
+    const io: ProfileDeletionIoDeps = {
+      linkEntryExists: () => true,
+      removeJunction: () => undefined,
+      removeDirRecursive: (path) => removedDirs.push(path),
+    };
+    return { io, removedDirs };
+  }
+
+  it('perfil comum, não ativo: exclui de fato', () => {
+    const { io, removedDirs } = fakeDeletionIo();
+    const result = deleteProfile('conta-b', 'principal', profiles, io);
+    expect(result).toEqual({ ok: true });
+    expect(removedDirs).toEqual(['C:\\perfis\\conta-b']);
+  });
+
+  it('bloqueia o Principal SEM tocar disco', () => {
+    const { io, removedDirs } = fakeDeletionIo();
+    const result = deleteProfile('principal', 'conta-b', profiles, io);
+    expect(result).toEqual({ ok: false, reason: 'is-primary' });
+    expect(removedDirs).toEqual([]);
+  });
+
+  it('bloqueia o perfil ATIVO SEM tocar disco', () => {
+    const { io, removedDirs } = fakeDeletionIo();
+    const result = deleteProfile('conta-b', 'conta-b', profiles, io);
+    expect(result).toEqual({ ok: false, reason: 'is-active' });
+    expect(removedDirs).toEqual([]);
+  });
+
+  it('slug inexistente: not-found, sem tocar disco', () => {
+    const { io, removedDirs } = fakeDeletionIo();
+    const result = deleteProfile('fantasma', 'principal', profiles, io);
+    expect(result).toEqual({ ok: false, reason: 'not-found' });
+    expect(removedDirs).toEqual([]);
+  });
+});
+
+describe('createSystemProfileDeletionIoDeps — integração com JUNCTION REAL em pasta temporária (prova crítica: exclusão não segue o link)', () => {
+  let tmpRoot: string;
+  let globalTarget: string; // simula ~/.claude/projects GLOBAL — NUNCA pode ser tocado
+  let profileConfigDir: string; // simula ~/.claude-profiles/<slug>
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'donel-dev-profile-delete-'));
+    globalTarget = join(tmpRoot, 'claude-home', 'projects');
+    profileConfigDir = join(tmpRoot, 'claude-profiles', 'conta-b');
+    mkdirSync(globalTarget, { recursive: true });
+    mkdirSync(profileConfigDir, { recursive: true });
+
+    // Conteúdo GLOBAL real — se a exclusão seguisse a junction e apagasse o
+    // ALVO em vez do link, este arquivo desapareceria (é exatamente o que o
+    // achado do spike/CLAUDE.md gotcha manda nunca acontecer).
+    writeFileSync(join(globalTarget, 'sessao-real-do-usuario.jsonl'), '{"transcript":"nao pode sumir"}', 'utf8');
+
+    // A junction de verdade — mesmo `fs.symlinkSync(target, path, 'junction')`
+    // do gotcha documentado (não pede admin no Windows).
+    symlinkSync(globalTarget, join(profileConfigDir, 'projects'), 'junction');
+
+    // Um arquivo comum do perfil (não-junction) — prova que o resto do
+    // diretório É removido normalmente.
+    writeFileSync(join(profileConfigDir, 'settings.json'), '{}', 'utf8');
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('remove o perfil (junction + resto do diretório) SEM apagar o conteúdo do ALVO da junction', () => {
+    const profile: ProfileInfo = { name: 'Conta B', slug: 'conta-b', configDir: profileConfigDir, isPrimary: false };
+    const io = createSystemProfileDeletionIoDeps();
+
+    deleteProfileDirectory(profile, io);
+
+    // O diretório do PERFIL sumiu inteiro (junction + settings.json).
+    expect(existsSync(profileConfigDir)).toBe(false);
+
+    // O ALVO da junction (o "global" simulado) e o arquivo dentro dele
+    // continuam INTACTOS — a prova de que a remoção nunca seguiu o link.
+    expect(existsSync(globalTarget)).toBe(true);
+    expect(existsSync(join(globalTarget, 'sessao-real-do-usuario.jsonl'))).toBe(true);
+    expect(readdirSync(globalTarget)).toEqual(['sessao-real-do-usuario.jsonl']);
+  });
+
+  it('sanity check da junction ANTES da exclusão — prova que o setup do teste é uma junction de verdade', () => {
+    const linkPath = join(profileConfigDir, 'projects');
+    const stat = lstatSync(linkPath);
+    expect(stat.isSymbolicLink() || stat.isDirectory()).toBe(true); // reparse point Windows: lstat não marca isSymbolicLink() sempre, mas é distinto do alvo
+    expect(existsSync(join(linkPath, 'sessao-real-do-usuario.jsonl'))).toBe(true); // através do link, o conteúdo é visível (prova que é a MESMA pasta)
   });
 });

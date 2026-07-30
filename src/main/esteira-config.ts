@@ -1,6 +1,13 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { mergeBoardIds, mergeRepoGithub, readBoardIds, readProjectBinding, readRepoGithub, type ProjectBindingDto } from '../shared/projectBinding';
+import {
+  mergeRepoEntry,
+  readProjectBinding,
+  readRepoBoard,
+  readRepoGithub,
+  readRepoGithubExtra,
+  type ProjectBindingDto,
+} from '../shared/projectBinding';
 
 // CA-23 (009-modo-dev-v3, lote 3) — encanamento de disco da engrenagem de
 // configuração por projeto: os dois JSONs externos que hoje só as SKILLS da
@@ -104,15 +111,22 @@ export interface SaveProjectBindingInput {
   readonly workspaceId: string;
   readonly teamId: string;
   readonly github: string;
+  /** Repos ADITIVOS além do principal (`github`) — grava em `repos.<repoSlug>.github_extra`, contrato §I ignora esse campo. */
+  readonly githubExtra: readonly string[];
 }
 
 /**
- * Grava board + repo nos dois arquivos externos — cada um só é REESCRITO se
- * o valor relevante de fato mudou (a melhor preservação "byte a byte"
- * possível é não tocar o arquivo quando não há nada nele pra mudar: mesmo
- * mtime, mesmos bytes, nenhuma conversão de forma legada→objeto por acidente
- * num campo que o operador nem tocou). Devolve o estado persistido, derivado
- * do merge em memória — sem reler disco.
+ * Grava repo (principal + aditivos) e board NUM SÓ ARQUIVO — `repos.json`
+ * (`repos.<repoSlug>.{github,github_extra,board}`), decisão do orquestrador
+ * (frente 2, rodada de feedback 30/07, item 1): "board é POR PROJETO agora".
+ * `donel-board-credential.json` deixa de ser escrito por este caminho — ele
+ * continua existindo como fallback GLOBAL só-leitura (`readProjectBinding`
+ * cai pra lá quando o projeto não tem board próprio) e como único lugar do
+ * `token`/`baseUrl` (regra dura, nunca tocada aqui). `repos.json` só é
+ * REESCRITO se algo relevante de fato mudou (mesma preservação byte a byte
+ * de antes). Devolve o estado persistido, derivado do merge em memória — sem
+ * reler o `repos.json` do disco (o `donel-board-credential.json` É relido,
+ * pro fallback global entrar no DTO devolvido).
  */
 export function saveProjectBindingToDisk(
   dir: string,
@@ -124,26 +138,25 @@ export function saveProjectBindingToDisk(
   const workspaceId = next.workspaceId.trim();
   const teamId = next.teamId.trim();
   const github = next.github.trim();
-
-  const boardPath = boardCredentialPath(dir);
-  const boardText = io.readFileText(boardPath);
-  const currentIds = readBoardIds(boardText);
-  let finalBoardText = boardText;
-  if (currentIds.workspaceId !== (workspaceId || null) || currentIds.teamId !== (teamId || null)) {
-    const merged = mergeBoardIds(boardText, { workspaceId, teamId });
-    writeJsonAtomic(boardPath, merged, io);
-    finalBoardText = JSON.stringify(merged);
-  }
+  const githubExtra = next.githubExtra.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
 
   const reposPath = reposConfigPath(dir);
   const reposText = io.readFileText(reposPath);
   const currentGithub = readRepoGithub(reposText, repoSlug);
+  const currentGithubExtra = readRepoGithubExtra(reposText, repoSlug);
+  const currentBoard = readRepoBoard(reposText, repoSlug);
+
+  const githubChanged = currentGithub !== (github || null);
+  const githubExtraChanged = JSON.stringify(currentGithubExtra) !== JSON.stringify(githubExtra);
+  const boardChanged = currentBoard.workspaceId !== (workspaceId || null) || currentBoard.teamId !== (teamId || null);
+
   let finalReposText = reposText;
-  if (currentGithub !== (github || null)) {
-    const merged = mergeRepoGithub(reposText, { repoSlug, repoPath, github });
+  if (githubChanged || githubExtraChanged || boardChanged) {
+    const merged = mergeRepoEntry(reposText, { repoSlug, repoPath, github, githubExtra, workspaceId, teamId });
     writeJsonAtomic(reposPath, merged, io);
     finalReposText = JSON.stringify(merged);
   }
 
-  return readProjectBinding(finalBoardText, finalReposText, repoSlug);
+  const boardText = io.readFileText(boardCredentialPath(dir));
+  return readProjectBinding(boardText, finalReposText, repoSlug);
 }

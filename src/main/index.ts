@@ -10,6 +10,7 @@ import type {
   CopyTranscriptForResumeIpcInput,
   CopyTranscriptForResumeResult,
   CreateProjectResponse,
+  DeleteProfileOutcome,
   DiscoveryTree,
   GhAvailabilityDto,
   GithubReadRequest,
@@ -57,6 +58,7 @@ import {
   PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
   PTY_CHANNELS,
+  readRepoBoard,
   SEMAPHORE_CHANNELS,
   SESSION_CHANNELS,
   TAB_CHANNELS,
@@ -85,6 +87,7 @@ import {
   createSystemEsteiraConfigIoDeps,
   esteiraConfigDir,
   readProjectBindingFromDisk,
+  reposConfigPath,
   saveProjectBindingToDisk,
 } from './esteira-config';
 import { createSystemEsteiraReaderIoDeps } from './esteira-reader';
@@ -112,9 +115,11 @@ import {
   claudeHomeDir,
   createProfile,
   createSystemProfileCreationIoDeps,
+  createSystemProfileDeletionIoDeps,
   createSystemProfileDoctorDeps,
   createSystemProfileListDeps,
   createSystemProfileRepairIoDeps,
+  deleteProfile,
   listProfiles,
   PRINCIPAL_PROFILE,
   PRINCIPAL_PROFILE_SLUG,
@@ -183,7 +188,26 @@ const boardCallTool = boardCredential ? createJsonRpcCallTool(boardCredential, c
 
 /** O board da credencial do usuário é o default; o `config.json` do app, quando tem um, vence. */
 const credentialBoardConfig = boardConfigFromCredential(boardCredential);
-const effectiveBoardConfig = (): DevModeBoardConfig | null => appConfig.devMode.boardConfig ?? credentialBoardConfig;
+
+/**
+ * Frente 2 (rodada de feedback 30/07, item 1) — "board é POR PROJETO agora":
+ * quando `repoPath` vem preenchido (projeto selecionado), o board de
+ * `repos.<repoSlug>.board` (repos.json, aditivo, `mergeRepoEntry`/
+ * `readRepoBoard`) VENCE sobre o resto — `appConfig.devMode.boardConfig`
+ * (override do `config.json`) e a credencial global entram só como fallback,
+ * mesma ordem de antes. Sem `repoPath` (nenhum projeto selecionado ainda),
+ * comportamento idêntico ao anterior.
+ */
+const effectiveBoardConfig = (repoPath?: string): DevModeBoardConfig | null => {
+  if (repoPath && repoPath.trim()) {
+    const reposText = esteiraReaderIoDeps.readFileText(reposConfigPath(ESTEIRA_CONFIG_DIR));
+    const projectBoard = readRepoBoard(reposText, resolveRepoSlug(repoPath));
+    if (projectBoard.workspaceId && projectBoard.teamId) {
+      return { workspaceId: projectBoard.workspaceId, teamId: projectBoard.teamId };
+    }
+  }
+  return appConfig.devMode.boardConfig ?? credentialBoardConfig;
+};
 
 // T311 (Batch B) — de onde vêm os cards da porta de entrada (CA-1). Ordem:
 // fixture do roteiro de teste (`DONEL_DEVMODE_BOARD_FIXTURE`) → board real via
@@ -700,9 +724,15 @@ function registerDevModeIpcHandlers(): void {
     return buildDiscoveryTree(root, cardId, appConfig.devMode.archivedPhaseSessions, esteiraReaderIoDeps);
   });
 
-  /** T311/CA-1 — cards das 3 colunas de entrada do board configurado. Sem board/sem fonte = `[]` (porta desligada, nunca erro). */
-  ipcMain.handle(DEVMODE_CHANNELS.listEntryCards, async (): Promise<readonly EntryColumnCard[]> => {
-    return listEntryColumnCards(effectiveBoardConfig(), boardReader);
+  /**
+   * T311/CA-1 — cards das 3 colunas de entrada do board configurado. Sem
+   * board/sem fonte = `[]` (porta desligada, nunca erro). `repoPath` (item 1,
+   * frente 2 da rodada de feedback 30/07) — projeto selecionado agora no
+   * renderer; `effectiveBoardConfig` prefere o board DESSE projeto
+   * (`repos.<repoSlug>.board`) e só cai pro board global sem ele.
+   */
+  ipcMain.handle(DEVMODE_CHANNELS.listEntryCards, async (_event, repoPath?: unknown): Promise<readonly EntryColumnCard[]> => {
+    return listEntryColumnCards(effectiveBoardConfig(typeof repoPath === 'string' ? repoPath : undefined), boardReader);
   });
 
   /**
@@ -933,7 +963,7 @@ function registerTabIpcHandlers(): void {
  * lida).
  */
 function registerProjectBindingIpcHandlers(): void {
-  const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '' };
+  const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '', githubExtra: [] };
 
   ipcMain.handle(PROJECT_BINDING_CHANNELS.get, (_event, repoPath: unknown): ProjectBindingDto => {
     if (typeof repoPath !== 'string' || !repoPath.trim()) return EMPTY_BINDING;
@@ -947,7 +977,7 @@ function registerProjectBindingIpcHandlers(): void {
       ESTEIRA_CONFIG_DIR,
       resolveRepoSlug(typed.repoPath),
       typed.repoPath,
-      { workspaceId: typed.workspaceId, teamId: typed.teamId, github: typed.github },
+      { workspaceId: typed.workspaceId, teamId: typed.teamId, github: typed.github, githubExtra: typed.githubExtra },
       esteiraConfigIoDeps,
     );
   });
@@ -1071,6 +1101,24 @@ function registerProfileIpcHandlers(): void {
       persistAppConfig();
     }
     return profiles.map(toProfileSummaryDto);
+  });
+
+  /**
+   * Item 3 (rodada de feedback 30/07) — "excluir um perfil, não só
+   * adicionar". `deleteProfile` (profile-manager.ts) checa as duas regras
+   * duras (nunca Principal, nunca o perfil ATIVO agora) ANTES de tocar disco
+   * — a lista devolvida é sempre re-escaneada, mesmo em recusa, pro
+   * chamador nunca precisar de round-trip extra (mesmo idioma de `create`/
+   * `activate`).
+   */
+  ipcMain.handle(PROFILE_CHANNELS.delete, (_event, slug: string): DeleteProfileOutcome => {
+    const profiles = currentProfileList();
+    const io = createSystemProfileDeletionIoDeps();
+    const result = deleteProfile(slug, activeProfileSlug, profiles, io);
+    const refreshed = result.ok ? currentProfileList() : profiles;
+    return result.ok
+      ? { ok: true, profiles: refreshed.map(toProfileSummaryDto) }
+      : { ok: false, reason: result.reason, profiles: refreshed.map(toProfileSummaryDto) };
   });
 
   ipcMain.handle(PROFILE_CHANNELS.doctor, (_event, slug: string): ProfileDoctorReportDto => {

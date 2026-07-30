@@ -7,6 +7,7 @@ import type {
   CopyTranscriptForResumeResult,
   CreateProjectIpcInput,
   CreateProjectResponse,
+  DeleteProfileOutcome,
   DiscoveryTree,
   DonelApi,
   EntryColumnCard,
@@ -166,6 +167,9 @@ const donelApi: DonelApi = {
     // T205 — repassa `{ force }` cru pro main; o main é quem valida/normaliza
     // o payload (é IPC, não confia cegamente no que o renderer manda).
     headroom: (options?: { force?: boolean }) => ipcRenderer.invoke(PROFILE_CHANNELS.headroom, options) as Promise<ProfileHeadroomMap>,
+
+    // Item 3 (rodada de feedback 30/07) — exclusão de perfil.
+    delete: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.delete, slug) as Promise<DeleteProfileOutcome>,
   },
 
   config: {
@@ -225,7 +229,7 @@ const donelApi: DonelApi = {
     readTree: (cardId: string) => ipcRenderer.invoke(DEVMODE_CHANNELS.readTree, cardId) as Promise<DiscoveryTree>,
 
     // T311 (Batch B) — CA-1: consulta restrita da porta de entrada.
-    listEntryCards: () => ipcRenderer.invoke(DEVMODE_CHANNELS.listEntryCards) as Promise<readonly EntryColumnCard[]>,
+    listEntryCards: (repoPath?: string) => ipcRenderer.invoke(DEVMODE_CHANNELS.listEntryCards, repoPath) as Promise<readonly EntryColumnCard[]>,
 
     // T327 (Batch D) — CA-12: os 4 fatos do board para os cards do discovery
     // em foco. Leitura pura — não existe canal simétrico de escrita.

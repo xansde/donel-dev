@@ -107,6 +107,50 @@
   box-shadow: var(--focus-ring);
 }
 
+/* Item 3 (rodada de feedback 30/07) — botão de exclusão por linha, mesmo
+   padrão visual/tamanho do `.expandButton` (ghost, destaca só no hover/foco);
+   `disabled` (Principal ou perfil ATIVO) fica opaco, sem hover de erro. */
+.deleteButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.deleteButton:hover:not(:disabled) {
+  color: var(--state-error, #f0684c);
+  background: var(--bg-raised);
+}
+
+.deleteButton:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.deleteButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.confirmDeleteText {
+  margin: 0 0 var(--space-2);
+  color: var(--text-primary);
+}
+
+.confirmDeleteHint {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
 .chevronExpanded {
   transform: rotate(180deg);
 }

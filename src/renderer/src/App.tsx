@@ -1215,12 +1215,15 @@ export function App(): React.JSX.Element {
   /** CA-1 — lista de candidatos do board. Sem fonte configurada volta `[]` (porta desligada, não erro). */
   const refreshEntryCards = useCallback((): void => {
     setEntryLoading(true);
+    // Item 1 (frente 2, rodada de feedback 30/07) — board é POR PROJETO agora
+    // (repos.json → repos.<repoSlug>.board); passa o projeto selecionado pro
+    // main preferir esse board e só cair pro global sem ele.
     void window.donel.devMode
-      .listEntryCards()
+      .listEntryCards(selectedProjectPath)
       .then(setEntryCards)
       .catch(() => setEntryCards([]))
       .finally(() => setEntryLoading(false));
-  }, []);
+  }, [selectedProjectPath]);
 
   /** Relê do DISCO a árvore de todo discovery aberto (CA-7). Barato: `readTree` é só `existsSync`/`readFile` de manifesto. */
   const refreshDiscoveryTrees = useCallback((discoveryIds: readonly string[]): void => {

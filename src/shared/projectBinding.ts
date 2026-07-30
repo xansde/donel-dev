@@ -19,11 +19,29 @@ export const PROJECT_BINDING_CHANNELS = {
   save: 'projectBinding:save',
 } as const;
 
-/** Estado hoje conhecido pelo app para ESTE projeto. String vazia = campo ausente/não configurado — nunca `null`/`undefined` chegando à UI (C4, degradação por omissão). */
+/**
+ * Frente 2 (rodada de feedback 30/07, item 1) — "vários repositórios GitHub" +
+ * "board por projeto". O contrato do `repos.json` (`handoff-v3.md` §I) exige
+ * `github` SINGULAR por entrada — não é renegociável (as skills da esteira
+ * leem esse campo). Decisão do orquestrador: o PRIMEIRO repo da lista grava
+ * em `github` (o campo que o contrato conhece); os demais vão num campo
+ * ADITIVO `github_extra: string[]` que as skills ignoram e o merge deste
+ * módulo preserva sempre. O board (`workspaceId`/`teamId`) também vira
+ * ADITIVO em `repos.<repoSlug>.board` — POR PROJETO agora, em vez de só o
+ * default global de `donel-board-credential.json`. A leitura (`readProjectBinding`)
+ * PREFERE o board do projeto e cai pro global (`readBoardIds`, arquivo de
+ * credencial) quando o projeto não tem o seu próprio — nunca os dois juntos,
+ * nunca um campo pela metade (mesma regra "tudo ou nada" de `mergeBoardIds`).
+ * O TOKEN da credencial nunca é lido/escrito por este módulo em lugar
+ * nenhum — regra dura inalterada.
+ */
+
+/** Estado hoje conhecido pelo app para ESTE projeto. String vazia = campo ausente/não configurado — nunca `null`/`undefined` chegando à UI (C4, degradação por omissão). `githubExtra` é sempre um array (nunca ausente) — vazio é o caso comum (só um repo, ou nenhum). */
 export interface ProjectBindingDto {
   readonly workspaceId: string;
   readonly teamId: string;
   readonly github: string;
+  readonly githubExtra: readonly string[];
 }
 
 export interface SaveProjectBindingIpcInput {
@@ -31,6 +49,7 @@ export interface SaveProjectBindingIpcInput {
   readonly workspaceId: string;
   readonly teamId: string;
   readonly github: string;
+  readonly githubExtra: readonly string[];
 }
 
 /** Guarda defensiva de payload IPC — mesmo espírito de `isValidOpenDiscoveryIpcInput` (devMode.ts): o main nunca confia cegamente no que o renderer manda. */
@@ -42,7 +61,9 @@ export function isValidSaveProjectBindingIpcInput(input: unknown): input is Save
     candidate.repoPath.trim().length > 0 &&
     typeof candidate.workspaceId === 'string' &&
     typeof candidate.teamId === 'string' &&
-    typeof candidate.github === 'string'
+    typeof candidate.github === 'string' &&
+    Array.isArray(candidate.githubExtra) &&
+    candidate.githubExtra.every((entry) => typeof entry === 'string')
   );
 }
 
@@ -155,9 +176,97 @@ export function mergeRepoGithub(text: string | null, update: RepoGithubUpdate): 
   return { ...raw, repos: { ...repos, [update.repoSlug]: existingObject } };
 }
 
-/** Estado combinado hoje conhecido para `repoSlug`, a partir do texto cru dos dois arquivos — o que a engrenagem lê ao abrir. */
+/** `repos.<repoSlug>.github_extra` — repositórios ADITIVOS além do principal (`github`). `[]` por ausente/tipo errado/entradas não-string (nunca lança, C4). */
+export function readRepoGithubExtra(text: string | null, repoSlug: string): string[] {
+  const raw = parseJsonObject(text);
+  const repos = isPlainObject(raw.repos) ? raw.repos : {};
+  const entry = repos[repoSlug];
+  if (!isPlainObject(entry) || !Array.isArray(entry.github_extra)) return [];
+  return entry.github_extra.filter((item): item is string => typeof item === 'string' && item.length > 0);
+}
+
+/** `repos.<repoSlug>.board.{workspaceId,teamId}` — board POR PROJETO (aditivo). `null` por campo ausente/tipo errado, nunca fabricado — mesma disciplina de `readBoardIds`. */
+export function readRepoBoard(text: string | null, repoSlug: string): { readonly workspaceId: string | null; readonly teamId: string | null } {
+  const raw = parseJsonObject(text);
+  const repos = isPlainObject(raw.repos) ? raw.repos : {};
+  const entry = repos[repoSlug];
+  const board = isPlainObject(entry) && isPlainObject(entry.board) ? entry.board : {};
+  return {
+    workspaceId: typeof board.workspaceId === 'string' && board.workspaceId ? board.workspaceId : null,
+    teamId: typeof board.teamId === 'string' && board.teamId ? board.teamId : null,
+  };
+}
+
+export interface RepoEntryUpdate {
+  readonly repoSlug: string;
+  /** Path local do projeto — só usado se `repoSlug` ainda NÃO existir em `repos` (entrada nova precisa de `path`, único campo obrigatório do contrato §I). */
+  readonly repoPath: string;
+  /** Já deve chegar TRIMADO. Vazio remove o campo `github` (nunca grava string vazia). */
+  readonly github: string;
+  /** Já devem chegar TRIMADOS e sem entradas vazias. `[]` remove o campo `github_extra` (nunca grava array vazio — ausente é o estado C4). */
+  readonly githubExtra: readonly string[];
+  /** Já devem chegar TRIMADOS. Só grava `board` quando os DOIS vierem preenchidos — mesma regra "tudo ou nada" de `mergeBoardIds` (nunca um board pela metade). */
+  readonly workspaceId: string;
+  readonly teamId: string;
+}
+
+/**
+ * Funde `github`/`github_extra`/`board` na entrada `repos.<repoSlug>` NUM SÓ
+ * PASSO (evita reler o objeto intermediário três vezes) — preserva qualquer
+ * outro campo (`integration_branch`, `help_channel`, `promotion`, futuro) e o
+ * `path` já existente, mesma normalização de forma legada→objeto de
+ * `mergeRepoGithub`.
+ */
+export function mergeRepoEntry(text: string | null, update: RepoEntryUpdate): Record<string, unknown> {
+  const raw = parseJsonObject(text);
+  const repos = isPlainObject(raw.repos) ? { ...raw.repos } : {};
+  const existing = repos[update.repoSlug];
+
+  const existingObject: Record<string, unknown> = isPlainObject(existing)
+    ? { ...existing }
+    : typeof existing === 'string' && existing
+      ? { path: existing }
+      : { path: update.repoPath };
+
+  if (update.github) {
+    existingObject.github = update.github;
+  } else {
+    delete existingObject.github;
+  }
+
+  if (update.githubExtra.length > 0) {
+    existingObject.github_extra = [...update.githubExtra];
+  } else {
+    delete existingObject.github_extra;
+  }
+
+  if (update.workspaceId && update.teamId) {
+    existingObject.board = { workspaceId: update.workspaceId, teamId: update.teamId };
+  } else {
+    delete existingObject.board;
+  }
+
+  return { ...raw, repos: { ...repos, [update.repoSlug]: existingObject } };
+}
+
+/**
+ * Estado combinado hoje conhecido para `repoSlug`, a partir do texto cru dos
+ * dois arquivos — o que a engrenagem lê ao abrir. O board PREFERE o do
+ * PROJETO (`repos.<repoSlug>.board`, tudo-ou-nada); só cai pro global
+ * (`donel-board-credential.json`) quando o projeto não tem os dois campos.
+ */
 export function readProjectBinding(boardText: string | null, reposText: string | null, repoSlug: string): ProjectBindingDto {
-  const ids = readBoardIds(boardText);
+  const globalIds = readBoardIds(boardText);
+  const projectBoard = readRepoBoard(reposText, repoSlug);
+  const projectHasBoard = Boolean(projectBoard.workspaceId && projectBoard.teamId);
+
   const github = readRepoGithub(reposText, repoSlug);
-  return { workspaceId: ids.workspaceId ?? '', teamId: ids.teamId ?? '', github: github ?? '' };
+  const githubExtra = readRepoGithubExtra(reposText, repoSlug);
+
+  return {
+    workspaceId: (projectHasBoard ? projectBoard.workspaceId : globalIds.workspaceId) ?? '',
+    teamId: (projectHasBoard ? projectBoard.teamId : globalIds.teamId) ?? '',
+    github: github ?? '',
+    githubExtra,
+  };
 }

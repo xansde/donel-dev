@@ -1,0 +1,101 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--text-caption-size);
+  font-weight: var(--weight-semibold);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.repoList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+}
+
+.hint {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+  margin: 0;
+}
+
+.repoRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-half);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+}
+
+.repoBadge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+.repoPath {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.removeRepoButton {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.removeRepoButton:hover {
+  color: var(--state-error, #f0684c);
+}
+
+.removeRepoButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.addRepoRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+.addRepoInput {
+  flex: 1;
+}
+
+.boardFields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}

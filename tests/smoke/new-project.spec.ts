@@ -103,9 +103,14 @@ test('CA-30 — seletor de projetos no titlebar cria um projeto novo dentro do r
 
   await newProjectDialog.getByLabel('Nome do projeto').fill(PROJECT_NAME);
 
-  // 4. "Pasta local" é o preview (só-leitura) do destino real — dentro do root isolado.
+  // 4. Item 2 (rodada de feedback 30/07) — "não ter que selecionar a pasta
+  //    local, mas ele criar em um dos diretórios já configurados": o campo
+  //    "Pasta local" SAIU do modal; com só 1 root isolado configurado
+  //    (`isolateProjectRoots`, acima), a criação usa ele direto, sem Select
+  //    nem pergunta nenhuma — "Criar projeto" já habilita só com o nome.
   const expectedPath = join(isolatedRoot, PROJECT_NAME);
-  await expect(newProjectDialog.getByLabel('Pasta local')).toHaveValue(`${isolatedRoot}\\${PROJECT_NAME}`);
+  await expect(newProjectDialog.getByLabel('Pasta local')).toHaveCount(0);
+  await expect(newProjectDialog.getByLabel('Pasta-raiz')).toHaveCount(0);
 
   await expect(createButton).toBeEnabled();
   await createButton.click();

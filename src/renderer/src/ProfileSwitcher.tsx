@@ -1,7 +1,7 @@
 import { AccountBadge, Button, getHeadroomTier, Modal, TextInput } from '@donel-dev/design-system';
-import { AlertTriangle, Check, ChevronDown } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ProfileDoctorReportDto, ProfileHeadroomMap, ProfileQuota, ProfileSummaryDto } from '../../shared';
+import type { DeleteProfileErrorReason, ProfileDoctorReportDto, ProfileHeadroomMap, ProfileQuota, ProfileSummaryDto } from '../../shared';
 import { parseAccountNumber } from '../../shared';
 import styles from './ProfileSwitcher.module.css';
 
@@ -204,6 +204,10 @@ export function ProfileSwitcher({
   const [expandedSlug, setExpandedSlug] = useState<string | null>(null);
   /** T205/CA-3 — releitura forçada (botão "Atualizar"), distinta de `headroomLoading` (1ª leitura da abertura) só pro texto do botão; ambas cobrem o mesmo `slotLoading` das linhas. */
   const [refreshing, setRefreshing] = useState(false);
+  /** Item 3 (rodada de feedback 30/07) — perfil com a exclusão em confirmação (Modal separado, aninhado sobre "Perfis de conta"); `null` = nenhuma confirmação aberta. */
+  const [confirmingDelete, setConfirmingDelete] = useState<ProfileSummaryDto | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<DeleteProfileErrorReason | null>(null);
 
   // FIX (auditoria rodada 5, achado baixa "callback de prop nas deps de
   // efeito") — App.tsx sempre passa os dois direto de `setState` (identidade
@@ -332,6 +336,42 @@ export function ProfileSwitcher({
           .finally(() => setHeadroomLoading(false));
       })
       .finally(() => setCreating(false));
+  };
+
+  /**
+   * Item 3 (rodada de feedback 30/07) — "gostaria que fosse possível excluir
+   * um perfil, não apenas os adicionar". REGRAS DURAS (repetidas na UI, não só
+   * no main — desabilitar o botão evita até abrir a confirmação pra um alvo
+   * inválido): nunca o Principal (`profile.isPrimary`), nunca o perfil ATIVO
+   * agora (`profile.active` — peça pra trocar antes). A confirmação nomeia o
+   * perfil explicitamente no texto (nunca um "tem certeza?" genérico).
+   */
+  const canDeleteProfileInUi = (profile: ProfileSummaryDto): boolean => !profile.isPrimary && !profile.active;
+
+  const openDeleteConfirmation = (profile: ProfileSummaryDto): void => {
+    if (!canDeleteProfileInUi(profile)) return;
+    setDeleteError(null);
+    setConfirmingDelete(profile);
+  };
+  const closeDeleteConfirmation = useCallback((): void => {
+    setConfirmingDelete(null);
+    setDeleteError(null);
+  }, []);
+
+  const handleConfirmDelete = (): void => {
+    if (!confirmingDelete || deleting) return;
+    setDeleting(true);
+    void window.donel.profiles
+      .delete(confirmingDelete.slug)
+      .then((outcome) => {
+        setProfiles(outcome.profiles);
+        if (!outcome.ok) {
+          setDeleteError(outcome.reason);
+          return;
+        }
+        setConfirmingDelete(null);
+      })
+      .finally(() => setDeleting(false));
   };
 
   // FIX (feedback E2E rodada 4, item 5) — CAUSA RAIZ REAL: não era refresh
@@ -464,6 +504,28 @@ export function ProfileSwitcher({
                       </button>
                     )}
                     {expandButton}
+                    {/* Item 3 — nunca o Principal, nunca o perfil ATIVO agora (mesma regra dura do main, repetida aqui pra desabilitar antes de abrir a confirmação). */}
+                    <button
+                      type="button"
+                      className={styles.deleteButton}
+                      data-testid="profile-delete-button"
+                      aria-label={`Excluir perfil ${profile.name}`}
+                      title={
+                        profile.isPrimary
+                          ? 'O perfil Principal nunca pode ser excluído'
+                          : profile.active
+                            ? 'Troque de perfil antes de excluir este'
+                            : `Excluir perfil ${profile.name}`
+                      }
+                      disabled={!canDeleteProfileInUi(profile)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        event.preventDefault();
+                        openDeleteConfirmation(profile);
+                      }}
+                    >
+                      <Trash2 size={13} strokeWidth={1.5} aria-hidden="true" />
+                    </button>
                   </div>
 
                   <ProfileQuotaDetail quota={quota} loading={slotLoading} expanded={expanded} />
@@ -511,6 +573,45 @@ export function ProfileSwitcher({
             Trocar de perfil afeta só sessões novas — abas já abertas continuam com a conta que tinham. O login sempre acontece
             dentro do terminal (<code>/login</code>); o app nunca lê nem grava credenciais.
           </p>
+        </div>
+      </Modal>
+
+      {/* Item 3 (rodada de feedback 30/07) — confirmação explícita, com o
+          NOME do perfil no texto (nunca um "tem certeza?" genérico), aninhada
+          sobre "Perfis de conta". */}
+      <Modal
+        open={confirmingDelete !== null}
+        onClose={closeDeleteConfirmation}
+        title="Excluir perfil"
+        actions={
+          <>
+            <Button variant="secondary" onClick={closeDeleteConfirmation} disabled={deleting}>
+              Cancelar
+            </Button>
+            <Button variant="danger" onClick={handleConfirmDelete} disabled={deleting}>
+              {deleting ? 'Excluindo…' : 'Excluir perfil'}
+            </Button>
+          </>
+        }
+      >
+        <div data-testid="profile-delete-confirm">
+          <p className={styles.confirmDeleteText}>
+            Excluir o perfil <strong>{confirmingDelete?.name}</strong>? Isso apaga o diretório de configuração dele
+            (`~/.claude-profiles/{confirmingDelete?.slug}`) — a ação não pode ser desfeita.
+          </p>
+          <p className={styles.confirmDeleteHint}>
+            Nada compartilhado com o Principal (projetos, skills, comandos e demais pastas ligadas por junction) é tocado —
+            só o que é próprio deste perfil some.
+          </p>
+          {deleteError ? (
+            <p className={styles.confirmDeleteHint} data-testid="profile-delete-error">
+              {deleteError === 'is-primary'
+                ? 'O perfil Principal nunca pode ser excluído.'
+                : deleteError === 'is-active'
+                  ? 'Este é o perfil ativo agora — troque de perfil antes de excluir.'
+                  : 'Esse perfil já não existe mais (foi excluído em outro lugar).'}
+            </p>
+          ) : null}
         </div>
       </Modal>
     </>
