@@ -53,6 +53,7 @@ describe('defaultAppConfig (puro)', () => {
         phaseDefaults: DEFAULT_PHASE_DEFAULTS,
         boardConfig: null,
       },
+      tabAppearance: {},
     });
   });
 });
@@ -80,6 +81,7 @@ describe('toAppConfigDto (puro)', () => {
         phaseDefaults: DEFAULT_PHASE_DEFAULTS,
         boardConfig: null,
       },
+      tabAppearance: {},
     });
   });
 
@@ -186,6 +188,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
         phaseDefaults: DEFAULT_PHASE_DEFAULTS,
         boardConfig: { workspaceId: 'ws-1', teamId: 'team-1' },
       },
+      tabAppearance: { 'sess-1': { color: 'accent', order: 0 } },
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
   });
@@ -234,6 +237,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       sessionRegistry: {}, // ausente no objeto → default
       collapsedFavorites: [], // ausente no objeto → default
       devMode: defaults.devMode, // ausente no objeto → default
+      tabAppearance: {}, // ausente no objeto → default
     });
   });
 

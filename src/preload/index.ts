@@ -22,6 +22,7 @@ import type {
   SemaphoreStateInfo,
   SemaphoreUpdate,
   SessionSummaryDto,
+  TabColorToken,
   TranscriptChangedPayload,
   WatchPhaseIpcInput,
 } from '../shared';
@@ -33,6 +34,7 @@ import {
   PTY_CHANNELS,
   SEMAPHORE_CHANNELS,
   SESSION_CHANNELS,
+  TAB_CHANNELS,
   TRANSCRIPT_CHANNELS,
 } from '../shared';
 // T504 (005-terminal-copy-paste) — canal do clipboard-bridge (main), aditivo
@@ -180,6 +182,15 @@ const donelApi: DonelApi = {
 
   // T307 (003-modo-dev) — estado do Modo Dev (CA-21/CA-4) + leitura da árvore
   // do discovery (CA-7). Nenhum canal aqui escreve no TaskDex/vault.
+  // CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
+  tabs: {
+    setColor: (sessionId: string, color: TabColorToken) =>
+      ipcRenderer.invoke(TAB_CHANNELS.setColor, sessionId, color) as Promise<AppConfigDto>,
+
+    setOrder: (sessionId: string, order: number) =>
+      ipcRenderer.invoke(TAB_CHANNELS.setOrder, sessionId, order) as Promise<AppConfigDto>,
+  },
+
   devMode: {
     get: () => ipcRenderer.invoke(DEVMODE_CHANNELS.get) as Promise<AppConfigDto>,
 

@@ -44,6 +44,7 @@ import {
   PTY_CHANNELS,
   SEMAPHORE_CHANNELS,
   SESSION_CHANNELS,
+  TAB_CHANNELS,
   TRANSCRIPT_CHANNELS,
 } from '../shared';
 import { createSystemResolveDeps, resolveClaudeExecutable } from './claude-executable';
@@ -104,6 +105,8 @@ import { SessionSemaphoreManager } from './session-semaphore-manager';
 import { TranscriptWatcherRegistry } from './transcript-watcher';
 import { forgetIfOrphan } from '../shared/resumeFailure';
 import { removeSession, setPinned, upsertVisit } from '../shared/sessionRegistry';
+// CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
+import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearance';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
 // PtyManager chega em T004 (este arquivo). ProjectScanner chega no T007
@@ -777,6 +780,28 @@ function registerSessionIpcHandlers(): void {
   });
 }
 
+/**
+ * CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão
+ * claude. `sessionId` vazio ou payload malformado (cor fora dos 4 tokens,
+ * `order` não-finita) é no-op — o handler nunca confia cegamente no que o
+ * renderer manda, mesmo padrão de `SESSION_CHANNELS.setName`/`setPinned`.
+ */
+function registerTabIpcHandlers(): void {
+  ipcMain.handle(TAB_CHANNELS.setColor, (_event, sessionId: string, color: unknown): AppConfigDto => {
+    if (typeof sessionId !== 'string' || !sessionId || !isTabColorToken(color)) return toAppConfigDto(appConfig);
+    appConfig = { ...appConfig, tabAppearance: setTabColor(appConfig.tabAppearance, sessionId, color) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  ipcMain.handle(TAB_CHANNELS.setOrder, (_event, sessionId: string, order: unknown): AppConfigDto => {
+    if (typeof sessionId !== 'string' || !sessionId || typeof order !== 'number') return toAppConfigDto(appConfig);
+    appConfig = { ...appConfig, tabAppearance: setTabOrder(appConfig.tabAppearance, sessionId, order) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+}
+
 /** Sempre inclui o Principal + varre `~/.claude-profiles/*` de novo a cada chamada (mesmo espírito de `listProjectsWithFavorites` — lista pequena, I/O local, sem necessidade de cache próprio aqui). */
 function currentProfileList(): ProfileInfo[] {
   return listProfiles(createSystemProfileListDeps(homedir));
@@ -905,6 +930,7 @@ void app.whenReady().then(async () => {
   registerConfigIpcHandlers();
   registerClipboardIpcHandlers(); // T504 (005-terminal-copy-paste)
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
+  registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   createMainWindow();
 
   app.on('activate', () => {

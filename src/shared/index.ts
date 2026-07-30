@@ -9,6 +9,7 @@ import type { DonelDevModeApi } from './devMode';
 import type { DonelProfilesApi } from './profiles';
 import type { DonelProjectsApi } from './projects';
 import type { DonelSessionsApi } from './sessions';
+import type { DonelTabsApi } from './tabChannels';
 
 export { PROJECT_CHANNELS, sortProjects } from './projects';
 export type { DonelProjectsApi, ProjectInfo } from './projects';
@@ -34,6 +35,14 @@ export type { ResumeFailureSignal } from './resumeFailure';
 
 export { CONFIG_CHANNELS } from './config';
 export type { AppConfigDto, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, ProjectScanMode, SessionNamesMap } from './config';
+
+// CA-26/CA-27 (009-modo-dev-v3, lote 1) — aba v3: reordenar (CA-26) e cor por
+// aba (CA-27). Lógica pura em tabAppearance.ts; canais `tabs:*` em
+// tabChannels.ts (arquivo separado — ver comentário de topo de lá).
+export { isTabColorToken, reorderTabs, setTabColor, setTabOrder, TAB_COLOR_TOKENS } from './tabAppearance';
+export type { TabAppearance, TabAppearanceMap, TabColorToken } from './tabAppearance';
+export { TAB_CHANNELS } from './tabChannels';
+export type { DonelTabsApi } from './tabChannels';
 
 // 003-modo-dev (T301/T307) — estado próprio do Modo Dev + canais `devMode:*`.
 export {
@@ -269,4 +278,6 @@ export interface DonelApi {
   clipboard: DonelClipboardApi;
   /** T307 (003-modo-dev) — estado do Modo Dev + leitura da árvore do discovery. */
   devMode: DonelDevModeApi;
+  /** CA-26/CA-27 (009-modo-dev-v3) — cor + ordem da aba v3, persistidas por sessão claude. */
+  tabs: DonelTabsApi;
 }

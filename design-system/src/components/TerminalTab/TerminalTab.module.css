@@ -1,11 +1,12 @@
 .tab {
   display: inline-flex;
   align-items: center;
+  position: relative; /* âncora do menu de cor (CA-27) */
   height: 32px;
-  padding: 0 4px 0 10px;
-  gap: 8px;
-  background: transparent;
-  border-top: 2px solid transparent;
+  padding: 0 4px 0 7px;
+  gap: 7px;
+  background: var(--bg-app);
+  border-top: 2px solid var(--border);
   border-right: var(--hairline);
   white-space: nowrap;
   flex-shrink: 0;
@@ -13,13 +14,39 @@
 
 .active {
   background: var(--bg-raised);
+}
+
+/*
+ * CA-27 — faixa de cor definida pelo operador, INDEPENDENTE de `.active`
+ * (handoff v3, `Modo Dev v3.dc.html:1087-1089`: o stripe reflete só a cor
+ * escolhida, o destaque de foco já vem do fundo `.active` acima). Sem cor
+ * escolhida (`'none'`, default) a aba fica com o `border-top` neutro de
+ * `.tab` — nenhuma classe extra entra.
+ */
+.color-accent {
   border-top-color: var(--accent);
+}
+.color-donel-accent {
+  border-top-color: var(--donel-accent);
+}
+.color-permission {
+  border-top-color: var(--state-permission);
+}
+
+/* CA-26 — alça de arraste (glifo `⣿` do handoff, cor `--state-done` — mesmo tom neutro do dot "encerrada"). Só a APARÊNCIA: o `draggable` de verdade vive no `.tab` inteiro (mesma forma do mockup). */
+.dragHandle {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--state-done);
+  cursor: grab;
+  flex-shrink: 0;
 }
 
 .body {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   height: 100%;
   min-width: 0; /* deixa o nome encolher em vez de esticar a aba (T407) */
   padding: 0;
@@ -34,9 +61,60 @@
   box-shadow: var(--focus-ring);
 }
 
-.shellIcon {
-  color: var(--text-muted);
+/*
+ * CA-28 — ícone de estado no lugar do farol (StateDot); o farol permanece no
+ * mapa (DiscoveryMap), este é um segundo vocabulário glífico só da aba.
+ * Cores/estados batem 1:1 com StateDot.module.css (mesmos tokens
+ * `--state-*`); `shell` é o pseudo-estado "terminal comum" (sem SessionState).
+ */
+.stateIcon {
+  width: 12px;
   flex-shrink: 0;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1;
+}
+.stateIcon.working {
+  color: var(--state-working);
+}
+.stateIcon.waiting {
+  color: var(--state-waiting);
+}
+.stateIcon.permission {
+  color: var(--state-permission);
+}
+.stateIcon.done {
+  color: var(--state-done);
+}
+.stateIcon.error {
+  color: var(--state-error);
+}
+.stateIcon.shell {
+  color: var(--text-muted);
+}
+
+/* Só `working`/`permission` piscam (handoff v3 `iconAnim`) — mesma cadência de StateDot.module.css (`state-dot-pulse`, 2000ms/1000ms). */
+.stateIconBlink {
+  animation: tab-icon-pulse 2000ms ease-in-out infinite;
+}
+.stateIcon.permission.stateIconBlink {
+  animation-duration: 1000ms;
+}
+
+@keyframes tab-icon-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stateIconBlink {
+    animation: none;
+  }
 }
 
 /*
@@ -55,6 +133,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Aba v3 (handoff `Modo Dev v3.dc.html:1090`) — nome esmaecido quando a aba não está em foco; a ativa fica em `--text-primary` (default de `.name` acima). */
+.tab:not(.active) .name {
+  color: var(--text-muted);
 }
 
 .model {
@@ -84,4 +167,57 @@
 .close:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+/*
+ * CA-27 — menu de cor (clique direito na aba). O mockup só declara a
+ * CAPACIDADE ("cor por aba", `tabsHint`) sem desenhar o gatilho — clique
+ * direito escolhido para não acrescentar nenhum elemento visível novo à
+ * forma desenhada (handle + ícone + nome + modelo, exatamente como no
+ * handoff). Ver decisão no report do lote.
+ */
+.colorMenu {
+  position: absolute;
+  top: 100%;
+  left: 7px;
+  margin-top: 2px;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-modal);
+  z-index: 10;
+}
+
+.colorSwatch {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.colorSwatch:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.colorSwatch[aria-checked='true'] {
+  box-shadow: var(--focus-ring);
+}
+
+.swatch-none {
+  background: var(--border);
+}
+.swatch-accent {
+  background: var(--accent);
+}
+.swatch-donel-accent {
+  background: var(--donel-accent);
+}
+.swatch-permission {
+  background: var(--state-permission);
 }

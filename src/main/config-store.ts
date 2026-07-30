@@ -16,6 +16,8 @@ import type {
 import { DEFAULT_PHASE_DEFAULTS } from '../shared/devModeDefaults';
 import type { StoredSessionName } from '../shared/sessionName';
 import type { RegisteredSession, SessionRegistry } from '../shared/sessionRegistry';
+// CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
+import { isTabColorToken, type TabAppearance, type TabAppearanceMap } from '../shared/tabAppearance';
 import { PRINCIPAL_PROFILE_SLUG } from './profile-manager';
 
 // T015 — ConfigStore formal (FR-007): `%APPDATA%\donel-dev\config.json` (na
@@ -87,6 +89,8 @@ export interface AppConfig {
   readonly collapsedFavorites: readonly string[];
   /** T306 (003-modo-dev) — estado próprio do Modo Dev. Ver src/shared/devMode.ts. */
   readonly devMode: DevModeState;
+  /** CA-26/CA-27 (009-modo-dev-v3) — cor + ordem da aba v3, por `claudeSessionId`. Ver src/shared/tabAppearance.ts. */
+  readonly tabAppearance: TabAppearanceMap;
 }
 
 /** `projectRoots` não tem um default universal (depende do homedir da máquina) — quem chama monta com `defaultProjectRoots(homedir)` (project-scanner.ts) e passa aqui. */
@@ -104,6 +108,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     sessionRegistry: {},
     collapsedFavorites: [],
     devMode: defaultDevModeState(),
+    tabAppearance: {},
   };
 }
 
@@ -130,6 +135,7 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     sessionRegistry: config.sessionRegistry,
     collapsedFavorites: config.collapsedFavorites,
     devMode: config.devMode,
+    tabAppearance: config.tabAppearance,
   };
 }
 
@@ -286,6 +292,27 @@ function sanitizeSessionRegistry(value: unknown): SessionRegistry {
   return sanitized;
 }
 
+/**
+ * CA-26/CA-27 (009-modo-dev-v3) — sanitiza `tabAppearance` ENTRADA A ENTRADA,
+ * mesmo espírito de `sanitizeSessionRegistry`: uma entrada malformada (cor
+ * fora dos 4 tokens conhecidos, `order` não-finita) é descartada sozinha, sem
+ * levar o resto do mapa. `sessionId` vem da CHAVE (nunca do valor).
+ */
+function sanitizeTabAppearance(value: unknown): TabAppearanceMap {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+
+  const sanitized: Record<string, TabAppearance> = {};
+  for (const [sessionId, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!sessionId || typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+    const candidate = entry as Partial<TabAppearance>;
+    if (!isTabColorToken(candidate.color)) continue;
+    if (typeof candidate.order !== 'number' || !Number.isFinite(candidate.order)) continue;
+
+    sanitized[sessionId] = { color: candidate.color, order: candidate.order };
+  }
+  return sanitized;
+}
+
 // ---------------------------------------------------------------------------
 // T306 (003-modo-dev) — sanitização de `devMode`, mesmo espírito campo a campo
 // do resto do arquivo. `phaseDefaults` é a ÚNICA exceção "tudo ou nada"
@@ -428,6 +455,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     sessionRegistry: sanitizeSessionRegistry(candidate.sessionRegistry),
     collapsedFavorites: isStringArray(candidate.collapsedFavorites) ? candidate.collapsedFavorites : defaults.collapsedFavorites,
     devMode: sanitizeDevModeState(candidate.devMode, defaults.devMode),
+    tabAppearance: sanitizeTabAppearance(candidate.tabAppearance),
   };
 }
 

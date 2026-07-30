@@ -45,8 +45,8 @@ export type { ToggleProps } from './components/Toggle';
 export { SegmentedControl } from './components/SegmentedControl';
 export type { SegmentedControlProps, SegmentedControlOption } from './components/SegmentedControl';
 
-export { TerminalTab } from './components/TerminalTab';
-export type { TerminalTabProps } from './components/TerminalTab';
+export { TAB_COLOR_LABEL_PT, TAB_COLOR_TOKENS, TerminalTab } from './components/TerminalTab';
+export type { TabColorToken, TerminalTabProps } from './components/TerminalTab';
 
 export { EditableLabel } from './components/EditableLabel';
 export type { EditableLabelHandle, EditableLabelProps } from './components/EditableLabel';

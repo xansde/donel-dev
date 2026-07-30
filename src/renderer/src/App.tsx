@@ -14,7 +14,10 @@ import type {
   ProjectScanMode,
   SemaphoreStateInfo,
   SessionSummaryDto,
+  TabColorToken,
 } from '../../shared';
+// CA-26 (009-modo-dev-v3, lote 1) — reordenação pura da lista de abas por arraste.
+import { reorderTabs } from '../../shared/tabAppearance';
 import {
   buildClaudeArgs,
   DEFAULT_EFFORT_LEVEL,
@@ -135,6 +138,14 @@ interface TabState {
    * `resolveSessionName` e o que se carimba como `seenTitle` ao renomear.
    */
   customTitle?: string | null;
+  /**
+   * CA-27 (009-modo-dev-v3) — faixa de cor escolhida pelo operador para esta
+   * aba. Default 'none' (aplicado na renderização, não aqui — mesmo espírito
+   * opcional de `cwd`/`launchArgs` acima). Persiste por `claudeSessionId`
+   * (ver `window.donel.tabs.setColor`); aba `shell` colore só em memória,
+   * mesmo motivo do nome dela ser só em memória (C4, 004-nomear-sessoes).
+   */
+  color?: TabColorToken;
 }
 
 /** Último lançamento do Launcher — CA-1 (comando exato) + reaproveitado pelo corpo do "＋ Nova sessão" (ui-spec §2, zona 1). */
@@ -214,6 +225,11 @@ export function App(): React.JSX.Element {
   // UI puro (não persiste no config de propósito).
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
+  // CA-26 (009-modo-dev-v3) — índice de origem do arraste em andamento na
+  // barra de abas; `null` fora de um arraste. Estado de UI puro (mesmo
+  // espírito de `sidebarCollapsed` acima), a reordenação de verdade é
+  // `reorderTabs` (src/shared/tabAppearance.ts).
+  const [dragFromIndex, setDragFromIndex] = useState<number | null>(null);
   // T015 — ConfigStore (FR-007): roots/notificação/defaults do launcher.
   // `null` até `window.donel.config.get()` resolver no boot (mesmo padrão de
   // `projects`/`loadingProjects` acima) — os consumidores abaixo caem em
@@ -961,6 +977,35 @@ export function App(): React.JSX.Element {
         }
       })
       .catch(() => undefined);
+  };
+
+  /**
+   * CA-27 (009-modo-dev-v3) — cor escolhida pelo operador no menu da aba
+   * (clique direito, `TerminalTab` variante v3). Mesmo split de
+   * `handleRenameTab`: aba `claude` persiste via `tabs:setColor` (sobrevive a
+   * restart — CA-27); aba `shell` (ou aba cujo `claudeSessionId` ainda não
+   * resolveu) só muda em memória, sem `sessionId` onde persistir (C4).
+   */
+  const handleTabColorChange = (tabId: string, color: TabColorToken): void => {
+    updateTab(tabId, { color });
+    const tab = tabs.find((candidate) => candidate.id === tabId);
+    if (!tab?.claudeSessionId) return;
+    void window.donel.tabs.setColor(tab.claudeSessionId, color).then(setAppConfig).catch(() => undefined);
+  };
+
+  /**
+   * CA-26 (009-modo-dev-v3) — reordena a barra de abas por arraste
+   * (`reorderTabs`, src/shared/tabAppearance.ts). Persiste a nova posição de
+   * toda aba `claude` (CA-27: ordem sobrevive a restart, mesmo par
+   * cor/ordem); aba `shell` reordena só em memória (sem `sessionId`, C4).
+   */
+  const handleTabReorder = (fromIndex: number, toIndex: number): void => {
+    const next = reorderTabs(tabs, fromIndex, toIndex);
+    setTabs(next);
+    next.forEach((tab, index) => {
+      if (!tab.claudeSessionId) return;
+      void window.donel.tabs.setOrder(tab.claudeSessionId, index).then(setAppConfig).catch(() => undefined);
+    });
   };
 
   /**
@@ -1871,7 +1916,7 @@ export function App(): React.JSX.Element {
             </section>
           ) : null}
           <div className={styles.tabBar}>
-            {tabs.map((tab) => (
+            {tabs.map((tab, index) => (
               <TerminalTab
                 key={tab.id}
                 name={resolveTabName(tab)}
@@ -1881,11 +1926,24 @@ export function App(): React.JSX.Element {
                 nameMaxLength={SESSION_NAME_MAX_LENGTH}
                 // T010 — ui-spec §2 zona 3: abas de terminal comum não têm
                 // dot de semáforo (undefined = TerminalTab troca pelo ícone
-                // de shell); só abas 'claude' mostram o StateDot do T009.
+                // de shell); só abas 'claude' mostram o ícone de estado
+                // (CA-28) do T009.
                 state={tab.sessionType === 'shell' ? undefined : (semaphoreStates[tab.id]?.state ?? 'working')}
                 active={tab.id === activeTabId}
                 onClick={() => setActiveTabId(tab.id)}
                 onClose={() => handleRequestCloseTab(tab.id)}
+                // CA-27 — faixa de cor definida pelo operador (clique direito na aba).
+                color={tab.color ?? 'none'}
+                onColorChange={(color) => handleTabColorChange(tab.id, color)}
+                // CA-26 — arraste nativo (HTML5 DnD): o índice de origem fica
+                // em `dragFromIndex` até o `drop`, que dispara `reorderTabs`.
+                draggable
+                onDragStart={() => setDragFromIndex(index)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => {
+                  if (dragFromIndex !== null && dragFromIndex !== index) handleTabReorder(dragFromIndex, index);
+                  setDragFromIndex(null);
+                }}
               />
             ))}
           </div>
@@ -1933,7 +1991,13 @@ export function App(): React.JSX.Element {
                   // T404/T408 — o id da sessão chega aqui e vira a chave de
                   // persistência do nome desta aba (CA-6).
                   onClaudeSessionIdResolved={(claudeSessionId) => {
-                    updateTab(tab.id, { claudeSessionId });
+                    // CA-27 (009-modo-dev-v3) — retomada de uma sessão colorida
+                    // antes: hidrata a cor persistida assim que o `claudeSessionId`
+                    // chega (é o mesmo id de antes numa retomada, `pty:create`
+                    // reusa o `-r`). Sem entrada persistida, mantém a cor que a
+                    // aba já tinha (default 'none' de uma sessão nova).
+                    const persistedColor = claudeSessionId ? appConfig?.tabAppearance[claudeSessionId]?.color : undefined;
+                    updateTab(tab.id, { claudeSessionId, ...(persistedColor ? { color: persistedColor } : {}) });
                     // T707 (007) — gatilho 1: a sessão nasce. `resolveTabName`
                     // já sabe compor fallback/customTitle/nome da UI; o
                     // `claudeSessionId` chega só agora, então é passado por
