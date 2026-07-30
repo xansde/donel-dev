@@ -48,6 +48,20 @@
   white-space: nowrap;
 }
 
+/*
+ * CA-22 (009) — o `%` é o número que se lê de relance; os tokens ao lado são a
+ * régua. Cor por zona só no `over`: dentro da zona o rodapé é informação de
+ * fundo e não deve competir com o resto (`warn` já é sinalizado pela barra).
+ */
+.percent {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.root[data-zone='over'] .percent {
+  color: var(--zone-over);
+}
+
 .compact .label {
   font-size: var(--text-caption-size);
 }

@@ -2,8 +2,21 @@
 
 **Status:** 🟡 **RASCUNHO** (2026-07-29) — nasce do Discovery desta mesma data
 (`discovery.md`, 17 decisões fechadas com o Alexandre por entrevista `grilling`).
-**Nenhuma linha de código.** Próximo passo: leva de design (forma) e `plan.md` +
-`tasks.md`, depois o gate de execução.
+Próximo passo do CORPO da spec: leva de design (forma) e `plan.md` + `tasks.md`,
+depois o gate de execução.
+
+> **Adiantado fora do gate, a pedido dele em 29/07** ("desenvolve o que for fix
+> rápido em alfa"): **CA-22** (`%` de contexto no rodapé) e **CA-29** (moldura
+> cortada do terminal) estão **implementados** — os dois únicos itens que não
+> dependem da leva de design nem do modelo v3, e por isso os únicos que podiam
+> sair antes dela sem virar retrabalho. Ver a marcação em cada um.
+>
+> Ficaram de fora por dependerem do desenho, e não por tamanho: **CA-27** (cor
+> por aba) e **CA-28** (ícone de estado na aba) estão na lista que a nota de
+> sequência endereça à leva de design — implementar a forma antes seria decidir
+> no lugar dela. **CA-26** (reordenar abas) não depende de desenho, mas o gesto
+> de arrastar precisa de affordance própria e não é fix rápido. **CA-23/CA-24/
+> CA-30** são features inteiras.
 **Origem:** a Esteira v3 (`skills-dev-ai-ops-szi/specs/006-esteira-v3/`) trocou o modelo
 de domínio que o Modo Dev espelha, **e** o Alexandre aproveitou para descarregar oito
 incômodos acumulados no uso do app. A **D13** manda tratar as duas coisas nesta entrega.
@@ -223,8 +236,19 @@ não grava.
 
 ### App base `[B-1..B-8]`
 
-**CA-22.** O **`%` de contexto volta**, na `StatusBar`, atualizando ao vivo. A barra pode
-concentrar tudo, desde que atualize constantemente.
+**CA-22.** ✅ **IMPLEMENTADO em 29/07.** O **`%` de contexto volta**, na `StatusBar`,
+atualizando ao vivo. A barra pode concentrar tudo, desde que atualize constantemente.
+
+> Forma: o slot `smartZone` da `StatusBar` — o mini `SmartZoneMeter` que o design já
+> previa para o rodapé e que o app nunca tinha ligado (barra de 4px + rótulo). Alcance:
+> o rótulo passou a mostrar `%` **e** tokens (`45% · 135k/300k`), sem teto acima de 100%
+> (127% aparece como 127%), com o número em vermelho na zona `over`. Régua: a decisão de
+> 24/07 — `min(300k, janela do modelo)`, via `effectiveContextZone`, nunca o default de
+> 400k do design-system. Rótulo "contexto" antes do medidor porque o rodapé já mostra um
+> `%` de cota. Sem leitura do transcript o medidor não aparece — nunca um `0%` fabricado.
+> Cobertura: `tests/smartZone.test.ts` (aritmética e faixas) + `tests/smoke/session-context.spec.ts`
+> (ao vivo, incluindo o estado acima da zona, que a adaptação de 27/07 tinha declarado
+> perdido).
 
 **CA-23.** A tela de sessões anteriores ganha **engrenagem de configuração por projeto**,
 com o **ID do board TaskDex** e o **repo do GitHub** que aquele projeto aponta — os dois
@@ -250,7 +274,17 @@ eixos precisa sobreviver. A **legenda dos dois eixos sai** do rodapé do mapa �
 acessibilidade continua protegida pela **dupla codificação** (glifo **e** cor, sólido
 reservado a falhou/travada), que era o requisito de verdade; a legenda era só a chave.
 
-**CA-29.** A moldura cortada do terminal embedado é corrigida.
+**CA-29.** ✅ **IMPLEMENTADO em 29/07.** A moldura cortada do terminal embedado é
+corrigida.
+
+> Eram **duas** causas independentes, medidas por sonda de geometria antes de tocar em
+> CSS: (1) com `devicePixelRatio` 1,25, o `fit()` do xterm propunha 37 linhas que somavam
+> 634px dentro de um terminal de 623,6px, e o `overflow: hidden` da moldura cortava o
+> último glifo; (2) o `xterm.css` pinta o viewport de `#000` puro, contra o `#0e1116` do
+> tema — uma listra preta na calha da barra de rolagem. Correções: `fitWithoutOvershoot`
+> (mede o transbordo real e encolhe uma linha, antes do `pty.create`) e viewport
+> transparente. Depois: `scrollHeight == clientHeight` em toda a cadeia. Medição completa
+> em `specs/backlog.md` §B23.
 
 **CA-30.** É possível **lançar um projeto do zero** pelo app (US-15 do `backlog.md`).
 
