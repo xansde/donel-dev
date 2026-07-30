@@ -141,12 +141,16 @@ test.beforeAll(async () => {
   write(resultPath('plano', CARD_M1), manifest(CARD_M1, 'plano', 'success', { summary: 'plano ok' }));
   write(ctxPath('implementar', CARD_M1), '---\ncard_id: SZI-901\n---\n\n# ctx\n');
 
-  // M2 — os DOIS casos do CA-13 no mesmo card de plano:
-  //  · `implementar` concluída no disco e card ainda na coluna `plano` →
-  //    divergência de verdade (marca);
-  //  · `validar` concluída no disco e card ainda na coluna `plano` → NÃO
-  //    marca: por invariante da Esteira, Validar nunca move o card de coluna.
-  for (const fase of ['implementar', 'validar']) {
+  // M2 — os DOIS casos do CA-13/CA-19 no mesmo card de plano:
+  //  · `plano` concluído no disco e card ainda na coluna `plano` →
+  //    divergência de verdade (marca): Plano MOVE o card pra Implementar
+  //    (contrato v3 §B), então ficar em `plano` é atraso real.
+  //  · `implementar`/`validar` concluídas no disco e card ainda na coluna
+  //    `plano` → NÃO marcam: CA-19 (009-modo-dev-v3, lote 8) — Implementar
+  //    NÃO move o card na v3 (fica em Implementar até o PR mergear, D20) e
+  //    Validar nunca moveu (invariante antiga, preservada). Duas fases sem
+  //    divergência simultânea prova que o fix não é "sorte" de uma só.
+  for (const fase of ['plano', 'implementar', 'validar']) {
     write(ctxPath(fase, CARD_M2), `---\ncard_id: ${CARD_M2}\n---\n\n# ctx\n`);
     write(resultPath(fase, CARD_M2), manifest(CARD_M2, fase, 'success', { summary: `${fase} ok` }));
   }
@@ -301,11 +305,12 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   await expect(window.locator(`[data-testid="devmode-map-plano-action-${CARD_M1}"]`)).toContainText('Liberar trava');
   await expect(window.locator(`[data-testid="devmode-map-plano-action-${CARD_M1}"]`)).toBeEnabled();
 
-  // === T326/CA-13 — divergência marcada × divergência ESPERADA filtrada ===
+  // === T326/CA-13/CA-19 — divergência marcada × divergência ESPERADA filtrada ===
   const marcoM2 = window.locator(`[data-testid="devmode-map-plano-${CARD_M2}"]`);
   await expect(marcoM2).toContainText('⇄ disco: done · board: plano');
-  // `validar` concluída com o card ainda em `plano` é o caso esperado pela
-  // spec (Validar nunca move coluna): UMA divergência no card de plano, não duas.
+  // `implementar`/`validar` concluídas com o card ainda em `plano` são os
+  // casos esperados na v3 (CA-19: Implementar não move; Validar nunca
+  // moveu): só `plano` diverge — UMA etiqueta de divergência, não três.
   expect((await marcoM2.innerText()).match(/⇄ disco/g)?.length).toBe(1);
 
   // === T328/Decisão B — a ação de conciliar mora NA ETIQUETA, sem passo
@@ -340,8 +345,10 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
 
   const armed = window.locator('[data-testid="devmode-armed"]');
   await expect(armed).toContainText('Conciliação de divergência no card SZI-902', { timeout: 60_000 });
-  // Os DOIS fatos divergentes estão no texto preparado.
-  await expect(armed).toContainText('a fase implementar está "done"');
+  // Os DOIS fatos divergentes estão no texto preparado (CA-19: a fase que
+  // diverge agora é `plano`, não mais `implementar` — ver comentário da
+  // fixture do M2 acima).
+  await expect(armed).toContainText('a fase plano está "done"');
   await expect(armed).toContainText('coluna "plano"');
   // O app não corrige o board — e diz isso no próprio prompt.
   await expect(armed).toContainText('não altere o board');

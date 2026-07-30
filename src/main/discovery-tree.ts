@@ -10,6 +10,7 @@ import {
   type EsteiraStateRoot,
   type PhaseArtifacts,
   type PlanCardRef,
+  type PlanoFaseGarantiaRef,
   type PlanoFaseRef,
 } from './esteira-reader';
 
@@ -59,6 +60,8 @@ export interface PlanCardFaseNode {
   readonly faseNum: number;
   /** `null` = plano não deu título — degradação por omissão. */
   readonly titulo: string | null;
+  /** Lote 8 (CA-20) — a garantia declarada pelo plano (contrato §D.3), a MESMA pras duas sub-fases (D13). `null` = não declarada. */
+  readonly garantia: PlanoFaseGarantiaRef | null;
   readonly implementar: PhaseNode;
   readonly validar: PhaseNode;
 }
@@ -116,7 +119,7 @@ function buildFaseNode(root: EsteiraStateRoot, cardId: string, ref: PlanoFaseRef
     return { phase: fase, status, artifacts, archivedSession };
   };
 
-  return { faseNum: ref.faseNum, titulo: ref.titulo, implementar: buildAt('implementar'), validar: buildAt('validar') };
+  return { faseNum: ref.faseNum, titulo: ref.titulo, garantia: ref.garantia, implementar: buildAt('implementar'), validar: buildAt('validar') };
 }
 
 function buildPlanCardNode(root: EsteiraStateRoot, planCard: PlanCardRef, archived: ArchivedPhaseSessions, io: EsteiraReaderIoDeps): PlanCardNode {
@@ -131,7 +134,34 @@ function buildPlanCardNode(root: EsteiraStateRoot, planCard: PlanCardRef, archiv
   return { cardId: planCard.cardId, track: planCard.track, shadow: planCard.shadow, phases, fases };
 }
 
-/** CA-7/CA-9/CA-10/CA-17/CA-23 — monta o discovery em foco por completo, a partir do disco. Nunca lança. */
+/**
+ * CA-21 (lote 8) — a v3 não grava `concluir-result.json` (`esteira-concluir`
+ * é gate mecânico, contrato §D.7: "não grava result.json; grava
+ * create_comment e move a coluna"), então `phases.concluir.status === 'done'`
+ * nunca fica verdadeiro (problema 3 da spec — a causa de `allPlanCardsComplete`
+ * nunca ter disparado o auto-close do CA-23 na v3). O sinal de disco mais
+ * próximo de "este card de plano terminou", por track:
+ * - **código**: QUALQUER fase declarada (`PlanCardNode.fases`) cujo
+ *   `validar-result.json` mais recente traga `outputs.plano_completo: true`
+ *   (contrato §D.5 — "todas as fases DESTE PLANO estão homologadas", o mesmo
+ *   fato sobre o plano inteiro; qualquer fase que já tenha rodado com essa
+ *   marca basta, não precisa ser a última). Sem fase alguma declarada ainda
+ *   (`fases: []`), nunca completo — nunca fabrica conclusão por ausência.
+ * - **documental**: a fase `documentar` (terminal do track, §B) com status
+ *   `done` no disco.
+ * Isto é disco puro (mesmo espírito do resto deste módulo — ver comentário de
+ * topo do arquivo): NÃO confirma a coluna real do board (Concluído). É sinal
+ * aproximado, usado só para o auto-close de `discoveriesToClose`
+ * (`devModeSelection.ts`, CA-23 da 003) — fechar o discovery no estado PRÓPRIO
+ * do app não escreve nada no board nem no disco da Esteira.
+ */
+function planCardComplete(planCard: PlanCardNode): boolean {
+  if (planCard.track === 'documental') return planCard.phases.documentar.status === 'done';
+  if (planCard.fases.length === 0) return false;
+  return planCard.fases.some((fase) => fase.validar.artifacts.result?.outputs.plano_completo === true);
+}
+
+/** CA-7/CA-9/CA-10/CA-17/CA-21/CA-23 — monta o discovery em foco por completo, a partir do disco. Nunca lança. */
 export function buildDiscoveryTree(
   root: EsteiraStateRoot,
   discoveryCardId: string,
@@ -141,7 +171,7 @@ export function buildDiscoveryTree(
   const planCardRefs = readDiscoveryPlanCards(root, discoveryCardId, io);
   const planCards = planCardRefs.map((ref) => buildPlanCardNode(root, ref, archived, io));
 
-  const allPlanCardsComplete = planCards.length > 0 && planCards.every((planCard) => planCard.phases.concluir.status === 'done');
+  const allPlanCardsComplete = planCards.length > 0 && planCards.every(planCardComplete);
 
   return { discoveryCardId, planCards, focusedPlanCardId: null, allPlanCardsComplete };
 }

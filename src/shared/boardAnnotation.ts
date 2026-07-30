@@ -23,14 +23,44 @@ import type { PhaseStatus } from './phaseState';
 // `BoardFacts` (`../main/taskdex-board-client.ts`) são importados só como
 // TIPO — mesmo padrão de `shared/index.ts`: `import type` erasa no build,
 // este módulo shared nunca passa a depender de `node:fs`/rede em runtime.
+//
+// CA-19 (009-modo-dev-v3, lote 8) — a detecção parava de acusar "[Mx]"
+// (conferência já morta desde o lote 2, nada sobrou pra remover aqui) mas
+// ainda mentia sobre Implementar: `NEXT_PHASE.implementar = 'validar'`
+// assumia que a fase Implementar move o card, ficção da v2. No contrato v3
+// (`006-esteira-v3/contracts/handoff-v3.md` §B/§C — "Quem move o quê"):
+// Implementar NÃO move o card ("esteira-implementar NÃO move... o card fica
+// em Implementar até o PR da fase ser mergeado em staging", D20); quem move
+// Implementar → Validar é `esteira-validar`, ao confirmar o merge por `gh`.
+// Todo card com a fase implementar concluída no disco acendia "divergência
+// disco×board" mesmo com o card corretamente parado em Implementar — o card
+// orquestrador de lote (`esteira:orquestrador`) tem o mesmo "fica onde está,
+// de propósito" no §B, mas nunca precisou de tratamento aqui: ele é o
+// `discoveryCardId` da árvore, nunca um dos `planCards` que este módulo
+// percorre (`readDiscoveryPlanCards`, esteira-reader.ts, só lê `plan_cards[]`
+// — a capa do lote não entra nessa lista).
 
 const ALL_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'implementar', 'validar', 'documentar', 'cliente', 'concluir'];
 
-/** Fase → próxima fase esperada quando a atual termina `done`. `validar` fica de fora de propósito: por invariante da Esteira ela nunca move o card de coluna (CA-13), então não há coluna esperada a checar. `concluir` também fica de fora — é o fim da esteira, fora do escopo desta detecção. */
+/**
+ * Fase → próxima COLUNA esperada quando a fase termina `done` no disco
+ * (contrato §B, "Quem move o quê"). Só entram fases que a Esteira MOVE
+ * sozinha para uma coluna seguinte determinística:
+ * - `discovery` → `plano` (`esteira-discovery` move; track documental vai pra
+ *   `documentar`, mas "chegou pelo menos em `plano`" — índice ≥ — não acusa
+ *   esse ramo, CA-14/C4: sem base de comparação não alarma à toa).
+ * - `plano` → `implementar` (`esteira-plano` move, sempre).
+ * `implementar` fica de fora (CA-19/D20 — não move: fica na coluna
+ * Implementar até o PR mergear, e é `esteira-validar` quem move, com três
+ * transições condicionais que não têm "a próxima coluna" única). `validar`
+ * fica de fora pelo mesmo motivo que já valia antes (três destinos possíveis:
+ * Implementar de volta, Validação com Cliente, ou Concluído — nenhum
+ * determinístico o bastante pra virar uma linha desta tabela). `concluir`
+ * fica de fora — é o fim da esteira, fora do escopo desta detecção.
+ */
 const NEXT_PHASE: Readonly<Partial<Record<EsteiraPhase, EsteiraPhase>>> = {
   discovery: 'plano',
   plano: 'implementar',
-  implementar: 'validar',
 };
 
 function phaseIndex(value: string): number {
@@ -44,11 +74,11 @@ export interface PhaseDivergence {
 }
 
 /**
- * CA-13 (detecção)/CA-19 — fase concluída no disco, mas o board ainda não
- * chegou (ou passou) na coluna esperada. `implementar` NÃO move o card na v3
- * (D20 do contrato: fica em Implementar até o PR da fase mergear) — está fora
- * de `NEXT_PHASE`, então nunca acusa divergência por conta própria; mesma
- * regra que já valia para `validar`.
+ * CA-13 (detecção)/CA-19 (regra v3) — fase concluída no disco, mas o board
+ * ainda não chegou (ou passou) na coluna esperada por `NEXT_PHASE`. `implementar`
+ * NÃO move o card na v3 (D20 do contrato: fica em Implementar até o PR da
+ * fase mergear) — está fora de `NEXT_PHASE`, então nunca acusa divergência
+ * por conta própria; mesma regra que já valia para `validar`.
  */
 export function detectPhaseDivergence(phase: EsteiraPhase, diskStatus: PhaseStatus, boardColumn: string): PhaseDivergence | null {
   if (diskStatus !== 'done') return null;

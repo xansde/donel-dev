@@ -86,8 +86,21 @@ export interface EsteiraResultManifest {
      * de PR) que o plano fatiou. É a fonte de "quantos PRs este card de plano
      * propõe" — sem ela, Implementação/Validação não têm de onde nascer
      * (CA-14, degradação por omissão, nunca `fase 1` chutada).
+     *
+     * Lote 8 (CA-20) — `garantia` por fase (contrato §D.3): a declaração
+     * AUTORITATIVA da garantia daquela fase do plano (`tipo`, `descricao`,
+     * `roteiro_path` — `null` quando `tipo != "roteiro_e2e"`). É a mesma
+     * garantia pras duas sub-fases (implementar/validar, D13 — "1 garantia :
+     * 1 fase do plano"), por isso mora aqui e não em cada `*-result.json`
+     * individual.
      */
-    readonly fases?: readonly { fase_num: number; titulo?: string }[];
+    readonly fases?: readonly {
+      fase_num: number;
+      titulo?: string;
+      garantia?: { tipo?: string; descricao?: string; roteiro_path?: string | null };
+    }[];
+    /** CA-21 — só no validar-result.json (contrato §D.5): "todas as fases deste plano estão homologadas". A v3 não grava `concluir-result.json`; este é o sinal de disco mais próximo de "o card de plano terminou". */
+    readonly plano_completo?: boolean;
     /** CA-8: os ÚNICOS artefatos declarados por uma fase — nunca varredura. */
     readonly artifact_paths?: readonly string[];
     /**
@@ -251,11 +264,20 @@ export function readDiscoveryPlanCards(root: EsteiraStateRoot, cardId: string, i
   }));
 }
 
+/** Lote 8 (CA-20) — a garantia declarada pelo plano para uma fase (contrato §D.3). `null` = a fase não declarou (ou o plano ainda não gravou) garantia — degradação por omissão. */
+export interface PlanoFaseGarantiaRef {
+  readonly tipo: string | null;
+  readonly descricao: string | null;
+  readonly roteiroPath: string | null;
+}
+
 /** Lote 7 (CA-11) — uma fase (`fase_num`, unidade de PR) que o plano declarou. */
 export interface PlanoFaseRef {
   readonly faseNum: number;
   /** `null` = plano não deu título à fase — degradação por omissão, nunca fabricado. */
   readonly titulo: string | null;
+  /** Lote 8 (CA-20) — `null` = a fase não tem garantia declarada. */
+  readonly garantia: PlanoFaseGarantiaRef | null;
 }
 
 /**
@@ -278,6 +300,17 @@ export function readPlanoFases(root: EsteiraStateRoot, cardId: string, io: Estei
     .map((entry) => ({
       faseNum: entry.fase_num,
       titulo: typeof entry.titulo === 'string' ? entry.titulo : null,
+      garantia: normalizeGarantiaRef(entry.garantia),
     }))
     .sort((a, b) => a.faseNum - b.faseNum);
+}
+
+/** Lote 8 (CA-20) — `undefined`/shape errado vira `null` (C4), nunca fabrica um tipo/descrição que o plano não declarou. */
+function normalizeGarantiaRef(raw: { tipo?: string; descricao?: string; roteiro_path?: string | null } | undefined): PlanoFaseGarantiaRef | null {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    tipo: typeof raw.tipo === 'string' ? raw.tipo : null,
+    descricao: typeof raw.descricao === 'string' ? raw.descricao : null,
+    roteiroPath: typeof raw.roteiro_path === 'string' ? raw.roteiro_path : null,
+  };
 }

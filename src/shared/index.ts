@@ -12,6 +12,7 @@ import type { DonelProjectBindingApi } from './projectBinding';
 import type { DonelProjectsApi } from './projects';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
+import type { DonelTranscriptsApi } from './transcriptCopy';
 
 export { PROJECT_CHANNELS, sortProjects } from './projects';
 export type { DonelProjectsApi, ProjectInfo } from './projects';
@@ -118,6 +119,27 @@ export type { AnnotatedDiscoveryTree, AnnotatedPlanCardNode, AnnotatedPhaseNode,
 export { annotateTree, detectPhaseDivergence } from './boardAnnotation';
 export type { EsteiraResultManifest, PhaseArtifacts } from '../main/esteira-reader';
 export type { PhaseStatus } from './phaseState';
+
+// Lote 8 (009-modo-dev-v3), CA-24 — "Reiniciar sessão em foco" retoma na
+// conta SELECIONADA, copiando o `.jsonl` pro perfil dela quando a sessão
+// rodou em outro perfil (achado 14). Lógica pura + contrato IPC em
+// src/shared/transcriptCopy.ts; o fs real vive em src/main/transcript-copy.ts.
+export { isValidCopyTranscriptForResumeIpcInput, planTranscriptCopy, TRANSCRIPT_COPY_CHANNELS } from './transcriptCopy';
+export type { CopyTranscriptForResumeIpcInput, CopyTranscriptForResumeResult, DonelTranscriptsApi, TranscriptCopyPlan } from './transcriptCopy';
+
+// Lote 8 (009-modo-dev-v3), CA-18/CA-20 — o conteúdo rico do painel direito
+// (breadcrumb, garantia, PR, artefatos, recibos). Puro, testado; a UI só
+// renderiza (PhaseDetailsPanel.tsx).
+export { buildPhaseDetailsView } from './phaseDetailsView';
+export type {
+  BuildPhaseDetailsViewInput,
+  PhaseDetailsArtifact,
+  PhaseDetailsBreadcrumb,
+  PhaseDetailsGarantiaView,
+  PhaseDetailsPrRow,
+  PhaseDetailsReceipt,
+  PhaseDetailsViewModel,
+} from './phaseDetailsView';
 
 // 004-nomear-sessoes — resolução do nome exibido de uma sessão (T401) e
 // validação do nome digitado (T406). Usados no main (persistência) e no
@@ -308,4 +330,6 @@ export interface DonelApi {
   projectBinding: DonelProjectBindingApi;
   /** CA-3/CA-5 (009-modo-dev-v3, lote 4) — leitura do GitHub por `gh` CLI (spec-issue, sub-issues, PR da fase). Só leitura. */
   github: DonelGithubApi;
+  /** CA-24 (009-modo-dev-v3, lote 8) — cópia de transcript entre perfis pro "Reiniciar sessão em foco". */
+  transcripts: DonelTranscriptsApi;
 }

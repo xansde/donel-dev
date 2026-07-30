@@ -1,5 +1,5 @@
 import { ArmedPrompt, Button, HomologationClock, Modal, SplitButton, StatusBar, TerminalTab, Toast, Toggle } from '@donel-dev/design-system';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Settings } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppConfigDto,
@@ -35,6 +35,9 @@ import { sortProjects } from '../../shared';
 import type { PhasePullRequestFacts } from '../../shared/githubFacts';
 // Lote 7 (CA-11) — `--fase=n` no comando pré-digitado (D-V4: `=`, nunca espaço).
 import { formatFaseCommand } from '../../shared/mapLevels';
+// Lote 8 (CA-18/CA-20) — monta o conteúdo rico do painel direito (breadcrumb,
+// garantia, PR, artefatos, recibos) a partir de dados já resolvidos.
+import { buildPhaseDetailsView } from '../../shared/phaseDetailsView';
 // T710 (007/CA-11 2º momento) — o sinal de "a retomada falhou" é o exit code do
 // PTY (medido em specs/008-fechar-pendencias/medicao-t710.md), não texto de CLI.
 import { resumedSessionIdFromArgs, shouldForgetOnResumeFailure } from '../../shared/resumeFailure';
@@ -389,6 +392,21 @@ export function App(): React.JSX.Element {
   const [armedPrompt, setArmedPrompt] = useState<{ tabId: string; command: string; warning?: string } | null>(null);
   /** D4 — Toast informativo (troca de foco, avisos); nunca tem ação de desfazer. */
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
+  /**
+   * CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": aba +
+   * sessão-alvo confirmadas no modal, antes do resume de verdade. `null` =
+   * modal fechado. Funciona nos dois modos (Dev e Uso geral) — não é
+   * exclusivo do Modo Dev, ao contrário do resto deste bloco de estado.
+   */
+  const [restartTarget, setRestartTarget] = useState<{
+    tabId: string;
+    sessionId: string;
+    cwd?: string;
+    projectName?: string;
+    sourceProfileSlug: string;
+  } | null>(null);
+  /** CA-24 — mesmo hook de teste de `lastDevModeSession`/`lastLaunch`: o argv REAL montado pro resume, sem depender de ler o output do terminal. */
+  const [lastRestartSession, setLastRestartSession] = useState<{ args: readonly string[]; cwd?: string } | null>(null);
   /** C4/T318 — artefato aberto no lugar de uma sessão (discovery antigo sem `session-id`). */
   const [openedArtifactPath, setOpenedArtifactPath] = useState<string | null>(null);
   /** Etapa (`discovery:marco:fase`) → `tab.id` da sessão daquela etapa. É o que o arquivamento (CA-6) usa para achar a aba certa. */
@@ -1130,7 +1148,12 @@ export function App(): React.JSX.Element {
   const focusedMarcoDisplay =
     focusedTree?.planCards.find((planCard) => planCard.cardId === focusedMarcoId) ?? focusedTree?.planCards[0] ?? null;
 
-  /** Lote 7/CA-7 — a etapa selecionada no mapa, resolvida pro esqueleto do painel de 316px (`PhaseDetailsPanel`, lote 8 preenche o conteúdo rico). `null` sem seleção — o painel degrada por omissão. */
+  /**
+   * Lote 8/CA-18/CA-20 — a etapa selecionada no mapa, com o conteúdo RICO do
+   * painel de 316px (breadcrumb, garantia, PR desta fase, artefatos,
+   * recibos de conhecimento). `null` sem seleção — o painel degrada por
+   * omissão (`PhaseDetailsPanel`).
+   */
   const selectedPhaseDetails = useMemo(() => {
     if (!selectedNode || !focusedTree) return null;
     const marco = focusedTree.planCards.find((planCard) => planCard.cardId === selectedNode.cardId);
@@ -1140,8 +1163,21 @@ export function App(): React.JSX.Element {
       faseEntry && (selectedNode.phase === 'implementar' || selectedNode.phase === 'validar')
         ? faseEntry[selectedNode.phase]
         : marco.phases[selectedNode.phase];
-    return { cardId: selectedNode.cardId, phase: selectedNode.phase, faseNum: selectedNode.faseNum ?? null, status: node.status };
-  }, [selectedNode, focusedTree]);
+    const faseNum = selectedNode.faseNum ?? null;
+    const pr = faseNum !== null ? (phasePullRequestFacts[`${selectedNode.cardId}:${faseNum}`] ?? null) : null;
+    return buildPhaseDetailsView({
+      discoveryCardId: focusedTree.discoveryCardId,
+      planCardId: marco.cardId,
+      planCardTitle: marco.boardFacts?.title || marco.cardId,
+      phase: selectedNode.phase,
+      faseNum,
+      node,
+      faseGarantia: faseEntry?.garantia ?? null,
+      pr,
+      branch: node.artifacts.branch,
+      activeProfileSlug,
+    });
+  }, [selectedNode, focusedTree, phasePullRequestFacts, activeProfileSlug]);
 
   /** CA-1 — lista de candidatos do board. Sem fonte configurada volta `[]` (porta desligada, não erro). */
   const refreshEntryCards = useCallback((): void => {
@@ -1493,6 +1529,93 @@ export function App(): React.JSX.Element {
     }
 
     armPhaseCommands(tab.id, [LIBERAR_COMMAND_TEMPLATE.replace('{card_id}', target.cardId)]);
+  };
+
+  /**
+   * CA-24 (009-modo-dev-v3, lote 8) — abre o modal de confirmação do
+   * "Reiniciar sessão em foco". Sem aba Claude em foco (ou sem
+   * `claudeSessionId` já resolvido — janela curta entre `pty:create` e a
+   * promise responder), o botão simplesmente não faz nada: nunca cria uma
+   * sessão "vazia" só para ter algo a reiniciar.
+   */
+  const handleOpenRestart = (): void => {
+    if (!activeClaudeTab?.claudeSessionId) return;
+    const tab = activeClaudeTab;
+    setRestartTarget({
+      tabId: tab.id,
+      sessionId: tab.claudeSessionId as string,
+      cwd: tab.cwd,
+      projectName: tab.projectName,
+      // CA-25 — perfil de NASCIMENTO da aba (`sessionProfiles`, T707/handleProfileResolved), nunca o perfil ATIVO agora.
+      sourceProfileSlug: sessionProfiles[tab.id]?.slug ?? activeProfileSlug,
+    });
+  };
+
+  /**
+   * CA-24 — confirmado o reinício: retoma (`-r <sessionId>`) na conta
+   * SELECIONADA (`activeProfileSlug`, o perfil ativo agora no
+   * ProfileSwitcher — "a conta selecionada" do CA-24), copiando o transcript
+   * pra dentro do perfil dela ANTES quando ela é diferente da que rodou a
+   * sessão (achado 14: o `.jsonl` mora no `CLAUDE_CONFIG_DIR` do perfil
+   * dono). A cópia é best-effort (C4): se falhar, o resume segue mesmo assim
+   * — o pior caso é idêntico a hoje, sem este botão (`-r` começa do zero,
+   * calado). A aba antiga fecha (ela "congela", CA-25) e uma aba nova nasce
+   * já retomando; sem `cwd` conhecido (aba sem projeto associado) a cópia
+   * nem tenta — não há como resolver o diretório de sessões do projeto.
+   */
+  const confirmRestart = (): void => {
+    const target = restartTarget;
+    setRestartTarget(null);
+    if (!target) return;
+
+    const targetProfileSlug = activeProfileSlug;
+    const crossProfile = target.sourceProfileSlug !== targetProfileSlug;
+
+    const resumeWithNewTab = (): void => {
+      // ORDEM IMPORTA (bug pego pelo smoke restart-session.spec.ts): `addTab`/
+      // `closeTabImmediately` fazem `setTabs(<array direto>)` a partir do
+      // `tabs` do CLOSURE desta render — não são updates funcionais. Chamar
+      // `addTab` e DEPOIS `closeTabImmediately` faz o `setTabs` do close
+      // sobrescrever o array já com a aba nova por um array calculado ANTES
+      // dela existir (o `tabs` capturado no fechamento nunca viu o `addTab`),
+      // apagando a aba recém-criada — 0 abas no fim, não 1. Fechar PRIMEIRO
+      // (sobre o `tabs` desta render, ainda correto) e só then criar a nova
+      // evita a corrida: o `setTabs` de `addTab` (que É funcional,
+      // `prev => [...prev, novo]`) compõe corretamente em cima do resultado
+      // do close, processado antes dele na mesma fila de updates do React.
+      closeTabImmediately(target.tabId);
+      const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId: target.sessionId } });
+      setLastRestartSession({ args, cwd: target.cwd });
+      addTab({
+        name: target.projectName ?? 'Sessão reiniciada',
+        cwd: target.cwd,
+        projectName: target.projectName,
+        pinned: false,
+        launchArgs: args,
+        sessionType: 'claude',
+      });
+      if (crossProfile) {
+        setDevModeToast(`Sessão reiniciada na conta ${targetProfileSlug} — a sessão original (conta ${target.sourceProfileSlug}) continua congelada.`);
+      }
+    };
+
+    if (!crossProfile || !target.cwd) {
+      // Mesma conta: resume direto, sem cópia (CA-24). Sem `cwd` conhecido:
+      // não há como resolver o diretório do projeto pra copiar — segue sem
+      // cópia mesmo assim (degradação por omissão, nunca bloqueia o gesto).
+      resumeWithNewTab();
+      return;
+    }
+
+    window.donel.transcripts
+      .copyForResume({
+        sessionId: target.sessionId,
+        projectPath: target.cwd,
+        sourceProfileSlug: target.sourceProfileSlug,
+        targetProfileSlug,
+      })
+      .catch(() => undefined) // best-effort (C4) — a cópia falhar não impede o resume.
+      .finally(resumeWithNewTab);
   };
 
   /**
@@ -1912,6 +2035,23 @@ export function App(): React.JSX.Element {
             )}
           </button>
         ) : null}
+        {/* CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco":
+            mesmo padrão de gesto dos botões vizinhos (ícone no titlebar,
+            `preferencesButton`) — funciona nos dois modos (Dev e Uso geral),
+            por isso NÃO fica dentro do bloco `devModeOn` acima. Só aparece
+            com uma sessão claude em foco (nada a reiniciar sem isso). */}
+        {activeClaudeTab?.claudeSessionId ? (
+          <button
+            type="button"
+            className={styles.preferencesButton}
+            onClick={handleOpenRestart}
+            aria-label="Reiniciar sessão em foco"
+            title="Reiniciar sessão em foco (retoma na conta selecionada)"
+            data-testid="restart-session-button"
+          >
+            <RotateCcw size={16} strokeWidth={1.5} aria-hidden="true" />
+          </button>
+        ) : null}
         <button
           type="button"
           className={styles.preferencesButton}
@@ -2208,6 +2348,10 @@ export function App(): React.JSX.Element {
         <pre data-testid="devmode-last-session" data-cwd={lastDevModeSession?.cwd ?? ''} hidden>
           {lastDevModeSession ? ['claude', ...lastDevModeSession.args].join(' ') : ''}
         </pre>
+        {/* CA-24 (009-modo-dev-v3, lote 8) — idem, pro "Reiniciar sessão em foco". */}
+        <pre data-testid="restart-last-session" data-cwd={lastRestartSession?.cwd ?? ''} hidden>
+          {lastRestartSession ? ['claude', ...lastRestartSession.args].join(' ') : ''}
+        </pre>
       </div>
 
       <StatusBar
@@ -2247,6 +2391,36 @@ export function App(): React.JSX.Element {
         }
       >
         <p>O processo desta aba será encerrado.</p>
+      </Modal>
+
+      {/* CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": mesmo
+          padrão de modal de confirmação do "Fechar sessão?" acima. Avisa a
+          conta de destino e, quando diferente da que rodou a sessão, que a
+          sessão passa a existir em duas contas (CA-25) — retomada também é
+          um comando "preparado" no sentido de que só dispara ao confirmar
+          aqui, nunca antes. */}
+      <Modal
+        open={restartTarget !== null}
+        onClose={() => setRestartTarget(null)}
+        title="Reiniciar sessão em foco?"
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => setRestartTarget(null)}>
+              Cancelar
+            </Button>
+            <Button variant="primary" onClick={confirmRestart} data-testid="restart-session-confirm">
+              ⟳ Reiniciar
+            </Button>
+          </>
+        }
+      >
+        <p>A sessão é retomada (<code>-r</code>) na conta <strong>{activeProfileSlug}</strong>, a conta selecionada agora.</p>
+        {restartTarget && restartTarget.sourceProfileSlug !== activeProfileSlug ? (
+          <p>
+            Ela rodou na conta <strong>{restartTarget.sourceProfileSlug}</strong> — o transcript é copiado pra conta{' '}
+            <strong>{activeProfileSlug}</strong> antes de retomar. A sessão passa a existir nas duas contas; a original congela.
+          </p>
+        ) : null}
       </Modal>
 
       {/* T013 — PARTE PRINCIPAL (FR-004, CA-2, ui-spec §5). */}

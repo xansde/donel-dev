@@ -102,27 +102,98 @@ describe('buildDiscoveryTree', () => {
     expect(tree.allPlanCardsComplete).toBe(false);
   });
 
-  it('allPlanCardsComplete só é true quando TODA fase concluir de TODO card de plano tem status success (CA-23)', () => {
-    const files = {
-      ...threePlanCardsFanout(),
-      [phaseCtxPath('concluir', 'card-p1')]: '---\ncard_id: card-p1\n---\n',
-      [phaseResultPath('concluir', 'card-p1')]: successManifest('card-p1', 'concluir'),
-      [phaseCtxPath('concluir', 'card-p2')]: '---\ncard_id: card-p2\n---\n',
-      [phaseResultPath('concluir', 'card-p2')]: successManifest('card-p2', 'concluir'),
-      // card-p3 concluir: sem ctx.md — ainda não chegou lá.
-    };
-    const io = fakeIo(files);
-    const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
+  // CA-21 — a v3 não grava `concluir-result.json` (esteira-concluir é gate
+  // mecânico, §D.7 do contrato: "não grava result.json"), então
+  // `phases.concluir.status === 'done'` nunca fica verdadeiro (problema 3 da
+  // spec). `allPlanCardsComplete` passa a ler, por track: código — QUALQUER
+  // fase declarada com `validar-result.json.outputs.plano_completo === true`
+  // (contrato §D.5: "todas as fases deste plano estão homologadas", o mesmo
+  // fato pro plano inteiro, por isso QUALQUER fase basta); documental — a
+  // fase `documentar` (terminal do track, §B) com status `done`.
+  describe('allPlanCardsComplete (CA-21 — sem depender de concluir-result.json)', () => {
+    function planoManifestWithGarantiaFases(cardId: string, faseNums: readonly number[]): string {
+      return JSON.stringify({
+        card_id: cardId,
+        fase: 'plano',
+        status: 'success',
+        started_at: 'x',
+        finished_at: 'x',
+        executor: 'claude',
+        model: 'opus',
+        effort: 'high',
+        outputs: { fases: faseNums.map((n) => ({ fase_num: n })) },
+      });
+    }
 
-    expect(tree.allPlanCardsComplete).toBe(false);
+    function validarManifest(cardId: string, planoCompleto: boolean): string {
+      return JSON.stringify({
+        card_id: cardId,
+        fase: 'validar',
+        status: 'success',
+        started_at: 'x',
+        finished_at: 'x',
+        executor: 'claude',
+        model: 'sonnet',
+        effort: 'low',
+        outputs: { fase_num: 1, plano_completo: planoCompleto },
+      });
+    }
 
-    const filesAllDone = {
-      ...files,
-      [phaseCtxPath('concluir', 'card-p3')]: '---\ncard_id: card-p3\n---\n',
-      [phaseResultPath('concluir', 'card-p3')]: successManifest('card-p3', 'concluir'),
-    };
-    const treeAllDone = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, fakeIo(filesAllDone));
-    expect(treeAllDone.allPlanCardsComplete).toBe(true);
+    it('track código: nenhuma fase homologada (plano_completo ausente/false) → aquele card de plano não está completo', () => {
+      const files = {
+        ...threePlanCardsFanout(),
+        [planoResultPath('card-p1')]: planoManifestWithGarantiaFases('card-p1', [1]),
+        [phaseCtxPath('validar', 'card-p1')]: '---\ncard_id: card-p1\n---\n',
+        [phaseResultPathByFaseNum('validar', 'card-p1', 1)]: validarManifest('card-p1', false),
+      };
+      const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, fakeIo(files));
+      expect(tree.allPlanCardsComplete).toBe(false);
+    });
+
+    it('track código: fase homologada (plano_completo true) + track documental com documentar done → true', () => {
+      const files = {
+        ...threePlanCardsFanout(),
+        [planoResultPath('card-p1')]: planoManifestWithGarantiaFases('card-p1', [1]),
+        [phaseCtxPath('validar', 'card-p1')]: '---\ncard_id: card-p1\n---\n',
+        [phaseResultPathByFaseNum('validar', 'card-p1', 1)]: validarManifest('card-p1', true),
+        [planoResultPath('card-p2')]: planoManifestWithGarantiaFases('card-p2', [1]),
+        [phaseCtxPath('validar', 'card-p2')]: '---\ncard_id: card-p2\n---\n',
+        [phaseResultPathByFaseNum('validar', 'card-p2', 1)]: validarManifest('card-p2', true),
+        [phaseCtxPath('documentar', 'card-p3')]: '---\ncard_id: card-p3\n---\n',
+        [phaseResultPath('documentar', 'card-p3')]: successManifest('card-p3', 'documentar'),
+      };
+      const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, fakeIo(files));
+      expect(tree.allPlanCardsComplete).toBe(true);
+    });
+
+    it('track código sem fases declaradas ainda (fases: []) → nunca completo, mesmo que outros cards estejam', () => {
+      const files = {
+        ...threePlanCardsFanout(),
+        // card-p1: sem plano-result.json → fases: [].
+        [planoResultPath('card-p2')]: planoManifestWithGarantiaFases('card-p2', [1]),
+        [phaseCtxPath('validar', 'card-p2')]: '---\ncard_id: card-p2\n---\n',
+        [phaseResultPathByFaseNum('validar', 'card-p2', 1)]: validarManifest('card-p2', true),
+        [phaseCtxPath('documentar', 'card-p3')]: '---\ncard_id: card-p3\n---\n',
+        [phaseResultPath('documentar', 'card-p3')]: successManifest('card-p3', 'documentar'),
+      };
+      const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, fakeIo(files));
+      expect(tree.allPlanCardsComplete).toBe(false);
+    });
+
+    it('track documental: documentar sem sucesso ainda → não completo', () => {
+      const files = {
+        ...threePlanCardsFanout(),
+        [planoResultPath('card-p1')]: planoManifestWithGarantiaFases('card-p1', [1]),
+        [phaseCtxPath('validar', 'card-p1')]: '---\ncard_id: card-p1\n---\n',
+        [phaseResultPathByFaseNum('validar', 'card-p1', 1)]: validarManifest('card-p1', true),
+        [planoResultPath('card-p2')]: planoManifestWithGarantiaFases('card-p2', [1]),
+        [phaseCtxPath('validar', 'card-p2')]: '---\ncard_id: card-p2\n---\n',
+        [phaseResultPathByFaseNum('validar', 'card-p2', 1)]: validarManifest('card-p2', true),
+        // card-p3 (documental): sem ctx.md — ainda não chegou em Documentar.
+      };
+      const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, fakeIo(files));
+      expect(tree.allPlanCardsComplete).toBe(false);
+    });
   });
 
   it('liga archivedPhaseSessions ao nó certo, pela chave v3 cardId:fase (CA-9/CA-31)', () => {
@@ -175,7 +246,10 @@ describe('buildDiscoveryTree', () => {
   // PLANO propôs, cada uma com implementar/validar do disco de VERDADE
   // (`handoffs/fase-<n>/…`), não mais hardcoded em `fase-1`.
   describe('PlanCardNode.fases (CA-11)', () => {
-    function planoManifestWithFases(cardId: string, fases: readonly { fase_num: number; titulo?: string }[]): string {
+    function planoManifestWithFases(
+      cardId: string,
+      fases: readonly { fase_num: number; titulo?: string; garantia?: { tipo?: string; descricao?: string; roteiro_path?: string | null } }[],
+    ): string {
       return JSON.stringify({
         card_id: cardId,
         fase: 'plano',
@@ -196,6 +270,25 @@ describe('buildDiscoveryTree', () => {
       for (const planCard of tree.planCards) {
         expect(planCard.fases).toEqual([]);
       }
+    });
+
+    // CA-20 (lote 8) — a garantia declarada pelo plano (contrato §D.3) chega
+    // em `PlanCardFaseNode.garantia`, a mesma para implementar/validar da
+    // mesma fase (D13: "1 garantia : 1 fase do plano").
+    it('fase com garantia declarada → PlanCardFaseNode.garantia com tipo/descricao/roteiroPath; sem declaração → null (C4)', () => {
+      const files = {
+        ...threePlanCardsFanout(),
+        [planoResultPath('card-p1')]: planoManifestWithFases('card-p1', [
+          { fase_num: 1, garantia: { tipo: 'roteiro_e2e', descricao: 'Cobre o parcelamento', roteiro_path: 'specs/x/e2e-fase-1.md' } },
+          { fase_num: 2 }, // sem garantia declarada
+        ]),
+      };
+      const io = fakeIo(files);
+      const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
+
+      const p1 = tree.planCards.find((pc) => pc.cardId === 'card-p1')!;
+      expect(p1.fases[0].garantia).toEqual({ tipo: 'roteiro_e2e', descricao: 'Cobre o parcelamento', roteiroPath: 'specs/x/e2e-fase-1.md' });
+      expect(p1.fases[1].garantia).toBeNull();
     });
 
     it('plano com 2 fases declaradas → 2 entradas em fases[], cada uma com implementar/validar DO DISCO daquele fase_num', () => {

@@ -371,8 +371,8 @@ describe('readPlanoFases', () => {
       }),
     });
     expect(readPlanoFases(ROOT, CARD_ID, io)).toEqual([
-      { faseNum: 1, titulo: 'Tabela de coeficientes' },
-      { faseNum: 2, titulo: 'Serviço de parcelas' },
+      { faseNum: 1, titulo: 'Tabela de coeficientes', garantia: null },
+      { faseNum: 2, titulo: 'Serviço de parcelas', garantia: null },
     ]);
   });
 
@@ -381,8 +381,8 @@ describe('readPlanoFases', () => {
       [PLANO_RESULT_PATH]: planoManifest({ fases: [{ fase_num: 1 }, { fase_num: 2, titulo: 42 }] }),
     });
     expect(readPlanoFases(ROOT, CARD_ID, io)).toEqual([
-      { faseNum: 1, titulo: null },
-      { faseNum: 2, titulo: null },
+      { faseNum: 1, titulo: null, garantia: null },
+      { faseNum: 2, titulo: null, garantia: null },
     ]);
   });
 
@@ -390,6 +390,32 @@ describe('readPlanoFases', () => {
     const io = fakeIo({
       [PLANO_RESULT_PATH]: planoManifest({ fases: [{ fase_num: 1 }, { titulo: 'sem fase_num' }, { fase_num: 'x' }] }),
     });
-    expect(readPlanoFases(ROOT, CARD_ID, io)).toEqual([{ faseNum: 1, titulo: null }]);
+    expect(readPlanoFases(ROOT, CARD_ID, io)).toEqual([{ faseNum: 1, titulo: null, garantia: null }]);
+  });
+
+  // CA-20 (lote 8) — garantia declarada pelo plano (contrato §D.3): tipo,
+  // descricao, roteiro_path (renomeado pra roteiroPath, camelCase do domínio).
+  it('fase com garantia declarada → garantia com os 3 campos; roteiro_path null quando o tipo não é roteiro_e2e', () => {
+    const io = fakeIo({
+      [PLANO_RESULT_PATH]: planoManifest({
+        fases: [
+          { fase_num: 1, garantia: { tipo: 'roteiro_e2e', descricao: 'Cobre o fluxo de checkout', roteiro_path: 'specs/x/e2e-fase-1.md' } },
+          { fase_num: 2, garantia: { tipo: 'testes_herdados', descricao: 'Suite existente', roteiro_path: null } },
+        ],
+      }),
+    });
+    expect(readPlanoFases(ROOT, CARD_ID, io)).toEqual([
+      { faseNum: 1, titulo: null, garantia: { tipo: 'roteiro_e2e', descricao: 'Cobre o fluxo de checkout', roteiroPath: 'specs/x/e2e-fase-1.md' } },
+      { faseNum: 2, titulo: null, garantia: { tipo: 'testes_herdados', descricao: 'Suite existente', roteiroPath: null } },
+    ]);
+  });
+
+  it('fase sem garantia declarada, ou com garantia de shape errado → garantia: null, nunca lança', () => {
+    const io = fakeIo({
+      [PLANO_RESULT_PATH]: planoManifest({ fases: [{ fase_num: 1 }, { fase_num: 2, garantia: 'texto solto' }] }),
+    });
+    const fases = readPlanoFases(ROOT, CARD_ID, io);
+    expect(fases[0].garantia).toBeNull();
+    expect(fases[1].garantia).toBeNull();
   });
 });
