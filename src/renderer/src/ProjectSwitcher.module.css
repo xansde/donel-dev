@@ -1,0 +1,118 @@
+/* CA-30 (009-modo-dev-v3, lote 9) — trigger no titlebar, mesma linguagem
+   visual do `.genericBadge` de ProfileSwitcher.module.css (pill, bg-panel,
+   hairline), mas com o path/nome em mono (mockup linha 473: font-mono). */
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg-panel);
+  border: var(--hairline);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.trigger:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+.trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.triggerLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 320px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+  line-height: 1.55;
+}
+
+.hintDanger {
+  composes: hint;
+  color: var(--state-error);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.projectRow {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 6px var(--space-1);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.projectRow:hover {
+  background: var(--bg-raised);
+}
+
+.projectRow:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.mark {
+  flex: none;
+  width: 10px;
+  text-align: center;
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-body-size);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footer {
+  display: flex;
+  padding-top: var(--space-1);
+  border-top: var(--hairline);
+}
+
+.newProjectBody {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}

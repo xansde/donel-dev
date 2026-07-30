@@ -5,6 +5,8 @@ import type {
   BoardFacts,
   CopyTranscriptForResumeIpcInput,
   CopyTranscriptForResumeResult,
+  CreateProjectIpcInput,
+  CreateProjectResponse,
   DiscoveryTree,
   DonelApi,
   EntryColumnCard,
@@ -99,6 +101,9 @@ const donelApi: DonelApi = {
 
     setFavorite: (path: string, favorite: boolean) =>
       ipcRenderer.invoke(PROJECT_CHANNELS.favorite, path, favorite) as Promise<ProjectInfo[]>,
+
+    // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
+    create: (input: CreateProjectIpcInput) => ipcRenderer.invoke(PROJECT_CHANNELS.create, input) as Promise<CreateProjectResponse>,
   },
 
   semaphore: {

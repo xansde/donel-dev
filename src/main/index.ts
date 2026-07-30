@@ -8,6 +8,7 @@ import type {
   ArchivePhaseSessionIpcInput,
   CopyTranscriptForResumeIpcInput,
   CopyTranscriptForResumeResult,
+  CreateProjectResponse,
   DiscoveryTree,
   GhAvailabilityDto,
   GithubReadRequest,
@@ -44,6 +45,7 @@ import {
   isValidCardId,
   isValidCardIdList,
   isValidCopyTranscriptForResumeIpcInput,
+  isValidCreateProjectIpcInput,
   isValidGithubReadRequest,
   isValidOpenDiscoveryIpcInput,
   isValidSaveProjectBindingIpcInput,
@@ -119,6 +121,8 @@ import {
   type ProfileInfo,
 } from './profile-manager';
 import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects, sortProjects } from './project-scanner';
+// CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
+import { createNewProject, createSystemCreateProjectDeps } from './project-creator';
 import { PtyManager } from './pty-manager';
 // T504 (005-terminal-copy-paste) — clipboard-bridge (T503), aditivo aos
 // imports acima (não reordena o bloco existente).
@@ -148,6 +152,8 @@ const ptyManager = new PtyManager();
 const claudeResolveDeps = createSystemResolveDeps();
 // Idem para o scan de projetos (T007) — mesmo padrão do claude-executable.
 const projectScanDeps = createSystemScanDeps();
+// CA-30 (009-modo-dev-v3, lote 9) — idem para a criação de projeto novo.
+const createProjectDeps = createSystemCreateProjectDeps();
 
 // T015 — ConfigStore formal (FR-007): carregado de verdade em
 // `app.whenReady()` (migração dos JSONs legados de T007/T014 incluída, ver
@@ -532,6 +538,22 @@ function registerProjectIpcHandlers(): void {
     appConfig = { ...appConfig, favorites: toggleFavorite(appConfig.favorites, path, favorite) };
     persistAppConfig();
     return listProjectsWithFavorites();
+  });
+
+  /**
+   * CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero pelo app"
+   * (US-15). `allowedRoots` é SEMPRE `appConfig.projectRoots` (nunca uma
+   * lista vinda do renderer — a allowlist de destino é decidida aqui, não
+   * pelo payload IPC). Devolve resultado + lista já re-escaneada (mesmo
+   * idioma de `PROJECT_CHANNELS.favorite`): projeto criado aparece na
+   * sidebar/seletor sem round-trip extra.
+   */
+  ipcMain.handle(PROJECT_CHANNELS.create, async (_event, input: unknown): Promise<CreateProjectResponse> => {
+    if (!isValidCreateProjectIpcInput(input)) {
+      return { result: { ok: false, reason: 'empty' }, projects: listProjectsWithFavorites() };
+    }
+    const result = await createNewProject(input, appConfig.projectRoots, createProjectDeps);
+    return { result, projects: listProjectsWithFavorites() };
   });
 }
 

@@ -17,6 +17,20 @@ import type { DonelTranscriptsApi } from './transcriptCopy';
 export { PROJECT_CHANNELS, sortProjects } from './projects';
 export type { DonelProjectsApi, ProjectInfo } from './projects';
 
+// CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero pelo app"
+// (US-15 do backlog.md). Validação pura do nome da pasta + contrato IPC
+// aqui; o encanamento de disco (mkdir, marcador CLAUDE.md, `git init`
+// best-effort) vive em src/main/project-creator.ts.
+export { isValidCreateProjectIpcInput, NEW_PROJECT_CHANNEL, validateProjectFolderName } from './newProject';
+export type {
+  CreateProjectErrorReason,
+  CreateProjectIpcInput,
+  CreateProjectResponse,
+  CreateProjectResult,
+  ProjectFolderNameErrorReason,
+  ProjectFolderNameValidation,
+} from './newProject';
+
 export { SESSION_CHANNELS, TRANSCRIPT_CHANNELS } from './sessions';
 export type { DonelSessionsApi, SessionSummaryDto, TranscriptChangedPayload } from './sessions';
 

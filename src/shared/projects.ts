@@ -3,9 +3,15 @@
 // (src/main/project-scanner.ts, src/main/project-config-store.ts); aqui só o
 // contrato compartilhado com preload/renderer.
 
+import type { CreateProjectIpcInput, CreateProjectResponse } from './newProject';
+
 export const PROJECT_CHANNELS = {
   list: 'projects:list',
   favorite: 'projects:favorite',
+  // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
+  // Tipos do payload/resposta em ./newProject.ts (módulo puro, sem node:fs);
+  // o encanamento de disco vive em src/main/project-creator.ts.
+  create: 'projects:create',
 } as const;
 
 export interface ProjectInfo {
@@ -30,6 +36,8 @@ export interface DonelProjectsApi {
   list(): Promise<ProjectInfo[]>;
   /** Marca/desmarca favorito; retorna a lista já atualizada (evita round-trip extra). */
   setFavorite(path: string, favorite: boolean): Promise<ProjectInfo[]>;
+  /** CA-30 (009-modo-dev-v3, lote 9) — cria a pasta do projeto (+ marcador CLAUDE.md + `git init` best-effort) dentro de um root já configurado; devolve o resultado E a lista já re-escaneada. */
+  create(input: CreateProjectIpcInput): Promise<CreateProjectResponse>;
 }
 
 /**

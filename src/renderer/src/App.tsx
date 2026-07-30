@@ -100,6 +100,8 @@ import { PreviousSessions } from './PreviousSessions';
 import { ProfileSwitcher } from './ProfileSwitcher';
 import { ProjectSidebar } from './ProjectSidebar';
 import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from './ProjectSidebar';
+// CA-30 (009-modo-dev-v3, lote 9) — seletor de projetos no titlebar + modal de criação.
+import { ProjectSwitcher } from './ProjectSwitcher';
 import { TerminalPane } from './TerminalPane';
 import type { TerminalPaneHandle } from './TerminalPane';
 
@@ -2017,6 +2019,18 @@ export function App(): React.JSX.Element {
           <span aria-hidden="true">◆</span>
           <span>Donel Dev</span>
         </div>
+        {/* CA-30 (009-modo-dev-v3, lote 9) — o seletor vive no titlebar, fora
+            da coluna da sidebar (que fica oculta no Modo Dev, `zoneHidden`
+            abaixo): é a única forma de trocar/criar projeto quando o Modo
+            Dev está ligado (mockup linha 1295: "criar projeto é ação do
+            nível app, não do projeto aberto"). */}
+        <ProjectSwitcher
+          projects={projects}
+          activeProjectPath={selectedProjectPath}
+          projectRoots={appConfig?.projectRoots ?? []}
+          onOpenProject={handleOpenProject}
+          onProjectsChanged={setProjects}
+        />
         <ProfileSwitcher
           onActiveProfileLabelChange={setAccountLabel}
           onHeadroomChange={setProfileHeadroom}
