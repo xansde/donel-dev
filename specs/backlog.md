@@ -747,6 +747,29 @@ Depois das duas: `scrollHeight == clientHeight` em **todos** os níveis da cadei
 transparente. Sobram 4,6px de folga no rodapé do terminal, na cor da moldura —
 invisíveis por serem a mesma superfície.
 
+### B24. Indicador de conta GitHub ativa (novo — feedback 28/07)
+
+"Acho que o GH-profile pode ficar no próprio Donel Dev. É uma dor que vejo
+outras pessoas tendo: não conseguir configurar qual conta do GitHub está
+ativa." Hoje isso é resolvido só para o Alexandre por um hook pessoal de
+`SessionStart` do Claude Code (`~/.local/bin/gh-profile-switch.ps1`): roda
+`gh api user --jq '.login'` e injeta `systemMessage = "GitHub ativo: <user>"`
+no início da sessão — puramente informativo, não troca de conta. Referência
+técnica pronta para quem especificar: o script cabe em ~10 linhas, e o
+padrão de troca de conta (`gh auth switch -u <conta>`) já existe documentado
+em `~/seazone/CLAUDE.md`.
+
+Diferença do escopo aqui: o pedido é sobre a dor de **outras pessoas**, não
+só a dele — sugere um painel/indicador na própria UI do Donel Dev (visível
+sem depender de hook do Claude Code), possivelmente com **troca** de conta,
+não só leitura. Related: B8 (painel de perfis/cotas) já resolve um problema
+parecido de "qual perfil está ativo" para contas Claude — mesmo padrão de UI
+pode servir de referência para o indicador de conta GitHub.
+
+Clarify futuro: é só indicador (qual conta está ativa) ou também switcher
+(trocar sem sair do app)? Por repo (cada projeto pode ter conta diferente,
+via `includeIf` do git) ou global? Onde na UI (status bar, preferências)?
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo

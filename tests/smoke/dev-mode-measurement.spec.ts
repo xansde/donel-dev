@@ -268,7 +268,11 @@ test('C1 — RAM: ligar o Modo Dev com um discovery de 3 marcos fica abaixo da c
   await expect(appWindow.locator('[data-testid="devmode-toggle"]')).toBeVisible();
   const baselineMb = await medianWorkingSetMb(5);
 
-  await appWindow.locator('[data-testid="devmode-toggle"] input[role="switch"]').check();
+  // Item 1 (rodada de forma fix/009-board-real-e-modal) — o switch "Modo Dev"
+  // virou SegmentedControl "Uso geral | Dev" (titlebar v3); o testid do
+  // wrapper continua o mesmo, só o elemento interno mudou de `input[role=
+  // "switch"]` para `button[role="radio"]`.
+  await appWindow.locator('[data-testid="devmode-toggle"]').getByRole('radio', { name: 'Dev' }).click();
   await expect(appWindow.locator('[data-testid="devmode-map"]')).toBeVisible();
   // CA-17 — o testid usa o card_id real; o 3º card de plano do DISCOVERY_3 é
   // `${DISCOVERY_3}-M3`. Lote 7 — `devmode-map-marco-*` virou
@@ -305,8 +309,8 @@ test('CA-7/verificação §2 — geometria REAL do mapa: painéis 480/316px, car
 
   // Robusto à ORDEM dos testes deste arquivo: liga o Modo Dev se ainda não
   // estiver ligado (C1, acima, já deixa ligado — mas este teste não depende disso).
-  const devModeSwitch = appWindow.locator('[data-testid="devmode-toggle"] input[role="switch"]');
-  if (!(await devModeSwitch.isChecked())) await devModeSwitch.check();
+  const devModeRadio = appWindow.locator('[data-testid="devmode-toggle"]').getByRole('radio', { name: 'Dev' });
+  if ((await devModeRadio.getAttribute('aria-checked')) !== 'true') await devModeRadio.click();
   await expect(appWindow.locator('[data-testid="devmode-map"]')).toBeVisible();
   await expect(appWindow.locator(`[data-testid="devmode-map-plano-${DISCOVERY_3}-M1"]`)).toHaveAttribute('data-focused', 'true');
 

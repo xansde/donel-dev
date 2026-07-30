@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
+import type { DevModeBoardConfig } from '../shared/devMode';
 import type {
   AppConfigDto,
   ArchivePhaseSessionIpcInput,
@@ -96,13 +97,16 @@ import {
   readSubIssueFacts,
 } from './github-reader';
 import {
+  boardConfigFromCredential,
   listEntryColumnCards,
+  loadTaskdexServiceCredential,
   readBoardFactsFor,
   resolveBoardFactsReader,
   resolveBoardReader,
   type BoardFacts,
   type EntryColumnCard,
 } from './taskdex-board-client';
+import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
 import { writeHooksSettingsFile } from './hooks-settings';
 import {
   claudeHomeDir,
@@ -170,17 +174,31 @@ let appConfig: AppConfig = defaultAppConfig(defaultProjectRoots(homedir));
 // de `configIoDeps`), resolvido uma vez.
 const esteiraReaderIoDeps = createSystemEsteiraReaderIoDeps();
 
-// T311 (Batch B) — de onde vêm os cards da porta de entrada (CA-1). Na Fatia
-// 1 não existe cliente de rede ainda (isso é T324/CA-11, com credencial
-// dedicada): sem `DONEL_DEVMODE_BOARD_FIXTURE` este leitor devolve lista
-// vazia — a porta de entrada existe e não mente, só não tem fonte ainda.
-const boardReader = resolveBoardReader(process.env, esteiraReaderIoDeps.readFileText);
+// Credencial DE CADA USUÁRIO (`~/.claude/esteira-config/donel-board-credential.json`,
+// fora do repo): quem tem uma fala com o board de verdade; quem não tem segue
+// com a porta de entrada desligada, sem erro nenhum na tela. O token só existe
+// aqui e dentro do transporte — nada disso vai para log.
+const boardCredential = loadTaskdexServiceCredential({ readFileText: esteiraReaderIoDeps.readFileText, homedir });
+const boardCallTool = boardCredential ? createJsonRpcCallTool(boardCredential, createSystemHttpPostJson()) : null;
 
-// T327 (Batch D) — fonte dos 4 fatos do espelho (CA-12). Mesma degradação do
-// `boardReader`: sem fixture (e enquanto não houver um `callTool` real para
-// `createSystemBoardFactsReader`), nenhum card tem fato — a árvore continua
-// inteira, só não recebe anotação. Leitura pura, nunca escreve no board.
-const boardFactsReader = resolveBoardFactsReader(process.env, esteiraReaderIoDeps.readFileText);
+/** O board da credencial do usuário é o default; o `config.json` do app, quando tem um, vence. */
+const credentialBoardConfig = boardConfigFromCredential(boardCredential);
+const effectiveBoardConfig = (): DevModeBoardConfig | null => appConfig.devMode.boardConfig ?? credentialBoardConfig;
+
+// T311 (Batch B) — de onde vêm os cards da porta de entrada (CA-1). Ordem:
+// fixture do roteiro de teste (`DONEL_DEVMODE_BOARD_FIXTURE`) → board real via
+// MCP TaskDex → vazio.
+const boardReader = resolveBoardReader(process.env, esteiraReaderIoDeps.readFileText, boardCallTool);
+
+// T327 (Batch D) — fonte dos 4 fatos do espelho (CA-12), mesma ordem de
+// precedência. Sem fixture e sem credencial, nenhum card tem fato: a árvore
+// continua inteira, só não recebe anotação. Leitura pura, nunca escreve no board.
+const boardFactsReader = resolveBoardFactsReader(
+  process.env,
+  esteiraReaderIoDeps.readFileText,
+  boardCallTool,
+  credentialBoardConfig,
+);
 
 /**
  * CA-4 (009-modo-dev-v3) — raiz durável do handoff v3, fora de qualquer
@@ -684,7 +702,7 @@ function registerDevModeIpcHandlers(): void {
 
   /** T311/CA-1 — cards das 3 colunas de entrada do board configurado. Sem board/sem fonte = `[]` (porta desligada, nunca erro). */
   ipcMain.handle(DEVMODE_CHANNELS.listEntryCards, async (): Promise<readonly EntryColumnCard[]> => {
-    return listEntryColumnCards(appConfig.devMode.boardConfig, boardReader);
+    return listEntryColumnCards(effectiveBoardConfig(), boardReader);
   });
 
   /**

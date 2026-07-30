@@ -161,6 +161,9 @@ test.afterAll(async () => {
   }
 });
 
+// Item 11 (rodada de forma fix/009-board-real-e-modal) — a tela deixou de
+// ser um `Modal` (role="dialog") e virou uma TELA no grid do `.shell`
+// (`role="region"`, mesmo `aria-label` de antes — só o role mudou).
 async function openPreviousSessionsDialog() {
   const sidebar = window.locator('nav[aria-label="Projetos e sessões"]');
   await expect(sidebar).toBeVisible();
@@ -169,7 +172,7 @@ async function openPreviousSessionsDialog() {
   await expect(historyButton).toBeVisible({ timeout: 15_000 });
   await historyButton.click();
 
-  const dialog = window.getByRole('dialog', { name: new RegExp(`Sessões anteriores · ${PROJECT_NAME}`) });
+  const dialog = window.getByRole('region', { name: new RegExp(`Sessões anteriores · ${PROJECT_NAME}`) });
   await expect(dialog).toBeVisible();
   return dialog;
 }

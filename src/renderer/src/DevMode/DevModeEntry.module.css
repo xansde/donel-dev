@@ -28,10 +28,36 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-1);
+  /* Item 9 (rodada de forma fix/009-board-real-e-modal) — sem `min-width: 0`
+     num filho de flex row, ele nunca encolhe abaixo do próprio conteúdo; era
+     isso que empurrava o SegmentedControl (7 segmentos, largura intrínseca
+     grande) pra fora da borda direita do modal (screenshot app-04). */
+  min-width: 0;
 }
 
+/* FIX (revisão do orquestrador, app-04 regenerado) — o fix acima consertou o
+   vazamento, mas `.columnFilter` com `flex: none` (shrink: 0) e
+   `max-width: 100%` continuava reivindicando até a largura INTEIRA da linha
+   (seu conteúdo natural, ~590px, sob o cap de 100% do container) antes do
+   filtro ganhar qualquer espaço — o input sobrava com uns 30px, só o "F" do
+   placeholder. `flex: 1` sozinho tem `flex-basis: 0%`, então cresce SÓ no
+   que sobra depois do irmão fixo; por isso o `min-width` explícito abaixo
+   garante uma largura útil mínima, do jeito que o mockup desenha (linha
+   406-411: TextInput ao lado do SegmentedControl, os dois com espaço). */
 .filterInput {
-  flex: 1;
+  flex: 1 1 180px;
+  min-width: 180px;
+}
+
+/* Mockup linha 410 (`hint-size="260px,30px"`) — o SegmentedControl de coluna
+   tem 260px de largura própria, nunca mais. Agora com `flex-shrink` ligado
+   (era `flex: none`), ele cede espaço pro filtro antes de rolar contido; só
+   quando os 7 segmentos não cabem nem em 260px é que `overflow-x: auto`
+   entra (rola DENTRO do próprio controle, nunca o input que encolhe). */
+.columnFilter {
+  flex: 0 1 260px;
+  max-width: 260px;
+  overflow-x: auto;
 }
 
 .list {
@@ -67,19 +93,32 @@
   gap: var(--space-half);
 }
 
+/* Item 10 — título + id na MESMA linha, id à direita com gap (nunca
+   grudados). `.cardTitleRow` é a linha; `.cardTitle` encolhe com ellipsis
+   antes de deixar o id espremer. */
+.cardTitleRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  width: 100%;
+  min-width: 0;
+}
+
 .cardId {
+  flex: none;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-caption-size);
   color: var(--text-muted);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .cardTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-primary);
-  overflow-wrap: anywhere;
 }
 
 .empty {

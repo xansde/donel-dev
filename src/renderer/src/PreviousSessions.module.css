@@ -1,35 +1,59 @@
-.body {
+/* Item 11 (rodada de forma fix/009-board-real-e-modal) — a tela "Sessões
+   anteriores" v3 (mockup 2b): TELA no `.shell` (App.module.css
+   `.previousSessionsScreen` posiciona esta raiz na mesma linha do grid que
+   `.body`), não mais um `Modal` pequeno. */
+
+.screen {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  min-height: 0;
+  background: var(--bg-app);
+}
+
+.content {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.sessionsColumn {
+  flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 14px 16px 16px;
 }
 
-/*
- * CA-23 (009-modo-dev-v3, lote 3) — o `Modal` base é fixo em 480px
- * (Modal.module.css, comentário de topo: "usado só para confirmação
- * destrutiva... Máx. 480px"). A engrenagem precisa de espaço pro painel de
- * 380px (mesma medida do mockup, `design/modo-dev-v3-handoff/project/Modo
- * Dev v3.dc.html` linha 509) ao lado da lista — `!important` é o único jeito
- * de vencer a regra mais específica do módulo do Modal sem tocar num
- * componente do design system que é usado por telas que NÃO precisam ser
- * largas (Preferências, confirmações).
- */
-.dialogWide {
-  max-width: 920px !important;
-}
-
-.toolbar {
+.header {
   display: flex;
   align-items: center;
   gap: var(--space-1);
 }
 
-.searchInput {
+.title {
+  font-size: 15px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.projectName {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.headerSpacer {
   flex: 1;
 }
 
-/* Mesma forma do gear do mockup (linha 485 do handoff): 26x26, borda, radius-sm — diferente do `.preferencesButton` sem borda da titlebar (App.module.css), porque aqui o ícone abre um painel PERSISTENTE, não uma ação instantânea. */
+.headerNote {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+/* Mesma forma do gear do mockup (linha 485 do handoff): 26x26, borda, radius-sm. */
 .gearButton {
   flex-shrink: 0;
   display: inline-grid;
@@ -58,18 +82,187 @@
   border-color: var(--accent);
 }
 
-.content {
-  display: flex;
-  gap: var(--space-2);
-  min-width: 0;
+/* Decisão nomeada (ver comentário de topo do .tsx) — o mockup não desenha um
+   fechar pra esta tela; precisa de um pra ser dispensável (Escape cobre o
+   teclado, este cobre o mouse). Mesma linguagem visual do `.settingsClose`. */
+.closeButton {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
 }
 
-.sessionsColumn {
+.closeButton:hover {
+  color: var(--text-primary);
+}
+
+.closeButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.searchInput {
+  max-width: 320px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+/* === Tabela (mockup linhas 490-504): SESSÃO · ETAPA · CONTA · CONTEXTO ·
+   QUANDO — a 7ª coluna (ações) não existe no desenho; reservada pra
+   Retomar/Fork (nossos, sem equivalente no mockup). */
+.tableWrap {
   flex: 1;
-  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  overflow: hidden;
+}
+
+/* FIX (revisão do orquestrador, app-06 regenerado) — `.tableHeader` e
+   `.row` são DUAS grades separadas (um `<div>` e um `<li>`, não a mesma
+   grade); cada uma resolve `1fr`/`auto` a partir do PRÓPRIO conteúdo. A
+   última coluna era `auto`: vazia no cabeçalho (nenhum filho na posição 7)
+   ela cai a 0px, mas na linha os botões Retomar/Fork pedem ~150px — o
+   mesmo `1fr` da coluna Etapa absorve essa diferença e resolve num valor
+   DIFERENTE em cada grade, desalinhando tudo à direita dele (Conta,
+   Contexto, Quando). Trocar `auto` por um px fixo (nunca dependente de
+   conteúdo) faz as duas grades convergirem pro mesmo layout; o cabeçalho
+   ganhou uma 7ª célula vazia (`.tsx`) só pra ocupar essa coluna também. */
+.tableGridColumns {
+  grid-template-columns: 22px minmax(140px, 220px) 1fr minmax(100px, 150px) 90px 84px 160px;
+}
+
+.tableHeader {
+  composes: tableGridColumns;
+  display: grid;
+  gap: 10px;
+  align-items: center;
+  padding: 0 6px 6px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.table {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  composes: tableGridColumns;
+  display: grid;
+  gap: 10px;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 6px;
+  border-bottom: var(--hairline);
+}
+
+.rowGlyph {
+  width: 14px;
+  text-align: center;
+  font-size: 10px;
+}
+
+.tone-muted {
+  color: var(--text-muted);
+}
+
+.tone-accent {
+  color: var(--accent);
+}
+
+.tone-error {
+  color: var(--state-permission);
+}
+
+.rowName {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.corrupted {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.rowEtapa {
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.rowEtapaMuted {
+  color: var(--text-muted);
+}
+
+.accountChip {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  white-space: nowrap;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.rowMuted {
+  color: var(--text-muted);
+}
+
+.rowContext {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.rowWhen {
+  font-size: 10.5px;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+/* Decisão nomeada (item 11 permite os dois: "no hover da linha ou como o
+   app já faz") — SEMPRE visível, não só no hover: um hover-reveal com
+   `pointer-events: none` fora do hover interceptava o clique do Playwright
+   (`<li>` capturava o ponteiro antes do botão registrar `:hover`) — mesmo
+   risco existiria pra um mouse real com timing de movimento diferente do
+   comum. Mantém a capacidade (Retomar/Fork), sem depender de hover pra
+   funcionar. */
+.rowActions {
+  display: flex;
+  gap: var(--space-half);
+  justify-self: end;
+}
+
+.footerNote {
+  margin: 0;
+  padding: 10px 6px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 /* Painel lateral da engrenagem — mesma largura (380px) e composição (gap 14px, bg-panel, borda esquerda) do mockup, linha 509. */
@@ -82,7 +275,6 @@
   padding: var(--space-2);
   background: var(--bg-panel);
   border-left: var(--hairline);
-  border-radius: var(--radius-sm);
 }
 
 .settingsHeader {
@@ -137,63 +329,4 @@
   font-size: 10.5px;
   line-height: 1.55;
   color: var(--text-muted);
-}
-
-.hint {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--text-caption-size);
-}
-
-.list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1);
-  border-radius: var(--radius-sm);
-  border: var(--hairline);
-}
-
-.info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.preview {
-  font-family: var(--font-mono);
-  font-size: var(--text-body-size);
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.corrupted {
-  color: var(--text-muted);
-  font-style: italic;
-}
-
-.meta {
-  font-size: var(--text-caption-size);
-  color: var(--text-muted);
-}
-
-.actions {
-  flex: 0 0 auto;
-  display: flex;
-  gap: var(--space-half);
 }

@@ -93,6 +93,7 @@ export function DevModeEntry({
             className={styles.filterInput}
           />
           <SegmentedControl
+            className={styles.columnFilter}
             value={column}
             onChange={(next) => setColumn(next as ColumnFilter)}
             options={[
@@ -134,8 +135,13 @@ export function DevModeEntry({
                   disabled={!linked && !repoPath}
                   title={card.cardId}
                 >
-                  <span className={styles.cardTitle}>{card.title}</span>
-                  <span className={styles.cardId}>{card.cardId}</span>
+                  {/* Item 10 (rodada de forma fix/009-board-real-e-modal) — título à
+                      esquerda, id em mono à direita COM gap (antes vinham
+                      grudados: "…(discovery)SZI-900"). */}
+                  <span className={styles.cardTitleRow}>
+                    <span className={styles.cardTitle}>{card.title}</span>
+                    <span className={styles.cardId}>{card.cardId}</span>
+                  </span>
                 </Button>
                 <div className={styles.rowTags}>
                   <AnnotationTag tone="muted">{COLUMN_LABEL[card.column]}</AnnotationTag>

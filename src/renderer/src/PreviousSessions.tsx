@@ -1,39 +1,55 @@
-import { Button, Modal, TextInput } from '@donel-dev/design-system';
+import { Button, TextInput } from '@donel-dev/design-system';
 import { Settings } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ProjectBindingDto, SessionNamesMap, SessionSummaryDto } from '../../shared';
 import { resolveSessionName } from '../../shared/sessionName';
-import { filterSessionsByQuery, formatFileSize, formatRelativeTime } from '../../shared/sessions';
+import {
+  deriveSessionEtapa,
+  filterSessionsByQuery,
+  formatFileSize,
+  formatRelativeTime,
+  FREE_TERMINAL_ETAPA_LABEL,
+} from '../../shared/sessions';
 import styles from './PreviousSessions.module.css';
 
-// T013 — PARTE PRINCIPAL: painel "Sessões anteriores" (FR-004, CA-2,
-// ui-spec §5, brief B4 do design reference). Lista por projeto, alimentada
-// pelo SessionIndexer (T012, via `window.donel.sessions.list` — App.tsx faz
-// o fetch, este componente só renderiza). Aberto por um ícone dedicado na
-// sidebar (ProjectSidebar `onShowPreviousSessions`) — ver comentário lá pro
-// porquê de não ser o clique no nome do projeto.
+// T013 — PARTE PRINCIPAL: tela "Sessões anteriores" (FR-004, CA-2). Lista por
+// projeto, alimentada pelo SessionIndexer (T012, via `window.donel.sessions.list`
+// — App.tsx faz o fetch, este componente só renderiza).
 //
-// Reaproveita o `Modal` do design-system (mesmo padrão do "Fechar sessão?"
-// em App.tsx) em vez de um popover posicionado à mão: acessibilidade
-// (role=dialog, foco preso, Escape) de graça, sem inventar um sistema de
-// posicionamento novo pro card flutuante do brief B4.
+// Item 11 (rodada de forma fix/009-board-real-e-modal) — a MAIOR distância
+// entre o app e o handoff v3 (`design/modo-dev-v3-handoff/project/Modo Dev
+// v3.dc.html`, quadro 2b): a tela era um `Modal` pequeno com lista simples; o
+// mockup desenha uma TELA (ocupa o miolo, entre titlebar e StatusBar) com
+// tabela de 5 colunas. Decisão nomeada: manter a tela como uma REGIÃO no
+// grid do `.shell` (App.module.css `.previousSessionsScreen`, `grid-row: 2`,
+// mesma linha de `.body`) em vez do `Modal` compartilhado — o `Modal` é
+// fixo/centralizado e cobriria também o titlebar/StatusBar via portal para
+// `document.body`, o que o mockup NÃO desenha (titlebar mostra "Sessões
+// anteriores" + AccountBadge, StatusBar continua com os dados da conta —
+// os dois seguem vivos "por trás" da tela). O gatilho continua o mesmo
+// (`onShowPreviousSessions`, ícone dedicado na sidebar).
 //
-// Campo "modelo" do brief B4 ("{{ p.date }} · {{ p.size }} · {{ p.model }}")
-// fica DE FORA — ver comentário no topo de shared/sessions.ts pro porquê
-// (SessionIndexer, T012, congelado, não extrai modelo por sessão).
+// O mockup não desenha nenhum "X"/fechar para esta tela (só troca de volta
+// via o resto do titlebar) — mas a tela PRECISA ser dispensável: Escape e um
+// "✕" discreto no cabeçalho cobrem isso (decisão nomeada, sem equivalente no
+// desenho).
 //
-// CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto
-// (spec.md problema 8): a tela ganhou o ícone ⚙ (`design/modo-dev-v3-handoff
-// /project/Modo Dev v3.dc.html` linha 485) que abre um painel lateral com
-// board TaskDex + repo GitHub — os dois hoje editados à mão fora do app. O
-// mockup desenha um 3º campo ("Base de conhecimento") — D-V7 do
-// `design/modo-dev-v3-verificacao.md`: alcance novo, decisão pendente do
-// Alexandre, DE FORA deste lote de propósito. O mockup também mostra "ID do
-// board de tarefas" como UM campo só; o app grava DOIS ids independentes
-// (`workspaceId`/`teamId`, `~/.claude/esteira-config/donel-board-credential
-// .json`) — sem um formato documentado de composição num campo só, dividir
-// em dois inputs é o que evita inventar uma convenção não especificada em
-// lugar nenhum (decisão nomeada no report do lote).
+// Dados por coluna (nenhum fabricado — degrada por omissão quando a fonte
+// não tem o fato):
+// - SESSÃO: glifo de estado (real, corrompida/viva/arquivada) + nome mono
+//   (mesma resolução de sempre, `resolveSessionName`).
+// - ETAPA: derivada do PRÓPRIO primeiro prompt (`deriveSessionEtapa`,
+//   shared/sessions.ts) — sessão que não bate `/esteira-*` vira "terminal
+//   comum" (nunca inventa etapa pra sessão livre).
+// - CONTA: só quando o registro do Modo Dev sabe (`archivedPhaseSessions`,
+//   reverso por `sessionId` — App.tsx monta o mapa); achado do lote 8
+//   (`sessionAccountLabel.ts`, CA-25): "sessões anteriores não tem esse dado
+//   hoje" ainda vale pra maioria das linhas — "—" é o caso comum, não bug.
+// - CONTEXTO: só quando a sessão listada TAMBÉM é uma aba viva agora (única
+//   fonte real de tokens por sessão que o app tem — `TranscriptChangedPayload`
+//   é um push para abas abertas, nunca persistido pro índice de sessões
+//   fechadas) — "—" pras demais.
+// - QUANDO: `formatRelativeTime`, já existente.
 export interface PreviousSessionsProps {
   open: boolean;
   projectName: string;
@@ -51,9 +67,21 @@ export interface PreviousSessionsProps {
    * semanas atrás (US-A). Sem isso, a lista mostraria só a 1ª mensagem.
    */
   sessionNames: SessionNamesMap;
+  /** Item 11 — `sessionId -> profileSlug`, reverso de `devModeState.archivedPhaseSessions` (App.tsx). Sem entrada = "—" (achado do CA-25: a maioria das sessões não tem esse dado). */
+  accountBySessionId: Readonly<Record<string, string>>;
+  /** Perfil ATIVO agora — marca a linha cuja conta é a mesma com "· atual" (mesma leitura de `isArchivedSessionProfileMismatch`, invertida). */
+  activeProfileSlug: string;
+  /** Item 11 — "312k/400k" só para sessões que são TAMBÉM uma aba viva agora; sem entrada = "—". */
+  contextLabelBySessionId: Readonly<Record<string, string>>;
 }
 
 const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '' };
+
+function sessionGlyph(session: SessionSummaryDto, isLive: boolean): { glyph: string; tone: 'muted' | 'accent' | 'error' } {
+  if (session.corrupted) return { glyph: '⚠', tone: 'error' };
+  if (isLive) return { glyph: '▶', tone: 'accent' };
+  return { glyph: '○', tone: 'muted' };
+}
 
 export function PreviousSessions({
   open,
@@ -65,12 +93,14 @@ export function PreviousSessions({
   onResume,
   onFork,
   sessionNames,
-}: PreviousSessionsProps): React.JSX.Element {
+  accountBySessionId,
+  activeProfileSlug,
+  contextLabelBySessionId,
+}: PreviousSessionsProps): React.JSX.Element | null {
   // Query de busca reseta implicitamente a cada abertura (o componente some
-  // do DOM quando `open` é false — Modal.tsx `if (!open) return null` — o
-  // React descarta o state local junto). Mesmo vale pro estado da
-  // engrenagem abaixo (settingsOpen, os três inputs): nunca precisa de
-  // reset manual, a desmontagem já cuida disso.
+  // do DOM quando `open` é false — o React descarta o state local junto).
+  // Mesmo vale pro estado da engrenagem abaixo (settingsOpen, os três
+  // inputs): nunca precisa de reset manual, a desmontagem já cuida disso.
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => filterSessionsByQuery(sessions, query), [sessions, query]);
 
@@ -80,6 +110,19 @@ export function PreviousSessions({
   const [workspaceId, setWorkspaceId] = useState('');
   const [teamId, setTeamId] = useState('');
   const [github, setGithub] = useState('');
+
+  // A tela NÃO é o `Modal` compartilhado (ver comentário de topo) — Escape
+  // continua fechando, mesmo comportamento de sempre, só que sem foco preso
+  // (a tela convive com o titlebar/StatusBar vivos, não bloqueia interação
+  // com eles).
+  useEffect(() => {
+    if (!open) return undefined;
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [open, onClose]);
 
   // CA-23 — carrega board+repo do disco toda vez que o painel abre (nunca
   // guarda em memória entre aberturas: o app não é a única forma de editar
@@ -112,6 +155,8 @@ export function PreviousSessions({
     };
   }, [settingsOpen, projectPath]);
 
+  if (!open) return null;
+
   const handleSaveSettings = (): void => {
     setSaving(true);
     window.donel.projectBinding
@@ -126,14 +171,34 @@ export function PreviousSessions({
   };
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={`Sessões anteriores · ${projectName}`}
-      className={settingsOpen ? styles.dialogWide : undefined}
+    <section
+      className={styles.screen}
+      role="region"
+      aria-label={`Sessões anteriores · ${projectName}`}
+      data-testid="previous-sessions"
     >
-      <div data-testid="previous-sessions" className={styles.body}>
-        <div className={styles.toolbar}>
+      <div className={styles.content}>
+        <div className={styles.sessionsColumn}>
+          <div className={styles.header}>
+            <span className={styles.title}>Sessões anteriores</span>
+            <span className={styles.projectName}>{projectName}</span>
+            <button
+              type="button"
+              className={styles.gearButton}
+              onClick={() => setSettingsOpen((prev) => !prev)}
+              aria-label="Configuração do projeto"
+              aria-expanded={settingsOpen}
+              title="Configuração do projeto"
+            >
+              <Settings size={14} strokeWidth={1.5} aria-hidden="true" />
+            </button>
+            <div className={styles.headerSpacer} />
+            <span className={styles.headerNote}>só as sessões deste projeto</span>
+            <button type="button" className={styles.closeButton} onClick={onClose} aria-label="Fechar sessões anteriores" title="Fechar (Esc)">
+              ✕
+            </button>
+          </div>
+
           <TextInput
             className={styles.searchInput}
             value={query}
@@ -141,126 +206,142 @@ export function PreviousSessions({
             placeholder="Filtrar por nome…"
             aria-label="Filtrar sessões anteriores por nome"
           />
-          <button
-            type="button"
-            className={styles.gearButton}
-            onClick={() => setSettingsOpen((prev) => !prev)}
-            aria-label="Configuração do projeto"
-            aria-expanded={settingsOpen}
-            title="Configuração do projeto"
-          >
-            <Settings size={14} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-        </div>
 
-        <div className={styles.content}>
-          <div className={styles.sessionsColumn}>
-            {loading ? <p className={styles.hint}>Carregando sessões…</p> : null}
+          {loading ? <p className={styles.hint}>Carregando sessões…</p> : null}
 
-            {/* ui-spec §5, edge case "empty state": projeto sem NENHUMA sessão anterior. */}
-            {!loading && sessions.length === 0 ? (
-              <p className={styles.hint} data-testid="previous-sessions-empty">
-                Nenhuma sessão anterior neste projeto — comece uma nova.
-              </p>
-            ) : null}
+          {/* ui-spec §5, edge case "empty state": projeto sem NENHUMA sessão anterior. */}
+          {!loading && sessions.length === 0 ? (
+            <p className={styles.hint} data-testid="previous-sessions-empty">
+              Nenhuma sessão anterior neste projeto — comece uma nova.
+            </p>
+          ) : null}
 
-            {/* Busca sem resultado é um estado DIFERENTE do índice vazio (ui-spec §5: "Busca simples por nome"). */}
-            {!loading && sessions.length > 0 && filtered.length === 0 ? (
-              <p className={styles.hint}>Nenhuma sessão bate com “{query}”.</p>
-            ) : null}
+          {/* Busca sem resultado é um estado DIFERENTE do índice vazio (ui-spec §5: "Busca simples por nome"). */}
+          {!loading && sessions.length > 0 && filtered.length === 0 ? (
+            <p className={styles.hint}>Nenhuma sessão bate com “{query}”.</p>
+          ) : null}
 
-            {filtered.length > 0 ? (
-              <ul className={styles.list}>
-                {filtered.map((session) => (
-                  <li key={session.id} className={styles.row} data-testid="previous-session-row">
-                    <div className={styles.info}>
-                      {/* ui-spec §5: transcript corrompido/truncado entra na lista com preview "(ilegível)", sem derrubar o índice — o SessionIndexer já garante isso; aqui só um tom visual diferente. */}
-                      <span className={[styles.preview, session.corrupted ? styles.corrupted : ''].join(' ')}>
+          {filtered.length > 0 ? (
+            <div className={styles.tableWrap}>
+              <div className={styles.tableHeader}>
+                <span aria-hidden="true" />
+                <span>Sessão</span>
+                <span>Etapa</span>
+                <span>Conta</span>
+                <span>Contexto</span>
+                <span>Quando</span>
+                {/* Célula vazia na 7ª coluna (ações) — mesma contagem de filhos que
+                    `.row`, pro grid do cabeçalho resolver o MESMO layout (ver
+                    comentário de `.tableGridColumns`, PreviousSessions.module.css). */}
+                <span aria-hidden="true" />
+              </div>
+              <ul className={styles.table}>
+                {filtered.map((session) => {
+                  const isLive = Boolean(contextLabelBySessionId[session.id]);
+                  const { glyph, tone } = sessionGlyph(session, isLive);
+                  const etapa = deriveSessionEtapa(session.preview);
+                  const accountSlug = accountBySessionId[session.id] ?? null;
+                  const account = accountSlug ? (accountSlug === activeProfileSlug ? `${accountSlug} · atual` : accountSlug) : '—';
+                  const context = contextLabelBySessionId[session.id] ?? '—';
+                  return (
+                    <li key={session.id} className={styles.row} data-testid="previous-session-row">
+                      <span className={[styles.rowGlyph, styles[`tone-${tone}`]].join(' ')} aria-hidden="true">
+                        {glyph}
+                      </span>
+                      <span className={[styles.rowName, session.corrupted ? styles.corrupted : ''].join(' ')}>
                         {resolveSessionName({
                           fallback: session.preview,
                           customTitle: session.customTitle,
                           stored: sessionNames[session.id] ?? null,
                         })}
                       </span>
-                      <span className={styles.meta}>
-                        {formatRelativeTime(session.lastActivityAt ?? session.mtimeMs)} · {formatFileSize(session.size)}
+                      <span className={[styles.rowEtapa, etapa === FREE_TERMINAL_ETAPA_LABEL ? styles.rowEtapaMuted : ''].join(' ')}>
+                        {etapa}
                       </span>
-                    </div>
-                    <div className={styles.actions}>
-                      <Button variant="primary" onClick={() => onResume(session)}>
-                        Retomar
-                      </Button>
-                      <Button variant="secondary" onClick={() => onFork(session)}>
-                        Fork
-                      </Button>
-                    </div>
-                  </li>
-                ))}
+                      <span>{accountSlug ? <span className={styles.accountChip}>{account}</span> : <span className={styles.rowMuted}>—</span>}</span>
+                      <span className={styles.rowContext}>{context}</span>
+                      <span className={styles.rowWhen}>{formatRelativeTime(session.lastActivityAt ?? session.mtimeMs)}</span>
+                      {/* Gestos Retomar/Fork continuam, sempre visíveis (ver PreviousSessions.module.css `.rowActions` — decisão nomeada contra hover-reveal). `formatFileSize` some da forma de tabela (a coluna não existe no mockup) mas o dado ainda existe no título, pra quem passar o mouse na sessão. */}
+                      <span className={styles.rowActions} title={`${formatFileSize(session.size)}`}>
+                        <Button variant="primary" onClick={() => onResume(session)}>
+                          Retomar
+                        </Button>
+                        <Button variant="secondary" onClick={() => onFork(session)}>
+                          Fork
+                        </Button>
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
-            ) : null}
-          </div>
-
-          {settingsOpen ? (
-            <div className={styles.settingsPanel} data-testid="project-settings-panel">
-              <div className={styles.settingsHeader}>
-                <span className={styles.settingsTitle}>Configuração do projeto</span>
-                <button
-                  type="button"
-                  className={styles.settingsClose}
-                  onClick={() => setSettingsOpen(false)}
-                  aria-label="Fechar configuração do projeto"
-                >
-                  ✕
-                </button>
-              </div>
-              <p className={styles.settingsIntro}>
-                Sem estes dois o app não sabe onde procurar nada — e não escreve em nenhum dos dois. São editáveis aqui, não mais à
-                mão em arquivos fora do app.
-              </p>
-
-              {bindingLoading ? <p className={styles.hint}>Carregando configuração…</p> : null}
-
-              <TextInput
-                label="Workspace ID"
-                value={workspaceId}
-                onChange={(event) => setWorkspaceId(event.target.value)}
-                hint="board único do projeto · usado para ler colunas e cards"
-                hintTone="muted"
-                aria-label="Workspace ID do board de tarefas"
-              />
-              <TextInput
-                label="Team ID"
-                value={teamId}
-                onChange={(event) => setTeamId(event.target.value)}
-                aria-label="Team ID do board de tarefas"
-              />
-              <TextInput
-                label="Repositório GitHub"
-                value={github}
-                onChange={(event) => setGithub(event.target.value)}
-                placeholder="org/repo"
-                hint="origem das branches, PRs e lições do repositório"
-                hintTone="muted"
-                aria-label="Repositório GitHub"
-              />
-
-              <div className={styles.settingsActions}>
-                <Button variant="primary" onClick={handleSaveSettings} disabled={saving}>
-                  Salvar
-                </Button>
-                <Button variant="secondary" onClick={() => setSettingsOpen(false)} disabled={saving}>
-                  Cancelar
-                </Button>
-              </div>
-
-              <p className={styles.settingsFooter}>
-                Board e repositório são integrações plugáveis. Um projeto sem eles usa o Modo Dev inteiro — só sem leitura de coluna
-                e sem sub-issues.
+              <p className={styles.footerNote}>
+                Uma sessão reiniciada em outra conta aparece como duas entradas irmãs — a etiqueta de conta é o que diz de quem
+                é a cota.
               </p>
             </div>
           ) : null}
         </div>
+
+        {settingsOpen ? (
+          <div className={styles.settingsPanel} data-testid="project-settings-panel">
+            <div className={styles.settingsHeader}>
+              <span className={styles.settingsTitle}>Configuração do projeto</span>
+              <button
+                type="button"
+                className={styles.settingsClose}
+                onClick={() => setSettingsOpen(false)}
+                aria-label="Fechar configuração do projeto"
+              >
+                ✕
+              </button>
+            </div>
+            <p className={styles.settingsIntro}>
+              Sem estes dois o app não sabe onde procurar nada — e não escreve em nenhum dos dois. São editáveis aqui, não mais à
+              mão em arquivos fora do app.
+            </p>
+
+            {bindingLoading ? <p className={styles.hint}>Carregando configuração…</p> : null}
+
+            <TextInput
+              label="Workspace ID"
+              value={workspaceId}
+              onChange={(event) => setWorkspaceId(event.target.value)}
+              hint="board único do projeto · usado para ler colunas e cards"
+              hintTone="muted"
+              aria-label="Workspace ID do board de tarefas"
+            />
+            <TextInput
+              label="Team ID"
+              value={teamId}
+              onChange={(event) => setTeamId(event.target.value)}
+              aria-label="Team ID do board de tarefas"
+            />
+            <TextInput
+              label="Repositório GitHub"
+              value={github}
+              onChange={(event) => setGithub(event.target.value)}
+              placeholder="org/repo"
+              hint="origem das branches, PRs e lições do repositório"
+              hintTone="muted"
+              aria-label="Repositório GitHub"
+            />
+
+            <div className={styles.settingsActions}>
+              <Button variant="primary" onClick={handleSaveSettings} disabled={saving}>
+                Salvar
+              </Button>
+              <Button variant="secondary" onClick={() => setSettingsOpen(false)} disabled={saving}>
+                Cancelar
+              </Button>
+            </div>
+
+            <p className={styles.settingsFooter}>
+              Board e repositório são integrações plugáveis. Um projeto sem eles usa o Modo Dev inteiro — só sem leitura de
+              coluna e sem sub-issues.
+            </p>
+          </div>
+        ) : null}
       </div>
-    </Modal>
+    </section>
   );
 }

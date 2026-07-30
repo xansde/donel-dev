@@ -7,6 +7,8 @@ import {
   formatDeadlineAbsolute,
   formatFaseCommand,
   needsCarousel,
+  planCardToneColor,
+  resolvePlanCardTone,
   shouldPromoteClockToStatusBar,
 } from '../src/shared/mapLevels';
 
@@ -237,5 +239,44 @@ describe('buildPlanCardTags', () => {
     for (const tag of tags) {
       expect(tag.text).not.toMatch(/http|PR /);
     }
+  });
+});
+
+// Rodada de forma (fix/009-board-real-e-modal, item 7) — o border-top do
+// card de plano precisa refletir o estado real, não ficar sempre verde.
+describe('resolvePlanCardTone', () => {
+  it('divergência vence tudo — vira error mesmo com trava/execução também presentes', () => {
+    expect(resolvePlanCardTone({ hasDivergence: true, isLocked: true, statusLabel: 'em execução' })).toBe('error');
+  });
+
+  it('trava (board ou disco "travada") vira lock quando não há divergência', () => {
+    expect(resolvePlanCardTone({ hasDivergence: false, isLocked: true, statusLabel: 'em plano' })).toBe('lock');
+    expect(resolvePlanCardTone({ hasDivergence: false, isLocked: false, statusLabel: 'travada' })).toBe('lock');
+  });
+
+  it('em execução vira accent', () => {
+    expect(resolvePlanCardTone({ hasDivergence: false, isLocked: false, statusLabel: 'em execução' })).toBe('accent');
+  });
+
+  it('aguardando homologação vira warn (o caso relatado — laranja, não verde)', () => {
+    expect(resolvePlanCardTone({ hasDivergence: false, isLocked: false, statusLabel: 'aguardando homologação' })).toBe('warn');
+  });
+
+  it('homologado/concluído vira ok', () => {
+    expect(resolvePlanCardTone({ hasDivergence: false, isLocked: false, statusLabel: 'homologado' })).toBe('ok');
+    expect(resolvePlanCardTone({ hasDivergence: false, isLocked: false, statusLabel: 'concluído' })).toBe('ok');
+  });
+
+  it('em plano (neutro) vira muted', () => {
+    expect(resolvePlanCardTone({ hasDivergence: false, isLocked: false, statusLabel: 'em plano' })).toBe('muted');
+  });
+
+  it('planCardToneColor usa só tokens já existentes em tokens.css — nenhum hex novo', () => {
+    expect(planCardToneColor('ok')).toBe('var(--zone-ok)');
+    expect(planCardToneColor('warn')).toBe('var(--state-waiting)');
+    expect(planCardToneColor('error')).toBe('var(--state-permission)');
+    expect(planCardToneColor('lock')).toBe('var(--state-error)');
+    expect(planCardToneColor('accent')).toBe('var(--accent)');
+    expect(planCardToneColor('muted')).toBe('var(--text-muted)');
   });
 });

@@ -186,6 +186,37 @@ export function formatRelativeTime(timestampMs: number, nowMs: number = Date.now
   return `há ${years} ${years === 1 ? 'ano' : 'anos'}`;
 }
 
+// Item 11 (rodada de forma fix/009-board-real-e-modal) — a coluna ETAPA da
+// tela "Sessões anteriores" v3 (mockup 2b: "PRJ-143 · Validação fase 2").
+// Deriva do PRÓPRIO texto do primeiro prompt: o comando que a esteira prepara
+// (`DiscoveryMap.tsx` `onPrepare`) sempre começa `/esteira-<fase> <cardId>`,
+// com `--fase=<n>` (D-V4 — `=`, nunca espaço) quando a fase é numerada. Uma
+// sessão que não bate esse padrão é "terminal comum" — nunca inventa etapa
+// pra sessão livre.
+const ESTEIRA_COMMAND_PATTERN =
+  /^\/esteira-(discovery|plano|implementar|validar|documentar|cliente|concluir)\s+(\S+)(?:\s+--fase=(\d+))?/;
+
+const ESTEIRA_PHASE_LABEL: Readonly<Record<string, string>> = {
+  discovery: 'Discovery',
+  plano: 'Plano',
+  implementar: 'Implementação',
+  validar: 'Validação',
+  documentar: 'Documentação',
+  cliente: 'Validação com cliente',
+  concluir: 'Conclusão',
+};
+
+export const FREE_TERMINAL_ETAPA_LABEL = 'terminal comum';
+
+/** "PRJ-143 · Validação fase 2" a partir do primeiro prompt da sessão — `FREE_TERMINAL_ETAPA_LABEL` sem o padrão `/esteira-*`. */
+export function deriveSessionEtapa(preview: string): string {
+  const match = preview.trim().match(ESTEIRA_COMMAND_PATTERN);
+  if (!match) return FREE_TERMINAL_ETAPA_LABEL;
+  const [, phase, cardId, faseNum] = match;
+  const label = ESTEIRA_PHASE_LABEL[phase] ?? phase;
+  return faseNum ? `${cardId} · ${label} fase ${faseNum}` : `${cardId} · ${label}`;
+}
+
 const SIZE_UNITS = ['KB', 'MB', 'GB'] as const;
 
 /** Tamanho legível (ui-spec §5: "tamanho") a partir dos bytes do SessionIndexer (`stat().size`). */

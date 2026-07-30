@@ -47,6 +47,9 @@ async function launchApp(): Promise<void> {
   await window.waitForLoadState('domcontentloaded');
 }
 
+// Item 11 (rodada de forma fix/009-board-real-e-modal) — a tela deixou de
+// ser um `Modal` (role="dialog") e virou uma TELA no grid do `.shell`
+// (`role="region"`, mesmo `aria-label` de antes — só o role mudou).
 async function openSettingsPanel(): Promise<import('@playwright/test').Locator> {
   const sidebar = window.locator('nav[aria-label="Projetos e sessões"]');
   await expect(sidebar).toBeVisible();
@@ -55,7 +58,7 @@ async function openSettingsPanel(): Promise<import('@playwright/test').Locator> 
   await expect(historyButton).toBeVisible({ timeout: 15_000 });
   await historyButton.click();
 
-  const dialog = window.getByRole('dialog', { name: new RegExp(`Sessões anteriores · ${PROJECT_NAME}`) });
+  const dialog = window.getByRole('region', { name: new RegExp(`Sessões anteriores · ${PROJECT_NAME}`) });
   await expect(dialog).toBeVisible();
 
   await dialog.getByRole('button', { name: 'Configuração do projeto' }).click();

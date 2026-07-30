@@ -1,16 +1,17 @@
 import {
   ArmedPrompt,
   Button,
+  formatSmartZoneLabel,
   HomologationClock,
   Modal,
   PhaseChip,
+  SegmentedControl,
   SESSION_STATE_LABEL_PT,
   SplitButton,
   StateDot,
   StatusBar,
   TerminalTab,
   Toast,
-  Toggle,
   type EsteiraPhase as ChipPhase,
 } from '@donel-dev/design-system';
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Settings } from 'lucide-react';
@@ -231,6 +232,12 @@ function phaseKey(discoveryCardId: string, cardId: string, phase: EsteiraPhase, 
 /** Fallback quando quem chama não sabe (ainda) a fase do plano — implementar/validar sem `faseNum` explícito caem na fase 1 (mesmo ponto de partida do lote 2). */
 function faseNumFor(phase: EsteiraPhase): number | undefined {
   return phase === 'implementar' || phase === 'validar' ? 1 : undefined;
+}
+
+/** Item 3 (rodada de forma fix/009-board-real-e-modal) — só o nome do arquivo na Zona 2; o path inteiro vai pro `title` (tooltip), nunca solto feito header. */
+function artifactBasename(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : path;
 }
 
 /** Remove uma chave de um record sem mutar o original — usado ao limpar `semaphoreStates`/`aliveTabs` no fechamento de aba. */
@@ -1245,12 +1252,18 @@ export function App(): React.JSX.Element {
 
   /**
    * T327/CA-12 — os 4 fatos do board, SÓ dos cards do discovery em foco. A
-   * lista consultada é a dos cards de plano desta árvore: nenhum card fora do
+   * lista consultada é a dos cards de plano desta árvore + o card RAIZ
+   * (discoveryCardId, item 5 da rodada de forma fix/009-board-real-e-modal —
+   * o mapa precisa do título REAL do card de discovery, mesma via de
+   * `get_task_details` que os cards de plano já usam): nenhum card fora do
    * foco é pedido, e nada é escrito de volta (invariante 5). Board sem fonte
    * devolve `{}` — o mapa continua idêntico ao da Fatia 1, sem erro na tela.
    */
   const focusedMarcoCardIds = useMemo(
-    () => (rawFocusedTree ? rawFocusedTree.planCards.map((planCard) => planCard.cardId) : []),
+    () =>
+      rawFocusedTree
+        ? [...rawFocusedTree.planCards.map((planCard) => planCard.cardId), rawFocusedTree.discoveryCardId]
+        : [],
     [rawFocusedTree],
   );
 
@@ -2012,6 +2025,34 @@ export function App(): React.JSX.Element {
       )
     : accountLabel;
 
+  // Item 11 (rodada de forma fix/009-board-real-e-modal) — coluna CONTA da
+  // tela "Sessões anteriores": reverso de `archivedPhaseSessions`
+  // (`sessionId -> profileSlug`). Achado do CA-25 (`sessionAccountLabel.ts`)
+  // ainda vale: a maioria das sessões não tem esse dado — "—" é o comum.
+  const previousSessionsAccountBySessionId = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const archived of Object.values(devModeState?.archivedPhaseSessions ?? {})) {
+      map[archived.sessionId] = archived.profileSlug;
+    }
+    return map;
+  }, [devModeState]);
+
+  // Item 11 — coluna CONTEXTO: "312k/400k" só quando a sessão listada é
+  // TAMBÉM uma aba viva agora (`contextTokens` é um push pra abas abertas via
+  // `TranscriptChangedPayload` — nunca persistido pro índice de sessões
+  // fechadas, `SessionSummaryDto` não carrega esse campo).
+  const previousSessionsContextLabel = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const tab of tabs) {
+      if (tab.sessionType !== 'claude' || !tab.claudeSessionId) continue;
+      const used = contextTokens[tab.claudeSessionId];
+      if (used === null || used === undefined) continue;
+      const model = sessionModelEffort[tab.id]?.model ?? DEFAULT_MODEL_ALIAS;
+      map[tab.claudeSessionId] = formatSmartZoneLabel(used, effectiveContextZone(model));
+    }
+    return map;
+  }, [tabs, contextTokens, sessionModelEffort]);
+
   return (
     <div className={styles.shell}>
       <header className={styles.titlebar}>
@@ -2031,19 +2072,33 @@ export function App(): React.JSX.Element {
           onOpenProject={handleOpenProject}
           onProjectsChanged={setProjects}
         />
+        {/* Item 1 (rodada de forma fix/009-board-real-e-modal) — titlebar v3
+            (mockup linhas 39-51): esquerda = marca + pill de projeto (acima);
+            CENTRO = SegmentedControl "Uso geral | Dev" entre dois espaçadores
+            flex:1, substituindo o rótulo solto "Principal —" + o Toggle
+            azul; direita = AccountBadge (ProfileSwitcher) + os ícones que já
+            existiam. T310/CA-20 — ligar REORGANIZA o layout desta mesma
+            janela; desligar volta à tela de hoje, que não é aposentada (nem
+            desmontada — mesmo princípio do T007 "todas as abas ficam
+            montadas", garante que nenhum PTY é recriado na troca). */}
+        <div className={styles.titlebarSpacer} />
+        <div className={styles.devModeToggle} data-testid="devmode-toggle">
+          <SegmentedControl
+            ariaLabel="Modo"
+            value={devModeOn ? 'dev' : 'geral'}
+            onChange={(next) => setDevModeOn(next === 'dev')}
+            options={[
+              { value: 'geral', label: 'Uso geral' },
+              { value: 'dev', label: 'Dev' },
+            ]}
+          />
+        </div>
+        <div className={styles.titlebarSpacer} />
         <ProfileSwitcher
           onActiveProfileLabelChange={setAccountLabel}
           onHeadroomChange={setProfileHeadroom}
           onActiveProfileSlugChange={setActiveProfileSlug}
         />
-        {/* T310/CA-20 — o switch do Modo Dev. Ligar REORGANIZA o layout desta
-            mesma janela; desligar volta à tela de hoje, que não é aposentada
-            (nem desmontada: a sidebar e as abas continuam montadas, ocultas
-            por CSS — mesmo princípio do T007 "todas as abas ficam montadas",
-            é o que garante que nenhum PTY é recriado no toggle). */}
-        <div className={styles.devModeToggle} data-testid="devmode-toggle">
-          <Toggle checked={devModeOn} onChange={setDevModeOn} label="Modo Dev" />
-        </div>
         {/* T015 — UI de Preferências (FR-007, feedback E2E rodada 3/4). */}
         <button
           type="button"
@@ -2123,8 +2178,19 @@ export function App(): React.JSX.Element {
       >
         {/* CA-20 — a tela de hoje continua MONTADA quando o Modo Dev liga
             (só oculta por CSS): nada de remontar sidebar/abas, nada de PTY
-            recriado. Mesmo princípio já usado nas abas de terminal (T007). */}
-        <div className={devModeOn || sidebarCollapsed ? styles.zoneHidden : styles.zone} data-testid="today-sidebar">
+            recriado. Mesmo princípio já usado nas abas de terminal (T007).
+            FIX (revisão do orquestrador, app-06 regenerado) — "Sessões
+            anteriores" (item 11) é uma TELA irmã de `.body` na MESMA linha
+            do grid (`.previousSessionsScreen`, `grid-row: 2`), não um
+            `Modal` portalizado: sem esconder esta zona também, o rótulo
+            "PROJETOS" e a scrollbar da sidebar continuavam vivos por baixo
+            e vazavam na borda inferior do print — mesmo princípio de
+            `devModeOn`, mais um caso que reorganiza o miolo por cima da
+            tela de hoje. */}
+        <div
+          className={devModeOn || sidebarCollapsed || previousSessionsProject !== null ? styles.zoneHidden : styles.zone}
+          data-testid="today-sidebar"
+        >
         <ProjectSidebar
           projects={projects}
           loadingProjects={loadingProjects}
@@ -2187,14 +2253,27 @@ export function App(): React.JSX.Element {
                 </div>
               ) : null}
 
+              {/* Item 3 (rodada de forma fix/009-board-real-e-modal) — o path
+                  cru NÃO vai mais pro "header" (screenshot app-03 mostrava
+                  `C:\Users\...\implementar-result.json` ocupando o lugar do
+                  breadcrumb, porque o header de baixo só renderizava com
+                  `tabs.length > 0`). Decisão nomeada: o caminho completo
+                  segue existindo só como TOOLTIP (`title`) — o texto visível
+                  é o nome do arquivo; o path inteiro já está listado, por
+                  extenso, em "Artefatos declarados" no painel de 316px. */}
               {openedArtifactPath ? (
-                <p className={styles.devModeHint} data-testid="devmode-opened-artifact">
-                  {openedArtifactPath}
+                <p
+                  className={styles.devModeArtifactHint}
+                  data-testid="devmode-opened-artifact"
+                  title={openedArtifactPath}
+                >
+                  ◧ consultando {artifactBasename(openedArtifactPath)}
                 </p>
               ) : null}
             </section>
           ) : null}
           <div className={styles.tabBar}>
+            <div className={styles.tabBarScroll}>
             {tabs.map((tab, index) => (
               <TerminalTab
                 key={tab.id}
@@ -2225,6 +2304,12 @@ export function App(): React.JSX.Element {
                 }}
               />
             ))}
+            </div>
+            {/* Item 4 (rodada de forma fix/009-board-real-e-modal, mockup
+                linha 64) — o hint fica FORA da área rolável das abas, pra
+                nunca ser espremido/sumir quando há muitas abas. Só aparece
+                com pelo menos 1 aba (sem abas, não há barra). */}
+            {tabs.length > 0 ? <span className={styles.tabBarHint}>arraste para reordenar · cor por aba</span> : null}
           </div>
           {/* FIX (teste manual 27/07) — a toolbar de Modelo/Esforço
               (SessionDetails) foi REMOVIDA dos dois modos a pedido do dono
@@ -2238,7 +2323,15 @@ export function App(): React.JSX.Element {
               continua valendo: isto NÃO é o SessionDetails (modelo/esforço/
               permissões) — só o que o mockup desenha aqui: breadcrumb (Dev)
               ou nome+path (Uso geral), StateDot e "⟳ Reiniciar" (CA-24). */}
-          {tabs.length > 0 ? (
+          {/* Item 3 (rodada de forma fix/009-board-real-e-modal) — no Modo
+              Dev o header é SEMPRE o breadcrumb quando há etapa em foco,
+              independente de existir aba aberta (2a: a etapa "sem sessão
+              ainda" já mostra o breadcrumb) — antes a condição era só
+              `tabs.length > 0`, então com 0 sessões o header sumia inteiro e
+              o path cru do "consultar artefato" (Zona 2, acima) parecia ser
+              o header. Uso geral mantém a condição antiga (nome+path só com
+              aba aberta, lote 8). */}
+          {(devModeOn ? selectedPhaseDetails !== null : tabs.length > 0) ? (
             <div className={styles.sessionHeader} data-testid="session-header">
               {devModeOn && selectedPhaseDetails ? (
                 <>
@@ -2284,8 +2377,13 @@ export function App(): React.JSX.Element {
                 estado especial "primeira vez" separado do estado normal
                 "sem sessão nenhuma aberta agora". CTA aponta pros dois
                 caminhos reais de abrir uma sessão (sidebar ou "＋ Nova
-                sessão") em vez de inventar um terceiro botão/atalho. */}
-            {tabs.length === 0 ? (
+                sessão") em vez de inventar um terceiro botão/atalho.
+                Item 2 (rodada de forma fix/009-board-real-e-modal, CA-15) —
+                este CTA é do modo clássico: no Modo Dev as sessões nascem da
+                esteira ("⌁ Preparar" na trilha do mapa), nunca de um atalho
+                ad-hoc — o botão nunca aparece lá (screenshot app-01/03
+                mostrava o contrário). */}
+            {tabs.length === 0 && !devModeOn ? (
               <div className={styles.emptyState} data-testid="empty-state">
                 <p className={styles.emptyStateTitle}>Nenhuma sessão aberta</p>
                 <p className={styles.emptyStateHint}>Escolha um projeto na barra lateral ou</p>
@@ -2298,6 +2396,19 @@ export function App(): React.JSX.Element {
                 <Button variant="primary" onClick={handleQuickNewClaudeSession}>
                   Nova sessão
                 </Button>
+              </div>
+            ) : null}
+            {/* Item 2 — vazio NEUTRO do Modo Dev sem sessão: só a moldura
+                (fundo + hairline do próprio `.terminal`); com etapa em foco,
+                um texto de condução que aponta pro mapa (nunca um narrativa
+                por etapa fabricada — não há fonte pra isso). */}
+            {tabs.length === 0 && devModeOn ? (
+              <div className={styles.devModeTerminalEmpty} data-testid="devmode-terminal-empty">
+                {selectedPhaseDetails ? (
+                  <p className={styles.devModeHint}>
+                    — nenhuma sessão para esta etapa ainda — use "⌁ Preparar" na trilha do mapa.
+                  </p>
+                ) : null}
               </div>
             ) : null}
             {tabs.map((tab) => (
@@ -2353,6 +2464,7 @@ export function App(): React.JSX.Element {
         {devModeOn && focusedTree && !rightCollapsed ? (
           <DiscoveryMap
             tree={focusedTree}
+            discoveryBoardFacts={boardFacts[focusedTree.discoveryCardId] ?? null}
             phaseDefaults={phaseDefaults}
             focusedPlanCardId={focusedMarcoDisplay?.cardId ?? null}
             selectedNode={selectedNode}
@@ -2489,20 +2601,30 @@ export function App(): React.JSX.Element {
         ) : null}
       </Modal>
 
-      {/* T013 — PARTE PRINCIPAL (FR-004, CA-2, ui-spec §5). */}
-      <PreviousSessions
-        open={previousSessionsProject !== null}
-        projectName={previousSessionsProject?.name ?? ''}
-        projectPath={previousSessionsProject?.path ?? ''}
-        sessions={previousSessions}
-        loading={loadingPreviousSessions}
-        onClose={handleClosePreviousSessions}
-        onResume={handleResumeSession}
-        onFork={handleForkSession}
-        // T408 (004) — a lista mostra o nome resolvido (custom-title do CLI ou
-        // nome dado na UI), não só a 1ª mensagem: é o caminho do US-A.
-        sessionNames={appConfig?.sessionNames ?? {}}
-      />
+      {/* T013 — PARTE PRINCIPAL (FR-004, CA-2, ui-spec §5). Item 11 — a
+          tela não é mais um `Modal` portalizado: precisa do wrapper
+          posicionado no grid do `.shell` (`.previousSessionsScreen`, mesma
+          linha de `.body`) só quando aberta. */}
+      {previousSessionsProject !== null ? (
+        <div className={styles.previousSessionsScreen}>
+          <PreviousSessions
+            open={previousSessionsProject !== null}
+            projectName={previousSessionsProject?.name ?? ''}
+            projectPath={previousSessionsProject?.path ?? ''}
+            sessions={previousSessions}
+            loading={loadingPreviousSessions}
+            onClose={handleClosePreviousSessions}
+            onResume={handleResumeSession}
+            onFork={handleForkSession}
+            // T408 (004) — a lista mostra o nome resolvido (custom-title do CLI ou
+            // nome dado na UI), não só a 1ª mensagem: é o caminho do US-A.
+            sessionNames={appConfig?.sessionNames ?? {}}
+            accountBySessionId={previousSessionsAccountBySessionId}
+            activeProfileSlug={activeProfileSlug}
+            contextLabelBySessionId={previousSessionsContextLabel}
+          />
+        </div>
+      ) : null}
 
       {/* T327/CA-16/D1 — confirmação de "Liberar trava…". O texto fala em
           REMOVER A ETIQUETA DE TRAVA NO BOARD (nunca em "arquivo de trava":
