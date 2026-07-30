@@ -1,0 +1,1318 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/donel-dev-design-system-f6d68514-32ea-4734-9d90-1d716533bf62/styles.css">
+<script src="_ds/donel-dev-design-system-f6d68514-32ea-4734-9d90-1d716533bf62/_ds_bundle.js"></script>
+<style>
+  body { margin: 0; background: var(--bg-app); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { color: var(--text-primary); }
+  @keyframes dd-caret { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+  @keyframes dd-armed { 0%, 100% { border-color: rgba(76,156,240,.45) } 50% { border-color: rgba(76,156,240,.95) } }
+  @keyframes dd-blink { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+  @keyframes dd-blink-fast { 0%, 100% { opacity: 1 } 50% { opacity: .15 } }
+  ::-webkit-scrollbar { width: 8px; height: 8px }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px }
+  ::-webkit-scrollbar-track { background: transparent }
+</style>
+</helmet>
+
+<section style="display: flex; flex-direction: column; gap: 24px; padding: 40px; font-family: var(--font-ui); color: var(--text-primary);">
+  <div style="display: flex; flex-wrap: wrap; gap: 40px; align-items: flex-start;">
+
+    <div id="2a" style="display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 4px; background: var(--accent); color: var(--bg-app); font-size: 11px; font-weight: 600;">2a</span>
+        <span style="font-size: 13px; color: var(--text-muted);">Modo Dev v3 — carrossel de dois eixos · 1440×900 · interativo</span>
+      </div>
+
+      <div style="position: relative; width: 1440px; height: 900px; overflow: hidden; background: var(--bg-app); color: var(--text-primary); font-family: var(--font-ui); font-size: var(--text-body-size); border: 1px solid var(--border); border-radius: var(--radius-md); display: flex; flex-direction: column;">
+
+        <div style="height: 40px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px; background: var(--bg-panel); border-bottom: 1px solid var(--border);">
+          <div style="display: flex; gap: 8px; padding-right: 4px;">
+            <span style="width: 11px; height: 11px; border-radius: 50%; background: var(--state-done);"></span>
+            <span style="width: 11px; height: 11px; border-radius: 50%; background: var(--state-done);"></span>
+            <span style="width: 11px; height: 11px; border-radius: 50%; background: var(--state-done);"></span>
+          </div>
+          <span style="font-size: 13px; font-weight: 600;">Donel Dev</span>
+          <span onClick="{{ toggleProjects }}" style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 4px; border: 1px solid {{ projects.bd }}; background: {{ projects.bg }}; font-family: var(--font-mono); font-size: 11px; cursor: pointer; color: {{ projects.fg }};">{{ project.path }} <span style="font-size: 9px;">▾</span></span>
+          <div style="flex: 1;"></div>
+          <x-import component-from-global-scope="DonelDesignSystem.SegmentedControl" aria-label="Modo" options="{{ modeOptions }}" value="{{ mode }}" onChange="{{ setMode }}" hint-size="180px,30px"></x-import>
+          <div style="flex: 1;"></div>
+          <x-import component-from-global-scope="DonelDesignSystem.AccountBadge" account-number="{{ account.n }}" headroom-percent="{{ account.headroom }}" expandable="{{ true }}" hint-size="200px,26px"></x-import>
+        </div>
+
+        <div style="height: 36px; flex: none; display: flex; align-items: stretch; gap: 6px; padding: 4px 12px 0; background: var(--bg-panel); border-bottom: 1px solid var(--border);">
+          <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+            <div draggable="true" onDragStart="{{ t.onDragStart }}" onDragOver="{{ t.onDragOver }}" onDrop="{{ t.onDrop }}" onClick="{{ t.onClick }}" style="display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 9px 0 7px; border: 1px solid {{ t.bd }}; border-bottom: none; border-top: 2px solid {{ t.stripe }}; border-radius: 6px 6px 0 0; background: {{ t.bg }}; cursor: pointer;">
+              <span style="font-family: var(--font-mono); font-size: 9px; color: var(--state-done);">⣿</span>
+              <span style="width: 12px; flex: none; text-align: center; font-size: 10px; line-height: 1; color: {{ t.iconColor }}; animation: {{ t.iconAnim }};">{{ t.icon }}</span>
+              <span style="font-family: var(--font-mono); font-size: 12px; white-space: nowrap; color: {{ t.fg }};">{{ t.name }}</span>
+              <span style="font-size: 10px; color: var(--text-muted);">{{ t.model }}</span>
+            </div>
+          </sc-for>
+          <div style="flex: 1;"></div>
+          <div style="align-self: center; display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 10px; color: var(--text-muted);">{{ tabsHint }}</span>
+          </div>
+        </div>
+
+        <sc-if value="{{ isDev }}" hint-placeholder-val="{{ true }}">
+        <div style="flex: 1; min-height: 0; display: flex;">
+
+          <div style="width: 480px; flex: none; display: flex; flex-direction: column; background: var(--bg-panel); border-right: 1px solid var(--border);">
+            <div style="flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px 6px;">
+              <span style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);">Esteira</span>
+              <span style="font-family: var(--font-mono); font-size: 11px; color: var(--accent);">{{ disc.id }}</span>
+              <div style="flex: 1;"></div>
+              <div style="display: flex;">
+                <x-import component-from-global-scope="DonelDesignSystem.Button" variant="ghost" onClick="{{ openEntrada }}" hint-size="auto,30px">Trocar…</x-import>
+              </div>
+            </div>
+
+            <div style="flex: 1; min-height: 0; overflow: hidden;">
+              <div style="display: flex; flex-direction: column; gap: 14px; transform: translateY({{ carousel.y }}); transition: transform .32s cubic-bezier(0, 0, .2, 1);">
+                <sc-for list="{{ levels }}" as="lv" hint-placeholder-count="4">
+                  <div style="flex: none; height: {{ lv.h }}; display: flex; transition: height .32s cubic-bezier(0, 0, .2, 1);">
+                    <div style="width: 26px; flex: none; display: flex; flex-direction: column; align-items: center; padding-top: 20px;">
+                      <span style="width: 9px; height: 9px; flex: none; border-radius: 50%; background: {{ lv.nodeBg }}; border: 1px solid {{ lv.nodeBd }}; box-shadow: {{ lv.nodeGlow }};"></span>
+                      <span style="flex: 1; width: 1px; background: {{ lv.lineColor }};"></span>
+                    </div>
+                    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+                      <div style="flex: none; height: 20px; display: flex; align-items: center; gap: 8px;">
+                        <span onClick="{{ lv.onFocus }}" style="font-size: 10px; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; cursor: pointer; color: {{ lv.labelColor }};">{{ lv.label }}</span>
+                        <sc-if value="{{ lv.multi }}" hint-placeholder-val="{{ true }}">
+                          <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="font-size: 10px; white-space: nowrap; color: var(--text-muted);">{{ lv.counter }}</span>
+                            <span onClick="{{ lv.prev }}" style="display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-raised); color: var(--text-muted); font-size: 11px; cursor: pointer;">‹</span>
+                            <span onClick="{{ lv.next }}" style="display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-raised); color: var(--text-muted); font-size: 11px; cursor: pointer;">›</span>
+                          </div>
+                        </sc-if>
+                      </div>
+                      <div style="flex: 1; min-height: 0; display: flex; gap: 12px; transform: translateX({{ lv.x }}); transition: transform .32s cubic-bezier(0, 0, .2, 1);">
+                        <sc-for list="{{ lv.cards }}" as="c" hint-placeholder-count="3">
+                          <div onClick="{{ c.onFocus }}" style="width: 392px; flex: none; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-top: 2px solid {{ c.accent }}; border-radius: var(--radius-sm); background: var(--bg-app); opacity: {{ c.opacity }}; box-shadow: {{ c.shadow }}; cursor: {{ c.cursor }}; transition: opacity .3s, box-shadow .3s;">
+                            <div style="flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 11px 0;">
+                              <span style="flex: none; font-size: 11px; color: {{ c.accent }};">{{ c.icon }}</span>
+                              <span style="flex: none; white-space: nowrap; font-family: var(--font-mono); font-size: 11px; color: var(--accent);">{{ c.id }}</span>
+                              <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600;">{{ c.title }}</span>
+                              <span style="flex: none; display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 4px; font-size: 10px; white-space: nowrap; color: {{ c.statusFg }}; background: {{ c.statusBg }}; border: 1px solid {{ c.statusBd }};">{{ c.status }}</span>
+                            </div>
+                            <div style="flex: none; padding: 6px 11px 9px 30px; font-size: 11.5px; line-height: 1.5; text-wrap: pretty; color: var(--text-primary);">{{ c.plain }}</div>
+                            <sc-if value="{{ c.hasMeta }}" hint-placeholder-val="{{ true }}">
+                              <div style="flex: none; display: flex; align-items: center; flex-wrap: wrap; row-gap: 5px; column-gap: 8px; padding: 6px 11px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-panel);">
+                                <span style="font-size: 10px; white-space: nowrap; color: var(--text-muted);">{{ c.metaLabel }}</span>
+                                <span style="font-family: var(--font-mono); font-size: 10px; white-space: nowrap; color: var(--text-primary);">{{ c.metaValue }}</span>
+                                <sc-for list="{{ c.tags }}" as="g" hint-placeholder-count="2">
+                                  <span style="display: inline-flex; align-items: center; max-width: 100%; height: 16px; padding: 0 6px; border-radius: 4px; font-size: 10px; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: {{ g.fg }}; background: {{ g.bg }}; border: 1px solid {{ g.bd }};">{{ g.text }}</span>
+                                </sc-for>
+                              </div>
+                            </sc-if>
+                            <sc-if value="{{ c.hasClock }}" hint-placeholder-val="{{ true }}">
+                              <div style="flex: none; margin: 9px 11px; padding: 8px 10px; border: 1px solid {{ c.clock.bd }}; border-radius: var(--radius-sm); background: {{ c.clock.bg }};">
+                                <div style="display: flex; align-items: baseline; gap: 8px;">
+                                  <span style="flex: none; font-size: 11px; color: {{ c.clock.fg }}; animation: {{ c.clock.anim }};">◷</span>
+                                  <span style="flex: 1; min-width: 0; font-size: 10px; white-space: nowrap; color: var(--text-muted);">desfaz o merge em</span>
+                                  <span style="flex: none; font-family: var(--font-mono); font-size: 10px; white-space: nowrap; color: var(--text-muted);">{{ c.clock.relative }}</span>
+                                </div>
+                                <div style="margin-top: 2px; font-family: var(--font-mono); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: {{ c.clock.fg }};">{{ c.clock.absolute }}</div>
+                                <div style="margin-top: 6px; height: 4px; border-radius: 2px; background: var(--bg-raised); overflow: hidden;">
+                                  <div style="height: 100%; width: {{ c.clock.pct }}; background: {{ c.clock.fg }};"></div>
+                                </div>
+                                <div style="margin-top: 5px; font-size: 10px; line-height: 1.45; color: var(--text-muted);">{{ c.clock.note }}</div>
+                              </div>
+                            </sc-if>
+                            <sc-if value="{{ c.hasAction }}" hint-placeholder-val="{{ true }}">
+                              <div style="flex: none; display: flex; padding: 0 11px 9px;">
+                                <x-import component-from-global-scope="DonelDesignSystem.Button" variant="{{ c.actionVariant }}" onClick="{{ c.onAction }}" hint-size="auto,30px">{{ c.actionLabel }}</x-import>
+                              </div>
+                            </sc-if>
+                            <sc-if value="{{ c.hasTrilha }}" hint-placeholder-val="{{ true }}">
+                              <div style="flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; border-top: 1px solid var(--border); padding: 4px 0 6px;">
+                                <sc-for list="{{ c.trilha }}" as="s" hint-placeholder-count="6">
+                                  <div onClick="{{ s.onClick }}" style="display: flex; align-items: center; gap: 7px; min-height: {{ s.h }}; padding: 0 10px; cursor: pointer; border-left: 2px solid {{ s.edge }}; background: {{ s.bg }};">
+                                    <span style="width: 9px; flex: none; text-align: center; font-family: var(--font-mono); font-size: 10px; color: color-mix(in srgb, var(--text-muted) 40%, transparent);">{{ s.rail }}</span>
+                                    <span style="width: 16px; height: 16px; flex: none; display: grid; place-items: center; border-radius: 4px; font-size: 9.5px; font-weight: 700; line-height: 1; color: {{ s.glyphFg }}; background: {{ s.glyphBg }}; border: 1px solid {{ s.glyphBd }};">{{ s.glyph }}</span>
+                                    <sc-if value="{{ s.showChip }}" hint-placeholder-val="{{ true }}">
+                                      <x-import component-from-global-scope="DonelDesignSystem.PhaseChip" phase="{{ s.chip }}" hint-size="auto,18px"></x-import>
+                                    </sc-if>
+                                    <sc-if value="{{ s.docChip }}" hint-placeholder-val="{{ false }}">
+                                      <span style="display: inline-flex; align-items: center; flex: none; padding: 2px 8px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--donel-accent); background: color-mix(in srgb, var(--donel-accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--donel-accent) 45%, transparent);">Documentação</span>
+                                    </sc-if>
+                                    <span style="flex: none; font-family: var(--font-mono); font-size: 10px; white-space: nowrap; color: var(--text-muted);">{{ s.fase }}</span>
+                                    <div style="flex: 1;"></div>
+                                    <sc-if value="{{ s.hasSession }}" hint-placeholder-val="{{ true }}">
+                                      <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="{{ s.sessionState }}" hint-size="10px,10px"></x-import>
+                                    </sc-if>
+                                    <span style="flex: none; font-size: 10px; white-space: nowrap; color: {{ s.stateColor }};">{{ s.stateLabel }}</span>
+                                    <sc-if value="{{ s.isNext }}" hint-placeholder-val="{{ true }}">
+                                      <div style="display: flex; flex: none;">
+                                        <x-import component-from-global-scope="DonelDesignSystem.Button" variant="secondary" onClick="{{ s.onPrepare }}" hint-size="auto,30px">{{ s.prepareLabel }}</x-import>
+                                      </div>
+                                    </sc-if>
+                                  </div>
+                                </sc-for>
+                              </div>
+                            </sc-if>
+                          </div>
+                        </sc-for>
+                      </div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-panel);">
+            <div style="flex: none; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border);">
+              <span style="flex: none; white-space: nowrap; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">{{ disc.id }}</span>
+              <span style="flex: none; color: var(--state-done);">›</span>
+              <span style="flex: none; white-space: nowrap; font-family: var(--font-mono); font-size: 11px; color: var(--accent);">{{ step.planoId }}</span>
+              <span style="flex: none; white-space: nowrap; font-size: 12px;">{{ step.planoTitle }}</span>
+              <span style="flex: none; color: var(--state-done);">›</span>
+              <sc-if value="{{ step.showChip }}" hint-placeholder-val="{{ true }}">
+                <x-import component-from-global-scope="DonelDesignSystem.PhaseChip" phase="{{ step.chip }}" hint-size="auto,18px"></x-import>
+              </sc-if>
+              <sc-if value="{{ step.docChip }}" hint-placeholder-val="{{ false }}">
+                <span style="display: inline-flex; align-items: center; flex: none; padding: 2px 8px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--donel-accent); background: color-mix(in srgb, var(--donel-accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--donel-accent) 45%, transparent);">Documentação</span>
+              </sc-if>
+              <span style="flex: none; white-space: nowrap; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted);">{{ step.fase }}</span>
+              <div style="flex: 1;"></div>
+              <sc-if value="{{ step.hasSession }}" hint-placeholder-val="{{ true }}">
+                <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="{{ step.sessionState }}" label="{{ step.sessionLabel }}" hint-size="auto,14px"></x-import>
+              </sc-if>
+              <div style="display: flex; flex: none;">
+                <x-import component-from-global-scope="DonelDesignSystem.Button" variant="ghost" onClick="{{ openRestart }}" hint-size="auto,30px">⟳ Reiniciar</x-import>
+              </div>
+            </div>
+
+            <div style="flex: 1; min-height: 0; margin: 12px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-app);">
+              <div style="flex: none; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--bg-panel);">
+                <span style="font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted);">{{ term.title }}</span>
+                <div style="flex: 1;"></div>
+                <span style="font-size: 10px; color: var(--text-muted);">{{ term.badge }}</span>
+              </div>
+              <div style="flex: 1; min-height: 0; overflow: hidden; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55;">
+                <sc-for list="{{ term.lines }}" as="ln" hint-placeholder-count="10">
+                  <div style="white-space: pre; color: {{ ln.c }};">{{ ln.t }}</div>
+                </sc-for>
+              </div>
+              <div style="flex: none; padding: 0 12px 12px;">
+                <sc-if value="{{ armed.on }}" hint-placeholder-val="{{ true }}">
+                  <div style="margin-bottom: 8px; border: 1px solid rgba(76,156,240,.45); border-radius: var(--radius-sm); background: rgba(76,156,240,.07); animation: dd-armed 1.6s ease-in-out infinite;">
+                    <div style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid rgba(76,156,240,.25); font-size: 11px; color: var(--accent);">
+                      <span>⌁</span>
+                      <span style="font-weight: 600; white-space: nowrap;">Comando preparado — nada foi enviado.</span>
+                      <span style="color: var(--text-muted);">Pressione</span>
+                      <span style="display: inline-flex; align-items: center; height: 17px; padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-raised); font-family: var(--font-mono); font-size: 10px; color: var(--text-primary);">Enter</span>
+                      <div style="flex: 1;"></div>
+                      <span onClick="{{ clearArmed }}" style="cursor: pointer; white-space: nowrap; color: var(--text-muted); font-size: 11px;">descartar ✕</span>
+                    </div>
+                    <sc-if value="{{ armed.hasNote }}" hint-placeholder-val="{{ true }}">
+                      <div style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 11px; color: {{ armed.noteColor }};">
+                        <span>{{ armed.noteIcon }}</span><span>{{ armed.note }}</span>
+                      </div>
+                    </sc-if>
+                  </div>
+                </sc-if>
+                <div style="display: flex; align-items: baseline; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-panel); font-family: var(--font-mono); font-size: 12.5px;">
+                  <span style="color: var(--accent);">❯</span>
+                  <span style="color: {{ armed.cmdColor }};">{{ armed.cmd }}</span>
+                  <span style="width: 7px; height: 15px; background: var(--accent); animation: dd-caret 1.1s step-end infinite;"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="width: 316px; flex: none; display: flex; flex-direction: column; overflow-y: auto; background: var(--bg-panel); border-left: 1px solid var(--border);">
+            <div style="flex: none; padding: 12px; border-bottom: 1px solid var(--border);">
+              <div style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Etapa em foco</div>
+              <div style="display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; column-gap: 8px;">
+                <span style="width: 18px; height: 18px; flex: none; display: grid; place-items: center; border-radius: 4px; font-size: 10px; font-weight: 700; color: {{ step.glyphFg }}; background: {{ step.glyphBg }}; border: 1px solid {{ step.glyphBd }};">{{ step.glyph }}</span>
+                <sc-if value="{{ step.showChip }}" hint-placeholder-val="{{ true }}">
+                  <x-import component-from-global-scope="DonelDesignSystem.PhaseChip" phase="{{ step.chip }}" hint-size="auto,18px"></x-import>
+                </sc-if>
+                <sc-if value="{{ step.docChip }}" hint-placeholder-val="{{ false }}">
+                  <span style="display: inline-flex; align-items: center; flex: none; padding: 2px 8px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--donel-accent); background: color-mix(in srgb, var(--donel-accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--donel-accent) 45%, transparent);">Documentação</span>
+                </sc-if>
+                <span style="flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted);">{{ step.fase }}</span>
+                <span style="flex: none; font-size: 11px; color: {{ step.stateColor }};">{{ step.stateLabel }}</span>
+              </div>
+              <div style="margin-top: 7px; font-size: 11px; line-height: 1.55; text-wrap: pretty; color: var(--text-muted);">{{ step.summary }}</div>
+            </div>
+
+            <sc-if value="{{ step.hasGarantia }}" hint-placeholder-val="{{ true }}">
+              <div style="flex: none; padding: 12px; border-bottom: 1px solid var(--border);">
+                <div style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Garantia da fase</div>
+                <div style="display: flex; align-items: center; gap: 7px;">
+                  <span style="display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 4px; font-size: 10.5px; white-space: nowrap; color: {{ step.garantiaFg }}; background: {{ step.garantiaBg }}; border: 1px solid {{ step.garantiaBd }};">{{ step.garantiaTipo }}</span>
+                  <span style="font-size: 10.5px; color: var(--text-muted);">{{ step.garantiaStatus }}</span>
+                </div>
+                <div style="margin-top: 6px; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-primary);">{{ step.garantiaPath }}</div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ step.hasPr }}" hint-placeholder-val="{{ true }}">
+              <div style="flex: none; padding: 12px; border-bottom: 1px solid var(--border);">
+                <div style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">PR desta fase</div>
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                  <sc-for list="{{ step.pr }}" as="r" hint-placeholder-count="3">
+                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                      <span style="width: 74px; flex: none; font-size: 10.5px; line-height: 1.6; color: var(--text-muted);">{{ r.k }}</span>
+                      <span style="display: inline-flex; align-items: center; min-height: 18px; padding: 1px 7px; border-radius: 4px; font-size: 10.5px; line-height: 1.5; color: {{ r.fg }}; background: {{ r.bg }}; border: 1px solid {{ r.bd }};">{{ r.v }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ step.hasArtifacts }}" hint-placeholder-val="{{ true }}">
+              <div style="flex: none; padding: 12px; border-bottom: 1px solid var(--border);">
+                <div style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px;">Artefatos declarados</div>
+                <sc-for list="{{ step.artifacts }}" as="f" hint-placeholder-count="4">
+                  <div style="display: flex; align-items: center; gap: 8px; height: 24px; font-family: var(--font-mono); font-size: 11px; color: var(--text-primary);">
+                    <span style="flex: none; color: var(--text-muted);">{{ f.icon }}</span>
+                    <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ f.name }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ step.showReceipts }}" hint-placeholder-val="{{ true }}">
+              <div style="flex: none; padding: 12px;">
+                <div style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Recibos de conhecimento</div>
+                <sc-if value="{{ step.hasReceipts }}" hint-placeholder-val="{{ true }}">
+                  <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <sc-for list="{{ step.receipts }}" as="r" hint-placeholder-count="3">
+                      <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-app);">
+                        <span style="flex: none; font-size: 11px; color: {{ r.color }};">{{ r.icon }}</span>
+                        <div style="flex: 1; min-width: 0;">
+                          <div style="font-size: 11px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ r.title }}</div>
+                          <div style="font-size: 10px; color: var(--text-muted);">{{ r.where }}</div>
+                        </div>
+                        <span style="flex: none; font-size: 11px; color: var(--text-muted);">↗</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ step.noReceipts }}" hint-placeholder-val="{{ true }}">
+                  <div style="font-size: 10.5px; color: var(--text-muted); opacity: .8;">sem registro</div>
+                </sc-if>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ isGeral }}" hint-placeholder-val="{{ false }}">
+          <div style="flex: 1; min-height: 0; display: flex;">
+            <div style="width: 300px; flex: none; display: flex; flex-direction: column; background: var(--bg-panel); border-right: 1px solid var(--border);">
+              <div style="flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px;">
+                <span style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);">Sessões</span>
+                <div style="flex: 1;"></div>
+                <x-import component-from-global-scope="DonelDesignSystem.SplitButton" label="＋ Nova sessão" onClick="{{ geral.onNew }}" items="{{ geral.newItems }}" variant="secondary" hint-size="170px,30px"></x-import>
+              </div>
+              <div style="flex: 1; min-height: 0; overflow-y: auto;">
+                <sc-for list="{{ geral.sessions }}" as="g" hint-placeholder-count="5">
+                  <div onClick="{{ g.onClick }}" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; cursor: pointer; border-left: 2px solid {{ g.edge }}; background: {{ g.bg }};">
+                    <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="{{ g.state }}" hint-size="10px,10px"></x-import>
+                    <span style="flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ g.fg }};">{{ g.name }}</span>
+                    <span style="flex: none; font-size: 10px; color: var(--text-muted);">{{ g.model }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="flex: none; padding: 10px 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex;">
+                  <x-import component-from-global-scope="DonelDesignSystem.Button" variant="ghost" onClick="{{ geral.onHistory }}" hint-size="auto,30px">Sessões anteriores…</x-import>
+                </div>
+                <div style="font-size: 10px; line-height: 1.5; color: var(--text-muted);">Aqui as sessões são livres: você digita o que quiser. O Modo Dev é o mesmo app conduzindo a esteira — o switch só reorganiza o layout.</div>
+              </div>
+            </div>
+
+            <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-panel);">
+              <div style="flex: none; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border);">
+                <span style="flex: none; font-family: var(--font-mono); font-size: 12.5px; color: var(--text-primary);">{{ geral.sel.name }}</span>
+                <span style="flex: none; font-size: 10.5px; color: var(--text-muted);">{{ geral.sel.path }}</span>
+                <div style="flex: 1;"></div>
+                <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="{{ geral.sel.state }}" label="{{ geral.sel.stateLabel }}" hint-size="auto,14px"></x-import>
+                <div style="display: flex; flex: none;">
+                  <x-import component-from-global-scope="DonelDesignSystem.Button" variant="ghost" onClick="{{ openRestart }}" hint-size="auto,30px">⟳ Reiniciar</x-import>
+                </div>
+              </div>
+              <div style="flex: 1; min-height: 0; margin: 12px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-app);">
+                <div style="flex: none; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--bg-panel);">
+                  <span style="font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted);">{{ geral.sel.name }}</span>
+                  <div style="flex: 1;"></div>
+                  <span style="font-size: 10px; color: var(--text-muted);">sessão livre · sem esteira</span>
+                </div>
+                <div style="flex: 1; min-height: 0; overflow: hidden; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55;">
+                  <sc-for list="{{ geral.lines }}" as="ln" hint-placeholder-count="8">
+                    <div style="white-space: pre; color: {{ ln.c }};">{{ ln.t }}</div>
+                  </sc-for>
+                </div>
+                <div style="flex: none; padding: 0 12px 12px;">
+                  <div style="display: flex; align-items: baseline; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-panel); font-family: var(--font-mono); font-size: 12.5px;">
+                    <span style="color: var(--accent);">❯</span>
+                    <span style="color: var(--text-muted);">{{ geral.draft }}</span>
+                    <span style="width: 7px; height: 15px; background: var(--accent); animation: dd-caret 1.1s step-end infinite;"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="width: 300px; flex: none; display: flex; flex-direction: column; gap: 14px; padding: 12px; overflow-y: auto; background: var(--bg-panel); border-left: 1px solid var(--border);">
+              <div style="flex: none; margin-bottom: 2px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);">Sessão em foco</div>
+              <x-import component-from-global-scope="DonelDesignSystem.SmartZoneMeter" used-tokens="{{ usedTokens }}" onHandoff="{{ geral.onHandoff }}" hint-size="100%,44px"></x-import>
+              <x-import component-from-global-scope="DonelDesignSystem.AccountBadge" account-number="{{ account.n }}" headroom-percent="{{ account.headroom }}" active="{{ true }}" hint-size="200px,26px"></x-import>
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-size: 10.5px; color: var(--text-muted);">Modelo</span>
+                <x-import component-from-global-scope="DonelDesignSystem.SegmentedControl" aria-label="Modelo" options="{{ geral.modelOptions }}" value="{{ geral.model }}" onChange="{{ geral.setModel }}" hint-size="100%,30px"></x-import>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-size: 10.5px; color: var(--text-muted);">Esforço</span>
+                <x-import component-from-global-scope="DonelDesignSystem.SegmentedControl" aria-label="Esforço" options="{{ geral.effortOptions }}" value="{{ geral.effort }}" onChange="{{ geral.setEffort }}" hint-size="100%,30px"></x-import>
+              </div>
+              <x-import component-from-global-scope="DonelDesignSystem.Select" label="Permissões" value="{{ geral.perm }}" options="{{ geral.permOptions }}" onChange="{{ geral.setPerm }}" hint-size="100%,58px"></x-import>
+              <x-import component-from-global-scope="DonelDesignSystem.Toggle" checked="{{ geral.notify }}" onChange="{{ geral.setNotify }}" label="Avisar quando pedir permissão" description="notificação do sistema quando a sessão travar esperando você" hint-size="100%,44px"></x-import>
+              <div style="margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border);">
+                <x-import component-from-global-scope="DonelDesignSystem.PostItCard" text="{{ geral.postit }}" date="hoje, 09:14" project="seazone/cotas" onSendToSession="{{ geral.onPostitSend }}" hint-size="100%,120px"></x-import>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <div style="flex: none;">
+          <x-import component-from-global-scope="DonelDesignSystem.StatusBar" account-label="{{ status.account }}" model-effort="{{ status.model }}" session-count="{{ status.sessions }}" smart-zone="{{ status.zone }}" hint-size="100%,28px"></x-import>
+        </div>
+
+        <sc-if value="{{ entrada.open }}" hint-placeholder-val="{{ true }}">
+          <div style="position: absolute; inset: 0; background: var(--overlay-modal); display: flex; align-items: flex-start; justify-content: center; padding-top: 80px;">
+            <div style="width: 620px; max-height: 640px; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-modal);">
+              <div style="padding: 12px; border-bottom: 1px solid var(--border);">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                  <span style="font-size: 15px; font-weight: 600;">Abrir ou trocar discovery</span>
+                  <span onClick="{{ closeEntrada }}" style="cursor: pointer; color: var(--text-muted); font-size: 13px;">✕</span>
+                </div>
+                <div style="margin-top: 4px; font-size: 11px; color: var(--text-muted);">Board único · apenas Backlog, Discovery e Plano. Cards concluídos não aparecem.</div>
+                <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
+                  <div style="flex: 1;">
+                    <x-import component-from-global-scope="DonelDesignSystem.TextInput" placeholder="Filtrar por id ou título…" value="{{ entrada.query }}" onChange="{{ onQuery }}" hint-size="100%,30px"></x-import>
+                  </div>
+                  <x-import component-from-global-scope="DonelDesignSystem.SegmentedControl" aria-label="Coluna" options="{{ entrada.columnOptions }}" value="{{ entrada.column }}" onChange="{{ setColumn }}" hint-size="260px,30px"></x-import>
+                </div>
+              </div>
+              <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 8px;">
+                <sc-for list="{{ entrada.cards }}" as="c" hint-placeholder-count="6">
+                  <div onClick="{{ c.onOpen }}" style="display: flex; align-items: center; gap: 10px; padding: 10px; margin-bottom: 6px; border: 1px solid {{ c.bd }}; border-radius: var(--radius-sm); background: {{ c.bg }}; cursor: pointer;">
+                    <span style="width: 74px; flex: none; display: inline-flex; align-items: center; justify-content: center; height: 18px; border-radius: 4px; font-size: 10px; color: {{ c.colFg }}; background: {{ c.colBg }}; border: 1px solid {{ c.colBd }};">{{ c.column }}</span>
+                    <div style="flex: 1; min-width: 0;">
+                      <div style="display: flex; align-items: baseline; gap: 8px;">
+                        <span style="flex: none; white-space: nowrap; font-family: var(--font-mono); font-size: 11px; color: var(--accent);">{{ c.id }}</span>
+                        <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px;">{{ c.title }}</span>
+                      </div>
+                      <div style="margin-top: 3px; font-size: 10.5px; color: var(--text-muted);">{{ c.note }}</div>
+                    </div>
+                    <span style="flex: none; font-size: 10.5px; white-space: nowrap; color: {{ c.actionColor }};">{{ c.action }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="padding: 10px 12px; border-top: 1px solid var(--border); font-size: 10.5px; color: var(--text-muted);">Card já vinculado traz o discovery existente para o foco — nunca cria outro. Card de Plano abre o discovery pai.</div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ projects.open }}" hint-placeholder-val="{{ false }}">
+          <div style="position: absolute; top: 44px; left: 118px; width: 320px; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-modal);">
+            <div style="padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);">Projetos</div>
+            <sc-for list="{{ projects.list }}" as="p" hint-placeholder-count="3">
+              <div onClick="{{ p.onOpen }}" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; cursor: pointer; background: {{ p.bg }};">
+                <span style="width: 10px; flex: none; text-align: center; font-size: 10px; color: var(--accent);">{{ p.mark }}</span>
+                <span style="flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ p.fg }};">{{ p.path }}</span>
+                <span style="flex: none; font-size: 10px; color: var(--text-muted);">{{ p.meta }}</span>
+              </div>
+            </sc-for>
+            <div style="display: flex; padding: 8px 10px; border-top: 1px solid var(--border);">
+              <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" onClick="{{ openNewProject }}" hint-size="auto,30px">＋ Novo projeto</x-import>
+            </div>
+          </div>
+        </sc-if>
+
+        <x-import component-from-global-scope="DonelDesignSystem.Modal" open="{{ newProject.open }}" onClose="{{ closeNewProject }}" title="Novo projeto" actions="{{ newProjectActions }}" hint-size="0,0"><div style="display: flex; flex-direction: column; gap: 14px; min-width: 460px;"><div style="font-size: 11.5px; line-height: 1.55; color: var(--text-muted);">O app cria a pasta do projeto e o registro local. Board e repositório podem ficar em branco agora e ser preenchidos depois pela engrenagem.</div><x-import component-from-global-scope="DonelDesignSystem.TextInput" label="Nome do projeto" value="{{ newProject.name }}" onChange="{{ onNpName }}" hint-size="100%,58px"></x-import><x-import component-from-global-scope="DonelDesignSystem.Select" label="De onde vem o código" value="{{ newProject.source }}" options="{{ newProject.sourceOptions }}" onChange="{{ onNpSource }}" hint-size="100%,58px"></x-import><x-import component-from-global-scope="DonelDesignSystem.TextInput" label="Pasta local" value="{{ newProject.folder }}" onChange="{{ onNpFolder }}" hint="as worktrees dos planos nascem ao lado dela" hint-tone="muted" hint-size="100%,58px"></x-import><x-import component-from-global-scope="DonelDesignSystem.TextInput" label="Repositório GitHub (opcional)" value="{{ newProject.repo }}" onChange="{{ onNpRepo }}" hint-size="100%,58px"></x-import><x-import component-from-global-scope="DonelDesignSystem.TextInput" label="ID do board de tarefas (opcional)" value="{{ newProject.board }}" onChange="{{ onNpBoard }}" hint-size="100%,58px"></x-import></div></x-import>
+
+        <x-import component-from-global-scope="DonelDesignSystem.Modal" open="{{ restartOpen }}" onClose="{{ closeRestart }}" title="Reiniciar esta sessão na conta Tecnologia Claude 3?" actions="{{ restartActions }}" hint-size="0,0">A sessão é retomada de onde parou, com o mesmo contexto, mas passa a existir em <strong>duas contas</strong>: o histórico até agora fica em Tecnologia Claude 2 e a continuação passa a consumir a cota da Claude 3. Em Sessões anteriores as duas entradas aparecem separadas, cada uma dizendo de qual conta é. O comando de retomada fica escrito no prompt — o Enter é seu.</x-import>
+
+        <x-import component-from-global-scope="DonelDesignSystem.Modal" open="{{ lockOpen }}" onClose="{{ closeLock }}" title="Liberar a trava de PRJ-143 · Implementar?" actions="{{ lockActions }}" hint-size="0,0">A trava foi registrada ontem, 18:42, por uma sessão que morreu sem concluir. Liberar não desfaz nada no disco: remove o arquivo de trava e prepara o comando de retomada no prompt. O Enter continua sendo seu.</x-import>
+
+        <x-import component-from-global-scope="DonelDesignSystem.Toast" open="{{ toast.open }}" message="{{ toast.message }}" action-label="{{ toast.actionLabel }}" onAction="{{ toast.onAction }}" onDismiss="{{ toast.onDismiss }}" duration="{{ 9000 }}" hint-size="0,0"></x-import>
+      </div>
+    </div>
+
+    <div id="2b" style="display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 4px; background: var(--accent); color: var(--bg-app); font-size: 11px; font-weight: 600;">2b</span>
+        <span style="font-size: 13px; color: var(--text-muted);">Sessões anteriores — conta por linha, engrenagem do projeto, novo projeto</span>
+      </div>
+
+      <div style="position: relative; width: 1440px; height: 900px; overflow: hidden; background: var(--bg-app); color: var(--text-primary); font-family: var(--font-ui); border: 1px solid var(--border); border-radius: var(--radius-md); display: flex; flex-direction: column;">
+        <div style="height: 40px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px; background: var(--bg-panel); border-bottom: 1px solid var(--border);">
+          <div style="display: flex; gap: 8px; padding-right: 4px;">
+            <span style="width: 11px; height: 11px; border-radius: 50%; background: var(--state-done);"></span>
+            <span style="width: 11px; height: 11px; border-radius: 50%; background: var(--state-done);"></span>
+            <span style="width: 11px; height: 11px; border-radius: 50%; background: var(--state-done);"></span>
+          </div>
+          <span style="font-size: 13px; font-weight: 600;">Donel Dev</span>
+          <span onClick="{{ toggleProjects }}" style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 4px; border: 1px solid {{ projects.bd }}; background: {{ projects.bg }}; font-family: var(--font-mono); font-size: 11px; cursor: pointer; color: {{ projects.fg }};">{{ project.path }} <span style="font-size: 9px;">▾</span></span>
+          <div style="flex: 1;"></div>
+          <span style="font-size: 11px; color: var(--text-muted);">Sessões anteriores</span>
+          <div style="flex: 1;"></div>
+          <x-import component-from-global-scope="DonelDesignSystem.AccountBadge" account-number="{{ 3 }}" headroom-percent="{{ 58 }}" expandable="{{ true }}" hint-size="200px,26px"></x-import>
+        </div>
+
+        <div style="flex: 1; min-height: 0; display: flex;">
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+            <div style="flex: none; display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px;">
+              <span style="font-size: 15px; font-weight: 600;">Sessões anteriores</span>
+              <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">{{ project.name }}</span>
+              <span onClick="{{ toggleSettings }}" style="display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: var(--radius-sm); border: 1px solid {{ settings.bd }}; background: {{ settings.bg }}; color: {{ settings.fg }}; font-size: 13px; cursor: pointer;">⚙</span>
+              <div style="flex: 1;"></div>
+              <span style="font-size: 10.5px; color: var(--text-muted);">só as sessões deste projeto</span>
+            </div>
+
+            <div style="flex: none; display: grid; grid-template-columns: 24px 260px 1fr 168px 120px 92px; gap: 10px; padding: 0 16px 6px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted);">
+              <span></span><span>sessão</span><span>etapa</span><span>conta</span><span>contexto</span><span>quando</span>
+            </div>
+            <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px 16px;">
+              <sc-for list="{{ history }}" as="h" hint-placeholder-count="8">
+                <div style="display: grid; grid-template-columns: 24px 260px 1fr 168px 120px 92px; gap: 10px; align-items: center; min-height: 32px; padding: 0 6px; border-bottom: 1px solid var(--border); background: {{ h.bg }};">
+                  <span style="width: 14px; text-align: center; font-size: 10px; color: {{ h.iconColor }};">{{ h.icon }}</span>
+                  <span style="font-family: var(--font-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary);">{{ h.name }}</span>
+                  <span style="font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted);">{{ h.etapa }}</span>
+                  <span style="display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 4px; font-size: 10.5px; white-space: nowrap; color: {{ h.accFg }}; background: {{ h.accBg }}; border: 1px solid {{ h.accBd }};">{{ h.account }}</span>
+                  <span style="font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted);">{{ h.context }}</span>
+                  <span style="font-size: 10.5px; white-space: nowrap; color: var(--text-muted);">{{ h.when }}</span>
+                </div>
+              </sc-for>
+              <div style="padding: 10px 6px; font-size: 10.5px; line-height: 1.5; color: var(--text-muted);">Uma sessão reiniciada em outra conta aparece como duas entradas irmãs — a etiqueta de conta é o que diz de quem é a cota.</div>
+            </div>
+          </div>
+
+          <sc-if value="{{ settings.open }}" hint-placeholder-val="{{ true }}">
+            <div style="width: 380px; flex: none; display: flex; flex-direction: column; gap: 14px; padding: 14px; background: var(--bg-panel); border-left: 1px solid var(--border);">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 13px; font-weight: 600;">Configuração do projeto</span>
+                <div style="flex: 1;"></div>
+                <span onClick="{{ toggleSettings }}" style="cursor: pointer; color: var(--text-muted); font-size: 13px;">✕</span>
+              </div>
+              <div style="font-size: 11px; line-height: 1.55; color: var(--text-muted);">Sem estes dois o app não sabe onde procurar nada — e não escreve em nenhum dos dois. São editáveis aqui, não mais à mão em arquivos fora do app.</div>
+              <x-import component-from-global-scope="DonelDesignSystem.TextInput" label="ID do board de tarefas" value="{{ settings.board }}" onChange="{{ onBoard }}" hint="board único do projeto · usado para ler colunas e cards" hint-tone="muted" hint-size="100%,58px"></x-import>
+              <x-import component-from-global-scope="DonelDesignSystem.TextInput" label="Repositório GitHub" value="{{ settings.repo }}" onChange="{{ onRepo }}" hint="origem das branches, PRs e lições do repositório" hint-tone="muted" hint-size="100%,58px"></x-import>
+              <x-import component-from-global-scope="DonelDesignSystem.TextInput" label="Base de conhecimento (opcional)" value="{{ settings.vault }}" onChange="{{ onVault }}" hint="sem ela, o mapa simplesmente não mostra recibos — nunca cobra" hint-tone="muted" hint-size="100%,58px"></x-import>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <div style="display: flex;">
+                  <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" onClick="{{ saveSettings }}" hint-size="auto,30px">Salvar</x-import>
+                </div>
+                <div style="display: flex;">
+                  <x-import component-from-global-scope="DonelDesignSystem.Button" variant="secondary" onClick="{{ toggleSettings }}" hint-size="auto,30px">Cancelar</x-import>
+                </div>
+              </div>
+              <div style="margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); font-size: 10.5px; line-height: 1.55; color: var(--text-muted);">Board e base de conhecimento são integrações plugáveis. Um projeto sem elas usa o Modo Dev inteiro — só sem recibos e sem anotações de coluna.</div>
+            </div>
+          </sc-if>
+        </div>
+
+        <div style="flex: none;">
+          <x-import component-from-global-scope="DonelDesignSystem.StatusBar" account-label="Tecnologia Claude 3 · 58%" model-effort="—" session-count="{{ 4 }}" hint-size="100%,28px"></x-import>
+        </div>
+
+        <sc-if value="{{ projects.open }}" hint-placeholder-val="{{ false }}">
+          <div style="position: absolute; top: 44px; left: 118px; width: 320px; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-modal);">
+            <div style="padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);">Projetos</div>
+            <sc-for list="{{ projects.list }}" as="p" hint-placeholder-count="3">
+              <div onClick="{{ p.onOpen }}" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; cursor: pointer; background: {{ p.bg }};">
+                <span style="width: 10px; flex: none; text-align: center; font-size: 10px; color: var(--accent);">{{ p.mark }}</span>
+                <span style="flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ p.fg }};">{{ p.path }}</span>
+                <span style="flex: none; font-size: 10px; color: var(--text-muted);">{{ p.meta }}</span>
+              </div>
+            </sc-for>
+            <div style="display: flex; padding: 8px 10px; border-top: 1px solid var(--border);">
+              <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" onClick="{{ openNewProject }}" hint-size="auto,30px">＋ Novo projeto</x-import>
+            </div>
+          </div>
+        </sc-if>
+
+        <x-import component-from-global-scope="DonelDesignSystem.Modal" open="{{ newProject.open }}" onClose="{{ closeNewProject }}" title="Novo projeto" actions="{{ newProjectActions }}" hint-size="0,0"><div style="display: flex; flex-direction: column; gap: 14px; min-width: 460px;"><div style="font-size: 11.5px; line-height: 1.55; color: var(--text-muted);">O app cria a pasta do projeto e o registro local. Board e repositório podem ficar em branco agora e ser preenchidos depois pela engrenagem.</div><x-import component-from-global-scope="DonelDesignSystem.TextInput" label="Nome do projeto" value="{{ newProject.name }}" onChange="{{ onNpName }}" hint-size="100%,58px"></x-import><x-import component-from-global-scope="DonelDesignSystem.Select" label="De onde vem o código" value="{{ newProject.source }}" options="{{ newProject.sourceOptions }}" onChange="{{ onNpSource }}" hint-size="100%,58px"></x-import><x-import component-from-global-scope="DonelDesignSystem.TextInput" label="Pasta local" value="{{ newProject.folder }}" onChange="{{ onNpFolder }}" hint="as worktrees dos planos nascem ao lado dela" hint-tone="muted" hint-size="100%,58px"></x-import><x-import component-from-global-scope="DonelDesignSystem.TextInput" label="Repositório GitHub (opcional)" value="{{ newProject.repo }}" onChange="{{ onNpRepo }}" hint-size="100%,58px"></x-import><x-import component-from-global-scope="DonelDesignSystem.TextInput" label="ID do board de tarefas (opcional)" value="{{ newProject.board }}" onChange="{{ onNpBoard }}" hint-size="100%,58px"></x-import></div></x-import>
+      </div>
+    </div>
+
+    <div id="2c" style="display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 4px; background: var(--accent); color: var(--bg-app); font-size: 11px; font-weight: 600;">2c</span>
+        <span style="font-size: 13px; color: var(--text-muted);">Estudos de estado — relógio de homologação e anatomia da aba</span>
+      </div>
+      <div style="width: 700px; display: flex; flex-direction: column; gap: 20px; padding: 20px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md);">
+        <div>
+          <div style="font-size: 13px; font-weight: 600;">Decisão A — o relógio mora no card de Validação</div>
+          <div style="margin-top: 4px; font-size: 11px; line-height: 1.55; color: var(--text-muted);">Horário-limite absoluto em mono, tamanho de dado; o relativo é secundário. Escala em quatro degraus e, no último, promove-se à barra de status quando o card não está em foco — promoção, não duplicação.</div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <sc-for list="{{ clockStudy }}" as="c" hint-placeholder-count="4">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span style="width: 92px; flex: none; font-size: 10.5px; color: var(--text-muted);">{{ c.stage }}</span>
+              <div style="flex: 1; padding: 8px 10px; border: 1px solid {{ c.bd }}; border-radius: var(--radius-sm); background: {{ c.bg }};">
+                <div style="display: flex; align-items: baseline; gap: 8px;">
+                  <span style="flex: none; font-size: 11px; color: {{ c.fg }}; animation: {{ c.anim }};">◷</span>
+                  <span style="flex: 1; min-width: 0; font-size: 10px; white-space: nowrap; color: var(--text-muted);">desfaz o merge em</span>
+                  <span style="flex: none; font-family: var(--font-mono); font-size: 10px; white-space: nowrap; color: var(--text-muted);">{{ c.relative }}</span>
+                </div>
+                <div style="margin-top: 2px; font-family: var(--font-mono); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: {{ c.fg }};">{{ c.absolute }}</div>
+                <div style="margin-top: 6px; height: 4px; border-radius: 2px; background: var(--bg-raised); overflow: hidden;">
+                  <div style="height: 100%; width: {{ c.pct }}; background: {{ c.fg }};"></div>
+                </div>
+                <div style="margin-top: 5px; font-size: 10px; color: var(--text-muted);">{{ c.note }}</div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="border-top: 1px solid var(--border); padding-top: 16px;">
+          <div style="font-size: 13px; font-weight: 600;">Aba — variante v3</div>
+          <div style="margin-top: 4px; font-size: 11px; line-height: 1.55; color: var(--text-muted);">Ícone de estado no lugar do farol (pode piscar), faixa de cor definida pelo operador, alça de arraste para reordenar. O dot redondo continua no mapa, onde conviva com o glifo de fase.</div>
+          <div style="display: flex; align-items: flex-end; gap: 8px; margin-top: 14px; padding: 8px 8px 0; background: var(--bg-app); border: 1px solid var(--border); border-radius: var(--radius-sm);">
+            <sc-for list="{{ tabStudy }}" as="t" hint-placeholder-count="4">
+              <div style="display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 9px 0 7px; border: 1px solid {{ t.bd }}; border-bottom: none; border-top: 2px solid {{ t.stripe }}; border-radius: 6px 6px 0 0; background: {{ t.bg }};">
+                <span style="font-family: var(--font-mono); font-size: 9px; color: var(--state-done);">⣿</span>
+                <span style="width: 12px; flex: none; text-align: center; font-size: 10px; line-height: 1; color: {{ t.iconColor }}; animation: {{ t.iconAnim }};">{{ t.icon }}</span>
+                <span style="font-family: var(--font-mono); font-size: 12px; white-space: nowrap; color: {{ t.fg }};">{{ t.name }}</span>
+                <span style="font-size: 10px; color: var(--text-muted);">{{ t.model }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 10px; color: var(--text-muted);">
+            <sc-for list="{{ tabLegend }}" as="l" hint-placeholder-count="5">
+              <span style="display: inline-flex; align-items: center; gap: 4px;"><span style="width: 12px; text-align: center; color: {{ l.color }};">{{ l.icon }}</span>{{ l.label }}</span>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="2d" style="display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 4px; background: var(--accent); color: var(--bg-app); font-size: 11px; font-weight: 600;">2d</span>
+        <span style="font-size: 13px; color: var(--text-muted);">Mapa de componentes · decisões · extensões propostas</span>
+      </div>
+      <div style="width: 760px; display: flex; flex-direction: column; gap: 24px; padding: 24px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md);">
+        <div>
+          <div style="font-size: 15px; font-weight: 600; margin-bottom: 4px;">Mapa de componentes</div>
+          <div style="font-size: 11px; color: var(--text-muted);">Cada elemento de <a href="#2a">2a</a> e <a href="#2b">2b</a> e a peça do sistema que o realiza.</div>
+        </div>
+        <sc-for list="{{ mapGroups }}" as="g" hint-placeholder-count="6">
+          <div>
+            <div style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); padding-bottom: 6px; border-bottom: 1px solid var(--border);">{{ g.title }}</div>
+            <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="4">
+              <div style="display: grid; grid-template-columns: 250px 1fr; gap: 12px; padding: 8px 0; border-bottom: 1px solid rgba(40,48,59,.5);">
+                <div style="font-size: 12px; color: var(--text-primary);">{{ r.el }}</div>
+                <div>
+                  <div style="font-family: var(--font-mono); font-size: 11.5px; color: {{ r.color }};">{{ r.comp }}</div>
+                  <div style="font-size: 10.5px; color: var(--text-muted); margin-top: 2px; line-height: 1.5;">{{ r.note }}</div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+
+        <div>
+          <div style="font-size: 15px; font-weight: 600; margin-bottom: 8px;">As duas decisões que eram minhas</div>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <sc-for list="{{ decisions }}" as="d" hint-placeholder-count="2">
+              <div style="border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-app); padding: 12px;">
+                <div style="font-size: 12px; font-weight: 600; color: var(--accent);">{{ d.title }}</div>
+                <div style="margin-top: 6px; font-size: 11.5px; line-height: 1.6; color: var(--text-primary);">{{ d.what }}</div>
+                <div style="margin-top: 6px; font-size: 11px; line-height: 1.6; color: var(--text-muted);">{{ d.why }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size: 15px; font-weight: 600; margin-bottom: 4px; color: var(--zone-ok);">Extensões desta leva (4) — todas aprovadas</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Somadas às 4 da leva anterior (PhaseStateGlyph, AnnotationTag, WorktreeCard, ArmedPrompt), que esta tela reusa sem alterar. O sistema fica com 8 extensões nomeadas — nenhuma silenciosa.</div>
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <sc-for list="{{ extensions }}" as="e" hint-placeholder-count="4">
+              <div style="border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-app); padding: 12px;">
+                <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 8px;">
+                  <span style="font-family: var(--font-mono); font-size: 12.5px; color: var(--state-waiting);">{{ e.name }}</span>
+                  <span style="font-size: 10px; color: var(--text-muted);">{{ e.kind }}</span>
+                  <span style="display: inline-flex; align-items: center; height: 16px; padding: 0 6px; border-radius: 4px; font-size: 10px; line-height: 1; white-space: nowrap; color: {{ e.statusFg }}; background: {{ e.statusBg }}; border: 1px solid {{ e.statusBd }};">{{ e.status }}</span>
+                </div>
+                <div style="margin-top: 6px; font-size: 11.5px; line-height: 1.6; color: var(--text-primary);">{{ e.solves }}</div>
+                <div style="margin-top: 6px; font-size: 11px; line-height: 1.6; color: var(--text-muted);">{{ e.why }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); padding-bottom: 6px; border-bottom: 1px solid var(--border);">O que saiu de cena</div>
+          <div style="font-size: 11px; line-height: 1.7; color: var(--text-muted); padding-top: 8px;">A fileira de botões de fase da faixa superior (progressão vive só no mapa) · a legenda dos dois eixos no rodapé do mapa · o prefixo [M1] e a palavra marco · aprovação de PR como fato exibido · o subconjunto de Validar · a duplicação de trava, divergência e estado entre nó, botão e detalhe — cada fato tem um lugar só. No Modo Dev não aparecem SplitButton nem PostItCard — não há ação de "última configuração" nem voz do Donel dentro da esteira; as duas peças vivem no modo uso geral, que o switch preserva intacto.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:3060,&quot;height&quot;:2160},&quot;startMode&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dev&quot;,&quot;geral&quot;],&quot;default&quot;:&quot;dev&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Tela&quot;},&quot;vaultConfigured&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Integrações&quot;},&quot;horasParaHomologar&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;min&quot;:0,&quot;max&quot;:24,&quot;step&quot;:0.5,&quot;default&quot;:15,&quot;unit&quot;:&quot;h&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Homologação&quot;}}">
+class Component extends DCLogic {
+  state = {
+    modeOverride: null, disc: 'PRJ-142', planoIdx: 0, level: 1, faseImpl: 2, faseVal: 2,
+    step: 'val-2', armed: null, entrada: false, query: '', column: 'todas', faseImplSel: 2,
+    restart: false, lock: false, toast: null, tokens: 312000, tick: 0,
+    settingsOpen: true, board: 'seazone/cotas · board 7', repo: 'seazone/cotas', vault: '~/vault/seazone',
+    geralSel: 0, gModel: 'fable', gEffort: 'alto', gPerm: 'perguntar', gNotify: true,
+    projectsOpen: false, np: false, npName: 'Espelho de cotas', npSource: 'clone', npFolder: '~/seazone/espelho-cotas', npRepo: 'seazone/espelho-cotas', npBoard: '',
+    tabOrder: [0, 1, 2, 3], dragFrom: null
+  };
+
+  ST = {
+    nao_iniciada: { label: 'não rodou', glyph: '○', fg: 'var(--text-muted)', bg: 'transparent', bd: 'var(--border)', color: 'var(--text-muted)', rowBg: 'transparent' },
+    em_execucao: { label: 'em execução', glyph: '▶', fg: 'var(--bg-app)', bg: 'var(--state-working)', bd: 'var(--state-working)', color: 'var(--state-working)', rowBg: 'rgba(76,156,240,.07)' },
+    concluida: { label: 'concluída', glyph: '✓', fg: 'var(--zone-ok)', bg: 'color-mix(in srgb, var(--zone-ok) 16%, transparent)', bd: 'color-mix(in srgb, var(--zone-ok) 45%, transparent)', color: 'var(--zone-ok)', rowBg: 'transparent' },
+    falhou: { label: 'falhou', glyph: '✕', fg: 'var(--bg-app)', bg: 'var(--state-permission)', bd: 'var(--state-permission)', color: 'var(--state-permission)', rowBg: 'rgba(240,104,76,.09)' },
+    travada: { label: 'travada', glyph: '⊘', fg: 'var(--bg-app)', bg: 'var(--state-error)', bd: 'var(--state-error)', color: 'var(--state-error)', rowBg: 'rgba(182,120,240,.09)' },
+    proxima: { label: 'é a próxima', glyph: '→', fg: 'var(--accent)', bg: 'rgba(76,156,240,.16)', bd: 'rgba(76,156,240,.55)', color: 'var(--accent)', rowBg: 'rgba(76,156,240,.05)' }
+  };
+
+  T = {
+    muted: { fg: 'var(--text-muted)', bg: 'var(--bg-panel)', bd: 'var(--border)' },
+    ok: { fg: 'var(--zone-ok)', bg: 'rgba(61,206,143,.10)', bd: 'rgba(61,206,143,.40)' },
+    warn: { fg: 'var(--state-waiting)', bg: 'rgba(232,180,76,.10)', bd: 'rgba(232,180,76,.40)' },
+    error: { fg: 'var(--state-permission)', bg: 'rgba(240,104,76,.10)', bd: 'rgba(240,104,76,.40)' },
+    lock: { fg: 'var(--state-error)', bg: 'rgba(182,120,240,.10)', bd: 'rgba(182,120,240,.40)' },
+    accent: { fg: 'var(--accent)', bg: 'rgba(76,156,240,.10)', bd: 'rgba(76,156,240,.40)' },
+    doc: { fg: 'var(--donel-accent)', bg: 'rgba(255,255,255,.05)', bd: 'color-mix(in srgb, var(--donel-accent) 45%, transparent)' }
+  };
+
+  DISC = {
+    'PRJ-142': {
+      id: 'PRJ-142', title: 'Parcelamento no simulador', kind: 'codigo',
+      plain: 'Deixar o cliente parcelar a cota corrigida pelo CUB — do cálculo até o repasse para a construtora.',
+      lote: 'capa do lote · 3 planos', status: '1 plano rodando', statusTone: 'accent',
+      planos: [
+        { id: 'PRJ-143', title: 'Cálculo das parcelas', status: 'homologação aberta', statusTone: 'warn',
+          plain: 'Descobrir quanto o cliente paga por mês quando o valor do CUB muda.',
+          worktree: '../worktrees/143', branch: 'feat/143-calculo-parcelas', coluna: 'Implementar', divergente: false,
+          lock: { fase: 'Implementar', since: 'ontem, 18:42' },
+          fases: [
+            { n: 1, pr: '#482', prState: 'homologado', prTone: 'ok', garantia: 'roteiro manual', garantiaPath: 'docs/roteiros/143-f1.md', garantiaStatus: 'passou ontem, 17:40', merged: 'ontem, 15:20', impl: 'concluida', val: 'concluida', title: 'Tabela de coeficientes' },
+            { n: 2, pr: '#489', prState: 'mergeado em staging', prTone: 'warn', garantia: 'teste de API', garantiaPath: 'tests/api/parcelas.http', garantiaStatus: 'aguardando execução em staging', merged: 'há 6 horas', impl: 'concluida', val: 'proxima', clock: true, title: 'Serviço de parcelas' }
+          ],
+          trilha: [
+            { id: 'discovery', chip: 'discovery', fase: '', st: 'concluida' },
+            { id: 'plano', chip: 'plano', fase: '', st: 'concluida' },
+            { id: 'impl-1', chip: 'implementar', fase: 'fase 1', st: 'concluida' },
+            { id: 'val-1', chip: 'validar', fase: 'fase 1', st: 'concluida' },
+            { id: 'impl-2', chip: 'implementar', fase: 'fase 2', st: 'concluida' },
+            { id: 'val-2', chip: 'validar', fase: 'fase 2', st: 'proxima' }
+          ] },
+        { id: 'PRJ-144', title: 'Tela de simulação', status: 'conferir board', statusTone: 'error',
+          plain: 'A tela onde o corretor simula as parcelas junto com o cliente, antes de fechar negócio.',
+          worktree: '../worktrees/144', branch: 'feat/144-simulacao', coluna: 'Discovery', divergente: true,
+          fases: [
+            { n: 1, pr: '#491', prState: 'mergeado em staging', prTone: 'warn', garantia: 'testes herdados', garantiaPath: 'tests/e2e/simulacao.spec.ts', garantiaStatus: 'suíte existente cobre a tela', merged: 'hoje, 08:10', impl: 'concluida', val: 'proxima', title: 'Tela de simulação' }
+          ],
+          trilha: [
+            { id: 'discovery', chip: 'discovery', fase: '', st: 'concluida' },
+            { id: 'plano', chip: 'plano', fase: '', st: 'concluida' },
+            { id: 'impl-1', chip: 'implementar', fase: 'fase 1', st: 'concluida' },
+            { id: 'val-1', chip: 'validar', fase: 'fase 1', st: 'proxima' }
+          ] },
+        { id: 'PRJ-145', title: 'Relatório de repasse', status: 'Plano rodando', statusTone: 'accent',
+          plain: 'O relatório mensal que diz quanto dinheiro repassar para cada construtora.',
+          worktree: '../worktrees/145', branch: 'feat/145-repasse', coluna: 'Plano', divergente: false, atencao: 'precisa atenção',
+          fases: [],
+          trilha: [
+            { id: 'discovery', chip: 'discovery', fase: '', st: 'concluida' },
+            { id: 'plano', chip: 'plano', fase: '', st: 'em_execucao', session: 'working' }
+          ] }
+      ]
+    },
+    'PRJ-150': {
+      id: 'PRJ-150', title: 'Mapa do processo de repasse', kind: 'doc',
+      plain: 'Escrever, em documento, como o repasse funciona hoje — este trabalho não produz código.',
+      lote: 'caminho documental · 1 nível', status: 'Documentação rodando', statusTone: 'doc',
+      planos: [
+        { id: 'PRJ-150', title: 'Documento do processo', status: 'em execução', statusTone: 'accent', doc: true,
+          plain: 'Um documento só: o caminho do dinheiro do boleto até a construtora, com os pontos de decisão.',
+          worktree: '~/vault/seazone/processos', branch: 'sem branch — produto é documento', coluna: 'Discovery', divergente: false,
+          fases: [],
+          trilha: [
+            { id: 'discovery', chip: 'discovery', fase: '', st: 'concluida' },
+            { id: 'doc', chip: 'concluir', fase: '', st: 'em_execucao', session: 'waiting', docChip: true }
+          ] }
+      ]
+    }
+  };
+
+  TERM = {
+    'PRJ-143:val-1': { archived: 'sessão arquivada · somente consulta', title: 'esteira-validacao · 143-f1', lines: [
+      ['❯ /esteira-validacao PRJ-143 --fase 1', 'a'], ['', 'm'],
+      ['▸ homologação em staging · PR #482', 'm'],
+      ['  garantia: roteiro manual docs/roteiros/143-f1.md', 'm'],
+      ['  ✓ 6 passos conferidos pelo operador', 'ok'], ['', 'm'],
+      ['✓ homologado ontem, 17:40 — merge permanece', 'ok'],
+      ['  a aba fechou sozinha; o acesso é pelo mapa.', 'm']
+    ] },
+    'PRJ-143:impl-2': { archived: 'sessão arquivada · somente consulta', title: 'esteira-implementar · 143-f2', lines: [
+      ['❯ /esteira-implementar PRJ-143 --fase 2', 'a'], ['', 'm'],
+      ['▸ sessão única do plano · 4 subagentes de execução', 'm'],
+      ['  ✓ serviço de parcelas', 'ok'],
+      ['  ✓ arredondamento por competência', 'ok'],
+      ['  ✓ 26 testes de unidade', 'ok'], ['', 'm'],
+      ['✓ PR #489 aberto e mergeado · staging às 03:12', 'ok'],
+      ['  a janela de homologação começou a contar aqui.', 'm']
+    ] },
+    'PRJ-143:val-2': { title: 'nova sessão · esteira-validacao 143-f2', lines: [
+      ['— nenhuma sessão para esta etapa ainda —', 'm'], ['', 'm'],
+      ['  A fase 2 está em staging desde há 6 horas.', 'm'],
+      ['  Homologar é provar que funciona antes do prazo;', 'm'],
+      ['  passado o prazo, um processo automático desfaz o merge.', 'm'], ['', 'm'],
+      ['  Preparar escreve o comando abaixo no prompt e para.', 'm'],
+      ['  Disparar por engano custa uma sessão inteira de cota.', 'm']
+    ] },
+    'PRJ-143:plano': { archived: 'sessão arquivada · somente consulta', title: 'esteira-plano · 143', lines: [
+      ['❯ /esteira-plano PRJ-143', 'a'], ['', 'm'],
+      ['▸ skill esteira.plano', 'm'],
+      ['  ✓ spec.md · plan.md · tasks.md (14 tarefas)', 'ok'],
+      ['  ✓ fatiado em 2 fases — 2 PRs, estritamente sequenciais', 'ok'], ['', 'm'],
+      ['✓ concluída às 11:26 · 4 recibos registrados pelas skills', 'ok'],
+      ['  o app não escreve conhecimento — só exibe onde ele foi parar.', 'm']
+    ] },
+    'PRJ-143:impl-1': { archived: 'sessão arquivada · somente consulta', title: 'esteira-implementar · 143-f1', lines: [
+      ['❯ /esteira-implementar PRJ-143 --fase 1', 'a'], ['', 'm'],
+      ['  ✓ tabela de coeficientes CUB', 'ok'],
+      ['  ✓ 12 testes de contrato', 'ok'], ['', 'm'],
+      ['✓ PR #482 mergeado ontem, 15:20', 'ok'], ['', 'm'],
+      ['⊘ atenção: a trava desta etapa ficou registrada', 'e2'],
+      ['  .esteira/locks/143-implementar.lock · ontem, 18:42', 'm']
+    ] },
+    'PRJ-145:plano': { title: 'esteira-plano · 145', lines: [
+      ['❯ /esteira-plano PRJ-145', 'a'], ['', 'm'],
+      ['▸ skill esteira.plano · lendo o discovery', 'm'],
+      ['  ✓ escopo do relatório', 'ok'],
+      ['  ▸ fatiando em fases…', 'p'], ['', 'm'],
+      ['? a sessão quer ler contracts/repasse.openapi.yaml', 'w'],
+      ['  [1] permitir uma vez   [2] permitir sempre   [3] recusar', 'm']
+    ] },
+    'PRJ-150:doc': { title: 'esteira-documentacao · 150', lines: [
+      ['❯ /esteira-documentacao PRJ-150', 'a'], ['', 'm'],
+      ['▸ caminho documental · sem branch, sem PR', 'm'],
+      ['  ✓ entrevistas do processo lidas', 'ok'],
+      ['  ▸ escrevendo o mapa do repasse…', 'p'], ['', 'm'],
+      ['? a sessão quer escrever no vault', 'w'],
+      ['  [1] permitir uma vez   [2] permitir sempre   [3] recusar', 'm']
+    ] }
+  };
+
+  C = { a: 'var(--accent)', m: 'var(--text-muted)', p: 'var(--text-primary)', ok: 'var(--zone-ok)', w: 'var(--state-waiting)', e: 'var(--state-permission)', e2: 'var(--state-error)' };
+
+  ART = {
+    discovery: ['fase.manifest.json', 'contexto-disparo.md', 'specs/143/research.md', 'transcript.md'],
+    plano: ['fase.manifest.json', 'specs/143/spec.md', 'specs/143/plan.md', 'specs/143/tasks.md', 'specs/143/data-model.md', 'transcript.md'],
+    implementar: ['fase.manifest.json', 'specs/143/tasks.md (atualizado)', 'licoes.md', 'transcript.md'],
+    validar: ['fase.manifest.json', 'specs/143/e2e.md', 'relatorio-homologacao.html', 'transcript.md'],
+    concluir: ['documento.md', 'transcript.md']
+  };
+
+  CARDS = [
+    { id: 'PRJ-142', title: 'Parcelamento no simulador', column: 'Discovery', linked: true, focus: true, note: 'discovery aberto · lote de 3 planos · homologação aberta em PRJ-143' },
+    { id: 'PRJ-150', title: 'Mapa do processo de repasse', column: 'Discovery', linked: true, doc: true, note: 'discovery aberto · caminho documental (Discovery → Documentação)' },
+    { id: 'PRJ-155', title: 'Webhook de medalhas', column: 'Discovery', linked: true, note: 'discovery aberto · 2 planos · sem sessão viva' },
+    { id: 'PRJ-171', title: 'Conciliação Onvio', column: 'Backlog', linked: false, note: 'sem discovery — abre um novo' },
+    { id: 'PRJ-168', title: 'Espelho de cotas', column: 'Discovery', linked: false, note: 'sem discovery — abre um novo' },
+    { id: 'PRJ-165', title: 'Ajuste de repasse', column: 'Plano', linked: false, note: 'plano de PRJ-158 · Repasses — abre o discovery pai' }
+  ];
+
+  componentDidMount() {
+    this.timer = setInterval(() => this.setState(s => ({ tokens: Math.min(400000, s.tokens + 240), tick: s.tick + 1 })), 1000);
+  }
+  componentWillUnmount() { if (this.timer) clearInterval(this.timer); }
+
+  disc() { return this.DISC[this.state.disc]; }
+  plano() { const d = this.disc(); return d.planos[Math.min(this.state.planoIdx, d.planos.length - 1)]; }
+
+  clockData(hoursLeft) {
+    const total = 24, left = Math.max(0, hoursLeft);
+    let tone, anim = 'none', note;
+    if (left > 12) { tone = this.T.ok; note = 'janela de 24h aberta — homologar antes do prazo mantém o merge.'; }
+    else if (left > 4) { tone = this.T.warn; note = 'menos de meia janela — homologue hoje ou o merge é desfeito.'; }
+    else if (left > 0) { tone = this.T.error; anim = 'dd-blink 1s ease-in-out infinite'; note = 'reta final — passando do prazo, o merge é desfeito automaticamente.'; }
+    else { tone = this.T.lock; anim = 'dd-blink-fast 1s ease-in-out infinite'; note = 'prazo estourado — reversão automática em curso, o PR volta a staging zerado.'; }
+    const totalMin = Math.round(left * 60), h = Math.floor(totalMin / 60), min = totalMin % 60;
+    return { fg: tone.fg, bg: tone.bg, bd: tone.bd, anim, note,
+      pct: Math.max(2, Math.min(100, (left / total) * 100)) + '%',
+      relative: left <= 0 ? 'prazo vencido' : 'faltam ' + h + 'h ' + (min < 10 ? '0' + min : min) + 'min' };
+  }
+
+  step() {
+    const p = this.plano();
+    const s = p.trilha.find(x => x.id === this.state.step) || p.trilha[p.trilha.length - 1];
+    return s;
+  }
+
+  arm(cmd, note) { this.setState({ armed: { cmd, note }, lock: false, restart: false }); }
+  say(message, actionLabel) { this.setState({ toast: { message, actionLabel } }); }
+
+  focusPlano(i) {
+    const d = this.disc(), p = d.planos[i];
+    this.setState({ planoIdx: i, level: 1, step: p.trilha[p.trilha.length - 1].id });
+  }
+
+  GERAL = [
+    { name: 'cotas/api', path: 'src/cotas', model: 'fable', state: 'working', stateLabel: 'trabalhando', draft: '',
+      lines: [['❯ claude --model fable', 'a'], ['', 'm'], ['▸ lendo src/cotas/parcelas.ts', 'm'], ['  ✓ 3 arquivos alterados', 'ok'], ['  ▸ rodando vitest…', 'p'], ['', 'm'], ['  6 de 26 testes concluídos', 'm']] },
+    { name: 'cotas/web', path: 'apps/web', model: 'sonnet', state: 'waiting', stateLabel: 'aguardando resposta', draft: 'refatora o SimuladorCUB em dois componentes',
+      lines: [['❯ ajuste o espaçamento do simulador', 'a'], ['', 'm'], ['▸ dois caminhos possíveis:', 'm'], ['  [1] grid de 8px no container', 'p'], ['  [2] gap fixo por breakpoint', 'p'], ['', 'm'], ['? qual você prefere?', 'w']] },
+    { name: 'onvio/etl', path: 'jobs/onvio', model: 'sonnet', state: 'permission', stateLabel: 'permissão pendente', draft: '',
+      lines: [['❯ concilia o lote de junho', 'a'], ['', 'm'], ['▸ 2 arquivos para escrever', 'm'], ['', 'm'], ['? a sessão quer escrever em jobs/onvio/conciliacao.ts', 'w'], ['  [1] permitir uma vez   [2] permitir sempre   [3] recusar', 'm']] },
+    { name: 'medalhas', path: 'services/medalhas', model: 'fable', state: 'done', stateLabel: 'encerrada', draft: '',
+      lines: [['❯ claude --model fable', 'a'], ['', 'm'], ['✓ webhook publicado', 'ok'], ['  sessão encerrada às 16:12 · reabra pelo histórico', 'm']] },
+    { name: 'zsh', path: '~/seazone/cotas', model: '', state: 'done', stateLabel: 'terminal comum', draft: 'git status',
+      lines: [['❯ git status', 'a'], ['On branch main', 'p'], ['nothing to commit, working tree clean', 'm']] }
+  ];
+
+  geralVals() {
+    const st = this.state, sel = this.GERAL[st.geralSel];
+    return {
+      sessions: this.GERAL.map((g, i) => ({ name: g.name, model: g.model, state: g.state,
+        bg: i === st.geralSel ? 'var(--bg-raised)' : 'transparent',
+        edge: i === st.geralSel ? 'var(--accent)' : 'transparent',
+        fg: i === st.geralSel ? 'var(--text-primary)' : 'var(--text-muted)',
+        onClick: () => this.setState({ geralSel: i }) })),
+      sel: { name: sel.name, path: sel.path, state: sel.state, stateLabel: sel.stateLabel },
+      lines: sel.lines.map(l => ({ t: l[0] || ' ', c: this.C[l[1]] })),
+      draft: sel.draft,
+      onNew: () => this.say('Nova sessão Claude aberta com a última configuração — fable/alto'),
+      newItems: [
+        { label: 'Sessão Claude', description: 'fable · esforço alto · permissões: perguntar', onSelect: () => this.say('Nova sessão Claude aberta') },
+        { label: 'Terminal comum', description: 'shell, sem sessão Claude', onSelect: () => this.say('Terminal aberto') },
+        { label: 'Sessão em outra conta…', description: 'escolhe a conta antes de abrir', onSelect: () => this.say('Escolha a conta no badge do titlebar') }
+      ],
+      onHistory: () => this.say('Sessões anteriores deste projeto — veja o quadro 2b'),
+      onHandoff: () => this.say('Handoff preparado — o comando fica escrito no prompt, o Enter é seu'),
+      model: st.gModel, setModel: v => this.setState({ gModel: v }),
+      modelOptions: [{ value: 'fable', label: 'fable' }, { value: 'sonnet', label: 'sonnet' }],
+      effort: st.gEffort, setEffort: v => this.setState({ gEffort: v }),
+      effortOptions: [{ value: 'baixo', label: 'baixo' }, { value: 'medio', label: 'médio' }, { value: 'alto', label: 'alto' }],
+      perm: st.gPerm, setPerm: v => this.setState({ gPerm: v }),
+      permOptions: [
+        { value: 'perguntar', label: 'Perguntar sempre', description: 'cada escrita ou comando pede seu aval' },
+        { value: 'escrita', label: 'Permitir escrita no projeto', description: 'ainda pergunta antes de comandos de sistema' },
+        { value: 'tudo', label: 'Permitir tudo nesta sessão', description: 'vale só até a sessão fechar' }
+      ],
+      notify: st.gNotify, setNotify: v => this.setState({ gNotify: v }),
+      postit: 'Conferir com o Financeiro se o CUB de junho já saiu antes de rodar a conciliação do Onvio.',
+      onPostitSend: () => this.say('Anotação virou prompt — fica escrita na sessão, sem enviar')
+    };
+  }
+
+  renderVals() {
+    const S = this.ST, T = this.T, st = this.state;
+    const mode = st.modeOverride || this.props.startMode || 'dev';
+    const vault = this.props.vaultConfigured ?? true;
+    const d = this.disc(), planos = d.planos, plano = this.plano(), pIdx = planos.indexOf(plano);
+    const hoursLeft = (this.props.horasParaHomologar ?? 15) - st.tick / 3600;
+    const tag = t => ({ text: t.text, ...T[t.tone || 'muted'] });
+
+    const planoTags = p => {
+      const out = [];
+      if (p.divergente) out.push({ text: '⇄ disco: Plano concluído · board: ' + p.coluna, tone: 'error' });
+      else out.push({ text: 'board: ' + p.coluna, tone: 'muted' });
+      if (p.lock) out.push({ text: '⊘ trava desde ' + p.lock.since, tone: 'lock' });
+      if (p.atencao) out.push({ text: p.atencao, tone: 'error' });
+      const open = (p.fases || []).find(f => f.clock);
+      if (open) out.push({ text: '◷ homologar até amanhã 09:00', tone: hoursLeft > 12 ? 'ok' : 'warn' });
+      return out.map(tag);
+    };
+
+    const trilhaOf = p => p.trilha.map((s, i) => {
+      const stt = S[s.st], selected = st.step === s.id && pIdx === planos.indexOf(p);
+      const isNext = s.st === 'proxima';
+      return {
+        rail: i === p.trilha.length - 1 ? '└' : '├',
+        glyph: stt.glyph, glyphFg: stt.fg, glyphBg: stt.bg, glyphBd: stt.bd,
+        chip: s.chip, showChip: !s.docChip, docChip: !!s.docChip, fase: s.fase,
+        stateLabel: stt.label, stateColor: stt.color,
+        h: isNext ? '32px' : '24px',
+        bg: selected ? 'var(--bg-raised)' : stt.rowBg,
+        edge: selected ? 'var(--accent)' : 'transparent',
+        hasSession: !!s.session, sessionState: s.session || 'done',
+        isNext, prepareLabel: '⌁ Preparar',
+        onClick: () => this.setState({ step: s.id, planoIdx: planos.indexOf(p), level: 1 }),
+        onPrepare: () => {
+          const cmd = s.chip === 'validar' ? '/esteira-validacao ' + p.id + ' --fase ' + (s.fase || '').replace('fase ', '')
+            : s.chip === 'implementar' ? '/esteira-implementar ' + p.id
+            : '/esteira-' + s.chip + ' ' + p.id;
+          this.arm(cmd, p.lock ? 'fase em andamento desde ' + p.lock.since + ' — o disparo pode ser recusado' : null);
+          this.setState({ step: s.id });
+        }
+      };
+    });
+
+    const card = (o) => ({
+      icon: o.icon || '▷', id: o.id, title: o.title, plain: o.plain,
+      status: o.status, statusFg: T[o.tone].fg, statusBg: T[o.tone].bg, statusBd: T[o.tone].bd,
+      accent: o.focused ? T[o.tone].fg : 'var(--border)',
+      opacity: o.focused ? 1 : (o.levelFocused ? 0.34 : 0.22),
+      shadow: o.focused ? 'var(--shadow-modal)' : 'none',
+      cursor: o.focused ? 'default' : 'pointer',
+      onFocus: o.focused ? undefined : o.onFocus,
+      hasMeta: !!o.metaLabel, metaLabel: o.metaLabel, metaValue: o.metaValue, tags: o.tags || [],
+      hasClock: !!o.clock, clock: o.clock || {},
+      hasAction: !!o.actionLabel, actionLabel: o.actionLabel, actionVariant: o.actionVariant || 'secondary', onAction: o.onAction,
+      hasTrilha: !!o.trilha, trilha: o.trilha || []
+    });
+
+    const levels = [];
+    levels.push({ key: 'discovery', label: 'Discovery', tall: false, cards: [
+      card({ icon: '◈', id: d.id, title: d.title, plain: d.plain, status: d.status, tone: d.statusTone,
+        focused: st.level === 0, levelFocused: st.level === 0, onFocus: () => this.setState({ level: 0 }),
+        metaLabel: 'lote', metaValue: d.lote, tags: [] })
+    ], hIdx: 0, onFocus: () => this.setState({ level: 0 }) });
+
+    const planoLevel = {
+      key: 'planos', label: d.kind === 'doc' ? 'Documentação' : 'Planos', tall: true, hIdx: pIdx,
+      cards: planos.map((p, i) => card({
+        icon: p.doc ? '▤' : '▷', id: p.id, title: p.title, plain: p.plain,
+        status: p.status, tone: p.statusTone,
+        focused: st.level === 1 && i === pIdx, levelFocused: st.level === 1,
+        onFocus: () => this.focusPlano(i),
+        metaLabel: p.doc ? 'destino' : 'worktree', metaValue: p.worktree, tags: planoTags(p),
+        actionLabel: (st.level === 1 && i === pIdx && p.lock) ? '⊘ Liberar trava…' : ((st.level === 1 && i === pIdx && p.divergente) ? '⇄ Preparar conciliação' : null),
+        actionVariant: p.lock ? 'danger' : 'secondary',
+        onAction: p.lock ? () => this.setState({ lock: true }) : () => { this.arm('/esteira-conciliar ' + p.id + ' --disco=plano:concluido --board=coluna:' + p.coluna); this.say('Conciliação preparada — o app nunca corrige o board sozinho'); },
+        trilha: (st.level === 1 && i === pIdx) ? trilhaOf(p) : null
+      })),
+      prev: () => this.focusPlano(Math.max(0, pIdx - 1)),
+      next: () => this.focusPlano(Math.min(planos.length - 1, pIdx + 1)),
+      onFocus: () => this.setState({ level: 1 })
+    };
+    levels.push(planoLevel);
+
+    const fases = plano.fases || [];
+    const implFases = fases.filter(f => f.impl);
+    const valFases = fases.filter(f => f.val);
+
+    if (implFases.length) {
+      const idx = Math.min(st.faseImpl, implFases.length) - 1;
+      levels.push({ key: 'impl', label: 'Implementação', tall: false, hIdx: idx,
+        cards: implFases.map((f, i) => card({
+          icon: '⑂', id: 'fase ' + f.n, title: f.title, plain: 'Um PR só: ' + f.title.toLowerCase() + ' — implementação numa sessão única que orquestra subagentes.',
+          status: f.impl === 'concluida' ? 'PR ' + f.pr + ' mergeado' : S[f.impl].label, tone: f.impl === 'concluida' ? 'ok' : 'accent',
+          focused: st.level === 2 && i === idx, levelFocused: st.level === 2,
+          onFocus: () => this.setState({ level: 2, faseImpl: i + 1, step: 'impl-' + f.n }),
+          metaLabel: 'garantia', metaValue: f.garantia, tags: [tag({ text: 'merge ' + f.merged, tone: 'muted' })]
+        })),
+        prev: () => this.setState({ faseImpl: Math.max(1, st.faseImpl - 1), level: 2 }),
+        next: () => this.setState({ faseImpl: Math.min(implFases.length, st.faseImpl + 1), level: 2 }),
+        onFocus: () => this.setState({ level: 2 }) });
+    }
+
+    if (valFases.length) {
+      const idx = Math.min(st.faseVal, valFases.length) - 1;
+      levels.push({ key: 'val', label: 'Validação', tall: false, hIdx: idx,
+        cards: valFases.map((f, i) => card({
+          icon: '◷', id: 'fase ' + f.n, title: f.title, plain: f.val === 'concluida' ? 'Já provada em staging: o merge desta fase é definitivo.' : 'Provar em staging que o PR funciona — dentro da janela de 24h depois do merge.',
+          status: f.val === 'concluida' ? 'homologado' : 'aguardando homologação', tone: f.val === 'concluida' ? 'ok' : 'warn',
+          focused: st.level === 3 && i === idx, levelFocused: st.level === 3,
+          onFocus: () => this.setState({ level: 3, faseVal: i + 1, step: 'val-' + f.n }),
+          metaLabel: 'garantia', metaValue: f.garantia,
+          tags: [tag({ text: 'PR ' + f.pr + ' · ' + f.prState, tone: f.prTone })],
+          clock: f.clock ? Object.assign({ absolute: 'amanhã (30/07) · 09:00' }, this.clockData(hoursLeft)) : null
+        })),
+        prev: () => this.setState({ faseVal: Math.max(1, st.faseVal - 1), level: 3 }),
+        next: () => this.setState({ faseVal: Math.min(valFases.length, st.faseVal + 1), level: 3 }),
+        onFocus: () => this.setState({ level: 3 }) });
+    }
+
+    const level = Math.min(st.level, levels.length - 1);
+    let acc = 0, offsets = [];
+    const built = levels.map((lv, i) => {
+      const h = i === level ? (lv.tall ? 402 : 206) : 124;
+      offsets.push(acc); acc += h + 14;
+      return { h, lv, i };
+    });
+
+    const stepNode = this.step();
+    const sSt = S[stepNode.st];
+    const fase = fases.find(f => 'fase ' + f.n === stepNode.fase);
+    const termKey = plano.id + ':' + stepNode.id;
+    const td = this.TERM[termKey] || { title: 'esteira-' + stepNode.chip + ' · ' + plano.id.replace('PRJ-', ''), archived: stepNode.st === 'concluida' ? 'sessão arquivada · somente consulta' : null,
+      lines: [['❯ /esteira-' + stepNode.chip + ' ' + plano.id, 'a'], ['', 'm'], ['✓ etapa concluída · manifesto e transcript gravados', 'ok'], ['  a aba fechou sozinha; o acesso é pelo mapa.', 'm']] };
+
+    const receipts = stepNode.id === 'plano' && plano.id === 'PRJ-143' ? [
+      { icon: '◆', color: 'var(--donel-accent)', title: 'Parcelamento CUB — regras de arredondamento', where: 'vault · Notas/Cotas/parcelamento-cub.md' },
+      { icon: '❐', color: 'var(--zone-ok)', title: 'Lição: contrato de parcelas precede a UI', where: 'repo · docs/licoes.md §14' },
+      { icon: '❐', color: 'var(--zone-ok)', title: 'Lição: CUB muda por competência, nunca cachear', where: 'repo · docs/licoes.md §15' },
+      { icon: '▤', color: 'var(--accent)', title: 'Decisão de escopo do plano', where: 'board · documento do card PRJ-143' }
+    ] : [];
+
+    const stepSummary = stepNode.st === 'proxima'
+      ? 'Esta é a próxima etapa da esteira. Clicar em Preparar escreve o comando no prompt — o app conduz, o Enter é seu.'
+      : stepNode.st === 'em_execucao' ? 'A sessão desta etapa está viva agora. Trocar de etapa troca de sessão: nada é limpo nem reaproveitado.'
+      : stepNode.st === 'travada' ? 'A sessão morreu sem concluir e deixou uma trava. O botão da próxima etapa continua clicável — o app apenas avisa.'
+      : stepNode.st === 'falhou' ? 'A etapa terminou mal. Corrigir e preparar de novo; o app não decide por você.'
+      : 'Etapa concluída: a aba foi arquivada e esta sessão abre só para consulta.';
+
+    const tabsRaw = [
+      { name: 'esteira-validacao · 143-f2', model: 'fable', icon: '▶', state: 'working', stripe: 'var(--accent)' },
+      { name: 'simulador/web', model: 'sonnet', icon: '◐', state: 'waiting', stripe: 'var(--donel-accent)' },
+      { name: 'onvio/etl', model: 'sonnet', icon: '!', state: 'permission', stripe: 'var(--state-permission)' },
+      { name: 'zsh', model: '', icon: '❯', state: 'shell', stripe: 'var(--border)' }
+    ];
+    const iconColor = { working: 'var(--state-working)', waiting: 'var(--state-waiting)', permission: 'var(--state-permission)', done: 'var(--state-done)', shell: 'var(--text-muted)' };
+    const iconAnim = { working: 'dd-blink 2s ease-in-out infinite', permission: 'dd-blink-fast 1s ease-in-out infinite' };
+
+    const tabs = st.tabOrder.map((oi, pos) => {
+      const t = tabsRaw[oi];
+      const active = pos === 0;
+      return { name: t.name, model: t.model, icon: t.icon, stripe: t.stripe,
+        iconColor: iconColor[t.state], iconAnim: iconAnim[t.state] || 'none',
+        bg: active ? 'var(--bg-raised)' : 'var(--bg-app)', bd: 'var(--border)',
+        fg: active ? 'var(--text-primary)' : 'var(--text-muted)',
+        onClick: () => this.say('Aba trocada — cada etapa tem sessão própria'),
+        onDragStart: () => this.setState({ dragFrom: pos }),
+        onDragOver: e => e.preventDefault(),
+        onDrop: () => this.setState(s => { const o = s.tabOrder.slice(), [m] = o.splice(s.dragFrom, 1); o.splice(pos, 0, m); return { tabOrder: o, dragFrom: null }; }) };
+    });
+
+    const cards = this.CARDS
+      .filter(c => st.column === 'todas' || c.column.toLowerCase() === st.column)
+      .filter(c => !st.query || (c.id + ' ' + c.title).toLowerCase().includes(st.query.toLowerCase()))
+      .map(c => {
+        const col = c.column === 'Backlog' ? T.muted : c.column === 'Discovery' ? T.accent : T.warn;
+        const isFocus = c.id === st.disc;
+        return { id: c.id, title: c.title, column: c.column, note: c.note,
+          colFg: col.fg, colBg: col.bg, colBd: col.bd,
+          bg: isFocus ? 'var(--bg-raised)' : 'var(--bg-app)', bd: isFocus ? 'var(--accent)' : 'var(--border)',
+          action: isFocus ? '● em foco' : c.linked ? '● trazer ao foco' : '＋ abrir discovery',
+          actionColor: isFocus ? 'var(--accent)' : c.linked ? 'var(--zone-ok)' : 'var(--text-muted)',
+          onOpen: () => {
+            if (this.DISC[c.id]) {
+              const nd = this.DISC[c.id];
+              this.setState({ disc: c.id, planoIdx: 0, level: 1, step: nd.planos[0].trilha[nd.planos[0].trilha.length - 1].id, entrada: false, armed: null });
+              if (c.id !== st.disc) this.say(c.id + ' trazido para o foco — nada novo foi criado');
+            } else {
+              this.setState({ entrada: false });
+              this.say(c.linked ? c.id + ' trazido para o foco' : 'Discovery aberto para ' + c.id, 'desfazer');
+            }
+          } };
+      });
+
+    const clockStudy = [
+      { stage: 'tranquilo', hours: 18.5, absolute: 'amanhã (30/07) · 09:00' },
+      { stage: 'atenção', hours: 7.2, absolute: 'hoje · 21:00' },
+      { stage: 'urgente', hours: 1.6, absolute: 'hoje · 15:30' },
+      { stage: 'estourado', hours: 0, absolute: 'hoje · 09:00' }
+    ].map(c => Object.assign({ stage: c.stage, absolute: c.absolute }, this.clockData(c.hours)));
+
+    return {
+      mode, isDev: mode === 'dev', isGeral: mode === 'geral',
+      modeOptions: [{ value: 'geral', label: 'Uso geral' }, { value: 'dev', label: 'Dev' }],
+      geral: this.geralVals(), usedTokens: this.state.tokens,
+      setMode: v => this.setState({ modeOverride: v }),
+      project: { path: '~/seazone/cotas', name: 'seazone/cotas' },
+      account: { n: 3, headroom: Math.max(4, 62 - Math.floor(st.tick / 12)) },
+      tabs, tabsHint: 'arraste para reordenar · cor por aba',
+      disc: { id: d.id, loteLabel: d.lote },
+      levels: built.map(b => ({
+        h: b.h + 'px', label: b.lv.label, multi: b.lv.cards.length > 1,
+        counter: b.lv.cards.length > 1 ? (b.lv.hIdx + 1) + ' de ' + b.lv.cards.length : '',
+        labelColor: b.i === level ? 'var(--text-primary)' : 'var(--text-muted)',
+        nodeBg: b.i === level ? 'var(--accent)' : 'var(--bg-raised)',
+        nodeBd: b.i === level ? 'var(--accent)' : 'var(--border)',
+        nodeGlow: b.i === level ? '0 0 0 4px rgba(76,156,240,.18)' : 'none',
+        lineColor: 'var(--border)',
+        x: (0 - b.lv.hIdx * 404) + 'px',
+        cards: b.lv.cards, prev: b.lv.prev, next: b.lv.next, onFocus: b.lv.onFocus
+      })),
+      carousel: { y: (110 - offsets[level]) + 'px' },
+      step: {
+        planoId: plano.id, planoTitle: plano.title, chip: stepNode.chip, showChip: !stepNode.docChip, docChip: !!stepNode.docChip, fase: stepNode.fase,
+        glyph: sSt.glyph, glyphFg: sSt.fg, glyphBg: sSt.bg, glyphBd: sSt.bd,
+        stateLabel: sSt.label, stateColor: sSt.color, summary: stepSummary,
+        hasSession: !!stepNode.session, sessionState: stepNode.session || 'done',
+        sessionLabel: stepNode.session === 'working' ? 'trabalhando' : stepNode.session === 'waiting' ? 'aguardando resposta' : 'encerrada',
+        hasGarantia: !!fase, garantiaTipo: fase ? fase.garantia : '', garantiaPath: fase ? fase.garantiaPath : '',
+        garantiaStatus: fase ? fase.garantiaStatus : '',
+        garantiaFg: T.accent.fg, garantiaBg: T.accent.bg, garantiaBd: T.accent.bd,
+        hasPr: !!fase, pr: fase ? [
+          { k: 'PR', v: fase.pr + ' · ' + fase.prState, ...T[fase.prTone] },
+          { k: 'merge', v: fase.merged, ...T.muted },
+          { k: 'branch', v: plano.branch, ...T.muted }
+        ] : [],
+        hasArtifacts: stepNode.st !== 'proxima', artifacts: (this.ART[stepNode.chip] || []).map(n => ({ name: n, icon: n.endsWith('.json') ? '{}' : n.endsWith('.html') ? '◧' : '▤' })),
+        showReceipts: vault && stepNode.st !== 'proxima',
+        hasReceipts: receipts.length > 0, noReceipts: receipts.length === 0, receipts
+      },
+      term: { title: td.title, badge: td.archived || 'sessão da etapa em foco', lines: td.lines.map(l => ({ t: l[0] || ' ', c: this.C[l[1]] })) },
+      armed: {
+        on: !!st.armed, cmd: st.armed ? st.armed.cmd : '', cmdColor: st.armed ? 'var(--accent)' : 'var(--text-muted)',
+        hasNote: !!(st.armed && st.armed.note), note: st.armed ? st.armed.note : '', noteIcon: '⊘', noteColor: 'var(--state-error)'
+      },
+      clearArmed: () => this.setState({ armed: null }),
+      status: { account: 'Tecnologia Claude 3 · ' + Math.max(4, 62 - Math.floor(st.tick / 12)) + '%', model: 'fable/high', sessions: 4, zone: { usedTokens: st.tokens } },
+      entrada: { open: st.entrada, query: st.query, column: st.column, cards,
+        columnOptions: [{ value: 'todas', label: 'Todas' }, { value: 'backlog', label: 'Backlog' }, { value: 'discovery', label: 'Discovery' }, { value: 'plano', label: 'Plano' }] },
+      openEntrada: () => this.setState({ entrada: true }),
+      closeEntrada: () => this.setState({ entrada: false }),
+      onQuery: e => this.setState({ query: e.target.value }),
+      setColumn: v => this.setState({ column: v }),
+      restartOpen: st.restart,
+      openRestart: () => this.setState({ restart: true }),
+      closeRestart: () => this.setState({ restart: false }),
+      restartActions: React.createElement(React.Fragment, null,
+        React.createElement(window.DonelDesignSystem.Button, { variant: 'secondary', onClick: () => this.setState({ restart: false }) }, 'Cancelar'),
+        React.createElement(window.DonelDesignSystem.Button, { variant: 'primary', onClick: () => { this.arm('/esteira-retomar ' + plano.id + ' --conta 3 --de-onde-parou'); this.say('Retomada preparada na conta 3 — a sessão passa a existir em duas contas'); } }, '⟳ Preparar retomada')),
+      lockOpen: st.lock,
+      closeLock: () => this.setState({ lock: false }),
+      lockActions: React.createElement(React.Fragment, null,
+        React.createElement(window.DonelDesignSystem.Button, { variant: 'secondary', onClick: () => this.setState({ lock: false }) }, 'Cancelar'),
+        React.createElement(window.DonelDesignSystem.Button, { variant: 'danger', onClick: () => { this.arm('/esteira-implementar ' + plano.id + ' --retomar'); this.say('Trava liberada · comando de retomada preparado no prompt'); } }, 'Liberar trava')),
+      toast: { open: !!st.toast, message: st.toast ? st.toast.message : '', actionLabel: st.toast ? st.toast.actionLabel : undefined,
+        onAction: () => this.setState({ toast: null }), onDismiss: () => this.setState({ toast: null }) },
+      settings: { open: st.settingsOpen, board: st.board, repo: st.repo, vault: st.vault,
+        bg: st.settingsOpen ? 'var(--bg-raised)' : 'var(--bg-panel)', bd: st.settingsOpen ? 'var(--accent)' : 'var(--border)',
+        fg: st.settingsOpen ? 'var(--accent)' : 'var(--text-muted)' },
+      toggleSettings: () => this.setState({ settingsOpen: !st.settingsOpen }),
+      onBoard: e => this.setState({ board: e.target.value }),
+      onRepo: e => this.setState({ repo: e.target.value }),
+      onVault: e => this.setState({ vault: e.target.value }),
+      saveSettings: () => this.say('Configuração do projeto salva — nada foi escrito no board nem no repositório'),
+      newProject: { open: st.np, name: st.npName, source: st.npSource, folder: st.npFolder, repo: st.npRepo, board: st.npBoard,
+        sourceOptions: [
+          { value: 'clone', label: 'Clonar do GitHub', description: 'o app clona o repositório na pasta escolhida' },
+          { value: 'local', label: 'Pasta existente no disco', description: 'registra um projeto que já está aqui' },
+          { value: 'vazio', label: 'Começar vazio', description: 'só a pasta e o registro — sem repositório ainda' }
+        ] },
+      projects: {
+        open: st.projectsOpen,
+        bg: st.projectsOpen ? 'var(--bg-raised)' : 'transparent',
+        bd: st.projectsOpen ? 'var(--accent)' : 'var(--border)',
+        fg: st.projectsOpen ? 'var(--text-primary)' : 'var(--text-muted)',
+        list: [
+          { path: '~/seazone/cotas', meta: '4 sessões', mark: '●', fg: 'var(--text-primary)', bg: 'var(--bg-raised)', onOpen: () => this.setState({ projectsOpen: false }) },
+          { path: '~/seazone/onvio', meta: 'há 2 dias', mark: '', fg: 'var(--text-muted)', bg: 'transparent', onOpen: () => { this.setState({ projectsOpen: false }); this.say('Projeto ~/seazone/onvio aberto'); } },
+          { path: '~/seazone/medalhas', meta: 'há 1 semana', mark: '', fg: 'var(--text-muted)', bg: 'transparent', onOpen: () => { this.setState({ projectsOpen: false }); this.say('Projeto ~/seazone/medalhas aberto'); } }
+        ]
+      },
+      toggleProjects: () => this.setState({ projectsOpen: !st.projectsOpen }),
+      openNewProject: () => this.setState({ np: true, projectsOpen: false }),
+      closeNewProject: () => this.setState({ np: false }),
+      onNpName: e => this.setState({ npName: e.target.value }),
+      onNpSource: v => this.setState({ npSource: v }),
+      onNpFolder: e => this.setState({ npFolder: e.target.value }),
+      onNpRepo: e => this.setState({ npRepo: e.target.value }),
+      onNpBoard: e => this.setState({ npBoard: e.target.value }),
+      newProjectActions: React.createElement(React.Fragment, null,
+        React.createElement(window.DonelDesignSystem.Button, { variant: 'secondary', onClick: () => this.setState({ np: false }) }, 'Cancelar'),
+        React.createElement(window.DonelDesignSystem.Button, { variant: 'primary', onClick: () => { this.setState({ np: false }); this.say('Projeto criado — abra um discovery pela porta de entrada'); } }, 'Criar projeto')),
+      history: [
+        { icon: '▶', state: 'working', name: 'esteira-validacao · 143-f2', etapa: 'PRJ-143 · Validação fase 2', account: 'Claude 3 · atual', accTone: 'accent', context: '312k/400k', when: 'agora' },
+        { icon: '■', state: 'done', name: 'esteira-implementar · 143-f2', etapa: 'PRJ-143 · Implementação fase 2 (retomada)', account: 'Claude 3', accTone: 'accent', context: '281k/400k', when: 'há 6h' },
+        { icon: '■', state: 'done', name: 'esteira-implementar · 143-f2', etapa: 'PRJ-143 · Implementação fase 2 (início)', account: 'Claude 2 · cota esgotada', accTone: 'warn', context: '400k/400k', when: 'há 9h' },
+        { icon: '■', state: 'done', name: 'esteira-validacao · 143-f1', etapa: 'PRJ-143 · Validação fase 1 — homologada', account: 'Claude 2', accTone: 'muted', context: '96k/400k', when: 'ontem 17:40' },
+        { icon: '⊘', state: 'error', name: 'esteira-implementar · 143-f1', etapa: 'PRJ-143 · trava deixada para trás', account: 'Claude 2', accTone: 'muted', context: '188k/400k', when: 'ontem 18:42' },
+        { icon: '■', state: 'done', name: 'esteira-plano · 143', etapa: 'PRJ-143 · Plano', account: 'Claude 1', accTone: 'muted', context: '142k/400k', when: 'ontem 11:26' },
+        { icon: '■', state: 'done', name: 'esteira-documentacao · 150', etapa: 'PRJ-150 · Documentação', account: 'Claude 3', accTone: 'accent', context: '54k/400k', when: 'hoje 08:02' },
+        { icon: '❯', state: 'shell', name: 'zsh', etapa: 'terminal comum', account: '—', accTone: 'muted', context: '—', when: 'hoje 07:50' }
+      ].map((h, i) => ({ ...h, iconColor: iconColor[h.state], bg: i === 0 ? 'var(--bg-raised)' : 'transparent', ...{}, accFg: T[h.accTone].fg, accBg: T[h.accTone].bg, accBd: T[h.accTone].bd })),
+      clockStudy,
+      tabStudy: tabsRaw.map((t, i) => ({ name: t.name, model: t.model, icon: t.icon, stripe: t.stripe,
+        iconColor: iconColor[t.state], iconAnim: iconAnim[t.state] || 'none',
+        bg: i === 0 ? 'var(--bg-raised)' : 'var(--bg-app)', bd: 'var(--border)',
+        fg: i === 0 ? 'var(--text-primary)' : 'var(--text-muted)' })),
+      tabLegend: [
+        { icon: '▶', color: 'var(--state-working)', label: 'trabalhando (pisca lento)' },
+        { icon: '◐', color: 'var(--state-waiting)', label: 'aguardando resposta' },
+        { icon: '!', color: 'var(--state-permission)', label: 'permissão pendente (pisca rápido)' },
+        { icon: '■', color: 'var(--state-done)', label: 'encerrada' },
+        { icon: '❯', color: 'var(--text-muted)', label: 'terminal comum' }
+      ],
+      decisions: [
+        { title: 'A · o relógio de 24h mora no card de Validação — e só sobe à barra de status quando fica crítico',
+          what: 'O card da fase em homologação carrega o relógio: horário-limite absoluto em mono ("amanhã (30/07) · 09:00"), barra de 4px consumindo a janela, relativo como apoio, e a frase do que acontece se estourar. Quatro degraus: tranquilo (>12h, zone-ok), atenção (4–12h, zone-warn), urgente (<4h, zone-over, pisca), estourado (reversão em curso, state-error). O plano em foco também mostra o prazo como etiqueta curta, e no degrau urgente o relógio se promove à barra de status quando o card não está em foco.',
+          why: 'O prazo é uma propriedade do PR daquela fase, não do plano nem da sessão — colocá-lo no card mantém "cada fato num lugar só". A promoção existe porque um prazo crítico não pode depender de o operador estar olhando o nível certo do carrossel; é escalada, não duplicação.' },
+        { title: 'B · quatro etiquetas no card de plano, e nenhuma decorativa',
+          what: 'Ficam: (1) coluna real do board — quieta em muted quando concorda com o disco, virando marcador de divergência em error quando discorda, com a ação de conciliar ali mesmo; (2) trava de fase em andamento, com data e a ação de liberar; (3) etiqueta de atenção do board ("escalado", "precisa atenção"); (4) prazo de homologação em formato curto quando há janela aberta. Saíram a URL do PR, "PR sem aprovação" e o texto de conferência genérico.',
+          why: 'A régua foi: só entra o que muda o que o operador faz nos próximos minutos, ou o que contradiz o disco. Estado do PR (mergeado · homologado · revertido) desceu para o card da fase, onde o PR é a unidade — e assim nenhuma etiqueta repete o que o nível de baixo já diz.' }
+      ],
+      mapGroups: [
+        { title: 'Titlebar e abas', rows: [
+          { el: 'Switch “Uso geral | Dev”', comp: 'SegmentedControl', color: 'var(--zone-ok)', note: 'reorganiza o layout; a tela de uso geral segue intacta.' },
+          { el: 'Badge de conta', comp: 'AccountBadge', color: 'var(--zone-ok)', note: 'headroom vivo, cai junto com o consumo da sessão.' },
+          { el: 'Aba de sessão', comp: 'TerminalTab · variante v3 (extensão 5)', color: 'var(--state-waiting)', note: 'ícone de estado no lugar do farol, faixa de cor do operador, alça de arraste. Sem fileira de botões de fase na faixa — progressão vive só no mapa.' }
+        ] },
+        { title: 'Mapa — carrossel de dois eixos', rows: [
+          { el: 'Trilho vertical de níveis', comp: 'LevelCarousel (extensão 6)', color: 'var(--state-waiting)', note: 'Discovery → Planos → Implementação → Validação. Nível vazio não deixa buraco; o caminho documental tem dois níveis e usa o mesmo trilho.' },
+          { el: 'Carrossel horizontal de irmãos', comp: 'LevelCarousel · eixo X', color: 'var(--state-waiting)', note: 'ornamento condicional: setas e contador só quando há irmão. Um item só = nenhum enfeite.' },
+          { el: 'Cartão de cada nível', comp: 'WorktreeCard (aprovada)', color: 'var(--zone-ok)', note: 'variante orquestrador no Discovery; nos planos e fases carrega resumo sem jargão + faixa de worktree/garantia.' },
+          { el: 'Etiquetas do card', comp: 'AnnotationTag (aprovada)', color: 'var(--zone-ok)', note: 'as quatro da decisão B, nada além.' },
+          { el: 'Trilha de etapas no card em foco', comp: 'PhaseStateGlyph + PhaseChip + StateDot', color: 'var(--zone-ok)', note: 'só etapas que tiveram sessão + a próxima. Glifo quadrado = fase; dot redondo = sessão. Sem legenda: dupla codificação carrega sozinha.' },
+          { el: 'Avançar de etapa', comp: 'Button secondary dentro da linha “próxima”', color: 'var(--zone-ok)', note: 'o único disparo da tela; prepara e para.' },
+          { el: 'Relógio de homologação', comp: 'HomologationClock (extensão 7)', color: 'var(--state-waiting)', note: 'no card de Validação, quatro degraus de urgência.' },
+          { el: 'Chip do nível Documentação', comp: 'PhaseChip · variante documentacao (extensão 8)', color: 'var(--state-waiting)', note: 'o caminho documental precisa de um chip próprio, sem inventar hex.' }
+        ] },
+        { title: 'Etapa em foco (centro)', rows: [
+          { el: 'Moldura do terminal', comp: 'superfície bg-app com hairline completo', color: 'var(--zone-ok)', note: 'inset de 12px dentro do painel bg-panel — moldura inteira visível, nada cortado.' },
+          { el: 'Comando preparado', comp: 'ArmedPrompt (aprovada)', color: 'var(--zone-ok)', note: 'faixa + tecla Enter explícita + aviso de trava quando existe.' },
+          { el: 'Reiniciar na conta atual', comp: 'Button ghost + Modal', color: 'var(--zone-ok)', note: 'aviso de que a sessão passa a existir em duas contas; retomada também é comando preparado.' },
+          { el: 'Painel direito', comp: 'AnnotationTag + listas mono', color: 'var(--zone-ok)', note: 'garantia, PR, artefatos e recibos — o que a etapa produziu. Trava e divergência não repetem aqui.' }
+        ] },
+        { title: 'Rodapé', rows: [
+          { el: 'Barra de status', comp: 'StatusBar + SmartZoneMeter compact', color: 'var(--zone-ok)', note: 'contexto consumido de volta na barra, atualizando a cada segundo junto com o headroom da conta.' }
+        ] },
+        { title: 'Modo uso geral (mesmo switch, mesmo titlebar)', rows: [
+          { el: 'Lista de sessões livres', comp: 'StateDot + linhas de 32px', color: 'var(--zone-ok)', note: 'semáforo de sessão sozinho: aqui não existe eixo de fase, então o dot não disputa leitura com nada.' },
+          { el: 'Abrir sessão', comp: 'SplitButton', color: 'var(--zone-ok)', note: 'corpo repete a última configuração (fable/alto); o menu abre Claude, terminal comum ou outra conta.' },
+          { el: 'Modelo · Esforço', comp: 'SegmentedControl ×2', color: 'var(--zone-ok)', note: 'os dois eixos de configuração da sessão em foco.' },
+          { el: 'Permissões', comp: 'Select', color: 'var(--zone-ok)', note: 'dropdown com descrição por opção — o campo que justifica o Select customizado no sistema.' },
+          { el: 'Aviso de permissão', comp: 'Toggle', color: 'var(--zone-ok)', note: 'notificação quando a sessão trava esperando o operador.' },
+          { el: 'Medidor de contexto', comp: 'SmartZoneMeter (default)', color: 'var(--zone-ok)', note: 'versão completa no painel direito; a compacta segue na barra de status.' },
+          { el: 'Anotação do Donel', comp: 'PostItCard', color: 'var(--zone-ok)', note: 'única voz do Donel na tela, e só no uso geral: "enviar para sessão" escreve no prompt sem enviar.' }
+        ] },
+        { title: 'Sessões anteriores (2b)', rows: [
+          { el: 'Engrenagem do projeto', comp: 'ícone + painel lateral com TextInput ×3 + Button', color: 'var(--zone-ok)', note: 'ID do board e repositório GitHub; base de conhecimento opcional e sem cobrança.' },
+          { el: 'Coluna de conta por linha', comp: 'AnnotationTag', color: 'var(--zone-ok)', note: 'a sessão reiniciada aparece como duas entradas irmãs, cada uma com sua conta.' },
+          { el: 'Trocar de projeto / novo projeto', comp: 'seletor no titlebar + Button primary + Modal + TextInput + Select', color: 'var(--zone-ok)', note: 'criar projeto é ação do nível app, não do projeto aberto: o seletor de projetos vive no titlebar e existe nos dois modos (uso geral e Dev). A tela de sessões anteriores só lista as sessões deste projeto.' }
+        ] }
+      ],
+      extensions: [].concat([
+        { name: 'LevelCarousel', kind: 'componente novo · grupo modo-dev', status: '✓ aprovada',
+          solves: 'O trilho de dois eixos: carrossel vertical de níveis com o nível em foco alto e os vizinhos recuados e recortados, e dentro de cada nível um carrossel horizontal que só materializa setas e contador quando existe irmão. Sabe encurtar a sequência quando um nível não existe e absorver o caminho documental de dois níveis.',
+          why: 'WorktreeCard é o cartão, não o trilho, e nenhuma peça do sistema é contêiner de navegação. A regra "mesmas opacidades e recorte nos dois eixos" precisa morar num só lugar, ou cada tela vai reinventar a cruz de foco com números diferentes.' },
+        { name: 'HomologationClock', kind: 'componente novo · grupo modo-dev', status: '✓ aprovada',
+          solves: 'A janela de 24h da homologação: horário-limite absoluto em mono, barra de consumo da janela, relativo secundário, frase de consequência e quatro degraus de urgência (com pulso nos dois últimos). Tem variante compacta para a barra de status, usada só no degrau urgente.',
+          why: 'SmartZoneMeter mede tokens contra 400k — outra grandeza, outra escala e outro vocabulário de cor. AnnotationTag é estática e não escala urgência. Como passar do prazo desfaz o merge, este é o fato mais acionável do processo novo e não pode ficar como texto solto.' },
+        { name: 'TerminalTab · variante v3', kind: 'variante de componente existente · grupo sessão', status: '✓ aprovada',
+          solves: 'Troca o farol por um ícone de estado (que pode piscar), adiciona faixa de cor definível pelo operador e alça de arraste para reordenar. O dot redondo continua existindo — no mapa, onde precisa conviver com o glifo de fase.',
+          why: 'É alteração de anatomia de uma peça existente, não peça nova: o TerminalTab atual codifica estado só com o dot, o que colide com o eixo de fase agora que os dois aparecem na mesma tela.' },
+        { name: 'PhaseChip · variante documentacao', kind: 'variante de componente existente · grupo modo-dev', status: '✓ aprovada',
+          solves: 'Um sexto valor de chip para o caminho documental, cuja etapa não é nenhuma das cinco fases da Esteira. Usa --donel-accent, token existente e hoje sem dono em chips.',
+          why: 'O enum de PhaseChip é fechado nas cinco fases; sem a variante, o nível Documentação apareceria sem chip ou reaproveitando o chip de outra fase — leitura errada. Nenhum hex novo é introduzido.' }
+      ]).map(e => ({ ...e, status: e.status || 'aguardando aprovação',
+        statusFg: e.status ? T.ok.fg : T.warn.fg, statusBg: e.status ? T.ok.bg : T.warn.bg, statusBd: e.status ? T.ok.bd : T.warn.bd }))
+    };
+  }
+}
+</script>
+</body>
+</html>
