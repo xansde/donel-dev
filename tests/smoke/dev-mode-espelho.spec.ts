@@ -10,10 +10,11 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // T329 (003-modo-dev, Batch D) — smoke completo da Fatia 2: o ESPELHO.
 //
 // Isolado do board real (fixture em arquivo, `DONEL_DEVMODE_BOARD_FIXTURE` —
-// nenhuma chamada de rede, nenhum token) e do `%APPDATA%` real (userData
-// temp). O `.esteira/` é fixture em tmpdir, escrita por este arquivo.
+// nenhuma chamada de rede, nenhum token), do `%APPDATA%` real (userData temp)
+// e da raiz v3 do handoff (`DONEL_ESTEIRA_STATE_ROOT`, CA-4, 009-modo-dev-v3
+// — `~/.claude/esteira-state` isolada em tmpdir, escrita por este arquivo).
 //
-// Cobre: overlay dos 4 fatos (T327), trava do BOARD acendendo o slot do T314
+// Cobre: overlay dos fatos do board (T327), trava do BOARD acendendo o slot do T314
 // e a ação "Liberar trava…" (D1/CA-16), divergência marcada e divergência
 // ESPERADA filtrada (T326/CA-13), sessão de conciliação pré-digitada (T328) e
 // a ausência total de escrita — nem no disco, nem no board — em qualquer
@@ -31,6 +32,10 @@ let electronApp: ElectronApplication;
 let window: Page;
 let userDataDir: string;
 let fixtureRepo: string;
+/** CA-4 (009-modo-dev-v3) — raiz v3 do handoff, `~/.claude/esteira-state` isolada via `DONEL_ESTEIRA_STATE_ROOT`. */
+let stateRoot: string;
+/** `repo_slug` é o basename do checkout local — mesma resolução de `resolveRepoSlug` (main/index.ts). */
+let repoSlug: string;
 let boardFixturePath: string;
 
 function write(file: string, content: string): void {
@@ -39,11 +44,16 @@ function write(file: string, content: string): void {
 }
 
 function ctxPath(fase: string, cardId: string): string {
-  return path.join(fixtureRepo, '.esteira', fase, `${cardId}-ctx.md`);
+  return path.join(stateRoot, repoSlug, cardId, fase, `${cardId}-ctx.md`);
 }
 
-function resultPath(fase: string, cardId: string): string {
-  return path.join(fixtureRepo, '.esteira', fase, 'handoffs', cardId, `${fase}-result.json`);
+/** CA-4/D.0-bis — implementar/validar arquivam por `fase-<n>`; as demais fases gravam direto em `handoffs/`. */
+function resultPath(fase: string, cardId: string, faseNum?: number): string {
+  const handoffsDir = path.join(stateRoot, repoSlug, cardId, fase, 'handoffs');
+  if (fase === 'implementar' || fase === 'validar') {
+    return path.join(handoffsDir, `fase-${faseNum ?? 1}`, `${fase}-result.json`);
+  }
+  return path.join(handoffsDir, `${fase}-result.json`);
 }
 
 function manifest(cardId: string, fase: string, status: string, outputs: Record<string, unknown> = {}): string {
@@ -108,27 +118,30 @@ function newPids(before: Set<number>): number[] {
 
 test.beforeAll(async () => {
   fixtureRepo = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-espelho-'));
+  stateRoot = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-espelho-state-'));
+  repoSlug = path.basename(fixtureRepo);
 
-  // --- Fixture do `.esteira/` (o que a Esteira já gravou em disco) ---------
+  // --- Fixture da raiz v3 do handoff (o que a Esteira já gravou em disco) --
   write(ctxPath('discovery', CARD_DISCOVERY), '---\ncard_id: SZI-900\n---\n\n# ctx\n');
   write(
     resultPath('discovery', CARD_DISCOVERY),
     manifest(CARD_DISCOVERY, 'discovery', 'success', {
       summary: 'discovery ok',
-      fanout_cards: [
-        { card_id: CARD_M1, marco_id: 'M1' },
-        { card_id: CARD_M2, marco_id: 'M2' },
+      // CA-17 — plan_cards[] substitui fanout_cards[]: sem marco_id, com track/shadow.
+      plan_cards: [
+        { card_id: CARD_M1, track: 'codigo', shadow: false },
+        { card_id: CARD_M2, track: 'codigo', shadow: false },
       ],
     }),
   );
 
   // M1 — `plano` concluído e o board JÁ na coluna `implementar`: progresso
-  // normal, nenhuma divergência. É o marco que carrega a TRAVA do board.
+  // normal, nenhuma divergência. É o card de plano que carrega a TRAVA do board.
   write(ctxPath('plano', CARD_M1), '---\ncard_id: SZI-901\n---\n\n# ctx do plano\n');
   write(resultPath('plano', CARD_M1), manifest(CARD_M1, 'plano', 'success', { summary: 'plano ok' }));
   write(ctxPath('implementar', CARD_M1), '---\ncard_id: SZI-901\n---\n\n# ctx\n');
 
-  // M2 — os DOIS casos do CA-13 no mesmo marco:
+  // M2 — os DOIS casos do CA-13 no mesmo card de plano:
   //  · `implementar` concluída no disco e card ainda na coluna `plano` →
   //    divergência de verdade (marca);
   //  · `validar` concluída no disco e card ainda na coluna `plano` → NÃO
@@ -213,11 +226,15 @@ test.beforeAll(async () => {
         // entrada (essa é a Fatia 1, coberta por `dev-mode-conducao-mapa`).
         focusedDiscoveryId: CARD_DISCOVERY,
         archivedPhaseSessions: {},
+        // "Tudo ou nada" (config-store.ts sanitizePhaseDefaultsTable): as 7
+        // fases têm de estar presentes, senão cai no default inteiro.
         phaseDefaults: {
           discovery: phaseEntry('/esteira-discovery {card_id}', true),
           plano: phaseEntry('/esteira-plano {card_id}', true),
           implementar: phaseEntry('/esteira-implementar {card_id} ultracode', true),
           validar: phaseEntry('/esteira-validar {card_id}', true),
+          documentar: phaseEntry('/esteira-documentar {card_id}', true),
+          cliente: phaseEntry('/esteira-cliente {card_id}', false),
           concluir: phaseEntry('/esteira-concluir {card_id}', false),
         },
         boardConfig: { workspaceId: 'ws-smoke', teamId: 'team-smoke' },
@@ -228,7 +245,7 @@ test.beforeAll(async () => {
   electronApp = await electron.launch({
     args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
     cwd: REPO_ROOT,
-    env: { ...process.env, DONEL_DEVMODE_BOARD_FIXTURE: boardFixturePath },
+    env: { ...process.env, DONEL_DEVMODE_BOARD_FIXTURE: boardFixturePath, DONEL_ESTEIRA_STATE_ROOT: stateRoot },
   });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
@@ -240,10 +257,12 @@ test.afterAll(async () => {
   // Limpeza best-effort: no Windows o `claude.exe` pode segurar o handle do
   // diretório por alguns ms depois do app fechar (EBUSY). Falhar a suíte por
   // um rmdir de fixture seria falso vermelho — o diretório é temp.
-  try {
-    rmSync(fixtureRepo, { recursive: true, force: true });
-  } catch {
-    // ignorado de propósito — ver comentário acima
+  for (const dir of [fixtureRepo, stateRoot]) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // ignorado de propósito — ver comentário acima
+    }
   }
 });
 
@@ -251,12 +270,14 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   test.setTimeout(240_000);
   const claudeBaseline = listPids('claude.exe');
   const diskBefore = fingerprint(fixtureRepo);
+  const stateBefore = fingerprint(stateRoot);
 
   await window.locator('[data-testid="devmode-toggle"] input[role="switch"]').check();
   await expect(window.locator('[data-testid="devmode-map"]')).toBeVisible();
 
-  // === T327/CA-12 — os 4 fatos anotados no marco ==========================
-  const marcoM1 = window.locator('[data-testid="devmode-map-marco-M1"]');
+  // === T327/CA-12 — os fatos anotados no card de plano ====================
+  // CA-17 — o testid usa o card_id real (não há mais marco_id no disco).
+  const marcoM1 = window.locator(`[data-testid="devmode-map-marco-${CARD_M1}"]`);
   await expect(marcoM1).toContainText('coluna: implementar', { timeout: 30_000 });
   await expect(marcoM1).toContainText('esteira:precisa-atencao');
   await expect(marcoM1).toContainText('PR sem aprovação');
@@ -281,10 +302,10 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   await expect(window.locator('[data-testid="devmode-phase-button-implementar"]')).toBeEnabled();
 
   // === T326/CA-13 — divergência marcada × divergência ESPERADA filtrada ===
-  const marcoM2 = window.locator('[data-testid="devmode-map-marco-M2"]');
+  const marcoM2 = window.locator(`[data-testid="devmode-map-marco-${CARD_M2}"]`);
   await expect(marcoM2).toContainText('⇄ disco: done · board: plano');
   // `validar` concluída com o card ainda em `plano` é o caso esperado pela
-  // spec (Validar nunca move coluna): UMA divergência no marco, não duas.
+  // spec (Validar nunca move coluna): UMA divergência no card de plano, não duas.
   expect((await marcoM2.innerText()).match(/⇄ disco/g)?.length).toBe(1);
 
   // === T328/CA-13 — o nó divergente mostra os DOIS fatos ==================
@@ -369,7 +390,11 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   // O board deste teste É o arquivo de fixture: byte-idêntico depois de todo
   // o fluxo. (A garantia principal é estrutural: o tipo `BoardReadTool` não
   // admite nenhuma tool de escrita — este assert é a rede de segurança.)
+  // Cobre os DOIS diretórios: o repo (`fixtureRepo`, onde mora o
+  // `board-fixture.json`) e a raiz v3 do handoff (`stateRoot`, CA-4) — o app
+  // só LÊ dos dois.
   expect(fingerprint(fixtureRepo)).toEqual(diskBefore);
+  expect(fingerprint(stateRoot)).toEqual(stateBefore);
   // E nenhum arquivo de trava foi criado (D1: ele não existe).
-  expect(Object.keys(fingerprint(fixtureRepo)).filter((file) => file.includes('.lock'))).toHaveLength(0);
+  expect(Object.keys(fingerprint(stateRoot)).filter((file) => file.includes('.lock'))).toHaveLength(0);
 });

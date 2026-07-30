@@ -1,26 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import type { ArchivedPhaseSessions } from '../src/shared/devMode';
 import { buildDiscoveryTree, resolveArtifactPool } from '../src/main/discovery-tree';
-import type { EsteiraReaderIoDeps } from '../src/main/esteira-reader';
+import type { EsteiraReaderIoDeps, EsteiraStateRoot } from '../src/main/esteira-reader';
 
 // T305 (003-modo-dev, Batch A) — montagem da árvore do discovery (CA-7/CA-9/
-// CA-10/CA-23). Disco puro: `sessionAlive` é sempre `false` aqui — quem sabe
-// qual sessão está viva é o processo main (PTYs em memória), não o disco; a
-// Zona 3 (Batch B) sobrepõe "running" por cima com o que já sabe.
+// CA-10/CA-23), atualizado para a raiz v3 (CA-4/CA-17, 009-modo-dev-v3):
+// `plan_cards[]` no lugar de `fanout_cards[]`, sem `marco_id`. Disco puro:
+// `sessionAlive` é sempre `false` aqui — quem sabe qual sessão está viva é o
+// processo main (PTYs em memória), não o disco; a Zona 3 (Batch B) sobrepõe
+// "running" por cima com o que já sabe.
 
-const REPO = 'C:\\repo';
+const ROOT: EsteiraStateRoot = { esteiraStateRoot: 'C:\\Users\\fake\\.claude\\esteira-state', repoSlug: 'donel-dev' };
 const ROOT_CARD = 'card-root';
 
 function discoveryResultPath(cardId: string): string {
-  return `C:\\repo\\.esteira\\discovery\\handoffs\\${cardId}\\discovery-result.json`;
+  return `C:\\Users\\fake\\.claude\\esteira-state\\donel-dev\\${cardId}\\discovery\\handoffs\\discovery-result.json`;
 }
 
 function phaseResultPath(fase: string, cardId: string): string {
-  return `C:\\repo\\.esteira\\${fase}\\handoffs\\${cardId}\\${fase}-result.json`;
+  return `C:\\Users\\fake\\.claude\\esteira-state\\donel-dev\\${cardId}\\${fase}\\handoffs\\${fase}-result.json`;
+}
+
+function phaseResultPathByFaseNum(fase: string, cardId: string, faseNum: number): string {
+  return `C:\\Users\\fake\\.claude\\esteira-state\\donel-dev\\${cardId}\\${fase}\\handoffs\\fase-${faseNum}\\${fase}-result.json`;
 }
 
 function phaseCtxPath(fase: string, cardId: string): string {
-  return `C:\\repo\\.esteira\\${fase}\\${cardId}-ctx.md`;
+  return `C:\\Users\\fake\\.claude\\esteira-state\\donel-dev\\${cardId}\\${fase}\\${cardId}-ctx.md`;
 }
 
 function successManifest(cardId: string, fase: string): string {
@@ -44,7 +50,7 @@ function fakeIo(files: Record<string, string>): EsteiraReaderIoDeps {
   };
 }
 
-function threeMarcoFanout(): Record<string, string> {
+function threePlanCardsFanout(): Record<string, string> {
   return {
     [discoveryResultPath(ROOT_CARD)]: JSON.stringify({
       card_id: ROOT_CARD,
@@ -56,10 +62,10 @@ function threeMarcoFanout(): Record<string, string> {
       model: 'fable',
       effort: 'high',
       outputs: {
-        fanout_cards: [
-          { card_id: 'card-m1', marco_id: 'M1' },
-          { card_id: 'card-m2', marco_id: 'M2' },
-          { card_id: 'card-m3', marco_id: 'M3' },
+        plan_cards: [
+          { card_id: 'card-p1', track: 'codigo', shadow: false },
+          { card_id: 'card-p2', track: 'codigo', shadow: false },
+          { card_id: 'card-p3', track: 'documental', shadow: true },
         ],
       },
     }),
@@ -67,80 +73,105 @@ function threeMarcoFanout(): Record<string, string> {
 }
 
 const NO_ARCHIVED: ArchivedPhaseSessions = {};
+const ALL_PHASES = ['discovery', 'plano', 'implementar', 'validar', 'documentar', 'cliente', 'concluir'];
 
 describe('buildDiscoveryTree', () => {
-  it('árvore com 3 marcos monta 3 ramos × 5 fases cada', () => {
-    const io = fakeIo(threeMarcoFanout());
-    const tree = buildDiscoveryTree(REPO, ROOT_CARD, NO_ARCHIVED, io);
+  it('árvore com 3 cards de plano monta 3 ramos × 7 fases cada, com track/shadow de plan_cards', () => {
+    const io = fakeIo(threePlanCardsFanout());
+    const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
 
     expect(tree.discoveryCardId).toBe(ROOT_CARD);
-    expect(tree.marcos).toHaveLength(3);
-    for (const marco of tree.marcos) {
-      expect(Object.keys(marco.phases).sort()).toEqual(['concluir', 'discovery', 'implementar', 'plano', 'validar'].sort());
+    expect(tree.planCards).toHaveLength(3);
+    for (const planCard of tree.planCards) {
+      expect(Object.keys(planCard.phases).sort()).toEqual([...ALL_PHASES].sort());
     }
-    expect(tree.marcos.map((m) => m.marcoId)).toEqual(['M1', 'M2', 'M3']);
-    expect(tree.marcos.map((m) => m.cardId)).toEqual(['card-m1', 'card-m2', 'card-m3']);
+    expect(tree.planCards.map((pc) => pc.cardId)).toEqual(['card-p1', 'card-p2', 'card-p3']);
+    expect(tree.planCards.map((pc) => pc.track)).toEqual(['codigo', 'codigo', 'documental']);
+    expect(tree.planCards.map((pc) => pc.shadow)).toEqual([false, false, true]);
   });
 
-  it('sem fanout (discovery-result.json ausente/sem fanout_cards) → marcos vazio, allMarcosComplete false', () => {
+  it('sem plan_cards (discovery-result.json ausente/sem o campo) → planCards vazio, allPlanCardsComplete false', () => {
     const io = fakeIo({});
-    const tree = buildDiscoveryTree(REPO, ROOT_CARD, NO_ARCHIVED, io);
+    const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
 
-    expect(tree.marcos).toEqual([]);
-    expect(tree.allMarcosComplete).toBe(false);
+    expect(tree.planCards).toEqual([]);
+    expect(tree.allPlanCardsComplete).toBe(false);
   });
 
-  it("allMarcosComplete só é true quando TODA fase concluir de TODO marco tem status success (CA-23)", () => {
+  it('allPlanCardsComplete só é true quando TODA fase concluir de TODO card de plano tem status success (CA-23)', () => {
     const files = {
-      ...threeMarcoFanout(),
-      [phaseCtxPath('concluir', 'card-m1')]: '---\ncard_id: card-m1\n---\n',
-      [phaseResultPath('concluir', 'card-m1')]: successManifest('card-m1', 'concluir'),
-      [phaseCtxPath('concluir', 'card-m2')]: '---\ncard_id: card-m2\n---\n',
-      [phaseResultPath('concluir', 'card-m2')]: successManifest('card-m2', 'concluir'),
-      // card-m3 concluir: sem ctx.md — ainda não chegou lá.
+      ...threePlanCardsFanout(),
+      [phaseCtxPath('concluir', 'card-p1')]: '---\ncard_id: card-p1\n---\n',
+      [phaseResultPath('concluir', 'card-p1')]: successManifest('card-p1', 'concluir'),
+      [phaseCtxPath('concluir', 'card-p2')]: '---\ncard_id: card-p2\n---\n',
+      [phaseResultPath('concluir', 'card-p2')]: successManifest('card-p2', 'concluir'),
+      // card-p3 concluir: sem ctx.md — ainda não chegou lá.
     };
     const io = fakeIo(files);
-    const tree = buildDiscoveryTree(REPO, ROOT_CARD, NO_ARCHIVED, io);
+    const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
 
-    expect(tree.allMarcosComplete).toBe(false);
+    expect(tree.allPlanCardsComplete).toBe(false);
 
     const filesAllDone = {
       ...files,
-      [phaseCtxPath('concluir', 'card-m3')]: '---\ncard_id: card-m3\n---\n',
-      [phaseResultPath('concluir', 'card-m3')]: successManifest('card-m3', 'concluir'),
+      [phaseCtxPath('concluir', 'card-p3')]: '---\ncard_id: card-p3\n---\n',
+      [phaseResultPath('concluir', 'card-p3')]: successManifest('card-p3', 'concluir'),
     };
-    const treeAllDone = buildDiscoveryTree(REPO, ROOT_CARD, NO_ARCHIVED, fakeIo(filesAllDone));
-    expect(treeAllDone.allMarcosComplete).toBe(true);
+    const treeAllDone = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, fakeIo(filesAllDone));
+    expect(treeAllDone.allPlanCardsComplete).toBe(true);
   });
 
-  it('liga archivedPhaseSessions ao nó certo (CA-9)', () => {
+  it('liga archivedPhaseSessions ao nó certo, pela chave v3 cardId:fase (CA-9/CA-31)', () => {
     const archived: ArchivedPhaseSessions = {
-      'card-m1:M1:plano': { sessionId: 'sess-1', profileSlug: 'principal', archivedAt: 100 },
+      'card-p1:plano': { sessionId: 'sess-1', profileSlug: 'principal', archivedAt: 100 },
     };
-    const io = fakeIo(threeMarcoFanout());
-    const tree = buildDiscoveryTree(REPO, ROOT_CARD, archived, io);
+    const io = fakeIo(threePlanCardsFanout());
+    const tree = buildDiscoveryTree(ROOT, ROOT_CARD, archived, io);
 
-    const m1 = tree.marcos.find((m) => m.marcoId === 'M1')!;
-    expect(m1.phases.plano.archivedSession).toEqual({ sessionId: 'sess-1', profileSlug: 'principal', archivedAt: 100 });
-    expect(m1.phases.discovery.archivedSession).toBeNull();
+    const p1 = tree.planCards.find((pc) => pc.cardId === 'card-p1')!;
+    expect(p1.phases.plano.archivedSession).toEqual({ sessionId: 'sess-1', profileSlug: 'principal', archivedAt: 100 });
+    expect(p1.phases.discovery.archivedSession).toBeNull();
   });
 
   it('discovery antigo sem session-id arquivado (C4) monta igual — archivedSession null em toda fase', () => {
-    const io = fakeIo(threeMarcoFanout());
-    const tree = buildDiscoveryTree(REPO, ROOT_CARD, NO_ARCHIVED, io);
+    const io = fakeIo(threePlanCardsFanout());
+    const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
 
-    for (const marco of tree.marcos) {
-      for (const phase of Object.values(marco.phases)) {
+    for (const planCard of tree.planCards) {
+      for (const phase of Object.values(planCard.phases)) {
         expect(phase.archivedSession).toBeNull();
       }
     }
+  });
+
+  // CA-4/D.0-bis — implementar/validar arquivam sob handoffs/fase-<n>/. Este
+  // lote lê sempre fase-1 (decisão documentada no topo de discovery-tree.ts,
+  // até o carrossel do lote 7 saber ler fases[] do plano).
+  it('implementar/validar leem handoffs/fase-1/ (ponto de partida do lote 2, documentado)', () => {
+    const files = {
+      ...threePlanCardsFanout(),
+      [phaseCtxPath('implementar', 'card-p1')]: '---\ncard_id: card-p1\n---\n',
+      [phaseResultPathByFaseNum('implementar', 'card-p1', 1)]: successManifest('card-p1', 'implementar'),
+      // fase-2 existe mas não deve ser lida por este lote.
+      [phaseResultPathByFaseNum('implementar', 'card-p1', 2)]: JSON.stringify({
+        card_id: 'card-p1',
+        fase: 'implementar',
+        status: 'failed',
+        outputs: {},
+      }),
+    };
+    const io = fakeIo(files);
+    const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
+
+    const p1 = tree.planCards.find((pc) => pc.cardId === 'card-p1')!;
+    expect(p1.phases.implementar.status).toBe('done'); // leu fase-1 (success), não fase-2 (failed)
   });
 });
 
 describe('resolveArtifactPool', () => {
   it('nunca lista um path fora da constante fixa', () => {
     const io: EsteiraReaderIoDeps = { existsSync: () => true, readFileText: () => null };
-    const pool = resolveArtifactPool(REPO, '003-modo-dev', io);
+    const pool = resolveArtifactPool('C:\\repo', '003-modo-dev', io);
 
     const allowedSuffixes = [
       'specs\\003-modo-dev\\spec.md',
@@ -162,7 +193,7 @@ describe('resolveArtifactPool', () => {
 
   it('só lista os candidatos que EXISTEM (io.existsSync)', () => {
     const io: EsteiraReaderIoDeps = { existsSync: () => false, readFileText: () => null };
-    const pool = resolveArtifactPool(REPO, '003-modo-dev', io);
+    const pool = resolveArtifactPool('C:\\repo', '003-modo-dev', io);
     expect(pool).toEqual([]);
   });
 });

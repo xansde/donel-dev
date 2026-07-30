@@ -2,17 +2,44 @@ import { join } from 'node:path';
 import type { ArchivedPhaseSession, ArchivedPhaseSessions, EsteiraPhase } from '../shared/devMode';
 import { archivedPhaseSessionKey } from '../shared/devMode';
 import { derivePhaseStatus, type PhaseStatus } from '../shared/phaseState';
-import { readDiscoveryFanout, readPhaseArtifacts, type EsteiraReaderIoDeps, type PhaseArtifacts } from './esteira-reader';
+import {
+  readDiscoveryPlanCards,
+  readPhaseArtifacts,
+  type EsteiraReaderIoDeps,
+  type EsteiraStateRoot,
+  type PhaseArtifacts,
+  type PlanCardRef,
+} from './esteira-reader';
 
 // T305 (003-modo-dev, Batch A) — árvore do discovery (CA-7/CA-9/CA-10/CA-23):
-// marcos × fases, tudo lido do disco (`esteira-reader.ts`) + do estado
-// próprio arquivado (`archivedPhaseSessions`, CA-21). `sessionAlive` NUNCA
-// entra aqui: só o processo main (registro de PTYs em memória) sabe quem está
-// vivo — este módulo é 100% disco puro, testável sem Electron. A Zona 3
-// (Batch B, T316/T319) sobrepõe "running" por cima usando o que já tem em
-// memória, sem recalcular a árvore inteira a cada tick.
+// cards de plano × fases, tudo lido do disco (`esteira-reader.ts`) + do
+// estado próprio arquivado (`archivedPhaseSessions`, CA-21). `sessionAlive`
+// NUNCA entra aqui: só o processo main (registro de PTYs em memória) sabe
+// quem está vivo — este módulo é 100% disco puro, testável sem Electron. A
+// Zona 3 (Batch B, T316/T319) sobrepõe "running" por cima usando o que já tem
+// em memória, sem recalcular a árvore inteira a cada tick.
+//
+// CA-17 (009-modo-dev-v3) — `marco`/`MarcoNode`/`marcoId` morreram: o disco
+// não grava mais `marco_id` (plan_cards[] não tem esse campo — o card_id já
+// identifica o card de plano sozinho). `MarcoNode` → `PlanCardNode`;
+// `DiscoveryTree.marcos` → `.planCards`; `.focusedMarcoId` →
+// `.focusedPlanCardId`; `.allMarcosComplete` → `.allPlanCardsComplete` (MESMA
+// lógica — checa `phases.concluir.status`, que a v3 nem grava; o CA-21 que
+// conserta isso é do lote 8, não deste).
+//
+// CA-4/D.0-bis — implementar/validar arquivam por `fase-<n>` (fase do plano).
+// Este módulo ainda não conhece o `fases[]` do plano (isso é do carrossel do
+// lote 7/CA-11): por ora lê SEMPRE `faseNum: 1`, decisão explícita e só
+// aqui — nunca dentro do reader/watcher (que ficam agnósticos). Plano com
+// mais de uma fase mostrará, até o lote 7, o estado da fase 1 apenas.
 
-const ALL_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'implementar', 'validar', 'concluir'];
+const ALL_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'implementar', 'validar', 'documentar', 'cliente', 'concluir'];
+
+/** Só implementar/validar (D.0-bis) — as demais nunca leem por fase-num. */
+const PHASE_ARCHIVES_BY_FASE_NUM: readonly EsteiraPhase[] = ['implementar', 'validar'];
+
+/** Lote 2 (009-modo-dev-v3) — ponto de partida até o carrossel (CA-11/lote 7) saber ler `fases[]` do plano. */
+const DEFAULT_FASE_NUM = 1;
 
 export interface PhaseNode {
   readonly phase: EsteiraPhase;
@@ -21,73 +48,72 @@ export interface PhaseNode {
   readonly archivedSession: ArchivedPhaseSession | null; // CA-9/CA-21
 }
 
-export interface MarcoNode {
-  readonly marcoId: string; // "M1", "M2"... (outputs.fanout_cards)
-  readonly cardId: string; // card de Plano deste marco
+/** CA-17 — o que o app chamava de `MarcoNode`. `track`/`shadow` vêm de `plan_cards[]` (D8/D9 do contrato). */
+export interface PlanCardNode {
+  readonly cardId: string;
+  readonly track: 'codigo' | 'documental';
+  readonly shadow: boolean;
   readonly phases: Readonly<Record<EsteiraPhase, PhaseNode>>;
 }
 
 export interface DiscoveryTree {
   readonly discoveryCardId: string;
-  readonly marcos: readonly MarcoNode[];
-  /** Layout/UI (Batch B) decide qual marco destacar — este módulo não sabe seleção, só disco. */
-  readonly focusedMarcoId: string | null;
-  /** CA-23 — true quando TODO marco tem a fase concluir com status "success". Disco puro, sem board. */
-  readonly allMarcosComplete: boolean;
+  readonly planCards: readonly PlanCardNode[];
+  /** Layout/UI (Batch B) decide qual card de plano destacar — este módulo não sabe seleção, só disco. */
+  readonly focusedPlanCardId: string | null;
+  /** CA-23 — true quando TODO card de plano tem a fase concluir com status "success". Disco puro, sem board. */
+  readonly allPlanCardsComplete: boolean;
 }
 
 function buildPhaseNode(
-  repoPath: string,
+  root: EsteiraStateRoot,
   fase: EsteiraPhase,
   cardId: string,
-  marcoId: string,
   archived: ArchivedPhaseSessions,
   io: EsteiraReaderIoDeps,
 ): PhaseNode {
-  const artifacts = readPhaseArtifacts(repoPath, fase, cardId, io);
+  const faseNum = PHASE_ARCHIVES_BY_FASE_NUM.includes(fase) ? DEFAULT_FASE_NUM : undefined;
+  const artifacts = readPhaseArtifacts({ ...root, cardId, fase, faseNum }, io);
   const status = derivePhaseStatus({
     ctxExists: artifacts.ctxExists,
     result: artifacts.result,
     resultUnreadable: artifacts.resultUnreadable,
     sessionAlive: false, // ver comentário de topo do arquivo
   });
-  const archivedSession = archived[archivedPhaseSessionKey({ cardId, marcoId, phase: fase })] ?? null;
+  const archivedSession = archived[archivedPhaseSessionKey({ cardId, phase: fase })] ?? null;
 
   return { phase: fase, status, artifacts, archivedSession };
 }
 
-function buildMarcoNode(
-  repoPath: string,
-  marco: { cardId: string; marcoId: string },
-  archived: ArchivedPhaseSessions,
-  io: EsteiraReaderIoDeps,
-): MarcoNode {
+function buildPlanCardNode(root: EsteiraStateRoot, planCard: PlanCardRef, archived: ArchivedPhaseSessions, io: EsteiraReaderIoDeps): PlanCardNode {
   const phases = {} as Record<EsteiraPhase, PhaseNode>;
   for (const phase of ALL_PHASES) {
-    phases[phase] = buildPhaseNode(repoPath, phase, marco.cardId, marco.marcoId, archived, io);
+    phases[phase] = buildPhaseNode(root, phase, planCard.cardId, archived, io);
   }
-  return { marcoId: marco.marcoId, cardId: marco.cardId, phases };
+  return { cardId: planCard.cardId, track: planCard.track, shadow: planCard.shadow, phases };
 }
 
-/** CA-7/CA-9/CA-10/CA-23 — monta o discovery em foco por completo, a partir do disco. Nunca lança. */
+/** CA-7/CA-9/CA-10/CA-17/CA-23 — monta o discovery em foco por completo, a partir do disco. Nunca lança. */
 export function buildDiscoveryTree(
-  repoPath: string,
+  root: EsteiraStateRoot,
   discoveryCardId: string,
   archived: ArchivedPhaseSessions,
   io: EsteiraReaderIoDeps,
 ): DiscoveryTree {
-  const fanout = readDiscoveryFanout(repoPath, discoveryCardId, io);
-  const marcos = fanout.map((entry) => buildMarcoNode(repoPath, entry, archived, io));
+  const planCardRefs = readDiscoveryPlanCards(root, discoveryCardId, io);
+  const planCards = planCardRefs.map((ref) => buildPlanCardNode(root, ref, archived, io));
 
-  const allMarcosComplete = marcos.length > 0 && marcos.every((marco) => marco.phases.concluir.status === 'done');
+  const allPlanCardsComplete = planCards.length > 0 && planCards.every((planCard) => planCard.phases.concluir.status === 'done');
 
-  return { discoveryCardId, marcos, focusedMarcoId: null, allMarcosComplete };
+  return { discoveryCardId, planCards, focusedPlanCardId: null, allPlanCardsComplete };
 }
 
 // ---------------------------------------------------------------------------
 // Pool de artefatos consultável (CA-10) — lista FIXA de candidatos, constante
 // versionada no código (nunca varredura/descoberta em runtime). Cresce por
-// PR, não por I/O.
+// PR, não por I/O. Repo-local (specs/plans/tasks continuam commitados no
+// repo-alvo, ao contrário do handoff v3) — recebe `repoPath`, não a raiz do
+// esteira-state.
 // ---------------------------------------------------------------------------
 
 export type ArtifactCandidateKind =

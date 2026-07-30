@@ -9,11 +9,11 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 
 // T322 (003-modo-dev, Batch B) — smoke completo da Fatia 1: condução e mapa.
 //
-// Isolado do `%APPDATA%` real (userData temp) e do BOARD real: a porta de
-// entrada é alimentada por um arquivo de fixture
-// (`DONEL_DEVMODE_BOARD_FIXTURE`, ver `taskdex-board-client.ts`) — nenhuma
-// chamada de rede, nenhum token. O `.esteira/` é uma fixture em tmpdir,
-// escrita por este arquivo; nada é lido do repo de verdade.
+// Isolado do `%APPDATA%` real (userData temp), do BOARD real (porta de
+// entrada alimentada por um arquivo de fixture, `DONEL_DEVMODE_BOARD_FIXTURE`
+// — ver `taskdex-board-client.ts` — nenhuma chamada de rede, nenhum token) e
+// da raiz v3 do handoff (`DONEL_ESTEIRA_STATE_ROOT`, CA-4/009-modo-dev-v3):
+// uma fixture em tmpdir escrita por este arquivo; nada é lido do repo/`~/.claude` de verdade.
 //
 // UMA sessão `claude` real é aberta de propósito: o teste mais importante da
 // feature é "o comando aparece ESCRITO no prompt e NÃO foi enviado", e isso
@@ -31,6 +31,10 @@ let electronApp: ElectronApplication;
 let window: Page;
 let userDataDir: string;
 let fixtureRepo: string;
+/** CA-4 (009-modo-dev-v3) — raiz v3 do handoff, `~/.claude/esteira-state` isolada via `DONEL_ESTEIRA_STATE_ROOT`. */
+let stateRoot: string;
+/** `repo_slug` é o basename do checkout local — mesma resolução de `resolveRepoSlug` (main/index.ts). */
+let repoSlug: string;
 let worktreeDir: string;
 /** Mesmo caminho de `worktreeDir` com barras normais — é assim que o `ctx.md` declara (e é o que o app usa como `cwd`). */
 let worktreeDeclared: string;
@@ -42,11 +46,16 @@ function write(file: string, content: string): void {
 }
 
 function ctxPath(fase: string, cardId: string): string {
-  return path.join(fixtureRepo, '.esteira', fase, `${cardId}-ctx.md`);
+  return path.join(stateRoot, repoSlug, cardId, fase, `${cardId}-ctx.md`);
 }
 
-function resultPath(fase: string, cardId: string): string {
-  return path.join(fixtureRepo, '.esteira', fase, 'handoffs', cardId, `${fase}-result.json`);
+/** CA-4/D.0-bis — implementar/validar arquivam por `fase-<n>`; as demais fases gravam direto em `handoffs/`. */
+function resultPath(fase: string, cardId: string, faseNum?: number): string {
+  const handoffsDir = path.join(stateRoot, repoSlug, cardId, fase, 'handoffs');
+  if (fase === 'implementar' || fase === 'validar') {
+    return path.join(handoffsDir, `fase-${faseNum ?? 1}`, `${fase}-result.json`);
+  }
+  return path.join(handoffsDir, `${fase}-result.json`);
 }
 
 function manifest(cardId: string, fase: string, status: string, outputs: Record<string, unknown> = {}): string {
@@ -93,20 +102,23 @@ function newPids(before: Set<number>): number[] {
 
 test.beforeAll(async () => {
   fixtureRepo = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-esteira-'));
+  stateRoot = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-esteira-state-'));
+  repoSlug = path.basename(fixtureRepo);
   worktreeDir = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-worktree-'));
   worktreeDeclared = worktreeDir.split(path.sep).join('/');
 
-  // --- Fixture do `.esteira/` (o que a Esteira já grava em disco) ---------
-  // Discovery concluído, com o fanout de 2 marcos (CA-14: o mapa card→marco
-  // vem daqui, nunca do prefixo [Mx] do título do card).
+  // --- Fixture da raiz v3 do handoff (o que a Esteira já grava em disco) --
+  // Discovery concluído, com 2 cards de plano em `plan_cards[]` (CA-14/CA-17:
+  // o mapa card→card-de-plano vem daqui, nunca do prefixo [Mx] do título do
+  // card — que a v3 nem grava mais).
   write(ctxPath('discovery', CARD_DISCOVERY), '---\ncard_id: SZI-900\n---\n\n# ctx\n');
   write(
     resultPath('discovery', CARD_DISCOVERY),
     manifest(CARD_DISCOVERY, 'discovery', 'success', {
       summary: 'discovery ok',
-      fanout_cards: [
-        { card_id: CARD_M1, marco_id: 'M1' },
-        { card_id: CARD_M2, marco_id: 'M2' },
+      plan_cards: [
+        { card_id: CARD_M1, track: 'codigo', shadow: false },
+        { card_id: CARD_M2, track: 'codigo', shadow: false },
       ],
     }),
   );
@@ -120,7 +132,7 @@ test.beforeAll(async () => {
     manifest(CARD_M1, 'plano', 'success', {
       summary: 'plano ok',
       artifact_paths: ['specs/003/spec.md', 'specs/003/plan.md'],
-      e2e_path: 'specs/003/e2e.md',
+      garantia: { tipo: 'roteiro_e2e', roteiro_path: 'specs/003/e2e.md' },
     }),
   );
   // D3 — worktree/branch no frontmatter do ctx.md da fase implementar.
@@ -172,14 +184,21 @@ test.beforeAll(async () => {
           [CARD_DISCOVERY]: { cardId: CARD_DISCOVERY, repoPath: fixtureRepo, epicId: null, openedAt: 1, closedAt: null },
         },
         focusedDiscoveryId: null,
+        // CA-31 — chave v3 (cardId:fase, sem marco_id).
         archivedPhaseSessions: {
-          [`${CARD_M1}:M1:plano`]: { sessionId: 'sess-antiga', profileSlug: 'outra-conta', archivedAt: 1 },
+          [`${CARD_M1}:plano`]: { sessionId: 'sess-antiga', profileSlug: 'outra-conta', archivedAt: 1 },
         },
+        // "Tudo ou nada" (config-store.ts sanitizePhaseDefaultsTable): as 7
+        // fases têm de estar presentes, senão a tabela INTEIRA cai no
+        // DEFAULT_PHASE_DEFAULTS (opus/high) e este smoke perderia a prova de
+        // que a tabela é config editável (haiku/low, abaixo).
         phaseDefaults: {
           discovery: phaseEntry('/esteira-discovery {card_id}', true),
           plano: phaseEntry('/esteira-plano {card_id}', true),
           implementar: phaseEntry('/esteira-implementar {card_id} ultracode', true),
           validar: phaseEntry('/esteira-validar {card_id}', true),
+          documentar: phaseEntry('/esteira-documentar {card_id}', true),
+          cliente: phaseEntry('/esteira-cliente {card_id}', false),
           concluir: phaseEntry('/esteira-concluir {card_id}', false),
         },
         boardConfig: { workspaceId: 'ws-smoke', teamId: 'team-smoke' },
@@ -190,7 +209,7 @@ test.beforeAll(async () => {
   electronApp = await electron.launch({
     args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
     cwd: REPO_ROOT,
-    env: { ...process.env, DONEL_DEVMODE_BOARD_FIXTURE: boardFixturePath },
+    env: { ...process.env, DONEL_DEVMODE_BOARD_FIXTURE: boardFixturePath, DONEL_ESTEIRA_STATE_ROOT: stateRoot },
   });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
@@ -203,7 +222,7 @@ test.afterAll(async () => {
   // worktree pode ainda segurar o handle do diretório por alguns ms depois do
   // app fechar (EBUSY). Falhar a suíte por causa de um rmdir de fixture seria
   // um falso vermelho — o diretório é temp e o SO recolhe.
-  for (const dir of [fixtureRepo, worktreeDir]) {
+  for (const dir of [fixtureRepo, stateRoot, worktreeDir]) {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
@@ -244,13 +263,14 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   // com o card do marco no topo).
   await expect(window.locator('[data-testid="devmode-map"]')).toBeVisible();
 
-  // === T316/CA-7 — a árvore inteira: 2 marcos × 5 nós =====================
-  await expect(window.locator('[data-testid="devmode-map-marco-M1"]')).toBeVisible();
-  await expect(window.locator('[data-testid="devmode-map-marco-M2"]')).toBeVisible();
-  await expect(window.locator('[data-testid="devmode-map-marco-M1"] button')).toHaveCount(5);
-  // Marco em foco tem marcação distinta.
-  await expect(window.locator('[data-testid="devmode-map-marco-M1"]')).toHaveAttribute('data-focused', 'true');
-  await expect(window.locator('[data-testid="devmode-map-marco-M2"]')).toHaveAttribute('data-focused', 'false');
+  // === T316/CA-7 — a árvore inteira: 2 cards de plano × 5 nós =============
+  // CA-17 — o testid usa o card_id real (não há mais marco_id no disco).
+  await expect(window.locator(`[data-testid="devmode-map-marco-${CARD_M1}"]`)).toBeVisible();
+  await expect(window.locator(`[data-testid="devmode-map-marco-${CARD_M2}"]`)).toBeVisible();
+  await expect(window.locator(`[data-testid="devmode-map-marco-${CARD_M1}"] button`)).toHaveCount(5);
+  // Card de plano em foco tem marcação distinta.
+  await expect(window.locator(`[data-testid="devmode-map-marco-${CARD_M1}"]`)).toHaveAttribute('data-focused', 'true');
+  await expect(window.locator(`[data-testid="devmode-map-marco-${CARD_M2}"]`)).toHaveAttribute('data-focused', 'false');
   // Legenda dos DOIS eixos (fase × sessão) no rodapé — item verificável.
   const legend = window.locator('[data-testid="devmode-map-legend"]');
   await expect(legend).toContainText('Fase');
@@ -279,9 +299,9 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   // === T317/CA-8,CA-10,CA-18 + T318/CA-9 — nó expandido e retomada ========
   // Clicar no nó `plano` (concluído, COM session-id arquivado) expande o nó E
   // retoma a sessão daquela etapa — é o que o CA-9 pede literalmente.
-  await window.locator('[data-testid="devmode-map-marco-M1"] button').nth(1).click();
+  await window.locator(`[data-testid="devmode-map-marco-${CARD_M1}"] button`).nth(1).click();
   const artifacts = window.locator('[data-testid="devmode-node-artifact"]');
-  await expect(artifacts).toHaveCount(5); // 2 artifact_paths + e2e_path + ctx.md + result.json
+  await expect(artifacts).toHaveCount(5); // 2 artifact_paths + garantia.roteiro_path + ctx.md + result.json
   await expect(window.locator('[data-testid="devmode-node-artifacts"]')).toContainText('specs/003/spec.md');
   await expect(window.locator('[data-testid="devmode-node-skill"]')).toHaveText('/esteira-plano');
   // CA-18 — sem recibo de vault: indicador discreto, nunca "incompleto"/erro.

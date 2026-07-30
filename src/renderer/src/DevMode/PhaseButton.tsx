@@ -20,9 +20,18 @@ import styles from './PhaseButton.module.css';
 // **CA-15:** o estado de FASE aparece via `PhaseStateGlyph` (5 estados,
 // dupla codificação) — eixo diferente do `StateDot` (sessão), que continua
 // vivendo na aba/sidebar.
+//
+// CA-15 (009-modo-dev-v3) já decidiu que esta faixa central de botões SAI
+// (a progressão passa a viver só no mapa) — é trabalho do lote 7, não deste.
+// Enquanto ela existe, `phase` fica restrito às fases que o design system
+// (`ESTEIRA_PHASE_LABEL_PT`, ainda com 5 valores — a extensão de chip do
+// track documental é do lote 6) sabe rotular; `documentar`/`cliente` (CA-18)
+// ainda não têm botão nem estado visual aqui — degradação por omissão, não
+// erro de tipo escondido.
+type RenderablePhase = Exclude<EsteiraPhase, 'documentar' | 'cliente'>;
 
 export interface PhaseButtonProps {
-  phase: EsteiraPhase;
+  phase: RenderablePhase;
   status: PhaseStatus;
   /** CA-5 — conteúdo do slot de aviso de trava. T327 (Fatia 2) liga o dado real: a etiqueta `esteira:em-andamento:<fase>` LIDA DO BOARD. */
   lockAnnotation?: string | null;
