@@ -27,14 +27,23 @@
  * escolhida, o destaque de foco já vem do fundo `.active` acima). Sem cor
  * escolhida (`'none'`, default) a aba fica com o `border-top` neutro de
  * `.tab` — nenhuma classe extra entra.
+ *
+ * Fix #19 (E2E 30/07, onda 2) — a faixa não ficava perceptível. O seletor
+ * combinado `.tab.color-*` (em vez de `.color-*` isolado) garante a MESMA
+ * especificidade das outras regras de `.tab` (0,2,0) e deixa explícito que a
+ * cor some por cima do `border-top` base, em vez de depender só da ORDEM de
+ * declaração no arquivo para vencer o empate de especificidade — qualquer
+ * reordenação futura deste arquivo (ex.: um novo estado inserido entre
+ * `.tab` e `.color-*`) deixaria de silenciosamente voltar a mostrar o
+ * `border-top` neutro de `.tab`.
  */
-.color-accent {
+.tab.color-accent {
   border-top-color: var(--accent);
 }
-.color-donel-accent {
+.tab.color-donel-accent {
   border-top-color: var(--donel-accent);
 }
-.color-permission {
+.tab.color-permission {
   border-top-color: var(--state-permission);
 }
 
