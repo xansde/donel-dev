@@ -60,6 +60,62 @@
   overflow-x: auto;
 }
 
+/* FIX (#22, e2e-30-07 onda 2) — busca textual do repo, mesma linguagem visual
+   do popover "Projetos" (ProjectSwitcher.module.css `.list`/`.projectOpenButton`). */
+.repoField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+}
+
+.repoLabel {
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.repoList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.repoOption {
+  width: 100%;
+  text-align: left;
+  padding: 4px var(--space-1);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-body-size);
+  cursor: pointer;
+}
+
+.repoOption:hover {
+  background: var(--bg-raised);
+}
+
+.repoSelected {
+  margin: 0;
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.repoClear {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: var(--text-caption-size);
+  text-decoration: underline;
+}
+
 .list {
   display: flex;
   flex-direction: column;

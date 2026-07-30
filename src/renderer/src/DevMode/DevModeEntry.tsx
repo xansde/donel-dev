@@ -1,8 +1,9 @@
-import { AnnotationTag, Button, Modal, SegmentedControl, Select, TextInput } from '@donel-dev/design-system';
+import { AnnotationTag, Button, Modal, SegmentedControl, TextInput } from '@donel-dev/design-system';
 import { useMemo, useState } from 'react';
 import type { EntryColumn, EntryColumnCard, ProjectInfo } from '../../../shared';
 import type { DiscoveryTree } from '../../../main/discovery-tree';
 import type { DevModeDiscoveries } from '../../../shared/devMode';
+import { filterProjectsByName } from '../../../shared/projectCatalog';
 import { isCardLinked, localOnlyDiscoveryIds } from './devModeSelection';
 import styles from './DevModeEntry.module.css';
 
@@ -63,7 +64,28 @@ export function DevModeEntry({
 }: DevModeEntryProps): React.JSX.Element | null {
   const [filter, setFilter] = useState('');
   const [column, setColumn] = useState<ColumnFilter>('todas');
-  const [repoPath, setRepoPath] = useState(defaultRepoPath ?? projects[0]?.path ?? '');
+  // FIX (#22, e2e-30-07 onda 2) — o campo do repo era um `Select` cru
+  // (lista inteira, sem busca) e nascia com um valor sempre PREENCHIDO —
+  // `defaultRepoPath` quando havia, senão o primeiro projeto do catálogo
+  // inteiro (podia "vazar" um projeto qualquer, achado da sonda de
+  // screenshots). Agora é de verdade opcional: sem `defaultRepoPath`, nasce
+  // vazio — nunca adivinha um projeto. `repoQuery` é só o texto do filtro
+  // (mesmo padrão de busca do popover "Projetos", `projectCatalog.ts`); o
+  // projeto efetivamente escolhido continua em `repoPath`.
+  const [repoPath, setRepoPath] = useState(defaultRepoPath ?? '');
+  const [repoQuery, setRepoQuery] = useState(() => projects.find((project) => project.path === (defaultRepoPath ?? ''))?.name ?? '');
+
+  const filteredRepoProjects = useMemo(() => filterProjectsByName(projects, repoQuery), [projects, repoQuery]);
+
+  const selectRepo = (project: ProjectInfo): void => {
+    setRepoPath(project.path);
+    setRepoQuery(project.name);
+  };
+
+  const clearRepo = (): void => {
+    setRepoPath('');
+    setRepoQuery('');
+  };
 
   // FIX (E2E 30/07, achado F8) — discoveries abertos no disco/estado próprio
   // que o board não trouxe (ex.: o `SZI-DEMO` do mock) entram na lista mesmo
@@ -118,13 +140,49 @@ export function DevModeEntry({
           />
         </div>
 
-        <Select
-          label="Repo do discovery novo"
-          value={repoPath}
-          onChange={setRepoPath}
-          options={projects.map((project) => ({ value: project.path, label: project.name }))}
-          placeholder="Selecione um projeto"
-        />
+        {/* FIX (#22) — busca textual em vez de uma lista crua (mesmo padrão
+            do popover "Projetos", `ProjectSwitcher.tsx`): `TextInput` filtra,
+            a lista abaixo mostra só os projetos que batem, e o campo é
+            genuinamente opcional (card já vinculado nunca precisa dele; card
+            novo só cobra o repo no clique, via toast — nunca um controle
+            travado sem explicação). */}
+        <div className={styles.repoField} data-testid="devmode-entry-repo-field">
+          <label className={styles.repoLabel} htmlFor="devmode-entry-repo-filter">
+            Repo do discovery novo (opcional)
+          </label>
+          <TextInput
+            id="devmode-entry-repo-filter"
+            value={repoQuery}
+            onChange={(event) => {
+              setRepoQuery(event.target.value);
+              if (repoPath) setRepoPath('');
+            }}
+            placeholder="Filtrar por nome…"
+            aria-label="Filtrar repo do discovery novo"
+          />
+          {repoPath ? (
+            <p className={styles.repoSelected} data-testid="devmode-entry-repo-selected">
+              Selecionado: {repoQuery}{' '}
+              <button type="button" className={styles.repoClear} onClick={clearRepo}>
+                limpar
+              </button>
+            </p>
+          ) : (
+            <ul className={styles.repoList} data-testid="devmode-entry-repo-list">
+              {filteredRepoProjects.length === 0 ? (
+                <li className={styles.empty}>Nenhum repo bate com "{repoQuery}".</li>
+              ) : (
+                filteredRepoProjects.map((project) => (
+                  <li key={project.path}>
+                    <button type="button" className={styles.repoOption} onClick={() => selectRepo(project)}>
+                      {project.name}
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+          )}
+        </div>
 
         <ul className={styles.list} data-testid="devmode-entry-list">
           {loading ? <li className={styles.empty}>Carregando…</li> : null}
@@ -141,7 +199,11 @@ export function DevModeEntry({
                   variant="secondary"
                   onClick={() => onSelectCard(card.cardId, repoPath)}
                   className={styles.rowButton}
-                  disabled={!linked && !repoPath}
+                  // FIX (#22) — o repo agora é opcional de verdade: o clique
+                  // nunca fica travado sem explicação. Card sem repo escolhido
+                  // e sem vínculo segue clicável; `handleSelectEntryCard`
+                  // (App.tsx) já mostra o toast "Escolha o repo..." quando
+                  // falta de fato (criação exige saber ONDE criar).
                   title={card.cardId}
                 >
                   {/* Item 10 (rodada de forma fix/009-board-real-e-modal) — título à
