@@ -476,6 +476,13 @@ export function App(): React.JSX.Element {
     cwd?: string;
     projectName?: string;
     sourceProfileSlug: string;
+    // FIX (#21) — modelo/esforço que a aba reiniciada estava mostrando ANTES
+    // do restart (`sessionModelEffort[tab.id]`, já resolvido com o fallback de
+    // `appConfig.launcherDefaults`): sem isto, `confirmRestart` reconstruía o
+    // argv só com `continuation: resume` — sem `--model`/`--effort` — e a aba
+    // nova caía no default hardcoded, "esquecendo" o valor que a StatusBar já
+    // mostrava pra ela um instante antes do reinício.
+    modelEffort: { model: ModelAlias; effort: EffortLevel };
   } | null>(null);
   /** CA-24 — mesmo hook de teste de `lastDevModeSession`/`lastLaunch`: o argv REAL montado pro resume, sem depender de ler o output do terminal. */
   const [lastRestartSession, setLastRestartSession] = useState<{ args: readonly string[]; cwd?: string } | null>(null);
@@ -604,10 +611,23 @@ export function App(): React.JSX.Element {
     // `launchArgs` (Launcher, T008) quando a aba nasceu configurada; sem
     // isso (ex.: clique direto na sidebar), cai nos defaults do Brief 3.
     if (partial.sessionType === 'claude') {
+      // FIX (#21, e2e-30-07 onda 2) — sem `--model`/`--effort` no `launchArgs`
+      // (aba nascida fora do Launcher: clique direto na sidebar, Retomar/Fork
+      // de "Sessões anteriores", Reiniciar, ou fase da esteira no Modo Dev), o
+      // fallback ERA o literal `DEFAULT_MODEL_ALIAS`/`DEFAULT_EFFORT_LEVEL`
+      // ('fable'/'high', hardcoded) — a StatusBar acabava mostrando sempre o
+      // mesmo valor fixo pra qualquer uma dessas abas, ignorando inclusive o
+      // default que o PRÓPRIO usuário configurou no Launcher
+      // (`appConfig.launcherDefaults`, persistido por T015). Cai agora no
+      // default configurado; só na ausência de qualquer config (`appConfig`
+      // ainda não carregou) usa o literal como último fallback.
       const parsed = parseModelEffortFromArgs(partial.launchArgs);
       setSessionModelEffort((prev) => ({
         ...prev,
-        [id]: { model: parsed.model ?? DEFAULT_MODEL_ALIAS, effort: parsed.effort ?? DEFAULT_EFFORT_LEVEL },
+        [id]: {
+          model: parsed.model ?? appConfig?.launcherDefaults.model ?? DEFAULT_MODEL_ALIAS,
+          effort: parsed.effort ?? appConfig?.launcherDefaults.effort ?? DEFAULT_EFFORT_LEVEL,
+        },
       }));
     }
     return id;
@@ -1634,6 +1654,12 @@ export function App(): React.JSX.Element {
         projectName: tab.projectName,
         // CA-25 — perfil de NASCIMENTO da aba (`sessionProfiles`, T707/handleProfileResolved), nunca o perfil ATIVO agora.
         sourceProfileSlug: sessionProfiles[tab.id]?.slug ?? activeProfileSlug,
+        // FIX (#21) — o que a StatusBar mostra pra esta aba AGORA, mesma
+        // resolução de `addTab` (launchArgs > launcherDefaults > literal).
+        modelEffort: {
+          model: sessionModelEffort[tab.id]?.model ?? appConfig?.launcherDefaults.model ?? DEFAULT_MODEL_ALIAS,
+          effort: sessionModelEffort[tab.id]?.effort ?? appConfig?.launcherDefaults.effort ?? DEFAULT_EFFORT_LEVEL,
+        },
       });
     } catch {
       setDevModeToast('Não foi possível preparar o reinício desta sessão.');
@@ -1680,7 +1706,15 @@ export function App(): React.JSX.Element {
         // `prev => [...prev, novo]`) compõe corretamente em cima do resultado
         // do close, processado antes dele na mesma fila de updates do React.
         closeTabImmediately(target.tabId);
-        const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId: target.sessionId } });
+        // FIX (#21) — leva o modelo/esforço que a aba já mostrava (capturado em
+        // `handleOpenRestart`) pro argv real do resume: sem isto, a aba nova
+        // nascia sem `--model`/`--effort` e `addTab` caía no fallback,
+        // "esquecendo" o valor que estava na StatusBar um instante antes.
+        const args = buildClaudeArgs({
+          model: target.modelEffort.model,
+          effort: target.modelEffort.effort,
+          continuation: { type: 'resume', sessionId: target.sessionId },
+        });
         setLastRestartSession({ args, cwd: target.cwd });
         addTab({
           name: target.projectName ?? 'Sessão reiniciada',

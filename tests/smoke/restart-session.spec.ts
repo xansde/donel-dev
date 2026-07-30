@@ -114,15 +114,21 @@ test('CA-24 — "Reiniciar sessão em foco" arma o comando `-r <sessionId>` e n�
   expect(await appWindow.locator('[role="tab"]').count()).toBe(tabsBefore);
   await expect(appWindow.locator('[data-testid="restart-last-session"]')).toHaveText('');
 
-  // 5. Confirmado: o comando armado é EXATAMENTE `claude -r <sessionId>` —
-  //    mesma conta de origem e destino (Principal), então `same-profile`
-  //    (shared/transcriptCopy.ts) decide sem copiar nada.
+  // 5. Confirmado: o comando armado é `claude -r <sessionId>` — mesma conta de
+  //    origem e destino (Principal), então `same-profile`
+  //    (shared/transcriptCopy.ts) decide sem copiar nada. FIX (#21,
+  //    e2e-30-07 onda 2) — o argv agora carrega `--model`/`--effort` também
+  //    (o que a StatusBar já mostrava pra esta aba antes do reinício, aqui os
+  //    defaults do launcher — `fable`/`high` — porque a aba nasceu de um
+  //    clique direto no projeto, sem passar pelo Launcher): sem isto, a aba
+  //    reiniciada "esquecia" o modelo e caía sempre no literal hardcoded.
   await restartButton.click();
   await expect(modal).toBeVisible();
   await modal.getByRole('button', { name: '⟳ Reiniciar' }).click();
-  await expect(appWindow.locator('[data-testid="restart-last-session"]')).toHaveText(`claude -r ${sessionId}`, {
-    timeout: 30_000,
-  });
+  await expect(appWindow.locator('[data-testid="restart-last-session"]')).toHaveText(
+    `claude --model fable --effort high -r ${sessionId}`,
+    { timeout: 30_000 },
+  );
 
   // 6. A aba original fecha e uma nova nasce no lugar — mesma contagem final,
   //    nunca duas abas da "mesma" sessão abertas ao mesmo tempo.
