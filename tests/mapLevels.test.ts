@@ -7,6 +7,7 @@ import {
   formatDeadlineAbsolute,
   formatFaseCommand,
   needsCarousel,
+  nextLevelPreview,
   planCardToneColor,
   resolvePlanCardTone,
   shouldPromoteClockToStatusBar,
@@ -47,6 +48,38 @@ describe('canonicalLevelKeys', () => {
     // plan cards é inconsistente — mas a função nunca fabrica um nível
     // órfão: sem card de plano focado, não há de onde as fases viriam).
     expect(canonicalLevelKeys({ hasPlanCards: false, faseCount: 2 })).toEqual(['discovery']);
+  });
+});
+
+// FIX (rodada de feedback 30/07, item 4) — "abri um discovery e não tinha
+// como avançar para a próxima etapa": discovery em foco SEM `plan_cards`
+// ainda (discovery não rodou/não terminou, ou terminou mas não declarou
+// planos) deixava o mapa mostrar SÓ o card de discovery, sem nenhum indício
+// de que há um caminho adiante. `nextLevelPreview` decide a MENSAGEM do
+// nível-preview fantasma que o mapa passa a desenhar (`DiscoveryMap.tsx`,
+// geometria de nível fora de foco já existente — 124px/opacidade 0.22, sem
+// token novo).
+describe('nextLevelPreview', () => {
+  it('já há card de plano: sem preview nenhum (o nível real já existe)', () => {
+    expect(nextLevelPreview({ hasPlanCards: true, discoveryStatus: 'done' })).toBeNull();
+  });
+
+  it('sem plano ainda, discovery não iniciada/rodando/travada/falhou: hint aponta pra rodar o Discovery', () => {
+    for (const discoveryStatus of ['not-started', 'running', 'stuck', 'failed'] as const) {
+      expect(nextLevelPreview({ hasPlanCards: false, discoveryStatus })).toEqual({
+        key: 'planos',
+        label: 'PLANOS',
+        hint: 'nascem do discovery — rode a etapa Discovery',
+      });
+    }
+  });
+
+  it('discovery já concluída mas sem plan_cards (dado incompleto) — degrada por omissão, sem fabricar motivo', () => {
+    expect(nextLevelPreview({ hasPlanCards: false, discoveryStatus: 'done' })).toEqual({
+      key: 'planos',
+      label: 'PLANOS',
+      hint: null,
+    });
   });
 });
 

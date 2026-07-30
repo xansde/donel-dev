@@ -695,7 +695,7 @@ function registerDevModeIpcHandlers(): void {
   /** CA-4/CA-7 — monta a árvore do discovery pedido a partir do disco (raiz v3, `~/.claude/esteira-state/<repo_slug>`). `cardId` sem discovery aberto devolve árvore vazia (nunca lança). */
   ipcMain.handle(DEVMODE_CHANNELS.readTree, (_event, cardId: string): DiscoveryTree => {
     const repoPath = isValidCardId(cardId) ? (appConfig.devMode.discoveries[cardId]?.repoPath ?? '') : '';
-    if (!repoPath) return { discoveryCardId: cardId, planCards: [], focusedPlanCardId: null, allPlanCardsComplete: false };
+    if (!repoPath) return { discoveryCardId: cardId, planCards: [], focusedPlanCardId: null, allPlanCardsComplete: false, discoveryStatus: 'not-started' };
     const root = { esteiraStateRoot: ESTEIRA_STATE_ROOT, repoSlug: resolveRepoSlug(repoPath) };
     return buildDiscoveryTree(root, cardId, appConfig.devMode.archivedPhaseSessions, esteiraReaderIoDeps);
   });

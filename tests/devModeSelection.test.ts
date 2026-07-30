@@ -51,7 +51,7 @@ function planCard(cardId: string, concluirStatus: PhaseStatus): PlanCardNode {
 }
 
 function tree(discoveryCardId: string, planCards: PlanCardNode[], allPlanCardsComplete: boolean): DiscoveryTree {
-  return { discoveryCardId, planCards, focusedPlanCardId: null, allPlanCardsComplete };
+  return { discoveryCardId, planCards, focusedPlanCardId: null, allPlanCardsComplete, discoveryStatus: 'done' };
 }
 
 const DISCOVERIES: DevModeDiscoveries = {

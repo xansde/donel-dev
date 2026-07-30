@@ -21,6 +21,7 @@ import {
   canonicalLevelKeys,
   computeHomologationDeadline,
   formatDeadlineAbsolute,
+  nextLevelPreview,
   planCardToneColor,
   resolvePlanCardTone,
   shouldPromoteClockToStatusBar,
@@ -151,7 +152,22 @@ interface FaseCardContent {
   readonly clock: { absoluteLabel: string; deadline: number } | null;
 }
 
-type MapCardContent = DiscoveryCardContent | PlanoCardContent | FaseCardContent;
+/**
+ * FIX (rodada de feedback 30/07, item 4) — card-fantasma do nível-preview
+ * ("PLANOS"), quando `tree.planCards` ainda está vazio. Nunca clicável, nunca
+ * em foco (`DiscoveryMap` só empurra este nível DEPOIS do índice em foco —
+ * ver comentário de `levels` abaixo): a geometria de "fora de foco" do
+ * `LevelCarousel` (124px, opacidade 0.22) já desenha o esmaecido sozinha,
+ * sem CSS/token novo.
+ */
+interface PreviewCardContent {
+  readonly kind: 'preview';
+  readonly label: string;
+  /** `null` = degradação por omissão (`nextLevelPreview`, shared/mapLevels.ts) — discovery já concluída, sem `plan_cards[]` ainda. */
+  readonly hint: string | null;
+}
+
+type MapCardContent = DiscoveryCardContent | PlanoCardContent | FaseCardContent | PreviewCardContent;
 
 function planCardStatusLabel(planCard: AnnotatedPlanCardNode): string {
   const phases = planCard.phases;
@@ -309,6 +325,24 @@ export function DiscoveryMap({
         focusedCardIndex: 0,
         cards: [discoveryCard],
         onFocusLevel: () => setFocusedLevelKey('discovery'),
+      });
+    }
+
+    // FIX (rodada de feedback 30/07, item 4) — "abri um discovery e não
+    // tinha como avançar para a próxima etapa": sem `plan_cards` ainda,
+    // `levelKeys` para em `['discovery']` — o mapa mostrava só o card do
+    // discovery, nenhum indício do caminho adiante. O preview nasce como um
+    // 2º NÍVEL de verdade (nunca focável — sem `onFocusLevel`/`onFocusCard`,
+    // e o índice em foco nunca aponta pra ele, ver `focusedLevelIndex`
+    // acima), então a geometria "fora de foco" do `LevelCarousel` (124px,
+    // opacidade 0.22 — `carouselGeometry.ts`) já o desenha esmaecido sozinha.
+    const preview = nextLevelPreview({ hasPlanCards, discoveryStatus: tree.discoveryStatus });
+    if (preview) {
+      result.push({
+        key: preview.key,
+        label: preview.label,
+        focusedCardIndex: 0,
+        cards: [{ id: 'preview-planos', content: { kind: 'preview', label: preview.label, hint: preview.hint } }],
       });
     }
 
@@ -631,6 +665,23 @@ function renderMapCard(content: MapCardContent, focused: boolean): React.JSX.Ele
             ))}
           </div>
         ) : null}
+      </div>
+    );
+  }
+
+  if (content.kind === 'preview') {
+    // FIX (item 4, rodada de feedback 30/07) — card-fantasma do nível
+    // "Planos": só o rótulo do nível + o hint (quando existir — degradação
+    // por omissão, `nextLevelPreview`). A geometria de fora de foco
+    // (124px/opacidade 0.22) já esmaece o card sozinha; nada de estilo novo
+    // aqui, só menos conteúdo que um card real.
+    return (
+      <div className={styles.cardBody} data-testid="devmode-map-preview-planos">
+        <div className={styles.cardTop}>
+          <span className={styles.cardIcon}>▷</span>
+          <span className={styles.cardTitle}>{content.label}</span>
+        </div>
+        {content.hint ? <div className={styles.cardFooterMeta}>{content.hint}</div> : null}
       </div>
     );
   }
