@@ -242,3 +242,35 @@
   font-size: var(--text-caption-size);
   color: var(--text-muted);
 }
+
+/* 009-modo-dev-v3, lote 5 (CA-2) — cabeçalho da Zona 1 depois que a porta de
+   entrada virou modal. Ocupa o lugar do antigo painel embutido (mesma âncora
+   de coluna do grid — ver comentário em .center) até o lote 7 trazer o mapa
+   de 480px de verdade. */
+.devModeEntryZone {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--panel-padding);
+  background: var(--bg-panel);
+  border-right: var(--hairline);
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.devModeEntryLabel {
+  font-size: var(--text-caption-size);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.devModeEntryFocusId {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--accent);
+}
+
+.devModeEntrySpacer {
+  flex: 1;
+}

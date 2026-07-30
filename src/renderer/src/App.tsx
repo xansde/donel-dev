@@ -343,6 +343,16 @@ export function App(): React.JSX.Element {
   const [devModeOn, setDevModeOn] = useState(false);
   const [entryCards, setEntryCards] = useState<readonly EntryColumnCard[]>([]);
   const [entryLoading, setEntryLoading] = useState(false);
+  /**
+   * 009-modo-dev-v3, lote 5 (CA-2) — a porta de entrada virou modal
+   * ("Trocar…", `Modal v3.dc.html:397-431`). `entradaOpen` é DERIVADO, não só
+   * este estado: sem discovery em foco ela abre sozinha (é preciso escolher
+   * algo antes de conduzir); com foco, só abre quando o operador pede
+   * ("Trocar…"). Fechar manualmente sem foco não esconde nada — não há pra
+   * onde ir sem escolher um card — e essa é a única situação em que o botão
+   * ✕/Escape não muda a tela.
+   */
+  const [entradaManualOpen, setEntradaManualOpen] = useState(false);
   /** Árvore por discovery ABERTO (`devMode:readTree`) — disco puro, relida sob demanda. */
   const [discoveryTrees, setDiscoveryTrees] = useState<Record<string, DiscoveryTree>>({});
   /** T327/CA-12 — os 4 fatos do board por card do discovery EM FOCO. `{}` = espelho sem fonte: a árvore aparece inteira, só sem anotação. */
@@ -1079,6 +1089,8 @@ export function App(): React.JSX.Element {
   const devModeState = appConfig?.devMode;
   const focusedDiscoveryId = devModeState?.focusedDiscoveryId ?? null;
   const focusedDiscovery = focusedDiscoveryId ? (devModeState?.discoveries[focusedDiscoveryId] ?? null) : null;
+  /** CA-2 — ver comentário de `entradaManualOpen`: derivado, não só o clique em "Trocar…". */
+  const entradaOpen = devModeOn && (entradaManualOpen || !focusedDiscoveryId);
   const rawFocusedTree = focusedDiscoveryId ? (discoveryTrees[focusedDiscoveryId] ?? null) : null;
   /**
    * T327/CA-12 — a MESMA árvore de disco, com os 4 fatos do board sobrepostos.
@@ -1411,6 +1423,10 @@ export function App(): React.JSX.Element {
     });
 
     if (selection.kind === 'focus') {
+      // CA-2 — selecionar fecha o modal: o foco já resolve `entradaOpen`
+      // sozinho (derivado), mas fechar aqui também cobre o caso de já haver
+      // outro discovery em foco (troca explícita via "Trocar…").
+      setEntradaManualOpen(false);
       void window.donel.devMode
         .focusDiscovery(selection.discoveryCardId)
         .then((config) => {
@@ -1426,10 +1442,13 @@ export function App(): React.JSX.Element {
     }
 
     if (!repoPath) {
+      // Sem repo escolhido não há como criar — o modal continua aberto pra
+      // o operador escolher um projeto e tentar de novo.
       setDevModeToast('Escolha o repo do discovery antes de criar.');
       return;
     }
 
+    setEntradaManualOpen(false);
     void window.donel.devMode
       .openDiscovery({ cardId: selection.cardId, repoPath, epicId: null })
       .then(() => window.donel.devMode.focusDiscovery(selection.cardId))
@@ -1840,9 +1859,25 @@ export function App(): React.JSX.Element {
         />
         </div>
 
-        {/* Zona 1 — porta de entrada (CA-1/CA-2), só no Modo Dev. */}
+        {/* Zona 1 — porta de entrada (CA-1/CA-2), só no Modo Dev.
+            009-modo-dev-v3, lote 5 — a forma virou modal ("Trocar…"): este
+            cabeçalho fica no lugar do painel embutido de antes; o mapa de
+            480px do handoff (com "Esteira" + id + "Trocar…" na mesma faixa,
+            `Modal v3.dc.html:71-79`) é o lote 7. Por ora só o gatilho. */}
         {devModeOn && !sidebarCollapsed ? (
+          <div className={styles.devModeEntryZone} data-testid="devmode-entry-zone">
+            <span className={styles.devModeEntryLabel}>Esteira</span>
+            {focusedDiscoveryId ? <span className={styles.devModeEntryFocusId}>{focusedDiscoveryId}</span> : null}
+            <div className={styles.devModeEntrySpacer} />
+            <Button variant="ghost" onClick={() => setEntradaManualOpen(true)} data-testid="devmode-entry-trigger">
+              Trocar…
+            </Button>
+          </div>
+        ) : null}
+        {devModeOn ? (
           <DevModeEntry
+            open={entradaOpen}
+            onClose={() => setEntradaManualOpen(false)}
             cards={entryCards}
             discoveries={devModeState?.discoveries ?? {}}
             trees={Object.values(discoveryTrees)}

@@ -24,6 +24,8 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 const CARD_DISCOVERY = 'SZI-900';
 const CARD_M1 = 'SZI-901';
 const CARD_M2 = 'SZI-902';
+/** 009-modo-dev-v3, lote 5 (CA-2) — card SEM vínculo numa coluna que a v2 nunca listava. */
+const CARD_IMPL = 'SZI-903';
 const CARD_LIVRE = 'SZI-999';
 const CARD_FORA = 'SZI-500';
 
@@ -150,7 +152,10 @@ test.beforeAll(async () => {
       { cardId: CARD_M1, column: 'plano', title: 'Marco 1' },
       { cardId: CARD_M2, column: 'plano', title: 'Marco 2' },
       { cardId: CARD_LIVRE, column: 'backlog', title: 'Card sem discovery' },
-      // CA-1 — coluna fora das 3 de entrada: NUNCA pode aparecer.
+      // CA-2 (009-modo-dev-v3, lote 5) — coluna nova da v3: a v2 nunca listava
+      // cards de Implementar na porta de entrada; agora lista.
+      { cardId: CARD_IMPL, column: 'implementar', title: 'Card em implementar' },
+      // CA-1 — Concluído continua fora: NUNCA pode aparecer.
       { cardId: CARD_FORA, column: 'concluido', title: 'Card concluído' },
     ]),
   );
@@ -241,10 +246,14 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   // A tela de hoje foi OCULTADA, não desmontada.
   await expect(window.locator('[data-testid="today-sidebar"]')).toBeHidden();
 
-  // === T311/CA-1 — só as 3 colunas de entrada aparecem ====================
+  // === T311/CA-1/CA-2 (009-modo-dev-v3, lote 5) — colunas de entrada ======
+  // A v2 restringia a 3 colunas; a v3 soma as colunas disparáveis do CA-1
+  // (implementar/validar/documentar) — CARD_IMPL é a prova viva disso.
   await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_DISCOVERY}"]`)).toBeVisible();
   await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_M1}"]`)).toBeVisible();
   await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_LIVRE}"]`)).toBeVisible();
+  await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_IMPL}"]`)).toBeVisible();
+  // Concluído continua fora — CA-1 diz que ela não dispara nada.
   await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_FORA}"]`)).toHaveCount(0);
 
   // === T311/CA-2 — card vinculado aparece MARCADO =========================
@@ -252,15 +261,42 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   await expect(window.locator(`[data-testid="devmode-entry-linked-${CARD_M1}"]`)).toBeVisible();
   await expect(window.locator(`[data-testid="devmode-entry-linked-${CARD_LIVRE}"]`)).toHaveCount(0);
 
+  // === lote 5 (CA-1/CA-2) — o modal "Trocar…": filtro por texto e por coluna
+  const entryModal = window.locator('[data-testid="devmode-entry"]');
+  const filterInput = entryModal.locator('input[aria-label="Filtrar cards"]');
+  await filterInput.fill(CARD_M1);
+  await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_M1}"]`)).toBeVisible();
+  await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_LIVRE}"]`)).toHaveCount(0);
+  await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_IMPL}"]`)).toHaveCount(0);
+  await filterInput.fill('');
+
+  await entryModal.getByRole('radio', { name: 'Implementar' }).click();
+  await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_IMPL}"]`)).toBeVisible();
+  await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_M1}"]`)).toHaveCount(0);
+  await entryModal.getByRole('radio', { name: 'Todas' }).click();
+  await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_M1}"]`)).toBeVisible();
+
   // === T311/CA-2 — card de PLANO abre o discovery PAI, não um novo ========
+  // (escolher card já vinculado a um discovery existente traz esse discovery
+  // ao foco — nunca dispara/cria outro: nenhuma sessão nova nasce aqui.)
+  const claudeBeforeSelect = listPids('claude.exe');
   await window.locator(`[data-testid="devmode-entry-card-${CARD_M2}"] button`).click();
   const toast = window.locator('[role="status"]');
   await expect(toast).toContainText(`Discovery ${CARD_DISCOVERY} em foco`);
   // D4 — Toast informativo: nenhuma ação de desfazer.
   await expect(toast.locator('button')).toHaveCount(0);
+  expect(newPids(claudeBeforeSelect)).toHaveLength(0);
   // Nenhum discovery novo nasceu: o card de Plano continua marcado como
   // vinculado ao PAI (se tivesse criado um discovery próprio, o mapa abriria
   // com o card do marco no topo).
+  // Selecionar fecha o modal (CA-2 — comportamento, não forma do mockup).
+  await expect(entryModal).toHaveCount(0);
+
+  // === lote 5 (CA-2) — "Trocar…" reabre o modal com um discovery em foco ==
+  await window.locator('[data-testid="devmode-entry-trigger"]').click();
+  await expect(entryModal).toBeVisible();
+  await window.keyboard.press('Escape');
+  await expect(entryModal).toHaveCount(0);
   await expect(window.locator('[data-testid="devmode-map"]')).toBeVisible();
 
   // === T316/CA-7 — a árvore inteira: 2 cards de plano × 5 nós =============

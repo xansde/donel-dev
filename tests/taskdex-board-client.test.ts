@@ -21,11 +21,15 @@ import {
 } from '../src/main/taskdex-board-client';
 
 // T309 (003-modo-dev, Batch A) — cliente MÍNIMO de leitura do board (CA-1/
-// CA-2): escopo estritamente Fatia 1, restrito às colunas Backlog/Discovery/
-// Plano de UM board configurado. O `reader` é injetável — a implementação de
-// sistema (rede real, token dedicado, CA-11) chega em T324 (Fatia 2), que
-// ESTENDE este módulo; aqui só o contrato + o filtro puro, testado com
-// resposta mockada (nenhuma chamada de rede nesta task).
+// CA-2). O `reader` é injetável — a implementação de sistema (rede real,
+// token dedicado, CA-11) chega em T324 (Fatia 2), que ESTENDE este módulo;
+// aqui só o contrato + o filtro puro, testado com resposta mockada (nenhuma
+// chamada de rede nesta task).
+//
+// 009-modo-dev-v3, lote 5 (CA-2) — a porta de entrada deixou de ficar restrita
+// às 3 colunas da v2 (Backlog/Discovery/Plano): agora soma as colunas
+// disparáveis do CA-1 (`columnEligibility.ts` — fonte única), porque um card
+// em Implementar é justamente o que pode rodar a fase seguinte.
 
 const BOARD_CONFIG: DevModeBoardConfig = { workspaceId: 'ws-1', teamId: 'team-1' };
 
@@ -34,7 +38,7 @@ function fakeReader(cards: readonly TaskdexBoardCard[]): TaskdexBoardReader {
 }
 
 describe('listEntryColumnCards', () => {
-  it('resposta mockada com cards de 4 colunas → só as 3 permitidas voltam', async () => {
+  it('resposta mockada com cards de 4 colunas → só as permitidas voltam (v2: 3 colunas)', async () => {
     const cards: TaskdexBoardCard[] = [
       { cardId: 'c-1', column: 'backlog', title: 'Backlog card' },
       { cardId: 'c-2', column: 'discovery', title: 'Discovery card' },
@@ -46,6 +50,23 @@ describe('listEntryColumnCards', () => {
 
     expect(result.map((c) => c.cardId)).toEqual(['c-1', 'c-2', 'c-3']);
     expect(result.map((c) => c.column)).toEqual(['backlog', 'discovery', 'plano']);
+  });
+
+  it('CA-2 (009-modo-dev-v3) — colunas novas da v3 (implementar/validar/documentar) agora passam', async () => {
+    const cards: TaskdexBoardCard[] = [
+      { cardId: 'c-1', column: 'backlog', title: 'Backlog card' },
+      { cardId: 'c-2', column: 'implementar', title: 'Card em implementar' },
+      { cardId: 'c-3', column: 'validar', title: 'Card em validar' },
+      { cardId: 'c-4', column: 'documentar', title: 'Card em documentar' },
+      // Concluído e Validação com Cliente CONTINUAM fora — CA-1 diz que
+      // Concluído não dispara nada, e Validação com Cliente não está no mapa.
+      { cardId: 'c-5', column: 'concluido', title: 'Card concluído' },
+      { cardId: 'c-6', column: 'validacao-cliente', title: 'Card em validação com cliente' },
+    ];
+
+    const result = await listEntryColumnCards(BOARD_CONFIG, fakeReader(cards));
+
+    expect(result.map((c) => c.cardId)).toEqual(['c-1', 'c-2', 'c-3', 'c-4']);
   });
 
   it('card sem coluna reconhecida é ignorado, nunca lança', async () => {

@@ -1,9 +1,10 @@
 import { join } from 'node:path';
 import type { DevModeBoardConfig } from '../shared/devMode';
+import { DISPATCHABLE_COLUMNS, type DispatchableColumn } from '../shared/columnEligibility';
 
 // T309 (003-modo-dev, Batch A) — cliente MÍNIMO de leitura do board (CA-1/
-// CA-2): porta de entrada da Zona 1, restrita às colunas Backlog/Discovery/
-// Plano de UM board único configurado (`DevModeBoardConfig`).
+// CA-2): porta de entrada da Zona 1 de UM board único configurado
+// (`DevModeBoardConfig`).
 //
 // **Escopo estritamente Fatia 1** — nenhuma outra tool de leitura entra
 // aqui; a lista fechada de tools do CA-11 (com token dedicado, superfície de
@@ -11,11 +12,20 @@ import type { DevModeBoardConfig } from '../shared/devMode';
 // implementação de sistema real. Por isso `TaskdexBoardReader` é só um
 // contrato injetável aqui — sem `createSystemTaskdexBoardReader` ainda: essa
 // é justamente a peça que T324 adiciona (credencial dedicada, C5).
+//
+// 009-modo-dev-v3, lote 5 (CA-2) — a porta de entrada deixou de ficar restrita
+// às 3 colunas da v2 (Backlog/Discovery/Plano): "um card em Implementar é
+// justamente o que pode rodar a fase seguinte". `EntryColumn` agora é
+// `'backlog'` + as colunas disparáveis do CA-1 (`DISPATCHABLE_COLUMNS`, fonte
+// única em `columnEligibility.ts` — nenhuma segunda lista a manter em sincronia).
+// Concluído e Validação com Cliente continuam FORA: nada dispara a partir
+// delas (CA-1), e nada aqui duplica a elegibilidade — este arquivo só decide
+// QUEM aparece na lista, `columnEligibility.ts` decide o QUE cada um dispara.
 
-/** Colunas restritas da porta de entrada (CA-1) — cards de outras colunas, inclusive concluídos, não aparecem. */
-export type EntryColumn = 'backlog' | 'discovery' | 'plano';
+/** Colunas da porta de entrada (CA-1/CA-2) — cards de outras colunas (Concluído, Validação com Cliente, coluna desconhecida) não aparecem. */
+export type EntryColumn = 'backlog' | DispatchableColumn;
 
-const ENTRY_COLUMNS: readonly EntryColumn[] = ['backlog', 'discovery', 'plano'];
+const ENTRY_COLUMNS: readonly EntryColumn[] = ['backlog', ...DISPATCHABLE_COLUMNS];
 
 function isEntryColumn(column: string): column is EntryColumn {
   return (ENTRY_COLUMNS as readonly string[]).includes(column);
@@ -40,10 +50,10 @@ export interface TaskdexBoardReader {
 }
 
 /**
- * CA-1/CA-2 — lista só os cards das 3 colunas de entrada de UM board
- * configurado. `boardConfig` ausente é a porta de entrada desligada (não
- * erro): nem chama o `reader`. Card de coluna desconhecida é ignorado, nunca
- * lança.
+ * CA-1/CA-2 — lista só os cards das colunas de entrada (`ENTRY_COLUMNS`) de
+ * UM board configurado. `boardConfig` ausente é a porta de entrada desligada
+ * (não erro): nem chama o `reader`. Card de coluna desconhecida (inclusive
+ * Concluído e Validação com Cliente) é ignorado, nunca lança.
  */
 export async function listEntryColumnCards(
   boardConfig: DevModeBoardConfig | null,
