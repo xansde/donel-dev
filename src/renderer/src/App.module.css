@@ -304,11 +304,16 @@
   --col-right: 0px;
 }
 
-/* Lote 7 — "Recolher mapa" (botão do titlebar) no Modo Dev zera a coluna
-   ESQUERDA agora (o mapa mudou de lado, CA-7). Depois de `.bodyDevMode` de
-   propósito (a ordem decide a var). */
+/* Lote 7 — "Recolher painéis" (botão do titlebar, PanelRightClose/Open) no
+   Modo Dev zera as DUAS colunas laterais: a ESQUERDA (o mapa, que mudou de
+   lado, CA-7) e, FIX (item 2, rodada de feedback 30/07), a DIREITA também
+   (`PhaseDetailsPanel`, 316px) — antes só o mapa obedecia ao botão, e o
+   painel de detalhe ficava sempre reservando 316px mesmo com o conteúdo
+   desmontado em App.tsx. Depois de `.bodyDevMode` de propósito (a ordem
+   decide a var). */
 .bodyMapCollapsed {
   --col-left: 0px;
+  --col-right: 0px;
 }
 
 /* Teste manual 27/07 — sidebar (projetos ou porta de entrada) colapsável

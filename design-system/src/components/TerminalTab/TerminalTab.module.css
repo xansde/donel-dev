@@ -8,6 +8,11 @@
   background: var(--bg-app);
   border-top: 2px solid var(--border);
   border-right: var(--hairline);
+  /* Item 4 (rodada de feedback 30/07) — cantos superiores arredondados, forma
+     exata do mockup (`Modo Dev v3.dc.html:55`, `border-radius: 6px 6px 0 0`,
+     confirmado no print `modo-dev-v3-2c-estudos-relogio-e-aba.png`). Antes a
+     aba era totalmente quadrada (sem `border-radius` nenhum). */
+  border-radius: 6px 6px 0 0;
   white-space: nowrap;
   flex-shrink: 0;
 }

@@ -33,7 +33,7 @@ function planCard(cardId: string, statuses: Partial<Record<EsteiraPhase, PhaseSt
 }
 
 function tree(planCards: readonly PlanCardNode[]): DiscoveryTree {
-  return { discoveryCardId: 'disc-1', planCards, focusedPlanCardId: null, allPlanCardsComplete: false };
+  return { discoveryCardId: 'disc-1', planCards, focusedPlanCardId: null, allPlanCardsComplete: false, discoveryStatus: 'done' };
 }
 
 function boardFacts(overrides: Partial<BoardFacts> = {}): BoardFacts {

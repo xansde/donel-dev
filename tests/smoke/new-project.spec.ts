@@ -103,9 +103,14 @@ test('CA-30 — seletor de projetos no titlebar cria um projeto novo dentro do r
 
   await newProjectDialog.getByLabel('Nome do projeto').fill(PROJECT_NAME);
 
-  // 4. "Pasta local" é o preview (só-leitura) do destino real — dentro do root isolado.
+  // 4. Item 2 (rodada de feedback 30/07) — "não ter que selecionar a pasta
+  //    local, mas ele criar em um dos diretórios já configurados": o campo
+  //    "Pasta local" SAIU do modal; com só 1 root isolado configurado
+  //    (`isolateProjectRoots`, acima), a criação usa ele direto, sem Select
+  //    nem pergunta nenhuma — "Criar projeto" já habilita só com o nome.
   const expectedPath = join(isolatedRoot, PROJECT_NAME);
-  await expect(newProjectDialog.getByLabel('Pasta local')).toHaveValue(`${isolatedRoot}\\${PROJECT_NAME}`);
+  await expect(newProjectDialog.getByLabel('Pasta local')).toHaveCount(0);
+  await expect(newProjectDialog.getByLabel('Pasta-raiz')).toHaveCount(0);
 
   await expect(createButton).toBeEnabled();
   await createButton.click();
@@ -120,16 +125,19 @@ test('CA-30 — seletor de projetos no titlebar cria um projeto novo dentro do r
   expect(existsSync(join(expectedPath, 'CLAUDE.md'))).toBe(true);
   expect(existsSync(join(expectedPath, '.git'))).toBe(true);
 
-  // 7. Aparece IMEDIATAMENTE na sidebar (re-scan), sem precisar reiniciar o app.
-  const sidebar = window.locator('nav[aria-label="Projetos e sessões"]');
-  await expect(sidebar.locator(`[data-testid="project-row-${PROJECT_NAME}"]`)).toBeVisible({ timeout: 10_000 });
+  // 7. Aparece IMEDIATAMENTE como projeto ATIVO — o pill do seletor no
+  //    titlebar mostra o path do projeto recém-criado, sem precisar
+  //    reiniciar o app. FIX (item 1, rodada de feedback do teste de 30/07) —
+  //    a árvore "Projetos" da sidebar saiu (só ficaram Favoritos + Sessões);
+  //    a prova de "aparece imediatamente" migrou pro próprio seletor, que é
+  //    o catálogo completo agora.
+  await expect(trigger).toContainText(expectedPath, { timeout: 10_000 });
 
-  // 8. E também no próprio seletor do titlebar (reabre o popover). Escopado
-  //    ao dialog: a sessão claude que a criação já abriu tem seu próprio
-  //    cabeçalho mostrando o mesmo path (session-header), e um `getByText`
-  //    solto bateria nos dois.
+  // 8. E também no próprio popover "Projetos" (reabre-o): a lista mostra só
+  //    o NOME (item 3, agrupado por diretório-raiz) — escopado ao dialog,
+  //    exact pra não confundir com o nome parcial de outro projeto.
   await trigger.click();
   const reopenedDialog = window.getByRole('dialog', { name: 'Projetos' });
   await expect(reopenedDialog).toBeVisible();
-  await expect(reopenedDialog.getByText(expectedPath)).toBeVisible();
+  await expect(reopenedDialog.getByRole('button', { name: PROJECT_NAME, exact: true })).toBeVisible();
 });

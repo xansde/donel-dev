@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   isValidSaveProjectBindingIpcInput,
   mergeBoardIds,
+  mergeRepoEntry,
   mergeRepoGithub,
   readBoardIds,
   readProjectBinding,
+  readRepoBoard,
   readRepoGithub,
+  readRepoGithubExtra,
 } from '../src/shared/projectBinding';
 
 // CA-23 (009-modo-dev-v3, lote 3) — TDD da lógica PURA de leitura/mesclagem
@@ -189,31 +192,188 @@ describe('mergeRepoGithub', () => {
   });
 });
 
+describe('readRepoGithubExtra', () => {
+  const REPOS_TEXT = JSON.stringify({
+    repos: {
+      spotsys: { path: 'C:/x/spotsys', github: 'seazone-tech/spotsys', github_extra: ['seazone-tech/spotsys-infra', 'seazone-tech/spotsys-docs'] },
+      'sem-extra': { path: 'C:/x/sem-extra', github: 'org/sem-extra' },
+      'extra-invalido': { path: 'C:/x/y', github_extra: 'nao-e-array' },
+      'extra-com-lixo': { path: 'C:/x/z', github_extra: ['org/ok', 42, '', null] },
+    },
+  });
+
+  it('lê a lista aditiva quando presente', () => {
+    expect(readRepoGithubExtra(REPOS_TEXT, 'spotsys')).toEqual(['seazone-tech/spotsys-infra', 'seazone-tech/spotsys-docs']);
+  });
+
+  it('entrada sem github_extra: []', () => {
+    expect(readRepoGithubExtra(REPOS_TEXT, 'sem-extra')).toEqual([]);
+  });
+
+  it('github_extra de tipo errado (não-array): []', () => {
+    expect(readRepoGithubExtra(REPOS_TEXT, 'extra-invalido')).toEqual([]);
+  });
+
+  it('filtra entradas não-string/vazias da lista, preservando as válidas', () => {
+    expect(readRepoGithubExtra(REPOS_TEXT, 'extra-com-lixo')).toEqual(['org/ok']);
+  });
+
+  it('repoSlug inexistente / arquivo ausente: []', () => {
+    expect(readRepoGithubExtra(REPOS_TEXT, 'nao-existe')).toEqual([]);
+    expect(readRepoGithubExtra(null, 'spotsys')).toEqual([]);
+  });
+});
+
+describe('readRepoBoard', () => {
+  const REPOS_TEXT = JSON.stringify({
+    repos: {
+      spotsys: { path: 'C:/x/spotsys', board: { workspaceId: 'ws-proj', teamId: 'team-proj' } },
+      'sem-board': { path: 'C:/x/sem-board' },
+      'board-parcial': { path: 'C:/x/y', board: { workspaceId: 'ws-1' } },
+    },
+  });
+
+  it('lê workspaceId/teamId do board do projeto', () => {
+    expect(readRepoBoard(REPOS_TEXT, 'spotsys')).toEqual({ workspaceId: 'ws-proj', teamId: 'team-proj' });
+  });
+
+  it('entrada sem board: os dois null', () => {
+    expect(readRepoBoard(REPOS_TEXT, 'sem-board')).toEqual({ workspaceId: null, teamId: null });
+  });
+
+  it('board pela metade (só workspaceId): teamId null, workspaceId lido como está (a regra tudo-ou-nada é do MERGE, não da leitura)', () => {
+    expect(readRepoBoard(REPOS_TEXT, 'board-parcial')).toEqual({ workspaceId: 'ws-1', teamId: null });
+  });
+
+  it('repoSlug inexistente / arquivo ausente: os dois null', () => {
+    expect(readRepoBoard(REPOS_TEXT, 'nao-existe')).toEqual({ workspaceId: null, teamId: null });
+    expect(readRepoBoard(null, 'spotsys')).toEqual({ workspaceId: null, teamId: null });
+  });
+});
+
+describe('mergeRepoEntry', () => {
+  it('repoSlug ausente: cria entrada nova com path + github + github_extra + board', () => {
+    const result = mergeRepoEntry(null, {
+      repoSlug: 'novo-repo',
+      repoPath: 'C:/x/novo-repo',
+      github: 'org/novo-repo',
+      githubExtra: ['org/novo-repo-infra'],
+      workspaceId: 'ws-1',
+      teamId: 'team-1',
+    });
+    expect(result).toEqual({
+      repos: {
+        'novo-repo': {
+          path: 'C:/x/novo-repo',
+          github: 'org/novo-repo',
+          github_extra: ['org/novo-repo-infra'],
+          board: { workspaceId: 'ws-1', teamId: 'team-1' },
+        },
+      },
+    });
+  });
+
+  it('PRESERVA campos desconhecidos da entrada existente — só github/github_extra/board mudam', () => {
+    const text = JSON.stringify({
+      default_repo: 'C:/x/spotsys',
+      repos: { spotsys: { path: 'C:/x/spotsys', integration_branch: 'staging', help_channel: '#spotsys-hub' } },
+      round_limit_by_board: { SPOTSYSMAR: 3 },
+    });
+    const result = mergeRepoEntry(text, {
+      repoSlug: 'spotsys',
+      repoPath: 'ignorado',
+      github: 'seazone-tech/spotsys',
+      githubExtra: [],
+      workspaceId: '',
+      teamId: '',
+    });
+    expect(result).toEqual({
+      default_repo: 'C:/x/spotsys',
+      repos: { spotsys: { path: 'C:/x/spotsys', integration_branch: 'staging', help_channel: '#spotsys-hub', github: 'seazone-tech/spotsys' } },
+      round_limit_by_board: { SPOTSYSMAR: 3 },
+    });
+  });
+
+  it('githubExtra vazio remove o campo (nunca grava array vazio)', () => {
+    const text = JSON.stringify({ repos: { spotsys: { path: 'C:/x', github_extra: ['org/x'] } } });
+    const result = mergeRepoEntry(text, { repoSlug: 'spotsys', repoPath: 'ignorado', github: '', githubExtra: [], workspaceId: '', teamId: '' });
+    expect(result).toEqual({ repos: { spotsys: { path: 'C:/x' } } });
+  });
+
+  it('só um dos dois ids de board vazio: remove o board inteiro (tudo ou nada, mesma regra de mergeBoardIds)', () => {
+    const text = JSON.stringify({ repos: { spotsys: { path: 'C:/x', board: { workspaceId: 'ws-old', teamId: 'team-old' } } } });
+    const result = mergeRepoEntry(text, { repoSlug: 'spotsys', repoPath: 'ignorado', github: '', githubExtra: [], workspaceId: 'ws-novo', teamId: '' });
+    expect(result).toEqual({ repos: { spotsys: { path: 'C:/x' } } });
+  });
+
+  it('entrada em forma legada (string): converte pra objeto preservando o path', () => {
+    const text = JSON.stringify({ repos: { dalton: 'C:/x/dalton' } });
+    const result = mergeRepoEntry(text, { repoSlug: 'dalton', repoPath: 'C:/ignorado', github: 'seazone-tech/dalton', githubExtra: [], workspaceId: '', teamId: '' });
+    expect(result).toEqual({ repos: { dalton: { path: 'C:/x/dalton', github: 'seazone-tech/dalton' } } });
+  });
+});
+
 describe('readProjectBinding', () => {
   it('combina os dois arquivos num DTO único, string vazia por campo ausente (nunca null/undefined)', () => {
     const boardText = JSON.stringify({ workspaceId: 'ws-1', teamId: 'team-1', token: 'sk_x' });
     const reposText = JSON.stringify({ repos: { spotsys: { path: 'C:/x', github: 'seazone-tech/spotsys' } } });
-    expect(readProjectBinding(boardText, reposText, 'spotsys')).toEqual({ workspaceId: 'ws-1', teamId: 'team-1', github: 'seazone-tech/spotsys' });
+    expect(readProjectBinding(boardText, reposText, 'spotsys')).toEqual({
+      workspaceId: 'ws-1',
+      teamId: 'team-1',
+      github: 'seazone-tech/spotsys',
+      githubExtra: [],
+    });
   });
 
   it('os dois arquivos ausentes: DTO todo vazio, nunca lança', () => {
-    expect(readProjectBinding(null, null, 'spotsys')).toEqual({ workspaceId: '', teamId: '', github: '' });
+    expect(readProjectBinding(null, null, 'spotsys')).toEqual({ workspaceId: '', teamId: '', github: '', githubExtra: [] });
+  });
+
+  it('board DO PROJETO (repos.json) tem prioridade sobre o global (credencial)', () => {
+    const boardText = JSON.stringify({ workspaceId: 'ws-global', teamId: 'team-global' });
+    const reposText = JSON.stringify({
+      repos: { spotsys: { path: 'C:/x', github: 'seazone-tech/spotsys', board: { workspaceId: 'ws-proj', teamId: 'team-proj' } } },
+    });
+    expect(readProjectBinding(boardText, reposText, 'spotsys')).toEqual({
+      workspaceId: 'ws-proj',
+      teamId: 'team-proj',
+      github: 'seazone-tech/spotsys',
+      githubExtra: [],
+    });
+  });
+
+  it('projeto sem board próprio cai pro global — mesmo com repos.json presente', () => {
+    const boardText = JSON.stringify({ workspaceId: 'ws-global', teamId: 'team-global' });
+    const reposText = JSON.stringify({ repos: { spotsys: { path: 'C:/x', github: 'seazone-tech/spotsys' } } });
+    const result = readProjectBinding(boardText, reposText, 'spotsys');
+    expect(result.workspaceId).toBe('ws-global');
+    expect(result.teamId).toBe('team-global');
+  });
+
+  it('github_extra do projeto aparece no DTO', () => {
+    const reposText = JSON.stringify({ repos: { spotsys: { path: 'C:/x', github: 'seazone-tech/spotsys', github_extra: ['org/extra-1'] } } });
+    expect(readProjectBinding(null, reposText, 'spotsys').githubExtra).toEqual(['org/extra-1']);
   });
 });
 
 describe('isValidSaveProjectBindingIpcInput', () => {
   it('aceita payload completo, mesmo com campos vazios (limpar é uma gravação válida)', () => {
-    expect(isValidSaveProjectBindingIpcInput({ repoPath: 'C:/x', workspaceId: '', teamId: '', github: '' })).toBe(true);
+    expect(isValidSaveProjectBindingIpcInput({ repoPath: 'C:/x', workspaceId: '', teamId: '', github: '', githubExtra: [] })).toBe(true);
   });
 
   it('rejeita repoPath vazio/ausente — é a chave, não pode faltar', () => {
-    expect(isValidSaveProjectBindingIpcInput({ repoPath: '', workspaceId: 'a', teamId: 'b', github: 'c' })).toBe(false);
-    expect(isValidSaveProjectBindingIpcInput({ workspaceId: 'a', teamId: 'b', github: 'c' })).toBe(false);
+    expect(isValidSaveProjectBindingIpcInput({ repoPath: '', workspaceId: 'a', teamId: 'b', github: 'c', githubExtra: [] })).toBe(false);
+    expect(isValidSaveProjectBindingIpcInput({ workspaceId: 'a', teamId: 'b', github: 'c', githubExtra: [] })).toBe(false);
   });
 
   it('rejeita tipos errados e payload não-objeto', () => {
     expect(isValidSaveProjectBindingIpcInput(null)).toBe(false);
     expect(isValidSaveProjectBindingIpcInput('string')).toBe(false);
-    expect(isValidSaveProjectBindingIpcInput({ repoPath: 'C:/x', workspaceId: 1, teamId: 'b', github: 'c' })).toBe(false);
+    expect(isValidSaveProjectBindingIpcInput({ repoPath: 'C:/x', workspaceId: 1, teamId: 'b', github: 'c', githubExtra: [] })).toBe(false);
+  });
+
+  it('rejeita githubExtra ausente ou com entrada não-string', () => {
+    expect(isValidSaveProjectBindingIpcInput({ repoPath: 'C:/x', workspaceId: '', teamId: '', github: '' })).toBe(false);
+    expect(isValidSaveProjectBindingIpcInput({ repoPath: 'C:/x', workspaceId: '', teamId: '', github: '', githubExtra: ['ok', 1] })).toBe(false);
   });
 });

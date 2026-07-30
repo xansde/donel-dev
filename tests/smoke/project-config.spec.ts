@@ -9,10 +9,19 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // CA-23 (009-modo-dev-v3, lote 3) — smoke da engrenagem de configuração por
 // projeto: abre a tela de Sessões anteriores, abre o painel, preenche board
 // (workspaceId/teamId) + repo GitHub, salva, reinicia o app inteiro e prova
-// que os valores persistiram — E que os dois arquivos externos
+// que os valores persistiram — E que os arquivos externos
 // (`~/.claude/esteira-config/donel-board-credential.json` e `repos.json`)
 // preservam qualquer campo desconhecido (token/baseUrl/outros repos), nunca
 // são substituídos por inteiro.
+//
+// FIX (rodada de feedback 30/07, item 1) — "board é POR PROJETO agora": o
+// formulário unificado (`ProjectConfigForm.tsx`) grava board+repo(s) NUM SÓ
+// arquivo, `repos.json` (`repos.<repoSlug>.{github,github_extra,board}`);
+// `donel-board-credential.json` deixa de ser ESCRITO por este caminho — só
+// continua existindo intocado como fixture (prova de que nada nele foi
+// tocado). "Repositório GitHub" virou uma LISTA editável (adicionar/remover,
+// item 1) — este smoke cobre 1 repo só (o caminho de vários repos tem sua
+// própria cobertura em tests/projectBinding.test.ts/esteira-config.test.ts).
 //
 // Isolado do `~/.claude/esteira-config` REAL da máquina via
 // `DONEL_ESTEIRA_CONFIG_DIR` (mesmo espírito de `DONEL_ESTEIRA_STATE_ROOT`/
@@ -50,11 +59,16 @@ async function launchApp(): Promise<void> {
 // Item 11 (rodada de forma fix/009-board-real-e-modal) — a tela deixou de
 // ser um `Modal` (role="dialog") e virou uma TELA no grid do `.shell`
 // (`role="region"`, mesmo `aria-label` de antes — só o role mudou).
+//
+// FIX (item 1, rodada de feedback do teste de 30/07) — o botão "Sessões
+// anteriores de X" morava numa linha da árvore "Projetos" da sidebar
+// (removida); migrou pro popover "Projetos" do seletor no titlebar.
 async function openSettingsPanel(): Promise<import('@playwright/test').Locator> {
-  const sidebar = window.locator('nav[aria-label="Projetos e sessões"]');
-  await expect(sidebar).toBeVisible();
+  await window.getByRole('button', { name: 'Trocar de projeto' }).click();
+  const projectsPopover = window.getByRole('dialog', { name: 'Projetos' });
+  await expect(projectsPopover).toBeVisible();
 
-  const historyButton = sidebar.getByRole('button', { name: `Sessões anteriores de ${PROJECT_NAME}`, exact: true });
+  const historyButton = projectsPopover.getByRole('button', { name: `Sessões anteriores de ${PROJECT_NAME}`, exact: true });
   await expect(historyButton).toBeVisible({ timeout: 15_000 });
   await historyButton.click();
 
@@ -108,39 +122,46 @@ test.afterAll(async () => {
   }
 });
 
-test('CA-23 — engrenagem lê vazio na 1ª vez, grava board+repo, persiste a restart e preserva campos desconhecidos', async () => {
+test('CA-23 — engrenagem lê vazio na 1ª vez, grava board+repo (num só repos.json), persiste a restart e preserva campos desconhecidos', async () => {
   test.setTimeout(120_000);
 
-  // 1. Projeto ainda não tem entrada nos dois arquivos — os 3 campos nascem vazios (degradação por omissão, C4).
+  // 1. Projeto ainda não tem entrada em repos.json — os campos nascem vazios (degradação por omissão, C4).
   const panel = await openSettingsPanel();
   await expect(panel.getByLabel('Workspace ID do board de tarefas')).toHaveValue('');
   await expect(panel.getByLabel('Team ID do board de tarefas')).toHaveValue('');
-  await expect(panel.getByLabel('Repositório GitHub')).toHaveValue('');
+  await expect(panel.getByText('Nenhum repositório configurado.')).toBeVisible();
 
   // O token de serviço nunca aparece em lugar nenhum da UI.
   expect(await window.content()).not.toContain(FAKE_TOKEN);
 
-  // 2. Preenche e salva.
+  // 2. Preenche board + adiciona 1 repo (item 1 — lista editável), salva.
   await panel.getByLabel('Workspace ID do board de tarefas').fill('ws-smoke-test');
   await panel.getByLabel('Team ID do board de tarefas').fill('team-smoke-test');
-  await panel.getByLabel('Repositório GitHub').fill('seazone-tech/smoke-fixture-repo');
+  await panel.getByLabel('Novo repositório GitHub').fill('seazone-tech/smoke-fixture-repo');
+  await panel.getByRole('button', { name: 'Adicionar' }).click();
+  await expect(panel.getByText('seazone-tech/smoke-fixture-repo')).toBeVisible();
   await panel.getByRole('button', { name: 'Salvar' }).click();
   await expect(panel).toBeHidden();
 
-  // 3. Confirma no ARQUIVO real — merge, não substituição.
+  // 3. Confirma no ARQUIVO real — merge, não substituição. Board é POR
+  //    PROJETO agora (repos.json), NUNCA escrito na credencial global.
   await expect(async () => {
     const board = boardCredentialOnDisk();
-    expect(board.workspaceId).toBe('ws-smoke-test');
-    expect(board.teamId).toBe('team-smoke-test');
-    expect(board.token).toBe(FAKE_TOKEN); // preservado
-    expect(board.baseUrl).toBe('https://taskdex.example/api/mcp'); // preservado
-    expect(board._comentario).toBe('fixture do smoke'); // preservado
+    expect(board.workspaceId).toBeUndefined(); // nunca escrito por este caminho
+    expect(board.teamId).toBeUndefined();
+    expect(board.token).toBe(FAKE_TOKEN); // preservado, intocado
+    expect(board.baseUrl).toBe('https://taskdex.example/api/mcp'); // preservado, intocado
+    expect(board._comentario).toBe('fixture do smoke'); // preservado, intocado
 
     const repos = reposConfigOnDisk() as { default_repo: string; repos: Record<string, unknown>; round_limit_by_board: unknown };
     expect(repos.default_repo).toBe('C:/nao/importa/pro/smoke'); // preservado
     expect(repos.round_limit_by_board).toEqual({ SPOTSYSMAR: 3 }); // preservado
     expect(repos.repos['outro-repo-ja-cadastrado']).toBe('C:/outro/path'); // preservado
-    expect(repos.repos[PROJECT_NAME]).toEqual({ path: REPO_ROOT, github: 'seazone-tech/smoke-fixture-repo' });
+    expect(repos.repos[PROJECT_NAME]).toEqual({
+      path: REPO_ROOT,
+      github: 'seazone-tech/smoke-fixture-repo',
+      board: { workspaceId: 'ws-smoke-test', teamId: 'team-smoke-test' },
+    });
   }).toPass({ timeout: 10_000 });
 
   // 4. Restart COMPLETO do app — mesmo requisito do config-persistence.spec.ts (T015 DoD).
@@ -151,7 +172,7 @@ test('CA-23 — engrenagem lê vazio na 1ª vez, grava board+repo, persiste a re
   const panelAfterRestart = await openSettingsPanel();
   await expect(panelAfterRestart.getByLabel('Workspace ID do board de tarefas')).toHaveValue('ws-smoke-test');
   await expect(panelAfterRestart.getByLabel('Team ID do board de tarefas')).toHaveValue('team-smoke-test');
-  await expect(panelAfterRestart.getByLabel('Repositório GitHub')).toHaveValue('seazone-tech/smoke-fixture-repo');
+  await expect(panelAfterRestart.getByText('seazone-tech/smoke-fixture-repo')).toBeVisible();
   expect(await window.content()).not.toContain(FAKE_TOKEN);
 
   await panelAfterRestart.getByRole('button', { name: 'Cancelar' }).click();

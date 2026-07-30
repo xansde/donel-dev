@@ -35,6 +35,26 @@ const PROFILE_LINK_DIR_NAMES = ['projects', 'skills', 'commands', 'rules', 'plug
 const E2E_PROFILE_NAME = 'e2e-profile-test';
 const E2E_PROFILE_DIR = join(homedir(), '.claude-profiles', E2E_PROFILE_NAME);
 
+// Item 3 (rodada de feedback 30/07) — "excluir um perfil, não apenas
+// adicionar". Perfil DEDICADO (não reaproveita `E2E_PROFILE_NAME` acima —
+// aquele teste já o deixa ATIVO ao final, e um dos casos aqui precisa de um
+// perfil NÃO-ativo pra provar a exclusão de verdade).
+const DELETE_PROFILE_NAME = 'e2e-profile-delete-test';
+const DELETE_PROFILE_DIR = join(homedir(), '.claude-profiles', DELETE_PROFILE_NAME);
+
+function cleanupDeleteProfileDir(): void {
+  if (!existsSync(DELETE_PROFILE_DIR)) return;
+  for (const dirName of PROFILE_LINK_DIR_NAMES) {
+    const linkPath = join(DELETE_PROFILE_DIR, dirName);
+    try {
+      rmdirSync(linkPath);
+    } catch {
+      // Não era uma junction ou já foi removida — ok.
+    }
+  }
+  rmSync(DELETE_PROFILE_DIR, { recursive: true, force: true });
+}
+
 // T801/§B19 (008) — `APP_MAIN`/`REPO_ROOT`/`PROJECT_NAME` vêm de
 // `repoUnderTest.ts`: o projeto na sidebar é o `basename` da PASTA de onde a
 // suíte roda (numa worktree, `donel-dev-wt-x`), nunca o literal `donel-dev`.
@@ -69,6 +89,7 @@ test.beforeAll(async () => {
   // vazar pra esta (perfil já existente faria "Criar perfil" ser um no-op
   // silencioso sobre um estado velho, mascarando o que este smoke prova).
   cleanupE2eProfileDir();
+  cleanupDeleteProfileDir();
 
   userDataDir = createIsolatedUserDataDir('profiles');
   electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
@@ -97,6 +118,7 @@ test.afterAll(async () => {
   } finally {
     removeIsolatedUserDataDir(userDataDir);
     cleanupE2eProfileDir();
+    cleanupDeleteProfileDir();
   }
 });
 
@@ -181,8 +203,8 @@ test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar 
   // convenção "Tecnologia Claude {n}" (nome de teste arbitrário), então
   // ProfileSwitcher.tsx renderiza um botão genérico com o nome cru em vez do
   // AccountBadge do design-system.
-  await newRow.getByRole('button', { name: E2E_PROFILE_NAME }).click();
-  await expect(newRow.getByRole('button', { name: E2E_PROFILE_NAME })).toContainText(E2E_PROFILE_NAME);
+  await newRow.getByRole('button', { name: E2E_PROFILE_NAME, exact: true }).click();
+  await expect(newRow.getByRole('button', { name: E2E_PROFILE_NAME, exact: true })).toContainText(E2E_PROFILE_NAME);
 
   // Fecha o dropdown (Escape — Modal.tsx) antes de abrir a sessão nova.
   await window.keyboard.press('Escape');
@@ -278,5 +300,61 @@ test('T014 — criar perfil, doctor verde, listar no dropdown, ativar e spawnar 
   await trigger.click();
   await expect(switcher).toBeVisible();
   await switcher.locator('[data-testid="profile-row"][data-slug="principal"]').getByRole('button').first().click();
+  await window.keyboard.press('Escape');
+});
+
+test('Item 3 (rodada de feedback 30/07) — excluir perfil: nunca o Principal, nunca o ATIVO, confirmação nomeia o perfil e a junction some sem tocar o alvo global', async () => {
+  test.setTimeout(90_000);
+
+  const trigger = window.locator('[data-testid="profile-switcher-trigger"] button');
+  const switcher = window.locator('[data-testid="profile-switcher"]');
+
+  // 0. Cria o perfil dedicado desta prova.
+  await trigger.click();
+  await expect(switcher).toBeVisible();
+  await switcher.getByLabel('Novo perfil').fill(DELETE_PROFILE_NAME);
+  await switcher.getByRole('button', { name: 'Criar perfil' }).click();
+  const deleteRow = switcher.locator(`[data-testid="profile-row"][data-slug="${DELETE_PROFILE_NAME}"]`);
+  await expect(deleteRow).toBeVisible({ timeout: 30_000 });
+  await expect(async () => expect(existsSync(DELETE_PROFILE_DIR)).toBe(true)).toPass({ timeout: 5_000 });
+
+  // 1. REGRA DURA — o Principal nunca pode ser excluído: botão desabilitado.
+  const principalRow = switcher.locator('[data-testid="profile-row"][data-slug="principal"]');
+  await expect(principalRow.getByTestId('profile-delete-button')).toBeDisabled();
+
+  // 2. REGRA DURA — o perfil ATIVO agora não pode ser excluído. Ativa o
+  //    perfil novo e confirma que o botão dele mesmo fica desabilitado.
+  await deleteRow.getByRole('button', { name: DELETE_PROFILE_NAME, exact: true }).click();
+  await expect(deleteRow.getByTestId('profile-delete-button')).toBeDisabled();
+
+  // 3. Volta o ativo pra Principal — agora o perfil novo pode ser excluído.
+  await principalRow.getByRole('button').first().click();
+  await expect(deleteRow.getByTestId('profile-delete-button')).toBeEnabled();
+
+  // 4. Abre a confirmação — o NOME do perfil aparece no texto (nunca um "tem
+  //    certeza?" genérico).
+  await deleteRow.getByTestId('profile-delete-button').click();
+  const confirmDialog = window.getByRole('dialog', { name: 'Excluir perfil' });
+  await expect(confirmDialog).toBeVisible();
+  await expect(confirmDialog).toContainText(DELETE_PROFILE_NAME);
+
+  await confirmDialog.getByRole('button', { name: 'Excluir perfil' }).click();
+  await expect(confirmDialog).toBeHidden({ timeout: 15_000 });
+
+  // 5. A linha some do dropdown E o diretório some do disco de verdade —
+  //    prova de que a exclusão de fato rodou (não só um estado de UI).
+  await expect(deleteRow).toHaveCount(0);
+  await expect(async () => expect(existsSync(DELETE_PROFILE_DIR)).toBe(false)).toPass({ timeout: 10_000 });
+
+  // 6. PROVA CRÍTICA (o mesmo achado do CLAUDE.md gotcha / tests/profile-manager.test.ts
+  //    "junção real"): o diretório GLOBAL `~/.claude` — alvo das 6 junctions
+  //    que o perfil excluído tinha — continua intacto. Se a exclusão tivesse
+  //    seguido algum link, um `~/.claude/skills` ou `~/.claude/projects` real
+  //    do Alexandre teria sido apagado; isso NUNCA pode acontecer.
+  const claudeHome = join(homedir(), '.claude');
+  for (const dirName of PROFILE_LINK_DIR_NAMES) {
+    expect(existsSync(join(claudeHome, dirName))).toBe(true);
+  }
+
   await window.keyboard.press('Escape');
 });

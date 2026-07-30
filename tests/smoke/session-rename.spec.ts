@@ -109,13 +109,22 @@ async function openFreeTerminalTab(): Promise<void> {
   await appWindow.getByRole('menuitem', { name: 'Terminal (shell livre)' }).click();
 }
 
+// FIX (item 1, rodada de feedback do teste de 30/07) — o botão "Sessões
+// anteriores de X" morava numa linha da árvore "Projetos" da sidebar
+// (removida); migrou pro popover "Projetos" do seletor no titlebar.
 async function openPreviousSessionsDialog() {
-  const sidebar = appWindow.locator('nav[aria-label="Projetos e sessões"]');
-  await expect(sidebar).toBeVisible();
-  const historyButton = sidebar.getByRole('button', { name: `Sessões anteriores de ${PROJECT_NAME}`, exact: true });
+  await appWindow.getByRole('button', { name: 'Trocar de projeto' }).click();
+  const projectsPopover = appWindow.getByRole('dialog', { name: 'Projetos' });
+  await expect(projectsPopover).toBeVisible();
+  const historyButton = projectsPopover.getByRole('button', { name: `Sessões anteriores de ${PROJECT_NAME}`, exact: true });
   await expect(historyButton).toBeVisible({ timeout: 15_000 });
   await historyButton.click();
-  const dialog = appWindow.getByRole('dialog', { name: new RegExp(`Sessões anteriores · ${PROJECT_NAME}`) });
+  // FIX (bug pré-existente, achado ao mexer nesta função pro item 1) — Item 11
+  // (fix/009-board-real-e-modal) trocou a tela de "Sessões anteriores" de
+  // `Modal` (role="dialog") pra uma TELA no grid do `.shell` (role="region"),
+  // mas este arquivo nunca tinha sido atualizado — a query aqui achava um
+  // dialog que não existe mais, sempre estourando timeout.
+  const dialog = appWindow.getByRole('region', { name: new RegExp(`Sessões anteriores · ${PROJECT_NAME}`) });
   await expect(dialog).toBeVisible();
   return dialog;
 }

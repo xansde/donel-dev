@@ -34,6 +34,46 @@ export function canonicalLevelKeys(input: CanonicalLevelKeysInput): readonly Map
   return keys;
 }
 
+export interface NextLevelPreviewInput {
+  /** `tree.planCards.length > 0` — mesmo dado de `CanonicalLevelKeysInput`. */
+  readonly hasPlanCards: boolean;
+  /** Status da fase `discovery` do card RAIZ (`DiscoveryTree.discoveryStatus`, `main/discovery-tree.ts`) — nunca de um card de plano (a árvore ainda não tem nenhum quando isto importa). */
+  readonly discoveryStatus: PhaseStatus;
+}
+
+export interface NextLevelPreview {
+  readonly key: 'planos';
+  readonly label: string;
+  /** `null` = degradação por omissão: discovery já concluída, mas sem `plan_cards[]` ainda — dado incompleto, nunca um motivo fabricado. */
+  readonly hint: string | null;
+}
+
+/**
+ * FIX (rodada de feedback 30/07, item 4) — "abri um discovery e não tinha
+ * como avançar para a próxima etapa": com `hasPlanCards: false`,
+ * `canonicalLevelKeys` devolve só `['discovery']` — o mapa nunca mostrava
+ * NENHUM indício do caminho adiante. Esta função decide a mensagem do
+ * nível-preview fantasma "Planos" que o mapa passa a desenhar sempre que o
+ * nível real ainda não existe (`DiscoveryMap.tsx` empurra este preview pra
+ * DEPOIS do nível `discovery` na lista de `LevelCarouselLevel` — a geometria
+ * de "fora de foco" já é 124px/opacidade 0.22, tokens existentes, sem
+ * escolha nova de estilo).
+ *
+ * Duas frases possíveis, nunca uma terceira fabricada: discovery ainda não
+ * terminou (`not-started`/`running`/`stuck`/`failed`) → aponta pra rodar a
+ * etapa; discovery JÁ terminou (`done`) mas `plan_cards[]` continua vazio →
+ * dado incompleto, não erro do usuário — degrada por omissão (`hint: null`),
+ * nunca inventa uma explicação sobre por que não há planos.
+ */
+export function nextLevelPreview(input: NextLevelPreviewInput): NextLevelPreview | null {
+  if (input.hasPlanCards) return null;
+  return {
+    key: 'planos',
+    label: 'PLANOS',
+    hint: input.discoveryStatus === 'done' ? null : 'nascem do discovery — rode a etapa Discovery',
+  };
+}
+
 /** CA-11/CA-13 — o ornamento de carrossel (setas + contador) só nasce quando há irmão. Nenhum ornamento para item único. */
 export function needsCarousel(cardCount: number): boolean {
   return cardCount > 1;

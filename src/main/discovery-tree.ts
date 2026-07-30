@@ -83,6 +83,18 @@ export interface DiscoveryTree {
   readonly focusedPlanCardId: string | null;
   /** CA-23 — true quando TODO card de plano tem a fase concluir com status "success". Disco puro, sem board. */
   readonly allPlanCardsComplete: boolean;
+  /**
+   * FIX (rodada de feedback 30/07, item 4) — status da fase `discovery` do
+   * CARD RAIZ (não de um card de plano — a árvore ainda não tem nenhum
+   * quando isto importa). Único lugar que precisa saber se o discovery já
+   * rodou/terminou SEM depender de `planCards.length > 0`: o mapa usa isto
+   * pra decidir a MENSAGEM do nível-preview "Planos" (`nextLevelPreview`,
+   * `shared/mapLevels.ts`) quando `planCards` ainda está vazio — "rode a
+   * etapa Discovery" enquanto ela não rodou/terminou, degradado por omissão
+   * (sem mensagem fabricada) quando ela JÁ terminou mas não declarou
+   * `plan_cards[]` ainda (dado incompleto, não erro).
+   */
+  readonly discoveryStatus: PhaseStatus;
 }
 
 function buildPhaseNode(
@@ -172,8 +184,13 @@ export function buildDiscoveryTree(
   const planCards = planCardRefs.map((ref) => buildPlanCardNode(root, ref, archived, io));
 
   const allPlanCardsComplete = planCards.length > 0 && planCards.every(planCardComplete);
+  // FIX (item 4) — mesmo `buildPhaseNode` que cada card de plano usa pra sua
+  // própria fase `discovery` fixa (`DISCOVERY_STEP`, DiscoveryMap.tsx), só
+  // que aqui é o card RAIZ de verdade sendo lido, não um card de plano —
+  // funciona ANTES de existir plano nenhum.
+  const discoveryStatus = buildPhaseNode(root, 'discovery', discoveryCardId, archived, io).status;
 
-  return { discoveryCardId, planCards, focusedPlanCardId: null, allPlanCardsComplete };
+  return { discoveryCardId, planCards, focusedPlanCardId: null, allPlanCardsComplete, discoveryStatus };
 }
 
 // ---------------------------------------------------------------------------

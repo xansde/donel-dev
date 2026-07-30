@@ -10,6 +10,7 @@ import {
   formatRelativeTime,
   FREE_TERMINAL_ETAPA_LABEL,
 } from '../../shared/sessions';
+import { ProjectConfigForm } from './ProjectConfigForm';
 import styles from './PreviousSessions.module.css';
 
 // T013 — PARTE PRINCIPAL: tela "Sessões anteriores" (FR-004, CA-2). Lista por
@@ -75,7 +76,12 @@ export interface PreviousSessionsProps {
   contextLabelBySessionId: Readonly<Record<string, string>>;
 }
 
-const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '' };
+const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '', githubExtra: [] };
+
+/** `github` (principal) + `githubExtra` (aditivos) viram uma lista ordenada só, pro `ProjectConfigForm` — índice 0 é sempre o principal. Vazio quando ambos vazios (nenhum repo configurado ainda). */
+function reposFromBinding(dto: ProjectBindingDto): string[] {
+  return [dto.github, ...dto.githubExtra].filter((repo) => repo.trim().length > 0);
+}
 
 function sessionGlyph(session: SessionSummaryDto, isLive: boolean): { glyph: string; tone: 'muted' | 'accent' | 'error' } {
   if (session.corrupted) return { glyph: '⚠', tone: 'error' };
@@ -109,7 +115,7 @@ export function PreviousSessions({
   const [saving, setSaving] = useState(false);
   const [workspaceId, setWorkspaceId] = useState('');
   const [teamId, setTeamId] = useState('');
-  const [github, setGithub] = useState('');
+  const [repos, setRepos] = useState<string[]>([]);
 
   // A tela NÃO é o `Modal` compartilhado (ver comentário de topo) — Escape
   // continua fechando, mesmo comportamento de sempre, só que sem foco preso
@@ -137,7 +143,7 @@ export function PreviousSessions({
         if (cancelled) return;
         setWorkspaceId(dto.workspaceId);
         setTeamId(dto.teamId);
-        setGithub(dto.github);
+        setRepos(reposFromBinding(dto));
       })
       .catch(() => {
         // Mesma degradação do resto do app (C4): arquivo ilegível não é erro
@@ -145,7 +151,7 @@ export function PreviousSessions({
         if (cancelled) return;
         setWorkspaceId(EMPTY_BINDING.workspaceId);
         setTeamId(EMPTY_BINDING.teamId);
-        setGithub(EMPTY_BINDING.github);
+        setRepos([]);
       })
       .finally(() => {
         if (!cancelled) setBindingLoading(false);
@@ -160,11 +166,11 @@ export function PreviousSessions({
   const handleSaveSettings = (): void => {
     setSaving(true);
     window.donel.projectBinding
-      .save({ repoPath: projectPath, workspaceId, teamId, github })
+      .save({ repoPath: projectPath, workspaceId, teamId, github: repos[0] ?? '', githubExtra: repos.slice(1) })
       .then((dto) => {
         setWorkspaceId(dto.workspaceId);
         setTeamId(dto.teamId);
-        setGithub(dto.github);
+        setRepos(reposFromBinding(dto));
         setSettingsOpen(false);
       })
       .finally(() => setSaving(false));
@@ -302,28 +308,14 @@ export function PreviousSessions({
 
             {bindingLoading ? <p className={styles.hint}>Carregando configuração…</p> : null}
 
-            <TextInput
-              label="Workspace ID"
-              value={workspaceId}
-              onChange={(event) => setWorkspaceId(event.target.value)}
-              hint="board único do projeto · usado para ler colunas e cards"
-              hintTone="muted"
-              aria-label="Workspace ID do board de tarefas"
-            />
-            <TextInput
-              label="Team ID"
-              value={teamId}
-              onChange={(event) => setTeamId(event.target.value)}
-              aria-label="Team ID do board de tarefas"
-            />
-            <TextInput
-              label="Repositório GitHub"
-              value={github}
-              onChange={(event) => setGithub(event.target.value)}
-              placeholder="org/repo"
-              hint="origem das branches, PRs e lições do repositório"
-              hintTone="muted"
-              aria-label="Repositório GitHub"
+            <ProjectConfigForm
+              repos={repos}
+              onReposChange={setRepos}
+              workspaceId={workspaceId}
+              onWorkspaceIdChange={setWorkspaceId}
+              teamId={teamId}
+              onTeamIdChange={setTeamId}
+              disabled={bindingLoading || saving}
             />
 
             <div className={styles.settingsActions}>

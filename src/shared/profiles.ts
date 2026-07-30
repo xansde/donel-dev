@@ -17,6 +17,8 @@ export const PROFILE_CHANNELS = {
   repair: 'profiles:repair',
   /** T014 — não estava no plan.md original; ver comentário de topo. */
   headroom: 'profiles:headroom',
+  /** Item 3 (rodada de feedback 30/07) — "excluir um perfil, não só adicionar". */
+  delete: 'profiles:delete',
 } as const;
 
 export interface ProfileSummaryDto {
@@ -71,6 +73,19 @@ export interface ProfileQuota {
 /** `Record<slug, ProfileQuota>` — slug ausente = ainda não consultado. */
 export type ProfileHeadroomMap = Record<string, ProfileQuota>;
 
+/**
+ * Item 3 (rodada de feedback 30/07) — motivo pelo qual `profiles:delete`
+ * recusou. `'is-primary'`/`'is-active'` são as duas regras duras (nunca o
+ * Principal, nunca o perfil ATIVO agora); `'not-found'` cobre um slug que já
+ * não existe mais na lista (dupla exclusão em duas abas, por exemplo).
+ */
+export type DeleteProfileErrorReason = 'is-primary' | 'is-active' | 'not-found';
+
+/** Resultado de `profiles:delete` — a lista JÁ vem re-escaneada (mesmo idioma de `activate`/`create`), mesmo em recusa (nada mudou, mas o chamador não precisa de round-trip extra). */
+export type DeleteProfileOutcome =
+  | { readonly ok: true; readonly profiles: ProfileSummaryDto[] }
+  | { readonly ok: false; readonly reason: DeleteProfileErrorReason; readonly profiles: ProfileSummaryDto[] };
+
 /** API tipada exposta pelo preload em `window.donel.profiles`. */
 export interface DonelProfilesApi {
   /** Sempre inclui o Principal (1º item) + os perfis em `~/.claude-profiles/*`. */
@@ -90,6 +105,13 @@ export interface DonelProfilesApi {
    * comportamento anterior (respeita cache).
    */
   headroom(options?: { force?: boolean }): Promise<ProfileHeadroomMap>;
+  /**
+   * Item 3 (rodada de feedback 30/07) — exclui o perfil (junctions desfeitas
+   * com segurança + diretório do perfil removido, `profile-manager.ts`
+   * `deleteProfile`/`deleteProfileDirectory`). Recusa (nunca lança) quando o
+   * slug é o Principal, é o perfil ATIVO agora, ou não existe mais.
+   */
+  delete(slug: string): Promise<DeleteProfileOutcome>;
 }
 
 const ACCOUNT_NAME_PATTERN = /^Tecnologia Claude (\d+)$/;
