@@ -6,8 +6,9 @@ import type { DevModeDiscoveries } from '../../../shared/devMode';
 // cruzamento entre os cards do board, os discoveries abertos (estado próprio,
 // CA-21) e as árvores lidas do disco.
 //
-// CA-14 respeitado: o vínculo card-de-marco → discovery vem do `fanout_cards`
-// (disco), NUNCA do prefixo `[Mx]` do título do card no board.
+// CA-14/CA-17 (009-modo-dev-v3) respeitado: o vínculo card-de-plano →
+// discovery vem de `plan_cards[]` (disco), NUNCA do prefixo `[Mx]` do título
+// do card no board (morto na v3).
 
 export type EntrySelection =
   | { readonly kind: 'focus'; readonly discoveryCardId: string }
@@ -25,11 +26,11 @@ function isOpen(discoveries: DevModeDiscoveries, cardId: string): boolean {
   return !!discovery && discovery.closedAt === null;
 }
 
-/** Discovery-pai de um card de MARCO (card de Plano), pelo `fanout_cards` do disco — `null` se o card não é marco de nenhum discovery aberto. */
+/** Discovery-pai de um card de PLANO, por `plan_cards[]` do disco — `null` se o card não é card de plano de nenhum discovery aberto. */
 function parentDiscoveryOf(cardId: string, discoveries: DevModeDiscoveries, trees: readonly DiscoveryTree[]): string | null {
   for (const tree of trees) {
     if (!isOpen(discoveries, tree.discoveryCardId)) continue;
-    if (tree.marcos.some((marco) => marco.cardId === cardId)) return tree.discoveryCardId;
+    if (tree.planCards.some((planCard) => planCard.cardId === cardId)) return tree.discoveryCardId;
   }
   return null;
 }
@@ -48,19 +49,20 @@ export function resolveEntrySelection(input: EntrySelectionInput): EntrySelectio
   return { kind: 'create', cardId: input.cardId };
 }
 
-/** CA-2 — o card vinculado aparece MARCADO na lista de candidatos (card de entrada ou card de marco). */
+/** CA-2 — o card vinculado aparece MARCADO na lista de candidatos (card de entrada ou card de plano). */
 export function isCardLinked(cardId: string, discoveries: DevModeDiscoveries, trees: readonly DiscoveryTree[]): boolean {
   if (isOpen(discoveries, cardId)) return true;
   return parentDiscoveryOf(cardId, discoveries, trees) !== null;
 }
 
 /**
- * CA-23 — discoveries que devem encerrar sozinhos: `allMarcosComplete` é
- * fato verificável do disco (gate de `esteira-concluir` de cada marco), não
- * opinião do app. Já encerrado nunca reaparece aqui (evita IPC repetido).
+ * CA-23 — discoveries que devem encerrar sozinhos: `allPlanCardsComplete` é
+ * fato verificável do disco (gate de `esteira-concluir` de cada card de
+ * plano), não opinião do app. Já encerrado nunca reaparece aqui (evita IPC
+ * repetido).
  */
 export function discoveriesToClose(trees: readonly DiscoveryTree[], discoveries: DevModeDiscoveries): readonly string[] {
   return trees
-    .filter((tree) => tree.allMarcosComplete && isOpen(discoveries, tree.discoveryCardId))
+    .filter((tree) => tree.allPlanCardsComplete && isOpen(discoveries, tree.discoveryCardId))
     .map((tree) => tree.discoveryCardId);
 }

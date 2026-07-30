@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type {
   AppConfigDto,
   ArchivePhaseSessionIpcInput,
@@ -132,8 +132,9 @@ const projectScanDeps = createSystemScanDeps();
 const configIoDeps = createSystemConfigIoDeps();
 let appConfig: AppConfig = defaultAppConfig(defaultProjectRoots(homedir));
 
-// T303/T305 (003-modo-dev) — leitura dos artefatos `.esteira/` em disco;
-// injetável (mesmo padrão de `configIoDeps`), resolvido uma vez.
+// T303/T305 (003-modo-dev) — leitura dos artefatos da Esteira em disco (raiz
+// v3, CA-4: `~/.claude/esteira-state/<repo_slug>/`); injetável (mesmo padrão
+// de `configIoDeps`), resolvido uma vez.
 const esteiraReaderIoDeps = createSystemEsteiraReaderIoDeps();
 
 // T311 (Batch B) — de onde vêm os cards da porta de entrada (CA-1). Na Fatia
@@ -149,15 +150,42 @@ const boardReader = resolveBoardReader(process.env, esteiraReaderIoDeps.readFile
 const boardFactsReader = resolveBoardFactsReader(process.env, esteiraReaderIoDeps.readFileText);
 
 /**
+ * CA-4 (009-modo-dev-v3) — raiz durável do handoff v3, fora de qualquer
+ * checkout git (contrato `handoff-v3.md` §D.0-bis): `~/.claude/esteira-state`.
+ * `DONEL_ESTEIRA_STATE_ROOT` (mesmo padrão de `DONEL_DEVMODE_BOARD_FIXTURE`,
+ * `taskdex-board-client.ts`) permite ao smoke apontar para um tmpdir — sem
+ * isso, um teste de disco real sujaria (ou dependeria de) o
+ * `~/.claude/esteira-state` de verdade da máquina que roda o smoke.
+ */
+const ESTEIRA_STATE_ROOT = process.env.DONEL_ESTEIRA_STATE_ROOT || join(homedir(), '.claude', 'esteira-state');
+
+/**
+ * CA-4 — `repo_slug` é a CHAVE do repo-alvo em `repos.json → repos`
+ * (`~/.claude/esteira-config/repos.json`, contrato §D.0-bis/§I), não o path.
+ * Este app ainda não lê `repos.json` (isso é a engrenagem do lote 3, CA-23) —
+ * até lá, usa o nome da pasta do checkout local como aproximação. Na prática
+ * a chave costuma coincidir com o basename do repo (`spotsys`, `dalton`, ver
+ * exemplos do contrato), mas diverge se o board apontar um checkout cujo
+ * nome de pasta não bate com a chave escolhida em `repos.json` — risco
+ * conhecido, registrado no report do lote 2, a fechar quando a engrenagem
+ * ganhar um campo próprio para o slug (ou o app passar a ler `repos.json`).
+ */
+function resolveRepoSlug(repoPath: string): string {
+  return basename(repoPath);
+}
+
+/**
  * T315 (Batch B) — um watcher de manifesto por ETAPA vigiada (CA-6), chave =
- * `discovery:card:marco:fase`. Vive aqui (e não no renderer) porque `fs.watch`
- * é main; o renderer só assina o push `devMode:phaseArchived`. Nada aqui
- * ESCREVE em disco — é watch de leitura, invariante 5 preservada.
+ * `discovery:card:fase:faseNum`. Vive aqui (e não no renderer) porque
+ * `fs.watch` é main; o renderer só assina o push `devMode:phaseArchived`.
+ * Nada aqui ESCREVE em disco — é watch de leitura, invariante 5 preservada.
+ * `faseNum` entra na chave (CA-4/D.0-bis) para não colidir implementar/validar
+ * de fases diferentes do mesmo card.
  */
 const esteiraResultWatchers = new Map<string, EsteiraResultWatcherHandle>();
 
-function phaseWatchKey(input: { discoveryCardId: string; cardId: string; marcoId: string; phase: string }): string {
-  return `${input.discoveryCardId}:${input.cardId}:${input.marcoId}:${input.phase}`;
+function phaseWatchKey(input: { discoveryCardId: string; cardId: string; phase: string; faseNum?: number | null }): string {
+  return `${input.discoveryCardId}:${input.cardId}:${input.phase}:${input.faseNum ?? ''}`;
 }
 
 function disposeAllEsteiraResultWatchers(): void {
@@ -559,7 +587,7 @@ function registerDevModeIpcHandlers(): void {
       ...appConfig,
       devMode: archivePhaseSession(
         appConfig.devMode,
-        { cardId: input.cardId, marcoId: input.marcoId, phase: input.phase },
+        { cardId: input.cardId, phase: input.phase },
         { sessionId: input.sessionId, profileSlug: input.profileSlug, archivedAt: Date.now() },
       ),
     };
@@ -576,11 +604,12 @@ function registerDevModeIpcHandlers(): void {
     return toAppConfigDto(appConfig);
   });
 
-  /** CA-7 — monta a árvore do discovery pedido a partir do disco. `cardId` sem discovery aberto devolve árvore vazia (nunca lança). */
+  /** CA-4/CA-7 — monta a árvore do discovery pedido a partir do disco (raiz v3, `~/.claude/esteira-state/<repo_slug>`). `cardId` sem discovery aberto devolve árvore vazia (nunca lança). */
   ipcMain.handle(DEVMODE_CHANNELS.readTree, (_event, cardId: string): DiscoveryTree => {
     const repoPath = isValidCardId(cardId) ? (appConfig.devMode.discoveries[cardId]?.repoPath ?? '') : '';
-    if (!repoPath) return { discoveryCardId: cardId, marcos: [], focusedMarcoId: null, allMarcosComplete: false };
-    return buildDiscoveryTree(repoPath, cardId, appConfig.devMode.archivedPhaseSessions, esteiraReaderIoDeps);
+    if (!repoPath) return { discoveryCardId: cardId, planCards: [], focusedPlanCardId: null, allPlanCardsComplete: false };
+    const root = { esteiraStateRoot: ESTEIRA_STATE_ROOT, repoSlug: resolveRepoSlug(repoPath) };
+    return buildDiscoveryTree(root, cardId, appConfig.devMode.archivedPhaseSessions, esteiraReaderIoDeps);
   });
 
   /** T311/CA-1 — cards das 3 colunas de entrada do board configurado. Sem board/sem fonte = `[]` (porta desligada, nunca erro). */
@@ -614,17 +643,18 @@ function registerDevModeIpcHandlers(): void {
 
     const sender = event.sender;
     const handle = watchEsteiraResult({
-      repoPath,
+      esteiraStateRoot: ESTEIRA_STATE_ROOT,
+      repoSlug: resolveRepoSlug(repoPath),
       fase: input.phase,
       cardId: input.cardId,
-      marcoId: input.marcoId,
-      // ACHADO DO SMOKE (T322): o diretório `handoffs/<card_id>/` só nasce
-      // quando a SKILL chega ao fim — e uma fase da Esteira leva minutos ou
-      // horas. Com o default do módulo (1s × 30 = 30s) o watcher desistia
-      // muito antes do manifesto existir, e o arquivamento do CA-6 nunca
-      // disparava fora de um teste. Janela de espera aqui é ~1h (3s × 1200),
-      // um timer barato; passado isso a fase segue visível como travada
-      // (CA-15) — só o arquivamento automático deixa de acontecer.
+      faseNum: input.faseNum,
+      // ACHADO DO SMOKE (T322): o diretório `handoffs/…` só nasce quando a
+      // SKILL chega ao fim — e uma fase da Esteira leva minutos ou horas. Com
+      // o default do módulo (1s × 30 = 30s) o watcher desistia muito antes do
+      // manifesto existir, e o arquivamento do CA-6 nunca disparava fora de
+      // um teste. Janela de espera aqui é ~1h (3s × 1200), um timer barato;
+      // passado isso a fase segue visível como travada (CA-15) — só o
+      // arquivamento automático deixa de acontecer.
       retryMs: 3_000,
       maxRetries: 1_200,
       onArchived: (archived) => {
@@ -632,8 +662,8 @@ function registerDevModeIpcHandlers(): void {
         const payload: PhaseArchivedPayload = {
           discoveryCardId: input.discoveryCardId,
           cardId: archived.cardId,
-          marcoId: archived.marcoId,
           phase: archived.fase,
+          faseNum: archived.faseNum,
           manifestPath: archived.manifestPath,
         };
         sender.send(DEVMODE_CHANNELS.phaseArchived, payload);

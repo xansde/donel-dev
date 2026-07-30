@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  archivedPhaseSessionKey,
   archivePhaseSession,
   closeDiscovery,
   focusDiscovery,
@@ -8,6 +9,7 @@ import {
   isValidCardId,
   isValidCardIdList,
   isValidOpenDiscoveryIpcInput,
+  isValidWatchPhaseIpcInput,
   linkDiscoveryRepo,
   openDiscovery,
   type DevModeState,
@@ -32,6 +34,9 @@ function emptyState(): DevModeState {
         opensOwnSession: true,
       },
       validar: { model: 'sonnet', effort: 'high', commandTemplate: '/esteira-validar {card_id}', opensOwnSession: true },
+      // CA-18 (009-modo-dev-v3) — documentar/cliente entram na tabela.
+      documentar: { model: 'opus', effort: 'high', commandTemplate: '/esteira-documentar {card_id}', opensOwnSession: true },
+      cliente: { model: 'haiku', effort: 'low', commandTemplate: '/esteira-cliente {card_id}', opensOwnSession: false },
       concluir: { model: 'haiku', effort: 'low', commandTemplate: '/esteira-concluir {card_id}', opensOwnSession: false },
     },
     boardConfig: null,
@@ -123,15 +128,16 @@ describe('closeDiscovery', () => {
 });
 
 describe('archivePhaseSession', () => {
-  it('grava sessionId + profileSlug + archivedAt na chave composta cardId:marcoId:fase', () => {
+  // CA-31 — chave v3 é `cardId:fase` (marco_id morreu, cardId já é o card de plano).
+  it('grava sessionId + profileSlug + archivedAt na chave composta cardId:fase', () => {
     const state = emptyState();
     const next = archivePhaseSession(
       state,
-      { cardId: 'card-1', marcoId: 'M1', phase: 'plano' },
+      { cardId: 'card-1', phase: 'plano' },
       { sessionId: 'sess-1', profileSlug: 'principal', archivedAt: 1000 },
     );
 
-    expect(next.archivedPhaseSessions['card-1:M1:plano']).toEqual({
+    expect(next.archivedPhaseSessions['card-1:plano']).toEqual({
       sessionId: 'sess-1',
       profileSlug: 'principal',
       archivedAt: 1000,
@@ -187,8 +193,18 @@ describe('isValidArchivePhaseSessionIpcInput', () => {
     expect(
       isValidArchivePhaseSessionIpcInput({
         cardId: 'card-1',
-        marcoId: 'M1',
         phase: 'plano',
+        sessionId: 'sess-1',
+        profileSlug: 'principal',
+      }),
+    ).toBe(true);
+  });
+
+  it('aceita as fases novas do CA-18 (documentar/cliente)', () => {
+    expect(
+      isValidArchivePhaseSessionIpcInput({
+        cardId: 'card-1',
+        phase: 'documentar',
         sessionId: 'sess-1',
         profileSlug: 'principal',
       }),
@@ -199,16 +215,53 @@ describe('isValidArchivePhaseSessionIpcInput', () => {
     expect(
       isValidArchivePhaseSessionIpcInput({
         cardId: 'card-1',
-        marcoId: 'M1',
         phase: 'fase-inventada',
         sessionId: 'sess-1',
         profileSlug: 'principal',
       }),
     ).toBe(false);
     expect(
-      isValidArchivePhaseSessionIpcInput({ cardId: '', marcoId: 'M1', phase: 'plano', sessionId: 'sess-1', profileSlug: 'principal' }),
+      isValidArchivePhaseSessionIpcInput({ cardId: '', phase: 'plano', sessionId: 'sess-1', profileSlug: 'principal' }),
     ).toBe(false);
     expect(isValidArchivePhaseSessionIpcInput(null)).toBe(false);
+  });
+});
+
+// CA-31 — a chave persistida em v3, sem o marco_id morto.
+describe('archivedPhaseSessionKey', () => {
+  it('monta cardId:fase, sem marco_id', () => {
+    expect(archivedPhaseSessionKey({ cardId: 'card-1', phase: 'plano' })).toBe('card-1:plano');
+  });
+});
+
+// T315 — payload de watchPhase/unwatchPhase (CA-6/CA-4). faseNum é opcional
+// (só implementar/validar o usam; degradação por omissão nas demais fases).
+describe('isValidWatchPhaseIpcInput', () => {
+  it('aceita payload sem faseNum (discovery/plano/documentar/cliente)', () => {
+    expect(
+      isValidWatchPhaseIpcInput({ discoveryCardId: 'root-1', cardId: 'card-1', phase: 'plano' }),
+    ).toBe(true);
+  });
+
+  it('aceita faseNum numérico (implementar/validar, CA-4)', () => {
+    expect(
+      isValidWatchPhaseIpcInput({ discoveryCardId: 'root-1', cardId: 'card-1', phase: 'implementar', faseNum: 1 }),
+    ).toBe(true);
+  });
+
+  it('aceita faseNum null explícito', () => {
+    expect(
+      isValidWatchPhaseIpcInput({ discoveryCardId: 'root-1', cardId: 'card-1', phase: 'validar', faseNum: null }),
+    ).toBe(true);
+  });
+
+  it('rejeita faseNum de tipo errado, fase desconhecida, ou campo vazio', () => {
+    expect(
+      isValidWatchPhaseIpcInput({ discoveryCardId: 'root-1', cardId: 'card-1', phase: 'implementar', faseNum: '1' }),
+    ).toBe(false);
+    expect(isValidWatchPhaseIpcInput({ discoveryCardId: '', cardId: 'card-1', phase: 'plano' })).toBe(false);
+    expect(isValidWatchPhaseIpcInput({ discoveryCardId: 'root-1', cardId: 'card-1', phase: 'fase-inventada' })).toBe(false);
+    expect(isValidWatchPhaseIpcInput(null)).toBe(false);
   });
 });
 

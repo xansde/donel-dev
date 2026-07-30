@@ -9,7 +9,7 @@ import {
 } from '@donel-dev/design-system';
 import type { WorktreeCardAnnotation, WorktreeCardPhaseNode } from '@donel-dev/design-system';
 import type { PhaseNode } from '../../../main/discovery-tree';
-import type { AnnotatedDiscoveryTree, AnnotatedMarcoNode } from '../../../shared/boardAnnotation';
+import type { AnnotatedDiscoveryTree, AnnotatedPlanCardNode } from '../../../shared/boardAnnotation';
 import type { EsteiraPhase, PhaseDefaultsTable } from '../../../shared/devMode';
 import type { PhaseStatus } from '../../../shared/phaseState';
 import styles from './DiscoveryMap.module.css';
@@ -20,29 +20,42 @@ import styles from './DiscoveryMap.module.css';
 // Tudo o que aparece aqui vem de `devMode:readTree` (disco) — **nenhuma**
 // chamada a git, nenhuma varredura de diretório, nenhuma escrita (CA-19).
 // Artefato exibido é só o que o `<fase>-result.json` DECLAROU
-// (`artifact_paths`/`e2e_path`/`documents`) mais `ctx.md` e o próprio
+// (`artifact_paths`/`garantia`/`documents`) mais `ctx.md` e o próprio
 // `result.json` (CA-8).
 //
-// A composição é só design system (CA-25): `WorktreeCard` (marco e
+// A composição é só design system (CA-25): `WorktreeCard` (card de plano e
 // orquestrador), `PhaseStateGlyph` (estado de FASE), `StateDot` (estado de
 // SESSÃO, só na legenda) e `AnnotationTag`. A legenda do rodapé distinguindo
 // os dois eixos é item verificável (achado de acessibilidade da verificação
 // de design).
 //
 // T327/T328 (Batch D) — o ESPELHO entra aqui, e **não tem tela própria**
-// (CA-12): os 4 fatos que o disco não sabe (coluna real, trava ativa,
-// etiquetas de atenção, PR+aprovação) viram anotação em cima da árvore que já
-// existe, pelos slots que o `WorktreeCard` (T333) já expõe — `tags` no marco
+// (CA-12): os fatos que o disco não sabe (coluna real, trava ativa, etiquetas
+// de atenção, PR+aprovação) viram anotação em cima da árvore que já existe,
+// pelos slots que o `WorktreeCard` (T333) já expõe — `tags` no card de plano
 // e `annotations` no nó de fase. **D1:** a trava exibida é literalmente a
 // etiqueta `esteira:em-andamento:<fase>` lida do BOARD, nunca um arquivo em
 // disco. Comentário, descrição e checklist do card NUNCA aparecem (fora do
 // escopo do CA-12), e nenhum card fora do discovery em foco entra (a lista de
-// cards consultados é a dos marcos desta árvore).
+// cards consultados é a dos cards de plano desta árvore).
+//
+// CA-17 (009-modo-dev-v3) — `marco`/`MarcoNode` → `card de plano`/
+// `PlanCardNode` nos tipos e no encanamento (esta troca é a deste lote).
+// `variant="marco"` do `WorktreeCard` e o resto da SUPERFÍCIE visual (a
+// pilha vertical, a ausência de carrossel) ficam INTOCADOS — isso é forma, e
+// forma é dos lotes 6-8 (CA-7..CA-16). `documentar`/`cliente` (CA-18) ainda
+// não têm glifo/chip no design system (extensão do lote 6): o que é passado
+// ao `WorktreeCard` continua restrito às 5 fases que ele já desenha —
+// degradação por omissão, não erro escondido.
 
-const ALL_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'implementar', 'validar', 'concluir'];
+/** Fases que hoje têm representação visual no `WorktreeCard`/`PhaseChip` (design system, ainda com 5 valores — a extensão do track documental é do lote 6). */
+const RENDERABLE_PHASES = ['discovery', 'plano', 'implementar', 'validar', 'concluir'] as const;
+
+/** Todas as fases do modelo v3 (CA-18), usada só para varreduras internas (resumo de estado) que não tocam o design system diretamente. */
+const ALL_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'implementar', 'validar', 'documentar', 'cliente', 'concluir'];
 
 export interface SelectedPhaseNode {
-  readonly marcoId: string;
+  readonly cardId: string;
   readonly phase: EsteiraPhase;
 }
 
@@ -50,14 +63,14 @@ export interface DiscoveryMapProps {
   /** T327 — a árvore JÁ ANOTADA pelo espelho (`annotateTree`, T325). Sem fonte de board, os campos de anotação chegam vazios e o mapa fica idêntico ao da Fatia 1. */
   tree: AnnotatedDiscoveryTree;
   phaseDefaults: PhaseDefaultsTable;
-  focusedMarcoId: string | null;
+  focusedPlanCardId: string | null;
   selectedNode: SelectedPhaseNode | null;
   /** Perfil de conta ATIVO agora — usado para o aviso do CA-22 na etapa arquivada. */
   activeProfileSlug: string;
-  onFocusMarco: (marcoId: string) => void;
-  onSelectPhase: (marcoId: string, phase: EsteiraPhase) => void;
+  onFocusPlanCard: (cardId: string) => void;
+  onSelectPhase: (cardId: string, phase: EsteiraPhase) => void;
   /** T328/CA-13 — abre a sessão de conciliação do nó divergente (prompt pré-digitado; o app nunca corrige o board). */
-  onConciliate?: (marcoId: string, phase: EsteiraPhase) => void;
+  onConciliate?: (cardId: string, phase: EsteiraPhase) => void;
 }
 
 /** A skill de cada fase é DADO FIXO da tabela do CA-4 — nunca um campo novo do manifesto (plan.md). */
@@ -65,23 +78,24 @@ function skillOf(defaults: PhaseDefaultsTable, phase: EsteiraPhase): string {
   return defaults[phase].commandTemplate.split(' ')[0];
 }
 
-/** CA-8/CA-10 — só o que a fase DECLAROU, mais `ctx.md` e o próprio manifesto. Nunca varredura. */
+/** CA-8/CA-10/CA-17 — só o que a fase DECLAROU, mais `ctx.md` e o próprio manifesto. Nunca varredura. `garantia` substitui o antigo `e2e_path`. */
 function declaredArtifacts(node: PhaseNode): readonly string[] {
   const outputs = node.artifacts.result?.outputs;
   const declared = [...(outputs?.artifact_paths ?? []), ...(outputs?.documents ?? [])];
-  if (outputs?.e2e_path) declared.push(outputs.e2e_path);
+  const garantiaPath = outputs?.garantia?.path ?? outputs?.garantia?.roteiro_path;
+  if (garantiaPath) declared.push(garantiaPath);
   if (node.artifacts.ctxExists) declared.push(node.artifacts.ctxPath);
-  if (node.artifacts.result) declared.push(node.artifacts.resultPath);
+  if (node.artifacts.result && node.artifacts.resultPath) declared.push(node.artifacts.resultPath);
   return declared;
 }
 
 /**
- * T327/CA-12 — os fatos do MARCO na faixa do `WorktreeCard`: coluna real,
- * etiquetas de atenção e PR+aprovação. Sem fatos de board (`boardFacts` nulo)
- * a faixa fica como estava na Fatia 1 — nenhuma etiqueta inventada.
+ * T327/CA-12 — os fatos do CARD DE PLANO na faixa do `WorktreeCard`: coluna
+ * real, etiquetas de atenção e PR+aprovação. Sem fatos de board (`boardFacts`
+ * nulo) a faixa fica como estava na Fatia 1 — nenhuma etiqueta inventada.
  */
-function marcoBoardTags(marco: AnnotatedMarcoNode): WorktreeCardAnnotation[] {
-  const facts = marco.boardFacts;
+function planCardBoardTags(planCard: AnnotatedPlanCardNode): WorktreeCardAnnotation[] {
+  const facts = planCard.boardFacts;
   if (!facts) return [];
 
   const tags: WorktreeCardAnnotation[] = [{ text: `coluna: ${facts.column}`, tone: 'accent' }];
@@ -97,12 +111,6 @@ function marcoBoardTags(marco: AnnotatedMarcoNode): WorktreeCardAnnotation[] {
     });
   }
 
-  // CA-14 — `[Mx]` do título do card diverge do `marco_id` de disco: marcador
-  // de CONFERÊNCIA. O `marco_id` exibido continua sendo o do disco.
-  if (marco.marcoIdMismatch) {
-    tags.push({ text: 'conferir: [Mx] do board difere do disco', tone: 'warn' });
-  }
-
   return tags;
 }
 
@@ -111,14 +119,14 @@ function marcoBoardTags(marco: AnnotatedMarcoNode): WorktreeCardAnnotation[] {
  * board, tom `lock`) e divergência disco×board (CA-13, tom `error`, com os
  * DOIS fatos no texto).
  */
-function phaseBoardAnnotations(marco: AnnotatedMarcoNode, phase: EsteiraPhase): WorktreeCardAnnotation[] {
+function phaseBoardAnnotations(planCard: AnnotatedPlanCardNode, phase: EsteiraPhase): WorktreeCardAnnotation[] {
   const annotations: WorktreeCardAnnotation[] = [];
 
-  if (marco.boardFacts?.lockedPhase === phase) {
+  if (planCard.boardFacts?.lockedPhase === phase) {
     annotations.push({ text: `trava no board: ${LOCK_LABEL_PREFIX}${phase}`, tone: 'lock' });
   }
 
-  const divergence = marco.phases[phase].divergence;
+  const divergence = planCard.phases[phase].divergence;
   if (divergence) {
     annotations.push({ text: `⇄ disco: ${divergence.diskStatus} · board: ${divergence.boardColumn}`, tone: 'error' });
   }
@@ -129,26 +137,26 @@ function phaseBoardAnnotations(marco: AnnotatedMarcoNode, phase: EsteiraPhase): 
 /** D1 — a trava é ESTA etiqueta no board, e o texto da UI diz isso literalmente (nunca "arquivo de trava"). */
 const LOCK_LABEL_PREFIX = 'esteira:em-andamento:';
 
-function marcoStatusSummary(marco: AnnotatedMarcoNode): PhaseStatus {
-  const running = ALL_PHASES.find((phase) => marco.phases[phase].status === 'running');
+function planCardStatusSummary(planCard: AnnotatedPlanCardNode): PhaseStatus {
+  const running = ALL_PHASES.find((phase) => planCard.phases[phase].status === 'running');
   if (running) return 'running';
-  const failed = ALL_PHASES.find((phase) => marco.phases[phase].status === 'failed');
+  const failed = ALL_PHASES.find((phase) => planCard.phases[phase].status === 'failed');
   if (failed) return 'failed';
-  return marco.phases.concluir.status;
+  return planCard.phases.concluir.status;
 }
 
 export function DiscoveryMap({
   tree,
   phaseDefaults,
-  focusedMarcoId,
+  focusedPlanCardId,
   selectedNode,
   activeProfileSlug,
-  onFocusMarco,
+  onFocusPlanCard,
   onSelectPhase,
   onConciliate,
 }: DiscoveryMapProps): React.JSX.Element {
-  const selectedMarco = selectedNode ? tree.marcos.find((marco) => marco.marcoId === selectedNode.marcoId) : undefined;
-  const selectedPhaseNode = selectedMarco && selectedNode ? selectedMarco.phases[selectedNode.phase] : undefined;
+  const selectedPlanCard = selectedNode ? tree.planCards.find((planCard) => planCard.cardId === selectedNode.cardId) : undefined;
+  const selectedPhaseNode = selectedPlanCard && selectedNode ? selectedPlanCard.phases[selectedNode.phase] : undefined;
 
   return (
     <aside className={styles.map} aria-label="Mapa do discovery" data-testid="devmode-map">
@@ -158,44 +166,44 @@ export function DiscoveryMap({
         variant="orquestrador"
         id={tree.discoveryCardId}
         title="Discovery em foco"
-        summary={`${tree.marcos.length} marco(s) na frente. O mapa mostra a fase em que cada um está.`}
-        status={tree.allMarcosComplete ? 'todos os marcos concluídos' : undefined}
+        summary={`${tree.planCards.length} card(s) de plano na frente. O mapa mostra a fase em que cada um está.`}
+        status={tree.allPlanCardsComplete ? 'todos os cards de plano concluídos' : undefined}
         statusTone="ok"
       />
 
       <div className={styles.marcos} data-testid="devmode-map-marcos">
-        {tree.marcos.map((marco) => {
-          const phases: WorktreeCardPhaseNode[] = ALL_PHASES.map((phase) => ({
+        {tree.planCards.map((planCard) => {
+          const phases: WorktreeCardPhaseNode[] = RENDERABLE_PHASES.map((phase) => ({
             phase,
-            state: marco.phases[phase].status,
-            annotations: phaseBoardAnnotations(marco, phase),
-            onSelect: () => onSelectPhase(marco.marcoId, phase),
+            state: planCard.phases[phase].status,
+            annotations: phaseBoardAnnotations(planCard, phase),
+            onSelect: () => onSelectPhase(planCard.cardId, phase),
           }));
 
           return (
             <div
-              key={marco.marcoId}
-              className={marco.marcoId === focusedMarcoId ? styles.marcoFocused : styles.marco}
-              data-testid={`devmode-map-marco-${marco.marcoId}`}
-              data-focused={marco.marcoId === focusedMarcoId ? 'true' : 'false'}
+              key={planCard.cardId}
+              className={planCard.cardId === focusedPlanCardId ? styles.marcoFocused : styles.marco}
+              data-testid={`devmode-map-marco-${planCard.cardId}`}
+              data-focused={planCard.cardId === focusedPlanCardId ? 'true' : 'false'}
             >
               <WorktreeCard
                 variant="marco"
-                id={marco.marcoId}
-                title={marco.cardId}
-                summary={`Fatia vertical do discovery — uma branch, um PR. Estado agregado: ${PHASE_STATE_LABEL_PT[marcoStatusSummary(marco)]}.`}
-                worktreePath={marco.phases.implementar.artifacts.worktreePath ?? undefined}
-                branch={marco.phases.implementar.artifacts.branch ?? undefined}
-                tags={marcoBoardTags(marco)}
+                id={planCard.cardId}
+                title={planCard.cardId}
+                summary={`Fatia vertical do discovery — uma branch, um PR. Estado agregado: ${PHASE_STATE_LABEL_PT[planCardStatusSummary(planCard)]}.`}
+                worktreePath={planCard.phases.implementar.artifacts.worktreePath ?? undefined}
+                branch={planCard.phases.implementar.artifacts.branch ?? undefined}
+                tags={planCardBoardTags(planCard)}
                 phases={phases}
-                onFocus={() => onFocusMarco(marco.marcoId)}
+                onFocus={() => onFocusPlanCard(planCard.cardId)}
               />
             </div>
           );
         })}
-        {tree.marcos.length === 0 ? (
+        {tree.planCards.length === 0 ? (
           <p className={styles.empty} data-testid="devmode-map-empty">
-            Nenhum marco ainda — o fanout de marcos nasce no `discovery-result.json`.
+            Nenhum card de plano ainda — nasce em `outputs.plan_cards` do `discovery-result.json`.
           </p>
         ) : null}
       </div>
@@ -206,7 +214,7 @@ export function DiscoveryMap({
           <header className={styles.detailsHeader}>
             <PhaseStateGlyph status={selectedPhaseNode.status} />
             <span>
-              [{selectedNode.marcoId}] · {selectedNode.phase}
+              [{selectedNode.cardId}] · {selectedNode.phase}
             </span>
           </header>
 
@@ -228,7 +236,7 @@ export function DiscoveryMap({
               {onConciliate ? (
                 <Button
                   variant="secondary"
-                  onClick={() => onConciliate(selectedNode.marcoId, selectedNode.phase)}
+                  onClick={() => onConciliate(selectedNode.cardId, selectedNode.phase)}
                   data-testid="devmode-node-conciliar"
                 >
                   Preparar conciliação

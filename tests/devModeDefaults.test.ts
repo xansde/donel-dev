@@ -6,10 +6,18 @@ import { DEFAULT_PHASE_DEFAULTS, resolveCommandText } from '../src/shared/devMod
 // sem tocar em código (config editável, T307 devMode:setDefaults) — o que
 // entra AQUI é só o ponto de partida.
 
-const ALL_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'implementar', 'validar', 'concluir'];
+const ALL_PHASES: readonly EsteiraPhase[] = [
+  'discovery',
+  'plano',
+  'implementar',
+  'validar',
+  'documentar',
+  'cliente',
+  'concluir',
+];
 
 describe('DEFAULT_PHASE_DEFAULTS', () => {
-  it('tem as 5 fases', () => {
+  it('tem as 7 fases (CA-18: documentar/cliente entram)', () => {
     for (const phase of ALL_PHASES) {
       expect(DEFAULT_PHASE_DEFAULTS[phase]).toBeDefined();
     }
@@ -19,10 +27,13 @@ describe('DEFAULT_PHASE_DEFAULTS', () => {
     expect(DEFAULT_PHASE_DEFAULTS.implementar.commandTemplate).toContain('ultracode');
   });
 
-  it('concluir tem opensOwnSession: false e todas as outras true (C6)', () => {
+  // C6 (concluir) + §G do contrato v3 (cliente: inline, não abre sessão própria).
+  it('concluir e cliente têm opensOwnSession: false; as demais, true', () => {
+    const inlinePhases: readonly EsteiraPhase[] = ['concluir', 'cliente'];
     expect(DEFAULT_PHASE_DEFAULTS.concluir.opensOwnSession).toBe(false);
+    expect(DEFAULT_PHASE_DEFAULTS.cliente.opensOwnSession).toBe(false);
     for (const phase of ALL_PHASES) {
-      if (phase === 'concluir') continue;
+      if (inlinePhases.includes(phase)) continue;
       expect(DEFAULT_PHASE_DEFAULTS[phase].opensOwnSession).toBe(true);
     }
   });

@@ -183,9 +183,19 @@ const PRE_TYPE_READY_TIMEOUT_MS = 30_000;
 /** Intervalo do re-teste da prontidão. Não é um "delay fixo até digitar": o gatilho continua sendo o SINAL (semáforo/buffer), este tick só garante reavaliar quando o sinal chega sem um chunk novo de PTY junto. */
 const PRE_TYPE_POLL_MS = 250;
 
-/** Chave de uma ETAPA (marco × fase) do discovery em foco — a mesma granularidade de `archivedPhaseSessions` (CA-21). */
-function phaseKey(discoveryCardId: string, marcoId: string, phase: EsteiraPhase): string {
-  return `${discoveryCardId}:${marcoId}:${phase}`;
+/** Chave de uma ETAPA (card de plano × fase) do discovery em foco — a mesma granularidade de `archivedPhaseSessions` (CA-21). CA-17: `marcoId` saiu (morto no disco); `cardId` já identifica o card de plano sozinho. */
+function phaseKey(discoveryCardId: string, cardId: string, phase: EsteiraPhase): string {
+  return `${discoveryCardId}:${cardId}:${phase}`;
+}
+
+/**
+ * CA-4/D.0-bis (009-modo-dev-v3) — implementar/validar arquivam por fase do
+ * plano (`handoffs/fase-<n>/…`). O app ainda não sabe qual `fase_num` o
+ * usuário está trabalhando (isso é do carrossel do lote 7/CA-11) — até lá,
+ * `1` é o ponto de partida documentado, mesma decisão de `discovery-tree.ts`.
+ */
+function faseNumFor(phase: EsteiraPhase): number | undefined {
+  return phase === 'implementar' || phase === 'validar' ? 1 : undefined;
 }
 
 /** Remove uma chave de um record sem mutar o original — usado ao limpar `semaphoreStates`/`aliveTabs` no fechamento de aba. */
@@ -338,7 +348,7 @@ export function App(): React.JSX.Element {
   /** T327/CA-12 — os 4 fatos do board por card do discovery EM FOCO. `{}` = espelho sem fonte: a árvore aparece inteira, só sem anotação. */
   const [boardFacts, setBoardFacts] = useState<Record<string, BoardFacts>>({});
   /** T327/CA-16 — trava a liberar, confirmada antes de pré-digitar `/esteira-liberar` (a confirmação fala em ETIQUETA no board, nunca em arquivo). */
-  const [lockToRelease, setLockToRelease] = useState<{ marcoId: string; phase: EsteiraPhase; cardId: string } | null>(null);
+  const [lockToRelease, setLockToRelease] = useState<{ phase: EsteiraPhase; cardId: string } | null>(null);
   const [focusedMarcoId, setFocusedMarcoId] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<SelectedPhaseNode | null>(null);
   /** CA-3 — o comando ESCRITO e não enviado, exibido pelo `ArmedPrompt`. */
@@ -1080,9 +1090,9 @@ export function App(): React.JSX.Element {
     [rawFocusedTree, boardFacts],
   );
   const phaseDefaults = devModeState?.phaseDefaults ?? DEFAULT_PHASE_DEFAULTS;
-  /** Marco EM FOCO (CA-7): a escolha explícita do usuário, ou o primeiro marco enquanto ele não escolheu. */
+  /** Card de plano EM FOCO (CA-7): a escolha explícita do usuário, ou o primeiro card de plano enquanto ele não escolheu. */
   const focusedMarcoDisplay =
-    focusedTree?.marcos.find((marco) => marco.marcoId === focusedMarcoId) ?? focusedTree?.marcos[0] ?? null;
+    focusedTree?.planCards.find((planCard) => planCard.cardId === focusedMarcoId) ?? focusedTree?.planCards[0] ?? null;
   /** T327/D1 — a fase travada segundo o BOARD (etiqueta `esteira:em-andamento:<fase>`), nunca um arquivo em disco. */
   const focusedLockedPhase = focusedMarcoDisplay?.boardFacts?.lockedPhase ?? null;
 
@@ -1126,12 +1136,12 @@ export function App(): React.JSX.Element {
 
   /**
    * T327/CA-12 — os 4 fatos do board, SÓ dos cards do discovery em foco. A
-   * lista consultada é a dos marcos desta árvore: nenhum card fora do foco é
-   * pedido, e nada é escrito de volta (invariante 5). Board sem fonte devolve
-   * `{}` — o mapa continua idêntico ao da Fatia 1, sem erro na tela.
+   * lista consultada é a dos cards de plano desta árvore: nenhum card fora do
+   * foco é pedido, e nada é escrito de volta (invariante 5). Board sem fonte
+   * devolve `{}` — o mapa continua idêntico ao da Fatia 1, sem erro na tela.
    */
   const focusedMarcoCardIds = useMemo(
-    () => (rawFocusedTree ? rawFocusedTree.marcos.map((marco) => marco.cardId) : []),
+    () => (rawFocusedTree ? rawFocusedTree.planCards.map((planCard) => planCard.cardId) : []),
     [rawFocusedTree],
   );
 
@@ -1235,14 +1245,14 @@ export function App(): React.JSX.Element {
    * (`decidePhaseOpen`/`resolveCommandSequence`); aqui só o encanamento:
    * criar/focar/retomar a aba e mandar armar o comando.
    */
-  const handlePhaseAction = (marcoId: string, phase: EsteiraPhase): void => {
+  const handlePhaseAction = (cardId: string, phase: EsteiraPhase): void => {
     if (!focusedDiscovery || !focusedTree) return;
-    const marco = focusedTree.marcos.find((candidate) => candidate.marcoId === marcoId);
+    const marco = focusedTree.planCards.find((candidate) => candidate.cardId === cardId);
     if (!marco) return;
 
     const node = marco.phases[phase];
-    const key = phaseKey(focusedDiscovery.cardId, marcoId, phase);
-    setSelectedNode({ marcoId, phase });
+    const key = phaseKey(focusedDiscovery.cardId, cardId, phase);
+    setSelectedNode({ cardId, phase });
     setOpenedArtifactPath(null);
 
     // Sessão daquela etapa já aberta nesta execução: foca, não duplica (C6
@@ -1293,7 +1303,7 @@ export function App(): React.JSX.Element {
 
       case 'create': {
         const tabId = addTab({
-          name: `[${marcoId}] ${phase}`,
+          name: `[${cardId}] ${phase}`,
           cwd: decision.cwd,
           projectName: projects.find((project) => project.path === decision.cwd)?.name,
           pinned: false,
@@ -1305,7 +1315,7 @@ export function App(): React.JSX.Element {
         // CA-6 — o gatilho do arquivamento é o MANIFESTO em disco; ligar o
         // watcher agora é o que permite fechar a aba quando ele aparecer.
         void window.donel.devMode
-          .watchPhase({ discoveryCardId: focusedDiscovery.cardId, cardId: marco.cardId, marcoId, phase })
+          .watchPhase({ discoveryCardId: focusedDiscovery.cardId, cardId: marco.cardId, phase, faseNum: faseNumFor(phase) })
           .catch(() => undefined);
         armPhaseCommands(tabId, sequence, warning);
         return;
@@ -1314,7 +1324,7 @@ export function App(): React.JSX.Element {
       case 'resume': {
         // CA-9 — volta à etapa concluída para CONSULTA: nada é pré-digitado.
         const tabId = addTab({
-          name: `[${marcoId}] ${phase}`,
+          name: `[${cardId}] ${phase}`,
           cwd: decision.cwd,
           projectName: projects.find((project) => project.path === decision.cwd)?.name,
           pinned: false,
@@ -1368,14 +1378,14 @@ export function App(): React.JSX.Element {
    * os dois fatos divergentes já ESCRITO e não enviado (mesma regra do CA-3).
    * O app não corrige o board — não existe canal para isso.
    */
-  const handleConciliate = (marcoId: string, phase: EsteiraPhase): void => {
+  const handleConciliate = (cardId: string, phase: EsteiraPhase): void => {
     if (!focusedDiscovery || !focusedTree) return;
-    const marco = focusedTree.marcos.find((candidate) => candidate.marcoId === marcoId);
+    const marco = focusedTree.planCards.find((candidate) => candidate.cardId === cardId);
     const divergence = marco?.phases[phase].divergence;
     if (!marco || !divergence) return;
 
     const tabId = addTab({
-      name: `[${marcoId}] conciliação`,
+      name: `[${cardId}] conciliação`,
       cwd: focusedDiscovery.repoPath,
       projectName: projects.find((project) => project.path === focusedDiscovery.repoPath)?.name,
       pinned: false,
@@ -1385,7 +1395,6 @@ export function App(): React.JSX.Element {
     armPhaseCommands(tabId, [
       buildConciliationPrompt({
         cardId: marco.cardId,
-        marcoId,
         phase,
         diskStatus: divergence.diskStatus,
         boardColumn: divergence.boardColumn,
@@ -1452,7 +1461,7 @@ export function App(): React.JSX.Element {
   // Nenhum `.jsonl` é apagado: o transcript é do CLI.
   useEffect(() => {
     const unsubscribe = window.donel.devMode.onPhaseArchived((payload: PhaseArchivedPayload) => {
-      const key = phaseKey(payload.discoveryCardId, payload.marcoId, payload.phase);
+      const key = phaseKey(payload.discoveryCardId, payload.cardId, payload.phase);
       const tabId = phaseTabsRef.current[key];
       const tab = tabId ? tabsRef.current.find((candidate) => candidate.id === tabId) : undefined;
 
@@ -1460,7 +1469,6 @@ export function App(): React.JSX.Element {
         void window.donel.devMode
           .archivePhaseSession({
             cardId: payload.cardId,
-            marcoId: payload.marcoId,
             phase: payload.phase,
             sessionId: tab.claudeSessionId,
             profileSlug: sessionProfilesRef.current[tab.id]?.slug ?? 'principal',
@@ -1479,8 +1487,8 @@ export function App(): React.JSX.Element {
         .unwatchPhase({
           discoveryCardId: payload.discoveryCardId,
           cardId: payload.cardId,
-          marcoId: payload.marcoId,
           phase: payload.phase,
+          faseNum: payload.faseNum,
         })
         .catch(() => undefined);
 
@@ -1853,9 +1861,7 @@ export function App(): React.JSX.Element {
             <section className={styles.devModeZone2} aria-label="Condução do marco em foco" data-testid="devmode-zone2">
               {focusedTree && focusedMarcoDisplay ? (
                 <>
-                  <div className={styles.devModeMarcoLabel}>
-                    [{focusedMarcoDisplay.marcoId}] · {focusedMarcoDisplay.cardId}
-                  </div>
+                  <div className={styles.devModeMarcoLabel}>[{focusedMarcoDisplay.cardId}]</div>
                   <div className={styles.devModePhases}>
                     {(['discovery', 'plano', 'implementar', 'validar', 'concluir'] as const).map((phase) => {
                       const node = focusedMarcoDisplay.phases[phase];
@@ -1874,7 +1880,6 @@ export function App(): React.JSX.Element {
                             focusedLockedPhase === phase
                               ? () =>
                                   setLockToRelease({
-                                    marcoId: focusedMarcoDisplay.marcoId,
                                     phase,
                                     cardId: focusedMarcoDisplay.cardId,
                                   })
@@ -1884,8 +1889,8 @@ export function App(): React.JSX.Element {
                             archived && archived.profileSlug !== activeProfileSlug ? `rodou na conta ${archived.profileSlug}` : null
                           }
                           resultUnreadable={node.artifacts.resultUnreadable}
-                          active={selectedNode?.marcoId === focusedMarcoDisplay.marcoId && selectedNode?.phase === phase}
-                          onClick={() => handlePhaseAction(focusedMarcoDisplay.marcoId, phase)}
+                          active={selectedNode?.cardId === focusedMarcoDisplay.cardId && selectedNode?.phase === phase}
+                          onClick={() => handlePhaseAction(focusedMarcoDisplay.cardId, phase)}
                         />
                       );
                     })}
@@ -2029,10 +2034,10 @@ export function App(): React.JSX.Element {
           <DiscoveryMap
             tree={focusedTree}
             phaseDefaults={phaseDefaults}
-            focusedMarcoId={focusedMarcoDisplay?.marcoId ?? null}
+            focusedPlanCardId={focusedMarcoDisplay?.cardId ?? null}
             selectedNode={selectedNode}
             activeProfileSlug={activeProfileSlug}
-            onFocusMarco={(marcoId) => setFocusedMarcoId(marcoId)}
+            onFocusPlanCard={(cardId) => setFocusedMarcoId(cardId)}
             onSelectPhase={handlePhaseAction}
             onConciliate={handleConciliate}
           />
@@ -2128,7 +2133,7 @@ export function App(): React.JSX.Element {
       <Modal
         open={lockToRelease !== null}
         onClose={() => setLockToRelease(null)}
-        title={lockToRelease ? `Liberar a trava de [${lockToRelease.marcoId}] · ${lockToRelease.phase}?` : ''}
+        title={lockToRelease ? `Liberar a trava de [${lockToRelease.cardId}] · ${lockToRelease.phase}?` : ''}
         actions={
           <>
             <Button variant="ghost" onClick={() => setLockToRelease(null)}>

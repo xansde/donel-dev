@@ -1,13 +1,22 @@
 import { promises as fs, watch, type FSWatcher } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { EsteiraPhase } from '../shared/devMode';
+import type { EsteiraStateRoot } from './esteira-reader';
 
 // T308 (003-modo-dev, Batch A) — CA-6: quando `<fase>-result.json` aparece
 // com `status: "success"`, o app fecha a aba e registra o `session-id`. O
 // GATILHO é o manifesto em disco, nunca "o processo terminou" — nada aqui lê
 // o PTY, só o filesystem. Mesmo padrão de `transcript-watcher.ts`: vigia o
-// DIRETÓRIO `handoffs/<card_id>/` (nunca o arquivo — ele nasce só quando a
-// skill termina), com retry limitado para o diretório ainda não existir.
+// DIRETÓRIO `handoffs/` (nunca o arquivo — ele nasce só quando a skill
+// termina), com retry limitado para o diretório ainda não existir.
+//
+// CA-4 (009-modo-dev-v3) — a raiz saiu de `<repo>/.esteira/` para
+// `~/.claude/esteira-state/<repo_slug>/<card_id>/<fase>/`, fora do repo
+// (mesma raiz de `esteira-reader.ts` — ver o comentário de topo de lá sobre
+// `repoSlug`). Implementar/Validar arquivam sob `handoffs/fase-<n>/` (D.0-bis
+// do contrato); sem `faseNum` conhecido não há diretório correto a vigiar —
+// o watcher fica inerte (nunca chuta `fase-1`; quem decide esse ponto de
+// partida, documentado, é `discovery-tree.ts`/`main/index.ts`).
 //
 // Etapa que FALHOU (`status` ≠ "success") não arquiva sozinha — fica aberta
 // (CA-6 literal). Reprocessamento (mesmo manifesto reescrito) não duplica
@@ -17,17 +26,16 @@ import type { EsteiraPhase } from '../shared/devMode';
 
 export interface EsteiraResultEvent {
   readonly cardId: string;
-  readonly marcoId: string;
   readonly fase: EsteiraPhase;
+  readonly faseNum?: number | null;
   readonly manifestPath: string;
 }
 
-export interface EsteiraResultWatcherOptions {
-  readonly repoPath: string;
+export interface EsteiraResultWatcherOptions extends EsteiraStateRoot {
   readonly fase: EsteiraPhase;
   readonly cardId: string;
-  /** Metadado só repassado no evento — quem chama já sabe o marco (fanout, CA-14). */
-  readonly marcoId: string;
+  /** Só implementar/validar (D.0-bis) — sem valor, o watcher fica inerte (nunca observa `fase-1` por chute). */
+  readonly faseNum?: number | null;
   readonly onArchived: (event: EsteiraResultEvent) => void;
   readonly retryMs?: number;
   readonly maxRetries?: number;
@@ -40,9 +48,20 @@ export interface EsteiraResultWatcherHandle {
 
 const DEFAULT_RETRY_MS = 1_000;
 const DEFAULT_MAX_RETRIES = 30;
+const PHASE_ARCHIVES_BY_FASE_NUM: readonly EsteiraPhase[] = ['implementar', 'validar'];
 
 function manifestFileName(fase: EsteiraPhase): string {
   return `${fase}-result.json`;
+}
+
+/** `null` — implementar/validar sem `faseNum`: não há diretório correto a vigiar (degradação por omissão, CA-6). */
+function resolveHandoffsDir(options: EsteiraResultWatcherOptions): string | null {
+  const phaseDir = join(options.esteiraStateRoot, options.repoSlug, options.cardId, options.fase);
+  if (PHASE_ARCHIVES_BY_FASE_NUM.includes(options.fase)) {
+    if (options.faseNum === undefined || options.faseNum === null) return null;
+    return join(phaseDir, 'handoffs', `fase-${options.faseNum}`);
+  }
+  return join(phaseDir, 'handoffs');
 }
 
 /** Nunca lança: ausente/ilegível devolve `null` — reprocessado no próximo evento do watch. */
@@ -65,12 +84,22 @@ async function readManifestStatus(manifestPath: string): Promise<string | null> 
 /**
  * Abre o watch e devolve o handle. Nunca lança: qualquer falha de I/O degrada
  * para "sem detecção automática" (a etapa falhou/travou fica visível pelo
- * estado de fase, CA-15 — o arquivamento só não acontece sozinho).
+ * estado de fase, CA-15 — o arquivamento só não acontece sozinho). Sem
+ * `handoffsDir` resolvível (implementar/validar sem `faseNum`), o handle
+ * volta inerte: nunca abre `fs.watch`, nunca emite, `dispose()` é no-op.
  */
 export function watchEsteiraResult(options: EsteiraResultWatcherOptions): EsteiraResultWatcherHandle {
-  const { repoPath, fase, cardId, marcoId, onArchived, retryMs = DEFAULT_RETRY_MS, maxRetries = DEFAULT_MAX_RETRIES } = options;
+  const { fase, cardId, faseNum, onArchived, retryMs = DEFAULT_RETRY_MS, maxRetries = DEFAULT_MAX_RETRIES } = options;
 
-  const handoffsDir = join(repoPath, '.esteira', fase, 'handoffs', cardId);
+  const resolvedHandoffsDir = resolveHandoffsDir(options);
+  if (resolvedHandoffsDir === null) {
+    return { dispose: () => undefined };
+  }
+  // Realocado para um `const` com tipo `string` explícito: closures aninhadas
+  // (função `openWatch` abaixo) não retêm o narrowing de `resolvedHandoffsDir`
+  // feito pelo `if` acima.
+  const handoffsDir: string = resolvedHandoffsDir;
+
   const fileName = manifestFileName(fase);
   const manifestPath = join(handoffsDir, fileName);
 
@@ -99,7 +128,7 @@ export function watchEsteiraResult(options: EsteiraResultWatcherOptions): Esteir
       if (status !== 'success') return; // ausente, ilegível ou falhou/travou (CA-6): fica aberta
 
       emitted = true;
-      onArchived({ cardId, marcoId, fase, manifestPath });
+      onArchived({ cardId, fase, faseNum, manifestPath });
     } finally {
       reading = false;
     }

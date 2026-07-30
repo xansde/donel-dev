@@ -152,7 +152,7 @@ describe('resolveCommandSequence (CA-16)', () => {
   it('NENHUM comando de NENHUM estado carrega \\r ou \\n (invariante 2, CA-3)', () => {
     const statuses = ['not-started', 'running', 'done', 'failed', 'stuck'] as const;
     for (const status of statuses) {
-      for (const phase of ['discovery', 'plano', 'implementar', 'validar', 'concluir'] as const) {
+      for (const phase of ['discovery', 'plano', 'implementar', 'validar', 'documentar', 'cliente', 'concluir'] as const) {
         const sequence = resolveCommandSequence({ status, defaults: DEFAULT_PHASE_DEFAULTS[phase], cardId: 'CARD-9' });
         for (const command of sequence) {
           expect(command).not.toMatch(/[\r\n]/);
@@ -202,17 +202,15 @@ describe('createPrimeSequencer (CA-16 — cada comando com seu próprio Enter)',
 describe('buildConciliationPrompt', () => {
   const INPUT = {
     cardId: 'SZI-901',
-    marcoId: 'M1',
     phase: 'implementar' as const,
     diskStatus: 'done' as const,
     boardColumn: 'plano',
   };
 
-  it('cita os DOIS fatos divergentes (disco e board) e o card/marco/fase', () => {
+  it('cita os DOIS fatos divergentes (disco e board) e o card/fase', () => {
     const prompt = buildConciliationPrompt(INPUT);
 
     expect(prompt).toContain('SZI-901');
-    expect(prompt).toContain('M1');
     expect(prompt).toContain('implementar');
     expect(prompt).toContain('done'); // fato do DISCO
     expect(prompt).toContain('plano'); // fato do BOARD

@@ -11,7 +11,13 @@
 // (config-store.ts, T306) e quem chama pela IPC (main/index.ts, T307) fica de
 // fora deste arquivo.
 
-export type EsteiraPhase = 'discovery' | 'plano' | 'implementar' | 'validar' | 'concluir';
+// CA-18 (009-modo-dev-v3) — `documentar` e `cliente` entram para o track
+// documental (Discovery → Documentar → Concluído) e a Validação com Cliente
+// serem representáveis. D-V5 (verificação de design): o VALOR é `documentar`
+// (o que a spec e as skills usam); `documentacao` é só rótulo de chip — chip é
+// lote 6. Ordem canônica: discovery, plano, implementar, validar, documentar,
+// cliente (+ concluir).
+export type EsteiraPhase = 'discovery' | 'plano' | 'implementar' | 'validar' | 'documentar' | 'cliente' | 'concluir';
 
 /** Um discovery = 1 card de entrada do board (Modelo de domínio da spec, MD-01). */
 export interface DevModeDiscovery {
@@ -120,15 +126,20 @@ export function closeDiscovery(state: DevModeState, cardId: string, closedAt: nu
   };
 }
 
+// CA-17/CA-31 (009-modo-dev-v3) — a chave v2 era `cardId:marcoId:fase`, mas
+// `cardId` já era o card_id do próprio card de plano (o `marco` que o
+// disparava); `marcoId` (o rótulo "M1"/"M2") era só decoração — `marco_id`
+// morreu no disco (plan_cards[] não carrega mais esse campo). A chave v3 é só
+// `cardId:fase`. `migrateArchivedPhaseSessionKeys` (config-store.ts) converte
+// entradas antigas na leitura do config (CA-31).
 export interface ArchivePhaseSessionKey {
   readonly cardId: string;
-  readonly marcoId: string;
   readonly phase: EsteiraPhase;
 }
 
-/** Monta a chave composta `cardId:marcoId:fase` usada em `archivedPhaseSessions`. */
+/** Monta a chave composta `cardId:fase` usada em `archivedPhaseSessions` (CA-31). */
 export function archivedPhaseSessionKey(key: ArchivePhaseSessionKey): string {
-  return `${key.cardId}:${key.marcoId}:${key.phase}`;
+  return `${key.cardId}:${key.phase}`;
 }
 
 /** CA-6/CA-9 — registra o `session-id` (+ perfil, CA-22) da etapa recém-arquivada. */
@@ -214,11 +225,18 @@ export function isValidOpenDiscoveryIpcInput(input: unknown): input is OpenDisco
   );
 }
 
-const ALL_ESTEIRA_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'implementar', 'validar', 'concluir'];
+const ALL_ESTEIRA_PHASES: readonly EsteiraPhase[] = [
+  'discovery',
+  'plano',
+  'implementar',
+  'validar',
+  'documentar',
+  'cliente',
+  'concluir',
+];
 
 export interface ArchivePhaseSessionIpcInput {
   readonly cardId: string;
-  readonly marcoId: string;
   readonly phase: EsteiraPhase;
   readonly sessionId: string;
   readonly profileSlug: string;
@@ -230,8 +248,6 @@ export function isValidArchivePhaseSessionIpcInput(input: unknown): input is Arc
   return (
     typeof candidate.cardId === 'string' &&
     candidate.cardId.trim().length > 0 &&
-    typeof candidate.marcoId === 'string' &&
-    candidate.marcoId.trim().length > 0 &&
     typeof candidate.phase === 'string' &&
     (ALL_ESTEIRA_PHASES as readonly string[]).includes(candidate.phase) &&
     typeof candidate.sessionId === 'string' &&
@@ -251,12 +267,19 @@ export function isValidCardIdList(input: unknown): input is readonly string[] {
   return Array.isArray(input) && input.every((cardId) => isValidCardId(cardId));
 }
 
-/** T315 — payload de `watchPhase`/`unwatchPhase`: qual etapa (do discovery em foco) o watcher de manifesto deve vigiar (CA-6). */
+/**
+ * T315 — payload de `watchPhase`/`unwatchPhase`: qual etapa (do discovery em
+ * foco) o watcher de manifesto deve vigiar (CA-6). `marcoId` morreu (CA-17 —
+ * `card_id` já identifica o card de plano sozinho). `faseNum` (CA-4/D.0-bis do
+ * contrato v3) só existe para `implementar`/`validar`, que arquivam sob
+ * `handoffs/fase-<n>/`; ausente para as demais fases (degradação por omissão,
+ * nunca fabricar um número de fase).
+ */
 export interface WatchPhaseIpcInput {
   readonly discoveryCardId: string;
   readonly cardId: string;
-  readonly marcoId: string;
   readonly phase: EsteiraPhase;
+  readonly faseNum?: number | null;
 }
 
 export function isValidWatchPhaseIpcInput(input: unknown): input is WatchPhaseIpcInput {
@@ -267,10 +290,9 @@ export function isValidWatchPhaseIpcInput(input: unknown): input is WatchPhaseIp
     candidate.discoveryCardId.trim().length > 0 &&
     typeof candidate.cardId === 'string' &&
     candidate.cardId.trim().length > 0 &&
-    typeof candidate.marcoId === 'string' &&
-    candidate.marcoId.trim().length > 0 &&
     typeof candidate.phase === 'string' &&
-    (ALL_ESTEIRA_PHASES as readonly string[]).includes(candidate.phase)
+    (ALL_ESTEIRA_PHASES as readonly string[]).includes(candidate.phase) &&
+    (candidate.faseNum === undefined || candidate.faseNum === null || typeof candidate.faseNum === 'number')
   );
 }
 
@@ -278,8 +300,8 @@ export function isValidWatchPhaseIpcInput(input: unknown): input is WatchPhaseIp
 export interface PhaseArchivedPayload {
   readonly discoveryCardId: string;
   readonly cardId: string;
-  readonly marcoId: string;
   readonly phase: EsteiraPhase;
+  readonly faseNum?: number | null;
   readonly manifestPath: string;
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DevModeDiscoveries } from '../src/shared/devMode';
-import type { DiscoveryTree, MarcoNode, PhaseNode } from '../src/main/discovery-tree';
+import type { DiscoveryTree, PhaseNode, PlanCardNode } from '../src/main/discovery-tree';
 import type { PhaseStatus } from '../src/shared/phaseState';
 import {
   discoveriesToClose,
@@ -11,7 +11,8 @@ import {
 // T311/T321 (003-modo-dev, Batch B) — decisões PURAS da Zona 1 (CA-2) e do
 // encerramento automático (CA-23). Sem React, sem IPC: só o cruzamento entre
 // os cards do board, os discoveries abertos (estado próprio, CA-21) e as
-// árvores lidas do disco (CA-14 — o mapa card→marco vem do `fanout_cards`).
+// árvores lidas do disco (CA-14/CA-17 — o mapa card→card-de-plano vem de
+// `plan_cards[]`).
 
 function phaseNode(status: PhaseStatus): PhaseNode {
   return {
@@ -30,23 +31,26 @@ function phaseNode(status: PhaseStatus): PhaseNode {
   };
 }
 
-function marco(marcoId: string, cardId: string, concluirStatus: PhaseStatus): MarcoNode {
+function planCard(cardId: string, concluirStatus: PhaseStatus): PlanCardNode {
   const node = phaseNode(concluirStatus);
   return {
-    marcoId,
     cardId,
+    track: 'codigo',
+    shadow: false,
     phases: {
       discovery: node,
       plano: node,
       implementar: node,
       validar: node,
+      documentar: node,
+      cliente: node,
       concluir: node,
     },
   };
 }
 
-function tree(discoveryCardId: string, marcos: MarcoNode[], allMarcosComplete: boolean): DiscoveryTree {
-  return { discoveryCardId, marcos, focusedMarcoId: null, allMarcosComplete };
+function tree(discoveryCardId: string, planCards: PlanCardNode[], allPlanCardsComplete: boolean): DiscoveryTree {
+  return { discoveryCardId, planCards, focusedPlanCardId: null, allPlanCardsComplete };
 }
 
 const DISCOVERIES: DevModeDiscoveries = {
@@ -54,7 +58,7 @@ const DISCOVERIES: DevModeDiscoveries = {
 };
 
 const TREES: readonly DiscoveryTree[] = [
-  tree('SZI-100', [marco('M1', 'SZI-101', 'done'), marco('M2', 'SZI-102', 'stuck')], false),
+  tree('SZI-100', [planCard('SZI-101', 'done'), planCard('SZI-102', 'stuck')], false),
 ];
 
 describe('resolveEntrySelection (CA-2)', () => {
@@ -95,7 +99,7 @@ describe('isCardLinked (CA-2 — o card vinculado aparece marcado)', () => {
     expect(isCardLinked('SZI-100', DISCOVERIES, TREES)).toBe(true);
   });
 
-  it('marca também o card de marco que pertence a um discovery aberto', () => {
+  it('marca também o card de plano que pertence a um discovery aberto', () => {
     expect(isCardLinked('SZI-101', DISCOVERIES, TREES)).toBe(true);
   });
 
@@ -105,12 +109,12 @@ describe('isCardLinked (CA-2 — o card vinculado aparece marcado)', () => {
 });
 
 describe('discoveriesToClose (CA-23)', () => {
-  it('devolve o discovery cujos marcos TODOS concluíram', () => {
-    const complete = [tree('SZI-100', [marco('M1', 'SZI-101', 'done')], true)];
+  it('devolve o discovery cujos cards de plano TODOS concluíram', () => {
+    const complete = [tree('SZI-100', [planCard('SZI-101', 'done')], true)];
     expect(discoveriesToClose(complete, DISCOVERIES)).toEqual(['SZI-100']);
   });
 
-  it('um marco pendente mantém o discovery aberto', () => {
+  it('um card de plano pendente mantém o discovery aberto', () => {
     expect(discoveriesToClose(TREES, DISCOVERIES)).toEqual([]);
   });
 
@@ -118,11 +122,11 @@ describe('discoveriesToClose (CA-23)', () => {
     const closed: DevModeDiscoveries = {
       'SZI-100': { cardId: 'SZI-100', repoPath: 'C:/repo', epicId: null, openedAt: 1, closedAt: 2 },
     };
-    const complete = [tree('SZI-100', [marco('M1', 'SZI-101', 'done')], true)];
+    const complete = [tree('SZI-100', [planCard('SZI-101', 'done')], true)];
     expect(discoveriesToClose(complete, closed)).toEqual([]);
   });
 
-  it('árvore sem marco nenhum nunca encerra (allMarcosComplete falso por construção)', () => {
+  it('árvore sem card de plano nenhum nunca encerra (allPlanCardsComplete falso por construção)', () => {
     expect(discoveriesToClose([tree('SZI-100', [], false)], DISCOVERIES)).toEqual([]);
   });
 });

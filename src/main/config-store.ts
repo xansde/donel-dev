@@ -320,7 +320,15 @@ function sanitizeTabAppearance(value: unknown): TabAppearanceMap {
 // explícito da task).
 // ---------------------------------------------------------------------------
 
-const KNOWN_ESTEIRA_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'implementar', 'validar', 'concluir'];
+const KNOWN_ESTEIRA_PHASES: readonly EsteiraPhase[] = [
+  'discovery',
+  'plano',
+  'implementar',
+  'validar',
+  'documentar',
+  'cliente',
+  'concluir',
+];
 
 function isValidPhaseDefault(value: unknown): value is PhaseDefault {
   if (typeof value !== 'object' || value === null) return false;
@@ -387,6 +395,47 @@ function sanitizeArchivedPhaseSessions(value: unknown): ArchivedPhaseSessions {
   return sanitized;
 }
 
+/**
+ * CA-31 (009-modo-dev-v3) — migra a chave v2 `cardId:marcoId:fase` para a
+ * chave v3 `cardId:fase` (`archivedPhaseSessionKey`, devMode.ts): `marco_id`
+ * morreu no disco (v3 nunca mais grava esse campo), e o `cardId` do 1º slot
+ * JÁ era o card_id do próprio card de plano (é o que o app sempre passou
+ * para `archivePhaseSession` — o `marcoId` do meio era só rótulo decorativo,
+ * "M1"/"M2"). `discovery`/`plano` sobrevivem com a chave nova;
+ * `implementar`/`validar` são DESCARTADAS — o registro antigo não tem
+ * `fase_num`, e assumir `fase 1` ofereceria retomar a sessão errada num nó
+ * errado (D16 do discovery, CA-31). Chave já no formato novo (2 partes) passa
+ * direto — migração idempotente, roda a cada leitura do config (mesmo padrão
+ * de sanitização campo a campo deste arquivo; não é um passo "só na 1ª vez",
+ * como `migrateFromLegacyFiles`, porque esta migração precisa alcançar
+ * `config.json` já existentes, não só a 1ª execução).
+ */
+function migrateArchivedPhaseSessionKeys(sessions: ArchivedPhaseSessions): ArchivedPhaseSessions {
+  const migrated: Record<string, ArchivedPhaseSession> = {};
+
+  for (const [key, entry] of Object.entries(sessions)) {
+    const parts = key.split(':');
+
+    if (parts.length === 2) {
+      migrated[key] = entry; // já no formato v3
+      continue;
+    }
+
+    if (parts.length === 3) {
+      const [cardId, , fase] = parts;
+      if (fase === 'discovery' || fase === 'plano') {
+        migrated[`${cardId}:${fase}`] = entry;
+      }
+      // implementar/validar/concluir/outro: descartado de propósito (CA-31).
+      continue;
+    }
+
+    // formato desconhecido (0, 1 ou 4+ partes): descartado, nunca fabricado (C4).
+  }
+
+  return migrated;
+}
+
 function sanitizeDevModeBoardConfig(value: unknown): DevModeBoardConfig | null {
   if (typeof value !== 'object' || value === null) return null;
   const candidate = value as Partial<DevModeBoardConfig>;
@@ -408,7 +457,8 @@ function sanitizeDevModeState(value: unknown, fallback: DevModeState): DevModeSt
   return {
     discoveries,
     focusedDiscoveryId,
-    archivedPhaseSessions: sanitizeArchivedPhaseSessions(candidate.archivedPhaseSessions),
+    // CA-31 — migração da chave v2→v3 roda por cima do resultado já sanitizado.
+    archivedPhaseSessions: migrateArchivedPhaseSessionKeys(sanitizeArchivedPhaseSessions(candidate.archivedPhaseSessions)),
     phaseDefaults: sanitizePhaseDefaultsTable(candidate.phaseDefaults),
     boardConfig: sanitizeDevModeBoardConfig(candidate.boardConfig),
   };

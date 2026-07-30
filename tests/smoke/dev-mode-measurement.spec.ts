@@ -60,10 +60,27 @@ let electronApp: ElectronApplication;
 let appWindow: Page;
 let userDataDir: string;
 let fixtureRepo: string;
+/** CA-4 (009-modo-dev-v3) — raiz v3 do handoff, `~/.claude/esteira-state` isolada via `DONEL_ESTEIRA_STATE_ROOT`. */
+let stateRoot: string;
+/** `repo_slug` é o basename do checkout local — mesma resolução de `resolveRepoSlug` (main/index.ts). */
+let repoSlug: string;
 
 function write(file: string, content: string): void {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, content, 'utf8');
+}
+
+/** CA-4/D.0-bis — implementar/validar arquivam por `fase-<n>`; as demais fases gravam direto em `handoffs/`. */
+function resultPath(fase: string, cardId: string, faseNum?: number): string {
+  const handoffsDir = path.join(stateRoot, repoSlug, cardId, fase, 'handoffs');
+  if (fase === 'implementar' || fase === 'validar') {
+    return path.join(handoffsDir, `fase-${faseNum ?? 1}`, `${fase}-result.json`);
+  }
+  return path.join(handoffsDir, `${fase}-result.json`);
+}
+
+function ctxPath(fase: string, cardId: string): string {
+  return path.join(stateRoot, repoSlug, cardId, fase, `${cardId}-ctx.md`);
 }
 
 function manifest(cardId: string, fase: string, outputs: Record<string, unknown> = {}): string {
@@ -81,30 +98,31 @@ function manifest(cardId: string, fase: string, outputs: Record<string, unknown>
   });
 }
 
-/** Discovery COMPLETO: N marcos × 5 fases, cada fase com `ctx.md` + `result.json` — o pior caso de leitura. */
-function seedDiscovery(discoveryCardId: string, marcoCount: number): void {
-  const fanout = Array.from({ length: marcoCount }, (_, index) => ({
+/** Discovery COMPLETO: N cards de plano × 5 fases, cada fase com `ctx.md` + `result.json` — o pior caso de leitura. */
+function seedDiscovery(discoveryCardId: string, planCardCount: number): void {
+  // CA-17 — plan_cards[] substitui fanout_cards[] (sem marco_id); o
+  // identificador legível "M<n>" segue como SUFIXO do próprio card_id, só
+  // para o teste montar os card ids de forma previsível.
+  const planCards = Array.from({ length: planCardCount }, (_, index) => ({
     card_id: `${discoveryCardId}-M${index + 1}`,
-    marco_id: `M${index + 1}`,
+    track: 'codigo' as const,
+    shadow: false,
   }));
-  write(path.join(fixtureRepo, '.esteira', 'discovery', `${discoveryCardId}-ctx.md`), '---\n---\n# ctx\n');
-  write(
-    path.join(fixtureRepo, '.esteira', 'discovery', 'handoffs', discoveryCardId, 'discovery-result.json'),
-    manifest(discoveryCardId, 'discovery', { fanout_cards: fanout }),
-  );
+  write(ctxPath('discovery', discoveryCardId), '---\n---\n# ctx\n');
+  write(resultPath('discovery', discoveryCardId), manifest(discoveryCardId, 'discovery', { plan_cards: planCards }));
 
-  for (const [index, entry] of fanout.entries()) {
+  for (const [index, entry] of planCards.entries()) {
     for (const fase of PHASES) {
       write(
-        path.join(fixtureRepo, '.esteira', fase, `${entry.card_id}-ctx.md`),
+        ctxPath(fase, entry.card_id),
         `---\ncard_id: ${entry.card_id}\nworktree_path: C:/wt/${entry.card_id}\nbranch: feature/${entry.card_id}\n---\n# ctx\n`,
       );
-      // O `concluir` do ÚLTIMO marco fica sem manifesto de propósito: com
-      // TODOS os marcos concluídos o discovery encerra sozinho (CA-23/T321,
+      // O `concluir` do ÚLTIMO card de plano fica sem manifesto de propósito:
+      // com TODOS eles concluídos o discovery encerra sozinho (CA-23/T321,
       // comportamento correto) e o mapa sai da tela — não haveria o que medir.
-      if (index === fanout.length - 1 && fase === 'concluir') continue;
+      if (index === planCards.length - 1 && fase === 'concluir') continue;
       write(
-        path.join(fixtureRepo, '.esteira', fase, 'handoffs', entry.card_id, `${fase}-result.json`),
+        resultPath(fase, entry.card_id),
         manifest(entry.card_id, fase, { artifact_paths: ['specs/x/spec.md', 'specs/x/plan.md'], documents: ['docs/processos/x.md'] }),
       );
     }
@@ -113,6 +131,8 @@ function seedDiscovery(discoveryCardId: string, marcoCount: number): void {
 
 test.beforeAll(async () => {
   fixtureRepo = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-medicao-'));
+  stateRoot = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-medicao-state-'));
+  repoSlug = path.basename(fixtureRepo);
   seedDiscovery(DISCOVERY_3, 3);
   seedDiscovery(DISCOVERY_5, 5);
 
@@ -140,7 +160,11 @@ test.beforeAll(async () => {
     }),
   );
 
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
+  electronApp = await electron.launch({
+    args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
+    cwd: REPO_ROOT,
+    env: { ...process.env, DONEL_ESTEIRA_STATE_ROOT: stateRoot },
+  });
   appWindow = await electronApp.firstWindow();
   await appWindow.waitForLoadState('domcontentloaded');
 });
@@ -151,10 +175,12 @@ test.afterAll(async () => {
     await electronApp?.close();
   } finally {
     if (userDataDir) removeIsolatedUserDataDir(userDataDir);
-    try {
-      rmSync(fixtureRepo, { recursive: true, force: true });
-    } catch {
-      // best-effort (ver dev-mode-conducao-mapa.spec.ts)
+    for (const dir of [fixtureRepo, stateRoot]) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort (ver dev-mode-conducao-mapa.spec.ts)
+      }
     }
   }
 });
@@ -217,7 +243,8 @@ test('C1 — RAM: ligar o Modo Dev com um discovery de 3 marcos fica abaixo da c
 
   await appWindow.locator('[data-testid="devmode-toggle"] input[role="switch"]').check();
   await expect(appWindow.locator('[data-testid="devmode-map"]')).toBeVisible();
-  await expect(appWindow.locator('[data-testid="devmode-map-marco-M3"]')).toBeVisible();
+  // CA-17 — o testid usa o card_id real; o 3º card de plano do DISCOVERY_3 é `${DISCOVERY_3}-M3`.
+  await expect(appWindow.locator(`[data-testid="devmode-map-marco-${DISCOVERY_3}-M3"]`)).toBeVisible();
   const devModeMb = await medianWorkingSetMb(5);
 
   const deltaMb = devModeMb - baselineMb;
