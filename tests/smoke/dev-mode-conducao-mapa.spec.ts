@@ -135,6 +135,10 @@ test.beforeAll(async () => {
       summary: 'plano ok',
       artifact_paths: ['specs/003/spec.md', 'specs/003/plan.md'],
       garantia: { tipo: 'roteiro_e2e', roteiro_path: 'specs/003/e2e.md' },
+      // Lote 7 (CA-11) — o plano declara 1 fase (unidade de PR); sem isto,
+      // `PlanCardNode.fases` fica vazio e Implementação/Validação não nascem
+      // no mapa (CA-14) — a trilha ficaria só em [discovery, plano].
+      fases: [{ fase_num: 1, titulo: 'Implementação única' }],
     }),
   );
   // D3 — worktree/branch no frontmatter do ctx.md da fase implementar.
@@ -299,54 +303,39 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   await expect(entryModal).toHaveCount(0);
   await expect(window.locator('[data-testid="devmode-map"]')).toBeVisible();
 
-  // === T316/CA-7 — a árvore inteira: 2 cards de plano × 5 nós =============
+  // === Lote 7/CA-7/CA-9 — o mapa virou carrossel de dois eixos ============
   // CA-17 — o testid usa o card_id real (não há mais marco_id no disco).
-  await expect(window.locator(`[data-testid="devmode-map-marco-${CARD_M1}"]`)).toBeVisible();
-  await expect(window.locator(`[data-testid="devmode-map-marco-${CARD_M2}"]`)).toBeVisible();
-  await expect(window.locator(`[data-testid="devmode-map-marco-${CARD_M1}"] button`)).toHaveCount(5);
-  // Card de plano em foco tem marcação distinta.
-  await expect(window.locator(`[data-testid="devmode-map-marco-${CARD_M1}"]`)).toHaveAttribute('data-focused', 'true');
-  await expect(window.locator(`[data-testid="devmode-map-marco-${CARD_M2}"]`)).toHaveAttribute('data-focused', 'false');
-  // Legenda dos DOIS eixos (fase × sessão) no rodapé — item verificável.
-  const legend = window.locator('[data-testid="devmode-map-legend"]');
-  await expect(legend).toContainText('Fase');
-  await expect(legend).toContainText('Sessão');
-  await expect(legend).toContainText('Travada');
-  await expect(legend).toContainText('Aguardando resposta');
+  await expect(window.locator(`[data-testid="devmode-map-plano-${CARD_M1}"]`)).toBeVisible();
+  await expect(window.locator(`[data-testid="devmode-map-plano-${CARD_M2}"]`)).toBeVisible();
+  // Card de plano em foco (M1 é `planCards[0]`, foco default) tem marcação distinta.
+  await expect(window.locator(`[data-testid="devmode-map-plano-${CARD_M1}"]`)).toHaveAttribute('data-focused', 'true');
+  await expect(window.locator(`[data-testid="devmode-map-plano-${CARD_M2}"]`)).toHaveAttribute('data-focused', 'false');
+  // CA-28 — a legenda dos dois eixos SAIU do rodapé do mapa (não existe mais testid pra ela).
+  await expect(window.locator('[data-testid="devmode-map-legend"]')).toHaveCount(0);
 
-  // === T319/CA-15 — os 5 estados chegam certos na peça certa ==============
-  await expect(window.locator('[data-testid="devmode-phase-button-plano"]')).toHaveAttribute('data-status', 'done');
-  await expect(window.locator('[data-testid="devmode-phase-button-implementar"]')).toHaveAttribute('data-status', 'stuck');
-  await expect(window.locator('[data-testid="devmode-phase-button-validar"]')).toHaveAttribute('data-status', 'not-started');
+  // === CA-13 — a trilha do card em foco: já rodou + a PRÓXIMA, nada além ==
+  // M1: discovery(done) · plano(done) · implementar-1(stuck) · validar-1(not-started, é a próxima).
+  const trilhaM1 = window.locator(`[data-testid="devmode-map-trilha-${CARD_M1}"]`);
+  await expect(trilhaM1.locator('[data-testid^="devmode-trilha-step-"]')).toHaveCount(4);
+  await expect(window.locator(`[data-testid="devmode-trilha-step-${CARD_M1}-discovery"]`)).toBeVisible();
+  await expect(window.locator(`[data-testid="devmode-trilha-step-${CARD_M1}-plano"]`)).toBeVisible();
+  await expect(window.locator(`[data-testid="devmode-trilha-step-${CARD_M1}-implementar-1"]`)).toBeVisible();
+  await expect(window.locator(`[data-testid="devmode-trilha-step-${CARD_M1}-validar-1"]`)).toContainText('é a próxima');
+  // CA-13/verificação §2 — "⌁ Preparar" só na PRÓXIMA (validar-1); nenhuma outra etapa ganha o botão.
+  await expect(window.locator(`[data-testid="devmode-trilha-prepare-${CARD_M1}-validar-1"]`)).toBeVisible();
+  await expect(window.locator(`[data-testid="devmode-trilha-prepare-${CARD_M1}-implementar-1"]`)).toHaveCount(0);
 
-  // === T314/CA-5 — botão sempre clicável, slot de trava VAZIO na Fatia 1 ==
-  await expect(window.locator('[data-testid="devmode-phase-button-implementar"]')).toBeEnabled();
-  await expect(window.locator('[data-testid="devmode-phase-slot-implementar"]')).toHaveText('');
-
-  // === T320/CA-22 — etapa arquivada em outra conta avisa, sem bloquear ====
-  await expect(window.locator('[data-testid="devmode-phase-profile-warning-plano"]')).toContainText('outra-conta');
-  await expect(window.locator('[data-testid="devmode-phase-button-plano"]')).toBeEnabled();
-
-  // === T313/C6 — `concluir` sem aba em foco: avisa e NÃO cria sessão ======
-  await window.locator('[data-testid="devmode-phase-button-concluir"]').click();
-  await expect(toast).toContainText('Sem sessão Claude em foco');
-  expect(newPids(claudeBaseline)).toHaveLength(0);
-
-  // === T317/CA-8,CA-10,CA-18 + T318/CA-9 — nó expandido e retomada ========
-  // Clicar no nó `plano` (concluído, COM session-id arquivado) expande o nó E
-  // retoma a sessão daquela etapa — é o que o CA-9 pede literalmente.
-  await window.locator(`[data-testid="devmode-map-marco-${CARD_M1}"] button`).nth(1).click();
-  const artifacts = window.locator('[data-testid="devmode-node-artifact"]');
-  await expect(artifacts).toHaveCount(5); // 2 artifact_paths + garantia.roteiro_path + ctx.md + result.json
-  await expect(window.locator('[data-testid="devmode-node-artifacts"]')).toContainText('specs/003/spec.md');
-  await expect(window.locator('[data-testid="devmode-node-skill"]')).toHaveText('/esteira-plano');
-  // CA-18 — sem recibo de vault: indicador discreto, nunca "incompleto"/erro.
-  await expect(window.locator('[data-testid="devmode-node-no-receipt"]')).toBeVisible();
+  // === T317/CA-8,CA-10,CA-18 + T318/CA-9 — clicar numa etapa PASSADA retoma =
+  // Clicar na linha `plano` (concluída, COM session-id arquivado) retoma a
+  // sessão daquela etapa — é o que o CA-13 pede literalmente ("clicar numa
+  // passada retoma a sessão arquivada").
+  await window.locator(`[data-testid="devmode-trilha-step-${CARD_M1}-plano"]`).click();
   // CA-9 — retomada pelo `-r <session-id>` arquivado (argv real, hook de teste).
   await expect(window.locator('[data-testid="devmode-last-session"]')).toHaveText('claude -r sess-antiga');
-  // CA-22 — a etapa rodou em outra conta: avisa, e retoma assim mesmo.
+  // CA-22 — a etapa rodou em outra conta: avisa, e retoma assim mesmo (o
+  // aviso inline no nó do mapa é conteúdo rico do lote 8 — o Toast já cobre
+  // o fato aqui).
   await expect(toast).toContainText('outra-conta');
-  await expect(window.locator('[data-testid="devmode-node-profile-warning"]')).toContainText('outra-conta');
   // A sessão retomada de verdade subiu (1 processo novo) — só depois disso a
   // contagem do próximo passo é determinística.
   await expect(async () => {
@@ -354,11 +343,13 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   }).toPass({ timeout: 60_000 });
 
   // === T312/CA-3 — O GESTO CENTRAL: escreve e PARA ========================
-  // `implementar` está TRAVADA: a sequência do CA-16 tem dois passos, e só o
-  // primeiro pode sair agora (o segundo depende de um Enter humano que este
-  // teste deliberadamente não dá).
+  // `implementar-1` está TRAVADA (stuck): a sequência do CA-16 tem dois
+  // passos, e só o primeiro pode sair agora (o segundo depende de um Enter
+  // humano que este teste deliberadamente não dá). Clicar a LINHA (travada
+  // não é "a próxima" — não tem botão "⌁ Preparar", mas a linha inteira
+  // dispara, mesmo comportamento do antigo botão sempre clicável, CA-5).
   const beforeImplementar = listPids('claude.exe');
-  await window.locator('[data-testid="devmode-phase-button-implementar"]').click();
+  await window.locator(`[data-testid="devmode-trilha-step-${CARD_M1}-implementar-1"]`).click();
 
   // T312 — argv da tabela do CA-4 (editada no config: haiku/low) e `cwd` na
   // WORKTREE declarada no ctx.md (D3), não no repo.
@@ -393,16 +384,19 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   expect(paneText).not.toContain('Unknown slash command');
   expect(paneText).not.toContain('esteira-liberar: ');
 
-  // Exatamente UMA sessão nova (o `concluir` de antes não criou nenhuma).
+  // Exatamente UMA sessão nova (a retomada da fase `plano` de antes).
   await expect(async () => {
     expect(newPids(beforeImplementar)).toHaveLength(1);
   }).toPass({ timeout: 30_000 });
 
-  // === T313/C6 — `concluir` COM aba em foco: pré-digita nela, sem PTY novo =
-  const beforeConcluir = listPids('claude.exe');
-  await window.locator('[data-testid="devmode-phase-button-concluir"]').click();
-  await expect(armed).toContainText(`/esteira-concluir ${CARD_M1}`, { timeout: 60_000 });
-  expect(newPids(beforeConcluir)).toHaveLength(0);
+  // NOTA (lote 7) — o C6 (`concluir` pré-digita na aba em foco, sem PTY novo)
+  // e o painel de detalhe rico (artefatos, skill, recibos, aviso de conta) já
+  // não têm entrada nesta suíte: `concluir` não é mais nível nem trilha (a
+  // trilha para na PRÓXIMA etapa proposta — CA-13/CA-21), e o conteúdo do nó
+  // migrou para o painel de 316px (`PhaseDetailsPanel`), que o lote 8 povoa.
+  // `--fase=n` (D-V4) é coberto por unidade em `tests/mapLevels.test.ts`
+  // (`formatFaseCommand`) — armar o 2º passo aqui exigiria destravar o
+  // sequenciador com Enter de verdade, custando uma sessão real de cota.
 
   // === T310/CA-20 — desligar preserva a tela de hoje E as abas ============
   const tabsBefore = await window.locator('[role="tab"]').count();

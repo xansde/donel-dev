@@ -5,10 +5,12 @@ import { derivePhaseStatus, type PhaseStatus } from '../shared/phaseState';
 import {
   readDiscoveryPlanCards,
   readPhaseArtifacts,
+  readPlanoFases,
   type EsteiraReaderIoDeps,
   type EsteiraStateRoot,
   type PhaseArtifacts,
   type PlanCardRef,
+  type PlanoFaseRef,
 } from './esteira-reader';
 
 // T305 (003-modo-dev, Batch A) — árvore do discovery (CA-7/CA-9/CA-10/CA-23):
@@ -28,10 +30,14 @@ import {
 // conserta isso é do lote 8, não deste).
 //
 // CA-4/D.0-bis — implementar/validar arquivam por `fase-<n>` (fase do plano).
-// Este módulo ainda não conhece o `fases[]` do plano (isso é do carrossel do
-// lote 7/CA-11): por ora lê SEMPRE `faseNum: 1`, decisão explícita e só
-// aqui — nunca dentro do reader/watcher (que ficam agnósticos). Plano com
-// mais de uma fase mostrará, até o lote 7, o estado da fase 1 apenas.
+// `phases.implementar`/`phases.validar` (o Record de 7 fases abaixo)
+// CONTINUAM lendo sempre `faseNum: 1` — decisão herdada do lote 2, mantida de
+// propósito para não quebrar quem já consome esse Record (boardAnnotation.ts,
+// a divergência disco×board). O lote 7 (CA-11) ACRESCENTA `PlanCardNode.fases`
+// — a lista REAL de fases que o plano propôs (`outputs.fases[]`,
+// `readPlanoFases`), cada uma com seu PRÓPRIO par implementar/validar lido do
+// `fase_num` verdadeiro. As duas fontes de leitura convivem: nenhuma fase
+// nova é fabricada por suposição fora de `outputs.fases[]`.
 
 const ALL_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'implementar', 'validar', 'documentar', 'cliente', 'concluir'];
 
@@ -48,12 +54,23 @@ export interface PhaseNode {
   readonly archivedSession: ArchivedPhaseSession | null; // CA-9/CA-21
 }
 
+/** Lote 7 (CA-11) — uma fase (`fase_num`, unidade de PR) que o plano propôs, com seu par implementar/validar do disco DAQUELE `fase_num`. */
+export interface PlanCardFaseNode {
+  readonly faseNum: number;
+  /** `null` = plano não deu título — degradação por omissão. */
+  readonly titulo: string | null;
+  readonly implementar: PhaseNode;
+  readonly validar: PhaseNode;
+}
+
 /** CA-17 — o que o app chamava de `MarcoNode`. `track`/`shadow` vêm de `plan_cards[]` (D8/D9 do contrato). */
 export interface PlanCardNode {
   readonly cardId: string;
   readonly track: 'codigo' | 'documental';
   readonly shadow: boolean;
   readonly phases: Readonly<Record<EsteiraPhase, PhaseNode>>;
+  /** CA-11/CA-14 — as fases (unidade de PR) que o PLANO declarou (`outputs.fases[]`); `[]` até ele fatiar — é essa lista vazia que faz Implementação/Validação não nascerem no mapa. */
+  readonly fases: readonly PlanCardFaseNode[];
 }
 
 export interface DiscoveryTree {
@@ -85,12 +102,33 @@ function buildPhaseNode(
   return { phase: fase, status, artifacts, archivedSession };
 }
 
+/** CA-11 — uma entrada de `PlanCardNode.fases`, com implementar/validar lidos do `fase_num` REAL (não o `DEFAULT_FASE_NUM` do Record legado). */
+function buildFaseNode(root: EsteiraStateRoot, cardId: string, ref: PlanoFaseRef, archived: ArchivedPhaseSessions, io: EsteiraReaderIoDeps): PlanCardFaseNode {
+  const buildAt = (fase: EsteiraPhase): PhaseNode => {
+    const artifacts = readPhaseArtifacts({ ...root, cardId, fase, faseNum: ref.faseNum }, io);
+    const status = derivePhaseStatus({
+      ctxExists: artifacts.ctxExists,
+      result: artifacts.result,
+      resultUnreadable: artifacts.resultUnreadable,
+      sessionAlive: false, // ver comentário de topo do arquivo
+    });
+    const archivedSession = archived[archivedPhaseSessionKey({ cardId, phase: fase })] ?? null;
+    return { phase: fase, status, artifacts, archivedSession };
+  };
+
+  return { faseNum: ref.faseNum, titulo: ref.titulo, implementar: buildAt('implementar'), validar: buildAt('validar') };
+}
+
 function buildPlanCardNode(root: EsteiraStateRoot, planCard: PlanCardRef, archived: ArchivedPhaseSessions, io: EsteiraReaderIoDeps): PlanCardNode {
   const phases = {} as Record<EsteiraPhase, PhaseNode>;
   for (const phase of ALL_PHASES) {
     phases[phase] = buildPhaseNode(root, phase, planCard.cardId, archived, io);
   }
-  return { cardId: planCard.cardId, track: planCard.track, shadow: planCard.shadow, phases };
+
+  const faseRefs = readPlanoFases(root, planCard.cardId, io);
+  const fases = faseRefs.map((ref) => buildFaseNode(root, planCard.cardId, ref, archived, io));
+
+  return { cardId: planCard.cardId, track: planCard.track, shadow: planCard.shadow, phases, fases };
 }
 
 /** CA-7/CA-9/CA-10/CA-17/CA-23 — monta o discovery em foco por completo, a partir do disco. Nunca lança. */

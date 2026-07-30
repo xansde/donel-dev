@@ -1,0 +1,56 @@
+/* Lote 7 (009-modo-dev-v3), CA-7 — painel próprio de 316px, EXATO (o smoke
+   de geometria mede a largura real). */
+
+.panel {
+  width: 316px;
+  min-width: 316px;
+  max-width: 316px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border-left: var(--hairline);
+  /* Âncora de coluna do grid do .body (App.module.css). */
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.header {
+  flex: none;
+  padding: var(--panel-padding);
+}
+
+.label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-size: var(--text-caption-size);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.fase {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.placeholder {
+  margin-top: var(--space-1);
+  font-size: var(--text-caption-size);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.empty {
+  padding: var(--panel-padding);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}

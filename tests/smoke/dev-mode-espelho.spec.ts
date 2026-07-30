@@ -275,15 +275,19 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   await window.locator('[data-testid="devmode-toggle"] input[role="switch"]').check();
   await expect(window.locator('[data-testid="devmode-map"]')).toBeVisible();
 
-  // === T327/CA-12 — os fatos anotados no card de plano ====================
-  // CA-17 — o testid usa o card_id real (não há mais marco_id no disco).
-  const marcoM1 = window.locator(`[data-testid="devmode-map-marco-${CARD_M1}"]`);
-  await expect(marcoM1).toContainText('coluna: implementar', { timeout: 30_000 });
+  // === T327/CA-12/Decisão B — as 4 etiquetas do card de plano =============
+  // CA-17 — o testid usa o card_id real (não há mais marco_id no disco). M1
+  // é `planCards[0]`: foco default, sem precisar clicar.
+  const marcoM1 = window.locator(`[data-testid="devmode-map-plano-${CARD_M1}"]`);
+  await expect(marcoM1).toHaveAttribute('data-focused', 'true');
+  await expect(marcoM1).toContainText('board: implementar', { timeout: 30_000 });
   await expect(marcoM1).toContainText('esteira:precisa-atencao');
-  await expect(marcoM1).toContainText('PR sem aprovação');
-  await expect(marcoM1).toContainText('https://github.com/org/repo/pull/482');
-  // D1 — a trava exibida é a ETIQUETA do board, com esse nome literal.
-  await expect(marcoM1).toContainText('esteira:em-andamento:implementar');
+  // D1/Decisão B — a trava exibida é a ETIQUETA do board, com esse nome
+  // literal (nunca "arquivo de trava").
+  await expect(marcoM1).toContainText('trava: esteira:em-andamento:implementar');
+  // Decisão B — a URL do PR e "PR sem aprovação" MORRERAM como etiqueta.
+  await expect(marcoM1).not.toContainText('PR sem aprovação');
+  await expect(marcoM1).not.toContainText('https://github.com/org/repo/pull/482');
 
   // === CA-12 (negativa) — o que o espelho NÃO mostra ======================
   const map = window.locator('[data-testid="devmode-map"]');
@@ -293,38 +297,32 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   // Card fora do discovery em foco nunca entra na anotação.
   await expect(window.locator('body')).not.toContainText('CARD-FORA-DO-FOCO');
 
-  // === T327/CA-5 — o slot do T314 ACENDE com o dado real ==================
-  const lockSlot = window.locator('[data-testid="devmode-phase-slot-implementar"]');
-  await expect(lockSlot).toContainText('esteira:em-andamento:implementar');
-  // Fase sem trava continua com o slot vazio — a trava é UMA, não um enfeite.
-  await expect(window.locator('[data-testid="devmode-phase-slot-validar"]')).toHaveText('');
-  // Invariante 4/CA-5 — o botão nunca é desabilitado pela trava.
-  await expect(window.locator('[data-testid="devmode-phase-button-implementar"]')).toBeEnabled();
+  // === Invariante 4/CA-5 — a ação da trava (foco atual) é SEMPRE clicável =
+  await expect(window.locator(`[data-testid="devmode-map-plano-action-${CARD_M1}"]`)).toContainText('Liberar trava');
+  await expect(window.locator(`[data-testid="devmode-map-plano-action-${CARD_M1}"]`)).toBeEnabled();
 
   // === T326/CA-13 — divergência marcada × divergência ESPERADA filtrada ===
-  const marcoM2 = window.locator(`[data-testid="devmode-map-marco-${CARD_M2}"]`);
+  const marcoM2 = window.locator(`[data-testid="devmode-map-plano-${CARD_M2}"]`);
   await expect(marcoM2).toContainText('⇄ disco: done · board: plano');
   // `validar` concluída com o card ainda em `plano` é o caso esperado pela
   // spec (Validar nunca move coluna): UMA divergência no card de plano, não duas.
   expect((await marcoM2.innerText()).match(/⇄ disco/g)?.length).toBe(1);
 
-  // === T328/CA-13 — o nó divergente mostra os DOIS fatos ==================
-  // `implementar` do M2 está `done` sem sessão arquivada: o clique abre o
-  // ARTEFATO (C4), não uma sessão — nenhum processo novo aqui.
-  await marcoM2.locator('button').nth(2).click();
-  await expect(window.locator('[data-testid="devmode-node-divergence"]')).toBeVisible();
-  await expect(window.locator('[data-testid="devmode-node-divergence-disk"]')).toContainText('done');
-  await expect(window.locator('[data-testid="devmode-node-divergence-board"]')).toContainText('plano');
-  // Regressão da tela preta (28/07): com `artifact_paths` no formato objeto
-  // do manifesto real, o painel lista os paths — antes o spread de um
-  // não-iterável desmontava a árvore React inteira aqui.
-  const artifactList = window.locator('[data-testid="devmode-node-artifacts"]');
-  await expect(artifactList).toContainText('specs/demo/spec.md');
-  await expect(artifactList).toContainText('specs/demo/plan.md');
+  // === T328/Decisão B — a ação de conciliar mora NA ETIQUETA, sem passo
+  // intermediário (o card em foco já mostra "⇄ Preparar conciliação"). Focar
+  // M2 (clique no card, LevelCarousel move o foco no eixo X) e disparar. O
+  // conteúdo rico do nó (artefatos, disco×board lado a lado) migrou pro
+  // painel de 316px, que o lote 8 povoa — a regressão do `artifact_paths`
+  // objeto (tela preta 28/07) continua coberta por unidade
+  // (`tests/esteira-reader.test.ts`).
+  await marcoM2.click();
+  await expect(marcoM2).toHaveAttribute('data-focused', 'true');
+  const conciliateAction = window.locator(`[data-testid="devmode-map-plano-action-${CARD_M2}"]`);
+  await expect(conciliateAction).toContainText('Preparar conciliação');
   expect(newPids(claudeBaseline)).toHaveLength(0);
 
   // === T328 — a sessão de conciliação: texto ESCRITO, nada enviado ========
-  await window.locator('[data-testid="devmode-node-conciliar"]').click();
+  await conciliateAction.click();
 
   const activePane = window.locator('[data-testid="terminal-pane"]:visible');
   await expect(activePane).toHaveCount(1);
@@ -355,12 +353,12 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   expect(await activePane.innerText()).not.toContain('Unknown slash command');
 
   // === T327/CA-16/D1 — "Liberar trava…" pré-digita, e não apaga nada ======
-  // Selecionar um nó do M2 trouxe o M2 ao foco (comportamento da Fatia 1), e
-  // a trava é do M1: devolve o foco ao M1 clicando no RESUMO do card (área
-  // sem botão — clicar num nó de fase abriria sessão).
-  await marcoM1.locator('p').first().click();
-  await expect(window.locator('[data-testid="devmode-zone2"]')).toContainText(CARD_M1);
-  await window.locator('[data-testid="devmode-phase-release-lock-implementar"]').click();
+  // Focar M2 (acima) trouxe o M2 ao foco, e a trava é do M1: devolve o foco
+  // clicando no CARD de M1 (a trilha só aparece no card focado — clicar uma
+  // linha dela abriria sessão, então o clique aqui é fora da trilha).
+  await marcoM1.click();
+  await expect(marcoM1).toHaveAttribute('data-focused', 'true');
+  await window.locator(`[data-testid="devmode-map-plano-action-${CARD_M1}"]`).click();
   const modal = window.locator('[role="dialog"]');
   await expect(modal).toBeVisible();
   // D1 — o texto fala em remover a ETIQUETA do board e NEGA explicitamente o

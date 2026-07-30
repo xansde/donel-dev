@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readDiscoveryPlanCards, readPhaseArtifacts, type EsteiraReaderIoDeps } from '../src/main/esteira-reader';
+import { readDiscoveryPlanCards, readPhaseArtifacts, readPlanoFases, type EsteiraReaderIoDeps } from '../src/main/esteira-reader';
 
 // T303 (003-modo-dev, Batch A) — leitura dos artefatos de fase no disco.
 // Atualizado para a raiz v3 (CA-4, 009-modo-dev-v3):
@@ -320,5 +320,76 @@ describe('readDiscoveryPlanCards', () => {
   it('discovery-result.json ilegível → [], nunca lança', () => {
     const io = fakeIo({ [DISCOVERY_RESULT_PATH]: '{ corrompido' });
     expect(readDiscoveryPlanCards(ROOT, ROOT_CARD, io)).toEqual([]);
+  });
+});
+
+// Lote 7 (009-modo-dev-v3, CA-11) — as fases (`fase_num`, unidade de PR) que
+// o PLANO declarou em `outputs.fases[]` de `plano-result.json`. Sem o campo
+// (plano ainda não fatiou, ou manifesto antigo sem ele) → `[]`: o nível de
+// Implementação/Validação simplesmente não nasce (CA-14) — nunca um `fase 1`
+// fabricado por suposição.
+describe('readPlanoFases', () => {
+  const CARD_ID = 'card-p1';
+  const PLANO_RESULT_PATH = 'C:\\Users\\fake\\.claude\\esteira-state\\donel-dev\\card-p1\\plano\\handoffs\\plano-result.json';
+
+  function planoManifest(outputs: Record<string, unknown>): string {
+    return JSON.stringify({
+      card_id: CARD_ID,
+      fase: 'plano',
+      status: 'success',
+      started_at: 'x',
+      finished_at: 'x',
+      executor: 'claude',
+      model: 'opus',
+      effort: 'high',
+      outputs,
+    });
+  }
+
+  it('outputs.fases ausente → []', () => {
+    const io = fakeIo({ [PLANO_RESULT_PATH]: planoManifest({}) });
+    expect(readPlanoFases(ROOT, CARD_ID, io)).toEqual([]);
+  });
+
+  it('plano-result.json ausente → []', () => {
+    const io = fakeIo({});
+    expect(readPlanoFases(ROOT, CARD_ID, io)).toEqual([]);
+  });
+
+  it('plano-result.json ilegível → [], nunca lança', () => {
+    const io = fakeIo({ [PLANO_RESULT_PATH]: '{ corrompido' });
+    expect(readPlanoFases(ROOT, CARD_ID, io)).toEqual([]);
+  });
+
+  it('devolve as fases declaradas, ordenadas por fase_num, com titulo opcional', () => {
+    const io = fakeIo({
+      [PLANO_RESULT_PATH]: planoManifest({
+        fases: [
+          { fase_num: 2, titulo: 'Serviço de parcelas' },
+          { fase_num: 1, titulo: 'Tabela de coeficientes' },
+        ],
+      }),
+    });
+    expect(readPlanoFases(ROOT, CARD_ID, io)).toEqual([
+      { faseNum: 1, titulo: 'Tabela de coeficientes' },
+      { faseNum: 2, titulo: 'Serviço de parcelas' },
+    ]);
+  });
+
+  it('titulo ausente/tipo errado degrada para null, nunca lança', () => {
+    const io = fakeIo({
+      [PLANO_RESULT_PATH]: planoManifest({ fases: [{ fase_num: 1 }, { fase_num: 2, titulo: 42 }] }),
+    });
+    expect(readPlanoFases(ROOT, CARD_ID, io)).toEqual([
+      { faseNum: 1, titulo: null },
+      { faseNum: 2, titulo: null },
+    ]);
+  });
+
+  it('entrada sem fase_num numérico é descartada, vizinhas válidas sobrevivem', () => {
+    const io = fakeIo({
+      [PLANO_RESULT_PATH]: planoManifest({ fases: [{ fase_num: 1 }, { titulo: 'sem fase_num' }, { fase_num: 'x' }] }),
+    });
+    expect(readPlanoFases(ROOT, CARD_ID, io)).toEqual([{ faseNum: 1, titulo: null }]);
   });
 });

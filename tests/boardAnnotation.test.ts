@@ -29,7 +29,7 @@ function phaseNode(phase: EsteiraPhase, status: PhaseStatus): PhaseNode {
 function planCard(cardId: string, statuses: Partial<Record<EsteiraPhase, PhaseStatus>> = {}): PlanCardNode {
   const phases = {} as Record<EsteiraPhase, PhaseNode>;
   for (const phase of ALL_PHASES) phases[phase] = phaseNode(phase, statuses[phase] ?? 'not-started');
-  return { cardId, track: 'codigo', shadow: false, phases };
+  return { cardId, track: 'codigo', shadow: false, phases, fases: [] };
 }
 
 function tree(planCards: readonly PlanCardNode[]): DiscoveryTree {

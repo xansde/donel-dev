@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { SmartZoneMeter } from '../SmartZoneMeter';
 import styles from './StatusBar.module.css';
 
@@ -14,6 +15,15 @@ export interface StatusBarProps {
   sessionCount: number;
   /** Mini smart zone da aba em foco (§6, P1). Omitido = não renderiza o medidor. */
   smartZone?: StatusBarSmartZone;
+  /**
+   * Lote 7 (009-modo-dev-v3), Decisão A do handoff v3 — o `HomologationClock`
+   * (variante `compact`) PROMOVIDO quando o card de Validação no degrau
+   * urgente sai de foco (`shouldPromoteClockToStatusBar`, `shared/mapLevels.ts`).
+   * A StatusBar não decide QUANDO promover — só reserva o slot, mesmo padrão
+   * de `smartZone` (CA-22): omitido = nada aparece, nunca um espaço vazio
+   * reservado à toa.
+   */
+  homologationClock?: ReactNode;
   className?: string;
   /**
    * FIX (auditoria rodada 5, achado baixa "testid hardcoded na lib") —
@@ -28,9 +38,18 @@ export interface StatusBarProps {
 
 /**
  * Rodapé do shell: conta ativa · modelo/esforço da aba em foco · nº de
- * sessões · mini smart zone (design-system.md §4, §6). Altura 28px.
+ * sessões · mini smart zone (design-system.md §4, §6) · relógio de
+ * homologação promovido (lote 7, opcional). Altura 28px.
  */
-export function StatusBar({ accountLabel, modelEffort, sessionCount, smartZone, className, accountTestId }: StatusBarProps) {
+export function StatusBar({
+  accountLabel,
+  modelEffort,
+  sessionCount,
+  smartZone,
+  homologationClock,
+  className,
+  accountTestId,
+}: StatusBarProps) {
   const sessionLabel = sessionCount === 1 ? '1 sessão' : `${sessionCount} sessões`;
 
   return (
@@ -63,6 +82,14 @@ export function StatusBar({ accountLabel, modelEffort, sessionCount, smartZone, 
             usedTokens={smartZone.usedTokens}
             maxTokens={smartZone.maxTokens}
           />
+        </>
+      ) : null}
+      {homologationClock ? (
+        <>
+          <span className={styles.separator} aria-hidden="true">
+            ·
+          </span>
+          {homologationClock}
         </>
       ) : null}
     </div>

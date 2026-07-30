@@ -46,6 +46,7 @@ function planCard(cardId: string, concluirStatus: PhaseStatus): PlanCardNode {
       cliente: node,
       concluir: node,
     },
+    fases: [],
   };
 }
 

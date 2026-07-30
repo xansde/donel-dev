@@ -29,6 +29,10 @@ function phaseCtxPath(fase: string, cardId: string): string {
   return `C:\\Users\\fake\\.claude\\esteira-state\\donel-dev\\${cardId}\\${fase}\\${cardId}-ctx.md`;
 }
 
+function planoResultPath(cardId: string): string {
+  return `C:\\Users\\fake\\.claude\\esteira-state\\donel-dev\\${cardId}\\plano\\handoffs\\plano-result.json`;
+}
+
 function successManifest(cardId: string, fase: string): string {
   return JSON.stringify({
     card_id: cardId,
@@ -165,6 +169,94 @@ describe('buildDiscoveryTree', () => {
 
     const p1 = tree.planCards.find((pc) => pc.cardId === 'card-p1')!;
     expect(p1.phases.implementar.status).toBe('done'); // leu fase-1 (success), não fase-2 (failed)
+  });
+
+  // Lote 7 (CA-11) — `PlanCardNode.fases[]`: as fases (unidade de PR) que o
+  // PLANO propôs, cada uma com implementar/validar do disco de VERDADE
+  // (`handoffs/fase-<n>/…`), não mais hardcoded em `fase-1`.
+  describe('PlanCardNode.fases (CA-11)', () => {
+    function planoManifestWithFases(cardId: string, fases: readonly { fase_num: number; titulo?: string }[]): string {
+      return JSON.stringify({
+        card_id: cardId,
+        fase: 'plano',
+        status: 'success',
+        started_at: 'x',
+        finished_at: 'x',
+        executor: 'claude',
+        model: 'opus',
+        effort: 'high',
+        outputs: { fases },
+      });
+    }
+
+    it('plano sem outputs.fases → fases: [] (nível de Implementação/Validação não nasce, CA-14)', () => {
+      const io = fakeIo(threePlanCardsFanout());
+      const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
+
+      for (const planCard of tree.planCards) {
+        expect(planCard.fases).toEqual([]);
+      }
+    });
+
+    it('plano com 2 fases declaradas → 2 entradas em fases[], cada uma com implementar/validar DO DISCO daquele fase_num', () => {
+      const files = {
+        ...threePlanCardsFanout(),
+        [planoResultPath('card-p1')]: planoManifestWithFases('card-p1', [
+          { fase_num: 1, titulo: 'Tabela de coeficientes' },
+          { fase_num: 2, titulo: 'Serviço de parcelas' },
+        ]),
+        [phaseCtxPath('implementar', 'card-p1')]: '---\ncard_id: card-p1\n---\n',
+        [phaseCtxPath('validar', 'card-p1')]: '---\ncard_id: card-p1\n---\n',
+        [phaseResultPathByFaseNum('implementar', 'card-p1', 1)]: successManifest('card-p1', 'implementar'),
+        [phaseResultPathByFaseNum('validar', 'card-p1', 1)]: successManifest('card-p1', 'validar'),
+        // fase 2 sem result.json — ainda não rodou.
+      };
+      const io = fakeIo(files);
+      const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
+
+      const p1 = tree.planCards.find((pc) => pc.cardId === 'card-p1')!;
+      expect(p1.fases).toHaveLength(2);
+      expect(p1.fases.map((f) => f.faseNum)).toEqual([1, 2]);
+      expect(p1.fases.map((f) => f.titulo)).toEqual(['Tabela de coeficientes', 'Serviço de parcelas']);
+      expect(p1.fases[0].implementar.status).toBe('done');
+      expect(p1.fases[0].validar.status).toBe('done');
+      // `ctx.md` NÃO é por fase_num (`phaseDir`/`esteiraCtxPath` ignoram
+      // `faseNum` — layout do lote 2): o ctx.md de `implementar`/`validar`
+      // escrito acima é COMPARTILHADO entre fase 1 e fase 2. Por isso a fase
+      // 2 (sem result.json) deriva `stuck` (ctx existe, result não), nunca
+      // `not-started` — quirk pré-existente do lote 2, fora do escopo deste
+      // lote (nomeado no report como divergência conhecida).
+      expect(p1.fases[1].implementar.status).toBe('stuck');
+      expect(p1.fases[1].validar.status).toBe('stuck');
+    });
+
+    it('fases[] NÃO some com o legado phases.implementar/phases.validar (fase 1 hardcoded, preservado)', () => {
+      const files = {
+        ...threePlanCardsFanout(),
+        [planoResultPath('card-p1')]: planoManifestWithFases('card-p1', [{ fase_num: 1 }]),
+        [phaseCtxPath('implementar', 'card-p1')]: '---\ncard_id: card-p1\n---\n',
+        [phaseResultPathByFaseNum('implementar', 'card-p1', 1)]: successManifest('card-p1', 'implementar'),
+      };
+      const io = fakeIo(files);
+      const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
+
+      const p1 = tree.planCards.find((pc) => pc.cardId === 'card-p1')!;
+      expect(p1.phases.implementar.status).toBe('done');
+      expect(p1.fases[0].implementar.status).toBe('done');
+    });
+
+    it('cards de plano SEM outputs.fases (ex.: card-p2/p3 do fixture) não quebram os outros', () => {
+      const files = {
+        ...threePlanCardsFanout(),
+        [planoResultPath('card-p1')]: planoManifestWithFases('card-p1', [{ fase_num: 1 }]),
+      };
+      const io = fakeIo(files);
+      const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
+
+      expect(tree.planCards.find((pc) => pc.cardId === 'card-p1')!.fases).toHaveLength(1);
+      expect(tree.planCards.find((pc) => pc.cardId === 'card-p2')!.fases).toEqual([]);
+      expect(tree.planCards.find((pc) => pc.cardId === 'card-p3')!.fases).toEqual([]);
+    });
   });
 });
 

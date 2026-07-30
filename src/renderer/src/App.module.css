@@ -199,17 +199,25 @@
   display: none;
 }
 
-/* Zona 1 (280px) · terminal (1fr) · Zona 3 (320px) */
+/* Lote 7 (009-modo-dev-v3), CA-7 — mapa (480px) · terminal (1fr) · detalhe
+   (316px). A compressão da v2 (280/320, mapa espremido na coluna direita)
+   saiu: o mapa vive na ESQUERDA agora, do tamanho real do handoff. */
 .bodyDevMode {
-  --col-left: 280px;
-  --col-right: 320px;
+  --col-left: 480px;
+  --col-right: 316px;
 }
 
 /* FIX (feedback E2E rodada 3 + teste manual 27/07) — coluna direita zerada
-   quando não há Launcher aberto (clássico) ou o mapa do Modo Dev foi
-   recolhido. Depois de .bodyDevMode de propósito (a ordem decide a var). */
+   quando não há Launcher aberto no modo CLÁSSICO. */
 .bodyRightCollapsed {
   --col-right: 0px;
+}
+
+/* Lote 7 — "Recolher mapa" (botão do titlebar) no Modo Dev zera a coluna
+   ESQUERDA agora (o mapa mudou de lado, CA-7). Depois de `.bodyDevMode` de
+   propósito (a ordem decide a var). */
+.bodyMapCollapsed {
+  --col-left: 0px;
 }
 
 /* Teste manual 27/07 — sidebar (projetos ou porta de entrada) colapsável
@@ -226,51 +234,7 @@
   border-bottom: var(--hairline);
 }
 
-.devModeMarcoLabel {
-  font-family: var(--font-mono);
-  font-size: var(--text-caption-size);
-  color: var(--text-muted);
-}
-
-.devModePhases {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
-
 .devModeHint {
   font-size: var(--text-caption-size);
   color: var(--text-muted);
-}
-
-/* 009-modo-dev-v3, lote 5 (CA-2) — cabeçalho da Zona 1 depois que a porta de
-   entrada virou modal. Ocupa o lugar do antigo painel embutido (mesma âncora
-   de coluna do grid — ver comentário em .center) até o lote 7 trazer o mapa
-   de 480px de verdade. */
-.devModeEntryZone {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--panel-padding);
-  background: var(--bg-panel);
-  border-right: var(--hairline);
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.devModeEntryLabel {
-  font-size: var(--text-caption-size);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.devModeEntryFocusId {
-  font-family: var(--font-mono);
-  font-size: var(--text-caption-size);
-  color: var(--accent);
-}
-
-.devModeEntrySpacer {
-  flex: 1;
 }

@@ -81,6 +81,13 @@ export interface EsteiraResultManifest {
      * `marco_id` (contrato §D.2). Um item por card de plano.
      */
     readonly plan_cards?: readonly { card_id: string; track: 'codigo' | 'documental'; shadow: boolean }[];
+    /**
+     * Lote 7 (CA-11) — só no plano-result.json: as fases (`fase_num`, unidade
+     * de PR) que o plano fatiou. É a fonte de "quantos PRs este card de plano
+     * propõe" — sem ela, Implementação/Validação não têm de onde nascer
+     * (CA-14, degradação por omissão, nunca `fase 1` chutada).
+     */
+    readonly fases?: readonly { fase_num: number; titulo?: string }[];
     /** CA-8: os ÚNICOS artefatos declarados por uma fase — nunca varredura. */
     readonly artifact_paths?: readonly string[];
     /**
@@ -242,4 +249,35 @@ export function readDiscoveryPlanCards(root: EsteiraStateRoot, cardId: string, i
     track: entry.track === 'documental' ? 'documental' : 'codigo',
     shadow: entry.shadow === true,
   }));
+}
+
+/** Lote 7 (CA-11) — uma fase (`fase_num`, unidade de PR) que o plano declarou. */
+export interface PlanoFaseRef {
+  readonly faseNum: number;
+  /** `null` = plano não deu título à fase — degradação por omissão, nunca fabricado. */
+  readonly titulo: string | null;
+}
+
+/**
+ * CA-11/CA-14 — as fases que o PLANO de um card propôs, lidas de
+ * `plano-result.json → outputs.fases[]`, ordenadas por `fase_num`. Nunca
+ * lança; ausente/ilegível/sem o campo vira `[]` — é essa lista vazia que faz
+ * os níveis de Implementação/Validação não nascerem (CA-14), nunca uma fase
+ * 1 chutada por suposição. Entradas sem `fase_num` numérico são descartadas;
+ * as vizinhas válidas sobrevivem (mesma disciplina de `parseSubIssues`).
+ */
+export function readPlanoFases(root: EsteiraStateRoot, cardId: string, io: EsteiraReaderIoDeps): readonly PlanoFaseRef[] {
+  const { result, resultUnreadable } = readPhaseArtifacts({ ...root, cardId, fase: 'plano' }, io);
+  if (resultUnreadable || result === null) return [];
+
+  const fases = result.outputs.fases;
+  if (!fases) return [];
+
+  return fases
+    .filter((entry) => typeof entry.fase_num === 'number')
+    .map((entry) => ({
+      faseNum: entry.fase_num,
+      titulo: typeof entry.titulo === 'string' ? entry.titulo : null,
+    }))
+    .sort((a, b) => a.faseNum - b.faseNum);
 }

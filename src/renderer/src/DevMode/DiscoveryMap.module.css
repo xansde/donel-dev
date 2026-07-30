@@ -1,131 +1,225 @@
-/* T316/T317/T318 (003-modo-dev) — Zona 3. Só tokens existentes. */
+/* Lote 7 (009-modo-dev-v3) — CA-7: painel esquerdo de 480px, EXATO (o smoke
+   de geometria mede a largura real). O card de 392px e as opacidades/alturas
+   do carrossel vêm prontas de `LevelCarousel.module.css`/`carouselGeometry.ts`
+   — este arquivo só desenha o CHROME do painel (cabeçalho, cards) e o
+   conteúdo que `renderCard` monta. */
 
 .map {
+  width: 480px;
+  min-width: 480px;
+  max-width: 480px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   min-height: 0;
-  padding: var(--panel-padding);
   background: var(--bg-panel);
-  border-left: var(--hairline);
-  overflow-y: auto;
-  /* Âncora de coluna do grid do .body — ver comentário em App.module.css
-     (.center): desmontar um painel não pode deslocar os outros. */
-  grid-column: 3;
+  border-right: var(--hairline);
+  /* Âncora de coluna do grid do .body (App.module.css) — o mapa agora vive
+     na coluna ESQUERDA em Modo Dev (CA-7 tirou a compressão da v2, que o
+     enfiava na coluna direita de 320px). */
+  grid-column: 1;
   grid-row: 1;
 }
 
-.marcos {
+/* CA-7 (mockup linhas 71-79) — "Esteira · id · Trocar…" dentro do painel. */
+.header {
+  flex: none;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--space-1);
+  padding: 10px 12px 6px;
 }
 
-.marco {
-  opacity: 0.7;
+.headerLabel {
+  font-size: var(--text-caption-size);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
-/* Marco EM FOCO destacado (CA-7) — o vizinho fica legível, só recuado. */
-.marcoFocused {
-  opacity: 1;
-  outline: 1px solid var(--accent);
-  border-radius: var(--radius-md);
+.headerId {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--accent);
+}
+
+.headerSpacer {
+  flex: 1;
 }
 
 .empty {
+  padding: 0 var(--panel-padding) var(--panel-padding);
   font-size: var(--text-caption-size);
   color: var(--text-muted);
 }
 
-.details {
+/* === Conteúdo dos cards (o LevelCarousel cuida da geometria; aqui só o miolo) === */
+
+.cardBody {
   display: flex;
   flex-direction: column;
-  gap: var(--space-half);
-  padding: var(--space-1);
-  background: var(--bg-raised);
-  border: var(--hairline);
-  border-radius: var(--radius-md);
+  min-height: 0;
+  height: 100%;
 }
 
-.detailsHeader {
+.cardTop {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: var(--space-half);
-  font-weight: var(--weight-semibold);
-  color: var(--text-primary);
+  gap: 8px;
+  padding: 9px 11px 0;
 }
 
-.detailsTitle {
-  margin-top: var(--space-1);
-  font-size: var(--text-caption-size);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
+.cardIcon {
+  flex: none;
+  font-size: 11px;
+  color: var(--accent);
 }
 
-.artifacts {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-half);
-  list-style: none;
-}
-
-.mono {
+.cardId {
+  flex: none;
+  white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: var(--text-caption-size);
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.cardTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: var(--weight-semibold);
+}
+
+.cardStatus {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.cardPlain {
+  margin: 0;
+  padding: 6px 11px 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
   color: var(--text-primary);
-  overflow-wrap: anywhere;
 }
 
-.muted {
-  font-size: var(--text-caption-size);
-  color: var(--text-muted);
-}
-
-.warning {
-  font-size: var(--text-caption-size);
-  color: var(--state-waiting);
-}
-
-.legend {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-half);
-  margin-top: auto;
-  padding-top: var(--space-1);
-  border-top: var(--hairline);
-  font-size: var(--text-caption-size);
-  color: var(--text-muted);
-}
-
-.legendRow {
+.cardTags {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
+  gap: 6px;
+  padding: 6px 11px;
 }
 
-.legendTitle {
-  font-weight: var(--weight-semibold);
-  color: var(--text-primary);
-}
-
-.legendItem {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-half);
-}
-
-/* T328 — bloco de divergência disco × board (CA-13). Só tokens existentes. */
-.divergence {
+.cardAction {
+  flex: none;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-half);
-  padding: var(--space-1);
-  background: var(--bg-panel);
-  border: 1px solid var(--state-error);
-  border-radius: var(--radius-md);
-  font-size: var(--text-caption-size);
-  color: var(--text-primary);
+  padding: 0 11px 9px;
+}
+
+.cardClock {
+  flex: none;
+  margin: 9px 11px;
+}
+
+/* === Trilha do card de plano em FOCO (CA-13) — geometria da verificação §2:
+   linha de 24px (32px na "é a próxima"), rail ├/└, glifo quadrado de 16px. === */
+
+.trilha {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: var(--hairline);
+  padding: 4px 0 6px;
+}
+
+.trilhaRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  padding: 0 10px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+
+.trilhaRowNext {
+  min-height: 32px;
+}
+
+.trilhaRowSelected {
+  background: var(--bg-raised);
+  border-left-color: var(--accent);
+}
+
+.trilhaRail {
+  width: 9px;
+  flex: none;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.trilhaGlyph {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.trilhaGlyph.state-running {
+  color: var(--bg-app);
+  background: var(--state-working);
+  border-color: var(--state-working);
+}
+
+.trilhaGlyph.state-done {
+  color: var(--zone-ok);
+  background: color-mix(in srgb, var(--zone-ok) 16%, transparent);
+  border-color: color-mix(in srgb, var(--zone-ok) 45%, transparent);
+}
+
+.trilhaGlyph.state-failed {
+  color: var(--bg-app);
+  background: var(--state-permission);
+  border-color: var(--state-permission);
+}
+
+.trilhaGlyph.state-stuck {
+  color: var(--bg-app);
+  background: var(--state-error);
+  border-color: var(--state-error);
+}
+
+.trilhaFase {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.trilhaSpacer {
+  flex: 1;
+}
+
+.trilhaState {
+  flex: none;
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--text-muted);
 }
