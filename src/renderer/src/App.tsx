@@ -2099,6 +2099,9 @@ export function App(): React.JSX.Element {
           projectRoots={appConfig?.projectRoots ?? []}
           onOpenProject={handleOpenProject}
           onProjectsChanged={setProjects}
+          loadingProjects={loadingProjects}
+          onToggleFavorite={handleToggleFavorite}
+          onShowPreviousSessions={handleShowPreviousSessions}
         />
         {/* Item 1 (rodada de forma fix/009-board-real-e-modal) — titlebar v3
             (mockup linhas 39-51): esquerda = marca + pill de projeto (acima);
@@ -2229,15 +2232,10 @@ export function App(): React.JSX.Element {
           data-testid="today-sidebar"
         >
         <ProjectSidebar
-          projects={projects}
-          loadingProjects={loadingProjects}
-          onOpenProject={handleOpenProject}
-          onToggleFavorite={handleToggleFavorite}
           sessions={sidebarSessions}
           onFocusSession={setActiveTabId}
           onTogglePin={handleTogglePin}
           onRenameSession={handleRenameTab}
-          onShowPreviousSessions={handleShowPreviousSessions}
           favoriteGroups={favoriteGroups}
           onToggleFavoriteGroupCollapsed={handleToggleFavoriteGroupCollapsed}
           onFocusOrResumeFavoriteSession={handleFocusOrResumeFavoriteSession}

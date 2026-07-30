@@ -149,19 +149,26 @@ test('terminal spawns a real claude session inside Electron', async () => {
   }).toPass({ timeout: 15_000 });
 });
 
-test('opening a project from the sidebar creates a tab with a claude session in that project cwd', async () => {
-  // T007 — prova o DoD ("abrir projeto pela sidebar funciona", FR-001/FR-002):
-  // clicar num projeto real da sidebar spawna uma sessão claude nova com
-  // `cwd` correto, sem matar a aba "Sessão" default (continua montada, só
-  // fica display:none — App.tsx mantém o PTY vivo ao trocar de aba).
-  // `donel-dev` é o próprio repo sob teste — sempre presente no scan (tem
-  // `.git`) e sempre em `~\seazone\donel-dev` nesta máquina de dev.
-  const sidebar = window.locator('nav[aria-label="Projetos e sessões"]');
-  await expect(sidebar).toBeVisible();
+test('opening a project from the project switcher creates a tab with a claude session in that project cwd', async () => {
+  // T007 — prova o DoD ("abrir projeto funciona", FR-001/FR-002): clicar num
+  // projeto real spawna uma sessão claude nova com `cwd` correto, sem matar
+  // a aba "Sessão" default (continua montada, só fica display:none —
+  // App.tsx mantém o PTY vivo ao trocar de aba). `donel-dev` é o próprio
+  // repo sob teste — sempre presente no scan (tem `.git`) e sempre em
+  // `~\seazone\donel-dev` nesta máquina de dev.
+  //
+  // FIX (item 1, rodada de feedback do teste de 30/07) — a árvore
+  // "Projetos" da sidebar saiu (só ficaram Favoritos + Sessões); abrir um
+  // projeto qualquer agora é sempre pelo popover "Projetos" do seletor no
+  // titlebar.
+  await window.getByRole('button', { name: 'Trocar de projeto' }).click();
+  const projectsPopover = window.getByRole('dialog', { name: 'Projetos' });
+  await expect(projectsPopover).toBeVisible();
 
-  const projectButton = sidebar.getByRole('button', { name: PROJECT_NAME, exact: true });
+  const projectButton = projectsPopover.getByRole('button', { name: PROJECT_NAME, exact: true });
   await expect(projectButton).toBeVisible({ timeout: 15_000 });
   await projectButton.click();
+  await expect(projectsPopover).toBeHidden();
 
   const newTab = window.locator('[role="tab"]', { hasText: PROJECT_NAME });
   await expect(newTab).toBeVisible();

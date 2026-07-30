@@ -1,17 +1,25 @@
 import type { ProjectInfo } from '../../shared';
 import type { EditableLabelHandle, SessionState } from '@donel-dev/design-system';
 import { EditableLabel, StateDot } from '@donel-dev/design-system';
-import { ChevronDown, ChevronRight, History, Pin, PinOff, Star } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, Pin, PinOff } from 'lucide-react';
+import { useMemo, useRef } from 'react';
 import { sortSessions } from '../../shared/sessionOrdering';
 import { SESSION_NAME_MAX_LENGTH } from '../../shared/sessionName';
 import styles from './ProjectSidebar.module.css';
 
-// T007 — sidebar real (ui-spec §2, US-1, FR-001): PROJETOS (árvore rasa por
-// root, favoritos no topo) + SESSÕES (todas as sessões abertas, sessões
-// fixadas com pin). `state` das sessões é placeholder ('working') até o
-// semáforo real chegar no T009 — a ordenação (sortSessions) já segue a regra
-// definitiva de precedência pra não precisar reescrever depois.
+// T007 — sidebar real (ui-spec §2, US-1, FR-001). `state` das sessões é
+// placeholder ('working') até o semáforo real chegar no T009 — a ordenação
+// (sortSessions) já segue a regra definitiva de precedência pra não precisar
+// reescrever depois.
+//
+// Item 1 (rodada de feedback do teste de 30/07) — "o seletor de projetos
+// substitui a necessidade de ocupar a barra lateral com todos os projetos
+// possíveis": a árvore completa "PROJETOS" (todos os roots, todo o catálogo)
+// SAIU daqui. A sidebar agora só mostra FAVORITOS (T708/T709, inalterado:
+// fixar/expandir) + SESSÕES abertas. O catálogo completo — abrir qualquer
+// projeto, favoritar, "sessões anteriores" de um projeto qualquer — mora no
+// seletor do titlebar (`ProjectSwitcher.tsx`), que ganhou filtro textual e
+// agrupamento por diretório (itens 2/3) exatamente para cobrir esse papel.
 
 export interface SidebarSession {
   id: string;
@@ -26,10 +34,6 @@ export interface SidebarSession {
 }
 
 export interface ProjectSidebarProps {
-  projects: ProjectInfo[];
-  loadingProjects: boolean;
-  onOpenProject: (project: ProjectInfo) => void;
-  onToggleFavorite: (path: string, favorite: boolean) => void;
   sessions: SidebarSession[];
   onFocusSession: (id: string) => void;
   onTogglePin: (id: string) => void;
@@ -39,13 +43,6 @@ export interface ProjectSidebarProps {
    * decide o que fazer com o texto: aba claude persiste, aba shell é memória.
    */
   onRenameSession: (id: string, name: string) => void;
-  /**
-   * T013 (FR-004, CA-2, ui-spec §5) — abre o painel "Sessões anteriores" do
-   * projeto. Ícone PRÓPRIO por linha (não o botão do nome, que já abre uma
-   * sessão claude NOVA direto — T007, smoke `terminal.spec.ts` — e não pode
-   * mudar de significado).
-   */
-  onShowPreviousSessions: (project: ProjectInfo) => void;
   /** T708 (007-favoritos-sessoes) — grupo novo NO TOPO (C5), só projetos favoritados (D6). */
   favoriteGroups: FavoriteProjectGroup[];
   /** T708 — colapsar/expandir o grupo de um projeto favoritado; estado persiste (CA-1). */
@@ -78,26 +75,6 @@ export interface FavoriteProjectGroup {
   readonly liveState?: SessionState;
   /** T709/CA-6 — contagem de abas vivas deste projeto (o "com contagem" do CA-6). */
   readonly liveCount: number;
-}
-
-function rootLabel(root: string): string {
-  const normalized = root.replace(/[\\/]+$/, '');
-  const lastSep = Math.max(normalized.lastIndexOf('\\'), normalized.lastIndexOf('/'));
-  const base = lastSep >= 0 ? normalized.slice(lastSep + 1) : normalized;
-  return `${base}/`;
-}
-
-function groupByRoot(projects: ProjectInfo[]): { root: string; items: ProjectInfo[] }[] {
-  const groups: { root: string; items: ProjectInfo[] }[] = [];
-  for (const project of projects) {
-    const lastGroup = groups[groups.length - 1];
-    if (lastGroup && lastGroup.root === project.root) {
-      lastGroup.items.push(project);
-    } else {
-      groups.push({ root: project.root, items: [project] });
-    }
-  }
-  return groups;
 }
 
 /**
@@ -241,38 +218,24 @@ function FavoriteGroupView({
 }
 
 export function ProjectSidebar({
-  projects,
-  loadingProjects,
-  onOpenProject,
-  onToggleFavorite,
   sessions,
   onFocusSession,
   onTogglePin,
   onRenameSession,
-  onShowPreviousSessions,
   favoriteGroups,
   onToggleFavoriteGroupCollapsed,
   onFocusOrResumeFavoriteSession,
   onToggleFavoriteSessionPinned,
 }: ProjectSidebarProps): React.JSX.Element {
-  const [collapsedRoots, setCollapsedRoots] = useState<ReadonlySet<string>>(new Set());
-  const groups = useMemo(() => groupByRoot(projects), [projects]);
   const orderedSessions = useMemo(() => sortSessions(sessions), [sessions]);
-
-  const toggleRoot = (root: string): void => {
-    setCollapsedRoots((prev) => {
-      const next = new Set(prev);
-      if (next.has(root)) next.delete(root);
-      else next.add(root);
-      return next;
-    });
-  };
 
   return (
     <nav className={styles.sidebar} aria-label="Projetos e sessões">
-      {/* T708 (007) — C5: grupo novo NO TOPO, ANTES de "Projetos". Só existe
-          quando há ao menos um projeto favoritado (D6) — sem CTA de seção
-          vazia, mesmo espírito do resto da sidebar. */}
+      {/* T708 (007) — C5: grupo novo NO TOPO. Só existe quando há ao menos
+          um projeto favoritado (D6) — sem CTA de seção vazia, mesmo espírito
+          do resto da sidebar. Item 1 (rodada de feedback 30/07) — a árvore
+          "Projetos" que existia abaixo saiu inteira: o catálogo completo
+          agora mora no seletor do titlebar. */}
       {favoriteGroups.length > 0 ? (
         <section aria-label="Favoritos">
           <h2 className={styles.sectionTitle}>Favoritos</h2>
@@ -287,83 +250,6 @@ export function ProjectSidebar({
           ))}
         </section>
       ) : null}
-
-      <section>
-        <h2 className={styles.sectionTitle}>Projetos</h2>
-        {loadingProjects ? <p className={styles.hint}>Carregando projetos…</p> : null}
-        {!loadingProjects && groups.length === 0 ? (
-          <p className={styles.hint}>Nenhum projeto encontrado em ~/seazone ou ~/pessoal.</p>
-        ) : null}
-        {groups.map((group) => {
-          const collapsed = collapsedRoots.has(group.root);
-          return (
-            <div key={group.root} className={styles.projectGroup}>
-              <button
-                type="button"
-                className={styles.projectRootToggle}
-                onClick={() => toggleRoot(group.root)}
-                aria-expanded={!collapsed}
-              >
-                {collapsed ? (
-                  <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" />
-                ) : (
-                  <ChevronDown size={12} strokeWidth={1.5} aria-hidden="true" />
-                )}
-                <span className={styles.projectRoot}>{rootLabel(group.root)}</span>
-              </button>
-              {collapsed
-                ? null
-                : group.items.map((project) => (
-                    <div
-                      key={project.path}
-                      data-testid={`project-row-${project.name}`}
-                      className={[styles.projectRow, project.missing ? styles.missing : ''].join(' ')}
-                    >
-                      <button
-                        type="button"
-                        className={styles.favoriteButton}
-                        onClick={() => onToggleFavorite(project.path, !project.favorite)}
-                        aria-pressed={project.favorite}
-                        aria-label={project.favorite ? `Remover ${project.name} dos favoritos` : `Favoritar ${project.name}`}
-                        disabled={project.missing}
-                      >
-                        <Star size={12} strokeWidth={1.5} fill={project.favorite ? 'currentColor' : 'none'} aria-hidden="true" />
-                      </button>
-                      {project.missing ? (
-                        <>
-                          <span className={styles.projectName} title={project.path}>
-                            {project.name}
-                          </span>
-                          <button
-                            type="button"
-                            className={styles.removeButton}
-                            onClick={() => onToggleFavorite(project.path, false)}
-                          >
-                            remover
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button type="button" className={styles.projectOpenButton} onClick={() => onOpenProject(project)}>
-                            {project.name}
-                          </button>
-                          <button
-                            type="button"
-                            className={styles.historyButton}
-                            onClick={() => onShowPreviousSessions(project)}
-                            aria-label={`Sessões anteriores de ${project.name}`}
-                            title="Sessões anteriores"
-                          >
-                            <History size={12} strokeWidth={1.5} aria-hidden="true" />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  ))}
-            </div>
-          );
-        })}
-      </section>
 
       <section>
         <h2 className={styles.sectionTitle}>Sessões</h2>

@@ -50,11 +50,16 @@ async function launchApp(): Promise<void> {
 // Item 11 (rodada de forma fix/009-board-real-e-modal) — a tela deixou de
 // ser um `Modal` (role="dialog") e virou uma TELA no grid do `.shell`
 // (`role="region"`, mesmo `aria-label` de antes — só o role mudou).
+//
+// FIX (item 1, rodada de feedback do teste de 30/07) — o botão "Sessões
+// anteriores de X" morava numa linha da árvore "Projetos" da sidebar
+// (removida); migrou pro popover "Projetos" do seletor no titlebar.
 async function openSettingsPanel(): Promise<import('@playwright/test').Locator> {
-  const sidebar = window.locator('nav[aria-label="Projetos e sessões"]');
-  await expect(sidebar).toBeVisible();
+  await window.getByRole('button', { name: 'Trocar de projeto' }).click();
+  const projectsPopover = window.getByRole('dialog', { name: 'Projetos' });
+  await expect(projectsPopover).toBeVisible();
 
-  const historyButton = sidebar.getByRole('button', { name: `Sessões anteriores de ${PROJECT_NAME}`, exact: true });
+  const historyButton = projectsPopover.getByRole('button', { name: `Sessões anteriores de ${PROJECT_NAME}`, exact: true });
   await expect(historyButton).toBeVisible({ timeout: 15_000 });
   await historyButton.click();
 

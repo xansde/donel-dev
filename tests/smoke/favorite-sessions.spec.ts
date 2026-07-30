@@ -82,11 +82,15 @@ test('T711 — grupo aparece só com favoritados, dedupe da lista geral, cabeça
   const group = appWindow.locator(`[data-testid="favorite-group-${PROJECT_NAME}"]`);
   await expect(group).toBeVisible();
 
-  // 1. Abre uma sessão claude REAL clicando no projeto — gatilho 1 (aba nasce).
-  const sidebar = appWindow.locator('nav[aria-label="Projetos e sessões"]');
-  const projectRow = sidebar.locator(`[data-testid="project-row-${PROJECT_NAME}"]`);
-  await expect(projectRow).toBeVisible({ timeout: 15_000 });
-  await projectRow.getByRole('button', { name: PROJECT_NAME, exact: true }).click();
+  // 1. Abre uma sessão claude REAL clicando no projeto — gatilho 1 (aba
+  // nasce). FIX (item 1, rodada de feedback do teste de 30/07) — a árvore
+  // "Projetos" da sidebar saiu; abrir um projeto qualquer agora é sempre
+  // pelo popover "Projetos" do seletor no titlebar.
+  await appWindow.getByRole('button', { name: 'Trocar de projeto' }).click();
+  const projectsPopover = appWindow.getByRole('dialog', { name: 'Projetos' });
+  await expect(projectsPopover).toBeVisible();
+  await projectsPopover.getByRole('button', { name: PROJECT_NAME, exact: true }).click();
+  await expect(projectsPopover).toBeHidden();
 
   const tabs = appWindow.locator('[role="tab"]');
   await expect(tabs).toHaveCount(1);

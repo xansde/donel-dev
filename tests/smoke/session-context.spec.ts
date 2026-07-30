@@ -99,11 +99,15 @@ test('T611/T612 (CA-22 da 009) — a StatusBar mostra o `%` de contexto da aba e
   const active = profiles.find((profile) => profile.active);
   test.skip(!active?.isPrimary, `perfil ativo não é o Principal (${active?.slug}) — transcript não fica em ~/.claude`);
 
-  // 1. Abre uma sessão claude real clicando no projeto na sidebar.
-  const sidebar = appWindow.locator('nav[aria-label="Projetos e sessões"]');
-  const projectRow = sidebar.locator(`[data-testid="project-row-${PROJECT_NAME}"]`);
-  await expect(projectRow).toBeVisible({ timeout: 15_000 });
-  await projectRow.getByRole('button', { name: PROJECT_NAME, exact: true }).click();
+  // 1. Abre uma sessão claude real clicando no projeto — FIX (item 1, rodada
+  // de feedback do teste de 30/07) — a árvore "Projetos" da sidebar saiu;
+  // abrir um projeto qualquer agora é sempre pelo popover do seletor no
+  // titlebar.
+  await appWindow.getByRole('button', { name: 'Trocar de projeto' }).click();
+  const projectsPopover = appWindow.getByRole('dialog', { name: 'Projetos' });
+  await expect(projectsPopover).toBeVisible();
+  await projectsPopover.getByRole('button', { name: PROJECT_NAME, exact: true }).click();
+  await expect(projectsPopover).toBeHidden();
 
   const tab = appWindow.locator('[role="tab"]').first();
   await expect(tab).toBeVisible();

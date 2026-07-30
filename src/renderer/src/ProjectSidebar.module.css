@@ -49,7 +49,6 @@
   font-size: var(--text-caption-size);
 }
 
-.projectRow,
 .sessionRow {
   display: flex;
   align-items: center;
@@ -59,7 +58,6 @@
   border-radius: var(--radius-sm);
 }
 
-.projectRow:hover,
 .sessionRow:hover {
   background: var(--bg-raised);
 }
@@ -68,13 +66,7 @@
   background: var(--bg-raised);
 }
 
-.missing {
-  opacity: 0.5;
-}
-
-.favoriteButton,
-.pinButton,
-.historyButton {
+.pinButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -88,34 +80,17 @@
   cursor: pointer;
 }
 
-.historyButton:hover {
-  color: var(--text-primary);
-}
-
-.favoriteButton[aria-pressed='true'] {
-  color: var(--donel-accent, var(--state-waiting));
-}
-
 .pinButton[aria-pressed='true'] {
   color: var(--accent);
 }
 
-.favoriteButton:disabled {
-  cursor: default;
-  opacity: 0.4;
-}
-
-.favoriteButton:focus-visible,
 .pinButton:focus-visible,
-.historyButton:focus-visible,
-.projectOpenButton:focus-visible,
 .sessionOpenButton:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
   border-radius: var(--radius-sm);
 }
 
-.projectOpenButton,
 .sessionOpenButton {
   display: flex;
   align-items: center;
@@ -129,33 +104,6 @@
   font-family: var(--font-ui);
   font-size: var(--text-body-size);
   text-align: left;
-  cursor: pointer;
-}
-
-.projectOpenButton {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.projectName {
-  flex: 1;
-  min-width: 0;
-  color: var(--text-muted);
-  font-size: var(--text-body-size);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.removeButton {
-  flex-shrink: 0;
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--text-muted);
-  font-size: var(--text-caption-size);
-  text-decoration: underline;
   cursor: pointer;
 }
 

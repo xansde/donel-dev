@@ -69,12 +69,15 @@ test('T413 — CA-4: custom-title escrito no transcript da sessão VIVA reflete 
   const active = profiles.find((profile) => profile.active);
   test.skip(!active?.isPrimary, `perfil ativo não é o Principal (${active?.slug}) — transcript não fica em ~/.claude`);
 
-  // 1. Abre uma sessão claude real clicando no projeto na sidebar (1 clique,
-  //    sem Launcher — o watcher nasce no `pty:create`, não no launcher).
-  const sidebar = appWindow.locator('nav[aria-label="Projetos e sessões"]');
-  const projectRow = sidebar.locator(`[data-testid="project-row-${PROJECT_NAME}"]`);
-  await expect(projectRow).toBeVisible({ timeout: 15_000 });
-  await projectRow.getByRole('button', { name: PROJECT_NAME, exact: true }).click();
+  // 1. Abre uma sessão claude real clicando no projeto (1 clique no popover
+  //    "Projetos" do seletor, sem Launcher — o watcher nasce no
+  //    `pty:create`, não no launcher). FIX (item 1, rodada de feedback do
+  //    teste de 30/07) — a árvore "Projetos" da sidebar saiu.
+  await appWindow.getByRole('button', { name: 'Trocar de projeto' }).click();
+  const projectsPopover = appWindow.getByRole('dialog', { name: 'Projetos' });
+  await expect(projectsPopover).toBeVisible();
+  await projectsPopover.getByRole('button', { name: PROJECT_NAME, exact: true }).click();
+  await expect(projectsPopover).toBeHidden();
 
   const tab = appWindow.locator('[role="tab"]').first();
   await expect(tab).toBeVisible();
@@ -127,7 +130,9 @@ test('T413 — CA-4: custom-title escrito no transcript da sessão VIVA reflete 
   console.log(`[CA-4] aba refletiu o custom-title em ${elapsedMs} ms (debounce 300 ms + fs.watch + IPC; alvo < 1000 ms)`);
   expect(elapsedMs).toBeLessThan(1_000);
 
-  // 5. …e a sidebar mostra o mesmo valor (CA-5: uma resolução só).
+  // 5. …e a sidebar (seção "Sessões", que continua existindo — só a árvore
+  //    "Projetos" saiu) mostra o mesmo valor (CA-5: uma resolução só).
+  const sidebar = appWindow.locator('nav[aria-label="Projetos e sessões"]');
   await expect(sidebar.getByText(cliTitle, { exact: true })).toBeVisible();
 
   // 6. C2 fechado: o `/rename` veio DEPOIS do nome da UI, então o CLI vence e a

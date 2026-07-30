@@ -1,8 +1,9 @@
 import { Button, Modal, Select, TextInput } from '@donel-dev/design-system';
 import type { SelectOption } from '@donel-dev/design-system';
-import { Star } from 'lucide-react';
-import { useState } from 'react';
+import { History, Star } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import type { CreateProjectErrorReason, ProjectInfo } from '../../shared';
+import { filterProjectsByName, groupProjectsByRoot, projectRootLabel } from '../../shared/projectCatalog';
 import styles from './ProjectSwitcher.module.css';
 
 // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero pelo app"
@@ -52,6 +53,21 @@ export interface ProjectSwitcherProps {
   onOpenProject: (project: ProjectInfo) => void;
   /** Sincroniza a lista de projetos de App.tsx com a resposta (já re-escaneada) de `projects.create`. */
   onProjectsChanged: (projects: ProjectInfo[]) => void;
+  /** Item 1 — o hint de "carregando" que a árvore da sidebar mostrava migrou pra cá (o scan inicial de `~/seazone`/`~/pessoal` ainda leva um instante). */
+  loadingProjects?: boolean;
+  /**
+   * Item 1/2/3 (rodada de feedback do teste de 30/07) — a sidebar perdeu a
+   * árvore completa de projetos (agora só Favoritos + Sessões); favoritar um
+   * projeto qualquer passou a acontecer AQUI, no popover "Projetos", que é o
+   * catálogo completo agora.
+   */
+  onToggleFavorite: (path: string, favorite: boolean) => void;
+  /**
+   * Item 1 — "sessões anteriores" de um projeto qualquer (favoritado ou não)
+   * também migrou pra cá: era um botão por linha da árvore da sidebar
+   * (removida), agora é um botão por linha desta lista.
+   */
+  onShowPreviousSessions: (project: ProjectInfo) => void;
 }
 
 const SOURCE_OPTIONS: SelectOption[] = [
@@ -85,6 +101,9 @@ export function ProjectSwitcher({
   projectRoots,
   onOpenProject,
   onProjectsChanged,
+  loadingProjects = false,
+  onToggleFavorite,
+  onShowPreviousSessions,
 }: ProjectSwitcherProps): React.JSX.Element {
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
@@ -93,13 +112,29 @@ export function ProjectSwitcher({
   const [repo, setRepo] = useState('');
   const [creating, setCreating] = useState(false);
   const [errorReason, setErrorReason] = useState<CreateProjectErrorReason | null>(null);
+  // Item 2 — filtro textual do popover "Projetos" (case/acento-insensível,
+  // lógica pura em src/shared/projectCatalog.ts). Zera toda vez que o
+  // popover fecha, pra não reabrir com um filtro "esquecido" de outra hora.
+  const [filterQuery, setFilterQuery] = useState('');
+
+  // Item 3 — a lista mostra só o NOME, agrupada por diretório-raiz
+  // (cabeçalho = o root, ex. `seazone`). Filtro roda ANTES do agrupamento —
+  // um grupo que não sobra nenhum item some inteiro (não aparece cabeçalho
+  // vazio).
+  const filteredGroups = useMemo(
+    () => groupProjectsByRoot(filterProjectsByName(projects, filterQuery)),
+    [projects, filterQuery],
+  );
 
   const activeProject = projects.find((project) => project.path === activeProjectPath);
   const defaultRoot = projectRoots[0];
   const previewPath = defaultRoot ? `${defaultRoot}\\${name.trim() || '…'}` : '';
 
   const openProjectsPopover = (): void => setProjectsOpen(true);
-  const closeProjectsPopover = (): void => setProjectsOpen(false);
+  const closeProjectsPopover = (): void => {
+    setProjectsOpen(false);
+    setFilterQuery('');
+  };
 
   const openNewProjectModal = (): void => {
     setProjectsOpen(false);
@@ -155,31 +190,71 @@ export function ProjectSwitcher({
 
       <Modal open={projectsOpen} onClose={closeProjectsPopover} title="Projetos">
         <div className={styles.body} data-testid="project-switcher-list">
-          {projects.length === 0 ? <p className={styles.hint}>Nenhum projeto encontrado.</p> : null}
+          {/* Item 2 — filtro textual (case/acento-insensível, ver
+              src/shared/projectCatalog.ts filterProjectsByName). */}
           {projects.length > 0 ? (
-            <ul className={styles.list}>
-              {projects.map((project) => (
-                <li key={project.path}>
-                  <button
-                    type="button"
-                    className={styles.projectRow}
-                    onClick={() => {
-                      onOpenProject(project);
-                      setProjectsOpen(false);
-                    }}
-                  >
-                    <span className={styles.mark} aria-hidden="true">
-                      {project.path === activeProjectPath ? '●' : ''}
-                    </span>
-                    <span className={styles.path} title={project.path}>
-                      {project.path}
-                    </span>
-                    {project.favorite ? <Star size={11} strokeWidth={1.5} fill="currentColor" aria-hidden="true" /> : null}
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <TextInput
+              aria-label="Filtrar projetos"
+              placeholder="Filtrar por nome…"
+              value={filterQuery}
+              onChange={(event) => setFilterQuery(event.target.value)}
+            />
           ) : null}
+          {projects.length === 0 && loadingProjects ? <p className={styles.hint}>Carregando projetos…</p> : null}
+          {projects.length === 0 && !loadingProjects ? <p className={styles.hint}>Nenhum projeto encontrado.</p> : null}
+          {projects.length > 0 && filteredGroups.length === 0 ? (
+            <p className={styles.hint}>Nenhum projeto bate com "{filterQuery}".</p>
+          ) : null}
+          {filteredGroups.map((group) => (
+            <div key={group.root} className={styles.rootGroup}>
+              {/* Item 3 — cabeçalho de grupo é o root (ex. "seazone"), lista
+                  mostra só o NOME do projeto (não mais o path inteiro). */}
+              <div className={styles.rootGroupHeader}>{projectRootLabel(group.root)}</div>
+              <ul className={styles.list}>
+                {group.items.map((project) => (
+                  <li key={project.path}>
+                    <div className={styles.projectRow}>
+                      <button
+                        type="button"
+                        className={styles.favoriteToggle}
+                        onClick={() => onToggleFavorite(project.path, !project.favorite)}
+                        aria-pressed={project.favorite}
+                        aria-label={project.favorite ? `Remover ${project.name} dos favoritos` : `Favoritar ${project.name}`}
+                      >
+                        <Star size={11} strokeWidth={1.5} fill={project.favorite ? 'currentColor' : 'none'} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.projectOpenButton}
+                        onClick={() => {
+                          onOpenProject(project);
+                          setProjectsOpen(false);
+                        }}
+                        title={project.path}
+                      >
+                        <span className={styles.mark} aria-hidden="true">
+                          {project.path === activeProjectPath ? '●' : ''}
+                        </span>
+                        <span className={styles.name}>{project.name}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.historyToggle}
+                        onClick={() => {
+                          onShowPreviousSessions(project);
+                          setProjectsOpen(false);
+                        }}
+                        aria-label={`Sessões anteriores de ${project.name}`}
+                        title="Sessões anteriores"
+                      >
+                        <History size={12} strokeWidth={1.5} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
           <div className={styles.footer}>
             <Button variant="primary" onClick={openNewProjectModal}>
               ＋ Novo projeto
