@@ -252,7 +252,9 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   const claudeBaseline = listPids('claude.exe');
 
   // === T310/CA-20 — liga o modo ==========================================
-  await window.locator('[data-testid="devmode-toggle"] input[role="switch"]').check();
+  // Item 1 (rodada de forma fix/009-board-real-e-modal) — o switch "Modo
+  // Dev" virou SegmentedControl "Uso geral | Dev" (titlebar v3).
+  await window.locator('[data-testid="devmode-toggle"]').getByRole('radio', { name: 'Dev' }).click();
   await expect(window.locator('[data-testid="devmode-entry"]')).toBeVisible();
   // A tela de hoje foi OCULTADA, não desmontada.
   await expect(window.locator('[data-testid="today-sidebar"]')).toBeHidden();
@@ -438,12 +440,12 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   // === T310/CA-20 — desligar preserva a tela de hoje E as abas ============
   const tabsBefore = await window.locator('[role="tab"]').count();
   const pidsBefore = listPids('claude.exe');
-  await window.locator('[data-testid="devmode-toggle"] input[role="switch"]').uncheck();
+  await window.locator('[data-testid="devmode-toggle"]').getByRole('radio', { name: 'Uso geral' }).click();
   await expect(window.locator('[data-testid="today-sidebar"]')).toBeVisible();
   await expect(window.locator('[data-testid="devmode-entry"]')).toHaveCount(0);
   expect(await window.locator('[role="tab"]').count()).toBe(tabsBefore);
   expect([...listPids('claude.exe')].sort()).toEqual([...pidsBefore].sort()); // nenhum PTY recriado
-  await window.locator('[data-testid="devmode-toggle"] input[role="switch"]').check();
+  await window.locator('[data-testid="devmode-toggle"]').getByRole('radio', { name: 'Dev' }).click();
   await expect(window.locator('[data-testid="devmode-map"]')).toBeVisible();
 
   // === T315/CA-6 — arquivamento pelo MANIFESTO ============================
@@ -473,8 +475,8 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
     write(resultPath('validar', cardId), manifest(cardId, 'validar', 'success', { fase_num: 1, plano_completo: true }));
   }
   // Força uma releitura do disco pelo mesmo caminho que o usuário usaria.
-  await window.locator('[data-testid="devmode-toggle"] input[role="switch"]').uncheck();
-  await window.locator('[data-testid="devmode-toggle"] input[role="switch"]').check();
+  await window.locator('[data-testid="devmode-toggle"]').getByRole('radio', { name: 'Uso geral' }).click();
+  await window.locator('[data-testid="devmode-toggle"]').getByRole('radio', { name: 'Dev' }).click();
   await expect(window.locator(`[data-testid="devmode-entry-linked-${CARD_DISCOVERY}"]`)).toHaveCount(0, { timeout: 30_000 });
   await expect(window.locator('[data-testid="devmode-map"]')).toHaveCount(0);
 });

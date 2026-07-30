@@ -165,6 +165,45 @@ const LOCK_LABEL_PREFIX = 'esteira:em-andamento:';
  * não têm representação aqui. Sem `boardColumn` (achado 12/C4), a lista
  * inteira fica vazia: nenhuma etiqueta fabricada sem fonte.
  */
+// Rodada de forma (fix/009-board-real-e-modal, item 7) — o `border-top` do
+// card de plano em foco tinha virado sempre `--zone-ok` (verde), ignorando o
+// estado real; o mockup usa `T[statusTone].fg`, um tom por card, não por
+// nível. `resolvePlanCardTone` reproduz a mesma prioridade que as etiquetas
+// do CA-16 já aplicam (divergência > trava > execução > homologação pendente
+// > concluído > neutro) — primitivos, não `AnnotatedPlanCardNode`, pra não
+// puxar tipos de `main/` pra este módulo puro.
+export type PlanCardAccentTone = 'ok' | 'warn' | 'error' | 'lock' | 'accent' | 'muted';
+
+export interface ResolvePlanCardToneInput {
+  readonly hasDivergence: boolean;
+  readonly isLocked: boolean;
+  /** Saída de `planCardStatusLabel` (DiscoveryMap.tsx) — texto, não enum, pra não duplicar a tabela de status ali. */
+  readonly statusLabel: string;
+}
+
+export function resolvePlanCardTone(input: ResolvePlanCardToneInput): PlanCardAccentTone {
+  if (input.hasDivergence) return 'error';
+  if (input.isLocked || input.statusLabel === 'travada') return 'lock';
+  if (input.statusLabel === 'em execução') return 'accent';
+  if (input.statusLabel === 'aguardando homologação') return 'warn';
+  if (input.statusLabel === 'homologado' || input.statusLabel === 'concluído') return 'ok';
+  return 'muted';
+}
+
+const PLAN_CARD_TONE_COLOR: Readonly<Record<PlanCardAccentTone, string>> = {
+  ok: 'var(--zone-ok)',
+  warn: 'var(--state-waiting)',
+  error: 'var(--state-permission)',
+  lock: 'var(--state-error)',
+  accent: 'var(--accent)',
+  muted: 'var(--text-muted)',
+};
+
+/** O mesmo token que `T[tone].fg` usa no mockup (verificação §3, "nenhum hex novo") — nunca um hex inventado aqui. */
+export function planCardToneColor(tone: PlanCardAccentTone): string {
+  return PLAN_CARD_TONE_COLOR[tone];
+}
+
 export function buildPlanCardTags(input: PlanCardTagsInput): readonly PlanCardTag[] {
   const tags: PlanCardTag[] = [];
 

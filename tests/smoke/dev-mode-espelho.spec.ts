@@ -276,7 +276,9 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   const diskBefore = fingerprint(fixtureRepo);
   const stateBefore = fingerprint(stateRoot);
 
-  await window.locator('[data-testid="devmode-toggle"] input[role="switch"]').check();
+  // Item 1 (rodada de forma fix/009-board-real-e-modal) — o switch "Modo Dev"
+  // virou SegmentedControl "Uso geral | Dev" (titlebar v3).
+  await window.locator('[data-testid="devmode-toggle"]').getByRole('radio', { name: 'Dev' }).click();
   await expect(window.locator('[data-testid="devmode-map"]')).toBeVisible();
 
   // === T327/CA-12/Decisão B — as 4 etiquetas do card de plano =============

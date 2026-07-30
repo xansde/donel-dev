@@ -11,6 +11,7 @@ import {
   type LevelCarouselLevel,
 } from '@donel-dev/design-system';
 import type { PhaseNode } from '../../../main/discovery-tree';
+import type { BoardFacts } from '../../../shared';
 import type { AnnotatedDiscoveryTree, AnnotatedPlanCardNode } from '../../../shared/boardAnnotation';
 import type { EsteiraPhase, PhaseDefaultsTable } from '../../../shared/devMode';
 import type { PhasePullRequestFacts } from '../../../shared/githubFacts';
@@ -20,11 +21,14 @@ import {
   canonicalLevelKeys,
   computeHomologationDeadline,
   formatDeadlineAbsolute,
+  planCardToneColor,
+  resolvePlanCardTone,
   shouldPromoteClockToStatusBar,
   type MapLevelKey,
   type PlanCardTag,
 } from '../../../shared/mapLevels';
 import type { PhaseStatus } from '../../../shared/phaseState';
+import { formatRelativeTime } from '../../../shared/sessions';
 import styles from './DiscoveryMap.module.css';
 
 // Lote 7 (009-modo-dev-v3) — CA-7..CA-16: o mapa vira o carrossel de dois
@@ -68,6 +72,13 @@ export interface PromotedHomologationClock {
 export interface DiscoveryMapProps {
   /** T327 — a árvore JÁ ANOTADA pelo espelho (`annotateTree`). Sem fonte de board, os campos de anotação chegam vazios e o mapa degrada por omissão. */
   tree: AnnotatedDiscoveryTree;
+  /**
+   * Item 5 da rodada de forma (fix/009-board-real-e-modal) — os 4 fatos do
+   * CA-12 para o card RAIZ (discovery), buscados pela mesma via dos cards de
+   * plano (`get_task_details`, App.tsx). `null` sem fonte de board — o card
+   * mostra só o id (nunca fabrica título).
+   */
+  discoveryBoardFacts: BoardFacts | null;
   phaseDefaults: PhaseDefaultsTable;
   focusedPlanCardId: string | null;
   selectedNode: SelectedPhaseNode | null;
@@ -93,8 +104,12 @@ export interface DiscoveryMapProps {
 interface DiscoveryCardContent {
   readonly kind: 'discovery';
   readonly discoveryCardId: string;
-  readonly planCardCount: number;
-  readonly allComplete: boolean;
+  /** Título real do board (`discoveryBoardFacts.title`) — `null` sem fonte (item 5: "sem título, mostre só o id", nunca fabricado). */
+  readonly title: string | null;
+  /** "N plano(s) rodando" — `null` sem nenhum card de plano em execução (item 5: derivado do status real, omitido sem dado). */
+  readonly runningBadge: string | null;
+  /** "N planos" — `null` sem card de plano nenhum ainda. */
+  readonly footer: string | null;
 }
 
 interface TrilhaRenderItem {
@@ -112,6 +127,9 @@ interface TrilhaRenderItem {
 interface PlanoCardContent {
   readonly kind: 'plano';
   readonly planCard: AnnotatedPlanCardNode;
+  /** 'worktree' (track código) ou `null` (track documental, ou worktree ainda não existe — item 6: nunca fabricado). */
+  readonly metaLabel: string | null;
+  readonly metaValue: string | null;
   readonly tags: readonly PlanCardTag[];
   /** Só quando o card está em foco (CA-13 — a trilha vive no card em foco). */
   readonly trilha: readonly TrilhaRenderItem[] | null;
@@ -126,8 +144,10 @@ interface FaseCardContent {
   readonly faseNum: number;
   readonly titulo: string;
   readonly node: PhaseNode;
+  /** Etiqueta à direita do título (item 8) — estado do PR desta fase; `null` sem PR resolvido ainda. */
   readonly prLabel: string | null;
-  readonly garantiaTipo: string | null;
+  /** Rodapé "garantia <tipo> · merge <relativo>" (item 8) — `null` sem os dois fatos. */
+  readonly footerMeta: string | null;
   readonly clock: { absoluteLabel: string; deadline: number } | null;
 }
 
@@ -157,6 +177,14 @@ function prStatusLabel(pr: PhasePullRequestFacts | null | undefined): string | n
 
 function prKey(cardId: string, faseNum: number): string {
   return `${cardId}:${faseNum}`;
+}
+
+/** Item 8 — "garantia <tipo> · merge <relativo>" no rodapé do card de fase; cada metade some sem o fato correspondente (nunca fabricado). */
+function faseFooterMeta(garantiaTipo: string | null, mergedAt: string | null, now: number): string | null {
+  const mergedMs = mergedAt ? Date.parse(mergedAt) : NaN;
+  const mergeRelative = Number.isNaN(mergedMs) ? null : `merge ${formatRelativeTime(mergedMs, now)}`;
+  const parts = [garantiaTipo ? `garantia ${garantiaTipo}` : null, mergeRelative].filter((part): part is string => part !== null);
+  return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 // A fase `discovery` é do CARD RAIZ, nunca do card de plano em si — nada
@@ -189,6 +217,7 @@ function documentalTrilhaSteps(planCard: AnnotatedPlanCardNode): readonly { phas
 
 export function DiscoveryMap({
   tree,
+  discoveryBoardFacts,
   phaseDefaults: _phaseDefaults,
   focusedPlanCardId,
   selectedNode,
@@ -259,14 +288,19 @@ export function DiscoveryMap({
     const result: LevelCarouselLevel<MapCardContent>[] = [];
 
     if (levelKeys.includes('discovery')) {
+      // Item 5 — "N plano(s) rodando" derivado do status REAL (mesma tabela
+      // que já decide o rótulo do card de plano, `planCardStatusLabel`);
+      // omitido sem nenhum plano em execução (nunca "0 planos rodando").
+      const runningCount = tree.planCards.filter((planCard) => planCardStatusLabel(planCard) === 'em execução').length;
       const discoveryCard: LevelCarouselCard<MapCardContent> = {
         id: tree.discoveryCardId,
-        accent: 'var(--accent)',
+        accent: tree.allPlanCardsComplete ? 'var(--zone-ok)' : 'var(--accent)',
         content: {
           kind: 'discovery',
           discoveryCardId: tree.discoveryCardId,
-          planCardCount: tree.planCards.length,
-          allComplete: tree.allPlanCardsComplete,
+          title: discoveryBoardFacts?.title || null,
+          runningBadge: runningCount > 0 ? `${runningCount} ${runningCount === 1 ? 'plano rodando' : 'planos rodando'}` : null,
+          footer: tree.planCards.length > 0 ? `${tree.planCards.length} ${tree.planCards.length === 1 ? 'plano' : 'planos'}` : null,
         },
       };
       result.push({
@@ -338,16 +372,36 @@ export function DiscoveryMap({
                 : null
             : null;
 
+          const statusLabel = planCardStatusLabel(planCard);
+          // Item 7 — o tone segue o ESTADO real do card (mesma prioridade das
+          // etiquetas do CA-16), nunca fixo em verde.
+          const accent = planCardToneColor(
+            resolvePlanCardTone({ hasDivergence: divergence !== null, isLocked: Boolean(lockedHere), statusLabel }),
+          );
+          // Item 6 — a faixa "worktree <path>" (track código; track
+          // documental não tem fonte equivalente hoje — omitida, nunca
+          // fabricada). Primeira fase com o dado vence: implementar é onde a
+          // worktree nasce, validar/plano ficam de reforço.
+          const worktreePath =
+            planCard.track === 'codigo'
+              ? (planCard.phases.implementar.artifacts.worktreePath ??
+                planCard.phases.validar.artifacts.worktreePath ??
+                planCard.phases.plano.artifacts.worktreePath ??
+                null)
+              : null;
+
           return {
             id: planCard.cardId,
-            accent: divergence ? 'var(--state-permission)' : 'var(--zone-ok)',
+            accent,
             content: {
               kind: 'plano',
               planCard,
+              metaLabel: worktreePath ? 'worktree' : null,
+              metaValue: worktreePath,
               tags,
               trilha,
               action,
-              statusLabel: planCardStatusLabel(planCard),
+              statusLabel,
             },
           } satisfies LevelCarouselCard<MapCardContent>;
         }),
@@ -386,7 +440,10 @@ export function DiscoveryMap({
               titulo: fase.titulo ?? `Fase ${fase.faseNum}`,
               node: fase.implementar,
               prLabel: prStatusLabel(pr),
-              garantiaTipo: null,
+              // Item 8 — a garantia é da FASE (declarada pelo plano, `PlanCardFaseNode.garantia`),
+              // a mesma fonte que o painel de detalhe já usa (`phaseDetailsView.ts`) — não o
+              // `outputs.garantia` do manifesto de validar (fonte antiga, só existia pro card de validar).
+              footerMeta: faseFooterMeta(fase.garantia?.tipo ?? null, pr?.mergedAt ?? null, now),
               clock: null,
             },
           } satisfies LevelCarouselCard<MapCardContent>;
@@ -409,7 +466,6 @@ export function DiscoveryMap({
         cards: focusedPlanCard.fases.map((fase) => {
           const pr = phasePullRequestFacts[prKey(focusedPlanCard.cardId, fase.faseNum)] ?? null;
           const deadline = computeHomologationDeadline(pr ?? null);
-          const garantiaTipo = fase.validar.artifacts.result?.outputs.garantia?.tipo ?? null;
           return {
             id: `${focusedPlanCard.cardId}:val:${fase.faseNum}`,
             accent: fase.validar.status === 'done' ? 'var(--zone-ok)' : 'var(--state-waiting)',
@@ -421,7 +477,7 @@ export function DiscoveryMap({
               titulo: fase.titulo ?? `Fase ${fase.faseNum}`,
               node: fase.validar,
               prLabel: prStatusLabel(pr),
-              garantiaTipo,
+              footerMeta: faseFooterMeta(fase.garantia?.tipo ?? null, pr?.mergedAt ?? null, now),
               clock: deadline !== null ? { absoluteLabel: formatDeadlineAbsolute(deadline, now), deadline } : null,
             },
           } satisfies LevelCarouselCard<MapCardContent>;
@@ -440,6 +496,7 @@ export function DiscoveryMap({
   }, [
     levelKeys,
     tree,
+    discoveryBoardFacts,
     focusedPlanCard,
     effectiveLevelKey,
     planLevelLabel,
@@ -487,23 +544,23 @@ export function DiscoveryMap({
 
 function renderMapCard(content: MapCardContent, focused: boolean): React.JSX.Element {
   if (content.kind === 'discovery') {
+    // Item 5 — linha 1: id + título real do board (`null` = mostra só o id,
+    // nunca fabricado) + etiqueta de planos rodando; rodapé: "N planos".
     return (
       <div className={styles.cardBody} data-testid={`devmode-map-discovery-${content.discoveryCardId}`}>
         <div className={styles.cardTop}>
           <span className={styles.cardIcon}>◈</span>
           <span className={styles.cardId}>{content.discoveryCardId}</span>
-          <span className={styles.cardTitle}>Discovery em foco</span>
+          <span className={styles.cardTitle}>{content.title ?? ''}</span>
+          {content.runningBadge ? <span className={styles.cardStatus}>{content.runningBadge}</span> : null}
         </div>
-        <p className={styles.cardPlain}>
-          {content.planCardCount} card(s) de plano na frente.
-          {content.allComplete ? ' Todos concluídos.' : ''}
-        </p>
+        {content.footer ? <div className={styles.cardFooterMeta}>{content.footer}</div> : null}
       </div>
     );
   }
 
   if (content.kind === 'plano') {
-    const { planCard, tags, trilha, action, statusLabel } = content;
+    const { planCard, metaLabel, metaValue, tags, trilha, action, statusLabel } = content;
     return (
       <div className={styles.cardBody} data-testid={`devmode-map-plano-${planCard.cardId}`} data-focused={focused ? 'true' : 'false'}>
         <div className={styles.cardTop}>
@@ -512,8 +569,17 @@ function renderMapCard(content: MapCardContent, focused: boolean): React.JSX.Ele
           <span className={styles.cardTitle}>{planCard.boardFacts?.title || planCard.cardId}</span>
           <span className={styles.cardStatus}>{statusLabel}</span>
         </div>
-        {tags.length > 0 ? (
+        {/* Item 6 — a faixa "worktree <path>" (metaLabel/metaValue) e as 4
+            etiquetas da Decisão B (board/trava/atenção/prazo) vivem na MESMA
+            linha, como no mockup — nunca duas faixas separadas. */}
+        {metaLabel || tags.length > 0 ? (
           <div className={styles.cardTags} data-testid={`devmode-map-plano-tags-${planCard.cardId}`}>
+            {metaLabel ? (
+              <>
+                <span className={styles.cardMetaLabel}>{metaLabel}</span>
+                <span className={styles.cardMetaValue}>{metaValue}</span>
+              </>
+            ) : null}
             {tags.map((tag) => (
               <AnnotationTag key={tag.text} tone={tag.tone}>
                 {tag.text}
@@ -570,17 +636,18 @@ function renderMapCard(content: MapCardContent, focused: boolean): React.JSX.Ele
   }
 
   // content.kind === 'fase' (Implementação/Validação, CA-11/CA-12)
+  // Item 8 — linha "fase N <título>" + etiqueta de PR à direita (quando
+  // resolvido); rodapé "garantia <tipo> · merge <relativo>" (cada metade some
+  // sem o fato correspondente — nunca fabricada).
   return (
     <div className={styles.cardBody} data-testid={`devmode-map-fase-${content.role}-${content.cardId}-${content.faseNum}`}>
       <div className={styles.cardTop}>
         <span className={styles.cardIcon}>{content.role === 'implementar' ? '⑂' : '◷'}</span>
         <span className={styles.cardId}>fase {content.faseNum}</span>
         <span className={styles.cardTitle}>{content.titulo}</span>
+        {content.prLabel ? <span className={styles.cardStatus}>{content.prLabel}</span> : null}
       </div>
-      <div className={styles.cardTags}>
-        {content.prLabel ? <AnnotationTag tone="ok">{content.prLabel}</AnnotationTag> : null}
-        {content.garantiaTipo ? <AnnotationTag tone="muted">{content.garantiaTipo}</AnnotationTag> : null}
-      </div>
+      {content.footerMeta ? <div className={styles.cardFooterMeta}>{content.footerMeta}</div> : null}
       {content.role === 'validar' && content.clock ? (
         <div className={styles.cardClock}>
           <HomologationClock absoluteLabel={content.clock.absoluteLabel} deadline={content.clock.deadline} now={Date.now()} />
