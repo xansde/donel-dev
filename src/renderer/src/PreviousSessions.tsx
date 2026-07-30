@@ -230,6 +230,10 @@ export function PreviousSessions({
                 <span>Conta</span>
                 <span>Contexto</span>
                 <span>Quando</span>
+                {/* Célula vazia na 7ª coluna (ações) — mesma contagem de filhos que
+                    `.row`, pro grid do cabeçalho resolver o MESMO layout (ver
+                    comentário de `.tableGridColumns`, PreviousSessions.module.css). */}
+                <span aria-hidden="true" />
               </div>
               <ul className={styles.table}>
                 {filtered.map((session) => {

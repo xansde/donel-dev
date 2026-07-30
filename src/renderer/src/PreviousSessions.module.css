@@ -116,9 +116,8 @@
 }
 
 /* === Tabela (mockup linhas 490-504): SESSÃO · ETAPA · CONTA · CONTEXTO ·
-   QUANDO — a 7ª coluna (ações) não existe no desenho; reservada e revelada
-   no hover/foco da linha, pra não reflow ("adapte à forma de tabela" mantendo
-   Retomar/Fork). */
+   QUANDO — a 7ª coluna (ações) não existe no desenho; reservada pra
+   Retomar/Fork (nossos, sem equivalente no mockup). */
 .tableWrap {
   flex: 1;
   min-height: 0;
@@ -127,8 +126,18 @@
   overflow: hidden;
 }
 
+/* FIX (revisão do orquestrador, app-06 regenerado) — `.tableHeader` e
+   `.row` são DUAS grades separadas (um `<div>` e um `<li>`, não a mesma
+   grade); cada uma resolve `1fr`/`auto` a partir do PRÓPRIO conteúdo. A
+   última coluna era `auto`: vazia no cabeçalho (nenhum filho na posição 7)
+   ela cai a 0px, mas na linha os botões Retomar/Fork pedem ~150px — o
+   mesmo `1fr` da coluna Etapa absorve essa diferença e resolve num valor
+   DIFERENTE em cada grade, desalinhando tudo à direita dele (Conta,
+   Contexto, Quando). Trocar `auto` por um px fixo (nunca dependente de
+   conteúdo) faz as duas grades convergirem pro mesmo layout; o cabeçalho
+   ganhou uma 7ª célula vazia (`.tsx`) só pra ocupar essa coluna também. */
 .tableGridColumns {
-  grid-template-columns: 22px minmax(140px, 220px) 1fr minmax(100px, 150px) 90px 84px auto;
+  grid-template-columns: 22px minmax(140px, 220px) 1fr minmax(100px, 150px) 90px 84px 160px;
 }
 
 .tableHeader {

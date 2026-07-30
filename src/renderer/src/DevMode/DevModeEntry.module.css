@@ -35,17 +35,28 @@
   min-width: 0;
 }
 
+/* FIX (revisão do orquestrador, app-04 regenerado) — o fix acima consertou o
+   vazamento, mas `.columnFilter` com `flex: none` (shrink: 0) e
+   `max-width: 100%` continuava reivindicando até a largura INTEIRA da linha
+   (seu conteúdo natural, ~590px, sob o cap de 100% do container) antes do
+   filtro ganhar qualquer espaço — o input sobrava com uns 30px, só o "F" do
+   placeholder. `flex: 1` sozinho tem `flex-basis: 0%`, então cresce SÓ no
+   que sobra depois do irmão fixo; por isso o `min-width` explícito abaixo
+   garante uma largura útil mínima, do jeito que o mockup desenha (linha
+   406-411: TextInput ao lado do SegmentedControl, os dois com espaço). */
 .filterInput {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 180px;
+  min-width: 180px;
 }
 
-/* O SegmentedControl de coluna nunca encolhe os próprios segmentos (cada um
-   é texto + padding fixo) — quando não cabe, rola CONTIDO na largura do
-   modal em vez de vazar por cima da borda. */
+/* Mockup linha 410 (`hint-size="260px,30px"`) — o SegmentedControl de coluna
+   tem 260px de largura própria, nunca mais. Agora com `flex-shrink` ligado
+   (era `flex: none`), ele cede espaço pro filtro antes de rolar contido; só
+   quando os 7 segmentos não cabem nem em 260px é que `overflow-x: auto`
+   entra (rola DENTRO do próprio controle, nunca o input que encolhe). */
 .columnFilter {
-  flex: none;
-  max-width: 100%;
+  flex: 0 1 260px;
+  max-width: 260px;
   overflow-x: auto;
 }
 

@@ -2178,8 +2178,19 @@ export function App(): React.JSX.Element {
       >
         {/* CA-20 — a tela de hoje continua MONTADA quando o Modo Dev liga
             (só oculta por CSS): nada de remontar sidebar/abas, nada de PTY
-            recriado. Mesmo princípio já usado nas abas de terminal (T007). */}
-        <div className={devModeOn || sidebarCollapsed ? styles.zoneHidden : styles.zone} data-testid="today-sidebar">
+            recriado. Mesmo princípio já usado nas abas de terminal (T007).
+            FIX (revisão do orquestrador, app-06 regenerado) — "Sessões
+            anteriores" (item 11) é uma TELA irmã de `.body` na MESMA linha
+            do grid (`.previousSessionsScreen`, `grid-row: 2`), não um
+            `Modal` portalizado: sem esconder esta zona também, o rótulo
+            "PROJETOS" e a scrollbar da sidebar continuavam vivos por baixo
+            e vazavam na borda inferior do print — mesmo princípio de
+            `devModeOn`, mais um caso que reorganiza o miolo por cima da
+            tela de hoje. */}
+        <div
+          className={devModeOn || sidebarCollapsed || previousSessionsProject !== null ? styles.zoneHidden : styles.zone}
+          data-testid="today-sidebar"
+        >
         <ProjectSidebar
           projects={projects}
           loadingProjects={loadingProjects}
