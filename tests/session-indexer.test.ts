@@ -66,6 +66,7 @@ describe('readSessionPreview — filtros do FR-004', () => {
     expect(result).toEqual({
       preview: 'Summarize the placeholder document and list the next three action items.',
       corrupted: false,
+      firstCommandLine: null,
     });
   });
 
@@ -76,6 +77,12 @@ describe('readSessionPreview — filtros do FR-004', () => {
     expect(result).toEqual({
       preview: 'Check the placeholder API status page and report anything red.',
       corrupted: false,
+      // Fix #20 — a fixture abre com `/clear`; firstCommandLine captura o
+      // comando cru independente do filtro que exclui esse payload de
+      // `preview` (é o comportamento que #20 precisava para sessões
+      // `/esteira-*`, este fixture só confirma que também funciona p/ um
+      // slash-command qualquer).
+      firstCommandLine: '/clear',
     });
   });
 
@@ -83,7 +90,7 @@ describe('readSessionPreview — filtros do FR-004', () => {
     const path = fixturePath('only-control-no-user.jsonl');
     const result = await readSessionPreview(path, await sizeOf(path));
 
-    expect(result).toEqual({ preview: '(sem mensagem de usuário)', corrupted: false });
+    expect(result).toEqual({ preview: '(sem mensagem de usuário)', corrupted: false, firstCommandLine: null });
   });
 
   it('tolerates a corrupted line without derailing the scan — finds the genuine message after it', async () => {
@@ -93,6 +100,7 @@ describe('readSessionPreview — filtros do FR-004', () => {
     expect(result).toEqual({
       preview: 'Draft a placeholder release note for version 1.2.0.',
       corrupted: false,
+      firstCommandLine: null,
     });
   });
 
@@ -100,7 +108,7 @@ describe('readSessionPreview — filtros do FR-004', () => {
     const path = fixturePath('fully-corrupted.jsonl');
     const result = await readSessionPreview(path, await sizeOf(path));
 
-    expect(result).toEqual({ preview: '(ilegível)', corrupted: true });
+    expect(result).toEqual({ preview: '(ilegível)', corrupted: true, firstCommandLine: null });
   });
 
   it('treats a 0-byte transcript as "(sem mensagem de usuário)", not corrupted', async () => {
@@ -109,7 +117,7 @@ describe('readSessionPreview — filtros do FR-004', () => {
 
     const result = await readSessionPreview(path, 0);
 
-    expect(result).toEqual({ preview: '(sem mensagem de usuário)', corrupted: false });
+    expect(result).toEqual({ preview: '(sem mensagem de usuário)', corrupted: false, firstCommandLine: null });
   });
 
   it('skips a user message whose content is only a tool_result block (not typed by the user), and finds the real one after it', async () => {
@@ -119,6 +127,7 @@ describe('readSessionPreview — filtros do FR-004', () => {
     expect(result).toEqual({
       preview: 'Now write a placeholder haiku about deployment pipelines.',
       corrupted: false,
+      firstCommandLine: null,
     });
   });
 
@@ -129,6 +138,7 @@ describe('readSessionPreview — filtros do FR-004', () => {
     expect(result).toEqual({
       preview: 'Review the attached placeholder screenshot and list issues.',
       corrupted: false,
+      firstCommandLine: null,
     });
   });
 
@@ -136,7 +146,18 @@ describe('readSessionPreview — filtros do FR-004', () => {
     const path = fixturePath('whitespace-only-user-message.jsonl');
     const result = await readSessionPreview(path, await sizeOf(path));
 
-    expect(result).toEqual({ preview: '(sem mensagem de usuário)', corrupted: false });
+    expect(result).toEqual({ preview: '(sem mensagem de usuário)', corrupted: false, firstCommandLine: null });
+  });
+
+  it('Fix #20 — extracts firstCommandLine from an /esteira-* slash-command payload without changing preview (which still skips to the next genuine message)', async () => {
+    const path = fixturePath('esteira-command.jsonl');
+    const result = await readSessionPreview(path, await sizeOf(path));
+
+    expect(result).toEqual({
+      preview: 'Segue o contexto do card.',
+      corrupted: false,
+      firstCommandLine: '/esteira-implementar PRJ-143 --fase=1',
+    });
   });
 
   it('normalizes whitespace/newlines and truncates long previews to MAX_PREVIEW_LENGTH', async () => {

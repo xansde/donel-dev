@@ -24,6 +24,8 @@ import type {
   EsteiraPhase,
   NotificationPreference,
   PhaseArchivedPayload,
+  PhaseNode,
+  PlanCardNode,
   ProfileHeadroomMap,
   ProjectInfo,
   ProjectScanMode,
@@ -48,6 +50,7 @@ import { sortProjects } from '../../shared';
 // Lote 4/7 (009-modo-dev-v3) — PR da fase por `gh` (CA-3), consumido pelo
 // mapa (estado do PR desce pro card da fase, CA-16) via o canal já existente.
 import type { PhasePullRequestFacts } from '../../shared/githubFacts';
+import type { PhaseStatus } from '../../shared/phaseState';
 // Lote 7 (CA-11) — `--fase=n` no comando pré-digitado (D-V4: `=`, nunca espaço).
 import { formatFaseCommand } from '../../shared/mapLevels';
 // Lote 8 (CA-18/CA-20) — monta o conteúdo rico do painel direito (breadcrumb,
@@ -229,6 +232,42 @@ function phaseKey(discoveryCardId: string, cardId: string, phase: EsteiraPhase, 
   return faseNum ? `${base}:${faseNum}` : base;
 }
 
+/**
+ * FIX (E2E 30/07, achado F4) — `discovery` é a fase do CARD RAIZ, nunca do
+ * card de plano (nada escreve `<planCardId>/discovery/…` em disco —
+ * `marco.phases.discovery` é sempre `not-started`, uma fonte que não existe).
+ * A trilha do mapa (`DiscoveryMap.tsx`) já sabia disso e usava
+ * `tree.discoveryStatus`; esta função dá ao resto do app (painel de 316px +
+ * `handlePhaseAction`, que decide o QUE arma no prompt) a MESMA fonte — CA-16,
+ * um fato num lugar só, nunca duas versões concorrentes do mesmo card.
+ * Sem artefatos/PR/sessão arquivada próprios — a etapa não é fase-indexada e
+ * não tem `ctx.md` dela mesma.
+ */
+function resolveSelectedPhaseNode(
+  marco: PlanCardNode,
+  phase: EsteiraPhase,
+  faseEntry: PlanCardNode['fases'][number] | undefined,
+  discoveryStatus: PhaseStatus,
+): PhaseNode {
+  if (phase === 'discovery') {
+    return {
+      phase: 'discovery',
+      status: discoveryStatus,
+      artifacts: {
+        ctxPath: '',
+        resultPath: null,
+        ctxExists: false,
+        result: null,
+        resultUnreadable: false,
+        worktreePath: null,
+        branch: null,
+      },
+      archivedSession: null,
+    };
+  }
+  return faseEntry && (phase === 'implementar' || phase === 'validar') ? faseEntry[phase] : marco.phases[phase];
+}
+
 /** Fallback quando quem chama não sabe (ainda) a fase do plano — implementar/validar sem `faseNum` explícito caem na fase 1 (mesmo ponto de partida do lote 2). */
 function faseNumFor(phase: EsteiraPhase): number | undefined {
   return phase === 'implementar' || phase === 'validar' ? 1 : undefined;
@@ -395,6 +434,18 @@ export function App(): React.JSX.Element {
   const [devModeOn, setDevModeOn] = useState(false);
   const [entryCards, setEntryCards] = useState<readonly EntryColumnCard[]>([]);
   const [entryLoading, setEntryLoading] = useState(false);
+  // FIX (#23, e2e-30-07 onda 2) — "filtrar por board": o app assume um board
+  // POR PROJETO (repos.json → repos.<repoSlug>.board, comentário de
+  // `effectiveBoardConfig` em main/index.ts) — não existe uma entidade "board"
+  // com nome próprio, só o par opaco workspaceId/teamId. Na ausência de um
+  // nome de board de verdade, o NOME DO PROJETO é o rótulo legível (1:1 com o
+  // board configurado nele). `null` = usa o board do projeto selecionado
+  // globalmente (`selectedProjectPath`, default de sempre); só vira um path
+  // diferente quando o operador troca de board DENTRO do modal, sem mexer no
+  // projeto selecionado em toda a app.
+  const [entryBoardRepoPath, setEntryBoardRepoPath] = useState<string | null>(null);
+  /** Projetos com board configurado (`workspaceId`+`teamId`) — as opções do seletor "Board" da porta de entrada. Recalculado toda vez que o modal abre. */
+  const [boardProjects, setBoardProjects] = useState<readonly ProjectInfo[]>([]);
   /**
    * 009-modo-dev-v3, lote 5 (CA-2) — a porta de entrada virou modal
    * ("Trocar…", `Modal v3.dc.html:397-431`). `entradaOpen` é DERIVADO, não só
@@ -437,6 +488,13 @@ export function App(): React.JSX.Element {
     cwd?: string;
     projectName?: string;
     sourceProfileSlug: string;
+    // FIX (#21) — modelo/esforço que a aba reiniciada estava mostrando ANTES
+    // do restart (`sessionModelEffort[tab.id]`, já resolvido com o fallback de
+    // `appConfig.launcherDefaults`): sem isto, `confirmRestart` reconstruía o
+    // argv só com `continuation: resume` — sem `--model`/`--effort` — e a aba
+    // nova caía no default hardcoded, "esquecendo" o valor que a StatusBar já
+    // mostrava pra ela um instante antes do reinício.
+    modelEffort: { model: ModelAlias; effort: EffortLevel };
   } | null>(null);
   /** CA-24 — mesmo hook de teste de `lastDevModeSession`/`lastLaunch`: o argv REAL montado pro resume, sem depender de ler o output do terminal. */
   const [lastRestartSession, setLastRestartSession] = useState<{ args: readonly string[]; cwd?: string } | null>(null);
@@ -565,10 +623,23 @@ export function App(): React.JSX.Element {
     // `launchArgs` (Launcher, T008) quando a aba nasceu configurada; sem
     // isso (ex.: clique direto na sidebar), cai nos defaults do Brief 3.
     if (partial.sessionType === 'claude') {
+      // FIX (#21, e2e-30-07 onda 2) — sem `--model`/`--effort` no `launchArgs`
+      // (aba nascida fora do Launcher: clique direto na sidebar, Retomar/Fork
+      // de "Sessões anteriores", Reiniciar, ou fase da esteira no Modo Dev), o
+      // fallback ERA o literal `DEFAULT_MODEL_ALIAS`/`DEFAULT_EFFORT_LEVEL`
+      // ('fable'/'high', hardcoded) — a StatusBar acabava mostrando sempre o
+      // mesmo valor fixo pra qualquer uma dessas abas, ignorando inclusive o
+      // default que o PRÓPRIO usuário configurou no Launcher
+      // (`appConfig.launcherDefaults`, persistido por T015). Cai agora no
+      // default configurado; só na ausência de qualquer config (`appConfig`
+      // ainda não carregou) usa o literal como último fallback.
       const parsed = parseModelEffortFromArgs(partial.launchArgs);
       setSessionModelEffort((prev) => ({
         ...prev,
-        [id]: { model: parsed.model ?? DEFAULT_MODEL_ALIAS, effort: parsed.effort ?? DEFAULT_EFFORT_LEVEL },
+        [id]: {
+          model: parsed.model ?? appConfig?.launcherDefaults.model ?? DEFAULT_MODEL_ALIAS,
+          effort: parsed.effort ?? appConfig?.launcherDefaults.effort ?? DEFAULT_EFFORT_LEVEL,
+        },
       }));
     }
     return id;
@@ -1192,10 +1263,7 @@ export function App(): React.JSX.Element {
     const marco = focusedTree.planCards.find((planCard) => planCard.cardId === selectedNode.cardId);
     if (!marco) return null;
     const faseEntry = selectedNode.faseNum ? marco.fases.find((fase) => fase.faseNum === selectedNode.faseNum) : undefined;
-    const node =
-      faseEntry && (selectedNode.phase === 'implementar' || selectedNode.phase === 'validar')
-        ? faseEntry[selectedNode.phase]
-        : marco.phases[selectedNode.phase];
+    const node = resolveSelectedPhaseNode(marco, selectedNode.phase, faseEntry, focusedTree.discoveryStatus);
     const faseNum = selectedNode.faseNum ?? null;
     const pr = faseNum !== null ? (phasePullRequestFacts[`${selectedNode.cardId}:${faseNum}`] ?? null) : null;
     return buildPhaseDetailsView({
@@ -1218,12 +1286,14 @@ export function App(): React.JSX.Element {
     // Item 1 (frente 2, rodada de feedback 30/07) — board é POR PROJETO agora
     // (repos.json → repos.<repoSlug>.board); passa o projeto selecionado pro
     // main preferir esse board e só cair pro global sem ele.
+    // FIX (#23) — `entryBoardRepoPath` vence quando o operador trocou de board
+    // DENTRO do modal (sem mexer no projeto selecionado globalmente).
     void window.donel.devMode
-      .listEntryCards(selectedProjectPath)
+      .listEntryCards(entryBoardRepoPath ?? selectedProjectPath)
       .then(setEntryCards)
       .catch(() => setEntryCards([]))
       .finally(() => setEntryLoading(false));
-  }, [selectedProjectPath]);
+  }, [selectedProjectPath, entryBoardRepoPath]);
 
   /** Relê do DISCO a árvore de todo discovery aberto (CA-7). Barato: `readTree` é só `existsSync`/`readFile` de manifesto. */
   const refreshDiscoveryTrees = useCallback((discoveryIds: readonly string[]): void => {
@@ -1247,6 +1317,34 @@ export function App(): React.JSX.Element {
     if (!devModeOn) return;
     refreshEntryCards();
   }, [devModeOn, refreshEntryCards]);
+
+  // FIX (#23) — descobre QUAIS projetos têm board configurado (repos.json →
+  // repos.<repoSlug>.board), pra alimentar o seletor "Board" do modal
+  // "Abrir ou trocar discovery". Roda só quando o modal abre de fato
+  // (`entradaOpen`, nunca em todo boot) — são N leituras de disco locais
+  // (`projectBinding.get` por projeto), baratas mas sem motivo de repetir
+  // enquanto o modal segue fechado. `entryBoardRepoPath` volta a `null`
+  // (board do projeto selecionado globalmente) toda vez que reabre — nunca
+  // carrega uma escolha "esquecida" de uma sessão anterior do modal.
+  useEffect(() => {
+    if (!entradaOpen) return;
+    setEntryBoardRepoPath(null);
+    let cancelled = false;
+    void Promise.all(
+      projects.map((project) =>
+        window.donel.projectBinding
+          .get(project.path)
+          .then((binding) => (binding.workspaceId && binding.teamId ? project : null))
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      setBoardProjects(results.filter((project): project is ProjectInfo => project !== null));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [entradaOpen, projects]);
 
   useEffect(() => {
     if (!devModeOn || openDiscoveryIds.length === 0) return;
@@ -1443,7 +1541,7 @@ export function App(): React.JSX.Element {
     if (!marco) return;
 
     const faseEntry = faseNum ? marco.fases.find((f) => f.faseNum === faseNum) : undefined;
-    const node = faseEntry && (phase === 'implementar' || phase === 'validar') ? faseEntry[phase] : marco.phases[phase];
+    const node = resolveSelectedPhaseNode(marco, phase, faseEntry, focusedTree.discoveryStatus);
     const key = phaseKey(focusedDiscovery.cardId, cardId, phase, faseNum);
     setSelectedNode({ cardId, phase, faseNum: faseNum ?? null });
     setOpenedArtifactPath(null);
@@ -1598,6 +1696,12 @@ export function App(): React.JSX.Element {
         projectName: tab.projectName,
         // CA-25 — perfil de NASCIMENTO da aba (`sessionProfiles`, T707/handleProfileResolved), nunca o perfil ATIVO agora.
         sourceProfileSlug: sessionProfiles[tab.id]?.slug ?? activeProfileSlug,
+        // FIX (#21) — o que a StatusBar mostra pra esta aba AGORA, mesma
+        // resolução de `addTab` (launchArgs > launcherDefaults > literal).
+        modelEffort: {
+          model: sessionModelEffort[tab.id]?.model ?? appConfig?.launcherDefaults.model ?? DEFAULT_MODEL_ALIAS,
+          effort: sessionModelEffort[tab.id]?.effort ?? appConfig?.launcherDefaults.effort ?? DEFAULT_EFFORT_LEVEL,
+        },
       });
     } catch {
       setDevModeToast('Não foi possível preparar o reinício desta sessão.');
@@ -1644,7 +1748,15 @@ export function App(): React.JSX.Element {
         // `prev => [...prev, novo]`) compõe corretamente em cima do resultado
         // do close, processado antes dele na mesma fila de updates do React.
         closeTabImmediately(target.tabId);
-        const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId: target.sessionId } });
+        // FIX (#21) — leva o modelo/esforço que a aba já mostrava (capturado em
+        // `handleOpenRestart`) pro argv real do resume: sem isto, a aba nova
+        // nascia sem `--model`/`--effort` e `addTab` caía no fallback,
+        // "esquecendo" o valor que estava na StatusBar um instante antes.
+        const args = buildClaudeArgs({
+          model: target.modelEffort.model,
+          effort: target.modelEffort.effort,
+          continuation: { type: 'resume', sessionId: target.sessionId },
+        });
         setLastRestartSession({ args, cwd: target.cwd });
         addTab({
           name: target.projectName ?? 'Sessão reiniciada',
@@ -2262,6 +2374,13 @@ export function App(): React.JSX.Element {
             defaultRepoPath={selectedProjectPath}
             onSelectCard={handleSelectEntryCard}
             loading={entryLoading}
+            // FIX (#23) — "mostrar o nome do board" + "filtrar por board":
+            // sem entidade "board" própria (só o par opaco workspaceId/
+            // teamId), o nome do PROJETO é o rótulo — 1:1 com o board
+            // configurado nele (`effectiveBoardConfig`, main/index.ts).
+            boardProjects={boardProjects}
+            activeBoardRepoPath={entryBoardRepoPath ?? selectedProjectPath}
+            onSwitchBoard={setEntryBoardRepoPath}
           />
         ) : null}
 

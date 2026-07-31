@@ -245,7 +245,12 @@ export function PreviousSessions({
                 {filtered.map((session) => {
                   const isLive = Boolean(contextLabelBySessionId[session.id]);
                   const { glyph, tone } = sessionGlyph(session, isLive);
-                  const etapa = deriveSessionEtapa(session.preview);
+                  // Fix #20 (E2E 30/07) — `preview` nunca contém o texto cru
+                  // de um slash-command (FR-004 descarta esse payload de
+                  // propósito), então toda sessão da esteira caía em
+                  // "terminal comum". `firstCommandLine` (SessionIndexer)
+                  // guarda esse texto à parte, sem afetar o `preview` exibido.
+                  const etapa = deriveSessionEtapa(session.firstCommandLine ?? session.preview);
                   const accountSlug = accountBySessionId[session.id] ?? null;
                   const account = accountSlug ? (accountSlug === activeProfileSlug ? `${accountSlug} · atual` : accountSlug) : '—';
                   const context = contextLabelBySessionId[session.id] ?? '—';

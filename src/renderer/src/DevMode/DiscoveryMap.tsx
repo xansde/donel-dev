@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AnnotationTag,
   Button,
@@ -21,6 +21,7 @@ import {
   canonicalLevelKeys,
   computeHomologationDeadline,
   formatDeadlineAbsolute,
+  moveLevelFocus,
   nextLevelPreview,
   planCardToneColor,
   resolvePlanCardTone,
@@ -209,14 +210,27 @@ function faseFooterMeta(garantiaTipo: string | null, mergedAt: string | null, no
 // fonte pra ela) e a trilha pararia ali no 1º passo pra todo card de plano.
 // Um card de plano só existe porque a discovery da árvore já rodou e
 // declarou `plan_cards[]` — a etapa "discovery" da trilha é, por construção,
-// sempre `done` (mesmo dado do mockup: `{id:'discovery', st:'concluida'}`
-// em toda fixture de trilha, sem exceção).
-const DISCOVERY_STEP = { phase: 'discovery' as const, status: 'done' as const, key: 'discovery' };
+// (quase) sempre `done`.
+//
+// FIX (E2E 30/07, achado F4) — antes este status vinha HARDCODED (`'done'`),
+// nunca lido do disco: o painel de 316px (`PhaseDetailsPanel`), ao mostrar a
+// MESMA etapa `discovery` selecionada, lia `marco.phases.discovery.status`
+// (a fonte que o comentário acima já explica que não existe — sempre
+// `not-started`) e discordava da trilha, achando `CA-16` ("cada fato num
+// lugar só"). Agora as duas fontes usam o MESMO campo — `tree.discoveryStatus`
+// (`buildDiscoveryTree`, já lido do `discovery-result.json` do card raiz) —
+// nunca mais duas versões concorrentes do mesmo fato.
+function discoveryStep(discoveryStatus: PhaseStatus): { phase: 'discovery'; status: PhaseStatus; key: string } {
+  return { phase: 'discovery', status: discoveryStatus, key: 'discovery' };
+}
 
 /** CA-13 — as etapas do CAMINHO DE CÓDIGO: discovery, plano, e cada fase declarada (implementar-N, validar-N), na ordem. */
-function codigoTrilhaSteps(planCard: AnnotatedPlanCardNode): readonly { phase: EsteiraPhase; faseNum?: number; status: PhaseStatus; key: string }[] {
+function codigoTrilhaSteps(
+  planCard: AnnotatedPlanCardNode,
+  discoveryStatus: PhaseStatus,
+): readonly { phase: EsteiraPhase; faseNum?: number; status: PhaseStatus; key: string }[] {
   const steps: { phase: EsteiraPhase; faseNum?: number; status: PhaseStatus; key: string }[] = [
-    DISCOVERY_STEP,
+    discoveryStep(discoveryStatus),
     { phase: 'plano', status: planCard.phases.plano.status, key: 'plano' },
   ];
   for (const fase of planCard.fases) {
@@ -227,8 +241,11 @@ function codigoTrilhaSteps(planCard: AnnotatedPlanCardNode): readonly { phase: E
 }
 
 /** CA-18 — o caminho DOCUMENTAL é só Discovery → Documentar (D-V5: o valor é `documentar`; "Documentação" é rótulo do chip). */
-function documentalTrilhaSteps(planCard: AnnotatedPlanCardNode): readonly { phase: EsteiraPhase; faseNum?: number; status: PhaseStatus; key: string }[] {
-  return [DISCOVERY_STEP, { phase: 'documentar', status: planCard.phases.documentar.status, key: 'documentar' }];
+function documentalTrilhaSteps(
+  planCard: AnnotatedPlanCardNode,
+  discoveryStatus: PhaseStatus,
+): readonly { phase: EsteiraPhase; faseNum?: number; status: PhaseStatus; key: string }[] {
+  return [discoveryStep(discoveryStatus), { phase: 'documentar', status: planCard.phases.documentar.status, key: 'documentar' }];
 }
 
 export function DiscoveryMap({
@@ -268,6 +285,40 @@ export function DiscoveryMap({
 
   const clampedImplIndex = Math.min(implFaseIndex, Math.max(0, faseCount - 1));
   const clampedValIndex = Math.min(valFaseIndex, Math.max(0, faseCount - 1));
+
+  // FIX (E2E 30/07, F1) — eixo vertical navega nos dois sentidos, como o
+  // horizontal já faz (`onPrevCard`/`onNextCard`). `moveLevelFocus` é a MESMA
+  // aritmética pura de `mapLevels.ts`; aqui só os dois gestos que faltavam
+  // (roda do mouse + setas ↑/↓). Debounce no wheel: cada "degrau" de scroll
+  // do trackpad dispara várias dezenas de eventos — sem represar, o mapa
+  // saltaria vários níveis por um gesto só.
+  const lastWheelAtRef = useRef(0);
+  const moveLevel = useCallback(
+    (direction: 1 | -1) => setFocusedLevelKey((current) => moveLevelFocus(levelKeys, current, direction)),
+    [levelKeys],
+  );
+  const handleMapWheel = useCallback(
+    (event: React.WheelEvent<HTMLElement>) => {
+      if (Math.abs(event.deltaY) < 4) return;
+      const now = Date.now();
+      if (now - lastWheelAtRef.current < 260) return;
+      lastWheelAtRef.current = now;
+      moveLevel(event.deltaY > 0 ? 1 : -1);
+    },
+    [moveLevel],
+  );
+  const handleMapKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLElement>) => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        moveLevel(1);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        moveLevel(-1);
+      }
+    },
+    [moveLevel],
+  );
 
   // Decisão A — a fase "aberta" (com janela de homologação correndo): a
   // primeira cujo PR mergeado ainda não foi homologado/revertido.
@@ -371,7 +422,10 @@ export function DiscoveryMap({
                   )
                 : null,
           });
-          const steps = planCard.track === 'documental' ? documentalTrilhaSteps(planCard) : codigoTrilhaSteps(planCard);
+          const steps =
+            planCard.track === 'documental'
+              ? documentalTrilhaSteps(planCard, tree.discoveryStatus)
+              : codigoTrilhaSteps(planCard, tree.discoveryStatus);
           const trilhaSteps = buildTrilha(steps.map((s) => ({ id: s.key, status: s.status })));
           const trilha: TrilhaRenderItem[] | null = focused
             ? trilhaSteps.map((step, index) => {
@@ -547,7 +601,14 @@ export function DiscoveryMap({
   ]);
 
   return (
-    <aside className={styles.map} aria-label="Mapa do discovery" data-testid="devmode-map">
+    <aside
+      className={styles.map}
+      aria-label="Mapa do discovery"
+      data-testid="devmode-map"
+      tabIndex={0}
+      onWheel={handleMapWheel}
+      onKeyDown={handleMapKeyDown}
+    >
       {/* CA-7 (mockup linhas 71-79) — o cabeçalho "Esteira · id · Trocar…"
           mora DENTRO do painel de 480px, não numa faixa à parte. */}
       <header className={styles.header}>

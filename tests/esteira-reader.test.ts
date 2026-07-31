@@ -224,6 +224,43 @@ describe('readPhaseArtifacts', () => {
       expect(artifacts.resultPath).toBeNull();
       expect(artifacts.result).toBeNull();
     });
+
+    // FIX (E2E 30/07, achado F3) — o ctx.md é POR TIPO de fase (implementar),
+    // não por fase_num: fase 2 herdava o ctx.md que a fase 1 já escreveu e
+    // `ctxExists` virava `true` sem a fase 2 ter rodado nada, o que
+    // `derivePhaseStatus` (phaseState.ts) lia como "stuck" em vez de
+    // "not-started". `ctxExists` por fase_num agora também exige que o
+    // `handoffs/fase-<n>/<fase>-result.json` daquele fase_num específico já
+    // tenha aparecido — o único sinal por-fase-num disponível no disco.
+    it('fase 1 já rodou (ctx.md + result existem) → ctxExists true', () => {
+      const io = fakeIo({
+        [IMPL_CTX]: '---\ncard_id: card-1\n---\n',
+        [IMPL_RESULT_FASE_1]: implementarManifest(1),
+      });
+      const fase1 = readPhaseArtifacts({ ...ROOT, cardId: 'card-1', fase: 'implementar', faseNum: 1 }, io);
+      expect(fase1.ctxExists).toBe(true);
+    });
+
+    it('fase 2 nunca rodou (só o result da fase 1 existe) → ctxExists false, nunca herda o ctx.md da fase 1 (F3)', () => {
+      const io = fakeIo({
+        [IMPL_CTX]: '---\ncard_id: card-1\n---\n',
+        [IMPL_RESULT_FASE_1]: implementarManifest(1),
+      });
+      const fase2 = readPhaseArtifacts({ ...ROOT, cardId: 'card-1', fase: 'implementar', faseNum: 2 }, io);
+      expect(fase2.ctxExists).toBe(false);
+      expect(fase2.result).toBeNull();
+    });
+
+    it('worktreePath/branch continuam lidos do ctx.md compartilhado mesmo com ctxExists false pra fase 2 (dado ainda vale, só não conta como "rodou")', () => {
+      const io = fakeIo({
+        [IMPL_CTX]: '---\nworktree_path: /tmp/wt\nbranch: fix/x\n---\n',
+        [IMPL_RESULT_FASE_1]: implementarManifest(1),
+      });
+      const fase2 = readPhaseArtifacts({ ...ROOT, cardId: 'card-1', fase: 'implementar', faseNum: 2 }, io);
+      expect(fase2.ctxExists).toBe(false);
+      expect(fase2.worktreePath).toBe('/tmp/wt');
+      expect(fase2.branch).toBe('fix/x');
+    });
   });
 
   // CA-18 — documentar/cliente lêem direto de handoffs/<fase>-result.json,

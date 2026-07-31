@@ -87,6 +87,8 @@ export interface SessionSummaryDto {
   readonly lastActivityAt: number | null;
   /** T403 (004-nomear-sessoes) — último `custom-title` do transcript (nome dado por `/rename` no CLI); null se nunca renomeada. Entra na resolução do nome exibido (`resolveSessionName`, ./sessionName.ts); o `preview` acima continua sendo o fallback. */
   readonly customTitle: string | null;
+  /** Fix #20 — comando `/esteira-*` cru que abriu a sessão (`SessionIndexer`); alimenta `deriveSessionEtapa` porque `preview` nunca contém o texto de um slash-command (FR-004 descarta esse payload de propósito). Null quando a sessão não nasceu de um slash-command. */
+  readonly firstCommandLine: string | null;
 }
 
 /** API tipada exposta pelo preload em `window.donel.sessions`. */

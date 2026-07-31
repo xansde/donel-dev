@@ -1,9 +1,10 @@
-import { AnnotationTag, Button, Modal, SegmentedControl, Select, TextInput } from '@donel-dev/design-system';
+import { AnnotationTag, Button, Modal, SegmentedControl, TextInput } from '@donel-dev/design-system';
 import { useMemo, useState } from 'react';
 import type { EntryColumn, EntryColumnCard, ProjectInfo } from '../../../shared';
 import type { DiscoveryTree } from '../../../main/discovery-tree';
 import type { DevModeDiscoveries } from '../../../shared/devMode';
-import { isCardLinked } from './devModeSelection';
+import { filterProjectsByName } from '../../../shared/projectCatalog';
+import { isCardLinked, localOnlyDiscoveryIds } from './devModeSelection';
 import styles from './DevModeEntry.module.css';
 
 // T311 (003-modo-dev, Batch B) — porta de entrada (CA-1/CA-2).
@@ -48,6 +49,18 @@ export interface DevModeEntryProps {
   /** Card já vinculado → foca o discovery; card sem vínculo → cria (com o repo escolhido). Quem decide é `resolveEntrySelection` (puro). */
   onSelectCard: (cardId: string, repoPath: string) => void;
   loading: boolean;
+  /**
+   * FIX (#23, e2e-30-07 onda 2) — "mostrar o nome do board" + "filtrar por
+   * board": projetos com board configurado (`workspaceId`+`teamId` em
+   * `repos.json`) — as opções do seletor. Sem entidade "board" própria no
+   * app (só o par opaco workspaceId/teamId), o NOME DO PROJETO é o rótulo
+   * legível (1:1 com o board configurado nele, `effectiveBoardConfig`).
+   */
+  boardProjects: readonly ProjectInfo[];
+  /** Board cujos `cards` estão sendo mostrados agora (repoPath do projeto). */
+  activeBoardRepoPath?: string;
+  /** Troca o board em foco — App.tsx reconsulta `listEntryCards` para ele. */
+  onSwitchBoard: (repoPath: string) => void;
 }
 
 export function DevModeEntry({
@@ -60,29 +73,91 @@ export function DevModeEntry({
   defaultRepoPath,
   onSelectCard,
   loading,
+  boardProjects,
+  activeBoardRepoPath,
+  onSwitchBoard,
 }: DevModeEntryProps): React.JSX.Element | null {
   const [filter, setFilter] = useState('');
   const [column, setColumn] = useState<ColumnFilter>('todas');
-  const [repoPath, setRepoPath] = useState(defaultRepoPath ?? projects[0]?.path ?? '');
+  // FIX (#22, e2e-30-07 onda 2) — o campo do repo era um `Select` cru
+  // (lista inteira, sem busca) e nascia com um valor sempre PREENCHIDO —
+  // `defaultRepoPath` quando havia, senão o primeiro projeto do catálogo
+  // inteiro (podia "vazar" um projeto qualquer, achado da sonda de
+  // screenshots). Agora é de verdade opcional: sem `defaultRepoPath`, nasce
+  // vazio — nunca adivinha um projeto. `repoQuery` é só o texto do filtro
+  // (mesmo padrão de busca do popover "Projetos", `projectCatalog.ts`); o
+  // projeto efetivamente escolhido continua em `repoPath`.
+  const [repoPath, setRepoPath] = useState(defaultRepoPath ?? '');
+  const [repoQuery, setRepoQuery] = useState(() => projects.find((project) => project.path === (defaultRepoPath ?? ''))?.name ?? '');
+
+  const filteredRepoProjects = useMemo(() => filterProjectsByName(projects, repoQuery), [projects, repoQuery]);
+
+  const selectRepo = (project: ProjectInfo): void => {
+    setRepoPath(project.path);
+    setRepoQuery(project.name);
+  };
+
+  const clearRepo = (): void => {
+    setRepoPath('');
+    setRepoQuery('');
+  };
+
+  // FIX (E2E 30/07, achado F8) — discoveries abertos no disco/estado próprio
+  // que o board não trouxe (ex.: o `SZI-DEMO` do mock) entram na lista mesmo
+  // sem card de board — sem título/coluna fabricados, ver `localOnlyDiscoveryIds`.
+  const allCards = useMemo(() => {
+    const localOnlyIds = localOnlyDiscoveryIds(cards, discoveries);
+    if (localOnlyIds.length === 0) return cards;
+    return [...cards, ...localOnlyIds.map((cardId) => ({ cardId, column: 'discovery' as const, title: cardId }))];
+  }, [cards, discoveries]);
 
   const visibleCards = useMemo(() => {
     const needle = filter.trim().toLowerCase();
-    return cards.filter((card) => {
+    return allCards.filter((card) => {
       if (column !== 'todas' && card.column !== column) return false;
       if (!needle) return true;
       return `${card.cardId} ${card.title}`.toLowerCase().includes(needle);
     });
-  }, [cards, column, filter]);
+  }, [allCards, column, filter]);
+
+  // FIX (#23) — nome do board em foco: o nome do projeto dono dele. Busca em
+  // `projects` (não só `boardProjects`) porque o board ativo é o do projeto
+  // selecionado GLOBALMENTE (App.tsx `selectedProjectPath`) por default —
+  // pode não ter sido confirmado ainda como "tem board" quando o modal abre.
+  const activeBoardProject = projects.find((project) => project.path === activeBoardRepoPath);
+  const activeBoardLabel = activeBoardProject?.name ?? null;
 
   if (!open) return null;
 
   return (
     <Modal open={open} onClose={onClose} title="Abrir ou trocar discovery" className={styles.dialog}>
       <section className={styles.entry} aria-label="Porta de entrada do Modo Dev" data-testid="devmode-entry">
-        <p className={styles.hint}>
-          Board único · colunas Backlog, Discovery, Plano, Implementar, Validar e Documentar. Cards concluídos não
-          aparecem.
+        {/* FIX (#23) — "o id não ajuda em nada": o nome do board (= projeto
+            dono dele) substitui a frase genérica "Board único" — agora se sabe
+            DE ONDE os cards abaixo vêm. */}
+        <p className={styles.hint} data-testid="devmode-entry-board-label">
+          {activeBoardLabel ? `Board: ${activeBoardLabel}` : 'Sem board configurado'} · colunas Backlog, Discovery,
+          Plano, Implementar, Validar e Documentar. Cards concluídos não aparecem.
         </p>
+
+        {/* FIX (#23) — "filtrar por board": só aparece quando há MAIS de um
+            projeto com board configurado — com um só (o caso comum), trocar
+            não seria uma opção de verdade. */}
+        {boardProjects.length > 1 ? (
+          <div className={styles.boardSwitcher} data-testid="devmode-entry-board-switcher">
+            {boardProjects.map((project) => (
+              <button
+                key={project.path}
+                type="button"
+                className={project.path === activeBoardRepoPath ? styles.boardOptionActive : styles.boardOption}
+                onClick={() => onSwitchBoard(project.path)}
+                aria-pressed={project.path === activeBoardRepoPath}
+              >
+                {project.name}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <div className={styles.filterRow}>
           <TextInput
@@ -109,13 +184,49 @@ export function DevModeEntry({
           />
         </div>
 
-        <Select
-          label="Repo do discovery novo"
-          value={repoPath}
-          onChange={setRepoPath}
-          options={projects.map((project) => ({ value: project.path, label: project.name }))}
-          placeholder="Selecione um projeto"
-        />
+        {/* FIX (#22) — busca textual em vez de uma lista crua (mesmo padrão
+            do popover "Projetos", `ProjectSwitcher.tsx`): `TextInput` filtra,
+            a lista abaixo mostra só os projetos que batem, e o campo é
+            genuinamente opcional (card já vinculado nunca precisa dele; card
+            novo só cobra o repo no clique, via toast — nunca um controle
+            travado sem explicação). */}
+        <div className={styles.repoField} data-testid="devmode-entry-repo-field">
+          <label className={styles.repoLabel} htmlFor="devmode-entry-repo-filter">
+            Repo do discovery novo (opcional)
+          </label>
+          <TextInput
+            id="devmode-entry-repo-filter"
+            value={repoQuery}
+            onChange={(event) => {
+              setRepoQuery(event.target.value);
+              if (repoPath) setRepoPath('');
+            }}
+            placeholder="Filtrar por nome…"
+            aria-label="Filtrar repo do discovery novo"
+          />
+          {repoPath ? (
+            <p className={styles.repoSelected} data-testid="devmode-entry-repo-selected">
+              Selecionado: {repoQuery}{' '}
+              <button type="button" className={styles.repoClear} onClick={clearRepo}>
+                limpar
+              </button>
+            </p>
+          ) : (
+            <ul className={styles.repoList} data-testid="devmode-entry-repo-list">
+              {filteredRepoProjects.length === 0 ? (
+                <li className={styles.empty}>Nenhum repo bate com "{repoQuery}".</li>
+              ) : (
+                filteredRepoProjects.map((project) => (
+                  <li key={project.path}>
+                    <button type="button" className={styles.repoOption} onClick={() => selectRepo(project)}>
+                      {project.name}
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+          )}
+        </div>
 
         <ul className={styles.list} data-testid="devmode-entry-list">
           {loading ? <li className={styles.empty}>Carregando…</li> : null}
@@ -132,7 +243,11 @@ export function DevModeEntry({
                   variant="secondary"
                   onClick={() => onSelectCard(card.cardId, repoPath)}
                   className={styles.rowButton}
-                  disabled={!linked && !repoPath}
+                  // FIX (#22) — o repo agora é opcional de verdade: o clique
+                  // nunca fica travado sem explicação. Card sem repo escolhido
+                  // e sem vínculo segue clicável; `handleSelectEntryCard`
+                  // (App.tsx) já mostra o toast "Escolha o repo..." quando
+                  // falta de fato (criação exige saber ONDE criar).
                   title={card.cardId}
                 >
                   {/* Item 10 (rodada de forma fix/009-board-real-e-modal) — título à
