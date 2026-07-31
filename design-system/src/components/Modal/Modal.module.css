@@ -36,6 +36,14 @@
   font-size: var(--text-body-size);
   line-height: var(--text-body-line-height);
   color: var(--text-primary);
+  /* FIX (e2e-30-07, regressão do #23) — sem isso, `.body` (item flex de
+     `.dialog`) nunca encolhe abaixo da altura do próprio conteúdo (default
+     de flex item é `min-height: auto`), então o `max-height` que um
+     consumidor define em `.dialog` (via `className`, ex. DevModeEntry)
+     nunca chega a restringir de verdade: o conteúdo vaza pra fora da caixa
+     do modal em vez de ativar o scroll interno das listas (`overflow-y:
+     auto` delas nunca é acionado, pois nunca ficam menores que o conteúdo). */
+  min-height: 0;
 }
 
 .actions {

@@ -9,7 +9,8 @@
 .dialog {
   width: 620px;
   max-width: 90vw;
-  max-height: 640px;
+  max-height: min(640px, 90vh);
+  overflow-y: auto;
 }
 
 .entry {
@@ -154,6 +155,10 @@
   min-height: 0;
   max-height: 340px;
   overflow-y: auto;
+  /* FIX (e2e-30-07, junto da correção do Modal) — cardId muito longo (ids
+     tipo cuid passam de 25 caracteres) não deve empurrar a linha pra fora
+     do modal; ele agora trunca (ver .cardId) em vez de vazar. */
+  overflow-x: hidden;
 }
 
 .row {
@@ -191,7 +196,10 @@
 }
 
 .cardId {
-  flex: none;
+  flex: 0 1 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-caption-size);
