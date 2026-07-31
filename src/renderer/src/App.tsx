@@ -1334,7 +1334,12 @@ export function App(): React.JSX.Element {
       projects.map((project) =>
         window.donel.projectBinding
           .get(project.path)
-          .then((binding) => (binding.workspaceId && binding.teamId ? project : null))
+          // FIX (e2e-30-07 onda 2, regressão do #23) — `workspaceId`/`teamId`
+          // sozinhos incluem o fallback GLOBAL (todo projeto sem board
+          // próprio herda o mesmo, virando "todo projeto tem board" e
+          // estourando este seletor com a lista inteira). `hasOwnBoard` é só
+          // o board PRÓPRIO do projeto.
+          .then((binding) => (binding.hasOwnBoard ? project : null))
           .catch(() => null),
       ),
     ).then((results) => {

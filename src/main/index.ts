@@ -963,7 +963,7 @@ function registerTabIpcHandlers(): void {
  * lida).
  */
 function registerProjectBindingIpcHandlers(): void {
-  const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '', githubExtra: [] };
+  const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '', githubExtra: [], hasOwnBoard: false };
 
   ipcMain.handle(PROJECT_BINDING_CHANNELS.get, (_event, repoPath: unknown): ProjectBindingDto => {
     if (typeof repoPath !== 'string' || !repoPath.trim()) return EMPTY_BINDING;

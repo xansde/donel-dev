@@ -73,7 +73,7 @@ function makeMockIo(files: Record<string, string> = {}): { io: EsteiraConfigIoDe
 describe('readProjectBindingFromDisk (I/O mockado)', () => {
   it('os dois arquivos ausentes: DTO vazio, nunca lança', () => {
     const { io } = makeMockIo();
-    expect(readProjectBindingFromDisk('C:\\cfg', 'spotsys', io)).toEqual({ workspaceId: '', teamId: '', github: '', githubExtra: [] });
+    expect(readProjectBindingFromDisk('C:\\cfg', 'spotsys', io)).toEqual({ workspaceId: '', teamId: '', github: '', githubExtra: [], hasOwnBoard: false });
   });
 
   it('lê os dois arquivos reais do diretório e combina no DTO — board do PROJETO tem prioridade sobre o global', () => {
@@ -88,6 +88,7 @@ describe('readProjectBindingFromDisk (I/O mockado)', () => {
       teamId: 'team-1',
       github: 'seazone-tech/spotsys',
       githubExtra: [],
+      hasOwnBoard: true,
     });
   });
 
@@ -99,6 +100,7 @@ describe('readProjectBindingFromDisk (I/O mockado)', () => {
     const result = readProjectBindingFromDisk('C:\\cfg', 'spotsys', io);
     expect(result.workspaceId).toBe('ws-global');
     expect(result.teamId).toBe('team-global');
+    expect(result.hasOwnBoard).toBe(false);
   });
 });
 
@@ -112,7 +114,13 @@ describe('saveProjectBindingToDisk (I/O mockado)', () => {
       { workspaceId: 'ws-1', teamId: 'team-1', github: 'seazone-tech/spotsys', githubExtra: ['seazone-tech/spotsys-infra'] },
       io,
     );
-    expect(result).toEqual({ workspaceId: 'ws-1', teamId: 'team-1', github: 'seazone-tech/spotsys', githubExtra: ['seazone-tech/spotsys-infra'] });
+    expect(result).toEqual({
+      workspaceId: 'ws-1',
+      teamId: 'team-1',
+      github: 'seazone-tech/spotsys',
+      githubExtra: ['seazone-tech/spotsys-infra'],
+      hasOwnBoard: true,
+    });
 
     const repos = JSON.parse(files[reposConfigPath('C:\\cfg')] as string);
     expect(repos).toEqual({
@@ -172,7 +180,7 @@ describe('saveProjectBindingToDisk (I/O mockado)', () => {
 
     const result = saveProjectBindingToDisk('C:\\cfg', 'spotsys', 'C:\\spotsys', { workspaceId: 'ws-1', teamId: 'team-1', github: 'seazone-tech/spotsys', githubExtra: [] }, io);
 
-    expect(result).toEqual({ workspaceId: 'ws-1', teamId: 'team-1', github: 'seazone-tech/spotsys', githubExtra: [] });
+    expect(result).toEqual({ workspaceId: 'ws-1', teamId: 'team-1', github: 'seazone-tech/spotsys', githubExtra: [], hasOwnBoard: true });
     expect(writes).toEqual([]);
   });
 
@@ -185,7 +193,7 @@ describe('saveProjectBindingToDisk (I/O mockado)', () => {
 
     const result = saveProjectBindingToDisk('C:\\cfg', 'spotsys', 'C:\\spotsys', { workspaceId: '', teamId: '', github: '', githubExtra: [] }, io);
 
-    expect(result).toEqual({ workspaceId: '', teamId: '', github: '', githubExtra: [] });
+    expect(result).toEqual({ workspaceId: '', teamId: '', github: '', githubExtra: [], hasOwnBoard: false });
     expect(JSON.parse(files[reposConfigPath('C:\\cfg')] as string)).toEqual({ repos: { spotsys: { path: 'C:\\spotsys', help_channel: '#h' } } });
   });
 
@@ -224,7 +232,7 @@ describe('integração — I/O real em pasta temporária', () => {
     expect(reposOnDisk.repos.spotsys.board).toEqual({ workspaceId: 'ws-1', teamId: 'team-1' });
 
     const reread = readProjectBindingFromDisk(dir, 'spotsys', io);
-    expect(reread).toEqual({ workspaceId: 'ws-1', teamId: 'team-1', github: 'seazone-tech/spotsys', githubExtra: [] });
+    expect(reread).toEqual({ workspaceId: 'ws-1', teamId: 'team-1', github: 'seazone-tech/spotsys', githubExtra: [], hasOwnBoard: true });
   });
 
   it('cria o diretório de config se ele ainda não existir', () => {

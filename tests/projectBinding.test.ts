@@ -322,11 +322,18 @@ describe('readProjectBinding', () => {
       teamId: 'team-1',
       github: 'seazone-tech/spotsys',
       githubExtra: [],
+      hasOwnBoard: false,
     });
   });
 
   it('os dois arquivos ausentes: DTO todo vazio, nunca lança', () => {
-    expect(readProjectBinding(null, null, 'spotsys')).toEqual({ workspaceId: '', teamId: '', github: '', githubExtra: [] });
+    expect(readProjectBinding(null, null, 'spotsys')).toEqual({
+      workspaceId: '',
+      teamId: '',
+      github: '',
+      githubExtra: [],
+      hasOwnBoard: false,
+    });
   });
 
   it('board DO PROJETO (repos.json) tem prioridade sobre o global (credencial)', () => {
@@ -339,15 +346,17 @@ describe('readProjectBinding', () => {
       teamId: 'team-proj',
       github: 'seazone-tech/spotsys',
       githubExtra: [],
+      hasOwnBoard: true,
     });
   });
 
-  it('projeto sem board próprio cai pro global — mesmo com repos.json presente', () => {
+  it('projeto sem board próprio cai pro global — mesmo com repos.json presente — mas hasOwnBoard fica falso', () => {
     const boardText = JSON.stringify({ workspaceId: 'ws-global', teamId: 'team-global' });
     const reposText = JSON.stringify({ repos: { spotsys: { path: 'C:/x', github: 'seazone-tech/spotsys' } } });
     const result = readProjectBinding(boardText, reposText, 'spotsys');
     expect(result.workspaceId).toBe('ws-global');
     expect(result.teamId).toBe('team-global');
+    expect(result.hasOwnBoard).toBe(false);
   });
 
   it('github_extra do projeto aparece no DTO', () => {

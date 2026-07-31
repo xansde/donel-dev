@@ -42,6 +42,17 @@ export interface ProjectBindingDto {
   readonly teamId: string;
   readonly github: string;
   readonly githubExtra: readonly string[];
+  /**
+   * FIX (e2e-30-07 onda 2, regressão do #23) — `workspaceId`/`teamId` acima
+   * são o board EFETIVO (projeto próprio OU fallback global) — bom pra
+   * resolver PR/board facts, ruim pra "este projeto tem board configurado?":
+   * o fallback global se aplica a TODO projeto sem board próprio, então esse
+   * teste sempre dava verdadeiro pra quase todo mundo (boardProjects virou a
+   * lista inteira de projetos). `hasOwnBoard` é só o sinal do board PRÓPRIO
+   * (`repos.<repoSlug>.board`), nunca o fallback — é o que o seletor "Board"
+   * da porta de entrada (App.tsx) deve filtrar.
+   */
+  readonly hasOwnBoard: boolean;
 }
 
 export interface SaveProjectBindingIpcInput {
@@ -268,5 +279,6 @@ export function readProjectBinding(boardText: string | null, reposText: string |
     teamId: (projectHasBoard ? projectBoard.teamId : globalIds.teamId) ?? '',
     github: github ?? '',
     githubExtra,
+    hasOwnBoard: projectHasBoard,
   };
 }

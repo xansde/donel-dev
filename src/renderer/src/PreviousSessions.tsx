@@ -76,7 +76,7 @@ export interface PreviousSessionsProps {
   contextLabelBySessionId: Readonly<Record<string, string>>;
 }
 
-const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '', githubExtra: [] };
+const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '', githubExtra: [], hasOwnBoard: false };
 
 /** `github` (principal) + `githubExtra` (aditivos) viram uma lista ordenada só, pro `ProjectConfigForm` — índice 0 é sempre o principal. Vazio quando ambos vazios (nenhum repo configurado ainda). */
 function reposFromBinding(dto: ProjectBindingDto): string[] {
