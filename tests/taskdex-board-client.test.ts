@@ -399,10 +399,10 @@ describe('createSystemBoardLocksReader (trava = etiqueta do board)', () => {
   ];
 
   function callToolFake(byLabel: Record<string, string[]>): CallBoardReadTool {
-    return vi.fn(async (tool: string, params: Readonly<Record<string, string>>) => {
+    return vi.fn(async (tool: string, params: Readonly<Record<string, string | readonly string[]>>) => {
       if (tool === 'list_labels') return LABELS;
       if (tool === 'search_tasks') {
-        const labelId = JSON.parse(params.labelIds ?? '[]')[0] as string;
+        const labelId = (params.labelIds as readonly string[])[0];
         return { tasks: (byLabel[labelId] ?? []).map((cardId) => ({ id: cardId })) };
       }
       return null;

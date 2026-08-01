@@ -160,7 +160,10 @@ export type BoardReadTool = 'get_task_details' | 'list_tasks_by_team' | 'list_la
  * do APP (`cardId`, `teamId`, `workspaceId`); traduzir para os nomes da API é
  * responsabilidade do transporte (`taskdex-mcp-transport.ts`), não daqui.
  */
-export type CallBoardReadTool = (tool: BoardReadTool, params: Readonly<Record<string, string>>) => Promise<unknown>;
+export type CallBoardReadTool = (
+  tool: BoardReadTool,
+  params: Readonly<Record<string, string | readonly string[]>>,
+) => Promise<unknown>;
 
 /**
  * Credencial de cada usuário (decisão de 2026-07-28: "cada um deverá ter as
@@ -428,7 +431,7 @@ export function createSystemBoardLocksReader(
             cardIds: cardIdsFrom(
               await callTool('search_tasks', {
                 query: '',
-                labelIds: JSON.stringify([label.id]),
+                labelIds: [label.id],
                 workspaceId: boardConfig.workspaceId,
               }),
             ),
