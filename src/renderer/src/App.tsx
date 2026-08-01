@@ -2376,13 +2376,14 @@ export function App(): React.JSX.Element {
             discoveries={devModeState?.discoveries ?? {}}
             trees={Object.values(discoveryTrees)}
             projects={projects}
-            defaultRepoPath={selectedProjectPath}
             onSelectCard={handleSelectEntryCard}
             loading={entryLoading}
             // FIX (#23) — "mostrar o nome do board" + "filtrar por board":
             // sem entidade "board" própria (só o par opaco workspaceId/
             // teamId), o nome do PROJETO é o rótulo — 1:1 com o board
             // configurado nele (`effectiveBoardConfig`, main/index.ts).
+            // 31/07 — o board virou DROPDOWN e passou a ser também a resposta
+            // de "onde criar": o repo do discovery novo é o projeto dono dele.
             boardProjects={boardProjects}
             activeBoardRepoPath={entryBoardRepoPath ?? selectedProjectPath}
             onSwitchBoard={setEntryBoardRepoPath}
