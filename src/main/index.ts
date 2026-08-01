@@ -103,6 +103,9 @@ import {
   boardConfigFromCredential,
   listEntryColumnCards,
   loadTaskdexServiceCredential,
+  createSystemBoardLocksReader,
+  EMPTY_BOARD_LOCKS_READER,
+  mergeLockedPhases,
   readBoardFactsFor,
   resolveBoardFactsReader,
   resolveBoardReader,
@@ -223,6 +226,20 @@ const boardFactsReader = resolveBoardFactsReader(
   boardCallTool,
   credentialBoardConfig,
 );
+
+/**
+ * Achado do e2e 31/07 — a TRAVA (`esteira:em-andamento:<fase>`) é o único dos
+ * 4 fatos do CA-12 que `get_task_details` não devolve, e sem ela uma fase que
+ * rodou e não arquivou aparece como "não iniciada", sem o botão de liberar.
+ * A varredura por etiqueta preenche esse buraco no MESMO carregamento dos
+ * fatos (decisão dele: "quando carregar, enquanto abre o terminal, pode fazer
+ * uma verificação rápida no board"). Sem credencial/board, degrada para
+ * "nenhuma trava" — igual à falha de rede.
+ */
+const boardLocksReader =
+  boardCallTool && credentialBoardConfig
+    ? createSystemBoardLocksReader(boardCallTool, credentialBoardConfig)
+    : EMPTY_BOARD_LOCKS_READER;
 
 /**
  * CA-4 (009-modo-dev-v3) — raiz durável do handoff v3, fora de qualquer
@@ -743,7 +760,13 @@ function registerDevModeIpcHandlers(): void {
    */
   ipcMain.handle(DEVMODE_CHANNELS.readBoardFacts, async (_event, cardIds: readonly string[]): Promise<Record<string, BoardFacts>> => {
     if (!isValidCardIdList(cardIds)) return {};
-    return readBoardFactsFor(cardIds, boardFactsReader);
+    // As duas leituras em paralelo: os fatos são card a card, a trava é uma
+    // varredura só do board (o filtro do TaskDex é por etiqueta, não por task).
+    const [facts, locks] = await Promise.all([
+      readBoardFactsFor(cardIds, boardFactsReader),
+      boardLocksReader.fetchLockedPhases(),
+    ]);
+    return mergeLockedPhases(facts, locks);
   });
 
   /**

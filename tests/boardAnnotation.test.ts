@@ -157,3 +157,57 @@ describe('annotateTree — wiring da divergência por fase (T326, ajustada ao mo
     }
   });
 });
+
+// Achado do e2e 31/07 — "travada" tinha virado estado IMPOSSÍVEL para
+// implementar/validar: `esteira-reader.ts` só crê que a fase rodou quando o
+// manifesto daquele `fase_num` existe (fix do #16), e manifesto presente já
+// define o status. Resultado: fase que rodou e não arquivou aparecia como
+// "não iniciada" e sumia da trilha, sem o botão de liberar. A trava é
+// ETIQUETA DO BOARD (D1) — e é o board que devolve esse estado à fase.
+describe('annotateTree — trava do board promove a fase a "stuck"', () => {
+  function faseNode(implementar: PhaseStatus, validar: PhaseStatus) {
+    return {
+      faseNum: 1,
+      titulo: null,
+      garantia: null,
+      implementar: phaseNode('implementar', implementar),
+      validar: phaseNode('validar', validar),
+    };
+  }
+
+  it('fase não iniciada no disco + etiqueta de trava no board = travada', () => {
+    const card = { ...planCard('card-1'), fases: [faseNode('not-started', 'not-started')] };
+    const annotated = annotateTree(tree([card]), { 'card-1': boardFacts({ lockedPhase: 'implementar' }) });
+
+    expect(annotated.planCards[0].fases[0].implementar.status).toBe('stuck');
+    expect(annotated.planCards[0].phases.implementar.status).toBe('stuck');
+    // A outra sub-fase não é tocada: a etiqueta nomeia UMA fase.
+    expect(annotated.planCards[0].fases[0].validar.status).toBe('not-started');
+  });
+
+  it('só a PRIMEIRA fase não iniciada é promovida — a etiqueta não diz fase_num', () => {
+    const card = {
+      ...planCard('card-1'),
+      fases: [faseNode('done', 'done'), faseNode('not-started', 'not-started'), faseNode('not-started', 'not-started')],
+    };
+    const annotated = annotateTree(tree([card]), { 'card-1': boardFacts({ lockedPhase: 'implementar' }) });
+
+    expect(annotated.planCards[0].fases[1].implementar.status).toBe('stuck');
+    expect(annotated.planCards[0].fases[2].implementar.status).toBe('not-started');
+  });
+
+  it('fase que JÁ tem status do disco não é sobrescrita pela etiqueta', () => {
+    const card = { ...planCard('card-1', { implementar: 'done' }), fases: [faseNode('done', 'not-started')] };
+    const annotated = annotateTree(tree([card]), { 'card-1': boardFacts({ lockedPhase: 'implementar' }) });
+
+    expect(annotated.planCards[0].fases[0].implementar.status).toBe('done');
+    expect(annotated.planCards[0].phases.implementar.status).toBe('done');
+  });
+
+  it('sem etiqueta de trava nada muda', () => {
+    const card = { ...planCard('card-1'), fases: [faseNode('not-started', 'not-started')] };
+    const annotated = annotateTree(tree([card]), { 'card-1': boardFacts() });
+
+    expect(annotated.planCards[0].fases[0].implementar.status).toBe('not-started');
+  });
+})

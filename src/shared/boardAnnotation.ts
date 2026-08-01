@@ -114,13 +114,45 @@ function annotatePhase(phase: EsteiraPhase, node: PhaseNode, boardColumn: string
   return { ...node, divergence };
 }
 
+/**
+ * Achado do e2e 31/07 — a trava do board é o que devolve o estado
+ * **travada** a implementar/validar. O disco sozinho não consegue mais
+ * expressá-lo: desde o fix do #16, `esteira-reader.ts` só crê que a fase
+ * rodou quando existe o manifesto daquele `fase_num` — e manifesto presente
+ * já define o status. Sem esta promoção, a fase que rodou e não arquivou
+ * aparece como "não iniciada", some da trilha e leva junto o botão de
+ * liberar.
+ *
+ * Só promove quem está `not-started`: status vindo do disco é fato mais forte
+ * que a etiqueta e nunca é sobrescrito. E só a PRIMEIRA fase não iniciada
+ * daquele tipo — a etiqueta nomeia a fase (`implementar`), não o `fase_num`,
+ * então a que está em andamento é a próxima da fila, nunca todas.
+ */
+function promoteLockedToStuck<T extends { readonly status: PhaseStatus }>(node: T, locked: boolean): T {
+  return locked && node.status === 'not-started' ? { ...node, status: 'stuck' as PhaseStatus } : node;
+}
+
 function annotatePlanCard(planCard: PlanCardNode, facts: BoardFacts | null): AnnotatedPlanCardNode {
+  const lockedPhase = facts?.lockedPhase ?? null;
+
   const phases = {} as Record<EsteiraPhase, AnnotatedPhaseNode>;
   for (const phase of ALL_PHASES) {
-    phases[phase] = annotatePhase(phase, planCard.phases[phase], facts?.column ?? null);
+    const node = promoteLockedToStuck(planCard.phases[phase], phase === lockedPhase);
+    phases[phase] = annotatePhase(phase, node, facts?.column ?? null);
   }
 
-  return { ...planCard, phases, boardFacts: facts };
+  let alreadyPromoted = false;
+  const fases = planCard.fases.map((fase) => {
+    if (!lockedPhase || alreadyPromoted) return fase;
+    if (lockedPhase !== 'implementar' && lockedPhase !== 'validar') return fase;
+
+    const promoted = promoteLockedToStuck(fase[lockedPhase], true);
+    if (promoted === fase[lockedPhase]) return fase;
+    alreadyPromoted = true;
+    return { ...fase, [lockedPhase]: promoted };
+  });
+
+  return { ...planCard, phases, fases, boardFacts: facts };
 }
 
 /**
