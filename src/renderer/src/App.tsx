@@ -1853,11 +1853,22 @@ export function App(): React.JSX.Element {
     // globalmente é o palpite honesto antes de recusar o clique.
     const repo = repoPath || selectedProjectPath || '';
 
-    if (selection.kind === 'focus') {
-      // CA-2 — selecionar fecha o modal: o foco já resolve `entradaOpen`
-      // sozinho (derivado), mas fechar aqui também cobre o caso de já haver
-      // outro discovery em foco (troca explícita via "Trocar…").
+    /**
+     * FIX (e2e 31/07, 2ª vez) — fechar a porta é UM gesto, num lugar só.
+     * `setEntradaManualOpen(false)` sozinho não fecha nada quando não há
+     * discovery em foco: `entradaOpen` é derivado e reabre pelo outro ramo
+     * (`!focusedDiscoveryId`). Foi o que prendeu ele no modal ao escolher um
+     * card de Validar — a sessão nascia atrás, com o comando armado, e a
+     * porta continuava por cima. Todo caminho de SUCESSO passa por aqui;
+     * o único que não fecha é o que recusa o clique (sem repo).
+     */
+    const dismissEntrada = (): void => {
       setEntradaManualOpen(false);
+      setEntradaDismissed(true);
+    };
+
+    if (selection.kind === 'focus') {
+      dismissEntrada();
       void window.donel.devMode
         .focusDiscovery(selection.discoveryCardId)
         .then((config) => {
@@ -1885,9 +1896,10 @@ export function App(): React.JSX.Element {
     // Discovery e Backlog começam um discovery novo. (e2e 31/07: escolher um
     // card em Validar armava `/esteira-discovery` e jogava o operador para o
     // começo da esteira.)
+    dismissEntrada();
+
     const entryPhase = entryPhaseForColumn(column);
     if (entryPhase !== 'discovery') {
-      setEntradaManualOpen(false);
       const defaults = phaseDefaults[entryPhase];
       const tabId = addTab({
         name: `${cardId} ${entryPhase}`,
@@ -1904,7 +1916,6 @@ export function App(): React.JSX.Element {
       return;
     }
 
-    setEntradaManualOpen(false);
     void window.donel.devMode
       .openDiscovery({ cardId: selection.cardId, repoPath: repo, epicId: null })
       .then(() => window.donel.devMode.focusDiscovery(selection.cardId))
@@ -2273,7 +2284,12 @@ export function App(): React.JSX.Element {
           <SegmentedControl
             ariaLabel="Modo"
             value={devModeOn ? 'dev' : 'geral'}
-            onChange={(next) => setDevModeOn(next === 'dev')}
+            onChange={(next) => {
+              // Ligar o Modo Dev reabre a porta: "dispensada" vale para a
+              // sessão de trabalho em curso, não para sempre.
+              if (next === 'dev') setEntradaDismissed(false);
+              setDevModeOn(next === 'dev');
+            }}
             options={[
               { value: 'geral', label: 'Uso geral' },
               { value: 'dev', label: 'Dev' },
@@ -2407,7 +2423,12 @@ export function App(): React.JSX.Element {
         {devModeOn ? (
           <DevModeEntry
             open={entradaOpen}
-            onClose={() => setEntradaManualOpen(false)}
+            onClose={() => {
+              // Mesma razão do `dismissEntrada` (handleSelectEntryCard): sem
+              // discovery em foco, zerar só o `manualOpen` não fecha nada.
+              setEntradaManualOpen(false);
+              setEntradaDismissed(true);
+            }}
             cards={entryCards}
             discoveries={devModeState?.discoveries ?? {}}
             trees={Object.values(discoveryTrees)}

@@ -35,6 +35,14 @@ let userDataDir: string;
 let fixtureRepo: string;
 /** CA-4 (009-modo-dev-v3) — raiz v3 do handoff, `~/.claude/esteira-state` isolada via `DONEL_ESTEIRA_STATE_ROOT`. */
 let stateRoot: string;
+/**
+ * Isolamento que faltava (achado 31/07): sem `DONEL_ESTEIRA_CONFIG_DIR`, o app
+ * lia o `~/.claude/esteira-config/repos.json` REAL da máquina — o dropdown de
+ * board do smoke chegou a listar "spotsys", um projeto de verdade. Teste que
+ * enxerga a configuração da máquina não é isolado: passa ou falha conforme o
+ * dia.
+ */
+let esteiraConfigDir: string;
 /** `repo_slug` é o basename do checkout local — mesma resolução de `resolveRepoSlug` (main/index.ts). */
 let repoSlug: string;
 let worktreeDir: string;
@@ -105,7 +113,12 @@ function newPids(before: Set<number>): number[] {
 test.beforeAll(async () => {
   fixtureRepo = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-esteira-'));
   stateRoot = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-esteira-state-'));
+  esteiraConfigDir = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-esteira-config-'));
   repoSlug = path.basename(fixtureRepo);
+  // O catálogo de projetos do app só reconhece pasta com `.git` ou
+  // `CLAUDE.md` (`project-scanner.ts`) — sem o marcador, o repo do fixture não
+  // existe para o dropdown da porta de entrada.
+  write(path.join(fixtureRepo, 'CLAUDE.md'), '# fixture do smoke\n');
   worktreeDir = mkdtempSync(path.join(os.tmpdir(), 'modo-dev-worktree-'));
   worktreeDeclared = worktreeDir.split(path.sep).join('/');
 
@@ -236,7 +249,12 @@ test.beforeAll(async () => {
   electronApp = await electron.launch({
     args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
     cwd: REPO_ROOT,
-    env: { ...process.env, DONEL_DEVMODE_BOARD_FIXTURE: boardFixturePath, DONEL_ESTEIRA_STATE_ROOT: stateRoot },
+    env: {
+      ...process.env,
+      DONEL_DEVMODE_BOARD_FIXTURE: boardFixturePath,
+      DONEL_ESTEIRA_STATE_ROOT: stateRoot,
+      DONEL_ESTEIRA_CONFIG_DIR: esteiraConfigDir,
+    },
   });
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
@@ -249,7 +267,7 @@ test.afterAll(async () => {
   // worktree pode ainda segurar o handle do diretório por alguns ms depois do
   // app fechar (EBUSY). Falhar a suíte por causa de um rmdir de fixture seria
   // um falso vermelho — o diretório é temp e o SO recolhe.
-  for (const dir of [fixtureRepo, stateRoot, worktreeDir]) {
+  for (const dir of [fixtureRepo, stateRoot, worktreeDir, esteiraConfigDir]) {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
@@ -514,4 +532,34 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   await window.locator('[data-testid="devmode-toggle"]').getByRole('radio', { name: 'Dev' }).click();
   await expect(window.locator(`[data-testid="devmode-entry-linked-${CARD_DISCOVERY}"]`)).toHaveCount(0, { timeout: 30_000 });
   await expect(window.locator('[data-testid="devmode-map"]')).toHaveCount(0);
+
+  // === CA-1 + "a porta FECHA ao escolher" (e2e 31/07) ======================
+  // Card sem vínculo numa coluna disparável abre a sessão DAQUELA fase (nunca
+  // `/esteira-discovery`) — e a porta some. Este segundo pedaço é o que
+  // prendeu ele: sem discovery em foco, zerar só o `entradaManualOpen` não
+  // fecha nada, porque `entradaOpen` reabre pelo ramo `!focusedDiscoveryId`.
+  // Fica por último de propósito: é o único ponto do teste que abre uma
+  // sessão `claude` fora das contagens de PID acima.
+  const entryModalFinal = window.locator('[data-testid="devmode-entry"]');
+  await expect(entryModalFinal).toBeVisible({ timeout: 15_000 });
+
+  // Sem repo escolhido o clique é RECUSADO — e a porta continua aberta de
+  // propósito, porque é nela que o pedido se resolve (o dropdown do topo).
+  await window.locator(`[data-testid="devmode-entry-card-${CARD_IMPL}"] button`).click();
+  await expect(window.locator('[role="status"]')).toContainText('onde este card roda');
+  await expect(entryModalFinal).toBeVisible();
+
+  // Escolhido o projeto no dropdown, o mesmo clique passa — e AGORA a porta
+  // fecha (era exatamente aqui que ele ficava preso).
+  await entryModalFinal.getByRole('button', { name: /Escolher projeto|Escolher board/ }).click();
+  await window.getByRole('option', { name: repoSlug }).click();
+  await window.locator(`[data-testid="devmode-entry-card-${CARD_IMPL}"] button`).click();
+  await expect(entryModalFinal).toHaveCount(0, { timeout: 15_000 });
+  // A aba nasce com a FASE da coluna no nome — a prova de que o clique não
+  // caiu no discovery. O texto do comando em si é contrato de
+  // `entryPhaseForColumn` + `resolveCommandSequence` (testes unitários): subir
+  // mais um `claude` só para reler o prompt aqui não pagaria o minuto extra.
+  await expect(window.getByRole('tab', { name: new RegExp(`${CARD_IMPL}.*implementar`) })).toBeVisible({
+    timeout: 30_000,
+  });
 });
