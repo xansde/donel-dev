@@ -38,10 +38,23 @@ export function createSystemHttpPostJson(): HttpPostJson {
  */
 const PARAM_ALIASES: Readonly<Record<string, string>> = { cardId: 'taskId' };
 
-function toApiArguments(params: Readonly<Record<string, string>>): Record<string, string> {
-  const apiArgs: Record<string, string> = {};
+/**
+ * Parâmetros que vão para a API MESMO vazios, porque a tool os exige e o vazio
+ * é o valor com significado. `search_tasks` pede `query` sempre; "todos os
+ * cards desta etiqueta" é `query: ''` + `labelIds` — sem esta exceção a
+ * varredura de travas morreria em validação e degradaria calada para "nenhuma
+ * trava".
+ */
+const ALWAYS_SENT_PARAMS: readonly string[] = ['query'];
+
+function toApiArguments(
+  params: Readonly<Record<string, string | readonly string[]>>,
+): Record<string, string | readonly string[]> {
+  const apiArgs: Record<string, string | readonly string[]> = {};
   for (const [key, value] of Object.entries(params)) {
-    if (!value) continue; // parâmetro vazio não vai para a API (ela reclamaria de string vazia)
+    // Array vazio também não vai (nada a filtrar não é o mesmo que filtrar por nada).
+    const empty = Array.isArray(value) ? value.length === 0 : !value;
+    if (empty && !ALWAYS_SENT_PARAMS.includes(key)) continue;
     apiArgs[PARAM_ALIASES[key] ?? key] = value;
   }
   return apiArgs;
@@ -97,7 +110,7 @@ function unwrapToolResult(result: unknown): unknown {
 export function createJsonRpcCallTool(credential: TaskdexServiceCredential, post: HttpPostJson): CallBoardReadTool {
   let nextId = 1;
 
-  return async (tool: BoardReadTool, params: Readonly<Record<string, string>>): Promise<unknown> => {
+  return async (tool: BoardReadTool, params: Readonly<Record<string, string | readonly string[]>>): Promise<unknown> => {
     const body = JSON.stringify({
       jsonrpc: '2.0',
       id: nextId++,

@@ -59,6 +59,25 @@ describe('createJsonRpcCallTool', () => {
     expect(parsed.params.arguments).toEqual({ taskId: 'c-1', workspaceId: 'ws-1' });
   });
 
+  // Achado ao ligar a leitura de TRAVA (31/07): `search_tasks` recebe
+  // `labelIds` como ARRAY e exige `query` — que, para "todos os cards desta
+  // etiqueta", é a string vazia. As duas coisas morriam no caminho: o tipo só
+  // aceitava string, e string vazia era descartada. Sem isto a varredura de
+  // travas falharia contra o board real e degradaria calada para "nenhuma
+  // trava" — o pior tipo de falha, a que não aparece.
+  it('search_tasks leva labelIds como array e a query vazia obrigatória', async () => {
+    const post = vi.fn<HttpPostJson>(async () => ({ status: 200, text: envelope({}) }));
+    const callTool = createJsonRpcCallTool(CREDENTIAL, post);
+
+    await callTool('search_tasks', { query: '', labelIds: ['lab-1'], workspaceId: 'ws-1' });
+
+    expect(JSON.parse(post.mock.calls[0][2]).params.arguments).toEqual({
+      query: '',
+      labelIds: ['lab-1'],
+      workspaceId: 'ws-1',
+    });
+  });
+
   it('omite parâmetro vazio em vez de mandar string vazia para a API', async () => {
     const post = vi.fn<HttpPostJson>(async () => ({ status: 200, text: envelope({}) }));
     const callTool = createJsonRpcCallTool(CREDENTIAL, post);
