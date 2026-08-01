@@ -274,20 +274,31 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
   await expect(window.locator(`[data-testid="devmode-entry-linked-${CARD_M1}"]`)).toBeVisible();
   await expect(window.locator(`[data-testid="devmode-entry-linked-${CARD_LIVRE}"]`)).toHaveCount(0);
 
-  // === lote 5 (CA-1/CA-2) — o modal "Trocar…": filtro por texto e por coluna
+  // === forma enxuta (31/07) — a porta é dropdown de board + busca + lista ===
+  // O filtro por COLUNA (SegmentedControl de 7 segmentos) saiu: a etapa agora
+  // vem escrita em cada linha, junto do nome do board.
   const entryModal = window.locator('[data-testid="devmode-entry"]');
-  const filterInput = entryModal.locator('input[aria-label="Filtrar cards"]');
+  const filterInput = entryModal.locator('input[aria-label="Buscar card"]');
   await filterInput.fill(CARD_M1);
   await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_M1}"]`)).toBeVisible();
   await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_LIVRE}"]`)).toHaveCount(0);
   await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_IMPL}"]`)).toHaveCount(0);
   await filterInput.fill('');
-
-  await entryModal.getByRole('radio', { name: 'Implementar' }).click();
-  await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_IMPL}"]`)).toBeVisible();
-  await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_M1}"]`)).toHaveCount(0);
-  await entryModal.getByRole('radio', { name: 'Todas' }).click();
   await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_M1}"]`)).toBeVisible();
+
+  // A etapa do card está na própria linha (era o que o SegmentedControl filtrava).
+  await expect(window.locator(`[data-testid="devmode-entry-card-${CARD_IMPL}"]`)).toContainText('Implementar');
+
+  // Nada do conteúdo pode passar da caixa do modal — o corte na borda direita
+  // (e2e 30/07) era exatamente isto: filho mais largo que o próprio diálogo.
+  const overflowX = await entryModal.evaluate((element) => {
+    const dialog = element.closest('[role="dialog"]') ?? element;
+    return Math.max(
+      dialog.scrollWidth - dialog.clientWidth,
+      ...[...dialog.querySelectorAll('*')].map((child) => child.scrollWidth - child.clientWidth),
+    );
+  });
+  expect(overflowX).toBeLessThanOrEqual(1);
 
   // === T311/CA-2 — card de PLANO abre o discovery PAI, não um novo ========
   // (escolher card já vinculado a um discovery existente traz esse discovery

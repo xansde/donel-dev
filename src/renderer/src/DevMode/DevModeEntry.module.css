@@ -1,228 +1,105 @@
-/* T311 (003-modo-dev) — porta de entrada. Só tokens existentes
-   (design-system.md); nenhuma peça visual nova (CA-25).
+/* Porta de entrada do Modo Dev (CA-1/CA-2) — forma enxuta de 31/07:
+   dropdown de board + busca por nome + lista (nome do card · board · etapa).
 
-   009-modo-dev-v3, lote 5 — forma de MODAL (não mais painel embutido no
-   grid): `.dialog` alarga o `Modal` compartilhado para os 620px do mockup
-   (`Modal v3.dc.html:399`); `.entry` é só o conteúdo interno, sem âncora de
-   grid (o `Modal` já cuida do overlay/centralização/portal). */
+   O modal anterior cortava conteúdo na borda direita porque quatro controles
+   disputavam a mesma linha/largura. Aqui NADA disputa largura: a caixa é uma
+   coluna só, cada filho ocupa 100% e todo texto trunca com ellipsis antes de
+   chegar na borda. Só tokens existentes (design-system.md), nenhuma peça
+   visual nova (CA-25). */
 
-.dialog {
-  width: 620px;
+/* `.dialog` DUPLICADO de propósito (sobe a especificidade para 0,2,0): o
+   `.dialog` do `Modal` compartilhado tem `max-width: 480px` com a MESMA
+   especificidade desta regra, então hoje quem vence é só quem entra por
+   último no bundle — hoje é este arquivo (medido no CSS gerado), mas isso é
+   ordem de import, não contrato. Se um dia invertesse, a caixa ficaria em
+   480px com o conteúdo dimensionado para 560px: texto cortado na borda
+   direita, sem nada no código-fonte explicando. */
+.dialog.dialog {
+  width: 560px;
   max-width: 90vw;
-  max-height: min(640px, 90vh);
-  overflow-y: auto;
+  max-height: min(560px, 80vh);
 }
 
 .entry {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  /* Sem os dois `min-*: 0`, um item de flex column nunca encolhe abaixo do
+     conteúdo — foi essa a raiz do vazamento vertical (fix `803b517`, no
+     `.body` do Modal) e é a mesma armadilha no eixo horizontal. */
   min-height: 0;
-}
-
-.hint {
-  font-size: var(--text-caption-size);
-  color: var(--text-muted);
-}
-
-.filterRow {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-1);
-  /* Item 9 (rodada de forma fix/009-board-real-e-modal) — sem `min-width: 0`
-     num filho de flex row, ele nunca encolhe abaixo do próprio conteúdo; era
-     isso que empurrava o SegmentedControl (7 segmentos, largura intrínseca
-     grande) pra fora da borda direita do modal (screenshot app-04). */
   min-width: 0;
 }
 
-/* FIX (revisão do orquestrador, app-04 regenerado) — o fix acima consertou o
-   vazamento, mas `.columnFilter` com `flex: none` (shrink: 0) e
-   `max-width: 100%` continuava reivindicando até a largura INTEIRA da linha
-   (seu conteúdo natural, ~590px, sob o cap de 100% do container) antes do
-   filtro ganhar qualquer espaço — o input sobrava com uns 30px, só o "F" do
-   placeholder. `flex: 1` sozinho tem `flex-basis: 0%`, então cresce SÓ no
-   que sobra depois do irmão fixo; por isso o `min-width` explícito abaixo
-   garante uma largura útil mínima, do jeito que o mockup desenha (linha
-   406-411: TextInput ao lado do SegmentedControl, os dois com espaço). */
-.filterInput {
-  flex: 1 1 180px;
-  min-width: 180px;
+.board {
+  width: 100%;
 }
 
-/* Mockup linha 410 (`hint-size="260px,30px"`) — o SegmentedControl de coluna
-   tem 260px de largura própria, nunca mais. Agora com `flex-shrink` ligado
-   (era `flex: none`), ele cede espaço pro filtro antes de rolar contido; só
-   quando os 7 segmentos não cabem nem em 260px é que `overflow-x: auto`
-   entra (rola DENTRO do próprio controle, nunca o input que encolhe). */
-.columnFilter {
-  flex: 0 1 260px;
-  max-width: 260px;
-  overflow-x: auto;
-}
-
-/* FIX (#23, e2e-30-07 onda 2) — seletor de board (= projeto dono dele), só
-   quando há mais de 1 configurado. Mesma linguagem de "pill" do
-   SegmentedControl, sem introduzir peça nova do design-system (CA-25). */
-.boardSwitcher {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-half);
-}
-
-.boardOption,
-.boardOptionActive {
-  padding: 3px var(--space-1);
-  border-radius: 999px;
-  border: var(--hairline);
-  background: none;
-  color: var(--text-muted);
-  font-size: var(--text-caption-size);
-  cursor: pointer;
-}
-
-.boardOption:hover {
-  color: var(--text-primary);
-}
-
-.boardOptionActive {
-  background: var(--bg-raised);
-  color: var(--text-primary);
-  border-color: var(--accent);
-}
-
-/* FIX (#22, e2e-30-07 onda 2) — busca textual do repo, mesma linguagem visual
-   do popover "Projetos" (ProjectSwitcher.module.css `.list`/`.projectOpenButton`). */
-.repoField {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-half);
-}
-
-.repoLabel {
-  font-size: var(--text-caption-size);
-  color: var(--text-muted);
-}
-
-.repoList {
+.list {
   display: flex;
   flex-direction: column;
   gap: 2px;
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 120px;
-  overflow-y: auto;
-}
-
-.repoOption {
-  width: 100%;
-  text-align: left;
-  padding: 4px var(--space-1);
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: var(--text-body-size);
-  cursor: pointer;
-}
-
-.repoOption:hover {
-  background: var(--bg-raised);
-}
-
-.repoSelected {
-  margin: 0;
-  font-size: var(--text-caption-size);
-  color: var(--text-muted);
-}
-
-.repoClear {
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: var(--text-caption-size);
-  text-decoration: underline;
-}
-
-.list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  list-style: none;
   min-height: 0;
-  max-height: 340px;
   overflow-y: auto;
-  /* FIX (e2e-30-07, junto da correção do Modal) — cardId muito longo (ids
-     tipo cuid passam de 25 caracteres) não deve empurrar a linha pra fora
-     do modal; ele agora trunca (ver .cardId) em vez de vazar. */
   overflow-x: hidden;
 }
 
 .row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-half);
+  min-width: 0;
 }
 
 .rowButton {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-half);
+  gap: 2px;
   width: 100%;
-  height: auto;
-  min-height: var(--control-height);
+  min-width: 0;
+  padding: var(--space-1);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
   text-align: left;
+  cursor: pointer;
 }
 
-.rowTags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-half);
+/* Fundo do modal é `bg-raised`; o hover desce para `bg-panel` (subir não
+   contrastaria — era por isso que o hover da lista antiga sumia). */
+.rowButton:hover {
+  background: var(--bg-panel);
 }
 
-/* Item 10 — título + id na MESMA linha, id à direita com gap (nunca
-   grudados). `.cardTitleRow` é a linha; `.cardTitle` encolhe com ellipsis
-   antes de deixar o id espremer. */
-.cardTitleRow {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-1);
-  width: 100%;
-  min-width: 0;
+.rowButton:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
-.cardId {
-  flex: 0 1 auto;
-  max-width: 45%;
+.rowTitle,
+.rowMeta {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: var(--text-caption-size);
-  color: var(--text-muted);
 }
 
-.cardTitle {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.rowTitle {
   color: var(--text-primary);
+  font-size: var(--text-body-size);
+}
+
+.rowMeta {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.rowOpen {
+  color: var(--accent);
 }
 
 .empty {
   font-size: var(--text-caption-size);
   color: var(--text-muted);
-}
-
-.footerNote {
-  font-size: var(--text-caption-size);
-  color: var(--text-muted);
-  border-top: var(--hairline);
-  padding-top: var(--space-1);
 }
