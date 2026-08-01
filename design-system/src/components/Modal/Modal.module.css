@@ -1,6 +1,16 @@
 .overlay {
   position: fixed;
-  inset: 0;
+  /* FIX (e2e 31/07) — "o botão de trocar projeto some junto": o overlay cobria
+     a janela INTEIRA, titlebar incluído, então o seletor de projeto (e os
+     ícones de painel/preferências) ficava atrás dele — inalcançável enquanto
+     um modal estivesse aberto. Com a porta de entrada abrindo sozinha sem
+     discovery em foco, isso deixava o operador sem o gesto de que ele mais
+     precisava ali: trocar de projeto. O overlay começa abaixo do titlebar
+     (34px, `App.module.css .titlebar`); o resto da tela segue coberto. */
+  top: var(--titlebar-height, 34px);
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 100;
   display: flex;
   align-items: center;
