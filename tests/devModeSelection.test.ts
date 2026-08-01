@@ -4,6 +4,7 @@ import type { DiscoveryTree, PhaseNode, PlanCardNode } from '../src/main/discove
 import type { PhaseStatus } from '../src/shared/phaseState';
 import {
   discoveriesToClose,
+  entryPhaseForColumn,
   isCardLinked,
   localOnlyDiscoveryIds,
   resolveEntrySelection,
@@ -155,5 +156,26 @@ describe('discoveriesToClose (CA-23)', () => {
 
   it('árvore sem card de plano nenhum nunca encerra (allPlanCardsComplete falso por construção)', () => {
     expect(discoveriesToClose([tree('SZI-100', [], false)], DISCOVERIES)).toEqual([]);
+  });
+});
+
+// CA-1 — "TaskDex responde o que posso disparar agora, PELA COLUNA do card".
+// Achado do e2e 31/07: clicar num card em Validar armava `/esteira-discovery`
+// (o app tratava todo card sem vínculo como discovery novo) — ele foi jogado
+// para o começo da esteira num card que já estava no fim dela.
+describe('entryPhaseForColumn (CA-1)', () => {
+  it('cada coluna disparável responde a própria fase', () => {
+    expect(entryPhaseForColumn('plano')).toBe('plano');
+    expect(entryPhaseForColumn('implementar')).toBe('implementar');
+    expect(entryPhaseForColumn('validar')).toBe('validar');
+    expect(entryPhaseForColumn('documentar')).toBe('documentar');
+  });
+
+  it('discovery responde discovery', () => {
+    expect(entryPhaseForColumn('discovery')).toBe('discovery');
+  });
+
+  it('backlog começa pelo discovery — é a única fase que faz sentido num card ainda não trabalhado', () => {
+    expect(entryPhaseForColumn('backlog')).toBe('discovery');
   });
 });

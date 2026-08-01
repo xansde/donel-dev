@@ -56,10 +56,11 @@ export interface DevModeEntryProps {
   /** Catálogo completo — só para resolver o NOME do board em foco quando ele não está em `boardProjects`. */
   projects: readonly ProjectInfo[];
   /**
-   * Card já vinculado → foca o discovery; card sem vínculo → cria no repo do
-   * board escolhido. Quem decide focar × criar é `resolveEntrySelection` (puro).
+   * Card já vinculado → foca o discovery; card sem vínculo → dispara a fase da
+   * COLUNA dele (CA-1) no repo escolhido. Quem decide focar × disparar é
+   * `resolveEntrySelection`; qual fase, `entryPhaseForColumn` — os dois puros.
    */
-  onSelectCard: (cardId: string, repoPath: string) => void;
+  onSelectCard: (cardId: string, repoPath: string, column: EntryColumn) => void;
   loading: boolean;
   /**
    * Projetos com board PRÓPRIO (`workspaceId`+`teamId` em `repos.json`) — as
@@ -106,6 +107,19 @@ export function DevModeEntry({
       .sort((left, right) => left.label.localeCompare(right.label, 'pt-BR'));
   }, [boardProjects, activeBoardRepoPath, activeBoardLabel]);
 
+  /**
+   * FIX (e2e 31/07 — TELA SEM SAÍDA) — sem board configurado e sem projeto
+   * selecionado, o dropdown ficava vazio, o repo saía vazio junto e todo
+   * clique morria no toast "Escolha o repo do discovery antes de criar", sem
+   * campo nenhum onde escolher: o operador ficava preso no modal. Sem board,
+   * o dropdown passa a listar o CATÁLOGO de projetos — o que ele responde
+   * ("onde isto roda") continua sendo exatamente a pergunta que faltava.
+   */
+  const noBoardConfigured = boardOptions.length === 0;
+  const options = noBoardConfigured
+    ? projects.map((project) => ({ value: project.path, label: project.name }))
+    : boardOptions;
+
   // FIX (E2E 30/07, achado F8) — discoveries abertos no disco que o board não
   // trouxe (ex.: o `SZI-DEMO` do mock) entram na lista mesmo sem card de
   // board — sem título/coluna fabricados, ver `localOnlyDiscoveryIds`.
@@ -131,11 +145,11 @@ export function DevModeEntry({
     <Modal open={open} onClose={onClose} title="Abrir discovery" className={styles.dialog}>
       <section className={styles.entry} aria-label="Porta de entrada do Modo Dev" data-testid="devmode-entry">
         <Select
-          label="Board"
+          label={noBoardConfigured ? 'Projeto (nenhum board configurado)' : 'Board'}
           value={activeBoardRepoPath ?? ''}
-          options={boardOptions}
+          options={options}
           onChange={onSwitchBoard}
-          placeholder="Sem board configurado"
+          placeholder={noBoardConfigured ? 'Escolher projeto' : 'Escolher board'}
           className={styles.board}
         />
 
@@ -161,7 +175,7 @@ export function DevModeEntry({
               <button
                 type="button"
                 className={styles.rowButton}
-                onClick={() => onSelectCard(card.cardId, activeBoardRepoPath ?? '')}
+                onClick={() => onSelectCard(card.cardId, activeBoardRepoPath ?? '', card.column)}
                 title={card.cardId}
               >
                 <span className={styles.rowTitle}>{card.title}</span>
