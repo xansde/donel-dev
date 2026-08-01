@@ -4,6 +4,7 @@ import {
   createFixtureBoardFactsReader,
   createFixtureTaskdexBoardReader,
   createSystemBoardFactsReader,
+  createSystemBoardLocksReader,
   listEntryColumnCards,
   loadTaskdexServiceCredential,
   readBoardFactsFor,
@@ -382,3 +383,56 @@ describe('readBoardFactsFor (T327)', () => {
     expect(Object.keys(result)).toEqual(['SZI-901']);
   });
 });
+
+// CA-12/D1 (achado do e2e 31/07) — a TRAVA é etiqueta do board
+// (`esteira:em-andamento:<fase>`), nunca arquivo. `get_task_details` não
+// devolve as labels do card (medido contra o servidor: o payload não tem a
+// chave), então a trava vinha sempre `null` e uma fase travada aparecia como
+// "não iniciada" — sem o botão de liberar. A leitura passa a ser INVERTIDA:
+// `list_labels` acha as etiquetas de trava do board, `search_tasks` filtra os
+// cards de cada uma.
+describe('createSystemBoardLocksReader (trava = etiqueta do board)', () => {
+  const LABELS = [
+    { id: 'lab-disc', name: 'esteira:em-andamento:discovery' },
+    { id: 'lab-impl', name: 'esteira:em-andamento:implementar' },
+    { id: 'lab-atencao', name: 'esteira:precisa-atencao' },
+  ];
+
+  function callToolFake(byLabel: Record<string, string[]>): CallBoardReadTool {
+    return vi.fn(async (tool: string, params: Readonly<Record<string, string>>) => {
+      if (tool === 'list_labels') return LABELS;
+      if (tool === 'search_tasks') {
+        const labelId = JSON.parse(params.labelIds ?? '[]')[0] as string;
+        return { tasks: (byLabel[labelId] ?? []).map((cardId) => ({ id: cardId })) };
+      }
+      return null;
+    }) as CallBoardReadTool;
+  }
+
+  const BOARD = { workspaceId: 'ws-1', teamId: 'team-1' };
+
+  it('devolve a fase travada de cada card, só das etiquetas de trava', async () => {
+    const callTool = callToolFake({ 'lab-impl': ['card-a'], 'lab-disc': ['card-b'] });
+    const reader = createSystemBoardLocksReader(callTool, BOARD);
+
+    expect(await reader.fetchLockedPhases()).toEqual({ 'card-a': 'implementar', 'card-b': 'discovery' });
+    // `esteira:precisa-atencao` não é trava — nem chega a ser consultada.
+    expect(callTool).toHaveBeenCalledTimes(3);
+  });
+
+  it('board sem nenhuma etiqueta de trava não consulta card nenhum', async () => {
+    const callTool = vi.fn(async () => []) as CallBoardReadTool;
+    const reader = createSystemBoardLocksReader(callTool, BOARD);
+
+    expect(await reader.fetchLockedPhases()).toEqual({});
+    expect(callTool).toHaveBeenCalledTimes(1);
+  });
+
+  it('falha de rede degrada para "nenhuma trava" — nunca lança na cara do operador (C4)', async () => {
+    const callTool = vi.fn(async () => {
+      throw new Error('offline');
+    }) as CallBoardReadTool;
+
+    expect(await createSystemBoardLocksReader(callTool, BOARD).fetchLockedPhases()).toEqual({});
+  });
+})

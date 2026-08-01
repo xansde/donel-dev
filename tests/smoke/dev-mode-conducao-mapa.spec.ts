@@ -158,17 +158,28 @@ test.beforeAll(async () => {
   boardFixturePath = path.join(fixtureRepo, 'board-fixture.json');
   write(
     boardFixturePath,
-    JSON.stringify([
-      { cardId: CARD_DISCOVERY, column: 'discovery', title: 'Frente grande' },
-      { cardId: CARD_M1, column: 'plano', title: 'Marco 1' },
-      { cardId: CARD_M2, column: 'plano', title: 'Marco 2' },
-      { cardId: CARD_LIVRE, column: 'backlog', title: 'Card sem discovery' },
-      // CA-2 (009-modo-dev-v3, lote 5) — coluna nova da v3: a v2 nunca listava
-      // cards de Implementar na porta de entrada; agora lista.
-      { cardId: CARD_IMPL, column: 'implementar', title: 'Card em implementar' },
-      // CA-1 — Concluído continua fora: NUNCA pode aparecer.
-      { cardId: CARD_FORA, column: 'concluido', title: 'Card concluído' },
-    ]),
+    JSON.stringify({
+      cards: [
+        { cardId: CARD_DISCOVERY, column: 'discovery', title: 'Frente grande' },
+        { cardId: CARD_M1, column: 'plano', title: 'Marco 1' },
+        { cardId: CARD_M2, column: 'plano', title: 'Marco 2' },
+        { cardId: CARD_LIVRE, column: 'backlog', title: 'Card sem discovery' },
+        // CA-2 (009-modo-dev-v3, lote 5) — coluna nova da v3: a v2 nunca listava
+        // cards de Implementar na porta de entrada; agora lista.
+        { cardId: CARD_IMPL, column: 'implementar', title: 'Card em implementar' },
+        // CA-1 — Concluído continua fora: NUNCA pode aparecer.
+        { cardId: CARD_FORA, column: 'concluido', title: 'Card concluído' },
+      ],
+      // Achado do e2e 31/07 — a fase TRAVADA do M1 não é mais expressável só
+      // pelo disco: desde o fix do #16, `ctx.md` sem o manifesto do `fase_num`
+      // significa "não iniciada". Quem diz "esta fase rodou e não arquivou" é
+      // a ETIQUETA do board (D1) — é ela que devolve `stuck` à fase, e com ela
+      // a trilha volta a mostrar a etapa seguinte e o `/esteira-liberar` do
+      // CA-16.
+      facts: {
+        [CARD_M1]: { column: 'implementar', title: 'Marco 1', labels: ['esteira:em-andamento:implementar'] },
+      },
+    }),
   );
 
   // --- Config semeado no userData isolado ---------------------------------

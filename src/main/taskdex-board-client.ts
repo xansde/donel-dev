@@ -152,7 +152,7 @@ export function resolveBoardReader(
  * a fonte da porta de entrada (CA-1). Nenhuma tool de escrita é representável
  * aqui — a garantia é o TIPO, checada em `npm run typecheck`.
  */
-export type BoardReadTool = 'get_task_details' | 'list_tasks_by_team';
+export type BoardReadTool = 'get_task_details' | 'list_tasks_by_team' | 'list_labels' | 'search_tasks';
 
 /**
  * Assinatura restrita ao `BoardReadTool` — nem o fake de teste nem a
@@ -330,6 +330,119 @@ export function createSystemBoardFactsReader(
       if (boardConfig?.workspaceId) params.workspaceId = boardConfig.workspaceId;
       const raw = await callTool('get_task_details', params);
       return toBoardFacts(raw);
+    },
+  };
+}
+
+export interface BoardLocksReader {
+  /** Uma varredura do board inteiro — nunca por card (o filtro do TaskDex é por etiqueta, não por task). */
+  fetchLockedPhases(): Promise<LockedPhasesByCard>;
+}
+
+/** Fase travada por card (`cardId` → fase, sem o prefixo `esteira:em-andamento:`). Card ausente = sem trava. */
+export type LockedPhasesByCard = Readonly<Record<string, string>>;
+
+/**
+ * Sobrepõe a trava lida por ETIQUETA nos fatos lidos card a card — a trava é
+ * o único dos 4 fatos do CA-12 que `get_task_details` não devolve. Card sem
+ * trava fica exatamente como estava (nunca apaga o que o card já dizia).
+ */
+export function mergeLockedPhases(
+  facts: Readonly<Record<string, BoardFacts>>,
+  locks: LockedPhasesByCard,
+): Record<string, BoardFacts> {
+  const merged: Record<string, BoardFacts> = {};
+  for (const [cardId, card] of Object.entries(facts)) {
+    const lockedPhase = locks[cardId];
+    merged[cardId] = lockedPhase ? { ...card, lockedPhase } : card;
+  }
+  return merged;
+}
+
+/** Sem credencial/board não há varredura possível — "nenhuma trava" é a degradação, igual à falha de rede (C4). */
+export const EMPTY_BOARD_LOCKS_READER: BoardLocksReader = { fetchLockedPhases: async () => ({}) };
+
+
+/** `list_labels` devolve `[{id, name}]`; só interessam as etiquetas de trava, já com a fase extraída. */
+function lockLabelsFrom(raw: unknown): readonly { id: string; phase: string }[] {
+  const entries = Array.isArray(raw) ? raw : [];
+  return entries.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) return [];
+    const label = entry as { id?: unknown; name?: unknown };
+    if (typeof label.id !== 'string' || typeof label.name !== 'string') return [];
+    if (!label.name.startsWith(LOCK_LABEL_PREFIX)) return [];
+    const phase = label.name.slice(LOCK_LABEL_PREFIX.length);
+    return phase ? [{ id: label.id, phase }] : [];
+  });
+}
+
+/** `search_tasks` devolve `{tasks: [{id, …}]}` — aqui só o `id` importa. */
+function cardIdsFrom(raw: unknown): readonly string[] {
+  const tasks =
+    typeof raw === 'object' && raw !== null && Array.isArray((raw as { tasks?: unknown }).tasks)
+      ? (raw as { tasks: unknown[] }).tasks
+      : Array.isArray(raw)
+        ? raw
+        : [];
+  return tasks.flatMap((task) =>
+    typeof task === 'object' && task !== null && typeof (task as { id?: unknown }).id === 'string'
+      ? [(task as { id: string }).id]
+      : [],
+  );
+}
+
+/**
+ * CA-12/D1 — de onde vem "esta fase TRAVOU". A trava é **etiqueta do board**
+ * (`esteira:em-andamento:<fase>`), nunca arquivo `.lock`; e `get_task_details`
+ * não devolve as labels do card (medido contra o servidor em 28/07 e de novo
+ * em 31/07 — o payload não tem a chave). A leitura então é INVERTIDA:
+ * `list_labels` acha as etiquetas de trava do board e `search_tasks` filtra
+ * quais cards estão em cada uma — uma varredura do board, não N consultas
+ * por card.
+ *
+ * Sem isto, uma fase que rodou e não arquivou aparecia como "não iniciada"
+ * (`esteira-reader.ts` exige o manifesto do `fase_num` para crer que a fase
+ * rodou) e o operador perdia o botão de liberar.
+ *
+ * Falha de rede degrada para "nenhuma trava" (C4): o espelho mostra menos,
+ * nunca inventa uma trava que não viu.
+ */
+export function createSystemBoardLocksReader(
+  callTool: CallBoardReadTool,
+  boardConfig: DevModeBoardConfig,
+): BoardLocksReader {
+  return {
+    fetchLockedPhases: async (): Promise<LockedPhasesByCard> => {
+      try {
+        const labels = lockLabelsFrom(
+          await callTool('list_labels', { teamId: boardConfig.teamId, workspaceId: boardConfig.workspaceId }),
+        );
+        if (labels.length === 0) return {};
+
+        const perLabel = await Promise.all(
+          labels.map(async (label) => ({
+            phase: label.phase,
+            // `query` vazia + `labelIds` = "todos os cards com esta etiqueta"
+            // (o filtro por etiqueta é o que seleciona; a busca textual não
+            // restringe nada quando vazia).
+            cardIds: cardIdsFrom(
+              await callTool('search_tasks', {
+                query: '',
+                labelIds: JSON.stringify([label.id]),
+                workspaceId: boardConfig.workspaceId,
+              }),
+            ),
+          })),
+        );
+
+        const locked: Record<string, string> = {};
+        for (const { phase, cardIds } of perLabel) {
+          for (const cardId of cardIds) locked[cardId] = phase;
+        }
+        return locked;
+      } catch {
+        return {};
+      }
     },
   };
 }

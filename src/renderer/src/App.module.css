@@ -149,6 +149,14 @@
   gap: var(--space-1);
   padding: 0 var(--panel-padding);
   border-bottom: var(--hairline);
+  /* FIX (smoke `restart-session-devmode`, vermelho desde 30/07) — todos os
+     itens deste header eram `flex: none` + `nowrap`: um `cwd` longo (o caso
+     normal — path absoluto de worktree) esticava o header além da coluna do
+     grid e empurrava "⟳ Reiniciar" para DEBAIXO do painel direito de 316px,
+     que passava a interceptar o clique. O header agora é contido e quem
+     cede espaço é o texto, nunca o botão. */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .sessionHeaderId {
@@ -160,14 +168,21 @@
 }
 
 .sessionHeaderTitle {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
   color: var(--text-primary);
 }
 
 .sessionHeaderPath {
-  flex: none;
+  /* O path é o que mais cresce — é ele que encolhe primeiro. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 10.5px;
   color: var(--text-muted);
