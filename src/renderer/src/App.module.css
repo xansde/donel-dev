@@ -335,6 +335,26 @@
   color: var(--text-muted);
 }
 
+/* FIX (e2e 31/07) — a frase da Zona 2 vazia virou GESTO: é a porta de volta
+   quando a entrada foi fechada sem discovery em foco. Discreta como a frase
+   que substituiu — só ganha contorno no hover, não vira um botão gritando. */
+.devModeEntryReopen {
+  align-self: flex-start;
+  padding: 2px var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--text-caption-size);
+  cursor: pointer;
+}
+
+.devModeEntryReopen:hover {
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
 /* Item 11 (rodada de forma fix/009-board-real-e-modal) — "Sessões
    anteriores" virou TELA (mockup 2b), não mais `Modal` portalizado: ocupa a
    MESMA linha do grid que `.body` (entre titlebar e StatusBar, que

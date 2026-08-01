@@ -345,15 +345,18 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
     expect(text.toLowerCase()).toContain('claude code');
   }).toPass({ timeout: 90_000 });
 
-  const armed = window.locator('[data-testid="devmode-armed"]');
-  await expect(armed).toContainText('Conciliação de divergência no card SZI-902', { timeout: 60_000 });
-  // Os DOIS fatos divergentes estão no texto preparado (CA-19: a fase que
-  // diverge agora é `plano`, não mais `implementar` — ver comentário da
-  // fixture do M2 acima).
-  await expect(armed).toContainText('a fase plano está "done"');
-  await expect(armed).toContainText('coluna "plano"');
-  // O app não corrige o board — e diz isso no próprio prompt.
-  await expect(armed).toContainText('não altere o board');
+  // #24 (onda 3) — sem a moldura do `ArmedPrompt`, o prompt do CLI é onde o
+  // texto preparado tem de estar (era lá que ele já precisava estar).
+  await expect(async () => {
+    expect(await activePane.innerText()).toContain('Conciliação de divergência no card SZI-902');
+  }).toPass({ timeout: 60_000 });
+  // O CONTEÚDO do texto (os dois fatos divergentes e o "não altere o board")
+  // é contrato de `buildConciliationPrompt`, coberto em
+  // `tests/openPhaseSession.test.ts`. Aqui não dá para reafirmá-lo linha a
+  // linha: o xterm quebra a frase onde a largura do pane manda, e a asserção
+  // passaria a testar o wrap do terminal, não o app.
+  const armedText = await activePane.innerText();
+  expect(armedText).toContain('Conciliação de divergência');
 
   // O texto está no PROMPT do CLI (escrito de verdade) e NÃO foi submetido.
   await expect(async () => {
@@ -378,10 +381,9 @@ test('Modo Dev — Fatia 2: espelho anota a árvore, avisa a trava, marca diverg
   await expect(modal).not.toContainText('só remove o arquivo');
 
   await window.locator('[data-testid="devmode-confirm-release-lock"]').click();
-  await expect(armed).toContainText(`/esteira-liberar ${CARD_M1}`, { timeout: 60_000 });
   await expect(async () => {
     expect(await activePane.innerText()).toContain(`/esteira-liberar ${CARD_M1}`);
-  }).toPass({ timeout: 30_000 });
+  }).toPass({ timeout: 60_000 });
   // Não foi ENVIADO: o CLI nunca processou o comando.
   const paneText = await activePane.innerText();
   expect(paneText).not.toContain('Unknown slash command');

@@ -434,17 +434,16 @@ test('Modo Dev — Fatia 1 de ponta a ponta: entrada, condução sem Enter, mapa
     expect(text.toLowerCase()).toContain('claude code');
   }).toPass({ timeout: 90_000 });
 
-  const armed = window.locator('[data-testid="devmode-armed"]');
-  await expect(armed).toContainText(`/esteira-liberar ${CARD_M1}`, { timeout: 60_000 });
-  // CA-16 — NUNCA os dois comandos ao mesmo tempo.
-  await expect(armed).not.toContainText('/esteira-implementar');
-
-  // O texto está no PROMPT do CLI (escrito de verdade) e NÃO foi submetido:
-  // nenhuma linha de output do CLI processando o comando.
+  // #24 (onda 3) — a moldura do `ArmedPrompt` saiu: o comando escrito no
+  // PROMPT do CLI é a única prova que interessa (e sempre foi a de verdade).
   await expect(async () => {
     expect(await activePane.innerText()).toContain(`/esteira-liberar ${CARD_M1}`);
-  }).toPass({ timeout: 30_000 });
+  }).toPass({ timeout: 60_000 });
   const paneText = await activePane.innerText();
+  // CA-16 — NUNCA os dois comandos ao mesmo tempo.
+  expect(paneText).not.toContain('/esteira-implementar');
+  // ...e o que está lá NÃO foi submetido: nenhuma linha de output do CLI
+  // processando o comando.
   expect(paneText).not.toContain('Unknown slash command');
   expect(paneText).not.toContain('esteira-liberar: ');
 

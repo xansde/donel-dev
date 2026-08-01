@@ -1,5 +1,4 @@
 import {
-  ArmedPrompt,
   Button,
   formatSmartZoneLabel,
   HomologationClock,
@@ -20,6 +19,7 @@ import type {
   AppConfigDto,
   BoardFacts,
   DiscoveryTree,
+  EntryColumn,
   EntryColumnCard,
   EsteiraPhase,
   NotificationPreference,
@@ -88,7 +88,7 @@ import { annotateTree } from '../../shared/boardAnnotation';
 import { DevModeEntry } from './DevMode/DevModeEntry';
 import { DiscoveryMap, type PromotedHomologationClock, type SelectedPhaseNode } from './DevMode/DiscoveryMap';
 import { PhaseDetailsPanel } from './DevMode/PhaseDetailsPanel';
-import { discoveriesToClose, resolveEntrySelection } from './DevMode/devModeSelection';
+import { discoveriesToClose, entryPhaseForColumn, resolveEntrySelection } from './DevMode/devModeSelection';
 import {
   LIBERAR_COMMAND_TEMPLATE,
   buildConciliationPrompt,
@@ -456,6 +456,13 @@ export function App(): React.JSX.Element {
    * ✕/Escape não muda a tela.
    */
   const [entradaManualOpen, setEntradaManualOpen] = useState(false);
+  /**
+   * FIX (e2e 31/07 — "estou preso nessa tela") — fechar a porta agora fecha
+   * de verdade, mesmo sem discovery em foco. Antes o ✕/Escape não tinham
+   * efeito nesse estado (o modal era derivado só do foco), e um clique que
+   * falhava deixava o operador sem saída nenhuma. A volta é o botão da Zona 2.
+   */
+  const [entradaDismissed, setEntradaDismissed] = useState(false);
   /** Árvore por discovery ABERTO (`devMode:readTree`) — disco puro, relida sob demanda. */
   const [discoveryTrees, setDiscoveryTrees] = useState<Record<string, DiscoveryTree>>({});
   /** T327/CA-12 — os 4 fatos do board por card do discovery EM FOCO. `{}` = espelho sem fonte: a árvore aparece inteira, só sem anotação. */
@@ -472,8 +479,6 @@ export function App(): React.JSX.Element {
   const [promotedClock, setPromotedClock] = useState<PromotedHomologationClock | null>(null);
   /** "Agora" para o `HomologationClock` — nunca `Date.now()` direto no componente (mesmo contrato do design-system); atualizado devagar, o degrau some/pisca por CSS, não por re-render por segundo. */
   const [now, setNow] = useState(() => Date.now());
-  /** CA-3 — o comando ESCRITO e não enviado, exibido pelo `ArmedPrompt`. */
-  const [armedPrompt, setArmedPrompt] = useState<{ tabId: string; command: string; warning?: string } | null>(null);
   /** D4 — Toast informativo (troca de foco, avisos); nunca tem ação de desfazer. */
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
   /**
@@ -669,7 +674,6 @@ export function App(): React.JSX.Element {
     // vigiava (senão tentaria escrever num PTY que já não existe).
     armWatchersRef.current[tabId]?.();
     delete armWatchersRef.current[tabId];
-    setArmedPrompt((prev) => (prev?.tabId === tabId ? null : prev));
   };
 
   /**
@@ -1235,8 +1239,8 @@ export function App(): React.JSX.Element {
   const devModeState = appConfig?.devMode;
   const focusedDiscoveryId = devModeState?.focusedDiscoveryId ?? null;
   const focusedDiscovery = focusedDiscoveryId ? (devModeState?.discoveries[focusedDiscoveryId] ?? null) : null;
-  /** CA-2 — ver comentário de `entradaManualOpen`: derivado, não só o clique em "Trocar…". */
-  const entradaOpen = devModeOn && (entradaManualOpen || !focusedDiscoveryId);
+  /** CA-2 — ver comentário de `entradaManualOpen`: derivado, não só o clique em "Trocar…". Fechar (`entradaDismissed`) vence o "abre sozinha sem foco". */
+  const entradaOpen = devModeOn && (entradaManualOpen || (!focusedDiscoveryId && !entradaDismissed));
   const rawFocusedTree = focusedDiscoveryId ? (discoveryTrees[focusedDiscoveryId] ?? null) : null;
   /**
    * T327/CA-12 — a MESMA árvore de disco, com os 4 fatos do board sobrepostos.
@@ -1510,7 +1514,9 @@ export function App(): React.JSX.Element {
       armedAt = Date.now();
       isFirstStep = false;
       armedAny = true;
-      setArmedPrompt({ tabId, command, warning });
+      // #24 — sem a moldura, só o AVISO precisa de voz própria: ele é
+      // informação que o terminal não mostra (trava, divergência).
+      if (warning) setDevModeToast(warning);
       if (sequencer.done) stop();
     };
 
@@ -1835,12 +1841,17 @@ export function App(): React.JSX.Element {
   };
 
   /** T311/CA-2 — clique num card da porta de entrada. `resolveEntrySelection` (puro) decide focar × criar. */
-  const handleSelectEntryCard = (cardId: string, repoPath: string): void => {
+  const handleSelectEntryCard = (cardId: string, repoPath: string, column: EntryColumn = 'discovery'): void => {
     const selection = resolveEntrySelection({
       cardId,
       discoveries: devModeState?.discoveries ?? {},
       trees: Object.values(discoveryTrees),
     });
+
+    // FIX (e2e 31/07) — o repo vem do dropdown da porta; quando ele está
+    // vazio (nenhum board configurado ainda), o projeto selecionado
+    // globalmente é o palpite honesto antes de recusar o clique.
+    const repo = repoPath || selectedProjectPath || '';
 
     if (selection.kind === 'focus') {
       // CA-2 — selecionar fecha o modal: o foco já resolve `entradaOpen`
@@ -1861,16 +1872,41 @@ export function App(): React.JSX.Element {
       return;
     }
 
-    if (!repoPath) {
-      // Sem repo escolhido não há como criar — o modal continua aberto pra
-      // o operador escolher um projeto e tentar de novo.
-      setDevModeToast('Escolha o repo do discovery antes de criar.');
+    if (!repo) {
+      // O modal continua aberto — e agora com um dropdown de PROJETO, que é
+      // onde este pedido se resolve (antes o toast mandava escolher um repo
+      // que não existia em lugar nenhum da tela).
+      setDevModeToast('Escolha no topo do modal onde este card roda.');
+      return;
+    }
+
+    // CA-1 — a coluna do card responde QUAL fase disparar. Card que já está em
+    // Plano/Implementar/Validar/Documentar abre a sessão DAQUELA fase; só
+    // Discovery e Backlog começam um discovery novo. (e2e 31/07: escolher um
+    // card em Validar armava `/esteira-discovery` e jogava o operador para o
+    // começo da esteira.)
+    const entryPhase = entryPhaseForColumn(column);
+    if (entryPhase !== 'discovery') {
+      setEntradaManualOpen(false);
+      const defaults = phaseDefaults[entryPhase];
+      const tabId = addTab({
+        name: `${cardId} ${entryPhase}`,
+        cwd: repo,
+        projectName: projects.find((project) => project.path === repo)?.name,
+        pinned: false,
+        launchArgs: buildClaudeArgs({ model: defaults.model, effort: defaults.effort }),
+        sessionType: 'claude',
+      });
+      armPhaseCommands(tabId, resolveCommandSequence({ status: 'not-started', defaults, cardId }));
+      // O mapa não aparece: sem discovery no disco não há árvore a desenhar, e
+      // inventar uma seria mentir sobre o que a Esteira registrou.
+      setDevModeToast(`Card em ${entryPhase}: sessão aberta com o comando da fase.`);
       return;
     }
 
     setEntradaManualOpen(false);
     void window.donel.devMode
-      .openDiscovery({ cardId: selection.cardId, repoPath, epicId: null })
+      .openDiscovery({ cardId: selection.cardId, repoPath: repo, epicId: null })
       .then(() => window.donel.devMode.focusDiscovery(selection.cardId))
       .then((config) => {
         setAppConfig(config);
@@ -1882,8 +1918,8 @@ export function App(): React.JSX.Element {
         const defaults = (config.devMode.phaseDefaults ?? DEFAULT_PHASE_DEFAULTS).discovery;
         const tabId = addTab({
           name: `${selection.cardId} discovery`,
-          cwd: repoPath,
-          projectName: projects.find((project) => project.path === repoPath)?.name,
+          cwd: repo,
+          projectName: projects.find((project) => project.path === repo)?.name,
           pinned: false,
           launchArgs: buildClaudeArgs({ model: defaults.model, effort: defaults.effort }),
           sessionType: 'claude',
@@ -2399,21 +2435,30 @@ export function App(): React.JSX.Element {
               duplicado aqui. */}
           {devModeOn ? (
             <section className={styles.devModeZone2} aria-label="Condução do marco em foco" data-testid="devmode-zone2">
-              {!focusedTree || !focusedMarcoDisplay ? (
-                <p className={styles.devModeHint} data-testid="devmode-zone2-empty">
-                  Escolha um card na porta de entrada para conduzir um discovery.
-                </p>
+              {/* FIX (e2e 31/07) — a frase só aparece quando NÃO há discovery
+                  em foco (antes ficava pendurada sobre um discovery aberto,
+                  mandando escolher o que já estava escolhido) e agora é a
+                  PORTA DE VOLTA: sem ela, fechar o modal sem foco deixava a
+                  tela sem gesto nenhum. */}
+              {!focusedTree ? (
+                <button
+                  type="button"
+                  className={styles.devModeEntryReopen}
+                  onClick={() => {
+                    setEntradaDismissed(false);
+                    setEntradaManualOpen(true);
+                  }}
+                  data-testid="devmode-zone2-empty"
+                >
+                  Escolher um card para conduzir…
+                </button>
               ) : null}
 
-              {armedPrompt ? (
-                <div data-testid="devmode-armed">
-                <ArmedPrompt
-                  command={armedPrompt.command}
-                  warning={armedPrompt.warning ? { text: armedPrompt.warning } : undefined}
-                  onDismiss={() => setArmedPrompt(null)}
-                />
-                </div>
-              ) : null}
+              {/* #24 (onda 3) — o `ArmedPrompt` saiu como MOLDURA: o comando
+                  já está escrito no prompt do CLI, prestes a receber um Enter;
+                  repeti-lo numa caixa acima do terminal era o app explicando
+                  o que a tela já mostra. O aviso que vinha junto virou toast
+                  (`armPhaseCommands`) — ele é informação nova, a moldura não. */}
 
               {/* Item 3 (rodada de forma fix/009-board-real-e-modal) — o path
                   cru NÃO vai mais pro "header" (screenshot app-03 mostrava
@@ -2471,7 +2516,6 @@ export function App(): React.JSX.Element {
                 linha 64) — o hint fica FORA da área rolável das abas, pra
                 nunca ser espremido/sumir quando há muitas abas. Só aparece
                 com pelo menos 1 aba (sem abas, não há barra). */}
-            {tabs.length > 0 ? <span className={styles.tabBarHint}>arraste para reordenar · cor por aba</span> : null}
           </div>
           {/* FIX (teste manual 27/07) — a toolbar de Modelo/Esforço
               (SessionDetails) foi REMOVIDA dos dois modos a pedido do dono
@@ -2623,7 +2667,13 @@ export function App(): React.JSX.Element {
             na coluna ESQUERDA de 480px (a compressão da v2 saiu — o mapa não
             divide coluna com o Launcher nunca mais). "Recolher mapa" (botão
             do titlebar) zera essa coluna. */}
-        {devModeOn && focusedTree && !rightCollapsed ? (
+        {/* FIX #15 (e2e 30/07, reincidente em 31/07) — "recolher a barra
+            lateral deixa o mapa desenhado POR CIMA do terminal": recolher só
+            zerava a COLUNA (`--col-left: 0px`) e o mapa continuava montado,
+            transbordando de uma caixa de largura zero. Colapsar a lateral
+            agora desmonta o mapa, do mesmo jeito que "Recolher painéis" já
+            fazia. */}
+        {devModeOn && focusedTree && !rightCollapsed && !sidebarCollapsed ? (
           <DiscoveryMap
             tree={focusedTree}
             discoveryBoardFacts={boardFacts[focusedTree.discoveryCardId] ?? null}

@@ -1,5 +1,7 @@
 import type { DiscoveryTree } from '../../../main/discovery-tree';
-import type { DevModeDiscoveries } from '../../../shared/devMode';
+import type { EntryColumn } from '../../../shared';
+import { eligiblePhaseForColumn } from '../../../shared/columnEligibility';
+import type { DevModeDiscoveries, EsteiraPhase } from '../../../shared/devMode';
 
 // T311/T321 (003-modo-dev, Batch B) — decisões PURAS da porta de entrada
 // (CA-2) e do encerramento automático (CA-23). Sem React e sem IPC: só o
@@ -47,6 +49,24 @@ export function resolveEntrySelection(input: EntrySelectionInput): EntrySelectio
   if (parent) return { kind: 'focus', discoveryCardId: parent };
 
   return { kind: 'create', cardId: input.cardId };
+}
+
+/**
+ * CA-1 — a **coluna** do card responde qual fase o clique dispara
+ * (`Plano→plano`, `Implementar→implementar`, `Validar→validar`,
+ * `Documentar→documentar`). Backlog e Discovery começam pelo discovery: num
+ * card ainda não trabalhado é a única fase que faz sentido.
+ *
+ * FIX (e2e 31/07) — sem isto, TODO card sem discovery vinculado virava
+ * `/esteira-discovery`: escolher um card que já estava em Validar jogava o
+ * operador de volta para o começo da esteira.
+ */
+export function entryPhaseForColumn(column: EntryColumn): EsteiraPhase {
+  // `eligiblePhaseForColumn` é a fonte única do mapa coluna→fase
+  // (`columnEligibility.ts`); aqui só se decide o que fazer com o `null` dela:
+  // na porta de entrada, coluna que não dispara nada significa "começa pelo
+  // discovery" — é o único destino honesto para um card ainda não trabalhado.
+  return eligiblePhaseForColumn(column) ?? 'discovery';
 }
 
 /** CA-2 — o card vinculado aparece MARCADO na lista de candidatos (card de entrada ou card de plano). */
