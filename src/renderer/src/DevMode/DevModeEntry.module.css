@@ -7,17 +7,18 @@
    chegar na borda. Só tokens existentes (design-system.md), nenhuma peça
    visual nova (CA-25). */
 
-/* `.dialog` DUPLICADO de propósito (sobe a especificidade para 0,2,0): o
-   `.dialog` do `Modal` compartilhado tem `max-width: 480px` com a MESMA
-   especificidade desta regra, então hoje quem vence é só quem entra por
-   último no bundle — hoje é este arquivo (medido no CSS gerado), mas isso é
-   ordem de import, não contrato. Se um dia invertesse, a caixa ficaria em
-   480px com o conteúdo dimensionado para 560px: texto cortado na borda
-   direita, sem nada no código-fonte explicando. */
-.dialog.dialog {
-  width: 560px;
-  max-width: 90vw;
-  max-height: min(560px, 80vh);
+/* Issue #37 — nada aqui redeclara `width`/`max-width`/`max-height`: o
+   `Modal` compartilhado lê essas três propriedades de custom properties
+   (`--modal-width`/`--modal-max-width`/`--modal-max-height`, ver
+   `Modal.module.css`), então esta classe só PASSA os valores adiante. Sem
+   duas regras competindo pela mesma propriedade no mesmo elemento, não há
+   mais especificidade nem ordem de bundle para inverter — a fragilidade que
+   este comentário documentava (`.dialog.dialog` para ganhar por
+   especificidade, dependente de medição no CSS gerado) deixou de existir. */
+.dialog {
+  --modal-width: 560px;
+  --modal-max-width: 90vw;
+  --modal-max-height: min(560px, 80vh);
 }
 
 .entry {
@@ -29,6 +30,12 @@
      `.body` do Modal) e é a mesma armadilha no eixo horizontal. */
   min-height: 0;
   min-width: 0;
+  /* FIX (issue #37) — `.entry` é o único filho de `.body` (agora
+     `flex: 1; display: flex` no Modal, ver Modal.module.css); sem `flex: 1`
+     aqui também, `.entry` fica com `flex-grow: 0` e só ocupa a altura do
+     próprio conteúdo — o espaço que `.body` ganhou nunca chega até `.list`,
+     que é quem realmente precisa da altura pra ter contra o que rolar. */
+  flex: 1;
 }
 
 .board {
@@ -45,6 +52,16 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* FIX (issue #37, raiz do bug) — sem `flex: 1`, `.list` tinha
+     `overflow-y: auto` mas nenhuma ALTURA contra a qual rolar: um item de
+     flex column com `flex-grow: 0` (default) cresce até o tamanho do próprio
+     conteúdo, então uma lista de 12+ cards simplesmente empurrava a caixa
+     inteira pra baixo — a lista "vazava" por baixo da borda do modal em vez
+     de ativar o scroll interno. `flex: 1` faz `.list` disputar o espaço
+     restante de `.entry` (que agora também tem `flex: 1` dentro de `.body`);
+     o que sobra depois de Select/TextInput/repoChoice vira a altura real do
+     scroll. */
+  flex: 1;
 }
 
 .row {
