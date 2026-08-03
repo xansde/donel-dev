@@ -29,6 +29,7 @@ import type {
   PtyCreateResult,
   PtyExitInfo,
   SaveProjectBindingIpcInput,
+  SaveProjectBindingResult,
   SemaphoreStateInfo,
   SemaphoreUpdate,
   SessionSummaryDto,
@@ -257,7 +258,7 @@ const donelApi: DonelApi = {
     get: (repoPath: string) => ipcRenderer.invoke(PROJECT_BINDING_CHANNELS.get, repoPath) as Promise<ProjectBindingDto>,
 
     save: (input: SaveProjectBindingIpcInput) =>
-      ipcRenderer.invoke(PROJECT_BINDING_CHANNELS.save, input) as Promise<ProjectBindingDto>,
+      ipcRenderer.invoke(PROJECT_BINDING_CHANNELS.save, input) as Promise<SaveProjectBindingResult>,
   },
 
   // CA-3/CA-5 (009-modo-dev-v3, lote 4) — GitHub por `gh` CLI (spec-issue,

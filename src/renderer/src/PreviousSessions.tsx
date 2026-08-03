@@ -1,6 +1,6 @@
 import { Button, TextInput } from '@donel-dev/design-system';
 import { Settings } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectBindingDto, SessionNamesMap, SessionSummaryDto } from '../../shared';
 import { resolveSessionName } from '../../shared/sessionName';
 import {
@@ -10,7 +10,8 @@ import {
   formatRelativeTime,
   FREE_TERMINAL_ETAPA_LABEL,
 } from '../../shared/sessions';
-import { ProjectConfigForm } from './ProjectConfigForm';
+import { ProjectConfigForm, type ProjectConfigFormHandle } from './ProjectConfigForm';
+import { withPendingRepoCommitted } from './repoEntryList';
 import styles from './PreviousSessions.module.css';
 
 // T013 — PARTE PRINCIPAL: tela "Sessões anteriores" (FR-004, CA-2). Lista por
@@ -103,9 +104,17 @@ export function PreviousSessions({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bindingLoading, setBindingLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // FIX (#33) — `projectBinding.save` agora devolve `{ ok, ... }` (ver
+  // src/shared/projectBinding.ts) em vez do DTO cru, justamente pra distinguir
+  // falha de sucesso — antes o handler engolia payload inválido/erro de
+  // escrita no mesmo DTO "vazio" que uma limpeza legítima produz.
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [workspaceId, setWorkspaceId] = useState('');
   const [teamId, setTeamId] = useState('');
   const [repos, setRepos] = useState<string[]>([]);
+  // FIX (#32) — mesmo commit de texto pendente do campo de repo que
+  // `ProjectSwitcher.tsx` faz antes do submit (ver comentário lá).
+  const configFormRef = useRef<ProjectConfigFormHandle>(null);
 
   // A tela NÃO é o `Modal` compartilhado (ver comentário de topo) — Escape
   // continua fechando, mesmo comportamento de sempre, só que sem foco preso
@@ -127,6 +136,7 @@ export function PreviousSessions({
     if (!settingsOpen) return undefined;
     let cancelled = false;
     setBindingLoading(true);
+    setSaveError(null);
     window.donel.projectBinding
       .get(projectPath)
       .then((dto) => {
@@ -155,12 +165,21 @@ export function PreviousSessions({
 
   const handleSaveSettings = (): void => {
     setSaving(true);
+    setSaveError(null);
+    // FIX (#32) — commita o texto pendente do campo de repo ANTES de ler a
+    // lista (mesma normalização trim+dedup do `handleAddRepo` interno).
+    const effectiveRepos = withPendingRepoCommitted(repos, configFormRef.current?.getPendingRepo() ?? '');
+    if (effectiveRepos.length !== repos.length) setRepos(effectiveRepos);
     window.donel.projectBinding
-      .save({ repoPath: projectPath, workspaceId, teamId, github: repos[0] ?? '', githubExtra: repos.slice(1) })
-      .then((dto) => {
-        setWorkspaceId(dto.workspaceId);
-        setTeamId(dto.teamId);
-        setRepos(reposFromBinding(dto));
+      .save({ repoPath: projectPath, workspaceId, teamId, github: effectiveRepos[0] ?? '', githubExtra: effectiveRepos.slice(1) })
+      .then((result) => {
+        if (!result.ok) {
+          setSaveError('Não consegui salvar — tente de novo.');
+          return;
+        }
+        setWorkspaceId(result.binding.workspaceId);
+        setTeamId(result.binding.teamId);
+        setRepos(reposFromBinding(result.binding));
         setSettingsOpen(false);
       })
       .finally(() => setSaving(false));
@@ -297,6 +316,7 @@ export function PreviousSessions({
             {bindingLoading ? <p className={styles.hint}>Carregando configuração…</p> : null}
 
             <ProjectConfigForm
+              ref={configFormRef}
               repos={repos}
               onReposChange={setRepos}
               workspaceId={workspaceId}
@@ -305,6 +325,12 @@ export function PreviousSessions({
               onTeamIdChange={setTeamId}
               disabled={bindingLoading || saving}
             />
+
+            {saveError ? (
+              <p className={styles.hintDanger} data-testid="project-config-save-error">
+                {saveError}
+              </p>
+            ) : null}
 
             <div className={styles.settingsActions}>
               <Button variant="primary" onClick={handleSaveSettings} disabled={saving}>

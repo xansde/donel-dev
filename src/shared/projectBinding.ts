@@ -79,6 +79,21 @@ export function isValidSaveProjectBindingIpcInput(input: unknown): input is Save
 }
 
 /**
+ * FIX (#33) — `save` engolia silenciosamente tanto payload inválido (guarda
+ * `isValidSaveProjectBindingIpcInput` rejeitando o input) quanto falha real de
+ * escrita em disco: os dois casos devolviam o mesmo DTO "vazio" que uma
+ * limpeza legítima de binding também produz — quem chamava não tinha como
+ * distinguir "salvei um binding vazio de propósito" de "não salvei nada".
+ * Contrato novo: `ok: true` carrega o DTO persistido; `ok: false` carrega o
+ * motivo (`invalid-input` = a guarda de payload rejeitou; `write-failed` = a
+ * escrita atômica em `repos.json` lançou, ex. permissão negada) — o
+ * renderer decide o que mostrar em cada caso, mas nunca fica sem sinal.
+ */
+export type SaveProjectBindingResult =
+  | { readonly ok: true; readonly binding: ProjectBindingDto }
+  | { readonly ok: false; readonly reason: 'invalid-input' | 'write-failed' };
+
+/**
  * API tipada exposta pelo preload em `window.donel.projectBinding`. Nenhum
  * canal escreve em TaskDex ou GitHub — só nos dois arquivos de config locais
  * que a esteira já lia (invariante 5/CA-19 preservada: a Esteira em si
@@ -87,7 +102,7 @@ export function isValidSaveProjectBindingIpcInput(input: unknown): input is Save
  */
 export interface DonelProjectBindingApi {
   get(repoPath: string): Promise<ProjectBindingDto>;
-  save(input: SaveProjectBindingIpcInput): Promise<ProjectBindingDto>;
+  save(input: SaveProjectBindingIpcInput): Promise<SaveProjectBindingResult>;
 }
 
 // ---------------------------------------------------------------------------
