@@ -107,8 +107,28 @@ ato humano.
 > 28/07 (PRs #2 e #3). A forma da v2 (`design/modo-dev-handoff/` +
 > `design/modo-dev-verificacao.md`, divergências D1–D5) fica como registro do que
 > foi construído — a v3 a sucede. A divergência mais séria de lá **reincidiu** na
-> leva nova e continua valendo: a trava é **etiqueta do board**, nunca arquivo
-> `.lock` (D-V3).
+> leva nova e continua valendo **enquanto o modelo atual existir**: a trava é
+> **etiqueta do board**, nunca arquivo `.lock` (D-V3). **A spec 010 supersede
+> isto**: com o tracker virando opcional, a trava passa a ser **local** (fato com
+> dono, hora e sessão, visível e liberável num gesto), com espelho opcional em
+> etiqueta. O que a D-V3 proibia — trava invisível e órfã — continua proibido.
+
+## Gatilho — "rodar a próxima fase da 010"
+
+Pedido "**rodar a próxima fase da 010**" (ou "próxima fase da Esteira do Donel")
+= abrir a fila `Claude Seazone/Projects/donel-dev/esteira-010/PROXIMO.md` no
+vault e pegar a **primeira fase `⬜`**. A ordem **é** estritamente sequencial:
+cada fase depende do contrato que a anterior fixou, e rodar duas em paralelo
+recria o desencontro de contrato que originou a spec. Prompts prontos, um por
+fase, em `prompts.md` na mesma pasta.
+
+Fonte de verdade do escopo: `specs/010-esteira-donel/spec.md` (16 decisões
+fechadas por `grilling` em 03/08 — são requisito — e 6 pendências propostas).
+Cada fase termina com **revisão do Alexandre** antes da seguinte começar.
+
+**Congelado enquanto a 010 não avança:** issues #41 e #42 (polir apresentação de
+um mapa que será substituído) e #35 (a trilha sintética **será revertida** — ela
+pinta "não realizada" o que é "não consegui ler").
 
 ## Gotchas conhecidos (do planejamento)
 
