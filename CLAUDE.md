@@ -107,8 +107,11 @@ ato humano.
 > 28/07 (PRs #2 e #3). A forma da v2 (`design/modo-dev-handoff/` +
 > `design/modo-dev-verificacao.md`, divergências D1–D5) fica como registro do que
 > foi construído — a v3 a sucede. A divergência mais séria de lá **reincidiu** na
-> leva nova e continua valendo: a trava é **etiqueta do board**, nunca arquivo
-> `.lock` (D-V3).
+> leva nova e continua valendo **enquanto o modelo atual existir**: a trava é
+> **etiqueta do board**, nunca arquivo `.lock` (D-V3). **A spec 010 supersede
+> isto**: com o tracker virando opcional, a trava passa a ser **local** (fato com
+> dono, hora e sessão, visível e liberável num gesto), com espelho opcional em
+> etiqueta. O que a D-V3 proibia — trava invisível e órfã — continua proibido.
 
 ## Gatilho — "rodar a próxima fase da 010"
 
