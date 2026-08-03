@@ -42,15 +42,11 @@ import styles from './PreviousSessions.module.css';
 // - ETAPA: derivada do PRÓPRIO primeiro prompt (`deriveSessionEtapa`,
 //   shared/sessions.ts) — sessão que não bate `/esteira-*` vira "terminal
 //   comum" (nunca inventa etapa pra sessão livre).
-// - CONTA: só quando o registro do Modo Dev sabe (`archivedPhaseSessions`,
-//   reverso por `sessionId` — App.tsx monta o mapa); achado do lote 8
-//   (`sessionAccountLabel.ts`, CA-25): "sessões anteriores não tem esse dado
-//   hoje" ainda vale pra maioria das linhas — "—" é o caso comum, não bug.
-// - CONTEXTO: só quando a sessão listada TAMBÉM é uma aba viva agora (única
-//   fonte real de tokens por sessão que o app tem — `TranscriptChangedPayload`
-//   é um push para abas abertas, nunca persistido pro índice de sessões
-//   fechadas) — "—" pras demais.
 // - QUANDO: `formatRelativeTime`, já existente.
+//
+// #26 — colunas CONTA e CONTEXTO removidas (dispensáveis, sem consumidor que
+// as leia no dia a dia). O rodapé sobre "entradas irmãs" (sessão reiniciada
+// em outra conta) fica — é decisão nomeada do dono, não depende da coluna.
 export interface PreviousSessionsProps {
   open: boolean;
   projectName: string;
@@ -68,11 +64,7 @@ export interface PreviousSessionsProps {
    * semanas atrás (US-A). Sem isso, a lista mostraria só a 1ª mensagem.
    */
   sessionNames: SessionNamesMap;
-  /** Item 11 — `sessionId -> profileSlug`, reverso de `devModeState.archivedPhaseSessions` (App.tsx). Sem entrada = "—" (achado do CA-25: a maioria das sessões não tem esse dado). */
-  accountBySessionId: Readonly<Record<string, string>>;
-  /** Perfil ATIVO agora — marca a linha cuja conta é a mesma com "· atual" (mesma leitura de `isArchivedSessionProfileMismatch`, invertida). */
-  activeProfileSlug: string;
-  /** Item 11 — "312k/400k" só para sessões que são TAMBÉM uma aba viva agora; sem entrada = "—". */
+  /** Item 11 — "sessão VIVA agora" (glifo ▶ na coluna SESSÃO): presença de entrada aqui é o sinal, não mais exibido como texto (coluna CONTEXTO removida, #26). */
   contextLabelBySessionId: Readonly<Record<string, string>>;
 }
 
@@ -99,8 +91,6 @@ export function PreviousSessions({
   onResume,
   onFork,
   sessionNames,
-  accountBySessionId,
-  activeProfileSlug,
   contextLabelBySessionId,
 }: PreviousSessionsProps): React.JSX.Element | null {
   // Query de busca reseta implicitamente a cada abertura (o componente some
@@ -233,10 +223,8 @@ export function PreviousSessions({
                 <span aria-hidden="true" />
                 <span>Sessão</span>
                 <span>Etapa</span>
-                <span>Conta</span>
-                <span>Contexto</span>
                 <span>Quando</span>
-                {/* Célula vazia na 7ª coluna (ações) — mesma contagem de filhos que
+                {/* Célula vazia na última coluna (ações) — mesma contagem de filhos que
                     `.row`, pro grid do cabeçalho resolver o MESMO layout (ver
                     comentário de `.tableGridColumns`, PreviousSessions.module.css). */}
                 <span aria-hidden="true" />
@@ -251,9 +239,6 @@ export function PreviousSessions({
                   // "terminal comum". `firstCommandLine` (SessionIndexer)
                   // guarda esse texto à parte, sem afetar o `preview` exibido.
                   const etapa = deriveSessionEtapa(session.firstCommandLine ?? session.preview);
-                  const accountSlug = accountBySessionId[session.id] ?? null;
-                  const account = accountSlug ? (accountSlug === activeProfileSlug ? `${accountSlug} · atual` : accountSlug) : '—';
-                  const context = contextLabelBySessionId[session.id] ?? '—';
                   return (
                     <li key={session.id} className={styles.row} data-testid="previous-session-row">
                       <span className={[styles.rowGlyph, styles[`tone-${tone}`]].join(' ')} aria-hidden="true">
@@ -269,8 +254,6 @@ export function PreviousSessions({
                       <span className={[styles.rowEtapa, etapa === FREE_TERMINAL_ETAPA_LABEL ? styles.rowEtapaMuted : ''].join(' ')}>
                         {etapa}
                       </span>
-                      <span>{accountSlug ? <span className={styles.accountChip}>{account}</span> : <span className={styles.rowMuted}>—</span>}</span>
-                      <span className={styles.rowContext}>{context}</span>
                       <span className={styles.rowWhen}>{formatRelativeTime(session.lastActivityAt ?? session.mtimeMs)}</span>
                       {/* Gestos Retomar/Fork continuam, sempre visíveis (ver PreviousSessions.module.css `.rowActions` — decisão nomeada contra hover-reveal). `formatFileSize` some da forma de tabela (a coluna não existe no mockup) mas o dado ainda existe no título, pra quem passar o mouse na sessão. */}
                       <span className={styles.rowActions} title={`${formatFileSize(session.size)}`}>

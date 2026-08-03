@@ -2220,22 +2220,13 @@ export function App(): React.JSX.Element {
       )
     : accountLabel;
 
-  // Item 11 (rodada de forma fix/009-board-real-e-modal) — coluna CONTA da
-  // tela "Sessões anteriores": reverso de `archivedPhaseSessions`
-  // (`sessionId -> profileSlug`). Achado do CA-25 (`sessionAccountLabel.ts`)
-  // ainda vale: a maioria das sessões não tem esse dado — "—" é o comum.
-  const previousSessionsAccountBySessionId = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const archived of Object.values(devModeState?.archivedPhaseSessions ?? {})) {
-      map[archived.sessionId] = archived.profileSlug;
-    }
-    return map;
-  }, [devModeState]);
-
-  // Item 11 — coluna CONTEXTO: "312k/400k" só quando a sessão listada é
-  // TAMBÉM uma aba viva agora (`contextTokens` é um push pra abas abertas via
-  // `TranscriptChangedPayload` — nunca persistido pro índice de sessões
-  // fechadas, `SessionSummaryDto` não carrega esse campo).
+  // Item 11 (rodada de forma fix/009-board-real-e-modal) — presença de
+  // entrada aqui é o sinal de "sessão VIVA agora" (glifo ▶ na coluna SESSÃO
+  // de "Sessões anteriores", `PreviousSessions.tsx`); a coluna CONTEXTO que
+  // exibia o valor ("312k/400k") foi removida (#26) — o mapa segue existindo
+  // só pra essa checagem de presença (`contextTokens` é um push pra abas
+  // abertas via `TranscriptChangedPayload` — nunca persistido pro índice de
+  // sessões fechadas, `SessionSummaryDto` não carrega esse campo).
   const previousSessionsContextLabel = useMemo(() => {
     const map: Record<string, string> = {};
     for (const tab of tabs) {
@@ -2854,8 +2845,6 @@ export function App(): React.JSX.Element {
             // T408 (004) — a lista mostra o nome resolvido (custom-title do CLI ou
             // nome dado na UI), não só a 1ª mensagem: é o caminho do US-A.
             sessionNames={appConfig?.sessionNames ?? {}}
-            accountBySessionId={previousSessionsAccountBySessionId}
-            activeProfileSlug={activeProfileSlug}
             contextLabelBySessionId={previousSessionsContextLabel}
           />
         </div>
