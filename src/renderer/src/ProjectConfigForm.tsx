@@ -1,6 +1,7 @@
 import { Button, TextInput } from '@donel-dev/design-system';
 import { Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { forwardRef, useImperativeHandle, useState } from 'react';
+import { withPendingRepoCommitted } from './repoEntryList';
 import styles from './ProjectConfigForm.module.css';
 
 // Frente 2 (rodada de feedback 30/07, item 1) — "gostaria de poder adicionar
@@ -18,6 +19,17 @@ import styles from './ProjectConfigForm.module.css';
 // (grava em `github`) e os demais são ADITIVOS (`github_extra`, contrato
 // ignora) — mesma decisão nomeada em `shared/projectBinding.ts`. Mesmo
 // padrão visual de lista editável de `Preferences.tsx` (`rootList`/Trash2).
+//
+// FIX (#32) — "o link do repositório digitado some se não clicar
+// 'Adicionar'": `newRepo` (o texto do campo "Novo repositório GitHub") era
+// state PURAMENTE local — se o usuário digitasse um repo e submetesse o
+// formulário PAI sem clicar "Adicionar" (ou apertar Enter) antes, o texto
+// nunca virava um item de `repos` e sumia em silêncio. `ProjectConfigForm`
+// agora expõe `getPendingRepo()` via ref (`ProjectConfigFormHandle`) — quem
+// submete (handleCreate/handleSaveSettings) commita esse texto pendente com
+// `withPendingRepoCommitted` (mesma normalização trim+dedup do
+// `handleAddRepo`) ANTES de gravar, sem depender de re-render/timing de
+// state do React.
 
 export interface ProjectConfigFormProps {
   repos: readonly string[];
@@ -29,21 +41,24 @@ export interface ProjectConfigFormProps {
   disabled?: boolean;
 }
 
-export function ProjectConfigForm({
-  repos,
-  onReposChange,
-  workspaceId,
-  onWorkspaceIdChange,
-  teamId,
-  onTeamIdChange,
-  disabled = false,
-}: ProjectConfigFormProps): React.JSX.Element {
+/** Imperativo exposto via ref — só o necessário pra quem submete o formulário PAI não perder o texto pendente do campo de repo (FIX #32). */
+export interface ProjectConfigFormHandle {
+  /** Texto cru (ainda não trimado/commitado) do campo "Novo repositório GitHub" agora mesmo. */
+  getPendingRepo(): string;
+}
+
+export const ProjectConfigForm = forwardRef<ProjectConfigFormHandle, ProjectConfigFormProps>(function ProjectConfigForm(
+  { repos, onReposChange, workspaceId, onWorkspaceIdChange, teamId, onTeamIdChange, disabled = false },
+  ref,
+) {
   const [newRepo, setNewRepo] = useState('');
 
+  useImperativeHandle(ref, () => ({ getPendingRepo: () => newRepo }), [newRepo]);
+
   const handleAddRepo = (): void => {
-    const trimmed = newRepo.trim();
-    if (!trimmed || repos.includes(trimmed)) return;
-    onReposChange([...repos, trimmed]);
+    const next = withPendingRepoCommitted(repos, newRepo);
+    if (next.length === repos.length) return; // candidato vazio ou já presente — nada a adicionar
+    onReposChange(next);
     setNewRepo('');
   };
 
@@ -54,7 +69,11 @@ export function ProjectConfigForm({
   return (
     <>
       <div className={styles.section} data-testid="project-config-repos">
-        <h4 className={styles.sectionTitle}>Repositórios GitHub</h4>
+        <h4 className={styles.sectionTitle}>Repositório GitHub (issues/PRs)</h4>
+        <p className={styles.hint}>
+          Metadado usado pela esteira pra achar issue/PR deste projeto (grava em <code>repos.json</code>) — não traz código
+          nenhum. Pra trazer código de um repositório, use "Clonar do GitHub" ao criar o projeto.
+        </p>
         <ul className={styles.repoList}>
           {repos.length === 0 ? <li className={styles.hint}>Nenhum repositório configurado.</li> : null}
           {repos.map((repo, index) => (
@@ -116,4 +135,4 @@ export function ProjectConfigForm({
       </div>
     </>
   );
-}
+});

@@ -1,10 +1,11 @@
 import { Button, Modal, Select, TextInput } from '@donel-dev/design-system';
 import type { SelectOption } from '@donel-dev/design-system';
 import { History, Star } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { CreateProjectErrorReason, ProjectInfo } from '../../shared';
 import { filterProjectsByName, groupProjectsByRoot, projectRootLabel } from '../../shared/projectCatalog';
-import { ProjectConfigForm } from './ProjectConfigForm';
+import { ProjectConfigForm, type ProjectConfigFormHandle } from './ProjectConfigForm';
+import { withPendingRepoCommitted } from './repoEntryList';
 import styles from './ProjectSwitcher.module.css';
 
 // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero pelo app"
@@ -133,6 +134,12 @@ export function ProjectSwitcher({
   // `createdProject`), nunca recria a pasta (que já existe).
   const [bindingError, setBindingError] = useState<string | null>(null);
   const [createdProject, setCreatedProject] = useState<{ path: string; name: string } | null>(null);
+  // FIX (#32) — o campo "Novo repositório GitHub" de `ProjectConfigForm` tem
+  // texto pendente que só vira item de `repos` ao clicar "Adicionar"/Enter;
+  // no submit, commitamos esse pendente via `getPendingRepo()` ANTES de ler
+  // `repos` — sem isso, o texto digitado sumia se o usuário só tivesse
+  // preenchido e clicado direto em "Criar projeto".
+  const configFormRef = useRef<ProjectConfigFormHandle>(null);
   // Item 2 — filtro textual do popover "Projetos" (case/acento-insensível,
   // lógica pura em src/shared/projectCatalog.ts). Zera toda vez que o
   // popover fecha, pra não reabrir com um filtro "esquecido" de outra hora.
@@ -204,14 +211,19 @@ export function ProjectSwitcher({
           projectsList = response.projects;
         }
 
-        const needsBindingSave = repos.length > 0 || (workspaceId.trim() && teamId.trim());
+        // FIX (#32) — commita o texto pendente do campo de repo ANTES de ler
+        // a lista (mesma normalização trim+dedup do `handleAddRepo` interno).
+        const effectiveRepos = withPendingRepoCommitted(repos, configFormRef.current?.getPendingRepo() ?? '');
+        if (effectiveRepos.length !== repos.length) setRepos(effectiveRepos);
+
+        const needsBindingSave = effectiveRepos.length > 0 || (workspaceId.trim() && teamId.trim());
         if (needsBindingSave) {
           const saveResult = await window.donel.projectBinding.save({
             repoPath: path,
             workspaceId,
             teamId,
-            github: repos[0] ?? '',
-            githubExtra: repos.slice(1),
+            github: effectiveRepos[0] ?? '',
+            githubExtra: effectiveRepos.slice(1),
           });
           if (!saveResult.ok) {
             setCreatedProject({ path, name: createdName });
@@ -382,6 +394,7 @@ export function ProjectSwitcher({
           ) : null}
 
           <ProjectConfigForm
+            ref={configFormRef}
             repos={repos}
             onReposChange={setRepos}
             workspaceId={workspaceId}

@@ -1,6 +1,6 @@
 import { Button, TextInput } from '@donel-dev/design-system';
 import { Settings } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectBindingDto, SessionNamesMap, SessionSummaryDto } from '../../shared';
 import { resolveSessionName } from '../../shared/sessionName';
 import {
@@ -10,7 +10,8 @@ import {
   formatRelativeTime,
   FREE_TERMINAL_ETAPA_LABEL,
 } from '../../shared/sessions';
-import { ProjectConfigForm } from './ProjectConfigForm';
+import { ProjectConfigForm, type ProjectConfigFormHandle } from './ProjectConfigForm';
+import { withPendingRepoCommitted } from './repoEntryList';
 import styles from './PreviousSessions.module.css';
 
 // T013 — PARTE PRINCIPAL: tela "Sessões anteriores" (FR-004, CA-2). Lista por
@@ -121,6 +122,9 @@ export function PreviousSessions({
   const [workspaceId, setWorkspaceId] = useState('');
   const [teamId, setTeamId] = useState('');
   const [repos, setRepos] = useState<string[]>([]);
+  // FIX (#32) — mesmo commit de texto pendente do campo de repo que
+  // `ProjectSwitcher.tsx` faz antes do submit (ver comentário lá).
+  const configFormRef = useRef<ProjectConfigFormHandle>(null);
 
   // A tela NÃO é o `Modal` compartilhado (ver comentário de topo) — Escape
   // continua fechando, mesmo comportamento de sempre, só que sem foco preso
@@ -172,8 +176,12 @@ export function PreviousSessions({
   const handleSaveSettings = (): void => {
     setSaving(true);
     setSaveError(null);
+    // FIX (#32) — commita o texto pendente do campo de repo ANTES de ler a
+    // lista (mesma normalização trim+dedup do `handleAddRepo` interno).
+    const effectiveRepos = withPendingRepoCommitted(repos, configFormRef.current?.getPendingRepo() ?? '');
+    if (effectiveRepos.length !== repos.length) setRepos(effectiveRepos);
     window.donel.projectBinding
-      .save({ repoPath: projectPath, workspaceId, teamId, github: repos[0] ?? '', githubExtra: repos.slice(1) })
+      .save({ repoPath: projectPath, workspaceId, teamId, github: effectiveRepos[0] ?? '', githubExtra: effectiveRepos.slice(1) })
       .then((result) => {
         if (!result.ok) {
           setSaveError('Não consegui salvar — tente de novo.');
@@ -325,6 +333,7 @@ export function PreviousSessions({
             {bindingLoading ? <p className={styles.hint}>Carregando configuração…</p> : null}
 
             <ProjectConfigForm
+              ref={configFormRef}
               repos={repos}
               onReposChange={setRepos}
               workspaceId={workspaceId}
