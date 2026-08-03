@@ -52,6 +52,19 @@ const userLine = (text: string): string =>
   `${JSON.stringify({ type: 'user', message: { role: 'user', content: text }, timestamp: new Date().toISOString() })}\n`;
 
 /**
+ * Fix #19 — linha real de `/color <nome>` no CLI (forma conferida num
+ * transcript do próprio donel-dev, esclarecimento do Alexandre 03/08).
+ */
+const colorLine = (color: string, sessionId = 'abc-123'): string =>
+  `${JSON.stringify({
+    type: 'system',
+    subtype: 'local_command',
+    content: `<local-command-stdout>Session color set to: ${color}</local-command-stdout>`,
+    level: 'info',
+    sessionId,
+  })}\n`;
+
+/**
  * T606 (006) — turno do assistant com `usage`. A forma bate com o transcript
  * REAL conferido em 26/07: a `usage` fica em `message.usage`, não no topo da
  * linha (ver `specs/006-contexto-consumido/medicao-t606.md`).
@@ -117,7 +130,30 @@ describe('watchTranscript', () => {
     await fs.appendFile(filePath, titleLine('renomeado ao vivo'), 'utf8');
 
     await waitFor(() => changes.length === 1);
-    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'renomeado ao vivo', contextTokens: null });
+    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'renomeado ao vivo', contextTokens: null, cliColorName: null });
+  });
+
+  it('Fix #19 — emite a cor quando o operador roda /color na sessão viva', async () => {
+    await fs.writeFile(filePath, userLine('trabalhando'), 'utf8');
+    start();
+    await settle();
+    expect(changes).toEqual([]);
+
+    await fs.appendFile(filePath, colorLine('blue'), 'utf8');
+
+    await waitFor(() => changes.length === 1);
+    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: null, contextTokens: null, cliColorName: 'blue' });
+  });
+
+  it('Fix #19 — troca de cor na mesma sessão (/color blue → /color red) emite a ÚLTIMA', async () => {
+    await fs.writeFile(filePath, colorLine('blue'), 'utf8');
+    start();
+    await waitFor(() => changes.length === 1);
+    expect(changes[0].cliColorName).toBe('blue');
+
+    await fs.appendFile(filePath, colorLine('red'), 'utf8');
+    await waitFor(() => changes.length === 2);
+    expect(changes[1].cliColorName).toBe('red');
   });
 
   it('lê na ABERTURA e emite o título que já existia (sessão retomada com nome antigo)', async () => {
@@ -254,7 +290,7 @@ describe('watchTranscript', () => {
     await fs.appendFile(filePath, assistantUsageLine({ input: 290, cacheCreation: 1505, cacheRead: 132_807 }), 'utf8');
 
     await waitFor(() => changes.length === 1);
-    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: null, contextTokens: 134_602 });
+    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: null, contextTokens: 134_602, cliColorName: null });
   });
 
   it('turno seguinte que só muda a usage EMITE (regressão que a regra antiga da 004 causaria)', async () => {
@@ -335,7 +371,7 @@ describe('watchTranscript', () => {
     await fs.appendFile(filePath, `${assistantUsageLine({ input: 10, cacheRead: 60_000 })}${titleLine('com nome')}`, 'utf8');
 
     await waitFor(() => changes.length === 1);
-    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'com nome', contextTokens: 60_010 });
+    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'com nome', contextTokens: 60_010, cliColorName: null });
   });
 });
 
@@ -362,7 +398,21 @@ describe('readTranscriptTail', () => {
       'utf8',
     );
 
-    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'nome', contextTokens: 134_602 });
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'nome', contextTokens: 134_602, cliColorName: null });
+  });
+
+  it('Fix #19 — devolve os TRÊS campos (título, tokens e cor) numa leitura só', async () => {
+    await fs.writeFile(
+      filePath,
+      `${userLine('oi')}${assistantUsageLine({ input: 290, cacheCreation: 1505, cacheRead: 132_807 })}${titleLine('nome')}${colorLine('purple')}`,
+      'utf8',
+    );
+
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({
+      customTitle: 'nome',
+      contextTokens: 134_602,
+      cliColorName: 'purple',
+    });
   });
 
   it('último de cada um vence, independente da ordem entre eles', async () => {
@@ -377,7 +427,7 @@ describe('readTranscriptTail', () => {
       'utf8',
     );
 
-    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'nome novo', contextTokens: 2_002 });
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'nome novo', contextTokens: 2_002, cliColorName: null });
   });
 
   it('linha cortada no início do chunk (a cauda corta no meio de uma linha) não lança', async () => {
@@ -385,24 +435,25 @@ describe('readTranscriptTail', () => {
     const giant = `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'x'.repeat(70 * 1024) } })}\n`;
     await fs.writeFile(filePath, `${giant}${assistantUsageLine({ input: 5, cacheRead: 500 })}${titleLine('sobreviveu')}`, 'utf8');
 
-    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'sobreviveu', contextTokens: 505 });
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'sobreviveu', contextTokens: 505, cliColorName: null });
   });
 
   it('arquivo vazio → os dois null', async () => {
     await fs.writeFile(filePath, '', 'utf8');
-    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: null, contextTokens: null });
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: null, contextTokens: null, cliColorName: null });
   });
 
   it('arquivo inexistente → os dois null, sem lançar', async () => {
     await expect(readTranscriptTail(join(dir, 'nao-existe.jsonl'))).resolves.toEqual({
       customTitle: null,
       contextTokens: null,
+      cliColorName: null,
     });
   });
 
   it('transcript sem nenhuma usage e sem título → os dois null (não 0)', async () => {
     await fs.writeFile(filePath, `${userLine('só conversa')}${userLine('mais conversa')}`, 'utf8');
-    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: null, contextTokens: null });
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: null, contextTokens: null, cliColorName: null });
   });
 });
 

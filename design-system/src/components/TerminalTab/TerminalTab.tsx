@@ -91,6 +91,19 @@ export interface TerminalTabProps {
    * Storybook que só ilustra o ícone).
    */
   onColorChange?: (color: TabColorToken) => void;
+  /**
+   * Fix #19 — cor CSS concreta (hex) lida do `/color` do CLI, quando a
+   * sessão já rodou o comando. `null`/`undefined` = sem cor do CLI (mantém
+   * a faixa por `color`/token acima). PRECEDÊNCIA: quando presente, esta cor
+   * VENCE `color` na faixa visual — decisão nomeada (esclarecimento do
+   * Alexandre, 03/08): "não existe lugar na UI para definir cor", o
+   * `/color` do CLI é o gesto explícito e mais recente do operador, então
+   * ganha de um token que nem tem como ser escolhido hoje. O menu de cor
+   * (clique direito, `onColorChange`) continua funcional — só fica
+   * visualmente sobreposto enquanto houver `cliColorHex`, exatamente como
+   * `.active` não sobrepõe a faixa (são camadas independentes).
+   */
+  cliColorHex?: string | null;
   /** CA-26 — aba arrastável; a reordenação de verdade é decisão de quem hospeda a barra (`reorderTabs`, src/shared/tabAppearance.ts no app). */
   draggable?: boolean;
   onDragStart?: (event: DragEvent<HTMLDivElement>) => void;
@@ -115,6 +128,7 @@ export function TerminalTab({
   className,
   color = 'none',
   onColorChange,
+  cliColorHex = null,
   draggable = false,
   onDragStart,
   onDragOver,
@@ -168,7 +182,17 @@ export function TerminalTab({
 
   return (
     <div
-      className={[styles.tab, active ? styles.active : '', color !== 'none' ? styles[`color-${color}`] : '', className]
+      className={[
+        styles.tab,
+        active ? styles.active : '',
+        // Fix #19 — a classe do token só entra quando NÃO há cor do CLI: o
+        // inline style abaixo já venceria por especificidade de qualquer
+        // jeito, mas nem aplicar a classe deixa a precedência legível no
+        // próprio DOM (inspecionar o elemento mostra a intenção, não um
+        // empate de CSS resolvido por acidente).
+        !cliColorHex && color !== 'none' ? styles[`color-${color}`] : '',
+        className,
+      ]
         .filter(Boolean)
         .join(' ')}
       role="tab"
@@ -181,6 +205,10 @@ export function TerminalTab({
       onDragOver={onDragOver}
       onDrop={onDrop}
       onContextMenu={handleContextMenu}
+      // Fix #19 — cor do CLI vence a faixa por token (ver doc de `cliColorHex`
+      // acima); inline style é o único jeito de aplicar um hex livre sem
+      // reintroduzir "hex novo" no CSS do design system.
+      style={cliColorHex ? { borderTopColor: cliColorHex } : undefined}
     >
       {draggable ? (
         <span className={styles.dragHandle} aria-hidden="true">
