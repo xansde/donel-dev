@@ -3,6 +3,7 @@ import type {
   AppConfigDto,
   ArchivePhaseSessionIpcInput,
   BoardFacts,
+  CardRepoResolution,
   CopyTranscriptForResumeIpcInput,
   CopyTranscriptForResumeResult,
   CreateProjectIpcInput,
@@ -28,6 +29,7 @@ import type {
   PtyCreateOptions,
   PtyCreateResult,
   PtyExitInfo,
+  ResolveCardRepoIpcInput,
   SaveProjectBindingIpcInput,
   SaveProjectBindingResult,
   SemaphoreStateInfo,
@@ -249,6 +251,11 @@ const donelApi: DonelApi = {
       ipcRenderer.on(DEVMODE_CHANNELS.phaseArchived, handler);
       return () => ipcRenderer.removeListener(DEVMODE_CHANNELS.phaseArchived, handler);
     },
+
+    // Issue #34 (P0) — resolve o repo-alvo do card por rastro em disco, nunca
+    // pelo repo em foco na sidebar.
+    resolveCardRepo: (input: ResolveCardRepoIpcInput) =>
+      ipcRenderer.invoke(DEVMODE_CHANNELS.resolveCardRepo, input) as Promise<CardRepoResolution>,
   },
 
   // CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto

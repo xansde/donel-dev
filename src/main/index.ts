@@ -29,6 +29,7 @@ import type {
   PtyCreateResult,
   PhaseArchivedPayload,
   PtyExitInfo,
+  ResolveCardRepoIpcInput,
   SaveProjectBindingIpcInput,
   SaveProjectBindingResult,
   SemaphoreUpdate,
@@ -51,6 +52,7 @@ import {
   isValidCreateProjectIpcInput,
   isValidGithubReadRequest,
   isValidOpenDiscoveryIpcInput,
+  isValidResolveCardRepoIpcInput,
   isValidSaveProjectBindingIpcInput,
   isValidWatchPhaseIpcInput,
   normalizeSessionName,
@@ -59,6 +61,7 @@ import {
   PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
   PTY_CHANNELS,
+  readAllRepoEntries,
   readRepoBoard,
   SEMAPHORE_CHANNELS,
   SESSION_CHANNELS,
@@ -83,6 +86,7 @@ import {
   writeAppConfig,
   type AppConfig,
 } from './config-store';
+import { resolveCardRepo, type CardRepoResolution } from './cardRepoResolver';
 import { buildDiscoveryTree } from './discovery-tree';
 import {
   createSystemEsteiraConfigIoDeps,
@@ -768,6 +772,26 @@ function registerDevModeIpcHandlers(): void {
       boardLocksReader.fetchLockedPhases(),
     ]);
     return mergeLockedPhases(facts, locks);
+  });
+
+  /**
+   * Issue #34 (P0) — resolve o repo-alvo do card por RASTRO EM DISCO
+   * (`esteira-state/<repoSlug>/<cardId>/` ou o `.esteira/discovery/` legado
+   * de cada repo conhecido em `repos.json`), nunca pelo repo em foco na
+   * sidebar. `boardRepoPath` (o repo por trás do dropdown "Board" do modal)
+   * só entra como último recurso, sem rastro nenhum — e só resolve sozinho
+   * quando é dono de UM repo só; 2+ repos com o mesmo board viram `ambiguous`
+   * (a UI pergunta, nunca chuta o `default_repo`). Payload inválido devolve
+   * `unknown` — o mesmo "não sei" de um card sem repo nenhum encontrado.
+   */
+  ipcMain.handle(DEVMODE_CHANNELS.resolveCardRepo, (_event, input: ResolveCardRepoIpcInput): CardRepoResolution => {
+    if (!isValidResolveCardRepoIpcInput(input)) return { kind: 'unknown' };
+    const reposText = esteiraReaderIoDeps.readFileText(reposConfigPath(ESTEIRA_CONFIG_DIR));
+    const repos = readAllRepoEntries(reposText);
+    return resolveCardRepo(
+      { cardId: input.cardId, esteiraStateRoot: ESTEIRA_STATE_ROOT, repos, boardRepoPath: input.boardRepoPath },
+      esteiraReaderIoDeps,
+    );
   });
 
   /**

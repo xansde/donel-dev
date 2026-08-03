@@ -94,12 +94,35 @@ describe('buildDiscoveryTree', () => {
     expect(tree.planCards.map((pc) => pc.shadow)).toEqual([false, false, true]);
   });
 
-  it('sem plan_cards (discovery-result.json ausente/sem o campo) → planCards vazio, allPlanCardsComplete false', () => {
+  // Issue #35 (exceção explícita ao CA-14, pedido literal do dono 01/08) —
+  // sem `plan_cards[]`, a trilha SINTÉTICA do card raiz nasce em vez de uma
+  // lista vazia (era o bug: "abri um discovery e não tinha como avançar").
+  it('sem plan_cards (discovery-result.json ausente/sem o campo) → UM card de plano SINTÉTICO (cardId === card raiz), allPlanCardsComplete false', () => {
     const io = fakeIo({});
     const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
 
-    expect(tree.planCards).toEqual([]);
+    expect(tree.planCards).toHaveLength(1);
+    expect(tree.planCards[0].cardId).toBe(ROOT_CARD);
+    expect(tree.planCards[0].synthetic).toBe(true);
+    expect(tree.planCards[0].fases).toEqual([]);
     expect(tree.allPlanCardsComplete).toBe(false);
+  });
+
+  it('issue #35 — card entrado direto na coluna Validar (sem discovery/plano/implementar no disco): trilha sintética tem validar REALIZADO e as 3 anteriores não realizadas', () => {
+    const io = fakeIo({
+      [phaseCtxPath('validar', ROOT_CARD)]: '---\n---\n',
+      [phaseResultPathByFaseNum('validar', ROOT_CARD, 1)]: successManifest(ROOT_CARD, 'validar'),
+    });
+    const tree = buildDiscoveryTree(ROOT, ROOT_CARD, NO_ARCHIVED, io);
+
+    expect(tree.planCards).toHaveLength(1);
+    const synthetic = tree.planCards[0];
+    expect(synthetic.synthetic).toBe(true);
+    expect(synthetic.cardId).toBe(ROOT_CARD);
+    expect(synthetic.phases.discovery.status).toBe('not-started');
+    expect(synthetic.phases.plano.status).toBe('not-started');
+    expect(synthetic.phases.implementar.status).toBe('not-started');
+    expect(synthetic.phases.validar.status).toBe('done');
   });
 
   // CA-21 — a v3 não grava `concluir-result.json` (esteira-concluir é gate

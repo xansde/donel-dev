@@ -49,6 +49,7 @@ function planCard(cardId: string, concluirStatus: PhaseStatus): PlanCardNode {
       concluir: node,
     },
     fases: [],
+    synthetic: false,
   };
 }
 

@@ -1,6 +1,6 @@
 import { Modal, Select, TextInput } from '@donel-dev/design-system';
 import { useMemo, useState } from 'react';
-import type { EntryColumn, EntryColumnCard, ProjectInfo } from '../../../shared';
+import type { EntryColumn, EntryColumnCard, ProjectInfo, RepoCandidate } from '../../../shared';
 import type { DiscoveryTree } from '../../../main/discovery-tree';
 import type { DevModeDiscoveries } from '../../../shared/devMode';
 import { isCardLinked, localOnlyDiscoveryIds } from './devModeSelection';
@@ -72,6 +72,14 @@ export interface DevModeEntryProps {
   activeBoardRepoPath?: string;
   /** Troca o board em foco — App.tsx reconsulta `listEntryCards` para ele. */
   onSwitchBoard: (repoPath: string) => void;
+  /**
+   * Issue #34 (P0) — o clique num card ficou ambíguo (`devMode:resolveCardRepo`
+   * sem rastro em disco + board compartilhado por 2+ repos): nenhuma sessão
+   * dispara até o operador escolher explicitamente qual repo é o certo.
+   * "Pergunta, nunca palpite" — nunca cai de volta pro `default_repo`.
+   */
+  pendingRepoChoice?: { readonly cardId: string; readonly candidates: readonly RepoCandidate[] } | null;
+  onChooseRepoForCard?: (repoPath: string) => void;
 }
 
 export function DevModeEntry({
@@ -86,6 +94,8 @@ export function DevModeEntry({
   boardProjects,
   activeBoardRepoPath,
   onSwitchBoard,
+  pendingRepoChoice,
+  onChooseRepoForCard,
 }: DevModeEntryProps): React.JSX.Element | null {
   const [query, setQuery] = useState('');
 
@@ -159,6 +169,31 @@ export function DevModeEntry({
           placeholder="Buscar por nome…"
           aria-label="Buscar card"
         />
+
+        {/* Issue #34 — "precisa escolher", nunca um palpite: sem rastro em
+            disco, dois+ repos compartilham o mesmo board e só o operador sabe
+            qual é o certo para ESTE card. */}
+        {pendingRepoChoice ? (
+          <div className={styles.repoChoice} data-testid="devmode-entry-repo-choice">
+            <p className={styles.repoChoiceHint}>
+              Card <strong>{pendingRepoChoice.cardId}</strong> roda em mais de um projeto possível — em qual repo ele está?
+            </p>
+            <ul className={styles.repoChoiceList}>
+              {pendingRepoChoice.candidates.map((candidate) => (
+                <li key={candidate.repoPath}>
+                  <button
+                    type="button"
+                    className={styles.repoChoiceButton}
+                    data-testid={`devmode-entry-repo-choice-${candidate.repoSlug}`}
+                    onClick={() => onChooseRepoForCard?.(candidate.repoPath)}
+                  >
+                    {candidate.repoSlug}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         <ul className={styles.list} data-testid="devmode-entry-list">
           {loading ? <li className={styles.empty}>Carregando…</li> : null}

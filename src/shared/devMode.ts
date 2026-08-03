@@ -206,6 +206,10 @@ export const DEVMODE_CHANNELS = {
   // board (CA-12) para os cards do discovery em foco. Continua sem nenhum
   // canal de ESCRITA para TaskDex/vault (invariante 5/CA-14/CA-19).
   readBoardFacts: 'devMode:readBoardFacts',
+  // Issue #34 (P0) — resolve o repo-alvo de um card por RASTRO EM DISCO
+  // (esteira-state/.esteira), nunca pelo board em foco na sidebar. Leitura
+  // pura (`main/cardRepoResolver.ts`) — não escreve em nada.
+  resolveCardRepo: 'devMode:resolveCardRepo',
 } as const;
 
 export interface OpenDiscoveryIpcInput {
@@ -223,6 +227,22 @@ export function isValidOpenDiscoveryIpcInput(input: unknown): input is OpenDisco
     candidate.cardId.trim().length > 0 &&
     typeof candidate.repoPath === 'string' &&
     candidate.repoPath.trim().length > 0
+  );
+}
+
+/** Issue #34 — payload de `resolveCardRepo`: o card e o repo por trás do dropdown "Board" (só usado como último recurso, sem rastro em disco). `boardRepoPath: null` = nenhum board selecionado. */
+export interface ResolveCardRepoIpcInput {
+  readonly cardId: string;
+  readonly boardRepoPath: string | null;
+}
+
+export function isValidResolveCardRepoIpcInput(input: unknown): input is ResolveCardRepoIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<ResolveCardRepoIpcInput>;
+  return (
+    typeof candidate.cardId === 'string' &&
+    candidate.cardId.trim().length > 0 &&
+    (candidate.boardRepoPath === null || typeof candidate.boardRepoPath === 'string')
   );
 }
 
@@ -333,4 +353,6 @@ export interface DonelDevModeApi {
   unwatchPhase(input: WatchPhaseIpcInput): Promise<void>;
   /** CA-6 — push do main quando o manifesto de sucesso aparece. Devolve unsubscribe (mesmo padrão de `sessions.onTranscriptChanged`). */
   onPhaseArchived(listener: (payload: PhaseArchivedPayload) => void): () => void;
+  /** Issue #34 — resolve o repo-alvo do card por rastro em disco (nunca pelo repo em foco na sidebar); ambíguo/desconhecido nunca vira palpite. */
+  resolveCardRepo(input: ResolveCardRepoIpcInput): Promise<import('../main/cardRepoResolver').CardRepoResolution>;
 }

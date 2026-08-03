@@ -103,3 +103,42 @@
   font-size: var(--text-caption-size);
   color: var(--text-muted);
 }
+
+/* Issue #34 — "precisa escolher, nunca palpite": painel inline, mesmos
+   tokens do resto do modal (nenhuma peça visual nova, CA-25). */
+.repoChoice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--state-waiting);
+  border-radius: var(--radius-sm);
+}
+
+.repoChoiceHint {
+  margin: 0;
+  font-size: var(--text-caption-size);
+  color: var(--text-primary);
+}
+
+.repoChoiceList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.repoChoiceButton {
+  padding: var(--space-1);
+  background: var(--bg-panel);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.repoChoiceButton:hover {
+  background: var(--bg-raised);
+}

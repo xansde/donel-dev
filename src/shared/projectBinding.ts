@@ -275,6 +275,39 @@ export function mergeRepoEntry(text: string | null, update: RepoEntryUpdate): Re
   return { ...raw, repos: { ...repos, [update.repoSlug]: existingObject } };
 }
 
+/** Uma entrada de `repos.<slug>` já normalizada — forma legada (string = só `path`) e forma objeto viram o mesmo shape. Usado por `resolveCardRepo` (main/cardRepoResolver.ts, issue #34) para enumerar TODOS os repos e descobrir quais compartilham o mesmo board. */
+export interface RepoEntry {
+  readonly repoSlug: string;
+  readonly repoPath: string;
+  /** `null`/`null` juntos — igual `readRepoBoard`, nunca um campo pela metade. */
+  readonly workspaceId: string | null;
+  readonly teamId: string | null;
+}
+
+/** Todas as entradas de `repos.<slug>` do `repos.json`, com `path` resolvido (forma legada string vira o path) e o board PRÓPRIO daquele repo (nunca o fallback global — issue #34 precisa saber exatamente quais repos têm o MESMO board declarado, não quem herda por omissão). Nunca lança; `repos` ausente/malformado vira `[]`. */
+export function readAllRepoEntries(reposText: string | null): readonly RepoEntry[] {
+  const raw = parseJsonObject(reposText);
+  const repos = isPlainObject(raw.repos) ? raw.repos : {};
+  const entries: RepoEntry[] = [];
+
+  for (const [repoSlug, value] of Object.entries(repos)) {
+    if (typeof value === 'string' && value) {
+      entries.push({ repoSlug, repoPath: value, workspaceId: null, teamId: null });
+      continue;
+    }
+    if (!isPlainObject(value) || typeof value.path !== 'string' || !value.path) continue;
+    const board = isPlainObject(value.board) ? value.board : {};
+    entries.push({
+      repoSlug,
+      repoPath: value.path,
+      workspaceId: typeof board.workspaceId === 'string' && board.workspaceId ? board.workspaceId : null,
+      teamId: typeof board.teamId === 'string' && board.teamId ? board.teamId : null,
+    });
+  }
+
+  return entries;
+}
+
 /**
  * Estado combinado hoje conhecido para `repoSlug`, a partir do texto cru dos
  * dois arquivos — o que a engrenagem lê ao abrir. O board PREFERE o do

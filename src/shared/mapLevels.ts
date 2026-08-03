@@ -124,6 +124,36 @@ export function buildTrilha<TId>(steps: readonly TrilhaStepInput<TId>[]): readon
   return result;
 }
 
+export interface FullTrilhaStep<TId> extends TrilhaStepInput<TId> {
+  /** A PRIMEIRA etapa não realizada — só ela ganha o botão "⌁ Preparar" (mesmo papel de `TrilhaStep.isNext`). */
+  readonly isNext: boolean;
+  /** Issue #35 — tem manifesto em disco (`status !== 'not-started'`). `false` nunca remove a etapa da lista (ao contrário de `buildTrilha`) — ela some clicável e revisitável. */
+  readonly realized: boolean;
+}
+
+/**
+ * Issue #35 (exceção EXPLÍCITA ao CA-14 — "nunca fabrica card de plano nem
+ * fase por suposição" — pedido literal do dono, 01/08: *"Se eu estou em
+ * validar, quero que mostre o mapa, mas a parte anterior (E todas as outras
+ * anteriores sem memória em disco) como não realizada. Eu posso querer
+ * voltar e refazer alguma etapa sempre."*): a trilha SINTÉTICA (nasce quando
+ * o card não tem `plan_cards[]`/fanout real — `discovery-tree.ts`) mostra
+ * TODAS as etapas SEMPRE, mesmo com várias `not-started` em sequência —
+ * nunca trunca a lista (ao contrário de `buildTrilha`, que para na primeira
+ * `not-started`; card com fanout real continua nesse contrato, inalterado).
+ * Cada etapa carrega `realized` para a UI distinguir "estado vazio" (nunca
+ * realizada) de "fato registrado" — nunca as duas coisas se confundem.
+ */
+export function buildFullTrilha<TId>(steps: readonly TrilhaStepInput<TId>[]): readonly FullTrilhaStep<TId>[] {
+  let nextAssigned = false;
+  return steps.map((step) => {
+    const realized = step.status !== 'not-started';
+    const isNext = !realized && !nextAssigned;
+    if (isNext) nextAssigned = true;
+    return { ...step, isNext, realized };
+  });
+}
+
 /**
  * Decisão A do handoff v3 (verificação §1) — no degrau **urgente**, quando o
  * card de Validação NÃO está em foco, o relógio se promove à barra de status
