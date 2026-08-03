@@ -7,6 +7,7 @@ import {
   readRepoGithub,
   readRepoGithubExtra,
   type ProjectBindingDto,
+  type SaveProjectBindingResult,
 } from '../shared/projectBinding';
 
 // CA-23 (009-modo-dev-v3, lote 3) — encanamento de disco da engrenagem de
@@ -159,4 +160,29 @@ export function saveProjectBindingToDisk(
 
   const boardText = io.readFileText(boardCredentialPath(dir));
   return readProjectBinding(boardText, finalReposText, repoSlug);
+}
+
+/**
+ * FIX (#33) — wrapper de `saveProjectBindingToDisk` que o handler IPC
+ * (`PROJECT_BINDING_CHANNELS.save`, main/index.ts) passa a chamar. A escrita
+ * atômica (`writeJsonAtomic`) pode lançar (permissão negada, disco cheio,
+ * rename falhando no meio) — antes isso propagava como rejeição da promise
+ * do `ipcMain.handle`, mas nenhum call site do renderer tinha `.catch`
+ * (`ProjectSwitcher.tsx`/`PreviousSessions.tsx`), então virava unhandled
+ * rejection silenciosa. Aqui a exceção é capturada e devolvida como resultado
+ * tipado — o renderer nunca mais precisa adivinhar se algo deu errado.
+ */
+export function trySaveProjectBindingToDisk(
+  dir: string,
+  repoSlug: string,
+  repoPath: string,
+  next: SaveProjectBindingInput,
+  io: EsteiraConfigIoDeps,
+): SaveProjectBindingResult {
+  try {
+    const binding = saveProjectBindingToDisk(dir, repoSlug, repoPath, next, io);
+    return { ok: true, binding };
+  } catch {
+    return { ok: false, reason: 'write-failed' };
+  }
 }

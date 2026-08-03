@@ -30,6 +30,7 @@ import type {
   PhaseArchivedPayload,
   PtyExitInfo,
   SaveProjectBindingIpcInput,
+  SaveProjectBindingResult,
   SemaphoreUpdate,
   SessionSummaryDto,
   TranscriptChangedPayload,
@@ -88,7 +89,7 @@ import {
   esteiraConfigDir,
   readProjectBindingFromDisk,
   reposConfigPath,
-  saveProjectBindingToDisk,
+  trySaveProjectBindingToDisk,
 } from './esteira-config';
 import { createSystemEsteiraReaderIoDeps } from './esteira-reader';
 import { watchEsteiraResult, type EsteiraResultWatcherHandle } from './esteira-result-watcher';
@@ -993,10 +994,14 @@ function registerProjectBindingIpcHandlers(): void {
     return readProjectBindingFromDisk(ESTEIRA_CONFIG_DIR, resolveRepoSlug(repoPath), esteiraConfigIoDeps);
   });
 
-  ipcMain.handle(PROJECT_BINDING_CHANNELS.save, (_event, input: unknown): ProjectBindingDto => {
-    if (!isValidSaveProjectBindingIpcInput(input)) return EMPTY_BINDING;
+  // FIX (#33) — `save` engolia payload inválido e falha de escrita no mesmo
+  // DTO "vazio" que uma limpeza legítima de binding também produz. Agora
+  // devolve `SaveProjectBindingResult` (ok/reason) — `trySaveProjectBindingToDisk`
+  // já captura exceção de I/O; aqui só resta capturar a guarda de payload.
+  ipcMain.handle(PROJECT_BINDING_CHANNELS.save, (_event, input: unknown): SaveProjectBindingResult => {
+    if (!isValidSaveProjectBindingIpcInput(input)) return { ok: false, reason: 'invalid-input' };
     const typed = input as SaveProjectBindingIpcInput;
-    return saveProjectBindingToDisk(
+    return trySaveProjectBindingToDisk(
       ESTEIRA_CONFIG_DIR,
       resolveRepoSlug(typed.repoPath),
       typed.repoPath,

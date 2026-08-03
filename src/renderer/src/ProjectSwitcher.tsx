@@ -123,6 +123,16 @@ export function ProjectSwitcher({
   const [teamId, setTeamId] = useState('');
   const [creating, setCreating] = useState(false);
   const [errorReason, setErrorReason] = useState<CreateProjectErrorReason | null>(null);
+  // FIX (#33) — `projectBinding.save` era fire-and-forget: se o IPC falhasse
+  // (guarda `isValidSaveProjectBindingIpcInput` rejeitando o payload, ou a
+  // escrita em disco lançando), ninguém ficava sabendo — o modal já tinha
+  // fechado. Agora o save é aguardado e, em falha, o erro aparece aqui (mesmo
+  // lugar de `errorReason`/`new-project-error`) SEM fechar o modal — o
+  // projeto em si já foi criado (mkdir/CLAUDE.md/clone já aconteceram), então
+  // um novo clique em "Criar projeto" só reintenta o SAVE do binding (via
+  // `createdProject`), nunca recria a pasta (que já existe).
+  const [bindingError, setBindingError] = useState<string | null>(null);
+  const [createdProject, setCreatedProject] = useState<{ path: string; name: string } | null>(null);
   // Item 2 — filtro textual do popover "Projetos" (case/acento-insensível,
   // lógica pura em src/shared/projectCatalog.ts). Zera toda vez que o
   // popover fecha, pra não reabrir com um filtro "esquecido" de outra hora.
@@ -156,37 +166,70 @@ export function ProjectSwitcher({
     setWorkspaceId('');
     setTeamId('');
     setErrorReason(null);
+    setBindingError(null);
+    setCreatedProject(null);
     setNewProjectOpen(true);
   };
   const closeNewProjectModal = (): void => setNewProjectOpen(false);
 
   const handleCreate = (): void => {
-    if (creating || source !== 'vazio' || !name.trim() || !targetRoot) return;
+    if (creating || source !== 'vazio' || (!createdProject && (!name.trim() || !targetRoot))) return;
     setCreating(true);
     setErrorReason(null);
-    window.donel.projects
-      .create({ name, root: targetRoot })
-      .then((response) => {
-        onProjectsChanged(response.projects);
-        if (!response.result.ok) {
-          setErrorReason(response.result.reason);
-          return;
+    setBindingError(null);
+
+    void (async (): Promise<void> => {
+      try {
+        let path: string;
+        let createdName: string;
+        let projectsList: readonly ProjectInfo[];
+
+        if (createdProject) {
+          // Retry — o projeto já existe em disco (a criação deu certo da
+          // primeira vez); só o save do binding falhou, então NÃO chama
+          // `projects.create` de novo (a pasta já existe, viraria erro
+          // `already-exists` mascarando a falha real).
+          path = createdProject.path;
+          createdName = createdProject.name;
+          projectsList = projects;
+        } else {
+          const response = await window.donel.projects.create({ name, root: targetRoot });
+          onProjectsChanged(response.projects);
+          if (!response.result.ok) {
+            setErrorReason(response.result.reason);
+            return;
+          }
+          path = response.result.path;
+          createdName = response.result.name;
+          projectsList = response.projects;
         }
-        const { path, name: createdName } = response.result;
-        setNewProjectOpen(false);
-        if (repos.length > 0 || (workspaceId.trim() && teamId.trim())) {
-          void window.donel.projectBinding.save({
+
+        const needsBindingSave = repos.length > 0 || (workspaceId.trim() && teamId.trim());
+        if (needsBindingSave) {
+          const saveResult = await window.donel.projectBinding.save({
             repoPath: path,
             workspaceId,
             teamId,
             github: repos[0] ?? '',
             githubExtra: repos.slice(1),
           });
+          if (!saveResult.ok) {
+            setCreatedProject({ path, name: createdName });
+            setBindingError(
+              'O projeto foi criado, mas não consegui salvar o repositório/board dele — tente salvar de novo.',
+            );
+            return;
+          }
         }
-        const created = response.projects.find((project) => project.path === path);
+
+        setNewProjectOpen(false);
+        setCreatedProject(null);
+        const created = projectsList.find((project) => project.path === path);
         onOpenProject(created ?? { path, name: createdName, root: targetRoot, favorite: false });
-      })
-      .finally(() => setCreating(false));
+      } finally {
+        setCreating(false);
+      }
+    })();
   };
 
   return (
@@ -295,9 +338,9 @@ export function ProjectSwitcher({
             <Button
               variant="primary"
               onClick={handleCreate}
-              disabled={creating || source !== 'vazio' || !name.trim() || !targetRoot}
+              disabled={creating || source !== 'vazio' || (!createdProject && (!name.trim() || !targetRoot))}
             >
-              {creating ? 'Criando…' : 'Criar projeto'}
+              {creating ? 'Criando…' : createdProject ? 'Tentar salvar de novo' : 'Criar projeto'}
             </Button>
           </>
         }
@@ -351,9 +394,9 @@ export function ProjectSwitcher({
           {!targetRoot ? (
             <p className={styles.hintDanger}>Nenhuma pasta-raiz configurada — adicione uma em Preferências antes de criar.</p>
           ) : null}
-          {errorReason ? (
+          {errorReason || bindingError ? (
             <p className={styles.hintDanger} data-testid="new-project-error">
-              {errorMessage(errorReason)}
+              {errorReason ? errorMessage(errorReason) : bindingError}
             </p>
           ) : null}
         </div>

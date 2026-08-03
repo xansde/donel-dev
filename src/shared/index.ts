@@ -116,7 +116,14 @@ export {
   readRepoGithub,
   readRepoGithubExtra,
 } from './projectBinding';
-export type { DonelProjectBindingApi, ProjectBindingDto, RepoEntryUpdate, RepoGithubUpdate, SaveProjectBindingIpcInput } from './projectBinding';
+export type {
+  DonelProjectBindingApi,
+  ProjectBindingDto,
+  RepoEntryUpdate,
+  RepoGithubUpdate,
+  SaveProjectBindingIpcInput,
+  SaveProjectBindingResult,
+} from './projectBinding';
 
 // CA-3/CA-5 (009-modo-dev-v3, lote 4) — canal IPC do GitHub reader
 // (src/main/github-reader.ts): spec-issue, sub-issues nativas, PR da fase +

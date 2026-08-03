@@ -115,6 +115,12 @@
   font-size: var(--text-caption-size);
 }
 
+/* FIX (#33) — mesmo tratamento visual de erro do `.hintDanger` em ProjectSwitcher.module.css. */
+.hintDanger {
+  composes: hint;
+  color: var(--state-error);
+}
+
 /* === Tabela (mockup linhas 490-504): SESSÃO · ETAPA · CONTA · CONTEXTO ·
    QUANDO — a 7ª coluna (ações) não existe no desenho; reservada pra
    Retomar/Fork (nossos, sem equivalente no mockup). */

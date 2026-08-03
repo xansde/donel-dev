@@ -113,6 +113,11 @@ export function PreviousSessions({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bindingLoading, setBindingLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // FIX (#33) — `projectBinding.save` agora devolve `{ ok, ... }` (ver
+  // src/shared/projectBinding.ts) em vez do DTO cru, justamente pra distinguir
+  // falha de sucesso — antes o handler engolia payload inválido/erro de
+  // escrita no mesmo DTO "vazio" que uma limpeza legítima produz.
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [workspaceId, setWorkspaceId] = useState('');
   const [teamId, setTeamId] = useState('');
   const [repos, setRepos] = useState<string[]>([]);
@@ -137,6 +142,7 @@ export function PreviousSessions({
     if (!settingsOpen) return undefined;
     let cancelled = false;
     setBindingLoading(true);
+    setSaveError(null);
     window.donel.projectBinding
       .get(projectPath)
       .then((dto) => {
@@ -165,12 +171,17 @@ export function PreviousSessions({
 
   const handleSaveSettings = (): void => {
     setSaving(true);
+    setSaveError(null);
     window.donel.projectBinding
       .save({ repoPath: projectPath, workspaceId, teamId, github: repos[0] ?? '', githubExtra: repos.slice(1) })
-      .then((dto) => {
-        setWorkspaceId(dto.workspaceId);
-        setTeamId(dto.teamId);
-        setRepos(reposFromBinding(dto));
+      .then((result) => {
+        if (!result.ok) {
+          setSaveError('Não consegui salvar — tente de novo.');
+          return;
+        }
+        setWorkspaceId(result.binding.workspaceId);
+        setTeamId(result.binding.teamId);
+        setRepos(reposFromBinding(result.binding));
         setSettingsOpen(false);
       })
       .finally(() => setSaving(false));
@@ -322,6 +333,12 @@ export function PreviousSessions({
               onTeamIdChange={setTeamId}
               disabled={bindingLoading || saving}
             />
+
+            {saveError ? (
+              <p className={styles.hintDanger} data-testid="project-config-save-error">
+                {saveError}
+              </p>
+            ) : null}
 
             <div className={styles.settingsActions}>
               <Button variant="primary" onClick={handleSaveSettings} disabled={saving}>

@@ -10,6 +10,7 @@ import {
   readProjectBindingFromDisk,
   reposConfigPath,
   saveProjectBindingToDisk,
+  trySaveProjectBindingToDisk,
   type EsteiraConfigIoDeps,
 } from '../src/main/esteira-config';
 
@@ -203,6 +204,61 @@ describe('saveProjectBindingToDisk (I/O mockado)', () => {
     const repos = JSON.parse(files[reposConfigPath('C:\\cfg')] as string);
     expect(repos.repos.spotsys.board).toEqual({ workspaceId: 'ws-1', teamId: 'team-1' });
     expect(repos.repos.spotsys.github_extra).toEqual(['org/extra']);
+  });
+});
+
+// FIX (#33) — `projectBinding.save` era fire-and-forget no renderer e o
+// handler IPC devolvia o DTO "vazio" tanto pra payload inválido quanto pra
+// falha real de escrita, indistinguível de uma limpeza legítima de binding.
+// `trySaveProjectBindingToDisk` é o wrapper que o handler passa a chamar —
+// TDD aqui prova que uma falha de I/O (ex. permissão negada) vira
+// `{ ok: false, reason: 'write-failed' }` em vez de propagar a exceção
+// (que o `ipcMain.handle` até rejeitaria, mas o renderer nunca tratava — daí
+// a falha silenciosa) ou devolver um DTO vazio ambíguo.
+describe('trySaveProjectBindingToDisk (I/O mockado)', () => {
+  it('sucesso: devolve { ok: true, binding } com o DTO persistido', () => {
+    const { io } = makeMockIo();
+    const result = trySaveProjectBindingToDisk(
+      'C:\\cfg',
+      'spotsys',
+      'C:\\Users\\x\\seazone\\spotsys',
+      { workspaceId: 'ws-1', teamId: 'team-1', github: 'seazone-tech/spotsys', githubExtra: [] },
+      io,
+    );
+    expect(result).toEqual({
+      ok: true,
+      binding: { workspaceId: 'ws-1', teamId: 'team-1', github: 'seazone-tech/spotsys', githubExtra: [], hasOwnBoard: true },
+    });
+  });
+
+  it('escrita lança (ex.: permissão negada): devolve { ok: false, reason: "write-failed" }, nunca lança', () => {
+    const { io } = makeMockIo();
+    io.writeFileText = vi.fn(() => {
+      throw new Error('EPERM');
+    });
+    const result = trySaveProjectBindingToDisk(
+      'C:\\cfg',
+      'spotsys',
+      'C:\\spotsys',
+      { workspaceId: 'ws-1', teamId: 'team-1', github: 'seazone-tech/spotsys', githubExtra: [] },
+      io,
+    );
+    expect(result).toEqual({ ok: false, reason: 'write-failed' });
+  });
+
+  it('rename lança depois do write (falha no meio da escrita atômica): também vira write-failed', () => {
+    const { io } = makeMockIo();
+    io.renameFile = vi.fn(() => {
+      throw new Error('EBUSY');
+    });
+    const result = trySaveProjectBindingToDisk(
+      'C:\\cfg',
+      'spotsys',
+      'C:\\spotsys',
+      { workspaceId: 'ws-1', teamId: 'team-1', github: 'seazone-tech/spotsys', githubExtra: [] },
+      io,
+    );
+    expect(result).toEqual({ ok: false, reason: 'write-failed' });
   });
 });
 
