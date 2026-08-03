@@ -208,6 +208,20 @@ canônica, filtrada pelo que existe — nunca por indexação por nome de etapa.
 não deixa buraco: deixa uma lista mais curta. (Hoje o código faz o oposto: `phases` é um
 `Record` sempre cheio e `phaseIndex()` devolve `-1` para coluna desconhecida.)
 
+**Exceção explícita ao CA-14 (issue #35, pedido literal do dono, 01/08):** *"Se eu estou em
+validar, quero que mostre o mapa, mas a parte anterior (E todas as outras anteriores sem
+memória em disco) como não realizada. Eu posso querer voltar e refazer alguma etapa
+sempre."* Quando um discovery não tem `plan_cards[]` nenhum ainda (achado real: card sem
+avanço nenhum não conseguia sair da tela, e um card aberto direto na coluna Validar aparecia
+como se estivesse em Discovery), o tree-builder (`discovery-tree.ts`) fabrica **um card de
+plano SINTÉTICO** (`PlanCardNode.synthetic: true`, `cardId === discoveryCardId`) com a trilha
+fixa `discovery → plano → implementar → validar`. Cada etapa sem manifesto em disco é
+"não realizada" (`buildFullTrilha`, `mapLevels.ts` — nunca trunca a lista, ao contrário de
+`buildTrilha`) e continua **clicável e revisitável**, nunca escondida. Assim que o card
+declarar `plan_cards[]`/`fases[]` reais, o comportamento CA-14 original volta a valer
+byte a byte (`planCard.fases.length > 0` desliga a trilha sintética). É a ÚNICA fabricação
+de card/fase por suposição permitida no sistema — todo o resto do CA-14 continua vigente.
+
 **CA-15.** **Nenhum disparo na faixa superior** — a fileira de botões de fase do centro
 sai, e a progressão vive só no mapa. `＋ Nova sessão` não pertence ao Modo Dev.
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildFullTrilha,
   buildPlanCardTags,
   buildTrilha,
   canonicalLevelKeys,
@@ -158,6 +159,51 @@ describe('buildTrilha', () => {
 
   it('lista vazia → trilha vazia, nunca lança', () => {
     expect(buildTrilha([])).toEqual([]);
+  });
+});
+
+describe('buildFullTrilha (issue #35 — trilha sintética)', () => {
+  it('nenhuma etapa realizada: TODAS aparecem, sem truncar na primeira not-started — só a 1ª ganha isNext', () => {
+    const steps = [
+      { id: 'discovery', status: 'not-started' as const },
+      { id: 'plano', status: 'not-started' as const },
+      { id: 'implementar', status: 'not-started' as const },
+      { id: 'validar', status: 'not-started' as const },
+    ];
+    const trilha = buildFullTrilha(steps);
+    expect(trilha.map((s) => s.id)).toEqual(['discovery', 'plano', 'implementar', 'validar']);
+    expect(trilha.every((s) => s.realized === false)).toBe(true);
+    expect(trilha.map((s) => s.isNext)).toEqual([true, false, false, false]);
+  });
+
+  it('card focado direto em Validar: anteriores não realizadas continuam na lista (revisitáveis), validar aparece realizado', () => {
+    const steps = [
+      { id: 'discovery', status: 'not-started' as const },
+      { id: 'plano', status: 'not-started' as const },
+      { id: 'implementar', status: 'not-started' as const },
+      { id: 'validar', status: 'running' as const },
+    ];
+    const trilha = buildFullTrilha(steps);
+    expect(trilha).toHaveLength(4);
+    expect(trilha.map((s) => s.realized)).toEqual([false, false, false, true]);
+    // A "próxima" continua sendo a 1ª não realizada, não a validar (já em curso).
+    expect(trilha.find((s) => s.isNext)?.id).toBe('discovery');
+  });
+
+  it('etapas com manifesto real (done/failed/stuck) marcam realized=true, sem afetar as demais', () => {
+    const steps = [
+      { id: 'discovery', status: 'done' as const },
+      { id: 'plano', status: 'failed' as const },
+      { id: 'implementar', status: 'not-started' as const },
+      { id: 'validar', status: 'not-started' as const },
+    ];
+    const trilha = buildFullTrilha(steps);
+    expect(trilha.map((s) => s.realized)).toEqual([true, true, false, false]);
+    expect(trilha.map((s) => s.isNext)).toEqual([false, false, true, false]);
+  });
+
+  it('lista vazia → trilha vazia, nunca lança', () => {
+    expect(buildFullTrilha([])).toEqual([]);
   });
 });
 

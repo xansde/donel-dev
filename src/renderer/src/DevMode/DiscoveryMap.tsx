@@ -16,6 +16,7 @@ import type { AnnotatedDiscoveryTree, AnnotatedPlanCardNode } from '../../../sha
 import type { EsteiraPhase, PhaseDefaultsTable } from '../../../shared/devMode';
 import type { PhasePullRequestFacts } from '../../../shared/githubFacts';
 import {
+  buildFullTrilha,
   buildPlanCardTags,
   buildTrilha,
   canonicalLevelKeys,
@@ -249,6 +250,31 @@ function documentalTrilhaSteps(
   return [discoveryStep(discoveryStatus), { phase: 'documentar', status: planCard.phases.documentar.status, key: 'documentar' }];
 }
 
+/**
+ * Issue #35 (exceção explícita ao CA-14, pedido literal do dono 01/08) — a
+ * trilha SINTÉTICA do card de plano fabricado (`planCard.synthetic`, sem
+ * `plan_cards[]`/`fases[]` reais ainda): 4 etapas FIXAS
+ * `discovery→plano→implementar→validar`, lidas do MESMO `phases` Record que
+ * todo card já tem (`implementar`/`validar` continuam no `faseNum: 1` default
+ * — mesma fonte que `codigoTrilhaSteps` usava antes do carrossel por-PR do
+ * lote 7). Ao contrário de `codigoTrilhaSteps`, NÃO itera `planCard.fases`
+ * (que aqui está vazio, por construção): a trilha sempre tem as 4 etapas,
+ * combinada com `buildFullTrilha` (que nunca trunca na primeira
+ * `not-started`) para que "as anteriores sem memória em disco" continuem
+ * visíveis e clicáveis, nunca escondidas.
+ */
+function syntheticTrilhaSteps(
+  planCard: AnnotatedPlanCardNode,
+  discoveryStatus: PhaseStatus,
+): readonly { phase: EsteiraPhase; faseNum?: number; status: PhaseStatus; key: string }[] {
+  return [
+    discoveryStep(discoveryStatus),
+    { phase: 'plano', status: planCard.phases.plano.status, key: 'plano' },
+    { phase: 'implementar', status: planCard.phases.implementar.status, key: 'implementar' },
+    { phase: 'validar', status: planCard.phases.validar.status, key: 'validar' },
+  ];
+}
+
 export function DiscoveryMap({
   tree,
   discoveryBoardFacts,
@@ -423,11 +449,21 @@ export function DiscoveryMap({
                   )
                 : null,
           });
-          const steps =
-            planCard.track === 'documental'
+          // Issue #35 — enquanto o card de plano é SINTÉTICO e ainda não
+          // declarou `fases[]` reais (`plano-result.json` do próprio card
+          // raiz), a trilha é a de 4 etapas fixas + `buildFullTrilha` (nunca
+          // trunca as não-realizadas). Assim que `fases[]` nasce — synthetic
+          // ou não — o comportamento REAL (por-PR, `buildTrilha` truncando na
+          // 1ª não iniciada) volta a valer, byte a byte igual a antes.
+          const isSyntheticTrail = planCard.synthetic && planCard.fases.length === 0;
+          const steps = isSyntheticTrail
+            ? syntheticTrilhaSteps(planCard, tree.discoveryStatus)
+            : planCard.track === 'documental'
               ? documentalTrilhaSteps(planCard, tree.discoveryStatus)
               : codigoTrilhaSteps(planCard, tree.discoveryStatus);
-          const trilhaSteps = buildTrilha(steps.map((s) => ({ id: s.key, status: s.status })));
+          const trilhaSteps = isSyntheticTrail
+            ? buildFullTrilha(steps.map((s) => ({ id: s.key, status: s.status })))
+            : buildTrilha(steps.map((s) => ({ id: s.key, status: s.status })));
           const trilha: TrilhaRenderItem[] | null = focused
             ? trilhaSteps.map((step, index) => {
                 const source = steps[index];

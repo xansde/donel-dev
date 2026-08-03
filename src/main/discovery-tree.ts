@@ -74,6 +74,16 @@ export interface PlanCardNode {
   readonly phases: Readonly<Record<EsteiraPhase, PhaseNode>>;
   /** CA-11/CA-14 — as fases (unidade de PR) que o PLANO declarou (`outputs.fases[]`); `[]` até ele fatiar — é essa lista vazia que faz Implementação/Validação não nascerem no mapa. */
   readonly fases: readonly PlanCardFaseNode[];
+  /**
+   * Issue #35 (exceção explícita ao CA-14, pedido literal do dono 01/08) —
+   * `true` quando este card de plano NÃO veio de `plan_cards[]` real: é a
+   * trilha SINTÉTICA `discovery→plano→implementar→validar` do próprio card
+   * RAIZ (`cardId === discoveryCardId`), fabricada só quando o discovery não
+   * tem fanout nenhum ainda (card entrou direto numa coluna adiantada, ou
+   * discovery ainda não declarou `plan_cards[]`). `false` para todo card real
+   * — nunca fabricado, comportamento CA-14 original intacto.
+   */
+  readonly synthetic: boolean;
 }
 
 export interface DiscoveryTree {
@@ -143,7 +153,23 @@ function buildPlanCardNode(root: EsteiraStateRoot, planCard: PlanCardRef, archiv
   const faseRefs = readPlanoFases(root, planCard.cardId, io);
   const fases = faseRefs.map((ref) => buildFaseNode(root, planCard.cardId, ref, archived, io));
 
-  return { cardId: planCard.cardId, track: planCard.track, shadow: planCard.shadow, phases, fases };
+  return { cardId: planCard.cardId, track: planCard.track, shadow: planCard.shadow, phases, fases, synthetic: false };
+}
+
+/**
+ * Issue #35 (exceção explícita ao CA-14) — o card de plano SINTÉTICO: mesma
+ * estrutura de `buildPlanCardNode`, mas `cardId === discoveryCardId` (o
+ * PRÓPRIO card raiz, não um sub-card de `plan_cards[]`). Fabricado só quando
+ * `readDiscoveryPlanCards` devolveu `[]` — sem fanout real, o progresso do
+ * card raiz (`plano`/`implementar`/`validar` lidos sob o MESMO `cardId` do
+ * discovery) é o único fato que existe para desenhar. `fases[]` continua
+ * lido do disco de verdade (`readPlanoFases`): se o plano do próprio card
+ * raiz já declarou fases, a trilha por-PR nasce igual à de um card real —
+ * nenhuma duplicação de lógica entre os dois casos.
+ */
+function buildSyntheticRootPlanCard(root: EsteiraStateRoot, discoveryCardId: string, archived: ArchivedPhaseSessions, io: EsteiraReaderIoDeps): PlanCardNode {
+  const node = buildPlanCardNode(root, { cardId: discoveryCardId, track: 'codigo', shadow: false }, archived, io);
+  return { ...node, synthetic: true };
 }
 
 /**
@@ -181,9 +207,17 @@ export function buildDiscoveryTree(
   io: EsteiraReaderIoDeps,
 ): DiscoveryTree {
   const planCardRefs = readDiscoveryPlanCards(root, discoveryCardId, io);
-  const planCards = planCardRefs.map((ref) => buildPlanCardNode(root, ref, archived, io));
+  // Issue #35 — sem `plan_cards[]` (discovery sem fanout ainda, OU card
+  // entrado direto numa coluna adiantada sem discovery nenhum no disco), a
+  // trilha SINTÉTICA do card raiz nasce aqui — nunca uma lista vazia. É a
+  // exceção explícita ao CA-14 (pedido literal do dono, 01/08): "a parte
+  // anterior sem memória em disco" aparece "não realizada", nunca some.
+  const planCards =
+    planCardRefs.length > 0
+      ? planCardRefs.map((ref) => buildPlanCardNode(root, ref, archived, io))
+      : [buildSyntheticRootPlanCard(root, discoveryCardId, archived, io)];
 
-  const allPlanCardsComplete = planCards.length > 0 && planCards.every(planCardComplete);
+  const allPlanCardsComplete = planCardRefs.length > 0 && planCards.every(planCardComplete);
   // FIX (item 4) — mesmo `buildPhaseNode` que cada card de plano usa pra sua
   // própria fase `discovery` fixa (`DISCOVERY_STEP`, DiscoveryMap.tsx), só
   // que aqui é o card RAIZ de verdade sendo lido, não um card de plano —
