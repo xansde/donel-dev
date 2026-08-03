@@ -24,6 +24,7 @@ import {
   moveLevelFocus,
   nextLevelPreview,
   planCardToneColor,
+  resolveCardDisplayTitle,
   resolvePlanCardTone,
   shouldPromoteClockToStatusBar,
   type MapLevelKey,
@@ -656,24 +657,32 @@ function renderMapCard(content: MapCardContent, focused: boolean): React.JSX.Ele
 
   if (content.kind === 'plano') {
     const { planCard, metaLabel, metaValue, tags, trilha, action, statusLabel } = content;
+    // #27a — só um segundo texto quando o título do board traz algo além do
+    // id já mostrado em `.cardId` (ver `resolveCardDisplayTitle`).
+    const displayTitle = resolveCardDisplayTitle(planCard.cardId, planCard.boardFacts?.title ?? null);
     return (
       <div className={styles.cardBody} data-testid={`devmode-map-plano-${planCard.cardId}`} data-focused={focused ? 'true' : 'false'}>
         <div className={styles.cardTop}>
           <span className={styles.cardIcon}>{planCard.track === 'documental' ? '▤' : '▷'}</span>
           <span className={styles.cardId}>{planCard.cardId}</span>
-          <span className={styles.cardTitle}>{planCard.boardFacts?.title || planCard.cardId}</span>
+          <span className={styles.cardTitle}>{displayTitle ?? ''}</span>
           <span className={styles.cardStatus}>{statusLabel}</span>
         </div>
         {/* Item 6 — a faixa "worktree <path>" (metaLabel/metaValue) e as 4
             etiquetas da Decisão B (board/trava/atenção/prazo) vivem na MESMA
-            linha, como no mockup — nunca duas faixas separadas. */}
+            linha, como no mockup — nunca duas faixas separadas. #27b — o
+            par metaLabel/metaValue ganhou wrapper próprio (`.cardMeta`,
+            `min-width: 0` + `flex-shrink`) pra caber numa faixa inline de
+            uma linha só (ellipsis), nunca quebrando o path em duas. */}
         {metaLabel || tags.length > 0 ? (
           <div className={styles.cardTags} data-testid={`devmode-map-plano-tags-${planCard.cardId}`}>
             {metaLabel ? (
-              <>
+              <span className={styles.cardMeta}>
                 <span className={styles.cardMetaLabel}>{metaLabel}</span>
-                <span className={styles.cardMetaValue}>{metaValue}</span>
-              </>
+                <span className={styles.cardMetaValue} title={metaValue ?? undefined}>
+                  {metaValue}
+                </span>
+              </span>
             ) : null}
             {tags.map((tag) => (
               <AnnotationTag key={tag.text} tone={tag.tone}>

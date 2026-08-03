@@ -115,9 +115,11 @@
   font-size: var(--text-caption-size);
 }
 
-/* === Tabela (mockup linhas 490-504): SESSÃO · ETAPA · CONTA · CONTEXTO ·
-   QUANDO — a 7ª coluna (ações) não existe no desenho; reservada pra
-   Retomar/Fork (nossos, sem equivalente no mockup). */
+/* === Tabela (mockup linhas 490-504): SESSÃO · ETAPA · QUANDO — a última
+   coluna (ações) não existe no desenho; reservada pra Retomar/Fork (nossos,
+   sem equivalente no mockup). #26 — colunas CONTA e CONTEXTO removidas
+   (dispensáveis; o rodapé sobre "entradas irmãs" continua explicando a
+   etiqueta de conta quando ela existir em outro lugar). */
 .tableWrap {
   flex: 1;
   min-height: 0;
@@ -137,7 +139,7 @@
    conteúdo) faz as duas grades convergirem pro mesmo layout; o cabeçalho
    ganhou uma 7ª célula vazia (`.tsx`) só pra ocupar essa coluna também. */
 .tableGridColumns {
-  grid-template-columns: 22px minmax(140px, 220px) 1fr minmax(100px, 150px) 90px 84px 160px;
+  grid-template-columns: 22px minmax(140px, 220px) 1fr 84px 160px;
 }
 
 .tableHeader {
@@ -212,29 +214,6 @@
 }
 
 .rowEtapaMuted {
-  color: var(--text-muted);
-}
-
-.accountChip {
-  display: inline-flex;
-  align-items: center;
-  height: 18px;
-  padding: 0 7px;
-  border-radius: 4px;
-  font-size: 10.5px;
-  white-space: nowrap;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-}
-
-.rowMuted {
-  color: var(--text-muted);
-}
-
-.rowContext {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
   color: var(--text-muted);
 }
 

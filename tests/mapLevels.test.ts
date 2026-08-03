@@ -10,6 +10,7 @@ import {
   needsCarousel,
   nextLevelPreview,
   planCardToneColor,
+  resolveCardDisplayTitle,
   resolvePlanCardTone,
   shouldPromoteClockToStatusBar,
 } from '../src/shared/mapLevels';
@@ -335,5 +336,25 @@ describe('resolvePlanCardTone', () => {
     expect(planCardToneColor('lock')).toBe('var(--state-error)');
     expect(planCardToneColor('accent')).toBe('var(--accent)');
     expect(planCardToneColor('muted')).toBe('var(--text-muted)');
+  });
+});
+
+// #27a (rodada de polimento) — o card de plano mostrava id + título
+// duplicados ("SZI-DEMO-A SZI-DEMO-A") sempre que o board não tinha título
+// distinto (fallback antigo `title || cardId` repetia o id; título igual ao
+// id, por coincidência, causava a mesma repetição).
+describe('resolveCardDisplayTitle', () => {
+  it('título ausente — nunca fabrica um segundo texto igual ao id', () => {
+    expect(resolveCardDisplayTitle('SZI-DEMO-A', null)).toBeNull();
+    expect(resolveCardDisplayTitle('SZI-DEMO-A', undefined)).toBeNull();
+    expect(resolveCardDisplayTitle('SZI-DEMO-A', '')).toBeNull();
+  });
+
+  it('título igual ao id — mesma repetição, mesma correção: null', () => {
+    expect(resolveCardDisplayTitle('SZI-DEMO-A', 'SZI-DEMO-A')).toBeNull();
+  });
+
+  it('título distinto do id — aparece por inteiro', () => {
+    expect(resolveCardDisplayTitle('SZI-902', 'Conciliação de divergência')).toBe('Conciliação de divergência');
   });
 });

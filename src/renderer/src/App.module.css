@@ -119,8 +119,8 @@
 }
 
 /* Item 4 (rodada de forma fix/009-board-real-e-modal, mockup linha 61-65) —
-   a lista de abas rola sozinha; o hint fica FORA da área rolável (senão some
-   com muitas abas abertas, nunca lê "arraste para reordenar"). */
+   a lista de abas rola sozinha, ocupando a barra inteira (#25 — sem hint,
+   sem faixa reservada à direita). */
 .tabBarScroll {
   display: flex;
   align-items: center;
@@ -128,14 +128,6 @@
   min-width: 0;
   flex: 1;
   overflow-x: auto;
-}
-
-.tabBarHint {
-  flex: none;
-  white-space: nowrap;
-  padding-left: var(--space-1);
-  font-size: 10px;
-  color: var(--text-muted);
 }
 
 /* Lote 8 (009-modo-dev-v3) — header de 44px acima do terminal (mockup

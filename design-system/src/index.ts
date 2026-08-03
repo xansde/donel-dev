@@ -89,9 +89,6 @@ export type {
   WorktreeCardAnnotation,
 } from './components/WorktreeCard';
 
-export { ArmedPrompt } from './components/ArmedPrompt';
-export type { ArmedPromptProps, ArmedPromptWarning } from './components/ArmedPrompt';
-
 // === Lote 6 (009-modo-dev-v3) — extensões 5, 6 e 8 do handoff v3 ===
 
 export { LevelCarousel } from './components/LevelCarousel';
