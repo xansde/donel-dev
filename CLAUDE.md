@@ -110,6 +110,23 @@ ato humano.
 > leva nova e continua valendo: a trava é **etiqueta do board**, nunca arquivo
 > `.lock` (D-V3).
 
+## Gatilho — "rodar a próxima fase da 010"
+
+Pedido "**rodar a próxima fase da 010**" (ou "próxima fase da Esteira do Donel")
+= abrir a fila `Claude Seazone/Projects/donel-dev/esteira-010/PROXIMO.md` no
+vault e pegar a **primeira fase `⬜`**. A ordem **é** estritamente sequencial:
+cada fase depende do contrato que a anterior fixou, e rodar duas em paralelo
+recria o desencontro de contrato que originou a spec. Prompts prontos, um por
+fase, em `prompts.md` na mesma pasta.
+
+Fonte de verdade do escopo: `specs/010-esteira-donel/spec.md` (16 decisões
+fechadas por `grilling` em 03/08 — são requisito — e 6 pendências propostas).
+Cada fase termina com **revisão do Alexandre** antes da seguinte começar.
+
+**Congelado enquanto a 010 não avança:** issues #41 e #42 (polir apresentação de
+um mapa que será substituído) e #35 (a trilha sintética **será revertida** — ela
+pinta "não realizada" o que é "não consegui ler").
+
 ## Gotchas conhecidos (do planejamento)
 
 - node-pty precisa casar com a ABI do Electron — prebuilds/@electron/rebuild;
