@@ -76,6 +76,16 @@ export const PermissionColorTab: Story = {
   args: { name: 'onvio/etl', model: 'sonnet', state: 'permission', color: 'permission', onClose: () => {} },
 };
 
+/**
+ * Fix #19 — cor REAL do `/color` do CLI (`cliColorHex`), independente da
+ * paleta de 4 tokens. Aqui `color="accent"` (azul do token) está setado de
+ * propósito para ilustrar a PRECEDÊNCIA: o hex do CLI vence a faixa, mesmo
+ * com um token diferente atribuído — ver decisão em TerminalTab.tsx.
+ */
+export const CliColorTab: Story = {
+  args: { name: 'implementar-#19', model: 'sonnet', state: 'working', color: 'accent', cliColorHex: '#e05c5c', onClose: () => {} },
+};
+
 /** CA-27 — clique direito na aba abre o menu de 4 faixas; escolher uma faixa fecha o menu e chama `onColorChange`. Story interativa (estado local só para demonstrar o gesto). */
 export const InteractiveColorMenu: Story = {
   render: () => {

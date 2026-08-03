@@ -34,6 +34,8 @@ import type {
   SessionSummaryDto,
   TabColorToken,
 } from '../../shared';
+// Fix #19 — mapa nome de cor do CLI → CSS (módulo puro, ver src/shared/cliColor.ts).
+import { cliColorNameToHex } from '../../shared/cliColor';
 // CA-26 (009-modo-dev-v3, lote 1) — reordenação pura da lista de abas por arraste.
 import { reorderTabs } from '../../shared/tabAppearance';
 import {
@@ -175,6 +177,16 @@ interface TabState {
    * mesmo motivo do nome dela ser só em memória (C4, 004-nomear-sessoes).
    */
   color?: TabColorToken;
+  /**
+   * Fix #19 — nome cru da última cor definida por `/color` no CLI desta
+   * sessão (ex. `'blue'`); `null`/`undefined` quando a sessão nunca rodou
+   * `/color`. SÓ EM MEMÓRIA (igual `semaphoreStates`) — não é persistido: a
+   * fonte de verdade é sempre o transcript, relido a cada `transcript:changed`
+   * e na primeira leitura ao assinar o watcher (`transcript-watcher.ts`), então
+   * reabrir a sessão redescobre a cor sozinho, sem precisar guardar nada aqui.
+   * Precedência sobre `color` (token) na renderização — ver `TerminalTab`.
+   */
+  cliColorName?: string | null;
 }
 
 /** Último lançamento do Launcher — CA-1 (comando exato) + reaproveitado pelo corpo do "＋ Nova sessão" (ui-spec §2, zona 1). */
@@ -1208,37 +1220,41 @@ export function App(): React.JSX.Element {
    * não deixa listener órfão nem cancela o da montagem nova.
    */
   useEffect(() => {
-    const unsubscribe = window.donel.sessions.onTranscriptChanged(({ sessionId, customTitle, contextTokens: tokens }) => {
-      // Chave é o `sessionId`, não o `tabId` — daí o `.map` próprio em vez do
-      // `updateTab`. Uma mesma sessão retomada pode estar em mais de uma aba.
-      setTabs((prev) =>
-        prev.map((tab) => (tab.claudeSessionId === sessionId ? { ...tab, customTitle } : tab)),
-      );
+    const unsubscribe = window.donel.sessions.onTranscriptChanged(
+      ({ sessionId, customTitle, contextTokens: tokens, cliColorName }) => {
+        // Chave é o `sessionId`, não o `tabId` — daí o `.map` próprio em vez do
+        // `updateTab`. Uma mesma sessão retomada pode estar em mais de uma aba.
+        // Fix #19 — `cliColorName` entra no MESMO `.map`: é o mesmo evento, a
+        // mesma chave, nenhum segundo caminho de estado.
+        setTabs((prev) =>
+          prev.map((tab) => (tab.claudeSessionId === sessionId ? { ...tab, customTitle, cliColorName } : tab)),
+        );
 
-      // T610 (006) — MESMA assinatura, MESMO evento: a 006 só lê o segundo campo
-      // do payload. Abrir uma segunda assinatura aqui era risco nomeado na
-      // tabela de riscos do tasks.md (dois listeners no mesmo canal, um deles
-      // órfão no double-invoke do StrictMode).
-      setContextTokens((prev) => (prev[sessionId] === tokens ? prev : { ...prev, [sessionId]: tokens }));
+        // T610 (006) — MESMA assinatura, MESMO evento: a 006 só lê o segundo campo
+        // do payload. Abrir uma segunda assinatura aqui era risco nomeado na
+        // tabela de riscos do tasks.md (dois listeners no mesmo canal, um deles
+        // órfão no double-invoke do StrictMode).
+        setContextTokens((prev) => (prev[sessionId] === tokens ? prev : { ...prev, [sessionId]: tokens }));
 
-      const stored = appConfigRef.current?.sessionNames[sessionId] ?? null;
-      const cliWins = !!stored && reconcileStoredName(stored, customTitle) === null;
-      if (cliWins) {
-        // Nome vazio = apagar a entrada (mesmo canal do C5, sem inventar outro).
-        void window.donel.sessions.setName(sessionId, '', null).then(setAppConfig).catch(() => undefined);
-      }
+        const stored = appConfigRef.current?.sessionNames[sessionId] ?? null;
+        const cliWins = !!stored && reconcileStoredName(stored, customTitle) === null;
+        if (cliWins) {
+          // Nome vazio = apagar a entrada (mesmo canal do C5, sem inventar outro).
+          void window.donel.sessions.setName(sessionId, '', null).then(setAppConfig).catch(() => undefined);
+        }
 
-      // T707 (007) — gatilho 3: "durante o trabalho" do D9. `tabsRef` (não
-      // `tabs`) porque esta assinatura tem deps vazias (montada uma vez só,
-      // mesmo motivo do `appConfigRef` acima). `stored: null` quando o CLI
-      // acabou de vencer (a entrada já foi limpa acima) — sem isso o rótulo
-      // gravado usaria um nome que já deixou de valer.
-      const matchingTab = tabsRef.current.find((tab) => tab.claudeSessionId === sessionId);
-      if (matchingTab?.cwd) {
-        const label = resolveSessionName({ fallback: matchingTab.name, customTitle, stored: cliWins ? null : stored });
-        maybeRegisterVisit(sessionId, matchingTab.cwd, label);
-      }
-    });
+        // T707 (007) — gatilho 3: "durante o trabalho" do D9. `tabsRef` (não
+        // `tabs`) porque esta assinatura tem deps vazias (montada uma vez só,
+        // mesmo motivo do `appConfigRef` acima). `stored: null` quando o CLI
+        // acabou de vencer (a entrada já foi limpa acima) — sem isso o rótulo
+        // gravado usaria um nome que já deixou de valer.
+        const matchingTab = tabsRef.current.find((tab) => tab.claudeSessionId === sessionId);
+        if (matchingTab?.cwd) {
+          const label = resolveSessionName({ fallback: matchingTab.name, customTitle, stored: cliWins ? null : stored });
+          maybeRegisterVisit(sessionId, matchingTab.cwd, label);
+        }
+      },
+    );
     return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2559,6 +2575,12 @@ export function App(): React.JSX.Element {
                 // CA-27 — faixa de cor definida pelo operador (clique direito na aba).
                 color={tab.color ?? 'none'}
                 onColorChange={(color) => handleTabColorChange(tab.id, color)}
+                // Fix #19 — a cor REAL do `/color` do CLI (quando existe) vence a
+                // faixa por token: gesto explícito e recente do operador, ver
+                // decisão em TerminalTab.tsx. O menu de clique direito (acima)
+                // continua funcionando normalmente — só fica visualmente
+                // sobreposto enquanto houver cor do CLI.
+                cliColorHex={cliColorNameToHex(tab.cliColorName)}
                 // CA-26 — arraste nativo (HTML5 DnD): o índice de origem fica
                 // em `dragFromIndex` até o `drop`, que dispara `reorderTabs`.
                 draggable

@@ -1,5 +1,6 @@
 import { promises as fs, watch, type FSWatcher } from 'node:fs';
 import { basename, dirname } from 'node:path';
+import { extractCliColorNameFromLine } from '../shared/cliColor';
 import { contextTokensFromLine } from '../shared/contextWindow';
 import { extractCustomTitleFromLine } from '../shared/sessionName';
 import { readFileTail, TAIL_READ_BYTES } from './session-indexer';
@@ -21,6 +22,13 @@ import { readFileTail, TAIL_READ_BYTES } from './session-indexer';
 // varredura reversa da cauda devolve os dois campos e para assim que tem ambos.
 // Um leitor, um watcher, um canal (antisséptico do T609).
 //
+// Fix #19 — TERCEIRO campo na MESMA varredura: a faixa de cor da aba não tem
+// UI própria (esclarecimento do Alexandre, 03/08) — ela reflete o `/color`
+// digitado no CLI, e a única fonte é a linha `system`/`local_command`
+// "Session color set to: …" deste MESMO `.jsonl`. Pendurar no watcher já
+// existente em vez de abrir um segundo `fs.watch` concorrente no mesmo
+// arquivo — mesmo raciocínio do `contextTokens` acima.
+//
 // Por que o path é conhecido: o app IMPÕE o id da sessão no spawn
 // (`--session-id`, `session-correlation.ts:24-34`), então o nome do `.jsonl` é
 // conhecido antes de o CLI subir — não há janela cega no início da sessão.
@@ -31,6 +39,8 @@ export interface TranscriptChange {
   readonly customTitle: string | null;
   /** Soma da última `usage` da cauda (T606/006); `null` quando nunca houve leitura. */
   readonly contextTokens: number | null;
+  /** Fix #19 — nome cru da última cor definida por `/color` no CLI (ex. `'blue'`); `null` quando a sessão nunca rodou `/color`. Mapeamento pra CSS fica em `src/shared/cliColor.ts` (`cliColorNameToHex`), do lado do renderer. */
+  readonly cliColorName: string | null;
 }
 
 export interface TranscriptWatcherOptions {
@@ -85,7 +95,7 @@ export function watchTranscript(options: TranscriptWatcherOptions): TranscriptWa
   let retries = 0;
   let disposed = false;
   /** Último valor EMITIDO — a comparação é por valor, para não spammar o renderer. */
-  let lastEmitted: { customTitle: string | null; contextTokens: number | null } | null = null;
+  let lastEmitted: { customTitle: string | null; contextTokens: number | null; cliColorName: string | null } | null = null;
   /** Uma releitura por vez: rajada longa não empilha leituras concorrentes do mesmo arquivo. */
   let reading = false;
 
@@ -123,6 +133,10 @@ export function watchTranscript(options: TranscriptWatcherOptions): TranscriptWa
       const next = {
         customTitle: tail.customTitle ?? lastEmitted?.customTitle ?? null,
         contextTokens: tail.contextTokens ?? lastEmitted?.contextTokens ?? null,
+        // Fix #19 — mesma regra "não apaga o que já sabe": uma leitura sem
+        // linha de cor não significa "o operador tirou a cor" (o CLI não tem
+        // `/color none`), é lacuna de leitura.
+        cliColorName: tail.cliColorName ?? lastEmitted?.cliColorName ?? null,
       };
       if (!hasChanged(lastEmitted, next)) return;
 
@@ -222,15 +236,19 @@ export class TranscriptWatcherRegistry {
 }
 
 function hasChanged(
-  previous: { customTitle: string | null; contextTokens: number | null } | null,
-  next: { customTitle: string | null; contextTokens: number | null },
+  previous: { customTitle: string | null; contextTokens: number | null; cliColorName: string | null } | null,
+  next: { customTitle: string | null; contextTokens: number | null; cliColorName: string | null },
 ): boolean {
   if (previous === null) {
     // Primeira leitura: só vale emitir se houver algo de fato (evita um evento
     // inútil por aba nova, que é o caso mais comum).
-    return next.customTitle !== null || next.contextTokens !== null;
+    return next.customTitle !== null || next.contextTokens !== null || next.cliColorName !== null;
   }
-  return previous.customTitle !== next.customTitle || previous.contextTokens !== next.contextTokens;
+  return (
+    previous.customTitle !== next.customTitle ||
+    previous.contextTokens !== next.contextTokens ||
+    previous.cliColorName !== next.cliColorName
+  );
 }
 
 export interface TranscriptTail {
@@ -238,9 +256,11 @@ export interface TranscriptTail {
   readonly customTitle: string | null;
   /** Soma da última `usage` da cauda; `null` se nenhuma. (Consumidor: 006.) */
   readonly contextTokens: number | null;
+  /** Fix #19 — nome cru da última cor definida por `/color`; `null` se nenhuma linha de cor na cauda. */
+  readonly cliColorName: string | null;
 }
 
-const EMPTY_TAIL: TranscriptTail = { customTitle: null, contextTokens: null };
+const EMPTY_TAIL: TranscriptTail = { customTitle: null, contextTokens: null, cliColorName: null };
 
 /**
  * Lê SÓ a cauda — nunca o arquivo inteiro — e devolve os DOIS campos numa
@@ -286,14 +306,17 @@ function extractTranscriptTail(tailText: string): TranscriptTail {
   const lines = tailText.split('\n');
   let customTitle: string | null = null;
   let contextTokens: number | null = null;
+  let cliColorName: string | null = null;
 
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index];
     if (customTitle === null) customTitle = extractCustomTitleFromLine(line);
     // `=== null` e não falsy: `0` tokens é leitura VÁLIDA de contexto vazio.
     if (contextTokens === null) contextTokens = contextTokensFromLine(line);
-    if (customTitle !== null && contextTokens !== null) break;
+    // Fix #19 — mesma varredura única, terceiro campo.
+    if (cliColorName === null) cliColorName = extractCliColorNameFromLine(line);
+    if (customTitle !== null && contextTokens !== null && cliColorName !== null) break;
   }
 
-  return { customTitle, contextTokens };
+  return { customTitle, contextTokens, cliColorName };
 }

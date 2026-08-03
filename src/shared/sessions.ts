@@ -47,9 +47,10 @@ export const SESSION_CHANNELS = {
 } as const;
 
 /**
- * T412 (004) + T608 (006) — push do `main` quando o transcript de uma sessão
- * VIVA muda o que a UI mostra: o `custom-title` de um `/rename` (004) **e** os
- * tokens de contexto do último turn (006), no MESMO evento, vindos da MESMA
+ * T412 (004) + T608 (006) + Fix #19 — push do `main` quando o transcript de
+ * uma sessão VIVA muda o que a UI mostra: o `custom-title` de um `/rename`
+ * (004), os tokens de contexto do último turn (006) **e** a cor da sessão
+ * definida por `/color` no CLI (#19), no MESMO evento, vindos da MESMA
  * leitura de cauda.
  *
  * O nome do canal é `transcript:changed`, e não `sessions:nameChanged` como a
@@ -73,6 +74,16 @@ export interface TranscriptChangedPayload {
    * título, ver `transcript-watcher.ts` e `medicao-t606.md`.
    */
   readonly contextTokens: number | null;
+  /**
+   * Fix #19 — nome cru da última cor definida por `/color` no CLI (ex.
+   * `'blue'`); `null` enquanto a sessão nunca rodou `/color` nesta leitura
+   * (mesma regra do título/tokens: leitura vazia NÃO apaga cor já conhecida
+   * — o CLI não tem `/color none`). Mapeamento pra CSS fica em
+   * `src/shared/cliColor.ts` (`cliColorNameToHex`), do lado do renderer —
+   * este payload carrega só o nome cru, não a cor final, para o mapa de cor
+   * poder mudar sem tocar no contrato IPC.
+   */
+  readonly cliColorName: string | null;
 }
 
 export interface SessionSummaryDto {
