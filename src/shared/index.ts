@@ -81,6 +81,7 @@ export {
   isValidCardId,
   isValidCardIdList,
   isValidOpenDiscoveryIpcInput,
+  isValidResolveCardRepoIpcInput,
   isValidWatchPhaseIpcInput,
   linkDiscoveryRepo,
   openDiscovery,
@@ -100,6 +101,7 @@ export type {
   PhaseArchivedPayload,
   PhaseDefault,
   PhaseDefaultsTable,
+  ResolveCardRepoIpcInput,
   WatchPhaseIpcInput,
 } from './devMode';
 
@@ -116,6 +118,7 @@ export {
   mergeRepoEntry,
   mergeRepoGithub,
   PROJECT_BINDING_CHANNELS,
+  readAllRepoEntries,
   readBoardIds,
   readProjectBinding,
   readRepoBoard,
@@ -125,6 +128,7 @@ export {
 export type {
   DonelProjectBindingApi,
   ProjectBindingDto,
+  RepoEntry,
   RepoEntryUpdate,
   RepoGithubUpdate,
   SaveProjectBindingIpcInput,
@@ -145,6 +149,8 @@ export type { DonelGithubApi, GhAvailabilityDto, GithubReadRequest, GithubReadRe
 export type { ArtifactCandidate, ArtifactCandidateKind, DiscoveryTree, PlanCardNode, PhaseNode } from '../main/discovery-tree';
 /** T311/T327 — card da porta de entrada (CA-1) e os 4 fatos do espelho (CA-12); mesmo motivo do `DiscoveryTree` acima: tipo só, `import type` erasa no build. */
 export type { BoardFacts, EntryColumn, EntryColumnCard } from '../main/taskdex-board-client';
+/** Issue #34 — resultado de `devMode:resolveCardRepo`; mesmo motivo do `DiscoveryTree` acima: tipo só, `import type` erasa no build. */
+export type { CardRepoResolution, RepoCandidate } from '../main/cardRepoResolver';
 
 /** T325/T326 (Batch C) — a árvore já anotada pelo espelho, consumida pela UI do mapa (T327/T328). */
 export type { AnnotatedDiscoveryTree, AnnotatedPlanCardNode, AnnotatedPhaseNode, PhaseDivergence } from './boardAnnotation';

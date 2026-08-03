@@ -29,6 +29,7 @@ import type {
   ProfileHeadroomMap,
   ProjectInfo,
   ProjectScanMode,
+  RepoCandidate,
   SemaphoreStateInfo,
   SessionSummaryDto,
   TabColorToken,
@@ -181,6 +182,13 @@ interface LastLaunch {
   args: string[];
   cwd: string;
   name: string;
+}
+
+/** Issue #34 — o card cujo repo ficou ambíguo (`devMode:resolveCardRepo`) até o operador escolher explicitamente. */
+interface PendingRepoChoice {
+  readonly cardId: string;
+  readonly column: EntryColumn;
+  readonly candidates: readonly RepoCandidate[];
 }
 
 // FIX (feedback E2E, decisão do Alexandre 2026-07-23, rodada 5 — "opção A") —
@@ -463,6 +471,14 @@ export function App(): React.JSX.Element {
    * falhava deixava o operador sem saída nenhuma. A volta é o botão da Zona 2.
    */
   const [entradaDismissed, setEntradaDismissed] = useState(false);
+  /**
+   * Issue #34 (P0) — quando `devMode.resolveCardRepo` devolve `ambiguous`
+   * (card sem rastro em disco, board com 2+ repos), a fase NÃO dispara: o
+   * modal fica com o card marcado pedindo a escolha explícita do repo. Nunca
+   * um repo chutado — "pergunta, nunca palpite" (raiz do #34: o app usava o
+   * repo do DROPDOWN de board como se fosse o do card).
+   */
+  const [pendingRepoChoice, setPendingRepoChoice] = useState<PendingRepoChoice | null>(null);
   /** Árvore por discovery ABERTO (`devMode:readTree`) — disco puro, relida sob demanda. */
   const [discoveryTrees, setDiscoveryTrees] = useState<Record<string, DiscoveryTree>>({});
   /** T327/CA-12 — os 4 fatos do board por card do discovery EM FOCO. `{}` = espelho sem fonte: a árvore aparece inteira, só sem anotação. */
@@ -1840,6 +1856,78 @@ export function App(): React.JSX.Element {
     ]);
   };
 
+  /**
+   * FIX (e2e 31/07, 2ª vez) — fechar a porta é UM gesto, num lugar só.
+   * `setEntradaManualOpen(false)` sozinho não fecha nada quando não há
+   * discovery em foco: `entradaOpen` é derivado e reabre pelo outro ramo
+   * (`!focusedDiscoveryId`). Foi o que prendeu ele no modal ao escolher um
+   * card de Validar — a sessão nascia atrás, com o comando armado, e a porta
+   * continuava por cima. Todo caminho de SUCESSO passa por aqui; o único que
+   * não fecha é o que recusa o clique (sem repo, issue #34).
+   */
+  const dismissEntrada = (): void => {
+    setEntradaManualOpen(false);
+    setEntradaDismissed(true);
+  };
+
+  /**
+   * Issue #34/#35 — o gesto de disparo em si, só depois do repo já estar
+   * RESOLVIDO (nunca um fallback silencioso pro projeto em foco — o antigo
+   * `repoPath || selectedProjectPath || ''` saiu daqui de propósito). Issue
+   * #35 (D-V… "mapa sem caminho pra frente") — a fase abre sempre por
+   * `openDiscovery`+`focusDiscovery`, qualquer que seja a coluna do card: é
+   * isso que faz `focusedTree` existir e o mapa aparecer, mesmo para um card
+   * que entrou direto em Plano/Implementar/Validar/Documentar (antes só a
+   * coluna Discovery passava por aqui; as demais abriam sessão SEM mapa
+   * nenhum — "sem discovery no disco não há árvore a desenhar" deixou de ser
+   * verdade: `buildDiscoveryTree` agora sintetiza a trilha, ver
+   * `discovery-tree.ts`).
+   */
+  const proceedToOpenPhase = (resolvedCardId: string, repo: string, column: EntryColumn): void => {
+    if (!repo) {
+      // O modal continua aberto — e agora com um dropdown de PROJETO, que é
+      // onde este pedido se resolve (antes o toast mandava escolher um repo
+      // que não existia em lugar nenhum da tela).
+      setDevModeToast('Escolha no topo do modal onde este card roda.');
+      return;
+    }
+
+    // CA-1 — a coluna do card responde QUAL fase disparar. Card que já está em
+    // Plano/Implementar/Validar/Documentar abre a sessão DAQUELA fase; só
+    // Discovery e Backlog começam um discovery novo. (e2e 31/07: escolher um
+    // card em Validar armava `/esteira-discovery` e jogava o operador para o
+    // começo da esteira.)
+    dismissEntrada();
+    setPendingRepoChoice(null);
+
+    const entryPhase = entryPhaseForColumn(column);
+    void window.donel.devMode
+      .openDiscovery({ cardId: resolvedCardId, repoPath: repo, epicId: null })
+      .then(() => window.donel.devMode.focusDiscovery(resolvedCardId))
+      .then((config) => {
+        setAppConfig(config);
+        setFocusedMarcoId(null);
+        setSelectedNode(null);
+        refreshDiscoveryTrees([resolvedCardId]);
+        // CA-2 — "criar discovery novo dispara /esteira-discovery <card_id>
+        // pela regra do CA-3": sessão nova + comando ESCRITO, sem Enter.
+        const defaults = (config.devMode.phaseDefaults ?? DEFAULT_PHASE_DEFAULTS)[entryPhase];
+        const tabId = addTab({
+          name: `${resolvedCardId} ${entryPhase}`,
+          cwd: repo,
+          projectName: projects.find((project) => project.path === repo)?.name,
+          pinned: false,
+          launchArgs: buildClaudeArgs({ model: defaults.model, effort: defaults.effort }),
+          sessionType: 'claude',
+        });
+        armPhaseCommands(tabId, resolveCommandSequence({ status: 'not-started', defaults, cardId: resolvedCardId }));
+        if (entryPhase !== 'discovery') {
+          setDevModeToast(`Card em ${entryPhase}: sessão aberta com o mapa focado na etapa.`);
+        }
+      })
+      .catch(() => undefined);
+  };
+
   /** T311/CA-2 — clique num card da porta de entrada. `resolveEntrySelection` (puro) decide focar × criar. */
   const handleSelectEntryCard = (cardId: string, repoPath: string, column: EntryColumn = 'discovery'): void => {
     const selection = resolveEntrySelection({
@@ -1847,25 +1935,6 @@ export function App(): React.JSX.Element {
       discoveries: devModeState?.discoveries ?? {},
       trees: Object.values(discoveryTrees),
     });
-
-    // FIX (e2e 31/07) — o repo vem do dropdown da porta; quando ele está
-    // vazio (nenhum board configurado ainda), o projeto selecionado
-    // globalmente é o palpite honesto antes de recusar o clique.
-    const repo = repoPath || selectedProjectPath || '';
-
-    /**
-     * FIX (e2e 31/07, 2ª vez) — fechar a porta é UM gesto, num lugar só.
-     * `setEntradaManualOpen(false)` sozinho não fecha nada quando não há
-     * discovery em foco: `entradaOpen` é derivado e reabre pelo outro ramo
-     * (`!focusedDiscoveryId`). Foi o que prendeu ele no modal ao escolher um
-     * card de Validar — a sessão nascia atrás, com o comando armado, e a
-     * porta continuava por cima. Todo caminho de SUCESSO passa por aqui;
-     * o único que não fecha é o que recusa o clique (sem repo).
-     */
-    const dismissEntrada = (): void => {
-      setEntradaManualOpen(false);
-      setEntradaDismissed(true);
-    };
 
     if (selection.kind === 'focus') {
       dismissEntrada();
@@ -1883,61 +1952,37 @@ export function App(): React.JSX.Element {
       return;
     }
 
-    if (!repo) {
-      // O modal continua aberto — e agora com um dropdown de PROJETO, que é
-      // onde este pedido se resolve (antes o toast mandava escolher um repo
-      // que não existia em lugar nenhum da tela).
-      setDevModeToast('Escolha no topo do modal onde este card roda.');
-      return;
-    }
-
-    // CA-1 — a coluna do card responde QUAL fase disparar. Card que já está em
-    // Plano/Implementar/Validar/Documentar abre a sessão DAQUELA fase; só
-    // Discovery e Backlog começam um discovery novo. (e2e 31/07: escolher um
-    // card em Validar armava `/esteira-discovery` e jogava o operador para o
-    // começo da esteira.)
-    dismissEntrada();
-
-    const entryPhase = entryPhaseForColumn(column);
-    if (entryPhase !== 'discovery') {
-      const defaults = phaseDefaults[entryPhase];
-      const tabId = addTab({
-        name: `${cardId} ${entryPhase}`,
-        cwd: repo,
-        projectName: projects.find((project) => project.path === repo)?.name,
-        pinned: false,
-        launchArgs: buildClaudeArgs({ model: defaults.model, effort: defaults.effort }),
-        sessionType: 'claude',
-      });
-      armPhaseCommands(tabId, resolveCommandSequence({ status: 'not-started', defaults, cardId }));
-      // O mapa não aparece: sem discovery no disco não há árvore a desenhar, e
-      // inventar uma seria mentir sobre o que a Esteira registrou.
-      setDevModeToast(`Card em ${entryPhase}: sessão aberta com o comando da fase.`);
-      return;
-    }
-
+    /**
+     * Issue #34 (P0) — "o do Dalton carregou no projeto spotsys": o repo do
+     * card NUNCA é assumido a partir do dropdown de board (`repoPath` aqui);
+     * ele é RESOLVIDO por rastro em disco (`devMode:resolveCardRepo`,
+     * `main/cardRepoResolver.ts`). Sem rastro, o board só resolve sozinho
+     * quando é dono de um repo único — dois+ repos com o mesmo board (achado
+     * real: `spotsys`/`dalton` compartilham board) viram pergunta explícita
+     * (`pendingRepoChoice`), nunca um palpite pro `default_repo`.
+     */
     void window.donel.devMode
-      .openDiscovery({ cardId: selection.cardId, repoPath: repo, epicId: null })
-      .then(() => window.donel.devMode.focusDiscovery(selection.cardId))
-      .then((config) => {
-        setAppConfig(config);
-        setFocusedMarcoId(null);
-        setSelectedNode(null);
-        refreshDiscoveryTrees([selection.cardId]);
-        // CA-2 — "criar discovery novo dispara /esteira-discovery <card_id>
-        // pela regra do CA-3": sessão nova + comando ESCRITO, sem Enter.
-        const defaults = (config.devMode.phaseDefaults ?? DEFAULT_PHASE_DEFAULTS).discovery;
-        const tabId = addTab({
-          name: `${selection.cardId} discovery`,
-          cwd: repo,
-          projectName: projects.find((project) => project.path === repo)?.name,
-          pinned: false,
-          launchArgs: buildClaudeArgs({ model: defaults.model, effort: defaults.effort }),
-          sessionType: 'claude',
-        });
-        armPhaseCommands(tabId, resolveCommandSequence({ status: 'not-started', defaults, cardId: selection.cardId }));
+      .resolveCardRepo({ cardId: selection.cardId, boardRepoPath: repoPath || null })
+      .then((resolution) => {
+        if (resolution.kind === 'ambiguous') {
+          setPendingRepoChoice({ cardId: selection.cardId, column, candidates: resolution.candidates });
+          setDevModeToast('Este card roda em mais de um projeto possível pelo mesmo board — escolha qual, no topo do modal.');
+          return;
+        }
+        if (resolution.kind === 'unknown') {
+          setDevModeToast('Não foi possível descobrir em qual repo este card roda.');
+          return;
+        }
+        proceedToOpenPhase(selection.cardId, resolution.repoPath, column);
       })
-      .catch(() => undefined);
+      .catch(() => setDevModeToast('Não foi possível descobrir em qual repo este card roda.'));
+  };
+
+  /** Issue #34 — o operador escolheu explicitamente o repo de um card que ficou ambíguo (`pendingRepoChoice`). */
+  const handleChooseRepoForCard = (repoPath: string): void => {
+    if (!pendingRepoChoice) return;
+    const { cardId, column } = pendingRepoChoice;
+    proceedToOpenPhase(cardId, repoPath, column);
   };
 
   // T315/CA-6 — arquivamento por MANIFESTO: `<fase>-result.json` com
@@ -2435,6 +2480,8 @@ export function App(): React.JSX.Element {
             boardProjects={boardProjects}
             activeBoardRepoPath={entryBoardRepoPath ?? selectedProjectPath}
             onSwitchBoard={setEntryBoardRepoPath}
+            pendingRepoChoice={pendingRepoChoice}
+            onChooseRepoForCard={handleChooseRepoForCard}
           />
         ) : null}
 
