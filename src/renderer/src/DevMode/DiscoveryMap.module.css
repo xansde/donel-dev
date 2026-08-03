@@ -120,7 +120,22 @@
 /* Itens 5/6/8 (rodada de forma) — a faixa "worktree <path>" no início da
    linha de etiquetas (mesma linha do mockup, metaLabel+metaValue+tags) e o
    rodapé "N planos"/"garantia <tipo> · merge <relativo>" dos cards de
-   discovery/plano/fase. */
+   discovery/plano/fase.
+   #27b — `.cardMeta` empacota o par label+valor num item ÚNICO de
+   `.cardTags` (flex-wrap): ele pode ENCOLHER (`min-width: 0`, sem o qual o
+   valor nunca trunca — o default `min-width: auto` do flexbox trava no
+   tamanho do conteúdo e o path inteiro força o item pra baixo, "quebrando em
+   duas linhas"). `flex-shrink` sem `flex-grow` mantém o comportamento de
+   antes pra paths curtos (nunca ocupa espaço à toa). */
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .cardMetaLabel {
   flex: none;
   font-size: 10px;
@@ -129,8 +144,8 @@
 }
 
 .cardMetaValue {
-  flex: none;
-  max-width: 100%;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

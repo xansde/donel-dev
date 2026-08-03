@@ -260,6 +260,20 @@ export function planCardToneColor(tone: PlanCardAccentTone): string {
   return PLAN_CARD_TONE_COLOR[tone];
 }
 
+/**
+ * #27a (rodada de polimento) — o card de plano mostra `cardId` numa faixa
+ * própria (`.cardId`) sempre; o título do board é um SEGUNDO texto, só quando
+ * traz informação nova. Sem título (`boardFacts.title` vazio), o antigo
+ * fallback `title || cardId` repetia o id ao lado dele mesmo ("SZI-DEMO-A
+ * SZI-DEMO-A"). Título igual ao id é a MESMA repetição por coincidência —
+ * as duas causas somem com uma regra só: `null` quando não há título
+ * distinto do id, nunca um segundo texto igual ao primeiro.
+ */
+export function resolveCardDisplayTitle(id: string, title: string | null | undefined): string | null {
+  if (!title) return null;
+  return title === id ? null : title;
+}
+
 export function buildPlanCardTags(input: PlanCardTagsInput): readonly PlanCardTag[] {
   const tags: PlanCardTag[] = [];
 
