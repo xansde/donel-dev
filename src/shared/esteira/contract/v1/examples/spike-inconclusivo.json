@@ -1,0 +1,47 @@
+{
+  "contract_version": "1.0.0",
+  "kind": "esteira.result",
+  "run": {
+    "run_id": "run-2026-08-05-1100",
+    "phase": "implementar",
+    "status": "success",
+    "started_at": "2026-08-05T14:00:00.000Z",
+    "finished_at": "2026-08-05T16:12:00.000Z",
+    "failure": null
+  },
+  "actor": {
+    "tool": "esteira-donel",
+    "tool_version": "3.0.0",
+    "executor": "claude-code",
+    "model": "claude-opus-5",
+    "effort": "high",
+    "cli_session_id": "0198f2df-5a6b-7e35-9f8d-6a5b7c8d9e0f"
+  },
+  "subject": {
+    "discovery_id": "dsc-2026-08-03-a",
+    "plan_id": "pln-2026-08-03-a1",
+    "work_item_id": "wi-2026-08-03-a1-04"
+  },
+  "workspace": {
+    "target_repo": "atlas",
+    "repo_path": "C:/Users/dev/code/atlas",
+    "worktree_path": null,
+    "branch": null
+  },
+  "facts": [
+    {
+      "type": "verification.recorded",
+      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-04" },
+      "verification_kind": "conclusion",
+      "state": "passed",
+      "ref": "Nao da: a fila do provedor nao expoe profundidade por consumidor. Caminho descartado."
+    },
+    {
+      "type": "phase.completed",
+      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-04" },
+      "phase": "implementar",
+      "outcome": "inconclusive",
+      "summary": "Spike timeboxed em 2h respondeu a pergunta com um nao."
+    }
+  ]
+}

@@ -1,0 +1,381 @@
+// Spec 010 (D-9) — FORMATO do store local da Esteira. Este modulo define o que
+// esta gravado em disco e como se le o cabecalho; ele NAO reduz eventos, nao
+// deriva snapshot e nao toca fs. Reducer, derivacao e watcher sao do vertical
+// pequeno (cadencia D-15, passo 2) — aqui e passo zero.
+//
+// Layout, dentro do `userData` do app (compartilhado entre os tres canais, como
+// ja e hoje por decisao de 28/07):
+//
+//   <userData>/esteira/
+//     events.jsonl      append-only; linha 1 e o cabecalho, demais linhas sao eventos
+//     snapshot.json     derivado, descartavel; reconstruivel apagando o arquivo
+//
+// Arquivo PROPRIO, fora do `config.json` e portanto fora do sanitizador de
+// config — canal antigo nao reescreve por cima do que nao entende (o risco
+// aceito em 28/07 que este formato fecha).
+//
+// Regra de compatibilidade, o coracao do formato: o canal compara o MAJOR do
+// `schema_version` do cabecalho com o seu. Igual: le e escreve. Maior:
+// **le o que consegue e nao escreve** — nunca reescreve, nunca trunca, nunca
+// "conserta". Menor (arquivo antigo): le, e a escrita so e liberada apos
+// migracao explicita, que e append de um novo cabecalho, nunca reescrita.
+//
+// Sem SQLite de proposito: dependencia nativa esbarraria na ABI do Electron a
+// cada atualizacao, o mesmo custo que o node-pty ja impoe.
+
+/** Versao do esquema do store que este app escreve. */
+export const STORE_SCHEMA_VERSION = '1.0.0';
+
+export const STORE_DIR_NAME = 'esteira';
+export const STORE_EVENTS_FILE = 'events.jsonl';
+export const STORE_SNAPSHOT_FILE = 'snapshot.json';
+
+// ---------------------------------------------------------------------------
+// Cabecalho
+// ---------------------------------------------------------------------------
+
+export interface StoreHeader {
+  readonly kind: 'esteira.store.header';
+  readonly schema_version: string;
+  readonly created_at: string;
+  /** Canal que criou o arquivo (`alfa` | `beta` | `stable`), so para diagnostico. */
+  readonly created_by_channel: string | null;
+}
+
+export type StoreCompatibility =
+  /** Mesmo major: leitura e escrita liberadas. */
+  | 'read-write'
+  /** Major a frente do que este canal conhece: le o que conseguir, NUNCA escreve. */
+  | 'read-only'
+  /** Major atras: leitura ok, escrita so depois de migracao explicita. */
+  | 'needs-migration'
+  /** Cabecalho ausente ou ilegivel: nao da para afirmar nada; nao escreve. */
+  | 'unreadable';
+
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
+
+function majorOf(version: string): number | null {
+  if (!SEMVER_PATTERN.test(version)) return null;
+  return Number.parseInt(version.split('.')[0], 10);
+}
+
+/** Le a linha 1 do `events.jsonl`. Nunca lanca; `null` = cabecalho ausente/ilegivel. */
+export function parseStoreHeader(line: string | null | undefined): StoreHeader | null {
+  if (typeof line !== 'string' || line.trim().length === 0) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+
+  const node = parsed as Record<string, unknown>;
+  if (node.kind !== 'esteira.store.header') return null;
+  if (typeof node.schema_version !== 'string' || !SEMVER_PATTERN.test(node.schema_version)) return null;
+  if (typeof node.created_at !== 'string' || node.created_at.length === 0) return null;
+
+  return {
+    kind: 'esteira.store.header',
+    schema_version: node.schema_version,
+    created_at: node.created_at,
+    created_by_channel: typeof node.created_by_channel === 'string' ? node.created_by_channel : null,
+  };
+}
+
+/** A decisao de "posso escrever aqui?" — a unica pergunta que o cabecalho existe para responder. */
+export function storeCompatibility(header: StoreHeader | null, appSchemaVersion: string = STORE_SCHEMA_VERSION): StoreCompatibility {
+  if (header === null) return 'unreadable';
+  const fileMajor = majorOf(header.schema_version);
+  const appMajor = majorOf(appSchemaVersion);
+  if (fileMajor === null || appMajor === null) return 'unreadable';
+  if (fileMajor === appMajor) return 'read-write';
+  return fileMajor > appMajor ? 'read-only' : 'needs-migration';
+}
+
+// ---------------------------------------------------------------------------
+// Eventos
+// ---------------------------------------------------------------------------
+
+/**
+ * De onde o evento veio. `ingest` carrega o `run_id` do `result.json`: e o que
+ * torna a ingestao idempotente — reprocessar o mesmo arquivo nao duplica fato.
+ * `seed` e o caminho explicito de D-2 para plantar discoveries em andamento sem
+ * edicao manual as cegas.
+ */
+export type EventSource =
+  | { readonly kind: 'app' }
+  | { readonly kind: 'ingest'; readonly run_id: string; readonly result_path: string }
+  | { readonly kind: 'seed' };
+
+export const STORE_EVENT_TYPES = [
+  'discovery.created',
+  'discovery.updated',
+  'plan.created',
+  'work_item.created',
+  'work_item.updated',
+  'work_item.discarded',
+  'relation.added',
+  'relation.removed',
+  'artifact.pinned',
+  'verification.updated',
+  'phase.started',
+  'phase.completed',
+  'session.started',
+  'session.ended',
+  'lock.acquired',
+  'lock.released',
+  'stage.overridden',
+  'stage.override.cleared',
+  'note.added',
+  'ingest.failed',
+  'mirror.queued',
+  'mirror.synced',
+  'mirror.failed',
+] as const;
+
+export type StoreEventType = (typeof STORE_EVENT_TYPES)[number];
+
+/**
+ * Envelope de UM evento — uma linha do `events.jsonl`. O `payload` e tipado por
+ * `type` no reducer (vertical pequeno); aqui e opaco de proposito: o envelope
+ * precisa ser legivel por um canal que nao conhece o payload, para cumprir
+ * "ignora o que nao entende, nunca apaga historico".
+ */
+export interface StoreEvent {
+  /** Monotonico, comeca em 1. Ordem de gravacao — nao confundir com `at`. */
+  readonly seq: number;
+  readonly event_id: string;
+  readonly at: string;
+  readonly type: string;
+  readonly source: EventSource;
+  /**
+   * Chave natural do fato. Dois eventos com a mesma `dedupe_key` sao o MESMO
+   * fato: o segundo e descartado na leitura. E o que permite reingerir um
+   * `result.json` sem medo.
+   */
+  readonly dedupe_key: string | null;
+  readonly payload: Record<string, unknown>;
+}
+
+export type ParseEventLine =
+  | { readonly ok: true; readonly event: StoreEvent }
+  | { readonly ok: false; readonly reason: 'blank' | 'invalid_json' | 'not_an_event' };
+
+/**
+ * Le UMA linha de evento. Nunca lanca. Linha ilegivel devolve `ok: false` e o
+ * chamador segue para a proxima — "le o que consegue" e comportamento do
+ * formato, nao tratamento de erro do leitor.
+ */
+export function parseEventLine(line: string): ParseEventLine {
+  if (line.trim().length === 0) return { ok: false, reason: 'blank' };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return { ok: false, reason: 'invalid_json' };
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, reason: 'not_an_event' };
+  }
+
+  const node = parsed as Record<string, unknown>;
+  if (typeof node.seq !== 'number' || !Number.isInteger(node.seq) || node.seq < 1) return { ok: false, reason: 'not_an_event' };
+  if (typeof node.event_id !== 'string' || node.event_id.length === 0) return { ok: false, reason: 'not_an_event' };
+  if (typeof node.at !== 'string' || node.at.length === 0) return { ok: false, reason: 'not_an_event' };
+  if (typeof node.type !== 'string' || node.type.length === 0) return { ok: false, reason: 'not_an_event' };
+
+  const source = parseSource(node.source);
+  if (source === null) return { ok: false, reason: 'not_an_event' };
+
+  const payload = typeof node.payload === 'object' && node.payload !== null && !Array.isArray(node.payload)
+    ? (node.payload as Record<string, unknown>)
+    : {};
+
+  return {
+    ok: true,
+    event: {
+      seq: node.seq,
+      event_id: node.event_id,
+      at: node.at,
+      type: node.type,
+      source,
+      dedupe_key: typeof node.dedupe_key === 'string' ? node.dedupe_key : null,
+      payload,
+    },
+  };
+}
+
+function parseSource(raw: unknown): EventSource | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const node = raw as Record<string, unknown>;
+  if (node.kind === 'app') return { kind: 'app' };
+  if (node.kind === 'seed') return { kind: 'seed' };
+  if (node.kind === 'ingest') {
+    if (typeof node.run_id !== 'string' || node.run_id.length === 0) return null;
+    if (typeof node.result_path !== 'string' || node.result_path.length === 0) return null;
+    return { kind: 'ingest', run_id: node.run_id, result_path: node.result_path };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot derivado
+// ---------------------------------------------------------------------------
+
+export type EntityKind = 'discovery' | 'plan' | 'work_item';
+export type RelationKind = 'originated' | 'flows_into' | 'ships_with';
+export type WorkItemType = 'issue' | 'spec' | 'process-map' | 'adr' | 'prototype' | 'spike' | 'eval';
+
+/** D-4 — o que varia de verdade e o que significa terminar. Tipo e metadado; ciclo e regra. */
+export type LifecycleKind = 'code-delivery' | 'reviewed-artifact' | 'answered-question';
+
+export type WorkItemState = 'open' | 'in-progress' | 'done' | 'abandoned';
+
+/** D-13 — macro etapas do card de origem, sempre CALCULADAS do grafo. */
+export type MacroStage = 'discovery' | 'planned' | 'execution' | 'done';
+
+export interface EntityId {
+  readonly entity: EntityKind;
+  readonly id: string;
+}
+
+export interface TrackerRef {
+  readonly provider: string;
+  readonly cardId: string;
+}
+
+/** D-8 — o ponteiro do artefato; a resposta unica de "cade o artefato?". */
+export interface ArtifactPointer {
+  readonly owner: EntityId;
+  readonly artifactKind: string;
+  readonly location: 'repo' | 'disk';
+  readonly repo: string | null;
+  readonly path: string;
+  readonly recordedAt: string;
+}
+
+/** D-11 — a trava e local e e FATO: dono, hora e sessao, visivel no card, liberavel num gesto. Nunca arquivo `.lock` solto, nunca so etiqueta remota. */
+export interface LockRecord {
+  readonly subject: EntityId;
+  readonly phase: string;
+  readonly holderKind: 'skill' | 'app';
+  readonly acquiredAt: string;
+  readonly cliSessionId: string | null;
+  /** Espelho no board, quando o adapter esta ligado (D-12). Nunca condiciona a trava local. */
+  readonly mirroredLabel: string | null;
+}
+
+export interface StageOverride {
+  readonly value: MacroStage;
+  readonly by: string;
+  readonly at: string;
+  readonly reason: string | null;
+}
+
+export interface DiscoverySnapshot {
+  readonly id: string;
+  readonly title: string;
+  readonly problem: string | null;
+  /** D-1 — referencia guardada, jamais consultada para saber estado. */
+  readonly tracker: TrackerRef | null;
+  /** D-6 — alvo default herdado pelos itens; pode ser null (discovery investiga problema, nao repo). */
+  readonly targetRepo: string | null;
+  readonly scopeRepos: readonly string[];
+  readonly createdAt: string;
+  /** D-13 — SEMPRE presente, sempre calculada. */
+  readonly derivedStage: MacroStage;
+  /** Sinais visiveis no card; `completed-without-plan` e o estado do card F3 da evidencia 1. */
+  readonly stageSignals: readonly ('completed-without-plan' | 'orphan-item' | 'ingest-error' | 'mirror-pending')[];
+  /** Override manual, sempre marcado como tal — `derivedStage` continua visivel ao lado. */
+  readonly stageOverride: StageOverride | null;
+}
+
+export interface PlanSnapshot {
+  readonly id: string;
+  readonly discoveryId: string;
+  readonly title: string;
+  readonly summary: string | null;
+  readonly createdAt: string;
+}
+
+export interface WorkItemSnapshot {
+  readonly id: string;
+  readonly planId: string | null;
+  readonly itemType: WorkItemType;
+  readonly lifecycle: LifecycleKind;
+  readonly title: string;
+  /** D-6 — `issue` tem exatamente um; sem ele, nao dispara. */
+  readonly targetRepo: string | null;
+  readonly scopeRepos: readonly string[];
+  readonly state: WorkItemState;
+  /** True quando nasceu pela skill (D-16) — descartavel num gesto, sem bloqueio. */
+  readonly createdBySkill: boolean;
+  readonly createdAt: string;
+}
+
+/** Cada sessao de terminal, amarrada a um alvo e a uma fase. */
+export interface SessionSnapshot {
+  readonly id: string;
+  readonly cliSessionId: string | null;
+  readonly subject: EntityId;
+  readonly phase: string;
+  readonly cwd: string | null;
+  readonly model: string | null;
+  readonly effort: string | null;
+  readonly startedAt: string;
+  readonly endedAt: string | null;
+}
+
+export interface RelationSnapshot {
+  readonly relation: RelationKind;
+  readonly from: EntityId;
+  readonly to: EntityId;
+  readonly recordedAt: string;
+}
+
+/** D-10 — documento fora do contrato vira ERRO visivel no card, nunca silencio. */
+export interface IngestErrorSnapshot {
+  readonly resultPath: string;
+  readonly at: string;
+  readonly subject: EntityId | null;
+  readonly issues: readonly { readonly code: string; readonly path: string; readonly message: string }[];
+}
+
+/** D-12 — o espelho nunca bloqueia: falha vai para fila e o card mostra "espelho pendente". */
+export interface MirrorQueueEntry {
+  readonly subject: EntityId;
+  readonly operation: string;
+  readonly queuedAt: string;
+  readonly attempts: number;
+  readonly lastError: string | null;
+}
+
+export interface StoreSnapshot {
+  readonly kind: 'esteira.store.snapshot';
+  readonly schema_version: string;
+  /** Ate qual `seq` do `events.jsonl` este snapshot foi derivado. Descartavel: apagar o arquivo forca reconstrucao. */
+  readonly through_seq: number;
+  readonly built_at: string;
+  readonly discoveries: readonly DiscoverySnapshot[];
+  readonly plans: readonly PlanSnapshot[];
+  readonly workItems: readonly WorkItemSnapshot[];
+  readonly sessions: readonly SessionSnapshot[];
+  readonly relations: readonly RelationSnapshot[];
+  readonly artifacts: readonly ArtifactPointer[];
+  readonly locks: readonly LockRecord[];
+  readonly ingestErrors: readonly IngestErrorSnapshot[];
+  readonly mirrorQueue: readonly MirrorQueueEntry[];
+}
+
+/** D-4 — o ciclo de vida de cada tipo. Tabela, nao regra espalhada. */
+export const LIFECYCLE_BY_ITEM_TYPE: Readonly<Record<WorkItemType, LifecycleKind>> = {
+  issue: 'code-delivery',
+  spec: 'code-delivery',
+  'process-map': 'reviewed-artifact',
+  adr: 'reviewed-artifact',
+  prototype: 'answered-question',
+  spike: 'answered-question',
+  eval: 'answered-question',
+};
