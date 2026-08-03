@@ -30,6 +30,7 @@ import type {
   PhaseArchivedPayload,
   PtyExitInfo,
   ResolveCardRepoIpcInput,
+  ResolveCardReposIpcInput,
   SaveProjectBindingIpcInput,
   SaveProjectBindingResult,
   SemaphoreUpdate,
@@ -53,6 +54,7 @@ import {
   isValidGithubReadRequest,
   isValidOpenDiscoveryIpcInput,
   isValidResolveCardRepoIpcInput,
+  isValidResolveCardReposIpcInput,
   isValidSaveProjectBindingIpcInput,
   isValidWatchPhaseIpcInput,
   normalizeSessionName,
@@ -86,7 +88,7 @@ import {
   writeAppConfig,
   type AppConfig,
 } from './config-store';
-import { resolveCardRepo, type CardRepoResolution } from './cardRepoResolver';
+import { resolveCardRepo, resolveCardRepos, type CardRepoResolution } from './cardRepoResolver';
 import { buildDiscoveryTree } from './discovery-tree';
 import {
   createSystemEsteiraConfigIoDeps,
@@ -793,6 +795,29 @@ function registerDevModeIpcHandlers(): void {
       esteiraReaderIoDeps,
     );
   });
+
+  /**
+   * Issue #38 — mesma resolução do canal acima, só que para a LISTA inteira
+   * da porta de entrada num único IPC: a lista rotulava todo card com o repo
+   * do dropdown de board mesmo quando o card real era de outro repo que
+   * compartilha o mesmo board (`spotsys`/`dalton`). Um `resolveCardRepo` por
+   * linha dentro do loop de render da UI seria dezenas de IPCs a cada
+   * abertura do modal — este canal lê `repos.json` UMA vez e resolve o lote
+   * inteiro numa só invocação de main. Payload inválido devolve `{}` (mesmo
+   * "nada a mostrar" do resto da API de leitura pura).
+   */
+  ipcMain.handle(
+    DEVMODE_CHANNELS.resolveCardRepos,
+    (_event, input: ResolveCardReposIpcInput): Record<string, CardRepoResolution> => {
+      if (!isValidResolveCardReposIpcInput(input)) return {};
+      const reposText = esteiraReaderIoDeps.readFileText(reposConfigPath(ESTEIRA_CONFIG_DIR));
+      const repos = readAllRepoEntries(reposText);
+      return resolveCardRepos(
+        { cardIds: input.cardIds, esteiraStateRoot: ESTEIRA_STATE_ROOT, repos, boardRepoPath: input.boardRepoPath },
+        esteiraReaderIoDeps,
+      );
+    },
+  );
 
   /**
    * T315/CA-6 — liga o watcher do `<fase>-result.json` daquela etapa. O

@@ -210,6 +210,11 @@ export const DEVMODE_CHANNELS = {
   // (esteira-state/.esteira), nunca pelo board em foco na sidebar. Leitura
   // pura (`main/cardRepoResolver.ts`) — não escreve em nada.
   resolveCardRepo: 'devMode:resolveCardRepo',
+  // Issue #38 — a mesma resolução do canal acima, mas para a LISTA inteira da
+  // porta de entrada de uma vez (`resolveCardRepos`, plural, em
+  // `main/cardRepoResolver.ts`). Existe pra rotular cada linha com o repo
+  // REAL do card sem abrir um IPC por linha dentro do loop de render.
+  resolveCardRepos: 'devMode:resolveCardRepos',
 } as const;
 
 export interface OpenDiscoveryIpcInput {
@@ -242,6 +247,22 @@ export function isValidResolveCardRepoIpcInput(input: unknown): input is Resolve
   return (
     typeof candidate.cardId === 'string' &&
     candidate.cardId.trim().length > 0 &&
+    (candidate.boardRepoPath === null || typeof candidate.boardRepoPath === 'string')
+  );
+}
+
+/** Issue #38 — payload de `resolveCardRepos`: a lista inteira de cards da porta de entrada + o repo por trás do dropdown "Board". `cardIds: []` é válido (lista vazia — devolve mapa vazio, não erro). */
+export interface ResolveCardReposIpcInput {
+  readonly cardIds: readonly string[];
+  readonly boardRepoPath: string | null;
+}
+
+export function isValidResolveCardReposIpcInput(input: unknown): input is ResolveCardReposIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<ResolveCardReposIpcInput>;
+  return (
+    Array.isArray(candidate.cardIds) &&
+    candidate.cardIds.every((cardId) => typeof cardId === 'string' && cardId.trim().length > 0) &&
     (candidate.boardRepoPath === null || typeof candidate.boardRepoPath === 'string')
   );
 }
@@ -355,4 +376,6 @@ export interface DonelDevModeApi {
   onPhaseArchived(listener: (payload: PhaseArchivedPayload) => void): () => void;
   /** Issue #34 — resolve o repo-alvo do card por rastro em disco (nunca pelo repo em foco na sidebar); ambíguo/desconhecido nunca vira palpite. */
   resolveCardRepo(input: ResolveCardRepoIpcInput): Promise<import('../main/cardRepoResolver').CardRepoResolution>;
+  /** Issue #38 — a mesma resolução, para a lista inteira da porta de entrada num só IPC (`cardId -> CardRepoResolution`). */
+  resolveCardRepos(input: ResolveCardReposIpcInput): Promise<Record<string, import('../main/cardRepoResolver').CardRepoResolution>>;
 }

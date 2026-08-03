@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import type { CardRepoResolution } from '../src/shared';
 import type { DevModeDiscoveries } from '../src/shared/devMode';
 import type { DiscoveryTree, PhaseNode, PlanCardNode } from '../src/main/discovery-tree';
 import type { PhaseStatus } from '../src/shared/phaseState';
 import {
+  cardRepoLabel,
   discoveriesToClose,
   entryPhaseForColumn,
   isCardLinked,
   localOnlyDiscoveryIds,
+  REPO_LABEL_TBD,
   resolveEntrySelection,
 } from '../src/renderer/src/DevMode/devModeSelection';
 
@@ -178,5 +181,45 @@ describe('entryPhaseForColumn (CA-1)', () => {
 
   it('backlog começa pelo discovery — é a única fase que faz sentido num card ainda não trabalhado', () => {
     expect(entryPhaseForColumn('backlog')).toBe('discovery');
+  });
+});
+
+// Issue #38 — a lista rotulava TODO card com o repo do dropdown de board,
+// mesmo quando o card real era de outro repo que compartilha o mesmo board
+// (`spotsys`/`dalton`). `cardRepoLabel` decide o rótulo de UMA linha a
+// partir da resolução em lote (`devMode:resolveCardRepos`).
+describe('cardRepoLabel (issue #38)', () => {
+  const PROJECTS = [
+    { path: 'C:/repo/spotsys', name: 'Spotsys' },
+    { path: 'C:/repo/dalton', name: 'Dalton' },
+  ];
+
+  it('card resolvido mostra o NOME do projeto dono do repo real, não o board', () => {
+    const resolution: CardRepoResolution = { kind: 'resolved', repoPath: 'C:/repo/dalton', repoSlug: 'dalton' };
+    expect(cardRepoLabel(resolution, PROJECTS)).toBe('Dalton');
+  });
+
+  it('repo resolvido mas fora do catálogo de projetos degrada pro repoSlug — nunca inventa um nome', () => {
+    const resolution: CardRepoResolution = { kind: 'resolved', repoPath: 'C:/repo/outro', repoSlug: 'outro' };
+    expect(cardRepoLabel(resolution, PROJECTS)).toBe('outro');
+  });
+
+  it('resolução ambígua nunca reaproveita o board — mostra o rótulo honesto', () => {
+    const resolution: CardRepoResolution = {
+      kind: 'ambiguous',
+      candidates: [
+        { repoSlug: 'spotsys', repoPath: 'C:/repo/spotsys' },
+        { repoSlug: 'dalton', repoPath: 'C:/repo/dalton' },
+      ],
+    };
+    expect(cardRepoLabel(resolution, PROJECTS)).toBe(REPO_LABEL_TBD);
+  });
+
+  it('resolução desconhecida mostra o rótulo honesto', () => {
+    expect(cardRepoLabel({ kind: 'unknown' }, PROJECTS)).toBe(REPO_LABEL_TBD);
+  });
+
+  it('sem resolução ainda (fetch em lote em voo) mostra o rótulo honesto, nunca um palpite temporário', () => {
+    expect(cardRepoLabel(undefined, PROJECTS)).toBe(REPO_LABEL_TBD);
   });
 });

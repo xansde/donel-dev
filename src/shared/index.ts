@@ -82,6 +82,7 @@ export {
   isValidCardIdList,
   isValidOpenDiscoveryIpcInput,
   isValidResolveCardRepoIpcInput,
+  isValidResolveCardReposIpcInput,
   isValidWatchPhaseIpcInput,
   linkDiscoveryRepo,
   openDiscovery,
@@ -102,6 +103,7 @@ export type {
   PhaseDefault,
   PhaseDefaultsTable,
   ResolveCardRepoIpcInput,
+  ResolveCardReposIpcInput,
   WatchPhaseIpcInput,
 } from './devMode';
 

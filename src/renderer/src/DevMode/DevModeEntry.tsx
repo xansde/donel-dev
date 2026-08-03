@@ -1,9 +1,9 @@
 import { Modal, Select, TextInput } from '@donel-dev/design-system';
 import { useMemo, useState } from 'react';
-import type { EntryColumn, EntryColumnCard, ProjectInfo, RepoCandidate } from '../../../shared';
+import type { CardRepoResolution, EntryColumn, EntryColumnCard, ProjectInfo, RepoCandidate } from '../../../shared';
 import type { DiscoveryTree } from '../../../main/discovery-tree';
 import type { DevModeDiscoveries } from '../../../shared/devMode';
-import { isCardLinked, localOnlyDiscoveryIds } from './devModeSelection';
+import { cardRepoLabel, isCardLinked, localOnlyDiscoveryIds } from './devModeSelection';
 import styles from './DevModeEntry.module.css';
 
 // T311 (003-modo-dev, Batch B) — porta de entrada (CA-1/CA-2).
@@ -43,9 +43,6 @@ const COLUMN_LABEL: Record<EntryColumn, string> = {
   documentar: 'Documentar',
 };
 
-/** Rótulo do board de um card que só existe no disco (achado F8/#18) — não veio de board nenhum. */
-const LOCAL_BOARD_LABEL = 'local';
-
 export interface DevModeEntryProps {
   /** Controla o overlay (CA-2 — a forma é modal, não painel embutido). */
   open: boolean;
@@ -80,6 +77,14 @@ export interface DevModeEntryProps {
    */
   pendingRepoChoice?: { readonly cardId: string; readonly candidates: readonly RepoCandidate[] } | null;
   onChooseRepoForCard?: (repoPath: string) => void;
+  /**
+   * Issue #38 — repo REAL de cada card (rastro em disco, `devMode:resolveCardRepos`
+   * em lote — App.tsx busca a lista inteira de uma vez, nunca por linha aqui).
+   * Card sem entrada no mapa (fetch em voo) ou resolvido como
+   * ambíguo/desconhecido cai no rótulo honesto `REPO_LABEL_TBD`
+   * (`devModeSelection.ts`) em vez de herdar o repo do dropdown de board.
+   */
+  cardRepoResolutions?: Record<string, CardRepoResolution>;
 }
 
 export function DevModeEntry({
@@ -96,6 +101,7 @@ export function DevModeEntry({
   onSwitchBoard,
   pendingRepoChoice,
   onChooseRepoForCard,
+  cardRepoResolutions,
 }: DevModeEntryProps): React.JSX.Element | null {
   const [query, setQuery] = useState('');
 
@@ -144,10 +150,13 @@ export function DevModeEntry({
       .filter((card) => (needle ? `${card.title} ${card.cardId}`.toLowerCase().includes(needle) : true))
       .map((card) => ({
         ...card,
-        boardLabel: localOnly.has(card.cardId) ? LOCAL_BOARD_LABEL : activeBoardLabel,
+        // Issue #38 — repo REAL, nunca mais "todo card é do board escolhido":
+        // `cardRepoResolutions` vem do rastro em disco (`devMode:resolveCardRepos`),
+        // resolvido em lote por App.tsx.
+        boardLabel: cardRepoLabel(cardRepoResolutions?.[card.cardId], projects),
         linked: isCardLinked(card.cardId, discoveries, trees),
       }));
-  }, [cards, discoveries, trees, query, activeBoardLabel]);
+  }, [cards, discoveries, trees, query, cardRepoResolutions, projects]);
 
   if (!open) return null;
 
