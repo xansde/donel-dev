@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppConfigDto,
   BoardFacts,
+  CardRepoResolution,
   DiscoveryTree,
   EntryColumn,
   EntryColumnCard,
@@ -89,7 +90,7 @@ import { annotateTree } from '../../shared/boardAnnotation';
 import { DevModeEntry } from './DevMode/DevModeEntry';
 import { DiscoveryMap, type PromotedHomologationClock, type SelectedPhaseNode } from './DevMode/DiscoveryMap';
 import { PhaseDetailsPanel } from './DevMode/PhaseDetailsPanel';
-import { discoveriesToClose, entryPhaseForColumn, resolveEntrySelection } from './DevMode/devModeSelection';
+import { discoveriesToClose, entryPhaseForColumn, localOnlyDiscoveryIds, resolveEntrySelection } from './DevMode/devModeSelection';
 import {
   LIBERAR_COMMAND_TEMPLATE,
   buildConciliationPrompt,
@@ -442,6 +443,8 @@ export function App(): React.JSX.Element {
   const [devModeOn, setDevModeOn] = useState(false);
   const [entryCards, setEntryCards] = useState<readonly EntryColumnCard[]>([]);
   const [entryLoading, setEntryLoading] = useState(false);
+  /** Issue #38 — repo REAL de cada card da lista (rastro em disco, `devMode:resolveCardRepos`), um mapa pra lista inteira — nunca um IPC por linha. */
+  const [entryCardRepos, setEntryCardRepos] = useState<Record<string, CardRepoResolution>>({});
   // FIX (#23, e2e-30-07 onda 2) — "filtrar por board": o app assume um board
   // POR PROJETO (repos.json → repos.<repoSlug>.board, comentário de
   // `effectiveBoardConfig` em main/index.ts) — não existe uma entidade "board"
@@ -1337,6 +1340,38 @@ export function App(): React.JSX.Element {
     if (!devModeOn) return;
     refreshEntryCards();
   }, [devModeOn, refreshEntryCards]);
+
+  /**
+   * Issue #38 — repo REAL de cada linha da lista, resolvido em LOTE (um
+   * `devMode:resolveCardRepos` para a lista inteira, nunca um IPC por card
+   * dentro do loop de render). Reage à mesma lista de `entryCards` que já
+   * dispara `refreshEntryCards`, mais os discoveries "só no disco" (achado
+   * F8 — não vêm do board, mas são resolvíveis pelo mesmo rastro).
+   */
+  useEffect(() => {
+    if (!devModeOn) {
+      setEntryCardRepos({});
+      return;
+    }
+    const localOnlyIds = localOnlyDiscoveryIds(entryCards, devModeState?.discoveries ?? {});
+    const cardIds = [...entryCards.map((card) => card.cardId), ...localOnlyIds];
+    if (cardIds.length === 0) {
+      setEntryCardRepos({});
+      return;
+    }
+    let cancelled = false;
+    void window.donel.devMode
+      .resolveCardRepos({ cardIds, boardRepoPath: entryBoardRepoPath ?? selectedProjectPath ?? null })
+      .then((resolutions) => {
+        if (!cancelled) setEntryCardRepos(resolutions);
+      })
+      .catch(() => {
+        if (!cancelled) setEntryCardRepos({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [devModeOn, entryCards, devModeState?.discoveries, entryBoardRepoPath, selectedProjectPath]);
 
   // FIX (#23) — descobre QUAIS projetos têm board configurado (repos.json →
   // repos.<repoSlug>.board), pra alimentar o seletor "Board" do modal
@@ -2482,6 +2517,10 @@ export function App(): React.JSX.Element {
             onSwitchBoard={setEntryBoardRepoPath}
             pendingRepoChoice={pendingRepoChoice}
             onChooseRepoForCard={handleChooseRepoForCard}
+            // Issue #38 — repo REAL por card (rastro em disco, lote único),
+            // pra lista parar de afirmar `spotsys` pra todo card só porque é
+            // o board escolhido no dropdown.
+            cardRepoResolutions={entryCardRepos}
           />
         ) : null}
 

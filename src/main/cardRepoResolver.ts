@@ -46,6 +46,14 @@ export interface ResolveCardRepoInput {
   readonly boardRepoPath: string | null;
 }
 
+/** Issue #38 — mesmo input de `resolveCardRepo`, mas para VÁRIOS cards de uma vez (a lista inteira da porta de entrada). */
+export interface ResolveCardReposInput {
+  readonly cardIds: readonly string[];
+  readonly esteiraStateRoot: string;
+  readonly repos: readonly RepoEntry[];
+  readonly boardRepoPath: string | null;
+}
+
 function candidateOf(repo: RepoEntry): RepoCandidate {
   return { repoSlug: repo.repoSlug, repoPath: repo.repoPath };
 }
@@ -116,4 +124,24 @@ export function resolveCardRepo(input: ResolveCardRepoInput, io: CardRepoResolve
   }
 
   return { kind: 'unknown' };
+}
+
+/**
+ * Issue #38 — a lista da porta de entrada tem dezenas de cards; um
+ * `devMode:resolveCardRepo` por LINHA (dentro do loop de render) seria uma
+ * rodada de IPC por card. Este é o mesmo `resolveCardRepo`, só que chamado
+ * uma vez por card DENTRO de uma única invocação de main (um IPC, uma leitura
+ * de `repos.json`) — o consumidor (`devMode:resolveCardRepos`, plural, em
+ * `main/index.ts`) devolve um mapa `cardId -> CardRepoResolution` pronto pra
+ * lista inteira.
+ */
+export function resolveCardRepos(input: ResolveCardReposInput, io: CardRepoResolverIoDeps): Record<string, CardRepoResolution> {
+  const result: Record<string, CardRepoResolution> = {};
+  for (const cardId of input.cardIds) {
+    result[cardId] = resolveCardRepo(
+      { cardId, esteiraStateRoot: input.esteiraStateRoot, repos: input.repos, boardRepoPath: input.boardRepoPath },
+      io,
+    );
+  }
+  return result;
 }
