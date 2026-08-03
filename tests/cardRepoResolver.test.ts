@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveCardRepo, type CardRepoResolverIoDeps } from '../src/main/cardRepoResolver';
+import { resolveCardRepo, resolveCardRepos, type CardRepoResolverIoDeps } from '../src/main/cardRepoResolver';
 import type { RepoEntry } from '../src/shared/projectBinding';
 
 // Issue #34 (P0) — "o do Dalton carregou no projeto spotsys". `spotsys` e
@@ -123,5 +123,61 @@ describe('resolveCardRepo (issue #34)', () => {
     );
 
     expect(result).toEqual({ kind: 'resolved', repoPath: unregisteredPath, repoSlug: 'projeto-novo' });
+  });
+});
+
+// Issue #38 — a lista da porta de entrada rotulava TODO card com o repo do
+// dropdown de board, mesmo quando o card real era de outro repo que
+// compartilha o mesmo board (`spotsys`/`dalton`). `resolveCardRepos` é o
+// mesmo `resolveCardRepo`, em lote — uma chamada, um mapa `cardId ->
+// resolução`, nunca um IPC por linha.
+describe('resolveCardRepos (issue #38)', () => {
+  const OTHER_CARD_ID = 'cms38m5gf003r01mjvpz7other';
+
+  it('resolve cada card do lote de forma independente, mesmo com rastros em repos diferentes', () => {
+    const io = fakeIo([v3TraceDir('dalton', CARD_ID), v3TraceDir('spotsys', OTHER_CARD_ID)]);
+
+    const result = resolveCardRepos(
+      {
+        cardIds: [CARD_ID, OTHER_CARD_ID],
+        esteiraStateRoot: ESTEIRA_STATE_ROOT,
+        repos: [spotsys, dalton],
+        boardRepoPath: spotsys.repoPath,
+      },
+      io,
+    );
+
+    expect(result).toEqual({
+      [CARD_ID]: { kind: 'resolved', repoPath: dalton.repoPath, repoSlug: 'dalton' },
+      [OTHER_CARD_ID]: { kind: 'resolved', repoPath: spotsys.repoPath, repoSlug: 'spotsys' },
+    });
+  });
+
+  it('lista vazia devolve mapa vazio', () => {
+    const io = fakeIo([]);
+
+    const result = resolveCardRepos(
+      { cardIds: [], esteiraStateRoot: ESTEIRA_STATE_ROOT, repos: [spotsys, dalton], boardRepoPath: spotsys.repoPath },
+      io,
+    );
+
+    expect(result).toEqual({});
+  });
+
+  it('card sem rastro nenhum e board ambíguo entra no mapa como "ambiguous", não desaparece nem quebra os demais', () => {
+    const io = fakeIo([v3TraceDir('dalton', OTHER_CARD_ID)]);
+
+    const result = resolveCardRepos(
+      {
+        cardIds: [CARD_ID, OTHER_CARD_ID],
+        esteiraStateRoot: ESTEIRA_STATE_ROOT,
+        repos: [spotsys, dalton],
+        boardRepoPath: spotsys.repoPath,
+      },
+      io,
+    );
+
+    expect(result[CARD_ID].kind).toBe('ambiguous');
+    expect(result[OTHER_CARD_ID]).toEqual({ kind: 'resolved', repoPath: dalton.repoPath, repoSlug: 'dalton' });
   });
 });

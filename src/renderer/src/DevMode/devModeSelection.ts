@@ -1,5 +1,5 @@
 import type { DiscoveryTree } from '../../../main/discovery-tree';
-import type { EntryColumn } from '../../../shared';
+import type { CardRepoResolution, EntryColumn } from '../../../shared';
 import { eligiblePhaseForColumn } from '../../../shared/columnEligibility';
 import type { DevModeDiscoveries, EsteiraPhase } from '../../../shared/devMode';
 
@@ -104,4 +104,27 @@ export function discoveriesToClose(trees: readonly DiscoveryTree[], discoveries:
   return trees
     .filter((tree) => tree.allPlanCardsComplete && isOpen(discoveries, tree.discoveryCardId))
     .map((tree) => tree.discoveryCardId);
+}
+
+/** Issue #38 — "nunca afirmar um repo errado com cara de fato": rótulo honesto para quando o rastro em disco não resolve sozinho. */
+export const REPO_LABEL_TBD = 'repo a definir';
+
+/** Um par `path`/`name` já basta pra achar o nome legível de um repo resolvido — `ProjectInfo` inteiro seria mais do que a função precisa. */
+export interface RepoNameLookup {
+  readonly path: string;
+  readonly name: string;
+}
+
+/**
+ * CA-1/#38 — rótulo de repo de UMA linha da lista, a partir da resolução em
+ * lote (`devMode:resolveCardRepos`, rastro em disco — issue #34). Sem
+ * resolução ainda (fetch em voo) ou resolução ambígua/desconhecida: nunca um
+ * palpite, sempre `REPO_LABEL_TBD` — era exatamente essa mentira ("spotsys"
+ * pra um card do `dalton`, só porque os dois compartilham board) que a issue
+ * relatou.
+ */
+export function cardRepoLabel(resolution: CardRepoResolution | undefined, projects: readonly RepoNameLookup[]): string {
+  if (!resolution || resolution.kind !== 'resolved') return REPO_LABEL_TBD;
+  const project = projects.find((candidate) => candidate.path === resolution.repoPath);
+  return project?.name ?? resolution.repoSlug;
 }

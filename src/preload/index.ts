@@ -30,6 +30,7 @@ import type {
   PtyCreateResult,
   PtyExitInfo,
   ResolveCardRepoIpcInput,
+  ResolveCardReposIpcInput,
   SaveProjectBindingIpcInput,
   SaveProjectBindingResult,
   SemaphoreStateInfo,
@@ -256,6 +257,11 @@ const donelApi: DonelApi = {
     // pelo repo em foco na sidebar.
     resolveCardRepo: (input: ResolveCardRepoIpcInput) =>
       ipcRenderer.invoke(DEVMODE_CHANNELS.resolveCardRepo, input) as Promise<CardRepoResolution>,
+
+    // Issue #38 — a mesma resolução, em lote, pra lista inteira da porta de
+    // entrada num só IPC (nunca um IPC por linha dentro do loop de render).
+    resolveCardRepos: (input: ResolveCardReposIpcInput) =>
+      ipcRenderer.invoke(DEVMODE_CHANNELS.resolveCardRepos, input) as Promise<Record<string, CardRepoResolution>>,
   },
 
   // CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto

@@ -18,9 +18,17 @@
   background: var(--overlay-modal);
 }
 
+/* Issue #37 — tamanho é uma VARIÁVEL, não uma disputa de especificidade.
+   `width`/`max-width`/`max-height` são lidos de custom properties com
+   fallback (`--modal-width`/`--modal-max-width`/`--modal-max-height`); um
+   consumidor (ex. DevModeEntry) que precisa de uma caixa maior DEFINE só a
+   variável na sua própria classe, nunca redeclara a propriedade em si — não
+   há mais duas regras disputando a MESMA propriedade no mesmo elemento, então
+   não existe ordem de import capaz de fazer o `max-height` sumir. */
 .dialog {
-  width: 100%;
-  max-width: 480px;
+  width: var(--modal-width, 100%);
+  max-width: var(--modal-max-width, 480px);
+  max-height: var(--modal-max-height, none);
   margin: var(--space-3);
   padding: var(--space-3);
   display: flex;
@@ -54,6 +62,17 @@
      do modal em vez de ativar o scroll interno das listas (`overflow-y:
      auto` delas nunca é acionado, pois nunca ficam menores que o conteúdo). */
   min-height: 0;
+  /* FIX (issue #37) — `min-height: 0` sozinho só deixa `.body` ENCOLHER; sem
+     `flex: 1` ele continua com `flex-grow: 0` (default), então nunca CRESCE
+     pra ocupar o espaço vertical que `max-height` reserva em `.dialog`. Um
+     filho de `.body` que precise rolar dentro de uma altura fixa (a lista do
+     DevModeEntry) só tem contra o que rolar se `.body` de fato preencher
+     esse espaço — daí o `display: flex; flex-direction: column` aqui,
+     propagando a mesma disciplina de altura que `.dialog` já segue. */
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .actions {
