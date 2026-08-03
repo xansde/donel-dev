@@ -92,30 +92,83 @@ export function validateProjectFolderName(rawName: string): ProjectFolderNameVal
 /** Canal IPC de criacao - some ao lado de `PROJECT_CHANNELS.list`/`.favorite` em src/shared/projects.ts. */
 export const NEW_PROJECT_CHANNEL = 'projects:create' as const;
 
-/** Payload que o formulario "Novo projeto" manda: nome cru (validado dos dois lados) + root ESCOLHIDO entre os ja configurados (nunca um caminho livre). */
+/** Modo de origem do codigo do projeto novo (Select "De onde vem o codigo", `SOURCE_OPTIONS` em ProjectSwitcher.tsx). `'local'` (pasta existente) fica fora do escopo de #31 — so 'vazio'/'clone' tem encanamento real. */
+export type ProjectSourceMode = 'vazio' | 'clone';
+
+/**
+ * Payload que o formulario "Novo projeto" manda: nome cru (validado dos dois
+ * lados) + root ESCOLHIDO entre os ja configurados (nunca um caminho livre).
+ * FIX (#31) — `source`/`cloneUrl` sao ADITIVOS e OPCIONAIS (compatibilidade
+ * com quem ja chamava sem eles): payload sem `source` vira `'vazio'` por
+ * omissao em `createNewProject` (main/project-creator.ts). `cloneUrl` so e
+ * exigido (guarda abaixo) quando `source === 'clone'` — ja deve chegar
+ * resolvido pro formato que o `git clone` aceita (`resolveGithubCloneUrl`,
+ * este arquivo), o renderer computa a partir do mesmo campo "Repositorio
+ * GitHub" que #32 corrigiu (o valor tambem vira `repos.<slug>.github`).
+ */
 export interface CreateProjectIpcInput {
   readonly name: string;
   readonly root: string;
+  readonly source?: ProjectSourceMode;
+  readonly cloneUrl?: string;
 }
 
 /** Guarda defensiva de payload IPC - mesmo espirito de `isValidSaveProjectBindingIpcInput` (projectBinding.ts): o main nunca confia cegamente no que o renderer manda. */
 export function isValidCreateProjectIpcInput(input: unknown): input is CreateProjectIpcInput {
   if (typeof input !== 'object' || input === null) return false;
   const candidate = input as Partial<CreateProjectIpcInput>;
-  return (
-    typeof candidate.name === 'string' &&
-    candidate.name.trim().length > 0 &&
-    typeof candidate.root === 'string' &&
-    candidate.root.trim().length > 0
-  );
+  if (typeof candidate.name !== 'string' || candidate.name.trim().length === 0) return false;
+  if (typeof candidate.root !== 'string' || candidate.root.trim().length === 0) return false;
+
+  if (candidate.source !== undefined && candidate.source !== 'vazio' && candidate.source !== 'clone') return false;
+  if (candidate.source === 'clone') {
+    if (typeof candidate.cloneUrl !== 'string' || candidate.cloneUrl.trim().length === 0) return false;
+  }
+
+  return true;
 }
 
-export type CreateProjectErrorReason = ProjectFolderNameErrorReason | 'invalid-root' | 'already-exists' | 'mkdir-failed';
+/**
+ * FIX (#31) — o campo "Repositorio GitHub" (ProjectConfigForm.tsx, #32)
+ * aceita tanto o shorthand `org/repo` (contrato `repos.json` §I) quanto uma
+ * URL ja completa. `git clone` so entende URL/scp-syntax — o shorthand sem
+ * `:` seria tratado como PATH LOCAL relativo (git falharia com um erro
+ * confuso). Aqui: se o valor ja parece uma URL/scp-syntax (tem um esquema
+ * conhecido ou o padrao `usuario@host:`), passa direto; senao, assume
+ * shorthand `org/repo` e compoe a URL https do GitHub (mesmo host que o
+ * contrato de `repos.json` sempre assumiu implicitamente).
+ */
+const CLONABLE_URL_PATTERN = /^(https?:\/\/|ssh:\/\/|git:\/\/|[^/\s]+@[^/\s]+:)/i;
 
-/** Resultado da criacao (src/main/project-creator.ts `createNewProject`). `gitInitialized: false` e degradacao por omissao (C4) - `git` ausente/falho nunca derruba a criacao em si (o marcador `CLAUDE.md` ja garante que o projeto aparece na lista). */
+export function resolveGithubCloneUrl(rawRepoRef: string): string {
+  const trimmed = rawRepoRef.trim();
+  if (CLONABLE_URL_PATTERN.test(trimmed)) return trimmed;
+  return `https://github.com/${trimmed}.git`;
+}
+
+export type CreateProjectErrorReason =
+  | ProjectFolderNameErrorReason
+  | 'invalid-root'
+  | 'already-exists'
+  | 'mkdir-failed'
+  | 'clone-url-empty'
+  | 'clone-failed';
+
+/**
+ * Resultado da criacao (src/main/project-creator.ts `createNewProject`).
+ * `gitInitialized: false` e degradacao por omissao (C4) - `git` ausente/falho
+ * nunca derruba a criacao em si no modo 'vazio' (o marcador `CLAUDE.md` ja
+ * garante que o projeto aparece na lista). FIX (#31) — `clone-failed` e o
+ * UNICO motivo com mensagem DINAMICA (`message`): ao contrario do resto
+ * (nome invalido, root fora da allowlist, etc — sempre o MESMO texto fixo em
+ * pt-BR), falha de clone precisa mostrar o que o `git` de fato disse (URL
+ * invalida, sem auth, rede fora) — nunca degrada em silencio como o
+ * `git init` do modo 'vazio' degrada.
+ */
 export type CreateProjectResult =
   | { readonly ok: true; readonly path: string; readonly name: string; readonly gitInitialized: boolean }
-  | { readonly ok: false; readonly reason: CreateProjectErrorReason };
+  | { readonly ok: false; readonly reason: Exclude<CreateProjectErrorReason, 'clone-failed'> }
+  | { readonly ok: false; readonly reason: 'clone-failed'; readonly message: string };
 
 /** O que o handler `projects:create` devolve - resultado + lista de projetos JA atualizada (evita round-trip extra, mesmo idioma de `projects:favorite`). Mesmo shape mutável de `DonelProjectsApi.list()` (ProjectInfo[]) — os consumidores do renderer passam isso direto pro `setProjects` do App.tsx. */
 export interface CreateProjectResponse {

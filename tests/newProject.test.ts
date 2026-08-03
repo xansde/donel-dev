@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isValidCreateProjectIpcInput, validateProjectFolderName } from '../src/shared/newProject';
+import { isValidCreateProjectIpcInput, resolveGithubCloneUrl, validateProjectFolderName } from '../src/shared/newProject';
 
 // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero pelo app"
 // (US-15 do backlog.md). TDD do módulo puro: validação do NOME da pasta
@@ -96,5 +96,62 @@ describe('isValidCreateProjectIpcInput — guarda defensiva de payload IPC (mesm
   it('rejeita root vazio (mesmo com o nome válido) — sem root não há onde criar', () => {
     expect(isValidCreateProjectIpcInput({ name: 'x', root: '' })).toBe(false);
     expect(isValidCreateProjectIpcInput({ name: 'x', root: '   ' })).toBe(false);
+  });
+
+  // FIX (#31) — "Clonar do GitHub" não clonava de verdade; o payload IPC
+  // ganha `source`/`cloneUrl` (os dois OPCIONAIS — payload antigo, sem
+  // nenhum dos dois, continua válido e vira modo 'vazio' por omissão em
+  // `createNewProject`, mantendo compatibilidade com quem já chamava sem eles).
+  it('aceita payload sem source/cloneUrl (compatibilidade — vira modo "vazio" por omissão)', () => {
+    expect(isValidCreateProjectIpcInput({ name: 'x', root: 'C:\\x' })).toBe(true);
+  });
+
+  it('aceita source "vazio" explícito, sem cloneUrl', () => {
+    expect(isValidCreateProjectIpcInput({ name: 'x', root: 'C:\\x', source: 'vazio' })).toBe(true);
+  });
+
+  it('aceita source "clone" com cloneUrl preenchido', () => {
+    expect(isValidCreateProjectIpcInput({ name: 'x', root: 'C:\\x', source: 'clone', cloneUrl: 'org/repo' })).toBe(true);
+  });
+
+  it('rejeita source "clone" sem cloneUrl (ou vazio) — não dá pra clonar sem saber de onde', () => {
+    expect(isValidCreateProjectIpcInput({ name: 'x', root: 'C:\\x', source: 'clone' })).toBe(false);
+    expect(isValidCreateProjectIpcInput({ name: 'x', root: 'C:\\x', source: 'clone', cloneUrl: '' })).toBe(false);
+    expect(isValidCreateProjectIpcInput({ name: 'x', root: 'C:\\x', source: 'clone', cloneUrl: '   ' })).toBe(false);
+  });
+
+  it('rejeita source de valor desconhecido', () => {
+    expect(isValidCreateProjectIpcInput({ name: 'x', root: 'C:\\x', source: 'importar' })).toBe(false);
+  });
+
+  it('rejeita cloneUrl de tipo errado', () => {
+    expect(isValidCreateProjectIpcInput({ name: 'x', root: 'C:\\x', source: 'clone', cloneUrl: 42 })).toBe(false);
+  });
+});
+
+describe('resolveGithubCloneUrl — normaliza o valor do campo "Repositório GitHub" pra uma URL clonável', () => {
+  it('shorthand "org/repo" vira URL https do GitHub com .git', () => {
+    expect(resolveGithubCloneUrl('seazone-tech/spotsys')).toBe('https://github.com/seazone-tech/spotsys.git');
+  });
+
+  it('trima espaços em volta do shorthand antes de compor a URL', () => {
+    expect(resolveGithubCloneUrl('  seazone-tech/spotsys  ')).toBe('https://github.com/seazone-tech/spotsys.git');
+  });
+
+  it('URL https já completa: passa direto, sem duplicar nada', () => {
+    expect(resolveGithubCloneUrl('https://github.com/seazone-tech/spotsys.git')).toBe('https://github.com/seazone-tech/spotsys.git');
+    expect(resolveGithubCloneUrl('https://github.com/seazone-tech/spotsys')).toBe('https://github.com/seazone-tech/spotsys');
+  });
+
+  it('URL http (não https): passa direto — não é o app que decide protocolo de quem já deu a URL completa', () => {
+    expect(resolveGithubCloneUrl('http://internal-git.local/x/y.git')).toBe('http://internal-git.local/x/y.git');
+  });
+
+  it('SSH (git@host:...): passa direto', () => {
+    expect(resolveGithubCloneUrl('git@github.com:seazone-tech/spotsys.git')).toBe('git@github.com:seazone-tech/spotsys.git');
+  });
+
+  it('ssh:// explícito: passa direto', () => {
+    expect(resolveGithubCloneUrl('ssh://git@github.com/seazone-tech/spotsys.git')).toBe('ssh://git@github.com/seazone-tech/spotsys.git');
   });
 });

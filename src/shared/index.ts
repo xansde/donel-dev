@@ -21,7 +21,12 @@ export type { DonelProjectsApi, ProjectInfo } from './projects';
 // (US-15 do backlog.md). Validação pura do nome da pasta + contrato IPC
 // aqui; o encanamento de disco (mkdir, marcador CLAUDE.md, `git init`
 // best-effort) vive em src/main/project-creator.ts.
-export { isValidCreateProjectIpcInput, NEW_PROJECT_CHANNEL, validateProjectFolderName } from './newProject';
+export {
+  isValidCreateProjectIpcInput,
+  NEW_PROJECT_CHANNEL,
+  resolveGithubCloneUrl,
+  validateProjectFolderName,
+} from './newProject';
 export type {
   CreateProjectErrorReason,
   CreateProjectIpcInput,
@@ -29,6 +34,7 @@ export type {
   CreateProjectResult,
   ProjectFolderNameErrorReason,
   ProjectFolderNameValidation,
+  ProjectSourceMode,
 } from './newProject';
 
 export { SESSION_CHANNELS, TRANSCRIPT_CHANNELS } from './sessions';

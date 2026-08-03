@@ -2,7 +2,8 @@ import { Button, Modal, Select, TextInput } from '@donel-dev/design-system';
 import type { SelectOption } from '@donel-dev/design-system';
 import { History, Star } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
-import type { CreateProjectErrorReason, ProjectInfo } from '../../shared';
+import { resolveGithubCloneUrl } from '../../shared';
+import type { CreateProjectErrorReason, ProjectInfo, ProjectSourceMode } from '../../shared';
 import { filterProjectsByName, groupProjectsByRoot, projectRootLabel } from '../../shared/projectCatalog';
 import { ProjectConfigForm, type ProjectConfigFormHandle } from './ProjectConfigForm';
 import { withPendingRepoCommitted } from './repoEntryList';
@@ -26,16 +27,14 @@ import styles from './ProjectSwitcher.module.css';
 // apresentação, não de conteúdo — a lista e o botão "＋ Novo projeto"
 // aparecem com o mesmo texto/ordem do mockup.
 //
-// ESCOPO DESTE LOTE (nomeado): das 3 opções "De onde vem o código" do
-// mockup, só "Começar vazio" cria de fato (mkdir + marcador CLAUDE.md +
-// `git init` best-effort, src/main/project-creator.ts). "Clonar do GitHub"
-// e "Pasta existente no disco" ficam no Select (fidelidade de forma) mas
-// desabilitam "Criar projeto" com uma nota — CA-30/US-15 pede "lançar um
-// projeto DO ZERO"; clonar é uma feature de importação bem maior (rede,
-// autenticação) e "pasta existente" reabriria a mesma ambiguidade que o
-// lote 3 (CA-23) já resolveu de outro jeito (favoritos tratam path fora do
-// scan como "missing", não como "registrado") — nenhuma das duas cabe no
-// mesmo encanamento validado aqui.
+// ESCOPO (nomeado): das 3 opções "De onde vem o código" do mockup, "Começar
+// vazio" (mkdir + marcador CLAUDE.md + `git init` best-effort) e "Clonar do
+// GitHub" (FIX #31 — `git clone` de verdade, src/main/project-creator.ts,
+// erro de clone aparece pro usuário e a pasta pela metade é limpa) criam de
+// fato. "Pasta existente no disco" continua fora do Select habilitado —
+// reabriria a mesma ambiguidade que o lote 3 (CA-23) já resolveu de outro
+// jeito (favoritos tratam path fora do scan como "missing", não como
+// "registrado") — não cabe no mesmo encanamento validado aqui.
 //
 // FIX (rodada de feedback 30/07, item 2) — "não ter que selecionar a pasta
 // local, mas ele criar em um dos diretórios já configurados": o campo/preview
@@ -85,7 +84,12 @@ const SOURCE_OPTIONS: SelectOption[] = [
   { value: 'local', label: 'Pasta existente no disco', description: 'registra um projeto que já está aqui' },
 ];
 
-function errorMessage(reason: CreateProjectErrorReason): string {
+/**
+ * FIX (#31) — `clone-failed` é o ÚNICO motivo com mensagem DINÂMICA (o texto
+ * de verdade vem do `git`, em `cloneErrorDetail`) — os demais são sempre o
+ * MESMO texto fixo em pt-BR, independente do payload.
+ */
+function errorMessage(reason: CreateProjectErrorReason, cloneDetail?: string | null): string {
   switch (reason) {
     case 'empty':
       return 'Dê um nome pro projeto.';
@@ -101,6 +105,10 @@ function errorMessage(reason: CreateProjectErrorReason): string {
       return 'Já existe uma pasta com esse nome ali.';
     case 'mkdir-failed':
       return 'Não consegui criar a pasta (permissão negada?).';
+    case 'clone-url-empty':
+      return 'Preencha o campo "Repositório GitHub (issues/PRs)" com o repo a clonar antes de criar.';
+    case 'clone-failed':
+      return cloneDetail ?? 'Não consegui clonar o repositório — confira a URL, a autenticação e a rede.';
   }
 }
 
@@ -134,6 +142,10 @@ export function ProjectSwitcher({
   // `createdProject`), nunca recria a pasta (que já existe).
   const [bindingError, setBindingError] = useState<string | null>(null);
   const [createdProject, setCreatedProject] = useState<{ path: string; name: string } | null>(null);
+  // FIX (#31) — `clone-failed` é o único motivo de erro com mensagem
+  // dinâmica (o texto de verdade vem do `git`, propagado por
+  // `project-creator.ts`) — os demais reasons são texto fixo (`errorMessage`).
+  const [cloneErrorDetail, setCloneErrorDetail] = useState<string | null>(null);
   // FIX (#32) — o campo "Novo repositório GitHub" de `ProjectConfigForm` tem
   // texto pendente que só vira item de `repos` ao clicar "Adicionar"/Enter;
   // no submit, commitamos esse pendente via `getPendingRepo()` ANTES de ler
@@ -175,18 +187,33 @@ export function ProjectSwitcher({
     setErrorReason(null);
     setBindingError(null);
     setCreatedProject(null);
+    setCloneErrorDetail(null);
     setNewProjectOpen(true);
   };
   const closeNewProjectModal = (): void => setNewProjectOpen(false);
 
+  // FIX (#31) — "Clonar do GitHub" agora tem encanamento de verdade; "Pasta
+  // existente no disco" continua fora do escopo (ver comentário do topo do
+  // arquivo — reabriria a ambiguidade que o lote 3/CA-23 já resolveu).
+  const isSourceSupported = source === 'vazio' || source === 'clone';
+
   const handleCreate = (): void => {
-    if (creating || source !== 'vazio' || (!createdProject && (!name.trim() || !targetRoot))) return;
+    if (creating || !isSourceSupported || (!createdProject && (!name.trim() || !targetRoot))) return;
     setCreating(true);
     setErrorReason(null);
     setBindingError(null);
+    setCloneErrorDetail(null);
 
     void (async (): Promise<void> => {
       try {
+        // FIX (#32) — commita o texto pendente do campo de repo ANTES de ler
+        // a lista (mesma normalização trim+dedup do `handleAddRepo` interno).
+        // FIX (#31) — o modo clone também depende disso: o repo PRINCIPAL
+        // (`effectiveRepos[0]`) É a URL/shorthand a clonar (mesmo campo,
+        // reaproveitado — a esteira grava o mesmo valor em `repos.<slug>.github`).
+        const effectiveRepos = withPendingRepoCommitted(repos, configFormRef.current?.getPendingRepo() ?? '');
+        if (effectiveRepos.length !== repos.length) setRepos(effectiveRepos);
+
         let path: string;
         let createdName: string;
         let projectsList: readonly ProjectInfo[];
@@ -200,21 +227,27 @@ export function ProjectSwitcher({
           createdName = createdProject.name;
           projectsList = projects;
         } else {
-          const response = await window.donel.projects.create({ name, root: targetRoot });
+          const sourceMode: ProjectSourceMode = source === 'clone' ? 'clone' : 'vazio';
+          if (sourceMode === 'clone' && effectiveRepos.length === 0) {
+            setErrorReason('clone-url-empty');
+            return;
+          }
+          const response = await window.donel.projects.create({
+            name,
+            root: targetRoot,
+            source: sourceMode,
+            ...(sourceMode === 'clone' ? { cloneUrl: resolveGithubCloneUrl(effectiveRepos[0] ?? '') } : {}),
+          });
           onProjectsChanged(response.projects);
           if (!response.result.ok) {
             setErrorReason(response.result.reason);
+            if (response.result.reason === 'clone-failed') setCloneErrorDetail(response.result.message);
             return;
           }
           path = response.result.path;
           createdName = response.result.name;
           projectsList = response.projects;
         }
-
-        // FIX (#32) — commita o texto pendente do campo de repo ANTES de ler
-        // a lista (mesma normalização trim+dedup do `handleAddRepo` interno).
-        const effectiveRepos = withPendingRepoCommitted(repos, configFormRef.current?.getPendingRepo() ?? '');
-        if (effectiveRepos.length !== repos.length) setRepos(effectiveRepos);
 
         const needsBindingSave = effectiveRepos.length > 0 || (workspaceId.trim() && teamId.trim());
         if (needsBindingSave) {
@@ -350,9 +383,9 @@ export function ProjectSwitcher({
             <Button
               variant="primary"
               onClick={handleCreate}
-              disabled={creating || source !== 'vazio' || (!createdProject && (!name.trim() || !targetRoot))}
+              disabled={creating || !isSourceSupported || (!createdProject && (!name.trim() || !targetRoot))}
             >
-              {creating ? 'Criando…' : createdProject ? 'Tentar salvar de novo' : 'Criar projeto'}
+              {creating ? 'Criando…' : createdProject ? 'Tentar salvar de novo' : source === 'clone' ? 'Clonar e criar' : 'Criar projeto'}
             </Button>
           </>
         }
@@ -372,9 +405,15 @@ export function ProjectSwitcher({
           />
 
           <Select label="De onde vem o código" value={source} options={SOURCE_OPTIONS} onChange={setSource} disabled={creating} />
-          {source !== 'vazio' ? (
+          {source === 'clone' ? (
+            <p className={styles.hint}>
+              O app clona o repositório digitado no campo "Repositório GitHub (issues/PRs)" abaixo pra dentro da pasta nova —
+              preencha esse campo antes de criar.
+            </p>
+          ) : null}
+          {source === 'local' ? (
             <p className={styles.hintDanger}>
-              Ainda não implementado nesta leva — crie vazio, ou clone/registre a pasta manualmente e abra por "Trocar de
+              Ainda não implementado nesta leva — crie vazio/clone, ou registre a pasta manualmente e abra por "Trocar de
               projeto".
             </p>
           ) : null}
@@ -409,7 +448,7 @@ export function ProjectSwitcher({
           ) : null}
           {errorReason || bindingError ? (
             <p className={styles.hintDanger} data-testid="new-project-error">
-              {errorReason ? errorMessage(errorReason) : bindingError}
+              {errorReason ? errorMessage(errorReason, cloneErrorDetail) : bindingError}
             </p>
           ) : null}
         </div>
