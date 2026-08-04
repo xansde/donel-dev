@@ -213,6 +213,48 @@ dentro do que o discovery já decidiu. Razão de cada uma em
   exclusão. Ver `research.md` §2. **Confirmada pelo dono em 2026-08-04**
   (revisão pós-fase Plano): etapa 1 com os dois mods juntos.
 
+### 2026-08-04 — fase Plano, recorte da **etapa 3** (registry de providers, classe A)
+
+Lacunas resolvidas por julgamento na fase Plano (sem humano no loop), todas
+dentro do que o discovery já decidiu `[T-5]`. Razão de cada uma em
+`registry-classe-a/research.md` §4; o recorte da etapa 3 e as dependências com
+as etapas 1 e 2 estão em `registry-classe-a/research.md` §1–§2.
+
+- **C13** — Provider e motor de contas são **mutuamente exclusivos por sessão**:
+  a sessão nasce de conta Anthropic **ou** de provider classe A, nunca dos dois.
+  Auto-switch ignora sessões de provider.
+- **C14** — Registry **nasce inerte** (`providers.entries = []`): sem entrada
+  configurada, o launcher não muda e o spawn é byte a byte o de hoje.
+- **C15** — O contrato da classe A é o **mecanismo env do Claude Code**, não a
+  API de um provider: entrada carrega `env` genérico (não sensível) +
+  `secretEnvKeys` (nomes das variáveis cujo valor vive no cofre). Base URL e
+  mapeamento de modelo são **dados**, não código.
+- **C16** — Config dir do provider = `<userData>/providers/<id>/`, criado
+  **vazio**: nenhuma cópia automática de MCPs, `CLAUDE.md` ou `settings.json`.
+  A promessa "MCP configurado uma vez sobrevive" é sobre **troca de conta**,
+  não sobre provider externo. Dito na UI.
+- **C17** — A sessão grava o `providerId` de nascimento; "Sessões anteriores"
+  consulta o home do provider **selecionado** (mesmo padrão de hoje com perfil).
+  Sem união de raízes na v1; a origem da lista é mostrada, nunca silenciosa.
+- **C18** — Com provider classe A selecionado, `--model`/`--effort` são
+  **omitidos** do argv (o modelo vem do env da entrada); `-n`,
+  `--permission-mode` e o `--settings` dos hooks seguem iguais.
+  `commandBuilder.ts` **não** é alterado.
+- **C19** — Segredo de provider vai para o **mesmo cofre** da etapa 1, namespace
+  `provider:<id>`. Write-only: a UI só vê `configurado`/`não configurado`. A
+  chave do OpenRouter é lida do Bitwarden **na implementação**, direto para o
+  formulário do app — nunca em chat, arquivo, fixture, log ou commit.
+- **C20** — Classe B nasce vazia **com definição**: `class: 'B'` é aceito e
+  persistido, mas não há caminho de spawn nem UI de criação na v1; entrada `'B'`
+  é listada como "não suportada nesta versão" e recusada com mensagem — nunca
+  ignorada em silêncio.
+- **C21** — Precedência única de `CLAUDE_CONFIG_DIR`: **provider > motor >
+  perfil**, numa função pura. Enquanto perfis existirem, provider selecionado
+  vence o perfil ativo (e a UI de perfil fica desabilitada). O registry **não**
+  depende da etapa 2.
+- **C22** — `providerId` é slug opaco; `label` é texto livre sem nome de pessoa
+  (LGPD). Erro de provider nomeia a variável, nunca o valor.
+
 ## Pendências
 
 Nenhuma que trave o plano — o mapa fechou com frontier zerada. As névoas

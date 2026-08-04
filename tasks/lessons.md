@@ -57,3 +57,48 @@ reversível por config, sem depender da demolição de perfis.
 **Lesson:** feature que substitui um mecanismo vivo entra desligada por config
 — assim ela pode ser integrada e testada em dogfooding antes de o mecanismo
 antigo morrer.
+
+## 2026-08-04 — pln-registry-providers-classe-a (registry-classe-a)
+
+### Registry de um piloto só: campos genéricos em vez de campos nomeados
+
+A classe A estreia com **um** provider (OpenRouter), e a lição da etapa 1 diz
+que interface extraída de uma implementação só vira o formato dessa
+implementação. A alternativa natural — modelar a entrada com `baseUrl`,
+`apiKey` e `model` — foi rejeitada: congelaria o registry no formato do
+primeiro provider e exigiria código novo para o segundo. A entrada passou a
+carregar `env: Record<string,string>` genérico + `secretEnvKeys: string[]`, e o
+teste do registry roda a mesma bateria contra **duas** entradas fictícias de
+formatos diferentes. Nenhuma string do provider real existe em lógica.
+
+**Lesson:** quando a feature estreia com um único caso concreto, a proteção
+contra "virar o formato dele" não é abstrair mais — é modelar o mecanismo em
+dados genéricos e provar com duas fixtures de formatos diferentes.
+
+### "Funciona sem obra" é afirmação sobre o mecanismo, não sobre o encanamento
+
+A spec prometia que transcripts, hooks, resume e Modo Dev funcionariam "sem
+obra" na classe A, porque o binário é o mesmo. Verdade sobre o mecanismo — e
+falso sobre o app: `resolveTranscriptPath` e `indexProjectSessions` recebem o
+`claudeHome` por parâmetro, então alguém tem de passar o home do provider. A
+tentação era unir todas as raízes de transcript; foi rejeitada (muda assinatura
+do indexer, cria dedup e ordenação entre origens, obra que ninguém pediu). A
+resolução ficou no mesmo padrão que já vale para perfil ativo: a lista segue o
+provider selecionado, e a UI diz de qual origem ela veio.
+
+**Lesson:** "o binário é o mesmo, então funciona" merece uma checagem no código
+de quem chama — o mecanismo herdado costuma ser parametrizado, e o parâmetro é
+a obra escondida.
+
+### Precedência de env com três donos vira função pura, não `if` no hub
+
+`CLAUDE_CONFIG_DIR` passa a ter três candidatos ao mesmo tempo (perfil ativo,
+motor de contas que exige *ausência* de override, provider). Espalhar a decisão
+no `pty:create` deixaria a etapa 2 (que mata perfis) quebrar o comportamento sem
+teste acusar. Virou `resolveSessionConfigDir` — pura, ordem provider > motor >
+perfil, tabela-verdade testada incluindo o mundo pós-demolição, consumida num
+ponto só.
+
+**Lesson:** quando um recurso muda de dono ao longo de etapas, escreva a
+precedência como função pura com tabela-verdade — a etapa que remove um dono
+some com um ramo em vez de virar arqueologia.
