@@ -64,8 +64,10 @@ import {
   type DispatchIpcInput,
   type EsteiraCreateDiscoveryDto,
   type EsteiraDispatchDto,
+  type EsteiraSeedDto,
   type EsteiraSnapshotDto,
   type ReleaseLockIpcInput,
+  type SeedIpcInput,
 } from '../shared/esteira/ipc';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
@@ -309,6 +311,10 @@ const donelApi: DonelApi = {
 
     createDiscovery: (input: CreateDiscoveryIpcInput) =>
       ipcRenderer.invoke(ESTEIRA_CHANNELS.createDiscovery, input) as Promise<EsteiraCreateDiscoveryDto>,
+
+    // D-2 — o documento de seed vai CRU para o main: quem o le e o parser puro,
+    // para a redacao do erro (com caminho do campo) nascer de um lugar so.
+    seed: (input: SeedIpcInput) => ipcRenderer.invoke(ESTEIRA_CHANNELS.seed, input) as Promise<EsteiraSeedDto>,
 
     dispatch: (input: DispatchIpcInput) => ipcRenderer.invoke(ESTEIRA_CHANNELS.dispatch, input) as Promise<EsteiraDispatchDto>,
 

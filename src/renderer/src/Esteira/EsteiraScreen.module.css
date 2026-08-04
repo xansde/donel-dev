@@ -276,3 +276,65 @@
   gap: var(--space-1);
   align-self: flex-start;
 }
+
+/* D-2 — o seed. Caminho de exceção (plantar o que já existe), por isso fechado
+   por default e visualmente mais discreto que "Novo discovery". */
+.seedCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--bg-panel);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
+.seedDoc {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: var(--space-1);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+  line-height: 1.45;
+}
+
+.seedDoc:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* O documento recusado: nada foi escrito, e cada linha diz o campo. */
+.seedIssues {
+  margin: 0;
+  padding: var(--space-1) var(--space-1) var(--space-1) 22px;
+  border: 1px solid color-mix(in srgb, var(--state-permission) 40%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--state-permission) 10%, transparent);
+  font-size: var(--text-caption-size);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* A marca de "semeado": tom de atenção, não de erro — afirmar não é falhar,
+   mas também não é ter observado. */
+.seeded {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--state-waiting) 18%, transparent);
+  color: var(--state-waiting);
+  font-size: var(--text-caption-size);
+  cursor: help;
+  white-space: nowrap;
+}
+
+.seededNote {
+  margin: 0;
+  font-size: var(--text-caption-size);
+  color: var(--state-waiting);
+}

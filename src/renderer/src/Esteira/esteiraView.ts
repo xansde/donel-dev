@@ -11,6 +11,7 @@
 // são diferentes porque os dois estados são diferentes; confundi-los foi o bug
 // de 03/08.
 
+import type { ContractIssue, ContractIssueCode } from '../../../shared/esteira/contract/parsing';
 import { MACRO_STAGE_LABEL } from '../../../shared/esteira/ipc';
 import type {
   DiscoverySnapshot,
@@ -56,6 +57,69 @@ const SIGNAL_VIEW: Readonly<Record<DiscoverySnapshot['stageSignals'][number], Si
 
 export function signalViews(discovery: DiscoverySnapshot): readonly SignalView[] {
   return discovery.stageSignals.map((signal) => SIGNAL_VIEW[signal]);
+}
+
+// ---------------------------------------------------------------------------
+// D-2 — proveniência: o que foi SEMEADO x o que veio declarado por skill
+// ---------------------------------------------------------------------------
+
+/**
+ * A marca de proveniência. Existe porque as duas coisas chegam ao mesmo log e
+ * derivam a mesma etapa, mas dizem coisas diferentes sobre o mundo:
+ *
+ *   semeado   → uma pessoa AFIRMOU que isto já existia e está neste ponto
+ *   declarado → uma skill OBSERVOU o fato e o gravou num `result.json`
+ *
+ * Mostrar os dois iguais seria a inverdade da spec 010 por uma porta nova: o
+ * app apresentando como visto o que ninguém viu. A marca é sempre a mesma
+ * palavra — chip, não frase — para que corrigir o vocabulário seja um lugar só.
+ */
+export interface ProvenanceMark {
+  readonly label: string;
+  readonly title: string;
+}
+
+export const SEEDED_MARK: ProvenanceMark = {
+  label: 'semeado',
+  title: 'Plantado à mão: alguém afirmou que isto já existia. Nenhuma skill declarou este fato — o app não o observou.',
+};
+
+/** `null` (e não uma marca "declarado") porque o default é o fato observado: só a afirmação precisa se anunciar. */
+export function provenanceMark(seeded: boolean): ProvenanceMark | null {
+  return seeded ? SEEDED_MARK : null;
+}
+
+export const SEEDED_CARD_NOTE =
+  'Este card foi semeado: o ponto em que ele está foi afirmado por uma pessoa, não observado de uma execução. O que chegar por skill daqui para frente aparece sem a marca.';
+
+/** O que dizer depois de plantar. Conta o que entrou — e lembra do que aquilo é. */
+export function seededSummary(counts: { readonly plans: number; readonly items: number }): string {
+  const plans = counts.plans === 0 ? 'nenhum plano' : counts.plans === 1 ? '1 plano' : `${counts.plans} planos`;
+  const items = counts.items === 0 ? 'nenhum item' : counts.items === 1 ? '1 item' : `${counts.items} itens`;
+  return `Semeado: 1 card, ${plans} e ${items}. Isso é afirmação sua, não fato observado — a tela marca cada um como semeado.`;
+}
+
+/**
+ * O documento de seed recusado, em português. O parser devolve código + caminho
+ * (texto técnico é insumo de log, não de tela); a redação para quem está
+ * escrevendo o documento nasce aqui — é o que faz "sem edição manual às cegas"
+ * ser verdade, em vez de um `unknown_field` cru.
+ */
+const SEED_ISSUE_TEXT: Readonly<Partial<Record<ContractIssueCode, string>>> = {
+  invalid_json: 'o documento não é JSON válido',
+  not_an_object: 'o documento precisa ser um objeto JSON',
+  missing_field: 'campo obrigatório ausente',
+  unknown_field: 'campo que o seed não conhece',
+  wrong_type: 'campo com tipo errado',
+  bad_format: 'campo fora do formato',
+  not_in_enum: 'valor fora dos aceitos',
+  missing_required_fact: 'referência para algo que o documento não declara',
+  issue_without_target_repo: 'item do tipo issue precisa de um repo alvo — sem repo, ele nunca poderia ser disparado',
+};
+
+export function seedIssueLine(issue: ContractIssue): string {
+  const text = SEED_ISSUE_TEXT[issue.code] ?? issue.code;
+  return issue.path.length === 0 ? text : `${text} — ${issue.path}`;
 }
 
 /** Etapa mostrada + se ela é override manual. A derivada NUNCA some da tela (D-13). */
@@ -199,6 +263,8 @@ export interface PhaseLineView {
   readonly text: string;
   readonly failed: boolean;
   readonly detail: string | null;
+  /** D-2 — a fase foi afirmada num seed, não observada de uma execução. */
+  readonly mark: ProvenanceMark | null;
 }
 
 export function phaseLines(card: CardView): readonly PhaseLineView[] {
@@ -218,8 +284,29 @@ export function phaseLines(card: CardView): readonly PhaseLineView[] {
       text: phaseLine(phase, claimed),
       failed: phase.failure !== null,
       detail: phase.failure?.message ?? null,
+      // A marca vai AO LADO da frase, não dentro dela: a frase descreve o
+      // desfecho, a marca diz quem o afirmou. Misturar as duas faria o
+      // vocabulário do desfecho depender da proveniência — e ele já tem dono.
+      mark: provenanceMark(phase.seeded),
     };
   });
+}
+
+/** Uma linha da lista de itens. Mesmo motivo das fases: o texto nasce aqui, nunca no JSX. */
+export interface ItemLineView {
+  readonly key: string;
+  readonly text: string;
+  readonly mark: ProvenanceMark | null;
+}
+
+export function itemLines(card: CardView): readonly ItemLineView[] {
+  return card.items.map((item) => ({
+    key: item.id,
+    // "sem repo alvo" é dito com todas as letras: item sem alvo não dispara
+    // (D-6), e esconder isso deixaria o card prometendo o que não cumpre.
+    text: `${item.title} · ${item.itemType} · ${item.state}${item.targetRepo ? ` · ${item.targetRepo}` : ' · sem repo alvo'}`,
+    mark: provenanceMark(item.seeded),
+  }));
 }
 
 /** Um erro de ingestão, em português, sem esconder o caminho do arquivo. */

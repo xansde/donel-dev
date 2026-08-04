@@ -408,3 +408,78 @@ describe('a trava cai quando a fase termina — nunca fica órfã', () => {
     expect(snapshot.locks[0].phase).toBe('plano');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Proveniencia (D-2) — semeado x declarado
+// ---------------------------------------------------------------------------
+
+/** O mesmo `evt`, mas com `source: { kind: 'seed' }` — a afirmacao humana. */
+function semeado(type: string, payload: Record<string, unknown>): StoreEvent {
+  return { ...evt(type, payload), source: { kind: 'seed' } };
+}
+
+describe('reduceEvents — proveniencia do que foi SEMEADO (D-2)', () => {
+  it('discovery, plano e item plantados por seed saem marcados', () => {
+    const snapshot = reduceEvents([
+      semeado('discovery.created', { id: 'dsc-1', title: 'Semeado', createdAt: '2026-08-03T12:00:00.000Z' }),
+      semeado('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano semeado' }),
+      semeado('work_item.created', { id: 'wi-1', discoveryId: 'dsc-1', itemType: 'issue', title: 'Item semeado', state: 'in-progress' }),
+    ]);
+
+    expect(snapshot.discoveries[0].seeded).toBe(true);
+    expect(snapshot.plans[0].seeded).toBe(true);
+    expect(snapshot.workItems[0].seeded).toBe(true);
+  });
+
+  it('o que veio declarado por skill NAO ganha a marca', () => {
+    const snapshot = reduceEvents([discovery('dsc-1'), plan('pln-1', 'dsc-1'), workItem('wi-1', 'dsc-1')]);
+
+    expect(snapshot.discoveries[0].seeded).toBe(false);
+    expect(snapshot.plans[0].seeded).toBe(false);
+    expect(snapshot.workItems[0].seeded).toBe(false);
+  });
+
+  it('a marca da ENTIDADE e da origem e nao se apaga: skill declarando fato novo nao reescreve como foi plantada', () => {
+    // O corpus da skill faz upsert de `discovery.recorded` a cada run. Se a
+    // marca seguisse o ultimo evento, o card semeado se disfarcaria de card
+    // observado no primeiro disparo — que e justamente o que ela existe para
+    // impedir.
+    const snapshot = reduceEvents([
+      semeado('discovery.created', { id: 'dsc-1', title: 'Semeado', createdAt: '2026-08-03T12:00:00.000Z' }),
+      discovery('dsc-1', { title: 'Mesmo card, agora com fato da skill' }),
+    ]);
+
+    expect(snapshot.discoveries[0].title).toBe('Mesmo card, agora com fato da skill');
+    expect(snapshot.discoveries[0].seeded).toBe(true);
+  });
+
+  it('a marca da FASE segue o ultimo fato: um run de verdade em cima da fase semeada tira a marca', () => {
+    // A fase e um estado de AGORA, nao uma origem: o que vale e quem afirmou o
+    // ultimo desfecho. Semeada e depois de fato executada = observada.
+    const semeada = reduceEvents([
+      semeado('discovery.created', { id: 'dsc-1', title: 'Semeado' }),
+      semeado('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done' }),
+    ]);
+    expect(semeada.phases[0].seeded).toBe(true);
+
+    const reexecutada = reduceEvents([
+      semeado('discovery.created', { id: 'dsc-1', title: 'Semeado' }),
+      semeado('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done' }),
+      phaseCompleted('discovery', 'dsc-1', 'discovery', 'done'),
+    ]);
+    expect(reexecutada.phases[0].seeded).toBe(false);
+  });
+
+  it('a etapa de um card semeado e DERIVADA dos fatos semeados, como qualquer outra', () => {
+    const snapshot = reduceEvents([
+      semeado('discovery.created', { id: 'dsc-1', title: 'Semeado' }),
+      semeado('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done' }),
+      semeado('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+      semeado('work_item.created', { id: 'wi-1', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'issue', title: 'A', state: 'in-progress' }),
+      semeado('work_item.created', { id: 'wi-2', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'spike', title: 'B', state: 'open' }),
+    ]);
+
+    expect(snapshot.discoveries[0].derivedStage).toBe('execution');
+    expect(snapshot.discoveries[0].stageOverride).toBeNull();
+  });
+});

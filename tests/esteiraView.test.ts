@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { cardView, ingestErrorLine, lockView, phaseLine, phaseLines, signalViews, stageView } from '../src/renderer/src/Esteira/esteiraView';
+import {
+  cardView,
+  ingestErrorLine,
+  itemLines,
+  lockView,
+  phaseLine,
+  phaseLines,
+  provenanceMark,
+  SEEDED_CARD_NOTE,
+  seedIssueLine,
+  seededSummary,
+  signalViews,
+  stageView,
+} from '../src/renderer/src/Esteira/esteiraView';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
 import type { DiscoverySnapshot, PhaseRunSnapshot, StoreEvent } from '../src/shared/esteira/store/storeFormat';
 
@@ -24,6 +37,7 @@ function phase(overrides: Partial<PhaseRunSnapshot>): PhaseRunSnapshot {
     summary: null,
     failure: null,
     lastRunId: null,
+    seeded: false,
     ...overrides,
   };
 }
@@ -61,6 +75,7 @@ describe('sinais do card', () => {
     derivedStage: 'discovery',
     stageSignals: signals,
     stageOverride: null,
+    seeded: false,
   });
 
   it('"discovery concluído sem plano" é dito como o desfecho que é, sem tom de erro', () => {
@@ -90,6 +105,7 @@ describe('stageView — o override nunca engana quem lê', () => {
     derivedStage: 'discovery',
     stageSignals: [],
     stageOverride: null,
+    seeded: false,
   };
 
   it('sem override, mostra a etapa derivada', () => {
@@ -250,5 +266,98 @@ describe('phaseLines — "disparar" não é "começar", nem na lista de fases', 
     const [line] = phaseLines(cardView(snapshot, 'dsc-1')!);
     expect(line.failed).toBe(true);
     expect(line.detail).toBe('Havia alterações não commitadas.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-2 — o que foi SEMEADO x o que veio declarado por skill
+// ---------------------------------------------------------------------------
+
+describe('a tela distingue afirmação de fato observado', () => {
+  /** Um evento com `source: { kind: 'seed' }` — o gesto humano de plantar. */
+  function semeado(type: string, payload: Record<string, unknown>): StoreEvent {
+    return { ...evt(type, payload), source: { kind: 'seed' } };
+  }
+
+  const cardSemeado = (): ReturnType<typeof cardView> =>
+    cardView(
+      reduceEvents([
+        semeado('discovery.created', { id: 'dsc-1', title: 'Trabalho que já existia', createdAt: 'x' }),
+        semeado('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: 'x' }),
+        semeado('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+        semeado('work_item.created', {
+          id: 'wi-1',
+          discoveryId: 'dsc-1',
+          planId: 'pln-1',
+          itemType: 'issue',
+          title: 'Item em curso',
+          targetRepo: 'atlas',
+          state: 'in-progress',
+        }),
+      ]),
+      'dsc-1',
+    );
+
+  it('o card semeado ganha marca própria, e ela diz que ninguém observou aquilo', () => {
+    const card = cardSemeado()!;
+    const mark = provenanceMark(card.discovery.seeded);
+    expect(mark?.label).toBe('semeado');
+    expect(mark?.title).toContain('afirm');
+    expect(mark?.title.toLowerCase()).toContain('nenhuma skill');
+  });
+
+  it('card declarado por skill não ganha marca nenhuma — a ausência é o default', () => {
+    const snapshot = reduceEvents([evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' })]);
+    expect(provenanceMark(cardView(snapshot, 'dsc-1')!.discovery.seeded)).toBeNull();
+  });
+
+  it('a linha do item semeado carrega a marca, sem perder o que ela já dizia', () => {
+    const [linha] = itemLines(cardSemeado()!);
+    expect(linha.text).toContain('Item em curso');
+    expect(linha.mark?.label).toBe('semeado');
+  });
+
+  it('a fase semeada não é apresentada como fase observada', () => {
+    const [linha] = phaseLines(cardSemeado()!);
+    expect(linha.text).toBe('discovery — concluída');
+    expect(linha.mark?.label).toBe('semeado');
+  });
+
+  it('a fase que de fato rodou depois do seed perde a marca', () => {
+    const card = cardView(
+      reduceEvents([
+        semeado('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+        semeado('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: 'x' }),
+        evt('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: 'x' }),
+      ]),
+      'dsc-1',
+    )!;
+    expect(phaseLines(card)[0].mark).toBeNull();
+    // O card, esse, continua tendo nascido de uma afirmação.
+    expect(provenanceMark(card.discovery.seeded)).not.toBeNull();
+  });
+
+  it('a nota do card semeado explica o que a marca significa, sem prometer o que não houve', () => {
+    expect(SEEDED_CARD_NOTE).toContain('semeado');
+    expect(SEEDED_CARD_NOTE).not.toContain('não realizada');
+  });
+});
+
+describe('erro de seed — o documento é recusado com o motivo, em português', () => {
+  it('traduz o código do contrato e mostra o caminho do campo', () => {
+    expect(seedIssueLine({ code: 'missing_field', path: 'discovery.title', message: 'x' })).toBe('campo obrigatório ausente — discovery.title');
+    expect(seedIssueLine({ code: 'unknown_field', path: 'discovery.fanout', message: 'x' })).toContain('campo que o seed não conhece');
+    expect(seedIssueLine({ code: 'issue_without_target_repo', path: 'items[0].target_repo', message: 'x' })).toContain('repo alvo');
+  });
+
+  it('JSON quebrado não vira caminho vazio pendurado', () => {
+    expect(seedIssueLine({ code: 'invalid_json', path: '', message: 'x' })).toBe('o documento não é JSON válido');
+  });
+
+  it('o resumo do que foi plantado conta o que entrou e lembra que é afirmação', () => {
+    expect(seededSummary({ plans: 1, items: 2 })).toBe(
+      'Semeado: 1 card, 1 plano e 2 itens. Isso é afirmação sua, não fato observado — a tela marca cada um como semeado.',
+    );
+    expect(seededSummary({ plans: 0, items: 0 })).toContain('nenhum plano e nenhum item');
   });
 });

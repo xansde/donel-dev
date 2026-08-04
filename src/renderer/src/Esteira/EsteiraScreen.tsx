@@ -1,7 +1,23 @@
 import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ContractIssue } from '../../../shared/esteira/contract/parsing';
 import type { EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
-import { cardView, formatTimestamp, ingestErrorLine, lockView, phaseLines, STORE_COMPATIBILITY_WARNING, type SignalTone } from './esteiraView';
+import { SEED_DOCUMENT_EXAMPLE } from '../../../shared/esteira/store/seed';
+import {
+  cardView,
+  formatTimestamp,
+  ingestErrorLine,
+  itemLines,
+  lockView,
+  phaseLines,
+  provenanceMark,
+  SEEDED_CARD_NOTE,
+  seedIssueLine,
+  seededSummary,
+  STORE_COMPATIBILITY_WARNING,
+  type ProvenanceMark,
+  type SignalTone,
+} from './esteiraView';
 import styles from './EsteiraScreen.module.css';
 
 // Spec 010 — a tela da esteira nova. Ela é PROJEÇÃO do snapshot que o main
@@ -28,6 +44,20 @@ const PHASE_OPTIONS = [
   { value: 'plano', label: 'Plano' },
 ];
 
+/**
+ * A marca de proveniência (D-2). Componente burro de propósito: o texto e a
+ * decisão de mostrar ou não vêm de `esteiraView`, porque foi corrigir rótulo
+ * dentro do JSX que fez a mesma palavra errada reaparecer noutro bloco.
+ */
+function ProvenanceChip({ mark }: { mark: ProvenanceMark | null }): JSX.Element | null {
+  if (mark === null) return null;
+  return (
+    <span className={styles.seeded} title={mark.title}>
+      {mark.label}
+    </span>
+  );
+}
+
 export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
   const [state, setState] = useState<EsteiraSnapshotDto | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -35,6 +65,11 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
   const [newRepo, setNewRepo] = useState('');
   const [phase, setPhase] = useState('discovery');
   const [message, setMessage] = useState<string | null>(null);
+  // D-2 — semear trabalho em curso. Fica fechado por default: é o caminho de
+  // exceção (plantar o que já existe), não o gesto do dia a dia.
+  const [seedOpen, setSeedOpen] = useState(false);
+  const [seedDoc, setSeedDoc] = useState('');
+  const [seedIssues, setSeedIssues] = useState<readonly ContractIssue[]>([]);
 
   useEffect(() => {
     void window.donel.esteira.snapshot().then(setState);
@@ -68,6 +103,32 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
       setMessage('Não deu para criar: o histórico não aceita escrita agora.');
     }
   }, [newTitle, newRepo]);
+
+  const handleSeed = useCallback(async () => {
+    const document = seedDoc.trim();
+    if (document.length === 0) return;
+    const seeded = await window.donel.esteira.seed({ document });
+    setState(seeded.state);
+
+    if (seeded.ok) {
+      setSeedIssues([]);
+      setSeedDoc('');
+      setSeedOpen(false);
+      setSelectedId(seeded.discoveryId);
+      setMessage(seededSummary({ plans: seeded.planIds.length, items: seeded.workItemIds.length }));
+      return;
+    }
+    if (seeded.reason === 'invalid-seed') {
+      // Nada foi escrito: o documento volta na tela com o motivo de cada
+      // recusa, para ser corrigido — é isto que "sem edição manual às cegas"
+      // significa na prática.
+      setSeedIssues(seeded.issues);
+      setMessage(null);
+      return;
+    }
+    setSeedIssues([]);
+    setMessage('Não deu para semear: o histórico não aceita escrita agora.');
+  }, [seedDoc]);
 
   const handleDispatch = useCallback(async () => {
     if (selected === null) return;
@@ -159,6 +220,55 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
             </Button>
           </div>
 
+          {/* D-2 — o caminho para trabalho que JÁ existe. O store nasce limpo e
+              continua nascendo: isto não importa o modelo antigo, é o operador
+              descrevendo o que está em curso. Tudo o que entra por aqui nasce
+              marcado como semeado — afirmação, não fato observado. */}
+          <div className={styles.seedCard}>
+            <Button
+              variant="ghost"
+              data-testid="esteira-seed-toggle"
+              onClick={() => setSeedOpen((open) => !open)}
+              disabled={readOnly}
+            >
+              {seedOpen ? 'Fechar o seed' : 'Semear trabalho em curso'}
+            </Button>
+
+            {seedOpen ? (
+              <>
+                <p className={styles.hint}>
+                  Descreva o que já existe — o discovery, os planos, os itens e em que ponto estão. Nasce marcado como semeado: é a sua
+                  palavra, não algo que o app tenha lido de uma execução.
+                </p>
+                <textarea
+                  className={styles.seedDoc}
+                  data-testid="esteira-seed-doc"
+                  aria-label="Documento do seed"
+                  spellCheck={false}
+                  rows={12}
+                  value={seedDoc}
+                  onChange={(event) => setSeedDoc(event.target.value)}
+                  placeholder="Cole aqui o documento do seed, ou comece pelo exemplo."
+                />
+                {seedIssues.length > 0 ? (
+                  <ul className={styles.seedIssues} data-testid="esteira-seed-issues">
+                    {seedIssues.map((issue, index) => (
+                      <li key={`${index}:${issue.code}:${issue.path}`}>{seedIssueLine(issue)}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div className={styles.rowActions}>
+                  <Button onClick={() => void handleSeed()} disabled={readOnly || seedDoc.trim().length === 0}>
+                    Semear
+                  </Button>
+                  <Button variant="ghost" onClick={() => setSeedDoc(SEED_DOCUMENT_EXAMPLE)}>
+                    Exemplo
+                  </Button>
+                </div>
+              </>
+            ) : null}
+          </div>
+
           {cards.length === 0 ? (
             <p className={styles.empty}>Nenhum card ainda. O histórico nasce limpo — nada foi importado do modelo antigo.</p>
           ) : null}
@@ -178,6 +288,7 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                   <span className={styles.stage}>{view.stage.shown}</span>
                   {view.stage.overridden ? <span className={styles.stageDerived}>derivada: {view.stage.derived}</span> : null}
                   {discovery.targetRepo ? <span className={styles.repo}>{discovery.targetRepo}</span> : null}
+                  <ProvenanceChip mark={provenanceMark(discovery.seeded)} />
                 </span>
                 {view.signals.length > 0 ? (
                   <span className={styles.signals}>
@@ -201,6 +312,7 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
               <h3 className={styles.detailTitle}>{selected.discovery.title}</h3>
               {selected.discovery.problem ? <p className={styles.problem}>{selected.discovery.problem}</p> : null}
               {selected.stage.overridden ? <p className={styles.overrideNote}>Etapa {selected.stage.overrideNote}</p> : null}
+              {selected.discovery.seeded ? <p className={styles.seededNote}>{SEEDED_CARD_NOTE}</p> : null}
 
               {/* O erro de leitura vem PRIMEIRO: é a informação que o modelo
                   antigo escondia, e a que muda o que o operador faz agora. */}
@@ -255,7 +367,7 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                   <ul className={styles.lines}>
                     {phaseLines(selected).map((entry) => (
                       <li key={entry.key} className={entry.failed ? styles.failed : undefined}>
-                        {entry.text}
+                        {entry.text} <ProvenanceChip mark={entry.mark} />
                         {entry.detail ? <span className={styles.hint}> {entry.detail}</span> : null}
                       </li>
                     ))}
@@ -275,10 +387,9 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                   </p>
                 ) : (
                   <ul className={styles.lines}>
-                    {selected.items.map((item) => (
-                      <li key={item.id}>
-                        {item.title} · {item.itemType} · {item.state}
-                        {item.targetRepo ? ` · ${item.targetRepo}` : ' · sem repo alvo'}
+                    {itemLines(selected).map((line) => (
+                      <li key={line.key}>
+                        {line.text} <ProvenanceChip mark={line.mark} />
                       </li>
                     ))}
                   </ul>
