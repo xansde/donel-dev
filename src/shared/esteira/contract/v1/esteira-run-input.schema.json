@@ -195,7 +195,7 @@
       }
     },
     "id": {
-      "description": "Mesmo padrao do result.json. Nao aceita underscore de proposito: ids viajam em nome de arquivo e em branch.",
+      "description": "Mesmo padrao do result.json: comeca por alfanumerico, depois A-Za-z0-9._:- . Ids viajam em nome de arquivo e em branch, por isso nada de espaco nem de inicio com pontuacao.",
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
     },

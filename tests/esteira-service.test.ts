@@ -133,7 +133,7 @@ describe('gestos do app', () => {
     expect(discovery.stageSignals).toEqual([]);
   });
 
-  it('o id gerado respeita o padrao do contrato (sem underscore)', () => {
+  it('o id gerado respeita o padrao do contrato', () => {
     const created = service.createDiscovery({ title: 'Card novo', problem: null, targetRepo: null, scopeRepos: [], tracker: null });
     expect(created.ok && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(created.discoveryId)).toBe(true);
   });

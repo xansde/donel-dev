@@ -1,0 +1,223 @@
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createEsteiraService, type EsteiraService } from '../src/main/esteira-service';
+import { cardView } from '../src/renderer/src/Esteira/esteiraView';
+
+// Spec 010 — A ESPINHA, ponta a ponta, com as duas pontas de VERDADE:
+//
+//   app dispara  →  run-input.json no inbox
+//   skill lê o input e emite pelo emissor Python real  →  result.json no outbox
+//   app ingere   →  o card aparece na tela
+//
+// Não há dublê: o `result.json` sai de `skills/esteira-donel-3.0.0/tools`, o
+// mesmo código que a skill roda. E o teste que mais importa é o último — o
+// documento fora do contrato vira ERRO VISÍVEL no card, com caminho e motivo.
+// É esse par (caminho feliz + documento quebrado) que prova que a inverdade de
+// 03/08 não tem mais como acontecer.
+
+const SKILL_TOOLS_DIR = fileURLToPath(new URL('../skills/esteira-donel-3.0.0/tools/', import.meta.url));
+
+let root: string;
+let service: EsteiraService;
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'donel-esteira-espinha-'));
+  mkdirSync(join(root, 'outbox'), { recursive: true });
+  let seq = 0;
+  service = createEsteiraService({
+    storeDir: join(root, 'store'),
+    inboxDir: join(root, 'inbox'),
+    outboxDir: join(root, 'outbox'),
+    channel: 'dev',
+    now: () => '2026-08-04T14:30:00.000Z',
+    newId: (prefix) => {
+      seq += 1;
+      return `${prefix}-${seq}`;
+    },
+  });
+});
+
+afterEach(() => {
+  service.dispose();
+});
+
+/** A skill de verdade: lê o input, monta os fatos e emite pelo `emit_result.py`. */
+function runSkill(inputPath: string, facts: unknown[], extraArgs: string[] = []): string {
+  const factsPath = join(root, 'facts.json');
+  writeFileSync(factsPath, JSON.stringify(facts), 'utf8');
+  return execFileSync(
+    'python',
+    ['emit_result.py', '--input', inputPath, '--facts-file', factsPath, '--model', 'claude-opus-5', '--effort', 'high', ...extraArgs],
+    { cwd: SKILL_TOOLS_DIR, encoding: 'utf8', env: { ...process.env, PYTHONIOENCODING: 'utf-8' } },
+  ).trim();
+}
+
+describe('espinha — do gesto no app ao card na tela', () => {
+  it('cria, dispara, a skill responde, o app ingere e o card mostra o que aconteceu', () => {
+    // 1. O gesto no app.
+    const created = service.createDiscovery({
+      title: 'Fila de importacao trava sem sinal',
+      problem: 'Lotes grandes ficam pendentes sem erro e sem log.',
+      targetRepo: 'atlas',
+      scopeRepos: ['atlas'],
+      tracker: null,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    // 2. O disparo: contexto tipado no inbox + trava + sessão.
+    const dispatched = service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: { target_repo: 'atlas', repo_path: null, worktree_path: null, branch: null },
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+    expect(dispatched.ok).toBe(true);
+    if (!dispatched.ok) return;
+
+    // A skill consegue LER o que o app escreveu (o outro lado do contrato).
+    const rendered = execFileSync('python', ['read_input.py', '--input', dispatched.inputPath], {
+      cwd: SKILL_TOOLS_DIR,
+      encoding: 'utf8',
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    });
+    expect(rendered).toContain('Fila de importacao trava sem sinal');
+    expect(rendered).toContain(dispatched.resultPath);
+
+    // 3. A skill responde — emissor real, nenhum JSON escrito à mão aqui.
+    const written = runSkill(dispatched.inputPath, [
+      {
+        type: 'discovery.recorded',
+        discovery_id: created.discoveryId,
+        title: 'Fila de importacao trava sem sinal',
+        problem: 'Lotes grandes ficam pendentes sem erro e sem log.',
+        target_repo: 'atlas',
+        scope_repos: ['atlas'],
+      },
+      { type: 'plan.recorded', plan_id: 'pln-espinha-1', discovery_id: created.discoveryId, title: 'Tornar o estado observavel' },
+      {
+        type: 'relation.recorded',
+        relation: 'originated',
+        from: { entity: 'discovery', id: created.discoveryId },
+        to: { entity: 'plan', id: 'pln-espinha-1' },
+      },
+      { type: 'note.recorded', subject: { entity: 'discovery', id: created.discoveryId }, text: 'Duas hipoteses descartadas.' },
+      {
+        type: 'phase.completed',
+        subject: { entity: 'discovery', id: created.discoveryId },
+        phase: 'discovery',
+        outcome: 'done',
+        summary: 'Um plano proposto.',
+      },
+    ]);
+    expect(written).toBe(dispatched.resultPath);
+
+    // 4. O app ingere e o card mostra.
+    const state = service.scanOutbox();
+    const view = cardView(state.snapshot, created.discoveryId);
+
+    expect(view).not.toBeNull();
+    if (view === null) return;
+    expect(view.planCount).toBe(1);
+    expect(view.notes).toHaveLength(1);
+    expect(view.phases[0].outcome).toBe('done');
+    // Com plano registrado, o card sai de "discovery" — a etapa foi DERIVADA
+    // dos fatos, nunca digitada.
+    expect(view.discovery.derivedStage).toBe('planned');
+    expect(view.signals.map((signal) => signal.label)).not.toContain('não consegui ler');
+  });
+
+  it('discovery que termina SEM plano aparece como desfecho, não como pendência (o card F3)', () => {
+    const created = service.createDiscovery({ title: 'Como o time decide a semana', problem: null, targetRepo: null, scopeRepos: [], tracker: null });
+    if (!created.ok) return;
+    const dispatched = service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: null,
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+    if (!dispatched.ok) return;
+
+    runSkill(dispatched.inputPath, [
+      { type: 'discovery.recorded', discovery_id: created.discoveryId, title: 'Como o time decide a semana' },
+      { type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'discovery', outcome: 'done' },
+    ]);
+
+    const view = cardView(service.scanOutbox().snapshot, created.discoveryId);
+    expect(view?.signals.map((signal) => signal.label)).toContain('sem plano registrado');
+    expect(view?.signals.find((signal) => signal.label === 'sem plano registrado')?.tone).toBe('neutral');
+  });
+
+  it('fase que FALHOU chega ao card com o código do erro — nunca como "não realizada"', () => {
+    const created = service.createDiscovery({ title: 'Card com fase que falha', problem: null, targetRepo: 'atlas', scopeRepos: [], tracker: null });
+    if (!created.ok) return;
+    const dispatched = service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: { target_repo: 'atlas', repo_path: null, worktree_path: null, branch: null },
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+    if (!dispatched.ok) return;
+
+    runSkill(
+      dispatched.inputPath,
+      [{ type: 'note.recorded', subject: { entity: 'discovery', id: created.discoveryId }, text: 'Abortou antes de tocar arquivo.' }],
+      ['--status', 'failed', '--failure-code', 'worktree-dirty', '--failure-message', 'Havia alteracoes nao commitadas.'],
+    );
+
+    const view = cardView(service.scanOutbox().snapshot, created.discoveryId);
+    const failed = view?.phases.find((entry) => entry.phase === 'discovery');
+    expect(failed?.failure?.code).toBe('worktree-dirty');
+    // A fase NÃO conta como concluída — a etapa não avança por causa de um run ruim.
+    expect(failed?.completedAt).toBeNull();
+    expect(view?.discovery.derivedStage).toBe('discovery');
+  });
+
+  it('documento fora do contrato vira ERRO VISÍVEL no card, com caminho e motivo', () => {
+    const created = service.createDiscovery({ title: 'Card que recebe lixo', problem: null, targetRepo: null, scopeRepos: [], tracker: null });
+    if (!created.ok) return;
+
+    // Um "result.json" que um lado escreveu com um campo que o outro não
+    // conhece — exatamente o desencontro que originou a spec.
+    const rogue = join(root, 'outbox', 'rogue.json');
+    writeFileSync(
+      rogue,
+      JSON.stringify({
+        contract_version: '1.0.0',
+        kind: 'esteira.result',
+        run: { run_id: 'run-rogue', phase: 'discovery', status: 'success', started_at: '2026-08-04T14:00:00.000Z', finished_at: '2026-08-04T14:10:00.000Z', failure: null },
+        actor: { tool: 'esteira-donel', tool_version: '2.1.0' },
+        subject: { discovery_id: created.discoveryId },
+        facts: [
+          { type: 'discovery.recorded', discovery_id: created.discoveryId, title: 'Card que recebe lixo', fanout_cards: ['card-1'] },
+          { type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'discovery', outcome: 'done' },
+        ],
+      }),
+      'utf8',
+    );
+
+    const state = service.scanOutbox();
+    expect(state.rejectedOnLastScan).toBe(1);
+
+    const view = cardView(state.snapshot, created.discoveryId);
+    expect(view?.signals.map((signal) => signal.label)).toContain('não consegui ler');
+    expect(view?.ingestErrors[0].resultPath).toBe(rogue);
+    expect(view?.ingestErrors[0].issues.some((issue) => issue.path.includes('fanout_cards'))).toBe(true);
+    // E nada do documento recusado entrou: o app não aproveita meia verdade.
+    expect(view?.phases).toHaveLength(0);
+    expect(readFileSync(rogue, 'utf8').length).toBeGreaterThan(0); // o arquivo continua lá
+  });
+});

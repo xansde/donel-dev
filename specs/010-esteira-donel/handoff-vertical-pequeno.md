@@ -52,10 +52,16 @@ mutação.
 | 1. Writer do store | ✅ `src/main/esteira-store.ts` |
 | 2. Reducer + snapshot | ✅ `src/shared/esteira/store/reducer.ts` |
 | 3. Derivação de macro etapa | ✅ mesma unidade, `deriveStage` |
-| 4. Ingestão | ✅ `src/main/esteira-ingest.ts` (falta ligar ao boot/watcher do app) |
+| 4. Ingestão | ✅ `src/main/esteira-ingest.ts` + boot/watcher em `esteira-service.ts` |
 | 5. Disparo de fase | ✅ `src/main/esteira-dispatch.ts` (falta ligar à aba de terminal) |
-| 6. Mapa como projeção | ⬜ **é o próximo** — IPC + tela |
-| 7. Fork `esteira-donel-3.0.0` | ⬜ |
+| 6. Mapa como projeção | ✅ `src/renderer/src/Esteira/` + IPC `esteira:*` |
+| 7. Fork `esteira-donel-3.0.0` | ✅ `skills/esteira-donel-3.0.0/` (discovery e plano) |
+
+**O que ainda não está ligado:** o disparo prepara o `run-input.json` e trava o
+card, mas **não abre a aba de terminal com a sessão** — hoje o operador roda a
+skill à mão apontando para o arquivo. Ligar isso ao PTY é o resto do bloco 5.
+Também falta a revisão do Alexandre **na tela** (o gate que o `npm test` não
+substitui) e a retirada do mapa antigo (P-5), que só acontece depois dela.
 
 **Decisões tomadas nesta metade** (as três primeiras lacunas):
 
@@ -68,9 +74,19 @@ mutação.
    dois lados). O `ctx.md` de texto livre morre com a 3.0.
 3. **Ids:** o app gera `run_id`, `session_id` e — quando a tela existir —
    `discovery_id`/`plan_id`; a skill gera `work_item_id` (é o que o corpus já
-   mostra). Padrão do contrato **não aceita underscore**.
+   mostra). **Correção:** este handoff dizia que o padrão do contrato não
+   aceita underscore — ele aceita (`[A-Za-z0-9._:-]` inclui `_`). O que ele
+   recusa é id com espaço ou que comece por pontuação. Quem desmentiu foi o
+   teste espelho do fork.
 
-**Duas decisões de desenho que apareceram implementando** (revisar):
+4. **Onde mora o fork:** dentro do donel-dev, em `skills/esteira-donel-3.0.0/`.
+   Como o schema é o mesmo arquivo (não uma cópia), o `sincronizar-contrato.ps1`
+   com hash que o passo zero previa **deixou de ser necessário** — não há cópia
+   para divergir. Em compensação, `skills/` entrou no `sincronizar-publico.ps1`:
+   dois testes de `tests/` rodam o emissor Python, e sem a pasta o `npm test` do
+   repo público quebraria.
+
+**Três decisões de desenho que apareceram implementando** (revisar):
 
 - **`phase.failed` é evento novo.** O contrato só exige `phase.completed` de
   run bem-sucedido; sem um evento próprio para o run que falhou, "falhou"
@@ -79,6 +95,9 @@ mutação.
   discovery em andamento trava plano e itens que descendem dele; dois itens
   irmãos seguem em paralelo. O teste derrubou a primeira versão, que só
   travava o assunto.
+- **A tela nova nasce atrás de um gesto interno** (botão no titlebar, só no
+  Modo Dev) e o mapa atual segue intocado por baixo — dá para comparar os dois
+  com o mesmo dado antes de aposentar o antigo (P-5).
 
 ## O que NÃO existe (é o trabalho da fase 1)
 

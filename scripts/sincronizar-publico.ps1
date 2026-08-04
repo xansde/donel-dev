@@ -39,7 +39,12 @@ Write-Host "destino: $destino"
 Write-Host ''
 
 # Pastas espelhadas COM delecao (/MIR): arquivo removido aqui sai de la tambem.
-$pastas = @('src', 'tests', 'patches', 'design-system')
+#
+# `skills` entrou em 03/08 (spec 010): o fork `esteira-donel-3.0.0` e o lado
+# SKILL do contrato, e dois testes de `tests/` rodam o emissor Python dele
+# (`esteiraSkillMirrorContract`, `esteiraEspinha`). Sem a pasta, o `npm test`
+# do publico quebraria — e um teste que so passa aqui nao vale como gate.
+$pastas = @('src', 'tests', 'patches', 'design-system', 'skills')
 $excluirPastas = @('node_modules', 'dist', 'storybook-static', 'coverage', '.vite', 'test-results')
 
 foreach ($pasta in $pastas) {
