@@ -219,7 +219,13 @@ interface MapCardBodyProps {
 
 function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapCardBodyProps): React.JSX.Element {
   return (
-    <div className={styles.cardBody} data-testid={`devmode-map-${card.kind}-${card.key}`} data-focused={focused ? 'true' : 'false'}>
+    <div
+      className={styles.cardBody}
+      data-testid="devmode-map-card"
+      data-kind={card.kind}
+      data-key={card.key}
+      data-focused={focused ? 'true' : 'false'}
+    >
       <div className={styles.cardTop} onClick={card.subject ? () => onSelectNode(card.key, null) : undefined}>
         <span className={styles.cardIcon}>{card.icon}</span>
         <span className={styles.cardTitle}>{card.title}</span>
@@ -233,7 +239,7 @@ function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapC
       ) : null}
 
       {card.tags.length > 0 ? (
-        <div className={styles.cardTags} data-testid={`devmode-map-tags-${card.key}`}>
+        <div className={styles.cardTags} data-testid="devmode-map-tags">
           {card.tags.map((tag) => (
             <AnnotationTag key={tag.text} tone={tag.tone as AnnotationTone}>
               <span title={tag.title ?? undefined}>{tag.text}</span>
@@ -246,13 +252,13 @@ function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapC
           CONCLUÍDO: a resposta negativa é desfecho, não pendência, e é isso que
           o mapa antigo desenhava como trilha pela metade. */}
       {card.closureLine ? (
-        <div className={styles.cardFooterMeta} data-testid={`devmode-map-closure-${card.key}`}>
+        <div className={styles.cardFooterMeta} data-testid="devmode-map-closure">
           {card.closureLine}
         </div>
       ) : null}
 
       {focused && card.trail.length > 0 ? (
-        <div className={styles.trilha} data-testid={`devmode-map-trilha-${card.key}`}>
+        <div className={styles.trilha} data-testid="devmode-map-trilha">
           {card.trail.map((step) => {
             const selected = selection.nodeKey === card.key && selection.phase === step.phase;
             return (
@@ -262,7 +268,8 @@ function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapC
                   .filter(Boolean)
                   .join(' ')}
                 onClick={() => onSelectNode(card.key, step.phase)}
-                data-testid={`devmode-trilha-step-${card.key}-${step.phase}`}
+                data-testid="devmode-trilha-step"
+                data-phase={step.phase}
                 title={step.reason ?? undefined}
               >
                 <span className={styles.trilhaRail} aria-hidden="true">
@@ -282,7 +289,8 @@ function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapC
                       event.stopPropagation();
                       onPrepare(step);
                     }}
-                    data-testid={`devmode-trilha-prepare-${card.key}-${step.phase}`}
+                    data-testid="devmode-trilha-prepare"
+                    data-phase={step.phase}
                   >
                     ⌁ Preparar
                   </Button>
@@ -293,7 +301,7 @@ function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapC
           {/* A razão de não dar para preparar vem ESCRITA — recusa calada é o
               vício que a spec 010 combate. */}
           {card.trail.some((step) => step.isNext && !step.enabled) ? (
-            <p className={styles.cardFooterMeta} data-testid={`devmode-map-blocked-${card.key}`}>
+            <p className={styles.cardFooterMeta} data-testid="devmode-map-blocked">
               {card.trail.find((step) => step.isNext && !step.enabled)?.reason}
             </p>
           ) : null}
