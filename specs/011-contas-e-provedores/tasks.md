@@ -34,10 +34,16 @@ T1131).
 
 ## Fase 0 — Gate (bloqueante)
 
-- [ ] **T1101** — Confirmar que os batches da 010 fecharam em staging e que
+- [x] **T1101** — Confirmar que os batches da 010 fecharam em staging e que
   `src/main/index.ts` está estável (sem refactor em voo). Registrar a
   confirmação no card. **Sem código.**
   **DoD**: confirmação escrita; se negativo, a fase para aqui.
+  **✅ Satisfeita em 2026-08-04, por confirmação do dono**: os 7 batches da
+  010 (B1..B7) estão integrados em `staging` **local** (fases 0–2 da fila ✅;
+  fase 3 parcial só em itens de escala pós-lançamento), alfa 0.3.2 em
+  dogfooding. Condição operacional: a implementação nasce **rebaseada sobre a
+  `staging` local** (não `origin/staging`, que está atrás — push pendente de
+  decisão); rebase da branch `esteira/contas-e-provedores` feito nesta data.
 
 ---
 
