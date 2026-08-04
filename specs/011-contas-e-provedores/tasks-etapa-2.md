@@ -39,7 +39,7 @@ T1228, T1229, T1230, T1231).
 
 ## Fase 0 — Gate (bloqueante)
 
-- [ ] **T1201** — Confirmar as **duas** pré-condições: (a) etapa 1 implementada,
+- [x] **T1201** — Confirmar as **duas** pré-condições: (a) etapa 1 implementada,
   mergeada e validada em dogfooding no alfa com `accounts.mod ≠ null` (o
   operador troca de conta pelo motor, sem reiniciar sessão); (b) batches da 010
   fechados em staging e `src/main/index.ts` estável. Registrar a confirmação no
@@ -48,8 +48,29 @@ T1228, T1229, T1230, T1231).
   aqui.
   > **(b) CONFIRMADA em 2026-08-04** pelo dono, na sessão do plano da etapa 3:
   > os 7 batches (B1..B7) da 010 estão integrados em `staging` local e não há
-  > mais batch em voo tocando `src/main/index.ts`. Pendente apenas a (a) —
-  > etapa 1 implementada, mergeada e validada em dogfooding com mod ativo.
+  > mais batch em voo tocando `src/main/index.ts`.
+  >
+  > **(a) CONFIRMADA em 2026-08-04** pelo dono, na sessão de validação da
+  > etapa 1, nesta ordem: (1) etapa 1 **implementada** (T1102–T1131, commits
+  > `38042e9`/`eccf49a`/`b722f53` + as correções do dogfooding, `5571b73`
+  > … `5819217`); (2) **mergeada** em `staging` local — a branch inteira, sem
+  > commit pendente, no merge `4b7914a`, com 1709 testes verdes e typecheck
+  > limpo; (3) **validada em dogfooding no alfa com `accounts.mod ≠ null`** —
+  > o pool Seazone foi conectado contra o servidor real, 61 contas apareceram
+  > com carga, e o dono **trocou de conta pelo motor**. Palavras dele: *"Eu
+  > testei, mas a conta dessa sessão caiu. Pode considerar feito e
+  > funcional"*.
+  >
+  > A conta da sessão cair **é o efeito esperado** do switch: ele reescreve
+  > `~/.claude/.credentials.json` e apaga `oauthAccount`, e o CLI em execução
+  > perde a credencial que tinha. Prova de que o mecanismo central da etapa 1
+  > funciona de ponta a ponta. Consequência registrada como achado, não como
+  > defeito desta etapa: no **primeiro** switch `activeAccountId` é `null`,
+  > então o guard `if (rotatedPair && fromId)` (account-engine.ts) **pula a
+  > captura** — correto do ponto de vista de segurança (a credencial pessoal
+  > do dono nunca é enviada ao servidor da Seazone), mas significa que o par
+  > que estava no disco é **descartado sem aviso**, e o caminho de volta é um
+  > `/login`. Ver o relatório de melhoria da sessão.
 
 ---
 

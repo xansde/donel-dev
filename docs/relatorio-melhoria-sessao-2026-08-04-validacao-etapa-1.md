@@ -270,6 +270,31 @@ ainda), mas os dois pedem a mesma disciplina: **ao introduzir um valor novo
 num tipo, varrer todos os pontos que produzem aquele tipo**, não só o que
 motivou a mudança. Registrados em `tasks/lessons.md` (`cb5a6f9`).
 
+### P23 — O primeiro switch descarta a credencial que estava no disco, sem aviso
+
+Descoberto ao fechar a sessão, quando o dono trocou de conta pelo motor e a
+conta da própria sessão caiu — efeito **esperado** do switch (ele reescreve
+`.credentials.json` e apaga `oauthAccount`; o CLI em execução perde o que
+tinha). O que não é esperado é o resto.
+
+No **primeiro** switch, `activeAccountId` é `null`, então o guard
+`if (rotatedPair && fromId)` em `account-engine.ts` **pula a captura** do par
+que está saindo. Do ponto de vista de segurança isso está certo, e vale dizer
+explicitamente: a credencial **pessoal** do dono nunca foi enviada ao servidor
+da Seazone — o guard segurou. Mas o efeito colateral é que esse par é
+**descartado**: ele não vai para o servidor (certo), não vai para o cofre
+local (o mod Seazone não guarda par localmente, por decisão D3), e é
+sobrescrito no disco. O caminho de volta é um `/login`.
+
+O app **sabe** que está prestes a sobrescrever uma credencial que não capturou
+— tem `fromId === null` e um par não-nulo em mãos no momento exato da decisão.
+Poderia avisar antes ("a conta que está logada agora não pertence a nenhum
+pool conhecido; trocar vai exigir `/login` para voltar a ela"), e não avisa.
+
+Não é bug da etapa 1: o comportamento segue o contrato, e a etapa 2 (migração
+de perfis) é justamente onde a pergunta "de quem é a credencial que está aqui?"
+ganha dono. Registrar para que a etapa 2 não o herde sem decidir.
+
 ## Prioridade sugerida
 
 | # | Achado | Custo | Risco se ficar |
@@ -279,8 +304,9 @@ motivou a mudança. Registrados em `tasks/lessons.md` (`cb5a6f9`).
 | 3 | P16 sanitize com passthrough (ou B10) | médio | dogfooding de feature nova continua se apagando sozinho |
 | 4 | P20 spike bloqueante + dublê capturado | baixo | o próximo backend externo repete as quatro divergências |
 | 5 | P17 revalidar "não consegui ler" na abertura | baixo | fantasmas competem com problemas reais pela atenção |
-| 6 | P22 `switchTo` sem `'io'` + race do `sessionRefused` | baixo | o erro do switch continua dizendo "sem rede" para recusa do servidor |
-| 7 | P21 vocabulário de erro de rede no resto do app | médio | diagnóstico caro em cada integração nova |
+| 6 | P23 aviso antes do primeiro switch descartar credencial | baixo | quem troca sem saber perde a sessão e não sabe por quê |
+| 7 | P22 `switchTo` sem `'io'` + race do `sessionRefused` | baixo | o erro do switch continua dizendo "sem rede" para recusa do servidor |
+| 8 | P21 vocabulário de erro de rede no resto do app | médio | diagnóstico caro em cada integração nova |
 
 ## Estado ao fim da sessão
 
@@ -295,6 +321,11 @@ motivou a mudança. Registrados em `tasks/lessons.md` (`cb5a6f9`).
   instalado.
 - Instalação do switcher é **temporária** — pegada e intenção de desinstalar
   registradas na memória do projeto.
+- **Gate `T1201` da etapa 2 satisfeito** ao fim da sessão: o dono trocou de
+  conta pelo motor no alfa (a conta da sessão caiu — efeito esperado), e a
+  confirmação humana das duas pré-condições está registrada em
+  `tasks-etapa-2.md`. A sessão de Implementar da etapa 2 que estava parada
+  neste gate pode seguir.
 - Pendente de execução humana no `e2e.md`: seções 2, 4, 5 e 6 (pool próprio
   com credencial real, auto-switch em tempo real, heartbeat de 15 min contra o
   servidor, máquina sem `safeStorage`). O `POST /session/switch` real nunca foi
