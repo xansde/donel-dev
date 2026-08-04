@@ -76,49 +76,49 @@ T1228, T1229, T1230, T1231).
 
 ## Fase 1 — Inventário e planejador da migração (puro, invisível ao app)
 
-- [ ] **T1202** [P] Teste: `tests/profileInventory.test.ts` — raiz ausente ⇒ `[]`
+- [x] **T1202** [P] Teste: `tests/profileInventory.test.ts` — raiz ausente ⇒ `[]`
   sem lançar; perfil sem `.credentials.json` ⇒ `hasCredentials: false`; perfil
   sem `.donel-profile.json` ⇒ nome derivado do slug; `projects` **junction** ×
   **diretório real** × **ausente**; entrada que não é diretório é ignorada;
   `.claude.json` corrompido ⇒ `mcpServerNames: []`.
   **DoD**: suíte vermelha por ausência de implementação.
 
-- [ ] **T1203** Implementar `src/main/accounts/migration/profile-inventory.ts`
+- [x] **T1203** Implementar `src/main/accounts/migration/profile-inventory.ts`
   (`ProfileInventoryEntry`, `readProfileInventory`, IO **injetável** conforme
   `contracts/migration-etapa-2.md` §3). **Nunca lê `.credentials.json`** — só
   verifica existência.
   **DoD**: T1202 verde; `npm run typecheck` verde.
 
-- [ ] **T1204** [P] Teste: `tests/mcpDiff.test.ts` — `onlyInProfile`/`onlyInGlobal`
+- [x] **T1204** [P] Teste: `tests/mcpDiff.test.ts` — `onlyInProfile`/`onlyInGlobal`
   por **nome**; arquivo ausente/corrompido ⇒ diff vazio sem lançar; **fixture com
   token plantado dentro do bloco do servidor e asserção de que ele não aparece
   em lugar nenhum da saída**.
   **DoD**: suíte vermelha.
 
-- [ ] **T1205** Implementar `src/main/accounts/migration/mcp-diff.ts` — função
+- [x] **T1205** Implementar `src/main/accounts/migration/mcp-diff.ts` — função
   pura, saída só de nomes (D14). Sem caminho de escrita.
   **DoD**: T1204 verde.
 
-- [ ] **T1206** [P] Teste: `tests/transcriptConsolidation.test.ts` — `realpath`
+- [x] **T1206** [P] Teste: `tests/transcriptConsolidation.test.ts` — `realpath`
   igual (junction) ⇒ `already-consolidated`, **zero** operações; diretório real
   distinto ⇒ uma operação por `.jsonl` com id de sessão preservado; destino já
   existente ⇒ `skip-existing`, nunca sobrescreve; `projects` ausente ⇒
   `nothing-to-copy`.
   **DoD**: suíte vermelha.
 
-- [ ] **T1207** Implementar
+- [x] **T1207** Implementar
   `src/main/accounts/migration/transcript-consolidation.ts` — **puro** (recebe
   os `realpath` já resolvidos e devolve o plano); o executor de disco é
   injetável.
   **DoD**: T1206 verde.
 
-- [ ] **T1208** [P] Teste: `tests/migrationState.test.ts` — `sanitizeMigrationState`
+- [x] **T1208** [P] Teste: `tests/migrationState.test.ts` — `sanitizeMigrationState`
   resiliente (chave ausente, JSON corrompido, `step` desconhecido, slug vazio);
   idempotência do plano (perfil `imported` não reaparece como pendente);
   `skipped`/`failed` são retomáveis; `canArchive` só com zero pendentes.
   **DoD**: suíte vermelha.
 
-- [ ] **T1209** Implementar `src/main/accounts/migration/migration-plan.ts`
+- [x] **T1209** Implementar `src/main/accounts/migration/migration-plan.ts`
   (função pura `(inventário, estado, diffs) ⇒ MigrationPlan`) **e** a chave
   `accounts.migration` no `src/main/config-store.ts`, plugando nos 4 pontos do
   padrão do arquivo (default, sanitize, DTO, escrita atômica) **sem tocar nas

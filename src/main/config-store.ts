@@ -17,6 +17,7 @@ import type {
 } from '../shared/devMode';
 import { DEFAULT_PHASE_DEFAULTS } from '../shared/devModeDefaults';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
+import { defaultMigrationState, sanitizeMigrationState, type MigrationState } from './accounts/migration/migration-state';
 import type { StoredSessionName } from '../shared/sessionName';
 import type { RegisteredSession, SessionRegistry } from '../shared/sessionRegistry';
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
@@ -104,6 +105,13 @@ export interface AppConfig {
    * separado, accounts-vault.json).
    */
   readonly accounts: AccountsConfig;
+  /**
+   * T1209 (011-contas-e-provedores, etapa 2) — estado da migração assistida
+   * (perfis → cofre). Nasce `defaultMigrationState()` (nada iniciado).
+   * Não exposta via `AppConfigDto`/`config:get` — tem canal IPC próprio
+   * (`migration:*`, contracts/migration-etapa-2.md), mesmo padrão de `accounts`.
+   */
+  readonly migration: MigrationState;
 }
 
 /** `projectRoots` não tem um default universal (depende do homedir da máquina) — quem chama monta com `defaultProjectRoots(homedir)` (project-scanner.ts) e passa aqui. */
@@ -123,6 +131,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     devMode: defaultDevModeState(),
     tabAppearance: {},
     accounts: defaultAccountsConfig(),
+    migration: defaultMigrationState(),
   };
 }
 
@@ -521,6 +530,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     devMode: sanitizeDevModeState(candidate.devMode, defaults.devMode),
     tabAppearance: sanitizeTabAppearance(candidate.tabAppearance),
     accounts: sanitizeAccountsConfig(candidate.accounts, defaults.accounts),
+    migration: sanitizeMigrationState(candidate.migration, defaults.migration),
   };
 }
 
