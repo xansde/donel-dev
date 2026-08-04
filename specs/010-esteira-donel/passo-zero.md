@@ -298,7 +298,31 @@ O donel-dev é o **dono** do contrato. O fork guarda uma **cópia verificada**:
 - Não cria o fork `esteira-donel-3.0.0` — o lado skill está **desenhado**, não
   construído.
 
-## Pendências
+## Pendências — marteladas em 03/08
 
-`[P-1]`…`[P-6]` da spec seguem abertas; as decisões tomadas sobre elas entram
-aqui e na spec quando martelo bater.
+| | Decisão |
+|---|---|
+| **P-1** | Numeração e nome **mantidos**: `specs/010-esteira-donel/`. |
+| **P-2** | Backup do store por **export manual** para o vault (um gesto no app), fora de sync em tempo real. Append-only dentro do OneDrive gera conflito, e conflito num log append-only é histórico corrompido. |
+| **P-3** | A 2.x sai de `~/.claude/skills/` **quando o Donel Dev rodar um card real de ponta a ponta** no modelo novo. Até lá, convivência. |
+| **P-4** | Nomes das fases por ciclo ficam para o **horizontal pequeno**, com uso real na mão. É por isso que `run.phase` é string livre no contrato, não enum. |
+| **P-5** | `discovery-tree.ts`, `esteira-reader.ts` e o mapa atual saem **ao fim do vertical pequeno**, quando o novo provar a espinha. Até lá: congelados, sem trabalho novo em cima (#41, #42, #35). |
+| **P-6** | **Sessão por item+fase, com handoff por contexto dentro da fase.** Mudar de fase abre sessão nova, sempre. Dentro da mesma fase, quem decide abrir outra é o orçamento de contexto: alvo de nunca passar de ~400k tokens. Trabalho extra que cabe (protótipo barato, ou algo delegável a subagente sem sujar o contexto) fica onde está; rodada pesada — um mapeamento de processos, por exemplo — vira **handoff**. |
+
+### O que P-6 muda no formato
+
+A proposta original da spec (uma sessão por item+fase) vale, com um acréscimo:
+uma fase pode ter **N sessões encadeadas**, quando o contexto estoura.
+
+- `SessionSnapshot.phase` é **uma** fase — trocar de fase abre sessão nova.
+- `SessionSnapshot.continuesSessionId` + `handoffReason` — a sessão nova aponta
+  para a anterior **da mesma fase**. A história da fase é a cadeia; nenhum
+  pedaço fica órfão.
+- Evento `session.handed-off` no store.
+- **O contrato não muda.** Um run continua sendo uma execução de fase, e
+  `actor.cli_session_id` já amarra vários `result.json` à mesma sessão. Quando
+  a fase termina por falta de contexto, isso é `status: "aborted"` com
+  `failure.code` explícito, ou `phase.completed` com `outcome: "inconclusive"` —
+  ambos já cabem no v1.
+- Ligação com a spec 006 (contexto consumido): o app já mede o consumo; é o que
+  torna "sugerir handoff antes de estourar" implementável no vertical.

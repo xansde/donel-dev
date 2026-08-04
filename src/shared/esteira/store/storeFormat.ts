@@ -123,6 +123,8 @@ export const STORE_EVENT_TYPES = [
   'phase.completed',
   'session.started',
   'session.ended',
+  /** `[P-6]` — a sessao atingiu o teto de contexto e a MESMA fase seguiu noutra sessao. */
+  'session.handed-off',
   'lock.acquired',
   'lock.released',
   'stage.overridden',
@@ -315,12 +317,30 @@ export interface WorkItemSnapshot {
   readonly createdAt: string;
 }
 
-/** Cada sessao de terminal, amarrada a um alvo e a uma fase. */
+/**
+ * Cada sessao de terminal, amarrada a um ALVO e a UMA fase. `[P-6]`, em duas
+ * regras que nao se misturam:
+ *
+ * 1. **Mudou de fase, mudou de sessao** — sempre. A fase e a fronteira dura, e
+ *    e o que mantem a historia do card reconstruivel.
+ * 2. **Dentro da MESMA fase**, o que decide abrir outra sessao e o ORCAMENTO DE
+ *    CONTEXTO (alvo: nunca passar de ~400k tokens). Trabalho extra que cabe
+ *    (um prototipo barato, ou algo delegavel a subagente sem sujar o contexto)
+ *    fica onde esta; rodada que estouraria o contexto vira handoff.
+ *
+ * Daí `continuesSessionId`: uma fase pode ter N sessoes encadeadas, e a
+ * historia dela e a cadeia, nunca um registro perdido.
+ */
 export interface SessionSnapshot {
   readonly id: string;
   readonly cliSessionId: string | null;
   readonly subject: EntityId;
+  /** A fase desta sessao. Uma so — trocar de fase abre sessao nova. */
   readonly phase: string;
+  /** Sessao anterior da MESMA fase, quando esta nasceu de handoff por contexto. `null` = comeco da cadeia. */
+  readonly continuesSessionId: string | null;
+  /** Por que houve handoff — texto curto, so quando `continuesSessionId` existe. */
+  readonly handoffReason: string | null;
   readonly cwd: string | null;
   readonly model: string | null;
   readonly effort: string | null;

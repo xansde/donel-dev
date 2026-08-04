@@ -1,8 +1,11 @@
 # Spec — 010 Esteira do Donel Dev (modelo de estado próprio)
 
-**Status:** 🟡 **RASCUNHO** (2026-08-03) — nasce da entrevista `grilling` desta mesma
-data, com 16 decisões fechadas e 6 pendências propostas (seção final).
-**Gate:** nenhuma linha de código antes do Alexandre bater o martelo nas pendências.
+**Status:** 🟢 **DECIDIDA** (2026-08-03) — nasce da entrevista `grilling` desta mesma
+data, com 16 decisões fechadas; as 6 pendências foram marteladas no mesmo dia, na sessão
+do passo zero (seção final).
+**Gate:** o passo zero (schema, formato do store e teste de contrato) está em
+[`passo-zero.md`](./passo-zero.md), para revisão. Implementar o **vertical pequeno**
+exige novo OK explícito do Alexandre.
 
 **Sucede a 009.** Onde as duas discordarem, vence esta. A `009-modo-dev-v3` fica como
 registro do que foi construído — inclusive dos erros que motivaram esta.
@@ -248,19 +251,28 @@ real.
 
 ---
 
-## Pendências (proposta aguardando decisão)
+## Pendências — decididas em 03/08
 
-- **[P-1] Numeração e nome** — `specs/010-esteira-donel/` (este arquivo). Proposta: manter.
-- **[P-2] Backup do store** — `userData` não sincroniza; máquina perdida leva histórico
-  junto. Proposta: export periódico para o vault, **fora** do OneDrive em tempo real
-  (append-only + sync gera conflito).
-- **[P-3] Aposentadoria da 2.x** — sem critério, o fork vira dívida e as correções se
-  dividem entre duas esteiras. Proposta: quando o Donel Dev rodar um card real de ponta a
-  ponta, os repos migram e a 2.x sai de `~/.claude/skills/`.
-- **[P-4] Fases de cada ciclo** — os nomes exatos das fases por ciclo de vida. Proposta:
-  definir no **horizontal pequeno**, com uso real na mão, não antes.
-- **[P-5] Remoção do código atual** — quando deletar `discovery-tree.ts`, o
-  `esteira-reader` e o mapa atual. Proposta: ao fim do vertical pequeno, quando o novo
-  provar a espinha.
-- **[P-6] Granularidade da sessão** — uma sessão por item+fase, ou sessão livre associada
-  ao alvo. Proposta: por item+fase, para a história do card ser reconstruível.
+As seis foram marteladas na sessão do passo zero (03/08). Viraram requisito,
+como as 16 decisões acima. Detalhamento e consequências de formato em
+[`passo-zero.md`](./passo-zero.md).
+
+- **[P-1] Numeração e nome** — **mantidos**: `specs/010-esteira-donel/`.
+- **[P-2] Backup do store** — **export manual** para o vault, um gesto no app. Fora de
+  sync em tempo real: append-only + OneDrive gera conflito, e conflito num log
+  append-only é histórico corrompido. Sem timer, sem export automático.
+- **[P-3] Aposentadoria da 2.x** — a 2.x sai de `~/.claude/skills/` **quando o Donel Dev
+  rodar um card real de ponta a ponta** no modelo novo. Até lá, convivência.
+- **[P-4] Fases de cada ciclo** — definidas no **horizontal pequeno**, com uso real na
+  mão. É por isso que `run.phase` é string livre no contrato, e não enum: um enum agora
+  fecharia esta decisão por acidente.
+- **[P-5] Remoção do código atual** — `discovery-tree.ts`, `esteira-reader` e o mapa
+  atual saem **ao fim do vertical pequeno**, quando o novo provar a espinha. Até lá
+  ficam congelados, sem trabalho novo em cima.
+- **[P-6] Granularidade da sessão** — **por item+fase**, como proposto, com um acréscimo:
+  mudar de fase abre sessão nova **sempre**; dentro da mesma fase, quem decide abrir
+  outra é o **orçamento de contexto** (alvo: nunca passar de ~400k tokens). Trabalho
+  extra que cabe — protótipo barato, ou algo delegável a subagente sem sujar o contexto —
+  fica onde está; rodada pesada, como um mapeamento de processos, vira **handoff**. Uma
+  fase pode portanto ter N sessões encadeadas: `Session` guarda sua fase e aponta para a
+  sessão anterior da mesma fase, e a história do card é essa cadeia.
