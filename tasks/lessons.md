@@ -102,3 +102,55 @@ ponto só.
 **Lesson:** quando um recurso muda de dono ao longo de etapas, escreva a
 precedência como função pura com tabela-verdade — a etapa que remove um dono
 some com um ramo em vez de virar arqueologia.
+
+## 2026-08-04 — pln-demolicao-perfis-migracao (demolicao-perfis-migracao)
+
+### Migrar o que a topologia já consolidou é copiar arquivo sobre si mesmo
+
+O passo "copiar `<perfil>/projects/*.jsonl` para `~/.claude/projects`" parecia
+óbvio até o inventário mostrar que `projects` é uma das seis junctions que o
+próprio app cria (`PROFILE_LINK_DIRS`): todo perfil aponta para o mesmo
+diretório físico. Escrito ao pé da letra, o passo copiaria cada arquivo sobre
+ele mesmo. A alternativa rejeitada foi cortar o passo ("não há o que migrar
+nesta máquina"): ele ficou, mas comparando `realpath` antes — junction vira
+"já consolidado", diretório real de verdade é copiado.
+
+**Lesson:** antes de escrever um passo de migração, meça a topologia real do
+disco — um plano de migração escrito a partir do modelo mental copia dados que
+já estão no destino, ou pior, sobrescreve os que estão.
+
+### Desfazer o link antes de renomear a pasta que o contém
+
+Arquivar `~/.claude-profiles` com as junctions vivas passa em qualquer teste do
+dia da virada. O estrago aparece semanas depois, quando um humano apaga a pasta
+`.old` e a deleção atravessa o link até o `~/.claude` real. O código antigo já
+sabia disso (`deleteProfileDirectory` desfazia as seis antes de remover) — a
+lição estava dentro do módulo que ia ser deletado.
+
+**Lesson:** ao demolir um módulo, extraia as invariantes de segurança que ele
+carregava antes de apagá-lo; elas costumam estar em comentário e ordem de
+chamada, não em nome de função.
+
+### Religar a fonte nova antes de remover a velha
+
+A tentação era começar pela demolição (é o nome da etapa) e religar a tela
+depois. Rejeitado: existiria uma janela em que o app não tem tela de conta
+nenhuma, e é exatamente nela que o dogfooding pararia. Com a ordem invertida —
+trocar a fonte, ver verde, só então remover — cada remoção passa a ser sobre
+código comprovadamente sem consumidor, e quem verifica isso é o `typecheck`,
+não a leitura de quem removeu.
+
+**Lesson:** numa substituição de mecanismo, a ordem "ligar o novo → provar →
+apagar o velho" transforma revisão de diff em verificação automática; a ordem
+inversa transforma em fé.
+
+### Dois runs planejando a mesma spec no mesmo dia colidem na numeração
+
+As fases Plano das etapas 2 e 3 rodaram em paralelo sobre a mesma `spec.md`. As
+duas continuaram a numeração de clarifications a partir de C12 — e a que
+commitou primeiro levou C13–C22. Só apareceu porque o `Edit` avisou que o
+arquivo mudara em disco.
+
+**Lesson:** ao acrescentar numeração contínua a um artefato compartilhado, releia
+o arquivo no momento de escrever, não no início da sessão — em fases paralelas, a
+numeração que você leu já é histórica.

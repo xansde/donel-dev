@@ -255,6 +255,50 @@ as etapas 1 e 2 estão em `registry-classe-a/research.md` §1–§2.
 - **C22** — `providerId` é slug opaco; `label` é texto livre sem nome de pessoa
   (LGPD). Erro de provider nomeia a variável, nunca o valor.
 
+### 2026-08-04 — fase Plano, recorte da **etapa 2** (demolição + migração)
+
+Mesma regra da etapa 1: lacunas resolvidas por julgamento na fase Plano (sem
+humano no loop), todas dentro do que o discovery já decidiu (tickets 04 e 06).
+Razão de cada uma em `research-etapa-2.md` §4; o inventário de código que as
+sustenta está em `research-etapa-2.md` §2–3. **A numeração continua depois do
+bloco da etapa 3** (C13–C22), commitado em paralelo pelo run
+`pln-registry-providers-classe-a` — as duas fases rodaram no mesmo dia.
+
+- **C23** — Pré-condição de demolição: etapa 1 implementada, validada em
+  dogfooding no alfa e com mod **ativo**. Demolir com o motor inerte deixaria o
+  app sem meio nenhum de trocar de conta.
+- **C24** — `sessionAccountLabel` muda de **fonte e vocabulário, não de forma**:
+  `PtyCreateResult.profile` vira `account: { id, label }`, preenchido pelo motor
+  no disparo e imutável pela vida da aba. Nenhum store novo é criado.
+- **C25** — Uma unidade só: com o dropdown de perfis morto, `ProfileQuota`
+  (% livre) sai e sobra `AccountLoad` (% consumido) — fecha o achado A3 do
+  analyze da etapa 1.
+- **C26** — Transcripts: `projects` é junction para `~/.claude/projects` em todo
+  perfil, então o passo "copiar" vira **inventariar e copiar só o que for
+  diretório real** (comparação de `realpath`).
+- **C27** — Arquivamento tem ordem invariante: desfazer as 6 junctions de cada
+  perfil **antes** de renomear `~/.claude-profiles` → `.old` (sufixo de data se
+  já existir). Nunca deletar.
+- **C28** — Estado da migração em `accounts.migration` (`config.json`),
+  sanitizado como os demais blocos; assistente **reexecutável** e idempotente,
+  perfil a perfil.
+- **C29** — Diff de MCP é **leitura de nomes** de servidor, nunca do bloco de
+  configuração (argumento de MCP carrega token). Sem merge, sem "aplicar".
+- **C30** — Config legada (`activeProfileSlug`, `archivedPhaseSessions[].profileSlug`)
+  deixa de ser escrita mas continua **tolerada na leitura** — os canais
+  alfa/beta/stable compartilham `userData`.
+- **C31** — "Reiniciar sessão em outra conta" (CA-24 da 009) perde a cópia de
+  transcript e mantém o gesto (trocar conta + retomar); os textos do diálogo
+  mudam junto.
+- **C32** — Superseded é **marcação** (bloco de cabeçalho), nunca deleção — vale
+  para a spec 002 inteira e para os artefatos históricos da 001.
+- **C33** — `CLAUDE_CONFIG_DIR` **não morre como mecanismo**: morre como meio de
+  trocar de conta. `claudeConfigDir`/`buildPtyEnv` do `pty-manager` ficam
+  intactos e passam a ser alimentados pelo provider da classe A na etapa 3.
+- **C34** — A conta honesta das suítes: são **7** que morrem (as 4 nomeadas
+  + `quota-headroom.test.ts`, `transcript-copy.test.ts`, `transcriptCopy.test.ts`),
+  todas porque seus módulos morrem. As demais são **ajustadas**, nunca removidas.
+
 ## Pendências
 
 Nenhuma que trave o plano — o mapa fechou com frontier zerada. As névoas
