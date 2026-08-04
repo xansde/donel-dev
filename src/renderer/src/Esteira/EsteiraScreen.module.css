@@ -255,6 +255,48 @@
   gap: var(--space-1);
 }
 
+/* As fases ficam TODAS visíveis; a que o card não comporta fica desabilitada,
+   com a razão escrita logo abaixo. Esconder a opção pouparia pixel e faria a
+   tela mentir por omissão. */
+.phaseRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.phaseChip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-caption-size);
+  cursor: pointer;
+}
+
+.phaseChip:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+
+.phaseChip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.phaseChipSelected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* A razão de não dar para disparar tem peso de aviso — ela é o que substitui o
+   clique que falharia. */
+.blockedReason {
+  margin: 0;
+  font-size: var(--text-caption-size);
+  color: var(--state-waiting);
+}
+
 /* O comando que roda a fase — enquanto o disparo não abre a aba sozinho, ele é
    o próximo passo real, e precisa poder ser lido e copiado sem esforço. */
 .command {

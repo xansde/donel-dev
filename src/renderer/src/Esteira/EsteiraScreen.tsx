@@ -1,7 +1,16 @@
 import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
-import { cardView, formatTimestamp, ingestErrorLine, lockView, phaseLines, STORE_COMPATIBILITY_WARNING, type SignalTone } from './esteiraView';
+import {
+  cardView,
+  dispatchView,
+  formatTimestamp,
+  ingestErrorLine,
+  lockView,
+  phaseLines,
+  STORE_COMPATIBILITY_WARNING,
+  type SignalTone,
+} from './esteiraView';
 import styles from './EsteiraScreen.module.css';
 
 // Spec 010 — a tela da esteira nova. Ela é PROJEÇÃO do snapshot que o main
@@ -23,17 +32,14 @@ const SIGNAL_CLASS: Readonly<Record<SignalTone, string>> = {
   error: styles.signalError,
 };
 
-const PHASE_OPTIONS = [
-  { value: 'discovery', label: 'Discovery' },
-  { value: 'plano', label: 'Plano' },
-];
-
 export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
   const [state, setState] = useState<EsteiraSnapshotDto | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [newRepo, setNewRepo] = useState('');
   const [phase, setPhase] = useState('discovery');
+  /** O assunto escolhido para o disparo. `null` = o primeiro que a fase comporta. */
+  const [targetKey, setTargetKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -46,6 +52,12 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
   const cards = snapshot?.discoveries ?? [];
   const selected = useMemo(() => (snapshot && selectedId ? cardView(snapshot, selectedId) : null), [snapshot, selectedId]);
   const lock = useMemo(() => (selected === null ? null : lockView(selected)), [selected]);
+  // Quem decide o que está habilitado e com que razão é a camada pura — o JSX
+  // abaixo só desenha o que sai daqui.
+  const dispatch = useMemo(
+    () => (selected === null ? null : dispatchView(selected, { phase, targetKey })),
+    [selected, phase, targetKey],
+  );
   const warning = state === null ? null : STORE_COMPATIBILITY_WARNING[state.compatibility];
   const readOnly = state !== null && state.compatibility !== 'read-write';
 
@@ -70,22 +82,30 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
   }, [newTitle, newRepo]);
 
   const handleDispatch = useCallback(async () => {
-    if (selected === null) return;
-    const targetRepo = selected.discovery.targetRepo;
+    // O botão já está desabilitado quando não dá; esta guarda existe para o
+    // caminho de teclado e para não haver DOIS lugares decidindo a mesma coisa.
+    if (dispatch === null || !dispatch.canDispatch || dispatch.target === null) return;
+    const target = dispatch.target;
     const dispatched = await window.donel.esteira.dispatch({
-      phase,
-      discoveryId: selected.discovery.id,
-      planId: null,
-      workItemId: null,
-      // D-6 — o alvo é explícito: o que está no card, nunca o projeto em foco.
-      workspace: targetRepo === null ? null : { target_repo: targetRepo, repo_path: null, worktree_path: null, branch: null },
+      phase: dispatch.phase.phase,
+      discoveryId: target.discoveryId,
+      // O assunto vai EXPLÍCITO: a fase de um item leva o item (e o plano dele);
+      // a fase de um plano leva o plano. Era daqui que saía o `plan_id: null`
+      // num disparo de fase "Plano".
+      planId: target.planId,
+      workItemId: target.workItemId,
+      // D-6 — o alvo é explícito: o do item, ou o herdado do card. Nunca o projeto em foco.
+      workspace:
+        target.targetRepo === null
+          ? null
+          : { target_repo: target.targetRepo, repo_path: null, worktree_path: null, branch: null },
       continuesSessionId: null,
       handoffReason: null,
     });
     setState(dispatched.state);
 
     if (dispatched.ok) {
-      setMessage(`Fase "${phase}" preparada. A skill lê ${dispatched.inputPath} e devolve em ${dispatched.resultPath}.`);
+      setMessage(`Fase "${dispatch.phase.phase}" preparada. A skill lê ${dispatched.inputPath} e devolve em ${dispatched.resultPath}.`);
       return;
     }
     if (dispatched.reason === 'locked') {
@@ -97,7 +117,7 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
       return;
     }
     setMessage('Não deu para disparar: o histórico não aceita escrita agora.');
-  }, [phase, selected]);
+  }, [dispatch]);
 
   const handleRelease = useCallback(async () => {
     if (selected?.lock == null) return;
@@ -171,7 +191,10 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                 type="button"
                 key={discovery.id}
                 className={[styles.card, selectedId === discovery.id ? styles.cardSelected : ''].filter(Boolean).join(' ')}
-                onClick={() => setSelectedId(discovery.id)}
+                onClick={() => {
+                  setSelectedId(discovery.id);
+                  setTargetKey(null);
+                }}
               >
                 <span className={styles.cardTitle}>{discovery.title}</span>
                 <span className={styles.cardMeta}>
@@ -296,20 +319,78 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                 </section>
               ) : null}
 
-              <section className={styles.block}>
-                <h4 className={styles.blockTitle}>Disparar fase</h4>
-                <div className={styles.dispatchRow}>
-                  <Select label="Fase" value={phase} onChange={setPhase} options={PHASE_OPTIONS} />
-                  <Button onClick={() => void handleDispatch()} disabled={readOnly || selected.lock !== null}>
-                    Preparar
-                  </Button>
-                </div>
-                <p className={styles.hint}>
-                  {selected.lock !== null
-                    ? 'Há uma fase preparada neste card. Libere a trava acima antes de preparar outra.'
-                    : 'O app separa o contexto no inbox e trava o card. Quem roda a fase é a skill — hoje, apontando para o arquivo à mão.'}
-                </p>
-              </section>
+              {/* Só oferecer disparo que o modelo comporta — e nunca recusar
+                  calado. A fase que o card ainda não comporta continua VISÍVEL,
+                  desabilitada, com a razão escrita ao lado; esconder faria a
+                  tela mentir por omissão, que é a outra metade do mesmo vício. */}
+              {dispatch !== null ? (
+                <section className={styles.block}>
+                  <h4 className={styles.blockTitle}>Disparar fase</h4>
+
+                  <div className={styles.phaseRow} data-testid="dispatch-phases">
+                    {dispatch.phases.map((option) => (
+                      <button
+                        type="button"
+                        key={option.phase}
+                        data-testid={`dispatch-phase-${option.phase}`}
+                        className={[styles.phaseChip, option.phase === dispatch.phase.phase ? styles.phaseChipSelected : '']
+                          .filter(Boolean)
+                          .join(' ')}
+                        aria-pressed={option.phase === dispatch.phase.phase}
+                        disabled={!option.enabled}
+                        onClick={() => {
+                          setPhase(option.phase);
+                          setTargetKey(null);
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {dispatch.phases.some((option) => !option.enabled) ? (
+                    <ul className={styles.lines} data-testid="dispatch-phase-reasons">
+                      {dispatch.phases
+                        .filter((option) => !option.enabled)
+                        .map((option) => (
+                          <li key={option.phase} className={styles.hint}>
+                            <strong>{option.label}</strong> — {option.reason}
+                          </li>
+                        ))}
+                    </ul>
+                  ) : null}
+
+                  <div data-testid="dispatch-subject">
+                    <Select
+                      label="Assunto"
+                      value={dispatch.target?.key ?? ''}
+                      onChange={setTargetKey}
+                      options={dispatch.targets.map((target) => ({ value: target.key, label: target.label }))}
+                      placeholder="Nenhum assunto para esta fase"
+                      disabled={dispatch.targets.length === 0}
+                    />
+                  </div>
+
+                  <p className={styles.hint} data-testid="dispatch-repo">
+                    {dispatch.target?.targetRepo
+                      ? `Repo alvo: ${dispatch.target.targetRepo}${dispatch.target.repoNote ? ` — ${dispatch.target.repoNote}` : ''}`
+                      : 'Sem repo alvo.'}
+                  </p>
+
+                  <div className={styles.dispatchRow}>
+                    <Button onClick={() => void handleDispatch()} disabled={readOnly || !dispatch.canDispatch}>
+                      Preparar
+                    </Button>
+                  </div>
+
+                  <p
+                    className={dispatch.blocked === null ? styles.hint : styles.blockedReason}
+                    data-testid="dispatch-blocked"
+                  >
+                    {dispatch.blocked ?? dispatch.hint}
+                  </p>
+                </section>
+              ) : null}
             </>
           )}
         </div>

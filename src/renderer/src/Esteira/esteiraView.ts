@@ -12,11 +12,14 @@
 // de 03/08.
 
 import { MACRO_STAGE_LABEL } from '../../../shared/esteira/ipc';
+import { findBlockingLock, lockChainOf } from '../../../shared/esteira/store/lockChain';
 import type {
   DiscoverySnapshot,
+  EntityId,
   IngestErrorSnapshot,
   LockRecord,
   PhaseRunSnapshot,
+  PlanSnapshot,
   SessionSnapshot,
   StoreSnapshot,
   WorkItemSnapshot,
@@ -83,10 +86,14 @@ export interface CardView {
   readonly discovery: DiscoverySnapshot;
   readonly stage: StageView;
   readonly signals: readonly SignalView[];
+  readonly plans: readonly PlanSnapshot[];
   readonly planCount: number;
   readonly items: readonly WorkItemSnapshot[];
   readonly phases: readonly PhaseRunSnapshot[];
+  /** A primeira trava do card — a que o bloco da trava desenha. */
   readonly lock: LockRecord | null;
+  /** TODAS as travas do card: um item travado nao trava o irmao, e a tela precisa saber disso. */
+  readonly locks: readonly LockRecord[];
   /** A sessão aberta pelo disparo, quando existe — é dela que saem os caminhos do inbox/outbox. */
   readonly openSession: SessionSnapshot | null;
   /** Todas as sessões do card: é delas que sai o "alguém assumiu?" de cada fase. */
@@ -150,15 +157,18 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     ...items.map((item) => `work_item:${item.id}`),
   ]);
   const belongs = (subject: { entity: string; id: string }): boolean => owned.has(`${subject.entity}:${subject.id}`);
+  const locks = snapshot.locks.filter((lock) => belongs(lock.subject));
 
   return {
     discovery,
     stage: stageView(discovery),
     signals: signalViews(discovery),
+    plans,
     planCount: plans.length,
     items,
     phases: snapshot.phases.filter((phase) => belongs(phase.subject)),
-    lock: snapshot.locks.find((lock) => belongs(lock.subject)) ?? null,
+    lock: locks[0] ?? null,
+    locks,
     // A última sessão aberta do assunto: é ela que carrega os caminhos do
     // `run-input.json` e do `result.json` desta rodada.
     openSession: [...snapshot.sessions].reverse().find((session) => belongs(session.subject) && session.endedAt === null) ?? null,
@@ -220,6 +230,236 @@ export function phaseLines(card: CardView): readonly PhaseLineView[] {
       detail: phase.failure?.message ?? null,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Disparo — só oferecer o que o modelo comporta
+// ---------------------------------------------------------------------------
+//
+// Achado do primeiro uso real: dava para disparar a fase "Plano" num card que
+// não tinha plano nenhum, e o `run-input.json` saía com `plan_id: null`. A fase
+// Plano existe para detalhar um plano; a tela oferecia um caminho que o modelo
+// não comporta, e o clique só falhava depois.
+//
+// A correção tem duas metades, e as duas moram aqui, na camada pura:
+//
+//  1. a fase que o card não comporta fica DESABILITADA, com a razão ESCRITA —
+//     o mesmo padrão que a trava já usa;
+//  2. quem dispara escolhe o ASSUNTO (o discovery, um plano ou um item), que é
+//     o que destrava as fases de item.
+//
+// E o D-6 é cobrado ANTES do clique: item `issue` sem repo alvo não dispara, e
+// a tela diz por quê em vez de deixar clicar no escuro.
+
+export type DispatchEntity = 'discovery' | 'plan' | 'work_item';
+
+interface PhaseSpec {
+  readonly phase: string;
+  readonly label: string;
+  readonly runsOn: DispatchEntity;
+  /** A frase de quando o card ainda não tem o que a fase exige. */
+  readonly missing: string;
+}
+
+/**
+ * O catálogo do que a TELA oferece hoje — **não** o enum do contrato.
+ * `run.phase` é string livre de propósito (`[P-4]`: os nomes de fase de cada
+ * ciclo só se fecham com uso real na mão), e fechá-lo num enum agora decidiria
+ * essa pendência por acidente. Esta tabela diz o que o app propõe e o que cada
+ * proposta exige do card; o contrato continua aberto por baixo.
+ */
+const PHASE_CATALOG: readonly PhaseSpec[] = [
+  { phase: 'discovery', label: 'Discovery', runsOn: 'discovery', missing: '' },
+  {
+    phase: 'plano',
+    label: 'Plano',
+    runsOn: 'plan',
+    missing:
+      'Nenhum plano declarado ainda. A fase Plano detalha um plano que já existe — quem declara o primeiro é o Discovery.',
+  },
+  {
+    phase: 'implementar',
+    label: 'Implementar',
+    runsOn: 'work_item',
+    missing:
+      'Nenhum item de trabalho ainda. Implementar roda sobre um item, e item nasce pela skill (D-16) — o app não tem formulário de criação.',
+  },
+  {
+    phase: 'validar',
+    label: 'Validar',
+    runsOn: 'work_item',
+    missing:
+      'Nenhum item de trabalho ainda. Validar roda sobre um item, e item nasce pela skill (D-16) — o app não tem formulário de criação.',
+  },
+];
+
+export interface PhaseChoiceView {
+  readonly phase: string;
+  readonly label: string;
+  readonly runsOn: DispatchEntity;
+  readonly enabled: boolean;
+  /** Por que esta fase não pode rodar neste card agora. `null` quando pode. */
+  readonly reason: string | null;
+}
+
+export interface DispatchTargetView {
+  readonly key: string;
+  readonly label: string;
+  readonly entity: DispatchEntity;
+  readonly discoveryId: string;
+  readonly planId: string | null;
+  readonly workItemId: string | null;
+  /** D-6 — o repo que a sessão usaria. Item sem repo próprio herda o do card, e só o do card. */
+  readonly targetRepo: string | null;
+  /** De onde o repo veio, quando não é o do próprio assunto. */
+  readonly repoNote: string | null;
+  /** Por que ESTE assunto não dispara. `null` quando dispara. */
+  readonly blocked: string | null;
+}
+
+export interface DispatchView {
+  readonly phases: readonly PhaseChoiceView[];
+  /** A fase escolhida, já resolvida contra o catálogo. */
+  readonly phase: PhaseChoiceView;
+  /** Os assuntos possíveis para a fase escolhida. */
+  readonly targets: readonly DispatchTargetView[];
+  readonly target: DispatchTargetView | null;
+  readonly canDispatch: boolean;
+  /** A razão de não dar para disparar. Sempre preenchida quando `canDispatch` é falso. */
+  readonly blocked: string | null;
+  /** O que o clique faz — a frase que fica quando não há impedimento. */
+  readonly hint: string;
+}
+
+export interface DispatchSelection {
+  readonly phase: string;
+  readonly targetKey: string | null;
+}
+
+const DISPATCH_HINT =
+  'O app separa o contexto no inbox e trava o card. Quem roda a fase é a skill — hoje, apontando para o arquivo à mão.';
+
+const LOCK_SCOPE: Readonly<Record<DispatchEntity, string>> = {
+  discovery: 'no card',
+  plan: 'no plano',
+  work_item: 'no item',
+};
+
+/** A chave estável de um assunto — é o que a tela guarda entre renderizações. */
+function targetKeyOf(subject: EntityId): string {
+  return `${subject.entity}:${subject.id}`;
+}
+
+function candidatesFor(card: CardView, runsOn: DispatchEntity): readonly DispatchTargetView[] {
+  const discoveryId = card.discovery.id;
+
+  if (runsOn === 'discovery') {
+    return [
+      buildTarget(card, {
+        subject: { entity: 'discovery', id: discoveryId },
+        label: `O discovery — ${card.discovery.title}`,
+        planId: null,
+        workItemId: null,
+        targetRepo: card.discovery.targetRepo,
+        repoNote: null,
+        needsRepo: false,
+      }),
+    ];
+  }
+
+  if (runsOn === 'plan') {
+    return card.plans.map((plan) =>
+      buildTarget(card, {
+        subject: { entity: 'plan', id: plan.id },
+        label: `Plano — ${plan.title}`,
+        planId: plan.id,
+        workItemId: null,
+        targetRepo: card.discovery.targetRepo,
+        repoNote: null,
+        needsRepo: false,
+      }),
+    );
+  }
+
+  return card.items.map((item) => {
+    // O item HERDA o repo do card quando não declarou o seu (D-6). Herdar do
+    // próprio discovery é o default que a spec prevê; o que nunca acontece é
+    // cair no "projeto em foco" — o palpite que abriu uma fase no repo errado.
+    const inherited = item.targetRepo === null && card.discovery.targetRepo !== null;
+    return buildTarget(card, {
+      subject: { entity: 'work_item', id: item.id },
+      label: `${item.itemType} — ${item.title}`,
+      planId: item.planId,
+      workItemId: item.id,
+      targetRepo: item.targetRepo ?? card.discovery.targetRepo,
+      repoNote: inherited ? 'repo herdado do card' : null,
+      needsRepo: item.itemType === 'issue',
+    });
+  });
+}
+
+function buildTarget(
+  card: CardView,
+  spec: {
+    readonly subject: EntityId;
+    readonly label: string;
+    readonly planId: string | null;
+    readonly workItemId: string | null;
+    readonly targetRepo: string | null;
+    readonly repoNote: string | null;
+    readonly needsRepo: boolean;
+  },
+): DispatchTargetView {
+  const chain = lockChainOf(spec.subject, { discoveryId: card.discovery.id, planId: spec.planId });
+  const lock = findBlockingLock(card.locks, chain);
+
+  let blocked: string | null = null;
+  if (spec.needsRepo && spec.targetRepo === null) {
+    blocked =
+      'Este item é do tipo issue e não tem repo alvo — nem ele, nem o card. Sem repo a fase não dispara: o app não escolhe um repositório por você.';
+  } else if (lock !== null) {
+    blocked = `A fase "${lock.phase}" já está travada ${LOCK_SCOPE[lock.subject.entity]}, desde ${formatTimestamp(lock.acquiredAt)}. Libere a trava antes de preparar outra.`;
+  }
+
+  return {
+    key: targetKeyOf(spec.subject),
+    label: spec.label,
+    entity: spec.subject.entity,
+    discoveryId: card.discovery.id,
+    planId: spec.planId,
+    workItemId: spec.workItemId,
+    targetRepo: spec.targetRepo,
+    repoNote: spec.repoNote,
+    blocked,
+  };
+}
+
+/**
+ * O que a tela pode oferecer neste card, para esta escolha. Uma função só,
+ * porque a decisão é uma só: **o app não oferece o que o modelo não comporta,
+ * e não recusa em silêncio.** O componente lê o resultado e desenha; ele não
+ * decide quem está habilitado nem escreve razão nenhuma.
+ */
+export function dispatchView(card: CardView, selection: DispatchSelection): DispatchView {
+  const phases: readonly PhaseChoiceView[] = PHASE_CATALOG.map((spec) => {
+    const enabled =
+      spec.runsOn === 'discovery' ? true : spec.runsOn === 'plan' ? card.plans.length > 0 : card.items.length > 0;
+    return { phase: spec.phase, label: spec.label, runsOn: spec.runsOn, enabled, reason: enabled ? null : spec.missing };
+  });
+
+  // Fase desconhecida cai na primeira: a tela nunca fica sem estado válido —
+  // e a primeira é sempre a que qualquer card comporta.
+  const phase = phases.find((entry) => entry.phase === selection.phase) ?? phases[0];
+  const targets = candidatesFor(card, phase.runsOn);
+  const target = targets.find((entry) => entry.key === selection.targetKey) ?? targets[0] ?? null;
+
+  const blocked = !phase.enabled
+    ? phase.reason
+    : target === null
+      ? 'Não há assunto para esta fase neste card.'
+      : target.blocked;
+
+  return { phases, phase, targets, target, canDispatch: blocked === null, blocked, hint: DISPATCH_HINT };
 }
 
 /** Um erro de ingestão, em português, sem esconder o caminho do arquivo. */

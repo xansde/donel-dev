@@ -38,9 +38,18 @@ nenhum; o `run-input.json` sai com `plan_id: null`.
 
 **Causa:** o seletor de fase não olha o estado do card.
 
-**Correção (pendente):** escolher o plano no disparo, e desabilitar a fase
-enquanto não houver nenhum — igual ao "Preparar" desabilitado com a razão
-escrita.
+**Correção (batch B2 da spec 010):** o catálogo de fases passou a ser lido
+contra o card em `dispatchView()` (`esteiraView.ts`), e o disparo escolhe o
+**assunto** — o discovery, um plano ou um item. Fase que o card não comporta
+fica **visível e desabilitada, com a razão escrita**: sumir com a opção
+pouparia pixel e faria a tela mentir por omissão, que é a mesma doença por
+outra porta. O D-6 entrou no mesmo lugar: item `issue` sem repo alvo já
+aparece recusado, com a frase, antes de o clique falhar.
+
+**O que ficou como regra:** a decisão de "isto pode ser disparado?" mora numa
+função só, compartilhada com o main pelo alcance da trava
+(`store/lockChain.ts`) — a tela não pode oferecer o que `dispatchPhase` vai
+recusar, nem esconder o que ele aceitaria.
 
 ---
 
