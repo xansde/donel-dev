@@ -4,6 +4,7 @@
 // (src/shared/projects.ts) — os demais (sessions:*, profiles:*, config:*)
 // chegam junto das tasks que os implementam.
 
+import type { DonelAccountsApi } from './accounts';
 import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
 import type { DonelEsteiraApi } from './esteira/ipc';
@@ -182,6 +183,31 @@ export type { ResolveSessionNameInput, StoredSessionName } from './sessionName';
 export { IMAGE_PASTE_SEQUENCE, resolveTerminalKeyAction } from './terminalKeymap';
 export type { TerminalKeyAction, TerminalKeyContext, TerminalKeyDescriptor } from './terminalKeymap';
 
+// 011-contas-e-provedores (etapa 1) — motor de contas + mods. `CredentialPair`
+// NUNCA sai de src/main/accounts/ (regra dura); tudo aqui é seguro de expor
+// ao renderer.
+export {
+  ACCOUNT_CHANNELS,
+  defaultAccountsConfig,
+  defaultAutoSwitchPolicy,
+  overallLoad,
+} from './accounts';
+export type {
+  AccountId,
+  AccountLoad,
+  AccountsConfig,
+  AccountsConfigDto,
+  AccountsViewDto,
+  AccountSummary,
+  AutoSwitchPolicy,
+  ConnectModInput,
+  ConnectModOutcome,
+  DonelAccountsApi,
+  LocalAccountMeta,
+  ModId,
+  SwitchOutcome,
+} from './accounts';
+
 /** Nomes dos canais IPC do domínio PTY (plan.md linha 37). */
 export const PTY_CHANNELS = {
   create: 'pty:create',
@@ -340,6 +366,8 @@ export interface DonelApi {
   semaphore: DonelSemaphoreApi;
   sessions: DonelSessionsApi;
   profiles: DonelProfilesApi;
+  /** 011-contas-e-provedores (etapa 1) — motor de contas + mods; nasce inerte (accounts.mod = null). */
+  accounts: DonelAccountsApi;
   /** T015 — ConfigStore (FR-007/FR-009); ver src/shared/config.ts. */
   config: DonelConfigApi;
   /** T504 (005-terminal-copy-paste) — clipboard-bridge no main, atrás de IPC. */
