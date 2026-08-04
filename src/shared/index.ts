@@ -4,7 +4,7 @@
 // (src/shared/projects.ts) — os demais (sessions:*, profiles:*, config:*)
 // chegam junto das tasks que os implementam.
 
-import type { DonelAccountsApi } from './accounts';
+import type { AccountId, DonelAccountsApi } from './accounts';
 import type { DonelMigrationApi } from './migration';
 import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
@@ -280,16 +280,19 @@ export function parseClaudeNotFound(error: unknown): string | null {
 export interface PtyCreateResult {
   ptyId: string;
   /**
-   * FIX (feedback E2E rodada 5) — perfil ATIVO no momento em que esta sessão
-   * nasceu (main/index.ts `activeProfileSlug`/`activeProfileName`), o mesmo
-   * valor por trás do `claudeConfigDir` passado a `PtyManager.create`
-   * (T014/FR-005). Só preenchido pra `sessionType: 'claude'` — terminal
-   * livre (shell) nunca aplica `CLAUDE_CONFIG_DIR`, então não tem "perfil de
-   * nascimento" (App.tsx usa isso pra distinguir os dois casos no rótulo da
-   * statusbar, ver `sessionAccountLabel.ts`). `undefined` também é o valor
-   * legítimo de um `pty:create` de shell — não é "ainda não resolvido".
+   * T1219 (011-contas-e-provedores, etapa 2, C24) — CONTA ativa no momento
+   * em que esta sessão nasceu (main/index.ts, motor de contas — ou o perfil
+   * ativo legado enquanto o motor estiver inerte, C1/C10), o mesmo valor por
+   * trás do `claudeConfigDir` passado a `PtyManager.create` (T014/FR-005).
+   * Só preenchido pra `sessionType: 'claude'` — terminal livre (shell)
+   * nunca aplica `CLAUDE_CONFIG_DIR`, então não tem "conta de nascimento"
+   * (App.tsx usa isso pra distinguir os dois casos no rótulo da statusbar,
+   * ver `sessionAccountLabel.ts`). `undefined` também é o valor legítimo de
+   * um `pty:create` de shell — não é "ainda não resolvido". Campo chamava-se
+   * `profile` até a etapa 1/início da 2 (`{slug, name}`) — renomeado junto
+   * com a troca de vocabulário perfil → conta.
    */
-  profile?: { slug: string; name: string };
+  account?: { id: AccountId; label: string };
   /**
    * T404 (004-nomear-sessoes) — id da sessão do Claude para ESTA aba, o mesmo
    * que nomeia o `.jsonl` do transcript. O app não descobre esse id: ele o

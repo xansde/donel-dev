@@ -253,14 +253,13 @@ export function App(): React.JSX.Element {
   // ProfileSwitcher (que já busca `window.donel.profiles.*` pro dropdown do
   // titlebar — ver comentário de topo de ProfileSwitcher.tsx).
   const [accountLabel, setAccountLabel] = useState('Principal');
-  // FIX (auditoria rodada 5, achado alta "regressão de cota") — mapa
-  // COMPLETO de headroom (slug -> percent|null) reportado por
-  // `ProfileSwitcher.onHeadroomChange`, alimentado só quando o dropdown de
-  // perfis abre (FR-012). Usado por `activeSessionAccountLabel` abaixo pra
-  // compor a cota do perfil de NASCIMENTO da sessão em foco — que pode ser
-  // um perfil diferente do ativo global, por isso não dá pra reusar
-  // `accountLabel` (que só carrega a cota do perfil ATIVO).
-  const [profileHeadroom, setProfileHeadroom] = useState<ProfileHeadroomMap>({});
+  // T1219 (011-contas-e-provedores, etapa 2) — `profileHeadroom` alimentava
+  // `activeSessionQuota` (rótulo da statusbar) antes da troca de fonte pra
+  // `AccountLoad` (C25). O setter continua ligado ao `ProfileSwitcher`
+  // (que ainda existe até a Fase 4/T1225 remover o dropdown), mas o VALOR
+  // deixou de ser lido aqui — T1221 substitui por uma leitura direta do
+  // motor. Mantido só o setter para não quebrar `ProfileSwitcher.onHeadroomChange`.
+  const [, setProfileHeadroom] = useState<ProfileHeadroomMap>({});
   // T009 — estado do semáforo por aba (chave = tab.id), alimentado pelo
   // callback que cada TerminalPane levanta via onStateChange.
   const [semaphoreStates, setSemaphoreStates] = useState<Record<string, SemaphoreStateInfo>>({});
@@ -301,7 +300,7 @@ export function App(): React.JSX.Element {
   // "afeta só sessões novas"). `undefined` = aba 'shell' OU ainda não
   // resolvido (`computeSessionAccountLabel` decide o rótulo pros dois
   // casos). Limpo em `closeTabImmediately` (mesmo padrão de `sessionModelEffort`).
-  const [sessionProfiles, setSessionProfiles] = useState<Record<string, { slug: string; name: string } | undefined>>({});
+  const [sessionAccounts, setSessionAccounts] = useState<Record<string, { id: string; label: string } | undefined>>({});
   // T010 — aba com fechamento pendente de confirmação (modal "Fechar sessão?", ui-spec §2); null = nenhum modal aberto.
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
   // T011 — modelo/esforço "atual" de cada aba claude (chave = tab.id), pro
@@ -401,8 +400,8 @@ export function App(): React.JSX.Element {
   /** CA-22 — slug do perfil ATIVO agora (reportado pelo ProfileSwitcher, que já busca a lista). */
   const [activeProfileSlug, setActiveProfileSlug] = useState('principal');
   /** Mesma razão de `appConfigRef`/`tabsRef`: a assinatura de `onPhaseArchived` tem deps vazias e precisa do valor ATUAL. */
-  const sessionProfilesRef = useRef<Record<string, { slug: string; name: string } | undefined>>({});
-  sessionProfilesRef.current = sessionProfiles;
+  const sessionAccountsRef = useRef<Record<string, { id: string; label: string } | undefined>>({});
+  sessionAccountsRef.current = sessionAccounts;
 
   const handleSemaphoreChange = useCallback((tabId: string, info: SemaphoreStateInfo): void => {
     setSemaphoreStates((prev) => ({ ...prev, [tabId]: info }));
@@ -428,8 +427,8 @@ export function App(): React.JSX.Element {
   // única vez (TerminalPane chama isto só uma vez por `spawnSession`, ver
   // comentário do prop) — nunca sobrescrito por uma troca de perfil ATIVO
   // global depois (isso é `accountLabel`/ProfileSwitcher, estado separado).
-  const handleProfileResolved = useCallback((tabId: string, profile: { slug: string; name: string } | undefined): void => {
-    setSessionProfiles((prev) => ({ ...prev, [tabId]: profile }));
+  const handleAccountResolved = useCallback((tabId: string, account: { id: string; label: string } | undefined): void => {
+    setSessionAccounts((prev) => ({ ...prev, [tabId]: account }));
   }, []);
 
   /**
@@ -546,7 +545,7 @@ export function App(): React.JSX.Element {
     setSemaphoreStates((prev) => omitKey(prev, tabId));
     setAliveTabs((prev) => omitKey(prev, tabId));
     delete aliveSinceRef.current[tabId]; // FIX (feedback E2E rodada 5) — mesmo padrão de limpeza dos maps acima.
-    setSessionProfiles((prev) => omitKey(prev, tabId)); // FIX (feedback E2E rodada 5) — idem.
+    setSessionAccounts((prev) => omitKey(prev, tabId)); // FIX (feedback E2E rodada 5) — idem.
     setSessionModelEffort((prev) => omitKey(prev, tabId));
     delete terminalRefs.current[tabId];
     // 003-modo-dev/T312 — nenhum watcher de prontidão sobrevive à aba que ele
@@ -1333,8 +1332,8 @@ export function App(): React.JSX.Element {
         sessionId: tab.claudeSessionId as string,
         cwd: tab.cwd,
         projectName: tab.projectName,
-        // CA-25 — perfil de NASCIMENTO da aba (`sessionProfiles`, T707/handleProfileResolved), nunca o perfil ATIVO agora.
-        sourceProfileSlug: sessionProfiles[tab.id]?.slug ?? activeProfileSlug,
+        // CA-25 — conta de NASCIMENTO da aba (`sessionAccounts`, T707/handleAccountResolved), nunca a conta ATIVA agora.
+        sourceProfileSlug: sessionAccounts[tab.id]?.id ?? activeProfileSlug,
         // FIX (#21) — o que a StatusBar mostra pra esta aba AGORA, mesma
         // resolução de `addTab` (launchArgs > launcherDefaults > literal).
         modelEffort: {
@@ -1650,7 +1649,7 @@ export function App(): React.JSX.Element {
   // sessão EM FOCO foi criada", não a conta ATIVA global (`accountLabel`,
   // ProfileSwitcher). `accountLabel` continua sendo o badge do
   // titlebar/dropdown ("que conta a PRÓXIMA sessão usa") — aqui é só o
-  // fallback pra janela curta antes de `sessionProfiles[activeTab.id]`
+  // fallback pra janela curta antes de `sessionAccounts[activeTab.id]`
   // resolver (ver `computeSessionAccountLabel`). Sem aba ativa (0 sessões
   // abertas), cai no `accountLabel` global também — não há "aba em foco"
   // nesse estado.
@@ -1663,13 +1662,15 @@ export function App(): React.JSX.Element {
   // contrato "—" da rodada 4). T204 (002-quota-headroom): `profileHeadroom`
   // guarda `ProfileQuota` (não mais `number|null`) — `computeSessionAccountLabel`
   // já lê `.fiveHour.percentRemaining` internamente.
-  const activeSessionProfile = activeTab ? sessionProfiles[activeTab.id] : undefined;
-  const activeSessionQuota = activeSessionProfile ? (profileHeadroom[activeSessionProfile.slug] ?? null) : null;
+  const activeSessionAccount = activeTab ? sessionAccounts[activeTab.id] : undefined;
+  // T1219 — a cota (AccountLoad) do motor ainda não está fiada aqui; T1221
+  // conecta a fonte real (uma unidade só, C25). Até lá o slot mostra "—".
+  const activeSessionLoad: import('../../shared').AccountLoad | null = null;
   const activeSessionAccountLabel = activeTab
     ? computeSessionAccountLabel(
-        { sessionType: activeTab.sessionType, profile: activeSessionProfile },
+        { sessionType: activeTab.sessionType, account: activeSessionAccount },
         accountLabel,
-        activeSessionQuota,
+        activeSessionLoad,
       )
     : accountLabel;
 
@@ -2040,7 +2041,7 @@ export function App(): React.JSX.Element {
                   args={tab.launchArgs}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}
-                  onProfileResolved={(profile) => handleProfileResolved(tab.id, profile)}
+                  onAccountResolved={(account) => handleAccountResolved(tab.id, account)}
                   // T404/T408 — o id da sessão chega aqui e vira a chave de
                   // persistência do nome desta aba (CA-6).
                   onClaudeSessionIdResolved={(claudeSessionId) => {

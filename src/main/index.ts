@@ -716,17 +716,17 @@ function registerPtyIpcHandlers(): void {
       // T404 (004) — `correlationId` é o id da sessão do Claude (imposto no
       // spawn acima, ou herdado do `-r` numa retomada); devolvê-lo aqui é o
       // que dá ao renderer a chave para nomear/persistir esta sessão.
-      // T1125/C10 — com o motor ativo, o "perfil" devolvido é a CONTA ativa
-      // dele (mesmo formato `{slug, name}`, sessionAccountLabel.ts não muda
-      // de contrato nesta etapa).
-      const spawnProfile = motorActive && accountsSnapshot?.activeAccountId
+      // T1219 (etapa 2, C24) — com o motor ativo, a conta devolvida é a
+      // CONTA ativa dele (`{id, label}`); com o motor inerte, cai no perfil
+      // ativo legado (mesmos valores de sempre, só o nome do campo mudou).
+      const spawnAccount = motorActive && accountsSnapshot?.activeAccountId
         ? {
-            slug: accountsSnapshot.activeAccountId,
-            name: accountsSnapshot.accounts.find((account) => account.id === accountsSnapshot.activeAccountId)?.label ?? accountsSnapshot.activeAccountId,
+            id: accountsSnapshot.activeAccountId,
+            label: accountsSnapshot.accounts.find((account) => account.id === accountsSnapshot.activeAccountId)?.label ?? accountsSnapshot.activeAccountId,
           }
-        : { slug: activeProfileSlug, name: activeProfileName };
+        : { id: activeProfileSlug, label: activeProfileName };
 
-      return { ptyId, claudeSessionId: correlationId, profile: spawnProfile };
+      return { ptyId, claudeSessionId: correlationId, account: spawnAccount };
     }
 
     const ptyId = ptyManager.create(options);
@@ -916,7 +916,7 @@ function registerDevModeIpcHandlers(): void {
       devMode: archivePhaseSession(
         appConfig.devMode,
         { cardId: input.cardId, phase: input.phase },
-        { sessionId: input.sessionId, profileSlug: input.profileSlug, archivedAt: Date.now() },
+        { sessionId: input.sessionId, accountId: input.accountId, archivedAt: Date.now() },
       ),
     };
     persistAppConfig();
@@ -1487,9 +1487,11 @@ function registerProfileIpcHandlers(): void {
       activeProfileSlug = target.slug;
       activeProfileConfigDir = target.configDir;
       activeProfileName = target.name; // FIX (feedback E2E rodada 5) — mesmo ponto de atualização de activeProfileSlug/activeProfileConfigDir acima.
-      // T015 — perfil ativo agora persiste dentro do ConfigStore unificado
-      // (antes: active-profile.json próprio, T014).
-      appConfig = { ...appConfig, activeProfileSlug: target.slug };
+      // T1220 (011-contas-e-provedores, etapa 2, D15) — `activeProfileSlug`
+      // do `AppConfig` DEIXA de ser escrito aqui: a tela de contas (T1221)
+      // substitui o dropdown de perfis, então não há mais gesto de UI que
+      // chame este handler. O campo continua ACEITO no sanitize (leitura
+      // tolerante de config antigo) — só a escrita para.
       persistAppConfig();
     }
     return profiles.map(toProfileSummaryDto);

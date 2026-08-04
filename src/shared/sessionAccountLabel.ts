@@ -1,105 +1,68 @@
-// FIX (feedback E2E rodada 5, item registrado em specs/001-mvp/feedback-e2e.md
-// rodada 5 — o texto ORIGINAL de FR-009/ui-spec §2 zona 5 descrevia o
-// comportamento ANTIGO "conta ATIVA"; o drift apontado pela auditoria rodada
-// 5 já foi corrigido no commit 8e0128a, que emendou FR-009 (spec.md) e a
-// seção 5/zona 5 (ui-spec.md) — os dois já descrevem "conta de NASCIMENTO da
-// sessão em foco") — "statusbar deve mostrar a conta com que a sessão EM
-// FOCO foi criada".
+// T1218/T1219 (011-contas-e-provedores, etapa 2) — troca de fonte do rótulo
+// de sessão (C24): a entrada deixa de ser o perfil (`{slug, name}`,
+// `shared/profiles.ts`, que morre na Fase 4) e vira a CONTA do motor
+// (`{id, label}`, `shared/accounts.ts`), preenchida pelo main NO MOMENTO do
+// disparo da sessão (`PtyCreateResult.account`) e imutável pela vida da aba —
+// mesma regra "por valor na criação" que `claudeConfigDir` já seguia (T014).
 //
-// CAUSA RAIZ: StatusBar (App.tsx) recebia `accountLabel` GLOBAL (perfil
-// ATIVO, reportado por ProfileSwitcher.tsx — independente da aba); nenhum
-// lugar guardava o perfil de NASCIMENTO de cada sessão. Trocar de perfil
-// ativo global sem mudar sessões vivas é o comportamento CORRETO (FR-005/
-// CA-3) — o bug era só a barra inferior sugerir, incorretamente, que a
-// sessão em foco tinha trocado de conta junto.
+// A cota também troca de fonte: antes vinha de `ProfileQuota` (% LIVRE,
+// dropdown de perfis, spec 002); agora vem de `AccountLoad` (% CONSUMIDO,
+// `shared/accounts.ts`) — C25 fecha o achado A3 da etapa 1 (duas unidades
+// convivendo): com o dropdown de perfis morto (Fase 4), só sobra esta.
 //
-// FIX (auditoria rodada 5, achado alta "regressão de cota") — a primeira
-// versão deste rótulo (`Sessão: <nome>`) removeu a cota (headroom) que a
-// rodada 4 (item 8) tinha acabado de garantir SEMPRE aparecer na statusbar
-// ("Principal · 62%"/"Principal · —"). `headroomPercent` abaixo restaura
-// esse contrato pro rótulo por sessão: cota do perfil de NASCIMENTO da aba
-// (não do perfil ativo global), consultada por quem chama via
-// `ProfileHeadroomMap` (App.tsx `profileHeadroom`, alimentado por
-// `ProfileSwitcher.onHeadroomChange`).
-//
-// Função pura (sem I/O), extraída de App.tsx pra ser testável em isolamento
-// (TDD com escopo — bugfix de produção). `profile` vem de
-// `PtyCreateResult.profile` (shared/index.ts), resolvido pelo main process
-// no momento da criação da aba (main/index.ts `activeProfileSlug`/
-// `activeProfileName`) e propagado por TerminalPane -> App.tsx
-// (`sessionProfiles`, chave = tab.id) — nunca reconsultado depois: o valor é
-// fixo pra vida da aba, exatamente como `claudeConfigDir` já é (T014,
-// PtyManager.create, "por VALOR na criação").
+// Função pura (sem I/O), extraída de App.tsx pra ser testável em isolamento.
 
-import { parseAccountNumber, type ProfileQuota } from './profiles';
+import type { AccountId, AccountLoad } from './accounts';
+import { overallLoad } from './accounts';
 
 export interface SessionAccountLabelInput {
-  /** 'shell' (terminal livre) nunca aplica `CLAUDE_CONFIG_DIR` — não tem "perfil de nascimento" que faça sentido mostrar. */
+  /** 'shell' (terminal livre) nunca aplica `CLAUDE_CONFIG_DIR` — não tem "conta de nascimento" que faça sentido mostrar. */
   sessionType: 'claude' | 'shell';
-  /** Perfil de nascimento da aba (`PtyCreateResult.profile`); `undefined` = ainda não resolvido (janela curta entre `pty:create` disparar e a promise resolver) OU aba 'shell'. */
-  profile: { slug: string; name: string } | undefined;
+  /** Conta de nascimento da aba (`PtyCreateResult.account`); `undefined` = ainda não resolvido (janela curta entre `pty:create` disparar e a promise resolver) OU aba 'shell'. */
+  account: { id: AccountId; label: string } | undefined;
 }
 
 /**
- * Rótulo da statusbar pra aba em foco (registrado na rodada 5 do
- * feedback-e2e.md — ver nota de topo sobre o drift pendente com FR-009/
- * ui-spec §2 zona 5 original):
+ * Rótulo da statusbar pra aba em foco:
  * - 'shell' -> rótulo neutro, sem conta nenhuma (cota não se aplica).
- * - 'claude' com perfil resolvido -> "Sessão: <nome> · <cota>", normalizando
- *   pro formato canônico "Tecnologia Claude {n}" quando o nome já segue essa
- *   convenção (`parseAccountNumber`, mesma normalização que
- *   ProfileSwitcher.tsx já aplica no badge do titlebar) — perfis fora da
- *   convenção (ex.: "Principal", nomes de teste) mostram o nome cru. `<cota>`
- *   é `${quota.fiveHour.percentRemaining}%` quando conhecida, `—` quando
- *   ausente — MESMO contrato "sempre mostra o slot" da rodada 4 item 8,
- *   aplicado à cota do perfil de NASCIMENTO da aba (não do perfil ativo
- *   global). T204 (002-quota-headroom): o parâmetro passou de `number|null`
- *   pro shape `ProfileQuota|null` — a rotulagem "5h" explícita no texto
- *   (ex.: "5h 62%") é T208, OUTRA fase; aqui o formato do texto NÃO muda.
- * - 'claude' sem perfil ainda resolvido -> `fallbackGlobalLabel` (o
- *   `accountLabel` global de ProfileSwitcher, que já embute sua PRÓPRIA cota)
- *   só como placeholder da janela curta até `pty:create` responder — nunca o
- *   estado estável da aba; `quota` é ignorado neste caso.
+ * - 'claude' com conta resolvida -> "Sessão: <label> · <cota>". `<cota>` é
+ *   `${overallLoad(load)}% usado` quando conhecida, `—` quando ausente —
+ *   MESMO contrato "sempre mostra o slot" de sempre, aplicado à carga da
+ *   conta de NASCIMENTO da aba (não da conta ativa global).
+ * - 'claude' sem conta ainda resolvida -> `fallbackGlobalLabel` (o rótulo
+ *   global da tela de contas, que já embute sua PRÓPRIA cota) só como
+ *   placeholder da janela curta até `pty:create` responder — nunca o estado
+ *   estável da aba; `load` é ignorado neste caso.
  */
 export function computeSessionAccountLabel(
   input: SessionAccountLabelInput,
   fallbackGlobalLabel: string,
-  quota: ProfileQuota | null = null,
+  load: AccountLoad | null = null,
 ): string {
   if (input.sessionType === 'shell') return 'Terminal (sem conta)';
-  if (!input.profile) return fallbackGlobalLabel;
+  if (!input.account) return fallbackGlobalLabel;
 
-  const accountNumber = parseAccountNumber(input.profile.name);
-  const displayName = accountNumber !== null ? `Tecnologia Claude ${accountNumber}` : input.profile.name;
-  const headroomPercent = quota?.fiveHour?.percentRemaining ?? null;
-  // T208 (002-quota-headroom, CA-4) — "5h" explícita no rótulo: antes o `%`
-  // era ambíguo (o problema 2 da spec.md — "não entendi o que essa cota
-  // significa" — vinha exatamente daqui, um número solto sem dizer QUAL
-  // janela). Sem leitura -> continua só "—" (nunca "5h —", que sugeriria
-  // falsamente que já se sabe que é a janela de 5h vazia).
-  const percentText = headroomPercent === null ? '—' : `5h ${headroomPercent}%`;
-  return `Sessão: ${displayName} · ${percentText}`;
+  const percent = overallLoad(load);
+  const percentText = percent === null ? '—' : `${percent}% usado`;
+  return `Sessão: ${input.account.label} · ${percentText}`;
 }
 
 // ---------------------------------------------------------------------------
 // CA-25 (009-modo-dev-v3, lote 8) — extensão pra ENTRADAS ARQUIVADAS: o mapa
 // mostra a etapa concluída de um card de plano (`ArchivedPhaseSession`,
-// devMode.ts) com o `profileSlug` de quando ela rodou. CA-24 pode produzir
-// duas entradas com o MESMO `sessionId` em contas diferentes (a "Reiniciar"
-// copia o transcript e a original congela) — nunca podem aparecer
-// indistinguíveis. Raw slug, sem reconstrução de nome de exibição: mesma
-// convenção que o toast já usava antes deste lote ("Essa etapa rodou na
-// conta ${profileSlug}.", App.tsx T313) — introduzir uma segunda forma de
-// mostrar conta (nome bonito aqui, slug cru ali) seria inconsistência nova.
+// devMode.ts) com a CONTA de quando ela rodou. Troca de vocabulário (C24):
+// `profileSlug` → `accountId` — a leitura tolerante do campo legado
+// acontece em `devMode.ts`/`config-store.ts` (T1220), nunca aqui; esta
+// função só formata o que já chegou resolvido.
 // ---------------------------------------------------------------------------
 
 export interface ArchivedAccountLabel {
   readonly label: string;
-  /** `true` quando o perfil arquivado é diferente do perfil ATIVO agora — sinal pra UI aplicar um tom de aviso (nunca de erro: rodar numa conta diferente é esperado, não uma falha). */
+  /** `true` quando a conta arquivada é diferente da conta ATIVA agora — sinal pra UI aplicar um tom de aviso (nunca de erro: rodar numa conta diferente é esperado, não uma falha). */
   readonly mismatch: boolean;
 }
 
-/** CA-25 — rótulo curto + sinal de divergência pra uma entrada arquivada (etapa do mapa; "sessões anteriores" não tem esse dado hoje, ver report do lote). */
-export function formatArchivedAccountLabel(profileSlug: string, activeProfileSlug: string): ArchivedAccountLabel {
-  return { label: `conta: ${profileSlug}`, mismatch: profileSlug !== activeProfileSlug };
+/** CA-25 — rótulo curto + sinal de divergência pra uma entrada arquivada. */
+export function formatArchivedAccountLabel(accountId: string, activeAccountId: string): ArchivedAccountLabel {
+  return { label: `conta: ${accountId}`, mismatch: accountId !== activeAccountId };
 }

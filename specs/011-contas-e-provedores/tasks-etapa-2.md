@@ -190,14 +190,14 @@ T1228, T1229, T1230, T1231).
 
 ## Fase 3 — Trocar a fonte (depende da Fase 2; **antes** de qualquer remoção)
 
-- [ ] **T1218** Adaptar `tests/sessionAccountLabel.test.ts` (104 L) para a
+- [x] **T1218** Adaptar `tests/sessionAccountLabel.test.ts` (104 L) para a
   entrada `account`: rótulo com a conta ativa **no disparo**, imutável pela vida
   da aba; cota vinda do motor (uma unidade, C25); `formatArchivedAccountLabel`
   sobre `accountId`; **caso legado**: entrada arquivada só com `profileSlug`
   ainda rotula corretamente.
   **DoD**: suíte vermelha contra o contrato novo.
 
-- [ ] **T1219** Trocar o contrato e os consumidores: `PtyCreateResult.profile` →
+- [x] **T1219** Trocar o contrato e os consumidores: `PtyCreateResult.profile` →
   `account` (`src/shared/index.ts:260–268`), `src/shared/sessionAccountLabel.ts`
   (:36–41, :64–82, :103–105), `TerminalPane.tsx` (:100, :224–225, :324) e os
   pontos de `App.tsx` que propagam o dado (:369, :418, :589–591, :707, :2315–2323,
@@ -205,7 +205,7 @@ T1228, T1229, T1230, T1231).
   (`index.ts:551`).
   **DoD**: T1218 verde; app abre e a statusbar mostra a conta da sessão em foco.
 
-- [ ] **T1220** `devMode.ts`/`config-store.ts`: `ArchivedPhaseSession.profileSlug`
+- [x] **T1220** `devMode.ts`/`config-store.ts`: `ArchivedPhaseSession.profileSlug`
   → `accountId` (`devMode.ts:37, :160–161, :284, :297–298`), com **leitura
   tolerante** do campo legado (C30/D15) em `sanitizeArchivedPhaseSessions`
   (`config-store.ts:390–393`); `activeProfileSlug` deixa de ser escrito mas

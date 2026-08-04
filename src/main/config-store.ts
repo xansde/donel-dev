@@ -401,19 +401,32 @@ function sanitizeDevModeDiscoveries(value: unknown): DevModeDiscoveries {
   return sanitized;
 }
 
-/** Chave vem do mapa (evita divergência), mesmo espírito de `sanitizeSessionRegistry`. */
+/**
+ * Chave vem do mapa (evita divergência), mesmo espírito de
+ * `sanitizeSessionRegistry`. T1220 (011-contas-e-provedores, etapa 2, C30) —
+ * leitura TOLERANTE do campo legado `profileSlug`: `accountId` é lido dele
+ * quando o campo novo não existe. Nunca escrito de novo — só aceito. Motivo
+ * direto do CLAUDE.md: os canais alfa/beta/stable compartilham `userData`, e
+ * um canal antigo aberto depois não pode ter o estado destruído por um
+ * sanitize novo.
+ */
 function sanitizeArchivedPhaseSessions(value: unknown): ArchivedPhaseSessions {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
 
   const sanitized: Record<string, ArchivedPhaseSession> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
     if (!key || typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
-    const candidate = entry as Partial<ArchivedPhaseSession>;
+    const candidate = entry as Partial<ArchivedPhaseSession> & { profileSlug?: unknown };
     if (typeof candidate.sessionId !== 'string' || !candidate.sessionId) continue;
-    if (typeof candidate.profileSlug !== 'string' || !candidate.profileSlug) continue;
+    const accountId = typeof candidate.accountId === 'string' && candidate.accountId
+      ? candidate.accountId
+      : typeof candidate.profileSlug === 'string' && candidate.profileSlug
+        ? candidate.profileSlug
+        : null;
+    if (accountId === null) continue;
     if (typeof candidate.archivedAt !== 'number' || !Number.isFinite(candidate.archivedAt)) continue;
 
-    sanitized[key] = { sessionId: candidate.sessionId, profileSlug: candidate.profileSlug, archivedAt: candidate.archivedAt };
+    sanitized[key] = { sessionId: candidate.sessionId, accountId, archivedAt: candidate.archivedAt };
   }
   return sanitized;
 }
