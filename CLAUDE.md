@@ -58,6 +58,17 @@ via `CLAUDE_CONFIG_DIR`.
   `TaskDex` (intenção de design real, não placeholder) e `seazone` como nome de
   pasta-raiz default.
 
+## Política de review do repo (fixada pelo dono em 2026-08-04)
+
+Repo pessoal de mantenedor único (`xansde`): a política de review do
+repositório-alvo é **1 revisor** para qualquer classificação de risco,
+inclusive `sensivel` — o próprio dono, após validação manual (e2e quando a
+fase Validar apontar). Esta política **substitui** o default por risco da
+esteira (`default-risco-esteira`, que pediria 2 revisores no sensível), como
+o contrato de Concluir prevê para repos com política própria. Se o repo um
+dia ganhar um segundo mantenedor, revisar esta seção antes de concluir card
+sensível.
+
 ## Regras do projeto
 
 - **Fonte de verdade do escopo**: `specs/001-mvp/` (spec → plan → tasks).
