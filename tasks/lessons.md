@@ -282,3 +282,43 @@ mandei" são estados diferentes e levam a ações opostas; colapsar os dois numa
 palavra transfere para quem lê o custo de descobrir qual dos dois é. Separe ao
 menos rede / credencial / resposta-inesperada, e deixe a razão do servidor
 chegar à tela.
+
+### Correção que não visita os irmãos do lugar onde nasceu
+
+A rodada 2 de Validar (04/08/2026) revisou as três correções acima e achou, nas
+três, o mesmo resíduo: a correção parou no caminho exato onde o defeito foi
+observado e não visitou os caminhos gêmeos ao lado.
+
+1. A separação rede/credencial/resposta-inesperada entrou em `listAccounts`
+   (não-2xx → `io`), mas `switchTo`, no mesmo arquivo e a 20 linhas de
+   distância, ainda devolve `offline` para qualquer não-2xx — inclusive o 422
+   que originou a lição. O tipo `SwitchToResult` ganhou `'io'` no mesmo commit
+   e o caminho continua sem usá-lo.
+2. A bateria de contrato nova cobre 422 e 401 em `/accounts`; `/session/switch`
+   só tem caso feliz. O teste seguiu o mesmo recorte da correção.
+3. O roteiro `contas-motor-ativo.spec.ts`, criado no MESMO commit que consertou
+   o `claudeJsonPath`, descreve no cabeçalho o bug em tempo presente ("é
+   resolvido SEMPRE por `homedir()`") e afirma que o smoke "isola só o
+   primeiro" — as duas frases nasceram falsas.
+
+**Lesson:** ao corrigir, listar os irmãos do ponto corrigido — o outro método
+da mesma interface, o outro campo do mesmo contrato, o comentário que descrevia
+o defeito — e ou corrigir, ou registrar por que ficaram de fora. Um defeito
+aparece onde alguém olhou, não onde ele mora; corrigir só o ponto observado
+deixa o resto do padrão vivo e agora protegido por um verde novo, que faz o
+lugar parecer revisado.
+
+### Flag de closure lida depois de um `await` não sobrevive a chamada concorrente
+
+`seazone-mod.ts` distingue "sessão recusada" de "sem rede" por uma variável de
+closure (`sessaoRecusada`) que `authedFetch` zera na entrada e o chamador lê
+depois do `await`. Duas chamadas concorrentes — o poll de 5 min do motor e um
+clique de troca — se sobrepõem: a segunda zera a flag que a primeira acabou de
+levantar, e um `unauthorized` real chega à tela como `offline`. Só o rótulo do
+erro é afetado (nenhuma credencial se perde), e nenhum teste cobre o
+entrelaçamento, porque cada teste roda uma chamada por vez.
+
+**Lesson:** informação produzida dentro de uma chamada assíncrona volta pelo
+valor de retorno, não por variável compartilhada — estado de closura lido
+depois de um `await` pertence a quem escreveu por último, não a quem está
+lendo. A suíte não pega: teste sequencial nunca produz o entrelaçamento.
