@@ -99,6 +99,17 @@ substitui) e a retirada do mapa antigo (P-5), que só acontece depois dela.
   Modo Dev) e o mapa atual segue intocado por baixo — dá para comparar os dois
   com o mesmo dado antes de aposentar o antigo (P-5).
 
+## O que vem depois — os batches
+
+O trabalho restante está quebrado em sete batches em [`batches.md`](./batches.md),
+cada um com escopo, roteiro e2e e prompt de lançamento. B1–B5 e B7 são
+paralelizáveis; **B6 (aposentar o mapa antigo) é o último** e depende de o
+Alexandre ter usado a tela nova num card real.
+
+Todo batch termina com um roteiro da skill
+[`tutorial-e2e`](../../.claude/skills/tutorial-e2e/SKILL.md), não com teste
+verde: o gate desta spec é a tela.
+
 ## O que NÃO existe (é o trabalho da fase 1)
 
 1. **Writer do store** — criar `<userData>/esteira/events.jsonl` com o cabeçalho,
