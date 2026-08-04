@@ -247,6 +247,108 @@ describe('parseEsteiraResult — fatos', () => {
   });
 });
 
+// Spec 010 (B7) — `x-required-facts` das fases restantes, cobrado no LADO APP.
+//
+// A tabela mora no schema e vale para os dois lados: a skill falha se nao
+// gravar, o app falha se nao exigir. Sem a metade daqui, uma fase poderia
+// prometer no schema e o app aceitar o documento calado — que e a mesma
+// omissao de 03/08, so que combinada por escrito.
+describe('parseEsteiraResult — o que cada fase promete declarar (D-4)', () => {
+  function resultForPhase(phase: string, facts: unknown[], status = 'success'): Record<string, unknown> {
+    const doc = validResult();
+    const run = doc.run as Record<string, unknown>;
+    run.phase = phase;
+    run.status = status;
+    if (status !== 'success') run.failure = { code: 'worktree-dirty', message: 'Havia alteracoes nao commitadas.' };
+    doc.subject = { discovery_id: 'dsc-1', plan_id: 'pln-1', work_item_id: 'wi-1' };
+    doc.facts = facts;
+    return doc;
+  }
+
+  const completed = (phase: string, outcome = 'done'): Record<string, unknown> => ({
+    type: 'phase.completed',
+    subject: { entity: 'work_item', id: 'wi-1' },
+    phase,
+    outcome,
+    summary: null,
+  });
+
+  const verification = (kind: string, state: string, ref: string | null = null): Record<string, unknown> => ({
+    type: 'verification.recorded',
+    subject: { entity: 'work_item', id: 'wi-1' },
+    verification_kind: kind,
+    state,
+    ref,
+  });
+
+  const artifact = (): Record<string, unknown> => ({
+    type: 'artifact.recorded',
+    owner: { entity: 'work_item', id: 'wi-1' },
+    artifact_kind: 'adr',
+    location: 'repo',
+    repo: 'atlas',
+    path: 'docs/adr/0007-fila.md',
+  });
+
+  it('implementar sem verificacao declarada e recusado', () => {
+    expect(codesOf(resultForPhase('implementar', [completed('implementar')]))).toContain('missing_required_fact');
+  });
+
+  it('implementar com o check que ela escreveu e aceito', () => {
+    const doc = resultForPhase('implementar', [verification('check', 'passed', 'npm test'), completed('implementar')]);
+    expect(parseEsteiraResult(doc).ok).toBe(true);
+  });
+
+  it('validar sem verificacao declarada e recusado — rodar a verificacao E validar', () => {
+    expect(codesOf(resultForPhase('validar', [completed('validar')]))).toContain('missing_required_fact');
+  });
+
+  it('documentar sem artefato apontado e recusado — documento sem endereco nao e documento', () => {
+    expect(codesOf(resultForPhase('documentar', [completed('documentar')]))).toContain('missing_required_fact');
+  });
+
+  it('documentar com o ponteiro do documento e aceito', () => {
+    expect(parseEsteiraResult(resultForPhase('documentar', [artifact(), completed('documentar')])).ok).toBe(true);
+  });
+
+  it('concluir sem verificacao declarada e recusado', () => {
+    expect(codesOf(resultForPhase('concluir', [completed('concluir')]))).toContain('missing_required_fact');
+  });
+
+  it('concluir "done" com verificacao ainda pendente e recusado — concluido sem evidencia e afirmar o que nao se leu', () => {
+    const doc = resultForPhase('concluir', [
+      verification('pull-request', 'pending', 'https://github.com/exemplo/atlas/pull/128'),
+      completed('concluir'),
+    ]);
+    expect(codesOf(doc)).toContain('done_without_passed_verification');
+  });
+
+  it('concluir "done" com verificacao que passou e aceito', () => {
+    const doc = resultForPhase('concluir', [
+      verification('pull-request', 'passed', 'https://github.com/exemplo/atlas/pull/128'),
+      completed('concluir'),
+    ]);
+    expect(parseEsteiraResult(doc).ok).toBe(true);
+  });
+
+  it('concluir ABANDONADO com verificacao que falhou e aceito — "nao deu certo" e desfecho', () => {
+    const doc = resultForPhase('concluir', [
+      verification('conclusion', 'failed', 'Caminho descartado: o provedor nao expoe o dado.'),
+      completed('concluir', 'abandoned'),
+    ]);
+    expect(parseEsteiraResult(doc).ok).toBe(true);
+  });
+
+  it('run que FALHOU nao e cobrado pela tabela — o que ela cobra e promessa cumprida, nao promessa feita', () => {
+    const doc = resultForPhase('implementar', [{ type: 'note.recorded', subject: { entity: 'work_item', id: 'wi-1' }, text: 'Abortou.' }], 'failed');
+    expect(parseEsteiraResult(doc).ok).toBe(true);
+  });
+
+  it('fase que a tabela nao nomeia so precisa de phase.completed — `run.phase` continua livre (P-4)', () => {
+    expect(parseEsteiraResult(resultForPhase('explorar', [completed('explorar')])).ok).toBe(true);
+  });
+});
+
 describe('parseEsteiraResultText', () => {
   it('JSON invalido vira issue, nunca excecao', () => {
     const parsed = parseEsteiraResultText('{ "contract_version": ');

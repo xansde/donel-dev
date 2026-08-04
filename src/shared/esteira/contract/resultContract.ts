@@ -293,6 +293,44 @@ export const CONSUMED_PATHS: readonly string[] = [
   'facts[note.recorded].text',
 ];
 
+/**
+ * `x-required-facts` do schema, do lado do app — a promessa que cada fase faz,
+ * cobrada na ingestao. Copia LITERAL da tabela do arquivo canonico, pelo mesmo
+ * motivo de `CONSUMED_PATHS`: este modulo e puro e nao le disco, entao a
+ * sincronia e garantida por teste (`esteiraContractCoverage`), nao por leitura
+ * de codigo feita por alguem de boa vontade. O lado skill le o schema direto.
+ *
+ * So vale para run `success`: o que se cobra e promessa CUMPRIDA. Um run que
+ * falhou ja tem `failure` com codigo e motivo, e cobrar dele os fatos da fase
+ * seria transformar um desfecho legivel em documento recusado.
+ */
+export const REQUIRED_FACTS_ANY_SUCCESS: readonly FactType[] = ['phase.completed'];
+
+export const REQUIRED_FACTS_BY_PHASE: Readonly<Record<string, readonly FactType[]>> = {
+  discovery: ['discovery.recorded'],
+  // O que a fase produziu tem que poder ser conferido: o check que ela escreveu
+  // e rodou, o documento pronto para revisao, ou a resposta do spike (D-4).
+  implementar: ['verification.recorded'],
+  // "Rodar a verificacao e validar" (D-4) — sem ela declarada, nao ha registro
+  // do que foi examinado.
+  validar: ['verification.recorded'],
+  // D-8: o store guarda o PONTEIRO. Documento sem endereco nao responde "cade o
+  // artefato?".
+  documentar: ['artifact.recorded'],
+  // D-4: o ciclo termina com PR verificado, documento aceito ou conclusao
+  // registrada.
+  concluir: ['verification.recorded'],
+};
+
+/**
+ * Fases em que `phase.completed` com `outcome: "done"` exige uma
+ * `verification.recorded` que **passou**. E o dente de D-4 ("PR mergeado e
+ * verificado"): concluir sem evidencia seria o app afirmando o que nao leu, que
+ * e o pecado que a spec 010 inteira existe para extinguir. Desfecho ruim
+ * continua valido — `abandoned`/`inconclusive` nao pedem nada.
+ */
+export const PHASES_REQUIRING_PASSED_VERIFICATION: readonly string[] = ['concluir'];
+
 function parseEntityRef(node: Record<string, unknown>, key: string, path: string, c: Collector): EntityRef | null {
   const raw = node[key];
   if (!isPlainObject(raw)) {
@@ -578,14 +616,31 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
     });
   }
 
-  // A promessa do outro lado, verificada aqui: run bem-sucedido SEM
-  // `phase.completed` seria de novo o app tendo que adivinhar se terminou.
+  // A promessa do outro lado, verificada aqui: run bem-sucedido SEM os fatos
+  // que a fase promete seria de novo o app tendo que adivinhar o que aconteceu.
+  // A tabela vem do schema (`x-required-facts`), nao de regra escrita duas
+  // vezes — e o teste de cobertura reprova se as duas se afastarem.
   if (run !== null && run.status === 'success') {
-    if (!facts.some((fact) => fact.type === 'phase.completed')) {
-      c.add('missing_required_fact', 'facts', 'a successful run must declare a "phase.completed" fact');
+    const required = [...REQUIRED_FACTS_ANY_SUCCESS, ...(REQUIRED_FACTS_BY_PHASE[run.phase] ?? [])];
+    for (const factType of required) {
+      if (!facts.some((fact) => fact.type === factType)) {
+        c.add('missing_required_fact', 'facts', `a successful "${run.phase}" run must declare a "${factType}" fact`);
+      }
     }
-    if (run.phase === 'discovery' && !facts.some((fact) => fact.type === 'discovery.recorded')) {
-      c.add('missing_required_fact', 'facts', 'a successful "discovery" run must declare a "discovery.recorded" fact');
+
+    // D-4 com dente: a fase que declara o ciclo ENCERRADO precisa da evidencia
+    // que o encerra. Sem isto, "Concluído" na tela seria palavra sem lastro —
+    // a inverdade de 03/08 na direcao contraria.
+    if (PHASES_REQUIRING_PASSED_VERIFICATION.includes(run.phase)) {
+      const declaredDone = facts.some((fact) => fact.type === 'phase.completed' && fact.outcome === 'done');
+      const passed = facts.some((fact) => fact.type === 'verification.recorded' && fact.state === 'passed');
+      if (declaredDone && !passed) {
+        c.add(
+          'done_without_passed_verification',
+          'facts',
+          `a "${run.phase}" run completed as "done" must declare a "verification.recorded" fact with state "passed"`,
+        );
+      }
     }
   }
 

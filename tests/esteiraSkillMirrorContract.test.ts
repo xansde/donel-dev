@@ -111,6 +111,94 @@ describe('espelho — o documento produzido pela skill passa no parser do app', 
   });
 });
 
+// Spec 010 (B7) — o ciclo COMPLETO: as quatro fases que faltavam no fork.
+//
+// A tabela `x-required-facts` do schema virou dado dos dois lados: o Python a
+// le do arquivo, o app carrega a copia literal. Aqui se prova a metade da
+// skill — ela recusa emitir a fase que nao cumpriu o que promete, e o que ela
+// emite passa no parser do app.
+describe('espelho — as fases do ciclo completo (implementar, validar, documentar, concluir)', () => {
+  const CASOS = [
+    { phase: 'implementar', required: 'verification.recorded' },
+    { phase: 'validar', required: 'verification.recorded' },
+    { phase: 'documentar', required: 'artifact.recorded' },
+    { phase: 'concluir', required: 'verification.recorded' },
+  ] as const;
+
+  it('a tabela que a skill le e a tabela do schema, e so vale para run bem-sucedido', () => {
+    const lida = runPython(
+      `${PRELUDE}print(json.dumps({p: c.required_facts_for(p, 'success') for p in ['discovery','implementar','validar','documentar','concluir','explorar']} | {'falhou': c.required_facts_for('validar', 'failed')}))`,
+    ) as Record<string, string[]>;
+
+    expect(lida.discovery).toEqual(['phase.completed', 'discovery.recorded']);
+    expect(lida.implementar).toEqual(['phase.completed', 'verification.recorded']);
+    expect(lida.documentar).toEqual(['phase.completed', 'artifact.recorded']);
+    // `run.phase` continua livre (P-4): fase que a tabela nao nomeia so precisa
+    // do `phase.completed` de sempre.
+    expect(lida.explorar).toEqual(['phase.completed']);
+    expect(lida.falhou).toEqual([]);
+  });
+
+  it.each(CASOS)('$phase sem $required nao e sequer emitida', ({ phase, required }) => {
+    let stderr = '';
+    try {
+      execFileSync(
+        'python',
+        [
+          '-c',
+          `${PRELUDE}c.build_result(run_id='run-x', phase='${phase}', status='success', started_at='2026-08-04T12:00:00.000Z', finished_at='2026-08-04T12:30:00.000Z', discovery_id='dsc-1', work_item_id='wi-1', facts=[c.phase_completed({'entity':'work_item','id':'wi-1'}, '${phase}', 'done')])`,
+        ],
+        { encoding: 'utf8', cwd: SKILL_TOOLS_DIR, stdio: 'pipe' },
+      );
+      throw new Error(`esperava ContractError para a fase ${phase}, e o emissor aceitou`);
+    } catch (error) {
+      stderr = String((error as { stderr?: string }).stderr ?? '');
+    }
+    expect(stderr).toContain(required);
+  });
+
+  it('concluir "done" sem verificacao que passou nao e emitida — D-4 com dente', () => {
+    let stderr = '';
+    try {
+      execFileSync(
+        'python',
+        [
+          '-c',
+          `${PRELUDE}facts = [c.verification_recorded({'entity':'work_item','id':'wi-1'}, 'pull-request', 'pending', ref='https://exemplo/pr/1'), c.phase_completed({'entity':'work_item','id':'wi-1'}, 'concluir', 'done')]\n` +
+            `c.build_result(run_id='run-y', phase='concluir', status='success', started_at='2026-08-04T12:00:00.000Z', finished_at='2026-08-04T12:30:00.000Z', discovery_id='dsc-1', work_item_id='wi-1', facts=facts)`,
+        ],
+        { encoding: 'utf8', cwd: SKILL_TOOLS_DIR, stdio: 'pipe' },
+      );
+      throw new Error('esperava ContractError, e o emissor aceitou concluir sem evidencia');
+    } catch (error) {
+      stderr = String((error as { stderr?: string }).stderr ?? '');
+    }
+    expect(stderr).toContain('passed');
+  });
+
+  it('o ciclo inteiro emitido pela skill passa no parser do app', () => {
+    const documentos = runPython(
+      `${PRELUDE}` +
+        `wi = {'entity':'work_item','id':'wi-1'}\n` +
+        `ws = {'target_repo':'atlas','repo_path':'C:/code/atlas','branch':'feat/fila'}\n` +
+        `def r(phase, facts, **kw): return c.build_result(run_id='run-'+phase, phase=phase, status='success', started_at='2026-08-04T12:00:00.000Z', finished_at='2026-08-04T12:30:00.000Z', discovery_id='dsc-1', plan_id='pln-1', work_item_id='wi-1', workspace=ws, facts=facts, **kw)\n` +
+        `docs = [\n` +
+        `  r('implementar', [c.verification_recorded(wi, 'check', 'passed', ref='npm test'), c.lock_released(wi, 'implementar'), c.phase_completed(wi, 'implementar', 'done', summary='Teste escrito e verde.')]),\n` +
+        `  r('validar', [c.verification_recorded(wi, 'pull-request', 'pending', ref='https://exemplo/pr/128'), c.artifact_recorded(wi, 'review-report', 'disk', 'C:/tmp/review.md'), c.phase_completed(wi, 'validar', 'done')]),\n` +
+        `  r('documentar', [c.artifact_recorded(wi, 'adr', 'repo', 'docs/adr/0007.md', repo='atlas'), c.phase_completed(wi, 'documentar', 'done')]),\n` +
+        `  r('concluir', [c.verification_recorded(wi, 'pull-request', 'passed', ref='https://exemplo/pr/128'), c.phase_completed(wi, 'concluir', 'done', summary='PR mergeado e verificado.')]),\n` +
+        `]\n` +
+        `print(json.dumps(docs))`,
+    ) as unknown[];
+
+    expect(documentos).toHaveLength(4);
+    for (const documento of documentos) {
+      const parsed = parseEsteiraResult(documento);
+      if (!parsed.ok) throw new Error(`a skill produziu algo que o app recusa: ${JSON.stringify(parsed.issues, null, 2)}`);
+    }
+  });
+});
+
 describe('espelho — a skill recusa gravar o que o app recusaria ler', () => {
   function expectPythonError(code: string): string {
     try {
