@@ -507,6 +507,24 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         break;
       }
 
+      case 'session.claimed': {
+        // Batch B1 — a aba abriu e o CLI devolveu o id da sessao. E o unico
+        // fato que separa "preparada" de "em andamento": ate ele chegar, o app
+        // so tinha deixado um arquivo em disco.
+        const id = str(p, 'id');
+        const cliSessionId = str(p, 'cliSessionId');
+        if (id === null || cliSessionId === null) break;
+        const current = sessions.get(id);
+        if (current === undefined) break;
+        sessions.set(id, { ...current, cliSessionId, claimed: true });
+        // A trava daquela fase passa a ter DONO com nome (D-11: dono, hora e
+        // sessao). So a fase DESTA sessao — trava de fase irma nao herda dono.
+        const lockKey = `${entityKey(current.subject)}|${current.phase}`;
+        const lock = locks.get(lockKey);
+        if (lock !== undefined) locks.set(lockKey, { ...lock, cliSessionId });
+        break;
+      }
+
       case 'session.ended':
       case 'session.handed-off': {
         const id = str(p, 'id');

@@ -1,0 +1,131 @@
+// Spec 010 / batch B1 — a decisão PURA do gesto "Preparar": qual comando a
+// sessão recebe escrito, em que diretório ela abre, e o que a tela diz quando
+// ela não abre.
+//
+// Fica fora do componente pelo mesmo motivo de `esteiraView.ts`: é aqui que
+// mora o vocabulário. Uma correção de frase feita no JSX não sobe até a raiz —
+// foi exatamente assim que "em andamento" apareceu duas vezes para um estado
+// que ninguém tinha assumido.
+//
+// Dois invariantes moram aqui, e os dois têm cicatriz no repo:
+//
+// 1. **O Enter é gesto humano** (invariante 2/CA-3 de `openPhaseSession.ts`):
+//    nada que sai daqui contém `\r`/`\n`. Quem escreve no PTY é o App.tsx, pelo
+//    canal `pty:input`, sempre com o texto puro.
+// 2. **Alvo explícito, zero palpite** (D-6): repo que o app não conhece devolve
+//    RECUSA com o nome do repo, nunca um segundo melhor palpite. A evidência 2
+//    da spec é uma fase que abriu no repo errado por causa de um fallback
+//    silencioso comentado no código como "palpite honesto".
+
+/** O mínimo que este módulo precisa saber de um projeto — nome e caminho. */
+export interface KnownProject {
+  readonly name: string;
+  readonly path: string;
+}
+
+export type SessionCwdResolution =
+  | { readonly ok: true; readonly cwd: string }
+  /** `no-target-repo`: o card não declara repo (legítimo — discovery investiga problema, não repositório). */
+  | { readonly ok: false; readonly reason: 'no-target-repo' | 'unknown-repo' };
+
+/** Tira quebra de linha de qualquer texto que vá para o PTY — a garantia do invariante 2 fica na origem. */
+function semQuebra(value: string): string {
+  return value.replace(/[\r\n]/g, '');
+}
+
+/**
+ * A skill 3.0 da fase, apontada para o `run-input.json` que o disparo gravou.
+ * `phase` é string livre no contrato (`[P-4]` — as fases de cada ciclo só serão
+ * fechadas no horizontal pequeno), então o nome da skill é derivado dela.
+ *
+ * **Uma função só para os dois usos.** O mesmo texto é pré-digitado na aba E
+ * mostrado como próximo passo quando a sessão não pôde abrir — se fossem dois
+ * lugares, o segundo envelheceria calado.
+ */
+export function esteiraPhaseCommand(phase: string, inputPath: string): string {
+  return semQuebra(`/esteira-${phase.trim()} --input "${inputPath}"`);
+}
+
+/**
+ * Onde a sessão abre. Nome do projeto OU caminho inteiro — os dois são
+ * declaração explícita de quem criou o card. O que NÃO existe é fallback: repo
+ * fora da lista devolve `unknown-repo` mesmo quando há um único projeto
+ * configurado, porque "só tem um, deve ser esse" é a mesma classe de palpite
+ * que abriu a fase no repo errado em 03/08.
+ */
+export function resolveSessionCwd(targetRepo: string | null, projects: readonly KnownProject[]): SessionCwdResolution {
+  const wanted = targetRepo?.trim() ?? '';
+  if (wanted.length === 0) return { ok: false, reason: 'no-target-repo' };
+
+  const normalized = wanted.toLowerCase().replace(/[\\/]+$/, '');
+  const match = projects.find(
+    (project) =>
+      project.name.toLowerCase() === normalized ||
+      project.path.toLowerCase().replace(/[\\/]+$/, '').replace(/\\/g, '/') === normalized.replace(/\\/g, '/'),
+  );
+  return match === undefined ? { ok: false, reason: 'unknown-repo' } : { ok: true, cwd: match.path };
+}
+
+/** Nome da aba: a fase e o card de onde ela nasceu, curto o bastante para caber. */
+export function esteiraTabName(phase: string, discoveryTitle: string): string {
+  const prefixo = `[${phase}] `;
+  const espaco = 60 - prefixo.length;
+  const titulo = discoveryTitle.trim();
+  return `${prefixo}${titulo.length > espaco ? `${titulo.slice(0, espaco - 1)}…` : titulo}`;
+}
+
+/**
+ * O pedido que a tela entrega ao App: tudo já decidido, nada a deduzir. O App
+ * só faz o encanamento (criar a aba, escrever o comando, amarrar a sessão) —
+ * mesma divisão de `decidePhaseOpen`/`App.tsx` do Modo Dev.
+ */
+export interface EsteiraSessionRequest {
+  /** A sessão que o disparo registrou no store — é ela que será assumida e encerrada. */
+  readonly sessionId: string;
+  readonly phase: string;
+  readonly cwd: string;
+  readonly tabName: string;
+  /** Pré-digitado, nunca enviado: o Enter é do humano. */
+  readonly command: string;
+}
+
+export type SessionOpenOutcome =
+  | { readonly opened: true; readonly tabName: string }
+  | { readonly opened: false; readonly reason: 'no-target-repo' | 'unknown-repo' };
+
+export interface PreparedMessageInput {
+  readonly phase: string;
+  readonly targetRepo: string | null;
+  readonly inputPath: string;
+  readonly outcome: SessionOpenOutcome;
+}
+
+/**
+ * A frase que o card mostra logo depois do "Preparar". Nos três casos ela diz a
+ * mesma coisa por caminhos diferentes: **o que o app fez e o que falta**. O
+ * disparo que não abriu sessão não vira silêncio nem erro genérico — vira o
+ * motivo, com o caminho do contexto que já está em disco.
+ */
+export function preparedMessage(input: PreparedMessageInput): string {
+  if (input.outcome.opened) {
+    return `Fase "${input.phase}" preparada: a sessão abriu na aba "${input.outcome.tabName}" com o comando já escrito. O Enter é seu — o app nunca envia por você.`;
+  }
+
+  if (input.outcome.reason === 'unknown-repo') {
+    return `Fase "${input.phase}" preparada, mas a sessão não abriu: não conheço o repo "${input.targetRepo ?? ''}" entre os projetos configurados, e o app não abre noutro lugar por palpite. O contexto está em ${input.inputPath}.`;
+  }
+
+  return `Fase "${input.phase}" preparada, mas a sessão não abriu: este card está sem repo alvo, e é ele que diz onde a sessão roda. O contexto está em ${input.inputPath}.`;
+}
+
+/**
+ * O que o bloco "Disparar fase" explica antes do clique. Fica aqui, e não no
+ * JSX, pela regra do repo: texto de estado nasce na camada pura — foi assim que
+ * a correção de um rótulo deixou de subir até a raiz e o bug voltou noutro
+ * lugar.
+ */
+export function dispatchHint(locked: boolean): string {
+  return locked
+    ? 'Há uma fase preparada neste card. Libere a trava acima antes de preparar outra.'
+    : 'O app separa o contexto, trava o card e abre a aba da sessão com o comando já escrito. O Enter é seu.';
+}

@@ -19,6 +19,10 @@ export const ESTEIRA_CHANNELS = {
   createDiscovery: 'esteira:createDiscovery',
   /** Dispara uma fase: grava o `run-input.json`, trava e abre sessao. */
   dispatch: 'esteira:dispatch',
+  /** Alguem assumiu a sessao preparada: o CLI devolveu o id dela (batch B1). */
+  claimSession: 'esteira:claimSession',
+  /** A sessao acabou sem a fase concluir — tipicamente a aba fechada (batch B1). */
+  endSession: 'esteira:endSession',
   /** Libera a trava — o "gesto" de D-11. */
   releaseLock: 'esteira:releaseLock',
   /** main → renderer: o store mudou (ingestao, disparo, gesto de outro canal). */
@@ -90,6 +94,40 @@ export function isValidDispatchIpcInput(input: unknown): input is DispatchIpcInp
   return true;
 }
 
+/**
+ * Batch B1 — a aba nasceu e o CLI devolveu o id da sessao. E o fato que
+ * autoriza o card a dizer "em andamento": antes dele, o app so tinha separado
+ * o contexto em disco.
+ */
+export interface ClaimSessionIpcInput {
+  readonly sessionId: string;
+  readonly cliSessionId: string;
+}
+
+export function isValidClaimSessionIpcInput(input: unknown): input is ClaimSessionIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<ClaimSessionIpcInput>;
+  if (typeof candidate.sessionId !== 'string' || candidate.sessionId.trim().length === 0) return false;
+  return typeof candidate.cliSessionId === 'string' && candidate.cliSessionId.trim().length > 0;
+}
+
+/**
+ * Batch B1 — a sessao acabou sem a fase concluir (aba fechada). O card NAO pode
+ * ficar preso num estado sem saida: a trava cai junto, porque trava sem sessao
+ * e a trava orfa que matou o modelo anterior.
+ */
+export interface EndSessionIpcInput {
+  readonly sessionId: string;
+  readonly reason: string | null;
+}
+
+export function isValidEndSessionIpcInput(input: unknown): input is EndSessionIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<EndSessionIpcInput>;
+  if (typeof candidate.sessionId !== 'string' || candidate.sessionId.trim().length === 0) return false;
+  return candidate.reason === null || candidate.reason === undefined || typeof candidate.reason === 'string';
+}
+
 export interface ReleaseLockIpcInput {
   readonly subject: EntityId;
   readonly phase: string;
@@ -128,6 +166,8 @@ export interface DonelEsteiraApi {
   scanOutbox(): Promise<EsteiraSnapshotDto>;
   createDiscovery(input: CreateDiscoveryIpcInput): Promise<EsteiraCreateDiscoveryDto>;
   dispatch(input: DispatchIpcInput): Promise<EsteiraDispatchDto>;
+  claimSession(input: ClaimSessionIpcInput): Promise<EsteiraSnapshotDto>;
+  endSession(input: EndSessionIpcInput): Promise<EsteiraSnapshotDto>;
   releaseLock(input: ReleaseLockIpcInput): Promise<EsteiraSnapshotDto>;
   /** Devolve a funcao de desinscricao (mesmo padrao dos outros canais de push). */
   onChanged(listener: (state: EsteiraSnapshotDto) => void): () => void;

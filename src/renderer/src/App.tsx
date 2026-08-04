@@ -107,6 +107,7 @@ import type { LauncherLaunchOptions } from './Launcher';
 // desmonta ou altera o Modo Dev de hoje; a tela entra por cima, atrás de um
 // gesto interno, para dar para comparar as duas com o mesmo dado.
 import { EsteiraScreen } from './Esteira/EsteiraScreen';
+import type { EsteiraSessionRequest } from './Esteira/esteiraSession';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { ProfileSwitcher } from './ProfileSwitcher';
@@ -554,6 +555,14 @@ export function App(): React.JSX.Element {
   const [lastDevModeSession, setLastDevModeSession] = useState<{ args: readonly string[]; cwd: string } | null>(null);
   /** Cleanup do watcher de prontidão em voo por aba (mesmo padrão de `pendingInjectionWatchersRef`). */
   const armWatchersRef = useRef<Record<string, (() => void) | undefined>>({});
+  /**
+   * Spec 010 / batch B1 — `tab.id` → id da sessão da esteira que aquela aba
+   * está tocando. É por este mapa que dois fatos voltam ao histórico: a sessão
+   * ASSUMIDA (quando o CLI devolve o id) e a sessão ENCERRADA (quando a aba
+   * fecha sem a fase concluir). Sem ele, a aba fechada deixaria o card travado
+   * com uma trava sem dono — a trava órfã da evidência 3 da spec.
+   */
+  const esteiraTabSessionsRef = useRef<Record<string, string | undefined>>({});
   const semaphoreStatesRef = useRef<Record<string, SemaphoreStateInfo>>({});
   semaphoreStatesRef.current = semaphoreStates;
   /** CA-22 — slug do perfil ATIVO agora (reportado pelo ProfileSwitcher, que já busca a lista). */
@@ -711,6 +720,15 @@ export function App(): React.JSX.Element {
     // vigiava (senão tentaria escrever num PTY que já não existe).
     armWatchersRef.current[tabId]?.();
     delete armWatchersRef.current[tabId];
+    // Spec 010 / B1 — a aba era de uma fase da esteira: a sessão acabou. O main
+    // encerra a sessão E solta a trava; se a fase já tinha concluído, o gesto
+    // não grava nada (o reducer já a encerrou). Fechar a aba nunca pode deixar
+    // o card preso num estado sem saída.
+    const esteiraSessionId = esteiraTabSessionsRef.current[tabId];
+    if (esteiraSessionId) {
+      delete esteiraTabSessionsRef.current[tabId];
+      void window.donel.esteira.endSession({ sessionId: esteiraSessionId, reason: 'tab-closed' }).catch(() => undefined);
+    }
   };
 
   /**
@@ -1609,6 +1627,29 @@ export function App(): React.JSX.Element {
   }, []);
 
   /**
+   * Spec 010 / batch B1 — o "Preparar" da esteira nova abre a sessão de
+   * verdade. Mesma divisão do Modo Dev: a DECISÃO (onde abrir, com que comando)
+   * é pura e vive em `Esteira/esteiraSession.ts`; aqui só o encanamento —
+   * criar a aba, escrever o comando (sem `\r`, invariante 2/CA-3) e amarrar a
+   * aba à sessão registrada no histórico.
+   */
+  const handleOpenEsteiraSession = (request: EsteiraSessionRequest): void => {
+    const tabId = addTab({
+      name: request.tabName,
+      cwd: request.cwd,
+      projectName: projects.find((project) => project.path === request.cwd)?.name,
+      pinned: false,
+      // Sem `--model`/`--effort`: a fase da esteira nova não tem tabela de
+      // defaults (`run.phase` é string livre, `[P-4]`), e inventar um modelo
+      // aqui seria o app decidindo o que ninguém declarou.
+      launchArgs: [],
+      sessionType: 'claude',
+    });
+    esteiraTabSessionsRef.current[tabId] = request.sessionId;
+    armPhaseCommands(tabId, [request.command]);
+  };
+
+  /**
    * T312/T313/T318/T319 — o clique numa fase. A DECISÃO é pura
    * (`decidePhaseOpen`/`resolveCommandSequence`); aqui só o encanamento:
    * criar/focar/retomar a aba e mandar armar o comando.
@@ -2498,7 +2539,9 @@ export function App(): React.JSX.Element {
         {/* Spec 010 — a esteira nova entra POR CIMA, sem desmontar nada: o
             mapa atual segue vivo por baixo (`[P-5]` — ele só sai no fim do
             vertical, quando o novo provar a espinha). */}
-        {devModeOn && esteiraOpen ? <EsteiraScreen onClose={() => setEsteiraOpen(false)} /> : null}
+        {devModeOn && esteiraOpen ? (
+          <EsteiraScreen onClose={() => setEsteiraOpen(false)} projects={projects} onOpenSession={handleOpenEsteiraSession} />
+        ) : null}
 
         {/* CA-20 — a tela de hoje continua MONTADA quando o Modo Dev liga
             (só oculta por CSS): nada de remontar sidebar/abas, nada de PTY
@@ -2791,6 +2834,16 @@ export function App(): React.JSX.Element {
                     const projectPath = tab.cwd;
                     if (projectPath && claudeSessionId) {
                       maybeRegisterVisit(claudeSessionId, projectPath, resolveTabName({ ...tab, claudeSessionId }));
+                    }
+                    // Spec 010 / B1 — aba de fase da esteira: o id do CLI é o
+                    // que separa "preparada" de "em andamento". Antes dele, o
+                    // que existia era um arquivo em disco; agora existe sessão,
+                    // com dono. É o único fato que autoriza a frase.
+                    const esteiraSessionId = esteiraTabSessionsRef.current[tab.id];
+                    if (esteiraSessionId && claudeSessionId) {
+                      void window.donel.esteira
+                        .claimSession({ sessionId: esteiraSessionId, cliSessionId: claudeSessionId })
+                        .catch(() => undefined);
                     }
                   }}
                   // T710 (CA-11, 2º momento) — retomada que morre logo depois do

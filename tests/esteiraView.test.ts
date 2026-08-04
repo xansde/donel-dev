@@ -43,6 +43,12 @@ describe('phaseLine — três estados, três frases', () => {
     expect(phaseLine(phase({ startedAt: '2026-08-03T12:00:00.000Z' }))).toBe('discovery — em andamento');
   });
 
+  it('fase cuja sessão acabou sem concluir diz que foi INTERROMPIDA — nunca "em andamento"', () => {
+    const line = phaseLine(phase({ startedAt: '2026-08-03T12:00:00.000Z' }), 'interrupted');
+    expect(line).toBe('discovery — interrompida: a sessão terminou sem concluir');
+    expect(line).not.toContain('em andamento');
+  });
+
   it('abandonada e inconclusiva tem palavra propria', () => {
     expect(phaseLine(phase({ completedAt: 'x', outcome: 'abandoned' }))).toContain('abandonada');
     expect(phaseLine(phase({ completedAt: 'x', outcome: 'inconclusive' }))).toContain('sem conclusão');
@@ -187,16 +193,22 @@ describe('lockView — a tela não promete o que não cumpre', () => {
     expect(view.title).not.toContain('Em andamento');
   });
 
-  it('e diz o próximo passo, com o caminho do contexto que o app deixou', () => {
+  it('e diz o próximo passo, com o MESMO comando que a aba receberia', () => {
     const view = lockView(cardWithLock(false))!;
-    expect(view.nextStep?.command).toContain('read_input.py');
-    expect(view.nextStep?.command).toContain('C:/inbox/run-1.json');
+    // Uma função só produz o comando (`esteiraPhaseCommand`) — se aqui fosse
+    // outro texto, a correção de um dos dois envelheceria calada.
+    expect(view.nextStep?.command).toBe('/esteira-discovery --input "C:/inbox/run-1.json"');
   });
 
   it('quando alguém assumiu de verdade, aí sim é "em andamento" — e sem próximo passo', () => {
     const view = lockView(cardWithLock(true))!;
     expect(view.title).toBe('Em andamento');
     expect(view.nextStep).toBeNull();
+  });
+
+  it('assumida: a linha nomeia a SESSÃO que segura a trava — dono, hora e sessão (D-11)', () => {
+    const view = lockView(cardWithLock(true))!;
+    expect(view.line).toContain('cli-1');
   });
 
   it('trava posta pela própria skill já é trabalho acontecendo', () => {
@@ -235,6 +247,21 @@ describe('phaseLines — "disparar" não é "começar", nem na lista de fases', 
       evt('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: 'x' }),
     ]);
     expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — concluída');
+  });
+
+  it('sessão encerrada sem a fase concluir: a fase fica INTERROMPIDA, não "em andamento"', () => {
+    // O caso do batch B1: a aba foi fechada na mão. Sem esta regra, a lista de
+    // fases voltava a dizer "em andamento" — que é o mesmo defeito de 03/08
+    // reaparecendo por outra porta (nenhuma sessão aberta = ninguém para
+    // desmentir a frase otimista).
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
+      evt('session.started', { id: 'ses-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+      evt('session.claimed', { id: 'ses-1', cliSessionId: 'cli-1', at: 'x' }),
+      evt('session.ended', { id: 'ses-1', at: 'x', reason: 'tab-closed' }),
+    ]);
+    expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — interrompida: a sessão terminou sem concluir');
   });
 
   it('fase que falhou traz o motivo junto', () => {

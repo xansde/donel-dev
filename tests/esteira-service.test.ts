@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEsteiraService, type EsteiraService } from '../src/main/esteira-service';
-import { isValidCreateDiscoveryIpcInput, isValidDispatchIpcInput, isValidReleaseLockIpcInput } from '../src/shared/esteira/ipc';
+import {
+  isValidClaimSessionIpcInput,
+  isValidCreateDiscoveryIpcInput,
+  isValidDispatchIpcInput,
+  isValidEndSessionIpcInput,
+  isValidReleaseLockIpcInput,
+} from '../src/shared/esteira/ipc';
 
 // Spec 010 — o servico que liga o store ao app: boot, varredura do outbox,
 // watcher e os gestos que a tela dispara. O que se prova aqui:
@@ -197,6 +203,95 @@ describe('gestos do app', () => {
   });
 });
 
+// Batch B1 — o ciclo de vida da sessao que o "Preparar" abre. Dois fatos, e os
+// dois existem para que a tela pare de mentir num sentido ou no outro:
+// assumir a sessao e o que autoriza dizer "em andamento"; fechar a aba sem
+// concluir NAO pode deixar o card preso.
+describe('a sessao que o disparo abre', () => {
+  function cardDisparado(): { discoveryId: string; sessionId: string } {
+    const created = service.createDiscovery({ title: 'Card novo', problem: null, targetRepo: 'donel-dev', scopeRepos: [], tracker: null });
+    if (!created.ok) throw new Error('createDiscovery falhou');
+    const dispatched = service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: { target_repo: 'donel-dev', repo_path: 'C:/dev/donel-dev', worktree_path: null, branch: null },
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+    if (!dispatched.ok) throw new Error('dispatch falhou');
+    return { discoveryId: created.discoveryId, sessionId: dispatched.sessionId };
+  }
+
+  it('a sessao recem-disparada NAO esta assumida — disparar nao e comecar', () => {
+    const { sessionId } = cardDisparado();
+    const session = service.snapshotDto().snapshot.sessions.find((entry) => entry.id === sessionId);
+    expect(session?.claimed).toBe(false);
+  });
+
+  it('a aba abriu: o id do CLI vira dono da sessao e da trava', () => {
+    const { sessionId } = cardDisparado();
+    const state = service.claimSession({ sessionId, cliSessionId: 'cli-abc' });
+
+    expect(state.snapshot.sessions.find((entry) => entry.id === sessionId)?.claimed).toBe(true);
+    expect(state.snapshot.locks[0].cliSessionId).toBe('cli-abc');
+  });
+
+  it('assumir a mesma sessao duas vezes com o mesmo id nao vira fato novo', () => {
+    const { sessionId } = cardDisparado();
+    service.claimSession({ sessionId, cliSessionId: 'cli-abc' });
+    const listener = vi.fn();
+    service.startWatching(listener);
+
+    service.claimSession({ sessionId, cliSessionId: 'cli-abc' });
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('fechar a aba sem concluir encerra a sessao E solta a trava — o card nao fica preso', () => {
+    const { sessionId } = cardDisparado();
+    service.claimSession({ sessionId, cliSessionId: 'cli-abc' });
+
+    const state = service.endSession({ sessionId, reason: 'tab-closed' });
+
+    expect(state.snapshot.sessions.find((entry) => entry.id === sessionId)?.endedAt).not.toBeNull();
+    expect(state.snapshot.locks).toHaveLength(0);
+  });
+
+  it('a fase interrompida continua VISIVEL — encerrar a sessao nao apaga que ela comecou', () => {
+    const { sessionId } = cardDisparado();
+    const state = service.endSession({ sessionId, reason: 'tab-closed' });
+
+    const phase = state.snapshot.phases[0];
+    expect(phase.startedAt).not.toBeNull();
+    // Nao concluiu e nao falhou: a fase ficou pelo meio, e e isso que a tela diz.
+    expect(phase.completedAt).toBeNull();
+    expect(phase.failure).toBeNull();
+  });
+
+  it('encerrar uma sessao que ja acabou nao grava nada', () => {
+    const { sessionId } = cardDisparado();
+    service.endSession({ sessionId, reason: 'tab-closed' });
+    const listener = vi.fn();
+    service.startWatching(listener);
+
+    service.endSession({ sessionId, reason: 'tab-closed' });
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('sessao desconhecida nao muta nada', () => {
+    const listener = vi.fn();
+    service.startWatching(listener);
+
+    service.claimSession({ sessionId: 'ses-fantasma', cliSessionId: 'cli-abc' });
+    service.endSession({ sessionId: 'ses-fantasma', reason: null });
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
+
 describe('store que nao aceita escrita', () => {
   it('o app mostra o estado e RECUSA o gesto, em vez de falhar calado', () => {
     mkdirSync(join(root, 'store2'), { recursive: true });
@@ -226,6 +321,15 @@ describe('validacao de payload do IPC (o main so muta depois de validar)', () =>
     expect(isValidDispatchIpcInput({ phase: 'discovery', discoveryId: 'dsc-1', planId: null, workItemId: null, workspace: null })).toBe(true);
     expect(isValidDispatchIpcInput({ phase: '', discoveryId: 'dsc-1' })).toBe(false);
     expect(isValidDispatchIpcInput({ phase: 'plano', discoveryId: 'dsc-1', workspace: { repo_path: 'x' } })).toBe(false);
+  });
+
+  it('claimSession/endSession exigem uma sessao de verdade', () => {
+    expect(isValidClaimSessionIpcInput({ sessionId: 'ses-1', cliSessionId: 'cli-1' })).toBe(true);
+    expect(isValidClaimSessionIpcInput({ sessionId: 'ses-1', cliSessionId: '' })).toBe(false);
+    expect(isValidClaimSessionIpcInput({ cliSessionId: 'cli-1' })).toBe(false);
+    expect(isValidEndSessionIpcInput({ sessionId: 'ses-1', reason: 'tab-closed' })).toBe(true);
+    expect(isValidEndSessionIpcInput({ sessionId: 'ses-1', reason: null })).toBe(true);
+    expect(isValidEndSessionIpcInput({ sessionId: '  ' })).toBe(false);
   });
 
   it('releaseLock exige um assunto de verdade', () => {

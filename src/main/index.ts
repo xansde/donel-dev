@@ -11,8 +11,10 @@ import { esteiraOutboxDir } from './esteira-ingest';
 import { esteiraInboxDir } from './esteira-dispatch';
 import {
   ESTEIRA_CHANNELS,
+  isValidClaimSessionIpcInput,
   isValidCreateDiscoveryIpcInput,
   isValidDispatchIpcInput,
+  isValidEndSessionIpcInput,
   isValidReleaseLockIpcInput,
   type EsteiraCreateDiscoveryDto,
   type EsteiraDispatchDto,
@@ -939,6 +941,22 @@ function registerEsteiraIpcHandlers(): void {
     if (esteiraService === null) return null;
     if (!isValidDispatchIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
     return esteiraService.dispatch(input);
+  });
+
+  // Batch B1 — a aba abriu e o CLI devolveu o id da sessão: é o fato que
+  // separa "preparada" de "em andamento".
+  ipcMain.handle(ESTEIRA_CHANNELS.claimSession, (_event, input: unknown): EsteiraSnapshotDto | null => {
+    if (esteiraService === null) return null;
+    if (!isValidClaimSessionIpcInput(input)) return esteiraService.snapshotDto();
+    return esteiraService.claimSession(input);
+  });
+
+  // Batch B1 — a aba fechou sem a fase concluir: encerra a sessão e solta a
+  // trava, para o card nunca ficar preso sem saída.
+  ipcMain.handle(ESTEIRA_CHANNELS.endSession, (_event, input: unknown): EsteiraSnapshotDto | null => {
+    if (esteiraService === null) return null;
+    if (!isValidEndSessionIpcInput(input)) return esteiraService.snapshotDto();
+    return esteiraService.endSession(input);
   });
 
   ipcMain.handle(ESTEIRA_CHANNELS.releaseLock, (_event, input: unknown): EsteiraSnapshotDto | null => {

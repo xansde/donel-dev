@@ -129,6 +129,13 @@ export const STORE_EVENT_TYPES = [
    */
   'phase.failed',
   'session.started',
+  /**
+   * Alguem ASSUMIU a sessao preparada: o CLI devolveu o id dela. Existe como
+   * fato proprio porque "o app separou o contexto" e "a fase esta rodando" sao
+   * estados diferentes, e chama-los pelo mesmo nome e o vicio que a spec 010
+   * combate — so que na direcao contraria. Da dono a trava tambem (D-11).
+   */
+  'session.claimed',
   'session.ended',
   /** `[P-6]` — a sessao atingiu o teto de contexto e a MESMA fase seguiu noutra sessao. */
   'session.handed-off',
