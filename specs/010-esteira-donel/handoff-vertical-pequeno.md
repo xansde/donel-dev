@@ -40,6 +40,46 @@ Tudo puro, sem I/O, sem import no app. `npm run typecheck` limpo, `npm test`
 `CONSUMED_PATHS` e o corpus no mesmo commit — senão `npm test` quebra na hora.
 É o mecanismo funcionando, não um obstáculo a contornar.
 
+## Estado em 03/08 — metade da fase 1 está feita
+
+Branch `feat/010-fase1-vertical-pequeno`, dois commits, baseada em
+`feat/010-passo-zero-contrato-store` (o PR #44 ainda estava aberto).
+`npm test` 1392 verdes, `npm run typecheck` limpo, achados verificados por
+mutação.
+
+| Bloco | Estado |
+|---|---|
+| 1. Writer do store | ✅ `src/main/esteira-store.ts` |
+| 2. Reducer + snapshot | ✅ `src/shared/esteira/store/reducer.ts` |
+| 3. Derivação de macro etapa | ✅ mesma unidade, `deriveStage` |
+| 4. Ingestão | ✅ `src/main/esteira-ingest.ts` (falta ligar ao boot/watcher do app) |
+| 5. Disparo de fase | ✅ `src/main/esteira-dispatch.ts` (falta ligar à aba de terminal) |
+| 6. Mapa como projeção | ⬜ **é o próximo** — IPC + tela |
+| 7. Fork `esteira-donel-3.0.0` | ⬜ |
+
+**Decisões tomadas nesta metade** (as três primeiras lacunas):
+
+1. **Local combinado:** `~/.claude/esteira-donel/{inbox,outbox}/<run_id>.json`,
+   com override por env (`DONEL_ESTEIRA_INBOX_DIR`/`DONEL_ESTEIRA_OUTBOX_DIR`)
+   para o smoke não tocar o real. O arquivo ingerido **não** é movido nem
+   apagado — a idempotência vem do `run_id`, e apagar destruiria a trilha.
+2. **Contraparte de entrada:** o Alexandre escolheu **contrato com schema**
+   (`esteira-run-input.schema.json` + `runInput.ts` + 3 exemplos + teste dos
+   dois lados). O `ctx.md` de texto livre morre com a 3.0.
+3. **Ids:** o app gera `run_id`, `session_id` e — quando a tela existir —
+   `discovery_id`/`plan_id`; a skill gera `work_item_id` (é o que o corpus já
+   mostra). Padrão do contrato **não aceita underscore**.
+
+**Duas decisões de desenho que apareceram implementando** (revisar):
+
+- **`phase.failed` é evento novo.** O contrato só exige `phase.completed` de
+  run bem-sucedido; sem um evento próprio para o run que falhou, "falhou"
+  ficaria indistinguível de "nunca rodou" — a mesma inverdade por outra porta.
+- **A trava vale para a cadeia para cima**, não só para o assunto exato:
+  discovery em andamento trava plano e itens que descendem dele; dois itens
+  irmãos seguem em paralelo. O teste derrubou a primeira versão, que só
+  travava o assunto.
+
 ## O que NÃO existe (é o trabalho da fase 1)
 
 1. **Writer do store** — criar `<userData>/esteira/events.jsonl` com o cabeçalho,
