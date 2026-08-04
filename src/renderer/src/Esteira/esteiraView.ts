@@ -18,6 +18,7 @@ import type {
   IngestErrorSnapshot,
   LockRecord,
   PhaseRunSnapshot,
+  PlanSnapshot,
   SessionSnapshot,
   StoreSnapshot,
   WorkItemSnapshot,
@@ -92,10 +93,21 @@ export function provenanceMark(seeded: boolean): ProvenanceMark | null {
 export const SEEDED_CARD_NOTE =
   'Este card foi semeado: o ponto em que ele está foi afirmado por uma pessoa, não observado de uma execução. O que chegar por skill daqui para frente aparece sem a marca.';
 
+/**
+ * Contagem em português, num lugar só. Existia solta dentro de `seededSummary`
+ * enquanto o título do bloco de planos escrevia "1 plano(s), 2 item(ns)" no
+ * JSX — a mesma grandeza dita de duas formas, e a de fora da camada pura era a
+ * feia. Contar é vocabulário: nasce aqui.
+ */
+function contagem(count: number, singular: string, plural: string, nenhum: string): string {
+  if (count === 0) return nenhum;
+  return count === 1 ? `1 ${singular}` : `${count} ${plural}`;
+}
+
 /** O que dizer depois de plantar. Conta o que entrou — e lembra do que aquilo é. */
 export function seededSummary(counts: { readonly plans: number; readonly items: number }): string {
-  const plans = counts.plans === 0 ? 'nenhum plano' : counts.plans === 1 ? '1 plano' : `${counts.plans} planos`;
-  const items = counts.items === 0 ? 'nenhum item' : counts.items === 1 ? '1 item' : `${counts.items} itens`;
+  const plans = contagem(counts.plans, 'plano', 'planos', 'nenhum plano');
+  const items = contagem(counts.items, 'item', 'itens', 'nenhum item');
   return `Semeado: 1 card, ${plans} e ${items}. Isso é afirmação sua, não fato observado — a tela marca cada um como semeado.`;
 }
 
@@ -120,6 +132,27 @@ const SEED_ISSUE_TEXT: Readonly<Partial<Record<ContractIssueCode, string>>> = {
 export function seedIssueLine(issue: ContractIssue): string {
   const text = SEED_ISSUE_TEXT[issue.code] ?? issue.code;
   return issue.path.length === 0 ? text : `${text} — ${issue.path}`;
+}
+
+/**
+ * A recusa é veredito sobre UM texto — e por isso anda com ele.
+ *
+ * O print do passo 9 pegou a tela afirmando "campo obrigatório ausente —
+ * discovery.title" logo abaixo de uma textarea onde `title` já estava escrito:
+ * a lista sobrevivia à correção e passava a acusar defeito que o documento na
+ * frente da pessoa não tinha mais. Uma lista de erros que não se refere ao que
+ * está na tela é a mesma inverdade das outras, com outro assunto.
+ */
+export interface SeedRefusal {
+  /** O documento que foi recusado, como foi enviado. */
+  readonly document: string;
+  readonly issues: readonly ContractIssue[];
+}
+
+/** As recusas que AINDA valem para o texto atual — as outras não existem mais. */
+export function seedIssuesShown(refusal: SeedRefusal | null, currentDocument: string): readonly ContractIssue[] {
+  if (refusal === null) return [];
+  return refusal.document.trim() === currentDocument.trim() ? refusal.issues : [];
 }
 
 /** Etapa mostrada + se ela é override manual. A derivada NUNCA some da tela (D-13). */
@@ -147,7 +180,12 @@ export interface CardView {
   readonly discovery: DiscoverySnapshot;
   readonly stage: StageView;
   readonly signals: readonly SignalView[];
-  readonly planCount: number;
+  /**
+   * Os planos INTEIROS, não a contagem deles. Era `planCount: number`, e o
+   * bloco dizia "1 plano(s)" sem nunca nomear o plano: a tela contava uma
+   * entidade que escondia — e escondia junto a marca de proveniência dela.
+   */
+  readonly plans: readonly PlanSnapshot[];
   readonly items: readonly WorkItemSnapshot[];
   readonly phases: readonly PhaseRunSnapshot[];
   readonly lock: LockRecord | null;
@@ -219,7 +257,7 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     discovery,
     stage: stageView(discovery),
     signals: signalViews(discovery),
-    planCount: plans.length,
+    plans,
     items,
     phases: snapshot.phases.filter((phase) => belongs(phase.subject)),
     lock: snapshot.locks.find((lock) => belongs(lock.subject)) ?? null,
@@ -297,6 +335,26 @@ export interface ItemLineView {
   readonly key: string;
   readonly text: string;
   readonly mark: ProvenanceMark | null;
+}
+
+/**
+ * O título do bloco. Vive aqui pelo mesmo motivo das linhas: montado no JSX,
+ * ele saía "1 plano(s), 2 item(ns)" — e contava um plano que a lista abaixo
+ * não mostrava.
+ */
+export function plansAndItemsTitle(card: CardView): string {
+  const plans = contagem(card.plans.length, 'plano', 'planos', 'nenhum plano');
+  const items = contagem(card.items.length, 'item', 'itens', 'nenhum item');
+  return `Planos e itens (${plans}, ${items})`;
+}
+
+/** Uma linha da lista de planos. O plano é entidade do card, não um número no título. */
+export function planLines(card: CardView): readonly ItemLineView[] {
+  return card.plans.map((plan) => ({
+    key: plan.id,
+    text: plan.summary ? `${plan.title} · ${plan.summary}` : plan.title,
+    mark: provenanceMark(plan.seeded),
+  }));
 }
 
 export function itemLines(card: CardView): readonly ItemLineView[] {

@@ -125,7 +125,7 @@ describe('espinha — do gesto no app ao card na tela', () => {
 
     expect(view).not.toBeNull();
     if (view === null) return;
-    expect(view.planCount).toBe(1);
+    expect(view.plans).toHaveLength(1);
     expect(view.notes).toHaveLength(1);
     expect(view.phases[0].outcome).toBe('done');
     // Com plano registrado, o card sai de "discovery" — a etapa foi DERIVADA

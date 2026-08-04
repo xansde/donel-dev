@@ -1,6 +1,5 @@
 import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ContractIssue } from '../../../shared/esteira/contract/parsing';
 import type { EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
 import { SEED_DOCUMENT_EXAMPLE } from '../../../shared/esteira/store/seed';
 import {
@@ -10,12 +9,16 @@ import {
   itemLines,
   lockView,
   phaseLines,
+  planLines,
+  plansAndItemsTitle,
   provenanceMark,
   SEEDED_CARD_NOTE,
   seedIssueLine,
+  seedIssuesShown,
   seededSummary,
   STORE_COMPATIBILITY_WARNING,
   type ProvenanceMark,
+  type SeedRefusal,
   type SignalTone,
 } from './esteiraView';
 import styles from './EsteiraScreen.module.css';
@@ -69,7 +72,9 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
   // exceção (plantar o que já existe), não o gesto do dia a dia.
   const [seedOpen, setSeedOpen] = useState(false);
   const [seedDoc, setSeedDoc] = useState('');
-  const [seedIssues, setSeedIssues] = useState<readonly ContractIssue[]>([]);
+  // A recusa guarda o documento que ela julgou: veredito não sobrevive ao texto
+  // que o motivou (ver `seedIssuesShown`).
+  const [seedRefusal, setSeedRefusal] = useState<SeedRefusal | null>(null);
 
   useEffect(() => {
     void window.donel.esteira.snapshot().then(setState);
@@ -81,6 +86,7 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
   const cards = snapshot?.discoveries ?? [];
   const selected = useMemo(() => (snapshot && selectedId ? cardView(snapshot, selectedId) : null), [snapshot, selectedId]);
   const lock = useMemo(() => (selected === null ? null : lockView(selected)), [selected]);
+  const seedIssues = seedIssuesShown(seedRefusal, seedDoc);
   const warning = state === null ? null : STORE_COMPATIBILITY_WARNING[state.compatibility];
   const readOnly = state !== null && state.compatibility !== 'read-write';
 
@@ -111,7 +117,7 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
     setState(seeded.state);
 
     if (seeded.ok) {
-      setSeedIssues([]);
+      setSeedRefusal(null);
       setSeedDoc('');
       setSeedOpen(false);
       setSelectedId(seeded.discoveryId);
@@ -121,12 +127,14 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
     if (seeded.reason === 'invalid-seed') {
       // Nada foi escrito: o documento volta na tela com o motivo de cada
       // recusa, para ser corrigido — é isto que "sem edição manual às cegas"
-      // significa na prática.
-      setSeedIssues(seeded.issues);
+      // significa na prática. A recusa anda grudada no texto que a produziu:
+      // editar o documento apaga o veredito, em vez de acusar defeito que não
+      // está mais lá.
+      setSeedRefusal({ document, issues: seeded.issues });
       setMessage(null);
       return;
     }
-    setSeedIssues([]);
+    setSeedRefusal(null);
     setMessage('Não deu para semear: o histórico não aceita escrita agora.');
   }, [seedDoc]);
 
@@ -376,23 +384,31 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
               </section>
 
               <section className={styles.block}>
-                <h4 className={styles.blockTitle}>
-                  Planos e itens ({selected.planCount} plano(s), {selected.items.length} item(ns))
-                </h4>
-                {selected.items.length === 0 ? (
+                <h4 className={styles.blockTitle}>{plansAndItemsTitle(selected)}</h4>
+                {/* O plano aparece por extenso, não só na contagem: contar uma
+                    entidade e escondê-la deixa o leitor sem saber a QUE plano
+                    os itens pertencem — e some com a marca de proveniência
+                    dele, que é justamente o que este bloco tem que mostrar. */}
+                {selected.plans.length === 0 && selected.items.length === 0 ? (
                   <p className={styles.hint}>
-                    {selected.planCount === 0
-                      ? 'Nenhum plano registrado. Se o discovery terminou assim, é um desfecho — não uma pendência.'
-                      : 'Os planos ainda não declararam itens.'}
+                    Nenhum plano registrado. Se o discovery terminou assim, é um desfecho — não uma pendência.
                   </p>
                 ) : (
-                  <ul className={styles.lines}>
-                    {itemLines(selected).map((line) => (
-                      <li key={line.key}>
-                        {line.text} <ProvenanceChip mark={line.mark} />
-                      </li>
-                    ))}
-                  </ul>
+                  <>
+                    <ul className={styles.lines}>
+                      {planLines(selected).map((line) => (
+                        <li key={line.key}>
+                          {line.text} <ProvenanceChip mark={line.mark} />
+                        </li>
+                      ))}
+                      {itemLines(selected).map((line) => (
+                        <li key={line.key} className={styles.itemLine}>
+                          {line.text} <ProvenanceChip mark={line.mark} />
+                        </li>
+                      ))}
+                    </ul>
+                    {selected.items.length === 0 ? <p className={styles.hint}>Os planos ainda não declararam itens.</p> : null}
+                  </>
                 )}
               </section>
 

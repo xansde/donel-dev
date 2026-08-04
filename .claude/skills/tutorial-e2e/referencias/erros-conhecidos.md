@@ -42,6 +42,33 @@ nenhum; o `run-input.json` sai com `plan_id: null`.
 enquanto não houver nenhum — igual ao "Preparar" desabilitado com a razão
 escrita.
 
+### 7. Veredito que sobrevive ao texto que o motivou
+
+**Sintoma:** a lista de recusas do seed continuava na tela depois de o documento
+ser corrigido — "campo obrigatório ausente — discovery.title" logo abaixo de uma
+textarea onde `title` já estava escrito.
+
+**Causa:** o erro virou estado da tela (`seedIssues`), solto do documento que o
+produziu. Enquanto ninguém submetesse de novo, ele valia para sempre.
+
+**Correção:** a recusa anda com o texto que julgou (`SeedRefusal { document,
+issues }`) e a tela só mostra o que ainda se aplica (`seedIssuesShown`). Vale
+para qualquer veredito sobre um input editável: validação, diff, preview.
+
+### 8. Contar uma entidade que a tela esconde
+
+**Sintoma:** o bloco dizia "Planos e itens (1 plano(s), 2 item(ns))" e listava só
+os dois itens. O plano era contado, nunca nomeado — e a marca de proveniência
+dele não aparecia em lugar nenhum.
+
+**Causa:** a projeção guardava `planCount: number` em vez dos planos. Contagem é
+o que sobra de uma entidade quando ela é jogada fora cedo demais.
+
+**Correção:** `CardView.plans` com os snapshots inteiros, `planLines()` ao lado de
+`itemLines()`, e o título do bloco (`plansAndItemsTitle`) saindo da mesma camada
+pura — era o último texto de estado montado no JSX, e era justamente o que estava
+errado.
+
 ---
 
 ## No roteiro (achados da automação)

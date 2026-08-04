@@ -6,9 +6,12 @@ import {
   lockView,
   phaseLine,
   phaseLines,
+  planLines,
+  plansAndItemsTitle,
   provenanceMark,
   SEEDED_CARD_NOTE,
   seedIssueLine,
+  seedIssuesShown,
   seededSummary,
   signalViews,
   stageView,
@@ -144,7 +147,7 @@ describe('cardView — a tela é projeção, não cálculo', () => {
     const view = cardView(snapshot, 'dsc-1');
     expect(view).not.toBeNull();
     if (view === null) return;
-    expect(view.planCount).toBe(1);
+    expect(view.plans).toHaveLength(1);
     expect(view.items).toHaveLength(1);
     expect(view.phases).toHaveLength(1);
     expect(view.notes).toHaveLength(1);
@@ -317,6 +320,12 @@ describe('a tela distingue afirmação de fato observado', () => {
     expect(linha.mark?.label).toBe('semeado');
   });
 
+  it('o plano semeado é NOMEADO, não só contado — senão a marca dele não existe em lugar nenhum', () => {
+    const [linha] = planLines(cardSemeado()!);
+    expect(linha.text).toContain('Plano');
+    expect(linha.mark?.label).toBe('semeado');
+  });
+
   it('a fase semeada não é apresentada como fase observada', () => {
     const [linha] = phaseLines(cardSemeado()!);
     expect(linha.text).toBe('discovery — concluída');
@@ -359,5 +368,47 @@ describe('erro de seed — o documento é recusado com o motivo, em português',
       'Semeado: 1 card, 1 plano e 2 itens. Isso é afirmação sua, não fato observado — a tela marca cada um como semeado.',
     );
     expect(seededSummary({ plans: 0, items: 0 })).toContain('nenhum plano e nenhum item');
+  });
+
+  // O print do passo 9 do roteiro `seed-discovery` mostrou a lista de recusas
+  // sobrevivendo à correção do documento: a tela acusava "campo obrigatório
+  // ausente — discovery.title" com o `title` escrito logo acima.
+  it('a recusa vale para o documento que a produziu — e some quando ele muda', () => {
+    const refusal = {
+      document: '{ "discovery": { "titulo": "x" } }',
+      issues: [{ code: 'unknown_field' as const, path: 'discovery.titulo', message: 'x' }],
+    };
+    expect(seedIssuesShown(refusal, '{ "discovery": { "titulo": "x" } }')).toHaveLength(1);
+    expect(seedIssuesShown(refusal, '{ "discovery": { "title": "x" } }')).toHaveLength(0);
+    // Espaço em volta não é edição: o app manda o documento aparado.
+    expect(seedIssuesShown(refusal, '  { "discovery": { "titulo": "x" } }\n')).toHaveLength(1);
+    expect(seedIssuesShown(null, 'qualquer coisa')).toHaveLength(0);
+  });
+});
+
+describe('o bloco de planos e itens conta o que mostra', () => {
+  it('o título usa plural de gente, e não "1 plano(s), 2 item(ns)"', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+      evt('work_item.created', { id: 'wi-1', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'issue', title: 'A', targetRepo: 'atlas', state: 'open' }),
+      evt('work_item.created', { id: 'wi-2', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'spike', title: 'B', targetRepo: 'atlas', state: 'open' }),
+    ]);
+    expect(plansAndItemsTitle(cardView(snapshot, 'dsc-1')!)).toBe('Planos e itens (1 plano, 2 itens)');
+  });
+
+  it('sem plano nenhum, o título diz isso — ausência declarada, não contagem zero', () => {
+    const snapshot = reduceEvents([evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' })]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(plansAndItemsTitle(card)).toBe('Planos e itens (nenhum plano, nenhum item)');
+    expect(planLines(card)).toHaveLength(0);
+  });
+
+  it('o plano registrado aparece com o resumo dele, e não só com o título', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Tornar observável', summary: 'Medir antes de mexer.' }),
+    ]);
+    expect(planLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('Tornar observável · Medir antes de mexer.');
   });
 });

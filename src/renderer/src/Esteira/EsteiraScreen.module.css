@@ -217,6 +217,12 @@
   gap: 4px;
 }
 
+/* O item pende do plano: o recuo é o que diz "isto está dentro daquilo" sem
+   precisar repetir o título do plano em cada linha. */
+.itemLine {
+  margin-left: 18px;
+}
+
 .failed {
   color: var(--state-permission);
 }
