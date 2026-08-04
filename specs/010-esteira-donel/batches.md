@@ -39,8 +39,8 @@ B7 (independente; B1 ajuda, não bloqueia)
 ```
 
 **B1, B2, B3, B4, B5 e B7 podem rodar em paralelo** — tocam arquivos
-diferentes. **B6 é o último**: ele remove o mapa antigo, e isso só acontece
-depois de o novo provar a espinha com o Alexandre olhando.
+diferentes. **B6 é o último**: ele depende do que B1–B3 e B5 entregarem, e a
+etapa 0 dele (inventário de paridade) só fecha quando esses existirem.
 
 Conflito previsível se rodarem juntos: `EsteiraScreen.tsx` é tocado por B2 e
 B3. Se forem paralelos, quem chegar segundo rebaseia — ou rodam em sequência.
@@ -239,36 +239,70 @@ sai; o passo 1 prova que o local não travou.
 
 ## B6 — Aposentar o mapa antigo `[P-5]`
 
-**Objetivo:** remover `discovery-tree.ts`, `esteira-reader.ts` e o mapa atual,
-e reverter a issue **#35**.
+**O que é "o mapa":** a tela do Modo Dev de hoje — o carrossel de dois eixos do
+design v3 (`DiscoveryMap.tsx`): à esquerda os **níveis** (discovery → marcos →
+cards) navegáveis na horizontal, e por card a **trilha** das sete fases da
+Esteira em chips; à direita o painel de detalhe da etapa em foco. Ele lê o disco
+por `discovery-tree.ts` e `esteira-reader.ts`.
 
-**Por quê:** eles ficaram congelados até o modelo novo provar a espinha. A #35
-pinta "não realizada" o que é "não consegui ler" — a inverdade que originou a
-spec, ainda viva no código antigo.
+> Não confundir com o "vertical / horizontal pequeno" da spec: aquilo é a
+> **cadência de entrega** `[D-15]` (uma fatia fina de ponta a ponta, depois a
+> generalização), não uma tela.
 
-**Escopo — entra:**
-- Remover o mapa e seus leitores, com os testes que os cobriam.
-- A esteira nova deixa de ser "atrás de um gesto interno" e passa a ser a tela
-  do Modo Dev.
-- Fechar **#41** e **#42** (polir apresentação de um mapa que deixou de existir)
-  e **#35** com a justificativa registrada.
+**Objetivo:** remover o mapa e seus leitores, reverter a issue **#35**, e a
+esteira nova deixa de estar atrás de um gesto interno.
 
-**Não entra:** migrar dado do modelo antigo (D-2 continua valendo).
+**Por quê:** ficaram congelados até o modelo novo provar a espinha. A #35 pinta
+"não realizada" o que é "não consegui ler" — a inverdade que originou a spec,
+ainda viva no código antigo.
 
-**Pré-requisito duro:** B1, B2 e B3 concluídos **e** o Alexandre tendo usado a
-tela nova num card real. Não é decisão de agente.
+### O pré-requisito virou PARIDADE, não "usar num card real"
+
+O risco do B6 nunca foi técnico — é **perder função que o mapa dá e a esteira
+nova ainda não dá**. Isso é verificável localmente, e por isso o batch começa
+por um inventário, não pela remoção.
+
+**Etapa 0 — inventário de paridade.** Listar o que o mapa entrega hoje e marcar,
+para cada item: *coberto pela esteira nova* · *coberto por outro batch* ·
+**perda consciente** (com a razão escrita). O levantamento inicial:
+
+| O mapa hoje | Situação |
+|---|---|
+| Trilha das fases por card (chips com estado) | a esteira lista as fases em texto — **decidir** se vira trilha visual |
+| Detalhe da etapa: artefatos, recibos, garantia | parcialmente coberto; artefatos estão no snapshot e **não** aparecem na tela |
+| PR da fase (via `gh`) | o store tem `verifications` e a tela **não mostra** — buraco real |
+| Fatos do board (etiquetas, coluna) | vem no **B5** |
+| Relógio de homologação (prazo do PR) | candidato a **perda consciente** — nasceu de outra necessidade |
+| Abrir/retomar sessão da fase | vem no **B1** |
+| Navegação por níveis (carrossel) | a esteira nova é lista; **decidir** se a hierarquia precisa voltar |
+
+Nada é removido antes de cada linha ter destino. Item marcado como perda
+consciente vai para o batch com a justificativa — some porque foi decidido, não
+porque ninguém percebeu.
+
+**Etapa 1 — cobrir o que ficou faltando** (o mínimo que o inventário apontar;
+o que for grande vira batch novo, não escopo escondido aqui).
+
+**Etapa 2 — remover:** `discovery-tree.ts`, `esteira-reader.ts`, o mapa e os
+testes que os cobriam; a esteira vira a tela do Modo Dev; fechar **#41**, **#42**
+e **#35** com a justificativa registrada.
+
+**Não entra:** migrar dado do modelo antigo — `[D-2]` continua valendo.
 
 **Roteiro e2e:** `modo-dev-so-esteira`
-1. Ligar o Modo Dev — a esteira nova é o que aparece.
+1. Ligar o Modo Dev — a esteira nova é o que aparece, sem gesto extra.
 2. Nenhum caminho leva ao mapa antigo.
-3. O ciclo do B1 continua funcionando por inteiro.
+3. **Um passo por linha do inventário marcada como "coberto"** — é o que prova
+   a paridade em vez de afirmá-la.
+4. O ciclo do B1 continua funcionando por inteiro.
 
-**Pronto quando:** o roteiro roda, `npm test` verde sem os testes removidos, e
-nenhuma referência ao mapa sobrou (`grep` limpo por `discovery-tree`, `esteira-reader`).
+**Pronto quando:** o roteiro roda, `npm test` verde sem os testes removidos,
+`grep` limpo por `discovery-tree`/`esteira-reader`, e o inventário publicado no
+PR com cada linha resolvida.
 
-> **Prompt:** `Leia specs/010-esteira-donel/batches.md (batch B6) e execute-o. CONFIRME ANTES com o Alexandre que ele já usou a tela nova num card real — sem isso, não comece. Antes de codar, leia spec.md, o handoff da fase 1 e .claude/skills/tutorial-e2e/SKILL.md.`
-
----
+**Ainda assim, o merge é decisão dele.** A validação local prova que nada foi
+perdido *sem querer*; a decisão de aposentar a ferramenta que ele usa todo dia
+continua sendo humana.
 
 ## B7 — As fases restantes da skill 3.0
 
