@@ -246,3 +246,39 @@ duas telas lado a lado.
 inteiro é conhecido, ou ser reescrita no escopo da tela que a exibe; do
 contrário a primeira feature vizinha a transforma em mentira sem que ninguém
 edite aquele arquivo.
+
+### Dublê escrito a partir do contrato não testa o contrato
+
+O mod Seazone foi implementado contra `backends-http.md`, escrito na fase de
+pesquisa pela leitura do servidor e nunca exercitado contra a API. Quatro
+divergências passaram: a rota de auth (`/auth/exchange` em vez de
+`/auth/refresh`), o campo do JWT (`jwt` em vez de `accessJwt`), o envelope de
+`/accounts` (lista no topo, e o identificador é o `label` — campo `id` não
+existe) e os nomes da carga (`fiveHourUtil`/`sevenDayUtil`). A suíte tinha um
+`fetch` falso que respondia exatamente o contrato imaginado, então cada teste
+novo aumentava a confiança numa suposição. 1699 verdes, e o primeiro contato
+com o servidor real devolveu 422.
+
+A divergência mais perigosa era a silenciosa: com os nomes de carga errados, as
+61 contas do pool apareceriam na tela com carga `null`, e carga desconhecida
+nunca é destino de auto-switch (C9) — o recurso ficaria inerte, sem erro
+nenhum, parecendo apenas "não trocou ainda".
+
+**Lesson:** dublê de HTTP tem que nascer de uma resposta CAPTURADA do servidor
+real (basta um `curl` salvo), nunca do documento de contrato — senão o teste
+confirma a leitura de quem escreveu o documento, e a primeira execução real é
+que vira o teste. Quando não dá para capturar (sem credencial, sem acesso),
+isso é um bloqueio a declarar, não uma suposição a seguir.
+
+### Toda falha virando "offline" apaga o diagnóstico
+
+O mesmo mod classificava qualquer falha como indisponibilidade de rede. O 422
+de contrato acima chegou ao operador como "Contas indisponíveis: backend
+indisponível (offline)" — que mandou o diagnóstico para DNS e disponibilidade
+do host, quando o servidor estava no ar e tinha respondido em 105 ms.
+
+**Lesson:** "não consegui falar com o servidor" e "o servidor recusou o que eu
+mandei" são estados diferentes e levam a ações opostas; colapsar os dois numa
+palavra transfere para quem lê o custo de descobrir qual dos dois é. Separe ao
+menos rede / credencial / resposta-inesperada, e deixe a razão do servidor
+chegar à tela.

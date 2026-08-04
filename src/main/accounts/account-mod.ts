@@ -19,9 +19,16 @@ export type ListAccountsResult =
   | { readonly kind: 'ok'; readonly accounts: readonly import('../../shared/accounts').AccountSummary[] }
   | { readonly kind: 'unavailable'; readonly reason: 'offline' | 'unauthorized' | 'io' };
 
+/**
+ * `io` = o servidor respondeu, mas a resposta não deu para usar (formato
+ * inesperado, corpo ilegível). É a mesma palavra que `ListAccountsResult` e
+ * `SwitchOutcome` já usam para isso — antes o switch não tinha essa opção e
+ * caía em `offline`, dizendo "sem rede" sobre um servidor que tinha acabado de
+ * responder.
+ */
 export type SwitchToResult =
   | { readonly kind: 'ok'; readonly pair: CredentialPair }
-  | { readonly kind: 'failed'; readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'unknown-account' };
+  | { readonly kind: 'failed'; readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'unknown-account' | 'io' };
 
 /**
  * A interface é EXTRAÍDA dos dois mods concretos (Seazone e local), nunca
