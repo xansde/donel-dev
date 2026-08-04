@@ -389,6 +389,23 @@ export function phaseLines(card: CardView): readonly PhaseLineView[] {
   });
 }
 
+/**
+ * O que dizer depois de varrer o outbox.
+ *
+ * A versão anterior olhava só os arquivos RECUSADOS: varredura que ingeriu um
+ * fato novo e não recusou nada dizia "Nada novo no outbox" — a tela negando o
+ * que acabara de ler. `through_seq` é até onde o log foi reduzido; se ele
+ * avançou, entrou fato. Comparar os dois snapshots é o que o renderer já tem em
+ * mãos, sem inventar campo novo no DTO.
+ */
+export function scanOutcomeMessage(throughSeqBefore: number | null, rejected: number, throughSeqAfter: number): string {
+  const entrou = throughSeqBefore !== null && throughSeqAfter > throughSeqBefore;
+  if (rejected > 0) {
+    return `${rejected} arquivo(s) fora do contrato — os cards mostram o motivo.${entrou ? ' O que estava dentro do contrato entrou.' : ''}`;
+  }
+  return entrou ? 'Entrou fato novo do outbox. Os cards já mostram o que a skill declarou.' : 'Nada novo no outbox.';
+}
+
 /** Um erro de ingestão, em português, sem esconder o caminho do arquivo. */
 export function ingestErrorLine(error: IngestErrorSnapshot): string {
   const first = error.issues[0];

@@ -21,6 +21,7 @@ import {
   MACRO_STAGE_OPTIONS,
   noteTargetOptions,
   parseNoteTarget,
+  scanOutcomeMessage,
   stageView,
   WORK_ITEM_STATE_LABEL,
 } from '../src/renderer/src/Esteira/esteiraView';
@@ -231,6 +232,28 @@ describe('depois do descarte, a tela nao finge que o item nunca existiu', () => 
 describe('a regra dos itens e dita uma vez, onde ela se aplica', () => {
   it('e ela nomeia o retrocesso', () => {
     expect(ITEM_STATE_RULE).toContain('retroced');
+  });
+});
+
+describe('a varredura do outbox nao nega o que acabou de ler', () => {
+  it('varredura que ingeriu fato novo NAO diz "nada novo"', () => {
+    const message = scanOutcomeMessage(3, 0, 9);
+    expect(message).not.toContain('Nada novo');
+    expect(message).toContain('Entrou fato novo');
+  });
+
+  it('varredura sem novidade diz que nao houve novidade', () => {
+    expect(scanOutcomeMessage(9, 0, 9)).toBe('Nada novo no outbox.');
+  });
+
+  it('arquivo recusado aparece — e nao esconde o que entrou junto', () => {
+    const message = scanOutcomeMessage(3, 2, 9);
+    expect(message).toContain('2 arquivo(s) fora do contrato');
+    expect(message).toContain('entrou');
+  });
+
+  it('primeira varredura, sem estado anterior, nao afirma que entrou o que ela nao viu chegar', () => {
+    expect(scanOutcomeMessage(null, 0, 9)).toBe('Nada novo no outbox.');
   });
 });
 

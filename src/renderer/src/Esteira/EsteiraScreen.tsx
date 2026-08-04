@@ -17,6 +17,7 @@ import {
   noteTargetOptions,
   parseNoteTarget,
   phaseLines,
+  scanOutcomeMessage,
   STORE_COMPATIBILITY_WARNING,
   type SignalTone,
 } from './esteiraView';
@@ -196,14 +197,11 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
   );
 
   const handleScan = useCallback(async () => {
+    const before = state?.snapshot.through_seq ?? null;
     const scanned = await window.donel.esteira.scanOutbox();
     setState(scanned);
-    setMessage(
-      scanned.rejectedOnLastScan > 0
-        ? `${scanned.rejectedOnLastScan} arquivo(s) fora do contrato — os cards mostram o motivo.`
-        : 'Nada novo no outbox.',
-    );
-  }, []);
+    setMessage(scanOutcomeMessage(before, scanned.rejectedOnLastScan, scanned.snapshot.through_seq));
+  }, [state]);
 
   return (
     <section className={styles.screen} aria-label="Esteira">
