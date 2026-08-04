@@ -52,14 +52,26 @@ export function importProfileCredentials(profile: ProfileToImport, deps: Credent
   return { kind: 'imported', accountId, label: profile.displayName };
 }
 
-function isCredentialPairShape(value: unknown): value is CredentialPair {
-  if (typeof value !== 'object' || value === null) return false;
-  const candidate = value as Partial<CredentialPair>;
-  return (
-    typeof candidate.accessToken === 'string' &&
-    typeof candidate.refreshToken === 'string' &&
-    typeof candidate.expiresAt === 'number'
-  );
+/**
+ * Formato REAL de `.credentials.json` do CLI (mesmo que `claude-state.ts`
+ * `extractPair` já lê): o par vive dentro do bloco `claudeAiOauth`, não solto
+ * na raiz do arquivo — outras chaves top-level (`unrelatedField` etc.) podem
+ * existir e são ignoradas aqui de propósito.
+ */
+function extractPairFromCredentialsJson(value: unknown): CredentialPair | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const oauth = (value as { claudeAiOauth?: unknown }).claudeAiOauth;
+  if (typeof oauth !== 'object' || oauth === null) return null;
+  const candidate = oauth as Partial<CredentialPair>;
+  if (typeof candidate.accessToken !== 'string' || typeof candidate.refreshToken !== 'string' || typeof candidate.expiresAt !== 'number') {
+    return null;
+  }
+  return {
+    accessToken: candidate.accessToken,
+    refreshToken: candidate.refreshToken,
+    expiresAt: candidate.expiresAt,
+    scopes: Array.isArray(candidate.scopes) ? candidate.scopes.filter((s): s is string => typeof s === 'string') : [],
+  };
 }
 
 /** Deps reais (filesystem da máquina + cofre real) — só o main process usa. Nunca loga o conteúdo lido. */
@@ -71,16 +83,9 @@ export function createSystemCredentialsImportDeps(vault: VaultLike, isVaultAvail
       if (!existsSync(path)) return { kind: 'absent' };
       try {
         const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
-        if (!isCredentialPairShape(parsed)) return { kind: 'invalid-format' };
-        return {
-          kind: 'ok',
-          pair: {
-            accessToken: parsed.accessToken,
-            refreshToken: parsed.refreshToken,
-            expiresAt: parsed.expiresAt,
-            scopes: Array.isArray(parsed.scopes) ? parsed.scopes.filter((s): s is string => typeof s === 'string') : [],
-          },
-        };
+        const pair = extractPairFromCredentialsJson(parsed);
+        if (!pair) return { kind: 'invalid-format' };
+        return { kind: 'ok', pair };
       } catch {
         return { kind: 'invalid-format' };
       }

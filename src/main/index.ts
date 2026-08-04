@@ -1615,10 +1615,27 @@ function registerAccountsIpcHandlers(): void {
   });
 }
 
+/**
+ * Reaproveita o MESMO seam de teste que `accounts.claudeHome` já abre para o
+ * switch (`applyAccountsClaudeStateSwitch`): quando o override está setado
+ * (`<homeFalso>/.claude`), a migração inteira passa a operar sob
+ * `dirname(override)` em vez do `homedir()` real — é o que permite ao smoke
+ * `migration-nunca-deleta.spec.ts` injetar uma árvore falsa em `mkdtemp` sem
+ * tocar `~/.claude-profiles`/`~/.claude` reais (regra dura desta etapa).
+ */
+function migrationHomedir(): string {
+  const override = appConfig.accounts.claudeHome;
+  return override ? dirname(override) : homedir();
+}
+
+function migrationPathDeps(): { homedir: () => string } {
+  return { homedir: migrationHomedir };
+}
+
 /** Monta o `MigrationPlan` corrente lendo o inventário + diffs de MCP do disco, cruzado com `appConfig.migration` (estado persistido). Somente leitura. */
 function currentMigrationPlan(): MigrationPlan {
-  const inventory = readProfileInventory(createSystemProfileInventoryDeps(homedir));
-  const diffs = inventory.map((profile) => computeMcpDiffFromDisk(profile.slug, profile.path, globalClaudeJsonPath(profilePathDeps)));
+  const inventory = readProfileInventory(createSystemProfileInventoryDeps(migrationHomedir));
+  const diffs = inventory.map((profile) => computeMcpDiffFromDisk(profile.slug, profile.path, globalClaudeJsonPath(migrationPathDeps())));
   return buildMigrationPlan(inventory, appConfig.migration, diffs);
 }
 
@@ -1635,7 +1652,7 @@ function registerMigrationIpcHandlers(): void {
   ipcMain.handle(MIGRATION_CHANNELS.importCredentials, (_event, profileSlug: unknown): ImportResult => {
     if (typeof profileSlug !== 'string' || !profileSlug) return { kind: 'absent' };
 
-    const inventory = readProfileInventory(createSystemProfileInventoryDeps(homedir));
+    const inventory = readProfileInventory(createSystemProfileInventoryDeps(migrationHomedir));
     const profile = inventory.find((p) => p.slug === profileSlug);
     if (!profile) return { kind: 'absent' };
 
@@ -1687,11 +1704,11 @@ function registerMigrationIpcHandlers(): void {
   ipcMain.handle(MIGRATION_CHANNELS.consolidateTranscripts, (_event, profileSlug: unknown): ConsolidateResult => {
     if (typeof profileSlug !== 'string' || !profileSlug) return { result: 'nothing-to-copy', copied: 0 };
 
-    const inventory = readProfileInventory(createSystemProfileInventoryDeps(homedir));
+    const inventory = readProfileInventory(createSystemProfileInventoryDeps(migrationHomedir));
     const profile = inventory.find((p) => p.slug === profileSlug);
     if (!profile) return { result: 'nothing-to-copy', copied: 0 };
 
-    const claudeHome = claudeHomeDir(profilePathDeps);
+    const claudeHome = claudeHomeDir(migrationPathDeps());
     const input = readTranscriptConsolidationInput(join(profile.path, 'projects'), join(claudeHome, 'projects'));
     const outcome = planTranscriptConsolidation(input);
     const copied = outcome.kind === 'copy' ? executeTranscriptCopyOperations(outcome.operations) : 0;
@@ -1736,9 +1753,9 @@ function registerMigrationIpcHandlers(): void {
     const plan = currentMigrationPlan();
     if (!plan.canArchive) return { kind: 'nothing-to-archive' };
 
-    const inventory = readProfileInventory(createSystemProfileInventoryDeps(homedir));
+    const inventory = readProfileInventory(createSystemProfileInventoryDeps(migrationHomedir));
     const outcome = archiveProfiles(
-      { ...createSystemArchiveIoDeps(), paths: { homedir: homedir() }, profileSlugs: inventory.map((p) => p.slug) },
+      { ...createSystemArchiveIoDeps(), paths: { homedir: migrationHomedir() }, profileSlugs: inventory.map((p) => p.slug) },
       new Date(),
     );
 

@@ -163,7 +163,7 @@ T1228, T1229, T1230, T1231).
   **DoD**: `donel.d.ts` atualizado; typecheck verde; nenhum canal devolve
   conteúdo de arquivo de perfil.
 
-- [ ] **T1215** UI do assistente: `src/renderer/src/MigrationWizard.tsx`
+- [x] **T1215** UI do assistente: `src/renderer/src/MigrationWizard.tsx`
   (+ `.module.css`), acessível pelo `AccountsPanel` da etapa 1. Uma linha por
   perfil, com estado e **botão de importar individual** (OK humano perfil a
   perfil); bloco read-only com o diff de MCP (nomes) e a marcação "revisado";
@@ -172,14 +172,14 @@ T1228, T1229, T1230, T1231).
   **DoD**: renderiza com inventário vazio sem quebrar; smokes do T1216/T1217
   cobrem o caminho feliz e a proteção.
 
-- [ ] **T1216** Smoke: `tests/smoke/migration-wizard.spec.ts` — árvore de perfis
+- [x] **T1216** Smoke: `tests/smoke/migration-wizard.spec.ts` — árvore de perfis
   falsa em `mkdtemp`, isolada do `homedir()` e do `%APPDATA%` reais: inventário
   aparece, importar **um** perfil deixa os outros pendentes, reabrir o
   assistente mostra o estado persistido, arquivar fica bloqueado enquanto houver
   pendente.
   **DoD**: smoke verde.
 
-- [ ] **T1217** [P] Smoke: `tests/smoke/migration-nunca-deleta.spec.ts` — após a
+- [x] **T1217** [P] Smoke: `tests/smoke/migration-nunca-deleta.spec.ts` — após a
   virada completa na árvore falsa: o diretório original existe sob `.old`, as
   junctions foram desfeitas, e o **alvo** (`<home falso>/.claude/projects`)
   continua com todos os arquivos. É a asserção que protege contra o pior caso
