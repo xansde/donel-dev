@@ -770,6 +770,40 @@ Clarify futuro: é só indicador (qual conta está ativa) ou também switcher
 (trocar sem sair do app)? Por repo (cada projeto pode ter conta diferente,
 via `includeIf` do git) ou global? Onde na UI (status bar, preferências)?
 
+### B25. Priorizar contas específicas no pool Seazone (novo — dogfooding 04/08)
+
+Pedido do Alexandre durante a validação da etapa 1 da 011, com o pool real na
+tela: *"gostaria que esse mod-seazone eu pudesse priorizar algumas contas
+específicas"*. Contexto que dá peso ao pedido: o pool do switcher tem **61
+contas de toda a empresa** — o auto-switch, como está, pode mover o Alexandre
+para a conta de um colega de outro squad sem ele pedir.
+
+**Decisão fechada em 04/08 (a restrição vale para o automático, não para o
+manual):** o auto-switch considera **apenas** as contas preferidas — allowlist
+dura no que o app faz sozinho; se nenhuma preferida tiver folga, ele não troca.
+A lista do painel continua mostrando as 61, e um clique deliberado em qualquer
+uma segue funcionando. Assim o app nunca escolhe uma conta alheia por conta
+própria, e a saída manual não se perde num momento de aperto.
+
+Forma técnica (levantada, não implementada): `selectSwitchTarget`
+(`src/main/accounts/auto-switch.ts`) já é função pura que filtra candidatas —
+priorizar é mais um filtro ali, antes do power-of-two-choices. A config ganha
+uma lista em `accounts` e o painel, um gesto para marcar/desmarcar. Como o
+identificador da conta **é o label** (o e-mail, ver
+`contracts/backends-http.md` corrigido em 04/08), a lista de preferidas é uma
+lista de e-mails — legível direto no `config.json`.
+
+Quando: **fora da etapa 1**, que está fechada e em Validar (risco sensível,
+esperando PR + 2 aprovações) — mexer naquela branch reabriria um diff já
+revisado. Entra como spec própria ou como emenda à etapa 2, depois que o PR da
+etapa 1 fechar.
+
+Clarify futuro: preferidas são uma lista simples ou têm ordem entre si? O que
+a UI mostra quando o auto-switch não troca por nenhuma preferida ter folga —
+silêncio, ou uma linha dizendo por quê? (Vale lembrar que hoje o painel já
+descarta `available`/`unavailableReason` que a API manda — achado do mesmo dia,
+mesmo lugar da tela.)
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo

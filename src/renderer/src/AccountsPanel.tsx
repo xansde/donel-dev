@@ -76,7 +76,7 @@ export function AccountsPanel(): React.JSX.Element {
    * padrão do erro conhecido #7 desta casa ("veredito que sobrevive ao texto
    * que o motivou").
    */
-  const editarForm = (patch: (prev: ConnectFormState) => ConnectFormState): void => {
+  const editForm = (patch: (prev: ConnectFormState) => ConnectFormState): void => {
     setConnectForm(patch);
     setConnectError(null);
   };
@@ -158,7 +158,7 @@ export function AccountsPanel(): React.JSX.Element {
               <Select
                 label="Provedor"
                 value={connectForm.mod}
-                onChange={(value) => editarForm((prev) => ({ ...prev, mod: value as ModId }))}
+                onChange={(value) => editForm((prev) => ({ ...prev, mod: value as ModId }))}
                 options={[
                   { value: 'seazone', label: 'Pool Seazone' },
                   { value: 'local', label: 'Pool próprio' },
@@ -169,7 +169,7 @@ export function AccountsPanel(): React.JSX.Element {
                   <TextInput
                     label="Endereço do switcher"
                     value={connectForm.baseUrl}
-                    onChange={(event) => editarForm((prev) => ({ ...prev, baseUrl: event.target.value }))}
+                    onChange={(event) => editForm((prev) => ({ ...prev, baseUrl: event.target.value }))}
                     // A URL real do switcher (`DEFAULT_API_URL` do cliente
                     // oficial). O placeholder anterior, "switcher.seazone.dev",
                     // parecia legítimo e não existe — placeholder com cara de
@@ -180,7 +180,7 @@ export function AccountsPanel(): React.JSX.Element {
                     label="Token de sessão"
                     type="password"
                     value={connectForm.sessionRefreshToken}
-                    onChange={(event) => editarForm((prev) => ({ ...prev, sessionRefreshToken: event.target.value }))}
+                    onChange={(event) => editForm((prev) => ({ ...prev, sessionRefreshToken: event.target.value }))}
                   />
                 </>
               ) : (
@@ -188,20 +188,20 @@ export function AccountsPanel(): React.JSX.Element {
                   <TextInput
                     label="Rótulo da conta"
                     value={connectForm.label}
-                    onChange={(event) => editarForm((prev) => ({ ...prev, label: event.target.value }))}
+                    onChange={(event) => editForm((prev) => ({ ...prev, label: event.target.value }))}
                     placeholder="ex.: Conta B"
                   />
                   <TextInput
                     label="Access token"
                     type="password"
                     value={connectForm.accessToken}
-                    onChange={(event) => editarForm((prev) => ({ ...prev, accessToken: event.target.value }))}
+                    onChange={(event) => editForm((prev) => ({ ...prev, accessToken: event.target.value }))}
                   />
                   <TextInput
                     label="Refresh token"
                     type="password"
                     value={connectForm.refreshToken}
-                    onChange={(event) => editarForm((prev) => ({ ...prev, refreshToken: event.target.value }))}
+                    onChange={(event) => editForm((prev) => ({ ...prev, refreshToken: event.target.value }))}
                   />
                 </>
               )}

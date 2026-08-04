@@ -10,16 +10,18 @@ import { abrirDonel, fecharDonel, REPO_ROOT, type RoteiroContexto } from '../lib
 // do caminho real. O que este roteiro NÃO prova: a chamada de rede de verdade e
 // o formato do payload real — isso é a bateria manual do `e2e.md` (seções 2 e 5).
 //
-// ISOLAMENTO — a razão de o HOME ser trocado aqui:
-// `applyAccountsClaudeStateSwitch` (main/index.ts) monta o alvo das escritas
-// assim: `claudeHome = accounts.claudeHome ?? claudeHomeDir(profilePathDeps)`,
-// mas o segundo arquivo, `claudeJsonPath: globalClaudeJsonPath(profilePathDeps)`,
-// é resolvido SEMPRE por `homedir()` — o override `accounts.claudeHome` não o
-// alcança. Ou seja: um switch com o HOME real apaga o bloco `oauthAccount` do
-// `~/.claude.json` DA MÁQUINA, derrubando o login do CLI de quem roda o teste.
-// Trocar `USERPROFILE`/`HOME` no processo do app é o único jeito de mover os
-// dois arquivos de uma vez. O smoke `accounts-switch.spec.ts` isola só o
-// primeiro — ver o registro de iterações.
+// ISOLAMENTO — por que o HOME inteiro é trocado aqui, e não só o `claudeHome`:
+// o switch escreve em DOIS arquivos irmãos (`<claudeHome>/.credentials.json` e
+// `~/.claude.json`), então o teste só está isolado de verdade quando os dois
+// caem na árvore temporária. Trocar `USERPROFILE`/`HOME` no processo do app
+// move os dois de uma vez, independente de como o main os resolve.
+//
+// Isto não é zelo abstrato: quando este roteiro foi escrito, o override
+// `accounts.claudeHome` alcançava só o primeiro arquivo — o segundo saía
+// sempre de `homedir()` —, e os smokes da etapa 1, que isolavam apenas o
+// `claudeHome`, apagaram o bloco `oauthAccount` do `~/.claude.json` REAL da
+// máquina, derrubando o login do CLI. Corrigido em `5571b73`; a troca de HOME
+// continua aqui porque ela protege mesmo que a resolução mude de novo.
 
 const FIXTURE_PATH = path.join(REPO_ROOT, 'tests/fixtures/accounts-fake-mod.json');
 
