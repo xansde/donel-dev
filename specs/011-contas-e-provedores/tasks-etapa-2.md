@@ -225,27 +225,32 @@ T1228, T1229, T1230, T1231).
   **DoD**: typecheck verde; `grep -r "quota-axi" src/ tests/` sem hits em código
   executável.
 
-- [ ] **T1224** Remover a cópia de transcript entre perfis (C31/A9): apagar
-  `src/main/transcript-copy.ts` (87 L) e `src/shared/transcriptCopy.ts`, e
-  reescrever o fluxo de reinício em `App.tsx` (:1781–1782, :1812–1875, :2065) —
-  **o gesto permanece** (trocar a conta ativa e retomar), a cópia some. Os textos
-  do diálogo (:2954–2958) deixam de prometer "a sessão passa a existir nas duas
-  contas".
-  **DoD**: typecheck verde; `tests/smoke/restart-session.spec.ts` e
-  `restart-session-devmode.spec.ts` ajustados e verdes; nenhum texto de UI
-  afirmando comportamento que não acontece mais.
+- [ ] **T1224** Remover o fluxo "Reiniciar sessão em foco" **inteiro**
+  (C31/A9 — decisão do dono, 2026-08-04): apagar `src/main/transcript-copy.ts`
+  (87 L) e `src/shared/transcriptCopy.ts`; em `App.tsx`, remover o botão
+  "⟳ Reiniciar" (:2717), o diálogo (:2940–2962), `handleOpenRestart`,
+  `confirmRestart`, `restartTarget`, `lastRestartSession` e o `<pre>` de
+  smoke `restart-last-session` (:2888–2890). O equivalente do gesto é trocar
+  a conta ativa no motor + retomar por "Sessões anteriores" — nada novo a
+  construir. O CA-24 da 009 fica **superseded** (marcação no registro da 009,
+  mesma regra da C32 — nunca deleção).
+  **DoD**: typecheck verde; `grep -ri "restart" src/` sem hits do fluxo morto;
+  nenhum texto de UI referenciando reinício de sessão.
 
 - [ ] **T1225** Remover `src/renderer/src/ProfileSwitcher.tsx` (619 L) e seu
   `.module.css`. **Antes de apagar**, conferir o componente de badge citado em
   `ProjectSwitcher.tsx:22` — se for compartilhado, ele **fica** (achado A15).
   **DoD**: app abre; `ProjectSwitcher` intacto e verde.
 
-- [ ] **T1226** **Morte declarada das suítes** — remover nominalmente as **7**
-  (C34/A8): `tests/profile-manager.test.ts` (726 L),
+- [ ] **T1226** **Morte declarada das suítes** — remover nominalmente as **9**
+  (C34/A8 + decisão C31): `tests/profile-manager.test.ts` (726 L),
   `tests/quota-headroom.test.ts` (495 L), `tests/transcript-copy.test.ts`
   (102 L), `tests/transcriptCopy.test.ts` (67 L),
   `tests/smoke/profiles.spec.ts` (360 L), `tests/smoke/profile-quota.spec.ts`
-  (170 L), `tests/smoke/profile-switcher-focus.spec.ts` (77 L).
+  (170 L), `tests/smoke/profile-switcher-focus.spec.ts` (77 L),
+  `tests/smoke/restart-session.spec.ts` e
+  `tests/smoke/restart-session-devmode.spec.ts` (fluxo de reinício morre
+  inteiro, T1224).
   **O que prova que nada quebrou** (critério explícito, não opinião): (a)
   `npm test` **inteiro verde sem elas**, com a contagem de suítes antes/depois
   colada no card; (b) `npm run typecheck` verde; (c) `git diff --stat` mostrando
@@ -262,7 +267,7 @@ T1228, T1229, T1230, T1231).
   `tests/claude-executable.test.ts`, `tests/sessionOrdering.test.ts` e os smokes
   que só esperam o badge de conta aparecer (`terminal`, `session-context`,
   `session-rename*`, `previous-sessions`, `dev-mode-*`, `config-persistence`,
-  `empty-state`, `ca7-measurement`, `model-injection`, `restart-session*`).
+  `empty-state`, `ca7-measurement`, `model-injection`).
   Criar `tests/smoke/accounts-panel-substitui-perfis.spec.ts`: não existe mais
   dropdown de perfis; a tela de contas ocupa o lugar, com uma unidade só.
   **DoD**: suíte inteira verde; nenhuma dessas suítes removida.

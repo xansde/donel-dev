@@ -287,17 +287,19 @@ bloco da etapa 3** (C13–C22), commitado em paralelo pelo run
 - **C30** — Config legada (`activeProfileSlug`, `archivedPhaseSessions[].profileSlug`)
   deixa de ser escrita mas continua **tolerada na leitura** — os canais
   alfa/beta/stable compartilham `userData`.
-- **C31** — "Reiniciar sessão em outra conta" (CA-24 da 009) perde a cópia de
-  transcript e mantém o gesto (trocar conta + retomar); os textos do diálogo
-  mudam junto.
+- **C31** — "Reiniciar sessão em foco" (CA-24 da 009) **morre inteiro**
+  (decisão do dono, 2026-08-04): botão, diálogo e cópia de transcript saem;
+  o equivalente passa a ser trocar a conta ativa no motor + retomar por
+  Sessões anteriores.
 - **C32** — Superseded é **marcação** (bloco de cabeçalho), nunca deleção — vale
   para a spec 002 inteira e para os artefatos históricos da 001.
 - **C33** — `CLAUDE_CONFIG_DIR` **não morre como mecanismo**: morre como meio de
   trocar de conta. `claudeConfigDir`/`buildPtyEnv` do `pty-manager` ficam
   intactos e passam a ser alimentados pelo provider da classe A na etapa 3.
-- **C34** — A conta honesta das suítes: são **7** que morrem (as 4 nomeadas
-  + `quota-headroom.test.ts`, `transcript-copy.test.ts`, `transcriptCopy.test.ts`),
-  todas porque seus módulos morrem. As demais são **ajustadas**, nunca removidas.
+- **C34** — A conta honesta das suítes: são **9** que morrem (as 4 nomeadas
+  + `quota-headroom.test.ts`, `transcript-copy.test.ts`, `transcriptCopy.test.ts`,
+  todas porque seus módulos morrem, + os 2 smokes de restart pela decisão da
+  C31). As demais são **ajustadas**, nunca removidas.
 
 ## Pendências
 

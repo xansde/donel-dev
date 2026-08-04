@@ -195,15 +195,19 @@ canais alfa/beta/stable compartilham `userData`, e um canal antigo aberto depois
 não pode ter seu estado destruído por um sanitize novo (é o risco "sanitize com
 passthrough" já registrado).
 
-**C31 — "Reiniciar sessão em outra conta" perde a cópia, mantém o gesto.**
-A cópia de transcript entre perfis (CA-24 da 009) só existia porque cada perfil
-tinha `projects` próprio — e na prática já era no-op (§3.1). Com config única, a
-sessão vive num lugar só: o gesto vira **trocar a conta ativa e retomar**, sem
-cópia, sem "a sessão passa a existir nas duas contas". Os textos do diálogo
-(`App.tsx:2954–2958`) mudam junto. Isto **remove** comportamento de uma entrega
-já feita — está registrado como achado do analyze (A9) e merece o olho do
-Alexandre na revisão, mas não amplia escopo: o ticket 01 já classificou
-`transcript-copy.ts` como "morre inteiro".
+**C31 — "Reiniciar sessão em foco" morre inteiro (decisão do dono,
+2026-08-04, revisão da fase Plano).** A resolução original do analyze (A9) era
+conservadora: manter o gesto e matar só a cópia de transcript. O Alexandre
+decidiu na revisão que **o botão sai também**: com credencial única e global,
+"reiniciar em outra conta" vira apenas "trocar a conta ativa no motor +
+retomar por Sessões anteriores" — um botão dedicado é redundância que só
+existia por causa dos perfis. Morrem: o botão "⟳ Reiniciar"
+(`App.tsx:2717`), o diálogo (`App.tsx:2940–2962`), `handleOpenRestart`/
+`confirmRestart`/`restartTarget`/`lastRestartSession`, `transcript-copy.ts` e
+`transcriptCopy.ts`, e os smokes `restart-session.spec.ts` e
+`restart-session-devmode.spec.ts` (contados na C34). Isto **remove o CA-24 da
+009** — comportamento de entrega já feita — com decisão humana registrada; o
+registro da 009 fica intacto (superseded é marcação, C32).
 
 **C32 — Superseded é marcação, nunca deleção.** `specs/002-quota-headroom/*` e
 os artefatos históricos da 001 (`spike-t001-resultado.md`,
@@ -223,8 +227,10 @@ ticket 05). Nenhuma task desta etapa pode remover esse parâmetro nem seu teste 
 `quota-headroom.test.ts` (495 L), `transcript-copy.test.ts` (102 L) e
 `transcriptCopy.test.ts` (67 L) — todas morrem **porque seus módulos morrem**,
 consequência direta de "dropdown vira UI do motor" e de `transcript-copy` estar
-na lista "morre inteiro" do ticket 01. São **7 suítes**, não 4. Nenhuma outra é
-removida: as tocadas de raspão (§2.4) são **ajustadas**.
+na lista "morre inteiro" do ticket 01. Com a decisão da C31 (o fluxo de
+reinício morre inteiro), somam-se `tests/smoke/restart-session.spec.ts` e
+`tests/smoke/restart-session-devmode.spec.ts`. São **9 suítes**, não 4.
+Nenhuma outra é removida: as tocadas de raspão (§2.4) são **ajustadas**.
 
 ## 5. Alternativas consideradas e rejeitadas nesta fase
 
