@@ -49,6 +49,8 @@ tela nova ganhou e o mapa não tem.
 | M-24 | **Arquivamento automático da sessão** ao aparecer o manifesto (`devMode:watchPhase`) | `App.tsx` + `esteira-result-watcher` | **coberta por outro batch (B1)** | o ciclo equivalente existe: o disparo abre a aba, `session.claimed` marca o dono e fechar a aba encerra a sessão e solta a trava |
 | M-25 | **Breadcrumb** no header da sessão (discovery › plano › fase) | `App.tsx` + `phaseDetailsView.breadcrumb` | **coberta** | volta com os nós novos: discovery › plano/item › fase |
 | M-26 | **Empty state** do mapa ("nasce em `outputs.plan_cards`") | `DiscoveryMap.tsx` | **coberta**, com a frase certa | a frase citava um campo do manifesto 2.x. A nova diz o que é verdade: o histórico nasce limpo e o primeiro plano nasce da skill |
+| M-27 | **Hook de teste `devmode-last-session`** (o argv da última sessão aberta pelo mapa) | `App.tsx` | **perda consciente** | ele existia porque o argv da fase saía de uma tabela de defaults por fase (`phaseDefaults`), e o smoke não tinha como inspecioná-lo. A fase nova abre **sem** `--model`/`--effort` (`[P-4]`: não há tabela a inventar), então não há argv a espiar |
+| M-28 | **Navegação por teclado/roda no eixo vertical** | `DiscoveryMap.tsx` + `moveLevelFocus` | **coberta** | mesma função pura, agora sobre os níveis novos; é o achado F1 do e2e de 30/07, preservado |
 
 ## 2. O que a tela da fase 1 ganhou (e o mapa não tem)
 
@@ -99,12 +101,38 @@ a abre ("Painel do store"), para ninguém a confundir com o mapa.
 | `src/shared/phaseDetailsView.ts` | **removido** — view-model do painel sobre `PhaseNode` (M-09..M-12) |
 | `src/renderer/src/DevMode/DevModeEntry.tsx` | **removido** (M-21) |
 | `src/renderer/src/DevMode/devModeSelection.ts` | **removido** — todas as suas funções serviam à porta de entrada e à árvore (M-21/M-22/M-23) |
-| `src/renderer/src/DevMode/openPhaseSession.ts` | **reduzido** ao `createPrimeSequencer` (o "um comando, um Enter" que o B1 reusa). `decidePhaseOpen`, `resolveCommandSequence` e `buildConciliationPrompt` saem com o modelo antigo |
-| `src/shared/mapLevels.ts` | **reduzido** ao que o carrossel novo usa (`moveLevelFocus`, `buildTrilha`, `needsCarousel`, `resolveCardDisplayTitle`); o resto sai com M-08/M-13/M-15 |
+| `src/renderer/src/DevMode/openPhaseSession.ts` | **virou `primeSequencer.ts`**, só com o `createPrimeSequencer` (o "um comando, um Enter" que o B1 reusa). `decidePhaseOpen`, `resolveCommandSequence` e `buildConciliationPrompt` saem com o modelo antigo. O nome mudou porque o arquivo deixou de decidir a abertura de sessão |
+| `src/shared/mapLevels.ts` | **reduzido ao `moveLevelFocus`** — a aritmética do eixo vertical, a única coisa que o carrossel novo ainda usa daqui. `canonicalLevelKeys`, `buildTrilha`/`buildFullTrilha`, `buildPlanCardTags`, o relógio e o tom do card saem com M-05/M-08/M-13/M-15 |
+| `src/shared/phaseState.ts` | **removido** — `derivePhaseStatus` derivava o estado de fase a partir do `ctx.md`/manifesto em disco. O estado de fase agora nasce de `phaseTrailState` (`esteiraView.ts`), sobre os fatos do store |
 | `src/main/index.ts` → `devMode:readTree` | **removido** (não há mais árvore para ler) |
-| `tests/discovery-tree.test.ts`, `tests/esteira-reader.test.ts`, `tests/boardAnnotation.test.ts`, `tests/phaseDetailsView.test.ts`, `tests/devModeSelection.test.ts` | **removidos com o código que testam** |
+| `tests/discovery-tree.test.ts`, `tests/esteira-reader.test.ts`, `tests/boardAnnotation.test.ts`, `tests/phaseDetailsView.test.ts`, `tests/devModeSelection.test.ts`, `tests/phaseState.test.ts` | **removidos com o código que testam** |
+| `tests/smoke/dev-mode-conducao-mapa.spec.ts`, `dev-mode-espelho.spec.ts`, `dev-mode-measurement.spec.ts`, `restart-session-devmode.spec.ts` | **removidos** — os quatro dirigem a porta de entrada e o mapa antigo de ponta a ponta (um deles mede o tempo de `readTree`). Smoke que não tem como passar não é rede de segurança, é ruído. O que cobre o fluxo novo são os roteiros da skill `tutorial-e2e`, com print por passo |
+
+**Uma mudança de comportamento que atravessa as duas telas** (nomeada aqui
+porque não é remoção): `dispatchView` passou a **recusar disparo sobre item
+fechado**, com a razão escrita. Vem de M-05/D-4 — item fechado não tem próxima
+fase, e era oferecer uma que fazia um `spike` respondido parecer trabalho pela
+metade. Como a regra mora na camada pura, o painel do store herda a recusa: as
+duas telas concordam por construção, não por coincidência.
 
 Fica de pé, sem uso pelo mapa: `taskdex-board-client.ts`, `github-reader.ts`,
-`cardRepoResolver.ts` e os handlers `devMode:*` que os servem. Não são do mapa —
-o adapter do board (B5) e o que vier de tracker vão precisar deles, e removê-los
-aqui seria escopo de outro batch.
+`cardRepoResolver.ts`, `esteira-result-watcher.ts` e os handlers `devMode:*` que
+os servem. Não são do mapa — o adapter do board (B5) e o que vier de tracker vão
+precisar deles, e removê-los aqui seria escopo de outro batch. **Ficam nomeados
+como código sem consumidor**, para o próximo batch decidir: o
+`esteira-result-watcher` vigia a raiz da 2.x (`~/.claude/esteira-state`), que
+a 3.0 não escreve, e o `devMode:watchPhase` que o servia perdeu o chamador aqui.
+
+## 5. O que este batch acrescentou à camada pura
+
+Não é remoção, mas entra no inventário porque muda o que a tela pode dizer:
+
+| Novo | Onde | Por quê |
+|---|---|---|
+| `phaseTrailState` + `PHASE_STATE_WORD` | `esteiraView.ts` | o mapa precisa do mesmo fato em outra forma (glifo, tom, "tem próxima fase?"). Derivar isso do TEXTO seria a cópia de regra que fez a palavra errada reaparecer três vezes |
+| `verificationLines` | `esteiraView.ts` | M-10 — as quatro formas de conferir (D-4), com estado e referência |
+| `itemClosureLine` + `isItemClosed` | `esteiraView.ts` | M-05/D-4 — o que "terminar" significa em cada ciclo, com a resposta registrada junto |
+| `itemMeta` | `esteiraView.ts` | a linha do item sem o título, para o card do mapa não remontar a frase (erro conhecido nº 1) |
+| `CardView.verifications` / `.artifacts` | `esteiraView.ts` | os dois fatos que o snapshot tinha e nenhuma projeção expunha |
+| `preparePhase` | `Esteira/preparePhase.ts` | o gesto "Preparar" inteiro, num lugar só, para a trilha do mapa e o painel do store nunca divergirem |
+| `esteiraMapView.ts` | `DevMode/` | o adaptador `StoreSnapshot` → carrossel; é o coração deste batch |
