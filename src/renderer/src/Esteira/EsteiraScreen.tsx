@@ -10,6 +10,7 @@ import {
   MIRROR_PENDING_TITLE,
   mirrorLines,
   phaseLines,
+  scanMessage,
   STORE_COMPATIBILITY_WARNING,
   type SignalTone,
 } from './esteiraView';
@@ -128,11 +129,10 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
   const handleScan = useCallback(async () => {
     const scanned = await window.donel.esteira.scanOutbox();
     setState(scanned);
-    setMessage(
-      scanned.rejectedOnLastScan > 0
-        ? `${scanned.rejectedOnLastScan} arquivo(s) fora do contrato — os cards mostram o motivo.`
-        : 'Nada novo no outbox.',
-    );
+    // A frase nasce em `esteiraView`, com o resultado INTEIRO da varredura: a
+    // versão anterior olhava só o que fora recusado e, por isso, anunciava
+    // "nada novo" enquanto o card mudava de etapa embaixo dela.
+    setMessage(scanMessage(scanned));
   }, []);
 
   return (

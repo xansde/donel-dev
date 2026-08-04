@@ -79,6 +79,27 @@ describe('varredura do outbox', () => {
     expect(state.rejectedOnLastScan).toBe(0);
   });
 
+  // Achado do print 07 do roteiro `espelho-pendente`: a tela dizia "Nada novo
+  // no outbox." enquanto o card mudava de etapa embaixo da frase. A varredura
+  // sabia o que tinha ingerido; o DTO nao carregava.
+  it('a varredura conta o que INGERIU, nao so o que recusou', () => {
+    putResult('discovery-com-tracker');
+
+    const state = service.scanOutbox();
+
+    expect(state.ingestedOnLastScan).toBe(1);
+    expect(state.unreadableOnLastScan).toBe(0);
+  });
+
+  it('reler o mesmo arquivo nao conta como novidade — nada mudou', () => {
+    putResult('discovery-com-tracker');
+    service.scanOutbox();
+
+    const again = service.scanOutbox();
+
+    expect(again.ingestedOnLastScan).toBe(0);
+  });
+
   it('documento fora do contrato vira erro VISIVEL, e o card ganha o sinal', () => {
     writeFileSync(join(root, 'outbox', 'quebrado.json'), '{"kind":"esteira.result","contract_version":"1.0.0"}', 'utf8');
     putResult('discovery-com-tracker');

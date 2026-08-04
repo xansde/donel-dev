@@ -88,6 +88,8 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
   let debounceTimer: NodeJS.Timeout | undefined;
   let disposed = false;
   let rejectedOnLastScan = 0;
+  let ingestedOnLastScan = 0;
+  let unreadableOnLastScan = 0;
 
   function snapshotDto(): EsteiraSnapshotDto {
     return {
@@ -97,6 +99,8 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
       inboxDir: options.inboxDir,
       outboxDir: options.outboxDir,
       rejectedOnLastScan,
+      ingestedOnLastScan,
+      unreadableOnLastScan,
     };
   }
 
@@ -171,6 +175,10 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
     const before = store.events.length;
     const summary = ingestOutbox(store, options.outboxDir);
     rejectedOnLastScan = summary.rejected;
+    // `alreadyIngested` NAO entra: reler o mesmo arquivo nao e novidade
+    // nenhuma, e contar isso faria a tela anunciar mudanca que nao houve.
+    ingestedOnLastScan = summary.ingested;
+    unreadableOnLastScan = summary.unreadable;
     if (store.events.length !== before) {
       store.persistSnapshot();
       notify();

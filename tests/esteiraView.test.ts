@@ -7,6 +7,7 @@ import {
   mirrorLines,
   phaseLine,
   phaseLines,
+  scanMessage,
   signalViews,
   stageView,
 } from '../src/renderer/src/Esteira/esteiraView';
@@ -305,5 +306,47 @@ describe('espelho pendente — o card diz o que o board não recebeu (D-12)', ()
   it('o card avisa que o local NÃO depende do espelho', () => {
     expect(MIRROR_PENDING_HINT).toContain('local');
     expect(cardComFila('column', { column: 'Plano' }).signals.some((signal) => signal.label === 'espelho pendente')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A frase da varredura. Achada num print do roteiro `espelho-pendente`: a
+// barra dizia "Nada novo no outbox." no MESMO instante em que a fase virava
+// "concluída", a etapa ia para Planejado e um plano aparecia na tela. A frase
+// só sabia de arquivo RECUSADO; ingerido e ilegível não tinham palavra.
+// ---------------------------------------------------------------------------
+describe('o que a varredura do outbox diz ter acontecido', () => {
+  it('varredura sem nada novo diz isso, e só isso', () => {
+    expect(scanMessage({ ingestedOnLastScan: 0, rejectedOnLastScan: 0, unreadableOnLastScan: 0 })).toBe(
+      'Nada novo no outbox.',
+    );
+  });
+
+  it('resultado ingerido NAO pode ser anunciado como "nada novo" — o card acabou de mudar', () => {
+    const frase = scanMessage({ ingestedOnLastScan: 1, rejectedOnLastScan: 0, unreadableOnLastScan: 0 });
+
+    expect(frase).not.toContain('Nada novo');
+    expect(frase).toContain('1 resultado(s)');
+  });
+
+  it('arquivo fora do contrato continua tendo a frase que manda olhar o card', () => {
+    expect(scanMessage({ ingestedOnLastScan: 0, rejectedOnLastScan: 2, unreadableOnLastScan: 0 })).toContain(
+      '2 arquivo(s) fora do contrato',
+    );
+  });
+
+  it('"nao consegui ler" tem palavra propria — nunca vira ausencia silenciosa', () => {
+    const frase = scanMessage({ ingestedOnLastScan: 0, rejectedOnLastScan: 0, unreadableOnLastScan: 1 });
+
+    expect(frase).not.toContain('Nada novo');
+    expect(frase).toContain('não consegui ler');
+  });
+
+  it('as tres coisas na mesma varredura aparecem todas — nenhuma esconde a outra', () => {
+    const frase = scanMessage({ ingestedOnLastScan: 3, rejectedOnLastScan: 1, unreadableOnLastScan: 1 });
+
+    expect(frase).toContain('3 resultado(s)');
+    expect(frase).toContain('fora do contrato');
+    expect(frase).toContain('não consegui ler');
   });
 });

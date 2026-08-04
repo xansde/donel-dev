@@ -294,6 +294,41 @@ export function ingestErrorLine(error: IngestErrorSnapshot): string {
   return `${detail}${more}`;
 }
 
+/** O que a última varredura do outbox encontrou — os três desfechos possíveis. */
+export interface ScanCounts {
+  readonly ingestedOnLastScan: number;
+  readonly rejectedOnLastScan: number;
+  readonly unreadableOnLastScan: number;
+}
+
+/**
+ * A frase da varredura. Cada desfecho tem palavra própria, e "nada novo" só é
+ * dito quando os três são zero.
+ *
+ * Nasceu de um print: a barra dizia "Nada novo no outbox." no mesmo instante em
+ * que a fase virava "concluída", a etapa ia para Planejado e um plano aparecia
+ * no card — a tela negando a mudança que ela própria acabara de mostrar. A
+ * causa era a frase olhar SÓ para o que foi recusado; ingerir e não conseguir
+ * ler não tinham palavra. É a mesma raiz do bug de 03/08: o texto decidido a
+ * partir de meia informação, e não do estado inteiro.
+ */
+export function scanMessage(scan: ScanCounts): string {
+  const parts: string[] = [];
+  if (scan.ingestedOnLastScan > 0) {
+    parts.push(`${scan.ingestedOnLastScan} resultado(s) novo(s) — os cards já mudaram`);
+  }
+  if (scan.rejectedOnLastScan > 0) {
+    parts.push(`${scan.rejectedOnLastScan} arquivo(s) fora do contrato — os cards mostram o motivo`);
+  }
+  if (scan.unreadableOnLastScan > 0) {
+    // "Não consegui ler" nunca vira "não aconteceu": o que a skill fez segue
+    // valendo, só não foi lido.
+    parts.push(`${scan.unreadableOnLastScan} arquivo(s) que não consegui ler — nada foi afirmado sobre eles`);
+  }
+  if (parts.length === 0) return 'Nada novo no outbox.';
+  return `${parts.join('. ')}.`;
+}
+
 export const STORE_COMPATIBILITY_WARNING: Readonly<Record<string, string | null>> = {
   'read-write': null,
   'read-only': 'Este histórico foi escrito por uma versão mais nova do Donel Dev. Dá para ler, mas nada será gravado aqui.',
