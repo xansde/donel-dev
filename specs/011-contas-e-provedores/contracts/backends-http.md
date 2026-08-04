@@ -10,14 +10,42 @@ Base URL configurável (`accounts.seazone.baseUrl`). Auth: JWT Bearer (HS256,
 15 min) obtido a partir do `sessionRefreshToken` (30 dias, guardado no cofre —
 C11).
 
-| Método | Rota | Uso na etapa 1 |
-|---|---|---|
-| `POST` | `/auth/exchange` | Troca o `sessionRefreshToken` pelo JWT curto |
-| `POST` | `/auth/refresh` | Renova o JWT curto quando expira |
-| `POST` | `/auth/revoke` | Desconectar o mod (gesto do operador) |
-| `GET` | `/accounts` | `listAccounts()` — label, plano, `fiveHour`/`sevenDay`/`sonnetUtil`, `available` |
-| `POST` | `/session/switch` | `switchTo()` — devolve o par da conta nova |
-| `POST` | `/session/heartbeat` | `keepAlive()` — sincroniza o par rotacionado |
+> **CORRIGIDO em 04/08/2026 contra a API real.** A tabela anterior foi escrita
+> a partir da leitura do servidor, sem nunca ser exercitada, e errava em quatro
+> pontos — cada um deles bastava para o mod não funcionar. O primeiro contato
+> real devolveu `422` e chegou à tela como "backend indisponível (offline)".
+> O que estava escrito antes está registrado em `captura-visual-etapa-1.md`.
+
+| Método | Rota | Uso na etapa 1 | Corpo enviado | Resposta |
+|---|---|---|---|---|
+| `POST` | `/auth/refresh` | Troca **e** renova o JWT a partir do `sessionRefreshToken` | `{sessionRefreshToken}` | `{accessJwt, sessionRefreshToken, actorEmail, sessionExpiresAt, minimumClientVersion}` |
+| `POST` | `/auth/exchange` | **NÃO usado pelo mod** — é o exchange do OAuth Google | `{code, redirect_uri}` | idem acima |
+| `POST` | `/auth/revoke` | Desconectar o mod (gesto do operador) | `{sessionRefreshToken}` | `{revoked}` |
+| `GET` | `/accounts` | `listAccounts()` | — | **lista no topo** de `{label, plan, fiveHourUtil, sevenDayUtil, sonnetUtil, available, unavailableReason}` |
+| `POST` | `/session/switch` | `switchTo()` — devolve o par da conta nova | `{account, currentAccount?}` | `{label, accessToken, refreshToken, expiresAt}` |
+| `POST` | `/session/heartbeat` | Sincroniza o par rotacionado (`captureRotatedPair`) | `{accessToken, refreshToken, expiresAt (ISO), label?}` | `{accessToken, refreshToken, expiresAt}` |
+
+As quatro divergências, porque cada uma falha de um jeito diferente:
+
+1. **A rota de auth** era `/auth/exchange`; é `/auth/refresh`. Falha ruidosa (422).
+2. **O JWT** vinha em `jwt`; vem em `accessJwt`. Falharia mesmo com a rota certa.
+3. **`/accounts`** devolve **lista**, não `{accounts: […]}`; e o identificador da
+   conta é o **`label`** — não existe campo `id`.
+4. **A carga** está em `fiveHourUtil`/`sevenDayUtil`, não `fiveHour`/`sevenDay`.
+   Esta é a silenciosa: as contas apareceriam com carga `null`, e carga
+   desconhecida nunca é destino de auto-switch (C9) — o recurso ficaria inerte
+   sem nada na tela explicando.
+
+Duas regras que a API impõe e o contrato não registrava:
+
+- **`/auth/refresh` pode rotacionar o `sessionRefreshToken`** — a resposta traz
+  um token novo, e não regravá-lo no cofre mata a sessão na chamada seguinte.
+- **`expiresAt` do heartbeat é ISO-8601**, não epoch ms. O cliente oficial
+  documenta que mandar o int cru fazia *todo* tick responder 422, o par
+  rotacionado nunca chegava ao pool e os switches seguintes davam 403.
+
+`minimumClientVersion` (hoje `0.4.1`) vem em toda resposta de auth e o mod
+**ignora** — fora do escopo da etapa 1, mas é contrato pendente.
 
 **Não consumidos na etapa 1**: `POST /accounts` (adicionar conta ao pool —
 gesto administrativo deles). O mod **nunca** chama `platform.claude.com` —

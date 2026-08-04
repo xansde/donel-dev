@@ -14,6 +14,14 @@ ocupada, formatador de carga (conversão de unidade), e os três smokes com mod
 falso (`accounts-switch`, `accounts-mcp-survives-switch`,
 `accounts-secret-never-leaks`).
 
+**Captura visual de 04/08/2026** (`captura-visual-etapa-1.md`): as seções **1**
+e **7** deste roteiro passaram a ser cobertas por dois roteiros de print
+(`.claude/skills/tutorial-e2e/roteiros/contas-motor-{inerte,ativo}.spec.ts`),
+que também fotografam os estados do motor **ativo** com o mod falso. Elas
+seguem listadas abaixo como referência do que a captura verifica — o que
+continua exigindo gesto humano é tudo que depende de **credencial real, rede
+real ou máquina sem `safeStorage`**: seções 2, 3, 4, 5 e 6.
+
 O que os automatizados **não** provam e só um humano confere:
 
 ### 1. Motor nasce inerte — app abre igual a hoje

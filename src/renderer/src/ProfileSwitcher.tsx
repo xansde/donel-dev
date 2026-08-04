@@ -569,9 +569,15 @@ export function ProfileSwitcher({
             </Button>
           </div>
 
+          {/* A frase é sobre PERFIS, e precisa continuar sendo: até a etapa 1
+              da 011 ela dizia "o app nunca lê nem grava credenciais", garantia
+              que deixou de valer no dia em que o painel vizinho ("Contas")
+              passou a pedir access/refresh token. Afirmação sobre o app inteiro
+              feita de dentro de uma tela que só conhece perfis envelhece mal —
+              achado da captura visual, 04/08/2026. */}
           <p className={styles.hint}>
-            Trocar de perfil afeta só sessões novas — abas já abertas continuam com a conta que tinham. O login sempre acontece
-            dentro do terminal (<code>/login</code>); o app nunca lê nem grava credenciais.
+            Trocar de perfil afeta só sessões novas — abas já abertas continuam com a conta que tinham. O login de um perfil
+            sempre acontece dentro do terminal (<code>/login</code>); perfil nenhum lê ou grava credencial.
           </p>
         </div>
       </Modal>

@@ -215,3 +215,70 @@ o valor fabricado só existe no caminho da UI.
 **Lesson:** campo que alimenta uma decisão de negócio (aqui, "renovo ou não")
 nunca deve ser fabricado com um default plausível na borda — ou vem do
 provedor, ou é perguntado, ou o consumidor trata `null` explicitamente.
+
+### Override de isolamento que cobre metade do alvo
+
+O motor de contas escreve em dois arquivos: `.credentials.json` (dentro de
+`claudeHome`) e `~/.claude.json` (de onde apaga o bloco `oauthAccount`). O
+`accounts.claudeHome` existe para testes redirecionarem essas escritas, mas em
+`main/index.ts` só o primeiro alvo o respeitava — o segundo saía sempre de
+`homedir()`. Os três smokes da etapa 1 isolavam o `claudeHome`, acreditavam
+estar em sandbox, e ao rodar apagavam o `oauthAccount` do `~/.claude.json`
+REAL da máquina: o login do CLI Claude Code caía, e a asserção falhava ainda
+por cima. Ninguém tinha visto porque os smokes nunca haviam sido executados —
+`npm test` é vitest e não os inclui. Descoberto na captura visual da etapa 1
+(04/08/2026), com o dano acontecendo de verdade na máquina antes da correção.
+
+**Lesson:** override de isolamento é contrato de tudo ou nada — se ele cobre
+parte dos alvos, promete sandbox e entrega estrago fora dele; derive os alvos
+irmãos do mesmo override em vez de resolver cada um pela sua própria fonte.
+
+### Garantia escrita numa tela que só conhece metade do app
+
+O rodapé do painel de perfis afirmava "o app nunca lê nem grava credenciais".
+Verdade sobre perfis; falsa sobre o app a partir do momento em que o botão
+vizinho no mesmo titlebar passou a pedir access/refresh token e guardá-los no
+cofre. A frase não foi revisada porque a etapa 1 não tocou no `ProfileSwitcher`
+— e nenhum teste cobre texto de garantia. Só apareceu quando um print pôs as
+duas telas lado a lado.
+
+**Lesson:** frase que promete algo sobre *o app inteiro* deve morar onde o app
+inteiro é conhecido, ou ser reescrita no escopo da tela que a exibe; do
+contrário a primeira feature vizinha a transforma em mentira sem que ninguém
+edite aquele arquivo.
+
+### Dublê escrito a partir do contrato não testa o contrato
+
+O mod Seazone foi implementado contra `backends-http.md`, escrito na fase de
+pesquisa pela leitura do servidor e nunca exercitado contra a API. Quatro
+divergências passaram: a rota de auth (`/auth/exchange` em vez de
+`/auth/refresh`), o campo do JWT (`jwt` em vez de `accessJwt`), o envelope de
+`/accounts` (lista no topo, e o identificador é o `label` — campo `id` não
+existe) e os nomes da carga (`fiveHourUtil`/`sevenDayUtil`). A suíte tinha um
+`fetch` falso que respondia exatamente o contrato imaginado, então cada teste
+novo aumentava a confiança numa suposição. 1699 verdes, e o primeiro contato
+com o servidor real devolveu 422.
+
+A divergência mais perigosa era a silenciosa: com os nomes de carga errados, as
+61 contas do pool apareceriam na tela com carga `null`, e carga desconhecida
+nunca é destino de auto-switch (C9) — o recurso ficaria inerte, sem erro
+nenhum, parecendo apenas "não trocou ainda".
+
+**Lesson:** dublê de HTTP tem que nascer de uma resposta CAPTURADA do servidor
+real (basta um `curl` salvo), nunca do documento de contrato — senão o teste
+confirma a leitura de quem escreveu o documento, e a primeira execução real é
+que vira o teste. Quando não dá para capturar (sem credencial, sem acesso),
+isso é um bloqueio a declarar, não uma suposição a seguir.
+
+### Toda falha virando "offline" apaga o diagnóstico
+
+O mesmo mod classificava qualquer falha como indisponibilidade de rede. O 422
+de contrato acima chegou ao operador como "Contas indisponíveis: backend
+indisponível (offline)" — que mandou o diagnóstico para DNS e disponibilidade
+do host, quando o servidor estava no ar e tinha respondido em 105 ms.
+
+**Lesson:** "não consegui falar com o servidor" e "o servidor recusou o que eu
+mandei" são estados diferentes e levam a ações opostas; colapsar os dois numa
+palavra transfere para quem lê o custo de descobrir qual dos dois é. Separe ao
+menos rede / credencial / resposta-inesperada, e deixe a razão do servidor
+chegar à tela.

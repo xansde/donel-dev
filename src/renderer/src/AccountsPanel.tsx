@@ -66,6 +66,21 @@ export function AccountsPanel(): React.JSX.Element {
     if (open) refresh();
   }, [open, refresh]);
 
+  /**
+   * Toda edição do formulário passa por aqui — e invalida a recusa anterior.
+   * O erro é um veredito sobre o que estava escrito no momento do clique; se o
+   * texto muda (inclusive trocando de provedor, que troca os campos inteiros),
+   * ele deixa de valer. Antes, "dados incompletos" do pool próprio continuava
+   * na tela descrevendo o formulário do pool Seazone, que nem tinha sido
+   * submetido — achado da captura visual da etapa 1 (011), 04/08/2026, mesmo
+   * padrão do erro conhecido #7 desta casa ("veredito que sobrevive ao texto
+   * que o motivou").
+   */
+  const editarForm = (patch: (prev: ConnectFormState) => ConnectFormState): void => {
+    setConnectForm(patch);
+    setConnectError(null);
+  };
+
   const handleSwitch = (id: string): void => {
     setSwitchingId(id);
     void window.donel.accounts
@@ -143,7 +158,7 @@ export function AccountsPanel(): React.JSX.Element {
               <Select
                 label="Provedor"
                 value={connectForm.mod}
-                onChange={(value) => setConnectForm((prev) => ({ ...prev, mod: value as ModId }))}
+                onChange={(value) => editarForm((prev) => ({ ...prev, mod: value as ModId }))}
                 options={[
                   { value: 'seazone', label: 'Pool Seazone' },
                   { value: 'local', label: 'Pool próprio' },
@@ -154,14 +169,18 @@ export function AccountsPanel(): React.JSX.Element {
                   <TextInput
                     label="Endereço do switcher"
                     value={connectForm.baseUrl}
-                    onChange={(event) => setConnectForm((prev) => ({ ...prev, baseUrl: event.target.value }))}
-                    placeholder="https://switcher.seazone.dev"
+                    onChange={(event) => editarForm((prev) => ({ ...prev, baseUrl: event.target.value }))}
+                    // A URL real do switcher (`DEFAULT_API_URL` do cliente
+                    // oficial). O placeholder anterior, "switcher.seazone.dev",
+                    // parecia legítimo e não existe — placeholder com cara de
+                    // endereço real é convite a digitar o errado.
+                    placeholder="https://claude-switcher-api.seazone.dev"
                   />
                   <TextInput
                     label="Token de sessão"
                     type="password"
                     value={connectForm.sessionRefreshToken}
-                    onChange={(event) => setConnectForm((prev) => ({ ...prev, sessionRefreshToken: event.target.value }))}
+                    onChange={(event) => editarForm((prev) => ({ ...prev, sessionRefreshToken: event.target.value }))}
                   />
                 </>
               ) : (
@@ -169,20 +188,20 @@ export function AccountsPanel(): React.JSX.Element {
                   <TextInput
                     label="Rótulo da conta"
                     value={connectForm.label}
-                    onChange={(event) => setConnectForm((prev) => ({ ...prev, label: event.target.value }))}
+                    onChange={(event) => editarForm((prev) => ({ ...prev, label: event.target.value }))}
                     placeholder="ex.: Conta B"
                   />
                   <TextInput
                     label="Access token"
                     type="password"
                     value={connectForm.accessToken}
-                    onChange={(event) => setConnectForm((prev) => ({ ...prev, accessToken: event.target.value }))}
+                    onChange={(event) => editarForm((prev) => ({ ...prev, accessToken: event.target.value }))}
                   />
                   <TextInput
                     label="Refresh token"
                     type="password"
                     value={connectForm.refreshToken}
-                    onChange={(event) => setConnectForm((prev) => ({ ...prev, refreshToken: event.target.value }))}
+                    onChange={(event) => editarForm((prev) => ({ ...prev, refreshToken: event.target.value }))}
                   />
                 </>
               )}
