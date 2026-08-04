@@ -177,3 +177,41 @@ por essa razão — só não havia comentário nenhum explicando o porquê.
 de `.evaluate()`, nunca nomeie a variável `Page` como `window` — use
 `appWindow` (convenção já presente em parte dos smokes do repo); a colisão de
 nome só aparece no `tsc --noEmit`, não em tempo de execução do Playwright.
+
+### Estado do motor e estado persistido divergem quando quem troca a conta não é o IPC
+
+O `activeAccountId` é gravado em `config.json` só dentro do handler
+`accounts:switch` (`src/main/index.ts`). O auto-switch, porém, acontece dentro
+do motor (`AccountEngine.evaluateAutoSwitch` -> `switchTo`, disparado pelo poll
+de 5 min) e nunca passa por esse handler: ele atualiza `this.config` em memória
+e o `appConfig.accounts` do hub fica para trás. Duas consequências que nenhum
+teste pega, porque as suítes do motor são unitárias e o hub não tem suíte:
+a conta escolhida pelo auto-switch se perde no restart, e um
+`accounts:setConfig` posterior (ex.: o toggle "Trocar automaticamente" do
+painel) chama `updateConfig(appConfig.accounts)` e devolve ao motor o
+`activeAccountId` velho — a troca automática é silenciosamente desfeita no
+estado do motor. O motor nasce inerte, então nada disso aparece hoje; aparece
+na etapa em que alguém conectar um mod de verdade.
+
+**Lesson:** quando um objeto de domínio muda estado por conta própria (timer,
+poll, auto-*), a persistência não pode morar só no handler IPC do gesto manual
+— ou o motor notifica quem persiste (o `onChanged` já existe e serve), ou
+`updateConfig` recebe só os campos de política, nunca o estado que o motor é
+dono.
+
+### `expiresAt` inventado na UI desarma o refresh de fallback do mod local
+
+Ao conectar uma conta do pool próprio, o `AccountsPanel.tsx` monta o
+`ConnectModInput` com `expiresAt: Date.now() + 3600_000` — uma hora chutada,
+não um dado que o operador informou nem que veio do provedor. É esse campo que
+o `local-mod.ts` consulta (`pair.expiresAt <= Date.now()`) para decidir se
+tenta o refresh HTTP de fallback no switch (D4). Colar um par já vencido faz o
+mod tratá-lo como válido pela primeira hora e escrever um token morto em
+`.credentials.json` sem tentar renovar; colar um par de validade longa provoca
+um refresh desnecessário depois de uma hora — e refresh token é de uso único.
+Os testes não pegam porque o `expiresAt` chega pronto nos fixtures das suítes;
+o valor fabricado só existe no caminho da UI.
+
+**Lesson:** campo que alimenta uma decisão de negócio (aqui, "renovo ou não")
+nunca deve ser fabricado com um default plausível na borda — ou vem do
+provedor, ou é perguntado, ou o consumidor trata `null` explicitamente.
