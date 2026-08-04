@@ -121,6 +121,13 @@ export const STORE_EVENT_TYPES = [
   'verification.updated',
   'phase.started',
   'phase.completed',
+  /**
+   * Run que terminou mal (`status` != `success` no `result.json`). Existe porque
+   * o contrato so exige `phase.completed` de run bem-sucedido: sem este evento,
+   * uma fase que falhou ficaria indistinguivel de uma que nunca rodou — a
+   * inverdade que a spec 010 extingue. Carrega `failure.code`/`message`.
+   */
+  'phase.failed',
   'session.started',
   'session.ended',
   /** `[P-6]` — a sessao atingiu o teto de contexto e a MESMA fase seguiu noutra sessao. */
@@ -304,6 +311,13 @@ export interface PlanSnapshot {
 
 export interface WorkItemSnapshot {
   readonly id: string;
+  /**
+   * Ancoragem OBRIGATORIA: todo item nasce dentro de um discovery (o
+   * `subject.discovery_id` do run que o declarou). Sem isso, um item sem plano
+   * — que e legitimo — nao teria onde aparecer, e some da tela: exatamente o
+   * modo de falha que a spec extingue.
+   */
+  readonly discoveryId: string;
   readonly planId: string | null;
   readonly itemType: WorkItemType;
   readonly lifecycle: LifecycleKind;
@@ -355,6 +369,46 @@ export interface RelationSnapshot {
   readonly recordedAt: string;
 }
 
+export type PhaseOutcome = 'done' | 'abandoned' | 'inconclusive';
+
+/**
+ * Uma passagem de uma fase por um assunto. E daqui que a macro etapa se deriva
+ * (D-13) — e e por existir como REGISTRO que "a fase discovery terminou sem
+ * plano" e distinguivel de "a fase nunca rodou". Sem este registro, ausencia
+ * volta a ser lida como "nao aconteceu", que e o bug de 03/08.
+ */
+export interface PhaseRunSnapshot {
+  readonly subject: EntityId;
+  readonly phase: string;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly outcome: PhaseOutcome | null;
+  readonly summary: string | null;
+  /** Preenchido por `phase.failed`: o desfecho ruim precisa ser LEGIVEL, com codigo e motivo. */
+  readonly failure: { readonly code: string; readonly message: string } | null;
+  /** Ultimo run que tocou esta fase — a trilha de volta ao `result.json` que a produziu. */
+  readonly lastRunId: string | null;
+}
+
+export type VerificationKind = 'pull-request' | 'check' | 'review' | 'conclusion';
+export type VerificationState = 'pending' | 'passed' | 'failed';
+
+/** D-4 — como o ciclo termina. PR e so UMA das formas; ADR e spike terminam de outro jeito. */
+export interface VerificationSnapshot {
+  readonly subject: EntityId;
+  readonly verificationKind: VerificationKind;
+  readonly state: VerificationState;
+  readonly ref: string | null;
+  readonly recordedAt: string;
+}
+
+/** Texto humano amarrado a uma entidade. Nunca deduplica por conteudo — duas notas iguais sao dois gestos. */
+export interface NoteSnapshot {
+  readonly subject: EntityId;
+  readonly text: string;
+  readonly at: string;
+}
+
 /** D-10 — documento fora do contrato vira ERRO visivel no card, nunca silencio. */
 export interface IngestErrorSnapshot {
   readonly resultPath: string;
@@ -385,6 +439,9 @@ export interface StoreSnapshot {
   readonly relations: readonly RelationSnapshot[];
   readonly artifacts: readonly ArtifactPointer[];
   readonly locks: readonly LockRecord[];
+  readonly phases: readonly PhaseRunSnapshot[];
+  readonly verifications: readonly VerificationSnapshot[];
+  readonly notes: readonly NoteSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
   readonly mirrorQueue: readonly MirrorQueueEntry[];
 }
