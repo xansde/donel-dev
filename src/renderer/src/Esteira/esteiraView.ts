@@ -12,10 +12,12 @@
 // de 03/08.
 
 import { MACRO_STAGE_LABEL } from '../../../shared/esteira/ipc';
+import { mirrorOperationKind } from '../../../shared/esteira/mirror/mirrorPlan';
 import type {
   DiscoverySnapshot,
   IngestErrorSnapshot,
   LockRecord,
+  MirrorQueueEntry,
   PhaseRunSnapshot,
   SessionSnapshot,
   StoreSnapshot,
@@ -92,6 +94,8 @@ export interface CardView {
   /** Todas as sessões do card: é delas que sai o "alguém assumiu?" de cada fase. */
   readonly sessions: readonly SessionSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
+  /** D-12 — o que o board ainda não recebeu. Nunca bloqueia nada; só precisa ser visível. */
+  readonly mirrorQueue: readonly MirrorQueueEntry[];
   readonly notes: readonly { readonly text: string; readonly at: string }[];
 }
 
@@ -164,8 +168,66 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     openSession: [...snapshot.sessions].reverse().find((session) => belongs(session.subject) && session.endedAt === null) ?? null,
     sessions: snapshot.sessions.filter((session) => belongs(session.subject)),
     ingestErrors: snapshot.ingestErrors.filter((error) => error.subject !== null && belongs(error.subject)),
+    mirrorQueue: snapshot.mirrorQueue.filter((entry) => belongs(entry.subject)),
     notes: snapshot.notes.filter((note) => belongs(note.subject)).map((note) => ({ text: note.text, at: note.at })),
   };
+}
+
+/**
+ * O espelho no tracker é **cortesia** (D-12): ele reflete fatos que já
+ * aconteceram aqui. Por isso a frase do bloco não é um alerta — é um aviso de
+ * que o board está atrasado, não de que algo aqui está travado. Confundir os
+ * dois faria o operador esperar por uma integração opcional.
+ */
+export const MIRROR_PENDING_TITLE = 'Espelho pendente';
+
+export const MIRROR_PENDING_HINT =
+  'O board ainda não recebeu isto. O trabalho local já aconteceu e não depende do espelho — nada aqui está esperando.';
+
+export interface MirrorLineView {
+  readonly key: string;
+  readonly text: string;
+  /** Quantas vezes já tentou e por que não foi. `null` nunca: silêncio aqui seria a falha invisível de novo. */
+  readonly detail: string;
+}
+
+/** O que falta mandar ao board, em português — uma linha por operação da fila. */
+export function mirrorLines(card: CardView): readonly MirrorLineView[] {
+  return card.mirrorQueue.map((entry) => ({
+    key: `${entry.subject.entity}:${entry.subject.id}:${entry.operation}`,
+    text: mirrorOperationText(entry),
+    detail:
+      entry.attempts === 0
+        ? 'ainda não tentou'
+        : `${entry.attempts} ${entry.attempts === 1 ? 'tentativa' : 'tentativas'} — ${entry.lastError ?? 'motivo não registrado'}`,
+  }));
+}
+
+function mirrorOperationText(entry: MirrorQueueEntry): string {
+  const kind = mirrorOperationKind(entry.operation);
+
+  if (kind === 'label') {
+    const labels = Array.isArray(entry.payload.labels)
+      ? entry.payload.labels.filter((label): label is string => typeof label === 'string')
+      : [];
+    if (labels.length === 0) return 'remover as etiquetas de fase';
+    return `aplicar a etiqueta ${labels.map((label) => `"${label}"`).join(', ')}`;
+  }
+
+  if (kind === 'column') {
+    const column = typeof entry.payload.column === 'string' ? entry.payload.column : '—';
+    return `mover o card para "${column}"`;
+  }
+
+  if (kind === 'comment') {
+    const phase = typeof entry.payload.phase === 'string' ? entry.payload.phase : 'anterior';
+    return `comentar a conclusão da fase ${phase}`;
+  }
+
+  // Operação que este canal não conhece (gravada por um mais novo): dizer que
+  // não sei é a única resposta honesta — fingir que mandei seria a inverdade
+  // que a spec inteira existe para extinguir.
+  return `não sei espelhar a operação "${entry.operation}"`;
 }
 
 /**

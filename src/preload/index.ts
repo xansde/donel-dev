@@ -314,6 +314,10 @@ const donelApi: DonelApi = {
 
     releaseLock: (input: ReleaseLockIpcInput) => ipcRenderer.invoke(ESTEIRA_CHANNELS.releaseLock, input) as Promise<EsteiraSnapshotDto>,
 
+    // D-12 — reenvio do espelho. O board é destino opcional: falhar aqui nunca
+    // muda o que já aconteceu localmente.
+    retryMirror: () => ipcRenderer.invoke(ESTEIRA_CHANNELS.retryMirror) as Promise<EsteiraSnapshotDto>,
+
     onChanged: (listener: (state: EsteiraSnapshotDto) => void) => {
       const handler = (_event: unknown, state: EsteiraSnapshotDto): void => listener(state);
       ipcRenderer.on(ESTEIRA_CHANNELS.changed, handler);

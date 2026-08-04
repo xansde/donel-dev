@@ -21,6 +21,8 @@ export const ESTEIRA_CHANNELS = {
   dispatch: 'esteira:dispatch',
   /** Libera a trava — o "gesto" de D-11. */
   releaseLock: 'esteira:releaseLock',
+  /** Reenvia o que o board nao recebeu (D-12). Gesto humano: ignora o teto de tentativas. */
+  retryMirror: 'esteira:retryMirror',
   /** main → renderer: o store mudou (ingestao, disparo, gesto de outro canal). */
   changed: 'esteira:changed',
 } as const;
@@ -129,6 +131,12 @@ export interface DonelEsteiraApi {
   createDiscovery(input: CreateDiscoveryIpcInput): Promise<EsteiraCreateDiscoveryDto>;
   dispatch(input: DispatchIpcInput): Promise<EsteiraDispatchDto>;
   releaseLock(input: ReleaseLockIpcInput): Promise<EsteiraSnapshotDto>;
+  /**
+   * D-12 — reenvia a fila do espelho. E o UNICO caminho do espelho que espera
+   * resposta, porque quem clicou quer saber se foi; todo o resto acontece
+   * atras, sem segurar gesto nenhum.
+   */
+  retryMirror(): Promise<EsteiraSnapshotDto>;
   /** Devolve a funcao de desinscricao (mesmo padrao dos outros canais de push). */
   onChanged(listener: (state: EsteiraSnapshotDto) => void): () => void;
 }

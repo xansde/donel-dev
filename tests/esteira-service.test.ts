@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEsteiraService, type EsteiraService } from '../src/main/esteira-service';
+import { createFakeBoardAdapter } from '../src/main/esteira-mirror';
 import { isValidCreateDiscoveryIpcInput, isValidDispatchIpcInput, isValidReleaseLockIpcInput } from '../src/shared/esteira/ipc';
 
 // Spec 010 — o servico que liga o store ao app: boot, varredura do outbox,
@@ -194,6 +195,116 @@ describe('gestos do app', () => {
     });
 
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('espelho no tracker (D-12) — cortesia que nunca vira bloqueio', () => {
+  const MIRROR_CONFIG = {
+    enabled: true,
+    provider: 'taskdex',
+    columnByStage: { discovery: 'Discovery', planned: 'Plano' },
+    phaseLabelPrefix: 'esteira:em-andamento:',
+    maxAttempts: 3,
+  } as const;
+
+  function comEspelho(controlPath: string): EsteiraService {
+    return open({
+      mirror: {
+        config: MIRROR_CONFIG,
+        adapter: createFakeBoardAdapter({ provider: 'taskdex', controlPath }),
+      },
+    });
+  }
+
+  function controle(mode: 'ok' | 'fail', error = 'o board nao respondeu'): string {
+    const controlPath = join(root, 'mirror-fake.json');
+    writeFileSync(controlPath, JSON.stringify({ mode, error }), 'utf8');
+    return controlPath;
+  }
+
+  it('board caido NAO impede o trabalho local — o card entra, a fila e que fica pendente', async () => {
+    const espelhado = comEspelho(controle('fail', 'sem rede'));
+    putResult('discovery-com-tracker');
+
+    const state = espelhado.scanOutbox();
+    // O trabalho local aconteceu ANTES de qualquer conversa com o board.
+    expect(state.snapshot.discoveries[0].title).toBe('Fila de importacao trava sem sinal');
+
+    await espelhado.drainMirror();
+    const depois = espelhado.snapshotDto().snapshot;
+    expect(depois.discoveries[0].title).toBe('Fila de importacao trava sem sinal');
+    expect(depois.mirrorQueue.length).toBeGreaterThan(0);
+    expect(depois.mirrorQueue[0].lastError).toBe('sem rede');
+    // E o card DIZ que ha espelho pendente, em vez de esconder.
+    expect(depois.discoveries[0].stageSignals).toContain('mirror-pending');
+    espelhado.dispose();
+  });
+
+  it('o gesto local nao ESPERA o board — adapter que nunca responde nao segura o disparo', () => {
+    const travado = open({
+      mirror: {
+        config: MIRROR_CONFIG,
+        adapter: {
+          provider: 'taskdex',
+          applyLabel: () => new Promise<never>(() => {}),
+          comment: () => new Promise<never>(() => {}),
+          moveColumn: () => new Promise<never>(() => {}),
+        },
+      },
+    });
+    putResult('discovery-com-tracker');
+    travado.scanOutbox();
+
+    const dispatched = travado.dispatch({
+      phase: 'plano',
+      discoveryId: 'dsc-2026-08-03-a',
+      planId: null,
+      workItemId: null,
+      workspace: { target_repo: 'atlas', repo_path: null, worktree_path: null, branch: null },
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+
+    expect(dispatched.ok).toBe(true);
+    expect(dispatched.state.snapshot.locks).toHaveLength(1);
+    travado.dispose();
+  });
+
+  it('o board volta: a fila drena no gesto de reenvio e o sinal some', async () => {
+    const controlPath = controle('fail');
+    const espelhado = comEspelho(controlPath);
+    putResult('discovery-com-tracker');
+    espelhado.scanOutbox();
+    await espelhado.drainMirror();
+    expect(espelhado.snapshotDto().snapshot.mirrorQueue.length).toBeGreaterThan(0);
+
+    writeFileSync(controlPath, JSON.stringify({ mode: 'ok' }), 'utf8');
+    const state = await espelhado.retryMirror();
+
+    expect(state.snapshot.mirrorQueue).toHaveLength(0);
+    expect(state.snapshot.discoveries[0].stageSignals).not.toContain('mirror-pending');
+    // O que o board passou a refletir fica registrado — nao volta para a fila.
+    expect(state.snapshot.mirrorSynced.length).toBeGreaterThan(0);
+    espelhado.dispose();
+  });
+
+  it('sem adapter plugado, nada e enfileirado — fila que ninguem drena seria pendencia eterna', () => {
+    putResult('discovery-com-tracker');
+    const state = service.scanOutbox();
+
+    expect(state.snapshot.mirrorQueue).toHaveLength(0);
+    expect(state.snapshot.discoveries[0].stageSignals).not.toContain('mirror-pending');
+  });
+
+  it('card sem tracker nao gera espelho nenhum', async () => {
+    const espelhado = comEspelho(controle('ok'));
+    espelhado.createDiscovery({ title: 'Card local', problem: null, targetRepo: null, scopeRepos: [], tracker: null });
+
+    await espelhado.drainMirror();
+
+    expect(espelhado.snapshotDto().snapshot.mirrorQueue).toHaveLength(0);
+    expect(espelhado.snapshotDto().snapshot.mirrorSynced).toHaveLength(0);
+    espelhado.dispose();
   });
 });
 

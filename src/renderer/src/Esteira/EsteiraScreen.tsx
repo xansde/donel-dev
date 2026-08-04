@@ -1,7 +1,18 @@
 import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
-import { cardView, formatTimestamp, ingestErrorLine, lockView, phaseLines, STORE_COMPATIBILITY_WARNING, type SignalTone } from './esteiraView';
+import {
+  cardView,
+  formatTimestamp,
+  ingestErrorLine,
+  lockView,
+  MIRROR_PENDING_HINT,
+  MIRROR_PENDING_TITLE,
+  mirrorLines,
+  phaseLines,
+  STORE_COMPATIBILITY_WARNING,
+  type SignalTone,
+} from './esteiraView';
 import styles from './EsteiraScreen.module.css';
 
 // Spec 010 — a tela da esteira nova. Ela é PROJEÇÃO do snapshot que o main
@@ -104,6 +115,15 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
     setState(await window.donel.esteira.releaseLock({ subject: selected.lock.subject, phase: selected.lock.phase }));
     setMessage(null);
   }, [selected]);
+
+  // D-12 — reenviar o espelho é gesto de cortesia: ele não desbloqueia nada
+  // local, e por isso a mensagem fala do board, nunca do trabalho.
+  const handleRetryMirror = useCallback(async () => {
+    const state = await window.donel.esteira.retryMirror();
+    setState(state);
+    const pending = state.snapshot.mirrorQueue.length;
+    setMessage(pending === 0 ? 'O board recebeu o que faltava.' : `${pending} operação(ões) ainda não foram aceitas pelo board.`);
+  }, []);
 
   const handleScan = useCallback(async () => {
     const scanned = await window.donel.esteira.scanOutbox();
@@ -284,6 +304,30 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                   </ul>
                 )}
               </section>
+
+              {/* O espelho vem DEPOIS dos fatos locais, e nunca antes: ele é
+                  cortesia para quem olha o board (D-12). Board atrasado não é
+                  trabalho parado — e a tela precisa dizer isso, senão o
+                  operador espera por uma integração opcional. */}
+              {selected.mirrorQueue.length > 0 ? (
+                <section className={styles.block} data-testid="mirror-pending">
+                  <h4 className={styles.blockTitle}>{MIRROR_PENDING_TITLE}</h4>
+                  <p className={styles.hint}>{MIRROR_PENDING_HINT}</p>
+                  <ul className={styles.lines}>
+                    {mirrorLines(selected).map((entry) => (
+                      <li key={entry.key}>
+                        {entry.text}
+                        <span className={styles.hint}> — {entry.detail}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className={styles.rowActions}>
+                    <Button variant="ghost" onClick={() => void handleRetryMirror()} disabled={readOnly}>
+                      Reenviar espelho
+                    </Button>
+                  </div>
+                </section>
+              ) : null}
 
               {selected.notes.length > 0 ? (
                 <section className={styles.block}>
