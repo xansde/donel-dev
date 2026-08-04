@@ -36,8 +36,10 @@ Leia nesta ordem, antes de qualquer código:
 3. specs/010-esteira-donel/handoff-vertical-pequeno.md — o que já existe e o que não reescrever
 4. .claude/skills/tutorial-e2e/SKILL.md — o gate de todo batch
 
-Execute em paralelo: B1, B2, B3, B4, B5 e B7.
-NÃO execute o B6 — ele depende dos outros e da minha decisão.
+Execute em DUAS ONDAS, na mesma sessão, sem me esperar:
+- Onda 1, em paralelo: B1, B2, B3, B4, B5, B7
+- Onda 2, quando a onda 1 fechar: B6 (o mapa sobre o store — precisa do que
+  B1, B2, B3 e B5 entregaram)
 
 Regras duras:
 - Cada batch em branch própria, a partir de feat/010-fase1-vertical-pequeno.
@@ -58,6 +60,8 @@ Me entregue no fim:
 - os erros que se repetiram ENTRE batches — se o mesmo defeito apareceu em dois,
   a correção certa é estrutural, e quero saber qual
 - o que cada batch descobriu que muda a spec ou os batches seguintes
+- do B6: o inventário de paridade com cada linha resolvida, e o que virou perda
+  consciente — quero conferir a lista, não descobrir a ausência depois
 ```
 
 **Custo:** seis batches em paralelo, cada um com implementação, testes e uma
@@ -83,9 +87,10 @@ B4 (independente)
 B7 (independente; B1 ajuda, não bloqueia)
 ```
 
-**B1, B2, B3, B4, B5 e B7 podem rodar em paralelo** — tocam arquivos
-diferentes. **B6 é o último**: ele reapõe o mapa sobre o store novo, e metade
-dos nós depende do que B1–B3 e B5 entregarem.
+**Onda 1, em paralelo:** B1, B2, B3, B4, B5, B7 — tocam arquivos diferentes.
+**Onda 2, sozinho:** B6, que reapõe o mapa sobre o store e precisa do que a
+onda 1 entregou. As duas ondas cabem na mesma sessão: a segunda começa quando
+a primeira fecha, sem esperar ninguém.
 
 Conflito previsível se rodarem juntos: `EsteiraScreen.tsx` é tocado por B2 e
 B3. Se forem paralelos, quem chegar segundo rebaseia — ou rodam em sequência.
@@ -357,7 +362,9 @@ se resolve pela regra do repo: **forma → vence o design; alcance ou
 comportamento → vence a spec.**
 
 **Pré-requisito:** B1, B2, B3 e B5 — metade dos nós depende do que eles
-entregam.
+entregam. É dependência **técnica**, e é a única: o batch roda até o fim sem
+esperar ninguém acordar. A validação é local, pelo inventário + e2e; o que
+continua humano é só o **merge**, como em qualquer PR.
 
 **Roteiro e2e:** `mapa-sobre-o-store`
 1. Modo Dev abre no mapa, com os cards vindos do store.
