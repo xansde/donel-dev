@@ -18,7 +18,7 @@
     "test": "vitest run",
     "test:smoke": "playwright test -c tests/smoke/playwright.config.ts",
     "test:smoke:dev": "playwright test -c tests/smoke-dev/playwright.config.ts",
-    "e2e:visual": "npm run build && playwright test -c .claude/skills/e2e-visual/lib/playwright.config.ts && node .claude/skills/e2e-visual/lib/relatorio.mjs esteira",
+    "tutorial": "npm run build && playwright test -c .claude/skills/tutorial-e2e/lib/playwright.config.ts && node .claude/skills/tutorial-e2e/lib/relatorio.mjs",
     "dist": "npm run build && electron-builder --win nsis",
     "dist:alfa": "npm run build && electron-builder --win nsis --config.appId=com.seazone.doneldev.alfa \"--config.productName=Donel Dev Alfa\" \"--config.nsis.shortcutName=Donel Dev Alfa\"",
     "dist:beta": "npm run build && electron-builder --win nsis --config.appId=com.seazone.doneldev.beta \"--config.productName=Donel Dev Beta\" \"--config.nsis.shortcutName=Donel Dev Beta\"",

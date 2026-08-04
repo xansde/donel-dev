@@ -8,7 +8,7 @@
 // print é passo que não aconteceu — e roteiro que morreu no meio aparece com o
 // passo e o motivo, em vez de sumir.
 
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,15 +16,27 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const SAIDA_RAIZ = process.env.E2E_VISUAL_OUT ?? path.join(REPO_ROOT, '.e2e-visual');
 
 const [, , roteiroArg, ...rest] = process.argv;
-if (!roteiroArg) {
-  console.error('uso: node relatorio.mjs <roteiro> [--titulo "Título do relatório"]');
-  process.exit(2);
-}
-
 const tituloIndex = rest.indexOf('--titulo');
 const tituloCustom = tituloIndex >= 0 ? rest[tituloIndex + 1] : null;
 
-const dir = path.join(SAIDA_RAIZ, roteiroArg);
+// Sem argumento, gera para TODOS os roteiros que deixaram manifesto. Assim
+// acrescentar um roteiro novo não exige tocar no `package.json` — o ato é
+// "escrever o roteiro", e o resto se vira.
+const roteiros = roteiroArg
+  ? [roteiroArg]
+  : existsSync(SAIDA_RAIZ)
+    ? readdirSync(SAIDA_RAIZ).filter((nome) => existsSync(path.join(SAIDA_RAIZ, nome, 'manifest.json')))
+    : [];
+
+if (roteiros.length === 0) {
+  console.error(`nenhum roteiro capturado em ${SAIDA_RAIZ} — rode os roteiros antes`);
+  process.exit(2);
+}
+
+for (const roteiro of roteiros) gerar(roteiro);
+
+function gerar(roteiro) {
+const dir = path.join(SAIDA_RAIZ, roteiro);
 const manifest = JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
 
 const dataUri = (arquivo) => `data:image/png;base64,${readFileSync(path.join(dir, arquivo)).toString('base64')}`;
@@ -163,3 +175,4 @@ const html = `<!doctype html>
 const destino = path.join(dir, 'relatorio.html');
 writeFileSync(destino, html, 'utf8');
 console.log(`${destino} — ${manifest.passos.length} passo(s), ${(html.length / 1024 / 1024).toFixed(2)} MB${manifest.falha ? ' (roteiro interrompido)' : ''}`);
+}
