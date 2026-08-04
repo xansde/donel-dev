@@ -41,10 +41,7 @@ import type {
   ConsolidateResult,
   ImportResult,
   MigrationPlan,
-  CopyTranscriptForResumeIpcInput,
-  CopyTranscriptForResumeResult,
   CreateProjectResponse,
-  DeleteProfileOutcome,
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
@@ -52,9 +49,6 @@ import type {
   NotificationPreference,
   OpenDiscoveryIpcInput,
   PhaseDefaultsTable,
-  ProfileDoctorReportDto,
-  ProfileHeadroomMap,
-  ProfileSummaryDto,
   ProjectBindingDto,
   ProjectInfo,
   ProjectScanMode,
@@ -87,7 +81,6 @@ import {
   isValidArchivePhaseSessionIpcInput,
   isValidCardId,
   isValidCardIdList,
-  isValidCopyTranscriptForResumeIpcInput,
   isValidCreateProjectIpcInput,
   isValidGithubReadRequest,
   isValidOpenDiscoveryIpcInput,
@@ -97,7 +90,6 @@ import {
   isValidWatchPhaseIpcInput,
   normalizeSessionName,
   openDiscovery,
-  PROFILE_CHANNELS,
   PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
   PTY_CHANNELS,
@@ -107,9 +99,7 @@ import {
   SESSION_CHANNELS,
   TAB_CHANNELS,
   TRANSCRIPT_CHANNELS,
-  TRANSCRIPT_COPY_CHANNELS,
 } from '../shared';
-import { copyTranscriptForResume, createSystemTranscriptCopyIoDeps } from './transcript-copy';
 import { createSystemResolveDeps, resolveClaudeExecutable } from './claude-executable';
 import {
   clearSessionName,
@@ -158,25 +148,6 @@ import {
 } from './taskdex-board-client';
 import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
 import { writeHooksSettingsFile } from './hooks-settings';
-import {
-  claudeHomeDir,
-  createProfile,
-  createSystemProfileCreationIoDeps,
-  createSystemProfileDeletionIoDeps,
-  createSystemProfileDoctorDeps,
-  createSystemProfileListDeps,
-  createSystemProfileRepairIoDeps,
-  deleteProfile,
-  globalClaudeJsonPath,
-  listProfiles,
-  PRINCIPAL_PROFILE,
-  PRINCIPAL_PROFILE_SLUG,
-  profileDirPath,
-  repairProfileJunctions,
-  runProfileDoctor,
-  titleCaseFromSlug,
-  type ProfileInfo,
-} from './profile-manager';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
 // arquivo só instancia/liga (T1125 — única task que toca o hub).
@@ -203,7 +174,6 @@ import { PtyManager } from './pty-manager';
 // imports acima (não reordena o bloco existente).
 import { hasImage, readText, writeText } from './clipboard-bridge';
 import { CLIPBOARD_CHANNELS } from '../shared';
-import { HeadroomCache, readAllProfilesHeadroom } from './quota-headroom';
 import { resolveClaudeCorrelation } from './session-correlation';
 import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
 import { seedProject } from './session-seed';
@@ -369,25 +339,22 @@ function disposeAllEsteiraResultWatchers(): void {
   esteiraResultWatchers.clear();
 }
 
-// T014 — ProfileManager (FR-005, FR-012, CA-3). `profilePathDeps` é a única
-// dependência de path (homedir) reaproveitada por toda função pura do
-// módulo. `activeProfileSlug`/`activeProfileConfigDir` vivem em memória
-// (persistidos no ConfigStore, T015) — toda sessão `claude` nova (T005/T008)
-// nasce com o `CLAUDE_CONFIG_DIR` do perfil ativo NESTE INSTANTE (FR-005:
-// "trocar de perfil afeta apenas sessões novas" — abas já abertas já
-// receberam seu env por VALOR na criação, ver PtyManager.create).
-const profilePathDeps = { homedir };
-let activeProfileSlug: string = PRINCIPAL_PROFILE_SLUG;
-let activeProfileConfigDir: string | undefined;
-// FIX (feedback E2E rodada 5) — nome de exibição do perfil ativo, mantido ao
-// lado de `activeProfileSlug`/`activeProfileConfigDir` (mesmos pontos de
-// atualização: boot e `profiles:activate` abaixo) só pra devolver no
-// `pty:create` de sessão claude (ver `PtyCreateResult.profile`) — a
-// statusbar (App.tsx) usa isso pra saber com que perfil CADA ABA nasceu,
-// distinto do perfil ATIVO global (que pode já ter mudado quando o foco
-// volta pra essa aba).
-let activeProfileName: string = PRINCIPAL_PROFILE.name;
-const headroomCache = new HeadroomCache();
+// T1222 (011-contas-e-provedores, etapa 2) — o mecanismo de perfis
+// (`profile-manager.ts`, `activeProfileSlug`/`activeProfileConfigDir`/
+// `activeProfileName` em memória) morreu nesta etapa: a única config é
+// `~/.claude`, o único lugar de conta é o motor (`account-engine.ts`).
+// `claudeHomeDirFor`/`globalClaudeJsonPathFor` abaixo substituem os
+// helpers homônimos de `profile-manager.ts` (join trivial sobre um
+// `homedir()` já resolvido) — os dois únicos pontos que ainda precisavam
+// deles são o switch de conta (`applyAccountsClaudeStateSwitch`) e a
+// migração (`migrationHomedir()`), nenhum dos dois é sobre perfil.
+function claudeHomeDirFor(home: string): string {
+  return join(home, '.claude');
+}
+
+function globalClaudeJsonPathFor(home: string): string {
+  return join(home, '.claude.json');
+}
 
 // T009 — semáforo de sessões (FR-010). `getRecentLines` reaproveita o ring
 // buffer que o PtyManager já mantém (plan.md ponto 8) como sinal B da
@@ -478,8 +445,8 @@ function resolveAccountMod(modId: ModId): AccountMod {
  */
 function applyAccountsClaudeStateSwitch(pair: import('./accounts/account-mod').CredentialPair, onRotatedPairCaptured: (pair: import('./accounts/account-mod').CredentialPair | null) => void | Promise<void>): Promise<void> {
   const overrideHome = appConfig.accounts.claudeHome;
-  const claudeHome = overrideHome ?? claudeHomeDir(profilePathDeps);
-  const realClaudeJsonPath = globalClaudeJsonPath(profilePathDeps);
+  const claudeHome = overrideHome ?? claudeHomeDirFor(homedir());
+  const realClaudeJsonPath = globalClaudeJsonPathFor(homedir());
   const claudeJsonPath = overrideHome === null ? realClaudeJsonPath : join(dirname(overrideHome), basename(realClaudeJsonPath));
   return applyAccountSwitch({ io: accountsClaudeStateIo, claudeHome, claudeJsonPath, onRotatedPairCaptured }, pair);
 }
@@ -606,10 +573,10 @@ const transcriptWatchers = new TranscriptWatcherRegistry();
 
 /**
  * Path do `.jsonl` da sessão. O CLI o deriva do `cwd` (slug do path absoluto) e
- * do diretório de config ATIVO — com um perfil ativo, `CLAUDE_CONFIG_DIR`
- * aponta para o diretório do perfil, e o transcript vive lá dentro, não em
- * `~/.claude`. Usa o mesmo `activeProfileConfigDir` passado ao spawn, para o
- * watcher não vigiar um arquivo que nunca vai aparecer.
+ * do diretório de config ATIVO. T1222 (etapa 2) — perfis mortos: nenhum
+ * spawn passa mais `claudeConfigDir` (sempre `undefined`), então o parâmetro
+ * aqui só sobrevive pra `sessions:forgetIfOrphan`/`seedProject` (T404/T706),
+ * que também passam `undefined` desde a demolição.
  */
 function resolveTranscriptPath(sessionId: string, cwd: string | undefined, claudeConfigDir: string | undefined): string {
   const claudeHome = claudeConfigDir ?? defaultClaudeHome();
@@ -668,16 +635,15 @@ function registerPtyIpcHandlers(): void {
       const semaphoreArgs = hooksSettingsPath ? ['--settings', hooksSettingsPath] : [];
       const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs];
 
-      // T1125 (011-contas-e-provedores, etapa 1, C1/C10) — com o motor de
-      // contas ATIVO (`mod !== null`), sessões novas nascem SEM override de
-      // `CLAUDE_CONFIG_DIR` (o motor escreve credencial só no `~/.claude`
-      // real — motor e perfis nunca escrevem no mesmo lugar ao mesmo tempo,
-      // D6/C1) e `PtyCreateResult.profile` reflete a conta ativa do motor,
-      // não o perfil. Motor INERTE (default, C2): byte a byte o
-      // comportamento de hoje (`activeProfileConfigDir`/perfil).
+      // T1222 (011-contas-e-provedores, etapa 2, D8/entregável) — com os
+      // perfis demolidos, sessões novas NUNCA mais recebem override de
+      // `CLAUDE_CONFIG_DIR`: a única config é `~/.claude` (o motor escreve
+      // credencial nela, ou em `accounts.claudeHome` só em teste). O
+      // parâmetro `claudeConfigDir` do `PtyManager` continua existindo
+      // intacto (C33) — é a porta que a etapa 3 (registry de providers)
+      // atravessa; aqui ele simplesmente nunca é alimentado.
       const accountsSnapshot = accountEngine?.getSnapshot();
       const motorActive = accountsSnapshot !== undefined && accountsSnapshot.mod !== null;
-      const spawnConfigDir = motorActive ? undefined : activeProfileConfigDir;
 
       const ptyId = ptyManager.create({
         cols: options.cols,
@@ -687,10 +653,6 @@ function registerPtyIpcHandlers(): void {
         // (npm -g) no interpretador; ConPTY não executa script direto.
         command: resolved.launch.command,
         args: [...resolved.launch.argsPrefix, ...finalArgs],
-        // T014 (FR-005/CA-3) — perfil ativo NO MOMENTO da criação da aba;
-        // `undefined` pro perfil Principal (sem override de env). T1125:
-        // `undefined` também quando o motor de contas está ativo (acima).
-        claudeConfigDir: spawnConfigDir,
       });
 
       if (hooksSettingsPath) {
@@ -701,30 +663,28 @@ function registerPtyIpcHandlers(): void {
 
       // T412 (004) — reflexo AO VIVO do `/rename` (CA-4). O path do `.jsonl` já
       // é conhecido aqui: o id da sessão foi IMPOSTO no spawn logo acima.
-      const transcriptPath = resolveTranscriptPath(correlationId, options.cwd, spawnConfigDir);
+      const transcriptPath = resolveTranscriptPath(correlationId, options.cwd, undefined);
       // T710 — guardado ANTES de qualquer coisa poder falhar: é o caminho que o
       // `forgetIfOrphan` vai conferir se esta retomada morrer (ver comentário de
       // `spawnedTranscriptPaths`).
       spawnedTranscriptPaths.set(correlationId, transcriptPath);
       startTranscriptWatcher(ptyId, transcriptPath, correlationId);
 
-      // FIX (feedback E2E rodada 5) — perfil de NASCIMENTO desta sessão
-      // (mesmo `activeProfileSlug`/Name usados em `claudeConfigDir` acima,
-      // por VALOR — trocar de perfil depois não reescreve isto). Só pra
-      // 'claude' (branch abaixo, shell, nunca aplica `CLAUDE_CONFIG_DIR` —
-      // não tem "perfil" que fizesse sentido devolver aqui).
       // T404 (004) — `correlationId` é o id da sessão do Claude (imposto no
       // spawn acima, ou herdado do `-r` numa retomada); devolvê-lo aqui é o
       // que dá ao renderer a chave para nomear/persistir esta sessão.
-      // T1219 (etapa 2, C24) — com o motor ativo, a conta devolvida é a
-      // CONTA ativa dele (`{id, label}`); com o motor inerte, cai no perfil
-      // ativo legado (mesmos valores de sempre, só o nome do campo mudou).
-      const spawnAccount = motorActive && accountsSnapshot?.activeAccountId
-        ? {
-            id: accountsSnapshot.activeAccountId,
-            label: accountsSnapshot.accounts.find((account) => account.id === accountsSnapshot.activeAccountId)?.label ?? accountsSnapshot.activeAccountId,
-          }
-        : { id: activeProfileSlug, label: activeProfileName };
+      // T1219/T1222 (etapa 2) — com o motor ativo, a conta devolvida é a
+      // CONTA ativa dele (`{id, label}`); motor inerte (sem mod conectado,
+      // C2) devolve `undefined` — não existe mais "conta ativa" fallback
+      // (os perfis morreram; `computeSessionAccountLabel` cai no rótulo
+      // global "Motor inerte" nesse caso).
+      const spawnAccount =
+        motorActive && accountsSnapshot?.activeAccountId
+          ? {
+              id: accountsSnapshot.activeAccountId,
+              label: accountsSnapshot.accounts.find((account) => account.id === accountsSnapshot.activeAccountId)?.label ?? accountsSnapshot.activeAccountId,
+            }
+          : undefined;
 
       return { ptyId, claudeSessionId: correlationId, account: spawnAccount };
     }
@@ -1284,7 +1244,7 @@ function registerSessionIpcHandlers(): void {
     const entry = appConfig.sessionRegistry[sessionId];
     if (!entry) return toAppConfigDto(appConfig);
 
-    const transcriptPath = spawnedTranscriptPaths.get(sessionId) ?? resolveTranscriptPath(sessionId, entry.projectPath, activeProfileConfigDir);
+    const transcriptPath = spawnedTranscriptPaths.get(sessionId) ?? resolveTranscriptPath(sessionId, entry.projectPath, undefined);
     appConfig = {
       ...appConfig,
       sessionRegistry: forgetIfOrphan(appConfig.sessionRegistry, sessionId, existsSync(transcriptPath)),
@@ -1308,7 +1268,7 @@ function registerSessionIpcHandlers(): void {
       projectPath,
       appConfig.sessionNames,
       { indexProjectSessions },
-      activeProfileConfigDir,
+      undefined,
     );
     appConfig = { ...appConfig, sessionRegistry };
     persistAppConfig();
@@ -1376,26 +1336,6 @@ function registerProjectBindingIpcHandlers(): void {
 }
 
 /**
- * Lote 8 (009-modo-dev-v3), CA-24 — "Reiniciar sessão em foco" na conta
- * SELECIONADA: copia o `.jsonl` do perfil de origem pro perfil ativo quando
- * são diferentes (achado 14). Payload inválido é no-op (`same-profile`,
- * nunca lança) — mesmo espírito defensivo do resto dos handlers deste
- * arquivo. Nenhuma escrita fora do `.jsonl` da própria sessão sendo
- * reiniciada; nenhuma leitura/escrita de credencial (`.credentials.json`/
- * `oauthAccount`) — regra dura do projeto, preservada aqui como em
- * profile-manager.ts.
- */
-function registerTranscriptCopyIpcHandlers(): void {
-  const transcriptCopyIoDeps = createSystemTranscriptCopyIoDeps();
-
-  ipcMain.handle(TRANSCRIPT_COPY_CHANNELS.copyForResume, (_event, input: unknown): CopyTranscriptForResumeResult => {
-    if (!isValidCopyTranscriptForResumeIpcInput(input)) return { copied: false, reason: 'invalid-payload' };
-    const typed = input as CopyTranscriptForResumeIpcInput;
-    return copyTranscriptForResume(typed, { homedir }, transcriptCopyIoDeps);
-  });
-}
-
-/**
  * CA-3/CA-5 (009-modo-dev-v3, lote 4) — GitHub por `gh` CLI (spec-issue,
  * sub-issues nativas, PR da fase + etiquetas homologado/revertido-ciclo).
  * `github:read` cobre os 3 fatos do CA-3 num canal só, discriminado por
@@ -1433,112 +1373,6 @@ function registerGithubIpcHandlers(): void {
   ipcMain.handle(GITHUB_CHANNELS.checkAvailability, async (): Promise<GhAvailabilityDto> => {
     const availability = await checkGhAvailability();
     return availability.available ? { available: true, reason: null } : { available: false, reason: availability.reason };
-  });
-}
-
-/** Sempre inclui o Principal + varre `~/.claude-profiles/*` de novo a cada chamada (mesmo espírito de `listProjectsWithFavorites` — lista pequena, I/O local, sem necessidade de cache próprio aqui). */
-function currentProfileList(): ProfileInfo[] {
-  return listProfiles(createSystemProfileListDeps(homedir));
-}
-
-function toProfileSummaryDto(profile: ProfileInfo): ProfileSummaryDto {
-  return { name: profile.name, slug: profile.slug, isPrimary: profile.isPrimary, active: profile.slug === activeProfileSlug };
-}
-
-/** Doctor/repair podem ser chamados por slug que não está (mais) na listagem atual — sintetiza um `ProfileInfo` a partir do slug em vez de silenciosamente cair pro Principal (que mentiria "saudável" pra um perfil que não existe). */
-function resolveProfileOrSynthesize(slug: string): ProfileInfo {
-  const existing = currentProfileList().find((profile) => profile.slug === slug);
-  if (existing) return existing;
-  if (slug === PRINCIPAL_PROFILE_SLUG) return PRINCIPAL_PROFILE;
-  return { name: titleCaseFromSlug(slug), slug, configDir: profileDirPath(slug, profilePathDeps), isPrimary: false };
-}
-
-/**
- * T014 — ProfileManager (FR-005, FR-012, CA-3). GATE HUMANO: a mecânica de
- * isolamento por `CLAUDE_CONFIG_DIR` foi validada ponta-a-ponta pelo
- * Alexandre em 2026-07-23 (login real concorrente, ver addendum de
- * `specs/001-mvp/spike-t001-resultado.md`) — mas o app em si NUNCA lê/grava/
- * exibe credenciais; qualquer conta nova cadastrada aqui só fica "pronta de
- * verdade" depois de um `/login` real dentro do terminal daquele perfil.
- */
-function registerProfileIpcHandlers(): void {
-  ipcMain.handle(PROFILE_CHANNELS.list, (): ProfileSummaryDto[] => currentProfileList().map(toProfileSummaryDto));
-
-  ipcMain.handle(PROFILE_CHANNELS.create, async (_event, name: string): Promise<ProfileSummaryDto[]> => {
-    // Mesma resolução do `claude` usada pro spawn de sessão (T005) — o
-    // bootstrap do `.claude.json` do perfil (spike seção 4/5) precisa do
-    // mesmo executável; CA-5 (claude ausente) degrada com graça aqui também
-    // (createSystemProfileCreationIoDeps trata `claudeExecutablePath: null`
-    // como no-op no passo de bootstrap, não como erro fatal). Handler async
-    // — `createProfile` aguarda o bootstrap sem travar o event loop do main
-    // (ver comentário de topo de `ProfileCreationIoDeps.runBootstrapPrompt`).
-    const resolved = resolveClaudeExecutable(claudeResolveDeps);
-    const io = createSystemProfileCreationIoDeps(resolved.found ? resolved.launch : null, profilePathDeps);
-    await createProfile(name, profilePathDeps, io);
-    return currentProfileList().map(toProfileSummaryDto);
-  });
-
-  ipcMain.handle(PROFILE_CHANNELS.activate, (_event, slug: string): ProfileSummaryDto[] => {
-    const profiles = currentProfileList();
-    const target = profiles.find((profile) => profile.slug === slug);
-    // Slug desconhecido = no-op silencioso (lista devolvida sem o campo
-    // `active` mudar) — não há perfil válido pra ativar.
-    if (target) {
-      activeProfileSlug = target.slug;
-      activeProfileConfigDir = target.configDir;
-      activeProfileName = target.name; // FIX (feedback E2E rodada 5) — mesmo ponto de atualização de activeProfileSlug/activeProfileConfigDir acima.
-      // T1220 (011-contas-e-provedores, etapa 2, D15) — `activeProfileSlug`
-      // do `AppConfig` DEIXA de ser escrito aqui: a tela de contas (T1221)
-      // substitui o dropdown de perfis, então não há mais gesto de UI que
-      // chame este handler. O campo continua ACEITO no sanitize (leitura
-      // tolerante de config antigo) — só a escrita para.
-      persistAppConfig();
-    }
-    return profiles.map(toProfileSummaryDto);
-  });
-
-  /**
-   * Item 3 (rodada de feedback 30/07) — "excluir um perfil, não só
-   * adicionar". `deleteProfile` (profile-manager.ts) checa as duas regras
-   * duras (nunca Principal, nunca o perfil ATIVO agora) ANTES de tocar disco
-   * — a lista devolvida é sempre re-escaneada, mesmo em recusa, pro
-   * chamador nunca precisar de round-trip extra (mesmo idioma de `create`/
-   * `activate`).
-   */
-  ipcMain.handle(PROFILE_CHANNELS.delete, (_event, slug: string): DeleteProfileOutcome => {
-    const profiles = currentProfileList();
-    const io = createSystemProfileDeletionIoDeps();
-    const result = deleteProfile(slug, activeProfileSlug, profiles, io);
-    const refreshed = result.ok ? currentProfileList() : profiles;
-    return result.ok
-      ? { ok: true, profiles: refreshed.map(toProfileSummaryDto) }
-      : { ok: false, reason: result.reason, profiles: refreshed.map(toProfileSummaryDto) };
-  });
-
-  ipcMain.handle(PROFILE_CHANNELS.doctor, (_event, slug: string): ProfileDoctorReportDto => {
-    const profile = resolveProfileOrSynthesize(slug);
-    return runProfileDoctor(profile, claudeHomeDir(profilePathDeps), createSystemProfileDoctorDeps(profilePathDeps));
-  });
-
-  ipcMain.handle(PROFILE_CHANNELS.repair, (_event, slug: string): ProfileDoctorReportDto => {
-    const profile = resolveProfileOrSynthesize(slug);
-    const claudeHome = claudeHomeDir(profilePathDeps);
-    const doctorDeps = createSystemProfileDoctorDeps(profilePathDeps);
-    const report = runProfileDoctor(profile, claudeHome, doctorDeps);
-    repairProfileJunctions(profile, report, claudeHome, createSystemProfileRepairIoDeps());
-    // Re-roda o doctor pós-reparo — devolve o estado REAL, não um "healthy" otimista.
-    return runProfileDoctor(profile, claudeHome, doctorDeps);
-  });
-
-  ipcMain.handle(PROFILE_CHANNELS.headroom, async (_event, rawOptions?: unknown): Promise<ProfileHeadroomMap> => {
-    // T205 — payload vem do renderer via IPC; nunca confiar cegamente
-    // (poderia ser qualquer coisa vinda de um preload comprometido/versão
-    // desalinhada) — só aceita `{ force: true }`, qualquer outra forma vira
-    // `force: false` (comportamento anterior, respeita cache).
-    const force =
-      typeof rawOptions === 'object' && rawOptions !== null && (rawOptions as { force?: unknown }).force === true;
-    const targets = currentProfileList().map((profile) => ({ slug: profile.slug, configDir: profile.configDir }));
-    return readAllProfilesHeadroom(targets, headroomCache, undefined, { force });
   });
 }
 
@@ -1630,14 +1464,10 @@ function migrationHomedir(): string {
   return override ? dirname(override) : homedir();
 }
 
-function migrationPathDeps(): { homedir: () => string } {
-  return { homedir: migrationHomedir };
-}
-
 /** Monta o `MigrationPlan` corrente lendo o inventário + diffs de MCP do disco, cruzado com `appConfig.migration` (estado persistido). Somente leitura. */
 function currentMigrationPlan(): MigrationPlan {
   const inventory = readProfileInventory(createSystemProfileInventoryDeps(migrationHomedir));
-  const diffs = inventory.map((profile) => computeMcpDiffFromDisk(profile.slug, profile.path, globalClaudeJsonPath(migrationPathDeps())));
+  const diffs = inventory.map((profile) => computeMcpDiffFromDisk(profile.slug, profile.path, globalClaudeJsonPathFor(migrationHomedir())));
   return buildMigrationPlan(inventory, appConfig.migration, diffs);
 }
 
@@ -1710,7 +1540,7 @@ function registerMigrationIpcHandlers(): void {
     const profile = inventory.find((p) => p.slug === profileSlug);
     if (!profile) return { result: 'nothing-to-copy', copied: 0 };
 
-    const claudeHome = claudeHomeDir(migrationPathDeps());
+    const claudeHome = claudeHomeDirFor(migrationHomedir());
     const input = readTranscriptConsolidationInput(join(profile.path, 'projects'), join(claudeHome, 'projects'));
     const outcome = planTranscriptConsolidation(input);
     const copied = outcome.kind === 'copy' ? executeTranscriptCopyOperations(outcome.operations) : 0;
@@ -1790,21 +1620,6 @@ void app.whenReady().then(async () => {
   // config-store.ts) — nunca lança, cai nos defaults na pior hipótese.
   appConfig = readAppConfig(getAppConfigPath(), defaultAppConfig(defaultProjectRoots(homedir)), legacyConfigPaths(), configIoDeps);
 
-  // T014 — perfil ativo persistido ANTES de registrar os handlers de PTY (o
-  // primeiro `pty:create` de sessão claude já precisa do
-  // `activeProfileConfigDir` certo). Slug persistido que não existe mais
-  // (perfil removido do disco manualmente) cai pro Principal, nunca lança.
-  const bootProfile = currentProfileList().find((profile) => profile.slug === appConfig.activeProfileSlug) ?? PRINCIPAL_PROFILE;
-  activeProfileSlug = bootProfile.slug;
-  activeProfileConfigDir = bootProfile.configDir;
-  activeProfileName = bootProfile.name; // FIX (feedback E2E rodada 5) — mesmo ponto de atualização de activeProfileSlug/activeProfileConfigDir acima.
-  // Slug persistido pode ter sido normalizado pro Principal acima (perfil
-  // morto) — reflete de volta no config em memória pra próxima escrita não
-  // reintroduzir um slug inexistente.
-  if (appConfig.activeProfileSlug !== bootProfile.slug) {
-    appConfig = { ...appConfig, activeProfileSlug: bootProfile.slug };
-  }
-
   // T1125 (011-contas-e-provedores, etapa 1) — motor de contas. `accountsVaultPath`
   // precisa de `userData` (só disponível aqui); `rebuildAccountEngine` monta o
   // motor com `appConfig.accounts` (mod `null` = inerte, C2 — comportamento de
@@ -1823,7 +1638,6 @@ void app.whenReady().then(async () => {
   registerPtyIpcHandlers();
   registerProjectIpcHandlers();
   registerSessionIpcHandlers();
-  registerProfileIpcHandlers();
   registerAccountsIpcHandlers(); // T1125 (011-contas-e-provedores, etapa 1)
   registerMigrationIpcHandlers(); // T1214 (011-contas-e-provedores, etapa 2)
   registerConfigIpcHandlers();
@@ -1832,7 +1646,6 @@ void app.whenReady().then(async () => {
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
   registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)
-  registerTranscriptCopyIpcHandlers(); // CA-24 (009-modo-dev-v3, lote 8)
   registerEsteiraIpcHandlers(); // Spec 010 — esteira nova (store + contrato), ao LADO do mapa atual
   createMainWindow();
 

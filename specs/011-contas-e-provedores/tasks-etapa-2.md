@@ -227,7 +227,7 @@ T1228, T1229, T1230, T1231).
 
 ## Fase 4 — Demolição (depende da Fase 3 verde)
 
-- [ ] **T1222** Remover o mecanismo do main: apagar `src/main/profile-manager.ts`
+- [x] **T1222** Remover o mecanismo do main: apagar `src/main/profile-manager.ts`
   (673 L) e limpar `src/main/index.ts` — imports (:27, :36–38, :76, :95,
   :138–155), estado de módulo (:337–348), `registerProfileIpcHandlers` inteiro
   (:1226–1303) e sua chamada (:1343), helpers (:1202–1216), boot do perfil
@@ -243,14 +243,14 @@ T1228, T1229, T1230, T1231).
   **DoD**: `npm run typecheck` verde; app abre; nenhuma referência a
   `PROFILE_CHANNELS` no `src/`.
 
-- [ ] **T1223** Remover a leitura de cota por perfil: apagar
+- [x] **T1223** Remover a leitura de cota por perfil: apagar
   `src/main/quota-headroom.ts` (366 L), o `HeadroomCache` do `index.ts` (:348,
   :164) e o handler `profiles:headroom`. Conferir que nenhuma env de fixture
   (`DONEL_QUOTA_AXI_FIXTURE`) restou em script, smoke ou doc.
   **DoD**: typecheck verde; `grep -r "quota-axi" src/ tests/` sem hits em código
   executável.
 
-- [ ] **T1224** Remover o fluxo "Reiniciar sessão em foco" **inteiro**
+- [x] **T1224** Remover o fluxo "Reiniciar sessão em foco" **inteiro**
   (C31/A9 — decisão do dono, 2026-08-04): apagar `src/main/transcript-copy.ts`
   (87 L) e `src/shared/transcriptCopy.ts`; em `App.tsx`, remover o botão
   "⟳ Reiniciar" (:2717), o diálogo (:2940–2962), `handleOpenRestart`,
@@ -262,12 +262,12 @@ T1228, T1229, T1230, T1231).
   **DoD**: typecheck verde; `grep -ri "restart" src/` sem hits do fluxo morto;
   nenhum texto de UI referenciando reinício de sessão.
 
-- [ ] **T1225** Remover `src/renderer/src/ProfileSwitcher.tsx` (619 L) e seu
+- [x] **T1225** Remover `src/renderer/src/ProfileSwitcher.tsx` (619 L) e seu
   `.module.css`. **Antes de apagar**, conferir o componente de badge citado em
   `ProjectSwitcher.tsx:22` — se for compartilhado, ele **fica** (achado A15).
   **DoD**: app abre; `ProjectSwitcher` intacto e verde.
 
-- [ ] **T1226** **Morte declarada das suítes** — remover nominalmente as **9**
+- [x] **T1226** **Morte declarada das suítes** — remover nominalmente as **9**
   (C34/A8 + decisão C31): `tests/profile-manager.test.ts` (726 L),
   `tests/quota-headroom.test.ts` (495 L), `tests/transcript-copy.test.ts`
   (102 L), `tests/transcriptCopy.test.ts` (67 L),
@@ -284,7 +284,7 @@ T1228, T1229, T1230, T1231).
   contas, o comportamento que os smokes mortos cobriam pelo dropdown.
   **DoD**: os quatro itens acima registrados no card.
 
-- [ ] **T1227** **Ajuste (não morte)** das suítes de raspão + smoke substituto:
+- [x] **T1227** **Ajuste (não morte)** das suítes de raspão + smoke substituto:
   `tests/config-store.test.ts` (893 L), `tests/pty-manager.test.ts` (160 L —
   **só** o que cita perfil; `buildPtyEnv` e `claudeConfigDir` continuam
   testados, C33), `tests/devMode.test.ts`, `tests/phaseDetailsView.test.ts`,

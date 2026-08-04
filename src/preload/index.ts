@@ -12,11 +12,8 @@ import type {
   ArchivePhaseSessionIpcInput,
   BoardFacts,
   CardRepoResolution,
-  CopyTranscriptForResumeIpcInput,
-  CopyTranscriptForResumeResult,
   CreateProjectIpcInput,
   CreateProjectResponse,
-  DeleteProfileOutcome,
   DonelApi,
   EntryColumnCard,
   GhAvailabilityDto,
@@ -27,9 +24,6 @@ import type {
   OpenDiscoveryIpcInput,
   PhaseArchivedPayload,
   PhaseDefaultsTable,
-  ProfileDoctorReportDto,
-  ProfileHeadroomMap,
-  ProfileSummaryDto,
   ProjectBindingDto,
   ProjectInfo,
   ProjectScanMode,
@@ -55,7 +49,6 @@ import {
   DEVMODE_CHANNELS,
   GITHUB_CHANNELS,
   MIGRATION_CHANNELS,
-  PROFILE_CHANNELS,
   PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
   PTY_CHANNELS,
@@ -63,7 +56,6 @@ import {
   SESSION_CHANNELS,
   TAB_CHANNELS,
   TRANSCRIPT_CHANNELS,
-  TRANSCRIPT_COPY_CHANNELS,
 } from '../shared';
 // T504 (005-terminal-copy-paste) — canal do clipboard-bridge (main), aditivo
 // aos imports acima (não reordena o bloco existente).
@@ -187,28 +179,9 @@ const donelApi: DonelApi = {
     seedProject: (projectPath: string) => ipcRenderer.invoke(SESSION_CHANNELS.seedProject, projectPath) as Promise<AppConfigDto>,
   },
 
-  profiles: {
-    list: () => ipcRenderer.invoke(PROFILE_CHANNELS.list) as Promise<ProfileSummaryDto[]>,
-
-    create: (name: string) => ipcRenderer.invoke(PROFILE_CHANNELS.create, name) as Promise<ProfileSummaryDto[]>,
-
-    activate: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.activate, slug) as Promise<ProfileSummaryDto[]>,
-
-    doctor: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.doctor, slug) as Promise<ProfileDoctorReportDto>,
-
-    repair: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.repair, slug) as Promise<ProfileDoctorReportDto>,
-
-    // T205 — repassa `{ force }` cru pro main; o main é quem valida/normaliza
-    // o payload (é IPC, não confia cegamente no que o renderer manda).
-    headroom: (options?: { force?: boolean }) => ipcRenderer.invoke(PROFILE_CHANNELS.headroom, options) as Promise<ProfileHeadroomMap>,
-
-    // Item 3 (rodada de feedback 30/07) — exclusão de perfil.
-    delete: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.delete, slug) as Promise<DeleteProfileOutcome>,
-  },
-
   // 011-contas-e-provedores (etapa 1) — motor de contas + mods (nasce inerte,
   // accounts.mod = null). `ConnectModInput` é write-only: o segredo digitado
-  // nunca volta em NENHUM canal de leitura abaixo. Mesmo padrão de `profiles.*`.
+  // nunca volta em NENHUM canal de leitura abaixo.
   accounts: {
     list: (options?: { force?: boolean }) => ipcRenderer.invoke(ACCOUNT_CHANNELS.list, options) as Promise<AccountsViewDto>,
 
@@ -350,13 +323,6 @@ const donelApi: DonelApi = {
     read: (request: GithubReadRequest) => ipcRenderer.invoke(GITHUB_CHANNELS.read, request) as Promise<GithubReadResponse>,
 
     checkAvailability: () => ipcRenderer.invoke(GITHUB_CHANNELS.checkAvailability) as Promise<GhAvailabilityDto>,
-  },
-
-  // CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": copia o
-  // `.jsonl` pro perfil ATIVO quando a sessão rodou em outro (achado 14).
-  transcripts: {
-    copyForResume: (input: CopyTranscriptForResumeIpcInput) =>
-      ipcRenderer.invoke(TRANSCRIPT_COPY_CHANNELS.copyForResume, input) as Promise<CopyTranscriptForResumeResult>,
   },
 
   // Spec 010 — a esteira nova. O renderer NUNCA lê disco nem calcula macro

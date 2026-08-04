@@ -367,28 +367,6 @@ export function App(): React.JSX.Element {
   });
   /** D4 — Toast informativo (o que o gesto fez, por que foi recusado); nunca tem desfazer. */
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
-  /**
-   * CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": aba +
-   * sessão-alvo confirmadas no modal, antes do resume de verdade. `null` =
-   * modal fechado. Funciona nos dois modos (Dev e Uso geral) — não é
-   * exclusivo do Modo Dev, ao contrário do resto deste bloco de estado.
-   */
-  const [restartTarget, setRestartTarget] = useState<{
-    tabId: string;
-    sessionId: string;
-    cwd?: string;
-    projectName?: string;
-    sourceProfileSlug: string;
-    // FIX (#21) — modelo/esforço que a aba reiniciada estava mostrando ANTES
-    // do restart (`sessionModelEffort[tab.id]`, já resolvido com o fallback de
-    // `appConfig.launcherDefaults`): sem isto, `confirmRestart` reconstruía o
-    // argv só com `continuation: resume` — sem `--model`/`--effort` — e a aba
-    // nova caía no default hardcoded, "esquecendo" o valor que a StatusBar já
-    // mostrava pra ela um instante antes do reinício.
-    modelEffort: { model: ModelAlias; effort: EffortLevel };
-  } | null>(null);
-  /** CA-24 — mesmo hook de teste de `lastDevModeSession`/`lastLaunch`: o argv REAL montado pro resume, sem depender de ler o output do terminal. */
-  const [lastRestartSession, setLastRestartSession] = useState<{ args: readonly string[]; cwd?: string } | null>(null);
   /** Cleanup do watcher de prontidão em voo por aba (mesmo padrão de `pendingInjectionWatchersRef`). */
   const armWatchersRef = useRef<Record<string, (() => void) | undefined>>({});
   /**
@@ -401,8 +379,6 @@ export function App(): React.JSX.Element {
   const esteiraTabSessionsRef = useRef<Record<string, string | undefined>>({});
   const semaphoreStatesRef = useRef<Record<string, SemaphoreStateInfo>>({});
   semaphoreStatesRef.current = semaphoreStates;
-  /** CA-22 — slug do perfil ATIVO agora (reportado pelo ProfileSwitcher, que já busca a lista). */
-  const [activeProfileSlug, setActiveProfileSlug] = useState('principal');
   /** Mesma razão de `appConfigRef`/`tabsRef`: a assinatura de `onPhaseArchived` tem deps vazias e precisa do valor ATUAL. */
   const sessionAccountsRef = useRef<Record<string, { id: string; label: string } | undefined>>({});
   sessionAccountsRef.current = sessionAccounts;
@@ -445,13 +421,6 @@ export function App(): React.JSX.Element {
     void window.donel.accounts.list().then(setAccountsView);
     return window.donel.accounts.onChanged(setAccountsView);
   }, []);
-
-  // `activeProfileSlug` segue existindo só pro fluxo de "Reiniciar sessão em
-  // outra conta" (C31/T1224, removido na Fase 4) — alimentado agora pela
-  // conta ativa do motor em vez do callback do `ProfileSwitcher` morto.
-  useEffect(() => {
-    setActiveProfileSlug(accountsView.activeAccountId ?? 'principal');
-  }, [accountsView.activeAccountId]);
 
   /**
    * T707 (007-favoritos-sessoes) — grava uma visita no registro (D9: "mantenha
@@ -1331,135 +1300,6 @@ export function App(): React.JSX.Element {
       .catch(() => undefined);
   };
 
-  /**
-   * CA-24 (009-modo-dev-v3, lote 8) — abre o modal de confirmação do
-   * "Reiniciar sessão em foco". Sem aba Claude em foco (ou sem
-   * `claudeSessionId` já resolvido — janela curta entre `pty:create` e a
-   * promise responder), o botão simplesmente não faz nada: nunca cria uma
-   * sessão "vazia" só para ter algo a reiniciar.
-   */
-  const handleOpenRestart = (): void => {
-    if (!activeClaudeTab?.claudeSessionId) return;
-    const tab = activeClaudeTab;
-    // FIX (rodada de feedback 30/07, item 1) — degradação por exceção: nenhum
-    // handler de gesto do usuário pode lançar sem ser pego (uma exceção não
-    // tratada num handler de evento do React derruba a árvore inteira — a
-    // "tela preta" já conhecida do projeto). `setRestartTarget` só monta um
-    // objeto plano a partir de campos já lidos — não deveria lançar nunca —
-    // mas o try/catch é a rede de segurança: pior caso vira um toast, nunca
-    // um app travado.
-    try {
-      setRestartTarget({
-        tabId: tab.id,
-        sessionId: tab.claudeSessionId as string,
-        cwd: tab.cwd,
-        projectName: tab.projectName,
-        // CA-25 — conta de NASCIMENTO da aba (`sessionAccounts`, T707/handleAccountResolved), nunca a conta ATIVA agora.
-        sourceProfileSlug: sessionAccounts[tab.id]?.id ?? activeProfileSlug,
-        // FIX (#21) — o que a StatusBar mostra pra esta aba AGORA, mesma
-        // resolução de `addTab` (launchArgs > launcherDefaults > literal).
-        modelEffort: {
-          model: sessionModelEffort[tab.id]?.model ?? appConfig?.launcherDefaults.model ?? DEFAULT_MODEL_ALIAS,
-          effort: sessionModelEffort[tab.id]?.effort ?? appConfig?.launcherDefaults.effort ?? DEFAULT_EFFORT_LEVEL,
-        },
-      });
-    } catch {
-      setDevModeToast('Não foi possível preparar o reinício desta sessão.');
-    }
-  };
-
-  /**
-   * CA-24 — confirmado o reinício: retoma (`-r <sessionId>`) na conta
-   * SELECIONADA (`activeProfileSlug`, o perfil ativo agora no
-   * ProfileSwitcher — "a conta selecionada" do CA-24), copiando o transcript
-   * pra dentro do perfil dela ANTES quando ela é diferente da que rodou a
-   * sessão (achado 14: o `.jsonl` mora no `CLAUDE_CONFIG_DIR` do perfil
-   * dono). A cópia é best-effort (C4): se falhar, o resume segue mesmo assim
-   * — o pior caso é idêntico a hoje, sem este botão (`-r` começa do zero,
-   * calado). A aba antiga fecha (ela "congela", CA-25) e uma aba nova nasce
-   * já retomando; sem `cwd` conhecido (aba sem projeto associado) a cópia
-   * nem tenta — não há como resolver o diretório de sessões do projeto.
-   */
-  const confirmRestart = (): void => {
-    const target = restartTarget;
-    setRestartTarget(null);
-    if (!target) return;
-
-    const targetProfileSlug = activeProfileSlug;
-    const crossProfile = target.sourceProfileSlug !== targetProfileSlug;
-
-    const resumeWithNewTab = (): void => {
-      // FIX (rodada de feedback 30/07, item 1) — degradação por exceção:
-      // qualquer falha aqui dentro (ex.: `buildClaudeArgs` recebendo um
-      // `sessionId` degenerado numa sessão recém-nascida sem transcript
-      // ainda) vira um toast, nunca uma exceção não tratada dentro de um
-      // handler de evento — essa é a "tela preta" conhecida do projeto (uma
-      // exceção em render/handler desmonta a árvore React inteira).
-      try {
-        // ORDEM IMPORTA (bug pego pelo smoke restart-session.spec.ts): `addTab`/
-        // `closeTabImmediately` fazem `setTabs(<array direto>)` a partir do
-        // `tabs` do CLOSURE desta render — não são updates funcionais. Chamar
-        // `addTab` e DEPOIS `closeTabImmediately` faz o `setTabs` do close
-        // sobrescrever o array já com a aba nova por um array calculado ANTES
-        // dela existir (o `tabs` capturado no fechamento nunca viu o `addTab`),
-        // apagando a aba recém-criada — 0 abas no fim, não 1. Fechar PRIMEIRO
-        // (sobre o `tabs` desta render, ainda correto) e só then criar a nova
-        // evita a corrida: o `setTabs` de `addTab` (que É funcional,
-        // `prev => [...prev, novo]`) compõe corretamente em cima do resultado
-        // do close, processado antes dele na mesma fila de updates do React.
-        closeTabImmediately(target.tabId);
-        // FIX (#21) — leva o modelo/esforço que a aba já mostrava (capturado em
-        // `handleOpenRestart`) pro argv real do resume: sem isto, a aba nova
-        // nascia sem `--model`/`--effort` e `addTab` caía no fallback,
-        // "esquecendo" o valor que estava na StatusBar um instante antes.
-        const args = buildClaudeArgs({
-          model: target.modelEffort.model,
-          effort: target.modelEffort.effort,
-          continuation: { type: 'resume', sessionId: target.sessionId },
-        });
-        setLastRestartSession({ args, cwd: target.cwd });
-        addTab({
-          name: target.projectName ?? 'Sessão reiniciada',
-          cwd: target.cwd,
-          projectName: target.projectName,
-          pinned: false,
-          launchArgs: args,
-          sessionType: 'claude',
-        });
-        if (crossProfile) {
-          setDevModeToast(`Sessão reiniciada na conta ${targetProfileSlug} — a sessão original (conta ${target.sourceProfileSlug}) continua congelada.`);
-        }
-      } catch {
-        setDevModeToast('Não foi possível reiniciar esta sessão.');
-      }
-    };
-
-    if (!crossProfile || !target.cwd) {
-      // Mesma conta: resume direto, sem cópia (CA-24). Sem `cwd` conhecido:
-      // não há como resolver o diretório do projeto pra copiar — segue sem
-      // cópia mesmo assim (degradação por omissão, nunca bloqueia o gesto).
-      resumeWithNewTab();
-      return;
-    }
-
-    try {
-      window.donel.transcripts
-        .copyForResume({
-          sessionId: target.sessionId,
-          projectPath: target.cwd,
-          sourceProfileSlug: target.sourceProfileSlug,
-          targetProfileSlug,
-        })
-        .catch(() => undefined) // best-effort (C4) — a cópia falhar não impede o resume.
-        .finally(resumeWithNewTab);
-    } catch {
-      // FIX (item 1) — `window.donel.transcripts` ausente/quebrado lançaria
-      // SINCRONAMENTE aqui (fora de qualquer promise, um `.catch` não pegaria):
-      // degrada pro mesmo caminho best-effort, resume segue sem a cópia.
-      resumeWithNewTab();
-    }
-  };
-
   // T009 — antes do primeiro evento de hook chegar pra uma aba recém-criada,
   // assume 'working' (spike: estado inicial otimista) com stateEnteredAt=0
   // (sortSessions trata omitido/0 como "a mais antiga possível" — nunca
@@ -1998,11 +1838,6 @@ export function App(): React.JSX.Element {
                   label={SESSION_STATE_LABEL_PT[semaphoreStates[activeClaudeTab.id]?.state ?? 'working']}
                 />
               ) : null}
-              {activeClaudeTab?.claudeSessionId ? (
-                <Button variant="ghost" onClick={handleOpenRestart} data-testid="restart-session-button">
-                  ⟳ Reiniciar
-                </Button>
-              ) : null}
             </div>
           ) : null}
           <div className={styles.terminal}>
@@ -2182,10 +2017,6 @@ export function App(): React.JSX.Element {
         <pre data-testid="launcher-last-command" data-cwd={lastLaunch?.cwd ?? ''} hidden>
           {lastLaunch ? ['claude', ...lastLaunch.args].join(' ') : ''}
         </pre>
-        {/* CA-24 (009-modo-dev-v3, lote 8) — idem, pro "Reiniciar sessão em foco". */}
-        <pre data-testid="restart-last-session" data-cwd={lastRestartSession?.cwd ?? ''} hidden>
-          {lastRestartSession ? ['claude', ...lastRestartSession.args].join(' ') : ''}
-        </pre>
       </div>
 
       <StatusBar
@@ -2213,36 +2044,6 @@ export function App(): React.JSX.Element {
         }
       >
         <p>O processo desta aba será encerrado.</p>
-      </Modal>
-
-      {/* CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": mesmo
-          padrão de modal de confirmação do "Fechar sessão?" acima. Avisa a
-          conta de destino e, quando diferente da que rodou a sessão, que a
-          sessão passa a existir em duas contas (CA-25) — retomada também é
-          um comando "preparado" no sentido de que só dispara ao confirmar
-          aqui, nunca antes. */}
-      <Modal
-        open={restartTarget !== null}
-        onClose={() => setRestartTarget(null)}
-        title="Reiniciar sessão em foco?"
-        actions={
-          <>
-            <Button variant="secondary" onClick={() => setRestartTarget(null)}>
-              Cancelar
-            </Button>
-            <Button variant="primary" onClick={confirmRestart} data-testid="restart-session-confirm">
-              ⟳ Reiniciar
-            </Button>
-          </>
-        }
-      >
-        <p>A sessão é retomada (<code>-r</code>) na conta <strong>{activeProfileSlug}</strong>, a conta selecionada agora.</p>
-        {restartTarget && restartTarget.sourceProfileSlug !== activeProfileSlug ? (
-          <p>
-            Ela rodou na conta <strong>{restartTarget.sourceProfileSlug}</strong> — o transcript é copiado pra conta{' '}
-            <strong>{activeProfileSlug}</strong> antes de retomar. A sessão passa a existir nas duas contas; a original congela.
-          </p>
-        ) : null}
       </Modal>
 
       {/* T013 — PARTE PRINCIPAL (FR-004, CA-2, ui-spec §5). Item 11 — a

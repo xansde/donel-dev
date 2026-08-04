@@ -22,7 +22,12 @@ import type { StoredSessionName } from '../shared/sessionName';
 import type { RegisteredSession, SessionRegistry } from '../shared/sessionRegistry';
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
 import { isTabColorToken, type TabAppearance, type TabAppearanceMap } from '../shared/tabAppearance';
-import { PRINCIPAL_PROFILE_SLUG } from './profile-manager';
+
+// T1222 (011-contas-e-provedores, etapa 2) — `profile-manager.ts` morreu na
+// demolição; `activeProfileSlug` é campo LEGADO (D15/C30, nunca mais
+// escrito, só aceito no sanitize) — o default é o literal que o perfil
+// "Principal" sempre usou, sem depender do módulo morto.
+const LEGACY_PRINCIPAL_PROFILE_SLUG = 'principal';
 
 // T015 — ConfigStore formal (FR-007): `%APPDATA%\donel-dev\config.json` (na
 // prática `app.getPath('userData')`, que resolve pro nome real do app —
@@ -43,15 +48,13 @@ import { PRINCIPAL_PROFILE_SLUG } from './profile-manager';
 //    foi DELETADO nesta task, exatamente como o comentário de topo dele já
 //    previa ("o ConfigStore formal... chega no T015 e absorve este arquivo").
 //    `toggleFavorite` (pura) foi portada pra cá sem mudança de comportamento.
-//  - `active-profile.json` (T014, `{ activeSlug }`) — `profile-manager.ts`
-//    continua com `ActiveProfileConfig`/`readActiveProfileConfig`/
-//    `writeActiveProfileConfig` INTOCADOS (módulo já auditado, testes
-//    próprios em profile-manager.test.ts) — só deixam de ser CHAMADOS por
-//    `main/index.ts` (o caminho de leitura/escrita ativo passa a ser só este
-//    arquivo). A migração abaixo lê o `active-profile.json` legado de forma
-//    INDEPENDENTE (parsing próprio do formato `{ activeSlug }`, sem importar
-//    de profile-manager.ts) pra não acoplar os dois módulos nem reabrir
-//    escopo do T014 fora desta task.
+//  - `active-profile.json` (T014, `{ activeSlug }`) — o formato `{
+//    activeSlug }` original vivia em `profile-manager.ts`
+//    (`ActiveProfileConfig`), morto na demolição de perfis (T1222,
+//    011-contas-e-provedores etapa 2). A migração abaixo sempre leu o
+//    arquivo de forma INDEPENDENTE (parsing próprio, sem importar do
+//    módulo) — sobrevive intacta, `activeProfileSlug` é campo legado
+//    (D15/C30): aceito no sanitize, nunca mais escrito.
 //
 // Campos NOVOS neste batch (feedback E2E, specs/001-mvp/feedback-e2e.md):
 //  - `projectRoots` (rodada 3) — era hardcoded em `defaultProjectRoots`,
@@ -121,7 +124,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     projectRoots,
     projectScanMode: 'markers',
     favorites: [],
-    activeProfileSlug: PRINCIPAL_PROFILE_SLUG,
+    activeProfileSlug: LEGACY_PRINCIPAL_PROFILE_SLUG,
     launcherDefaults: DEFAULT_LAUNCHER_DEFAULTS,
     notificationPreference: DEFAULT_NOTIFICATION_PREFERENCE,
     sessionNames: {},

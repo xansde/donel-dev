@@ -93,11 +93,9 @@ test.afterAll(async () => {
 test('T611/T612 (CA-22 da 009) — a StatusBar mostra o `%` de contexto da aba em foco, atualiza ao vivo com o turno novo, sinaliza acima da zona e cai quando o turno fica menor (não é acumulado)', async () => {
   test.setTimeout(180_000);
 
-  // Só faz sentido com o perfil Principal ativo: com outro perfil o CLI grava o
-  // transcript sob o diretório daquele perfil, não em `~/.claude`.
-  const profiles = await appWindow.evaluate(() => window.donel.profiles.list());
-  const active = profiles.find((profile) => profile.active);
-  test.skip(!active?.isPrimary, `perfil ativo não é o Principal (${active?.slug}) — transcript não fica em ~/.claude`);
+  // T1227 (011-contas-e-provedores, etapa 2) — o guard de "só faz sentido com
+  // o perfil Principal ativo" morreu junto com os perfis (T1222): sem
+  // `CLAUDE_CONFIG_DIR` por perfil, o transcript SEMPRE fica em `~/.claude`.
 
   // 1. Abre uma sessão claude real clicando no projeto — FIX (item 1, rodada
   // de feedback do teste de 30/07) — a árvore "Projetos" da sidebar saiu;
