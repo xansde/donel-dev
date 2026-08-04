@@ -1,9 +1,7 @@
 import {
   Button,
   formatSmartZoneLabel,
-  HomologationClock,
   Modal,
-  PhaseChip,
   SegmentedControl,
   SESSION_STATE_LABEL_PT,
   SplitButton,
@@ -11,26 +9,15 @@ import {
   StatusBar,
   TerminalTab,
   Toast,
-  type EsteiraPhase as ChipPhase,
 } from '@donel-dev/design-system';
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppConfigDto,
-  BoardFacts,
-  CardRepoResolution,
-  DiscoveryTree,
-  EntryColumn,
-  EntryColumnCard,
-  EsteiraPhase,
   NotificationPreference,
-  PhaseArchivedPayload,
-  PhaseNode,
-  PlanCardNode,
   ProfileHeadroomMap,
   ProjectInfo,
   ProjectScanMode,
-  RepoCandidate,
   SemaphoreStateInfo,
   SessionSummaryDto,
   TabColorToken,
@@ -51,15 +38,6 @@ import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
 // `SmartZoneMeter` do design-system.
 import { effectiveContextZone } from '../../shared/contextWindow';
 import { sortProjects } from '../../shared';
-// Lote 4/7 (009-modo-dev-v3) — PR da fase por `gh` (CA-3), consumido pelo
-// mapa (estado do PR desce pro card da fase, CA-16) via o canal já existente.
-import type { PhasePullRequestFacts } from '../../shared/githubFacts';
-import type { PhaseStatus } from '../../shared/phaseState';
-// Lote 7 (CA-11) — `--fase=n` no comando pré-digitado (D-V4: `=`, nunca espaço).
-import { formatFaseCommand } from '../../shared/mapLevels';
-// Lote 8 (CA-18/CA-20) — monta o conteúdo rico do painel direito (breadcrumb,
-// garantia, PR, artefatos, recibos) a partir de dados já resolvidos.
-import { buildPhaseDetailsView } from '../../shared/phaseDetailsView';
 // T710 (007/CA-11 2º momento) — o sinal de "a retomada falhou" é o exit code do
 // PTY (medido em specs/008-fechar-pendencias/medicao-t710.md), não texto de CLI.
 import { resumedSessionIdFromArgs, shouldForgetOnResumeFailure } from '../../shared/resumeFailure';
@@ -80,26 +58,14 @@ import {
   resolveSessionName,
 } from '../../shared/sessionName';
 import { sessionTabName } from '../../shared/sessions';
-// 003-modo-dev (Batch B) — Zonas 1/2/3 do Modo Dev. Toda a decisão pura
-// (que sessão abrir, que sequência pré-digitar, quem focar, o que encerrar)
-// vive nos módulos de `DevMode/`; aqui fica só o encanamento com PTY/IPC.
-import { DEFAULT_PHASE_DEFAULTS } from '../../shared/devModeDefaults';
+// Spec 010 / batch B6 — o Modo Dev continua sendo o mapa; a fonte dele passou
+// a ser o STORE (`esteiraMapView.ts`, puro e testado). Aqui fica só o
+// encanamento com PTY/IPC — nenhuma decisão de domínio, nenhuma frase de estado.
 import { isReadyToPreType } from '../../shared/preTypeReadiness';
-// 003-modo-dev (Batch D) — o espelho do board (CA-12/CA-13): anotação PURA em
-// cima da árvore de disco. `annotateTree` não persiste nada e o app não tem
-// canal de escrita para o TaskDex (invariante 5/CA-14).
-import { annotateTree } from '../../shared/boardAnnotation';
-import { DevModeEntry } from './DevMode/DevModeEntry';
-import { DiscoveryMap, type PromotedHomologationClock, type SelectedPhaseNode } from './DevMode/DiscoveryMap';
+import { DiscoveryMap } from './DevMode/DiscoveryMap';
 import { PhaseDetailsPanel } from './DevMode/PhaseDetailsPanel';
-import { discoveriesToClose, entryPhaseForColumn, localOnlyDiscoveryIds, resolveEntrySelection } from './DevMode/devModeSelection';
-import {
-  LIBERAR_COMMAND_TEMPLATE,
-  buildConciliationPrompt,
-  createPrimeSequencer,
-  decidePhaseOpen,
-  resolveCommandSequence,
-} from './DevMode/openPhaseSession';
+import { buildMapView, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
+import { createPrimeSequencer } from './DevMode/primeSequencer';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import type { LauncherLaunchOptions } from './Launcher';
@@ -107,8 +73,13 @@ import type { LauncherLaunchOptions } from './Launcher';
 // desmonta ou altera o Modo Dev de hoje; a tela entra por cima, atrás de um
 // gesto interno, para dar para comparar as duas com o mesmo dado.
 import { EsteiraScreen } from './Esteira/EsteiraScreen';
+import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
+import type { EsteiraSessionRequest } from './Esteira/esteiraSession';
+import { preparePhase } from './Esteira/preparePhase';
+import type { EsteiraSnapshotDto } from '../../shared/esteira/ipc';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
+import { AccountsPanel } from './AccountsPanel';
 import { ProfileSwitcher } from './ProfileSwitcher';
 import { ProjectSidebar } from './ProjectSidebar';
 import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from './ProjectSidebar';
@@ -201,13 +172,6 @@ interface LastLaunch {
   name: string;
 }
 
-/** Issue #34 — o card cujo repo ficou ambíguo (`devMode:resolveCardRepo`) até o operador escolher explicitamente. */
-interface PendingRepoChoice {
-  readonly cardId: string;
-  readonly column: EntryColumn;
-  readonly candidates: readonly RepoCandidate[];
-}
-
 // FIX (feedback E2E, decisão do Alexandre 2026-07-23, rodada 5 — "opção A") —
 // antes havia uma aba "default" (id fixo, sem `cwd`) que spawnava `claude`
 // direto em `os.homedir()` no boot do app. Causa raiz do bug reaberto no
@@ -236,90 +200,12 @@ const PRE_TYPE_READY_TIMEOUT_MS = 30_000;
 /** Intervalo do re-teste da prontidão. Não é um "delay fixo até digitar": o gatilho continua sendo o SINAL (semáforo/buffer), este tick só garante reavaliar quando o sinal chega sem um chunk novo de PTY junto. */
 const PRE_TYPE_POLL_MS = 250;
 
-/**
- * Chave de uma ETAPA (card de plano × fase [× fase do plano]) do discovery
- * em foco — dedup de aba DENTRO desta execução do app (`phaseTabsRef`), não
- * persistida. Lote 7/CA-11: `faseNum` entra na chave para implementar/validar
- * com mais de uma fase não colidirem entre si (fase 1 e fase 2 são ETAPAS
- * diferentes, cada uma com sua própria aba). CA-17: `marcoId` saiu (morto no
- * disco); `cardId` já identifica o card de plano sozinho.
- *
- * **Limitação conhecida, herdada do lote 2 (fora do escopo deste lote):**
- * `archivedPhaseSessions` (CA-21/CA-31, `devMode.ts`) e o `ctx.md` de disco
- * (`esteira-reader.ts`) continuam chaveados só por `cardId:fase`, sem
- * `faseNum` — a retomada de uma etapa PASSADA (CA-13) e o `worktreePath`/
- * `branch` lidos do `ctx.md` são os mesmos para toda fase do mesmo card. Com
- * mais de uma fase, "retomar a fase 1" e "retomar a fase 2" resolvem para a
- * mesma sessão arquivada (a última). Registrado no report do lote.
- */
-function phaseKey(discoveryCardId: string, cardId: string, phase: EsteiraPhase, faseNum?: number): string {
-  const base = `${discoveryCardId}:${cardId}:${phase}`;
-  return faseNum ? `${base}:${faseNum}` : base;
-}
-
-/**
- * FIX (E2E 30/07, achado F4) — `discovery` é a fase do CARD RAIZ, nunca do
- * card de plano (nada escreve `<planCardId>/discovery/…` em disco —
- * `marco.phases.discovery` é sempre `not-started`, uma fonte que não existe).
- * A trilha do mapa (`DiscoveryMap.tsx`) já sabia disso e usava
- * `tree.discoveryStatus`; esta função dá ao resto do app (painel de 316px +
- * `handlePhaseAction`, que decide o QUE arma no prompt) a MESMA fonte — CA-16,
- * um fato num lugar só, nunca duas versões concorrentes do mesmo card.
- * Sem artefatos/PR/sessão arquivada próprios — a etapa não é fase-indexada e
- * não tem `ctx.md` dela mesma.
- */
-function resolveSelectedPhaseNode(
-  marco: PlanCardNode,
-  phase: EsteiraPhase,
-  faseEntry: PlanCardNode['fases'][number] | undefined,
-  discoveryStatus: PhaseStatus,
-): PhaseNode {
-  if (phase === 'discovery') {
-    return {
-      phase: 'discovery',
-      status: discoveryStatus,
-      artifacts: {
-        ctxPath: '',
-        resultPath: null,
-        ctxExists: false,
-        result: null,
-        resultUnreadable: false,
-        worktreePath: null,
-        branch: null,
-      },
-      archivedSession: null,
-    };
-  }
-  return faseEntry && (phase === 'implementar' || phase === 'validar') ? faseEntry[phase] : marco.phases[phase];
-}
-
-/** Fallback quando quem chama não sabe (ainda) a fase do plano — implementar/validar sem `faseNum` explícito caem na fase 1 (mesmo ponto de partida do lote 2). */
-function faseNumFor(phase: EsteiraPhase): number | undefined {
-  return phase === 'implementar' || phase === 'validar' ? 1 : undefined;
-}
-
-/** Item 3 (rodada de forma fix/009-board-real-e-modal) — só o nome do arquivo na Zona 2; o path inteiro vai pro `title` (tooltip), nunca solto feito header. */
-function artifactBasename(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1] : path;
-}
-
 /** Remove uma chave de um record sem mutar o original — usado ao limpar `semaphoreStates`/`aliveTabs` no fechamento de aba. */
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   if (!(key in record)) return record;
   const next = { ...record };
   delete next[key];
   return next;
-}
-
-// Lote 8 (009-modo-dev-v3) — mesmo `CHIP_PHASES`/`isChipPhase` local de
-// `DiscoveryMap.tsx`/`PhaseDetailsPanel.tsx` (o `PhaseChip` do design-system
-// só desenha 6 das 7 fases do domínio, sem `cliente`) — usado no breadcrumb
-// do header de 44px (`.sessionHeader`).
-const CHIP_PHASES: ReadonlySet<string> = new Set<ChipPhase>(['discovery', 'plano', 'implementar', 'validar', 'concluir', 'documentar']);
-
-function isChipPhase(phase: EsteiraPhase): phase is ChipPhase {
-  return CHIP_PHASES.has(phase);
 }
 
 export function App(): React.JSX.Element {
@@ -459,64 +345,24 @@ export function App(): React.JSX.Element {
   const [devModeOn, setDevModeOn] = useState(false);
   /** Spec 010 — tela da esteira nova (gesto interno: botão no titlebar do Modo Dev). */
   const [esteiraOpen, setEsteiraOpen] = useState(false);
-  const [entryCards, setEntryCards] = useState<readonly EntryColumnCard[]>([]);
-  const [entryLoading, setEntryLoading] = useState(false);
-  /** Issue #38 — repo REAL de cada card da lista (rastro em disco, `devMode:resolveCardRepos`), um mapa pra lista inteira — nunca um IPC por linha. */
-  const [entryCardRepos, setEntryCardRepos] = useState<Record<string, CardRepoResolution>>({});
-  // FIX (#23, e2e-30-07 onda 2) — "filtrar por board": o app assume um board
-  // POR PROJETO (repos.json → repos.<repoSlug>.board, comentário de
-  // `effectiveBoardConfig` em main/index.ts) — não existe uma entidade "board"
-  // com nome próprio, só o par opaco workspaceId/teamId. Na ausência de um
-  // nome de board de verdade, o NOME DO PROJETO é o rótulo legível (1:1 com o
-  // board configurado nele). `null` = usa o board do projeto selecionado
-  // globalmente (`selectedProjectPath`, default de sempre); só vira um path
-  // diferente quando o operador troca de board DENTRO do modal, sem mexer no
-  // projeto selecionado em toda a app.
-  const [entryBoardRepoPath, setEntryBoardRepoPath] = useState<string | null>(null);
-  /** Projetos com board configurado (`workspaceId`+`teamId`) — as opções do seletor "Board" da porta de entrada. Recalculado toda vez que o modal abre. */
-  const [boardProjects, setBoardProjects] = useState<readonly ProjectInfo[]>([]);
   /**
-   * 009-modo-dev-v3, lote 5 (CA-2) — a porta de entrada virou modal
-   * ("Trocar…", `Modal v3.dc.html:397-431`). `entradaOpen` é DERIVADO, não só
-   * este estado: sem discovery em foco ela abre sozinha (é preciso escolher
-   * algo antes de conduzir); com foco, só abre quando o operador pede
-   * ("Trocar…"). Fechar manualmente sem foco não esconde nada — não há pra
-   * onde ir sem escolher um card — e essa é a única situação em que o botão
-   * ✕/Escape não muda a tela.
+   * Spec 010 / B6 — o mapa é PROJEÇÃO do store: o snapshot chega pronto do main
+   * (macro etapa já derivada, D-13) e é empurrado a cada mudança. O renderer
+   * nunca lê disco nem calcula etapa.
    */
-  const [entradaManualOpen, setEntradaManualOpen] = useState(false);
+  const [esteiraState, setEsteiraState] = useState<EsteiraSnapshotDto | null>(null);
   /**
-   * FIX (e2e 31/07 — "estou preso nessa tela") — fechar a porta agora fecha
-   * de verdade, mesmo sem discovery em foco. Antes o ✕/Escape não tinham
-   * efeito nesse estado (o modal era derivado só do foco), e um clique que
-   * falhava deixava o operador sem saída nenhuma. A volta é o botão da Zona 2.
+   * O que está em foco em cada eixo do carrossel e qual nó/etapa o painel de
+   * detalhe mostra. Estado de TELA — nada aqui é domínio.
    */
-  const [entradaDismissed, setEntradaDismissed] = useState(false);
-  /**
-   * Issue #34 (P0) — quando `devMode.resolveCardRepo` devolve `ambiguous`
-   * (card sem rastro em disco, board com 2+ repos), a fase NÃO dispara: o
-   * modal fica com o card marcado pedindo a escolha explícita do repo. Nunca
-   * um repo chutado — "pergunta, nunca palpite" (raiz do #34: o app usava o
-   * repo do DROPDOWN de board como se fosse o do card).
-   */
-  const [pendingRepoChoice, setPendingRepoChoice] = useState<PendingRepoChoice | null>(null);
-  /** Árvore por discovery ABERTO (`devMode:readTree`) — disco puro, relida sob demanda. */
-  const [discoveryTrees, setDiscoveryTrees] = useState<Record<string, DiscoveryTree>>({});
-  /** T327/CA-12 — os 4 fatos do board por card do discovery EM FOCO. `{}` = espelho sem fonte: a árvore aparece inteira, só sem anotação. */
-  const [boardFacts, setBoardFacts] = useState<Record<string, BoardFacts>>({});
-  /** T327/CA-16 — trava a liberar, confirmada antes de pré-digitar `/esteira-liberar` (a confirmação fala em ETIQUETA no board, nunca em arquivo). */
-  const [lockToRelease, setLockToRelease] = useState<{ phase: EsteiraPhase; cardId: string } | null>(null);
-  const [focusedMarcoId, setFocusedMarcoId] = useState<string | null>(null);
-  const [selectedNode, setSelectedNode] = useState<SelectedPhaseNode | null>(null);
-  /** Lote 7 — repo GitHub ("owner/repo") do discovery EM FOCO (`projectBinding.github`), usado para resolver o PR de cada fase. `''` sem engrenagem preenchida (CA-23) — a porta fica desligada, não erro. */
-  const [focusedRepoGithub, setFocusedRepoGithub] = useState('');
-  /** Lote 4/7 (CA-3) — fatos do PR por fase do card de plano EM FOCO, chave `${cardId}:${faseNum}`. Entrada ausente = PR ainda não resolvido (degradação por omissão). */
-  const [phasePullRequestFacts, setPhasePullRequestFacts] = useState<Record<string, PhasePullRequestFacts | null>>({});
-  /** Decisão A (handoff v3) — o relógio urgente fora de foco, promovido à StatusBar pelo próprio mapa (`DiscoveryMap.onHomologationPromote`). `null` = nada a promover. */
-  const [promotedClock, setPromotedClock] = useState<PromotedHomologationClock | null>(null);
-  /** "Agora" para o `HomologationClock` — nunca `Date.now()` direto no componente (mesmo contrato do design-system); atualizado devagar, o degrau some/pisca por CSS, não por re-render por segundo. */
-  const [now, setNow] = useState(() => Date.now());
-  /** D4 — Toast informativo (troca de foco, avisos); nunca tem ação de desfazer. */
+  const [mapSelection, setMapSelection] = useState<MapSelection>({
+    discoveryId: null,
+    planId: null,
+    itemId: null,
+    nodeKey: null,
+    phase: null,
+  });
+  /** D4 — Toast informativo (o que o gesto fez, por que foi recusado); nunca tem desfazer. */
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
   /**
    * CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": aba +
@@ -540,20 +386,16 @@ export function App(): React.JSX.Element {
   } | null>(null);
   /** CA-24 — mesmo hook de teste de `lastDevModeSession`/`lastLaunch`: o argv REAL montado pro resume, sem depender de ler o output do terminal. */
   const [lastRestartSession, setLastRestartSession] = useState<{ args: readonly string[]; cwd?: string } | null>(null);
-  /** C4/T318 — artefato aberto no lugar de uma sessão (discovery antigo sem `session-id`). */
-  const [openedArtifactPath, setOpenedArtifactPath] = useState<string | null>(null);
-  /** Etapa (`discovery:marco:fase`) → `tab.id` da sessão daquela etapa. É o que o arquivamento (CA-6) usa para achar a aba certa. */
-  const phaseTabsRef = useRef<Record<string, string>>({});
-  /**
-   * Hook só de teste (mesmo precedente de `launcher-last-command`, T008): o
-   * argv real do `claude` é montado no main, e o smoke não tem como
-   * inspecioná-lo a partir do renderer. Guarda a ÚLTIMA sessão aberta pelo
-   * Modo Dev (argv da tabela do CA-4 + `cwd`, que na fase `implementar` é a
-   * worktree do `ctx.md` — D3).
-   */
-  const [lastDevModeSession, setLastDevModeSession] = useState<{ args: readonly string[]; cwd: string } | null>(null);
   /** Cleanup do watcher de prontidão em voo por aba (mesmo padrão de `pendingInjectionWatchersRef`). */
   const armWatchersRef = useRef<Record<string, (() => void) | undefined>>({});
+  /**
+   * Spec 010 / batch B1 — `tab.id` → id da sessão da esteira que aquela aba
+   * está tocando. É por este mapa que dois fatos voltam ao histórico: a sessão
+   * ASSUMIDA (quando o CLI devolve o id) e a sessão ENCERRADA (quando a aba
+   * fecha sem a fase concluir). Sem ele, a aba fechada deixaria o card travado
+   * com uma trava sem dono — a trava órfã da evidência 3 da spec.
+   */
+  const esteiraTabSessionsRef = useRef<Record<string, string | undefined>>({});
   const semaphoreStatesRef = useRef<Record<string, SemaphoreStateInfo>>({});
   semaphoreStatesRef.current = semaphoreStates;
   /** CA-22 — slug do perfil ATIVO agora (reportado pelo ProfileSwitcher, que já busca a lista). */
@@ -711,6 +553,15 @@ export function App(): React.JSX.Element {
     // vigiava (senão tentaria escrever num PTY que já não existe).
     armWatchersRef.current[tabId]?.();
     delete armWatchersRef.current[tabId];
+    // Spec 010 / B1 — a aba era de uma fase da esteira: a sessão acabou. O main
+    // encerra a sessão E solta a trava; se a fase já tinha concluído, o gesto
+    // não grava nada (o reducer já a encerrou). Fechar a aba nunca pode deixar
+    // o card preso num estado sem saída.
+    const esteiraSessionId = esteiraTabSessionsRef.current[tabId];
+    if (esteiraSessionId) {
+      delete esteiraTabSessionsRef.current[tabId];
+      void window.donel.esteira.endSession({ sessionId: esteiraSessionId, reason: 'tab-closed' }).catch(() => undefined);
+    }
   };
 
   /**
@@ -1053,6 +904,16 @@ export function App(): React.JSX.Element {
    * apaga nada. Sem aviso na tela, como o CA-11 pede.
    */
   const handleTabProcessExit = (tab: TabState, info: { exitCode: number | undefined; msSinceSpawn: number }): void => {
+    // Spec 010 / B1 — o processo da sessão morreu (saiu sozinho, ou foi morto).
+    // A aba pode continuar na tela, mas a SESSÃO acabou: deixar o card dizendo
+    // "em andamento" com nada rodando é a mesma inverdade que fechar a aba
+    // produziria. Se a fase já tinha concluído, o gesto não grava nada.
+    const esteiraSessionId = esteiraTabSessionsRef.current[tab.id];
+    if (esteiraSessionId) {
+      delete esteiraTabSessionsRef.current[tab.id];
+      void window.donel.esteira.endSession({ sessionId: esteiraSessionId, reason: 'process-exit' }).catch(() => undefined);
+    }
+
     const resumedSessionId = resumedSessionIdFromArgs(tab.launchArgs);
     if (!resumedSessionId) return; // sessão nova nunca é candidata
     if (!shouldForgetOnResumeFailure({ resumedSessionId, exitCode: info.exitCode, msSinceSpawn: info.msSinceSpawn })) return;
@@ -1277,261 +1138,25 @@ export function App(): React.JSX.Element {
   // concatenado. O Enter é sempre gesto humano.
   // =========================================================================
 
-  const devModeState = appConfig?.devMode;
-  const focusedDiscoveryId = devModeState?.focusedDiscoveryId ?? null;
-  const focusedDiscovery = focusedDiscoveryId ? (devModeState?.discoveries[focusedDiscoveryId] ?? null) : null;
-  /** CA-2 — ver comentário de `entradaManualOpen`: derivado, não só o clique em "Trocar…". Fechar (`entradaDismissed`) vence o "abre sozinha sem foco". */
-  const entradaOpen = devModeOn && (entradaManualOpen || (!focusedDiscoveryId && !entradaDismissed));
-  const rawFocusedTree = focusedDiscoveryId ? (discoveryTrees[focusedDiscoveryId] ?? null) : null;
   /**
-   * T327/CA-12 — a MESMA árvore de disco, com os 4 fatos do board sobrepostos.
-   * `annotateTree` é puro: não persiste nada e ignora qualquer card que não
-   * seja marco desta árvore ("nunca cards fora do discovery em foco").
+   * Spec 010 / B6 — a projeção do store para o carrossel. Tudo que o mapa
+   * mostra sai daqui: níveis, cards, trilha, detalhe, breadcrumb e a frase do
+   * vazio. Nenhuma decisão de domínio acontece neste arquivo.
    */
-  const focusedTree = useMemo(
-    () => (rawFocusedTree ? annotateTree(rawFocusedTree, boardFacts) : null),
-    [rawFocusedTree, boardFacts],
+  const mapView = useMemo(
+    () => buildMapView(esteiraState?.snapshot ?? null, mapSelection),
+    [esteiraState, mapSelection],
   );
-  const phaseDefaults = devModeState?.phaseDefaults ?? DEFAULT_PHASE_DEFAULTS;
-  /** Card de plano EM FOCO (CA-7): a escolha explícita do usuário, ou o primeiro card de plano enquanto ele não escolheu. */
-  const focusedMarcoDisplay =
-    focusedTree?.planCards.find((planCard) => planCard.cardId === focusedMarcoId) ?? focusedTree?.planCards[0] ?? null;
+  const storeWarning = esteiraState === null ? null : STORE_COMPATIBILITY_WARNING[esteiraState.compatibility];
+  const storeReadOnly = esteiraState !== null && esteiraState.compatibility !== 'read-write';
 
-  /**
-   * Lote 8/CA-18/CA-20 — a etapa selecionada no mapa, com o conteúdo RICO do
-   * painel de 316px (breadcrumb, garantia, PR desta fase, artefatos,
-   * recibos de conhecimento). `null` sem seleção — o painel degrada por
-   * omissão (`PhaseDetailsPanel`).
-   */
-  const selectedPhaseDetails = useMemo(() => {
-    if (!selectedNode || !focusedTree) return null;
-    const marco = focusedTree.planCards.find((planCard) => planCard.cardId === selectedNode.cardId);
-    if (!marco) return null;
-    const faseEntry = selectedNode.faseNum ? marco.fases.find((fase) => fase.faseNum === selectedNode.faseNum) : undefined;
-    const node = resolveSelectedPhaseNode(marco, selectedNode.phase, faseEntry, focusedTree.discoveryStatus);
-    const faseNum = selectedNode.faseNum ?? null;
-    const pr = faseNum !== null ? (phasePullRequestFacts[`${selectedNode.cardId}:${faseNum}`] ?? null) : null;
-    return buildPhaseDetailsView({
-      discoveryCardId: focusedTree.discoveryCardId,
-      planCardId: marco.cardId,
-      planCardTitle: marco.boardFacts?.title || marco.cardId,
-      phase: selectedNode.phase,
-      faseNum,
-      node,
-      faseGarantia: faseEntry?.garantia ?? null,
-      pr,
-      branch: node.artifacts.branch,
-      activeProfileSlug,
-    });
-  }, [selectedNode, focusedTree, phasePullRequestFacts, activeProfileSlug]);
-
-  /** CA-1 — lista de candidatos do board. Sem fonte configurada volta `[]` (porta desligada, não erro). */
-  const refreshEntryCards = useCallback((): void => {
-    setEntryLoading(true);
-    // Item 1 (frente 2, rodada de feedback 30/07) — board é POR PROJETO agora
-    // (repos.json → repos.<repoSlug>.board); passa o projeto selecionado pro
-    // main preferir esse board e só cair pro global sem ele.
-    // FIX (#23) — `entryBoardRepoPath` vence quando o operador trocou de board
-    // DENTRO do modal (sem mexer no projeto selecionado globalmente).
-    void window.donel.devMode
-      .listEntryCards(entryBoardRepoPath ?? selectedProjectPath)
-      .then(setEntryCards)
-      .catch(() => setEntryCards([]))
-      .finally(() => setEntryLoading(false));
-  }, [selectedProjectPath, entryBoardRepoPath]);
-
-  /** Relê do DISCO a árvore de todo discovery aberto (CA-7). Barato: `readTree` é só `existsSync`/`readFile` de manifesto. */
-  const refreshDiscoveryTrees = useCallback((discoveryIds: readonly string[]): void => {
-    for (const cardId of discoveryIds) {
-      void window.donel.devMode
-        .readTree(cardId)
-        .then((tree) => setDiscoveryTrees((prev) => ({ ...prev, [cardId]: tree })))
-        .catch(() => undefined);
-    }
+  // Um evento só cobre os três caminhos de mudança do histórico (ingestão,
+  // gesto do app, gesto de outro canal). O mapa e o painel do store assinam o
+  // MESMO canal — nenhum dos dois relê disco.
+  useEffect(() => {
+    void window.donel.esteira.snapshot().then(setEsteiraState).catch(() => undefined);
+    return window.donel.esteira.onChanged(setEsteiraState);
   }, []);
-
-  const openDiscoveryIds = useMemo(
-    () =>
-      Object.values(devModeState?.discoveries ?? {})
-        .filter((discovery) => discovery.closedAt === null)
-        .map((discovery) => discovery.cardId),
-    [devModeState],
-  );
-
-  useEffect(() => {
-    if (!devModeOn) return;
-    refreshEntryCards();
-  }, [devModeOn, refreshEntryCards]);
-
-  /**
-   * Issue #38 — repo REAL de cada linha da lista, resolvido em LOTE (um
-   * `devMode:resolveCardRepos` para a lista inteira, nunca um IPC por card
-   * dentro do loop de render). Reage à mesma lista de `entryCards` que já
-   * dispara `refreshEntryCards`, mais os discoveries "só no disco" (achado
-   * F8 — não vêm do board, mas são resolvíveis pelo mesmo rastro).
-   */
-  useEffect(() => {
-    if (!devModeOn) {
-      setEntryCardRepos({});
-      return;
-    }
-    const localOnlyIds = localOnlyDiscoveryIds(entryCards, devModeState?.discoveries ?? {});
-    const cardIds = [...entryCards.map((card) => card.cardId), ...localOnlyIds];
-    if (cardIds.length === 0) {
-      setEntryCardRepos({});
-      return;
-    }
-    let cancelled = false;
-    void window.donel.devMode
-      .resolveCardRepos({ cardIds, boardRepoPath: entryBoardRepoPath ?? selectedProjectPath ?? null })
-      .then((resolutions) => {
-        if (!cancelled) setEntryCardRepos(resolutions);
-      })
-      .catch(() => {
-        if (!cancelled) setEntryCardRepos({});
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [devModeOn, entryCards, devModeState?.discoveries, entryBoardRepoPath, selectedProjectPath]);
-
-  // FIX (#23) — descobre QUAIS projetos têm board configurado (repos.json →
-  // repos.<repoSlug>.board), pra alimentar o seletor "Board" do modal
-  // "Abrir ou trocar discovery". Roda só quando o modal abre de fato
-  // (`entradaOpen`, nunca em todo boot) — são N leituras de disco locais
-  // (`projectBinding.get` por projeto), baratas mas sem motivo de repetir
-  // enquanto o modal segue fechado. `entryBoardRepoPath` volta a `null`
-  // (board do projeto selecionado globalmente) toda vez que reabre — nunca
-  // carrega uma escolha "esquecida" de uma sessão anterior do modal.
-  useEffect(() => {
-    if (!entradaOpen) return;
-    setEntryBoardRepoPath(null);
-    let cancelled = false;
-    void Promise.all(
-      projects.map((project) =>
-        window.donel.projectBinding
-          .get(project.path)
-          // FIX (e2e-30-07 onda 2, regressão do #23) — `workspaceId`/`teamId`
-          // sozinhos incluem o fallback GLOBAL (todo projeto sem board
-          // próprio herda o mesmo, virando "todo projeto tem board" e
-          // estourando este seletor com a lista inteira). `hasOwnBoard` é só
-          // o board PRÓPRIO do projeto.
-          .then((binding) => (binding.hasOwnBoard ? project : null))
-          .catch(() => null),
-      ),
-    ).then((results) => {
-      if (cancelled) return;
-      setBoardProjects(results.filter((project): project is ProjectInfo => project !== null));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [entradaOpen, projects]);
-
-  useEffect(() => {
-    if (!devModeOn || openDiscoveryIds.length === 0) return;
-    refreshDiscoveryTrees(openDiscoveryIds);
-  }, [devModeOn, openDiscoveryIds, refreshDiscoveryTrees]);
-
-  /**
-   * T327/CA-12 — os 4 fatos do board, SÓ dos cards do discovery em foco. A
-   * lista consultada é a dos cards de plano desta árvore + o card RAIZ
-   * (discoveryCardId, item 5 da rodada de forma fix/009-board-real-e-modal —
-   * o mapa precisa do título REAL do card de discovery, mesma via de
-   * `get_task_details` que os cards de plano já usam): nenhum card fora do
-   * foco é pedido, e nada é escrito de volta (invariante 5). Board sem fonte
-   * devolve `{}` — o mapa continua idêntico ao da Fatia 1, sem erro na tela.
-   */
-  const focusedMarcoCardIds = useMemo(
-    () =>
-      rawFocusedTree
-        ? [...rawFocusedTree.planCards.map((planCard) => planCard.cardId), rawFocusedTree.discoveryCardId]
-        : [],
-    [rawFocusedTree],
-  );
-
-  useEffect(() => {
-    if (!devModeOn || focusedMarcoCardIds.length === 0) {
-      setBoardFacts({});
-      return;
-    }
-    void window.donel.devMode
-      .readBoardFacts(focusedMarcoCardIds)
-      .then(setBoardFacts)
-      .catch(() => setBoardFacts({}));
-  }, [devModeOn, focusedMarcoCardIds]);
-
-  // Lote 7 — "agora" para o `HomologationClock`: atualiza devagar (o pisca-
-  // pisca do degrau urgente é CSS, não precisa de tick por segundo aqui).
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 60_000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  // Lote 7 — o repo GitHub (`owner/repo`) do discovery EM FOCO, pela
-  // engrenagem do CA-23 (`projectBinding`). Sem repoPath (nenhum discovery em
-  // foco) ou sem o campo preenchido: fica vazio — a resolução de PR por fase
-  // simplesmente não acontece (degradação por omissão, não erro).
-  useEffect(() => {
-    if (!devModeOn || !focusedDiscovery?.repoPath) {
-      setFocusedRepoGithub('');
-      return;
-    }
-    void window.donel.projectBinding
-      .get(focusedDiscovery.repoPath)
-      .then((binding) => setFocusedRepoGithub(binding.github ?? ''))
-      .catch(() => setFocusedRepoGithub(''));
-  }, [devModeOn, focusedDiscovery?.repoPath]);
-
-  /** Lote 7/CA-11 — as fases (PR units) do card de plano EM FOCO com uma branch conhecida (`ctx.md` frontmatter, D3) — só elas têm endereço pra perguntar ao GitHub. */
-  const focusedFaseRequests = useMemo(
-    () =>
-      (focusedMarcoDisplay?.fases ?? [])
-        .map((fase) => ({ faseNum: fase.faseNum, head: fase.implementar.artifacts.branch }))
-        .filter((entry): entry is { faseNum: number; head: string } => Boolean(entry.head)),
-    [focusedMarcoDisplay],
-  );
-
-  // Lote 4/7 (CA-3) — o estado do PR de cada fase (mergeado/homologado/
-  // revertido), lido por `gh` via o canal já existente (`github:read`). Sem
-  // repo configurado ou sem branch conhecida: a fase simplesmente não pede
-  // (degradação por omissão) — nunca um PR fabricado.
-  useEffect(() => {
-    const cardId = focusedMarcoDisplay?.cardId;
-    if (!devModeOn || !cardId || !focusedRepoGithub || focusedFaseRequests.length === 0) {
-      setPhasePullRequestFacts({});
-      return;
-    }
-    let cancelled = false;
-    void Promise.all(
-      focusedFaseRequests.map(async ({ faseNum, head }) => {
-        try {
-          const response = await window.donel.github.read({ kind: 'phase-pull-request', repo: focusedRepoGithub, head });
-          const facts = response.status === 'ok' ? (response.data as PhasePullRequestFacts) : null;
-          return [`${cardId}:${faseNum}`, facts] as const;
-        } catch {
-          return [`${cardId}:${faseNum}`, null] as const;
-        }
-      }),
-    ).then((entries) => {
-      if (cancelled) return;
-      setPhasePullRequestFacts(Object.fromEntries(entries));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [devModeOn, focusedMarcoDisplay?.cardId, focusedRepoGithub, focusedFaseRequests]);
-
-  // T321/CA-23 — encerramento automático: o discovery some da lista de abertos
-  // quando TODO marco tem `concluir: success`. Fato verificável (gate de
-  // `esteira-concluir`), não opinião do app — e sem passo manual.
-  useEffect(() => {
-    if (!devModeState) return;
-    const toClose = discoveriesToClose(Object.values(discoveryTrees), devModeState.discoveries);
-    for (const cardId of toClose) {
-      void window.donel.devMode.closeDiscovery(cardId).then(setAppConfig).catch(() => undefined);
-    }
-  }, [discoveryTrees, devModeState]);
 
   /**
    * T312/CA-3 — escreve a sequência no PTY, um comando por vez, SEM `\r`.
@@ -1609,150 +1234,80 @@ export function App(): React.JSX.Element {
   }, []);
 
   /**
-   * T312/T313/T318/T319 — o clique numa fase. A DECISÃO é pura
-   * (`decidePhaseOpen`/`resolveCommandSequence`); aqui só o encanamento:
-   * criar/focar/retomar a aba e mandar armar o comando.
-   *
-   * Lote 7/CA-11 — `faseNum` identifica QUAL fase do plano (unidade de PR)
-   * quando `phase` é `implementar`/`validar` e o card propôs mais de uma
-   * (`marco.fases`); ausente, cai no `phases[phase]` legado (fase 1, mesmo
-   * comportamento de antes) — mantém funcionando `discovery`/`plano`/
-   * `documentar`/`cliente`/`concluir`, que não são fase-indexados.
+   * Spec 010 / batch B1 — o "Preparar" da esteira nova abre a sessão de
+   * verdade. Mesma divisão do Modo Dev: a DECISÃO (onde abrir, com que comando)
+   * é pura e vive em `Esteira/esteiraSession.ts`; aqui só o encanamento —
+   * criar a aba, escrever o comando (sem `\r`, invariante 2/CA-3) e amarrar a
+   * aba à sessão registrada no histórico.
    */
-  const handlePhaseAction = (cardId: string, phase: EsteiraPhase, faseNum?: number): void => {
-    if (!focusedDiscovery || !focusedTree) return;
-    const marco = focusedTree.planCards.find((candidate) => candidate.cardId === cardId);
-    if (!marco) return;
-
-    const faseEntry = faseNum ? marco.fases.find((f) => f.faseNum === faseNum) : undefined;
-    const node = resolveSelectedPhaseNode(marco, phase, faseEntry, focusedTree.discoveryStatus);
-    const key = phaseKey(focusedDiscovery.cardId, cardId, phase, faseNum);
-    setSelectedNode({ cardId, phase, faseNum: faseNum ?? null });
-    setOpenedArtifactPath(null);
-
-    // Sessão daquela etapa já aberta nesta execução: foca, não duplica (C6
-    // "uma sessão por etapa" — e o estado real dela é `running`).
-    const existingTabId = phaseTabsRef.current[key];
-    if (existingTabId && tabs.some((tab) => tab.id === existingTabId)) {
-      setActiveTabId(existingTabId);
-      return;
-    }
-
-    const defaults = phaseDefaults[phase];
-    const artifactPath = node.artifacts.result
-      ? node.artifacts.resultPath
-      : node.artifacts.ctxExists
-        ? node.artifacts.ctxPath
-        : null;
-
-    const decision = decidePhaseOpen({
-      phase,
-      defaults,
-      status: node.status,
-      archivedSession: node.archivedSession,
-      repoPath: focusedDiscovery.repoPath,
-      worktreePath: node.artifacts.worktreePath,
-      artifactPath,
+  const handleOpenEsteiraSession = (request: EsteiraSessionRequest): void => {
+    const tabId = addTab({
+      name: request.tabName,
+      cwd: request.cwd,
+      projectName: projects.find((project) => project.path === request.cwd)?.name,
+      pinned: false,
+      // Sem `--model`/`--effort`: a fase da esteira nova não tem tabela de
+      // defaults (`run.phase` é string livre, `[P-4]`), e inventar um modelo
+      // aqui seria o app decidindo o que ninguém declarou.
+      launchArgs: [],
+      sessionType: 'claude',
     });
-    const rawSequence = resolveCommandSequence({ status: node.status, defaults, cardId: marco.cardId });
-    // D-V4 (verificação de design) — `--fase=n` no comando REAL da fase
-    // (último da sequência; o `/esteira-liberar` que pode vir antes NUNCA
-    // leva a flag). `=`, nunca espaço.
-    const sequence =
-      faseNum && (phase === 'implementar' || phase === 'validar')
-        ? rawSequence.map((cmd, index) => (index === rawSequence.length - 1 ? formatFaseCommand(cmd, faseNum) : cmd))
-        : rawSequence;
-    const warning =
-      node.status === 'stuck'
-        ? 'Fase travada — o comando de liberar vem primeiro, com o seu Enter.'
-        : node.status === 'failed'
-          ? 'Fase falhou — a mesma skill volta preparada.'
-          : undefined;
-
-    switch (decision.kind) {
-      case 'use-focused': {
-        // T313 — exceção do `concluir` (C6): pré-digita na aba EM FOCO,
-        // nunca cria PTY. Sem aba claude em foco: avisa e não faz nada (uma
-        // sessão "vazia" só pra ter onde digitar seria pior que o aviso).
-        const target = tabs.find((tab) => tab.id === activeTabId && tab.sessionType === 'claude');
-        if (!target) {
-          setDevModeToast('Sem sessão Claude em foco — abra ou foque uma aba para preparar o /esteira-concluir.');
-          return;
-        }
-        armPhaseCommands(target.id, sequence, warning);
-        return;
-      }
-
-      case 'create': {
-        const tabId = addTab({
-          name: faseNum ? `[${cardId}] ${phase} · fase ${faseNum}` : `[${cardId}] ${phase}`,
-          cwd: decision.cwd,
-          projectName: projects.find((project) => project.path === decision.cwd)?.name,
-          pinned: false,
-          launchArgs: [...decision.args],
-          sessionType: 'claude',
-        });
-        phaseTabsRef.current[key] = tabId;
-        setLastDevModeSession({ args: decision.args, cwd: decision.cwd });
-        // CA-6 — o gatilho do arquivamento é o MANIFESTO em disco; ligar o
-        // watcher agora é o que permite fechar a aba quando ele aparecer.
-        void window.donel.devMode
-          .watchPhase({ discoveryCardId: focusedDiscovery.cardId, cardId: marco.cardId, phase, faseNum: faseNum ?? faseNumFor(phase) })
-          .catch(() => undefined);
-        armPhaseCommands(tabId, sequence, warning);
-        return;
-      }
-
-      case 'resume': {
-        // CA-9 — volta à etapa concluída para CONSULTA: nada é pré-digitado.
-        const tabId = addTab({
-          name: faseNum ? `[${cardId}] ${phase} · fase ${faseNum}` : `[${cardId}] ${phase}`,
-          cwd: decision.cwd,
-          projectName: projects.find((project) => project.path === decision.cwd)?.name,
-          pinned: false,
-          launchArgs: [...decision.args],
-          sessionType: 'claude',
-        });
-        phaseTabsRef.current[key] = tabId;
-        setLastDevModeSession({ args: decision.args, cwd: decision.cwd });
-        if (node.archivedSession && node.archivedSession.profileSlug !== activeProfileSlug) {
-          // CA-22 — avisa qual conta, nunca bloqueia (o aviso inline no nó do
-          // mapa é o canal principal; o Toast cobre quem clicou pela Zona 2).
-          setDevModeToast(`Essa etapa rodou na conta ${node.archivedSession.profileSlug}.`);
-        }
-        return;
-      }
-
-      case 'open-artifact': {
-        // C4 — discovery antigo, sem `session-id` arquivado: o clique alcança
-        // o ARTEFATO (o mapa já lista os paths declarados), nunca tenta
-        // retomar uma sessão que não existe. Degradação esperada, não erro.
-        setOpenedArtifactPath(decision.path);
-        setDevModeToast('Etapa sem sessão arquivada — abrindo o artefato dela.');
-        return;
-      }
-    }
+    esteiraTabSessionsRef.current[tabId] = request.sessionId;
+    armPhaseCommands(tabId, [request.command]);
   };
 
   /**
-   * T327/CA-16 — confirmada a liberação, pré-digita `/esteira-liberar
-   * <card_id>` na aba EM FOCO (mesma regra do `concluir`: nenhuma sessão nova
-   * nasce só para digitar um comando). **Nenhum arquivo é tocado** — a trava é
-   * a etiqueta `esteira:em-andamento:<fase>` no board (D1), e quem a remove é
-   * a skill, depois do Enter do humano.
+   * Spec 010 / B6 — "⌁ Preparar" na trilha do mapa. É o MESMO gesto do painel
+   * do store: a orquestração inteira mora em `preparePhase` (resolver o cwd,
+   * disparar, abrir a aba com o comando escrito, dizer o que aconteceu). Duas
+   * orquestrações do mesmo disparo divergiriam no primeiro conserto — e
+   * divergir aqui significa uma tela abrindo sessão onde a outra recusa.
    */
-  const confirmReleaseLock = (): void => {
-    const target = lockToRelease;
-    setLockToRelease(null);
-    if (!target) return;
-
-    const tab = tabs.find((candidate) => candidate.id === activeTabId && candidate.sessionType === 'claude');
-    if (!tab) {
-      setDevModeToast('Sem sessão Claude em foco — abra ou foque uma aba para preparar o /esteira-liberar.');
+  const handleMapPrepare = (step: MapTrailStep): void => {
+    const snapshot = esteiraState?.snapshot;
+    if (!snapshot) return;
+    const card = cardView(snapshot, mapView.focused.discoveryId ?? '');
+    if (card === null) return;
+    // Quem diz se esta fase pode rodar sobre este assunto é `dispatchView` (B2)
+    // — o mapa pergunta, nunca recalcula.
+    const oferta = dispatchView(card, { phase: step.phase, targetKey: `${step.subject.entity}:${step.subject.id}` });
+    if (oferta.target === null) return;
+    if (!oferta.canDispatch) {
+      setDevModeToast(oferta.blocked ?? oferta.hint);
       return;
     }
+    void preparePhase(
+      { card, phase: step.phase, target: oferta.target, projects },
+      { dispatch: (payload) => window.donel.esteira.dispatch(payload), openSession: handleOpenEsteiraSession },
+    ).then((result) => {
+      setEsteiraState(result.state);
+      setDevModeToast(result.message);
+    });
+  };
 
-    armPhaseCommands(tab.id, [LIBERAR_COMMAND_TEMPLATE.replace('{card_id}', target.cardId)]);
+  /** D-11 — a trava é fato local, e sai num gesto. Nada de etiqueta órfã no board. */
+  const handleMapReleaseLock = (): void => {
+    const lock = mapView.detail?.lock;
+    const snapshot = esteiraState?.snapshot;
+    if (!lock || !snapshot) return;
+    const card = cardView(snapshot, mapView.focused.discoveryId ?? '');
+    if (card?.lock == null) return;
+    void window.donel.esteira
+      .releaseLock({ subject: card.lock.subject, phase: card.lock.phase })
+      .then(setEsteiraState)
+      .catch(() => undefined);
+  };
+
+  /** D-12 — reenviar o espelho é cortesia: não desbloqueia nada local, e a frase fala do board. */
+  const handleMapRetryMirror = (): void => {
+    void window.donel.esteira
+      .retryMirror()
+      .then((state) => {
+        setEsteiraState(state);
+        const pendente = state.snapshot.mirrorQueue.length;
+        setDevModeToast(pendente === 0 ? 'O board recebeu o que faltava.' : `${pendente} operação(ões) ainda não foram aceitas pelo board.`);
+      })
+      .catch(() => undefined);
   };
 
   /**
@@ -1883,210 +1438,6 @@ export function App(): React.JSX.Element {
       resumeWithNewTab();
     }
   };
-
-  /**
-   * T328/CA-13 — sessão de CONCILIAÇÃO: sessão nova, com o prompt que descreve
-   * os dois fatos divergentes já ESCRITO e não enviado (mesma regra do CA-3).
-   * O app não corrige o board — não existe canal para isso.
-   */
-  const handleConciliate = (cardId: string, phase: EsteiraPhase): void => {
-    if (!focusedDiscovery || !focusedTree) return;
-    const marco = focusedTree.planCards.find((candidate) => candidate.cardId === cardId);
-    const divergence = marco?.phases[phase].divergence;
-    if (!marco || !divergence) return;
-
-    const tabId = addTab({
-      name: `[${cardId}] conciliação`,
-      cwd: focusedDiscovery.repoPath,
-      projectName: projects.find((project) => project.path === focusedDiscovery.repoPath)?.name,
-      pinned: false,
-      launchArgs: buildClaudeArgs({}),
-      sessionType: 'claude',
-    });
-    armPhaseCommands(tabId, [
-      buildConciliationPrompt({
-        cardId: marco.cardId,
-        phase,
-        diskStatus: divergence.diskStatus,
-        boardColumn: divergence.boardColumn,
-      }),
-    ]);
-  };
-
-  /**
-   * FIX (e2e 31/07, 2ª vez) — fechar a porta é UM gesto, num lugar só.
-   * `setEntradaManualOpen(false)` sozinho não fecha nada quando não há
-   * discovery em foco: `entradaOpen` é derivado e reabre pelo outro ramo
-   * (`!focusedDiscoveryId`). Foi o que prendeu ele no modal ao escolher um
-   * card de Validar — a sessão nascia atrás, com o comando armado, e a porta
-   * continuava por cima. Todo caminho de SUCESSO passa por aqui; o único que
-   * não fecha é o que recusa o clique (sem repo, issue #34).
-   */
-  const dismissEntrada = (): void => {
-    setEntradaManualOpen(false);
-    setEntradaDismissed(true);
-  };
-
-  /**
-   * Issue #34/#35 — o gesto de disparo em si, só depois do repo já estar
-   * RESOLVIDO (nunca um fallback silencioso pro projeto em foco — o antigo
-   * `repoPath || selectedProjectPath || ''` saiu daqui de propósito). Issue
-   * #35 (D-V… "mapa sem caminho pra frente") — a fase abre sempre por
-   * `openDiscovery`+`focusDiscovery`, qualquer que seja a coluna do card: é
-   * isso que faz `focusedTree` existir e o mapa aparecer, mesmo para um card
-   * que entrou direto em Plano/Implementar/Validar/Documentar (antes só a
-   * coluna Discovery passava por aqui; as demais abriam sessão SEM mapa
-   * nenhum — "sem discovery no disco não há árvore a desenhar" deixou de ser
-   * verdade: `buildDiscoveryTree` agora sintetiza a trilha, ver
-   * `discovery-tree.ts`).
-   */
-  const proceedToOpenPhase = (resolvedCardId: string, repo: string, column: EntryColumn): void => {
-    if (!repo) {
-      // O modal continua aberto — e agora com um dropdown de PROJETO, que é
-      // onde este pedido se resolve (antes o toast mandava escolher um repo
-      // que não existia em lugar nenhum da tela).
-      setDevModeToast('Escolha no topo do modal onde este card roda.');
-      return;
-    }
-
-    // CA-1 — a coluna do card responde QUAL fase disparar. Card que já está em
-    // Plano/Implementar/Validar/Documentar abre a sessão DAQUELA fase; só
-    // Discovery e Backlog começam um discovery novo. (e2e 31/07: escolher um
-    // card em Validar armava `/esteira-discovery` e jogava o operador para o
-    // começo da esteira.)
-    dismissEntrada();
-    setPendingRepoChoice(null);
-
-    const entryPhase = entryPhaseForColumn(column);
-    void window.donel.devMode
-      .openDiscovery({ cardId: resolvedCardId, repoPath: repo, epicId: null })
-      .then(() => window.donel.devMode.focusDiscovery(resolvedCardId))
-      .then((config) => {
-        setAppConfig(config);
-        setFocusedMarcoId(null);
-        setSelectedNode(null);
-        refreshDiscoveryTrees([resolvedCardId]);
-        // CA-2 — "criar discovery novo dispara /esteira-discovery <card_id>
-        // pela regra do CA-3": sessão nova + comando ESCRITO, sem Enter.
-        const defaults = (config.devMode.phaseDefaults ?? DEFAULT_PHASE_DEFAULTS)[entryPhase];
-        const tabId = addTab({
-          name: `${resolvedCardId} ${entryPhase}`,
-          cwd: repo,
-          projectName: projects.find((project) => project.path === repo)?.name,
-          pinned: false,
-          launchArgs: buildClaudeArgs({ model: defaults.model, effort: defaults.effort }),
-          sessionType: 'claude',
-        });
-        armPhaseCommands(tabId, resolveCommandSequence({ status: 'not-started', defaults, cardId: resolvedCardId }));
-        if (entryPhase !== 'discovery') {
-          setDevModeToast(`Card em ${entryPhase}: sessão aberta com o mapa focado na etapa.`);
-        }
-      })
-      .catch(() => undefined);
-  };
-
-  /** T311/CA-2 — clique num card da porta de entrada. `resolveEntrySelection` (puro) decide focar × criar. */
-  const handleSelectEntryCard = (cardId: string, repoPath: string, column: EntryColumn = 'discovery'): void => {
-    const selection = resolveEntrySelection({
-      cardId,
-      discoveries: devModeState?.discoveries ?? {},
-      trees: Object.values(discoveryTrees),
-    });
-
-    if (selection.kind === 'focus') {
-      dismissEntrada();
-      void window.donel.devMode
-        .focusDiscovery(selection.discoveryCardId)
-        .then((config) => {
-          setAppConfig(config);
-          setFocusedMarcoId(null);
-          setSelectedNode(null);
-          // D4 — Toast só INFORMATIVO: trocar o foco já é reversível pelo
-          // próprio gesto (clicar no outro card), então nada de "desfazer".
-          setDevModeToast(`Discovery ${selection.discoveryCardId} em foco.`);
-        })
-        .catch(() => undefined);
-      return;
-    }
-
-    /**
-     * Issue #34 (P0) — "o do Dalton carregou no projeto spotsys": o repo do
-     * card NUNCA é assumido a partir do dropdown de board (`repoPath` aqui);
-     * ele é RESOLVIDO por rastro em disco (`devMode:resolveCardRepo`,
-     * `main/cardRepoResolver.ts`). Sem rastro, o board só resolve sozinho
-     * quando é dono de um repo único — dois+ repos com o mesmo board (achado
-     * real: `spotsys`/`dalton` compartilham board) viram pergunta explícita
-     * (`pendingRepoChoice`), nunca um palpite pro `default_repo`.
-     */
-    void window.donel.devMode
-      .resolveCardRepo({ cardId: selection.cardId, boardRepoPath: repoPath || null })
-      .then((resolution) => {
-        if (resolution.kind === 'ambiguous') {
-          setPendingRepoChoice({ cardId: selection.cardId, column, candidates: resolution.candidates });
-          setDevModeToast('Este card roda em mais de um projeto possível pelo mesmo board — escolha qual, no topo do modal.');
-          return;
-        }
-        if (resolution.kind === 'unknown') {
-          setDevModeToast('Não foi possível descobrir em qual repo este card roda.');
-          return;
-        }
-        proceedToOpenPhase(selection.cardId, resolution.repoPath, column);
-      })
-      .catch(() => setDevModeToast('Não foi possível descobrir em qual repo este card roda.'));
-  };
-
-  /** Issue #34 — o operador escolheu explicitamente o repo de um card que ficou ambíguo (`pendingRepoChoice`). */
-  const handleChooseRepoForCard = (repoPath: string): void => {
-    if (!pendingRepoChoice) return;
-    const { cardId, column } = pendingRepoChoice;
-    proceedToOpenPhase(cardId, repoPath, column);
-  };
-
-  // T315/CA-6 — arquivamento por MANIFESTO: `<fase>-result.json` com
-  // `status: "success"` fecha a aba daquela etapa e registra o `session-id`
-  // (com o perfil de NASCIMENTO da aba, CA-22). Etapa que falhou não chega
-  // aqui — o watcher só emite em sucesso, e ela fica aberta de propósito.
-  // Nenhum `.jsonl` é apagado: o transcript é do CLI.
-  useEffect(() => {
-    const unsubscribe = window.donel.devMode.onPhaseArchived((payload: PhaseArchivedPayload) => {
-      // Lote 7 — a chave precisa do MESMO `faseNum` usado ao abrir a aba
-      // (`handlePhaseAction`), senão implementar/validar com mais de uma
-      // fase nunca encontram a aba certa pra fechar (CA-11).
-      const key = phaseKey(payload.discoveryCardId, payload.cardId, payload.phase, payload.faseNum ?? undefined);
-      const tabId = phaseTabsRef.current[key];
-      const tab = tabId ? tabsRef.current.find((candidate) => candidate.id === tabId) : undefined;
-
-      if (tab?.claudeSessionId) {
-        void window.donel.devMode
-          .archivePhaseSession({
-            cardId: payload.cardId,
-            phase: payload.phase,
-            sessionId: tab.claudeSessionId,
-            profileSlug: sessionProfilesRef.current[tab.id]?.slug ?? 'principal',
-          })
-          .then(setAppConfig)
-          .catch(() => undefined);
-      }
-
-      if (tabId) {
-        delete phaseTabsRef.current[key];
-        armWatchersRef.current[tabId]?.();
-        closeTabImmediatelyRef.current(tabId);
-      }
-
-      void window.donel.devMode
-        .unwatchPhase({
-          discoveryCardId: payload.discoveryCardId,
-          cardId: payload.cardId,
-          phase: payload.phase,
-          faseNum: payload.faseNum,
-        })
-        .catch(() => undefined);
-
-      refreshDiscoveryTrees([payload.discoveryCardId]);
-    });
-    return unsubscribe;
-  }, [refreshDiscoveryTrees]);
 
   // T009 — antes do primeiro evento de hook chegar pra uma aba recém-criada,
   // assume 'working' (spike: estado inicial otimista) com stateEnteredAt=0
@@ -2377,12 +1728,7 @@ export function App(): React.JSX.Element {
           <SegmentedControl
             ariaLabel="Modo"
             value={devModeOn ? 'dev' : 'geral'}
-            onChange={(next) => {
-              // Ligar o Modo Dev reabre a porta: "dispensada" vale para a
-              // sessão de trabalho em curso, não para sempre.
-              if (next === 'dev') setEntradaDismissed(false);
-              setDevModeOn(next === 'dev');
-            }}
+            onChange={(next) => setDevModeOn(next === 'dev')}
             options={[
               { value: 'geral', label: 'Uso geral' },
               { value: 'dev', label: 'Dev' },
@@ -2395,6 +1741,11 @@ export function App(): React.JSX.Element {
           onHeadroomChange={setProfileHeadroom}
           onActiveProfileSlugChange={setActiveProfileSlug}
         />
+        {/* 011-contas-e-provedores (etapa 1) — motor de contas, ao lado do
+            ProfileSwitcher (nenhum dos dois substitui o outro nesta etapa).
+            Nasce inerte (accounts.mod = null): o painel abre e mostra "nenhum
+            provedor conectado" sem afetar perfis. */}
+        <AccountsPanel />
         {/* T015 — UI de Preferências (FR-007, feedback E2E rodada 3/4). */}
         <button
           type="button"
@@ -2498,7 +1849,9 @@ export function App(): React.JSX.Element {
         {/* Spec 010 — a esteira nova entra POR CIMA, sem desmontar nada: o
             mapa atual segue vivo por baixo (`[P-5]` — ele só sai no fim do
             vertical, quando o novo provar a espinha). */}
-        {devModeOn && esteiraOpen ? <EsteiraScreen onClose={() => setEsteiraOpen(false)} /> : null}
+        {devModeOn && esteiraOpen ? (
+          <EsteiraScreen onClose={() => setEsteiraOpen(false)} projects={projects} onOpenSession={handleOpenEsteiraSession} />
+        ) : null}
 
         {/* CA-20 — a tela de hoje continua MONTADA quando o Modo Dev liga
             (só oculta por CSS): nada de remontar sidebar/abas, nada de PTY
@@ -2527,97 +1880,14 @@ export function App(): React.JSX.Element {
         />
         </div>
 
-        {/* Zona 1 — porta de entrada (CA-1/CA-2), só no Modo Dev. Lote 7/CA-7
-            — o cabeçalho "Esteira · id · Trocar…" saiu desta faixa solta: ele
-            mora DENTRO do painel do mapa agora (`DiscoveryMap`, mockup linhas
-            71-79) — a coluna esquerda de 280px do painel embutido não existe
-            mais em Modo Dev (virou os 480px do mapa). */}
-        {devModeOn ? (
-          <DevModeEntry
-            open={entradaOpen}
-            onClose={() => {
-              // Mesma razão do `dismissEntrada` (handleSelectEntryCard): sem
-              // discovery em foco, zerar só o `manualOpen` não fecha nada.
-              setEntradaManualOpen(false);
-              setEntradaDismissed(true);
-            }}
-            cards={entryCards}
-            discoveries={devModeState?.discoveries ?? {}}
-            trees={Object.values(discoveryTrees)}
-            projects={projects}
-            onSelectCard={handleSelectEntryCard}
-            loading={entryLoading}
-            // FIX (#23) — "mostrar o nome do board" + "filtrar por board":
-            // sem entidade "board" própria (só o par opaco workspaceId/
-            // teamId), o nome do PROJETO é o rótulo — 1:1 com o board
-            // configurado nele (`effectiveBoardConfig`, main/index.ts).
-            // 31/07 — o board virou DROPDOWN e passou a ser também a resposta
-            // de "onde criar": o repo do discovery novo é o projeto dono dele.
-            boardProjects={boardProjects}
-            activeBoardRepoPath={entryBoardRepoPath ?? selectedProjectPath}
-            onSwitchBoard={setEntryBoardRepoPath}
-            pendingRepoChoice={pendingRepoChoice}
-            onChooseRepoForCard={handleChooseRepoForCard}
-            // Issue #38 — repo REAL por card (rastro em disco, lote único),
-            // pra lista parar de afirmar `spotsys` pra todo card só porque é
-            // o board escolhido no dropdown.
-            cardRepoResolutions={entryCardRepos}
-          />
-        ) : null}
+        {/* Spec 010 / B6 — a porta de entrada saiu com o modelo antigo: ela
+            listava cards do BOARD, e o tracker deixou de ser consultado para
+            saber estado (D-1). Escolher qual discovery conduzir virou o eixo X
+            do nível Discovery do mapa; criar um passa pelo painel do store, que
+            é onde a criação já mora (D-16 — o app não ganha um segundo
+            formulário). O inventário de paridade registra a decisão (M-21). */}
 
         <main className={styles.center}>
-          {/* Zona 2 — condução: só o comando ARMADO (escrito, não enviado) e
-              o artefato aberto (C4). D12/CA-15 (009-modo-dev-v3) — a fileira
-              de botões de fase SAIU desta faixa: a progressão vive só no
-              mapa agora ("⌁ Preparar" na trilha do card em foco). Cada fato
-              (trava, divergência, estado) mora só ali (CA-16) — nada
-              duplicado aqui. */}
-          {devModeOn ? (
-            <section className={styles.devModeZone2} aria-label="Condução do marco em foco" data-testid="devmode-zone2">
-              {/* FIX (e2e 31/07) — a frase só aparece quando NÃO há discovery
-                  em foco (antes ficava pendurada sobre um discovery aberto,
-                  mandando escolher o que já estava escolhido) e agora é a
-                  PORTA DE VOLTA: sem ela, fechar o modal sem foco deixava a
-                  tela sem gesto nenhum. */}
-              {!focusedTree ? (
-                <button
-                  type="button"
-                  className={styles.devModeEntryReopen}
-                  onClick={() => {
-                    setEntradaDismissed(false);
-                    setEntradaManualOpen(true);
-                  }}
-                  data-testid="devmode-zone2-empty"
-                >
-                  Escolher um card para conduzir…
-                </button>
-              ) : null}
-
-              {/* #24 (onda 3) — o `ArmedPrompt` saiu como MOLDURA: o comando
-                  já está escrito no prompt do CLI, prestes a receber um Enter;
-                  repeti-lo numa caixa acima do terminal era o app explicando
-                  o que a tela já mostra. O aviso que vinha junto virou toast
-                  (`armPhaseCommands`) — ele é informação nova, a moldura não. */}
-
-              {/* Item 3 (rodada de forma fix/009-board-real-e-modal) — o path
-                  cru NÃO vai mais pro "header" (screenshot app-03 mostrava
-                  `C:\Users\...\implementar-result.json` ocupando o lugar do
-                  breadcrumb, porque o header de baixo só renderizava com
-                  `tabs.length > 0`). Decisão nomeada: o caminho completo
-                  segue existindo só como TOOLTIP (`title`) — o texto visível
-                  é o nome do arquivo; o path inteiro já está listado, por
-                  extenso, em "Artefatos declarados" no painel de 316px. */}
-              {openedArtifactPath ? (
-                <p
-                  className={styles.devModeArtifactHint}
-                  data-testid="devmode-opened-artifact"
-                  title={openedArtifactPath}
-                >
-                  ◧ consultando {artifactBasename(openedArtifactPath)}
-                </p>
-              ) : null}
-            </section>
-          ) : null}
           <div className={styles.tabBar}>
             <div className={styles.tabBarScroll}>
             {tabs.map((tab, index) => (
@@ -2682,23 +1952,20 @@ export function App(): React.JSX.Element {
               o path cru do "consultar artefato" (Zona 2, acima) parecia ser
               o header. Uso geral mantém a condição antiga (nome+path só com
               aba aberta, lote 8). */}
-          {(devModeOn ? selectedPhaseDetails !== null : tabs.length > 0) ? (
+          {(devModeOn ? mapView.breadcrumb.length > 0 : tabs.length > 0) ? (
             <div className={styles.sessionHeader} data-testid="session-header">
-              {devModeOn && selectedPhaseDetails ? (
+              {/* Spec 010 / B6 — o breadcrumb passou a ser o dos nós novos:
+                  discovery › plano › item. Ele vem pronto de `buildMapView`;
+                  montá-lo aqui seria a terceira redação da mesma navegação. */}
+              {devModeOn && mapView.breadcrumb.length > 0 ? (
                 <>
-                  <span className={styles.sessionHeaderId}>{selectedPhaseDetails.breadcrumb.discoveryCardId}</span>
-                  <span className={styles.sessionHeaderSep} aria-hidden="true">
-                    ›
-                  </span>
-                  <span className={styles.sessionHeaderId}>{selectedPhaseDetails.breadcrumb.planCardId}</span>
-                  <span className={styles.sessionHeaderTitle}>{selectedPhaseDetails.breadcrumb.planCardTitle}</span>
-                  <span className={styles.sessionHeaderSep} aria-hidden="true">
-                    ›
-                  </span>
-                  {isChipPhase(selectedPhaseDetails.phase) ? <PhaseChip phase={selectedPhaseDetails.phase} /> : null}
-                  {selectedPhaseDetails.faseNum ? (
-                    <span className={styles.sessionHeaderFase}>fase {selectedPhaseDetails.faseNum}</span>
-                  ) : null}
+                  {mapView.breadcrumb.map((step, index) => (
+                    <span key={step} className={index === 0 ? styles.sessionHeaderId : styles.sessionHeaderTitle}>
+                      {index > 0 ? '› ' : ''}
+                      {step}
+                    </span>
+                  ))}
+                  {mapView.detail?.phase ? <span className={styles.sessionHeaderFase}>{mapView.detail.phase}</span> : null}
                 </>
               ) : (
                 <>
@@ -2755,7 +2022,7 @@ export function App(): React.JSX.Element {
                 por etapa fabricada — não há fonte pra isso). */}
             {tabs.length === 0 && devModeOn ? (
               <div className={styles.devModeTerminalEmpty} data-testid="devmode-terminal-empty">
-                {selectedPhaseDetails ? (
+                {mapView.detail ? (
                   <p className={styles.devModeHint}>
                     — nenhuma sessão para esta etapa ainda — use "⌁ Preparar" na trilha do mapa.
                   </p>
@@ -2792,6 +2059,16 @@ export function App(): React.JSX.Element {
                     if (projectPath && claudeSessionId) {
                       maybeRegisterVisit(claudeSessionId, projectPath, resolveTabName({ ...tab, claudeSessionId }));
                     }
+                    // Spec 010 / B1 — aba de fase da esteira: o id do CLI é o
+                    // que separa "preparada" de "em andamento". Antes dele, o
+                    // que existia era um arquivo em disco; agora existe sessão,
+                    // com dono. É o único fato que autoriza a frase.
+                    const esteiraSessionId = esteiraTabSessionsRef.current[tab.id];
+                    if (esteiraSessionId && claudeSessionId) {
+                      void window.donel.esteira
+                        .claimSession({ sessionId: esteiraSessionId, cliSessionId: claudeSessionId })
+                        .catch(() => undefined);
+                    }
                   }}
                   // T710 (CA-11, 2º momento) — retomada que morre logo depois do
                   // spawn faz a entrada órfã sair da lista.
@@ -2818,22 +2095,21 @@ export function App(): React.JSX.Element {
             transbordando de uma caixa de largura zero. Colapsar a lateral
             agora desmonta o mapa, do mesmo jeito que "Recolher painéis" já
             fazia. */}
-        {devModeOn && focusedTree && !rightCollapsed && !sidebarCollapsed ? (
+        {devModeOn && !rightCollapsed && !sidebarCollapsed ? (
           <DiscoveryMap
-            tree={focusedTree}
-            discoveryBoardFacts={boardFacts[focusedTree.discoveryCardId] ?? null}
-            phaseDefaults={phaseDefaults}
-            focusedPlanCardId={focusedMarcoDisplay?.cardId ?? null}
-            selectedNode={selectedNode}
-            activeProfileSlug={activeProfileSlug}
-            now={now}
-            phasePullRequestFacts={phasePullRequestFacts}
-            onFocusPlanCard={(cardId) => setFocusedMarcoId(cardId)}
-            onSelectPhase={handlePhaseAction}
-            onOpenTrocar={() => setEntradaManualOpen(true)}
-            onConciliate={handleConciliate}
-            onReleaseLock={(cardId, phase) => setLockToRelease({ cardId, phase })}
-            onHomologationPromote={setPromotedClock}
+            view={mapView}
+            selection={mapSelection}
+            warning={storeWarning}
+            onFocusDiscovery={(discoveryId) =>
+              // Trocar de card zera o que pertence ao card: o plano, o item e o
+              // nó do detalhe apontariam para algo que não está mais na tela.
+              setMapSelection({ discoveryId, planId: null, itemId: null, nodeKey: null, phase: null })
+            }
+            onFocusPlan={(planId) => setMapSelection((prev) => ({ ...prev, planId, itemId: null, nodeKey: null, phase: null }))}
+            onFocusItem={(itemId) => setMapSelection((prev) => ({ ...prev, itemId, nodeKey: `work_item:${itemId}`, phase: null }))}
+            onSelectNode={(nodeKey, phase) => setMapSelection((prev) => ({ ...prev, nodeKey, phase }))}
+            onPrepare={handleMapPrepare}
+            onNewDiscovery={() => setEsteiraOpen(true)}
           />
         ) : null}
 
@@ -2843,7 +2119,14 @@ export function App(): React.JSX.Element {
             de antes). FIX (item 2, rodada 30/07) — `!rightCollapsed`: o
             botão "Recolher painéis" do titlebar agora também esconde este
             painel, não só o mapa (ver comentário do botão e `.bodyMapCollapsed`). */}
-        {devModeOn && !launcherOpen && !rightCollapsed ? <PhaseDetailsPanel selection={selectedPhaseDetails} /> : null}
+        {devModeOn && !launcherOpen && !rightCollapsed ? (
+          <PhaseDetailsPanel
+            detail={mapView.detail}
+            onReleaseLock={handleMapReleaseLock}
+            onRetryMirror={handleMapRetryMirror}
+            readOnly={storeReadOnly}
+          />
+        ) : null}
 
         {launcherOpen ? (
           <aside className={styles.rightPanel} aria-label="Lançar sessão">
@@ -2881,10 +2164,6 @@ export function App(): React.JSX.Element {
         <pre data-testid="launcher-last-command" data-cwd={lastLaunch?.cwd ?? ''} hidden>
           {lastLaunch ? ['claude', ...lastLaunch.args].join(' ') : ''}
         </pre>
-        {/* Idem, para o Modo Dev (T312/D3) — ver `lastDevModeSession`. */}
-        <pre data-testid="devmode-last-session" data-cwd={lastDevModeSession?.cwd ?? ''} hidden>
-          {lastDevModeSession ? ['claude', ...lastDevModeSession.args].join(' ') : ''}
-        </pre>
         {/* CA-24 (009-modo-dev-v3, lote 8) — idem, pro "Reiniciar sessão em foco". */}
         <pre data-testid="restart-last-session" data-cwd={lastRestartSession?.cwd ?? ''} hidden>
           {lastRestartSession ? ['claude', ...lastRestartSession.args].join(' ') : ''}
@@ -2897,18 +2176,6 @@ export function App(): React.JSX.Element {
         sessionCount={tabs.length}
         smartZone={activeSmartZone}
         accountTestId="statusbar-account"
-        // Decisão A (handoff v3) — o relógio urgente promovido, quando o
-        // mapa decide que o card de Validação saiu de foco
-        // (`DiscoveryMap.onHomologationPromote`). Promoção, nunca
-        // duplicação: `promotedClock` só existe quando o card NÃO mostra o
-        // próprio relógio (ver `shouldPromoteClockToStatusBar`).
-        homologationClock={
-          promotedClock ? (
-            <span data-testid="statusbar-homologation-clock">
-              <HomologationClock variant="compact" absoluteLabel={promotedClock.absoluteLabel} deadline={promotedClock.deadline} now={now} />
-            </span>
-          ) : undefined
-        }
       />
 
       {/* T010 — FR-006, ui-spec §2 "fechar aba com sessão ativa": confirmação destrutiva antes de matar um PTY vivo. */}
@@ -2982,32 +2249,6 @@ export function App(): React.JSX.Element {
           />
         </div>
       ) : null}
-
-      {/* T327/CA-16/D1 — confirmação de "Liberar trava…". O texto fala em
-          REMOVER A ETIQUETA DE TRAVA NO BOARD (nunca em "arquivo de trava":
-          esse arquivo não existe) e deixa claro que o app só PREPARA o
-          comando — nada é enviado sem o Enter dele. */}
-      <Modal
-        open={lockToRelease !== null}
-        onClose={() => setLockToRelease(null)}
-        title={lockToRelease ? `Liberar a trava de [${lockToRelease.cardId}] · ${lockToRelease.phase}?` : ''}
-        actions={
-          <>
-            <Button variant="ghost" onClick={() => setLockToRelease(null)}>
-              Cancelar
-            </Button>
-            <Button variant="danger" onClick={confirmReleaseLock} data-testid="devmode-confirm-release-lock">
-              Preparar /esteira-liberar
-            </Button>
-          </>
-        }
-      >
-        <p>
-          A trava é a etiqueta <code>esteira:em-andamento:{lockToRelease?.phase}</code> no card do board — não há arquivo de
-          trava em disco. Quem remove a etiqueta é a skill <code>/esteira-liberar</code>: o app apenas escreve o comando no
-          prompt, e o Enter continua sendo seu.
-        </p>
-      </Modal>
 
       {/* D4 — Toast do Modo Dev: uma linha, SEM ação de desfazer. Trocar o
           foco já é reversível pelo próprio gesto (clicar no outro card); uma

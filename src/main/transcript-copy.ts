@@ -8,7 +8,7 @@ import { claudeHomeDir, PRINCIPAL_PROFILE_SLUG, profileDirPath, type ProfilePath
 // contas diferentes, quais paths) é pura (`shared/transcriptCopy.ts`); este
 // módulo só resolve as duas raízes reais (`profile-manager.ts`, o mesmo
 // helper que a criação de perfil usa) e copia o arquivo — sempre injetável
-// (mesmo padrão de `esteira-reader.ts`/`profile-manager.ts`), nunca lança.
+// (mesmo padrão de `file-io.ts`/`profile-manager.ts`), nunca lança.
 //
 // ACHADO (medido nesta máquina, 2026-07-30): `~/.claude-profiles/<slug>/projects`
 // é um Windows Junction pra `~/.claude/projects` GLOBAL (criado por

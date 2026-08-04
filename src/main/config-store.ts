@@ -1,5 +1,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
+import type { AccountsConfig } from '../shared/accounts';
+import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
 import type { AppConfigDto, LauncherDefaultsDto, NotificationPreference, ProjectScanMode, SessionNamesMap } from '../shared/config';
 import type {
@@ -14,6 +16,7 @@ import type {
   PhaseDefaultsTable,
 } from '../shared/devMode';
 import { DEFAULT_PHASE_DEFAULTS } from '../shared/devModeDefaults';
+import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import type { StoredSessionName } from '../shared/sessionName';
 import type { RegisteredSession, SessionRegistry } from '../shared/sessionRegistry';
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
@@ -91,6 +94,16 @@ export interface AppConfig {
   readonly devMode: DevModeState;
   /** CA-26/CA-27 (009-modo-dev-v3) — cor + ordem da aba v3, por `claudeSessionId`. Ver src/shared/tabAppearance.ts. */
   readonly tabAppearance: TabAppearanceMap;
+  /**
+   * T1105 (011-contas-e-provedores, etapa 1) — config NÃO sensível do motor
+   * de contas (mod ativo, política de auto-switch, metadado do pool local).
+   * Nasce `defaultAccountsConfig()` (mod: null, motor inerte, C2). NÃO
+   * exposta via `AppConfigDto`/`config:get` — tem canal IPC próprio
+   * (`accounts:getConfig`/`setConfig`, src/shared/accounts.ts) para não
+   * misturar dois domínios num DTO só. Segredo nunca mora aqui (cofre
+   * separado, accounts-vault.json).
+   */
+  readonly accounts: AccountsConfig;
 }
 
 /** `projectRoots` não tem um default universal (depende do homedir da máquina) — quem chama monta com `defaultProjectRoots(homedir)` (project-scanner.ts) e passa aqui. */
@@ -109,6 +122,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     collapsedFavorites: [],
     devMode: defaultDevModeState(),
     tabAppearance: {},
+    accounts: defaultAccountsConfig(),
   };
 }
 
@@ -506,6 +520,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     collapsedFavorites: isStringArray(candidate.collapsedFavorites) ? candidate.collapsedFavorites : defaults.collapsedFavorites,
     devMode: sanitizeDevModeState(candidate.devMode, defaults.devMode),
     tabAppearance: sanitizeTabAppearance(candidate.tabAppearance),
+    accounts: sanitizeAccountsConfig(candidate.accounts, defaults.accounts),
   };
 }
 

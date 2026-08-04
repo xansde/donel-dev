@@ -1,0 +1,108 @@
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg-panel);
+  border: var(--hairline);
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.trigger:hover {
+  background: var(--bg-raised);
+}
+
+.trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 340px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.autoSwitchToggle {
+  margin-left: auto;
+}
+
+.connectSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  border-radius: var(--radius-sm);
+  border: var(--hairline);
+}
+
+.plainRow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-1);
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  cursor: pointer;
+  text-align: left;
+}
+
+.plainRow:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.label {
+  font-weight: 500;
+}
+
+.load {
+  font-size: var(--text-caption-size, 12px);
+  color: var(--text-muted);
+}
+
+.hint {
+  font-size: var(--text-caption-size, 12px);
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.error {
+  font-size: var(--text-caption-size, 12px);
+  color: var(--danger, #e5484d);
+  margin: 0;
+}

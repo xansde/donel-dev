@@ -1,0 +1,10 @@
+{
+  "accounts": [
+    { "id": "acc-alfa", "label": "Conta Alfa", "plan": "pro", "available": true, "load": { "fiveHour": 10, "sevenDay": 5, "sonnet": 2, "readAt": "2026-08-04T00:00:00.000Z" } },
+    { "id": "acc-beta", "label": "Conta Beta", "plan": "pro", "available": true, "load": { "fiveHour": 20, "sevenDay": 8, "sonnet": 3, "readAt": "2026-08-04T00:00:00.000Z" } }
+  ],
+  "pairs": {
+    "acc-alfa": { "accessToken": "fixture-access-alfa", "refreshToken": "fixture-refresh-alfa", "expiresAt": 4102444800000, "scopes": ["user:inference"] },
+    "acc-beta": { "accessToken": "fixture-access-beta", "refreshToken": "fixture-refresh-beta", "expiresAt": 4102444800000, "scopes": ["user:inference"] }
+  }
+}

@@ -107,7 +107,10 @@ function factToDraft(fact: EsteiraFact, index: number, result: EsteiraResult): E
           title: fact.title,
           targetRepo: fact.target_repo,
           scopeRepos: fact.scope_repos,
-          state: 'open',
+          // Sem `state`: `work_item.recorded` NAO declara estado, e escrever
+          // `open` aqui seria o app afirmando o que ninguem disse. O estado sai
+          // do grafo de fases (D-13) — e enquanto nenhuma fase tomar o item, o
+          // reducer o deixa `open`, que ai e default honesto, nao afirmacao.
           createdBySkill: true,
           createdAt: at,
         },

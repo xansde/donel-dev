@@ -18,7 +18,9 @@
 
 import {
   LIFECYCLE_BY_ITEM_TYPE,
+  MACRO_STAGES,
   STORE_SCHEMA_VERSION,
+  WORK_ITEM_STATES,
   type ArtifactPointer,
   type DiscoverySnapshot,
   type EntityId,
@@ -27,6 +29,7 @@ import {
   type LockRecord,
   type MacroStage,
   type MirrorQueueEntry,
+  type MirrorSyncedEntry,
   type NoteSnapshot,
   type PhaseOutcome,
   type PhaseRunSnapshot,
@@ -53,6 +56,46 @@ import {
  * fechar, muda aqui e em nenhum outro lugar.
  */
 export const DISCOVERY_PHASE_NAME = 'discovery';
+
+/**
+ * O nome da fase que FECHA o ciclo de um item. Mesma razao da constante acima:
+ * `run.phase` e string livre por `[P-4]`, mas o contrato ja da semantica a este
+ * nome (`x-required-facts` cobra `verification.recorded` com `state: passed`
+ * quando ela sai com `outcome: done`). Quando P-4 fechar, muda aqui e so aqui.
+ */
+export const CONCLUDING_PHASE_NAME = 'concluir';
+
+/**
+ * O estado de um item depois de uma fase que o tomou por assunto — `[D-13]`
+ * aplicado ao item: estado calculado do grafo, nunca digitado.
+ *
+ * Achado do roteiro `ciclo-completo-de-item` (04/08/2026): o card mostrava seis
+ * fases concluidas e "PR mergeado e verificado" com o item "aberto" e a etapa
+ * "Planejado". `open` nao era afirmacao de ninguem — era default de nascimento
+ * inventado na ingestao, e nada o movia depois.
+ *
+ * Regras, na ordem em que sao escritas (a ordem E a precedencia):
+ *
+ * - `concluir` com desfecho `done`/`abandoned` fecha o item. `inconclusive` NAO
+ *   fecha: desfecho ruim e um desfecho, desfecho falso e uma mentira.
+ * - Qualquer outra fase assumida, concluida ou falha deixa o item `in-progress`.
+ *   Falhar nao e "nao ter comecado".
+ *
+ * O que NAO chama esta funcao, de proposito: o DISPARO. O app grava
+ * `phase.started` ao apenas preparar a fase (o mesmo fato torto que obrigou
+ * `phaseLine` a receber um `claimed`), e preparar nao e comecar — "Preparada —
+ * ninguem assumiu ainda" e justamente a distincao que a spec 010 existe para
+ * fazer. Quem move o item e a sessao ASSUMIDA, que e o fato honesto sobre haver
+ * alguem trabalhando. O primeiro roteiro deste batch fotografou as duas frases
+ * juntas: "ninguem assumiu ainda" em cima, item "em curso" logo abaixo.
+ */
+export function workItemStateAfterPhase(phase: string, outcome: PhaseOutcome | null): WorkItemState {
+  if (phase === CONCLUDING_PHASE_NAME) {
+    if (outcome === 'done') return 'done';
+    if (outcome === 'abandoned') return 'abandoned';
+  }
+  return 'in-progress';
+}
 
 export type StageSignal = DiscoverySnapshot['stageSignals'][number];
 
@@ -92,13 +135,25 @@ export function deriveStage(input: StageInput): StageResult {
     return { stage: 'discovery', signals };
   }
 
-  const reopened = input.items.some((item) => item.everConcluded && item.state !== 'done' && item.state !== 'abandoned');
-  const running = input.items.some((item) => item.state === 'in-progress');
-  if (reopened || running) return { stage: 'execution', signals: [] };
-
+  // A ordem aqui e a precedencia, e ela mudou depois do print 12 da captura
+  // `gestos-do-card`: com um item concluido e outro aberto, a tela dizia
+  // "Planejado" — trabalho ja fechado apresentado como trabalho que nunca
+  // comecou. Pior, a etapa dependia de QUAL item estava aberto: o mesmo
+  // conjunto (um aberto, um fechado) dava "Planejado" num print e "Execucao"
+  // no outro, enquanto os dois se diziam "calculada dos fatos".
   const allConcluded = input.items.length > 0 && input.items.every((item) => item.state === 'done' || item.state === 'abandoned');
   if (allConcluded) return { stage: 'done', signals: [] };
 
+  // Execucao e o estado de "comecou e nao terminou". Um item que JA se concluiu
+  // alguma vez (`everConcluded`) e prova de que comecou — reaberto ou nao. E o
+  // mesmo sinal que ja fazia a etapa RETROCEDER; ele so estava restrito ao item
+  // reaberto, quando vale para qualquer item que ja teve desfecho.
+  const running = input.items.some((item) => item.state === 'in-progress');
+  const everStarted = input.items.some((item) => item.everConcluded);
+  if (running || everStarted) return { stage: 'execution', signals: [] };
+
+  // Planejado sobra para o que ele sempre quis dizer: existe plano e nenhum
+  // item foi tocado por ninguem.
   return { stage: 'planned', signals: [] };
 }
 
@@ -123,6 +178,12 @@ function strList(node: Record<string, unknown>, key: string): readonly string[] 
 
 function bool(node: Record<string, unknown>, key: string): boolean {
   return node[key] === true;
+}
+
+/** Sub-objeto opaco do payload (o conteudo de uma operacao de espelho). Ilegivel = vazio, nunca fatal. */
+function payloadOf(node: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = node[key];
+  return isPlainObject(value) ? value : {};
 }
 
 function oneOf<T extends string>(node: Record<string, unknown>, key: string, allowed: readonly T[]): T | null {
@@ -159,8 +220,6 @@ function relationKey(relation: string, from: EntityId, to: EntityId): string {
 }
 
 const WORK_ITEM_TYPES: readonly WorkItemType[] = ['issue', 'spec', 'process-map', 'adr', 'prototype', 'spike', 'eval'];
-const WORK_ITEM_STATES: readonly WorkItemState[] = ['open', 'in-progress', 'done', 'abandoned'];
-const MACRO_STAGES: readonly MacroStage[] = ['discovery', 'planned', 'execution', 'done'];
 const RELATION_KINDS: readonly RelationKind[] = ['originated', 'flows_into', 'ships_with'];
 const PHASE_OUTCOMES: readonly PhaseOutcome[] = ['done', 'abandoned', 'inconclusive'];
 const VERIFICATION_KINDS: readonly VerificationKind[] = ['pull-request', 'check', 'review', 'conclusion'];
@@ -179,6 +238,7 @@ interface MutableDiscovery {
   scopeRepos: readonly string[];
   createdAt: string;
   stageOverride: StageOverride | null;
+  seeded: boolean;
 }
 
 interface MutableWorkItem {
@@ -193,6 +253,7 @@ interface MutableWorkItem {
   everConcluded: boolean;
   createdBySkill: boolean;
   createdAt: string;
+  seeded: boolean;
 }
 
 interface MutableSession {
@@ -215,6 +276,7 @@ interface MutableSession {
 interface MutableMirror {
   subject: EntityId;
   operation: string;
+  payload: Record<string, unknown>;
   queuedAt: string;
   attempts: number;
   lastError: string | null;
@@ -238,9 +300,27 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
   const notes: NoteSnapshot[] = [];
   const ingestErrors: IngestErrorSnapshot[] = [];
   const mirrorQueue = new Map<string, MutableMirror>();
+  const mirrorSynced = new Map<string, MirrorSyncedEntry>();
 
   const seenDedupeKeys = new Set<string>();
   let throughSeq = 0;
+
+  /**
+   * O estado do item acompanha a fase que o tomou por assunto. Fica aqui, num
+   * lugar so, porque tres eventos diferentes (`phase.started`, `phase.completed`,
+   * `phase.failed`) contam a mesma historia — e a palavra tem que nascer uma vez.
+   */
+  function moveItemByPhase(subject: EntityId, phase: string, outcome: PhaseOutcome | null): void {
+    if (subject.entity !== 'work_item') return;
+    const item = workItems.get(subject.id);
+    if (item === undefined) return;
+    const state = workItemStateAfterPhase(phase, outcome);
+    workItems.set(subject.id, {
+      ...item,
+      state,
+      everConcluded: item.everConcluded || state === 'done' || state === 'abandoned',
+    });
+  }
 
   for (const event of events) {
     if (event.seq > throughSeq) throughSeq = event.seq;
@@ -253,6 +333,10 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     }
 
     const p = event.payload;
+    // D-2 — a proveniencia do FATO. Entidade guarda a do nascimento (origem);
+    // fase guarda a do ultimo fato (estado de agora). As duas regras estao
+    // explicadas em `SeededFlag`, no formato.
+    const fromSeed = event.source.kind === 'seed';
 
     switch (event.type) {
       case 'discovery.created':
@@ -272,6 +356,9 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           scopeRepos: 'scopeRepos' in p ? strList(p, 'scopeRepos') : (current?.scopeRepos ?? []),
           createdAt: current?.createdAt ?? str(p, 'createdAt') ?? event.at,
           stageOverride: current?.stageOverride ?? null,
+          // Marca de ORIGEM: quem nasceu de uma afirmacao continua tendo
+          // nascido dela, mesmo depois de a skill declarar fatos por cima.
+          seeded: current?.seeded ?? fromSeed,
         });
         break;
       }
@@ -287,6 +374,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           title,
           summary: str(p, 'summary'),
           createdAt: str(p, 'createdAt') ?? event.at,
+          seeded: plans.get(id)?.seeded ?? fromSeed,
         });
         break;
       }
@@ -311,6 +399,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           everConcluded: (current?.everConcluded ?? false) || state === 'done' || state === 'abandoned',
           createdBySkill: bool(p, 'createdBySkill'),
           createdAt: current?.createdAt ?? str(p, 'createdAt') ?? event.at,
+          seeded: current?.seeded ?? fromSeed,
         });
         break;
       }
@@ -409,6 +498,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           // AGORA, e o historico continua no log.
           failure: null,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
+          seeded: fromSeed,
         });
         break;
       }
@@ -429,7 +519,14 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           summary: str(p, 'summary'),
           failure: null,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
+          // A fase e estado de AGORA: quem afirmou o ultimo desfecho define a
+          // marca. Fase semeada e depois de fato executada vira observada.
+          seeded: fromSeed,
         });
+        // O item acompanha o que aconteceu com ele: sem isto, o card mostraria
+        // seis fases concluidas e um item "aberto" — a mentira que o roteiro
+        // `ciclo-completo-de-item` fotografou.
+        moveItemByPhase(subject, phase, outcome);
         // A fase acabou: a trava dela cai junto. A skill DEVE declarar
         // `lock.released` (o corpus faz), mas depender só disso deixaria o card
         // preso para sempre quando ela morre no meio — a trava orfa que D-V3
@@ -469,7 +566,11 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           summary: current?.summary ?? null,
           failure,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
+          seeded: fromSeed,
         });
+        // Falhar nao e "nao ter comecado": o item continua em curso, e a falha
+        // fica visivel na fase.
+        moveItemByPhase(subject, phase, null);
         // Mesma regra do `phase.completed`: o run acabou (mal), a trava cai. O
         // card volta a aceitar disparo — e a falha continua visivel na fase.
         locks.delete(key);
@@ -504,6 +605,27 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           // Nasce NAO assumida: o app preparou, ninguem pegou ainda.
           claimed: str(p, 'cliSessionId') !== null,
         });
+        // Sessao ASSUMIDA e o fato honesto de que alguem esta trabalhando no
+        // item — e o unico que o move para "em curso" antes de a fase terminar.
+        if (str(p, 'cliSessionId') !== null) moveItemByPhase(subject, phase, null);
+        break;
+      }
+
+      case 'session.claimed': {
+        // Batch B1 — a aba abriu e o CLI devolveu o id da sessao. E o unico
+        // fato que separa "preparada" de "em andamento": ate ele chegar, o app
+        // so tinha deixado um arquivo em disco.
+        const id = str(p, 'id');
+        const cliSessionId = str(p, 'cliSessionId');
+        if (id === null || cliSessionId === null) break;
+        const current = sessions.get(id);
+        if (current === undefined) break;
+        sessions.set(id, { ...current, cliSessionId, claimed: true });
+        // A trava daquela fase passa a ter DONO com nome (D-11: dono, hora e
+        // sessao). So a fase DESTA sessao — trava de fase irma nao herda dono.
+        const lockKey = `${entityKey(current.subject)}|${current.phase}`;
+        const lock = locks.get(lockKey);
+        if (lock !== undefined) locks.set(lockKey, { ...lock, cliSessionId });
         break;
       }
 
@@ -594,9 +716,19 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         const operation = str(p, 'operation');
         if (subject === null || operation === null) break;
         const key = `${entityKey(subject)}|${operation}`;
-        if (!mirrorQueue.has(key)) {
-          mirrorQueue.set(key, { subject, operation, queuedAt: str(p, 'queuedAt') ?? event.at, attempts: 0, lastError: null });
-        }
+        const current = mirrorQueue.get(key);
+        // Re-enfileirar a MESMA operacao atualiza o conteudo e preserva a
+        // contagem: a fila guarda a intencao de AGORA (reenviar a coluna velha
+        // seria espelhar um passado que ja nao existe), e zerar `attempts` a
+        // cada gesto faria o teto de tentativas nunca chegar.
+        mirrorQueue.set(key, {
+          subject,
+          operation,
+          payload: payloadOf(p, 'payload'),
+          queuedAt: current?.queuedAt ?? str(p, 'queuedAt') ?? event.at,
+          attempts: current?.attempts ?? 0,
+          lastError: current?.lastError ?? null,
+        });
         break;
       }
 
@@ -605,7 +737,14 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         const operation = str(p, 'operation');
         if (subject === null || operation === null) break;
         const key = `${entityKey(subject)}|${operation}`;
-        const current = mirrorQueue.get(key) ?? { subject, operation, queuedAt: event.at, attempts: 0, lastError: null };
+        const current = mirrorQueue.get(key) ?? {
+          subject,
+          operation,
+          payload: payloadOf(p, 'payload'),
+          queuedAt: event.at,
+          attempts: 0,
+          lastError: null,
+        };
         mirrorQueue.set(key, { ...current, attempts: current.attempts + 1, lastError: str(p, 'error') });
         break;
       }
@@ -614,7 +753,17 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         const subject = entityId(p, 'subject');
         const operation = str(p, 'operation');
         if (subject === null || operation === null) break;
-        mirrorQueue.delete(`${entityKey(subject)}|${operation}`);
+        const key = `${entityKey(subject)}|${operation}`;
+        const queued = mirrorQueue.get(key);
+        mirrorQueue.delete(key);
+        // O que o board passou a refletir. Sem este registro, a proxima
+        // varredura de intencoes reenfileiraria a mesma etiqueta para sempre.
+        mirrorSynced.set(key, {
+          subject,
+          operation,
+          payload: 'payload' in p ? payloadOf(p, 'payload') : (queued?.payload ?? {}),
+          at: str(p, 'at') ?? event.at,
+        });
         break;
       }
 
@@ -646,9 +795,22 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
       items: ownItems.map((item) => ({ state: item.state, everConcluded: item.everConcluded })),
     });
 
+    // O erro de ingestao pode estar ancorado em QUALQUER entidade do card: com
+    // as fases de item (implementar, validar, documentar, concluir), a maioria
+    // dos documentos recusados vem ancorada num work item. Olhar so o discovery
+    // deixaria o card limpo na lista enquanto um `result.json` foi recusado —
+    // o silencio que a spec inteira existe para acabar.
+    const owned = new Set<string>([
+      `discovery:${discovery.id}`,
+      ...ownPlans.map((plan) => `plan:${plan.id}`),
+      ...ownItems.map((item) => `work_item:${item.id}`),
+    ]);
+
     const signals: StageSignal[] = [...derived.signals];
     if (ownItems.some((item) => item.planId === null)) signals.push('orphan-item');
-    if (errorList.some((error) => error.subject?.entity === 'discovery' && error.subject.id === discovery.id)) signals.push('ingest-error');
+    if (errorList.some((error) => error.subject !== null && owned.has(`${error.subject.entity}:${error.subject.id}`))) {
+      signals.push('ingest-error');
+    }
     if (mirrorList.some((entry) => entry.subject.entity === 'discovery' && entry.subject.id === discovery.id)) signals.push('mirror-pending');
 
     return {
@@ -662,6 +824,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
       derivedStage: derived.stage,
       stageSignals: signals,
       stageOverride: discovery.stageOverride,
+      seeded: discovery.seeded,
     };
   });
 
@@ -684,13 +847,15 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     verifications: [...verifications.values()],
     notes,
     ingestErrors: errorList,
-    mirrorQueue: mirrorList.map(({ subject, operation, queuedAt, attempts, lastError }) => ({
+    mirrorQueue: mirrorList.map(({ subject, operation, payload, queuedAt, attempts, lastError }) => ({
       subject,
       operation,
+      payload,
       queuedAt,
       attempts,
       lastError,
     })) satisfies MirrorQueueEntry[],
+    mirrorSynced: [...mirrorSynced.values()],
   };
 }
 

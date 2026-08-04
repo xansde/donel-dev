@@ -218,7 +218,12 @@ describe('buildRunInput — o que o app entrega', () => {
 
   it('a macro etapa vai CALCULADA pelo app (D-13), nunca em branco', () => {
     const built = buildRunInput(storeWithCard(), { ...base, phase: 'plano', planId: 'pln-1' });
-    expect(built.ok && built.input.context.derived_stage).toBe('planned');
+    // `execution`, nao `planned`: este card tem uma fase `implementar` que foi
+    // disparada sobre o item e FALHOU. "Planejado" significa "plano existe,
+    // nenhum item comecou" — dize-lo aqui seria afirmar que ninguem tocou num
+    // trabalho que o proprio card mostra tendo falhado. Falhar nao e nao ter
+    // comecado (achado do roteiro `ciclo-completo-de-item`, 04/08/2026).
+    expect(built.ok && built.input.context.derived_stage).toBe('execution');
   });
 
   it('item do tipo issue sem alvo NAO dispara — nada de cair no projeto em foco', () => {

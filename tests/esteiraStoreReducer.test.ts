@@ -200,6 +200,45 @@ describe('reduceEvents — entidades', () => {
     ]);
     expect(synced.mirrorQueue).toHaveLength(0);
   });
+
+  it('a fila guarda O QUE mandar — reenviar sem conteudo seria adivinhar (D-12)', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      evt('mirror.queued', { subject, operation: 'column', payload: { column: 'Plano' }, queuedAt: '2026-08-03T12:00:00.000Z' }),
+    ]);
+
+    expect(snapshot.mirrorQueue[0].payload).toEqual({ column: 'Plano' });
+  });
+
+  it('re-enfileirar a mesma operacao atualiza o conteudo e PRESERVA as tentativas', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      evt('mirror.queued', { subject, operation: 'column', payload: { column: 'Discovery' }, queuedAt: '2026-08-03T12:00:00.000Z' }),
+      evt('mirror.failed', { subject, operation: 'column', error: 'sem rede' }),
+      evt('mirror.queued', { subject, operation: 'column', payload: { column: 'Plano' }, queuedAt: '2026-08-03T13:00:00.000Z' }),
+    ]);
+
+    expect(snapshot.mirrorQueue).toHaveLength(1);
+    // A intencao de AGORA: mandar a coluna velha seria espelhar um passado que ja nao existe.
+    expect(snapshot.mirrorQueue[0].payload).toEqual({ column: 'Plano' });
+    // Zerar a contagem a cada gesto faria o teto de tentativas nunca chegar.
+    expect(snapshot.mirrorQueue[0].attempts).toBe(1);
+    expect(snapshot.mirrorQueue[0].queuedAt).toBe('2026-08-03T12:00:00.000Z');
+  });
+
+  it('o que o board ja reflete fica REGISTRADO — sem isso, a mesma etiqueta voltaria para sempre', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      evt('mirror.queued', { subject, operation: 'label', payload: { labels: ['esteira:em-andamento:plano'] } }),
+      evt('mirror.synced', { subject, operation: 'label', at: '2026-08-03T12:05:00.000Z' }),
+    ]);
+
+    expect(snapshot.mirrorQueue).toHaveLength(0);
+    expect(snapshot.mirrorSynced).toHaveLength(1);
+    // O conteudo vem da fila quando o evento de sync nao o repete.
+    expect(snapshot.mirrorSynced[0].payload).toEqual({ labels: ['esteira:em-andamento:plano'] });
+    expect(snapshot.mirrorSynced[0].at).toBe('2026-08-03T12:05:00.000Z');
+  });
 });
 
 describe('reduceEvents — dedupe (a idempotencia da ingestao)', () => {
@@ -346,6 +385,44 @@ describe('reduceEvents — a etapa sai do grafo, nunca do teclado', () => {
     expect(snapshot.discoveries[0].stageSignals).toContain('mirror-pending');
   });
 
+  // Spec 010 (B7) — o erro de ingestao de um ITEM tambem e do card. Com as
+  // fases de item na skill 3.0 (implementar, validar, documentar, concluir), a
+  // maioria dos `result.json` recusados passa a vir ancorada num work item; se
+  // o sinal so olhasse o discovery, o card ficaria LIMPO na lista enquanto um
+  // documento foi recusado — o silencio que a spec inteira existe para acabar.
+  it('erro de ingestao ancorado num item do card tambem acende o sinal do card', () => {
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      plan('pln-1', 'dsc-1'),
+      workItem('wi-1', 'dsc-1', { planId: 'pln-1' }),
+      evt('ingest.failed', {
+        resultPath: 'C:/outbox/validar-sem-verificacao.json',
+        at: '2026-08-03T12:00:00.000Z',
+        subject: { entity: 'work_item', id: 'wi-1' },
+        issues: [{ code: 'missing_required_fact', path: 'facts', message: 'x' }],
+      }),
+    ]);
+
+    expect(snapshot.discoveries[0].stageSignals).toContain('ingest-error');
+  });
+
+  it('erro de ingestao de um item de OUTRO card nao acende o sinal deste', () => {
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      discovery('dsc-2'),
+      workItem('wi-2', 'dsc-2'),
+      evt('ingest.failed', {
+        resultPath: 'C:/outbox/x.json',
+        at: '2026-08-03T12:00:00.000Z',
+        subject: { entity: 'work_item', id: 'wi-2' },
+        issues: [],
+      }),
+    ]);
+
+    expect(snapshot.discoveries[0].stageSignals).not.toContain('ingest-error');
+    expect(snapshot.discoveries[1].stageSignals).toContain('ingest-error');
+  });
+
   it('override manual e marcado como tal, e a etapa derivada continua visivel ao lado', () => {
     const snapshot = reduceEvents([
       discovery('dsc-1'),
@@ -406,5 +483,277 @@ describe('a trava cai quando a fase termina — nunca fica órfã', () => {
 
     expect(snapshot.locks).toHaveLength(1);
     expect(snapshot.locks[0].phase).toBe('plano');
+  });
+});
+
+// Batch B1 — a sessão preparada passa a ser assumida DE VERDADE quando o CLI
+// devolve o id dela. Antes disso, o card diz "preparada"; depois, "em
+// andamento" — e a diferença entre as duas é um fato, não uma suposição.
+describe('session.claimed — a sessão ganha dono', () => {
+  const subject = { entity: 'discovery', id: 'dsc-1' };
+
+  function preparada(): StoreEvent[] {
+    return [
+      discovery('dsc-1'),
+      evt('lock.acquired', { subject, phase: 'discovery', holderKind: 'app', acquiredAt: '2026-08-03T12:00:00.000Z', cliSessionId: null }),
+      evt('session.started', { id: 'ses-1', subject, phase: 'discovery', startedAt: '2026-08-03T12:00:00.000Z' }),
+    ];
+  }
+
+  it('a sessão nasce NÃO assumida — disparar não é começar', () => {
+    const snapshot = reduceEvents(preparada());
+    expect(snapshot.sessions[0].claimed).toBe(false);
+    expect(snapshot.sessions[0].cliSessionId).toBeNull();
+  });
+
+  it('o id do CLI vira o dono da sessão E da trava (D-11: dono, hora e sessão)', () => {
+    const snapshot = reduceEvents([
+      ...preparada(),
+      evt('session.claimed', { id: 'ses-1', cliSessionId: 'cli-abc', at: '2026-08-03T12:01:00.000Z' }),
+    ]);
+
+    expect(snapshot.sessions[0].claimed).toBe(true);
+    expect(snapshot.sessions[0].cliSessionId).toBe('cli-abc');
+    expect(snapshot.locks[0].cliSessionId).toBe('cli-abc');
+  });
+
+  it('assumir sessão que não existe não inventa sessão nenhuma', () => {
+    const snapshot = reduceEvents([...preparada(), evt('session.claimed', { id: 'ses-fantasma', cliSessionId: 'cli-abc' })]);
+    expect(snapshot.sessions).toHaveLength(1);
+    expect(snapshot.sessions[0].claimed).toBe(false);
+  });
+
+  it('a trava de outra fase não ganha dono por tabela', () => {
+    const snapshot = reduceEvents([
+      ...preparada(),
+      evt('lock.acquired', { subject, phase: 'plano', holderKind: 'app', acquiredAt: '2026-08-03T12:00:00.000Z' }),
+      evt('session.claimed', { id: 'ses-1', cliSessionId: 'cli-abc' }),
+    ]);
+
+    expect(snapshot.locks.find((lock) => lock.phase === 'plano')?.cliSessionId).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Proveniencia (D-2) — semeado x declarado
+// ---------------------------------------------------------------------------
+
+/** O mesmo `evt`, mas com `source: { kind: 'seed' }` — a afirmacao humana. */
+function semeado(type: string, payload: Record<string, unknown>): StoreEvent {
+  return { ...evt(type, payload), source: { kind: 'seed' } };
+}
+
+describe('reduceEvents — proveniencia do que foi SEMEADO (D-2)', () => {
+  it('discovery, plano e item plantados por seed saem marcados', () => {
+    const snapshot = reduceEvents([
+      semeado('discovery.created', { id: 'dsc-1', title: 'Semeado', createdAt: '2026-08-03T12:00:00.000Z' }),
+      semeado('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano semeado' }),
+      semeado('work_item.created', { id: 'wi-1', discoveryId: 'dsc-1', itemType: 'issue', title: 'Item semeado', state: 'in-progress' }),
+    ]);
+
+    expect(snapshot.discoveries[0].seeded).toBe(true);
+    expect(snapshot.plans[0].seeded).toBe(true);
+    expect(snapshot.workItems[0].seeded).toBe(true);
+  });
+
+  it('o que veio declarado por skill NAO ganha a marca', () => {
+    const snapshot = reduceEvents([discovery('dsc-1'), plan('pln-1', 'dsc-1'), workItem('wi-1', 'dsc-1')]);
+
+    expect(snapshot.discoveries[0].seeded).toBe(false);
+    expect(snapshot.plans[0].seeded).toBe(false);
+    expect(snapshot.workItems[0].seeded).toBe(false);
+  });
+
+  it('a marca da ENTIDADE e da origem e nao se apaga: skill declarando fato novo nao reescreve como foi plantada', () => {
+    // O corpus da skill faz upsert de `discovery.recorded` a cada run. Se a
+    // marca seguisse o ultimo evento, o card semeado se disfarcaria de card
+    // observado no primeiro disparo — que e justamente o que ela existe para
+    // impedir.
+    const snapshot = reduceEvents([
+      semeado('discovery.created', { id: 'dsc-1', title: 'Semeado', createdAt: '2026-08-03T12:00:00.000Z' }),
+      discovery('dsc-1', { title: 'Mesmo card, agora com fato da skill' }),
+    ]);
+
+    expect(snapshot.discoveries[0].title).toBe('Mesmo card, agora com fato da skill');
+    expect(snapshot.discoveries[0].seeded).toBe(true);
+  });
+
+  it('a marca da FASE segue o ultimo fato: um run de verdade em cima da fase semeada tira a marca', () => {
+    // A fase e um estado de AGORA, nao uma origem: o que vale e quem afirmou o
+    // ultimo desfecho. Semeada e depois de fato executada = observada.
+    const semeada = reduceEvents([
+      semeado('discovery.created', { id: 'dsc-1', title: 'Semeado' }),
+      semeado('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done' }),
+    ]);
+    expect(semeada.phases[0].seeded).toBe(true);
+
+    const reexecutada = reduceEvents([
+      semeado('discovery.created', { id: 'dsc-1', title: 'Semeado' }),
+      semeado('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done' }),
+      phaseCompleted('discovery', 'dsc-1', 'discovery', 'done'),
+    ]);
+    expect(reexecutada.phases[0].seeded).toBe(false);
+  });
+
+  it('a etapa de um card semeado e DERIVADA dos fatos semeados, como qualquer outra', () => {
+    const snapshot = reduceEvents([
+      semeado('discovery.created', { id: 'dsc-1', title: 'Semeado' }),
+      semeado('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done' }),
+      semeado('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+      semeado('work_item.created', { id: 'wi-1', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'issue', title: 'A', state: 'in-progress' }),
+      semeado('work_item.created', { id: 'wi-2', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'spike', title: 'B', state: 'open' }),
+    ]);
+
+    expect(snapshot.discoveries[0].derivedStage).toBe('execution');
+    expect(snapshot.discoveries[0].stageOverride).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O estado do item sai do grafo (D-13 aplicado ao item)
+// ---------------------------------------------------------------------------
+//
+// Achado do roteiro e2e `ciclo-completo-de-item` (04/08/2026, batch B7): o print
+// mostrava seis fases concluídas, "PR mergeado e verificado" — e, logo abaixo,
+// o item "aberto" e a etapa "Planejado". A tela afirmava que ninguém tinha
+// começado um trabalho que ela mesma mostrava terminado.
+//
+// A causa não era a tela: `work_item.recorded` nascia `open` e NADA movia o
+// estado depois. `open` não era afirmação de ninguém — era default de
+// nascimento inventado na ingestão, exatamente o "estado digitado" que D-13
+// proíbe. Agora o estado é derivado das fases que tomam o item por assunto.
+
+describe('o estado do item sai do grafo — nenhum default finge saber', () => {
+  function itemState(snapshot: ReturnType<typeof reduceEvents>, id: string): string | undefined {
+    return snapshot.workItems.find((item) => item.id === id)?.state;
+  }
+
+  it('item recém-declarado pela skill nasce aberto — nenhuma fase o tomou ainda', () => {
+    const snapshot = reduceEvents([discovery('dsc-1'), workItem('wi-1', 'dsc-1', { state: undefined })]);
+    expect(itemState(snapshot, 'wi-1')).toBe('open');
+  });
+
+  it('DISPARAR a fase não move o item — o app grava phase.started ao preparar, e preparar não é começar', () => {
+    // O disparo real grava os três de uma vez, e a tela lê "Preparada — ninguém
+    // assumiu ainda". O primeiro roteiro deste batch fotografou essa frase com
+    // o item "em curso" logo abaixo: a mesma contradição de sempre, agora entre
+    // duas linhas da MESMA tela.
+    const subject = { entity: 'work_item', id: 'wi-1' };
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      workItem('wi-1', 'dsc-1', { state: undefined }),
+      evt('lock.acquired', { subject, phase: 'implementar', holderKind: 'app', acquiredAt: '2026-08-03T12:00:00.000Z' }),
+      evt('phase.started', { subject, phase: 'implementar', at: '2026-08-03T12:00:00.000Z' }),
+      evt('session.started', { id: 'ses-1', subject, phase: 'implementar', cliSessionId: null, startedAt: '2026-08-03T12:00:00.000Z' }),
+    ]);
+
+    expect(itemState(snapshot, 'wi-1')).toBe('open');
+  });
+
+  it('sessão ASSUMIDA vira "em curso" — aí existe alguém trabalhando', () => {
+    const subject = { entity: 'work_item', id: 'wi-1' };
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      workItem('wi-1', 'dsc-1', { state: undefined }),
+      evt('session.started', { id: 'ses-1', subject, phase: 'implementar', cliSessionId: 'cli-9', startedAt: '2026-08-03T12:10:00.000Z' }),
+    ]);
+
+    expect(itemState(snapshot, 'wi-1')).toBe('in-progress');
+  });
+
+  it('implementar concluída deixa o item em curso — o ciclo não fechou ainda', () => {
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      workItem('wi-1', 'dsc-1', { state: undefined }),
+      phaseCompleted('work_item', 'wi-1', 'implementar', 'done'),
+    ]);
+
+    expect(itemState(snapshot, 'wi-1')).toBe('in-progress');
+  });
+
+  it('concluir com desfecho "done" fecha o item', () => {
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      workItem('wi-1', 'dsc-1', { state: undefined }),
+      phaseCompleted('work_item', 'wi-1', 'implementar', 'done'),
+      phaseCompleted('work_item', 'wi-1', 'concluir', 'done'),
+    ]);
+
+    expect(itemState(snapshot, 'wi-1')).toBe('done');
+  });
+
+  it('concluir "abandoned" abandona; "inconclusive" NÃO fecha — desfecho ruim não é desfecho falso', () => {
+    const abandonado = reduceEvents([
+      discovery('dsc-1'),
+      workItem('wi-1', 'dsc-1', { state: undefined }),
+      phaseCompleted('work_item', 'wi-1', 'concluir', 'abandoned'),
+    ]);
+    expect(itemState(abandonado, 'wi-1')).toBe('abandoned');
+
+    const inconclusivo = reduceEvents([
+      discovery('dsc-1'),
+      workItem('wi-1', 'dsc-1', { state: undefined }),
+      phaseCompleted('work_item', 'wi-1', 'concluir', 'inconclusive'),
+    ]);
+    expect(itemState(inconclusivo, 'wi-1')).toBe('in-progress');
+  });
+
+  it('fase que falha deixa o item em curso — falhar não é não ter começado', () => {
+    const subject = { entity: 'work_item', id: 'wi-1' };
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      workItem('wi-1', 'dsc-1', { state: undefined }),
+      evt('phase.failed', { subject, phase: 'implementar', failure: { code: 'worktree-dirty', message: 'x' }, at: '2026-08-03T12:30:00.000Z' }),
+    ]);
+
+    expect(itemState(snapshot, 'wi-1')).toBe('in-progress');
+  });
+
+  it('o gesto humano vence o que veio antes — e uma fase nova depois dele volta a valer', () => {
+    const declarado = reduceEvents([
+      discovery('dsc-1'),
+      workItem('wi-1', 'dsc-1', { state: undefined }),
+      phaseCompleted('work_item', 'wi-1', 'concluir', 'done'),
+      evt('work_item.updated', { id: 'wi-1', state: 'open' }),
+    ]);
+    expect(itemState(declarado, 'wi-1')).toBe('open');
+
+    const refeito = reduceEvents([
+      discovery('dsc-1'),
+      workItem('wi-1', 'dsc-1', { state: undefined }),
+      phaseCompleted('work_item', 'wi-1', 'concluir', 'done'),
+      evt('work_item.updated', { id: 'wi-1', state: 'open' }),
+      phaseCompleted('work_item', 'wi-1', 'implementar', 'done'),
+    ]);
+    expect(itemState(refeito, 'wi-1')).toBe('in-progress');
+  });
+
+  it('o ciclo inteiro move a ETAPA do card: Planejado → Execução → Concluído', () => {
+    const base = [discovery('dsc-1'), plan('pln-1', 'dsc-1'), workItem('wi-1', 'dsc-1', { planId: 'pln-1', state: undefined }), phaseCompleted('discovery', 'dsc-1', 'discovery', 'done')];
+
+    expect(reduceEvents(base).discoveries[0].derivedStage).toBe('planned');
+
+    const emExecucao = reduceEvents([...base, phaseCompleted('work_item', 'wi-1', 'implementar', 'done')]);
+    expect(emExecucao.discoveries[0].derivedStage).toBe('execution');
+
+    const concluido = reduceEvents([
+      ...base,
+      phaseCompleted('work_item', 'wi-1', 'implementar', 'done'),
+      phaseCompleted('work_item', 'wi-1', 'concluir', 'done'),
+    ]);
+    expect(concluido.discoveries[0].derivedStage).toBe('done');
+  });
+
+  it('item reaberto por gesto depois de concluído faz a etapa RETROCEDER para Execução', () => {
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      plan('pln-1', 'dsc-1'),
+      workItem('wi-1', 'dsc-1', { planId: 'pln-1', state: undefined }),
+      phaseCompleted('discovery', 'dsc-1', 'discovery', 'done'),
+      phaseCompleted('work_item', 'wi-1', 'concluir', 'done'),
+      evt('work_item.updated', { id: 'wi-1', state: 'open' }),
+    ]);
+
+    expect(snapshot.discoveries[0].derivedStage).toBe('execution');
   });
 });

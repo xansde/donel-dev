@@ -1,7 +1,17 @@
 import { promises as fs, watch, type FSWatcher } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { EsteiraPhase } from '../shared/devMode';
-import type { EsteiraStateRoot } from './esteira-reader';
+
+/**
+ * A raiz onde a esteira 2.x arquiva (`~/.claude/esteira-state/<repo_slug>`).
+ * Morava no leitor do mapa antigo, que saiu no batch B6 — este watcher ficou sem
+ * consumidor no renderer (o mapa lê o store agora) e continua aqui só enquanto
+ * a 2.x conviver (`[P-3]`).
+ */
+export interface EsteiraStateRoot {
+  readonly esteiraStateRoot: string;
+  readonly repoSlug: string;
+}
 
 // T308 (003-modo-dev, Batch A) — CA-6: quando `<fase>-result.json` aparece
 // com `status: "success"`, o app fecha a aba e registra o `session-id`. O
@@ -11,12 +21,10 @@ import type { EsteiraStateRoot } from './esteira-reader';
 // termina), com retry limitado para o diretório ainda não existir.
 //
 // CA-4 (009-modo-dev-v3) — a raiz saiu de `<repo>/.esteira/` para
-// `~/.claude/esteira-state/<repo_slug>/<card_id>/<fase>/`, fora do repo
-// (mesma raiz de `esteira-reader.ts` — ver o comentário de topo de lá sobre
-// `repoSlug`). Implementar/Validar arquivam sob `handoffs/fase-<n>/` (D.0-bis
-// do contrato); sem `faseNum` conhecido não há diretório correto a vigiar —
-// o watcher fica inerte (nunca chuta `fase-1`; quem decide esse ponto de
-// partida, documentado, é `discovery-tree.ts`/`main/index.ts`).
+// `~/.claude/esteira-state/<repo_slug>/<card_id>/<fase>/`, fora do repo.
+// Implementar/Validar arquivam sob `handoffs/fase-<n>/` (D.0-bis do contrato);
+// sem `faseNum` conhecido não há diretório correto a vigiar — o watcher fica
+// inerte (nunca chuta `fase-1`).
 //
 // Etapa que FALHOU (`status` ≠ "success") não arquiva sozinha — fica aberta
 // (CA-6 literal). Reprocessamento (mesmo manifesto reescrito) não duplica

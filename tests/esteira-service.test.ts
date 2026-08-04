@@ -1,9 +1,17 @@
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEsteiraService, type EsteiraService } from '../src/main/esteira-service';
-import { isValidCreateDiscoveryIpcInput, isValidDispatchIpcInput, isValidReleaseLockIpcInput } from '../src/shared/esteira/ipc';
+import { createFakeBoardAdapter } from '../src/main/esteira-mirror';
+import {
+  isValidClaimSessionIpcInput,
+  isValidCreateDiscoveryIpcInput,
+  isValidDispatchIpcInput,
+  isValidEndSessionIpcInput,
+  isValidReleaseLockIpcInput,
+  isValidSeedIpcInput,
+} from '../src/shared/esteira/ipc';
 
 // Spec 010 — o servico que liga o store ao app: boot, varredura do outbox,
 // watcher e os gestos que a tela dispara. O que se prova aqui:
@@ -76,6 +84,27 @@ describe('varredura do outbox', () => {
 
     expect(state.snapshot.discoveries[0].title).toBe('Fila de importacao trava sem sinal');
     expect(state.rejectedOnLastScan).toBe(0);
+  });
+
+  // Achado do print 07 do roteiro `espelho-pendente`: a tela dizia "Nada novo
+  // no outbox." enquanto o card mudava de etapa embaixo da frase. A varredura
+  // sabia o que tinha ingerido; o DTO nao carregava.
+  it('a varredura conta o que INGERIU, nao so o que recusou', () => {
+    putResult('discovery-com-tracker');
+
+    const state = service.scanOutbox();
+
+    expect(state.ingestedOnLastScan).toBe(1);
+    expect(state.unreadableOnLastScan).toBe(0);
+  });
+
+  it('reler o mesmo arquivo nao conta como novidade — nada mudou', () => {
+    putResult('discovery-com-tracker');
+    service.scanOutbox();
+
+    const again = service.scanOutbox();
+
+    expect(again.ingestedOnLastScan).toBe(0);
   });
 
   it('documento fora do contrato vira erro VISIVEL, e o card ganha o sinal', () => {
@@ -197,6 +226,234 @@ describe('gestos do app', () => {
   });
 });
 
+// Batch B1 — o ciclo de vida da sessao que o "Preparar" abre. Dois fatos, e os
+// dois existem para que a tela pare de mentir num sentido ou no outro:
+// assumir a sessao e o que autoriza dizer "em andamento"; fechar a aba sem
+// concluir NAO pode deixar o card preso.
+describe('a sessao que o disparo abre', () => {
+  function cardDisparado(): { discoveryId: string; sessionId: string } {
+    const created = service.createDiscovery({ title: 'Card novo', problem: null, targetRepo: 'donel-dev', scopeRepos: [], tracker: null });
+    if (!created.ok) throw new Error('createDiscovery falhou');
+    const dispatched = service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: { target_repo: 'donel-dev', repo_path: 'C:/dev/donel-dev', worktree_path: null, branch: null },
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+    if (!dispatched.ok) throw new Error('dispatch falhou');
+    return { discoveryId: created.discoveryId, sessionId: dispatched.sessionId };
+  }
+
+  it('a sessao recem-disparada NAO esta assumida — disparar nao e comecar', () => {
+    const { sessionId } = cardDisparado();
+    const session = service.snapshotDto().snapshot.sessions.find((entry) => entry.id === sessionId);
+    expect(session?.claimed).toBe(false);
+  });
+
+  it('a aba abriu: o id do CLI vira dono da sessao e da trava', () => {
+    const { sessionId } = cardDisparado();
+    const state = service.claimSession({ sessionId, cliSessionId: 'cli-abc' });
+
+    expect(state.snapshot.sessions.find((entry) => entry.id === sessionId)?.claimed).toBe(true);
+    expect(state.snapshot.locks[0].cliSessionId).toBe('cli-abc');
+  });
+
+  it('assumir a mesma sessao duas vezes com o mesmo id nao vira fato novo', () => {
+    const { sessionId } = cardDisparado();
+    service.claimSession({ sessionId, cliSessionId: 'cli-abc' });
+    const listener = vi.fn();
+    service.startWatching(listener);
+
+    service.claimSession({ sessionId, cliSessionId: 'cli-abc' });
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('fechar a aba sem concluir encerra a sessao E solta a trava — o card nao fica preso', () => {
+    const { sessionId } = cardDisparado();
+    service.claimSession({ sessionId, cliSessionId: 'cli-abc' });
+
+    const state = service.endSession({ sessionId, reason: 'tab-closed' });
+
+    expect(state.snapshot.sessions.find((entry) => entry.id === sessionId)?.endedAt).not.toBeNull();
+    expect(state.snapshot.locks).toHaveLength(0);
+  });
+
+  it('a fase interrompida continua VISIVEL — encerrar a sessao nao apaga que ela comecou', () => {
+    const { sessionId } = cardDisparado();
+    const state = service.endSession({ sessionId, reason: 'tab-closed' });
+
+    const phase = state.snapshot.phases[0];
+    expect(phase.startedAt).not.toBeNull();
+    // Nao concluiu e nao falhou: a fase ficou pelo meio, e e isso que a tela diz.
+    expect(phase.completedAt).toBeNull();
+    expect(phase.failure).toBeNull();
+  });
+
+  it('encerrar uma sessao que ja acabou nao grava nada', () => {
+    const { sessionId } = cardDisparado();
+    service.endSession({ sessionId, reason: 'tab-closed' });
+    const listener = vi.fn();
+    service.startWatching(listener);
+
+    service.endSession({ sessionId, reason: 'tab-closed' });
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('sessao desconhecida nao muta nada', () => {
+    const listener = vi.fn();
+    service.startWatching(listener);
+
+    service.claimSession({ sessionId: 'ses-fantasma', cliSessionId: 'cli-abc' });
+    service.endSession({ sessionId: 'ses-fantasma', reason: null });
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe('espelho no tracker (D-12) — cortesia que nunca vira bloqueio', () => {
+  const MIRROR_CONFIG = {
+    enabled: true,
+    provider: 'taskdex',
+    columnByStage: { discovery: 'Discovery', planned: 'Plano' },
+    phaseLabelPrefix: 'esteira:em-andamento:',
+    maxAttempts: 3,
+  } as const;
+
+  function comEspelho(controlPath: string): EsteiraService {
+    return open({
+      mirror: {
+        config: MIRROR_CONFIG,
+        adapter: createFakeBoardAdapter({ provider: 'taskdex', controlPath }),
+      },
+    });
+  }
+
+  function controle(mode: 'ok' | 'fail', error = 'o board nao respondeu'): string {
+    const controlPath = join(root, 'mirror-fake.json');
+    writeFileSync(controlPath, JSON.stringify({ mode, error }), 'utf8');
+    return controlPath;
+  }
+
+  it('board caido NAO impede o trabalho local — o card entra, a fila e que fica pendente', async () => {
+    const espelhado = comEspelho(controle('fail', 'sem rede'));
+    putResult('discovery-com-tracker');
+
+    const state = espelhado.scanOutbox();
+    // O trabalho local aconteceu ANTES de qualquer conversa com o board.
+    expect(state.snapshot.discoveries[0].title).toBe('Fila de importacao trava sem sinal');
+
+    await espelhado.drainMirror();
+    const depois = espelhado.snapshotDto().snapshot;
+    expect(depois.discoveries[0].title).toBe('Fila de importacao trava sem sinal');
+    expect(depois.mirrorQueue.length).toBeGreaterThan(0);
+    expect(depois.mirrorQueue[0].lastError).toBe('sem rede');
+    // E o card DIZ que ha espelho pendente, em vez de esconder.
+    expect(depois.discoveries[0].stageSignals).toContain('mirror-pending');
+    espelhado.dispose();
+  });
+
+  it('o gesto local nao ESPERA o board — adapter que nunca responde nao segura o disparo', () => {
+    const travado = open({
+      mirror: {
+        config: MIRROR_CONFIG,
+        adapter: {
+          provider: 'taskdex',
+          applyLabel: () => new Promise<never>(() => {}),
+          comment: () => new Promise<never>(() => {}),
+          moveColumn: () => new Promise<never>(() => {}),
+        },
+      },
+    });
+    putResult('discovery-com-tracker');
+    travado.scanOutbox();
+
+    const dispatched = travado.dispatch({
+      phase: 'plano',
+      discoveryId: 'dsc-2026-08-03-a',
+      planId: null,
+      workItemId: null,
+      workspace: { target_repo: 'atlas', repo_path: null, worktree_path: null, branch: null },
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+
+    expect(dispatched.ok).toBe(true);
+    expect(dispatched.state.snapshot.locks).toHaveLength(1);
+    travado.dispose();
+  });
+
+  it('o board volta: a fila drena no gesto de reenvio e o sinal some', async () => {
+    const controlPath = controle('fail');
+    const espelhado = comEspelho(controlPath);
+    putResult('discovery-com-tracker');
+    espelhado.scanOutbox();
+    await espelhado.drainMirror();
+    expect(espelhado.snapshotDto().snapshot.mirrorQueue.length).toBeGreaterThan(0);
+
+    writeFileSync(controlPath, JSON.stringify({ mode: 'ok' }), 'utf8');
+    const state = await espelhado.retryMirror();
+
+    expect(state.snapshot.mirrorQueue).toHaveLength(0);
+    expect(state.snapshot.discoveries[0].stageSignals).not.toContain('mirror-pending');
+    // O que o board passou a refletir fica registrado — nao volta para a fila.
+    expect(state.snapshot.mirrorSynced.length).toBeGreaterThan(0);
+    espelhado.dispose();
+  });
+
+  it('sem adapter plugado, nada e enfileirado — fila que ninguem drena seria pendencia eterna', () => {
+    putResult('discovery-com-tracker');
+    const state = service.scanOutbox();
+
+    expect(state.snapshot.mirrorQueue).toHaveLength(0);
+    expect(state.snapshot.discoveries[0].stageSignals).not.toContain('mirror-pending');
+  });
+
+  it('card sem tracker nao gera espelho nenhum', async () => {
+    const espelhado = comEspelho(controle('ok'));
+    espelhado.createDiscovery({ title: 'Card local', problem: null, targetRepo: null, scopeRepos: [], tracker: null });
+
+    await espelhado.drainMirror();
+
+    expect(espelhado.snapshotDto().snapshot.mirrorQueue).toHaveLength(0);
+    expect(espelhado.snapshotDto().snapshot.mirrorSynced).toHaveLength(0);
+    espelhado.dispose();
+  });
+
+  // Este caso so existe DEPOIS do merge de B3 com B5, e e a costura entre os
+  // dois: os gestos locais do B3 (estado do item, override de etapa) sao
+  // exatamente os que MOVEM a macro etapa, e mover a macro etapa e o que o
+  // espelho reflete em coluna (D-12). Cada batch estava certo sozinho e a
+  // ligacao nao existia em nenhum dos dois — o gesto mudava a etapa aqui e o
+  // board nunca ficava sabendo, sem nada na tela denunciando.
+  it('gesto local que move a macro etapa enfileira a coluna nova (B3 x B5)', async () => {
+    const espelhado = comEspelho(controle('fail', 'sem rede'));
+    putResult('discovery-com-tracker');
+    espelhado.scanOutbox();
+    await espelhado.drainMirror();
+
+    const antes = espelhado.snapshotDto().snapshot;
+    expect(antes.discoveries[0].derivedStage).toBe('planned');
+    expect(antes.mirrorQueue.find((entry) => entry.operation === 'column')?.payload.column).toBe('Plano');
+
+    // O humano puxa o card de volta a mao (D-13). Nenhum gesto do B3 chamava o
+    // espelho: sem a costura, a fila continuaria pedindo a coluna ANTIGA.
+    const forcado = espelhado.setStageOverride({ discoveryId: antes.discoveries[0].id, value: 'discovery', reason: null });
+    expect(forcado.ok).toBe(true);
+
+    const depois = espelhado.snapshotDto().snapshot;
+    expect(depois.discoveries[0].stageOverride?.value).toBe('discovery');
+    expect(depois.mirrorQueue.find((entry) => entry.operation === 'column')?.payload.column).toBe('Discovery');
+    // E o card continua dizendo que o board esta atrasado, em vez de esconder.
+    expect(depois.discoveries[0].stageSignals).toContain('mirror-pending');
+    espelhado.dispose();
+  });
+});
+
 describe('store que nao aceita escrita', () => {
   it('o app mostra o estado e RECUSA o gesto, em vez de falhar calado', () => {
     mkdirSync(join(root, 'store2'), { recursive: true });
@@ -228,9 +485,101 @@ describe('validacao de payload do IPC (o main so muta depois de validar)', () =>
     expect(isValidDispatchIpcInput({ phase: 'plano', discoveryId: 'dsc-1', workspace: { repo_path: 'x' } })).toBe(false);
   });
 
+  it('claimSession/endSession exigem uma sessao de verdade', () => {
+    expect(isValidClaimSessionIpcInput({ sessionId: 'ses-1', cliSessionId: 'cli-1' })).toBe(true);
+    expect(isValidClaimSessionIpcInput({ sessionId: 'ses-1', cliSessionId: '' })).toBe(false);
+    expect(isValidClaimSessionIpcInput({ cliSessionId: 'cli-1' })).toBe(false);
+    expect(isValidEndSessionIpcInput({ sessionId: 'ses-1', reason: 'tab-closed' })).toBe(true);
+    expect(isValidEndSessionIpcInput({ sessionId: 'ses-1', reason: null })).toBe(true);
+    expect(isValidEndSessionIpcInput({ sessionId: '  ' })).toBe(false);
+  });
+
   it('releaseLock exige um assunto de verdade', () => {
     expect(isValidReleaseLockIpcInput({ subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery' })).toBe(true);
     expect(isValidReleaseLockIpcInput({ subject: { entity: 'card', id: 'x' }, phase: 'discovery' })).toBe(false);
     expect(isValidReleaseLockIpcInput({ phase: 'discovery' })).toBe(false);
+  });
+});
+
+describe('semear trabalho em curso (D-2)', () => {
+  const DOCUMENTO = JSON.stringify({
+    discovery: { title: 'Trabalho que ja existia', target_repo: 'donel-dev' },
+    phases: [{ phase: 'discovery', outcome: 'done' }],
+    plans: [{ ref: 'p1', title: 'O plano que ja existe' }],
+    items: [
+      { title: 'Item em curso', type: 'issue', state: 'in-progress', plan: 'p1' },
+      { title: 'Item que nao comecou', type: 'spike', state: 'open', plan: 'p1' },
+    ],
+  });
+
+  it('planta o card, o plano e os itens, e a etapa sai DERIVADA dos fatos semeados', () => {
+    const result = service.seed({ document: DOCUMENTO });
+    if (!result.ok) throw new Error(`esperava ok: ${JSON.stringify(result)}`);
+
+    const snapshot = result.state.snapshot;
+    expect(snapshot.discoveries).toHaveLength(1);
+    expect(snapshot.plans).toHaveLength(1);
+    expect(snapshot.workItems).toHaveLength(2);
+    // Nenhuma etapa digitada: item em curso ⇒ Execução, pela mesma tabela de sempre.
+    expect(snapshot.discoveries[0].derivedStage).toBe('execution');
+    expect(snapshot.discoveries[0].seeded).toBe(true);
+  });
+
+  it('os eventos vao para o log com source.kind = "seed" — a proveniencia fica no disco, nao so na tela', () => {
+    const result = service.seed({ document: DOCUMENTO });
+    expect(result.ok).toBe(true);
+
+    const linhas = readFileSync(join(root, 'store', 'events.jsonl'), 'utf8').trim().split('\n').slice(1);
+    const eventos = linhas.map((linha) => JSON.parse(linha));
+    expect(eventos.length).toBeGreaterThan(0);
+    expect(eventos.every((evento) => evento.source.kind === 'seed')).toBe(true);
+    expect(eventos.map((evento) => evento.type)).toContain('discovery.created');
+  });
+
+  it('documento fora do formato NAO escreve nada e devolve o motivo com caminho', () => {
+    const result = service.seed({ document: JSON.stringify({ discovery: { problem: 'sem titulo' } }) });
+    if (result.ok) throw new Error('esperava recusa');
+
+    if (result.reason !== 'invalid-seed') throw new Error(`esperava invalid-seed, veio ${result.reason}`);
+    expect(result.issues).toContainEqual(expect.objectContaining({ path: 'discovery.title' }));
+    expect(result.state.snapshot.discoveries).toHaveLength(0);
+  });
+
+  it('disparar uma fase em cima do card semeado funciona igual', () => {
+    const seeded = service.seed({ document: DOCUMENTO });
+    if (!seeded.ok) throw new Error('seed falhou');
+
+    const dispatched = service.dispatch({
+      phase: 'plano',
+      discoveryId: seeded.discoveryId,
+      planId: seeded.planIds[0],
+      workItemId: null,
+      workspace: { target_repo: 'donel-dev', repo_path: null, worktree_path: null, branch: null },
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+
+    expect(dispatched.ok).toBe(true);
+    expect(dispatched.state.snapshot.locks).toHaveLength(1);
+  });
+
+  it('store que nao aceita escrita recusa o seed, sem escrever nada', () => {
+    mkdirSync(join(root, 'store3'), { recursive: true });
+    writeFileSync(
+      join(root, 'store3', 'events.jsonl'),
+      `${JSON.stringify({ kind: 'esteira.store.header', schema_version: '9.0.0', created_at: '2026-08-04T14:30:00.000Z', created_by_channel: 'beta' })}\n`,
+      'utf8',
+    );
+    const readOnly = open({ storeDir: join(root, 'store3') });
+
+    expect(readOnly.seed({ document: DOCUMENTO })).toMatchObject({ ok: false, reason: 'store-refused' });
+    readOnly.dispose();
+  });
+
+  it('o canal valida o payload antes de o main mutar qualquer coisa', () => {
+    expect(isValidSeedIpcInput({ document: '{}' })).toBe(true);
+    expect(isValidSeedIpcInput({ document: '   ' })).toBe(false);
+    expect(isValidSeedIpcInput({})).toBe(false);
+    expect(isValidSeedIpcInput(null)).toBe(false);
   });
 });

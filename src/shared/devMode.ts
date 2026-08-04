@@ -4,8 +4,7 @@
 // CA-21 ("um fato, um dono"): o estado próprio do app se limita ao que o
 // disco/board NÃO sabem — discoveries abertos, qual está em foco, o vínculo
 // discovery↔repo, os `session-id` arquivados (com o perfil em que rodaram) e a
-// tabela de defaults do CA-4. Tudo mais é leitura (esteira-reader.ts,
-// discovery-tree.ts, taskdex-board-client.ts).
+// tabela de defaults do CA-4. Tudo mais é leitura (taskdex-board-client.ts).
 //
 // Funções puras: nenhuma toca I/O, nenhuma conhece Electron. Quem persiste
 // (config-store.ts, T306) e quem chama pela IPC (main/index.ts, T307) fica de
@@ -190,7 +189,6 @@ export const DEVMODE_CHANNELS = {
   archivePhaseSession: 'devMode:archivePhaseSession',
   getDefaults: 'devMode:getDefaults',
   setDefaults: 'devMode:setDefaults',
-  readTree: 'devMode:readTree',
   // T311/T315 (Batch B) — os dois canais de LEITURA que a UI precisou e a
   // Fatia 1 ainda não tinha. `listEntryCards` é a consulta da porta de
   // entrada (CA-1/CA-2, colunas do board v3 — lote 5 da 009-modo-dev-v3
@@ -299,7 +297,7 @@ export function isValidArchivePhaseSessionIpcInput(input: unknown): input is Arc
   );
 }
 
-/** Usado por `focusDiscovery`/`closeDiscovery`/`readTree` — payload é só um `cardId`. */
+/** Usado por `focusDiscovery`/`closeDiscovery` — payload é só um `cardId`. */
 export function isValidCardId(cardId: unknown): cardId is string {
   return typeof cardId === 'string' && cardId.trim().length > 0;
 }
@@ -349,11 +347,8 @@ export interface PhaseArchivedPayload {
 
 /**
  * API tipada exposta pelo preload em `window.donel.devMode` (contextBridge).
- * Todos os canais devolvem o `AppConfigDto` inteiro (mesmo padrão de
- * `DonelConfigApi` — o renderer sincroniza um shape só), exceto `readTree`,
- * que devolve a árvore do discovery pedido (`DiscoveryTree`,
- * `../main/discovery-tree.ts` — importado só como TIPO: `import type` erasa
- * no build, o preload/renderer nunca puxam o módulo de disco em runtime).
+ * Todos os canais devolvem o `AppConfigDto` inteiro — o renderer sincroniza um
+ * shape só, mesmo padrão de `DonelConfigApi`.
  */
 export interface DonelDevModeApi {
   get(): Promise<import('./config').AppConfigDto>;
@@ -363,7 +358,6 @@ export interface DonelDevModeApi {
   archivePhaseSession(input: ArchivePhaseSessionIpcInput): Promise<import('./config').AppConfigDto>;
   getDefaults(): Promise<import('./config').AppConfigDto>;
   setDefaults(defaults: PhaseDefaultsTable): Promise<import('./config').AppConfigDto>;
-  readTree(cardId: string): Promise<import('../main/discovery-tree').DiscoveryTree>;
   /** CA-1/CA-2 (009-modo-dev-v3) — cards das colunas de entrada do board v3 configurado; `[]` sem board/fonte (porta desligada, não erro). */
   /** `repoPath` (item 1, frente 2 30/07) — projeto selecionado; `undefined` mantém o board GLOBAL (comportamento anterior). */
   listEntryCards(repoPath?: string): Promise<readonly import('../main/taskdex-board-client').EntryColumnCard[]>;

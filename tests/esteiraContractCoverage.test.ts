@@ -1,7 +1,14 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { CONSUMED_PATHS, FACT_TYPES, parseEsteiraResultText } from '../src/shared/esteira/contract/resultContract';
+import {
+  CONSUMED_PATHS,
+  FACT_TYPES,
+  PHASES_REQUIRING_PASSED_VERIFICATION,
+  REQUIRED_FACTS_ANY_SUCCESS,
+  REQUIRED_FACTS_BY_PHASE,
+  parseEsteiraResultText,
+} from '../src/shared/esteira/contract/resultContract';
 import { createSchemaWalker, type JsonNode } from './helpers/contractSchemaPaths';
 
 // Spec 010 (D-10) — TESTE DE CONTRATO, lado APP.
@@ -62,6 +69,44 @@ describe('contrato result.json — schema x parser', () => {
 
   it('CONSUMED_PATHS nao tem duplicata', () => {
     expect(new Set(CONSUMED_PATHS).size).toBe(CONSUMED_PATHS.length);
+  });
+});
+
+// Spec 010 (B7) — a quarta amarra: `x-required-facts` e DADO COMPARTILHADO.
+//
+// A tabela do schema diz o que cada fase promete gravar. A skill le o arquivo
+// direto (Python); o app carrega uma copia LITERAL, pelo mesmo motivo de
+// `CONSUMED_PATHS` — o parser e puro e nao le disco. Este teste e o que impede
+// as duas de se afastarem: promessa que so um lado conhece e exatamente o
+// desencontro que a spec 010 existe para acabar.
+describe('contrato result.json — x-required-facts dos dois lados', () => {
+  const table = schema['x-required-facts'] as {
+    'any-phase-success': string[];
+    'by-phase': Record<string, string[]>;
+    'done-requires-passed-verification': string[];
+  };
+
+  it('a tabela do schema nomeia as fases do ciclo completo', () => {
+    expect(Object.keys(table['by-phase']).sort()).toEqual(['concluir', 'discovery', 'documentar', 'implementar', 'validar']);
+  });
+
+  it('o que o app exige em todo run bem-sucedido e o que o schema promete', () => {
+    expect([...REQUIRED_FACTS_ANY_SUCCESS].sort()).toEqual([...table['any-phase-success']].sort());
+  });
+
+  it('o que o app exige POR FASE e exatamente a tabela do schema', () => {
+    const fromApp = Object.fromEntries(Object.entries(REQUIRED_FACTS_BY_PHASE).map(([phase, facts]) => [phase, [...facts].sort()]));
+    const fromSchema = Object.fromEntries(Object.entries(table['by-phase']).map(([phase, facts]) => [phase, [...facts].sort()]));
+    expect(fromApp).toEqual(fromSchema);
+  });
+
+  it('a regra do desfecho verificado tambem vem da tabela, nao do codigo', () => {
+    expect([...PHASES_REQUIRING_PASSED_VERIFICATION].sort()).toEqual([...table['done-requires-passed-verification']].sort());
+  });
+
+  it('todo fato exigido pela tabela existe como tipo de fato', () => {
+    const required = new Set([...table['any-phase-success'], ...Object.values(table['by-phase']).flat()]);
+    expect([...required].filter((type) => !(FACT_TYPES as readonly string[]).includes(type))).toEqual([]);
   });
 });
 

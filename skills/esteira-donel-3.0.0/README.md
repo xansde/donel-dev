@@ -29,11 +29,35 @@ tools/
 skills/
   esteira-discovery/    a fase Discovery
   esteira-plano/        a fase Plano
+  esteira-implementar/  a fase Implementar
+  esteira-validar/      a fase Validar
+  esteira-documentar/   a fase Documentar
+  esteira-concluir/     a fase Concluir
 ```
 
-Só as duas fases que o vertical pequeno exercita. Implementar, Validar,
-Documentar e Concluir continuam na 2.x até o modelo novo provar a espinha (P-3:
-a 2.x sai quando o Donel Dev rodar um card real de ponta a ponta).
+O ciclo completo, desde o batch B7 (2026-08-04). É o que permite um card rodar
+de ponta a ponta no modelo novo — a condição que P-3 impôs para a 2.x sair de
+`~/.claude/skills/`. Até ela sair, os dois convivem.
+
+## O que cada fase promete declarar
+
+A tabela `x-required-facts` mora no **schema**, não em regra escrita duas
+vezes: o emissor a lê do arquivo canônico e o app carrega a mesma tabela como
+cópia literal, conferida por teste.
+
+| Fase | Além de `phase.completed` | Por quê |
+|---|---|---|
+| `discovery` | `discovery.recorded` | a raiz do card |
+| `implementar` | `verification.recorded` | o que outra pessoa consegue conferir (check, review ou a resposta do spike) |
+| `validar` | `verification.recorded` | rodar a verificação **é** validar (D-4) |
+| `documentar` | `artifact.recorded` | D-8 — documento sem endereço não responde "cadê o artefato?" |
+| `concluir` | `verification.recorded` | D-4 — o ciclo termina com evidência |
+
+E um dente a mais: `concluir` com `outcome: done` exige uma
+`verification.recorded` com `state: passed`. Desfecho ruim continua válido —
+`abandoned` e `inconclusive` não pedem nada. A tabela só vale para run
+`success`: o que se cobra é promessa **cumprida**, e run que falhou já declara
+`failure` com código e motivo.
 
 ## Instalar
 
@@ -41,13 +65,11 @@ O Claude Code carrega skills de `~/.claude/skills/`. Aponte para cá com um
 junction (Windows, não pede admin):
 
 ```powershell
-New-Item -ItemType Junction `
-  -Path "$env:USERPROFILE\.claude\skills\esteira-discovery-3" `
-  -Target "$PWD\skills\esteira-donel-3.0.0\skills\esteira-discovery"
-
-New-Item -ItemType Junction `
-  -Path "$env:USERPROFILE\.claude\skills\esteira-plano-3" `
-  -Target "$PWD\skills\esteira-donel-3.0.0\skills\esteira-plano"
+foreach ($fase in 'discovery','plano','implementar','validar','documentar','concluir') {
+  New-Item -ItemType Junction `
+    -Path "$env:USERPROFILE\.claude\skills\esteira-$fase-3" `
+    -Target "$PWD\skills\esteira-donel-3.0.0\skills\esteira-$fase"
+}
 ```
 
 Nomes com sufixo `-3` para conviverem com o plugin `esteira:` da 2.1.0 sem

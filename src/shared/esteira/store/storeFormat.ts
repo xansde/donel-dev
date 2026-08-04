@@ -129,6 +129,13 @@ export const STORE_EVENT_TYPES = [
    */
   'phase.failed',
   'session.started',
+  /**
+   * Alguem ASSUMIU a sessao preparada: o CLI devolveu o id dela. Existe como
+   * fato proprio porque "o app separou o contexto" e "a fase esta rodando" sao
+   * estados diferentes, e chama-los pelo mesmo nome e o vicio que a spec 010
+   * combate — so que na direcao contraria. Da dono a trava tambem (D-11).
+   */
+  'session.claimed',
   'session.ended',
   /** `[P-6]` — a sessao atingiu o teto de contexto e a MESMA fase seguiu noutra sessao. */
   'session.handed-off',
@@ -245,6 +252,15 @@ export type WorkItemState = 'open' | 'in-progress' | 'done' | 'abandoned';
 /** D-13 — macro etapas do card de origem, sempre CALCULADAS do grafo. */
 export type MacroStage = 'discovery' | 'planned' | 'execution' | 'done';
 
+/**
+ * As duas listas moram AQUI, com o formato, porque tres camadas precisam da
+ * mesma: o reducer (para ler o payload do disco), a fronteira IPC (para validar
+ * o gesto antes de mutar) e a tela (para oferecer as opcoes). Duas copias da
+ * mesma lista sao exatamente o desencontro entre camadas que originou a spec.
+ */
+export const WORK_ITEM_STATES: readonly WorkItemState[] = ['open', 'in-progress', 'done', 'abandoned'];
+export const MACRO_STAGES: readonly MacroStage[] = ['discovery', 'planned', 'execution', 'done'];
+
 export interface EntityId {
   readonly entity: EntityKind;
   readonly id: string;
@@ -283,6 +299,27 @@ export interface StageOverride {
   readonly reason: string | null;
 }
 
+/**
+ * D-2 — de onde veio o que este registro afirma:
+ *
+ *   SEMEADO   (`true`)  = afirmacao de uma pessoa, plantada pelo gesto de seed
+ *   DECLARADO (`false`) = fato observado, que uma skill gravou num `result.json`
+ *
+ * Os dois viram evento no mesmo log e a etapa se deriva igual de ambos — mas
+ * NAO sao a mesma coisa, e a tela precisa poder mostrar cada um pelo que e.
+ * Tratar afirmacao como observacao seria a inverdade da spec 010 por uma porta
+ * nova: o app afirmando como visto o que ninguem viu.
+ *
+ * Duas regras diferentes, por natureza diferente:
+ *
+ * - **Entidade** (discovery, plano, item): a marca e da ORIGEM e nao se apaga.
+ *   Um card plantado a mao continua tendo nascido de uma afirmacao, ainda que
+ *   uma skill declare fatos sobre ele depois.
+ * - **Fase**: a marca segue o ULTIMO fato, porque a fase e um estado de agora.
+ *   Fase semeada e depois de fato executada passa a ser observada.
+ */
+export type SeededFlag = boolean;
+
 export interface DiscoverySnapshot {
   readonly id: string;
   readonly title: string;
@@ -299,6 +336,8 @@ export interface DiscoverySnapshot {
   readonly stageSignals: readonly ('completed-without-plan' | 'orphan-item' | 'ingest-error' | 'mirror-pending')[];
   /** Override manual, sempre marcado como tal — `derivedStage` continua visivel ao lado. */
   readonly stageOverride: StageOverride | null;
+  /** D-2 — o card foi PLANTADO a mao (afirmacao), nao declarado por skill (observacao). */
+  readonly seeded: SeededFlag;
 }
 
 export interface PlanSnapshot {
@@ -307,6 +346,8 @@ export interface PlanSnapshot {
   readonly title: string;
   readonly summary: string | null;
   readonly createdAt: string;
+  /** D-2 — o plano foi semeado junto com o card, em vez de declarado por uma skill. */
+  readonly seeded: SeededFlag;
 }
 
 export interface WorkItemSnapshot {
@@ -329,6 +370,12 @@ export interface WorkItemSnapshot {
   /** True quando nasceu pela skill (D-16) — descartavel num gesto, sem bloqueio. */
   readonly createdBySkill: boolean;
   readonly createdAt: string;
+  /**
+   * D-2 — o item foi semeado. Note que `seeded` e `createdBySkill` respondem
+   * perguntas diferentes: um item semeado nunca nasceu pela skill, mas um item
+   * que nao nasceu pela skill tambem pode ter vindo de um run declarado.
+   */
+  readonly seeded: SeededFlag;
 }
 
 /**
@@ -404,6 +451,12 @@ export interface PhaseRunSnapshot {
   readonly failure: { readonly code: string; readonly message: string } | null;
   /** Ultimo run que tocou esta fase — a trilha de volta ao `result.json` que a produziu. */
   readonly lastRunId: string | null;
+  /**
+   * D-2 — o ULTIMO fato desta fase foi semeado (afirmado), nao observado. A
+   * fase e estado de agora: um run de verdade em cima de uma fase semeada tira
+   * a marca, porque ai passou a haver observacao.
+   */
+  readonly seeded: SeededFlag;
 }
 
 export type VerificationKind = 'pull-request' | 'check' | 'review' | 'conclusion';
@@ -436,10 +489,29 @@ export interface IngestErrorSnapshot {
 /** D-12 — o espelho nunca bloqueia: falha vai para fila e o card mostra "espelho pendente". */
 export interface MirrorQueueEntry {
   readonly subject: EntityId;
+  /** `label` | `column` | `comment:<run_id>` — a chave natural da operacao no card. */
   readonly operation: string;
+  /**
+   * O QUE mandar ao board. Fica na fila (e portanto no `events.jsonl`) para o
+   * reenvio ser auto-contido e auditavel a olho nu: reenviar sem saber o
+   * conteudo obrigaria a re-derivar a intencao de um estado que ja mudou.
+   */
+  readonly payload: Record<string, unknown>;
   readonly queuedAt: string;
   readonly attempts: number;
   readonly lastError: string | null;
+}
+
+/**
+ * D-12 — o que o board JA reflete. Sem esta memoria, a mesma etiqueta e a mesma
+ * coluna voltariam para a fila a cada gesto local, e o card mostraria "espelho
+ * pendente" para trabalho que ja foi espelhado — outra forma da tela mentir.
+ */
+export interface MirrorSyncedEntry {
+  readonly subject: EntityId;
+  readonly operation: string;
+  readonly payload: Record<string, unknown>;
+  readonly at: string;
 }
 
 export interface StoreSnapshot {
@@ -460,6 +532,7 @@ export interface StoreSnapshot {
   readonly notes: readonly NoteSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
   readonly mirrorQueue: readonly MirrorQueueEntry[];
+  readonly mirrorSynced: readonly MirrorSyncedEntry[];
 }
 
 /** D-4 — o ciclo de vida de cada tipo. Tabela, nao regra espalhada. */
