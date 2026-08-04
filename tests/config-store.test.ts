@@ -54,6 +54,14 @@ describe('defaultAppConfig (puro)', () => {
         boardConfig: null,
       },
       tabAppearance: {},
+      accounts: {
+        mod: null,
+        autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 },
+        claudeHome: null,
+        seazone: null,
+        localAccounts: [],
+        activeAccountId: null,
+      },
     });
   });
 });
@@ -190,6 +198,14 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
         boardConfig: { workspaceId: 'ws-1', teamId: 'team-1' },
       },
       tabAppearance: { 'sess-1': { color: 'accent', order: 0 } },
+      accounts: {
+        mod: 'local',
+        autoSwitch: { enabled: false, switchAtLoad: 85, minAdvantage: 15 },
+        claudeHome: 'C:\\custom\\.claude',
+        seazone: { baseUrl: 'https://switcher.seazone.dev' },
+        localAccounts: [{ id: 'acc-1', label: 'Conta 1', plan: 'pro' }],
+        activeAccountId: 'acc-1',
+      },
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
   });
@@ -239,6 +255,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       collapsedFavorites: [], // ausente no objeto → default
       devMode: defaults.devMode, // ausente no objeto → default
       tabAppearance: {}, // ausente no objeto → default
+      accounts: defaults.accounts, // ausente no objeto → default
     });
   });
 

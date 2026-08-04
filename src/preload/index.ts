@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  AccountsConfigDto,
+  AccountsViewDto,
   AppConfigDto,
+  ConnectModInput,
+  ConnectModOutcome,
   ArchivePhaseSessionIpcInput,
   BoardFacts,
   CardRepoResolution,
@@ -35,11 +39,14 @@ import type {
   SemaphoreStateInfo,
   SemaphoreUpdate,
   SessionSummaryDto,
+  SwitchOutcome,
   TabColorToken,
   TranscriptChangedPayload,
   WatchPhaseIpcInput,
 } from '../shared';
+import type { AccountId } from '../shared';
 import {
+  ACCOUNT_CHANNELS,
   CONFIG_CHANNELS,
   DEVMODE_CHANNELS,
   GITHUB_CHANNELS,
@@ -192,6 +199,29 @@ const donelApi: DonelApi = {
 
     // Item 3 (rodada de feedback 30/07) — exclusão de perfil.
     delete: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.delete, slug) as Promise<DeleteProfileOutcome>,
+  },
+
+  // 011-contas-e-provedores (etapa 1) — motor de contas + mods (nasce inerte,
+  // accounts.mod = null). `ConnectModInput` é write-only: o segredo digitado
+  // nunca volta em NENHUM canal de leitura abaixo. Mesmo padrão de `profiles.*`.
+  accounts: {
+    list: (options?: { force?: boolean }) => ipcRenderer.invoke(ACCOUNT_CHANNELS.list, options) as Promise<AccountsViewDto>,
+
+    switch: (id: AccountId) => ipcRenderer.invoke(ACCOUNT_CHANNELS.switch, id) as Promise<SwitchOutcome>,
+
+    getConfig: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.getConfig) as Promise<AccountsConfigDto>,
+
+    setConfig: (patch: Partial<AccountsConfigDto>) => ipcRenderer.invoke(ACCOUNT_CHANNELS.setConfig, patch) as Promise<AccountsConfigDto>,
+
+    connectMod: (input: ConnectModInput) => ipcRenderer.invoke(ACCOUNT_CHANNELS.connectMod, input) as Promise<ConnectModOutcome>,
+
+    disconnectMod: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.disconnectMod) as Promise<AccountsConfigDto>,
+
+    onChanged: (listener: (view: AccountsViewDto) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, view: AccountsViewDto): void => listener(view);
+      ipcRenderer.on(ACCOUNT_CHANNELS.changed, handler);
+      return () => ipcRenderer.removeListener(ACCOUNT_CHANNELS.changed, handler);
+    },
   },
 
   config: {
