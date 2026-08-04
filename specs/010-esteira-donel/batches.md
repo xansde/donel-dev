@@ -30,17 +30,17 @@ local, tela como projeção, e o fork `esteira-donel-3.0.0` com discovery e plan
 ## Dependências
 
 ```
-B1 ─┬─> B6
+B1 ─┬─> B6  (o mapa sobre o store)
 B2 ─┤
-B3 ─┘
+B3 ─┤
+B5 ─┘
 B4 (independente)
-B5 (independente)
 B7 (independente; B1 ajuda, não bloqueia)
 ```
 
 **B1, B2, B3, B4, B5 e B7 podem rodar em paralelo** — tocam arquivos
-diferentes. **B6 é o último**: ele depende do que B1–B3 e B5 entregarem, e a
-etapa 0 dele (inventário de paridade) só fecha quando esses existirem.
+diferentes. **B6 é o último**: ele reapõe o mapa sobre o store novo, e metade
+dos nós depende do que B1–B3 e B5 entregarem.
 
 Conflito previsível se rodarem juntos: `EsteiraScreen.tsx` é tocado por B2 e
 B3. Se forem paralelos, quem chegar segundo rebaseia — ou rodam em sequência.
@@ -237,72 +237,94 @@ sai; o passo 1 prova que o local não travou.
 
 ---
 
-## B6 — Aposentar o mapa antigo `[P-5]`
+## B6 — O mapa passa a ler o store `[P-5]`
 
-**O que é "o mapa":** a tela do Modo Dev de hoje — o carrossel de dois eixos do
-design v3 (`DiscoveryMap.tsx`): à esquerda os **níveis** (discovery → marcos →
-cards) navegáveis na horizontal, e por card a **trilha** das sete fases da
-Esteira em chips; à direita o painel de detalhe da etapa em foco. Ele lê o disco
-por `discovery-tree.ts` e `esteira-reader.ts`.
+> **Mudança de rumo (04/08).** Este batch se chamava "aposentar o mapa antigo".
+> Estava errado, e a pergunta do Alexandre — *"por que aposentar? ele é bonito e
+> fácil de navegar"* — é o que corrigiu. O mapa não sai por ser ruim: ele sai
+> **de fome**. Lê `~/.claude/esteira-state/` (`ctx.md`, `<fase>-result.json`), e
+> a skill 3.0 para de escrever ali `[D-3]`. Sem fonte, ele fica vazio.
+>
+> Jogar a FORMA fora junto com a fonte seria desperdício: o carrossel de dois
+> eixos, os chips de fase e o painel de detalhe são o design v3, aprovado por
+> handoff. A tela que a fase 1 construiu (lista + detalhe) é **andaime de
+> vertical** — existia para provar a espinha com o mínimo de UI, não para
+> suceder um design que passou por revisão.
+
+**O que é "o mapa":** a tela do Modo Dev de hoje (`DiscoveryMap.tsx`) — à
+esquerda os **níveis** (discovery → marcos → cards) navegáveis na horizontal, e
+por card a **trilha** das fases em chips; à direita o painel de detalhe da
+etapa.
 
 > Não confundir com o "vertical / horizontal pequeno" da spec: aquilo é a
-> **cadência de entrega** `[D-15]` (uma fatia fina de ponta a ponta, depois a
-> generalização), não uma tela.
+> **cadência de entrega** `[D-15]`, não uma tela.
 
-**Objetivo:** remover o mapa e seus leitores, reverter a issue **#35**, e a
-esteira nova deixa de estar atrás de um gesto interno.
+**Objetivo:** o mapa continua sendo a tela do Modo Dev, agora alimentado pelo
+`StoreSnapshot`. `discovery-tree.ts` e `esteira-reader.ts` saem; o carrossel
+fica.
 
-**Por quê:** ficaram congelados até o modelo novo provar a espinha. A #35 pinta
-"não realizada" o que é "não consegui ler" — a inverdade que originou a spec,
-ainda viva no código antigo.
+### O que não é só trocar o encanamento
 
-### O pré-requisito virou PARIDADE, não "usar num card real"
+A forma sobrevive; **o que os nós significam muda**, porque a hierarquia é
+outra:
 
-O risco do B6 nunca foi técnico — é **perder função que o mapa dá e a esteira
-nova ainda não dá**. Isso é verificável localmente, e por isso o batch começa
-por um inventário, não pela remoção.
-
-**Etapa 0 — inventário de paridade.** Listar o que o mapa entrega hoje e marcar,
-para cada item: *coberto pela esteira nova* · *coberto por outro batch* ·
-**perda consciente** (com a razão escrita). O levantamento inicial:
-
-| O mapa hoje | Situação |
+| O mapa desenha hoje | O modelo novo diz |
 |---|---|
-| Trilha das fases por card (chips com estado) | a esteira lista as fases em texto — **decidir** se vira trilha visual |
-| Detalhe da etapa: artefatos, recibos, garantia | parcialmente coberto; artefatos estão no snapshot e **não** aparecem na tela |
-| PR da fase (via `gh`) | o store tem `verifications` e a tela **não mostra** — buraco real |
-| Fatos do board (etiquetas, coluna) | vem no **B5** |
-| Relógio de homologação (prazo do PR) | candidato a **perda consciente** — nasceu de outra necessidade |
-| Abrir/retomar sessão da fase | vem no **B1** |
-| Navegação por níveis (carrossel) | a esteira nova é lista; **decidir** se a hierarquia precisa voltar |
+| discovery → **cards de plano** → fases numeradas (`fase_num` = unidade de PR) | discovery → **planos** → **itens**, e o item é a unidade |
+| 7 fases fixas por card | nomes de fase em aberto `[P-4]`; o que varia é o **ciclo de vida** do tipo `[D-4]` |
+| tudo termina em PR | `adr`/`process-map` terminam por revisão; `spike`/`prototype`/`eval` terminam por **resposta**, inclusive negativa |
+| estado lido do disco, fase a fase | macro etapa **derivada** do grafo `[D-13]`, com override sempre marcado |
 
-Nada é removido antes de cada linha ter destino. Item marcado como perda
-consciente vai para o batch com a justificativa — some porque foi decidido, não
-porque ninguém percebeu.
+Mesma linguagem visual, nós remodelados. Um `spike` que respondeu "não dá"
+precisa parecer **concluído** — não uma trilha de PR pela metade.
 
-**Etapa 1 — cobrir o que ficou faltando** (o mínimo que o inventário apontar;
-o que for grande vira batch novo, não escopo escondido aqui).
+**Escopo — entra:**
+- Adaptador `StoreSnapshot → o que o carrossel consome`, no lugar de
+  `discovery-tree.ts`. Módulo puro, com teste.
+- Os nós do modelo novo: planos, itens com tipo e ciclo, macro etapa derivada,
+  sinais do card — inclusive **"não consegui ler"**, que o mapa antigo pintava
+  como "não realizada" (a issue **#35**, revertida aqui na origem).
+- O que o inventário apontar como presente no mapa e ausente na tela nova —
+  `verifications` (o PR da fase) é o caso já achado.
+- A tela da fase 1 sai de cena, ou fica como painel de depuração do store
+  (decidir no batch — andaime não precisa virar dívida).
 
-**Etapa 2 — remover:** `discovery-tree.ts`, `esteira-reader.ts`, o mapa e os
-testes que os cobriam; a esteira vira a tela do Modo Dev; fechar **#41**, **#42**
-e **#35** com a justificativa registrada.
+**Etapa 0 — inventário de paridade, nos dois sentidos.** O que o mapa faz e a
+tela nova não faz, **e** o que a tela nova ganhou e o mapa não tem. Cada linha
+recebe destino: coberta, coberta por outro batch, ou **perda consciente com a
+razão escrita**.
 
-**Não entra:** migrar dado do modelo antigo — `[D-2]` continua valendo.
+| Item | Situação |
+|---|---|
+| Trilha das fases por card (chips) | **volta** — é a forma aprovada |
+| Navegação por níveis (carrossel) | **volta**, com planos/itens no lugar de cards de plano |
+| Detalhe da etapa: artefatos, recibos | o store tem os artefatos; nenhuma tela mostra — cobrir |
+| PR da fase | `verifications` está no snapshot e ninguém mostra — cobrir |
+| Fatos do board (etiquetas, coluna) | vem do **B5** |
+| Relógio de homologação | candidato a **perda consciente** — nasceu de outra necessidade |
+| Erro de ingestão visível | ganho da tela nova — **preservar** |
+| Trava com dono, hora e saída num gesto | ganho da tela nova — **preservar** |
 
-**Roteiro e2e:** `modo-dev-so-esteira`
-1. Ligar o Modo Dev — a esteira nova é o que aparece, sem gesto extra.
-2. Nenhum caminho leva ao mapa antigo.
-3. **Um passo por linha do inventário marcada como "coberto"** — é o que prova
-   a paridade em vez de afirmá-la.
-4. O ciclo do B1 continua funcionando por inteiro.
+Nada é removido antes de a linha ter destino.
 
-**Pronto quando:** o roteiro roda, `npm test` verde sem os testes removidos,
-`grep` limpo por `discovery-tree`/`esteira-reader`, e o inventário publicado no
-PR com cada linha resolvida.
+**Não entra:** redesenhar a forma. Divergência entre o design v3 e o modelo novo
+se resolve pela regra do repo: **forma → vence o design; alcance ou
+comportamento → vence a spec.**
 
-**Ainda assim, o merge é decisão dele.** A validação local prova que nada foi
-perdido *sem querer*; a decisão de aposentar a ferramenta que ele usa todo dia
-continua sendo humana.
+**Pré-requisito:** B1, B2, B3 e B5 — metade dos nós depende do que eles
+entregam.
+
+**Roteiro e2e:** `mapa-sobre-o-store`
+1. Modo Dev abre no mapa, com os cards vindos do store.
+2. Um passo por linha do inventário marcada como "volta" ou "cobrir".
+3. Um `spike` que respondeu "não dá" aparece **concluído**, não pela metade.
+4. Um `result.json` fora do contrato: o card mostra "não consegui ler" — a #35
+   revertida, provada na tela.
+5. O ciclo do B1 continua funcionando por inteiro.
+
+**Pronto quando:** o roteiro roda, `grep` limpo por `discovery-tree`/
+`esteira-reader`, `npm test` verde, e o inventário publicado no PR com cada
+linha resolvida.
 
 ## B7 — As fases restantes da skill 3.0
 
