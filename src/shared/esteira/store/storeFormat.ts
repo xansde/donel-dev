@@ -436,10 +436,29 @@ export interface IngestErrorSnapshot {
 /** D-12 — o espelho nunca bloqueia: falha vai para fila e o card mostra "espelho pendente". */
 export interface MirrorQueueEntry {
   readonly subject: EntityId;
+  /** `label` | `column` | `comment:<run_id>` — a chave natural da operacao no card. */
   readonly operation: string;
+  /**
+   * O QUE mandar ao board. Fica na fila (e portanto no `events.jsonl`) para o
+   * reenvio ser auto-contido e auditavel a olho nu: reenviar sem saber o
+   * conteudo obrigaria a re-derivar a intencao de um estado que ja mudou.
+   */
+  readonly payload: Record<string, unknown>;
   readonly queuedAt: string;
   readonly attempts: number;
   readonly lastError: string | null;
+}
+
+/**
+ * D-12 — o que o board JA reflete. Sem esta memoria, a mesma etiqueta e a mesma
+ * coluna voltariam para a fila a cada gesto local, e o card mostraria "espelho
+ * pendente" para trabalho que ja foi espelhado — outra forma da tela mentir.
+ */
+export interface MirrorSyncedEntry {
+  readonly subject: EntityId;
+  readonly operation: string;
+  readonly payload: Record<string, unknown>;
+  readonly at: string;
 }
 
 export interface StoreSnapshot {
@@ -460,6 +479,7 @@ export interface StoreSnapshot {
   readonly notes: readonly NoteSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
   readonly mirrorQueue: readonly MirrorQueueEntry[];
+  readonly mirrorSynced: readonly MirrorSyncedEntry[];
 }
 
 /** D-4 — o ciclo de vida de cada tipo. Tabela, nao regra espalhada. */

@@ -200,6 +200,45 @@ describe('reduceEvents — entidades', () => {
     ]);
     expect(synced.mirrorQueue).toHaveLength(0);
   });
+
+  it('a fila guarda O QUE mandar — reenviar sem conteudo seria adivinhar (D-12)', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      evt('mirror.queued', { subject, operation: 'column', payload: { column: 'Plano' }, queuedAt: '2026-08-03T12:00:00.000Z' }),
+    ]);
+
+    expect(snapshot.mirrorQueue[0].payload).toEqual({ column: 'Plano' });
+  });
+
+  it('re-enfileirar a mesma operacao atualiza o conteudo e PRESERVA as tentativas', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      evt('mirror.queued', { subject, operation: 'column', payload: { column: 'Discovery' }, queuedAt: '2026-08-03T12:00:00.000Z' }),
+      evt('mirror.failed', { subject, operation: 'column', error: 'sem rede' }),
+      evt('mirror.queued', { subject, operation: 'column', payload: { column: 'Plano' }, queuedAt: '2026-08-03T13:00:00.000Z' }),
+    ]);
+
+    expect(snapshot.mirrorQueue).toHaveLength(1);
+    // A intencao de AGORA: mandar a coluna velha seria espelhar um passado que ja nao existe.
+    expect(snapshot.mirrorQueue[0].payload).toEqual({ column: 'Plano' });
+    // Zerar a contagem a cada gesto faria o teto de tentativas nunca chegar.
+    expect(snapshot.mirrorQueue[0].attempts).toBe(1);
+    expect(snapshot.mirrorQueue[0].queuedAt).toBe('2026-08-03T12:00:00.000Z');
+  });
+
+  it('o que o board ja reflete fica REGISTRADO — sem isso, a mesma etiqueta voltaria para sempre', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      evt('mirror.queued', { subject, operation: 'label', payload: { labels: ['esteira:em-andamento:plano'] } }),
+      evt('mirror.synced', { subject, operation: 'label', at: '2026-08-03T12:05:00.000Z' }),
+    ]);
+
+    expect(snapshot.mirrorQueue).toHaveLength(0);
+    expect(snapshot.mirrorSynced).toHaveLength(1);
+    // O conteudo vem da fila quando o evento de sync nao o repete.
+    expect(snapshot.mirrorSynced[0].payload).toEqual({ labels: ['esteira:em-andamento:plano'] });
+    expect(snapshot.mirrorSynced[0].at).toBe('2026-08-03T12:05:00.000Z');
+  });
 });
 
 describe('reduceEvents — dedupe (a idempotencia da ingestao)', () => {

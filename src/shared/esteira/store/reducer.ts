@@ -27,6 +27,7 @@ import {
   type LockRecord,
   type MacroStage,
   type MirrorQueueEntry,
+  type MirrorSyncedEntry,
   type NoteSnapshot,
   type PhaseOutcome,
   type PhaseRunSnapshot,
@@ -125,6 +126,12 @@ function bool(node: Record<string, unknown>, key: string): boolean {
   return node[key] === true;
 }
 
+/** Sub-objeto opaco do payload (o conteudo de uma operacao de espelho). Ilegivel = vazio, nunca fatal. */
+function payloadOf(node: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = node[key];
+  return isPlainObject(value) ? value : {};
+}
+
 function oneOf<T extends string>(node: Record<string, unknown>, key: string, allowed: readonly T[]): T | null {
   const value = node[key];
   return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : null;
@@ -215,6 +222,7 @@ interface MutableSession {
 interface MutableMirror {
   subject: EntityId;
   operation: string;
+  payload: Record<string, unknown>;
   queuedAt: string;
   attempts: number;
   lastError: string | null;
@@ -238,6 +246,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
   const notes: NoteSnapshot[] = [];
   const ingestErrors: IngestErrorSnapshot[] = [];
   const mirrorQueue = new Map<string, MutableMirror>();
+  const mirrorSynced = new Map<string, MirrorSyncedEntry>();
 
   const seenDedupeKeys = new Set<string>();
   let throughSeq = 0;
@@ -594,9 +603,19 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         const operation = str(p, 'operation');
         if (subject === null || operation === null) break;
         const key = `${entityKey(subject)}|${operation}`;
-        if (!mirrorQueue.has(key)) {
-          mirrorQueue.set(key, { subject, operation, queuedAt: str(p, 'queuedAt') ?? event.at, attempts: 0, lastError: null });
-        }
+        const current = mirrorQueue.get(key);
+        // Re-enfileirar a MESMA operacao atualiza o conteudo e preserva a
+        // contagem: a fila guarda a intencao de AGORA (reenviar a coluna velha
+        // seria espelhar um passado que ja nao existe), e zerar `attempts` a
+        // cada gesto faria o teto de tentativas nunca chegar.
+        mirrorQueue.set(key, {
+          subject,
+          operation,
+          payload: payloadOf(p, 'payload'),
+          queuedAt: current?.queuedAt ?? str(p, 'queuedAt') ?? event.at,
+          attempts: current?.attempts ?? 0,
+          lastError: current?.lastError ?? null,
+        });
         break;
       }
 
@@ -605,7 +624,14 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         const operation = str(p, 'operation');
         if (subject === null || operation === null) break;
         const key = `${entityKey(subject)}|${operation}`;
-        const current = mirrorQueue.get(key) ?? { subject, operation, queuedAt: event.at, attempts: 0, lastError: null };
+        const current = mirrorQueue.get(key) ?? {
+          subject,
+          operation,
+          payload: payloadOf(p, 'payload'),
+          queuedAt: event.at,
+          attempts: 0,
+          lastError: null,
+        };
         mirrorQueue.set(key, { ...current, attempts: current.attempts + 1, lastError: str(p, 'error') });
         break;
       }
@@ -614,7 +640,17 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         const subject = entityId(p, 'subject');
         const operation = str(p, 'operation');
         if (subject === null || operation === null) break;
-        mirrorQueue.delete(`${entityKey(subject)}|${operation}`);
+        const key = `${entityKey(subject)}|${operation}`;
+        const queued = mirrorQueue.get(key);
+        mirrorQueue.delete(key);
+        // O que o board passou a refletir. Sem este registro, a proxima
+        // varredura de intencoes reenfileiraria a mesma etiqueta para sempre.
+        mirrorSynced.set(key, {
+          subject,
+          operation,
+          payload: 'payload' in p ? payloadOf(p, 'payload') : (queued?.payload ?? {}),
+          at: str(p, 'at') ?? event.at,
+        });
         break;
       }
 
@@ -684,13 +720,15 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     verifications: [...verifications.values()],
     notes,
     ingestErrors: errorList,
-    mirrorQueue: mirrorList.map(({ subject, operation, queuedAt, attempts, lastError }) => ({
+    mirrorQueue: mirrorList.map(({ subject, operation, payload, queuedAt, attempts, lastError }) => ({
       subject,
       operation,
+      payload,
       queuedAt,
       attempts,
       lastError,
     })) satisfies MirrorQueueEntry[],
+    mirrorSynced: [...mirrorSynced.values()],
   };
 }
 
