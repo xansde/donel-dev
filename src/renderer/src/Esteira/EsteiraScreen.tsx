@@ -2,6 +2,7 @@ import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
 import {
+  cardContent,
   cardView,
   dispatchView,
   formatTimestamp,
@@ -52,6 +53,7 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
   const cards = snapshot?.discoveries ?? [];
   const selected = useMemo(() => (snapshot && selectedId ? cardView(snapshot, selectedId) : null), [snapshot, selectedId]);
   const lock = useMemo(() => (selected === null ? null : lockView(selected)), [selected]);
+  const content = useMemo(() => (selected === null ? null : cardContent(selected)), [selected]);
   // Quem decide o que está habilitado e com que razão é a camada pura — o JSX
   // abaixo só desenha o que sai daqui.
   const dispatch = useMemo(
@@ -286,27 +288,23 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                 )}
               </section>
 
-              <section className={styles.block}>
-                <h4 className={styles.blockTitle}>
-                  Planos e itens ({selected.planCount} plano(s), {selected.items.length} item(ns))
-                </h4>
-                {selected.items.length === 0 ? (
-                  <p className={styles.hint}>
-                    {selected.planCount === 0
-                      ? 'Nenhum plano registrado. Se o discovery terminou assim, é um desfecho — não uma pendência.'
-                      : 'Os planos ainda não declararam itens.'}
-                  </p>
-                ) : (
+              {/* Cada linha vem pronta de `cardContent`: montar a frase aqui foi
+                  o que fez a lista dizer "sem repo alvo" enquanto o disparo,
+                  quatro linhas abaixo, dizia "repo herdado do card" — sobre o
+                  mesmo item, na mesma tela (print 16 do roteiro do B2). */}
+              {content === null ? null : (
+              <section className={styles.block} data-testid="card-content">
+                <h4 className={styles.blockTitle}>{content.title}</h4>
+                {content.lines.length > 0 ? (
                   <ul className={styles.lines}>
-                    {selected.items.map((item) => (
-                      <li key={item.id}>
-                        {item.title} · {item.itemType} · {item.state}
-                        {item.targetRepo ? ` · ${item.targetRepo}` : ' · sem repo alvo'}
-                      </li>
+                    {content.lines.map((line) => (
+                      <li key={line.key}>{line.text}</li>
                     ))}
                   </ul>
-                )}
+                ) : null}
+                {content.note !== null ? <p className={styles.hint}>{content.note}</p> : null}
               </section>
+              )}
 
               {selected.notes.length > 0 ? (
                 <section className={styles.block}>

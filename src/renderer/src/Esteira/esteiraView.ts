@@ -178,6 +178,97 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
   };
 }
 
+// ---------------------------------------------------------------------------
+// Planos e itens — o conteúdo do card, escrito uma vez só
+// ---------------------------------------------------------------------------
+//
+// Achado da captura e2e do B2 (print 16): a MESMA tela dizia duas coisas
+// incompatíveis sobre o MESMO item, com quatro linhas de distância —
+//
+//   Planos e itens …  "Medir onde o lote para · spike · open · sem repo alvo"
+//   Repo alvo:        "donel-dev — repo herdado do card"
+//
+// A herança de repo existia, mas só dentro do disparo; a lista de itens era
+// montada à mão no JSX. É o erro conhecido nº 1 pela terceira vez: a correção
+// parou na frase onde o defeito apareceu, em vez de descer até a função que
+// produz o texto. Agora as duas frases nascem de `itemRepoOf` — divergir exige
+// mudar a função, e a função tem teste.
+
+/** O repo que este item de fato usaria, e de onde ele veio. */
+export interface ItemRepoView {
+  readonly repo: string | null;
+  readonly inherited: boolean;
+}
+
+/**
+ * D-6 — o alvo de um item: o dele, ou o do card. Nunca o "projeto em foco" da
+ * janela, que foi o palpite que abriu uma fase no repositório errado.
+ */
+export function itemRepoOf(item: WorkItemSnapshot, discovery: DiscoverySnapshot): ItemRepoView {
+  if (item.targetRepo !== null) return { repo: item.targetRepo, inherited: false };
+  if (discovery.targetRepo !== null) return { repo: discovery.targetRepo, inherited: true };
+  return { repo: null, inherited: false };
+}
+
+export interface ContentLineView {
+  readonly key: string;
+  readonly kind: 'plan' | 'item';
+  readonly text: string;
+}
+
+export interface CardContentView {
+  /** O título do bloco, com o que ele conta — e a lista abaixo mostra tudo o que ele contou. */
+  readonly title: string;
+  readonly lines: readonly ContentLineView[];
+  /** O que dizer quando falta algo. `null` quando a lista já diz tudo. */
+  readonly note: string | null;
+}
+
+/** "1 plano" / "2 itens" / "nenhum item" — plural de gente, não "item(ns)". */
+function counted(total: number, singular: string, plural: string): string {
+  if (total === 0) return `nenhum ${singular}`;
+  return `${total} ${total === 1 ? singular : plural}`;
+}
+
+/**
+ * Planos e itens do card, cada linha com a palavra certa. O componente imprime
+ * o que sai daqui — ele não monta frase nenhuma, porque foi montando frase no
+ * JSX que a tela passou a se contradizer.
+ */
+export function cardContent(card: CardView): CardContentView {
+  const title = `Planos e itens (${counted(card.planCount, 'plano', 'planos')}, ${counted(card.items.length, 'item', 'itens')})`;
+
+  const lines: ContentLineView[] = card.plans.map((plan) => ({
+    key: `plan:${plan.id}`,
+    kind: 'plan' as const,
+    text: `Plano — ${plan.title}`,
+  }));
+
+  for (const item of card.items) {
+    const { repo, inherited } = itemRepoOf(item, card.discovery);
+    const repoText = repo === null ? 'sem repo alvo' : inherited ? `${repo} (herdado do card)` : repo;
+    // A trava DO item, não a que o bloqueia: um discovery travado impede o
+    // disparo do item sem que o item esteja travado, e dizer "travado" ali
+    // seria a tela mentindo de novo, agora por excesso.
+    const lock = card.locks.find((entry) => entry.subject.entity === 'work_item' && entry.subject.id === item.id) ?? null;
+    const lockText = lock === null ? '' : ` · travado pela fase "${lock.phase}" desde ${formatTimestamp(lock.acquiredAt)}`;
+    lines.push({
+      key: `work_item:${item.id}`,
+      kind: 'item',
+      text: `${item.title} · ${item.itemType} · ${item.state} · ${repoText}${lockText}`,
+    });
+  }
+
+  const note =
+    card.planCount === 0 && card.items.length === 0
+      ? 'Nenhum plano registrado. Se o discovery terminou assim, é um desfecho — não uma pendência.'
+      : card.items.length === 0
+        ? 'Os planos ainda não declararam nenhum item.'
+        : null;
+
+  return { title, lines, note };
+}
+
 /**
  * A frase de UMA passagem de fase. Cada estado tem palavra própria — e nenhuma
  * delas é "não realizada":
@@ -382,16 +473,17 @@ function candidatesFor(card: CardView, runsOn: DispatchEntity): readonly Dispatc
   }
 
   return card.items.map((item) => {
-    // O item HERDA o repo do card quando não declarou o seu (D-6). Herdar do
-    // próprio discovery é o default que a spec prevê; o que nunca acontece é
-    // cair no "projeto em foco" — o palpite que abriu uma fase no repo errado.
-    const inherited = item.targetRepo === null && card.discovery.targetRepo !== null;
+    // O item HERDA o repo do card quando não declarou o seu (D-6). A resolução
+    // é a MESMA que a lista de itens usa (`itemRepoOf`) — quando eram duas, a
+    // lista dizia "sem repo alvo" enquanto esta linha dizia "herdado do card",
+    // sobre o mesmo item e na mesma tela.
+    const { repo, inherited } = itemRepoOf(item, card.discovery);
     return buildTarget(card, {
       subject: { entity: 'work_item', id: item.id },
       label: `${item.itemType} — ${item.title}`,
       planId: item.planId,
       workItemId: item.id,
-      targetRepo: item.targetRepo ?? card.discovery.targetRepo,
+      targetRepo: repo,
       repoNote: inherited ? 'repo herdado do card' : null,
       needsRepo: item.itemType === 'issue',
     });
