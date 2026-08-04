@@ -213,7 +213,7 @@ T1228, T1229, T1230, T1231).
   **DoD**: `tests/config-store.test.ts` e `tests/devMode.test.ts` ajustados e
   verdes, incluindo um caso explícito de config gravada por canal antigo.
 
-- [ ] **T1221** Tela de contas substitui o dropdown de perfis: `AccountsPanel`
+- [x] **T1221** Tela de contas substitui o dropdown de perfis: `AccountsPanel`
   (etapa 1) assume o lugar do `<ProfileSwitcher>` em `App.tsx:2393–2397`,
   alimentando badge do titlebar e statusbar. **Uma unidade só** (C25): a
   conversão de `AccountLoad` (% consumido) para o texto exibido acontece num

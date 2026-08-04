@@ -13,9 +13,10 @@ import {
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  AccountLoad,
+  AccountsViewDto,
   AppConfigDto,
   NotificationPreference,
-  ProfileHeadroomMap,
   ProjectInfo,
   ProjectScanMode,
   SemaphoreStateInfo,
@@ -80,7 +81,6 @@ import type { EsteiraSnapshotDto } from '../../shared/esteira/ipc';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { AccountsPanel } from './AccountsPanel';
-import { ProfileSwitcher } from './ProfileSwitcher';
 import { ProjectSidebar } from './ProjectSidebar';
 import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from './ProjectSidebar';
 // CA-30 (009-modo-dev-v3, lote 9) — seletor de projetos no titlebar + modal de criação.
@@ -249,17 +249,21 @@ export function App(): React.JSX.Element {
   const [appConfig, setAppConfig] = useState<AppConfigDto | null>(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const tabIdCounter = useRef(0);
-  // T014 — rótulo de conta pra Statusbar (ui-spec §2 zona 5), reportado pelo
-  // ProfileSwitcher (que já busca `window.donel.profiles.*` pro dropdown do
-  // titlebar — ver comentário de topo de ProfileSwitcher.tsx).
-  const [accountLabel, setAccountLabel] = useState('Principal');
-  // T1219 (011-contas-e-provedores, etapa 2) — `profileHeadroom` alimentava
-  // `activeSessionQuota` (rótulo da statusbar) antes da troca de fonte pra
-  // `AccountLoad` (C25). O setter continua ligado ao `ProfileSwitcher`
-  // (que ainda existe até a Fase 4/T1225 remover o dropdown), mas o VALOR
-  // deixou de ser lido aqui — T1221 substitui por uma leitura direta do
-  // motor. Mantido só o setter para não quebrar `ProfileSwitcher.onHeadroomChange`.
-  const [, setProfileHeadroom] = useState<ProfileHeadroomMap>({});
+  // T1221 (011-contas-e-provedores, etapa 2) — `AccountsPanel` substitui o
+  // `ProfileSwitcher` (dropdown de perfis) como fonte da statusbar/badge:
+  // este estado é a MESMA leitura que `AccountsPanel` já faz
+  // (`window.donel.accounts.list()`/`onChanged`), só que também precisa
+  // estar disponível aqui pro rótulo global de fallback e pra cota (uma
+  // unidade só, C25) da conta em foco.
+  const [accountsView, setAccountsView] = useState<AccountsViewDto>({
+    mod: null,
+    state: 'inert',
+    unavailableReason: null,
+    accounts: [],
+    activeAccountId: null,
+    autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 },
+    lastReadAt: null,
+  });
   // T009 — estado do semáforo por aba (chave = tab.id), alimentado pelo
   // callback que cada TerminalPane levanta via onStateChange.
   const [semaphoreStates, setSemaphoreStates] = useState<Record<string, SemaphoreStateInfo>>({});
@@ -430,6 +434,24 @@ export function App(): React.JSX.Element {
   const handleAccountResolved = useCallback((tabId: string, account: { id: string; label: string } | undefined): void => {
     setSessionAccounts((prev) => ({ ...prev, [tabId]: account }));
   }, []);
+
+  // T1221 (011-contas-e-provedores, etapa 2) — mesma assinatura que
+  // `AccountsPanel` já faz, precisa rodar aqui TAMBÉM (independente do
+  // painel estar aberto) pro badge/statusbar saberem a conta ativa mesmo
+  // com o painel fechado — mesmo espírito do `ProfileSwitcher` de antes
+  // ("badge do titlebar precisa saber quem é o perfil ativo mesmo com o
+  // dropdown fechado").
+  useEffect(() => {
+    void window.donel.accounts.list().then(setAccountsView);
+    return window.donel.accounts.onChanged(setAccountsView);
+  }, []);
+
+  // `activeProfileSlug` segue existindo só pro fluxo de "Reiniciar sessão em
+  // outra conta" (C31/T1224, removido na Fase 4) — alimentado agora pela
+  // conta ativa do motor em vez do callback do `ProfileSwitcher` morto.
+  useEffect(() => {
+    setActiveProfileSlug(accountsView.activeAccountId ?? 'principal');
+  }, [accountsView.activeAccountId]);
 
   /**
    * T707 (007-favoritos-sessoes) — grava uma visita no registro (D9: "mantenha
@@ -1645,27 +1667,25 @@ export function App(): React.JSX.Element {
       ? { usedTokens: activeContextTokens, maxTokens: effectiveContextZone(activeModel) }
       : undefined;
 
-  // FIX (feedback E2E rodada 5) — "statusbar deve mostrar a conta com que a
-  // sessão EM FOCO foi criada", não a conta ATIVA global (`accountLabel`,
-  // ProfileSwitcher). `accountLabel` continua sendo o badge do
-  // titlebar/dropdown ("que conta a PRÓXIMA sessão usa") — aqui é só o
-  // fallback pra janela curta antes de `sessionAccounts[activeTab.id]`
-  // resolver (ver `computeSessionAccountLabel`). Sem aba ativa (0 sessões
-  // abertas), cai no `accountLabel` global também — não há "aba em foco"
-  // nesse estado.
+  // T1221 (011-contas-e-provedores, etapa 2) — `accountLabel` é o rótulo
+  // GLOBAL (badge do titlebar/AccountsPanel, "que conta a PRÓXIMA sessão
+  // usa"): conta ativa do motor quando ele está ligado; "Motor inerte"
+  // enquanto `accounts.mod` for `null` (comportamento de hoje, sem perfis).
+  const activeAccountSummary = accountsView.accounts.find((account) => account.id === accountsView.activeAccountId) ?? null;
+  const accountLabel = activeAccountSummary?.label ?? (accountsView.mod === null ? 'Motor inerte' : 'Conta ativa');
+
+  // "Statusbar deve mostrar a conta com que a sessão EM FOCO foi criada",
+  // não a conta ATIVA global — `accountLabel` acima é só o fallback pra
+  // janela curta antes de `sessionAccounts[activeTab.id]` resolver (ver
+  // `computeSessionAccountLabel`). Sem aba ativa (0 sessões abertas), cai no
+  // `accountLabel` global também — não há "aba em foco" nesse estado.
   //
-  // FIX (auditoria rodada 5, achado alta "regressão de cota") — cota do
-  // perfil de NASCIMENTO da aba (`profileHeadroom[slug]`, alimentado por
-  // `ProfileSwitcher.onHeadroomChange`), não a do perfil ativo global —
-  // `?? null` cobre tanto "perfil sem entrada no mapa ainda" (dropdown nunca
-  // foi aberto) quanto "mapa devolveu unavailable pra este slug" (mesmo
-  // contrato "—" da rodada 4). T204 (002-quota-headroom): `profileHeadroom`
-  // guarda `ProfileQuota` (não mais `number|null`) — `computeSessionAccountLabel`
-  // já lê `.fiveHour.percentRemaining` internamente.
+  // C25 — uma unidade só: a cota é `AccountLoad` (% consumido) da conta de
+  // NASCIMENTO da aba, lida do MESMO `accountsView` que alimenta o painel
+  // (não mais `ProfileQuota`/`profileHeadroom`, mortos nesta troca de fonte).
   const activeSessionAccount = activeTab ? sessionAccounts[activeTab.id] : undefined;
-  // T1219 — a cota (AccountLoad) do motor ainda não está fiada aqui; T1221
-  // conecta a fonte real (uma unidade só, C25). Até lá o slot mostra "—".
-  const activeSessionLoad: import('../../shared').AccountLoad | null = null;
+  const activeSessionLoad: AccountLoad | null =
+    (activeSessionAccount && accountsView.accounts.find((account) => account.id === activeSessionAccount.id)?.load) ?? null;
   const activeSessionAccountLabel = activeTab
     ? computeSessionAccountLabel(
         { sessionType: activeTab.sessionType, account: activeSessionAccount },
@@ -1719,7 +1739,7 @@ export function App(): React.JSX.Element {
             (mockup linhas 39-51): esquerda = marca + pill de projeto (acima);
             CENTRO = SegmentedControl "Uso geral | Dev" entre dois espaçadores
             flex:1, substituindo o rótulo solto "Principal —" + o Toggle
-            azul; direita = AccountBadge (ProfileSwitcher) + os ícones que já
+            azul; direita = AccountBadge (AccountsPanel, T1221) + os ícones que já
             existiam. T310/CA-20 — ligar REORGANIZA o layout desta mesma
             janela; desligar volta à tela de hoje, que não é aposentada (nem
             desmontada — mesmo princípio do T007 "todas as abas ficam
@@ -1737,15 +1757,12 @@ export function App(): React.JSX.Element {
           />
         </div>
         <div className={styles.titlebarSpacer} />
-        <ProfileSwitcher
-          onActiveProfileLabelChange={setAccountLabel}
-          onHeadroomChange={setProfileHeadroom}
-          onActiveProfileSlugChange={setActiveProfileSlug}
-        />
-        {/* 011-contas-e-provedores (etapa 1) — motor de contas, ao lado do
-            ProfileSwitcher (nenhum dos dois substitui o outro nesta etapa).
-            Nasce inerte (accounts.mod = null): o painel abre e mostra "nenhum
-            provedor conectado" sem afetar perfis. */}
+        {/* T1221 (011-contas-e-provedores, etapa 2) — `AccountsPanel`
+            SUBSTITUI o `ProfileSwitcher` (dropdown de perfis): é agora o
+            único badge/entrada de troca de conta no titlebar. Nasce inerte
+            (accounts.mod = null) quando não há mod conectado — mesmo
+            comportamento de sempre, só que sem o dropdown de perfis ao
+            lado. */}
         <AccountsPanel />
         {/* T015 — UI de Preferências (FR-007, feedback E2E rodada 3/4). */}
         <button
