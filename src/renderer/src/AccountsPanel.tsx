@@ -170,7 +170,11 @@ export function AccountsPanel(): React.JSX.Element {
                     label="Endereço do switcher"
                     value={connectForm.baseUrl}
                     onChange={(event) => editarForm((prev) => ({ ...prev, baseUrl: event.target.value }))}
-                    placeholder="https://switcher.seazone.dev"
+                    // A URL real do switcher (`DEFAULT_API_URL` do cliente
+                    // oficial). O placeholder anterior, "switcher.seazone.dev",
+                    // parecia legítimo e não existe — placeholder com cara de
+                    // endereço real é convite a digitar o errado.
+                    placeholder="https://claude-switcher-api.seazone.dev"
                   />
                   <TextInput
                     label="Token de sessão"
