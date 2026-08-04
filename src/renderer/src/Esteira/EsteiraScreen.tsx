@@ -5,6 +5,7 @@ import type { MacroStage, WorkItemSnapshot, WorkItemState } from '../../../share
 import {
   cardView,
   discardHint,
+  dispatchHint,
   discardedMessage,
   formatTimestamp,
   gestureRefusalMessage,
@@ -417,12 +418,13 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                               </Button>
                             ))}
                             {/* D-16 — criar item é da skill; descartar é um gesto
-                                daqui, sem bloqueio. */}
+                                daqui. O botão continua clicável mesmo com o item
+                                travado: a recusa é dita, nunca calada. */}
                             <Button variant="ghost" onClick={() => void handleDiscard(item)} disabled={readOnly}>
                               Descartar
                             </Button>
                           </div>
-                          <span className={styles.hint}>{discardHint(item)}</span>
+                          <span className={styles.hint}>{discardHint(item, selected.lock)}</span>
                         </li>
                       ))}
                     </ul>
@@ -469,11 +471,7 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                     Preparar
                   </Button>
                 </div>
-                <p className={styles.hint}>
-                  {selected.lock !== null
-                    ? 'Há uma fase preparada neste card. Libere a trava acima antes de preparar outra.'
-                    : 'O app separa o contexto no inbox e trava o card. Quem roda a fase é a skill — hoje, apontando para o arquivo à mão.'}
-                </p>
+                <p className={styles.hint}>{dispatchHint(selected)}</p>
               </section>
             </>
           )}

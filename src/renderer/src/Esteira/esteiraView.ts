@@ -183,8 +183,23 @@ export function discardedMessage(item: WorkItemSnapshot): string {
   return `Item «${item.title}» descartado. Ele sai do card; o histórico guarda que ele existiu.`;
 }
 
-/** D-16 — por que o descarte não tem bloqueio, e o que ele não apaga. */
-export function discardHint(item: WorkItemSnapshot): string {
+/** A trava prende ESTE item? A comparação mora aqui, não em quem desenha. */
+export function isLocked(item: WorkItemSnapshot, lock: LockRecord | null): boolean {
+  return lock !== null && lock.subject.entity === 'work_item' && lock.subject.id === item.id;
+}
+
+/**
+ * D-16 — por que o descarte não tem bloqueio, e o que ele não apaga.
+ *
+ * Recebe a trava porque, sem ela, a frase mentia: o print 26 mostrava "descartar
+ * é um gesto só, sem bloqueio" embaixo do item travado, e o print 27 mostrava o
+ * app recusando o descarte DESSE item na mesma tela. A promessa e a recusa
+ * precisam sair da mesma função, ou uma desmente a outra.
+ */
+export function discardHint(item: WorkItemSnapshot, lock: LockRecord | null = null): string {
+  // A MESMA frase da recusa, não uma cópia dela: duas redações da mesma regra
+  // divergem no primeiro conserto (`erros-conhecidos.md` #1).
+  if (isLocked(item, lock)) return GESTURE_REFUSAL_MESSAGE['locked']!;
   const origem = item.createdBySkill
     ? 'Este item nasceu pela skill: descartar é um gesto só, sem bloqueio.'
     : 'Descartar é um gesto só, sem bloqueio.';
@@ -229,6 +244,19 @@ export interface LockView {
   readonly nextStep: { readonly explanation: string; readonly command: string } | null;
 }
 
+/**
+ * De QUE é a trava, em português. O bloco fica no topo do card, e no print 25
+ * ele dizia "Fase implementar, por uma skill, desde ..." com dois itens na tela:
+ * o app sabia o assunto (`lock.subject`) e não dizia. Com disparo por item (B2)
+ * a ambiguidade vira regra, não exceção.
+ */
+export function lockSubjectLabel(card: CardView, lock: LockRecord): string {
+  if (lock.subject.entity === 'discovery') return 'o card';
+  if (lock.subject.entity === 'plan') return 'um plano';
+  const item = card.items.find((entry) => entry.id === lock.subject.id);
+  return item === undefined ? 'um item que não está mais no card' : `o item «${item.title}»`;
+}
+
 export function lockView(card: CardView): LockView | null {
   const lock = card.lock;
   if (lock === null) return null;
@@ -236,18 +264,19 @@ export function lockView(card: CardView): LockView | null {
   const holder = lock.holderKind === 'skill' ? 'uma skill' : 'o app';
   const claimed = card.openSession?.claimed ?? false;
   const inputPath = card.openSession?.inputPath ?? null;
+  const about = lockSubjectLabel(card, lock);
 
   if (claimed || lock.holderKind === 'skill') {
     return {
       title: 'Em andamento',
-      line: `Fase ${lock.phase}, por ${holder}, desde ${formatTimestamp(lock.acquiredAt)}.`,
+      line: `Fase ${lock.phase} sobre ${about}, por ${holder}, desde ${formatTimestamp(lock.acquiredAt)}.`,
       nextStep: null,
     };
   }
 
   return {
     title: 'Preparada — ninguém assumiu ainda',
-    line: `O app separou o contexto da fase ${lock.phase} às ${formatTimestamp(lock.acquiredAt)} e travou o card. Nada está rodando: abrir a sessão ainda é um passo manual.`,
+    line: `O app separou o contexto da fase ${lock.phase} sobre ${about} às ${formatTimestamp(lock.acquiredAt)} e travou. Nada está rodando: abrir a sessão ainda é um passo manual.`,
     nextStep:
       inputPath === null
         ? null
@@ -256,6 +285,25 @@ export function lockView(card: CardView): LockView | null {
             command: `python skills/esteira-donel-3.0.0/tools/read_input.py --input "${inputPath}"`,
           },
   };
+}
+
+/**
+ * Por que o "Preparar" está desabilitado — ou o que ele fará.
+ *
+ * Nasceu do print 29: a frase estava escrita à mão no componente e dizia "Há uma
+ * fase preparada neste card" para uma fase que a skill JÁ tinha assumido, sobre
+ * um ITEM. Duas palavras erradas de uma vez, pelo mesmo motivo de sempre — a
+ * frase morava longe do estado. Aqui ela recebe o card inteiro e reusa o título
+ * que `lockView` já escolheu, para as duas nunca discordarem na mesma tela.
+ */
+export function dispatchHint(card: CardView): string {
+  const lock = card.lock;
+  if (lock === null) {
+    return 'O app separa o contexto no inbox e trava o card. Quem roda a fase é a skill — hoje, apontando para o arquivo à mão.';
+  }
+  const view = lockView(card)!;
+  const estado = view.title === 'Em andamento' ? 'em andamento' : 'preparada';
+  return `Há uma fase ${estado} sobre ${lockSubjectLabel(card, lock)}. Libere a trava acima antes de preparar outra.`;
 }
 
 /** Projeção do snapshot para UM card. A tela não deriva nada além disto. */
