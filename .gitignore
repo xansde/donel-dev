@@ -25,3 +25,6 @@ __pycache__/
 # Saída regenerável da captura do tutorial (scripts/tutorial-esteira)
 .tutorial-shots/
 test-results/
+
+# Saída regenerável do e2e visual (.claude/skills/e2e-visual)
+.e2e-visual/
