@@ -17,3 +17,7 @@ tests/probe/
 # Destino local da publicacao (caminho da pasta compartilhada — varia por
 # maquina, gravado no primeiro `npm run publicar`).
 scripts/publicar.local.json
+
+# Python do fork da esteira (skills/esteira-donel-3.0.0)
+__pycache__/
+*.pyc
