@@ -19,6 +19,51 @@ antes de tocar em código.
 4. Registrar as iterações; ao fim, nomear os erros que se repetiram.
 5. Commit em branch própria. PR é ato humano.
 
+## Prompt de lançamento (sessão limpa, ultracode)
+
+Copie o bloco abaixo numa sessão nova, na raiz do repo. Ele é autossuficiente:
+manda ler o que importa antes de tocar em código.
+
+```text
+ultracode
+
+Repo: donel-dev. Branch de partida: feat/010-fase1-vertical-pequeno (a fase 1 da
+spec 010 está entregue; o resto está quebrado em batches).
+
+Leia nesta ordem, antes de qualquer código:
+1. specs/010-esteira-donel/batches.md — os sete batches: escopo, e2e, dependências
+2. specs/010-esteira-donel/spec.md — as 16 decisões fechadas
+3. specs/010-esteira-donel/handoff-vertical-pequeno.md — o que já existe e o que não reescrever
+4. .claude/skills/tutorial-e2e/SKILL.md — o gate de todo batch
+
+Execute em paralelo: B1, B2, B3, B4, B5 e B7.
+NÃO execute o B6 — ele depende dos outros e da minha decisão.
+
+Regras duras:
+- Cada batch em branch própria, a partir de feat/010-fase1-vertical-pequeno.
+- Se usar worktree, crie FORA do repo. Worktree em .claude/worktrees faz o glob do
+  Playwright pegar as cópias e a suíte roda multiplicada.
+- TDD no que é comportamento. npm test e npm run typecheck verdes antes de fechar.
+- Todo batch termina com o roteiro e2e da skill tutorial-e2e — e com a etapa de
+  OLHAR cada print, um por um. Print que mostra a tela mentindo é achado: conserta
+  o app, não o roteiro.
+- Os roteiros abrem janela do Electron. SERIALIZE essa etapa: uma captura por vez,
+  nunca seis janelas ao mesmo tempo na minha máquina.
+- B2 e B3 tocam EsteiraScreen.tsx. Quem terminar depois rebaseia.
+- Nunca abrir PR. Nunca tocar main. Nunca rodar npm run test:smoke.
+
+Me entregue no fim:
+- uma linha por batch: o que entrou, o que ficou de fora e por quê, a branch
+- o caminho dos relatórios HTML gerados (.e2e-visual/<roteiro>/relatorio.html)
+- os erros que se repetiram ENTRE batches — se o mesmo defeito apareceu em dois,
+  a correção certa é estrutural, e quero saber qual
+- o que cada batch descobriu que muda a spec ou os batches seguintes
+```
+
+**Custo:** seis batches em paralelo, cada um com implementação, testes e uma
+captura e2e. Se quiser começar menor, lance B1+B2+B3 — são os que fecham o
+vertical e destravam o B6 — e deixe B4, B5 e B7 para a leva seguinte.
+
 ## Estado ao escrever isto
 
 Feito na fase 1: store append-only, reducer com derivação de etapa, ingestão
