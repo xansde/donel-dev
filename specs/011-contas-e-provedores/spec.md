@@ -178,6 +178,40 @@ Três entregas, cada uma testável e utilizável sozinha:
   CLIs terceiros) e **UI de MCPs/integrações** — névoa pós-v1 registrada no
   mapa, não prometida aqui.
 
+## Clarifications
+
+### 2026-08-04 — fase Plano, recorte da **etapa 1** (motor + mods)
+
+Lacunas resolvidas por julgamento na fase Plano (sem humano no loop), todas
+dentro do que o discovery já decidiu. Razão de cada uma em
+`research.md` §4; o recorte etapa 1 × etapas irmãs está em `research.md` §1.
+
+- **C1** — Motor tem alvo de config dir (`claudeHome`, default `~/.claude`);
+  com mod ativo, sessão `claude` nasce **sem** override de `CLAUDE_CONFIG_DIR`.
+- **C2** — `accounts.mod` nasce `null`: motor **inerte**, comportamento de hoje
+  intocado até o operador escolher um mod.
+- **C3** — `keepAlive()` é timer de 15 min do processo vivo, só para mods que o
+  implementam (Seazone sim, local não). Nenhum agendador de SO.
+- **C4** — Carga lida sob demanda + poll de 5 min com sessão viva; auto-switch
+  avaliado nesses momentos.
+- **C5** — Auto-switch **adia** enquanto houver sessão trabalhando (semáforo);
+  switch manual nunca é adiado.
+- **C6** — `captureRotatedPair()` lê o par vigente antes de sobrescrever;
+  chamado antes de todo switch e no encerramento do app.
+- **C7** — Metadado não sensível na chave `accounts` do `config.json`; segredo
+  em `accounts-vault.json` separado, cifrado por `safeStorage`.
+- **C8** — Conta = id opaco + label. Nunca e-mail, nunca nome de pessoa (LGPD).
+- **C9** — Backend fora → estado `unavailable`: nunca bloqueia abrir sessão,
+  auto-switch pausa, sem troca automática de mod.
+- **C10** — `sessionAccountLabel` **não muda de contrato** na etapa 1; o main
+  preenche `PtyCreateResult.profile` com a conta ativa do motor.
+- **C11** — O `sessionRefreshToken` do mod Seazone mora no mesmo cofre; a
+  *exceção* de regra continua sendo o mod local ler credencial da Anthropic.
+- **C12 (leitura da cadência)** — a entrega 1 (`[T-7]`, "Motor + mod Seazone")
+  inclui **também o mod local**: a spec exige interface *extraída de dois mods
+  concretos*, o que é impossível com um mod só. Nome curto do lote, não
+  exclusão. Ver `research.md` §2.
+
 ## Pendências
 
 Nenhuma que trave o plano — o mapa fechou com frontier zerada. As névoas
