@@ -2,11 +2,12 @@
 // "ConfigStore %APPDATA%\DonelDev\config.json"). O ConfigStore de verdade
 // (schema completo, escrita atômica, migração dos JSONs avulsos de T007/
 // T014) vive em `src/main/config-store.ts`; aqui só o contrato compartilhado
-// com preload/renderer — mesmo padrão de src/shared/profiles.ts.
+// com preload/renderer — mesmo padrão de src/shared/accounts.ts.
 //
 // Só os campos que o RENDERER precisa ler/editar entram no DTO
 // (`AppConfigDto`): `favorites` (já servido por `projects:list`) e
-// `activeProfileSlug` (já servido por `profiles:list`, campo `active`) NÃO
+// `activeProfileSlug` (campo LEGADO, T1220 — nunca mais escrito, só aceito
+// no sanitize; o motor de contas tem canal próprio, `accounts:*`) NÃO
 // duplicam aqui — o main process continua sendo a fonte única de verdade
 // pros dois, só que agora persistidos dentro do MESMO config.json.
 

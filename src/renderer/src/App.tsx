@@ -411,15 +411,15 @@ export function App(): React.JSX.Element {
     setSessionAccounts((prev) => ({ ...prev, [tabId]: account }));
   }, []);
 
-  // T1221 (011-contas-e-provedores, etapa 2) — mesma assinatura que
-  // `AccountsPanel` já faz, precisa rodar aqui TAMBÉM (independente do
-  // painel estar aberto) pro badge/statusbar saberem a conta ativa mesmo
-  // com o painel fechado — mesmo espírito do `ProfileSwitcher` de antes
-  // ("badge do titlebar precisa saber quem é o perfil ativo mesmo com o
-  // dropdown fechado").
-  useEffect(() => {
-    void window.donel.accounts.list().then(setAccountsView);
-    return window.donel.accounts.onChanged(setAccountsView);
+  // T1232 (011-contas-e-provedores, etapa 2, achado da regressão final) —
+  // ANTES este efeito abria a SUA PRÓPRIA assinatura de
+  // `window.donel.accounts.list()`/`onChanged`, duplicando a que
+  // `AccountsPanel` já mantém — dois round-trips de IPC no boot estouraram
+  // a cerca de regressão do CA-7 (250 ms → ~330 ms medidos). Agora
+  // `AccountsPanel` reporta a mesma leitura pra cima via `onViewChange`
+  // (prop nova), uma assinatura só, no lugar de duas.
+  const handleAccountsViewChange = useCallback((view: AccountsViewDto): void => {
+    setAccountsView(view);
   }, []);
 
   /**
@@ -1603,7 +1603,7 @@ export function App(): React.JSX.Element {
             (accounts.mod = null) quando não há mod conectado — mesmo
             comportamento de sempre, só que sem o dropdown de perfis ao
             lado. */}
-        <AccountsPanel />
+        <AccountsPanel onViewChange={handleAccountsViewChange} />
         {/* T015 — UI de Preferências (FR-007, feedback E2E rodada 3/4). */}
         <button
           type="button"

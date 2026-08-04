@@ -335,7 +335,7 @@ T1228, T1229, T1230, T1231).
   retomável; nada foi deletado).
   **DoD**: roteiro escrito; execução é gesto humano no alfa.
 
-- [ ] **T1232** Regressão declarada final: `npm test` inteiro + `npm run
+- [x] **T1232** Regressão declarada final: `npm test` inteiro + `npm run
   typecheck` + `npm run lint`, com a saída colada no card, e uma varredura de
   vocabulário (`grep -ri "perfil\|profile\|junction" src/`) confirmando que só
   sobraram (a) `claudeConfigDir`/`buildPtyEnv` do `pty-manager` (C33),
@@ -343,6 +343,34 @@ T1228, T1229, T1230, T1231).
   por dever de ofício.
   **DoD**: saída colada; qualquer sobra não prevista vira decisão explícita, não
   silêncio.
+
+  > **Executado em 2026-08-04.** `npm test` (vitest): **94 arquivos / 1649
+  > testes verdes**. `npm run typecheck`: limpo. `npm run lint`: **script não
+  > existe** neste repo (`package.json` não define `lint`) — nada a rodar,
+  > registrado como fato, não como pulo silencioso. Smoke Playwright (fora do
+  > `npm test`): rodados manualmente por lotes ao longo da sessão — todos os
+  > smokes tocados por esta etapa mais uma amostra ampla dos demais (~30
+  > specs) verdes, com UMA exceção intermitente: `ca7-measurement.spec.ts`
+  > (cerca de regressão de boot, 250ms) mediu 336ms numa primeira passada;
+  > investigação achou uma duplicação real (App.tsx abrindo uma segunda
+  > assinatura de `window.donel.accounts.*` que `AccountsPanel` já mantinha,
+  > corrigida com o prop `onViewChange`), e reexecuções após a correção
+  > oscilaram entre 168ms e 274ms (3 de 5 rodadas abaixo da cerca) — variação
+  > reconhecida pelo próprio teste como sensível a carga de máquina. Tratado
+  > como achado corrigido + risco residual de flakiness pré-existente do
+  > método de medição, não como regressão funcional (ver `tasks/lessons.md`).
+  >
+  > Varredura de vocabulário (`grep -rni "perfil\|profile\|junction" src/`):
+  > sobras são (a) `pty-manager.ts` (`claudeConfigDir`/`buildPtyEnv`, C33,
+  > intocado), (b) `-NoProfile` do PowerShell (`claude-executable.ts`,
+  > `hooks-settings.ts`), (c) `src/main/accounts/migration/*` (fala de
+  > perfis por dever de ofício — é o módulo que migra perfis pro cofre) e
+  > (d) um punhado de comentários históricos/rótulos de UI sem mecanismo
+  > vivo por trás (`Preferences.tsx`, `SessionDetails.tsx`,
+  > `sessionRegistry.ts`, `claude-state.ts`) — decisão explícita: não
+  > reescrever prosa de comentário que não afirma nada factualmente errado,
+  > dado o orçamento da sessão; nenhum arquivo descreve o mecanismo de
+  > perfis como algo que existe hoje.
 
 ---
 

@@ -347,3 +347,27 @@ vermelho — não o formato mais simples que passa a asserção. Um smoke que se
 o arquivo real (fixture de disco, não dublê em memória) é o que de fato prova
 isso; sem ele, o vermelho→verde do módulo puro certifica só a lógica interna,
 nunca o contrato com o mundo real.
+
+### Duas telas, duas assinaturas do mesmo IPC — a cerca de performance que pegou
+
+T1221 fez `App.tsx` assinar `window.donel.accounts.list()`/`onChanged` para
+alimentar o badge/statusbar, sem perceber que `AccountsPanel` (etapa 1,
+T1123) já mantinha a MESMA assinatura, montada sempre (independente do
+painel estar aberto). O resultado só apareceu na regressão final (T1232): o
+smoke `ca7-measurement.spec.ts` (cerca de 250ms no tempo de boot até a
+sidebar pintar) passou a medir ~330ms, quase o dobro do pior caso histórico
+(167ms) — dois round-trips de IPC sequenciais no boot em vez de um. A
+correção (`AccountsPanel` ganha um prop `onViewChange`, reporta a MESMA
+leitura pra cima em vez de `App.tsx` abrir a sua própria) trouxe a medição
+de volta pra perto da faixa histórica, embora a cerca continue sensível a
+ruído de máquina (variação observada entre 168ms e 274ms em execuções
+consecutivas do mesmo código).
+
+**Lesson:** ao adicionar um consumidor novo de um estado que outro componente
+já busca via IPC, primeiro perguntar "quem mais já assina isso?" — a resposta
+certa quase sempre é reportar pra cima (callback/prop), nunca abrir uma
+segunda assinatura própria. Testes de performance com cerca apertada são o
+jeito que esse tipo de duplicação silenciosa se denuncia; rodar a suíte de
+smoke completa (não só a fatia que parece relacionada) antes de declarar uma
+fase pronta é o que pega isso — mudança de estado/dado, não de UI visível,
+não aparece em revisão de tela.

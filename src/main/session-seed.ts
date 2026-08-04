@@ -1,6 +1,6 @@
 // T706 (007-favoritos-sessoes) — a ÚNICA leitura de disco desta feature
 // (CA-8). Vive num módulo próprio, e não em `main/index.ts`, pelo mesmo motivo
-// de `session-indexer.ts`/`profile-manager.ts`/`config-store.ts`: `main/index.ts`
+// de `session-indexer.ts`/`config-store.ts`: `main/index.ts`
 // importa `electron` e nunca é importado por um teste unit — qualquer lógica
 // que precise de TDD sem subir o Electron mora num arquivo próprio, com
 // dependências injetáveis.
