@@ -76,49 +76,49 @@ T1228, T1229, T1230, T1231).
 
 ## Fase 1 — Inventário e planejador da migração (puro, invisível ao app)
 
-- [ ] **T1202** [P] Teste: `tests/profileInventory.test.ts` — raiz ausente ⇒ `[]`
+- [x] **T1202** [P] Teste: `tests/profileInventory.test.ts` — raiz ausente ⇒ `[]`
   sem lançar; perfil sem `.credentials.json` ⇒ `hasCredentials: false`; perfil
   sem `.donel-profile.json` ⇒ nome derivado do slug; `projects` **junction** ×
   **diretório real** × **ausente**; entrada que não é diretório é ignorada;
   `.claude.json` corrompido ⇒ `mcpServerNames: []`.
   **DoD**: suíte vermelha por ausência de implementação.
 
-- [ ] **T1203** Implementar `src/main/accounts/migration/profile-inventory.ts`
+- [x] **T1203** Implementar `src/main/accounts/migration/profile-inventory.ts`
   (`ProfileInventoryEntry`, `readProfileInventory`, IO **injetável** conforme
   `contracts/migration-etapa-2.md` §3). **Nunca lê `.credentials.json`** — só
   verifica existência.
   **DoD**: T1202 verde; `npm run typecheck` verde.
 
-- [ ] **T1204** [P] Teste: `tests/mcpDiff.test.ts` — `onlyInProfile`/`onlyInGlobal`
+- [x] **T1204** [P] Teste: `tests/mcpDiff.test.ts` — `onlyInProfile`/`onlyInGlobal`
   por **nome**; arquivo ausente/corrompido ⇒ diff vazio sem lançar; **fixture com
   token plantado dentro do bloco do servidor e asserção de que ele não aparece
   em lugar nenhum da saída**.
   **DoD**: suíte vermelha.
 
-- [ ] **T1205** Implementar `src/main/accounts/migration/mcp-diff.ts` — função
+- [x] **T1205** Implementar `src/main/accounts/migration/mcp-diff.ts` — função
   pura, saída só de nomes (D14). Sem caminho de escrita.
   **DoD**: T1204 verde.
 
-- [ ] **T1206** [P] Teste: `tests/transcriptConsolidation.test.ts` — `realpath`
+- [x] **T1206** [P] Teste: `tests/transcriptConsolidation.test.ts` — `realpath`
   igual (junction) ⇒ `already-consolidated`, **zero** operações; diretório real
   distinto ⇒ uma operação por `.jsonl` com id de sessão preservado; destino já
   existente ⇒ `skip-existing`, nunca sobrescreve; `projects` ausente ⇒
   `nothing-to-copy`.
   **DoD**: suíte vermelha.
 
-- [ ] **T1207** Implementar
+- [x] **T1207** Implementar
   `src/main/accounts/migration/transcript-consolidation.ts` — **puro** (recebe
   os `realpath` já resolvidos e devolve o plano); o executor de disco é
   injetável.
   **DoD**: T1206 verde.
 
-- [ ] **T1208** [P] Teste: `tests/migrationState.test.ts` — `sanitizeMigrationState`
+- [x] **T1208** [P] Teste: `tests/migrationState.test.ts` — `sanitizeMigrationState`
   resiliente (chave ausente, JSON corrompido, `step` desconhecido, slug vazio);
   idempotência do plano (perfil `imported` não reaparece como pendente);
   `skipped`/`failed` são retomáveis; `canArchive` só com zero pendentes.
   **DoD**: suíte vermelha.
 
-- [ ] **T1209** Implementar `src/main/accounts/migration/migration-plan.ts`
+- [x] **T1209** Implementar `src/main/accounts/migration/migration-plan.ts`
   (função pura `(inventário, estado, diffs) ⇒ MigrationPlan`) **e** a chave
   `accounts.migration` no `src/main/config-store.ts`, plugando nos 4 pontos do
   padrão do arquivo (default, sanitize, DTO, escrita atômica) **sem tocar nas
@@ -129,7 +129,7 @@ T1228, T1229, T1230, T1231).
 
 ## Fase 2 — Execução assistida (depende da Fase 1)
 
-- [ ] **T1210** [P] Teste: `tests/credentialsImport.test.ts` — importa **um**
+- [x] **T1210** [P] Teste: `tests/credentialsImport.test.ts` — importa **um**
   perfil por chamada; par **nunca** aparece no retorno, em log ou em mensagem de
   erro (varredura da saída inteira procurando o segredo plantado); cofre
   indisponível ⇒ recusa **antes** de ler o arquivo; arquivo com formato inválido
@@ -137,13 +137,13 @@ T1228, T1229, T1230, T1231).
   label }`, nunca e-mail.
   **DoD**: suíte vermelha.
 
-- [ ] **T1211** Implementar `src/main/accounts/migration/credentials-import.ts`
+- [x] **T1211** Implementar `src/main/accounts/migration/credentials-import.ts`
   **dentro** de `src/main/accounts/` (a exceção do `CLAUDE.md` já cobre esse
   diretório — **não** ampliar a emenda). Grava no cofre da etapa 1 e registra a
   conta no pool do mod local.
   **DoD**: T1210 verde.
 
-- [ ] **T1212** [P] Teste: `tests/archiveProfiles.test.ts` — **ordem invariante**:
+- [x] **T1212** [P] Teste: `tests/archiveProfiles.test.ts` — **ordem invariante**:
   todo unlink de junction acontece antes do rename (asserção sobre a ordem das
   chamadas do dublê); falha de unlink ⇒ `aborted` nomeando o perfil, **sem**
   rename; `.old` já existente ⇒ sufixo de data; raiz ausente ⇒
@@ -151,19 +151,19 @@ T1228, T1229, T1230, T1231).
   afirma que nenhum é chamado**.
   **DoD**: suíte vermelha.
 
-- [ ] **T1213** Implementar `src/main/accounts/migration/archive-profiles.ts`
+- [x] **T1213** Implementar `src/main/accounts/migration/archive-profiles.ts`
   (`ArchiveIoDeps` sem verbo de deleção, D13; desfaz as 6 junctions de
   `PROFILE_LINK_DIRS` por perfil e renomeia a raiz).
   **DoD**: T1212 verde.
 
-- [ ] **T1214** IPC + preload da migração: registrar os `MIGRATION_CHANNELS`
+- [x] **T1214** IPC + preload da migração: registrar os `MIGRATION_CHANNELS`
   (`contracts/migration-etapa-2.md` §1) no main e a ponte
   `window.donel.migration.*` no `src/preload/index.ts`, no mesmo padrão de
   `accounts.*`. `archive` valida `canArchive` **no main**.
   **DoD**: `donel.d.ts` atualizado; typecheck verde; nenhum canal devolve
   conteúdo de arquivo de perfil.
 
-- [ ] **T1215** UI do assistente: `src/renderer/src/MigrationWizard.tsx`
+- [x] **T1215** UI do assistente: `src/renderer/src/MigrationWizard.tsx`
   (+ `.module.css`), acessível pelo `AccountsPanel` da etapa 1. Uma linha por
   perfil, com estado e **botão de importar individual** (OK humano perfil a
   perfil); bloco read-only com o diff de MCP (nomes) e a marcação "revisado";
@@ -172,14 +172,14 @@ T1228, T1229, T1230, T1231).
   **DoD**: renderiza com inventário vazio sem quebrar; smokes do T1216/T1217
   cobrem o caminho feliz e a proteção.
 
-- [ ] **T1216** Smoke: `tests/smoke/migration-wizard.spec.ts` — árvore de perfis
+- [x] **T1216** Smoke: `tests/smoke/migration-wizard.spec.ts` — árvore de perfis
   falsa em `mkdtemp`, isolada do `homedir()` e do `%APPDATA%` reais: inventário
   aparece, importar **um** perfil deixa os outros pendentes, reabrir o
   assistente mostra o estado persistido, arquivar fica bloqueado enquanto houver
   pendente.
   **DoD**: smoke verde.
 
-- [ ] **T1217** [P] Smoke: `tests/smoke/migration-nunca-deleta.spec.ts` — após a
+- [x] **T1217** [P] Smoke: `tests/smoke/migration-nunca-deleta.spec.ts` — após a
   virada completa na árvore falsa: o diretório original existe sob `.old`, as
   junctions foram desfeitas, e o **alvo** (`<home falso>/.claude/projects`)
   continua com todos os arquivos. É a asserção que protege contra o pior caso

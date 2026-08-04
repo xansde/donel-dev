@@ -2,6 +2,7 @@ import { Button, Modal, Select, TextInput, Toggle } from '@donel-dev/design-syst
 import { useCallback, useEffect, useState } from 'react';
 import type { AccountsConfigDto, AccountsViewDto, ConnectModInput, ModId } from '../../shared';
 import { formatAccountLoad } from './accountsFormat';
+import { MigrationWizard } from './MigrationWizard';
 import styles from './AccountsPanel.module.css';
 
 // T1123/T1124 (011-contas-e-provedores, etapa 1) — ADAPTAÇÃO do
@@ -45,6 +46,11 @@ export function AccountsPanel(): React.JSX.Element {
   const [connectForm, setConnectForm] = useState<ConnectFormState>(emptyConnectForm());
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  // T1215 (011-contas-e-provedores, etapa 2) — o assistente só aparece
+  // enquanto o inventário de `~/.claude-profiles` tiver alguma entrada;
+  // some sozinho depois da virada (DoD do tasks-etapa-2.md).
+  const [hasLegacyProfiles, setHasLegacyProfiles] = useState(false);
+  const [migrationOpen, setMigrationOpen] = useState(false);
 
   const refresh = useCallback((force = false): void => {
     setLoading(true);
@@ -65,6 +71,10 @@ export function AccountsPanel(): React.JSX.Element {
   useEffect(() => {
     if (open) refresh();
   }, [open, refresh]);
+
+  useEffect(() => {
+    if (open) void window.donel.migration.scan().then((plan) => setHasLegacyProfiles(plan.entries.length > 0));
+  }, [open]);
 
   /**
    * Toda edição do formulário passa por aqui — e invalida a recusa anterior.
@@ -152,6 +162,13 @@ export function AccountsPanel(): React.JSX.Element {
 
       <Modal open={open} onClose={() => setOpen(false)} title="Contas e provedores">
         <div className={styles.body} data-testid="accounts-panel">
+          {hasLegacyProfiles ? (
+            <div className={styles.toolbar}>
+              <Button variant="secondary" data-testid="accounts-open-migration" onClick={() => setMigrationOpen(true)}>
+                Migrar perfis antigos
+              </Button>
+            </div>
+          ) : null}
           {view.mod === null ? (
             <div className={styles.connectSection} data-testid="accounts-connect-form">
               <p className={styles.hint}>Nenhum provedor conectado — os perfis de hoje continuam funcionando normalmente.</p>
@@ -266,6 +283,10 @@ export function AccountsPanel(): React.JSX.Element {
             </>
           )}
         </div>
+      </Modal>
+
+      <Modal open={migrationOpen} onClose={() => setMigrationOpen(false)} title="Migração de perfis">
+        <MigrationWizard onClose={() => setMigrationOpen(false)} />
       </Modal>
     </>
   );

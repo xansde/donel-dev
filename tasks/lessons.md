@@ -322,3 +322,28 @@ entrelaçamento, porque cada teste roda uma chamada por vez.
 valor de retorno, não por variável compartilhada — estado de closura lido
 depois de um `await` pertence a quem escreveu por último, não a quem está
 lendo. A suíte não pega: teste sequencial nunca produz o entrelaçamento.
+
+## 2026-08-04 — wi-demolicao-perfis-migracao (demolicao-perfis-migracao)
+
+### O dublê de teste tinha o formato errado de `.credentials.json`
+
+`credentials-import.ts` nasceu (T1210/T1211) com `readCredentialsFile`
+devolvendo o par **solto** na raiz do JSON (`{ accessToken, refreshToken,
+expiresAt, scopes }`). A suíte de vitest passou verde de primeira — o dublê
+injetado nos testes também usava esse formato, então o contrato entre teste e
+implementação estava consistente e cego ao mesmo tempo. O formato REAL do
+arquivo que o CLI escreve (confirmado em `claude-state.ts`, `extractPair`, já
+existente da etapa 1) embrulha o par dentro do bloco `claudeAiOauth`:
+`{ claudeAiOauth: { accessToken, ... } }`. Se `createSystemCredentialsImportDeps`
+(a implementação de IO real, escrita depois dos testes) tivesse ido para
+produção sem o smoke em árvore de perfis falsa (T1216/T1217) — que seeda um
+`.credentials.json` no formato real —, toda importação de perfil real teria
+devolvido `invalid-format` silenciosamente, e só apareceria no dia da virada.
+
+**Lesson:** quando o módulo sob teste lê um arquivo cujo formato já existe em
+outro lugar do código (aqui, `claude-state.ts` já lia o mesmo arquivo), o
+dublê de teste do vitest tem que espelhar esse formato desde o primeiro
+vermelho — não o formato mais simples que passa a asserção. Um smoke que seeda
+o arquivo real (fixture de disco, não dublê em memória) é o que de fato prova
+isso; sem ele, o vermelho→verde do módulo puro certifica só a lógica interna,
+nunca o contrato com o mundo real.

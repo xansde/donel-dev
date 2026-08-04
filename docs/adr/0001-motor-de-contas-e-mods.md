@@ -133,11 +133,13 @@ fluxo que funciona hoje.
 - **Perfis continuam de pé.** Enquanto a demolição não vier, há dois mecanismos
   de conta no app ao mesmo tempo, e textos de garantia escritos para um deles
   podem descrever mal o outro.
-- **O formato do arquivo de credencial é inferido.** A chave `claudeAiOauth` em
-  `.credentials.json` foi deduzida do formato usado pelo CLI e está coberta por
-  testes com dublê; a confirmação contra um login real ainda é gesto humano
-  pendente no roteiro de e2e — dublê escrito a partir do contrato não prova o
-  contrato.
+- **O formato do arquivo de credencial foi inferido — e depois confirmado.** A
+  chave `claudeAiOauth` em `.credentials.json` foi deduzida do formato usado
+  pelo CLI e coberta por testes com dublê; a execução manual do roteiro de e2e
+  (`specs/011-contas-e-provedores/e2e.md`) pelo dono, durante a fase Validar em
+  2026-08-04, confirmou o formato contra o CLI real. Fica registrado o método:
+  dublê escrito a partir do contrato não prova o contrato — foi o e2e humano
+  que fechou a inferência.
 - **`expiresAt` fabricado na UI.** Ao conectar uma conta do pool próprio, o
   `AccountsPanel.tsx` monta o par com `expiresAt` de uma hora à frente, chutado.
   É esse campo que decide se o mod local tenta o refresh de fallback: um par já

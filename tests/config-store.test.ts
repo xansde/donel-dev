@@ -62,6 +62,7 @@ describe('defaultAppConfig (puro)', () => {
         localAccounts: [],
         activeAccountId: null,
       },
+      migration: { startedAt: null, completedAt: null, profiles: {}, archivedTo: null },
     });
   });
 });
@@ -206,6 +207,12 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
         localAccounts: [{ id: 'acc-1', label: 'Conta 1', plan: 'pro' }],
         activeAccountId: 'acc-1',
       },
+      migration: {
+        startedAt: 1000,
+        completedAt: null,
+        profiles: { 'acc-1': { credentials: 'imported', transcripts: 'imported', mcpReviewed: true } },
+        archivedTo: null,
+      },
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
   });
@@ -256,6 +263,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       devMode: defaults.devMode, // ausente no objeto → default
       tabAppearance: {}, // ausente no objeto → default
       accounts: defaults.accounts, // ausente no objeto → default
+      migration: defaults.migration, // ausente no objeto → default
     });
   });
 
