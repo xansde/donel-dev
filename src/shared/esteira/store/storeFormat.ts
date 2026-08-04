@@ -245,6 +245,15 @@ export type WorkItemState = 'open' | 'in-progress' | 'done' | 'abandoned';
 /** D-13 — macro etapas do card de origem, sempre CALCULADAS do grafo. */
 export type MacroStage = 'discovery' | 'planned' | 'execution' | 'done';
 
+/**
+ * As duas listas moram AQUI, com o formato, porque tres camadas precisam da
+ * mesma: o reducer (para ler o payload do disco), a fronteira IPC (para validar
+ * o gesto antes de mutar) e a tela (para oferecer as opcoes). Duas copias da
+ * mesma lista sao exatamente o desencontro entre camadas que originou a spec.
+ */
+export const WORK_ITEM_STATES: readonly WorkItemState[] = ['open', 'in-progress', 'done', 'abandoned'];
+export const MACRO_STAGES: readonly MacroStage[] = ['discovery', 'planned', 'execution', 'done'];
+
 export interface EntityId {
   readonly entity: EntityKind;
   readonly id: string;

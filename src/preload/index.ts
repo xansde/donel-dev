@@ -60,12 +60,17 @@ import { CLIPBOARD_CHANNELS } from '../shared';
 // Spec 010 — canais e shapes da esteira nova.
 import {
   ESTEIRA_CHANNELS,
+  type AddNoteIpcInput,
   type CreateDiscoveryIpcInput,
+  type DiscardWorkItemIpcInput,
   type DispatchIpcInput,
   type EsteiraCreateDiscoveryDto,
   type EsteiraDispatchDto,
+  type EsteiraGestureDto,
   type EsteiraSnapshotDto,
   type ReleaseLockIpcInput,
+  type SetStageOverrideIpcInput,
+  type SetWorkItemStateIpcInput,
 } from '../shared/esteira/ipc';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
@@ -313,6 +318,20 @@ const donelApi: DonelApi = {
     dispatch: (input: DispatchIpcInput) => ipcRenderer.invoke(ESTEIRA_CHANNELS.dispatch, input) as Promise<EsteiraDispatchDto>,
 
     releaseLock: (input: ReleaseLockIpcInput) => ipcRenderer.invoke(ESTEIRA_CHANNELS.releaseLock, input) as Promise<EsteiraSnapshotDto>,
+
+    // Os gestos que o store já entendia e a tela não oferecia (B3): ajuste de
+    // macro etapa, estado do item, descarte (D-16) e nota. Criação de item NÃO
+    // está aqui de propósito — D-16 manda ela passar sempre pela skill.
+    setStageOverride: (input: SetStageOverrideIpcInput) =>
+      ipcRenderer.invoke(ESTEIRA_CHANNELS.setStageOverride, input) as Promise<EsteiraGestureDto>,
+
+    setWorkItemState: (input: SetWorkItemStateIpcInput) =>
+      ipcRenderer.invoke(ESTEIRA_CHANNELS.setWorkItemState, input) as Promise<EsteiraGestureDto>,
+
+    discardWorkItem: (input: DiscardWorkItemIpcInput) =>
+      ipcRenderer.invoke(ESTEIRA_CHANNELS.discardWorkItem, input) as Promise<EsteiraGestureDto>,
+
+    addNote: (input: AddNoteIpcInput) => ipcRenderer.invoke(ESTEIRA_CHANNELS.addNote, input) as Promise<EsteiraGestureDto>,
 
     onChanged: (listener: (state: EsteiraSnapshotDto) => void) => {
       const handler = (_event: unknown, state: EsteiraSnapshotDto): void => listener(state);

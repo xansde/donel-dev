@@ -18,7 +18,9 @@
 
 import {
   LIFECYCLE_BY_ITEM_TYPE,
+  MACRO_STAGES,
   STORE_SCHEMA_VERSION,
+  WORK_ITEM_STATES,
   type ArtifactPointer,
   type DiscoverySnapshot,
   type EntityId,
@@ -159,8 +161,6 @@ function relationKey(relation: string, from: EntityId, to: EntityId): string {
 }
 
 const WORK_ITEM_TYPES: readonly WorkItemType[] = ['issue', 'spec', 'process-map', 'adr', 'prototype', 'spike', 'eval'];
-const WORK_ITEM_STATES: readonly WorkItemState[] = ['open', 'in-progress', 'done', 'abandoned'];
-const MACRO_STAGES: readonly MacroStage[] = ['discovery', 'planned', 'execution', 'done'];
 const RELATION_KINDS: readonly RelationKind[] = ['originated', 'flows_into', 'ships_with'];
 const PHASE_OUTCOMES: readonly PhaseOutcome[] = ['done', 'abandoned', 'inconclusive'];
 const VERIFICATION_KINDS: readonly VerificationKind[] = ['pull-request', 'check', 'review', 'conclusion'];

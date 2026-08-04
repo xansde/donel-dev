@@ -12,14 +12,18 @@
 // de 03/08.
 
 import { MACRO_STAGE_LABEL } from '../../../shared/esteira/ipc';
+import { MACRO_STAGES } from '../../../shared/esteira/store/storeFormat';
 import type {
   DiscoverySnapshot,
+  EntityId,
   IngestErrorSnapshot,
   LockRecord,
+  MacroStage,
   PhaseRunSnapshot,
   SessionSnapshot,
   StoreSnapshot,
   WorkItemSnapshot,
+  WorkItemState,
 } from '../../../shared/esteira/store/storeFormat';
 
 export type SignalTone = 'neutral' | 'attention' | 'error';
@@ -64,19 +68,136 @@ export interface StageView {
   readonly derived: string;
   readonly overridden: boolean;
   readonly overrideNote: string | null;
+  /**
+   * A frase INTEIRA do ajuste, com a etapa calculada dentro dela. Existe porque
+   * `overrideNote` sozinha dizia quem ajustou e não dizia o que o cálculo diz —
+   * e um ajuste sem o cálculo ao lado é exatamente o override que engana quem
+   * lê, que D-13 proíbe. `null` quando não há ajuste.
+   */
+  readonly overrideLine: string | null;
 }
 
 export function stageView(discovery: DiscoverySnapshot): StageView {
   const derived = MACRO_STAGE_LABEL[discovery.derivedStage];
   const override = discovery.stageOverride;
-  if (override === null) return { shown: derived, derived, overridden: false, overrideNote: null };
+  if (override === null) return { shown: derived, derived, overridden: false, overrideNote: null, overrideLine: null };
 
+  const forced = MACRO_STAGE_LABEL[override.value];
+  const because = override.reason ? ` — ${override.reason}` : '';
   return {
-    shown: MACRO_STAGE_LABEL[override.value],
+    shown: forced,
     derived,
     overridden: true,
-    overrideNote: `ajustado à mão por ${override.by}${override.reason ? ` — ${override.reason}` : ''}`,
+    overrideNote: `ajustado à mão por ${override.by}${because}`,
+    overrideLine: `Etapa forçada para "${forced}" por ${override.by}${because}. O cálculo continua dizendo "${derived}".`,
   };
+}
+
+/** As macro etapas que o gesto de ajuste oferece. Ordem do modelo, rótulo em pt-BR. */
+export const MACRO_STAGE_OPTIONS: readonly { readonly value: MacroStage; readonly label: string }[] = MACRO_STAGES.map((stage) => ({
+  value: stage,
+  label: MACRO_STAGE_LABEL[stage],
+}));
+
+/** O estado do item em português. O dado é inglês; a tela, não. */
+export const WORK_ITEM_STATE_LABEL: Readonly<Record<WorkItemState, string>> = {
+  open: 'aberto',
+  'in-progress': 'em curso',
+  done: 'concluído',
+  abandoned: 'abandonado',
+};
+
+/** A linha de UM item na lista do card — tudo que ela diz nasce aqui. */
+export function itemLine(item: WorkItemSnapshot): string {
+  const repo = item.targetRepo ?? 'sem repo alvo';
+  const origem = item.createdBySkill ? ' · criado pela skill' : '';
+  return `${item.title} · ${item.itemType} · ${WORK_ITEM_STATE_LABEL[item.state]} · ${repo}${origem}`;
+}
+
+export interface ItemStateAction {
+  readonly state: WorkItemState;
+  readonly label: string;
+  /** O que o gesto faz — e o que ele faz com a etapa do card. */
+  readonly hint: string;
+}
+
+/**
+ * Os gestos de estado oferecidos para um item: abrir, começar, concluir,
+ * abandonar, menos aquele em que ele já está.
+ *
+ * As frases falam da REGRA ("a etapa é recalculada e pode retroceder"), nunca do
+ * resultado ("a etapa vai virar Execução"): prever a etapa aqui seria a tela
+ * calculando o que só o main deriva — e errando sempre que o discovery ainda não
+ * tivesse concluído.
+ */
+export function itemStateActions(item: WorkItemSnapshot): readonly ItemStateAction[] {
+  const concluded = item.state === 'done' || item.state === 'abandoned';
+
+  const all: readonly ItemStateAction[] = [
+    {
+      state: 'in-progress',
+      label: concluded ? 'Retomar' : 'Começar',
+      hint: 'O item passa a estar em curso. A etapa do card é recalculada — ela nunca é digitada.',
+    },
+    {
+      state: 'done',
+      label: 'Concluir',
+      hint: 'O item fecha. Quando todos os itens estiverem fechados, o cálculo leva o card a Concluído.',
+    },
+    {
+      state: 'abandoned',
+      label: 'Abandonar',
+      hint: 'Desistir é desfecho válido, não pendência: o item fecha como abandonado.',
+    },
+    {
+      state: 'open',
+      label: concluded ? 'Reabrir' : 'Voltar para aberto',
+      hint: concluded
+        ? 'O item volta a aberto. A etapa do card é recalculada e pode retroceder — item reaberto puxa o card de volta.'
+        : 'O item deixa de estar em curso. A etapa do card é recalculada e pode retroceder.',
+    },
+  ];
+
+  return all.filter((action) => action.state !== item.state);
+}
+
+/** A regra que governa o bloco de itens, dita uma vez, onde ela se aplica. */
+export const ITEM_STATE_RULE =
+  'O estado do item é o que move a etapa do card — e a etapa retrocede: item reaberto depois de fechado puxa o card de volta.';
+
+/** O que dizer quando um gesto é recusado. Recusa calada é o vício que a spec 010 combate. */
+export const GESTURE_REFUSAL_MESSAGE: Readonly<Record<string, string>> = {
+  'store-refused': 'O histórico não aceita escrita agora. Nada foi gravado.',
+  'invalid-input': 'O gesto chegou incompleto ao app e foi recusado. Nada foi gravado.',
+  'unknown-subject': 'Este assunto não está mais no histórico. Nada foi gravado — a tela pode estar defasada; varra o outbox.',
+  locked:
+    'Há uma fase travada neste item. Libere a trava antes de descartá-lo: descartar agora tiraria a trava da tela sem tirá-la do estado.',
+};
+
+export function gestureRefusalMessage(reason: string): string {
+  return GESTURE_REFUSAL_MESSAGE[reason] ?? 'O gesto foi recusado e nada foi gravado.';
+}
+
+/** O que a tela diz DEPOIS de o item sair — o descarte não apaga o passado. */
+export function discardedMessage(item: WorkItemSnapshot): string {
+  return `Item «${item.title}» descartado. Ele sai do card; o histórico guarda que ele existiu.`;
+}
+
+/** D-16 — por que o descarte não tem bloqueio, e o que ele não apaga. */
+export function discardHint(item: WorkItemSnapshot): string {
+  const origem = item.createdBySkill
+    ? 'Este item nasceu pela skill: descartar é um gesto só, sem bloqueio.'
+    : 'Descartar é um gesto só, sem bloqueio.';
+  return `${origem} O item sai do card; o fato de ele ter existido fica no histórico.`;
+}
+
+/** Uma nota do card, já sabendo dizer sobre o que ela é. */
+export interface NoteView {
+  readonly text: string;
+  readonly at: string;
+  readonly subject: EntityId;
+  /** "o card", "o item «X»", "um plano" — quem lê precisa saber a que a nota se prende. */
+  readonly about: string;
 }
 
 export interface CardView {
@@ -92,7 +213,7 @@ export interface CardView {
   /** Todas as sessões do card: é delas que sai o "alguém assumiu?" de cada fase. */
   readonly sessions: readonly SessionSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
-  readonly notes: readonly { readonly text: string; readonly at: string }[];
+  readonly notes: readonly NoteView[];
 }
 
 /**
@@ -164,8 +285,54 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     openSession: [...snapshot.sessions].reverse().find((session) => belongs(session.subject) && session.endedAt === null) ?? null,
     sessions: snapshot.sessions.filter((session) => belongs(session.subject)),
     ingestErrors: snapshot.ingestErrors.filter((error) => error.subject !== null && belongs(error.subject)),
-    notes: snapshot.notes.filter((note) => belongs(note.subject)).map((note) => ({ text: note.text, at: note.at })),
+    notes: snapshot.notes
+      .filter((note) => belongs(note.subject))
+      .map((note) => ({
+        text: note.text,
+        at: note.at,
+        subject: note.subject,
+        about: aboutSubject(note.subject, plans, items),
+      })),
   };
+}
+
+/** Como se chama, em português, o assunto de uma nota deste card. */
+function aboutSubject(subject: EntityId, plans: readonly PlanLike[], items: readonly WorkItemSnapshot[]): string {
+  if (subject.entity === 'discovery') return 'o card';
+  if (subject.entity === 'plan') {
+    const plan = plans.find((entry) => entry.id === subject.id);
+    return plan === undefined ? 'um plano' : `o plano «${plan.title}»`;
+  }
+  const item = items.find((entry) => entry.id === subject.id);
+  return item === undefined ? 'um item' : `o item «${item.title}»`;
+}
+
+interface PlanLike {
+  readonly id: string;
+  readonly title: string;
+}
+
+/**
+ * Os alvos possíveis de uma nota neste card: o card e cada item. O valor é
+ * `<entidade>:<id>` porque o `Select` do design-system trafega string — e o
+ * caminho de volta é `parseNoteTarget`, para o renderer não montar `EntityId`
+ * à mão em lugar nenhum.
+ */
+export function noteTargetOptions(card: CardView): readonly { readonly value: string; readonly label: string }[] {
+  return [
+    { value: `discovery:${card.discovery.id}`, label: `Sobre o card — ${card.discovery.title}` },
+    ...card.items.map((item) => ({ value: `work_item:${item.id}`, label: `Sobre o item — ${item.title}` })),
+  ];
+}
+
+export function parseNoteTarget(value: string): EntityId | null {
+  const separator = value.indexOf(':');
+  if (separator <= 0) return null;
+  const entity = value.slice(0, separator);
+  const id = value.slice(separator + 1);
+  if (id.length === 0) return null;
+  if (entity !== 'discovery' && entity !== 'plan' && entity !== 'work_item') return null;
+  return { entity, id };
 }
 
 /**

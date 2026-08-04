@@ -11,11 +11,16 @@ import { esteiraOutboxDir } from './esteira-ingest';
 import { esteiraInboxDir } from './esteira-dispatch';
 import {
   ESTEIRA_CHANNELS,
+  isValidAddNoteIpcInput,
   isValidCreateDiscoveryIpcInput,
+  isValidDiscardWorkItemIpcInput,
   isValidDispatchIpcInput,
   isValidReleaseLockIpcInput,
+  isValidSetStageOverrideIpcInput,
+  isValidSetWorkItemStateIpcInput,
   type EsteiraCreateDiscoveryDto,
   type EsteiraDispatchDto,
+  type EsteiraGestureDto,
   type EsteiraSnapshotDto,
 } from '../shared/esteira/ipc';
 import type {
@@ -945,6 +950,32 @@ function registerEsteiraIpcHandlers(): void {
     if (esteiraService === null) return null;
     if (!isValidReleaseLockIpcInput(input)) return esteiraService.snapshotDto();
     return esteiraService.releaseLock(input);
+  });
+
+  // Os gestos de B3. Todos seguem a mesma regra dos canais acima: payload
+  // inválido não muta nada e volta com a razão, em vez de falhar calado.
+  ipcMain.handle(ESTEIRA_CHANNELS.setStageOverride, (_event, input: unknown): EsteiraGestureDto | null => {
+    if (esteiraService === null) return null;
+    if (!isValidSetStageOverrideIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
+    return esteiraService.setStageOverride(input);
+  });
+
+  ipcMain.handle(ESTEIRA_CHANNELS.setWorkItemState, (_event, input: unknown): EsteiraGestureDto | null => {
+    if (esteiraService === null) return null;
+    if (!isValidSetWorkItemStateIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
+    return esteiraService.setWorkItemState(input);
+  });
+
+  ipcMain.handle(ESTEIRA_CHANNELS.discardWorkItem, (_event, input: unknown): EsteiraGestureDto | null => {
+    if (esteiraService === null) return null;
+    if (!isValidDiscardWorkItemIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
+    return esteiraService.discardWorkItem(input);
+  });
+
+  ipcMain.handle(ESTEIRA_CHANNELS.addNote, (_event, input: unknown): EsteiraGestureDto | null => {
+    if (esteiraService === null) return null;
+    if (!isValidAddNoteIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
+    return esteiraService.addNote(input);
   });
 }
 

@@ -8,7 +8,8 @@
 // snapshot, a tela nao o inventa.
 
 import type { ContractIssue } from './contract/parsing';
-import type { EntityId, LockRecord, MacroStage, StoreCompatibility, StoreSnapshot } from './store/storeFormat';
+import { MACRO_STAGES, WORK_ITEM_STATES } from './store/storeFormat';
+import type { EntityId, LockRecord, MacroStage, StoreCompatibility, StoreSnapshot, WorkItemState } from './store/storeFormat';
 
 export const ESTEIRA_CHANNELS = {
   /** Estado atual: snapshot derivado + de onde ele veio. */
@@ -21,6 +22,14 @@ export const ESTEIRA_CHANNELS = {
   dispatch: 'esteira:dispatch',
   /** Libera a trava — o "gesto" de D-11. */
   releaseLock: 'esteira:releaseLock',
+  /** D-13 — forca a macro etapa a mao, ou volta ao calculo (`value: null`). */
+  setStageOverride: 'esteira:setStageOverride',
+  /** Abrir/comecar/concluir/abandonar um item — e o que move a macro etapa, inclusive PARA TRAS. */
+  setWorkItemState: 'esteira:setWorkItemState',
+  /** D-16 — descarta um item num gesto; o evento fica no log, a entidade sai do snapshot. */
+  discardWorkItem: 'esteira:discardWorkItem',
+  /** Nota amarrada ao card ou a um item. */
+  addNote: 'esteira:addNote',
   /** main → renderer: o store mudou (ingestao, disparo, gesto de outro canal). */
   changed: 'esteira:changed',
 } as const;
@@ -105,6 +114,88 @@ export function isValidReleaseLockIpcInput(input: unknown): input is ReleaseLock
   return typeof subject.id === 'string' && subject.id.trim().length > 0;
 }
 
+/**
+ * D-13 — o ajuste manual da macro etapa. `value: null` e o gesto de LIMPAR: um
+ * canal so para os dois lados do mesmo ajuste, porque "voltar ao calculado"
+ * precisa ser tao barato quanto forcar — override caro de desfazer vira override
+ * esquecido, e etapa esquecida e o "estado que mente" que a spec extingue.
+ *
+ * Quem ajustou (`by`) NAO vem do renderer: e o main que sabe em nome de quem o
+ * app roda. Deixar a tela mandar o autor seria deixar o registro do ajuste ser
+ * escrito por quem esta sendo registrado.
+ */
+export interface SetStageOverrideIpcInput {
+  readonly discoveryId: string;
+  readonly value: MacroStage | null;
+  readonly reason: string | null;
+}
+
+export function isValidSetStageOverrideIpcInput(input: unknown): input is SetStageOverrideIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<SetStageOverrideIpcInput>;
+  if (typeof candidate.discoveryId !== 'string' || candidate.discoveryId.trim().length === 0) return false;
+  if (candidate.value !== null && candidate.value !== undefined && !MACRO_STAGES.includes(candidate.value)) return false;
+  if (candidate.reason !== null && candidate.reason !== undefined && typeof candidate.reason !== 'string') return false;
+  return true;
+}
+
+/** Abrir, comecar, concluir, abandonar — os quatro estados de D-4, um gesto cada. */
+export interface SetWorkItemStateIpcInput {
+  readonly workItemId: string;
+  readonly state: WorkItemState;
+}
+
+export function isValidSetWorkItemStateIpcInput(input: unknown): input is SetWorkItemStateIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<SetWorkItemStateIpcInput>;
+  if (typeof candidate.workItemId !== 'string' || candidate.workItemId.trim().length === 0) return false;
+  return typeof candidate.state === 'string' && WORK_ITEM_STATES.includes(candidate.state);
+}
+
+/** D-16 — descartar item nascido pela skill. Sem bloqueio; o fato fica no log. */
+export interface DiscardWorkItemIpcInput {
+  readonly workItemId: string;
+  readonly reason: string | null;
+}
+
+export function isValidDiscardWorkItemIpcInput(input: unknown): input is DiscardWorkItemIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<DiscardWorkItemIpcInput>;
+  if (typeof candidate.workItemId !== 'string' || candidate.workItemId.trim().length === 0) return false;
+  if (candidate.reason !== null && candidate.reason !== undefined && typeof candidate.reason !== 'string') return false;
+  return true;
+}
+
+export interface AddNoteIpcInput {
+  readonly subject: EntityId;
+  readonly text: string;
+}
+
+export function isValidAddNoteIpcInput(input: unknown): input is AddNoteIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<AddNoteIpcInput>;
+  if (typeof candidate.text !== 'string' || candidate.text.trim().length === 0) return false;
+  const subject = candidate.subject as Partial<EntityId> | undefined;
+  if (typeof subject !== 'object' || subject === null) return false;
+  if (subject.entity !== 'discovery' && subject.entity !== 'plan' && subject.entity !== 'work_item') return false;
+  return typeof subject.id === 'string' && subject.id.trim().length > 0;
+}
+
+/**
+ * A resposta dos gestos que so mudam o estado local. `unknown-subject` existe
+ * porque o reducer ignora, calado, evento sobre entidade que nao existe: gravar
+ * assim mesmo produziria um fato sobre um fantasma e uma tela que nao muda, sem
+ * ninguem saber por que. Recusar antes de escrever, com a razao, e a mesma regra
+ * de "o app nunca afirma o que nao leu", aplicada na escrita.
+ */
+export type EsteiraGestureDto =
+  | { readonly ok: true; readonly state: EsteiraSnapshotDto }
+  | {
+      readonly ok: false;
+      readonly reason: 'store-refused' | 'invalid-input' | 'unknown-subject' | 'locked';
+      readonly state: EsteiraSnapshotDto;
+    };
+
 export type EsteiraDispatchDto =
   | {
       readonly ok: true;
@@ -129,6 +220,10 @@ export interface DonelEsteiraApi {
   createDiscovery(input: CreateDiscoveryIpcInput): Promise<EsteiraCreateDiscoveryDto>;
   dispatch(input: DispatchIpcInput): Promise<EsteiraDispatchDto>;
   releaseLock(input: ReleaseLockIpcInput): Promise<EsteiraSnapshotDto>;
+  setStageOverride(input: SetStageOverrideIpcInput): Promise<EsteiraGestureDto>;
+  setWorkItemState(input: SetWorkItemStateIpcInput): Promise<EsteiraGestureDto>;
+  discardWorkItem(input: DiscardWorkItemIpcInput): Promise<EsteiraGestureDto>;
+  addNote(input: AddNoteIpcInput): Promise<EsteiraGestureDto>;
   /** Devolve a funcao de desinscricao (mesmo padrao dos outros canais de push). */
   onChanged(listener: (state: EsteiraSnapshotDto) => void): () => void;
 }
