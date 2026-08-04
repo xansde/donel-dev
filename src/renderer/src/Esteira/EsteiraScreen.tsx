@@ -2,6 +2,7 @@ import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EsteiraGestureDto, EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
 import type { MacroStage, WorkItemSnapshot, WorkItemState } from '../../../shared/esteira/store/storeFormat';
+import { SEED_DOCUMENT_EXAMPLE } from '../../../shared/esteira/store/seed';
 import type { EsteiraSessionRequest, KnownProject } from './esteiraSession';
 import { preparePhase } from './preparePhase';
 import {
@@ -23,9 +24,16 @@ import {
   NOTHING_NEW,
   parseNoteTarget,
   phaseLines,
+  provenanceMark,
   scanMessage,
   scanOutcomeMessage,
+  SEEDED_CARD_NOTE,
+  seedIssueLine,
+  seedIssuesShown,
+  seededSummary,
   STORE_COMPATIBILITY_WARNING,
+  type ProvenanceMark,
+  type SeedRefusal,
   type SignalTone,
 } from './esteiraView';
 import styles from './EsteiraScreen.module.css';
@@ -60,6 +68,20 @@ const SIGNAL_CLASS: Readonly<Record<SignalTone, string>> = {
 // O catálogo de fases saiu daqui no B2: quem diz o que a tela oferece — e por
 // que uma fase está desabilitada — é `dispatchView`, na camada pura.
 
+/**
+ * A marca de proveniência (D-2). Componente burro de propósito: o texto e a
+ * decisão de mostrar ou não vêm de `esteiraView`, porque foi corrigir rótulo
+ * dentro do JSX que fez a mesma palavra errada reaparecer noutro bloco.
+ */
+function ProvenanceChip({ mark }: { mark: ProvenanceMark | null }): JSX.Element | null {
+  if (mark === null) return null;
+  return (
+    <span className={styles.seeded} title={mark.title}>
+      {mark.label}
+    </span>
+  );
+}
+
 export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScreenProps): JSX.Element {
   const [state, setState] = useState<EsteiraSnapshotDto | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -75,6 +97,13 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   const [stagePick, setStagePick] = useState<MacroStage | null>(null);
   const [notePick, setNotePick] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
+  // D-2 — semear trabalho em curso. Fica fechado por default: é o caminho de
+  // exceção (plantar o que já existe), não o gesto do dia a dia.
+  const [seedOpen, setSeedOpen] = useState(false);
+  const [seedDoc, setSeedDoc] = useState('');
+  // A recusa guarda o documento que ela julgou: veredito não sobrevive ao texto
+  // que o motivou (ver `seedIssuesShown`).
+  const [seedRefusal, setSeedRefusal] = useState<SeedRefusal | null>(null);
 
   useEffect(() => {
     void window.donel.esteira.snapshot().then(setState);
@@ -93,6 +122,7 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
     () => (selected === null ? null : dispatchView(selected, { phase, targetKey })),
     [selected, phase, targetKey],
   );
+  const seedIssues = seedIssuesShown(seedRefusal, seedDoc);
   const warning = state === null ? null : STORE_COMPATIBILITY_WARNING[state.compatibility];
   const readOnly = state !== null && state.compatibility !== 'read-write';
 
@@ -103,8 +133,8 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   // simples; item vira linha COM gestos, e o texto continua sendo o mesmo que a
   // camada pura escreveu.
   const planLines = useMemo(() => (content?.lines ?? []).filter((line) => line.kind === 'plan'), [content]);
-  const itemTextById = useMemo(
-    () => new Map((content?.lines ?? []).filter((line) => line.kind === 'item').map((line) => [line.key.slice('work_item:'.length), line.text])),
+  const itemLineById = useMemo(
+    () => new Map((content?.lines ?? []).filter((line) => line.kind === 'item').map((line) => [line.key.slice('work_item:'.length), line])),
     [content],
   );
 
@@ -142,6 +172,34 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
       setMessage('Não deu para criar: o histórico não aceita escrita agora.');
     }
   }, [newTitle, newRepo]);
+
+  const handleSeed = useCallback(async () => {
+    const document = seedDoc.trim();
+    if (document.length === 0) return;
+    const seeded = await window.donel.esteira.seed({ document });
+    setState(seeded.state);
+
+    if (seeded.ok) {
+      setSeedRefusal(null);
+      setSeedDoc('');
+      setSeedOpen(false);
+      setSelectedId(seeded.discoveryId);
+      setMessage(seededSummary({ plans: seeded.planIds.length, items: seeded.workItemIds.length }));
+      return;
+    }
+    if (seeded.reason === 'invalid-seed') {
+      // Nada foi escrito: o documento volta na tela com o motivo de cada
+      // recusa, para ser corrigido — é isto que "sem edição manual às cegas"
+      // significa na prática. A recusa anda grudada no texto que a produziu:
+      // editar o documento apaga o veredito, em vez de acusar defeito que não
+      // está mais lá.
+      setSeedRefusal({ document, issues: seeded.issues });
+      setMessage(null);
+      return;
+    }
+    setSeedRefusal(null);
+    setMessage('Não deu para semear: o histórico não aceita escrita agora.');
+  }, [seedDoc]);
 
   const handleDispatch = useCallback(async () => {
     // O botão já está desabilitado quando não dá; esta guarda existe para o
@@ -290,6 +348,55 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
             </Button>
           </div>
 
+          {/* D-2 — o caminho para trabalho que JÁ existe. O store nasce limpo e
+              continua nascendo: isto não importa o modelo antigo, é o operador
+              descrevendo o que está em curso. Tudo o que entra por aqui nasce
+              marcado como semeado — afirmação, não fato observado. */}
+          <div className={styles.seedCard}>
+            <Button
+              variant="ghost"
+              data-testid="esteira-seed-toggle"
+              onClick={() => setSeedOpen((open) => !open)}
+              disabled={readOnly}
+            >
+              {seedOpen ? 'Fechar o seed' : 'Semear trabalho em curso'}
+            </Button>
+
+            {seedOpen ? (
+              <>
+                <p className={styles.hint}>
+                  Descreva o que já existe — o discovery, os planos, os itens e em que ponto estão. Nasce marcado como semeado: é a sua
+                  palavra, não algo que o app tenha lido de uma execução.
+                </p>
+                <textarea
+                  className={styles.seedDoc}
+                  data-testid="esteira-seed-doc"
+                  aria-label="Documento do seed"
+                  spellCheck={false}
+                  rows={12}
+                  value={seedDoc}
+                  onChange={(event) => setSeedDoc(event.target.value)}
+                  placeholder="Cole aqui o documento do seed, ou comece pelo exemplo."
+                />
+                {seedIssues.length > 0 ? (
+                  <ul className={styles.seedIssues} data-testid="esteira-seed-issues">
+                    {seedIssues.map((issue, index) => (
+                      <li key={`${index}:${issue.code}:${issue.path}`}>{seedIssueLine(issue)}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div className={styles.rowActions}>
+                  <Button onClick={() => void handleSeed()} disabled={readOnly || seedDoc.trim().length === 0}>
+                    Semear
+                  </Button>
+                  <Button variant="ghost" onClick={() => setSeedDoc(SEED_DOCUMENT_EXAMPLE)}>
+                    Exemplo
+                  </Button>
+                </div>
+              </>
+            ) : null}
+          </div>
+
           {cards.length === 0 ? (
             <p className={styles.empty}>Nenhum card ainda. O histórico nasce limpo — nada foi importado do modelo antigo.</p>
           ) : null}
@@ -309,6 +416,7 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                   <span className={styles.stage}>{view.stage.shown}</span>
                   {view.stage.overridden ? <span className={styles.stageDerived}>derivada: {view.stage.derived}</span> : null}
                   {discovery.targetRepo ? <span className={styles.repo}>{discovery.targetRepo}</span> : null}
+                  <ProvenanceChip mark={provenanceMark(discovery.seeded)} />
                 </span>
                 {view.signals.length > 0 ? (
                   <span className={styles.signals}>
@@ -371,6 +479,10 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                 </div>
               </section>
 
+              {/* D-2 — o card foi semeado: a nota diz o que a marca significa,
+                  uma vez por card, em vez de repetir a explicação em cada chip. */}
+              {selected.discovery.seeded ? <p className={styles.seededNote}>{SEEDED_CARD_NOTE}</p> : null}
+
               {/* O erro de leitura vem PRIMEIRO: é a informação que o modelo
                   antigo escondia, e a que muda o que o operador faz agora. */}
               {selected.ingestErrors.length > 0 ? (
@@ -428,7 +540,7 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                   <ul className={styles.lines}>
                     {phaseLines(selected).map((entry) => (
                       <li key={entry.key} className={entry.failed ? styles.failed : undefined}>
-                        {entry.text}
+                        {entry.text} <ProvenanceChip mark={entry.mark} />
                         {entry.detail ? <span className={styles.hint}> {entry.detail}</span> : null}
                       </li>
                     ))}
@@ -440,14 +552,19 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                   GESTOS de cada item vêm do B3. Os dois batches reescreveram
                   este bloco: um para a lista parar de contradizer o disparo
                   sobre o repo, o outro para o item ganhar estado e descarte.
-                  Montar a frase aqui de novo desfaria o primeiro. */}
+                  Montar a frase aqui de novo desfaria o primeiro. A marca de
+                  proveniência (B4) vem JUNTO da linha, do mesmo `cardContent`:
+                  duas fontes para o mesmo bloco foi o que fez a tela se
+                  contradizer no print 16. */}
               {content === null ? null : (
               <section className={styles.block} data-testid="card-content">
                 <h4 className={styles.blockTitle}>{content.title}</h4>
                 {planLines.length > 0 ? (
                   <ul className={styles.lines}>
                     {planLines.map((line) => (
-                      <li key={line.key}>{line.text}</li>
+                      <li key={line.key}>
+                        {line.text} <ProvenanceChip mark={line.mark} />
+                      </li>
                     ))}
                   </ul>
                 ) : null}
@@ -463,7 +580,9 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                           null;
                         return (
                           <li key={item.id} className={styles.item} data-testid="esteira-item">
-                            <span className={styles.itemLine}>{itemTextById.get(item.id) ?? ''}</span>
+                            <span className={styles.itemLine}>
+                              {itemLineById.get(item.id)?.text ?? ''} <ProvenanceChip mark={itemLineById.get(item.id)?.mark ?? null} />
+                            </span>
                             <div className={styles.rowActions}>
                               {itemStateActions(item).map((action) => (
                                 <Button

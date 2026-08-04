@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,6 +10,7 @@ import {
   isValidDispatchIpcInput,
   isValidEndSessionIpcInput,
   isValidReleaseLockIpcInput,
+  isValidSeedIpcInput,
 } from '../src/shared/esteira/ipc';
 
 // Spec 010 — o servico que liga o store ao app: boot, varredura do outbox,
@@ -497,5 +498,88 @@ describe('validacao de payload do IPC (o main so muta depois de validar)', () =>
     expect(isValidReleaseLockIpcInput({ subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery' })).toBe(true);
     expect(isValidReleaseLockIpcInput({ subject: { entity: 'card', id: 'x' }, phase: 'discovery' })).toBe(false);
     expect(isValidReleaseLockIpcInput({ phase: 'discovery' })).toBe(false);
+  });
+});
+
+describe('semear trabalho em curso (D-2)', () => {
+  const DOCUMENTO = JSON.stringify({
+    discovery: { title: 'Trabalho que ja existia', target_repo: 'donel-dev' },
+    phases: [{ phase: 'discovery', outcome: 'done' }],
+    plans: [{ ref: 'p1', title: 'O plano que ja existe' }],
+    items: [
+      { title: 'Item em curso', type: 'issue', state: 'in-progress', plan: 'p1' },
+      { title: 'Item que nao comecou', type: 'spike', state: 'open', plan: 'p1' },
+    ],
+  });
+
+  it('planta o card, o plano e os itens, e a etapa sai DERIVADA dos fatos semeados', () => {
+    const result = service.seed({ document: DOCUMENTO });
+    if (!result.ok) throw new Error(`esperava ok: ${JSON.stringify(result)}`);
+
+    const snapshot = result.state.snapshot;
+    expect(snapshot.discoveries).toHaveLength(1);
+    expect(snapshot.plans).toHaveLength(1);
+    expect(snapshot.workItems).toHaveLength(2);
+    // Nenhuma etapa digitada: item em curso ⇒ Execução, pela mesma tabela de sempre.
+    expect(snapshot.discoveries[0].derivedStage).toBe('execution');
+    expect(snapshot.discoveries[0].seeded).toBe(true);
+  });
+
+  it('os eventos vao para o log com source.kind = "seed" — a proveniencia fica no disco, nao so na tela', () => {
+    const result = service.seed({ document: DOCUMENTO });
+    expect(result.ok).toBe(true);
+
+    const linhas = readFileSync(join(root, 'store', 'events.jsonl'), 'utf8').trim().split('\n').slice(1);
+    const eventos = linhas.map((linha) => JSON.parse(linha));
+    expect(eventos.length).toBeGreaterThan(0);
+    expect(eventos.every((evento) => evento.source.kind === 'seed')).toBe(true);
+    expect(eventos.map((evento) => evento.type)).toContain('discovery.created');
+  });
+
+  it('documento fora do formato NAO escreve nada e devolve o motivo com caminho', () => {
+    const result = service.seed({ document: JSON.stringify({ discovery: { problem: 'sem titulo' } }) });
+    if (result.ok) throw new Error('esperava recusa');
+
+    if (result.reason !== 'invalid-seed') throw new Error(`esperava invalid-seed, veio ${result.reason}`);
+    expect(result.issues).toContainEqual(expect.objectContaining({ path: 'discovery.title' }));
+    expect(result.state.snapshot.discoveries).toHaveLength(0);
+  });
+
+  it('disparar uma fase em cima do card semeado funciona igual', () => {
+    const seeded = service.seed({ document: DOCUMENTO });
+    if (!seeded.ok) throw new Error('seed falhou');
+
+    const dispatched = service.dispatch({
+      phase: 'plano',
+      discoveryId: seeded.discoveryId,
+      planId: seeded.planIds[0],
+      workItemId: null,
+      workspace: { target_repo: 'donel-dev', repo_path: null, worktree_path: null, branch: null },
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+
+    expect(dispatched.ok).toBe(true);
+    expect(dispatched.state.snapshot.locks).toHaveLength(1);
+  });
+
+  it('store que nao aceita escrita recusa o seed, sem escrever nada', () => {
+    mkdirSync(join(root, 'store3'), { recursive: true });
+    writeFileSync(
+      join(root, 'store3', 'events.jsonl'),
+      `${JSON.stringify({ kind: 'esteira.store.header', schema_version: '9.0.0', created_at: '2026-08-04T14:30:00.000Z', created_by_channel: 'beta' })}\n`,
+      'utf8',
+    );
+    const readOnly = open({ storeDir: join(root, 'store3') });
+
+    expect(readOnly.seed({ document: DOCUMENTO })).toMatchObject({ ok: false, reason: 'store-refused' });
+    readOnly.dispose();
+  });
+
+  it('o canal valida o payload antes de o main mutar qualquer coisa', () => {
+    expect(isValidSeedIpcInput({ document: '{}' })).toBe(true);
+    expect(isValidSeedIpcInput({ document: '   ' })).toBe(false);
+    expect(isValidSeedIpcInput({})).toBe(false);
+    expect(isValidSeedIpcInput(null)).toBe(false);
   });
 });

@@ -11,6 +11,7 @@
 // são diferentes porque os dois estados são diferentes; confundi-los foi o bug
 // de 03/08.
 
+import type { ContractIssue, ContractIssueCode } from '../../../shared/esteira/contract/parsing';
 import { MACRO_STAGE_LABEL } from '../../../shared/esteira/ipc';
 import { mirrorOperationKind } from '../../../shared/esteira/mirror/mirrorPlan';
 import { findBlockingLock, lockChainOf } from '../../../shared/esteira/store/lockChain';
@@ -72,6 +73,101 @@ const SIGNAL_VIEW: Readonly<Record<DiscoverySnapshot['stageSignals'][number], Si
 
 export function signalViews(discovery: DiscoverySnapshot): readonly SignalView[] {
   return discovery.stageSignals.map((signal) => SIGNAL_VIEW[signal]);
+}
+
+// ---------------------------------------------------------------------------
+// D-2 — proveniência: o que foi SEMEADO x o que veio declarado por skill
+// ---------------------------------------------------------------------------
+
+/**
+ * A marca de proveniência. Existe porque as duas coisas chegam ao mesmo log e
+ * derivam a mesma etapa, mas dizem coisas diferentes sobre o mundo:
+ *
+ *   semeado   → uma pessoa AFIRMOU que isto já existia e está neste ponto
+ *   declarado → uma skill OBSERVOU o fato e o gravou num `result.json`
+ *
+ * Mostrar os dois iguais seria a inverdade da spec 010 por uma porta nova: o
+ * app apresentando como visto o que ninguém viu. A marca é sempre a mesma
+ * palavra — chip, não frase — para que corrigir o vocabulário seja um lugar só.
+ */
+export interface ProvenanceMark {
+  readonly label: string;
+  readonly title: string;
+}
+
+export const SEEDED_MARK: ProvenanceMark = {
+  label: 'semeado',
+  title: 'Plantado à mão: alguém afirmou que isto já existia. Nenhuma skill declarou este fato — o app não o observou.',
+};
+
+/** `null` (e não uma marca "declarado") porque o default é o fato observado: só a afirmação precisa se anunciar. */
+export function provenanceMark(seeded: boolean): ProvenanceMark | null {
+  return seeded ? SEEDED_MARK : null;
+}
+
+export const SEEDED_CARD_NOTE =
+  'Este card foi semeado: o ponto em que ele está foi afirmado por uma pessoa, não observado de uma execução. O que chegar por skill daqui para frente aparece sem a marca.';
+
+/**
+ * Contagem em português, num lugar só. Existia solta dentro de `seededSummary`
+ * enquanto o título do bloco de planos escrevia "1 plano(s), 2 item(ns)" no
+ * JSX — a mesma grandeza dita de duas formas, e a de fora da camada pura era a
+ * feia. Contar é vocabulário: nasce aqui.
+ */
+function contagem(count: number, singular: string, plural: string, nenhum: string): string {
+  if (count === 0) return nenhum;
+  return count === 1 ? `1 ${singular}` : `${count} ${plural}`;
+}
+
+/** O que dizer depois de plantar. Conta o que entrou — e lembra do que aquilo é. */
+export function seededSummary(counts: { readonly plans: number; readonly items: number }): string {
+  const plans = contagem(counts.plans, 'plano', 'planos', 'nenhum plano');
+  const items = contagem(counts.items, 'item', 'itens', 'nenhum item');
+  return `Semeado: 1 card, ${plans} e ${items}. Isso é afirmação sua, não fato observado — a tela marca cada um como semeado.`;
+}
+
+/**
+ * O documento de seed recusado, em português. O parser devolve código + caminho
+ * (texto técnico é insumo de log, não de tela); a redação para quem está
+ * escrevendo o documento nasce aqui — é o que faz "sem edição manual às cegas"
+ * ser verdade, em vez de um `unknown_field` cru.
+ */
+const SEED_ISSUE_TEXT: Readonly<Partial<Record<ContractIssueCode, string>>> = {
+  invalid_json: 'o documento não é JSON válido',
+  not_an_object: 'o documento precisa ser um objeto JSON',
+  missing_field: 'campo obrigatório ausente',
+  unknown_field: 'campo que o seed não conhece',
+  wrong_type: 'campo com tipo errado',
+  bad_format: 'campo fora do formato',
+  not_in_enum: 'valor fora dos aceitos',
+  missing_required_fact: 'referência para algo que o documento não declara',
+  issue_without_target_repo: 'item do tipo issue precisa de um repo alvo — sem repo, ele nunca poderia ser disparado',
+};
+
+export function seedIssueLine(issue: ContractIssue): string {
+  const text = SEED_ISSUE_TEXT[issue.code] ?? issue.code;
+  return issue.path.length === 0 ? text : `${text} — ${issue.path}`;
+}
+
+/**
+ * A recusa é veredito sobre UM texto — e por isso anda com ele.
+ *
+ * O print do passo 9 pegou a tela afirmando "campo obrigatório ausente —
+ * discovery.title" logo abaixo de uma textarea onde `title` já estava escrito:
+ * a lista sobrevivia à correção e passava a acusar defeito que o documento na
+ * frente da pessoa não tinha mais. Uma lista de erros que não se refere ao que
+ * está na tela é a mesma inverdade das outras, com outro assunto.
+ */
+export interface SeedRefusal {
+  /** O documento que foi recusado, como foi enviado. */
+  readonly document: string;
+  readonly issues: readonly ContractIssue[];
+}
+
+/** As recusas que AINDA valem para o texto atual — as outras não existem mais. */
+export function seedIssuesShown(refusal: SeedRefusal | null, currentDocument: string): readonly ContractIssue[] {
+  if (refusal === null) return [];
+  return refusal.document.trim() === currentDocument.trim() ? refusal.issues : [];
 }
 
 /** Etapa mostrada + se ela é override manual. A derivada NUNCA some da tela (D-13). */
@@ -340,8 +436,13 @@ export interface CardView {
   readonly discovery: DiscoverySnapshot;
   readonly stage: StageView;
   readonly signals: readonly SignalView[];
+  /**
+   * Os planos INTEIROS, não a contagem deles. Era `planCount: number`, e o
+   * bloco dizia "1 plano(s)" sem nunca nomear o plano: a tela contava uma
+   * entidade que escondia — e escondia junto a marca de proveniência dela.
+   * Quem precisa da contagem lê `plans.length` — um número a menos para mentir.
+   */
   readonly plans: readonly PlanSnapshot[];
-  readonly planCount: number;
   readonly items: readonly WorkItemSnapshot[];
   readonly phases: readonly PhaseRunSnapshot[];
   /** A primeira trava do card — a que o bloco da trava desenha. */
@@ -494,7 +595,6 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     stage: stageView(discovery),
     signals: signalViews(discovery),
     plans,
-    planCount: plans.length,
     items,
     phases: snapshot.phases.filter((phase) => belongs(phase.subject)),
     lock: locks[0] ?? null,
@@ -554,6 +654,12 @@ export interface ContentLineView {
   readonly key: string;
   readonly kind: 'plan' | 'item';
   readonly text: string;
+  /**
+   * D-2 — a entidade foi afirmada num seed, não observada de uma execução.
+   * A marca vai AO LADO da frase, não dentro dela: a frase descreve o que a
+   * entidade é, a marca diz quem a afirmou.
+   */
+  readonly mark: ProvenanceMark | null;
 }
 
 export interface CardContentView {
@@ -564,10 +670,13 @@ export interface CardContentView {
   readonly note: string | null;
 }
 
-/** "1 plano" / "2 itens" / "nenhum item" — plural de gente, não "item(ns)". */
+/**
+ * "1 plano" / "2 itens" / "nenhum item" — plural de gente, não "item(ns)".
+ * Delegar para `contagem` (a mesma do `seededSummary`) mantém UMA aritmética
+ * de plural no arquivo: duas cópias divergem no primeiro conserto.
+ */
 function counted(total: number, singular: string, plural: string): string {
-  if (total === 0) return `nenhum ${singular}`;
-  return `${total} ${total === 1 ? singular : plural}`;
+  return contagem(total, singular, plural, `nenhum ${singular}`);
 }
 
 /**
@@ -576,12 +685,18 @@ function counted(total: number, singular: string, plural: string): string {
  * JSX que a tela passou a se contradizer.
  */
 export function cardContent(card: CardView): CardContentView {
-  const title = `Planos e itens (${counted(card.planCount, 'plano', 'planos')}, ${counted(card.items.length, 'item', 'itens')})`;
+  const title = `Planos e itens (${counted(card.plans.length, 'plano', 'planos')}, ${counted(card.items.length, 'item', 'itens')})`;
 
   const lines: ContentLineView[] = card.plans.map((plan) => ({
     key: `plan:${plan.id}`,
     kind: 'plan' as const,
-    text: `Plano — ${plan.title}`,
+    // O resumo vem junto quando o plano declarou um (B4): nomear o plano e
+    // esconder o que ele diz seria contar uma entidade pela metade.
+    text: plan.summary ? `Plano — ${plan.title} · ${plan.summary}` : `Plano — ${plan.title}`,
+    // Costura B2×B4: a linha é do `cardContent` (fonte única do bloco), a
+    // marca de semeado é do seed — sem ela o plano afirmado apareceria aqui
+    // como fato observado.
+    mark: provenanceMark(plan.seeded),
   }));
 
   for (const item of card.items) {
@@ -596,11 +711,12 @@ export function cardContent(card: CardView): CardContentView {
       // do dado (`in-progress`) e o bloco de gestos do B3 imprimia "em curso",
       // sobre o mesmo item, na mesma tela.
       text: itemLine(item, card.discovery, lock),
+      mark: provenanceMark(item.seeded),
     });
   }
 
   const note =
-    card.planCount === 0 && card.items.length === 0
+    card.plans.length === 0 && card.items.length === 0
       ? 'Nenhum plano registrado. Se o discovery terminou assim, é um desfecho — não uma pendência.'
       : card.items.length === 0
         ? 'Os planos ainda não declararam nenhum item.'
@@ -797,6 +913,8 @@ export interface PhaseLineView {
   /** O fato por trás da frase — quem desenha glifo/tom lê isto, nunca o texto. */
   readonly state: PhaseTrailState;
   readonly phase: PhaseRunSnapshot;
+  /** D-2 — a fase foi afirmada num seed, não observada de uma execução. */
+  readonly mark: ProvenanceMark | null;
 }
 
 /**
@@ -828,6 +946,10 @@ export function phaseLines(card: CardView, subject: EntityId | null = null): rea
       detail: phase.failure?.message ?? null,
       state: phaseTrailState(phase, presence),
       phase,
+      // A marca vai AO LADO da frase, não dentro dela: a frase descreve o
+      // desfecho, a marca diz quem o afirmou. Misturar as duas faria o
+      // vocabulário do desfecho depender da proveniência — e ele já tem dono.
+      mark: provenanceMark(phase.seeded),
     };
   });
 }

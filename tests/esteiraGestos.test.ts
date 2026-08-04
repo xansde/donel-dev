@@ -65,6 +65,7 @@ function item(overrides: Partial<WorkItemSnapshot> = {}): WorkItemSnapshot {
     state: 'open',
     createdBySkill: true,
     createdAt: '2026-08-04T12:00:00.000Z',
+    seeded: false,
     ...overrides,
   };
 }
@@ -130,6 +131,7 @@ describe('stageView — o override mostra o calculo ao lado (D-13)', () => {
     derivedStage: 'discovery',
     stageSignals: [],
     stageOverride: null,
+    seeded: false,
   };
 
   it('sem ajuste, nao ha frase de ajuste', () => {

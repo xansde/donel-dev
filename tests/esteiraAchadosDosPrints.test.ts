@@ -30,6 +30,7 @@ function item(overrides: Partial<WorkItemSnapshot> = {}): WorkItemSnapshot {
     state: 'open',
     createdBySkill: true,
     createdAt: '2026-08-04T12:00:00.000Z',
+    seeded: false,
     ...overrides,
   };
 }

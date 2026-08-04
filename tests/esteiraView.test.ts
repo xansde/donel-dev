@@ -2,12 +2,18 @@ import { describe, expect, it } from 'vitest';
 import {
   cardView,
   ingestErrorLine,
+  cardContent,
   lockView,
   MIRROR_PENDING_HINT,
   mirrorLines,
   phaseLine,
   phaseLines,
+  provenanceMark,
   scanMessage,
+  SEEDED_CARD_NOTE,
+  seedIssueLine,
+  seedIssuesShown,
+  seededSummary,
   signalViews,
   stageView,
 } from '../src/renderer/src/Esteira/esteiraView';
@@ -35,6 +41,7 @@ function phase(overrides: Partial<PhaseRunSnapshot>): PhaseRunSnapshot {
     summary: null,
     failure: null,
     lastRunId: null,
+    seeded: false,
     ...overrides,
   };
 }
@@ -84,6 +91,7 @@ describe('sinais do card', () => {
     derivedStage: 'discovery',
     stageSignals: signals,
     stageOverride: null,
+    seeded: false,
   });
 
   it('"discovery concluído sem plano" é dito como o desfecho que é, sem tom de erro', () => {
@@ -113,6 +121,7 @@ describe('stageView — o override nunca engana quem lê', () => {
     derivedStage: 'discovery',
     stageSignals: [],
     stageOverride: null,
+    seeded: false,
   };
 
   it('sem override, mostra a etapa derivada', () => {
@@ -151,7 +160,7 @@ describe('cardView — a tela é projeção, não cálculo', () => {
     const view = cardView(snapshot, 'dsc-1');
     expect(view).not.toBeNull();
     if (view === null) return;
-    expect(view.planCount).toBe(1);
+    expect(view.plans).toHaveLength(1);
     expect(view.items).toHaveLength(1);
     expect(view.phases).toHaveLength(1);
     expect(view.notes).toHaveLength(1);
@@ -421,5 +430,151 @@ describe('o que a varredura do outbox diz ter acontecido', () => {
     expect(frase).toContain('3 resultado(s)');
     expect(frase).toContain('fora do contrato');
     expect(frase).toContain('não consegui ler');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-2 — o que foi SEMEADO x o que veio declarado por skill
+// ---------------------------------------------------------------------------
+
+describe('a tela distingue afirmação de fato observado', () => {
+  /** Um evento com `source: { kind: 'seed' }` — o gesto humano de plantar. */
+  function semeado(type: string, payload: Record<string, unknown>): StoreEvent {
+    return { ...evt(type, payload), source: { kind: 'seed' } };
+  }
+
+  const cardSemeado = (): ReturnType<typeof cardView> =>
+    cardView(
+      reduceEvents([
+        semeado('discovery.created', { id: 'dsc-1', title: 'Trabalho que já existia', createdAt: 'x' }),
+        semeado('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: 'x' }),
+        semeado('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+        semeado('work_item.created', {
+          id: 'wi-1',
+          discoveryId: 'dsc-1',
+          planId: 'pln-1',
+          itemType: 'issue',
+          title: 'Item em curso',
+          targetRepo: 'atlas',
+          state: 'in-progress',
+        }),
+      ]),
+      'dsc-1',
+    );
+
+  it('o card semeado ganha marca própria, e ela diz que ninguém observou aquilo', () => {
+    const card = cardSemeado()!;
+    const mark = provenanceMark(card.discovery.seeded);
+    expect(mark?.label).toBe('semeado');
+    expect(mark?.title).toContain('afirm');
+    expect(mark?.title.toLowerCase()).toContain('nenhuma skill');
+  });
+
+  it('card declarado por skill não ganha marca nenhuma — a ausência é o default', () => {
+    const snapshot = reduceEvents([evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' })]);
+    expect(provenanceMark(cardView(snapshot, 'dsc-1')!.discovery.seeded)).toBeNull();
+  });
+
+  // Costura B2×B4: as linhas nascem em `cardContent` (a fonte única do bloco,
+  // que o B2 criou) e carregam a marca de proveniência que o B4 trouxe —
+  // `itemLines`/`planLines` do B4 eram uma segunda solução do mesmo problema.
+  it('a linha do item semeado carrega a marca, sem perder o que ela já dizia', () => {
+    const [linha] = cardContent(cardSemeado()!).lines.filter((line) => line.kind === 'item');
+    expect(linha.text).toContain('Item em curso');
+    expect(linha.mark?.label).toBe('semeado');
+  });
+
+  it('o plano semeado é NOMEADO, não só contado — senão a marca dele não existe em lugar nenhum', () => {
+    const [linha] = cardContent(cardSemeado()!).lines.filter((line) => line.kind === 'plan');
+    expect(linha.text).toContain('Plano');
+    expect(linha.mark?.label).toBe('semeado');
+  });
+
+  it('a fase semeada não é apresentada como fase observada', () => {
+    const [linha] = phaseLines(cardSemeado()!);
+    expect(linha.text).toBe('discovery — concluída');
+    expect(linha.mark?.label).toBe('semeado');
+  });
+
+  it('a fase que de fato rodou depois do seed perde a marca', () => {
+    const card = cardView(
+      reduceEvents([
+        semeado('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+        semeado('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: 'x' }),
+        evt('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: 'x' }),
+      ]),
+      'dsc-1',
+    )!;
+    expect(phaseLines(card)[0].mark).toBeNull();
+    // O card, esse, continua tendo nascido de uma afirmação.
+    expect(provenanceMark(card.discovery.seeded)).not.toBeNull();
+  });
+
+  it('a nota do card semeado explica o que a marca significa, sem prometer o que não houve', () => {
+    expect(SEEDED_CARD_NOTE).toContain('semeado');
+    expect(SEEDED_CARD_NOTE).not.toContain('não realizada');
+  });
+});
+
+describe('erro de seed — o documento é recusado com o motivo, em português', () => {
+  it('traduz o código do contrato e mostra o caminho do campo', () => {
+    expect(seedIssueLine({ code: 'missing_field', path: 'discovery.title', message: 'x' })).toBe('campo obrigatório ausente — discovery.title');
+    expect(seedIssueLine({ code: 'unknown_field', path: 'discovery.fanout', message: 'x' })).toContain('campo que o seed não conhece');
+    expect(seedIssueLine({ code: 'issue_without_target_repo', path: 'items[0].target_repo', message: 'x' })).toContain('repo alvo');
+  });
+
+  it('JSON quebrado não vira caminho vazio pendurado', () => {
+    expect(seedIssueLine({ code: 'invalid_json', path: '', message: 'x' })).toBe('o documento não é JSON válido');
+  });
+
+  it('o resumo do que foi plantado conta o que entrou e lembra que é afirmação', () => {
+    expect(seededSummary({ plans: 1, items: 2 })).toBe(
+      'Semeado: 1 card, 1 plano e 2 itens. Isso é afirmação sua, não fato observado — a tela marca cada um como semeado.',
+    );
+    expect(seededSummary({ plans: 0, items: 0 })).toContain('nenhum plano e nenhum item');
+  });
+
+  // O print do passo 9 do roteiro `seed-discovery` mostrou a lista de recusas
+  // sobrevivendo à correção do documento: a tela acusava "campo obrigatório
+  // ausente — discovery.title" com o `title` escrito logo acima.
+  it('a recusa vale para o documento que a produziu — e some quando ele muda', () => {
+    const refusal = {
+      document: '{ "discovery": { "titulo": "x" } }',
+      issues: [{ code: 'unknown_field' as const, path: 'discovery.titulo', message: 'x' }],
+    };
+    expect(seedIssuesShown(refusal, '{ "discovery": { "titulo": "x" } }')).toHaveLength(1);
+    expect(seedIssuesShown(refusal, '{ "discovery": { "title": "x" } }')).toHaveLength(0);
+    // Espaço em volta não é edição: o app manda o documento aparado.
+    expect(seedIssuesShown(refusal, '  { "discovery": { "titulo": "x" } }\n')).toHaveLength(1);
+    expect(seedIssuesShown(null, 'qualquer coisa')).toHaveLength(0);
+  });
+});
+
+describe('o bloco de planos e itens conta o que mostra', () => {
+  it('o título usa plural de gente, e não "1 plano(s), 2 item(ns)"', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+      evt('work_item.created', { id: 'wi-1', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'issue', title: 'A', targetRepo: 'atlas', state: 'open' }),
+      evt('work_item.created', { id: 'wi-2', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'spike', title: 'B', targetRepo: 'atlas', state: 'open' }),
+    ]);
+    expect(cardContent(cardView(snapshot, 'dsc-1')!).title).toBe('Planos e itens (1 plano, 2 itens)');
+  });
+
+  it('sem plano nenhum, o título diz isso — ausência declarada, não contagem zero', () => {
+    const snapshot = reduceEvents([evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' })]);
+    const conteudo = cardContent(cardView(snapshot, 'dsc-1')!);
+    expect(conteudo.title).toBe('Planos e itens (nenhum plano, nenhum item)');
+    expect(conteudo.lines).toHaveLength(0);
+  });
+
+  it('o plano registrado aparece com o resumo dele, e não só com o título', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Tornar observável', summary: 'Medir antes de mexer.' }),
+    ]);
+    const [linha] = cardContent(cardView(snapshot, 'dsc-1')!).lines;
+    expect(linha.text).toContain('Tornar observável');
+    expect(linha.text).toContain('Medir antes de mexer.');
   });
 });

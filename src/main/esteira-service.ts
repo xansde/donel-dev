@@ -22,6 +22,7 @@ import { drainMirrorQueue, type BoardMirrorAdapter, type MirrorDrainSummary } fr
 import { openEsteiraStore, type EsteiraStore } from './esteira-store';
 import { MIRROR_DISABLED, type MirrorConfig } from '../shared/esteira/mirror/mirrorConfig';
 import { pendingMirrorDrafts } from '../shared/esteira/mirror/mirrorPlan';
+import { parseSeedDocument, seedToEvents } from '../shared/esteira/store/seed';
 import type {
   AddNoteIpcInput,
   ClaimSessionIpcInput,
@@ -32,8 +33,10 @@ import type {
   EsteiraCreateDiscoveryDto,
   EsteiraDispatchDto,
   EsteiraGestureDto,
+  EsteiraSeedDto,
   EsteiraSnapshotDto,
   ReleaseLockIpcInput,
+  SeedIpcInput,
   SetStageOverrideIpcInput,
   SetWorkItemStateIpcInput,
 } from '../shared/esteira/ipc';
@@ -69,6 +72,8 @@ export interface EsteiraService {
   snapshotDto(): EsteiraSnapshotDto;
   scanOutbox(): EsteiraSnapshotDto;
   createDiscovery(input: CreateDiscoveryIpcInput): EsteiraCreateDiscoveryDto;
+  /** D-2 — planta um discovery que ja existe, marcado como SEMEADO (afirmacao, nao observacao). */
+  seed(input: SeedIpcInput): EsteiraSeedDto;
   dispatch(input: DispatchIpcInput): EsteiraDispatchDto;
   /** Batch B1 — a aba abriu e o CLI devolveu o id: a fase preparada vira fase assumida. */
   claimSession(input: ClaimSessionIpcInput): EsteiraSnapshotDto;
@@ -287,6 +292,42 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
     return { ok: true, discoveryId, state: snapshotDto() };
   }
 
+  /**
+   * D-2 — o seed. O store nasce limpo e continua nascendo: isto NAO le o modelo
+   * antigo nem importa legado. E o operador descrevendo, num documento so, o
+   * trabalho que ja existe e o ponto em que ele esta.
+   *
+   * Duas disciplinas:
+   *
+   * 1. **Documento fora do formato nao escreve NADA.** A recusa vem com o
+   *    caminho do campo — "sem edicao manual as cegas" e isto, e nao um erro
+   *    generico depois de meia gravacao.
+   * 2. **A proveniencia vai para o DISCO**, no `source` do evento. Se ela so
+   *    existisse na tela, o proximo leitor do log leria afirmacao como
+   *    observacao — que e o erro que a spec 010 inteira existe para extinguir.
+   */
+  function seed(input: SeedIpcInput): EsteiraSeedDto {
+    const parsed = parseSeedDocument(input.document);
+    if (!parsed.ok) return { ok: false, reason: 'invalid-seed', issues: parsed.issues, state: snapshotDto() };
+
+    const planted = seedToEvents(parsed.seed, { at: now(), newId });
+    const written = store.append(planted.events, { kind: 'seed' });
+    if (!written.ok) return { ok: false, reason: 'store-refused', state: snapshotDto() };
+
+    store.persistSnapshot();
+    notify();
+    // Costura B4×B5: o documento de seed pode declarar `tracker`, e um card
+    // com tracker espelha como qualquer outro — semeado nao e isento de board.
+    mirrorAfterChange();
+    return {
+      ok: true,
+      discoveryId: planted.discoveryId,
+      planIds: planted.planIds,
+      workItemIds: planted.workItemIds,
+      state: snapshotDto(),
+    };
+  }
+
   function dispatch(input: DispatchIpcInput): EsteiraDispatchDto {
     const result = dispatchPhase(store, {
       phase: input.phase,
@@ -491,6 +532,7 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
     snapshotDto,
     scanOutbox,
     createDiscovery,
+    seed,
     dispatch,
     claimSession: claimSessionFact,
     endSession: endSessionFact,

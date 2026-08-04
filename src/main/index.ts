@@ -20,11 +20,13 @@ import {
   isValidDispatchIpcInput,
   isValidEndSessionIpcInput,
   isValidReleaseLockIpcInput,
+  isValidSeedIpcInput,
   isValidSetStageOverrideIpcInput,
   isValidSetWorkItemStateIpcInput,
   type EsteiraCreateDiscoveryDto,
   type EsteiraDispatchDto,
   type EsteiraGestureDto,
+  type EsteiraSeedDto,
   type EsteiraSnapshotDto,
 } from '../shared/esteira/ipc';
 import type {
@@ -942,6 +944,14 @@ function registerEsteiraIpcHandlers(): void {
     // Payload inválido não muta nada — mesmo princípio dos canais `devMode:*`.
     if (!isValidCreateDiscoveryIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
     return esteiraService.createDiscovery(input);
+  });
+
+  // D-2 — semear trabalho em curso. Mesmo rigor do resto: payload invalido nao
+  // muta nada, e documento fora do formato volta com o caminho do campo.
+  ipcMain.handle(ESTEIRA_CHANNELS.seed, (_event, input: unknown): EsteiraSeedDto | null => {
+    if (esteiraService === null) return null;
+    if (!isValidSeedIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
+    return esteiraService.seed(input);
   });
 
   ipcMain.handle(ESTEIRA_CHANNELS.dispatch, (_event, input: unknown): EsteiraDispatchDto | null => {

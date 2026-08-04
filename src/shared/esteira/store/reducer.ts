@@ -198,6 +198,7 @@ interface MutableDiscovery {
   scopeRepos: readonly string[];
   createdAt: string;
   stageOverride: StageOverride | null;
+  seeded: boolean;
 }
 
 interface MutableWorkItem {
@@ -212,6 +213,7 @@ interface MutableWorkItem {
   everConcluded: boolean;
   createdBySkill: boolean;
   createdAt: string;
+  seeded: boolean;
 }
 
 interface MutableSession {
@@ -274,6 +276,10 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     }
 
     const p = event.payload;
+    // D-2 — a proveniencia do FATO. Entidade guarda a do nascimento (origem);
+    // fase guarda a do ultimo fato (estado de agora). As duas regras estao
+    // explicadas em `SeededFlag`, no formato.
+    const fromSeed = event.source.kind === 'seed';
 
     switch (event.type) {
       case 'discovery.created':
@@ -293,6 +299,9 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           scopeRepos: 'scopeRepos' in p ? strList(p, 'scopeRepos') : (current?.scopeRepos ?? []),
           createdAt: current?.createdAt ?? str(p, 'createdAt') ?? event.at,
           stageOverride: current?.stageOverride ?? null,
+          // Marca de ORIGEM: quem nasceu de uma afirmacao continua tendo
+          // nascido dela, mesmo depois de a skill declarar fatos por cima.
+          seeded: current?.seeded ?? fromSeed,
         });
         break;
       }
@@ -308,6 +317,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           title,
           summary: str(p, 'summary'),
           createdAt: str(p, 'createdAt') ?? event.at,
+          seeded: plans.get(id)?.seeded ?? fromSeed,
         });
         break;
       }
@@ -332,6 +342,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           everConcluded: (current?.everConcluded ?? false) || state === 'done' || state === 'abandoned',
           createdBySkill: bool(p, 'createdBySkill'),
           createdAt: current?.createdAt ?? str(p, 'createdAt') ?? event.at,
+          seeded: current?.seeded ?? fromSeed,
         });
         break;
       }
@@ -430,6 +441,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           // AGORA, e o historico continua no log.
           failure: null,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
+          seeded: fromSeed,
         });
         break;
       }
@@ -450,6 +462,9 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           summary: str(p, 'summary'),
           failure: null,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
+          // A fase e estado de AGORA: quem afirmou o ultimo desfecho define a
+          // marca. Fase semeada e depois de fato executada vira observada.
+          seeded: fromSeed,
         });
         // A fase acabou: a trava dela cai junto. A skill DEVE declarar
         // `lock.released` (o corpus faz), mas depender só disso deixaria o card
@@ -490,6 +505,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           summary: current?.summary ?? null,
           failure,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
+          seeded: fromSeed,
         });
         // Mesma regra do `phase.completed`: o run acabou (mal), a trava cai. O
         // card volta a aceitar disparo — e a falha continua visivel na fase.
@@ -728,6 +744,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
       derivedStage: derived.stage,
       stageSignals: signals,
       stageOverride: discovery.stageOverride,
+      seeded: discovery.seeded,
     };
   });
 

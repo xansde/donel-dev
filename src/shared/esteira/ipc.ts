@@ -18,6 +18,8 @@ export const ESTEIRA_CHANNELS = {
   scanOutbox: 'esteira:scanOutbox',
   /** Gesto do app: nasce um discovery (o app gera o id). */
   createDiscovery: 'esteira:createDiscovery',
+  /** Gesto do app (D-2): planta um discovery que JA existe, com planos, itens e o ponto em que estao. */
+  seed: 'esteira:seed',
   /** Dispara uma fase: grava o `run-input.json`, trava e abre sessao. */
   dispatch: 'esteira:dispatch',
   /** Alguem assumiu a sessao preparada: o CLI devolveu o id dela (batch B1). */
@@ -81,6 +83,23 @@ export function isValidCreateDiscoveryIpcInput(input: unknown): input is CreateD
     if (typeof tracker.provider !== 'string' || typeof tracker.cardId !== 'string') return false;
   }
   return true;
+}
+
+/**
+ * D-2 — o seed. O renderer manda o DOCUMENTO cru, e quem o lê é o parser puro
+ * no main: a redação do erro (com caminho do campo) precisa nascer de um lugar
+ * só, e é o mesmo rigor dos dois contratos da esteira. Um formulário por campo
+ * também violaria D-16 — criar item é gesto da skill; semear é outra coisa,
+ * declarada de uma vez e marcada como afirmação.
+ */
+export interface SeedIpcInput {
+  readonly document: string;
+}
+
+export function isValidSeedIpcInput(input: unknown): input is SeedIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<SeedIpcInput>;
+  return typeof candidate.document === 'string' && candidate.document.trim().length > 0;
 }
 
 export interface DispatchIpcInput {
@@ -261,11 +280,24 @@ export type EsteiraCreateDiscoveryDto =
   | { readonly ok: true; readonly discoveryId: string; readonly state: EsteiraSnapshotDto }
   | { readonly ok: false; readonly reason: 'store-refused' | 'invalid-input'; readonly state: EsteiraSnapshotDto };
 
+export type EsteiraSeedDto =
+  | {
+      readonly ok: true;
+      readonly discoveryId: string;
+      readonly planIds: readonly string[];
+      readonly workItemIds: readonly string[];
+      readonly state: EsteiraSnapshotDto;
+    }
+  /** Documento fora do formato: nada foi escrito, e a razao vem com o CAMINHO do campo. */
+  | { readonly ok: false; readonly reason: 'invalid-seed'; readonly issues: readonly ContractIssue[]; readonly state: EsteiraSnapshotDto }
+  | { readonly ok: false; readonly reason: 'store-refused' | 'invalid-input'; readonly state: EsteiraSnapshotDto };
+
 /** API tipada exposta em `window.donel.esteira`. */
 export interface DonelEsteiraApi {
   snapshot(): Promise<EsteiraSnapshotDto>;
   scanOutbox(): Promise<EsteiraSnapshotDto>;
   createDiscovery(input: CreateDiscoveryIpcInput): Promise<EsteiraCreateDiscoveryDto>;
+  seed(input: SeedIpcInput): Promise<EsteiraSeedDto>;
   dispatch(input: DispatchIpcInput): Promise<EsteiraDispatchDto>;
   claimSession(input: ClaimSessionIpcInput): Promise<EsteiraSnapshotDto>;
   endSession(input: EndSessionIpcInput): Promise<EsteiraSnapshotDto>;

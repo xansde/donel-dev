@@ -299,6 +299,27 @@ export interface StageOverride {
   readonly reason: string | null;
 }
 
+/**
+ * D-2 — de onde veio o que este registro afirma:
+ *
+ *   SEMEADO   (`true`)  = afirmacao de uma pessoa, plantada pelo gesto de seed
+ *   DECLARADO (`false`) = fato observado, que uma skill gravou num `result.json`
+ *
+ * Os dois viram evento no mesmo log e a etapa se deriva igual de ambos — mas
+ * NAO sao a mesma coisa, e a tela precisa poder mostrar cada um pelo que e.
+ * Tratar afirmacao como observacao seria a inverdade da spec 010 por uma porta
+ * nova: o app afirmando como visto o que ninguem viu.
+ *
+ * Duas regras diferentes, por natureza diferente:
+ *
+ * - **Entidade** (discovery, plano, item): a marca e da ORIGEM e nao se apaga.
+ *   Um card plantado a mao continua tendo nascido de uma afirmacao, ainda que
+ *   uma skill declare fatos sobre ele depois.
+ * - **Fase**: a marca segue o ULTIMO fato, porque a fase e um estado de agora.
+ *   Fase semeada e depois de fato executada passa a ser observada.
+ */
+export type SeededFlag = boolean;
+
 export interface DiscoverySnapshot {
   readonly id: string;
   readonly title: string;
@@ -315,6 +336,8 @@ export interface DiscoverySnapshot {
   readonly stageSignals: readonly ('completed-without-plan' | 'orphan-item' | 'ingest-error' | 'mirror-pending')[];
   /** Override manual, sempre marcado como tal — `derivedStage` continua visivel ao lado. */
   readonly stageOverride: StageOverride | null;
+  /** D-2 — o card foi PLANTADO a mao (afirmacao), nao declarado por skill (observacao). */
+  readonly seeded: SeededFlag;
 }
 
 export interface PlanSnapshot {
@@ -323,6 +346,8 @@ export interface PlanSnapshot {
   readonly title: string;
   readonly summary: string | null;
   readonly createdAt: string;
+  /** D-2 — o plano foi semeado junto com o card, em vez de declarado por uma skill. */
+  readonly seeded: SeededFlag;
 }
 
 export interface WorkItemSnapshot {
@@ -345,6 +370,12 @@ export interface WorkItemSnapshot {
   /** True quando nasceu pela skill (D-16) — descartavel num gesto, sem bloqueio. */
   readonly createdBySkill: boolean;
   readonly createdAt: string;
+  /**
+   * D-2 — o item foi semeado. Note que `seeded` e `createdBySkill` respondem
+   * perguntas diferentes: um item semeado nunca nasceu pela skill, mas um item
+   * que nao nasceu pela skill tambem pode ter vindo de um run declarado.
+   */
+  readonly seeded: SeededFlag;
 }
 
 /**
@@ -420,6 +451,12 @@ export interface PhaseRunSnapshot {
   readonly failure: { readonly code: string; readonly message: string } | null;
   /** Ultimo run que tocou esta fase — a trilha de volta ao `result.json` que a produziu. */
   readonly lastRunId: string | null;
+  /**
+   * D-2 — o ULTIMO fato desta fase foi semeado (afirmado), nao observado. A
+   * fase e estado de agora: um run de verdade em cima de uma fase semeada tira
+   * a marca, porque ai passou a haver observacao.
+   */
+  readonly seeded: SeededFlag;
 }
 
 export type VerificationKind = 'pull-request' | 'check' | 'review' | 'conclusion';

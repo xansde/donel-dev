@@ -311,7 +311,7 @@ function discoveryCard(card: CardView, focused: boolean): MapCard {
 
   const meta = [
     card.discovery.targetRepo,
-    contado(card.planCount, 'plano', 'planos'),
+    contado(card.plans.length, 'plano', 'planos'),
     contado(card.items.length, 'item', 'itens'),
   ].filter((part): part is string => part !== null && part.length > 0);
 
