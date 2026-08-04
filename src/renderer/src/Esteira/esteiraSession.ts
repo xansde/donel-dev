@@ -141,24 +141,41 @@ export function lockStateOf(holderKind: 'skill' | 'app', claimed: boolean): Lock
   return claimed ? 'session-open' : 'prepared';
 }
 
-/** Como cada estado da trava se chama — a palavra nasce aqui, e só aqui. */
-const LOCK_WORD: Readonly<Record<LockState, string>> = {
+/**
+ * Como cada estado da trava se chama — a palavra nasce aqui, e só aqui.
+ *
+ * Exportado porque quem monta a frase do bloco "Disparar fase" precisa do card
+ * inteiro (para nomear o ASSUNTO da trava, achado do B3) e por isso mora em
+ * `esteiraView`. O que ele NÃO pode fazer é reescrever a palavra: quando havia
+ * duas tabelas, "sessão aberta" virava "preparada" na segunda.
+ */
+export const LOCK_WORD: Readonly<Record<LockState, string>> = {
   running: 'em andamento',
   'session-open': 'com a sessão aberta',
   prepared: 'preparada',
 };
 
 /**
- * O que o bloco "Disparar fase" explica antes do clique. Fica aqui, e não no
- * JSX, pela regra do repo: texto de estado nasce na camada pura — foi assim que
- * a correção de um rótulo deixou de subir até a raiz e o bug voltou noutro
- * lugar. Recebe o ESTADO, não um booleano: com `locked: boolean` esta frase
- * dizia "preparada" para um card cujo bloco dizia "Em andamento".
+ * O que o bloco "Disparar fase" explica quando NÃO há trava — a frase de "o que
+ * o clique faz". Uma origem só para os dois chamadores (`dispatchHint` daqui, o
+ * de `esteiraView`): duas redações da mesma promessa divergem no primeiro
+ * conserto, e esta já divergiu — o texto antigo prometia "apontando para o
+ * arquivo à mão" depois de o B1 fazer o app abrir a aba sozinho.
+ */
+export function noLockDispatchHint(): string {
+  return 'O app separa o contexto no inbox, trava o card e abre a aba da sessão com o comando da skill já escrito. O Enter é seu.';
+}
+
+/**
+ * O que o bloco "Disparar fase" explica antes do clique, para quem só tem o
+ * ESTADO da trava em mãos. Fica aqui, e não no JSX, pela regra do repo: texto de
+ * estado nasce na camada pura — foi assim que a correção de um rótulo deixou de
+ * subir até a raiz e o bug voltou noutro lugar. Recebe o ESTADO, não um
+ * booleano: com `locked: boolean` esta frase dizia "preparada" para um card cujo
+ * bloco dizia "Em andamento".
  */
 export function dispatchHint(lock: LockState | null): string {
-  if (lock === null) {
-    return 'O app separa o contexto, trava o card e abre a aba da sessão com o comando da skill já escrito. O Enter é seu.';
-  }
+  if (lock === null) return noLockDispatchHint();
   return `Há uma fase ${LOCK_WORD[lock]} neste card. Libere a trava acima antes de preparar outra.`;
 }
 

@@ -96,6 +96,52 @@ andamento": duas palavras, um estado, no mesmo print.
 merece. Reusar a palavra vizinha é como o vocabulário apodrece — e o teste não
 pega, porque o teste repete a palavra que o código escolheu.
 
+### 7. Etapa derivada que apaga o trabalho já feito
+
+**Sintoma:** card com um item **concluído** e outro aberto aparecia como
+"Planejado" — e, pior, a etapa dependia de QUAL item estava aberto: o mesmo
+conjunto (um aberto, um fechado) dava "Planejado" num print e "Execução" no
+outro, os dois se dizendo "calculada dos fatos".
+
+**Causa:** `deriveStage` só reconhecia execução por item *em curso* ou item
+*reaberto*. Item concluído sem ninguém reabrir não contava como "começou".
+
+**Correção:** desfecho fechado (`everConcluded`) é prova de que a execução
+aconteceu. Precedência hoje: todos fechados → Concluído; algum em curso **ou**
+algum já concluído alguma vez → Execução; senão → Planejado. "Planejado" voltou
+a significar só o que ele diz: existe plano e ninguém tocou em nada.
+
+### 8. A tela prometendo o que ela mesma vai recusar
+
+**Sintoma:** embaixo do item travado, "descartar é um gesto só, **sem
+bloqueio**" — e o app recusando o descarte desse item na mesma tela, dois
+centímetros acima.
+
+**Causa:** `discardHint` só recebia o item. Quem sabia da trava era a recusa,
+que morava noutra função (`GESTURE_REFUSAL_MESSAGE`). Promessa e recusa em
+lugares diferentes divergem sempre.
+
+**Correção:** `discardHint(item, lock)` — a mesma função decide as duas frases,
+e a do caso travado **é** a constante da recusa, não uma cópia dela. Efeito
+colateral bom: a tela avisa antes do clique, em vez de deixar o usuário
+descobrir pelo erro.
+
+### 9. Trava que não diz de que ela é
+
+**Sintoma:** "Fase implementar, por uma skill, desde 04/08, 12:00" no topo do
+card, com dois itens na tela. Qual dos dois? E, no rodapé, "Há uma fase
+**preparada** neste **card**" para uma fase que a skill já tinha assumido, sobre
+um **item** — duas palavras erradas na mesma frase.
+
+**Causa:** a mesma de #1, nas duas pontas. `lockView` tinha `lock.subject` e não
+o usava; a frase do rodapé estava escrita à mão dentro do componente, longe do
+estado que ela descrevia.
+
+**Correção:** `lockSubjectLabel(card, lock)` nomeia o assunto, `lockView` a usa,
+e a frase do rodapé virou `dispatchHint(card)` — que reusa o título que
+`lockView` já escolheu, para as duas nunca discordarem na mesma tela. Nada de
+texto de estado dentro do `.tsx`.
+
 ---
 
 ## No roteiro (achados da automação)

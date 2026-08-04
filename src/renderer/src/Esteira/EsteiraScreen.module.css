@@ -317,4 +317,49 @@
   display: flex;
   gap: var(--space-1);
   align-self: flex-start;
+  flex-wrap: wrap;
+}
+
+/* A etapa, em destaque, com o que ela é (calculada ou ajustada) logo ao lado. */
+.stageLine {
+  margin: 0;
+}
+
+/* Os itens deixam de ser uma lista de leitura: cada um carrega os gestos que
+   movem o card, então cada um é um bloco, não uma linha de <ul>. */
+.itemList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+}
+
+.itemLine {
+  font-size: var(--text-body-size);
+}
+
+.noteForm {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+/* Sobre o que a nota é. Sem isso, nota de item e nota de card viram a mesma
+   coisa na tela — e deixam de dizer a que se prendem. */
+.noteAbout {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
 }

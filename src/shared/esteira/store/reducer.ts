@@ -18,7 +18,9 @@
 
 import {
   LIFECYCLE_BY_ITEM_TYPE,
+  MACRO_STAGES,
   STORE_SCHEMA_VERSION,
+  WORK_ITEM_STATES,
   type ArtifactPointer,
   type DiscoverySnapshot,
   type EntityId,
@@ -92,13 +94,25 @@ export function deriveStage(input: StageInput): StageResult {
     return { stage: 'discovery', signals };
   }
 
-  const reopened = input.items.some((item) => item.everConcluded && item.state !== 'done' && item.state !== 'abandoned');
-  const running = input.items.some((item) => item.state === 'in-progress');
-  if (reopened || running) return { stage: 'execution', signals: [] };
-
+  // A ordem aqui e a precedencia, e ela mudou depois do print 12 da captura
+  // `gestos-do-card`: com um item concluido e outro aberto, a tela dizia
+  // "Planejado" — trabalho ja fechado apresentado como trabalho que nunca
+  // comecou. Pior, a etapa dependia de QUAL item estava aberto: o mesmo
+  // conjunto (um aberto, um fechado) dava "Planejado" num print e "Execucao"
+  // no outro, enquanto os dois se diziam "calculada dos fatos".
   const allConcluded = input.items.length > 0 && input.items.every((item) => item.state === 'done' || item.state === 'abandoned');
   if (allConcluded) return { stage: 'done', signals: [] };
 
+  // Execucao e o estado de "comecou e nao terminou". Um item que JA se concluiu
+  // alguma vez (`everConcluded`) e prova de que comecou — reaberto ou nao. E o
+  // mesmo sinal que ja fazia a etapa RETROCEDER; ele so estava restrito ao item
+  // reaberto, quando vale para qualquer item que ja teve desfecho.
+  const running = input.items.some((item) => item.state === 'in-progress');
+  const everStarted = input.items.some((item) => item.everConcluded);
+  if (running || everStarted) return { stage: 'execution', signals: [] };
+
+  // Planejado sobra para o que ele sempre quis dizer: existe plano e nenhum
+  // item foi tocado por ninguem.
   return { stage: 'planned', signals: [] };
 }
 
@@ -159,8 +173,6 @@ function relationKey(relation: string, from: EntityId, to: EntityId): string {
 }
 
 const WORK_ITEM_TYPES: readonly WorkItemType[] = ['issue', 'spec', 'process-map', 'adr', 'prototype', 'spike', 'eval'];
-const WORK_ITEM_STATES: readonly WorkItemState[] = ['open', 'in-progress', 'done', 'abandoned'];
-const MACRO_STAGES: readonly MacroStage[] = ['discovery', 'planned', 'execution', 'done'];
 const RELATION_KINDS: readonly RelationKind[] = ['originated', 'flows_into', 'ships_with'];
 const PHASE_OUTCOMES: readonly PhaseOutcome[] = ['done', 'abandoned', 'inconclusive'];
 const VERIFICATION_KINDS: readonly VerificationKind[] = ['pull-request', 'check', 'review', 'conclusion'];

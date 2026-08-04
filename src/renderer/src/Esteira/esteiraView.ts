@@ -13,17 +13,20 @@
 
 import { MACRO_STAGE_LABEL } from '../../../shared/esteira/ipc';
 import { findBlockingLock, lockChainOf } from '../../../shared/esteira/store/lockChain';
-import { dispatchHint, esteiraPhaseCommand, lockStateOf, type LockState } from './esteiraSession';
+import { MACRO_STAGES } from '../../../shared/esteira/store/storeFormat';
+import { esteiraPhaseCommand, LOCK_WORD, lockStateOf, noLockDispatchHint, type LockState } from './esteiraSession';
 import type {
   DiscoverySnapshot,
   EntityId,
   IngestErrorSnapshot,
   LockRecord,
+  MacroStage,
   PhaseRunSnapshot,
   PlanSnapshot,
   SessionSnapshot,
   StoreSnapshot,
   WorkItemSnapshot,
+  WorkItemState,
 } from '../../../shared/esteira/store/storeFormat';
 
 export type SignalTone = 'neutral' | 'attention' | 'error';
@@ -68,19 +71,170 @@ export interface StageView {
   readonly derived: string;
   readonly overridden: boolean;
   readonly overrideNote: string | null;
+  /**
+   * A frase INTEIRA do ajuste, com a etapa calculada dentro dela. Existe porque
+   * `overrideNote` sozinha dizia quem ajustou e não dizia o que o cálculo diz —
+   * e um ajuste sem o cálculo ao lado é exatamente o override que engana quem
+   * lê, que D-13 proíbe. `null` quando não há ajuste.
+   */
+  readonly overrideLine: string | null;
 }
 
 export function stageView(discovery: DiscoverySnapshot): StageView {
   const derived = MACRO_STAGE_LABEL[discovery.derivedStage];
   const override = discovery.stageOverride;
-  if (override === null) return { shown: derived, derived, overridden: false, overrideNote: null };
+  if (override === null) return { shown: derived, derived, overridden: false, overrideNote: null, overrideLine: null };
 
+  const forced = MACRO_STAGE_LABEL[override.value];
+  const because = override.reason ? ` — ${override.reason}` : '';
   return {
-    shown: MACRO_STAGE_LABEL[override.value],
+    shown: forced,
     derived,
     overridden: true,
-    overrideNote: `ajustado à mão por ${override.by}${override.reason ? ` — ${override.reason}` : ''}`,
+    overrideNote: `ajustado à mão por ${override.by}${because}`,
+    overrideLine: `Etapa forçada para "${forced}" por ${override.by}${because}. O cálculo continua dizendo "${derived}".`,
   };
+}
+
+/** As macro etapas que o gesto de ajuste oferece. Ordem do modelo, rótulo em pt-BR. */
+export const MACRO_STAGE_OPTIONS: readonly { readonly value: MacroStage; readonly label: string }[] = MACRO_STAGES.map((stage) => ({
+  value: stage,
+  label: MACRO_STAGE_LABEL[stage],
+}));
+
+/** O estado do item em português. O dado é inglês; a tela, não. */
+export const WORK_ITEM_STATE_LABEL: Readonly<Record<WorkItemState, string>> = {
+  open: 'aberto',
+  'in-progress': 'em curso',
+  done: 'concluído',
+  abandoned: 'abandonado',
+};
+
+/**
+ * A linha de UM item na lista do card — tudo que ela diz nasce aqui.
+ *
+ * Os dois batches que reescreveram esta lista pediam coisas diferentes e as duas
+ * são verdadeiras ao mesmo tempo:
+ *
+ *  - **B3**: estado em pt-BR e a origem (`criado pela skill`, D-16);
+ *  - **B2**: o repo que o item DE FATO usaria — o dele ou o herdado do card
+ *    (D-6) — e a trava, quando ela é dele.
+ *
+ * `discovery` e `lock` são opcionais porque a linha também é usada fora do card
+ * inteiro; sem o card, ela fala só do que o item declara.
+ */
+export function itemLine(
+  item: WorkItemSnapshot,
+  discovery: DiscoverySnapshot | null = null,
+  lock: LockRecord | null = null,
+): string {
+  const { repo, inherited } =
+    discovery === null ? { repo: item.targetRepo, inherited: false } : itemRepoOf(item, discovery);
+  const repoText = repo === null ? 'sem repo alvo' : inherited ? `${repo} (herdado do card)` : repo;
+  const origem = item.createdBySkill ? ' · criado pela skill' : '';
+  const travado = lock === null ? '' : ` · travado pela fase "${lock.phase}" desde ${formatTimestamp(lock.acquiredAt)}`;
+  return `${item.title} · ${item.itemType} · ${WORK_ITEM_STATE_LABEL[item.state]} · ${repoText}${origem}${travado}`;
+}
+
+export interface ItemStateAction {
+  readonly state: WorkItemState;
+  readonly label: string;
+  /** O que o gesto faz — e o que ele faz com a etapa do card. */
+  readonly hint: string;
+}
+
+/**
+ * Os gestos de estado oferecidos para um item: abrir, começar, concluir,
+ * abandonar, menos aquele em que ele já está.
+ *
+ * As frases falam da REGRA ("a etapa é recalculada e pode retroceder"), nunca do
+ * resultado ("a etapa vai virar Execução"): prever a etapa aqui seria a tela
+ * calculando o que só o main deriva — e errando sempre que o discovery ainda não
+ * tivesse concluído.
+ */
+export function itemStateActions(item: WorkItemSnapshot): readonly ItemStateAction[] {
+  const concluded = item.state === 'done' || item.state === 'abandoned';
+
+  const all: readonly ItemStateAction[] = [
+    {
+      state: 'in-progress',
+      label: concluded ? 'Retomar' : 'Começar',
+      hint: 'O item passa a estar em curso. A etapa do card é recalculada — ela nunca é digitada.',
+    },
+    {
+      state: 'done',
+      label: 'Concluir',
+      hint: 'O item fecha. Quando todos os itens estiverem fechados, o cálculo leva o card a Concluído.',
+    },
+    {
+      state: 'abandoned',
+      label: 'Abandonar',
+      hint: 'Desistir é desfecho válido, não pendência: o item fecha como abandonado.',
+    },
+    {
+      state: 'open',
+      label: concluded ? 'Reabrir' : 'Voltar para aberto',
+      hint: concluded
+        ? 'O item volta a aberto. A etapa do card é recalculada e pode retroceder — item reaberto puxa o card de volta.'
+        : 'O item deixa de estar em curso. A etapa do card é recalculada e pode retroceder.',
+    },
+  ];
+
+  return all.filter((action) => action.state !== item.state);
+}
+
+/** A regra que governa o bloco de itens, dita uma vez, onde ela se aplica. */
+export const ITEM_STATE_RULE =
+  'O estado do item é o que move a etapa do card — e a etapa retrocede: item reaberto depois de fechado puxa o card de volta.';
+
+/** O que dizer quando um gesto é recusado. Recusa calada é o vício que a spec 010 combate. */
+export const GESTURE_REFUSAL_MESSAGE: Readonly<Record<string, string>> = {
+  'store-refused': 'O histórico não aceita escrita agora. Nada foi gravado.',
+  'invalid-input': 'O gesto chegou incompleto ao app e foi recusado. Nada foi gravado.',
+  'unknown-subject': 'Este assunto não está mais no histórico. Nada foi gravado — a tela pode estar defasada; varra o outbox.',
+  locked:
+    'Há uma fase travada neste item. Libere a trava antes de descartá-lo: descartar agora tiraria a trava da tela sem tirá-la do estado.',
+};
+
+export function gestureRefusalMessage(reason: string): string {
+  return GESTURE_REFUSAL_MESSAGE[reason] ?? 'O gesto foi recusado e nada foi gravado.';
+}
+
+/** O que a tela diz DEPOIS de o item sair — o descarte não apaga o passado. */
+export function discardedMessage(item: WorkItemSnapshot): string {
+  return `Item «${item.title}» descartado. Ele sai do card; o histórico guarda que ele existiu.`;
+}
+
+/** A trava prende ESTE item? A comparação mora aqui, não em quem desenha. */
+export function isLocked(item: WorkItemSnapshot, lock: LockRecord | null): boolean {
+  return lock !== null && lock.subject.entity === 'work_item' && lock.subject.id === item.id;
+}
+
+/**
+ * D-16 — por que o descarte não tem bloqueio, e o que ele não apaga.
+ *
+ * Recebe a trava porque, sem ela, a frase mentia: o print 26 mostrava "descartar
+ * é um gesto só, sem bloqueio" embaixo do item travado, e o print 27 mostrava o
+ * app recusando o descarte DESSE item na mesma tela. A promessa e a recusa
+ * precisam sair da mesma função, ou uma desmente a outra.
+ */
+export function discardHint(item: WorkItemSnapshot, lock: LockRecord | null = null): string {
+  // A MESMA frase da recusa, não uma cópia dela: duas redações da mesma regra
+  // divergem no primeiro conserto (`erros-conhecidos.md` #1).
+  if (isLocked(item, lock)) return GESTURE_REFUSAL_MESSAGE['locked']!;
+  const origem = item.createdBySkill
+    ? 'Este item nasceu pela skill: descartar é um gesto só, sem bloqueio.'
+    : 'Descartar é um gesto só, sem bloqueio.';
+  return `${origem} O item sai do card; o fato de ele ter existido fica no histórico.`;
+}
+
+/** Uma nota do card, já sabendo dizer sobre o que ela é. */
+export interface NoteView {
+  readonly text: string;
+  readonly at: string;
+  readonly subject: EntityId;
+  /** "o card", "o item «X»", "um plano" — quem lê precisa saber a que a nota se prende. */
+  readonly about: string;
 }
 
 export interface CardView {
@@ -100,7 +254,7 @@ export interface CardView {
   /** Todas as sessões do card: é delas que sai o "alguém assumiu?" de cada fase. */
   readonly sessions: readonly SessionSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
-  readonly notes: readonly { readonly text: string; readonly at: string }[];
+  readonly notes: readonly NoteView[];
 }
 
 /**
@@ -125,6 +279,19 @@ export interface LockView {
   readonly nextStep: { readonly explanation: string; readonly command: string } | null;
 }
 
+/**
+ * De QUE é a trava, em português. O bloco fica no topo do card, e no print 25
+ * ele dizia "Fase implementar, por uma skill, desde ..." com dois itens na tela:
+ * o app sabia o assunto (`lock.subject`) e não dizia. Com disparo por item (B2)
+ * a ambiguidade vira regra, não exceção.
+ */
+export function lockSubjectLabel(card: CardView, lock: LockRecord): string {
+  if (lock.subject.entity === 'discovery') return 'o card';
+  if (lock.subject.entity === 'plan') return 'um plano';
+  const item = card.items.find((entry) => entry.id === lock.subject.id);
+  return item === undefined ? 'um item que não está mais no card' : `o item «${item.title}»`;
+}
+
 export function lockView(card: CardView): LockView | null {
   const lock = card.lock;
   if (lock === null) return null;
@@ -134,10 +301,13 @@ export function lockView(card: CardView): LockView | null {
   const inputPath = card.openSession?.inputPath ?? null;
   const cliSessionId = card.openSession?.cliSessionId ?? lock.cliSessionId;
   const state = lockStateOf(lock.holderKind, claimed);
+  // De QUE é a trava (B3): com disparo por item (B2), "a fase X está travada"
+  // sem dizer sobre o quê deixou de ser exceção e virou regra.
+  const about = lockSubjectLabel(card, lock);
   // Dono, hora e sessão (D-11): a trava nomeia quem a segura. Sem o id do
   // CLI (trava posta pela skill), diz quem a pôs — nunca fica anônima.
   const dono = cliSessionId === null ? `por ${holder}` : `na sessão ${cliSessionId}`;
-  const desde = `Fase ${lock.phase}, ${dono}, desde ${formatTimestamp(lock.acquiredAt)}.`;
+  const desde = `Fase ${lock.phase} sobre ${about}, ${dono}, desde ${formatTimestamp(lock.acquiredAt)}.`;
 
   if (state === 'running') {
     return { state, title: 'Em andamento', line: desde, nextStep: null };
@@ -159,7 +329,7 @@ export function lockView(card: CardView): LockView | null {
   return {
     state,
     title: 'Preparada — ninguém assumiu ainda',
-    line: `O app separou o contexto da fase ${lock.phase} às ${formatTimestamp(lock.acquiredAt)} e travou o card. Nada está rodando: nenhuma sessão assumiu esta fase ainda.`,
+    line: `O app separou o contexto da fase ${lock.phase} sobre ${about} às ${formatTimestamp(lock.acquiredAt)} e travou. Nada está rodando: nenhuma sessão assumiu esta fase ainda.`,
     nextStep:
       inputPath === null
         ? null
@@ -168,6 +338,31 @@ export function lockView(card: CardView): LockView | null {
             command: esteiraPhaseCommand(lock.phase, inputPath),
           },
   };
+}
+
+/**
+ * Por que o "Preparar" está desabilitado — ou o que ele fará.
+ *
+ * Nasceu do print 29 (B3): a frase estava escrita à mão no componente e dizia
+ * "Há uma fase preparada neste card" para uma fase que a skill JÁ tinha
+ * assumido, sobre um ITEM. Duas palavras erradas de uma vez, pelo mesmo motivo
+ * de sempre — a frase morava longe do estado.
+ *
+ * Aqui ela junta as DUAS correções que os batches fizeram separado:
+ *
+ *  - **de que** é a trava (B3): `lockSubjectLabel`, porque com disparo por item
+ *    (B2) o card, o plano e o item disputam a mesma frase;
+ *  - **em que pé** ela está (B1): `LOCK_WORD` do `lockStateOf`, o mesmo mapa que
+ *    o bloco da trava usa. Deduzir o estado do TÍTULO — o que o B3 fazia — dobra
+ *    "sessão aberta" em "preparada" assim que o B1 entra, e a tela volta a ter
+ *    duas palavras para um estado só.
+ */
+export function dispatchHint(card: CardView): string {
+  const lock = card.lock;
+  if (lock === null) return noLockDispatchHint();
+
+  const state = lockStateOf(lock.holderKind, card.openSession?.claimed ?? false);
+  return `Há uma fase ${LOCK_WORD[state]} sobre ${lockSubjectLabel(card, lock)}. Libere a trava acima antes de preparar outra.`;
 }
 
 /** Projeção do snapshot para UM card. A tela não deriva nada além disto. */
@@ -200,7 +395,14 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     openSession: [...snapshot.sessions].reverse().find((session) => belongs(session.subject) && session.endedAt === null) ?? null,
     sessions: snapshot.sessions.filter((session) => belongs(session.subject)),
     ingestErrors: snapshot.ingestErrors.filter((error) => error.subject !== null && belongs(error.subject)),
-    notes: snapshot.notes.filter((note) => belongs(note.subject)).map((note) => ({ text: note.text, at: note.at })),
+    notes: snapshot.notes
+      .filter((note) => belongs(note.subject))
+      .map((note) => ({
+        text: note.text,
+        at: note.at,
+        subject: note.subject,
+        about: aboutSubject(note.subject, plans, items),
+      })),
   };
 }
 
@@ -271,17 +473,17 @@ export function cardContent(card: CardView): CardContentView {
   }));
 
   for (const item of card.items) {
-    const { repo, inherited } = itemRepoOf(item, card.discovery);
-    const repoText = repo === null ? 'sem repo alvo' : inherited ? `${repo} (herdado do card)` : repo;
     // A trava DO item, não a que o bloqueia: um discovery travado impede o
     // disparo do item sem que o item esteja travado, e dizer "travado" ali
     // seria a tela mentindo de novo, agora por excesso.
     const lock = card.locks.find((entry) => entry.subject.entity === 'work_item' && entry.subject.id === item.id) ?? null;
-    const lockText = lock === null ? '' : ` · travado pela fase "${lock.phase}" desde ${formatTimestamp(lock.acquiredAt)}`;
     lines.push({
       key: `work_item:${item.id}`,
       kind: 'item',
-      text: `${item.title} · ${item.itemType} · ${item.state} · ${repoText}${lockText}`,
+      // A frase inteira vem de `itemLine`: a lista do B2 imprimia o estado CRU
+      // do dado (`in-progress`) e o bloco de gestos do B3 imprimia "em curso",
+      // sobre o mesmo item, na mesma tela.
+      text: itemLine(item, card.discovery, lock),
     });
   }
 
@@ -308,6 +510,45 @@ export type PhasePresence =
   | 'interrupted'
   /** Fase iniciada sem sessão do app: quem afirmou o início foi a skill, pelo outbox. */
   | 'declared';
+
+/** Como se chama, em português, o assunto de uma nota deste card. */
+function aboutSubject(subject: EntityId, plans: readonly PlanLike[], items: readonly WorkItemSnapshot[]): string {
+  if (subject.entity === 'discovery') return 'o card';
+  if (subject.entity === 'plan') {
+    const plan = plans.find((entry) => entry.id === subject.id);
+    return plan === undefined ? 'um plano' : `o plano «${plan.title}»`;
+  }
+  const item = items.find((entry) => entry.id === subject.id);
+  return item === undefined ? 'um item' : `o item «${item.title}»`;
+}
+
+interface PlanLike {
+  readonly id: string;
+  readonly title: string;
+}
+
+/**
+ * Os alvos possíveis de uma nota neste card: o card e cada item. O valor é
+ * `<entidade>:<id>` porque o `Select` do design-system trafega string — e o
+ * caminho de volta é `parseNoteTarget`, para o renderer não montar `EntityId`
+ * à mão em lugar nenhum.
+ */
+export function noteTargetOptions(card: CardView): readonly { readonly value: string; readonly label: string }[] {
+  return [
+    { value: `discovery:${card.discovery.id}`, label: `Sobre o card — ${card.discovery.title}` },
+    ...card.items.map((item) => ({ value: `work_item:${item.id}`, label: `Sobre o item — ${item.title}` })),
+  ];
+}
+
+export function parseNoteTarget(value: string): EntityId | null {
+  const separator = value.indexOf(':');
+  if (separator <= 0) return null;
+  const entity = value.slice(0, separator);
+  const id = value.slice(separator + 1);
+  if (id.length === 0) return null;
+  if (entity !== 'discovery' && entity !== 'plan' && entity !== 'work_item') return null;
+  return { entity, id };
+}
 
 /**
  * A frase de UMA passagem de fase. Cada estado tem palavra própria — e nenhuma
@@ -611,12 +852,9 @@ export function dispatchView(card: CardView, selection: DispatchSelection): Disp
       ? 'Não há assunto para esta fase neste card.'
       : target.blocked;
 
-  // O `hint` sai do MESMO vocabulário da trava (B1): sem trava, ele conta que o
-  // clique abre a aba com o comando escrito; com trava, ele repete a palavra que
-  // o bloco acima já usou. Escrito à parte, ele dizia "preparada" para um card
-  // cujo bloco dizia "Em andamento".
-  const lockState = card.lock === null ? null : lockStateOf(card.lock.holderKind, card.openSession?.claimed ?? false);
-
+  // O `hint` sai do MESMO vocabulário da trava (B1) e nomeia o assunto dela
+  // (B3). Escrito à parte, ele dizia "preparada" para um card cujo bloco dizia
+  // "Em andamento", e "neste card" para uma trava que era de um item.
   return {
     phases,
     phase,
@@ -624,8 +862,25 @@ export function dispatchView(card: CardView, selection: DispatchSelection): Disp
     target,
     canDispatch: blocked === null,
     blocked,
-    hint: dispatchHint(lockState),
+    hint: dispatchHint(card),
   };
+}
+
+/**
+ * O que dizer depois de varrer o outbox.
+ *
+ * A versão anterior olhava só os arquivos RECUSADOS: varredura que ingeriu um
+ * fato novo e não recusou nada dizia "Nada novo no outbox" — a tela negando o
+ * que acabara de ler. `through_seq` é até onde o log foi reduzido; se ele
+ * avançou, entrou fato. Comparar os dois snapshots é o que o renderer já tem em
+ * mãos, sem inventar campo novo no DTO.
+ */
+export function scanOutcomeMessage(throughSeqBefore: number | null, rejected: number, throughSeqAfter: number): string {
+  const entrou = throughSeqBefore !== null && throughSeqAfter > throughSeqBefore;
+  if (rejected > 0) {
+    return `${rejected} arquivo(s) fora do contrato — os cards mostram o motivo.${entrou ? ' O que estava dentro do contrato entrou.' : ''}`;
+  }
+  return entrou ? 'Entrou fato novo do outbox. Os cards já mostram o que a skill declarou.' : 'Nada novo no outbox.';
 }
 
 /** Um erro de ingestão, em português, sem esconder o caminho do arquivo. */

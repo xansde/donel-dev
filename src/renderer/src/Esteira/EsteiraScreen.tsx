@@ -1,6 +1,7 @@
 import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
+import type { EsteiraGestureDto, EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
+import type { MacroStage, WorkItemSnapshot, WorkItemState } from '../../../shared/esteira/store/storeFormat';
 import {
   dispatchRefusedMessage,
   esteiraPhaseCommand,
@@ -15,11 +16,20 @@ import {
 import {
   cardContent,
   cardView,
+  discardHint,
+  discardedMessage,
   dispatchView,
   formatTimestamp,
+  gestureRefusalMessage,
   ingestErrorLine,
+  itemStateActions,
+  ITEM_STATE_RULE,
   lockView,
+  MACRO_STAGE_OPTIONS,
+  noteTargetOptions,
+  parseNoteTarget,
   phaseLines,
+  scanOutcomeMessage,
   STORE_COMPATIBILITY_WARNING,
   type SignalTone,
 } from './esteiraView';
@@ -64,6 +74,12 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   /** O assunto escolhido para o disparo. `null` = o primeiro que a fase comporta. */
   const [targetKey, setTargetKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Escolhas dos gestos novos. Ambas guardadas como "o que o operador escolheu",
+  // não como "o estado atual": o default sai do card e volta sozinho ao trocar
+  // de card ou quando o item escolhido some (descarte).
+  const [stagePick, setStagePick] = useState<MacroStage | null>(null);
+  const [notePick, setNotePick] = useState<string | null>(null);
+  const [noteText, setNoteText] = useState('');
 
   useEffect(() => {
     void window.donel.esteira.snapshot().then(setState);
@@ -84,6 +100,33 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   );
   const warning = state === null ? null : STORE_COMPATIBILITY_WARNING[state.compatibility];
   const readOnly = state !== null && state.compatibility !== 'read-write';
+
+  // O alvo da nota é o que o operador escolheu — enquanto ele existir. Item
+  // descartado no meio do caminho devolve o formulário ao card, em vez de
+  // deixá-lo apontando para um assunto que sumiu.
+  // As linhas de `cardContent`, separadas por quem as desenha: plano vira linha
+  // simples; item vira linha COM gestos, e o texto continua sendo o mesmo que a
+  // camada pura escreveu.
+  const planLines = useMemo(() => (content?.lines ?? []).filter((line) => line.kind === 'plan'), [content]);
+  const itemTextById = useMemo(
+    () => new Map((content?.lines ?? []).filter((line) => line.kind === 'item').map((line) => [line.key.slice('work_item:'.length), line.text])),
+    [content],
+  );
+
+  const noteTargets = useMemo(() => (selected === null ? [] : noteTargetOptions(selected)), [selected]);
+  const noteTarget = notePick !== null && noteTargets.some((option) => option.value === notePick) ? notePick : (noteTargets[0]?.value ?? '');
+
+  /** Trocar de card zera as escolhas: elas pertencem ao card, não à tela. */
+  const selectCard = useCallback((id: string) => {
+    setSelectedId(id);
+    // O assunto do disparo (B2) é escolha de card como as outras: mantido entre
+    // cards, ele apontaria para um item que não está mais na tela.
+    setTargetKey(null);
+    setStagePick(null);
+    setNotePick(null);
+    setNoteText('');
+    setMessage(null);
+  }, []);
 
   const handleCreate = useCallback(async () => {
     const title = newTitle.trim();
@@ -193,15 +236,63 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
     setMessage(null);
   }, [selected]);
 
+  /** Toda resposta de gesto atualiza o estado; só a recusa fala. */
+  const applyGesture = useCallback((gesture: EsteiraGestureDto, successMessage: string): boolean => {
+    setState(gesture.state);
+    setMessage(gesture.ok ? successMessage : gestureRefusalMessage(gesture.reason));
+    return gesture.ok;
+  }, []);
+
+  const handleItemState = useCallback(
+    async (item: WorkItemSnapshot, state: WorkItemState, hint: string) => {
+      applyGesture(await window.donel.esteira.setWorkItemState({ workItemId: item.id, state }), hint);
+    },
+    [applyGesture],
+  );
+
+  const handleDiscard = useCallback(
+    async (item: WorkItemSnapshot) => {
+      applyGesture(await window.donel.esteira.discardWorkItem({ workItemId: item.id, reason: null }), discardedMessage(item));
+    },
+    [applyGesture],
+  );
+
+  const handleOverrideStage = useCallback(
+    async (value: MacroStage | null) => {
+      if (selected === null) return;
+      if (
+        applyGesture(
+          await window.donel.esteira.setStageOverride({ discoveryId: selected.discovery.id, value, reason: null }),
+          value === null
+            ? 'Ajuste removido. A etapa volta a ser só o cálculo.'
+            : 'Etapa ajustada à mão. O cálculo continua visível ao lado — ele nunca é apagado.',
+        )
+      ) {
+        // O seletor volta a acompanhar a etapa calculada. Deixá-lo parado na
+        // escolha anterior faria a tela mostrar duas etapas diferentes sem que
+        // nenhuma das duas fosse o estado do card.
+        setStagePick(null);
+      }
+    },
+    [applyGesture, selected],
+  );
+
+  const handleAddNote = useCallback(
+    async (target: string) => {
+      const text = noteText.trim();
+      const subject = parseNoteTarget(target);
+      if (text.length === 0 || subject === null) return;
+      if (applyGesture(await window.donel.esteira.addNote({ subject, text }), 'Nota registrada.')) setNoteText('');
+    },
+    [applyGesture, noteText],
+  );
+
   const handleScan = useCallback(async () => {
+    const before = state?.snapshot.through_seq ?? null;
     const scanned = await window.donel.esteira.scanOutbox();
     setState(scanned);
-    setMessage(
-      scanned.rejectedOnLastScan > 0
-        ? `${scanned.rejectedOnLastScan} arquivo(s) fora do contrato — os cards mostram o motivo.`
-        : 'Nada novo no outbox.',
-    );
-  }, []);
+    setMessage(scanOutcomeMessage(before, scanned.rejectedOnLastScan, scanned.snapshot.through_seq));
+  }, [state]);
 
   return (
     <section className={styles.screen} aria-label="Esteira">
@@ -259,10 +350,7 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                 type="button"
                 key={discovery.id}
                 className={[styles.card, selectedId === discovery.id ? styles.cardSelected : ''].filter(Boolean).join(' ')}
-                onClick={() => {
-                  setSelectedId(discovery.id);
-                  setTargetKey(null);
-                }}
+                onClick={() => selectCard(discovery.id)}
               >
                 <span className={styles.cardTitle}>{discovery.title}</span>
                 <span className={styles.cardMeta}>
@@ -291,7 +379,45 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
             <>
               <h3 className={styles.detailTitle}>{selected.discovery.title}</h3>
               {selected.discovery.problem ? <p className={styles.problem}>{selected.discovery.problem}</p> : null}
-              {selected.stage.overridden ? <p className={styles.overrideNote}>Etapa {selected.stage.overrideNote}</p> : null}
+
+              {/* D-13 — a etapa é derivada. O ajuste manual existe, é sempre
+                  marcado, e o cálculo aparece ao lado dele: override que esconde
+                  o cálculo é override que engana. */}
+              <section className={styles.block} data-testid="esteira-stage">
+                <h4 className={styles.blockTitle}>Etapa</h4>
+                <p className={styles.stageLine}>
+                  <strong>{selected.stage.shown}</strong>
+                  <span className={styles.hint}>
+                    {selected.stage.overridden ? ' · ajuste manual' : ' · calculada dos fatos, nunca digitada'}
+                  </span>
+                </p>
+                {selected.stage.overrideLine ? (
+                  <p className={styles.overrideNote} data-testid="esteira-stage-override-line">
+                    {selected.stage.overrideLine}
+                  </p>
+                ) : null}
+                <div className={styles.dispatchRow}>
+                  {/* Âncora estável para o roteiro e2e: o rótulo do gatilho do
+                      Select é o valor escolhido, e valor muda com o fluxo. */}
+                  <div data-testid="esteira-stage-picker">
+                    <Select
+                      label="Forçar etapa"
+                      value={stagePick ?? selected.discovery.derivedStage}
+                      onChange={(value) => setStagePick(value as MacroStage)}
+                      options={[...MACRO_STAGE_OPTIONS]}
+                      disabled={readOnly}
+                    />
+                  </div>
+                  <Button onClick={() => void handleOverrideStage(stagePick ?? selected.discovery.derivedStage)} disabled={readOnly}>
+                    Forçar
+                  </Button>
+                  {selected.stage.overridden ? (
+                    <Button variant="ghost" onClick={() => void handleOverrideStage(null)} disabled={readOnly}>
+                      Voltar ao calculado
+                    </Button>
+                  ) : null}
+                </div>
+              </section>
 
               {/* O erro de leitura vem PRIMEIRO: é a informação que o modelo
                   antigo escondia, e a que muda o que o operador faz agora. */}
@@ -358,34 +484,93 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                 )}
               </section>
 
-              {/* Cada linha vem pronta de `cardContent`: montar a frase aqui foi
-                  o que fez a lista dizer "sem repo alvo" enquanto o disparo,
-                  quatro linhas abaixo, dizia "repo herdado do card" — sobre o
-                  mesmo item, na mesma tela (print 16 do roteiro do B2). */}
+              {/* O TEXTO de cada linha vem pronto de `cardContent` (B2) e os
+                  GESTOS de cada item vêm do B3. Os dois batches reescreveram
+                  este bloco: um para a lista parar de contradizer o disparo
+                  sobre o repo, o outro para o item ganhar estado e descarte.
+                  Montar a frase aqui de novo desfaria o primeiro. */}
               {content === null ? null : (
               <section className={styles.block} data-testid="card-content">
                 <h4 className={styles.blockTitle}>{content.title}</h4>
-                {content.lines.length > 0 ? (
+                {planLines.length > 0 ? (
                   <ul className={styles.lines}>
-                    {content.lines.map((line) => (
+                    {planLines.map((line) => (
                       <li key={line.key}>{line.text}</li>
                     ))}
                   </ul>
+                ) : null}
+                {selected.items.length > 0 ? (
+                  <>
+                    <ul className={styles.itemList}>
+                      {selected.items.map((item) => {
+                        // A trava DESTE item, não a primeira do card: com disparo
+                        // por assunto (B2) um card tem mais de uma, e a promessa
+                        // do descarte tem que casar com a recusa do mesmo item.
+                        const itemLock =
+                          selected.locks.find((entry) => entry.subject.entity === 'work_item' && entry.subject.id === item.id) ??
+                          null;
+                        return (
+                          <li key={item.id} className={styles.item} data-testid="esteira-item">
+                            <span className={styles.itemLine}>{itemTextById.get(item.id) ?? ''}</span>
+                            <div className={styles.rowActions}>
+                              {itemStateActions(item).map((action) => (
+                                <Button
+                                  key={action.state}
+                                  variant="ghost"
+                                  onClick={() => void handleItemState(item, action.state, action.hint)}
+                                  disabled={readOnly}
+                                >
+                                  {action.label}
+                                </Button>
+                              ))}
+                              {/* D-16 — criar item é da skill; descartar é um gesto
+                                  daqui. O botão continua clicável mesmo com o item
+                                  travado: a recusa é dita, nunca calada. */}
+                              <Button variant="ghost" onClick={() => void handleDiscard(item)} disabled={readOnly}>
+                                Descartar
+                              </Button>
+                            </div>
+                            <span className={styles.hint}>{discardHint(item, itemLock)}</span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <p className={styles.hint}>{ITEM_STATE_RULE}</p>
+                  </>
                 ) : null}
                 {content.note !== null ? <p className={styles.hint}>{content.note}</p> : null}
               </section>
               )}
 
-              {selected.notes.length > 0 ? (
-                <section className={styles.block}>
-                  <h4 className={styles.blockTitle}>Notas</h4>
+              <section className={styles.block} data-testid="esteira-notes">
+                <h4 className={styles.blockTitle}>Notas</h4>
+                {selected.notes.length === 0 ? (
+                  <p className={styles.hint}>Nenhuma nota ainda.</p>
+                ) : (
                   <ul className={styles.lines}>
-                    {selected.notes.map((note) => (
-                      <li key={`${note.at}:${note.text}`}>{note.text}</li>
+                    {selected.notes.map((note, index) => (
+                      <li key={`${index}:${note.at}`}>
+                        <span className={styles.noteAbout}>{note.about}</span> — {note.text}
+                      </li>
                     ))}
                   </ul>
-                </section>
-              ) : null}
+                )}
+                <div className={styles.noteForm}>
+                  <div data-testid="esteira-note-target">
+                    <Select label="Sobre" value={noteTarget} onChange={setNotePick} options={[...noteTargets]} disabled={readOnly} />
+                  </div>
+                  <TextInput
+                    label="Nota"
+                    value={noteText}
+                    onChange={(event) => setNoteText(event.target.value)}
+                    placeholder="O que precisa ficar registrado?"
+                    disabled={readOnly}
+                  />
+                  <Button onClick={() => void handleAddNote(noteTarget)} disabled={readOnly || noteText.trim().length === 0}>
+                    Anotar
+                  </Button>
+                </div>
+              </section>
 
               {/* Só oferecer disparo que o modelo comporta — e nunca recusar
                   calado. A fase que o card ainda não comporta continua VISÍVEL,
