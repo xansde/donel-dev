@@ -35,6 +35,8 @@ import { abrirDonel, fecharDonel, fecharPortaDeEntrada, REPO_ROOT, type RoteiroC
 /** O card aponta para o repo de onde a suíte roda — nome calculado, nunca literal (numa worktree o nome é outro). */
 const REPO_ALVO = path.basename(REPO_ROOT);
 const TITULO_CARD = 'Fila de importação trava sem sinal';
+/** O título que o botão "Exemplo" preenche (`SEED_DOCUMENT_EXAMPLE`) — mesmo texto dos dois lados (erro nº 5). */
+const TITULO_SEMEADO = 'O que ja esta em andamento';
 
 let ctx: RoteiroContexto;
 
@@ -122,6 +124,13 @@ test('o mapa lê o store, e o que ele mostra é o modelo novo', async () => {
       'O "⌁ Preparar" do mapa e o "Preparar" do painel do store são o MESMO gesto: separam o contexto, travam o card e abrem a aba com o comando já escrito. O Enter é seu.',
     );
     await preparar.click();
+
+    // O painel vai dizer "a aba está aberta com o comando da fase escrito" —
+    // espere o comando APARECER no terminal antes de fotografar. Sem isso a
+    // foto sai no meio da abertura (o dublê demora ~1s a subir) e o print
+    // contradiz a frase por corrida — família do erro conhecido 5c, e a mesma
+    // espera que o roteiro `disparo-abre-sessao` já fazia.
+    await win.locator('.xterm-rows').filter({ hasText: '/esteira-discovery' }).first().waitFor({ timeout: 60_000 });
 
     const passoDaSessao = mapa.getByTestId('devmode-trilha-step').filter({ hasText: 'sessão aberta' }).first();
     await passoDaSessao.waitFor({ timeout: 60_000 });
@@ -281,6 +290,52 @@ test('o mapa lê o store, e o que ele mostra é o modelo novo', async () => {
       'O erro tem caminho e motivo — e nada se perdeu',
       blocoDoErro,
       'O arquivo continua no outbox, com o código do que o contrato recusou. O que a skill fez não sumiu: só não foi lido.',
+    );
+
+    // ── 8. A costura B4×B6: o trabalho SEMEADO não se disfarça de observado ─
+    // O seed (B4) declara de uma vez um trabalho que começou fora do app. No
+    // mapa, cada nó que nasceu assim carrega a etiqueta "semeado" — sem ela, a
+    // afirmação de quem digitou reapareceria no carrossel como fato observado.
+    await abrirPainelDoStore(ctx);
+    await painelDoStore.getByTestId('esteira-seed-toggle').click();
+    const docDoSeed = painelDoStore.getByTestId('esteira-seed-doc');
+    await painelDoStore.getByRole('button', { name: 'Exemplo', exact: true }).click();
+    await passo(
+      'Semeie um trabalho que já estava em curso',
+      docDoSeed,
+      'O documento declara o discovery, a fase que já concluiu, o plano e os itens — de uma vez, como afirmação de quem digita. Não é fato observado de uma skill, e é exatamente essa diferença que a marca "semeado" existe para não deixar sumir.',
+    );
+    await painelDoStore.getByRole('button', { name: 'Semear', exact: true }).click();
+    await painelDoStore.locator('button', { hasText: TITULO_SEMEADO }).first().waitFor({ timeout: 15_000 });
+    await painelDoStore.getByRole('button', { name: 'Fechar', exact: true }).click();
+
+    // O card novo entra no eixo X do nível Discovery. Sem trazê-lo ao foco, a
+    // foto pegaria o card clipado pela borda (erro conhecido 5b).
+    const cardSemeado = cardDoTipo('discovery').filter({ hasText: TITULO_SEMEADO }).first();
+    await cardSemeado.waitFor({ timeout: 15_000 });
+    await mapa.getByRole('button', { name: 'Discovery — próximo item' }).click();
+    await cardSemeado.locator('[class*="cardTop"]').click();
+    await assentar(win);
+    await cardSemeado.getByTestId('devmode-map-tags').filter({ hasText: 'semeado' }).first().waitFor({ timeout: 15_000 });
+    await passo(
+      'O nó semeado carrega a marca — nos dois desenhos',
+      cardSemeado,
+      'A mesma palavra da tela do store, importada, nunca reescrita. A etapa continua DERIVADA: "Execução" sai do item declarado em curso, não da etiqueta — a marca diz a ORIGEM do que se sabe, não muda o que se sabe.',
+    );
+
+    // Desce ao nível dos itens do card semeado: a marca vale para cada nó.
+    await mapa.press('ArrowDown');
+    await assentar(win);
+    await mapa.press('ArrowDown');
+    await assentar(win);
+    const itemSemeado = cardDoTipo('item').filter({ hasText: 'O item que esta em curso' }).first();
+    await itemSemeado.locator('[class*="cardTop"]').click();
+    await assentar(win);
+    await itemSemeado.getByTestId('devmode-map-tags').filter({ hasText: 'semeado' }).first().waitFor({ timeout: 15_000 });
+    await passo(
+      'O item semeado diz o estado E a origem',
+      itemSemeado,
+      'O estado veio declarado no documento ("em curso") e o app honra o explícito; quando o seed não declara, o estado deriva das fases que tomam o item por assunto. A marca acompanha o item, o plano e o card — a origem não se apaga no caminho.',
     );
   } catch (error) {
     // Roteiro que morre no meio ainda entrega valor: o relatório mostra até

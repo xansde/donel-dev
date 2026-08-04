@@ -352,6 +352,21 @@ Quando o achado merece ficar registrado, ele entra como história ("na primeira
 captura ele dizia X"), nunca no presente do indicativo. Toda correção de app
 pede uma leitura das legendas dos passos vizinhos.
 
+### 5e. Foto antes de o terminal mostrar o que a frase afirma
+
+**Sintoma (captura da integração, 04/08):** o painel dizia "A aba está aberta
+com o comando da fase escrito" e o terminal, no MESMO print, aparecia vazio —
+nem banner, nem comando. O dublê do `claude` leva ~1s para subir, e os passos
+da sessão fotografavam antes disso. O print contradizia a frase por corrida,
+não por mentira do app — mas quem lê o tutorial não tem como saber a diferença.
+
+**Correção:** depois do gesto que abre a sessão, esperar o comando APARECER no
+terminal antes de qualquer foto: `win.locator('.xterm-rows').filter({ hasText:
+'/esteira-<fase>' }).first().waitFor()`. O roteiro `disparo-abre-sessao` (B1)
+já fazia essa espera; o `mapa-sobre-o-store` não a tinha copiado. É a variante
+de conteúdo do 5c: transição de CSS ou saída de PTY, tudo que anima precisa
+assentar antes do flash.
+
 ### 6. Elemento coberto por overlay
 
 **Sintoma:** `<div class="_overlay_…"> intercepts pointer events`.
