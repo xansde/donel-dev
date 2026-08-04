@@ -75,10 +75,16 @@ function commentText(phase: PhaseRunSnapshot, planCount: number, itemCount: numb
   return `Fase ${phase.phase} ${outcome}: ${nascidos}.${resumo} Registrado pelo Donel Dev.`;
 }
 
-/** A chave do comentario: o run que produziu a conclusao — e, sem ele, o par assunto+fase. */
+/**
+ * A chave do comentario: a CONCLUSAO que ele descreve, nao o ultimo run que
+ * tocou a fase. Disparar de novo uma fase ja concluida atualiza o `lastRunId`
+ * sem mudar a conclusao — chavear por ele mandaria o MESMO comentario duas
+ * vezes ao board. Concluir de novo (outra conclusao, outro `completedAt`) e que
+ * merece comentario novo.
+ */
 function commentOperation(phase: PhaseRunSnapshot): string {
-  const key = phase.lastRunId ?? `${phase.subject.entity}:${phase.subject.id}:${phase.phase}`;
-  return `${COMMENT_PREFIX}${key}`;
+  const conclusion = phase.completedAt ?? phase.lastRunId ?? 'sem-marca';
+  return `${COMMENT_PREFIX}${phase.subject.entity}:${phase.subject.id}:${phase.phase}:${conclusion}`;
 }
 
 /** As intencoes de espelho do snapshot inteiro — ja descontado o que o board reflete. */

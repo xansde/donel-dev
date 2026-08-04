@@ -167,9 +167,24 @@ describe('o que se espelha', () => {
   it('comenta a conclusao da fase resumindo o que nasceu', () => {
     const comment = mirrorIntents(cardPlanejado(), CONFIG).find((intent) => intent.kind === 'comment');
 
-    expect(comment?.operation).toBe('comment:run-1');
+    expect(comment?.operation).toBe('comment:discovery:dsc-1:discovery:2026-08-04T12:00:00.000Z');
     expect(String(comment?.payload.text)).toContain('discovery');
     expect(String(comment?.payload.text)).toContain('1 plano');
+  });
+
+  it('disparar de novo uma fase JA concluida nao duplica o comentario no board', () => {
+    // `phase.started` atualiza o `lastRunId` sem mudar a conclusao: chavear o
+    // comentario pelo run mandaria o MESMO texto duas vezes.
+    const antes = mirrorIntents(cardPlanejado(), CONFIG).find((intent) => intent.kind === 'comment');
+    const depois = mirrorIntents(
+      cardPlanejado([
+        evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', runId: 'run-2' }),
+      ]),
+      CONFIG,
+    ).filter((intent) => intent.kind === 'comment');
+
+    expect(depois).toHaveLength(1);
+    expect(depois[0].operation).toBe(antes?.operation);
   });
 
   it('fase que FALHOU tambem vira comentario — o board nao pode achar que nada aconteceu', () => {
@@ -184,7 +199,7 @@ describe('o que se espelha', () => {
     ]);
     const comment = mirrorIntents(snapshot, CONFIG).find((intent) => intent.kind === 'comment');
 
-    expect(comment?.operation).toBe('comment:run-9');
+    expect(comment?.operation).toBe('comment:discovery:dsc-1:discovery:run-9');
     expect(String(comment?.payload.text)).toContain('worktree-dirty');
   });
 
@@ -232,7 +247,7 @@ describe('a fila', () => {
     ]);
     const drafts = pendingMirrorDrafts(snapshot, CONFIG, '2026-08-04T13:00:00.000Z');
 
-    expect(drafts.map((draft) => draft.payload.operation)).toEqual(['comment:run-1']);
+    expect(drafts.map((draft) => draft.payload.operation)).toEqual(['comment:discovery:dsc-1:discovery:2026-08-04T12:00:00.000Z']);
   });
 
   it('reenfileira quando a intencao MUDOU — reenviar o passado seria espelhar o que ja nao existe', () => {
