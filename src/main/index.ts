@@ -34,7 +34,6 @@ import type {
   CopyTranscriptForResumeResult,
   CreateProjectResponse,
   DeleteProfileOutcome,
-  DiscoveryTree,
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
@@ -112,7 +111,6 @@ import {
   type AppConfig,
 } from './config-store';
 import { resolveCardRepo, resolveCardRepos, type CardRepoResolution } from './cardRepoResolver';
-import { buildDiscoveryTree } from './discovery-tree';
 import {
   createSystemEsteiraConfigIoDeps,
   esteiraConfigDir,
@@ -120,7 +118,7 @@ import {
   reposConfigPath,
   trySaveProjectBindingToDisk,
 } from './esteira-config';
-import { createSystemEsteiraReaderIoDeps } from './esteira-reader';
+import { createSystemFileReadIoDeps } from './file-io';
 import { watchEsteiraResult, type EsteiraResultWatcherHandle } from './esteira-result-watcher';
 import {
   checkGhAvailability,
@@ -210,13 +208,13 @@ let appConfig: AppConfig = defaultAppConfig(defaultProjectRoots(homedir));
 // T303/T305 (003-modo-dev) — leitura dos artefatos da Esteira em disco (raiz
 // v3, CA-4: `~/.claude/esteira-state/<repo_slug>/`); injetável (mesmo padrão
 // de `configIoDeps`), resolvido uma vez.
-const esteiraReaderIoDeps = createSystemEsteiraReaderIoDeps();
+const fileIo = createSystemFileReadIoDeps();
 
 // Credencial DE CADA USUÁRIO (`~/.claude/esteira-config/donel-board-credential.json`,
 // fora do repo): quem tem uma fala com o board de verdade; quem não tem segue
 // com a porta de entrada desligada, sem erro nenhum na tela. O token só existe
 // aqui e dentro do transporte — nada disso vai para log.
-const boardCredential = loadTaskdexServiceCredential({ readFileText: esteiraReaderIoDeps.readFileText, homedir });
+const boardCredential = loadTaskdexServiceCredential({ readFileText: fileIo.readFileText, homedir });
 const boardCallTool = boardCredential ? createJsonRpcCallTool(boardCredential, createSystemHttpPostJson()) : null;
 
 /** O board da credencial do usuário é o default; o `config.json` do app, quando tem um, vence. */
@@ -233,7 +231,7 @@ const credentialBoardConfig = boardConfigFromCredential(boardCredential);
  */
 const effectiveBoardConfig = (repoPath?: string): DevModeBoardConfig | null => {
   if (repoPath && repoPath.trim()) {
-    const reposText = esteiraReaderIoDeps.readFileText(reposConfigPath(ESTEIRA_CONFIG_DIR));
+    const reposText = fileIo.readFileText(reposConfigPath(ESTEIRA_CONFIG_DIR));
     const projectBoard = readRepoBoard(reposText, resolveRepoSlug(repoPath));
     if (projectBoard.workspaceId && projectBoard.teamId) {
       return { workspaceId: projectBoard.workspaceId, teamId: projectBoard.teamId };
@@ -245,14 +243,14 @@ const effectiveBoardConfig = (repoPath?: string): DevModeBoardConfig | null => {
 // T311 (Batch B) — de onde vêm os cards da porta de entrada (CA-1). Ordem:
 // fixture do roteiro de teste (`DONEL_DEVMODE_BOARD_FIXTURE`) → board real via
 // MCP TaskDex → vazio.
-const boardReader = resolveBoardReader(process.env, esteiraReaderIoDeps.readFileText, boardCallTool);
+const boardReader = resolveBoardReader(process.env, fileIo.readFileText, boardCallTool);
 
 // T327 (Batch D) — fonte dos 4 fatos do espelho (CA-12), mesma ordem de
 // precedência. Sem fixture e sem credencial, nenhum card tem fato: a árvore
 // continua inteira, só não recebe anotação. Leitura pura, nunca escreve no board.
 const boardFactsReader = resolveBoardFactsReader(
   process.env,
-  esteiraReaderIoDeps.readFileText,
+  fileIo.readFileText,
   boardCallTool,
   credentialBoardConfig,
 );
@@ -706,7 +704,7 @@ function registerConfigIpcHandlers(): void {
  * main devolve o `AppConfigDto` atual sem mutar (validação pura em
  * `src/shared/devMode.ts`, testada isolada). **Nenhum canal aqui escreve no
  * TaskDex ou no vault** (invariante 5/CA-19) — só disco de leitura
- * (`esteira-reader.ts`/`discovery-tree.ts`) e o `ConfigStore` local.
+ * e o `ConfigStore` local.
  */
 function registerDevModeIpcHandlers(): void {
   ipcMain.handle(DEVMODE_CHANNELS.get, (): AppConfigDto => toAppConfigDto(appConfig));
@@ -763,13 +761,8 @@ function registerDevModeIpcHandlers(): void {
     return toAppConfigDto(appConfig);
   });
 
-  /** CA-4/CA-7 — monta a árvore do discovery pedido a partir do disco (raiz v3, `~/.claude/esteira-state/<repo_slug>`). `cardId` sem discovery aberto devolve árvore vazia (nunca lança). */
-  ipcMain.handle(DEVMODE_CHANNELS.readTree, (_event, cardId: string): DiscoveryTree => {
-    const repoPath = isValidCardId(cardId) ? (appConfig.devMode.discoveries[cardId]?.repoPath ?? '') : '';
-    if (!repoPath) return { discoveryCardId: cardId, planCards: [], focusedPlanCardId: null, allPlanCardsComplete: false, discoveryStatus: 'not-started' };
-    const root = { esteiraStateRoot: ESTEIRA_STATE_ROOT, repoSlug: resolveRepoSlug(repoPath) };
-    return buildDiscoveryTree(root, cardId, appConfig.devMode.archivedPhaseSessions, esteiraReaderIoDeps);
-  });
+  // Spec 010 / B6 — `devMode:readTree` saiu com o leitor de árvore do modelo antigo: não há
+  // mais árvore de disco a montar. O mapa lê o STORE (`esteira:snapshot`).
 
   /**
    * T311/CA-1 — cards das 3 colunas de entrada do board configurado. Sem
@@ -811,11 +804,11 @@ function registerDevModeIpcHandlers(): void {
    */
   ipcMain.handle(DEVMODE_CHANNELS.resolveCardRepo, (_event, input: ResolveCardRepoIpcInput): CardRepoResolution => {
     if (!isValidResolveCardRepoIpcInput(input)) return { kind: 'unknown' };
-    const reposText = esteiraReaderIoDeps.readFileText(reposConfigPath(ESTEIRA_CONFIG_DIR));
+    const reposText = fileIo.readFileText(reposConfigPath(ESTEIRA_CONFIG_DIR));
     const repos = readAllRepoEntries(reposText);
     return resolveCardRepo(
       { cardId: input.cardId, esteiraStateRoot: ESTEIRA_STATE_ROOT, repos, boardRepoPath: input.boardRepoPath },
-      esteiraReaderIoDeps,
+      fileIo,
     );
   });
 
@@ -833,11 +826,11 @@ function registerDevModeIpcHandlers(): void {
     DEVMODE_CHANNELS.resolveCardRepos,
     (_event, input: ResolveCardReposIpcInput): Record<string, CardRepoResolution> => {
       if (!isValidResolveCardReposIpcInput(input)) return {};
-      const reposText = esteiraReaderIoDeps.readFileText(reposConfigPath(ESTEIRA_CONFIG_DIR));
+      const reposText = fileIo.readFileText(reposConfigPath(ESTEIRA_CONFIG_DIR));
       const repos = readAllRepoEntries(reposText);
       return resolveCardRepos(
         { cardIds: input.cardIds, esteiraStateRoot: ESTEIRA_STATE_ROOT, repos, boardRepoPath: input.boardRepoPath },
-        esteiraReaderIoDeps,
+        fileIo,
       );
     },
   );
@@ -896,8 +889,8 @@ function registerDevModeIpcHandlers(): void {
 
 // ---------------------------------------------------------------------------
 // Spec 010 — a esteira nova (store de eventos + contrato com as skills). Nasce
-// AO LADO do Modo Dev atual, sem tocar `discovery-tree.ts`, `esteira-reader.ts`
-// nem o mapa (`[P-5]`: eles saem no fim do vertical, quando o novo provar a
+// AO LADO do Modo Dev atual, sem tocar o mapa antigo (`[P-5]`: ele saiu no
+// batch B6, quando o modelo novo provou a
 // espinha — não antes, para dar para comparar os dois com o mesmo dado).
 // ---------------------------------------------------------------------------
 

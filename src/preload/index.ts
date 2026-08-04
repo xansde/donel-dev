@@ -9,7 +9,6 @@ import type {
   CreateProjectIpcInput,
   CreateProjectResponse,
   DeleteProfileOutcome,
-  DiscoveryTree,
   DonelApi,
   EntryColumnCard,
   GhAvailabilityDto,
@@ -247,7 +246,6 @@ const donelApi: DonelApi = {
 
     setDefaults: (defaults: PhaseDefaultsTable) => ipcRenderer.invoke(DEVMODE_CHANNELS.setDefaults, defaults) as Promise<AppConfigDto>,
 
-    readTree: (cardId: string) => ipcRenderer.invoke(DEVMODE_CHANNELS.readTree, cardId) as Promise<DiscoveryTree>,
 
     // T311 (Batch B) — CA-1: consulta restrita da porta de entrada.
     listEntryCards: (repoPath?: string) => ipcRenderer.invoke(DEVMODE_CHANNELS.listEntryCards, repoPath) as Promise<readonly EntryColumnCard[]>,

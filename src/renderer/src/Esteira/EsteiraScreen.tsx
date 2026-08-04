@@ -2,24 +2,14 @@ import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EsteiraGestureDto, EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
 import type { MacroStage, WorkItemSnapshot, WorkItemState } from '../../../shared/esteira/store/storeFormat';
-import {
-  dispatchRefusedMessage,
-  esteiraPhaseCommand,
-  esteiraTabName,
-  lockStateOf,
-  preparedMessage,
-  resolveSessionCwd,
-  type EsteiraSessionRequest,
-  type KnownProject,
-  type SessionOpenOutcome,
-} from './esteiraSession';
+import type { EsteiraSessionRequest, KnownProject } from './esteiraSession';
+import { preparePhase } from './preparePhase';
 import {
   cardContent,
   cardView,
   discardHint,
   discardedMessage,
   dispatchView,
-  formatTimestamp,
   gestureRefusalMessage,
   ingestErrorLine,
   itemStateActions,
@@ -157,82 +147,15 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
     // O botão já está desabilitado quando não dá; esta guarda existe para o
     // caminho de teclado e para não haver DOIS lugares decidindo a mesma coisa.
     if (selected === null || dispatch === null || !dispatch.canDispatch || dispatch.target === null) return;
-    const target = dispatch.target;
-    const dispatchPhase = dispatch.phase.phase;
-    // O cwd é resolvido ANTES do disparo: ele viaja dentro do `run-input.json`
-    // (a skill precisa saber onde trabalhar) e é onde a aba abre. Um alvo só,
-    // declarado uma vez — e é o do ASSUNTO (B2), não o do card: a fase de um
-    // item roda no repo do item, ou no que ele herdou.
-    const resolved = resolveSessionCwd(target.targetRepo, projects);
-    const dispatched = await window.donel.esteira.dispatch({
-      phase: dispatchPhase,
-      discoveryId: target.discoveryId,
-      // O assunto vai EXPLÍCITO: a fase de um item leva o item (e o plano dele);
-      // a fase de um plano leva o plano. Era daqui que saía o `plan_id: null`
-      // num disparo de fase "Plano".
-      planId: target.planId,
-      workItemId: target.workItemId,
-      // D-6 — o alvo é explícito: o do item, ou o herdado do card. Nunca o projeto em foco.
-      workspace:
-        target.targetRepo === null
-          ? null
-          : {
-              target_repo: target.targetRepo,
-              repo_path: resolved.ok ? resolved.cwd : null,
-              worktree_path: null,
-              branch: null,
-            },
-      continuesSessionId: null,
-      handoffReason: null,
-    });
-    setState(dispatched.state);
-
-    if (dispatched.ok) {
-      // Batch B1 — o disparo deixou de parar no arquivo: se há para onde abrir,
-      // a aba nasce agora, com o comando escrito. Se NÃO há, a fase continua
-      // preparada e a tela diz o motivo em vez de fingir que abriu.
-      let outcome: SessionOpenOutcome;
-      if (resolved.ok) {
-        const tabName = esteiraTabName(dispatchPhase, selected.discovery.title);
-        onOpenSession({
-          sessionId: dispatched.sessionId,
-          phase: dispatchPhase,
-          cwd: resolved.cwd,
-          tabName,
-          command: esteiraPhaseCommand(dispatchPhase, dispatched.inputPath),
-        });
-        outcome = { opened: true, tabName };
-      } else {
-        outcome = { opened: false, reason: resolved.reason };
-      }
-      setMessage(
-        preparedMessage({
-          phase: dispatchPhase,
-          targetRepo: target.targetRepo,
-          inputPath: dispatched.inputPath,
-          outcome,
-        }),
-      );
-      return;
-    }
-    if (dispatched.reason === 'locked') {
-      // A frase sai da camada pura, com a MESMA palavra do bloco da trava:
-      // escrita aqui, ela dizia "em andamento" para um card cujo bloco dizia
-      // outra coisa — o erro nº 1 de `erros-conhecidos.md`, terceira volta.
-      setMessage(
-        dispatchRefusedMessage(
-          lockStateOf(dispatched.lock.holderKind, dispatched.lock.cliSessionId !== null),
-          dispatched.lock.phase,
-          formatTimestamp(dispatched.lock.acquiredAt),
-        ),
-      );
-      return;
-    }
-    if (dispatched.reason === 'invalid-target') {
-      setMessage(`Não dá para disparar: ${dispatched.issues.map((issue) => issue.code).join(', ')}.`);
-      return;
-    }
-    setMessage('Não deu para disparar: o histórico não aceita escrita agora.');
+    // A sequência inteira (cwd, disparo, aba, frase) mora em `preparePhase`: o
+    // mapa oferece o MESMO gesto na trilha, e duas orquestrações do mesmo
+    // disparo divergiriam no primeiro conserto.
+    const result = await preparePhase(
+      { card: selected, phase: dispatch.phase.phase, target: dispatch.target, projects },
+      { dispatch: (payload) => window.donel.esteira.dispatch(payload), openSession: onOpenSession },
+    );
+    setState(result.state);
+    setMessage(result.message);
   }, [dispatch, selected, projects, onOpenSession]);
 
   const handleRelease = useCallback(async () => {

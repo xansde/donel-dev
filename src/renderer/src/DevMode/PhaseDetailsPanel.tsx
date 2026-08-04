@@ -1,132 +1,163 @@
-import { PhaseChip, PhaseStateGlyph, type EsteiraPhase as ChipPhase } from '@donel-dev/design-system';
-import type { EsteiraPhase } from '../../../shared/devMode';
-import type { PhaseDetailsViewModel } from '../../../shared/phaseDetailsView';
+import { Button, PhaseChip, PhaseStateGlyph, type EsteiraPhase as ChipPhase } from '@donel-dev/design-system';
+import type { MapDetailView } from './esteiraMapView';
 import styles from './PhaseDetailsPanel.module.css';
 
-// Lote 7 (009-modo-dev-v3), CA-7 — o painel PRÓPRIO de 316px à direita: o
-// mapa (`DiscoveryMap.tsx`) NUNCA carrega o detalhe dentro de si.
+// Spec 010 / batch B6 — o painel PRÓPRIO de 316px à direita (CA-7 do design v3):
+// o mapa nunca carrega o detalhe dentro de si. A forma é a mesma; o conteúdo
+// passou a vir do STORE.
 //
-// Lote 8, CA-18/CA-20 — o CONTEÚDO rico (garantia, PR desta fase, artefatos
-// declarados, recibos de conhecimento — mockup linhas 236-312) chega aqui.
-// Cada seção degrada por OMISSÃO (C4/CA-6): sem dado, a seção simplesmente
-// não aparece — nunca um "em construção" nem um erro. O view-model inteiro é
-// montado por `buildPhaseDetailsView` (shared/phaseDetailsView.ts, puro/
-// testado) — este componente só renderiza.
+// O que ele mostra, e por quê (itens M-09/M-10 e T-01/T-02 do inventário do B6):
 //
-// REVISÃO do orquestrador (mesmo lote) — o breadcrumb (disc.id › card de
-// plano › fase) NÃO mora aqui: o "Etapa em foco" do mockup (linhas 236-250)
-// só tem glifo+chip+fase+estado+resumo, sem disc.id/planoId/planoTitle. O
-// breadcrumb é forma do HEADER de 44px acima do terminal (mockup linhas
-// 175-196), implementado em App.tsx — `buildPhaseDetailsView` continua
-// calculando `breadcrumb` (é dado útil, só mudou de consumidor).
+//  - **O que dá para conferir** — `verifications[]`: PR, check, revisão e
+//    conclusão (D-4). Estava no snapshot desde a fase 1 e nenhuma tela mostrava.
+//  - **Artefatos declarados** — `artifacts[]`, com o ponteiro inteiro (D-8).
+//  - **Não consegui ler** — o erro de ingestão, com caminho e código. É a
+//    inversão da issue #35: ausência de leitura nunca vira "não realizada".
+//  - **Trava** — dono, hora, sessão e a saída num gesto (D-11).
+//  - **Espelho pendente** — o board atrasado nunca é trabalho parado (D-12).
+//
+// Cada seção degrada por OMISSÃO: sem dado, ela não aparece. Nenhum texto nasce
+// aqui — tudo chega pronto de `esteiraMapView.ts`.
 
 const CHIP_PHASES: ReadonlySet<string> = new Set<ChipPhase>(['discovery', 'plano', 'implementar', 'validar', 'concluir', 'documentar']);
 
-function isChipPhase(phase: EsteiraPhase): phase is ChipPhase {
+function isChipPhase(phase: string): phase is ChipPhase {
   return CHIP_PHASES.has(phase);
 }
 
 export interface PhaseDetailsPanelProps {
-  /** `null` = nenhuma etapa selecionada ainda — o painel some por omissão, nunca um erro. */
-  readonly selection: PhaseDetailsViewModel | null;
+  /** `null` = não há card nenhum no histórico — o painel some por omissão. */
+  readonly detail: MapDetailView | null;
+  /** Libera a trava num gesto (D-11). */
+  readonly onReleaseLock: () => void;
+  /** Reenvia o que o board não recebeu (D-12) — gesto de cortesia, nunca desbloqueia nada local. */
+  readonly onRetryMirror: () => void;
+  readonly readOnly: boolean;
 }
 
-export function PhaseDetailsPanel({ selection }: PhaseDetailsPanelProps): React.JSX.Element {
-  if (!selection) {
+export function PhaseDetailsPanel({ detail, onReleaseLock, onRetryMirror, readOnly }: PhaseDetailsPanelProps): React.JSX.Element {
+  if (!detail) {
     return (
       <aside className={styles.panel} aria-label="Detalhe da etapa" data-testid="devmode-details-panel">
         <p className={styles.empty} data-testid="devmode-details-empty">
-          Selecione uma etapa no mapa para ver o detalhe.
+          Nenhum card no histórico ainda — o detalhe aparece quando houver um.
         </p>
       </aside>
     );
   }
 
-  const { garantia, pr, artifacts, receipts, showReceipts } = selection;
-
   return (
     <aside className={styles.panel} aria-label="Detalhe da etapa" data-testid="devmode-details-panel">
       <div className={styles.header}>
-        <span className={styles.label}>Etapa em foco</span>
+        <span className={styles.label}>{detail.phase ? 'Etapa em foco' : 'Nó em foco'}</span>
         <div className={styles.summary}>
-          <PhaseStateGlyph status={selection.status} />
-          {isChipPhase(selection.phase) ? <PhaseChip phase={selection.phase} /> : null}
-          {selection.faseNum ? <span className={styles.fase}>fase {selection.faseNum}</span> : null}
+          {detail.phaseGlyph ? <PhaseStateGlyph status={detail.phaseGlyph} /> : null}
+          {detail.phase && isChipPhase(detail.phase) ? <PhaseChip phase={detail.phase} /> : null}
+          {detail.phase && !isChipPhase(detail.phase) ? <span className={styles.fase}>{detail.phase}</span> : null}
         </div>
-        <p className={styles.summaryText} data-testid="devmode-details-summary">
-          {selection.summary}
+        <p className={styles.summaryText} data-testid="devmode-details-title">
+          {detail.title}
         </p>
-        {/* CA-25 — a conta em que a sessão ARQUIVADA desta etapa rodou; some
-            duas entradas da mesma sessão em contas diferentes (CA-24) nunca
-            indistinguíveis. */}
-        {selection.archivedAccount ? (
-          <span
-            className={[styles.accountTag, selection.archivedAccount.mismatch ? styles.accountTagWarn : ''].join(' ')}
-            data-testid="devmode-details-account"
-          >
-            {selection.archivedAccount.label}
-          </span>
-        ) : null}
+        <p className={styles.summaryText} data-testid="devmode-details-summary">
+          {detail.summary}
+        </p>
       </div>
 
-      {garantia ? (
-        <section className={styles.section} aria-label="Garantia da fase" data-testid="devmode-details-garantia">
-          <div className={styles.sectionLabel}>Garantia da fase</div>
-          <div className={styles.garantiaRow}>
-            <span className={styles.garantiaTipo}>{garantia.tipo}</span>
-            <span className={styles.garantiaStatus}>{garantia.statusLabel}</span>
-          </div>
-          {garantia.descricao ? <p className={styles.garantiaDescricao}>{garantia.descricao}</p> : null}
-          {garantia.roteiroPath ? <div className={styles.mono}>{garantia.roteiroPath}</div> : null}
+      {/* O erro de leitura vem PRIMEIRO: é a informação que o modelo antigo
+          escondia, e a que muda o que o operador faz agora. */}
+      {detail.ingestErrors.length > 0 ? (
+        <section className={styles.section} aria-label="Não consegui ler" data-testid="devmode-details-ingest-errors">
+          <div className={styles.sectionLabel}>Não consegui ler</div>
+          {detail.ingestErrors.map((error) => (
+            <div key={error.key} className={styles.kvRow}>
+              <span className={styles.mono}>{error.path}</span>
+              <span className={styles.kvValue}>{error.reason}</span>
+            </div>
+          ))}
+          <p className={styles.garantiaDescricao}>{detail.ingestErrorNote}</p>
         </section>
       ) : null}
 
-      {pr ? (
-        <section className={styles.section} aria-label="PR desta fase" data-testid="devmode-details-pr">
-          <div className={styles.sectionLabel}>PR desta fase</div>
+      {detail.lock ? (
+        <section className={styles.section} aria-label="Trava da fase" data-testid="devmode-details-lock" data-state={detail.lock.state}>
+          <div className={styles.sectionLabel}>{detail.lock.title}</div>
+          <p className={styles.garantiaDescricao}>{detail.lock.line}</p>
+          {detail.lock.nextStep ? (
+            <>
+              <p className={styles.garantiaDescricao}>{detail.lock.nextStep.explanation}</p>
+              <div className={styles.mono}>{detail.lock.nextStep.command}</div>
+            </>
+          ) : null}
+          <Button variant="ghost" onClick={onReleaseLock} disabled={readOnly} data-testid="devmode-details-release-lock">
+            Liberar trava
+          </Button>
+        </section>
+      ) : null}
+
+      {detail.closureLine ? (
+        <section className={styles.section} aria-label="Como o ciclo terminou" data-testid="devmode-details-closure">
+          <div className={styles.sectionLabel}>Como este ciclo termina</div>
+          <p className={styles.garantiaDescricao}>{detail.closureLine}</p>
+        </section>
+      ) : null}
+
+      {detail.verifications.length > 0 ? (
+        <section className={styles.section} aria-label={detail.verificationsTitle} data-testid="devmode-details-verifications">
+          <div className={styles.sectionLabel}>{detail.verificationsTitle}</div>
           <div className={styles.kvList}>
-            {pr.map((row) => (
-              <div key={row.label} className={styles.kvRow}>
-                <span className={styles.kvKey}>{row.label}</span>
-                <span className={styles.kvValue}>{row.value}</span>
+            {detail.verifications.map((line) => (
+              <div key={line.key} className={styles.kvRow}>
+                <span className={line.failed ? styles.garantiaStatus : styles.kvValue}>{line.text}</span>
               </div>
             ))}
           </div>
         </section>
       ) : null}
 
-      {artifacts.length > 0 ? (
+      {detail.artifacts.length > 0 ? (
         <section className={styles.section} aria-label="Artefatos declarados" data-testid="devmode-details-artifacts">
           <div className={styles.sectionLabel}>Artefatos declarados</div>
           <div className={styles.artifactList}>
-            {artifacts.map((artifact) => (
-              <div key={artifact.path} className={styles.artifactRow}>
+            {detail.artifacts.map((artifact) => (
+              <div key={artifact.key} className={styles.artifactRow}>
                 <span className={styles.artifactIcon} aria-hidden="true">
                   {artifact.icon}
                 </span>
-                <span className={styles.artifactPath}>{artifact.path}</span>
+                <span className={styles.artifactPath} title={artifact.note}>
+                  {artifact.path}
+                </span>
               </div>
             ))}
           </div>
         </section>
       ) : null}
 
-      {showReceipts ? (
-        <section className={styles.section} aria-label="Recibos de conhecimento" data-testid="devmode-details-receipts">
-          <div className={styles.sectionLabel}>Recibos de conhecimento</div>
-          {receipts.length > 0 ? (
-            <div className={styles.receiptList}>
-              {receipts.map((receipt) => (
-                <div key={receipt.source} className={styles.receiptRow} data-testid="devmode-details-receipt">
-                  {receipt.source}
-                </div>
-              ))}
+      {detail.notes.length > 0 ? (
+        <section className={styles.section} aria-label="Notas" data-testid="devmode-details-notes">
+          <div className={styles.sectionLabel}>Notas</div>
+          {detail.notes.map((note) => (
+            <div key={note.key} className={styles.kvRow}>
+              <span className={styles.kvKey}>{note.about}</span>
+              <span className={styles.kvValue}>{note.text}</span>
             </div>
-          ) : (
-            <p className={styles.receiptEmpty} data-testid="devmode-details-receipts-empty">
-              sem registro
-            </p>
-          )}
+          ))}
+        </section>
+      ) : null}
+
+      {detail.mirror.length > 0 ? (
+        <section className={styles.section} aria-label={detail.mirrorTitle} data-testid="devmode-details-mirror">
+          <div className={styles.sectionLabel}>{detail.mirrorTitle}</div>
+          <p className={styles.garantiaDescricao}>{detail.mirrorHint}</p>
+          {detail.mirror.map((line) => (
+            <div key={line.key} className={styles.kvRow}>
+              <span className={styles.kvValue}>
+                {line.text} — {line.detail}
+              </span>
+            </div>
+          ))}
+          <Button variant="ghost" onClick={onRetryMirror} disabled={readOnly} data-testid="devmode-details-retry-mirror">
+            Reenviar espelho
+          </Button>
         </section>
       ) : null}
     </aside>

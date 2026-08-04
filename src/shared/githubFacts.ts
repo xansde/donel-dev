@@ -7,7 +7,7 @@
 // I/O, que chama estas funções depois de ler o stdout do `gh`).
 //
 // Mesma disciplina do resto do repo (C4/CA-6, ver taskdex-board-client.ts
-// `toBoardFacts`, esteira-reader.ts `normalizeManifest`): shape inesperado
+// `toBoardFacts`): shape inesperado
 // degrada pra `null`/`[]`, campo desconhecido é ignorado, NUNCA lança. Um
 // payload malformado não pode derrubar o mapa — só faz o fato faltar.
 
@@ -151,7 +151,7 @@ export function parsePullRequestList(raw: unknown): PhasePullRequestFacts | null
 
 /**
  * CA-5 — a ponte entre CA-4 (disco: `plano-result.json` já lido por
- * `esteira-reader.ts`) e CA-3 (GitHub): "o app acha a spec-issue por
+ * do manifesto) e CA-3 (GitHub): "o app acha a spec-issue por
  * `outputs.spec_issue`". Shape esperado é o do contrato §D.3 (`{repo,
  * number, id, node_id, url}`); só `repo`+`number` interessam pra endereçar a
  * leitura no `gh`. `null` quando o plano ainda não gravou spec-issue (fase

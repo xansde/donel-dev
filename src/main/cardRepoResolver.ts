@@ -20,7 +20,7 @@ import type { RepoEntry } from '../shared/projectBinding';
 // nunca um palpite.
 //
 // Puro/testável sem Electron: `existsSync` é injetado (mesmo padrão de
-// `esteira-reader.ts`/`esteira-config.ts`).
+// `esteira-config.ts`).
 
 export interface CardRepoResolverIoDeps {
   existsSync: (path: string) => boolean;
@@ -38,7 +38,7 @@ export type CardRepoResolution =
 
 export interface ResolveCardRepoInput {
   readonly cardId: string;
-  /** Raiz v3 do handoff (`~/.claude/esteira-state`) — mesma raiz que `discovery-tree.ts`/`esteira-reader.ts` usam. */
+  /** Raiz v3 do handoff (`~/.claude/esteira-state`) — onde a esteira 2.x arquiva. */
   readonly esteiraStateRoot: string;
   /** TODOS os repos conhecidos (`readAllRepoEntries`, `shared/projectBinding.ts`) — a lista inteira, nunca só o repo em foco. */
   readonly repos: readonly RepoEntry[];

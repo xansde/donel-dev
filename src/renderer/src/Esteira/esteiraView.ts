@@ -14,12 +14,14 @@
 import { MACRO_STAGE_LABEL } from '../../../shared/esteira/ipc';
 import { mirrorOperationKind } from '../../../shared/esteira/mirror/mirrorPlan';
 import { findBlockingLock, lockChainOf } from '../../../shared/esteira/store/lockChain';
-import { MACRO_STAGES } from '../../../shared/esteira/store/storeFormat';
+import { LIFECYCLE_BY_ITEM_TYPE, MACRO_STAGES } from '../../../shared/esteira/store/storeFormat';
 import { esteiraPhaseCommand, LOCK_WORD, lockStateOf, noLockDispatchHint, type LockState } from './esteiraSession';
 import type {
+  ArtifactPointer,
   DiscoverySnapshot,
   EntityId,
   IngestErrorSnapshot,
+  LifecycleKind,
   LockRecord,
   MacroStage,
   MirrorQueueEntry,
@@ -27,6 +29,9 @@ import type {
   PlanSnapshot,
   SessionSnapshot,
   StoreSnapshot,
+  VerificationKind,
+  VerificationSnapshot,
+  VerificationState,
   WorkItemSnapshot,
   WorkItemState,
 } from '../../../shared/esteira/store/storeFormat';
@@ -132,12 +137,102 @@ export function itemLine(
   discovery: DiscoverySnapshot | null = null,
   lock: LockRecord | null = null,
 ): string {
+  return `${item.title} · ${itemMeta(item, discovery, lock)}`;
+}
+
+/**
+ * Tudo que a linha do item diz DEPOIS do título. Separado porque o mapa mostra
+ * o título como título do card e a meta embaixo — e montar a meta lá seria a
+ * segunda redação da mesma frase, que é como "sem repo alvo" e "herdado do
+ * card" apareceram na mesma tela sobre o mesmo item.
+ */
+export function itemMeta(
+  item: WorkItemSnapshot,
+  discovery: DiscoverySnapshot | null = null,
+  lock: LockRecord | null = null,
+): string {
   const { repo, inherited } =
     discovery === null ? { repo: item.targetRepo, inherited: false } : itemRepoOf(item, discovery);
   const repoText = repo === null ? 'sem repo alvo' : inherited ? `${repo} (herdado do card)` : repo;
   const origem = item.createdBySkill ? ' · criado pela skill' : '';
   const travado = lock === null ? '' : ` · travado pela fase "${lock.phase}" desde ${formatTimestamp(lock.acquiredAt)}`;
-  return `${item.title} · ${item.itemType} · ${WORK_ITEM_STATE_LABEL[item.state]} · ${repoText}${origem}${travado}`;
+  return `${item.itemType} · ${WORK_ITEM_STATE_LABEL[item.state]} · ${repoText}${origem}${travado}`;
+}
+
+/**
+ * D-4 — o item FECHOU. Vale para os três ciclos: entrega de código, artefato
+ * revisado e pergunta respondida. `abandoned` conta: desistir é desfecho, não
+ * pendência — e foi o mapa antigo pintar desfecho como trilha pela metade que
+ * fez um spike respondido parecer um PR inacabado.
+ */
+export function isItemClosed(item: WorkItemSnapshot): boolean {
+  return item.state === 'done' || item.state === 'abandoned';
+}
+
+/** O que "terminar" significa em cada ciclo (D-4) — tabela, não regra espalhada. */
+const LIFECYCLE_CLOSURE: Readonly<Record<LifecycleKind, string>> = {
+  'code-delivery': 'entrega de código: fecha com o PR mergeado e verificado',
+  'reviewed-artifact': 'artefato revisado: fecha com o documento publicado e aceito',
+  'answered-question': 'pergunta respondida: fecha com a conclusão registrada — "não deu" é desfecho válido',
+};
+
+/**
+ * A frase de fecho de um item, quando ele fechou. Junta o CICLO (o que terminar
+ * significa) com a RESPOSTA registrada, quando existe — é o que faz um `spike`
+ * que respondeu "não dá" parecer concluído em vez de interrompido.
+ */
+export function itemClosureLine(item: WorkItemSnapshot, verifications: readonly VerificationSnapshot[]): string | null {
+  if (!isItemClosed(item)) return null;
+  const lifecycle = LIFECYCLE_BY_ITEM_TYPE[item.itemType];
+  const conclusion = verifications.find(
+    (entry) =>
+      entry.subject.entity === 'work_item' &&
+      entry.subject.id === item.id &&
+      entry.verificationKind === 'conclusion' &&
+      entry.ref !== null,
+  );
+  const resposta = conclusion === undefined ? '' : ` — ${conclusion.ref}`;
+  return `${WORK_ITEM_STATE_LABEL[item.state]} · ${LIFECYCLE_CLOSURE[lifecycle]}${resposta}`;
+}
+
+/**
+ * D-4 — o que dá para CONFERIR num assunto: o PR, o check que rodou, a revisão
+ * e a conclusão. Ficava tudo no snapshot e nenhuma tela mostrava — a fase
+ * declarava o fato e o card não contava (item M-10 do inventário do B6).
+ */
+export const VERIFICATION_KIND_LABEL: Readonly<Record<VerificationKind, string>> = {
+  'pull-request': 'PR',
+  check: 'check',
+  review: 'revisão',
+  conclusion: 'conclusão',
+};
+
+export const VERIFICATION_STATE_LABEL: Readonly<Record<VerificationState, string>> = {
+  pending: 'pendente',
+  passed: 'passou',
+  failed: 'falhou',
+};
+
+export interface VerificationLineView {
+  readonly key: string;
+  readonly text: string;
+  readonly failed: boolean;
+}
+
+export function verificationLines(
+  verifications: readonly VerificationSnapshot[],
+  subject: EntityId | null = null,
+): readonly VerificationLineView[] {
+  const escopo =
+    subject === null
+      ? verifications
+      : verifications.filter((entry) => entry.subject.entity === subject.entity && entry.subject.id === subject.id);
+
+  return escopo.map((entry) => ({
+    key: `${entry.subject.entity}:${entry.subject.id}:${entry.verificationKind}:${entry.ref ?? ''}`,
+    text: `${VERIFICATION_KIND_LABEL[entry.verificationKind]} — ${VERIFICATION_STATE_LABEL[entry.state]}${entry.ref === null ? '' : ` · ${entry.ref}`}`,
+    failed: entry.state === 'failed',
+  }));
 }
 
 export interface ItemStateAction {
@@ -261,6 +356,14 @@ export interface CardView {
   /** D-12 — o que o board ainda não recebeu. Nunca bloqueia nada; só precisa ser visível. */
   readonly mirrorQueue: readonly MirrorQueueEntry[];
   readonly notes: readonly NoteView[];
+  /**
+   * D-4 — o que dá para conferir em cada assunto do card. Estava no snapshot
+   * desde a fase 1 e nenhuma tela mostrava: a fase declarava o PR e o card não
+   * contava (item M-10 do inventário do B6).
+   */
+  readonly verifications: readonly VerificationSnapshot[];
+  /** D-8 — "cadê o artefato?" tem resposta única, e ela mora no store. */
+  readonly artifacts: readonly ArtifactPointer[];
 }
 
 /**
@@ -402,6 +505,8 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     sessions: snapshot.sessions.filter((session) => belongs(session.subject)),
     ingestErrors: snapshot.ingestErrors.filter((error) => error.subject !== null && belongs(error.subject)),
     mirrorQueue: snapshot.mirrorQueue.filter((entry) => belongs(entry.subject)),
+    verifications: snapshot.verifications.filter((entry) => belongs(entry.subject)),
+    artifacts: snapshot.artifacts.filter((entry) => belongs(entry.owner)),
     notes: snapshot.notes
       .filter((note) => belongs(note.subject))
       .map((note) => ({
@@ -634,25 +739,53 @@ function mirrorOperationText(entry: MirrorQueueEntry): string {
  * sobra sessão aberta para desmentir a frase otimista, e a lista voltaria a
  * dizer "em andamento" para uma fase que ninguém está tocando.
  */
-export function phaseLine(phase: PhaseRunSnapshot, presence: PhasePresence = 'declared'): string {
-  if (phase.failure !== null) return `${phase.phase} — falhou: ${phase.failure.code}`;
+export type PhaseTrailState =
+  | 'concluida'
+  | 'abandonada'
+  | 'inconclusiva'
+  | 'falhou'
+  | 'sessao-aberta'
+  | 'preparada'
+  | 'interrompida'
+  | 'em-andamento'
+  | 'registrada';
+
+/**
+ * O ESTADO por trás da frase. Existe porque o mapa precisa do mesmo fato em
+ * outra forma (glifo, tom, "tem próxima fase?") e derivar isso do TEXTO seria
+ * a mesma cópia de regra que fez a palavra errada reaparecer noutro bloco.
+ */
+export function phaseTrailState(phase: PhaseRunSnapshot, presence: PhasePresence = 'declared'): PhaseTrailState {
+  if (phase.failure !== null) return 'falhou';
   if (phase.completedAt !== null) {
-    const outcome =
-      phase.outcome === 'done' ? 'concluída' : phase.outcome === 'abandoned' ? 'abandonada' : 'terminou sem conclusão';
-    return `${phase.phase} — ${outcome}`;
+    return phase.outcome === 'done' ? 'concluida' : phase.outcome === 'abandoned' ? 'abandonada' : 'inconclusiva';
   }
   if (phase.startedAt !== null) {
-    const word =
-      presence === 'claimed'
-        ? 'sessão aberta'
-        : presence === 'prepared'
-          ? 'preparada, ninguém assumiu'
-          : presence === 'interrupted'
-            ? 'interrompida: a sessão terminou sem concluir'
-            : 'em andamento';
-    return `${phase.phase} — ${word}`;
+    if (presence === 'claimed') return 'sessao-aberta';
+    if (presence === 'prepared') return 'preparada';
+    if (presence === 'interrupted') return 'interrompida';
+    return 'em-andamento';
   }
-  return `${phase.phase} — registrada`;
+  return 'registrada';
+}
+
+/** Uma palavra por estado, num lugar só. Nenhuma delas é "não realizada". */
+export const PHASE_STATE_WORD: Readonly<Record<PhaseTrailState, string>> = {
+  concluida: 'concluída',
+  abandonada: 'abandonada',
+  inconclusiva: 'terminou sem conclusão',
+  falhou: 'falhou',
+  'sessao-aberta': 'sessão aberta',
+  preparada: 'preparada, ninguém assumiu',
+  interrompida: 'interrompida: a sessão terminou sem concluir',
+  'em-andamento': 'em andamento',
+  registrada: 'registrada',
+};
+
+export function phaseLine(phase: PhaseRunSnapshot, presence: PhasePresence = 'declared'): string {
+  const state = phaseTrailState(phase, presence);
+  if (state === 'falhou') return `${phase.phase} — falhou: ${phase.failure?.code ?? 'motivo não registrado'}`;
+  return `${phase.phase} — ${PHASE_STATE_WORD[state]}`;
 }
 
 /** As fases do card, cada uma com a frase certa — a tela só imprime o que sai daqui. */
@@ -661,10 +794,23 @@ export interface PhaseLineView {
   readonly text: string;
   readonly failed: boolean;
   readonly detail: string | null;
+  /** O fato por trás da frase — quem desenha glifo/tom lê isto, nunca o texto. */
+  readonly state: PhaseTrailState;
+  readonly phase: PhaseRunSnapshot;
 }
 
-export function phaseLines(card: CardView): readonly PhaseLineView[] {
-  return card.phases.map((phase) => {
+/**
+ * As fases do card, cada uma com a frase certa. `subject` filtra por assunto —
+ * é o que a trilha do mapa precisa (um nó de cada vez) sem que exista uma
+ * segunda implementação da regra de presença.
+ */
+export function phaseLines(card: CardView, subject: EntityId | null = null): readonly PhaseLineView[] {
+  const doCard =
+    subject === null
+      ? card.phases
+      : card.phases.filter((phase) => phase.subject.entity === subject.entity && phase.subject.id === subject.id);
+
+  return doCard.map((phase) => {
     const doAssunto = card.sessions.filter(
       (entry) =>
         entry.phase === phase.phase && entry.subject.entity === phase.subject.entity && entry.subject.id === phase.subject.id,
@@ -680,6 +826,8 @@ export function phaseLines(card: CardView): readonly PhaseLineView[] {
       text: phaseLine(phase, presence),
       failed: phase.failure !== null,
       detail: phase.failure?.message ?? null,
+      state: phaseTrailState(phase, presence),
+      phase,
     };
   });
 }
@@ -744,6 +892,16 @@ const PHASE_CATALOG: readonly PhaseSpec[] = [
       'Nenhum item de trabalho ainda. Validar roda sobre um item, e item nasce pela skill (D-16) — o app não tem formulário de criação.',
   },
 ];
+
+/**
+ * As fases que o catálogo oferece para um tipo de assunto, na ordem. É o que a
+ * trilha do mapa usa para saber qual é a PRÓXIMA — reimplementar a pergunta lá
+ * faria o carrossel oferecer o que este arquivo recusa, que é o defeito do B2
+ * pelo avesso.
+ */
+export function catalogPhasesFor(runsOn: DispatchEntity): readonly { readonly phase: string; readonly label: string }[] {
+  return PHASE_CATALOG.filter((spec) => spec.runsOn === runsOn).map((spec) => ({ phase: spec.phase, label: spec.label }));
+}
 
 export interface PhaseChoiceView {
   readonly phase: string;
@@ -851,6 +1009,7 @@ function candidatesFor(card: CardView, runsOn: DispatchEntity): readonly Dispatc
       targetRepo: repo,
       repoNote: inherited ? 'repo herdado do card' : null,
       needsRepo: item.itemType === 'issue',
+      closed: isItemClosed(item),
     });
   });
 }
@@ -865,13 +1024,20 @@ function buildTarget(
     readonly targetRepo: string | null;
     readonly repoNote: string | null;
     readonly needsRepo: boolean;
+    readonly closed?: boolean;
   },
 ): DispatchTargetView {
   const chain = lockChainOf(spec.subject, { discoveryId: card.discovery.id, planId: spec.planId });
   const lock = findBlockingLock(card.locks, chain);
 
   let blocked: string | null = null;
-  if (spec.needsRepo && spec.targetRepo === null) {
+  if (spec.closed === true) {
+    // D-4 — o ciclo do item terminou. Oferecer outra fase aqui seria a tela
+    // propondo o que o modelo não comporta (a doença do B2), e é o que fazia um
+    // `spike` respondido aparecer como trilha pela metade em vez de desfecho.
+    blocked =
+      'Este item já fechou — o ciclo dele terminou, e desfecho não é pendência. Reabra o item se ele precisa voltar a andar.';
+  } else if (spec.needsRepo && spec.targetRepo === null) {
     blocked =
       'Este item é do tipo issue e não tem repo alvo — nem ele, nem o card. Sem repo a fase não dispara: o app não escolhe um repositório por você.';
   } else if (lock !== null) {
