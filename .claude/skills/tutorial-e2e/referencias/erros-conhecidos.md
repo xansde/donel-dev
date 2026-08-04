@@ -42,6 +42,26 @@ nenhum; o `run-input.json` sai com `plan_id: null`.
 enquanto não houver nenhum — igual ao "Preparar" desabilitado com a razão
 escrita.
 
+### 3b. A mesma palavra errada, quarta aparição — agora com um fato por trás
+
+**Sintoma:** o card dizia "Em andamento" enquanto o print seguinte, da MESMA
+rodada, mostrava o comando parado no prompt. Ninguém tinha apertado nada.
+
+**Causa:** o batch B1 ganhou um fato novo (`session.claimed` — o CLI devolveu o
+id) e reaproveitou a palavra que já existia. O fato é real, mas diz outra coisa:
+**a aba abriu**. Se o Enter é gesto humano, o app nunca sabe se a fase começou —
+e a tela não pode afirmar o que o app não sabe.
+
+**Correção:** um estado por fato (`LockState`: `running` / `session-open` /
+`prepared`) numa função só (`lockStateOf`), e as três frases derivadas dele —
+título do bloco, linha da lista de fases e razão do botão desabilitado. Antes,
+essa terceira frase dizia "preparada" para um card cujo bloco dizia "Em
+andamento": duas palavras, um estado, no mesmo print.
+
+**A regra que sai daqui:** quando um fato novo chega, pergunte que palavra ele
+merece. Reusar a palavra vizinha é como o vocabulário apodrece — e o teste não
+pega, porque o teste repete a palavra que o código escolheu.
+
 ---
 
 ## No roteiro (achados da automação)
@@ -62,6 +82,14 @@ conferência dos prints antes de entregar. Relatório é artefato que circula.
 
 **Correção:** âncora estável (`data-testid`, papel + nome), ou o mesmo texto
 dos dois lados quando o roteiro é quem escreve o dado.
+
+**Repetiu em 04/08, na variante mais silenciosa:** `locator('section').filter({
+hasText: 'Em andamento' }).last()` casava com DUAS seções — o bloco da trava e a
+lista de fases, que dizem a mesma palavra de propósito (`hasText` é substring, e
+sem distinção de maiúscula). O `.last()` pegava a errada, e dois passos seguidos
+fotografavam o mesmo elemento sem ninguém notar: o roteiro passou verde e o
+bloco da trava nunca foi visto. Filtro por texto num app cujo vocabulário se
+repete de propósito escolhe elemento por acaso — use `getByTestId`.
 
 ### 6. Elemento coberto por overlay
 

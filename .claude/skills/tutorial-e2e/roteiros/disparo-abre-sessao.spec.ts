@@ -102,21 +102,24 @@ test('o disparo abre a sessão, e fechar a aba não prende o card', async () => 
       'O app escreve o comando; quem envia é você. Nenhuma quebra de linha sai do app, nunca.',
     );
 
-    // ── "Em andamento" só depois que a sessão existe de verdade ──────────
-    const blocoDaTrava = esteira.locator('section').filter({ hasText: 'Em andamento' }).last();
-    await blocoDaTrava.waitFor({ timeout: 60_000 });
+    // ── A trava passa a ter dono só depois que a sessão existe ───────────
+    // Âncora por `data-testid`, não por texto: filtrar `section` pelo título
+    // pegava a LISTA DE FASES, que repete a mesma palavra, e o print do bloco
+    // saía duplicado (erro nº 5 — âncora por texto que o próprio fluxo muda).
+    const blocoDaTrava = esteira.getByTestId('esteira-lock');
+    await blocoDaTrava.filter({ hasText: 'Sessão aberta' }).waitFor({ timeout: 60_000 });
     await passo(
-      'Agora sim: em andamento',
+      'Agora a trava tem dono: a sessão abriu',
       blocoDaTrava,
-      'A frase saiu de "Preparada — ninguém assumiu ainda" para "Em andamento" porque o CLI devolveu o id da sessão. A trava passou a ter dono com nome — é fato, não suposição.',
+      'A frase saiu de "Preparada — ninguém assumiu ainda" para "Sessão aberta" porque o CLI devolveu o id da sessão. E para por aí: a aba existe, o comando está escrito, e o app não afirma que a fase está rodando — quem envia é você.',
     );
 
-    const linhaDaFase = esteira.locator('li').filter({ hasText: 'discovery — em andamento' }).first();
+    const linhaDaFase = esteira.locator('li').filter({ hasText: 'discovery — sessão aberta' }).first();
     await linhaDaFase.waitFor({ timeout: 20_000 });
     await passo(
       'A lista de fases conta a mesma história',
       linhaDaFase,
-      'As duas frases saem da MESMA função. Foi por corrigir só uma delas que "em andamento" reapareceu aqui em 03/08.',
+      'As duas frases saem da MESMA decisão de estado. Foi por corrigir só uma delas que "em andamento" reapareceu aqui em 03/08 — e, no primeiro print deste roteiro, pela quarta vez.',
     );
 
     // ── O comando escrito no terminal, sem Enter ─────────────────────────

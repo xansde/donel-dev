@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  dispatchHint,
+  dispatchRefusedMessage,
   esteiraPhaseCommand,
   esteiraTabName,
+  lockStateOf,
   preparedMessage,
   resolveSessionCwd,
 } from '../src/renderer/src/Esteira/esteiraSession';
@@ -89,5 +92,59 @@ describe('esteiraTabName — a aba diz de quem ela e', () => {
 
   it('titulo longo nao vira um nome de aba ilegivel', () => {
     expect(esteiraTabName('plano', 'x'.repeat(120)).length).toBeLessThanOrEqual(60);
+  });
+});
+
+describe('lockStateOf — um estado de trava, três fatos distintos', () => {
+  it('trava da skill = trabalho acontecendo', () => {
+    expect(lockStateOf('skill', false)).toBe('running');
+    expect(lockStateOf('skill', true)).toBe('running');
+  });
+
+  it('trava do app com sessão assumida = a aba abriu, e só isso', () => {
+    expect(lockStateOf('app', true)).toBe('session-open');
+  });
+
+  it('trava do app sem sessão assumida = preparada', () => {
+    expect(lockStateOf('app', false)).toBe('prepared');
+  });
+});
+
+describe('dispatchHint — a razão do botão desabilitado usa a MESMA palavra do bloco', () => {
+  it('sem trava, explica o que o gesto faz', () => {
+    expect(dispatchHint(null)).toContain('O Enter é seu');
+  });
+
+  it('sessão aberta: nunca chama de "preparada" o que o bloco chama de sessão aberta', () => {
+    // Era este o desencontro do print 06: o bloco dizia "Em andamento" e a
+    // razão logo abaixo dizia "Há uma fase preparada". Duas palavras, um
+    // estado — o erro conhecido nº 1 desta skill, esperando a terceira volta.
+    const hint = dispatchHint('session-open');
+    expect(hint).toContain('sessão aberta');
+    expect(hint).not.toContain('preparada');
+    expect(hint).toContain('Libere a trava');
+  });
+
+  it('em andamento e preparada têm cada uma a sua', () => {
+    expect(dispatchHint('running')).toContain('em andamento');
+    expect(dispatchHint('prepared')).toContain('preparada');
+  });
+});
+
+describe('dispatchRefusedMessage — a recusa não inventa um estado que o card não tem', () => {
+  it('recusa por sessão aberta não diz "em andamento"', () => {
+    const message = dispatchRefusedMessage('session-open', 'discovery', '03/08, 12:00');
+    expect(message).toContain('sessão aberta');
+    expect(message).toContain('discovery');
+    expect(message).toContain('03/08, 12:00');
+    expect(message).not.toContain('em andamento');
+  });
+
+  it('recusa por fase preparada diz preparada', () => {
+    expect(dispatchRefusedMessage('prepared', 'discovery', '03/08, 12:00')).toContain('preparada');
+  });
+
+  it('recusa por skill rodando diz em andamento', () => {
+    expect(dispatchRefusedMessage('running', 'plano', '03/08, 12:00')).toContain('em andamento');
   });
 });

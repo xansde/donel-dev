@@ -12,7 +12,7 @@
 // de 03/08.
 
 import { MACRO_STAGE_LABEL } from '../../../shared/esteira/ipc';
-import { esteiraPhaseCommand } from './esteiraSession';
+import { esteiraPhaseCommand, lockStateOf, type LockState } from './esteiraSession';
 import type {
   DiscoverySnapshot,
   IngestErrorSnapshot,
@@ -110,6 +110,8 @@ export interface CardView {
  * com o MESMO comando que a aba teria recebido.
  */
 export interface LockView {
+  /** O fato por trás da frase — a tela nunca deriva a palavra por conta própria. */
+  readonly state: LockState;
   readonly title: string;
   readonly line: string;
   /** Preenchido enquanto ninguém assumiu: o que fazer para a fase de fato rodar. */
@@ -124,19 +126,31 @@ export function lockView(card: CardView): LockView | null {
   const claimed = card.openSession?.claimed ?? false;
   const inputPath = card.openSession?.inputPath ?? null;
   const cliSessionId = card.openSession?.cliSessionId ?? lock.cliSessionId;
+  const state = lockStateOf(lock.holderKind, claimed);
+  // Dono, hora e sessão (D-11): a trava nomeia quem a segura. Sem o id do
+  // CLI (trava posta pela skill), diz quem a pôs — nunca fica anônima.
+  const dono = cliSessionId === null ? `por ${holder}` : `na sessão ${cliSessionId}`;
+  const desde = `Fase ${lock.phase}, ${dono}, desde ${formatTimestamp(lock.acquiredAt)}.`;
 
-  if (claimed || lock.holderKind === 'skill') {
-    // Dono, hora e sessão (D-11): a trava nomeia quem a segura. Sem o id do
-    // CLI (trava posta pela skill), diz quem a pôs — nunca fica anônima.
-    const dono = cliSessionId === null ? `por ${holder}` : `na sessão ${cliSessionId}`;
+  if (state === 'running') {
+    return { state, title: 'Em andamento', line: desde, nextStep: null };
+  }
+
+  if (state === 'session-open') {
+    // Abrir a aba NÃO é começar a fase. O app escreveu o comando e parou ali —
+    // enviar é gesto humano (invariante 2), e o app não tem como saber se você
+    // já o fez. Chamar isto de "em andamento" era o defeito de 03/08 pela
+    // quarta porta: os prints 07 e 10 do roteiro se desmentiam na mesma rodada.
     return {
-      title: 'Em andamento',
-      line: `Fase ${lock.phase}, ${dono}, desde ${formatTimestamp(lock.acquiredAt)}.`,
+      state,
+      title: 'Sessão aberta',
+      line: `${desde} A aba está aberta com o comando da fase escrito; o app não sabe se você já o enviou.`,
       nextStep: null,
     };
   }
 
   return {
+    state,
     title: 'Preparada — ninguém assumiu ainda',
     line: `O app separou o contexto da fase ${lock.phase} às ${formatTimestamp(lock.acquiredAt)} e travou o card. Nada está rodando: nenhuma sessão assumiu esta fase ainda.`,
     nextStep:
@@ -185,12 +199,14 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
  * descrevem estados diferentes e já foram confundidas duas vezes neste repo.
  */
 export type PhasePresence =
-  /** Alguém assumiu: existe sessão viva com id do CLI. */
+  /** Existe sessão viva com id do CLI: a aba abriu. Não diz que o comando foi enviado. */
   | 'claimed'
   /** O app separou o contexto e travou o card; ninguém pegou ainda. */
   | 'prepared'
   /** Batch B1 — havia sessão, ela acabou, e a fase não concluiu nem falhou. */
-  | 'interrupted';
+  | 'interrupted'
+  /** Fase iniciada sem sessão do app: quem afirmou o início foi a skill, pelo outbox. */
+  | 'declared';
 
 /**
  * A frase de UMA passagem de fase. Cada estado tem palavra própria — e nenhuma
@@ -198,9 +214,10 @@ export type PhasePresence =
  *
  *  - concluiu      → "concluída", "abandonada", "terminou sem conclusão"
  *  - falhou        → "falhou: <código>" (o desfecho ruim é legível)
- *  - assumida      → "em andamento"
+ *  - sessão aberta → "sessão aberta" (a aba existe; o Enter é seu)
  *  - só preparada  → "preparada, ninguém assumiu"
  *  - interrompida  → "interrompida: a sessão terminou sem concluir"
+ *  - declarada     → "em andamento" (a skill afirmou o início; ela é quem sabe)
  *
  * `presence` existe porque o app registra `phase.started` no DISPARO, e disparar
  * não é começar: o card fica travado esperando alguém rodar a fase. Chamar isso
@@ -211,7 +228,7 @@ export type PhasePresence =
  * sobra sessão aberta para desmentir a frase otimista, e a lista voltaria a
  * dizer "em andamento" para uma fase que ninguém está tocando.
  */
-export function phaseLine(phase: PhaseRunSnapshot, presence: PhasePresence = 'claimed'): string {
+export function phaseLine(phase: PhaseRunSnapshot, presence: PhasePresence = 'declared'): string {
   if (phase.failure !== null) return `${phase.phase} — falhou: ${phase.failure.code}`;
   if (phase.completedAt !== null) {
     const outcome =
@@ -221,10 +238,12 @@ export function phaseLine(phase: PhaseRunSnapshot, presence: PhasePresence = 'cl
   if (phase.startedAt !== null) {
     const word =
       presence === 'claimed'
-        ? 'em andamento'
+        ? 'sessão aberta'
         : presence === 'prepared'
           ? 'preparada, ninguém assumiu'
-          : 'interrompida: a sessão terminou sem concluir';
+          : presence === 'interrupted'
+            ? 'interrompida: a sessão terminou sem concluir'
+            : 'em andamento';
     return `${phase.phase} — ${word}`;
   }
   return `${phase.phase} — registrada`;
@@ -249,7 +268,7 @@ export function phaseLines(card: CardView): readonly PhaseLineView[] {
     // sessão que já existiu, a fase ficou pelo meio — e é isso que a tela diz.
     // Sem sessão nenhuma (fase vinda só da ingestão), a frase não depende disso.
     const presence: PhasePresence =
-      aberta !== undefined ? (aberta.claimed ? 'claimed' : 'prepared') : doAssunto.length > 0 ? 'interrupted' : 'claimed';
+      aberta !== undefined ? (aberta.claimed ? 'claimed' : 'prepared') : doAssunto.length > 0 ? 'interrupted' : 'declared';
     return {
       key: `${phase.subject.entity}:${phase.subject.id}:${phase.phase}`,
       text: phaseLine(phase, presence),

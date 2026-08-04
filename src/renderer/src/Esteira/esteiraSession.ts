@@ -119,13 +119,50 @@ export function preparedMessage(input: PreparedMessageInput): string {
 }
 
 /**
+ * Em que pé está a trava do card — **um estado, um fato**. A distinção nasceu do
+ * print 07 do roteiro `disparo-abre-sessao`: o bloco dizia "Em andamento"
+ * enquanto o print 10, da mesma rodada, mostrava o comando parado no prompt.
+ *
+ * O app sabe que a aba abriu e que o CLI devolveu um id. Ele **não** sabe se
+ * alguém apertou o Enter — e não pode saber, porque enviar é gesto humano
+ * (invariante 2). "Em andamento" fica reservado para quando existe alguém
+ * declarando que está tocando a fase: a trava posta pela própria skill.
+ */
+export type LockState =
+  /** A skill declarou a trava: há trabalho acontecendo, dito por quem o faz. */
+  | 'running'
+  /** O app abriu a aba e o CLI assumiu a sessão. A aba existe; o resto é com você. */
+  | 'session-open'
+  /** O contexto está em disco e o card travado; nenhuma sessão assumiu. */
+  | 'prepared';
+
+export function lockStateOf(holderKind: 'skill' | 'app', claimed: boolean): LockState {
+  if (holderKind === 'skill') return 'running';
+  return claimed ? 'session-open' : 'prepared';
+}
+
+/** Como cada estado da trava se chama — a palavra nasce aqui, e só aqui. */
+const LOCK_WORD: Readonly<Record<LockState, string>> = {
+  running: 'em andamento',
+  'session-open': 'com a sessão aberta',
+  prepared: 'preparada',
+};
+
+/**
  * O que o bloco "Disparar fase" explica antes do clique. Fica aqui, e não no
  * JSX, pela regra do repo: texto de estado nasce na camada pura — foi assim que
  * a correção de um rótulo deixou de subir até a raiz e o bug voltou noutro
- * lugar.
+ * lugar. Recebe o ESTADO, não um booleano: com `locked: boolean` esta frase
+ * dizia "preparada" para um card cujo bloco dizia "Em andamento".
  */
-export function dispatchHint(locked: boolean): string {
-  return locked
-    ? 'Há uma fase preparada neste card. Libere a trava acima antes de preparar outra.'
-    : 'O app separa o contexto, trava o card e abre a aba da sessão com o comando já escrito. O Enter é seu.';
+export function dispatchHint(lock: LockState | null): string {
+  if (lock === null) {
+    return 'O app separa o contexto, trava o card e abre a aba da sessão com o comando já escrito. O Enter é seu.';
+  }
+  return `Há uma fase ${LOCK_WORD[lock]} neste card. Libere a trava acima antes de preparar outra.`;
+}
+
+/** A recusa do disparo quando o card já está travado — mesmo vocabulário do bloco. */
+export function dispatchRefusedMessage(lock: LockState, phase: string, since: string): string {
+  return `Já há uma fase ${LOCK_WORD[lock]} (${phase}), desde ${since}.`;
 }

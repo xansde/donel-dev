@@ -3,8 +3,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
 import {
   dispatchHint,
+  dispatchRefusedMessage,
   esteiraPhaseCommand,
   esteiraTabName,
+  lockStateOf,
   preparedMessage,
   resolveSessionCwd,
   type EsteiraSessionRequest,
@@ -131,7 +133,16 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
       return;
     }
     if (dispatched.reason === 'locked') {
-      setMessage(`Já há uma fase em andamento (${dispatched.lock.phase}), desde ${formatTimestamp(dispatched.lock.acquiredAt)}.`);
+      // A frase sai da camada pura, com a MESMA palavra do bloco da trava:
+      // escrita aqui, ela dizia "em andamento" para um card cujo bloco dizia
+      // outra coisa — o erro nº 1 de `erros-conhecidos.md`, terceira volta.
+      setMessage(
+        dispatchRefusedMessage(
+          lockStateOf(dispatched.lock.holderKind, dispatched.lock.cliSessionId !== null),
+          dispatched.lock.phase,
+          formatTimestamp(dispatched.lock.acquiredAt),
+        ),
+      );
       return;
     }
     if (dispatched.reason === 'invalid-target') {
@@ -260,7 +271,10 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
               ) : null}
 
               {lock ? (
-                <section className={styles.block}>
+                // Âncora estável para o roteiro e2e: filtrar `section` por texto
+                // fazia o print do bloco cair na LISTA DE FASES, que repete a
+                // mesma palavra (erro nº 5 de `erros-conhecidos.md`).
+                <section className={styles.block} data-testid="esteira-lock" data-state={lock.state}>
                   <h4 className={styles.blockTitle}>{lock.title}</h4>
                   <p className={styles.lockLine}>{lock.line}</p>
                   {/* O disparo abre a aba sozinho quando há para onde abrir; o
@@ -347,7 +361,7 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                     Preparar
                   </Button>
                 </div>
-                <p className={styles.hint}>{dispatchHint(selected.lock !== null)}</p>
+                <p className={styles.hint}>{dispatchHint(lock?.state ?? null)}</p>
               </section>
             </>
           )}

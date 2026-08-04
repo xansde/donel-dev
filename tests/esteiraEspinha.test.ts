@@ -159,11 +159,13 @@ describe('espinha — do gesto no app ao card na tela', () => {
     // O comando oferecido é o MESMO que a aba recebe pré-digitado.
     expect(lockView(preparada)?.nextStep?.command).toBe(`/esteira-discovery --input "${dispatched.inputPath}"`);
 
-    // 2. A aba abriu e o CLI devolveu o id: agora sim, em andamento.
+    // 2. A aba abriu e o CLI devolveu o id: a trava ganha dono com nome. E só
+    //    isso — a aba existir não é a fase estar rodando, porque o Enter é
+    //    gesto humano e o app não tem como saber se ele aconteceu.
     const assumida = cardView(service.claimSession({ sessionId: dispatched.sessionId, cliSessionId: 'cli-espinha' }).snapshot, created.discoveryId)!;
-    expect(lockView(assumida)?.title).toBe('Em andamento');
+    expect(lockView(assumida)?.title).toBe('Sessão aberta');
     expect(lockView(assumida)?.line).toContain('cli-espinha');
-    expect(phaseLines(assumida)[0].text).toBe('discovery — em andamento');
+    expect(phaseLines(assumida)[0].text).toBe('discovery — sessão aberta');
 
     // 3. A aba fechou sem concluir: o card NÃO fica preso, e diz o que houve.
     const fechada = cardView(service.endSession({ sessionId: dispatched.sessionId, reason: 'tab-closed' }).snapshot, created.discoveryId)!;
