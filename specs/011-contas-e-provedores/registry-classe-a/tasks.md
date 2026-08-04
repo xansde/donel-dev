@@ -39,6 +39,10 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
   cofre (`src/main/accounts/vault.ts`) e a chave `accounts` do config-store
   precisam existir. Registrar a confirmação no card. **Sem código.**
   **DoD**: confirmação escrita; se negativo, a fase para aqui.
+  > **(a) CONFIRMADA em 2026-08-04** pelo dono, na sessão do plano desta etapa:
+  > os 7 batches (B1..B7) estão integrados em `staging` local e não há mais
+  > batch em voo tocando `src/main/index.ts`. Pendente apenas a (b) — etapa 1
+  > mergeada (cofre + chave `accounts` do config-store existindo).
 
 - [ ] **T1302** — **Spike de compatibilidade do piloto** (risco R1 / achado A3).
   Na máquina, com a chave do OpenRouter lida do Bitwarden (nunca ecoada),

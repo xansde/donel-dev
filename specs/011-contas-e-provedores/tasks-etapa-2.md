@@ -46,6 +46,10 @@ T1228, T1229, T1230, T1231).
   card. **Sem código.**
   **DoD**: confirmação escrita; se qualquer das duas for negativa, a fase para
   aqui.
+  > **(b) CONFIRMADA em 2026-08-04** pelo dono, na sessão do plano da etapa 3:
+  > os 7 batches (B1..B7) da 010 estão integrados em `staging` local e não há
+  > mais batch em voo tocando `src/main/index.ts`. Pendente apenas a (a) —
+  > etapa 1 implementada, mergeada e validada em dogfooding com mod ativo.
 
 ---
 
