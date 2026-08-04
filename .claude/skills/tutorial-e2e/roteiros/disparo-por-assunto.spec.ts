@@ -8,22 +8,26 @@ import { parseRunInput } from '../../../../src/shared/esteira/contract/runInput'
 // Roteiro `disparo-por-assunto` — batch B2 da spec 010.
 //
 // O que prova: o app só oferece disparo que o modelo comporta, e nunca recusa
-// calado. Três estados que o tutorial precisa ensinar a reconhecer:
+// calado. Os estados que o tutorial ensina a reconhecer:
 //
-//   fase que o card não comporta  → desabilitada, COM a razão escrita
-//   fase de item                  → só existe depois que existe item
-//   issue sem repo alvo (D-6)     → a tela recusa ANTES do clique, e diz por quê
+//   fase que o card não comporta   → visível, desabilitada, COM a razão escrita
+//   fase de item                   → só existe depois que existe item
+//   assunto do disparo             → o discovery, um plano ou um item
+//   issue sem repo alvo (D-6)      → recusado, com o motivo legível
 //
-// De propósito o card nasce SEM repo: é o que deixa o item `issue` sem alvo
-// nenhum para herdar, e é assim que a recusa do D-6 aparece de verdade em vez
-// de ser encenada.
+// Sobre o último: hoje o `issue` sem repo alvo é barrado ANTES de existir — o
+// emissor da skill se recusa a declará-lo e o app se recusa a ingeri-lo. Por
+// isso o roteiro fotografa a recusa onde ela de fato acontece (a ingestão), e
+// não um item impossível. A guarda equivalente na tela existe e está coberta
+// por `tests/esteiraDispatchView.test.ts`; ela só vira print quando houver um
+// caminho que produza esse item — o seed do B4 ou a edição de item do B3.
 
 // `discovery.created` faz upsert: o título declarado pela skill precisa ser o
 // MESMO que foi digitado, senão o card é renomeado no meio do roteiro e os
 // locators param de resolver (erro conhecido nº 5).
 const TITULO_DO_CARD = 'Lote grande fica pendente sem erro';
 const ITEM_COM_REPO = 'Instrumentar a fila';
-const ITEM_SEM_REPO = 'Publicar o painel de fila';
+const SPIKE_SEM_REPO = 'Medir onde o lote para';
 
 let ctx: RoteiroContexto;
 
@@ -53,14 +57,15 @@ test('o disparo que a tela oferece é o que o modelo comporta', async () => {
     await esteiraToggle.click();
     await win.locator('section[aria-label="Esteira"]').waitFor({ timeout: 15_000 });
 
-    // ── Um card recém-nascido: sem plano, sem item, sem repo ─────────────
+    // ── Um card recém-nascido: sem plano e sem item ──────────────────────
     const titulo = win.getByLabel('Novo discovery');
     await passo(
       'Descreva o que está em jogo',
       titulo,
-      'Este card nasce SEM repo de propósito: é o que faz a exigência de repo alvo aparecer mais adiante, em vez de ficar escondida.',
+      'O card nasce só com o problema: nenhum plano, nenhum item de trabalho. É desse estado que sai metade deste tutorial.',
     );
     await titulo.fill(TITULO_DO_CARD);
+    await win.getByLabel('Repo alvo (opcional)').fill('donel-dev');
 
     const criar = win.getByRole('button', { name: 'Criar' });
     await passo('Crie o card', criar);
@@ -74,9 +79,9 @@ test('o disparo que a tela oferece é o que o modelo comporta', async () => {
     const fasePlano = win.getByTestId('dispatch-phase-plano');
     await fasePlano.waitFor({ timeout: 10_000 });
     await passo(
-      'A fase "Plano" não aceita clique — e o card não tem plano nenhum',
+      'A fase "Plano" não aceita clique — o card não tem plano nenhum',
       fasePlano,
-      'Ela continua visível, desabilitada. Sumir com a opção pouparia pixel e faria a tela mentir por omissão.',
+      'Ela continua visível, desabilitada. Sumir com a opção pouparia pixel e faria a tela mentir por omissão — antes dava para disparar aqui, e o contexto saía com o plano vazio.',
     );
 
     await passo(
@@ -101,14 +106,13 @@ test('o disparo que a tela oferece é o que o modelo comporta', async () => {
     await passo('Varra o outbox', varrer, 'A skill devolveu um plano e dois itens. O watcher já ingere sozinho; o botão força a leitura na hora.');
     await varrer.click();
 
-    // As duas esperas são pelo chip HABILITADO: o chip em si existe desde
-    // sempre (o catálogo não muda), e esperar só por ele passaria antes da
-    // ingestão acontecer.
+    // As esperas são pelo chip HABILITADO: o chip em si existe desde sempre (o
+    // catálogo não muda), e esperar só por ele passaria antes da ingestão.
     await win.locator('[data-testid="dispatch-phase-plano"]:not([disabled])').waitFor({ timeout: 10_000 });
     await win.locator('[data-testid="dispatch-phase-implementar"]:not([disabled])').waitFor({ timeout: 10_000 });
     await passo(
       'Agora a fase "Plano" aceita clique',
-      win.getByTestId('dispatch-phase-plano'),
+      fasePlano,
       'Nada mudou na tela: mudou o card. O plano passou a existir porque a skill o declarou — e a fase que dependia dele habilitou sozinha.',
     );
 
@@ -125,13 +129,13 @@ test('o disparo que a tela oferece é o que o modelo comporta', async () => {
     await passo(
       'O assunto do disparo passa a ser o item',
       assunto,
-      'O card tem dois itens; o disparo escolhe QUAL. Era daqui que saía o run-input com o assunto pela metade.',
+      'O card tem dois itens; o disparo escolhe QUAL. Antes só dava para disparar sobre o card inteiro, e o contexto saía sem dizer de que item se tratava.',
     );
 
     await passo(
       'O repo alvo aparece antes do clique',
       win.getByTestId('dispatch-repo'),
-      'O alvo é explícito (D-6): o repo do próprio item. O app nunca completa esse campo com o projeto em foco.',
+      'O alvo é explícito (D-6): o repo do próprio item. O app nunca completa esse campo com o projeto que está em foco na janela.',
     );
 
     const inputsAntes = contarInputs(ctx.esteiraRoot);
@@ -142,29 +146,42 @@ test('o disparo que a tela oferece é o que o modelo comporta', async () => {
     await passo(
       'O contexto gravado é o do item — e passa no contrato de ida',
       win.locator('code').first(),
-      'O run-input recém-escrito traz work_item_id e o repo alvo, e foi validado por parseRunInput dentro do próprio roteiro.',
+      'O run-input recém-escrito traz work_item_id, o plano do item e o repo alvo. O roteiro o validou com o parseRunInput do app antes de fotografar.',
     );
 
-    // ── 5. D-6: o item issue sem repo não dispara ────────────────────────
+    // ── 5. O irmão segue livre, e o repo do card é herdado à vista ───────
     await assunto.locator('button[aria-haspopup="listbox"]').click();
-    const opcaoSemRepo = win.getByRole('option', { name: new RegExp(ITEM_SEM_REPO) });
+    const opcaoSpike = win.getByRole('option', { name: new RegExp(SPIKE_SEM_REPO) });
     await passo(
-      'Troque para o item que não tem repo alvo',
-      opcaoSemRepo,
-      'Os dois itens são do tipo issue. O que muda entre eles é só um campo: um tem repo, o outro não.',
+      'Troque o assunto para o outro item',
+      opcaoSpike,
+      'O primeiro item ficou travado agora há pouco. A trava vale para a cadeia acima do assunto — nunca para o irmão ao lado.',
     );
-    await opcaoSemRepo.click();
+    await opcaoSpike.click();
 
-    await win.getByTestId('dispatch-blocked').getByText('não tem repo alvo', { exact: false }).waitFor({ timeout: 10_000 });
+    await win.getByTestId('dispatch-repo').filter({ hasText: 'herdado do card' }).waitFor({ timeout: 10_000 });
     await passo(
-      'A tela recusa e explica, antes de o clique falhar',
-      win.getByTestId('dispatch-blocked'),
-      'Item do tipo issue exige exatamente um repo alvo (D-6). Sem repo — nem dele, nem herdado do card — a fase não dispara, e o app não escolhe um repositório por ninguém.',
+      'Este item não declarou repo — e a tela diz de onde veio o que ele vai usar',
+      win.getByTestId('dispatch-repo'),
+      'Herdar o repo do próprio card é o default que o modelo prevê. O que nunca acontece é herdar do projeto que está em foco na janela: foi esse palpite que abriu uma fase no repositório errado.',
+    );
+    if (!(await preparar.isEnabled())) throw new Error('o item irmão apareceu bloqueado — a trava de um item não vale para o outro');
+
+    // ── 6. D-6 na porta de entrada: o issue sem repo nem chega a existir ─
+    escreverIssueSemRepo(ctx.esteiraRoot, discoveryId);
+    await passo('Varra o outbox de novo', varrer, 'Desta vez chegou um result.json declarando um item do tipo issue SEM repo alvo. Só esse campo está errado.');
+    await varrer.click();
+
+    await win.getByText('não consegui ler').first().waitFor({ timeout: 10_000 });
+    await passo(
+      'O documento é recusado inteiro — e o card diz isso',
+      win.getByText('não consegui ler').first(),
+      'Nada daquele arquivo entrou: nem o item, nem a fase. O card mostra "não consegui ler", nunca "não realizada" — o estado que o modelo antigo confundia.',
     );
     await passo(
-      'E o botão "Preparar" fica desabilitado junto',
-      preparar,
-      'A frase e o botão contam a mesma história. Botão vivo com clique que falha depois é a versão anterior deste mesmo bug.',
+      'A recusa tem código e caminho: issue sem repo alvo',
+      win.locator('section', { hasText: 'Não consegui ler' }).last(),
+      'issue_without_target_repo, no campo exato. D-6 é cobrado na porta de entrada: item issue tem exatamente um repo alvo, e sem ele não dispara nem nasce.',
     );
   } catch (error) {
     // Roteiro que morre no meio ainda entrega valor: o relatório mostra até
@@ -184,8 +201,8 @@ function contarInputs(esteiraRoot: string): number {
 
 /**
  * O último `run-input.json` que o app gravou no inbox isolado. Ordena por
- * mtime, não por nome: o nome é `run-<uuid>`, e ordenar uuid dá "o último"
- * errado quando há mais de um disparo no mesmo roteiro.
+ * mtime, e não por nome: o nome é `run-<uuid>`, e ordenar uuid dá "o último"
+ * errado assim que há mais de um disparo no mesmo roteiro.
  */
 function ultimoInput(esteiraRoot: string): string {
   const arquivo = readdirSync(inbox(esteiraRoot))
@@ -200,8 +217,8 @@ function ultimoInput(esteiraRoot: string): string {
 /**
  * Roda o emissor REAL da skill 3.0 contra o input do disparo. Sem dublê: é o
  * mesmo `emit_result.py` que a skill usa, então o e2e prova o contrato dos dois
- * lados. Declara um plano e DOIS itens `issue` — um com repo, outro sem —,
- * porque é a diferença entre eles que o passo do D-6 fotografa.
+ * lados. Declara um plano e dois itens de tipos diferentes — é a diferença
+ * entre eles que os passos 4 e 5 fotografam.
  */
 function emitirResultadoDaSkill(esteiraRoot: string): string {
   const inputPath = ultimoInput(esteiraRoot);
@@ -217,9 +234,8 @@ function emitirResultadoDaSkill(esteiraRoot: string): string {
         discovery_id: discoveryId,
         title: TITULO_DO_CARD,
         problem: 'Lotes grandes ficam pendentes sem erro e sem log.',
-        // Sem repo: é o que faz o item sem alvo não ter de quem herdar.
-        target_repo: null,
-        scope_repos: [],
+        target_repo: 'donel-dev',
+        scope_repos: ['donel-dev'],
       },
       {
         type: 'plan.recorded',
@@ -227,6 +243,12 @@ function emitirResultadoDaSkill(esteiraRoot: string): string {
         discovery_id: discoveryId,
         title: 'Tornar o estado da fila observável',
         summary: 'Instrumentar antes de mexer no consumo.',
+      },
+      {
+        type: 'relation.recorded',
+        relation: 'originated',
+        from: { entity: 'discovery', id: discoveryId },
+        to: { entity: 'plan', id: 'pln-b2-01' },
       },
       {
         type: 'work_item.recorded',
@@ -238,11 +260,13 @@ function emitirResultadoDaSkill(esteiraRoot: string): string {
         scope_repos: ['donel-dev'],
       },
       {
+        // Spike responde uma pergunta e não termina em PR (D-4): pode nascer
+        // sem repo, e é o contraste que o passo do D-6 usa.
         type: 'work_item.recorded',
         work_item_id: 'wi-b2-02',
         plan_id: 'pln-b2-01',
-        item_type: 'issue',
-        title: ITEM_SEM_REPO,
+        item_type: 'spike',
+        title: SPIKE_SEM_REPO,
         target_repo: null,
         scope_repos: [],
       },
@@ -267,6 +291,45 @@ function emitirResultadoDaSkill(esteiraRoot: string): string {
 }
 
 /**
+ * Um `result.json` perfeito em tudo, menos num campo: um item do tipo `issue`
+ * sem repo alvo. Escrito à mão de propósito — o emissor da skill se RECUSA a
+ * produzi-lo (`ContractError`), e é justamente essa recusa dos dois lados que o
+ * passo final ensina.
+ */
+function escreverIssueSemRepo(esteiraRoot: string, discoveryId: string): void {
+  writeFileSync(
+    path.join(esteiraRoot, 'outbox', 'issue-sem-repo.json'),
+    JSON.stringify({
+      contract_version: '1.0.0',
+      kind: 'esteira.result',
+      run: {
+        run_id: 'run-issue-sem-repo',
+        phase: 'plano',
+        status: 'success',
+        started_at: '2026-08-04T12:00:00.000Z',
+        finished_at: '2026-08-04T12:10:00.000Z',
+        failure: null,
+      },
+      actor: { tool: 'esteira-donel', tool_version: '3.0.0' },
+      subject: { discovery_id: discoveryId },
+      facts: [
+        {
+          type: 'work_item.recorded',
+          work_item_id: 'wi-b2-03',
+          plan_id: 'pln-b2-01',
+          item_type: 'issue',
+          title: 'Publicar o painel de fila',
+          target_repo: null,
+          scope_repos: [],
+        },
+        { type: 'phase.completed', subject: { entity: 'discovery', id: discoveryId }, phase: 'plano', outcome: 'done' },
+      ],
+    }),
+    'utf8',
+  );
+}
+
+/**
  * O passo 3 do batch: o `run-input.json` do disparo de item precisa sair com
  * `work_item_id` E passar no `parseRunInput`. Conferir aqui, dentro do roteiro,
  * é o que impede o print de "parecer certo" com um arquivo errado por baixo.
@@ -281,9 +344,7 @@ function conferirRunInputDoItem(esteiraRoot: string, inputsAntes: number, discov
   if (parsed.input.subject.work_item_id !== 'wi-b2-01') {
     throw new Error(`o run-input saiu com work_item_id=${String(parsed.input.subject.work_item_id)} — o assunto do disparo não chegou`);
   }
-  if (parsed.input.subject.plan_id !== 'pln-b2-01') {
-    throw new Error('o run-input não levou o plano do item junto');
-  }
+  if (parsed.input.subject.plan_id !== 'pln-b2-01') throw new Error('o run-input não levou o plano do item junto');
   if (parsed.input.subject.discovery_id !== discoveryId) throw new Error('o run-input mudou de card no meio do caminho');
   if (parsed.input.workspace?.target_repo !== 'donel-dev') throw new Error('o repo alvo do item não chegou ao run-input');
   if (parsed.input.run.phase !== 'implementar') throw new Error(`o run-input saiu com a fase ${parsed.input.run.phase}`);
