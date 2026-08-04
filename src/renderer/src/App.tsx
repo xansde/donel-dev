@@ -79,6 +79,7 @@ import { preparePhase } from './Esteira/preparePhase';
 import type { EsteiraSnapshotDto } from '../../shared/esteira/ipc';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
+import { AccountsPanel } from './AccountsPanel';
 import { ProfileSwitcher } from './ProfileSwitcher';
 import { ProjectSidebar } from './ProjectSidebar';
 import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from './ProjectSidebar';
@@ -1740,6 +1741,11 @@ export function App(): React.JSX.Element {
           onHeadroomChange={setProfileHeadroom}
           onActiveProfileSlugChange={setActiveProfileSlug}
         />
+        {/* 011-contas-e-provedores (etapa 1) — motor de contas, ao lado do
+            ProfileSwitcher (nenhum dos dois substitui o outro nesta etapa).
+            Nasce inerte (accounts.mod = null): o painel abre e mostra "nenhum
+            provedor conectado" sem afetar perfis. */}
+        <AccountsPanel />
         {/* T015 — UI de Preferências (FR-007, feedback E2E rodada 3/4). */}
         <button
           type="button"

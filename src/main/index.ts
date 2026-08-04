@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { DevModeBoardConfig } from '../shared/devMode';
@@ -30,8 +30,13 @@ import {
   type EsteiraSnapshotDto,
 } from '../shared/esteira/ipc';
 import type {
+  AccountId,
+  AccountsConfigDto,
+  AccountsViewDto,
   AppConfigDto,
   ArchivePhaseSessionIpcInput,
+  ConnectModInput,
+  ConnectModOutcome,
   CopyTranscriptForResumeIpcInput,
   CopyTranscriptForResumeResult,
   CreateProjectResponse,
@@ -57,16 +62,20 @@ import type {
   ResolveCardReposIpcInput,
   SaveProjectBindingIpcInput,
   SaveProjectBindingResult,
+  ModId,
   SemaphoreUpdate,
   SessionSummaryDto,
+  SwitchOutcome,
   TranscriptChangedPayload,
   WatchPhaseIpcInput,
 } from '../shared';
 import {
+  ACCOUNT_CHANNELS,
   archivePhaseSession,
   CLAUDE_NOT_FOUND_PREFIX,
   closeDiscovery,
   CONFIG_CHANNELS,
+  defaultAccountsConfig,
   DEVMODE_CHANNELS,
   focusDiscovery,
   GITHUB_CHANNELS,
@@ -153,6 +162,7 @@ import {
   createSystemProfileListDeps,
   createSystemProfileRepairIoDeps,
   deleteProfile,
+  globalClaudeJsonPath,
   listProfiles,
   PRINCIPAL_PROFILE,
   PRINCIPAL_PROFILE_SLUG,
@@ -162,6 +172,16 @@ import {
   titleCaseFromSlug,
   type ProfileInfo,
 } from './profile-manager';
+// 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
+// (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
+// arquivo só instancia/liga (T1125 — única task que toca o hub).
+import { AccountEngine } from './accounts/account-engine';
+import type { AccountMod } from './accounts/account-mod';
+import { sanitizeAccountsConfig } from './accounts/accounts-config';
+import { applyAccountSwitch, createSystemClaudeStateIoDeps } from './accounts/claude-state';
+import { createLocalMod } from './accounts/mods/local-mod';
+import { createSeazoneMod } from './accounts/mods/seazone-mod';
+import { createSystemVaultIoDeps, decryptVaultEntry, writeVaultEntry, type VaultLike } from './accounts/vault';
 import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects, sortProjects } from './project-scanner';
 // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
 import { createNewProject, createSystemCreateProjectDeps } from './project-creator';
@@ -363,6 +383,101 @@ const semaphoreManager = new SessionSemaphoreManager({ getRecentLines: (ptyId) =
 /** Path do `--settings` adicional (hooks-settings.ts) — resolvido uma vez no boot, reaproveitado por todo spawn de sessão claude. `null` até `app.whenReady()` rodar. */
 let hooksSettingsPath: string | null = null;
 
+// ---------------------------------------------------------------------------
+// 011-contas-e-provedores (etapa 1) — motor de contas + mods (T1125, única
+// task que toca este arquivo). Nasce inerte (accounts.mod = null, C2): sem
+// mod configurado, `accountEngine` existe mas `getState() === 'inert'` e o
+// spawn de PTY segue exatamente como hoje (perfil ativo, ver mais abaixo).
+// ---------------------------------------------------------------------------
+const accountsVaultIo = createSystemVaultIoDeps();
+const accountsClaudeStateIo = createSystemClaudeStateIoDeps();
+/** `<userData>/accounts-vault.json` — só resolvido depois de `app.whenReady()` (precisa de `app.getPath`). */
+let accountsVaultPath: string | null = null;
+let accountEngine: AccountEngine | null = null;
+/** C5 — leitura apenas do `session-semaphore-manager` via `onUpdate` (API já pública; este arquivo NUNCA altera session-semaphore-manager.ts). ptyId em `working` entra, qualquer outro estado sai. */
+const accountsBusyPtyIds = new Set<string>();
+/** Sessões `claude` vivas nesta execução (C4 — poll de 5 min só enquanto houver ao menos uma). Adicionado no registro da sessão (registerPtyIpcHandlers), removido no `onExit` (createMainWindow). */
+const accountsLiveSessionPtyIds = new Set<string>();
+
+/** Adaptador `VaultLike` sobre o cofre real — write-only pra fora de `accounts/` (nenhum getter daqui atravessa IPC; só os mods e este arquivo o enxergam). */
+function createRealAccountsVaultAdapter(): VaultLike {
+  return {
+    read: (id: string) => (accountsVaultPath ? decryptVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, id) : null),
+    write: (id: string, plainText: string) =>
+      accountsVaultPath ? writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, id, plainText) : { kind: 'vault-unavailable' as const },
+  };
+}
+
+/**
+ * SEAM DE TESTE (T1126/T1127/T1128, mesmo espírito de `DONEL_QUOTA_AXI_FIXTURE`
+ * em quota-headroom.ts) — os smokes deste app rodam isolados do `%APPDATA%`
+ * real e a regra do projeto proíbe abrir sessão `claude` real. Quando
+ * `DONEL_ACCOUNTS_FAKE_MOD_FIXTURE` aponta pra um JSON `{ accounts, pairs }`,
+ * o mod devolvido é 100% em memória — nenhuma chamada de rede, nenhum cofre —
+ * mas passa pelo MESMO motor/claude-state que o caminho real usa. Fora de
+ * teste a variável não existe -> mods reais (seazone/local) abaixo.
+ */
+function createFixtureAccountMod(fixturePath: string): AccountMod {
+  const raw = JSON.parse(readFileSync(fixturePath, 'utf8')) as {
+    accounts: readonly { id: string; label: string; plan: string | null; available: boolean; load: import('../shared/accounts').AccountLoad | null }[];
+    pairs: Record<string, import('./accounts/account-mod').CredentialPair>;
+  };
+  return {
+    id: 'local',
+    async listAccounts() {
+      return { kind: 'ok', accounts: raw.accounts.map((account) => ({ ...account, active: false })) };
+    },
+    async switchTo(id) {
+      const pair = raw.pairs[id];
+      if (!pair) return { kind: 'failed', reason: 'unknown-account' };
+      return { kind: 'ok', pair };
+    },
+    async captureRotatedPair() {
+      // Fixture não persiste nada — smoke só confere o efeito em claude-state.ts.
+    },
+  };
+}
+
+function resolveAccountMod(modId: ModId): AccountMod {
+  const fixturePath = process.env.DONEL_ACCOUNTS_FAKE_MOD_FIXTURE;
+  if (fixturePath) return createFixtureAccountMod(fixturePath);
+
+  const vault = createRealAccountsVaultAdapter();
+  if (modId === 'seazone') {
+    return createSeazoneMod({ baseUrl: appConfig.accounts.seazone?.baseUrl ?? '', vault });
+  }
+  return createLocalMod({ accounts: appConfig.accounts.localAccounts, vault });
+}
+
+/** A sequência invariante inteira (captura → escreve `.credentials.json` → apaga `oauthAccount`) — `claude-state.ts` é a ÚNICA escrita de credencial do sistema. `claudeHome` respeita o override de `accounts.claudeHome` (C1); default é o `~/.claude` real (nunca o de um perfil — motor e perfis não escrevem no mesmo lugar ao mesmo tempo). */
+function applyAccountsClaudeStateSwitch(pair: import('./accounts/account-mod').CredentialPair, onRotatedPairCaptured: (pair: import('./accounts/account-mod').CredentialPair | null) => void | Promise<void>): Promise<void> {
+  const claudeHome = appConfig.accounts.claudeHome ?? claudeHomeDir(profilePathDeps);
+  return applyAccountSwitch(
+    { io: accountsClaudeStateIo, claudeHome, claudeJsonPath: globalClaudeJsonPath(profilePathDeps), onRotatedPairCaptured },
+    pair,
+  );
+}
+
+function broadcastAccountsChanged(view: AccountsViewDto): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(ACCOUNT_CHANNELS.changed, view);
+  }
+}
+
+/** Reconstrói o motor do zero — necessário sempre que `accounts.mod` muda (só o construtor resolve o mod concreto, T1120). Chamado no boot e em `connectMod`/`disconnectMod`. */
+function rebuildAccountEngine(): void {
+  accountEngine?.dispose();
+  accountEngine = new AccountEngine({
+    config: appConfig.accounts,
+    resolveMod: resolveAccountMod,
+    applySwitch: applyAccountsClaudeStateSwitch,
+    isSessionBusy: () => accountsBusyPtyIds.size > 0,
+  });
+  accountEngine.onChanged(broadcastAccountsChanged);
+  accountEngine.start();
+  accountEngine.startPolling(() => accountsLiveSessionPtyIds.size > 0);
+}
+
 // Achado do T009 (ao escrever o `--settings` de hooks pela primeira vez):
 // sem `setName`, o Electron só resolve o nome do app ("donel-dev", de
 // package.json) quando invocado como `electron .` (dev, `npm run dev`) — ao
@@ -422,6 +537,10 @@ function createMainWindow(): void {
     // kill forçado não dispara o hook, e um watcher sobrevivente é handle
     // vazado. No-op para aba de terminal livre (nunca abriu watcher).
     transcriptWatchers.stop(ptyId);
+    // T1125 (011-contas-e-provedores, etapa 1, C4) — mesma baixa, pro poll de
+    // 5 min do motor de contas parar de contar esta sessão como viva.
+    accountsBusyPtyIds.delete(ptyId);
+    accountsLiveSessionPtyIds.delete(ptyId);
   });
   const unsubscribeSemaphore = semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
     mainWindow.webContents.send(SEMAPHORE_CHANNELS.update, update);
@@ -523,6 +642,17 @@ function registerPtyIpcHandlers(): void {
       const semaphoreArgs = hooksSettingsPath ? ['--settings', hooksSettingsPath] : [];
       const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs];
 
+      // T1125 (011-contas-e-provedores, etapa 1, C1/C10) — com o motor de
+      // contas ATIVO (`mod !== null`), sessões novas nascem SEM override de
+      // `CLAUDE_CONFIG_DIR` (o motor escreve credencial só no `~/.claude`
+      // real — motor e perfis nunca escrevem no mesmo lugar ao mesmo tempo,
+      // D6/C1) e `PtyCreateResult.profile` reflete a conta ativa do motor,
+      // não o perfil. Motor INERTE (default, C2): byte a byte o
+      // comportamento de hoje (`activeProfileConfigDir`/perfil).
+      const accountsSnapshot = accountEngine?.getSnapshot();
+      const motorActive = accountsSnapshot !== undefined && accountsSnapshot.mod !== null;
+      const spawnConfigDir = motorActive ? undefined : activeProfileConfigDir;
+
       const ptyId = ptyManager.create({
         cols: options.cols,
         rows: options.rows,
@@ -532,17 +662,20 @@ function registerPtyIpcHandlers(): void {
         command: resolved.launch.command,
         args: [...resolved.launch.argsPrefix, ...finalArgs],
         // T014 (FR-005/CA-3) — perfil ativo NO MOMENTO da criação da aba;
-        // `undefined` pro perfil Principal (sem override de env).
-        claudeConfigDir: activeProfileConfigDir,
+        // `undefined` pro perfil Principal (sem override de env). T1125:
+        // `undefined` também quando o motor de contas está ativo (acima).
+        claudeConfigDir: spawnConfigDir,
       });
 
       if (hooksSettingsPath) {
         semaphoreManager.registerSession(ptyId, correlationId);
       }
+      // C4 — poll de 5 min do motor de contas só enquanto houver sessão viva.
+      accountsLiveSessionPtyIds.add(ptyId);
 
       // T412 (004) — reflexo AO VIVO do `/rename` (CA-4). O path do `.jsonl` já
       // é conhecido aqui: o id da sessão foi IMPOSTO no spawn logo acima.
-      const transcriptPath = resolveTranscriptPath(correlationId, options.cwd, activeProfileConfigDir);
+      const transcriptPath = resolveTranscriptPath(correlationId, options.cwd, spawnConfigDir);
       // T710 — guardado ANTES de qualquer coisa poder falhar: é o caminho que o
       // `forgetIfOrphan` vai conferir se esta retomada morrer (ver comentário de
       // `spawnedTranscriptPaths`).
@@ -557,7 +690,17 @@ function registerPtyIpcHandlers(): void {
       // T404 (004) — `correlationId` é o id da sessão do Claude (imposto no
       // spawn acima, ou herdado do `-r` numa retomada); devolvê-lo aqui é o
       // que dá ao renderer a chave para nomear/persistir esta sessão.
-      return { ptyId, claudeSessionId: correlationId, profile: { slug: activeProfileSlug, name: activeProfileName } };
+      // T1125/C10 — com o motor ativo, o "perfil" devolvido é a CONTA ativa
+      // dele (mesmo formato `{slug, name}`, sessionAccountLabel.ts não muda
+      // de contrato nesta etapa).
+      const spawnProfile = motorActive && accountsSnapshot?.activeAccountId
+        ? {
+            slug: accountsSnapshot.activeAccountId,
+            name: accountsSnapshot.accounts.find((account) => account.id === accountsSnapshot.activeAccountId)?.label ?? accountsSnapshot.activeAccountId,
+          }
+        : { slug: activeProfileSlug, name: activeProfileName };
+
+      return { ptyId, claudeSessionId: correlationId, profile: spawnProfile };
     }
 
     const ptyId = ptyManager.create(options);
@@ -1371,6 +1514,81 @@ function registerProfileIpcHandlers(): void {
   });
 }
 
+/**
+ * T1125 (011-contas-e-provedores, etapa 1) — handlers do motor de contas
+ * (contracts/ipc-accounts.md). `connectMod` é o ÚNICO ponto por onde segredo
+ * ENTRA (write-only, C11) — nenhum handler abaixo devolve `CredentialPair`,
+ * token ou trecho deles; a config re-lida (`AccountsConfigDto`) nunca carrega
+ * segredo (fica só no cofre).
+ */
+function registerAccountsIpcHandlers(): void {
+  ipcMain.handle(ACCOUNT_CHANNELS.list, async (): Promise<AccountsViewDto> => {
+    if (!accountEngine) return { mod: null, state: 'inert', unavailableReason: null, accounts: [], activeAccountId: null, autoSwitch: appConfig.accounts.autoSwitch, lastReadAt: null };
+    return accountEngine.listAccounts();
+  });
+
+  ipcMain.handle(ACCOUNT_CHANNELS.switch, async (_event, id: AccountId): Promise<SwitchOutcome> => {
+    if (!accountEngine) return { kind: 'failed', reason: 'io' };
+    const result = await accountEngine.switchTo(id);
+    if (result.kind === 'switched') {
+      appConfig = { ...appConfig, accounts: { ...appConfig.accounts, activeAccountId: result.to } };
+      persistAppConfig();
+    }
+    return result;
+  });
+
+  ipcMain.handle(ACCOUNT_CHANNELS.getConfig, (): AccountsConfigDto => appConfig.accounts);
+
+  ipcMain.handle(ACCOUNT_CHANNELS.setConfig, (_event, patch: unknown): AccountsConfigDto => {
+    const previousMod = appConfig.accounts.mod;
+    const merged = typeof patch === 'object' && patch !== null ? { ...appConfig.accounts, ...(patch as Partial<AccountsConfigDto>) } : appConfig.accounts;
+    appConfig = { ...appConfig, accounts: sanitizeAccountsConfig(merged, appConfig.accounts) };
+    persistAppConfig();
+    if (appConfig.accounts.mod !== previousMod) {
+      rebuildAccountEngine();
+    } else {
+      accountEngine?.updateConfig(appConfig.accounts);
+    }
+    return appConfig.accounts;
+  });
+
+  /** Único ponto por onde segredo ENTRA (write-only, C11) — nunca ecoado de volta. `vault-unavailable` = `safeStorage.isEncryptionAvailable()` false: recusa conectar, sem fallback em texto plano. */
+  ipcMain.handle(ACCOUNT_CHANNELS.connectMod, (_event, input: ConnectModInput): ConnectModOutcome => {
+    if (!accountsVaultPath) return { kind: 'failed', reason: 'offline' };
+    if (!safeStorage.isEncryptionAvailable()) return { kind: 'failed', reason: 'vault-unavailable' };
+
+    if (input.mod === 'seazone') {
+      if (!input.baseUrl?.trim() || !input.sessionRefreshToken?.trim()) return { kind: 'failed', reason: 'invalid-input' };
+      const writeResult = writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, 'seazone:session', input.sessionRefreshToken);
+      if (writeResult.kind !== 'ok') return { kind: 'failed', reason: 'vault-unavailable' };
+      appConfig = { ...appConfig, accounts: { ...appConfig.accounts, mod: 'seazone', seazone: { baseUrl: input.baseUrl.trim() } } };
+    } else {
+      if (!input.label?.trim() || !input.accessToken?.trim() || !input.refreshToken?.trim()) return { kind: 'failed', reason: 'invalid-input' };
+      const id = randomUUID();
+      const pair = { accessToken: input.accessToken, refreshToken: input.refreshToken, expiresAt: input.expiresAt, scopes: [] as readonly string[] };
+      const writeResult = writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, id, JSON.stringify(pair));
+      if (writeResult.kind !== 'ok') return { kind: 'failed', reason: 'vault-unavailable' };
+      appConfig = {
+        ...appConfig,
+        accounts: { ...appConfig.accounts, mod: 'local', localAccounts: [...appConfig.accounts.localAccounts, { id, label: input.label.trim(), plan: null }] },
+      };
+    }
+
+    persistAppConfig();
+    rebuildAccountEngine();
+    return { kind: 'connected', config: appConfig.accounts };
+  });
+
+  ipcMain.handle(ACCOUNT_CHANNELS.disconnectMod, (): AccountsConfigDto => {
+    // Volta pro default (motor inerte, C2) — preserva só `claudeHome` (não é
+    // segredo, é preferência de onde o motor escreveria se reconectado).
+    appConfig = { ...appConfig, accounts: { ...defaultAccountsConfig(), claudeHome: appConfig.accounts.claudeHome } };
+    persistAppConfig();
+    rebuildAccountEngine();
+    return appConfig.accounts;
+  });
+}
+
 void app.whenReady().then(async () => {
   // T009 — sobe o servidor local do semáforo e grava o `--settings` ANTES de
   // registrar os handlers de PTY (o primeiro `pty:create` de uma sessão
@@ -1406,10 +1624,26 @@ void app.whenReady().then(async () => {
     appConfig = { ...appConfig, activeProfileSlug: bootProfile.slug };
   }
 
+  // T1125 (011-contas-e-provedores, etapa 1) — motor de contas. `accountsVaultPath`
+  // precisa de `userData` (só disponível aqui); `rebuildAccountEngine` monta o
+  // motor com `appConfig.accounts` (mod `null` = inerte, C2 — comportamento de
+  // hoje intocado). C5: busy-tracking via API pública do semáforo, sem alterar
+  // session-semaphore-manager.ts.
+  accountsVaultPath = join(app.getPath('userData'), 'accounts-vault.json');
+  semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
+    if (update.state === 'working') {
+      accountsBusyPtyIds.add(update.ptyId);
+    } else {
+      accountsBusyPtyIds.delete(update.ptyId);
+    }
+  });
+  rebuildAccountEngine();
+
   registerPtyIpcHandlers();
   registerProjectIpcHandlers();
   registerSessionIpcHandlers();
   registerProfileIpcHandlers();
+  registerAccountsIpcHandlers(); // T1125 (011-contas-e-provedores, etapa 1)
   registerConfigIpcHandlers();
   registerClipboardIpcHandlers(); // T504 (005-terminal-copy-paste)
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
@@ -1432,6 +1666,7 @@ app.on('window-all-closed', () => {
   semaphoreManager.dispose();
   esteiraService?.dispose();
   esteiraService = null;
+  accountEngine?.dispose(); // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.
   if (process.platform !== 'darwin') {
     app.quit();
   }
