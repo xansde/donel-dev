@@ -52,7 +52,9 @@ const SIGNAL_VIEW: Readonly<Record<DiscoverySnapshot['stageSignals'][number], Si
   'mirror-pending': {
     label: 'espelho pendente',
     tone: 'attention',
-    title: 'O espelho no board falhou e está na fila. O trabalho local segue normalmente.',
+    // "Está na fila" cobre os dois estados; dizer "falhou" seria afirmar uma
+    // tentativa que pode nem ter acontecido ainda.
+    title: 'Há espelho esperando na fila do board. O trabalho local já aconteceu e segue normalmente.',
   },
 };
 
