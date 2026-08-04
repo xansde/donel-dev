@@ -12,6 +12,7 @@
 // de 03/08.
 
 import { MACRO_STAGE_LABEL } from '../../../shared/esteira/ipc';
+import { mirrorOperationKind } from '../../../shared/esteira/mirror/mirrorPlan';
 import { findBlockingLock, lockChainOf } from '../../../shared/esteira/store/lockChain';
 import { MACRO_STAGES } from '../../../shared/esteira/store/storeFormat';
 import { esteiraPhaseCommand, LOCK_WORD, lockStateOf, noLockDispatchHint, type LockState } from './esteiraSession';
@@ -21,6 +22,7 @@ import type {
   IngestErrorSnapshot,
   LockRecord,
   MacroStage,
+  MirrorQueueEntry,
   PhaseRunSnapshot,
   PlanSnapshot,
   SessionSnapshot,
@@ -57,7 +59,9 @@ const SIGNAL_VIEW: Readonly<Record<DiscoverySnapshot['stageSignals'][number], Si
   'mirror-pending': {
     label: 'espelho pendente',
     tone: 'attention',
-    title: 'O espelho no board falhou e está na fila. O trabalho local segue normalmente.',
+    // "Está na fila" cobre os dois estados; dizer "falhou" seria afirmar uma
+    // tentativa que pode nem ter acontecido ainda.
+    title: 'Há espelho esperando na fila do board. O trabalho local já aconteceu e segue normalmente.',
   },
 };
 
@@ -254,6 +258,8 @@ export interface CardView {
   /** Todas as sessões do card: é delas que sai o "alguém assumiu?" de cada fase. */
   readonly sessions: readonly SessionSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
+  /** D-12 — o que o board ainda não recebeu. Nunca bloqueia nada; só precisa ser visível. */
+  readonly mirrorQueue: readonly MirrorQueueEntry[];
   readonly notes: readonly NoteView[];
 }
 
@@ -395,6 +401,7 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     openSession: [...snapshot.sessions].reverse().find((session) => belongs(session.subject) && session.endedAt === null) ?? null,
     sessions: snapshot.sessions.filter((session) => belongs(session.subject)),
     ingestErrors: snapshot.ingestErrors.filter((error) => error.subject !== null && belongs(error.subject)),
+    mirrorQueue: snapshot.mirrorQueue.filter((entry) => belongs(entry.subject)),
     notes: snapshot.notes
       .filter((note) => belongs(note.subject))
       .map((note) => ({
@@ -548,6 +555,63 @@ export function parseNoteTarget(value: string): EntityId | null {
   if (id.length === 0) return null;
   if (entity !== 'discovery' && entity !== 'plan' && entity !== 'work_item') return null;
   return { entity, id };
+}
+
+/**
+ * O espelho no tracker é **cortesia** (D-12): ele reflete fatos que já
+ * aconteceram aqui. Por isso a frase do bloco não é um alerta — é um aviso de
+ * que o board está atrasado, não de que algo aqui está travado. Confundir os
+ * dois faria o operador esperar por uma integração opcional.
+ */
+export const MIRROR_PENDING_TITLE = 'Espelho pendente';
+
+export const MIRROR_PENDING_HINT =
+  'O board ainda não recebeu isto. O trabalho local já aconteceu e não depende do espelho — nada aqui está esperando.';
+
+export interface MirrorLineView {
+  readonly key: string;
+  readonly text: string;
+  /** Quantas vezes já tentou e por que não foi. `null` nunca: silêncio aqui seria a falha invisível de novo. */
+  readonly detail: string;
+}
+
+/** O que falta mandar ao board, em português — uma linha por operação da fila. */
+export function mirrorLines(card: CardView): readonly MirrorLineView[] {
+  return card.mirrorQueue.map((entry) => ({
+    key: `${entry.subject.entity}:${entry.subject.id}:${entry.operation}`,
+    text: mirrorOperationText(entry),
+    detail:
+      entry.attempts === 0
+        ? 'ainda não tentou'
+        : `${entry.attempts} ${entry.attempts === 1 ? 'tentativa' : 'tentativas'} — ${entry.lastError ?? 'motivo não registrado'}`,
+  }));
+}
+
+function mirrorOperationText(entry: MirrorQueueEntry): string {
+  const kind = mirrorOperationKind(entry.operation);
+
+  if (kind === 'label') {
+    const labels = Array.isArray(entry.payload.labels)
+      ? entry.payload.labels.filter((label): label is string => typeof label === 'string')
+      : [];
+    if (labels.length === 0) return 'remover as etiquetas de fase';
+    return `aplicar a etiqueta ${labels.map((label) => `"${label}"`).join(', ')}`;
+  }
+
+  if (kind === 'column') {
+    const column = typeof entry.payload.column === 'string' ? entry.payload.column : '—';
+    return `mover o card para "${column}"`;
+  }
+
+  if (kind === 'comment') {
+    const phase = typeof entry.payload.phase === 'string' ? entry.payload.phase : 'anterior';
+    return `comentar a conclusão da fase ${phase}`;
+  }
+
+  // Operação que este canal não conhece (gravada por um mais novo): dizer que
+  // não sei é a única resposta honesta — fingir que mandei seria a inverdade
+  // que a spec inteira existe para extinguir.
+  return `não sei espelhar a operação "${entry.operation}"`;
 }
 
 /**
@@ -867,20 +931,31 @@ export function dispatchView(card: CardView, selection: DispatchSelection): Disp
 }
 
 /**
- * O que dizer depois de varrer o outbox.
+ * A única frase de "não houve nada". Ela é literal em dois lugares — as duas
+ * varreduras deste arquivo — e por isso vive numa constante: quem decide entre
+ * as duas compara com ELA, não com uma cópia da string.
+ */
+export const NOTHING_NEW = 'Nada novo no outbox.';
+
+/**
+ * O que dizer depois de varrer o outbox, olhando o `through_seq`.
  *
  * A versão anterior olhava só os arquivos RECUSADOS: varredura que ingeriu um
  * fato novo e não recusou nada dizia "Nada novo no outbox" — a tela negando o
  * que acabara de ler. `through_seq` é até onde o log foi reduzido; se ele
  * avançou, entrou fato. Comparar os dois snapshots é o que o renderer já tem em
  * mãos, sem inventar campo novo no DTO.
+ *
+ * Convive com `scanMessage`, que responde à MESMA pergunta pelos contadores da
+ * varredura. Os contadores dizem mais, então falam primeiro; este aqui é a rede
+ * embaixo — quando eles vêm todos zerados e mesmo assim o log andou.
  */
 export function scanOutcomeMessage(throughSeqBefore: number | null, rejected: number, throughSeqAfter: number): string {
   const entrou = throughSeqBefore !== null && throughSeqAfter > throughSeqBefore;
   if (rejected > 0) {
     return `${rejected} arquivo(s) fora do contrato — os cards mostram o motivo.${entrou ? ' O que estava dentro do contrato entrou.' : ''}`;
   }
-  return entrou ? 'Entrou fato novo do outbox. Os cards já mostram o que a skill declarou.' : 'Nada novo no outbox.';
+  return entrou ? 'Entrou fato novo do outbox. Os cards já mostram o que a skill declarou.' : NOTHING_NEW;
 }
 
 /** Um erro de ingestão, em português, sem esconder o caminho do arquivo. */
@@ -889,6 +964,41 @@ export function ingestErrorLine(error: IngestErrorSnapshot): string {
   const detail = first === undefined ? 'motivo não registrado' : `${first.code}${first.path ? ` em ${first.path}` : ''}`;
   const more = error.issues.length > 1 ? ` (+${error.issues.length - 1})` : '';
   return `${detail}${more}`;
+}
+
+/** O que a última varredura do outbox encontrou — os três desfechos possíveis. */
+export interface ScanCounts {
+  readonly ingestedOnLastScan: number;
+  readonly rejectedOnLastScan: number;
+  readonly unreadableOnLastScan: number;
+}
+
+/**
+ * A frase da varredura. Cada desfecho tem palavra própria, e "nada novo" só é
+ * dito quando os três são zero.
+ *
+ * Nasceu de um print: a barra dizia "Nada novo no outbox." no mesmo instante em
+ * que a fase virava "concluída", a etapa ia para Planejado e um plano aparecia
+ * no card — a tela negando a mudança que ela própria acabara de mostrar. A
+ * causa era a frase olhar SÓ para o que foi recusado; ingerir e não conseguir
+ * ler não tinham palavra. É a mesma raiz do bug de 03/08: o texto decidido a
+ * partir de meia informação, e não do estado inteiro.
+ */
+export function scanMessage(scan: ScanCounts): string {
+  const parts: string[] = [];
+  if (scan.ingestedOnLastScan > 0) {
+    parts.push(`${scan.ingestedOnLastScan} resultado(s) novo(s) — os cards já mudaram`);
+  }
+  if (scan.rejectedOnLastScan > 0) {
+    parts.push(`${scan.rejectedOnLastScan} arquivo(s) fora do contrato — os cards mostram o motivo`);
+  }
+  if (scan.unreadableOnLastScan > 0) {
+    // "Não consegui ler" nunca vira "não aconteceu": o que a skill fez segue
+    // valendo, só não foi lido.
+    parts.push(`${scan.unreadableOnLastScan} arquivo(s) que não consegui ler — nada foi afirmado sobre eles`);
+  }
+  if (parts.length === 0) return NOTHING_NEW;
+  return `${parts.join('. ')}.`;
 }
 
 export const STORE_COMPATIBILITY_WARNING: Readonly<Record<string, string | null>> = {

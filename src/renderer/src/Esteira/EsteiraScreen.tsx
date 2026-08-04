@@ -26,9 +26,14 @@ import {
   ITEM_STATE_RULE,
   lockView,
   MACRO_STAGE_OPTIONS,
+  MIRROR_PENDING_HINT,
+  MIRROR_PENDING_TITLE,
+  mirrorLines,
   noteTargetOptions,
+  NOTHING_NEW,
   parseNoteTarget,
   phaseLines,
+  scanMessage,
   scanOutcomeMessage,
   STORE_COMPATIBILITY_WARNING,
   type SignalTone,
@@ -287,11 +292,35 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
     [applyGesture, noteText],
   );
 
+  // D-12 — reenviar o espelho é gesto de cortesia: ele não desbloqueia nada
+  // local, e por isso a mensagem fala do board, nunca do trabalho.
+  const handleRetryMirror = useCallback(async () => {
+    const state = await window.donel.esteira.retryMirror();
+    setState(state);
+    const pending = state.snapshot.mirrorQueue.length;
+    setMessage(pending === 0 ? 'O board recebeu o que faltava.' : `${pending} operação(ões) ainda não foram aceitas pelo board.`);
+  }, []);
+
   const handleScan = useCallback(async () => {
     const before = state?.snapshot.through_seq ?? null;
     const scanned = await window.donel.esteira.scanOutbox();
     setState(scanned);
-    setMessage(scanOutcomeMessage(before, scanned.rejectedOnLastScan, scanned.snapshot.through_seq));
+    // A frase nasce em `esteiraView`, com o resultado INTEIRO da varredura: a
+    // versão anterior olhava só o que fora recusado e, por isso, anunciava
+    // "nada novo" enquanto o card mudava de etapa embaixo dela.
+    //
+    // As DUAS varreduras do merge sobrevivem, e não por gosto: o B5 conta pelos
+    // contadores da varredura (ingerido, recusado, ilegível) e o B3 compara o
+    // `through_seq` de antes e depois. O contador é mais informativo, então ele
+    // fala primeiro; o seq entra quando os contadores não viram nada MAS o log
+    // andou — que é exatamente o caso em que a tela voltaria a dizer "nada
+    // novo" sobre um card que acabou de mudar.
+    const porContador = scanMessage(scanned);
+    setMessage(
+      porContador === NOTHING_NEW
+        ? scanOutcomeMessage(before, scanned.rejectedOnLastScan, scanned.snapshot.through_seq)
+        : porContador,
+    );
   }, [state]);
 
   return (
@@ -571,6 +600,30 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                   </Button>
                 </div>
               </section>
+
+              {/* O espelho vem DEPOIS dos fatos locais, e nunca antes: ele é
+                  cortesia para quem olha o board (D-12). Board atrasado não é
+                  trabalho parado — e a tela precisa dizer isso, senão o
+                  operador espera por uma integração opcional. */}
+              {selected.mirrorQueue.length > 0 ? (
+                <section className={styles.block} data-testid="mirror-pending">
+                  <h4 className={styles.blockTitle}>{MIRROR_PENDING_TITLE}</h4>
+                  <p className={styles.hint}>{MIRROR_PENDING_HINT}</p>
+                  <ul className={styles.lines}>
+                    {mirrorLines(selected).map((entry) => (
+                      <li key={entry.key}>
+                        {entry.text}
+                        <span className={styles.hint}> — {entry.detail}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className={styles.rowActions}>
+                    <Button variant="ghost" onClick={() => void handleRetryMirror()} disabled={readOnly}>
+                      Reenviar espelho
+                    </Button>
+                  </div>
+                </section>
+              ) : null}
 
               {/* Só oferecer disparo que o modelo comporta — e nunca recusar
                   calado. A fase que o card ainda não comporta continua VISÍVEL,

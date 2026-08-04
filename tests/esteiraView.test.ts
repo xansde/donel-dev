@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { cardView, ingestErrorLine, lockView, phaseLine, phaseLines, signalViews, stageView } from '../src/renderer/src/Esteira/esteiraView';
+import {
+  cardView,
+  ingestErrorLine,
+  lockView,
+  MIRROR_PENDING_HINT,
+  mirrorLines,
+  phaseLine,
+  phaseLines,
+  scanMessage,
+  signalViews,
+  stageView,
+} from '../src/renderer/src/Esteira/esteiraView';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
 import type { DiscoverySnapshot, PhaseRunSnapshot, StoreEvent } from '../src/shared/esteira/store/storeFormat';
 
@@ -323,5 +334,92 @@ describe('phaseLines — "disparar" não é "começar", nem na lista de fases', 
     const [line] = phaseLines(cardView(snapshot, 'dsc-1')!);
     expect(line.failed).toBe(true);
     expect(line.detail).toBe('Havia alterações não commitadas.');
+  });
+});
+
+describe('espelho pendente — o card diz o que o board não recebeu (D-12)', () => {
+  function cardComFila(operation: string, payload: Record<string, unknown>, falha: string | null = null) {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const events = [
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x', tracker: { provider: 'taskdex', cardId: 'card-4711' } }),
+      evt('mirror.queued', { subject, operation, payload, queuedAt: '2026-08-03T12:00:00.000Z' }),
+    ];
+    if (falha !== null) events.push(evt('mirror.failed', { subject, operation, error: falha }));
+    return cardView(reduceEvents(events), 'dsc-1')!;
+  }
+
+  it('a fila do card chega até a tela', () => {
+    expect(cardComFila('column', { column: 'Plano' }).mirrorQueue).toHaveLength(1);
+  });
+
+  it('cada operação tem frase própria, em português', () => {
+    expect(mirrorLines(cardComFila('column', { column: 'Plano' }))[0].text).toBe('mover o card para "Plano"');
+    expect(mirrorLines(cardComFila('label', { labels: ['esteira:em-andamento:plano'] }))[0].text).toBe(
+      'aplicar a etiqueta "esteira:em-andamento:plano"',
+    );
+    expect(mirrorLines(cardComFila('label', { labels: [] }))[0].text).toBe('remover as etiquetas de fase');
+    expect(mirrorLines(cardComFila('comment:run-1', { text: 'x', phase: 'discovery' }))[0].text).toBe(
+      'comentar a conclusão da fase discovery',
+    );
+  });
+
+  it('operação que o app não sabe espelhar diz isso — nunca finge que mandou', () => {
+    expect(mirrorLines(cardComFila('publicar-card', {}))[0].text).toContain('não sei espelhar');
+  });
+
+  it('o MOTIVO da falha aparece, com quantas vezes já tentou', () => {
+    const [line] = mirrorLines(cardComFila('column', { column: 'Plano' }, 'sem rede'));
+    expect(line.detail).toBe('1 tentativa — sem rede');
+  });
+
+  it('enfileirado e ainda não tentado diz exatamente isso', () => {
+    expect(mirrorLines(cardComFila('column', { column: 'Plano' }))[0].detail).toBe('ainda não tentou');
+  });
+
+  it('o card avisa que o local NÃO depende do espelho', () => {
+    expect(MIRROR_PENDING_HINT).toContain('local');
+    expect(cardComFila('column', { column: 'Plano' }).signals.some((signal) => signal.label === 'espelho pendente')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A frase da varredura. Achada num print do roteiro `espelho-pendente`: a
+// barra dizia "Nada novo no outbox." no MESMO instante em que a fase virava
+// "concluída", a etapa ia para Planejado e um plano aparecia na tela. A frase
+// só sabia de arquivo RECUSADO; ingerido e ilegível não tinham palavra.
+// ---------------------------------------------------------------------------
+describe('o que a varredura do outbox diz ter acontecido', () => {
+  it('varredura sem nada novo diz isso, e só isso', () => {
+    expect(scanMessage({ ingestedOnLastScan: 0, rejectedOnLastScan: 0, unreadableOnLastScan: 0 })).toBe(
+      'Nada novo no outbox.',
+    );
+  });
+
+  it('resultado ingerido NAO pode ser anunciado como "nada novo" — o card acabou de mudar', () => {
+    const frase = scanMessage({ ingestedOnLastScan: 1, rejectedOnLastScan: 0, unreadableOnLastScan: 0 });
+
+    expect(frase).not.toContain('Nada novo');
+    expect(frase).toContain('1 resultado(s)');
+  });
+
+  it('arquivo fora do contrato continua tendo a frase que manda olhar o card', () => {
+    expect(scanMessage({ ingestedOnLastScan: 0, rejectedOnLastScan: 2, unreadableOnLastScan: 0 })).toContain(
+      '2 arquivo(s) fora do contrato',
+    );
+  });
+
+  it('"nao consegui ler" tem palavra propria — nunca vira ausencia silenciosa', () => {
+    const frase = scanMessage({ ingestedOnLastScan: 0, rejectedOnLastScan: 0, unreadableOnLastScan: 1 });
+
+    expect(frase).not.toContain('Nada novo');
+    expect(frase).toContain('não consegui ler');
+  });
+
+  it('as tres coisas na mesma varredura aparecem todas — nenhuma esconde a outra', () => {
+    const frase = scanMessage({ ingestedOnLastScan: 3, rejectedOnLastScan: 1, unreadableOnLastScan: 1 });
+
+    expect(frase).toContain('3 resultado(s)');
+    expect(frase).toContain('fora do contrato');
+    expect(frase).toContain('não consegui ler');
   });
 });

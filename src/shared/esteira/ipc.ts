@@ -34,6 +34,8 @@ export const ESTEIRA_CHANNELS = {
   discardWorkItem: 'esteira:discardWorkItem',
   /** Nota amarrada ao card ou a um item. */
   addNote: 'esteira:addNote',
+  /** Reenvia o que o board nao recebeu (D-12). Gesto humano: ignora o teto de tentativas. */
+  retryMirror: 'esteira:retryMirror',
   /** main → renderer: o store mudou (ingestao, disparo, gesto de outro canal). */
   changed: 'esteira:changed',
 } as const;
@@ -47,6 +49,14 @@ export interface EsteiraSnapshotDto {
   readonly outboxDir: string;
   /** Quantos `result.json` do outbox foram recusados na ultima varredura. */
   readonly rejectedOnLastScan: number;
+  /**
+   * Quantos `result.json` NOVOS entraram no historico na ultima varredura.
+   * Existe porque a tela so sabia contar recusa e, por isso, anunciava "nada
+   * novo" no mesmo instante em que o card mudava de etapa embaixo da frase.
+   */
+  readonly ingestedOnLastScan: number;
+  /** Quantos arquivos a varredura NAO conseguiu ler. "Nao li" nao e "nao aconteceu". */
+  readonly unreadableOnLastScan: number;
 }
 
 export interface CreateDiscoveryIpcInput {
@@ -264,6 +274,12 @@ export interface DonelEsteiraApi {
   setWorkItemState(input: SetWorkItemStateIpcInput): Promise<EsteiraGestureDto>;
   discardWorkItem(input: DiscardWorkItemIpcInput): Promise<EsteiraGestureDto>;
   addNote(input: AddNoteIpcInput): Promise<EsteiraGestureDto>;
+  /**
+   * D-12 — reenvia a fila do espelho. E o UNICO caminho do espelho que espera
+   * resposta, porque quem clicou quer saber se foi; todo o resto acontece
+   * atras, sem segurar gesto nenhum.
+   */
+  retryMirror(): Promise<EsteiraSnapshotDto>;
   /** Devolve a funcao de desinscricao (mesmo padrao dos outros canais de push). */
   onChanged(listener: (state: EsteiraSnapshotDto) => void): () => void;
 }

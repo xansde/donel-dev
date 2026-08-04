@@ -9,6 +9,8 @@ import { createEsteiraService, type EsteiraService } from './esteira-service';
 import { esteiraStoreDir } from './esteira-store';
 import { esteiraOutboxDir } from './esteira-ingest';
 import { esteiraInboxDir } from './esteira-dispatch';
+import { resolveBoardMirrorAdapter } from './esteira-mirror';
+import { MIRROR_CONFIG_FILE, parseMirrorConfig } from '../shared/esteira/mirror/mirrorConfig';
 import {
   ESTEIRA_CHANNELS,
   isValidAddNoteIpcInput,
@@ -916,11 +918,18 @@ function appChannelName(): string {
 }
 
 function registerEsteiraIpcHandlers(): void {
+  // D-12 — o espelho no tracker. O mapeamento etapa → coluna vem do ARQUIVO
+  // (`~/.claude/esteira-config/donel-mirror.json`), nunca de constante no
+  // código: as colunas mudam. Sem arquivo, ou sem adapter plugado, o app
+  // trabalha exatamente como antes — o tracker é plugue, não requisito.
+  const mirrorConfig = parseMirrorConfig(esteiraConfigIoDeps.readFileText(join(ESTEIRA_CONFIG_DIR, MIRROR_CONFIG_FILE)));
+
   esteiraService = createEsteiraService({
     storeDir: esteiraStoreDir(process.env, app.getPath('userData')),
     inboxDir: esteiraInboxDir(process.env, homedir),
     outboxDir: esteiraOutboxDir(process.env, homedir),
     channel: appChannelName(),
+    mirror: { config: mirrorConfig, adapter: resolveBoardMirrorAdapter(process.env, mirrorConfig) },
   });
 
   // O store muda por três caminhos (ingestão do outbox, gesto da UI, outro
@@ -994,6 +1003,14 @@ function registerEsteiraIpcHandlers(): void {
     if (esteiraService === null) return null;
     if (!isValidAddNoteIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
     return esteiraService.addNote(input);
+  });
+
+  // Único canal do espelho que espera resposta: é o gesto de quem clicou
+  // "Reenviar". A drenagem normal acontece atrás de cada gesto local, sem
+  // ninguém esperando por ela.
+  ipcMain.handle(ESTEIRA_CHANNELS.retryMirror, async (): Promise<EsteiraSnapshotDto | null> => {
+    if (esteiraService === null) return null;
+    return esteiraService.retryMirror();
   });
 }
 

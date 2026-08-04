@@ -18,7 +18,10 @@ import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { claimSession, dispatchPhase, endSession, releaseLock } from './esteira-dispatch';
 import { ingestOutbox } from './esteira-ingest';
+import { drainMirrorQueue, type BoardMirrorAdapter, type MirrorDrainSummary } from './esteira-mirror';
 import { openEsteiraStore, type EsteiraStore } from './esteira-store';
+import { MIRROR_DISABLED, type MirrorConfig } from '../shared/esteira/mirror/mirrorConfig';
+import { pendingMirrorDrafts } from '../shared/esteira/mirror/mirrorPlan';
 import type {
   AddNoteIpcInput,
   ClaimSessionIpcInput,
@@ -51,6 +54,15 @@ export interface EsteiraServiceOptions {
   readonly actor?: string;
   /** Espera antes de reler o outbox depois de um evento do watcher (arquivo ainda sendo escrito). */
   readonly debounceMs?: number;
+  /**
+   * D-12 — o espelho no tracker. Ausente, ou com `adapter: null`, o app trabalha
+   * exatamente como antes: nenhum fato e enfileirado, nenhum card mostra
+   * "espelho pendente". O tracker e plugue, nao requisito.
+   */
+  readonly mirror?: {
+    readonly config: MirrorConfig;
+    readonly adapter: BoardMirrorAdapter | null;
+  };
 }
 
 export interface EsteiraService {
@@ -68,10 +80,20 @@ export interface EsteiraService {
   setWorkItemState(input: SetWorkItemStateIpcInput): EsteiraGestureDto;
   discardWorkItem(input: DiscardWorkItemIpcInput): EsteiraGestureDto;
   addNote(input: AddNoteIpcInput): EsteiraGestureDto;
+  /**
+   * Gesto humano de reenvio do espelho: ignora o teto de tentativas e devolve o
+   * estado depois de tentar. E o unico caminho do espelho que ESPERA — porque
+   * quem clicou quer o resultado.
+   */
+  retryMirror(): Promise<EsteiraSnapshotDto>;
+  /** A drenagem normal (respeita o teto). Exposta para o teste poder esperar por ela. */
+  drainMirror(): Promise<MirrorDrainSummary>;
   /** Registra quem quer saber que o store mudou. Devolve a desinscricao. */
   startWatching(listener: (state: EsteiraSnapshotDto) => void): () => void;
   dispose(): void;
 }
+
+const NO_DRAIN: MirrorDrainSummary = { attempted: 0, synced: 0, failed: 0, skipped: 0 };
 
 /** `dsc-2026-08-04-a1b2` — o padrao do contrato nao aceita underscore. */
 function defaultNewId(prefix: string): string {
@@ -101,6 +123,8 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
   let debounceTimer: NodeJS.Timeout | undefined;
   let disposed = false;
   let rejectedOnLastScan = 0;
+  let ingestedOnLastScan = 0;
+  let unreadableOnLastScan = 0;
 
   function snapshotDto(): EsteiraSnapshotDto {
     return {
@@ -110,6 +134,8 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
       inboxDir: options.inboxDir,
       outboxDir: options.outboxDir,
       rejectedOnLastScan,
+      ingestedOnLastScan,
+      unreadableOnLastScan,
     };
   }
 
@@ -126,13 +152,72 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
     }
   }
 
+  // -------------------------------------------------------------------------
+  // D-12 — o espelho. Duas metades que NUNCA se misturam com o gesto local:
+  // enfileirar (sincrono, so escreve no store) e mandar (assincrono, pode
+  // falhar). Nada aqui e esperado por quem fez o gesto.
+  // -------------------------------------------------------------------------
+
+  const mirrorConfig: MirrorConfig = options.mirror?.config ?? MIRROR_DISABLED;
+  const mirrorAdapter: BoardMirrorAdapter | null = options.mirror?.adapter ?? null;
+
+  /** Grava as intencoes de espelho que faltam. Devolve `true` quando algo mudou. */
+  function enqueueMirror(): boolean {
+    if (!mirrorConfig.enabled || mirrorAdapter === null) return false;
+    const drafts = pendingMirrorDrafts(store.snapshot(), mirrorConfig, now());
+    if (drafts.length === 0) return false;
+    const written = store.append(drafts);
+    return written.ok && written.events.length > 0;
+  }
+
+  /**
+   * Uma drenagem por vez. Duas rodando juntas (o gesto de reenvio caindo em
+   * cima da drenagem automatica de um disparo) contariam a MESMA falha duas
+   * vezes e queimariam o teto de tentativas por acidente.
+   */
+  let draining: Promise<MirrorDrainSummary> = Promise.resolve(NO_DRAIN);
+
+  async function runDrain(force: boolean): Promise<MirrorDrainSummary> {
+    if (disposed || !mirrorConfig.enabled || mirrorAdapter === null) return NO_DRAIN;
+    const summary = await drainMirrorQueue(store, mirrorAdapter, { now, maxAttempts: mirrorConfig.maxAttempts, force });
+    if (summary.synced > 0 || summary.failed > 0) {
+      store.persistSnapshot();
+      notify();
+    }
+    return summary;
+  }
+
+  function drain(force: boolean): Promise<MirrorDrainSummary> {
+    draining = draining.catch(() => NO_DRAIN).then(() => runDrain(force));
+    return draining;
+  }
+
+  /**
+   * Chamado DEPOIS de todo gesto local que ja terminou. O `void` e o ponto: o
+   * espelho acontece atras, e board caido nunca segura quem fez o gesto.
+   */
+  function mirrorAfterChange(): void {
+    if (!enqueueMirror()) {
+      void drain(false);
+      return;
+    }
+    store.persistSnapshot();
+    notify();
+    void drain(false);
+  }
+
   function scanOutbox(): EsteiraSnapshotDto {
     const before = store.events.length;
     const summary = ingestOutbox(store, options.outboxDir);
     rejectedOnLastScan = summary.rejected;
+    // `alreadyIngested` NAO entra: reler o mesmo arquivo nao e novidade
+    // nenhuma, e contar isso faria a tela anunciar mudanca que nao houve.
+    ingestedOnLastScan = summary.ingested;
+    unreadableOnLastScan = summary.unreadable;
     if (store.events.length !== before) {
       store.persistSnapshot();
       notify();
+      mirrorAfterChange();
     }
     return snapshotDto();
   }
@@ -198,6 +283,7 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
 
     store.persistSnapshot();
     notify();
+    mirrorAfterChange();
     return { ok: true, discoveryId, state: snapshotDto() };
   }
 
@@ -226,6 +312,8 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
 
     store.persistSnapshot();
     notify();
+    // A trava acabou de nascer: a etiqueta no board e o reflexo dela (D-11).
+    mirrorAfterChange();
     return { ...result, state: snapshotDto() };
   }
 
@@ -268,10 +356,23 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
     return { ok: false, reason, state: snapshotDto() };
   }
 
-  /** Todo gesto commitado passa por aqui: persiste o derivado e avisa a tela. */
+  /**
+   * Todo gesto commitado passa por aqui: persiste o derivado, avisa a tela e
+   * manda o espelho atras (D-12).
+   *
+   * A ultima linha e a costura entre os dois batches que se encontraram neste
+   * merge: os gestos daqui (B3) sao justamente os que MOVEM a macro etapa, e a
+   * macro etapa e o que o espelho reflete em coluna (B5). Sem ela, mudar o
+   * estado de um item mudava a etapa aqui e o board nunca ficava sabendo — e,
+   * pior, sem nada na tela denunciando, que e exatamente o que a spec 010
+   * existe para nao deixar acontecer.
+   *
+   * `void`, como em todo caminho do espelho: board caido nunca segura o gesto.
+   */
   function commit(): EsteiraGestureDto {
     store.persistSnapshot();
     notify();
+    mirrorAfterChange();
     return { ok: true, state: snapshotDto() };
   }
 
@@ -363,7 +464,17 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
     if (released.ok) {
       store.persistSnapshot();
       notify();
+      mirrorAfterChange();
     }
+    return snapshotDto();
+  }
+
+  async function retryMirror(): Promise<EsteiraSnapshotDto> {
+    if (enqueueMirror()) {
+      store.persistSnapshot();
+      notify();
+    }
+    await drain(true);
     return snapshotDto();
   }
 
@@ -388,6 +499,8 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
     setWorkItemState,
     discardWorkItem,
     addNote,
+    retryMirror,
+    drainMirror: () => drain(false),
     startWatching,
     dispose,
   };
