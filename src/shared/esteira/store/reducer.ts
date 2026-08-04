@@ -430,6 +430,19 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           failure: null,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
         });
+        // A fase acabou: a trava dela cai junto. A skill DEVE declarar
+        // `lock.released` (o corpus faz), mas depender só disso deixaria o card
+        // preso para sempre quando ela morre no meio — a trava orfa que D-V3
+        // combatia, reaparecendo por omissao em vez de por arquivo.
+        locks.delete(key);
+        // A sessao daquela fase tambem se encerra: fase concluida com sessao
+        // aberta e o mesmo estado pendurado, com outro nome.
+        for (const [sessionId, session] of sessions) {
+          if (session.endedAt !== null) continue;
+          if (session.phase !== phase) continue;
+          if (session.subject.entity !== subject.entity || session.subject.id !== subject.id) continue;
+          sessions.set(sessionId, { ...session, endedAt: str(p, 'at') ?? event.at });
+        }
         break;
       }
 
@@ -457,6 +470,15 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           failure,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
         });
+        // Mesma regra do `phase.completed`: o run acabou (mal), a trava cai. O
+        // card volta a aceitar disparo — e a falha continua visivel na fase.
+        locks.delete(key);
+        for (const [sessionId, session] of sessions) {
+          if (session.endedAt !== null) continue;
+          if (session.phase !== phase) continue;
+          if (session.subject.entity !== subject.entity || session.subject.id !== subject.id) continue;
+          sessions.set(sessionId, { ...session, endedAt: str(p, 'at') ?? event.at });
+        }
         break;
       }
 

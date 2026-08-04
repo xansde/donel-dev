@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardView, ingestErrorLine, lockView, phaseLine, signalViews, stageView } from '../src/renderer/src/Esteira/esteiraView';
+import { cardView, ingestErrorLine, lockView, phaseLine, phaseLines, signalViews, stageView } from '../src/renderer/src/Esteira/esteiraView';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
 import type { DiscoverySnapshot, PhaseRunSnapshot, StoreEvent } from '../src/shared/esteira/store/storeFormat';
 
@@ -206,5 +206,49 @@ describe('lockView — a tela não promete o que não cumpre', () => {
   it('card sem trava não tem bloco nenhum', () => {
     const snapshot = reduceEvents([evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' })]);
     expect(lockView(cardView(snapshot, 'dsc-1')!)).toBeNull();
+  });
+});
+
+describe('phaseLines — "disparar" não é "começar", nem na lista de fases', () => {
+  it('fase disparada e não assumida diz que ninguém assumiu', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
+      evt('session.started', { id: 'ses-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+    ]);
+    const [line] = phaseLines(cardView(snapshot, 'dsc-1')!);
+    expect(line.text).toBe('discovery — preparada, ninguém assumiu');
+  });
+
+  it('assumida pela skill vira "em andamento"', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
+      evt('session.started', { id: 'ses-1', cliSessionId: 'cli-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+    ]);
+    expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — em andamento');
+  });
+
+  it('fase concluída não depende de sessão nenhuma', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: 'x' }),
+    ]);
+    expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — concluída');
+  });
+
+  it('fase que falhou traz o motivo junto', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.failed', {
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        phase: 'discovery',
+        failure: { code: 'worktree-dirty', message: 'Havia alterações não commitadas.' },
+        at: 'x',
+      }),
+    ]);
+    const [line] = phaseLines(cardView(snapshot, 'dsc-1')!);
+    expect(line.failed).toBe(true);
+    expect(line.detail).toBe('Havia alterações não commitadas.');
   });
 });

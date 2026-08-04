@@ -89,6 +89,8 @@ export interface CardView {
   readonly lock: LockRecord | null;
   /** A sessão aberta pelo disparo, quando existe — é dela que saem os caminhos do inbox/outbox. */
   readonly openSession: SessionSnapshot | null;
+  /** Todas as sessões do card: é delas que sai o "alguém assumiu?" de cada fase. */
+  readonly sessions: readonly SessionSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
   readonly notes: readonly { readonly text: string; readonly at: string }[];
 }
@@ -160,28 +162,64 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     // A última sessão aberta do assunto: é ela que carrega os caminhos do
     // `run-input.json` e do `result.json` desta rodada.
     openSession: [...snapshot.sessions].reverse().find((session) => belongs(session.subject) && session.endedAt === null) ?? null,
+    sessions: snapshot.sessions.filter((session) => belongs(session.subject)),
     ingestErrors: snapshot.ingestErrors.filter((error) => error.subject !== null && belongs(error.subject)),
     notes: snapshot.notes.filter((note) => belongs(note.subject)).map((note) => ({ text: note.text, at: note.at })),
   };
 }
 
 /**
- * A frase de UMA passagem de fase. Três estados bem diferentes, três frases
- * diferentes — nenhuma delas é "não realizada":
+ * A frase de UMA passagem de fase. Cada estado tem palavra própria — e nenhuma
+ * delas é "não realizada":
  *
- *  - concluiu    → "concluída", "abandonada", "sem conclusão"
- *  - falhou      → "falhou: <código>" (o desfecho ruim é legível)
- *  - só começou  → "em andamento"
+ *  - concluiu     → "concluída", "abandonada", "terminou sem conclusão"
+ *  - falhou       → "falhou: <código>" (o desfecho ruim é legível)
+ *  - assumida     → "em andamento"
+ *  - só preparada → "preparada, ninguém assumiu"
+ *
+ * `claimed` existe porque o app registra `phase.started` no DISPARO, e disparar
+ * não é começar: o card fica travado esperando alguém rodar a fase. Chamar isso
+ * de "em andamento" foi o mesmo erro que o bloco da trava já tinha cometido —
+ * ele reapareceu aqui porque a correção de lá não subiu até a raiz.
  */
-export function phaseLine(phase: PhaseRunSnapshot): string {
+export function phaseLine(phase: PhaseRunSnapshot, claimed = true): string {
   if (phase.failure !== null) return `${phase.phase} — falhou: ${phase.failure.code}`;
   if (phase.completedAt !== null) {
     const outcome =
       phase.outcome === 'done' ? 'concluída' : phase.outcome === 'abandoned' ? 'abandonada' : 'terminou sem conclusão';
     return `${phase.phase} — ${outcome}`;
   }
-  if (phase.startedAt !== null) return `${phase.phase} — em andamento`;
+  if (phase.startedAt !== null) return `${phase.phase} — ${claimed ? 'em andamento' : 'preparada, ninguém assumiu'}`;
   return `${phase.phase} — registrada`;
+}
+
+/** As fases do card, cada uma com a frase certa — a tela só imprime o que sai daqui. */
+export interface PhaseLineView {
+  readonly key: string;
+  readonly text: string;
+  readonly failed: boolean;
+  readonly detail: string | null;
+}
+
+export function phaseLines(card: CardView): readonly PhaseLineView[] {
+  return card.phases.map((phase) => {
+    // Assumida = existe sessão aberta desta fase E alguém a declarou. Sem
+    // sessão aberta (fase já encerrada), a frase não depende disso.
+    const session = card.sessions.find(
+      (entry) =>
+        entry.phase === phase.phase &&
+        entry.subject.entity === phase.subject.entity &&
+        entry.subject.id === phase.subject.id &&
+        entry.endedAt === null,
+    );
+    const claimed = session === undefined ? true : session.claimed;
+    return {
+      key: `${phase.subject.entity}:${phase.subject.id}:${phase.phase}`,
+      text: phaseLine(phase, claimed),
+      failed: phase.failure !== null,
+      detail: phase.failure?.message ?? null,
+    };
+  });
 }
 
 /** Um erro de ingestão, em português, sem esconder o caminho do arquivo. */

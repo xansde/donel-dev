@@ -368,3 +368,43 @@ describe('reduceEvents — a etapa sai do grafo, nunca do teclado', () => {
     expect(snapshot.discoveries[0].stageOverride).toBeNull();
   });
 });
+
+describe('a trava cai quando a fase termina — nunca fica órfã', () => {
+  it('phase.completed libera a trava daquela fase e encerra a sessão', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      evt('lock.acquired', { subject, phase: 'discovery', holderKind: 'app', acquiredAt: '2026-08-03T12:00:00.000Z' }),
+      evt('session.started', { id: 'ses-1', subject, phase: 'discovery', startedAt: '2026-08-03T12:00:00.000Z' }),
+      phaseCompleted('discovery', 'dsc-1', 'discovery', 'done'),
+    ]);
+
+    expect(snapshot.locks).toHaveLength(0);
+    expect(snapshot.sessions[0].endedAt).not.toBeNull();
+  });
+
+  it('phase.failed também libera — o card volta a aceitar disparo, e a falha fica visível', () => {
+    const subject = { entity: 'work_item', id: 'wi-1' };
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      workItem('wi-1', 'dsc-1'),
+      evt('lock.acquired', { subject, phase: 'implementar', holderKind: 'skill', acquiredAt: '2026-08-03T12:00:00.000Z' }),
+      evt('phase.failed', { subject, phase: 'implementar', failure: { code: 'worktree-dirty', message: 'x' }, at: '2026-08-03T12:30:00.000Z' }),
+    ]);
+
+    expect(snapshot.locks).toHaveLength(0);
+    expect(snapshot.phases.find((phase) => phase.phase === 'implementar')?.failure?.code).toBe('worktree-dirty');
+  });
+
+  it('a trava de OUTRA fase do mesmo assunto não é afetada', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      evt('lock.acquired', { subject, phase: 'plano', holderKind: 'app', acquiredAt: '2026-08-03T12:00:00.000Z' }),
+      phaseCompleted('discovery', 'dsc-1', 'discovery', 'done'),
+    ]);
+
+    expect(snapshot.locks).toHaveLength(1);
+    expect(snapshot.locks[0].phase).toBe('plano');
+  });
+});

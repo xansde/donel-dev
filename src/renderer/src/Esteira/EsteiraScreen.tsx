@@ -1,7 +1,7 @@
 import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
-import { cardView, formatTimestamp, ingestErrorLine, lockView, phaseLine, STORE_COMPATIBILITY_WARNING, type SignalTone } from './esteiraView';
+import { cardView, formatTimestamp, ingestErrorLine, lockView, phaseLines, STORE_COMPATIBILITY_WARNING, type SignalTone } from './esteiraView';
 import styles from './EsteiraScreen.module.css';
 
 // Spec 010 — a tela da esteira nova. Ela é PROJEÇÃO do snapshot que o main
@@ -253,10 +253,10 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                   <p className={styles.hint}>Nenhuma fase rodou ainda.</p>
                 ) : (
                   <ul className={styles.lines}>
-                    {selected.phases.map((entry) => (
-                      <li key={`${entry.subject.entity}:${entry.subject.id}:${entry.phase}`} className={entry.failure ? styles.failed : undefined}>
-                        {phaseLine(entry)}
-                        {entry.failure ? <span className={styles.hint}> {entry.failure.message}</span> : null}
+                    {phaseLines(selected).map((entry) => (
+                      <li key={entry.key} className={entry.failed ? styles.failed : undefined}>
+                        {entry.text}
+                        {entry.detail ? <span className={styles.hint}> {entry.detail}</span> : null}
                       </li>
                     ))}
                   </ul>

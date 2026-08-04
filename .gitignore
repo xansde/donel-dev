@@ -21,3 +21,7 @@ scripts/publicar.local.json
 # Python do fork da esteira (skills/esteira-donel-3.0.0)
 __pycache__/
 *.pyc
+
+# Saída regenerável da captura do tutorial (scripts/tutorial-esteira)
+.tutorial-shots/
+test-results/
