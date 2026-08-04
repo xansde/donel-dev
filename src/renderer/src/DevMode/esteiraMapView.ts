@@ -40,6 +40,7 @@ import {
   mirrorLines,
   phaseLines,
   PHASE_STATE_WORD,
+  provenanceMark,
   verificationLines,
   type CardView,
   type LockView,
@@ -309,6 +310,13 @@ function discoveryCard(card: CardView, focused: boolean): MapCard {
   }
   if (lock !== null) tags.push({ text: `trava: ${lock.phase}`, tone: 'lock', title: null });
 
+  // T-14 do inventário (fechado quando o B4 entrou): sem a marca, o card
+  // semeado apareceria no carrossel como fato observado — o mesmo bug que a
+  // tela do store corrige, renascendo na tela nova. A palavra vem de
+  // `provenanceMark`, nunca é reescrita aqui.
+  const seededTag = provenanceMark(card.discovery.seeded);
+  if (seededTag !== null) tags.push({ text: seededTag.label, tone: 'muted', title: seededTag.title });
+
   const meta = [
     card.discovery.targetRepo,
     contado(card.plans.length, 'plano', 'planos'),
@@ -346,6 +354,12 @@ function planCard(card: CardView, planId: string, focused: boolean): MapCard {
   const itens = card.items.filter((item) => item.planId === plan.id);
   const fechados = itens.filter((item) => isItemClosed(item)).length;
 
+  const tags: MapTag[] = [];
+  if (lock !== null) tags.push({ text: `trava: ${lock.phase}`, tone: 'lock', title: null });
+  // T-14 — o plano semeado carrega a mesma marca do card (ver discoveryCard).
+  const seededTag = provenanceMark(plan.seeded);
+  if (seededTag !== null) tags.push({ text: seededTag.label, tone: 'muted', title: seededTag.title });
+
   return {
     key: entityKey(subject),
     kind: 'plan',
@@ -355,7 +369,7 @@ function planCard(card: CardView, planId: string, focused: boolean): MapCard {
     statusLabel:
       itens.length === 0 ? 'nenhum item ainda' : `${fechados} de ${contado(itens.length, 'item', 'itens')} fechado(s)`,
     metaLine: plan.summary,
-    tags: lock === null ? [] : [{ text: `trava: ${lock.phase}`, tone: 'lock', title: null }],
+    tags,
     accent: lock !== null ? 'lock' : itens.length > 0 && fechados === itens.length ? 'ok' : 'muted',
     trail: focused ? trailFor(card, subject, null) : [],
     closureLine: null,
@@ -374,6 +388,10 @@ function itemCard(card: CardView, item: WorkItemSnapshot, focused: boolean): Map
     tags.push({ text: 'sem plano', tone: 'warn', title: 'Este item não pertence a nenhum plano deste card.' });
   }
   if (lock !== null) tags.push({ text: `trava: ${lock.phase}`, tone: 'lock', title: null });
+
+  // T-14 — o item semeado carrega a mesma marca do card (ver discoveryCard).
+  const seededTag = provenanceMark(item.seeded);
+  if (seededTag !== null) tags.push({ text: seededTag.label, tone: 'muted', title: seededTag.title });
 
   return {
     key: entityKey(subject),
@@ -453,8 +471,10 @@ function detailFor(card: CardView, subject: EntityId, phase: string | null): Map
     summary,
     closureLine: item === null ? null : itemClosureLine(item, card.verifications),
     // D-4 — o PR é só UMA das formas de conferir; check, revisão e conclusão
-    // contam igual. O mapa antigo só sabia falar de PR.
-    verifications: verificationLines(card.verifications, subject),
+    // contam igual. O mapa antigo só sabia falar de PR. A frase é a MESMA do
+    // painel do store (verificationLines do B7): reescrevê-la aqui foi o que o
+    // handoff do B7 pediu para não acontecer.
+    verifications: verificationLines(card, subject),
     verificationsTitle: VERIFICATIONS_TITLE,
     artifacts: card.artifacts
       .filter((artifact) => artifact.owner.entity === subject.entity && artifact.owner.id === subject.id)

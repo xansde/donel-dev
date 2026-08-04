@@ -333,15 +333,30 @@ def note_recorded(subject: dict[str, str], text: str) -> dict[str, Any]:
     return {"type": "note.recorded", "subject": subject, "text": text}
 
 
-def required_facts_for(phase: str, status: str) -> list[str]:
-    """A tabela `x-required-facts` do schema — dado compartilhado, nao regra duplicada."""
+def _required_facts_table() -> dict[str, Any]:
+    """A tabela `x-required-facts` do arquivo canonico. Lida do schema, nunca copiada."""
     schema = json.loads(RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
-    table = schema.get("x-required-facts", {})
+    return schema.get("x-required-facts", {})
+
+
+def required_facts_for(phase: str, status: str) -> list[str]:
+    """A tabela `x-required-facts` do schema — dado compartilhado, nao regra duplicada.
+
+    So vale para run bem-sucedido: o que se cobra e promessa CUMPRIDA. Run que
+    falhou ja declara `failure` com codigo e motivo — cobrar dele os fatos da
+    fase transformaria um desfecho legivel em documento recusado.
+    """
     if status != "success":
         return []
+    table = _required_facts_table()
     required = list(table.get("any-phase-success", []))
     required.extend(table.get("by-phase", {}).get(phase, []))
     return required
+
+
+def phases_requiring_passed_verification() -> list[str]:
+    """Fases em que `outcome: done` exige uma verificacao que PASSOU (D-4, dente)."""
+    return list(_required_facts_table().get("done-requires-passed-verification", []))
 
 
 def build_result(
@@ -375,6 +390,19 @@ def build_result(
     missing = [required for required in required_facts_for(phase, status) if required not in declared]
     if missing:
         raise ContractError(f"fase {phase!r} concluida sem declarar: {', '.join(missing)}")
+
+    # D-4 com dente: a fase que declara o ciclo ENCERRADO precisa da evidencia
+    # que o encerra ("PR mergeado E VERIFICADO"). Sem isto, "Concluido" na tela
+    # seria palavra sem lastro. Desfecho ruim continua valido: `abandoned` e
+    # `inconclusive` nao pedem nada.
+    if status == "success" and phase in phases_requiring_passed_verification():
+        declared_done = any(f["type"] == "phase.completed" and f.get("outcome") == "done" for f in facts)
+        has_passed = any(f["type"] == "verification.recorded" and f.get("state") == "passed" for f in facts)
+        if declared_done and not has_passed:
+            raise ContractError(
+                f"fase {phase!r} com outcome 'done' exige uma verification.recorded com state 'passed' — "
+                "concluir sem evidencia e afirmar o que ninguem leu"
+            )
 
     return {
         "contract_version": CONTRACT_VERSION,

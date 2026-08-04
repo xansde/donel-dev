@@ -291,45 +291,12 @@ export function itemClosureLine(item: WorkItemSnapshot, verifications: readonly 
   return `${WORK_ITEM_STATE_LABEL[item.state]} · ${LIFECYCLE_CLOSURE[lifecycle]}${resposta}`;
 }
 
-/**
- * D-4 — o que dá para CONFERIR num assunto: o PR, o check que rodou, a revisão
- * e a conclusão. Ficava tudo no snapshot e nenhuma tela mostrava — a fase
- * declarava o fato e o card não contava (item M-10 do inventário do B6).
- */
-export const VERIFICATION_KIND_LABEL: Readonly<Record<VerificationKind, string>> = {
-  'pull-request': 'PR',
-  check: 'check',
-  review: 'revisão',
-  conclusion: 'conclusão',
-};
-
-export const VERIFICATION_STATE_LABEL: Readonly<Record<VerificationState, string>> = {
-  pending: 'pendente',
-  passed: 'passou',
-  failed: 'falhou',
-};
-
-export interface VerificationLineView {
-  readonly key: string;
-  readonly text: string;
-  readonly failed: boolean;
-}
-
-export function verificationLines(
-  verifications: readonly VerificationSnapshot[],
-  subject: EntityId | null = null,
-): readonly VerificationLineView[] {
-  const escopo =
-    subject === null
-      ? verifications
-      : verifications.filter((entry) => entry.subject.entity === subject.entity && entry.subject.id === subject.id);
-
-  return escopo.map((entry) => ({
-    key: `${entry.subject.entity}:${entry.subject.id}:${entry.verificationKind}:${entry.ref ?? ''}`,
-    text: `${VERIFICATION_KIND_LABEL[entry.verificationKind]} — ${VERIFICATION_STATE_LABEL[entry.state]}${entry.ref === null ? '' : ` · ${entry.ref}`}`,
-    failed: entry.state === 'failed',
-  }));
-}
+// A versão compacta de `verificationLines` que o B6 tinha aqui ("PR — passou ·
+// ref") saiu de propósito: o handoff do B7 pediu que o mapa REAPROVEITASSE a
+// função dele em vez de reescrever a frase, e duas redações da mesma evidência
+// divergem no primeiro conserto. A única origem é `verificationLines` (abaixo,
+// com o mapa explícito `VERIFICATION_TEXT`), agora com o filtro por assunto que
+// o painel do mapa precisa.
 
 export interface ItemStateAction {
   readonly state: WorkItemState;
@@ -458,9 +425,10 @@ export interface CardView {
   readonly mirrorQueue: readonly MirrorQueueEntry[];
   readonly notes: readonly NoteView[];
   /**
-   * D-4 — o que dá para conferir em cada assunto do card. Estava no snapshot
-   * desde a fase 1 e nenhuma tela mostrava: a fase declarava o PR e o card não
-   * contava (item M-10 do inventário do B6).
+   * D-4 — o que dá para conferir em cada assunto do card: como o ciclo de cada
+   * item termina (PR, check, revisão, conclusão). Estava no snapshot desde a
+   * fase 1 e nenhuma tela mostrava: a fase declarava o PR e o card não contava
+   * (item M-10 do inventário do B6).
    */
   readonly verifications: readonly VerificationSnapshot[];
   /** D-8 — "cadê o artefato?" tem resposta única, e ela mora no store. */
@@ -836,6 +804,66 @@ function mirrorOperationText(entry: MirrorQueueEntry): string {
 }
 
 /**
+ * A frase de UMA verificação. Mapa EXPLÍCITO de `kind` × `state`: montar a
+ * frase por template produziria "conclusão — passou", que não quer dizer nada.
+ * Cada uma das doze é escolhida, e é aqui que ela se conserta — nunca no JSX.
+ *
+ * O que este bloco impede: a fase declarar D-4 (o PR, o check, a resposta do
+ * spike) e o card não contar. Ler um fato e engoli-lo não é mentir, mas custa
+ * a mesma coisa a quem lê a tela para decidir o que fazer agora.
+ */
+const VERIFICATION_TEXT: Readonly<Record<VerificationKind, Readonly<Record<VerificationState, string>>>> = {
+  'pull-request': {
+    pending: 'PR aberto, ainda não verificado',
+    passed: 'PR mergeado e verificado',
+    failed: 'PR reprovado',
+  },
+  check: {
+    pending: 'verificação ainda não rodou',
+    passed: 'verificação passou',
+    failed: 'verificação falhou',
+  },
+  review: {
+    pending: 'revisão pendente',
+    passed: 'revisão aceita',
+    failed: 'revisão pediu mudança',
+  },
+  conclusion: {
+    // "Não deu certo" é desfecho, não pendência: um spike que respondeu
+    // negativo está CONCLUÍDO, e a frase precisa dizer isso.
+    pending: 'conclusão ainda não registrada',
+    passed: 'conclusão registrada',
+    failed: 'conclusão registrada: não deu certo',
+  },
+};
+
+export interface VerificationLineView {
+  readonly key: string;
+  readonly text: string;
+  /** A URL do PR, o nome do check, o texto da conclusão — o que dá para ir conferir. */
+  readonly detail: string | null;
+  readonly failed: boolean;
+}
+
+/**
+ * `subject` filtra por assunto — é o que o painel de detalhe do mapa (B6)
+ * precisa, um nó de cada vez, sem que exista uma segunda redação da evidência.
+ */
+export function verificationLines(card: CardView, subject: EntityId | null = null): readonly VerificationLineView[] {
+  const escopo =
+    subject === null
+      ? card.verifications
+      : card.verifications.filter((entry) => entry.subject.entity === subject.entity && entry.subject.id === subject.id);
+
+  return escopo.map((verification) => ({
+    key: `${verification.subject.entity}:${verification.subject.id}:${verification.verificationKind}:${verification.ref ?? ''}`,
+    text: VERIFICATION_TEXT[verification.verificationKind][verification.state],
+    detail: verification.ref,
+    failed: verification.state === 'failed',
+  }));
+}
+
+/**
  * A frase de UMA passagem de fase. Cada estado tem palavra própria — e nenhuma
  * delas é "não realizada":
  *
@@ -1012,6 +1040,24 @@ const PHASE_CATALOG: readonly PhaseSpec[] = [
     runsOn: 'work_item',
     missing:
       'Nenhum item de trabalho ainda. Validar roda sobre um item, e item nasce pela skill (D-16) — o app não tem formulário de criação.',
+  },
+  // As duas fases que fecham o ciclo entraram com o B7 (skill 3.0). O handoff
+  // do B2 pediu exatamente isto: uma linha por fase, com a frase de "por que
+  // não dá agora" junto — o catálogo continua oferta da tela, não enum do
+  // contrato ([P-4]).
+  {
+    phase: 'documentar',
+    label: 'Documentar',
+    runsOn: 'work_item',
+    missing:
+      'Nenhum item de trabalho ainda. Documentar registra o artefato de um item (D-8) — sem item, não há o que apontar; item nasce pela skill (D-16).',
+  },
+  {
+    phase: 'concluir',
+    label: 'Concluir',
+    runsOn: 'work_item',
+    missing:
+      'Nenhum item de trabalho ainda. Concluir fecha o ciclo de um item com a verificação que passou (D-4) — sem item, não há ciclo a fechar; item nasce pela skill (D-16).',
   },
 ];
 

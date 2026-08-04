@@ -238,3 +238,42 @@ describe('o invariante: recusar sem dizer por quê é o que a spec proíbe', () 
     expect(view.hint).toContain('skill');
   });
 });
+
+// Costura do merge da 010 (04/08): as duas fases que fecham o ciclo entraram
+// com a skill 3.0 do B7, e o handoff do B2 pediu exatamente isto — uma linha
+// por fase no catálogo, com a frase de "por que não dá agora" junto (D-4).
+describe('as fases do B7 no catálogo — documentar e concluir', () => {
+  it('a tela as oferece, rodando sobre item, na ordem do ciclo', () => {
+    const view = dispatchView(card([nasceCard()]), { phase: 'discovery', targetKey: null });
+    expect(view.phases.map((entry) => entry.phase)).toEqual([
+      'discovery',
+      'plano',
+      'implementar',
+      'validar',
+      'documentar',
+      'concluir',
+    ]);
+    expect(fase(view, 'documentar').runsOn).toBe('work_item');
+    expect(fase(view, 'concluir').runsOn).toBe('work_item');
+  });
+
+  it('sem item, as duas ficam desabilitadas com a razão do ciclo escrita', () => {
+    const view = dispatchView(card([nasceCard(), nascePlano()]), { phase: 'documentar', targetKey: null });
+
+    const documentar = fase(view, 'documentar');
+    expect(documentar.enabled).toBe(false);
+    expect(documentar.reason).toContain('artefato');
+    expect(documentar.reason).toContain('D-16');
+
+    const concluir = fase(view, 'concluir');
+    expect(concluir.enabled).toBe(false);
+    expect(concluir.reason).toContain('verifica');
+    expect(concluir.reason).toContain('ciclo');
+  });
+
+  it('com um item vivo, as duas habilitam — e o assunto do disparo é o item', () => {
+    const view = dispatchView(card([nasceCard(), nascePlano(), nasceItem()]), { phase: 'concluir', targetKey: null });
+    expect(fase(view, 'concluir').enabled).toBe(true);
+    expect(view.target?.entity).toBe('work_item');
+  });
+});

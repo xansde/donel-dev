@@ -33,6 +33,8 @@ export type ContractIssueCode =
   | 'empty_facts'
   | 'unknown_fact_type'
   | 'missing_required_fact'
+  /** Fase que declarou o ciclo encerrado (`outcome: done`) sem a verificacao que o encerra (D-4). */
+  | 'done_without_passed_verification'
   | 'issue_without_target_repo'
   | 'artifact_repo_mismatch'
   | 'failure_missing'

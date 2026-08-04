@@ -16,6 +16,7 @@ import {
   seededSummary,
   signalViews,
   stageView,
+  verificationLines,
 } from '../src/renderer/src/Esteira/esteiraView';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
 import type { DiscoverySnapshot, PhaseRunSnapshot, StoreEvent } from '../src/shared/esteira/store/storeFormat';
@@ -576,5 +577,167 @@ describe('o bloco de planos e itens conta o que mostra', () => {
     const [linha] = cardContent(cardView(snapshot, 'dsc-1')!).lines;
     expect(linha.text).toContain('Tornar observável');
     expect(linha.text).toContain('Medir antes de mexer.');
+  });
+});
+
+// Spec 010 (B7) — a EVIDÊNCIA na tela. `verifications` entrava no snapshot e
+// não saía em lugar nenhum: o PR do item, o check que rodou e a resposta do
+// spike ficavam num campo que ninguém lia. Ler um fato e não mostrá-lo não é
+// mentira, mas é a mesma perda — a fase declara D-4 e o card não conta.
+describe('verificationLines — como cada evidência de D-4 é dita', () => {
+  function cardWith(verifications: readonly { kind: string; state: string; ref?: string | null }[]) {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('work_item.created', {
+        id: 'wi-1',
+        discoveryId: 'dsc-1',
+        planId: null,
+        itemType: 'issue',
+        title: 'Item',
+        targetRepo: 'atlas',
+        state: 'open',
+        createdAt: 'x',
+      }),
+      ...verifications.map((entry) =>
+        evt('verification.updated', {
+          subject: { entity: 'work_item', id: 'wi-1' },
+          verificationKind: entry.kind,
+          state: entry.state,
+          ref: entry.ref ?? null,
+          recordedAt: 'x',
+        }),
+      ),
+    ]);
+    return cardView(snapshot, 'dsc-1')!;
+  }
+
+  it('PR aberto e ainda não verificado não se chama "verificado"', () => {
+    const [line] = verificationLines(cardWith([{ kind: 'pull-request', state: 'pending', ref: 'https://exemplo/pr/128' }]));
+    expect(line.text).toBe('PR aberto, ainda não verificado');
+    expect(line.detail).toBe('https://exemplo/pr/128');
+    expect(line.failed).toBe(false);
+  });
+
+  it('verificação que falhou aparece como falha, com o nome do check', () => {
+    const [line] = verificationLines(cardWith([{ kind: 'check', state: 'failed', ref: 'npm test' }]));
+    expect(line.text).toBe('verificação falhou');
+    expect(line.failed).toBe(true);
+    expect(line.detail).toBe('npm test');
+  });
+
+  it('a conclusão de um spike é conclusão registrada — não PR pela metade', () => {
+    const [line] = verificationLines(cardWith([{ kind: 'conclusion', state: 'passed', ref: 'Não dá: o provedor não expõe o dado.' }]));
+    expect(line.text).toBe('conclusão registrada');
+    expect(line.detail).toBe('Não dá: o provedor não expõe o dado.');
+  });
+
+  it('resposta negativa registrada também é desfecho, e diz isso', () => {
+    const [line] = verificationLines(cardWith([{ kind: 'conclusion', state: 'failed', ref: 'Caminho descartado.' }]));
+    expect(line.text).toBe('conclusão registrada: não deu certo');
+  });
+
+  it('revisão aceita e revisão que pediu mudança têm frases diferentes', () => {
+    const lines = verificationLines(
+      cardWith([
+        { kind: 'review', state: 'passed', ref: 'revisor A' },
+        { kind: 'review', state: 'failed', ref: 'revisor B' },
+      ]),
+    );
+    expect(lines.map((line) => line.text)).toEqual(['revisão aceita', 'revisão pediu mudança']);
+  });
+
+  it('a MESMA verificação declarada de novo atualiza o estado, não empilha uma segunda', () => {
+    // Chave natural no reducer = assunto + tipo + ref. É o que faz a fase
+    // Concluir poder dizer "o PR de ontem agora está mergeado" sem o card
+    // mostrar dois PRs — e sem a tela ter que escolher qual acreditar.
+    const lines = verificationLines(
+      cardWith([
+        { kind: 'pull-request', state: 'pending', ref: 'https://exemplo/pr/128' },
+        { kind: 'pull-request', state: 'passed', ref: 'https://exemplo/pr/128' },
+      ]),
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0].text).toBe('PR mergeado e verificado');
+  });
+
+  it('verificação sem ref não mostra detalhe nenhum — a tela não preenche buraco', () => {
+    const [line] = verificationLines(cardWith([{ kind: 'review', state: 'pending' }]));
+    expect(line.text).toBe('revisão pendente');
+    expect(line.detail).toBeNull();
+  });
+
+  it('card sem verificação nenhuma não inventa linha', () => {
+    expect(verificationLines(cardWith([]))).toHaveLength(0);
+  });
+
+  it('verificação de outro card não vaza para este', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('discovery.created', { id: 'dsc-2', title: 'Outro', createdAt: 'x' }),
+      evt('verification.updated', {
+        subject: { entity: 'discovery', id: 'dsc-2' },
+        verificationKind: 'check',
+        state: 'passed',
+        ref: 'npm test',
+        recordedAt: 'x',
+      }),
+    ]);
+    expect(verificationLines(cardView(snapshot, 'dsc-1')!)).toHaveLength(0);
+    expect(verificationLines(cardView(snapshot, 'dsc-2')!)).toHaveLength(1);
+  });
+});
+
+// Spec 010 (B7) — o estado do item, em português. A tela imprimia `item.state`
+// cru: "open", "in-progress". Vocabulário de estado montado no JSX é
+// exatamente como a palavra errada reapareceu duas vezes em 03/08 — ele nasce
+// aqui, numa função só, ou nasce errado em três lugares.
+//
+// Costura B3×B7 do merge: a função que produz a linha é `itemLine` (B3), via
+// `cardContent` — a `itemLines` que o B7 escreveu era a segunda redação da
+// mesma frase e saiu. As asserções são as mesmas.
+describe('a linha do item dita em português (via cardContent)', () => {
+  function itemLines(card: NonNullable<ReturnType<typeof cardView>>) {
+    return cardContent(card).lines.filter((line) => line.kind === 'item');
+  }
+
+  function cardWithItem(state: string, targetRepo: string | null = 'atlas') {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('work_item.created', {
+        id: 'wi-1',
+        discoveryId: 'dsc-1',
+        planId: 'pln-1',
+        itemType: 'issue',
+        title: 'Expor estado da fila',
+        targetRepo,
+        state,
+        createdAt: 'x',
+      }),
+    ]);
+    return cardView(snapshot, 'dsc-1')!;
+  }
+
+  it('item recém-declarado pela skill está aberto, não "open"', () => {
+    const [line] = itemLines(cardWithItem('open'));
+    expect(line.text).toBe('Expor estado da fila · issue · aberto · atlas');
+  });
+
+  it('item em curso diz "em curso"', () => {
+    expect(itemLines(cardWithItem('in-progress'))[0].text).toContain('em curso');
+  });
+
+  it('concluído e abandonado têm palavra própria', () => {
+    expect(itemLines(cardWithItem('done'))[0].text).toContain('concluído');
+    expect(itemLines(cardWithItem('abandoned'))[0].text).toContain('abandonado');
+  });
+
+  it('item sem repo alvo diz que não tem — silêncio aqui viraria "esqueci de olhar"', () => {
+    expect(itemLines(cardWithItem('open', null))[0].text).toContain('sem repo alvo');
+  });
+
+  it('nenhuma linha carrega vocabulário do modelo interno', () => {
+    for (const state of ['open', 'in-progress', 'done', 'abandoned']) {
+      expect(itemLines(cardWithItem(state))[0].text).not.toContain(state);
+    }
   });
 });

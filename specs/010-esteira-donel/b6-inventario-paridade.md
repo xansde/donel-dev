@@ -69,7 +69,7 @@ tela nova ganhou e o mapa não tem.
 | T-11 | **Varredura do outbox com a frase do que entrou/foi recusado** | `scanMessage` (B3/B5) | **coberta por outro batch** | fica no painel do store; o mapa reflete o resultado (o snapshot chega por `esteira:changed`) |
 | T-12 | **Aviso de compatibilidade do store** (só leitura / migração / ilegível) | `STORE_COMPATIBILITY_WARNING` | **coberta** | o mapa mostra o mesmo aviso: uma tela que aceita gesto sem poder gravar é uma tela que mente |
 | T-13 | **Criação de discovery** | `EsteiraScreen` | **coberta por outro batch** | fica onde está. O mapa leva até lá num gesto ("＋ Novo discovery" abre o painel do store) — o app não ganha um segundo formulário |
-| T-14 | **Proveniência "semeado"** | B4 (`seed.ts`) | **pendente** | o B4 não está mergeado nesta branch. Quando entrar, o mapa precisa da marca, senão o card semeado aparece como fato observado — o mesmo bug, na tela nova. Nomeado no handoff |
+| T-14 | **Proveniência "semeado"** | B4 (`seed.ts`) → `esteiraMapView.ts` | **coberta** | fechada no merge da 010 (04/08): o B4 entrou e os três nós do mapa (card, plano, item) carregam a etiqueta "semeado" via `provenanceMark` — a mesma palavra da tela do store, nunca reescrita. Sem ela o card semeado aparecia no carrossel como fato observado — o mesmo bug, na tela nova |
 | T-15 | **Caminho do histórico e do inbox/outbox** | cabeçalho do `EsteiraScreen` | **perda consciente no mapa** | é informação de depuração; fica no painel do store, que é o lugar dela |
 
 ## 3. O destino da tela da fase 1

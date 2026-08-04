@@ -222,6 +222,45 @@ o que sobra de uma entidade quando ela é jogada fora cedo demais.
 pura — era o último texto de estado montado no JSX, e era justamente o que estava
 errado.
 
+### 3b. Default de nascimento que finge ser afirmação
+
+**Sintoma:** o card mostrava seis fases concluídas e "PR mergeado e verificado" e,
+duas linhas abaixo, o item "aberto" e a etapa "Planejado" (roteiro
+`ciclo-completo-de-item`, 04/08/2026). "Planejado" quer dizer *plano existe,
+nenhum item começou* — dito sobre um trabalho que a mesma tela mostrava
+terminado.
+
+**Causa:** `work_item.recorded` não declara estado, e a ingestão escrevia
+`state: 'open'` mesmo assim. Ninguém tinha afirmado "aberto": era default de
+nascimento inventado pelo app, e nada o movia depois. D-13 manda a etapa ser
+calculada do grafo — mas o grafo estava sendo alimentado com uma constante.
+
+**Correção:** a ingestão parou de inventar o campo, e o estado passou a sair das
+fases que tomam o item por assunto (`workItemStateAfterPhase`, pura). Quando
+nenhuma fase o tocou, `open` volta a ser default honesto em vez de afirmação.
+
+**O padrão:** todo campo que o app preenche "só para não ficar vazio" vira uma
+afirmação quando alguém o lê. Ou ele sai de um fato, ou não existe.
+
+### 3c. Fato torto no log, contornado na apresentação
+
+**Sintoma:** com a correção acima, o print da fase preparada passou a mostrar
+"Preparada — ninguém assumiu ainda" em cima e o item "em curso" logo abaixo —
+duas frases da mesma tela se contradizendo.
+
+**Causa:** o app grava `phase.started` no DISPARO, e disparar não é começar. A
+tela já sabia disso e contornava com um flag (`phaseLine(phase, claimed)`); o
+fato no log continuou torto, esperando o próximo leitor.
+
+**Correção:** quem move o item é a **sessão assumida** — o fato honesto sobre
+existir alguém trabalhando —, não `phase.started`. O `phase.started` do disparo
+segue no log (histórico não se reescreve), mas nenhum consumidor novo o lê como
+"começou".
+
+**O padrão:** contornar um fato torto na apresentação não conserta o fato. O
+próximo consumidor não vai saber do contorno — e a contradição reaparece em
+outro lugar da mesma tela.
+
 ---
 
 ## No roteiro (achados da automação)
@@ -297,6 +336,21 @@ desenha o círculo onde o card **estava**.
 **Correção:** esperar o carrossel assentar depois de qualquer gesto de
 navegação (`assentar(win)` no roteiro do B6). Vale para qualquer componente com
 transição: o anel é posicionado por medida, não por referência viva.
+
+### 5d. Legenda que descreve o defeito, e sobrevive à correção
+
+(Do B7 — o merge renumerou de 5b para 5d porque a captura do B6, no mesmo dia,
+já tinha usado 5b/5c para os erros do carrossel.)
+
+**Sintoma:** a legenda do passo dizia *"o ITEM continua aberto e a etapa continua
+Planejado — é achado deste roteiro"*. Depois de o achado ser corrigido, o print
+mostrava "Concluído" e a legenda continuava afirmando o contrário. O tutorial
+passou a mentir no lugar da tela.
+
+**Correção:** legenda descreve o que a tela **deve** dizer, não o defeito do dia.
+Quando o achado merece ficar registrado, ele entra como história ("na primeira
+captura ele dizia X"), nunca no presente do indicativo. Toda correção de app
+pede uma leitura das legendas dos passos vizinhos.
 
 ### 6. Elemento coberto por overlay
 

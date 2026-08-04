@@ -107,7 +107,11 @@ export function PhaseDetailsPanel({ detail, onReleaseLock, onRetryMirror, readOn
           <div className={styles.kvList}>
             {detail.verifications.map((line) => (
               <div key={line.key} className={styles.kvRow}>
-                <span className={line.failed ? styles.garantiaStatus : styles.kvValue}>{line.text}</span>
+                <span className={line.failed ? styles.garantiaStatus : styles.kvValue}>
+                  {/* O ponteiro (URL do PR, nome do check) vem SEPARADO da frase
+                      de estado — é o que dá para ir conferir (D-4). */}
+                  {line.detail === null ? line.text : `${line.text} · ${line.detail}`}
+                </span>
               </div>
             ))}
           </div>

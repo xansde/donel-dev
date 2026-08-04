@@ -1,0 +1,58 @@
+{
+  "contract_version": "1.0.0",
+  "kind": "esteira.result",
+  "run": {
+    "run_id": "run-2026-08-06-1000",
+    "phase": "documentar",
+    "status": "success",
+    "started_at": "2026-08-06T13:00:00.000Z",
+    "finished_at": "2026-08-06T13:24:10.000Z",
+    "failure": null
+  },
+  "actor": {
+    "tool": "esteira-donel",
+    "tool_version": "3.0.0",
+    "executor": "claude-code",
+    "model": "claude-sonnet-5",
+    "effort": "medium",
+    "cli_session_id": "0198f3aa-6b7c-7f46-8a9e-7b6c8d9e0f1a"
+  },
+  "subject": {
+    "discovery_id": "dsc-2026-08-03-a",
+    "plan_id": "pln-2026-08-03-a1",
+    "work_item_id": "wi-2026-08-03-a1-05"
+  },
+  "workspace": {
+    "target_repo": "atlas",
+    "repo_path": "C:/Users/dev/code/atlas",
+    "worktree_path": null,
+    "branch": "docs/adr-fila-observavel"
+  },
+  "facts": [
+    {
+      "type": "artifact.recorded",
+      "owner": { "entity": "work_item", "id": "wi-2026-08-03-a1-05" },
+      "artifact_kind": "adr",
+      "location": "repo",
+      "repo": "atlas",
+      "path": "docs/adr/0007-estado-da-fila-e-derivado.md"
+    },
+    {
+      "type": "note.recorded",
+      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-05" },
+      "text": "O ADR foi para o repo ancora da familia, mesmo a decisao afetando beacon (D-8)."
+    },
+    {
+      "type": "lock.released",
+      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-05" },
+      "phase": "documentar"
+    },
+    {
+      "type": "phase.completed",
+      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-05" },
+      "phase": "documentar",
+      "outcome": "done",
+      "summary": "ADR publicado no repo ancora; o store guarda o ponteiro."
+    }
+  ]
+}

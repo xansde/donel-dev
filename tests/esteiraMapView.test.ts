@@ -292,9 +292,16 @@ describe('buildMapView — o painel de detalhe', () => {
       evt('verification.updated', { subject: { entity: 'work_item', id: 'wki-1' }, verificationKind: 'check', state: 'failed', ref: 'npm test' }),
     ];
     const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, nodeKey: 'work_item:wki-1' });
+    // Costura B6×B7: a frase vem de `verificationLines` do B7 (o mapa explícito
+    // de 12 pares, que os prints do B7 validaram) e o ponteiro vem SEPARADO, em
+    // `detail` — o handoff do B7 pediu reúso, não uma segunda redação compacta.
     expect(view.detail?.verifications.map((line) => line.text)).toEqual([
-      'PR — passou · https://github.com/xansde/donel-dev/pull/44',
-      'check — falhou · npm test',
+      'PR mergeado e verificado',
+      'verificação falhou',
+    ]);
+    expect(view.detail?.verifications.map((line) => line.detail)).toEqual([
+      'https://github.com/xansde/donel-dev/pull/44',
+      'npm test',
     ]);
   });
 
@@ -353,5 +360,56 @@ describe('buildMapView — o painel de detalhe', () => {
     const view = buildMapView(snapshotDe(eventosBase()), { ...SELECTION_VAZIA, nodeKey: 'discovery:dsc-1', phase: 'discovery' });
     expect(view.detail?.phase).toBe('discovery');
     expect(view.detail?.summary).toBe('discovery — concluída');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-14 do inventário — fechado no merge do B4 (04/08): a marca de "semeado"
+// nos nós do mapa. Sem ela, o card semeado apareceria no carrossel como fato
+// observado — o mesmo bug que a spec 010 existe para extinguir, na tela nova.
+// ---------------------------------------------------------------------------
+describe('buildMapView — proveniência "semeado" nos nós (T-14)', () => {
+  function semeado(type: string, payload: Record<string, unknown>): StoreEvent {
+    return { ...evt(type, payload), source: { kind: 'seed' } };
+  }
+
+  function eventosSemeados(): StoreEvent[] {
+    return [
+      semeado('discovery.created', { id: 'dsc-s', title: 'Trabalho que já existia' }),
+      semeado('phase.completed', { subject: { entity: 'discovery', id: 'dsc-s' }, phase: 'discovery', outcome: 'done' }),
+      semeado('plan.created', { id: 'pln-s', discoveryId: 'dsc-s', title: 'Plano semeado' }),
+      semeado('work_item.created', {
+        id: 'wki-s',
+        discoveryId: 'dsc-s',
+        planId: 'pln-s',
+        itemType: 'issue',
+        title: 'Item semeado',
+        targetRepo: 'donel-dev',
+        state: 'in-progress',
+      }),
+    ];
+  }
+
+  it('card, plano e item semeados carregam a etiqueta — a mesma palavra da tela do store', () => {
+    const view = buildMapView(snapshotDe(eventosSemeados()), SELECTION_VAZIA);
+    const [discovery] = view.levels[0].cards;
+    const [plano] = view.levels[1].cards;
+    const [item] = view.levels[2].cards;
+
+    for (const card of [discovery, plano, item]) {
+      const tag = card.tags.find((entry) => entry.text === 'semeado');
+      expect(tag).toBeDefined();
+      // O title explica o que a marca significa — vem de SEEDED_MARK, nunca reescrito.
+      expect(tag?.title).toContain('afirmou');
+    }
+  });
+
+  it('card declarado por skill não ganha etiqueta nenhuma — a ausência é o default', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);
+    for (const level of view.levels) {
+      for (const card of level.cards) {
+        expect(card.tags.some((tag) => tag.text === 'semeado')).toBe(false);
+      }
+    }
   });
 });

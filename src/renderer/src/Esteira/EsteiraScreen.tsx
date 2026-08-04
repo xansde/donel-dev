@@ -32,6 +32,7 @@ import {
   seedIssuesShown,
   seededSummary,
   STORE_COMPATIBILITY_WARNING,
+  verificationLines,
   type ProvenanceMark,
   type SeedRefusal,
   type SignalTone,
@@ -547,6 +548,24 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                   </ul>
                 )}
               </section>
+
+              {/* A evidência de D-4: o PR, o check, a resposta do spike. Sem
+                  este bloco, a fase declarava como o ciclo termina e o card
+                  engolia — dado lido e não mostrado custa o mesmo que dado
+                  ausente para quem lê a tela para decidir. */}
+              {selected.verifications.length > 0 ? (
+                <section className={styles.block} data-testid="esteira-verificacoes">
+                  <h4 className={styles.blockTitle}>Verificações</h4>
+                  <ul className={styles.lines}>
+                    {verificationLines(selected).map((entry) => (
+                      <li key={entry.key} className={entry.failed ? styles.failed : undefined}>
+                        {entry.text}
+                        {entry.detail ? <span className={styles.hint}> {entry.detail}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
 
               {/* O TEXTO de cada linha vem pronto de `cardContent` (B2) e os
                   GESTOS de cada item vêm do B3. Os dois batches reescreveram

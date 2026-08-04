@@ -57,6 +57,46 @@ import {
  */
 export const DISCOVERY_PHASE_NAME = 'discovery';
 
+/**
+ * O nome da fase que FECHA o ciclo de um item. Mesma razao da constante acima:
+ * `run.phase` e string livre por `[P-4]`, mas o contrato ja da semantica a este
+ * nome (`x-required-facts` cobra `verification.recorded` com `state: passed`
+ * quando ela sai com `outcome: done`). Quando P-4 fechar, muda aqui e so aqui.
+ */
+export const CONCLUDING_PHASE_NAME = 'concluir';
+
+/**
+ * O estado de um item depois de uma fase que o tomou por assunto — `[D-13]`
+ * aplicado ao item: estado calculado do grafo, nunca digitado.
+ *
+ * Achado do roteiro `ciclo-completo-de-item` (04/08/2026): o card mostrava seis
+ * fases concluidas e "PR mergeado e verificado" com o item "aberto" e a etapa
+ * "Planejado". `open` nao era afirmacao de ninguem — era default de nascimento
+ * inventado na ingestao, e nada o movia depois.
+ *
+ * Regras, na ordem em que sao escritas (a ordem E a precedencia):
+ *
+ * - `concluir` com desfecho `done`/`abandoned` fecha o item. `inconclusive` NAO
+ *   fecha: desfecho ruim e um desfecho, desfecho falso e uma mentira.
+ * - Qualquer outra fase assumida, concluida ou falha deixa o item `in-progress`.
+ *   Falhar nao e "nao ter comecado".
+ *
+ * O que NAO chama esta funcao, de proposito: o DISPARO. O app grava
+ * `phase.started` ao apenas preparar a fase (o mesmo fato torto que obrigou
+ * `phaseLine` a receber um `claimed`), e preparar nao e comecar — "Preparada —
+ * ninguem assumiu ainda" e justamente a distincao que a spec 010 existe para
+ * fazer. Quem move o item e a sessao ASSUMIDA, que e o fato honesto sobre haver
+ * alguem trabalhando. O primeiro roteiro deste batch fotografou as duas frases
+ * juntas: "ninguem assumiu ainda" em cima, item "em curso" logo abaixo.
+ */
+export function workItemStateAfterPhase(phase: string, outcome: PhaseOutcome | null): WorkItemState {
+  if (phase === CONCLUDING_PHASE_NAME) {
+    if (outcome === 'done') return 'done';
+    if (outcome === 'abandoned') return 'abandoned';
+  }
+  return 'in-progress';
+}
+
 export type StageSignal = DiscoverySnapshot['stageSignals'][number];
 
 export interface StageItemInput {
@@ -265,6 +305,23 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
   const seenDedupeKeys = new Set<string>();
   let throughSeq = 0;
 
+  /**
+   * O estado do item acompanha a fase que o tomou por assunto. Fica aqui, num
+   * lugar so, porque tres eventos diferentes (`phase.started`, `phase.completed`,
+   * `phase.failed`) contam a mesma historia — e a palavra tem que nascer uma vez.
+   */
+  function moveItemByPhase(subject: EntityId, phase: string, outcome: PhaseOutcome | null): void {
+    if (subject.entity !== 'work_item') return;
+    const item = workItems.get(subject.id);
+    if (item === undefined) return;
+    const state = workItemStateAfterPhase(phase, outcome);
+    workItems.set(subject.id, {
+      ...item,
+      state,
+      everConcluded: item.everConcluded || state === 'done' || state === 'abandoned',
+    });
+  }
+
   for (const event of events) {
     if (event.seq > throughSeq) throughSeq = event.seq;
 
@@ -466,6 +523,10 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           // marca. Fase semeada e depois de fato executada vira observada.
           seeded: fromSeed,
         });
+        // O item acompanha o que aconteceu com ele: sem isto, o card mostraria
+        // seis fases concluidas e um item "aberto" — a mentira que o roteiro
+        // `ciclo-completo-de-item` fotografou.
+        moveItemByPhase(subject, phase, outcome);
         // A fase acabou: a trava dela cai junto. A skill DEVE declarar
         // `lock.released` (o corpus faz), mas depender só disso deixaria o card
         // preso para sempre quando ela morre no meio — a trava orfa que D-V3
@@ -507,6 +568,9 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
           seeded: fromSeed,
         });
+        // Falhar nao e "nao ter comecado": o item continua em curso, e a falha
+        // fica visivel na fase.
+        moveItemByPhase(subject, phase, null);
         // Mesma regra do `phase.completed`: o run acabou (mal), a trava cai. O
         // card volta a aceitar disparo — e a falha continua visivel na fase.
         locks.delete(key);
@@ -541,6 +605,9 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           // Nasce NAO assumida: o app preparou, ninguem pegou ainda.
           claimed: str(p, 'cliSessionId') !== null,
         });
+        // Sessao ASSUMIDA e o fato honesto de que alguem esta trabalhando no
+        // item — e o unico que o move para "em curso" antes de a fase terminar.
+        if (str(p, 'cliSessionId') !== null) moveItemByPhase(subject, phase, null);
         break;
       }
 
@@ -728,9 +795,22 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
       items: ownItems.map((item) => ({ state: item.state, everConcluded: item.everConcluded })),
     });
 
+    // O erro de ingestao pode estar ancorado em QUALQUER entidade do card: com
+    // as fases de item (implementar, validar, documentar, concluir), a maioria
+    // dos documentos recusados vem ancorada num work item. Olhar so o discovery
+    // deixaria o card limpo na lista enquanto um `result.json` foi recusado —
+    // o silencio que a spec inteira existe para acabar.
+    const owned = new Set<string>([
+      `discovery:${discovery.id}`,
+      ...ownPlans.map((plan) => `plan:${plan.id}`),
+      ...ownItems.map((item) => `work_item:${item.id}`),
+    ]);
+
     const signals: StageSignal[] = [...derived.signals];
     if (ownItems.some((item) => item.planId === null)) signals.push('orphan-item');
-    if (errorList.some((error) => error.subject?.entity === 'discovery' && error.subject.id === discovery.id)) signals.push('ingest-error');
+    if (errorList.some((error) => error.subject !== null && owned.has(`${error.subject.entity}:${error.subject.id}`))) {
+      signals.push('ingest-error');
+    }
     if (mirrorList.some((entry) => entry.subject.entity === 'discovery' && entry.subject.id === discovery.id)) signals.push('mirror-pending');
 
     return {
