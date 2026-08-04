@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
 import { createEsteiraService, type EsteiraService } from './esteira-service';
@@ -449,13 +449,26 @@ function resolveAccountMod(modId: ModId): AccountMod {
   return createLocalMod({ accounts: appConfig.accounts.localAccounts, vault });
 }
 
-/** A sequência invariante inteira (captura → escreve `.credentials.json` → apaga `oauthAccount`) — `claude-state.ts` é a ÚNICA escrita de credencial do sistema. `claudeHome` respeita o override de `accounts.claudeHome` (C1); default é o `~/.claude` real (nunca o de um perfil — motor e perfis não escrevem no mesmo lugar ao mesmo tempo). */
+/**
+ * A sequência invariante inteira (captura → escreve `.credentials.json` → apaga
+ * `oauthAccount`) — `claude-state.ts` é a ÚNICA escrita de credencial do
+ * sistema. `claudeHome` respeita o override de `accounts.claudeHome` (C1);
+ * default é o `~/.claude` real (nunca o de um perfil — motor e perfis não
+ * escrevem no mesmo lugar ao mesmo tempo).
+ *
+ * O `.claude.json` acompanha o override: ele é sempre o IRMÃO do `claudeHome`
+ * (em produção, `dirname(~/.claude)` é o próprio `~`, então nada muda). Antes
+ * ele saía direto de `homedir()`, e o override movia só metade do alvo — um
+ * switch com `claudeHome` isolado ainda apagava o bloco `oauthAccount` do
+ * `~/.claude.json` DA MÁQUINA, derrubando o login do CLI de quem rodasse o
+ * smoke. Achado da captura visual da etapa 1 (011), 04/08/2026.
+ */
 function applyAccountsClaudeStateSwitch(pair: import('./accounts/account-mod').CredentialPair, onRotatedPairCaptured: (pair: import('./accounts/account-mod').CredentialPair | null) => void | Promise<void>): Promise<void> {
-  const claudeHome = appConfig.accounts.claudeHome ?? claudeHomeDir(profilePathDeps);
-  return applyAccountSwitch(
-    { io: accountsClaudeStateIo, claudeHome, claudeJsonPath: globalClaudeJsonPath(profilePathDeps), onRotatedPairCaptured },
-    pair,
-  );
+  const overrideHome = appConfig.accounts.claudeHome;
+  const claudeHome = overrideHome ?? claudeHomeDir(profilePathDeps);
+  const realClaudeJsonPath = globalClaudeJsonPath(profilePathDeps);
+  const claudeJsonPath = overrideHome === null ? realClaudeJsonPath : join(dirname(overrideHome), basename(realClaudeJsonPath));
+  return applyAccountSwitch({ io: accountsClaudeStateIo, claudeHome, claudeJsonPath, onRotatedPairCaptured }, pair);
 }
 
 function broadcastAccountsChanged(view: AccountsViewDto): void {

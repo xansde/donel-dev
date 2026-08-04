@@ -215,3 +215,34 @@ o valor fabricado só existe no caminho da UI.
 **Lesson:** campo que alimenta uma decisão de negócio (aqui, "renovo ou não")
 nunca deve ser fabricado com um default plausível na borda — ou vem do
 provedor, ou é perguntado, ou o consumidor trata `null` explicitamente.
+
+### Override de isolamento que cobre metade do alvo
+
+O motor de contas escreve em dois arquivos: `.credentials.json` (dentro de
+`claudeHome`) e `~/.claude.json` (de onde apaga o bloco `oauthAccount`). O
+`accounts.claudeHome` existe para testes redirecionarem essas escritas, mas em
+`main/index.ts` só o primeiro alvo o respeitava — o segundo saía sempre de
+`homedir()`. Os três smokes da etapa 1 isolavam o `claudeHome`, acreditavam
+estar em sandbox, e ao rodar apagavam o `oauthAccount` do `~/.claude.json`
+REAL da máquina: o login do CLI Claude Code caía, e a asserção falhava ainda
+por cima. Ninguém tinha visto porque os smokes nunca haviam sido executados —
+`npm test` é vitest e não os inclui. Descoberto na captura visual da etapa 1
+(04/08/2026), com o dano acontecendo de verdade na máquina antes da correção.
+
+**Lesson:** override de isolamento é contrato de tudo ou nada — se ele cobre
+parte dos alvos, promete sandbox e entrega estrago fora dele; derive os alvos
+irmãos do mesmo override em vez de resolver cada um pela sua própria fonte.
+
+### Garantia escrita numa tela que só conhece metade do app
+
+O rodapé do painel de perfis afirmava "o app nunca lê nem grava credenciais".
+Verdade sobre perfis; falsa sobre o app a partir do momento em que o botão
+vizinho no mesmo titlebar passou a pedir access/refresh token e guardá-los no
+cofre. A frase não foi revisada porque a etapa 1 não tocou no `ProfileSwitcher`
+— e nenhum teste cobre texto de garantia. Só apareceu quando um print pôs as
+duas telas lado a lado.
+
+**Lesson:** frase que promete algo sobre *o app inteiro* deve morar onde o app
+inteiro é conhecido, ou ser reescrita no escopo da tela que a exibe; do
+contrário a primeira feature vizinha a transforma em mentira sem que ninguém
+edite aquele arquivo.

@@ -11,6 +11,13 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // -> listar -> trocar; confere que `.credentials.json` foi reescrito e que
 // `oauthAccount` sumiu do `.claude.json` de teste. NUNCA abre sessão `claude`
 // real (o mod é 100% em memória, sem rede).
+//
+// O `.claude.json` de teste é IRMÃO do `claudeHome` de teste de propósito: é
+// assim que `applyAccountsClaudeStateSwitch` deriva o segundo alvo quando o
+// override existe. Até 04/08/2026 ele saía direto de `homedir()`, e este
+// smoke — que nunca tinha rodado — teria apagado o `oauthAccount` do
+// `~/.claude.json` REAL da máquina, derrubando o login do CLI de quem o
+// rodasse (e falhado a asserção mesmo assim). Achado da captura visual.
 
 const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
 const APP_CWD = path.join(__dirname, '../..');
