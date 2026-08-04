@@ -132,7 +132,7 @@ test('o ciclo completo de um item', async () => {
     await passo(
       'A fase Implementar fica preparada — e a tela não a chama de "em andamento"',
       win.getByText('Preparada — ninguém assumiu ainda'),
-      'A trava é fato com dono, hora e sessão. Ela aparece no card e sai num gesto: não existe arquivo .lock nem etiqueta remota.',
+      'A trava é fato com dono, hora e sessão. Ela aparece no card e sai num gesto: não existe arquivo .lock nem etiqueta remota. Repare no item logo abaixo: continua "aberto". Preparar não é começar — nem para a fase, nem para o item.',
     );
 
     emitir(ctx.esteiraRoot, [
@@ -193,9 +193,9 @@ test('o ciclo completo de um item', async () => {
     );
 
     await passo(
-      'O card depois das seis fases — e o que ele ainda não sabe dizer',
+      'O card depois das seis fases',
       cardNaLista,
-      'As quatro fases novas concluíram e o PR está verificado, mas o ITEM continua "aberto" e a etapa continua "Planejado": nenhum fato de fase move o estado do item hoje. É achado deste roteiro, não desenho.',
+      'A etapa do card é calculada do grafo (D-13), nunca digitada: seis fases concluídas e o PR verificado deixam o item "concluído" e o card em "Concluído". Na primeira captura deste roteiro ele dizia "Planejado" com o item "aberto" — a etapa não mentia por desenho, mentia porque nada movia o item.',
     );
 
     // ── O estado ruim, de propósito ──────────────────────────────────────
