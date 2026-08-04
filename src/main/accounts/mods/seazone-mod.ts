@@ -76,7 +76,7 @@ export function createSeazoneMod(deps: SeazoneModDeps): AccountMod {
    * "backend indisponível (offline)", mandando quem lê procurar problema de
    * rede quando o problema era a credencial.
    */
-  let sessaoRecusada = false;
+  let sessionRefused = false;
 
   /**
    * Troca o `sessionRefreshToken` por um JWT curto. A rota é `/auth/refresh` —
@@ -98,7 +98,7 @@ export function createSeazoneMod(deps: SeazoneModDeps): AccountMod {
         body: JSON.stringify({ sessionRefreshToken: sessionToken }),
       });
       if (response.status === 401 || response.status === 403) {
-        sessaoRecusada = true;
+        sessionRefused = true;
         return null;
       }
       if (response.status < 200 || response.status >= 300) return null;
@@ -120,9 +120,9 @@ export function createSeazoneMod(deps: SeazoneModDeps): AccountMod {
     }
   }
 
-  /** `null` = falha de rede/sessão (nunca lança) — chamador decide o `reason`, lendo `sessaoRecusada` para separar credencial de rede. */
+  /** `null` = falha de rede/sessão (nunca lança) — chamador decide o `reason`, lendo `sessionRefused` para separar credencial de rede. */
   async function authedFetch(path: string, init?: HttpRequestInit): Promise<HttpResponseLike | null> {
-    sessaoRecusada = false;
+    sessionRefused = false;
     const token = await ensureJwt();
     if (!token) return null;
     try {
@@ -138,7 +138,7 @@ export function createSeazoneMod(deps: SeazoneModDeps): AccountMod {
     /** `/accounts` devolve a LISTA no topo — não um envelope `{ accounts: [...] }`. */
     async listAccounts(): Promise<ListAccountsResult> {
       const response = await authedFetch('/accounts');
-      if (!response) return { kind: 'unavailable', reason: sessaoRecusada ? 'unauthorized' : 'offline' };
+      if (!response) return { kind: 'unavailable', reason: sessionRefused ? 'unauthorized' : 'offline' };
       if (response.status === 401 || response.status === 403) return { kind: 'unavailable', reason: 'unauthorized' };
       if (response.status < 200 || response.status >= 300) return { kind: 'unavailable', reason: 'io' };
 
@@ -158,7 +158,7 @@ export function createSeazoneMod(deps: SeazoneModDeps): AccountMod {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ account: id }),
       });
-      if (!response) return { kind: 'failed', reason: sessaoRecusada ? 'unauthorized' : 'offline' };
+      if (!response) return { kind: 'failed', reason: sessionRefused ? 'unauthorized' : 'offline' };
       if (response.status === 401 || response.status === 403) return { kind: 'failed', reason: 'unauthorized' };
       if (response.status === 404) return { kind: 'failed', reason: 'unknown-account' };
       if (response.status < 200 || response.status >= 300) return { kind: 'failed', reason: 'offline' };
