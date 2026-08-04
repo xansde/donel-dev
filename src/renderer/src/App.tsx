@@ -1071,6 +1071,16 @@ export function App(): React.JSX.Element {
    * apaga nada. Sem aviso na tela, como o CA-11 pede.
    */
   const handleTabProcessExit = (tab: TabState, info: { exitCode: number | undefined; msSinceSpawn: number }): void => {
+    // Spec 010 / B1 — o processo da sessão morreu (saiu sozinho, ou foi morto).
+    // A aba pode continuar na tela, mas a SESSÃO acabou: deixar o card dizendo
+    // "em andamento" com nada rodando é a mesma inverdade que fechar a aba
+    // produziria. Se a fase já tinha concluído, o gesto não grava nada.
+    const esteiraSessionId = esteiraTabSessionsRef.current[tab.id];
+    if (esteiraSessionId) {
+      delete esteiraTabSessionsRef.current[tab.id];
+      void window.donel.esteira.endSession({ sessionId: esteiraSessionId, reason: 'process-exit' }).catch(() => undefined);
+    }
+
     const resumedSessionId = resumedSessionIdFromArgs(tab.launchArgs);
     if (!resumedSessionId) return; // sessão nova nunca é candidata
     if (!shouldForgetOnResumeFailure({ resumedSessionId, exitCode: info.exitCode, msSinceSpawn: info.msSinceSpawn })) return;
