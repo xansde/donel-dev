@@ -301,7 +301,7 @@ T1228, T1229, T1230, T1231).
 
 ## Fase 5 — Registro (documento; depende da Fase 4)
 
-- [ ] **T1228** `specs/backlog.md`: **B8/US-12** e **auto-switch** saem da fila,
+- [x] **T1228** `specs/backlog.md`: **B8/US-12** e **auto-switch** saem da fila,
   cada um com uma linha de destino ("absorvido no motor — `specs/011-…`", no
   mesmo estilo dos itens já riscados do arquivo, ver B5/B19); **B10 fica e
   simplifica** (a frase sobre perfis compartilhados entre canais some — não há
@@ -310,7 +310,7 @@ T1228, T1229, T1230, T1231).
   **Nada é apagado** — itens saem marcados, não deletados.
   **DoD**: `git diff` do backlog só com marcações e notas de destino.
 
-- [ ] **T1229** Marcar **superseded** (C32): bloco de cabeçalho em
+- [x] **T1229** Marcar **superseded** (C32): bloco de cabeçalho em
   `specs/002-quota-headroom/spec.md`, `plan.md`, `tasks.md` e `roteiro-e2e.md`,
   e nos artefatos históricos da 001 (`spike-t001-resultado.md`,
   `spike-t002-resultado.md`, `analise-switch-account-amanda.md`) apontando para
@@ -318,7 +318,7 @@ T1228, T1229, T1230, T1231).
   só ganha o bloco no topo.
   **DoD**: os 7 arquivos com o bloco; conteúdo original intacto abaixo dele.
 
-- [ ] **T1230** Atualizar o `CLAUDE.md` do repo (e `README.md`,
+- [x] **T1230** Atualizar o `CLAUDE.md` do repo (e `README.md`,
   `docs/LEIA-ME-colegas.md`, `CHANGELOG` onde citarem perfis): a seção de
   gotchas perde "`~/.claude-profiles` nunca no OneDrive" como regra viva (vira
   nota histórica da migração), o vocabulário passa a ser **conta/motor**, e a
@@ -326,7 +326,7 @@ T1228, T1229, T1230, T1231).
   agora citando também `accounts/migration/`.
   **DoD**: nenhum documento do repo descrevendo perfis como mecanismo atual.
 
-- [ ] **T1231** Roteiro do dia da virada:
+- [x] **T1231** Roteiro do dia da virada:
   `specs/011-contas-e-provedores/roteiro-e2e-etapa-2.md` — passo a passo manual
   no alfa (abrir o assistente, importar perfil a perfil, conferir o diff de MCP,
   consolidar, arquivar, verificar `~/.claude-profiles.old` com junctions

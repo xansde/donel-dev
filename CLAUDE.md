@@ -88,12 +88,17 @@ sensível.
   do par rotacionado → escreve `.credentials.json` → apaga `oauthAccount`).
   `CredentialPair` nunca sai de `src/main/accounts/`: não cruza o preload,
   não entra em log nem em mensagem de erro. O core do app e a UI (inclusive
-  `AccountsPanel.tsx`) seguem sem tocar segredo — o formulário de conectar é
-  write-only, nenhum canal de leitura devolve o que foi digitado. **Não
-  generalizar esta exceção**: nenhum outro módulo ganha licença de tocar
-  credencial por causa dela.
-- **TDD com escopo**: CommandBuilder, SessionIndexer e paths de perfil são
-  módulos puros com vitest; PTY/UI validam por smoke roteirizado (T014).
+  `AccountsPanel.tsx`/`MigrationWizard.tsx`) seguem sem tocar segredo — o
+  formulário de conectar é write-only, nenhum canal de leitura devolve o que
+  foi digitado. **Não generalizar esta exceção**: nenhum outro módulo ganha
+  licença de tocar credencial por causa dela. A emenda **não foi ampliada**
+  na etapa 2 (011, demolição de perfis + migração assistida, 2026-08-04):
+  `src/main/accounts/migration/` já mora dentro de `src/main/accounts/`, é o
+  mesmo perímetro — o par migrado do `.credentials.json` de um perfil vai
+  direto pro cofre, nunca passa por variável de retorno exposta.
+- **TDD com escopo**: CommandBuilder, SessionIndexer e os módulos de
+  `src/main/accounts/` (motor, mods, migração) são puros com vitest; PTY/UI
+  validam por smoke roteirizado (T014).
 - UI em pt-BR; código, comentários e identificadores em inglês.
 
 ## Issue tracker (para skills que precisam de um)
@@ -157,7 +162,10 @@ pinta "não realizada" o que é "não consegui ler").
 
 - node-pty precisa casar com a ABI do Electron — prebuilds/@electron/rebuild;
   pin de versões testadas.
-- `~/.claude-profiles` fica no home local, nunca no OneDrive (junctions).
+- (histórico — o mecanismo morreu na 011, etapa 2) `~/.claude-profiles`
+  ficava no home local, nunca no OneDrive (junctions). O app hoje só toca
+  `~/.claude`; o histórico dos perfis, se algum dia migrado, fica arquivado
+  em `~/.claude-profiles.old` (nunca deletado pelo app).
 - Transcripts JSONL nunca são lidos inteiros — streaming + stat.
 - Junction em Node: `fs.symlinkSync(target, path, 'junction')` — não pede admin.
 
