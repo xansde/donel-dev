@@ -1,0 +1,236 @@
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createEsteiraService, type EsteiraService } from '../src/main/esteira-service';
+import { isValidCreateDiscoveryIpcInput, isValidDispatchIpcInput, isValidReleaseLockIpcInput } from '../src/shared/esteira/ipc';
+
+// Spec 010 — o servico que liga o store ao app: boot, varredura do outbox,
+// watcher e os gestos que a tela dispara. O que se prova aqui:
+//
+// - o que a skill devolveu APARECE, e o que ela devolveu quebrado aparece como
+//   ERRO (nunca como ausencia);
+// - o gesto do app (criar discovery, disparar, liberar trava) muda o snapshot
+//   e avisa quem esta olhando;
+// - store incompativel nao trava o app: ele mostra o estado e recusa escrever.
+
+const EXAMPLES_DIR = join(__dirname, '..', 'src', 'shared', 'esteira', 'contract', 'v1', 'examples');
+
+let root: string;
+let service: EsteiraService;
+
+function open(overrides: Record<string, unknown> = {}): EsteiraService {
+  let seq = 0;
+  return createEsteiraService({
+    storeDir: join(root, 'store'),
+    inboxDir: join(root, 'inbox'),
+    outboxDir: join(root, 'outbox'),
+    channel: 'alfa',
+    now: () => '2026-08-04T14:30:00.000Z',
+    newId: (prefix: string) => {
+      seq += 1;
+      return `${prefix}-${seq}`;
+    },
+    ...overrides,
+  });
+}
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'donel-esteira-service-'));
+  mkdirSync(join(root, 'outbox'), { recursive: true });
+  service = open();
+});
+
+afterEach(() => {
+  service.dispose();
+  rmSync(root, { recursive: true, force: true });
+});
+
+function putResult(name: string, as = `${name}.json`): void {
+  copyFileSync(join(EXAMPLES_DIR, `${name}.json`), join(root, 'outbox', as));
+}
+
+describe('boot', () => {
+  it('abre o store limpo e diz onde tudo mora', () => {
+    const state = service.snapshotDto();
+
+    expect(state.compatibility).toBe('read-write');
+    expect(state.snapshot.discoveries).toHaveLength(0);
+    expect(state.storeDir).toBe(join(root, 'store'));
+    expect(state.outboxDir).toBe(join(root, 'outbox'));
+  });
+
+  it('ingere o que ja estava no outbox — trabalho feito com o app fechado nao se perde', () => {
+    putResult('discovery-com-tracker');
+    const booted = open();
+
+    expect(booted.snapshotDto().snapshot.discoveries).toHaveLength(1);
+    booted.dispose();
+  });
+});
+
+describe('varredura do outbox', () => {
+  it('o result.json da skill aparece no snapshot', () => {
+    putResult('discovery-com-tracker');
+    const state = service.scanOutbox();
+
+    expect(state.snapshot.discoveries[0].title).toBe('Fila de importacao trava sem sinal');
+    expect(state.rejectedOnLastScan).toBe(0);
+  });
+
+  it('documento fora do contrato vira erro VISIVEL, e o card ganha o sinal', () => {
+    writeFileSync(join(root, 'outbox', 'quebrado.json'), '{"kind":"esteira.result","contract_version":"1.0.0"}', 'utf8');
+    putResult('discovery-com-tracker');
+
+    const state = service.scanOutbox();
+
+    expect(state.rejectedOnLastScan).toBe(1);
+    expect(state.snapshot.ingestErrors).toHaveLength(1);
+    // O caminho feliz do outro arquivo nao foi prejudicado.
+    expect(state.snapshot.discoveries).toHaveLength(1);
+  });
+
+  it('avisa quem esta olhando quando algo entrou', () => {
+    const listener = vi.fn();
+    service.startWatching(listener);
+    putResult('discovery-com-tracker');
+
+    service.scanOutbox();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener.mock.calls[0][0].snapshot.discoveries).toHaveLength(1);
+  });
+
+  it('varredura sem novidade nao avisa ninguem', () => {
+    const listener = vi.fn();
+    putResult('discovery-com-tracker');
+    service.scanOutbox();
+    service.startWatching(listener);
+
+    service.scanOutbox();
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe('gestos do app', () => {
+  it('criar discovery: o APP gera o id, e o card aparece na hora', () => {
+    const created = service.createDiscovery({
+      title: 'Esteira do Donel nao mostra o que foi feito',
+      problem: 'O mapa afirma "nao realizada" quando o que houve foi falha de leitura.',
+      targetRepo: 'donel-dev',
+      scopeRepos: [],
+      tracker: null,
+    });
+
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.discoveryId).toMatch(/^dsc-/);
+    const discovery = created.state.snapshot.discoveries[0];
+    expect(discovery.title).toBe('Esteira do Donel nao mostra o que foi feito');
+    // Card recem-criado: etapa discovery, sem sinal de plano faltando.
+    expect(discovery.derivedStage).toBe('discovery');
+    expect(discovery.stageSignals).toEqual([]);
+  });
+
+  it('o id gerado respeita o padrao do contrato (sem underscore)', () => {
+    const created = service.createDiscovery({ title: 'Card novo', problem: null, targetRepo: null, scopeRepos: [], tracker: null });
+    expect(created.ok && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(created.discoveryId)).toBe(true);
+  });
+
+  it('disparar uma fase trava o card e deixa o run-input pronto para a skill', () => {
+    const created = service.createDiscovery({ title: 'Card novo', problem: null, targetRepo: 'donel-dev', scopeRepos: [], tracker: null });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const dispatched = service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: { target_repo: 'donel-dev', repo_path: null, worktree_path: null, branch: null },
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+
+    expect(dispatched.ok).toBe(true);
+    if (!dispatched.ok) return;
+    expect(dispatched.state.snapshot.locks).toHaveLength(1);
+    expect(dispatched.inputPath.startsWith(join(root, 'inbox'))).toBe(true);
+    expect(dispatched.resultPath.startsWith(join(root, 'outbox'))).toBe(true);
+  });
+
+  it('a trava aparece e some por gesto — nunca fica orfa', () => {
+    const created = service.createDiscovery({ title: 'Card novo', problem: null, targetRepo: null, scopeRepos: [], tracker: null });
+    if (!created.ok) return;
+    service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: null,
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+
+    const after = service.releaseLock({ subject: { entity: 'discovery', id: created.discoveryId }, phase: 'discovery' });
+    expect(after.snapshot.locks).toHaveLength(0);
+  });
+
+  it('todo gesto avisa quem esta olhando', () => {
+    const listener = vi.fn();
+    service.startWatching(listener);
+
+    const created = service.createDiscovery({ title: 'Card novo', problem: null, targetRepo: null, scopeRepos: [], tracker: null });
+    if (!created.ok) return;
+    service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: null,
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('store que nao aceita escrita', () => {
+  it('o app mostra o estado e RECUSA o gesto, em vez de falhar calado', () => {
+    mkdirSync(join(root, 'store2'), { recursive: true });
+    writeFileSync(
+      join(root, 'store2', 'events.jsonl'),
+      `${JSON.stringify({ kind: 'esteira.store.header', schema_version: '9.0.0', created_at: '2026-08-04T14:30:00.000Z', created_by_channel: 'beta' })}\n`,
+      'utf8',
+    );
+
+    const readOnly = open({ storeDir: join(root, 'store2') });
+    expect(readOnly.snapshotDto().compatibility).toBe('read-only');
+
+    const created = readOnly.createDiscovery({ title: 'Card novo', problem: null, targetRepo: null, scopeRepos: [], tracker: null });
+    expect(created).toMatchObject({ ok: false, reason: 'store-refused' });
+    readOnly.dispose();
+  });
+});
+
+describe('validacao de payload do IPC (o main so muta depois de validar)', () => {
+  it('createDiscovery exige titulo', () => {
+    expect(isValidCreateDiscoveryIpcInput({ title: 'ok', problem: null, targetRepo: null, scopeRepos: [], tracker: null })).toBe(true);
+    expect(isValidCreateDiscoveryIpcInput({ title: '   ', scopeRepos: [] })).toBe(false);
+    expect(isValidCreateDiscoveryIpcInput(null)).toBe(false);
+  });
+
+  it('dispatch exige fase e discovery, e workspace com repo quando existe', () => {
+    expect(isValidDispatchIpcInput({ phase: 'discovery', discoveryId: 'dsc-1', planId: null, workItemId: null, workspace: null })).toBe(true);
+    expect(isValidDispatchIpcInput({ phase: '', discoveryId: 'dsc-1' })).toBe(false);
+    expect(isValidDispatchIpcInput({ phase: 'plano', discoveryId: 'dsc-1', workspace: { repo_path: 'x' } })).toBe(false);
+  });
+
+  it('releaseLock exige um assunto de verdade', () => {
+    expect(isValidReleaseLockIpcInput({ subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery' })).toBe(true);
+    expect(isValidReleaseLockIpcInput({ subject: { entity: 'card', id: 'x' }, phase: 'discovery' })).toBe(false);
+    expect(isValidReleaseLockIpcInput({ phase: 'discovery' })).toBe(false);
+  });
+});

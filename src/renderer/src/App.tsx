@@ -13,7 +13,7 @@ import {
   Toast,
   type EsteiraPhase as ChipPhase,
 } from '@donel-dev/design-system';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Settings } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppConfigDto,
@@ -103,6 +103,10 @@ import {
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import type { LauncherLaunchOptions } from './Launcher';
+// Spec 010 — a esteira nova, AO LADO do mapa atual (`[P-5]`): nada aqui
+// desmonta ou altera o Modo Dev de hoje; a tela entra por cima, atrás de um
+// gesto interno, para dar para comparar as duas com o mesmo dado.
+import { EsteiraScreen } from './Esteira/EsteiraScreen';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { ProfileSwitcher } from './ProfileSwitcher';
@@ -453,6 +457,8 @@ export function App(): React.JSX.Element {
   // está abaixo é só estado de TELA (modo ligado, o que está expandido, o
   // comando armado) — some no restart, e deve mesmo.
   const [devModeOn, setDevModeOn] = useState(false);
+  /** Spec 010 — tela da esteira nova (gesto interno: botão no titlebar do Modo Dev). */
+  const [esteiraOpen, setEsteiraOpen] = useState(false);
   const [entryCards, setEntryCards] = useState<readonly EntryColumnCard[]>([]);
   const [entryLoading, setEntryLoading] = useState(false);
   /** Issue #38 — repo REAL de cada card da lista (rastro em disco, `devMode:resolveCardRepos`), um mapa pra lista inteira — nunca um IPC por linha. */
@@ -2427,6 +2433,20 @@ export function App(): React.JSX.Element {
             )}
           </button>
         ) : null}
+        {/* Spec 010 — gesto interno para a esteira nova. Fica só no Modo Dev e
+            NÃO substitui o mapa: os dois convivem até o vertical fechar. */}
+        {devModeOn ? (
+          <button
+            type="button"
+            className={styles.preferencesButton}
+            onClick={() => setEsteiraOpen((prev) => !prev)}
+            aria-label={esteiraOpen ? 'Voltar ao mapa atual' : 'Abrir a esteira nova'}
+            title={esteiraOpen ? 'Voltar ao mapa atual' : 'Abrir a esteira nova (spec 010)'}
+            data-testid="esteira-toggle"
+          >
+            <Route size={16} strokeWidth={1.5} aria-hidden="true" />
+          </button>
+        ) : null}
         <button
           type="button"
           className={styles.preferencesButton}
@@ -2475,6 +2495,11 @@ export function App(): React.JSX.Element {
           .filter(Boolean)
           .join(' ')}
       >
+        {/* Spec 010 — a esteira nova entra POR CIMA, sem desmontar nada: o
+            mapa atual segue vivo por baixo (`[P-5]` — ele só sai no fim do
+            vertical, quando o novo provar a espinha). */}
+        {devModeOn && esteiraOpen ? <EsteiraScreen onClose={() => setEsteiraOpen(false)} /> : null}
+
         {/* CA-20 — a tela de hoje continua MONTADA quando o Modo Dev liga
             (só oculta por CSS): nada de remontar sidebar/abas, nada de PTY
             recriado. Mesmo princípio já usado nas abas de terminal (T007).

@@ -1,0 +1,256 @@
+/* Spec 010 — a tela da esteira nova. Mesmos tokens do resto do app
+   (`design-system/src/tokens.css`); nenhuma cor solta. A hierarquia visual
+   segue o que a spec quer que apareça primeiro: o que NÃO foi lido tem tom de
+   erro, o desfecho legítimo (discovery sem plano) tem tom neutro. */
+
+.screen {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-heading-size);
+  font-weight: var(--weight-semibold);
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.headerActions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.warning,
+.message {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-caption-size);
+}
+
+.warning {
+  background: color-mix(in srgb, var(--state-permission) 14%, transparent);
+  color: var(--text-primary);
+}
+
+.message {
+  background: var(--bg-panel);
+  color: var(--text-muted);
+}
+
+.body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  min-height: 0;
+}
+
+.list {
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.newCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-1);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.card:hover {
+  background: var(--bg-raised);
+}
+
+.cardSelected {
+  border-color: var(--accent);
+}
+
+.cardTitle {
+  font-weight: var(--weight-semibold);
+}
+
+.cardMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.stage {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+.stageDerived,
+.repo {
+  color: var(--text-muted);
+}
+
+.repo {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+}
+
+.signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.signalNeutral,
+.signalAttention,
+.signalError {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: var(--text-caption-size);
+  cursor: help;
+}
+
+.signalNeutral {
+  background: var(--bg-raised);
+  color: var(--text-muted);
+}
+
+.signalAttention {
+  background: color-mix(in srgb, var(--state-waiting) 20%, transparent);
+  color: var(--state-waiting);
+}
+
+/* "não consegui ler" — a informação que o modelo antigo escondia. */
+.signalError {
+  background: color-mix(in srgb, var(--state-permission) 20%, transparent);
+  color: var(--state-permission);
+}
+
+.detail {
+  overflow-y: auto;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.detailTitle {
+  margin: 0;
+  font-size: var(--text-heading-size);
+  font-weight: var(--weight-semibold);
+}
+
+.problem {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.overrideNote {
+  margin: 0;
+  font-size: var(--text-caption-size);
+  color: var(--state-waiting);
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.blockTitle {
+  margin: 0;
+  font-size: var(--text-caption-size);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: var(--weight-semibold);
+}
+
+.lines {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.failed {
+  color: var(--state-permission);
+}
+
+.errorLine {
+  margin: 0;
+  padding: var(--space-1);
+  border: 1px solid color-mix(in srgb, var(--state-permission) 40%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--state-permission) 10%, transparent);
+}
+
+.errorLine code {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+}
+
+.lockLine {
+  margin: 0;
+}
+
+.hint,
+.empty {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-1);
+}
+
+.dispatchRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-1);
+}

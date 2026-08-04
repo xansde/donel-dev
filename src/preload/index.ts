@@ -57,6 +57,16 @@ import {
 // T504 (005-terminal-copy-paste) — canal do clipboard-bridge (main), aditivo
 // aos imports acima (não reordena o bloco existente).
 import { CLIPBOARD_CHANNELS } from '../shared';
+// Spec 010 — canais e shapes da esteira nova.
+import {
+  ESTEIRA_CHANNELS,
+  type CreateDiscoveryIpcInput,
+  type DispatchIpcInput,
+  type EsteiraCreateDiscoveryDto,
+  type EsteiraDispatchDto,
+  type EsteiraSnapshotDto,
+  type ReleaseLockIpcInput,
+} from '../shared/esteira/ipc';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
 // arquivo é o único ponto por onde o renderer alcança o main process, via
@@ -287,6 +297,28 @@ const donelApi: DonelApi = {
   transcripts: {
     copyForResume: (input: CopyTranscriptForResumeIpcInput) =>
       ipcRenderer.invoke(TRANSCRIPT_COPY_CHANNELS.copyForResume, input) as Promise<CopyTranscriptForResumeResult>,
+  },
+
+  // Spec 010 — a esteira nova. O renderer NUNCA lê disco nem calcula macro
+  // etapa: recebe o snapshot já derivado pelo main (D-13) e desenha o que está
+  // nele. O que não está no snapshot, a tela não inventa.
+  esteira: {
+    snapshot: () => ipcRenderer.invoke(ESTEIRA_CHANNELS.snapshot) as Promise<EsteiraSnapshotDto>,
+
+    scanOutbox: () => ipcRenderer.invoke(ESTEIRA_CHANNELS.scanOutbox) as Promise<EsteiraSnapshotDto>,
+
+    createDiscovery: (input: CreateDiscoveryIpcInput) =>
+      ipcRenderer.invoke(ESTEIRA_CHANNELS.createDiscovery, input) as Promise<EsteiraCreateDiscoveryDto>,
+
+    dispatch: (input: DispatchIpcInput) => ipcRenderer.invoke(ESTEIRA_CHANNELS.dispatch, input) as Promise<EsteiraDispatchDto>,
+
+    releaseLock: (input: ReleaseLockIpcInput) => ipcRenderer.invoke(ESTEIRA_CHANNELS.releaseLock, input) as Promise<EsteiraSnapshotDto>,
+
+    onChanged: (listener: (state: EsteiraSnapshotDto) => void) => {
+      const handler = (_event: unknown, state: EsteiraSnapshotDto): void => listener(state);
+      ipcRenderer.on(ESTEIRA_CHANNELS.changed, handler);
+      return () => ipcRenderer.removeListener(ESTEIRA_CHANNELS.changed, handler);
+    },
   },
 };
 

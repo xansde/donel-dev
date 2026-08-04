@@ -4,6 +4,20 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { DevModeBoardConfig } from '../shared/devMode';
+// Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
+import { createEsteiraService, type EsteiraService } from './esteira-service';
+import { esteiraStoreDir } from './esteira-store';
+import { esteiraOutboxDir } from './esteira-ingest';
+import { esteiraInboxDir } from './esteira-dispatch';
+import {
+  ESTEIRA_CHANNELS,
+  isValidCreateDiscoveryIpcInput,
+  isValidDispatchIpcInput,
+  isValidReleaseLockIpcInput,
+  type EsteiraCreateDiscoveryDto,
+  type EsteiraDispatchDto,
+  type EsteiraSnapshotDto,
+} from '../shared/esteira/ipc';
 import type {
   AppConfigDto,
   ArchivePhaseSessionIpcInput,
@@ -871,6 +885,69 @@ function registerDevModeIpcHandlers(): void {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Spec 010 — a esteira nova (store de eventos + contrato com as skills). Nasce
+// AO LADO do Modo Dev atual, sem tocar `discovery-tree.ts`, `esteira-reader.ts`
+// nem o mapa (`[P-5]`: eles saem no fim do vertical, quando o novo provar a
+// espinha — não antes, para dar para comparar os dois com o mesmo dado).
+// ---------------------------------------------------------------------------
+
+/** `null` até `app.whenReady()` — o serviço precisa do `userData` resolvido. */
+let esteiraService: EsteiraService | null = null;
+
+/**
+ * Qual canal está escrevendo no store — só DIAGNÓSTICO no cabeçalho (a decisão
+ * de compatibilidade é pelo `schema_version`, nunca pelo canal). Os três
+ * instalados compartilham `app.getName()` de propósito (decisão de 28/07), então
+ * o que os distingue é o executável.
+ */
+function appChannelName(): string {
+  const executable = process.execPath.toLowerCase();
+  if (executable.includes('alfa')) return 'alfa';
+  if (executable.includes('beta')) return 'beta';
+  return app.isPackaged ? 'stable' : 'dev';
+}
+
+function registerEsteiraIpcHandlers(): void {
+  esteiraService = createEsteiraService({
+    storeDir: esteiraStoreDir(process.env, app.getPath('userData')),
+    inboxDir: esteiraInboxDir(process.env, homedir),
+    outboxDir: esteiraOutboxDir(process.env, homedir),
+    channel: appChannelName(),
+  });
+
+  // O store muda por três caminhos (ingestão do outbox, gesto da UI, outro
+  // canal do app escrevendo no mesmo `userData`) — a tela ouve UM evento só.
+  esteiraService.startWatching((state) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(ESTEIRA_CHANNELS.changed, state);
+    }
+  });
+
+  ipcMain.handle(ESTEIRA_CHANNELS.snapshot, (): EsteiraSnapshotDto | null => esteiraService?.snapshotDto() ?? null);
+
+  ipcMain.handle(ESTEIRA_CHANNELS.scanOutbox, (): EsteiraSnapshotDto | null => esteiraService?.scanOutbox() ?? null);
+
+  ipcMain.handle(ESTEIRA_CHANNELS.createDiscovery, (_event, input: unknown): EsteiraCreateDiscoveryDto | null => {
+    if (esteiraService === null) return null;
+    // Payload inválido não muta nada — mesmo princípio dos canais `devMode:*`.
+    if (!isValidCreateDiscoveryIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
+    return esteiraService.createDiscovery(input);
+  });
+
+  ipcMain.handle(ESTEIRA_CHANNELS.dispatch, (_event, input: unknown): EsteiraDispatchDto | null => {
+    if (esteiraService === null) return null;
+    if (!isValidDispatchIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
+    return esteiraService.dispatch(input);
+  });
+
+  ipcMain.handle(ESTEIRA_CHANNELS.releaseLock, (_event, input: unknown): EsteiraSnapshotDto | null => {
+    if (esteiraService === null) return null;
+    if (!isValidReleaseLockIpcInput(input)) return esteiraService.snapshotDto();
+    return esteiraService.releaseLock(input);
+  });
+}
+
 /**
  * T013 — índice de sessões anteriores por projeto (FR-004, CA-2). Delega
  * inteiramente pro SessionIndexer (T012, TDD já fechado — não reescrito
@@ -1271,6 +1348,7 @@ void app.whenReady().then(async () => {
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
   registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)
   registerTranscriptCopyIpcHandlers(); // CA-24 (009-modo-dev-v3, lote 8)
+  registerEsteiraIpcHandlers(); // Spec 010 — esteira nova (store + contrato), ao LADO do mapa atual
   createMainWindow();
 
   app.on('activate', () => {
@@ -1283,6 +1361,8 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   ptyManager.killAll();
   semaphoreManager.dispose();
+  esteiraService?.dispose();
+  esteiraService = null;
   if (process.platform !== 'darwin') {
     app.quit();
   }

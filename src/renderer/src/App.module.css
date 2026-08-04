@@ -91,6 +91,10 @@
      xterm a recalcular as rows. */
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
+  /* Spec 010 — âncora da tela da esteira nova (`EsteiraScreen`, absolute/inset:0).
+     Só cria contexto de posicionamento: não muda o layout das colunas, e mantém
+     a titlebar clicável por cima. */
+  position: relative;
 }
 
 /* Os estados de colapso (.bodyRightCollapsed/.bodySidebarCollapsed) vivem

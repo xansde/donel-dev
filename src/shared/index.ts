@@ -6,6 +6,7 @@
 
 import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
+import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProfilesApi } from './profiles';
 import type { DonelProjectBindingApi } from './projectBinding';
@@ -372,4 +373,6 @@ export interface DonelApi {
   github: DonelGithubApi;
   /** CA-24 (009-modo-dev-v3, lote 8) — cópia de transcript entre perfis pro "Reiniciar sessão em foco". */
   transcripts: DonelTranscriptsApi;
+  /** Spec 010 — a esteira nova (store de eventos + contrato com as skills), ao lado do Modo Dev atual. */
+  esteira: DonelEsteiraApi;
 }

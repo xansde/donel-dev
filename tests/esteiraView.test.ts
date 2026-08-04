@@ -1,0 +1,158 @@
+import { describe, expect, it } from 'vitest';
+import { cardView, ingestErrorLine, phaseLine, signalViews, stageView } from '../src/renderer/src/Esteira/esteiraView';
+import { reduceEvents } from '../src/shared/esteira/store/reducer';
+import type { DiscoverySnapshot, PhaseRunSnapshot, StoreEvent } from '../src/shared/esteira/store/storeFormat';
+
+// Spec 010 — o que a TELA diz. Este teste existe por um motivo só: a spec
+// inteira nasceu de uma tela que afirmava "fase não realizada" quando o que
+// tinha acontecido era "não consegui ler o arquivo". Aqui as duas frases são
+// verificadas como coisas distintas.
+
+let seq = 0;
+function evt(type: string, payload: Record<string, unknown>): StoreEvent {
+  seq += 1;
+  return { seq, event_id: `evt-${seq}`, at: '2026-08-03T12:00:00.000Z', type, source: { kind: 'app' }, dedupe_key: null, payload };
+}
+
+function phase(overrides: Partial<PhaseRunSnapshot>): PhaseRunSnapshot {
+  return {
+    subject: { entity: 'discovery', id: 'dsc-1' },
+    phase: 'discovery',
+    startedAt: null,
+    completedAt: null,
+    outcome: null,
+    summary: null,
+    failure: null,
+    lastRunId: null,
+    ...overrides,
+  };
+}
+
+describe('phaseLine — três estados, três frases', () => {
+  it('fase concluída diz que concluiu', () => {
+    expect(phaseLine(phase({ completedAt: '2026-08-03T12:41:07.000Z', outcome: 'done' }))).toBe('discovery — concluída');
+  });
+
+  it('fase que FALHOU diz que falhou, com o código — nunca "não realizada"', () => {
+    const line = phaseLine(phase({ phase: 'implementar', failure: { code: 'worktree-dirty', message: 'x' } }));
+    expect(line).toBe('implementar — falhou: worktree-dirty');
+    expect(line).not.toContain('não realizada');
+  });
+
+  it('fase só iniciada diz que está em andamento', () => {
+    expect(phaseLine(phase({ startedAt: '2026-08-03T12:00:00.000Z' }))).toBe('discovery — em andamento');
+  });
+
+  it('abandonada e inconclusiva tem palavra propria', () => {
+    expect(phaseLine(phase({ completedAt: 'x', outcome: 'abandoned' }))).toContain('abandonada');
+    expect(phaseLine(phase({ completedAt: 'x', outcome: 'inconclusive' }))).toContain('sem conclusão');
+  });
+});
+
+describe('sinais do card', () => {
+  const discovery = (signals: DiscoverySnapshot['stageSignals']): DiscoverySnapshot => ({
+    id: 'dsc-1',
+    title: 'Card',
+    problem: null,
+    tracker: null,
+    targetRepo: null,
+    scopeRepos: [],
+    createdAt: '2026-08-03T12:00:00.000Z',
+    derivedStage: 'discovery',
+    stageSignals: signals,
+    stageOverride: null,
+  });
+
+  it('"discovery concluído sem plano" é dito como o desfecho que é, sem tom de erro', () => {
+    const [view] = signalViews(discovery(['completed-without-plan']));
+    expect(view.label).toBe('sem plano registrado');
+    expect(view.tone).toBe('neutral');
+    expect(view.title).toContain('não é fase pendente');
+  });
+
+  it('falha de leitura aparece como ERRO, e a frase separa "não li" de "não aconteceu"', () => {
+    const [view] = signalViews(discovery(['ingest-error']));
+    expect(view.label).toBe('não consegui ler');
+    expect(view.tone).toBe('error');
+    expect(view.title).toContain('não foi perdido');
+  });
+});
+
+describe('stageView — o override nunca engana quem lê', () => {
+  const base: DiscoverySnapshot = {
+    id: 'dsc-1',
+    title: 'Card',
+    problem: null,
+    tracker: null,
+    targetRepo: null,
+    scopeRepos: [],
+    createdAt: '2026-08-03T12:00:00.000Z',
+    derivedStage: 'discovery',
+    stageSignals: [],
+    stageOverride: null,
+  };
+
+  it('sem override, mostra a etapa derivada', () => {
+    expect(stageView(base)).toMatchObject({ shown: 'Discovery', overridden: false });
+  });
+
+  it('com override, mostra o ajuste E a derivada ao lado, dizendo quem ajustou', () => {
+    const view = stageView({ ...base, stageOverride: { value: 'done', by: 'alexandre', at: 'x', reason: 'entregue fora do app' } });
+    expect(view.shown).toBe('Concluído');
+    expect(view.derived).toBe('Discovery');
+    expect(view.overridden).toBe(true);
+    expect(view.overrideNote).toContain('alexandre');
+  });
+});
+
+describe('cardView — a tela é projeção, não cálculo', () => {
+  it('junta plano, itens, fases, notas e trava do card', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: '2026-08-03T12:00:00.000Z' }),
+      evt('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+      evt('work_item.created', {
+        id: 'wi-1',
+        discoveryId: 'dsc-1',
+        planId: 'pln-1',
+        itemType: 'issue',
+        title: 'Item',
+        targetRepo: 'atlas',
+        state: 'open',
+        createdAt: '2026-08-03T12:00:00.000Z',
+      }),
+      evt('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: 'x' }),
+      evt('note.added', { subject: { entity: 'work_item', id: 'wi-1' }, text: 'nota do item', at: 'x' }),
+      evt('lock.acquired', { subject: { entity: 'work_item', id: 'wi-1' }, phase: 'implementar', holderKind: 'app', acquiredAt: 'x' }),
+    ]);
+
+    const view = cardView(snapshot, 'dsc-1');
+    expect(view).not.toBeNull();
+    if (view === null) return;
+    expect(view.planCount).toBe(1);
+    expect(view.items).toHaveLength(1);
+    expect(view.phases).toHaveLength(1);
+    expect(view.notes).toHaveLength(1);
+    expect(view.lock?.phase).toBe('implementar');
+  });
+
+  it('o erro de ingestão do card vem junto — a tela não teria como escondê-lo', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: '2026-08-03T12:00:00.000Z' }),
+      evt('ingest.failed', {
+        resultPath: 'C:/outbox/run-9.json',
+        at: 'x',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        issues: [{ code: 'unknown_field', path: 'facts[0].fanout', message: 'x' }],
+      }),
+    ]);
+
+    const view = cardView(snapshot, 'dsc-1');
+    expect(view?.ingestErrors).toHaveLength(1);
+    expect(view?.signals.some((signal) => signal.tone === 'error')).toBe(true);
+    expect(ingestErrorLine(view!.ingestErrors[0])).toBe('unknown_field em facts[0].fanout');
+  });
+
+  it('card que não existe devolve null — a tela não inventa card', () => {
+    expect(cardView(reduceEvents([]), 'dsc-fantasma')).toBeNull();
+  });
+});
