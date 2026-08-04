@@ -1,7 +1,7 @@
 import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
-import { cardView, formatTimestamp, ingestErrorLine, phaseLine, STORE_COMPATIBILITY_WARNING, type SignalTone } from './esteiraView';
+import { cardView, formatTimestamp, ingestErrorLine, lockView, phaseLine, STORE_COMPATIBILITY_WARNING, type SignalTone } from './esteiraView';
 import styles from './EsteiraScreen.module.css';
 
 // Spec 010 — a tela da esteira nova. Ela é PROJEÇÃO do snapshot que o main
@@ -45,6 +45,7 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
   const snapshot = state?.snapshot ?? null;
   const cards = snapshot?.discoveries ?? [];
   const selected = useMemo(() => (snapshot && selectedId ? cardView(snapshot, selectedId) : null), [snapshot, selectedId]);
+  const lock = useMemo(() => (selected === null ? null : lockView(selected)), [selected]);
   const warning = state === null ? null : STORE_COMPATIBILITY_WARNING[state.compatibility];
   const readOnly = state !== null && state.compatibility !== 'read-write';
 
@@ -216,16 +217,33 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                 </section>
               ) : null}
 
-              {selected.lock ? (
+              {lock ? (
                 <section className={styles.block}>
-                  <h4 className={styles.blockTitle}>Em andamento</h4>
-                  <p className={styles.lockLine}>
-                    Fase <strong>{selected.lock.phase}</strong>, por {selected.lock.holderKind === 'skill' ? 'uma skill' : 'o app'}, desde{' '}
-                    {formatTimestamp(selected.lock.acquiredAt)}.
-                  </p>
-                  <Button variant="ghost" onClick={() => void handleRelease()} disabled={readOnly}>
-                    Liberar
-                  </Button>
+                  <h4 className={styles.blockTitle}>{lock.title}</h4>
+                  <p className={styles.lockLine}>{lock.line}</p>
+                  {/* Enquanto o disparo não abre a aba de terminal, a tela diz o
+                      que falta fazer — travar o card e ficar calada seria pior
+                      do que não travar. */}
+                  {lock.nextStep ? (
+                    <>
+                      <p className={styles.hint}>{lock.nextStep.explanation}</p>
+                      <code className={styles.command}>{lock.nextStep.command}</code>
+                      <div className={styles.rowActions}>
+                        <Button variant="ghost" onClick={() => void window.donel.clipboard.writeText(lock.nextStep!.command)}>
+                          Copiar comando
+                        </Button>
+                        <Button variant="ghost" onClick={() => void handleRelease()} disabled={readOnly}>
+                          Liberar
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className={styles.rowActions}>
+                      <Button variant="ghost" onClick={() => void handleRelease()} disabled={readOnly}>
+                        Liberar
+                      </Button>
+                    </div>
+                  )}
                 </section>
               ) : null}
 
@@ -287,7 +305,9 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                   </Button>
                 </div>
                 <p className={styles.hint}>
-                  O app grava o contexto tipado no inbox e trava o card. A skill lê de lá e devolve o resultado no outbox.
+                  {selected.lock !== null
+                    ? 'Há uma fase preparada neste card. Libere a trava acima antes de preparar outra.'
+                    : 'O app separa o contexto no inbox e trava o card. Quem roda a fase é a skill — hoje, apontando para o arquivo à mão.'}
                 </p>
               </section>
             </>

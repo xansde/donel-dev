@@ -254,3 +254,25 @@
   align-items: flex-end;
   gap: var(--space-1);
 }
+
+/* O comando que roda a fase — enquanto o disparo não abre a aba sozinho, ele é
+   o próximo passo real, e precisa poder ser lido e copiado sem esforço. */
+.command {
+  display: block;
+  padding: var(--space-1);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+  color: var(--text-primary);
+  overflow-x: auto;
+  white-space: pre;
+  user-select: all;
+}
+
+.rowActions {
+  display: flex;
+  gap: var(--space-1);
+  align-self: flex-start;
+}

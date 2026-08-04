@@ -360,6 +360,22 @@ export interface SessionSnapshot {
   readonly effort: string | null;
   readonly startedAt: string;
   readonly endedAt: string | null;
+  /**
+   * O `run-input.json` que o app deixou para esta sessao, e o `result.json` que
+   * ela deve devolver. Ficam no snapshot porque a TELA precisa deles: enquanto
+   * o disparo nao abre a aba de terminal sozinho, e por estes caminhos que o
+   * operador roda a fase — e uma tela que trava o card sem dizer o que fazer a
+   * seguir e uma tela que promete o que nao cumpre.
+   */
+  readonly inputPath: string | null;
+  readonly resultPath: string | null;
+  /**
+   * `true` quando alguem de fato assumiu a sessao (a skill declarou o
+   * `cli_session_id`). Enquanto for `false`, a fase esta PREPARADA, nao "em
+   * andamento" — sao coisas diferentes, e chamar as duas pelo mesmo nome e o
+   * mesmo vicio que a spec 010 combate, so que na direcao contraria.
+   */
+  readonly claimed: boolean;
 }
 
 export interface RelationSnapshot {

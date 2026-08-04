@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardView, ingestErrorLine, phaseLine, signalViews, stageView } from '../src/renderer/src/Esteira/esteiraView';
+import { cardView, ingestErrorLine, lockView, phaseLine, signalViews, stageView } from '../src/renderer/src/Esteira/esteiraView';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
 import type { DiscoverySnapshot, PhaseRunSnapshot, StoreEvent } from '../src/shared/esteira/store/storeFormat';
 
@@ -154,5 +154,57 @@ describe('cardView — a tela é projeção, não cálculo', () => {
 
   it('card que não existe devolve null — a tela não inventa card', () => {
     expect(cardView(reduceEvents([]), 'dsc-fantasma')).toBeNull();
+  });
+});
+
+describe('lockView — a tela não promete o que não cumpre', () => {
+  function cardWithLock(claimed: boolean, holderKind: 'app' | 'skill' = 'app') {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: '2026-08-03T12:00:00.000Z' }),
+      evt('lock.acquired', {
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        phase: 'discovery',
+        holderKind,
+        acquiredAt: '2026-08-03T12:00:00.000Z',
+      }),
+      evt('session.started', {
+        id: 'ses-1',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        phase: 'discovery',
+        startedAt: '2026-08-03T12:00:00.000Z',
+        inputPath: 'C:/inbox/run-1.json',
+        resultPath: 'C:/outbox/run-1.json',
+        ...(claimed ? { cliSessionId: 'cli-1' } : {}),
+      }),
+    ]);
+    return cardView(snapshot, 'dsc-1')!;
+  }
+
+  it('fase preparada e sem ninguém a assumindo NÃO se chama "em andamento"', () => {
+    const view = lockView(cardWithLock(false))!;
+    expect(view.title).toBe('Preparada — ninguém assumiu ainda');
+    expect(view.line).toContain('Nada está rodando');
+    expect(view.title).not.toContain('Em andamento');
+  });
+
+  it('e diz o próximo passo, com o caminho do contexto que o app deixou', () => {
+    const view = lockView(cardWithLock(false))!;
+    expect(view.nextStep?.command).toContain('read_input.py');
+    expect(view.nextStep?.command).toContain('C:/inbox/run-1.json');
+  });
+
+  it('quando alguém assumiu de verdade, aí sim é "em andamento" — e sem próximo passo', () => {
+    const view = lockView(cardWithLock(true))!;
+    expect(view.title).toBe('Em andamento');
+    expect(view.nextStep).toBeNull();
+  });
+
+  it('trava posta pela própria skill já é trabalho acontecendo', () => {
+    expect(lockView(cardWithLock(false, 'skill'))!.title).toBe('Em andamento');
+  });
+
+  it('card sem trava não tem bloco nenhum', () => {
+    const snapshot = reduceEvents([evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' })]);
+    expect(lockView(cardView(snapshot, 'dsc-1')!)).toBeNull();
   });
 });

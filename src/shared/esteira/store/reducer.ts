@@ -207,6 +207,9 @@ interface MutableSession {
   effort: string | null;
   startedAt: string;
   endedAt: string | null;
+  inputPath: string | null;
+  resultPath: string | null;
+  claimed: boolean;
 }
 
 interface MutableMirror {
@@ -474,6 +477,10 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           effort: str(p, 'effort'),
           startedAt: str(p, 'startedAt') ?? event.at,
           endedAt: null,
+          inputPath: str(p, 'inputPath'),
+          resultPath: str(p, 'resultPath'),
+          // Nasce NAO assumida: o app preparou, ninguem pegou ainda.
+          claimed: str(p, 'cliSessionId') !== null,
         });
         break;
       }

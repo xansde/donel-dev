@@ -191,6 +191,10 @@ export function dispatchPhase(store: EsteiraStore, options: DispatchOptions): Di
         model: options.model ?? null,
         effort: options.effort ?? null,
         startedAt: at,
+        // A tela precisa destes dois para dizer o que fazer a seguir enquanto
+        // o disparo nao abre a aba de terminal sozinho.
+        inputPath,
+        resultPath,
       },
     },
   ];

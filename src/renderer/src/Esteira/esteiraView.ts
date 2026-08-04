@@ -17,6 +17,7 @@ import type {
   IngestErrorSnapshot,
   LockRecord,
   PhaseRunSnapshot,
+  SessionSnapshot,
   StoreSnapshot,
   WorkItemSnapshot,
 } from '../../../shared/esteira/store/storeFormat';
@@ -86,8 +87,52 @@ export interface CardView {
   readonly items: readonly WorkItemSnapshot[];
   readonly phases: readonly PhaseRunSnapshot[];
   readonly lock: LockRecord | null;
+  /** A sessão aberta pelo disparo, quando existe — é dela que saem os caminhos do inbox/outbox. */
+  readonly openSession: SessionSnapshot | null;
   readonly ingestErrors: readonly IngestErrorSnapshot[];
   readonly notes: readonly { readonly text: string; readonly at: string }[];
+}
+
+/**
+ * O que dizer sobre a fase travada. A distinção existe porque o app **prepara**
+ * a fase mas ainda não abre a sessão sozinho: chamar isso de "em andamento"
+ * seria a tela prometendo o que não cumpre — o mesmo vício que a spec 010
+ * combate, só que na direção contrária ("não realizada" para o que foi feito).
+ */
+export interface LockView {
+  readonly title: string;
+  readonly line: string;
+  /** Preenchido enquanto ninguém assumiu: o que fazer para a fase de fato rodar. */
+  readonly nextStep: { readonly explanation: string; readonly command: string } | null;
+}
+
+export function lockView(card: CardView): LockView | null {
+  const lock = card.lock;
+  if (lock === null) return null;
+
+  const holder = lock.holderKind === 'skill' ? 'uma skill' : 'o app';
+  const claimed = card.openSession?.claimed ?? false;
+  const inputPath = card.openSession?.inputPath ?? null;
+
+  if (claimed || lock.holderKind === 'skill') {
+    return {
+      title: 'Em andamento',
+      line: `Fase ${lock.phase}, por ${holder}, desde ${formatTimestamp(lock.acquiredAt)}.`,
+      nextStep: null,
+    };
+  }
+
+  return {
+    title: 'Preparada — ninguém assumiu ainda',
+    line: `O app separou o contexto da fase ${lock.phase} às ${formatTimestamp(lock.acquiredAt)} e travou o card. Nada está rodando: abrir a sessão ainda é um passo manual.`,
+    nextStep:
+      inputPath === null
+        ? null
+        : {
+            explanation: 'Rode a fase apontando para o contexto que o app deixou:',
+            command: `python skills/esteira-donel-3.0.0/tools/read_input.py --input "${inputPath}"`,
+          },
+  };
 }
 
 /** Projeção do snapshot para UM card. A tela não deriva nada além disto. */
@@ -112,6 +157,9 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     items,
     phases: snapshot.phases.filter((phase) => belongs(phase.subject)),
     lock: snapshot.locks.find((lock) => belongs(lock.subject)) ?? null,
+    // A última sessão aberta do assunto: é ela que carrega os caminhos do
+    // `run-input.json` e do `result.json` desta rodada.
+    openSession: [...snapshot.sessions].reverse().find((session) => belongs(session.subject) && session.endedAt === null) ?? null,
     ingestErrors: snapshot.ingestErrors.filter((error) => error.subject !== null && belongs(error.subject)),
     notes: snapshot.notes.filter((note) => belongs(note.subject)).map((note) => ({ text: note.text, at: note.at })),
   };
