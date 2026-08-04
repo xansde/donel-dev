@@ -1,0 +1,74 @@
+{
+  "contract_version": "1.0.0",
+  "kind": "esteira.run-input",
+  "run": {
+    "run_id": "run-2026-08-04-1130",
+    "phase": "implementar",
+    "requested_at": "2026-08-04T14:30:00.000Z",
+    "continues_session_id": "ses-2026-08-04-implementar-1",
+    "handoff_reason": "Orcamento de contexto: o mapeamento do consumidor levaria a sessao alem de 400k tokens."
+  },
+  "subject": {
+    "discovery_id": "dsc-2026-08-03-a",
+    "plan_id": "pln-2026-08-03-a1",
+    "work_item_id": "wi-2026-08-03-a1-02"
+  },
+  "workspace": {
+    "target_repo": "atlas",
+    "repo_path": "C:/Users/dev/code/atlas",
+    "worktree_path": "C:/Users/dev/code/atlas-wt/wi-2026-08-03-a1-02",
+    "branch": "feat/fila-observavel"
+  },
+  "outbox": {
+    "result_path": "C:/Users/dev/.claude/esteira-donel/outbox/run-2026-08-04-1130.json"
+  },
+  "context": {
+    "discovery": {
+      "id": "dsc-2026-08-03-a",
+      "title": "Fila de importacao trava sem sinal",
+      "problem": null,
+      "tracker": null,
+      "target_repo": "atlas",
+      "scope_repos": []
+    },
+    "plan": {
+      "id": "pln-2026-08-03-a1",
+      "title": "Tornar o estado da fila observavel",
+      "summary": null
+    },
+    "work_item": {
+      "id": "wi-2026-08-03-a1-02",
+      "title": "Expor estado da fila no endpoint de saude",
+      "item_type": "issue",
+      "state": "in-progress",
+      "target_repo": "atlas",
+      "scope_repos": ["atlas"]
+    },
+    "derived_stage": "execution",
+    "history": [
+      {
+        "phase": "discovery",
+        "outcome": "done",
+        "summary": "Um plano proposto; escopo confirmado em dois repos.",
+        "completed_at": "2026-08-03T12:41:07.000Z",
+        "failure": null
+      },
+      {
+        "phase": "implementar",
+        "outcome": null,
+        "summary": null,
+        "completed_at": null,
+        "failure": {
+          "code": "worktree-dirty",
+          "message": "A worktree do item tinha alteracoes nao commitadas de uma sessao anterior."
+        }
+      }
+    ],
+    "notes": [
+      {
+        "text": "Nada foi escrito no repo: a fase abortou antes de tocar arquivo.",
+        "at": "2026-08-04T11:06:31.000Z"
+      }
+    ]
+  }
+}

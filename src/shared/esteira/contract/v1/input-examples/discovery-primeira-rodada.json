@@ -1,0 +1,40 @@
+{
+  "contract_version": "1.0.0",
+  "kind": "esteira.run-input",
+  "run": {
+    "run_id": "run-2026-08-03-0900",
+    "phase": "discovery",
+    "requested_at": "2026-08-03T12:00:00.000Z",
+    "continues_session_id": null,
+    "handoff_reason": null
+  },
+  "subject": {
+    "discovery_id": "dsc-2026-08-03-a",
+    "plan_id": null,
+    "work_item_id": null
+  },
+  "workspace": {
+    "target_repo": "atlas",
+    "repo_path": "C:/Users/dev/code/atlas",
+    "worktree_path": null,
+    "branch": null
+  },
+  "outbox": {
+    "result_path": "C:/Users/dev/.claude/esteira-donel/outbox/run-2026-08-03-0900.json"
+  },
+  "context": {
+    "discovery": {
+      "id": "dsc-2026-08-03-a",
+      "title": "Fila de importacao trava sem sinal",
+      "problem": "Lotes grandes ficam pendentes sem erro e sem log; ninguem sabe se terminou.",
+      "tracker": { "provider": "taskdex", "card_id": "card-4711" },
+      "target_repo": "atlas",
+      "scope_repos": ["atlas", "beacon"]
+    },
+    "plan": null,
+    "work_item": null,
+    "derived_stage": "discovery",
+    "history": [],
+    "notes": []
+  }
+}

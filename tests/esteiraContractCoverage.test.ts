@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { CONSUMED_PATHS, FACT_TYPES, parseEsteiraResultText } from '../src/shared/esteira/contract/resultContract';
+import { createSchemaWalker, type JsonNode } from './helpers/contractSchemaPaths';
 
 // Spec 010 (D-10) — TESTE DE CONTRATO, lado APP.
 //
@@ -31,98 +32,12 @@ const CONTRACT_DIR = fileURLToPath(new URL('../src/shared/esteira/contract/v1/',
 const SCHEMA_PATH = `${CONTRACT_DIR}esteira-result.schema.json`;
 const EXAMPLES_DIR = `${CONTRACT_DIR}examples/`;
 
-type JsonNode = Record<string, unknown>;
-
 const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8')) as JsonNode;
 
-function resolveRef(node: JsonNode): JsonNode {
-  const ref = node.$ref;
-  if (typeof ref !== 'string') return node;
-  const key = ref.replace('#/$defs/', '');
-  const defs = schema.$defs as Record<string, JsonNode>;
-  return resolveRef(defs[key]);
-}
-
-/** `oneOf: [<algo>, {type: "null"}]` e um campo anulavel — o que interessa e o lado nao-nulo. */
-function unwrapNullable(node: JsonNode): JsonNode {
-  const oneOf = node.oneOf;
-  if (!Array.isArray(oneOf)) return node;
-  const nonNull = oneOf.filter((entry) => (entry as JsonNode).type !== 'null') as JsonNode[];
-  if (nonNull.length !== 1) return node;
-  return resolveRef(nonNull[0]);
-}
-
-function isObjectNode(node: JsonNode): boolean {
-  return node.type === 'object' && typeof node.properties === 'object' && node.properties !== null;
-}
-
-/** Percorre o schema e emite os caminhos canonicos declarados. */
-function collectSchemaPaths(node: JsonNode, prefix: string, out: Set<string>): void {
-  const properties = node.properties as Record<string, JsonNode>;
-  for (const [key, rawChild] of Object.entries(properties)) {
-    const child = unwrapNullable(resolveRef(rawChild));
-    const path = `${prefix}${key}`;
-
-    if (child.type === 'array') {
-      const items = unwrapNullable(resolveRef(child.items as JsonNode));
-      const branches = Array.isArray(items.oneOf) ? (items.oneOf as JsonNode[]).map(resolveRef) : [items];
-      for (const branch of branches) {
-        if (!isObjectNode(branch)) {
-          out.add(`${path}[]`);
-          continue;
-        }
-        // Uniao discriminada (os fatos): o `const` do discriminante nomeia o ramo.
-        const discriminant = discriminantOf(branch);
-        collectSchemaPaths(branch, discriminant === null ? `${path}[].` : `${path}[${discriminant}].`, out);
-      }
-      continue;
-    }
-
-    if (isObjectNode(child)) {
-      collectSchemaPaths(child, `${path}.`, out);
-      continue;
-    }
-
-    out.add(path);
-  }
-}
-
-function discriminantOf(branch: JsonNode): string | null {
-  const properties = branch.properties as Record<string, JsonNode>;
-  const type = properties?.type;
-  return typeof type?.const === 'string' ? type.const : null;
-}
-
-/** Mesma notacao, agora sobre um documento real: so conta campo com valor NAO-NULO. */
-function collectValuePaths(node: JsonNode, prefix: string, out: Set<string>): void {
-  for (const [key, value] of Object.entries(node)) {
-    if (value === null || value === undefined) continue;
-    const path = `${prefix}${key}`;
-
-    if (Array.isArray(value)) {
-      for (const entry of value) {
-        if (entry !== null && typeof entry === 'object' && !Array.isArray(entry)) {
-          const discriminant = (entry as JsonNode).type;
-          const base = typeof discriminant === 'string' ? `${path}[${discriminant}].` : `${path}[].`;
-          collectValuePaths(entry as JsonNode, base, out);
-        } else {
-          out.add(`${path}[]`);
-        }
-      }
-      continue;
-    }
-
-    if (typeof value === 'object') {
-      collectValuePaths(value as JsonNode, `${path}.`, out);
-      continue;
-    }
-
-    out.add(path);
-  }
-}
-
-const schemaPaths = new Set<string>();
-collectSchemaPaths(schema, '', schemaPaths);
+// O walker mora em `tests/helpers/contractSchemaPaths.ts` desde que a IDA
+// (`run-input.json`) ganhou o mesmo teste: uma copia por contrato seriam duas
+// chances de o mecanismo divergir do que ele protege.
+const { schemaPaths, collectValuePaths } = createSchemaWalker(schema);
 
 const exampleFiles = readdirSync(EXAMPLES_DIR).filter((name) => name.endsWith('.json'));
 const examples = exampleFiles.map((name) => ({ name, text: readFileSync(`${EXAMPLES_DIR}${name}`, 'utf8') }));

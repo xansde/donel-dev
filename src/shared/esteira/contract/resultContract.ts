@@ -17,6 +17,24 @@
 //
 // Modulo puro: sem I/O, sem dependencia de Electron, nunca lanca.
 
+import {
+  Collector,
+  ID_PATTERN,
+  PHASE_PATTERN,
+  SEMVER_PATTERN,
+  TIMESTAMP_PATTERN,
+  isPlainObject,
+  majorOf,
+  optionalPattern,
+  optionalString,
+  rejectUnknownKeys,
+  requireEnum,
+  requirePattern,
+  requireString,
+  requireStringList,
+  type ContractIssue,
+} from './parsing';
+
 /** Versao do contrato que este app implementa. Major diferente = recusa de ingestao. */
 export const CONTRACT_VERSION = '1.0.0';
 
@@ -171,36 +189,13 @@ export interface EsteiraResult {
 }
 
 /**
- * Codigos estaveis de erro de ingestao. A redacao pt-BR mostrada no card e
- * composta pela UI a partir de `code` + `path` — o parser nao carrega texto de
- * interface. O que NAO pode acontecer e a ausencia deste objeto: documento
- * fora do contrato vira erro VISIVEL (D-10), nunca "fase nao realizada".
+ * Os codigos e o formato do issue moram em `parsing.ts`, compartilhados com o
+ * contrato de IDA (`runInput.ts`): duas copias das mesmas regras seriam duas
+ * chances de elas divergirem. O que NAO pode acontecer e a ausencia do issue —
+ * documento fora do contrato vira erro VISIVEL (D-10), nunca "fase nao
+ * realizada".
  */
-export type ContractIssueCode =
-  | 'not_an_object'
-  | 'invalid_json'
-  | 'wrong_kind'
-  | 'unsupported_major'
-  | 'missing_field'
-  | 'unknown_field'
-  | 'wrong_type'
-  | 'bad_format'
-  | 'not_in_enum'
-  | 'empty_facts'
-  | 'unknown_fact_type'
-  | 'missing_required_fact'
-  | 'issue_without_target_repo'
-  | 'artifact_repo_mismatch'
-  | 'failure_missing'
-  | 'failure_unexpected';
-
-export interface ContractIssue {
-  readonly code: ContractIssueCode;
-  /** Caminho canonico dentro do documento, ex.: `facts[2].work_item_id`. */
-  readonly path: string;
-  /** Texto tecnico curto, em ingles — insumo de log, nao de tela. */
-  readonly message: string;
-}
+export type { ContractIssue, ContractIssueCode } from './parsing';
 
 export type ParseEsteiraResult =
   | { readonly ok: true; readonly result: EsteiraResult }
@@ -297,118 +292,6 @@ export const CONSUMED_PATHS: readonly string[] = [
   'facts[note.recorded].subject.id',
   'facts[note.recorded].text',
 ];
-
-const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
-const PHASE_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
-const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
-const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
-
-class Collector {
-  readonly issues: ContractIssue[] = [];
-
-  add(code: ContractIssueCode, path: string, message: string): void {
-    this.issues.push({ code, path, message });
-  }
-
-  get failed(): boolean {
-    return this.issues.length > 0;
-  }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Campo desconhecido e ERRO, nao ruido ignorado: e assim que "campo de um lado so" aparece na hora da ingestao. */
-function rejectUnknownKeys(node: Record<string, unknown>, allowed: readonly string[], path: string, c: Collector): void {
-  for (const key of Object.keys(node)) {
-    if (!allowed.includes(key)) c.add('unknown_field', path ? `${path}.${key}` : key, `unknown field "${key}"`);
-  }
-}
-
-function requireString(node: Record<string, unknown>, key: string, path: string, c: Collector): string | null {
-  const value = node[key];
-  if (value === undefined || value === null) {
-    c.add('missing_field', `${path}.${key}`, `required field "${key}" is missing`);
-    return null;
-  }
-  if (typeof value !== 'string' || value.length === 0) {
-    c.add('wrong_type', `${path}.${key}`, `field "${key}" must be a non-empty string`);
-    return null;
-  }
-  return value;
-}
-
-function optionalString(node: Record<string, unknown>, key: string, path: string, c: Collector): string | null {
-  const value = node[key];
-  if (value === undefined || value === null) return null;
-  if (typeof value !== 'string') {
-    c.add('wrong_type', `${path}.${key}`, `field "${key}" must be a string or null`);
-    return null;
-  }
-  return value;
-}
-
-function requirePattern(
-  node: Record<string, unknown>,
-  key: string,
-  pattern: RegExp,
-  path: string,
-  c: Collector,
-): string | null {
-  const value = requireString(node, key, path, c);
-  if (value === null) return null;
-  if (!pattern.test(value)) {
-    c.add('bad_format', `${path}.${key}`, `field "${key}" does not match ${String(pattern)}`);
-    return null;
-  }
-  return value;
-}
-
-function optionalPattern(
-  node: Record<string, unknown>,
-  key: string,
-  pattern: RegExp,
-  path: string,
-  c: Collector,
-): string | null {
-  const value = optionalString(node, key, path, c);
-  if (value === null) return null;
-  if (!pattern.test(value)) {
-    c.add('bad_format', `${path}.${key}`, `field "${key}" does not match ${String(pattern)}`);
-    return null;
-  }
-  return value;
-}
-
-function requireEnum<T extends string>(
-  node: Record<string, unknown>,
-  key: string,
-  allowed: readonly T[],
-  path: string,
-  c: Collector,
-): T | null {
-  const value = node[key];
-  if (value === undefined || value === null) {
-    c.add('missing_field', `${path}.${key}`, `required field "${key}" is missing`);
-    return null;
-  }
-  if (typeof value !== 'string' || !allowed.includes(value as T)) {
-    c.add('not_in_enum', `${path}.${key}`, `field "${key}" must be one of ${allowed.join('|')}`);
-    return null;
-  }
-  return value as T;
-}
-
-function requireStringList(node: Record<string, unknown>, key: string, path: string, c: Collector): readonly string[] {
-  const value = node[key];
-  if (value === undefined || value === null) return [];
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string' || entry.length === 0)) {
-    c.add('wrong_type', `${path}.${key}`, `field "${key}" must be an array of non-empty strings`);
-    return [];
-  }
-  return value as readonly string[];
-}
 
 function parseEntityRef(node: Record<string, unknown>, key: string, path: string, c: Collector): EntityRef | null {
   const raw = node[key];
@@ -650,12 +533,6 @@ function parseFact(raw: unknown, path: string, c: Collector): EsteiraFact | null
       return { type: factType,subject, text };
     }
   }
-}
-
-/** Major do semver, ou `null` se nao for semver. */
-function majorOf(version: string): string | null {
-  if (!SEMVER_PATTERN.test(version)) return null;
-  return version.split('.')[0];
 }
 
 /**

@@ -1,0 +1,57 @@
+{
+  "contract_version": "1.0.0",
+  "kind": "esteira.run-input",
+  "run": {
+    "run_id": "run-2026-08-03-1400",
+    "phase": "plano",
+    "requested_at": "2026-08-03T17:00:00.000Z",
+    "continues_session_id": null,
+    "handoff_reason": null
+  },
+  "subject": {
+    "discovery_id": "dsc-2026-08-03-a",
+    "plan_id": "pln-2026-08-03-a1",
+    "work_item_id": null
+  },
+  "workspace": {
+    "target_repo": "atlas",
+    "repo_path": "C:/Users/dev/code/atlas",
+    "worktree_path": "C:/Users/dev/code/atlas-wt/pln-2026-08-03-a1",
+    "branch": "plan/pln-2026-08-03-a1"
+  },
+  "outbox": {
+    "result_path": "C:/Users/dev/.claude/esteira-donel/outbox/run-2026-08-03-1400.json"
+  },
+  "context": {
+    "discovery": {
+      "id": "dsc-2026-08-03-a",
+      "title": "Fila de importacao trava sem sinal",
+      "problem": "Lotes grandes ficam pendentes sem erro e sem log; ninguem sabe se terminou.",
+      "tracker": { "provider": "taskdex", "card_id": "card-4711" },
+      "target_repo": "atlas",
+      "scope_repos": ["atlas", "beacon"]
+    },
+    "plan": {
+      "id": "pln-2026-08-03-a1",
+      "title": "Tornar o estado da fila observavel",
+      "summary": "Instrumentar a fila e expor o estado antes de mexer no consumo."
+    },
+    "work_item": null,
+    "derived_stage": "planned",
+    "history": [
+      {
+        "phase": "discovery",
+        "outcome": "done",
+        "summary": "Um plano proposto; escopo confirmado em dois repos.",
+        "completed_at": "2026-08-03T12:41:07.000Z",
+        "failure": null
+      }
+    ],
+    "notes": [
+      {
+        "text": "Duas hipoteses descartadas na entrevista: timeout do worker e limite de conexao.",
+        "at": "2026-08-03T12:41:07.000Z"
+      }
+    ]
+  }
+}

@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://donel.dev/contracts/esteira-run-input/v1",
+  "title": "Esteira run-input.json — contrato app -> skills, v1",
+  "description": "ARQUIVO CANONICO da IDA (spec 010, D-10; lacuna 2 do handoff da fase 1, decidida em 2026-08-03). O `result.json` e a volta; este e a ida — o que o app entrega a skill quando dispara uma fase, no lugar do antigo `ctx.md` de texto livre. Mesmo rigor dos dois lados: campo desconhecido e ERRO, e o teste de contrato confronta este arquivo com o que o app PRODUZ (PRODUCED_PATHS) e com o que a skill CONSOME (espelho no fork esteira-donel-3.0.0). Texto livre na ida deixaria a metade da troca sem a protecao que a volta ganhou — o mesmo desencontro, so que na outra direcao.",
+  "x-contract-version": "1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "kind", "run", "subject", "outbox", "context"],
+  "properties": {
+    "contract_version": {
+      "description": "Semver do CONTRATO. Major diferente do que a skill conhece = ela recusa rodar e diz por que, em vez de adivinhar o que o app quis dizer.",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "kind": {
+      "description": "Discriminante de arquivo — rejeita um JSON qualquer que caia na pasta.",
+      "const": "esteira.run-input"
+    },
+    "run": { "$ref": "#/$defs/run" },
+    "subject": { "$ref": "#/$defs/subject" },
+    "workspace": {
+      "description": "O ALVO da fase (D-6). `null` so quando a fase nao toca repo nenhum (discovery de um problema). Quando existe, `target_repo` e obrigatorio e NUNCA e inferido do projeto em foco — foi essa inferencia que abriu fase no repo errado (evidencia 2 da spec).",
+      "oneOf": [{ "$ref": "#/$defs/workspace" }, { "type": "null" }]
+    },
+    "outbox": { "$ref": "#/$defs/outbox" },
+    "context": { "$ref": "#/$defs/context" }
+  },
+  "$defs": {
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "phase", "requested_at"],
+      "properties": {
+        "run_id": {
+          "description": "Identidade desta execucao, gerada pelo APP. O `result.json` devolve o MESMO valor — e o que amarra ida e volta e da idempotencia a ingestao.",
+          "$ref": "#/$defs/id"
+        },
+        "phase": {
+          "description": "Nome da fase a tocar. String livre pelo mesmo motivo do result.json: [P-4] deixou os nomes por ciclo de vida em aberto.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$"
+        },
+        "requested_at": { "$ref": "#/$defs/timestamp" },
+        "continues_session_id": {
+          "description": "[P-6] — sessao anterior da MESMA fase, quando esta nasce de handoff por orcamento de contexto. `null` = comeco da cadeia.",
+          "type": ["string", "null"]
+        },
+        "handoff_reason": {
+          "description": "Por que houve handoff. Preenchido junto com `continues_session_id`; e o que a sessao nova le para nao recomecar do zero.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "subject": {
+      "description": "Quem esta sendo tocado, do mais amplo ao mais especifico. `discovery_id` sempre existe: toda fase acontece dentro de um discovery.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["discovery_id"],
+      "properties": {
+        "discovery_id": { "$ref": "#/$defs/id" },
+        "plan_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "work_item_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_repo"],
+      "properties": {
+        "target_repo": {
+          "description": "UM repo (D-6). Item do tipo `issue` sem repo NAO dispara — a regra e cobrada pelo parser dos dois lados.",
+          "type": "string",
+          "minLength": 1
+        },
+        "repo_path": { "type": ["string", "null"] },
+        "worktree_path": { "type": ["string", "null"] },
+        "branch": { "type": ["string", "null"] }
+      }
+    },
+    "outbox": {
+      "description": "Onde a skill deve gravar o `result.json`. O APP diz o lugar — assim a skill nao precisa saber do canal, do userData nem do nome do app, e o app nao precisa adivinhar onde procurar.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result_path"],
+      "properties": {
+        "result_path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "context": {
+      "description": "O retrato do assunto no momento do disparo, derivado do store. E o que substitui o `ctx.md`: os mesmos dados, agora tipados e verificaveis.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["discovery", "history", "notes"],
+      "properties": {
+        "discovery": { "$ref": "#/$defs/discovery" },
+        "plan": { "oneOf": [{ "$ref": "#/$defs/plan" }, { "type": "null" }] },
+        "work_item": { "oneOf": [{ "$ref": "#/$defs/work_item" }, { "type": "null" }] },
+        "derived_stage": {
+          "description": "Macro etapa CALCULADA pelo app (D-13). Vai junto para a skill saber onde o card esta, nunca para ela decidir a etapa — a derivacao e do app e de mais ninguem.",
+          "enum": ["discovery", "planned", "execution", "done"]
+        },
+        "history": {
+          "description": "Fases ja encerradas deste assunto, com desfecho. E o que impede a skill de refazer o que ja foi feito — e, principalmente, o que a deixa distinguir 'nao aconteceu' de 'aconteceu e terminou assim'.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/history_entry" }
+        },
+        "notes": {
+          "description": "Notas humanas amarradas ao assunto, em ordem cronologica.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/note" }
+        }
+      }
+    },
+    "discovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "problem": { "type": ["string", "null"] },
+        "tracker": {
+          "description": "D-1 — referencia guardada, jamais consultada para saber estado. A skill a usa para citar o card, nunca como fonte de verdade.",
+          "oneOf": [{ "$ref": "#/$defs/tracker" }, { "type": "null" }]
+        },
+        "target_repo": { "type": ["string", "null"] },
+        "scope_repos": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "summary": { "type": ["string", "null"] }
+      }
+    },
+    "work_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "item_type", "state"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "item_type": { "enum": ["issue", "spec", "process-map", "adr", "prototype", "spike", "eval"] },
+        "state": { "enum": ["open", "in-progress", "done", "abandoned"] },
+        "target_repo": { "type": ["string", "null"] },
+        "scope_repos": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "history_entry": {
+      "description": "Uma passagem de fase ja registrada. Ou ela CONCLUIU (tem `outcome`), ou ela FALHOU (tem `failure`) — as duas coisas sao ditas, nunca omitidas. Uma tentativa anterior que falhou sem aparecer aqui faria a skill repetir o mesmo erro achando que e a primeira vez.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase"],
+      "properties": {
+        "phase": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+        "outcome": { "oneOf": [{ "enum": ["done", "abandoned", "inconclusive"] }, { "type": "null" }] },
+        "summary": { "type": ["string", "null"] },
+        "completed_at": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "failure": {
+          "description": "Preenchido quando o run daquela fase terminou mal. Codigo + motivo, do jeito que o `result.json` os declarou.",
+          "oneOf": [{ "$ref": "#/$defs/failure" }, { "type": "null" }]
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "at"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "tracker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "card_id"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "card_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "id": {
+      "description": "Mesmo padrao do result.json. Nao aceita underscore de proposito: ids viajam em nome de arquivo e em branch.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+    }
+  }
+}
