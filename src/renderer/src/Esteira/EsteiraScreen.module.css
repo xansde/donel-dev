@@ -255,6 +255,48 @@
   gap: var(--space-1);
 }
 
+/* As fases ficam TODAS visíveis; a que o card não comporta fica desabilitada,
+   com a razão escrita logo abaixo. Esconder a opção pouparia pixel e faria a
+   tela mentir por omissão. */
+.phaseRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.phaseChip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-caption-size);
+  cursor: pointer;
+}
+
+.phaseChip:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+
+.phaseChip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.phaseChipSelected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* A razão de não dar para disparar tem peso de aviso — ela é o que substitui o
+   clique que falharia. */
+.blockedReason {
+  margin: 0;
+  font-size: var(--text-caption-size);
+  color: var(--state-waiting);
+}
+
 /* O comando que roda a fase — enquanto o disparo não abre a aba sozinho, ele é
    o próximo passo real, e precisa poder ser lido e copiado sem esforço. */
 .command {
@@ -275,4 +317,49 @@
   display: flex;
   gap: var(--space-1);
   align-self: flex-start;
+  flex-wrap: wrap;
+}
+
+/* A etapa, em destaque, com o que ela é (calculada ou ajustada) logo ao lado. */
+.stageLine {
+  margin: 0;
+}
+
+/* Os itens deixam de ser uma lista de leitura: cada um carrega os gestos que
+   movem o card, então cada um é um bloco, não uma linha de <ul>. */
+.itemList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+}
+
+.itemLine {
+  font-size: var(--text-body-size);
+}
+
+.noteForm {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+/* Sobre o que a nota é. Sem isso, nota de item e nota de card viram a mesma
+   coisa na tela — e deixam de dizer a que se prendem. */
+.noteAbout {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
 }

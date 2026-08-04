@@ -1,0 +1,357 @@
+import { describe, expect, it } from 'vitest';
+import { buildMapView, type MapSelection } from '../src/renderer/src/DevMode/esteiraMapView';
+import { reduceEvents } from '../src/shared/esteira/store/reducer';
+import type { StoreEvent } from '../src/shared/esteira/store/storeFormat';
+
+// Spec 010 / batch B6 — o mapa passa a ler o STORE.
+//
+// A forma sobrevive (carrossel de dois eixos, chips de fase, painel de
+// detalhe); o que muda é o que os nós significam: discovery → planos → ITENS,
+// com tipo e ciclo de vida (D-4), macro etapa derivada (D-13) e os sinais do
+// card — inclusive "não consegui ler", que o mapa antigo pintava como "não
+// realizada" (issue #35, revertida aqui na origem).
+//
+// Este arquivo cobre a DECISÃO. O componente só desenha o que sai daqui: se
+// uma frase de estado nascer no JSX, a próxima correção não sobe até a raiz —
+// foi assim que o mesmo defeito reapareceu três vezes neste repo.
+
+let seq = 0;
+function evt(type: string, payload: Record<string, unknown>, at = '2026-08-04T09:00:00.000Z'): StoreEvent {
+  seq += 1;
+  return { seq, event_id: `evt-${seq}`, at, type, source: { kind: 'app' }, dedupe_key: null, payload };
+}
+
+const SELECTION_VAZIA: MapSelection = { discoveryId: null, planId: null, itemId: null, nodeKey: null, phase: null };
+
+function snapshotDe(events: readonly StoreEvent[]) {
+  return reduceEvents(events);
+}
+
+/** Um discovery com plano e dois itens — o esqueleto que quase todo caso usa. */
+function eventosBase(): StoreEvent[] {
+  return [
+    evt('discovery.created', { id: 'dsc-1', title: 'Fila de importação trava sem sinal', targetRepo: 'donel-dev' }),
+    evt('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: '2026-08-04T09:10:00.000Z' }),
+    evt('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Instrumentar a fila' }),
+    evt('work_item.created', {
+      id: 'wki-1',
+      discoveryId: 'dsc-1',
+      planId: 'pln-1',
+      itemType: 'issue',
+      title: 'Expor o estado da fila no endpoint de saúde',
+      createdBySkill: true,
+    }),
+  ];
+}
+
+describe('buildMapView — o vazio honesto', () => {
+  it('sem store nenhum, o mapa não inventa nível nem card', () => {
+    const view = buildMapView(null, SELECTION_VAZIA);
+    expect(view.levels).toHaveLength(0);
+    expect(view.empty).toContain('histórico');
+  });
+
+  it('store vazio diz que ele NASCE limpo — não que algo sumiu', () => {
+    const view = buildMapView(snapshotDe([]), SELECTION_VAZIA);
+    expect(view.empty).toBe('Nenhum card ainda. O histórico nasce limpo — nada foi importado do modelo antigo.');
+    expect(view.empty).not.toContain('não realizada');
+  });
+});
+
+describe('buildMapView — os níveis do modelo novo', () => {
+  it('discovery sem plano tem o nível fantasma dos planos, com o que falta acontecer', () => {
+    const view = buildMapView(snapshotDe([evt('discovery.created', { id: 'dsc-1', title: 'Um problema' })]), SELECTION_VAZIA);
+    expect(view.levels.map((level) => level.key)).toEqual(['discovery', 'preview']);
+    const fantasma = view.levels[1];
+    expect(fantasma.focusable).toBe(false);
+    expect(fantasma.cards[0].title).toBe('PLANOS');
+    // Nunca "0 planos": a frase diz de onde o primeiro nasce.
+    expect(fantasma.cards[0].metaLine).toContain('skill');
+  });
+
+  it('discovery com plano e item tem os três níveis, e o item é a unidade', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);
+    expect(view.levels.map((level) => level.key)).toEqual(['discovery', 'planos', 'itens']);
+    const itens = view.levels[2];
+    expect(itens.cards).toHaveLength(1);
+    expect(itens.cards[0].kind).toBe('item');
+    expect(itens.cards[0].title).toBe('Expor o estado da fila no endpoint de saúde');
+  });
+
+  it('o eixo X do nível Discovery navega entre TODOS os discoveries do store', () => {
+    const events = [
+      ...eventosBase(),
+      evt('discovery.created', { id: 'dsc-2', title: 'Outro problema' }),
+    ];
+    const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, discoveryId: 'dsc-2' });
+    expect(view.levels[0].cards.map((card) => card.title)).toEqual(['Fila de importação trava sem sinal', 'Outro problema']);
+    expect(view.levels[0].focusedCardIndex).toBe(1);
+    expect(view.focused.discoveryId).toBe('dsc-2');
+  });
+
+  it('item sem plano nunca some do nível de itens — órfão se sinaliza, não se esconde', () => {
+    const events = [
+      ...eventosBase(),
+      evt('work_item.created', { id: 'wki-orfao', discoveryId: 'dsc-1', itemType: 'spike', title: 'Medir onde o lote para' }),
+    ];
+    const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, planId: 'pln-1' });
+    const itens = view.levels.find((level) => level.key === 'itens');
+    expect(itens?.cards.map((card) => card.title)).toContain('Medir onde o lote para');
+    const orfao = itens?.cards.find((card) => card.title === 'Medir onde o lote para');
+    expect(orfao?.tags.some((tag) => tag.text === 'sem plano')).toBe(true);
+  });
+});
+
+describe('buildMapView — o card do discovery', () => {
+  it('mostra a macro etapa DERIVADA, com a palavra do modelo', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);
+    expect(view.levels[0].cards[0].statusLabel).toBe('Planejado');
+  });
+
+  it('ajuste manual mostra a etapa forçada E o cálculo ao lado — override que esconde o cálculo engana', () => {
+    const events = [
+      ...eventosBase(),
+      evt('stage.overridden', { discoveryId: 'dsc-1', value: 'done', by: 'xansd' }),
+    ];
+    const card = buildMapView(snapshotDe(events), SELECTION_VAZIA).levels[0].cards[0];
+    expect(card.statusLabel).toBe('Concluído');
+    expect(card.tags.some((tag) => tag.text.includes('ajuste manual') && tag.text.includes('Planejado'))).toBe(true);
+  });
+
+  it('os sinais do card viram etiquetas — inclusive "não consegui ler"', () => {
+    const events = [
+      ...eventosBase(),
+      evt('ingest.failed', {
+        resultPath: 'C:/outbox/run-9.json',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        issues: [{ code: 'unknown_field', path: 'facts[0].kind', message: 'campo desconhecido' }],
+      }),
+    ];
+    const card = buildMapView(snapshotDe(events), SELECTION_VAZIA).levels[0].cards[0];
+    const etiqueta = card.tags.find((tag) => tag.text === 'não consegui ler');
+    expect(etiqueta).toBeDefined();
+    expect(etiqueta?.tone).toBe('error');
+    expect(card.tags.some((tag) => tag.text === 'não realizada')).toBe(false);
+  });
+
+  it('espelho pendente aparece como etiqueta, e não como falha do trabalho local', () => {
+    const events = [
+      ...eventosBase(),
+      evt('mirror.queued', { subject: { entity: 'discovery', id: 'dsc-1' }, operation: 'column', payload: { column: 'Plano' } }),
+    ];
+    const card = buildMapView(snapshotDe(events), SELECTION_VAZIA).levels[0].cards[0];
+    expect(card.tags.some((tag) => tag.text === 'espelho pendente')).toBe(true);
+  });
+});
+
+describe('buildMapView — a trilha das fases', () => {
+  it('a fase que rodou aparece com a palavra dela — e não sobra passo pendurado depois dela', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);
+    const trilha = view.levels[0].cards[0].trail;
+    expect(trilha[0].text).toBe('discovery — concluída');
+    expect(trilha[0].glyph).toBe('done');
+    // A trilha é POR ASSUNTO: o discovery já rodou a fase dele, e a fase de
+    // plano é do PLANO — ela aparece no nível de baixo, não pendurada aqui.
+    expect(trilha.some((step) => step.isNext)).toBe(false);
+  });
+
+  it('a próxima fase do plano é a que o catálogo (B2) oferece, no card do plano', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);
+    const trilha = view.levels[1].cards[0].trail;
+    const proxima = trilha.find((step) => step.isNext);
+    expect(proxima?.phase).toBe('plano');
+    expect(proxima?.text).toBe('plano — é a próxima');
+    expect(proxima?.enabled).toBe(true);
+  });
+
+  it('card recém-criado tem a fase discovery como próxima, com o "Preparar" liberado', () => {
+    const view = buildMapView(snapshotDe([evt('discovery.created', { id: 'dsc-1', title: 'Um problema', targetRepo: 'donel-dev' })]), SELECTION_VAZIA);
+    const proxima = view.levels[0].cards[0].trail.find((step) => step.isNext);
+    expect(proxima?.phase).toBe('discovery');
+    expect(proxima?.enabled).toBe(true);
+    expect(proxima?.glyph).toBe('not-started');
+  });
+
+  it('a trilha só nasce no card EM FOCO — os vizinhos ficam curtos, como no design', () => {
+    const events = [...eventosBase(), evt('discovery.created', { id: 'dsc-2', title: 'Outro problema' })];
+    const view = buildMapView(snapshotDe(events), SELECTION_VAZIA);
+    expect(view.levels[0].cards[0].trail.length).toBeGreaterThan(0);
+    expect(view.levels[0].cards[1].trail).toHaveLength(0);
+  });
+
+  it('fase que falhou diz que falhou, com o código — jamais "não realizada"', () => {
+    const events = [
+      ...eventosBase(),
+      evt('phase.failed', {
+        subject: { entity: 'work_item', id: 'wki-1' },
+        phase: 'implementar',
+        failure: { code: 'worktree-dirty', message: 'a worktree tem mudança não commitada' },
+      }),
+    ];
+    const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, itemId: 'wki-1' });
+    const item = view.levels[2].cards.find((card) => card.subject?.id === 'wki-1');
+    expect(item?.trail[0].text).toBe('implementar — falhou: worktree-dirty');
+    expect(item?.trail[0].glyph).toBe('failed');
+  });
+
+  it('trava no card: a próxima fase do plano vem BLOQUEADA, com a razão escrita', () => {
+    const events = [
+      ...eventosBase(),
+      evt('lock.acquired', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', holderKind: 'app' }),
+    ];
+    const view = buildMapView(snapshotDe(events), SELECTION_VAZIA);
+    const proxima = view.levels[1].cards[0].trail.find((step) => step.isNext);
+    expect(proxima?.enabled).toBe(false);
+    expect(proxima?.reason).toContain('travada');
+  });
+});
+
+describe('buildMapView — o ciclo de vida do item (D-4)', () => {
+  it('spike que respondeu "não dá" aparece CONCLUÍDO, não pela metade', () => {
+    const events = [
+      ...eventosBase(),
+      evt('work_item.created', { id: 'wki-spike', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'spike', title: 'Dá para ler o transcript inteiro?' }),
+      evt('verification.updated', {
+        subject: { entity: 'work_item', id: 'wki-spike' },
+        verificationKind: 'conclusion',
+        state: 'passed',
+        ref: 'não dá: o arquivo passa de 400 MB e o parser trava',
+      }),
+      evt('work_item.updated', { id: 'wki-spike', state: 'done' }),
+    ];
+    const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, itemId: 'wki-spike' });
+    const card = view.levels[2].cards.find((c) => c.subject?.id === 'wki-spike');
+
+    expect(card?.statusLabel).toBe('concluído');
+    // O fecho do ciclo "pergunta respondida" é dito com todas as letras — e a
+    // resposta negativa é desfecho, não pendência.
+    expect(card?.closureLine).toContain('pergunta');
+    expect(card?.closureLine).toContain('não dá: o arquivo passa de 400 MB e o parser trava');
+    // E a trilha NÃO fica com um passo pendente pendurado: item fechado não tem
+    // "próxima fase". Era isso que fazia um spike respondido parecer PR pela metade.
+    expect(card?.trail.some((step) => step.isNext)).toBe(false);
+  });
+
+  it('o detalhe do item fechado não repete o fecho: a linha do topo continua sendo a meta do item', () => {
+    // Achado da captura (print 19): o painel imprimia a MESMA frase de fecho
+    // duas vezes — no resumo e na seção "Como este ciclo termina" — e, ao fazer
+    // isso, deixava de dizer o que o item É (tipo, estado, repo, origem)
+    // justamente no estado em que ele fecha.
+    const events = [
+      ...eventosBase(),
+      evt('work_item.created', { id: 'wki-spike', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'spike', title: 'Dá para ler o transcript inteiro?' }),
+      evt('verification.updated', {
+        subject: { entity: 'work_item', id: 'wki-spike' },
+        verificationKind: 'conclusion',
+        state: 'passed',
+        ref: 'não dá: o arquivo passa de 400 MB e o parser trava',
+      }),
+      evt('work_item.updated', { id: 'wki-spike', state: 'done' }),
+    ];
+    const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, itemId: 'wki-spike', nodeKey: 'work_item:wki-spike' });
+
+    expect(view.detail?.closureLine).toContain('pergunta');
+    expect(view.detail?.summary).not.toBe(view.detail?.closureLine);
+    expect(view.detail?.summary).toContain('spike');
+    expect(view.detail?.summary).toContain('concluído');
+  });
+
+  it('item de entrega de código em curso continua com a próxima fase à frente', () => {
+    const events = [...eventosBase(), evt('work_item.updated', { id: 'wki-1', state: 'in-progress' })];
+    const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, itemId: 'wki-1' });
+    const card = view.levels[2].cards.find((c) => c.subject?.id === 'wki-1');
+    expect(card?.statusLabel).toBe('em curso');
+    expect(card?.trail.some((step) => step.isNext)).toBe(true);
+  });
+
+  it('a linha do item diz o tipo, o ciclo e o repo — o herdado marcado como herdado', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), { ...SELECTION_VAZIA, itemId: 'wki-1' });
+    const card = view.levels[2].cards.find((c) => c.subject?.id === 'wki-1');
+    expect(card?.metaLine).toContain('issue');
+    expect(card?.metaLine).toContain('donel-dev');
+    expect(card?.metaLine).toContain('herdado');
+  });
+});
+
+describe('buildMapView — o painel de detalhe', () => {
+  it('sem nó escolhido, o detalhe é o card em foco — nunca uma tela vazia sem saída', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);
+    expect(view.detail?.title).toBe('Fila de importação trava sem sinal');
+    expect(view.breadcrumb).toEqual(['Fila de importação trava sem sinal']);
+  });
+
+  it('o PR da fase volta a aparecer — e não só o PR (D-4)', () => {
+    const events = [
+      ...eventosBase(),
+      evt('verification.updated', {
+        subject: { entity: 'work_item', id: 'wki-1' },
+        verificationKind: 'pull-request',
+        state: 'passed',
+        ref: 'https://github.com/xansde/donel-dev/pull/44',
+      }),
+      evt('verification.updated', { subject: { entity: 'work_item', id: 'wki-1' }, verificationKind: 'check', state: 'failed', ref: 'npm test' }),
+    ];
+    const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, nodeKey: 'work_item:wki-1' });
+    expect(view.detail?.verifications.map((line) => line.text)).toEqual([
+      'PR — passou · https://github.com/xansde/donel-dev/pull/44',
+      'check — falhou · npm test',
+    ]);
+  });
+
+  it('os artefatos declarados aparecem com o ponteiro inteiro (D-8)', () => {
+    const events = [
+      ...eventosBase(),
+      evt('artifact.pinned', {
+        owner: { entity: 'discovery', id: 'dsc-1' },
+        artifactKind: 'spec',
+        location: 'repo',
+        repo: 'donel-dev',
+        path: 'specs/010-esteira-donel/spec.md',
+      }),
+    ];
+    const view = buildMapView(snapshotDe(events), SELECTION_VAZIA);
+    expect(view.detail?.artifacts).toHaveLength(1);
+    expect(view.detail?.artifacts[0].path).toBe('specs/010-esteira-donel/spec.md');
+    expect(view.detail?.artifacts[0].note).toContain('donel-dev');
+  });
+
+  it('o erro de ingestão aparece no detalhe com caminho e motivo — e diz que nada se perdeu', () => {
+    const events = [
+      ...eventosBase(),
+      evt('ingest.failed', {
+        resultPath: 'C:/outbox/run-9.json',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        issues: [{ code: 'unknown_field', path: 'facts[0].kind', message: 'campo desconhecido' }],
+      }),
+    ];
+    const view = buildMapView(snapshotDe(events), SELECTION_VAZIA);
+    expect(view.detail?.ingestErrors[0].path).toBe('C:/outbox/run-9.json');
+    expect(view.detail?.ingestErrors[0].reason).toContain('unknown_field');
+    expect(view.detail?.ingestErrorNote).toContain('continua lá');
+  });
+
+  it('a trava aparece no detalhe com dono, hora e saída — o mesmo texto da tela do store', () => {
+    const events = [
+      ...eventosBase(),
+      evt('lock.acquired', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'plano', holderKind: 'app' }),
+    ];
+    const view = buildMapView(snapshotDe(events), SELECTION_VAZIA);
+    expect(view.detail?.lock?.title).toBe('Preparada — ninguém assumiu ainda');
+    expect(view.detail?.lock?.line).toContain('plano');
+  });
+
+  it('o breadcrumb desce até o item escolhido', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), { ...SELECTION_VAZIA, nodeKey: 'work_item:wki-1' });
+    expect(view.breadcrumb).toEqual([
+      'Fila de importação trava sem sinal',
+      'Instrumentar a fila',
+      'Expor o estado da fila no endpoint de saúde',
+    ]);
+  });
+
+  it('escolher uma etapa da trilha leva o detalhe àquela fase', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), { ...SELECTION_VAZIA, nodeKey: 'discovery:dsc-1', phase: 'discovery' });
+    expect(view.detail?.phase).toBe('discovery');
+    expect(view.detail?.summary).toBe('discovery — concluída');
+  });
+});

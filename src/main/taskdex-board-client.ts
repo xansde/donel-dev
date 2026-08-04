@@ -404,7 +404,7 @@ function cardIdsFrom(raw: unknown): readonly string[] {
  * por card.
  *
  * Sem isto, uma fase que rodou e não arquivou aparecia como "não iniciada"
- * (`esteira-reader.ts` exige o manifesto do `fase_num` para crer que a fase
+ * (o leitor do modelo antigo exigia o manifesto do `fase_num` para crer que a fase
  * rodou) e o operador perdia o botão de liberar.
  *
  * Falha de rede degrada para "nenhuma trava" (C4): o espelho mostra menos,

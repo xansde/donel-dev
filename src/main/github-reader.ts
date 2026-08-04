@@ -50,7 +50,7 @@ function buildGhArgs(command: GhReadCommand): readonly string[] {
     case 'pr-list-by-head':
       // Achar o PR da fase quando o número ainda não é conhecido (ex.: PR
       // ainda não confirmado/mergeado) — busca pela branch (`ctx.md`
-      // frontmatter, já lido por esteira-reader.ts). `--state all` inclui
+      // frontmatter). `--state all` inclui
       // aberto/fechado/mergeado; `--limit 1` porque uma branch tem no máximo
       // um PR aberto contra o repo.
       return ['pr', 'list', '--repo', command.repo, '--head', command.head, '--state', 'all', '--json', PR_FIELDS, '--limit', '1'];

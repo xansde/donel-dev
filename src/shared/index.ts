@@ -144,22 +144,13 @@ export type {
 export { GITHUB_CHANNELS, isValidGithubReadRequest } from './github';
 export type { DonelGithubApi, GhAvailabilityDto, GithubReadRequest, GithubReadResponse } from './github';
 
-// T307 — `DiscoveryTree` é o retorno de `devMode:readTree`; definido em
-// `../main/discovery-tree.ts` (módulo com fs) mas reexportado aqui como TIPO
-// só, para preload/renderer importarem de um lugar só (`../shared`), como
-// todo o resto desta API. `import type` erasa no build: nenhum runtime do
-// renderer/preload passa a depender de `node:fs`.
-export type { ArtifactCandidate, ArtifactCandidateKind, DiscoveryTree, PlanCardNode, PhaseNode } from '../main/discovery-tree';
-/** T311/T327 — card da porta de entrada (CA-1) e os 4 fatos do espelho (CA-12); mesmo motivo do `DiscoveryTree` acima: tipo só, `import type` erasa no build. */
+// Spec 010 / B6 — `DiscoveryTree`/`PlanCardNode`/`PhaseNode` saíram com o
+// leitor de árvore do modelo antigo: não há mais árvore de disco. O que o mapa consome hoje é
+// a projeção do store (`renderer/src/DevMode/esteiraMapView.ts`).
+/** Card da porta de entrada e os fatos do board — tipo só, `import type` erasa no build. */
 export type { BoardFacts, EntryColumn, EntryColumnCard } from '../main/taskdex-board-client';
 /** Issue #34 — resultado de `devMode:resolveCardRepo`; mesmo motivo do `DiscoveryTree` acima: tipo só, `import type` erasa no build. */
 export type { CardRepoResolution, RepoCandidate } from '../main/cardRepoResolver';
-
-/** T325/T326 (Batch C) — a árvore já anotada pelo espelho, consumida pela UI do mapa (T327/T328). */
-export type { AnnotatedDiscoveryTree, AnnotatedPlanCardNode, AnnotatedPhaseNode, PhaseDivergence } from './boardAnnotation';
-export { annotateTree, detectPhaseDivergence } from './boardAnnotation';
-export type { EsteiraResultManifest, PhaseArtifacts } from '../main/esteira-reader';
-export type { PhaseStatus } from './phaseState';
 
 // Lote 8 (009-modo-dev-v3), CA-24 — "Reiniciar sessão em foco" retoma na
 // conta SELECIONADA, copiando o `.jsonl` pro perfil dela quando a sessão
@@ -168,19 +159,9 @@ export type { PhaseStatus } from './phaseState';
 export { isValidCopyTranscriptForResumeIpcInput, planTranscriptCopy, TRANSCRIPT_COPY_CHANNELS } from './transcriptCopy';
 export type { CopyTranscriptForResumeIpcInput, CopyTranscriptForResumeResult, DonelTranscriptsApi, TranscriptCopyPlan } from './transcriptCopy';
 
-// Lote 8 (009-modo-dev-v3), CA-18/CA-20 — o conteúdo rico do painel direito
-// (breadcrumb, garantia, PR, artefatos, recibos). Puro, testado; a UI só
-// renderiza (PhaseDetailsPanel.tsx).
-export { buildPhaseDetailsView } from './phaseDetailsView';
-export type {
-  BuildPhaseDetailsViewInput,
-  PhaseDetailsArtifact,
-  PhaseDetailsBreadcrumb,
-  PhaseDetailsGarantiaView,
-  PhaseDetailsPrRow,
-  PhaseDetailsReceipt,
-  PhaseDetailsViewModel,
-} from './phaseDetailsView';
+// Spec 010 / B6 — o view-model do painel direito saiu com o modelo antigo
+// (ele lia o nó de fase da árvore de disco). O painel é
+// alimentado hoje por `renderer/src/DevMode/esteiraMapView.ts`, sobre o store.
 
 // 004-nomear-sessoes — resolução do nome exibido de uma sessão (T401) e
 // validação do nome digitado (T406). Usados no main (persistência) e no

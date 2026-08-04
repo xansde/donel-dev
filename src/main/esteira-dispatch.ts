@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { buildRunInput, type RunInputWorkspace } from '../shared/esteira/contract/runInput';
 import type { ContractIssue } from '../shared/esteira/contract/parsing';
 import type { EventDraft } from '../shared/esteira/ingest/resultToEvents';
+import { findBlockingLock, lockChainOf } from '../shared/esteira/store/lockChain';
 import type { EntityId, LockRecord } from '../shared/esteira/store/storeFormat';
 import type { EsteiraStore } from './esteira-store';
 
@@ -73,23 +74,6 @@ function subjectOf(options: DispatchOptions): EntityId {
   return { entity: 'discovery', id: options.discoveryId };
 }
 
-/**
- * O assunto e seus ancestrais na cadeia (item → plano → discovery). A trava
- * vale para toda a cadeia PARA CIMA, e para nenhum irmao:
- *
- * - discovery em andamento trava o plano e os itens que descendem dele — o card
- *   inteiro esta sendo trabalhado, e disparar a fase seguinte no meio disso e o
- *   atropelo que a trava existe para impedir;
- * - dois ITENS do mesmo plano rodam em paralelo sem problema — sao assuntos
- *   irmaos, e o modelo novo quer justamente esse paralelismo (D-5/D-7).
- */
-function lockChainOf(subject: EntityId, options: DispatchOptions): readonly EntityId[] {
-  const chain: EntityId[] = [subject];
-  if (subject.entity === 'work_item' && options.planId) chain.push({ entity: 'plan', id: options.planId });
-  if (subject.entity !== 'discovery') chain.push({ entity: 'discovery', id: options.discoveryId });
-  return chain;
-}
-
 /** Escrita atomica: o `run-input.json` e reescrito por inteiro (ao contrario do log). */
 function writeJsonAtomic(path: string, data: unknown): void {
   const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -121,9 +105,8 @@ export function dispatchPhase(store: EsteiraStore, options: DispatchOptions): Di
   // 1. A trava primeiro: o assunto — ou algo acima dele na cadeia — ja esta
   //    sendo trabalhado?
   const snapshot = store.snapshot();
-  const chain = lockChainOf(subject, options);
-  const held = snapshot.locks.find((lock) => chain.some((entry) => entry.entity === lock.subject.entity && entry.id === lock.subject.id));
-  if (held !== undefined) return { ok: false, reason: 'locked', lock: held };
+  const held = findBlockingLock(snapshot.locks, lockChainOf(subject, { discoveryId: options.discoveryId, planId: options.planId }));
+  if (held !== null) return { ok: false, reason: 'locked', lock: held };
 
   // 2. O documento que a skill vai receber. Recusar aqui e o certo: disparar
   //    com contexto pela metade e o app afirmando o que nao sabe, na ida.
@@ -212,6 +195,88 @@ export function dispatchPhase(store: EsteiraStore, options: DispatchOptions): Di
   }
 
   return { ok: true, runId, sessionId, inputPath, resultPath };
+}
+
+/** `changed: false` = o fato ja estava no log; ninguem precisa ser avisado de novo. */
+export type SessionLifecycleResult =
+  | { readonly ok: true; readonly changed: boolean }
+  | { readonly ok: false; readonly reason: 'store-refused' };
+
+/**
+ * Batch B1 — alguem ASSUMIU a sessao preparada. Quem chama e a camada que abriu
+ * a aba, assim que o CLI devolve o id da sessao (`pty:create` o impoe no spawn,
+ * entao ele existe desde o primeiro instante da aba).
+ *
+ * E por causa deste fato que o card pode dizer "em andamento" sem mentir: ate
+ * ele chegar, o que houve foi o app separar um arquivo em disco.
+ */
+export function claimSession(
+  store: EsteiraStore,
+  sessionId: string,
+  cliSessionId: string,
+  now: () => string = () => new Date().toISOString(),
+): SessionLifecycleResult {
+  const session = store.snapshot().sessions.find((entry) => entry.id === sessionId);
+  // Sessao que nao existe (ou ja assumida pelo MESMO id) nao vira fato — o log
+  // registra o que aconteceu, nao toda vez que alguem perguntou.
+  if (session === undefined || session.cliSessionId === cliSessionId) return { ok: true, changed: false };
+
+  const at = now();
+  const written = store.append([
+    {
+      type: 'session.claimed',
+      at,
+      dedupe_key: `${sessionId}:session.claimed:${cliSessionId}`,
+      payload: { id: sessionId, cliSessionId, at },
+    },
+  ]);
+  return written.ok ? { ok: true, changed: true } : { ok: false, reason: 'store-refused' };
+}
+
+/**
+ * Batch B1 — a sessao acabou sem a fase concluir: tipicamente a aba fechada na
+ * mao. Dois fatos no mesmo gesto, e o segundo e o que importa:
+ *
+ * - `session.ended` — a sessao acabou, com o motivo;
+ * - `lock.released` — **a trava cai junto**. A trava e fato com dono, hora e
+ *   SESSAO (D-11); sem a sessao ela nao tem dono, e trava sem dono e exatamente
+ *   a trava orfa da evidencia 3 da spec, que prendia o card ate alguem rodar
+ *   `/esteira-liberar`.
+ *
+ * A fase continua registrada como iniciada e nao concluida — e a tela diz isso
+ * com todas as letras. Apagar o registro seria trocar uma inverdade por outra.
+ */
+export function endSession(
+  store: EsteiraStore,
+  sessionId: string,
+  reason: string | null,
+  now: () => string = () => new Date().toISOString(),
+): SessionLifecycleResult {
+  const snapshot = store.snapshot();
+  const session = snapshot.sessions.find((entry) => entry.id === sessionId);
+  // Fase ja concluida (ou falhada) encerra a sessao no reducer: chegar aqui
+  // depois disso e o caso NORMAL de quem fecha a aba com o trabalho pronto.
+  if (session === undefined || session.endedAt !== null) return { ok: true, changed: false };
+
+  const at = now();
+  const drafts: EventDraft[] = [
+    { type: 'session.ended', at, dedupe_key: `${sessionId}:session.ended`, payload: { id: sessionId, at, reason } },
+  ];
+
+  const holdsLock = snapshot.locks.some(
+    (lock) => lock.phase === session.phase && lock.subject.entity === session.subject.entity && lock.subject.id === session.subject.id,
+  );
+  if (holdsLock) {
+    drafts.push({
+      type: 'lock.released',
+      at,
+      dedupe_key: `${sessionId}:lock.released`,
+      payload: { subject: session.subject, phase: session.phase, at },
+    });
+  }
+
+  const written = store.append(drafts);
+  return written.ok ? { ok: true, changed: true } : { ok: false, reason: 'store-refused' };
 }
 
 export type ReleaseResult = { readonly ok: true } | { readonly ok: false; readonly reason: 'store-refused' };

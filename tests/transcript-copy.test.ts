@@ -3,7 +3,7 @@ import { copyTranscriptForResume, type TranscriptCopyIoDeps } from '../src/main/
 
 // Lote 8 (009-modo-dev-v3), CA-24 — o fs REAL da cópia de transcript entre
 // perfis (a decisão pura mora em shared/transcriptCopy.ts, testada à parte).
-// IO 100% fake (mesmo espírito de esteira-reader.test.ts) — nunca toca disco.
+// IO 100% fake — nunca toca disco.
 
 const HOMEDIR = 'C:\\Users\\fake';
 const PATH_DEPS = { homedir: () => HOMEDIR };

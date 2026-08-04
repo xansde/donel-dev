@@ -200,6 +200,45 @@ describe('reduceEvents — entidades', () => {
     ]);
     expect(synced.mirrorQueue).toHaveLength(0);
   });
+
+  it('a fila guarda O QUE mandar — reenviar sem conteudo seria adivinhar (D-12)', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      evt('mirror.queued', { subject, operation: 'column', payload: { column: 'Plano' }, queuedAt: '2026-08-03T12:00:00.000Z' }),
+    ]);
+
+    expect(snapshot.mirrorQueue[0].payload).toEqual({ column: 'Plano' });
+  });
+
+  it('re-enfileirar a mesma operacao atualiza o conteudo e PRESERVA as tentativas', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      evt('mirror.queued', { subject, operation: 'column', payload: { column: 'Discovery' }, queuedAt: '2026-08-03T12:00:00.000Z' }),
+      evt('mirror.failed', { subject, operation: 'column', error: 'sem rede' }),
+      evt('mirror.queued', { subject, operation: 'column', payload: { column: 'Plano' }, queuedAt: '2026-08-03T13:00:00.000Z' }),
+    ]);
+
+    expect(snapshot.mirrorQueue).toHaveLength(1);
+    // A intencao de AGORA: mandar a coluna velha seria espelhar um passado que ja nao existe.
+    expect(snapshot.mirrorQueue[0].payload).toEqual({ column: 'Plano' });
+    // Zerar a contagem a cada gesto faria o teto de tentativas nunca chegar.
+    expect(snapshot.mirrorQueue[0].attempts).toBe(1);
+    expect(snapshot.mirrorQueue[0].queuedAt).toBe('2026-08-03T12:00:00.000Z');
+  });
+
+  it('o que o board ja reflete fica REGISTRADO — sem isso, a mesma etiqueta voltaria para sempre', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      evt('mirror.queued', { subject, operation: 'label', payload: { labels: ['esteira:em-andamento:plano'] } }),
+      evt('mirror.synced', { subject, operation: 'label', at: '2026-08-03T12:05:00.000Z' }),
+    ]);
+
+    expect(snapshot.mirrorQueue).toHaveLength(0);
+    expect(snapshot.mirrorSynced).toHaveLength(1);
+    // O conteudo vem da fila quando o evento de sync nao o repete.
+    expect(snapshot.mirrorSynced[0].payload).toEqual({ labels: ['esteira:em-andamento:plano'] });
+    expect(snapshot.mirrorSynced[0].at).toBe('2026-08-03T12:05:00.000Z');
+  });
 });
 
 describe('reduceEvents — dedupe (a idempotencia da ingestao)', () => {
@@ -406,5 +445,53 @@ describe('a trava cai quando a fase termina — nunca fica órfã', () => {
 
     expect(snapshot.locks).toHaveLength(1);
     expect(snapshot.locks[0].phase).toBe('plano');
+  });
+});
+
+// Batch B1 — a sessão preparada passa a ser assumida DE VERDADE quando o CLI
+// devolve o id dela. Antes disso, o card diz "preparada"; depois, "em
+// andamento" — e a diferença entre as duas é um fato, não uma suposição.
+describe('session.claimed — a sessão ganha dono', () => {
+  const subject = { entity: 'discovery', id: 'dsc-1' };
+
+  function preparada(): StoreEvent[] {
+    return [
+      discovery('dsc-1'),
+      evt('lock.acquired', { subject, phase: 'discovery', holderKind: 'app', acquiredAt: '2026-08-03T12:00:00.000Z', cliSessionId: null }),
+      evt('session.started', { id: 'ses-1', subject, phase: 'discovery', startedAt: '2026-08-03T12:00:00.000Z' }),
+    ];
+  }
+
+  it('a sessão nasce NÃO assumida — disparar não é começar', () => {
+    const snapshot = reduceEvents(preparada());
+    expect(snapshot.sessions[0].claimed).toBe(false);
+    expect(snapshot.sessions[0].cliSessionId).toBeNull();
+  });
+
+  it('o id do CLI vira o dono da sessão E da trava (D-11: dono, hora e sessão)', () => {
+    const snapshot = reduceEvents([
+      ...preparada(),
+      evt('session.claimed', { id: 'ses-1', cliSessionId: 'cli-abc', at: '2026-08-03T12:01:00.000Z' }),
+    ]);
+
+    expect(snapshot.sessions[0].claimed).toBe(true);
+    expect(snapshot.sessions[0].cliSessionId).toBe('cli-abc');
+    expect(snapshot.locks[0].cliSessionId).toBe('cli-abc');
+  });
+
+  it('assumir sessão que não existe não inventa sessão nenhuma', () => {
+    const snapshot = reduceEvents([...preparada(), evt('session.claimed', { id: 'ses-fantasma', cliSessionId: 'cli-abc' })]);
+    expect(snapshot.sessions).toHaveLength(1);
+    expect(snapshot.sessions[0].claimed).toBe(false);
+  });
+
+  it('a trava de outra fase não ganha dono por tabela', () => {
+    const snapshot = reduceEvents([
+      ...preparada(),
+      evt('lock.acquired', { subject, phase: 'plano', holderKind: 'app', acquiredAt: '2026-08-03T12:00:00.000Z' }),
+      evt('session.claimed', { id: 'ses-1', cliSessionId: 'cli-abc' }),
+    ]);
+
+    expect(snapshot.locks.find((lock) => lock.phase === 'plano')?.cliSessionId).toBeNull();
   });
 });

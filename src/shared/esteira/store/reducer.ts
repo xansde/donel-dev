@@ -18,7 +18,9 @@
 
 import {
   LIFECYCLE_BY_ITEM_TYPE,
+  MACRO_STAGES,
   STORE_SCHEMA_VERSION,
+  WORK_ITEM_STATES,
   type ArtifactPointer,
   type DiscoverySnapshot,
   type EntityId,
@@ -27,6 +29,7 @@ import {
   type LockRecord,
   type MacroStage,
   type MirrorQueueEntry,
+  type MirrorSyncedEntry,
   type NoteSnapshot,
   type PhaseOutcome,
   type PhaseRunSnapshot,
@@ -92,13 +95,25 @@ export function deriveStage(input: StageInput): StageResult {
     return { stage: 'discovery', signals };
   }
 
-  const reopened = input.items.some((item) => item.everConcluded && item.state !== 'done' && item.state !== 'abandoned');
-  const running = input.items.some((item) => item.state === 'in-progress');
-  if (reopened || running) return { stage: 'execution', signals: [] };
-
+  // A ordem aqui e a precedencia, e ela mudou depois do print 12 da captura
+  // `gestos-do-card`: com um item concluido e outro aberto, a tela dizia
+  // "Planejado" — trabalho ja fechado apresentado como trabalho que nunca
+  // comecou. Pior, a etapa dependia de QUAL item estava aberto: o mesmo
+  // conjunto (um aberto, um fechado) dava "Planejado" num print e "Execucao"
+  // no outro, enquanto os dois se diziam "calculada dos fatos".
   const allConcluded = input.items.length > 0 && input.items.every((item) => item.state === 'done' || item.state === 'abandoned');
   if (allConcluded) return { stage: 'done', signals: [] };
 
+  // Execucao e o estado de "comecou e nao terminou". Um item que JA se concluiu
+  // alguma vez (`everConcluded`) e prova de que comecou — reaberto ou nao. E o
+  // mesmo sinal que ja fazia a etapa RETROCEDER; ele so estava restrito ao item
+  // reaberto, quando vale para qualquer item que ja teve desfecho.
+  const running = input.items.some((item) => item.state === 'in-progress');
+  const everStarted = input.items.some((item) => item.everConcluded);
+  if (running || everStarted) return { stage: 'execution', signals: [] };
+
+  // Planejado sobra para o que ele sempre quis dizer: existe plano e nenhum
+  // item foi tocado por ninguem.
   return { stage: 'planned', signals: [] };
 }
 
@@ -123,6 +138,12 @@ function strList(node: Record<string, unknown>, key: string): readonly string[] 
 
 function bool(node: Record<string, unknown>, key: string): boolean {
   return node[key] === true;
+}
+
+/** Sub-objeto opaco do payload (o conteudo de uma operacao de espelho). Ilegivel = vazio, nunca fatal. */
+function payloadOf(node: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = node[key];
+  return isPlainObject(value) ? value : {};
 }
 
 function oneOf<T extends string>(node: Record<string, unknown>, key: string, allowed: readonly T[]): T | null {
@@ -159,8 +180,6 @@ function relationKey(relation: string, from: EntityId, to: EntityId): string {
 }
 
 const WORK_ITEM_TYPES: readonly WorkItemType[] = ['issue', 'spec', 'process-map', 'adr', 'prototype', 'spike', 'eval'];
-const WORK_ITEM_STATES: readonly WorkItemState[] = ['open', 'in-progress', 'done', 'abandoned'];
-const MACRO_STAGES: readonly MacroStage[] = ['discovery', 'planned', 'execution', 'done'];
 const RELATION_KINDS: readonly RelationKind[] = ['originated', 'flows_into', 'ships_with'];
 const PHASE_OUTCOMES: readonly PhaseOutcome[] = ['done', 'abandoned', 'inconclusive'];
 const VERIFICATION_KINDS: readonly VerificationKind[] = ['pull-request', 'check', 'review', 'conclusion'];
@@ -215,6 +234,7 @@ interface MutableSession {
 interface MutableMirror {
   subject: EntityId;
   operation: string;
+  payload: Record<string, unknown>;
   queuedAt: string;
   attempts: number;
   lastError: string | null;
@@ -238,6 +258,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
   const notes: NoteSnapshot[] = [];
   const ingestErrors: IngestErrorSnapshot[] = [];
   const mirrorQueue = new Map<string, MutableMirror>();
+  const mirrorSynced = new Map<string, MirrorSyncedEntry>();
 
   const seenDedupeKeys = new Set<string>();
   let throughSeq = 0;
@@ -507,6 +528,24 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         break;
       }
 
+      case 'session.claimed': {
+        // Batch B1 — a aba abriu e o CLI devolveu o id da sessao. E o unico
+        // fato que separa "preparada" de "em andamento": ate ele chegar, o app
+        // so tinha deixado um arquivo em disco.
+        const id = str(p, 'id');
+        const cliSessionId = str(p, 'cliSessionId');
+        if (id === null || cliSessionId === null) break;
+        const current = sessions.get(id);
+        if (current === undefined) break;
+        sessions.set(id, { ...current, cliSessionId, claimed: true });
+        // A trava daquela fase passa a ter DONO com nome (D-11: dono, hora e
+        // sessao). So a fase DESTA sessao — trava de fase irma nao herda dono.
+        const lockKey = `${entityKey(current.subject)}|${current.phase}`;
+        const lock = locks.get(lockKey);
+        if (lock !== undefined) locks.set(lockKey, { ...lock, cliSessionId });
+        break;
+      }
+
       case 'session.ended':
       case 'session.handed-off': {
         const id = str(p, 'id');
@@ -594,9 +633,19 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         const operation = str(p, 'operation');
         if (subject === null || operation === null) break;
         const key = `${entityKey(subject)}|${operation}`;
-        if (!mirrorQueue.has(key)) {
-          mirrorQueue.set(key, { subject, operation, queuedAt: str(p, 'queuedAt') ?? event.at, attempts: 0, lastError: null });
-        }
+        const current = mirrorQueue.get(key);
+        // Re-enfileirar a MESMA operacao atualiza o conteudo e preserva a
+        // contagem: a fila guarda a intencao de AGORA (reenviar a coluna velha
+        // seria espelhar um passado que ja nao existe), e zerar `attempts` a
+        // cada gesto faria o teto de tentativas nunca chegar.
+        mirrorQueue.set(key, {
+          subject,
+          operation,
+          payload: payloadOf(p, 'payload'),
+          queuedAt: current?.queuedAt ?? str(p, 'queuedAt') ?? event.at,
+          attempts: current?.attempts ?? 0,
+          lastError: current?.lastError ?? null,
+        });
         break;
       }
 
@@ -605,7 +654,14 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         const operation = str(p, 'operation');
         if (subject === null || operation === null) break;
         const key = `${entityKey(subject)}|${operation}`;
-        const current = mirrorQueue.get(key) ?? { subject, operation, queuedAt: event.at, attempts: 0, lastError: null };
+        const current = mirrorQueue.get(key) ?? {
+          subject,
+          operation,
+          payload: payloadOf(p, 'payload'),
+          queuedAt: event.at,
+          attempts: 0,
+          lastError: null,
+        };
         mirrorQueue.set(key, { ...current, attempts: current.attempts + 1, lastError: str(p, 'error') });
         break;
       }
@@ -614,7 +670,17 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         const subject = entityId(p, 'subject');
         const operation = str(p, 'operation');
         if (subject === null || operation === null) break;
-        mirrorQueue.delete(`${entityKey(subject)}|${operation}`);
+        const key = `${entityKey(subject)}|${operation}`;
+        const queued = mirrorQueue.get(key);
+        mirrorQueue.delete(key);
+        // O que o board passou a refletir. Sem este registro, a proxima
+        // varredura de intencoes reenfileiraria a mesma etiqueta para sempre.
+        mirrorSynced.set(key, {
+          subject,
+          operation,
+          payload: 'payload' in p ? payloadOf(p, 'payload') : (queued?.payload ?? {}),
+          at: str(p, 'at') ?? event.at,
+        });
         break;
       }
 
@@ -684,13 +750,15 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     verifications: [...verifications.values()],
     notes,
     ingestErrors: errorList,
-    mirrorQueue: mirrorList.map(({ subject, operation, queuedAt, attempts, lastError }) => ({
+    mirrorQueue: mirrorList.map(({ subject, operation, payload, queuedAt, attempts, lastError }) => ({
       subject,
       operation,
+      payload,
       queuedAt,
       attempts,
       lastError,
     })) satisfies MirrorQueueEntry[],
+    mirrorSynced: [...mirrorSynced.values()],
   };
 }
 

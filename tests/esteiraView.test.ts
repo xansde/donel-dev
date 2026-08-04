@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { cardView, ingestErrorLine, lockView, phaseLine, phaseLines, signalViews, stageView } from '../src/renderer/src/Esteira/esteiraView';
+import {
+  cardView,
+  ingestErrorLine,
+  lockView,
+  MIRROR_PENDING_HINT,
+  mirrorLines,
+  phaseLine,
+  phaseLines,
+  scanMessage,
+  signalViews,
+  stageView,
+} from '../src/renderer/src/Esteira/esteiraView';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
 import type { DiscoverySnapshot, PhaseRunSnapshot, StoreEvent } from '../src/shared/esteira/store/storeFormat';
 
@@ -39,8 +50,20 @@ describe('phaseLine — três estados, três frases', () => {
     expect(line).not.toContain('não realizada');
   });
 
-  it('fase só iniciada diz que está em andamento', () => {
+  it('fase só declarada iniciada (sem sessão do app) diz que está em andamento', () => {
     expect(phaseLine(phase({ startedAt: '2026-08-03T12:00:00.000Z' }))).toBe('discovery — em andamento');
+  });
+
+  it('sessão aberta pelo app tem palavra PRÓPRIA: a aba existe, o Enter pode não ter acontecido', () => {
+    const line = phaseLine(phase({ startedAt: '2026-08-03T12:00:00.000Z' }), 'claimed');
+    expect(line).toBe('discovery — sessão aberta');
+    expect(line).not.toContain('em andamento');
+  });
+
+  it('fase cuja sessão acabou sem concluir diz que foi INTERROMPIDA — nunca "em andamento"', () => {
+    const line = phaseLine(phase({ startedAt: '2026-08-03T12:00:00.000Z' }), 'interrupted');
+    expect(line).toBe('discovery — interrompida: a sessão terminou sem concluir');
+    expect(line).not.toContain('em andamento');
   });
 
   it('abandonada e inconclusiva tem palavra propria', () => {
@@ -187,20 +210,42 @@ describe('lockView — a tela não promete o que não cumpre', () => {
     expect(view.title).not.toContain('Em andamento');
   });
 
-  it('e diz o próximo passo, com o caminho do contexto que o app deixou', () => {
+  it('e diz o próximo passo, com o MESMO comando que a aba receberia', () => {
     const view = lockView(cardWithLock(false))!;
-    expect(view.nextStep?.command).toContain('read_input.py');
-    expect(view.nextStep?.command).toContain('C:/inbox/run-1.json');
+    // Uma função só produz o comando (`esteiraPhaseCommand`) — se aqui fosse
+    // outro texto, a correção de um dos dois envelheceria calada.
+    expect(view.nextStep?.command).toBe('/esteira-discovery --input "C:/inbox/run-1.json"');
   });
 
-  it('quando alguém assumiu de verdade, aí sim é "em andamento" — e sem próximo passo', () => {
+  it('sessão aberta pelo app NÃO se chama "em andamento": abrir a aba não é apertar o Enter', () => {
+    // O print 07 do roteiro `disparo-abre-sessao` dizia "Em andamento" enquanto
+    // o print 10, da MESMA rodada, mostrava o comando parado no prompt. O app
+    // sabe que a aba abriu; ele não sabe se alguém enviou o comando — e a tela
+    // não pode afirmar o que o app não sabe.
     const view = lockView(cardWithLock(true))!;
-    expect(view.title).toBe('Em andamento');
+    expect(view.state).toBe('session-open');
+    expect(view.title).toBe('Sessão aberta');
+    expect(view.title).not.toContain('andamento');
     expect(view.nextStep).toBeNull();
   });
 
+  it('e a linha admite o limite do que o app sabe, em vez de prometer trabalho acontecendo', () => {
+    expect(lockView(cardWithLock(true))!.line).toContain('o app não sabe se você já o enviou');
+  });
+
+  it('assumida: a linha nomeia a SESSÃO que segura a trava — dono, hora e sessão (D-11)', () => {
+    const view = lockView(cardWithLock(true))!;
+    expect(view.line).toContain('cli-1');
+  });
+
   it('trava posta pela própria skill já é trabalho acontecendo', () => {
-    expect(lockView(cardWithLock(false, 'skill'))!.title).toBe('Em andamento');
+    const view = lockView(cardWithLock(false, 'skill'))!;
+    expect(view.state).toBe('running');
+    expect(view.title).toBe('Em andamento');
+  });
+
+  it('preparada tem estado próprio — os três nunca compartilham palavra', () => {
+    expect(lockView(cardWithLock(false))!.state).toBe('prepared');
   });
 
   it('card sem trava não tem bloco nenhum', () => {
@@ -220,11 +265,35 @@ describe('phaseLines — "disparar" não é "começar", nem na lista de fases', 
     expect(line.text).toBe('discovery — preparada, ninguém assumiu');
   });
 
-  it('assumida pela skill vira "em andamento"', () => {
+  it('sessão do CLI assumiu: a linha diz "sessão aberta", não "em andamento"', () => {
     const snapshot = reduceEvents([
       evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
       evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
       evt('session.started', { id: 'ses-1', cliSessionId: 'cli-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+    ]);
+    expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — sessão aberta');
+  });
+
+  it('as duas frases do MESMO estado saem da mesma decisão — o bloco e a lista nunca divergem', () => {
+    // O defeito de 03/08 foi corrigido no bloco e reapareceu na lista. Este
+    // teste amarra os dois: o estado da trava é um só, e as duas frases dele
+    // são derivadas dele, não escritas em dois lugares.
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('lock.acquired', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', holderKind: 'app', acquiredAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
+      evt('session.started', { id: 'ses-1', cliSessionId: 'cli-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(lockView(card)!.state).toBe('session-open');
+    expect(phaseLines(card)[0].text).toContain('sessão aberta');
+    expect(phaseLines(card)[0].text).not.toContain('em andamento');
+  });
+
+  it('fase declarada pela skill, sem sessão do app, continua "em andamento" — é o que a skill afirmou', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
     ]);
     expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — em andamento');
   });
@@ -235,6 +304,21 @@ describe('phaseLines — "disparar" não é "começar", nem na lista de fases', 
       evt('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: 'x' }),
     ]);
     expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — concluída');
+  });
+
+  it('sessão encerrada sem a fase concluir: a fase fica INTERROMPIDA, não "em andamento"', () => {
+    // O caso do batch B1: a aba foi fechada na mão. Sem esta regra, a lista de
+    // fases voltava a dizer "em andamento" — que é o mesmo defeito de 03/08
+    // reaparecendo por outra porta (nenhuma sessão aberta = ninguém para
+    // desmentir a frase otimista).
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
+      evt('session.started', { id: 'ses-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+      evt('session.claimed', { id: 'ses-1', cliSessionId: 'cli-1', at: 'x' }),
+      evt('session.ended', { id: 'ses-1', at: 'x', reason: 'tab-closed' }),
+    ]);
+    expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — interrompida: a sessão terminou sem concluir');
   });
 
   it('fase que falhou traz o motivo junto', () => {
@@ -250,5 +334,92 @@ describe('phaseLines — "disparar" não é "começar", nem na lista de fases', 
     const [line] = phaseLines(cardView(snapshot, 'dsc-1')!);
     expect(line.failed).toBe(true);
     expect(line.detail).toBe('Havia alterações não commitadas.');
+  });
+});
+
+describe('espelho pendente — o card diz o que o board não recebeu (D-12)', () => {
+  function cardComFila(operation: string, payload: Record<string, unknown>, falha: string | null = null) {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const events = [
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x', tracker: { provider: 'taskdex', cardId: 'card-4711' } }),
+      evt('mirror.queued', { subject, operation, payload, queuedAt: '2026-08-03T12:00:00.000Z' }),
+    ];
+    if (falha !== null) events.push(evt('mirror.failed', { subject, operation, error: falha }));
+    return cardView(reduceEvents(events), 'dsc-1')!;
+  }
+
+  it('a fila do card chega até a tela', () => {
+    expect(cardComFila('column', { column: 'Plano' }).mirrorQueue).toHaveLength(1);
+  });
+
+  it('cada operação tem frase própria, em português', () => {
+    expect(mirrorLines(cardComFila('column', { column: 'Plano' }))[0].text).toBe('mover o card para "Plano"');
+    expect(mirrorLines(cardComFila('label', { labels: ['esteira:em-andamento:plano'] }))[0].text).toBe(
+      'aplicar a etiqueta "esteira:em-andamento:plano"',
+    );
+    expect(mirrorLines(cardComFila('label', { labels: [] }))[0].text).toBe('remover as etiquetas de fase');
+    expect(mirrorLines(cardComFila('comment:run-1', { text: 'x', phase: 'discovery' }))[0].text).toBe(
+      'comentar a conclusão da fase discovery',
+    );
+  });
+
+  it('operação que o app não sabe espelhar diz isso — nunca finge que mandou', () => {
+    expect(mirrorLines(cardComFila('publicar-card', {}))[0].text).toContain('não sei espelhar');
+  });
+
+  it('o MOTIVO da falha aparece, com quantas vezes já tentou', () => {
+    const [line] = mirrorLines(cardComFila('column', { column: 'Plano' }, 'sem rede'));
+    expect(line.detail).toBe('1 tentativa — sem rede');
+  });
+
+  it('enfileirado e ainda não tentado diz exatamente isso', () => {
+    expect(mirrorLines(cardComFila('column', { column: 'Plano' }))[0].detail).toBe('ainda não tentou');
+  });
+
+  it('o card avisa que o local NÃO depende do espelho', () => {
+    expect(MIRROR_PENDING_HINT).toContain('local');
+    expect(cardComFila('column', { column: 'Plano' }).signals.some((signal) => signal.label === 'espelho pendente')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A frase da varredura. Achada num print do roteiro `espelho-pendente`: a
+// barra dizia "Nada novo no outbox." no MESMO instante em que a fase virava
+// "concluída", a etapa ia para Planejado e um plano aparecia na tela. A frase
+// só sabia de arquivo RECUSADO; ingerido e ilegível não tinham palavra.
+// ---------------------------------------------------------------------------
+describe('o que a varredura do outbox diz ter acontecido', () => {
+  it('varredura sem nada novo diz isso, e só isso', () => {
+    expect(scanMessage({ ingestedOnLastScan: 0, rejectedOnLastScan: 0, unreadableOnLastScan: 0 })).toBe(
+      'Nada novo no outbox.',
+    );
+  });
+
+  it('resultado ingerido NAO pode ser anunciado como "nada novo" — o card acabou de mudar', () => {
+    const frase = scanMessage({ ingestedOnLastScan: 1, rejectedOnLastScan: 0, unreadableOnLastScan: 0 });
+
+    expect(frase).not.toContain('Nada novo');
+    expect(frase).toContain('1 resultado(s)');
+  });
+
+  it('arquivo fora do contrato continua tendo a frase que manda olhar o card', () => {
+    expect(scanMessage({ ingestedOnLastScan: 0, rejectedOnLastScan: 2, unreadableOnLastScan: 0 })).toContain(
+      '2 arquivo(s) fora do contrato',
+    );
+  });
+
+  it('"nao consegui ler" tem palavra propria — nunca vira ausencia silenciosa', () => {
+    const frase = scanMessage({ ingestedOnLastScan: 0, rejectedOnLastScan: 0, unreadableOnLastScan: 1 });
+
+    expect(frase).not.toContain('Nada novo');
+    expect(frase).toContain('não consegui ler');
+  });
+
+  it('as tres coisas na mesma varredura aparecem todas — nenhuma esconde a outra', () => {
+    const frase = scanMessage({ ingestedOnLastScan: 3, rejectedOnLastScan: 1, unreadableOnLastScan: 1 });
+
+    expect(frase).toContain('3 resultado(s)');
+    expect(frase).toContain('fora do contrato');
+    expect(frase).toContain('não consegui ler');
   });
 });

@@ -129,6 +129,13 @@ export const STORE_EVENT_TYPES = [
    */
   'phase.failed',
   'session.started',
+  /**
+   * Alguem ASSUMIU a sessao preparada: o CLI devolveu o id dela. Existe como
+   * fato proprio porque "o app separou o contexto" e "a fase esta rodando" sao
+   * estados diferentes, e chama-los pelo mesmo nome e o vicio que a spec 010
+   * combate — so que na direcao contraria. Da dono a trava tambem (D-11).
+   */
+  'session.claimed',
   'session.ended',
   /** `[P-6]` — a sessao atingiu o teto de contexto e a MESMA fase seguiu noutra sessao. */
   'session.handed-off',
@@ -244,6 +251,15 @@ export type WorkItemState = 'open' | 'in-progress' | 'done' | 'abandoned';
 
 /** D-13 — macro etapas do card de origem, sempre CALCULADAS do grafo. */
 export type MacroStage = 'discovery' | 'planned' | 'execution' | 'done';
+
+/**
+ * As duas listas moram AQUI, com o formato, porque tres camadas precisam da
+ * mesma: o reducer (para ler o payload do disco), a fronteira IPC (para validar
+ * o gesto antes de mutar) e a tela (para oferecer as opcoes). Duas copias da
+ * mesma lista sao exatamente o desencontro entre camadas que originou a spec.
+ */
+export const WORK_ITEM_STATES: readonly WorkItemState[] = ['open', 'in-progress', 'done', 'abandoned'];
+export const MACRO_STAGES: readonly MacroStage[] = ['discovery', 'planned', 'execution', 'done'];
 
 export interface EntityId {
   readonly entity: EntityKind;
@@ -436,10 +452,29 @@ export interface IngestErrorSnapshot {
 /** D-12 — o espelho nunca bloqueia: falha vai para fila e o card mostra "espelho pendente". */
 export interface MirrorQueueEntry {
   readonly subject: EntityId;
+  /** `label` | `column` | `comment:<run_id>` — a chave natural da operacao no card. */
   readonly operation: string;
+  /**
+   * O QUE mandar ao board. Fica na fila (e portanto no `events.jsonl`) para o
+   * reenvio ser auto-contido e auditavel a olho nu: reenviar sem saber o
+   * conteudo obrigaria a re-derivar a intencao de um estado que ja mudou.
+   */
+  readonly payload: Record<string, unknown>;
   readonly queuedAt: string;
   readonly attempts: number;
   readonly lastError: string | null;
+}
+
+/**
+ * D-12 — o que o board JA reflete. Sem esta memoria, a mesma etiqueta e a mesma
+ * coluna voltariam para a fila a cada gesto local, e o card mostraria "espelho
+ * pendente" para trabalho que ja foi espelhado — outra forma da tela mentir.
+ */
+export interface MirrorSyncedEntry {
+  readonly subject: EntityId;
+  readonly operation: string;
+  readonly payload: Record<string, unknown>;
+  readonly at: string;
 }
 
 export interface StoreSnapshot {
@@ -460,6 +495,7 @@ export interface StoreSnapshot {
   readonly notes: readonly NoteSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
   readonly mirrorQueue: readonly MirrorQueueEntry[];
+  readonly mirrorSynced: readonly MirrorSyncedEntry[];
 }
 
 /** D-4 — o ciclo de vida de cada tipo. Tabela, nao regra espalhada. */
