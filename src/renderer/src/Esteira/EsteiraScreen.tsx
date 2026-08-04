@@ -1,6 +1,18 @@
 import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
+import {
+  dispatchHint,
+  dispatchRefusedMessage,
+  esteiraPhaseCommand,
+  esteiraTabName,
+  lockStateOf,
+  preparedMessage,
+  resolveSessionCwd,
+  type EsteiraSessionRequest,
+  type KnownProject,
+  type SessionOpenOutcome,
+} from './esteiraSession';
 import { cardView, formatTimestamp, ingestErrorLine, lockView, phaseLines, STORE_COMPATIBILITY_WARNING, type SignalTone } from './esteiraView';
 import styles from './EsteiraScreen.module.css';
 
@@ -14,6 +26,14 @@ import styles from './EsteiraScreen.module.css';
 
 export interface EsteiraScreenProps {
   onClose: () => void;
+  /**
+   * Projetos que o app conhece — a lista contra a qual o repo alvo do card é
+   * resolvido. D-6: o alvo é explícito; sem correspondência, a sessão não abre
+   * (e a tela diz por quê), nunca abre "no projeto em foco".
+   */
+  projects: readonly KnownProject[];
+  /** Abre a aba de terminal da fase. Quem faz o encanamento (PTY, pré-digitar) é o App. */
+  onOpenSession: (request: EsteiraSessionRequest) => void;
 }
 
 /** Tom do sinal → classe. Mapa explícito: nada de montar nome de classe por template. */
@@ -28,7 +48,7 @@ const PHASE_OPTIONS = [
   { value: 'plano', label: 'Plano' },
 ];
 
-export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
+export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScreenProps): JSX.Element {
   const [state, setState] = useState<EsteiraSnapshotDto | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
@@ -72,24 +92,57 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
   const handleDispatch = useCallback(async () => {
     if (selected === null) return;
     const targetRepo = selected.discovery.targetRepo;
+    // O cwd é resolvido ANTES do disparo: ele viaja dentro do `run-input.json`
+    // (a skill precisa saber onde trabalhar) e é onde a aba abre. Um alvo só,
+    // declarado uma vez.
+    const resolved = resolveSessionCwd(targetRepo, projects);
     const dispatched = await window.donel.esteira.dispatch({
       phase,
       discoveryId: selected.discovery.id,
       planId: null,
       workItemId: null,
       // D-6 — o alvo é explícito: o que está no card, nunca o projeto em foco.
-      workspace: targetRepo === null ? null : { target_repo: targetRepo, repo_path: null, worktree_path: null, branch: null },
+      workspace:
+        targetRepo === null
+          ? null
+          : { target_repo: targetRepo, repo_path: resolved.ok ? resolved.cwd : null, worktree_path: null, branch: null },
       continuesSessionId: null,
       handoffReason: null,
     });
     setState(dispatched.state);
 
     if (dispatched.ok) {
-      setMessage(`Fase "${phase}" preparada. A skill lê ${dispatched.inputPath} e devolve em ${dispatched.resultPath}.`);
+      // Batch B1 — o disparo deixou de parar no arquivo: se há para onde abrir,
+      // a aba nasce agora, com o comando escrito. Se NÃO há, a fase continua
+      // preparada e a tela diz o motivo em vez de fingir que abriu.
+      let outcome: SessionOpenOutcome;
+      if (resolved.ok) {
+        const tabName = esteiraTabName(phase, selected.discovery.title);
+        onOpenSession({
+          sessionId: dispatched.sessionId,
+          phase,
+          cwd: resolved.cwd,
+          tabName,
+          command: esteiraPhaseCommand(phase, dispatched.inputPath),
+        });
+        outcome = { opened: true, tabName };
+      } else {
+        outcome = { opened: false, reason: resolved.reason };
+      }
+      setMessage(preparedMessage({ phase, targetRepo, inputPath: dispatched.inputPath, outcome }));
       return;
     }
     if (dispatched.reason === 'locked') {
-      setMessage(`Já há uma fase em andamento (${dispatched.lock.phase}), desde ${formatTimestamp(dispatched.lock.acquiredAt)}.`);
+      // A frase sai da camada pura, com a MESMA palavra do bloco da trava:
+      // escrita aqui, ela dizia "em andamento" para um card cujo bloco dizia
+      // outra coisa — o erro nº 1 de `erros-conhecidos.md`, terceira volta.
+      setMessage(
+        dispatchRefusedMessage(
+          lockStateOf(dispatched.lock.holderKind, dispatched.lock.cliSessionId !== null),
+          dispatched.lock.phase,
+          formatTimestamp(dispatched.lock.acquiredAt),
+        ),
+      );
       return;
     }
     if (dispatched.reason === 'invalid-target') {
@@ -97,7 +150,7 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
       return;
     }
     setMessage('Não deu para disparar: o histórico não aceita escrita agora.');
-  }, [phase, selected]);
+  }, [phase, selected, projects, onOpenSession]);
 
   const handleRelease = useCallback(async () => {
     if (selected?.lock == null) return;
@@ -218,12 +271,16 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
               ) : null}
 
               {lock ? (
-                <section className={styles.block}>
+                // Âncora estável para o roteiro e2e: filtrar `section` por texto
+                // fazia o print do bloco cair na LISTA DE FASES, que repete a
+                // mesma palavra (erro nº 5 de `erros-conhecidos.md`).
+                <section className={styles.block} data-testid="esteira-lock" data-state={lock.state}>
                   <h4 className={styles.blockTitle}>{lock.title}</h4>
                   <p className={styles.lockLine}>{lock.line}</p>
-                  {/* Enquanto o disparo não abre a aba de terminal, a tela diz o
-                      que falta fazer — travar o card e ficar calada seria pior
-                      do que não travar. */}
+                  {/* O disparo abre a aba sozinho quando há para onde abrir; o
+                      próximo passo só sobra quando NÃO houve (card sem repo
+                      alvo, repo desconhecido). Travar o card e ficar calada
+                      seria pior do que não travar. */}
                   {lock.nextStep ? (
                     <>
                       <p className={styles.hint}>{lock.nextStep.explanation}</p>
@@ -304,11 +361,7 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                     Preparar
                   </Button>
                 </div>
-                <p className={styles.hint}>
-                  {selected.lock !== null
-                    ? 'Há uma fase preparada neste card. Libere a trava acima antes de preparar outra.'
-                    : 'O app separa o contexto no inbox e trava o card. Quem roda a fase é a skill — hoje, apontando para o arquivo à mão.'}
-                </p>
+                <p className={styles.hint}>{dispatchHint(lock?.state ?? null)}</p>
               </section>
             </>
           )}

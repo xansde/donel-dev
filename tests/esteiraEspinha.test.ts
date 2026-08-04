@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createEsteiraService, type EsteiraService } from '../src/main/esteira-service';
-import { cardView } from '../src/renderer/src/Esteira/esteiraView';
+import { cardView, lockView, phaseLines } from '../src/renderer/src/Esteira/esteiraView';
 
 // Spec 010 — A ESPINHA, ponta a ponta, com as duas pontas de VERDADE:
 //
@@ -132,6 +132,85 @@ describe('espinha — do gesto no app ao card na tela', () => {
     // dos fatos, nunca digitada.
     expect(view.discovery.derivedStage).toBe('planned');
     expect(view.signals.map((signal) => signal.label)).not.toContain('não consegui ler');
+  });
+
+  // Batch B1 — o pedaço que faltava da espinha: o disparo abre a SESSÃO, e o
+  // card acompanha as três frases dela. As três são diferentes de propósito, e
+  // as três já foram ditas erradas nesta tela.
+  it('preparada → em andamento → interrompida: o card conta o que houve com a sessão', () => {
+    const created = service.createDiscovery({ title: 'Card com sessao', problem: null, targetRepo: 'atlas', scopeRepos: [], tracker: null });
+    if (!created.ok) return;
+
+    const dispatched = service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: { target_repo: 'atlas', repo_path: 'C:/dev/atlas', worktree_path: null, branch: null },
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+    if (!dispatched.ok) return;
+
+    // 1. Preparada: o app separou o contexto e travou. Nada está rodando.
+    const preparada = cardView(service.snapshotDto().snapshot, created.discoveryId)!;
+    expect(lockView(preparada)?.title).toBe('Preparada — ninguém assumiu ainda');
+    expect(phaseLines(preparada)[0].text).toBe('discovery — preparada, ninguém assumiu');
+    // O comando oferecido é o MESMO que a aba recebe pré-digitado.
+    expect(lockView(preparada)?.nextStep?.command).toBe(`/esteira-discovery --input "${dispatched.inputPath}"`);
+
+    // 2. A aba abriu e o CLI devolveu o id: a trava ganha dono com nome. E só
+    //    isso — a aba existir não é a fase estar rodando, porque o Enter é
+    //    gesto humano e o app não tem como saber se ele aconteceu.
+    const assumida = cardView(service.claimSession({ sessionId: dispatched.sessionId, cliSessionId: 'cli-espinha' }).snapshot, created.discoveryId)!;
+    expect(lockView(assumida)?.title).toBe('Sessão aberta');
+    expect(lockView(assumida)?.line).toContain('cli-espinha');
+    expect(phaseLines(assumida)[0].text).toBe('discovery — sessão aberta');
+
+    // 3. A aba fechou sem concluir: o card NÃO fica preso, e diz o que houve.
+    const fechada = cardView(service.endSession({ sessionId: dispatched.sessionId, reason: 'tab-closed' }).snapshot, created.discoveryId)!;
+    expect(fechada.lock).toBeNull();
+    expect(lockView(fechada)).toBeNull();
+    expect(phaseLines(fechada)[0].text).toBe('discovery — interrompida: a sessão terminou sem concluir');
+
+    // E o card volta a aceitar disparo — a saída não depende de ninguém.
+    const denovo = service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: { target_repo: 'atlas', repo_path: 'C:/dev/atlas', worktree_path: null, branch: null },
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+    expect(denovo.ok).toBe(true);
+  });
+
+  it('a fase que a skill CONCLUIU não vira "interrompida" quando a aba fecha depois', () => {
+    const created = service.createDiscovery({ title: 'Card concluido', problem: null, targetRepo: 'atlas', scopeRepos: [], tracker: null });
+    if (!created.ok) return;
+    const dispatched = service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: { target_repo: 'atlas', repo_path: 'C:/dev/atlas', worktree_path: null, branch: null },
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+    if (!dispatched.ok) return;
+    service.claimSession({ sessionId: dispatched.sessionId, cliSessionId: 'cli-espinha' });
+
+    runSkill(dispatched.inputPath, [
+      { type: 'discovery.recorded', discovery_id: created.discoveryId, title: 'Card concluido' },
+      { type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'discovery', outcome: 'done' },
+    ]);
+    service.scanOutbox();
+
+    // Fechar a aba DEPOIS do trabalho pronto é o caso normal: não grava nada,
+    // e a fase continua concluída.
+    const state = service.endSession({ sessionId: dispatched.sessionId, reason: 'tab-closed' });
+    expect(phaseLines(cardView(state.snapshot, created.discoveryId)!)[0].text).toBe('discovery — concluída');
   });
 
   it('discovery que termina SEM plano aparece como desfecho, não como pendência (o card F3)', () => {

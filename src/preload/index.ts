@@ -60,8 +60,10 @@ import { CLIPBOARD_CHANNELS } from '../shared';
 // Spec 010 — canais e shapes da esteira nova.
 import {
   ESTEIRA_CHANNELS,
+  type ClaimSessionIpcInput,
   type CreateDiscoveryIpcInput,
   type DispatchIpcInput,
+  type EndSessionIpcInput,
   type EsteiraCreateDiscoveryDto,
   type EsteiraDispatchDto,
   type EsteiraSnapshotDto,
@@ -311,6 +313,12 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(ESTEIRA_CHANNELS.createDiscovery, input) as Promise<EsteiraCreateDiscoveryDto>,
 
     dispatch: (input: DispatchIpcInput) => ipcRenderer.invoke(ESTEIRA_CHANNELS.dispatch, input) as Promise<EsteiraDispatchDto>,
+
+    // Batch B1 — os dois fatos do ciclo de vida da aba que o disparo abre:
+    // alguém assumiu a sessão, e a sessão acabou sem a fase concluir.
+    claimSession: (input: ClaimSessionIpcInput) => ipcRenderer.invoke(ESTEIRA_CHANNELS.claimSession, input) as Promise<EsteiraSnapshotDto>,
+
+    endSession: (input: EndSessionIpcInput) => ipcRenderer.invoke(ESTEIRA_CHANNELS.endSession, input) as Promise<EsteiraSnapshotDto>,
 
     releaseLock: (input: ReleaseLockIpcInput) => ipcRenderer.invoke(ESTEIRA_CHANNELS.releaseLock, input) as Promise<EsteiraSnapshotDto>,
 

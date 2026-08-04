@@ -15,12 +15,14 @@
 
 import { watch, type FSWatcher } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { dispatchPhase, releaseLock } from './esteira-dispatch';
+import { claimSession, dispatchPhase, endSession, releaseLock } from './esteira-dispatch';
 import { ingestOutbox } from './esteira-ingest';
 import { openEsteiraStore, type EsteiraStore } from './esteira-store';
 import type {
+  ClaimSessionIpcInput,
   CreateDiscoveryIpcInput,
   DispatchIpcInput,
+  EndSessionIpcInput,
   EsteiraCreateDiscoveryDto,
   EsteiraDispatchDto,
   EsteiraSnapshotDto,
@@ -43,6 +45,10 @@ export interface EsteiraService {
   scanOutbox(): EsteiraSnapshotDto;
   createDiscovery(input: CreateDiscoveryIpcInput): EsteiraCreateDiscoveryDto;
   dispatch(input: DispatchIpcInput): EsteiraDispatchDto;
+  /** Batch B1 — a aba abriu e o CLI devolveu o id: a fase preparada vira fase assumida. */
+  claimSession(input: ClaimSessionIpcInput): EsteiraSnapshotDto;
+  /** Batch B1 — a sessao acabou sem concluir (aba fechada): encerra e solta a trava. */
+  endSession(input: EndSessionIpcInput): EsteiraSnapshotDto;
   releaseLock(input: ReleaseLockIpcInput): EsteiraSnapshotDto;
   /** Registra quem quer saber que o store mudou. Devolve a desinscricao. */
   startWatching(listener: (state: EsteiraSnapshotDto) => void): () => void;
@@ -173,6 +179,9 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
       planId: input.planId,
       workItemId: input.workItemId,
       workspace: input.workspace,
+      // Batch B1 — a sessao guarda ONDE ela abriu. E o mesmo caminho que a aba
+      // de terminal recebe: um so alvo, declarado uma vez (D-6).
+      cwd: input.workspace?.repo_path ?? null,
       inboxDir: options.inboxDir,
       outboxDir: options.outboxDir,
       continuesSessionId: input.continuesSessionId,
@@ -189,6 +198,26 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
     store.persistSnapshot();
     notify();
     return { ...result, state: snapshotDto() };
+  }
+
+  function claimSessionFact(input: ClaimSessionIpcInput): EsteiraSnapshotDto {
+    const claimed = claimSession(store, input.sessionId, input.cliSessionId, now);
+    // Nada mudou (sessao inexistente, ou ja assumida pelo mesmo id): nao avisa
+    // ninguem — repintar a tela por um nao-fato e ruido.
+    if (claimed.ok && claimed.changed) {
+      store.persistSnapshot();
+      notify();
+    }
+    return snapshotDto();
+  }
+
+  function endSessionFact(input: EndSessionIpcInput): EsteiraSnapshotDto {
+    const ended = endSession(store, input.sessionId, input.reason ?? null, now);
+    if (ended.ok && ended.changed) {
+      store.persistSnapshot();
+      notify();
+    }
+    return snapshotDto();
   }
 
   function releaseLockGesture(input: ReleaseLockIpcInput): EsteiraSnapshotDto {
@@ -209,5 +238,15 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
     listeners.clear();
   }
 
-  return { snapshotDto, scanOutbox, createDiscovery, dispatch, releaseLock: releaseLockGesture, startWatching, dispose };
+  return {
+    snapshotDto,
+    scanOutbox,
+    createDiscovery,
+    dispatch,
+    claimSession: claimSessionFact,
+    endSession: endSessionFact,
+    releaseLock: releaseLockGesture,
+    startWatching,
+    dispose,
+  };
 }

@@ -39,8 +39,20 @@ describe('phaseLine — três estados, três frases', () => {
     expect(line).not.toContain('não realizada');
   });
 
-  it('fase só iniciada diz que está em andamento', () => {
+  it('fase só declarada iniciada (sem sessão do app) diz que está em andamento', () => {
     expect(phaseLine(phase({ startedAt: '2026-08-03T12:00:00.000Z' }))).toBe('discovery — em andamento');
+  });
+
+  it('sessão aberta pelo app tem palavra PRÓPRIA: a aba existe, o Enter pode não ter acontecido', () => {
+    const line = phaseLine(phase({ startedAt: '2026-08-03T12:00:00.000Z' }), 'claimed');
+    expect(line).toBe('discovery — sessão aberta');
+    expect(line).not.toContain('em andamento');
+  });
+
+  it('fase cuja sessão acabou sem concluir diz que foi INTERROMPIDA — nunca "em andamento"', () => {
+    const line = phaseLine(phase({ startedAt: '2026-08-03T12:00:00.000Z' }), 'interrupted');
+    expect(line).toBe('discovery — interrompida: a sessão terminou sem concluir');
+    expect(line).not.toContain('em andamento');
   });
 
   it('abandonada e inconclusiva tem palavra propria', () => {
@@ -187,20 +199,42 @@ describe('lockView — a tela não promete o que não cumpre', () => {
     expect(view.title).not.toContain('Em andamento');
   });
 
-  it('e diz o próximo passo, com o caminho do contexto que o app deixou', () => {
+  it('e diz o próximo passo, com o MESMO comando que a aba receberia', () => {
     const view = lockView(cardWithLock(false))!;
-    expect(view.nextStep?.command).toContain('read_input.py');
-    expect(view.nextStep?.command).toContain('C:/inbox/run-1.json');
+    // Uma função só produz o comando (`esteiraPhaseCommand`) — se aqui fosse
+    // outro texto, a correção de um dos dois envelheceria calada.
+    expect(view.nextStep?.command).toBe('/esteira-discovery --input "C:/inbox/run-1.json"');
   });
 
-  it('quando alguém assumiu de verdade, aí sim é "em andamento" — e sem próximo passo', () => {
+  it('sessão aberta pelo app NÃO se chama "em andamento": abrir a aba não é apertar o Enter', () => {
+    // O print 07 do roteiro `disparo-abre-sessao` dizia "Em andamento" enquanto
+    // o print 10, da MESMA rodada, mostrava o comando parado no prompt. O app
+    // sabe que a aba abriu; ele não sabe se alguém enviou o comando — e a tela
+    // não pode afirmar o que o app não sabe.
     const view = lockView(cardWithLock(true))!;
-    expect(view.title).toBe('Em andamento');
+    expect(view.state).toBe('session-open');
+    expect(view.title).toBe('Sessão aberta');
+    expect(view.title).not.toContain('andamento');
     expect(view.nextStep).toBeNull();
   });
 
+  it('e a linha admite o limite do que o app sabe, em vez de prometer trabalho acontecendo', () => {
+    expect(lockView(cardWithLock(true))!.line).toContain('o app não sabe se você já o enviou');
+  });
+
+  it('assumida: a linha nomeia a SESSÃO que segura a trava — dono, hora e sessão (D-11)', () => {
+    const view = lockView(cardWithLock(true))!;
+    expect(view.line).toContain('cli-1');
+  });
+
   it('trava posta pela própria skill já é trabalho acontecendo', () => {
-    expect(lockView(cardWithLock(false, 'skill'))!.title).toBe('Em andamento');
+    const view = lockView(cardWithLock(false, 'skill'))!;
+    expect(view.state).toBe('running');
+    expect(view.title).toBe('Em andamento');
+  });
+
+  it('preparada tem estado próprio — os três nunca compartilham palavra', () => {
+    expect(lockView(cardWithLock(false))!.state).toBe('prepared');
   });
 
   it('card sem trava não tem bloco nenhum', () => {
@@ -220,11 +254,35 @@ describe('phaseLines — "disparar" não é "começar", nem na lista de fases', 
     expect(line.text).toBe('discovery — preparada, ninguém assumiu');
   });
 
-  it('assumida pela skill vira "em andamento"', () => {
+  it('sessão do CLI assumiu: a linha diz "sessão aberta", não "em andamento"', () => {
     const snapshot = reduceEvents([
       evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
       evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
       evt('session.started', { id: 'ses-1', cliSessionId: 'cli-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+    ]);
+    expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — sessão aberta');
+  });
+
+  it('as duas frases do MESMO estado saem da mesma decisão — o bloco e a lista nunca divergem', () => {
+    // O defeito de 03/08 foi corrigido no bloco e reapareceu na lista. Este
+    // teste amarra os dois: o estado da trava é um só, e as duas frases dele
+    // são derivadas dele, não escritas em dois lugares.
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('lock.acquired', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', holderKind: 'app', acquiredAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
+      evt('session.started', { id: 'ses-1', cliSessionId: 'cli-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(lockView(card)!.state).toBe('session-open');
+    expect(phaseLines(card)[0].text).toContain('sessão aberta');
+    expect(phaseLines(card)[0].text).not.toContain('em andamento');
+  });
+
+  it('fase declarada pela skill, sem sessão do app, continua "em andamento" — é o que a skill afirmou', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
     ]);
     expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — em andamento');
   });
@@ -235,6 +293,21 @@ describe('phaseLines — "disparar" não é "começar", nem na lista de fases', 
       evt('phase.completed', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: 'x' }),
     ]);
     expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — concluída');
+  });
+
+  it('sessão encerrada sem a fase concluir: a fase fica INTERROMPIDA, não "em andamento"', () => {
+    // O caso do batch B1: a aba foi fechada na mão. Sem esta regra, a lista de
+    // fases voltava a dizer "em andamento" — que é o mesmo defeito de 03/08
+    // reaparecendo por outra porta (nenhuma sessão aberta = ninguém para
+    // desmentir a frase otimista).
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
+      evt('session.started', { id: 'ses-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+      evt('session.claimed', { id: 'ses-1', cliSessionId: 'cli-1', at: 'x' }),
+      evt('session.ended', { id: 'ses-1', at: 'x', reason: 'tab-closed' }),
+    ]);
+    expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — interrompida: a sessão terminou sem concluir');
   });
 
   it('fase que falhou traz o motivo junto', () => {
