@@ -232,6 +232,30 @@ describe('buildMapView — o ciclo de vida do item (D-4)', () => {
     expect(card?.trail.some((step) => step.isNext)).toBe(false);
   });
 
+  it('o detalhe do item fechado não repete o fecho: a linha do topo continua sendo a meta do item', () => {
+    // Achado da captura (print 19): o painel imprimia a MESMA frase de fecho
+    // duas vezes — no resumo e na seção "Como este ciclo termina" — e, ao fazer
+    // isso, deixava de dizer o que o item É (tipo, estado, repo, origem)
+    // justamente no estado em que ele fecha.
+    const events = [
+      ...eventosBase(),
+      evt('work_item.created', { id: 'wki-spike', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'spike', title: 'Dá para ler o transcript inteiro?' }),
+      evt('verification.updated', {
+        subject: { entity: 'work_item', id: 'wki-spike' },
+        verificationKind: 'conclusion',
+        state: 'passed',
+        ref: 'não dá: o arquivo passa de 400 MB e o parser trava',
+      }),
+      evt('work_item.updated', { id: 'wki-spike', state: 'done' }),
+    ];
+    const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, itemId: 'wki-spike', nodeKey: 'work_item:wki-spike' });
+
+    expect(view.detail?.closureLine).toContain('pergunta');
+    expect(view.detail?.summary).not.toBe(view.detail?.closureLine);
+    expect(view.detail?.summary).toContain('spike');
+    expect(view.detail?.summary).toContain('concluído');
+  });
+
   it('item de entrega de código em curso continua com a próxima fase à frente', () => {
     const events = [...eventosBase(), evt('work_item.updated', { id: 'wki-1', state: 'in-progress' })];
     const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, itemId: 'wki-1' });

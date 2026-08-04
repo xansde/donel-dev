@@ -180,7 +180,12 @@ test('o mapa lê o store, e o que ele mostra é o modelo novo', async () => {
       'O carrossel de dois eixos é o mesmo do design v3; os nós é que mudaram. Onde havia "cards de plano" e fases numeradas (a unidade era o PR), agora há PLANOS e ITENS — e o item é a unidade (D-5).',
     );
 
+    // A trilha só é desenhada no nó EM FOCO (o carrossel tem um foco por vez);
+    // fotografar o plano sem escolhê-lo mostraria um card apagado e sem trilha
+    // — o roteiro estaria fotografando o nível de trás.
     const cardDoPlano = cardDoTipo('plan').first();
+    await cardDoPlano.locator('[class*="cardTop"]').click();
+    await assentar(win);
     await passo(
       'O plano conta quantos itens dele já fecharam',
       cardDoPlano,
@@ -199,15 +204,22 @@ test('o mapa lê o store, e o que ele mostra é o modelo novo', async () => {
     await concluirSpike.click();
     await painelDoStore.getByRole('button', { name: 'Fechar', exact: true }).click();
 
+    // O eixo X do nível: o spike é o SEGUNDO item, e o carrossel só mostra o
+    // que está em foco — sem andar até ele, o roteiro fotografaria o card
+    // clipado pela borda do mapa (o anel circulando o vazio).
     const cardDoSpike = cardDoTipo('item').filter({ hasText: 'transcript' }).first();
     await cardDoSpike.waitFor({ timeout: 20_000 });
+    const proximoItem = mapa.getByRole('button', { name: 'Itens — próximo item' });
+    await proximoItem.click();
+    await cardDoSpike.locator('[class*="cardTop"]').click();
+    await assentar(win);
     await passo(
       'O spike aparece CONCLUÍDO, não pela metade',
       cardDoSpike,
       'Este é o print que o batch existe para produzir. O mapa antigo desenhava tudo como trilha de PR: um spike respondido ficava com etapas "não realizadas" penduradas, parecendo trabalho inacabado. Aqui ele está fechado, com a resposta — inclusive negativa — escrita embaixo do título, e sem próxima fase pendurada.',
     );
 
-    const fechoDoCiclo = mapa.getByTestId('devmode-map-closure').first();
+    const fechoDoCiclo = cardDoSpike.getByTestId('devmode-map-closure').first();
     await passo(
       'O ciclo do tipo, dito com todas as letras',
       fechoDoCiclo,
@@ -216,6 +228,8 @@ test('o mapa lê o store, e o que ele mostra é o modelo novo', async () => {
 
     // ── 6. O que dá para conferir, e onde está o artefato ────────────────
     const cardDaIssue = cardDoTipo('item').filter({ hasText: 'endpoint de saúde' }).first();
+    await mapa.getByRole('button', { name: 'Itens — item anterior' }).click();
+    await assentar(win);
     await passo('Escolha o item de entrega de código', cardDaIssue, 'O carrossel navega entre os itens no eixo horizontal, como fazia entre os cards de plano.');
     // O clique de SELEÇÃO é no topo do card (título): o corpo inteiro inclui a
     // trilha, e clicar nela escolheria uma etapa em vez do nó.
@@ -244,6 +258,14 @@ test('o mapa lê o store, e o que ele mostra é o modelo novo', async () => {
     await painelDoStore.getByText('não consegui ler').first().waitFor({ timeout: 20_000 });
     await painelDoStore.getByRole('button', { name: 'Fechar', exact: true }).click();
 
+    // Voltar ao nível de cima pelo eixo Y — com a SETA, que é o gesto do
+    // carrossel. Com o foco lá embaixo (itens), tanto o card do discovery
+    // quanto o rótulo do nível estão fora do viewport, e o clique morre em
+    // "element is outside of the viewport".
+    await mapa.press('ArrowUp');
+    await assentar(win);
+    await mapa.press('ArrowUp');
+    await assentar(win);
     await cardDoDiscovery.locator('[class*="cardTop"]').click();
     const etiquetaDeErro = mapa.getByTestId('devmode-map-tags').filter({ hasText: 'não consegui ler' }).first();
     await etiquetaDeErro.waitFor({ timeout: 20_000 });
@@ -268,12 +290,33 @@ test('o mapa lê o store, e o que ele mostra é o modelo novo', async () => {
   }
 });
 
-/** Abre o painel do store pelo gesto do mapa (o mesmo que o operador usa). */
+/**
+ * Espera o carrossel parar de andar (transição de 320ms em
+ * `LevelCarousel.module.css`). O anel é posicionado por `boundingBox` no
+ * instante da foto: medir no meio da animação desenha o círculo no lugar onde
+ * o card ESTAVA — o "anel errado" da lista de erros conhecidos.
+ */
+async function assentar(win: RoteiroContexto['win']): Promise<void> {
+  await win.waitForTimeout(420);
+}
+
+/**
+ * Abre o painel do store pelo gesto do mapa (o mesmo que o operador usa) e
+ * deixa o card SELECIONADO.
+ *
+ * A seleção é estado do componente e o painel é desmontado no "Fechar": ele
+ * reabre em "Escolha um card para ver o que aconteceu nele.", sem lista de
+ * itens nenhuma. Sem este clique o roteiro morre procurando um botão que só
+ * existe depois de escolher o card (erro de roteiro registrado em 04/08).
+ */
 async function abrirPainelDoStore(ctx: RoteiroContexto): Promise<void> {
   const painel = ctx.win.locator('section[aria-label="Esteira"]');
-  if (await painel.isVisible().catch(() => false)) return;
-  await ctx.win.getByTestId('devmode-map').getByTestId('devmode-entry-trigger').click();
-  await painel.waitFor({ timeout: 15_000 });
+  if (!(await painel.isVisible().catch(() => false))) {
+    await ctx.win.getByTestId('devmode-map').getByTestId('devmode-entry-trigger').click();
+    await painel.waitFor({ timeout: 15_000 });
+  }
+  const card = painel.locator('button', { hasText: TITULO_CARD }).first();
+  if (await card.isVisible().catch(() => false)) await card.click();
 }
 
 /** O último `run-input.json` que o app gravou no inbox isolado. */

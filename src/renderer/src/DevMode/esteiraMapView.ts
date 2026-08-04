@@ -431,11 +431,16 @@ function detailFor(card: CardView, subject: EntityId, phase: string | null): Map
         ? 'Plano'
         : `Discovery · ${card.stage.shown}`;
 
+  // A linha do topo é sempre o QUE o nó é (tipo, estado, repo, origem). O fecho
+  // do ciclo tem seção própria logo abaixo: repeti-lo aqui — o que a captura do
+  // B6 fotografou no print 19 — imprimia a MESMA frase duas vezes a três linhas
+  // de distância e, de quebra, sumia com a meta do item justamente quando ele
+  // fecha (o print do spike não dizia mais "spike · concluído · repo · origem").
   const summary =
     daFase !== null
       ? daFase.text
       : item !== null
-        ? (itemClosureLine(item, card.verifications) ?? itemMeta(item, card.discovery, lockOf(card, subject)))
+        ? itemMeta(item, card.discovery, lockOf(card, subject))
         : plan !== null
           ? (plan.summary ?? 'Plano sem resumo declarado.')
           : (card.discovery.problem ?? 'Sem problema declarado — o card só tem o título.');
