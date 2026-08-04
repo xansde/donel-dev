@@ -19,6 +19,9 @@ import type {
   PhaseRunSnapshot,
   SessionSnapshot,
   StoreSnapshot,
+  VerificationKind,
+  VerificationSnapshot,
+  VerificationState,
   WorkItemSnapshot,
 } from '../../../shared/esteira/store/storeFormat';
 
@@ -93,6 +96,8 @@ export interface CardView {
   readonly sessions: readonly SessionSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
   readonly notes: readonly { readonly text: string; readonly at: string }[];
+  /** A evidência de D-4: como o ciclo de cada item termina (PR, check, revisão, conclusão). */
+  readonly verifications: readonly VerificationSnapshot[];
 }
 
 /**
@@ -165,7 +170,59 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     sessions: snapshot.sessions.filter((session) => belongs(session.subject)),
     ingestErrors: snapshot.ingestErrors.filter((error) => error.subject !== null && belongs(error.subject)),
     notes: snapshot.notes.filter((note) => belongs(note.subject)).map((note) => ({ text: note.text, at: note.at })),
+    verifications: snapshot.verifications.filter((verification) => belongs(verification.subject)),
   };
+}
+
+/**
+ * A frase de UMA verificação. Mapa EXPLÍCITO de `kind` × `state`: montar a
+ * frase por template produziria "conclusão — passou", que não quer dizer nada.
+ * Cada uma das doze é escolhida, e é aqui que ela se conserta — nunca no JSX.
+ *
+ * O que este bloco impede: a fase declarar D-4 (o PR, o check, a resposta do
+ * spike) e o card não contar. Ler um fato e engoli-lo não é mentir, mas custa
+ * a mesma coisa a quem lê a tela para decidir o que fazer agora.
+ */
+const VERIFICATION_TEXT: Readonly<Record<VerificationKind, Readonly<Record<VerificationState, string>>>> = {
+  'pull-request': {
+    pending: 'PR aberto, ainda não verificado',
+    passed: 'PR mergeado e verificado',
+    failed: 'PR reprovado',
+  },
+  check: {
+    pending: 'verificação ainda não rodou',
+    passed: 'verificação passou',
+    failed: 'verificação falhou',
+  },
+  review: {
+    pending: 'revisão pendente',
+    passed: 'revisão aceita',
+    failed: 'revisão pediu mudança',
+  },
+  conclusion: {
+    // "Não deu certo" é desfecho, não pendência: um spike que respondeu
+    // negativo está CONCLUÍDO, e a frase precisa dizer isso.
+    pending: 'conclusão ainda não registrada',
+    passed: 'conclusão registrada',
+    failed: 'conclusão registrada: não deu certo',
+  },
+};
+
+export interface VerificationLineView {
+  readonly key: string;
+  readonly text: string;
+  /** A URL do PR, o nome do check, o texto da conclusão — o que dá para ir conferir. */
+  readonly detail: string | null;
+  readonly failed: boolean;
+}
+
+export function verificationLines(card: CardView): readonly VerificationLineView[] {
+  return card.verifications.map((verification) => ({
+    key: `${verification.subject.entity}:${verification.subject.id}:${verification.verificationKind}:${verification.ref ?? ''}`,
+    text: VERIFICATION_TEXT[verification.verificationKind][verification.state],
+    detail: verification.ref,
+    failed: verification.state === 'failed',
+  }));
 }
 
 /**
@@ -220,6 +277,38 @@ export function phaseLines(card: CardView): readonly PhaseLineView[] {
       detail: phase.failure?.message ?? null,
     };
   });
+}
+
+/**
+ * O estado do item em português. O `WorkItemState` é vocabulário do MODELO
+ * (`open`, `in-progress`), e vocabulário de modelo não vaza para a tela: a
+ * palavra que o operador lê nasce aqui, numa função só. Foi corrigir a frase no
+ * lugar onde ela aparecia — em vez de descer até quem a produz — que fez o
+ * mesmo defeito de estado voltar duas vezes em 03/08.
+ */
+const WORK_ITEM_STATE_LABEL: Readonly<Record<WorkItemSnapshot['state'], string>> = {
+  open: 'aberto',
+  'in-progress': 'em curso',
+  done: 'concluído',
+  abandoned: 'abandonado',
+};
+
+export interface ItemLineView {
+  readonly key: string;
+  readonly text: string;
+}
+
+export function itemLines(card: CardView): readonly ItemLineView[] {
+  return card.items.map((item) => ({
+    key: item.id,
+    // O tipo (`issue`, `spike`, `adr`) fica como está: é termo do domínio,
+    // definido no glossário da spec — não é rótulo de interface.
+    text:
+      `${item.title} · ${item.itemType} · ${WORK_ITEM_STATE_LABEL[item.state]}` +
+      // Item sem alvo é informação, não lacuna a esconder: `issue` sem repo não
+      // dispara (D-6), e quem lê precisa ver por quê.
+      (item.targetRepo === null ? ' · sem repo alvo' : ` · ${item.targetRepo}`),
+  }));
 }
 
 /** Um erro de ingestão, em português, sem esconder o caminho do arquivo. */

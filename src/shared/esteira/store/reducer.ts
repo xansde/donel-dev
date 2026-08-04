@@ -646,9 +646,22 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
       items: ownItems.map((item) => ({ state: item.state, everConcluded: item.everConcluded })),
     });
 
+    // O erro de ingestao pode estar ancorado em QUALQUER entidade do card: com
+    // as fases de item (implementar, validar, documentar, concluir), a maioria
+    // dos documentos recusados vem ancorada num work item. Olhar so o discovery
+    // deixaria o card limpo na lista enquanto um `result.json` foi recusado —
+    // o silencio que a spec inteira existe para acabar.
+    const owned = new Set<string>([
+      `discovery:${discovery.id}`,
+      ...ownPlans.map((plan) => `plan:${plan.id}`),
+      ...ownItems.map((item) => `work_item:${item.id}`),
+    ]);
+
     const signals: StageSignal[] = [...derived.signals];
     if (ownItems.some((item) => item.planId === null)) signals.push('orphan-item');
-    if (errorList.some((error) => error.subject?.entity === 'discovery' && error.subject.id === discovery.id)) signals.push('ingest-error');
+    if (errorList.some((error) => error.subject !== null && owned.has(`${error.subject.entity}:${error.subject.id}`))) {
+      signals.push('ingest-error');
+    }
     if (mirrorList.some((entry) => entry.subject.entity === 'discovery' && entry.subject.id === discovery.id)) signals.push('mirror-pending');
 
     return {

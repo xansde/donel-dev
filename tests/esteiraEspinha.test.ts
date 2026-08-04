@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createEsteiraService, type EsteiraService } from '../src/main/esteira-service';
-import { cardView } from '../src/renderer/src/Esteira/esteiraView';
+import { cardView, verificationLines } from '../src/renderer/src/Esteira/esteiraView';
 
 // Spec 010 — A ESPINHA, ponta a ponta, com as duas pontas de VERDADE:
 //
@@ -184,6 +184,136 @@ describe('espinha — do gesto no app ao card na tela', () => {
     // A fase NÃO conta como concluída — a etapa não avança por causa de um run ruim.
     expect(failed?.completedAt).toBeNull();
     expect(view?.discovery.derivedStage).toBe('discovery');
+  });
+
+  // Spec 010 (B7) — o CICLO COMPLETO de um item, com os emissores reais das
+  // seis fases. É o que P-3 exige para a 2.x sair: um card rodando de ponta a
+  // ponta no modelo novo. O que cada fase promete declarar vem da tabela
+  // `x-required-facts` do schema, cobrada nos dois lados.
+  it('um item vai de plano a concluído com as quatro fases novas, e a evidência aparece no card', () => {
+    const created = service.createDiscovery({
+      title: 'Fila de importacao trava sem sinal',
+      problem: null,
+      targetRepo: 'atlas',
+      scopeRepos: ['atlas'],
+      tracker: null,
+    });
+    if (!created.ok) return;
+    const workspace = { target_repo: 'atlas', repo_path: 'C:/code/atlas', worktree_path: null, branch: 'feat/fila' };
+
+    /** Dispara a fase pelo app e devolve o caminho do `run-input.json` que ele deixou. */
+    function dispatch(phase: string, subject: { planId?: string; workItemId?: string } = {}): string {
+      const dispatched = service.dispatch({
+        phase,
+        discoveryId: created.ok ? created.discoveryId : '',
+        planId: subject.planId ?? null,
+        workItemId: subject.workItemId ?? null,
+        workspace,
+        continuesSessionId: null,
+        handoffReason: null,
+      });
+      if (!dispatched.ok) throw new Error(`disparo de ${phase} recusado: ${dispatched.reason}`);
+      return dispatched.inputPath;
+    }
+
+    const item = { entity: 'work_item', id: 'wi-ciclo-1' } as const;
+
+    runSkill(dispatch('discovery'), [
+      { type: 'discovery.recorded', discovery_id: created.discoveryId, title: 'Fila de importacao trava sem sinal', target_repo: 'atlas' },
+      { type: 'plan.recorded', plan_id: 'pln-ciclo-1', discovery_id: created.discoveryId, title: 'Tornar observavel' },
+      { type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'discovery', outcome: 'done' },
+    ]);
+    service.scanOutbox();
+
+    runSkill(dispatch('plano', { planId: 'pln-ciclo-1' }), [
+      {
+        type: 'work_item.recorded',
+        work_item_id: item.id,
+        plan_id: 'pln-ciclo-1',
+        item_type: 'issue',
+        title: 'Expor estado da fila',
+        target_repo: 'atlas',
+      },
+      { type: 'phase.completed', subject: { entity: 'plan', id: 'pln-ciclo-1' }, phase: 'plano', outcome: 'done' },
+    ]);
+    service.scanOutbox();
+
+    // Implementar: o que dá para conferir é o check que ela escreveu e rodou.
+    runSkill(dispatch('implementar', { planId: 'pln-ciclo-1', workItemId: item.id }), [
+      { type: 'verification.recorded', subject: item, verification_kind: 'check', state: 'passed', ref: 'npm test' },
+      { type: 'phase.completed', subject: item, phase: 'implementar', outcome: 'done' },
+    ]);
+    service.scanOutbox();
+
+    // Validar: o PR existe (gesto humano) e ainda não foi verificado.
+    runSkill(dispatch('validar', { planId: 'pln-ciclo-1', workItemId: item.id }), [
+      { type: 'verification.recorded', subject: item, verification_kind: 'pull-request', state: 'pending', ref: 'https://exemplo/pr/128' },
+      { type: 'artifact.recorded', owner: item, artifact_kind: 'review-report', location: 'disk', path: 'C:/tmp/review.md' },
+      { type: 'phase.completed', subject: item, phase: 'validar', outcome: 'done' },
+    ]);
+    service.scanOutbox();
+
+    // Documentar: o ponteiro do documento, no repo âncora (D-8).
+    runSkill(dispatch('documentar', { planId: 'pln-ciclo-1', workItemId: item.id }), [
+      { type: 'artifact.recorded', owner: item, artifact_kind: 'adr', location: 'repo', repo: 'atlas', path: 'docs/adr/0007.md' },
+      { type: 'phase.completed', subject: item, phase: 'documentar', outcome: 'done' },
+    ]);
+    service.scanOutbox();
+
+    // Concluir: a MESMA referência de PR, agora verificada.
+    runSkill(dispatch('concluir', { planId: 'pln-ciclo-1', workItemId: item.id }), [
+      { type: 'verification.recorded', subject: item, verification_kind: 'pull-request', state: 'passed', ref: 'https://exemplo/pr/128' },
+      { type: 'phase.completed', subject: item, phase: 'concluir', outcome: 'done', summary: 'PR mergeado e verificado.' },
+    ]);
+
+    const view = cardView(service.scanOutbox().snapshot, created.discoveryId);
+    expect(view).not.toBeNull();
+    if (view === null) return;
+
+    const doItem = view.phases.filter((phase) => phase.subject.id === item.id);
+    expect(doItem.map((phase) => phase.phase).sort()).toEqual(['concluir', 'documentar', 'implementar', 'validar']);
+    expect(doItem.every((phase) => phase.outcome === 'done' && phase.completedAt !== null)).toBe(true);
+    // Nenhuma trava sobrou: cada `phase.completed` solta a sua, e o disparo
+    // seguinte só foi possível por causa disso.
+    expect(view.lock).toBeNull();
+
+    // A evidência de D-4 chegou ao card — e a segunda declaração do MESMO PR
+    // atualizou o estado em vez de empilhar um segundo.
+    const pr = view.verifications.filter((verification) => verification.verificationKind === 'pull-request');
+    expect(pr).toHaveLength(1);
+    expect(pr[0].state).toBe('passed');
+    expect(verificationLines(view).map((line) => line.text)).toEqual(
+      expect.arrayContaining(['verificação passou', 'PR mergeado e verificado']),
+    );
+    expect(view.signals.map((signal) => signal.label)).not.toContain('não consegui ler');
+  });
+
+  it('fase que promete e não cumpre é RECUSADA na ingestão — não entra pela metade', () => {
+    const created = service.createDiscovery({ title: 'Card com validar incompleta', problem: null, targetRepo: 'atlas', scopeRepos: [], tracker: null });
+    if (!created.ok) return;
+
+    // Um `result.json` escrito à mão (o emissor recusaria emiti-lo): fase
+    // `validar` bem-sucedida que não declara o que verificou. Antes de B7 isto
+    // entrava calado e o card dizia "validar — concluída" sem nada por trás.
+    const incompleto = join(root, 'outbox', 'validar-sem-verificacao.json');
+    writeFileSync(
+      incompleto,
+      JSON.stringify({
+        contract_version: '1.0.0',
+        kind: 'esteira.result',
+        run: { run_id: 'run-incompleto', phase: 'validar', status: 'success', started_at: '2026-08-04T14:00:00.000Z', finished_at: '2026-08-04T14:20:00.000Z', failure: null },
+        actor: { tool: 'esteira-donel', tool_version: '3.0.0' },
+        subject: { discovery_id: created.discoveryId },
+        facts: [{ type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'validar', outcome: 'done' }],
+      }),
+      'utf8',
+    );
+
+    const view = cardView(service.scanOutbox().snapshot, created.discoveryId);
+    expect(view?.signals.map((signal) => signal.label)).toContain('não consegui ler');
+    expect(view?.ingestErrors[0].issues.some((issue) => issue.code === 'missing_required_fact')).toBe(true);
+    // E a fase NÃO aparece como concluída: o documento inteiro foi recusado.
+    expect(view?.phases).toHaveLength(0);
   });
 
   it('documento fora do contrato vira ERRO VISÍVEL no card, com caminho e motivo', () => {

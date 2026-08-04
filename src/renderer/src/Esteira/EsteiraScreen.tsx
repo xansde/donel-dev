@@ -1,7 +1,17 @@
 import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
-import { cardView, formatTimestamp, ingestErrorLine, lockView, phaseLines, STORE_COMPATIBILITY_WARNING, type SignalTone } from './esteiraView';
+import {
+  cardView,
+  formatTimestamp,
+  ingestErrorLine,
+  itemLines,
+  lockView,
+  phaseLines,
+  STORE_COMPATIBILITY_WARNING,
+  verificationLines,
+  type SignalTone,
+} from './esteiraView';
 import styles from './EsteiraScreen.module.css';
 
 // Spec 010 — a tela da esteira nova. Ela é PROJEÇÃO do snapshot que o main
@@ -263,6 +273,24 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                 )}
               </section>
 
+              {/* A evidência de D-4: o PR, o check, a resposta do spike. Sem
+                  este bloco, a fase declarava como o ciclo termina e o card
+                  engolia — dado lido e não mostrado custa o mesmo que dado
+                  ausente para quem lê a tela para decidir. */}
+              {selected.verifications.length > 0 ? (
+                <section className={styles.block} data-testid="esteira-verificacoes">
+                  <h4 className={styles.blockTitle}>Verificações</h4>
+                  <ul className={styles.lines}>
+                    {verificationLines(selected).map((entry) => (
+                      <li key={entry.key} className={entry.failed ? styles.failed : undefined}>
+                        {entry.text}
+                        {entry.detail ? <span className={styles.hint}> {entry.detail}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+
               <section className={styles.block}>
                 <h4 className={styles.blockTitle}>
                   Planos e itens ({selected.planCount} plano(s), {selected.items.length} item(ns))
@@ -275,11 +303,8 @@ export function EsteiraScreen({ onClose }: EsteiraScreenProps): JSX.Element {
                   </p>
                 ) : (
                   <ul className={styles.lines}>
-                    {selected.items.map((item) => (
-                      <li key={item.id}>
-                        {item.title} · {item.itemType} · {item.state}
-                        {item.targetRepo ? ` · ${item.targetRepo}` : ' · sem repo alvo'}
-                      </li>
+                    {itemLines(selected).map((item) => (
+                      <li key={item.key}>{item.text}</li>
                     ))}
                   </ul>
                 )}

@@ -346,6 +346,44 @@ describe('reduceEvents — a etapa sai do grafo, nunca do teclado', () => {
     expect(snapshot.discoveries[0].stageSignals).toContain('mirror-pending');
   });
 
+  // Spec 010 (B7) — o erro de ingestao de um ITEM tambem e do card. Com as
+  // fases de item na skill 3.0 (implementar, validar, documentar, concluir), a
+  // maioria dos `result.json` recusados passa a vir ancorada num work item; se
+  // o sinal so olhasse o discovery, o card ficaria LIMPO na lista enquanto um
+  // documento foi recusado — o silencio que a spec inteira existe para acabar.
+  it('erro de ingestao ancorado num item do card tambem acende o sinal do card', () => {
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      plan('pln-1', 'dsc-1'),
+      workItem('wi-1', 'dsc-1', { planId: 'pln-1' }),
+      evt('ingest.failed', {
+        resultPath: 'C:/outbox/validar-sem-verificacao.json',
+        at: '2026-08-03T12:00:00.000Z',
+        subject: { entity: 'work_item', id: 'wi-1' },
+        issues: [{ code: 'missing_required_fact', path: 'facts', message: 'x' }],
+      }),
+    ]);
+
+    expect(snapshot.discoveries[0].stageSignals).toContain('ingest-error');
+  });
+
+  it('erro de ingestao de um item de OUTRO card nao acende o sinal deste', () => {
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      discovery('dsc-2'),
+      workItem('wi-2', 'dsc-2'),
+      evt('ingest.failed', {
+        resultPath: 'C:/outbox/x.json',
+        at: '2026-08-03T12:00:00.000Z',
+        subject: { entity: 'work_item', id: 'wi-2' },
+        issues: [],
+      }),
+    ]);
+
+    expect(snapshot.discoveries[0].stageSignals).not.toContain('ingest-error');
+    expect(snapshot.discoveries[1].stageSignals).toContain('ingest-error');
+  });
+
   it('override manual e marcado como tal, e a etapa derivada continua visivel ao lado', () => {
     const snapshot = reduceEvents([
       discovery('dsc-1'),
