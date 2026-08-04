@@ -68,7 +68,19 @@ via `CLAUDE_CONFIG_DIR`.
   validar `CLAUDE_CONFIG_DIR` — resultado vai em
   `specs/001-mvp/spike-t001-resultado.md`.
 - **Credenciais**: o app NUNCA lê, grava ou exibe credenciais. Login acontece
-  exclusivamente dentro do terminal, pelo fluxo oficial do CLI.
+  exclusivamente dentro do terminal, pelo fluxo oficial do CLI. **Exceção
+  nomeada e confinada (011-contas-e-provedores, etapa 1, 2026-08-04)**: o
+  motor de contas (`src/main/accounts/`) é a única parte do app que lê/grava
+  credencial — mod local (cofre `safeStorage` + endpoint OAuth da Anthropic
+  no switch, com refresh só de fallback) e `claude-state.ts` (única escrita
+  de `~/.claude/.credentials.json`/`oauthAccount`, ordem invariante: captura
+  do par rotacionado → escreve `.credentials.json` → apaga `oauthAccount`).
+  `CredentialPair` nunca sai de `src/main/accounts/`: não cruza o preload,
+  não entra em log nem em mensagem de erro. O core do app e a UI (inclusive
+  `AccountsPanel.tsx`) seguem sem tocar segredo — o formulário de conectar é
+  write-only, nenhum canal de leitura devolve o que foi digitado. **Não
+  generalizar esta exceção**: nenhum outro módulo ganha licença de tocar
+  credencial por causa dela.
 - **TDD com escopo**: CommandBuilder, SessionIndexer e paths de perfil são
   módulos puros com vitest; PTY/UI validam por smoke roteirizado (T014).
 - UI em pt-BR; código, comentários e identificadores em inglês.

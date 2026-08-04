@@ -154,3 +154,26 @@ arquivo mudara em disco.
 **Lesson:** ao acrescentar numeração contínua a um artefato compartilhado, releia
 o arquivo no momento de escrever, não no início da sessão — em fases paralelas, a
 numeração que você leu já é histórica.
+
+## 2026-08-04 — wi-011-etapa1-motor-mods (motor-contas-mods)
+
+### Nomear a variável Playwright de `Page` como `window` quebra a tipagem dentro do `evaluate()`
+
+Os smokes existentes (`tests/smoke/profile-quota.spec.ts` e outros) nomeiam a
+variável `Page` do Playwright de `window` — funciona ali porque esses arquivos
+só chamam `window.locator(...)`/`window.keyboard...` (métodos do `Page`),
+nunca referenciam o `window` do NAVEGADOR de dentro de um `.evaluate()`.
+Copiei essa convenção para os três smokes novos de contas e, como eles
+precisavam ler `window.donel.accounts.*` (a API global tipada via `declare
+global` em `src/renderer/src/donel.d.ts`) de dentro do callback passado a
+`.evaluate()`, o `window` do callback resolveu para a variável de módulo
+`Page` (closure léxica) em vez do `Window` do browser — `tsc --noEmit` falhou
+com "Property 'donel' does not exist on type 'Page'" em toda chamada. Os
+smokes que já faziam isso (`config-persistence.spec.ts`,
+`favorite-sessions.spec.ts`) usam `appWindow`/`win`, nunca `window`, exatamente
+por essa razão — só não havia comentário nenhum explicando o porquê.
+
+**Lesson:** ao escrever um smoke Playwright que chama `window.donel.*` dentro
+de `.evaluate()`, nunca nomeie a variável `Page` como `window` — use
+`appWindow` (convenção já presente em parte dos smokes do repo); a colisão de
+nome só aparece no `tsc --noEmit`, não em tempo de execução do Playwright.
