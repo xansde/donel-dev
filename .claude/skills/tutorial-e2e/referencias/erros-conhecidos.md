@@ -19,6 +19,31 @@ até a função que produz o texto.
 recebe o estado inteiro e decide a palavra. Corrigir na frase garante a
 terceira aparição.
 
+**Terceira aparição (captura do B2, print 16) — e ela veio.** A MESMA tela
+dizia duas coisas incompatíveis sobre o MESMO item, com quatro linhas de
+distância:
+
+```
+Planos e itens …  Medir onde o lote para · spike · open · sem repo alvo
+Repo alvo:        donel-dev — repo herdado do card
+```
+
+A herança de repo tinha sido implementada só dentro do disparo (`dispatchView`);
+a lista de itens era montada **à mão, no JSX**, e não sabia dela. Quem lê a
+lista conclui que o item não tem alvo; quem lê o disparo conclui que tem. Junto
+vieram dois vizinhos do mesmo vício: o título contava "1 plano(s)" e a lista não
+mostrava plano nenhum, e o item travado não se distinguia do livre enquanto a
+razão do bloqueio mandava "libere a trava" sem dizer qual.
+
+**Correção estrutural:** `itemRepoOf()` e `cardContent()` em `esteiraView.ts` —
+a linha da lista e a linha do disparo nascem da mesma função, e o componente
+não monta frase nenhuma. Teste: `tests/esteiraCardContent.test.ts`, com um caso
+que cobra explicitamente que as duas concordam.
+
+**A regra que sai daqui:** *frase montada dentro do JSX é candidata a
+divergir.* Se o texto descreve estado, ele nasce na camada pura — mesmo quando
+é "só uma linha de lista".
+
 ### 2. Estado que só sai por gesto de terceiro
 
 **Sintoma:** card continuava travado depois de a fase concluir.
@@ -38,9 +63,18 @@ nenhum; o `run-input.json` sai com `plan_id: null`.
 
 **Causa:** o seletor de fase não olha o estado do card.
 
-**Correção (pendente):** escolher o plano no disparo, e desabilitar a fase
-enquanto não houver nenhum — igual ao "Preparar" desabilitado com a razão
-escrita.
+**Correção (batch B2 da spec 010):** o catálogo de fases passou a ser lido
+contra o card em `dispatchView()` (`esteiraView.ts`), e o disparo escolhe o
+**assunto** — o discovery, um plano ou um item. Fase que o card não comporta
+fica **visível e desabilitada, com a razão escrita**: sumir com a opção
+pouparia pixel e faria a tela mentir por omissão, que é a mesma doença por
+outra porta. O D-6 entrou no mesmo lugar: item `issue` sem repo alvo já
+aparece recusado, com a frase, antes de o clique falhar.
+
+**O que ficou como regra:** a decisão de "isto pode ser disparado?" mora numa
+função só, compartilhada com o main pelo alcance da trava
+(`store/lockChain.ts`) — a tela não pode oferecer o que `dispatchPhase` vai
+recusar, nem esconder o que ele aceitaria.
 
 ### 3b. A mesma palavra errada, quarta aparição — agora com um fato por trás
 

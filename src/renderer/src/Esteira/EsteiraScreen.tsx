@@ -2,7 +2,6 @@ import { Button, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EsteiraSnapshotDto } from '../../../shared/esteira/ipc';
 import {
-  dispatchHint,
   dispatchRefusedMessage,
   esteiraPhaseCommand,
   esteiraTabName,
@@ -13,7 +12,17 @@ import {
   type KnownProject,
   type SessionOpenOutcome,
 } from './esteiraSession';
-import { cardView, formatTimestamp, ingestErrorLine, lockView, phaseLines, STORE_COMPATIBILITY_WARNING, type SignalTone } from './esteiraView';
+import {
+  cardContent,
+  cardView,
+  dispatchView,
+  formatTimestamp,
+  ingestErrorLine,
+  lockView,
+  phaseLines,
+  STORE_COMPATIBILITY_WARNING,
+  type SignalTone,
+} from './esteiraView';
 import styles from './EsteiraScreen.module.css';
 
 // Spec 010 — a tela da esteira nova. Ela é PROJEÇÃO do snapshot que o main
@@ -43,10 +52,8 @@ const SIGNAL_CLASS: Readonly<Record<SignalTone, string>> = {
   error: styles.signalError,
 };
 
-const PHASE_OPTIONS = [
-  { value: 'discovery', label: 'Discovery' },
-  { value: 'plano', label: 'Plano' },
-];
+// O catálogo de fases saiu daqui no B2: quem diz o que a tela oferece — e por
+// que uma fase está desabilitada — é `dispatchView`, na camada pura.
 
 export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScreenProps): JSX.Element {
   const [state, setState] = useState<EsteiraSnapshotDto | null>(null);
@@ -54,6 +61,8 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   const [newTitle, setNewTitle] = useState('');
   const [newRepo, setNewRepo] = useState('');
   const [phase, setPhase] = useState('discovery');
+  /** O assunto escolhido para o disparo. `null` = o primeiro que a fase comporta. */
+  const [targetKey, setTargetKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -66,6 +75,13 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   const cards = snapshot?.discoveries ?? [];
   const selected = useMemo(() => (snapshot && selectedId ? cardView(snapshot, selectedId) : null), [snapshot, selectedId]);
   const lock = useMemo(() => (selected === null ? null : lockView(selected)), [selected]);
+  const content = useMemo(() => (selected === null ? null : cardContent(selected)), [selected]);
+  // Quem decide o que está habilitado e com que razão é a camada pura — o JSX
+  // abaixo só desenha o que sai daqui.
+  const dispatch = useMemo(
+    () => (selected === null ? null : dispatchView(selected, { phase, targetKey })),
+    [selected, phase, targetKey],
+  );
   const warning = state === null ? null : STORE_COMPATIBILITY_WARNING[state.compatibility];
   const readOnly = state !== null && state.compatibility !== 'read-write';
 
@@ -90,22 +106,34 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   }, [newTitle, newRepo]);
 
   const handleDispatch = useCallback(async () => {
-    if (selected === null) return;
-    const targetRepo = selected.discovery.targetRepo;
+    // O botão já está desabilitado quando não dá; esta guarda existe para o
+    // caminho de teclado e para não haver DOIS lugares decidindo a mesma coisa.
+    if (selected === null || dispatch === null || !dispatch.canDispatch || dispatch.target === null) return;
+    const target = dispatch.target;
+    const dispatchPhase = dispatch.phase.phase;
     // O cwd é resolvido ANTES do disparo: ele viaja dentro do `run-input.json`
     // (a skill precisa saber onde trabalhar) e é onde a aba abre. Um alvo só,
-    // declarado uma vez.
-    const resolved = resolveSessionCwd(targetRepo, projects);
+    // declarado uma vez — e é o do ASSUNTO (B2), não o do card: a fase de um
+    // item roda no repo do item, ou no que ele herdou.
+    const resolved = resolveSessionCwd(target.targetRepo, projects);
     const dispatched = await window.donel.esteira.dispatch({
-      phase,
-      discoveryId: selected.discovery.id,
-      planId: null,
-      workItemId: null,
-      // D-6 — o alvo é explícito: o que está no card, nunca o projeto em foco.
+      phase: dispatchPhase,
+      discoveryId: target.discoveryId,
+      // O assunto vai EXPLÍCITO: a fase de um item leva o item (e o plano dele);
+      // a fase de um plano leva o plano. Era daqui que saía o `plan_id: null`
+      // num disparo de fase "Plano".
+      planId: target.planId,
+      workItemId: target.workItemId,
+      // D-6 — o alvo é explícito: o do item, ou o herdado do card. Nunca o projeto em foco.
       workspace:
-        targetRepo === null
+        target.targetRepo === null
           ? null
-          : { target_repo: targetRepo, repo_path: resolved.ok ? resolved.cwd : null, worktree_path: null, branch: null },
+          : {
+              target_repo: target.targetRepo,
+              repo_path: resolved.ok ? resolved.cwd : null,
+              worktree_path: null,
+              branch: null,
+            },
       continuesSessionId: null,
       handoffReason: null,
     });
@@ -117,19 +145,26 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
       // preparada e a tela diz o motivo em vez de fingir que abriu.
       let outcome: SessionOpenOutcome;
       if (resolved.ok) {
-        const tabName = esteiraTabName(phase, selected.discovery.title);
+        const tabName = esteiraTabName(dispatchPhase, selected.discovery.title);
         onOpenSession({
           sessionId: dispatched.sessionId,
-          phase,
+          phase: dispatchPhase,
           cwd: resolved.cwd,
           tabName,
-          command: esteiraPhaseCommand(phase, dispatched.inputPath),
+          command: esteiraPhaseCommand(dispatchPhase, dispatched.inputPath),
         });
         outcome = { opened: true, tabName };
       } else {
         outcome = { opened: false, reason: resolved.reason };
       }
-      setMessage(preparedMessage({ phase, targetRepo, inputPath: dispatched.inputPath, outcome }));
+      setMessage(
+        preparedMessage({
+          phase: dispatchPhase,
+          targetRepo: target.targetRepo,
+          inputPath: dispatched.inputPath,
+          outcome,
+        }),
+      );
       return;
     }
     if (dispatched.reason === 'locked') {
@@ -150,7 +185,7 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
       return;
     }
     setMessage('Não deu para disparar: o histórico não aceita escrita agora.');
-  }, [phase, selected, projects, onOpenSession]);
+  }, [dispatch, selected, projects, onOpenSession]);
 
   const handleRelease = useCallback(async () => {
     if (selected?.lock == null) return;
@@ -224,7 +259,10 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                 type="button"
                 key={discovery.id}
                 className={[styles.card, selectedId === discovery.id ? styles.cardSelected : ''].filter(Boolean).join(' ')}
-                onClick={() => setSelectedId(discovery.id)}
+                onClick={() => {
+                  setSelectedId(discovery.id);
+                  setTargetKey(null);
+                }}
               >
                 <span className={styles.cardTitle}>{discovery.title}</span>
                 <span className={styles.cardMeta}>
@@ -320,27 +358,23 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                 )}
               </section>
 
-              <section className={styles.block}>
-                <h4 className={styles.blockTitle}>
-                  Planos e itens ({selected.planCount} plano(s), {selected.items.length} item(ns))
-                </h4>
-                {selected.items.length === 0 ? (
-                  <p className={styles.hint}>
-                    {selected.planCount === 0
-                      ? 'Nenhum plano registrado. Se o discovery terminou assim, é um desfecho — não uma pendência.'
-                      : 'Os planos ainda não declararam itens.'}
-                  </p>
-                ) : (
+              {/* Cada linha vem pronta de `cardContent`: montar a frase aqui foi
+                  o que fez a lista dizer "sem repo alvo" enquanto o disparo,
+                  quatro linhas abaixo, dizia "repo herdado do card" — sobre o
+                  mesmo item, na mesma tela (print 16 do roteiro do B2). */}
+              {content === null ? null : (
+              <section className={styles.block} data-testid="card-content">
+                <h4 className={styles.blockTitle}>{content.title}</h4>
+                {content.lines.length > 0 ? (
                   <ul className={styles.lines}>
-                    {selected.items.map((item) => (
-                      <li key={item.id}>
-                        {item.title} · {item.itemType} · {item.state}
-                        {item.targetRepo ? ` · ${item.targetRepo}` : ' · sem repo alvo'}
-                      </li>
+                    {content.lines.map((line) => (
+                      <li key={line.key}>{line.text}</li>
                     ))}
                   </ul>
-                )}
+                ) : null}
+                {content.note !== null ? <p className={styles.hint}>{content.note}</p> : null}
               </section>
+              )}
 
               {selected.notes.length > 0 ? (
                 <section className={styles.block}>
@@ -353,16 +387,82 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                 </section>
               ) : null}
 
-              <section className={styles.block}>
-                <h4 className={styles.blockTitle}>Disparar fase</h4>
-                <div className={styles.dispatchRow}>
-                  <Select label="Fase" value={phase} onChange={setPhase} options={PHASE_OPTIONS} />
-                  <Button onClick={() => void handleDispatch()} disabled={readOnly || selected.lock !== null}>
-                    Preparar
-                  </Button>
-                </div>
-                <p className={styles.hint}>{dispatchHint(lock?.state ?? null)}</p>
-              </section>
+              {/* Só oferecer disparo que o modelo comporta — e nunca recusar
+                  calado. A fase que o card ainda não comporta continua VISÍVEL,
+                  desabilitada, com a razão escrita ao lado; esconder faria a
+                  tela mentir por omissão, que é a outra metade do mesmo vício. */}
+              {dispatch !== null ? (
+                <section className={styles.block}>
+                  <h4 className={styles.blockTitle}>Disparar fase</h4>
+
+                  <div className={styles.phaseRow} data-testid="dispatch-phases">
+                    {dispatch.phases.map((option) => (
+                      <button
+                        type="button"
+                        key={option.phase}
+                        data-testid={`dispatch-phase-${option.phase}`}
+                        className={[styles.phaseChip, option.phase === dispatch.phase.phase ? styles.phaseChipSelected : '']
+                          .filter(Boolean)
+                          .join(' ')}
+                        aria-pressed={option.phase === dispatch.phase.phase}
+                        disabled={!option.enabled}
+                        onClick={() => {
+                          setPhase(option.phase);
+                          setTargetKey(null);
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {dispatch.phases.some((option) => !option.enabled) ? (
+                    <ul className={styles.lines} data-testid="dispatch-phase-reasons">
+                      {dispatch.phases
+                        .filter((option) => !option.enabled)
+                        .map((option) => (
+                          <li key={option.phase} className={styles.hint}>
+                            <strong>{option.label}</strong> — {option.reason}
+                          </li>
+                        ))}
+                    </ul>
+                  ) : null}
+
+                  <div data-testid="dispatch-subject">
+                    <Select
+                      label="Assunto"
+                      value={dispatch.target?.key ?? ''}
+                      onChange={setTargetKey}
+                      options={dispatch.targets.map((target) => ({ value: target.key, label: target.label }))}
+                      placeholder="Nenhum assunto para esta fase"
+                      disabled={dispatch.targets.length === 0}
+                    />
+                  </div>
+
+                  <p className={styles.hint} data-testid="dispatch-repo">
+                    {dispatch.target?.targetRepo
+                      ? `Repo alvo: ${dispatch.target.targetRepo}${dispatch.target.repoNote ? ` — ${dispatch.target.repoNote}` : ''}`
+                      : 'Sem repo alvo.'}
+                  </p>
+
+                  <div className={styles.dispatchRow}>
+                    <Button onClick={() => void handleDispatch()} disabled={readOnly || !dispatch.canDispatch}>
+                      Preparar
+                    </Button>
+                  </div>
+
+                  {/* B1 + B2 — a razão vem da camada pura (B2) E usa a MESMA
+                      palavra do bloco da trava (B1): `dispatchView` já monta o
+                      `hint` a partir do estado da trava, então não há um segundo
+                      lugar escrevendo frase de estado. */}
+                  <p
+                    className={dispatch.blocked === null ? styles.hint : styles.blockedReason}
+                    data-testid="dispatch-blocked"
+                  >
+                    {dispatch.blocked ?? dispatch.hint}
+                  </p>
+                </section>
+              ) : null}
             </>
           )}
         </div>

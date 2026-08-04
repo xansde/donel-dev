@@ -157,7 +157,7 @@ const LOCK_WORD: Readonly<Record<LockState, string>> = {
  */
 export function dispatchHint(lock: LockState | null): string {
   if (lock === null) {
-    return 'O app separa o contexto, trava o card e abre a aba da sessão com o comando já escrito. O Enter é seu.';
+    return 'O app separa o contexto, trava o card e abre a aba da sessão com o comando da skill já escrito. O Enter é seu.';
   }
   return `Há uma fase ${LOCK_WORD[lock]} neste card. Libere a trava acima antes de preparar outra.`;
 }
