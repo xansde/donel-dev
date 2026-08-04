@@ -210,7 +210,8 @@ dentro do que o discovery já decidiu. Razão de cada uma em
 - **C12 (leitura da cadência)** — a entrega 1 (`[T-7]`, "Motor + mod Seazone")
   inclui **também o mod local**: a spec exige interface *extraída de dois mods
   concretos*, o que é impossível com um mod só. Nome curto do lote, não
-  exclusão. Ver `research.md` §2.
+  exclusão. Ver `research.md` §2. **Confirmada pelo dono em 2026-08-04**
+  (revisão pós-fase Plano): etapa 1 com os dois mods juntos.
 
 ## Pendências
 
