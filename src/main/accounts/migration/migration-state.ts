@@ -3,7 +3,9 @@
 // Sanitize resiliente, mesmo padrão de `sanitizeAppConfig`/`sanitizeAccountsConfig`:
 // nunca lança, campo a campo cai no default correspondente.
 
-export type ProfileMigrationStep = 'pending' | 'imported' | 'skipped' | 'absent' | 'failed';
+import type { ProfileMigrationStep } from '../../../shared/migration';
+
+export type { ProfileMigrationStep } from '../../../shared/migration';
 
 const KNOWN_STEPS: readonly ProfileMigrationStep[] = ['pending', 'imported', 'skipped', 'absent', 'failed'];
 

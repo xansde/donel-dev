@@ -3,21 +3,11 @@
 // plano`. É o que a UI renderiza e o que decide se o botão de arquivar está
 // habilitado — nunca o inverso (D10).
 
-import type { McpDiff } from './mcp-diff';
+import type { McpDiff, MigrationPlan, MigrationPlanEntry, ProfileMigrationStep } from '../../../shared/migration';
 import type { ProfileInventoryEntry } from './profile-inventory';
-import type { MigrationState, ProfileMigrationStep } from './migration-state';
+import type { MigrationState } from './migration-state';
 
-export interface MigrationPlan {
-  readonly entries: readonly MigrationPlanEntry[];
-  readonly canArchive: boolean; // true só quando nenhum perfil está 'pending'
-}
-
-export interface MigrationPlanEntry {
-  readonly slug: string;
-  readonly displayName: string;
-  readonly credentials: ProfileMigrationStep;
-  readonly mcp: McpDiff;
-}
+export type { MigrationPlan, MigrationPlanEntry } from '../../../shared/migration';
 
 const EMPTY_DIFF = (slug: string): McpDiff => ({ profileSlug: slug, onlyInProfile: [], onlyInGlobal: [] });
 

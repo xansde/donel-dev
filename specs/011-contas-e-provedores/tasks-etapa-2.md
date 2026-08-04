@@ -129,7 +129,7 @@ T1228, T1229, T1230, T1231).
 
 ## Fase 2 — Execução assistida (depende da Fase 1)
 
-- [ ] **T1210** [P] Teste: `tests/credentialsImport.test.ts` — importa **um**
+- [x] **T1210** [P] Teste: `tests/credentialsImport.test.ts` — importa **um**
   perfil por chamada; par **nunca** aparece no retorno, em log ou em mensagem de
   erro (varredura da saída inteira procurando o segredo plantado); cofre
   indisponível ⇒ recusa **antes** de ler o arquivo; arquivo com formato inválido
@@ -137,13 +137,13 @@ T1228, T1229, T1230, T1231).
   label }`, nunca e-mail.
   **DoD**: suíte vermelha.
 
-- [ ] **T1211** Implementar `src/main/accounts/migration/credentials-import.ts`
+- [x] **T1211** Implementar `src/main/accounts/migration/credentials-import.ts`
   **dentro** de `src/main/accounts/` (a exceção do `CLAUDE.md` já cobre esse
   diretório — **não** ampliar a emenda). Grava no cofre da etapa 1 e registra a
   conta no pool do mod local.
   **DoD**: T1210 verde.
 
-- [ ] **T1212** [P] Teste: `tests/archiveProfiles.test.ts` — **ordem invariante**:
+- [x] **T1212** [P] Teste: `tests/archiveProfiles.test.ts` — **ordem invariante**:
   todo unlink de junction acontece antes do rename (asserção sobre a ordem das
   chamadas do dublê); falha de unlink ⇒ `aborted` nomeando o perfil, **sem**
   rename; `.old` já existente ⇒ sufixo de data; raiz ausente ⇒
@@ -151,12 +151,12 @@ T1228, T1229, T1230, T1231).
   afirma que nenhum é chamado**.
   **DoD**: suíte vermelha.
 
-- [ ] **T1213** Implementar `src/main/accounts/migration/archive-profiles.ts`
+- [x] **T1213** Implementar `src/main/accounts/migration/archive-profiles.ts`
   (`ArchiveIoDeps` sem verbo de deleção, D13; desfaz as 6 junctions de
   `PROFILE_LINK_DIRS` por perfil e renomeia a raiz).
   **DoD**: T1212 verde.
 
-- [ ] **T1214** IPC + preload da migração: registrar os `MIGRATION_CHANNELS`
+- [x] **T1214** IPC + preload da migração: registrar os `MIGRATION_CHANNELS`
   (`contracts/migration-etapa-2.md` §1) no main e a ponte
   `window.donel.migration.*` no `src/preload/index.ts`, no mesmo padrão de
   `accounts.*`. `archive` valida `canArchive` **no main**.

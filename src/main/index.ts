@@ -34,9 +34,13 @@ import type {
   AccountsConfigDto,
   AccountsViewDto,
   AppConfigDto,
+  ArchiveOutcome,
   ArchivePhaseSessionIpcInput,
   ConnectModInput,
   ConnectModOutcome,
+  ConsolidateResult,
+  ImportResult,
+  MigrationPlan,
   CopyTranscriptForResumeIpcInput,
   CopyTranscriptForResumeResult,
   CreateProjectResponse,
@@ -79,6 +83,7 @@ import {
   DEVMODE_CHANNELS,
   focusDiscovery,
   GITHUB_CHANNELS,
+  MIGRATION_CHANNELS,
   isValidArchivePhaseSessionIpcInput,
   isValidCardId,
   isValidCardIdList,
@@ -182,6 +187,14 @@ import { applyAccountSwitch, createSystemClaudeStateIoDeps } from './accounts/cl
 import { createLocalMod } from './accounts/mods/local-mod';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
 import { createSystemVaultIoDeps, decryptVaultEntry, writeVaultEntry, type VaultLike } from './accounts/vault';
+// 011-contas-e-provedores (etapa 2) — assistente de migração de perfis →
+// cofre (T1214). Temporário: existe enquanto houver `~/.claude-profiles`.
+import { archiveProfiles, createSystemArchiveIoDeps } from './accounts/migration/archive-profiles';
+import { createSystemCredentialsImportDeps, importProfileCredentials } from './accounts/migration/credentials-import';
+import { buildMigrationPlan } from './accounts/migration/migration-plan';
+import { computeMcpDiffFromDisk } from './accounts/migration/mcp-diff';
+import { createSystemProfileInventoryDeps, readProfileInventory } from './accounts/migration/profile-inventory';
+import { executeTranscriptCopyOperations, planTranscriptConsolidation, readTranscriptConsolidationInput } from './accounts/migration/transcript-consolidation';
 import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects, sortProjects } from './project-scanner';
 // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
 import { createNewProject, createSystemCreateProjectDeps } from './project-creator';
@@ -1602,6 +1615,142 @@ function registerAccountsIpcHandlers(): void {
   });
 }
 
+/** Monta o `MigrationPlan` corrente lendo o inventário + diffs de MCP do disco, cruzado com `appConfig.migration` (estado persistido). Somente leitura. */
+function currentMigrationPlan(): MigrationPlan {
+  const inventory = readProfileInventory(createSystemProfileInventoryDeps(homedir));
+  const diffs = inventory.map((profile) => computeMcpDiffFromDisk(profile.slug, profile.path, globalClaudeJsonPath(profilePathDeps)));
+  return buildMigrationPlan(inventory, appConfig.migration, diffs);
+}
+
+/**
+ * T1214 (011-contas-e-provedores, etapa 2) — handlers do assistente de
+ * migração (contracts/migration-etapa-2.md). Cada canal atua sobre UM
+ * perfil por chamada (D10) — nunca existe "migrar tudo". Nenhum canal
+ * devolve conteúdo de arquivo de perfil; `importCredentials` devolve só
+ * enum (`ImportResult`), nunca o par (fronteira de credencial preservada).
+ */
+function registerMigrationIpcHandlers(): void {
+  ipcMain.handle(MIGRATION_CHANNELS.scan, (): MigrationPlan => currentMigrationPlan());
+
+  ipcMain.handle(MIGRATION_CHANNELS.importCredentials, (_event, profileSlug: unknown): ImportResult => {
+    if (typeof profileSlug !== 'string' || !profileSlug) return { kind: 'absent' };
+
+    const inventory = readProfileInventory(createSystemProfileInventoryDeps(homedir));
+    const profile = inventory.find((p) => p.slug === profileSlug);
+    if (!profile) return { kind: 'absent' };
+
+    const vault = createRealAccountsVaultAdapter();
+    const deps = createSystemCredentialsImportDeps(vault, () => safeStorage.isEncryptionAvailable());
+    const result = importProfileCredentials(
+      { slug: profile.slug, displayName: profile.displayName, credentialsPath: join(profile.path, '.credentials.json') },
+      deps,
+    );
+
+    const step = result.kind === 'imported' ? 'imported' : result.kind === 'absent' ? 'absent' : 'failed';
+    const previous = appConfig.migration.profiles[profileSlug];
+    appConfig = {
+      ...appConfig,
+      migration: {
+        ...appConfig.migration,
+        startedAt: appConfig.migration.startedAt ?? Date.now(),
+        profiles: {
+          ...appConfig.migration.profiles,
+          [profileSlug]: { credentials: step, transcripts: previous?.transcripts ?? 'pending', mcpReviewed: previous?.mcpReviewed ?? false },
+        },
+      },
+    };
+
+    // Registra a conta no pool do mod local (plan.md, arquitetura em uma
+    // tela) — o mod local nasce ativo se o motor ainda estava inerte,
+    // exatamente o gesto que torna a credencial migrada utilizável.
+    if (result.kind === 'imported') {
+      const alreadyRegistered = appConfig.accounts.localAccounts.some((a) => a.id === result.accountId);
+      if (!alreadyRegistered) {
+        const wasInert = appConfig.accounts.mod === null;
+        appConfig = {
+          ...appConfig,
+          accounts: {
+            ...appConfig.accounts,
+            mod: appConfig.accounts.mod ?? 'local',
+            localAccounts: [...appConfig.accounts.localAccounts, { id: result.accountId, label: result.label, plan: null }],
+          },
+        };
+        if (wasInert) rebuildAccountEngine();
+        else accountEngine?.updateConfig(appConfig.accounts);
+      }
+    }
+
+    persistAppConfig();
+    return result;
+  });
+
+  ipcMain.handle(MIGRATION_CHANNELS.consolidateTranscripts, (_event, profileSlug: unknown): ConsolidateResult => {
+    if (typeof profileSlug !== 'string' || !profileSlug) return { result: 'nothing-to-copy', copied: 0 };
+
+    const inventory = readProfileInventory(createSystemProfileInventoryDeps(homedir));
+    const profile = inventory.find((p) => p.slug === profileSlug);
+    if (!profile) return { result: 'nothing-to-copy', copied: 0 };
+
+    const claudeHome = claudeHomeDir(profilePathDeps);
+    const input = readTranscriptConsolidationInput(join(profile.path, 'projects'), join(claudeHome, 'projects'));
+    const outcome = planTranscriptConsolidation(input);
+    const copied = outcome.kind === 'copy' ? executeTranscriptCopyOperations(outcome.operations) : 0;
+
+    const previous = appConfig.migration.profiles[profileSlug];
+    const transcriptsStep = outcome.kind === 'nothing-to-copy' ? 'absent' : 'imported';
+    appConfig = {
+      ...appConfig,
+      migration: {
+        ...appConfig.migration,
+        profiles: {
+          ...appConfig.migration.profiles,
+          [profileSlug]: { credentials: previous?.credentials ?? 'pending', transcripts: transcriptsStep, mcpReviewed: previous?.mcpReviewed ?? false },
+        },
+      },
+    };
+    persistAppConfig();
+
+    return { result: outcome.kind, copied };
+  });
+
+  ipcMain.handle(MIGRATION_CHANNELS.markMcpReviewed, (_event, profileSlug: unknown): MigrationPlan => {
+    if (typeof profileSlug === 'string' && profileSlug) {
+      const previous = appConfig.migration.profiles[profileSlug];
+      appConfig = {
+        ...appConfig,
+        migration: {
+          ...appConfig.migration,
+          profiles: {
+            ...appConfig.migration.profiles,
+            [profileSlug]: { credentials: previous?.credentials ?? 'pending', transcripts: previous?.transcripts ?? 'pending', mcpReviewed: true },
+          },
+        },
+      };
+      persistAppConfig();
+    }
+    return currentMigrationPlan();
+  });
+
+  /** `archive` recusa quando algum perfil está `pending` — a checagem é do main (contracts/migration-etapa-2.md §invariante 3), botão desabilitado na UI é só conforto. */
+  ipcMain.handle(MIGRATION_CHANNELS.archive, (): ArchiveOutcome => {
+    const plan = currentMigrationPlan();
+    if (!plan.canArchive) return { kind: 'nothing-to-archive' };
+
+    const inventory = readProfileInventory(createSystemProfileInventoryDeps(homedir));
+    const outcome = archiveProfiles(
+      { ...createSystemArchiveIoDeps(), paths: { homedir: homedir() }, profileSlugs: inventory.map((p) => p.slug) },
+      new Date(),
+    );
+
+    if (outcome.kind === 'archived') {
+      appConfig = { ...appConfig, migration: { ...appConfig.migration, completedAt: Date.now(), archivedTo: outcome.archivedTo } };
+      persistAppConfig();
+    }
+
+    return outcome;
+  });
+}
+
 void app.whenReady().then(async () => {
   // T009 — sobe o servidor local do semáforo e grava o `--settings` ANTES de
   // registrar os handlers de PTY (o primeiro `pty:create` de uma sessão
@@ -1657,6 +1806,7 @@ void app.whenReady().then(async () => {
   registerSessionIpcHandlers();
   registerProfileIpcHandlers();
   registerAccountsIpcHandlers(); // T1125 (011-contas-e-provedores, etapa 1)
+  registerMigrationIpcHandlers(); // T1214 (011-contas-e-provedores, etapa 2)
   registerConfigIpcHandlers();
   registerClipboardIpcHandlers(); // T504 (005-terminal-copy-paste)
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)

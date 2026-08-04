@@ -5,6 +5,7 @@
 // nunca confia na topologia — `projects` é junction em todo perfil criado
 // pelo app, então na máquina real não há o que copiar (achado A7).
 
+import { copyFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 
 export type ConsolidationOutcome =
@@ -50,4 +51,42 @@ export function planTranscriptConsolidation(input: TranscriptConsolidationInput)
   }));
 
   return { kind: 'copy', operations };
+}
+
+/** Executor de disco (IO real) — só copia; nunca sobrescreve destino existente (`skip-existing`). */
+export function executeTranscriptCopyOperations(operations: readonly TranscriptCopyOperation[]): number {
+  let copied = 0;
+  for (const op of operations) {
+    if (op.mode !== 'copy') continue;
+    copyFileSync(op.sourcePath, op.targetPath);
+    copied += 1;
+  }
+  return copied;
+}
+
+/** Monta o input real do plano a partir do disco — `realpath` injetável via Node puro (main process only). */
+export function readTranscriptConsolidationInput(profileProjectsPath: string, globalProjectsPath: string): TranscriptConsolidationInput {
+  const realpathOrNull = (path: string): string | null => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return null;
+    }
+  };
+  const listJsonl = (dirPath: string): string[] => {
+    try {
+      return readdirSync(dirPath).filter((name) => name.endsWith('.jsonl'));
+    } catch {
+      return [];
+    }
+  };
+
+  return {
+    profileProjectsRealpath: realpathOrNull(profileProjectsPath),
+    globalProjectsRealpath: realpathOrNull(globalProjectsPath),
+    profileJsonlFiles: listJsonl(profileProjectsPath),
+    globalProjectsPath,
+    profileProjectsPath,
+    existingGlobalFiles: listJsonl(globalProjectsPath),
+  };
 }

@@ -3,13 +3,11 @@
 // servidor — nenhum valor de configuração (args/env/headers) pode atravessar,
 // argumento de MCP carrega token com frequência.
 
-export interface McpDiff {
-  readonly profileSlug: string;
-  /** Servidores que só o perfil tem — candidatos a decisão manual. */
-  readonly onlyInProfile: readonly string[];
-  /** Servidores que só o global tem — informativo. */
-  readonly onlyInGlobal: readonly string[];
-}
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { McpDiff } from '../../../shared/migration';
+
+export type { McpDiff } from '../../../shared/migration';
 
 function serverNames(claudeJson: Record<string, unknown> | null): readonly string[] {
   const mcpServers = claudeJson?.mcpServers;
@@ -31,4 +29,24 @@ export function computeMcpDiff(
     onlyInProfile: [...profileNames].filter((name) => !globalNames.has(name)),
     onlyInGlobal: [...globalNames].filter((name) => !profileNames.has(name)),
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readClaudeJsonOrNull(path: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Lê `.claude.json` de disco (perfil + global) e devolve o diff — só o main process usa (IO real). */
+export function computeMcpDiffFromDisk(profileSlug: string, profileConfigDir: string, globalClaudeJsonPath: string): McpDiff {
+  const profileClaudeJson = readClaudeJsonOrNull(join(profileConfigDir, '.claude.json'));
+  const globalClaudeJson = readClaudeJsonOrNull(globalClaudeJsonPath);
+  return computeMcpDiff(profileSlug, profileClaudeJson, globalClaudeJson);
 }

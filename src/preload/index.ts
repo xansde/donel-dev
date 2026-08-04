@@ -3,8 +3,12 @@ import type {
   AccountsConfigDto,
   AccountsViewDto,
   AppConfigDto,
+  ArchiveOutcome,
   ConnectModInput,
   ConnectModOutcome,
+  ConsolidateResult,
+  ImportResult,
+  MigrationPlan,
   ArchivePhaseSessionIpcInput,
   BoardFacts,
   CardRepoResolution,
@@ -50,6 +54,7 @@ import {
   CONFIG_CHANNELS,
   DEVMODE_CHANNELS,
   GITHUB_CHANNELS,
+  MIGRATION_CHANNELS,
   PROFILE_CHANNELS,
   PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
@@ -222,6 +227,24 @@ const donelApi: DonelApi = {
       ipcRenderer.on(ACCOUNT_CHANNELS.changed, handler);
       return () => ipcRenderer.removeListener(ACCOUNT_CHANNELS.changed, handler);
     },
+  },
+
+  // T1214 (011-contas-e-provedores, etapa 2) — assistente de migração
+  // (contracts/migration-etapa-2.md). Temporário: existe enquanto houver
+  // `~/.claude-profiles`. Nenhum canal devolve conteúdo de arquivo de perfil.
+  migration: {
+    scan: () => ipcRenderer.invoke(MIGRATION_CHANNELS.scan) as Promise<MigrationPlan>,
+
+    importCredentials: (profileSlug: string) =>
+      ipcRenderer.invoke(MIGRATION_CHANNELS.importCredentials, profileSlug) as Promise<ImportResult>,
+
+    consolidateTranscripts: (profileSlug: string) =>
+      ipcRenderer.invoke(MIGRATION_CHANNELS.consolidateTranscripts, profileSlug) as Promise<ConsolidateResult>,
+
+    markMcpReviewed: (profileSlug: string) =>
+      ipcRenderer.invoke(MIGRATION_CHANNELS.markMcpReviewed, profileSlug) as Promise<MigrationPlan>,
+
+    archive: () => ipcRenderer.invoke(MIGRATION_CHANNELS.archive) as Promise<ArchiveOutcome>,
   },
 
   config: {

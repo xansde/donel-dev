@@ -5,6 +5,7 @@
 // chegam junto das tasks que os implementam.
 
 import type { DonelAccountsApi } from './accounts';
+import type { DonelMigrationApi } from './migration';
 import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
 import type { DonelEsteiraApi } from './esteira/ipc';
@@ -208,6 +209,22 @@ export type {
   SwitchOutcome,
 } from './accounts';
 
+// 011-contas-e-provedores (etapa 2) — assistente de migração (temporário:
+// existe enquanto houver `~/.claude-profiles`). Nenhum canal devolve
+// conteúdo de arquivo de perfil, em nenhuma direção.
+export { MIGRATION_CHANNELS } from './migration';
+export type {
+  ArchiveOutcome,
+  ConsolidateResult,
+  ConsolidationKind,
+  DonelMigrationApi,
+  ImportResult,
+  McpDiff,
+  MigrationPlan,
+  MigrationPlanEntry,
+  ProfileMigrationStep,
+} from './migration';
+
 /** Nomes dos canais IPC do domínio PTY (plan.md linha 37). */
 export const PTY_CHANNELS = {
   create: 'pty:create',
@@ -368,6 +385,8 @@ export interface DonelApi {
   profiles: DonelProfilesApi;
   /** 011-contas-e-provedores (etapa 1) — motor de contas + mods; nasce inerte (accounts.mod = null). */
   accounts: DonelAccountsApi;
+  /** 011-contas-e-provedores (etapa 2) — assistente de migração de perfis → cofre. */
+  migration: DonelMigrationApi;
   /** T015 — ConfigStore (FR-007/FR-009); ver src/shared/config.ts. */
   config: DonelConfigApi;
   /** T504 (005-terminal-copy-paste) — clipboard-bridge no main, atrás de IPC. */
