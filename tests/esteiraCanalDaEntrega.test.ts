@@ -37,11 +37,11 @@ function codesOf(input: unknown): ContractIssueCode[] {
   return parsed.ok ? [] : parsed.issues.map((issue) => issue.code);
 }
 
-const pr = (base: string | null): Record<string, unknown> => ({
+const pr = (base: string | null, state: 'passed' | 'pending' | 'failed' = 'passed'): Record<string, unknown> => ({
   type: 'verification.recorded',
   subject: WI,
   verification_kind: 'pull-request',
-  state: 'passed',
+  state,
   ref: 'https://github.com/exemplo/atlas/pull/128',
   base,
 });
@@ -113,6 +113,16 @@ describe('A15 — o canal da entrega', () => {
     const card = cardDo(concluir([pr('staging'), fechada('alfa')]));
     expect(card.verifications[0].base).toBe('staging');
     expect(card.phases[0].channel).toBe('alfa');
+  });
+
+  it('PR ainda pending com base declarada NÃO é "entregue" — achado da captura tutorial-e2e (batch n1, 2026-08-05)', () => {
+    // O fallback antigo aceitava `base` de QUALQUER estado, então um PR
+    // 'pending' já produzia "Entregue em staging." lado a lado com "PR
+    // aberto, ainda não verificado" — a mesma tela se contradizendo. O check
+    // passado (de outra verificação, ex.: npm test numa fase anterior) só
+    // cumpre o D-4 do run de exemplo; quem decide `deliveryLine` é o PR.
+    const check = { type: 'verification.recorded', subject: WI, verification_kind: 'check', state: 'passed', ref: 'npm test' };
+    expect(deliveryLine(cardDo(concluir([check, pr('staging', 'pending'), fechada(null)])))).toBeNull();
   });
 
   it('base fora de um PR é recusada — check e revisão não têm branch de destino', () => {

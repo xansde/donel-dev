@@ -885,10 +885,12 @@ export function deliveryLine(card: CardView, subject: EntityId | null = null): s
   const escopo = <T extends { readonly subject: EntityId }>(entries: readonly T[]): readonly T[] =>
     subject === null ? entries : entries.filter((entry) => entry.subject.entity === subject.entity && entry.subject.id === subject.id);
 
-  const base =
-    escopo(card.verifications).find((entry) => entry.verificationKind === 'pull-request' && entry.state === 'passed' && entry.base)?.base ??
-    escopo(card.verifications).find((entry) => entry.verificationKind === 'pull-request' && entry.base)?.base ??
-    null;
+  // Achado da captura tutorial-e2e (batch n1, 2026-08-05): havia um segundo
+  // `find` de fallback aqui, sem exigir `state === 'passed'` — um PR 'pending'
+  // com `base` já bastava para "Entregue em X.", lado a lado com "PR aberto,
+  // ainda não verificado" na mesma tela. "Chegou" é o que esta função promete
+  // (ver docstring); só um PR PASSADO chegou.
+  const base = escopo(card.verifications).find((entry) => entry.verificationKind === 'pull-request' && entry.state === 'passed' && entry.base)?.base ?? null;
 
   const channel = escopo(card.phases).find((phase) => phase.channel !== null)?.channel ?? null;
 
