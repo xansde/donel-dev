@@ -461,6 +461,13 @@ function emitirResultadoDaSkill(esteiraRoot: string): void {
         repo: REPO_ALVO,
         path: 'specs/010-esteira-donel/spec.md',
       },
+      // A18 — discovery concluída fecha com o que alguém disse.
+      {
+        type: 'decision.recorded',
+        subject: { entity: 'discovery', id: discoveryId },
+        decision: 'instrumentar antes de mexer no consumo',
+        confirmed_by: 'dono do repo',
+      },
       {
         type: 'phase.completed',
         subject: { entity: 'discovery', id: discoveryId },
@@ -501,6 +508,7 @@ function escreverResultadoQuebrado(esteiraRoot: string): void {
         // `fanout_cards` é do modelo ANTIGO — o campo que o app procurava e a
         // skill não gravava. É exatamente o desencontro da evidência 1.
         { type: 'discovery.recorded', discovery_id: discoveryId, title: 'Card', fanout_cards: ['card-1'] },
+        { type: 'decision.recorded', subject: { entity: 'discovery', id: discoveryId }, decision: 'instrumentar antes de mexer', confirmed_by: 'dono do repo' },
         { type: 'phase.completed', subject: { entity: 'discovery', id: discoveryId }, phase: 'discovery', outcome: 'done' },
       ],
     }),

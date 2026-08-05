@@ -270,6 +270,13 @@ function emitirResultadoDaSkill(esteiraRoot: string): string {
         target_repo: null,
         scope_repos: [],
       },
+      // A18 — discovery concluída fecha com o que alguém disse.
+      {
+        type: 'decision.recorded',
+        subject: { entity: 'discovery', id: discoveryId },
+        decision: 'os dois itens seguem, um deles sem repo alvo de propósito',
+        confirmed_by: 'dono do repo',
+      },
       {
         type: 'phase.completed',
         subject: { entity: 'discovery', id: discoveryId },
@@ -322,6 +329,7 @@ function escreverIssueSemRepo(esteiraRoot: string, discoveryId: string): void {
           target_repo: null,
           scope_repos: [],
         },
+        { type: 'decision.recorded', subject: { entity: 'discovery', id: discoveryId }, decision: 'seguir com os itens propostos', confirmed_by: 'dono do repo' },
         { type: 'phase.completed', subject: { entity: 'discovery', id: discoveryId }, phase: 'plano', outcome: 'done' },
       ],
     }),

@@ -17,6 +17,10 @@ import {
   ITEM_STATE_RULE,
   lockView,
   MACRO_STAGE_OPTIONS,
+  deliveryLine,
+  humanDecisionLines,
+  reviewChecklist,
+  reviewChecklistTitle,
   MIRROR_PENDING_HINT,
   MIRROR_PENDING_TITLE,
   mirrorLines,
@@ -134,6 +138,12 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   // simples; item vira linha COM gestos, e o texto continua sendo o mesmo que a
   // camada pura escreveu.
   const planLines = useMemo(() => (content?.lines ?? []).filter((line) => line.kind === 'plan'), [content]);
+  // A9/A18, A10/A19 e A15 — as três listas vêm PRONTAS da camada pura. A tela
+  // só decide se o bloco aparece; nenhuma frase nasce no JSX (foi montando
+  // frase aqui que a tela passou a se contradizer).
+  const decisoes = useMemo(() => (selected === null ? [] : humanDecisionLines(selected)), [selected]);
+  const revisao = useMemo(() => (selected === null ? [] : reviewChecklist(selected)), [selected]);
+  const entrega = useMemo(() => (selected === null ? null : deliveryLine(selected)), [selected]);
   const itemLineById = useMemo(
     () => new Map((content?.lines ?? []).filter((line) => line.kind === 'item').map((line) => [line.key.slice('work_item:'.length), line])),
     [content],
@@ -533,7 +543,7 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                 </section>
               ) : null}
 
-              <section className={styles.block}>
+              <section className={styles.block} data-testid="esteira-fases">
                 <h4 className={styles.blockTitle}>Fases</h4>
                 {selected.phases.length === 0 ? (
                   <p className={styles.hint}>Nenhuma fase rodou ainda.</p>
@@ -559,6 +569,45 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                   <ul className={styles.lines}>
                     {verificationLines(selected).map((entry) => (
                       <li key={entry.key} className={entry.failed ? styles.failed : undefined}>
+                        {entry.text}
+                        {entry.detail ? <span className={styles.hint}> {entry.detail}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {/* A15 — num repo com escada alfa→beta→stable, "concluído"
+                      sem destino se lê como "está na main". A frase inteira vem
+                      de `deliveryLine`; se ninguém declarou destino, ela é nula
+                      e a tela não afirma nada. */}
+                  {entrega === null ? null : <p className={styles.hint}>{entrega}</p>}
+                </section>
+              ) : null}
+
+              {/* A9 + A18 — o que GENTE disse sobre este card: gates
+                  confirmados e decisões tomadas. Antes viviam como blockquote
+                  no `tasks.md`, onde gate composto virava uma linha só e
+                  meia-confirmação não cabia. As frases vêm prontas de
+                  `humanDecisionLines`; aqui só se posiciona. */}
+              {decisoes.length > 0 ? (
+                <section className={styles.block} data-testid="esteira-decisoes">
+                  <h4 className={styles.blockTitle}>Decisões e confirmações</h4>
+                  <ul className={styles.lines}>
+                    {decisoes.map((entry) => (
+                      <li key={entry.key}>{entry.text}</li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+
+              {/* A10 + A19 — o que sobrou para você. Antes era uma frase
+                  corrida no `summary` da fase, que ninguém lê como lista.
+                  Item pendente NÃO é falha: o tom vem da linha, e ele nunca é
+                  de erro — esperar por gente é um estado legítimo. */}
+              {revisao.length > 0 ? (
+                <section className={styles.block} data-testid="esteira-revisao">
+                  <h4 className={styles.blockTitle}>{reviewChecklistTitle(revisao)}</h4>
+                  <ul className={styles.lines}>
+                    {revisao.map((entry) => (
+                      <li key={entry.key}>
                         {entry.text}
                         {entry.detail ? <span className={styles.hint}> {entry.detail}</span> : null}
                       </li>

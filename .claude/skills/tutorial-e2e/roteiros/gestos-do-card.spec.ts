@@ -220,14 +220,21 @@ function ultimoInput(esteiraRoot: string): string {
 }
 
 /** Roda o emissor REAL da skill 3.0 — sem dublê, o contrato é provado dos dois lados. */
-function emitir(esteiraRoot: string, fatos: unknown[], nomeDoArquivoDeFatos: string): void {
+function emitir(esteiraRoot: string, fatos: unknown[], nomeDoArquivoDeFatos: string, complemento = false): void {
   const inputPath = ultimoInput(esteiraRoot);
   const factsPath = path.join(esteiraRoot, nomeDoArquivoDeFatos);
   writeFileSync(factsPath, JSON.stringify(fatos), 'utf8');
 
+  // A4 — acrescentar fatos a um run já ingerido é COMPLEMENTO, não regravação:
+  // reescrever o mesmo `run_id` com outro conteúdo é recusado com erro visível.
+  const runId: string = JSON.parse(readFileSync(inputPath, 'utf8')).run.run_id;
+  const extras = complemento
+    ? ['--kind', 'esteira.result.complement', '--complements-run-id', runId, '--run-id', `${runId}.c1`]
+    : [];
+
   execFileSync(
     'python',
-    ['emit_result.py', '--input', inputPath, '--facts-file', factsPath, '--model', 'claude-opus-5', '--effort', 'high'],
+    ['emit_result.py', '--input', inputPath, '--facts-file', factsPath, '--model', 'claude-opus-5', '--effort', 'high', ...extras],
     { cwd: path.join(REPO_ROOT, 'skills', 'esteira-donel-3.0.0', 'tools'), encoding: 'utf8' },
   );
 }
@@ -263,6 +270,13 @@ function emitirPlanoComDoisItens(esteiraRoot: string): void {
       },
       { type: 'work_item.recorded', work_item_id: ID_ITEM_1, plan_id: 'pln-b3', item_type: 'issue', title: TITULO_ITEM_1, target_repo: 'donel-dev', scope_repos: [] },
       { type: 'work_item.recorded', work_item_id: ID_ITEM_2, plan_id: 'pln-b3', item_type: 'spec', title: TITULO_ITEM_2, target_repo: 'donel-dev', scope_repos: [] },
+      // A18 — a fase de conversa fecha com o que alguém disse.
+      {
+        type: 'decision.recorded',
+        subject: { entity: 'discovery', id: discoveryId },
+        decision: 'os dois itens entram juntos',
+        confirmed_by: 'dono do repo',
+      },
       {
         type: 'phase.completed',
         subject: { entity: 'discovery', id: discoveryId },
@@ -276,17 +290,20 @@ function emitirPlanoComDoisItens(esteiraRoot: string): void {
 }
 
 /**
- * O estado ruim: a skill assumiu o primeiro item e o travou. Reemitir o MESMO
- * run é de propósito — os fatos já ingeridos são deduplicados pelo `run_id`, e
- * só a trava entra. É a idempotência do contrato sendo exercitada, não um
- * atalho do roteiro.
+ * O estado ruim: a skill assumiu o primeiro item e o travou. Isto chega como
+ * COMPLEMENTO do run anterior (A4) — acrescenta um fato sem redeclarar a fase.
+ *
+ * Antes o roteiro reemitia o MESMO `run_id` e contava com a dedupe para deixar
+ * só a trava entrar. Era o buraco: regravar um run com outro conteúdo passava
+ * calado, e foi assim que a Concluir trocou um desfecho sem o card contar.
+ * Agora o mesmo `run_id` com conteúdo diferente é recusado com erro visível, e
+ * o complemento é o caminho certo — mais curto, inclusive: ele não precisa
+ * repetir nenhum fato já declarado.
  */
 function emitirTravaNoPrimeiroItem(esteiraRoot: string): void {
-  const discoveryId = discoveryDoInput(esteiraRoot);
   emitir(
     esteiraRoot,
     [
-      fatoDoCard(discoveryId),
       {
         // O emissor monta o `holder` (kind: skill) a partir destes dois campos —
         // é a forma que `esteira_contract.lock_acquired` aceita.
@@ -296,14 +313,8 @@ function emitirTravaNoPrimeiroItem(esteiraRoot: string): void {
         acquired_at: '2026-08-04T15:00:00.000Z',
         cli_session_id: '0198f0bd-2d3e-7b02-8c5a-3d2e4f5a6b7c',
       },
-      {
-        type: 'phase.completed',
-        subject: { entity: 'discovery', id: discoveryId },
-        phase: 'discovery',
-        outcome: 'done',
-        summary: 'Um plano com dois itens.',
-      },
     ],
     'fatos-trava.json',
+    true,
   );
 }

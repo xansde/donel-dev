@@ -104,6 +104,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default=None)
     parser.add_argument("--effort", default=None)
     parser.add_argument("--cli-session-id", default=None)
+    # A4/A13 — um run NAO se reescreve. Para acrescentar fatos a um run ja
+    # ingerido, emita um COMPLEMENTO; para rever o desfecho, uma REVISAO. Os
+    # dois sao runs novos, e o `--run-id` traz o sufixo que o contrato cobra
+    # (`<base>.c<N>`, `<base>.rev<N>`) — quem compoe o nome e quem sabe qual
+    # rodada e esta, nao o emissor.
+    parser.add_argument("--kind", default=contract.RESULT_KIND, choices=[contract.RESULT_KIND, contract.COMPLEMENT_KIND])
+    parser.add_argument("--run-id", default=None, help="sobrescreve o run_id do run-input (complemento/revisao)")
+    parser.add_argument("--complements-run-id", default=None)
+    parser.add_argument("--revises-run-id", default=None)
     args = parser.parse_args(argv)
 
     try:
@@ -121,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
             failure = {"code": args.failure_code, "message": args.failure_message}
 
         result = contract.build_result(
-            run_id=run_input["run"]["run_id"],
+            run_id=args.run_id or run_input["run"]["run_id"],
             phase=run_input["run"]["phase"],
             status=args.status,
             started_at=args.started_at or run_input["run"]["requested_at"],
@@ -135,6 +144,9 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             effort=args.effort,
             cli_session_id=args.cli_session_id,
+            kind=args.kind,
+            complements_run_id=args.complements_run_id,
+            revises_run_id=args.revises_run_id,
         )
 
         written = contract.write_result(result, run_input["outbox"]["result_path"])
