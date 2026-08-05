@@ -38,6 +38,14 @@ export const ESTEIRA_CHANNELS = {
   addNote: 'esteira:addNote',
   /** Reenvia o que o board nao recebeu (D-12). Gesto humano: ignora o teto de tentativas. */
   retryMirror: 'esteira:retryMirror',
+  /**
+   * C3 — le o TEXTO de um artefato ja conhecido pelo store (D-8), so leitura.
+   * O `path` chega ABSOLUTO, ja resolvido no renderer contra a lista de
+   * projetos conhecidos — a MESMA fronteira de confianca de onde a sessao de
+   * terminal abre (D-6): o app ja executa shell nesses caminhos sem validacao
+   * extra, e ler um arquivo de texto e uma capacidade menor que essa.
+   */
+  readArtifactText: 'esteira:readArtifactText',
   /** main → renderer: o store mudou (ingestao, disparo, gesto de outro canal). */
   changed: 'esteira:changed',
 } as const;
@@ -249,6 +257,27 @@ export function isValidAddNoteIpcInput(input: unknown): input is AddNoteIpcInput
 }
 
 /**
+ * C3 — o pedido de leitura de um artefato. Restrito a `.md`: este canal
+ * existe pra `tasks.md` (e documentos irmãos), não é um leitor de arquivo
+ * genérico — abrir pra qualquer extensão seria uma capacidade nova que
+ * ninguém revisou.
+ */
+export interface ReadArtifactTextIpcInput {
+  readonly path: string;
+}
+
+export function isValidReadArtifactTextIpcInput(input: unknown): input is ReadArtifactTextIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<ReadArtifactTextIpcInput>;
+  return typeof candidate.path === 'string' && candidate.path.trim().length > 0 && candidate.path.toLowerCase().endsWith('.md');
+}
+
+/** `not-found`/`read-error` nunca lançam pro renderer — degradam por omissão (o mesmo padrão de `FileReadIoDeps`, que nunca lança). */
+export type ReadArtifactTextDto =
+  | { readonly ok: true; readonly text: string }
+  | { readonly ok: false; readonly reason: 'not-found' | 'read-error' | 'invalid-input' };
+
+/**
  * A resposta dos gestos que so mudam o estado local. `unknown-subject` existe
  * porque o reducer ignora, calado, evento sobre entidade que nao existe: gravar
  * assim mesmo produziria um fato sobre um fantasma e uma tela que nao muda, sem
@@ -312,6 +341,8 @@ export interface DonelEsteiraApi {
    * atras, sem segurar gesto nenhum.
    */
   retryMirror(): Promise<EsteiraSnapshotDto>;
+  /** C3 — le o texto de um artefato (D-8), so leitura, restrito a `.md`. */
+  readArtifactText(input: ReadArtifactTextIpcInput): Promise<ReadArtifactTextDto>;
   /** Devolve a funcao de desinscricao (mesmo padrao dos outros canais de push). */
   onChanged(listener: (state: EsteiraSnapshotDto) => void): () => void;
 }

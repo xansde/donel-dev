@@ -79,6 +79,8 @@ import {
   type EsteiraGestureDto,
   type EsteiraSeedDto,
   type EsteiraSnapshotDto,
+  type ReadArtifactTextDto,
+  type ReadArtifactTextIpcInput,
   type ReleaseLockIpcInput,
   type SeedIpcInput,
   type SetStageOverrideIpcInput,
@@ -397,6 +399,10 @@ const donelApi: DonelApi = {
     // D-12 — reenvio do espelho. O board é destino opcional: falhar aqui nunca
     // muda o que já aconteceu localmente.
     retryMirror: () => ipcRenderer.invoke(ESTEIRA_CHANNELS.retryMirror) as Promise<EsteiraSnapshotDto>,
+
+    // C3 — lê o texto de um artefato (D-8), só leitura.
+    readArtifactText: (input: ReadArtifactTextIpcInput) =>
+      ipcRenderer.invoke(ESTEIRA_CHANNELS.readArtifactText, input) as Promise<ReadArtifactTextDto>,
 
     onChanged: (listener: (state: EsteiraSnapshotDto) => void) => {
       const handler = (_event: unknown, state: EsteiraSnapshotDto): void => listener(state);

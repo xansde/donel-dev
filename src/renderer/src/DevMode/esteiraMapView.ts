@@ -52,7 +52,7 @@ import {
   type VerificationLineView,
 } from '../Esteira/esteiraView';
 import { resolveResume } from '../Esteira/esteiraSession';
-import type { EntityId, StoreSnapshot, WorkItemSnapshot } from '../../../shared/esteira/store/storeFormat';
+import type { ArtifactPointer, EntityId, StoreSnapshot, WorkItemSnapshot } from '../../../shared/esteira/store/storeFormat';
 
 export type MapLevelKey = 'discovery' | 'planos' | 'itens' | 'preview';
 export type MapTone = 'muted' | 'ok' | 'warn' | 'error' | 'lock' | 'accent';
@@ -172,6 +172,8 @@ export interface MapNoteView {
 }
 
 export interface MapDetailView {
+  /** C3 — o assunto deste detalhe, cru: é o que `App.tsx` usa pra pedir `tasksArtifactFor` sem duplicar a resolução do nó em foco. */
+  readonly subject: EntityId;
   readonly title: string;
   /** O que este nó é: "Discovery", "Plano", "issue · em curso · donel-dev". */
   readonly subtitle: string;
@@ -539,6 +541,7 @@ function detailFor(card: CardView, subject: EntityId, phase: string | null): Map
           : (card.discovery.problem ?? 'Sem problema declarado — o card só tem o título.');
 
   return {
+    subject,
     title,
     subtitle,
     phase: daFase?.phase.phase ?? null,
@@ -730,6 +733,34 @@ export function tabToFocusFor(
   const live = liveSessionOf(card, subject);
   if (live === null || live.cliSessionId === null) return null;
   return tabs.find((tab) => tab.claudeSessionId === live.cliSessionId)?.id ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// C3 — "o card do item mostra O QUE RODA JUNTO". O contrato não declara
+// nenhuma granularidade abaixo do item (nem contagem, nem faixa de task); a
+// única fonte real hoje é o `tasks.md` do repo-alvo, quando um artefato
+// aponta pra ele (D-8). Esta função só ESCOLHE o artefato — quem lê o disco é
+// IPC (main), e quem interpreta o texto é `shared/tasksDoc` (puro, longe do
+// componente).
+// ---------------------------------------------------------------------------
+
+/**
+ * O artefato de `subject` que parece ser a lista de tasks. Sem convenção
+ * fixa de `artifactKind` no contrato ainda (achado desta investigação): a
+ * heurística aceita tanto `artifactKind === 'tasks'` (quando uma skill vier a
+ * declarar isso explicitamente) quanto o caminho terminando em `tasks.md` —
+ * hoje, o nome do arquivo é a única convenção que já existe de verdade neste
+ * repo (todo `specs/*\/tasks.md` segue o mesmo formato de checklist).
+ */
+export function tasksArtifactFor(card: CardView, subject: EntityId): ArtifactPointer | null {
+  return (
+    card.artifacts.find(
+      (artifact) =>
+        artifact.owner.entity === subject.entity &&
+        artifact.owner.id === subject.id &&
+        (artifact.artifactKind === 'tasks' || artifact.path.toLowerCase().endsWith('tasks.md')),
+    ) ?? null
+  );
 }
 
 /** A palavra de cada estado de fase, para quem precisa dela fora da frase inteira. */

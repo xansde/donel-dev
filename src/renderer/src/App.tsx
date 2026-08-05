@@ -70,8 +70,9 @@ import { sessionTabName } from '../../shared/sessions';
 import { isReadyToPreType } from '../../shared/preTypeReadiness';
 import { DiscoveryMap } from './DevMode/DiscoveryMap';
 import { PhaseDetailsPanel } from './DevMode/PhaseDetailsPanel';
-import { buildMapView, tabToFocusFor, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
+import { buildMapView, tabToFocusFor, tasksArtifactFor, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
 import { createPrimeSequencer } from './DevMode/primeSequencer';
+import type { TasksRunningTogetherView } from './DevMode/PhaseDetailsPanel';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import type { LauncherLaunchOptions } from './Launcher';
@@ -80,10 +81,13 @@ import type { LauncherLaunchOptions } from './Launcher';
 // gesto interno, para dar para comparar as duas com o mesmo dado.
 import { EsteiraScreen } from './Esteira/EsteiraScreen';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
-import { esteiraTabName, type EsteiraSessionRequest } from './Esteira/esteiraSession';
+import { esteiraTabName, resolveSessionCwd, type EsteiraSessionRequest } from './Esteira/esteiraSession';
 import { preparePhase } from './Esteira/preparePhase';
 import type { EsteiraSnapshotDto } from '../../shared/esteira/ipc';
 import type { EntityId } from '../../shared/esteira/store/storeFormat';
+// C3 — o parser do tasks.md (puro, testado) fica fora do domínio da esteira
+// de propósito: é interpretação de TEXTO de um artefato, não fato do store.
+import { parseTasksDoc, taskScope } from '../../shared/tasksDoc';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { AccountsPanel } from './AccountsPanel';
@@ -381,6 +385,15 @@ export function App(): React.JSX.Element {
   });
   /** D4 — Toast informativo (o que o gesto fez, por que foi recusado); nunca tem desfazer. */
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
+  /**
+   * C3 — cache do texto de tasks.md já lido, por caminho ABSOLUTO. `null` =
+   * já tentou e não achou/não leu (não refaz o IPC); ausente = ainda não
+   * tentou. `buildMapView` é síncrona e não lê disco (D-13 continua valendo
+   * pro resto do snapshot) — este cache vive fora dela de propósito.
+   */
+  const [taskDocByPath, setTaskDocByPath] = useState<Record<string, string | null>>({});
+  /** Evita reler o mesmo caminho enquanto o fetch está em voo (guard por ref, mesmo padrão de `armWatchersRef`). */
+  const taskDocFetchingRef = useRef<Set<string>>(new Set());
   /** Cleanup do watcher de prontidão em voo por aba (mesmo padrão de `pendingInjectionWatchersRef`). */
   const armWatchersRef = useRef<Record<string, (() => void) | undefined>>({});
   /**
@@ -1356,6 +1369,45 @@ export function App(): React.JSX.Element {
     if (tabId !== null) setActiveTabId(tabId);
   };
 
+  /**
+   * C3 — o artefato de tasks.md do nó em foco no detalhe, e o caminho
+   * ABSOLUTO resolvido pra lê-lo. `resolveSessionCwd` é a MESMA resolução
+   * repo→caminho local que já decide onde a sessão de terminal abre (D-6) —
+   * reusada aqui, não recalculada: um repo que o app não conhece não vira
+   * leitura silenciosa por palpite, do mesmo jeito que não vira sessão.
+   */
+  const tasksTarget = useMemo(() => {
+    const snapshot = esteiraState?.snapshot;
+    if (!snapshot || mapView.focused.discoveryId === null || mapView.detail === null) return null;
+    const card = cardView(snapshot, mapView.focused.discoveryId);
+    if (card === null) return null;
+    const artifact = tasksArtifactFor(card, mapView.detail.subject);
+    if (artifact === null || artifact.location !== 'repo' || artifact.repo === null) return null;
+    const resolved = resolveSessionCwd(artifact.repo, projects);
+    if (!resolved.ok) return null;
+    const separator = resolved.cwd.endsWith('/') || resolved.cwd.endsWith('\\') ? '' : '/';
+    return { path: `${resolved.cwd}${separator}${artifact.path}` };
+  }, [esteiraState, mapView.focused.discoveryId, mapView.detail, projects]);
+
+  useEffect(() => {
+    if (tasksTarget === null) return;
+    if (taskDocFetchingRef.current.has(tasksTarget.path)) return;
+    taskDocFetchingRef.current.add(tasksTarget.path);
+    void window.donel.esteira.readArtifactText({ path: tasksTarget.path }).then((result) => {
+      setTaskDocByPath((prev) => ({ ...prev, [tasksTarget.path]: result.ok ? result.text : null }));
+    });
+  }, [tasksTarget]);
+
+  /** C3 — o texto já lido (se houver) interpretado por `shared/tasksDoc` (puro): o painel de detalhe só desenha o que sai daqui. */
+  const tasksView = useMemo((): TasksRunningTogetherView | null => {
+    if (tasksTarget === null) return null;
+    const text = taskDocByPath[tasksTarget.path];
+    if (text === undefined || text === null) return null;
+    const tasks = parseTasksDoc(text);
+    const scope = taskScope(tasks);
+    return scope === null ? null : { scope, tasks };
+  }, [tasksTarget, taskDocByPath]);
+
   /** D-11 — a trava é fato local, e sai num gesto. Nada de etiqueta órfã no board. */
   const handleMapReleaseLock = (): void => {
     const lock = mapView.detail?.lock;
@@ -2083,6 +2135,7 @@ export function App(): React.JSX.Element {
             onReleaseLock={handleMapReleaseLock}
             onRetryMirror={handleMapRetryMirror}
             readOnly={storeReadOnly}
+            tasks={tasksView}
           />
         ) : null}
 

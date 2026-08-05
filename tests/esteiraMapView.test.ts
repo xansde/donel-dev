@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildMapView, tabToFocusFor, type MapSelection } from '../src/renderer/src/DevMode/esteiraMapView';
+import { buildMapView, tabToFocusFor, tasksArtifactFor, type MapSelection } from '../src/renderer/src/DevMode/esteiraMapView';
+import { cardView } from '../src/renderer/src/Esteira/esteiraView';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
 import type { StoreEvent } from '../src/shared/esteira/store/storeFormat';
 
@@ -278,6 +279,8 @@ describe('buildMapView — o painel de detalhe', () => {
     const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);
     expect(view.detail?.title).toBe('Fila de importação trava sem sinal');
     expect(view.breadcrumb).toEqual(['Fila de importação trava sem sinal']);
+    // C3 — o assunto cru vai junto: é o que App.tsx usa pra pedir tasksArtifactFor sem duplicar a resolução do nó.
+    expect(view.detail?.subject).toEqual({ entity: 'discovery', id: 'dsc-1' });
   });
 
   it('o PR da fase volta a aparecer — e não só o PR (D-4)', () => {
@@ -632,5 +635,46 @@ describe('tabToFocusFor — a aba da sessão viva do nó, quando existe', () => 
 
   it('sem snapshot: null, nunca lança', () => {
     expect(tabToFocusFor(null, 'dsc-1', { entity: 'discovery', id: 'dsc-1' }, abas)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C3 (batch N5) — "o card do item mostra O QUE RODA JUNTO". `tasksArtifactFor`
+// é só a SELEÇÃO de qual artefato do item parece o tasks.md — não lê disco
+// (isso é IPC, no main); o texto já lido é interpretado por
+// `shared/tasksDoc.parseTasksDoc`/`taskScope`, meia camada acima da UI.
+// ---------------------------------------------------------------------------
+describe('tasksArtifactFor — qual artefato do item parece o tasks.md', () => {
+  function comArtefato(artifactKind: string, path: string) {
+    return snapshotDe([
+      ...eventosBase(),
+      evt('artifact.pinned', { owner: { entity: 'work_item', id: 'wki-1' }, artifactKind, location: 'repo', repo: 'donel-dev', path }),
+    ]);
+  }
+
+  it('artifactKind "tasks": é o escolhido', () => {
+    const card = cardView(comArtefato('tasks', 'specs/010-esteira-donel/tasks.md'), 'dsc-1')!;
+    const found = tasksArtifactFor(card, { entity: 'work_item', id: 'wki-1' });
+    expect(found?.path).toBe('specs/010-esteira-donel/tasks.md');
+  });
+
+  it('sem artifactKind "tasks", mas o caminho termina em tasks.md: também é escolhido — a única convenção real hoje é o nome do arquivo', () => {
+    const card = cardView(comArtefato('spec', 'specs/010-esteira-donel/tasks.md'), 'dsc-1')!;
+    const found = tasksArtifactFor(card, { entity: 'work_item', id: 'wki-1' });
+    expect(found?.artifactKind).toBe('spec');
+  });
+
+  it('artefato que não é tasks.md nem kind "tasks": null — nunca inventa escopo do que não é lista de tasks', () => {
+    const card = cardView(comArtefato('spec', 'specs/010-esteira-donel/spec.md'), 'dsc-1')!;
+    expect(tasksArtifactFor(card, { entity: 'work_item', id: 'wki-1' })).toBeNull();
+  });
+
+  it('artefato de OUTRO assunto no mesmo card nunca é escolhido para este item', () => {
+    const snapshot = snapshotDe([
+      ...eventosBase(),
+      evt('artifact.pinned', { owner: { entity: 'discovery', id: 'dsc-1' }, artifactKind: 'tasks', location: 'repo', repo: 'donel-dev', path: 'specs/x/tasks.md' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(tasksArtifactFor(card, { entity: 'work_item', id: 'wki-1' })).toBeNull();
   });
 });

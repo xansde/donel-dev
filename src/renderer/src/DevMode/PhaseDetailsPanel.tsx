@@ -1,4 +1,5 @@
 import { Button, PhaseChip, PhaseStateGlyph, type EsteiraPhase as ChipPhase } from '@donel-dev/design-system';
+import type { TaskEntry, TaskScope } from '../../../shared/tasksDoc';
 import type { MapDetailView } from './esteiraMapView';
 import styles from './PhaseDetailsPanel.module.css';
 
@@ -25,6 +26,18 @@ function isChipPhase(phase: string): phase is ChipPhase {
   return CHIP_PHASES.has(phase);
 }
 
+/**
+ * C3 — "o que roda junto": o escopo compacto + as tasks expandidas do
+ * `tasks.md` apontado por um artefato do nó (`tasksArtifactFor`, lido via
+ * IPC). `null` = sem artefato de tasks, leitura ainda não chegou, ou o
+ * documento não tem task nenhuma — os três casos são "a seção não aparece",
+ * nunca um erro.
+ */
+export interface TasksRunningTogetherView {
+  readonly scope: TaskScope;
+  readonly tasks: readonly TaskEntry[];
+}
+
 export interface PhaseDetailsPanelProps {
   /** `null` = não há card nenhum no histórico — o painel some por omissão. */
   readonly detail: MapDetailView | null;
@@ -33,9 +46,11 @@ export interface PhaseDetailsPanelProps {
   /** Reenvia o que o board não recebeu (D-12) — gesto de cortesia, nunca desbloqueia nada local. */
   readonly onRetryMirror: () => void;
   readonly readOnly: boolean;
+  /** C3 — ver `TasksRunningTogetherView`. */
+  readonly tasks?: TasksRunningTogetherView | null;
 }
 
-export function PhaseDetailsPanel({ detail, onReleaseLock, onRetryMirror, readOnly }: PhaseDetailsPanelProps): React.JSX.Element {
+export function PhaseDetailsPanel({ detail, onReleaseLock, onRetryMirror, readOnly, tasks = null }: PhaseDetailsPanelProps): React.JSX.Element {
   if (!detail) {
     return (
       <aside className={styles.panel} aria-label="Detalhe da etapa" data-testid="devmode-details-panel">
@@ -98,6 +113,26 @@ export function PhaseDetailsPanel({ detail, onReleaseLock, onRetryMirror, readOn
         <section className={styles.section} aria-label="Como o ciclo terminou" data-testid="devmode-details-closure">
           <div className={styles.sectionLabel}>Como este ciclo termina</div>
           <p className={styles.garantiaDescricao}>{detail.closureLine}</p>
+        </section>
+      ) : null}
+
+      {/* C3 — o que roda junto: o escopo compacto (ex.: "27 tasks ·
+          T1102-T1131") + cada task expandida com o título humano. Some por
+          omissão sem artefato de tasks, sem leitura ainda, ou documento sem
+          task — nunca um erro no lugar da seção. */}
+      {tasks !== null ? (
+        <section className={styles.section} aria-label="O que roda junto" data-testid="devmode-details-tasks">
+          <div className={styles.sectionLabel}>O que roda junto — {tasks.scope.compact}</div>
+          <div className={styles.kvList}>
+            {tasks.tasks.map((task) => (
+              <div key={task.id} className={styles.kvRow}>
+                <span className={styles.kvKey}>
+                  {task.done ? '✓' : '○'} {task.id}
+                </span>
+                <span className={styles.kvValue}>{task.title}</span>
+              </div>
+            ))}
+          </div>
         </section>
       ) : null}
 
