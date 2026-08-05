@@ -69,7 +69,7 @@ import { sessionTabName } from '../../shared/sessions';
 // encanamento com PTY/IPC — nenhuma decisão de domínio, nenhuma frase de estado.
 import { DiscoveryMap } from './DevMode/DiscoveryMap';
 import { PhaseDetailsPanel } from './DevMode/PhaseDetailsPanel';
-import { buildMapView, tabToFocusFor, tasksArtifactFor, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
+import { buildMapView, parseEntityKey, tabToFocusFor, tasksArtifactFor, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
 import type { TasksRunningTogetherView } from './DevMode/PhaseDetailsPanel';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
@@ -2293,13 +2293,16 @@ export function App(): React.JSX.Element {
         onChangeNotificationPreference={handleChangeNotificationPreference}
       />
 
-      {/* Spec 010 / N7 (D1) — o mapa de nós. Renderizado condicionalmente
+      {/* Spec 010 / N7→F25 (D1) — o mapa de nós. Renderizado condicionalmente
           (monta/desmonta com `nodeGraphOpen`) para que o Esc do próprio
           overlay só exista enquanto ele está na tela. `onNavigate` entrega o
           MESMO alvo de seleção que o carrossel já consome (`mapSelection`) —
           o grafo é controle de navegação, não só visualização — e fecha
           qualquer tela que estivesse por cima do carrossel para o destino
-          ficar visível. */}
+          ficar visível. F25 — o clique também alterna para a aba da sessão
+          VIVA do alvo, a mesma semântica de `onFocusDiscovery`/`onFocusPlan`
+          /`onFocusItem` logo acima: navegar pelo grafo não pode deixar o
+          usuário olhando pra aba errada enquanto o card certo aparece. */}
       {nodeGraphOpen ? (
         <NodeGraphOverlay
           snapshot={esteiraState?.snapshot ?? null}
@@ -2308,6 +2311,10 @@ export function App(): React.JSX.Element {
             setMapSelection(target);
             setEsteiraOpen(false);
             setNodeGraphOpen(false);
+            const subject = parseEntityKey(target.nodeKey);
+            if (target.discoveryId !== null && subject !== null) {
+              focusLiveSessionOf(target.discoveryId, subject);
+            }
           }}
         />
       ) : null}
