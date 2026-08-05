@@ -78,6 +78,19 @@ test('abrir o mapa de nós, passar o mouse e navegar por um clique', async () =>
     const canvas = win.getByTestId('node-graph-canvas');
     await canvas.waitFor({ timeout: 15_000 });
     await win.waitForTimeout(500);
+
+    // Achado real (revisão do dono nos prints do primeiro commit deste
+    // batch): 4 nós apareciam SOLTOS — o React Flow não desenha aresta
+    // nenhuma para um nó custom sem `<Handle>`, mesmo com o array `edges`
+    // preenchido. Esta asserção teria pego o defeito sem depender de olhar
+    // print nenhum — mas o olhar continua sendo a etapa que prova o visual
+    // (linha, direção, label), não só a contagem.
+    const nosNoDom = await win.locator('[data-testid="node-graph-node"]').count();
+    const arestasNoDom = await win.locator('.react-flow__edge').count();
+    if (nosNoDom > 1 && arestasNoDom === 0) {
+      throw new Error(`${nosNoDom} nós no grafo e nenhuma aresta desenhada — os nós custom perderam o <Handle>?`);
+    }
+
     await passo(
       'O grafo cobre a janela inteira',
       null,

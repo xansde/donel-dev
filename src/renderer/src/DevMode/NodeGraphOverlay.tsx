@@ -3,8 +3,10 @@ import {
   Background,
   BackgroundVariant,
   Controls,
+  Handle,
   MiniMap,
   Panel,
+  Position,
   ReactFlow,
   ReactFlowProvider,
   type Edge,
@@ -111,6 +113,18 @@ function GraphNodeCard({ data }: { data: GraphNodeData }): React.JSX.Element {
       onFocus={() => onHoverChange(node.key)}
       onBlur={() => onHoverChange(null)}
     >
+      {/*
+        Sem estes dois handles, o React Flow simplesmente NÃO desenha nenhuma
+        aresta que aponte para/de este nó — o array `edges` existe, mas fica
+        órfão (achado do dono, revisão dos prints do primeiro commit deste
+        batch: 4 nós soltos, zero linha entre eles). O layout é em colunas da
+        esquerda pra direita (`nodeGraphLayout.ts`), então target fica à
+        esquerda e source à direita — a mesma direção que toda aresta
+        estrutural (`originated`/`artifact`/`verification`) segue, de uma
+        coluna pra próxima. `isConnectable={false}`: são só ancoragem visual,
+        o grafo não é editável (arestas vêm inteiras da projeção). */}
+      <Handle type="target" position={Position.Left} isConnectable={false} className={styles.handle} />
+      <Handle type="source" position={Position.Right} isConnectable={false} className={styles.handle} />
       <div className={styles.nodeHeader}>
         <Icon size={13} strokeWidth={1.75} aria-hidden />
         <span className={styles.nodeTitle}>{truncate(node.title, 28)}</span>

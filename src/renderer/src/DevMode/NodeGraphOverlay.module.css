@@ -183,6 +183,17 @@
   color: var(--text-muted);
 }
 
+/* Ancoragem das arestas (ver comentário em `GraphNodeCard`) — discreta de
+   propósito: um pontinho na cor do próprio nó, não um controle de edição
+   (o grafo não é editável, `isConnectable={false}` já impede o arraste). */
+.handle {
+  width: 6px;
+  height: 6px;
+  background: var(--node-tone, var(--border));
+  border: 1px solid var(--bg-panel);
+  opacity: 0.7;
+}
+
 /* === Arestas === */
 
 .edge :global(.react-flow__edge-path) {
