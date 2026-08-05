@@ -145,6 +145,14 @@ EMITTED_PATHS: tuple[str, ...] = (
     "facts[decision.recorded].decision",
     "facts[decision.recorded].confirmed_by",
     "facts[decision.recorded].rationale",
+    "facts[human_review.recorded].type",
+    "facts[human_review.recorded].subject.entity",
+    "facts[human_review.recorded].subject.id",
+    "facts[human_review.recorded].phase",
+    "facts[human_review.recorded].checklist[].item",
+    "facts[human_review.recorded].checklist[].kind",
+    "facts[human_review.recorded].checklist[].state",
+    "facts[human_review.recorded].checklist[].detail",
 )
 
 # O que a skill LE do `run-input.json`. Mesma disciplina, na outra direcao:
@@ -399,6 +407,41 @@ def decision_recorded(
         "confirmed_by": confirmed_by,
         "rationale": rationale,
     }
+
+
+HUMAN_REVIEW_KINDS = ("review", "action")
+HUMAN_REVIEW_STATES = ("pending", "done", "waived")
+
+
+def human_review_recorded(subject: dict[str, str], phase: str, checklist: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """A10 + A19 — o que sobrou para uma PESSOA, em forma de lista.
+
+    Antes viajava como frase corrida no `summary`, onde ninguem le como lista e
+    ninguem marca como feita. Duas naturezas na mesma lista porque as duas
+    respondem "o que falta de mim?": `review` = confira o que a fase fez;
+    `action` = faca o que ela nao podia fazer (A19). Item `action` pendente NAO
+    rebaixa a fase — esperar por gente e um estado legitimo.
+
+    `state='done'` so com resultado COLHIDO da pessoa. A skill nunca marca por
+    conta propria: seria ela se dando o aval que ninguem deu.
+    """
+    if not PHASE_PATTERN.match(phase):
+        raise ContractError(f"nome de fase fora do padrao: {phase!r}")
+    entradas = []
+    for index, entry in enumerate(checklist):
+        if not entry.get("item"):
+            raise ContractError(f"checklist[{index}] exige o que conferir ou fazer")
+        if entry.get("kind") not in HUMAN_REVIEW_KINDS:
+            raise ContractError(f"checklist[{index}].kind deve ser um de {'/'.join(HUMAN_REVIEW_KINDS)}")
+        if entry.get("state") not in HUMAN_REVIEW_STATES:
+            raise ContractError(f"checklist[{index}].state deve ser um de {'/'.join(HUMAN_REVIEW_STATES)}")
+        entradas.append(
+            {"item": entry["item"], "kind": entry["kind"], "state": entry["state"], "detail": entry.get("detail")}
+        )
+    if not entradas:
+        # "Tem coisa para voce" sem dizer o que e nao ajuda ninguem.
+        raise ContractError("human_review.recorded exige ao menos um item na checklist")
+    return {"type": "human_review.recorded", "subject": subject, "phase": phase, "checklist": entradas}
 
 
 def human_decision_facts() -> list[str]:

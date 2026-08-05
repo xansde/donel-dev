@@ -69,6 +69,7 @@ FACT_BUILDERS = {
     "decision.recorded": lambda f: contract.decision_recorded(
         f["subject"], f["decision"], f["confirmed_by"], rationale=f.get("rationale")
     ),
+    "human_review.recorded": lambda f: contract.human_review_recorded(f["subject"], f["phase"], f["checklist"]),
 }
 
 

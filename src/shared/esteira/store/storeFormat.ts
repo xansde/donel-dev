@@ -150,6 +150,8 @@ export const STORE_EVENT_TYPES = [
   'gate.confirmed',
   /** A18 — uma decisao tomada na fase, com quem a confirmou. Irma de `gate.confirmed`: gate confirma condicao, decisao escolhe caminho. */
   'decision.recorded',
+  /** A10/A19 — a lista do que sobrou para uma PESSOA conferir ou fazer, no lugar de uma frase enterrada no `summary`. */
+  'human_review.recorded',
   'stage.overridden',
   'stage.override.cleared',
   'note.added',
@@ -500,6 +502,29 @@ export interface GateConfirmationSnapshot {
   readonly confirmedAt: string;
 }
 
+export type HumanReviewKind = 'review' | 'action';
+export type HumanReviewState = 'pending' | 'done' | 'waived';
+
+/** A10/A19 — uma linha da lista do humano: confira (`review`) ou faca (`action`). */
+export interface HumanReviewItem {
+  readonly item: string;
+  readonly kind: HumanReviewKind;
+  readonly state: HumanReviewState;
+  readonly detail: string | null;
+}
+
+/**
+ * A10 — a lista de UMA fase sobre UM assunto. Chave natural `subject|phase`:
+ * redeclarar substitui, porque a lista e o estado de AGORA — uma revisao
+ * respondida pela metade nao deve conviver com a versao anterior inteira.
+ */
+export interface HumanReviewSnapshot {
+  readonly subject: EntityId;
+  readonly phase: string;
+  readonly checklist: readonly HumanReviewItem[];
+  readonly at: string;
+}
+
 /**
  * A18 — UMA decisao tomada, com quem a confirmou. Chave natural
  * `subject|decision`: redecidir a mesma coisa atualiza quem confirmou; decidir
@@ -593,6 +618,8 @@ export interface StoreSnapshot {
   readonly gates: readonly GateConfirmationSnapshot[];
   /** A18 — as decisoes tomadas, uma por registro, cada uma com quem a confirmou. */
   readonly decisions: readonly DecisionSnapshot[];
+  /** A10/A19 — o que sobrou para uma pessoa conferir ou fazer, por fase. */
+  readonly humanReviews: readonly HumanReviewSnapshot[];
   readonly notes: readonly NoteSnapshot[];
   /** A4 — o livro dos runs ingeridos, na ordem em que entraram. */
   readonly runs: readonly IngestedRunSnapshot[];

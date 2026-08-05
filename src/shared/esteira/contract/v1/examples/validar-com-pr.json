@@ -55,6 +55,25 @@
       "path": "C:/Users/dev/.donel/reports/wi-2026-08-03-a1-02-review.md"
     },
     {
+      "type": "human_review.recorded",
+      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "phase": "validar",
+      "checklist": [
+        {
+          "item": "o teste novo cobre lote vazio, que e o caso que quebrou",
+          "kind": "review",
+          "state": "pending",
+          "detail": "tests/fila.test.ts, terceiro caso"
+        },
+        {
+          "item": "aprovar o PR — a politica deste repo pede um revisor",
+          "kind": "action",
+          "state": "pending",
+          "detail": "https://github.com/exemplo/atlas/pull/128"
+        }
+      ]
+    },
+    {
       "type": "lock.released",
       "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
       "phase": "validar"

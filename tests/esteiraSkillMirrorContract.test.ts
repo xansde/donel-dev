@@ -148,6 +148,42 @@ describe('espelho — o documento produzido pela skill passa no parser do app', 
     expect(stderr).toContain('confirmed_by');
   });
 
+  it('A10/A19 — a lista da revisão humana que a skill emite passa no parser', () => {
+    const document = runPython(
+      `${PRELUDE}` +
+        `wi = {'entity':'work_item','id':'wi-1'}\n` +
+        `facts = [\n` +
+        `  c.verification_recorded(wi, 'review', 'passed', ref='sem bloqueio'),\n` +
+        `  c.human_review_recorded(wi, 'validar', [\n` +
+        `    {'item':'o teste cobre lote vazio','kind':'review','state':'pending','detail':'tests/fila.test.ts'},\n` +
+        `    {'item':'aprovar o PR','kind':'action','state':'pending','detail':None},\n` +
+        `  ]),\n` +
+        `  c.phase_completed(wi, 'validar', 'done'),\n` +
+        `]\n` +
+        `print(json.dumps(c.build_result(run_id='run-rev', phase='validar', status='success', started_at='2026-08-04T12:00:00.000Z', finished_at='2026-08-04T12:30:00.000Z', discovery_id='dsc-1', work_item_id='wi-1', facts=facts)))`,
+    );
+
+    const parsed = parseEsteiraResult(document);
+    if (!parsed.ok) throw new Error(`a skill produziu algo que o app recusa: ${JSON.stringify(parsed.issues, null, 2)}`);
+    const fact = parsed.result.facts.find((entry) => entry.type === 'human_review.recorded');
+    expect(fact?.type === 'human_review.recorded' && fact.checklist).toHaveLength(2);
+  });
+
+  it('A10 — a skill recusa item de checklist sem natureza declarada', () => {
+    let stderr = '';
+    try {
+      execFileSync(
+        'python',
+        ['-c', `${PRELUDE}c.human_review_recorded({'entity':'work_item','id':'wi-1'}, 'validar', [{'item':'algo','state':'pending'}])`],
+        { encoding: 'utf8', cwd: SKILL_TOOLS_DIR, stdio: 'pipe' },
+      );
+      throw new Error('esperava ContractError, e o emissor aceitou item sem natureza');
+    } catch (error) {
+      stderr = String((error as { stderr?: string }).stderr ?? '');
+    }
+    expect(stderr).toContain('kind');
+  });
+
   it('fase que falhou: o app aceita, e a falha vem legível', () => {
     const document = runPython(
       `${PRELUDE}` +

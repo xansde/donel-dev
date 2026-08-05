@@ -23,6 +23,9 @@ import type {
   DiscoverySnapshot,
   EntityId,
   GateConfirmationSnapshot,
+  HumanReviewKind,
+  HumanReviewSnapshot,
+  HumanReviewState,
   IngestErrorSnapshot,
   LifecycleKind,
   LockRecord,
@@ -439,6 +442,8 @@ export interface CardView {
   readonly gates: readonly GateConfirmationSnapshot[];
   /** A18 — o que ficou decidido, com quem decidiu. */
   readonly decisions: readonly DecisionSnapshot[];
+  /** A10/A19 — o que sobrou para uma pessoa conferir ou fazer. */
+  readonly humanReviews: readonly HumanReviewSnapshot[];
 }
 
 /**
@@ -583,6 +588,7 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     artifacts: snapshot.artifacts.filter((entry) => belongs(entry.owner)),
     gates: snapshot.gates.filter((entry) => belongs(entry.subject)),
     decisions: snapshot.decisions.filter((entry) => belongs(entry.subject)),
+    humanReviews: snapshot.humanReviews.filter((entry) => belongs(entry.subject)),
     notes: snapshot.notes
       .filter((note) => belongs(note.subject))
       .map((note) => ({
@@ -932,6 +938,79 @@ export function humanDecisionLines(card: CardView, subject: EntityId | null = nu
 
 export const GATES_EMPTY_NOTE =
   'Nenhuma condição confirmada por gente. Não é pendência: só quer dizer que nenhuma fase declarou ter perguntado.';
+
+// ---------------------------------------------------------------------------
+// A10 + A19 — o que sobrou para VOCÊ
+// ---------------------------------------------------------------------------
+//
+// Antes isto viajava como texto no `summary` da fase: uma frase corrida com
+// três coisas dentro, que ninguém lê como lista e ninguém marca como feita. E
+// no `summary` não cabe a distinção que importa — "confira o que eu fiz" e
+// "faça o que eu não podia fazer" são pedidos diferentes.
+//
+// A19: item `action` pendente NÃO é falha da fase. Falha é o que a fase deveria
+// ter feito e não fez; esperar por gente é um estado legítimo, e pintá-lo de
+// vermelho ensina a ignorar o vermelho.
+
+/** O verbo de cada natureza, num lugar só. */
+const REVIEW_KIND_VERB: Readonly<Record<HumanReviewKind, string>> = {
+  review: 'Confira',
+  action: 'Você precisa',
+};
+
+/** A palavra de cada estado. Nenhuma delas é "pendência" para o que ainda não foi pedido. */
+const REVIEW_STATE_WORD: Readonly<Record<HumanReviewState, string>> = {
+  pending: 'aguardando você',
+  done: 'respondido',
+  waived: 'dispensado',
+};
+
+export interface ReviewLineView {
+  readonly key: string;
+  /** "Confira: o teste cobre lote vazio — aguardando você" */
+  readonly text: string;
+  readonly detail: string | null;
+  readonly kind: HumanReviewKind;
+  readonly state: HumanReviewState;
+  /** A19 — o tom NUNCA é de erro: esperar por gente não é falha da fase. */
+  readonly tone: SignalTone;
+  readonly phase: string;
+}
+
+/**
+ * A lista da revisão humana, uma linha por item. `subject` filtra por assunto,
+ * como as demais listas do card.
+ */
+export function reviewChecklist(card: CardView, subject: EntityId | null = null): readonly ReviewLineView[] {
+  const escopo =
+    subject === null
+      ? card.humanReviews
+      : card.humanReviews.filter((entry) => entry.subject.entity === subject.entity && entry.subject.id === subject.id);
+
+  return escopo.flatMap((review) =>
+    review.checklist.map((entry, index) => ({
+      key: `${review.subject.entity}:${review.subject.id}:${review.phase}:${index}`,
+      text: `${REVIEW_KIND_VERB[entry.kind]}: ${entry.item} — ${REVIEW_STATE_WORD[entry.state]}`,
+      detail: entry.detail,
+      kind: entry.kind,
+      state: entry.state,
+      // Aguardando é `attention` (há algo a fazer), nunca `error` (algo deu
+      // errado). A19 mora nesta linha.
+      tone: entry.state === 'pending' ? ('attention' as const) : ('neutral' as const),
+      phase: review.phase,
+    })),
+  );
+}
+
+/** O título do bloco, com o que falta contado — a lista abaixo mostra tudo o que ele contou. */
+export function reviewChecklistTitle(lines: readonly ReviewLineView[]): string {
+  const pendentes = lines.filter((line) => line.state === 'pending').length;
+  if (lines.length === 0) return 'Revisão da fase';
+  return `Revisão da fase (${contagem(pendentes, 'item aguardando você', 'itens aguardando você', 'nada aguardando você')})`;
+}
+
+export const REVIEW_EMPTY_NOTE =
+  'Nenhuma fase deixou lista de revisão. Não é pendência: quer dizer que nenhuma delas declarou ter deixado algo para você.';
 
 /**
  * A frase de UMA passagem de fase. Cada estado tem palavra própria — e nenhuma

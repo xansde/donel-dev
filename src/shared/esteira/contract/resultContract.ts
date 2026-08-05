@@ -195,7 +195,26 @@ export type EsteiraFact =
       readonly decision: string;
       readonly confirmed_by: string;
       readonly rationale: string | null;
+    }
+  | {
+      readonly type: 'human_review.recorded';
+      readonly subject: EntityRef;
+      readonly phase: string;
+      readonly checklist: readonly HumanReviewEntry[];
     };
+
+/** A10/A19 — uma linha da lista do humano. `review` = confira; `action` = faca. */
+export type HumanReviewKind = 'review' | 'action';
+export type HumanReviewState = 'pending' | 'done' | 'waived';
+export const HUMAN_REVIEW_KINDS: readonly HumanReviewKind[] = ['review', 'action'];
+export const HUMAN_REVIEW_STATES: readonly HumanReviewState[] = ['pending', 'done', 'waived'];
+
+export interface HumanReviewEntry {
+  readonly item: string;
+  readonly kind: HumanReviewKind;
+  readonly state: HumanReviewState;
+  readonly detail: string | null;
+}
 
 export type FactType = EsteiraFact['type'];
 
@@ -212,6 +231,7 @@ export const FACT_TYPES: readonly FactType[] = [
   'note.recorded',
   'gate.confirmed',
   'decision.recorded',
+  'human_review.recorded',
 ];
 
 export interface EsteiraResult {
@@ -341,6 +361,14 @@ export const CONSUMED_PATHS: readonly string[] = [
   'facts[decision.recorded].decision',
   'facts[decision.recorded].confirmed_by',
   'facts[decision.recorded].rationale',
+  'facts[human_review.recorded].type',
+  'facts[human_review.recorded].subject.entity',
+  'facts[human_review.recorded].subject.id',
+  'facts[human_review.recorded].phase',
+  'facts[human_review.recorded].checklist[].item',
+  'facts[human_review.recorded].checklist[].kind',
+  'facts[human_review.recorded].checklist[].state',
+  'facts[human_review.recorded].checklist[].detail',
 ];
 
 /**
@@ -729,6 +757,37 @@ function parseFact(raw: unknown, path: string, c: Collector): EsteiraFact | null
       const confirmedAt = optionalPattern(raw, 'confirmed_at', TIMESTAMP_PATTERN, path, c);
       if (subject === null || condition === null || confirmedBy === null) return null;
       return { type: factType, subject, condition, confirmed_by: confirmedBy, confirmed_at: confirmedAt };
+    }
+    case 'human_review.recorded': {
+      rejectUnknownKeys(raw, ['type', 'subject', 'phase', 'checklist'], path, c);
+      const subject = parseEntityRef(raw, 'subject', path, c);
+      const phase = requirePattern(raw, 'phase', PHASE_PATTERN, path, c);
+      const rawChecklist = raw.checklist;
+      const checklist: HumanReviewEntry[] = [];
+      if (!Array.isArray(rawChecklist)) {
+        c.add(rawChecklist === undefined ? 'missing_field' : 'wrong_type', `${path}.checklist`, 'field "checklist" must be an array');
+      } else if (rawChecklist.length === 0) {
+        // Lista vazia e o mesmo que nao declarar: "tem coisa para voce" sem
+        // dizer o que e nao ajuda ninguem e ainda ocupa espaco na tela.
+        c.add('empty_facts', `${path}.checklist`, 'checklist must not be empty');
+      } else {
+        rawChecklist.forEach((entry, index) => {
+          const entryPath = `${path}.checklist[${index}]`;
+          if (!isPlainObject(entry)) {
+            c.add('wrong_type', entryPath, 'checklist entry must be an object');
+            return;
+          }
+          rejectUnknownKeys(entry, ['item', 'kind', 'state', 'detail'], entryPath, c);
+          const item = requireString(entry, 'item', entryPath, c);
+          const entryKind = requireEnum<HumanReviewKind>(entry, 'kind', HUMAN_REVIEW_KINDS, entryPath, c);
+          const state = requireEnum<HumanReviewState>(entry, 'state', HUMAN_REVIEW_STATES, entryPath, c);
+          const detail = optionalString(entry, 'detail', entryPath, c);
+          if (item === null || entryKind === null || state === null) return;
+          checklist.push({ item, kind: entryKind, state, detail });
+        });
+      }
+      if (subject === null || phase === null || checklist.length === 0) return null;
+      return { type: factType, subject, phase, checklist };
     }
     case 'decision.recorded': {
       rejectUnknownKeys(raw, ['type', 'subject', 'decision', 'confirmed_by', 'rationale'], path, c);

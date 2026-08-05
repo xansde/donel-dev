@@ -27,6 +27,10 @@ import {
   type DecisionSnapshot,
   type EntityKind,
   type GateConfirmationSnapshot,
+  type HumanReviewItem,
+  type HumanReviewKind,
+  type HumanReviewSnapshot,
+  type HumanReviewState,
   type IngestedRunSnapshot,
   type IngestErrorSnapshot,
   type LockRecord,
@@ -222,6 +226,8 @@ function relationKey(relation: string, from: EntityId, to: EntityId): string {
   return `${relation}|${entityKey(from)}|${entityKey(to)}`;
 }
 
+const HUMAN_REVIEW_KINDS: readonly HumanReviewKind[] = ['review', 'action'];
+const HUMAN_REVIEW_STATES: readonly HumanReviewState[] = ['pending', 'done', 'waived'];
 const WORK_ITEM_TYPES: readonly WorkItemType[] = ['issue', 'spec', 'process-map', 'adr', 'prototype', 'spike', 'eval'];
 const RELATION_KINDS: readonly RelationKind[] = ['originated', 'flows_into', 'ships_with'];
 const PHASE_OUTCOMES: readonly PhaseOutcome[] = ['done', 'abandoned', 'inconclusive'];
@@ -302,6 +308,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
   const verifications = new Map<string, VerificationSnapshot>();
   const gates = new Map<string, GateConfirmationSnapshot>();
   const decisions = new Map<string, DecisionSnapshot>();
+  const humanReviews = new Map<string, HumanReviewSnapshot>();
   const notes: NoteSnapshot[] = [];
   const runs = new Map<string, IngestedRunSnapshot>();
   const ingestErrors: IngestErrorSnapshot[] = [];
@@ -710,6 +717,26 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         break;
       }
 
+      case 'human_review.recorded': {
+        // A10 — a lista e o estado de AGORA: redeclarar SUBSTITUI. Mesclar
+        // deixaria conviver uma revisao respondida pela metade com a versao
+        // anterior inteira, e a tela mostraria as duas como se fossem uma.
+        const subject = entityId(p, 'subject');
+        const phase = str(p, 'phase');
+        const rawChecklist = Array.isArray(p.checklist) ? p.checklist : [];
+        if (subject === null || phase === null) break;
+        const checklist = rawChecklist.filter(isPlainObject).flatMap((entry): HumanReviewItem[] => {
+          const item = str(entry, 'item');
+          const kind = oneOf<HumanReviewKind>(entry, 'kind', HUMAN_REVIEW_KINDS);
+          const state = oneOf<HumanReviewState>(entry, 'state', HUMAN_REVIEW_STATES);
+          if (item === null || kind === null || state === null) return [];
+          return [{ item, kind, state, detail: str(entry, 'detail') }];
+        });
+        if (checklist.length === 0) break;
+        humanReviews.set(`${entityKey(subject)}|${phase}`, { subject, phase, checklist, at: str(p, 'at') ?? event.at });
+        break;
+      }
+
       case 'stage.overridden': {
         const discoveryId = str(p, 'discoveryId');
         const value = oneOf<MacroStage>(p, 'value', MACRO_STAGES);
@@ -908,6 +935,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     verifications: [...verifications.values()],
     gates: [...gates.values()],
     decisions: [...decisions.values()],
+    humanReviews: [...humanReviews.values()],
     notes,
     runs: [...runs.values()],
     ingestErrors: errorList,

@@ -215,6 +215,26 @@ function factToDraft(fact: EsteiraFact, index: number, result: EsteiraResult): E
         },
       };
 
+    case 'human_review.recorded':
+      // A10 — chave natural `assunto + fase`: a lista e o estado de AGORA, e
+      // redeclara-la substitui a anterior em vez de empilhar duas versoes.
+      return {
+        type: 'human_review.recorded',
+        at,
+        dedupe_key: dedupeKey(runId, fact.type, `${refKey(fact.subject)}:${fact.phase}`),
+        payload: {
+          subject: refToId(fact.subject),
+          phase: fact.phase,
+          checklist: fact.checklist.map((entry) => ({
+            item: entry.item,
+            kind: entry.kind,
+            state: entry.state,
+            detail: entry.detail,
+          })),
+          at,
+        },
+      };
+
     case 'decision.recorded':
       // A18 — chave natural `assunto + decisao`: uma fase de conversa toma
       // varias decisoes, e redecidir a mesma atualiza aquela linha.
