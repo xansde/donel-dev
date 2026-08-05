@@ -387,6 +387,7 @@ describe('A4 — o livro dos runs recusa run alterado depois de ingerido', () =>
       at: '2026-08-05T12:00:00.000Z',
       subject: DSC,
       issues: [{ code: 'run_changed_after_ingest', path: 'run.run_id', message: 'x' }],
+      declaredFacts: [],
     });
     expect(line).toContain('já tinha sido ingerido com outro conteúdo');
     expect(line).toContain('complemento');

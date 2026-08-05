@@ -156,6 +156,7 @@ describe('preparePhase', () => {
         modelEffortAssumed: false,
         startedAt: '2026-08-05T09:00:00.000Z',
         endedAt: null,
+        endReason: null,
         inputPath: 'C:/inbox/run-1.json',
         resultPath: 'C:/outbox/run-1.json',
         claimed: true,

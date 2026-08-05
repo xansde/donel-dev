@@ -1,8 +1,8 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ESTEIRA_OUTBOX_DIR_ENV_VAR, esteiraOutboxDir, ingestOutbox, ingestResultFile } from '../src/main/esteira-ingest';
+import { ESTEIRA_OUTBOX_DIR_ENV_VAR, esteiraOutboxDir, ingestOutbox, ingestResultFile, revalidateIngestErrors } from '../src/main/esteira-ingest';
 import { openEsteiraStore, storeEventsPath, type EsteiraStore } from '../src/main/esteira-store';
 
 // Spec 010 (D-10) — a INGESTAO, do arquivo ate o card. O teste que importa nao
@@ -221,5 +221,101 @@ describe('ingestOutbox — a varredura do diretorio combinado', () => {
     expect(summary.alreadyIngested).toBe(1);
     expect(store.snapshot().discoveries).toHaveLength(first.discoveries.length);
     expect(store.events.length).toBe(first.through_seq);
+  });
+});
+
+// A5 — o CUSTO: o card sabe o que o arquivo recusado declarava, sem entrar.
+describe('ingestResultFile — o custo do documento recusado (A5)', () => {
+  it('o erro carrega os fatos declarados — os work_item.recorded que nunca chegaram a existir', () => {
+    const path = join(outbox, 'quebrado.json');
+    const doc = JSON.parse(readFileSync(join(EXAMPLES_DIR, 'plano-com-itens.json'), 'utf8'));
+    doc.facts[0].fanout_cards = ['card-1'];
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+
+    ingestResultFile(store, path);
+
+    const error = store.snapshot().ingestErrors[0];
+    const workItems = error.declaredFacts.filter((fact) => fact.entity === 'work_item');
+    expect(workItems).toHaveLength(3);
+    expect(workItems.map((fact) => fact.id)).toContain('wi-2026-08-03-a1-01');
+    expect(store.snapshot().workItems).toHaveLength(0); // nao entrou nenhum — a lista e o CUSTO, nao um atalho para o dado
+  });
+});
+
+// A6 — a ingestao SANAVEL: um arquivo recusado que passou a ler vira um FATO
+// de recuperacao, sem apagar o `ingest.failed` do log.
+describe('ingestResultFile — a recuperacao de um path que estava em erro (A6)', () => {
+  it('arquivo corrigido no MESMO path emite ingest.recovered e some de ingestErrors', () => {
+    const path = join(outbox, 'run-quebrado.json');
+    const doc = JSON.parse(readFileSync(join(EXAMPLES_DIR, 'discovery-com-tracker.json'), 'utf8'));
+    doc.facts[0].fanout_cards = ['card-1'];
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+
+    expect(ingestResultFile(store, path).status).toBe('rejected');
+    expect(store.snapshot().ingestErrors).toHaveLength(1);
+
+    delete doc.facts[0].fanout_cards;
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+    const outcome = ingestResultFile(store, path);
+
+    expect(outcome.status).toBe('ingested');
+    expect(store.snapshot().ingestErrors).toHaveLength(0);
+    expect(store.snapshot().ingestRecoveries).toHaveLength(1);
+    expect(store.snapshot().ingestRecoveries[0].resultPath).toBe(path);
+    // O `ingest.failed` original continua no LOG — so o status de agora mudou.
+    expect(readFileSync(storeEventsPath(join(dir, 'store')), 'utf8')).toContain('ingest.failed');
+  });
+
+  it('arquivo que nunca teve erro pendente NAO gera recuperacao ao ser ingerido', () => {
+    putExample('discovery-com-tracker');
+    expect(store.snapshot().ingestRecoveries).toHaveLength(0);
+  });
+});
+
+describe('revalidateIngestErrors — a abertura do app revalida os erros pendentes (A6)', () => {
+  it('arquivo que NAO EXISTE MAIS sai da lista de erros', () => {
+    const path = join(outbox, 'run-sumiu.json');
+    const doc = JSON.parse(readFileSync(join(EXAMPLES_DIR, 'discovery-com-tracker.json'), 'utf8'));
+    doc.facts[0].fanout_cards = ['card-1'];
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+    ingestResultFile(store, path);
+    expect(store.snapshot().ingestErrors).toHaveLength(1);
+
+    unlinkSync(path);
+    const summary = revalidateIngestErrors(store);
+
+    expect(summary).toEqual({ recovered: 1, stillFailing: 0 });
+    expect(store.snapshot().ingestErrors).toHaveLength(0);
+    expect(store.snapshot().ingestRecoveries[0].how).toContain('não existe mais');
+  });
+
+  it('arquivo que EXISTE e agora PASSA e recuperado pelo mesmo caminho de uma releitura normal', () => {
+    const path = join(outbox, 'run-consertado.json');
+    const doc = JSON.parse(readFileSync(join(EXAMPLES_DIR, 'discovery-com-tracker.json'), 'utf8'));
+    doc.facts[0].fanout_cards = ['card-1'];
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+    ingestResultFile(store, path);
+
+    delete doc.facts[0].fanout_cards;
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+    const summary = revalidateIngestErrors(store);
+
+    expect(summary).toEqual({ recovered: 1, stillFailing: 0 });
+    expect(store.snapshot().discoveries).toHaveLength(1);
+  });
+
+  it('arquivo que CONTINUA quebrado nao vira recuperacao nem duplica erro', () => {
+    const path = join(outbox, 'run-continua-quebrado.json');
+    writeFileSync(path, '{ nao json', 'utf8');
+    ingestResultFile(store, path);
+
+    const summary = revalidateIngestErrors(store);
+
+    expect(summary).toEqual({ recovered: 0, stillFailing: 1 });
+    expect(store.snapshot().ingestErrors).toHaveLength(1);
+  });
+
+  it('sem erro pendente nenhum, nao faz nada', () => {
+    expect(revalidateIngestErrors(store)).toEqual({ recovered: 0, stillFailing: 0 });
   });
 });

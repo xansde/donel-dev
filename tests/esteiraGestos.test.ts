@@ -414,6 +414,18 @@ describe('descartar item (D-16)', () => {
     expect(etapa()).toBe('planned');
   });
 
+  // E2 — a lápide: o item saiu, mas o card ainda sabe responder "o que era?".
+  it('a lápide guarda o que o item era, e o card continua servindo o gesto (E2)', () => {
+    plantarCardDoCorpus();
+
+    const gesture = service.discardWorkItem({ workItemId: ITEM_ISSUE_BEACON, reason: 'nasceu duplicado' });
+    expect(gesture.ok).toBe(true);
+
+    const tombstone = service.snapshotDto().snapshot.tombstones.find((entry) => entry.id === ITEM_ISSUE_BEACON);
+    expect(tombstone?.reason).toBe('nasceu duplicado');
+    expect(tombstone?.discoveryId).toBe(DISCOVERY_ID);
+  });
+
   it('item com fase travada NÃO se descarta — descartar deixaria a trava orfa', () => {
     plantarCardDoCorpus();
     const dispatched = service.dispatch({

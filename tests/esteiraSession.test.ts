@@ -290,6 +290,7 @@ function sessao(overrides: Partial<SessionSnapshot> & { readonly id: string }): 
     modelEffortAssumed: false,
     startedAt: '2026-08-04T09:00:00.000Z',
     endedAt: '2026-08-04T09:30:00.000Z',
+    endReason: null,
     inputPath: null,
     resultPath: null,
     claimed: true,

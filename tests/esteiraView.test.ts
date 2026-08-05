@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   cardView,
+  ingestErrorCostLine,
   ingestErrorLine,
+  ingestRecoveryLine,
   cardContent,
   liveSessionOf,
   lockView,
@@ -18,6 +20,7 @@ import {
   seededSummary,
   signalViews,
   stageView,
+  tombstoneLines,
   verificationLines,
 } from '../src/renderer/src/Esteira/esteiraView';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
@@ -191,6 +194,109 @@ describe('cardView — a tela é projeção, não cálculo', () => {
 
   it('card que não existe devolve null — a tela não inventa card', () => {
     expect(cardView(reduceEvents([]), 'dsc-fantasma')).toBeNull();
+  });
+});
+
+// E2 — o item descartado sai da lista viva, mas o card continua sabendo dele:
+// nota/fase/sessão que apontavam para ele não viram órfãs, e a lápide diz o
+// que aconteceu.
+describe('cardView + tombstoneLines — o item descartado não vira órfão (E2)', () => {
+  function cardComItemDescartado() {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('work_item.created', { id: 'wi-1', discoveryId: 'dsc-1', itemType: 'spike', title: 'Medir onde o lote para', createdAt: 'x' }),
+      evt('note.added', { subject: { entity: 'work_item', id: 'wi-1' }, text: 'nota sobre o item', at: 'x' }),
+      evt('phase.completed', { subject: { entity: 'work_item', id: 'wi-1' }, phase: 'implementar', outcome: 'abandoned', at: 'x' }),
+      evt('work_item.discarded', { id: 'wi-1', at: '2026-08-05T14:22:00.000Z', reason: 'nasceu duplicado' }),
+    ]);
+    return cardView(snapshot, 'dsc-1')!;
+  }
+
+  it('o item sai de `items`, mas a lápide aparece em `tombstones`', () => {
+    const card = cardComItemDescartado();
+    expect(card.items).toHaveLength(0);
+    expect(card.tombstones).toHaveLength(1);
+    expect(card.tombstones[0].title).toBe('Medir onde o lote para');
+  });
+
+  it('a nota do item descartado continua no card, nomeando o item (descartado)', () => {
+    const card = cardComItemDescartado();
+    expect(card.notes).toHaveLength(1);
+    expect(card.notes[0].about).toBe('o item «Medir onde o lote para» (descartado)');
+  });
+
+  it('a fase do item descartado continua no card', () => {
+    const card = cardComItemDescartado();
+    expect(card.phases).toHaveLength(1);
+    expect(card.phases[0].subject).toEqual({ entity: 'work_item', id: 'wi-1' });
+  });
+
+  it('tombstoneLines produz a frase pronta, com tipo e data', () => {
+    // A hora exata depende do fuso da máquina (`formatTimestamp`); o que este
+    // teste garante é a FORMA da frase, não um horário hardcoded.
+    const [line] = tombstoneLines(cardComItemDescartado());
+    expect(line.text).toMatch(/^Medir onde o lote para · spike · descartado em \d{2}\/\d{2}, \d{2}:\d{2}$/);
+    expect(line.reason).toBe('nasceu duplicado');
+  });
+
+  it('card sem item descartado tem tombstones e tombstoneLines vazios', () => {
+    const snapshot = reduceEvents([evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' })]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(card.tombstones).toEqual([]);
+    expect(tombstoneLines(card)).toEqual([]);
+  });
+});
+
+// A5 — o CUSTO de um erro de ingestão: o que o arquivo declararia, se entrasse.
+describe('ingestErrorCostLine — o custo do documento recusado (A5)', () => {
+  it('nomeia as entidades que nunca chegaram a existir', () => {
+    const line = ingestErrorCostLine({
+      resultPath: 'C:/x.json',
+      at: 'x',
+      subject: null,
+      issues: [],
+      declaredFacts: [
+        { factType: 'work_item.recorded', entity: 'work_item', id: 'wi-1', title: 'Instrumentar a fila' },
+        { factType: 'work_item.recorded', entity: 'work_item', id: 'wi-2', title: null },
+      ],
+    });
+    expect(line).toBe('Sem este arquivo não existe: o item «Instrumentar a fila», o item wi-2.');
+  });
+
+  it('conta os fatos que não criam entidade própria como "e mais N"', () => {
+    const line = ingestErrorCostLine({
+      resultPath: 'C:/x.json',
+      at: 'x',
+      subject: null,
+      issues: [],
+      declaredFacts: [
+        { factType: 'plan.recorded', entity: 'plan', id: 'pln-1', title: 'Plano' },
+        { factType: 'relation.recorded', entity: null, id: null, title: null },
+      ],
+    });
+    expect(line).toBe('Sem este arquivo não existe: o plano «Plano», e mais 1 fato.');
+  });
+
+  it('sem nenhuma entidade declarada, devolve null — não há "deixou de existir" para dizer', () => {
+    expect(ingestErrorCostLine({ resultPath: 'C:/x.json', at: 'x', subject: null, issues: [], declaredFacts: [] })).toBeNull();
+    expect(
+      ingestErrorCostLine({
+        resultPath: 'C:/x.json',
+        at: 'x',
+        subject: null,
+        issues: [],
+        declaredFacts: [{ factType: 'gate.confirmed', entity: null, id: null, title: null }],
+      }),
+    ).toBeNull();
+  });
+});
+
+// A6 — a recuperação é um FATO com o que foi sanado, não "erro sumiu".
+describe('ingestRecoveryLine (A6)', () => {
+  it('diz COMO foi recuperado', () => {
+    expect(
+      ingestRecoveryLine({ resultPath: 'C:/x.json', at: 'x', runId: null, subject: null, recoveredCodes: [], how: 'o arquivo não existe mais no outbox' }),
+    ).toBe('Voltou a ler: o arquivo não existe mais no outbox.');
   });
 });
 
@@ -430,6 +536,32 @@ describe('phaseLines — "disparar" não é "começar", nem na lista de fases', 
       evt('session.ended', { id: 'ses-1', at: 'x', reason: 'tab-closed' }),
     ]);
     expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — interrompida: a sessão terminou sem concluir');
+  });
+
+  // A7 — a reconciliação de boot encerra a sessão órfã com um MOTIVO; a lista
+  // de fases precisa mostrá-lo, ou "interrompida" fica tão calada quanto o
+  // silêncio que ela substitui.
+  it('fase interrompida mostra o MOTIVO do encerramento no detail, quando declarado (A7)', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
+      evt('session.started', { id: 'ses-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+      evt('session.ended', { id: 'ses-1', at: 'x', reason: 'o app foi fechado ou reiniciado antes de o result.json aparecer no outbox' }),
+    ]);
+    const [line] = phaseLines(cardView(snapshot, 'dsc-1')!);
+    expect(line.state).toBe('interrompida');
+    expect(line.detail).toBe('o app foi fechado ou reiniciado antes de o result.json aparecer no outbox');
+  });
+
+  it('fase interrompida SEM motivo declarado tem detail null — nunca inventa explicação', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
+      evt('session.started', { id: 'ses-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+      evt('session.ended', { id: 'ses-1', at: 'x' }),
+    ]);
+    const [line] = phaseLines(cardView(snapshot, 'dsc-1')!);
+    expect(line.detail).toBeNull();
   });
 
   it('fase que falhou traz o motivo junto', () => {

@@ -16,8 +16,8 @@
 import { watch, type FSWatcher } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
-import { claimSession, dispatchPhase, endSession, releaseLock } from './esteira-dispatch';
-import { ingestOutbox } from './esteira-ingest';
+import { claimSession, dispatchPhase, endSession, reconcileOrphanedSessions, releaseLock } from './esteira-dispatch';
+import { ingestOutbox, revalidateIngestErrors } from './esteira-ingest';
 import { drainMirrorQueue, type BoardMirrorAdapter, type MirrorDrainSummary } from './esteira-mirror';
 import { openEsteiraStore, type EsteiraStore } from './esteira-store';
 import { MIRROR_DISABLED, type MirrorConfig } from '../shared/esteira/mirror/mirrorConfig';
@@ -229,6 +229,22 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
 
   // Boot: o que a skill deixou com o app fechado entra agora.
   scanOutbox();
+
+  // A6 — revalida os erros AINDA pendentes depois da varredura acima (ela ja
+  // recupera sozinha todo path cujo arquivo continua no outbox e agora passa;
+  // isto cobre o outro desfecho — o arquivo nao existe mais).
+  const revalidated = revalidateIngestErrors(store);
+
+  // A7 — reconciliacao manifesto-sem-result: sessao que sobrou aberta de uma
+  // execucao ANTERIOR do app, sem o `result.json` ter aparecido no outbox.
+  // Depois da varredura acima, o que ficou e so o que de fato morreu.
+  const reconciledSessions = reconcileOrphanedSessions(store);
+
+  if (revalidated.recovered > 0 || reconciledSessions.reconciled > 0) {
+    store.persistSnapshot();
+    notify();
+    mirrorAfterChange();
+  }
 
   function openWatch(): void {
     if (disposed || watcher) return;

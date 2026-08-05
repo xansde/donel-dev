@@ -43,6 +43,7 @@ import { buildRunInput, type RunInputWorkspace } from '../shared/esteira/contrac
 import type { ContractIssue } from '../shared/esteira/contract/parsing';
 import type { EventDraft } from '../shared/esteira/ingest/resultToEvents';
 import { findBlockingLock, findResourceLock, lockChainOf } from '../shared/esteira/store/lockChain';
+import { orphanedSessionCandidates } from '../shared/esteira/store/reconcile';
 import type { EntityId, LockRecord, LockResource, PhaseRunSnapshot, SessionSnapshot } from '../shared/esteira/store/storeFormat';
 import type { EsteiraStore } from './esteira-store';
 
@@ -385,6 +386,48 @@ export function endSession(
 
   const written = store.append(drafts);
   return written.ok ? { ok: true, changed: true } : { ok: false, reason: 'store-refused' };
+}
+
+/** A7 — o motivo gravado no log para uma sessao que a reconciliacao encerrou. */
+export const ORPHANED_SESSION_REASON = 'o app foi fechado ou reiniciado antes de o result.json aparecer no outbox';
+
+export interface ReconcileOrphanedSessionsResult {
+  /** Quantas sessoes a reconciliacao encerrou. */
+  readonly reconciled: number;
+}
+
+/**
+ * A7 — reconciliacao MANIFESTO-SEM-RESULT: o watcher detecta a fase que
+ * morreu entre o manifesto (`run-input.json`, no inbox) e o `result.json`
+ * esperado no outbox, e SINALIZA no card — hoje so um humano notava, olhando
+ * o card preso em "preparada"/"sessao aberta" para sempre e rodando
+ * `/esteira-liberar` a mao.
+ *
+ * Chamar UMA VEZ, na abertura do app (ver `orphanedSessionCandidates` para o
+ * raciocinio de por que isto e seguro sem checar processo nenhum). Para cada
+ * candidata: se o `resultPath` NAO existe no disco, a fase morreu sem
+ * devolver nada — encerra a sessao (mesmo caminho de `endSession`: a trava
+ * cai junto) com um motivo que diz o que aconteceu, e o card passa a mostrar
+ * "interrompida" em vez de ficar preso calado.
+ *
+ * Um `resultPath` que EXISTE nao e mexido aqui, mesmo que ainda nao tenha sido
+ * ingerido: a proxima varredura do outbox decide o desfecho dele, com o rigor
+ * do contrato — nao esta funcao, que so pergunta "existe alguma coisa la?".
+ */
+export function reconcileOrphanedSessions(
+  store: EsteiraStore,
+  options: { readonly resultExists?: (resultPath: string) => boolean; readonly now?: () => string } = {},
+): ReconcileOrphanedSessionsResult {
+  const resultExists = options.resultExists ?? existsSync;
+  const now = options.now ?? (() => new Date().toISOString());
+
+  let reconciled = 0;
+  for (const session of orphanedSessionCandidates(store.snapshot())) {
+    if (session.resultPath === null || resultExists(session.resultPath)) continue;
+    const ended = endSession(store, session.id, ORPHANED_SESSION_REASON, now);
+    if (ended.ok && ended.changed) reconciled += 1;
+  }
+  return { reconciled };
 }
 
 export type ReleaseResult = { readonly ok: true } | { readonly ok: false; readonly reason: 'store-refused' };
