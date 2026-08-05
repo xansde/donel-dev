@@ -261,6 +261,9 @@ export async function readClaimedSessionsFromStore(storeEventsPath) {
         if (current !== undefined) sessions.set(parsed.id, { ...current, cliSessionId: parsed.cliSessionId });
       }
     }
+  } catch {
+    // Erro de leitura a meio (ex.: arquivo trocado por diretório, IO falhou) —
+    // "lê o que consegue": devolve o que já foi acumulado até aqui, nunca lança.
   } finally {
     rl.close();
     stream.destroy();
@@ -309,6 +312,10 @@ export async function readSessionUsageFromTranscript(transcriptPath) {
         cacheWriteTokens += parsed.usage.cacheWriteTokens;
       }
     }
+  } catch {
+    // Mesmo espírito de readClaimedSessionsFromStore: erro de leitura a meio
+    // devolve o que já foi somado até aqui em vez de derrubar o script inteiro
+    // por causa de UMA sessão.
   } finally {
     rl.close();
     stream.destroy();

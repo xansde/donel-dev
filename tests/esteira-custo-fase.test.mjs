@@ -362,6 +362,12 @@ describe('readClaimedSessionsFromStore (I/O em tmpdir)', () => {
     const result = await readClaimedSessionsFromStore(path);
     expect(result).toEqual([{ phase: 'implementar', cwd: 'C:\\x\\y', cliSessionId: 'abc-123' }]);
   });
+
+  it('degrades to [] instead of throwing when the path is not a readable file (e.g. a directory)', async () => {
+    const path = join(dir, 'events.jsonl');
+    mkdirSync(path); // existsSync() é true, mas createReadStream falha com EISDIR
+    await expect(readClaimedSessionsFromStore(path)).resolves.toEqual([]);
+  });
 });
 
 describe('readSessionUsageFromTranscript (I/O em tmpdir)', () => {
@@ -394,6 +400,17 @@ describe('readSessionUsageFromTranscript (I/O em tmpdir)', () => {
 
     const result = await readSessionUsageFromTranscript(path);
     expect(result).toEqual({ calls: 2, outputTokens: 300, cacheWriteTokens: 50, durationMinutes: 5 });
+  });
+
+  it('degrades to a zeroed result instead of throwing when the path is not a readable file (e.g. a directory)', async () => {
+    const path = join(dir, 'abc-123.jsonl');
+    mkdirSync(path); // existsSync() é true, mas createReadStream falha com EISDIR
+    await expect(readSessionUsageFromTranscript(path)).resolves.toEqual({
+      calls: 0,
+      outputTokens: 0,
+      cacheWriteTokens: 0,
+      durationMinutes: null,
+    });
   });
 });
 
