@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONTRACT_VERSION,
+  declaredFactsFromRawText,
   parseEsteiraResult,
   parseEsteiraResultText,
   type ContractIssueCode,
@@ -434,5 +435,59 @@ describe('parseEsteiraResultText', () => {
     for (const input of inputs) {
       expect(() => parseEsteiraResult(input)).not.toThrow();
     }
+  });
+});
+
+// A5 — o CUSTO de um documento recusado: o que ELE declararia, se entrasse.
+// Le o texto CRU porque o parser ja pode ter recusado o documento inteiro por
+// causa de UM campo — a pergunta aqui e outra.
+describe('declaredFactsFromRawText', () => {
+  it('extrai discovery/plan/work_item pelo campo de identidade certo de cada um', () => {
+    const doc = validResult();
+    (doc.facts as unknown[]).push(
+      { type: 'plan.recorded', plan_id: 'pln-1', discovery_id: 'dsc-1', title: 'Plano', summary: null },
+      { type: 'work_item.recorded', work_item_id: 'wi-1', plan_id: 'pln-1', item_type: 'issue', title: 'Item', target_repo: 'x', scope_repos: [] },
+    );
+
+    const declared = declaredFactsFromRawText(JSON.stringify(doc));
+
+    expect(declared).toContainEqual({ factType: 'discovery.recorded', entity: 'discovery', id: 'dsc-1', title: 'Titulo' });
+    expect(declared).toContainEqual({ factType: 'plan.recorded', entity: 'plan', id: 'pln-1', title: 'Plano' });
+    expect(declared).toContainEqual({ factType: 'work_item.recorded', entity: 'work_item', id: 'wi-1', title: 'Item' });
+  });
+
+  it('fato que nao cria entidade propria (relacao, gate...) aparece so com o factType', () => {
+    const doc = validResult();
+    const declared = declaredFactsFromRawText(JSON.stringify(doc));
+    const gate = declared.find((fact) => fact.factType === 'gate.confirmed');
+    expect(gate).toEqual({ factType: 'gate.confirmed', entity: null, id: null, title: null });
+  });
+
+  it('funciona mesmo quando o resto do documento e invalido — a pergunta nao e "isto passa?"', () => {
+    // work_item_id teria que casar com ID_PATTERN para o PARSER aceitar, mas
+    // esta funcao nao valida — so extrai o que esta escrito, best-effort.
+    const declared = declaredFactsFromRawText(
+      JSON.stringify({ facts: [{ type: 'work_item.recorded', work_item_id: 'wi um espaço não permitido', title: 'X' }] }),
+    );
+    expect(declared).toEqual([{ factType: 'work_item.recorded', entity: 'work_item', id: 'wi um espaço não permitido', title: 'X' }]);
+  });
+
+  it('JSON invalido devolve lista vazia, nunca lanca', () => {
+    expect(declaredFactsFromRawText('{ nao json')).toEqual([]);
+  });
+
+  it('documento sem facts (ou facts que nao e array) devolve lista vazia', () => {
+    expect(declaredFactsFromRawText('{}')).toEqual([]);
+    expect(declaredFactsFromRawText('{"facts": "nao e lista"}')).toEqual([]);
+  });
+
+  it('fato sem o campo de identidade esperado devolve id null — nunca inventa', () => {
+    const declared = declaredFactsFromRawText(JSON.stringify({ facts: [{ type: 'work_item.recorded', title: 'Sem id' }] }));
+    expect(declared).toEqual([{ factType: 'work_item.recorded', entity: 'work_item', id: null, title: 'Sem id' }]);
+  });
+
+  it('entrada que nao e objeto (array no lugar de fato) e ignorada, nao derruba os demais', () => {
+    const declared = declaredFactsFromRawText(JSON.stringify({ facts: [['nao', 'e', 'objeto'], { type: 'plan.recorded', plan_id: 'pln-1' }] }));
+    expect(declared).toEqual([{ factType: 'plan.recorded', entity: 'plan', id: 'pln-1', title: null }]);
   });
 });

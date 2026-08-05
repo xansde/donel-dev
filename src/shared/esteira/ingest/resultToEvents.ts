@@ -16,7 +16,7 @@
 // A traducao snake_case (contrato) → camelCase (modelo do store) acontece AQUI
 // e em nenhum outro lugar: o contrato e do mundo externo, o snapshot e do app.
 
-import type { ContractIssue, EntityRef, EsteiraFact, EsteiraResult } from '../contract/resultContract';
+import type { ContractIssue, DeclaredFactRef, EntityRef, EsteiraFact, EsteiraResult } from '../contract/resultContract';
 import type { EntityId, StoreEventType } from '../store/storeFormat';
 import { resultFingerprint } from './runLedger';
 
@@ -326,6 +326,8 @@ export interface IngestFailureInput {
   /** O card em que o erro aparece, quando da para saber pelo documento. `null` = erro sem dono conhecido. */
   readonly subject: EntityId | null;
   readonly at: string;
+  /** A5 — o custo: os fatos que o documento declararia, se entrasse. Best-effort, `[]` quando nao ha o que extrair. */
+  readonly declaredFacts: readonly DeclaredFactRef[];
 }
 
 /**
@@ -343,6 +345,42 @@ export function ingestFailureEvent(input: IngestFailureInput): EventDraft {
       at: input.at,
       subject: input.subject,
       issues: input.issues.map((issue) => ({ code: issue.code, path: issue.path, message: issue.message })),
+      declaredFacts: input.declaredFacts.map((fact) => ({ factType: fact.factType, entity: fact.entity, id: fact.id, title: fact.title })),
+    },
+  };
+}
+
+export interface IngestRecoveryInput {
+  /** A MESMA chave do `ingest.failed` que esta recuperacao supera. */
+  readonly resultPath: string;
+  readonly at: string;
+  readonly runId: string | null;
+  readonly subject: EntityId | null;
+  /** Os codigos de `ContractIssue` que o documento trazia e deixaram de valer. */
+  readonly recoveredCodes: readonly string[];
+  /** Como foi sanado, em uma frase — nunca inventa QUEM consertou, so O QUE mudou. */
+  readonly how: string;
+}
+
+/**
+ * A6 — um `result.json` RECUSADO passou a ser legivel. O `ingest.failed`
+ * anterior permanece no log (a recuperacao NAO o apaga); este evento e o fato
+ * de que ele foi superado. `dedupe_key` e o path, sem timestamp: uma vez
+ * recuperado, o path sai de `ingestErrors` e nao volta a ser revalidado — nao
+ * ha "segunda recuperacao do mesmo evento" para dedupe distinguir.
+ */
+export function ingestRecoveryEvent(input: IngestRecoveryInput): EventDraft {
+  return {
+    type: 'ingest.recovered',
+    at: input.at,
+    dedupe_key: `ingest.recovered:${input.resultPath}`,
+    payload: {
+      resultPath: input.resultPath,
+      at: input.at,
+      runId: input.runId,
+      subject: input.subject,
+      recoveredCodes: input.recoveredCodes,
+      how: input.how,
     },
   };
 }

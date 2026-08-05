@@ -840,6 +840,63 @@ function parseFact(raw: unknown, path: string, c: Collector): EsteiraFact | null
 }
 
 /**
+ * A5 — o que cada fato QUE CRIA ENTIDADE usa como identidade, para extrair o
+ * CUSTO de um documento recusado. So os tres fatos de D-16/D-2 criam entidade
+ * propria; os demais (relacao, artefato, verificacao...) descrevem algo SOBRE
+ * uma entidade que ja existe, e nao tem "id proprio" que valha a pena nomear
+ * aqui — a lista deles ainda aparece (por `factType`), so sem `entity`/`id`.
+ */
+const ENTITY_CREATING_FACTS: Readonly<Partial<Record<FactType, { readonly entity: EntityKind; readonly idField: string }>>> = {
+  'discovery.recorded': { entity: 'discovery', idField: 'discovery_id' },
+  'plan.recorded': { entity: 'plan', idField: 'plan_id' },
+  'work_item.recorded': { entity: 'work_item', idField: 'work_item_id' },
+};
+
+/** A5 — um fato declarado, resumido para o card dizer "sem este arquivo não existe X". */
+export interface DeclaredFactRef {
+  readonly factType: string;
+  readonly entity: EntityKind | null;
+  readonly id: string | null;
+  readonly title: string | null;
+}
+
+/**
+ * A5 — o CUSTO de um documento recusado: o que ELE declararia, se entrasse.
+ * Le o texto CRU porque o parser pode ja ter recusado o documento inteiro por
+ * causa de UM campo — a pergunta aqui nao e "isto e valido?" (o parser ja
+ * respondeu), e sim "o que este arquivo diria que existe?".
+ *
+ * Best-effort e nunca lanca: JSON invalido, `facts` ausente ou fato sem o
+ * campo de identidade esperado devolvem menos informacao, nunca um erro novo
+ * por cima do que ja existe. Nao inventa: sem o campo, `id`/`title` ficam
+ * `null` em vez de um palpite.
+ */
+export function declaredFactsFromRawText(text: string): readonly DeclaredFactRef[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  if (!isPlainObject(parsed)) return [];
+  const rawFacts = parsed.facts;
+  if (!Array.isArray(rawFacts)) return [];
+
+  return rawFacts.flatMap((raw): DeclaredFactRef[] => {
+    if (!isPlainObject(raw)) return [];
+    const factType = raw.type;
+    if (typeof factType !== 'string') return [];
+
+    const title = typeof raw.title === 'string' ? raw.title : null;
+    const creates = ENTITY_CREATING_FACTS[factType as FactType];
+    if (creates === undefined) return [{ factType, entity: null, id: null, title: null }];
+
+    const id = typeof raw[creates.idField] === 'string' ? (raw[creates.idField] as string) : null;
+    return [{ factType, entity: creates.entity, id, title }];
+  });
+}
+
+/**
  * Le um `result.json` ja parseado (ou o texto cru, via `parseEsteiraResultText`).
  * Nunca lanca. `ok: false` sempre traz PELO MENOS um issue com caminho — e o
  * que a UI transforma em "erro de ingestao" visivel no card.

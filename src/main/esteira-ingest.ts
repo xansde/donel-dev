@@ -14,8 +14,8 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseEsteiraResultText } from '../shared/esteira/contract/resultContract';
-import { ingestFailureEvent, resultToEvents, runSubject } from '../shared/esteira/ingest/resultToEvents';
+import { declaredFactsFromRawText, parseEsteiraResultText } from '../shared/esteira/contract/resultContract';
+import { ingestFailureEvent, ingestRecoveryEvent, resultToEvents, runSubject } from '../shared/esteira/ingest/resultToEvents';
 import { checkReingest, resultFingerprint } from '../shared/esteira/ingest/runLedger';
 import type { EsteiraStore } from './esteira-store';
 
@@ -53,6 +53,11 @@ export interface IngestOutcome {
 
 /** Le um `result.json` e o grava no store. Nunca lanca. */
 export function ingestResultFile(store: EsteiraStore, resultPath: string): IngestOutcome {
+  // A6 — este path JA estava com erro pendente? Precisa saber ANTES de tentar
+  // ler de novo: se o documento passar desta vez, isto e o que diz que houve
+  // RECUPERACAO, e nao so mais uma ingestao normal.
+  const pendingError = store.snapshot().ingestErrors.find((error) => error.resultPath === resultPath) ?? null;
+
   let text: string;
   try {
     text = readFileSync(resultPath, 'utf8');
@@ -73,6 +78,8 @@ export function ingestResultFile(store: EsteiraStore, resultPath: string): Inges
       issues: parsed.issues,
       subject,
       at: new Date().toISOString(),
+      // A5 — o custo: o que este arquivo declararia, se entrasse.
+      declaredFacts: declaredFactsFromRawText(text),
     });
     const written = store.append([failure], { kind: 'app' });
     if (!written.ok) return { status: 'store-refused', resultPath, runId: null };
@@ -93,6 +100,7 @@ export function ingestResultFile(store: EsteiraStore, resultPath: string): Inges
       issues: [verdict.issue],
       subject: runSubject(result),
       at: new Date().toISOString(),
+      declaredFacts: declaredFactsFromRawText(text),
     });
     const refused = store.append([failure], { kind: 'app' });
     if (!refused.ok) return { status: 'store-refused', resultPath, runId: result.run.run_id };
@@ -103,11 +111,78 @@ export function ingestResultFile(store: EsteiraStore, resultPath: string): Inges
   const written = store.append(drafts, { kind: 'ingest', run_id: result.run.run_id, result_path: resultPath });
 
   if (!written.ok) return { status: 'store-refused', resultPath, runId: result.run.run_id };
+
+  // A6 — o documento passou, e este path tinha um erro pendente: a recuperacao
+  // e um FATO proprio, nao o apagamento do `ingest.failed` anterior (que
+  // continua no log). So muda o status DE AGORA daquele path.
+  if (pendingError !== null) {
+    store.append(
+      [
+        ingestRecoveryEvent({
+          resultPath,
+          at: new Date().toISOString(),
+          runId: result.run.run_id,
+          subject: pendingError.subject,
+          recoveredCodes: pendingError.issues.map((issue) => issue.code),
+          how: 'o documento agora passa no contrato',
+        }),
+      ],
+      { kind: 'app' },
+    );
+  }
+
   // Zero eventos escritos com drafts nao-vazios = tudo ja estava la (dedupe).
   if (written.events.length === 0 && drafts.length > 0) {
     return { status: 'already-ingested', resultPath, runId: result.run.run_id };
   }
   return { status: 'ingested', resultPath, runId: result.run.run_id };
+}
+
+export interface RevalidateSummary {
+  readonly recovered: number;
+  readonly stillFailing: number;
+}
+
+/**
+ * A6 — "revalidar os erros na ABERTURA do app": o parser e puro e barato, e
+ * so examina os paths que hoje aparecem em `ingestErrors`. Dois desfechos
+ * viram recuperacao, e so um deles passa pelo parser:
+ *
+ * - o arquivo NAO EXISTE MAIS — a preocupacao que ele registrava nao tem mais
+ *   objeto; recupera direto, sem tentar ler nada.
+ * - o arquivo EXISTE e agora PASSA — `ingestResultFile` cuida de emitir a
+ *   recuperacao, pelo MESMO caminho que uma releitura em vida normal usaria.
+ *
+ * Caso real que motivou isto: de 4 erros na tela, 3 arquivos ja liam bem e 1
+ * nem existia mais — e so um reboot (ou esta funcao) para descobrir.
+ */
+export function revalidateIngestErrors(store: EsteiraStore, now: () => string = () => new Date().toISOString()): RevalidateSummary {
+  const pending = store.snapshot().ingestErrors;
+  let recovered = 0;
+  let stillFailing = 0;
+
+  for (const error of pending) {
+    if (!existsSync(error.resultPath)) {
+      const recovery = ingestRecoveryEvent({
+        resultPath: error.resultPath,
+        at: now(),
+        runId: null,
+        subject: error.subject,
+        recoveredCodes: error.issues.map((issue) => issue.code),
+        how: 'o arquivo não existe mais no outbox',
+      });
+      const written = store.append([recovery], { kind: 'app' });
+      if (written.ok) recovered += 1;
+      else stillFailing += 1;
+      continue;
+    }
+
+    const outcome = ingestResultFile(store, error.resultPath);
+    if (outcome.status === 'ingested' || outcome.status === 'already-ingested') recovered += 1;
+    else stillFailing += 1;
+  }
+
+  return { recovered, stillFailing };
 }
 
 /**
