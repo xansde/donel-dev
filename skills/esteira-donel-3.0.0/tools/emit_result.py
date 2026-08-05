@@ -94,6 +94,17 @@ def build_facts(raw_facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # No Windows, stdout/stderr PIPED (nao ligado a um console) caem no
+    # codepage do locale (cp1252 aqui) em vez de UTF-8 — um travessao vira um
+    # byte que nao e UTF-8 valido sozinho. Achado da captura tutorial-e2e
+    # (batch n1, 2026-08-05): a legenda do roteiro `decisoes-revisao-e-canal`
+    # mostrava "�" no lugar do travessao das mensagens de erro. Forcar UTF-8
+    # aqui cobre qualquer leitor — piped (o roteiro e2e via execFileSync) ou
+    # console.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
     parser = argparse.ArgumentParser(description="Emite o result.json da esteira (contrato v1).")
     parser.add_argument("--input", required=True, help="run-input.json que o app deixou no inbox")
     parser.add_argument("--facts-file", required=True, help="JSON com a lista de fatos declarados")
