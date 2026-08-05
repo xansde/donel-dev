@@ -9,25 +9,24 @@ real do OpenRouter), logo após a implementação da etapa 3
 funciona, mas "ficou muito pouco intuitivo". O funcional está aprovado — esta
 issue é só de UX; nada aqui bloqueia a fase Validar da etapa 3.
 
-## Bug concreto (o mais chato, prioridade da issue)
+## Bug concreto — ✅ RESOLVIDO em 2026-08-04 (mesma sessão)
 
 **Roubo de foco ao digitar**: com o painel de criação aberto, digitar uma letra
-em qualquer campo move o cursor/foco para o campo "Nome" do provedor. Torna a
-digitação dos campos de env/segredo uma luta.
+em qualquer campo movia o cursor/foco para o campo "Nome" do provedor.
 
-Hipóteses a investigar (nenhuma confirmada ainda):
+**Causa raiz confirmada**: o efeito de foco do `Modal` (design-system) tinha
+`onClose` nas deps; o `ProviderForm` passa `onClose` como arrow inline
+(identidade nova a cada render), então qualquer re-render com o modal aberto
+(uma tecla, um clique, ou o `App` re-renderizando por evento de semáforo)
+re-rodava o efeito, que foca o primeiro focável do diálogo — o "Nome".
 
-- `ProviderForm` é montado direto na titlebar do `App`
-  (`src/renderer/src/App.tsx:1651`); o `App` re-renderiza com frequência
-  (semáforo, tabs) — verificar se algo remonta o form/painel e o browser
-  devolve o foco ao primeiro input.
-- Handlers globais de teclado em fase de captura no `App`
-  (`App.tsx:1431-1456`, Ctrl+1..9/Ctrl+Tab) e listeners do xterm
-  (`TerminalPane`) que re-focam o terminal — verificar se algum caminho chama
-  `focus()` em resposta a keydown sem checar se o usuário está digitando num
-  input (`document.activeElement`).
-- Associação de `<label>`/`htmlFor` errada fazendo clique/tecla ativar o
-  primeiro campo.
+**Fix**: `onClose` movido para ref (`onCloseRef`) e efeito dependendo só de
+`open` (`design-system/src/components/Modal/Modal.tsx`) — foco inicial
+acontece uma vez por abertura; conserta todos os chamadores do Modal, não só
+o ProviderForm. Coberto por smoke novo
+(`tests/smoke/modal-focus-steal.spec.ts`), vermelho antes / verde depois;
+regressão: vitest 1729/1729, typecheck, smokes de providers + project-config
+verdes.
 
 ## Melhorias de UX (menores, mesma passada)
 
@@ -54,7 +53,8 @@ Hipóteses a investigar (nenhuma confirmada ainda):
 
 ## DoD
 
-- Digitar em qualquer campo do painel nunca move o foco.
+- ~~Digitar em qualquer campo do painel nunca move o foco.~~ ✅ feito
+  (smoke `modal-focus-steal.spec.ts`).
 - Placeholder sem o `/v1` armadilha.
 - Um usuário de primeira viagem completa cadastro + segredo sem instrução
   externa (teste com roteiro e2e da etapa 3, seção 2).
