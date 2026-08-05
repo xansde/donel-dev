@@ -393,3 +393,100 @@ describe('A4 — o livro dos runs recusa run alterado depois de ingerido', () =>
     expect(line).toContain('revisão');
   });
 });
+
+// ---------------------------------------------------------------------------
+// A22 — um run que fecha N fases aparece como N fases fechadas
+// ---------------------------------------------------------------------------
+//
+// Caso real: Validar, Documentar e Concluir foram feitas dentro da sessão de
+// Implementar. O result declarou UMA `phase.completed` e o mapa ficou mudo
+// sobre as outras três — trabalho feito, tela em branco. É pré-requisito do E5
+// (fundir fases), que se constrói em cima disto.
+
+describe('A22 — N fases fechadas num result', () => {
+  const WI = { entity: 'work_item', id: 'wi-1' } as const;
+
+  const closed = (phase: string, outcome = 'done'): Record<string, unknown> => ({
+    type: 'phase.completed',
+    subject: WI,
+    phase,
+    outcome,
+    summary: null,
+  });
+
+  const check = (): Record<string, unknown> => ({
+    type: 'verification.recorded',
+    subject: WI,
+    verification_kind: 'check',
+    state: 'passed',
+    ref: 'npm test',
+  });
+
+  const adr = (): Record<string, unknown> => ({
+    type: 'artifact.recorded',
+    owner: WI,
+    artifact_kind: 'adr',
+    location: 'repo',
+    repo: 'atlas',
+    path: 'docs/adr/0009.md',
+  });
+
+  const cicloCompleto = (): Record<string, unknown> =>
+    resultWith([check(), adr(), closed('implementar'), closed('validar'), closed('documentar'), closed('concluir')], {
+      phase: 'implementar',
+    });
+
+  it('o parser aceita as quatro fases fechadas no mesmo documento', () => {
+    const parsed = parseEsteiraResult(cicloCompleto());
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues, null, 2));
+    expect(parsed.result.facts.filter((fact) => fact.type === 'phase.completed')).toHaveLength(4);
+  });
+
+  it('cada fase fechada responde pelo SEU produto — documentar sem artefato derruba o documento inteiro', () => {
+    const semArtefato = resultWith([check(), closed('implementar'), closed('documentar')], { phase: 'implementar' });
+    expect(codesOf(semArtefato)).toContain('missing_required_fact');
+  });
+
+  it('o run que fecha as seguintes sem dizer o que houve com a dele é recusado', () => {
+    const doc = resultWith([check(), closed('validar')], { phase: 'implementar' });
+    expect(codesOf(doc)).toContain('phase_completed_missing_for_run');
+  });
+
+  it('a mesma fase fechada duas vezes é recusada — duas histórias sobre uma execução', () => {
+    const doc = resultWith([check(), closed('implementar'), closed('implementar', 'abandoned')], { phase: 'implementar' });
+    expect(codesOf(doc)).toContain('duplicate_phase_completed');
+  });
+
+  it('o reducer registra QUATRO passagens de fase, e o item fecha pela última', () => {
+    const parsed = parseEsteiraResult(cicloCompleto());
+    if (!parsed.ok) throw new Error('fixture inválida');
+
+    const drafts = resultToEvents(parsed.result, { resultPath: 'C:/x.json' });
+    const events: StoreEvent[] = [
+      {
+        seq: 0,
+        event_id: 'evt-0',
+        at: '2026-08-04T11:00:00.000Z',
+        type: 'work_item.created',
+        source: { kind: 'app' },
+        dedupe_key: null,
+        payload: { id: 'wi-1', discoveryId: 'dsc-1', itemType: 'issue', title: 'Expor estado da fila', targetRepo: 'atlas' },
+      },
+      ...drafts.map((draft, index) => ({
+        seq: index + 1,
+        event_id: `evt-${index + 1}`,
+        at: draft.at,
+        type: draft.type,
+        source: { kind: 'app' } as const,
+        dedupe_key: draft.dedupe_key,
+        payload: draft.payload,
+      })),
+    ];
+
+    const snapshot = reduceEvents(events, { builtAt: '2026-08-04T13:00:00.000Z' });
+    expect(snapshot.phases.map((phase) => phase.phase).sort()).toEqual(['concluir', 'documentar', 'implementar', 'validar']);
+    expect(snapshot.phases.every((phase) => phase.completedAt !== null)).toBe(true);
+    // `concluir` com `done` fecha o item — as outras não o reabrem.
+    expect(snapshot.workItems[0].state).toBe('done');
+  });
+});

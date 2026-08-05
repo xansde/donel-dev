@@ -804,7 +804,34 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
   // que a fase promete seria de novo o app tendo que adivinhar o que aconteceu.
   // A tabela vem do schema (`x-required-facts`), nao de regra escrita duas
   // vezes — e o teste de cobertura reprova se as duas se afastarem.
+  // A22 — um run PODE fechar N fases: Validar, Documentar e Concluir feitas
+  // dentro da sessao de Implementar sao quatro fases fechadas, e o mapa tem que
+  // mostrar quatro. O que ele NAO pode e contar a mesma duas vezes: duas
+  // `phase.completed` do mesmo assunto e da mesma fase sao duas historias sobre
+  // uma execucao, e o reducer ficaria com a ultima sem ninguem saber.
+  const completedKeys = new Set<string>();
+  for (const fact of facts) {
+    if (fact.type !== 'phase.completed') continue;
+    const key = `${fact.subject.entity}:${fact.subject.id}|${fact.phase}`;
+    if (completedKeys.has(key)) {
+      c.add('duplicate_phase_completed', 'facts', `phase "${fact.phase}" is completed twice for the same subject in one result`);
+    }
+    completedKeys.add(key);
+  }
+
   if (run !== null && run.status === 'success' && kind === 'esteira.result') {
+    // A22 — fechar as fases seguintes nao dispensa dizer o que houve com a
+    // PROPRIA: o run foi disparado como esta fase, e quem o disparou precisa
+    // saber em que ela parou.
+    const fechouAPropria = facts.some((fact) => fact.type === 'phase.completed' && fact.phase === run.phase);
+    if (!fechouAPropria && facts.some((fact) => fact.type === 'phase.completed')) {
+      c.add(
+        'phase_completed_missing_for_run',
+        'facts',
+        `this run declares itself as "${run.phase}" but closes other phases without saying what happened to its own`,
+      );
+    }
+
     // As fases que este result declara FECHADAS com desfecho bom. A cobranca de
     // produto (A3) e por elas, nao por `run.phase`: quem diz "documentar
     // concluida" mostra o artefato, mesmo que o run se chame `implementar`.

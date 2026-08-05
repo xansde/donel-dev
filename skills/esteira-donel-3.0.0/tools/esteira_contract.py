@@ -523,9 +523,27 @@ def build_result(
     if not facts:
         raise ContractError("um run que nao declara nada nao tem resultado para ingerir")
 
+    # A22 — um run PODE fechar N fases (Validar, Documentar e Concluir feitas
+    # dentro da sessao de Implementar sao quatro fases fechadas). O que ele NAO
+    # pode e contar a mesma duas vezes.
+    vistas: set[tuple[str, str, str]] = set()
+    for fact in facts:
+        if fact["type"] != "phase.completed":
+            continue
+        chave = (fact["subject"]["entity"], fact["subject"]["id"], fact["phase"])
+        if chave in vistas:
+            raise ContractError(f"fase {fact['phase']!r} fechada duas vezes para o mesmo assunto no mesmo result")
+        vistas.add(chave)
+
     # A4 — o complemento nao e cobrado pela tabela: a fase ja respondeu por ela
     # no run ancorado, e cobrar de novo obrigaria a redeclarar o que ja foi dito.
     declared = {fact["type"] for fact in facts}
+    if kind == RESULT_KIND and status == "success" and any(f["type"] == "phase.completed" for f in facts):
+        # Fechar as fases seguintes nao dispensa dizer o que houve com a PROPRIA.
+        if not any(f["type"] == "phase.completed" and f["phase"] == phase for f in facts):
+            raise ContractError(
+                f"o run se declara {phase!r} e fecha outras fases sem dizer o que houve com a dele"
+            )
     if kind == RESULT_KIND:
         missing = [required for required in required_facts_for(phase, status, facts) if required not in declared]
         if missing:

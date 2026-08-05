@@ -45,6 +45,10 @@ export type ContractIssueCode =
   | 'complement_redeclares_phase'
   /** A4/A13 — o `run_id` nao traz o sufixo do parentesco que ele declara. */
   | 'lineage_suffix_mismatch'
+  /** A22 — o MESMO assunto e a MESMA fase fechados duas vezes no mesmo result: duas historias sobre uma execucao. */
+  | 'duplicate_phase_completed'
+  /** A22 — o run fechou outras fases e nao disse o que houve com a SUA. */
+  | 'phase_completed_missing_for_run'
   /**
    * A4 — o MESMO `run_id`, ja ingerido, voltou com conteudo DIFERENTE e sem se
    * declarar complemento nem revisao. Caso real: a Concluir regravou o run com
