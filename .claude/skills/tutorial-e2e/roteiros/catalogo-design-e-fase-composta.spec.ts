@@ -108,15 +108,31 @@ test('o catálogo novo aparece no disparo e no mapa', async () => {
       .filter({ hasText: 'O item que esta em curso' })
       .first();
     await itemFresco.waitFor({ timeout: 15_000 });
-    await passo('Escolha o item que ainda não tem fase própria', itemFresco, 'O clique de seleção é no topo do card — o corpo inteiro inclui a trilha, que escolheria uma etapa em vez do nó.');
+    // Alvo é o TÍTULO, não o card inteiro: `cardTop` é flex (ícone, título,
+    // status lado a lado) e o innerText do Chromium quebra linha em cada item
+    // flex mesmo com os três desenhados na mesma linha visual — o card inteiro
+    // vira "Circulado: ⑂" (o ícone do card, não o título). Achado da própria
+    // captura (05/08), mesma família do já registrado para os chips do
+    // catálogo (linha 78).
+    await passo(
+      'Escolha o item que ainda não tem fase própria',
+      itemFresco.locator('[class*="cardTitle"]'),
+      'O clique de seleção é no topo do card — o corpo inteiro inclui a trilha, que escolheria uma etapa em vez do nó.',
+    );
     await itemFresco.locator('[class*="cardTop"]').click();
     await win.waitForTimeout(420); // o carrossel assenta a transição de foco antes da foto
 
     const trilha = mapa.getByTestId('devmode-trilha-step').filter({ hasText: 'design' }).first();
     await trilha.waitFor({ timeout: 15_000 });
+    // Alvo é o CHIP da fase (`span[data-phase="design"]`), não a linha inteira:
+    // mesma razão do título acima — a linha da trilha também é flex (rail,
+    // glifo, chip, estado, botão) e o innerText da linha começa no rail
+    // ("└"/"├"). `span`, não só `[data-phase]`, porque o botão "Preparar"
+    // também carrega `data-phase={step.phase}` — sem o seletor de tag os dois
+    // casam e o `.first()` interno de `passo()` dependeria da ordem do DOM.
     await passo(
       'A trilha do item concorda: a próxima é Design',
-      trilha,
+      trilha.locator('span[data-phase="design"]'),
       'Nenhuma fase rodou neste item ainda — o mapa lê a mesma tabela do catálogo (`catalogPhasesFor`) para achar a próxima, e agora ela começa em Design em vez de Implementar.',
     );
   } catch (error) {
