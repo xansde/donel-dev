@@ -34,11 +34,13 @@ import {
   isItemClosed,
   itemClosureLine,
   itemMeta,
+  liveSessionOf,
   lockView,
   MIRROR_PENDING_HINT,
   MIRROR_PENDING_TITLE,
   mirrorLines,
   phaseLines,
+  phaseSessions,
   PHASE_STATE_WORD,
   provenanceMark,
   verificationLines,
@@ -49,6 +51,7 @@ import {
   type SignalTone,
   type VerificationLineView,
 } from '../Esteira/esteiraView';
+import { resolveResume } from '../Esteira/esteiraSession';
 import type { EntityId, StoreSnapshot, WorkItemSnapshot } from '../../../shared/esteira/store/storeFormat';
 
 export type MapLevelKey = 'discovery' | 'planos' | 'itens' | 'preview';
@@ -84,6 +87,13 @@ export interface MapTrailStep {
   readonly phase: string;
   /** A frase inteira da etapa, vinda de `phaseLine` — o componente só imprime. */
   readonly text: string;
+  /**
+   * C1 — a MESMA informação de `text`, resumida a uma palavra (chip/glifo do
+   * design). É o que o card em foco desenha na trilha; `text` desce para
+   * tooltip. Nasce de `PHASE_STATE_WORD` (a mesma tabela que já existia),
+   * nunca reescrita aqui.
+   */
+  readonly label: string;
   readonly glyph: MapGlyph;
   /** Só a etapa que vem A SEGUIR ganha o "⌁ Preparar" (mesma regra da trilha do design). */
   readonly isNext: boolean;
@@ -93,6 +103,14 @@ export interface MapTrailStep {
   readonly reason: string | null;
   readonly subject: EntityId;
   readonly detail: string | null;
+  /**
+   * B1 — a sessão que "Retomar" reabriria (`claude -r <cliSessionId>` no
+   * `cwd` dela), quando o passo já FECHOU e há uma sessão de CLI completa pra
+   * ele. `null` para qualquer passo que não fechou (inclusive "é a próxima")
+   * ou cuja fase rodou sem sessão de app (seed, ou skill fora do disparo) —
+   * nesses dois casos não há o que reabrir.
+   */
+  readonly resume: { readonly cliSessionId: string; readonly cwd: string } | null;
 }
 
 export interface MapCard {
@@ -105,6 +123,13 @@ export interface MapCard {
   /** A palavra de estado à direita do título: a macro etapa, o estado do item. */
   readonly statusLabel: string;
   readonly metaLine: string | null;
+  /**
+   * C1 — a MESMA meta, resumida a uma palavra, para o card em espaço mínimo
+   * desenhar (o item: o TIPO). `null` quando não há o que encurtar — a meta
+   * de discovery/plano já é uma contagem curta, não uma frase. `metaLine`
+   * nunca perde a versão inteira: ela é o que o tooltip mostra.
+   */
+  readonly metaLabel: string | null;
   readonly tags: readonly MapTag[];
   readonly accent: MapTone;
   /** Vazia fora de foco — a trilha vive no card em foco, como no design. */
@@ -238,11 +263,27 @@ function lockOf(card: CardView, subject: EntityId) {
  * aparece — inventá-la para desenhá-la "não realizada" é a issue #35, que esta
  * spec manda reverter.
  */
+/**
+ * B1 — a sessão que "Retomar" reabriria para ESTE passo, quando ele fechou.
+ * `null` para qualquer passo aberto (não é o que "concluída" significa) e
+ * para fechado sem sessão de CLI completa (seed, ou skill fora do disparo —
+ * não há aba pra reabrir). A decisão de QUAL sessão (a última da cadeia) é
+ * `resolveResume`, importada — nunca recalculada aqui.
+ */
+function resumeFor(card: CardView, subject: EntityId, phase: string, state: PhaseTrailState): MapTrailStep['resume'] {
+  if (!FECHADAS.has(state)) return null;
+  const resolution = resolveResume(phaseSessions(card, subject, phase));
+  return resolution.ok ? { cliSessionId: resolution.cliSessionId, cwd: resolution.cwd } : null;
+}
+
 function trailFor(card: CardView, subject: EntityId, item: WorkItemSnapshot | null): readonly MapTrailStep[] {
   const historia = phaseLines(card, subject).map((line) => ({
     key: line.key,
     phase: line.phase.phase,
     text: line.text,
+    // C1 — a mesma tabela que já existia (`PHASE_STATE_WORD`); o passo em
+    // foco desenha `label`, o tooltip/detalhe usa `text`.
+    label: PHASE_STATE_WORD[line.state],
     glyph: GLYPH_BY_STATE[line.state],
     isNext: false,
     isLast: false,
@@ -250,6 +291,7 @@ function trailFor(card: CardView, subject: EntityId, item: WorkItemSnapshot | nu
     reason: null as string | null,
     subject,
     detail: line.detail,
+    resume: resumeFor(card, subject, line.phase.phase, line.state),
     state: line.state,
   }));
 
@@ -280,6 +322,7 @@ function trailFor(card: CardView, subject: EntityId, item: WorkItemSnapshot | nu
         key: `${entityKey(subject)}:${candidato.phase}:proxima`,
         phase: candidato.phase,
         text: `${candidato.phase} — é a próxima`,
+        label: 'próxima',
         glyph: 'not-started',
         isNext: true,
         isLast: false,
@@ -287,6 +330,7 @@ function trailFor(card: CardView, subject: EntityId, item: WorkItemSnapshot | nu
         reason,
         subject,
         detail: null,
+        resume: null,
       });
     }
   }
@@ -331,6 +375,9 @@ function discoveryCard(card: CardView, focused: boolean): MapCard {
     title: card.discovery.title,
     statusLabel: card.stage.shown,
     metaLine: meta.join(' · '),
+    // C1 — nada a encurtar aqui: a meta do discovery já é uma contagem curta
+    // ("repo · N planos · N itens"), não uma frase para descer a tooltip.
+    metaLabel: null,
     tags,
     accent: card.signals.some((signal) => signal.tone === 'error')
       ? 'error'
@@ -369,6 +416,8 @@ function planCard(card: CardView, planId: string, focused: boolean): MapCard {
     statusLabel:
       itens.length === 0 ? 'nenhum item ainda' : `${fechados} de ${contado(itens.length, 'item', 'itens')} fechado(s)`,
     metaLine: plan.summary,
+    // C1 — mesma razão do discovery: sem frase longa aqui pra encurtar.
+    metaLabel: null,
     tags,
     accent: lock !== null ? 'lock' : itens.length > 0 && fechados === itens.length ? 'ok' : 'muted',
     trail: focused ? trailFor(card, subject, null) : [],
@@ -387,11 +436,22 @@ function itemCard(card: CardView, item: WorkItemSnapshot, focused: boolean): Map
   if (item.planId === null) {
     tags.push({ text: 'sem plano', tone: 'warn', title: 'Este item não pertence a nenhum plano deste card.' });
   }
-  if (lock !== null) tags.push({ text: `trava: ${lock.phase}`, tone: 'lock', title: null });
+  // C1 — o `title` da etiqueta de trava vinha `null`: a etiqueta cabia
+  // ("trava: implementar"), mas o dono/hora/sessão sumiam da tela inteira, não
+  // só encurtavam de camada. `lockView` já monta essa frase — pedida com a
+  // trava DESTE item (não `card.lock`, a primeira do card), nunca reescrita.
+  if (lock !== null) tags.push({ text: `trava: ${lock.phase}`, tone: 'lock', title: lockView(card, lock)?.line ?? null });
 
   // T-14 — o item semeado carrega a mesma marca do card (ver discoveryCard).
   const seededTag = provenanceMark(item.seeded);
   if (seededTag !== null) tags.push({ text: seededTag.label, tone: 'muted', title: seededTag.title });
+
+  // D-4 — o fecho do ciclo. `itemClosureLine` já devolve `null` pra item
+  // aberto (D-4 original). A frase INTEIRA segue existindo pro tooltip/painel
+  // de detalhe (`closureLine`, abaixo); o card em si só ganha o chip — antes
+  // era a frase inteira, sem tooltip, dita direto no espaço mínimo do card.
+  const closure = itemClosureLine(item, card.verifications);
+  if (closure !== null) tags.push({ text: 'ver desfecho', tone: 'ok', title: closure });
 
   return {
     key: entityKey(subject),
@@ -401,10 +461,14 @@ function itemCard(card: CardView, item: WorkItemSnapshot, focused: boolean): Map
     title: item.title,
     statusLabel: item.state === 'in-progress' ? 'em curso' : item.state === 'open' ? 'aberto' : item.state === 'done' ? 'concluído' : 'abandonado',
     metaLine: itemMeta(item, card.discovery, lock),
+    // C1 — o tipo (uma palavra: "issue", "spike", "adr"...) é o que o card
+    // desenha; a frase inteira (tipo · estado · repo · origem · trava)
+    // continua em `metaLine`, agora só para tooltip/detalhe.
+    metaLabel: item.itemType,
     tags,
     accent: isItemClosed(item) ? 'ok' : lock !== null ? 'lock' : item.state === 'in-progress' ? 'accent' : 'muted',
     trail: focused ? trailFor(card, subject, item) : [],
-    closureLine: itemClosureLine(item, card.verifications),
+    closureLine: closure,
     footer: null,
   };
 }
@@ -425,6 +489,7 @@ function previewLevel(): MapLevel {
         title: 'PLANOS',
         statusLabel: '',
         metaLine: PREVIEW_HINT,
+        metaLabel: null,
         tags: [],
         accent: 'muted',
         trail: [],
@@ -616,6 +681,39 @@ function breadcrumbFor(card: CardView, subject: EntityId): readonly string[] {
     }
   }
   return trilha;
+}
+
+// ---------------------------------------------------------------------------
+// B2 — "navegar no mapa alterna para a aba da sessão VIVA do nó". Nó sem
+// sessão viva não rouba foco; sessão fechada nunca é alvo (existe o retomar
+// explícito do B1 pra isso). O FATO que decide é `SessionSnapshot.endedAt`
+// (via `liveSessionOf`, importado); esta função só cruza esse fato com as
+// abas abertas — ela não sabe nada de React, `TabState` nem `setActiveTabId`.
+// ---------------------------------------------------------------------------
+
+/** O mínimo de uma aba aberta que esta decisão precisa — evita importar `TabState` de `App.tsx`. */
+export interface LiveSessionTabLookup {
+  readonly id: string;
+  readonly claudeSessionId: string | null;
+}
+
+/**
+ * A aba para onde navegar o mapa até `subject` deveria alternar o foco —
+ * `null` quando não há sessão viva OU quando ela não tem aba aberta agora (os
+ * dois casos são "não rouba foco", nunca um erro).
+ */
+export function tabToFocusFor(
+  snapshot: StoreSnapshot | null,
+  discoveryId: string,
+  subject: EntityId,
+  tabs: readonly LiveSessionTabLookup[],
+): string | null {
+  if (snapshot === null) return null;
+  const card = cardView(snapshot, discoveryId);
+  if (card === null) return null;
+  const live = liveSessionOf(card, subject);
+  if (live === null || live.cliSessionId === null) return null;
+  return tabs.find((tab) => tab.claudeSessionId === live.cliSessionId)?.id ?? null;
 }
 
 /** A palavra de cada estado de fase, para quem precisa dela fora da frase inteira. */

@@ -470,8 +470,13 @@ export function lockSubjectLabel(card: CardView, lock: LockRecord): string {
   return item === undefined ? 'um item que não está mais no card' : `o item «${item.title}»`;
 }
 
-export function lockView(card: CardView): LockView | null {
-  const lock = card.lock;
+/**
+ * `lock` é opcional (default `card.lock`, a primeira do card) — C1 (batch N5)
+ * o pede explícito, porque com disparo por item (B2 da 010) um card pode ter
+ * mais de uma trava viva, e o mapa precisa da linha honesta de UMA delas, não
+ * necessariamente a primeira.
+ */
+export function lockView(card: CardView, lock: LockRecord | null = card.lock): LockView | null {
   if (lock === null) return null;
 
   const holder = lock.holderKind === 'skill' ? 'uma skill' : 'o app';
@@ -946,6 +951,33 @@ export interface PhaseLineView {
 }
 
 /**
+ * As sessões de UM assunto+fase, na ordem em que existiram. Era um filtro
+ * inline dentro de `phaseLines` até o B1 (batch N5) precisar da MESMA fatia
+ * fora dela — "Retomar" precisa da cadeia inteira daquela fase para achar a
+ * última sessão (`esteiraSession.lastSessionOfChain`). Uma origem só: duas
+ * cópias do mesmo filtro divergem no primeiro conserto.
+ */
+export function phaseSessions(card: CardView, subject: EntityId, phase: string): readonly SessionSnapshot[] {
+  return card.sessions.filter(
+    (entry) => entry.phase === phase && entry.subject.entity === subject.entity && entry.subject.id === subject.id,
+  );
+}
+
+/**
+ * B2 (batch N5) — a sessão VIVA de um assunto (`endedAt === null`), quando
+ * existe. É o único fato que decide se navegar o mapa até este nó alterna a
+ * aba ativa: nó sem sessão viva nunca rouba foco, e sessão fechada nunca é
+ * alvo — para isso existe o retomar explícito do B1.
+ */
+export function liveSessionOf(card: CardView, subject: EntityId): SessionSnapshot | null {
+  return (
+    card.sessions.find(
+      (entry) => entry.subject.entity === subject.entity && entry.subject.id === subject.id && entry.endedAt === null,
+    ) ?? null
+  );
+}
+
+/**
  * As fases do card, cada uma com a frase certa. `subject` filtra por assunto —
  * é o que a trilha do mapa precisa (um nó de cada vez) sem que exista uma
  * segunda implementação da regra de presença.
@@ -957,10 +989,7 @@ export function phaseLines(card: CardView, subject: EntityId | null = null): rea
       : card.phases.filter((phase) => phase.subject.entity === subject.entity && phase.subject.id === subject.id);
 
   return doCard.map((phase) => {
-    const doAssunto = card.sessions.filter(
-      (entry) =>
-        entry.phase === phase.phase && entry.subject.entity === phase.subject.entity && entry.subject.id === phase.subject.id,
-    );
+    const doAssunto = phaseSessions(card, phase.subject, phase.phase);
     const aberta = doAssunto.find((entry) => entry.endedAt === null);
     // Sessão aberta manda: assumida ou só preparada. Sem sessão aberta, mas com
     // sessão que já existiu, a fase ficou pelo meio — e é isso que a tela diz.
