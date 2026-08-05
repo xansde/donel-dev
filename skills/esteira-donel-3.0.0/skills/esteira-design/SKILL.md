@@ -1,6 +1,6 @@
 ---
-name: esteira-design
-description: Use quando o Donel Dev disparar a fase Design de um item — o app deixou um `run-input.json` com o item em `subject.work_item_id` e espera de volta o mockup e o diagrama de arquitetura, ANTES de qualquer código. Roda entre Plano e Implementar; se um dos dois artefatos não se aplica a este item, exige nota com a justificativa — nunca omissão silenciosa.
+name: esteira-design-3
+description: "Use quando o Donel Dev disparar a fase Design de um item — o app deixou um `run-input.json` com o item em `subject.work_item_id` e espera de volta o mockup e o diagrama de arquitetura, ANTES de qualquer código. Roda entre Plano e Implementar; se um dos dois artefatos não se aplica a este item, exige nota com a justificativa — nunca omissão silenciosa."
 ---
 
 # Fase Design — esteira-donel 3.0.0
@@ -27,6 +27,25 @@ disciplina é sua, não do emissor: um item que chega em Implementar sem ter
 sido visto antes é o mesmo problema que a fase existe para evitar, só que sem
 ninguém para recusar por você.
 
+## Antes dos passos — onde moram as ferramentas
+
+As `tools/` do fork ficam **dois níveis acima** desta `SKILL.md`, e a sessão da
+fase abre no **repo alvo** — nunca dentro do fork. Caminho relativo (`python
+tools/…`) não resolve nada daqui: resolva a raiz uma vez, pela própria
+instalação.
+
+```powershell
+Split-Path (Split-Path @((Get-Item "$env:USERPROFILE\.claude\skills\esteira-design-3").Target)[0])
+```
+
+Use o caminho devolvido **por extenso** em todo comando `tools/` daqui para
+baixo — é por isso que os exemplos escrevem `<raiz>/tools/…` em vez de uma
+variável: variável de shell não sobrevive de um comando para o outro.
+
+Comando sem saída = esta skill não foi instalada por junction (`README.md`,
+seção "Instalar"). Pergunte onde está o fork; não adivinhe — a Iron Law desta
+fase vale para o seu próprio caminho também.
+
 ## Passos
 
 0. **Preflight mecânico.**
@@ -41,7 +60,7 @@ ninguém para recusar por você.
 1. **Leia a ida.**
 
    ```bash
-   python tools/read_input.py --input <run-input.json>
+   python <raiz>/tools/read_input.py --input <run-input.json>
    ```
 
    `context.work_item` diz o tipo, o título e o repo alvo. `context.history`
@@ -94,7 +113,7 @@ ninguém para recusar por você.
 4. **Emita.**
 
    ```bash
-   python tools/emit_result.py --input <run-input.json> --facts-file facts.json \
+   python <raiz>/tools/emit_result.py --input <run-input.json> --facts-file facts.json \
        --status success --model <modelo> --effort <esforço>
    ```
 
@@ -110,7 +129,7 @@ ninguém para recusar por você.
 6. **Se a fase falhou**, emita mesmo assim:
 
    ```bash
-   python tools/emit_result.py --input <run-input.json> --facts-file facts.json \
+   python <raiz>/tools/emit_result.py --input <run-input.json> --facts-file facts.json \
        --status failed --failure-code <código> --failure-message "<o que houve>"
    ```
 

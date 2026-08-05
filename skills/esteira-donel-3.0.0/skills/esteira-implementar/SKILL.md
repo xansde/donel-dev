@@ -1,6 +1,6 @@
 ---
-name: esteira-implementar
-description: Use quando o Donel Dev disparar a fase Implementar de um item — o app deixou um `run-input.json` com o item em `subject.work_item_id` e espera de volta o que foi construído E o que pode ser conferido. Escreve código e teste na branch do item; nunca abre PR.
+name: esteira-implementar-3
+description: "Use quando o Donel Dev disparar a fase Implementar de um item — o app deixou um `run-input.json` com o item em `subject.work_item_id` e espera de volta o que foi construído E o que pode ser conferido. Escreve código e teste na branch do item; nunca abre PR."
 ---
 
 # Fase Implementar — esteira-donel 3.0.0
@@ -26,6 +26,25 @@ ninguém consegue verificar é indistinguível de um item que ninguém tocou. Fo
 essa indistinção — ausência lida como negação — que produziu a tela mentirosa
 de 03/08.
 
+## Antes dos passos — onde moram as ferramentas
+
+As `tools/` do fork ficam **dois níveis acima** desta `SKILL.md`, e a sessão da
+fase abre no **repo alvo** — nunca dentro do fork. Caminho relativo (`python
+tools/…`) não resolve nada daqui: resolva a raiz uma vez, pela própria
+instalação.
+
+```powershell
+Split-Path (Split-Path @((Get-Item "$env:USERPROFILE\.claude\skills\esteira-implementar-3").Target)[0])
+```
+
+Use o caminho devolvido **por extenso** em todo comando `tools/` daqui para
+baixo — é por isso que os exemplos escrevem `<raiz>/tools/…` em vez de uma
+variável: variável de shell não sobrevive de um comando para o outro.
+
+Comando sem saída = esta skill não foi instalada por junction (`README.md`,
+seção "Instalar"). Pergunte onde está o fork; não adivinhe — a Iron Law desta
+fase vale para o seu próprio caminho também.
+
 ## Passos
 
 0. **Preflight mecânico.**
@@ -40,7 +59,7 @@ de 03/08.
 1. **Leia a ida.**
 
    ```bash
-   python tools/read_input.py --input <run-input.json>
+   python <raiz>/tools/read_input.py --input <run-input.json>
    ```
 
    `context.work_item` diz **o quê**: tipo, título, repo alvo e estado.
@@ -99,7 +118,7 @@ de 03/08.
 5. **Emita.**
 
    ```bash
-   python tools/emit_result.py --input <run-input.json> --facts-file facts.json \
+   python <raiz>/tools/emit_result.py --input <run-input.json> --facts-file facts.json \
        --status success --model <modelo> --effort <esforço>
    ```
 
@@ -119,7 +138,7 @@ de 03/08.
 7. **Se a fase falhou**, emita mesmo assim:
 
    ```bash
-   python tools/emit_result.py --input <run-input.json> --facts-file facts.json \
+   python <raiz>/tools/emit_result.py --input <run-input.json> --facts-file facts.json \
        --status failed --failure-code <código> --failure-message "<o que houve>"
    ```
 

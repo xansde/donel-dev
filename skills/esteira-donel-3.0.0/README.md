@@ -101,7 +101,25 @@ foreach ($fase in 'discovery','plano','design','implementar','validar','concluir
 Sem `documentar` na lista: a fase virou parte da `SKILL.md` de `validar` (E5).
 
 Nomes com sufixo `-3` para conviverem com o plugin `esteira:` da 2.1.0 sem
-conflito — os dois modelos coexistem até a virada.
+conflito — os dois modelos coexistem até a virada. **O sufixo vive nos dois
+lugares**: no nome do junction E no `name:` do frontmatter de cada `SKILL.md`.
+Só no diretório não basta — o Claude Code registra a skill pelo `name:`, e um
+par desalinhado deixa o `/esteira-<fase>-3` que o app pré-digita
+(`esteiraPhaseCommand`, com teste) sem nada para invocar. Foi assim em 05/08:
+o app ganhou o sufixo no batch N4 e o frontmatter ficou para trás, então cada
+disparo caía num nome que não existia.
+
+**Aponte o junction para um checkout do canal que você roda.** O alvo é uma
+árvore de trabalho de verdade, então a skill instalada é a do branch que estiver
+lá naquele instante — junction para a árvore principal serve o fork da branch de
+feature em que você por acaso está, não o do alfa. A worktree do canal
+(`donel-dev-alfa`, em `staging`) é o alvo certo: ela não muda de branch por
+baixo de você.
+
+E as `tools/` ficam **fora** do que o junction expõe (dois níveis acima da
+`SKILL.md`), enquanto a sessão da fase abre no repo alvo. Por isso cada
+`SKILL.md` começa resolvendo a raiz do fork pelo próprio junction, antes do
+Passo 1 — nenhum comando `tools/` roda por caminho relativo.
 
 ## O teste que amarra os dois lados
 

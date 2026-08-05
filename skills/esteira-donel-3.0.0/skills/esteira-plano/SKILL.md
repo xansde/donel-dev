@@ -1,6 +1,6 @@
 ---
-name: esteira-plano
-description: Use quando o Donel Dev disparar a fase Plano de um card — o app deixou um `run-input.json` com o discovery e o plano em `subject.plan_id`, e espera de volta os ITENS declarados. Entrevista as escolhas AO VIVO, na sessão, antes de fechar; cada item nasce com tipo e alvo explícitos, e item de código sem repo não entra.
+name: esteira-plano-3
+description: "Use quando o Donel Dev disparar a fase Plano de um card — o app deixou um `run-input.json` com o discovery e o plano em `subject.plan_id`, e espera de volta os ITENS declarados. Entrevista as escolhas AO VIVO, na sessão, antes de fechar; cada item nasce com tipo e alvo explícitos, e item de código sem repo não entra."
 ---
 
 # Fase Plano — esteira-donel 3.0.0
@@ -33,6 +33,25 @@ a saída fácil por baixo: `outcome: "done"` também exige `gate.confirmed` ou
 `decision.recorded`, com `confirmed_by` de uma pessoa de verdade, nunca da
 própria skill.
 
+## Antes dos passos — onde moram as ferramentas
+
+As `tools/` do fork ficam **dois níveis acima** desta `SKILL.md`, e a sessão da
+fase abre no **repo alvo** — nunca dentro do fork. Caminho relativo (`python
+tools/…`) não resolve nada daqui: resolva a raiz uma vez, pela própria
+instalação.
+
+```powershell
+Split-Path (Split-Path @((Get-Item "$env:USERPROFILE\.claude\skills\esteira-plano-3").Target)[0])
+```
+
+Use o caminho devolvido **por extenso** em todo comando `tools/` daqui para
+baixo — é por isso que os exemplos escrevem `<raiz>/tools/…` em vez de uma
+variável: variável de shell não sobrevive de um comando para o outro.
+
+Comando sem saída = esta skill não foi instalada por junction (`README.md`,
+seção "Instalar"). Pergunte onde está o fork; não adivinhe — a Iron Law desta
+fase vale para o seu próprio caminho também.
+
 ## Passos
 
 0. **Preflight mecânico.**
@@ -47,7 +66,7 @@ própria skill.
 1. **Leia a ida.**
 
    ```bash
-   python tools/read_input.py --input <run-input.json>
+   python <raiz>/tools/read_input.py --input <run-input.json>
    ```
 
    `subject.plan_id` diz **qual** plano você está detalhando — o plano já
@@ -101,7 +120,7 @@ própria skill.
 6. **Emita**, sempre com `phase.completed`:
 
    ```bash
-   python tools/emit_result.py --input <run-input.json> --facts-file facts.json \
+   python <raiz>/tools/emit_result.py --input <run-input.json> --facts-file facts.json \
        --status success --model <modelo> --effort <esforço>
    ```
 

@@ -1,6 +1,6 @@
 ---
-name: esteira-concluir
-description: Use quando o Donel Dev disparar a fase Concluir de um item — o app deixou um `run-input.json` e espera de volta a EVIDÊNCIA que fecha o ciclo. É gate, não carimbo: sem verificação que passou, o emissor recusa declarar concluído.
+name: esteira-concluir-3
+description: "Use quando o Donel Dev disparar a fase Concluir de um item — o app deixou um `run-input.json` e espera de volta a EVIDÊNCIA que fecha o ciclo. É gate, não carimbo: sem verificação que passou, o emissor recusa declarar concluído."
 ---
 
 # Fase Concluir — esteira-donel 3.0.0
@@ -24,6 +24,25 @@ de 03/08, só que na direção contrária — em vez de negar o que aconteceu, e
 afirmaria o que ninguém leu. Se a entrega não passou, o desfecho honesto
 existe: `abandoned` ou `inconclusive`, que **não** exigem nada.
 
+## Antes dos passos — onde moram as ferramentas
+
+As `tools/` do fork ficam **dois níveis acima** desta `SKILL.md`, e a sessão da
+fase abre no **repo alvo** — nunca dentro do fork. Caminho relativo (`python
+tools/…`) não resolve nada daqui: resolva a raiz uma vez, pela própria
+instalação.
+
+```powershell
+Split-Path (Split-Path @((Get-Item "$env:USERPROFILE\.claude\skills\esteira-concluir-3").Target)[0])
+```
+
+Use o caminho devolvido **por extenso** em todo comando `tools/` daqui para
+baixo — é por isso que os exemplos escrevem `<raiz>/tools/…` em vez de uma
+variável: variável de shell não sobrevive de um comando para o outro.
+
+Comando sem saída = esta skill não foi instalada por junction (`README.md`,
+seção "Instalar"). Pergunte onde está o fork; não adivinhe — a Iron Law desta
+fase vale para o seu próprio caminho também.
+
 ## Passos
 
 0. **Preflight mecânico.**
@@ -38,7 +57,7 @@ existe: `abandoned` ou `inconclusive`, que **não** exigem nada.
 1. **Leia a ida.**
 
    ```bash
-   python tools/read_input.py --input <run-input.json>
+   python <raiz>/tools/read_input.py --input <run-input.json>
    ```
 
    `context.history` traz o que Implementar e Validar (que agora também fecha
@@ -48,7 +67,7 @@ existe: `abandoned` ou `inconclusive`, que **não** exigem nada.
 2. **Leia a política de review do repo-alvo — não confie no que alguém disse.**
 
    ```bash
-   python tools/review_policy.py --repo <caminho do repo-alvo> --risk <trivial|sensivel>
+   python <raiz>/tools/review_policy.py --repo <caminho do repo-alvo> --risk <trivial|sensivel>
    ```
 
    `[A14]` Isto devolve QUANTOS aprovadores este repo exige para o risco desta
@@ -100,7 +119,7 @@ existe: `abandoned` ou `inconclusive`, que **não** exigem nada.
 5. **Emita.**
 
    ```bash
-   python tools/emit_result.py --input <run-input.json> --facts-file facts.json \
+   python <raiz>/tools/emit_result.py --input <run-input.json> --facts-file facts.json \
        --status success --model <modelo> --effort <esforço>
    ```
 

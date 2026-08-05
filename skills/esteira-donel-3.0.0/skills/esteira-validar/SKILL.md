@@ -1,6 +1,6 @@
 ---
-name: esteira-validar
-description: Use quando o Donel Dev disparar a fase Validar de um item — o app deixou um `run-input.json` com o item em `subject.work_item_id` e espera de volta o que foi examinado, o que ficou registrado para o futuro, e em que estado os dois ficaram. Fase COMPOSTA (E5): roda a verificação sobre o que Implementar deixou E documenta com o que a verificação acabou de ensinar, na mesma sessão. Nunca aprova, nunca mergeia, nunca marca sozinha um roteiro e2e como visto.
+name: esteira-validar-3
+description: "Use quando o Donel Dev disparar a fase Validar de um item — o app deixou um `run-input.json` com o item em `subject.work_item_id` e espera de volta o que foi examinado, o que ficou registrado para o futuro, e em que estado os dois ficaram. Fase COMPOSTA (E5): roda a verificação sobre o que Implementar deixou E documenta com o que a verificação acabou de ensinar, na mesma sessão. Nunca aprova, nunca mergeia, nunca marca sozinha um roteiro e2e como visto."
 ---
 
 # Fase Validar (+ Documentar) — esteira-donel 3.0.0
@@ -42,6 +42,25 @@ validado. Aqui você DIRIGE o app de verdade, fotografa, gera o relatório — e
 estado do roteiro só sai de `pending` com o veredito **colhido do dono**,
 nunca inferido por você sozinha. Ver "3. O roteiro e2e" abaixo.
 
+## Antes dos passos — onde moram as ferramentas
+
+As `tools/` do fork ficam **dois níveis acima** desta `SKILL.md`, e a sessão da
+fase abre no **repo alvo** — nunca dentro do fork. Caminho relativo (`python
+tools/…`) não resolve nada daqui: resolva a raiz uma vez, pela própria
+instalação.
+
+```powershell
+Split-Path (Split-Path @((Get-Item "$env:USERPROFILE\.claude\skills\esteira-validar-3").Target)[0])
+```
+
+Use o caminho devolvido **por extenso** em todo comando `tools/` daqui para
+baixo — é por isso que os exemplos escrevem `<raiz>/tools/…` em vez de uma
+variável: variável de shell não sobrevive de um comando para o outro.
+
+Comando sem saída = esta skill não foi instalada por junction (`README.md`,
+seção "Instalar"). Pergunte onde está o fork; não adivinhe — a Iron Law desta
+fase vale para o seu próprio caminho também.
+
 ## Passos
 
 0. **Preflight mecânico.**
@@ -56,7 +75,7 @@ nunca inferido por você sozinha. Ver "3. O roteiro e2e" abaixo.
 1. **Leia a ida.**
 
    ```bash
-   python tools/read_input.py --input <run-input.json>
+   python <raiz>/tools/read_input.py --input <run-input.json>
    ```
 
    `context.history` mostra o que Implementar (e Design, se rodou) declararam.
@@ -158,7 +177,7 @@ nunca inferido por você sozinha. Ver "3. O roteiro e2e" abaixo.
 7. **Emita.**
 
    ```bash
-   python tools/emit_result.py --input <run-input.json> --facts-file facts.json \
+   python <raiz>/tools/emit_result.py --input <run-input.json> --facts-file facts.json \
        --status success --model <modelo> --effort <esforço>
    ```
 
