@@ -9,6 +9,7 @@ import {
   formatFileSize,
   formatRelativeTime,
   FREE_TERMINAL_ETAPA_LABEL,
+  partitionSessionsByPhaseWork,
 } from '../../shared/sessions';
 import { ProjectConfigForm, type ProjectConfigFormHandle } from './ProjectConfigForm';
 import { withPendingRepoCommitted } from './repoEntryList';
@@ -67,6 +68,14 @@ export interface PreviousSessionsProps {
   sessionNames: SessionNamesMap;
   /** Item 11 — "sessão VIVA agora" (glifo ▶ na coluna SESSÃO): presença de entrada aqui é o sinal, não mais exibido como texto (coluna CONTEXTO removida, #26). */
   contextLabelBySessionId: Readonly<Record<string, string>>;
+  /**
+   * B3 (relatório de sessão 05/08) — os `id` das sessões que o store da
+   * Esteira reconhece como disparo de FASE (o "worker", não o "cockpit" que
+   * orquestra). Somem da lista por default: elas já têm histórico próprio no
+   * card da Esteira, e uma cadeia de disparos de várias fases enche esta
+   * lista genérica de entradas que atrapalham achar a sessão certa.
+   */
+  esteiraPhaseSessionIds: ReadonlySet<string>;
 }
 
 const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '', githubExtra: [], hasOwnBoard: false };
@@ -93,13 +102,24 @@ export function PreviousSessions({
   onFork,
   sessionNames,
   contextLabelBySessionId,
+  esteiraPhaseSessionIds,
 }: PreviousSessionsProps): React.JSX.Element | null {
   // Query de busca reseta implicitamente a cada abertura (o componente some
   // do DOM quando `open` é false — o React descarta o state local junto).
   // Mesmo vale pro estado da engrenagem abaixo (settingsOpen, os três
-  // inputs): nunca precisa de reset manual, a desmontagem já cuida disso.
+  // inputs) e pro toggle de sessões de fase logo abaixo: nunca precisa de
+  // reset manual, a desmontagem já cuida disso.
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => filterSessionsByQuery(sessions, query), [sessions, query]);
+  // B3 — por default, as sessões de FASE DA ESTEIRA ficam de fora (ver o
+  // porquê no JSDoc da prop). `partitioned.visible` preserva a ordem
+  // original de `filtered`.
+  const [showPhaseSessions, setShowPhaseSessions] = useState(false);
+  const partitioned = useMemo(
+    () => partitionSessionsByPhaseWork(filtered, esteiraPhaseSessionIds),
+    [filtered, esteiraPhaseSessionIds],
+  );
+  const rows = showPhaseSessions ? filtered : partitioned.visible;
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bindingLoading, setBindingLoading] = useState(false);
@@ -236,7 +256,15 @@ export function PreviousSessions({
             <p className={styles.hint}>Nenhuma sessão bate com “{query}”.</p>
           ) : null}
 
-          {filtered.length > 0 ? (
+          {/* B3 — tudo que a busca achou é sessão de fase da esteira, e elas estão ocultas: estado DIFERENTE de "sem resultado" (a busca achou, só não mostra por default). */}
+          {!loading && filtered.length > 0 && rows.length === 0 ? (
+            <p className={styles.hint}>
+              {partitioned.hidden.length === 1 ? 'A sessão encontrada é' : 'As sessões encontradas são'} de fase da
+              esteira — <button type="button" className={styles.phaseToggle} onClick={() => setShowPhaseSessions(true)}>mostre-as</button>.
+            </p>
+          ) : null}
+
+          {rows.length > 0 ? (
             <div className={styles.tableWrap}>
               <div className={styles.tableHeader}>
                 <span aria-hidden="true" />
@@ -249,7 +277,7 @@ export function PreviousSessions({
                 <span aria-hidden="true" />
               </div>
               <ul className={styles.table}>
-                {filtered.map((session) => {
+                {rows.map((session) => {
                   const isLive = Boolean(contextLabelBySessionId[session.id]);
                   const { glyph, tone } = sessionGlyph(session, isLive);
                   // Fix #20 (E2E 30/07) — `preview` nunca contém o texto cru
@@ -291,6 +319,17 @@ export function PreviousSessions({
                 Uma sessão reiniciada em outra conta aparece como duas entradas irmãs — a etiqueta de conta é o que diz de quem
                 é a cota.
               </p>
+              {/* B3 — o toggle só aparece quando há algo a esconder/revelar; "ocultar de novo" mantém o gesto reversível. */}
+              {partitioned.hidden.length > 0 ? (
+                <p className={styles.footerNote}>
+                  <button type="button" className={styles.phaseToggle} onClick={() => setShowPhaseSessions((prev) => !prev)}>
+                    {showPhaseSessions
+                      ? 'Ocultar sessões de fase da esteira'
+                      : `${partitioned.hidden.length} sessão(ões) de fase da esteira oculta(s) — mostrar`}
+                  </button>
+                  {showPhaseSessions ? ' — elas já têm histórico próprio no card da Esteira.' : null}
+                </p>
+              ) : null}
             </div>
           ) : null}
         </div>

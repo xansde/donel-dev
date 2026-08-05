@@ -165,6 +165,33 @@ export function filterSessionsByQuery(
   );
 }
 
+/**
+ * B3 (relatório de sessão 05/08 — "cockpit" x "subagentes/workers de fase") —
+ * a lista de "Sessões anteriores" lê `~/.claude/projects/**` inteiro; uma
+ * cadeia de disparos de fase da Esteira (discovery, plano, implementar…) enche
+ * essa lista de entradas que já têm histórico PRÓPRIO no card da Esteira,
+ * escondendo a sessão que a pessoa está de fato procurando. `phaseSessionIds`
+ * vem de fora (o app cruza com o store da Esteira via `cliSessionId`); esta
+ * função só reparte — mantém este arquivo agnóstico de domínio, sem importar
+ * nada da Esteira.
+ */
+export interface SessionListPartition<T> {
+  readonly visible: readonly T[];
+  readonly hidden: readonly T[];
+}
+
+export function partitionSessionsByPhaseWork<T extends { readonly id: string }>(
+  sessions: readonly T[],
+  phaseSessionIds: ReadonlySet<string>,
+): SessionListPartition<T> {
+  const visible: T[] = [];
+  const hidden: T[] = [];
+  for (const session of sessions) {
+    (phaseSessionIds.has(session.id) ? hidden : visible).push(session);
+  }
+  return { visible, hidden };
+}
+
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
