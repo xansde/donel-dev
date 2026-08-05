@@ -26,36 +26,60 @@ existe: `abandoned` ou `inconclusive`, que **não** exigem nada.
 
 ## Passos
 
+0. **Preflight mecânico.**
+
+   ```bash
+   ls docs/relatorio-*.md 2>/dev/null
+   ```
+
+   Arquivo encontrado = leia antes de agir; costuma nomear o erro que você
+   está prestes a repetir. Nada encontrado, siga.
+
 1. **Leia a ida.**
 
    ```bash
    python tools/read_input.py --input <run-input.json>
    ```
 
-   `context.history` traz o que Implementar e Validar declararam. É o mapa do
-   que conferir — não o substituto de conferir.
+   `context.history` traz o que Implementar e Validar (que agora também fecha
+   Documentar, `[E5]`) declararam. É o mapa do que conferir — não o substituto
+   de conferir.
 
 2. **Confira a evidência na fonte.** PR mergeado, review aprovado, check verde,
    documento aceito, pergunta respondida. Estado antigo declarado noutra fase
    não vale como evidência de agora: um PR aberto ontem pode ter sido fechado
    sem merge.
 
-3. **Decida o que é fato:**
+3. **Decida o que é fato.** A tabela é a mesma promessa do schema
+   (`x-required-facts`), nomeada por esta fase:
 
-   - `verification.recorded` — **obrigatório**, com o estado de agora:
-     - `pull-request` `passed` = mergeado e verificado (o `ref` é a URL);
-     - `review` `passed` = documento aceito, com quem aceitou em `ref`;
-     - `conclusion` `passed` = a pergunta foi respondida, com a resposta em
-       `ref` — **inclusive quando a resposta é "não dá"**. Spike que responde
-       negativo está concluído, não pela metade.
+   | Fato | Quando é obrigatório |
+   |---|---|
+   | `verification.recorded` | quando `outcome: "done"` — e precisa ter pelo menos uma com `state: "passed"` (o dente de D-4) |
+   | `phase.completed` | **sempre**, em todo run `status: success` |
+
+   O que `verification.recorded` pode ser, com o estado de agora:
+   - `pull-request` `passed` = mergeado e verificado (o `ref` é a URL);
+   - `review` `passed` = documento aceito, com quem aceitou em `ref`;
+   - `conclusion` `passed` = a pergunta foi respondida, com a resposta em
+     `ref` — **inclusive quando a resposta é "não dá"**. Spike que responde
+     negativo está concluído, não pela metade.
+
+   E o resto:
    - `artifact.recorded` — o ponteiro do que ficou entregue, quando ainda não
      foi declarado por outra fase.
    - `note.recorded` — o resumo do que nasceu deste item, quando outra pessoa
      vai precisar dele.
-   - `phase.completed` — **obrigatório**, com o outcome certo:
-     - `done` — fechou, e a evidência acima está declarada;
-     - `abandoned` — não vai acontecer, e o card fecha assim mesmo;
-     - `inconclusive` — não deu para fechar agora.
+
+   `phase.completed` leva o outcome certo: `done` — fechou, e a evidência
+   acima está declarada; `abandoned` — não vai acontecer, e o card fecha assim
+   mesmo; `inconclusive` — não deu para fechar agora.
+
+   **A forma é o corpus, não a memória.** Veja
+   `src/shared/esteira/contract/v1/examples/concluir-entrega-verificada.json`
+   (PR mergeado, `channel` declarado — `[A15]`) e
+   `concluir-desfecho-revisto.json` (uma revisão de desfecho, `[A13]`) antes de
+   montar `facts.json`.
 
 4. **Emita.**
 
@@ -67,6 +91,15 @@ existe: `abandoned` ou `inconclusive`, que **não** exigem nada.
    Se o emissor recusar por falta de verificação que passou, **não troque o
    estado da verificação para passar** — troque o outcome para o que é
    verdade.
+
+5. **Confira do outro lado do contrato antes de considerar a fase concluída.**
+
+   ```bash
+   npm run esteira:check -- <result.json escrito pelo passo 4>
+   ```
+
+   Só considere a fase concluída com exit 0. Reclamou, conserte os fatos e
+   emita de novo.
 
 ## O que esta fase NÃO faz
 
