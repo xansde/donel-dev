@@ -5,12 +5,18 @@ import { abrirDonel, fecharDonel, fecharPortaDeEntrada, type RoteiroContexto } f
 // mesma esteira, outra projeção (discovery → planos → itens, sem modelo
 // novo), aberta por um botão de navegação rápida na titlebar.
 //
-// Vale como e2e E como tutorial. O que os prints precisam provar:
+// F25 — a CAMADA VISUAL foi refeita com `@xyflow/react` em cima do veredito
+// do dono sobre a versão anterior (overlay SVG à mão): "Feio. Não navega
+// corretamente. Difícil de identificar o mapa." Este roteiro passa a provar
+// os três defeitos apontados, não só abrir/hover/clicar:
 //
-//   abrir     →  o botão só existe no Modo Dev, e cobre a janela inteira
-//   hover     →  um nó mostra o resumo de UMA frase, sem clicar
-//   clique    →  fecha o overlay e leva o card ATÉ o nó clicado — é
-//                navegação, não só desenho
+//   abrir      →  o botão só existe no Modo Dev, e cobre a janela inteira
+//   legibilidade → a legenda de tipos aparece fixa no canto do canvas
+//                  ("difícil de identificar o mapa")
+//   hover      →  um nó mostra o resumo de UMA frase, sem clicar
+//   clique     →  fecha o overlay e leva o card ATÉ o nó clicado, COM a aba
+//                 da sessão viva em foco quando ela existe — é navegação, não
+//                 só desenho ("não navega corretamente")
 //
 // A seedagem reaproveita a MESMA técnica de `seed-discovery.spec.ts`
 // (Semear trabalho em curso → Exemplo → Semear): este roteiro não inventa um
@@ -66,10 +72,24 @@ test('abrir o mapa de nós, passar o mouse e navegar por um clique', async () =>
 
     const overlay = win.getByTestId('node-graph-overlay');
     await overlay.waitFor({ timeout: 15_000 });
+    // React Flow calcula posição/zoom (`fitView`) de forma assíncrona — dar um
+    // instante para o canvas assentar antes da primeira foto (mesma cautela do
+    // achado 5c: fotografar durante o ajuste desenha o grafo no lugar errado).
+    const canvas = win.getByTestId('node-graph-canvas');
+    await canvas.waitFor({ timeout: 15_000 });
+    await win.waitForTimeout(500);
     await passo(
       'O grafo cobre a janela inteira',
       null,
-      'Discovery → plano → itens, em colunas por profundidade (BFS a partir do discovery) — o mesmo histórico do card ao lado, só que de ponta a ponta.',
+      'Discovery → plano → itens, em colunas por profundidade (BFS a partir do discovery) — o mesmo histórico do card ao lado, só que de ponta a ponta, agora com pan/zoom e minimapa de verdade (React Flow).',
+    );
+
+    // ── Legenda: responde a "difícil de identificar o mapa" ─────────────
+    const legenda = win.getByTestId('node-graph-legend');
+    await passo(
+      'A legenda fica fixa no canto',
+      legenda,
+      'Cada tipo de nó (discovery, plano, item, artefato, verificação) tem um ícone e uma cor de borda próprios — a legenda nomeia os cinco sem precisar clicar em nada.',
     );
 
     // ── Hover: o resumo de uma frase, sem clicar ────────────────────────
@@ -89,7 +109,7 @@ test('abrir o mapa de nós, passar o mouse e navegar por um clique', async () =>
     await passo(
       'Clique num nó',
       noItem,
-      'O grafo é controle de navegação, não só visualização: o clique fecha o mapa e leva o card até este item.',
+      'O grafo é controle de navegação, não só visualização: o clique fecha o mapa, leva o card até este item e alterna para a aba da sessão viva dele, quando existe.',
     );
     await noItem.click();
 
