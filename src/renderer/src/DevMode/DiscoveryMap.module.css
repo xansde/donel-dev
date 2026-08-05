@@ -20,21 +20,12 @@
   grid-row: 1;
 }
 
-/* C4 (batch N5) — o mapa fica MONTADO quando só a coluna direita recolhe (o
-   botão "Recolher painéis" do titlebar); só a LARGURA zera aqui, nunca em
-   App.tsx via desmonte. `overflow: hidden` é o que evita o vazamento visual:
-   `.map` tem `width/min-width/max-width: 480px` fixos (a régua da CA-7), e um
-   grid track de 0px NÃO encolhe sozinho um item com largura própria — sem
-   isso, o painel continuaria pintando 480px por cima do terminal. FIX #15
-   (colapsar a barra ESQUERDA, `sidebarCollapsed`) continua desmontando o
-   mapa — essa condição vive em `App.tsx`, intocada. */
-.mapCollapsed {
-  width: 0;
-  min-width: 0;
-  max-width: 0;
-  overflow: hidden;
-  border-right: none;
-}
+/* FIX (feedback e2e 05/08, C4) — `.mapCollapsed` morreu: a versão anterior
+   (batch N5) zerava a largura do mapa quando só a coluna DIREITA recolhia
+   (`rightCollapsed`); era exatamente o bug relatado ("ocultar a barra
+   direita derruba o mapa"). O mapa não tem mais um estado de colapso
+   próprio — só `sidebarCollapsed`, em `App.tsx`, decide se ele está
+   montado. */
 
 /* CA-7 (mockup linhas 71-79) — "Esteira · id · Trocar…" dentro do painel. */
 .header {

@@ -1791,21 +1791,18 @@ export function App(): React.JSX.Element {
           )}
         </button>
         {devModeOn ? (
-          // FIX (rodada de feedback 30/07, item 2) — "o botão de ocultar
-          // barra lateral não oculta a barra direita": o ícone é
-          // Panel-RIGHT-Close/Open, mas até aqui `rightCollapsed` só zerava
-          // a coluna ESQUERDA (o mapa, que migrou de lado no lote 7 —
-          // `bodyMapCollapsed`). O painel de 316px à direita
-          // (`PhaseDetailsPanel`) nunca obedecia a este botão. Mesmo
-          // estado, agora os dois painéis do Modo Dev — mapa e detalhe —
-          // respondem ao mesmo gesto (ver `.bodyMapCollapsed` no CSS e a
-          // condição de `PhaseDetailsPanel` logo abaixo).
+          // FIX (feedback e2e 05/08, C4) — a versão de 30/07 deste comentário
+          // dizia que `rightCollapsed` devia zerar mapa E painel de detalhe
+          // juntos; era o próprio bug. "Recolher a barra direita" só pode
+          // recolher a barra direita: este botão agora afeta SÓ
+          // `PhaseDetailsPanel` (coluna direita, 316px) — o mapa
+          // (`DiscoveryMap`, coluna esquerda) nunca mais reage a este estado.
           <button
             type="button"
             className={styles.preferencesButton}
             onClick={() => setRightCollapsed((prev) => !prev)}
-            aria-label={rightCollapsed ? 'Mostrar painéis do Modo Dev' : 'Recolher painéis do Modo Dev'}
-            title={rightCollapsed ? 'Mostrar painéis do Modo Dev' : 'Recolher painéis do Modo Dev'}
+            aria-label={rightCollapsed ? 'Mostrar painel de detalhes' : 'Recolher painel de detalhes'}
+            title={rightCollapsed ? 'Mostrar painel de detalhes' : 'Recolher painel de detalhes'}
           >
             {rightCollapsed ? (
               <PanelRightOpen size={16} strokeWidth={1.5} aria-hidden="true" />
@@ -1885,10 +1882,11 @@ export function App(): React.JSX.Element {
           sidebarCollapsed ? styles.bodySidebarCollapsed : '',
           // Clássico sem Launcher: coluna direita (320px, Launcher) zerada.
           !devModeOn && !launcherOpen ? styles.bodyRightCollapsed : '',
-          // Lote 7 — o mapa mudou de coluna (CA-7: agora é a ESQUERDA, 480px).
-          // "Recolher mapa" (botão do titlebar) zera essa coluna; o Launcher
-          // aberto por cima não depende dela (vive na coluna direita).
-          devModeOn && rightCollapsed ? styles.bodyMapCollapsed : '',
+          // FIX (feedback e2e 05/08, C4) — Modo Dev com painel de detalhe
+          // recolhido: só a coluna DIREITA zera (mesma classe do modo
+          // clássico). O mapa (coluna ESQUERDA, 480px) nunca depende deste
+          // estado — `.bodyMapCollapsed`, que zerava as duas, morreu.
+          devModeOn && rightCollapsed ? styles.bodyRightCollapsed : '',
         ]
           .filter(Boolean)
           .join(' ')}
@@ -2137,19 +2135,17 @@ export function App(): React.JSX.Element {
             zerava a COLUNA (`--col-left: 0px`) e o mapa continuava montado,
             transbordando de uma caixa de largura zero. Colapsar a lateral
             agora desmonta o mapa — preservado abaixo (`!sidebarCollapsed`).
-            C4 (batch N5) — BUG relacionado, mas inverso: ocultar a barra
-            DIREITA (`rightCollapsed`, botão "Recolher painéis") desmontava o
-            mapa ESQUERDO também, perdendo o estado do carrossel a cada
-            toggle. O mapa agora fica montado sempre que o Modo Dev está
-            ligado e a lateral não colapsou; `rightCollapsed` vira só a prop
-            `collapsed` (largura 0 via CSS, ver `.mapCollapsed`), nunca mais a
-            condição de montagem. */}
+            FIX (feedback e2e 05/08, C4) — a versão anterior deste comentário
+            (batch N5) fazia `rightCollapsed` também encolher o mapa via prop
+            `collapsed` (largura 0 via CSS); era exatamente o bug relatado
+            ("ocultar a barra direita derruba o mapa"). O mapa não recebe mais
+            essa prop e não reage a `rightCollapsed` de forma alguma — só
+            `sidebarCollapsed` (acima) controla se ele está montado. */}
         {devModeOn && !sidebarCollapsed ? (
           <DiscoveryMap
             view={mapView}
             selection={mapSelection}
             warning={storeWarning}
-            collapsed={rightCollapsed}
             onFocusDiscovery={(discoveryId) => {
               // Trocar de card zera o que pertence ao card: o plano, o item e o
               // nó do detalhe apontariam para algo que não está mais na tela.
@@ -2176,9 +2172,9 @@ export function App(): React.JSX.Element {
         {/* Painel de 316px à direita (CA-7) — o mapa NUNCA carrega o detalhe
             dentro de si; esqueleto aqui, conteúdo rico no lote 8. Quando o
             Launcher está aberto, ele ocupa esta mesma coluna (mesmo padrão
-            de antes). FIX (item 2, rodada 30/07) — `!rightCollapsed`: o
-            botão "Recolher painéis" do titlebar agora também esconde este
-            painel, não só o mapa (ver comentário do botão e `.bodyMapCollapsed`). */}
+            de antes). `!rightCollapsed`: o botão "Recolher painel de
+            detalhes" do titlebar desmonta só este painel — desde a correção
+            de 05/08 (C4) o mapa não é mais afetado por este estado. */}
         {devModeOn && !launcherOpen && !rightCollapsed ? (
           <PhaseDetailsPanel
             detail={mapView.detail}
