@@ -183,6 +183,8 @@ describe('preparePhase', () => {
         summary: null,
         failure: null,
         lastRunId: 'run-1',
+        channel: null,
+        risk: null,
         seeded: false,
       },
       state: estado(),
