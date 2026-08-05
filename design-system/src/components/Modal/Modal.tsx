@@ -27,6 +27,16 @@ export function Modal({ open, onClose, title, children, actions, className }: Mo
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
 
+  // O efeito de foco depende só de `open`: chamadores costumam passar
+  // `onClose` como arrow inline (identidade nova a cada render), e com
+  // `onClose` nas deps qualquer re-render com o modal aberto re-rodava o
+  // efeito e devolvia o foco ao primeiro focável — roubando o cursor de quem
+  // estava digitando em outro campo (issue 09 de contas-e-provedores).
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   useEffect(() => {
     if (!open) return undefined;
 
@@ -42,7 +52,7 @@ export function Modal({ open, onClose, title, children, actions, className }: Mo
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -67,7 +77,7 @@ export function Modal({ open, onClose, title, children, actions, className }: Mo
       document.removeEventListener('keydown', handleKeyDown);
       previouslyFocused?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open || typeof document === 'undefined') return null;
 

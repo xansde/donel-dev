@@ -400,3 +400,75 @@ persiste chave nova ali, ou o sanitize ganha passthrough de chaves
 desconhecidas (e escrita vira read-merge-write), ou a feature precisa detectar
 outra instância viva e recusar rodar. Teste automatizado de processo único
 nunca pega isso; só o e2e na máquina real com os canais coexistindo.
+
+## 2026-08-05 — wi-registry-providers-classe-a (registry-providers-classe-a)
+
+### `claude` CLI duplica `/v1/messages` em cima de `ANTHROPIC_BASE_URL` — path errado, não credencial
+
+No spike do piloto (T1302), apontar `ANTHROPIC_BASE_URL=https://openrouter.ai/api/v1`
+(o valor que a documentação do OpenRouter recomenda para outros clientes,
+igual ao que qualquer SDK Anthropic community usaria) fazia o `claude` CLI
+recusar toda tentativa de lançamento com "There's an issue with the selected
+model" — mensagem que aponta pro nome do modelo, não pro path, então a
+primeira hipótese natural foi "o modelo não existe no catálogo do
+OpenRouter". Testar o MESMO modelo direto via `curl` contra
+`https://openrouter.ai/api/v1/messages` respondeu 200 — a API em si estava
+certa. Só rodando o CLI com `--debug` (`ANTHROPIC_LOG=debug`) apareceu a
+request de verdade: `POST https://openrouter.ai/api/v1/v1/messages` — o
+binário concatena um sufixo fixo `/v1/messages` em cima de QUALQUER
+`ANTHROPIC_BASE_URL`, então a base precisa terminar ANTES do `/v1` (aqui:
+`https://openrouter.ai/api`, sem o `/v1` final) para o path final bater.
+
+**Lesson:** quando um provider Anthropic-compatible falha com uma mensagem
+que aponta pro MODELO, mas o problema é o ROTEAMENTO da URL, `--debug`
+(`ANTHROPIC_LOG=debug`) que mostra a request HTTP de verdade resolve em um
+comando o que tentativa-e-erro por variação de nome de modelo não resolveria
+nunca — o path duplicado (`/v1/v1/`) só aparece ali, nunca na mensagem de
+erro da CLI. Ao documentar `ANTHROPIC_BASE_URL` pra um provider novo no
+registry, testar o valor exato com `curl` primeiro (confirma a API) e depois
+com `--debug` do CLI (confirma o path que o binário de fato monta) — os dois
+podem discordar mesmo com a mesma API funcionando.
+
+### Prop de callback nova + painel que ainda lê o home default = sessão que some sem ninguém dizer
+
+Na etapa 3 o `pty:create` passou a devolver `provider: { id, label }` e o
+`TerminalPane` ganhou a prop `onProviderResolved` para levantá-lo — mas
+nenhum chamador foi ligado (`grep onProviderResolved` fora do próprio
+`TerminalPane.tsx` não devolve nada), e o handler de `SESSION_CHANNELS.list`
+segue chamando `indexProjectSessions(projectPath)` sem `claudeHome`, ou
+seja, sempre `~/.claude`. Como uma sessão de provider nasce com
+`CLAUDE_CONFIG_DIR = <userData>/providers/<id>/`, o `.jsonl` dela é gravado
+lá — e o painel "Sessões anteriores" simplesmente não a encontra, sem
+nenhuma mensagem. É exatamente o risco que a C17 antecipou ("a origem da
+lista é mostrada, nunca silenciosa") e que o DoD da T1321 pedia na UI. Os
+1729 testes de vitest e os 7 smokes ficam todos verdes: nenhum deles abre o
+painel de sessões anteriores DEPOIS de lançar com provider, então a lacuna
+não tem cor vermelha em lugar nenhum.
+
+**Lesson:** prop de callback declarada e nunca consumida é o sintoma barato
+de um encanamento que parou no meio — `grep` do nome da prop fora do arquivo
+que a declara custa um comando e pega o que a suíte inteira não pega. Quando
+uma feature muda a RAIZ de onde um artefato é lido/gravado (`claudeHome`,
+config dir, workspace), a checagem que fecha o ciclo não é "spawnou com o
+env certo", é "o painel que lista aquele artefato ainda o acha depois" —
+teste de leitura pós-escrita, não só de escrita.
+
+### Campo de segredo desenhado sobre `envKeys` (que inclui os não-secretos) grava entrada órfã no cofre
+
+O `ProviderSummaryDto.envKeys` é, de propósito, `[...Object.keys(entry.env),
+...entry.secretEnvKeys]` — a lista de diagnóstico com TODOS os nomes. O
+`ProviderForm` reaproveitou essa lista para renderizar a seção "Segredos de
+<label>", então aparece um campo `password` também para as variáveis NÃO
+secretas (ex.: `ANTHROPIC_BASE_URL`). Salvar ali grava
+`provider:<id>:ANTHROPIC_BASE_URL` no cofre — um valor que `buildProviderEnv`
+nunca lê (ele só resolve `secretEnvKeys`) e que `remove()` nunca apaga
+(`deleteSecrets` também itera só `secretEnvKeys`): entrada órfã, cifrada,
+sobrevivendo à remoção do provider. Nenhum teste pega porque todos os testes
+constroem entradas em que as duas listas coincidem com a intenção.
+
+**Lesson:** um DTO de DIAGNÓSTICO (lista de nomes "para o operador ver") e um
+DTO de AÇÃO (lista sobre a qual a UI oferece escrita) parecem o mesmo array e
+não são — reusar o primeiro como fonte do segundo abre escrita em chaves que
+o motor nunca vai ler nem limpar. Quando um campo de UI gera escrita
+persistente, derive a lista do campo do MESMO array que o consumidor lê
+(aqui: `secretEnvKeys`), nunca da união de diagnóstico.

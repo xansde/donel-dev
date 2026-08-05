@@ -12,6 +12,7 @@ import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProjectBindingApi } from './projectBinding';
 import type { DonelProjectsApi } from './projects';
+import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 
@@ -203,6 +204,24 @@ export type {
   ProfileMigrationStep,
 } from './migration';
 
+// 011-contas-e-provedores (etapa 3) — registry de providers classe A. Mesmo
+// espírito de accounts: nenhum campo aqui carrega valor de segredo (fica só
+// no cofre, src/main/providers/provider-secrets.ts).
+export { defaultProvidersConfig, PROVIDER_CHANNELS } from './providers';
+export type {
+  DonelProvidersApi,
+  ProviderClass,
+  ProviderEntry,
+  ProviderId,
+  ProviderSummaryDto,
+  ProvidersConfigDto,
+  ResolveLaunchResult,
+  SetSecretResult,
+  UpsertProviderInput,
+  UpsertProviderResult,
+  ValidationReason,
+} from './providers';
+
 /** Nomes dos canais IPC do domínio PTY (plan.md linha 37). */
 export const PTY_CHANNELS = {
   create: 'pty:create',
@@ -234,6 +253,14 @@ export interface PtyCreateOptions {
    * (que sempre spawna `powershell.exe -NoLogo`, PtyManager.FREE_TERMINAL_ARGS).
    */
   args?: string[];
+  /**
+   * T1318 (011-contas-e-provedores, etapa 3, C13) — provider classe A
+   * escolhido nesta sessão. Mutuamente exclusivo com o motor de contas
+   * (D2): quando presente, o main resolve env/config dir pelo registry
+   * (`resolveLaunch`) e IGNORA o motor. `undefined` = comportamento de hoje
+   * (conta/perfil). Só tem efeito com `sessionType === 'claude'`.
+   */
+  providerId?: string;
 }
 
 /**
@@ -283,6 +310,14 @@ export interface PtyCreateResult {
    * terminal livre não tem sessão de Claude, e por isso não persiste nome (C4).
    */
   claudeSessionId?: string;
+  /**
+   * T1318 (011-contas-e-provedores, etapa 3, data-model.md §7) — preenchido
+   * só quando a sessão nasceu de um provider classe A (`undefined` = sessão
+   * de conta/perfil, o caso de hoje). Permite ao renderer rotular a
+   * statusbar e resolver a origem do transcript/retomada (C17) sem carregar
+   * nenhum valor de env sensível — `label` é o texto livre do operador.
+   */
+  provider?: { id: string; label: string };
 }
 
 export interface PtyExitInfo {
@@ -367,6 +402,8 @@ export interface DonelApi {
   accounts: DonelAccountsApi;
   /** 011-contas-e-provedores (etapa 2) — assistente de migração de perfis → cofre. */
   migration: DonelMigrationApi;
+  /** 011-contas-e-provedores (etapa 3) — registry de providers classe A; nasce inerte (`providers.entries = []`). */
+  providers: DonelProvidersApi;
   /** T015 — ConfigStore (FR-007/FR-009); ver src/shared/config.ts. */
   config: DonelConfigApi;
   /** T504 (005-terminal-copy-paste) — clipboard-bridge no main, atrás de IPC. */

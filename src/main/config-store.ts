@@ -18,6 +18,9 @@ import type {
 import { DEFAULT_PHASE_DEFAULTS } from '../shared/devModeDefaults';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { defaultMigrationState, sanitizeMigrationState, type MigrationState } from './accounts/migration/migration-state';
+import { sanitizeProvidersConfig } from './providers/providers-config';
+import { defaultProvidersConfig } from '../shared/providers';
+import type { ProvidersConfigDto } from '../shared/providers';
 import type { StoredSessionName } from '../shared/sessionName';
 import type { RegisteredSession, SessionRegistry } from '../shared/sessionRegistry';
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
@@ -115,6 +118,16 @@ export interface AppConfig {
    * (`migration:*`, contracts/migration-etapa-2.md), mesmo padrão de `accounts`.
    */
   readonly migration: MigrationState;
+  /**
+   * T1305 (011-contas-e-provedores, etapa 3) — registry de providers classe
+   * A (`providers-config.ts`). Nasce `defaultProvidersConfig()` (`entries:
+   * []`, C14/D6) — registry inerte, comportamento de hoje byte a byte. NÃO
+   * exposta via `AppConfigDto`/`config:get` — canal IPC próprio
+   * (`PROVIDER_CHANNELS`, src/shared/providers.ts), mesmo padrão de
+   * `accounts`/`migration`. Segredo nunca mora aqui (cofre separado,
+   * namespace `provider:<id>`, accounts-vault.json reusado).
+   */
+  readonly providers: ProvidersConfigDto;
 }
 
 /** `projectRoots` não tem um default universal (depende do homedir da máquina) — quem chama monta com `defaultProjectRoots(homedir)` (project-scanner.ts) e passa aqui. */
@@ -135,6 +148,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     tabAppearance: {},
     accounts: defaultAccountsConfig(),
     migration: defaultMigrationState(),
+    providers: defaultProvidersConfig(),
   };
 }
 
@@ -547,6 +561,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     tabAppearance: sanitizeTabAppearance(candidate.tabAppearance),
     accounts: sanitizeAccountsConfig(candidate.accounts, defaults.accounts),
     migration: sanitizeMigrationState(candidate.migration, defaults.migration),
+    providers: sanitizeProvidersConfig(candidate.providers),
   };
 }
 

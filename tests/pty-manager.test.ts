@@ -94,6 +94,43 @@ describe('buildPtyEnv (puro)', () => {
   });
 });
 
+// T1314 (011-contas-e-provedores, etapa 3) — `buildPtyEnv` ganha o 2º
+// parâmetro `envOverrides` (env do provider, já resolvido por
+// `buildProviderEnv`). Regressão byte a byte: sem overrides, a saída é
+// IDÊNTICA à de hoje (os testes acima continuam passando sem alteração,
+// porque a chamada de 2 args é só o caso `envOverrides === undefined`).
+describe('buildPtyEnv (puro) — envOverrides (T1314)', () => {
+  it('overrides são aplicados sobre o env base', () => {
+    const env = buildPtyEnv({ PATH: 'C:\\bin' }, undefined, { ANTHROPIC_BASE_URL: 'https://provider.test', ANTHROPIC_AUTH_TOKEN: 'segredo' });
+    expect(env.PATH).toBe('C:\\bin');
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://provider.test');
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('segredo');
+  });
+
+  it('override tentando setar CLAUDE_CONFIG_DIR é ignorado — só o parâmetro próprio governa essa chave', () => {
+    const env = buildPtyEnv({ PATH: 'C:\\bin' }, 'C:\\perfil-legitimo\\.claude', { CLAUDE_CONFIG_DIR: 'C:\\hack-do-provider' });
+    expect(env.CLAUDE_CONFIG_DIR).toBe('C:\\perfil-legitimo\\.claude');
+  });
+
+  it('override tentando setar CLAUDE_CONFIG_DIR sem claudeConfigDir próprio também não vaza (chave continua ausente)', () => {
+    const env = buildPtyEnv({ PATH: 'C:\\bin' }, undefined, { CLAUDE_CONFIG_DIR: 'C:\\hack-do-provider' });
+    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
+  });
+
+  it('marcadores de sessão-filha continuam removidos mesmo com overrides presentes', () => {
+    const env = buildPtyEnv({ PATH: 'C:\\bin', CLAUDECODE: '1' }, undefined, { ANTHROPIC_BASE_URL: 'https://provider.test' });
+    expect('CLAUDECODE' in env).toBe(false);
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://provider.test');
+  });
+
+  it('sem overrides (2 args, chamada de hoje), a saída é idêntica à de sempre — regressão byte a byte', () => {
+    const withoutThirdArg = buildPtyEnv({ PATH: 'C:\\bin', USERNAME: 'x' }, 'C:\\perfil\\.claude');
+    const withUndefinedThirdArg = buildPtyEnv({ PATH: 'C:\\bin', USERNAME: 'x' }, 'C:\\perfil\\.claude', undefined);
+    expect(withoutThirdArg).toEqual(withUndefinedThirdArg);
+    expect(withoutThirdArg).toEqual({ PATH: 'C:\\bin', USERNAME: 'x', CLAUDE_CONFIG_DIR: 'C:\\perfil\\.claude' });
+  });
+});
+
 // T014 — integração: `PtyManager.create` aplica `claudeConfigDir` no env real do processo spawnado (não só na função pura `buildPtyEnv` isolada).
 describe('PtyManager — claudeConfigDir chega no processo spawnado (FR-005/CA-3)', () => {
   it('a variável CLAUDE_CONFIG_DIR aparece no ambiente real do PTY quando claudeConfigDir é passado', async () => {
