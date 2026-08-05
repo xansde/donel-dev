@@ -342,6 +342,10 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
       outboxDir: options.outboxDir,
       continuesSessionId: input.continuesSessionId,
       handoffReason: input.handoffReason,
+      model: input.model ?? null,
+      effort: input.effort ?? null,
+      modelEffortAssumed: input.modelEffortAssumed ?? false,
+      confirmReopen: input.confirmReopen ?? false,
       now,
       newId,
     });

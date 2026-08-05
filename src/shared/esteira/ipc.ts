@@ -9,7 +9,16 @@
 
 import type { ContractIssue } from './contract/parsing';
 import { MACRO_STAGES, WORK_ITEM_STATES } from './store/storeFormat';
-import type { EntityId, LockRecord, MacroStage, StoreCompatibility, StoreSnapshot, WorkItemState } from './store/storeFormat';
+import type {
+  EntityId,
+  LockRecord,
+  MacroStage,
+  PhaseRunSnapshot,
+  SessionSnapshot,
+  StoreCompatibility,
+  StoreSnapshot,
+  WorkItemState,
+} from './store/storeFormat';
 
 export const ESTEIRA_CHANNELS = {
   /** Estado atual: snapshot derivado + de onde ele veio. */
@@ -116,6 +125,12 @@ export interface DispatchIpcInput {
   } | null;
   readonly continuesSessionId: string | null;
   readonly handoffReason: string | null;
+  readonly model?: string | null;
+  readonly effort?: string | null;
+  /** A21 — `true` so quando model/effort vieram de DEFAULT, sem confirmacao explicita (P33). */
+  readonly modelEffortAssumed?: boolean;
+  /** A1 — confirma a reabertura explicita de uma fase ja concluida sobre o mesmo assunto. */
+  readonly confirmReopen?: boolean;
 }
 
 export function isValidDispatchIpcInput(input: unknown): input is DispatchIpcInput {
@@ -129,6 +144,10 @@ export function isValidDispatchIpcInput(input: unknown): input is DispatchIpcInp
     const workspace = candidate.workspace as Partial<DispatchIpcInput['workspace']> & Record<string, unknown>;
     if (typeof workspace.target_repo !== 'string' || workspace.target_repo.trim().length === 0) return false;
   }
+  if (candidate.model !== null && candidate.model !== undefined && typeof candidate.model !== 'string') return false;
+  if (candidate.effort !== null && candidate.effort !== undefined && typeof candidate.effort !== 'string') return false;
+  if (candidate.modelEffortAssumed !== undefined && typeof candidate.modelEffortAssumed !== 'boolean') return false;
+  if (candidate.confirmReopen !== undefined && typeof candidate.confirmReopen !== 'boolean') return false;
   return true;
 }
 
@@ -273,6 +292,12 @@ export type EsteiraDispatchDto =
       readonly state: EsteiraSnapshotDto;
     }
   | { readonly ok: false; readonly reason: 'locked'; readonly lock: LockRecord; readonly state: EsteiraSnapshotDto }
+  /** A8/A20 — o repo+caminho que esta fase tocaria ja esta ocupado por outro assunto (irmao). */
+  | { readonly ok: false; readonly reason: 'resource-busy'; readonly lock: LockRecord; readonly state: EsteiraSnapshotDto }
+  /** A1 — a fase ja concluiu sobre este assunto; redisparar exige `confirmReopen: true`. */
+  | { readonly ok: false; readonly reason: 'phase-done'; readonly phase: PhaseRunSnapshot; readonly state: EsteiraSnapshotDto }
+  /** B3 — ja existe uma sessao VIVA para este MESMO assunto+fase. */
+  | { readonly ok: false; readonly reason: 'session-active'; readonly session: SessionSnapshot; readonly state: EsteiraSnapshotDto }
   | { readonly ok: false; readonly reason: 'invalid-target'; readonly issues: readonly ContractIssue[]; readonly state: EsteiraSnapshotDto }
   | { readonly ok: false; readonly reason: 'store-refused' | 'write-failed' | 'invalid-input'; readonly state: EsteiraSnapshotDto };
 

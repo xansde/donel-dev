@@ -12,6 +12,26 @@
 //    dentro da mesma fase, o que abre outra e o orcamento de contexto, e ai a
 //    nova aponta para a anterior por `continuesSessionId`.
 //
+// Rodada de melhoria de 05/08 (relatorio "etapa-3-ponta-a-ponta", P32/P33)
+// acrescentou mais duas guardas ao mesmo disparo:
+//
+// 4. **Redisparo de fase DONE exige confirmacao (A1)** — uma fase que ja
+//    concluiu (done/abandoned/inconclusive) sobre o MESMO assunto so roda de
+//    novo com `confirmReopen: true` explicito. Sem isso, o disparo recusa —
+//    nunca gera run novo silenciosamente sobre trabalho que ja tem desfecho.
+// 5. **Trava por RECURSO DE ESCRITA (A8/A20)** — alem da trava por assunto
+//    (2, acima), o disparo tambem recusa quando o REPO+CAMINHO FISICO que a
+//    fase vai tocar ja esta ocupado por OUTRO assunto (irmao). E o buraco que
+//    a trava por assunto nao fecha: P32 e exatamente "worker rodou na arvore
+//    principal enquanto outra sessao comitava nela — commits entrelacados na
+//    mesma branch", entre DOIS assuntos diferentes. Ver `store/lockChain.ts`
+//    (`resourceConflicts`) para a regra completa.
+// 6. **Segunda sessao VIVA no mesmo item+fase e recusada (B3)** — rede de
+//    seguranca para quando a trava (2) ja caiu por outro caminho (ex.:
+//    `releaseLock` manual sem a sessao ter terminado) mas a sessao anterior
+//    ainda esta aberta (`endedAt: null`). Duas sessoes vivas do MESMO
+//    assunto+fase e exatamente o caos que a trava deveria impedir sozinha.
+//
 // O que este modulo NAO faz: abrir aba, montar linha de comando, falar com o
 // PTY. Ele deixa em disco o `run-input.json` e devolve os caminhos; quem
 // executa e a camada de UI/terminal.
@@ -22,8 +42,8 @@ import { join } from 'node:path';
 import { buildRunInput, type RunInputWorkspace } from '../shared/esteira/contract/runInput';
 import type { ContractIssue } from '../shared/esteira/contract/parsing';
 import type { EventDraft } from '../shared/esteira/ingest/resultToEvents';
-import { findBlockingLock, lockChainOf } from '../shared/esteira/store/lockChain';
-import type { EntityId, LockRecord } from '../shared/esteira/store/storeFormat';
+import { findBlockingLock, findResourceLock, lockChainOf } from '../shared/esteira/store/lockChain';
+import type { EntityId, LockRecord, LockResource, PhaseRunSnapshot, SessionSnapshot } from '../shared/esteira/store/storeFormat';
 import type { EsteiraStore } from './esteira-store';
 
 /** Irmao do outbox: `~/.claude/esteira-donel/{inbox,outbox}`. Home LOCAL — nunca OneDrive. */
@@ -49,6 +69,23 @@ export interface DispatchOptions {
   readonly cwd?: string | null;
   readonly model?: string | null;
   readonly effort?: string | null;
+  /**
+   * A21 — `true` so quando model/effort foram aplicados por DEFAULT, sem
+   * confirmacao explicita de quem disparou (o anuncio pre-disparo saiu, mas o
+   * disparo nao esperou resposta — P33). `false` (o default) cobre os dois
+   * casos sem ambiguidade: nem model/effort foram declarados, nem houve
+   * decisao assumida sem confirmar. Vira `session.modelEffortAssumed` — a
+   * decisao do app fica registrada de forma explicita, nunca implicita no
+   * silencio do campo.
+   */
+  readonly modelEffortAssumed?: boolean;
+  /**
+   * A1 — confirma a REABERTURA explicita de uma fase que ja concluiu
+   * (done/abandoned/inconclusive) sobre o MESMO assunto. Default `false`:
+   * redisparo de fase done e RECUSADO sem este sinal, para nunca gerar run
+   * novo por engano sobre trabalho que ja tem desfecho.
+   */
+  readonly confirmReopen?: boolean;
   readonly now?: () => string;
   readonly newId?: (prefix: string) => string;
 }
@@ -64,8 +101,24 @@ export type DispatchResult =
       readonly resultPath: string;
     }
   | { readonly ok: false; readonly reason: 'locked'; readonly lock: LockRecord }
+  /** A8/A20 — o REPO+CAMINHO que esta fase tocaria ja esta ocupado por outro assunto (irmao). */
+  | { readonly ok: false; readonly reason: 'resource-busy'; readonly lock: LockRecord }
+  /** A1 — a fase ja concluiu sobre este assunto; redisparar exige `confirmReopen: true`. */
+  | { readonly ok: false; readonly reason: 'phase-done'; readonly phase: PhaseRunSnapshot }
+  /** B3 — ja existe uma sessao VIVA (sem `endedAt`) para este MESMO assunto+fase. */
+  | { readonly ok: false; readonly reason: 'session-active'; readonly session: SessionSnapshot }
   | { readonly ok: false; readonly reason: 'invalid-target'; readonly issues: readonly ContractIssue[] }
   | { readonly ok: false; readonly reason: 'store-refused' | 'write-failed' };
+
+/** A8/A20 — deriva o RECURSO de um workspace (`null` = fase sem repo, nada a ocupar). */
+function resourceOf(workspace: RunInputWorkspace | null | undefined): LockResource | null {
+  if (!workspace) return null;
+  return {
+    targetRepo: workspace.target_repo,
+    branch: workspace.branch ?? null,
+    treePath: workspace.worktree_path ?? workspace.repo_path ?? null,
+  };
+}
 
 /** O assunto do disparo, do mais especifico para o mais amplo (mesma regra da ingestao). */
 function subjectOf(options: DispatchOptions): EntityId {
@@ -107,6 +160,52 @@ export function dispatchPhase(store: EsteiraStore, options: DispatchOptions): Di
   const snapshot = store.snapshot();
   const held = findBlockingLock(snapshot.locks, lockChainOf(subject, { discoveryId: options.discoveryId, planId: options.planId }));
   if (held !== null) return { ok: false, reason: 'locked', lock: held };
+
+  // 1b. A1 — a fase JA CONCLUIU sobre este MESMO assunto? Redisparo silencioso
+  //     de fase done nunca gera run novo — precisa de `confirmReopen: true`.
+  //     So o assunto EXATO conta aqui (nao a cadeia inteira): uma fase done do
+  //     discovery nao deve impedir redisparo comum de uma fase de item, que e
+  //     um assunto diferente.
+  const donePhase = snapshot.phases.find(
+    (entry) =>
+      entry.subject.entity === subject.entity &&
+      entry.subject.id === subject.id &&
+      entry.phase === options.phase &&
+      entry.completedAt !== null,
+  );
+  if (donePhase !== undefined && !options.confirmReopen) return { ok: false, reason: 'phase-done', phase: donePhase };
+
+  // 1c. A8/A20 — trava por RECURSO: o repo+caminho fisico que esta fase vai
+  //     tocar ja esta ocupado por outro assunto (irmao)? A trava de assunto
+  //     (1, acima) nao ve isto — ela so olha o MESMO assunto ou ancestral.
+  const resource = resourceOf(options.workspace);
+  if (resource !== null) {
+    const resourceLock = findResourceLock(snapshot.locks, resource);
+    if (resourceLock !== null) return { ok: false, reason: 'resource-busy', lock: resourceLock };
+  }
+
+  // 1d. B3 — uma sessao VIVA (`endedAt: null`) ja existe para este MESMO
+  //     assunto+fase, mesmo sem trava (ex.: `releaseLock` chamado a mao sem a
+  //     sessao ter terminado). Duas sessoes vivas do mesmo par seriam duas
+  //     abas concorrentes tocando o mesmo trabalho — o mesmo modo de falha
+  //     que a trava existe para impedir, so que pelo lado da sessao.
+  //
+  //     EXCECAO deliberada: `[P-6]` handoff por orcamento de contexto e
+  //     exatamente uma sessao nova CONTINUANDO a viva encontrada aqui —
+  //     `options.continuesSessionId` apontando pra ela e o sinal explicito de
+  //     que nao e uma segunda sessao concorrente, e sim a MESMA cadeia. Sem
+  //     esta excecao, nenhum handoff jamais conseguiria redisparar (a sessao
+  //     anterior so recebe `endedAt` de um evento SEPARADO, que pode chegar
+  //     antes ou depois deste disparo).
+  const liveSession = snapshot.sessions.find(
+    (entry) =>
+      entry.subject.entity === subject.entity &&
+      entry.subject.id === subject.id &&
+      entry.phase === options.phase &&
+      entry.endedAt === null &&
+      entry.id !== options.continuesSessionId,
+  );
+  if (liveSession !== undefined) return { ok: false, reason: 'session-active', session: liveSession };
 
   // 2. O documento que a skill vai receber. Recusar aqui e o certo: disparar
   //    com contexto pela metade e o app afirmando o que nao sabe, na ida.
@@ -151,6 +250,9 @@ export function dispatchPhase(store: EsteiraStore, options: DispatchOptions): Di
         acquiredAt: at,
         cliSessionId: null,
         mirroredLabel: null,
+        // A8/A20 — o mesmo recurso computado no passo 1c, para o disparo
+        // SEGUINTE (de um assunto irmao) enxergar o que este ocupou.
+        resource,
       },
     },
     {
@@ -173,6 +275,12 @@ export function dispatchPhase(store: EsteiraStore, options: DispatchOptions): Di
         cwd: options.cwd ?? null,
         model: options.model ?? null,
         effort: options.effort ?? null,
+        // A21 — a escolha de model/effort registrada como decisao ASSUMIDA
+        // quando ninguem confirmou explicitamente (P33: o anuncio pre-disparo
+        // saiu, mas o disparo nao esperou resposta). O resto (pausar de fato,
+        // esperar override) e comportamento de skill/cockpit — aqui so o
+        // registro explicito da decisao.
+        modelEffortAssumed: options.modelEffortAssumed ?? false,
         startedAt: at,
         // A tela precisa destes dois para dizer o que fazer a seguir enquanto
         // o disparo nao abre a aba de terminal sozinho.

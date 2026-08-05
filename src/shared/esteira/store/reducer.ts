@@ -34,6 +34,7 @@ import {
   type IngestedRunSnapshot,
   type IngestErrorSnapshot,
   type LockRecord,
+  type LockResource,
   type MacroStage,
   type MirrorQueueEntry,
   type MirrorSyncedEntry,
@@ -219,6 +220,15 @@ function trackerRef(node: Record<string, unknown>, key: string): TrackerRef | nu
   return { provider, cardId };
 }
 
+/** A8/A20 — le `LockResource` de um payload. `targetRepo` ausente = sem recurso (fase sem workspace). */
+function lockResource(node: Record<string, unknown>, key: string): LockResource | null {
+  const raw = node[key];
+  if (!isPlainObject(raw)) return null;
+  const targetRepo = str(raw, 'targetRepo');
+  if (targetRepo === null) return null;
+  return { targetRepo, branch: str(raw, 'branch'), treePath: str(raw, 'treePath') };
+}
+
 function entityKey(id: EntityId): string {
   return `${id.entity}:${id.id}`;
 }
@@ -277,6 +287,7 @@ interface MutableSession {
   cwd: string | null;
   model: string | null;
   effort: string | null;
+  modelEffortAssumed: boolean;
   startedAt: string;
   endedAt: string | null;
   inputPath: string | null;
@@ -626,6 +637,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           cwd: str(p, 'cwd'),
           model: str(p, 'model'),
           effort: str(p, 'effort'),
+          modelEffortAssumed: bool(p, 'modelEffortAssumed'),
           startedAt: str(p, 'startedAt') ?? event.at,
           endedAt: null,
           inputPath: str(p, 'inputPath'),
@@ -685,6 +697,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           acquiredAt,
           cliSessionId: str(p, 'cliSessionId'),
           mirroredLabel: str(p, 'mirroredLabel'),
+          resource: lockResource(p, 'resource'),
         });
         break;
       }

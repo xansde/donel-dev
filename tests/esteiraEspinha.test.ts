@@ -164,7 +164,8 @@ describe('espinha — do gesto no app ao card na tela', () => {
     expect(lockView(preparada)?.title).toBe('Preparada — ninguém assumiu ainda');
     expect(phaseLines(preparada)[0].text).toBe('discovery — preparada, ninguém assumiu');
     // O comando oferecido é o MESMO que a aba recebe pré-digitado.
-    expect(lockView(preparada)?.nextStep?.command).toBe(`/esteira-discovery --input "${dispatched.inputPath}"`);
+    // A2 — a skill do FORK (sufixo -3), nunca o plugin 2.1.0 sem sufixo.
+    expect(lockView(preparada)?.nextStep?.command).toBe(`/esteira-discovery-3 --input "${dispatched.inputPath}"`);
 
     // 2. A aba abriu e o CLI devolveu o id: a trava ganha dono com nome. E só
     //    isso — a aba existir não é a fase estar rodando, porque o Enter é

@@ -503,14 +503,19 @@ export function lockView(card: CardView): LockView | null {
   }
 
   if (state === 'session-open') {
-    // Abrir a aba NÃO é começar a fase. O app escreveu o comando e parou ali —
-    // enviar é gesto humano (invariante 2), e o app não tem como saber se você
-    // já o fez. Chamar isto de "em andamento" era o defeito de 03/08 pela
-    // quarta porta: os prints 07 e 10 do roteiro se desmentiam na mesma rodada.
+    // Abrir a aba NÃO é começar a fase — quem começa é a skill, ao declarar a
+    // trava. Chamar isto de "em andamento" era o defeito de 03/08 pela quarta
+    // porta: os prints 07 e 10 do roteiro se desmentiam na mesma rodada.
+    //
+    // B5 (05/08): o app aperta o próprio Enter assim que o terminal aceita
+    // entrada (`withAutoEnter`, `esteiraSession.ts`) — enviar deixou de ser
+    // gesto exclusivamente humano. Até 05/08 esta linha dizia "o app não sabe
+    // se você já o enviou"; achado da captura `auto-start-e-redisparo-recusado`:
+    // a frase continuou prometendo uma incerteza que o app não tinha mais.
     return {
       state,
       title: 'Sessão aberta',
-      line: `${desde} A aba está aberta com o comando da fase escrito; o app não sabe se você já o enviou.`,
+      line: `${desde} A aba está aberta com o comando da fase escrito; o app aperta o Enter sozinho, assim que o terminal aceitar entrada.`,
       nextStep: null,
     };
   }

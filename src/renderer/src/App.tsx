@@ -67,11 +67,9 @@ import { sessionTabName } from '../../shared/sessions';
 // Spec 010 / batch B6 — o Modo Dev continua sendo o mapa; a fonte dele passou
 // a ser o STORE (`esteiraMapView.ts`, puro e testado). Aqui fica só o
 // encanamento com PTY/IPC — nenhuma decisão de domínio, nenhuma frase de estado.
-import { isReadyToPreType } from '../../shared/preTypeReadiness';
 import { DiscoveryMap } from './DevMode/DiscoveryMap';
 import { PhaseDetailsPanel } from './DevMode/PhaseDetailsPanel';
 import { buildMapView, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
-import { createPrimeSequencer } from './DevMode/primeSequencer';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import type { LauncherLaunchOptions } from './Launcher';
@@ -80,7 +78,7 @@ import type { LauncherLaunchOptions } from './Launcher';
 // gesto interno, para dar para comparar as duas com o mesmo dado.
 import { EsteiraScreen } from './Esteira/EsteiraScreen';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
-import type { EsteiraSessionRequest } from './Esteira/esteiraSession';
+import { isReadyForAutoStart, withAutoEnter, type EsteiraSessionRequest } from './Esteira/esteiraSession';
 import { preparePhase } from './Esteira/preparePhase';
 import type { EsteiraSnapshotDto } from '../../shared/esteira/ipc';
 import { Preferences } from './Preferences';
@@ -1161,10 +1159,14 @@ export function App(): React.JSX.Element {
   // =========================================================================
   // 003-modo-dev (Batch B) — Zonas 1/2/3
   //
-  // INVARIANTE 2 (CA-3): o único ponto deste bloco que escreve no PTY é
-  // `armPhaseCommands` abaixo, via `TerminalPaneHandle.injectCommand`, com o
-  // texto EXATO devolvido por `resolveCommandSequence` — nunca com `\r`/`\n`
-  // concatenado. O Enter é sempre gesto humano.
+  // INVARIANTE 2 (CA-3): o Enter é sempre gesto humano — a ÚNICA exceção
+  // FECHADA é o auto-start de sessão de fase da esteira (batch B5,
+  // `armEsteiraAutoStart`, mais abaixo), que nunca é a abertura genérica de
+  // aba. A infra GENÉRICA de pré-digitar-sem-enviar (`isReadyToPreType`,
+  // `createPrimeSequencer`) segue viva e testada em `shared/preTypeReadiness.ts`
+  // / `DevMode/primeSequencer.ts`, mesmo sem uma função de encanamento própria
+  // neste arquivo hoje — `handleOpenEsteiraSession` (o único lugar do Modo Dev
+  // que abria aba com comando pré-digitado) migrou para o auto-start no B5.
   // =========================================================================
 
   /**
@@ -1179,6 +1181,20 @@ export function App(): React.JSX.Element {
   const storeWarning = esteiraState === null ? null : STORE_COMPATIBILITY_WARNING[esteiraState.compatibility];
   const storeReadOnly = esteiraState !== null && esteiraState.compatibility !== 'read-write';
 
+  /**
+   * B3 — os `cliSessionId` que o store da Esteira reconhece como sessão de
+   * FASE (o disparo, não a sessão livre em que alguém orquestra várias
+   * fases). É este conjunto que `PreviousSessions` usa para ocultá-las por
+   * default — dado que o app JÁ tem (nenhuma leitura nova), só recortado.
+   */
+  const esteiraPhaseSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const session of esteiraState?.snapshot.sessions ?? []) {
+      if (session.cliSessionId) ids.add(session.cliSessionId);
+    }
+    return ids;
+  }, [esteiraState]);
+
   // Um evento só cobre os três caminhos de mudança do histórico (ingestão,
   // gesto do app, gesto de outro canal). O mapa e o painel do store assinam o
   // MESMO canal — nenhum dos dois relê disco.
@@ -1188,22 +1204,31 @@ export function App(): React.JSX.Element {
   }, []);
 
   /**
-   * T312/CA-3 — escreve a sequência no PTY, um comando por vez, SEM `\r`.
-   * Só escreve quando `isReadyToPreType` diz que a sessão aceita input
-   * (semáforo em `'waiting'` ou REPL desenhado; nunca com o diálogo de
-   * confiança na tela). O 2º comando do CA-16 só sai depois de um `'waiting'`
-   * NOVO — ou seja, depois do Enter humano do 1º ter fechado o turno.
-   * Estourou o teto sem sinal: para, avisa, e deixa o resto manual.
+   * Batch B5 (05/08, pedido literal do dono) — a sessão de FASE DA ESTEIRA
+   * aperta o próprio Enter, assim que o CLI PROVA que aceita input
+   * (`isReadyForAutoStart`, o mesmo sinal de boot do pré-digitar genérico
+   * acima: banner do CLI ou barra de status do prompt ocioso; nunca com o
+   * diálogo de confiança na tela). O gesto explícito continua sendo o clique
+   * em "Preparar" — o que some é a SEGUNDA confirmação (apertar Enter dentro
+   * do terminal depois de ver o comando escrito).
+   *
+   * Função PRÓPRIA, de propósito — NUNCA uma bifurcação dentro de
+   * `armPhaseCommands`: aquela é o mecanismo GENÉRICO de pré-digitar sem
+   * enviar (invariante 2/CA-3), que outro código pode voltar a usar um dia, e
+   * esta é a exceção FECHADA, chamada só pelo caminho de disparo de fase da
+   * esteira (`handleOpenEsteiraSession`, logo abaixo) — nunca pela abertura
+   * genérica de aba.
+   *
+   * Reaproveita `armWatchersRef`/`terminalRefs` (mesmos refs de
+   * `armPhaseCommands`): a aba é NOVA aqui (acabou de nascer em
+   * `handleOpenEsteiraSession`), então não há watcher anterior para colidir —
+   * a limpeza defensiva (`armWatchersRef.current[tabId]?.()`) segue o mesmo
+   * padrão só por disciplina.
    */
-  const armPhaseCommands = useCallback((tabId: string, commands: readonly string[], warning?: string): void => {
+  const armEsteiraAutoStart = useCallback((tabId: string, command: string): void => {
     armWatchersRef.current[tabId]?.();
-    const sequencer = createPrimeSequencer(commands);
-    if (sequencer.done) return;
 
-    let armedAt = 0;
-    let isFirstStep = true;
     let settled = false;
-    let armedAny = false;
 
     const cleanup = (): void => {
       unsubscribe();
@@ -1220,31 +1245,17 @@ export function App(): React.JSX.Element {
 
     const check = (): void => {
       if (settled) return;
-      const ready = isReadyToPreType({
-        isFirstStep,
-        semaphore: semaphoreStatesRef.current[tabId],
-        armedAt,
-        renderedLines: terminalRefs.current[tabId]?.getRenderedLines() ?? [],
-      });
-      if (!ready) return;
+      if (!isReadyForAutoStart({ renderedLines: terminalRefs.current[tabId]?.getRenderedLines() ?? [] })) return;
 
-      const command = sequencer.next();
-      if (command === null) {
-        stop();
-        return;
-      }
-
-      // ⬇⬇ O gesto central: texto puro, nunca `\r`. ⬇⬇
-      const written = terminalRefs.current[tabId]?.injectCommand(command) ?? false;
+      // ⬇⬇ O único lugar do repo em que uma sessão de FASE DA ESTEIRA recebe
+      // o próprio Enter — texto + `\r` num write só (mesmo padrão de
+      // `buildModelInjection`, `shared/liveSessionInjection.ts`), para não
+      // haver janela entre "digitou" e "enviou" onde uma corrida possa
+      // acontecer. ⬇⬇
+      const written = terminalRefs.current[tabId]?.injectCommand(withAutoEnter(command)) ?? false;
       if (!written) return; // PTY ainda não nasceu — tenta de novo no próximo sinal
 
-      armedAt = Date.now();
-      isFirstStep = false;
-      armedAny = true;
-      // #24 — sem a moldura, só o AVISO precisa de voz própria: ele é
-      // informação que o terminal não mostra (trava, divergência).
-      if (warning) setDevModeToast(warning);
-      if (sequencer.done) stop();
+      stop();
     };
 
     const unsubscribe = terminalRefs.current[tabId]?.onRenderedUpdate(check) ?? ((): void => {});
@@ -1252,10 +1263,10 @@ export function App(): React.JSX.Element {
     const timeoutId = setTimeout(() => {
       if (settled) return;
       stop();
-      // Só avisa quando NADA foi preparado. Numa sequência do CA-16, o 2º
-      // passo depende do Enter humano do 1º — o humano demorar não é falha,
-      // é o fluxo normal; um aviso aqui seria ruído (e mentira).
-      if (!armedAny) setDevModeToast('A sessão não ficou pronta a tempo — o comando não foi preparado.');
+      // O boot medido leva 14,5-20,9s; o teto (30s) sobra folga. Se estourar
+      // mesmo assim, NADA foi enviado (nem o texto) — dizer isso é a única
+      // frase honesta, e o comando manual continua disponível na tela do card.
+      setDevModeToast('A sessão não ficou pronta a tempo — o comando não foi enviado. Rode-o você mesmo na aba.');
     }, PRE_TYPE_READY_TIMEOUT_MS);
 
     armWatchersRef.current[tabId] = cleanup;
@@ -1266,8 +1277,10 @@ export function App(): React.JSX.Element {
    * Spec 010 / batch B1 — o "Preparar" da esteira nova abre a sessão de
    * verdade. Mesma divisão do Modo Dev: a DECISÃO (onde abrir, com que comando)
    * é pura e vive em `Esteira/esteiraSession.ts`; aqui só o encanamento —
-   * criar a aba, escrever o comando (sem `\r`, invariante 2/CA-3) e amarrar a
-   * aba à sessão registrada no histórico.
+   * criar a aba e amarrá-la à sessão registrada no histórico.
+   *
+   * Batch B5 — o comando não fica só pré-digitado: `armEsteiraAutoStart`
+   * também aperta o Enter, sozinho, assim que o CLI prova que está pronto.
    */
   const handleOpenEsteiraSession = (request: EsteiraSessionRequest): void => {
     const tabId = addTab({
@@ -1282,7 +1295,7 @@ export function App(): React.JSX.Element {
       sessionType: 'claude',
     });
     esteiraTabSessionsRef.current[tabId] = request.sessionId;
-    armPhaseCommands(tabId, [request.command]);
+    armEsteiraAutoStart(tabId, request.command);
   };
 
   /**
@@ -2112,6 +2125,7 @@ export function App(): React.JSX.Element {
             // nome dado na UI), não só a 1ª mensagem: é o caminho do US-A.
             sessionNames={appConfig?.sessionNames ?? {}}
             contextLabelBySessionId={previousSessionsContextLabel}
+            esteiraPhaseSessionIds={esteiraPhaseSessionIds}
           />
         </div>
       ) : null}

@@ -226,14 +226,17 @@ describe('lockView — a tela não promete o que não cumpre', () => {
     const view = lockView(cardWithLock(false))!;
     // Uma função só produz o comando (`esteiraPhaseCommand`) — se aqui fosse
     // outro texto, a correção de um dos dois envelheceria calada.
-    expect(view.nextStep?.command).toBe('/esteira-discovery --input "C:/inbox/run-1.json"');
+    // A2 — a skill do FORK (sufixo -3), nunca o plugin 2.1.0 sem sufixo.
+    expect(view.nextStep?.command).toBe('/esteira-discovery-3 --input "C:/inbox/run-1.json"');
   });
 
-  it('sessão aberta pelo app NÃO se chama "em andamento": abrir a aba não é apertar o Enter', () => {
+  it('sessão aberta pelo app NÃO se chama "em andamento": abrir a aba não é a skill declarar que roda', () => {
     // O print 07 do roteiro `disparo-abre-sessao` dizia "Em andamento" enquanto
     // o print 10, da MESMA rodada, mostrava o comando parado no prompt. O app
-    // sabe que a aba abriu; ele não sabe se alguém enviou o comando — e a tela
-    // não pode afirmar o que o app não sabe.
+    // sabe que a aba abriu e que o CLI devolveu um id — isso ainda não é a
+    // SKILL declarando que está trabalhando (só ela pode dizer isso, via
+    // holderKind: 'skill'). "Em andamento" fica reservado pra quando existe
+    // alguém, de fato, tocando a fase.
     const view = lockView(cardWithLock(true))!;
     expect(view.state).toBe('session-open');
     expect(view.title).toBe('Sessão aberta');
@@ -241,8 +244,18 @@ describe('lockView — a tela não promete o que não cumpre', () => {
     expect(view.nextStep).toBeNull();
   });
 
-  it('e a linha admite o limite do que o app sabe, em vez de prometer trabalho acontecendo', () => {
-    expect(lockView(cardWithLock(true))!.line).toContain('o app não sabe se você já o enviou');
+  it('e a linha diz que o app aperta o Enter sozinho — o gesto humano acabou no clique em Preparar (B5)', () => {
+    // Achado da captura `auto-start-e-redisparo-recusado` (05/08): esta linha
+    // dizia "o app não sabe se você já o enviou", texto escrito quando enviar
+    // era SEMPRE gesto humano. O batch B5 (mesma leva) fechou essa lacuna com
+    // `withAutoEnter`/`armEsteiraAutoStart` sem atualizar esta frase — a tela
+    // continuou prometendo incerteza sobre um fato que o app passou a
+    // controlar. `handleOpenEsteiraSession` arma o auto-start para TODA sessão
+    // de fase da esteira, sem exceção — não sobra caso em que o texto antigo
+    // ainda fosse verdade.
+    const line = lockView(cardWithLock(true))!.line;
+    expect(line).toContain('aperta o Enter sozinho');
+    expect(line).not.toContain('não sabe se você já o enviou');
   });
 
   it('assumida: a linha nomeia a SESSÃO que segura a trava — dono, hora e sessão (D-11)', () => {
