@@ -13,9 +13,10 @@ import {
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  AccountLoad,
+  AccountsViewDto,
   AppConfigDto,
   NotificationPreference,
-  ProfileHeadroomMap,
   ProjectInfo,
   ProjectScanMode,
   SemaphoreStateInfo,
@@ -80,7 +81,6 @@ import type { EsteiraSnapshotDto } from '../../shared/esteira/ipc';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { AccountsPanel } from './AccountsPanel';
-import { ProfileSwitcher } from './ProfileSwitcher';
 import { ProjectSidebar } from './ProjectSidebar';
 import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from './ProjectSidebar';
 // CA-30 (009-modo-dev-v3, lote 9) — seletor de projetos no titlebar + modal de criação.
@@ -249,18 +249,21 @@ export function App(): React.JSX.Element {
   const [appConfig, setAppConfig] = useState<AppConfigDto | null>(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const tabIdCounter = useRef(0);
-  // T014 — rótulo de conta pra Statusbar (ui-spec §2 zona 5), reportado pelo
-  // ProfileSwitcher (que já busca `window.donel.profiles.*` pro dropdown do
-  // titlebar — ver comentário de topo de ProfileSwitcher.tsx).
-  const [accountLabel, setAccountLabel] = useState('Principal');
-  // FIX (auditoria rodada 5, achado alta "regressão de cota") — mapa
-  // COMPLETO de headroom (slug -> percent|null) reportado por
-  // `ProfileSwitcher.onHeadroomChange`, alimentado só quando o dropdown de
-  // perfis abre (FR-012). Usado por `activeSessionAccountLabel` abaixo pra
-  // compor a cota do perfil de NASCIMENTO da sessão em foco — que pode ser
-  // um perfil diferente do ativo global, por isso não dá pra reusar
-  // `accountLabel` (que só carrega a cota do perfil ATIVO).
-  const [profileHeadroom, setProfileHeadroom] = useState<ProfileHeadroomMap>({});
+  // T1221 (011-contas-e-provedores, etapa 2) — `AccountsPanel` substitui o
+  // `ProfileSwitcher` (dropdown de perfis) como fonte da statusbar/badge:
+  // este estado é a MESMA leitura que `AccountsPanel` já faz
+  // (`window.donel.accounts.list()`/`onChanged`), só que também precisa
+  // estar disponível aqui pro rótulo global de fallback e pra cota (uma
+  // unidade só, C25) da conta em foco.
+  const [accountsView, setAccountsView] = useState<AccountsViewDto>({
+    mod: null,
+    state: 'inert',
+    unavailableReason: null,
+    accounts: [],
+    activeAccountId: null,
+    autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 },
+    lastReadAt: null,
+  });
   // T009 — estado do semáforo por aba (chave = tab.id), alimentado pelo
   // callback que cada TerminalPane levanta via onStateChange.
   const [semaphoreStates, setSemaphoreStates] = useState<Record<string, SemaphoreStateInfo>>({});
@@ -301,7 +304,7 @@ export function App(): React.JSX.Element {
   // "afeta só sessões novas"). `undefined` = aba 'shell' OU ainda não
   // resolvido (`computeSessionAccountLabel` decide o rótulo pros dois
   // casos). Limpo em `closeTabImmediately` (mesmo padrão de `sessionModelEffort`).
-  const [sessionProfiles, setSessionProfiles] = useState<Record<string, { slug: string; name: string } | undefined>>({});
+  const [sessionAccounts, setSessionAccounts] = useState<Record<string, { id: string; label: string } | undefined>>({});
   // T010 — aba com fechamento pendente de confirmação (modal "Fechar sessão?", ui-spec §2); null = nenhum modal aberto.
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
   // T011 — modelo/esforço "atual" de cada aba claude (chave = tab.id), pro
@@ -364,28 +367,6 @@ export function App(): React.JSX.Element {
   });
   /** D4 — Toast informativo (o que o gesto fez, por que foi recusado); nunca tem desfazer. */
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
-  /**
-   * CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": aba +
-   * sessão-alvo confirmadas no modal, antes do resume de verdade. `null` =
-   * modal fechado. Funciona nos dois modos (Dev e Uso geral) — não é
-   * exclusivo do Modo Dev, ao contrário do resto deste bloco de estado.
-   */
-  const [restartTarget, setRestartTarget] = useState<{
-    tabId: string;
-    sessionId: string;
-    cwd?: string;
-    projectName?: string;
-    sourceProfileSlug: string;
-    // FIX (#21) — modelo/esforço que a aba reiniciada estava mostrando ANTES
-    // do restart (`sessionModelEffort[tab.id]`, já resolvido com o fallback de
-    // `appConfig.launcherDefaults`): sem isto, `confirmRestart` reconstruía o
-    // argv só com `continuation: resume` — sem `--model`/`--effort` — e a aba
-    // nova caía no default hardcoded, "esquecendo" o valor que a StatusBar já
-    // mostrava pra ela um instante antes do reinício.
-    modelEffort: { model: ModelAlias; effort: EffortLevel };
-  } | null>(null);
-  /** CA-24 — mesmo hook de teste de `lastDevModeSession`/`lastLaunch`: o argv REAL montado pro resume, sem depender de ler o output do terminal. */
-  const [lastRestartSession, setLastRestartSession] = useState<{ args: readonly string[]; cwd?: string } | null>(null);
   /** Cleanup do watcher de prontidão em voo por aba (mesmo padrão de `pendingInjectionWatchersRef`). */
   const armWatchersRef = useRef<Record<string, (() => void) | undefined>>({});
   /**
@@ -398,11 +379,9 @@ export function App(): React.JSX.Element {
   const esteiraTabSessionsRef = useRef<Record<string, string | undefined>>({});
   const semaphoreStatesRef = useRef<Record<string, SemaphoreStateInfo>>({});
   semaphoreStatesRef.current = semaphoreStates;
-  /** CA-22 — slug do perfil ATIVO agora (reportado pelo ProfileSwitcher, que já busca a lista). */
-  const [activeProfileSlug, setActiveProfileSlug] = useState('principal');
   /** Mesma razão de `appConfigRef`/`tabsRef`: a assinatura de `onPhaseArchived` tem deps vazias e precisa do valor ATUAL. */
-  const sessionProfilesRef = useRef<Record<string, { slug: string; name: string } | undefined>>({});
-  sessionProfilesRef.current = sessionProfiles;
+  const sessionAccountsRef = useRef<Record<string, { id: string; label: string } | undefined>>({});
+  sessionAccountsRef.current = sessionAccounts;
 
   const handleSemaphoreChange = useCallback((tabId: string, info: SemaphoreStateInfo): void => {
     setSemaphoreStates((prev) => ({ ...prev, [tabId]: info }));
@@ -428,8 +407,19 @@ export function App(): React.JSX.Element {
   // única vez (TerminalPane chama isto só uma vez por `spawnSession`, ver
   // comentário do prop) — nunca sobrescrito por uma troca de perfil ATIVO
   // global depois (isso é `accountLabel`/ProfileSwitcher, estado separado).
-  const handleProfileResolved = useCallback((tabId: string, profile: { slug: string; name: string } | undefined): void => {
-    setSessionProfiles((prev) => ({ ...prev, [tabId]: profile }));
+  const handleAccountResolved = useCallback((tabId: string, account: { id: string; label: string } | undefined): void => {
+    setSessionAccounts((prev) => ({ ...prev, [tabId]: account }));
+  }, []);
+
+  // T1232 (011-contas-e-provedores, etapa 2, achado da regressão final) —
+  // ANTES este efeito abria a SUA PRÓPRIA assinatura de
+  // `window.donel.accounts.list()`/`onChanged`, duplicando a que
+  // `AccountsPanel` já mantém — dois round-trips de IPC no boot estouraram
+  // a cerca de regressão do CA-7 (250 ms → ~330 ms medidos). Agora
+  // `AccountsPanel` reporta a mesma leitura pra cima via `onViewChange`
+  // (prop nova), uma assinatura só, no lugar de duas.
+  const handleAccountsViewChange = useCallback((view: AccountsViewDto): void => {
+    setAccountsView(view);
   }, []);
 
   /**
@@ -546,7 +536,7 @@ export function App(): React.JSX.Element {
     setSemaphoreStates((prev) => omitKey(prev, tabId));
     setAliveTabs((prev) => omitKey(prev, tabId));
     delete aliveSinceRef.current[tabId]; // FIX (feedback E2E rodada 5) — mesmo padrão de limpeza dos maps acima.
-    setSessionProfiles((prev) => omitKey(prev, tabId)); // FIX (feedback E2E rodada 5) — idem.
+    setSessionAccounts((prev) => omitKey(prev, tabId)); // FIX (feedback E2E rodada 5) — idem.
     setSessionModelEffort((prev) => omitKey(prev, tabId));
     delete terminalRefs.current[tabId];
     // 003-modo-dev/T312 — nenhum watcher de prontidão sobrevive à aba que ele
@@ -1310,135 +1300,6 @@ export function App(): React.JSX.Element {
       .catch(() => undefined);
   };
 
-  /**
-   * CA-24 (009-modo-dev-v3, lote 8) — abre o modal de confirmação do
-   * "Reiniciar sessão em foco". Sem aba Claude em foco (ou sem
-   * `claudeSessionId` já resolvido — janela curta entre `pty:create` e a
-   * promise responder), o botão simplesmente não faz nada: nunca cria uma
-   * sessão "vazia" só para ter algo a reiniciar.
-   */
-  const handleOpenRestart = (): void => {
-    if (!activeClaudeTab?.claudeSessionId) return;
-    const tab = activeClaudeTab;
-    // FIX (rodada de feedback 30/07, item 1) — degradação por exceção: nenhum
-    // handler de gesto do usuário pode lançar sem ser pego (uma exceção não
-    // tratada num handler de evento do React derruba a árvore inteira — a
-    // "tela preta" já conhecida do projeto). `setRestartTarget` só monta um
-    // objeto plano a partir de campos já lidos — não deveria lançar nunca —
-    // mas o try/catch é a rede de segurança: pior caso vira um toast, nunca
-    // um app travado.
-    try {
-      setRestartTarget({
-        tabId: tab.id,
-        sessionId: tab.claudeSessionId as string,
-        cwd: tab.cwd,
-        projectName: tab.projectName,
-        // CA-25 — perfil de NASCIMENTO da aba (`sessionProfiles`, T707/handleProfileResolved), nunca o perfil ATIVO agora.
-        sourceProfileSlug: sessionProfiles[tab.id]?.slug ?? activeProfileSlug,
-        // FIX (#21) — o que a StatusBar mostra pra esta aba AGORA, mesma
-        // resolução de `addTab` (launchArgs > launcherDefaults > literal).
-        modelEffort: {
-          model: sessionModelEffort[tab.id]?.model ?? appConfig?.launcherDefaults.model ?? DEFAULT_MODEL_ALIAS,
-          effort: sessionModelEffort[tab.id]?.effort ?? appConfig?.launcherDefaults.effort ?? DEFAULT_EFFORT_LEVEL,
-        },
-      });
-    } catch {
-      setDevModeToast('Não foi possível preparar o reinício desta sessão.');
-    }
-  };
-
-  /**
-   * CA-24 — confirmado o reinício: retoma (`-r <sessionId>`) na conta
-   * SELECIONADA (`activeProfileSlug`, o perfil ativo agora no
-   * ProfileSwitcher — "a conta selecionada" do CA-24), copiando o transcript
-   * pra dentro do perfil dela ANTES quando ela é diferente da que rodou a
-   * sessão (achado 14: o `.jsonl` mora no `CLAUDE_CONFIG_DIR` do perfil
-   * dono). A cópia é best-effort (C4): se falhar, o resume segue mesmo assim
-   * — o pior caso é idêntico a hoje, sem este botão (`-r` começa do zero,
-   * calado). A aba antiga fecha (ela "congela", CA-25) e uma aba nova nasce
-   * já retomando; sem `cwd` conhecido (aba sem projeto associado) a cópia
-   * nem tenta — não há como resolver o diretório de sessões do projeto.
-   */
-  const confirmRestart = (): void => {
-    const target = restartTarget;
-    setRestartTarget(null);
-    if (!target) return;
-
-    const targetProfileSlug = activeProfileSlug;
-    const crossProfile = target.sourceProfileSlug !== targetProfileSlug;
-
-    const resumeWithNewTab = (): void => {
-      // FIX (rodada de feedback 30/07, item 1) — degradação por exceção:
-      // qualquer falha aqui dentro (ex.: `buildClaudeArgs` recebendo um
-      // `sessionId` degenerado numa sessão recém-nascida sem transcript
-      // ainda) vira um toast, nunca uma exceção não tratada dentro de um
-      // handler de evento — essa é a "tela preta" conhecida do projeto (uma
-      // exceção em render/handler desmonta a árvore React inteira).
-      try {
-        // ORDEM IMPORTA (bug pego pelo smoke restart-session.spec.ts): `addTab`/
-        // `closeTabImmediately` fazem `setTabs(<array direto>)` a partir do
-        // `tabs` do CLOSURE desta render — não são updates funcionais. Chamar
-        // `addTab` e DEPOIS `closeTabImmediately` faz o `setTabs` do close
-        // sobrescrever o array já com a aba nova por um array calculado ANTES
-        // dela existir (o `tabs` capturado no fechamento nunca viu o `addTab`),
-        // apagando a aba recém-criada — 0 abas no fim, não 1. Fechar PRIMEIRO
-        // (sobre o `tabs` desta render, ainda correto) e só then criar a nova
-        // evita a corrida: o `setTabs` de `addTab` (que É funcional,
-        // `prev => [...prev, novo]`) compõe corretamente em cima do resultado
-        // do close, processado antes dele na mesma fila de updates do React.
-        closeTabImmediately(target.tabId);
-        // FIX (#21) — leva o modelo/esforço que a aba já mostrava (capturado em
-        // `handleOpenRestart`) pro argv real do resume: sem isto, a aba nova
-        // nascia sem `--model`/`--effort` e `addTab` caía no fallback,
-        // "esquecendo" o valor que estava na StatusBar um instante antes.
-        const args = buildClaudeArgs({
-          model: target.modelEffort.model,
-          effort: target.modelEffort.effort,
-          continuation: { type: 'resume', sessionId: target.sessionId },
-        });
-        setLastRestartSession({ args, cwd: target.cwd });
-        addTab({
-          name: target.projectName ?? 'Sessão reiniciada',
-          cwd: target.cwd,
-          projectName: target.projectName,
-          pinned: false,
-          launchArgs: args,
-          sessionType: 'claude',
-        });
-        if (crossProfile) {
-          setDevModeToast(`Sessão reiniciada na conta ${targetProfileSlug} — a sessão original (conta ${target.sourceProfileSlug}) continua congelada.`);
-        }
-      } catch {
-        setDevModeToast('Não foi possível reiniciar esta sessão.');
-      }
-    };
-
-    if (!crossProfile || !target.cwd) {
-      // Mesma conta: resume direto, sem cópia (CA-24). Sem `cwd` conhecido:
-      // não há como resolver o diretório do projeto pra copiar — segue sem
-      // cópia mesmo assim (degradação por omissão, nunca bloqueia o gesto).
-      resumeWithNewTab();
-      return;
-    }
-
-    try {
-      window.donel.transcripts
-        .copyForResume({
-          sessionId: target.sessionId,
-          projectPath: target.cwd,
-          sourceProfileSlug: target.sourceProfileSlug,
-          targetProfileSlug,
-        })
-        .catch(() => undefined) // best-effort (C4) — a cópia falhar não impede o resume.
-        .finally(resumeWithNewTab);
-    } catch {
-      // FIX (item 1) — `window.donel.transcripts` ausente/quebrado lançaria
-      // SINCRONAMENTE aqui (fora de qualquer promise, um `.catch` não pegaria):
-      // degrada pro mesmo caminho best-effort, resume segue sem a cópia.
-      resumeWithNewTab();
-    }
-  };
-
   // T009 — antes do primeiro evento de hook chegar pra uma aba recém-criada,
   // assume 'working' (spike: estado inicial otimista) com stateEnteredAt=0
   // (sortSessions trata omitido/0 como "a mais antiga possível" — nunca
@@ -1646,30 +1507,30 @@ export function App(): React.JSX.Element {
       ? { usedTokens: activeContextTokens, maxTokens: effectiveContextZone(activeModel) }
       : undefined;
 
-  // FIX (feedback E2E rodada 5) — "statusbar deve mostrar a conta com que a
-  // sessão EM FOCO foi criada", não a conta ATIVA global (`accountLabel`,
-  // ProfileSwitcher). `accountLabel` continua sendo o badge do
-  // titlebar/dropdown ("que conta a PRÓXIMA sessão usa") — aqui é só o
-  // fallback pra janela curta antes de `sessionProfiles[activeTab.id]`
-  // resolver (ver `computeSessionAccountLabel`). Sem aba ativa (0 sessões
-  // abertas), cai no `accountLabel` global também — não há "aba em foco"
-  // nesse estado.
+  // T1221 (011-contas-e-provedores, etapa 2) — `accountLabel` é o rótulo
+  // GLOBAL (badge do titlebar/AccountsPanel, "que conta a PRÓXIMA sessão
+  // usa"): conta ativa do motor quando ele está ligado; "Motor inerte"
+  // enquanto `accounts.mod` for `null` (comportamento de hoje, sem perfis).
+  const activeAccountSummary = accountsView.accounts.find((account) => account.id === accountsView.activeAccountId) ?? null;
+  const accountLabel = activeAccountSummary?.label ?? (accountsView.mod === null ? 'Motor inerte' : 'Conta ativa');
+
+  // "Statusbar deve mostrar a conta com que a sessão EM FOCO foi criada",
+  // não a conta ATIVA global — `accountLabel` acima é só o fallback pra
+  // janela curta antes de `sessionAccounts[activeTab.id]` resolver (ver
+  // `computeSessionAccountLabel`). Sem aba ativa (0 sessões abertas), cai no
+  // `accountLabel` global também — não há "aba em foco" nesse estado.
   //
-  // FIX (auditoria rodada 5, achado alta "regressão de cota") — cota do
-  // perfil de NASCIMENTO da aba (`profileHeadroom[slug]`, alimentado por
-  // `ProfileSwitcher.onHeadroomChange`), não a do perfil ativo global —
-  // `?? null` cobre tanto "perfil sem entrada no mapa ainda" (dropdown nunca
-  // foi aberto) quanto "mapa devolveu unavailable pra este slug" (mesmo
-  // contrato "—" da rodada 4). T204 (002-quota-headroom): `profileHeadroom`
-  // guarda `ProfileQuota` (não mais `number|null`) — `computeSessionAccountLabel`
-  // já lê `.fiveHour.percentRemaining` internamente.
-  const activeSessionProfile = activeTab ? sessionProfiles[activeTab.id] : undefined;
-  const activeSessionQuota = activeSessionProfile ? (profileHeadroom[activeSessionProfile.slug] ?? null) : null;
+  // C25 — uma unidade só: a cota é `AccountLoad` (% consumido) da conta de
+  // NASCIMENTO da aba, lida do MESMO `accountsView` que alimenta o painel
+  // (não mais `ProfileQuota`/`profileHeadroom`, mortos nesta troca de fonte).
+  const activeSessionAccount = activeTab ? sessionAccounts[activeTab.id] : undefined;
+  const activeSessionLoad: AccountLoad | null =
+    (activeSessionAccount && accountsView.accounts.find((account) => account.id === activeSessionAccount.id)?.load) ?? null;
   const activeSessionAccountLabel = activeTab
     ? computeSessionAccountLabel(
-        { sessionType: activeTab.sessionType, profile: activeSessionProfile },
+        { sessionType: activeTab.sessionType, account: activeSessionAccount },
         accountLabel,
-        activeSessionQuota,
+        activeSessionLoad,
       )
     : accountLabel;
 
@@ -1718,7 +1579,7 @@ export function App(): React.JSX.Element {
             (mockup linhas 39-51): esquerda = marca + pill de projeto (acima);
             CENTRO = SegmentedControl "Uso geral | Dev" entre dois espaçadores
             flex:1, substituindo o rótulo solto "Principal —" + o Toggle
-            azul; direita = AccountBadge (ProfileSwitcher) + os ícones que já
+            azul; direita = AccountBadge (AccountsPanel, T1221) + os ícones que já
             existiam. T310/CA-20 — ligar REORGANIZA o layout desta mesma
             janela; desligar volta à tela de hoje, que não é aposentada (nem
             desmontada — mesmo princípio do T007 "todas as abas ficam
@@ -1736,16 +1597,13 @@ export function App(): React.JSX.Element {
           />
         </div>
         <div className={styles.titlebarSpacer} />
-        <ProfileSwitcher
-          onActiveProfileLabelChange={setAccountLabel}
-          onHeadroomChange={setProfileHeadroom}
-          onActiveProfileSlugChange={setActiveProfileSlug}
-        />
-        {/* 011-contas-e-provedores (etapa 1) — motor de contas, ao lado do
-            ProfileSwitcher (nenhum dos dois substitui o outro nesta etapa).
-            Nasce inerte (accounts.mod = null): o painel abre e mostra "nenhum
-            provedor conectado" sem afetar perfis. */}
-        <AccountsPanel />
+        {/* T1221 (011-contas-e-provedores, etapa 2) — `AccountsPanel`
+            SUBSTITUI o `ProfileSwitcher` (dropdown de perfis): é agora o
+            único badge/entrada de troca de conta no titlebar. Nasce inerte
+            (accounts.mod = null) quando não há mod conectado — mesmo
+            comportamento de sempre, só que sem o dropdown de perfis ao
+            lado. */}
+        <AccountsPanel onViewChange={handleAccountsViewChange} />
         {/* T015 — UI de Preferências (FR-007, feedback E2E rodada 3/4). */}
         <button
           type="button"
@@ -1980,11 +1838,6 @@ export function App(): React.JSX.Element {
                   label={SESSION_STATE_LABEL_PT[semaphoreStates[activeClaudeTab.id]?.state ?? 'working']}
                 />
               ) : null}
-              {activeClaudeTab?.claudeSessionId ? (
-                <Button variant="ghost" onClick={handleOpenRestart} data-testid="restart-session-button">
-                  ⟳ Reiniciar
-                </Button>
-              ) : null}
             </div>
           ) : null}
           <div className={styles.terminal}>
@@ -2040,7 +1893,7 @@ export function App(): React.JSX.Element {
                   args={tab.launchArgs}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}
-                  onProfileResolved={(profile) => handleProfileResolved(tab.id, profile)}
+                  onAccountResolved={(account) => handleAccountResolved(tab.id, account)}
                   // T404/T408 — o id da sessão chega aqui e vira a chave de
                   // persistência do nome desta aba (CA-6).
                   onClaudeSessionIdResolved={(claudeSessionId) => {
@@ -2164,10 +2017,6 @@ export function App(): React.JSX.Element {
         <pre data-testid="launcher-last-command" data-cwd={lastLaunch?.cwd ?? ''} hidden>
           {lastLaunch ? ['claude', ...lastLaunch.args].join(' ') : ''}
         </pre>
-        {/* CA-24 (009-modo-dev-v3, lote 8) — idem, pro "Reiniciar sessão em foco". */}
-        <pre data-testid="restart-last-session" data-cwd={lastRestartSession?.cwd ?? ''} hidden>
-          {lastRestartSession ? ['claude', ...lastRestartSession.args].join(' ') : ''}
-        </pre>
       </div>
 
       <StatusBar
@@ -2195,36 +2044,6 @@ export function App(): React.JSX.Element {
         }
       >
         <p>O processo desta aba será encerrado.</p>
-      </Modal>
-
-      {/* CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": mesmo
-          padrão de modal de confirmação do "Fechar sessão?" acima. Avisa a
-          conta de destino e, quando diferente da que rodou a sessão, que a
-          sessão passa a existir em duas contas (CA-25) — retomada também é
-          um comando "preparado" no sentido de que só dispara ao confirmar
-          aqui, nunca antes. */}
-      <Modal
-        open={restartTarget !== null}
-        onClose={() => setRestartTarget(null)}
-        title="Reiniciar sessão em foco?"
-        actions={
-          <>
-            <Button variant="secondary" onClick={() => setRestartTarget(null)}>
-              Cancelar
-            </Button>
-            <Button variant="primary" onClick={confirmRestart} data-testid="restart-session-confirm">
-              ⟳ Reiniciar
-            </Button>
-          </>
-        }
-      >
-        <p>A sessão é retomada (<code>-r</code>) na conta <strong>{activeProfileSlug}</strong>, a conta selecionada agora.</p>
-        {restartTarget && restartTarget.sourceProfileSlug !== activeProfileSlug ? (
-          <p>
-            Ela rodou na conta <strong>{restartTarget.sourceProfileSlug}</strong> — o transcript é copiado pra conta{' '}
-            <strong>{activeProfileSlug}</strong> antes de retomar. A sessão passa a existir nas duas contas; a original congela.
-          </p>
-        ) : null}
       </Modal>
 
       {/* T013 — PARTE PRINCIPAL (FR-004, CA-2, ui-spec §5). Item 11 — a

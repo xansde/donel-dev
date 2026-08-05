@@ -63,11 +63,9 @@ test.afterAll(async () => {
 test('T413 — CA-4: custom-title escrito no transcript da sessão VIVA reflete na aba em < 1 s, e o CLI vence o nome da UI (C2)', async () => {
   test.setTimeout(180_000);
 
-  // Só faz sentido com o perfil Principal ativo: com outro perfil, o CLI grava
-  // o transcript sob o diretório daquele perfil, não em `~/.claude`.
-  const profiles = await appWindow.evaluate(() => window.donel.profiles.list());
-  const active = profiles.find((profile) => profile.active);
-  test.skip(!active?.isPrimary, `perfil ativo não é o Principal (${active?.slug}) — transcript não fica em ~/.claude`);
+  // T1227 (011-contas-e-provedores, etapa 2) — o guard de "só faz sentido com
+  // o perfil Principal ativo" morreu junto com os perfis (T1222): sem
+  // `CLAUDE_CONFIG_DIR` por perfil, o transcript SEMPRE fica em `~/.claude`.
 
   // 1. Abre uma sessão claude real clicando no projeto (1 clique no popover
   //    "Projetos" do seletor, sem Launcher — o watcher nasce no

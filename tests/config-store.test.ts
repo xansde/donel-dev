@@ -194,7 +194,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
         discoveries: { 'card-1': { cardId: 'card-1', repoPath: 'C:\\repo', epicId: 'epic-1', openedAt: 100, closedAt: null } },
         focusedDiscoveryId: 'card-1',
         // Chave v3 (CA-31): cardId:fase, sem marco_id — já no formato final, a migração não altera.
-        archivedPhaseSessions: { 'card-1:plano': { sessionId: 'sess-1', profileSlug: 'principal', archivedAt: 100 } },
+        archivedPhaseSessions: { 'card-1:plano': { sessionId: 'sess-1', accountId: 'principal', archivedAt: 100 } },
         phaseDefaults: DEFAULT_PHASE_DEFAULTS,
         boardConfig: { workspaceId: 'ws-1', teamId: 'team-1' },
       },
@@ -699,7 +699,7 @@ describe('readAppConfig / writeAppConfig — I/O real em pasta temporária (inte
         discoveries: { 'card-1': { cardId: 'card-1', repoPath: 'C:\\repo', epicId: null, openedAt: 100, closedAt: null } },
         focusedDiscoveryId: 'card-1',
         // Chave v3 (CA-31): já cardId:fase — round-trip é identidade, sem migração de por meio.
-        archivedPhaseSessions: { 'card-1:plano': { sessionId: 'sess-1', profileSlug: 'principal', archivedAt: 200 } },
+        archivedPhaseSessions: { 'card-1:plano': { sessionId: 'sess-1', accountId: 'principal', archivedAt: 200 } },
         phaseDefaults: DEFAULT_PHASE_DEFAULTS,
         boardConfig: { workspaceId: 'ws-1', teamId: 'team-1' },
       },
@@ -828,8 +828,8 @@ describe('sanitizeAppConfig — devMode (T306)', () => {
 
       const sanitized = sanitizeAppConfig(parsed, baseDefaults());
       expect(sanitized.devMode.archivedPhaseSessions).toEqual({
-        'card-1:discovery': { sessionId: 'sess-a', profileSlug: 'principal', archivedAt: 100 },
-        'card-2:plano': { sessionId: 'sess-b', profileSlug: 'principal', archivedAt: 200 },
+        'card-1:discovery': { sessionId: 'sess-a', accountId: 'principal', archivedAt: 100 },
+        'card-2:plano': { sessionId: 'sess-b', accountId: 'principal', archivedAt: 200 },
       });
     });
 
@@ -867,7 +867,7 @@ describe('sanitizeAppConfig — devMode (T306)', () => {
 
       const sanitized = sanitizeAppConfig(parsed, baseDefaults());
       expect(sanitized.devMode.archivedPhaseSessions).toEqual({
-        'card-1:plano': { sessionId: 'sess-a', profileSlug: 'principal', archivedAt: 100 },
+        'card-1:plano': { sessionId: 'sess-a', accountId: 'principal', archivedAt: 100 },
       });
     });
 
@@ -888,6 +888,33 @@ describe('sanitizeAppConfig — devMode (T306)', () => {
       const sanitized = sanitizeAppConfig(parsed, baseDefaults());
       expect(sanitized.devMode.archivedPhaseSessions).toEqual({});
     });
+  });
+
+  // T1220 (011-contas-e-provedores, etapa 2, C30/D15) — config GRAVADA POR
+  // CANAL ANTIGO (`profileSlug`, nunca `accountId`): o sanitize aceita sem
+  // erro e LÊ o legado como `accountId` — nunca escreve `profileSlug` de
+  // volta. Cobre o risco "canal alfa/beta/stable aberto depois destrói
+  // estado novo" (CLAUDE.md).
+  it('archivedPhaseSessions gravado por canal antigo (só profileSlug, sem accountId) é lido como accountId', () => {
+    const parsed = {
+      devMode: {
+        discoveries: {},
+        focusedDiscoveryId: null,
+        archivedPhaseSessions: {
+          'card-1:plano': { sessionId: 'sess-1', profileSlug: 'tecnologia-claude-4', archivedAt: 100 },
+        },
+        phaseDefaults: DEFAULT_PHASE_DEFAULTS,
+        boardConfig: null,
+      },
+    };
+
+    const sanitized = sanitizeAppConfig(parsed, baseDefaults());
+    expect(sanitized.devMode.archivedPhaseSessions['card-1:plano']).toEqual({
+      sessionId: 'sess-1',
+      accountId: 'tecnologia-claude-4',
+      archivedAt: 100,
+    });
+    expect(JSON.stringify(sanitized.devMode.archivedPhaseSessions)).not.toContain('profileSlug');
   });
 
   it('boardConfig malformado (sem teamId) cai em null', () => {

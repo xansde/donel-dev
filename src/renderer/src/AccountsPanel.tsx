@@ -38,7 +38,20 @@ function emptyConnectForm(): ConnectFormState {
   return { mod: 'seazone', baseUrl: '', sessionRefreshToken: '', label: '', accessToken: '', refreshToken: '' };
 }
 
-export function AccountsPanel(): React.JSX.Element {
+interface AccountsPanelProps {
+  /**
+   * T1232 (011-contas-e-provedores, etapa 2) — achado da regressão final:
+   * `App.tsx` também precisava do `AccountsViewDto` (badge/statusbar) e
+   * abria uma SEGUNDA assinatura própria de `window.donel.accounts.list()`/
+   * `onChanged` — dobrando o round-trip de IPC no boot e estourando a cerca
+   * de regressão do CA-7 (250ms → ~330ms). Callback opcional, mesmo padrão
+   * de `ProfileSwitcher.onActiveProfileLabelChange` de antes: uma assinatura
+   * só, aqui dentro, reportada pra cima.
+   */
+  onViewChange?: (view: AccountsViewDto) => void;
+}
+
+export function AccountsPanel({ onViewChange }: AccountsPanelProps = {}): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<AccountsViewDto>(emptyView());
   const [loading, setLoading] = useState(false);
@@ -67,6 +80,12 @@ export function AccountsPanel(): React.JSX.Element {
     void window.donel.accounts.list().then(setView);
     return window.donel.accounts.onChanged(setView);
   }, []);
+
+  // Reporta pra cima (App.tsx) sempre que `view` mudar — uma assinatura só,
+  // aqui dentro; ver comentário de `AccountsPanelProps.onViewChange`.
+  useEffect(() => {
+    onViewChange?.(view);
+  }, [view, onViewChange]);
 
   useEffect(() => {
     if (open) refresh();

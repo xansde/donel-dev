@@ -7,9 +7,12 @@ Nada aqui entra em implementação sem passar pelo ciclo de spec
 ## Fila já especificada (spec 001, aguardando priorização do Alexandre)
 
 - **P1**: US-8 tokens/smart zone · US-9 subagentes · US-10 post-its ·
-  US-11 todo do projeto · US-12 quota das 15 contas · US-14 rotinas ·
-  US-15 novo projeto decente · **auto-switch** (auto-seleção de perfil
-  por headroom; insumo em `001-mvp/analise-switch-account-amanda.md`).
+  US-11 todo do projeto · US-12 quota das 15 contas (**absorvido no motor —
+  `specs/011-contas-e-provedores/`, ver B8**) · US-14 rotinas ·
+  US-15 novo projeto decente · ~~**auto-switch**~~ (**absorvido no motor —
+  `specs/011-contas-e-provedores/`, 90/20 puro em `accounts/auto-switch.ts`**;
+  era "auto-seleção de perfil por headroom", insumo em
+  `001-mvp/analise-switch-account-amanda.md`).
 - **P2**: US-13 Modo Dev (task → fases da Esteira, ui-spec §11) ·
   US-16 Donel buddy.
 
@@ -122,7 +125,15 @@ Ctrl+Shift+C, menu de contexto com Copiar, e seleção que sobrevive a
 output novo chegando. Critério: copiar um trecho do terminal tem que ser
 tão fácil quanto no Windows Terminal.
 
-### B8. Painel de cotas de todas as contas (novo — feedback 23/07, rodada 6)
+### B8. ~~Painel de cotas de todas as contas~~ — **ABSORVIDO no motor de contas (`specs/011-contas-e-provedores/`)**
+
+> **Absorvido em 2026-08-04 (011-contas-e-provedores, etapa 2).** O painel
+> dedicado listando todas as contas com cota (5h e semanal), refresh manual e
+> uma unidade só de leitura (C25 fecha o achado A3 da etapa 1: `AccountLoad`,
+> % consumido, sem o `ProfileQuota` de perfil convivendo do lado) é o
+> `AccountsPanel`/`MigrationWizard` de hoje — o dropdown de perfis que este
+> item descrevia morreu na demolição (T1225). Nada deste texto é apagado —
+> fica como registro do pedido original.
 
 "Seria interessante um botão que rode um script olhando todas as contas
 ativas e suas cotas de uso disponível (5h e semanal)." Encaixa em **US-12
@@ -185,10 +196,13 @@ cada projeto (vitest, pytest, etc.).
 para testar as novidades." **Decisões do Alexandre (2026-07-24):** (a) entra
 DEPOIS de fechar a 002 (dist + reinstalação + E2E da 002 acontecem no app
 atual, como já combinado); (b) isolamento **só do estado do app** —
-`~/.claude` e `~/.claude-profiles` seguem COMPARTILHADOS entre os canais, de
-propósito, para o canal de teste ver as contas e a cota reais (é o que
-permite testar perfis/quota de verdade). Consequência aceita: "Criar perfil"/
-"Recriar links" no canal de teste mexe nas junctions REAIS.
+`~/.claude` segue COMPARTILHADO entre os canais, de propósito, para o canal
+de teste ver as contas e a cota reais (é o que permite testar o motor de
+verdade). **Atualizado em 2026-08-04 (011-contas-e-provedores, etapa 2):** a
+frase sobre `~/.claude-profiles` compartilhado saiu — perfis não existem
+mais (demolidos, T1222/T1225); o fundo do item continua o mesmo, um só
+`~/.claude` para os canais instalados lado a lado (ver `CLAUDE.md`, seção
+"Canais instalados coexistindo").
 
 Investigação feita (24/07) — o app já está quase pronto para isso: todo
 estado próprio (config, favoritos, launcher defaults, e o
@@ -520,10 +534,14 @@ teste nenhum.
 Levantado ao responder "o sistema de pastas será intuitivo para as outras
 pessoas?". **Nada de estado dele viaja** — isso está verificado e é o menor dos
 problemas (`app.asar` = `out/` + `package.json`; config vive em
-`%APPDATA%\donel-dev\config.json`, criado na máquina de cada um; perfis são
-listados varrendo `~/.claude-profiles` do próprio usuário, com guarda de
-`existsSync`, então a lista nasce só com o **Principal**, que é o `~/.claude`
-dele mesmo). O problema é o **primeiro contato**:
+`%APPDATA%\donel-dev\config.json`, criado na máquina de cada um). **Atualizado
+em 2026-08-04 (011-contas-e-provedores, etapa 2):** a frase original descrevia
+a listagem de perfis (`~/.claude-profiles` do próprio usuário, lista nascendo
+só com o Principal) — mecanismo demolido (T1222/T1225). Numa máquina nova
+hoje, a tela de contas nasce **inerte** (`accounts.mod = null`), sem conta
+nenhuma até o operador conectar um provedor — comportamento equivalente
+("nada pré-existe"), vocabulário atualizado. O problema é o **primeiro
+contato**:
 
 1. **`defaultProjectRoots` é a convenção de pastas do Alexandre** —
    `project-scanner.ts:110` devolve `~/seazone` e `~/pessoal`. Numa máquina que
@@ -762,9 +780,10 @@ em `~/seazone/CLAUDE.md`.
 Diferença do escopo aqui: o pedido é sobre a dor de **outras pessoas**, não
 só a dele — sugere um painel/indicador na própria UI do Donel Dev (visível
 sem depender de hook do Claude Code), possivelmente com **troca** de conta,
-não só leitura. Related: B8 (painel de perfis/cotas) já resolve um problema
-parecido de "qual perfil está ativo" para contas Claude — mesmo padrão de UI
-pode servir de referência para o indicador de conta GitHub.
+não só leitura. Related: B8 (painel de contas/cotas, absorvido no motor —
+`specs/011-contas-e-provedores/`) já resolve um problema parecido de "qual
+conta está ativa" para contas Claude — mesmo padrão de UI pode servir de
+referência para o indicador de conta GitHub.
 
 Clarify futuro: é só indicador (qual conta está ativa) ou também switcher
 (trocar sem sair do app)? Por repo (cada projeto pode ter conta diferente,

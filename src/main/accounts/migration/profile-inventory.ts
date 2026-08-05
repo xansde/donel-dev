@@ -8,9 +8,21 @@
 
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { titleCaseFromSlug } from '../../profile-manager';
 
 export type ProjectsDirKind = 'junction' | 'real-directory' | 'missing';
+
+/**
+ * T1222 (011-contas-e-provedores, etapa 2) — cópia PRÓPRIA de
+ * `titleCaseFromSlug` (`profile-manager.ts` morreu na demolição). Lossy de
+ * propósito: só usado como fallback quando `.donel-profile.json` não existe.
+ */
+function titleCaseFromSlug(slug: string): string {
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
 
 export interface ProfileInventoryEntry {
   /** Nome de diretório em ~/.claude-profiles (dado de máquina, nunca de pessoa). */

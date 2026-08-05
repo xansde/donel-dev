@@ -1,5 +1,14 @@
 # Plano técnico — 002 Quota headroom
 
+> **SUPERSEDED (2026-08-04, C32 — 011-contas-e-provedores, etapa 2).** O
+> mecanismo de perfis (`~/.claude-profiles`, `CLAUDE_CONFIG_DIR` por perfil,
+> dropdown `ProfileSwitcher`) descrito abaixo foi DEMOLIDO na etapa 2 da 011
+> (T1222/T1225): o único caminho de conta hoje é o motor
+> (`src/main/accounts/`), documentado em `specs/011-contas-e-provedores/`.
+> Marcação apenas — nada abaixo foi apagado ou reescrito (mesma regra do
+> `backlog.md`, itens riscados com nota, nunca deletados).
+
+
 Referência: `spec.md` deste diretório. Todos os paths relativos a
 `C:/Users/xansd/seazone/donel-dev`. Branch: `feature/mvp-p0` (mesma; tudo
 local, sem push).

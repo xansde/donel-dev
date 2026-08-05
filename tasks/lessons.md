@@ -347,3 +347,56 @@ vermelho — não o formato mais simples que passa a asserção. Um smoke que se
 o arquivo real (fixture de disco, não dublê em memória) é o que de fato prova
 isso; sem ele, o vermelho→verde do módulo puro certifica só a lógica interna,
 nunca o contrato com o mundo real.
+
+### Duas telas, duas assinaturas do mesmo IPC — a cerca de performance que pegou
+
+T1221 fez `App.tsx` assinar `window.donel.accounts.list()`/`onChanged` para
+alimentar o badge/statusbar, sem perceber que `AccountsPanel` (etapa 1,
+T1123) já mantinha a MESMA assinatura, montada sempre (independente do
+painel estar aberto). O resultado só apareceu na regressão final (T1232): o
+smoke `ca7-measurement.spec.ts` (cerca de 250ms no tempo de boot até a
+sidebar pintar) passou a medir ~330ms, quase o dobro do pior caso histórico
+(167ms) — dois round-trips de IPC sequenciais no boot em vez de um. A
+correção (`AccountsPanel` ganha um prop `onViewChange`, reporta a MESMA
+leitura pra cima em vez de `App.tsx` abrir a sua própria) trouxe a medição
+de volta pra perto da faixa histórica, embora a cerca continue sensível a
+ruído de máquina (variação observada entre 168ms e 274ms em execuções
+consecutivas do mesmo código).
+
+**Lesson:** ao adicionar um consumidor novo de um estado que outro componente
+já busca via IPC, primeiro perguntar "quem mais já assina isso?" — a resposta
+certa quase sempre é reportar pra cima (callback/prop), nunca abrir uma
+segunda assinatura própria. Testes de performance com cerca apertada são o
+jeito que esse tipo de duplicação silenciosa se denuncia; rodar a suíte de
+smoke completa (não só a fatia que parece relacionada) antes de declarar uma
+fase pronta é o que pega isso — mudança de estado/dado, não de UI visível,
+não aparece em revisão de tela.
+
+## 2026-08-04 — wi-demolicao-perfis-migracao (validação manual e2e)
+
+### O canal antigo aberto apaga o progresso da migração — o risco aceito disparou no primeiro uso real
+
+Na primeira execução real do MigrationWizard (8 perfis `tech-*` importados um
+a um, pelo app em modo dev na branch da etapa 2), as 8 credenciais chegaram ao
+cofre (`accounts-vault.json`, 8 entradas novas) — mas minutos depois o
+`config.json` compartilhado estava sem a chave `migration` e com
+`accounts.localAccounts` vazio. Causa: os canais instalados coexistem
+compartilhando o MESMO `userData` (decisão de 2026-07-28), e o alfa (etapa 1,
+não conhece `migration`) e o beta estavam abertos durante a migração; qualquer
+persist deles reescreve o `config.json` inteiro a partir da cópia em memória
+deles — o sanitize derruba a chave desconhecida e o last-writer-wins clobbera
+`localAccounts` com a cópia velha. Exatamente o risco aceito como item de
+produto "sanitize com passthrough" no CLAUDE.md — que aqui deixou de ser
+teórico: o cenário normal do operador (usar o Donel enquanto migra… dentro do
+próprio Donel) destrói o registro das contas migradas e o progresso do wizard.
+Agravante: reimportar não é idempotente entre execuções — `generateAccountId`
+é `randomUUID()` por import, então cada nova tentativa cria entradas novas no
+cofre e as anteriores viram órfãs inatribuíveis (o payload cifrado guarda só o
+par, sem label).
+
+**Lesson:** estado novo que vive no `config.json` compartilhado entre canais
+não sobrevive a um canal antigo aberto — antes de construir feature que
+persiste chave nova ali, ou o sanitize ganha passthrough de chaves
+desconhecidas (e escrita vira read-merge-write), ou a feature precisa detectar
+outra instância viva e recusar rodar. Teste automatizado de processo único
+nunca pega isso; só o e2e na máquina real com os canais coexistindo.

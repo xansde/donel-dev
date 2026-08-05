@@ -19,8 +19,8 @@ import styles from './ProjectSwitcher.module.css';
 // DIVERGÊNCIA NOMEADA (popover → Modal): o mockup desenha um popover
 // ANCORADO sob o botão (`position: absolute; top: 44px; left: 118px`), mas
 // esta implementação reaproveita o `Modal` centralizado do design-system —
-// mesmo componente que `ProfileSwitcher.tsx` já usa pro par "badge no
-// titlebar → lista + criar" (perfis de conta) e a MESMA razão que
+// mesmo componente que `AccountsPanel.tsx` (T1221) usa pro par "badge no
+// titlebar → lista de contas" e a MESMA razão que
 // `PreviousSessions.tsx` documenta pra evitar popover posicionado à mão:
 // acessibilidade (foco preso, Escape, foco devolvido) de graça, sem inventar
 // posicionamento/click-outside novos. É uma troca de COMPORTAMENTO de

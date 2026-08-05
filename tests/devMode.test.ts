@@ -129,17 +129,17 @@ describe('closeDiscovery', () => {
 
 describe('archivePhaseSession', () => {
   // CA-31 — chave v3 é `cardId:fase` (marco_id morreu, cardId já é o card de plano).
-  it('grava sessionId + profileSlug + archivedAt na chave composta cardId:fase', () => {
+  it('grava sessionId + accountId + archivedAt na chave composta cardId:fase', () => {
     const state = emptyState();
     const next = archivePhaseSession(
       state,
       { cardId: 'card-1', phase: 'plano' },
-      { sessionId: 'sess-1', profileSlug: 'principal', archivedAt: 1000 },
+      { sessionId: 'sess-1', accountId: 'principal', archivedAt: 1000 },
     );
 
     expect(next.archivedPhaseSessions['card-1:plano']).toEqual({
       sessionId: 'sess-1',
-      profileSlug: 'principal',
+      accountId: 'principal',
       archivedAt: 1000,
     });
   });
@@ -147,7 +147,7 @@ describe('archivePhaseSession', () => {
 
 describe('isArchivedSessionProfileMismatch (CA-22)', () => {
   it('detecta divergência de perfil sem falhar', () => {
-    const archived = { sessionId: 'sess-1', profileSlug: 'tecnologia-claude-2', archivedAt: 1000 };
+    const archived = { sessionId: 'sess-1', accountId: 'tecnologia-claude-2', archivedAt: 1000 };
     expect(isArchivedSessionProfileMismatch(archived, 'principal')).toBe(true);
     expect(isArchivedSessionProfileMismatch(archived, 'tecnologia-claude-2')).toBe(false);
   });
@@ -195,7 +195,7 @@ describe('isValidArchivePhaseSessionIpcInput', () => {
         cardId: 'card-1',
         phase: 'plano',
         sessionId: 'sess-1',
-        profileSlug: 'principal',
+        accountId: 'principal',
       }),
     ).toBe(true);
   });
@@ -206,7 +206,7 @@ describe('isValidArchivePhaseSessionIpcInput', () => {
         cardId: 'card-1',
         phase: 'documentar',
         sessionId: 'sess-1',
-        profileSlug: 'principal',
+        accountId: 'principal',
       }),
     ).toBe(true);
   });
@@ -217,11 +217,11 @@ describe('isValidArchivePhaseSessionIpcInput', () => {
         cardId: 'card-1',
         phase: 'fase-inventada',
         sessionId: 'sess-1',
-        profileSlug: 'principal',
+        accountId: 'principal',
       }),
     ).toBe(false);
     expect(
-      isValidArchivePhaseSessionIpcInput({ cardId: '', phase: 'plano', sessionId: 'sess-1', profileSlug: 'principal' }),
+      isValidArchivePhaseSessionIpcInput({ cardId: '', phase: 'plano', sessionId: 'sess-1', accountId: 'principal' }),
     ).toBe(false);
     expect(isValidArchivePhaseSessionIpcInput(null)).toBe(false);
   });

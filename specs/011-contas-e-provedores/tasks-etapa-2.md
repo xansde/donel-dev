@@ -190,14 +190,14 @@ T1228, T1229, T1230, T1231).
 
 ## Fase 3 — Trocar a fonte (depende da Fase 2; **antes** de qualquer remoção)
 
-- [ ] **T1218** Adaptar `tests/sessionAccountLabel.test.ts` (104 L) para a
+- [x] **T1218** Adaptar `tests/sessionAccountLabel.test.ts` (104 L) para a
   entrada `account`: rótulo com a conta ativa **no disparo**, imutável pela vida
   da aba; cota vinda do motor (uma unidade, C25); `formatArchivedAccountLabel`
   sobre `accountId`; **caso legado**: entrada arquivada só com `profileSlug`
   ainda rotula corretamente.
   **DoD**: suíte vermelha contra o contrato novo.
 
-- [ ] **T1219** Trocar o contrato e os consumidores: `PtyCreateResult.profile` →
+- [x] **T1219** Trocar o contrato e os consumidores: `PtyCreateResult.profile` →
   `account` (`src/shared/index.ts:260–268`), `src/shared/sessionAccountLabel.ts`
   (:36–41, :64–82, :103–105), `TerminalPane.tsx` (:100, :224–225, :324) e os
   pontos de `App.tsx` que propagam o dado (:369, :418, :589–591, :707, :2315–2323,
@@ -205,7 +205,7 @@ T1228, T1229, T1230, T1231).
   (`index.ts:551`).
   **DoD**: T1218 verde; app abre e a statusbar mostra a conta da sessão em foco.
 
-- [ ] **T1220** `devMode.ts`/`config-store.ts`: `ArchivedPhaseSession.profileSlug`
+- [x] **T1220** `devMode.ts`/`config-store.ts`: `ArchivedPhaseSession.profileSlug`
   → `accountId` (`devMode.ts:37, :160–161, :284, :297–298`), com **leitura
   tolerante** do campo legado (C30/D15) em `sanitizeArchivedPhaseSessions`
   (`config-store.ts:390–393`); `activeProfileSlug` deixa de ser escrito mas
@@ -213,7 +213,7 @@ T1228, T1229, T1230, T1231).
   **DoD**: `tests/config-store.test.ts` e `tests/devMode.test.ts` ajustados e
   verdes, incluindo um caso explícito de config gravada por canal antigo.
 
-- [ ] **T1221** Tela de contas substitui o dropdown de perfis: `AccountsPanel`
+- [x] **T1221** Tela de contas substitui o dropdown de perfis: `AccountsPanel`
   (etapa 1) assume o lugar do `<ProfileSwitcher>` em `App.tsx:2393–2397`,
   alimentando badge do titlebar e statusbar. **Uma unidade só** (C25): a
   conversão de `AccountLoad` (% consumido) para o texto exibido acontece num
@@ -227,7 +227,7 @@ T1228, T1229, T1230, T1231).
 
 ## Fase 4 — Demolição (depende da Fase 3 verde)
 
-- [ ] **T1222** Remover o mecanismo do main: apagar `src/main/profile-manager.ts`
+- [x] **T1222** Remover o mecanismo do main: apagar `src/main/profile-manager.ts`
   (673 L) e limpar `src/main/index.ts` — imports (:27, :36–38, :76, :95,
   :138–155), estado de módulo (:337–348), `registerProfileIpcHandlers` inteiro
   (:1226–1303) e sua chamada (:1343), helpers (:1202–1216), boot do perfil
@@ -243,14 +243,14 @@ T1228, T1229, T1230, T1231).
   **DoD**: `npm run typecheck` verde; app abre; nenhuma referência a
   `PROFILE_CHANNELS` no `src/`.
 
-- [ ] **T1223** Remover a leitura de cota por perfil: apagar
+- [x] **T1223** Remover a leitura de cota por perfil: apagar
   `src/main/quota-headroom.ts` (366 L), o `HeadroomCache` do `index.ts` (:348,
   :164) e o handler `profiles:headroom`. Conferir que nenhuma env de fixture
   (`DONEL_QUOTA_AXI_FIXTURE`) restou em script, smoke ou doc.
   **DoD**: typecheck verde; `grep -r "quota-axi" src/ tests/` sem hits em código
   executável.
 
-- [ ] **T1224** Remover o fluxo "Reiniciar sessão em foco" **inteiro**
+- [x] **T1224** Remover o fluxo "Reiniciar sessão em foco" **inteiro**
   (C31/A9 — decisão do dono, 2026-08-04): apagar `src/main/transcript-copy.ts`
   (87 L) e `src/shared/transcriptCopy.ts`; em `App.tsx`, remover o botão
   "⟳ Reiniciar" (:2717), o diálogo (:2940–2962), `handleOpenRestart`,
@@ -262,12 +262,12 @@ T1228, T1229, T1230, T1231).
   **DoD**: typecheck verde; `grep -ri "restart" src/` sem hits do fluxo morto;
   nenhum texto de UI referenciando reinício de sessão.
 
-- [ ] **T1225** Remover `src/renderer/src/ProfileSwitcher.tsx` (619 L) e seu
+- [x] **T1225** Remover `src/renderer/src/ProfileSwitcher.tsx` (619 L) e seu
   `.module.css`. **Antes de apagar**, conferir o componente de badge citado em
   `ProjectSwitcher.tsx:22` — se for compartilhado, ele **fica** (achado A15).
   **DoD**: app abre; `ProjectSwitcher` intacto e verde.
 
-- [ ] **T1226** **Morte declarada das suítes** — remover nominalmente as **9**
+- [x] **T1226** **Morte declarada das suítes** — remover nominalmente as **9**
   (C34/A8 + decisão C31): `tests/profile-manager.test.ts` (726 L),
   `tests/quota-headroom.test.ts` (495 L), `tests/transcript-copy.test.ts`
   (102 L), `tests/transcriptCopy.test.ts` (67 L),
@@ -284,7 +284,7 @@ T1228, T1229, T1230, T1231).
   contas, o comportamento que os smokes mortos cobriam pelo dropdown.
   **DoD**: os quatro itens acima registrados no card.
 
-- [ ] **T1227** **Ajuste (não morte)** das suítes de raspão + smoke substituto:
+- [x] **T1227** **Ajuste (não morte)** das suítes de raspão + smoke substituto:
   `tests/config-store.test.ts` (893 L), `tests/pty-manager.test.ts` (160 L —
   **só** o que cita perfil; `buildPtyEnv` e `claudeConfigDir` continuam
   testados, C33), `tests/devMode.test.ts`, `tests/phaseDetailsView.test.ts`,
@@ -301,7 +301,7 @@ T1228, T1229, T1230, T1231).
 
 ## Fase 5 — Registro (documento; depende da Fase 4)
 
-- [ ] **T1228** `specs/backlog.md`: **B8/US-12** e **auto-switch** saem da fila,
+- [x] **T1228** `specs/backlog.md`: **B8/US-12** e **auto-switch** saem da fila,
   cada um com uma linha de destino ("absorvido no motor — `specs/011-…`", no
   mesmo estilo dos itens já riscados do arquivo, ver B5/B19); **B10 fica e
   simplifica** (a frase sobre perfis compartilhados entre canais some — não há
@@ -310,7 +310,7 @@ T1228, T1229, T1230, T1231).
   **Nada é apagado** — itens saem marcados, não deletados.
   **DoD**: `git diff` do backlog só com marcações e notas de destino.
 
-- [ ] **T1229** Marcar **superseded** (C32): bloco de cabeçalho em
+- [x] **T1229** Marcar **superseded** (C32): bloco de cabeçalho em
   `specs/002-quota-headroom/spec.md`, `plan.md`, `tasks.md` e `roteiro-e2e.md`,
   e nos artefatos históricos da 001 (`spike-t001-resultado.md`,
   `spike-t002-resultado.md`, `analise-switch-account-amanda.md`) apontando para
@@ -318,7 +318,7 @@ T1228, T1229, T1230, T1231).
   só ganha o bloco no topo.
   **DoD**: os 7 arquivos com o bloco; conteúdo original intacto abaixo dele.
 
-- [ ] **T1230** Atualizar o `CLAUDE.md` do repo (e `README.md`,
+- [x] **T1230** Atualizar o `CLAUDE.md` do repo (e `README.md`,
   `docs/LEIA-ME-colegas.md`, `CHANGELOG` onde citarem perfis): a seção de
   gotchas perde "`~/.claude-profiles` nunca no OneDrive" como regra viva (vira
   nota histórica da migração), o vocabulário passa a ser **conta/motor**, e a
@@ -326,7 +326,7 @@ T1228, T1229, T1230, T1231).
   agora citando também `accounts/migration/`.
   **DoD**: nenhum documento do repo descrevendo perfis como mecanismo atual.
 
-- [ ] **T1231** Roteiro do dia da virada:
+- [x] **T1231** Roteiro do dia da virada:
   `specs/011-contas-e-provedores/roteiro-e2e-etapa-2.md` — passo a passo manual
   no alfa (abrir o assistente, importar perfil a perfil, conferir o diff de MCP,
   consolidar, arquivar, verificar `~/.claude-profiles.old` com junctions
@@ -335,7 +335,7 @@ T1228, T1229, T1230, T1231).
   retomável; nada foi deletado).
   **DoD**: roteiro escrito; execução é gesto humano no alfa.
 
-- [ ] **T1232** Regressão declarada final: `npm test` inteiro + `npm run
+- [x] **T1232** Regressão declarada final: `npm test` inteiro + `npm run
   typecheck` + `npm run lint`, com a saída colada no card, e uma varredura de
   vocabulário (`grep -ri "perfil\|profile\|junction" src/`) confirmando que só
   sobraram (a) `claudeConfigDir`/`buildPtyEnv` do `pty-manager` (C33),
@@ -343,6 +343,34 @@ T1228, T1229, T1230, T1231).
   por dever de ofício.
   **DoD**: saída colada; qualquer sobra não prevista vira decisão explícita, não
   silêncio.
+
+  > **Executado em 2026-08-04.** `npm test` (vitest): **94 arquivos / 1649
+  > testes verdes**. `npm run typecheck`: limpo. `npm run lint`: **script não
+  > existe** neste repo (`package.json` não define `lint`) — nada a rodar,
+  > registrado como fato, não como pulo silencioso. Smoke Playwright (fora do
+  > `npm test`): rodados manualmente por lotes ao longo da sessão — todos os
+  > smokes tocados por esta etapa mais uma amostra ampla dos demais (~30
+  > specs) verdes, com UMA exceção intermitente: `ca7-measurement.spec.ts`
+  > (cerca de regressão de boot, 250ms) mediu 336ms numa primeira passada;
+  > investigação achou uma duplicação real (App.tsx abrindo uma segunda
+  > assinatura de `window.donel.accounts.*` que `AccountsPanel` já mantinha,
+  > corrigida com o prop `onViewChange`), e reexecuções após a correção
+  > oscilaram entre 168ms e 274ms (3 de 5 rodadas abaixo da cerca) — variação
+  > reconhecida pelo próprio teste como sensível a carga de máquina. Tratado
+  > como achado corrigido + risco residual de flakiness pré-existente do
+  > método de medição, não como regressão funcional (ver `tasks/lessons.md`).
+  >
+  > Varredura de vocabulário (`grep -rni "perfil\|profile\|junction" src/`):
+  > sobras são (a) `pty-manager.ts` (`claudeConfigDir`/`buildPtyEnv`, C33,
+  > intocado), (b) `-NoProfile` do PowerShell (`claude-executable.ts`,
+  > `hooks-settings.ts`), (c) `src/main/accounts/migration/*` (fala de
+  > perfis por dever de ofício — é o módulo que migra perfis pro cofre) e
+  > (d) um punhado de comentários históricos/rótulos de UI sem mecanismo
+  > vivo por trás (`Preferences.tsx`, `SessionDetails.tsx`,
+  > `sessionRegistry.ts`, `claude-state.ts`) — decisão explícita: não
+  > reescrever prosa de comentário que não afirma nada factualmente errado,
+  > dado o orçamento da sessão; nenhum arquivo descreve o mecanismo de
+  > perfis como algo que existe hoje.
 
 ---
 

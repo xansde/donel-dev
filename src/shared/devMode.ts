@@ -30,10 +30,10 @@ export interface DevModeDiscovery {
 
 export type DevModeDiscoveries = Readonly<Record<string, DevModeDiscovery>>;
 
-/** CA-21 + CA-9: session-id arquivado por etapa concluída, com o perfil em que rodou (CA-22). */
+/** CA-21 + CA-9: session-id arquivado por etapa concluída, com a conta em que rodou (CA-22). Campo chamava-se `profileSlug` até a troca de vocabulário (C24/T1220) — leitura tolerante do legado em `sanitizeArchivedPhaseSessions` (config-store.ts). */
 export interface ArchivedPhaseSession {
   readonly sessionId: string;
-  readonly profileSlug: string;
+  readonly accountId: string;
   readonly archivedAt: number;
 }
 
@@ -156,8 +156,8 @@ export function archivePhaseSession(state: DevModeState, key: ArchivePhaseSessio
  * CA-22 — retomar uma etapa arquivada num perfil diferente do ativo não
  * falha: só sinaliza. Puro, sem I/O; quem chama decide o aviso na UI.
  */
-export function isArchivedSessionProfileMismatch(archived: ArchivedPhaseSession, activeProfileSlug: string): boolean {
-  return archived.profileSlug !== activeProfileSlug;
+export function isArchivedSessionProfileMismatch(archived: ArchivedPhaseSession, activeAccountId: string): boolean {
+  return archived.accountId !== activeAccountId;
 }
 
 /**
@@ -279,7 +279,7 @@ export interface ArchivePhaseSessionIpcInput {
   readonly cardId: string;
   readonly phase: EsteiraPhase;
   readonly sessionId: string;
-  readonly profileSlug: string;
+  readonly accountId: string;
 }
 
 export function isValidArchivePhaseSessionIpcInput(input: unknown): input is ArchivePhaseSessionIpcInput {
@@ -292,8 +292,8 @@ export function isValidArchivePhaseSessionIpcInput(input: unknown): input is Arc
     (ALL_ESTEIRA_PHASES as readonly string[]).includes(candidate.phase) &&
     typeof candidate.sessionId === 'string' &&
     candidate.sessionId.trim().length > 0 &&
-    typeof candidate.profileSlug === 'string' &&
-    candidate.profileSlug.trim().length > 0
+    typeof candidate.accountId === 'string' &&
+    candidate.accountId.trim().length > 0
   );
 }
 

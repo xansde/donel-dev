@@ -88,16 +88,17 @@ export interface TerminalPaneProps {
    */
   onAliveChange?: (alive: boolean) => void;
   /**
-   * FIX (feedback E2E rodada 5) — perfil de NASCIMENTO desta sessão
-   * (`PtyCreateResult.profile`, main/index.ts `activeProfileSlug`/`Name` NO
-   * MOMENTO da criação — por valor, como `claudeConfigDir` já é, T014).
-   * Chamado uma única vez, junto com `ptyIdRef.current = result.ptyId`
-   * (mesmo instante que `onAliveChange(true)`/`setStatus('running')`
-   * refletem). `undefined` só chega aqui pra sessão 'shell' (branch shell
-   * do handler `pty:create` nunca preenche `profile`) — App.tsx decide o
-   * que fazer com isso (`sessionAccountLabel.ts`).
+   * T1219 (011-contas-e-provedores, etapa 2, C24) — CONTA de NASCIMENTO
+   * desta sessão (`PtyCreateResult.account`, main/index.ts NO MOMENTO da
+   * criação — por valor, como `claudeConfigDir` já é, T014). Chamado uma
+   * única vez, junto com `ptyIdRef.current = result.ptyId` (mesmo instante
+   * que `onAliveChange(true)`/`setStatus('running')` refletem). `undefined`
+   * só chega aqui pra sessão 'shell' (branch shell do handler `pty:create`
+   * nunca preenche `account`) — App.tsx decide o que fazer com isso
+   * (`sessionAccountLabel.ts`). Prop chamava-se `onProfileResolved` até a
+   * troca de vocabulário perfil → conta.
    */
-  onProfileResolved?: (profile: { slug: string; name: string } | undefined) => void;
+  onAccountResolved?: (account: { id: string; label: string } | undefined) => void;
   /**
    * T404/T408 (004-nomear-sessoes) — id da sessão do Claude desta aba
    * (`PtyCreateResult.claudeSessionId`, imposto pelo main no spawn via
@@ -180,7 +181,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     onCloseTab,
     onStateChange,
     onAliveChange,
-    onProfileResolved,
+    onAccountResolved,
     onClaudeSessionIdResolved,
     onProcessExit,
   },
@@ -221,8 +222,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   onStateChangeRef.current = onStateChange;
   const onAliveChangeRef = useRef(onAliveChange);
   onAliveChangeRef.current = onAliveChange;
-  const onProfileResolvedRef = useRef(onProfileResolved);
-  onProfileResolvedRef.current = onProfileResolved;
+  const onAccountResolvedRef = useRef(onAccountResolved);
+  onAccountResolvedRef.current = onAccountResolved;
   const onClaudeSessionIdResolvedRef = useRef(onClaudeSessionIdResolved);
   onClaudeSessionIdResolvedRef.current = onClaudeSessionIdResolved;
   const onProcessExitRef = useRef(onProcessExit);
@@ -321,7 +322,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         // única vez, no mesmo instante que `onAliveChange(true)` reflete
         // (efeito de `status.kind` acima) — App.tsx grava por tab.id, nunca
         // reconsultado depois (mesmo espírito "por valor" de `claudeConfigDir`).
-        onProfileResolvedRef.current?.(result.profile);
+        onAccountResolvedRef.current?.(result.account);
         // T404 (004) — id da sessão do Claude desta aba, no mesmo instante e pelo
         // mesmo motivo do perfil acima: é a chave de persistência do nome (CA-6).
         onClaudeSessionIdResolvedRef.current?.(result.claudeSessionId);

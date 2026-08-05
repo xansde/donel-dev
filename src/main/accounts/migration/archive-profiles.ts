@@ -7,10 +7,18 @@
 
 import { join } from 'node:path';
 import { existsSync, lstatSync, readlinkSync, renameSync, rmdirSync } from 'node:fs';
-import { PROFILE_LINK_DIRS } from '../../profile-manager';
 import type { ArchiveOutcome } from '../../../shared/migration';
 
 export type { ArchiveOutcome } from '../../../shared/migration';
+
+/**
+ * T1222 (011-contas-e-provedores, etapa 2) — cópia PRÓPRIA da lista de dirs
+ * linkados por junction (`profile-manager.ts` morreu na demolição). Mesma
+ * lista, mesmo espírito de duplicação de propósito que os smokes já usam
+ * (nunca importar de um módulo morto ou prestes a morrer — ver comentário
+ * de topo de `tests/smoke/profiles.spec.ts`).
+ */
+const PROFILE_LINK_DIRS = ['projects', 'skills', 'commands', 'rules', 'plugins', 'templates'] as const;
 
 export interface ArchiveIoDeps {
   /** `rmdir` do link — NUNCA remove o alvo (reparse point de diretório, não recursivo). */

@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { archiveProfiles, type ArchiveIoDeps } from '../src/main/accounts/migration/archive-profiles';
-import { PROFILE_LINK_DIRS } from '../src/main/profile-manager';
+
+// T1222 — profile-manager.ts morreu; mesma lista duplicada aqui de
+// propósito (mesmo espírito dos smokes deste repo).
+const PROFILE_LINK_DIRS = ['projects', 'skills', 'commands', 'rules', 'plugins', 'templates'] as const;
 
 // T1212 (011-contas-e-provedores, etapa 2) — archive-profiles.ts: ordem
 // invariante (C27/D12): TODO unlink de junction acontece ANTES do rename. O

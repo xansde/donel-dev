@@ -4,18 +4,16 @@
 // (src/shared/projects.ts) — os demais (sessions:*, profiles:*, config:*)
 // chegam junto das tasks que os implementam.
 
-import type { DonelAccountsApi } from './accounts';
+import type { AccountId, DonelAccountsApi } from './accounts';
 import type { DonelMigrationApi } from './migration';
 import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
-import type { DonelProfilesApi } from './profiles';
 import type { DonelProjectBindingApi } from './projectBinding';
 import type { DonelProjectsApi } from './projects';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
-import type { DonelTranscriptsApi } from './transcriptCopy';
 
 export { PROJECT_CHANNELS, sortProjects } from './projects';
 export type { DonelProjectsApi, ProjectInfo } from './projects';
@@ -42,19 +40,6 @@ export type {
 
 export { SESSION_CHANNELS, TRANSCRIPT_CHANNELS } from './sessions';
 export type { DonelSessionsApi, SessionSummaryDto, TranscriptChangedPayload } from './sessions';
-
-export { PROFILE_CHANNELS, parseAccountNumber } from './profiles';
-export type {
-  DeleteProfileErrorReason,
-  DeleteProfileOutcome,
-  DonelProfilesApi,
-  JunctionIssueDto,
-  ProfileDoctorReportDto,
-  ProfileHeadroomMap,
-  ProfileQuota,
-  ProfileSummaryDto,
-  QuotaWindow,
-} from './profiles';
 
 // T710 (007/CA-11 2º momento) — decisão de esquecer a entrada órfã quando a
 // retomada falha. Puro; medição do sinal em specs/008-fechar-pendencias/.
@@ -153,13 +138,6 @@ export type { DonelGithubApi, GhAvailabilityDto, GithubReadRequest, GithubReadRe
 export type { BoardFacts, EntryColumn, EntryColumnCard } from '../main/taskdex-board-client';
 /** Issue #34 — resultado de `devMode:resolveCardRepo`; mesmo motivo do `DiscoveryTree` acima: tipo só, `import type` erasa no build. */
 export type { CardRepoResolution, RepoCandidate } from '../main/cardRepoResolver';
-
-// Lote 8 (009-modo-dev-v3), CA-24 — "Reiniciar sessão em foco" retoma na
-// conta SELECIONADA, copiando o `.jsonl` pro perfil dela quando a sessão
-// rodou em outro perfil (achado 14). Lógica pura + contrato IPC em
-// src/shared/transcriptCopy.ts; o fs real vive em src/main/transcript-copy.ts.
-export { isValidCopyTranscriptForResumeIpcInput, planTranscriptCopy, TRANSCRIPT_COPY_CHANNELS } from './transcriptCopy';
-export type { CopyTranscriptForResumeIpcInput, CopyTranscriptForResumeResult, DonelTranscriptsApi, TranscriptCopyPlan } from './transcriptCopy';
 
 // Spec 010 / B6 — o view-model do painel direito saiu com o modelo antigo
 // (ele lia o nó de fase da árvore de disco). O painel é
@@ -280,16 +258,19 @@ export function parseClaudeNotFound(error: unknown): string | null {
 export interface PtyCreateResult {
   ptyId: string;
   /**
-   * FIX (feedback E2E rodada 5) — perfil ATIVO no momento em que esta sessão
-   * nasceu (main/index.ts `activeProfileSlug`/`activeProfileName`), o mesmo
-   * valor por trás do `claudeConfigDir` passado a `PtyManager.create`
-   * (T014/FR-005). Só preenchido pra `sessionType: 'claude'` — terminal
-   * livre (shell) nunca aplica `CLAUDE_CONFIG_DIR`, então não tem "perfil de
-   * nascimento" (App.tsx usa isso pra distinguir os dois casos no rótulo da
-   * statusbar, ver `sessionAccountLabel.ts`). `undefined` também é o valor
-   * legítimo de um `pty:create` de shell — não é "ainda não resolvido".
+   * T1219 (011-contas-e-provedores, etapa 2, C24) — CONTA ativa no momento
+   * em que esta sessão nasceu (main/index.ts, motor de contas — ou o perfil
+   * ativo legado enquanto o motor estiver inerte, C1/C10), o mesmo valor por
+   * trás do `claudeConfigDir` passado a `PtyManager.create` (T014/FR-005).
+   * Só preenchido pra `sessionType: 'claude'` — terminal livre (shell)
+   * nunca aplica `CLAUDE_CONFIG_DIR`, então não tem "conta de nascimento"
+   * (App.tsx usa isso pra distinguir os dois casos no rótulo da statusbar,
+   * ver `sessionAccountLabel.ts`). `undefined` também é o valor legítimo de
+   * um `pty:create` de shell — não é "ainda não resolvido". Campo chamava-se
+   * `profile` até a etapa 1/início da 2 (`{slug, name}`) — renomeado junto
+   * com a troca de vocabulário perfil → conta.
    */
-  profile?: { slug: string; name: string };
+  account?: { id: AccountId; label: string };
   /**
    * T404 (004-nomear-sessoes) — id da sessão do Claude para ESTA aba, o mesmo
    * que nomeia o `.jsonl` do transcript. O app não descobre esse id: ele o
@@ -382,7 +363,6 @@ export interface DonelApi {
   projects: DonelProjectsApi;
   semaphore: DonelSemaphoreApi;
   sessions: DonelSessionsApi;
-  profiles: DonelProfilesApi;
   /** 011-contas-e-provedores (etapa 1) — motor de contas + mods; nasce inerte (accounts.mod = null). */
   accounts: DonelAccountsApi;
   /** 011-contas-e-provedores (etapa 2) — assistente de migração de perfis → cofre. */
@@ -399,8 +379,6 @@ export interface DonelApi {
   projectBinding: DonelProjectBindingApi;
   /** CA-3/CA-5 (009-modo-dev-v3, lote 4) — leitura do GitHub por `gh` CLI (spec-issue, sub-issues, PR da fase). Só leitura. */
   github: DonelGithubApi;
-  /** CA-24 (009-modo-dev-v3, lote 8) — cópia de transcript entre perfis pro "Reiniciar sessão em foco". */
-  transcripts: DonelTranscriptsApi;
   /** Spec 010 — a esteira nova (store de eventos + contrato com as skills), ao lado do Modo Dev atual. */
   esteira: DonelEsteiraApi;
 }
