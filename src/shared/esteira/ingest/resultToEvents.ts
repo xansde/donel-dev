@@ -350,6 +350,44 @@ export function ingestFailureEvent(input: IngestFailureInput): EventDraft {
   };
 }
 
+export interface IngestAmnestyInput {
+  /** A MESMA chave que `ingest.failed` teria usado — a linha que este evento evita. */
+  readonly resultPath: string;
+  readonly at: string;
+  /** O run_id lido de forma leniente do texto cru — e por ele que a anistia se justifica. */
+  readonly runId: string;
+  readonly subject: EntityId | null;
+  /** Os issues que o parser NOVO apontou — para auditoria: por que este arquivo teria falhado hoje. */
+  readonly issues: readonly ContractIssue[];
+}
+
+/**
+ * F26 — a anistia do outbox historico. Um run cujo `run_id` JA CONSTA no
+ * livro (`store.snapshot().runs`) foi ingerido legitimamente por um contrato
+ * mais antigo; endurecer o contrato nao pode fazer esse mesmo arquivo
+ * reaparecer como "nao consegui ler" so porque o parser de HOJE o recusaria.
+ * Revalidacao/re-scan so LIMPA, nunca SUJA.
+ *
+ * `dedupe_key` e `ingest.amnestied:<resultPath>` — prefixada com o proprio
+ * tipo, igual `ingest.failed:<path>` e `ingest.recovered:<path>`: as tres
+ * chaves nunca colidem entre si mesmo apontando para o MESMO arquivo, e o
+ * mesmo arquivo reprocessado a cada boot produz UMA anistia, nao uma pilha.
+ */
+export function ingestAmnestyEvent(input: IngestAmnestyInput): EventDraft {
+  return {
+    type: 'ingest.amnestied',
+    at: input.at,
+    dedupe_key: `ingest.amnestied:${input.resultPath}`,
+    payload: {
+      resultPath: input.resultPath,
+      at: input.at,
+      runId: input.runId,
+      subject: input.subject,
+      issues: input.issues.map((issue) => ({ code: issue.code, path: issue.path, message: issue.message })),
+    },
+  };
+}
+
 export interface IngestRecoveryInput {
   /** A MESMA chave do `ingest.failed` que esta recuperacao supera. */
   readonly resultPath: string;

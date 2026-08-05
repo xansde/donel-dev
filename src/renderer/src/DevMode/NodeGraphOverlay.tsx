@@ -1,16 +1,38 @@
 import { Button } from '@donel-dev/design-system';
-import { useEffect, useMemo, useState } from 'react';
+import {
+  Background,
+  BackgroundVariant,
+  Controls,
+  Handle,
+  MiniMap,
+  Panel,
+  Position,
+  ReactFlow,
+  ReactFlowProvider,
+  type Edge,
+  type Node,
+  type NodeMouseHandler,
+  type NodeTypes,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { Compass, FileText, ListTree, ShieldCheck, SquareCheck, type LucideIcon } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import type { StoreSnapshot } from '../../../shared/esteira/store/storeFormat';
 import type { MapSelection } from './esteiraMapView';
-import { buildNodeGraph, type GraphNode, type GraphTone } from './nodeGraphView';
+import { LAYOUT_NODE_HEIGHT, LAYOUT_NODE_WIDTH, layoutNodeGraph } from './nodeGraphLayout';
+import { buildNodeGraph, type GraphEdgeKind, type GraphNode, type GraphNodeKind, type GraphTone, type NodeGraphView } from './nodeGraphView';
 import styles from './NodeGraphOverlay.module.css';
 
-// Spec 010 / batch N7 (D1) — o mapa de nós em TELA CHEIA. Componente burro de
-// propósito: `nodeGraphView.ts` decide nó, aresta, coluna, desvio e resumo;
-// aqui só se converte coluna em pixel (layout em camadas, à mão, sem
-// biblioteca de grafo) e se desenha o SVG. Nenhuma frase de estado nasce
-// neste arquivo — o mesmo defeito já reapareceu três vezes no repo por causa
-// disso (ver cabeçalho de `nodeGraphView.ts`).
+// Spec 010 / batch F25 (D1) — refeitura da CAMADA VISUAL do mapa de nós.
+// Veredito do dono sobre a versão anterior (overlay SVG à mão, batch N7):
+// "Feio. Não navega corretamente. Difícil de identificar o mapa." Esta
+// versão troca o desenho à mão por `@xyflow/react` (motor node-based real,
+// autorizado pelo dono) — pan/zoom, minimapa e controles de verdade — sem
+// tocar a PROJEÇÃO (`nodeGraphView.ts`, 24 testes) nem o CÁLCULO de layout
+// (`nodeGraphLayout.ts`, layout em camadas feito à mão, sem dagre/elkjs).
+//
+// Nenhuma frase de estado nasce neste arquivo — o mesmo defeito já reapareceu
+// três vezes no repo por causa disso (ver cabeçalho de `nodeGraphView.ts`).
 //
 // É CONTROLE DE NAVEGAÇÃO, não só visualização: clicar num nó fecha o overlay
 // e leva o carrossel/esteira até ele — o MESMO alvo de seleção que o
@@ -24,12 +46,6 @@ export interface NodeGraphOverlayProps {
   readonly onNavigate: (target: MapSelection) => void;
 }
 
-const COLUMN_WIDTH = 260;
-const ROW_HEIGHT = 92;
-const NODE_WIDTH = 208;
-const NODE_HEIGHT = 64;
-const PADDING = 48;
-
 const TONE_VAR: Readonly<Record<GraphTone, string>> = {
   muted: 'var(--text-muted)',
   accent: 'var(--accent)',
@@ -39,60 +55,235 @@ const TONE_VAR: Readonly<Record<GraphTone, string>> = {
   lock: 'var(--state-error)',
 };
 
+/** Ícone por tipo — a resposta a "difícil de identificar o que é o quê" (veredito do dono): cor de borda sozinha nunca basta. */
+const KIND_ICON: Readonly<Record<GraphNodeKind, LucideIcon>> = {
+  discovery: Compass,
+  plan: ListTree,
+  work_item: SquareCheck,
+  artifact: FileText,
+  verification: ShieldCheck,
+};
+
+/** Legenda compacta — mesmo vocabulário de tipo que o resto do mapa usa, nunca uma segunda redação. */
+const KIND_LABEL: Readonly<Record<GraphNodeKind, string>> = {
+  discovery: 'Discovery',
+  plan: 'Plano',
+  work_item: 'Item',
+  artifact: 'Artefato',
+  verification: 'Verificação',
+};
+
+const KIND_ORDER: readonly GraphNodeKind[] = ['discovery', 'plan', 'work_item', 'artifact', 'verification'];
+
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
-interface NodePosition {
-  readonly x: number;
-  readonly y: number;
+interface GraphNodeData extends Record<string, unknown> {
+  readonly graphNode: GraphNode;
+  readonly hovered: boolean;
+  readonly onHoverChange: (key: string | null) => void;
+}
+
+/**
+ * Nó custom ÚNICO que se comporta como "um por tipo" (ícone, cor de borda e
+ * badge mudam com `data.graphNode.kind`) em vez de cinco componentes quase
+ * idênticos — o que muda entre discovery/plano/item/artefato/verificação é
+ * dado (`GraphNode`), não estrutura. Registrado em `nodeTypes` sob as 5
+ * chaves de `GraphNodeKind` (ver mais abaixo) para o React Flow rotear por
+ * tipo como o motor espera.
+ */
+function GraphNodeCard({ data }: { data: GraphNodeData }): React.JSX.Element {
+  const { graphNode: node, hovered, onHoverChange } = data;
+  const Icon = KIND_ICON[node.kind];
+
+  return (
+    <div
+      className={[styles.node, node.deviation ? styles.nodeDeviation : ''].filter(Boolean).join(' ')}
+      style={{ ['--node-tone' as string]: TONE_VAR[node.tone] }}
+      role="button"
+      tabIndex={0}
+      aria-label={`${node.title} — ${node.summary}`}
+      data-testid="node-graph-node"
+      data-kind={node.kind}
+      data-key={node.key}
+      data-deviation={node.deviation ? 'true' : 'false'}
+      onMouseEnter={() => onHoverChange(node.key)}
+      onMouseLeave={() => onHoverChange(null)}
+      onFocus={() => onHoverChange(node.key)}
+      onBlur={() => onHoverChange(null)}
+    >
+      {/*
+        Sem estes dois handles, o React Flow simplesmente NÃO desenha nenhuma
+        aresta que aponte para/de este nó — o array `edges` existe, mas fica
+        órfão (achado do dono, revisão dos prints do primeiro commit deste
+        batch: 4 nós soltos, zero linha entre eles). O layout é em colunas da
+        esquerda pra direita (`nodeGraphLayout.ts`), então target fica à
+        esquerda e source à direita — a mesma direção que toda aresta
+        estrutural (`originated`/`artifact`/`verification`) segue, de uma
+        coluna pra próxima. `isConnectable={false}`: são só ancoragem visual,
+        o grafo não é editável (arestas vêm inteiras da projeção). */}
+      <Handle type="target" position={Position.Left} isConnectable={false} className={styles.handle} />
+      <Handle type="source" position={Position.Right} isConnectable={false} className={styles.handle} />
+      <div className={styles.nodeHeader}>
+        <Icon size={13} strokeWidth={1.75} aria-hidden />
+        <span className={styles.nodeTitle}>{truncate(node.title, 28)}</span>
+      </div>
+      <span className={styles.nodeBadge}>{truncate(node.badge, 34)}</span>
+      {node.deviation ? <span className={styles.nodeDeviationLabel}>⚠ {truncate(node.deviation.label, 28)}</span> : null}
+      {hovered ? <span className={styles.nodeHoverHint}>Enter/clique para ir até aqui</span> : null}
+    </div>
+  );
+}
+
+// As 5 chaves precisam existir em `nodeTypes` para o React Flow aceitar
+// `type: node.kind` em cada `Node` — todas apontam pro MESMO componente
+// (decisão acima), então uma única função basta; `nodeTypes` fixo fora do
+// componente evita o warning do React Flow de "nodeTypes recriado a cada render".
+const NODE_TYPES: NodeTypes = {
+  discovery: GraphNodeCard,
+  plan: GraphNodeCard,
+  work_item: GraphNodeCard,
+  artifact: GraphNodeCard,
+  verification: GraphNodeCard,
+} as unknown as NodeTypes;
+
+const EDGE_LATERAL_KINDS: ReadonlySet<GraphEdgeKind> = new Set(['flows_into', 'ships_with']);
+
+function NodeGraphCanvas({
+  view,
+  onNavigate,
+}: {
+  view: NodeGraphView;
+  onNavigate: (target: MapSelection) => void;
+}): React.JSX.Element {
+  const layout = useMemo(() => layoutNodeGraph(view.nodes), [view.nodes]);
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+
+  const nodes: Node[] = useMemo(
+    () =>
+      layout.nodes.map(({ node, position }): Node => {
+        const data: GraphNodeData = { graphNode: node, hovered: hoveredKey === node.key, onHoverChange: setHoveredKey };
+        return {
+          id: node.key,
+          type: node.kind,
+          position,
+          data,
+          width: LAYOUT_NODE_WIDTH,
+          height: LAYOUT_NODE_HEIGHT,
+          draggable: false,
+          connectable: false,
+        };
+      }),
+    [layout.nodes, hoveredKey],
+  );
+
+  const edges: Edge[] = useMemo(
+    () =>
+      view.edges.map((edge): Edge => ({
+        id: edge.key,
+        source: edge.from,
+        target: edge.to,
+        label: edge.label,
+        type: 'smoothstep',
+        className: EDGE_LATERAL_KINDS.has(edge.kind) ? styles.edgeLateral : styles.edge,
+        labelBgStyle: { fill: 'var(--bg-panel)' },
+        labelStyle: { fill: 'var(--text-muted)', fontSize: 10 },
+      })),
+    [view.edges],
+  );
+
+  const hovered = hoveredKey === null ? null : (view.nodes.find((node) => node.key === hoveredKey) ?? null);
+
+  const handleNodeClick: NodeMouseHandler = (_event, rfNode) => {
+    const found = view.nodes.find((node) => node.key === rfNode.id);
+    if (found) onNavigate(found.navigateTo);
+  };
+
+  if (view.empty) {
+    return (
+      <p className={styles.empty} data-testid="node-graph-empty">
+        {view.empty}
+      </p>
+    );
+  }
+
+  return (
+    <>
+      <div className={styles.canvas} data-testid="node-graph-canvas">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={NODE_TYPES}
+          onNodeClick={handleNodeClick}
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          minZoom={0.2}
+          maxZoom={2}
+          proOptions={{ hideAttribution: true }}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={false}
+        >
+          <Background variant={BackgroundVariant.Dots} gap={20} size={1} className={styles.background} />
+          <Controls showInteractive={false} className={styles.controls} />
+          <MiniMap
+            className={styles.minimap}
+            pannable
+            zoomable
+            nodeColor={(node) => {
+              const data = node.data as GraphNodeData;
+              return TONE_VAR[data.graphNode.tone];
+            }}
+            maskColor="rgba(14, 17, 22, 0.75)"
+          />
+          {/* Legenda compacta — a resposta direta a "difícil de identificar o mapa" (veredito do dono). */}
+          <Panel position="top-left" className={styles.legend} data-testid="node-graph-legend">
+            {KIND_ORDER.map((kind) => {
+              const Icon = KIND_ICON[kind];
+              return (
+                <span key={kind} className={styles.legendItem}>
+                  <Icon size={12} strokeWidth={1.75} aria-hidden />
+                  {KIND_LABEL[kind]}
+                </span>
+              );
+            })}
+          </Panel>
+        </ReactFlow>
+      </div>
+
+      <footer className={styles.infoBar} data-testid="node-graph-hover-summary">
+        {hovered ? (
+          <p className={styles.infoLine}>
+            <strong>{hovered.title}</strong>
+            <span> — {hovered.summary}</span>
+          </p>
+        ) : (
+          <p className={styles.infoHint}>Passe o mouse (ou o foco) sobre um nó para ver o resumo. Clique para ir até ele.</p>
+        )}
+      </footer>
+    </>
+  );
 }
 
 export function NodeGraphOverlay({ snapshot, onClose, onNavigate }: NodeGraphOverlayProps): React.JSX.Element {
   const view = useMemo(() => buildNodeGraph(snapshot), [snapshot]);
-  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
-
-  // Fecha em Esc, como qualquer overlay modal do app — próprio, porque a
-  // sobreposição cobre a janela inteira (inclusive a titlebar) e não passa
-  // por nenhum handler já existente de outra tela.
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') onClose();
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
-
-  const clearHover = (key: string): void => setHoveredKey((current) => (current === key ? null : current));
-
-  const nodesByColumn = useMemo(() => {
-    const map = new Map<number, GraphNode[]>();
-    for (const node of view.nodes) {
-      const list = map.get(node.column) ?? [];
-      list.push(node);
-      map.set(node.column, list);
-    }
-    return map;
-  }, [view.nodes]);
-
-  const positionByKey = useMemo(() => {
-    const map = new Map<string, NodePosition>();
-    for (const [column, nodes] of nodesByColumn) {
-      nodes.forEach((node, row) => {
-        map.set(node.key, { x: PADDING + column * COLUMN_WIDTH, y: PADDING + row * ROW_HEIGHT });
-      });
-    }
-    return map;
-  }, [nodesByColumn]);
-
-  const maxRows = Math.max(1, ...[...nodesByColumn.values()].map((nodes) => nodes.length));
-  const width = PADDING * 2 + Math.max(1, view.columns) * COLUMN_WIDTH - (COLUMN_WIDTH - NODE_WIDTH);
-  const height = PADDING * 2 + maxRows * ROW_HEIGHT - (ROW_HEIGHT - NODE_HEIGHT);
-
-  const hovered = hoveredKey === null ? null : (view.nodes.find((node) => node.key === hoveredKey) ?? null);
 
   return (
-    <div className={styles.overlay} role="dialog" aria-label="Mapa de nós" data-testid="node-graph-overlay">
+    <div
+      className={styles.overlay}
+      role="dialog"
+      aria-label="Mapa de nós"
+      data-testid="node-graph-overlay"
+      onKeyDown={(event) => {
+        // Fecha em Esc, como qualquer overlay modal do app — próprio, porque a
+        // sobreposição cobre a janela inteira (inclusive a titlebar) e não
+        // passa por nenhum handler já existente de outra tela. React Flow
+        // captura teclado para pan/zoom, então o listener fica no wrapper
+        // (fase de bubble) em vez de `window`, para nunca perder o Esc.
+        if (event.key === 'Escape') onClose();
+      }}
+    >
       <header className={styles.header}>
         <div>
           <h2 className={styles.title}>Mapa de nós</h2>
@@ -105,101 +296,13 @@ export function NodeGraphOverlay({ snapshot, onClose, onNavigate }: NodeGraphOve
         </Button>
       </header>
 
-      {view.empty ? (
-        <p className={styles.empty} data-testid="node-graph-empty">
-          {view.empty}
-        </p>
-      ) : (
-        <>
-          <div className={styles.canvas}>
-            <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Grafo de nós da Esteira">
-              <g aria-hidden="true">
-                {view.edges.map((edge) => {
-                  const from = positionByKey.get(edge.from);
-                  const to = positionByKey.get(edge.to);
-                  if (!from || !to) return null;
-                  const x1 = from.x + NODE_WIDTH;
-                  const y1 = from.y + NODE_HEIGHT / 2;
-                  const x2 = to.x;
-                  const y2 = to.y + NODE_HEIGHT / 2;
-                  const midX = (x1 + x2) / 2;
-                  return (
-                    <path
-                      key={edge.key}
-                      d={`M ${x1} ${y1} C ${midX} ${y1} ${midX} ${y2} ${x2} ${y2}`}
-                      className={styles.edge}
-                      data-kind={edge.kind}
-                    >
-                      <title>{edge.label}</title>
-                    </path>
-                  );
-                })}
-              </g>
-              <g>
-                {view.nodes.map((node) => {
-                  const pos = positionByKey.get(node.key);
-                  if (!pos) return null;
-                  return (
-                    <g
-                      key={node.key}
-                      transform={`translate(${pos.x}, ${pos.y})`}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`${node.title} — ${node.summary}`}
-                      className={styles.node}
-                      data-testid="node-graph-node"
-                      data-kind={node.kind}
-                      data-key={node.key}
-                      data-deviation={node.deviation ? 'true' : 'false'}
-                      onMouseEnter={() => setHoveredKey(node.key)}
-                      onMouseLeave={() => clearHover(node.key)}
-                      onFocus={() => setHoveredKey(node.key)}
-                      onBlur={() => clearHover(node.key)}
-                      onClick={() => onNavigate(node.navigateTo)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          onNavigate(node.navigateTo);
-                        }
-                      }}
-                    >
-                      <rect
-                        width={NODE_WIDTH}
-                        height={NODE_HEIGHT}
-                        rx={8}
-                        className={[styles.nodeBox, node.deviation ? styles.nodeBoxDeviation : ''].filter(Boolean).join(' ')}
-                        style={{ ['--node-tone' as string]: TONE_VAR[node.tone] }}
-                      />
-                      <text className={styles.nodeTitle} x={12} y={24}>
-                        {truncate(node.title, 26)}
-                      </text>
-                      <text className={styles.nodeBadge} x={12} y={42}>
-                        {truncate(node.badge, 30)}
-                      </text>
-                      {node.deviation ? (
-                        <text className={styles.nodeDeviation} x={12} y={58}>
-                          ⚠ {truncate(node.deviation.label, 26)}
-                        </text>
-                      ) : null}
-                    </g>
-                  );
-                })}
-              </g>
-            </svg>
-          </div>
-
-          <footer className={styles.infoBar} data-testid="node-graph-hover-summary">
-            {hovered ? (
-              <p className={styles.infoLine}>
-                <strong>{hovered.title}</strong>
-                <span> — {hovered.summary}</span>
-              </p>
-            ) : (
-              <p className={styles.infoHint}>Passe o mouse (ou o foco) sobre um nó para ver o resumo. Clique para ir até ele.</p>
-            )}
-          </footer>
-        </>
-      )}
+      {/* `ReactFlowProvider` isolado deste componente (não do app inteiro): o
+          mapa de nós é a única tela que usa React Flow, e o overlay
+          monta/desmonta inteiro a cada abertura — não há estado do motor
+          para preservar entre uma sessão do overlay e outra. */}
+      <ReactFlowProvider>
+        <NodeGraphCanvas view={view} onNavigate={onNavigate} />
+      </ReactFlowProvider>
     </div>
   );
 }

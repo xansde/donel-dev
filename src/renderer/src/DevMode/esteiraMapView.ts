@@ -240,7 +240,12 @@ function entityKey(subject: EntityId): string {
   return `${subject.entity}:${subject.id}`;
 }
 
-function parseEntityKey(value: string | null): EntityId | null {
+// F25 (010, D1) — exportada para o mapa de nós: navegar por um nó clicado
+// precisa do MESMO `EntityId` que o carrossel já resolve a partir do
+// `nodeKey` de `MapSelection`, para alternar a aba da sessão viva
+// (`focusLiveSessionOf` em App.tsx) com a mesma semântica de `onFocusDiscovery`
+// /`onFocusPlan`/`onFocusItem` — nenhum segundo parser de chave.
+export function parseEntityKey(value: string | null): EntityId | null {
   if (value === null) return null;
   const separator = value.indexOf(':');
   if (separator <= 0) return null;

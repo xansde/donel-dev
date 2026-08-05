@@ -33,6 +33,7 @@ import {
   type HumanReviewKind,
   type HumanReviewSnapshot,
   type HumanReviewState,
+  type IngestAmnesty,
   type IngestedRunSnapshot,
   type IngestErrorSnapshot,
   type IngestRecovery,
@@ -317,7 +318,13 @@ interface MutableSession {
  * (`ingestErrors` OU `ingestRecoveries`) — nunca nas duas, porque a recuperacao
  * nao apaga o `ingest.failed` do LOG, so para de mostra-lo como pendente.
  */
-type IngestPathStatus = { readonly kind: 'failed'; readonly error: IngestErrorSnapshot } | { readonly kind: 'recovered'; readonly recovery: IngestRecovery };
+type IngestPathStatus =
+  | { readonly kind: 'failed'; readonly error: IngestErrorSnapshot }
+  | { readonly kind: 'recovered'; readonly recovery: IngestRecovery }
+  // F26 — o path foi ANISTIADO: nao entra em `ingestErrors` nem em
+  // `ingestRecoveries` (ele nunca chegou a ser um `ingest.failed` gravado
+  // nesta passada — ou, se foi, a anistia e a palavra mais recente sobre ele).
+  | { readonly kind: 'amnestied'; readonly amnesty: IngestAmnesty };
 
 interface MutableMirror {
   subject: EntityId;
@@ -899,6 +906,30 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         break;
       }
 
+      case 'ingest.amnestied': {
+        // F26 — este path nao aparece como erro, sob nenhuma hipotese: o
+        // `run_id` ja consta no livro, ingerido por um contrato mais antigo.
+        // Chave e o path, igual `ingest.failed`/`ingest.recovered`: o ULTIMO
+        // evento sobre aquele arquivo decide o status de agora.
+        const resultPath = str(p, 'resultPath');
+        const runId = str(p, 'runId');
+        if (resultPath === null || runId === null) break;
+        const rawIssues = Array.isArray(p.issues) ? p.issues : [];
+        ingestStatusByPath.set(resultPath, {
+          kind: 'amnestied',
+          amnesty: {
+            resultPath,
+            at: str(p, 'at') ?? event.at,
+            runId,
+            subject: entityId(p, 'subject'),
+            issues: rawIssues
+              .filter(isPlainObject)
+              .map((issue) => ({ code: str(issue, 'code') ?? 'unknown', path: str(issue, 'path') ?? '', message: str(issue, 'message') ?? '' })),
+          },
+        });
+        break;
+      }
+
       case 'mirror.queued': {
         const subject = entityId(p, 'subject');
         const operation = str(p, 'operation');
@@ -973,6 +1004,9 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
   const recoveryList = statusList
     .filter((entry): entry is Extract<IngestPathStatus, { kind: 'recovered' }> => entry.kind === 'recovered')
     .map((entry) => entry.recovery);
+  const amnestyList = statusList
+    .filter((entry): entry is Extract<IngestPathStatus, { kind: 'amnestied' }> => entry.kind === 'amnestied')
+    .map((entry) => entry.amnesty);
   const mirrorList = [...mirrorQueue.values()];
   const phaseList = [...phases.values()];
   const tombstoneList = [...tombstones.values()];
@@ -1053,6 +1087,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     runs: [...runs.values()],
     ingestErrors: errorList,
     ingestRecoveries: recoveryList,
+    ingestAmnesties: amnestyList,
     mirrorQueue: mirrorList.map(({ subject, operation, payload, queuedAt, attempts, lastError }) => ({
       subject,
       operation,

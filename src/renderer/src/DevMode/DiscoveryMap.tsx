@@ -69,15 +69,6 @@ export interface DiscoveryMapProps {
   onResume: (step: MapTrailStep) => void;
   /** D-16 — o app não ganha formulário: o gesto leva ao painel do store, onde a criação já mora. */
   onNewDiscovery: () => void;
-  /**
-   * C4 — só encolhe visualmente (largura 0, sem desmontar): o botão "Recolher
-   * painéis" do titlebar zera a coluna do mapa, mas o componente PRECISA
-   * continuar montado, ou o foco do carrossel (`focusedLevelKey`, estado
-   * local abaixo) se perde a cada toggle. Quem desmonta de propósito é só
-   * `sidebarCollapsed`, na condição de `App.tsx` que envolve este componente
-   * (FIX #15, preservado).
-   */
-  collapsed?: boolean;
 }
 
 export function DiscoveryMap({
@@ -91,7 +82,6 @@ export function DiscoveryMap({
   onPrepare,
   onResume,
   onNewDiscovery,
-  collapsed = false,
 }: DiscoveryMapProps): React.JSX.Element {
   // Estado de TELA (qual nível está em foco no eixo Y), não de domínio — mesmo
   // papel que tinha no mapa antigo.
@@ -177,10 +167,9 @@ export function DiscoveryMap({
 
   return (
     <aside
-      className={[styles.map, collapsed ? styles.mapCollapsed : ''].filter(Boolean).join(' ')}
+      className={styles.map}
       aria-label="Mapa do discovery"
       data-testid="devmode-map"
-      data-collapsed={collapsed ? 'true' : 'false'}
       tabIndex={0}
       onWheel={handleMapWheel}
       onKeyDown={handleMapKeyDown}

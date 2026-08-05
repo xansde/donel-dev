@@ -1,7 +1,8 @@
-/* Spec 010 / batch N7 (D1) — mapa de nós em TELA CHEIA. Mesmos tokens do
-   resto do app (`design-system/src/tokens.css`); nenhuma cor solta — é o que
-   deixa o overlay pronto pro dia em que o app ganhar um tema claro (hoje ele
-   só tem um tema, e os tokens já carregam essa dependência sozinhos). */
+/* Spec 010 / batch F25 (D1) — mapa de nós em TELA CHEIA, motor `@xyflow/react`.
+   Mesmos tokens do resto do app (`design-system/src/tokens.css`); nenhuma cor
+   solta. React Flow vem com tema CLARO por padrão — este arquivo sobrescreve
+   as variáveis dele (prefixo `--xy-*`) para o único tema do app (dark), além
+   de estilizar os nós/arestas/legenda próprios. */
 
 .overlay {
   /* TELA CHEIA de verdade: cobre a janela inteira (inclusive titlebar e
@@ -18,6 +19,23 @@
   color: var(--text-primary);
   font-family: var(--font-ui);
   font-size: var(--text-body-size);
+
+  /* Tema do React Flow — sobrescreve o claro-padrão pelos tokens do app.
+     Variáveis documentadas em @xyflow/react/dist/style.css; só as que este
+     overlay de fato usa (fundo do canvas, linha de aresta, controles). */
+  --xy-background-color: var(--bg-app);
+  --xy-background-pattern-dots-color: var(--border);
+  --xy-edge-stroke: var(--border);
+  --xy-edge-stroke-width: 1.5;
+  --xy-edge-label-background-color: var(--bg-panel);
+  --xy-controls-button-background-color: var(--bg-panel);
+  --xy-controls-button-background-color-hover: var(--bg-raised);
+  --xy-controls-button-color: var(--text-primary);
+  --xy-controls-button-color-hover: var(--text-primary);
+  --xy-controls-button-border-color: var(--border);
+  --xy-minimap-background-color: var(--bg-panel);
+  --xy-minimap-mask-background-color: rgba(14, 17, 22, 0.75);
+  --xy-attribution-background-color: transparent;
 }
 
 .header {
@@ -27,6 +45,7 @@
   gap: var(--space-2);
   padding: var(--space-2);
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .title {
@@ -49,70 +68,144 @@
 .canvas {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: var(--space-2);
 }
 
-.edge {
-  fill: none;
-  stroke: var(--border);
-  stroke-width: 1.5;
+/* React Flow monta um `.react-flow` interno que precisa preencher a área
+   reservada — só existe porque `.canvas` acima define a caixa; sem largura
+   e altura explícitas o motor renderiza um canvas de 0px. */
+.canvas > :global(.react-flow) {
+  width: 100%;
+  height: 100%;
 }
 
-.edge[data-kind='flows_into'],
-.edge[data-kind='ships_with'] {
-  /* As duas relações LATERAIS entre itens (não a hierarquia discovery → plano
-     → item) ganham um traço tracejado — distinguível sem depender só da cor. */
-  stroke-dasharray: 4 3;
-  stroke: var(--accent);
+.background {
+  opacity: 0.5;
 }
+
+.controls :global(button) {
+  border-radius: var(--radius-sm);
+}
+
+.minimap {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* === Nó custom (GraphNodeCard) — um por tipo, distinguido por ícone (data
+   attribute `data-kind`) e cor de borda (`--node-tone`, definida inline por
+   nó a partir do tom da projeção). === */
 
 .node {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  border: 1.5px solid var(--node-tone, var(--border));
   cursor: pointer;
+  transition:
+    background var(--duration-micro) var(--ease-standard),
+    filter var(--duration-micro) var(--ease-standard);
 }
 
-.node:focus-visible .nodeBox {
+.node:hover,
+.node:focus-visible {
+  background: var(--bg-raised);
+}
+
+.node:focus-visible {
   outline: none;
   filter: drop-shadow(var(--focus-ring));
 }
 
-.nodeBox {
-  fill: var(--bg-panel);
-  stroke: var(--node-tone, var(--border));
-  stroke-width: 1.5;
-  transition: filter var(--duration-micro) var(--ease-standard);
+.nodeDeviation {
+  border-style: dashed;
+  border-width: 2px;
 }
 
-.node:hover .nodeBox {
-  fill: var(--bg-raised);
-}
-
-.nodeBoxDeviation {
-  stroke-width: 2;
-  stroke-dasharray: 5 3;
+.nodeHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--node-tone, var(--text-primary));
 }
 
 .nodeTitle {
-  fill: var(--text-primary);
-  font-family: var(--font-ui);
   font-size: 12px;
   font-weight: var(--weight-semibold);
-  pointer-events: none;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nodeBadge {
-  fill: var(--text-muted);
-  font-family: var(--font-ui);
   font-size: var(--text-caption-size);
-  pointer-events: none;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.nodeDeviation {
-  fill: var(--node-tone, var(--state-waiting));
-  font-family: var(--font-ui);
+.nodeDeviationLabel {
   font-size: var(--text-caption-size);
   font-weight: var(--weight-semibold);
-  pointer-events: none;
+  color: var(--node-tone, var(--state-waiting));
+}
+
+.nodeHoverHint {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* Ancoragem das arestas (ver comentário em `GraphNodeCard`) — discreta de
+   propósito: um pontinho na cor do próprio nó, não um controle de edição
+   (o grafo não é editável, `isConnectable={false}` já impede o arraste). */
+.handle {
+  width: 6px;
+  height: 6px;
+  background: var(--node-tone, var(--border));
+  border: 1px solid var(--bg-panel);
+  opacity: 0.7;
+}
+
+/* === Arestas === */
+
+.edge :global(.react-flow__edge-path) {
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.edgeLateral :global(.react-flow__edge-path) {
+  /* As duas relações LATERAIS entre itens (não a hierarquia discovery → plano
+     → item) ganham um traço tracejado — distinguível sem depender só da cor. */
+  stroke: var(--accent);
+  stroke-dasharray: 4 3;
 }
 
 .infoBar {

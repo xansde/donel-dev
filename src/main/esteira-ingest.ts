@@ -14,8 +14,8 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { declaredFactsFromRawText, parseEsteiraResultText } from '../shared/esteira/contract/resultContract';
-import { ingestFailureEvent, ingestRecoveryEvent, resultToEvents, runSubject } from '../shared/esteira/ingest/resultToEvents';
+import { declaredFactsFromRawText, parseEsteiraResultText, runIdFromRawText } from '../shared/esteira/contract/resultContract';
+import { ingestAmnestyEvent, ingestFailureEvent, ingestRecoveryEvent, resultToEvents, runSubject } from '../shared/esteira/ingest/resultToEvents';
 import { checkReingest, resultFingerprint } from '../shared/esteira/ingest/runLedger';
 import type { EsteiraStore } from './esteira-store';
 
@@ -40,6 +40,12 @@ export type IngestStatus =
   | 'already-ingested'
   /** Fora do contrato: virou `ingest.failed` VISIVEL, com os issues. */
   | 'rejected'
+  /**
+   * F26 — fora do contrato ATUAL, mas o `run_id` ja consta no livro: e um run
+   * historico, ja ingerido por um contrato mais antigo. Virou `ingest.amnestied`,
+   * nao `ingest.failed` — a tela nao ganha um erro para um run que ja existe.
+   */
+  | 'amnestied'
   /** Nao deu para ler o arquivo (ausente, permissao). Nao e afirmacao sobre a fase. */
   | 'unreadable'
   /** O store recusou escrita (cabecalho de major a frente, por exemplo). */
@@ -73,6 +79,26 @@ export function ingestResultFile(store: EsteiraStore, resultPath: string): Inges
     // O erro precisa ter DONO: sem o `subject` do documento (que pode estar
     // ilegivel), ele aparece como erro sem card, mas aparece.
     const subject = subjectFromRawText(text);
+
+    // F26 — antes de afirmar "nao consegui ler": este `run_id` (lido de forma
+    // leniente, sem exigir que o resto do documento seja valido) JA CONSTA no
+    // livro dos runs? Se sim, e um run HISTORICO, ingerido de boa fe por um
+    // contrato mais antigo — o endurecimento de HOJE nao pode fazer ele
+    // reaparecer como erro. Revalidacao/re-scan so LIMPA, nunca SUJA.
+    const rawRunId = runIdFromRawText(text);
+    if (rawRunId !== null && store.snapshot().runs.some((run) => run.runId === rawRunId)) {
+      const amnesty = ingestAmnestyEvent({
+        resultPath,
+        runId: rawRunId,
+        subject,
+        issues: parsed.issues,
+        at: new Date().toISOString(),
+      });
+      const written = store.append([amnesty], { kind: 'app' });
+      if (!written.ok) return { status: 'store-refused', resultPath, runId: rawRunId };
+      return { status: 'amnestied', resultPath, runId: rawRunId };
+    }
+
     const failure = ingestFailureEvent({
       resultPath,
       issues: parsed.issues,
@@ -178,7 +204,10 @@ export function revalidateIngestErrors(store: EsteiraStore, now: () => string = 
     }
 
     const outcome = ingestResultFile(store, error.resultPath);
-    if (outcome.status === 'ingested' || outcome.status === 'already-ingested') recovered += 1;
+    // F26 — `amnestied` some de `ingestErrors` tao bem quanto `ingested`: para
+    // quem olha a tela, e a MESMA coisa (o erro sumiu); o resumo de boot nao
+    // precisa distinguir por que sumiu.
+    if (outcome.status === 'ingested' || outcome.status === 'already-ingested' || outcome.status === 'amnestied') recovered += 1;
     else stillFailing += 1;
   }
 
@@ -216,6 +245,8 @@ export interface OutboxSummary {
   readonly ingested: number;
   readonly alreadyIngested: number;
   readonly rejected: number;
+  /** F26 — quantos arquivos falhariam no contrato de hoje mas foram anistiados por ja constarem no livro. */
+  readonly amnestied: number;
   readonly unreadable: number;
   readonly outcomes: readonly IngestOutcome[];
 }
@@ -231,14 +262,14 @@ export interface OutboxSummary {
  */
 export function ingestOutbox(store: EsteiraStore, outboxDir: string): OutboxSummary {
   if (!existsSync(outboxDir)) {
-    return { ingested: 0, alreadyIngested: 0, rejected: 0, unreadable: 0, outcomes: [] };
+    return { ingested: 0, alreadyIngested: 0, rejected: 0, amnestied: 0, unreadable: 0, outcomes: [] };
   }
 
   let names: string[];
   try {
     names = readdirSync(outboxDir).filter((name) => name.toLowerCase().endsWith('.json')).sort();
   } catch {
-    return { ingested: 0, alreadyIngested: 0, rejected: 0, unreadable: 0, outcomes: [] };
+    return { ingested: 0, alreadyIngested: 0, rejected: 0, amnestied: 0, unreadable: 0, outcomes: [] };
   }
 
   const outcomes = names.map((name) => ingestResultFile(store, join(outboxDir, name)));
@@ -247,6 +278,7 @@ export function ingestOutbox(store: EsteiraStore, outboxDir: string): OutboxSumm
     ingested: outcomes.filter((outcome) => outcome.status === 'ingested').length,
     alreadyIngested: outcomes.filter((outcome) => outcome.status === 'already-ingested').length,
     rejected: outcomes.filter((outcome) => outcome.status === 'rejected').length,
+    amnestied: outcomes.filter((outcome) => outcome.status === 'amnestied').length,
     unreadable: outcomes.filter((outcome) => outcome.status === 'unreadable').length,
     outcomes,
   };

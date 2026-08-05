@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ESTEIRA_OUTBOX_DIR_ENV_VAR, esteiraOutboxDir, ingestOutbox, ingestResultFile, revalidateIngestErrors } from '../src/main/esteira-ingest';
+import { ingestFailureEvent } from '../src/shared/esteira/ingest/resultToEvents';
 import { openEsteiraStore, storeEventsPath, type EsteiraStore } from '../src/main/esteira-store';
 
 // Spec 010 (D-10) — a INGESTAO, do arquivo ate o card. O teste que importa nao
@@ -317,5 +318,119 @@ describe('revalidateIngestErrors — a abertura do app revalida os erros pendent
 
   it('sem erro pendente nenhum, nao faz nada', () => {
     expect(revalidateIngestErrors(store)).toEqual({ recovered: 0, stillFailing: 0 });
+  });
+});
+
+// F26 — a anistia do outbox historico: um RUN JA INGERIDO pelo contrato
+// antigo nao pode reaparecer como "nao consegui ler" so porque o contrato
+// endureceu. Revalidacao/re-scan so LIMPA a tela, nunca SUJA um run que ja
+// foi ingerido legitimamente.
+describe('ingestResultFile — a anistia do outbox historico (F26)', () => {
+  it('(a) run ja ingerido cujo arquivo passa a falhar no contrato novo e ANISTIADO, nao vira erro', () => {
+    const path = putExample('discovery-com-tracker');
+    expect(ingestResultFile(store, path).status).toBe('ingested');
+
+    // O "contrato mais rigoroso de hoje": o MESMO arquivo, com um campo que o
+    // parser de agora nao conhece (o parser recusaria isto como run novo).
+    const doc = JSON.parse(readFileSync(path, 'utf8'));
+    doc.facts[0].fanout_cards = ['card-1'];
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+
+    const outcome = ingestResultFile(store, path);
+
+    expect(outcome.status).toBe('amnestied');
+    expect(outcome.runId).toBe('run-2026-08-03-0900');
+    expect(store.snapshot().ingestErrors).toHaveLength(0);
+    // Os fatos da ingestao ORIGINAL continuam de pe — a anistia nao os apaga
+    // nem os reescreve.
+    expect(store.snapshot().discoveries).toHaveLength(1);
+    expect(store.snapshot().discoveries[0].title).toBe('Fila de importacao trava sem sinal');
+  });
+
+  it('(b) store ja poluido (ingest.failed gravado ANTES do fix) — o proximo scan deixa o path amnistiado', () => {
+    const path = putExample('discovery-com-tracker');
+    expect(ingestResultFile(store, path).status).toBe('ingested');
+
+    const doc = JSON.parse(readFileSync(path, 'utf8'));
+    doc.facts[0].fanout_cards = ['card-1'];
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+
+    // Simula o `ingest.failed` que o boot de hoje cedo gravou ANTES do fix —
+    // aquele codigo nao consultava o livro dos runs. Escrito direto no log,
+    // sem passar por `ingestResultFile` (que ja tem o fix), para reproduzir
+    // fielmente a ordem real: `run.ingested` (do ingest valido) seguido de
+    // `ingest.failed` (do boot ruim).
+    const failureDeHojeCedo = ingestFailureEvent({
+      resultPath: path,
+      issues: [{ code: 'unknown_field', path: 'facts[0].fanout_cards', message: 'unknown field "fanout_cards"' }],
+      subject: { entity: 'discovery', id: 'dsc-2026-08-03-a' },
+      at: '2026-08-05T08:00:00.000Z',
+      declaredFacts: [],
+    });
+    store.append([failureDeHojeCedo], { kind: 'app' });
+    expect(store.snapshot().ingestErrors).toHaveLength(1);
+
+    // O PROXIMO boot (com o fix) reprocessa o mesmo arquivo.
+    const outcome = ingestResultFile(store, path);
+
+    expect(outcome.status).toBe('amnestied');
+    expect(store.snapshot().ingestErrors).toHaveLength(0);
+    // O `ingest.failed` de hoje cedo PERMANECE no log — a anistia nao apaga
+    // historico, so para de mostrar o path como pendente.
+    expect(readFileSync(storeEventsPath(join(dir, 'store')), 'utf8')).toContain('ingest.failed');
+  });
+
+  it('(c) run NOVO (fora do livro) com arquivo invalido continua ingest.failed — a regra nova vale para run novo', () => {
+    const path = join(outbox, 'run-novo-invalido.json');
+    const doc = JSON.parse(readFileSync(join(EXAMPLES_DIR, 'discovery-com-tracker.json'), 'utf8'));
+    doc.run.run_id = 'run-2026-08-05-9999'; // nunca entrou no livro
+    doc.facts[0].fanout_cards = ['card-1'];
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+
+    const outcome = ingestResultFile(store, path);
+
+    expect(outcome.status).toBe('rejected');
+    expect(store.snapshot().ingestErrors).toHaveLength(1);
+    expect(store.snapshot().ingestErrors[0].issues.some((issue) => issue.path.includes('fanout_cards'))).toBe(true);
+  });
+
+  it('(d) arquivo sem run_id extraivel (JSON quebrado de verdade) continua ingest.failed', () => {
+    const path = join(outbox, 'truncado-sem-run-id.json');
+    writeFileSync(path, '{"kind":"esteira.result", "run":', 'utf8');
+
+    const outcome = ingestResultFile(store, path);
+
+    expect(outcome.status).toBe('rejected');
+    expect(store.snapshot().ingestErrors).toHaveLength(1);
+    expect(store.snapshot().ingestErrors[0].issues[0].code).toBe('invalid_json');
+  });
+
+  it('(e) dois boots seguidos nao empilham eventos duplicados — o dedupe do amnestied e chave propria', () => {
+    const path = putExample('discovery-com-tracker');
+    ingestResultFile(store, path);
+
+    const doc = JSON.parse(readFileSync(path, 'utf8'));
+    doc.facts[0].fanout_cards = ['card-1'];
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+
+    expect(ingestResultFile(store, path).status).toBe('amnestied'); // primeiro "boot" com o contrato novo
+    const afterFirst = store.events.length;
+
+    expect(ingestResultFile(store, path).status).toBe('amnestied'); // segundo "boot": releitura do mesmo arquivo
+    expect(store.events.length).toBe(afterFirst);
+    expect(store.snapshot().ingestErrors).toHaveLength(0);
+  });
+
+  it('ingestOutbox conta os arquivos anistiados a parte dos rejeitados', () => {
+    const path = putExample('discovery-com-tracker');
+    ingestResultFile(store, path);
+    const doc = JSON.parse(readFileSync(path, 'utf8'));
+    doc.facts[0].fanout_cards = ['card-1'];
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+
+    const summary = ingestOutbox(store, outbox);
+
+    expect(summary.amnestied).toBe(1);
+    expect(summary.rejected).toBe(0);
   });
 });
