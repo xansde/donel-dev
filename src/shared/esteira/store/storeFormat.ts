@@ -184,6 +184,16 @@ export const STORE_EVENT_TYPES = [
    * novo. Quem o reduz e quem for implementar `IngestRecovery`.
    */
   'ingest.recovered',
+  /**
+   * F26 — a anistia do outbox historico. Um `ingest.failed` que o parser NOVO
+   * emitiria para um `run_id` JA CONSTANTE no livro (`run.ingested`) vira isto
+   * em vez daquilo: revalidacao/re-scan so LIMPA a tela, nunca SUJA um run que
+   * ja foi ingerido legitimamente por um contrato mais antigo. Diferente de
+   * `ingest.recovered` (que supera um `ingest.failed` ja gravado), este evento
+   * substitui o `ingest.failed` que SERIA emitido agora — o log nunca chega a
+   * ganhar a linha de erro.
+   */
+  'ingest.amnestied',
   'mirror.queued',
   'mirror.synced',
   'mirror.failed',
@@ -716,6 +726,21 @@ export interface IngestErrorSnapshot {
   readonly declaredFacts: readonly DeclaredFactSummary[];
 }
 
+/**
+ * F26 — um `resultPath` que o parser novo RECUSARIA, mas cujo `run_id` ja
+ * consta no livro dos runs: a anistia e um FATO de migracao (o log registra
+ * que o arquivo foi perdoado), nunca silencio. `issues` guarda o que o parser
+ * novo apontaria — a auditoria de por que este arquivo teria falhado hoje, se
+ * fosse um run novo.
+ */
+export interface IngestAmnesty {
+  readonly resultPath: string;
+  readonly at: string;
+  readonly runId: string;
+  readonly subject: EntityId | null;
+  readonly issues: readonly { readonly code: string; readonly path: string; readonly message: string }[];
+}
+
 /** D-12 — o espelho nunca bloqueia: falha vai para fila e o card mostra "espelho pendente". */
 export interface MirrorQueueEntry {
   readonly subject: EntityId;
@@ -772,6 +797,12 @@ export interface StoreSnapshot {
   readonly ingestErrors: readonly IngestErrorSnapshot[];
   /** A6 — as recuperacoes conhecidas, uma por `resultPath` (a mais recente). */
   readonly ingestRecoveries: readonly IngestRecovery[];
+  /**
+   * F26 — as anistias conhecidas, uma por `resultPath`. Auditoria, nao sinal
+   * de UI: o objetivo e limpar a tela ("nao consegui ler"), nao adicionar um
+   * chip novo — o fato fica registrado aqui e no log, nao na tela do card.
+   */
+  readonly ingestAmnesties: readonly IngestAmnesty[];
   readonly mirrorQueue: readonly MirrorQueueEntry[];
   readonly mirrorSynced: readonly MirrorSyncedEntry[];
   /** E2 — as lapides dos itens descartados, uma por item. */
