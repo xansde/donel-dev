@@ -186,7 +186,12 @@ test('o mapa fica denso, humano, sobrevive ao colapso da barra e sabe retomar/na
     );
 
     // ── C4 — recolher a barra direita NÃO desmonta o mapa esquerdo ────────
-    const recolherPaineis = win.getByRole('button', { name: 'Recolher painéis do Modo Dev' });
+    // O aria-label/title deste botão alterna com o estado ("Recolher..." ↔
+    // "Mostrar..." — correto para acessibilidade). Âncora por regex na parte
+    // ESTÁVEL do nome, nunca pelo texto inteiro: o próprio roteiro clica nele
+    // duas vezes, e um locator com o nome de um único estado emperra no
+    // segundo clique (violaria a própria regra do roteiro.md).
+    const recolherPaineis = win.getByRole('button', { name: /painéis do Modo Dev/ });
     await passo(
       'Recolher os painéis do Modo Dev',
       recolherPaineis,
