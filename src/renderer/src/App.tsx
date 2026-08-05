@@ -10,7 +10,7 @@ import {
   TerminalTab,
   Toast,
 } from '@donel-dev/design-system';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
+import { Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AccountLoad,
@@ -92,6 +92,11 @@ import type { EntityId } from '../../shared/esteira/store/storeFormat';
 // C3 — o parser do tasks.md (puro, testado) fica fora do domínio da esteira
 // de propósito: é interpretação de TEXTO de um artefato, não fato do store.
 import { parseTasksDoc, taskScope } from '../../shared/tasksDoc';
+// N7 (010, D1) — o mapa de nós em tela cheia: outra projeção do MESMO
+// snapshot da esteira (`esteiraState` acima), isolada de propósito na sua
+// própria pasta (nenhuma edição em EsteiraScreen/esteiraMapView) — ver o
+// comentário do estado `nodeGraphOpen` mais abaixo.
+import { NodeGraphOverlay } from './DevMode/NodeGraphOverlay';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { AccountsPanel } from './AccountsPanel';
@@ -370,6 +375,15 @@ export function App(): React.JSX.Element {
   const [devModeOn, setDevModeOn] = useState(false);
   /** Spec 010 — tela da esteira nova (gesto interno: botão no titlebar do Modo Dev). */
   const [esteiraOpen, setEsteiraOpen] = useState(false);
+  /**
+   * Spec 010 / N7 (D1) — o mapa de nós, em tela cheia. Estado de TELA isolado
+   * de propósito (só este booleano + o botão do titlebar + o overlay
+   * condicional lá embaixo): o componente e a projeção pura moram inteiros em
+   * `DevMode/NodeGraphOverlay.tsx`/`DevMode/nodeGraphView.ts` e não editam
+   * `EsteiraScreen`/`esteiraMapView` — a mesma casca de UI que outro batch
+   * (mapa de carrossel) também mexe.
+   */
+  const [nodeGraphOpen, setNodeGraphOpen] = useState(false);
   /**
    * Spec 010 / B6 — o mapa é PROJEÇÃO do store: o snapshot chega pronto do main
    * (macro etapa já derivada, D-13) e é empurrado a cada mudança. O renderer
@@ -1814,6 +1828,23 @@ export function App(): React.JSX.Element {
             <Route size={16} strokeWidth={1.5} aria-hidden="true" />
           </button>
         ) : null}
+        {/* Spec 010 / N7 (D1) — navegação rápida: o mapa de nós, em tela
+            cheia, para acompanhar o trabalho de ponta a ponta (todos os
+            discoveries, não um card por vez). Só abre — fechar é gesto do
+            próprio overlay (botão "Fechar" ou Esc), porque ele cobre a
+            titlebar inteira enquanto está aberto. */}
+        {devModeOn ? (
+          <button
+            type="button"
+            className={styles.preferencesButton}
+            onClick={() => setNodeGraphOpen(true)}
+            aria-label="Abrir o mapa de nós"
+            title="Mapa de nós — visão geral e navegação rápida (spec 010, D1)"
+            data-testid="node-graph-toggle"
+          >
+            <Network size={16} strokeWidth={1.5} aria-hidden="true" />
+          </button>
+        ) : null}
         <button
           type="button"
           className={styles.preferencesButton}
@@ -2265,6 +2296,25 @@ export function App(): React.JSX.Element {
         onChangeProjectScanMode={handleChangeProjectScanMode}
         onChangeNotificationPreference={handleChangeNotificationPreference}
       />
+
+      {/* Spec 010 / N7 (D1) — o mapa de nós. Renderizado condicionalmente
+          (monta/desmonta com `nodeGraphOpen`) para que o Esc do próprio
+          overlay só exista enquanto ele está na tela. `onNavigate` entrega o
+          MESMO alvo de seleção que o carrossel já consome (`mapSelection`) —
+          o grafo é controle de navegação, não só visualização — e fecha
+          qualquer tela que estivesse por cima do carrossel para o destino
+          ficar visível. */}
+      {nodeGraphOpen ? (
+        <NodeGraphOverlay
+          snapshot={esteiraState?.snapshot ?? null}
+          onClose={() => setNodeGraphOpen(false)}
+          onNavigate={(target) => {
+            setMapSelection(target);
+            setEsteiraOpen(false);
+            setNodeGraphOpen(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
