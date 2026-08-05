@@ -14,10 +14,35 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { declaredFactsFromRawText, parseEsteiraResultText, runIdFromRawText } from '../shared/esteira/contract/resultContract';
+import { declaredFactsFromRawText, parseEsteiraResultText, runIdFromRawText, runTimestampFromRawText } from '../shared/esteira/contract/resultContract';
 import { ingestAmnestyEvent, ingestFailureEvent, ingestRecoveryEvent, resultToEvents, runSubject } from '../shared/esteira/ingest/resultToEvents';
 import { checkReingest, resultFingerprint } from '../shared/esteira/ingest/runLedger';
 import type { EsteiraStore } from './esteira-store';
+
+/**
+ * F26 — o instante em que o contrato endurecido (novos required-facts,
+ * `done_without_human_decision`, enum `verification_kind`, `unknown_field`)
+ * entrou no app instalado do dono. Runs cujo timestamp e ANTERIOR a este
+ * corte sao historicos por definicao: nao ha como eles terem sido escritos
+ * ja sabendo de regras que ainda nao existiam, e o contrato de hoje nao pode
+ * cobrar retroativamente algo que a skill de ontem nunca prometeu cumprir.
+ *
+ * So entra em jogo quando o `run_id` nao e conhecido de nenhuma ingestao
+ * anterior (criterio 1/2) — e o criterio de ULTIMO recurso, nao o primeiro.
+ */
+export const HISTORIC_CONTRACT_CUTOFF = '2026-08-05T13:00:00Z';
+
+/**
+ * Comparacao NUMERICA (nao lexicografica): `finished_at`/`started_at` de um
+ * `result.json` pode vir sem milissegundos ou noutra forma ISO valida que
+ * ainda assim compara errado como string. `Date.parse` invalido (`NaN`) e
+ * "nao da para dizer" — nunca tratado como anterior ao corte.
+ */
+function isBeforeHistoricCutoff(timestamp: string): boolean {
+  const value = Date.parse(timestamp);
+  if (Number.isNaN(value)) return false;
+  return value < Date.parse(HISTORIC_CONTRACT_CUTOFF);
+}
 
 /**
  * O "local combinado" — onde a skill deixa o `result.json` e o app o encontra.
@@ -80,13 +105,34 @@ export function ingestResultFile(store: EsteiraStore, resultPath: string): Inges
     // ilegivel), ele aparece como erro sem card, mas aparece.
     const subject = subjectFromRawText(text);
 
-    // F26 — antes de afirmar "nao consegui ler": este `run_id` (lido de forma
-    // leniente, sem exigir que o resto do documento seja valido) JA CONSTA no
-    // livro dos runs? Se sim, e um run HISTORICO, ingerido de boa fe por um
-    // contrato mais antigo — o endurecimento de HOJE nao pode fazer ele
-    // reaparecer como erro. Revalidacao/re-scan so LIMPA, nunca SUJA.
+    // F26 — antes de afirmar "nao consegui ler", tres criterios (em ordem) —
+    // qualquer um basta:
+    //
+    // 1/2. Este `run_id` (lido de forma leniente, sem exigir que o resto do
+    //    documento seja valido) JA PASSOU pela ingestao — no livro
+    //    (`store.snapshot().runs`, o caso comum) OU em qualquer evento ja
+    //    gravado com origem `ingest` mesmo sem `run.ingested`
+    //    (`knownIngestRunIds`: os runs pre-ledger, ingeridos ANTES do livro
+    //    existir, tem fatos no store mas nunca ganharam aquele evento).
+    // 3. Sem `run_id` conhecido: o TIMESTAMP do run (leniente, `finished_at`
+    //    OU `started_at`) e anterior ao corte do contrato endurecido — um run
+    //    de antes daquela data nao tem como ter sido escrito ja sabendo das
+    //    regras de hoje.
+    //
+    // Qualquer um dos tres e um run HISTORICO, ingerido (ou tentado) de boa
+    // fe por um contrato mais antigo — o endurecimento de HOJE nao pode fazer
+    // ele reaparecer como erro. Revalidacao/re-scan so LIMPA, nunca SUJA.
     const rawRunId = runIdFromRawText(text);
-    if (rawRunId !== null && store.snapshot().runs.some((run) => run.runId === rawRunId)) {
+    const snapshot = store.snapshot();
+    const runIdKnown = rawRunId !== null && (snapshot.runs.some((run) => run.runId === rawRunId) || snapshot.knownIngestRunIds.has(rawRunId));
+
+    let isHistoric = runIdKnown;
+    if (!isHistoric) {
+      const rawTimestamp = runTimestampFromRawText(text);
+      isHistoric = rawTimestamp !== null && isBeforeHistoricCutoff(rawTimestamp);
+    }
+
+    if (isHistoric) {
       const amnesty = ingestAmnestyEvent({
         resultPath,
         runId: rawRunId,

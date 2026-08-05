@@ -402,7 +402,9 @@ describe('espinha — do gesto no app ao card na tela', () => {
       JSON.stringify({
         contract_version: '1.0.0',
         kind: 'esteira.result',
-        run: { run_id: 'run-incompleto', phase: 'validar', status: 'success', started_at: '2026-08-04T14:00:00.000Z', finished_at: '2026-08-04T14:20:00.000Z', failure: null },
+        // F26 — timestamp DEPOIS do HISTORIC_CONTRACT_CUTOFF: este documento e
+        // um invalido de HOJE, sem relacao com a anistia do outbox historico.
+        run: { run_id: 'run-incompleto', phase: 'validar', status: 'success', started_at: '2026-08-06T14:00:00.000Z', finished_at: '2026-08-06T14:20:00.000Z', failure: null },
         actor: { tool: 'esteira-donel', tool_version: '3.0.0' },
         subject: { discovery_id: created.discoveryId },
         facts: [{ type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'validar', outcome: 'done' }],
@@ -429,7 +431,8 @@ describe('espinha — do gesto no app ao card na tela', () => {
       JSON.stringify({
         contract_version: '1.0.0',
         kind: 'esteira.result',
-        run: { run_id: 'run-rogue', phase: 'discovery', status: 'success', started_at: '2026-08-04T14:00:00.000Z', finished_at: '2026-08-04T14:10:00.000Z', failure: null },
+        // F26 — ver comentario no teste irmao acima (timestamp depois do corte).
+        run: { run_id: 'run-rogue', phase: 'discovery', status: 'success', started_at: '2026-08-06T14:00:00.000Z', finished_at: '2026-08-06T14:10:00.000Z', failure: null },
         actor: { tool: 'esteira-donel', tool_version: '2.1.0' },
         subject: { discovery_id: created.discoveryId },
         facts: [

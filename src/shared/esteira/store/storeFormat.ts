@@ -727,16 +727,20 @@ export interface IngestErrorSnapshot {
 }
 
 /**
- * F26 — um `resultPath` que o parser novo RECUSARIA, mas cujo `run_id` ja
- * consta no livro dos runs: a anistia e um FATO de migracao (o log registra
- * que o arquivo foi perdoado), nunca silencio. `issues` guarda o que o parser
- * novo apontaria — a auditoria de por que este arquivo teria falhado hoje, se
+ * F26 — um `resultPath` que o parser novo RECUSARIA, mas que e um run
+ * HISTORICO: a anistia e um FATO de migracao (o log registra que o arquivo
+ * foi perdoado), nunca silencio. `issues` guarda o que o parser novo
+ * apontaria — a auditoria de por que este arquivo teria falhado hoje, se
  * fosse um run novo.
+ *
+ * `runId` e `null` quando o proprio documento nao tinha um `run.run_id`
+ * legivel (a anistia por CORTE DE DATA so precisa do timestamp) — honesto em
+ * vez de um palpite, igual `IngestRecovery.runId`.
  */
 export interface IngestAmnesty {
   readonly resultPath: string;
   readonly at: string;
-  readonly runId: string;
+  readonly runId: string | null;
   readonly subject: EntityId | null;
   readonly issues: readonly { readonly code: string; readonly path: string; readonly message: string }[];
 }
@@ -793,6 +797,17 @@ export interface StoreSnapshot {
   readonly notes: readonly NoteSnapshot[];
   /** A4 — o livro dos runs ingeridos, na ordem em que entraram. */
   readonly runs: readonly IngestedRunSnapshot[];
+  /**
+   * F26 — todo `run_id` que JA PASSOU pela ingestao, mesmo antes do livro
+   * (`runs`/`run.ingested`) existir: qualquer evento cuja origem e
+   * `{ kind: 'ingest' }` carrega o `run_id` do documento que o gerou
+   * (`EventSource`), e essa e a unica fonte que alcanca os 10 runs
+   * pre-ledger do incidente de 05/08 — eles tem fatos no store, mas nunca
+   * ganharam um `run.ingested` porque o evento nao existia quando entraram.
+   * `runs` (o livro) e um SUBCONJUNTO deste set; a anistia consulta os dois
+   * pela mesma razao que consultaria so este.
+   */
+  readonly knownIngestRunIds: ReadonlySet<string>;
   /** D-10 — erros AINDA pendentes: um path recuperado (A6) sai daqui, nao fica acumulando. */
   readonly ingestErrors: readonly IngestErrorSnapshot[];
   /** A6 — as recuperacoes conhecidas, uma por `resultPath` (a mais recente). */
