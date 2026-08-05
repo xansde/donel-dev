@@ -114,6 +114,12 @@ export const STORE_EVENT_TYPES = [
   'plan.created',
   'work_item.created',
   'work_item.updated',
+  /**
+   * D-16 — item nascido pela skill, descartado num gesto. O evento fica no log
+   * e a entidade sai do snapshot. A LAPIDE (`DiscardedItemTombstone`) esta
+   * DECLARADA e ainda nao derivada: hoje o item some sem nada dizendo que
+   * existiu, e "por que este item sumiu?" nao tem resposta na tela.
+   */
   'work_item.discarded',
   'relation.added',
   'relation.removed',
@@ -163,6 +169,21 @@ export const STORE_EVENT_TYPES = [
    */
   'run.ingested',
   'ingest.failed',
+  /**
+   * DECLARADO, NAO IMPLEMENTADO (contrato para o batch da ingestao sanavel).
+   *
+   * Um `result.json` que tinha sido RECUSADO passou a ser legivel — porque a
+   * skill reemitiu uma versao corrigida, ou porque uma passada de saneamento o
+   * recuperou. O evento existe para que a recuperacao seja um FATO, e nao o
+   * apagamento do erro anterior: o `ingest.failed` continua no log, e este diz
+   * que ele foi superado. Apagar o erro seria o app reescrevendo a propria
+   * historia — o mesmo silencio que a spec 010 extingue, com sinal trocado.
+   *
+   * O reducer NAO trata este tipo ainda: ele cai no `default` e e preservado
+   * sem derivacao, exatamente como o formato promete para evento de canal mais
+   * novo. Quem o reduz e quem for implementar `IngestRecovery`.
+   */
+  'ingest.recovered',
   'mirror.queued',
   'mirror.synced',
   'mirror.failed',
@@ -571,6 +592,56 @@ export interface IngestedRunSnapshot {
   readonly subject: EntityId | null;
   readonly resultPath: string | null;
   readonly at: string;
+}
+
+/**
+ * DECLARADO, NAO IMPLEMENTADO — a estrutura minima da ingestao sanavel, fixada
+ * aqui para que quem a implementar nao precise inventar a forma e para que ela
+ * nao nasca divergente do resto do formato.
+ *
+ * Contrato pretendido:
+ *
+ * - `resultPath` e a MESMA chave do `IngestErrorSnapshot` que ela supera — e
+ *   por ela que o card sabe qual erro deixou de valer.
+ * - `recoveredCodes` diz o que foi sanado, nao "estava tudo bem": a recuperacao
+ *   e um fato sobre o documento, nao um perdao retroativo.
+ * - `runId` so aparece quando o documento sanado tinha um run legivel; `null` e
+ *   um estado honesto, nao um buraco a preencher com palpite.
+ * - O `ingest.failed` anterior PERMANECE no log. O snapshot e que para de
+ *   mostra-lo como pendente.
+ */
+export interface IngestRecovery {
+  readonly resultPath: string;
+  readonly at: string;
+  readonly runId: string | null;
+  readonly subject: EntityId | null;
+  /** Os codigos de `ContractIssue` que o documento trazia e deixaram de valer. */
+  readonly recoveredCodes: readonly string[];
+  /** Como foi sanado, em uma frase — "a skill reemitiu", "campo desconhecido descartado". */
+  readonly how: string;
+}
+
+/**
+ * DECLARADO, NAO IMPLEMENTADO — a LAPIDE de um item descartado.
+ *
+ * Hoje `work_item.discarded` remove a entidade do snapshot e o evento fica so
+ * no log: quem olha o card ve o item sumir, sem nada dizendo que ele existiu.
+ * Para um item nascido pela skill (D-16) isso e barato de descartar e caro de
+ * explicar depois — "por que este item sumiu?" nao tem resposta na tela.
+ *
+ * Contrato pretendido: a lapide guarda o MINIMO para responder essa pergunta
+ * (o que era, de quem era, quando e por que saiu) e nada alem — ela e um
+ * registro de que algo foi descartado, nao uma copia do item para ressuscitar.
+ * O item descartado continua FORA de `workItems`.
+ */
+export interface DiscardedItemTombstone {
+  readonly id: string;
+  readonly discoveryId: string;
+  readonly title: string;
+  readonly itemType: WorkItemType;
+  readonly discardedAt: string;
+  /** Por que saiu, quando quem descartou disse. `null` = ninguem disse, e o card nao inventa. */
+  readonly reason: string | null;
 }
 
 /** D-10 — documento fora do contrato vira ERRO visivel no card, nunca silencio. */
