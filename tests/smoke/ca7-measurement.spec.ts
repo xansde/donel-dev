@@ -4,6 +4,7 @@ import path, { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { median } from './statistics';
 
 // T712 (007-favoritos-sessoes) — MEDIÇÃO OBRIGATÓRIA do CA-7: tempo do
 // `domcontentloaded` até a sidebar pintada com o registro CHEIO (5 favoritos
@@ -19,6 +20,22 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // falhar só quando o boot piorar de verdade, e não por variação de carga da
 // máquina. Se algum dia a otimização de boot entrar (§B20 do backlog), aperte
 // esta cerca junto.
+//
+// G4 (batch n3) — MEDIANA DE N EXECUÇÕES, MANTENDO A CERCA. Achado: a cerca
+// pegou uma regressão real que 1649 testes verdes não viram (prova de valor),
+// mas uma ÚNICA amostra oscila 168–274 ms com a máquina sob carga (medido:
+// 3 de 5 execuções abaixo da cerca de 250 ms, 2 acima só por variação de
+// carga) — flaky vira "reroda até passar", que corrói o detector (ninguém
+// confia mais no vermelho). Escolha (documentada aqui, não só no card): rodar
+// `SAMPLE_COUNT` boots independentes e comparar a MEDIANA contra a cerca, em
+// vez de alargar a cerca. Alargar a cerca perderia sensibilidade a uma
+// regressão real e persistente; a mediana já resolve a flakiness sozinha —
+// uma regressão de verdade desloca a DISTRIBUIÇÃO inteira pra cima (todas as
+// amostras sobem), então a mediana também estoura a cerca; um pico isolado de
+// carga da máquina (1–2 amostras altas em meio a várias normais) não desloca
+// a mediana. Cada amostra é um boot INDEPENDENTE (Electron novo) — a medição
+// é de boot fresco, então não dá pra reamostrar dentro da mesma janela sem
+// medir outra coisa (repintura, não boot).
 //
 // Polling APERTADO (loop próprio abaixo, checando a cada round-trip do
 // `locator.count()`), nunca `expect().toPass` — lição da 004
@@ -37,8 +54,10 @@ const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
 const APP_CWD = path.join(__dirname, '../..');
 const RECENT_PER_PROJECT = 5;
 const FAVORITES_COUNT = 5;
-/** Cerca de regressão, não alvo (ver decisão de 26/07 no topo). Pior caso medido: 167 ms. */
+/** Cerca de regressão, não alvo (ver decisão de 26/07 no topo). Pior caso medido numa amostra isolada: 274 ms — a MEDIANA de N amostras fica bem abaixo disso (ver comentário G4). */
 const CA7_REGRESSION_FENCE_MS = 250;
+/** G4 — nº de boots independentes por medição. 5 é o tamanho da amostra do diagnóstico que motivou esta mudança (168–274 ms, 3 de 5 abaixo da cerca). */
+const SAMPLE_COUNT = 5;
 
 let electronApp: ElectronApplication;
 let appWindow: Page;
@@ -50,6 +69,48 @@ async function launchApp(): Promise<void> {
   await appWindow.waitForLoadState('domcontentloaded');
 }
 
+/**
+ * G4 — UM boot completo: abre o app (config já seedado no disco por quem
+ * chama), faz polling apertado até a sidebar pintar o registro cheio, mede
+ * (dentro do MESMO `evaluate`, ver comentário de topo) e fecha o app antes de
+ * devolver — cada amostra é um processo Electron independente, igual a um
+ * usuário fechando e reabrindo o app. Reusa o MESMO `userDataDir`/config.json
+ * entre amostras (não recria a cada volta): a medição nunca chama nenhum IPC
+ * que mute `appConfig` (só lê `projects.list`/pinta a sidebar), então não há
+ * risco de uma amostra contaminar o config.json que a próxima vai ler.
+ */
+async function measureOneBoot(): Promise<number> {
+  await launchApp();
+
+  const rowsSelector = 'section[aria-label="Favoritos"] button[aria-pressed]';
+  const expectedRows = FAVORITES_COUNT * (RECENT_PER_PROJECT + 1);
+  const pollDeadlineMs = Date.now() + 10_000;
+  let elapsedMs: number | null = null;
+  let lastCount = 0;
+  for (;;) {
+    const result = await appWindow.evaluate(
+      ({ selector, expectedRows }) => {
+        const count = document.querySelectorAll(selector).length;
+        if (count !== expectedRows) return { done: false, count };
+        const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
+        return { done: true, count, elapsedMs: performance.now() - nav.domContentLoadedEventEnd };
+      },
+      { selector: rowsSelector, expectedRows },
+    );
+    lastCount = result.count;
+    if (result.done) {
+      elapsedMs = result.elapsedMs!;
+      break;
+    }
+    if (Date.now() > pollDeadlineMs) {
+      throw new Error(`timeout aguardando a sidebar pintar o registro cheio: ${lastCount}/${expectedRows} linhas montadas`);
+    }
+  }
+
+  await electronApp.close();
+  return elapsedMs;
+}
+
 test.afterAll(async () => {
   test.setTimeout(90_000); // folga do B11 para o close com PTY vivo
   try {
@@ -59,8 +120,10 @@ test.afterAll(async () => {
   }
 });
 
-test('T712/CA-7 — domcontentloaded → sidebar com o registro cheio (5×6 linhas), medido com polling apertado', async () => {
-  test.setTimeout(60_000);
+test('T712/CA-7 — domcontentloaded → sidebar com o registro cheio (5×6 linhas), mediana de 5 boots independentes', async () => {
+  // G4 — orçamento generoso: SAMPLE_COUNT boots completos (cada um com seu
+  // próprio polling de até 10s) mais o boot de descoberta abaixo.
+  test.setTimeout(180_000);
 
   // 1. Descobre projetos REAIS já escaneados nesta máquina — nunca inventar
   // paths que não existem no disco (o "missing" da sidebar é um estado real
@@ -78,6 +141,8 @@ test('T712/CA-7 — domcontentloaded → sidebar com o registro cheio (5×6 linh
   // 2. Monta um config.json com os 5 favoritos + registro CHEIO, ESCRITO
   // DIRETO NO DISCO — a medição é do BOOT (D9/CA-7: ler bytes, nunca varrer
   // `.jsonl`), não de uma sequência de IPCs feita depois do app já de pé.
+  // Escrito UMA VEZ (não a cada amostra) — reaproveitado pelos N boots do
+  // laço abaixo (ver comentário de `measureOneBoot`).
   userDataDir = createIsolatedUserDataDir('ca7-measurement');
   const sessionRegistry: Record<string, unknown> = {};
   for (const project of chosenProjects) {
@@ -116,47 +181,25 @@ test('T712/CA-7 — domcontentloaded → sidebar com o registro cheio (5×6 linh
   mkdirSync(userDataDir, { recursive: true });
   writeFileSync(join(userDataDir, 'config.json'), JSON.stringify(config, null, 2), 'utf8');
 
-  // 3. Boot com o config já pronto no disco, e polling APERTADO até as 30
-  // linhas (5 grupos × 6 sessões) estarem montadas. CRÍTICO: a contagem E o
-  // cálculo do tempo decorrido acontecem na MESMA chamada de `evaluate` —
-  // inteiramente dentro do processo renderer, sem round-trip do protocolo do
-  // Playwright entre "detectei que pintou" e "medi quanto levou". Medir os
-  // dois em passos separados reintroduziria exatamente o erro do amostrador
-  // que a lição da 004 avisa (852 ms medidos por algo que levava ~350 ms).
-  await launchApp();
-
-  const rowsSelector = 'section[aria-label="Favoritos"] button[aria-pressed]';
-  const expectedRows = FAVORITES_COUNT * (RECENT_PER_PROJECT + 1);
-  const pollDeadlineMs = Date.now() + 10_000;
-  let elapsedMs: number | null = null;
-  let lastCount = 0;
-  for (;;) {
-    const result = await appWindow.evaluate(
-      ({ selector, expectedRows }) => {
-        const count = document.querySelectorAll(selector).length;
-        if (count !== expectedRows) return { done: false, count };
-        const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
-        return { done: true, count, elapsedMs: performance.now() - nav.domContentLoadedEventEnd };
-      },
-      { selector: rowsSelector, expectedRows },
-    );
-    lastCount = result.count;
-    if (result.done) {
-      elapsedMs = result.elapsedMs!;
-      break;
-    }
-    if (Date.now() > pollDeadlineMs) {
-      throw new Error(`timeout aguardando a sidebar pintar o registro cheio: ${lastCount}/${expectedRows} linhas montadas`);
-    }
+  // 3. SAMPLE_COUNT boots independentes contra o MESMO config já pronto no
+  // disco — cada `measureOneBoot()` abre um Electron novo, mede com polling
+  // apertado (contagem + tempo na MESMA chamada de `evaluate`, ver comentário
+  // de topo) e fecha antes da próxima volta.
+  const samples: number[] = [];
+  for (let i = 0; i < SAMPLE_COUNT; i += 1) {
+    samples.push(await measureOneBoot());
   }
+  const medianMs = median(samples);
 
   // eslint-disable-next-line no-console
   console.log(
-    `CA-7 medido: ${elapsedMs!.toFixed(2)} ms (faixa aceita em 26/07: 103–167 ms · cerca de regressão: ${CA7_REGRESSION_FENCE_MS} ms) — ${expectedRows} linhas`,
+    `CA-7 medido (${SAMPLE_COUNT} boots): [${samples.map((s) => s.toFixed(2)).join(', ')}] ms · mediana: ${medianMs.toFixed(2)} ms ` +
+      `(faixa aceita em 26/07 p/ amostra isolada: 103–167 ms · cerca de regressão sobre a MEDIANA: ${CA7_REGRESSION_FENCE_MS} ms)`,
   );
-  // Vermelho aqui significa **regressão de boot**, não o desvio já aceito: o
-  // número sai de polling apertado numa única chamada de `evaluate` (sem o erro
-  // de amostrador da 004), então não é ruído de medição. Diagnóstico e candidatos
-  // de otimização: specs/007-favoritos-sessoes/medicao-ca7.md e §B20 do backlog.
-  expect(elapsedMs).toBeLessThan(CA7_REGRESSION_FENCE_MS);
+  // Vermelho aqui significa **regressão de boot persistente** (a distribuição
+  // inteira deslocou), não ruído de carga da máquina nem o desvio já aceito:
+  // a mediana de N boots independentes já absorve o pico isolado que uma
+  // amostra única não absorvia (ver decisão G4 no comentário de topo).
+  // Diagnóstico e candidatos de otimização: specs/007-favoritos-sessoes/medicao-ca7.md e §B20 do backlog.
+  expect(medianMs).toBeLessThan(CA7_REGRESSION_FENCE_MS);
 });
