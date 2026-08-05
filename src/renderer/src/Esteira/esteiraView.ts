@@ -1218,6 +1218,16 @@ const PHASE_CATALOG: readonly PhaseSpec[] = [
     missing:
       'Nenhum plano declarado ainda. A fase Plano detalha um plano que já existe — quem declara o primeiro é o Discovery.',
   },
+  // E1 (05/08) — Design roda ANTES de Implementar: mockup e diagrama de
+  // arquitetura se veem antes de codar, não depois (F11). `run.phase`
+  // continua string livre ([P-4]) — a linha nova é só oferta da tela.
+  {
+    phase: 'design',
+    label: 'Design',
+    runsOn: 'work_item',
+    missing:
+      'Nenhum item de trabalho ainda. Design produz o mockup e o diagrama de arquitetura de um item antes de implementar, e item nasce pela skill (D-16) — o app não tem formulário de criação.',
+  },
   {
     phase: 'implementar',
     label: 'Implementar',
@@ -1225,23 +1235,19 @@ const PHASE_CATALOG: readonly PhaseSpec[] = [
     missing:
       'Nenhum item de trabalho ainda. Implementar roda sobre um item, e item nasce pela skill (D-16) — o app não tem formulário de criação.',
   },
+  // E5 (05/08) — Validar e Documentar viram UMA fase: a fronteira que
+  // justificaria fase separada (gate humano · olho novo · orçamento de
+  // contexto) não separa as duas — Documentar escreve com o que Validar
+  // acabou de construir, na mesma sessão. A fase composta declara os DOIS
+  // `phase.completed` (A22, suporte a múltiplos por run já no contrato); o
+  // catálogo, que é oferta da tela e não enum do contrato ([P-4]), mostra
+  // uma linha só. `run.phase` continua "validar" — só o rótulo muda.
   {
     phase: 'validar',
-    label: 'Validar',
+    label: 'Validar + Documentar',
     runsOn: 'work_item',
     missing:
-      'Nenhum item de trabalho ainda. Validar roda sobre um item, e item nasce pela skill (D-16) — o app não tem formulário de criação.',
-  },
-  // As duas fases que fecham o ciclo entraram com o B7 (skill 3.0). O handoff
-  // do B2 pediu exatamente isto: uma linha por fase, com a frase de "por que
-  // não dá agora" junto — o catálogo continua oferta da tela, não enum do
-  // contrato ([P-4]).
-  {
-    phase: 'documentar',
-    label: 'Documentar',
-    runsOn: 'work_item',
-    missing:
-      'Nenhum item de trabalho ainda. Documentar registra o artefato de um item (D-8) — sem item, não há o que apontar; item nasce pela skill (D-16).',
+      'Nenhum item de trabalho ainda. Validar roda a verificação e Documentar registra o artefato (D-8) sobre um item, e item nasce pela skill (D-16) — o app não tem formulário de criação.',
   },
   {
     phase: 'concluir',

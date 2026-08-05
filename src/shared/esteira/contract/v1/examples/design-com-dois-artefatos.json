@@ -1,0 +1,61 @@
+{
+  "contract_version": "1.0.0",
+  "kind": "esteira.result",
+  "run": {
+    "run_id": "run-2026-08-05-1100",
+    "phase": "design",
+    "status": "success",
+    "started_at": "2026-08-05T14:00:00.000Z",
+    "finished_at": "2026-08-05T14:22:30.000Z",
+    "failure": null
+  },
+  "actor": {
+    "tool": "esteira-donel",
+    "tool_version": "3.0.0",
+    "executor": "claude-code",
+    "model": "claude-opus-5",
+    "effort": "high",
+    "cli_session_id": "0198f4cc-8d9e-7b68-ac1f-9d8ea1b2c3d4"
+  },
+  "subject": {
+    "discovery_id": "dsc-2026-08-03-a",
+    "plan_id": "pln-2026-08-03-a1",
+    "work_item_id": "wi-2026-08-03-a1-02"
+  },
+  "workspace": {
+    "target_repo": "atlas",
+    "repo_path": "C:/Users/dev/code/atlas",
+    "worktree_path": null,
+    "branch": "design/fila-observavel"
+  },
+  "facts": [
+    {
+      "type": "artifact.recorded",
+      "owner": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "artifact_kind": "mockup",
+      "location": "disk",
+      "repo": null,
+      "path": "C:/Users/dev/.donel/design/wi-2026-08-03-a1-02-mockup.png"
+    },
+    {
+      "type": "artifact.recorded",
+      "owner": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "artifact_kind": "architecture-diagram",
+      "location": "repo",
+      "repo": "atlas",
+      "path": "specs/031-fila-observavel/design/diagrama-arquitetura.md"
+    },
+    {
+      "type": "note.recorded",
+      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "text": "O mockup cobre so a tela do endpoint de saude; o painel do beacon fica para o item wi-2026-08-03-a1-03, que tem o proprio ciclo de design."
+    },
+    {
+      "type": "phase.completed",
+      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "phase": "design",
+      "outcome": "done",
+      "summary": "Mockup do endpoint e diagrama de arquitetura da fila prontos; ver antes de codar (F11)."
+    }
+  ]
+}
