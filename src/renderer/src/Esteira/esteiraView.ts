@@ -20,13 +20,16 @@ import { esteiraPhaseCommand, LOCK_WORD, lockStateOf, noLockDispatchHint, type L
 import type {
   ArtifactPointer,
   DecisionSnapshot,
+  DiscardedItemTombstone,
   DiscoverySnapshot,
   EntityId,
+  EntityKind,
   GateConfirmationSnapshot,
   HumanReviewKind,
   HumanReviewSnapshot,
   HumanReviewState,
   IngestErrorSnapshot,
+  IngestRecovery,
   LifecycleKind,
   LockRecord,
   MacroStage,
@@ -395,6 +398,27 @@ export function discardHint(item: WorkItemSnapshot, lock: LockRecord | null = nu
   return `${origem} O item sai do card; o fato de ele ter existido fica no histórico.`;
 }
 
+// ---------------------------------------------------------------------------
+// E2 — a lápide: o item saiu, mas o card ainda responde "por que ele sumiu?"
+// ---------------------------------------------------------------------------
+
+export interface TombstoneView {
+  readonly key: string;
+  /** "«Instrumentar a fila» · spike · descartado em 05/08 14:22" */
+  readonly text: string;
+  /** Por que saiu, quando quem descartou disse. `null` = ninguém disse — o card não inventa. */
+  readonly reason: string | null;
+}
+
+/** As lápides do card, cada uma com a frase pronta — a tela só posiciona. */
+export function tombstoneLines(card: CardView): readonly TombstoneView[] {
+  return card.tombstones.map((tombstone) => ({
+    key: `work_item:${tombstone.id}`,
+    text: `${tombstone.title} · ${tombstone.itemType} · descartado em ${formatTimestamp(tombstone.discardedAt)}`,
+    reason: tombstone.reason,
+  }));
+}
+
 /** Uma nota do card, já sabendo dizer sobre o que ela é. */
 export interface NoteView {
   readonly text: string;
@@ -426,6 +450,8 @@ export interface CardView {
   /** Todas as sessões do card: é delas que sai o "alguém assumiu?" de cada fase. */
   readonly sessions: readonly SessionSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
+  /** A6 — os erros deste card que foram SUPERADOS. O `ingest.failed` continua no log; isto é o que diz que ele deixou de valer. */
+  readonly ingestRecoveries: readonly IngestRecovery[];
   /** D-12 — o que o board ainda não recebeu. Nunca bloqueia nada; só precisa ser visível. */
   readonly mirrorQueue: readonly MirrorQueueEntry[];
   readonly notes: readonly NoteView[];
@@ -444,6 +470,8 @@ export interface CardView {
   readonly decisions: readonly DecisionSnapshot[];
   /** A10/A19 — o que sobrou para uma pessoa conferir ou fazer. */
   readonly humanReviews: readonly HumanReviewSnapshot[];
+  /** E2 — as lápides dos itens descartados deste card: o que eram, quando e por quê saíram. */
+  readonly tombstones: readonly DiscardedItemTombstone[];
 }
 
 /**
@@ -561,10 +589,16 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
 
   const plans = snapshot.plans.filter((plan) => plan.discoveryId === discovery.id);
   const items = snapshot.workItems.filter((item) => item.discoveryId === discovery.id);
+  // E2 — o item descartado continua PERTENCENDO ao card: sem ele em `owned`,
+  // toda nota/fase/sessão que apontava para ele viraria órfã no instante em
+  // que `work_item.discarded` o tirasse de `items` — o mesmo silêncio que o
+  // descarte prometia NÃO fazer.
+  const tombstones = snapshot.tombstones.filter((tombstone) => tombstone.discoveryId === discovery.id);
   const owned = new Set<string>([
     `discovery:${discovery.id}`,
     ...plans.map((plan) => `plan:${plan.id}`),
     ...items.map((item) => `work_item:${item.id}`),
+    ...tombstones.map((tombstone) => `work_item:${tombstone.id}`),
   ]);
   const belongs = (subject: { entity: string; id: string }): boolean => owned.has(`${subject.entity}:${subject.id}`);
   const locks = snapshot.locks.filter((lock) => belongs(lock.subject));
@@ -583,6 +617,7 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     openSession: [...snapshot.sessions].reverse().find((session) => belongs(session.subject) && session.endedAt === null) ?? null,
     sessions: snapshot.sessions.filter((session) => belongs(session.subject)),
     ingestErrors: snapshot.ingestErrors.filter((error) => error.subject !== null && belongs(error.subject)),
+    ingestRecoveries: snapshot.ingestRecoveries.filter((recovery) => recovery.subject !== null && belongs(recovery.subject)),
     mirrorQueue: snapshot.mirrorQueue.filter((entry) => belongs(entry.subject)),
     verifications: snapshot.verifications.filter((entry) => belongs(entry.subject)),
     artifacts: snapshot.artifacts.filter((entry) => belongs(entry.owner)),
@@ -595,8 +630,9 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
         text: note.text,
         at: note.at,
         subject: note.subject,
-        about: aboutSubject(note.subject, plans, items),
+        about: aboutSubject(note.subject, plans, items, tombstones),
       })),
+    tombstones,
   };
 }
 
@@ -721,15 +757,28 @@ export type PhasePresence =
   /** Fase iniciada sem sessão do app: quem afirmou o início foi a skill, pelo outbox. */
   | 'declared';
 
-/** Como se chama, em português, o assunto de uma nota deste card. */
-function aboutSubject(subject: EntityId, plans: readonly PlanLike[], items: readonly WorkItemSnapshot[]): string {
+/**
+ * Como se chama, em português, o assunto de uma nota deste card.
+ *
+ * E2 — `tombstones` é o que impede uma nota sobre um item DESCARTADO de virar
+ * "um item" genérico: o item saiu de `workItems`, mas a lápide sabe o título,
+ * e a nota continua contando A HISTÓRIA DO DESCARTE, não um fantasma sem nome.
+ */
+function aboutSubject(
+  subject: EntityId,
+  plans: readonly PlanLike[],
+  items: readonly WorkItemSnapshot[],
+  tombstones: readonly DiscardedItemTombstone[] = [],
+): string {
   if (subject.entity === 'discovery') return 'o card';
   if (subject.entity === 'plan') {
     const plan = plans.find((entry) => entry.id === subject.id);
     return plan === undefined ? 'um plano' : `o plano «${plan.title}»`;
   }
   const item = items.find((entry) => entry.id === subject.id);
-  return item === undefined ? 'um item' : `o item «${item.title}»`;
+  if (item !== undefined) return `o item «${item.title}»`;
+  const tombstone = tombstones.find((entry) => entry.id === subject.id);
+  return tombstone === undefined ? 'um item' : `o item «${tombstone.title}» (descartado)`;
 }
 
 interface PlanLike {
@@ -1158,11 +1207,15 @@ export function phaseLines(card: CardView, subject: EntityId | null = null): rea
     // Sem sessão nenhuma (fase vinda só da ingestão), a frase não depende disso.
     const presence: PhasePresence =
       aberta !== undefined ? (aberta.claimed ? 'claimed' : 'prepared') : doAssunto.length > 0 ? 'interrupted' : 'declared';
+    // A7 — por que a interrupção aconteceu, quando alguém (a reconciliação de
+    // boot, ou o próprio `endSession`) declarou. A sessão mais RECENTE da
+    // cadeia é a que tem a palavra sobre esta interrupção especificamente.
+    const interruptedReason = presence === 'interrupted' ? (doAssunto.at(-1)?.endReason ?? null) : null;
     return {
       key: `${phase.subject.entity}:${phase.subject.id}:${phase.phase}`,
       text: phaseLine(phase, presence),
       failed: phase.failure !== null,
-      detail: phase.failure?.message ?? null,
+      detail: phase.failure?.message ?? interruptedReason,
       state: phaseTrailState(phase, presence),
       phase,
       // A marca vai AO LADO da frase, não dentro dela: a frase descreve o
@@ -1506,6 +1559,42 @@ export function ingestErrorLine(error: IngestErrorSnapshot): string {
   const detail = explained ?? `${first.code}${first.path ? ` em ${first.path}` : ''}`;
   const more = error.issues.length > 1 ? ` (+${error.issues.length - 1})` : '';
   return `${detail}${more}`;
+}
+
+/** Como cada entidade se chama em português, no singular — o vocabulário do custo (A5). */
+const ENTITY_LABEL: Readonly<Record<EntityKind, string>> = {
+  discovery: 'o card',
+  plan: 'o plano',
+  work_item: 'o item',
+};
+
+/**
+ * A5 — o CUSTO de um erro de ingestão: o que ESTE arquivo declararia, se
+ * entrasse. "Campo desconhecido em facts[3].fanout" não diz o que se perde; o
+ * dono viveu isso como "não consigo abrir as tasks" — porque os
+ * `work_item.recorded` que o arquivo carregava nunca chegaram a existir.
+ *
+ * `null` quando o documento não declarava nenhuma entidade nova (ex.: JSON
+ * truncado antes de `facts`, ou um erro só sobre fatos que não criam
+ * entidade) — nesse caso não há custo de "algo deixou de existir" a dizer.
+ */
+export function ingestErrorCostLine(error: IngestErrorSnapshot): string | null {
+  const named = error.declaredFacts.filter((fact): fact is typeof fact & { entity: EntityKind } => fact.entity !== null);
+  if (named.length === 0) return null;
+
+  const pieces = named.map((fact) => (fact.title ? `${ENTITY_LABEL[fact.entity]} «${fact.title}»` : `${ENTITY_LABEL[fact.entity]} ${fact.id ?? '(sem id)'}`));
+  const outros = error.declaredFacts.length - named.length;
+  const resto = outros > 0 ? `, e mais ${outros} fato${outros === 1 ? '' : 's'}` : '';
+  return `Sem este arquivo não existe: ${pieces.join(', ')}${resto}.`;
+}
+
+/**
+ * A6 — a recuperação de um erro superado. Não é "erro sumiu": é um FATO
+ * próprio, com o que foi sanado e como — o mesmo rigor que faz o erro
+ * original nunca desaparecer do log.
+ */
+export function ingestRecoveryLine(recovery: IngestRecovery): string {
+  return `Voltou a ler: ${recovery.how}.`;
 }
 
 /** O que a última varredura do outbox encontrou — os três desfechos possíveis. */

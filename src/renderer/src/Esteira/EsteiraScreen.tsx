@@ -12,7 +12,9 @@ import {
   discardedMessage,
   dispatchView,
   gestureRefusalMessage,
+  ingestErrorCostLine,
   ingestErrorLine,
+  ingestRecoveryLine,
   itemStateActions,
   ITEM_STATE_RULE,
   lockView,
@@ -36,6 +38,7 @@ import {
   seedIssuesShown,
   seededSummary,
   STORE_COMPATIBILITY_WARNING,
+  tombstoneLines,
   verificationLines,
   type ProvenanceMark,
   type SeedRefusal,
@@ -148,6 +151,9 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
     () => new Map((content?.lines ?? []).filter((line) => line.kind === 'item').map((line) => [line.key.slice('work_item:'.length), line])),
     [content],
   );
+
+  // E2 — as lápides: item que saiu, mas o card ainda sabe responder por quê.
+  const tombstones = useMemo(() => (selected === null ? [] : tombstoneLines(selected)), [selected]);
 
   const noteTargets = useMemo(() => (selected === null ? [] : noteTargetOptions(selected)), [selected]);
   const noteTarget = notePick !== null && noteTargets.some((option) => option.value === notePick) ? notePick : (noteTargets[0]?.value ?? '');
@@ -497,13 +503,35 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
               {/* O erro de leitura vem PRIMEIRO: é a informação que o modelo
                   antigo escondia, e a que muda o que o operador faz agora. */}
               {selected.ingestErrors.length > 0 ? (
-                <section className={styles.block}>
+                <section className={styles.block} data-testid="esteira-ingest-errors">
                   <h4 className={styles.blockTitle}>Não consegui ler</h4>
                   {selected.ingestErrors.map((error) => (
                     <p key={error.resultPath} className={styles.errorLine}>
                       <code>{error.resultPath}</code> — {ingestErrorLine(error)}
                       <br />
                       <span className={styles.hint}>O que a skill fez não se perdeu: o arquivo continua lá, fora do contrato.</span>
+                      {/* A5 — o CUSTO: sem este arquivo, quais entidades nunca
+                          chegaram a existir. É a diferença entre "um campo
+                          quebrou" e "por isso o Implementar não abre". */}
+                      {ingestErrorCostLine(error) ? (
+                        <>
+                          <br />
+                          <strong>{ingestErrorCostLine(error)}</strong>
+                        </>
+                      ) : null}
+                    </p>
+                  ))}
+                </section>
+              ) : null}
+
+              {/* A6 — a recuperação é um FATO próprio, não o desaparecimento
+                  silencioso do erro: o card diz que ele foi superado, e como. */}
+              {selected.ingestRecoveries.length > 0 ? (
+                <section className={styles.block} data-testid="esteira-ingest-recovered">
+                  <h4 className={styles.blockTitle}>Erros arquivados</h4>
+                  {selected.ingestRecoveries.map((recovery) => (
+                    <p key={recovery.resultPath} className={styles.hint}>
+                      <code>{recovery.resultPath}</code> — {ingestRecoveryLine(recovery)}
                     </p>
                   ))}
                 </section>
@@ -680,6 +708,22 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                 {content.note !== null ? <p className={styles.hint}>{content.note}</p> : null}
               </section>
               )}
+
+              {/* E2 — a lápide: o item saiu de "Planos e itens", mas continua
+                  respondendo "por que ele sumiu?" — nunca vira órfão calado. */}
+              {tombstones.length > 0 ? (
+                <section className={styles.block} data-testid="esteira-tombstones">
+                  <h4 className={styles.blockTitle}>Itens descartados</h4>
+                  <ul className={styles.lines}>
+                    {tombstones.map((tombstone) => (
+                      <li key={tombstone.key}>
+                        {tombstone.text}
+                        {tombstone.reason ? <span className={styles.hint}> — {tombstone.reason}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
 
               <section className={styles.block} data-testid="esteira-notes">
                 <h4 className={styles.blockTitle}>Notas</h4>
