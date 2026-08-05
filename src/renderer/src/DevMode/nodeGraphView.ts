@@ -26,6 +26,7 @@ import {
   signalViews,
   stageView,
   verificationLines,
+  WORK_ITEM_STATE_LABEL,
   type CardView,
 } from '../Esteira/esteiraView';
 import { LIFECYCLE_BY_ITEM_TYPE } from '../../../shared/esteira/store/storeFormat';
@@ -114,12 +115,9 @@ const LIFECYCLE_LABEL: Readonly<Record<LifecycleKind, string>> = {
   'answered-question': 'pergunta respondida',
 };
 
-const WORK_ITEM_STATE_LABEL: Readonly<Record<WorkItemSnapshot['state'], string>> = {
-  open: 'aberto',
-  'in-progress': 'em curso',
-  done: 'concluído',
-  abandoned: 'abandonado',
-};
+// `WORK_ITEM_STATE_LABEL` NÃO tem versão local: já é exportada por
+// `esteiraView.ts` (import acima) — reescrevê-la aqui seria a MESMA frase
+// nascendo de duas fontes, o defeito que este arquivo existe para evitar.
 
 const VERIFICATION_KIND_LABEL: Readonly<Record<VerificationKind, string>> = {
   'pull-request': 'Pull request',
