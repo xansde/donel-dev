@@ -235,18 +235,20 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
   suportada e o lançamento é recusado com mensagem (C20).
   **DoD**: ambos verdes.
 
-- [ ] **T1325** Ingestão da chave real do OpenRouter: ler do Bitwarden e digitar
+- [x] **T1325** Ingestão da chave real do OpenRouter: ler do Bitwarden e digitar
   **no formulário do app** (T1321), direto para o cofre. Nunca em chat,
   arquivo, fixture, log, variável de ambiente do repo ou commit; nenhuma saída
   de terminal que a ecoe (C19). **Gesto humano/manual — sem teste.**
   **DoD**: `secretsStatus` do provider vira `configured`; `git status` limpo.
-  > **PENDENTE — gesto humano, não executado pelo worker.** O spike T1302
-  > (sessão de terminal, não o app) já provou que a chave lida do Bitwarden
-  > funciona ponta a ponta com `ANTHROPIC_BASE_URL=https://openrouter.ai/api`
-  > (sem `/v1` — achado do spike). Digitar a chave real DENTRO do app
-  > instalado é ato do Alexandre no alfa (roteiro passo 2 de `e2e.md`) — o
-  > worker de código não abre o app instalado nem grava segredo de produção
-  > no `userData` real da máquina.
+  > **CUMPRIDA em 2026-08-04 pelo dono**, no app em modo dev (branch desta
+  > etapa), seguindo a seção 2 do `e2e.md`: provider OpenRouter criado
+  > (`ANTHROPIC_BASE_URL=https://openrouter.ai/api`, sem `/v1` — achado do
+  > spike T1302), chave lida do Bitwarden e colada no campo write-only
+  > (clipboard direto, nunca ecoada em chat/terminal/arquivo), status
+  > "Segredo: configurado" confirmado. Durante o gesto o dono reportou o bug
+  > de roubo de foco do Modal — corrigido na mesma sessão (commit `829a2d9`,
+  > smoke `tests/smoke/modal-focus-steal.spec.ts`; issue 09 de
+  > `.scratch/contas-e-provedores/` registra o restante de UX).
 
 - [x] **T1326** Regressão declarada + roteiro e2e no alfa: rodar `npm test`
   inteiro (suítes de perfil, da etapa 1 e `pty-manager` verdes) e escrever
