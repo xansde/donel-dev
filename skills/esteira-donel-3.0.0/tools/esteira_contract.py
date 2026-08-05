@@ -371,8 +371,29 @@ def _required_facts_table() -> dict[str, Any]:
     return schema.get("x-required-facts", {})
 
 
-def required_facts_for(phase: str, status: str) -> list[str]:
+def done_phases(facts: Iterable[dict[str, Any]]) -> list[str]:
+    """As fases que este result declara FECHADAS com desfecho bom.
+
+    A cobranca de produto e por elas, nao por `run.phase`: um result que fecha N
+    fases responde pelo produto de cada uma que declarou `done`.
+    """
+    return [
+        fact["phase"]
+        for fact in facts
+        if fact.get("type") == "phase.completed" and fact.get("outcome") == "done" and isinstance(fact.get("phase"), str)
+    ]
+
+
+def required_facts_for(phase: str, status: str, facts: Iterable[dict[str, Any]] = ()) -> list[str]:
     """A tabela `x-required-facts` do schema — dado compartilhado, nao regra duplicada.
+
+    Duas camadas, e a diferenca entre elas e A3:
+
+    - `by-phase` vale em QUALQUER desfecho (a entidade e o assunto do run);
+    - `by-phase-when-done` so se cobra de quem declarou ter chegado no produto.
+      Cobrar de todo `success` obrigava um run que parou num gate a declarar uma
+      verificacao `pending` so para caber no contrato — o contrato empurrando a
+      skill a inventar fato.
 
     So vale para run bem-sucedido: o que se cobra e promessa CUMPRIDA. Run que
     falhou ja declara `failure` com codigo e motivo — cobrar dele os fatos da
@@ -383,6 +404,11 @@ def required_facts_for(phase: str, status: str) -> list[str]:
     table = _required_facts_table()
     required = list(table.get("any-phase-success", []))
     required.extend(table.get("by-phase", {}).get(phase, []))
+    when_done = table.get("by-phase-when-done", {})
+    for closed in done_phases(facts):
+        for fact_type in when_done.get(closed, []):
+            if fact_type not in required:
+                required.append(fact_type)
     return required
 
 
@@ -419,20 +445,22 @@ def build_result(
         raise ContractError("um run que nao declara nada nao tem resultado para ingerir")
 
     declared = {fact["type"] for fact in facts}
-    missing = [required for required in required_facts_for(phase, status) if required not in declared]
+    missing = [required for required in required_facts_for(phase, status, facts) if required not in declared]
     if missing:
         raise ContractError(f"fase {phase!r} concluida sem declarar: {', '.join(missing)}")
 
     # D-4 com dente: a fase que declara o ciclo ENCERRADO precisa da evidencia
     # que o encerra ("PR mergeado E VERIFICADO"). Sem isto, "Concluido" na tela
     # seria palavra sem lastro. Desfecho ruim continua valido: `abandoned` e
-    # `inconclusive` nao pedem nada.
-    if status == "success" and phase in phases_requiring_passed_verification():
-        declared_done = any(f["type"] == "phase.completed" and f.get("outcome") == "done" for f in facts)
+    # `inconclusive` nao pedem nada. Cobrado por FASE FECHADA, nao por
+    # `run.phase`: quem fecha `concluir` de dentro de outro run responde igual.
+    if status == "success":
+        exigem = phases_requiring_passed_verification()
+        fechadas = [closed for closed in done_phases(facts) if closed in exigem]
         has_passed = any(f["type"] == "verification.recorded" and f.get("state") == "passed" for f in facts)
-        if declared_done and not has_passed:
+        if fechadas and not has_passed:
             raise ContractError(
-                f"fase {phase!r} com outcome 'done' exige uma verification.recorded com state 'passed' — "
+                f"fase {fechadas[0]!r} com outcome 'done' exige uma verification.recorded com state 'passed' — "
                 "concluir sem evidencia e afirmar o que ninguem leu"
             )
 

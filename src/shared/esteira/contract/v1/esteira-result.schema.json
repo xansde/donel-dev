@@ -329,19 +329,28 @@
     "description": "O que cada lado PROMETE gravar. O teste de contrato dos dois lados le esta tabela: a skill falha se nao gravar, o app falha se nao exigir. So vale para run com status=success — o que se cobra e promessa CUMPRIDA, nao promessa feita; run que falhou declara `failure`, e isso ja e o desfecho legivel.",
     "any-phase-success": ["phase.completed"],
     "by-phase": {
-      "discovery": ["discovery.recorded"],
+      "discovery": ["discovery.recorded"]
+    },
+    "x-by-phase-rationale": {
+      "discovery": "A entidade E o assunto do run: uma discovery que abandonou continua sendo a discovery que o run declarou. Por isso ela e cobrada em QUALQUER desfecho, ao contrario do produto das outras fases."
+    },
+    "by-phase-when-done": {
+      "plano": ["work_item.recorded"],
       "implementar": ["verification.recorded"],
       "validar": ["verification.recorded"],
       "documentar": ["artifact.recorded"],
       "concluir": ["verification.recorded"]
     },
-    "x-by-phase-rationale": {
+    "x-when-done-rationale": {
+      "x-por-que-o-desfecho-importa": "A3 — o que se cobra e o PRODUTO da fase, e fase que nao chegou ao produto nao tem produto para mostrar. Cobrar de todo run `success` obrigava um run que parou num gate a declarar uma verificacao `pending` so para caber no contrato: o contrato empurrando a skill a inventar fato, que e a inverdade de 03/08 pela porta do gate. `abandoned` e `inconclusive` sao desfechos legitimos e nao pedem nada.",
+      "x-quando-se-aplica": "Vale por FASE FECHADA, nao por `run.phase`: um result que fecha N fases (A22) e cobrado do produto de CADA uma que declarou `outcome: done`. Quem declara 'documentar concluida' mostra o artefato, mesmo que o run se chame `implementar`.",
+      "plano": "Plano concluido sem nenhum item declarado nao e plano — e o card F3 da evidencia 1 pelo avesso: a fase diz que terminou bem e nao deixa nada para a seguinte tomar.",
       "implementar": "O que a fase produziu tem que poder ser conferido por outra pessoa: o check que ela escreveu e rodou (codigo), o documento pronto para revisao, ou a resposta de um spike — inclusive negativa (D-4). 'Implementei' sem nada verificavel e afirmacao sem lastro.",
       "validar": "Rodar a verificacao E validar (D-4). A fase que valida sem declarar o que verificou nao deixou registro nenhum do que examinou.",
       "documentar": "D-8 — o store guarda o PONTEIRO do artefato. Documento sem endereco nao responde 'cade o artefato?', que e a unica pergunta que a fase existe para fechar.",
       "concluir": "D-4 — o ciclo termina com PR mergeado e verificado, documento aceito, ou conclusao registrada. Concluir sem verificacao seria o app afirmar 'terminou' sem ter lido nada."
     },
     "done-requires-passed-verification": ["concluir"],
-    "x-done-rationale": "Fases desta lista com `phase.completed.outcome = done` exigem ao menos uma `verification.recorded` com `state = passed`. E o dente de D-4: 'PR mergeado E VERIFICADO'. Desfecho ruim continua valido — `abandoned`/`inconclusive` nao pedem nada."
+    "x-done-rationale": "Fases desta lista com `phase.completed.outcome = done` exigem ao menos uma `verification.recorded` com `state = passed`. E o dente de D-4: 'PR mergeado E VERIFICADO'. Desfecho ruim continua valido — `abandoned`/`inconclusive` nao pedem nada. Tambem se cobra por FASE FECHADA, nao por `run.phase`."
   }
 }

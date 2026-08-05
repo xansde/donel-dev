@@ -347,6 +347,57 @@ describe('parseEsteiraResult — o que cada fase promete declarar (D-4)', () => 
   it('fase que a tabela nao nomeia so precisa de phase.completed — `run.phase` continua livre (P-4)', () => {
     expect(parseEsteiraResult(resultForPhase('explorar', [completed('explorar')])).ok).toBe(true);
   });
+
+  // A3 — a tabela passa a olhar o DESFECHO, nao so o `status`. O que se cobra e
+  // o produto da fase, e fase que nao chegou ao produto nao tem produto para
+  // mostrar: um run de implementar que parou num gate teve que declarar uma
+  // verificacao `pending` so para caber no contrato. Declarar verificacao que
+  // nao houve para escapar da regra e a inverdade de 03/08 pela porta do gate.
+  describe('A3 — o que se cobra depende do desfecho', () => {
+    it('implementar INCONCLUSIVO nao precisa declarar verificacao', () => {
+      expect(parseEsteiraResult(resultForPhase('implementar', [completed('implementar', 'inconclusive')])).ok).toBe(true);
+    });
+
+    it('validar ABANDONADO nao precisa declarar verificacao', () => {
+      expect(parseEsteiraResult(resultForPhase('validar', [completed('validar', 'abandoned')])).ok).toBe(true);
+    });
+
+    it('documentar INCONCLUSIVO nao precisa apontar artefato', () => {
+      expect(parseEsteiraResult(resultForPhase('documentar', [completed('documentar', 'inconclusive')])).ok).toBe(true);
+    });
+
+    it('implementar CONCLUIDO continua exigindo a verificacao — o desfecho bom e o que tem produto', () => {
+      expect(codesOf(resultForPhase('implementar', [completed('implementar')]))).toContain('missing_required_fact');
+    });
+
+    it('plano CONCLUIDO sem nenhum item declarado e recusado — plano que nao propoe nada nao e plano', () => {
+      expect(codesOf(resultForPhase('plano', [completed('plano')]))).toContain('missing_required_fact');
+    });
+
+    it('plano CONCLUIDO com um item declarado e aceito', () => {
+      const item = {
+        type: 'work_item.recorded',
+        work_item_id: 'wi-1',
+        plan_id: 'pln-1',
+        item_type: 'spike',
+        title: 'Medir onde o lote para',
+        target_repo: null,
+        scope_repos: [],
+      };
+      expect(parseEsteiraResult(resultForPhase('plano', [item, completed('plano')])).ok).toBe(true);
+    });
+
+    it('plano ABANDONADO nao precisa de item — desistir de planejar e um desfecho', () => {
+      expect(parseEsteiraResult(resultForPhase('plano', [completed('plano', 'abandoned')])).ok).toBe(true);
+    });
+
+    it('a discovery continua declarando a si mesma em QUALQUER desfecho — a entidade e o assunto do run', () => {
+      const doc = resultForPhase('discovery', [
+        { type: 'phase.completed', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'abandoned', summary: null },
+      ]);
+      expect(codesOf(doc)).toContain('missing_required_fact');
+    });
+  });
 });
 
 describe('parseEsteiraResultText', () => {

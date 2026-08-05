@@ -159,13 +159,26 @@ describe('espelho — as fases do ciclo completo (implementar, validar, document
   ] as const;
 
   it('a tabela que a skill le e a tabela do schema, e so vale para run bem-sucedido', () => {
+    // A3 — a cobranca do PRODUTO depende do desfecho declarado, entao a tabela
+    // se le com os fatos na mao. `fechada(p)` = a fase p declarada `done`.
     const lida = runPython(
-      `${PRELUDE}print(json.dumps({p: c.required_facts_for(p, 'success') for p in ['discovery','implementar','validar','documentar','concluir','explorar']} | {'falhou': c.required_facts_for('validar', 'failed')}))`,
+      `${PRELUDE}` +
+        `def fechada(p): return [{'type':'phase.completed','phase':p,'outcome':'done'}]\n` +
+        `def parada(p): return [{'type':'phase.completed','phase':p,'outcome':'inconclusive'}]\n` +
+        `print(json.dumps(\n` +
+        `  {p: c.required_facts_for(p, 'success', fechada(p)) for p in ['discovery','plano','implementar','validar','documentar','concluir','explorar']}\n` +
+        `  | {'implementar_parado': c.required_facts_for('implementar', 'success', parada('implementar'))}\n` +
+        `  | {'falhou': c.required_facts_for('validar', 'failed', fechada('validar'))}\n` +
+        `))`,
     ) as Record<string, string[]>;
 
     expect(lida.discovery).toEqual(['phase.completed', 'discovery.recorded']);
+    expect(lida.plano).toEqual(['phase.completed', 'work_item.recorded']);
     expect(lida.implementar).toEqual(['phase.completed', 'verification.recorded']);
     expect(lida.documentar).toEqual(['phase.completed', 'artifact.recorded']);
+    // A3 — a fase que parou no meio nao tem produto para mostrar, e cobrar dela
+    // um obrigava a skill a inventar uma verificacao `pending`.
+    expect(lida.implementar_parado).toEqual(['phase.completed']);
     // `run.phase` continua livre (P-4): fase que a tabela nao nomeia so precisa
     // do `phase.completed` de sempre.
     expect(lida.explorar).toEqual(['phase.completed']);

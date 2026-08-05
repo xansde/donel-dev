@@ -321,7 +321,30 @@ export const CONSUMED_PATHS: readonly string[] = [
 export const REQUIRED_FACTS_ANY_SUCCESS: readonly FactType[] = ['phase.completed'];
 
 export const REQUIRED_FACTS_BY_PHASE: Readonly<Record<string, readonly FactType[]>> = {
+  // A entidade E o assunto do run: uma discovery que abandonou continua sendo a
+  // discovery que aquele run declarou. Por isso ela e cobrada em QUALQUER
+  // desfecho — ao contrario do PRODUTO das outras fases, que so se cobra de
+  // quem diz ter chegado nele.
   discovery: ['discovery.recorded'],
+};
+
+/**
+ * A3 — o produto de cada fase, cobrado apenas de quem declara ter CHEGADO nele
+ * (`phase.completed.outcome = done`).
+ *
+ * Antes a cobranca era por `status: success`, e isso obrigava um run que parou
+ * num gate a declarar uma `verification.recorded` com `state: pending` so para
+ * caber no contrato — o contrato empurrando a skill a inventar fato, que e a
+ * inverdade de 03/08 entrando pela porta do gate. Desfecho ruim continua
+ * valido e nao pede nada.
+ *
+ * A cobranca e por FASE FECHADA, nao por `run.phase`: um result que fecha N
+ * fases (A22) responde pelo produto de cada uma que declarou `done`.
+ */
+export const REQUIRED_FACTS_BY_PHASE_WHEN_DONE: Readonly<Record<string, readonly FactType[]>> = {
+  // Plano concluido sem nenhum item e o card F3 da evidencia 1 pelo avesso: a
+  // fase diz que terminou bem e nao deixa nada para a seguinte tomar.
+  plano: ['work_item.recorded'],
   // O que a fase produziu tem que poder ser conferido: o check que ela escreveu
   // e rodou, o documento pronto para revisao, ou a resposta do spike (D-4).
   implementar: ['verification.recorded'],
@@ -647,24 +670,37 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
   // A tabela vem do schema (`x-required-facts`), nao de regra escrita duas
   // vezes — e o teste de cobertura reprova se as duas se afastarem.
   if (run !== null && run.status === 'success') {
-    const required = [...REQUIRED_FACTS_ANY_SUCCESS, ...(REQUIRED_FACTS_BY_PHASE[run.phase] ?? [])];
-    for (const factType of required) {
+    // As fases que este result declara FECHADAS com desfecho bom. A cobranca de
+    // produto (A3) e por elas, nao por `run.phase`: quem diz "documentar
+    // concluida" mostra o artefato, mesmo que o run se chame `implementar`.
+    const donePhases = facts
+      .filter((fact): fact is Extract<EsteiraFact, { type: 'phase.completed' }> => fact.type === 'phase.completed')
+      .filter((fact) => fact.outcome === 'done')
+      .map((fact) => fact.phase);
+
+    const required: { readonly factType: FactType; readonly because: string }[] = [
+      ...REQUIRED_FACTS_ANY_SUCCESS.map((factType) => ({ factType, because: run.phase })),
+      ...(REQUIRED_FACTS_BY_PHASE[run.phase] ?? []).map((factType) => ({ factType, because: run.phase })),
+      ...donePhases.flatMap((phase) => (REQUIRED_FACTS_BY_PHASE_WHEN_DONE[phase] ?? []).map((factType) => ({ factType, because: phase }))),
+    ];
+
+    for (const { factType, because } of required) {
       if (!facts.some((fact) => fact.type === factType)) {
-        c.add('missing_required_fact', 'facts', `a successful "${run.phase}" run must declare a "${factType}" fact`);
+        c.add('missing_required_fact', 'facts', `a successful "${because}" run must declare a "${factType}" fact`);
       }
     }
 
     // D-4 com dente: a fase que declara o ciclo ENCERRADO precisa da evidencia
     // que o encerra. Sem isto, "Concluído" na tela seria palavra sem lastro —
     // a inverdade de 03/08 na direcao contraria.
-    if (PHASES_REQUIRING_PASSED_VERIFICATION.includes(run.phase)) {
-      const declaredDone = facts.some((fact) => fact.type === 'phase.completed' && fact.outcome === 'done');
+    for (const phase of donePhases) {
+      if (!PHASES_REQUIRING_PASSED_VERIFICATION.includes(phase)) continue;
       const passed = facts.some((fact) => fact.type === 'verification.recorded' && fact.state === 'passed');
-      if (declaredDone && !passed) {
+      if (!passed) {
         c.add(
           'done_without_passed_verification',
           'facts',
-          `a "${run.phase}" run completed as "done" must declare a "verification.recorded" fact with state "passed"`,
+          `a "${phase}" run completed as "done" must declare a "verification.recorded" fact with state "passed"`,
         );
       }
     }
