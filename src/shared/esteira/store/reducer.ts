@@ -25,6 +25,7 @@ import {
   type DiscoverySnapshot,
   type EntityId,
   type EntityKind,
+  type GateConfirmationSnapshot,
   type IngestErrorSnapshot,
   type LockRecord,
   type MacroStage,
@@ -297,6 +298,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
   const locks = new Map<string, LockRecord>();
   const phases = new Map<string, PhaseRunSnapshot>();
   const verifications = new Map<string, VerificationSnapshot>();
+  const gates = new Map<string, GateConfirmationSnapshot>();
   const notes: NoteSnapshot[] = [];
   const ingestErrors: IngestErrorSnapshot[] = [];
   const mirrorQueue = new Map<string, MutableMirror>();
@@ -669,6 +671,23 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         break;
       }
 
+      case 'gate.confirmed': {
+        // A9 — uma condicao por registro. Reconfirmar a MESMA condicao atualiza
+        // quem confirmou; nao empilha, porque duas confirmacoes da mesma coisa
+        // sao a mesma coisa confirmada.
+        const subject = entityId(p, 'subject');
+        const condition = str(p, 'condition');
+        const confirmedBy = str(p, 'confirmedBy');
+        if (subject === null || condition === null || confirmedBy === null) break;
+        gates.set(`${entityKey(subject)}|${condition}`, {
+          subject,
+          condition,
+          confirmedBy,
+          confirmedAt: str(p, 'confirmedAt') ?? event.at,
+        });
+        break;
+      }
+
       case 'stage.overridden': {
         const discoveryId = str(p, 'discoveryId');
         const value = oneOf<MacroStage>(p, 'value', MACRO_STAGES);
@@ -845,6 +864,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     locks: [...locks.values()],
     phases: phaseList,
     verifications: [...verifications.values()],
+    gates: [...gates.values()],
     notes,
     ingestErrors: errorList,
     mirrorQueue: mirrorList.map(({ subject, operation, payload, queuedAt, attempts, lastError }) => ({

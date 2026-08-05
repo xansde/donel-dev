@@ -57,6 +57,20 @@
       "text": "Duas hipoteses descartadas na entrevista: timeout do worker e limite de conexao."
     },
     {
+      "type": "gate.confirmed",
+      "subject": { "entity": "discovery", "id": "dsc-2026-08-03-a" },
+      "condition": "o repo alvo do card e atlas",
+      "confirmed_by": "dono do repo",
+      "confirmed_at": "2026-08-03T12:22:40.000Z"
+    },
+    {
+      "type": "gate.confirmed",
+      "subject": { "entity": "discovery", "id": "dsc-2026-08-03-a" },
+      "condition": "beacon entra no escopo, mas nao recebe PR nesta rodada",
+      "confirmed_by": "dono do repo",
+      "confirmed_at": "2026-08-03T12:23:15.000Z"
+    },
+    {
       "type": "lock.released",
       "subject": { "entity": "discovery", "id": "dsc-2026-08-03-a" },
       "phase": "discovery"

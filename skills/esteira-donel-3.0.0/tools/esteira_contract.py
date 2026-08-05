@@ -128,6 +128,12 @@ EMITTED_PATHS: tuple[str, ...] = (
     "facts[note.recorded].subject.entity",
     "facts[note.recorded].subject.id",
     "facts[note.recorded].text",
+    "facts[gate.confirmed].type",
+    "facts[gate.confirmed].subject.entity",
+    "facts[gate.confirmed].subject.id",
+    "facts[gate.confirmed].condition",
+    "facts[gate.confirmed].confirmed_by",
+    "facts[gate.confirmed].confirmed_at",
 )
 
 # O que a skill LE do `run-input.json`. Mesma disciplina, na outra direcao:
@@ -331,6 +337,32 @@ def lock_released(subject: dict[str, str], phase: str) -> dict[str, Any]:
 
 def note_recorded(subject: dict[str, str], text: str) -> dict[str, Any]:
     return {"type": "note.recorded", "subject": subject, "text": text}
+
+
+def gate_confirmed(
+    subject: dict[str, str],
+    condition: str,
+    confirmed_by: str,
+    confirmed_at: str | None = None,
+) -> dict[str, Any]:
+    """A9 — UMA condicao de gate confirmada por UMA pessoa.
+
+    Gate composto vira N fatos, um por condicao: meia-confirmacao nao cabe numa
+    linha de texto, e foi como blockquote no `tasks.md` que "confirmado"
+    apareceu com metade do gate em aberto.
+    """
+    if not condition:
+        raise ContractError("gate.confirmed exige a condicao confirmada")
+    if not confirmed_by:
+        # Confirmacao sem gente e o app se dando o aval que ninguem deu.
+        raise ContractError("gate.confirmed exige confirmed_by — quem confirmou")
+    return {
+        "type": "gate.confirmed",
+        "subject": subject,
+        "condition": condition,
+        "confirmed_by": confirmed_by,
+        "confirmed_at": confirmed_at,
+    }
 
 
 def _required_facts_table() -> dict[str, Any]:

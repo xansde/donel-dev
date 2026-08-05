@@ -141,6 +141,13 @@ export const STORE_EVENT_TYPES = [
   'session.handed-off',
   'lock.acquired',
   'lock.released',
+  /**
+   * A9 — alguem confirmou uma condicao de gate. Fato de primeira classe porque
+   * a confirmacao vivia como blockquote no `tasks.md`, onde gate composto nao
+   * expressa meia-confirmacao: uma condicao confirmada e outra em aberto viravam
+   * a mesma frase. Skills e specs consultam o STORE.
+   */
+  'gate.confirmed',
   'stage.overridden',
   'stage.override.cleared',
   'note.added',
@@ -471,6 +478,19 @@ export interface VerificationSnapshot {
   readonly recordedAt: string;
 }
 
+/**
+ * A9 — UMA condicao de gate confirmada por UMA pessoa. Chave natural
+ * `subject|condition`: reconfirmar a mesma condicao atualiza quem confirmou e
+ * quando, e um gate de duas condicoes ocupa duas linhas — que e exatamente o
+ * que o blockquote do `tasks.md` nao sabia fazer.
+ */
+export interface GateConfirmationSnapshot {
+  readonly subject: EntityId;
+  readonly condition: string;
+  readonly confirmedBy: string;
+  readonly confirmedAt: string;
+}
+
 /** Texto humano amarrado a uma entidade. Nunca deduplica por conteudo — duas notas iguais sao dois gestos. */
 export interface NoteSnapshot {
   readonly subject: EntityId;
@@ -529,6 +549,8 @@ export interface StoreSnapshot {
   readonly locks: readonly LockRecord[];
   readonly phases: readonly PhaseRunSnapshot[];
   readonly verifications: readonly VerificationSnapshot[];
+  /** A9 — as confirmacoes de gate deste store, uma condicao por registro. */
+  readonly gates: readonly GateConfirmationSnapshot[];
   readonly notes: readonly NoteSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
   readonly mirrorQueue: readonly MirrorQueueEntry[];

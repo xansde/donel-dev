@@ -117,7 +117,8 @@
         { "$ref": "#/$defs/fact_phase_completed" },
         { "$ref": "#/$defs/fact_lock_acquired" },
         { "$ref": "#/$defs/fact_lock_released" },
-        { "$ref": "#/$defs/fact_note_recorded" }
+        { "$ref": "#/$defs/fact_note_recorded" },
+        { "$ref": "#/$defs/fact_gate_confirmed" }
       ]
     },
     "fact_discovery_recorded": {
@@ -257,6 +258,30 @@
         "type": { "const": "note.recorded" },
         "subject": { "$ref": "#/$defs/entity_ref" },
         "text": { "type": "string", "minLength": 1 }
+      }
+    },
+    "fact_gate_confirmed": {
+      "description": "A9 — a confirmacao de um gate e FATO de primeira classe, nao um blockquote no tasks.md. Uma condicao por fato, de proposito: gate composto ('spec aprovada E repo alvo confirmado') nao expressa meia-confirmacao quando vira uma linha de texto, e foi assim que 'confirmado' apareceu na tela com metade do gate em aberto. Skills e specs consultam o store, nao o markdown.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "subject", "condition", "confirmed_by"],
+      "properties": {
+        "type": { "const": "gate.confirmed" },
+        "subject": { "$ref": "#/$defs/entity_ref" },
+        "condition": {
+          "description": "A condicao confirmada, UMA por fato. Texto curto e afirmativo ('o repo alvo e atlas').",
+          "type": "string",
+          "minLength": 1
+        },
+        "confirmed_by": {
+          "description": "Quem confirmou. Nunca a propria skill: confirmacao sem gente e o app se dando o aval que ninguem deu.",
+          "type": "string",
+          "minLength": 1
+        },
+        "confirmed_at": {
+          "description": "Quando a pessoa confirmou — nao e a hora em que o run terminou. Ausente = usa-se a hora do run.",
+          "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }]
+        }
       }
     },
     "lock_holder": {

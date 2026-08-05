@@ -21,6 +21,7 @@ import type {
   ArtifactPointer,
   DiscoverySnapshot,
   EntityId,
+  GateConfirmationSnapshot,
   IngestErrorSnapshot,
   LifecycleKind,
   LockRecord,
@@ -433,6 +434,8 @@ export interface CardView {
   readonly verifications: readonly VerificationSnapshot[];
   /** D-8 — "cadê o artefato?" tem resposta única, e ela mora no store. */
   readonly artifacts: readonly ArtifactPointer[];
+  /** A9 — o que uma pessoa confirmou, condição por condição. */
+  readonly gates: readonly GateConfirmationSnapshot[];
 }
 
 /**
@@ -575,6 +578,7 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     mirrorQueue: snapshot.mirrorQueue.filter((entry) => belongs(entry.subject)),
     verifications: snapshot.verifications.filter((entry) => belongs(entry.subject)),
     artifacts: snapshot.artifacts.filter((entry) => belongs(entry.owner)),
+    gates: snapshot.gates.filter((entry) => belongs(entry.subject)),
     notes: snapshot.notes
       .filter((note) => belongs(note.subject))
       .map((note) => ({
@@ -862,6 +866,39 @@ export function verificationLines(card: CardView, subject: EntityId | null = nul
     failed: verification.state === 'failed',
   }));
 }
+
+// ---------------------------------------------------------------------------
+// A9 — o que uma pessoa confirmou
+// ---------------------------------------------------------------------------
+//
+// A confirmação de gate viajava como blockquote no `tasks.md`: gate composto
+// virava UMA linha, e meia-confirmação não cabia nela. Agora cada condição tem
+// seu fato no store — e o card mostra uma linha por condição, com quem
+// confirmou. A frase nasce aqui; a tela só posiciona.
+
+export interface GateLineView {
+  readonly key: string;
+  /** "«o repo alvo é atlas» — confirmado por dono do repo, em 03/08 12:22" */
+  readonly text: string;
+  readonly subject: EntityId;
+}
+
+/** `subject` filtra por assunto — o painel de detalhe do mapa precisa de um nó por vez. */
+export function gateLines(card: CardView, subject: EntityId | null = null): readonly GateLineView[] {
+  const escopo =
+    subject === null
+      ? card.gates
+      : card.gates.filter((gate) => gate.subject.entity === subject.entity && gate.subject.id === subject.id);
+
+  return escopo.map((gate) => ({
+    key: `${gate.subject.entity}:${gate.subject.id}:${gate.condition}`,
+    text: `«${gate.condition}» — confirmado por ${gate.confirmedBy}, em ${formatTimestamp(gate.confirmedAt)}`,
+    subject: gate.subject,
+  }));
+}
+
+export const GATES_EMPTY_NOTE =
+  'Nenhuma condição confirmada por gente. Não é pendência: só quer dizer que nenhuma fase declarou ter perguntado.';
 
 /**
  * A frase de UMA passagem de fase. Cada estado tem palavra própria — e nenhuma

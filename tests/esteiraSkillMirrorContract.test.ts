@@ -97,6 +97,39 @@ describe('espelho — o documento produzido pela skill passa no parser do app', 
     expect(parsed.result.facts).toHaveLength(5);
   });
 
+  it('A9 — o gate confirmado que a skill emite passa no parser, uma condição por fato', () => {
+    const document = runPython(
+      `${PRELUDE}` +
+        `dsc = {'entity':'discovery','id':'dsc-1'}\n` +
+        `facts = [\n` +
+        `  c.discovery_recorded('dsc-1', 'Fila trava sem sinal'),\n` +
+        `  c.gate_confirmed(dsc, 'o repo alvo e atlas', 'dono do repo', confirmed_at='2026-08-04T12:10:00.000Z'),\n` +
+        `  c.gate_confirmed(dsc, 'a spec esta aprovada', 'dono do repo'),\n` +
+        `  c.phase_completed(dsc, 'discovery', 'done'),\n` +
+        `]\n` +
+        `print(json.dumps(c.build_result(run_id='run-gate', phase='discovery', status='success', started_at='2026-08-04T12:00:00.000Z', finished_at='2026-08-04T12:30:00.000Z', discovery_id='dsc-1', facts=facts)))`,
+    );
+
+    const parsed = parseEsteiraResult(document);
+    if (!parsed.ok) throw new Error(`a skill produziu algo que o app recusa: ${JSON.stringify(parsed.issues, null, 2)}`);
+    expect(parsed.result.facts.filter((fact) => fact.type === 'gate.confirmed')).toHaveLength(2);
+  });
+
+  it('A9 — a skill recusa confirmar um gate sem dizer quem confirmou', () => {
+    let stderr = '';
+    try {
+      execFileSync('python', ['-c', `${PRELUDE}c.gate_confirmed({'entity':'discovery','id':'dsc-1'}, 'a spec esta aprovada', '')`], {
+        encoding: 'utf8',
+        cwd: SKILL_TOOLS_DIR,
+        stdio: 'pipe',
+      });
+      throw new Error('esperava ContractError, e o emissor aceitou gate sem gente');
+    } catch (error) {
+      stderr = String((error as { stderr?: string }).stderr ?? '');
+    }
+    expect(stderr).toContain('confirmed_by');
+  });
+
   it('fase que falhou: o app aceita, e a falha vem legível', () => {
     const document = runPython(
       `${PRELUDE}` +

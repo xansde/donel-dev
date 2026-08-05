@@ -196,6 +196,24 @@ function factToDraft(fact: EsteiraFact, index: number, result: EsteiraResult): E
         payload: { subject: refToId(fact.subject), phase: fact.phase, at },
       };
 
+    case 'gate.confirmed':
+      // A9 — a chave natural e `assunto + condicao`: cada condicao do gate tem
+      // seu registro, e reconfirmar a mesma condicao noutro run atualiza aquela
+      // linha em vez de empilhar outra.
+      return {
+        type: 'gate.confirmed',
+        at,
+        dedupe_key: dedupeKey(runId, fact.type, `${refKey(fact.subject)}:${fact.condition}`),
+        payload: {
+          subject: refToId(fact.subject),
+          condition: fact.condition,
+          confirmedBy: fact.confirmed_by,
+          // A hora da PESSOA, quando ela foi declarada; senao a do run. Nunca
+          // se inventa uma hora mais precisa do que a que se leu.
+          confirmedAt: fact.confirmed_at ?? at,
+        },
+      };
+
     case 'note.recorded':
       // Chave pelo INDICE: duas notas de texto igual no mesmo run sao dois
       // gestos, e a chave so precisa impedir que o MESMO arquivo, relido, empilhe.

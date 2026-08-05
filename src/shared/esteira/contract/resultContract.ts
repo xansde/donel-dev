@@ -161,6 +161,13 @@ export type EsteiraFact =
       readonly type: 'note.recorded';
       readonly subject: EntityRef;
       readonly text: string;
+    }
+  | {
+      readonly type: 'gate.confirmed';
+      readonly subject: EntityRef;
+      readonly condition: string;
+      readonly confirmed_by: string;
+      readonly confirmed_at: string | null;
     };
 
 export type FactType = EsteiraFact['type'];
@@ -176,6 +183,7 @@ export const FACT_TYPES: readonly FactType[] = [
   'lock.acquired',
   'lock.released',
   'note.recorded',
+  'gate.confirmed',
 ];
 
 export interface EsteiraResult {
@@ -291,6 +299,12 @@ export const CONSUMED_PATHS: readonly string[] = [
   'facts[note.recorded].subject.entity',
   'facts[note.recorded].subject.id',
   'facts[note.recorded].text',
+  'facts[gate.confirmed].type',
+  'facts[gate.confirmed].subject.entity',
+  'facts[gate.confirmed].subject.id',
+  'facts[gate.confirmed].condition',
+  'facts[gate.confirmed].confirmed_by',
+  'facts[gate.confirmed].confirmed_at',
 ];
 
 /**
@@ -569,6 +583,18 @@ function parseFact(raw: unknown, path: string, c: Collector): EsteiraFact | null
       const text = requireString(raw, 'text', path, c);
       if (subject === null || text === null) return null;
       return { type: factType,subject, text };
+    }
+    case 'gate.confirmed': {
+      // A9 — uma condicao por fato. O gate composto virava UMA linha de texto no
+      // tasks.md, e meia-confirmacao nao cabia nela: a tela dizia "confirmado"
+      // com metade do gate em aberto.
+      rejectUnknownKeys(raw, ['type', 'subject', 'condition', 'confirmed_by', 'confirmed_at'], path, c);
+      const subject = parseEntityRef(raw, 'subject', path, c);
+      const condition = requireString(raw, 'condition', path, c);
+      const confirmedBy = requireString(raw, 'confirmed_by', path, c);
+      const confirmedAt = optionalPattern(raw, 'confirmed_at', TIMESTAMP_PATTERN, path, c);
+      if (subject === null || condition === null || confirmedBy === null) return null;
+      return { type: factType, subject, condition, confirmed_by: confirmedBy, confirmed_at: confirmedAt };
     }
   }
 }
