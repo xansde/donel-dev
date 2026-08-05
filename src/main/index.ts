@@ -223,6 +223,18 @@ const createProjectDeps = createSystemCreateProjectDeps();
 // pela UI de Preferências, feedback E2E rodada 3).
 const configIoDeps = createSystemConfigIoDeps();
 let appConfig: AppConfig = defaultAppConfig(defaultProjectRoots(homedir));
+/**
+ * G1 (011-contas-e-provedores, issue 08) — baseline do read-merge-write:
+ * a config como ESTE processo a viu pela última vez em sync com o disco
+ * (logo após o boot ler `config.json`, e logo após cada `persistAppConfig`
+ * bem-sucedido). `writeAppConfig` só sobrescreve no disco as chaves de topo
+ * que divergem desta baseline — o resto vem do disco FRESCO relido na hora
+ * de gravar, preservando escrita concorrente de outro canal/processo mesmo
+ * em chave já conhecida (ex.: `accounts.localAccounts`). `null` só antes do
+ * boot terminar (nunca observável por um handler real, que só registra
+ * depois do `whenReady().then(...)`).
+ */
+let lastSyncedAppConfig: AppConfig | null = null;
 
 // T303/T305 (003-modo-dev) — leitura dos artefatos da Esteira em disco (raiz
 // v3, CA-4: `~/.claude/esteira-state/<repo_slug>/`); injetável (mesmo padrão
@@ -858,9 +870,17 @@ function legacyConfigPaths(): { projectConfigPath: string; activeProfilePath: st
   };
 }
 
-/** Escrita atômica (FR-007) do `appConfig` em memória — chamada depois de TODA mutação (favoritos, roots, perfil ativo, defaults do launcher, notificação). */
+/**
+ * Escrita atômica (FR-007) do `appConfig` em memória — chamada depois de TODA
+ * mutação (favoritos, roots, perfil ativo, defaults do launcher, notificação).
+ * G1 (issue 08): read-merge-write contra `lastSyncedAppConfig` (só as chaves
+ * que ESTE processo mudou desde o último sync sobrescrevem o disco); depois
+ * de gravar, `lastSyncedAppConfig` avança para o `appConfig` atual — é a
+ * baseline da PRÓXIMA chamada.
+ */
 function persistAppConfig(): void {
-  writeAppConfig(getAppConfigPath(), appConfig, configIoDeps);
+  writeAppConfig(getAppConfigPath(), appConfig, configIoDeps, lastSyncedAppConfig);
+  lastSyncedAppConfig = appConfig;
 }
 
 /** Scan + merge de favoritos + ordenação — a mesma pipeline usada por list e favorite (T007), agora sobre `appConfig.projectRoots`/`appConfig.favorites` (T015). */
@@ -1739,6 +1759,9 @@ void app.whenReady().then(async () => {
   // ainda não existir nesta máquina (ver comentário de topo de
   // config-store.ts) — nunca lança, cai nos defaults na pior hipótese.
   appConfig = readAppConfig(getAppConfigPath(), defaultAppConfig(defaultProjectRoots(homedir)), legacyConfigPaths(), configIoDeps);
+  // G1 (issue 08) — este é o 1º sync com o disco: vira a baseline do
+  // read-merge-write (ver comentário de topo de `lastSyncedAppConfig`).
+  lastSyncedAppConfig = appConfig;
 
   // T1125 (011-contas-e-provedores, etapa 1) — motor de contas. `accountsVaultPath`
   // precisa de `userData` (só disponível aqui); `rebuildAccountEngine` monta o

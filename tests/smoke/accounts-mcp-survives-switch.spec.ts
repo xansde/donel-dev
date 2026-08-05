@@ -4,6 +4,7 @@ import path, { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { refuseIfRealClaudeHome } from './accountsCredentialGuard';
 
 // T1127 (011-contas-e-provedores, etapa 1, D6) — a promessa central da spec:
 // MCP configurado UMA VEZ em `~/.claude.json` continua presente depois de
@@ -29,6 +30,8 @@ test.beforeAll(async () => {
   const claudeHomeParent = mkdtempSync(path.join(tmpdir(), 'donel-accounts-smoke-mcp-'));
   claudeHomeDir = join(claudeHomeParent, '.claude');
   claudeJsonPath = join(claudeHomeParent, '.claude.json');
+  // G2 (batch n3) — cinto de segurança (ver accounts-switch.spec.ts).
+  refuseIfRealClaudeHome(claudeHomeDir);
   mkdirSync(claudeHomeParent, { recursive: true });
   writeFileSync(claudeJsonPath, JSON.stringify({ oauthAccount: { seeded: true }, mcpServers: SEEDED_MCP_SERVERS, machineID: 'fixed-machine-id' }), 'utf8');
 
