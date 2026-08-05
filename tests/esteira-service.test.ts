@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -74,6 +74,123 @@ describe('boot', () => {
 
     expect(booted.snapshotDto().snapshot.discoveries).toHaveLength(1);
     booted.dispose();
+  });
+
+  // A7 — reconciliacao manifesto-sem-result: sessao que sobrou aberta de uma
+  // execucao ANTERIOR (nunca chamamos endSession — "o app fechou") aparece
+  // interrompida no PROXIMO boot, sem que ninguem precise notar sozinho.
+  it('A7: sessao orfa de uma execucao anterior vira interrompida no proximo boot, com a trava liberada', () => {
+    const created = service.createDiscovery({ title: 'Card', problem: null, targetRepo: 'atlas', scopeRepos: [], tracker: null });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const dispatched = service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: null,
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+    expect(dispatched.ok).toBe(true);
+    if (!dispatched.ok) return;
+    expect(service.snapshotDto().snapshot.locks).toHaveLength(1);
+
+    // Nunca chamamos endSession: e exatamente o que "o app fechou sem ninguem
+    // fechar a aba" significa. O boot SEGUINTE, no mesmo storeDir, e quem tem
+    // que notar sozinho.
+    const reopened = open();
+    const snapshot = reopened.snapshotDto().snapshot;
+    const session = snapshot.sessions.find((entry) => entry.id === dispatched.sessionId);
+
+    expect(session?.endedAt).not.toBeNull();
+    expect(session?.endReason).toContain('result.json');
+    expect(snapshot.locks).toHaveLength(0);
+    const phase = snapshot.phases.find((entry) => entry.subject.id === created.discoveryId);
+    // A fase nao vira "concluida": ela so deixou de estar presa em silencio.
+    expect(phase?.completedAt).toBeNull();
+    reopened.dispose();
+  });
+
+  it('A7: sessao cujo result JA chegou ao outbox e ingerida normalmente no proximo boot, nao "interrompida"', () => {
+    const created = service.createDiscovery({ title: 'Card', problem: null, targetRepo: 'atlas', scopeRepos: [], tracker: null });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const dispatched = service.dispatch({
+      phase: 'discovery',
+      discoveryId: created.discoveryId,
+      planId: null,
+      workItemId: null,
+      workspace: null,
+      continuesSessionId: null,
+      handoffReason: null,
+    });
+    expect(dispatched.ok).toBe(true);
+    if (!dispatched.ok) return;
+
+    // A skill terminou de verdade e deixou o result.json — so ninguem
+    // reabriu o app para ingeri-lo ainda. Documento MINIMO, com o mesmo
+    // discoveryId do disparo — nao o exemplo do corpus (ele traz outro id).
+    const doc = {
+      contract_version: '1.0.0',
+      kind: 'esteira.result',
+      run: { run_id: dispatched.runId, phase: 'discovery', status: 'success', started_at: '2026-08-04T14:30:00.000Z', finished_at: '2026-08-04T14:35:00.000Z', failure: null },
+      actor: { tool: 'esteira-donel', tool_version: '3.0.0', executor: null, model: null, effort: null, cli_session_id: null },
+      subject: { discovery_id: created.discoveryId, plan_id: null, work_item_id: null },
+      workspace: null,
+      facts: [
+        { type: 'discovery.recorded', discovery_id: created.discoveryId, title: 'Card', problem: null, tracker: null, target_repo: null, scope_repos: [] },
+        { type: 'gate.confirmed', subject: { entity: 'discovery', id: created.discoveryId }, condition: 'x', confirmed_by: 'dono', confirmed_at: null },
+        { type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'discovery', outcome: 'done', summary: null },
+      ],
+    };
+    writeFileSync(dispatched.resultPath, JSON.stringify(doc), 'utf8');
+
+    const reopened = open();
+    const snapshot = reopened.snapshotDto().snapshot;
+    const phase = snapshot.phases.find((entry) => entry.subject.id === created.discoveryId);
+
+    expect(phase?.completedAt).not.toBeNull();
+    const session = snapshot.sessions.find((entry) => entry.id === dispatched.sessionId);
+    expect(session?.endReason).toBeNull(); // encerrada pela CONCLUSAO da fase, nao pela reconciliacao
+    reopened.dispose();
+  });
+
+  // A6 — revalida os erros pendentes na abertura: arquivo consertado ou
+  // removido nao deveria continuar acusando defeito para sempre.
+  it('A6: erro cujo arquivo sumiu do outbox sai da lista no proximo boot', () => {
+    const path = join(root, 'outbox', 'run-quebrado.json');
+    const doc = JSON.parse(readFileSync(join(EXAMPLES_DIR, 'discovery-com-tracker.json'), 'utf8'));
+    doc.facts[0].fanout_cards = ['x'];
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+    service.scanOutbox();
+    expect(service.snapshotDto().snapshot.ingestErrors).toHaveLength(1);
+
+    unlinkSync(path);
+    const reopened = open();
+
+    expect(reopened.snapshotDto().snapshot.ingestErrors).toHaveLength(0);
+    expect(reopened.snapshotDto().snapshot.ingestRecoveries).toHaveLength(1);
+    reopened.dispose();
+  });
+
+  it('A6: erro cujo arquivo foi CONSERTADO no outbox sai da lista no proximo boot', () => {
+    const path = join(root, 'outbox', 'run-quebrado.json');
+    const doc = JSON.parse(readFileSync(join(EXAMPLES_DIR, 'discovery-com-tracker.json'), 'utf8'));
+    doc.facts[0].fanout_cards = ['x'];
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+    service.scanOutbox();
+    expect(service.snapshotDto().snapshot.ingestErrors).toHaveLength(1);
+
+    delete doc.facts[0].fanout_cards;
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+    const reopened = open();
+
+    expect(reopened.snapshotDto().snapshot.ingestErrors).toHaveLength(0);
+    expect(reopened.snapshotDto().snapshot.discoveries).toHaveLength(1);
+    reopened.dispose();
   });
 });
 
