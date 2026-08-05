@@ -72,6 +72,49 @@ describe('ingestResultFile — caminho feliz', () => {
   });
 });
 
+// Spec 010 (A4) — o defeito com nome: a fase Concluir regravou o MESMO
+// `run_id` com o desfecho revisto. A segunda leitura casou com a `dedupe_key`
+// da primeira e cada evento novo foi descartado como "ja visto". O card
+// continuou dizendo "terminou sem conclusao" enquanto o arquivo dizia o
+// contrario, e nenhum erro apareceu em lugar nenhum.
+describe('ingestResultFile — run alterado depois de ingerido (A4)', () => {
+  it('o mesmo run_id com conteudo DIFERENTE e recusado com erro visivel no card', () => {
+    const path = putExample('discovery-com-tracker');
+    expect(ingestResultFile(store, path).status).toBe('ingested');
+
+    const doc = JSON.parse(readFileSync(path, 'utf8'));
+    doc.facts.find((fact: { type: string }) => fact.type === 'phase.completed').outcome = 'abandoned';
+    writeFileSync(path, JSON.stringify(doc), 'utf8');
+
+    const outcome = ingestResultFile(store, path);
+    expect(outcome.status).toBe('rejected');
+
+    const erro = store.snapshot().ingestErrors.at(-1);
+    expect(erro?.issues[0].code).toBe('run_changed_after_ingest');
+    // O erro tem DONO: ele aparece no card, nao num log que ninguem le.
+    expect(erro?.subject).toEqual({ entity: 'discovery', id: 'dsc-2026-08-03-a' });
+    // E o desfecho antigo continua de pe: recusar nao e engolir metade.
+    expect(store.snapshot().phases[0].outcome).toBe('done');
+  });
+
+  it('o COMPLEMENTO do mesmo run entra — ele acrescenta fatos, nao reescreve', () => {
+    ingestResultFile(store, putExample('spike-inconclusivo'));
+    const antes = store.snapshot().artifacts.length;
+
+    expect(ingestResultFile(store, putExample('complemento-do-implementar')).status).toBe('ingested');
+    expect(store.snapshot().artifacts.length).toBe(antes + 1);
+    // A fase nao foi contada de novo: o complemento nao a redeclara.
+    expect(store.snapshot().phases.filter((phase) => phase.phase === 'implementar')).toHaveLength(1);
+  });
+
+  it('o livro dos runs guarda o parentesco — desfecho revisto vira dado consultavel (A13)', () => {
+    ingestResultFile(store, putExample('concluir-desfecho-revisto'));
+    const run = store.snapshot().runs.find((entry) => entry.runId === 'run-2026-08-06-1600.rev2');
+    expect(run?.revisesRunId).toBe('run-2026-08-06-1600');
+    expect(run?.kind).toBe('esteira.result');
+  });
+});
+
 describe('ingestResultFile — o documento fora do contrato', () => {
   it('vira erro VISIVEL no snapshot, com os issues e o caminho — nunca silencio', () => {
     const path = join(outbox, 'quebrado.json');

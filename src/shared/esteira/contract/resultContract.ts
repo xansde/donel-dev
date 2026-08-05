@@ -68,7 +68,27 @@ export interface ResultRun {
   readonly started_at: string;
   readonly finished_at: string;
   readonly failure: { readonly code: string; readonly message: string } | null;
+  /** A4 — o run ao qual este complemento se ancora. `null` num result normal. */
+  readonly complements_run_id: string | null;
+  /** A13 — o run cujo desfecho este revisa. `null` quando nao ha revisao. */
+  readonly revises_run_id: string | null;
 }
+
+/** A4 — os dois tipos de documento que o outbox aceita. */
+export type ResultKind = 'esteira.result' | 'esteira.result.complement';
+export const RESULT_KINDS: readonly ResultKind[] = ['esteira.result', 'esteira.result.complement'];
+
+/**
+ * A4/A13 — a convencao de sufixo, num lugar so. Um run NAO se reescreve:
+ * complemento e revisao sao runs NOVOS ancorados no anterior, e o sufixo faz o
+ * parentesco visivel a olho nu no nome do arquivo do outbox — que e onde alguem
+ * vai procurar quando o card disser "houve revisao".
+ *
+ * O padrao de id (`[A-Za-z0-9._:-]`) aceita ponto, entao o sufixo cabe sem
+ * ampliar o alfabeto.
+ */
+export const COMPLEMENT_SUFFIX = /^(.+)\.c(\d+)$/;
+export const REVISION_SUFFIX = /^(.+)\.rev(\d+)$/;
 
 export interface ResultActor {
   readonly tool: string;
@@ -196,7 +216,7 @@ export const FACT_TYPES: readonly FactType[] = [
 
 export interface EsteiraResult {
   readonly contract_version: string;
-  readonly kind: 'esteira.result';
+  readonly kind: ResultKind;
   readonly run: ResultRun;
   readonly actor: ResultActor;
   readonly subject: ResultSubject;
@@ -234,6 +254,8 @@ export const CONSUMED_PATHS: readonly string[] = [
   'run.finished_at',
   'run.failure.code',
   'run.failure.message',
+  'run.complements_run_id',
+  'run.revises_run_id',
   'actor.tool',
   'actor.tool_version',
   'actor.executor',
@@ -417,7 +439,12 @@ function parseRun(raw: unknown, c: Collector): ResultRun | null {
     c.add(raw === undefined ? 'missing_field' : 'wrong_type', 'run', 'field "run" must be an object');
     return null;
   }
-  rejectUnknownKeys(raw, ['run_id', 'phase', 'status', 'started_at', 'finished_at', 'failure'], 'run', c);
+  rejectUnknownKeys(
+    raw,
+    ['run_id', 'phase', 'status', 'started_at', 'finished_at', 'failure', 'complements_run_id', 'revises_run_id'],
+    'run',
+    c,
+  );
 
   const runId = requirePattern(raw, 'run_id', ID_PATTERN, 'run', c);
   const phase = requirePattern(raw, 'phase', PHASE_PATTERN, 'run', c);
@@ -447,8 +474,62 @@ function parseRun(raw: unknown, c: Collector): ResultRun | null {
     c.add('failure_unexpected', 'run.failure', 'run.failure must be null when status is "success"');
   }
 
+  const complementsRunId = optionalPattern(raw, 'complements_run_id', ID_PATTERN, 'run', c);
+  const revisesRunId = optionalPattern(raw, 'revises_run_id', ID_PATTERN, 'run', c);
+
   if (runId === null || phase === null || status === null || startedAt === null || finishedAt === null) return null;
-  return { run_id: runId, phase, status, started_at: startedAt, finished_at: finishedAt, failure };
+  return {
+    run_id: runId,
+    phase,
+    status,
+    started_at: startedAt,
+    finished_at: finishedAt,
+    failure,
+    complements_run_id: complementsRunId,
+    revises_run_id: revisesRunId,
+  };
+}
+
+/**
+ * A4/A13 — o parentesco entre runs, verificado. Um run que se diz complemento
+ * (ou revisao) de outro tem que trazer o sufixo combinado sobre o run ancorado:
+ * sem isso, o parentesco existe so no campo, e olhar o outbox nao conta a
+ * historia. E foi olhar o outbox — arquivo por arquivo — que revelou a Concluir
+ * regravando o MESMO `run_id` com desfecho revisto.
+ */
+function checkRunLineage(run: ResultRun, kind: ResultKind, c: Collector): void {
+  if (kind === 'esteira.result.complement') {
+    if (run.complements_run_id === null) {
+      c.add('complement_without_anchor', 'run.complements_run_id', 'a complement result must declare "complements_run_id"');
+    } else {
+      const match = COMPLEMENT_SUFFIX.exec(run.run_id);
+      if (match === null || match[1] !== run.complements_run_id) {
+        c.add(
+          'lineage_suffix_mismatch',
+          'run.run_id',
+          `a complement of "${run.complements_run_id}" must be named "${run.complements_run_id}.c<N>"`,
+        );
+      }
+    }
+  } else if (run.complements_run_id !== null) {
+    c.add('complement_without_kind', 'run.complements_run_id', 'only a "esteira.result.complement" may declare "complements_run_id"');
+  }
+
+  if (run.revises_run_id === null) return;
+  if (run.revises_run_id === run.run_id) {
+    // Reescrever o proprio run e exatamente o que a revisao existe para
+    // substituir: o run anterior tem que continuar legivel.
+    c.add('lineage_suffix_mismatch', 'run.revises_run_id', 'a run cannot revise itself');
+    return;
+  }
+  const match = REVISION_SUFFIX.exec(run.run_id);
+  if (match === null || match[1] !== run.revises_run_id || Number.parseInt(match[2], 10) < 2) {
+    c.add(
+      'lineage_suffix_mismatch',
+      'run.run_id',
+      `a revision of "${run.revises_run_id}" must be named "${run.revises_run_id}.rev<N>" with N >= 2`,
+    );
+  }
 }
 
 function parseActor(raw: unknown, c: Collector): ResultActor | null {
@@ -675,8 +756,9 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
 
   rejectUnknownKeys(input, ['contract_version', 'kind', 'run', 'actor', 'subject', 'workspace', 'facts'], '', c);
 
-  if (input.kind !== 'esteira.result') {
-    c.add('wrong_kind', 'kind', 'kind must be "esteira.result"');
+  const kind = (RESULT_KINDS as readonly unknown[]).includes(input.kind) ? (input.kind as ResultKind) : null;
+  if (kind === null) {
+    c.add('wrong_kind', 'kind', `kind must be one of ${RESULT_KINDS.join(' | ')}`);
   }
 
   const contractVersion = requirePattern(input, 'contract_version', SEMVER_PATTERN, '', c);
@@ -704,11 +786,25 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
     });
   }
 
+  if (run !== null && kind !== null) checkRunLineage(run, kind, c);
+
+  // A4 — o complemento ACRESCENTA fatos a um run ja ingerido; ele nao conta a
+  // fase de novo. Por isso nao e cobrado pela tabela (a fase ja respondeu por
+  // ela no run ancorado) e nao pode declarar `phase.completed`: a fase contada
+  // duas vezes viraria duas passagens no card sobre a mesma execucao.
+  if (kind === 'esteira.result.complement') {
+    for (const fact of facts) {
+      if (fact.type !== 'phase.completed') continue;
+      c.add('complement_redeclares_phase', 'facts', 'a complement must not declare "phase.completed" — it adds facts, it does not close the phase again');
+      break;
+    }
+  }
+
   // A promessa do outro lado, verificada aqui: run bem-sucedido SEM os fatos
   // que a fase promete seria de novo o app tendo que adivinhar o que aconteceu.
   // A tabela vem do schema (`x-required-facts`), nao de regra escrita duas
   // vezes — e o teste de cobertura reprova se as duas se afastarem.
-  if (run !== null && run.status === 'success') {
+  if (run !== null && run.status === 'success' && kind === 'esteira.result') {
     // As fases que este result declara FECHADAS com desfecho bom. A cobranca de
     // produto (A3) e por elas, nao por `run.phase`: quem diz "documentar
     // concluida" mostra o artefato, mesmo que o run se chame `implementar`.
@@ -765,7 +861,7 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
 
   return {
     ok: true,
-    result: { contract_version: contractVersion ?? CONTRACT_VERSION, kind: 'esteira.result', run, actor, subject, workspace, facts },
+    result: { contract_version: contractVersion ?? CONTRACT_VERSION, kind: kind ?? 'esteira.result', run, actor, subject, workspace, facts },
   };
 }
 

@@ -95,7 +95,8 @@ describe('resultToEvents — cada fato vira um evento', () => {
     expect(events.some((event) => event.type === 'plan.created')).toBe(false);
     // A decisao esta la porque A18 a exige de uma discovery concluida — e ela
     // e justamente o oposto de lacuna preenchida: e o que a fase declarou.
-    expect(events.map((event) => event.type)).toEqual(['discovery.created', 'decision.recorded', 'phase.completed']);
+    // `run.ingested` abre a lista: e o livro dos runs (A4), nao um fato.
+    expect(events.map((event) => event.type)).toEqual(['run.ingested', 'discovery.created', 'decision.recorded', 'phase.completed']);
   });
 
   it('run que falhou vira phase.failed com codigo e motivo — falha nunca vira silencio', () => {
@@ -129,7 +130,10 @@ describe('resultToEvents — cada fato vira um evento', () => {
     for (const name of examples) {
       const result = loadExample(name);
       const events = resultToEvents(result, { resultPath: 'C:/x.json' });
-      const factEvents = events.filter((event) => event.type !== 'phase.failed');
+      // `phase.failed` fala do run inteiro; `run.ingested` e o LIVRO dos runs
+      // (A4). Nenhum dos dois nasce de um fato declarado — os fatos e que
+      // precisam sair inteiros do outro lado.
+      const factEvents = events.filter((event) => event.type !== 'phase.failed' && event.type !== 'run.ingested');
       expect(factEvents.length, `${name}: fato sem evento correspondente`).toBe(result.facts.length);
     }
   });

@@ -14,8 +14,8 @@
       "pattern": "^\\d+\\.\\d+\\.\\d+$"
     },
     "kind": {
-      "description": "Discriminante de arquivo. Existe para o watcher rejeitar um JSON qualquer que caia na pasta.",
-      "const": "esteira.result"
+      "description": "Discriminante de arquivo. Existe para o watcher rejeitar um JSON qualquer que caia na pasta. A4 — `esteira.result.complement` e um result de COMPLEMENTO: acrescenta fatos a um run ja ingerido SEM redeclarar a fase. Sem essa marca, regravar o mesmo `run_id` com conteudo diferente e recusado, porque a alternativa e o app engolir a versao nova em silencio (foi o que aconteceu: a Concluir regravou o mesmo run com desfecho revisto e o card ficou 'terminou sem conclusao' calado).",
+      "enum": ["esteira.result", "esteira.result.complement"]
     },
     "run": { "$ref": "#/$defs/run" },
     "actor": { "$ref": "#/$defs/actor" },
@@ -38,8 +38,16 @@
       "required": ["run_id", "phase", "status", "started_at", "finished_at"],
       "properties": {
         "run_id": {
-          "description": "Identidade da execucao. Chave de idempotencia da ingestao: reingerir o mesmo arquivo nao duplica evento no store.",
+          "description": "Identidade da execucao. Chave de idempotencia da ingestao: reingerir o mesmo arquivo nao duplica evento no store. Um run NAO se reescreve: complemento e revisao sao runs NOVOS, com sufixo (`.c1`, `.rev2`) sobre o run ancorado.",
           "$ref": "#/$defs/id"
+        },
+        "complements_run_id": {
+          "description": "A4 — o run ao qual este COMPLEMENTO se ancora. Obrigatorio quando `kind` e `esteira.result.complement`, proibido no result normal. O complemento acrescenta fatos e NAO redeclara a fase: `phase.completed` nele seria a fase contada duas vezes.",
+          "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "revises_run_id": {
+          "description": "A13 — o run cujo DESFECHO este revisa. Desfecho revisto vira dado consultavel em vez de sobrescrita silenciosa: o card mostra que houve revisao, e de qual run. Convencao de sufixo cobrada pelo parser: `<run revisado>.rev<N>`, com N >= 2.",
+          "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
         },
         "phase": {
           "description": "Nome da fase. String livre de proposito: [P-4] deixou os nomes das fases por ciclo de vida em aberto, e um enum aqui fecharia essa decisao por acidente.",

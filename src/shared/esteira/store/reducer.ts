@@ -27,6 +27,7 @@ import {
   type DecisionSnapshot,
   type EntityKind,
   type GateConfirmationSnapshot,
+  type IngestedRunSnapshot,
   type IngestErrorSnapshot,
   type LockRecord,
   type MacroStage,
@@ -302,6 +303,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
   const gates = new Map<string, GateConfirmationSnapshot>();
   const decisions = new Map<string, DecisionSnapshot>();
   const notes: NoteSnapshot[] = [];
+  const runs = new Map<string, IngestedRunSnapshot>();
   const ingestErrors: IngestErrorSnapshot[] = [];
   const mirrorQueue = new Map<string, MutableMirror>();
   const mirrorSynced = new Map<string, MirrorSyncedEntry>();
@@ -735,6 +737,26 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         break;
       }
 
+      case 'run.ingested': {
+        // A4 — o livro dos runs. Chave e o `run_id`: um run e um so, e e por
+        // ele que a ingestao pergunta "isto ja entrou, e com que conteudo?".
+        const runId = str(p, 'runId');
+        const contentHash = str(p, 'contentHash');
+        if (runId === null || contentHash === null) break;
+        runs.set(runId, {
+          runId,
+          phase: str(p, 'phase') ?? '',
+          kind: str(p, 'kind') ?? 'esteira.result',
+          contentHash,
+          complementsRunId: str(p, 'complementsRunId'),
+          revisesRunId: str(p, 'revisesRunId'),
+          subject: entityId(p, 'subject'),
+          resultPath: str(p, 'resultPath'),
+          at: str(p, 'at') ?? event.at,
+        });
+        break;
+      }
+
       case 'ingest.failed': {
         const resultPath = str(p, 'resultPath');
         if (resultPath === null) break;
@@ -887,6 +909,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     gates: [...gates.values()],
     decisions: [...decisions.values()],
     notes,
+    runs: [...runs.values()],
     ingestErrors: errorList,
     mirrorQueue: mirrorList.map(({ subject, operation, payload, queuedAt, attempts, lastError }) => ({
       subject,

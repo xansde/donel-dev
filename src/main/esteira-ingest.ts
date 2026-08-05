@@ -15,7 +15,8 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseEsteiraResultText } from '../shared/esteira/contract/resultContract';
-import { ingestFailureEvent, resultToEvents } from '../shared/esteira/ingest/resultToEvents';
+import { ingestFailureEvent, resultToEvents, runSubject } from '../shared/esteira/ingest/resultToEvents';
+import { checkReingest, resultFingerprint } from '../shared/esteira/ingest/runLedger';
 import type { EsteiraStore } from './esteira-store';
 
 /**
@@ -35,7 +36,7 @@ export function esteiraOutboxDir(env: Record<string, string | undefined>, homedi
 export type IngestStatus =
   /** Fatos gravados no store. */
   | 'ingested'
-  /** Ja estava no store (mesmo `run_id`): nenhuma linha nova. */
+  /** Ja estava no store (mesmo `run_id`, mesmo conteudo): nenhuma linha nova. */
   | 'already-ingested'
   /** Fora do contrato: virou `ingest.failed` VISIVEL, com os issues. */
   | 'rejected'
@@ -79,6 +80,25 @@ export function ingestResultFile(store: EsteiraStore, resultPath: string): Inges
   }
 
   const result = parsed.result;
+
+  // A4 — o mesmo `run_id` de volta com conteudo DIFERENTE e um run alterado
+  // depois de ingerido, nao uma releitura. Sem esta checagem, cada evento novo
+  // casaria com a `dedupe_key` do anterior e seria descartado como "ja visto":
+  // foi assim que a Concluir regravou o desfecho e o card ficou dizendo
+  // "terminou sem conclusao" sem nenhum erro em lugar nenhum.
+  const verdict = checkReingest(store.snapshot().runs, result, resultFingerprint(result));
+  if (verdict.kind === 'changed') {
+    const failure = ingestFailureEvent({
+      resultPath,
+      issues: [verdict.issue],
+      subject: runSubject(result),
+      at: new Date().toISOString(),
+    });
+    const refused = store.append([failure], { kind: 'app' });
+    if (!refused.ok) return { status: 'store-refused', resultPath, runId: result.run.run_id };
+    return { status: 'rejected', resultPath, runId: result.run.run_id };
+  }
+
   const drafts = resultToEvents(result, { resultPath });
   const written = store.append(drafts, { kind: 'ingest', run_id: result.run.run_id, result_path: resultPath });
 

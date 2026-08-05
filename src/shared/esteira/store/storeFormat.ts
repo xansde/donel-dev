@@ -153,6 +153,13 @@ export const STORE_EVENT_TYPES = [
   'stage.overridden',
   'stage.override.cleared',
   'note.added',
+  /**
+   * A4 — o LIVRO DOS RUNS: um run entrou, com a impressao digital do que ele
+   * declarava. E o que permite distinguir "o mesmo arquivo, relido" (dedupe
+   * normal) de "o mesmo run, reescrito com outro desfecho" — que a `dedupe_key`
+   * sozinha nao distingue, e por isso engoliu em silencio a revisao da Concluir.
+   */
+  'run.ingested',
   'ingest.failed',
   'mirror.queued',
   'mirror.synced',
@@ -513,6 +520,24 @@ export interface NoteSnapshot {
   readonly at: string;
 }
 
+/**
+ * A4/A13 — um run ja ingerido. O `contentHash` responde "o mesmo run voltou
+ * com o mesmo conteudo?"; `complementsRunId`/`revisesRunId` respondem "de quem
+ * ele descende?". A segunda pergunta e o que torna desfecho revisto um dado
+ * CONSULTAVEL em vez de uma sobrescrita silenciosa.
+ */
+export interface IngestedRunSnapshot {
+  readonly runId: string;
+  readonly phase: string;
+  readonly kind: string;
+  readonly contentHash: string;
+  readonly complementsRunId: string | null;
+  readonly revisesRunId: string | null;
+  readonly subject: EntityId | null;
+  readonly resultPath: string | null;
+  readonly at: string;
+}
+
 /** D-10 — documento fora do contrato vira ERRO visivel no card, nunca silencio. */
 export interface IngestErrorSnapshot {
   readonly resultPath: string;
@@ -569,6 +594,8 @@ export interface StoreSnapshot {
   /** A18 — as decisoes tomadas, uma por registro, cada uma com quem a confirmou. */
   readonly decisions: readonly DecisionSnapshot[];
   readonly notes: readonly NoteSnapshot[];
+  /** A4 — o livro dos runs ingeridos, na ordem em que entraram. */
+  readonly runs: readonly IngestedRunSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
   readonly mirrorQueue: readonly MirrorQueueEntry[];
   readonly mirrorSynced: readonly MirrorSyncedEntry[];

@@ -18,6 +18,7 @@
 
 import type { ContractIssue, EntityRef, EsteiraFact, EsteiraResult } from '../contract/resultContract';
 import type { EntityId, StoreEventType } from '../store/storeFormat';
+import { resultFingerprint } from './runLedger';
 
 export interface EventDraft {
   readonly type: StoreEventType;
@@ -248,8 +249,28 @@ function factToDraft(fact: EsteiraFact, index: number, result: EsteiraResult): E
  * run inteiro, nao de um fato.
  */
 export function resultToEvents(result: EsteiraResult, source: IngestSource): readonly EventDraft[] {
-  void source; // o caminho do arquivo viaja no `source` do envelope, gravado pelo writer
   const drafts: EventDraft[] = [];
+
+  // A4 — o run entra no LIVRO antes dos fatos dele. E o registro que distingue
+  // "o mesmo arquivo, relido" de "o mesmo run, reescrito com outro desfecho":
+  // a `dedupe_key` sozinha nao distingue, e por isso engoliu em silencio a
+  // revisao da Concluir.
+  drafts.push({
+    type: 'run.ingested',
+    at: result.run.finished_at,
+    dedupe_key: `run.ingested:${result.run.run_id}:${resultFingerprint(result)}`,
+    payload: {
+      runId: result.run.run_id,
+      phase: result.run.phase,
+      kind: result.kind,
+      contentHash: resultFingerprint(result),
+      complementsRunId: result.run.complements_run_id,
+      revisesRunId: result.run.revises_run_id,
+      subject: runSubject(result),
+      resultPath: source.resultPath,
+      at: result.run.finished_at,
+    },
+  });
 
   result.facts.forEach((fact, index) => {
     const draft = factToDraft(fact, index, result);

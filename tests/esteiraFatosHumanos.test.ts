@@ -276,3 +276,120 @@ describe('A18 — decisão humana é o que fecha discovery e plano', () => {
     expect(humanDecisionLines(card).map((line) => line.text)).toEqual([gateLines(card)[0].text, decisionLines(card)[0].text]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A4 + A13 — complemento e revisão: um run não se reescreve
+// ---------------------------------------------------------------------------
+//
+// O caso real: a fase Concluir regravou o MESMO `run_id` com o desfecho
+// revisto. A segunda leitura casou com a `dedupe_key` da primeira — o mecanismo
+// que torna a reingestão segura — e cada evento novo foi descartado como "já
+// visto". O card continuou dizendo "terminou sem conclusão" enquanto o arquivo
+// dizia o contrário, sem erro em lugar nenhum.
+
+describe('A4 — complemento acrescenta fatos sem redeclarar a fase', () => {
+  const nota = (): Record<string, unknown> => ({ type: 'note.recorded', subject: DSC, text: 'O relatório ficou pronto depois.' });
+
+  const complemento = (run: Record<string, unknown> = {}, facts: unknown[] = [nota()]): Record<string, unknown> => {
+    const doc = resultWith(facts, { run_id: 'run-1.c1', complements_run_id: 'run-1', ...run });
+    doc.kind = 'esteira.result.complement';
+    return doc;
+  };
+
+  it('o complemento é aceito sem phase.completed — a fase já respondeu no run ancorado', () => {
+    expect(parseEsteiraResult(complemento()).ok).toBe(true);
+  });
+
+  it('complemento que redeclara a fase é recusado — a mesma execução contada duas vezes', () => {
+    expect(codesOf(complemento({}, [nota(), completedDiscovery()]))).toContain('complement_redeclares_phase');
+  });
+
+  it('complemento sem dizer a que run se ancora é recusado', () => {
+    const doc = complemento();
+    delete (doc.run as Record<string, unknown>).complements_run_id;
+    expect(codesOf(doc)).toContain('complement_without_anchor');
+  });
+
+  it('complemento cujo run_id não traz o sufixo do ancorado é recusado', () => {
+    expect(codesOf(complemento({ run_id: 'run-outro' }))).toContain('lineage_suffix_mismatch');
+  });
+
+  it('result normal declarando complements_run_id é recusado — complemento sem se dizer complemento', () => {
+    const doc = resultWith([discoveryRecorded(), gate('o repo é atlas'), completedDiscovery()], { complements_run_id: 'run-0' });
+    expect(codesOf(doc)).toContain('complement_without_kind');
+  });
+});
+
+describe('A13 — desfecho revisto é dado consultável, não sobrescrita', () => {
+  const revisao = (run: Record<string, unknown> = {}): Record<string, unknown> =>
+    resultWith([discoveryRecorded(), gate('o problema mudou'), completedDiscovery('abandoned')], {
+      run_id: 'run-1.rev2',
+      revises_run_id: 'run-1',
+      ...run,
+    });
+
+  it('a revisão é aceita e o run revisado fica legível no documento', () => {
+    const parsed = parseEsteiraResult(revisao());
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.result.run.revises_run_id).toBe('run-1');
+  });
+
+  it('revisão sem o sufixo combinado é recusada — o parentesco existiria só no campo', () => {
+    expect(codesOf(revisao({ run_id: 'run-2' }))).toContain('lineage_suffix_mismatch');
+  });
+
+  it('rev1 é recusada — a primeira versão de um run é o próprio run', () => {
+    expect(codesOf(revisao({ run_id: 'run-1.rev1' }))).toContain('lineage_suffix_mismatch');
+  });
+
+  it('um run não revisa a si mesmo — o anterior tem que continuar legível', () => {
+    expect(codesOf(revisao({ run_id: 'run-1', revises_run_id: 'run-1' }))).toContain('lineage_suffix_mismatch');
+  });
+});
+
+describe('A4 — o livro dos runs recusa run alterado depois de ingerido', () => {
+  const doc = () => {
+    const parsed = parseEsteiraResult(resultWith([discoveryRecorded(), gate('o repo é atlas'), completedDiscovery()]));
+    if (!parsed.ok) throw new Error('fixture inválida');
+    return parsed.result;
+  };
+
+  it('a digital NÃO muda com a ordem das chaves — ordem é detalhe de quem escreveu o arquivo', async () => {
+    const { resultFingerprint } = await import('../src/shared/esteira/ingest/runLedger');
+    const original = doc();
+    const reordenado = { ...original, run: { ...original.run }, kind: original.kind } as typeof original;
+    expect(resultFingerprint(reordenado)).toBe(resultFingerprint(original));
+  });
+
+  it('mesmo run, mesmo conteúdo: reingestão normal e silenciosa', async () => {
+    const { checkReingest, resultFingerprint } = await import('../src/shared/esteira/ingest/runLedger');
+    const result = doc();
+    const hash = resultFingerprint(result);
+    expect(checkReingest([{ runId: 'run-1', contentHash: hash }], result, hash).kind).toBe('already-ingested');
+  });
+
+  it('mesmo run, conteúdo DIFERENTE: recusa com erro visível e a saída escrita', async () => {
+    const { checkReingest, resultFingerprint } = await import('../src/shared/esteira/ingest/runLedger');
+    const result = doc();
+    const verdict = checkReingest([{ runId: 'run-1', contentHash: 'outra-coisa' }], result, resultFingerprint(result));
+    expect(verdict.kind).toBe('changed');
+    if (verdict.kind !== 'changed') return;
+    expect(verdict.issue.code).toBe('run_changed_after_ingest');
+    expect(verdict.issue.message).toContain('complement');
+    expect(verdict.issue.message).toContain('revision');
+  });
+
+  it('o card conta o que houve, com a saída — nunca só o código do erro', async () => {
+    const { ingestErrorLine } = await import('../src/renderer/src/Esteira/esteiraView');
+    const line = ingestErrorLine({
+      resultPath: 'C:/outbox/run-1.json',
+      at: '2026-08-05T12:00:00.000Z',
+      subject: DSC,
+      issues: [{ code: 'run_changed_after_ingest', path: 'run.run_id', message: 'x' }],
+    });
+    expect(line).toContain('já tinha sido ingerido com outro conteúdo');
+    expect(line).toContain('complemento');
+    expect(line).toContain('revisão');
+  });
+});

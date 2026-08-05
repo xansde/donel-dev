@@ -1363,9 +1363,26 @@ export function scanOutcomeMessage(throughSeqBefore: number | null, rejected: nu
 }
 
 /** Um erro de ingestão, em português, sem esconder o caminho do arquivo. */
+/**
+ * A4 — os motivos de recusa que precisam de frase própria, porque o código
+ * sozinho não diz o que fazer a seguir. O caso que originou a lista: um run
+ * regravado com outro desfecho aparecia como nada; agora aparece com o nome do
+ * defeito E com a saída (complemento ou revisão).
+ */
+const INGEST_ISSUE_TEXT: Readonly<Partial<Record<ContractIssueCode, string>>> = {
+  run_changed_after_ingest:
+    'este run já tinha sido ingerido com outro conteúdo — para acrescentar fatos use um complemento, para rever o desfecho use uma revisão',
+  complement_without_anchor: 'complemento sem dizer a que run ele se ancora',
+  complement_without_kind: 'só um complemento pode declarar “complements_run_id”',
+  complement_redeclares_phase: 'complemento não fecha a fase de novo — ele acrescenta fatos ao run que a fechou',
+  lineage_suffix_mismatch: 'o nome do run não traz o sufixo do parentesco que ele declara',
+};
+
 export function ingestErrorLine(error: IngestErrorSnapshot): string {
   const first = error.issues[0];
-  const detail = first === undefined ? 'motivo não registrado' : `${first.code}${first.path ? ` em ${first.path}` : ''}`;
+  if (first === undefined) return 'motivo não registrado';
+  const explained = INGEST_ISSUE_TEXT[first.code as ContractIssueCode];
+  const detail = explained ?? `${first.code}${first.path ? ` em ${first.path}` : ''}`;
   const more = error.issues.length > 1 ? ` (+${error.issues.length - 1})` : '';
   return `${detail}${more}`;
 }

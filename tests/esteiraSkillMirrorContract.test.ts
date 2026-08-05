@@ -263,6 +263,56 @@ describe('espelho — as fases do ciclo completo (implementar, validar, document
   });
 });
 
+// Spec 010 (A4/A13) — um run NAO se reescreve, e a skill e quem tem que saber
+// disso primeiro: quem regravou o mesmo `run_id` com outro desfecho foi ela.
+describe('espelho — complemento e revisao (A4/A13)', () => {
+  it('o complemento emitido pela skill passa no parser do app', () => {
+    const document = runPython(
+      `${PRELUDE}` +
+        `wi = {'entity':'work_item','id':'wi-1'}\n` +
+        `facts = [c.artifact_recorded(wi, 'spike-report', 'disk', 'C:/tmp/spike.md')]\n` +
+        `print(json.dumps(c.build_result(run_id='run-1.c1', phase='implementar', status='success', started_at='2026-08-04T12:00:00.000Z', finished_at='2026-08-04T12:04:00.000Z', discovery_id='dsc-1', work_item_id='wi-1', facts=facts, kind=c.COMPLEMENT_KIND, complements_run_id='run-1')))`,
+    );
+
+    const parsed = parseEsteiraResult(document);
+    if (!parsed.ok) throw new Error(`a skill produziu algo que o app recusa: ${JSON.stringify(parsed.issues, null, 2)}`);
+    expect(parsed.result.kind).toBe('esteira.result.complement');
+    expect(parsed.result.run.complements_run_id).toBe('run-1');
+  });
+
+  function expectPythonError(code: string): string {
+    try {
+      execFileSync('python', ['-c', `${PRELUDE}${code}`], { encoding: 'utf8', cwd: SKILL_TOOLS_DIR, stdio: 'pipe' });
+    } catch (error) {
+      return String((error as { stderr?: string }).stderr ?? '');
+    }
+    throw new Error('esperava ContractError, e o emissor aceitou');
+  }
+
+  it('a skill recusa um complemento que redeclara a fase', () => {
+    const stderr = expectPythonError(
+      `wi = {'entity':'work_item','id':'wi-1'}\n` +
+        `c.build_result(run_id='run-1.c1', phase='implementar', status='success', started_at='2026-08-04T12:00:00.000Z', finished_at='2026-08-04T12:04:00.000Z', discovery_id='dsc-1', work_item_id='wi-1', facts=[c.phase_completed(wi, 'implementar', 'done')], kind=c.COMPLEMENT_KIND, complements_run_id='run-1')`,
+    );
+    expect(stderr).toContain('phase.completed');
+  });
+
+  it('a skill recusa complemento sem o sufixo do run ancorado', () => {
+    const stderr = expectPythonError(
+      `c.build_result(run_id='run-outro', phase='implementar', status='success', started_at='2026-08-04T12:00:00.000Z', finished_at='2026-08-04T12:04:00.000Z', discovery_id='dsc-1', facts=[c.note_recorded({'entity':'discovery','id':'dsc-1'}, 'x')], kind=c.COMPLEMENT_KIND, complements_run_id='run-1')`,
+    );
+    expect(stderr).toContain('run-1.c<N>');
+  });
+
+  it('a skill recusa revisao sem o sufixo combinado — parentesco so no campo nao conta a historia', () => {
+    const stderr = expectPythonError(
+      `wi = {'entity':'work_item','id':'wi-1'}\n` +
+        `c.build_result(run_id='run-9', phase='concluir', status='success', started_at='2026-08-04T12:00:00.000Z', finished_at='2026-08-04T12:04:00.000Z', discovery_id='dsc-1', work_item_id='wi-1', facts=[c.verification_recorded(wi, 'conclusion', 'failed', ref='revertido'), c.phase_completed(wi, 'concluir', 'abandoned')], revises_run_id='run-1')`,
+    );
+    expect(stderr).toContain('run-1.rev<N>');
+  });
+});
+
 describe('espelho — a skill recusa gravar o que o app recusaria ler', () => {
   function expectPythonError(code: string): string {
     try {

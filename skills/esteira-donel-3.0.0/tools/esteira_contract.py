@@ -33,6 +33,9 @@ CONTRACT_VERSION = "1.0.0"
 TOOL_NAME = "esteira-donel"
 TOOL_VERSION = "3.0.0"
 
+RESULT_KIND = "esteira.result"
+COMPLEMENT_KIND = "esteira.result.complement"
+
 # O schema canonico vive no app; o fork o le do mesmo lugar.
 CONTRACT_DIR = Path(__file__).resolve().parents[3] / "src" / "shared" / "esteira" / "contract" / "v1"
 RESULT_SCHEMA_PATH = CONTRACT_DIR / "esteira-result.schema.json"
@@ -55,6 +58,8 @@ EMITTED_PATHS: tuple[str, ...] = (
     "run.finished_at",
     "run.failure.code",
     "run.failure.message",
+    "run.complements_run_id",
+    "run.revises_run_id",
     "actor.tool",
     "actor.tool_version",
     "actor.executor",
@@ -475,8 +480,41 @@ def build_result(
     effort: str | None = None,
     executor: str | None = "claude-code",
     cli_session_id: str | None = None,
+    kind: str = RESULT_KIND,
+    complements_run_id: str | None = None,
+    revises_run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Monta o `result.json`. Recusa documento que ja nasceria invalido."""
+    """Monta o `result.json`. Recusa documento que ja nasceria invalido.
+
+    A4/A13 — um run NAO se reescreve. Para acrescentar fatos a um run ja
+    ingerido use `complement(...)`; para rever o desfecho, `revision(...)`. Os
+    dois devolvem runs NOVOS, com sufixo sobre o anterior, e o anterior continua
+    legivel. Regravar o mesmo `run_id` com outro conteudo e o que fez a Concluir
+    trocar o desfecho e o card nao contar.
+    """
+    if kind not in (RESULT_KIND, COMPLEMENT_KIND):
+        raise ContractError(f"kind fora do contrato: {kind!r}")
+
+    if kind == COMPLEMENT_KIND:
+        if not complements_run_id:
+            raise ContractError("complemento exige complements_run_id — acrescentar fatos a coisa nenhuma nao e complemento")
+        sufixo = run_id[len(complements_run_id) + 2 :] if run_id.startswith(f"{complements_run_id}.c") else ""
+        if not sufixo.isdigit():
+            raise ContractError(f"complemento de {complements_run_id!r} deve se chamar '{complements_run_id}.c<N>'")
+        if any(fact["type"] == "phase.completed" for fact in facts):
+            raise ContractError("complemento nao declara phase.completed — ele acrescenta fatos, nao fecha a fase de novo")
+    elif complements_run_id:
+        raise ContractError("so um complemento declara complements_run_id")
+
+    if revises_run_id:
+        if revises_run_id == run_id:
+            raise ContractError("um run nao revisa a si mesmo — o anterior tem que continuar legivel")
+        if not run_id.startswith(f"{revises_run_id}.rev"):
+            raise ContractError(f"revisao de {revises_run_id!r} deve se chamar '{revises_run_id}.rev<N>' com N >= 2")
+        sufixo = run_id[len(revises_run_id) + 4 :]
+        if not sufixo.isdigit() or int(sufixo) < 2:
+            raise ContractError(f"revisao de {revises_run_id!r} deve se chamar '{revises_run_id}.rev<N>' com N >= 2")
+
     if status != "success" and failure is None:
         # "Falhou, nao sei por que" e o mesmo vicio de "nao sei" travestido de fato.
         raise ContractError("status != success exige failure com code e message")
@@ -485,10 +523,13 @@ def build_result(
     if not facts:
         raise ContractError("um run que nao declara nada nao tem resultado para ingerir")
 
+    # A4 — o complemento nao e cobrado pela tabela: a fase ja respondeu por ela
+    # no run ancorado, e cobrar de novo obrigaria a redeclarar o que ja foi dito.
     declared = {fact["type"] for fact in facts}
-    missing = [required for required in required_facts_for(phase, status, facts) if required not in declared]
-    if missing:
-        raise ContractError(f"fase {phase!r} concluida sem declarar: {', '.join(missing)}")
+    if kind == RESULT_KIND:
+        missing = [required for required in required_facts_for(phase, status, facts) if required not in declared]
+        if missing:
+            raise ContractError(f"fase {phase!r} concluida sem declarar: {', '.join(missing)}")
 
     # A18 — a fase de conversa fecha com o que alguem DISSE. Sem nenhum fato
     # humano, "discovery concluida" e uma fase que nao perguntou nada saindo
@@ -520,7 +561,7 @@ def build_result(
 
     return {
         "contract_version": CONTRACT_VERSION,
-        "kind": "esteira.result",
+        "kind": kind,
         "run": {
             "run_id": _require_id(run_id, "run_id"),
             "phase": phase,
@@ -528,6 +569,8 @@ def build_result(
             "started_at": started_at,
             "finished_at": finished_at,
             "failure": None if failure is None else {"code": failure["code"], "message": failure["message"]},
+            "complements_run_id": None if complements_run_id is None else _require_id(complements_run_id, "complements_run_id"),
+            "revises_run_id": None if revises_run_id is None else _require_id(revises_run_id, "revises_run_id"),
         },
         "actor": {
             "tool": TOOL_NAME,
