@@ -65,6 +65,14 @@
      dessaturado novo como os 5 acima: é um alias do token de identidade do
      Donel já existente. */
   --phase-documentar: var(--donel-accent);
+  /* 010, batch E1 — Design entra no catálogo entre Plano e Implementar.
+     Achado da captura do batch n8 (tutorial-e2e): a fase chegou ao catálogo de
+     disparo mas não ao PhaseChip, e a trilha do mapa mostrava "design" cru,
+     sem chip. Tom novo, mesma regra dos 5 originais (dessaturado, luminosidade
+     ~65%, espaçado no círculo cromático e longe do roxo — reservado a
+     state-error ~271°): rosa dessaturado ~327°, entre o vermelho de
+     permission (~9°) e o roxo de error, sem encostar em nenhum dos dois. */
+  --phase-design: #c97fa8; /* rosa dessaturado */
 
   /* === Tipografia (§3) === */
   --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;

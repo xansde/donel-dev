@@ -4,8 +4,8 @@ import {
   Button,
   LevelCarousel,
   PhaseChip,
+  isEsteiraPhase,
   type AnnotationTone,
-  type EsteiraPhase as ChipPhase,
   type LevelCarouselCard,
   type LevelCarouselLevel,
 } from '@donel-dev/design-system';
@@ -24,13 +24,11 @@ import styles from './DiscoveryMap.module.css';
 // Este arquivo NÃO decide nada sobre o domínio: nenhuma frase de estado nasce
 // aqui, nenhuma regra de "esta fase pode?" é recalculada. Foi montar frase no
 // JSX que fez a mesma palavra errada reaparecer em três blocos diferentes.
-
-/** O `PhaseChip` do design-system desenha 6 fases; `run.phase` é string livre (`[P-4]`). */
-const CHIP_PHASES: ReadonlySet<string> = new Set<ChipPhase>(['discovery', 'plano', 'implementar', 'validar', 'concluir', 'documentar']);
-
-function isChipPhase(phase: string): phase is ChipPhase {
-  return CHIP_PHASES.has(phase);
-}
+//
+// `isEsteiraPhase` vem do design-system (achado da captura do batch n8: este
+// arquivo e `PhaseDetailsPanel.tsx` tinham cada um seu próprio Set local de
+// "quais fases têm chip", e os dois esqueceram `design` quando a fase entrou
+// no catálogo — `run.phase` continua string livre para fases fora da lista).
 
 const GLYPH_CHAR: Readonly<Record<MapGlyph, string>> = {
   'not-started': '○',
@@ -278,7 +276,7 @@ function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapC
                 <span className={[styles.trilhaGlyph, styles[`state-${step.glyph}`]].filter(Boolean).join(' ')} aria-hidden="true">
                   {GLYPH_CHAR[step.glyph]}
                 </span>
-                {isChipPhase(step.phase) ? <PhaseChip phase={step.phase} /> : <span className={styles.trilhaFase}>{step.phase}</span>}
+                {isEsteiraPhase(step.phase) ? <PhaseChip phase={step.phase} /> : <span className={styles.trilhaFase}>{step.phase}</span>}
                 <div className={styles.trilhaSpacer} />
                 <span className={styles.trilhaState}>{step.text}</span>
                 {step.isNext ? (

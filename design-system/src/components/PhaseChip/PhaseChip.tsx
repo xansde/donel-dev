@@ -5,13 +5,31 @@ import styles from './PhaseChip.module.css';
  * As fases fixas da Esteira (design-system.md §6, Brief 10 do handoff),
  * mais `documentar` (009-modo-dev-v3, extensão 8 — D-V5): o caminho
  * documental não é nenhuma das 5 fases originais e precisa de chip próprio,
- * sem reaproveitar leitura errada de outra fase.
+ * sem reaproveitar leitura errada de outra fase. E `design` (010, batch E1):
+ * entra no catálogo entre Plano e Implementar — mesma regra, chip próprio.
  */
-export type EsteiraPhase = 'discovery' | 'plano' | 'implementar' | 'validar' | 'concluir' | 'documentar';
+export type EsteiraPhase = 'discovery' | 'plano' | 'design' | 'implementar' | 'validar' | 'concluir' | 'documentar';
+
+/**
+ * A lista em runtime do union acima — única fonte do que o `PhaseChip` sabe
+ * desenhar. Achado da captura do batch n8 (tutorial-e2e, 05/08): `design`
+ * chegou ao catálogo central (`PHASE_CATALOG`, esteiraView.ts) mas dois
+ * consumidores (`DiscoveryMap.tsx`, `PhaseDetailsPanel.tsx`) mantinham cada
+ * um sua PRÓPRIA cópia hardcoded de "quais fases têm chip" — as duas
+ * esqueceram a fase nova, e a trilha do mapa mostrava "design" cru, sem cor,
+ * a mesma degradação visual de uma fase desconhecida. `isEsteiraPhase` é o
+ * que os dois devem importar em vez de duplicar o Set.
+ */
+export const ESTEIRA_PHASES: readonly EsteiraPhase[] = ['discovery', 'plano', 'design', 'implementar', 'validar', 'concluir', 'documentar'];
+
+export function isEsteiraPhase(phase: string): phase is EsteiraPhase {
+  return (ESTEIRA_PHASES as readonly string[]).includes(phase);
+}
 
 export const ESTEIRA_PHASE_LABEL_PT: Record<EsteiraPhase, string> = {
   discovery: 'Discovery',
   plano: 'Plano',
+  design: 'Design',
   implementar: 'Implementar',
   validar: 'Validar',
   concluir: 'Concluir',

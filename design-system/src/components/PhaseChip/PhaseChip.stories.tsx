@@ -21,6 +21,9 @@ type Story = StoryObj<typeof PhaseChip>;
 export const Discovery: Story = { args: { phase: 'discovery' } };
 export const Plano: Story = { args: { phase: 'plano' } };
 
+/** 7º valor (010, batch E1): entra no catálogo entre Plano e Implementar — mockup e diagrama de arquitetura antes de codar. */
+export const Design: Story = { args: { phase: 'design' } };
+
 /** "SZI-142 · Ajuste parcelas CUB" está em Implementar (Brief 10). */
 export const Implementar: Story = { args: { phase: 'implementar' } };
 export const Validar: Story = { args: { phase: 'validar' } };
@@ -33,12 +36,13 @@ export const Concluir: Story = { args: { phase: 'concluir' } };
  */
 export const Documentar: Story = { args: { phase: 'documentar' } };
 
-/** As 6 fases lado a lado — como aparecem espalhadas pelas linhas da sidebar de tasks (Brief 10) e no nível Documentação do mapa v3. */
+/** As 7 fases lado a lado — como aparecem espalhadas pelas linhas da sidebar de tasks (Brief 10) e no nível Documentação do mapa v3. */
 export const AllPhases: Story = {
   render: () => (
     <div style={{ display: 'flex', gap: 8 }}>
       <PhaseChip phase="discovery" />
       <PhaseChip phase="plano" />
+      <PhaseChip phase="design" />
       <PhaseChip phase="implementar" />
       <PhaseChip phase="validar" />
       <PhaseChip phase="concluir" />
