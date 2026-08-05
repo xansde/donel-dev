@@ -22,6 +22,8 @@ import {
   STORE_SCHEMA_VERSION,
   WORK_ITEM_STATES,
   type ArtifactPointer,
+  type DeclaredFactSummary,
+  type DiscardedItemTombstone,
   type DiscoverySnapshot,
   type EntityId,
   type DecisionSnapshot,
@@ -33,6 +35,7 @@ import {
   type HumanReviewState,
   type IngestedRunSnapshot,
   type IngestErrorSnapshot,
+  type IngestRecovery,
   type LockRecord,
   type MacroStage,
   type MirrorQueueEntry,
@@ -201,6 +204,18 @@ function oneOf<T extends string>(node: Record<string, unknown>, key: string, all
 
 const ENTITY_KINDS: readonly EntityKind[] = ['discovery', 'plan', 'work_item'];
 
+/** A5 — le `declaredFacts` do payload de `ingest.failed`. Entrada ilegivel e OMITIDA, nunca inventada. */
+function declaredFactList(node: Record<string, unknown>, key: string): readonly DeclaredFactSummary[] {
+  const value = node[key];
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): DeclaredFactSummary[] => {
+    if (!isPlainObject(entry)) return [];
+    const factType = str(entry, 'factType');
+    if (factType === null) return [];
+    return [{ factType, entity: oneOf<EntityKind>(entry, 'entity', ENTITY_KINDS), id: str(entry, 'id'), title: str(entry, 'title') }];
+  });
+}
+
 function entityId(node: Record<string, unknown>, key: string): EntityId | null {
   const raw = node[key];
   if (!isPlainObject(raw)) return null;
@@ -279,10 +294,19 @@ interface MutableSession {
   effort: string | null;
   startedAt: string;
   endedAt: string | null;
+  endReason: string | null;
   inputPath: string | null;
   resultPath: string | null;
   claimed: boolean;
 }
+
+/**
+ * A6 — o status ATUAL de um `resultPath`: a ultima palavra sobre ele, no
+ * sentido do log. Um mesmo path so aparece numa das duas listas de saida
+ * (`ingestErrors` OU `ingestRecoveries`) — nunca nas duas, porque a recuperacao
+ * nao apaga o `ingest.failed` do LOG, so para de mostra-lo como pendente.
+ */
+type IngestPathStatus = { readonly kind: 'failed'; readonly error: IngestErrorSnapshot } | { readonly kind: 'recovered'; readonly recovery: IngestRecovery };
 
 interface MutableMirror {
   subject: EntityId;
@@ -313,9 +337,12 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
   const humanReviews = new Map<string, HumanReviewSnapshot>();
   const notes: NoteSnapshot[] = [];
   const runs = new Map<string, IngestedRunSnapshot>();
-  const ingestErrors: IngestErrorSnapshot[] = [];
+  /** A6 — chave e `resultPath`: o ULTIMO evento sobre aquele arquivo decide o status de agora. */
+  const ingestStatusByPath = new Map<string, IngestPathStatus>();
   const mirrorQueue = new Map<string, MutableMirror>();
   const mirrorSynced = new Map<string, MirrorSyncedEntry>();
+  /** E2 — a lapide de cada item descartado, por id. */
+  const tombstones = new Map<string, DiscardedItemTombstone>();
 
   const seenDedupeKeys = new Set<string>();
   let throughSeq = 0;
@@ -441,7 +468,22 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         // D-16: item nascido pela skill se descarta num gesto. O evento fica no
         // log (historico nunca some); a entidade sai do snapshot.
         const id = str(p, 'id');
-        if (id !== null) workItems.delete(id);
+        if (id === null) break;
+        // E2 — a LAPIDE nasce do item COMO ELE ERA no instante do descarte,
+        // antes de sair do mapa. Sem o item (fantasma, ja descartado antes) nao
+        // ha o que gravar: uma lapide sem conteudo nao responde pergunta nenhuma.
+        const item = workItems.get(id);
+        if (item !== undefined) {
+          tombstones.set(id, {
+            id: item.id,
+            discoveryId: item.discoveryId,
+            title: item.title,
+            itemType: item.itemType,
+            discardedAt: str(p, 'at') ?? event.at,
+            reason: str(p, 'reason'),
+          });
+        }
+        workItems.delete(id);
         break;
       }
 
@@ -628,6 +670,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           effort: str(p, 'effort'),
           startedAt: str(p, 'startedAt') ?? event.at,
           endedAt: null,
+          endReason: null,
           inputPath: str(p, 'inputPath'),
           resultPath: str(p, 'resultPath'),
           // Nasce NAO assumida: o app preparou, ninguem pegou ainda.
@@ -669,6 +712,9 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           // O motivo do handoff fica na sessao que ENCERRA e na que continua —
           // a cadeia da fase precisa ser legivel dos dois lados.
           handoffReason: event.type === 'session.handed-off' ? (str(p, 'reason') ?? current.handoffReason) : current.handoffReason,
+          // A7 — por que ESTA sessao terminou (nao a de handoff, que tem
+          // sucessora e conta outra historia). `null` quando ninguem declarou.
+          endReason: event.type === 'session.ended' ? str(p, 'reason') : current.endReason,
         });
         break;
       }
@@ -803,13 +849,39 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         const resultPath = str(p, 'resultPath');
         if (resultPath === null) break;
         const rawIssues = Array.isArray(p.issues) ? p.issues : [];
-        ingestErrors.push({
-          resultPath,
-          at: str(p, 'at') ?? event.at,
-          subject: entityId(p, 'subject'),
-          issues: rawIssues
-            .filter(isPlainObject)
-            .map((issue) => ({ code: str(issue, 'code') ?? 'unknown', path: str(issue, 'path') ?? '', message: str(issue, 'message') ?? '' })),
+        ingestStatusByPath.set(resultPath, {
+          kind: 'failed',
+          error: {
+            resultPath,
+            at: str(p, 'at') ?? event.at,
+            subject: entityId(p, 'subject'),
+            issues: rawIssues
+              .filter(isPlainObject)
+              .map((issue) => ({ code: str(issue, 'code') ?? 'unknown', path: str(issue, 'path') ?? '', message: str(issue, 'message') ?? '' })),
+            // A5 — o custo: o que o documento declararia, se entrasse.
+            declaredFacts: declaredFactList(p, 'declaredFacts'),
+          },
+        });
+        break;
+      }
+
+      case 'ingest.recovered': {
+        // A6 — o MESMO path que falhou passou a ser legivel. Isto NAO apaga o
+        // `ingest.failed` do log (ele continua la, evento anterior); so troca o
+        // status DE AGORA daquele path — e e por isso que a chave e o path, nao
+        // um id novo: recuperar e suceder, nao e um fato solto.
+        const resultPath = str(p, 'resultPath');
+        if (resultPath === null) break;
+        ingestStatusByPath.set(resultPath, {
+          kind: 'recovered',
+          recovery: {
+            resultPath,
+            at: str(p, 'at') ?? event.at,
+            runId: str(p, 'runId'),
+            subject: entityId(p, 'subject'),
+            recoveredCodes: strList(p, 'recoveredCodes'),
+            how: str(p, 'how') ?? '',
+          },
         });
         break;
       }
@@ -880,9 +952,17 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
 
   const planList = [...plans.values()];
   const itemList = [...workItems.values()];
-  const errorList = ingestErrors;
+  // A6 — so o status DE AGORA de cada path: um path recuperado saiu da lista de
+  // erros e entrou na de recuperacoes, sem que o `ingest.failed` original tenha
+  // sido apagado do log (ele so nao aparece mais aqui).
+  const statusList = [...ingestStatusByPath.values()];
+  const errorList = statusList.filter((entry): entry is Extract<IngestPathStatus, { kind: 'failed' }> => entry.kind === 'failed').map((entry) => entry.error);
+  const recoveryList = statusList
+    .filter((entry): entry is Extract<IngestPathStatus, { kind: 'recovered' }> => entry.kind === 'recovered')
+    .map((entry) => entry.recovery);
   const mirrorList = [...mirrorQueue.values()];
   const phaseList = [...phases.values()];
+  const tombstoneList = [...tombstones.values()];
 
   const discoveryList: DiscoverySnapshot[] = [...discoveries.values()].map((discovery) => {
     const ownPlans = planList.filter((plan) => plan.discoveryId === discovery.id);
@@ -903,10 +983,15 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     // dos documentos recusados vem ancorada num work item. Olhar so o discovery
     // deixaria o card limpo na lista enquanto um `result.json` foi recusado —
     // o silencio que a spec inteira existe para acabar.
+    //
+    // E2 — o item DESCARTADO continua contando: um erro ou espelho pendente
+    // ancorado nele nao vira orfao so porque o item saiu de `workItems`.
+    const ownTombstones = tombstoneList.filter((tombstone) => tombstone.discoveryId === discovery.id);
     const owned = new Set<string>([
       `discovery:${discovery.id}`,
       ...ownPlans.map((plan) => `plan:${plan.id}`),
       ...ownItems.map((item) => `work_item:${item.id}`),
+      ...ownTombstones.map((tombstone) => `work_item:${tombstone.id}`),
     ]);
 
     const signals: StageSignal[] = [...derived.signals];
@@ -954,6 +1039,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     notes,
     runs: [...runs.values()],
     ingestErrors: errorList,
+    ingestRecoveries: recoveryList,
     mirrorQueue: mirrorList.map(({ subject, operation, payload, queuedAt, attempts, lastError }) => ({
       subject,
       operation,
@@ -963,6 +1049,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
       lastError,
     })) satisfies MirrorQueueEntry[],
     mirrorSynced: [...mirrorSynced.values()],
+    tombstones: tombstoneList,
   };
 }
 

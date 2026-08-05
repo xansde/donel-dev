@@ -183,6 +183,96 @@ describe('reduceEvents — entidades', () => {
     expect(snapshot.ingestErrors[0].issues[0].path).toBe('facts[0].fanout');
   });
 
+  // A5 — o CUSTO: o payload carrega o que o arquivo declararia, e o snapshot preserva.
+  it('o erro de ingestao guarda os fatos declarados — o CUSTO do arquivo recusado (A5)', () => {
+    const snapshot = reduceEvents([
+      evt('ingest.failed', {
+        resultPath: 'C:/x/run-9.json',
+        at: '2026-08-03T12:00:00.000Z',
+        subject: { entity: 'plan', id: 'pln-1' },
+        issues: [{ code: 'unknown_field', path: 'facts[3].fanout', message: 'x' }],
+        declaredFacts: [{ factType: 'work_item.recorded', entity: 'work_item', id: 'wi-1', title: 'Instrumentar a fila' }],
+      }),
+    ]);
+
+    expect(snapshot.ingestErrors[0].declaredFacts).toEqual([
+      { factType: 'work_item.recorded', entity: 'work_item', id: 'wi-1', title: 'Instrumentar a fila' },
+    ]);
+  });
+
+  it('erro sem declaredFacts no payload (evento antigo) devolve lista vazia, nunca quebra (A5)', () => {
+    const snapshot = reduceEvents([evt('ingest.failed', { resultPath: 'C:/x.json', at: '2026-08-03T12:00:00.000Z', subject: null, issues: [] })]);
+    expect(snapshot.ingestErrors[0].declaredFacts).toEqual([]);
+  });
+
+  // A6 — a recuperacao e um FATO proprio: o `ingest.failed` fica no LOG, so o
+  // status DE AGORA (snapshot) para de mostrar aquele path como pendente.
+  describe('ingest.recovered — o erro superado sai da lista, sem sumir do log (A6)', () => {
+    it('o path recuperado sai de ingestErrors e entra em ingestRecoveries', () => {
+      const snapshot = reduceEvents([
+        evt('ingest.failed', {
+          resultPath: 'C:/x/run-9.json',
+          at: '2026-08-03T12:00:00.000Z',
+          subject: { entity: 'discovery', id: 'dsc-1' },
+          issues: [{ code: 'unknown_field', path: 'facts[0].fanout', message: 'x' }],
+        }),
+        evt('ingest.recovered', {
+          resultPath: 'C:/x/run-9.json',
+          at: '2026-08-05T09:00:00.000Z',
+          runId: 'run-9',
+          subject: { entity: 'discovery', id: 'dsc-1' },
+          recoveredCodes: ['unknown_field'],
+          how: 'o documento agora passa no contrato',
+        }),
+      ]);
+
+      expect(snapshot.ingestErrors).toHaveLength(0);
+      expect(snapshot.ingestRecoveries).toHaveLength(1);
+      expect(snapshot.ingestRecoveries[0].how).toBe('o documento agora passa no contrato');
+      expect(snapshot.ingestRecoveries[0].recoveredCodes).toEqual(['unknown_field']);
+    });
+
+    it('o ingest.failed ORIGINAL continua no LOG — a recuperacao nao apaga historia', () => {
+      const events = [
+        evt('ingest.failed', { resultPath: 'C:/x.json', at: '2026-08-03T12:00:00.000Z', subject: null, issues: [] }),
+        evt('ingest.recovered', { resultPath: 'C:/x.json', at: '2026-08-05T09:00:00.000Z', runId: null, subject: null, recoveredCodes: [], how: 'sumiu' }),
+      ];
+      const snapshot = reduceEvents(events);
+
+      // O log passado (a lista de eventos) continua tendo os dois — o
+      // reducer so decide o que aparece no SNAPSHOT, nunca reescreve entrada.
+      expect(events.some((event) => event.type === 'ingest.failed')).toBe(true);
+      expect(snapshot.through_seq).toBe(events[events.length - 1].seq);
+    });
+
+    it('o sinal ingest-error do card SOME quando o path dele e recuperado', () => {
+      const subject = { entity: 'discovery', id: 'dsc-1' };
+      const snapshot = reduceEvents([
+        discovery('dsc-1'),
+        evt('ingest.failed', { resultPath: 'C:/x.json', at: '2026-08-03T12:00:00.000Z', subject, issues: [] }),
+        evt('ingest.recovered', { resultPath: 'C:/x.json', at: '2026-08-05T09:00:00.000Z', runId: null, subject, recoveredCodes: [], how: 'x' }),
+      ]);
+
+      expect(snapshot.discoveries[0].stageSignals).not.toContain('ingest-error');
+    });
+
+    it('um SEGUNDO erro no mesmo path, depois de recuperado, volta a acender o sinal', () => {
+      const subject = { entity: 'discovery', id: 'dsc-1' };
+      const snapshot = reduceEvents([
+        discovery('dsc-1'),
+        evt('ingest.failed', { resultPath: 'C:/x.json', at: '2026-08-03T12:00:00.000Z', subject, issues: [] }),
+        evt('ingest.recovered', { resultPath: 'C:/x.json', at: '2026-08-05T09:00:00.000Z', runId: null, subject, recoveredCodes: [], how: 'x' }),
+        evt('ingest.failed', { resultPath: 'C:/x.json', at: '2026-08-06T09:00:00.000Z', subject, issues: [{ code: 'unknown_field', path: 'x', message: 'x' }] }),
+      ]);
+
+      // A ULTIMA palavra sobre o path e "falhou de novo" — nao fica preso no
+      // status da primeira recuperacao.
+      expect(snapshot.ingestErrors).toHaveLength(1);
+      expect(snapshot.ingestRecoveries).toHaveLength(0);
+      expect(snapshot.discoveries[0].stageSignals).toContain('ingest-error');
+    });
+  });
+
   it('espelho que falhou vai para fila e nunca trava o trabalho local (D-12)', () => {
     const subject = { entity: 'discovery', id: 'dsc-1' };
     const snapshot = reduceEvents([
@@ -238,6 +328,85 @@ describe('reduceEvents — entidades', () => {
     // O conteudo vem da fila quando o evento de sync nao o repete.
     expect(snapshot.mirrorSynced[0].payload).toEqual({ labels: ['esteira:em-andamento:plano'] });
     expect(snapshot.mirrorSynced[0].at).toBe('2026-08-03T12:05:00.000Z');
+  });
+});
+
+// E2 — a LAPIDE: `work_item.discarded` tira o item de `workItems`, mas o card
+// continua sabendo o que era, de quem era, quando e por que saiu.
+describe('work_item.discarded — a lápide do item que saiu (E2)', () => {
+  it('a entidade sai de workItems e a lápide entra em tombstones', () => {
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      workItem('wi-1', 'dsc-1', { itemType: 'spike', title: 'Medir onde o lote para' }),
+      evt('work_item.discarded', { id: 'wi-1', at: '2026-08-05T14:22:00.000Z', reason: 'nasceu duplicado' }),
+    ]);
+
+    expect(snapshot.workItems).toHaveLength(0);
+    expect(snapshot.tombstones).toHaveLength(1);
+    expect(snapshot.tombstones[0]).toEqual({
+      id: 'wi-1',
+      discoveryId: 'dsc-1',
+      title: 'Medir onde o lote para',
+      itemType: 'spike',
+      discardedAt: '2026-08-05T14:22:00.000Z',
+      reason: 'nasceu duplicado',
+    });
+  });
+
+  it('reason ausente vira null — o card nao inventa por que o item saiu', () => {
+    const snapshot = reduceEvents([discovery('dsc-1'), workItem('wi-1', 'dsc-1'), evt('work_item.discarded', { id: 'wi-1', at: '2026-08-05T14:22:00.000Z' })]);
+    expect(snapshot.tombstones[0].reason).toBeNull();
+  });
+
+  it('descartar um id que nao existe nao cria lápide fantasma', () => {
+    const snapshot = reduceEvents([discovery('dsc-1'), evt('work_item.discarded', { id: 'wi-fantasma', at: '2026-08-05T14:22:00.000Z', reason: null })]);
+    expect(snapshot.tombstones).toHaveLength(0);
+  });
+
+  it('a lápide do card mantém o sinal de erro ancorado no item — ela não vira órfã (E2)', () => {
+    const subject = { entity: 'work_item', id: 'wi-1' };
+    const snapshot = reduceEvents([
+      discovery('dsc-1'),
+      workItem('wi-1', 'dsc-1'),
+      evt('ingest.failed', { resultPath: 'C:/x.json', at: '2026-08-03T12:00:00.000Z', subject, issues: [] }),
+      evt('work_item.discarded', { id: 'wi-1', at: '2026-08-05T14:22:00.000Z', reason: null }),
+    ]);
+
+    // O item saiu, mas o card continua contando o erro de ingestão que era dele.
+    expect(snapshot.discoveries[0].stageSignals).toContain('ingest-error');
+  });
+});
+
+// A7 — por que a sessão terminou, quando `session.ended` (não handoff) o disse.
+describe('session.ended — o motivo fica legível no snapshot (A7)', () => {
+  it('endReason carrega o motivo de UMA sessão encerrada sem handoff', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      evt('session.started', { id: 'ses-1', subject, phase: 'discovery', startedAt: '2026-08-03T12:00:00.000Z' }),
+      evt('session.ended', { id: 'ses-1', at: '2026-08-03T13:00:00.000Z', reason: 'o app reiniciou antes do result aparecer' }),
+    ]);
+
+    expect(snapshot.sessions[0].endReason).toBe('o app reiniciou antes do result aparecer');
+  });
+
+  it('session.handed-off NAO grava em endReason — ele tem sucessora, não é interrupção', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      evt('session.started', { id: 'ses-1', subject, phase: 'discovery', startedAt: '2026-08-03T12:00:00.000Z' }),
+      evt('session.handed-off', { id: 'ses-1', reason: 'orcamento de contexto', at: '2026-08-03T13:00:00.000Z' }),
+    ]);
+
+    expect(snapshot.sessions[0].endReason).toBeNull();
+    expect(snapshot.sessions[0].handoffReason).toBe('orcamento de contexto');
+  });
+
+  it('sem reason declarado, endReason fica null — ninguem inventa motivo', () => {
+    const subject = { entity: 'discovery', id: 'dsc-1' };
+    const snapshot = reduceEvents([
+      evt('session.started', { id: 'ses-1', subject, phase: 'discovery', startedAt: '2026-08-03T12:00:00.000Z' }),
+      evt('session.ended', { id: 'ses-1', at: '2026-08-03T13:00:00.000Z' }),
+    ]);
+    expect(snapshot.sessions[0].endReason).toBeNull();
   });
 });
 

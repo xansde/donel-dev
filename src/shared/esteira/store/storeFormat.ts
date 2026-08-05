@@ -447,6 +447,15 @@ export interface SessionSnapshot {
   readonly startedAt: string;
   readonly endedAt: string | null;
   /**
+   * A7 — por que ESTA sessao terminou, quando `session.ended` (nao handoff) o
+   * disse. Existe porque `endSession` sempre recebeu um `reason`, mas ate aqui
+   * so `session.handed-off` o guardava (em `handoffReason`) — uma sessao
+   * encerrada pela reconciliacao de boot ("o app reiniciou sem o result
+   * aparecer") ficava com o motivo escrito no log e invisivel no snapshot.
+   * `null` = ninguem declarou motivo (ex.: aba fechada antes desta causa existir).
+   */
+  readonly endReason: string | null;
+  /**
    * O `run-input.json` que o app deixou para esta sessao, e o `result.json` que
    * ela deve devolver. Ficam no snapshot porque a TELA precisa deles: enquanto
    * o disparo nao abre a aba de terminal sozinho, e por estes caminhos que o
@@ -595,11 +604,7 @@ export interface IngestedRunSnapshot {
 }
 
 /**
- * DECLARADO, NAO IMPLEMENTADO — a estrutura minima da ingestao sanavel, fixada
- * aqui para que quem a implementar nao precise inventar a forma e para que ela
- * nao nasca divergente do resto do formato.
- *
- * Contrato pretendido:
+ * A6 — a estrutura minima da ingestao sanavel.
  *
  * - `resultPath` e a MESMA chave do `IngestErrorSnapshot` que ela supera — e
  *   por ela que o card sabe qual erro deixou de valer.
@@ -608,7 +613,8 @@ export interface IngestedRunSnapshot {
  * - `runId` so aparece quando o documento sanado tinha um run legivel; `null` e
  *   um estado honesto, nao um buraco a preencher com palpite.
  * - O `ingest.failed` anterior PERMANECE no log. O snapshot e que para de
- *   mostra-lo como pendente.
+ *   mostra-lo como pendente (`reduceEvents` — o path recuperado sai de
+ *   `ingestErrors` e entra aqui).
  */
 export interface IngestRecovery {
   readonly resultPath: string;
@@ -622,17 +628,19 @@ export interface IngestRecovery {
 }
 
 /**
- * DECLARADO, NAO IMPLEMENTADO — a LAPIDE de um item descartado.
+ * E2 — a LAPIDE de um item descartado.
  *
- * Hoje `work_item.discarded` remove a entidade do snapshot e o evento fica so
- * no log: quem olha o card ve o item sumir, sem nada dizendo que ele existiu.
- * Para um item nascido pela skill (D-16) isso e barato de descartar e caro de
- * explicar depois — "por que este item sumiu?" nao tem resposta na tela.
+ * `work_item.discarded` remove a entidade do snapshot e o evento fica so no
+ * log: sem a lapide, quem olha o card veria o item sumir, sem nada dizendo que
+ * ele existiu. Para um item nascido pela skill (D-16) isso e barato de
+ * descartar e caro de explicar depois — "por que este item sumiu?" precisa de
+ * resposta na tela.
  *
- * Contrato pretendido: a lapide guarda o MINIMO para responder essa pergunta
- * (o que era, de quem era, quando e por que saiu) e nada alem — ela e um
- * registro de que algo foi descartado, nao uma copia do item para ressuscitar.
- * O item descartado continua FORA de `workItems`.
+ * A lapide guarda o MINIMO para responder essa pergunta (o que era, de quem
+ * era, quando e por que saiu) e nada alem — ela e um registro de que algo foi
+ * descartado, nao uma copia do item para ressuscitar. O item descartado
+ * continua FORA de `workItems`; notas, fases e sessoes que apontavam para ele
+ * continuam pertencendo ao card (`cardView` inclui a lapide em `owned`).
  */
 export interface DiscardedItemTombstone {
   readonly id: string;
@@ -644,12 +652,30 @@ export interface DiscardedItemTombstone {
   readonly reason: string | null;
 }
 
+/**
+ * A5 — o CUSTO de um documento recusado: o que ELE declararia, se entrasse.
+ * Best-effort e nunca inventado — quando o campo de identidade do fato nao
+ * esta la, `id`/`title` ficam `null` em vez de um palpite. Existe porque
+ * apontar so o campo que quebrou ("unknown_field em facts[3].fanout") nao diz
+ * o que se perde: o dono viveu isso como "nao consigo abrir as tasks", porque
+ * os `work_item.recorded` que este arquivo carregava nunca chegaram a existir.
+ */
+export interface DeclaredFactSummary {
+  readonly factType: string;
+  /** A entidade que este fato criaria. `null` para fatos que nao criam entidade propria (relacao, verificacao, gate...). */
+  readonly entity: EntityKind | null;
+  readonly id: string | null;
+  readonly title: string | null;
+}
+
 /** D-10 — documento fora do contrato vira ERRO visivel no card, nunca silencio. */
 export interface IngestErrorSnapshot {
   readonly resultPath: string;
   readonly at: string;
   readonly subject: EntityId | null;
   readonly issues: readonly { readonly code: string; readonly path: string; readonly message: string }[];
+  /** A5 — o custo: os fatos que este arquivo declarava, tipo + id, sem entrar no store. */
+  readonly declaredFacts: readonly DeclaredFactSummary[];
 }
 
 /** D-12 — o espelho nunca bloqueia: falha vai para fila e o card mostra "espelho pendente". */
@@ -704,9 +730,14 @@ export interface StoreSnapshot {
   readonly notes: readonly NoteSnapshot[];
   /** A4 — o livro dos runs ingeridos, na ordem em que entraram. */
   readonly runs: readonly IngestedRunSnapshot[];
+  /** D-10 — erros AINDA pendentes: um path recuperado (A6) sai daqui, nao fica acumulando. */
   readonly ingestErrors: readonly IngestErrorSnapshot[];
+  /** A6 — as recuperacoes conhecidas, uma por `resultPath` (a mais recente). */
+  readonly ingestRecoveries: readonly IngestRecovery[];
   readonly mirrorQueue: readonly MirrorQueueEntry[];
   readonly mirrorSynced: readonly MirrorSyncedEntry[];
+  /** E2 — as lapides dos itens descartados, uma por item. */
+  readonly tombstones: readonly DiscardedItemTombstone[];
 }
 
 /** D-4 — o ciclo de vida de cada tipo. Tabela, nao regra espalhada. */
