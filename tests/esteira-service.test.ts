@@ -163,6 +163,11 @@ describe('boot', () => {
   it('A6: erro cujo arquivo sumiu do outbox sai da lista no proximo boot', () => {
     const path = join(root, 'outbox', 'run-quebrado.json');
     const doc = JSON.parse(readFileSync(join(EXAMPLES_DIR, 'discovery-com-tracker.json'), 'utf8'));
+    // F26 — o fixture tem finished_at ANTES do HISTORIC_CONTRACT_CUTOFF; este
+    // teste quer um documento invalido de HOJE, sem relacao com a anistia do
+    // outbox historico, entao pula o timestamp para depois do corte.
+    doc.run.started_at = '2026-08-06T09:00:00.000Z';
+    doc.run.finished_at = '2026-08-06T09:41:07.000Z';
     doc.facts[0].fanout_cards = ['x'];
     writeFileSync(path, JSON.stringify(doc), 'utf8');
     service.scanOutbox();
@@ -179,6 +184,9 @@ describe('boot', () => {
   it('A6: erro cujo arquivo foi CONSERTADO no outbox sai da lista no proximo boot', () => {
     const path = join(root, 'outbox', 'run-quebrado.json');
     const doc = JSON.parse(readFileSync(join(EXAMPLES_DIR, 'discovery-com-tracker.json'), 'utf8'));
+    // F26 — ver comentario no teste irmao acima.
+    doc.run.started_at = '2026-08-06T09:00:00.000Z';
+    doc.run.finished_at = '2026-08-06T09:41:07.000Z';
     doc.facts[0].fanout_cards = ['x'];
     writeFileSync(path, JSON.stringify(doc), 'utf8');
     service.scanOutbox();

@@ -354,19 +354,25 @@ export interface IngestAmnestyInput {
   /** A MESMA chave que `ingest.failed` teria usado — a linha que este evento evita. */
   readonly resultPath: string;
   readonly at: string;
-  /** O run_id lido de forma leniente do texto cru — e por ele que a anistia se justifica. */
-  readonly runId: string;
+  /**
+   * O run_id lido de forma leniente do texto cru. `null` quando a anistia
+   * veio pelo CORTE DE DATA sem um `run.run_id` legivel — honesto em vez de
+   * um palpite, nunca inventado.
+   */
+  readonly runId: string | null;
   readonly subject: EntityId | null;
   /** Os issues que o parser NOVO apontou — para auditoria: por que este arquivo teria falhado hoje. */
   readonly issues: readonly ContractIssue[];
 }
 
 /**
- * F26 — a anistia do outbox historico. Um run cujo `run_id` JA CONSTA no
- * livro (`store.snapshot().runs`) foi ingerido legitimamente por um contrato
- * mais antigo; endurecer o contrato nao pode fazer esse mesmo arquivo
- * reaparecer como "nao consegui ler" so porque o parser de HOJE o recusaria.
- * Revalidacao/re-scan so LIMPA, nunca SUJA.
+ * F26 — a anistia do outbox historico. Um run HISTORICO — cujo `run_id` JA
+ * PASSOU pela ingestao (livro ou qualquer evento com origem `ingest`, mesmo
+ * anterior ao livro existir) OU cujo timestamp e anterior ao corte do
+ * contrato endurecido — foi legitimo por um contrato mais antigo; endurecer
+ * o contrato nao pode fazer esse mesmo arquivo reaparecer como "nao consegui
+ * ler" so porque o parser de HOJE o recusaria. Revalidacao/re-scan so LIMPA,
+ * nunca SUJA.
  *
  * `dedupe_key` e `ingest.amnestied:<resultPath>` — prefixada com o proprio
  * tipo, igual `ingest.failed:<path>` e `ingest.recovered:<path>`: as tres

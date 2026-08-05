@@ -919,6 +919,32 @@ export function runIdFromRawText(text: string): string | null {
 }
 
 /**
+ * F26 — o CORTE POR DATA: quando o `run_id` nao e conhecido de nenhuma
+ * ingestao anterior (nem o livro, nem qualquer fato ja gravado), o segundo
+ * criterio para anistiar e "este run e de ANTES do contrato endurecer?".
+ * `finished_at` e preferido (e quando o run terminou, o dado mais proximo do
+ * "quando isto foi ingerido de fato"); `started_at` e o fallback quando o
+ * documento nao chegou a declarar `finished_at` de forma legivel. Mesma
+ * leitura leniente e best-effort de `runIdFromRawText`: nunca lanca, nunca
+ * inventa — sem nenhum dos dois campos como string, devolve `null`.
+ */
+export function runTimestampFromRawText(text: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(parsed)) return null;
+  const run = parsed.run;
+  if (!isPlainObject(run)) return null;
+  const finishedAt = run.finished_at;
+  if (typeof finishedAt === 'string' && finishedAt.length > 0) return finishedAt;
+  const startedAt = run.started_at;
+  return typeof startedAt === 'string' && startedAt.length > 0 ? startedAt : null;
+}
+
+/**
  * Le um `result.json` ja parseado (ou o texto cru, via `parseEsteiraResultText`).
  * Nunca lanca. `ok: false` sempre traz PELO MENOS um issue com caminho — e o
  * que a UI transforma em "erro de ingestao" visivel no card.

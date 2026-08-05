@@ -926,3 +926,38 @@ describe('o estado do item sai do grafo — nenhum default finge saber', () => {
     expect(snapshot.discoveries[0].derivedStage).toBe('execution');
   });
 });
+
+// ---------------------------------------------------------------------------
+// F26 — `knownIngestRunIds`: todo run_id que ja passou pela ingestao, mesmo
+// SEM `run.ingested` (os runs pre-ledger do incidente de 05/08).
+// ---------------------------------------------------------------------------
+
+/** Um fato qualquer com origem `ingest` — o shape que `EventSource` promete carregar o run_id. */
+function ingerido(type: string, payload: Record<string, unknown>, runId: string, resultPath = 'C:/outbox/run.json'): StoreEvent {
+  return { ...evt(type, payload), source: { kind: 'ingest', run_id: runId, result_path: resultPath } };
+}
+
+describe('reduceEvents — knownIngestRunIds (F26)', () => {
+  it('um run com run.ingested aparece no set — o caso comum', () => {
+    const snapshot = reduceEvents([
+      ingerido('run.ingested', { runId: 'run-1', contentHash: 'abc' }, 'run-1'),
+      discovery('dsc-1'),
+    ]);
+
+    expect(snapshot.knownIngestRunIds.has('run-1')).toBe(true);
+  });
+
+  it('um run PRE-LEDGER (fato com source.run_id, sem run.ingested nenhum) tambem aparece no set', () => {
+    // Simula os 10 runs do incidente de 05/08: entraram ANTES do evento
+    // `run.ingested` existir, entao so tem o fato em si com a origem.
+    const snapshot = reduceEvents([ingerido('discovery.created', { id: 'dsc-1', title: 'Pre-ledger' }, 'run-pre-ledger')]);
+
+    expect(snapshot.knownIngestRunIds.has('run-pre-ledger')).toBe(true);
+    expect(snapshot.runs).toHaveLength(0); // o livro continua vazio — so o set enxerga este run
+  });
+
+  it('run_id que nunca apareceu em evento nenhum NAO esta no set', () => {
+    const snapshot = reduceEvents([discovery('dsc-1')]); // source: app, sem run_id
+    expect(snapshot.knownIngestRunIds.has('run-desconhecido')).toBe(false);
+  });
+});

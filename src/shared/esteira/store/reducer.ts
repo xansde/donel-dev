@@ -361,6 +361,8 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
   const mirrorSynced = new Map<string, MirrorSyncedEntry>();
   /** E2 — a lapide de cada item descartado, por id. */
   const tombstones = new Map<string, DiscardedItemTombstone>();
+  /** F26 — todo `run_id` que ja passou pela ingestao, mesmo sem `run.ingested`. */
+  const knownIngestRunIds = new Set<string>();
 
   const seenDedupeKeys = new Set<string>();
   let throughSeq = 0;
@@ -384,6 +386,13 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
 
   for (const event of events) {
     if (event.seq > throughSeq) throughSeq = event.seq;
+
+    // F26 — o `run_id` conta como CONHECIDO pelo simples fato de ter passado
+    // pela ingestao, mesmo que o evento em si seja um duplicado descartado a
+    // seguir (dedupe) ou um fato de um tempo em que `run.ingested` nao
+    // existia ainda: e exatamente essa segunda situacao que os 10 runs
+    // pre-ledger do incidente de 05/08 estao em.
+    if (event.source.kind === 'ingest') knownIngestRunIds.add(event.source.run_id);
 
     // Dois eventos com a mesma chave natural sao o MESMO fato: o segundo e
     // descartado na leitura. E dai que vem a idempotencia da ingestao.
@@ -912,15 +921,17 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         // Chave e o path, igual `ingest.failed`/`ingest.recovered`: o ULTIMO
         // evento sobre aquele arquivo decide o status de agora.
         const resultPath = str(p, 'resultPath');
-        const runId = str(p, 'runId');
-        if (resultPath === null || runId === null) break;
+        // F26 — `runId` pode ser `null`: a anistia por CORTE DE DATA nao exige
+        // um `run_id` legivel, so um timestamp anterior ao corte. Ver
+        // `IngestAmnesty.runId`.
+        if (resultPath === null) break;
         const rawIssues = Array.isArray(p.issues) ? p.issues : [];
         ingestStatusByPath.set(resultPath, {
           kind: 'amnestied',
           amnesty: {
             resultPath,
             at: str(p, 'at') ?? event.at,
-            runId,
+            runId: str(p, 'runId'),
             subject: entityId(p, 'subject'),
             issues: rawIssues
               .filter(isPlainObject)
@@ -1085,6 +1096,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     humanReviews: [...humanReviews.values()],
     notes,
     runs: [...runs.values()],
+    knownIngestRunIds,
     ingestErrors: errorList,
     ingestRecoveries: recoveryList,
     ingestAmnesties: amnestyList,
