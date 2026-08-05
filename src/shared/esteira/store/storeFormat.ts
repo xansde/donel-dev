@@ -281,6 +281,32 @@ export interface ArtifactPointer {
   readonly recordedAt: string;
 }
 
+/**
+ * A8/A20 — o RECURSO DE ESCRITA que um disparo ocupa: o repo e o caminho
+ * FISICO que a fase vai tocar (a worktree dedicada, ou a arvore principal na
+ * ausencia dela). E um alcance DIFERENTE de `LockRecord.subject`: o subject e
+ * "quem" (o card/plano/item); o recurso e "onde no disco" — e dois assuntos
+ * IRMAOS (D-5/D-7, paralelismo desejado) podem ocupar o MESMO recurso sem que
+ * a trava de assunto veja problema nenhum, porque ela nunca olha os dois ao
+ * mesmo tempo.
+ *
+ * `branch` viaja para EXIBICAO (o card consegue dizer "branch X ocupada"),
+ * mas NAO decide conflito sozinho — ver `resourceConflicts` em
+ * `store/lockChain.ts` para o porque (nem sempre é conhecida hoje, e tratá-la
+ * como curinga quebraria o paralelismo de irmãos que a spec pede).
+ */
+export interface LockResource {
+  readonly targetRepo: string;
+  readonly branch: string | null;
+  /**
+   * `worktree_path`, ou `repo_path` na ausencia dele — o caminho que este run
+   * de fato toca. `null` quando nem isso e conhecido: tratado, na checagem de
+   * conflito, como a arvore principal/compartilhada — o caso mais arriscado
+   * (P32/A20), e o default hoje (`worktree_path` ainda vem `null` na pratica).
+   */
+  readonly treePath: string | null;
+}
+
 /** D-11 — a trava e local e e FATO: dono, hora e sessao, visivel no card, liberavel num gesto. Nunca arquivo `.lock` solto, nunca so etiqueta remota. */
 export interface LockRecord {
   readonly subject: EntityId;
@@ -290,6 +316,8 @@ export interface LockRecord {
   readonly cliSessionId: string | null;
   /** Espelho no board, quando o adapter esta ligado (D-12). Nunca condiciona a trava local. */
   readonly mirroredLabel: string | null;
+  /** A8/A20 — `null` quando a fase nao declarou workspace (no repo nenhum a ocupar). */
+  readonly resource: LockResource | null;
 }
 
 export interface StageOverride {
@@ -405,6 +433,16 @@ export interface SessionSnapshot {
   readonly cwd: string | null;
   readonly model: string | null;
   readonly effort: string | null;
+  /**
+   * A21 — `true` quando `model`/`effort` foram aplicados por DEFAULT, sem
+   * confirmacao explicita de quem disparou (P33: o anuncio pre-disparo saiu,
+   * mas o disparo seguiu no mesmo turno, sem esperar override). `false` cobre
+   * tanto "sem model/effort nenhum" quanto "escolha confirmada" — os dois sao
+   * decisao explicita, so o terceiro caso e assumido. E o app registrando a
+   * proveniencia da PRÓPRIA decisao, o mesmo espirito de `SeededFlag` para
+   * entidades vindas de seed.
+   */
+  readonly modelEffortAssumed: boolean;
   readonly startedAt: string;
   readonly endedAt: string | null;
   /**

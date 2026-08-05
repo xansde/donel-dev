@@ -21,8 +21,11 @@ import {
   esteiraPhaseCommand,
   esteiraTabName,
   lockStateOf,
+  phaseDoneRefusedMessage,
   preparedMessage,
   resolveSessionCwd,
+  resourceBusyRefusedMessage,
+  sessionActiveRefusedMessage,
   type EsteiraSessionRequest,
   type KnownProject,
   type SessionOpenOutcome,
@@ -112,6 +115,50 @@ export async function preparePhase(input: PreparePhaseInput, deps: PreparePhaseD
         lockStateOf(dispatched.lock.holderKind, dispatched.lock.cliSessionId !== null),
         dispatched.lock.phase,
         formatTimestamp(dispatched.lock.acquiredAt),
+      ),
+    };
+  }
+
+  if (dispatched.reason === 'resource-busy') {
+    // A8/A20 — o repo (às vezes a branch) que esta fase tocaria já está
+    // ocupado por OUTRO assunto (irmão): a trava por assunto (`locked`,
+    // acima) nunca veria isto — é o buraco que a trava de recurso fecha.
+    const resource = dispatched.lock.resource;
+    return {
+      ok: false,
+      state: dispatched.state,
+      message: resourceBusyRefusedMessage(
+        resource?.targetRepo ?? target.targetRepo ?? 'este repositório',
+        resource?.branch ?? null,
+        dispatched.lock.phase,
+        formatTimestamp(dispatched.lock.acquiredAt),
+      ),
+    };
+  }
+
+  if (dispatched.reason === 'session-active') {
+    // B3 — a trava (`locked`, acima) já teria pego o caso comum; isto é a
+    // rede de segurança para quando ela caiu por outro caminho e a sessão
+    // anterior nunca terminou.
+    return {
+      ok: false,
+      state: dispatched.state,
+      message: sessionActiveRefusedMessage(dispatched.session.phase, formatTimestamp(dispatched.session.startedAt)),
+    };
+  }
+
+  if (dispatched.reason === 'phase-done') {
+    // A1 — a fase já concluiu sobre este MESMO assunto; redisparar exige
+    // `confirmReopen: true` explícito (o gesto de reabrir é do B1, fora deste
+    // batch — aqui só a recusa e a razão, para quem chamar decidir o que
+    // oferecer em cima dela).
+    return {
+      ok: false,
+      state: dispatched.state,
+      message: phaseDoneRefusedMessage(
+        dispatched.phase.phase,
+        dispatched.phase.outcome,
+        formatTimestamp(dispatched.phase.completedAt ?? dispatched.phase.startedAt),
       ),
     };
   }

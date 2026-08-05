@@ -72,7 +72,8 @@ describe('preparePhase', () => {
     expect(request.cwd).toBe('C:/repos/donel-dev');
     expect(request.sessionId).toBe('ses-1');
     // Invariante 2: o comando é escrito, nunca enviado.
-    expect(request.command).toBe('/esteira-discovery --input "C:/inbox/run-1.json"');
+    // A2 — a skill do FORK (sufixo -3), nunca o plugin 2.1.0 sem sufixo.
+    expect(request.command).toBe('/esteira-discovery-3 --input "C:/inbox/run-1.json"');
     expect(request.command).not.toMatch(/[\r\n]/);
     expect(result.message).toContain('O Enter é seu');
   });
@@ -97,6 +98,7 @@ describe('preparePhase', () => {
         acquiredAt: '2026-08-04T09:30:00.000Z',
         cliSessionId: null,
         mirroredLabel: null,
+        resource: null,
       },
       state: estado(),
     };
@@ -106,6 +108,88 @@ describe('preparePhase', () => {
     expect(result.ok).toBe(false);
     expect(result.message).toContain('em andamento');
     expect(result.message).toContain('plano');
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('A8/A20: recurso ocupado por outro assunto — a recusa nomeia o repo e quem segura', async () => {
+    const recusa: EsteiraDispatchDto = {
+      ok: false,
+      reason: 'resource-busy',
+      lock: {
+        subject: { entity: 'work_item', id: 'wi-2' },
+        phase: 'implementar',
+        holderKind: 'app',
+        acquiredAt: '2026-08-05T09:00:00.000Z',
+        cliSessionId: null,
+        mirroredLabel: null,
+        resource: { targetRepo: 'donel-dev', branch: 'feat/wi-2', treePath: null },
+      },
+      state: estado(),
+    };
+    const openSession = vi.fn();
+    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('donel-dev');
+    expect(result.message).toContain('feat/wi-2');
+    expect(result.message).toContain('implementar');
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('B3: sessão viva já existente para o mesmo assunto+fase — a recusa não deixa abrir uma segunda', async () => {
+    const recusa: EsteiraDispatchDto = {
+      ok: false,
+      reason: 'session-active',
+      session: {
+        id: 'ses-1',
+        cliSessionId: 'cli-1',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        phase: 'discovery',
+        continuesSessionId: null,
+        handoffReason: null,
+        cwd: 'C:/repos/donel-dev',
+        model: null,
+        effort: null,
+        modelEffortAssumed: false,
+        startedAt: '2026-08-05T09:00:00.000Z',
+        endedAt: null,
+        inputPath: 'C:/inbox/run-1.json',
+        resultPath: 'C:/outbox/run-1.json',
+        claimed: true,
+      },
+      state: estado(),
+    };
+    const openSession = vi.fn();
+    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('discovery');
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('A1: fase já concluída sobre este assunto — a recusa nomeia o desfecho e pede confirmação', async () => {
+    const recusa: EsteiraDispatchDto = {
+      ok: false,
+      reason: 'phase-done',
+      phase: {
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        phase: 'discovery',
+        startedAt: '2026-08-04T09:00:00.000Z',
+        completedAt: '2026-08-04T09:30:00.000Z',
+        outcome: 'done',
+        summary: null,
+        failure: null,
+        lastRunId: 'run-1',
+        seeded: false,
+      },
+      state: estado(),
+    };
+    const openSession = vi.fn();
+    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('concluída');
+    expect(result.message).toContain('confirme');
     expect(openSession).not.toHaveBeenCalled();
   });
 

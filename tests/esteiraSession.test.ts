@@ -4,10 +4,16 @@ import {
   dispatchRefusedMessage,
   esteiraPhaseCommand,
   esteiraTabName,
+  isReadyForAutoStart,
   lockStateOf,
+  phaseDoneRefusedMessage,
   preparedMessage,
   resolveSessionCwd,
+  resourceBusyRefusedMessage,
+  sessionActiveRefusedMessage,
+  withAutoEnter,
 } from '../src/renderer/src/Esteira/esteiraSession';
+import { TRUST_DIALOG_CONFIRM_MARKER, TRUST_DIALOG_EXIT_MARKER } from '../src/shared/trustDialog';
 
 // Spec 010 / batch B1 — a decisao PURA do que o "Preparar" abre. Ela existe
 // separada do componente por dois motivos, os dois com historia neste repo:
@@ -21,12 +27,23 @@ import {
 //    melhor palpite.
 
 describe('esteiraPhaseCommand — o comando que a sessao recebe escrito', () => {
-  it('chama a skill da fase e aponta para o contexto que o app deixou', () => {
-    expect(esteiraPhaseCommand('discovery', 'C:/inbox/run-1.json')).toBe('/esteira-discovery --input "C:/inbox/run-1.json"');
+  // A2 — a skill que REALMENTE le `--input <run-input.json>` e o fork
+  // (`skills/esteira-donel-3.0.0`), instalado com sufixo `-3` (README,
+  // "Instalar") justamente para conviver sem colidir com o plugin `esteira:`
+  // da 2.1.0, que responde ao MESMO nome sem sufixo (`/esteira-discovery
+  // <card_id>`, um formato de argumento diferente). Sem o sufixo, o texto
+  // pré-digitado invoca o plugin errado — reincidiu em seis runs seguidos
+  // antes desta correção.
+  it('chama a skill do FORK (sufixo -3) e aponta para o contexto que o app deixou', () => {
+    expect(esteiraPhaseCommand('discovery', 'C:/inbox/run-1.json')).toBe('/esteira-discovery-3 --input "C:/inbox/run-1.json"');
+  });
+
+  it('NUNCA o nome sem sufixo — esse é o plugin 2.1.0, que espera <card_id>, não --input', () => {
+    expect(esteiraPhaseCommand('discovery', 'C:/inbox/run-1.json')).not.toMatch(/^\/esteira-discovery /);
   });
 
   it('serve qualquer nome de fase — `run.phase` e string livre no contrato (P-4)', () => {
-    expect(esteiraPhaseCommand('plano', 'C:/inbox/run-2.json')).toContain('/esteira-plano');
+    expect(esteiraPhaseCommand('plano', 'C:/inbox/run-2.json')).toContain('/esteira-plano-3');
   });
 
   it('NUNCA carrega quebra de linha — o Enter e gesto humano (invariante 2/CA-3)', () => {
@@ -146,5 +163,99 @@ describe('dispatchRefusedMessage — a recusa não inventa um estado que o card 
 
   it('recusa por skill rodando diz em andamento', () => {
     expect(dispatchRefusedMessage('running', 'plano', '03/08, 12:00')).toContain('em andamento');
+  });
+});
+
+describe('phaseDoneRefusedMessage — A1: redisparo de fase concluída exige confirmação', () => {
+  it('done: diz "concluída"', () => {
+    const message = phaseDoneRefusedMessage('discovery', 'done', '03/08, 12:00');
+    expect(message).toContain('concluída');
+    expect(message).toContain('discovery');
+    expect(message).toContain('03/08, 12:00');
+    expect(message).toContain('confirme');
+  });
+
+  it('abandoned: diz "abandonada" — não some com o desfecho real', () => {
+    expect(phaseDoneRefusedMessage('validar', 'abandoned', '03/08, 12:00')).toContain('abandonada');
+  });
+
+  it('inconclusive: "terminou sem conclusão" — não é "não realizada"', () => {
+    const message = phaseDoneRefusedMessage('discovery', 'inconclusive', '03/08, 12:00');
+    expect(message).toContain('terminou sem conclusão');
+    expect(message).not.toContain('não realizada');
+  });
+});
+
+describe('resourceBusyRefusedMessage — A8/A20: recusa por recurso ocupado', () => {
+  it('nomeia o repo, a fase que segura e desde quando — "registro visível" começa na frase', () => {
+    const message = resourceBusyRefusedMessage('atlas', null, 'implementar', '05/08, 09:00');
+    expect(message).toContain('atlas');
+    expect(message).toContain('implementar');
+    expect(message).toContain('05/08, 09:00');
+    expect(message).toContain('outro assunto');
+  });
+
+  it('branch conhecida aparece na frase', () => {
+    expect(resourceBusyRefusedMessage('atlas', 'feat/wi-1', 'implementar', '05/08, 09:00')).toContain('feat/wi-1');
+  });
+
+  it('branch desconhecida não inventa nome nenhum', () => {
+    const message = resourceBusyRefusedMessage('atlas', null, 'implementar', '05/08, 09:00');
+    expect(message).not.toContain('branch ""');
+  });
+});
+
+describe('sessionActiveRefusedMessage — B3: recusa por segunda sessão viva', () => {
+  it('nomeia a fase e desde quando a sessão está aberta', () => {
+    const message = sessionActiveRefusedMessage('implementar', '05/08, 09:00');
+    expect(message).toContain('implementar');
+    expect(message).toContain('05/08, 09:00');
+    expect(message).toContain('sessão aberta');
+  });
+});
+
+describe('B5 — withAutoEnter: o texto que o auto-start ENVIA', () => {
+  it('cola o Enter no MESMO comando que a aba receberia escrito', () => {
+    expect(withAutoEnter(esteiraPhaseCommand('discovery', 'C:/inbox/run-1.json'))).toBe(
+      '/esteira-discovery-3 --input "C:/inbox/run-1.json"\r',
+    );
+  });
+
+  it('é a ÚNICA função da esteira que produz texto com \\r — o resto do arquivo segue proibindo', () => {
+    expect(withAutoEnter('/esteira-plano-3 --input "x.json"')).toMatch(/\r$/);
+  });
+});
+
+describe('B5 — isReadyForAutoStart: a prova de que o CLI aceita input, antes de mandar o Enter', () => {
+  const BANNER = ['✻ Welcome to Claude Code!', '> '];
+  const TRUST = [...BANNER, TRUST_DIALOG_CONFIRM_MARKER, TRUST_DIALOG_EXIT_MARKER];
+  const IDLE_FOOTER_NO_BANNER = [
+    '───────────────────────────────────────────────────────────────',
+    '❯ /esteira-implementar-3 --input "C:/inbox/run-1.json"',
+    '───────────────────────────────────────────────────────────────',
+    '  ⏵⏵ bypass permissions on (shift+tab to cycle)              /rc · focus',
+  ];
+
+  it('banner do CLI já desenhado: pronto — o boot leva 14,5-20,9s e é isso que se espera', () => {
+    expect(isReadyForAutoStart({ renderedLines: BANNER })).toBe(true);
+  });
+
+  it('barra de status do prompt ocioso, sem banner: também pronto (mesmo achado do T329)', () => {
+    expect(isReadyForAutoStart({ renderedLines: IDLE_FOOTER_NO_BANNER })).toBe(true);
+  });
+
+  it('sem banner e sem barra de status: CLI ainda subindo — não manda nada', () => {
+    expect(isReadyForAutoStart({ renderedLines: ['conectando...'] })).toBe(false);
+    expect(isReadyForAutoStart({ renderedLines: [] })).toBe(false);
+  });
+
+  it('diálogo de confiança de pasta na tela BLOQUEIA — um Enter aqui cairia dentro da pergunta', () => {
+    expect(isReadyForAutoStart({ renderedLines: TRUST })).toBe(false);
+  });
+
+  it('NÃO depende do semáforo — sessão nova nunca chega a "waiting" antes do 1º turno, e é ANTES do 1º turno que o auto-start precisa disparar', () => {
+    // Ao contrário de `isReadyToPreType`, esta função nem recebe semáforo:
+    // o único jeito de ela liberar é o CLI ter desenhado banner ou barra.
+    expect(isReadyForAutoStart({ renderedLines: BANNER })).toBe(true);
   });
 });

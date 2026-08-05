@@ -224,7 +224,8 @@ describe('lockView — a tela não promete o que não cumpre', () => {
     const view = lockView(cardWithLock(false))!;
     // Uma função só produz o comando (`esteiraPhaseCommand`) — se aqui fosse
     // outro texto, a correção de um dos dois envelheceria calada.
-    expect(view.nextStep?.command).toBe('/esteira-discovery --input "C:/inbox/run-1.json"');
+    // A2 — a skill do FORK (sufixo -3), nunca o plugin 2.1.0 sem sufixo.
+    expect(view.nextStep?.command).toBe('/esteira-discovery-3 --input "C:/inbox/run-1.json"');
   });
 
   it('sessão aberta pelo app NÃO se chama "em andamento": abrir a aba não é apertar o Enter', () => {

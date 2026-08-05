@@ -10,12 +10,26 @@
 // Dois invariantes moram aqui, e os dois têm cicatriz no repo:
 //
 // 1. **O Enter é gesto humano** (invariante 2/CA-3 de `openPhaseSession.ts`):
-//    nada que sai daqui contém `\r`/`\n`. Quem escreve no PTY é o App.tsx, pelo
-//    canal `pty:input`, sempre com o texto puro.
+//    `esteiraPhaseCommand` nunca contém `\r`/`\n` — é o texto PRÉ-DIGITADO,
+//    mostrado igual na aba e na frase de "próximo passo" manual. Quem escreve
+//    no PTY é o App.tsx, pelo canal `pty:input`, sempre com texto puro.
+//
+//    **Batch B5 (05/08, pedido literal do dono) abre uma exceção NOMEADA e
+//    FECHADA a este invariante**: `withAutoEnter` (mais abaixo) é a ÚNICA
+//    função deste repo que produz texto com `\r` para uma sessão de fase —
+//    e só é chamada pelo caminho de disparo da esteira (`App.tsx`
+//    `handleOpenEsteiraSession`), nunca pela abertura genérica de aba. O
+//    gesto explícito continua sendo o clique em "Preparar"; o que some é a
+//    SEGUNDA confirmação (apertar Enter dentro do terminal depois de ver o
+//    comando escrito) — substituída por uma prova de que o CLI já aceita
+//    input (o mesmo sinal de boot que o pré-digitar genérico usa).
 // 2. **Alvo explícito, zero palpite** (D-6): repo que o app não conhece devolve
 //    RECUSA com o nome do repo, nunca um segundo melhor palpite. A evidência 2
 //    da spec é uma fase que abriu no repo errado por causa de um fallback
 //    silencioso comentado no código como "palpite honesto".
+
+import { hasClaudeReadyMarker, hasIdlePromptFooter } from '../../../shared/preTypeReadiness';
+import { isTrustDialogVisible } from '../../../shared/trustDialog';
 
 /** O mínimo que este módulo precisa saber de um projeto — nome e caminho. */
 export interface KnownProject {
@@ -41,9 +55,19 @@ function semQuebra(value: string): string {
  * **Uma função só para os dois usos.** O mesmo texto é pré-digitado na aba E
  * mostrado como próximo passo quando a sessão não pôde abrir — se fossem dois
  * lugares, o segundo envelheceria calado.
+ *
+ * A2 — o sufixo `-3` NÃO é decoração: o fork `esteira-donel-3.0.0` é
+ * instalado em `~/.claude/skills/esteira-<fase>-3` exatamente com esse nome
+ * (`skills/esteira-donel-3.0.0/README.md`, seção "Instalar"), para conviver
+ * sem colidir com o plugin `esteira:` da 2.1.0, que responde ao MESMO nome
+ * sem sufixo (`/esteira-discovery <card_id>` — outro formato de argumento,
+ * incompatível com `--input <path>`). Sem o sufixo aqui, o texto pré-digitado
+ * invoca o plugin 2.1.0 — reincidiu em SEIS runs seguidos antes desta
+ * correção, porque os dois nomes são idênticos e o CLI não tem como saber
+ * qual dos dois a pessoa quis dizer.
  */
 export function esteiraPhaseCommand(phase: string, inputPath: string): string {
-  return semQuebra(`/esteira-${phase.trim()} --input "${inputPath}"`);
+  return semQuebra(`/esteira-${phase.trim()}-3 --input "${inputPath}"`);
 }
 
 /**
@@ -182,4 +206,89 @@ export function dispatchHint(lock: LockState | null): string {
 /** A recusa do disparo quando o card já está travado — mesmo vocabulário do bloco. */
 export function dispatchRefusedMessage(lock: LockState, phase: string, since: string): string {
   return `Já há uma fase ${LOCK_WORD[lock]} (${phase}), desde ${since}.`;
+}
+
+/**
+ * A1 — a recusa quando a fase já concluiu sobre o MESMO assunto. `since` vem
+ * já formatado (o mesmo padrão de `dispatchRefusedMessage`): a camada pura
+ * decide o TEXTO, quem chama decide a formatação de data, para os dois nunca
+ * divergirem em fuso ou estilo.
+ */
+export function phaseDoneRefusedMessage(phase: string, outcome: 'done' | 'abandoned' | 'inconclusive' | null, since: string): string {
+  const outcomeWord = outcome === 'done' ? 'concluída' : outcome === 'abandoned' ? 'abandonada' : 'terminou sem conclusão';
+  return `A fase "${phase}" já está ${outcomeWord} para este assunto, desde ${since}. Para rodar de novo, confirme explicitamente a reabertura.`;
+}
+
+/**
+ * A8/A20 — a recusa quando o REPO (+ caminho) que esta fase tocaria já está
+ * ocupado por outro assunto (irmão) — o buraco que a trava por assunto não
+ * fecha (P32: "worker rodou na árvore principal enquanto outra sessão
+ * comitava nela"). Nomeia o repo, a branch quando conhecida, e QUEM segura
+ * (a fase de outro assunto) — "registro visível" (A20) começa na frase que a
+ * pessoa lê no instante da recusa.
+ */
+export function resourceBusyRefusedMessage(targetRepo: string, branch: string | null, holderPhase: string, since: string): string {
+  const ondeMais = branch ? ` (branch "${branch}")` : '';
+  return `O repositório "${targetRepo}"${ondeMais} já está ocupado pela fase "${holderPhase}" de outro assunto, desde ${since} — para não cruzar commits na mesma árvore. Espere ela terminar ou libere a trava dela.`;
+}
+
+/**
+ * B3 — a recusa quando já existe uma sessão VIVA para o MESMO assunto+fase,
+ * mesmo sem trava (ex.: a trava caiu por um `releaseLock` manual, mas a
+ * sessão que a segurava nunca terminou). Duas abas concorrentes tocando o
+ * mesmo trabalho é o caos que a trava deveria impedir sozinha.
+ */
+export function sessionActiveRefusedMessage(phase: string, since: string): string {
+  return `Já há uma sessão aberta para a fase "${phase}" deste assunto, desde ${since}. Encerre-a (ou espere ela terminar) antes de preparar outra.`;
+}
+
+// ---------------------------------------------------------------------------
+// Batch B5 — AUTO-START: a sessão de fase aperta o próprio Enter
+// ---------------------------------------------------------------------------
+//
+// Ver o parágrafo do invariante 1, no topo do arquivo, para o porquê deste
+// bloco existir separado do resto: é uma exceção NOMEADA e FECHADA, não uma
+// reinterpretação do invariante.
+
+/**
+ * A prova de que o CLI já aceita input — o MESMO sinal de boot que libera o
+ * primeiro passo do pré-digitar genérico (`isReadyToPreType` em
+ * `shared/preTypeReadiness.ts`, `isFirstStep: true`): o banner de boas-vindas
+ * do REPL, ou a barra de status do prompt ocioso quando o banner já saiu do
+ * viewport. Nunca com o diálogo de confiança de pasta na tela — um `\r`
+ * disparado ali cairia dentro da pergunta "trust this folder?", que é
+ * exatamente a classe de acidente que o auto-start não pode causar.
+ *
+ * Deliberadamente NÃO inclui o semáforo (`state === 'waiting'`): a sessão de
+ * fase é sempre NOVA (nunca um `-r`/resume — `handleOpenEsteiraSession` abre
+ * com `launchArgs: []`), e uma sessão nova nasce em `'working'` e só alcança
+ * `'waiting'` depois do PRIMEIRO turno (achado já documentado em
+ * `preTypeReadiness.ts`) — o auto-start precisa disparar ANTES de existir
+ * turno nenhum, então esperar por `'waiting'` a faria nunca disparar.
+ *
+ * Reaproveita os detectores JÁ TESTADOS de `shared/preTypeReadiness.ts` /
+ * `shared/trustDialog.ts` (o boot do CLI é um fato só, testado uma vez) —
+ * mas mora AQUI, ao lado do resto das decisões do disparo, porque é este
+ * módulo (não o genérico) que decide QUANDO o auto-envio se aplica.
+ */
+export interface AutoStartReadinessInput {
+  readonly renderedLines: readonly string[];
+}
+
+export function isReadyForAutoStart(input: AutoStartReadinessInput): boolean {
+  if (isTrustDialogVisible(input.renderedLines)) return false;
+  return hasClaudeReadyMarker(input.renderedLines) || hasIdlePromptFooter(input.renderedLines);
+}
+
+/**
+ * O texto que o auto-start ENVIA: o MESMO comando pré-digitado
+ * (`esteiraPhaseCommand` — uma função só produz o texto, para a correção de
+ * um não envelhecer o outro), com o Enter colado num write só. Mesmo padrão
+ * já usado para injeção em sessão viva (`buildModelInjection`,
+ * `shared/liveSessionInjection.ts`: `` `/model ${model}\r` ``) — texto +
+ * Enter num write só é mais seguro que dois writes separados, porque não há
+ * janela entre "digitou" e "enviou" para uma corrida acontecer.
+ */
+export function withAutoEnter(command: string): string {
+  return `${command}\r`;
 }
