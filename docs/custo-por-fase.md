@@ -1,6 +1,6 @@
 # Custo médio por fase da Esteira
 
-> Gerado por `npm run esteira:custo` em 2026-08-05T04:14:43.172Z. Cruza o store
+> Gerado por `npm run esteira:custo` em 2026-08-05T06:27:00.471Z. Cruza o store
 > local da Esteira (`session.started`/`session.claimed` → `cliSessionId`)
 > com os transcripts do CLI (`~/.claude/projects/<slug>/*.jsonl`, campo
 > `usage` por mensagem). Leitura estritamente read-only — nunca escreve no
