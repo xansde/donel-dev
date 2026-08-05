@@ -7,6 +7,7 @@ import { storeEventsPath } from '../src/main/esteira-store';
 import {
   isValidAddNoteIpcInput,
   isValidDiscardWorkItemIpcInput,
+  isValidReadArtifactTextIpcInput,
   isValidSetStageOverrideIpcInput,
   isValidSetWorkItemStateIpcInput,
 } from '../src/shared/esteira/ipc';
@@ -508,5 +509,14 @@ describe('validacao de payload do IPC — o main so muta depois de validar', () 
     expect(isValidAddNoteIpcInput({ subject: { entity: 'discovery', id: 'dsc-1' }, text: 'ok' })).toBe(true);
     expect(isValidAddNoteIpcInput({ subject: { entity: 'discovery', id: 'dsc-1' }, text: '   ' })).toBe(false);
     expect(isValidAddNoteIpcInput({ subject: { entity: 'cartao', id: 'x' }, text: 'ok' })).toBe(false);
+  });
+
+  // C3 (batch N5) — leitura de artefato restrita a `.md`: este canal existe
+  // pra tasks.md, não é um leitor de arquivo genérico.
+  it('leitura de artefato exige caminho não vazio terminando em .md', () => {
+    expect(isValidReadArtifactTextIpcInput({ path: 'C:/dev/atlas/specs/010/tasks.md' })).toBe(true);
+    expect(isValidReadArtifactTextIpcInput({ path: '  ' })).toBe(false);
+    expect(isValidReadArtifactTextIpcInput({ path: 'C:/dev/atlas/.env' })).toBe(false);
+    expect(isValidReadArtifactTextIpcInput({})).toBe(false);
   });
 });

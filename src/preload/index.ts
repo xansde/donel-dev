@@ -1,4 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
+// G5 (batch N5) — guarda contra segundo assinante silencioso de canal IPC:
+// todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
+import { subscribeChannel } from './subscribeChannel';
 import type {
   AccountsConfigDto,
   AccountsViewDto,
@@ -76,6 +79,8 @@ import {
   type EsteiraGestureDto,
   type EsteiraSeedDto,
   type EsteiraSnapshotDto,
+  type ReadArtifactTextDto,
+  type ReadArtifactTextIpcInput,
   type ReleaseLockIpcInput,
   type SeedIpcInput,
   type SetStageOverrideIpcInput,
@@ -108,6 +113,10 @@ const donelApi: DonelApi = {
 
     getPreview: (ptyId: string) => ipcRenderer.invoke(PTY_CHANNELS.preview, ptyId) as Promise<string[]>,
 
+    // NÃO passa por `subscribeChannel` (G5): este canal é broadcast DE
+    // PROPÓSITO — uma aba, um `TerminalPane`, um listener, todos no MESMO
+    // canal, cada um filtrando pelo próprio `ptyId`. Múltiplos assinantes
+    // aqui são o desenho certo, não o bug que G5 existe para pegar.
     onData: (ptyId: string, listener: (data: string) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, eventPtyId: string, data: string): void => {
         if (eventPtyId === ptyId) listener(data);
@@ -157,12 +166,14 @@ const donelApi: DonelApi = {
     // T412 (004) — push do watcher de transcript (CA-4). Sem filtro por
     // sessionId aqui, ao contrário de `pty.onData`: é UMA assinatura no App
     // para TODAS as abas vivas, e quem despacha por sessão é o renderer.
+    // G5 — canal pensado para UMA assinatura só (o comentário acima já dizia
+    // "UMA assinatura no App para TODAS as abas vivas"); `subscribeChannel`
+    // torna essa intenção auditável, não só comentada.
     onTranscriptChanged: (listener: (payload: TranscriptChangedPayload) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: TranscriptChangedPayload): void => {
         listener(payload);
       };
-      ipcRenderer.on(TRANSCRIPT_CHANNELS.changed, handler);
-      return () => ipcRenderer.removeListener(TRANSCRIPT_CHANNELS.changed, handler);
+      return subscribeChannel(ipcRenderer, TRANSCRIPT_CHANNELS.changed, handler);
     },
 
     // T705 (007-favoritos-sessoes) — os três canais de escrita do registro.
@@ -197,10 +208,13 @@ const donelApi: DonelApi = {
 
     disconnectMod: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.disconnectMod) as Promise<AccountsConfigDto>,
 
+    // G5 — o canal cujo segundo assinante silencioso já custou ~80ms no boot
+    // (T1232/011, etapa 2): `App.tsx` abria a própria assinatura além da que
+    // `AccountsPanel` já mantinha. A correção de então tirou a duplicata; esta
+    // guarda pega a PRÓXIMA vez que alguém reintroduzir o mesmo padrão.
     onChanged: (listener: (view: AccountsViewDto) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, view: AccountsViewDto): void => listener(view);
-      ipcRenderer.on(ACCOUNT_CHANNELS.changed, handler);
-      return () => ipcRenderer.removeListener(ACCOUNT_CHANNELS.changed, handler);
+      return subscribeChannel(ipcRenderer, ACCOUNT_CHANNELS.changed, handler);
     },
   },
 
@@ -311,8 +325,7 @@ const donelApi: DonelApi = {
       const handler = (_event: Electron.IpcRendererEvent, payload: PhaseArchivedPayload): void => {
         listener(payload);
       };
-      ipcRenderer.on(DEVMODE_CHANNELS.phaseArchived, handler);
-      return () => ipcRenderer.removeListener(DEVMODE_CHANNELS.phaseArchived, handler);
+      return subscribeChannel(ipcRenderer, DEVMODE_CHANNELS.phaseArchived, handler);
     },
 
     // Issue #34 (P0) — resolve o repo-alvo do card por rastro em disco, nunca
@@ -387,10 +400,13 @@ const donelApi: DonelApi = {
     // muda o que já aconteceu localmente.
     retryMirror: () => ipcRenderer.invoke(ESTEIRA_CHANNELS.retryMirror) as Promise<EsteiraSnapshotDto>,
 
+    // C3 — lê o texto de um artefato (D-8), só leitura.
+    readArtifactText: (input: ReadArtifactTextIpcInput) =>
+      ipcRenderer.invoke(ESTEIRA_CHANNELS.readArtifactText, input) as Promise<ReadArtifactTextDto>,
+
     onChanged: (listener: (state: EsteiraSnapshotDto) => void) => {
       const handler = (_event: unknown, state: EsteiraSnapshotDto): void => listener(state);
-      ipcRenderer.on(ESTEIRA_CHANNELS.changed, handler);
-      return () => ipcRenderer.removeListener(ESTEIRA_CHANNELS.changed, handler);
+      return subscribeChannel(ipcRenderer, ESTEIRA_CHANNELS.changed, handler);
     },
   },
 };

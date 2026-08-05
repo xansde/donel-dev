@@ -19,6 +19,7 @@ import {
   isValidDiscardWorkItemIpcInput,
   isValidDispatchIpcInput,
   isValidEndSessionIpcInput,
+  isValidReadArtifactTextIpcInput,
   isValidReleaseLockIpcInput,
   isValidSeedIpcInput,
   isValidSetStageOverrideIpcInput,
@@ -28,6 +29,7 @@ import {
   type EsteiraGestureDto,
   type EsteiraSeedDto,
   type EsteiraSnapshotDto,
+  type ReadArtifactTextDto,
 } from '../shared/esteira/ipc';
 import type {
   AccountId,
@@ -1283,6 +1285,20 @@ function registerEsteiraIpcHandlers(): void {
   ipcMain.handle(ESTEIRA_CHANNELS.retryMirror, async (): Promise<EsteiraSnapshotDto | null> => {
     if (esteiraService === null) return null;
     return esteiraService.retryMirror();
+  });
+
+  // C3 (batch N5) — lê o texto de um artefato apontado pelo store (D-8), só
+  // leitura, restrito a `.md`. O `path` chega ABSOLUTO, já resolvido no
+  // renderer contra a lista de projetos conhecidos — a MESMA fronteira de
+  // confiança de onde a sessão de terminal abre (D-6): este canal não é uma
+  // capacidade nova de acesso a disco, é uma MENOR que a que já existe
+  // (spawn de shell). `fileIo` (`file-io.ts`) nunca lança — degrada por
+  // omissão, mesmo padrão do resto do main.
+  ipcMain.handle(ESTEIRA_CHANNELS.readArtifactText, (_event, input: unknown): ReadArtifactTextDto => {
+    if (!isValidReadArtifactTextIpcInput(input)) return { ok: false, reason: 'invalid-input' };
+    if (!fileIo.existsSync(input.path)) return { ok: false, reason: 'not-found' };
+    const text = fileIo.readFileText(input.path);
+    return text === null ? { ok: false, reason: 'read-error' } : { ok: true, text };
   });
 }
 

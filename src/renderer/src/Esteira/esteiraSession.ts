@@ -1,3 +1,5 @@
+import type { SessionSnapshot } from '../../../shared/esteira/store/storeFormat';
+
 // Spec 010 / batch B1 — a decisão PURA do gesto "Preparar": qual comando a
 // sessão recebe escrito, em que diretório ela abre, e o que a tela diz quando
 // ela não abre.
@@ -299,4 +301,49 @@ export function isReadyForAutoStart(input: AutoStartReadinessInput): boolean {
  */
 export function withAutoEnter(command: string): string {
   return `${command}\r`;
+}
+
+// ---------------------------------------------------------------------------
+// B1 (batch N5, spec 010) — "retomar fase concluída por clique".
+//
+// Diferente do "Preparar" (que dispara uma fase NOVA, grava run-input.json e
+// trava o card), retomar não dispara nada: reabre a conversa que já rodou —
+// `claude -r <cliSessionId>` no MESMO cwd — sem tocar no store. Quem muda
+// estado é fato declarado por skill; o gesto de abrir não é um deles. Por
+// isso esta função não sabe nada de `dispatch`/lock — só decide QUAL sessão.
+// ---------------------------------------------------------------------------
+
+/**
+ * A ÚLTIMA sessão da cadeia — a que "Retomar" reabre.
+ *
+ * `SessionSnapshot.continuesSessionId` aponta para TRÁS (a sessão que esta
+ * continua, quando o CLI trocou de sessão por orçamento de contexto —
+ * `[P-6]`). A cauda da cadeia é a única sessão que ninguém mais continua;
+ * retomar a primeira reabriria uma conversa que o CLI já superou.
+ */
+export function lastSessionOfChain(sessions: readonly SessionSnapshot[]): SessionSnapshot | null {
+  if (sessions.length === 0) return null;
+  const continuadas = new Set(
+    sessions.map((session) => session.continuesSessionId).filter((id): id is string => id !== null),
+  );
+  return sessions.find((session) => !continuadas.has(session.id)) ?? sessions[sessions.length - 1]!;
+}
+
+export type ResumeResolution =
+  | { readonly ok: true; readonly cliSessionId: string; readonly cwd: string }
+  | { readonly ok: false; readonly reason: 'no-session' | 'no-cli-session-id' | 'no-cwd' };
+
+/**
+ * O que falta (ou não) para "Retomar" funcionar, a partir das sessões JÁ
+ * FILTRADAS por assunto+fase (`esteiraView.phaseSessions`). Sem `cliSessionId`
+ * é uma fase que rodou sem o app abrir aba nenhuma (seed, ou skill fora do
+ * disparo) — não há sessão de CLI para reabrir. Sem `cwd` é um registro
+ * incompleto — sem ele não há onde a aba nova abriria.
+ */
+export function resolveResume(sessions: readonly SessionSnapshot[]): ResumeResolution {
+  const last = lastSessionOfChain(sessions);
+  if (last === null) return { ok: false, reason: 'no-session' };
+  if (last.cliSessionId === null) return { ok: false, reason: 'no-cli-session-id' };
+  if (last.cwd === null) return { ok: false, reason: 'no-cwd' };
+  return { ok: true, cliSessionId: last.cliSessionId, cwd: last.cwd };
 }

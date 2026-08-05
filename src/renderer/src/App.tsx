@@ -69,7 +69,8 @@ import { sessionTabName } from '../../shared/sessions';
 // encanamento com PTY/IPC — nenhuma decisão de domínio, nenhuma frase de estado.
 import { DiscoveryMap } from './DevMode/DiscoveryMap';
 import { PhaseDetailsPanel } from './DevMode/PhaseDetailsPanel';
-import { buildMapView, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
+import { buildMapView, tabToFocusFor, tasksArtifactFor, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
+import type { TasksRunningTogetherView } from './DevMode/PhaseDetailsPanel';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import type { LauncherLaunchOptions } from './Launcher';
@@ -78,9 +79,19 @@ import type { LauncherLaunchOptions } from './Launcher';
 // gesto interno, para dar para comparar as duas com o mesmo dado.
 import { EsteiraScreen } from './Esteira/EsteiraScreen';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
-import { isReadyForAutoStart, withAutoEnter, type EsteiraSessionRequest } from './Esteira/esteiraSession';
+import {
+  esteiraTabName,
+  isReadyForAutoStart,
+  resolveSessionCwd,
+  withAutoEnter,
+  type EsteiraSessionRequest,
+} from './Esteira/esteiraSession';
 import { preparePhase } from './Esteira/preparePhase';
 import type { EsteiraSnapshotDto } from '../../shared/esteira/ipc';
+import type { EntityId } from '../../shared/esteira/store/storeFormat';
+// C3 — o parser do tasks.md (puro, testado) fica fora do domínio da esteira
+// de propósito: é interpretação de TEXTO de um artefato, não fato do store.
+import { parseTasksDoc, taskScope } from '../../shared/tasksDoc';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { AccountsPanel } from './AccountsPanel';
@@ -378,6 +389,15 @@ export function App(): React.JSX.Element {
   });
   /** D4 — Toast informativo (o que o gesto fez, por que foi recusado); nunca tem desfazer. */
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
+  /**
+   * C3 — cache do texto de tasks.md já lido, por caminho ABSOLUTO. `null` =
+   * já tentou e não achou/não leu (não refaz o IPC); ausente = ainda não
+   * tentou. `buildMapView` é síncrona e não lê disco (D-13 continua valendo
+   * pro resto do snapshot) — este cache vive fora dela de propósito.
+   */
+  const [taskDocByPath, setTaskDocByPath] = useState<Record<string, string | null>>({});
+  /** Evita reler o mesmo caminho enquanto o fetch está em voo (guard por ref, mesmo padrão de `armWatchersRef`). */
+  const taskDocFetchingRef = useRef<Set<string>>(new Set());
   /** Cleanup do watcher de prontidão em voo por aba (mesmo padrão de `pendingInjectionWatchersRef`). */
   const armWatchersRef = useRef<Record<string, (() => void) | undefined>>({});
   /**
@@ -1327,6 +1347,86 @@ export function App(): React.JSX.Element {
     });
   };
 
+  /**
+   * B1 (batch N5) — "↺ Retomar" na trilha do mapa: reabre a ÚLTIMA sessão da
+   * cadeia daquele passo já FECHADO (`claude -r <cliSessionId>` no `cwd`
+   * dela — `step.resume` já vem resolvido de `esteiraMapView.trailFor`,
+   * pura). SEM dispatch novo, SEM mudar estado do card: quem muda estado é
+   * fato declarado por skill, nunca o gesto de abrir. Mesmo padrão de
+   * `handleFocusOrResumeFavoriteSession` (007): aba já aberta com essa
+   * sessão ganha foco, em vez de abrir outra.
+   */
+  const handleMapResume = (step: MapTrailStep): void => {
+    if (step.resume === null) return;
+    const { cliSessionId, cwd } = step.resume;
+    const existingTab = tabs.find((tab) => tab.claudeSessionId === cliSessionId);
+    if (existingTab) {
+      setActiveTabId(existingTab.id);
+      return;
+    }
+    const discoveryTitle = mapView.breadcrumb[0] ?? step.phase;
+    addTab({
+      name: esteiraTabName(step.phase, discoveryTitle),
+      cwd,
+      projectName: projects.find((project) => project.path === cwd)?.name,
+      pinned: false,
+      launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId: cliSessionId } }),
+      sessionType: 'claude',
+    });
+  };
+
+  /**
+   * B2 (batch N5) — navegar o mapa até um nó alterna para a aba da sessão
+   * VIVA dele, quando existe. `tabToFocusFor` (esteiraMapView, pura) é quem
+   * decide o FATO — `SessionSnapshot.endedAt === null` cruzado com as abas
+   * abertas; esta função só aplica o resultado. Nó sem sessão viva não rouba
+   * foco (`tabId` vem `null`, nada muda) — sessão fechada nunca é alvo de
+   * alternância; para isso existe o retomar explícito do B1.
+   */
+  const focusLiveSessionOf = (discoveryId: string, subject: EntityId): void => {
+    const tabId = tabToFocusFor(esteiraState?.snapshot ?? null, discoveryId, subject, tabs);
+    if (tabId !== null) setActiveTabId(tabId);
+  };
+
+  /**
+   * C3 — o artefato de tasks.md do nó em foco no detalhe, e o caminho
+   * ABSOLUTO resolvido pra lê-lo. `resolveSessionCwd` é a MESMA resolução
+   * repo→caminho local que já decide onde a sessão de terminal abre (D-6) —
+   * reusada aqui, não recalculada: um repo que o app não conhece não vira
+   * leitura silenciosa por palpite, do mesmo jeito que não vira sessão.
+   */
+  const tasksTarget = useMemo(() => {
+    const snapshot = esteiraState?.snapshot;
+    if (!snapshot || mapView.focused.discoveryId === null || mapView.detail === null) return null;
+    const card = cardView(snapshot, mapView.focused.discoveryId);
+    if (card === null) return null;
+    const artifact = tasksArtifactFor(card, mapView.detail.subject);
+    if (artifact === null || artifact.location !== 'repo' || artifact.repo === null) return null;
+    const resolved = resolveSessionCwd(artifact.repo, projects);
+    if (!resolved.ok) return null;
+    const separator = resolved.cwd.endsWith('/') || resolved.cwd.endsWith('\\') ? '' : '/';
+    return { path: `${resolved.cwd}${separator}${artifact.path}` };
+  }, [esteiraState, mapView.focused.discoveryId, mapView.detail, projects]);
+
+  useEffect(() => {
+    if (tasksTarget === null) return;
+    if (taskDocFetchingRef.current.has(tasksTarget.path)) return;
+    taskDocFetchingRef.current.add(tasksTarget.path);
+    void window.donel.esteira.readArtifactText({ path: tasksTarget.path }).then((result) => {
+      setTaskDocByPath((prev) => ({ ...prev, [tasksTarget.path]: result.ok ? result.text : null }));
+    });
+  }, [tasksTarget]);
+
+  /** C3 — o texto já lido (se houver) interpretado por `shared/tasksDoc` (puro): o painel de detalhe só desenha o que sai daqui. */
+  const tasksView = useMemo((): TasksRunningTogetherView | null => {
+    if (tasksTarget === null) return null;
+    const text = taskDocByPath[tasksTarget.path];
+    if (text === undefined || text === null) return null;
+    const tasks = parseTasksDoc(text);
+    const scope = taskScope(tasks);
+    return scope === null ? null : { scope, tasks };
+  }, [tasksTarget, taskDocByPath]);
+
   /** D-11 — a trava é fato local, e sai num gesto. Nada de etiqueta órfã no board. */
   const handleMapReleaseLock = (): void => {
     const lock = mapView.detail?.lock;
@@ -2005,22 +2105,39 @@ export function App(): React.JSX.Element {
             lateral deixa o mapa desenhado POR CIMA do terminal": recolher só
             zerava a COLUNA (`--col-left: 0px`) e o mapa continuava montado,
             transbordando de uma caixa de largura zero. Colapsar a lateral
-            agora desmonta o mapa, do mesmo jeito que "Recolher painéis" já
-            fazia. */}
-        {devModeOn && !rightCollapsed && !sidebarCollapsed ? (
+            agora desmonta o mapa — preservado abaixo (`!sidebarCollapsed`).
+            C4 (batch N5) — BUG relacionado, mas inverso: ocultar a barra
+            DIREITA (`rightCollapsed`, botão "Recolher painéis") desmontava o
+            mapa ESQUERDO também, perdendo o estado do carrossel a cada
+            toggle. O mapa agora fica montado sempre que o Modo Dev está
+            ligado e a lateral não colapsou; `rightCollapsed` vira só a prop
+            `collapsed` (largura 0 via CSS, ver `.mapCollapsed`), nunca mais a
+            condição de montagem. */}
+        {devModeOn && !sidebarCollapsed ? (
           <DiscoveryMap
             view={mapView}
             selection={mapSelection}
             warning={storeWarning}
-            onFocusDiscovery={(discoveryId) =>
+            collapsed={rightCollapsed}
+            onFocusDiscovery={(discoveryId) => {
               // Trocar de card zera o que pertence ao card: o plano, o item e o
               // nó do detalhe apontariam para algo que não está mais na tela.
-              setMapSelection({ discoveryId, planId: null, itemId: null, nodeKey: null, phase: null })
-            }
-            onFocusPlan={(planId) => setMapSelection((prev) => ({ ...prev, planId, itemId: null, nodeKey: null, phase: null }))}
-            onFocusItem={(itemId) => setMapSelection((prev) => ({ ...prev, itemId, nodeKey: `work_item:${itemId}`, phase: null }))}
+              setMapSelection({ discoveryId, planId: null, itemId: null, nodeKey: null, phase: null });
+              // B2 — navegar até o discovery alterna para a aba da sessão viva
+              // DELE, quando existe (nó sem sessão viva não rouba foco).
+              focusLiveSessionOf(discoveryId, { entity: 'discovery', id: discoveryId });
+            }}
+            onFocusPlan={(planId) => {
+              setMapSelection((prev) => ({ ...prev, planId, itemId: null, nodeKey: null, phase: null }));
+              if (mapView.focused.discoveryId) focusLiveSessionOf(mapView.focused.discoveryId, { entity: 'plan', id: planId });
+            }}
+            onFocusItem={(itemId) => {
+              setMapSelection((prev) => ({ ...prev, itemId, nodeKey: `work_item:${itemId}`, phase: null }));
+              if (mapView.focused.discoveryId) focusLiveSessionOf(mapView.focused.discoveryId, { entity: 'work_item', id: itemId });
+            }}
             onSelectNode={(nodeKey, phase) => setMapSelection((prev) => ({ ...prev, nodeKey, phase }))}
             onPrepare={handleMapPrepare}
+            onResume={handleMapResume}
             onNewDiscovery={() => setEsteiraOpen(true)}
           />
         ) : null}
@@ -2037,6 +2154,7 @@ export function App(): React.JSX.Element {
             onReleaseLock={handleMapReleaseLock}
             onRetryMirror={handleMapRetryMirror}
             readOnly={storeReadOnly}
+            tasks={tasksView}
           />
         ) : null}
 

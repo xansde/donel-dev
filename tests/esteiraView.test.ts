@@ -3,11 +3,13 @@ import {
   cardView,
   ingestErrorLine,
   cardContent,
+  liveSessionOf,
   lockView,
   MIRROR_PENDING_HINT,
   mirrorLines,
   phaseLine,
   phaseLines,
+  phaseSessions,
   provenanceMark,
   scanMessage,
   SEEDED_CARD_NOTE,
@@ -276,6 +278,90 @@ describe('lockView — a tela não promete o que não cumpre', () => {
   it('card sem trava não tem bloco nenhum', () => {
     const snapshot = reduceEvents([evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' })]);
     expect(lockView(cardView(snapshot, 'dsc-1')!)).toBeNull();
+  });
+
+  // C1 (batch N5) — o mapa precisa da linha honesta de UMA trava que não é
+  // `card.lock` (a primeira do card): com disparo por item (B2 da 010), um
+  // card pode ter mais de uma trava ao mesmo tempo. Parâmetro opcional,
+  // default `card.lock`, para as chamadas existentes continuarem intocadas.
+  it('aceita uma trava explícita, diferente da primeira do card — o mapa pede a de UM assunto específico', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+      evt('work_item.created', { id: 'wki-1', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'issue', title: 'Item' }),
+      evt('lock.acquired', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', holderKind: 'app', acquiredAt: 'x' }),
+      evt('lock.acquired', { subject: { entity: 'work_item', id: 'wki-1' }, phase: 'implementar', holderKind: 'skill', acquiredAt: 'y' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(card.locks).toHaveLength(2);
+    const travaDoItem = card.locks.find((entry) => entry.subject.entity === 'work_item')!;
+
+    // Sem o parâmetro, continua sendo `card.lock` (a primeira) — nada quebra.
+    expect(lockView(card)!.line).toContain('o card');
+
+    // Com o parâmetro, é a trava PEDIDA que a frase descreve.
+    const viewDoItem = lockView(card, travaDoItem)!;
+    expect(viewDoItem.state).toBe('running');
+    expect(viewDoItem.line).toContain('Item');
+    expect(viewDoItem.line).not.toContain('o card,');
+  });
+});
+
+describe('phaseSessions — as sessões de UM assunto+fase', () => {
+  it('filtra por assunto E fase — a mesma fatia que a lista de fases já calculava', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+      evt('work_item.created', { id: 'wki-1', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'issue', title: 'Item' }),
+      evt('session.started', { id: 'ses-discovery', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+      evt('session.started', { id: 'ses-item', subject: { entity: 'work_item', id: 'wki-1' }, phase: 'implementar', startedAt: 'x' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    const doItem = phaseSessions(card, { entity: 'work_item', id: 'wki-1' }, 'implementar');
+    expect(doItem.map((session) => session.id)).toEqual(['ses-item']);
+  });
+
+  it('sem sessão nenhuma daquele assunto+fase, devolve vazio — nunca as de outro assunto', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('session.started', { id: 'ses-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(phaseSessions(card, { entity: 'discovery', id: 'dsc-1' }, 'plano')).toHaveLength(0);
+  });
+});
+
+// B2 (batch N5) — "navegar no mapa alterna para a aba da sessão VIVA do nó".
+// `endedAt === null` é o único fato que decide: sessão fechada nunca é alvo
+// de alternância (existe o retomar explícito do B1 para isso).
+describe('liveSessionOf — a sessão viva de um assunto, quando existe', () => {
+  it('sessão aberta (endedAt null) é a viva', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('session.started', { id: 'ses-1', cliSessionId: 'cli-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(liveSessionOf(card, { entity: 'discovery', id: 'dsc-1' })?.id).toBe('ses-1');
+  });
+
+  it('sessão encerrada NÃO é viva — mesmo sendo a única do assunto', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('session.started', { id: 'ses-1', cliSessionId: 'cli-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+      evt('session.ended', { id: 'ses-1', at: 'x', reason: 'tab-closed' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(liveSessionOf(card, { entity: 'discovery', id: 'dsc-1' })).toBeNull();
+  });
+
+  it('sem sessão nenhuma do assunto, devolve null — nunca a de outro assunto', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+      evt('session.started', { id: 'ses-1', cliSessionId: 'cli-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(liveSessionOf(card, { entity: 'plan', id: 'pln-1' })).toBeNull();
   });
 });
 
