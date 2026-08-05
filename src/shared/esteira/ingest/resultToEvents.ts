@@ -171,6 +171,7 @@ function factToDraft(fact: EsteiraFact, index: number, result: EsteiraResult): E
           outcome: fact.outcome,
           summary: fact.summary,
           channel: fact.channel,
+          risk: fact.risk,
           at,
           runId,
         },

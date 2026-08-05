@@ -849,6 +849,14 @@ const VERIFICATION_TEXT: Readonly<Record<VerificationKind, Readonly<Record<Verif
     passed: 'conclusão registrada',
     failed: 'conclusão registrada: não deu certo',
   },
+  // A16 — as três frases dizem o que o gate antigo não dizia. Ele conferia que
+  // o arquivo do roteiro estava na branch; "escrito" e "rodado" viraram a mesma
+  // coisa, e foi assim que uma fase fechou verde sem ninguém ter validado.
+  'e2e-manual': {
+    pending: 'roteiro e2e escrito, esperando você rodar',
+    passed: 'roteiro e2e rodado por você: passou',
+    failed: 'roteiro e2e rodado por você: falhou',
+  },
 };
 
 export interface VerificationLineView {

@@ -49,6 +49,10 @@ export type ContractIssueCode =
   | 'duplicate_phase_completed'
   /** A22 — o run fechou outras fases e nao disse o que houve com a SUA. */
   | 'phase_completed_missing_for_run'
+  /** A16 — fase de risco sensivel fechada sem declarar o roteiro e2e manual. */
+  | 'sensitive_without_e2e'
+  /** A16 — aprovacao humana registrada com o roteiro e2e ainda pendente, em risco sensivel. */
+  | 'approval_before_e2e'
   /**
    * A4 — o MESMO `run_id`, ja ingerido, voltou com conteudo DIFERENTE e sem se
    * declarar complemento nem revisao. Caso real: a Concluir regravou o run com

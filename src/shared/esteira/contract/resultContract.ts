@@ -43,7 +43,18 @@ export type PhaseOutcome = 'done' | 'abandoned' | 'inconclusive';
 export type EntityKind = 'discovery' | 'plan' | 'work_item';
 export type RelationKind = 'originated' | 'flows_into' | 'ships_with';
 export type ArtifactLocation = 'repo' | 'disk';
-export type VerificationKind = 'pull-request' | 'check' | 'review' | 'conclusion';
+/**
+ * A16 — `e2e-manual` e o roteiro rodado A MAO por uma pessoa, separado de
+ * `check` (o que a maquina roda). Confundir os dois foi como uma fase fechou
+ * verde sem ninguem ter validado: o gate conferia a EXISTENCIA do arquivo de
+ * roteiro na branch, nunca o resultado dele.
+ */
+export type VerificationKind = 'pull-request' | 'check' | 'review' | 'conclusion' | 'e2e-manual';
+export const VERIFICATION_KINDS: readonly VerificationKind[] = ['pull-request', 'check', 'review', 'conclusion', 'e2e-manual'];
+
+/** A16 — a regua de aprovacao de D-4, classificada pela fase. `null` = ela nao classificou. */
+export type PhaseRisk = 'trivial' | 'sensivel';
+export const PHASE_RISKS: readonly PhaseRisk[] = ['trivial', 'sensivel'];
 export type VerificationState = 'pending' | 'passed' | 'failed';
 export type LockHolderKind = 'skill' | 'app';
 
@@ -167,6 +178,8 @@ export type EsteiraFact =
       readonly phase: string;
       readonly outcome: PhaseOutcome;
       readonly summary: string | null;
+      /** A16 — o risco que esta fase classificou. `null` = ela nao classificou, e o app nao classifica por ela. */
+      readonly risk: PhaseRisk | null;
       /** A15 — onde a entrega chegou, no vocabulario do repo (`alfa`, `beta`, `stable`). */
       readonly channel: string | null;
     }
@@ -339,6 +352,7 @@ export const CONSUMED_PATHS: readonly string[] = [
   'facts[phase.completed].phase',
   'facts[phase.completed].outcome',
   'facts[phase.completed].summary',
+  'facts[phase.completed].risk',
   'facts[phase.completed].channel',
   'facts[lock.acquired].type',
   'facts[lock.acquired].subject.entity',
@@ -453,6 +467,21 @@ export const HUMAN_DECISION_FACTS: readonly FactType[] = ['gate.confirmed', 'dec
  * Desfecho ruim nao pede nada — abandonar sem perguntar e legitimo.
  */
 export const PHASES_REQUIRING_HUMAN_DECISION: readonly string[] = ['discovery', 'plano'];
+
+/**
+ * A16 — as fases em que `risk: sensivel` liga o gate do roteiro e2e manual.
+ *
+ * O defeito que ele fecha: o gate de e2e conferia a EXISTENCIA do arquivo de
+ * roteiro na branch. "Escrito" e "rodado" viraram a mesma coisa, e uma fase
+ * fechou verde sem ninguem ter validado. Aqui o roteiro e uma
+ * `verification.recorded` de tipo proprio (`e2e-manual`), e o `state` dela so
+ * sai de `pending` com resultado COLHIDO do dono.
+ *
+ * Ficar `pending` e legitimo (A19: esperar por gente nao e falha). O que nao
+ * pode e a MESMA fase registrar aprovacao humana por cima de um e2e que
+ * ninguem rodou.
+ */
+export const PHASES_REQUIRING_E2E_WHEN_SENSITIVE: readonly string[] = ['validar'];
 
 function parseEntityRef(node: Record<string, unknown>, key: string, path: string, c: Collector): EntityRef | null {
   const raw = node[key];
@@ -705,7 +734,7 @@ function parseFact(raw: unknown, path: string, c: Collector): EsteiraFact | null
     case 'verification.recorded': {
       rejectUnknownKeys(raw, ['type', 'subject', 'verification_kind', 'state', 'ref', 'base'], path, c);
       const subject = parseEntityRef(raw, 'subject', path, c);
-      const verificationKind = requireEnum<VerificationKind>(raw, 'verification_kind', ['pull-request', 'check', 'review', 'conclusion'], path, c);
+      const verificationKind = requireEnum<VerificationKind>(raw, 'verification_kind', VERIFICATION_KINDS, path, c);
       const state = requireEnum<VerificationState>(raw, 'state', ['pending', 'passed', 'failed'], path, c);
       const ref = optionalString(raw, 'ref', path, c);
       const base = optionalString(raw, 'base', path, c);
@@ -713,14 +742,15 @@ function parseFact(raw: unknown, path: string, c: Collector): EsteiraFact | null
       return { type: factType, subject, verification_kind: verificationKind, state, ref, base };
     }
     case 'phase.completed': {
-      rejectUnknownKeys(raw, ['type', 'subject', 'phase', 'outcome', 'summary', 'channel'], path, c);
+      rejectUnknownKeys(raw, ['type', 'subject', 'phase', 'outcome', 'summary', 'risk', 'channel'], path, c);
       const subject = parseEntityRef(raw, 'subject', path, c);
       const phase = requirePattern(raw, 'phase', PHASE_PATTERN, path, c);
       const outcome = requireEnum<PhaseOutcome>(raw, 'outcome', ['done', 'abandoned', 'inconclusive'], path, c);
       const summary = optionalString(raw, 'summary', path, c);
       const channel = optionalString(raw, 'channel', path, c);
+      const risk = raw.risk === undefined || raw.risk === null ? null : requireEnum<PhaseRisk>(raw, 'risk', PHASE_RISKS, path, c);
       if (subject === null || phase === null || outcome === null) return null;
-      return { type: factType, subject, phase, outcome, summary, channel };
+      return { type: factType, subject, phase, outcome, summary, risk, channel };
     }
     case 'lock.acquired': {
       rejectUnknownKeys(raw, ['type', 'subject', 'phase', 'holder'], path, c);
@@ -930,6 +960,48 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
         'facts',
         `a "${phase}" run completed as "done" must declare at least one of ${HUMAN_DECISION_FACTS.join(' | ')}`,
       );
+    }
+
+    // A16 — o gate do roteiro e2e, em risco sensivel.
+    const fechadasSensiveis = facts.filter(
+      (fact): fact is Extract<EsteiraFact, { type: 'phase.completed' }> =>
+        fact.type === 'phase.completed' &&
+        fact.outcome === 'done' &&
+        fact.risk === 'sensivel' &&
+        PHASES_REQUIRING_E2E_WHEN_SENSITIVE.includes(fact.phase),
+    );
+
+    if (fechadasSensiveis.length > 0) {
+      const e2e = facts.filter(
+        (fact): fact is Extract<EsteiraFact, { type: 'verification.recorded' }> =>
+          fact.type === 'verification.recorded' && fact.verification_kind === 'e2e-manual',
+      );
+
+      if (e2e.length === 0) {
+        c.add(
+          'sensitive_without_e2e',
+          'facts',
+          `a "${fechadasSensiveis[0].phase}" run classified as "sensivel" must declare an "e2e-manual" verification`,
+        );
+      }
+
+      // Aprovacao humana por cima de um roteiro que ninguem rodou e exatamente
+      // o gate de EXISTENCIA que deixou a fase fechar verde. O e2e pode ficar
+      // pendente; o que nao pode e o aval sair junto.
+      if (e2e.some((fact) => fact.state === 'pending')) {
+        const aprovacao = facts.some(
+          (fact) =>
+            fact.type === 'gate.confirmed' ||
+            (fact.type === 'verification.recorded' && fact.verification_kind === 'review' && fact.state === 'passed'),
+        );
+        if (aprovacao) {
+          c.add(
+            'approval_before_e2e',
+            'facts',
+            'human approval cannot be recorded while the "e2e-manual" verification is still pending in a "sensivel" run',
+          );
+        }
+      }
     }
 
     // D-4 com dente: a fase que declara o ciclo ENCERRADO precisa da evidencia

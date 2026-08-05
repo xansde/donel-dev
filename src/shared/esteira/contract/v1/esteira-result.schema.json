@@ -217,7 +217,10 @@
       "properties": {
         "type": { "const": "verification.recorded" },
         "subject": { "$ref": "#/$defs/entity_ref" },
-        "verification_kind": { "enum": ["pull-request", "check", "review", "conclusion"] },
+        "verification_kind": {
+          "description": "A16 — `e2e-manual` e o roteiro rodado A MAO por uma pessoa. Existe separado de `check` porque `check` e o que a maquina roda, e confundir os dois foi como uma fase fechou verde sem ninguem ter validado: o gate conferia a EXISTENCIA do arquivo de roteiro na branch, nao o resultado dele. `state` de um `e2e-manual` so sai de `pending` com resultado COLHIDO do dono.",
+          "enum": ["pull-request", "check", "review", "conclusion", "e2e-manual"]
+        },
         "state": { "enum": ["pending", "passed", "failed"] },
         "ref": {
           "description": "URL do PR, nome do check, ou o texto da conclusao registrada.",
@@ -240,6 +243,10 @@
         "phase": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
         "outcome": { "enum": ["done", "abandoned", "inconclusive"] },
         "summary": { "type": ["string", "null"] },
+        "risk": {
+          "description": "A16 — o risco classificado por esta fase (a regua de aprovacao de D-4). `sensivel` liga o gate do roteiro e2e manual; ausente = a fase nao classificou, e o app nao classifica por ela.",
+          "oneOf": [{ "enum": ["trivial", "sensivel"] }, { "type": "null" }]
+        },
         "channel": {
           "description": "A15 — ONDE a entrega chegou, no vocabulario do repo (`alfa`, `beta`, `stable`). String livre pelo mesmo motivo de `run.phase`: a escada de canais e de cada repo, e um enum aqui decidiria por todos. Ausente = o card diz so a base do PR, e nao inventa canal nenhum.",
           "type": ["string", "null"]
@@ -438,6 +445,8 @@
     },
     "done-requires-passed-verification": ["concluir"],
     "x-done-rationale": "Fases desta lista com `phase.completed.outcome = done` exigem ao menos uma `verification.recorded` com `state = passed`. E o dente de D-4: 'PR mergeado E VERIFICADO'. Desfecho ruim continua valido — `abandoned`/`inconclusive` nao pedem nada. Tambem se cobra por FASE FECHADA, nao por `run.phase`.",
+    "e2e-required-when-sensitive": ["validar"],
+    "x-e2e-rationale": "A16 — fase desta lista fechada `done` com `risk: sensivel` exige uma `verification.recorded` de `verification_kind: e2e-manual`. Ela PODE ficar `pending`: esperar o dono rodar o roteiro e um estado legitimo (A19). O que nao pode e a mesma fase registrar aprovacao humana (`review` que passou, ou `gate.confirmed`) com o e2e ainda `pending` — foi assim que uma fase fechou verde sem ninguem ter validado, com o gate conferindo so a EXISTENCIA do arquivo de roteiro na branch.",
     "human-decision-facts": ["gate.confirmed", "decision.recorded"],
     "done-requires-human-decision": ["discovery", "plano"],
     "x-human-decision-rationale": "A18 — as fases de CONVERSA fecham com o que uma pessoa disse. Discovery e plano existem para produzir decisao; fase que nao perguntou nada nao fechou coisa nenhuma, e deixar 'concluida' sem nenhum fato humano era a mesma tela sem lastro que D-4 ja combate do outro lado. Qualquer um dos dois fatos serve — os dois nomeiam quem confirmou em `confirmed_by`, e e essa a pergunta. Desfecho ruim nao pede nada: abandonar sem perguntar e legitimo."

@@ -31,7 +31,10 @@
   "facts": [
     {
       "type": "lock.acquired",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-02"
+      },
       "phase": "validar",
       "holder": {
         "kind": "skill",
@@ -41,24 +44,50 @@
     },
     {
       "type": "verification.recorded",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-02"
+      },
       "verification_kind": "pull-request",
       "state": "pending",
       "ref": "https://github.com/exemplo/atlas/pull/128"
     },
     {
       "type": "artifact.recorded",
-      "owner": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "owner": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-02"
+      },
       "artifact_kind": "review-report",
       "location": "disk",
       "repo": null,
       "path": "C:/Users/dev/.donel/reports/wi-2026-08-03-a1-02-review.md"
     },
     {
+      "type": "verification.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-02"
+      },
+      "verification_kind": "e2e-manual",
+      "state": "pending",
+      "ref": ".claude/skills/tutorial-e2e/roteiros/fila-observavel.spec.ts",
+      "base": null
+    },
+    {
       "type": "human_review.recorded",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-02"
+      },
       "phase": "validar",
       "checklist": [
+        {
+          "item": "rodar o roteiro e2e e me dizer o que viu",
+          "kind": "action",
+          "state": "pending",
+          "detail": ".claude/skills/tutorial-e2e/roteiros/fila-observavel.spec.ts"
+        },
         {
           "item": "o teste novo cobre lote vazio, que e o caso que quebrou",
           "kind": "review",
@@ -75,15 +104,23 @@
     },
     {
       "type": "lock.released",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-02"
+      },
       "phase": "validar"
     },
     {
       "type": "phase.completed",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-02"
+      },
       "phase": "validar",
       "outcome": "done",
-      "summary": "Review sem bloqueio; PR aberto aguardando revisor humano."
+      "summary": "Review sem bloqueio; o roteiro e2e esta escrito e espera voce rodar.",
+      "risk": "sensivel",
+      "channel": null
     }
   ]
 }

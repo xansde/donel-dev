@@ -39,6 +39,7 @@ import {
   type MirrorSyncedEntry,
   type NoteSnapshot,
   type PhaseOutcome,
+  type PhaseRisk,
   type PhaseRunSnapshot,
   type PlanSnapshot,
   type RelationKind,
@@ -231,7 +232,8 @@ const HUMAN_REVIEW_STATES: readonly HumanReviewState[] = ['pending', 'done', 'wa
 const WORK_ITEM_TYPES: readonly WorkItemType[] = ['issue', 'spec', 'process-map', 'adr', 'prototype', 'spike', 'eval'];
 const RELATION_KINDS: readonly RelationKind[] = ['originated', 'flows_into', 'ships_with'];
 const PHASE_OUTCOMES: readonly PhaseOutcome[] = ['done', 'abandoned', 'inconclusive'];
-const VERIFICATION_KINDS: readonly VerificationKind[] = ['pull-request', 'check', 'review', 'conclusion'];
+const VERIFICATION_KINDS: readonly VerificationKind[] = ['pull-request', 'check', 'review', 'conclusion', 'e2e-manual'];
+const PHASE_RISKS: readonly PhaseRisk[] = ['trivial', 'sensivel'];
 const VERIFICATION_STATES: readonly VerificationState[] = ['pending', 'passed', 'failed'];
 
 // ---------------------------------------------------------------------------
@@ -515,6 +517,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           failure: null,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
           channel: current?.channel ?? null,
+          risk: current?.risk ?? null,
           seeded: fromSeed,
         });
         break;
@@ -539,6 +542,9 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           // A15 — o canal so muda quando a fase declara um: nao se herda o
           // destino de uma entrega anterior nem se inventa um.
           channel: str(p, 'channel') ?? current?.channel ?? null,
+          // A16 — o risco so muda quando a fase declara um: nao se herda a
+          // regua de uma passagem anterior nem se classifica por ela.
+          risk: oneOf<PhaseRisk>(p, 'risk', PHASE_RISKS) ?? current?.risk ?? null,
           // A fase e estado de AGORA: quem afirmou o ultimo desfecho define a
           // marca. Fase semeada e depois de fato executada vira observada.
           seeded: fromSeed,
@@ -587,6 +593,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           failure,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
           channel: current?.channel ?? null,
+          risk: current?.risk ?? null,
           seeded: fromSeed,
         });
         // Falhar nao e "nao ter comecado": o item continua em curso, e a falha

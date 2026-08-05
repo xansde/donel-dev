@@ -33,14 +33,20 @@
   "facts": [
     {
       "type": "verification.recorded",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-05" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
       "verification_kind": "check",
       "state": "passed",
       "ref": "npm test"
     },
     {
       "type": "artifact.recorded",
-      "owner": { "entity": "work_item", "id": "wi-2026-08-03-a1-05" },
+      "owner": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
       "artifact_kind": "adr",
       "location": "repo",
       "repo": "atlas",
@@ -48,42 +54,68 @@
     },
     {
       "type": "verification.recorded",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-05" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
       "verification_kind": "pull-request",
       "state": "passed",
       "ref": "https://github.com/exemplo/atlas/pull/141"
     },
     {
       "type": "phase.completed",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-05" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
       "phase": "implementar",
       "outcome": "done",
-      "summary": "Correcao e teste no mesmo commit."
+      "summary": "Correcao e teste no mesmo commit.",
+      "risk": null,
+      "channel": null
     },
     {
       "type": "phase.completed",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-05" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
       "phase": "validar",
       "outcome": "done",
-      "summary": "Review e verificacao rodados na mesma sessao."
+      "summary": "Review e verificacao rodados na mesma sessao.",
+      "risk": "trivial",
+      "channel": null
     },
     {
       "type": "phase.completed",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-05" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
       "phase": "documentar",
       "outcome": "done",
-      "summary": "ADR escrita junto, enquanto a decisao ainda estava fresca."
+      "summary": "ADR escrita junto, enquanto a decisao ainda estava fresca.",
+      "risk": null,
+      "channel": null
     },
     {
       "type": "phase.completed",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-05" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
       "phase": "concluir",
       "outcome": "done",
-      "summary": "PR mergeado e verificado."
+      "summary": "PR mergeado e verificado.",
+      "risk": null,
+      "channel": "alfa"
     },
     {
       "type": "lock.released",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-05" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
       "phase": "implementar"
     }
   ]

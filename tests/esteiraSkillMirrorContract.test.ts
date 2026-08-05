@@ -184,6 +184,46 @@ describe('espelho — o documento produzido pela skill passa no parser do app', 
     expect(stderr).toContain('kind');
   });
 
+  it('A16 — a skill recusa aprovação humana com o roteiro e2e ainda pendente', () => {
+    let stderr = '';
+    try {
+      execFileSync(
+        'python',
+        [
+          '-c',
+          `${PRELUDE}wi = {'entity':'work_item','id':'wi-1'}\n` +
+            `facts = [\n` +
+            `  c.verification_recorded(wi, 'e2e-manual', 'pending', ref='roteiros/fila.spec.ts'),\n` +
+            `  c.verification_recorded(wi, 'review', 'passed', ref='aprovado por 1 revisor'),\n` +
+            `  c.phase_completed(wi, 'validar', 'done', risk='sensivel'),\n` +
+            `]\n` +
+            `c.build_result(run_id='run-e2e', phase='validar', status='success', started_at='2026-08-04T12:00:00.000Z', finished_at='2026-08-04T12:30:00.000Z', discovery_id='dsc-1', work_item_id='wi-1', facts=facts)`,
+        ],
+        { encoding: 'utf8', cwd: SKILL_TOOLS_DIR, stdio: 'pipe' },
+      );
+      throw new Error('esperava ContractError, e o emissor aceitou aval com e2e pendente');
+    } catch (error) {
+      stderr = String((error as { stderr?: string }).stderr ?? '');
+    }
+    expect(stderr).toContain('e2e');
+  });
+
+  it('A16 — validar sensível com o e2e pendente e SEM aval passa no parser (esperar é legítimo)', () => {
+    const document = runPython(
+      `${PRELUDE}wi = {'entity':'work_item','id':'wi-1'}\n` +
+        `facts = [\n` +
+        `  c.verification_recorded(wi, 'e2e-manual', 'pending', ref='roteiros/fila.spec.ts'),\n` +
+        `  c.human_review_recorded(wi, 'validar', [{'item':'rodar o roteiro e2e e me dizer o que viu','kind':'action','state':'pending','detail':'roteiros/fila.spec.ts'}]),\n` +
+        `  c.phase_completed(wi, 'validar', 'done', risk='sensivel'),\n` +
+        `]\n` +
+        `print(json.dumps(c.build_result(run_id='run-e2e-ok', phase='validar', status='success', started_at='2026-08-04T12:00:00.000Z', finished_at='2026-08-04T12:30:00.000Z', discovery_id='dsc-1', work_item_id='wi-1', facts=facts)))`,
+    );
+
+    const parsed = parseEsteiraResult(document);
+    if (!parsed.ok) throw new Error(`a skill produziu algo que o app recusa: ${JSON.stringify(parsed.issues, null, 2)}`);
+    expect(parsed.result.facts.some((fact) => fact.type === 'verification.recorded' && fact.verification_kind === 'e2e-manual')).toBe(true);
+  });
+
   it('fase que falhou: o app aceita, e a falha vem legível', () => {
     const document = runPython(
       `${PRELUDE}` +

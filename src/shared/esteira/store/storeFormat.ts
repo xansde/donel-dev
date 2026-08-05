@@ -469,6 +469,8 @@ export interface PhaseRunSnapshot {
   readonly failure: { readonly code: string; readonly message: string } | null;
   /** Ultimo run que tocou esta fase — a trilha de volta ao `result.json` que a produziu. */
   readonly lastRunId: string | null;
+  /** A16 — o risco que esta fase classificou. `null` = ela nao classificou. */
+  readonly risk: PhaseRisk | null;
   /** A15 — o canal em que esta fase entregou (`alfa`, `beta`, `stable`). `null` = a fase nao declarou. */
   readonly channel: string | null;
   /**
@@ -479,7 +481,11 @@ export interface PhaseRunSnapshot {
   readonly seeded: SeededFlag;
 }
 
-export type VerificationKind = 'pull-request' | 'check' | 'review' | 'conclusion';
+/** A16 — `e2e-manual` e o roteiro rodado A MAO por gente; `check` e o que a maquina roda. */
+export type VerificationKind = 'pull-request' | 'check' | 'review' | 'conclusion' | 'e2e-manual';
+
+/** A16 — a regua de aprovacao classificada pela fase. */
+export type PhaseRisk = 'trivial' | 'sensivel';
 export type VerificationState = 'pending' | 'passed' | 'failed';
 
 /** D-4 — como o ciclo termina. PR e so UMA das formas; ADR e spike terminam de outro jeito. */

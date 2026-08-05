@@ -119,6 +119,7 @@ EMITTED_PATHS: tuple[str, ...] = (
     "facts[phase.completed].phase",
     "facts[phase.completed].outcome",
     "facts[phase.completed].summary",
+    "facts[phase.completed].risk",
     "facts[phase.completed].channel",
     "facts[lock.acquired].type",
     "facts[lock.acquired].subject.entity",
@@ -340,6 +341,8 @@ def verification_recorded(
     main". A base vai como esta no repo; traduzir para canal e trabalho de quem
     conhece a escada, e isso vai em `phase_completed(channel=...)`.
     """
+    if verification_kind not in VERIFICATION_KINDS:
+        raise ContractError(f"verification_kind fora do contrato: {verification_kind!r}")
     if base and verification_kind != "pull-request":
         raise ContractError('"base" so faz sentido em verification_kind "pull-request"')
     return {
@@ -358,16 +361,25 @@ def phase_completed(
     outcome: str,
     summary: str | None = None,
     channel: str | None = None,
+    risk: str | None = None,
 ) -> dict[str, Any]:
-    """A15 — `channel` diz ONDE a entrega chegou, no vocabulario do repo."""
+    """A15 — `channel` diz ONDE a entrega chegou. A16 — `risk` e a regua de aprovacao.
+
+    `risk='sensivel'` liga o gate do roteiro e2e manual: a fase precisa declarar
+    uma `verification.recorded` de tipo `e2e-manual`, e nao pode registrar
+    aprovacao humana enquanto ela estiver `pending`.
+    """
     if not PHASE_PATTERN.match(phase):
         raise ContractError(f"nome de fase fora do padrao: {phase!r}")
+    if risk is not None and risk not in PHASE_RISKS:
+        raise ContractError(f"risco fora do contrato: {risk!r}")
     return {
         "type": "phase.completed",
         "subject": subject,
         "phase": phase,
         "outcome": outcome,
         "summary": summary,
+        "risk": risk,
         "channel": channel,
     }
 
@@ -440,6 +452,9 @@ def decision_recorded(
     }
 
 
+PHASE_RISKS = ("trivial", "sensivel")
+VERIFICATION_KINDS = ("pull-request", "check", "review", "conclusion", "e2e-manual")
+
 HUMAN_REVIEW_KINDS = ("review", "action")
 HUMAN_REVIEW_STATES = ("pending", "done", "waived")
 
@@ -483,6 +498,11 @@ def human_decision_facts() -> list[str]:
 def phases_requiring_human_decision() -> list[str]:
     """Fases de CONVERSA: com `outcome: done`, exigem ao menos um fato humano (A18)."""
     return list(_required_facts_table().get("done-requires-human-decision", []))
+
+
+def phases_requiring_e2e_when_sensitive() -> list[str]:
+    """Fases em que `risk: sensivel` liga o gate do roteiro e2e manual (A16)."""
+    return list(_required_facts_table().get("e2e-required-when-sensitive", []))
 
 
 def _required_facts_table() -> dict[str, Any]:
@@ -635,6 +655,38 @@ def build_result(
                 f"fase {sem_gente[0]!r} com outcome 'done' exige ao menos um "
                 f"{' ou '.join(human_decision_facts())} — fase que nao perguntou nada nao fecha"
             )
+
+    # A16 — o gate do roteiro e2e, em risco sensivel. O gate antigo conferia a
+    # EXISTENCIA do arquivo de roteiro na branch: "escrito" e "rodado" viraram a
+    # mesma coisa, e uma fase fechou verde sem ninguem ter validado.
+    if status == "success":
+        exigem_e2e = phases_requiring_e2e_when_sensitive()
+        sensiveis = [
+            fact
+            for fact in facts
+            if fact["type"] == "phase.completed"
+            and fact.get("outcome") == "done"
+            and fact.get("risk") == "sensivel"
+            and fact["phase"] in exigem_e2e
+        ]
+        if sensiveis:
+            e2e = [f for f in facts if f["type"] == "verification.recorded" and f.get("verification_kind") == "e2e-manual"]
+            if not e2e:
+                raise ContractError(
+                    f"fase {sensiveis[0]['phase']!r} classificada 'sensivel' exige uma verification.recorded "
+                    "de verification_kind 'e2e-manual' — gate de existencia de roteiro nao e validacao"
+                )
+            if any(f.get("state") == "pending" for f in e2e):
+                aprovou = any(
+                    f["type"] == "gate.confirmed"
+                    or (f["type"] == "verification.recorded" and f.get("verification_kind") == "review" and f.get("state") == "passed")
+                    for f in facts
+                )
+                if aprovou:
+                    raise ContractError(
+                        "aprovacao humana com o roteiro e2e ainda 'pending' em risco sensivel — "
+                        "o e2e pode esperar por voce, o aval nao sai junto"
+                    )
 
     # D-4 com dente: a fase que declara o ciclo ENCERRADO precisa da evidencia
     # que o encerra ("PR mergeado E VERIFICADO"). Sem isto, "Concluido" na tela
