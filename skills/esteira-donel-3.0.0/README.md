@@ -29,9 +29,9 @@ tools/
 skills/
   esteira-discovery/    a fase Discovery
   esteira-plano/        a fase Plano
+  esteira-design/       a fase Design (E1) — mockup + diagrama, antes de codar
   esteira-implementar/  a fase Implementar
-  esteira-validar/      a fase Validar
-  esteira-documentar/   a fase Documentar
+  esteira-validar/      a fase Validar + Documentar — fase COMPOSTA (E5)
   esteira-concluir/     a fase Concluir
 ```
 
@@ -43,15 +43,23 @@ de ponta a ponta no modelo novo — a condição que P-3 impôs para a 2.x sair 
 
 A tabela `x-required-facts` mora no **schema**, não em regra escrita duas
 vezes: o emissor a lê do arquivo canônico e o app carrega a mesma tabela como
-cópia literal, conferida por teste.
+cópia literal, conferida por teste. A cobrança é por **FASE FECHADA** (A3),
+não por `run.phase` — o que importa é o que o run diz ter *fechado* em cada
+`phase.completed`, não o nome que o próprio run carrega.
 
-| Fase | Além de `phase.completed` | Por quê |
+| Fase (fechada) | Além de `phase.completed` | Por quê |
 |---|---|---|
 | `discovery` | `discovery.recorded` | a raiz do card |
+| `plano` | `work_item.recorded` | plano concluído sem item é a evidência 1 pelo avesso |
 | `implementar` | `verification.recorded` | o que outra pessoa consegue conferir (check, review ou a resposta do spike) |
 | `validar` | `verification.recorded` | rodar a verificação **é** validar (D-4) |
 | `documentar` | `artifact.recorded` | D-8 — documento sem endereço não responde "cadê o artefato?" |
 | `concluir` | `verification.recorded` | D-4 — o ciclo termina com evidência |
+
+`design` (E1, 05/08) não está nesta tabela: o schema não muda para ela existir
+— `run.phase` é string livre (`[P-4]`), e a fase nasceu sem tocar o contrato.
+A disciplina de declarar os dois artefatos (mockup + diagrama de arquitetura,
+ver antes de codar — F11) é da `SKILL.md` da fase, não do emissor.
 
 E um dente a mais: `concluir` com `outcome: done` exige uma
 `verification.recorded` com `state: passed`. Desfecho ruim continua válido —
@@ -59,18 +67,38 @@ E um dente a mais: `concluir` com `outcome: done` exige uma
 `success`: o que se cobra é promessa **cumprida**, e run que falhou já declara
 `failure` com código e motivo.
 
+## Validar + Documentar viram uma fase composta (E5, 05/08)
+
+O catálogo de disparo do app oferecia `validar` e `documentar` como duas
+linhas separadas. A fronteira que justifica fase própria é **gate humano ·
+olho novo · orçamento de contexto** — e nenhuma das três separa estas duas.
+Desde 05/08, a `SKILL.md` de `esteira-validar` faz as duas coisas na mesma
+sessão: roda a verificação e, com o que acabou de aprender, decide também o
+que documentar. Não existe mais uma `SKILL.md` de `esteira-documentar`
+separada.
+
+A tabela acima continua com uma linha própria para `documentar` porque a
+cobrança do contrato é por FASE FECHADA, não por `run.phase`: um run cujo
+`run.phase` é `"validar"` fecha as **duas**, sempre — declarando dois
+`phase.completed` no mesmo result (A22, suporte a múltiplos por run). O
+catálogo de disparo do app mostra uma linha só ("Validar + Documentar"); o
+contrato, por baixo, continua vendo duas fases fechadas — e cobrando cada uma
+pelo que ela promete.
+
 ## Instalar
 
 O Claude Code carrega skills de `~/.claude/skills/`. Aponte para cá com um
 junction (Windows, não pede admin):
 
 ```powershell
-foreach ($fase in 'discovery','plano','implementar','validar','documentar','concluir') {
+foreach ($fase in 'discovery','plano','design','implementar','validar','concluir') {
   New-Item -ItemType Junction `
     -Path "$env:USERPROFILE\.claude\skills\esteira-$fase-3" `
     -Target "$PWD\skills\esteira-donel-3.0.0\skills\esteira-$fase"
 }
 ```
+
+Sem `documentar` na lista: a fase virou parte da `SKILL.md` de `validar` (E5).
 
 Nomes com sufixo `-3` para conviverem com o plugin `esteira:` da 2.1.0 sem
 conflito — os dois modelos coexistem até a virada.

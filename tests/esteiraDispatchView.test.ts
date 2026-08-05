@@ -79,6 +79,7 @@ describe('fase que o card não comporta fica desabilitada, com a razão escrita'
   it('sem item, as fases de item ficam desabilitadas — e a razão nomeia D-16', () => {
     const view = dispatchView(card([nasceCard(), nascePlano()]), { phase: 'implementar', targetKey: null });
 
+    expect(fase(view, 'design').enabled).toBe(false);
     expect(fase(view, 'implementar').enabled).toBe(false);
     expect(fase(view, 'validar').enabled).toBe(false);
     expect(fase(view, 'implementar').reason).toContain('skill');
@@ -242,28 +243,46 @@ describe('o invariante: recusar sem dizer por quê é o que a spec proíbe', () 
 // Costura do merge da 010 (04/08): as duas fases que fecham o ciclo entraram
 // com a skill 3.0 do B7, e o handoff do B2 pediu exatamente isto — uma linha
 // por fase no catálogo, com a frase de "por que não dá agora" junto (D-4).
-describe('as fases do B7 no catálogo — documentar e concluir', () => {
-  it('a tela as oferece, rodando sobre item, na ordem do ciclo', () => {
+//
+// N8/E1+E5 (05/08): o catálogo ganhou DESIGN, antes de Implementar — mockup e
+// diagrama de arquitetura se veem antes de codar (F11) — e perdeu a linha
+// separada de Documentar: Validar e Documentar viram UMA fase composta, porque
+// nenhuma das três fronteiras que justificam fase própria (gate humano, olho
+// novo, orçamento de contexto) separa as duas. A fase composta continua se
+// chamando "validar" (`run.phase` não muda) e declara os DOIS `phase.completed`
+// (A22) — o catálogo é só a OFERTA da tela, não o enum do contrato.
+describe('as fases do B7 no catálogo — a fase composta e concluir', () => {
+  it('a tela as oferece, rodando sobre item, na ordem do ciclo — com Design antes de Implementar', () => {
     const view = dispatchView(card([nasceCard()]), { phase: 'discovery', targetKey: null });
     expect(view.phases.map((entry) => entry.phase)).toEqual([
       'discovery',
       'plano',
+      'design',
       'implementar',
       'validar',
-      'documentar',
       'concluir',
     ]);
-    expect(fase(view, 'documentar').runsOn).toBe('work_item');
+    expect(fase(view, 'design').runsOn).toBe('work_item');
+    expect(fase(view, 'validar').label).toContain('Documentar');
     expect(fase(view, 'concluir').runsOn).toBe('work_item');
   });
 
-  it('sem item, as duas ficam desabilitadas com a razão do ciclo escrita', () => {
-    const view = dispatchView(card([nasceCard(), nascePlano()]), { phase: 'documentar', targetKey: null });
+  it('não há mais uma linha própria para "documentar" — ela foi absorvida por Validar', () => {
+    const view = dispatchView(card([nasceCard()]), { phase: 'discovery', targetKey: null });
+    expect(view.phases.some((entry) => entry.phase === 'documentar')).toBe(false);
+  });
 
-    const documentar = fase(view, 'documentar');
-    expect(documentar.enabled).toBe(false);
-    expect(documentar.reason).toContain('artefato');
-    expect(documentar.reason).toContain('D-16');
+  it('sem item, design e a fase composta ficam desabilitados com a razão do ciclo escrita', () => {
+    const view = dispatchView(card([nasceCard(), nascePlano()]), { phase: 'validar', targetKey: null });
+
+    const design = fase(view, 'design');
+    expect(design.enabled).toBe(false);
+    expect(design.reason).toContain('D-16');
+
+    const validar = fase(view, 'validar');
+    expect(validar.enabled).toBe(false);
+    expect(validar.reason).toContain('artefato');
+    expect(validar.reason).toContain('D-16');
 
     const concluir = fase(view, 'concluir');
     expect(concluir.enabled).toBe(false);
@@ -271,8 +290,10 @@ describe('as fases do B7 no catálogo — documentar e concluir', () => {
     expect(concluir.reason).toContain('ciclo');
   });
 
-  it('com um item vivo, as duas habilitam — e o assunto do disparo é o item', () => {
+  it('com um item vivo, design, validar e concluir habilitam — e o assunto do disparo é o item', () => {
     const view = dispatchView(card([nasceCard(), nascePlano(), nasceItem()]), { phase: 'concluir', targetKey: null });
+    expect(fase(view, 'design').enabled).toBe(true);
+    expect(fase(view, 'validar').enabled).toBe(true);
     expect(fase(view, 'concluir').enabled).toBe(true);
     expect(view.target?.entity).toBe('work_item');
   });

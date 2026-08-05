@@ -1,4 +1,4 @@
-import { Button, PhaseChip, PhaseStateGlyph, type EsteiraPhase as ChipPhase } from '@donel-dev/design-system';
+import { Button, PhaseChip, PhaseStateGlyph, isEsteiraPhase } from '@donel-dev/design-system';
 import type { TaskEntry, TaskScope } from '../../../shared/tasksDoc';
 import type { MapDetailView } from './esteiraMapView';
 import styles from './PhaseDetailsPanel.module.css';
@@ -19,12 +19,12 @@ import styles from './PhaseDetailsPanel.module.css';
 //
 // Cada seção degrada por OMISSÃO: sem dado, ela não aparece. Nenhum texto nasce
 // aqui — tudo chega pronto de `esteiraMapView.ts`.
-
-const CHIP_PHASES: ReadonlySet<string> = new Set<ChipPhase>(['discovery', 'plano', 'implementar', 'validar', 'concluir', 'documentar']);
-
-function isChipPhase(phase: string): phase is ChipPhase {
-  return CHIP_PHASES.has(phase);
-}
+//
+// `isEsteiraPhase` vem do design-system, não é mais um Set local: achado da
+// captura do batch n8 (tutorial-e2e) — esta cópia e a de `DiscoveryMap.tsx`
+// tinham cada uma seu próprio Set hardcoded, as duas esquecendo `design`
+// quando a fase entrou no catálogo (E1). Vocabulário duplicado diverge; a
+// fonte agora é uma só.
 
 /**
  * C3 — "o que roda junto": o escopo compacto + as tasks expandidas do
@@ -67,8 +67,8 @@ export function PhaseDetailsPanel({ detail, onReleaseLock, onRetryMirror, readOn
         <span className={styles.label}>{detail.phase ? 'Etapa em foco' : 'Nó em foco'}</span>
         <div className={styles.summary}>
           {detail.phaseGlyph ? <PhaseStateGlyph status={detail.phaseGlyph} /> : null}
-          {detail.phase && isChipPhase(detail.phase) ? <PhaseChip phase={detail.phase} /> : null}
-          {detail.phase && !isChipPhase(detail.phase) ? <span className={styles.fase}>{detail.phase}</span> : null}
+          {detail.phase && isEsteiraPhase(detail.phase) ? <PhaseChip phase={detail.phase} /> : null}
+          {detail.phase && !isEsteiraPhase(detail.phase) ? <span className={styles.fase}>{detail.phase}</span> : null}
         </div>
         <p className={styles.summaryText} data-testid="devmode-details-title">
           {detail.title}
