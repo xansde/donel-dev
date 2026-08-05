@@ -4,6 +4,7 @@ import path, { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { refuseIfRealClaudeHome } from './accountsCredentialGuard';
 
 // T1126 (011-contas-e-provedores, etapa 1) — mod FALSO (via
 // `DONEL_ACCOUNTS_FAKE_MOD_FIXTURE`, mesmo espírito de `DONEL_QUOTA_AXI_FIXTURE`),
@@ -34,6 +35,10 @@ test.beforeAll(async () => {
   const claudeHomeParent = mkdtempSync(path.join(tmpdir(), 'donel-accounts-smoke-claude-'));
   claudeHomeDir = join(claudeHomeParent, '.claude');
   claudeJsonPath = join(claudeHomeParent, '.claude.json');
+  // G2 (batch n3) — cinto de segurança: recusa rodar ANTES de qualquer IPC
+  // se `claudeHomeDir` por acaso resolver pra pasta real (ver comentário de
+  // topo do arquivo — este smoke já causou o incidente uma vez).
+  refuseIfRealClaudeHome(claudeHomeDir);
   // Seed: `.claude.json` de teste com `oauthAccount` presente (simula uma
   // sessão CLI já logada) + uma chave qualquer que TEM que sobreviver ao
   // switch — só assim o "oauthAccount sumiu, o resto ficou" é uma prova real.
