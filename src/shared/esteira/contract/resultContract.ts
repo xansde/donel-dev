@@ -158,6 +158,8 @@ export type EsteiraFact =
       readonly verification_kind: VerificationKind;
       readonly state: VerificationState;
       readonly ref: string | null;
+      /** A15 — a base do PR. `null` quando a verificacao nao e de PR, ou quando a fase nao a declarou. */
+      readonly base: string | null;
     }
   | {
       readonly type: 'phase.completed';
@@ -165,6 +167,8 @@ export type EsteiraFact =
       readonly phase: string;
       readonly outcome: PhaseOutcome;
       readonly summary: string | null;
+      /** A15 — onde a entrega chegou, no vocabulario do repo (`alfa`, `beta`, `stable`). */
+      readonly channel: string | null;
     }
   | {
       readonly type: 'lock.acquired';
@@ -328,12 +332,14 @@ export const CONSUMED_PATHS: readonly string[] = [
   'facts[verification.recorded].verification_kind',
   'facts[verification.recorded].state',
   'facts[verification.recorded].ref',
+  'facts[verification.recorded].base',
   'facts[phase.completed].type',
   'facts[phase.completed].subject.entity',
   'facts[phase.completed].subject.id',
   'facts[phase.completed].phase',
   'facts[phase.completed].outcome',
   'facts[phase.completed].summary',
+  'facts[phase.completed].channel',
   'facts[lock.acquired].type',
   'facts[lock.acquired].subject.entity',
   'facts[lock.acquired].subject.id',
@@ -697,22 +703,24 @@ function parseFact(raw: unknown, path: string, c: Collector): EsteiraFact | null
       return { type: factType,owner, artifact_kind: artifactKind, location, repo, path: artifactPath };
     }
     case 'verification.recorded': {
-      rejectUnknownKeys(raw, ['type', 'subject', 'verification_kind', 'state', 'ref'], path, c);
+      rejectUnknownKeys(raw, ['type', 'subject', 'verification_kind', 'state', 'ref', 'base'], path, c);
       const subject = parseEntityRef(raw, 'subject', path, c);
       const verificationKind = requireEnum<VerificationKind>(raw, 'verification_kind', ['pull-request', 'check', 'review', 'conclusion'], path, c);
       const state = requireEnum<VerificationState>(raw, 'state', ['pending', 'passed', 'failed'], path, c);
       const ref = optionalString(raw, 'ref', path, c);
+      const base = optionalString(raw, 'base', path, c);
       if (subject === null || verificationKind === null || state === null) return null;
-      return { type: factType,subject, verification_kind: verificationKind, state, ref };
+      return { type: factType, subject, verification_kind: verificationKind, state, ref, base };
     }
     case 'phase.completed': {
-      rejectUnknownKeys(raw, ['type', 'subject', 'phase', 'outcome', 'summary'], path, c);
+      rejectUnknownKeys(raw, ['type', 'subject', 'phase', 'outcome', 'summary', 'channel'], path, c);
       const subject = parseEntityRef(raw, 'subject', path, c);
       const phase = requirePattern(raw, 'phase', PHASE_PATTERN, path, c);
       const outcome = requireEnum<PhaseOutcome>(raw, 'outcome', ['done', 'abandoned', 'inconclusive'], path, c);
       const summary = optionalString(raw, 'summary', path, c);
+      const channel = optionalString(raw, 'channel', path, c);
       if (subject === null || phase === null || outcome === null) return null;
-      return { type: factType,subject, phase, outcome, summary };
+      return { type: factType, subject, phase, outcome, summary, channel };
     }
     case 'lock.acquired': {
       rejectUnknownKeys(raw, ['type', 'subject', 'phase', 'holder'], path, c);

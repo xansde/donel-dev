@@ -42,6 +42,7 @@ function phase(overrides: Partial<PhaseRunSnapshot>): PhaseRunSnapshot {
     summary: null,
     failure: null,
     lastRunId: null,
+    channel: null,
     seeded: false,
     ...overrides,
   };

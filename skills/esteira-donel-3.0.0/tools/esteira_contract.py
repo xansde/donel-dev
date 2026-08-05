@@ -112,12 +112,14 @@ EMITTED_PATHS: tuple[str, ...] = (
     "facts[verification.recorded].verification_kind",
     "facts[verification.recorded].state",
     "facts[verification.recorded].ref",
+    "facts[verification.recorded].base",
     "facts[phase.completed].type",
     "facts[phase.completed].subject.entity",
     "facts[phase.completed].subject.id",
     "facts[phase.completed].phase",
     "facts[phase.completed].outcome",
     "facts[phase.completed].summary",
+    "facts[phase.completed].channel",
     "facts[lock.acquired].type",
     "facts[lock.acquired].subject.entity",
     "facts[lock.acquired].subject.id",
@@ -325,20 +327,49 @@ def artifact_recorded(
     }
 
 
-def verification_recorded(subject: dict[str, str], verification_kind: str, state: str, ref: str | None = None) -> dict[str, Any]:
+def verification_recorded(
+    subject: dict[str, str],
+    verification_kind: str,
+    state: str,
+    ref: str | None = None,
+    base: str | None = None,
+) -> dict[str, Any]:
+    """A15 — `base` e a branch de destino do PR.
+
+    Num repo com escada de canais, "concluido" sem destino se le como "esta na
+    main". A base vai como esta no repo; traduzir para canal e trabalho de quem
+    conhece a escada, e isso vai em `phase_completed(channel=...)`.
+    """
+    if base and verification_kind != "pull-request":
+        raise ContractError('"base" so faz sentido em verification_kind "pull-request"')
     return {
         "type": "verification.recorded",
         "subject": subject,
         "verification_kind": verification_kind,
         "state": state,
         "ref": ref,
+        "base": base,
     }
 
 
-def phase_completed(subject: dict[str, str], phase: str, outcome: str, summary: str | None = None) -> dict[str, Any]:
+def phase_completed(
+    subject: dict[str, str],
+    phase: str,
+    outcome: str,
+    summary: str | None = None,
+    channel: str | None = None,
+) -> dict[str, Any]:
+    """A15 — `channel` diz ONDE a entrega chegou, no vocabulario do repo."""
     if not PHASE_PATTERN.match(phase):
         raise ContractError(f"nome de fase fora do padrao: {phase!r}")
-    return {"type": "phase.completed", "subject": subject, "phase": phase, "outcome": outcome, "summary": summary}
+    return {
+        "type": "phase.completed",
+        "subject": subject,
+        "phase": phase,
+        "outcome": outcome,
+        "summary": summary,
+        "channel": channel,
+    }
 
 
 def lock_acquired(subject: dict[str, str], phase: str, acquired_at: str, cli_session_id: str | None = None) -> dict[str, Any]:

@@ -31,29 +31,43 @@
   "facts": [
     {
       "type": "verification.recorded",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-02"
+      },
       "verification_kind": "pull-request",
       "state": "passed",
-      "ref": "https://github.com/exemplo/atlas/pull/128"
+      "ref": "https://github.com/exemplo/atlas/pull/128",
+      "base": "staging"
     },
     {
       "type": "verification.recorded",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-02"
+      },
       "verification_kind": "review",
       "state": "passed",
       "ref": "aprovado por 1 revisor humano"
     },
     {
       "type": "lock.released",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-02"
+      },
       "phase": "concluir"
     },
     {
       "type": "phase.completed",
-      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-02" },
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-02"
+      },
       "phase": "concluir",
       "outcome": "done",
-      "summary": "PR mergeado e verificado; o item fecha pelo ciclo de entrega de codigo (D-4)."
+      "summary": "PR mergeado em staging e verificado; entrega no canal alfa (D-4).",
+      "channel": "alfa"
     }
   ]
 }

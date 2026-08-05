@@ -469,6 +469,8 @@ export interface PhaseRunSnapshot {
   readonly failure: { readonly code: string; readonly message: string } | null;
   /** Ultimo run que tocou esta fase — a trilha de volta ao `result.json` que a produziu. */
   readonly lastRunId: string | null;
+  /** A15 — o canal em que esta fase entregou (`alfa`, `beta`, `stable`). `null` = a fase nao declarou. */
+  readonly channel: string | null;
   /**
    * D-2 — o ULTIMO fato desta fase foi semeado (afirmado), nao observado. A
    * fase e estado de agora: um run de verdade em cima de uma fase semeada tira
@@ -486,6 +488,8 @@ export interface VerificationSnapshot {
   readonly verificationKind: VerificationKind;
   readonly state: VerificationState;
   readonly ref: string | null;
+  /** A15 — a base do PR. Num repo com escada de canais, o destino E parte do desfecho. */
+  readonly base: string | null;
   readonly recordedAt: string;
 }
 

@@ -489,6 +489,9 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           verificationKind,
           state,
           ref,
+          // A15 — a base do PR faz parte do desfecho num repo com escada de
+          // canais: "concluido" sem destino se le como "esta na main".
+          base: str(p, 'base'),
           recordedAt: str(p, 'recordedAt') ?? event.at,
         });
         break;
@@ -511,6 +514,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           // AGORA, e o historico continua no log.
           failure: null,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
+          channel: current?.channel ?? null,
           seeded: fromSeed,
         });
         break;
@@ -532,6 +536,9 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           summary: str(p, 'summary'),
           failure: null,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
+          // A15 — o canal so muda quando a fase declara um: nao se herda o
+          // destino de uma entrega anterior nem se inventa um.
+          channel: str(p, 'channel') ?? current?.channel ?? null,
           // A fase e estado de AGORA: quem afirmou o ultimo desfecho define a
           // marca. Fase semeada e depois de fato executada vira observada.
           seeded: fromSeed,
@@ -579,6 +586,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           summary: current?.summary ?? null,
           failure,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
+          channel: current?.channel ?? null,
           seeded: fromSeed,
         });
         // Falhar nao e "nao ter comecado": o item continua em curso, e a falha

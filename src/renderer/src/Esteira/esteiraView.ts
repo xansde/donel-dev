@@ -859,6 +859,40 @@ export interface VerificationLineView {
   readonly failed: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// A15 — o canal da entrega
+// ---------------------------------------------------------------------------
+//
+// Num repo com escada alfa→beta→stable, "concluído" sem destino se lê como
+// "está na main". O card precisa dizer ONDE a coisa chegou — e não pode
+// deduzir: o apelido do canal é vocabulário do repo, não do contrato. Se a
+// fase declarou só a base do PR, a frase diz a base; se declarou o canal
+// também, os dois aparecem. Nenhum dos dois se inventa a partir do outro.
+
+/**
+ * Onde a entrega chegou, se alguém disse. `null` quando nenhuma fase declarou
+ * base nem canal — e aí a tela não afirma nada, que é o ponto.
+ */
+export function deliveryLine(card: CardView, subject: EntityId | null = null): string | null {
+  const escopo = <T extends { readonly subject: EntityId }>(entries: readonly T[]): readonly T[] =>
+    subject === null ? entries : entries.filter((entry) => entry.subject.entity === subject.entity && entry.subject.id === subject.id);
+
+  const base =
+    escopo(card.verifications).find((entry) => entry.verificationKind === 'pull-request' && entry.state === 'passed' && entry.base)?.base ??
+    escopo(card.verifications).find((entry) => entry.verificationKind === 'pull-request' && entry.base)?.base ??
+    null;
+
+  const channel = escopo(card.phases).find((phase) => phase.channel !== null)?.channel ?? null;
+
+  if (base === null && channel === null) return null;
+  if (base === null) return `Entregue no canal ${channel}.`;
+  if (channel === null) return `Entregue em ${base}.`;
+  return `Entregue em ${base} (${channel}).`;
+}
+
+export const DELIVERY_UNKNOWN_NOTE =
+  'Nenhuma fase declarou o destino da entrega. Num repo com escada de canais, “concluído” sozinho não diz se chegou ao canal fechado.';
+
 /**
  * `subject` filtra por assunto — é o que o painel de detalhe do mapa (B6)
  * precisa, um nó de cada vez, sem que exista uma segunda redação da evidência.

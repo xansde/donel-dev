@@ -55,9 +55,11 @@ FACT_BUILDERS = {
         f["owner"], f["artifact_kind"], f["location"], f["path"], repo=f.get("repo")
     ),
     "verification.recorded": lambda f: contract.verification_recorded(
-        f["subject"], f["verification_kind"], f["state"], ref=f.get("ref")
+        f["subject"], f["verification_kind"], f["state"], ref=f.get("ref"), base=f.get("base")
     ),
-    "phase.completed": lambda f: contract.phase_completed(f["subject"], f["phase"], f["outcome"], summary=f.get("summary")),
+    "phase.completed": lambda f: contract.phase_completed(
+        f["subject"], f["phase"], f["outcome"], summary=f.get("summary"), channel=f.get("channel")
+    ),
     "lock.acquired": lambda f: contract.lock_acquired(
         f["subject"], f["phase"], f["acquired_at"], cli_session_id=f.get("cli_session_id")
     ),

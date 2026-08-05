@@ -155,6 +155,7 @@ function factToDraft(fact: EsteiraFact, index: number, result: EsteiraResult): E
           verificationKind: fact.verification_kind,
           state: fact.state,
           ref: fact.ref,
+          base: fact.base,
           recordedAt: at,
         },
       };
@@ -169,6 +170,7 @@ function factToDraft(fact: EsteiraFact, index: number, result: EsteiraResult): E
           phase: fact.phase,
           outcome: fact.outcome,
           summary: fact.summary,
+          channel: fact.channel,
           at,
           runId,
         },

@@ -222,6 +222,10 @@
         "ref": {
           "description": "URL do PR, nome do check, ou o texto da conclusao registrada.",
           "type": ["string", "null"]
+        },
+        "base": {
+          "description": "A15 — a BASE do PR (a branch de destino), quando `verification_kind` e `pull-request`. Num repo com escada de canais, 'concluido' sem canal se le como 'esta na main': foi por isso que uma entrega em staging passou por entrega fechada. Nome da branch como esta no repo — nunca traduzido para canal aqui, porque quem sabe o apelido do canal e a fase, nao o contrato.",
+          "type": ["string", "null"]
         }
       }
     },
@@ -235,7 +239,11 @@
         "subject": { "$ref": "#/$defs/entity_ref" },
         "phase": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
         "outcome": { "enum": ["done", "abandoned", "inconclusive"] },
-        "summary": { "type": ["string", "null"] }
+        "summary": { "type": ["string", "null"] },
+        "channel": {
+          "description": "A15 — ONDE a entrega chegou, no vocabulario do repo (`alfa`, `beta`, `stable`). String livre pelo mesmo motivo de `run.phase`: a escada de canais e de cada repo, e um enum aqui decidiria por todos. Ausente = o card diz so a base do PR, e nao inventa canal nenhum.",
+          "type": ["string", "null"]
+        }
       }
     },
     "fact_lock_acquired": {
