@@ -10,6 +10,8 @@ import {
   formatRelativeTime,
   FREE_TERMINAL_ETAPA_LABEL,
   partitionSessionsByPhaseWork,
+  phaseOnlyResultsMessage,
+  phaseSessionsToggleLabel,
 } from '../../shared/sessions';
 import { ProjectConfigForm, type ProjectConfigFormHandle } from './ProjectConfigForm';
 import { withPendingRepoCommitted } from './repoEntryList';
@@ -256,11 +258,13 @@ export function PreviousSessions({
             <p className={styles.hint}>Nenhuma sessão bate com “{query}”.</p>
           ) : null}
 
-          {/* B3 — tudo que a busca achou é sessão de fase da esteira, e elas estão ocultas: estado DIFERENTE de "sem resultado" (a busca achou, só não mostra por default). */}
+          {/* B3 — tudo que a busca achou é sessão de fase da esteira, e elas estão ocultas: estado DIFERENTE de "sem resultado" (a busca achou, só não mostra por default). A frase nasce em `phaseOnlyResultsMessage` (shared/sessions.ts) — aqui só decide QUANDO mostrá-la. */}
           {!loading && filtered.length > 0 && rows.length === 0 ? (
             <p className={styles.hint}>
-              {partitioned.hidden.length === 1 ? 'A sessão encontrada é' : 'As sessões encontradas são'} de fase da
-              esteira — <button type="button" className={styles.phaseToggle} onClick={() => setShowPhaseSessions(true)}>mostre-as</button>.
+              {phaseOnlyResultsMessage(partitioned.hidden.length)}{' '}
+              <button type="button" className={styles.phaseToggle} onClick={() => setShowPhaseSessions(true)}>
+                Mostrar
+              </button>
             </p>
           ) : null}
 
@@ -319,13 +323,11 @@ export function PreviousSessions({
                 Uma sessão reiniciada em outra conta aparece como duas entradas irmãs — a etiqueta de conta é o que diz de quem
                 é a cota.
               </p>
-              {/* B3 — o toggle só aparece quando há algo a esconder/revelar; "ocultar de novo" mantém o gesto reversível. */}
+              {/* B3 — o toggle só aparece quando há algo a esconder/revelar; "ocultar de novo" mantém o gesto reversível. O rótulo nasce em `phaseSessionsToggleLabel` (shared/sessions.ts). */}
               {partitioned.hidden.length > 0 ? (
                 <p className={styles.footerNote}>
                   <button type="button" className={styles.phaseToggle} onClick={() => setShowPhaseSessions((prev) => !prev)}>
-                    {showPhaseSessions
-                      ? 'Ocultar sessões de fase da esteira'
-                      : `${partitioned.hidden.length} sessão(ões) de fase da esteira oculta(s) — mostrar`}
+                    {phaseSessionsToggleLabel(partitioned.hidden.length, showPhaseSessions)}
                   </button>
                   {showPhaseSessions ? ' — elas já têm histórico próprio no card da Esteira.' : null}
                 </p>

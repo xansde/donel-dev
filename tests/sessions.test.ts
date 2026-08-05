@@ -5,6 +5,8 @@ import {
   formatFileSize,
   formatRelativeTime,
   partitionSessionsByPhaseWork,
+  phaseOnlyResultsMessage,
+  phaseSessionsToggleLabel,
   sessionTabName,
 } from '../src/shared/sessions';
 import type { SessionSummaryDto } from '../src/shared/sessions';
@@ -177,5 +179,29 @@ describe('partitionSessionsByPhaseWork — B3: sessões de fase da esteira somem
 
   it('lista vazia devolve as duas partições vazias, sem lançar', () => {
     expect(partitionSessionsByPhaseWork([], new Set(['x']))).toEqual({ visible: [], hidden: [] });
+  });
+});
+
+describe('phaseSessionsToggleLabel — B3: o rótulo do toggle nasce na camada pura', () => {
+  it('singular: "1 sessão", sem plural errado', () => {
+    expect(phaseSessionsToggleLabel(1, false)).toBe('1 sessão de fase da esteira oculta — mostrar');
+  });
+
+  it('plural: concorda em número', () => {
+    expect(phaseSessionsToggleLabel(3, false)).toBe('3 sessões de fase da esteira ocultas — mostrar');
+  });
+
+  it('mostrando: oferece ocultar, sem contagem nenhuma', () => {
+    expect(phaseSessionsToggleLabel(3, true)).toBe('Ocultar sessões de fase da esteira');
+  });
+});
+
+describe('phaseOnlyResultsMessage — B3: busca achou, mas é tudo sessão de fase oculta', () => {
+  it('singular', () => {
+    expect(phaseOnlyResultsMessage(1)).toBe('A sessão encontrada é de fase da esteira.');
+  });
+
+  it('plural', () => {
+    expect(phaseOnlyResultsMessage(2)).toBe('As sessões encontradas são de fase da esteira.');
   });
 });

@@ -192,6 +192,22 @@ export function partitionSessionsByPhaseWork<T extends { readonly id: string }>(
   return { visible, hidden };
 }
 
+/**
+ * B3 — lição da rodada anterior (5 de 7 batches: "texto de estado nasce no
+ * JSX"): as duas frases do toggle/estado-vazio nascem AQUI, com teste — o
+ * componente só decide QUANDO mostrá-las, nunca monta a frase.
+ */
+export function phaseSessionsToggleLabel(hiddenCount: number, showing: boolean): string {
+  if (showing) return 'Ocultar sessões de fase da esteira';
+  const contagem = hiddenCount === 1 ? '1 sessão de fase da esteira oculta' : `${hiddenCount} sessões de fase da esteira ocultas`;
+  return `${contagem} — mostrar`;
+}
+
+/** A busca achou algo, mas é tudo sessão de fase (oculta por default) — estado DIFERENTE de "sem resultado". */
+export function phaseOnlyResultsMessage(hiddenCount: number): string {
+  return hiddenCount === 1 ? 'A sessão encontrada é de fase da esteira.' : 'As sessões encontradas são de fase da esteira.';
+}
+
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
