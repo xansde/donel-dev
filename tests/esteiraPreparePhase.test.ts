@@ -75,7 +75,10 @@ describe('preparePhase', () => {
     // A2 — a skill do FORK (sufixo -3), nunca o plugin 2.1.0 sem sufixo.
     expect(request.command).toBe('/esteira-discovery-3 --input "C:/inbox/run-1.json"');
     expect(request.command).not.toMatch(/[\r\n]/);
-    expect(result.message).toContain('O Enter é seu');
+    // B5 — o Enter deixou de ser gesto humano nesta frase: o app aperta
+    // sozinho assim que o terminal aceita entrada (ver esteiraSession.test.ts).
+    expect(result.message).toContain('aperta o Enter sozinho');
+    expect(result.message).not.toContain('O Enter é seu');
   });
 
   it('repo que o app não conhece: a fase fica preparada, NENHUMA aba abre, e a razão nomeia o repo', async () => {

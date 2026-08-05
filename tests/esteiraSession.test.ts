@@ -80,10 +80,17 @@ describe('resolveSessionCwd — o alvo e explicito, sem segundo melhor palpite (
 describe('preparedMessage — a frase depois do "Preparar"', () => {
   const base = { phase: 'discovery', targetRepo: 'atlas', inputPath: 'C:/inbox/run-1.json' };
 
-  it('sessao aberta: diz onde ela abriu e que o Enter continua sendo seu', () => {
+  it('sessao aberta: diz onde ela abriu e que o app aperta o Enter sozinho (B5)', () => {
+    // B5 (05/08, pedido literal do dono): o gesto humano ACABA no clique em
+    // "Preparar" — o app aperta o próprio Enter assim que o terminal aceita
+    // entrada. Antes do B5 esta frase dizia "o Enter é seu"; ficou falsa no
+    // instante em que `withAutoEnter` passou a existir, porque toda sessão de
+    // fase da esteira passa por `armEsteiraAutoStart` (App.tsx), sem exceção.
     const message = preparedMessage({ ...base, outcome: { opened: true, tabName: '[atlas] discovery' } });
     expect(message).toContain('[atlas] discovery');
-    expect(message.toLowerCase()).toContain('enter');
+    expect(message).toContain('aperta o Enter sozinho');
+    expect(message).not.toContain('O Enter é seu');
+    expect(message).not.toContain('nunca envia por você');
   });
 
   it('repo desconhecido: nomeia o repo e diz que o app nao abre noutro lugar por palpite', () => {
@@ -128,8 +135,10 @@ describe('lockStateOf — um estado de trava, três fatos distintos', () => {
 });
 
 describe('dispatchHint — a razão do botão desabilitado usa a MESMA palavra do bloco', () => {
-  it('sem trava, explica o que o gesto faz', () => {
-    expect(dispatchHint(null)).toContain('O Enter é seu');
+  it('sem trava, explica o que o gesto faz — inclusive que o Enter é automático (B5)', () => {
+    const hint = dispatchHint(null);
+    expect(hint).toContain('aperta o Enter sozinho');
+    expect(hint).not.toContain('O Enter é seu');
   });
 
   it('sessão aberta: nunca chama de "preparada" o que o bloco chama de sessão aberta', () => {

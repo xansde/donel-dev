@@ -132,7 +132,7 @@ export interface PreparedMessageInput {
  */
 export function preparedMessage(input: PreparedMessageInput): string {
   if (input.outcome.opened) {
-    return `Fase "${input.phase}" preparada: a sessão abriu na aba "${input.outcome.tabName}" com o comando já escrito. O Enter é seu — o app nunca envia por você.`;
+    return `Fase "${input.phase}" preparada: a sessão abriu na aba "${input.outcome.tabName}" com o comando já escrito. O app aperta o Enter sozinho, assim que o terminal aceitar entrada — nenhum gesto seu é necessário.`;
   }
 
   if (input.outcome.reason === 'unknown-repo') {
@@ -147,10 +147,16 @@ export function preparedMessage(input: PreparedMessageInput): string {
  * print 07 do roteiro `disparo-abre-sessao`: o bloco dizia "Em andamento"
  * enquanto o print 10, da mesma rodada, mostrava o comando parado no prompt.
  *
- * O app sabe que a aba abriu e que o CLI devolveu um id. Ele **não** sabe se
- * alguém apertou o Enter — e não pode saber, porque enviar é gesto humano
- * (invariante 2). "Em andamento" fica reservado para quando existe alguém
- * declarando que está tocando a fase: a trava posta pela própria skill.
+ * O app sabe que a aba abriu e que o CLI devolveu um id. Isso não é a SKILL
+ * declarando que está trabalhando — só ela pode dizer isso (invariante que
+ * sobrevive ao B5: mesmo com o Enter automático, ninguém além da skill afirma
+ * que a fase está rodando). "Em andamento" fica reservado para quando existe
+ * alguém declarando que está tocando a fase: a trava posta pela própria skill.
+ *
+ * (Histórico: antes do B5, 05/08, esta distinção também carregava "o app não
+ * sabe se alguém enviou o Enter" — verdade enquanto enviar era só gesto
+ * humano. `withAutoEnter` fechou essa lacuna; o texto que a citava
+ * (`lockView`, estado `session-open`) foi corrigido junto.)
  */
 export type LockState =
   /** A skill declarou a trava: há trabalho acontecendo, dito por quem o faz. */
@@ -183,11 +189,13 @@ export const LOCK_WORD: Readonly<Record<LockState, string>> = {
  * O que o bloco "Disparar fase" explica quando NÃO há trava — a frase de "o que
  * o clique faz". Uma origem só para os dois chamadores (`dispatchHint` daqui, o
  * de `esteiraView`): duas redações da mesma promessa divergem no primeiro
- * conserto, e esta já divergiu — o texto antigo prometia "apontando para o
- * arquivo à mão" depois de o B1 fazer o app abrir a aba sozinho.
+ * conserto, e esta já divergiu duas vezes — o texto original prometia
+ * "apontando para o arquivo à mão" depois de o B1 fazer o app abrir a aba
+ * sozinho; depois prometia "o Enter é seu" depois de o B5 fazer o app apertar
+ * o próprio Enter (achado da captura `auto-start-e-redisparo-recusado`, 05/08).
  */
 export function noLockDispatchHint(): string {
-  return 'O app separa o contexto no inbox, trava o card e abre a aba da sessão com o comando da skill já escrito. O Enter é seu.';
+  return 'O app separa o contexto no inbox, trava o card e abre a aba da sessão com o comando da skill já escrito — e aperta o Enter sozinho, assim que o terminal aceitar entrada. Nenhum gesto seu é necessário.';
 }
 
 /**
