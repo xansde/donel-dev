@@ -19,6 +19,7 @@ import type {
   NotificationPreference,
   ProjectInfo,
   ProjectScanMode,
+  ProviderSummaryDto,
   SemaphoreStateInfo,
   SessionSummaryDto,
   TabColorToken,
@@ -34,6 +35,10 @@ import {
   parseModelEffortFromArgs,
 } from '../../shared/commandBuilder';
 import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
+// T1317 (011-contas-e-provedores, etapa 3, C18/D7) — decide se --model/--effort
+// entram no argv (sem provider) ou são omitidos (com provider); commandBuilder.ts
+// (buildClaudeArgs acima) continua intocado.
+import { buildLauncherArgs } from './launchArgsForProvider';
 // CA-22 (009) — só o DENOMINADOR do `%` de contexto vem daqui (`min(300k,
 // janela do modelo)`, decisão de 24/07); a formatação e as faixas de cor são do
 // `SmartZoneMeter` do design-system.
@@ -81,6 +86,7 @@ import type { EsteiraSnapshotDto } from '../../shared/esteira/ipc';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { AccountsPanel } from './AccountsPanel';
+import { ProviderForm } from './ProviderForm';
 import { ProjectSidebar } from './ProjectSidebar';
 import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from './ProjectSidebar';
 // CA-30 (009-modo-dev-v3, lote 9) — seletor de projetos no titlebar + modal de criação.
@@ -131,6 +137,13 @@ interface TabState {
   launchArgs?: string[];
   /** 'claude' (default) = sessão claude direta no PTY; 'shell' = terminal livre (FR-008, powershell.exe). */
   sessionType: 'claude' | 'shell';
+  /**
+   * T1320 (011-contas-e-provedores, etapa 3, C13) — provider classe A
+   * escolhido no Launcher para ESTA sessão; `undefined` = sessão de conta
+   * (comportamento de hoje). Fixo por aba, igual `launchArgs` — passado ao
+   * `pty:create` pelo TerminalPane (T1318).
+   */
+  providerId?: string;
   /**
    * T404/T408 — id da sessão do Claude desta aba (o mesmo que nomeia o
    * `.jsonl`), devolvido por `pty.create` e levantado pelo TerminalPane. É a
@@ -607,6 +620,19 @@ export function App(): React.JSX.Element {
     };
   }, []);
 
+  // T1320 (011-contas-e-provedores, etapa 3) — registry de providers classe
+  // A; `[]` (registry inerte, C14/D6) faz o Launcher renderizar sem o campo
+  // "Provedor" — comportamento de hoje intocado. `refreshProviders` é
+  // passado ao `ProviderForm` (titlebar) pra repor a lista depois de
+  // criar/editar/remover uma entrada, sem duplicar a leitura aqui.
+  const [providers, setProviders] = useState<readonly ProviderSummaryDto[]>([]);
+  const refreshProviders = useCallback((): void => {
+    void window.donel.providers.list().then(setProviders).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    refreshProviders();
+  }, [refreshProviders]);
+
   // T015 — carrega o ConfigStore uma vez no boot (roots/notificação/defaults
   // do launcher). Falha de IPC aqui não trava o shell (mesmo espírito do
   // catch de `projects.list` acima) — os consumidores seguem nos fallbacks
@@ -725,14 +751,27 @@ export function App(): React.JSX.Element {
   // Launcher é lançamento configurado, distinto do clique direto no nome do
   // projeto acima, que reaproveita/foca uma aba existente com defaults).
   const handleLaunch = (options: LauncherLaunchOptions): void => {
-    const args = buildClaudeArgs({
+    // T1317 (011-contas-e-provedores, etapa 3, C18/D7) — com provider classe
+    // A selecionado, --model/--effort são omitidos do argv (o modelo vem do
+    // env da entrada); buildClaudeArgs (commandBuilder.ts) continua intocado,
+    // buildLauncherArgs só decide quais opções passar pra ela.
+    const args = buildLauncherArgs({
+      providerId: options.providerId ?? undefined,
       model: options.model,
       effort: options.effort,
       permissionMode: options.permissionMode,
-      sessionName: options.sessionName || undefined,
+      sessionName: options.sessionName,
     });
     const name = options.sessionName || options.projectName;
-    addTab({ name, cwd: options.projectPath, projectName: options.projectName, pinned: false, launchArgs: args, sessionType: 'claude' });
+    addTab({
+      name,
+      cwd: options.projectPath,
+      projectName: options.projectName,
+      pinned: false,
+      launchArgs: args,
+      sessionType: 'claude',
+      providerId: options.providerId ?? undefined,
+    });
     setSelectedProjectPath(options.projectPath);
     setLastLaunch({ args, cwd: options.projectPath, name });
     // T015 (FR-007 "defaults do launcher") — cada lançamento configurado vira
@@ -1604,6 +1643,12 @@ export function App(): React.JSX.Element {
             comportamento de sempre, só que sem o dropdown de perfis ao
             lado. */}
         <AccountsPanel onViewChange={handleAccountsViewChange} />
+        {/* T1321 (011-contas-e-provedores, etapa 3) — gerenciamento do
+            registry de providers classe A (criar/editar/remover, gravar
+            segredo write-only). Nasce inerte (registry vazio, C14/D6) — o
+            trigger sempre aparece, mesmo sem entrada nenhuma (é como um
+            provider passa a existir). */}
+        <ProviderForm onChanged={refreshProviders} />
         {/* T015 — UI de Preferências (FR-007, feedback E2E rodada 3/4). */}
         <button
           type="button"
@@ -1891,6 +1936,7 @@ export function App(): React.JSX.Element {
                   sessionType={tab.sessionType}
                   cwd={tab.cwd}
                   args={tab.launchArgs}
+                  providerId={tab.providerId}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}
                   onAccountResolved={(account) => handleAccountResolved(tab.id, account)}
@@ -1998,6 +2044,7 @@ export function App(): React.JSX.Element {
               projects={projects}
               defaultProjectPath={selectedProjectPath}
               launcherDefaults={appConfig?.launcherDefaults}
+              providers={providers}
               onLaunch={handleLaunch}
             />
           </aside>

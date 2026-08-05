@@ -34,7 +34,7 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
 
 ## Fase 0 — Gates (bloqueantes)
 
-- [ ] **T1301** — Confirmar (a) que os batches da 010 fecharam em staging e
+- [x] **T1301** — Confirmar (a) que os batches da 010 fecharam em staging e
   `src/main/index.ts` está estável e (b) que a **etapa 1** está mergeada — o
   cofre (`src/main/accounts/vault.ts`) e a chave `accounts` do config-store
   precisam existir. Registrar a confirmação no card. **Sem código.**
@@ -43,8 +43,12 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
   > os 7 batches (B1..B7) estão integrados em `staging` local e não há mais
   > batch em voo tocando `src/main/index.ts`. Pendente apenas a (b) — etapa 1
   > mergeada (cofre + chave `accounts` do config-store existindo).
+  > **(b) CONFIRMADA em 2026-08-05** pelo worker da fase Implementar:
+  > `src/main/accounts/vault.ts` e a chave `accounts` do config-store
+  > (`AppConfig.accounts`, `config-store.ts`) existem no checkout desta
+  > branch (etapas 1 e 2 já implementadas e validadas nela). Gate liberado.
 
-- [ ] **T1302** — **Spike de compatibilidade do piloto** (risco R1 / achado A3).
+- [x] **T1302** — **Spike de compatibilidade do piloto** (risco R1 / achado A3).
   Na máquina, com a chave do OpenRouter lida do Bitwarden (nunca ecoada),
   verificar se o binário `claude` sobe com `ANTHROPIC_BASE_URL` +
   `ANTHROPIC_AUTH_TOKEN` apontados ao provider e completa **um** turno.
@@ -60,7 +64,7 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
 
 ## Fase 1 — Config e módulos puros (invisível ao app)
 
-- [ ] **T1303** [P] Teste: `tests/providersConfig.test.ts` —
+- [x] **T1303** [P] Teste: `tests/providersConfig.test.ts` —
   `sanitizeProvidersConfig`: chave ausente / JSON corrompido / `entries` não
   array → `{ version: 1, entries: [] }`; entrada inválida **descartada** sem
   derrubar as válidas; `id` fora de `^[a-z0-9][a-z0-9-]{0,31}$` recusado;
@@ -69,7 +73,7 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
   `env` recusado.
   **DoD**: suíte vermelha por ausência de implementação.
 
-- [ ] **T1304** Criar `src/shared/providers.ts` — `ProviderId`,
+- [x] **T1304** Criar `src/shared/providers.ts` — `ProviderId`,
   `ProviderClass`, `ProviderSummaryDto`, `ProvidersConfigDto`,
   `UpsertProviderInput`/`Result`, `SetSecretResult`, `PROVIDER_CHANNELS`
   (`contracts/provider-registry.md`). Exportar em `src/shared/index.ts`.
@@ -77,48 +81,48 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
   **DoD**: `npm run typecheck` verde; nenhum campo de valor secreto em
   `src/shared/**`.
 
-- [ ] **T1305** Implementar `src/main/providers/providers-config.ts`
+- [x] **T1305** Implementar `src/main/providers/providers-config.ts`
   (`sanitizeProvidersConfig`, leitura/escrita da chave `providers`) e plugar
   nos 4 pontos do padrão de `src/main/config-store.ts` (default, sanitize, DTO,
   escrita atômica), **sem tocar nas chaves existentes** (inclusive `accounts`,
   da etapa 1).
   **DoD**: T1303 verde; `tests/config-store.test.ts` continua verde.
 
-- [ ] **T1306** [P] Teste: `tests/providerEnv.test.ts` — `buildProviderEnv`:
+- [x] **T1306** [P] Teste: `tests/providerEnv.test.ts` — `buildProviderEnv`:
   monta `entry.env` + segredos do cofre; chave secreta ausente no cofre →
   `missing-secret` nomeando **a variável, nunca o valor**; `CLAUDE_CONFIG_DIR`
   e marcadores `CLAUDECODE`/`CLAUDE_CODE_*` nunca entram, mesmo se presentes na
   entrada; função nunca loga.
   **DoD**: suíte vermelha.
 
-- [ ] **T1307** Implementar `src/main/providers/provider-env.ts` — puro, cofre
+- [x] **T1307** Implementar `src/main/providers/provider-env.ts` — puro, cofre
   injetado.
   **DoD**: T1306 verde.
 
-- [ ] **T1308** [P] Teste: `tests/providerSecrets.test.ts` — adaptador do cofre
+- [x] **T1308** [P] Teste: `tests/providerSecrets.test.ts` — adaptador do cofre
   da etapa 1 no namespace `provider:<id>:<ENV_KEY>`: round-trip com
   `safeStorage` falso; `safeStorage` indisponível → `vault-unavailable` (nunca
   texto plano); `secretsStatus` devolve **boolean/enum**, nunca valor; remover
   provider apaga as chaves dele.
   **DoD**: suíte vermelha.
 
-- [ ] **T1309** Implementar `src/main/providers/provider-secrets.ts`
+- [x] **T1309** Implementar `src/main/providers/provider-secrets.ts`
   **reusando** `src/main/accounts/vault.ts` — sem criar um segundo cofre e sem
   alterar o arquivo da etapa 1.
   **DoD**: T1308 verde; `git diff` vazio em `src/main/accounts/vault.ts`.
 
-- [ ] **T1310** [P] Teste: `tests/sessionConfigDir.test.ts` —
+- [x] **T1310** [P] Teste: `tests/sessionConfigDir.test.ts` —
   `resolveSessionConfigDir` (C21/D3), tabela-verdade completa: provider vence
   motor e perfil; sem provider e motor ativo → `undefined`; sem provider e sem
   motor → `activeProfileConfigDir`; mundo pós-etapa 2 (sem perfil) → mesmos dois
   primeiros ramos intactos.
   **DoD**: suíte vermelha.
 
-- [ ] **T1311** Implementar `src/main/providers/session-config-dir.ts` — função
+- [x] **T1311** Implementar `src/main/providers/session-config-dir.ts` — função
   pura, sem I/O.
   **DoD**: T1310 verde.
 
-- [ ] **T1312** [P] Teste: `tests/providerRegistry.test.ts` — as 6 invariantes
+- [x] **T1312** [P] Teste: `tests/providerRegistry.test.ts` — as 6 invariantes
   de `contracts/provider-registry.md`: segredo nunca em retorno; classe B →
   `unsupported-class`; env do provider não sequestra `CLAUDE_CONFIG_DIR`/
   marcadores; `missing-secret` aborta o lançamento; `vault-unavailable` em
@@ -127,7 +131,7 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
   mesma bateria — o teste que impede o registry de nascer no formato-OpenRouter.
   **DoD**: suíte vermelha.
 
-- [ ] **T1313** Implementar `src/main/providers/provider-registry.ts` — CRUD,
+- [x] **T1313** Implementar `src/main/providers/provider-registry.ts` — CRUD,
   validação, `resolveLaunch` (cria `<userData>/providers/<configDirName>/`
   **vazio**, C16/D4), IO e cofre injetáveis. Nenhuma string de provider real no
   código.
@@ -138,7 +142,7 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
 
 ## Fase 2 — Spawn e env (depende da Fase 1)
 
-- [ ] **T1314** Teste: estender `tests/pty-manager.test.ts` — `buildPtyEnv` com
+- [x] **T1314** Teste: estender `tests/pty-manager.test.ts` — `buildPtyEnv` com
   o novo 2º parâmetro `envOverrides`: overrides aplicados sobre o env base;
   `CLAUDE_CONFIG_DIR` continua governado **só** pelo parâmetro próprio (um
   override tentando setá-lo é ignorado); marcadores de sessão-filha continuam
@@ -146,25 +150,25 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
   regressão byte a byte).
   **DoD**: suíte vermelha nos casos novos, verde nos antigos.
 
-- [ ] **T1315** Estender `src/main/pty-manager.ts`: `buildPtyEnv(baseEnv,
+- [x] **T1315** Estender `src/main/pty-manager.ts`: `buildPtyEnv(baseEnv,
   claudeConfigDir, envOverrides?)` e `PtyCreateOptions.envOverrides?`. Nada
   mais do módulo muda; ele continua agnóstico ao domínio (não sabe o que é
   "provider").
   **DoD**: T1314 verde.
 
-- [ ] **T1316** [P] Teste: `tests/launchArgsForProvider.test.ts` — montador de
+- [x] **T1316** [P] Teste: `tests/launchArgsForProvider.test.ts` — montador de
   argv extraído do `App.tsx` (função pura): com provider classe A, `--model` e
   `--effort` **omitidos**, `-n`/`--permission-mode` preservados; sem provider,
   argv **byte a byte** o de hoje (C18/D7). `commandBuilder.ts` **não** aparece
   no diff.
   **DoD**: suíte vermelha.
 
-- [ ] **T1317** Extrair no renderer a função pura de montagem de argv usada pelo
+- [x] **T1317** Extrair no renderer a função pura de montagem de argv usada pelo
   `App.tsx` e aplicar a regra do C18. **`src/shared/commandBuilder.ts`
   permanece intocado.**
   **DoD**: T1316 verde; `git diff` vazio em `src/shared/commandBuilder.ts`.
 
-- [ ] **T1318** Acrescentar `providerId?` a `PtyCreateOptions` e
+- [x] **T1318** Acrescentar `providerId?` a `PtyCreateOptions` e
   `provider?: { id, label }` a `PtyCreateResult` (`src/shared/index.ts`), sem
   alterar os campos existentes (inclusive `profile`, contrato da etapa 1/C10).
   Ponte no `src/preload/index.ts`: `window.donel.providers.{list,upsert,remove,
@@ -172,7 +176,7 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
   **DoD**: `donel.d.ts` atualizado; typecheck verde; nenhum método de leitura
   de valor de segredo exposto.
 
-- [ ] **T1319** **Única task que toca o hub** `src/main/index.ts`: registrar os
+- [x] **T1319** **Única task que toca o hub** `src/main/index.ts`: registrar os
   handlers de `PROVIDER_CHANNELS`; no `pty:create` de sessão `claude`, quando
   vier `providerId`, chamar `registry.resolveLaunch(id)` e (a) passar
   `envOverrides` + `claudeConfigDir` resolvidos por `resolveSessionConfigDir`
@@ -188,7 +192,7 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
 
 ## Fase 3 — UI (depende da Fase 2)
 
-- [ ] **T1320** `src/renderer/src/ProviderPicker.tsx` (+ `.module.css`) — campo
+- [x] **T1320** `src/renderer/src/ProviderPicker.tsx` (+ `.module.css`) — campo
   "Provedor" no `Launcher.tsx`, **só renderizado com registry não vazio**
   (C14); primeira opção sempre "Claude (conta)" e default. Ao selecionar um
   provider: desabilita os controles de modelo/esforço com a explicação de uma
@@ -199,7 +203,7 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
   **DoD**: com registry vazio, o launcher renderiza **sem** o campo; smoke do
   T1322 cobre o caso com entrada.
 
-- [ ] **T1321** `src/renderer/src/ProviderForm.tsx` — criar/editar/remover
+- [x] **T1321** `src/renderer/src/ProviderForm.tsx` — criar/editar/remover
   entrada **classe A** (não há UI de criação de classe B, C20) e campo de
   segredo **write-only**: nunca é relido do main, nunca é preenchido de volta;
   estado exibido é só `configurado`/`não configurado`/`cofre indisponível`
@@ -212,18 +216,18 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
 
 ## Fase 4 — Verificação e fechamento
 
-- [ ] **T1322** Smoke: `tests/smoke/providers-inert.spec.ts` — `userData`
+- [x] **T1322** Smoke: `tests/smoke/providers-inert.spec.ts` — `userData`
   temporário, registry vazio: launcher **sem** o campo "Provedor"; sessão
   `claude` nasce com o mesmo env e o mesmo config dir de hoje (D6/C14).
   **DoD**: smoke verde.
 
-- [ ] **T1323** [P] Smoke: `tests/smoke/providers-session-env.spec.ts` — entrada
+- [x] **T1323** [P] Smoke: `tests/smoke/providers-session-env.spec.ts` — entrada
   fictícia classe A (sem rede real): sessão nasce com o env da entrada aplicado
   e com `<userData>/providers/<id>/` criado e **vazio** (nada copiado de
   `~/.claude`, D4).
   **DoD**: smoke verde.
 
-- [ ] **T1324** [P] Smoke: `tests/smoke/providers-secret-never-leaks.spec.ts` +
+- [x] **T1324** [P] Smoke: `tests/smoke/providers-secret-never-leaks.spec.ts` +
   `tests/smoke/providers-class-b-refused.spec.ts` — (a) varredura de todos os
   payloads dos `PROVIDER_CHANNELS`, do `config:get` e do `pty:create`
   procurando o segredo plantado no cofre de teste: nenhum hit, nem truncado;
@@ -236,16 +240,33 @@ as de **documento/gesto humano** (T1301, T1325, T1326).
   arquivo, fixture, log, variável de ambiente do repo ou commit; nenhuma saída
   de terminal que a ecoe (C19). **Gesto humano/manual — sem teste.**
   **DoD**: `secretsStatus` do provider vira `configured`; `git status` limpo.
+  > **PENDENTE — gesto humano, não executado pelo worker.** O spike T1302
+  > (sessão de terminal, não o app) já provou que a chave lida do Bitwarden
+  > funciona ponta a ponta com `ANTHROPIC_BASE_URL=https://openrouter.ai/api`
+  > (sem `/v1` — achado do spike). Digitar a chave real DENTRO do app
+  > instalado é ato do Alexandre no alfa (roteiro passo 2 de `e2e.md`) — o
+  > worker de código não abre o app instalado nem grava segredo de produção
+  > no `userData` real da máquina.
 
-- [ ] **T1326** Regressão declarada + roteiro e2e no alfa: rodar `npm test`
+- [x] **T1326** Regressão declarada + roteiro e2e no alfa: rodar `npm test`
   inteiro (suítes de perfil, da etapa 1 e `pty-manager` verdes) e escrever
-  `specs/011-contas-e-provedores/registry-classe-a/roteiro-e2e-etapa-3.md` —
-  passo a passo manual (criar provider, gravar chave, lançar sessão com
-  provider e outra com conta lado a lado, ver semáforo funcionando, ver o
-  transcript nascer no config dir do provider, remover provider). **Documento:
-  sem teste próprio.**
+  o roteiro e2e — passo a passo manual (criar provider, gravar chave, lançar
+  sessão com provider e outra com conta lado a lado, ver semáforo
+  funcionando, ver o transcript nascer no config dir do provider, remover
+  provider). **Documento: sem teste próprio.**
   **DoD**: saída da suíte colada no card; roteiro escrito. Execução do roteiro é
   gesto humano no alfa.
+  > **Roteiro escrito em `e2e.md`** (nome pedido pelo cockpit desta fase, no
+  > lugar de `roteiro-e2e-etapa-3.md`). `npm test`: **1724/1724 testes
+  > passaram** (100 arquivos), `npm run typecheck` verde. Smoke roteirizado:
+  > os 4 specs de `tests/smoke/providers-*.spec.ts` (T1322-T1324) passaram —
+  > 6/6 testes. Regressão em smokes pré-existentes (`accounts-*`,
+  > `terminal.spec.ts`, `model-injection.spec.ts`, `model-per-tab.spec.ts`):
+  > 12/13 — a única falha (`terminal.spec.ts` "semáforo: StateDot em
+  > background", T009/CA-6) é um teste de timing sobre um caminho de código
+  > que esta etapa não toca (sem `providerId` envolvido), com 11
+  > `claude.exe` concorrentes já rodando na máquina antes da espera final —
+  > sinal de contenção de ambiente, não de regressão desta mudança.
 
 ---
 

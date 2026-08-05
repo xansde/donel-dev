@@ -400,3 +400,31 @@ persiste chave nova ali, ou o sanitize ganha passthrough de chaves
 desconhecidas (e escrita vira read-merge-write), ou a feature precisa detectar
 outra instância viva e recusar rodar. Teste automatizado de processo único
 nunca pega isso; só o e2e na máquina real com os canais coexistindo.
+
+## 2026-08-05 — wi-registry-providers-classe-a (registry-providers-classe-a)
+
+### `claude` CLI duplica `/v1/messages` em cima de `ANTHROPIC_BASE_URL` — path errado, não credencial
+
+No spike do piloto (T1302), apontar `ANTHROPIC_BASE_URL=https://openrouter.ai/api/v1`
+(o valor que a documentação do OpenRouter recomenda para outros clientes,
+igual ao que qualquer SDK Anthropic community usaria) fazia o `claude` CLI
+recusar toda tentativa de lançamento com "There's an issue with the selected
+model" — mensagem que aponta pro nome do modelo, não pro path, então a
+primeira hipótese natural foi "o modelo não existe no catálogo do
+OpenRouter". Testar o MESMO modelo direto via `curl` contra
+`https://openrouter.ai/api/v1/messages` respondeu 200 — a API em si estava
+certa. Só rodando o CLI com `--debug` (`ANTHROPIC_LOG=debug`) apareceu a
+request de verdade: `POST https://openrouter.ai/api/v1/v1/messages` — o
+binário concatena um sufixo fixo `/v1/messages` em cima de QUALQUER
+`ANTHROPIC_BASE_URL`, então a base precisa terminar ANTES do `/v1` (aqui:
+`https://openrouter.ai/api`, sem o `/v1` final) para o path final bater.
+
+**Lesson:** quando um provider Anthropic-compatible falha com uma mensagem
+que aponta pro MODELO, mas o problema é o ROTEAMENTO da URL, `--debug`
+(`ANTHROPIC_LOG=debug`) que mostra a request HTTP de verdade resolve em um
+comando o que tentativa-e-erro por variação de nome de modelo não resolveria
+nunca — o path duplicado (`/v1/v1/`) só aparece ali, nunca na mensagem de
+erro da CLI. Ao documentar `ANTHROPIC_BASE_URL` pra um provider novo no
+registry, testar o valor exato com `curl` primeiro (confirma a API) e depois
+com `--debug` do CLI (confirma o path que o binário de fato monta) — os dois
+podem discordar mesmo com a mesma API funcionando.

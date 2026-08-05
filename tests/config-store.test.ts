@@ -63,6 +63,7 @@ describe('defaultAppConfig (puro)', () => {
         activeAccountId: null,
       },
       migration: { startedAt: null, completedAt: null, profiles: {}, archivedTo: null },
+      providers: { version: 1, entries: [] },
     });
   });
 });
@@ -213,6 +214,12 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
         profiles: { 'acc-1': { credentials: 'imported', transcripts: 'imported', mcpReviewed: true } },
         archivedTo: null,
       },
+      providers: {
+        version: 1,
+        entries: [
+          { id: 'meu-provider', label: 'Meu provider', class: 'A', command: null, env: { ANTHROPIC_BASE_URL: 'https://x.test' }, secretEnvKeys: ['ANTHROPIC_AUTH_TOKEN'], configDirName: 'meu-provider' },
+        ],
+      },
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
   });
@@ -264,6 +271,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       tabAppearance: {}, // ausente no objeto → default
       accounts: defaults.accounts, // ausente no objeto → default
       migration: defaults.migration, // ausente no objeto → default
+      providers: defaults.providers, // ausente no objeto → default
     });
   });
 

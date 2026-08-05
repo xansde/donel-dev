@@ -51,12 +51,14 @@ import {
   MIGRATION_CHANNELS,
   PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
+  PROVIDER_CHANNELS,
   PTY_CHANNELS,
   SEMAPHORE_CHANNELS,
   SESSION_CHANNELS,
   TAB_CHANNELS,
   TRANSCRIPT_CHANNELS,
 } from '../shared';
+import type { ProviderId, ProviderSummaryDto, SetSecretResult, UpsertProviderInput, UpsertProviderResult } from '../shared';
 // T504 (005-terminal-copy-paste) — canal do clipboard-bridge (main), aditivo
 // aos imports acima (não reordena o bloco existente).
 import { CLIPBOARD_CHANNELS } from '../shared';
@@ -218,6 +220,23 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(MIGRATION_CHANNELS.markMcpReviewed, profileSlug) as Promise<MigrationPlan>,
 
     archive: () => ipcRenderer.invoke(MIGRATION_CHANNELS.archive) as Promise<ArchiveOutcome>,
+  },
+
+  // T1318 (011-contas-e-provedores, etapa 3) — registry de providers classe
+  // A; nasce inerte (`providers.entries = []`). `UpsertProviderInput` nunca
+  // carrega o VALOR de um segredo — só `setSecret` grava segredo, e devolve
+  // só o status (write-only, C19). Não existe canal `resolveLaunch`: essa
+  // resolução acontece dentro do `pty:create`, no main, pro env nunca
+  // atravessar este arquivo (contracts/provider-registry.md).
+  providers: {
+    list: () => ipcRenderer.invoke(PROVIDER_CHANNELS.list) as Promise<readonly ProviderSummaryDto[]>,
+
+    upsert: (input: UpsertProviderInput) => ipcRenderer.invoke(PROVIDER_CHANNELS.upsert, input) as Promise<UpsertProviderResult>,
+
+    remove: (id: ProviderId) => ipcRenderer.invoke(PROVIDER_CHANNELS.remove, id) as Promise<readonly ProviderSummaryDto[]>,
+
+    setSecret: (id: ProviderId, envKey: string, value: string) =>
+      ipcRenderer.invoke(PROVIDER_CHANNELS.setSecret, id, envKey, value) as Promise<SetSecretResult>,
   },
 
   config: {

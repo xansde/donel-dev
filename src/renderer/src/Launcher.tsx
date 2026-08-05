@@ -1,8 +1,9 @@
 import { Button, Select, SegmentedControl, TextInput } from '@donel-dev/design-system';
 import type { SegmentedControlOption, SelectOption } from '@donel-dev/design-system';
 import { useEffect, useState } from 'react';
-import type { ProjectInfo } from '../../shared';
+import type { ProjectInfo, ProviderSummaryDto } from '../../shared';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../../shared/commandBuilder';
+import { ProviderPicker } from './ProviderPicker';
 import styles from './Launcher.module.css';
 
 // T008 — Launcher real (ui-spec §4, FR-003, CA-1). Este componente só
@@ -57,6 +58,12 @@ export interface LauncherLaunchOptions {
   sessionName: string;
   projectPath: string;
   projectName: string;
+  /**
+   * T1320 (011-contas-e-provedores, etapa 3, C13) — provider classe A
+   * escolhido nesta sessão; `null` = "Claude (conta)" (comportamento de
+   * hoje). Mutuamente exclusivo com o motor de contas (D2).
+   */
+  providerId: string | null;
 }
 
 export interface LauncherProps {
@@ -66,15 +73,21 @@ export interface LauncherProps {
   defaultProjectPath?: string;
   /** T015 (FR-007 "defaults do launcher") — última escolha persistida no ConfigStore; `undefined` até `config:get` resolver (cai nos `DEFAULT_*` locais). */
   launcherDefaults?: { model: ModelAlias; effort: EffortLevel; permissionMode: PermissionMode };
+  /** T1320 — registry de providers classe A; `[]` = campo "Provedor" nem aparece (C14/D6). */
+  providers?: readonly ProviderSummaryDto[];
   onLaunch: (options: LauncherLaunchOptions) => void;
 }
 
-export function Launcher({ projects, defaultProjectPath, launcherDefaults, onLaunch }: LauncherProps): React.JSX.Element {
+export function Launcher({ projects, defaultProjectPath, launcherDefaults, providers = [], onLaunch }: LauncherProps): React.JSX.Element {
   const [model, setModel] = useState<ModelAlias>(launcherDefaults?.model ?? DEFAULT_MODEL);
   const [effort, setEffort] = useState<EffortLevel>(launcherDefaults?.effort ?? DEFAULT_EFFORT);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(launcherDefaults?.permissionMode ?? DEFAULT_PERMISSION);
   const [sessionName, setSessionName] = useState('');
   const [projectPath, setProjectPath] = useState(defaultProjectPath ?? '');
+  // T1320 (C13) — `null` = "Claude (conta)"; provider selecionado desabilita
+  // modelo/esforço (C18/D7, a flag não existe fora da assinatura Anthropic).
+  const [providerId, setProviderId] = useState<string | null>(null);
+  const hasProvider = providerId !== null;
 
   // "Herdado da seleção da sidebar": cada nova seleção reflete aqui — mas
   // só até o próximo clique na sidebar; edições manuais no meio-tempo não
@@ -99,12 +112,15 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, onLau
       sessionName: sessionName.trim(),
       projectPath,
       projectName: selectedProject?.name ?? projectPath,
+      providerId,
     });
   };
 
   return (
     <div className={styles.launcher} data-testid="launcher">
       <h2 className={styles.sectionTitle}>Lançar sessão</h2>
+
+      <ProviderPicker providers={providers} value={providerId} onChange={setProviderId} />
 
       <div className={styles.field}>
         <span className={styles.label}>Modelo</span>
@@ -113,7 +129,9 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, onLau
           value={model}
           onChange={(value) => setModel(value as ModelAlias)}
           ariaLabel="Modelo"
+          disabled={hasProvider}
         />
+        {hasProvider ? <span className={styles.label}>Vem da configuração do provedor.</span> : null}
       </div>
 
       <div className={styles.field}>
@@ -123,6 +141,7 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, onLau
           value={effort}
           onChange={(value) => setEffort(value as EffortLevel)}
           ariaLabel="Esforço"
+          disabled={hasProvider}
         />
       </div>
 

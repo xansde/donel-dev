@@ -44,6 +44,16 @@ export interface PtyCreateOptions {
    * abertas (FR-005 — "trocar de perfil afeta apenas sessões novas").
    */
   claudeConfigDir?: string;
+  /**
+   * T1315 (011-contas-e-provedores, etapa 3) — env NÃO sensível + segredos
+   * já resolvidos de um provider classe A (`buildProviderEnv`,
+   * provider-env.ts). PtyManager continua agnóstico ao domínio: só aplica o
+   * mapa por cima do env base, sem saber o que é um "provider". Aplicado
+   * DEPOIS do env base e ANTES de `claudeConfigDir` — `CLAUDE_CONFIG_DIR`
+   * continua governado SÓ pelo parâmetro próprio (um override tentando setá-lo
+   * é ignorado, ver `buildPtyEnv`).
+   */
+  envOverrides?: Record<string, string>;
 }
 
 /**
@@ -69,13 +79,32 @@ const INHERITED_CLAUDE_SESSION_MARKERS = [
   'CLAUDE_CODE_SSE_PORT',
 ] as const;
 
-export function buildPtyEnv(baseEnv: NodeJS.ProcessEnv, claudeConfigDir: string | undefined): Record<string, string> {
+export function buildPtyEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  claudeConfigDir: string | undefined,
+  envOverrides?: Record<string, string>,
+): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(baseEnv)) {
     if (value !== undefined) env[key] = value;
   }
   for (const marker of INHERITED_CLAUDE_SESSION_MARKERS) {
     delete env[marker];
+  }
+  // T1315 (011-contas-e-provedores, etapa 3) — overrides do provider (env não
+  // sensível + segredos já resolvidos) por cima do env base. Aplicado ANTES
+  // do bloco de CLAUDE_CONFIG_DIR abaixo de propósito: essa chave continua
+  // sendo governada SÓ pelo parâmetro `claudeConfigDir` — um override
+  // tentando setá-la (entrada corrompida à mão, ou defesa contra bug futuro)
+  // nunca sobrevive ao bloco seguinte.
+  if (envOverrides) {
+    for (const [key, value] of Object.entries(envOverrides)) {
+      if (key === 'CLAUDE_CONFIG_DIR') continue;
+      env[key] = value;
+    }
+    for (const marker of INHERITED_CLAUDE_SESSION_MARKERS) {
+      delete env[marker];
+    }
   }
   if (claudeConfigDir) {
     env.CLAUDE_CONFIG_DIR = claudeConfigDir;
@@ -147,7 +176,7 @@ export class PtyManager {
         cols: options.cols,
         rows: options.rows,
         cwd: options.cwd ?? os.homedir(),
-        env: buildPtyEnv(process.env, options.claudeConfigDir),
+        env: buildPtyEnv(process.env, options.claudeConfigDir, options.envOverrides),
       });
     } catch (error) {
       throw new Error(buildSpawnFailureMessage(command, options.cwd, error));

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { DevModeBoardConfig } from '../shared/devMode';
@@ -66,9 +66,16 @@ import type {
   SwitchOutcome,
   TranscriptChangedPayload,
   WatchPhaseIpcInput,
+  // 011-contas-e-provedores (etapa 3) — registry de providers classe A.
+  ProviderId,
+  ProviderSummaryDto,
+  SetSecretResult,
+  UpsertProviderInput,
+  UpsertProviderResult,
 } from '../shared';
 import {
   ACCOUNT_CHANNELS,
+  PROVIDER_CHANNELS,
   archivePhaseSession,
   CLAUDE_NOT_FOUND_PREFIX,
   closeDiscovery,
@@ -166,6 +173,13 @@ import { buildMigrationPlan } from './accounts/migration/migration-plan';
 import { computeMcpDiffFromDisk } from './accounts/migration/mcp-diff';
 import { createSystemProfileInventoryDeps, readProfileInventory } from './accounts/migration/profile-inventory';
 import { executeTranscriptCopyOperations, planTranscriptConsolidation, readTranscriptConsolidationInput } from './accounts/migration/transcript-consolidation';
+// 011-contas-e-provedores (etapa 3) — registry de providers classe A
+// (T1319 — única task que toca o hub, mesma disciplina da etapa 1). Reusa o
+// MESMO cofre da etapa 1 (accountsVaultPath/accountsVaultIo acima) —
+// nenhum arquivo/mecanismo novo de segredo.
+import { createProviderRegistry, type ProviderRegistry } from './providers/provider-registry';
+import { deleteProviderSecrets, providerSecretsStatus, readProviderSecret, writeProviderSecret } from './providers/provider-secrets';
+import { resolveSessionConfigDir } from './providers/session-config-dir';
 import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects, sortProjects } from './project-scanner';
 // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
 import { createNewProject, createSystemCreateProjectDeps } from './project-creator';
@@ -386,6 +400,62 @@ function createRealAccountsVaultAdapter(): VaultLike {
     write: (id: string, plainText: string) =>
       accountsVaultPath ? writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, id, plainText) : { kind: 'vault-unavailable' as const },
   };
+}
+
+// ---------------------------------------------------------------------------
+// 011-contas-e-provedores (etapa 3) — registry de providers classe A (T1319).
+// Todas as closures abaixo leem `appConfig`/`accountsVaultPath` AO VIVO (nunca
+// capturam um valor antigo) — não precisa de um "rebuild" como o motor de
+// contas, porque o registry não guarda estado próprio além do que já vive em
+// `appConfig.providers` e no cofre. Nasce inerte (`providers.entries = []`,
+// C14/D6): sem entrada, `providerRegistry.list()` devolve `[]` e o `pty:create`
+// de sessão claude nunca entra no ramo `options.providerId` (T1319, acima).
+// ---------------------------------------------------------------------------
+const providerRegistry: ProviderRegistry = createProviderRegistry({
+  getConfig: () => appConfig.providers,
+  setConfig: (next) => {
+    appConfig = { ...appConfig, providers: next };
+    persistAppConfig();
+  },
+  readSecret: (providerId, envKey) =>
+    accountsVaultPath ? readProviderSecret(accountsVaultPath, safeStorage, accountsVaultIo, providerId, envKey) : null,
+  writeSecret: (providerId, envKey, value) =>
+    accountsVaultPath
+      ? writeProviderSecret(accountsVaultPath, safeStorage, accountsVaultIo, providerId, envKey, value)
+      : { kind: 'vault-unavailable' as const },
+  deleteSecrets: (providerId, envKeys) => {
+    if (accountsVaultPath) deleteProviderSecrets(accountsVaultPath, accountsVaultIo, providerId, envKeys);
+  },
+  secretsStatus: (providerId, envKeys) =>
+    accountsVaultPath ? providerSecretsStatus(accountsVaultPath, safeStorage, accountsVaultIo, providerId, envKeys) : 'vault-unavailable',
+  // C16/D4 — `<userData>/providers/<configDirName>/`, criado VAZIO: nenhuma
+  // cópia automática de MCPs/CLAUDE.md/settings.json do usuário.
+  ensureConfigDir: (configDirName) => {
+    const dir = join(app.getPath('userData'), 'providers', configDirName);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    return dir;
+  },
+});
+
+/**
+ * T1319 — handlers de `PROVIDER_CHANNELS` (contracts/provider-registry.md).
+ * Não existe `providers:resolveLaunch`: essa resolução acontece só dentro do
+ * `pty:create` (registerPtyIpcHandlers, acima), pro env nunca atravessar o
+ * preload. `setSecret` é write-only — nunca ecoa o valor de volta.
+ */
+function registerProviderIpcHandlers(): void {
+  ipcMain.handle(PROVIDER_CHANNELS.list, (): readonly ProviderSummaryDto[] => providerRegistry.list());
+
+  ipcMain.handle(PROVIDER_CHANNELS.upsert, (_event, input: UpsertProviderInput): UpsertProviderResult => providerRegistry.upsert(input));
+
+  ipcMain.handle(PROVIDER_CHANNELS.remove, (_event, id: ProviderId): readonly ProviderSummaryDto[] => {
+    providerRegistry.remove(id);
+    return providerRegistry.list();
+  });
+
+  ipcMain.handle(PROVIDER_CHANNELS.setSecret, (_event, id: ProviderId, envKey: string, value: string): SetSecretResult =>
+    providerRegistry.setSecret(id, envKey, value),
+  );
 }
 
 /**
@@ -636,14 +706,58 @@ function registerPtyIpcHandlers(): void {
       const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs];
 
       // T1222 (011-contas-e-provedores, etapa 2, D8/entregável) — com os
-      // perfis demolidos, sessões novas NUNCA mais recebem override de
+      // perfis demolidos, sessões SEM provider nunca mais recebem override de
       // `CLAUDE_CONFIG_DIR`: a única config é `~/.claude` (o motor escreve
       // credencial nela, ou em `accounts.claudeHome` só em teste). O
-      // parâmetro `claudeConfigDir` do `PtyManager` continua existindo
-      // intacto (C33) — é a porta que a etapa 3 (registry de providers)
-      // atravessa; aqui ele simplesmente nunca é alimentado.
-      const accountsSnapshot = accountEngine?.getSnapshot();
-      const motorActive = accountsSnapshot !== undefined && accountsSnapshot.mod !== null;
+      // parâmetro `claudeConfigDir` do `PtyManager` é agora alimentado
+      // exatamente pela porta que a etapa 3 (registry de providers) atravessa
+      // — ver bloco `options.providerId` abaixo.
+      //
+      // T1319 (011-contas-e-provedores, etapa 3, C13/D2) — provider classe A
+      // e motor de contas são MUTUAMENTE EXCLUSIVOS por sessão: com
+      // `providerId`, o motor nem é consultado (nenhuma sessão nasce
+      // autenticada por acidente com credencial de conta viajando para um
+      // endpoint de terceiro).
+      let accountsSnapshot: ReturnType<NonNullable<typeof accountEngine>['getSnapshot']> | undefined;
+      let motorActive = false;
+      let envOverrides: Record<string, string> | undefined;
+      let providerConfigDir: string | undefined;
+      let spawnProvider: { id: string; label: string } | undefined;
+
+      if (options.providerId) {
+        const launchResult = providerRegistry.resolveLaunch(options.providerId);
+        if (launchResult.kind !== 'ok') {
+          // Nenhum valor de env cruza esta mensagem — só o NOME da variável
+          // faltando, quando aplicável (C22, "erro nomeia a variável, nunca
+          // o valor").
+          const message =
+            launchResult.kind === 'not-found'
+              ? 'Provedor não encontrado — pode ter sido removido.'
+              : launchResult.kind === 'unsupported-class'
+                ? 'Este provedor ainda não é suportado nesta versão (classe B, C20).'
+                : launchResult.kind === 'missing-secret'
+                  ? `Falta configurar a variável "${launchResult.envKey}" deste provedor antes de lançar uma sessão.`
+                  : 'O cofre de credenciais está indisponível neste dispositivo — não é possível lançar com provedor.';
+          throw new Error(message);
+        }
+        envOverrides = launchResult.env;
+        providerConfigDir = launchResult.configDir;
+        const providerEntry = providerRegistry.list().find((entry) => entry.id === options.providerId);
+        spawnProvider = { id: options.providerId, label: providerEntry?.label ?? options.providerId };
+      } else {
+        accountsSnapshot = accountEngine?.getSnapshot();
+        motorActive = accountsSnapshot !== undefined && accountsSnapshot.mod !== null;
+      }
+
+      // T1319 (C21/D3) — única resposta do app pra "qual CLAUDE_CONFIG_DIR
+      // esta sessão usa": provider > motor > perfil. Perfis morreram na etapa
+      // 2 (`activeProfileConfigDir` sempre `undefined` nesta árvore) — o
+      // terceiro ramo já não existe, sem precisar tocar os dois primeiros.
+      const claudeConfigDirForSession = resolveSessionConfigDir({
+        providerConfigDir,
+        accountsEngineActive: motorActive,
+        activeProfileConfigDir: undefined,
+      });
 
       const ptyId = ptyManager.create({
         cols: options.cols,
@@ -653,6 +767,8 @@ function registerPtyIpcHandlers(): void {
         // (npm -g) no interpretador; ConPTY não executa script direto.
         command: resolved.launch.command,
         args: [...resolved.launch.argsPrefix, ...finalArgs],
+        claudeConfigDir: claudeConfigDirForSession,
+        envOverrides,
       });
 
       if (hooksSettingsPath) {
@@ -663,7 +779,9 @@ function registerPtyIpcHandlers(): void {
 
       // T412 (004) — reflexo AO VIVO do `/rename` (CA-4). O path do `.jsonl` já
       // é conhecido aqui: o id da sessão foi IMPOSTO no spawn logo acima.
-      const transcriptPath = resolveTranscriptPath(correlationId, options.cwd, undefined);
+      // T1319/C17 — com provider, o home consultado é o config dir DELE (mesmo
+      // padrão de sempre com perfil/motor).
+      const transcriptPath = resolveTranscriptPath(correlationId, options.cwd, claudeConfigDirForSession);
       // T710 — guardado ANTES de qualquer coisa poder falhar: é o caminho que o
       // `forgetIfOrphan` vai conferir se esta retomada morrer (ver comentário de
       // `spawnedTranscriptPaths`).
@@ -678,15 +796,17 @@ function registerPtyIpcHandlers(): void {
       // C2) devolve `undefined` — não existe mais "conta ativa" fallback
       // (os perfis morreram; `computeSessionAccountLabel` cai no rótulo
       // global "Motor inerte" nesse caso).
+      // T1319 (C13/D2) — com provider, `account` fica `undefined` de
+      // propósito (mutuamente exclusivo) e `provider` é quem é preenchido.
       const spawnAccount =
-        motorActive && accountsSnapshot?.activeAccountId
+        !spawnProvider && motorActive && accountsSnapshot?.activeAccountId
           ? {
               id: accountsSnapshot.activeAccountId,
               label: accountsSnapshot.accounts.find((account) => account.id === accountsSnapshot.activeAccountId)?.label ?? accountsSnapshot.activeAccountId,
             }
           : undefined;
 
-      return { ptyId, claudeSessionId: correlationId, account: spawnAccount };
+      return { ptyId, claudeSessionId: correlationId, account: spawnAccount, provider: spawnProvider };
     }
 
     const ptyId = ptyManager.create(options);
@@ -1640,6 +1760,7 @@ void app.whenReady().then(async () => {
   registerSessionIpcHandlers();
   registerAccountsIpcHandlers(); // T1125 (011-contas-e-provedores, etapa 1)
   registerMigrationIpcHandlers(); // T1214 (011-contas-e-provedores, etapa 2)
+  registerProviderIpcHandlers(); // T1319 (011-contas-e-provedores, etapa 3)
   registerConfigIpcHandlers();
   registerClipboardIpcHandlers(); // T504 (005-terminal-copy-paste)
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
