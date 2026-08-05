@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { test } from '@playwright/test';
 import { abrirDonel, fecharDonel, fecharPortaDeEntrada, REPO_ROOT, type RoteiroContexto } from '../lib/captura';
@@ -25,6 +26,10 @@ const REPO_ALVO = 'donel-dev';
 let ctx: RoteiroContexto;
 
 test.beforeAll(async () => {
+  // O clique real em "Preparar" abre uma sessão de verdade (batch B1) — sem
+  // dublê, isso sobe o `claude` REAL, tocando ~/.claude do host (achado desta
+  // captura; mesmo risco que disparo-abre-sessao.spec.ts já evita).
+  prepararClaudeDeMentira();
   ctx = await abrirDonel({ roteiro: 'run-reescrito' });
 });
 
@@ -45,28 +50,41 @@ test('um run não se reescreve', async () => {
     const esteiraToggle = win.getByTestId('esteira-toggle');
     await esteiraToggle.waitFor({ timeout: 15_000 });
     await esteiraToggle.click();
-    await win.locator('section[aria-label="Esteira"]').waitFor({ timeout: 15_000 });
+    // Tudo da tela nova é procurado DENTRO da seção da Esteira: o mapa antigo
+    // continua montado por baixo e repete de propósito o MESMO vocabulário
+    // (erros-conhecidos.md #1) e um botão de nome parecido ("⌁ Preparar" na
+    // trilha do nó em foco) — texto e papel sem escopo casam os dois lados.
+    // Padrão já estabelecido em disparo-abre-sessao.spec.ts.
+    const esteira = win.locator('section[aria-label="Esteira"]');
+    await esteira.waitFor({ timeout: 15_000 });
 
-    const titulo = win.getByLabel('Novo discovery');
+    const titulo = esteira.getByLabel('Novo discovery');
     await passo('Descreva o que está em jogo', titulo);
     await titulo.fill('Fila de importação trava sem sinal');
-    await win.getByLabel('Repo alvo (opcional)').fill(REPO_ALVO);
+    await esteira.getByLabel('Repo alvo (opcional)').fill(REPO_ALVO);
 
-    const criar = win.getByRole('button', { name: 'Criar' });
+    const criar = esteira.getByRole('button', { name: 'Criar', exact: true });
     await criar.click();
 
-    const cardNaLista = win.locator('button', { hasText: 'Fila de importação trava sem sinal' }).first();
+    const cardNaLista = esteira.locator('button', { hasText: 'Fila de importação trava sem sinal' }).first();
     await cardNaLista.waitFor({ timeout: 10_000 });
 
-    const preparar = win.getByRole('button', { name: 'Preparar' });
-    await passo('Prepare a fase Discovery', preparar, 'O app separa o contexto no inbox e trava o card.');
+    const preparar = esteira.getByRole('button', { name: 'Preparar', exact: true });
+    await passo(
+      'Prepare a fase Discovery',
+      preparar,
+      'O app separa o contexto no inbox, trava o card e abre a aba da sessão com o comando já escrito (batch B1) — o Enter continua seu.',
+    );
     await preparar.click();
-    await win.getByText('Preparada — ninguém assumiu ainda').waitFor({ timeout: 10_000 });
+    // "Preparada — ninguém assumiu ainda" é o texto do disparo direto (sem UI,
+    // sem abrir sessão) — o clique real no botão abre a aba, ver
+    // disparo-abre-sessao.spec.ts.
+    await esteira.getByText('a sessão abriu na aba').waitFor({ timeout: 10_000 });
 
     const discoveryId = lerDiscoveryId(ctx.esteiraRoot);
     const runId = lerRunId(ctx.esteiraRoot);
     const dsc = { entity: 'discovery', id: discoveryId };
-    const varrer = win.getByRole('button', { name: 'Varrer outbox' });
+    const varrer = esteira.getByRole('button', { name: 'Varrer outbox' });
 
     // ── 1. O run original ────────────────────────────────────────────────
     emitir(ctx.esteiraRoot, [
@@ -83,24 +101,24 @@ test('um run não se reescreve', async () => {
     ]);
     await passo('Varra o outbox', varrer);
     await varrer.click();
-    await win.getByText('discovery — concluída').waitFor({ timeout: 10_000 });
+    await esteira.getByText('discovery — concluída').waitFor({ timeout: 10_000 });
     await passo('O run entra e a fase fecha', cardNaLista, 'Até aqui, o caminho normal.');
 
     // ── 2. O MESMO arquivo, relido ───────────────────────────────────────
     await varrer.click();
     await passo(
       'Reler o MESMO arquivo não muda nada — e está certo',
-      win.getByTestId('esteira-fases'),
+      esteira.getByTestId('esteira-fases'),
       'A ingestão é idempotente por desenho: o watcher relê a pasta sem medo. Nenhuma linha nova, nenhum erro. É este mecanismo que o passo seguinte quase virou do avesso.',
     );
 
     // ── 3. O run REESCRITO, com outro desfecho ───────────────────────────
     reescreverDesfecho(ctx.esteiraRoot, discoveryId, runId);
     await varrer.click();
-    await win.getByText('não consegui ler').first().waitFor({ timeout: 10_000 });
+    await esteira.getByText('não consegui ler').first().waitFor({ timeout: 10_000 });
     await passo(
       'Reescrever o run com outro desfecho vira ERRO VISÍVEL',
-      win.locator('section', { hasText: 'Não consegui ler' }).last(),
+      esteira.locator('section', { hasText: 'Não consegui ler' }).last(),
       'Este é o caso real: a Concluir regravou o mesmo run com o desfecho revisto. A segunda leitura casava com a dedupe da primeira e sumia — o card seguia dizendo "terminou sem conclusão" enquanto o arquivo dizia o contrário, e nenhum erro aparecia. Agora aparece, e com a SAÍDA escrita na frase: complemento para acrescentar, revisão para rever.',
     );
     await passo(
@@ -112,7 +130,7 @@ test('um run não se reescreve', async () => {
     // ── 4. O caminho certo para ACRESCENTAR ──────────────────────────────
     emitirComplemento(ctx.esteiraRoot, discoveryId, runId);
     await varrer.click();
-    await win.getByText('O relatório ficou pronto depois que o run fechou.').waitFor({ timeout: 10_000 });
+    await esteira.getByText('O relatório ficou pronto depois que o run fechou.').waitFor({ timeout: 10_000 });
     await passo(
       'Complemento: acrescenta fatos sem redeclarar a fase',
       cardNaLista,
@@ -122,7 +140,7 @@ test('um run não se reescreve', async () => {
     // ── 5. O caminho certo para REVER o desfecho ─────────────────────────
     emitirRevisao(ctx.esteiraRoot, discoveryId, runId);
     await varrer.click();
-    await win.getByText('discovery — abandonada').waitFor({ timeout: 10_000 });
+    await esteira.getByText('discovery — abandonada').waitFor({ timeout: 10_000 });
     await passo(
       'Revisão: o desfecho muda, e a mudança é um FATO',
       cardNaLista,
@@ -234,4 +252,60 @@ function emitirRevisao(esteiraRoot: string, discoveryId: string, runId: string):
     ],
     ['--revises-run-id', runId, '--run-id', `${runId}.rev2`],
   );
+}
+
+/**
+ * O dublê do `claude`: um REPL mínimo que desenha o banner que
+ * `hasClaudeReadyMarker` procura, ecoa o que recebe (para o comando
+ * pré-digitado aparecer na tela) e **denuncia** qualquer `\r`/`\n` que chegue.
+ * Copiado de disparo-abre-sessao.spec.ts (batch B1) — mesmo risco, mesma cura:
+ * sem isto, "Preparar" sobe o `claude` REAL e toca ~/.claude do host.
+ */
+const STUB_JS = `
+process.stdout.write('\\r\\n  * Welcome to Claude Code (stub do roteiro e2e)\\r\\n\\r\\n> ');
+process.stdin.setEncoding('utf8');
+if (process.stdin.isTTY && process.stdin.setRawMode) process.stdin.setRawMode(true);
+process.stdin.on('data', (chunk) => {
+  if (/[\\r\\n]/.test(chunk)) {
+    // O app NUNCA deveria chegar aqui: o Enter é gesto humano (invariante 2).
+    process.stdout.write('\\r\\n[stub] ENTER RECEBIDO\\r\\n> ');
+    return;
+  }
+  process.stdout.write(chunk);
+});
+process.stdin.resume();
+`;
+
+/**
+ * Põe o dublê no PATH e tira dele o `claude` real. A remoção é necessária
+ * porque `resolveClaudeExecutable` prefere um `.exe` a um shim `.cmd` mesmo
+ * quando o shim vem antes — deixar o real visível faria o app ignorar o dublê.
+ */
+function prepararClaudeDeMentira(): string {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'donel-e2e-claude-stub-'));
+  writeFileSync(path.join(dir, 'claude-stub.js'), STUB_JS, 'utf8');
+  // Caminho absoluto do node: o filtro de PATH abaixo pode remover o diretório
+  // onde ele mora (npm global e node dividem pasta em algumas instalações).
+  writeFileSync(path.join(dir, 'claude.cmd'), `@echo off\r\n"${process.execPath}" "%~dp0claude-stub.js" %*\r\n`, 'utf8');
+
+  const diretoriosDoReal = new Set<string>();
+  try {
+    for (const linha of execFileSync('where.exe', ['claude'], { encoding: 'utf8' }).split(/\r?\n/)) {
+      const limpa = linha.trim();
+      if (limpa.length > 0) diretoriosDoReal.add(path.resolve(path.dirname(limpa)).toLowerCase());
+    }
+  } catch {
+    // Sem `claude` no PATH: nada a filtrar.
+  }
+
+  const restante = (process.env.PATH ?? '')
+    .split(path.delimiter)
+    .filter((entrada) => entrada.trim().length > 0 && !diretoriosDoReal.has(path.resolve(entrada.trim()).toLowerCase()));
+  process.env.PATH = [dir, ...restante].join(path.delimiter);
+
+  const resolvido = execFileSync('where.exe', ['claude'], { encoding: 'utf8' }).split(/\r?\n/)[0]?.trim() ?? '';
+  if (path.resolve(path.dirname(resolvido)).toLowerCase() !== path.resolve(dir).toLowerCase()) {
+    throw new Error(`o dublê do claude não venceu o PATH (o app resolveria ${resolvido || 'nada'})`);
+  }
+  return dir;
 }
