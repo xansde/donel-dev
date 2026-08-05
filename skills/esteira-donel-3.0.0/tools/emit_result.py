@@ -58,7 +58,7 @@ FACT_BUILDERS = {
         f["subject"], f["verification_kind"], f["state"], ref=f.get("ref"), base=f.get("base")
     ),
     "phase.completed": lambda f: contract.phase_completed(
-        f["subject"], f["phase"], f["outcome"], summary=f.get("summary"), channel=f.get("channel")
+        f["subject"], f["phase"], f["outcome"], summary=f.get("summary"), channel=f.get("channel"), risk=f.get("risk")
     ),
     "lock.acquired": lambda f: contract.lock_acquired(
         f["subject"], f["phase"], f["acquired_at"], cli_session_id=f.get("cli_session_id")
