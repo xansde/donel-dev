@@ -897,6 +897,28 @@ export function declaredFactsFromRawText(text: string): readonly DeclaredFactRef
 }
 
 /**
+ * F26 — a anistia do outbox historico: para decidir se um documento RECUSADO
+ * pelo contrato novo era, na verdade, um run ja ingerido pelo contrato antigo,
+ * o chamador precisa do `run_id` sem esperar que o documento inteiro seja
+ * valido. Leitura leniente, best-effort e nunca lanca — igual
+ * `declaredFactsFromRawText`, mas so para este campo: JSON invalido ou
+ * `run.run_id` ausente/nao-string devolvem `null`, nunca um palpite.
+ */
+export function runIdFromRawText(text: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(parsed)) return null;
+  const run = parsed.run;
+  if (!isPlainObject(run)) return null;
+  const runId = run.run_id;
+  return typeof runId === 'string' && runId.length > 0 ? runId : null;
+}
+
+/**
  * Le um `result.json` ja parseado (ou o texto cru, via `parseEsteiraResultText`).
  * Nunca lanca. `ok: false` sempre traz PELO MENOS um issue com caminho — e o
  * que a UI transforma em "erro de ingestao" visivel no card.
