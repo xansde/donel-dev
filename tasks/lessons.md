@@ -428,3 +428,47 @@ erro da CLI. Ao documentar `ANTHROPIC_BASE_URL` pra um provider novo no
 registry, testar o valor exato com `curl` primeiro (confirma a API) e depois
 com `--debug` do CLI (confirma o path que o binário de fato monta) — os dois
 podem discordar mesmo com a mesma API funcionando.
+
+### Prop de callback nova + painel que ainda lê o home default = sessão que some sem ninguém dizer
+
+Na etapa 3 o `pty:create` passou a devolver `provider: { id, label }` e o
+`TerminalPane` ganhou a prop `onProviderResolved` para levantá-lo — mas
+nenhum chamador foi ligado (`grep onProviderResolved` fora do próprio
+`TerminalPane.tsx` não devolve nada), e o handler de `SESSION_CHANNELS.list`
+segue chamando `indexProjectSessions(projectPath)` sem `claudeHome`, ou
+seja, sempre `~/.claude`. Como uma sessão de provider nasce com
+`CLAUDE_CONFIG_DIR = <userData>/providers/<id>/`, o `.jsonl` dela é gravado
+lá — e o painel "Sessões anteriores" simplesmente não a encontra, sem
+nenhuma mensagem. É exatamente o risco que a C17 antecipou ("a origem da
+lista é mostrada, nunca silenciosa") e que o DoD da T1321 pedia na UI. Os
+1729 testes de vitest e os 7 smokes ficam todos verdes: nenhum deles abre o
+painel de sessões anteriores DEPOIS de lançar com provider, então a lacuna
+não tem cor vermelha em lugar nenhum.
+
+**Lesson:** prop de callback declarada e nunca consumida é o sintoma barato
+de um encanamento que parou no meio — `grep` do nome da prop fora do arquivo
+que a declara custa um comando e pega o que a suíte inteira não pega. Quando
+uma feature muda a RAIZ de onde um artefato é lido/gravado (`claudeHome`,
+config dir, workspace), a checagem que fecha o ciclo não é "spawnou com o
+env certo", é "o painel que lista aquele artefato ainda o acha depois" —
+teste de leitura pós-escrita, não só de escrita.
+
+### Campo de segredo desenhado sobre `envKeys` (que inclui os não-secretos) grava entrada órfã no cofre
+
+O `ProviderSummaryDto.envKeys` é, de propósito, `[...Object.keys(entry.env),
+...entry.secretEnvKeys]` — a lista de diagnóstico com TODOS os nomes. O
+`ProviderForm` reaproveitou essa lista para renderizar a seção "Segredos de
+<label>", então aparece um campo `password` também para as variáveis NÃO
+secretas (ex.: `ANTHROPIC_BASE_URL`). Salvar ali grava
+`provider:<id>:ANTHROPIC_BASE_URL` no cofre — um valor que `buildProviderEnv`
+nunca lê (ele só resolve `secretEnvKeys`) e que `remove()` nunca apaga
+(`deleteSecrets` também itera só `secretEnvKeys`): entrada órfã, cifrada,
+sobrevivendo à remoção do provider. Nenhum teste pega porque todos os testes
+constroem entradas em que as duas listas coincidem com a intenção.
+
+**Lesson:** um DTO de DIAGNÓSTICO (lista de nomes "para o operador ver") e um
+DTO de AÇÃO (lista sobre a qual a UI oferece escrita) parecem o mesmo array e
+não são — reusar o primeiro como fonte do segundo abre escrita em chaves que
+o motor nunca vai ler nem limpar. Quando um campo de UI gera escrita
+persistente, derive a lista do campo do MESMO array que o consumidor lê
+(aqui: `secretEnvKeys`), nunca da união de diagnóstico.
