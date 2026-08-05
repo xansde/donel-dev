@@ -34,6 +34,13 @@
       "scope_repos": []
     },
     {
+      "type": "decision.recorded",
+      "subject": { "entity": "discovery", "id": "dsc-2026-08-03-b" },
+      "decision": "a fila da semana se decide na segunda, com o time inteiro",
+      "confirmed_by": "dono do repo",
+      "rationale": null
+    },
+    {
       "type": "phase.completed",
       "subject": { "entity": "discovery", "id": "dsc-2026-08-03-b" },
       "phase": "discovery",

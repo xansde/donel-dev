@@ -168,6 +168,13 @@ export type EsteiraFact =
       readonly condition: string;
       readonly confirmed_by: string;
       readonly confirmed_at: string | null;
+    }
+  | {
+      readonly type: 'decision.recorded';
+      readonly subject: EntityRef;
+      readonly decision: string;
+      readonly confirmed_by: string;
+      readonly rationale: string | null;
     };
 
 export type FactType = EsteiraFact['type'];
@@ -184,6 +191,7 @@ export const FACT_TYPES: readonly FactType[] = [
   'lock.released',
   'note.recorded',
   'gate.confirmed',
+  'decision.recorded',
 ];
 
 export interface EsteiraResult {
@@ -305,6 +313,12 @@ export const CONSUMED_PATHS: readonly string[] = [
   'facts[gate.confirmed].condition',
   'facts[gate.confirmed].confirmed_by',
   'facts[gate.confirmed].confirmed_at',
+  'facts[decision.recorded].type',
+  'facts[decision.recorded].subject.entity',
+  'facts[decision.recorded].subject.id',
+  'facts[decision.recorded].decision',
+  'facts[decision.recorded].confirmed_by',
+  'facts[decision.recorded].rationale',
 ];
 
 /**
@@ -367,6 +381,22 @@ export const REQUIRED_FACTS_BY_PHASE_WHEN_DONE: Readonly<Record<string, readonly
  * continua valido — `abandoned`/`inconclusive` nao pedem nada.
  */
 export const PHASES_REQUIRING_PASSED_VERIFICATION: readonly string[] = ['concluir'];
+
+/**
+ * A18 — os fatos que carregam a palavra de uma PESSOA. Os dois nomeiam quem
+ * confirmou no mesmo campo (`confirmed_by`) de proposito: a regra que fecha a
+ * fase de conversa pergunta "houve fato humano com dono?", e um nome so evita
+ * duas leituras da mesma pergunta.
+ */
+export const HUMAN_DECISION_FACTS: readonly FactType[] = ['gate.confirmed', 'decision.recorded'];
+
+/**
+ * A18 — as fases de CONVERSA. Elas existem para produzir decisao: fase que nao
+ * perguntou nada nao fechou coisa nenhuma, e deixa-la sair "concluida" sem
+ * nenhum fato humano seria a tela sem lastro que D-4 ja combate do outro lado.
+ * Desfecho ruim nao pede nada — abandonar sem perguntar e legitimo.
+ */
+export const PHASES_REQUIRING_HUMAN_DECISION: readonly string[] = ['discovery', 'plano'];
 
 function parseEntityRef(node: Record<string, unknown>, key: string, path: string, c: Collector): EntityRef | null {
   const raw = node[key];
@@ -619,6 +649,15 @@ function parseFact(raw: unknown, path: string, c: Collector): EsteiraFact | null
       if (subject === null || condition === null || confirmedBy === null) return null;
       return { type: factType, subject, condition, confirmed_by: confirmedBy, confirmed_at: confirmedAt };
     }
+    case 'decision.recorded': {
+      rejectUnknownKeys(raw, ['type', 'subject', 'decision', 'confirmed_by', 'rationale'], path, c);
+      const subject = parseEntityRef(raw, 'subject', path, c);
+      const decision = requireString(raw, 'decision', path, c);
+      const confirmedBy = requireString(raw, 'confirmed_by', path, c);
+      const rationale = optionalString(raw, 'rationale', path, c);
+      if (subject === null || decision === null || confirmedBy === null) return null;
+      return { type: factType, subject, decision, confirmed_by: confirmedBy, rationale };
+    }
   }
 }
 
@@ -688,6 +727,19 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
       if (!facts.some((fact) => fact.type === factType)) {
         c.add('missing_required_fact', 'facts', `a successful "${because}" run must declare a "${factType}" fact`);
       }
+    }
+
+    // A18 — a fase de conversa fecha com o que alguem DISSE. Sem nenhum fato
+    // humano, "discovery concluida" e uma fase que nao perguntou nada saindo
+    // como se tivesse decidido algo.
+    for (const phase of donePhases) {
+      if (!PHASES_REQUIRING_HUMAN_DECISION.includes(phase)) continue;
+      if (facts.some((fact) => (HUMAN_DECISION_FACTS as readonly string[]).includes(fact.type))) continue;
+      c.add(
+        'done_without_human_decision',
+        'facts',
+        `a "${phase}" run completed as "done" must declare at least one of ${HUMAN_DECISION_FACTS.join(' | ')}`,
+      );
     }
 
     // D-4 com dente: a fase que declara o ciclo ENCERRADO precisa da evidencia

@@ -28,6 +28,16 @@ function validResult(): Record<string, unknown> {
     workspace: null,
     facts: [
       { type: 'discovery.recorded', discovery_id: 'dsc-1', title: 'Titulo', problem: null, tracker: null, target_repo: null, scope_repos: [] },
+      // A18 — discovery concluida fecha com o que alguem disse. Sem isto o
+      // documento nao passa, e e para nao passar mesmo: fase que nao perguntou
+      // nada nao fecha.
+      {
+        type: 'gate.confirmed',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        condition: 'o problema e esse mesmo',
+        confirmed_by: 'dono do repo',
+        confirmed_at: null,
+      },
       { type: 'phase.completed', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', summary: null },
     ],
   };
@@ -44,7 +54,7 @@ describe('parseEsteiraResult — caminho feliz', () => {
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.result.run.phase).toBe('discovery');
-    expect(parsed.result.facts).toHaveLength(2);
+    expect(parsed.result.facts).toHaveLength(3);
     expect(parsed.result.facts[0].type).toBe('discovery.recorded');
   });
 
@@ -142,7 +152,7 @@ describe('parseEsteiraResult — fatos', () => {
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
     expect(parsed.issues[0].code).toBe('unknown_fact_type');
-    expect(parsed.issues[0].path).toBe('facts[2].type');
+    expect(parsed.issues[0].path).toBe('facts[3].type');
   });
 
   it('recusa campo desconhecido DENTRO de um fato', () => {
@@ -384,7 +394,15 @@ describe('parseEsteiraResult — o que cada fase promete declarar (D-4)', () => 
         target_repo: null,
         scope_repos: [],
       };
-      expect(parseEsteiraResult(resultForPhase('plano', [item, completed('plano')])).ok).toBe(true);
+      // A decisao vem junto porque A18 tambem cobra o plano concluido.
+      const decisao = {
+        type: 'decision.recorded',
+        subject: { entity: 'plan', id: 'pln-1' },
+        decision: 'medir antes de mexer',
+        confirmed_by: 'dono do repo',
+        rationale: null,
+      };
+      expect(parseEsteiraResult(resultForPhase('plano', [item, decisao, completed('plano')])).ok).toBe(true);
     });
 
     it('plano ABANDONADO nao precisa de item — desistir de planejar e um desfecho', () => {

@@ -178,3 +178,101 @@ describe('A9 — a confirmação de gate é fato, não blockquote', () => {
     expect(lines[0].text).toContain('confirmado por dono do repo');
   });
 });
+
+// ---------------------------------------------------------------------------
+// A18 — a fase de conversa fecha com o que uma pessoa disse
+// ---------------------------------------------------------------------------
+
+describe('A18 — decisão humana é o que fecha discovery e plano', () => {
+  const decision = (text: string, rationale: string | null = null): Record<string, unknown> => ({
+    type: 'decision.recorded',
+    subject: DSC,
+    decision: text,
+    confirmed_by: 'dono do repo',
+    rationale,
+  });
+
+  it('discovery CONCLUÍDA sem nenhum fato humano é recusada — ela não perguntou nada', () => {
+    expect(codesOf(resultWith([discoveryRecorded(), completedDiscovery()]))).toContain('done_without_human_decision');
+  });
+
+  it('discovery concluída com um gate confirmado é aceita', () => {
+    expect(parseEsteiraResult(resultWith([discoveryRecorded(), gate('o repo alvo é atlas'), completedDiscovery()])).ok).toBe(true);
+  });
+
+  it('discovery concluída com uma decisão registrada é aceita', () => {
+    const doc = resultWith([discoveryRecorded(), decision('fila por lote, não por item'), completedDiscovery()]);
+    expect(parseEsteiraResult(doc).ok).toBe(true);
+  });
+
+  it('discovery ABANDONADA não precisa de fato humano — desistir sem perguntar é legítimo', () => {
+    expect(parseEsteiraResult(resultWith([discoveryRecorded(), completedDiscovery('abandoned')])).ok).toBe(true);
+  });
+
+  it('plano CONCLUÍDO sem fato humano é recusado, mesmo declarando itens', () => {
+    const item = {
+      type: 'work_item.recorded',
+      work_item_id: 'wi-1',
+      plan_id: null,
+      item_type: 'spike',
+      title: 'Medir onde o lote para',
+      target_repo: null,
+      scope_repos: [],
+    };
+    const doc = resultWith([item, { type: 'phase.completed', subject: DSC, phase: 'plano', outcome: 'done', summary: null }], {
+      phase: 'plano',
+    });
+    expect(codesOf(doc)).toContain('done_without_human_decision');
+  });
+
+  it('decisão sem quem decidiu é recusada — decisão órfã é o app decidindo sozinho', () => {
+    const orfa = { ...decision('fila por lote') };
+    delete orfa.confirmed_by;
+    expect(codesOf(resultWith([discoveryRecorded(), orfa, completedDiscovery()]))).toContain('missing_field');
+  });
+
+  it('o card mostra a decisão com o motivo na mesma frase, junto dos gates', async () => {
+    const { decisionLines, humanDecisionLines } = await import('../src/renderer/src/Esteira/esteiraView');
+    const events: StoreEvent[] = [
+      {
+        seq: 1,
+        event_id: 'evt-1',
+        at: '2026-08-04T12:30:00.000Z',
+        type: 'discovery.created',
+        source: { kind: 'app' },
+        dedupe_key: null,
+        payload: { id: 'dsc-1', title: 'Fila trava sem sinal' },
+      },
+      {
+        seq: 2,
+        event_id: 'evt-2',
+        at: '2026-08-04T12:30:00.000Z',
+        type: 'gate.confirmed',
+        source: { kind: 'app' },
+        dedupe_key: null,
+        payload: { subject: DSC, condition: 'o repo alvo é atlas', confirmedBy: 'dono do repo' },
+      },
+      {
+        seq: 3,
+        event_id: 'evt-3',
+        at: '2026-08-04T12:30:00.000Z',
+        type: 'decision.recorded',
+        source: { kind: 'app' },
+        dedupe_key: null,
+        payload: {
+          subject: DSC,
+          decision: 'fila por lote, não por item',
+          confirmedBy: 'dono do repo',
+          rationale: 'O painel só tem o que mostrar por lote.',
+        },
+      },
+    ];
+
+    const card = cardView(reduceEvents(events), 'dsc-1')!;
+    expect(decisionLines(card)[0].text).toBe(
+      '«fila por lote, não por item» — decidido por dono do repo. Motivo: O painel só tem o que mostrar por lote.',
+    );
+    // O bloco do card junta LINHAS prontas; nenhuma frase nasce aqui.
+    expect(humanDecisionLines(card).map((line) => line.text)).toEqual([gateLines(card)[0].text, decisionLines(card)[0].text]);
+  });
+});

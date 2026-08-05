@@ -61,6 +61,23 @@ describe('espelho — schema x o que a skill ESCREVE', () => {
     expect(skillPaths().emitted.filter((path) => !resultPaths.has(path)).sort()).toEqual([]);
   });
 
+  // A porta REAL da skill é o CLI (`emit_result.py`), não o módulo. Um tipo de
+  // fato declarado no schema e sem construtor lá é um fato que a skill não
+  // consegue emitir por nenhum caminho — campo de um lado só pela terceira
+  // porta, agora entre o contrato e a linha de comando que o usa.
+  it('todo tipo de fato do contrato tem construtor no emissor de linha de comando', () => {
+    const doSchema = new Set(
+      [...resultPaths].map((path) => /^facts\[(.+?)\]\./.exec(path)?.[1]).filter((type): type is string => type !== undefined),
+    );
+    const doCli = new Set(
+      runPython(
+        `${PRELUDE}import emit_result as e; print(json.dumps(sorted(e.FACT_BUILDERS)))`,
+      ) as string[],
+    );
+    expect([...doSchema].filter((type) => !doCli.has(type)).sort()).toEqual([]);
+    expect([...doCli].filter((type) => !doSchema.has(type)).sort()).toEqual([]);
+  });
+
   it('os dois lados leem/escrevem o MESMO conjunto — é isto que impede campo de um lado só', () => {
     // O que o app lê tem que ser exatamente o que a skill escreve.
     expect(skillPaths().emitted.slice().sort()).toEqual([...CONSUMED_PATHS].sort());
@@ -87,6 +104,7 @@ describe('espelho — o documento produzido pela skill passa no parser do app', 
         `  c.plan_recorded('pln-1', 'dsc-1', 'Tornar observavel', summary='Instrumentar antes de mexer.'),\n` +
         `  c.relation_recorded('originated', {'entity':'discovery','id':'dsc-1'}, {'entity':'plan','id':'pln-1'}),\n` +
         `  c.note_recorded({'entity':'discovery','id':'dsc-1'}, 'Duas hipoteses descartadas.'),\n` +
+        `  c.decision_recorded({'entity':'discovery','id':'dsc-1'}, 'expor o estado antes de mexer no consumo', 'dono do repo'),\n` +
         `  c.phase_completed({'entity':'discovery','id':'dsc-1'}, 'discovery', 'done', summary='Um plano proposto.'),\n` +
         `]\n` +
         `print(json.dumps(c.build_result(run_id='run-1', phase='discovery', status='success', started_at='2026-08-04T12:00:00.000Z', finished_at='2026-08-04T12:30:00.000Z', discovery_id='dsc-1', facts=facts, workspace={'target_repo':'atlas','repo_path':'C:/code/atlas'})))`,
@@ -94,7 +112,7 @@ describe('espelho — o documento produzido pela skill passa no parser do app', 
 
     const parsed = parseEsteiraResult(document);
     if (!parsed.ok) throw new Error(`a skill produziu algo que o app recusa: ${JSON.stringify(parsed.issues, null, 2)}`);
-    expect(parsed.result.facts).toHaveLength(5);
+    expect(parsed.result.facts).toHaveLength(6);
   });
 
   it('A9 — o gate confirmado que a skill emite passa no parser, uma condição por fato', () => {

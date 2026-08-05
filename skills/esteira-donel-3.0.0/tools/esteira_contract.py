@@ -134,6 +134,12 @@ EMITTED_PATHS: tuple[str, ...] = (
     "facts[gate.confirmed].condition",
     "facts[gate.confirmed].confirmed_by",
     "facts[gate.confirmed].confirmed_at",
+    "facts[decision.recorded].type",
+    "facts[decision.recorded].subject.entity",
+    "facts[decision.recorded].subject.id",
+    "facts[decision.recorded].decision",
+    "facts[decision.recorded].confirmed_by",
+    "facts[decision.recorded].rationale",
 )
 
 # O que a skill LE do `run-input.json`. Mesma disciplina, na outra direcao:
@@ -365,6 +371,41 @@ def gate_confirmed(
     }
 
 
+def decision_recorded(
+    subject: dict[str, str],
+    decision: str,
+    confirmed_by: str,
+    rationale: str | None = None,
+) -> dict[str, Any]:
+    """A18 — uma decisao TOMADA na fase, com quem a confirmou.
+
+    Irma de `gate_confirmed` e diferente dela: o gate confirma uma condicao, a
+    decisao escolhe um caminho entre outros. As duas fecham as fases de conversa
+    (discovery, plano): fase que nao perguntou nada nao fechou coisa nenhuma.
+    """
+    if not decision:
+        raise ContractError("decision.recorded exige o que ficou decidido")
+    if not confirmed_by:
+        raise ContractError("decision.recorded exige confirmed_by — quem decidiu")
+    return {
+        "type": "decision.recorded",
+        "subject": subject,
+        "decision": decision,
+        "confirmed_by": confirmed_by,
+        "rationale": rationale,
+    }
+
+
+def human_decision_facts() -> list[str]:
+    """Os tipos de fato que carregam a palavra de uma pessoa (A18)."""
+    return list(_required_facts_table().get("human-decision-facts", []))
+
+
+def phases_requiring_human_decision() -> list[str]:
+    """Fases de CONVERSA: com `outcome: done`, exigem ao menos um fato humano (A18)."""
+    return list(_required_facts_table().get("done-requires-human-decision", []))
+
+
 def _required_facts_table() -> dict[str, Any]:
     """A tabela `x-required-facts` do arquivo canonico. Lida do schema, nunca copiada."""
     schema = json.loads(RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -448,6 +489,19 @@ def build_result(
     missing = [required for required in required_facts_for(phase, status, facts) if required not in declared]
     if missing:
         raise ContractError(f"fase {phase!r} concluida sem declarar: {', '.join(missing)}")
+
+    # A18 — a fase de conversa fecha com o que alguem DISSE. Sem nenhum fato
+    # humano, "discovery concluida" e uma fase que nao perguntou nada saindo
+    # como se tivesse decidido algo.
+    if status == "success":
+        humanas = phases_requiring_human_decision()
+        sem_gente = [closed for closed in done_phases(facts) if closed in humanas]
+        tem_gente = any(fact["type"] in human_decision_facts() for fact in facts)
+        if sem_gente and not tem_gente:
+            raise ContractError(
+                f"fase {sem_gente[0]!r} com outcome 'done' exige ao menos um "
+                f"{' ou '.join(human_decision_facts())} — fase que nao perguntou nada nao fecha"
+            )
 
     # D-4 com dente: a fase que declara o ciclo ENCERRADO precisa da evidencia
     # que o encerra ("PR mergeado E VERIFICADO"). Sem isto, "Concluido" na tela

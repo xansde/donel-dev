@@ -24,6 +24,7 @@ import {
   type ArtifactPointer,
   type DiscoverySnapshot,
   type EntityId,
+  type DecisionSnapshot,
   type EntityKind,
   type GateConfirmationSnapshot,
   type IngestErrorSnapshot,
@@ -299,6 +300,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
   const phases = new Map<string, PhaseRunSnapshot>();
   const verifications = new Map<string, VerificationSnapshot>();
   const gates = new Map<string, GateConfirmationSnapshot>();
+  const decisions = new Map<string, DecisionSnapshot>();
   const notes: NoteSnapshot[] = [];
   const ingestErrors: IngestErrorSnapshot[] = [];
   const mirrorQueue = new Map<string, MutableMirror>();
@@ -688,6 +690,24 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         break;
       }
 
+      case 'decision.recorded': {
+        // A18 — uma decisao por registro. Redecidir a MESMA coisa atualiza quem
+        // confirmou e por que; decidir outra coisa e outra linha, porque uma
+        // fase de conversa toma varias decisoes.
+        const subject = entityId(p, 'subject');
+        const decision = str(p, 'decision');
+        const confirmedBy = str(p, 'confirmedBy');
+        if (subject === null || decision === null || confirmedBy === null) break;
+        decisions.set(`${entityKey(subject)}|${decision}`, {
+          subject,
+          decision,
+          confirmedBy,
+          rationale: str(p, 'rationale'),
+          at: str(p, 'at') ?? event.at,
+        });
+        break;
+      }
+
       case 'stage.overridden': {
         const discoveryId = str(p, 'discoveryId');
         const value = oneOf<MacroStage>(p, 'value', MACRO_STAGES);
@@ -865,6 +885,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     phases: phaseList,
     verifications: [...verifications.values()],
     gates: [...gates.values()],
+    decisions: [...decisions.values()],
     notes,
     ingestErrors: errorList,
     mirrorQueue: mirrorList.map(({ subject, operation, payload, queuedAt, attempts, lastError }) => ({

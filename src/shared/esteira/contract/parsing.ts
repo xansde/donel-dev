@@ -35,6 +35,8 @@ export type ContractIssueCode =
   | 'missing_required_fact'
   /** Fase que declarou o ciclo encerrado (`outcome: done`) sem a verificacao que o encerra (D-4). */
   | 'done_without_passed_verification'
+  /** A18 — fase de conversa (discovery, plano) fechada `done` sem nenhum fato humano: ela nao perguntou nada. */
+  | 'done_without_human_decision'
   | 'issue_without_target_repo'
   | 'artifact_repo_mismatch'
   | 'failure_missing'

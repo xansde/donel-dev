@@ -93,7 +93,9 @@ describe('resultToEvents — cada fato vira um evento', () => {
     // O card F3 (evidencia 1): discovery concluido, ZERO plano declarado.
     const events = resultToEvents(loadExample('discovery-sem-repo-nem-tracker'), { resultPath: 'C:/x.json' });
     expect(events.some((event) => event.type === 'plan.created')).toBe(false);
-    expect(events.map((event) => event.type)).toEqual(['discovery.created', 'phase.completed']);
+    // A decisao esta la porque A18 a exige de uma discovery concluida — e ela
+    // e justamente o oposto de lacuna preenchida: e o que a fase declarou.
+    expect(events.map((event) => event.type)).toEqual(['discovery.created', 'decision.recorded', 'phase.completed']);
   });
 
   it('run que falhou vira phase.failed com codigo e motivo — falha nunca vira silencio', () => {

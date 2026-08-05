@@ -148,6 +148,8 @@ export const STORE_EVENT_TYPES = [
    * a mesma frase. Skills e specs consultam o STORE.
    */
   'gate.confirmed',
+  /** A18 — uma decisao tomada na fase, com quem a confirmou. Irma de `gate.confirmed`: gate confirma condicao, decisao escolhe caminho. */
+  'decision.recorded',
   'stage.overridden',
   'stage.override.cleared',
   'note.added',
@@ -491,6 +493,19 @@ export interface GateConfirmationSnapshot {
   readonly confirmedAt: string;
 }
 
+/**
+ * A18 — UMA decisao tomada, com quem a confirmou. Chave natural
+ * `subject|decision`: redecidir a mesma coisa atualiza quem confirmou; decidir
+ * outra coisa e outra linha, porque uma fase toma varias decisoes.
+ */
+export interface DecisionSnapshot {
+  readonly subject: EntityId;
+  readonly decision: string;
+  readonly confirmedBy: string;
+  readonly rationale: string | null;
+  readonly at: string;
+}
+
 /** Texto humano amarrado a uma entidade. Nunca deduplica por conteudo — duas notas iguais sao dois gestos. */
 export interface NoteSnapshot {
   readonly subject: EntityId;
@@ -551,6 +566,8 @@ export interface StoreSnapshot {
   readonly verifications: readonly VerificationSnapshot[];
   /** A9 — as confirmacoes de gate deste store, uma condicao por registro. */
   readonly gates: readonly GateConfirmationSnapshot[];
+  /** A18 — as decisoes tomadas, uma por registro, cada uma com quem a confirmou. */
+  readonly decisions: readonly DecisionSnapshot[];
   readonly notes: readonly NoteSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
   readonly mirrorQueue: readonly MirrorQueueEntry[];

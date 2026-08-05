@@ -77,6 +77,13 @@
       "path": "specs/031-fila-observavel/spec.md"
     },
     {
+      "type": "decision.recorded",
+      "subject": { "entity": "plan", "id": "pln-2026-08-03-a1" },
+      "decision": "a spec sai antes das issues, e as duas issues entram juntas",
+      "confirmed_by": "dono do repo",
+      "rationale": "O painel do beacon so tem o que mostrar depois que o atlas expoe o estado."
+    },
+    {
       "type": "phase.completed",
       "subject": { "entity": "plan", "id": "pln-2026-08-03-a1" },
       "phase": "plano",

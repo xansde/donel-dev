@@ -109,6 +109,13 @@ describe('espinha — do gesto no app ao card na tela', () => {
         to: { entity: 'plan', id: 'pln-espinha-1' },
       },
       { type: 'note.recorded', subject: { entity: 'discovery', id: created.discoveryId }, text: 'Duas hipoteses descartadas.' },
+      // A18 — a discovery so fecha porque alguem confirmou alguma coisa.
+      {
+        type: 'gate.confirmed',
+        subject: { entity: 'discovery', id: created.discoveryId },
+        condition: 'o repo alvo e atlas',
+        confirmed_by: 'dono do repo',
+      },
       {
         type: 'phase.completed',
         subject: { entity: 'discovery', id: created.discoveryId },
@@ -203,6 +210,7 @@ describe('espinha — do gesto no app ao card na tela', () => {
 
     runSkill(dispatched.inputPath, [
       { type: 'discovery.recorded', discovery_id: created.discoveryId, title: 'Card concluido' },
+      { type: 'gate.confirmed', subject: { entity: 'discovery', id: created.discoveryId }, condition: 'o problema e esse', confirmed_by: 'dono do repo' },
       { type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'discovery', outcome: 'done' },
     ]);
     service.scanOutbox();
@@ -229,6 +237,12 @@ describe('espinha — do gesto no app ao card na tela', () => {
 
     runSkill(dispatched.inputPath, [
       { type: 'discovery.recorded', discovery_id: created.discoveryId, title: 'Como o time decide a semana' },
+      {
+        type: 'decision.recorded',
+        subject: { entity: 'discovery', id: created.discoveryId },
+        decision: 'a fila da semana se decide na segunda',
+        confirmed_by: 'dono do repo',
+      },
       { type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'discovery', outcome: 'done' },
     ]);
 
@@ -300,6 +314,7 @@ describe('espinha — do gesto no app ao card na tela', () => {
     runSkill(dispatch('discovery'), [
       { type: 'discovery.recorded', discovery_id: created.discoveryId, title: 'Fila de importacao trava sem sinal', target_repo: 'atlas' },
       { type: 'plan.recorded', plan_id: 'pln-ciclo-1', discovery_id: created.discoveryId, title: 'Tornar observavel' },
+      { type: 'gate.confirmed', subject: { entity: 'discovery', id: created.discoveryId }, condition: 'o repo alvo e atlas', confirmed_by: 'dono do repo' },
       { type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'discovery', outcome: 'done' },
     ]);
     service.scanOutbox();
@@ -312,6 +327,12 @@ describe('espinha — do gesto no app ao card na tela', () => {
         item_type: 'issue',
         title: 'Expor estado da fila',
         target_repo: 'atlas',
+      },
+      {
+        type: 'decision.recorded',
+        subject: { entity: 'plan', id: 'pln-ciclo-1' },
+        decision: 'expor o estado antes de mexer no consumo',
+        confirmed_by: 'dono do repo',
       },
       { type: 'phase.completed', subject: { entity: 'plan', id: 'pln-ciclo-1' }, phase: 'plano', outcome: 'done' },
     ]);

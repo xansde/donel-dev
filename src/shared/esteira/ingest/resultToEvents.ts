@@ -214,6 +214,22 @@ function factToDraft(fact: EsteiraFact, index: number, result: EsteiraResult): E
         },
       };
 
+    case 'decision.recorded':
+      // A18 — chave natural `assunto + decisao`: uma fase de conversa toma
+      // varias decisoes, e redecidir a mesma atualiza aquela linha.
+      return {
+        type: 'decision.recorded',
+        at,
+        dedupe_key: dedupeKey(runId, fact.type, `${refKey(fact.subject)}:${fact.decision}`),
+        payload: {
+          subject: refToId(fact.subject),
+          decision: fact.decision,
+          confirmedBy: fact.confirmed_by,
+          rationale: fact.rationale,
+          at,
+        },
+      };
+
     case 'note.recorded':
       // Chave pelo INDICE: duas notas de texto igual no mesmo run sao dois
       // gestos, e a chave so precisa impedir que o MESMO arquivo, relido, empilhe.

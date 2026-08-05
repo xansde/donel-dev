@@ -19,6 +19,7 @@ import { LIFECYCLE_BY_ITEM_TYPE, MACRO_STAGES } from '../../../shared/esteira/st
 import { esteiraPhaseCommand, LOCK_WORD, lockStateOf, noLockDispatchHint, type LockState } from './esteiraSession';
 import type {
   ArtifactPointer,
+  DecisionSnapshot,
   DiscoverySnapshot,
   EntityId,
   GateConfirmationSnapshot,
@@ -436,6 +437,8 @@ export interface CardView {
   readonly artifacts: readonly ArtifactPointer[];
   /** A9 — o que uma pessoa confirmou, condição por condição. */
   readonly gates: readonly GateConfirmationSnapshot[];
+  /** A18 — o que ficou decidido, com quem decidiu. */
+  readonly decisions: readonly DecisionSnapshot[];
 }
 
 /**
@@ -579,6 +582,7 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     verifications: snapshot.verifications.filter((entry) => belongs(entry.subject)),
     artifacts: snapshot.artifacts.filter((entry) => belongs(entry.owner)),
     gates: snapshot.gates.filter((entry) => belongs(entry.subject)),
+    decisions: snapshot.decisions.filter((entry) => belongs(entry.subject)),
     notes: snapshot.notes
       .filter((note) => belongs(note.subject))
       .map((note) => ({
@@ -895,6 +899,35 @@ export function gateLines(card: CardView, subject: EntityId | null = null): read
     text: `«${gate.condition}» — confirmado por ${gate.confirmedBy}, em ${formatTimestamp(gate.confirmedAt)}`,
     subject: gate.subject,
   }));
+}
+
+/**
+ * A18 — o que ficou decidido, com quem decidiu. O motivo entra na MESMA frase
+ * quando a fase o registrou: nomear a decisão e esconder o porquê é contar a
+ * conversa pela metade, que é o mesmo defeito do plano sem resumo (B4).
+ */
+export function decisionLines(card: CardView, subject: EntityId | null = null): readonly GateLineView[] {
+  const escopo =
+    subject === null
+      ? card.decisions
+      : card.decisions.filter((entry) => entry.subject.entity === subject.entity && entry.subject.id === subject.id);
+
+  return escopo.map((decision) => ({
+    key: `${decision.subject.entity}:${decision.subject.id}:${decision.decision}`,
+    text: decision.rationale
+      ? `«${decision.decision}» — decidido por ${decision.confirmedBy}. Motivo: ${decision.rationale}`
+      : `«${decision.decision}» — decidido por ${decision.confirmedBy}`,
+    subject: decision.subject,
+  }));
+}
+
+/**
+ * O bloco inteiro do que GENTE disse sobre este card: gates confirmados e
+ * decisões tomadas, na mesma lista. Cada frase continua nascendo da sua função
+ * — o que se junta aqui são as linhas prontas, nunca a redação delas.
+ */
+export function humanDecisionLines(card: CardView, subject: EntityId | null = null): readonly GateLineView[] {
+  return [...gateLines(card, subject), ...decisionLines(card, subject)];
 }
 
 export const GATES_EMPTY_NOTE =

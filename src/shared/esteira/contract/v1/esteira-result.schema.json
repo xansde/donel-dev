@@ -118,7 +118,8 @@
         { "$ref": "#/$defs/fact_lock_acquired" },
         { "$ref": "#/$defs/fact_lock_released" },
         { "$ref": "#/$defs/fact_note_recorded" },
-        { "$ref": "#/$defs/fact_gate_confirmed" }
+        { "$ref": "#/$defs/fact_gate_confirmed" },
+        { "$ref": "#/$defs/fact_decision_recorded" }
       ]
     },
     "fact_discovery_recorded": {
@@ -284,6 +285,30 @@
         }
       }
     },
+    "fact_decision_recorded": {
+      "description": "A18 — uma decisao TOMADA na fase, com quem a confirmou. Irma de `gate.confirmed` e diferente dela: o gate confirma uma condicao ('a spec esta aprovada'), a decisao escolhe um caminho entre outros ('fila por lote, nao por item'). As duas sao o que uma fase de conversa produz, e as duas viviam soltas no texto.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "subject", "decision", "confirmed_by"],
+      "properties": {
+        "type": { "const": "decision.recorded" },
+        "subject": { "$ref": "#/$defs/entity_ref" },
+        "decision": {
+          "description": "O que ficou decidido, afirmativo e curto. Uma decisao por fato.",
+          "type": "string",
+          "minLength": 1
+        },
+        "confirmed_by": {
+          "description": "Quem decidiu. Mesmo campo de `gate.confirmed` de proposito: a regra que fecha a fase pergunta 'ha fato humano com dono?', e um nome so evita duas leituras da mesma pergunta.",
+          "type": "string",
+          "minLength": 1
+        },
+        "rationale": {
+          "description": "Por que, quando a fase registrou. Nunca inventado a posteriori.",
+          "type": ["string", "null"]
+        }
+      }
+    },
     "lock_holder": {
       "type": "object",
       "additionalProperties": false,
@@ -351,6 +376,9 @@
       "concluir": "D-4 — o ciclo termina com PR mergeado e verificado, documento aceito, ou conclusao registrada. Concluir sem verificacao seria o app afirmar 'terminou' sem ter lido nada."
     },
     "done-requires-passed-verification": ["concluir"],
-    "x-done-rationale": "Fases desta lista com `phase.completed.outcome = done` exigem ao menos uma `verification.recorded` com `state = passed`. E o dente de D-4: 'PR mergeado E VERIFICADO'. Desfecho ruim continua valido — `abandoned`/`inconclusive` nao pedem nada. Tambem se cobra por FASE FECHADA, nao por `run.phase`."
+    "x-done-rationale": "Fases desta lista com `phase.completed.outcome = done` exigem ao menos uma `verification.recorded` com `state = passed`. E o dente de D-4: 'PR mergeado E VERIFICADO'. Desfecho ruim continua valido — `abandoned`/`inconclusive` nao pedem nada. Tambem se cobra por FASE FECHADA, nao por `run.phase`.",
+    "human-decision-facts": ["gate.confirmed", "decision.recorded"],
+    "done-requires-human-decision": ["discovery", "plano"],
+    "x-human-decision-rationale": "A18 — as fases de CONVERSA fecham com o que uma pessoa disse. Discovery e plano existem para produzir decisao; fase que nao perguntou nada nao fechou coisa nenhuma, e deixar 'concluida' sem nenhum fato humano era a mesma tela sem lastro que D-4 ja combate do outro lado. Qualquer um dos dois fatos serve — os dois nomeiam quem confirmou em `confirmed_by`, e e essa a pergunta. Desfecho ruim nao pede nada: abandonar sem perguntar e legitimo."
   }
 }

@@ -63,6 +63,12 @@ FACT_BUILDERS = {
     ),
     "lock.released": lambda f: contract.lock_released(f["subject"], f["phase"]),
     "note.recorded": lambda f: contract.note_recorded(f["subject"], f["text"]),
+    "gate.confirmed": lambda f: contract.gate_confirmed(
+        f["subject"], f["condition"], f["confirmed_by"], confirmed_at=f.get("confirmed_at")
+    ),
+    "decision.recorded": lambda f: contract.decision_recorded(
+        f["subject"], f["decision"], f["confirmed_by"], rationale=f.get("rationale")
+    ),
 }
 
 
