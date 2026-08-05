@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ESTEIRA_INBOX_DIR_ENV_VAR, dispatchPhase, esteiraInboxDir, releaseLock } from '../src/main/esteira-dispatch';
+import { ESTEIRA_INBOX_DIR_ENV_VAR, dispatchPhase, esteiraInboxDir, reconcileOrphanedSessions, releaseLock } from '../src/main/esteira-dispatch';
 import { openEsteiraStore, type EsteiraStore } from '../src/main/esteira-store';
 import { parseRunInputText } from '../src/shared/esteira/contract/runInput';
 import type { EventDraft } from '../src/shared/esteira/ingest/resultToEvents';
@@ -246,5 +246,54 @@ describe('dispatchPhase — alvo explicito (D-6)', () => {
 
   it('assunto fora do store nao dispara', () => {
     expect(dispatch({ discoveryId: 'dsc-fantasma' })).toMatchObject({ ok: false, reason: 'invalid-target' });
+  });
+});
+
+// A7 — reconciliacao MANIFESTO-SEM-RESULT: a fase que morreu entre o
+// `run-input.json` (o manifesto, no inbox) e o `result.json` esperado no
+// outbox. Hoje so um humano notava, olhando o card preso para sempre.
+describe('reconcileOrphanedSessions — a fase que morreu sem devolver nada (A7)', () => {
+  it('sessao sem result no disco e encerrada, com motivo, e a trava cai junto', () => {
+    const dispatched = dispatch();
+    expect(dispatched.ok).toBe(true);
+    if (!dispatched.ok) return;
+
+    const result = reconcileOrphanedSessions(store, { resultExists: () => false, now: () => '2026-08-05T09:00:00.000Z' });
+
+    expect(result.reconciled).toBe(1);
+    const session = store.snapshot().sessions.find((entry) => entry.id === dispatched.sessionId);
+    expect(session?.endedAt).toBe('2026-08-05T09:00:00.000Z');
+    expect(session?.endReason).toContain('result.json');
+    expect(store.snapshot().locks).toHaveLength(0);
+  });
+
+  it('sessao cujo result JA existe no disco nao e mexida — a proxima varredura decide', () => {
+    const dispatched = dispatch();
+    expect(dispatched.ok).toBe(true);
+    if (!dispatched.ok) return;
+
+    const result = reconcileOrphanedSessions(store, { resultExists: (path) => path === dispatched.resultPath });
+
+    expect(result.reconciled).toBe(0);
+    const session = store.snapshot().sessions.find((entry) => entry.id === dispatched.sessionId);
+    expect(session?.endedAt).toBeNull();
+    expect(store.snapshot().locks).toHaveLength(1);
+  });
+
+  it('sessao ja encerrada (fase concluida normalmente) nao e candidata — chamar de novo nao faz nada', () => {
+    const dispatched = dispatch();
+    expect(dispatched.ok).toBe(true);
+    if (!dispatched.ok) return;
+
+    store.append([
+      { type: 'phase.completed', at: '2026-08-05T09:00:00.000Z', dedupe_key: null, payload: { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', at: '2026-08-05T09:00:00.000Z' } },
+    ]);
+
+    const result = reconcileOrphanedSessions(store, { resultExists: () => false });
+    expect(result.reconciled).toBe(0);
+  });
+
+  it('sem sessao aberta nenhuma, nao faz nada', () => {
+    expect(reconcileOrphanedSessions(store, { resultExists: () => false })).toEqual({ reconciled: 0 });
   });
 });
