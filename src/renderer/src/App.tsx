@@ -70,7 +70,7 @@ import { sessionTabName } from '../../shared/sessions';
 import { isReadyToPreType } from '../../shared/preTypeReadiness';
 import { DiscoveryMap } from './DevMode/DiscoveryMap';
 import { PhaseDetailsPanel } from './DevMode/PhaseDetailsPanel';
-import { buildMapView, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
+import { buildMapView, tabToFocusFor, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
 import { createPrimeSequencer } from './DevMode/primeSequencer';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
@@ -80,9 +80,10 @@ import type { LauncherLaunchOptions } from './Launcher';
 // gesto interno, para dar para comparar as duas com o mesmo dado.
 import { EsteiraScreen } from './Esteira/EsteiraScreen';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
-import type { EsteiraSessionRequest } from './Esteira/esteiraSession';
+import { esteiraTabName, type EsteiraSessionRequest } from './Esteira/esteiraSession';
 import { preparePhase } from './Esteira/preparePhase';
 import type { EsteiraSnapshotDto } from '../../shared/esteira/ipc';
+import type { EntityId } from '../../shared/esteira/store/storeFormat';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { AccountsPanel } from './AccountsPanel';
@@ -1314,6 +1315,47 @@ export function App(): React.JSX.Element {
     });
   };
 
+  /**
+   * B1 (batch N5) — "↺ Retomar" na trilha do mapa: reabre a ÚLTIMA sessão da
+   * cadeia daquele passo já FECHADO (`claude -r <cliSessionId>` no `cwd`
+   * dela — `step.resume` já vem resolvido de `esteiraMapView.trailFor`,
+   * pura). SEM dispatch novo, SEM mudar estado do card: quem muda estado é
+   * fato declarado por skill, nunca o gesto de abrir. Mesmo padrão de
+   * `handleFocusOrResumeFavoriteSession` (007): aba já aberta com essa
+   * sessão ganha foco, em vez de abrir outra.
+   */
+  const handleMapResume = (step: MapTrailStep): void => {
+    if (step.resume === null) return;
+    const { cliSessionId, cwd } = step.resume;
+    const existingTab = tabs.find((tab) => tab.claudeSessionId === cliSessionId);
+    if (existingTab) {
+      setActiveTabId(existingTab.id);
+      return;
+    }
+    const discoveryTitle = mapView.breadcrumb[0] ?? step.phase;
+    addTab({
+      name: esteiraTabName(step.phase, discoveryTitle),
+      cwd,
+      projectName: projects.find((project) => project.path === cwd)?.name,
+      pinned: false,
+      launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId: cliSessionId } }),
+      sessionType: 'claude',
+    });
+  };
+
+  /**
+   * B2 (batch N5) — navegar o mapa até um nó alterna para a aba da sessão
+   * VIVA dele, quando existe. `tabToFocusFor` (esteiraMapView, pura) é quem
+   * decide o FATO — `SessionSnapshot.endedAt === null` cruzado com as abas
+   * abertas; esta função só aplica o resultado. Nó sem sessão viva não rouba
+   * foco (`tabId` vem `null`, nada muda) — sessão fechada nunca é alvo de
+   * alternância; para isso existe o retomar explícito do B1.
+   */
+  const focusLiveSessionOf = (discoveryId: string, subject: EntityId): void => {
+    const tabId = tabToFocusFor(esteiraState?.snapshot ?? null, discoveryId, subject, tabs);
+    if (tabId !== null) setActiveTabId(tabId);
+  };
+
   /** D-11 — a trava é fato local, e sai num gesto. Nada de etiqueta órfã no board. */
   const handleMapReleaseLock = (): void => {
     const lock = mapView.detail?.lock;
@@ -1992,22 +2034,39 @@ export function App(): React.JSX.Element {
             lateral deixa o mapa desenhado POR CIMA do terminal": recolher só
             zerava a COLUNA (`--col-left: 0px`) e o mapa continuava montado,
             transbordando de uma caixa de largura zero. Colapsar a lateral
-            agora desmonta o mapa, do mesmo jeito que "Recolher painéis" já
-            fazia. */}
-        {devModeOn && !rightCollapsed && !sidebarCollapsed ? (
+            agora desmonta o mapa — preservado abaixo (`!sidebarCollapsed`).
+            C4 (batch N5) — BUG relacionado, mas inverso: ocultar a barra
+            DIREITA (`rightCollapsed`, botão "Recolher painéis") desmontava o
+            mapa ESQUERDO também, perdendo o estado do carrossel a cada
+            toggle. O mapa agora fica montado sempre que o Modo Dev está
+            ligado e a lateral não colapsou; `rightCollapsed` vira só a prop
+            `collapsed` (largura 0 via CSS, ver `.mapCollapsed`), nunca mais a
+            condição de montagem. */}
+        {devModeOn && !sidebarCollapsed ? (
           <DiscoveryMap
             view={mapView}
             selection={mapSelection}
             warning={storeWarning}
-            onFocusDiscovery={(discoveryId) =>
+            collapsed={rightCollapsed}
+            onFocusDiscovery={(discoveryId) => {
               // Trocar de card zera o que pertence ao card: o plano, o item e o
               // nó do detalhe apontariam para algo que não está mais na tela.
-              setMapSelection({ discoveryId, planId: null, itemId: null, nodeKey: null, phase: null })
-            }
-            onFocusPlan={(planId) => setMapSelection((prev) => ({ ...prev, planId, itemId: null, nodeKey: null, phase: null }))}
-            onFocusItem={(itemId) => setMapSelection((prev) => ({ ...prev, itemId, nodeKey: `work_item:${itemId}`, phase: null }))}
+              setMapSelection({ discoveryId, planId: null, itemId: null, nodeKey: null, phase: null });
+              // B2 — navegar até o discovery alterna para a aba da sessão viva
+              // DELE, quando existe (nó sem sessão viva não rouba foco).
+              focusLiveSessionOf(discoveryId, { entity: 'discovery', id: discoveryId });
+            }}
+            onFocusPlan={(planId) => {
+              setMapSelection((prev) => ({ ...prev, planId, itemId: null, nodeKey: null, phase: null }));
+              if (mapView.focused.discoveryId) focusLiveSessionOf(mapView.focused.discoveryId, { entity: 'plan', id: planId });
+            }}
+            onFocusItem={(itemId) => {
+              setMapSelection((prev) => ({ ...prev, itemId, nodeKey: `work_item:${itemId}`, phase: null }));
+              if (mapView.focused.discoveryId) focusLiveSessionOf(mapView.focused.discoveryId, { entity: 'work_item', id: itemId });
+            }}
             onSelectNode={(nodeKey, phase) => setMapSelection((prev) => ({ ...prev, nodeKey, phase }))}
             onPrepare={handleMapPrepare}
+            onResume={handleMapResume}
             onNewDiscovery={() => setEsteiraOpen(true)}
           />
         ) : null}

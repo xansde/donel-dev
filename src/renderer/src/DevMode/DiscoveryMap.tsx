@@ -62,8 +62,24 @@ export interface DiscoveryMapProps {
   onSelectNode: (nodeKey: string, phase: string | null) => void;
   /** "⌁ Preparar" — o mesmo gesto do painel do store (`preparePhase`), nunca uma segunda orquestração. */
   onPrepare: (step: MapTrailStep) => void;
+  /**
+   * B1 — "↺ Retomar", num passo FECHADO com `resume` preenchido: reabre a
+   * última sessão da cadeia (`claude -r <cliSessionId>` no `cwd` dela). Sem
+   * dispatch novo, sem mudar estado do card — é por isso que este gesto é
+   * diferente de `onPrepare`.
+   */
+  onResume: (step: MapTrailStep) => void;
   /** D-16 — o app não ganha formulário: o gesto leva ao painel do store, onde a criação já mora. */
   onNewDiscovery: () => void;
+  /**
+   * C4 — só encolhe visualmente (largura 0, sem desmontar): o botão "Recolher
+   * painéis" do titlebar zera a coluna do mapa, mas o componente PRECISA
+   * continuar montado, ou o foco do carrossel (`focusedLevelKey`, estado
+   * local abaixo) se perde a cada toggle. Quem desmonta de propósito é só
+   * `sidebarCollapsed`, na condição de `App.tsx` que envolve este componente
+   * (FIX #15, preservado).
+   */
+  collapsed?: boolean;
 }
 
 export function DiscoveryMap({
@@ -75,7 +91,9 @@ export function DiscoveryMap({
   onFocusItem,
   onSelectNode,
   onPrepare,
+  onResume,
   onNewDiscovery,
+  collapsed = false,
 }: DiscoveryMapProps): React.JSX.Element {
   // Estado de TELA (qual nível está em foco no eixo Y), não de domínio — mesmo
   // papel que tinha no mapa antigo.
@@ -161,17 +179,21 @@ export function DiscoveryMap({
 
   return (
     <aside
-      className={styles.map}
+      className={[styles.map, collapsed ? styles.mapCollapsed : ''].filter(Boolean).join(' ')}
       aria-label="Mapa do discovery"
       data-testid="devmode-map"
+      data-collapsed={collapsed ? 'true' : 'false'}
       tabIndex={0}
       onWheel={handleMapWheel}
       onKeyDown={handleMapKeyDown}
     >
       <header className={styles.header}>
         <span className={styles.headerLabel}>Esteira</span>
-        <span className={styles.headerId} data-testid="devmode-map-discovery-id">
-          {view.focused.discoveryId ?? '—'}
+        {/* C2 — vocabulário humano: o TÍTULO do discovery em foco é o que a
+            tela mostra; o id técnico (`dsc-...`) vira metadado de tooltip —
+            ele não sumiu, só desceu de camada. */}
+        <span className={styles.headerId} data-testid="devmode-map-discovery-id" title={view.focused.discoveryId ?? undefined}>
+          {view.breadcrumb[0] ?? '—'}
         </span>
         <div className={styles.headerSpacer} />
         <Button variant="ghost" onClick={onNewDiscovery} data-testid="devmode-entry-trigger">
@@ -201,6 +223,7 @@ export function DiscoveryMap({
               selection={selection}
               onSelectNode={onSelectNode}
               onPrepare={onPrepare}
+              onResume={onResume}
             />
           )}
         />
@@ -215,9 +238,10 @@ interface MapCardBodyProps {
   readonly selection: MapSelection;
   readonly onSelectNode: (nodeKey: string, phase: string | null) => void;
   readonly onPrepare: (step: MapTrailStep) => void;
+  readonly onResume: (step: MapTrailStep) => void;
 }
 
-function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapCardBodyProps): React.JSX.Element {
+function MapCardBody({ card, focused, selection, onSelectNode, onPrepare, onResume }: MapCardBodyProps): React.JSX.Element {
   return (
     <div
       className={styles.cardBody}
@@ -232,9 +256,13 @@ function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapC
         {card.statusLabel ? <span className={styles.cardStatus}>{card.statusLabel}</span> : null}
       </div>
 
+      {/* C1 — densidade: `metaLabel` (uma palavra) é o que o card desenha
+          quando existe; a frase inteira (`metaLine`) nunca morre — vira o
+          tooltip. Discovery/plano não têm `metaLabel` (a meta deles já é
+          curta) e continuam mostrando `metaLine` direto, sem tooltip redundante. */}
       {card.metaLine ? (
-        <div className={styles.cardFooterMeta} title={card.metaLine}>
-          {card.metaLine}
+        <div className={styles.cardFooterMeta} title={card.metaLabel ? card.metaLine : undefined}>
+          {card.metaLabel ?? card.metaLine}
         </div>
       ) : null}
 
@@ -250,10 +278,13 @@ function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapC
 
       {/* D-4 — o fecho do ciclo. Um `spike` que respondeu "não dá" está
           CONCLUÍDO: a resposta negativa é desfecho, não pendência, e é isso que
-          o mapa antigo desenhava como trilha pela metade. */}
+          o mapa antigo desenhava como trilha pela metade. C1 — o card desenha
+          só `closureLabel` ("ver desfecho"); a frase inteira, com a
+          explicação do ciclo e a referência (PR, resposta do spike), vive no
+          tooltip e no painel de detalhe — nenhuma informação morreu. */}
       {card.closureLine ? (
-        <div className={styles.cardFooterMeta} data-testid="devmode-map-closure">
-          {card.closureLine}
+        <div className={styles.cardFooterMeta} data-testid="devmode-map-closure" title={card.closureLine}>
+          {card.closureLabel ?? card.closureLine}
         </div>
       ) : null}
 
@@ -270,7 +301,10 @@ function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapC
                 onClick={() => onSelectNode(card.key, step.phase)}
                 data-testid="devmode-trilha-step"
                 data-phase={step.phase}
-                title={step.reason ?? undefined}
+                // C1 — a razão de bloqueio continua vencendo (é a informação
+                // acionável); sem ela, o tooltip mostra a frase honesta
+                // inteira que `label`, abaixo, resume a uma palavra.
+                title={step.reason ?? step.text}
               >
                 <span className={styles.trilhaRail} aria-hidden="true">
                   {step.isLast ? '└' : '├'}
@@ -280,7 +314,9 @@ function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapC
                 </span>
                 {isChipPhase(step.phase) ? <PhaseChip phase={step.phase} /> : <span className={styles.trilhaFase}>{step.phase}</span>}
                 <div className={styles.trilhaSpacer} />
-                <span className={styles.trilhaState}>{step.text}</span>
+                {/* C1 — o passo desenha `label` (uma palavra); `text`, a frase
+                    honesta inteira, vira o `title` da linha, acima. */}
+                <span className={styles.trilhaState}>{step.label}</span>
                 {step.isNext ? (
                   <Button
                     variant="secondary"
@@ -293,6 +329,22 @@ function MapCardBody({ card, focused, selection, onSelectNode, onPrepare }: MapC
                     data-phase={step.phase}
                   >
                     ⌁ Preparar
+                  </Button>
+                ) : null}
+                {/* B1 — "Retomar" continua a ÚLTIMA sessão da cadeia deste
+                    passo fechado. Nunca aparece junto de "Preparar": um passo
+                    fechado não é "a próxima" de ninguém. */}
+                {step.resume !== null ? (
+                  <Button
+                    variant="ghost"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onResume(step);
+                    }}
+                    data-testid="devmode-trilha-resume"
+                    data-phase={step.phase}
+                  >
+                    ↺ Retomar
                   </Button>
                 ) : null}
               </div>

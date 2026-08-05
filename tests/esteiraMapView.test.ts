@@ -437,6 +437,41 @@ describe('buildMapView — C1, densidade: metaLabel curto no card do item', () =
   });
 });
 
+describe('buildMapView — C1, densidade: closureLabel curto + tooltip da trava', () => {
+  it('item fechado ganha closureLabel curto; closureLine segue com a frase inteira', () => {
+    const events = [
+      ...eventosBase(),
+      evt('work_item.created', { id: 'wki-spike', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'spike', title: 'Um spike' }),
+      evt('verification.updated', {
+        subject: { entity: 'work_item', id: 'wki-spike' },
+        verificationKind: 'conclusion',
+        state: 'passed',
+        ref: 'não dá',
+      }),
+      evt('work_item.updated', { id: 'wki-spike', state: 'done' }),
+    ];
+    const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, itemId: 'wki-spike' });
+    const card = view.levels[2].cards.find((c) => c.subject?.id === 'wki-spike');
+    expect(card?.closureLabel).toBe('ver desfecho');
+    expect(card?.closureLine).toContain('não dá');
+  });
+
+  it('item aberto: closureLabel e closureLine são os dois null — nada a mostrar', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), { ...SELECTION_VAZIA, itemId: 'wki-1' });
+    const card = view.levels[2].cards.find((c) => c.subject?.id === 'wki-1');
+    expect(card?.closureLabel).toBeNull();
+    expect(card?.closureLine).toBeNull();
+  });
+
+  it('a etiqueta de trava carrega a frase honesta no title — dono, hora e sessão não somem mais', () => {
+    const events = [...eventosBase(), evt('lock.acquired', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', holderKind: 'app', acquiredAt: 'x' })];
+    const view = buildMapView(snapshotDe(events), SELECTION_VAZIA);
+    const etiqueta = view.levels[0].cards[0].tags.find((tag) => tag.text.startsWith('trava:'));
+    expect(etiqueta?.title).toContain('discovery');
+    expect(etiqueta?.title).not.toBeNull();
+  });
+});
+
 describe('buildMapView — C1, densidade: label curto em cada passo da trilha', () => {
   it('passo já rodado: label é só a palavra de estado; text continua sendo a frase inteira', () => {
     const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);

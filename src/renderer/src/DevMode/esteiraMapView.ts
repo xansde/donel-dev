@@ -136,6 +136,8 @@ export interface MapCard {
   readonly trail: readonly MapTrailStep[];
   /** D-4 — como o ciclo deste item terminou. `null` enquanto ele não fechou. */
   readonly closureLine: string | null;
+  /** C1 — o mesmo fecho, resumido a um rótulo curto; `null` junto com `closureLine`. */
+  readonly closureLabel: string | null;
   readonly footer: string | null;
 }
 
@@ -352,7 +354,9 @@ function discoveryCard(card: CardView, focused: boolean): MapCard {
   if (card.stage.overridden && card.stage.overrideLine !== null) {
     tags.push({ text: `ajuste manual · calculada: ${card.stage.derived}`, tone: 'warn', title: card.stage.overrideLine });
   }
-  if (lock !== null) tags.push({ text: `trava: ${lock.phase}`, tone: 'lock', title: null });
+  // C1 — o `title` da etiqueta de trava era `null`: a etiqueta cabia, mas o
+  // dono/hora/sessão sumiam da tela inteira, em vez de só mudar de camada.
+  if (lock !== null) tags.push({ text: `trava: ${lock.phase}`, tone: 'lock', title: lockView(card, lock)?.line ?? null });
 
   // T-14 do inventário (fechado quando o B4 entrou): sem a marca, o card
   // semeado apareceria no carrossel como fato observado — o mesmo bug que a
@@ -390,6 +394,7 @@ function discoveryCard(card: CardView, focused: boolean): MapCard {
             : 'muted',
     trail: focused ? trailFor(card, subject, null) : [],
     closureLine: null,
+    closureLabel: null,
     footer: card.discovery.problem,
   };
 }
@@ -402,7 +407,9 @@ function planCard(card: CardView, planId: string, focused: boolean): MapCard {
   const fechados = itens.filter((item) => isItemClosed(item)).length;
 
   const tags: MapTag[] = [];
-  if (lock !== null) tags.push({ text: `trava: ${lock.phase}`, tone: 'lock', title: null });
+  // C1 — mesmo conserto do discoveryCard: o title da etiqueta de trava
+  // carrega a frase honesta agora, em vez de sumir com dono/hora/sessão.
+  if (lock !== null) tags.push({ text: `trava: ${lock.phase}`, tone: 'lock', title: lockView(card, lock)?.line ?? null });
   // T-14 — o plano semeado carrega a mesma marca do card (ver discoveryCard).
   const seededTag = provenanceMark(plan.seeded);
   if (seededTag !== null) tags.push({ text: seededTag.label, tone: 'muted', title: seededTag.title });
@@ -422,6 +429,7 @@ function planCard(card: CardView, planId: string, focused: boolean): MapCard {
     accent: lock !== null ? 'lock' : itens.length > 0 && fechados === itens.length ? 'ok' : 'muted',
     trail: focused ? trailFor(card, subject, null) : [],
     closureLine: null,
+    closureLabel: null,
     footer: null,
   };
 }
@@ -447,11 +455,8 @@ function itemCard(card: CardView, item: WorkItemSnapshot, focused: boolean): Map
   if (seededTag !== null) tags.push({ text: seededTag.label, tone: 'muted', title: seededTag.title });
 
   // D-4 — o fecho do ciclo. `itemClosureLine` já devolve `null` pra item
-  // aberto (D-4 original). A frase INTEIRA segue existindo pro tooltip/painel
-  // de detalhe (`closureLine`, abaixo); o card em si só ganha o chip — antes
-  // era a frase inteira, sem tooltip, dita direto no espaço mínimo do card.
+  // aberto (D-4 original).
   const closure = itemClosureLine(item, card.verifications);
-  if (closure !== null) tags.push({ text: 'ver desfecho', tone: 'ok', title: closure });
 
   return {
     key: entityKey(subject),
@@ -469,6 +474,10 @@ function itemCard(card: CardView, item: WorkItemSnapshot, focused: boolean): Map
     accent: isItemClosed(item) ? 'ok' : lock !== null ? 'lock' : item.state === 'in-progress' ? 'accent' : 'muted',
     trail: focused ? trailFor(card, subject, item) : [],
     closureLine: closure,
+    // C1 — a frase INTEIRA de `closureLine` segue existindo, pro tooltip/
+    // painel de detalhe; o card em si desenha só este rótulo curto. Antes era
+    // a frase inteira, sem tooltip, dita direto no espaço mínimo do card.
+    closureLabel: closure === null ? null : 'ver desfecho',
     footer: null,
   };
 }
@@ -494,6 +503,7 @@ function previewLevel(): MapLevel {
         accent: 'muted',
         trail: [],
         closureLine: null,
+        closureLabel: null,
         footer: null,
       },
     ],
@@ -691,10 +701,16 @@ function breadcrumbFor(card: CardView, subject: EntityId): readonly string[] {
 // abas abertas — ela não sabe nada de React, `TabState` nem `setActiveTabId`.
 // ---------------------------------------------------------------------------
 
-/** O mínimo de uma aba aberta que esta decisão precisa — evita importar `TabState` de `App.tsx`. */
+/**
+ * O mínimo de uma aba aberta que esta decisão precisa — evita importar
+ * `TabState` de `App.tsx`. `undefined` entra ao lado de `null` porque é assim
+ * que `TabState.claudeSessionId` chega (aba `shell`, ou `claude` que ainda
+ * não teve o id resolvido pelo hook) — os dois significam a mesma coisa aqui:
+ * esta aba não é candidata a nenhuma sessão.
+ */
 export interface LiveSessionTabLookup {
   readonly id: string;
-  readonly claudeSessionId: string | null;
+  readonly claudeSessionId?: string | null;
 }
 
 /**
