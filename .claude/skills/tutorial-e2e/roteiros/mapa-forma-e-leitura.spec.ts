@@ -17,7 +17,8 @@ import { abrirDonel, fecharDonel, fecharPortaDeEntrada, REPO_ROOT, type RoteiroC
 //   C3  o item com artefato de tasks ganha a seção "O que roda junto" no
 //       painel de detalhe: escopo compacto + cada task com o título humano
 //       (lido do `tasks.md` REAL desta árvore, não um dublê);
-//   C4  recolher a barra DIREITA não desmonta mais o mapa ESQUERDO — o
+//   C4  recolher o painel de detalhe (barra DIREITA) não derruba mais o mapa
+//       ESQUERDO — a coluna do mapa nunca zera por causa deste botão, e o
 //       carrossel continua no mesmo nó depois de reabrir;
 //   B1  uma fase CONCLUÍDA ganha "↺ Retomar": reabre a última sessão da
 //       cadeia, sem disparo novo;
@@ -185,17 +186,24 @@ test('o mapa fica denso, humano, sobrevive ao colapso da barra e sabe retomar/na
       `O item aponta pra um artefato de tasks (o \`${TASKS_DOC_PATH}\` real desta árvore, 26 tasks). O painel lê o arquivo, resume no cabeçalho ("26 tasks · T1301-T1326") e expande cada task com o título humano — não o id sozinho.`,
     );
 
-    // ── C4 — recolher a barra direita NÃO desmonta o mapa esquerdo ────────
-    // O aria-label/title deste botão alterna com o estado ("Recolher..." ↔
-    // "Mostrar..." — correto para acessibilidade). Âncora por regex na parte
-    // ESTÁVEL do nome, nunca pelo texto inteiro: o próprio roteiro clica nele
-    // duas vezes, e um locator com o nome de um único estado emperra no
-    // segundo clique (violaria a própria regra do roteiro.md).
-    const recolherPaineis = win.getByRole('button', { name: /painéis do Modo Dev/ });
+    // ── C4 — recolher o painel de detalhe NÃO derruba o mapa esquerdo ─────
+    // FIX (feedback e2e 05/08): o botão "Recolher painéis do Modo Dev" zerava
+    // a coluna do mapa JUNTO com a do detalhe — ocultar a barra direita
+    // derrubava o mapa. O passo de 04/08 só checava presença no DOM +
+    // `data-collapsed`, e por isso "passou" com o defeito vivo: o mapa
+    // seguia montado, só que com largura 0 (invisível do mesmo jeito). Este
+    // passo fotografa o GESTO real e mede a largura de verdade
+    // (`boundingBox`), não só a montagem.
+    //
+    // O rótulo do botão mudou (agora fala só do painel de detalhe), mas a
+    // âncora aqui segue por regex na parte estável — "Modo Dev" não está mais
+    // no nome, então ancoramos por "painel de detalhes" (as duas variações,
+    // "Recolher"/"Mostrar", contêm essa frase).
+    const recolherPaineis = win.getByRole('button', { name: /painel de detalhes/ });
     await passo(
-      'Recolher os painéis do Modo Dev',
+      'Recolher o painel de detalhes',
       recolherPaineis,
-      'Este botão zera a coluna do mapa E a do detalhe. O bug (C4): recolher a barra DIREITA desmontava o mapa ESQUERDO — cada toggle perdia o nó em foco do carrossel.',
+      'Este botão agora afeta SÓ a coluna direita (`PhaseDetailsPanel`, 316px). O bug corrigido (C4): antes ele também zerava a coluna do mapa, à esquerda — ocultar a barra direita derrubava o mapa junto.',
     );
     await recolherPaineis.click();
     await assentar(win);
@@ -203,26 +211,36 @@ test('o mapa fica denso, humano, sobrevive ao colapso da barra e sabe retomar/na
     const mapaColapsado = win.getByTestId('devmode-map');
     const aindaMontado = await mapaColapsado.count();
     if (aindaMontado === 0) {
-      throw new Error('C4 regrediu: o mapa desmontou ao recolher a barra direita');
+      throw new Error('C4 regrediu: o mapa desmontou ao recolher o painel de detalhes');
     }
-    const colapsadoAttr = await mapaColapsado.getAttribute('data-collapsed');
-    if (colapsadoAttr !== 'true') {
-      throw new Error('C4: o mapa está montado, mas não marcou data-collapsed="true" — a prop não chegou');
+    const larguraComPainelOculto = (await mapaColapsado.boundingBox())?.width ?? 0;
+    if (larguraComPainelOculto <= 400) {
+      throw new Error(
+        `C4 regrediu: o mapa está montado mas com largura ${larguraComPainelOculto}px (esperado >400px) — a tela MENTE que o mapa está lá.`,
+      );
+    }
+    const detalheAindaVisivel = await detalhe.count();
+    if (detalheAindaVisivel > 0) {
+      throw new Error('C4 regrediu: o painel de detalhe continua no DOM depois de "Recolher"');
     }
     await passo(
-      'O mapa continua no DOM — só a largura zerou',
-      null,
-      'O `data-testid="devmode-map"` continua presente (verificado no script, não só visualmente): o componente não desmontou, só encolheu por CSS. FIX #15 continua valendo do outro lado — colapsar a barra ESQUERDA (ícone ao lado) ainda desmonta o mapa, de propósito.',
+      'O mapa continua VISÍVEL DE VERDADE — só o painel de detalhe sumiu',
+      mapa,
+      `A largura medida do mapa (\`boundingBox\`) é ${Math.round(larguraComPainelOculto)}px — não é só um testid presente com largura zero. O painel de detalhe (\`devmode-details-panel\`) desmontou, como sempre fez; o mapa nunca mais reage a este botão.`,
     );
 
     await recolherPaineis.click();
     await assentar(win);
     const itemAindaEmFoco = detalhe.getByTestId('devmode-details-tasks');
     await itemAindaEmFoco.waitFor({ timeout: 15_000 });
+    const larguraComPainelVisivel = (await mapa.boundingBox())?.width ?? 0;
+    if (larguraComPainelVisivel <= 400) {
+      throw new Error(`C4 regrediu: reabrindo o painel de detalhe, o mapa ficou com largura ${larguraComPainelVisivel}px`);
+    }
     await passo(
-      'Reabrindo: o mesmo nó continua selecionado',
+      'Reabrindo: o painel de detalhe volta com o item em foco',
       mapa,
-      'Sem remontar, o estado do carrossel (o nível em foco, o nó selecionado) sobreviveu ao toggle — a seção "O que roda junto" do item ainda está aberta, sem precisar escolher o item de novo.',
+      'O mapa nunca desmontou (nunca reage a este botão): o estado do carrossel (o nível em foco, o nó selecionado) sobreviveu ao toggle inteiro — a seção "O que roda junto" do item ainda está aberta, sem precisar escolher o item de novo.',
     );
 
     // ── B2 — navegar até um nó com sessão viva alterna a aba sozinho ──────
@@ -355,6 +373,14 @@ function emitirResultadoDaSkill(esteiraRoot: string): void {
         repo: REPO_ALVO,
         path: TASKS_DOC_PATH,
       },
+      // A18 — discovery concluída fecha com o que alguém disse (mesmo
+      // requisito de `mapa-sobre-o-store.spec.ts`, B6).
+      {
+        type: 'decision.recorded',
+        subject: { entity: 'discovery', id: discoveryId },
+        decision: 'instrumentar antes de mexer no consumo',
+        confirmed_by: 'dono do repo',
+      },
       {
         // B1 — a fase que tinha ficado "interrompida" (a aba fechou sem
         // concluir) agora conclui: a sessão que rodou ali já está no
@@ -377,19 +403,31 @@ function emitirResultadoDaSkill(esteiraRoot: string): void {
 }
 
 /**
- * O dublê do `claude` — idêntico ao de `mapa-sobre-o-store.spec.ts` (mesmo
- * banner, mesmo eco, mesma denúncia de `\r`/`\n` recebido).
+ * O dublê do `claude` — mesmo banner e mesmo eco de `mapa-sobre-o-store.spec.ts`,
+ * mas DIVERGE numa coisa: este roteiro testa a fase "app aperta o Enter
+ * sozinho" (auto-submit, ver `esteiraView.ts`), que B6 trata como invariante
+ * violada. FIX (05/08, achado ao rodar a captura de verdade do C4) — o dublê
+ * de B6 só ecoa o chunk INTEIRO quando ele não contém `\r`/`\n`; quando o app
+ * escreve comando+Enter no MESMO `pty.write` (ou o pipe do Windows coalesce
+ * duas escritas próximas em uma leitura só), o chunk chega com o texto e o
+ * `\r` juntos, e o dublê antigo pulava o eco do texto inteiro — o comando
+ * pré-digitado nunca aparecia na tela, e o roteiro travava esperando por ele.
+ * Este dublê ecoa o que vier ANTES do primeiro `\r`/`\n` do chunk, depois
+ * denuncia o Enter — o mesmo que um terminal de verdade faria.
  */
 const STUB_JS = `
 process.stdout.write('\\r\\n  * Welcome to Claude Code (stub do roteiro e2e)\\r\\n\\r\\n> ');
 process.stdin.setEncoding('utf8');
 if (process.stdin.isTTY && process.stdin.setRawMode) process.stdin.setRawMode(true);
 process.stdin.on('data', (chunk) => {
-  if (/[\\r\\n]/.test(chunk)) {
-    process.stdout.write('\\r\\n[stub] ENTER RECEBIDO\\r\\n> ');
+  const corte = chunk.search(/[\\r\\n]/);
+  if (corte === -1) {
+    process.stdout.write(chunk);
     return;
   }
-  process.stdout.write(chunk);
+  const antesDoEnter = chunk.slice(0, corte);
+  if (antesDoEnter.length > 0) process.stdout.write(antesDoEnter);
+  process.stdout.write('\\r\\n[stub] ENTER RECEBIDO\\r\\n> ');
 });
 process.stdin.resume();
 `;
