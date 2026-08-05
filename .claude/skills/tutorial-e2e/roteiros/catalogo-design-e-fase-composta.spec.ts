@@ -71,13 +71,17 @@ test('o catálogo novo aparece no disparo e no mapa', async () => {
     await painel.locator('button', { hasText: 'O que ja esta em andamento' }).first().waitFor({ timeout: 10_000 });
 
     // ── O catálogo de disparo, com a linha nova e a linha fundida ────────
-    const linhaDeFases = painel.getByTestId('dispatch-phases');
+    // Alvo é o CHIP, não a linha inteira (`dispatch-phases`): a legenda do
+    // relatório usa a primeira linha do innerText do alvo, e um container com
+    // seis botões vira "Circulado: Discovery" — a foto mostra o anel em volta
+    // de tudo, a legenda nomeia só o primeiro. Achado da própria captura
+    // (05/08); os roteiros irmãos (disparo-por-assunto) já ancoram no chip.
     const chipDesign = painel.getByTestId('dispatch-phase-design');
     await chipDesign.waitFor({ timeout: 10_000 });
     await passo(
       'Design entrou no catálogo, antes de Implementar',
-      linhaDeFases,
-      'E1 — mockup e diagrama de arquitetura se veem ANTES de codar (F11). O nome da fase é livre (run.phase continua string) — só a OFERTA da tela ganhou a linha nova, o contrato não mudou.',
+      chipDesign,
+      'E1 — mockup e diagrama de arquitetura se veem ANTES de codar (F11). O nome da fase é livre (run.phase continua string) — só a OFERTA da tela ganhou a linha nova, o contrato não mudou. (A linha inteira do catálogo aparece no print — Discovery, Plano, Design, Implementar, Validar+Documentar, Concluir, nessa ordem.)',
     );
 
     const chipValidar = painel.getByTestId('dispatch-phase-validar');
