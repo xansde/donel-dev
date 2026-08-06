@@ -292,6 +292,61 @@ describe('gestos do app', () => {
     expect(created.ok && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(created.discoveryId)).toBe(true);
   });
 
+  // Achado do dogfooding de 06/08 — o card so podia declarar repo ao nascer, e
+  // num campo de texto livre. Um card com alvo `"spotsys e api-spotsys"` (uma
+  // frase, nao uma pasta) nao dispara e nao tinha gesto que o consertasse.
+  describe('corrigir alvo e escopo de um card que ja existe (D-6)', () => {
+    function cardDeObras(): string {
+      const created = service.createDiscovery({
+        title: 'Diario de Obra',
+        problem: null,
+        targetRepo: 'spotsys e api-spotsys',
+        scopeRepos: [],
+        tracker: null,
+      });
+      if (!created.ok) throw new Error('setup falhou');
+      return created.discoveryId;
+    }
+
+    it('troca a ancora e passa a declarar o escopo multi-repo', () => {
+      const id = cardDeObras();
+      const gesto = service.setDiscoveryRepos({ discoveryId: id, targetRepo: 'api-spotsys', scopeRepos: ['api-spotsys', 'spotsys'] });
+
+      expect(gesto.ok).toBe(true);
+      const card = gesto.state.snapshot.discoveries.find((entry) => entry.id === id)!;
+      expect(card.targetRepo).toBe('api-spotsys');
+      expect(card.scopeRepos).toEqual(['api-spotsys', 'spotsys']);
+      // A correcao nao pode levar junto nada mais do card.
+      expect(card.title).toBe('Diario de Obra');
+      expect(card.derivedStage).toBe('discovery');
+    });
+
+    it('aceita voltar a ficar sem repo — discovery investiga problema, nao repositorio', () => {
+      const id = cardDeObras();
+      const gesto = service.setDiscoveryRepos({ discoveryId: id, targetRepo: null, scopeRepos: [] });
+      expect(gesto.ok).toBe(true);
+      const card = gesto.state.snapshot.discoveries.find((entry) => entry.id === id)!;
+      expect(card.targetRepo).toBeNull();
+      expect(card.scopeRepos).toEqual([]);
+    });
+
+    it('apara o que chega e descarta entrada vazia, em vez de gravar lixo', () => {
+      const id = cardDeObras();
+      const gesto = service.setDiscoveryRepos({ discoveryId: id, targetRepo: '  api-spotsys  ', scopeRepos: ['  spotsys ', '   '] });
+      expect(gesto.ok).toBe(true);
+      const card = gesto.state.snapshot.discoveries.find((entry) => entry.id === id)!;
+      expect(card.targetRepo).toBe('api-spotsys');
+      expect(card.scopeRepos).toEqual(['spotsys']);
+    });
+
+    it('card que nao existe: recusa com a razao, sem inventar entidade', () => {
+      const gesto = service.setDiscoveryRepos({ discoveryId: 'dsc-nao-existe', targetRepo: 'donel-dev', scopeRepos: [] });
+      expect(gesto.ok).toBe(false);
+      if (gesto.ok) return;
+      expect(gesto.reason).toBe('unknown-subject');
+    });
+  });
+
   it('disparar uma fase trava o card e deixa o run-input pronto para a skill', () => {
     const created = service.createDiscovery({ title: 'Card novo', problem: null, targetRepo: 'donel-dev', scopeRepos: [], tracker: null });
     expect(created.ok).toBe(true);

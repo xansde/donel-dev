@@ -50,6 +50,9 @@ const OK: EsteiraDispatchDto = {
   state: estado(),
 };
 
+/** O repo do card, conhecido — para os testes que precisam CHEGAR ao dispatch. */
+const CONHECIDOS = [{ name: 'donel-dev', path: 'C:/repos/donel-dev' }];
+
 describe('preparePhase', () => {
   it('repo conhecido: dispara, abre a aba com o comando escrito e diz onde ela abriu', async () => {
     const openSession = vi.fn();
@@ -81,12 +84,43 @@ describe('preparePhase', () => {
     expect(result.message).not.toContain('O Enter é seu');
   });
 
-  it('repo que o app não conhece: a fase fica preparada, NENHUMA aba abre, e a razão nomeia o repo', async () => {
+  // Achado do dogfooding de 06/08 — o card "Diário de Obra" nasceu com repo
+  // `"spotsys e api-spotsys"` (uma frase, não uma pasta). O gesto gravava o
+  // contexto e travava o card ANTES de descobrir isso, e o card ficou preso num
+  // trabalho que nunca começou. A ordem agora é a inversa, e o teste prende as
+  // três consequências: sem dispatch, sem aba, sem estado novo.
+  it('repo que o app não conhece: NADA é gravado, o card não trava, e a razão nomeia o repo', async () => {
     const openSession = vi.fn();
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(OK), openSession });
+    const dispatch = vi.fn().mockResolvedValue(OK);
+    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch, openSession });
 
+    expect(dispatch).not.toHaveBeenCalled();
     expect(openSession).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    // Nada mudou no histórico — e o tipo diz isso, em vez de devolver o snapshot velho.
+    expect(result.state).toBeNull();
     expect(result.message).toContain('não conheço o repo "donel-dev"');
+    expect(result.message).toContain('não ficou travado');
+    // A recusa não pode citar um contexto que ela não gravou.
+    expect(result.message).not.toContain('C:/inbox/run-1.json');
+  });
+
+  // A distinção que o gesto passou a fazer: "sem repo" é declaração legítima da
+  // spec (discovery investiga problema, não repositório); "repo que não existe"
+  // é erro. Só o erro é que não deixa resíduo.
+  it('card SEM repo: dispara e grava o contexto — o que não abre é a aba, e a frase diz onde rodar', async () => {
+    const semRepo: StoreSnapshot = reduceEvents([evt('discovery.created', { id: 'dsc-2', title: 'Investigar a fila', targetRepo: null })]);
+    const card = cardView(semRepo, 'dsc-2')!;
+    const view = dispatchView(card, { phase: 'discovery', targetKey: null });
+    const openSession = vi.fn();
+    const dispatch = vi.fn().mockResolvedValue(OK);
+
+    const result = await preparePhase({ card, phase: view.phase.phase, target: view.target!, projects: [] }, { dispatch, openSession });
+
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ workspace: null }));
+    expect(openSession).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain('não declara repo');
     expect(result.message).toContain('C:/inbox/run-1.json');
   });
 
@@ -106,7 +140,7 @@ describe('preparePhase', () => {
       state: estado(),
     };
     const openSession = vi.fn();
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('em andamento');
@@ -130,7 +164,7 @@ describe('preparePhase', () => {
       state: estado(),
     };
     const openSession = vi.fn();
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('donel-dev');
@@ -164,7 +198,7 @@ describe('preparePhase', () => {
       state: estado(),
     };
     const openSession = vi.fn();
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('discovery');
@@ -191,7 +225,7 @@ describe('preparePhase', () => {
       state: estado(),
     };
     const openSession = vi.fn();
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('concluída');
@@ -201,7 +235,7 @@ describe('preparePhase', () => {
 
   it('histórico só de leitura: nada é gravado, e a tela diz isso', async () => {
     const recusa: EsteiraDispatchDto = { ok: false, reason: 'store-refused', state: estado() };
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession: vi.fn() });
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession: vi.fn() });
     expect(result.ok).toBe(false);
     expect(result.message).toContain('não aceita escrita');
   });
@@ -213,7 +247,7 @@ describe('preparePhase', () => {
       issues: [{ code: 'issue_without_target_repo', path: 'run.workspace', message: 'x' }],
       state: estado(),
     };
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession: vi.fn() });
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession: vi.fn() });
     expect(result.message).toContain('issue_without_target_repo');
   });
 });

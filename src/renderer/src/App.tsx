@@ -1356,7 +1356,9 @@ export function App(): React.JSX.Element {
       { card, phase: step.phase, target: oferta.target, projects },
       { dispatch: (payload) => window.donel.esteira.dispatch(payload), openSession: handleOpenEsteiraSession },
     ).then((result) => {
-      setEsteiraState(result.state);
+      // `state: null` = recusa que nao gravou nada; manter o estado que ja esta
+      // na tela, em vez de zera-la para anunciar que nada aconteceu.
+      if (result.state !== null) setEsteiraState(result.state);
       setDevModeToast(result.message);
     });
   };

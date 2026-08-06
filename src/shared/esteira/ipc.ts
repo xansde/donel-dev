@@ -39,6 +39,8 @@ export const ESTEIRA_CHANNELS = {
   releaseLock: 'esteira:releaseLock',
   /** D-13 — forca a macro etapa a mao, ou volta ao calculo (`value: null`). */
   setStageOverride: 'esteira:setStageOverride',
+  /** D-6 — corrige a ancora e o escopo de um card que ja existe. */
+  setDiscoveryRepos: 'esteira:setDiscoveryRepos',
   /** Abrir/comecar/concluir/abandonar um item — e o que move a macro etapa, inclusive PARA TRAS. */
   setWorkItemState: 'esteira:setWorkItemState',
   /** D-16 — descarta um item num gesto; o evento fica no log, a entidade sai do snapshot. */
@@ -233,6 +235,36 @@ export function isValidSetStageOverrideIpcInput(input: unknown): input is SetSta
   return true;
 }
 
+/**
+ * D-6 — corrigir a ancora e o escopo de um card que ja existe.
+ *
+ * Nasceu do dogfooding de 06/08: o card so podia declarar repo no instante em
+ * que nascia, e num campo de texto livre. Quem descobriu depois que o alvo
+ * estava errado — ou que o trabalho atravessava um segundo servico — nao tinha
+ * gesto nenhum; ficava com um card que nao dispara e sem como conserta-lo.
+ *
+ * Os dois campos viajam JUNTOS de propósito: alvo e escopo sao a mesma decisao
+ * ("onde isto acontece"), e salva-los separado deixaria o card num estado
+ * intermediario onde a ancora nao pertence ao proprio escopo.
+ */
+export interface SetDiscoveryReposIpcInput {
+  readonly discoveryId: string;
+  /** A ancora: onde a sessao senta. `null` e legitimo — discovery investiga problema, nao repo. */
+  readonly targetRepo: string | null;
+  /** O alcance: o que a mudanca toca. Microsservico atravessa repo por natureza. */
+  readonly scopeRepos: readonly string[];
+}
+
+export function isValidSetDiscoveryReposIpcInput(input: unknown): input is SetDiscoveryReposIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<SetDiscoveryReposIpcInput>;
+  if (typeof candidate.discoveryId !== 'string' || candidate.discoveryId.trim().length === 0) return false;
+  if (candidate.targetRepo !== null && candidate.targetRepo !== undefined && typeof candidate.targetRepo !== 'string') return false;
+  if (candidate.scopeRepos !== undefined && !Array.isArray(candidate.scopeRepos)) return false;
+  if (candidate.scopeRepos?.some((repo) => typeof repo !== 'string' || repo.trim().length === 0)) return false;
+  return true;
+}
+
 /** Abrir, comecar, concluir, abandonar — os quatro estados de D-4, um gesto cada. */
 export interface SetWorkItemStateIpcInput {
   readonly workItemId: string;
@@ -357,6 +389,7 @@ export interface DonelEsteiraApi {
   endSession(input: EndSessionIpcInput): Promise<EsteiraSnapshotDto>;
   releaseLock(input: ReleaseLockIpcInput): Promise<EsteiraSnapshotDto>;
   setStageOverride(input: SetStageOverrideIpcInput): Promise<EsteiraGestureDto>;
+  setDiscoveryRepos(input: SetDiscoveryReposIpcInput): Promise<EsteiraGestureDto>;
   setWorkItemState(input: SetWorkItemStateIpcInput): Promise<EsteiraGestureDto>;
   discardWorkItem(input: DiscardWorkItemIpcInput): Promise<EsteiraGestureDto>;
   addNote(input: AddNoteIpcInput): Promise<EsteiraGestureDto>;

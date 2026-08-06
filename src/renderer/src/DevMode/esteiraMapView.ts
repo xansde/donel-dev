@@ -26,6 +26,7 @@
 //    pergunta; ela não recalcula. Recalcular faria o carrossel oferecer o que a
 //    outra tela recusa — o defeito do B2 pelo avesso, agora em duas telas.
 
+import { scopeMeta } from '../Esteira/repoScope';
 import {
   cardView,
   catalogPhasesFor,
@@ -373,7 +374,10 @@ function discoveryCard(card: CardView, focused: boolean): MapCard {
   if (seededTag !== null) tags.push({ text: seededTag.label, tone: 'muted', title: seededTag.title });
 
   const meta = [
-    card.discovery.targetRepo,
+    // Multi-repo aparece AQUI, que é onde o card é lido no dia a dia: até 06/08
+    // a linha mostrava só a âncora, então um card que atravessa dois serviços
+    // parecia um card de um repo só.
+    scopeMeta(card.discovery),
     contado(card.plans.length, 'plano', 'planos'),
     contado(card.items.length, 'item', 'itens'),
   ].filter((part): part is string => part !== null && part.length > 0);
