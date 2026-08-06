@@ -129,7 +129,9 @@ describe('noRepoPreparedMessage — preparou, e agora e com voce', () => {
     const message = noRepoPreparedMessage('discovery', 'C:/inbox/run-1.json');
     expect(message).toContain('não declara repo');
     expect(message).toContain('C:/inbox/run-1.json');
-    expect(message).toContain('/esteira-discovery --input');
+    // O sufixo `-3` do A2 vale aqui tambem: a frase entrega o MESMO comando que
+    // a aba receberia — sem ele, o texto copiado invoca o plugin 2.1.0.
+    expect(message).toContain('/esteira-discovery-3 --input');
   });
 
   it('o comando que ela mostra continua sem quebra de linha — a frase tambem e copiada e colada', () => {

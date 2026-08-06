@@ -164,7 +164,7 @@ describe('preparePhase', () => {
       state: estado(),
     };
     const openSession = vi.fn();
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('donel-dev');
@@ -198,7 +198,7 @@ describe('preparePhase', () => {
       state: estado(),
     };
     const openSession = vi.fn();
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('discovery');
@@ -225,7 +225,7 @@ describe('preparePhase', () => {
       state: estado(),
     };
     const openSession = vi.fn();
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('concluída');
