@@ -5,6 +5,8 @@ import type { MacroStage, WorkItemSnapshot, WorkItemState } from '../../../share
 import { SEED_DOCUMENT_EXAMPLE } from '../../../shared/esteira/store/seed';
 import type { EsteiraSessionRequest, KnownProject } from './esteiraSession';
 import { preparePhase } from './preparePhase';
+import { RepoScopePicker } from './RepoScopePicker';
+import { normalizeRepoScope, repoScopeWarning, scopeSummary, type RepoScope } from './repoScope';
 import {
   cardContent,
   cardView,
@@ -94,7 +96,15 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   const [state, setState] = useState<EsteiraSnapshotDto | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
-  const [newRepo, setNewRepo] = useState('');
+  // Alvo e escopo do card novo — os dois JUNTOS, porque sao a mesma decisao
+  // ("onde isto acontece"). Ver `repoScope.ts`.
+  const [newScope, setNewScope] = useState<RepoScope>({ targetRepo: null, scopeRepos: [] });
+  /**
+   * O rascunho da correcao de alvo/escopo do card selecionado. `null` = o bloco
+   * esta fechado, mostrando o que o card TEM. Guardar rascunho separado do
+   * snapshot e o que impede a tela de parecer salva antes de o gesto acontecer.
+   */
+  const [repoDraft, setRepoDraft] = useState<RepoScope | null>(null);
   const [phase, setPhase] = useState('discovery');
   /** O assunto escolhido para o disparo. `null` = o primeiro que a fase comporta. */
   const [targetKey, setTargetKey] = useState<string | null>(null);
@@ -165,6 +175,7 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
     // cards, ele apontaria para um item que não está mais na tela.
     setTargetKey(null);
     setStagePick(null);
+    setRepoDraft(null);
     setNotePick(null);
     setNoteText('');
     setMessage(null);
@@ -173,22 +184,24 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   const handleCreate = useCallback(async () => {
     const title = newTitle.trim();
     if (title.length === 0) return;
+    const escolha = normalizeRepoScope(newScope);
     const created = await window.donel.esteira.createDiscovery({
       title,
       problem: null,
-      targetRepo: newRepo.trim() || null,
-      scopeRepos: [],
+      targetRepo: escolha.targetRepo,
+      scopeRepos: escolha.scopeRepos,
       tracker: null,
     });
     setState(created.state);
     if (created.ok) {
       setSelectedId(created.discoveryId);
       setNewTitle('');
+      setNewScope({ targetRepo: null, scopeRepos: [] });
       setMessage(null);
     } else {
       setMessage('Não deu para criar: o histórico não aceita escrita agora.');
     }
-  }, [newTitle, newRepo]);
+  }, [newTitle, newScope]);
 
   const handleSeed = useCallback(async () => {
     const document = seedDoc.trim();
@@ -229,7 +242,9 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
       { card: selected, phase: dispatch.phase.phase, target: dispatch.target, projects },
       { dispatch: (payload) => window.donel.esteira.dispatch(payload), openSession: onOpenSession },
     );
-    setState(result.state);
+    // `state: null` = a recusa nao tocou no historico. Aplicar `null` aqui
+    // apagaria a tela inteira para dizer que nada mudou.
+    if (result.state !== null) setState(result.state);
     setMessage(result.message);
   }, [dispatch, selected, projects, onOpenSession]);
 
@@ -279,6 +294,32 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
     },
     [applyGesture, selected],
   );
+
+  /**
+   * D-6 — corrigir a âncora e o escopo de um card que já existe.
+   *
+   * O gesto não existia: o repo só podia ser declarado no nascimento do card, e
+   * num campo de texto livre. Quem errasse ali ficava com um card que não
+   * dispara e sem como consertá-lo — foi o que aconteceu com o "Diário de Obra"
+   * em 06/08, cujo alvo era a frase "spotsys e api-spotsys".
+   */
+  const handleSaveRepos = useCallback(async () => {
+    if (selected === null || repoDraft === null) return;
+    const escolha = normalizeRepoScope(repoDraft);
+    if (
+      applyGesture(
+        await window.donel.esteira.setDiscoveryRepos({
+          discoveryId: selected.discovery.id,
+          targetRepo: escolha.targetRepo,
+          scopeRepos: escolha.scopeRepos,
+        }),
+        `Alvo e escopo atualizados: ${scopeSummary(escolha)}.`,
+      )
+    ) {
+      // Fecha o rascunho: o que a tela mostra volta a ser o que o card TEM.
+      setRepoDraft(null);
+    }
+  }, [applyGesture, repoDraft, selected]);
 
   const handleAddNote = useCallback(
     async (target: string) => {
@@ -353,13 +394,9 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
               placeholder="O que está em jogo?"
               disabled={readOnly}
             />
-            <TextInput
-              label="Repo alvo (opcional)"
-              value={newRepo}
-              onChange={(event) => setNewRepo(event.target.value)}
-              placeholder="ex.: donel-dev"
-              disabled={readOnly}
-            />
+            {/* Era um `TextInput` livre. Virou escolha entre o que o app
+                conhece + escopo multi-repo — ver `RepoScopePicker`. */}
+            <RepoScopePicker value={newScope} onChange={setNewScope} projects={projects} disabled={readOnly} />
             <Button onClick={() => void handleCreate()} disabled={readOnly || newTitle.trim().length === 0}>
               Criar
             </Button>
@@ -456,6 +493,49 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
             <>
               <h3 className={styles.detailTitle}>{selected.discovery.title}</h3>
               {selected.discovery.problem ? <p className={styles.problem}>{selected.discovery.problem}</p> : null}
+
+              {/* D-6 — onde isto roda. Fica ANTES da etapa porque é o que
+                  decide se a fase abre: um card com repo impossível não tem
+                  etapa a discutir. O aviso aparece aqui, ao lado da escolha, e
+                  não depois do disparo — foi um aviso tardio que deixou um card
+                  travado por um trabalho que nunca começou (06/08). */}
+              <section className={styles.block} data-testid="esteira-repos">
+                <h4 className={styles.blockTitle}>Onde isto roda</h4>
+                {repoDraft === null ? (
+                  <>
+                    <p className={styles.stageLine}>
+                      <strong>{scopeSummary(selected.discovery)}</strong>
+                    </p>
+                    {repoScopeWarning(selected.discovery, projects) ? (
+                      <p className={styles.blockedReason} data-testid="esteira-repos-warning">
+                        {repoScopeWarning(selected.discovery, projects)}
+                      </p>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      data-testid="esteira-repos-edit"
+                      onClick={() =>
+                        setRepoDraft({ targetRepo: selected.discovery.targetRepo, scopeRepos: [...selected.discovery.scopeRepos] })
+                      }
+                      disabled={readOnly}
+                    >
+                      Corrigir alvo e escopo
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <RepoScopePicker value={repoDraft} onChange={setRepoDraft} projects={projects} disabled={readOnly} />
+                    <div className={styles.rowActions}>
+                      <Button onClick={() => void handleSaveRepos()} disabled={readOnly}>
+                        Salvar
+                      </Button>
+                      <Button variant="ghost" onClick={() => setRepoDraft(null)}>
+                        Cancelar
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </section>
 
               {/* D-13 — a etapa é derivada. O ajuste manual existe, é sempre
                   marcado, e o cálculo aparece ao lado dele: override que esconde

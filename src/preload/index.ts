@@ -83,6 +83,7 @@ import {
   type ReadArtifactTextIpcInput,
   type ReleaseLockIpcInput,
   type SeedIpcInput,
+  type SetDiscoveryReposIpcInput,
   type SetStageOverrideIpcInput,
   type SetWorkItemStateIpcInput,
 } from '../shared/esteira/ipc';
@@ -387,6 +388,8 @@ const donelApi: DonelApi = {
     // está aqui de propósito — D-16 manda ela passar sempre pela skill.
     setStageOverride: (input: SetStageOverrideIpcInput) =>
       ipcRenderer.invoke(ESTEIRA_CHANNELS.setStageOverride, input) as Promise<EsteiraGestureDto>,
+    setDiscoveryRepos: (input: SetDiscoveryReposIpcInput) =>
+      ipcRenderer.invoke(ESTEIRA_CHANNELS.setDiscoveryRepos, input) as Promise<EsteiraGestureDto>,
 
     setWorkItemState: (input: SetWorkItemStateIpcInput) =>
       ipcRenderer.invoke(ESTEIRA_CHANNELS.setWorkItemState, input) as Promise<EsteiraGestureDto>,

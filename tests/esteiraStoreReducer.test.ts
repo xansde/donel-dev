@@ -961,3 +961,27 @@ describe('reduceEvents — knownIngestRunIds (F26)', () => {
     expect(snapshot.knownIngestRunIds.has('run-desconhecido')).toBe(false);
   });
 });
+
+// Achado do dogfooding de 06/08 — o gesto de corrigir alvo/escopo precisa poder
+// LIMPAR o alvo, e nao podia: o reducer lia `null` como "o evento nao falou do
+// campo" e ressuscitava o valor antigo.
+describe('discovery.updated — apagar o alvo e diferente de nao falar dele', () => {
+  it('`targetRepo: null` LIMPA o alvo — o card volta a ser investigacao sem repo', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Diario de Obra', targetRepo: 'api-spotsys', scopeRepos: ['api-spotsys'] }),
+      evt('discovery.updated', { id: 'dsc-1', targetRepo: null, scopeRepos: [] }),
+    ]);
+    expect(snapshot.discoveries[0].targetRepo).toBeNull();
+    expect(snapshot.discoveries[0].scopeRepos).toEqual([]);
+  });
+
+  it('evento que NAO fala do alvo preserva o que estava la — skill declara so o que sabe', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Diario de Obra', targetRepo: 'api-spotsys', scopeRepos: ['api-spotsys'] }),
+      evt('discovery.updated', { id: 'dsc-1', problem: 'O que o card investiga.' }),
+    ]);
+    expect(snapshot.discoveries[0].targetRepo).toBe('api-spotsys');
+    expect(snapshot.discoveries[0].scopeRepos).toEqual(['api-spotsys']);
+    expect(snapshot.discoveries[0].problem).toBe('O que o card investiga.');
+  });
+});

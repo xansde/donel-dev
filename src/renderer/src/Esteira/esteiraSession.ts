@@ -29,6 +29,11 @@ import type { SessionSnapshot } from '../../../shared/esteira/store/storeFormat'
 //    RECUSA com o nome do repo, nunca um segundo melhor palpite. A evidência 2
 //    da spec é uma fase que abriu no repo errado por causa de um fallback
 //    silencioso comentado no código como "palpite honesto".
+//
+// Emenda de 06/08 (dogfooding): a recusa por repo passou a acontecer ANTES de
+// qualquer escrita — ver `repoRefusalMessage`. A regra de correspondência que
+// decide isso mora em `findProject`, exportada para que a tela possa avisar com
+// a MESMA régua do disparo.
 
 import { hasClaudeReadyMarker, hasIdlePromptFooter } from '../../../shared/preTypeReadiness';
 import { isTrustDialogVisible } from '../../../shared/trustDialog';
@@ -83,13 +88,28 @@ export function resolveSessionCwd(targetRepo: string | null, projects: readonly 
   const wanted = targetRepo?.trim() ?? '';
   if (wanted.length === 0) return { ok: false, reason: 'no-target-repo' };
 
-  const normalized = wanted.toLowerCase().replace(/[\\/]+$/, '');
-  const match = projects.find(
-    (project) =>
-      project.name.toLowerCase() === normalized ||
-      project.path.toLowerCase().replace(/[\\/]+$/, '').replace(/\\/g, '/') === normalized.replace(/\\/g, '/'),
+  const match = findProject(wanted, projects);
+  return match === null ? { ok: false, reason: 'unknown-repo' } : { ok: true, cwd: match.path };
+}
+
+/**
+ * A regra de correspondência repo declarado → projeto conhecido, **uma só vez**.
+ *
+ * Nome OU caminho inteiro, ignorando caixa e barra final. Fica exportada porque
+ * a tela precisa da MESMA regra para avisar sobre um repo impossível antes do
+ * gesto (`repoScope.ts`): com duas implementações, a tela diria "tudo certo"
+ * sobre um card que o disparo recusa — que é o incidente de 06/08 invertido.
+ */
+export function findProject(repo: string, projects: readonly KnownProject[]): KnownProject | null {
+  const normalized = repo.trim().toLowerCase().replace(/[\\/]+$/, '').replace(/\\/g, '/');
+  if (normalized.length === 0) return null;
+  return (
+    projects.find(
+      (project) =>
+        project.name.toLowerCase() === normalized ||
+        project.path.toLowerCase().replace(/[\\/]+$/, '').replace(/\\/g, '/') === normalized,
+    ) ?? null
   );
-  return match === undefined ? { ok: false, reason: 'unknown-repo' } : { ok: true, cwd: match.path };
 }
 
 /** Nome da aba: a fase e o card de onde ela nasceu, curto o bastante para caber. */
@@ -115,33 +135,48 @@ export interface EsteiraSessionRequest {
   readonly command: string;
 }
 
-export type SessionOpenOutcome =
-  | { readonly opened: true; readonly tabName: string }
-  | { readonly opened: false; readonly reason: 'no-target-repo' | 'unknown-repo' };
-
 export interface PreparedMessageInput {
   readonly phase: string;
-  readonly targetRepo: string | null;
-  readonly inputPath: string;
-  readonly outcome: SessionOpenOutcome;
+  readonly tabName: string;
+}
+
+/** A frase do disparo que deu certo: o que o app fez, e o que continua sendo seu. */
+export function preparedMessage(input: PreparedMessageInput): string {
+  return `Fase "${input.phase}" preparada: a sessão abriu na aba "${input.tabName}" com o comando já escrito. O app aperta o Enter sozinho, assim que o terminal aceitar entrada — nenhum gesto seu é necessário.`;
 }
 
 /**
- * A frase que o card mostra logo depois do "Preparar". Nos três casos ela diz a
- * mesma coisa por caminhos diferentes: **o que o app fez e o que falta**. O
- * disparo que não abriu sessão não vira silêncio nem erro genérico — vira o
- * motivo, com o caminho do contexto que já está em disco.
+ * O card que não declara repo — legítimo pela spec — prepara sem abrir aba. Não
+ * há cwd a inventar, então o que o app entrega é o contexto em disco e o
+ * comando para rodar onde fizer sentido.
  */
-export function preparedMessage(input: PreparedMessageInput): string {
-  if (input.outcome.opened) {
-    return `Fase "${input.phase}" preparada: a sessão abriu na aba "${input.outcome.tabName}" com o comando já escrito. O app aperta o Enter sozinho, assim que o terminal aceitar entrada — nenhum gesto seu é necessário.`;
-  }
+export function noRepoPreparedMessage(phase: string, inputPath: string): string {
+  // `semQuebra` na frase INTEIRA, não só no comando: esta é a única mensagem da
+  // tela que se copia e cola num prompt, e o caminho cru entra nela.
+  return semQuebra(
+    `Fase "${phase}" preparada, mas nenhuma aba abriu: este card não declara repo, e é ele que diz onde a sessão roda. O contexto está em ${inputPath} — rode ${esteiraPhaseCommand(phase, inputPath)} onde fizer sentido, ou dê uma âncora ao card.`,
+  );
+}
 
-  if (input.outcome.reason === 'unknown-repo') {
-    return `Fase "${input.phase}" preparada, mas a sessão não abriu: não conheço o repo "${input.targetRepo ?? ''}" entre os projetos configurados, e o app não abre noutro lugar por palpite. O contexto está em ${input.inputPath}.`;
-  }
-
-  return `Fase "${input.phase}" preparada, mas a sessão não abriu: este card está sem repo alvo, e é ele que diz onde a sessão roda. O contexto está em ${input.inputPath}.`;
+/**
+ * A recusa por repo — dita **antes** de qualquer escrita.
+ *
+ * Até 06/08 esta frase começava com "preparada, mas a sessão não abriu": o
+ * disparo gravava o `run-input.json` e travava o card, e só então descobria que
+ * o repo era impossível. O card ficava preso num trabalho que nunca começou,
+ * esperando um gesto de "Liberar trava" para um contexto que ninguém ia usar.
+ *
+ * Agora o cwd é resolvido primeiro e a recusa não deixa resíduo — por isso a
+ * frase diz, com todas as letras, que nada foi gravado e nada ficou travado.
+ * Uma recusa que não conta o que NÃO fez ensina o operador a procurar sujeira.
+ */
+export function repoRefusalMessage(phase: string, targetRepo: string | null, reason: 'no-target-repo' | 'unknown-repo'): string {
+  const motivo =
+    reason === 'unknown-repo'
+      ? `não conheço o repo "${targetRepo ?? ''}" entre os projetos configurados, e o app não abre noutro lugar por palpite`
+      : 'este card está sem repo alvo, e é ele que diz onde a sessão roda';
+  const saida = reason === 'unknown-repo' ? 'Ajuste o repo alvo do card' : 'Escolha a âncora do card';
+  return `Fase "${phase}" NÃO foi preparada: ${motivo}. Nada foi gravado e o card não ficou travado — ${saida} e prepare de novo.`;
 }
 
 /**

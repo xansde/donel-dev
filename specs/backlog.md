@@ -823,6 +823,53 @@ silêncio, ou uma linha dizendo por quê? (Vale lembrar que hoje o painel já
 descarta `available`/`unavailableReason` que a API manda — achado do mesmo dia,
 mesmo lugar da tela.)
 
+### B26. Alvo × escopo: microsserviço na Esteira (dogfooding 06/08) — **PARCIALMENTE ENTREGUE em 06/08**
+
+Achado com o card real "Diário de Obra" na tela: ele nasceu com repo alvo
+`"spotsys e api-spotsys"` — uma **frase**, digitada num campo de texto livre,
+nomeando dois serviços. Ela nunca poderia bater com pasta nenhuma, então o
+"Preparar" gravou o `run-input.json`, travou o card e **só então** disse que não
+abriria a sessão. O card ficou preso desde 06/08 11:42 num trabalho que nunca
+começou.
+
+Causa raiz: o store já separa **âncora** (`targetRepo`, 0..1 — onde a sessão
+senta) de **escopo** (`scopeRepos`, 0..N — o que a mudança toca) desde a spec
+010 `[D-6]`, e o contrato os carrega ponta a ponta. Só a TELA não separava: um
+`TextInput` livre rotulado "Repo alvo", e `scopeRepos: []` fixo no código. Quem
+trabalha em microsserviço — que atravessa repositórios por natureza — não tinha
+onde declarar o segundo repo, e escreveu "e api-spotsys" dentro do primeiro.
+
+**Entregue em 06/08** (branch `feature/repo-alvo-e-escopo`):
+- `repoScope.ts` — o vocabulário puro de âncora/escopo: normalização (a âncora
+  sempre pertence ao escopo), resumo em uma linha, e o **aviso antes do gesto**.
+- `RepoScopePicker` — âncora vira `Select` entre os projetos que o app conhece;
+  escopo vira chip que liga/desliga. Repo declarado que o app não enxerga
+  **aparece marcado como desconhecido**, em vez de sumir do formulário.
+- Gesto `setDiscoveryRepos` — corrigir alvo e escopo de um card que **já
+  existe**. Não havia: o repo só podia ser declarado no nascimento do card.
+- `preparePhase` recusa repo impossível **antes** de gravar e travar. Card SEM
+  repo continua preparando (é declaração legítima da spec: "discovery investiga
+  um problema, não um repositório") — o que não abre é a aba.
+- Correção no reducer: `discovery.updated` com `targetRepo: null` agora LIMPA o
+  alvo. Antes, `?? current` lia `null` como "o evento não falou do campo" e
+  ressuscitava o valor antigo — apagar era impossível.
+
+**Fica em aberto (não entrou nesta leva):**
+- **Escopo no item, pela tela.** `WorkItemSnapshot` tem os mesmos dois campos, e
+  a fase de um item roda no repo do item. Hoje só a skill os declara — não há
+  gesto de corrigir alvo/escopo de item, e o `RepoScopePicker` já serviria.
+- **Herança item←card não existe no motor.** O comentário de `DiscoverySnapshot`
+  diz "alvo default herdado pelos itens", mas o reducer (`work_item.created`)
+  grava `targetRepo` cru do fato. Quem herda é a VIEW (`itemRepoOf`). Decidir:
+  a herança sobe para o reducer, ou o comentário desce para a realidade?
+- **`ships_with` não tem gesto na tela.** A relação "entra junto" existe no
+  store e é o mecanismo certo para item do back + item do front que sobem na
+  mesma janela — o caso canônico de microsserviço. Nenhuma UI a cria hoje.
+- **O escopo não chega à skill como instrução.** Ele viaja no `run-input.json`
+  (`context.discovery.scope_repos[]`), mas nenhuma skill 3.0 fala dele no
+  prompt. Uma skill de Plano que ignore o escopo vai quebrar em itens de um
+  repo só, que é o erro que este item nasceu para evitar.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo

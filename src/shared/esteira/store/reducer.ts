@@ -421,7 +421,13 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           title,
           problem: str(p, 'problem') ?? current?.problem ?? null,
           tracker: trackerRef(p, 'tracker') ?? current?.tracker ?? null,
-          targetRepo: str(p, 'targetRepo') ?? current?.targetRepo ?? null,
+          // `'targetRepo' in p` e nao `?? current`: os dois casos existem e sao
+          // diferentes. Um `discovery.updated` que NAO fala do alvo (uma skill
+          // declarando so o problema) preserva o que estava la; um que manda
+          // `null` esta LIMPANDO o alvo, e limpar e um gesto legitimo — o card
+          // volta a ser investigacao sem repo. Com `??`, apagar era impossivel:
+          // o `null` era lido como "nao falou" e o alvo velho ressuscitava.
+          targetRepo: 'targetRepo' in p ? str(p, 'targetRepo') : (current?.targetRepo ?? null),
           scopeRepos: 'scopeRepos' in p ? strList(p, 'scopeRepos') : (current?.scopeRepos ?? []),
           createdAt: current?.createdAt ?? str(p, 'createdAt') ?? event.at,
           stageOverride: current?.stageOverride ?? null,

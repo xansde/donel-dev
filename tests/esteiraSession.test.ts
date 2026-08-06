@@ -7,8 +7,10 @@ import {
   isReadyForAutoStart,
   lastSessionOfChain,
   lockStateOf,
+  noRepoPreparedMessage,
   phaseDoneRefusedMessage,
   preparedMessage,
+  repoRefusalMessage,
   resolveResume,
   resolveSessionCwd,
   resourceBusyRefusedMessage,
@@ -81,33 +83,57 @@ describe('resolveSessionCwd — o alvo e explicito, sem segundo melhor palpite (
 });
 
 describe('preparedMessage — a frase depois do "Preparar"', () => {
-  const base = { phase: 'discovery', targetRepo: 'atlas', inputPath: 'C:/inbox/run-1.json' };
-
   it('sessao aberta: diz onde ela abriu e que o app aperta o Enter sozinho (B5)', () => {
     // B5 (05/08, pedido literal do dono): o gesto humano ACABA no clique em
     // "Preparar" — o app aperta o próprio Enter assim que o terminal aceita
     // entrada. Antes do B5 esta frase dizia "o Enter é seu"; ficou falsa no
     // instante em que `withAutoEnter` passou a existir, porque toda sessão de
     // fase da esteira passa por `armEsteiraAutoStart` (App.tsx), sem exceção.
-    const message = preparedMessage({ ...base, outcome: { opened: true, tabName: '[atlas] discovery' } });
+    const message = preparedMessage({ phase: 'discovery', tabName: '[atlas] discovery' });
     expect(message).toContain('[atlas] discovery');
     expect(message).toContain('aperta o Enter sozinho');
     expect(message).not.toContain('O Enter é seu');
     expect(message).not.toContain('nunca envia por você');
   });
+});
 
-  it('repo desconhecido: nomeia o repo e diz que o app nao abre noutro lugar por palpite', () => {
-    const message = preparedMessage({ ...base, targetRepo: 'vega', outcome: { opened: false, reason: 'unknown-repo' } });
+// Emenda de 06/08 — a recusa por repo passou a acontecer ANTES de o gesto
+// gravar qualquer coisa. Antes disso ela dizia "preparada, mas a sessao nao
+// abriu" e citava o contexto em disco: o card ficava travado por um trabalho
+// que nunca comecaria (o card "Diario de Obra", preso desde 06/08 11:42).
+describe('repoRefusalMessage — a recusa que nao deixa residuo', () => {
+  it('nomeia o repo, invoca o "sem palpite" e diz o que NAO aconteceu', () => {
+    const message = repoRefusalMessage('discovery', 'vega', 'unknown-repo');
     expect(message).toContain('vega');
     expect(message).toContain('palpite');
-    // O trabalho preparado nao se perde: o caminho do contexto continua na frase.
-    expect(message).toContain('C:/inbox/run-1.json');
+    expect(message).toContain('Nada foi gravado');
+    expect(message).toContain('não ficou travado');
   });
 
-  it('card sem repo alvo: a fase fica preparada e a tela diz por que a sessao nao abriu', () => {
-    const message = preparedMessage({ ...base, targetRepo: null, outcome: { opened: false, reason: 'no-target-repo' } });
+  it('nao cita caminho de contexto nenhum — nao ha contexto a citar', () => {
+    expect(repoRefusalMessage('discovery', 'vega', 'unknown-repo')).not.toContain('inbox');
+  });
+
+  it('card sem alvo pede a ancora, em vez de acusar repo errado', () => {
+    const message = repoRefusalMessage('plano', null, 'no-target-repo');
     expect(message).toContain('sem repo alvo');
+    expect(message).toContain('âncora');
+  });
+});
+
+// O outro lado da mesma distincao: card SEM repo e declaracao legitima da spec
+// ("discovery investiga um problema, nao um repositorio"), entao ele PREPARA —
+// o que nao existe e a aba, porque nao ha cwd a inventar.
+describe('noRepoPreparedMessage — preparou, e agora e com voce', () => {
+  it('diz onde o contexto ficou e entrega o comando pronto para rodar', () => {
+    const message = noRepoPreparedMessage('discovery', 'C:/inbox/run-1.json');
+    expect(message).toContain('não declara repo');
     expect(message).toContain('C:/inbox/run-1.json');
+    expect(message).toContain('/esteira-discovery --input');
+  });
+
+  it('o comando que ela mostra continua sem quebra de linha — a frase tambem e copiada e colada', () => {
+    expect(noRepoPreparedMessage('discovery', 'C:/inbox/run\n-1.json')).not.toMatch(/[\r\n]/);
   });
 });
 

@@ -22,6 +22,7 @@ import {
   isValidReadArtifactTextIpcInput,
   isValidReleaseLockIpcInput,
   isValidSeedIpcInput,
+  isValidSetDiscoveryReposIpcInput,
   isValidSetStageOverrideIpcInput,
   isValidSetWorkItemStateIpcInput,
   type EsteiraCreateDiscoveryDto,
@@ -1259,6 +1260,12 @@ function registerEsteiraIpcHandlers(): void {
     if (esteiraService === null) return null;
     if (!isValidSetStageOverrideIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
     return esteiraService.setStageOverride(input);
+  });
+
+  ipcMain.handle(ESTEIRA_CHANNELS.setDiscoveryRepos, (_event, input: unknown): EsteiraGestureDto | null => {
+    if (esteiraService === null) return null;
+    if (!isValidSetDiscoveryReposIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
+    return esteiraService.setDiscoveryRepos(input);
   });
 
   ipcMain.handle(ESTEIRA_CHANNELS.setWorkItemState, (_event, input: unknown): EsteiraGestureDto | null => {
