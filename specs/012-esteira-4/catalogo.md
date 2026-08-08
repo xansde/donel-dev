@@ -1,8 +1,9 @@
 # Catálogo das seis fases da esteira — 012 Esteira 4.0
 
-**Status:** 🟡 **PROPOSTA** (2026-08-08) — o texto normativo está escrito; as três
-pendências de alcance (`[P-1]`…`[P-3]`) saem daqui com **recomendação**, não com
-decisão fechada. Ratificação do Alexandre na fase Validar.
+**Status:** 🟢 **DECIDIDA** (2026-08-08) — o texto normativo está escrito e as três
+pendências de alcance (`[P-1]`…`[P-3]`) foram **ratificadas ao vivo pelo Alexandre**
+na mesma data, na sessão da fase Implementar, cada uma pela recomendação da seção 7.
+Nenhuma pendência de alcance segue aberta.
 **Item:** `wi-esteira4-catalogo-fases` · plano `pln-esteira4-catalogo-e-grafo` ·
 discovery `dsc-15a7e7f5-fbb`.
 **Item irmão (molde):** o formato do arquivo `esteira.grafo`. Este catálogo é a
@@ -17,8 +18,9 @@ vence esta; sobre contrato, store e fatos, continua valendo a 010.
 > **Legenda de proveniência:** `[D-n]` decisão do dono, fechada ao vivo no Discovery
 > de 07/08 — é requisito, não inventar além disto · `[F-n]` resolução de **forma**,
 > proposta pela fase Design de 08/08 e aqui transformada em texto normativo ·
-> `[P-n]` pendência de **alcance**, com recomendação, aguardando ratificação ·
-> `[E]` evidência medida em disco/código, com caminho.
+> `[P-n]` pergunta de **alcance** devolvida pelo Design, **ratificada pelo dono em
+> 08/08** — vale como requisito; o id foi mantido para a rastreabilidade com o
+> Design e com o item irmão · `[E]` evidência medida em disco/código, com caminho.
 
 Insumos: as 11 decisões do Discovery, o grafo exportado da mesa
 (`.esteira/plano/pln-esteira4-catalogo-e-grafo/grafo-mesa.json` — 12 nós, 12
@@ -187,9 +189,15 @@ nota, não silêncio.
 | | |
 |---|---|
 | **Exige** | um item com repo alvo e tasks; quando roteado a Design, o Design validado. |
-| **Faz** | escreve código e teste na branch do item, em **worktree por card** `[D]`. Roda só o gate barato por card: typecheck + testes dos arquivos tocados (`/no-mistakes`, ver `[P-3]`). Headless. |
-| **Devolve** | `verification.recorded` do que dá para conferir, `artifact.recorded` do que ficou fora do código, `phase.completed`. Como **artefato**, o PR para staging `[F-3]`. |
+| **Faz** | escreve código e teste na branch do item, em **worktree por card** `[D]`. Fecha com o gate barato por card — `/no-mistakes`: typecheck + testes dos arquivos tocados. Headless. |
+| **Devolve** | `verification.recorded` do que dá para conferir — **inclusive o `/no-mistakes`, como kind `check`** `[P-3]` —, `artifact.recorded` do que ficou fora do código, `phase.completed`. Como **artefato**, o PR para staging `[F-3]`. |
 | **Roda** | 1× por item; `complements_run_id` quando a mesma fase continua em sessão nova por orçamento de contexto. |
+
+**`/no-mistakes` é o gate de saída desta fase, não uma fase `[P-3]`.** Ele não tem
+skill própria, não tem gate humano, não tem handoff: é a verificação que a
+Implementar escreveu e rodou, que o contrato já cobra dela. Por isso **não existe nó
+`/no-mistakes` no grafo canônico** — existe a aresta `Implementar → Fila de merge`
+condicionada a ele. Na trilha, ele aparece como o `check` que a Implementar declara.
 
 **Dispensa nomeada `[D]`:** esta é a única fase autorizada a abrir PR, e só **para
 staging**. PR para produção continua sendo ato humano, na Concluir. O PR de staging
@@ -282,21 +290,22 @@ desenho; aqui elas viram texto normativo:
 | # | O que faltava | Como fica, normativo |
 |---|---|---|
 | `[F-1]` | O laço `fix ↔ validar` **não era ciclo**: as arestas iam `val-local → fix → val-stg`, sem volta. O teto de 3 regia um laço que o grafo não desenhava. | Aresta de volta `Validar staging → Fix` com condição `rodada < 3`, mais a saída do teto estourado (seção 5). |
-| `[F-2]` | O `/no-mistakes` decidido entre Implementar e Validar **não tinha nó**. | É o gate barato **por card**, e a suíte roda **1× por plano** — cardinalidades diferentes não cabem no mesmo nó. Se ele é nó próprio ou passo interno da Implementar: `[P-3]`. |
+| `[F-2]` | O `/no-mistakes` decidido entre Implementar e Validar **não tinha nó**. | É o gate barato **por card**, e a suíte roda **1× por plano** — cardinalidades diferentes não cabem no mesmo nó. Ratificado `[P-3]`: ele é **passo interno da Implementar**, não nó — a diferença de cardinalidade fica na aresta condicionada, e o `check` declarado é o que a trilha mostra. |
 | `[F-3]` | O **PR para staging** aberto pela Implementar não aparecia nem como nó nem como artefato. | É **artefato** pendurado na Implementar. Tipos distintos é o que impede a fila de tentar "executar" um PR. |
 | `[F-4]` | Discovery e Plano estavam `kind=gate`, não `fase`. | Ficam **gate**, pelo critério da seção 2 — os dois só terminam com decisão humana ao vivo. |
 
 ---
 
-## 7. As três pendências de alcance — com recomendação
+## 7. As três perguntas de alcance — ratificadas em 08/08
 
 A fase Design devolveu três perguntas **de propósito**, para a spec não herdar
-decisão tomada por acidente no desenho. Cada uma sai daqui com recomendação e com o
-custo da alternativa. **Nenhuma está fechada até o Alexandre ratificar.**
+decisão tomada por acidente no desenho. As três foram levadas ao Alexandre ao vivo,
+com a recomendação e o custo da alternativa, e **as três foram ratificadas pela
+recomendação** em 2026-08-08. O que segue é requisito, não proposta.
 
-### `[P-1]` Onde mora o roteamento Design | Implementar
+### `[P-1]` Onde mora o roteamento Design | Implementar — ✅ ratificado
 
-**Recomendação: nos dois lugares, porque são duas perguntas diferentes.**
+**Decisão: nos dois lugares, porque são duas perguntas diferentes.**
 
 A pergunta "campo do item **ou** aresta condicional do grafo" mistura *onde mora a
 condição* com *onde mora o dado*:
@@ -318,9 +327,9 @@ O app **deriva** `needsDesign` do grafo ao ingerir, e a tela mostra a linha Desi
 desabilitada com o motivo. Derivado, nunca guardado em duplicata — mesmo princípio
 do `derivedStage` `[D-13]` da 010.
 
-### `[P-2]` Quem incrementa o contador de rodadas do laço
+### `[P-2]` Quem incrementa o contador de rodadas do laço — ✅ ratificado
 
-**Recomendação: ninguém incrementa — o contador é derivado do log de fatos.**
+**Decisão: ninguém incrementa — o contador é derivado do log de fatos.**
 
 A rodada é observável: é o número de runs da fase Validar do item cuja verificação
 ficou `failed`. Guardar um contador, seja na Validar seja no motor, cria um segundo
@@ -331,23 +340,22 @@ Foi exatamente o modo de falha que a 010 extinguiu.
 motor): reinício do app, disparo manual repetido e run complementado passam a
 poder somar ou perder rodada — e o teto de 3 vira aproximação.
 
-### `[P-3]` `/no-mistakes` é fase própria ou passo interno da Implementar
+### `[P-3]` `/no-mistakes` é fase própria ou passo interno da Implementar — ✅ ratificado
 
-**Recomendação: passo interno da Implementar, declarado como
-`verification.recorded` (kind `check`) no `result.json` dela.**
+**Decisão: passo interno da Implementar, declarado como `verification.recorded`
+(kind `check`) no `result.json` dela.**
 
 Ele não tem skill própria, não tem gate humano, não tem handoff: é exatamente "a
 verificação que a Implementar escreveu e rodou" — que o contrato já cobra dela.
 Promovê-lo a fase criaria um run e uma sessão por card para rodar um typecheck,
 gastando orçamento de contexto em algo que não decide nada.
 
-**Divergência declarada com o Design:** o diagrama e o mockup desenham
-`/no-mistakes` como **nó de tipo `fase`**. Pela regra de conflito do repo, forma é
-do design e **alcance é da spec** — e "é fase ou é passo?" é alcance. Se esta
-recomendação for ratificada, o nó sai do grafo canônico e vira o **gate de saída da
-Implementar**, visível na trilha como a verificação que ela declara. Se for
-recusada, `/no-mistakes` ganha skill, `run-input.json` e `result.json` próprios, e a
-seção 3.4 muda junto.
+**Divergência declarada com o Design, resolvida a favor da spec:** o diagrama e o
+mockup desenham `/no-mistakes` como **nó de tipo `fase`**. Pela regra de conflito do
+repo, forma é do design e **alcance é da spec** — e "é fase ou é passo?" é alcance.
+Com a ratificação, **o nó sai do grafo canônico** (seção 1) e vira o gate de saída
+da Implementar, na aresta `Implementar → Fila de merge`. Os dois artefatos do Design
+ficam como registro do que foi proposto; onde eles mostram o nó, vale esta seção.
 
 ---
 
@@ -356,7 +364,7 @@ seção 3.4 muda junto.
 | Componente | Este item… | Por quê |
 |---|---|---|
 | `PHASE_CATALOG` (`src/renderer/src/Esteira/esteiraView.ts:1301`) | **fixa as seis fases**; Documentar já saiu `[E]` | é a oferta da tela, e a oferta tem de espelhar o catálogo |
-| Condição de roteamento do Design na tela | **não implementa aqui** | depende de `[P-1]` ratificado; implementar antes seria decidir por acidente |
+| Condição de roteamento do Design na tela | **não implementa aqui** | `[P-1]` está ratificado, mas o dado mora no nó do card dentro do `esteira.grafo` — e o formato desse arquivo é o **item irmão**. A tela só tem de onde ler quando ele existir; a dependência é de item, não de decisão |
 | Skills `esteira-*-3` | **muda o conteúdo**, não a instalação | decisão do Discovery: as skills rodam sem o Donel |
 | Contrato v1 (`esteira-result.schema.json`) | **não muda** | `run.phase` é string livre `[P-4 da 010]`; nenhum nome novo de fase exige schema novo |
 | Motor da fila | **é consumidor** | o grafo é o molde; o motor percorre. Especificado pelo item irmão |
