@@ -276,6 +276,251 @@
         </p>
       </header>
 
+      <!-- ==================================================== 0 -->
+      <h2 class="sec"><span class="num">0</span> A estrutura completa sugerida</h2>
+      <p class="sec-note">
+        O grafo canônico das seis fases, já <b>reconciliado</b>: o desenho que saiu da
+        mesa do Discovery mais as quatro costuras que faltavam para ele bater com as 11
+        decisões. Nó <span style="color: var(--state-waiting)">âmbar</span> é onde a fila
+        para e espera uma pessoa; nó cinza ela atravessa sozinha; nó tracejado é coisa
+        produzida, não passo executado.
+      </p>
+
+      <div class="window">
+        <div class="titlebar">
+          <span class="dot-row"><i></i><i></i><i></i></span>
+          <span>esteira 4.0 — grafo canônico de um plano</span>
+        </div>
+        <div class="body">
+          <svg viewBox="0 0 860 545" width="100%" role="img" aria-label="Grafo canônico das seis fases da esteira 4.0">
+            <defs>
+              <marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M0 0 L8 4 L0 8 z" fill="#4a5464" />
+              </marker>
+              <marker id="ah-amber" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M0 0 L8 4 L0 8 z" fill="#e8b44c" />
+              </marker>
+              <marker id="ah-red" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M0 0 L8 4 L0 8 z" fill="#f0684c" />
+              </marker>
+              <style>
+                .nd { fill: #151a21; stroke: #28303b; stroke-width: 1; rx: 6; }
+                .nd-gate { fill: #1c232c; stroke: #e8b44c; }
+                .nd-art { fill: #12181f; stroke: #5fb0a8; stroke-dasharray: 4 3; }
+                .nd-stop { fill: #12181f; stroke: #f0684c; stroke-dasharray: 4 3; }
+                .t { font-family: 'Inter', system-ui, sans-serif; fill: #d7dde5; font-size: 12px; font-weight: 600; text-anchor: middle; }
+                .k { font-family: 'Inter', system-ui, sans-serif; fill: #828d9c; font-size: 9.5px; text-anchor: middle; letter-spacing: 0.05em; }
+                .k-gate { fill: #e8b44c; }
+                .e { stroke: #4a5464; stroke-width: 1.2; fill: none; marker-end: url(#ah); }
+                .e-amber { stroke: #e8b44c; stroke-width: 1.4; fill: none; marker-end: url(#ah-amber); }
+                .e-red { stroke: #f0684c; stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; marker-end: url(#ah-red); }
+                .el { font-family: 'Inter', system-ui, sans-serif; fill: #828d9c; font-size: 9.5px; text-anchor: middle; }
+                .el-amber { fill: #e8b44c; }
+                .new { font-family: 'JetBrains Mono', monospace; fill: #c97fa8; font-size: 9px; text-anchor: middle; }
+              </style>
+            </defs>
+
+            <!-- linha A -->
+            <rect class="nd nd-gate" x="24" y="60" width="128" height="52" />
+            <text class="k k-gate" x="88" y="79">✋ GATE</text>
+            <text class="t" x="88" y="97">Discovery</text>
+
+            <rect class="nd nd-gate" x="192" y="60" width="128" height="52" />
+            <text class="k k-gate" x="256" y="79">✋ GATE</text>
+            <text class="t" x="256" y="97">Plano</text>
+
+            <rect class="nd" x="360" y="60" width="128" height="52" />
+            <text class="k" x="424" y="79">▸ FASE</text>
+            <text class="t" x="424" y="97">Design</text>
+
+            <rect class="nd nd-gate" x="528" y="60" width="128" height="52" />
+            <text class="k k-gate" x="592" y="79">✋ GATE</text>
+            <text class="t" x="592" y="95">Você valida</text>
+            <text class="t" x="592" y="108">o Design</text>
+
+            <!-- linha B (volta pela direita) -->
+            <rect class="nd" x="528" y="210" width="128" height="52" />
+            <text class="k" x="592" y="229">▸ FASE · 0% humana</text>
+            <text class="t" x="592" y="247">Implementar</text>
+
+            <rect class="nd nd-art" x="696" y="210" width="140" height="52" />
+            <text class="k" x="766" y="229">◇ ARTEFATO</text>
+            <text class="t" x="766" y="247">PR para staging</text>
+
+            <rect class="nd" x="360" y="210" width="128" height="52" />
+            <text class="k" x="424" y="229">▸ FASE · por card</text>
+            <text class="t" x="424" y="247">/no-mistakes</text>
+
+            <rect class="nd" x="192" y="210" width="128" height="52" />
+            <text class="k" x="256" y="229">▸ FASE</text>
+            <text class="t" x="256" y="247">Fila de merge</text>
+
+            <rect class="nd" x="24" y="210" width="128" height="52" />
+            <text class="k" x="88" y="227">▸ FASE · 1× por plano</text>
+            <text class="t" x="88" y="243">Suíte + build</text>
+            <text class="t" x="88" y="256">+ e2e</text>
+
+            <!-- linha C -->
+            <rect class="nd nd-gate" x="24" y="360" width="128" height="52" />
+            <text class="k k-gate" x="88" y="377">✋ GATE</text>
+            <text class="t" x="88" y="393">Validar —</text>
+            <text class="t" x="88" y="406">teste local</text>
+
+            <rect class="nd" x="192" y="360" width="128" height="52" />
+            <text class="k" x="256" y="379">▸ FASE</text>
+            <text class="t" x="256" y="397">Fix</text>
+
+            <rect class="nd" x="360" y="360" width="128" height="52" />
+            <text class="k" x="424" y="379">▸ FASE</text>
+            <text class="t" x="424" y="397">Validar staging</text>
+
+            <rect class="nd nd-gate" x="528" y="360" width="128" height="52" />
+            <text class="k k-gate" x="592" y="377">✋ GATE</text>
+            <text class="t" x="592" y="393">Concluir</text>
+            <text class="t" x="592" y="406">+ Documentar</text>
+
+            <rect class="nd nd-stop" x="668" y="470" width="168" height="44" />
+            <text class="t" x="752" y="490" style="fill: #f0684c">Chama o dono</text>
+            <text class="k" x="752" y="504">teto de 3 estourado</text>
+
+            <!-- arestas linha A -->
+            <path class="e" d="M152 86 L186 86" />
+            <path class="e" d="M320 86 L354 86" />
+            <path class="e" d="M488 86 L522 86" />
+            <text class="el" x="340" y="76">roteia: tem</text>
+            <text class="el" x="340" y="52">decisão de estrutura</text>
+
+            <!-- Plano -> Implementar (roteamento direto) -->
+            <path class="e" d="M256 112 L256 160 L568 160 L568 204" />
+            <text class="el" x="410" y="152">roteia: sem decisão de estrutura → pula o Design</text>
+
+            <!-- Valida Design -> Implementar -->
+            <path class="e" d="M620 112 L620 204" />
+
+            <!-- Implementar -> artefato e -> no-mistakes -->
+            <path class="e" d="M656 236 L690 236" />
+            <path class="e" d="M528 236 L494 236" />
+            <path class="e" d="M360 236 L326 236" />
+            <path class="e" d="M192 236 L158 236" />
+
+            <!-- Suíte -> teste local -->
+            <path class="e" d="M88 262 L88 354" />
+
+            <!-- linha C -->
+            <path class="e" d="M152 386 L186 386" />
+            <text class="el" x="169" y="376">achou</text>
+            <path class="e" d="M320 386 L354 386" />
+            <path class="e" d="M488 386 L522 386" />
+            <text class="el" x="505" y="376">passou</text>
+
+            <!-- laço de volta: Validar staging -> Fix -->
+            <path class="e-amber" d="M400 360 C 400 318, 280 318, 280 354" />
+            <text class="el el-amber" x="340" y="314">falhou · rodada &lt; 3</text>
+            <text class="new" x="340" y="302">aresta que faltava (1)</text>
+
+            <!-- skip: teste local -> validar staging -->
+            <path class="e" d="M88 412 C 88 452, 424 452, 424 418" />
+            <text class="el" x="230" y="466">nada a corrigir</text>
+
+            <!-- teto estourado -->
+            <path class="e-red" d="M470 412 L672 480" />
+            <text class="el" x="590" y="440" style="fill: #f0684c">rodada 3 falhou · a fila para</text>
+          </svg>
+
+          <div class="legend">
+            <span class="item"><span class="swatch" style="background: var(--state-waiting)"></span> gate — a fila para e espera você (5 no ciclo inteiro)</span>
+            <span class="item"><span class="swatch" style="background: var(--border)"></span> fase — tem run e devolve <code style="font-family: var(--font-mono)">result.json</code></span>
+            <span class="item"><span class="swatch" style="background: var(--phase-implementar)"></span> artefato — é produzido, não executado</span>
+            <span class="item"><span class="swatch" style="background: var(--state-permission)"></span> saída de exceção</span>
+          </div>
+        </div>
+      </div>
+
+      <p class="caption" style="margin-top: 18px">
+        <b>Taxonomia de nó — quatro tipos, um critério cada.</b> A mesa exportou três
+        (<code style="font-family: var(--font-mono)">gate</code>,
+        <code style="font-family: var(--font-mono)">fase</code>,
+        <code style="font-family: var(--font-mono)">nota</code>) e usou artefato só no
+        vocabulário. O desenho precisa de quatro, e a pergunta que separa é sempre a
+        mesma: <i>a fila atravessa sem gesto humano?</i> Se não → <b>gate</b>. Se sim, é
+        passo executado → <b>fase</b>, coisa produzida → <b>artefato</b>, nenhum dos dois
+        → <b>nota</b>. Consequência direta para o motor: <b>só nó
+        <code style="font-family: var(--font-mono)">fase</code> gera
+        <code style="font-family: var(--font-mono)">run-input.json</code></b> — gate gera
+        espera, artefato gera fato, nota não gera nada.
+      </p>
+
+      <table class="facts" style="margin-top: 22px">
+        <thead>
+          <tr>
+            <th style="width: 30px">#</th>
+            <th style="width: 40%">O que o desenho da mesa não tinha</th>
+            <th>Como a estrutura sugerida costura</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>
+              O laço <code>fix ↔ validar</code> <b>não era ciclo</b>: as arestas iam
+              <code>val-local → fix → val-stg</code>, sem volta. O teto de 3 rodadas
+              regia um laço que o grafo não desenhava.
+            </td>
+            <td>
+              Aresta de volta <code>Validar staging → Fix</code>, rotulada com a condição
+              (<code>rodada &lt; 3</code>), mais a saída do teto estourado. Sem a volta o
+              teto não tem o que limitar; sem a saída a fila não sabe parar.
+            </td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>
+              O <code>/no-mistakes</code> decidido entre Implementar e Validar
+              <b>não tinha nó</b> — entre os dois a mesa punha fila de merge e suíte.
+            </td>
+            <td>
+              Nó próprio, <b>antes</b> da fila de merge. Ele é o gate barato
+              <b>por card</b>; a suíte roda <b>1× por plano</b>. Fundir os dois no mesmo
+              nó apagaria essa diferença de cardinalidade.
+            </td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>
+              O <b>PR para staging</b> aberto pela Implementar (dispensa nomeada) não
+              aparecia nem como nó nem como artefato.
+            </td>
+            <td>
+              Vira <b>artefato</b> pendurado na Implementar, não fase: é o que ela
+              produz, não um passo que a fila percorre. Tipos distintos é o que impede a
+              fila de tentar “executar” um PR.
+            </td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>
+              Discovery e Plano estavam <code>kind=gate</code>, não fase — precisava casar
+              com a taxonomia que a spec do formato vai fixar.
+            </td>
+            <td>
+              Ficam <b>gate</b>, pelo critério acima: os dois só terminam com decisão
+              humana ao vivo. É o mesmo critério que faz “valida o Design”, “teste local”
+              e “Concluir” serem gates — um critério, cinco aplicações.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="caption" style="margin-top: 18px">
+        <b>Três perguntas ficam de fora do desenho, de propósito</b> — são de alcance, não
+        de forma, e quem fecha é a spec: (a) onde mora o roteamento Design|Implementar —
+        campo do item ou aresta condicional do grafo; (b) quem incrementa o contador de
+        rodadas do laço — a Validar ao declarar o fato ou o motor ao reenfileirar (o teto
+        de 3 já está fechado, o contador não); (c) se <code>/no-mistakes</code> é fase com
+        <code>result.json</code> próprio ou passo interno da Implementar — nó no grafo e
+        fase no contrato não são a mesma pergunta.
+      </p>
+
       <!-- ==================================================== 1 -->
       <h2 class="sec"><span class="num">1</span> O catálogo no painel de disparo</h2>
       <p class="sec-note">
