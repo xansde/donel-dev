@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mockup — Catálogo das seis fases (esteira 4.0) · wi-esteira4-catalogo-fases</title>
+    <style>
+      :root {
+        --bg-app: #0e1116;
+        --bg-panel: #151a21;
+        --bg-raised: #1c232c;
+        --border: #28303b;
+        --text-primary: #d7dde5;
+        --text-muted: #828d9c;
+        --accent: #4c9cf0;
+        --state-waiting: #e8b44c;
+        --state-permission: #f0684c;
+        --state-done: #5e6873;
+        --zone-ok: #3dce8f;
+        --donel-accent: #e8b44c;
+        --phase-discovery: #8896b3;
+        --phase-plano: #9b8fd9;
+        --phase-design: #c97fa8;
+        --phase-implementar: #5fb0a8;
+        --phase-validar: #d9a05f;
+        --phase-concluir: #7fbf83;
+        --phase-documentar: var(--donel-accent);
+        --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+        --radius-sm: 6px;
+        --radius-md: 8px;
+        --hairline: 1px solid var(--border);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        padding: 32px 24px 64px;
+        background: var(--bg-app);
+        color: var(--text-primary);
+        font-family: var(--font-ui);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .page { max-width: 1120px; margin: 0 auto; }
+
+      header.doc { border-bottom: var(--hairline); padding-bottom: 16px; margin-bottom: 24px; }
+      header.doc h1 { font-size: 18px; margin: 0 0 4px; font-weight: 600; }
+      header.doc p { margin: 0; color: var(--text-muted); font-size: 11px; }
+      header.doc code { font-family: var(--font-mono); color: var(--text-primary); }
+
+      h2.sec {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 40px 0 4px;
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+      h2.sec span.num {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+      p.sec-note { margin: 0 0 16px; color: var(--text-muted); font-size: 11px; max-width: 78ch; }
+
+      /* ---- moldura de janela do app ---- */
+      .window {
+        background: var(--bg-panel);
+        border: var(--hairline);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+      }
+      .window > .titlebar {
+        height: 28px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 12px;
+        background: var(--bg-raised);
+        border-bottom: var(--hairline);
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+      .dot-row { display: flex; gap: 5px; }
+      .dot-row i { width: 8px; height: 8px; border-radius: 50%; background: var(--border); display: block; }
+      .window > .body { padding: 16px; }
+
+      /* ---- painel de disparo ---- */
+      .dispatch { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
+      .field-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-muted);
+        margin-bottom: 8px;
+      }
+      .phase-list { display: flex; flex-direction: column; gap: 2px; }
+      .phase-row {
+        height: 32px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        border-radius: var(--radius-sm);
+        cursor: default;
+      }
+      .phase-row .bullet { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+      .phase-row .name { flex: 1; }
+      .phase-row .tag {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--text-muted);
+        border: var(--hairline);
+        border-radius: 4px;
+        padding: 1px 5px;
+      }
+      .phase-row.selected { background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--accent); }
+      .phase-row.disabled { opacity: 0.45; }
+      .phase-row.routed .name::after {
+        content: ' · roteada';
+        color: var(--phase-design);
+        font-size: 11px;
+      }
+
+      .why {
+        border: var(--hairline);
+        border-left: 2px solid var(--state-waiting);
+        border-radius: var(--radius-sm);
+        background: var(--bg-raised);
+        padding: 10px 12px;
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 12px;
+      }
+      .why b { color: var(--text-primary); font-weight: 600; }
+
+      .target-card {
+        border: var(--hairline);
+        border-radius: var(--radius-sm);
+        background: var(--bg-raised);
+        padding: 12px;
+      }
+      .kv { display: grid; grid-template-columns: 96px 1fr; gap: 6px 12px; font-size: 11px; }
+      .kv dt { color: var(--text-muted); }
+      .kv dd { margin: 0; font-family: var(--font-mono); }
+
+      .btn {
+        height: 30px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--accent);
+        background: color-mix(in srgb, var(--accent) 16%, transparent);
+        color: var(--text-primary);
+        font-family: var(--font-ui);
+        font-size: 13px;
+        padding: 0 14px;
+        margin-top: 12px;
+      }
+      .btn.ghost { border-color: var(--border); background: transparent; color: var(--text-muted); }
+
+      /* ---- trilha da fila ---- */
+      .trail { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
+      .step {
+        min-width: 132px;
+        flex: 1;
+        border: var(--hairline);
+        border-radius: var(--radius-sm);
+        background: var(--bg-raised);
+        padding: 10px;
+        margin-right: 22px;
+        position: relative;
+      }
+      .step:last-child { margin-right: 0; }
+      .step::after {
+        content: '';
+        position: absolute;
+        right: -18px;
+        top: 50%;
+        width: 14px;
+        height: 1px;
+        background: var(--border);
+      }
+      .step:last-child::after { display: none; }
+      .step .kind {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .step .kind .glyph { font-size: 11px; }
+      .step .title { font-weight: 600; margin: 4px 0 6px; }
+      .step .state { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+      .step.human { border-color: var(--state-waiting); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--state-waiting) 40%, transparent); }
+      .step.human .kind { color: var(--state-waiting); }
+      .step.auto .state { color: var(--zone-ok); }
+      .step.pending { opacity: 0.5; }
+
+      .legend { display: flex; gap: 20px; flex-wrap: wrap; font-size: 11px; color: var(--text-muted); margin-top: 14px; }
+      .legend .item { display: flex; align-items: center; gap: 6px; }
+      .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+      /* ---- laço fix <-> validar ---- */
+      .loop { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+      .counter {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        border: var(--hairline);
+        border-radius: 999px;
+        padding: 3px 10px;
+        color: var(--state-waiting);
+      }
+      .pips { display: inline-flex; gap: 3px; }
+      .pips i { width: 6px; height: 6px; border-radius: 50%; background: var(--border); display: block; }
+      .pips i.on { background: var(--state-waiting); }
+      .pips i.blown { background: var(--state-permission); }
+
+      .stop-card {
+        border: var(--hairline);
+        border-left: 2px solid var(--state-permission);
+        border-radius: var(--radius-sm);
+        background: var(--bg-raised);
+        padding: 12px;
+      }
+      .stop-card .head { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 6px; }
+      .stop-card p { margin: 0 0 8px; font-size: 11px; color: var(--text-muted); }
+
+      /* ---- concluir com documentar dentro ---- */
+      .nested {
+        border: var(--hairline);
+        border-radius: var(--radius-sm);
+        background: var(--bg-raised);
+        padding: 12px;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        padding: 2px 10px;
+        font-size: 11px;
+        border: var(--hairline);
+      }
+      .chip .bullet { width: 7px; height: 7px; border-radius: 2px; }
+      .inner-phases { display: flex; gap: 8px; margin: 10px 0 0; flex-wrap: wrap; }
+
+      table.facts { width: 100%; border-collapse: collapse; font-size: 11px; }
+      table.facts th, table.facts td { text-align: left; padding: 7px 10px; border-bottom: var(--hairline); vertical-align: top; }
+      table.facts th { color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px; }
+      table.facts td code { font-family: var(--font-mono); font-size: 11px; }
+
+      .caption { font-size: 11px; color: var(--text-muted); margin-top: 10px; max-width: 82ch; }
+      .caption b { color: var(--text-primary); font-weight: 600; }
+
+      footer.doc { margin-top: 48px; border-top: var(--hairline); padding-top: 16px; font-size: 11px; color: var(--text-muted); }
+      footer.doc ul { margin: 8px 0 0; padding-left: 18px; }
+      footer.doc li { margin-bottom: 4px; }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="doc">
+        <h1>Catálogo das seis fases — como ele aparece para quem usa</h1>
+        <p>
+          Mockup da fase Design · item <code>wi-esteira4-catalogo-fases</code> · plano
+          <code>pln-esteira4-catalogo-e-grafo</code> · repo <code>donel-dev</code> ·
+          08/08/2026. <b>Forma</b> deste documento vence; <b>alcance e comportamento</b>
+          continuam sendo da spec que a fase Implementar vai escrever.
+        </p>
+      </header>
+
+      <!-- ==================================================== 1 -->
+      <h2 class="sec"><span class="num">1</span> O catálogo no painel de disparo</h2>
+      <p class="sec-note">
+        As seis fases, na ordem do grafo. A diferença que a 4.0 traz para esta tela é a
+        linha <b>Design</b> deixar de ser oferta livre e passar a ser <b>roteada pelo
+        Plano</b>: quando o Plano não marcou decisão de estrutura no item, a linha
+        aparece desabilitada com o motivo — o mesmo padrão que já rege item sem repo
+        alvo, não uma exceção nova.
+      </p>
+
+      <div class="window">
+        <div class="titlebar">
+          <span class="dot-row"><i></i><i></i><i></i></span>
+          <span>Donel Dev — Esteira · disparar fase</span>
+        </div>
+        <div class="body">
+          <div class="dispatch">
+            <div>
+              <div class="field-label">Fase</div>
+              <div class="phase-list">
+                <div class="phase-row disabled">
+                  <span class="bullet" style="background: var(--phase-discovery)"></span>
+                  <span class="name">Discovery</span>
+                  <span class="tag">card</span>
+                </div>
+                <div class="phase-row disabled">
+                  <span class="bullet" style="background: var(--phase-plano)"></span>
+                  <span class="name">Plano</span>
+                  <span class="tag">plano</span>
+                </div>
+                <div class="phase-row selected routed">
+                  <span class="bullet" style="background: var(--phase-design)"></span>
+                  <span class="name">Design</span>
+                  <span class="tag">item</span>
+                </div>
+                <div class="phase-row">
+                  <span class="bullet" style="background: var(--phase-implementar)"></span>
+                  <span class="name">Implementar</span>
+                  <span class="tag">item</span>
+                </div>
+                <div class="phase-row">
+                  <span class="bullet" style="background: var(--phase-validar)"></span>
+                  <span class="name">Validar + Documentar</span>
+                  <span class="tag">item</span>
+                </div>
+                <div class="phase-row">
+                  <span class="bullet" style="background: var(--phase-concluir)"></span>
+                  <span class="name">Concluir</span>
+                  <span class="tag">item</span>
+                </div>
+              </div>
+
+              <div class="why">
+                <b>Design está oferecida porque o Plano roteou este item para ela.</b>
+                Item que o Plano roteou direto para Implementar mostra a linha Design
+                desabilitada, com esta mesma frase pelo avesso — nunca some da lista, para
+                a ausência não virar dúvida.
+              </div>
+            </div>
+
+            <div>
+              <div class="field-label">Assunto</div>
+              <div class="target-card">
+                <dl class="kv">
+                  <dt>Item</dt>
+                  <dd>wi-esteira4-catalogo-fases</dd>
+                  <dt>Título</dt>
+                  <dd style="font-family: var(--font-ui)">Catálogo das seis fases da esteira (conteúdo)</dd>
+                  <dt>Tipo</dt>
+                  <dd>spec</dd>
+                  <dt>Repo alvo</dt>
+                  <dd>donel-dev</dd>
+                  <dt>Checkout</dt>
+                  <dd>C:\Users\xansd\seazone\donel-dev</dd>
+                  <dt>Worktree</dt>
+                  <dd>por card · gate barato (typecheck + testes tocados)</dd>
+                </dl>
+                <button class="btn">Disparar Design</button>
+                <button class="btn ghost">Ver trilha</button>
+              </div>
+              <p class="caption">
+                O que muda para quem usa: hoje esta tela é um <b>lançador manual</b> — um
+                gesto por item, um item por vez. Na 4.0 ela continua existindo para o
+                disparo avulso, mas deixa de ser o caminho normal: o caminho normal é a
+                fila da seção 2 andando sozinha.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================================================== 2 -->
+      <h2 class="sec"><span class="num">2</span> A fila andando sozinha, e onde ela para</h2>
+      <p class="sec-note">
+        A trilha de um item percorrendo o grafo. Fase automática anda sem gesto humano;
+        <b>parada humana</b> tem moldura âmbar e é o único lugar onde a fila fica
+        esperando. São três, e só três: validar o Design, o teste local que não é
+        determinístico, e o merge de produção na Concluir.
+      </p>
+
+      <div class="window">
+        <div class="titlebar">
+          <span class="dot-row"><i></i><i></i><i></i></span>
+          <span>Donel Dev — Esteira · trilha do item</span>
+        </div>
+        <div class="body">
+          <div class="trail">
+            <div class="step auto">
+              <div class="kind"><span class="glyph">▸</span> fase</div>
+              <div class="title">Design</div>
+              <div class="state">concluída</div>
+            </div>
+            <div class="step human">
+              <div class="kind"><span class="glyph">✋</span> você valida</div>
+              <div class="title">Design revisto</div>
+              <div class="state">aguardando</div>
+            </div>
+            <div class="step pending">
+              <div class="kind"><span class="glyph">▸</span> fase</div>
+              <div class="title">Implementar</div>
+              <div class="state">na fila</div>
+            </div>
+            <div class="step pending">
+              <div class="kind"><span class="glyph">▸</span> fase</div>
+              <div class="title">Fila de merge</div>
+              <div class="state">ordem do Plano</div>
+            </div>
+            <div class="step pending">
+              <div class="kind"><span class="glyph">▸</span> fase</div>
+              <div class="title">Suíte + build + e2e</div>
+              <div class="state">1× por plano</div>
+            </div>
+            <div class="step pending human">
+              <div class="kind"><span class="glyph">✋</span> você valida</div>
+              <div class="title">Teste local</div>
+              <div class="state">roteiro e2e</div>
+            </div>
+            <div class="step pending">
+              <div class="kind"><span class="glyph">▸</span> fase</div>
+              <div class="title">Validar staging</div>
+              <div class="state">na fila</div>
+            </div>
+            <div class="step pending human">
+              <div class="kind"><span class="glyph">✋</span> você decide</div>
+              <div class="title">Concluir</div>
+              <div class="state">merge de produção</div>
+            </div>
+          </div>
+
+          <div class="legend">
+            <span class="item"><span class="swatch" style="background: var(--zone-ok)"></span> fase automática, já concluída</span>
+            <span class="item"><span class="swatch" style="background: var(--state-waiting)"></span> parada humana — a fila espera aqui</span>
+            <span class="item"><span class="swatch" style="background: var(--state-done)"></span> na fila, ainda não rodou</span>
+          </div>
+
+          <p class="caption">
+            <b>A dor que isso resolve, visível na própria tela:</b> nenhum passo cinza
+            pede clique para começar. O que pede clique é âmbar, e é âmbar porque uma
+            pessoa precisa decidir — não porque o lançador não sabe se virar sozinho.
+          </p>
+        </div>
+      </div>
+
+      <!-- ==================================================== 3 -->
+      <h2 class="sec"><span class="num">3</span> O laço fix ↔ validar, com o teto visível</h2>
+      <p class="sec-note">
+        O laço vive <b>dentro</b> da Validar e tem teto de <b>3 rodadas</b> (fechado pelo
+        Plano). O teto só serve se quem olha a tela souber em que rodada está antes de a
+        fila desistir — daí o contador ser parte da forma, não um detalhe de log.
+      </p>
+
+      <div class="loop">
+        <div class="window">
+          <div class="titlebar">
+            <span class="dot-row"><i></i><i></i><i></i></span>
+            <span>Validar · laço interno</span>
+          </div>
+          <div class="body">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px">
+              <span class="counter">
+                rodada 2 de 3
+                <span class="pips"><i class="on"></i><i class="on"></i><i></i></span>
+              </span>
+              <span style="font-size: 11px; color: var(--text-muted)">teto declarado pelo Plano</span>
+            </div>
+            <div class="trail">
+              <div class="step auto" style="min-width: 110px">
+                <div class="kind">▸ fase</div>
+                <div class="title">Fix</div>
+                <div class="state">mini Implementar</div>
+              </div>
+              <div class="step auto" style="min-width: 110px">
+                <div class="kind">▸ fase</div>
+                <div class="title">Validar staging</div>
+                <div class="state">rodando</div>
+              </div>
+            </div>
+            <p class="caption">
+              Achado no teste local vira Fix; Fix devolve para a Validar staging; a volta
+              é a aresta que o desenho da mesa não tinha e que o catálogo fecha
+              explicitamente (divergência 1 do Plano).
+            </p>
+          </div>
+        </div>
+
+        <div class="stop-card">
+          <div class="head">
+            <span class="swatch" style="background: var(--state-permission)"></span>
+            Rodada 3 falhou — a fila chama você
+          </div>
+          <p>
+            <b>Estourou o teto.</b> Três tentativas de conserto e o e2e de staging
+            continua falhando. A fila para aqui e não tenta a quarta.
+          </p>
+          <p style="font-family: var(--font-mono)">
+            último achado: e2e “abrir sessão pelo card” — timeout no Enter<br />
+            branch: <span style="color: var(--text-primary)">feature/wi-esteira4-catalogo-fases</span>
+          </p>
+          <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px">
+            <span class="counter">
+              3 de 3
+              <span class="pips"><i class="on"></i><i class="on"></i><i class="blown"></i></span>
+            </span>
+          </div>
+          <button class="btn ghost">Ver as 3 rodadas</button>
+          <button class="btn">Assumir na mão</button>
+        </div>
+      </div>
+
+      <!-- ==================================================== 4 -->
+      <h2 class="sec"><span class="num">4</span> Documentar dissolvida dentro da Concluir</h2>
+      <p class="sec-note">
+        Documentar deixa de ser linha do catálogo e vira <b>parte da Concluir</b>, que
+        passa a declarar dois <code>phase.completed</code> no mesmo run — a mesma mecânica
+        que a Validar composta já usa hoje. Para quem olha a tela, a diferença é uma
+        linha a menos na lista e um chip a mais dentro do card da Concluir.
+      </p>
+
+      <div class="nested">
+        <div style="display: flex; align-items: center; gap: 8px">
+          <span class="swatch" style="background: var(--phase-concluir)"></span>
+          <strong>Concluir</strong>
+          <span style="font-size: 11px; color: var(--text-muted)">— fecha o ciclo com a evidência que passou</span>
+        </div>
+        <div class="inner-phases">
+          <span class="chip"><span class="bullet" style="background: var(--phase-concluir)"></span> concluir · gate de evidência</span>
+          <span class="chip"><span class="bullet" style="background: var(--phase-documentar)"></span> documentar · insumo de todas as fases</span>
+        </div>
+        <p class="caption" style="margin-top: 12px">
+          O que a Concluir devolve, e que a tela mostra por item:
+        </p>
+        <table class="facts">
+          <thead>
+            <tr><th>Fato</th><th>Quem declara</th><th>O que aparece na tela</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>verification.recorded</code></td>
+              <td>Concluir</td>
+              <td>a evidência que passou, com o comando que rodou</td>
+            </tr>
+            <tr>
+              <td><code>artifact.recorded</code></td>
+              <td>Documentar, dentro da Concluir</td>
+              <td>o documento versionado, com repo e caminho clicáveis</td>
+            </tr>
+            <tr>
+              <td><code>phase.completed</code> ×2</td>
+              <td>o mesmo run</td>
+              <td>duas linhas na trilha, um disparo só</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <footer class="doc">
+        <strong>O que este mockup NÃO decide</strong> — e é de propósito, porque não é
+        desta fase:
+        <ul>
+          <li>
+            o formato do arquivo <code>esteira.grafo</code> (molde) — é a outra spec do
+            mesmo plano, com o próprio ciclo;
+          </li>
+          <li>
+            o texto normativo do catálogo (o que cada fase exige e devolve) — é o
+            conteúdo que a fase Implementar escreve na spec;
+          </li>
+          <li>
+            se o roteamento Design|Implementar vira campo do item ou aresta do grafo — a
+            forma acima serve aos dois; a escolha é da spec do formato.
+          </li>
+        </ul>
+      </footer>
+    </div>
+  </body>
+</html>
