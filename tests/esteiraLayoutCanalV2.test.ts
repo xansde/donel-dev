@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -106,6 +106,33 @@ describe('layout v2 — a árvore materializada obedece à seção 3', () => {
 
   it('o layout 2.1.0 deste item não sobreviveu ao movimento — não há duas cópias', () => {
     expect(existsSync(join(ESTEIRA_ROOT, 'design', ITEM))).toBe(false);
+  });
+});
+
+describe('layout v2 — o run desta própria fase pousou no canal (dogfood)', () => {
+  const runsDir = join(ESTEIRA_ROOT, 'ciclos', CICLO, 'runs');
+  const pattern = new RegExp(SECTION_4[1]);
+
+  it('todo arquivo de runs/ obedece ao padrão da seção 4', () => {
+    const names = readdirSync(runsDir);
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) expect(pattern.test(name)).toBe(true);
+  });
+
+  it('o arquivo versionado é o result SANITIZADO de [P-2] — e continua válido pelo mesmo contrato', () => {
+    const names = readdirSync(runsDir).sort();
+    for (const name of names) {
+      const run = JSON.parse(readFileSync(join(runsDir, name), 'utf-8'));
+      // O que NÃO viaja: caminho de máquina e id de sessão.
+      expect(run.workspace?.repo_path ?? null).toBeNull();
+      expect(run.workspace?.worktree_path ?? null).toBeNull();
+      expect(run.actor.cli_session_id).toBeNull();
+      // O que viaja: o slug do repo é contrato, e é obrigatório.
+      expect(typeof run.workspace?.target_repo).toBe('string');
+      // O caminho é índice, não segunda fonte: o nome do arquivo bate com o arquivo.
+      expect(name).toContain(`--${run.run.phase}--${run.run.run_id}`);
+      expect(run.subject.discovery_id).toBe(CICLO);
+    }
   });
 });
 
