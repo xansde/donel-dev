@@ -127,7 +127,7 @@ Três fronteiras saem daqui e valem para qualquer implementação do leitor:
 ├── ciclos/                         ← ZONA VERSIONADA · uma pasta por CICLO [P-1]
 │   └── <discovery_id>/
 │       ├── runs/                   APPEND-ONLY · um arquivo por run
-│       │   └── <utc>--<fase>--<run_id>.json
+│       │   └── <utc-ms>--<fase>--<run_id>.json
 │       ├── planos/
 │       │   └── <plan_id>/
 │       │       └── grafo.json      o esteira.grafo · dono único: a fase Plano
@@ -151,23 +151,23 @@ arquivo ganha.
 ## 4. O nome do arquivo de run é contrato `[F]`
 
 ```
-<UTC compacto>--<fase>--<run_id>.json
+<UTC compacto com ms>--<fase>--<run_id>.json
 ```
 
 **Padrão normativo** (o teste da seção 9 lê esta linha do próprio documento):
 
 ```
-^\d{8}T\d{4}Z--[a-z][a-z0-9-]*--[a-z][a-z0-9-]*(\.(c|rev)\d+)?\.json$
+^\d{8}T\d{9}Z--[a-z][a-z0-9-]*--[a-z][a-z0-9-]*(\.(c|rev)\d+)?\.json$
 ```
 
 Exemplos que **casam**:
 
 ```
-20260807T2312Z--discovery--run-3f2ab1c4-902.json
-20260808T0018Z--plano--run-9c14e77a-4d1.json
-20260808T0124Z--design--run-65bc73cc-11e.json
-20260808T0932Z--implementar--run-b70e2f19-55c.c1.json
-20260808T1041Z--validar--run-b70e2f19-55c.rev2.json
+20260807T231245123Z--discovery--run-3f2ab1c4-902.json
+20260808T001812045Z--plano--run-9c14e77a-4d1.json
+20260808T012433981Z--design--run-65bc73cc-11e.json
+20260808T093207512Z--implementar--run-b70e2f19-55c.c1.json
+20260808T104115337Z--validar--run-b70e2f19-55c.rev2.json
 ```
 
 Exemplos que **não casam**, e por quê:
@@ -176,12 +176,19 @@ Exemplos que **não casam**, e por quê:
 validar-result.json                      ← o formato 2.1.0: não diz quando nem qual run
 20260808--validar--run-abc.json          ← sem hora: dois runs do mesmo dia empatam
 2026-08-08T09:32:00Z--validar--x.json    ← `:` é caractere inválido em caminho no Windows
+20260808T0157Z--validar--run-abc.json    ← só até o minuto: quatro minutos do histórico real já têm mais de um run
 ```
 
 O padrão resolve três coisas de uma vez, e nenhuma delas é estética:
 
 1. **Ordena por leitura lexicográfica** — a ordem cronológica sai do `ls`, sem
-   abrir arquivo. É o que o redutor já faz com o outbox `[E]`.
+   abrir arquivo. É o que o redutor já faz com o outbox `[E]`. Precisa dos
+   milissegundos, não só do minuto: medidos os 64 runs reais do outbox, quatro
+   minutos distintos têm mais de um run terminando neles — um deles com três
+   (`2026-08-04T16:21`) e três com dois (`2026-08-04T17:10`,
+   `2026-08-08T00:30`, `2026-08-08T01:43`). Com granularidade de minuto, a
+   ordenação nesses casos cai no `run_id`, que é aleatório — e este item, sem
+   fila paralela nenhuma ainda, já produz o empate.
 2. **É único por run** — duas branches nunca escrevem o mesmo caminho, e o
    `git merge` une as árvores sem tocar conteúdo.
 3. **Diz no próprio nome o que a pessoa procura no diff** — quem revisa o PR lê a
@@ -225,6 +232,11 @@ que a esteira 4.0 existe para extinguir.
 | `esteira.json` · `review-policy.json` | humano | raro | sim | igual a qualquer config de repo — conflito raro e legível |
 | `local/**` | a máquina | sim | **não** | não existe no merge; some do PR por `.gitignore` |
 | `_legado-2x/**` | ninguém | congelado | sim | não muda mais; o leitor v2 não olha e não valida nada aqui |
+
+**Regra adicional da linha `runs/*.json`:** um run que pousa aqui tem
+`workspace.branch` preenchida — regra do **layout**, não do schema v1 (seção 9
+não muda). É cobrada pelo teste da seção 10 e, depois, pelo validador que viaja
+(item `wi-esteira4-validador-que-viaja`).
 
 **Critério de aceite do layout:** um PR que carrega duas fases do mesmo ciclo
 mostra **só linhas novas** em `runs/` e em `itens/`. A única linha "alterado"
@@ -305,6 +317,15 @@ O que sai é o que não pode viajar: `C:\Users\xansd\...` é topologia de máqui
 (e este repo tem um espelho **público**), e `cli_session_id` não significa nada
 fora da sessão que o gerou.
 
+**Emenda (Validar, 08/08): `branch` deixa de ser opcional ao pousar.** O schema
+v1 continua aceitando `null` — não é este item que muda o contrato —, mas o
+**layout** exige `workspace.branch` preenchida em todo run de `runs/`: medido no
+único run materializado antes desta emenda, ela veio `null`, e no histórico
+completo do outbox só 22 dos 64 runs a preenchem. Quem preenche é o **emissor**,
+derivando do checkout (`git rev-parse --abbrev-ref HEAD`) quando a ida não
+trouxer o valor — caminho natural, porque a 4.0 extingue a ida escrita pelo app
+(seção 1.1).
+
 **Consequência declarada, para ninguém descobrir depois:** o arquivo versionado
 **não** é byte-a-byte o que a skill emitiu. Isso não é perda de fidelidade
 escondida porque o emissor escreve **já na forma sanitizada** — não existe uma
@@ -351,7 +372,10 @@ slug do alvo `[E]`, e o layout não exige que o repo alvo tenha `.esteira/` algu
 
 **Consequência:** dois PRs, um ciclo. O PR do repo **alvo** carrega só o código; o
 PR do **âncora** carrega o run e os artefatos. Quem revisa o código não vê o run —
-e é por isso que o run declara a branch, que é o que costura os dois.
+e é por isso que o run declara a branch, que é o que costura os dois. Essa
+costura deixa de depender de um campo opcional: `[P-2]` torna
+`workspace.branch` obrigatória ao pousar em `runs/` — regra do layout, cobrada
+sobre a própria evidência que motivou a emenda.
 
 **Custo da alternativa** (run no repo alvo): o `.esteira/` do âncora deixa de ser
 o histórico inteiro do ciclo, e a frase "a ordem lexicográfica de `runs/` é o
@@ -373,6 +397,19 @@ assim.
 passariam a declarar a mesma superfície — e a sequência de merge do plano põe o
 modo solto **depois** deste item, então o comando especificado aqui chegaria ao
 código por outro item de qualquer jeito, com duas descrições para reconciliar.
+
+### Em aberto — worktree por card não tem endereço
+
+`local/repos.json` mapeia **slug → um caminho** (o checkout do repo nesta
+máquina); `workspace.worktree_path` é sanitizado para `null` por `[P-2]`
+antes de pousar em `runs/`; e, medido em disco, **0 dos 64 runs** do outbox
+preenchem esse campo. O único leitor no app hoje é
+`src/main/esteira-dispatch.ts:120`. Depois da sanitização, o endereço do
+worktree de um card específico não existe em lugar nenhum que sobreviva ao
+run — fica **em aberto por decisão do dono (08/08)**, não esquecido: ele
+amarra isso no fim. Uma proposta foi levada e **não foi fechada** — um
+`local/worktrees.json` com chave `<work_item_id>` — e fica registrada aqui
+só como o que foi cogitado, não como o que foi decidido.
 
 ---
 

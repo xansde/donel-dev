@@ -46,7 +46,7 @@ describe('layout v2 — o padrão de nome de run é contrato (seção 4 da spec)
   const pattern = new RegExp(regexBlock);
 
   it('a seção 4 declara gabarito, regex e os dois conjuntos de exemplo', () => {
-    expect(gabarito).toBe('<UTC compacto>--<fase>--<run_id>.json');
+    expect(gabarito).toBe('<UTC compacto com ms>--<fase>--<run_id>.json');
     expect(regexBlock.startsWith('^') && regexBlock.endsWith('$')).toBe(true);
     expect(filenames(casamBlock).length).toBeGreaterThanOrEqual(3);
     expect(filenames(naoCasamBlock).length).toBeGreaterThanOrEqual(3);
@@ -66,8 +66,8 @@ describe('layout v2 — o padrão de nome de run é contrato (seção 4 da spec)
   });
 
   it('complemento e revisão são runs NOVOS — os sufixos do contrato v1 casam', () => {
-    expect(pattern.test('20260808T0932Z--implementar--run-b70e2f19-55c.c1.json')).toBe(true);
-    expect(pattern.test('20260808T1041Z--validar--run-b70e2f19-55c.rev2.json')).toBe(true);
+    expect(pattern.test('20260808T093207512Z--implementar--run-b70e2f19-55c.c1.json')).toBe(true);
+    expect(pattern.test('20260808T104115337Z--validar--run-b70e2f19-55c.rev2.json')).toBe(true);
   });
 
   it('a ordem cronológica sai da ordem lexicográfica, sem abrir arquivo', () => {
@@ -129,6 +129,8 @@ describe('layout v2 — o run desta própria fase pousou no canal (dogfood)', ()
       expect(run.actor.cli_session_id).toBeNull();
       // O que viaja: o slug do repo é contrato, e é obrigatório.
       expect(typeof run.workspace?.target_repo).toBe('string');
+      // Regra nova do layout (seção 6/8 [P-2]): branch não é mais opcional ao pousar.
+      expect(typeof run.workspace?.branch).toBe('string');
       // O caminho é índice, não segunda fonte: o nome do arquivo bate com o arquivo.
       expect(name).toContain(`--${run.run.phase}--${run.run.run_id}`);
       expect(run.subject.discovery_id).toBe(CICLO);
