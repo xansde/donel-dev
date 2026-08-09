@@ -4,6 +4,11 @@
 pendências de alcance (`[P-1]`…`[P-3]`) foram **ratificadas ao vivo pelo Alexandre**
 na mesma data, na sessão da fase Implementar, cada uma pela recomendação da seção 7.
 Nenhuma pendência de alcance segue aberta.
+**Gate de gente fechado em 2026-08-09:** o dono leu o catálogo e **ratificou as seis
+fases** — é a pergunta que a seção 9 declara como não-pinável por teste. Na mesma
+leitura ele emendou o insumo do Plano (seção 3.2): "um assunto fechado" não quer
+dizer "uma spec". Os dois achados da Validar de 08/08 (A-1 e A-2) foram corrigidos
+no mesmo dia, por decisão dele de corrigir direto em vez de abrir item novo.
 **Item:** `wi-esteira4-catalogo-fases` · plano `pln-esteira4-catalogo-e-grafo` ·
 discovery `dsc-15a7e7f5-fbb`.
 **Item irmão (molde):** o formato do arquivo `esteira.grafo`. Este catálogo é a
@@ -157,14 +162,22 @@ pode inventar resposta.
 
 | | |
 |---|---|
-| **Exige** | **uma** spec/plano por completo. Consome um, não vários. |
+| **Exige** | **um** assunto fechado, por completo. Consome um, não vários. |
 | **Faz** | quebra o plano em itens; gera tasks e, quando o alvo é processo agêntico, evals; declara a **sequência de merge** e o que se sobrepõe em conflito `[D]`; **roteia cada item**: Design ou Implementar. |
 | **Devolve** | `work_item.recorded` (um por item, com tipo e repo alvo — item de código sem repo não entra `[D-6]`), `decision.recorded` da sequência de merge e do roteamento, `artifact.recorded` do `esteira.grafo` do plano, `phase.completed`. |
 | **Roda** | 1× por plano. |
 
+**"Um assunto fechado" não quer dizer "uma spec" `[D-09/08]`.** O insumo do Plano
+pode ser uma spec, mas também uma **tela**, uma **funcionalidade**, um ajuste com
+contorno próprio. O que a fase exige não é o formato do documento: é que o assunto
+seja **um só** e esteja **inteiro** — porque é dele que saem a lista de itens e a
+sequência de merge, e as duas coisas ficam erradas se o assunto vier pela metade
+ou vierem dois de uma vez. Onde este catálogo disser "spec", leia "o assunto que
+este Plano consome".
+
 O Plano é o **único** lugar onde a ordem de merge se decide. A fila não reordena, e
-o agente que resolver conflito imprevisto decide **pela spec** e registra o conflito
-e o que decidiu `[D]` — quem revê é a Validar.
+o agente que resolver conflito imprevisto decide **pelo assunto do plano** e
+registra o conflito e o que decidiu `[D]` — quem revê é a Validar.
 
 ### 3.3 Design — `fase`, condicional
 
@@ -397,3 +410,8 @@ A regra "a oferta da tela espelha o catálogo" é mecânica desde já:
 
 O que **não** dá para pinar por teste, e por isso é gate de gente: se as seis fases
 são as certas. Isso se responde na Validar, com o dono.
+
+**Respondido em 2026-08-09 — ✅ as seis são as certas.** O dono leu a seção 3 e
+ratificou. A leitura produziu **uma** emenda, já incorporada: o insumo do Plano não
+é "uma spec", é **um assunto fechado** (seção 3.2). Nenhuma fase entrou, saiu ou
+trocou de nome — o teste desta seção continua valendo sem alteração.
