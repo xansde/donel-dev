@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mockup — Fila do motor de execução (esteira 4.0) · wi-esteira4-motor-spec</title>
+    <style>
+      :root {
+        --bg-app: #0e1116;
+        --bg-panel: #151a21;
+        --bg-raised: #1c232c;
+        --border: #28303b;
+        --text-primary: #d7dde5;
+        --text-muted: #828d9c;
+        --accent: #4c9cf0;
+        --state-waiting: #e8b44c;
+        --state-alert: #f0684c;
+        --state-done: #5e6873;
+        --zone-ok: #3dce8f;
+        --phase-implementar: #5fb0a8;
+        --phase-validar: #d9a05f;
+        --phase-design: #c97fa8;
+        --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+        --radius-sm: 6px;
+        --radius-md: 8px;
+        --hairline: 1px solid var(--border);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: 32px 24px 64px;
+        background: var(--bg-app); color: var(--text-primary);
+        font-family: var(--font-ui); font-size: 13px; line-height: 1.5;
+      }
+      .page { max-width: 1120px; margin: 0 auto; }
+      header.doc { border-bottom: var(--hairline); padding-bottom: 16px; margin-bottom: 24px; }
+      header.doc h1 { font-size: 18px; margin: 0 0 4px; font-weight: 600; }
+      header.doc p { margin: 0; color: var(--text-muted); font-size: 11px; }
+      header.doc code, code { font-family: var(--font-mono); color: var(--text-primary); font-size: 11px; }
+      h2.sec { font-size: 15px; font-weight: 600; margin: 40px 0 4px; display: flex; align-items: baseline; gap: 8px; }
+      h2.sec span.num { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+      p.sec-note { margin: 0 0 16px; color: var(--text-muted); font-size: 11px; max-width: 82ch; }
+
+      .window { background: var(--bg-panel); border: var(--hairline); border-radius: var(--radius-md); overflow: hidden; }
+      .window > .titlebar {
+        height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 12px;
+        background: var(--bg-raised); border-bottom: var(--hairline);
+        font-size: 11px; color: var(--text-muted);
+      }
+      .dot-row { display: flex; gap: 5px; }
+      .dot-row i { width: 8px; height: 8px; border-radius: 50%; background: var(--border); display: block; }
+      .window > .body { padding: 16px; }
+
+      /* barra do plano */
+      .plan-bar { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--bg-raised); border: var(--hairline); border-radius: var(--radius-sm); margin-bottom: 12px; }
+      .plan-bar .name { font-weight: 600; }
+      .plan-bar .meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+      .plan-bar .spacer { flex: 1; }
+      .chip { font-family: var(--font-mono); font-size: 10px; border: var(--hairline); border-radius: 4px; padding: 2px 6px; color: var(--text-muted); }
+      .chip.live { color: var(--zone-ok); border-color: var(--zone-ok); }
+
+      /* linha de card */
+      .card-row {
+        display: grid; grid-template-columns: 16px 1fr 210px 190px; gap: 12px; align-items: center;
+        padding: 10px 12px; border: var(--hairline); border-radius: var(--radius-sm); margin-bottom: 6px;
+      }
+      .card-row .led { width: 8px; height: 8px; border-radius: 50%; }
+      .led.run { background: var(--phase-implementar); box-shadow: 0 0 6px var(--phase-implementar); }
+      .led.wait { background: var(--state-waiting); box-shadow: 0 0 6px var(--state-waiting); }
+      .led.block { background: var(--state-done); }
+      .led.alert { background: var(--state-alert); box-shadow: 0 0 6px var(--state-alert); }
+      .card-row .title { font-weight: 500; }
+      .card-row .title small { display: block; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); font-weight: 400; }
+      .card-row .stage { font-size: 11px; }
+      .card-row .stage b { font-weight: 600; }
+      .card-row .stage .sub { display: block; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+      .card-row .action { text-align: right; font-size: 11px; color: var(--text-muted); }
+      .card-row.waiting { border-color: var(--state-waiting); background: color-mix(in srgb, var(--state-waiting) 4%, var(--bg-panel)); }
+      .card-row.alert { border-color: var(--state-alert); background: color-mix(in srgb, var(--state-alert) 5%, var(--bg-panel)); }
+
+      button.human {
+        font: inherit; font-size: 11px; font-weight: 600;
+        background: var(--state-waiting); color: #10130a; border: none;
+        border-radius: var(--radius-sm); padding: 6px 12px; cursor: pointer;
+      }
+      button.human.alert { background: var(--state-alert); color: #1a0d0a; }
+      button.ghost {
+        font: inherit; font-size: 11px; background: none; color: var(--text-primary);
+        border: var(--hairline); border-radius: var(--radius-sm); padding: 6px 12px; cursor: pointer;
+      }
+
+      /* trilho serial (merge + suíte) */
+      .serial { display: flex; gap: 8px; align-items: stretch; margin-top: 12px; }
+      .serial .box { flex: 1; border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 10px 12px; font-size: 11px; color: var(--text-muted); }
+      .serial .box b { color: var(--text-primary); font-weight: 600; display: block; }
+      .serial .arrow { align-self: center; color: var(--text-muted); font-family: var(--font-mono); }
+
+      /* contador de rodadas */
+      .rounds { display: inline-flex; gap: 4px; align-items: center; vertical-align: middle; }
+      .rounds i { width: 14px; height: 6px; border-radius: 3px; background: var(--border); display: block; }
+      .rounds i.fail { background: var(--state-alert); }
+      .rounds i.cur { background: var(--state-waiting); }
+
+      /* painel teto estourado */
+      .stall { display: grid; grid-template-columns: 1fr 220px; gap: 16px; }
+      .stall .finding { background: var(--bg-raised); border-left: 3px solid var(--state-alert); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding: 10px 12px; font-size: 12px; }
+      .stall .finding .k { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+      .stall .exits { display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+
+      figure.note { margin: 12px 0 0; padding: 10px 12px; border: var(--hairline); border-left: 3px solid var(--accent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; font-size: 11px; color: var(--text-muted); }
+      figure.note b { color: var(--text-primary); }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="doc">
+        <h1>Fila do motor de execução — como o plano anda sozinho</h1>
+        <p>
+          Fase Design · <code>wi-esteira4-motor-spec</code> · plano <code>pln-esteira4-motor-de-execucao</code> · 09/08/2026.
+          Forma proposta para a spec do motor; alcance e comportamento são da spec. Critério de aceite herdado do
+          catálogo (§4): <b>nenhum passo automático pede clique</b> — todo botão nesta tela é uma parada humana.
+        </p>
+      </header>
+
+      <h2 class="sec"><span class="num">01</span> A leva em execução — paralelo onde dá, parado só onde é humano</h2>
+      <p class="sec-note">
+        Cada linha é um card do <code>esteira.grafo</code> do plano. LED verde-água = fase rodando headless na
+        worktree própria; âmbar = a fila parou e espera gesto; cinza = bloqueado por dependência. A coluna da direita
+        só tem botão quando a parada é humana — passo automático mostra estado, nunca pede clique.
+      </p>
+      <div class="window">
+        <div class="titlebar"><span class="dot-row"><i></i><i></i><i></i></span> Esteira · Motor de execução</div>
+        <div class="body">
+          <div class="plan-bar">
+            <span class="name">Motor de execução: fila, paralelismo e headless</span>
+            <span class="meta">pln-esteira4-motor-de-execucao · 9 itens · 2 rodando</span>
+            <span class="spacer"></span>
+            <span class="chip live">fila ativa</span>
+            <span class="chip">worktrees: 3/4</span>
+          </div>
+
+          <div class="card-row">
+            <span class="led run"></span>
+            <span class="title">Spec do motor: máquina de estados<small>wi-esteira4-motor-spec · worktree A</small></span>
+            <span class="stage"><b style="color:var(--phase-implementar)">Implementar</b> · headless<span class="sub">sessão 82e8… · 14 min · sem gesto pendente</span></span>
+            <span class="action">—</span>
+          </div>
+
+          <div class="card-row waiting">
+            <span class="led wait"></span>
+            <span class="title">Issue: scheduler sobre o grafo de cards<small>wi-esteira4-scheduler · worktree B</small></span>
+            <span class="stage"><b style="color:var(--phase-design)">Design</b> · parada humana<span class="sub">mockup + diagrama prontos há 22 min</span></span>
+            <span class="action"><button class="human">Validar o Design</button></span>
+          </div>
+
+          <div class="card-row">
+            <span class="led block"></span>
+            <span class="title">Issue: derivação de rodada e estado<small>wi-esteira4-derivacao · sem worktree</small></span>
+            <span class="stage"><b>Bloqueado</b><span class="sub">depende de wi-esteira4-motor-spec</span></span>
+            <span class="action">—</span>
+          </div>
+
+          <div class="serial">
+            <div class="box"><b>Fila de merge</b>sequência do Plano: spec → scheduler → derivação · a fila não reordena</div>
+            <span class="arrow">→</span>
+            <div class="box"><b>Suíte + build + e2e</b>1× por plano, depois do último merge da leva</div>
+          </div>
+        </div>
+      </div>
+      <figure class="note">
+        <b>Regra que a tela torna visível:</b> só nó tipo <code>fase</code> abre sessão (LED). Gate vira linha âmbar
+        com botão; artefato (PR de staging) vira chip na trilha do card, nunca uma linha da fila.
+      </figure>
+
+      <h2 class="sec"><span class="num">02</span> O contador de rodadas — parte da forma, não detalhe de log</h2>
+      <p class="sec-note">
+        Requisito de tela do catálogo (§5): quem olha sabe em que rodada do laço <code>fix ↔ validar staging</code>
+        o card está <i>antes</i> de a fila desistir. O contador é derivado do log de fatos — runs da Validar com
+        verificação <code>failed</code> — nunca um campo guardado.
+      </p>
+      <div class="window">
+        <div class="titlebar"><span class="dot-row"><i></i><i></i><i></i></span> Esteira · card em Validar</div>
+        <div class="body">
+          <div class="card-row">
+            <span class="led run"></span>
+            <span class="title">Issue: headless runner e evidência de submissão<small>wi-esteira4-headless · worktree C</small></span>
+            <span class="stage">
+              <b style="color:var(--phase-validar)">Validar</b> · fix em andamento
+              <span class="sub">rodada <b style="color:var(--text-primary)">2 de 3</b>&nbsp;
+                <span class="rounds"><i class="fail"></i><i class="cur"></i><i></i></span>
+                &nbsp;· derivada de 1 run failed</span>
+            </span>
+            <span class="action">—</span>
+          </div>
+        </div>
+      </div>
+
+      <h2 class="sec"><span class="num">03</span> Teto estourado — a fila sabe parar, e mostra as duas saídas</h2>
+      <p class="sec-note">
+        Rodada 3 falhou: a fila para e chama o dono. A tela mostra o último achado, a branch, e exatamente as duas
+        saídas que o catálogo nomeia — ver as 3 rodadas, ou assumir na mão. Nenhuma quarta tentativa automática.
+      </p>
+      <div class="window">
+        <div class="titlebar"><span class="dot-row"><i></i><i></i><i></i></span> Esteira · a fila parou</div>
+        <div class="body">
+          <div class="card-row alert" style="margin-bottom:12px">
+            <span class="led alert"></span>
+            <span class="title">Issue: fila de merge com resolução de conflito<small>wi-esteira4-merge · worktree D</small></span>
+            <span class="stage"><b style="color:var(--state-alert)">Teto estourado</b><span class="sub">rodada 3 de 3 falhou&nbsp;<span class="rounds"><i class="fail"></i><i class="fail"></i><i class="fail"></i></span></span></span>
+            <span class="action">—</span>
+          </div>
+          <div class="stall">
+            <div class="finding">
+              <div class="k">último achado · rodada 3</div>
+              O smoke <code>merge-order.spec.ts</code> segue vermelho: a resolução aplicada no conflito de
+              <code>esteiraView.ts</code> preservou a ordem do checkout, não a do Plano.
+              <div class="k" style="margin-top:8px">branch</div>
+              <code>feature/wi-esteira4-merge</code>
+            </div>
+            <div class="exits">
+              <button class="ghost">Ver as 3 rodadas</button>
+              <button class="human alert">Assumir na mão</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <figure class="note">
+        <b>Divergência a vigiar na Implementar:</b> se a spec mudar o que conta como rodada ou as saídas do teto,
+        vence a spec — e este mockup ganha a nota da divergência, não uma edição silenciosa.
+      </figure>
+    </div>
+  </body>
+</html>
