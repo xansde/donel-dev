@@ -21,6 +21,12 @@ via `CLAUDE_CONFIG_DIR`.
 - **Regra dura (inalterada)**: push/PR/merge em `main` e publicação no repo
   público só com instrução literal do Alexandre. "Comita", "deploya",
   "atualiza staging" NÃO autorizam tocar em `main` nem no público.
+- **PR e merge (redefinido pelo dono em 2026-08-09)**: **abrir PR contra
+  `staging` é livre para o Claude**, sem pedir confirmação — inclusive quando
+  quem abre é a fase Implementar da Esteira. A regra anterior ("PR é sempre
+  ato humano") **caiu**, aqui e no baseline do squad. O que **não** mudou:
+  **merge é sempre decisão humana, e só depois de validação**; e `main` e o
+  repo público seguem no bloqueio total do bullet acima.
 - **Canais instalados coexistindo (decisão de 2026-07-28)**: `npm run
   dist:alfa` / `dist:beta` / `dist` empacotam com identidade própria de
   INSTALADOR (`appId`/`productName`/atalho "Donel Dev Alfa"/"Donel Dev
@@ -128,8 +134,8 @@ Fonte de verdade do escopo: `specs/009-modo-dev-v3/spec.md` (31 CA). Forma da UI
 `design/modo-dev-v3-handoff/project/Modo Dev v3.dc.html` **lido junto de**
 `design/modo-dev-v3-verificacao.md`, que nomeia **7 divergências (D-V1..D-V7)** —
 ler ANTES de implementar. Regra de conflito: **forma** → vence o design, sem
-abrandar; **alcance ou comportamento** → vence a spec. Um lote por sessão; PR é
-ato humano.
+abrandar; **alcance ou comportamento** → vence a spec. Um lote por sessão; o PR
+para `staging` pode ser aberto pelo Claude (ver "PR e merge" abaixo).
 
 > **Fila anterior (003), cumprida:** `implementar-modo-dev/PROXIMO.md` zerou em
 > 28/07 (PRs #2 e #3). A forma da v2 (`design/modo-dev-handoff/` +
