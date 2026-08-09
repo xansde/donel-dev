@@ -93,8 +93,8 @@ O grafo tem treze nós; o catálogo tem **seis fases**. Não é contradição, �
 diferença entre *o que se percorre* e *o que se dispara*:
 
 - **fase do catálogo** = tem skill própria, tem `run-input.json`, devolve
-  `result.json`. São seis: Discovery, Plano, Design, Implementar, Validar
-  (composta) e Concluir.
+  `result.json`. São seis: Discovery, Plano, Design, Implementar, Validar e
+  Concluir (esta última com a Documentar dissolvida dentro, `[D-10]`).
 - **nó do grafo** = uma parada no caminho. Alguns nós são fases; outros são
   **passos internos** de uma fase (Fix e Validar staging vivem dentro da Validar),
   **artefatos** (o PR para staging) ou **etapas de plano**, com cardinalidade
@@ -204,14 +204,26 @@ staging**. PR para produção continua sendo ato humano, na Concluir. O PR de st
 é **artefato**, não fase `[F-3]`: é o que a fase produz, não um passo que a fila
 percorre — e é essa distinção de tipo que impede a fila de tentar executá-lo.
 
-### 3.5 Validar — `fase` composta (Validar + Documentar)
+### 3.5 Validar — `fase`
 
 | | |
 |---|---|
 | **Exige** | o que a Implementar deixou, e o roteiro de e2e. |
-| **Faz** | roda a verificação sobre o item **e** documenta com o que a verificação acabou de ensinar, na mesma sessão `[E5]`. Contém o laço `fix ↔ validar staging` (seção 5). |
-| **Devolve** | `verification.recorded` (kind `check` ou `review`), `artifact.recorded` do que foi documentado, dois `phase.completed` (`validar` e `documentar`) no mesmo run, `human_review_recorded` quando houve roteiro e2e visto por gente. |
+| **Faz** | roda a verificação sobre o item. Contém o laço `fix ↔ validar staging` (seção 5). |
+| **Devolve** | `verification.recorded` (kind `check` ou `review`), `artifact.recorded` do que a verificação produziu (relatório de review, roteiro de e2e), **um** `phase.completed` — o de `validar` —, `human_review.recorded` quando houve roteiro e2e visto por gente. |
 | **Roda** | 1× por item, com até 3 rodadas internas do laço. |
+
+**A Validar não documenta `[D-10]`.** O `phase.completed` de `documentar` é da
+Concluir (seção 3.6), e é dela sozinha: um mesmo fato de fase declarado por duas
+fases para o mesmo `subject` não tem de quem ser cobrado, e o motor não teria como
+arbitrar.
+
+> **Transição, nomeada de propósito.** A skill `esteira-validar` **3.0.0** é
+> composta (`[E5]`) e declara os dois `phase.completed`; a `esteira-concluir`
+> 3.0.0 não declara `documentar` nenhum. Da **4.0** em diante é o inverso, e é
+> esta seção que vale. Enquanto a 3.0 rodar, ela segue declarando os dois — o
+> histórico de runs até 08/08 tem essa forma, e não é erro de dado: é a versão
+> anterior do catálogo.
 
 **Nunca aprova, nunca mergeia, nunca marca sozinha um roteiro e2e como visto.** O
 teste local é gate humano por construção: humano só onde não é determinístico — API
@@ -223,12 +235,13 @@ roda sozinha, front é o dono.
 |---|---|
 | **Exige** | verificação que **passou**. Sem ela, o emissor recusa. |
 | **Faz** | fecha o ciclo do item. **O dono dá o merge de produção num gesto só**, sobre a leva concluída, e o agente executa na ordem declarada pelo Plano `[D]`. Aqui também nasce a documentação, com insumo de todas as fases. |
-| **Devolve** | `verification.recorded` da evidência que passou, `artifact.recorded` do documento versionado, `gate.confirmed`/`human_review_recorded` do gesto humano, e **dois** `phase.completed` (`concluir` e `documentar`) no mesmo run. |
+| **Devolve** | `verification.recorded` da evidência que passou, `artifact.recorded` do documento versionado, `gate.confirmed`/`human_review.recorded` do gesto humano, e **dois** `phase.completed` (`concluir` e `documentar`) no mesmo run. |
 | **Roda** | 1× por item; um gesto humano por **leva**, não por item. |
 
 Documentar deixa de ser linha do catálogo `[D-10]`: a fronteira que justificaria
 fase separada — gate humano, olho novo, orçamento de contexto — não separa as duas.
-A mecânica é a mesma que a Validar composta já usa `[E]`.
+A mecânica de fase que fecha dois assuntos numa sessão só já foi provada pela
+Validar composta da 3.0 `[E]` — o que muda na 4.0 é **de quem** ela é.
 
 ---
 
