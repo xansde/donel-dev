@@ -1,0 +1,131 @@
+{
+  "contract_version": "1.0.0",
+  "kind": "esteira.result",
+  "run": {
+    "run_id": "run-8ac1a2d4-7e4",
+    "phase": "implementar",
+    "status": "success",
+    "started_at": "2026-08-08T01:40:26.513Z",
+    "finished_at": "2026-08-08T01:57:05.317Z",
+    "failure": null,
+    "complements_run_id": null,
+    "revises_run_id": null
+  },
+  "actor": {
+    "tool": "esteira-donel",
+    "tool_version": "3.0.0",
+    "executor": "claude-code",
+    "model": "claude-opus-5",
+    "effort": "high",
+    "cli_session_id": null
+  },
+  "subject": {
+    "discovery_id": "dsc-15a7e7f5-fbb",
+    "plan_id": "pln-esteira4-skills-portateis",
+    "work_item_id": "wi-esteira4-layout-esteira-dir"
+  },
+  "workspace": {
+    "target_repo": "donel-dev",
+    "repo_path": null,
+    "worktree_path": null,
+    "branch": "feature/wi-esteira4-layout-esteira-dir"
+  },
+  "facts": [
+    {
+      "type": "verification.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "verification_kind": "check",
+      "state": "passed",
+      "ref": "tests/esteiraLayoutCanalV2.test.ts (23/23) — le o padrao de nome de run e os exemplos DA PROPRIA spec e os confronta, varre runs/ (nome bate com conteudo, e os tres campos de [P-2] estao null), confere a arvore v2 materializada e pina as 6 evidencias [E] que a spec cita. Suite inteira: npm test 2189/2189 em 119 arquivos (exit 0); npm run typecheck exit 0. `npm run esteira:check` exit 0 sobre o result deste run E sobre a copia SANITIZADA dele em runs/ — o arquivo sanitizado passa pelo MESMO contrato v1, que era a afirmacao central de [P-2]. Worktree do item (donel-dev-wt-layout), branch feature/wi-esteira4-layout-esteira-dir, commits 66eab91 (spec + arvore + teste) e o commit seguinte, que adiciona a copia deste run em runs/ — um run nao pode conter o sha do commit que o carrega, entao esse sha nao esta declarado aqui por construcao.",
+      "base": null
+    },
+    {
+      "type": "verification.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "verification_kind": "review",
+      "state": "pending",
+      "ref": "specs/012-esteira-4/layout-esteira.md — o documento esta pronto para revisao. O que a revisao decide e a secao 8: as CINCO decisoes de alcance ([P-1] pasta por ciclo com grafo em planos/<pln>/, [P-2] result sanitizado em tres campos anulaveis, [P-3] sem poda de runs/, [P-4] run sempre no repo ancora, [P-5] `esteira init` e do item vizinho). Enquanto nao ratificadas, o status da spec e PROPOSTA.",
+      "base": null
+    },
+    {
+      "type": "artifact.recorded",
+      "owner": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "artifact_kind": "spec",
+      "location": "repo",
+      "repo": "donel-dev",
+      "path": "specs/012-esteira-4/layout-esteira.md"
+    },
+    {
+      "type": "artifact.recorded",
+      "owner": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "artifact_kind": "canal-versionado",
+      "location": "repo",
+      "repo": "donel-dev",
+      "path": ".esteira/esteira.json"
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "CINCO DECISOES DE ALCANCE AGUARDAM RATIFICACAO, e por isso a spec esta como PROPOSTA e a verificacao de review esta `pending`. Cada uma na secao 8 com motivo e CUSTO DA ALTERNATIVA declarado: [P-1] pasta por CICLO (subject so exige discovery_id [E], e o run da Discovery nao teria onde pousar numa pasta por plano), com o grafo descendo para planos/<pln>/grafo.json porque este ciclo tem sete planos e a linha 'dono unico: a fase Plano' ficaria falsa no primeiro plano paralelo; [P-2] o arquivo versionado e o result SANITIZADO — workspace.repo_path, workspace.worktree_path e actor.cli_session_id viram null (os tres sao anulaveis no schema [E], entao o sanitizado continua valido pelo MESMO contrato), e a consequencia foi declarada em texto: o arquivo versionado nao e byte-a-byte o que a skill emitiu; [P-3] sem poda — podar reintroduziria por outra porta a perda de historico que originou o arquivo-por-run, e o teto do laco fix<->validar conta rodadas SOBRE esses runs; [P-4] o run pousa sempre no repo ANCORA, dois PRs e um ciclo, porque partir o ciclo faria a reducao runs->estado precisar de um mapa externo — o acoplamento que este item extingue; [P-5] `esteira init` e do item wi-esteira4-solto-automaticas, e ate la o esteira.json e config de repo com autor humano, como review-policy.json ja e hoje [E]."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "DUAS DIVERGENCIAS COM O DESIGN, declaradas em vez de silenciadas. (1) FORMA respeitada, ALCANCE decidido pela spec: os dois artefatos do Design desenham `ciclos/<dsc>/grafo.json` na raiz do ciclo; a spec desce o grafo para `ciclos/<dsc>/planos/<pln>/grafo.json`. Isso e resposta a pergunta [P-1] que o PROPRIO Design devolveu como alcance — os artefatos ficam como registro do que foi proposto, e a secao 8 da spec nomeia a divergencia. (2) CAMINHO DA SPEC: o mockup (cena 4, linha do diff) escreve `specs/013-layout-esteira/spec.md`; a spec foi escrita em `specs/012-esteira-4/layout-esteira.md`, ao lado do irmao `catalogo.md`, porque os dois itens saem do mesmo discovery e o repo ja abriu a feature 012 para ele. A linha do mockup e ilustrativa do diff, nao decreto de nome — mas fica registrada aqui para nao virar surpresa no review."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "A PROMESSA DA NOTA DO DESIGN FOI CUMPRIDA: os dois artefatos deste item sairam de `.esteira/design/wi-esteira4-layout-esteira-dir/` (layout 2.1.0) para `.esteira/ciclos/dsc-15a7e7f5-fbb/itens/wi-esteira4-layout-esteira-dir/design/` (layout v2), via `git mv` — o historico do arquivo segue. O PR tambem cria o `esteira.json` e o `.gitignore` de `local/`. O que este PR NAO faz, de proposito: mover as cinco pastas da 2.1.0 para `_legado-2x/` (e do item wi-esteira4-aposentar-21), escrever o leitor que deriva a ida (wi-esteira4-solto-*) e mexer no emit_result.py do fork (wi-esteira4-validador-que-viaja)."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "ONDE O TRABALHO ESTA: worktree NOVO em C:/Users/xansd/seazone/donel-dev-wt-layout, branch feature/wi-esteira4-layout-esteira-dir, baseada na staging LOCAL (9114a85). O checkout principal donel-dev NAO foi tocado: ele estava — e seguiu — na branch do item irmao wi-esteira4-catalogo-fases, com uma sessao commitando nele dois minutos depois deste run ser pedido (b4f79e7, 01:42:33Z). Trocar de branch la teria derrubado o trabalho do irmao. Os dois artefatos do Design deste item foram trazidos de a472b66 com `git checkout <sha> -- <path>` (eles tinham sido commitados na branch do irmao, por ser a que estava aberta) — so os DESTE item, para o PR ficar auto-contido. O worktree tem um junction de node_modules apontando para o checkout principal (nao versionado); apagar o worktree exige remover o junction antes."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "ACHADO DE CODIGO QUE MUDA O ENUNCIADO, e que a spec incorporou: o Design falava do `.esteira/` versionado como 'o layout instalado hoje'. Medido em disco, o canal de HOJE nao esta no repo — sao TRES raizes fora dele: `~/.claude/esteira-donel/{inbox,outbox}` da 3.0 (src/main/esteira-dispatch.ts:55, src/main/esteira-ingest.ts:58), `~/.claude/esteira-state/<repo>/<card>/<fase>` da 2.x (src/main/index.ts:314, movida para FORA do repo pela CA-4 da 009) e o resto da 2.1.0 que ficou versionado em `<repo>/.esteira/`. A decisao do Discovery ('.esteira/ versionado') REVERTE a CA-4 de proposito, e por um motivo diferente do que a CA-4 combatia — a spec diz isso em texto (secao Problema) para que a reversao nao pareca esquecimento. O teste pina as duas evidencias: quando alguem mudar esse codigo, o erro avisa que a SPEC envelheceu."
+    },
+    {
+      "type": "phase.completed",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "phase": "implementar",
+      "outcome": "done",
+      "summary": "Spec do layout do .esteira/ escrita e commitada (66eab91 + o commit do dogfood): tres zonas por regra de escrita, um arquivo por RUN com <utc>--<fase>--<run_id> no nome, descoberta do assunto em quatro degraus que falham ensinando, e as cinco perguntas de alcance do Design decididas com custo da alternativa. O PR materializa a zona versionada minima (esteira.json, .gitignore de local/) e move os dois artefatos do Design para o caminho novo. Verificacao: tests/esteiraLayoutCanalV2.test.ts (23/23) le o padrao e os exemplos DA PROPRIA spec, confere a arvore e pina as evidencias [E]; npm test 2189/2189; typecheck exit 0. Fica pendente de review a secao 8 — as cinco decisoes de alcance ainda nao foram ratificadas pelo dono.",
+      "risk": null,
+      "channel": null
+    }
+  ]
+}

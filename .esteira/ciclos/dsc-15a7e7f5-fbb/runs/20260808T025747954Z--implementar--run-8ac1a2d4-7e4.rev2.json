@@ -1,0 +1,150 @@
+{
+  "contract_version": "1.0.0",
+  "kind": "esteira.result",
+  "run": {
+    "run_id": "run-8ac1a2d4-7e4.rev2",
+    "phase": "implementar",
+    "status": "success",
+    "started_at": "2026-08-08T02:32:00.000Z",
+    "finished_at": "2026-08-08T02:57:47.954Z",
+    "failure": null,
+    "complements_run_id": null,
+    "revises_run_id": "run-8ac1a2d4-7e4"
+  },
+  "actor": {
+    "tool": "esteira-donel",
+    "tool_version": "3.0.0",
+    "executor": "claude-code",
+    "model": "claude-opus-5",
+    "effort": "high",
+    "cli_session_id": null
+  },
+  "subject": {
+    "discovery_id": "dsc-15a7e7f5-fbb",
+    "plan_id": "pln-esteira4-skills-portateis",
+    "work_item_id": "wi-esteira4-layout-esteira-dir"
+  },
+  "workspace": {
+    "target_repo": "donel-dev",
+    "repo_path": null,
+    "worktree_path": null,
+    "branch": "feature/wi-esteira4-layout-esteira-dir"
+  },
+  "facts": [
+    {
+      "type": "verification.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "verification_kind": "check",
+      "state": "passed",
+      "ref": "tests/esteiraLayoutCanalV2.test.ts isolado: 24/24 (eram 21; +2 do dogfood da rodada 1, +1 do exemplo 'nao casa' com granularidade de minuto). npm run typecheck exit 0. Rodados por mim no worktree donel-dev-wt-layout, nao herdados do worker.",
+      "base": null
+    },
+    {
+      "type": "verification.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "verification_kind": "check",
+      "state": "failed",
+      "ref": "npm test completo: 2189 de 2190, exit 1. A unica falha e tests/pty-manager.test.ts > 'spawna o comando/args default (terminal livre, PowerShell)' com 'Test timed out in 5000ms' - nenhuma relacao com este item. Declarado failed porque foi o que a suite completa devolveu; a explicacao esta na nota, nao no estado. O worker reportou 2190/2190 e nao reproduzi esse numero.",
+      "base": null
+    },
+    {
+      "type": "verification.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "verification_kind": "check",
+      "state": "passed",
+      "ref": "npm run esteira:check nos DOIS arquivos de .esteira/ciclos/dsc-15a7e7f5-fbb/runs/: ambos validos pelo contrato v1 ja com branch preenchida e os tres campos de [P-2] em null. O layout continua se provando em si mesmo depois do conserto.",
+      "base": null
+    },
+    {
+      "type": "artifact.recorded",
+      "owner": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "artifact_kind": "spec",
+      "location": "repo",
+      "repo": "donel-dev",
+      "path": "specs/012-esteira-4/layout-esteira.md"
+    },
+    {
+      "type": "artifact.recorded",
+      "owner": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "artifact_kind": "canal-versionado",
+      "location": "repo",
+      "repo": "donel-dev",
+      "path": ".esteira/ciclos/dsc-15a7e7f5-fbb/runs/"
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "OS DOIS CONSERTOS DA REVIEW FORAM APLICADOS no commit 851f7aa. (1) TIMESTAMP: o nome de run passa a <YYYYMMDD>T<HHMMSSmmm>Z - regex ^\\d{8}T\\d{9}Z--, gabarito, os cinco exemplos que casam e a arvore da secao 3 atualizados; um quarto exemplo 'nao casa' foi acrescentado justamente com granularidade de minuto, e o texto do item 1 da secao 4 agora carrega a medicao que motivou a mudanca (quatro minutos do historico real com mais de um run, um deles com tres). O run ja pousado foi renomeado com git mv DE VERDADE desta vez - o git detectou R099, ao contrario da rodada 1, cuja nota afirmava um git mv que nao existiu. (2) BRANCH: obrigatoria ao pousar em runs/, escrita na secao 6, em [P-2] e em [P-4]; o schema v1 NAO foi tocado - conferido por mim, `git diff --name-only staging...HEAD` nao lista esteira-result.schema.json. O teste passou a cobrar `typeof run.workspace?.branch === 'string'`."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "SOBRE O CHECK 'failed' DA SUITE COMPLETA, para ninguem ler como reprovacao do item: a unica falha e tests/pty-manager.test.ts, que spawna um PowerShell de verdade com teto de 5000ms. Rodado isolado, passa: 15/15, e o caso que estourou leva 3560ms - margem de 1,4s sobre o teto. Ou seja, e flake sob carga (eu tinha duas suites concorrentes na maquina), nao regressao deste item. Fica declarado como failed em vez de maquiado como passed porque a suite completa devolveu exit 1 e foi isso que eu vi; o teste do proprio item passa 24/24 isolado. Se doer de novo, o conserto e do teste de PTY - aumentar o teto ou parar de spawnar shell real -, e nao deste item."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "PENDENCIA DO DONO REGISTRADA NA SPEC SEM SER DECIDIDA, como ele pediu: a secao 8 ganhou a subsecao 'Em aberto - worktree por card nao tem endereco', que descreve o fato (repos.json e slug -> um caminho, worktree_path e sanitizado por [P-2], 0 de 64 runs o preenchem, unico leitor em esteira-dispatch.ts:120) e diz explicitamente que esta em aberto POR DECISAO DELE em 08/08, nao por esquecimento. A proposta cogitada (local/worktrees.json com chave <work_item_id>) esta citada como cogitada, nao endossada."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "COMO ESTA RODADA FOI DISPARADA, para o historico nao parecer inconsistente: nao houve ida nova no inbox - o app nao disparou esta fase. Reusei a ida real da rodada 1 (run-8ac1a2d4-7e4, fase implementar, mesmo item) e emiti com run_id novo e revises_run_id apontando para ela, que e o mecanismo que o contrato v1 ja tem para isto. Nenhum run-input foi forjado. Quem executou os consertos foi um subagente, para quem corrige nao ser o mesmo olho que apontou; a verificacao acima foi refeita por mim, nao herdada do relatorio dele - e foi assim que a divergencia do numero da suite apareceu."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "DOIS RESIDUOS PEQUENOS que ficam para a proxima passada, nenhum bloqueante. (a) A secao 4 da spec diz que 'o teste da secao 9 le esta linha do proprio documento', mas o teste esta descrito na secao 10 - a 9 e 'o que este item toca no codigo'. Erro pre-existente, nao introduzido pelo conserto. (b) O it('a ordem cronologica sai da ordem lexicografica') do teste ainda usa nomes com granularidade de MINUTO no array que ele ordena; a assercao continua correta (e um sort, nao um match do padrao), mas ilustra o formato velho num teste sobre o layout novo."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "PERGUNTA QUE A SPEC AINDA NAO RESPONDE, e que so apareceu porque o layout foi dogfoodado: QUEM pousa o run em runs/, e QUANDO. O result nasce no fim da fase, entao a fase nao consegue pousa-lo no mesmo commit em que declara o trabalho. Na pratica a rodada 1 resolveu commitando 31 segundos DEPOIS de emitir (finished_at 22:57:05 -0300, commit 5f96311 as 22:57:36), o que funciona mas deixa o commit do pouso sem run que o declare. Este run tambem sera pousado por um commit posterior a esta emissao. Vale a spec nomear o corte em vez de deixa-lo por costume."
+    },
+    {
+      "type": "phase.completed",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "phase": "implementar",
+      "outcome": "done",
+      "summary": "Rodada 2: os dois consertos que a review reprovou estao aplicados no commit 851f7aa - timestamp de run com milissegundos (e o run ja pousado renomeado com git mv real, R099) e workspace.branch obrigatoria no LAYOUT, sem tocar o schema v1. A pendencia do worktree entrou na spec como 'Em aberto', sem ser decidida. Teste do item 24/24 e typecheck limpos; a suite completa devolveu exit 1 por um flake de timeout no teste de PTY, alheio a este item e declarado como failed em vez de maquiado. Sem push, sem PR.",
+      "risk": null,
+      "channel": null
+    }
+  ]
+}
