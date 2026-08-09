@@ -1,0 +1,128 @@
+{
+  "kind": "esteira.grafo",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "n-discovery",
+      "kind": "gate",
+      "title": "Discovery",
+      "handoff": "assunto cru",
+      "note": "Dimensiona o problema e reduz incerteza: protótipo, spike, ADR, research, formulário pro cliente. Gera os cards do Plano e um palpite das specs. Aba de verdade — você está nela.",
+      "x": -359,
+      "y": 200
+    },
+    {
+      "id": "n-plano",
+      "kind": "gate",
+      "title": "Plano",
+      "handoff": "uma spec inteira",
+      "note": "Consome UMA spec por completo. Gera tasks + evals (quando é processo agêntico), a SEQUÊNCIA de merge e o que se sobrepõe em conflito. Roteia cada card: Design ou Implementar.",
+      "x": 6,
+      "y": 195
+    },
+    {
+      "id": "n-design",
+      "kind": "fase",
+      "title": "Design",
+      "handoff": "tasks do Plano",
+      "note": "Discovery técnico da estrutura-alvo: API, tabelas, tools, infra. Entrega HTML com Mermaid e REESCREVE as tasks do Plano. Só quando há decisão de infra a tomar.",
+      "x": 365,
+      "y": 16
+    },
+    {
+      "id": "n-design-ok",
+      "kind": "gate",
+      "title": "Você valida o Design",
+      "handoff": "HTML + Mermaid",
+      "note": "A fila para aqui: proposta de estrutura não passa sem você ver.",
+      "x": 653,
+      "y": 46
+    },
+    {
+      "id": "n-impl",
+      "kind": "fase",
+      "title": "Implementar",
+      "handoff": "Design + tasks",
+      "note": "0% humana. Um PR pra staging por card, com roteiro de e2e (API e front). Headless. Worktree por card; por card roda só o barato: typecheck + testes dos arquivos tocados.",
+      "x": 972,
+      "y": 229
+    },
+    {
+      "id": "n-merge-fila",
+      "kind": "fase",
+      "title": "Fila de merge",
+      "handoff": "sequência do Plano",
+      "note": "Cards entram na ordem declarada pelo Plano, conforme concluem. Conflito imprevisto: o agente decide pela spec, REGISTRA o conflito e o que decidiu.",
+      "x": 1299,
+      "y": 240
+    },
+    {
+      "id": "n-testes",
+      "kind": "fase",
+      "title": "Suíte + build + e2e",
+      "handoff": "plano inteiro fechado",
+      "note": "Roda UMA vez, quando todos os Implementar do plano terminam. O que falhar vira nova rodada de implementação.",
+      "x": 1657,
+      "y": 253
+    },
+    {
+      "id": "n-val-local",
+      "kind": "gate",
+      "title": "Validar — teste local",
+      "handoff": "HTML de e2e roteirizado",
+      "note": "Antes do merge. Humano só onde não é determinístico (API roda sozinha; front é você). O HTML tem espaço pra anotação, modularizado por tipo de teste.",
+      "x": 2045,
+      "y": 239
+    },
+    {
+      "id": "n-fix",
+      "kind": "fase",
+      "title": "Fix (mini Implementar)",
+      "handoff": "achados do teste local",
+      "note": "Laço interno da Validar. Gera uma mini Validar staging.",
+      "x": 2396,
+      "y": 62
+    },
+    {
+      "id": "n-val-stg",
+      "kind": "fase",
+      "title": "Validar staging",
+      "handoff": "staging de pé",
+      "note": "Staging não caiu e o e2e roda. Resultado: PR para produção preparado.",
+      "x": 2692,
+      "y": 452
+    },
+    {
+      "id": "n-concluir",
+      "kind": "gate",
+      "title": "Concluir",
+      "handoff": "tudo das etapas anteriores",
+      "note": "VOCÊ dá o merge em produção — num gesto só, sobre a leva concluída, e o agente executa na ordem do grafo. Aqui também nasce a documentação, com insumo de todas as fases.",
+      "x": 3028,
+      "y": 246
+    },
+    {
+      "id": "n-nota-dor",
+      "kind": "nota",
+      "title": "A dor que originou tudo",
+      "handoff": null,
+      "note": "Executar cada Implementar na mão · não conseguir rodar em paralelo · ter que apertar Enter em cada sessão nova.",
+      "x": -181,
+      "y": 524
+    }
+  ],
+  "edges": [
+    { "from": "n-discovery", "to": "n-plano" },
+    { "from": "n-plano", "to": "n-design" },
+    { "from": "n-design", "to": "n-design-ok" },
+    { "from": "n-design-ok", "to": "n-impl" },
+    { "from": "n-plano", "to": "n-impl" },
+    { "from": "n-impl", "to": "n-merge-fila" },
+    { "from": "n-merge-fila", "to": "n-testes" },
+    { "from": "n-testes", "to": "n-val-local" },
+    { "from": "n-val-local", "to": "n-fix" },
+    { "from": "n-fix", "to": "n-val-stg" },
+    { "from": "n-val-stg", "to": "n-concluir" },
+    { "from": "n-val-local", "to": "n-val-stg" }
+  ]
+}
