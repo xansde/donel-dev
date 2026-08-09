@@ -1,9 +1,13 @@
 # Layout do `.esteira/` como canal entre fases — 012 Esteira 4.0
 
-**Status:** 🟡 **PROPOSTA** (2026-08-08) — o texto normativo está escrito; as cinco
-perguntas de **alcance** que a fase Design devolveu (`[P-1]`…`[P-5]`) estão
-decididas na seção 8, cada uma com recomendação e custo da alternativa, e
-aguardam ratificação do dono. Enquanto não ratificadas, valem como proposta.
+**Status:** 🟢 **DECIDIDA** (2026-08-09) — as cinco perguntas de **alcance** da
+seção 8 (`[P-1]`…`[P-5]`) foram **ratificadas pelo dono**, cada uma pela
+recomendação escrita; as **três zonas** da seção 2 foram ratificadas na mesma
+leitura (o outro gate de gente que a seção 10 nomeia); e o **único ponto em
+aberto** — o endereço do worktree por card — foi **fechado**. Nenhuma pendência
+de alcance segue aberta. Os dois consertos que a Validar de 08/08 exigiu
+(timestamp com milissegundos e `workspace.branch` obrigatória) já estão
+aplicados e conferidos em disco.
 **Item:** `wi-esteira4-layout-esteira-dir` · plano `pln-esteira4-skills-portateis` ·
 discovery `dsc-15a7e7f5-fbb` · repo `donel-dev`.
 
@@ -270,12 +274,16 @@ produziria exatamente a leitura errada que a zona congelada existe para impedir.
 
 ---
 
-## 8. As cinco perguntas de alcance — decididas aqui
+## 8. As cinco perguntas de alcance — decididas aqui, ratificadas em 09/08
 
 A fase Design devolveu cinco perguntas **de propósito**, para esta spec não herdar
 decisão tomada por acidente no desenho. Cada uma abaixo traz a decisão, o motivo e
 **o custo da alternativa** — porque decisão sem custo declarado é preferência
 disfarçada.
+
+> **As cinco foram ratificadas pelo dono em 2026-08-09**, cada uma pela
+> recomendação escrita. Não são mais propostas: são requisito. Onde o texto
+> abaixo disser "decisão", leia "decisão ratificada".
 
 ### `[P-1]` A pasta é por ciclo ou por plano
 
@@ -398,18 +406,43 @@ passariam a declarar a mesma superfície — e a sequência de merge do plano p�
 modo solto **depois** deste item, então o comando especificado aqui chegaria ao
 código por outro item de qualquer jeito, com duas descrições para reconciliar.
 
-### Em aberto — worktree por card não tem endereço
+### `[P-6]` O endereço do worktree por card — fechado em 09/08
 
-`local/repos.json` mapeia **slug → um caminho** (o checkout do repo nesta
-máquina); `workspace.worktree_path` é sanitizado para `null` por `[P-2]`
-antes de pousar em `runs/`; e, medido em disco, **0 dos 64 runs** do outbox
-preenchem esse campo. O único leitor no app hoje é
-`src/main/esteira-dispatch.ts:120`. Depois da sanitização, o endereço do
-worktree de um card específico não existe em lugar nenhum que sobreviva ao
-run — fica **em aberto por decisão do dono (08/08)**, não esquecido: ele
-amarra isso no fim. Uma proposta foi levada e **não foi fechada** — um
-`local/worktrees.json` com chave `<work_item_id>` — e fica registrada aqui
-só como o que foi cogitado, não como o que foi decidido.
+**Decisão: `local/worktrees.json`, com chave `<work_item_id>` → caminho do
+worktree nesta máquina. Zona LOCAL, não versionada.**
+
+O problema medido: `local/repos.json` mapeia **slug → um caminho** (o checkout do
+repo nesta máquina); `workspace.worktree_path` é sanitizado para `null` por
+`[P-2]` antes de pousar em `runs/`; e, medido em disco, **0 dos 64 runs** do
+outbox preenchem esse campo. O único leitor no app hoje é
+`src/main/esteira-dispatch.ts:120`. Depois da sanitização, o endereço do worktree
+de um card não existia em lugar nenhum que sobrevivesse ao run — e "worktree por
+card" `[D]` é o que permite dois itens do mesmo plano correrem ao mesmo tempo sem
+se pisar.
+
+**A fronteira, escrita para ninguém a atravessar depois:** este arquivo é da
+máquina e **fica na máquina**. Ele resolve "onde, neste PC, mora o worktree do
+card X" — e só. `C:\Users\xansd\…` não significa nada no PC de outra pessoa;
+versioná-lo seria a fronteira da seção 2 deixando de ser fronteira.
+
+**O que sustenta a delegação, então, não é este arquivo — é o `ciclos/`
+versionado `[D-09/08]`.** Quem recebe o trabalho clona o repo e recebe o histórico
+inteiro do ciclo: os runs, os planos, os artefatos, o estado derivado deles. O que
+ele precisa fazer na própria máquina é declarar **onde as coisas ficam nela** —
+`esteira repo add <slug> <caminho>`, uma vez —, e a esteira segue de onde parou. O
+que viaja é contrato (**slug** e **branch**); o que não viaja é topologia de
+disco. É exatamente essa separação que faz o trabalho ser **delegável** em vez de
+preso à máquina de quem começou.
+
+**Custo da alternativa** (versionar o mapa de worktrees, ou derivar o caminho por
+convenção a partir do `work_item_id`): o primeiro põe caminho absoluto de máquina
+no PR de todo mundo, inclusive no espelho público; o segundo obriga toda máquina a
+adotar a mesma raiz de checkout — e quebra em silêncio na primeira que não adotar.
+
+**Quem implementa:** não é este item. O leitor de `local/**` nasce no
+`wi-esteira4-solto-automaticas`, junto do `esteira init` e do `esteira repo add`
+(`[P-5]`); o **motor de execução** (plano `pln-esteira4-motor-de-execucao`) é o
+consumidor, porque é ele que abre worktree por card.
 
 ---
 
@@ -459,3 +492,11 @@ que dá para pinar mecanicamente está em `tests/esteiraLayoutCanalV2.test.ts`:
 O que o teste **não** prova, e por isso é gate de gente: se as três zonas são as
 certas, e se as cinco decisões da seção 8 são as que o dono quer. Isso se responde
 na Validar, com ele.
+
+**Respondido em 2026-08-09 — ✅ as três zonas ratificadas, as cinco decisões
+ratificadas, e o `[P-6]` fechado.** O critério de aceite do layout — "um PR do
+mesmo ciclo mostra só linhas novas" (seção 6) — foi conferido no próprio diff
+desta branch contra `staging`: **9 arquivos, +1751, zero deleções**. Os três runs
+já pousados em `runs/` têm timestamp com milissegundos, `workspace.branch`
+preenchida e os três campos de `[P-2]` sanitizados; o
+`esteira-result.schema.json` não aparece no diff, honrando a promessa da seção 9.
