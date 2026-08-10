@@ -81,6 +81,7 @@ stateDiagram-v2
   [*] --> Bloqueado : tem dependência não concluída
   [*] --> Pronto : sem dependência pendente
   Bloqueado --> Pronto : última dependência concluiu
+  Bloqueado --> Esperando : dependência foi abandonada<br/>(a fila para e chama — seção 2.3)
   Pronto --> Rodando : scheduler admite<br/>(slot livre · nó tipo fase → run-input.json)
   Rodando --> Rodando : phase.completed done<br/>e próximo nó é fase
   Rodando --> Esperando : próximo nó é gate
@@ -89,8 +90,10 @@ stateDiagram-v2
   Falhou --> Esperando : dono decide<br/>(redisparar ou abandonar)
   Rodando --> TetoEstourado : rodada 3 do laço falhou<br/>(derivado, nunca gravado)
   TetoEstourado --> Esperando : dono decide<br/>(ver rodadas ou assumir na mão)
+  Esperando --> Abandonado : dono abandona o card<br/>(terminal — NÃO libera dependentes)
   Rodando --> Concluído : gate Concluir confirmado
   Concluído --> [*]
+  Abandonado --> [*]
 ```
 
 ### 2.1 As transições, uma a uma
@@ -99,6 +102,7 @@ stateDiagram-v2
 |---|---|---|
 | `[*]` → **Bloqueado** | o `esteira.grafo` declara dependência de card sem `phase.completed(concluir, done)` | grafo + log |
 | **Bloqueado** → **Pronto** | a última dependência ganhou `phase.completed(concluir, done)` | log |
+| **Bloqueado** → **Esperando** | um card de que este depende foi **abandonado** — a dependência nunca será cumprida, então a fila para e chama (seção 2.3) | log + grafo |
 | **Pronto** → **Rodando** | o scheduler admite: há slot no teto (`[Q-2]`) e o cursor aponta nó tipo `fase` → o motor grava `run-input.json` e abre a sessão headless | ação do motor |
 | **Rodando** → **Rodando** | `result.json` com `phase.completed` `outcome: done` e o próximo nó do canônico é `fase` — a fila emenda a fase seguinte sem gesto | log |
 | **Rodando** → **Esperando** | o próximo nó do canônico é `gate` (Você valida o Design, Teste local, Concluir) — a fila para, a tela chama | log + grafo canônico |
@@ -107,6 +111,7 @@ stateDiagram-v2
 | **Falhou** → **Esperando** | Falhou é **parada humana**: a tela mostra o motivo e as duas saídas — *redisparar* (run novo da mesma fase) ou *abandonar o card*. A fila nunca redispara um `failed` sozinha | gesto humano |
 | **Rodando** → **TetoEstourado** | derivado: `rodada == 3 && a 3ª falhou` (seção 5) | log, contagem `[P-2]` |
 | **TetoEstourado** → **Esperando** | dono escolhe uma das duas saídas do catálogo (§5): ver as 3 rodadas, ou assumir na mão | gesto humano |
+| **Esperando** → **Abandonado** | o dono escolheu *abandonar o card* (saída do Falhou ou do TetoEstourado). Terminal: a fila nunca redispara um card abandonado | gesto humano |
 | **Rodando** → **Concluído** | o gate Concluir confirmado virou fato — e este é o fato que **libera os dependentes** no grafo de execução | log |
 
 ### 2.2 `inconclusive` — a fase que não fechou
@@ -124,6 +129,30 @@ sem fechar" (tipicamente orçamento de contexto). Regra do motor:
 
 A contagem de inconclusivos seguidos é, como tudo, **derivada do log**: runs da
 mesma fase do mesmo item encadeados por `complements_run_id`.
+
+### 2.3 `Abandonado` — o card de que se desistiu, e o que ele deixa para trás
+
+Abandonar é a segunda saída do **Falhou** e do **TetoEstourado** (§2.1) — o dono
+olha o motivo e decide que este card não vai adiante. **Abandonado é terminal**:
+a fila nunca redispara um card abandonado, e nenhum gesto o traz de volta.
+Retomar o assunto é card novo, pelo mesmo princípio do "reabrir é run novo".
+
+A regra que o separa do Concluído é a que importa: **Abandonado não libera os
+dependentes.** `Rodando → Concluído` é o fato que solta quem esperava no grafo,
+justamente porque o trabalho foi feito. Desistir não é fazer — se abandonar
+liberasse, o card seguinte começaria em cima de uma dependência que ninguém
+cumpriu, e a fila estaria mentindo sobre o próprio grafo.
+
+Mas deixar os dependentes em **Bloqueado** para sempre também não serve: fica
+honesto e mudo, e o dono acumula cards presos sem nada na tela dizendo por quê.
+Então o abandono **vira parada humana para quem dependia** — `Bloqueado →
+Esperando`, com o motivo nomeado ("o card X, de que este depende, foi
+abandonado") e as duas saídas de sempre: **soltar** o card (a dependência deixa
+de valer; segue como Pronto) ou **abandonar em cascata**. É a mesma disciplina
+do Falhou e do TetoEstourado — a fila não decide sozinha, e também não emudece.
+
+Nenhum estado novo nasce daqui além do próprio Abandonado: quem dependia usa o
+**Esperando** que já existe, que é exatamente "a fila parou e chama".
 
 ---
 
