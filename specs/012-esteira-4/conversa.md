@@ -196,8 +196,10 @@ Herda a §3.2 do catálogo (roda 1× por plano; item de código sem repo não en
    agêntico** (uma skill, um prompt, um agente): o que se verifica ali não é
    assert, é comportamento sob variação. Alvo determinístico leva teste, não eval.
 3. **Qual a sequência de merge, e o que se sobrepõe em conflito?** A fila não
-   reordena. O agente que topar com conflito imprevisto decide **pela spec**,
-   registra o conflito e o que decidiu — quem revê é a Validar `[D]`.
+   reordena. O agente que topar com conflito imprevisto decide **pelo assunto do
+   plano**, registra o conflito e o que decidiu — quem revê é a Validar `[D]`.
+   (O vocabulário segue o catálogo corrigido: onde se lia "pela spec", leia "pelo
+   assunto que este Plano consome".)
 4. **Cada item vai para Design ou direto para Implementar?** Roteamento é
    `decision.recorded`, **não inferência do motor** `[P-1]`. Design é 0 ou 1× por
    item e **zero é o caso comum** `[D-11]`.
@@ -232,10 +234,15 @@ ratificada pelo dono em **09/08** troca isso por "**um assunto fechado** — um 
 inteiro". O motivo: o insumo nem sempre é um documento; mas é sempre **um**, e
 sempre **inteiro**.
 
-Esta spec **adota a emenda** e corrige o texto do catálogo na mesma leva (a
-divergência foi apontada pela fase Design e não se herda em silêncio). O que a
-emenda **não** afrouxa: dois assuntos num run continua proibido — é o que produz
-grafo com dependência inventada entre coisas que nunca se falaram.
+Esta spec **adota a emenda**. A correção do texto do catálogo **já foi feita na
+`staging`**, pelo próprio item do catálogo (commit `61fcb38`, 09/08) e com redação
+mais forte que a proposta aqui: além da linha "Exige", ele acrescenta o parágrafo
+*"'Um assunto fechado' não quer dizer 'uma spec'"* e a regra de leitura "onde este
+catálogo disser 'spec', leia 'o assunto que este Plano consome'". **Vale a versão
+da `staging`** — esta spec não a reescreve; o que ela faz é detalhar, na seção 6.2,
+o que esse assunto carrega. O que a emenda **não** afrouxa: dois assuntos num run
+continua proibido — é o que produz grafo com dependência inventada entre coisas que
+nunca se falaram.
 
 ### 6.2 O que um assunto fechado carrega
 
@@ -352,8 +359,11 @@ divergem da origem sem aviso; e o que se copiaria é justamente a parte acoplada
 
 ### `[Q-2]` Corrigir o texto do catálogo, ou só declarar a divergência? — ✅ ratificado
 
-**Decisão: corrigir o catálogo, na mesma leva deste item.** A correção está feita —
-`catalogo.md` §3.2, linha "Exige", com a emenda `[E-1]` citada no lugar.
+**Decisão: corrigir o catálogo** — e a correção **já existe na `staging`**, feita
+pelo item do catálogo em 09/08 (`61fcb38`), não por este item. O que esta spec
+propunha era a mesma decisão com redação menor; ela foi descartada no merge a favor
+da versão de lá, que diz mais (ver seção 6.1). A decisão do `[Q-2]` fica cumprida;
+muda só quem a executou.
 
 A emenda já foi ratificada em 09/08 — é requisito. Deixar a §3.2 dizendo "uma
 spec/plano por completo" é deixar duas fontes normativas discordando sobre o insumo
@@ -402,7 +412,7 @@ faz alguém decidir sem o material **sem registrar** que decidiu sem.
 | Componente | Este item… | Por quê |
 |---|---|---|
 | Spec dos gates (`specs/012-esteira-4/conversa.md`) | **escreve** — este arquivo | é o entregável do item: spec, não código |
-| `catalogo.md` §3.2 | **corrige uma frase** (`[Q-2]`) | a emenda de 09/08 é requisito; duas fontes normativas não podem discordar |
+| `catalogo.md` §3.2 | **não toca** — já corrigido na `staging` (`61fcb38`, 09/08) | a emenda de 09/08 é requisito e já está aplicada lá, com redação mais forte (`[Q-2]`, seção 6.1) |
 | Skills `esteira-discovery-4` / `esteira-plano-4` | **não escreve** — item futuro | esta spec é o molde delas |
 | Contrato v1 (`esteira-result.schema.json`) | **não muda** | todos os fatos citados já existem |
 | Motor da fila | **não toca** | a fronteira da §1 do diagrama garante: conversa à esquerda do `esteira.grafo`, fila à direita |
