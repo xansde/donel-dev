@@ -1,10 +1,10 @@
 # Spec do motor de execução — a fila sobre os dois grafos — 012 Esteira 4.0
 
-**Status:** 🟡 **PROPOSTA** (2026-08-09) — o texto normativo está escrito; as três
-perguntas de alcance que a fase Design devolveu (`[Q-1]`…`[Q-3]`, seção 8) estão
-**respondidas por recomendação, com o custo da alternativa**, e aguardam
-ratificação do Alexandre — o mesmo rito que fechou as `[P-1]`…`[P-3]` do
-catálogo. Até lá, as recomendações valem como proposta, não como requisito.
+**Status:** 🟢 **DECIDIDA** (2026-08-09) — o texto normativo está escrito e as três
+perguntas de alcance que a fase Design devolveu (`[Q-1]`…`[Q-3]`, seção 8) foram
+**ratificadas ao vivo pelo Alexandre na mesma data**, cada uma pela recomendação
+apresentada com o custo da alternativa — o mesmo rito que fechou as
+`[P-1]`…`[P-3]` do catálogo. Nenhuma pendência de alcance segue aberta.
 **Item:** `wi-esteira4-motor-spec` · plano `pln-esteira4-motor-de-execucao` ·
 discovery `dsc-15a7e7f5-fbb`.
 **Fonte de alcance:** `specs/012-esteira-4/catalogo.md` (🟢 decidida). Onde os dois
@@ -18,9 +18,10 @@ vence esta spec, e a divergência vira nota, não silêncio.
 > **Legenda de proveniência:** `[D-n]` decisão do dono, fechada ao vivo no
 > Discovery de 07/08 · `[P-n]` alcance ratificado pelo dono em 08/08 (catálogo,
 > seção 7) · `[F]` resolução de forma vinda da fase Design de 09/08 deste item ·
-> `[Q-n]` pergunta de alcance devolvida pelo Design **deste** item, respondida por
-> recomendação na seção 8, **a ratificar** · `[E]` evidência medida em
-> disco/código, com caminho.
+> `[Q-n]` pergunta de alcance devolvida pelo Design **deste** item,
+> **ratificada pelo dono em 09/08** — vale como requisito; o id foi mantido para
+> a rastreabilidade com o Design · `[E]` evidência medida em disco/código, com
+> caminho.
 
 ---
 
@@ -209,18 +210,18 @@ catálogo — divergência já registrada lá (seção 7), não se re-registra a
 
 ---
 
-## 8. As três perguntas de alcance — respondidas por recomendação, a ratificar
+## 8. As três perguntas de alcance — ratificadas em 09/08
 
 A fase Design devolveu três perguntas **de propósito** (diagrama, seção 6), para
-esta spec não herdar decisão tomada por acidente no desenho. As três seguem
-abaixo com recomendação e custo da alternativa — o rito é o mesmo das
-`[P-1]`…`[P-3]`: **valem como proposta até o Alexandre ratificar**, e a
-ratificação (ou a correção) deve ser registrada aqui, com data, antes de as
-issues que dependem delas implementarem.
+esta spec não herdar decisão tomada por acidente no desenho. As três foram
+apresentadas ao Alexandre com a recomendação e o custo da alternativa, e **as
+três foram ratificadas pela recomendação** em 2026-08-09, na mesma sessão da
+fase Implementar — o mesmo rito das `[P-1]`…`[P-3]` do catálogo. O que segue é
+requisito, não proposta.
 
-### `[Q-1]` O que é "evidência de submissão" — 🟡 proposta
+### `[Q-1]` O que é "evidência de submissão" — ✅ ratificado
 
-**Recomendação: output novo do processo no PTY após o envio do terminador,
+**Decisão: output novo do processo no PTY após o envio do terminador,
 dentro de um timeout curto (default 10 s).**
 
 Submissão observável = depois que o motor envia o `\r`, o processo do CLI
@@ -236,9 +237,9 @@ atual. O delta de output pode dar falso-positivo (o REPL redesenha sem ter
 submetido), mas o falso-positivo é coberto pelo `[Q-3]`: sessão "rodando" que
 não produz nada cai no limite de inatividade.
 
-### `[Q-2]` Limite de paralelismo — 🟡 proposta
+### `[Q-2]` Limite de paralelismo — ✅ ratificado
 
-**Recomendação: teto configurável nas settings, default 4.**
+**Decisão: teto configurável nas settings, default 4.**
 
 Worktree + sessão headless custam disco, CPU e cota de sessão; ilimitado não é
 opção. O default 4 é o que a forma já mostra (`worktrees: 3/4` no mockup) e
@@ -251,9 +252,9 @@ não — e um teto errado para menos serializa a leva inteira sem o dono poder
 agir; para mais, derruba a máquina. Configurável com default é o mesmo padrão
 das demais settings do app.
 
-### `[Q-3]` Rodando ainda × morreu sem `result.json` — 🟡 proposta
+### `[Q-3]` Rodando ainda × morreu sem `result.json` — ✅ ratificado
 
-**Recomendação: dois sinais, ambos observados, nenhum gravado.**
+**Decisão: dois sinais, ambos observados, nenhum gravado.**
 
 1. **Processo morto**: o PTY é filho do app — exit é observável diretamente.
    Processo terminou sem `result.json` no outbox → **Falhou**, motivo
@@ -291,7 +292,7 @@ de falha que `[P-2]` extinguiu, reintroduzido pela porta dos fundos.
 
 - **Agora (este item):** revisão do dono — este documento é o objeto do gate. A
   máquina de estados da seção 2 e as três respostas da seção 8 são o que ele
-  precisa ver; a ratificação das `[Q-n]` fecha o status para 🟢.
+  precisa ver; as `[Q-n]` foram ratificadas em 09/08 e o status fechou em 🟢.
 - **Depois (nas issues):** a máquina de estados da seção 2 é pinável por teste de
   unidade puro — derivação de estado a partir de um log de fatos sintético, sem
   PTY, sem worktree. A issue do scheduler nasce com esse teste; uma transição
