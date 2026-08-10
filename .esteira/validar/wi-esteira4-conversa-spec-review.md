@@ -79,6 +79,23 @@ seção 11 da conversa não pina o campo — mas a próxima sessão que escrever
 **Correção proposta:** uma frase no `catalogo.md:155`, no mesmo gesto do `[Q-2]`.
 Fica para decisão do dono — a Validar reporta, não emenda spec.
 
+## Adendo (10/08, após integrar a `staging`) — o item 2 acima envelheceu
+
+Ao abrir o PR, a `staging` mostrou-se **10 commits à frente** da branch, e um deles
+(`61fcb38`, 09/08, do próprio item do catálogo) **já tinha aplicado a mesma emenda**
+com redação mais forte: além da linha "Exige", o parágrafo *"'Um assunto fechado'
+não quer dizer 'uma spec'"* e a regra de leitura "onde este catálogo disser 'spec',
+leia 'o assunto que este Plano consome'".
+
+O conflito foi resolvido **a favor da `staging`** e a correção proposta por este
+item caiu. Três ajustes de coerência entraram na `conversa.md` (§5.1(3) passa a
+dizer "pelo assunto do plano"; §6.1 e `[Q-2]` creditam a correção a quem a fez; §10
+vira "não toca"). Suíte reverificada após o merge: **2194 testes** ✅, typecheck ✅.
+
+**O que isto não muda:** a decisão do `[Q-2]` segue cumprida — muda só quem a
+executou. E o **achado A-1 continua válido**: conferido no catálogo da `staging`, a
+§3.1 segue sem `artifact.recorded` no "Devolve".
+
 ## Veredito
 
 **Aprovado para revisão do dono.** Documento coerente com as duas specs irmãs, com o
