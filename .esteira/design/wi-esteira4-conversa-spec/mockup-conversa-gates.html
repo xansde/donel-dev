@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mockup — Os gates Discovery e Plano (esteira 4.0) · wi-esteira4-conversa-spec</title>
+    <style>
+      :root {
+        --bg-app: #0e1116;
+        --bg-panel: #151a21;
+        --bg-raised: #1c232c;
+        --border: #28303b;
+        --text-primary: #d7dde5;
+        --text-muted: #828d9c;
+        --accent: #4c9cf0;
+        --state-waiting: #e8b44c;
+        --state-alert: #f0684c;
+        --state-done: #5e6873;
+        --zone-ok: #3dce8f;
+        --phase-implementar: #5fb0a8;
+        --phase-validar: #d9a05f;
+        --phase-design: #c97fa8;
+        --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+        --radius-sm: 6px;
+        --radius-md: 8px;
+        --hairline: 1px solid var(--border);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: 32px 24px 64px;
+        background: var(--bg-app); color: var(--text-primary);
+        font-family: var(--font-ui); font-size: 13px; line-height: 1.5;
+      }
+      .page { max-width: 1120px; margin: 0 auto; }
+      header.doc { border-bottom: var(--hairline); padding-bottom: 16px; margin-bottom: 24px; }
+      header.doc h1 { font-size: 18px; margin: 0 0 4px; font-weight: 600; }
+      header.doc p { margin: 0; color: var(--text-muted); font-size: 11px; }
+      header.doc code, code { font-family: var(--font-mono); color: var(--text-primary); font-size: 11px; }
+      h2.sec { font-size: 15px; font-weight: 600; margin: 40px 0 4px; display: flex; align-items: baseline; gap: 8px; }
+      h2.sec span.num { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+      p.sec-note { margin: 0 0 16px; color: var(--text-muted); font-size: 11px; max-width: 82ch; }
+
+      .window { background: var(--bg-panel); border: var(--hairline); border-radius: var(--radius-md); overflow: hidden; }
+      .window > .titlebar {
+        height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 12px;
+        background: var(--bg-raised); border-bottom: var(--hairline);
+        font-size: 11px; color: var(--text-muted);
+      }
+      .dot-row { display: flex; gap: 5px; }
+      .dot-row i { width: 8px; height: 8px; border-radius: 50%; background: var(--border); display: block; }
+      .window > .body { padding: 16px; }
+
+      .plan-bar { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--bg-raised); border: var(--hairline); border-radius: var(--radius-sm); margin-bottom: 12px; }
+      .plan-bar .name { font-weight: 600; }
+      .plan-bar .meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+      .plan-bar .spacer { flex: 1; }
+      .chip { font-family: var(--font-mono); font-size: 10px; border: var(--hairline); border-radius: 4px; padding: 2px 6px; color: var(--text-muted); }
+      .chip.live { color: var(--zone-ok); border-color: var(--zone-ok); }
+      .chip.wait { color: var(--state-waiting); border-color: var(--state-waiting); }
+      .chip.mat { color: var(--phase-design); border-color: var(--phase-design); }
+
+      /* split: conversa | trilho assíncrono */
+      .split { display: grid; grid-template-columns: 1fr 320px; gap: 14px; align-items: start; }
+
+      /* conversa ao vivo */
+      .talk { border: var(--hairline); border-radius: var(--radius-sm); overflow: hidden; }
+      .talk .head { padding: 8px 12px; background: var(--bg-raised); border-bottom: var(--hairline); font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+      .turn { padding: 10px 12px; border-bottom: var(--hairline); font-size: 12px; }
+      .turn:last-child { border-bottom: none; }
+      .turn .who { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px; }
+      .turn.owner { background: color-mix(in srgb, var(--zone-ok) 5%, var(--bg-panel)); }
+      .turn.owner .who { color: var(--zone-ok); }
+      .turn.ask { background: color-mix(in srgb, var(--state-waiting) 6%, var(--bg-panel)); border-left: 3px solid var(--state-waiting); }
+      .turn.ask .who { color: var(--state-waiting); }
+      .turn .q { font-weight: 600; }
+      .turn .frame { color: var(--text-muted); font-size: 11px; margin-bottom: 6px; }
+      .turn .opts { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+      .fact { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 10px; color: var(--zone-ok); margin-top: 6px; }
+      .fact i { width: 5px; height: 5px; border-radius: 50%; background: var(--zone-ok); display: block; }
+
+      /* trilho assíncrono */
+      .aside { border: var(--hairline); border-radius: var(--radius-sm); }
+      .aside .head { padding: 8px 12px; background: var(--bg-raised); border-bottom: var(--hairline); font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+      .errand { padding: 9px 12px; border-bottom: var(--hairline); font-size: 11px; }
+      .errand:last-child { border-bottom: none; }
+      .errand .top { display: flex; align-items: center; gap: 6px; }
+      .errand .led { width: 7px; height: 7px; border-radius: 50%; background: var(--border); display: block; flex: none; }
+      .errand .led.run { background: var(--phase-implementar); box-shadow: 0 0 6px var(--phase-implementar); }
+      .errand .led.back { background: var(--phase-design); box-shadow: 0 0 6px var(--phase-design); }
+      .errand .tool { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+      .errand .what { margin-top: 3px; color: var(--text-primary); }
+      .errand .sub { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); margin-top: 3px; }
+      .stamp { display: inline-block; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--phase-design); color: var(--phase-design); border-radius: 3px; padding: 1px 5px; margin-top: 6px; }
+
+      /* linhas de item / assunto */
+      .row { display: grid; grid-template-columns: 16px 1fr 200px 180px; gap: 12px; align-items: center; padding: 10px 12px; border: var(--hairline); border-radius: var(--radius-sm); margin-bottom: 6px; }
+      .row .led { width: 8px; height: 8px; border-radius: 50%; }
+      .led.ok { background: var(--zone-ok); box-shadow: 0 0 6px var(--zone-ok); }
+      .led.wait { background: var(--state-waiting); box-shadow: 0 0 6px var(--state-waiting); }
+      .led.block { background: var(--state-done); }
+      .row .title { font-weight: 500; }
+      .row .title small { display: block; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); font-weight: 400; }
+      .row .stage { font-size: 11px; }
+      .row .stage b { font-weight: 600; }
+      .row .stage .sub { display: block; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+      .row .action { text-align: right; font-size: 11px; color: var(--text-muted); }
+      .row.waiting { border-color: var(--state-waiting); background: color-mix(in srgb, var(--state-waiting) 4%, var(--bg-panel)); }
+      .row.off { opacity: 0.55; border-style: dashed; }
+
+      button.human { font: inherit; font-size: 11px; font-weight: 600; background: var(--state-waiting); color: #10130a; border: none; border-radius: var(--radius-sm); padding: 6px 12px; cursor: pointer; }
+      button.ghost { font: inherit; font-size: 11px; background: none; color: var(--text-primary); border: var(--hairline); border-radius: var(--radius-sm); padding: 6px 12px; cursor: pointer; }
+      button.off { font: inherit; font-size: 11px; background: none; color: var(--text-muted); border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 6px 12px; cursor: not-allowed; }
+
+      .serial { display: flex; gap: 8px; align-items: stretch; margin-top: 12px; }
+      .serial .box { flex: 1; border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 10px 12px; font-size: 11px; color: var(--text-muted); }
+      .serial .box b { color: var(--text-primary); font-weight: 600; display: block; }
+      .serial .arrow { align-self: center; color: var(--text-muted); font-family: var(--font-mono); }
+
+      .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+      .card { border: var(--hairline); border-radius: var(--radius-sm); padding: 10px 12px; font-size: 11px; }
+      .card .k { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+      .card ul { margin: 0; padding-left: 16px; color: var(--text-primary); }
+      .card li { margin-bottom: 4px; }
+      .card.open { border-left: 3px solid var(--state-waiting); }
+      .card.guess { border-left: 3px solid var(--accent); }
+      .card.plan { border-left: 3px solid var(--zone-ok); }
+
+      figure.note { margin: 12px 0 0; padding: 10px 12px; border: var(--hairline); border-left: 3px solid var(--accent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; font-size: 11px; color: var(--text-muted); }
+      figure.note b { color: var(--text-primary); }
+      figure.note.warn { border-left-color: var(--state-alert); }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="doc">
+        <h1>Os gates Discovery e Plano — a conversa com o humano dentro</h1>
+        <p>
+          Fase Design · <code>wi-esteira4-conversa-spec</code> · plano <code>pln-esteira4-conversa-com-humano</code> · 09/08/2026.
+          Forma proposta para a spec dos dois gates; alcance e comportamento são da spec. Regra que estrutura a tela inteira:
+          <b>o que a fase pergunta ao vivo</b> fica no centro; <b>o que ela vai buscar assíncrono</b> fica na lateral, e volta
+          como <b>material de decisão — nunca como decisão tomada</b>.
+        </p>
+      </header>
+
+      <h2 class="sec"><span class="num">01</span> Discovery ao vivo — uma pergunta por vez, o resto correndo ao lado</h2>
+      <p class="sec-note">
+        O gate não é um formulário: é uma entrevista. A tela mostra <b>uma</b> pergunta aberta de cada vez, com o
+        enquadramento antes dela (o item e os tradeoffs nomeados, não a pergunta solta). Cada resposta do dono vira
+        <code>decision.recorded</code> na hora — visível, não um resumo no fim. À direita, as buscas assíncronas em voo:
+        elas não travam a conversa e não travam a fila.
+      </p>
+      <div class="window">
+        <div class="titlebar"><span class="dot-row"><i></i><i></i><i></i></span> Esteira · Discovery · gate</div>
+        <div class="body">
+          <div class="plan-bar">
+            <span class="name">Definição da esteira dev</span>
+            <span class="meta">dsc-15a7e7f5-fbb · assunto cru · sem repo alvo</span>
+            <span class="spacer"></span>
+            <span class="chip wait">conversa em andamento</span>
+            <span class="chip">7 decisões · 2 em aberto</span>
+          </div>
+
+          <div class="split">
+            <div class="talk">
+              <div class="head">conversa — síncrona, bloqueante</div>
+
+              <div class="turn">
+                <div class="who">decidido · 14:02</div>
+                O merge de produção é <b>um gesto só, sobre a leva</b> — não um por item.
+                <span class="fact"><i></i>decision.recorded</span>
+              </div>
+
+              <div class="turn owner">
+                <div class="who">dono · 14:09</div>
+                Conflito imprevisto o agente resolve sozinho, pela spec. Quem revê é a Validar.
+                <span class="fact"><i></i>decision.recorded</span>
+              </div>
+
+              <div class="turn ask">
+                <div class="who">pergunta aberta · agora</div>
+                <div class="frame">
+                  O laço <code>fix ↔ validar staging</code> é recursivo e hoje não tem teto declarado. Com teto baixo a fila
+                  chama você cedo demais; com teto alto ela queima worktree tentando consertar o que precisa de decisão.
+                </div>
+                <div class="q">Quantas rodadas antes de a fila parar e te chamar?</div>
+                <div class="opts">
+                  <button class="ghost">2 rodadas</button>
+                  <button class="human">3 rodadas</button>
+                  <button class="ghost">5 rodadas</button>
+                  <button class="ghost">Outro…</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="aside">
+              <div class="head">buscando — assíncrono, não bloqueia</div>
+
+              <div class="errand">
+                <div class="top"><span class="led run"></span><span class="tool">/research</span></div>
+                <div class="what">Como filas headless declaram teto de retry — fontes primárias.</div>
+                <div class="sub">agente de fundo · 6 min</div>
+              </div>
+
+              <div class="errand">
+                <div class="top"><span class="led back"></span><span class="tool">/prototype</span></div>
+                <div class="what">Mesa de grafo: nós por tipo, dependência por arrasto.</div>
+                <div class="sub">voltou · 1 artefato</div>
+                <span class="stamp">material de decisão</span>
+              </div>
+
+              <div class="errand">
+                <div class="top"><span class="led"></span><span class="tool">formulário</span></div>
+                <div class="what">Quais fases o outro repo usa de fato.</div>
+                <div class="sub">despachado · sem volta</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <figure class="note">
+        <b>Regra que a tela torna visível:</b> nenhuma linha do trilho assíncrono tem botão de decidir. O material volta,
+        recebe o carimbo <span class="stamp">material de decisão</span> e entra na conversa como insumo de uma pergunta —
+        não existe caminho de um protótipo direto para <code>decision.recorded</code>.
+      </figure>
+
+      <h2 class="sec"><span class="num">02</span> Saída do Discovery — três coisas, e nenhuma delas se confunde</h2>
+      <p class="sec-note">
+        O gate fecha com <b>assuntos</b> (viram <code>plan.recorded</code>), <b>palpite das specs</b> (fica em
+        <code>note.recorded</code>, porque palpite promovido a registro é decisão que ninguém tomou) e <b>perguntas em
+        aberto</b> (a fase seguinte não pode inventar resposta). Três destinos distintos, de propósito.
+      </p>
+      <div class="window">
+        <div class="titlebar"><span class="dot-row"><i></i><i></i><i></i></span> Esteira · Discovery · fechamento</div>
+        <div class="body">
+          <div class="cols">
+            <div class="card plan">
+              <div class="k">assuntos → plan.recorded</div>
+              <ul>
+                <li>Catálogo das seis fases</li>
+                <li>Motor de execução da fila</li>
+                <li>Conversa com o humano dentro</li>
+              </ul>
+            </div>
+            <div class="card guess">
+              <div class="k">palpite → note.recorded</div>
+              <ul>
+                <li>Catálogo provavelmente é 1 spec só</li>
+                <li>Motor pode precisar de 2 (fila + headless)</li>
+              </ul>
+            </div>
+            <div class="card open">
+              <div class="k">em aberto → note.recorded</div>
+              <ul>
+                <li>Teto do laço fix ↔ validar</li>
+                <li>Estrutura da fase Design</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+      <figure class="note warn">
+        <b>O que a tela recusa:</b> um palpite arrastado para a coluna dos assuntos sem passar pelo Plano. Palpite é
+        insumo da próxima conversa; assunto é o que já foi fechado nesta.
+      </figure>
+
+      <h2 class="sec"><span class="num">03</span> Plano — um assunto fechado por vez, e o motivo escrito nos outros</h2>
+      <p class="sec-note">
+        Emenda ratificada em 09/08: o insumo do Plano é <b>um assunto fechado</b> — um só, e inteiro. Os demais aparecem
+        <b>desabilitados com o motivo escrito</b>, no mesmo padrão que já rege item sem repo alvo — nunca somem da lista,
+        porque item que some vira item esquecido.
+      </p>
+      <div class="window">
+        <div class="titlebar"><span class="dot-row"><i></i><i></i><i></i></span> Esteira · Plano · gate</div>
+        <div class="body">
+          <div class="row waiting">
+            <span class="led wait"></span>
+            <span class="title">Conversa com o humano dentro<small>pln-esteira4-conversa-com-humano · assunto fechado</small></span>
+            <span class="stage"><b style="color:var(--state-waiting)">pronto para o Plano</b><span class="sub">2 decisões pendentes na sessão</span></span>
+            <span class="action"><button class="human">Abrir o Plano</button></span>
+          </div>
+
+          <div class="row off">
+            <span class="led block"></span>
+            <span class="title">Estrutura da fase Design<small>sem plan_id · assunto ainda aberto</small></span>
+            <span class="stage"><b>indisponível</b><span class="sub">pergunta em aberto no Discovery</span></span>
+            <span class="action"><button class="off">precisa de research antes da spec</button></span>
+          </div>
+
+          <div class="row off">
+            <span class="led block"></span>
+            <span class="title">Vista de grafo do plano<small>pln-esteira4-vista-grafo</small></span>
+            <span class="stage"><b>indisponível</b><span class="sub">um assunto por run</span></span>
+            <span class="action"><button class="off">o Plano já está aberto em outro assunto</button></span>
+          </div>
+        </div>
+      </div>
+
+      <h2 class="sec"><span class="num">04</span> Saída do Plano — itens roteados, e a ordem de merge que a fila não reordena</h2>
+      <p class="sec-note">
+        O Plano é o único lugar onde o roteamento <b>Design | Implementar</b> e a <b>sequência de merge</b> se decidem —
+        os dois viram <code>decision.recorded</code> que o motor lê, nunca inferência dele. Item de código sem repo alvo
+        não entra: a linha aparece desabilitada com o motivo, e o gate não fecha com ela pendurada.
+      </p>
+      <div class="window">
+        <div class="titlebar"><span class="dot-row"><i></i><i></i><i></i></span> Esteira · Plano · itens declarados</div>
+        <div class="body">
+          <div class="row">
+            <span class="led ok"></span>
+            <span class="title">Spec dos dois gates<small>wi-esteira4-conversa-spec · donel-dev</small></span>
+            <span class="stage"><b style="color:var(--phase-design)">→ Design</b><span class="sub">tem decisão de estrutura</span></span>
+            <span class="action">tasks: 6 · evals: 3</span>
+          </div>
+
+          <div class="row">
+            <span class="led ok"></span>
+            <span class="title">Skill do gate Discovery<small>wi-esteira4-skill-discovery · donel-dev</small></span>
+            <span class="stage"><b style="color:var(--phase-implementar)">→ Implementar</b><span class="sub">sem decisão de estrutura</span></span>
+            <span class="action">tasks: 9 · evals: 4</span>
+          </div>
+
+          <div class="row off">
+            <span class="led block"></span>
+            <span class="title">Portar as skills do kit Matt Pocock<small>sem repo alvo declarado</small></span>
+            <span class="stage"><b>não entra</b><span class="sub">item de código exige repo</span></span>
+            <span class="action"><button class="off">declare o repo alvo</button></span>
+          </div>
+
+          <div class="serial">
+            <div class="box"><b>Sequência de merge</b>spec dos gates → skill Discovery → skill Plano · decidida aqui, uma vez</div>
+            <span class="arrow">→</span>
+            <div class="box"><b>esteira.grafo</b>artifact.recorded · daqui em diante a fila anda sozinha</div>
+          </div>
+        </div>
+      </div>
+      <figure class="note">
+        <b>Divergência a vigiar na Implementar:</b> se a spec mudar o que fecha um assunto, o destino do palpite das specs
+        ou a forma do roteamento, vence a spec — e este mockup ganha a nota da divergência, não uma edição silenciosa.
+      </figure>
+    </div>
+  </body>
+</html>

@@ -157,10 +157,17 @@ pode inventar resposta.
 
 | | |
 |---|---|
-| **Exige** | **uma** spec/plano por completo. Consome um, não vários. |
+| **Exige** | **um assunto fechado** — um só, e inteiro (emenda de 09/08, abaixo). Consome um, não vários. |
 | **Faz** | quebra o plano em itens; gera tasks e, quando o alvo é processo agêntico, evals; declara a **sequência de merge** e o que se sobrepõe em conflito `[D]`; **roteia cada item**: Design ou Implementar. |
 | **Devolve** | `work_item.recorded` (um por item, com tipo e repo alvo — item de código sem repo não entra `[D-6]`), `decision.recorded` da sequência de merge e do roteamento, `artifact.recorded` do `esteira.grafo` do plano, `phase.completed`. |
 | **Roda** | 1× por plano. |
+
+> **Emenda ratificada pelo dono em 09/08, aplicada a este texto em 10/08.** A
+> linha "Exige" dizia "**uma** spec/plano por completo". O insumo nem sempre é um
+> documento — mas é sempre **um**, e sempre **inteiro**. A emenda troca o nome, não
+> afrouxa a regra: dois assuntos num run continua proibido. O detalhamento do que
+> um assunto fechado carrega está em `conversa.md`, seção 6; a correção deste texto
+> foi ratificada como `[Q-2]` lá.
 
 O Plano é o **único** lugar onde a ordem de merge se decide. A fila não reordena, e
 o agente que resolver conflito imprevisto decide **pela spec** e registra o conflito
