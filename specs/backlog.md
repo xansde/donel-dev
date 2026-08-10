@@ -870,6 +870,95 @@ onde declarar o segundo repo, e escreveu "e api-spotsys" dentro do primeiro.
   prompt. Uma skill de Plano que ignore o escopo vai quebrar em itens de um
   repo só, que é o erro que este item nasceu para evitar.
 
+### B27. O Claude Code já anuncia o próprio estado — e a gente joga fora (achado 10/08)
+
+**A mentira do semáforo tem cura barata, e ela está no stream que o app já
+intercepta.** O `PtyManager` (`src/main/pty-manager.ts:195`) vê cada byte que o
+CLI emite. Entre esses bytes vai a sequência OSC que define o **título do
+terminal** — e o Claude Code escreve nela, em tempo real, o próprio estado:
+
+| Título OSC começa com | Significa |
+|---|---|
+| um caractere braille `U+2800`–`U+28FF` (o spinner girando) | **trabalhando** |
+| `✳` (`U+2733`) | **ocioso** |
+
+Não é heurística nossa: é o CLI declarando. A evidência veio do `herdr`
+(`src/detect/manifests/claude.toml`, Apache-2.0), que usa exatamente essas duas
+regras como as de **maior prioridade** (1100 e 250) na detecção dele — acima de
+qualquer leitura de tela.
+
+**Por que isto importa agora.** A arquitetura do nosso semáforo já está certa e
+é a mesma do herdr: hooks do CLI como fonte autoritativa, com fallback quando o
+hook não conta a história toda (`semaphore-state-machine.ts`, cabeçalho). O que
+difere é a **qualidade do fallback**: o nosso é temporal
+(`applyPermissionHeuristic`, `:113` — `PreToolUse` pendente sem `PostToolUse`),
+e é exatamente ele que produz a mentira nomeada no dogfooding: *"afirma trabalho
+com o comando parado no prompt"*. Um `PreToolUse` que nunca fecha deixa o
+semáforo em `working` para sempre; o título OSC, nesse mesmo instante, já diz
+`✳`. Detalhe agravante: `INITIAL_SEMAPHORE_STATE` nasce em `working` — o app
+**começa** afirmando trabalho antes de ter observado qualquer coisa.
+
+**Segunda metade do achado: `blocked` de graça.** O mesmo `claude.toml` mapeia,
+em regras declarativas mantidas por terceiros, o que é uma **UI de bloqueio** do
+Claude Code — prompt de permissão de bash, formulário com "enter to confirm /
+esc to cancel", "do you want to proceed?", o menu de escolha. É o sinal que o
+**motor da 012 pressupõe existir**: a fila só sabe parar e chamar o dono quando
+alguém consegue dizer "esta sessão está bloqueada esperando gente". Hoje a gente
+deriva isso de `Notification` (que o spike T002 provou que dispara) — o OSC + as
+regras de tela são a rede quando ela não dispara.
+
+**O que fazer (não implementar sem spec):**
+- ler a sequência OSC de título no `PtyManager` e expor como evento tipado;
+- trocar o fallback temporal do semáforo por esse sinal, mantendo os hooks como
+  fonte primária (a hierarquia não muda, só o segundo tier);
+- portar as regras de `blocked` do `claude.toml` como fallback do
+  `permission`/`blocked`, com a licença creditada;
+- **não** copiar o manifest inteiro nem criar dependência do binário `herdr`
+  para isto — o que atravessa é o padrão e duas regex.
+
+**Risco conhecido:** o formato do título é contrato **de facto**, não público —
+uma versão do CLI pode mudar o spinner. Por isso ele entra como **fallback**,
+nunca acima dos hooks, e a ausência do sinal tem que degradar para o
+comportamento de hoje, não para `unknown`.
+
+### B28. `herdr` como runtime das sessões da Esteira — spike, não decisão (10/08)
+
+`github.com/herdrdev/herdr` (26.9k ★, Rust, Apache-2.0, v0.8.0) — "o runtime
+onde seus agentes moram": servidor de fundo + TUI cliente, com socket API
+(**named pipe no Windows**) e CLI que **agentes dirigem**. Ele resolve, prontos,
+quatro buracos que a 012 tem em aberto:
+
+| Buraco nosso | O que ele tem |
+|---|---|
+| o app **não envia o próprio Enter** na sessão que ele abre (problema fundador do catálogo) | `agent prompt <nome> "texto" --wait` — texto + Enter atômicos, honrando bracketed-paste |
+| o motor precisa saber que a fase **parou e precisa do dono** | `agent wait --until blocked --timeout N` — a definição de gate da 012 |
+| **sessão órfã** quando o app fecha (decisão nº2 do dogfooding) | servidor de fundo: sessões sobrevivem a fechar o cliente, cair a rede, reiniciar |
+| **A8** — worktree/lock de árvore para o worker | `worktree.create` / `open` / `remove` na própria API |
+
+Traz também um conceito que a nossa fila noturna precisa e não tem nome: **`done`
+≠ `idle`** — `done` é "terminou e **ninguém olhou ainda**"; vira `idle` quando um
+humano vê. É precisamente o estado que distingue "a fila avançou de madrugada" de
+"o dono já leu".
+
+**Os dois motivos de isto ser spike e não adoção:**
+
+1. **Não existe stream de output bruto.** Varredura da lista de métodos da socket
+   API: `pane.read` é snapshot, `events.subscribe` é ciclo de vida, e
+   `pane.graphics.stream` é imagem. **Nenhum canal entrega os bytes do PTY.** O
+   `xterm.js` do Donel vive desses bytes — então o herdr **não substitui**
+   `node-pty`. Adotar de verdade seria abrir mão da UI que é o Donel.
+2. **Windows é beta, e a issue mais próxima do nosso caso é de ontem:**
+   [#2545](https://github.com/herdrdev/herdr/issues/2545) (09/08) — *"agent
+   progress stalls for hours when herdr window is backgrounded on Windows"*.
+   Fila da Esteira rodando de fundo no Windows **é** esse cenário. Há mais de uma
+   dúzia de issues Windows abertas.
+
+**Recorte do spike, se um dia rodar:** herdr como runtime **só das sessões de
+fase da Esteira** — que não precisam de renderização rica, só nascer, receber
+prompt e avisar quando travaram —, com o Donel seguindo dono das abas
+interativas. **Gate do spike:** reproduzir a #2545. Se a fila trava de fundo no
+Windows, o spike morre ali e o B27 (que não depende de nada) segue sozinho.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
