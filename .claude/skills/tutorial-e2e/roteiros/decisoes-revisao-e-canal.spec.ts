@@ -216,7 +216,17 @@ test('o card conta o que gente disse, o que falta de você e onde a entrega cheg
     // ── A15: o canal da entrega ──────────────────────────────────────────
     await prepararFase(win, { phase: 'concluir', discoveryId, planId: ID_PLANO, workItemId: ID_ITEM });
     emitir(ctx.esteiraRoot, [
-      { type: 'verification.recorded', subject: item(), verification_kind: 'e2e-manual', state: 'passed', ref: `${ROTEIRO_E2E} — rodado por você, passou` },
+      // `ref` é a IDENTIDADE do check dentro do kind (é ele que o store usa pra
+      // saber "é a mesma verificação, atualizada" vs. "é outra") — igual ao PR
+      // logo abaixo, que mantém a MESMA `URL_PR` entre pending e passed. Uma
+      // primeira versão deste fato grudava "— rodado por você, passou" no ref:
+      // o texto mudava, o store lia como um check NOVO, e a tela passou a
+      // mostrar as DUAS linhas ao mesmo tempo — "esperando você rodar" e
+      // "rodado por você: passou" — uma contradizendo a outra no mesmo card
+      // (achado da captura tutorial-e2e, batch n1, 2026-08-05). A frase
+      // "rodado por você, passou" já é o texto que `VERIFICATION_TEXT` escolhe
+      // sozinho a partir de kind+state; não precisa (e não pode) vir dentro do ref.
+      { type: 'verification.recorded', subject: item(), verification_kind: 'e2e-manual', state: 'passed', ref: ROTEIRO_E2E },
       { type: 'verification.recorded', subject: item(), verification_kind: 'pull-request', state: 'passed', ref: URL_PR, base: 'staging' },
       { type: 'phase.completed', subject: item(), phase: 'concluir', outcome: 'done', channel: 'alfa', summary: 'PR mergeado em staging e verificado.' },
     ]);
