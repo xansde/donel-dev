@@ -59,6 +59,16 @@ foreach ($pasta in $pastas) {
 }
 
 # Arquivos soltos copiados um a um (sem /MIR — nao ha delecao a propagar).
+#
+# Os tres da esteira entraram em 11/08 (decisao do dono, promocao do beta de
+# 05/08): testes espelhados os exercitam, e teste que so passa no repo de
+# trabalho nao vale como gate — mesmo precedente de `skills` acima. A pasta
+# scripts/ como um todo CONTINUA fora (publicar.ps1 e este arquivo sao processo
+# interno); entram so as ferramentas da esteira que a suite chama.
+#
+# ATENCAO futura: quando a 4.0 chegar ao beta, o contrato tera se movido para
+# docs/esteira-dev/contract/v1/ (spec 012, inversao da fonte) — docs/esteira-dev
+# precisara entrar no espelho. Decisao de fronteira pendente com o dono.
 $arquivos = @(
   '.gitignore',
   '.gitattributes',
@@ -67,13 +77,19 @@ $arquivos = @(
   'electron.vite.config.ts',
   'tsconfig.json',
   'vitest.config.ts',
-  'package-lock.json'
+  'package-lock.json',
+  'scripts/esteira-check.mjs',
+  'scripts/esteira-custo-fase.mjs',
+  '.esteira/review-policy.json'
 )
 
 foreach ($arquivo in $arquivos) {
   $de = Join-Path $origem $arquivo
   if (-not (Test-Path $de)) { continue }
-  Copy-Item -Path $de -Destination (Join-Path $destino $arquivo) -Force
+  $para = Join-Path $destino $arquivo
+  $pastaPai = Split-Path -Parent $para
+  if (-not (Test-Path $pastaPai)) { New-Item -ItemType Directory -Force -Path $pastaPai | Out-Null }
+  Copy-Item -Path $de -Destination $para -Force
   Write-Host "copiado $arquivo"
 }
 
