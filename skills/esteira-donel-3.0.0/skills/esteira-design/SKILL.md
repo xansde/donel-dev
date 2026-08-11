@@ -104,7 +104,7 @@ fase vale para o seu próprio caminho também.
    faltou informação para desenhar (ex.: o repo alvo ainda não existe).
 
    **A forma é o corpus, não a memória.** Veja
-   `src/shared/esteira/contract/v1/examples/design-com-dois-artefatos.json`
+   `docs/esteira-dev/contract/v1/examples/design-com-dois-artefatos.json`
    antes de montar `facts.json`: um mockup em disco, um diagrama no repo
    âncora, e a nota que registra o que ficou de fora deste item
    especificamente (não uma nota de "não se aplica" genérica — a mesma

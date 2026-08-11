@@ -16,7 +16,7 @@ import type { StoreEvent } from '../src/shared/esteira/store/storeFormat';
 // - documento fora do contrato vira `ingest.failed` com os issues do parser,
 //   NUNCA silencio (foi silencio que virou "fase nao realizada" em 03/08).
 
-const EXAMPLES_DIR = join(__dirname, '..', 'src', 'shared', 'esteira', 'contract', 'v1', 'examples');
+const EXAMPLES_DIR = join(__dirname, '..', 'docs', 'esteira-dev', 'contract', 'v1', 'examples');
 
 function loadExample(name: string): EsteiraResult {
   const parsed = parseEsteiraResultText(readFileSync(join(EXAMPLES_DIR, `${name}.json`), 'utf8'));

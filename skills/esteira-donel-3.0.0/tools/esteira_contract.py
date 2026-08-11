@@ -36,8 +36,10 @@ TOOL_VERSION = "3.0.0"
 RESULT_KIND = "esteira.result"
 COMPLEMENT_KIND = "esteira.result.complement"
 
-# O schema canonico vive no app; o fork o le do mesmo lugar.
-CONTRACT_DIR = Path(__file__).resolve().parents[3] / "src" / "shared" / "esteira" / "contract" / "v1"
+# O schema canonico vive no pacote portatil `docs/esteira-dev/`; o app e o
+# fork leem os DOIS do mesmo lugar — nenhum dos dois guarda copia propria
+# (spec 010, D-3: foi copia divergente que produziu o desencontro de campo).
+CONTRACT_DIR = Path(__file__).resolve().parents[3] / "docs" / "esteira-dev" / "contract" / "v1"
 RESULT_SCHEMA_PATH = CONTRACT_DIR / "esteira-result.schema.json"
 RUN_INPUT_SCHEMA_PATH = CONTRACT_DIR / "esteira-run-input.schema.json"
 

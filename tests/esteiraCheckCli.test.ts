@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // compilacao TS-em-memoria que o script faz sozinho.
 
 const SCRIPT_PATH = join(__dirname, '..', 'scripts', 'esteira-check.mjs');
-const EXAMPLES_DIR = join(__dirname, '..', 'src', 'shared', 'esteira', 'contract', 'v1', 'examples');
+const EXAMPLES_DIR = join(__dirname, '..', 'docs', 'esteira-dev', 'contract', 'v1', 'examples');
 
 const VALID_EXAMPLES = [
   'concluir-entrega-verificada',

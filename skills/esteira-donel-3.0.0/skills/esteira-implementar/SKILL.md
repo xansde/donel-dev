@@ -109,7 +109,7 @@ fase vale para o seu próprio caminho também.
    três são respostas.
 
    **A forma é o corpus, não a memória.** Veja
-   `src/shared/esteira/contract/v1/examples/implementar-que-fecha-o-ciclo.json`
+   `docs/esteira-dev/contract/v1/examples/implementar-que-fecha-o-ciclo.json`
    (um run que fecha implementar E as fases seguintes, via A22) e
    `spike-inconclusivo.json` (um `conclusion` que respondeu "não dá" e ainda
    assim fechou `done`) antes de montar `facts.json`. `implementar-falhou.json`

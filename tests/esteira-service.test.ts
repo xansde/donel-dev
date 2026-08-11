@@ -22,7 +22,7 @@ import {
 //   e avisa quem esta olhando;
 // - store incompativel nao trava o app: ele mostra o estado e recusa escrever.
 
-const EXAMPLES_DIR = join(__dirname, '..', 'src', 'shared', 'esteira', 'contract', 'v1', 'examples');
+const EXAMPLES_DIR = join(__dirname, '..', 'docs', 'esteira-dev', 'contract', 'v1', 'examples');
 
 let root: string;
 let service: EsteiraService;

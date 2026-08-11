@@ -11,7 +11,7 @@ import { openEsteiraStore, storeEventsPath, type EsteiraStore } from '../src/mai
 // VISIVEL". Foi a ausencia dele que deixou o app afirmar "fase nao realizada"
 // quando o certo era "nao consegui ler" (evidencia 1 da spec).
 
-const EXAMPLES_DIR = join(__dirname, '..', 'src', 'shared', 'esteira', 'contract', 'v1', 'examples');
+const EXAMPLES_DIR = join(__dirname, '..', 'docs', 'esteira-dev', 'contract', 'v1', 'examples');
 
 let dir: string;
 let outbox: string;

@@ -154,7 +154,7 @@ describe('layout v2 — as evidências [E] que a spec cita continuam verdadeiras
   });
 
   it('os três campos sanitizados por [P-2] são anuláveis no contrato v1', () => {
-    const schemaPath = join(REPO_ROOT, 'src', 'shared', 'esteira', 'contract', 'v1', 'esteira-result.schema.json');
+    const schemaPath = join(REPO_ROOT, 'docs', 'esteira-dev', 'contract', 'v1', 'esteira-result.schema.json');
     const schema = JSON.parse(readFileSync(schemaPath, 'utf-8'));
     const workspace = schema.$defs.workspace.properties;
     const actor = schema.$defs.actor.properties;
@@ -166,7 +166,7 @@ describe('layout v2 — as evidências [E] que a spec cita continuam verdadeiras
   });
 
   it('subject só exige discovery_id — é o que sustenta [P-1] (pasta por ciclo)', () => {
-    const schemaPath = join(REPO_ROOT, 'src', 'shared', 'esteira', 'contract', 'v1', 'esteira-result.schema.json');
+    const schemaPath = join(REPO_ROOT, 'docs', 'esteira-dev', 'contract', 'v1', 'esteira-result.schema.json');
     const schema = JSON.parse(readFileSync(schemaPath, 'utf-8'));
     expect(schema.$defs.subject.required).toEqual(['discovery_id']);
   });

@@ -164,10 +164,10 @@ fase vale para o seu próprio caminho também.
      lacuna do passo 3a, se houve; o que ficou fora do documento de propósito.
 
    **A forma é o corpus, não a memória.** Veja
-   `src/shared/esteira/contract/v1/examples/validar-com-pr.json` (o
+   `docs/esteira-dev/contract/v1/examples/validar-com-pr.json` (o
    `e2e-manual` ainda `pending`, com o roteiro apontado em `ref`, e a
    checklist do que sobra para o dono) e
-   `src/shared/esteira/contract/v1/examples/documentar-adr.json` (o
+   `docs/esteira-dev/contract/v1/examples/documentar-adr.json` (o
    `artifact.recorded` de um ADR, com a nota de por que foi para o repo
    âncora) antes de montar `facts.json`. Nenhum dos dois exemplos ainda mostra
    os DOIS `phase.completed` juntos num run só — monte essa parte seguindo o

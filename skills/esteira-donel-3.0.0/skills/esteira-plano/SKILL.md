@@ -112,7 +112,7 @@ fase vale para o seu próprio caminho também.
    | `gate.confirmed` **ou** `decision.recorded` | quando `outcome: "done"` (A18) |
 
    **A forma é o corpus, não a memória.** Veja
-   `src/shared/esteira/contract/v1/examples/plano-com-itens.json` antes de
+   `docs/esteira-dev/contract/v1/examples/plano-com-itens.json` antes de
    montar `facts.json`: ele mostra os três itens, as duas relações
    (`flows_into` e `ships_with`), um `artifact.recorded` de spec e um
    `decision.recorded` com `rationale` — a forma exata que o emissor espera.
