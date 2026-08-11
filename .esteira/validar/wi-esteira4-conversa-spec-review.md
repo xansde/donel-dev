@@ -106,3 +106,20 @@ declarada e justificada. Um achado de consistência (A-1), não bloqueante.
 **Gate humano pendente:** este documento é o objeto do gate (seção 11) — o que o
 dono precisa ler é a régua da §1.1, a fronteira decisões × palpite da §6.2 e as
 quatro respostas da §9.
+
+## Segundo adendo (10/08, run oficial `run-91e2c0e3-85c`) — reverificado em HEAD
+
+O run disparado pelo app reverificou tudo do zero em `cd958c0`
+(`feature/esteira4-a1-a2`, já com os merges das três specs da 012):
+
+| Verificação | Resultado | Evidência |
+|---|---|---|
+| `npm test` (vitest) | ✅ passou | **2194 testes, 120 arquivos**, exit 0 |
+| `npm run typecheck` | ✅ passou | `tsc --noEmit` exit 0 |
+| Reconferência do documento | ✅ sem achado novo | pontos 1–9 acima reconferidos no disco |
+
+**O achado A-1 foi resolvido.** O commit `8332562` (10/08, do item irmão do motor)
+aplicou exatamente a correção proposta: o "Devolve" da §3.1 do catálogo agora lista
+`artifact.recorded` por artefato produzido (`catalogo.md:154`). Nenhum achado
+segue aberto. Risco confirmado **trivial** (docs-only); gate e2e não se aplica.
+O gate humano da seção 11 segue pendente — é o que a Concluir vai ler.

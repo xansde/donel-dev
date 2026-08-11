@@ -47,7 +47,13 @@ describe('PtyManager — ciclo de vida de um processo que sai sozinho', () => {
     expect(collected).toContain(marker);
 
     manager.kill(ptyId);
-  });
+    // Teto explícito: este teste spawna um PowerShell DE VERDADE, com o profile
+    // do usuário. O default de 5 s do vitest não é uma régua do produto — é o
+    // default — e a suíte roda os arquivos em paralelo, então o spawn compete
+    // por CPU com os outros workers. Medido nesta máquina: mediana 1,8 s e pico
+    // 3,2 s isolado; dentro da suíte cheia estourou os 5 s (5328 ms). O input
+    // nunca se perdeu em 8 sondagens de 30 s — é latência de cauda, não race.
+  }, 20_000);
 });
 
 // T014 (FR-005/CA-3) — env efetivo do PTY quando uma aba nasce sob um perfil

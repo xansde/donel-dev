@@ -151,7 +151,7 @@ Para cada fase: **o que exige** para poder rodar, **o que faz**, **o que devolve
 |---|---|
 | **Exige** | um assunto cru. Repo é opcional: Discovery investiga um problema, não um repositório. |
 | **Faz** | dimensiona o problema e reduz incerteza — protótipo, spike, ADR, research, formulário para o cliente. Entrevista **ao vivo**, na sessão. |
-| **Devolve** | `discovery.recorded`, os `plan.recorded` que nasceram dali, `decision.recorded` por decisão tomada ao vivo, `note.recorded` para as perguntas que ficaram abertas, `phase.completed`. |
+| **Devolve** | `discovery.recorded`, os `plan.recorded` que nasceram dali, `decision.recorded` por decisão tomada ao vivo, `artifact.recorded` por artefato produzido (protótipo, spike, ADR, research — o que o "Faz" fabricou vira fato), `note.recorded` para as perguntas que ficaram abertas, `phase.completed`. |
 | **Roda** | 1× por assunto. Reabrir é um run novo, não uma edição do anterior. |
 
 Discovery é gate porque **fecha com decisões humanas**, não com um documento
