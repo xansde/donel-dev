@@ -17,14 +17,21 @@ import type { SessionSnapshot } from '../../../shared/esteira/store/storeFormat'
 //    no PTY é o App.tsx, pelo canal `pty:input`, sempre com texto puro.
 //
 //    **Batch B5 (05/08, pedido literal do dono) abre uma exceção NOMEADA e
-//    FECHADA a este invariante**: `withAutoEnter` (mais abaixo) é a ÚNICA
-//    função deste repo que produz texto com `\r` para uma sessão de fase —
-//    e só é chamada pelo caminho de disparo da esteira (`App.tsx`
+//    FECHADA a este invariante**: `autoStartWriteSteps` (mais abaixo, até
+//    11/08 chamada `withAutoEnter`) é a ÚNICA função deste repo que produz
+//    o Enter (`AUTO_START_ENTER`) para uma sessão de fase — e só é chamada
+//    pelo caminho de disparo da esteira (`App.tsx`
 //    `handleOpenEsteiraSession`), nunca pela abertura genérica de aba. O
 //    gesto explícito continua sendo o clique em "Preparar"; o que some é a
 //    SEGUNDA confirmação (apertar Enter dentro do terminal depois de ver o
 //    comando escrito) — substituída por uma prova de que o CLI já aceita
 //    input (o mesmo sinal de boot que o pré-digitar genérico usa).
+//
+//    **Emenda wi-esteira4-autostart-enter (11/08)**: até esta correção o
+//    Enter saía COLADO ao comando, num write só (`withAutoEnter`). Era o
+//    "bug fundador" da esteira — o texto aparecia digitado mas nunca era
+//    submetido, sem toast nem erro. Ver o docstring de `autoStartWriteSteps`
+//    para o achado e a correção.
 // 2. **Alvo explícito, zero palpite** (D-6): repo que o app não conhece devolve
 //    RECUSA com o nome do repo, nunca um segundo melhor palpite. A evidência 2
 //    da spec é uma fase que abriu no repo errado por causa de um fallback
@@ -326,16 +333,61 @@ export function isReadyForAutoStart(input: AutoStartReadinessInput): boolean {
 }
 
 /**
- * O texto que o auto-start ENVIA: o MESMO comando pré-digitado
- * (`esteiraPhaseCommand` — uma função só produz o texto, para a correção de
- * um não envelhecer o outro), com o Enter colado num write só. Mesmo padrão
- * já usado para injeção em sessão viva (`buildModelInjection`,
- * `shared/liveSessionInjection.ts`: `` `/model ${model}\r` ``) — texto +
- * Enter num write só é mais seguro que dois writes separados, porque não há
- * janela entre "digitou" e "enviou" para uma corrida acontecer.
+ * O Enter que o auto-start manda — sempre um write PRÓPRIO, nunca colado ao
+ * texto do comando (ver `autoStartWriteSteps` logo abaixo para o motivo).
+ * Mesmo caractere usado em `buildModelInjection`/`buildEffortInjection`
+ * (`shared/liveSessionInjection.ts`) — lá o `\r` pode ir colado ao comando
+ * porque a sessão já está `'waiting'` (turno anterior concluído, ninguém
+ * mais escrevendo); aqui a sessão está no MEIO do boot do REPL, e é
+ * exatamente esse contexto que expôs o problema abaixo.
  */
-export function withAutoEnter(command: string): string {
-  return `${command}\r`;
+export const AUTO_START_ENTER = '\r';
+
+/**
+ * O PLANO de escrita do auto-start: `[texto, Enter]` — sempre DOIS passos,
+ * nunca um write único combinando os dois.
+ *
+ * **wi-esteira4-autostart-enter (11/08) — o "bug fundador" da esteira: sem
+ * ele, nenhuma fase roda sozinha.** Até esta correção esta função (então
+ * `withAutoEnter`) devolvia `` `${command}\r` `` — comando e Enter no MESMO
+ * write, com a justificativa (agora sabida errada) de que um write só seria
+ * mais seguro que dois separados, por não deixar "janela entre digitou e
+ * enviou". Na prática o comando aparecia digitado no terminal mas NUNCA era
+ * submetido — e sem nenhum sinal de erro, porque `injectCommand` só garante
+ * que o texto foi ESCRITO no stdin do PTY, nunca que o CLI o executou (ver
+ * `TerminalPane.tsx`); o watcher via `written === true` e encerrava achando
+ * que tinha terminado.
+ *
+ * **Achado, confirmado lendo o código do CLI de fora (bracketed paste)**:
+ * este repo já sabe, de outra correção (`TerminalPane.tsx`, colagem real de
+ * texto em aba claude), que o REPL do `claude` liga bracketed paste
+ * (`\x1b[?2004h`) e que colagem tem que ser envolvida em
+ * `\x1b[200~...\x1b[201~` para o CLI não tratar o conteúdo como digitação
+ * tecla-a-tecla. `armEsteiraAutoStart` nunca envolve nada nesses marcadores
+ * — mas o REPL (readline/Ink por trás do CLI) trata qualquer chunk de
+ * stdin com MAIS DE UM caractere chegando de uma vez como um blob colado em
+ * bloco, marcador ou não: o `\r` no MEIO desse blob não é interpretado como
+ * "Enter", só é inserido como conteúdo — exatamente o sintoma observado.
+ *
+ * **A correção**: separar os dois writes resolve, porque cada um chega como
+ * um chunk de stdin PRÓPRIO — um único caractere de Enter nunca é lido como
+ * início de colagem. Isso reabre, de propósito, a "janela entre digitou e
+ * enviou" que a versão antiga evitava — ela não desaparece, é MITIGADA:
+ * (1) ninguém mais escreve nesta aba durante a janela (a sessão acabou de
+ * nascer, o auto-start é o único escritor até o CLI ecoar de volta); (2) se
+ * a aba morrer NA janela (fechada, ou um novo auto-start armado por cima),
+ * `armEsteiraAutoStart` cancela o Enter pendente em vez de escrevê-lo num
+ * PTY que já não existe (ver `enterTimeoutId`/`cleanup` em App.tsx) — o
+ * único efeito residual possível é um comando digitado e nunca submetido
+ * numa aba que já foi fechada, o que é inofensivo. O prazo entre os dois
+ * writes (`AUTO_START_ENTER_DELAY_MS`, App.tsx, ao lado de
+ * `PRE_TYPE_READY_TIMEOUT_MS`) e a razão de precisar de um `setTimeout` (não
+ * dois writes síncronos, que ainda podem cair no mesmo read() do lado do
+ * CLI) estão documentados lá — é decisão de quem ORQUESTRA os dois writes,
+ * não desta função pura.
+ */
+export function autoStartWriteSteps(command: string): readonly [string, string] {
+  return [command, AUTO_START_ENTER];
 }
 
 // ---------------------------------------------------------------------------

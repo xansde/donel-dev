@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUTO_START_ENTER,
+  autoStartWriteSteps,
   dispatchHint,
   dispatchRefusedMessage,
   esteiraPhaseCommand,
@@ -15,7 +17,6 @@ import {
   resolveSessionCwd,
   resourceBusyRefusedMessage,
   sessionActiveRefusedMessage,
-  withAutoEnter,
 } from '../src/renderer/src/Esteira/esteiraSession';
 import { TRUST_DIALOG_CONFIRM_MARKER, TRUST_DIALOG_EXIT_MARKER } from '../src/shared/trustDialog';
 import type { SessionSnapshot } from '../src/shared/esteira/store/storeFormat';
@@ -87,8 +88,9 @@ describe('preparedMessage — a frase depois do "Preparar"', () => {
     // B5 (05/08, pedido literal do dono): o gesto humano ACABA no clique em
     // "Preparar" — o app aperta o próprio Enter assim que o terminal aceita
     // entrada. Antes do B5 esta frase dizia "o Enter é seu"; ficou falsa no
-    // instante em que `withAutoEnter` passou a existir, porque toda sessão de
-    // fase da esteira passa por `armEsteiraAutoStart` (App.tsx), sem exceção.
+    // instante em que `autoStartWriteSteps` (então `withAutoEnter`) passou a
+    // existir, porque toda sessão de fase da esteira passa por
+    // `armEsteiraAutoStart` (App.tsx), sem exceção.
     const message = preparedMessage({ phase: 'discovery', tabName: '[atlas] discovery' });
     expect(message).toContain('[atlas] discovery');
     expect(message).toContain('aperta o Enter sozinho');
@@ -254,15 +256,41 @@ describe('sessionActiveRefusedMessage — B3: recusa por segunda sessão viva', 
   });
 });
 
-describe('B5 — withAutoEnter: o texto que o auto-start ENVIA', () => {
-  it('cola o Enter no MESMO comando que a aba receberia escrito', () => {
-    expect(withAutoEnter(esteiraPhaseCommand('discovery', 'C:/inbox/run-1.json'))).toBe(
-      '/esteira-discovery-3 --input "C:/inbox/run-1.json"\r',
-    );
+// wi-esteira4-autostart-enter (11/08) — o "bug fundador": até esta correção
+// `withAutoEnter` colava o Enter no MESMO write do comando (`${command}\r`).
+// Na prática o texto aparecia digitado no terminal mas o Enter nunca
+// submetia — nenhum toast, nenhum erro, porque `injectCommand` só garante
+// que ESCREVEU no stdin, nunca que o CLI executou. Achado: o REPL do CLI
+// trata qualquer chunk de stdin com mais de um caractere como colagem em
+// bloco (mesma razão pela qual este repo já embrulha colagem real de texto
+// em `\x1b[200~...\x1b[201~`, ver TerminalPane.tsx) — um `\r` embutido no
+// meio de um blob multi-caractere não dispara "Enter", só é inserido como
+// conteúdo. `autoStartWriteSteps` substitui `withAutoEnter`: em vez de UM
+// texto com o Enter colado, devolve o PLANO de dois writes — quem chama
+// (`armEsteiraAutoStart`, App.tsx) escreve o primeiro, espera um tick
+// próprio (`AUTO_START_ENTER_DELAY_MS`) e só então escreve o segundo.
+describe('B5/wi-esteira4-autostart-enter — autoStartWriteSteps: o PLANO de escrita do auto-start', () => {
+  it('devolve o comando pré-digitado e o Enter como DOIS passos, nunca um texto só', () => {
+    expect(autoStartWriteSteps(esteiraPhaseCommand('discovery', 'C:/inbox/run-1.json'))).toEqual([
+      '/esteira-discovery-3 --input "C:/inbox/run-1.json"',
+      '\r',
+    ]);
   });
 
-  it('é a ÚNICA função da esteira que produz texto com \\r — o resto do arquivo segue proibindo', () => {
-    expect(withAutoEnter('/esteira-plano-3 --input "x.json"')).toMatch(/\r$/);
+  it('o primeiro passo NUNCA carrega o Enter embutido — é a regressão que causou o bug', () => {
+    const [text] = autoStartWriteSteps('/esteira-plano-3 --input "x.json"');
+    expect(text).not.toMatch(/\r/);
+    expect(text).not.toMatch(/\n/);
+  });
+
+  it('o segundo passo é SÓ o Enter — nenhum texto colado nele', () => {
+    const [, enter] = autoStartWriteSteps('/esteira-plano-3 --input "x.json"');
+    expect(enter).toBe(AUTO_START_ENTER);
+    expect(enter).toHaveLength(1);
+  });
+
+  it('AUTO_START_ENTER é exatamente `\\r` — o mesmo caractere de Enter usado no resto do repo (buildModelInjection)', () => {
+    expect(AUTO_START_ENTER).toBe('\r');
   });
 });
 
