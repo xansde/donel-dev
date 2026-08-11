@@ -92,16 +92,20 @@ isso **E roda antes, sozinha**.
       `wi-esteira4-motor-spec` e `wi-esteira4-design-spec` no store
       (eventos `work_item.updated` appendados ao `events.jsonl`)
 
-### Onda 1 — 3 frentes em paralelo
+### Onda 1 — 3 frentes em paralelo — ✅ frentes entregues em 11/08
 
-| Frente | Item | Tam. | Por que aqui |
-|---|---|---|---|
-| **E** | `wi-esteira4-autostart-enter` | P | O bug fundador: **sem o Enter nenhuma onda seguinte roda sozinha**. Hipótese registrada no discovery — `armEsteiraAutoStart` escreve o comando mas não o `\r`. **Verificar no alfa instalado, não assumir** |
-| **P1** | `wi-esteira4-pacote-portatil` | M | Pacote em `docs/esteira-dev/` + inversão da fonte do contrato. Toda a trilha P depende |
-| **G** | `wi-esteira4-formato-grafo` | P | É **spec**, não código — sessão de conversa, em paralelo. Destrava 2 itens do motor |
+| Frente | Item | Estado |
+|---|---|---|
+| **E** | `wi-esteira4-autostart-enter` | **PR #59 mergeado.** Hipótese confirmada (texto+`\r` num write único = colagem para o REPL); fix: dois writes com `AUTO_START_ENTER_DELAY_MS = 50`, máquina de 3 fases no watcher, 4 testes novos. 2196 verdes na worktree |
+| **P1** | `wi-esteira4-pacote-portatil` | **PR #60 mergeado.** Contrato v1 movido para `docs/esteira-dev/contract/v1/` (git mv), fork e 10 testes repontados, teste de unicidade novo, bundle provado sem referência ao caminho antigo |
+| **G** | `wi-esteira4-formato-grafo` | **PRs #58 + fechamento mergeados.** Molde **aprovado pelo dono em 11/08** — `[G-1]`…`[G-6]` viram requisito; spec 🟢 |
 
-**Gate 1:** o Enter funciona *no alfa instalado* (verificado, com evidência) **e**
-o molde do `esteira.grafo` foi aprovado pelo dono.
+Integração verificada pelo orquestrador na staging: typecheck limpo,
+**2198/2198 testes verdes** (11/08).
+
+**Gate 1:** o molde foi aprovado ✅; o Enter *no alfa instalado* aguarda a
+**bateria manual do dono** (roteiro entregue em 11/08) — a Onda 2 só começa
+depois do OK dele.
 
 ### Onda 2 — 2 frentes
 

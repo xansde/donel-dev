@@ -1,10 +1,9 @@
 # Formato do arquivo `esteira.grafo` — o molde — 012 Esteira 4.0
 
-**Status:** 🟡 **ESCRITA, aguardando o gate** — o molde está proposto sobre a
-evidência do arquivo que a mesa já exportou e sobre o que as quatro specs irmãs
-declaram consumir. As decisões novas desta spec estão marcadas `[G-1]`…`[G-6]` e
-listadas no fecho (seção 8) — **o gate desta spec é o dono aprovar o molde**;
-até lá nenhum validador nem escritor implementa contra ela.
+**Status:** 🟢 **DECIDIDA** — o molde foi **aprovado pelo dono em 11/08**, no
+Gate 1 da rodada de execução: as seis decisões `[G-1]`…`[G-6]` (seção 8) valem
+como requisito. Validador, schema e escritor implementam contra esta spec a
+partir da Onda 2.
 **Item:** `wi-esteira4-formato-grafo` · plano `pln-esteira4-catalogo-e-grafo` ·
 discovery `dsc-15a7e7f5-fbb`.
 **Fonte de alcance:** `catalogo.md` (🟢) — o grafo canônico (§1) e a taxonomia de
@@ -202,11 +201,10 @@ mesma regra de fonte única.
 | V-7 | `mergeOrder`, quando presente, inteiro ≥ 1 e único no arquivo | execução |
 | V-8 | no uso execução, `id` de card existe como work item no store/ciclo | execução — regra **cruzada**, do validador que enxerga o ciclo, não do schema |
 
-## 8. Fecho de gate — o que o dono aprova
+## 8. Fecho de gate — aprovado em 11/08
 
-O gate desta spec (Gate 1 da rodada, `execucao.md` §4) é **uma aprovação de
-molde**. As seis decisões propostas, uma por linha — aprovar o molde é aprovar
-estas; qualquer "não" reabre só a linha dele:
+O gate desta spec (Gate 1 da rodada, `execucao.md` §4) era **uma aprovação de
+molde**, e o dono a deu em 11/08 — as seis decisões abaixo valem como requisito:
 
 | # | Decisão proposta |
 |---|---|
