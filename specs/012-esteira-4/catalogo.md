@@ -25,7 +25,10 @@ vence esta; sobre contrato, store e fatos, continua valendo a 010.
 > proposta pela fase Design de 08/08 e aqui transformada em texto normativo ·
 > `[P-n]` pergunta de **alcance** devolvida pelo Design, **ratificada pelo dono em
 > 08/08** — vale como requisito; o id foi mantido para a rastreabilidade com o
-> Design e com o item irmão · `[E]` evidência medida em disco/código, com caminho.
+> Design e com o item irmão · `[P-A]` emenda ao §3.3 vinda da `design.md` (seção 3),
+> ratificada pelo dono em 10/08 e **aplicada in-place em 11/08** — a forma
+> in-place é a decisão `[P-F]` da `design.md`, padrão para as próximas emendas ·
+> `[E]` evidência medida em disco/código, com caminho.
 
 Insumos: as 11 decisões do Discovery, o grafo exportado da mesa
 (`.esteira/plano/pln-esteira4-catalogo-e-grafo/grafo-mesa.json` — 12 nós, 12
@@ -185,7 +188,7 @@ registra o conflito e o que decidiu `[D]` — quem revê é a Validar.
 |---|---|
 | **Exige** | um item **roteado a Design** pelo Plano, e as tasks dele. |
 | **Faz** | discovery técnico da estrutura-alvo: API, tabelas, tools, infra. Produz mockup e diagrama de arquitetura, e **reescreve as tasks** do Plano quando a estrutura escolhida as invalida. |
-| **Devolve** | dois `artifact.recorded` (mockup e diagrama). Quando um dos dois não se aplica, `note.recorded` com a justificativa — omissão silenciosa é recusada. `phase.completed`. |
+| **Devolve** | dois `artifact.recorded`: o **mapa HTML** (`artifact_kind` `mockup`) e o **diagrama de arquitetura** (`artifact_kind` `architecture-diagram`), ambos **sempre** `[P-A]`. As **telas simuladas** deixam de ser artefato próprio: viram uma seção dentro do mapa HTML, presente só quando o item tem superfície de UI — sem UI, `note.recorded` curta dizendo por quê. Omissão silenciosa segue recusada. Mais os `task.rewritten` da `design.md` §4, quando houve reescrita, e `phase.completed`. |
 | **Roda** | 0 ou 1× por item. **Zero é o caso comum.** |
 
 **Design não é oferta livre `[D-11]`.** Item sem decisão de estrutura a tomar vai
