@@ -130,7 +130,7 @@ dono, nunca da própria fase.
 aplica. A evidência das quatro rodadas é que **mockup de tela só pagou o custo
 quando havia UI**: o conteúdo dos diagramas entrou quase literal nas specs
 irmãs, e o HTML das telas nunca foi citado linha a linha nas reviews
-(`.esteira/validar/wi-esteira4-catalogo-fases/review-2026-08-08.md:88-89`). A
+(`.esteira/validar/wi-esteira4-catalogo-fases/review-2026-08-08.md:89-90`). A
 régua muda de lugar, não de rigor:
 
 | Antes (§3.3 vigente) | Depois `[P-A]` |
@@ -310,26 +310,46 @@ parada humana **"Você valida o Design"** e transiciona o card `Rodando →
 Esperando` (`motor.md:108`). A tela do gate abre o mapa HTML — é para isso que
 ele é autocontido.
 
+O diagrama abaixo é o **recorte deste gate na máquina de estados do card**, e usa
+o vocabulário dela: os estados são os oito canônicos do `motor.md:72-96`
+(`Bloqueado`, `Pronto`, `Rodando`, `Esperando`, `Falhou`, `TetoEstourado`,
+`Concluído`, `Abandonado`). Nome de fase — Plano, Design, Implementar — **não é
+estado**: é a posição do **cursor** no grafo canônico, e aparece aqui como rótulo
+da aresta, nunca como nó.
+
 ```mermaid
 stateDiagram-v2
-  [*] --> Planejado
-  Planejado --> Rodando: needsDesign = true
-  Planejado --> Implementar: needsDesign = false
-  Rodando --> Esperando: artefatos + fatos emitidos
-  Esperando --> Implementar: dono valida (gate.confirmed)
-  Esperando --> Planejado: dono reprova (volta ao Plano)
-  Planejado --> [*]: item abandonado
+  Pronto --> Rodando: scheduler admite<br/>cursor no nó Design
+  Rodando --> Esperando: artefatos + fatos emitidos<br/>(próximo nó do canônico é gate)
+  Esperando --> Rodando: dono valida (gate.confirmed)<br/>cursor avança para Implementar
+  Esperando --> Pronto: dono reprova [P-D]<br/>cursor RECUA para o nó do Plano
+  Esperando --> Abandonado: dono abandona o card (terminal)
 ```
 
-**Aprovado:** `gate.confirmed` com a condição escrita, e o item segue para
-Implementar — que parte das tasks **já corrigidas**.
+O roteamento `needsDesign` **não** aparece aí de propósito: ele é decidido no
+gate do Plano (seção 5) e o que ele muda é para onde o cursor aponta ao sair
+dele — nó Design quando é `true`, nó Implementar quando é `false`. Em nenhum dos
+dois casos o card muda de estado por causa dele.
+
+**Aprovado:** `gate.confirmed` com a condição escrita; o cursor avança para
+Implementar — que parte das tasks **já corrigidas** — e o card volta a `Rodando`
+pela aresta que o motor já conhece (`Esperando → Rodando`, gesto humano
+registrado).
 
 **Reprovado `[P-D]`:** o item **volta à fase Plano**. Desenho reprovado é sinal de
 plano mal posto; re-rodar a Design contradiria o "0 ou 1× por item", e o gate do
-Plano é o lugar onde alcance se reabre. A aresta `Esperando → Planejado` é o que
-esta spec **acrescenta** ao `motor.md`, que hoje só conhece a transição de
-aprovação — a divergência está declarada aqui, não silenciada, e é a spec do
-motor que a absorve quando for atualizada.
+Plano é o lugar onde alcance se reabre. Na máquina, isso é: o gesto de reprovação
+vira fato, o **cursor recua ao nó do Plano** e o card vai de `Esperando` para
+**`Pronto`** — volta a competir por slot no teto (`[Q-2]`), em vez de emendar
+direto, porque o Plano é um run novo como qualquer outro.
+
+A aresta `Esperando → Pronto` é o que esta spec **acrescenta** ao `motor.md`, que
+hoje só conhece as três saídas do `Esperando` (`→ Rodando` por gesto de gate,
+`→ Abandonado` por abandono). É a única transição nova, e a diferença entre ela e
+a `Esperando → Rodando` existente está no cursor, não no gesto: as duas nascem de
+um gesto humano no mesmo gate. A divergência está declarada aqui, não silenciada,
+e é a spec do motor que a absorve quando for atualizada — com o nó de destino
+agora nomeado no vocabulário dela.
 
 **O "0 ou 1× por item" fica intacto por passagem.** A contagem é por passagem
 pelo Plano: a nova passagem pode rotear a Design de novo, e aí é uma Design nova,
@@ -347,7 +367,7 @@ trilha existe para mostrar.
 
 Hoje a review **não re-revisa artefatos de Design** — precedente registrado na
 review do catálogo `[E]`
-(`.esteira/validar/wi-esteira4-catalogo-fases/review-2026-08-08.md:88-89`). Esse
+(`.esteira/validar/wi-esteira4-catalogo-fases/review-2026-08-08.md:89-90`). Esse
 precedente **fica**, com um recorte novo:
 
 | Objeto | Entra na review da Validar? | Por quê |
