@@ -50,7 +50,13 @@ via `CLAUDE_CONFIG_DIR`.
   buildar na própria máquina. Não há histórico compartilhado entre os dois.
 - **Nunca vão para o público**: `specs/`, `docs/`, `scripts/`, `design/`,
   `.claude/`. O público tem `README.md`, `LICENSE` e `CLAUDE.md` **próprios**,
-  editados à mão — o sync não os sobrescreve.
+  editados à mão — o sync não os sobrescreve. **Exceção nomeada (decisão do
+  dono, 11/08, precedente de `skills/` em 03/08)**: `scripts/esteira-check.mjs`,
+  `scripts/esteira-custo-fase.mjs` e `.esteira/review-policy.json` entram no
+  espelho — testes espelhados os exercitam, e teste que só passa no repo de
+  trabalho não vale como gate. Os scripts de publicação seguem fora. Pendência
+  para a próxima promoção: quando a 4.0 chegar ao beta, `docs/esteira-dev/`
+  (nova casa do contrato) precisará da mesma decisão.
 - **Promover**: `powershell -File scripts/sincronizar-publico.ps1` espelha
   `src/ tests/ patches/ design-system/` + configs de build e imprime o `git
   status` do lado público. Ele **não** commita nem faz push — revisar, rodar
