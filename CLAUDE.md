@@ -164,6 +164,27 @@ Cada fase termina com **revisão do Alexandre** antes da seguinte começar.
 um mapa que será substituído) e #35 (a trilha sintética **será revertida** — ela
 pinta "não realizada" o que é "não consegui ler").
 
+## Gatilho — "executar a próxima onda da 012"
+
+Pedido "**executar a próxima onda da 012**" (ou "próxima onda da Esteira 4.0")
+= abrir `specs/012-esteira-4/execucao.md` — o plano completo da rodada (grafo,
+trilhas por arquivo, gates, regras, riscos) — e pegar a primeira onda `⬜` da
+fila `Claude Seazone/Projects/donel-dev/execucao-012-esteira4/PROXIMO.md`.
+Prompts prontos (execução, retomada e fechamento no alfa) em `prompt.md`, na
+mesma pasta.
+
+**Escopo:** os **14 itens `open`** do discovery «Definicao esteira dev»
+(`dsc-15a7e7f5-fbb`). **Fora do escopo por decisão do dono (11/08):** os planos
+`forma-e-leitura` e `donel-leitor` — começam **depois** desta rodada fechar.
+
+**Dentro de uma onda as frentes são PARALELAS** (uma worktree por frente);
+**entre ondas a ordem é estritamente sequencial** — cada gate existe porque a
+onda seguinte assume o que ele provou. Bloco `ships_with` é **uma entrega**,
+construída sequencialmente na mesma branch: dois workers na mesma árvore foi o
+incidente dos commits entrelaçados de 04/08. A rodada **termina no alfa**
+(Onda 5) — liberado sem pedir permissão, ao contrário de `main` e do repo
+público, que seguem no bloqueio total.
+
 ## Gotchas conhecidos (do planejamento)
 
 - node-pty precisa casar com a ABI do Electron — prebuilds/@electron/rebuild;
