@@ -541,8 +541,9 @@ export function lockView(card: CardView, lock: LockRecord | null = card.lock): L
     // porta: os prints 07 e 10 do roteiro se desmentiam na mesma rodada.
     //
     // B5 (05/08): o app aperta o próprio Enter assim que o terminal aceita
-    // entrada (`withAutoEnter`, `esteiraSession.ts`) — enviar deixou de ser
-    // gesto exclusivamente humano. Até 05/08 esta linha dizia "o app não sabe
+    // entrada (`autoStartWriteSteps`, `esteiraSession.ts` — até 11/08
+    // `withAutoEnter`) — enviar deixou de ser gesto exclusivamente humano.
+    // Até 05/08 esta linha dizia "o app não sabe
     // se você já o enviou"; achado da captura `auto-start-e-redisparo-recusado`:
     // a frase continuou prometendo uma incerteza que o app não tinha mais.
     return {

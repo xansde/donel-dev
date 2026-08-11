@@ -356,7 +356,8 @@ describe('lockView — a tela não promete o que não cumpre', () => {
     // Achado da captura `auto-start-e-redisparo-recusado` (05/08): esta linha
     // dizia "o app não sabe se você já o enviou", texto escrito quando enviar
     // era SEMPRE gesto humano. O batch B5 (mesma leva) fechou essa lacuna com
-    // `withAutoEnter`/`armEsteiraAutoStart` sem atualizar esta frase — a tela
+    // `autoStartWriteSteps`/`armEsteiraAutoStart` (até 11/08, `withAutoEnter`)
+    // sem atualizar esta frase — a tela
     // continuou prometendo incerteza sobre um fato que o app passou a
     // controlar. `handleOpenEsteiraSession` arma o auto-start para TODA sessão
     // de fase da esteira, sem exceção — não sobra caso em que o texto antigo
