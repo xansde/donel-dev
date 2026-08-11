@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "prebuild": "npm run build -w @donel-dev/design-system",
+    "pretypecheck": "npm run build -w @donel-dev/design-system",
     "postinstall": "patch-package && electron-rebuild -f -w node-pty",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
