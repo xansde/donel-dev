@@ -236,3 +236,24 @@ No padrão das `[P-n]`, prontas para a ratificação — o que só o dono fecha:
   Re-rodar Design contradiz o "0 ou 1× por item" do §3.3 lido ao pé da
   letra; voltar ao Plano reabre um gate já fechado. Nenhuma das 4 specs
   responde. A fila precisa da resposta para não inventar a dela.
+
+## 6. Ratificação (dono, 2026-08-10)
+
+As quatro perguntas foram respondidas pelo dono na própria sessão da Validar
+deste item — cada resposta abaixo é decisão, não proposta, e a spec `design.md`
+(item irmão) escreve o texto normativo a partir daqui:
+
+- **[P-A] RATIFICADA a proposta.** O "Devolve" da fase passa a ser: mapa HTML
+  (sempre) + diagrama `.md` (sempre) + telas simuladas dentro do HTML apenas
+  quando o item tem superfície de UI; sem UI, nota curta. Emenda o texto do
+  §3.3 do catálogo.
+- **[P-B] Fato próprio no contrato.** A reescrita de tasks ganha registro
+  tipado (task → decisão de estrutura → o que mudou); `note.recorded` deixa de
+  ser o veículo. Mudança de contrato a especificar em `design.md`.
+- **[P-C] Sim.** Tasks reescritas entram no escopo da review da Validar — ela
+  confere o diff das tasks contra o fato declarado. Mockup e diagrama seguem
+  fora da re-revisão (precedente mantido).
+- **[P-D] Volta ao Plano.** Reprovação no gate "Você valida o Design" devolve o
+  item à fase Plano: o desenho reprovado é sinal de plano mal posto, e o gate
+  do Plano reabre para o item. O "0 ou 1× por item" do §3.3 fica intacto por
+  passagem — a nova passagem pelo Plano pode rotear a Design de novo.
