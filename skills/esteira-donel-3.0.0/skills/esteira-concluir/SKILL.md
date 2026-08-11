@@ -111,7 +111,7 @@ fase vale para o seu próprio caminho também.
    mesmo; `inconclusive` — não deu para fechar agora.
 
    **A forma é o corpus, não a memória.** Veja
-   `src/shared/esteira/contract/v1/examples/concluir-entrega-verificada.json`
+   `docs/esteira-dev/contract/v1/examples/concluir-entrega-verificada.json`
    (PR mergeado, `channel` declarado — `[A15]`) e
    `concluir-desfecho-revisto.json` (uma revisão de desfecho, `[A13]`) antes de
    montar `facts.json`.

@@ -23,7 +23,7 @@ import { createSchemaWalker, type JsonNode } from './helpers/contractSchemaPaths
 // Se um dia o fork sair daqui, o `sincronizar-contrato.ps1` e o hash voltam,
 // como o passo zero desenhou.
 
-const CONTRACT_DIR = fileURLToPath(new URL('../src/shared/esteira/contract/v1/', import.meta.url));
+const CONTRACT_DIR = fileURLToPath(new URL('../docs/esteira-dev/contract/v1/', import.meta.url));
 const SKILL_TOOLS_DIR = fileURLToPath(new URL('../skills/esteira-donel-3.0.0/tools/', import.meta.url));
 
 const resultSchema = JSON.parse(readFileSync(`${CONTRACT_DIR}esteira-result.schema.json`, 'utf8')) as JsonNode;

@@ -1,9 +1,10 @@
 // Spec 010 (D-10) — lado APP do contrato `result.json`. O arquivo canonico do
-// contrato e o JSON Schema vizinho (`v1/esteira-result.schema.json`), que o
-// fork `esteira-donel-3.0.0` le na mesma versao; este modulo e a leitura que o
-// app promete fazer dele. Os dois lados sao amarrados pelo teste de cobertura
-// (`tests/esteiraContractCoverage.test.ts`), que compara CONSUMED_PATHS com os
-// campos declarados no schema — e por um teste espelho do lado da skill.
+// contrato mora no pacote portatil (`docs/esteira-dev/contract/v1/esteira-result.schema.json`),
+// que o fork `esteira-donel-3.0.0` le na mesma versao; este modulo e a leitura
+// que o app promete fazer dele. Os dois lados sao amarrados pelo teste de
+// cobertura (`tests/esteiraContractCoverage.test.ts`), que compara
+// CONSUMED_PATHS com os campos declarados no schema — e por um teste espelho
+// do lado da skill.
 //
 // Por que fatos e nao `outputs.<campo>`: o bug de 03/08 (evidencia 1 da spec)
 // foi o app deduzir "houve plano" de `outputs.plan_cards[]`, um campo OPCIONAL

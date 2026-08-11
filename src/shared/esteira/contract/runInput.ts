@@ -1,6 +1,7 @@
 // Spec 010 (D-10) — lado APP do contrato de IDA (`run-input.json`), decidido em
-// 2026-08-03 (lacuna 2 do handoff da fase 1). O arquivo canonico e o JSON
-// Schema vizinho (`v1/esteira-run-input.schema.json`), lido pelos dois lados.
+// 2026-08-03 (lacuna 2 do handoff da fase 1). O arquivo canonico mora no
+// pacote portatil (`docs/esteira-dev/contract/v1/esteira-run-input.schema.json`),
+// lido pelos dois lados.
 //
 // A assimetria com `resultContract.ts` e proposital e importante:
 //

@@ -124,7 +124,7 @@ fase vale para o seu próprio caminho também.
 
    **A forma de cada fato é o corpus, não a memória.** Antes de montar
    `facts.json` à mão, olhe um exemplo de verdade em
-   `src/shared/esteira/contract/v1/examples/` — `discovery-com-tracker.json`
+   `docs/esteira-dev/contract/v1/examples/` — `discovery-com-tracker.json`
    tem `gate.confirmed` em dois formatos e mostra um `relation.recorded`
    completo; `discovery-sem-repo-nem-tracker.json` mostra o discovery mínimo,
    sem repo nem tracker. Copiar a forma de um exemplo real é mais seguro que

@@ -21,7 +21,7 @@ import { createSchemaWalker, type JsonNode } from './helpers/contractSchemaPaths
 // sozinho — o que faltava era um lugar onde os dois fossem confrontados.
 //
 // Sao tres amarras sobre o MESMO arquivo canonico
-// (`src/shared/esteira/contract/v1/esteira-result.schema.json`):
+// (`docs/esteira-dev/contract/v1/esteira-result.schema.json`):
 //
 //   1. schema x parser  — o conjunto de campos declarados no schema e o
 //      conjunto que o app promete ler (CONSUMED_PATHS) tem que ser IGUAL.
@@ -36,7 +36,7 @@ import { createSchemaWalker, type JsonNode } from './helpers/contractSchemaPaths
 // os campos declarados. O corpus e o mesmo arquivo, copiado com hash conferido.
 // Desenho completo em `specs/010-esteira-donel/passo-zero.md`.
 
-const CONTRACT_DIR = fileURLToPath(new URL('../src/shared/esteira/contract/v1/', import.meta.url));
+const CONTRACT_DIR = fileURLToPath(new URL('../docs/esteira-dev/contract/v1/', import.meta.url));
 const SCHEMA_PATH = `${CONTRACT_DIR}esteira-result.schema.json`;
 const EXAMPLES_DIR = `${CONTRACT_DIR}examples/`;
 

@@ -276,7 +276,7 @@ describe('discardHint — D-16 diz por que o descarte nao tem bloqueio', () => {
 // Os gestos, ponta a ponta pelo servico
 // ---------------------------------------------------------------------------
 
-const EXAMPLES_DIR = join(__dirname, '..', 'src', 'shared', 'esteira', 'contract', 'v1', 'examples');
+const EXAMPLES_DIR = join(__dirname, '..', 'docs', 'esteira-dev', 'contract', 'v1', 'examples');
 
 /** Ids do corpus do contrato — o mesmo dado que a skill 3.0 devolve de verdade. */
 const DISCOVERY_ID = 'dsc-2026-08-03-a';
