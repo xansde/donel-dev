@@ -20,11 +20,11 @@ Não puxe item deles para cá.
 | Fato | Situação |
 |---|---|
 | `design-system/` apagado do working tree (100 arquivos) | **restaurado em 11/08** (`git restore`) — nada builda sem ele |
-| PR **#54** (A-1 `artifact.recorded` + A-2 estado `Abandonado`) | **aberto**, esperando merge |
-| `specs/012-esteira-4/design.md` | 🟡 **trava a rodada**: `[P-E]` e `[P-F]` esperando o dono |
+| PR **#54** (A-1 `artifact.recorded` + A-2 estado `Abandonado`) | **mergeado em 11/08** |
+| `specs/012-esteira-4/design.md` | 🟢 **fechada em 11/08**: `[P-E]` (entra com `artifact.recorded`) e `[P-F]` (emenda in-place) decididas pelo dono; emenda aplicada ao `catalogo.md` §3.3 |
 | `catalogo.md`, `motor.md`, `conversa.md`, `layout-esteira.md` | 🟢 fechadas e mergeadas |
-| `wi-esteira4-catalogo-fases`, `wi-esteira4-motor-spec` | ainda `in-progress` no store, **embora as specs já tenham mergeado** |
-| Branch atual | `feature/esteira4-a1-a2` |
+| `wi-esteira4-catalogo-fases`, `wi-esteira4-motor-spec` | **declarados `done` no store em 11/08** (eventos seq 1211-1212) |
+| `pretypecheck` | **no `package.json` raiz desde 11/08** (PR #56) — typecheck builda o design-system antes |
 
 **Nenhum dos 14 itens tem uma linha de código.** O que fechou até aqui foi a
 coluna de documento: `layout-esteira-dir`, `conversa-spec`, `design-research`.
@@ -79,16 +79,18 @@ isso **E roda antes, sozinha**.
 
 ## 4. As ondas
 
-### Onda 0 — destravar (antes de qualquer item)
+### Onda 0 — destravar (antes de qualquer item) — ✅ FECHADA em 11/08
 
 - [x] `git restore design-system/` — feito em 11/08
-- [ ] **`pretypecheck`** no `package.json` raiz (`npm run build -w @donel-dev/design-system`).
-      `design-system/dist` ausente quebrou o typecheck em 3 batches distintos;
-      é o menor conserto com o maior retorno da lista
-- [ ] Fechar `[P-E]` e `[P-F]` da `design.md` → status 🟢 · **decisão do dono**
-- [ ] Merge do **PR #54**
-- [ ] Declarar `done` os itens `wi-esteira4-catalogo-fases` e
-      `wi-esteira4-motor-spec` (dívida de contrato: a spec mergeou, o store não soube)
+- [x] **`pretypecheck`** no `package.json` raiz — PR #56, mergeado; typecheck
+      rodado verde com o guarda novo
+- [x] Fechar `[P-E]` e `[P-F]` da `design.md` → status 🟢 — decididas pelo dono
+      em 11/08: `design` entra em `by-phase-when-done` com `artifact.recorded`;
+      emenda ao `catalogo.md` §3.3 aplicada **in-place** (padrão fixado)
+- [x] Merge do **PR #54** — 11/08
+- [x] Declarar `done` os itens `wi-esteira4-catalogo-fases`,
+      `wi-esteira4-motor-spec` e `wi-esteira4-design-spec` no store
+      (eventos `work_item.updated` appendados ao `events.jsonl`)
 
 ### Onda 1 — 3 frentes em paralelo
 
@@ -192,7 +194,7 @@ npm run dist:alfa
 
 | # | Decisão | Default assumido se não houver resposta |
 |---|---|---|
-| 1 | `[P-E]` / `[P-F]` da `design.md` | **nenhum** — trava real, a Onda 0 não fecha sem isso |
+| 1 | ~~`[P-E]` / `[P-F]` da `design.md`~~ **FECHADA em 11/08**: `[P-E]` → entra em `by-phase-when-done` com `artifact.recorded` (recomendação da spec acatada); `[P-F]` → edição in-place com proveniência na legenda (padrão para as próximas emendas) | — |
 | 2 | O `worktree-por-card` sai do bloco `ships_with` e entra sozinho na Onda 1 (PR pequeno e revisável; as frentes seguintes já nascem com árvore isolada), ou o bloco M1 sobe inteiro num PR grande? | **Sai do bloco.** Ele é útil sozinho — resolve A8 e A20, que já custaram commits entrelaçados — e nada em `headless`/`fila`/`gate-barato` exige que suba junto. PR gigante não recebe review de verdade |
 
 ---

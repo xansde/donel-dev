@@ -1,10 +1,12 @@
 # Spec do miolo da fase Design — 012 Esteira 4.0
 
-**Status:** 🟡 **ESCRITA, aguardando o gate** — o texto normativo está escrito
-sobre as quatro respostas que o dono ratificou em 10/08 (`[P-A]`…`[P-D]`,
-`design-research.md` §6), e devolve **duas** perguntas de alcance ainda abertas
-(`[P-E]`, `[P-F]`, seção 8). Enquanto elas não fecharem, o status não vira 🟢 e
-**nenhuma linha de código nasce deste item** — nem o schema, nem o catálogo.
+**Status:** 🟢 **DECIDIDA** — o texto normativo está escrito sobre as quatro
+respostas que o dono ratificou em 10/08 (`[P-A]`…`[P-D]`, `design-research.md`
+§6), e as **duas** perguntas de alcance que esta spec devolvia (`[P-E]`, `[P-F]`,
+seção 8) foram **fechadas pelo dono em 11/08**: a Design entra em
+`by-phase-when-done` com `artifact.recorded`, e a emenda ao catálogo é edição
+in-place — já aplicada. O schema muda pela issue que implementa o 14º fato
+(seção 4.2), agora com a resposta de `[P-E]` em mãos.
 **Item:** `wi-esteira4-design-spec` · plano `pln-esteira4-fase-design` ·
 discovery `dsc-15a7e7f5-fbb`.
 **Sucede a research.** `specs/012-esteira-4/design-research.md` **propôs**; este
@@ -24,9 +26,10 @@ nota, não silêncio.
 > Discovery de 07/08 · `[P-1]`…`[P-3]` alcance ratificado em 08/08 (catálogo,
 > §7) · `[P-A]`…`[P-D]` alcance **desta** frente, ratificado pelo dono em 10/08
 > na Validar do item irmão (`design-research.md` §6) — vale como requisito ·
-> `[P-E]`, `[P-F]` pergunta de alcance **ainda aberta**, devolvida pela fase
-> Design deste item · `[F]` resolução de forma vinda daquela fase Design ·
-> `[E]` evidência medida em disco/código, com caminho.
+> `[P-E]`, `[P-F]` pergunta de alcance devolvida pela fase Design deste item,
+> **fechada pelo dono em 11/08** (seção 8) — vale como requisito · `[F]`
+> resolução de forma vinda daquela fase Design · `[E]` evidência medida em
+> disco/código, com caminho.
 
 ---
 
@@ -257,7 +260,10 @@ flowchart LR
 
 **Nada disso é feito neste item.** O fato entra no contrato pela issue que a
 implementa, e só depois de `[P-E]` fechar (seção 8) — porque a resposta muda se o
-schema ganha só um `$defs` novo ou também uma linha em `x-required-facts`.
+schema ganha só um `$defs` novo ou também uma linha em `x-required-facts`. Com
+`[P-E]` fechada em 11/08, a resposta é: **as duas coisas** — o `$defs` do
+`task.rewritten` e a linha `design → artifact.recorded` em `by-phase-when-done`,
+no mesmo commit.
 Mudança de contrato v1 é mudança que o app e o fork leem da **mesma cópia**
 `[E]` (descrição do schema, linha 5): fazer metade dela agora deixaria os dois
 lados em desacordo.
@@ -384,10 +390,10 @@ isso que `note.recorded` em texto livre não permitia, e é o que `[P-B]` compra
 
 ---
 
-## 8. Perguntas em aberto
+## 8. Perguntas devolvidas ao dono — fechadas em 11/08
 
-Duas, ambas mudanças sobre contrato ou texto **já ratificado** — só o dono fecha,
-e é por isso que o status desta spec é 🟡.
+Duas, ambas mudanças sobre contrato ou texto **já ratificado** — só o dono podia
+fechar, e foi o fechamento delas que virou o status desta spec para 🟢.
 
 ### `[P-E]` A Design entra na tabela `x-required-facts`?
 
@@ -409,6 +415,11 @@ mecanicamente.
   **`artifact.recorded`** (o produto que sempre existe), e **não** com
   `task.rewritten` (cardinalidade 0..n por natureza). Quem fecha é o dono.
 
+**Fechada pelo dono em 11/08 — recomendação acatada:** `design` entra em
+`by-phase-when-done` cobrando **`artifact.recorded`**, e não `task.rewritten`.
+A linha no schema entra pela **mesma issue** que implementa o 14º fato (seção
+4.2) — mudança de contrato v1 é uma mudança só, nunca metade.
+
 ### `[P-F]` A emenda do §3.3 é edição in-place ou adendo datado?
 
 O `catalogo.md` está marcado 🟢 DECIDIDA e tem legenda de proveniência por id.
@@ -417,9 +428,11 @@ preserva intacto o que foi ratificado em 08/08. As duas formas já existem no re
 — a escolha vira **padrão para as próximas emendas**, e por isso não é detalhe de
 formatação.
 
-**Enquanto `[P-F]` não fechar, o `catalogo.md` não é tocado por este item.** O
-texto emendado está escrito na seção 3 acima, pronto para ser aplicado da forma
-que o dono escolher.
+**Fechada pelo dono em 11/08 — edição in-place.** A emenda da seção 3 foi
+aplicada direto no quadro do §3.3, com a proveniência `[P-A]` registrada na
+legenda do próprio `catalogo.md` (o que foi ratificado em 08/08 fica recuperável
+pelo git). **In-place com proveniência na legenda é, a partir daqui, o padrão
+para emendas a spec fechada.**
 
 ---
 
