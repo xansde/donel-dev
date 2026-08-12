@@ -1,38 +1,28 @@
 import { Button } from '@donel-dev/design-system';
-import {
-  Background,
-  BackgroundVariant,
-  Controls,
-  Handle,
-  MiniMap,
-  Panel,
-  Position,
-  ReactFlow,
-  ReactFlowProvider,
-  type Edge,
-  type Node,
-  type NodeMouseHandler,
-  type NodeTypes,
-} from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
-import { Compass, FileText, ListTree, ShieldCheck, SquareCheck, type LucideIcon } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { StoreSnapshot } from '../../../shared/esteira/store/storeFormat';
 import type { MapSelection } from './esteiraMapView';
-import { LAYOUT_NODE_HEIGHT, LAYOUT_NODE_WIDTH, layoutNodeGraph } from './nodeGraphLayout';
-import { buildNodeGraph, type GraphEdgeKind, type GraphNode, type GraphNodeKind, type GraphTone, type NodeGraphView } from './nodeGraphView';
+import {
+  createNodeGraphSimulation,
+  TONE_CLASS,
+  type ForceNode,
+  type NodeGraphSimulation,
+} from './nodeGraphForce';
+import { buildNodeGraph, type GraphEdgeKind, type GraphNode, type GraphTone } from './nodeGraphView';
 import styles from './NodeGraphOverlay.module.css';
 
-// Spec 010 / batch F25 (D1) — refeitura da CAMADA VISUAL do mapa de nós.
-// Veredito do dono sobre a versão anterior (overlay SVG à mão, batch N7):
-// "Feio. Não navega corretamente. Difícil de identificar o mapa." Esta
-// versão troca o desenho à mão por `@xyflow/react` (motor node-based real,
-// autorizado pelo dono) — pan/zoom, minimapa e controles de verdade — sem
-// tocar a PROJEÇÃO (`nodeGraphView.ts`, 24 testes) nem o CÁLCULO de layout
-// (`nodeGraphLayout.ts`, layout em camadas feito à mão, sem dagre/elkjs).
+// 012 Esteira 4.0 / wi-esteira4-mapa-grafos — o mapa de nós na forma fixada
+// pelo dono (D-M1..D-M8) com o motor ratificado (A — d3-force + SVG próprio,
+// `specs/012-esteira-4/mapa-grafos-escolha.md`). Substitui a versão React
+// Flow reprovada (F25): grafo estilo Obsidian forçado à horizontal — nós
+// circulares com rótulo embaixo, simulação AO VIVO com viés horizontal por
+// profundidade, cores por estado, satélites pequenos para artefatos, hover
+// com realce de vizinhança (D-M4).
 //
-// Nenhuma frase de estado nasce neste arquivo — o mesmo defeito já reapareceu
-// três vezes no repo por causa disso (ver cabeçalho de `nodeGraphView.ts`).
+// A fronteira não mudou: a projeção (`nodeGraphView.ts`) segue sendo a única
+// fonte de nós, arestas, tons e frases — nenhuma frase de estado nasce aqui
+// (o mesmo defeito já reapareceu três vezes no repo; ver cabeçalho de
+// `nodeGraphView.ts`). A física mora em `nodeGraphForce.ts` (pura, testada).
 //
 // É CONTROLE DE NAVEGAÇÃO, não só visualização: clicar num nó fecha o overlay
 // e leva o carrossel/esteira até ele — o MESMO alvo de seleção que o
@@ -46,6 +36,7 @@ export interface NodeGraphOverlayProps {
   readonly onNavigate: (target: MapSelection) => void;
 }
 
+/** Tom → token, para o QUE não é o círculo (o ponto de estado do tooltip). O círculo é pintado por classe CSS (`TONE_CLASS`), travada por teste contra o CSS module. */
 const TONE_VAR: Readonly<Record<GraphTone, string>> = {
   muted: 'var(--text-muted)',
   accent: 'var(--accent)',
@@ -55,152 +46,172 @@ const TONE_VAR: Readonly<Record<GraphTone, string>> = {
   lock: 'var(--state-error)',
 };
 
-/** Ícone por tipo — a resposta a "difícil de identificar o que é o quê" (veredito do dono): cor de borda sozinha nunca basta. */
-const KIND_ICON: Readonly<Record<GraphNodeKind, LucideIcon>> = {
-  discovery: Compass,
-  plan: ListTree,
-  work_item: SquareCheck,
-  artifact: FileText,
-  verification: ShieldCheck,
-};
+const EDGE_LATERAL_KINDS: ReadonlySet<GraphEdgeKind> = new Set(['flows_into', 'ships_with']);
 
-/** Legenda compacta — mesmo vocabulário de tipo que o resto do mapa usa, nunca uma segunda redação. */
-const KIND_LABEL: Readonly<Record<GraphNodeKind, string>> = {
-  discovery: 'Discovery',
-  plan: 'Plano',
-  work_item: 'Item',
-  artifact: 'Artefato',
-  verification: 'Verificação',
-};
-
-const KIND_ORDER: readonly GraphNodeKind[] = ['discovery', 'plan', 'work_item', 'artifact', 'verification'];
+const MIN_ZOOM = 0.15;
+const MAX_ZOOM = 4;
 
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
-interface GraphNodeData extends Record<string, unknown> {
-  readonly graphNode: GraphNode;
-  readonly hovered: boolean;
-  readonly onHoverChange: (key: string | null) => void;
+interface CanvasTransform {
+  readonly x: number;
+  readonly y: number;
+  readonly k: number;
 }
-
-/**
- * Nó custom ÚNICO que se comporta como "um por tipo" (ícone, cor de borda e
- * badge mudam com `data.graphNode.kind`) em vez de cinco componentes quase
- * idênticos — o que muda entre discovery/plano/item/artefato/verificação é
- * dado (`GraphNode`), não estrutura. Registrado em `nodeTypes` sob as 5
- * chaves de `GraphNodeKind` (ver mais abaixo) para o React Flow rotear por
- * tipo como o motor espera.
- */
-function GraphNodeCard({ data }: { data: GraphNodeData }): React.JSX.Element {
-  const { graphNode: node, hovered, onHoverChange } = data;
-  const Icon = KIND_ICON[node.kind];
-
-  return (
-    <div
-      className={[styles.node, node.deviation ? styles.nodeDeviation : ''].filter(Boolean).join(' ')}
-      style={{ ['--node-tone' as string]: TONE_VAR[node.tone] }}
-      role="button"
-      tabIndex={0}
-      aria-label={`${node.title} — ${node.summary}`}
-      data-testid="node-graph-node"
-      data-kind={node.kind}
-      data-key={node.key}
-      data-deviation={node.deviation ? 'true' : 'false'}
-      onMouseEnter={() => onHoverChange(node.key)}
-      onMouseLeave={() => onHoverChange(null)}
-      onFocus={() => onHoverChange(node.key)}
-      onBlur={() => onHoverChange(null)}
-    >
-      {/*
-        Sem estes dois handles, o React Flow simplesmente NÃO desenha nenhuma
-        aresta que aponte para/de este nó — o array `edges` existe, mas fica
-        órfão (achado do dono, revisão dos prints do primeiro commit deste
-        batch: 4 nós soltos, zero linha entre eles). O layout é em colunas da
-        esquerda pra direita (`nodeGraphLayout.ts`), então target fica à
-        esquerda e source à direita — a mesma direção que toda aresta
-        estrutural (`originated`/`artifact`/`verification`) segue, de uma
-        coluna pra próxima. `isConnectable={false}`: são só ancoragem visual,
-        o grafo não é editável (arestas vêm inteiras da projeção). */}
-      <Handle type="target" position={Position.Left} isConnectable={false} className={styles.handle} />
-      <Handle type="source" position={Position.Right} isConnectable={false} className={styles.handle} />
-      <div className={styles.nodeHeader}>
-        <Icon size={13} strokeWidth={1.75} aria-hidden />
-        <span className={styles.nodeTitle}>{truncate(node.title, 28)}</span>
-      </div>
-      <span className={styles.nodeBadge}>{truncate(node.badge, 34)}</span>
-      {node.deviation ? <span className={styles.nodeDeviationLabel}>⚠ {truncate(node.deviation.label, 28)}</span> : null}
-      {hovered ? <span className={styles.nodeHoverHint}>Enter/clique para ir até aqui</span> : null}
-    </div>
-  );
-}
-
-// As 5 chaves precisam existir em `nodeTypes` para o React Flow aceitar
-// `type: node.kind` em cada `Node` — todas apontam pro MESMO componente
-// (decisão acima), então uma única função basta; `nodeTypes` fixo fora do
-// componente evita o warning do React Flow de "nodeTypes recriado a cada render".
-const NODE_TYPES: NodeTypes = {
-  discovery: GraphNodeCard,
-  plan: GraphNodeCard,
-  work_item: GraphNodeCard,
-  artifact: GraphNodeCard,
-  verification: GraphNodeCard,
-} as unknown as NodeTypes;
-
-const EDGE_LATERAL_KINDS: ReadonlySet<GraphEdgeKind> = new Set(['flows_into', 'ships_with']);
 
 function NodeGraphCanvas({
   view,
   onNavigate,
 }: {
-  view: NodeGraphView;
+  view: ReturnType<typeof buildNodeGraph>;
   onNavigate: (target: MapSelection) => void;
 }): React.JSX.Element {
-  const layout = useMemo(() => layoutNodeGraph(view.nodes), [view.nodes]);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const draggingNodeRef = useRef<ForceNode | null>(null);
+  const panRef = useRef<{ active: boolean; startX: number; startY: number }>({ active: false, startX: 0, startY: 0 });
+  /** Depois do primeiro gesto do usuário (pan/zoom/drag), o enquadramento automático do fim da simulação não briga mais com ele. */
+  const interactedRef = useRef(false);
+
+  const [sim, setSim] = useState<NodeGraphSimulation | null>(null);
+  const [, setTick] = useState(0);
+  const [transform, setTransform] = useState<CanvasTransform>({ x: 0, y: 0, k: 1 });
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
 
-  const nodes: Node[] = useMemo(
-    () =>
-      layout.nodes.map(({ node, position }): Node => {
-        const data: GraphNodeData = { graphNode: node, hovered: hoveredKey === node.key, onHoverChange: setHoveredKey };
-        return {
-          id: node.key,
-          type: node.kind,
-          position,
-          data,
-          width: LAYOUT_NODE_WIDTH,
-          height: LAYOUT_NODE_HEIGHT,
-          draggable: false,
-          connectable: false,
-        };
-      }),
-    [layout.nodes, hoveredKey],
-  );
+  function fitTo(nodes: readonly ForceNode[]): void {
+    if (nodes.length === 0) return;
+    const xs = nodes.map((n) => n.x ?? 0);
+    const ys = nodes.map((n) => n.y ?? 0);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const rect = containerRef.current?.getBoundingClientRect();
+    const width = rect?.width ?? 800;
+    const height = rect?.height ?? 500;
+    const graphWidth = Math.max(1, maxX - minX);
+    const graphHeight = Math.max(1, maxY - minY);
+    const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min((width - 120) / graphWidth, (height - 120) / graphHeight)));
+    setTransform({ x: width / 2 - ((minX + maxX) / 2) * k, y: height / 2 - ((minY + maxY) / 2) * k, k });
+  }
 
-  const edges: Edge[] = useMemo(
-    () =>
-      view.edges.map((edge): Edge => ({
-        id: edge.key,
-        source: edge.from,
-        target: edge.to,
-        label: edge.label,
-        type: 'smoothstep',
-        className: EDGE_LATERAL_KINDS.has(edge.kind) ? styles.edgeLateral : styles.edge,
-        labelBgStyle: { fill: 'var(--bg-panel)' },
-        labelStyle: { fill: 'var(--text-muted)', fontSize: 10 },
-      })),
-    [view.edges],
-  );
+  // A simulação nasce DENTRO do effect (aviso 1 herdado da bancada): sob
+  // StrictMode o double-mount cria e descarta uma instância — criada aqui e
+  // parada no cleanup, a descartada nunca roda um tick órfão.
+  useEffect(() => {
+    const created = createNodeGraphSimulation(view.nodes, view.edges);
+    created.simulation.on('tick', () => setTick((t) => t + 1));
+    // Enquadra sozinho QUANDO a física assenta — a não ser que o usuário já
+    // tenha tomado o mapa para si (pan/zoom/drag): aí o enquadramento é dele.
+    created.simulation.on('end', () => {
+      if (!interactedRef.current) fitTo(created.nodes);
+    });
+    created.simulation.alpha(1).restart();
+    setSim(created);
+    return () => {
+      created.simulation.stop();
+    };
+    // `fitTo` lê refs e um setState — recriá-la por render não muda o effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
-  const hovered = hoveredKey === null ? null : (view.nodes.find((node) => node.key === hoveredKey) ?? null);
+  // Enquadramento inicial: centraliza a faixa de colunas antes de a física
+  // assentar, para o grafo nunca nascer fora da janela.
+  useEffect(() => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (rect) setTransform({ x: rect.width / 4, y: rect.height / 2, k: 1 });
+  }, []);
 
-  const handleNodeClick: NodeMouseHandler = (_event, rfNode) => {
-    const found = view.nodes.find((node) => node.key === rfNode.id);
-    if (found) onNavigate(found.navigateTo);
-  };
+  const neighbors = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const edge of view.edges) {
+      if (!map.has(edge.from)) map.set(edge.from, new Set());
+      if (!map.has(edge.to)) map.set(edge.to, new Set());
+      map.get(edge.from)!.add(edge.to);
+      map.get(edge.to)!.add(edge.from);
+    }
+    return map;
+  }, [view.edges]);
 
-  if (view.empty) {
+  function toWorld(clientX: number, clientY: number): { x: number; y: number } {
+    const rect = containerRef.current?.getBoundingClientRect();
+    const left = rect?.left ?? 0;
+    const top = rect?.top ?? 0;
+    return { x: (clientX - left - transform.x) / transform.k, y: (clientY - top - transform.y) / transform.k };
+  }
+
+  function handleWheel(event: React.WheelEvent<SVGSVGElement>): void {
+    interactedRef.current = true;
+    const factor = event.deltaY < 0 ? 1.1 : 0.9;
+    setTransform((prev) => ({ ...prev, k: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev.k * factor)) }));
+  }
+
+  function handleBackgroundPointerDown(event: React.PointerEvent<SVGSVGElement>): void {
+    if (event.target !== event.currentTarget) return;
+    interactedRef.current = true;
+    // `setPointerCapture` (aviso 2 herdado da bancada): sem ele, soltar o
+    // mouse FORA do canvas nunca entrega o pointerup — o pan ficava preso e,
+    // no drag de nó, a simulação ficava quente (`alphaTarget(0.1)`) para sempre.
+    event.currentTarget.setPointerCapture(event.pointerId);
+    panRef.current = { active: true, startX: event.clientX - transform.x, startY: event.clientY - transform.y };
+  }
+
+  function handleNodePointerDown(node: ForceNode, event: React.PointerEvent): void {
+    event.stopPropagation();
+    interactedRef.current = true;
+    svgRef.current?.setPointerCapture(event.pointerId);
+    draggingNodeRef.current = node;
+  }
+
+  function handlePointerMove(event: React.PointerEvent<SVGSVGElement>): void {
+    const dragging = draggingNodeRef.current;
+    if (dragging !== null && sim !== null) {
+      const world = toWorld(event.clientX, event.clientY);
+      dragging.fx = world.x;
+      dragging.fy = world.y;
+      sim.simulation.alphaTarget(0.1).restart();
+      return;
+    }
+    if (panRef.current.active) {
+      setTransform((prev) => ({ ...prev, x: event.clientX - panRef.current.startX, y: event.clientY - panRef.current.startY }));
+    }
+  }
+
+  function handlePointerUp(): void {
+    panRef.current.active = false;
+    const dragging = draggingNodeRef.current;
+    if (dragging !== null) {
+      dragging.fx = null;
+      dragging.fy = null;
+      draggingNodeRef.current = null;
+      sim?.simulation.alphaTarget(0);
+    }
+  }
+
+  function handleNodeHover(node: GraphNode, event: React.MouseEvent): void {
+    setHoveredKey(node.key);
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (rect) setTooltipPos({ x: event.clientX - rect.left + 14, y: event.clientY - rect.top + 14 });
+  }
+
+  function handleNodeFocus(forceNode: ForceNode): void {
+    setHoveredKey(forceNode.node.key);
+    // Foco por teclado não tem mouse: o tooltip ancora na posição projetada do nó.
+    setTooltipPos({
+      x: (forceNode.x ?? 0) * transform.k + transform.x + 14,
+      y: (forceNode.y ?? 0) * transform.k + transform.y + 14,
+    });
+  }
+
+  function handleNodeLeave(): void {
+    setHoveredKey(null);
+    setTooltipPos(null);
+  }
+
+  if (view.empty !== null) {
     return (
       <p className={styles.empty} data-testid="node-graph-empty">
         {view.empty}
@@ -208,61 +219,109 @@ function NodeGraphCanvas({
     );
   }
 
+  // D-M4 — hover realça o nó + vizinhos e apaga o resto (o gesto do Obsidian).
+  const keepSet = hoveredKey === null ? null : new Set([hoveredKey, ...(neighbors.get(hoveredKey) ?? [])]);
+  const hovered = hoveredKey === null ? null : (view.nodes.find((node) => node.key === hoveredKey) ?? null);
+
   return (
-    <>
-      <div className={styles.canvas} data-testid="node-graph-canvas">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={NODE_TYPES}
-          onNodeClick={handleNodeClick}
-          fitView
-          fitViewOptions={{ padding: 0.2 }}
-          minZoom={0.2}
-          maxZoom={2}
-          proOptions={{ hideAttribution: true }}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable={false}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} className={styles.background} />
-          <Controls showInteractive={false} className={styles.controls} />
-          <MiniMap
-            className={styles.minimap}
-            pannable
-            zoomable
-            nodeColor={(node) => {
-              const data = node.data as GraphNodeData;
-              return TONE_VAR[data.graphNode.tone];
-            }}
-            maskColor="rgba(14, 17, 22, 0.75)"
-          />
-          {/* Legenda compacta — a resposta direta a "difícil de identificar o mapa" (veredito do dono). */}
-          <Panel position="top-left" className={styles.legend} data-testid="node-graph-legend">
-            {KIND_ORDER.map((kind) => {
-              const Icon = KIND_ICON[kind];
+    <div className={styles.canvas} data-testid="node-graph-canvas" ref={containerRef}>
+      <div className={styles.toolbar}>
+        <Button variant="ghost" onClick={() => sim !== null && fitTo(sim.nodes)} data-testid="node-graph-fit">
+          Enquadrar
+        </Button>
+      </div>
+      <svg
+        ref={svgRef}
+        className={styles.svg}
+        width="100%"
+        height="100%"
+        onWheel={handleWheel}
+        onPointerDown={handleBackgroundPointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+      >
+        <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.k})`}>
+          <g>
+            {(sim?.links ?? []).map((link) => {
+              const source = typeof link.source === 'object' ? link.source : null;
+              const target = typeof link.target === 'object' ? link.target : null;
+              if (source === null || target === null) return null;
+              const on = keepSet === null || (keepSet.has(link.edge.from) && keepSet.has(link.edge.to));
               return (
-                <span key={kind} className={styles.legendItem}>
-                  <Icon size={12} strokeWidth={1.75} aria-hidden />
-                  {KIND_LABEL[kind]}
-                </span>
+                <line
+                  key={link.edge.key}
+                  x1={source.x ?? 0}
+                  y1={source.y ?? 0}
+                  x2={target.x ?? 0}
+                  y2={target.y ?? 0}
+                  className={EDGE_LATERAL_KINDS.has(link.edge.kind) ? styles.linkLateral : styles.link}
+                  style={{
+                    opacity: on ? undefined : 0.12,
+                    stroke: on && hovered !== null ? TONE_VAR[hovered.tone] : undefined,
+                  }}
+                />
               );
             })}
-          </Panel>
-        </ReactFlow>
-      </div>
-
-      <footer className={styles.infoBar} data-testid="node-graph-hover-summary">
-        {hovered ? (
-          <p className={styles.infoLine}>
-            <strong>{hovered.title}</strong>
-            <span> — {hovered.summary}</span>
-          </p>
-        ) : (
-          <p className={styles.infoHint}>Passe o mouse (ou o foco) sobre um nó para ver o resumo. Clique para ir até ele.</p>
-        )}
-      </footer>
-    </>
+          </g>
+          <g>
+            {(sim?.nodes ?? []).map((forceNode) => {
+              const node = forceNode.node;
+              const dimmed = keepSet !== null && !keepSet.has(node.key);
+              const classes = [styles.node, styles[TONE_CLASS[node.tone]], node.deviation !== null ? styles.nodeDeviation : '']
+                .filter(Boolean)
+                .join(' ');
+              return (
+                <g
+                  key={node.key}
+                  className={classes}
+                  style={{ opacity: dimmed ? 0.18 : 1 }}
+                  transform={`translate(${forceNode.x ?? 0}, ${forceNode.y ?? 0})`}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${node.title} — ${node.summary}`}
+                  data-testid="node-graph-node"
+                  data-kind={node.kind}
+                  data-key={node.key}
+                  data-deviation={node.deviation !== null ? 'true' : 'false'}
+                  onPointerDown={(event) => handleNodePointerDown(forceNode, event)}
+                  onMouseEnter={(event) => handleNodeHover(node, event)}
+                  onMouseMove={(event) => handleNodeHover(node, event)}
+                  onMouseLeave={handleNodeLeave}
+                  onFocus={() => handleNodeFocus(forceNode)}
+                  onBlur={handleNodeLeave}
+                  onClick={() => onNavigate(node.navigateTo)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onNavigate(node.navigateTo);
+                    }
+                  }}
+                >
+                  <circle r={forceNode.radius} />
+                  {/* D-M1/D-M3 — rótulo EMBAIXO do círculo, sempre visível. */}
+                  <text y={forceNode.radius + 13} textAnchor="middle">
+                    {truncate(node.title, 26)}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
+        </g>
+      </svg>
+      {/* D-M4 — hover mostra a descrição simples do que está sob o mouse. As
+          frases (badge/summary) vêm inteiras da projeção, nunca daqui. */}
+      {hovered !== null && tooltipPos !== null ? (
+        <div className={styles.tooltip} style={{ left: tooltipPos.x, top: tooltipPos.y }} data-testid="node-graph-tooltip">
+          <strong>{hovered.title}</strong>
+          <span className={styles.tooltipState} style={{ color: TONE_VAR[hovered.tone] }}>
+            ● {hovered.badge}
+          </span>
+          <p>{hovered.summary}</p>
+          {hovered.deviation !== null ? <p className={styles.tooltipDeviation}>⚠ {hovered.deviation.title}</p> : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -278,9 +337,7 @@ export function NodeGraphOverlay({ snapshot, onClose, onNavigate }: NodeGraphOve
       onKeyDown={(event) => {
         // Fecha em Esc, como qualquer overlay modal do app — próprio, porque a
         // sobreposição cobre a janela inteira (inclusive a titlebar) e não
-        // passa por nenhum handler já existente de outra tela. React Flow
-        // captura teclado para pan/zoom, então o listener fica no wrapper
-        // (fase de bubble) em vez de `window`, para nunca perder o Esc.
+        // passa por nenhum handler já existente de outra tela.
         if (event.key === 'Escape') onClose();
       }}
     >
@@ -295,14 +352,7 @@ export function NodeGraphOverlay({ snapshot, onClose, onNavigate }: NodeGraphOve
           Fechar (Esc)
         </Button>
       </header>
-
-      {/* `ReactFlowProvider` isolado deste componente (não do app inteiro): o
-          mapa de nós é a única tela que usa React Flow, e o overlay
-          monta/desmonta inteiro a cada abertura — não há estado do motor
-          para preservar entre uma sessão do overlay e outra. */}
-      <ReactFlowProvider>
-        <NodeGraphCanvas view={view} onNavigate={onNavigate} />
-      </ReactFlowProvider>
+      <NodeGraphCanvas view={view} onNavigate={onNavigate} />
     </div>
   );
 }

@@ -1,8 +1,10 @@
-/* Spec 010 / batch F25 (D1) — mapa de nós em TELA CHEIA, motor `@xyflow/react`.
-   Mesmos tokens do resto do app (`design-system/src/tokens.css`); nenhuma cor
-   solta. React Flow vem com tema CLARO por padrão — este arquivo sobrescreve
-   as variáveis dele (prefixo `--xy-*`) para o único tema do app (dark), além
-   de estilizar os nós/arestas/legenda próprios. */
+/* 012 Esteira 4.0 / wi-esteira4-mapa-grafos — mapa de nós em TELA CHEIA,
+   motor A (d3-force + SVG próprio). Mesmos tokens do resto do app
+   (`design-system/src/tokens.css`); nenhuma cor solta. O SVG lê CSS var
+   nativamente — nada de getComputedStyle (a gambiarra era só para WebGL,
+   na bancada). As classes de tom (.toneX) são o contrato com o componente
+   (`TONE_CLASS` em `nodeGraphForce.ts`) e estão travadas por teste
+   (`tests/nodeGraphStateClasses.test.ts`). */
 
 .overlay {
   /* TELA CHEIA de verdade: cobre a janela inteira (inclusive titlebar e
@@ -19,23 +21,6 @@
   color: var(--text-primary);
   font-family: var(--font-ui);
   font-size: var(--text-body-size);
-
-  /* Tema do React Flow — sobrescreve o claro-padrão pelos tokens do app.
-     Variáveis documentadas em @xyflow/react/dist/style.css; só as que este
-     overlay de fato usa (fundo do canvas, linha de aresta, controles). */
-  --xy-background-color: var(--bg-app);
-  --xy-background-pattern-dots-color: var(--border);
-  --xy-edge-stroke: var(--border);
-  --xy-edge-stroke-width: 1.5;
-  --xy-edge-label-background-color: var(--bg-panel);
-  --xy-controls-button-background-color: var(--bg-panel);
-  --xy-controls-button-background-color-hover: var(--bg-raised);
-  --xy-controls-button-color: var(--text-primary);
-  --xy-controls-button-color-hover: var(--text-primary);
-  --xy-controls-button-border-color: var(--border);
-  --xy-minimap-background-color: var(--bg-panel);
-  --xy-minimap-mask-background-color: rgba(14, 17, 22, 0.75);
-  --xy-attribution-background-color: transparent;
 }
 
 .header {
@@ -68,31 +53,119 @@
 .canvas {
   flex: 1;
   min-height: 0;
-}
-
-/* React Flow monta um `.react-flow` interno que precisa preencher a área
-   reservada — só existe porque `.canvas` acima define a caixa; sem largura
-   e altura explícitas o motor renderiza um canvas de 0px. */
-.canvas > :global(.react-flow) {
-  width: 100%;
-  height: 100%;
-}
-
-.background {
-  opacity: 0.5;
-}
-
-.controls :global(button) {
-  border-radius: var(--radius-sm);
-}
-
-.minimap {
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
+  position: relative;
   overflow: hidden;
 }
 
-.legend {
+.toolbar {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  z-index: 1;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.svg:active {
+  cursor: grabbing;
+}
+
+/* === Arestas === */
+
+.link {
+  stroke: var(--border);
+  stroke-width: 1.5;
+  transition: opacity var(--duration-micro) var(--ease-standard);
+}
+
+.linkLateral {
+  /* As duas relações LATERAIS entre itens (`deságua em`/`entra junto`, não a
+     hierarquia discovery → plano → item) ganham traço tracejado —
+     distinguível sem depender só da cor. */
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  transition: opacity var(--duration-micro) var(--ease-standard);
+}
+
+/* === Nós (círculo + rótulo embaixo, D-M1/D-M3) === */
+
+.node {
+  cursor: pointer;
+}
+
+.node circle {
+  transition: opacity var(--duration-micro) var(--ease-standard);
+}
+
+.node text {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  fill: var(--text-muted);
+  pointer-events: none;
+  user-select: none;
+}
+
+.node:focus-visible {
+  outline: none;
+}
+
+.node:focus-visible circle {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+/* Desvio sinalizado pela projeção (ex.: item sem plano, verificação que
+   falhou): o contorno vira tracejado — distinguível além da cor. */
+.nodeDeviation circle {
+  stroke: var(--state-waiting);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+}
+
+/* === Cores por estado (D-M2) — uma classe por tom da projeção. ===
+   ok=concluído · accent=rodando · warn=esperando o dono · error/lock=travado
+   (falha e trava, os dois vermelhos que o app já distingue) · muted=ainda
+   não começou (cinza VAZADO — fundo com contorno, não cheio). */
+
+.toneOk circle {
+  fill: var(--zone-ok);
+}
+
+.toneAccent circle {
+  fill: var(--accent);
+}
+
+.toneWarn circle {
+  fill: var(--state-waiting);
+}
+
+.toneError circle {
+  fill: var(--state-permission);
+}
+
+.toneLock circle {
+  fill: var(--state-error);
+}
+
+.toneMuted circle {
+  fill: var(--bg-raised);
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+}
+
+/* === Tooltip (D-M4) === */
+
+.tooltip {
+  position: absolute;
+  z-index: 2;
+  max-width: 320px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -100,131 +173,24 @@
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  font-size: var(--text-caption-size);
-  color: var(--text-muted);
   pointer-events: none;
-}
-
-.legendItem {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* === Nó custom (GraphNodeCard) — um por tipo, distinguido por ícone (data
-   attribute `data-kind`) e cor de borda (`--node-tone`, definida inline por
-   nó a partir do tom da projeção). === */
-
-.node {
-  box-sizing: border-box;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 3px;
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
-  background: var(--bg-panel);
-  border: 1.5px solid var(--node-tone, var(--border));
-  cursor: pointer;
-  transition:
-    background var(--duration-micro) var(--ease-standard),
-    filter var(--duration-micro) var(--ease-standard);
-}
-
-.node:hover,
-.node:focus-visible {
-  background: var(--bg-raised);
-}
-
-.node:focus-visible {
-  outline: none;
-  filter: drop-shadow(var(--focus-ring));
-}
-
-.nodeDeviation {
-  border-style: dashed;
-  border-width: 2px;
-}
-
-.nodeHeader {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--node-tone, var(--text-primary));
-}
-
-.nodeTitle {
-  font-size: 12px;
-  font-weight: var(--weight-semibold);
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.nodeBadge {
   font-size: var(--text-caption-size);
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.nodeDeviationLabel {
-  font-size: var(--text-caption-size);
-  font-weight: var(--weight-semibold);
-  color: var(--node-tone, var(--state-waiting));
-}
-
-.nodeHoverHint {
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-/* Ancoragem das arestas (ver comentário em `GraphNodeCard`) — discreta de
-   propósito: um pontinho na cor do próprio nó, não um controle de edição
-   (o grafo não é editável, `isConnectable={false}` já impede o arraste). */
-.handle {
-  width: 6px;
-  height: 6px;
-  background: var(--node-tone, var(--border));
-  border: 1px solid var(--bg-panel);
-  opacity: 0.7;
-}
-
-/* === Arestas === */
-
-.edge :global(.react-flow__edge-path) {
-  stroke: var(--border);
-  stroke-width: 1.5;
-}
-
-.edgeLateral :global(.react-flow__edge-path) {
-  /* As duas relações LATERAIS entre itens (não a hierarquia discovery → plano
-     → item) ganham um traço tracejado — distinguível sem depender só da cor. */
-  stroke: var(--accent);
-  stroke-dasharray: 4 3;
-}
-
-.infoBar {
-  flex-shrink: 0;
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  padding: var(--space-1) var(--space-2);
-  border-top: 1px solid var(--border);
-  background: var(--bg-panel);
-}
-
-.infoLine {
-  margin: 0;
+.tooltip strong {
   font-size: var(--text-body-size);
+  font-weight: var(--weight-semibold);
 }
 
-.infoHint {
+.tooltip p {
   margin: 0;
   color: var(--text-muted);
-  font-size: var(--text-caption-size);
+}
+
+.tooltipState {
+  font-weight: var(--weight-semibold);
+}
+
+.tooltipDeviation {
+  color: var(--state-waiting);
 }
