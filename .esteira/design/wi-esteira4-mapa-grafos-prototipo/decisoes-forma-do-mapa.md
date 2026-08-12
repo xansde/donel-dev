@@ -49,13 +49,15 @@ vizinhos, apagando o resto (o gesto do Obsidian). Clique navega até o item
 Exploração de Discovery que morreu é desenhada com marca própria (o "x" do
 caderno) e **permanece visível**. Caminho descartado é informação, não lixo.
 
-## D-M7 — Plano+Design é UMA fronteira no desenho (do caderno)
+## D-M7 — [SUPERADA] a faixa única "Plano+Design" do caderno é histórica
 
-O caderno desenha "Plano + Design" como uma faixa única onde o arbusto
-converge e os itens nascem (os círculos grandes). O mapa apresenta essa
-fronteira como um momento só — sem contradizer o catálogo, onde Design segue
-sendo fase própria roteada por item: é decisão de APRESENTAÇÃO, não de
-contrato.
+**Esclarecido pelo dono em 12/08, na sequência do registro:** o caderno
+desenhava "Plano + Design" como faixa única porque era um planejamento
+ANTIGO, anterior à evolução do catálogo. O que se preserva do caderno é a
+ESTÉTICA (arbusto → convergência → raias, D-M5), não essa fusão: no mapa
+real, Plano e Design são fases distintas, como o catálogo aprovado define
+(Design roteada por item via `needsDesign`). Nenhuma decisão de apresentação
+funde as duas.
 
 ## D-M8 — Loops desenhados como geometria (do caderno)
 
