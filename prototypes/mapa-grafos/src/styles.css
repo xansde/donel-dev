@@ -1,0 +1,274 @@
+@import '../../../design-system/src/tokens.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-header {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--hairline);
+  background: var(--bg-panel);
+}
+
+.app-header h1 {
+  margin: 0 0 var(--space-half) 0;
+  font-size: var(--text-heading-size);
+  font-weight: var(--weight-semibold);
+}
+
+.app-header .provenance {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3) 0;
+  border-bottom: var(--hairline);
+  background: var(--bg-panel);
+}
+
+.tab-button {
+  appearance: none;
+  border: var(--hairline);
+  border-bottom: none;
+  background: var(--bg-app);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  cursor: pointer;
+  transition: color var(--duration-micro) var(--ease-standard);
+}
+
+.tab-button:hover {
+  color: var(--text-primary);
+}
+
+.tab-button.active {
+  background: var(--bg-app);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: var(--weight-semibold);
+}
+
+.tab-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.main-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  min-height: 0;
+}
+
+.canvas-panel {
+  position: relative;
+  border: var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.canvas-panel .canvas-hint {
+  position: absolute;
+  bottom: var(--space-1);
+  left: var(--space-1);
+  z-index: 5;
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: var(--space-half) var(--space-1);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.canvas-root {
+  width: 100%;
+  height: 100%;
+}
+
+.side-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.panel {
+  border: var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  padding: var(--panel-padding);
+}
+
+.panel h2 {
+  margin: 0 0 var(--space-1) 0;
+  font-size: var(--text-body-size);
+  font-weight: var(--weight-semibold);
+}
+
+.criteria-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.criteria-list li {
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.criteria-list strong {
+  color: var(--text-primary);
+}
+
+.criteria-textarea {
+  width: 100%;
+  margin-top: var(--space-2);
+  min-height: 96px;
+  resize: vertical;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+}
+
+.criteria-textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.node-details-empty {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.node-details dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-half) var(--space-1);
+}
+
+.node-details dt {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.node-details dd {
+  margin: 0;
+  font-size: var(--text-body-size);
+  word-break: break-word;
+}
+
+.kind-badge {
+  display: inline-block;
+  padding: 2px var(--space-1);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-caption-size);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.kind-badge--gate {
+  background: color-mix(in srgb, var(--state-waiting) 20%, transparent);
+  color: var(--state-waiting);
+  border: 1px solid var(--state-waiting);
+}
+
+.kind-badge--fase {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.kind-badge--artefato {
+  background: color-mix(in srgb, var(--text-muted) 20%, transparent);
+  color: var(--text-muted);
+  border: 1px solid var(--text-muted);
+}
+
+.kind-badge--nota {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px dashed var(--text-muted);
+}
+
+/* Nós — usados pelas 3 abordagens (React Flow, Cytoscape via style, Reaflow) */
+.graph-node {
+  border-radius: var(--radius-sm);
+  padding: var(--space-half) var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-caption-size);
+  color: var(--text-primary);
+  background: var(--bg-raised);
+  border: 1.5px solid var(--border);
+  max-width: 180px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.graph-node--gate {
+  border: 3px double var(--state-waiting);
+}
+
+.graph-node--fase {
+  border: 1.5px solid var(--accent);
+}
+
+.graph-node--artefato {
+  border: 1.5px solid var(--text-muted);
+  border-radius: var(--radius-md);
+}
+
+.graph-node--nota {
+  border: 1.5px dashed var(--text-muted);
+}
+
+.graph-node--selected {
+  box-shadow: var(--focus-ring);
+}
+
+.tab-placeholder {
+  padding: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
