@@ -52,12 +52,17 @@ Duas notas de fronteira que Implementar não deve redescobrir:
    atual projeta o store (`nodeGraphView.ts`); o mapa novo da 4.0 deriva do
    grafo canônico (`formato-grafo.md`: "a tela deriva a linha Design dele").
    Comparar as libs já no dado certo evita repetir a comparação depois.
-2. **Aba A parte do que existe.** `@xyflow/react@12` já é dependência do repo
-   e o dono já autorizou motor node-based (cabeçalho de
-   `NodeGraphOverlay.tsx:26-32`). A aba A não é "manter como está": é React
-   Flow com auto-layout de verdade e custom nodes — o F25 reprovou a vista,
-   não necessariamente a lib. Abas B/C vêm da direção que o dono deu
-   (github.com/xyflow/awesome-node-based-uis); a seleção dos 2 candidatos é
+2. **A forma foi fixada pelo dono em 12/08, na revisão deste design** (v3 do
+   mockup): grafo estilo Obsidian forçado à horizontal — nós circulares com
+   rótulo embaixo, força dirigida com viés horizontal por profundidade,
+   código de cores por estado (concluído/rodando/esperando/travado/futuro),
+   nós pequenos para os arquivos de cada etapa, um nó por task do plano,
+   hover com descrição simples e realce de vizinhança. Com isso a pergunta
+   da bancada virou "qual motor reproduz esta forma com menos briga?" — e
+   "reproduz a forma fixada" é o critério eliminatório da régua. Candidatos
+   na direção do awesome-node-based-uis: `d3-force` + SVG próprio (o caminho
+   do Obsidian), `sigma.js`/graphology (WebGL), React Flow com posições de
+   `d3-force` (`@xyflow/react@12` já no repo). A seleção final dos 2–3 é
    decisão de Implementar, registrada na seção 0 do documento de escolha.
 
 ## Por onde o dado passa
