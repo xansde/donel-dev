@@ -1,14 +1,21 @@
-import type { NeutralNode } from '../adapter';
+import type { BenchNode } from '../benchGraph';
 
 interface NodeDetailsProps {
-  node: NeutralNode | null;
+  node: BenchNode | null;
 }
 
-const KIND_LABEL: Record<NeutralNode['kind'], string> = {
-  gate: 'Gate',
-  fase: 'Fase',
-  artefato: 'Artefato',
-  nota: 'Nota',
+const SIZE_LABEL: Record<BenchNode['size'], string> = {
+  lg: 'Fase/Gate',
+  md: 'Task',
+  sm: 'Arquivo/Artefato',
+};
+
+const STATE_LABEL: Record<BenchNode['state'], string> = {
+  ok: 'Concluído',
+  run: 'Rodando',
+  wait: 'Esperando você',
+  block: 'Travado',
+  future: 'Ainda não começou',
 };
 
 export function NodeDetails({ node }: NodeDetailsProps) {
@@ -24,14 +31,16 @@ export function NodeDetails({ node }: NodeDetailsProps) {
 
           <dt>Tipo</dt>
           <dd>
-            <span className={`kind-badge kind-badge--${node.kind}`}>{KIND_LABEL[node.kind]}</span>
+            <span className={`kind-badge kind-badge--${node.size}`}>{SIZE_LABEL[node.size]}</span>
           </dd>
 
-          <dt>Handoff</dt>
-          <dd>{node.handoff ?? '—'}</dd>
+          <dt>Estado</dt>
+          <dd>
+            <span className={`state-badge state-badge--${node.state}`}>{STATE_LABEL[node.state]}</span>
+          </dd>
 
-          <dt>Nota</dt>
-          <dd>{node.note ?? '—'}</dd>
+          <dt>Descrição</dt>
+          <dd>{node.desc ?? '—'}</dd>
         </dl>
       )}
     </div>

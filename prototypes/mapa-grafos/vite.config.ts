@@ -16,14 +16,14 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            if (id.includes('@xyflow/react') || id.includes('elkjs')) {
+            if (id.includes('@xyflow/react')) {
               return 'vendor-reactflow';
             }
-            if (id.includes('cytoscape')) {
-              return 'vendor-cytoscape';
+            if (id.includes('d3-force') || id.includes('d3-quadtree') || id.includes('d3-dispatch') || id.includes('d3-timer')) {
+              return 'vendor-d3force';
             }
-            if (id.includes('reaflow')) {
-              return 'vendor-reaflow';
+            if (id.includes('sigma') || id.includes('graphology')) {
+              return 'vendor-sigma';
             }
             if (id.includes('react-dom') || id.includes(`${'react'}/`) || id === 'react') {
               return 'vendor-react';

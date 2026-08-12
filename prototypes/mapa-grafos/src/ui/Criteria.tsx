@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 
 const CRITERIA: Array<{ title: string; body: string }> = [
-  { title: 'Identifica', body: 'tipo de nó legível de relance' },
-  { title: 'Navega', body: 'pan/zoom/fit fluidos, clique leva ao nó' },
-  { title: 'Bonito', body: 'veredito estético do dono' },
-  { title: 'Auto-layout', body: '12 nós sem sobreposição, sem coordenada à mão' },
-  { title: 'Integração', body: 'custo de trazer pro Modo Dev (React 18 + Electron, tema do design-system)' },
-  { title: 'Peso', body: 'bundle e dependências novas' },
+  {
+    title: '1. Reproduz a forma fixada',
+    body: 'eliminatório: círculos, rótulo embaixo, horizontal, cores de estado, satélites, hover com realce (lado a lado com o mockup)',
+  },
+  { title: '2. Identifica', body: 'estado e tipo legíveis de relance (F25)' },
+  { title: '3. Navega', body: 'pan/zoom/fit fluidos, clique seleciona, hover não trava (F25)' },
+  { title: '4. Bonito', body: 'veredito do dono, contra o mockup' },
+  { title: '5. Integração', body: 'React 18 + Electron + tokens do design-system' },
+  { title: '6. Peso', body: 'bundle e deps novas; fps com grafo grande' },
 ];
 
 export type TabId = 'A' | 'B' | 'C';

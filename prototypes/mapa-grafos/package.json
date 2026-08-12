@@ -13,10 +13,10 @@
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "@xyflow/react": "^12.11.2",
-    "elkjs": "^0.9.3",
-    "cytoscape": "^3.30.4",
-    "cytoscape-dagre": "^2.5.0",
-    "reaflow": "^5.2.7"
+    "d3-force": "^3.0.0",
+    "sigma": "^3.0.3",
+    "graphology": "^0.26.0",
+    "graphology-types": "^0.24.8"
   },
   "devDependencies": {
     "vite": "^5.4.11",
@@ -25,6 +25,6 @@
     "vitest": "^2.1.8",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
-    "@types/cytoscape": "^3.21.9"
+    "@types/d3-force": "^3.0.10"
   }
 }
