@@ -5,15 +5,20 @@ import { abrirDonel, fecharDonel, fecharPortaDeEntrada, type RoteiroContexto } f
 // mesma esteira, outra projeção (discovery → planos → itens, sem modelo
 // novo), aberta por um botão de navegação rápida na titlebar.
 //
-// F25 — a CAMADA VISUAL foi refeita com `@xyflow/react` em cima do veredito
-// do dono sobre a versão anterior (overlay SVG à mão): "Feio. Não navega
-// corretamente. Difícil de identificar o mapa." Este roteiro passa a provar
-// os três defeitos apontados, não só abrir/hover/clicar:
+// 012 Esteira 4.0 / wi-esteira4-mapa-grafos — a CAMADA VISUAL foi refeita de
+// novo, agora com o motor ratificado pelo dono (A — d3-force + SVG próprio,
+// `specs/012-esteira-4/mapa-grafos-escolha.md`), na forma fixada em
+// D-M1..D-M8: grafo estilo Obsidian forçado à horizontal — círculos com
+// rótulo embaixo, tamanho por tipo, cor por estado, hover com tooltip e
+// realce de vizinhança. A versão React Flow (F25) foi reprovada e saiu.
+// O que este roteiro prova:
 //
 //   abrir      →  o botão só existe no Modo Dev, e cobre a janela inteira
-//   legibilidade → a legenda de tipos aparece fixa no canto do canvas
-//                  ("difícil de identificar o mapa")
-//   hover      →  um nó mostra o resumo de UMA frase, sem clicar
+//   desenho    →  nós circulares COM arestas entre eles (a regressão do
+//                 primeiro commit do F25 eram nós soltos), assentados pela
+//                 simulação com o tempo correndo da esquerda pra direita
+//   hover      →  um nó mostra o tooltip com título, estado e resumo, sem
+//                 clicar ("difícil de identificar o mapa")
 //   clique     →  fecha o overlay e leva o card ATÉ o nó clicado, COM a aba
 //                 da sessão viva em foco quando ela existe — é navegação, não
 //                 só desenho ("não navega corretamente")
@@ -72,49 +77,49 @@ test('abrir o mapa de nós, passar o mouse e navegar por um clique', async () =>
 
     const overlay = win.getByTestId('node-graph-overlay');
     await overlay.waitFor({ timeout: 15_000 });
-    // React Flow calcula posição/zoom (`fitView`) de forma assíncrona — dar um
-    // instante para o canvas assentar antes da primeira foto (mesma cautela do
-    // achado 5c: fotografar durante o ajuste desenha o grafo no lugar errado).
+    // A simulação de força assenta em alguns segundos (e o enquadramento
+    // automático acontece quando ela TERMINA — `on('end')` → fit). Fotografar
+    // durante o ajuste desenha o grafo no lugar errado (mesma cautela do
+    // achado 5c da versão anterior), então a primeira foto espera a física.
     const canvas = win.getByTestId('node-graph-canvas');
     await canvas.waitFor({ timeout: 15_000 });
-    await win.waitForTimeout(500);
+    await win.waitForTimeout(7_000);
 
-    // Achado real (revisão do dono nos prints do primeiro commit deste
-    // batch): 4 nós apareciam SOLTOS — o React Flow não desenha aresta
-    // nenhuma para um nó custom sem `<Handle>`, mesmo com o array `edges`
-    // preenchido. Esta asserção teria pego o defeito sem depender de olhar
-    // print nenhum — mas o olhar continua sendo a etapa que prova o visual
-    // (linha, direção, label), não só a contagem.
+    // Herança do achado real do F25 (nós SOLTOS, zero aresta desenhada,
+    // pego pelo dono nos prints): a mesma asserção, agora sobre o SVG
+    // próprio — toda aresta é um `<line>` dentro do canvas. O olhar continua
+    // sendo a etapa que prova o visual (linha, direção, cor), não a contagem.
     const nosNoDom = await win.locator('[data-testid="node-graph-node"]').count();
-    const arestasNoDom = await win.locator('.react-flow__edge').count();
+    const arestasNoDom = await canvas.locator('svg line').count();
     if (nosNoDom > 1 && arestasNoDom === 0) {
-      throw new Error(`${nosNoDom} nós no grafo e nenhuma aresta desenhada — os nós custom perderam o <Handle>?`);
+      throw new Error(`${nosNoDom} nós no grafo e nenhuma aresta desenhada — a simulação entregou links vazios?`);
     }
 
     await passo(
       'O grafo cobre a janela inteira',
       null,
-      'Discovery → plano → itens, em colunas por profundidade (BFS a partir do discovery) — o mesmo histórico do card ao lado, só que de ponta a ponta, agora com pan/zoom e minimapa de verdade (React Flow).',
+      'Círculos com o rótulo embaixo (D-M1/D-M3): discovery e plano grandes, itens médios, artefatos e verificações pequenos como satélites — e o tempo correndo da esquerda para a direita, assentado por simulação de força, não por coordenada à mão. A cor de cada círculo é o estado (D-M2): verde concluído, azul rodando, âmbar esperando o dono, vermelho travado, cinza vazado ainda não começou.',
     );
 
-    // ── Legenda: responde a "difícil de identificar o mapa" ─────────────
-    const legenda = win.getByTestId('node-graph-legend');
+    // ── Enquadrar: o reencontro com o grafo depois de pan/zoom ──────────
+    const enquadrar = win.getByTestId('node-graph-fit');
     await passo(
-      'A legenda fica fixa no canto',
-      legenda,
-      'Cada tipo de nó (discovery, plano, item, artefato, verificação) tem um ícone e uma cor de borda próprios — a legenda nomeia os cinco sem precisar clicar em nada.',
+      'O botão Enquadrar fica no canto',
+      enquadrar,
+      'Depois de qualquer pan/zoom/arrasto, um clique traz o grafo inteiro de volta para a janela.',
     );
 
-    // ── Hover: o resumo de uma frase, sem clicar ────────────────────────
+    // ── Hover: tooltip com título, estado e resumo, sem clicar (D-M4) ───
     const noDiscovery = win.locator('[data-testid="node-graph-node"][data-kind="discovery"]');
-    await passo('Passe o mouse sobre um nó', noDiscovery, 'Nenhum clique ainda — só olhar já mostra do que se trata.');
+    await passo('Passe o mouse sobre um nó', noDiscovery, 'Nenhum clique ainda — só olhar já mostra do que se trata. O nó e os vizinhos ficam acesos; o resto do grafo apaga (o gesto do Obsidian).');
     await noDiscovery.hover();
 
-    const resumo = win.getByTestId('node-graph-hover-summary');
+    const tooltip = win.getByTestId('node-graph-tooltip');
+    await tooltip.waitFor({ timeout: 10_000 });
     await passo(
-      'O resumo de uma frase aparece embaixo',
-      resumo,
-      'O mesmo texto que o resto do app usa para este nó — nasce uma vez, na camada pura, nunca de novo aqui.',
+      'O tooltip aparece ao lado do mouse',
+      tooltip,
+      'Título, estado (com a cor do nó) e o resumo de uma frase — o mesmo texto que o resto do app usa para este nó, nascido uma vez na projeção, nunca de novo aqui.',
     );
 
     // ── Clique: fecha o overlay e navega até o nó ───────────────────────

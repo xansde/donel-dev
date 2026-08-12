@@ -8,6 +8,7 @@ import {
   type ForceNode,
   type NodeGraphSimulation,
 } from './nodeGraphForce';
+import { beginNodeGesture, gestureNavigates, trackNodeGesture, type NodeGesture } from './nodeGraphGesture';
 import { buildNodeGraph, type GraphEdgeKind, type GraphNode, type GraphTone } from './nodeGraphView';
 import styles from './NodeGraphOverlay.module.css';
 
@@ -71,6 +72,8 @@ function NodeGraphCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const draggingNodeRef = useRef<ForceNode | null>(null);
+  /** O gesto de pointer em curso num nó — decide clique×drag (`nodeGraphGesture.ts`). */
+  const nodeGestureRef = useRef<NodeGesture | null>(null);
   const panRef = useRef<{ active: boolean; startX: number; startY: number }>({ active: false, startX: 0, startY: 0 });
   /** Depois do primeiro gesto do usuário (pan/zoom/drag), o enquadramento automático do fim da simulação não briga mais com ele. */
   const interactedRef = useRef(false);
@@ -159,16 +162,29 @@ function NodeGraphCanvas({
     panRef.current = { active: true, startX: event.clientX - transform.x, startY: event.clientY - transform.y };
   }
 
-  function handleNodePointerDown(node: ForceNode, event: React.PointerEvent): void {
+  function handleNodePointerDown(node: ForceNode, event: React.PointerEvent<SVGGElement>): void {
     event.stopPropagation();
     interactedRef.current = true;
-    svgRef.current?.setPointerCapture(event.pointerId);
+    // A captura é no PRÓPRIO <g> do nó, nunca no svg: com a captura no
+    // ancestral, o pointerup era reentregue ao svg e o `click` nascia lá — o
+    // onClick do nó não disparava e clicar não navegava (achado do e2e de
+    // 12/08, D-M4). Capturado aqui, soltar fora do canvas continua entregando
+    // o pointerup (que borbulha até o svg e esfria a simulação).
+    event.currentTarget.setPointerCapture(event.pointerId);
     draggingNodeRef.current = node;
+    nodeGestureRef.current = beginNodeGesture(event.clientX, event.clientY);
   }
 
   function handlePointerMove(event: React.PointerEvent<SVGSVGElement>): void {
     const dragging = draggingNodeRef.current;
     if (dragging !== null && sim !== null) {
+      const gesture = nodeGestureRef.current;
+      if (gesture !== null) {
+        const tracked = trackNodeGesture(gesture, event.clientX, event.clientY);
+        nodeGestureRef.current = tracked;
+        // Dentro do raio de tremor ainda é clique: não arrasta nem esquenta a simulação.
+        if (!tracked.moved) return;
+      }
       const world = toWorld(event.clientX, event.clientY);
       dragging.fx = world.x;
       dragging.fy = world.y;
@@ -290,7 +306,12 @@ function NodeGraphCanvas({
                   onMouseLeave={handleNodeLeave}
                   onFocus={() => handleNodeFocus(forceNode)}
                   onBlur={handleNodeLeave}
-                  onClick={() => onNavigate(node.navigateTo)}
+                  onClick={() => {
+                    // Depois de um drag, o click dispara no mesmo <g> (down e
+                    // up capturados nele) — mas arrastar não é clicar.
+                    if (!gestureNavigates(nodeGestureRef.current)) return;
+                    onNavigate(node.navigateTo);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
