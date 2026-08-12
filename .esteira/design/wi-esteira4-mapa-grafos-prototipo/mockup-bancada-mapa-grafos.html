@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Mockup — bancada do protótipo do mapa de grafos</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f25; --border: #2c313a; --text: #d6dae2;
+    --muted: #8a93a3; --accent: #6ea8fe; --ok: #4cc38a; --warn: #e5b567;
+  }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", sans-serif; margin: 0; padding: 24px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 20px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 24px 0 8px; color: var(--accent); }
+  .prov { color: var(--muted); font-size: 12px; }
+  .bench { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); padding: 16px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .tab { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); }
+  .tab.active { border-color: var(--accent); color: var(--text); background: #23303f; }
+  .stage { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+  .canvas { border: 1px dashed var(--border); border-radius: 6px; min-height: 260px; padding: 12px; position: relative; overflow-x: auto; }
+  .canvas .hint { position: absolute; bottom: 8px; right: 12px; color: var(--muted); font-size: 12px; }
+  .node { display: inline-block; border: 1.5px solid var(--accent); border-radius: 6px; padding: 4px 10px; margin: 6px; font-size: 12px; background: #202632; }
+  .node.gate { border-color: var(--warn); border-style: double; }
+  .node.artefato { border-color: var(--muted); border-radius: 12px; }
+  .arrow { color: var(--muted); margin: 0 2px; }
+  .criteria { border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 13px; }
+  .criteria h3 { margin: 0 0 8px; font-size: 13px; color: var(--text); }
+  .criteria ul { margin: 0 0 12px; padding-left: 18px; color: var(--muted); }
+  .criteria li b { color: var(--text); }
+  .verdict { border: 1px solid var(--ok); border-radius: 8px; padding: 12px 16px; margin-top: 20px; background: #1a2420; }
+  .verdict h2 { color: var(--ok); margin-top: 0; }
+  code { background: #262b34; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  .note { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Bancada do protótipo do mapa de grafos — como o dono vê e decide</h1>
+  <p class="prov">
+    Fase <b>Design</b> do item <code>wi-esteira4-mapa-grafos-prototipo</code> ·
+    plano <code>pln-esteira4-forma-e-leitura</code> · discovery <code>dsc-15a7e7f5-fbb</code> ·
+    repo <code>donel-dev</code> · 12/08/2026.<br>
+    Este item é um <b>prototype</b>: a entrega é uma BANCADA descartável que renderiza o mesmo
+    grafo em 2–3 abordagens node-based e termina numa ESCOLHA. Este mockup desenha a superfície
+    da bancada e o formato do documento de escolha — <b>não</b> antecipa qual abordagem vence.
+    Forma daqui vence em Implementar; alcance (o que comparar) é do Plano/Discovery.
+  </p>
+</header>
+
+<h2>1. A bancada — uma página, um grafo, N abordagens</h2>
+<div class="bench">
+  <div class="tabs">
+    <span class="tab active">A — React Flow retrabalhado</span>
+    <span class="tab">B — candidato do awesome-node-based-uis</span>
+    <span class="tab">C — candidato do awesome-node-based-uis</span>
+  </div>
+  <div class="stage">
+    <div class="canvas">
+      <!-- O MESMO grafo em todas as abas: o export real da mesa (grafo-mesa.json, 12 nós / 12 arestas). -->
+      <div>
+        <span class="node gate">Discovery</span><span class="arrow">→</span>
+        <span class="node gate">Plano</span><span class="arrow">→</span>
+        <span class="node">Design</span><span class="arrow">→</span>
+        <span class="node gate">Você valida o Design</span>
+      </div>
+      <div>
+        <span class="arrow">…</span>
+        <span class="node">Implementar</span><span class="arrow">→</span>
+        <span class="node">Validar</span><span class="arrow">→</span>
+        <span class="node artefato">PR staging</span><span class="arrow">→</span>
+        <span class="node gate">Merge (você)</span>
+      </div>
+      <span class="hint">pan · zoom · clique seleciona nó · fit-view — obrigatórios em toda aba</span>
+    </div>
+    <div class="criteria">
+      <h3>Régua fixa (mesma em toda aba)</h3>
+      <ul>
+        <li><b>Identifica</b> — tipo de nó legível de relance (F25: "difícil identificar")</li>
+        <li><b>Navega</b> — pan/zoom/fit fluidos, clique leva ao nó (F25: "não navega")</li>
+        <li><b>Bonito</b> — veredito estético do dono (F25: "feio")</li>
+        <li><b>Auto-layout</b> — 12 nós sem sobreposição, sem coordenada à mão</li>
+        <li><b>Integração</b> — custo de trazer pro Modo Dev (React 19 + Electron, tema do design-system)</li>
+        <li><b>Peso</b> — bundle e dependências novas</li>
+      </ul>
+      <h3>Anotação por aba</h3>
+      <p class="note">Campo livre onde o dono escreve o que sentiu usando — a bancada
+      guarda junto do critério, não em chat.</p>
+    </div>
+  </div>
+</div>
+<p class="note">Dados: toda aba carrega o mesmo
+<code>.esteira/plano/pln-esteira4-catalogo-e-grafo/grafo-mesa.json</code> via um adapter único
+(<code>esteira.grafo → modelo neutro</code>). Abordagem que exigir mudar o dado de entrada já
+perde o critério "Integração".</p>
+
+<h2>2. O documento de escolha — como o protótipo "termina"</h2>
+<div class="verdict">
+  <p><b>Formato da resposta</b> (arquivo <code>specs/012-esteira-4/mapa-grafos-escolha.md</code>, irmão de <code>design-research.md</code>):</p>
+  <ul class="note">
+    <li><b>0. Abordagens testadas</b> — tabela: candidato → lib/versão → onde está o código da aba.</li>
+    <li><b>1. Régua preenchida</b> — a matriz critérios × abordagens, com a anotação do dono por célula relevante.</li>
+    <li><b>2. A escolha</b> — uma abordagem, dita com o porquê, ratificada pelo dono.</li>
+    <li><b>3. O que a issue do mapa herda</b> — o que da bancada sobrevive (adapter, custom nodes, tema) e o que morre com ela.</li>
+  </ul>
+  <p class="note">A bancada em si é descartável e NÃO entra em <code>src/</code> — quem entra no app
+  é a issue do mapa (item irmão do plano), depois da escolha ratificada.</p>
+</div>
+
+<h2>3. O que este mockup NÃO cobre</h2>
+<p class="note">A tela final do mapa de grafos no Modo Dev (substituta de
+<code>NodeGraphOverlay.tsx</code>) — essa é da issue do mapa, que terá o próprio ciclo de design
+sobre a abordagem vencedora. Aqui só a bancada de decisão e o formato da resposta.</p>
+
+</body>
+</html>
