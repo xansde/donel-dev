@@ -11,12 +11,12 @@ interface TabProps {
   showFps: boolean;
 }
 
-const STATE_CLASS: Record<BenchNode['state'], string> = {
-  ok: 'node--ok',
-  run: 'node--run',
-  wait: 'node--wait',
-  block: 'node--block',
-  future: 'node--future',
+export const STATE_CLASS: Record<BenchNode['state'], string> = {
+  ok: 'force-node--ok',
+  run: 'force-node--run',
+  wait: 'force-node--wait',
+  block: 'force-node--block',
+  future: 'force-node--future',
 };
 
 const STATE_TOKEN: Record<BenchNode['state'], string> = {
@@ -51,6 +51,10 @@ export function TabForceSvg({ graph, selectedNodeId, onSelect, showFps }: TabPro
 
   useEffect(() => {
     simulation.on('tick', () => setTick((t) => t + 1));
+    // StrictMode monta→desmonta→remonta: o cleanup abaixo para a simulação e,
+    // sem este restart, o remonte a deixaria congelada nos primeiros ticks
+    // (o "bolinho" espiral inicial do d3) — achado da rodada de fixes de 12/08.
+    simulation.alpha(1).restart();
     return () => {
       simulation.stop();
     };

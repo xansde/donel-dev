@@ -29,7 +29,7 @@ o **motor de render** e o custo de cada um reproduzir a forma.
 
 | Aba | Abordagem | Lib / versão | Onde está o código |
 |---|---|---|---|
-| A | d3-force + **SVG próprio** — o caminho do próprio Obsidian: render manual, simulação ao vivo, controle total da forma | `d3-force` — versão na seção 4 | `prototypes/mapa-grafos/src/tabs/TabD3Svg.tsx` |
+| A | d3-force + **SVG próprio** — o caminho do próprio Obsidian: render manual, simulação ao vivo, controle total da forma | `d3-force` — versão na seção 4 | `prototypes/mapa-grafos/src/tabs/TabForceSvg.tsx` |
 | B | **sigma.js / graphology** (WebGL) — feito para grafos orgânicos grandes; aposta: fps de sobra nas centenas de nós | `sigma` + `graphology` — versões na seção 4 | `prototypes/mapa-grafos/src/tabs/TabSigma.tsx` |
 | C | **React Flow posicionado por d3-force** — mantém a lib que o repo já paga; posições estáticas pós-simulação ("perde o vivo", já previsto no design) | `@xyflow/react` — versão na seção 4 | `prototypes/mapa-grafos/src/tabs/TabReactFlow.tsx` |
 
