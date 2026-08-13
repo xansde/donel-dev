@@ -1,0 +1,491 @@
+@import '../../../design-system/src/tokens.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-header {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--hairline);
+  background: var(--bg-panel);
+}
+
+.app-header h1 {
+  margin: 0 0 var(--space-half) 0;
+  font-size: var(--text-heading-size);
+  font-weight: var(--weight-semibold);
+}
+
+.app-header .provenance {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3) 0;
+  border-bottom: var(--hairline);
+  background: var(--bg-panel);
+}
+
+.tab-button {
+  appearance: none;
+  border: var(--hairline);
+  border-bottom: none;
+  background: var(--bg-app);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  cursor: pointer;
+  transition: color var(--duration-micro) var(--ease-standard);
+}
+
+.tab-button:hover {
+  color: var(--text-primary);
+}
+
+.tab-button.active {
+  background: var(--bg-app);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: var(--weight-semibold);
+}
+
+.tab-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.main-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  min-height: 0;
+}
+
+.canvas-panel {
+  position: relative;
+  border: var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.canvas-panel .canvas-hint {
+  position: absolute;
+  bottom: var(--space-1);
+  left: var(--space-1);
+  z-index: 5;
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: var(--space-half) var(--space-1);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.canvas-root {
+  width: 100%;
+  height: 100%;
+}
+
+/* MiniMap do React Flow — o default é branco, fora do tema. */
+.react-flow__minimap {
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+}
+
+.side-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.panel {
+  border: var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  padding: var(--panel-padding);
+}
+
+.panel h2 {
+  margin: 0 0 var(--space-1) 0;
+  font-size: var(--text-body-size);
+  font-weight: var(--weight-semibold);
+}
+
+.criteria-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.criteria-list li {
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.criteria-list strong {
+  color: var(--text-primary);
+}
+
+.criteria-textarea {
+  width: 100%;
+  margin-top: var(--space-2);
+  min-height: 96px;
+  resize: vertical;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+}
+
+.criteria-textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.node-details-empty {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.node-details dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-half) var(--space-1);
+}
+
+.node-details dt {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.node-details dd {
+  margin: 0;
+  font-size: var(--text-body-size);
+  word-break: break-word;
+}
+
+.kind-badge {
+  display: inline-block;
+  padding: 2px var(--space-1);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-caption-size);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.kind-badge--lg {
+  background: color-mix(in srgb, var(--state-waiting) 20%, transparent);
+  color: var(--state-waiting);
+  border: 1px solid var(--state-waiting);
+}
+
+.kind-badge--md {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.kind-badge--sm {
+  background: color-mix(in srgb, var(--text-muted) 20%, transparent);
+  color: var(--text-muted);
+  border: 1px solid var(--text-muted);
+}
+
+/* Badge de estado (D-M2) — mesmo vocabulário de cor usado nos nós do grafo. */
+.state-badge {
+  display: inline-block;
+  padding: 2px var(--space-1);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-caption-size);
+  font-weight: var(--weight-semibold);
+}
+
+.state-badge--ok {
+  background: color-mix(in srgb, var(--zone-ok) 20%, transparent);
+  color: var(--zone-ok);
+  border: 1px solid var(--zone-ok);
+}
+
+.state-badge--run {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.state-badge--wait {
+  background: color-mix(in srgb, var(--state-waiting) 20%, transparent);
+  color: var(--state-waiting);
+  border: 1px solid var(--state-waiting);
+}
+
+.state-badge--block {
+  background: color-mix(in srgb, var(--state-permission) 20%, transparent);
+  color: var(--state-permission);
+  border: 1px solid var(--state-permission);
+}
+
+.state-badge--future {
+  background: transparent;
+  color: var(--state-done);
+  border: 1px dashed var(--state-done);
+}
+
+.tab-placeholder {
+  padding: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+/* Barra de dataset, ao lado das abas. */
+.dataset-select {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-bottom: var(--space-1);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.dataset-select select {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-caption-size);
+}
+
+/* Tooltip flutuante (D-M4) — reproduz o #tip do mockup-v3.html. */
+.graph-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-caption-size);
+  max-width: 280px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+
+.graph-tooltip strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text-primary);
+}
+
+.graph-tooltip p {
+  margin: var(--space-half) 0 0;
+  color: var(--text-muted);
+}
+
+.graph-tooltip-state {
+  font-size: 11px;
+  display: block;
+}
+
+.graph-tooltip-state--ok {
+  color: var(--zone-ok);
+}
+
+.graph-tooltip-state--run {
+  color: var(--accent);
+}
+
+.graph-tooltip-state--wait {
+  color: var(--state-waiting);
+}
+
+.graph-tooltip-state--block {
+  color: var(--state-permission);
+}
+
+.graph-tooltip-state--future {
+  color: var(--state-done);
+}
+
+/* Contador de FPS (dataset sintético). */
+.fps-counter {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  z-index: 6;
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: var(--space-half) var(--space-1);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* Aba A — d3-force + SVG próprio. */
+.force-svg {
+  display: block;
+  cursor: grab;
+}
+
+.canvas-toolbar {
+  position: absolute;
+  top: var(--space-1);
+  left: var(--space-1);
+  z-index: 6;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.canvas-toolbar button {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-1);
+  font-size: var(--text-caption-size);
+  cursor: pointer;
+}
+
+.force-link {
+  stroke: #3a404c;
+  stroke-width: 1.2;
+  transition: opacity var(--duration-micro) var(--ease-standard);
+}
+
+.force-node circle {
+  transition: opacity var(--duration-micro) var(--ease-standard);
+}
+
+.force-node text {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  fill: var(--text-muted);
+  pointer-events: none;
+}
+
+.force-node--ok circle {
+  fill: var(--zone-ok);
+}
+
+.force-node--run circle {
+  fill: var(--accent);
+}
+
+.force-node--wait circle {
+  fill: var(--state-waiting);
+}
+
+.force-node--block circle {
+  fill: var(--state-permission);
+}
+
+.force-node--future circle {
+  fill: var(--bg-raised);
+  stroke: var(--state-done);
+  stroke-width: 1.5;
+}
+
+.force-node--selected circle {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+/* Aba B — sigma.js (WebGL) — o container precisa de dimensão explícita. */
+.sigma-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* Aba C — React Flow com nó circular custom. */
+.rf-circle-node {
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity var(--duration-micro) var(--ease-standard);
+  position: relative;
+}
+
+.rf-circle-node-label {
+  position: absolute;
+  top: 100%;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.rf-circle-node--ok {
+  background: var(--zone-ok);
+}
+
+.rf-circle-node--run {
+  background: var(--accent);
+}
+
+.rf-circle-node--wait {
+  background: var(--state-waiting);
+}
+
+.rf-circle-node--block {
+  background: var(--state-permission);
+}
+
+.rf-circle-node--future {
+  background: var(--bg-raised);
+  border: 1.5px solid var(--state-done);
+}
+
+.rf-circle-node--selected {
+  box-shadow: var(--focus-ring);
+}

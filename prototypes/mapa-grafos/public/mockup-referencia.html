@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Mockup — mapa de grafos estilo Obsidian horizontal</title>
+<style>
+  :root {
+    --bg: #16181d; --panel: #1c1f25; --border: #2c313a; --text: #d6dae2;
+    --muted: #8a93a3; --accent: #6ea8fe; --ok: #4cc38a; --warn: #e5b567; --err: #e5534b;
+  }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", sans-serif; margin: 0; padding: 24px; max-width: 1100px; margin-inline: auto; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 20px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 24px 0 8px; color: var(--accent); }
+  .prov { color: var(--muted); font-size: 12px; }
+  .graphwrap { border: 1px solid var(--border); border-radius: 8px; background: #14161a; position: relative; overflow: hidden; }
+  .graphwrap svg { display: block; width: 100%; height: auto; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  .legend span::before { content: "●"; margin-right: 6px; }
+  .lg-ok::before { color: var(--ok); } .lg-run::before { color: var(--accent); }
+  .lg-wait::before { color: var(--warn); } .lg-block::before { color: var(--err); }
+  .lg-future::before { color: #4a5160; }
+  .lg-art::before { content: "•"; color: var(--muted); }
+  #tip { position: absolute; pointer-events: none; background: #23262e; border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 12.5px; max-width: 280px; display: none; box-shadow: 0 4px 16px rgba(0,0,0,.5); z-index: 2; }
+  #tip b { display: block; margin-bottom: 2px; }
+  #tip .state { font-size: 11px; }
+  .note { color: var(--muted); font-size: 13px; }
+  .verdict { border: 1px solid var(--ok); border-radius: 8px; padding: 12px 16px; margin-top: 20px; background: #1a2420; }
+  .verdict h2 { color: var(--ok); margin-top: 0; }
+  code { background: #262b34; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  table { border-collapse: collapse; font-size: 12.5px; width: 100%; margin-top: 8px; }
+  th, td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+  th { color: var(--muted); font-weight: normal; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Mapa de grafos da esteira — a forma que o dono fixou</h1>
+  <p class="prov">
+    Fase <b>Design</b> do item <code>wi-esteira4-mapa-grafos-prototipo</code> ·
+    plano <code>pln-esteira4-forma-e-leitura</code> · repo <code>donel-dev</code> · 12/08/2026 ·
+    <b>v3 — forma fixada pelo dono na revisão deste design</b>: grafo estilo <b>Obsidian</b>
+    (nós circulares, rótulo embaixo, orgânico), <b>forçado à horizontal</b> (o tempo corre da
+    esquerda para a direita), <b>código de cores por estado</b>, <b>nós pequenos para os arquivos</b>
+    gerados em cada etapa, <b>um nó por task do plano</b>, e <b>hover com descrição simples</b> +
+    realce dos vizinhos. O grafo abaixo é interativo — passe o mouse. Os dados são o
+    <b>plano real</b> desta rodada, para julgar no concreto.
+  </p>
+</header>
+
+<h2>1. O alvo — passe o mouse nos nós</h2>
+<div class="graphwrap" id="wrap">
+  <svg id="g" viewBox="0 0 1040 430"></svg>
+  <div id="tip"></div>
+  <div class="legend">
+    <span class="lg-ok">concluído</span>
+    <span class="lg-run">rodando</span>
+    <span class="lg-wait">esperando você</span>
+    <span class="lg-block">travado</span>
+    <span class="lg-future">ainda não começou</span>
+    <span class="lg-art">nó pequeno = arquivo/artefato da etapa</span>
+  </div>
+</div>
+<p class="note">Comportamentos que a tela real precisa ter e um mockup só sugere: pan/zoom;
+clique navega até o item (mesmo <code>MapSelection</code> do carrossel); a posição vem de
+força dirigida com <b>viés horizontal por profundidade no grafo</b> (cada nó é puxado para a
+coluna da sua distância do Discovery — é isso que "força" o Obsidian a ser horizontal),
+nunca de coordenada à mão.</p>
+
+<h2>2. O que a bancada do protótipo testa agora</h2>
+<p class="note">Com a forma fixada, a pergunta da bancada deixou de ser "qual estilo?" e virou
+"<b>qual motor reproduz esta forma com menos briga?</b>" — força dirigida com viés horizontal,
+nós circulares com rótulo embaixo, realce de vizinhança no hover, e centenas de nós sem engasgar.
+Candidatos na direção do awesome-node-based-uis (seleção final é de Implementar, seção 0 do
+documento de escolha): <code>d3-force</code> + SVG próprio (o caminho do próprio Obsidian),
+<code>sigma.js</code>/graphology (WebGL, feito para grafos orgânicos grandes), React Flow com
+posições calculadas por <code>d3-force</code> (mantém a lib do repo, perde o "vivo" da simulação).</p>
+<table>
+  <thead><tr><th>Régua fixa</th><th>o que medir na bancada</th></tr></thead>
+  <tbody>
+    <tr><td><b>1. Reproduz a forma fixada</b></td><td>lado a lado com este mockup: círculos, rótulo embaixo, horizontal, cores de estado, satélites pequenos, hover com realce</td></tr>
+    <tr><td>2. Identifica</td><td>estado e tipo legíveis de relance (F25)</td></tr>
+    <tr><td>3. Navega</td><td>pan/zoom/fit fluidos, clique seleciona, hover não trava (F25)</td></tr>
+    <tr><td>4. Bonito</td><td>veredito do dono, contra este mockup</td></tr>
+    <tr><td>5. Integração</td><td>React 19 + Electron + tokens do design-system</td></tr>
+    <tr><td>6. Peso</td><td>bundle e deps novas; fps com grafo grande (12 nós hoje, centenas com artefatos)</td></tr>
+  </tbody>
+</table>
+
+<div class="verdict">
+  <h2>3. Como o protótipo termina (inalterado)</h2>
+  <p class="note">Documento <code>specs/012-esteira-4/mapa-grafos-escolha.md</code>: abordagens
+  testadas → régua preenchida (com a linha 1 acima como critério eliminatório) → a escolha
+  ratificada por você → o que a issue do mapa herda. A bancada segue descartável, fora de
+  <code>src/</code>; quem entra no app é a issue do mapa, sobre o motor vencedor.</p>
+</div>
+
+<script>
+// ——— dados: o plano forma-e-leitura, de verdade, neste momento ———
+const STATES = {
+  ok:     { fill: '#4cc38a', label: 'concluído' },
+  run:    { fill: '#6ea8fe', label: 'rodando' },
+  wait:   { fill: '#e5b567', label: 'esperando você' },
+  block:  { fill: '#e5534b', label: 'travado' },
+  future: { fill: '#4a5160', label: 'ainda não começou' },
+};
+// r: 16 fase/gate · 10 task · 5 arquivo
+const nodes = [
+  { id:'disc',  x:90,  y:215, r:16, s:'ok',    t:'Discovery — Definição esteira dev', d:'Onze decisões do dono, sete planos propostos. Fechado em 07/08.' },
+  { id:'plano', x:250, y:200, r:16, s:'ok',    t:'Plano — Forma e leitura', d:'Quatro itens declarados: protótipo do mapa, textos laterais, painel de runs, issue do mapa.' },
+  { id:'gmesa', x:205, y:120, r:5,  s:'ok',    t:'grafo-mesa.json', d:'Export da mesa interativa — 12 nós, 12 arestas. Vira o dado de toda renderização.' },
+
+  { id:'t1',    x:430, y:150, r:10, s:'wait',  t:'Task: protótipo do mapa de grafos', d:'Design pronto — esperando você aprovar a forma para a bancada começar. Você está aqui.' },
+  { id:'a-mock',x:385, y:75,  r:5,  s:'ok',    t:'mockup-bancada-mapa-grafos.html', d:'Este arquivo — a forma do mapa, fixada por você.' },
+  { id:'a-diag',x:455, y:65,  r:5,  s:'ok',    t:'diagrama-arquitetura.md', d:'Fronteiras da bancada: lê só o esteira.grafo, não toca src/.' },
+  { id:'a-banc',x:530, y:105, r:5,  s:'future',t:'bancada (2–3 motores)', d:'O protótipo em si: mesmo grafo nos motores candidatos, régua ao lado.' },
+  { id:'a-esc', x:600, y:145, r:5,  s:'future',t:'mapa-grafos-escolha.md', d:'A resposta do protótipo: matriz preenchida + o motor escolhido.' },
+  { id:'gate1', x:675, y:185, r:16, s:'future',t:'Você ratifica a escolha', d:'Parada humana: o motor do mapa só é escolhido por você.' },
+
+  { id:'t2',    x:420, y:280, r:10, s:'future',t:'Task: textos das barras laterais', d:'Independente das outras — texto direto no lugar do vocabulário de spec.' },
+  { id:'t3',    x:465, y:365, r:10, s:'block', t:'Task: painel de runs headless', d:'TRAVADO: depende do motor headless da rodada 012, que ainda não fechou.' },
+  { id:'dep',   x:300, y:390, r:10, s:'run',   t:'Motor headless (rodada 012)', d:'Dependência externa deste plano — em execução na rodada atual.' },
+
+  { id:'t4',    x:820, y:180, r:10, s:'future',t:'Task: issue do mapa de grafos', d:'Quem toca src/ — constrói a tela real sobre o motor ratificado.' },
+  { id:'a-pr',  x:915, y:120, r:5,  s:'future',t:'PR → staging', d:'Entrega da issue do mapa; merge é seu.' },
+];
+const edges = [
+  ['disc','plano'], ['plano','gmesa'],
+  ['plano','t1'], ['plano','t2'], ['plano','t3'],
+  ['t1','a-mock'], ['t1','a-diag'], ['t1','a-banc'], ['t1','a-esc'],
+  ['a-esc','gate1'], ['gate1','t4'], ['t4','a-pr'],
+  ['dep','t3'],
+];
+
+// ——— render ———
+const svg = document.getElementById('g');
+const NS = 'http://www.w3.org/2000/svg';
+const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+const neigh = {};
+edges.forEach(([a,b]) => { (neigh[a]??=new Set()).add(b); (neigh[b]??=new Set()).add(a); });
+
+const edgeEls = edges.map(([a,b]) => {
+  const l = document.createElementNS(NS,'line');
+  l.setAttribute('x1',byId[a].x); l.setAttribute('y1',byId[a].y);
+  l.setAttribute('x2',byId[b].x); l.setAttribute('y2',byId[b].y);
+  l.setAttribute('stroke','#3a404c'); l.setAttribute('stroke-width','1.2');
+  svg.appendChild(l); l.dataset.a=a; l.dataset.b=b; return l;
+});
+const nodeEls = nodes.map(n => {
+  const g = document.createElementNS(NS,'g');
+  g.style.cursor = 'pointer';
+  const c = document.createElementNS(NS,'circle');
+  c.setAttribute('cx',n.x); c.setAttribute('cy',n.y); c.setAttribute('r',n.r);
+  c.setAttribute('fill',STATES[n.s].fill);
+  if (n.s==='future') { c.setAttribute('fill','#242832'); c.setAttribute('stroke','#4a5160'); c.setAttribute('stroke-width','1.5'); }
+  const label = document.createElementNS(NS,'text');
+  label.setAttribute('x',n.x); label.setAttribute('y',n.y+n.r+13);
+  label.setAttribute('text-anchor','middle');
+  label.setAttribute('fill', n.r>=10 ? '#c3c9d4' : '#7b8494');
+  label.setAttribute('font-size', n.r>=16 ? '12' : n.r>=10 ? '11' : '9.5');
+  label.textContent = n.t.split(/[—:]/)[0].trim().slice(0,26);
+  g.append(c,label); svg.appendChild(g); g.dataset.id=n.id; return g;
+});
+
+// ——— hover: tooltip + realce de vizinhança (estilo Obsidian) ———
+const tip = document.getElementById('tip'), wrap = document.getElementById('wrap');
+nodeEls.forEach((g,i) => {
+  const n = nodes[i];
+  g.addEventListener('mousemove', ev => {
+    const r = wrap.getBoundingClientRect();
+    tip.style.display='block';
+    tip.style.left = Math.min(ev.clientX - r.left + 14, r.width-290) + 'px';
+    tip.style.top  = (ev.clientY - r.top + 14) + 'px';
+    tip.innerHTML = `<b>${n.t}</b><span class="state" style="color:${STATES[n.s].fill}">● ${STATES[n.s].label}</span><br>${n.d}`;
+  });
+  g.addEventListener('mouseenter', () => {
+    const keep = new Set([n.id, ...(neigh[n.id]??[])]);
+    nodeEls.forEach((o,j) => o.style.opacity = keep.has(nodes[j].id) ? 1 : .18);
+    edgeEls.forEach(l => {
+      const on = l.dataset.a===n.id || l.dataset.b===n.id;
+      l.style.opacity = on ? 1 : .12;
+      l.setAttribute('stroke', on ? STATES[n.s].fill : '#3a404c');
+    });
+  });
+  g.addEventListener('mouseleave', () => {
+    tip.style.display='none';
+    nodeEls.forEach(o => o.style.opacity = 1);
+    edgeEls.forEach(l => { l.style.opacity = 1; l.setAttribute('stroke','#3a404c'); });
+  });
+});
+</script>
+</body>
+</html>
