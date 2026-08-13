@@ -13,6 +13,18 @@ desagregados em item — `pln-esteira4-forma-e-leitura` e
 `pln-esteira4-donel-leitor`. Eles começam **depois** que esta rodada fechar.
 Não puxe item deles para cá.
 
+> **Achado de 13/08 — quando esses dois começarem, `donel-leitor` vem primeiro.**
+> A fase Design de `wi-esteira4-textos-laterais` (o primeiro item de
+> `forma-e-leitura` a rodar) entregou mockup e diagrama, e o dono não conseguiu
+> usá-los: **o painel mostra o ponteiro do artefato, mas o app não abre o
+> arquivo** — não lê `.html` nem `.md`. Mostrar não é abrir; artefato declarado
+> que não abre é ponteiro morto, e isso vale para as **seis** fases, não só
+> Design. Enquanto o app não souber abrir, revisar texto de tela é polir a parte
+> errada: o dono para na porta antes de chegar ao conteúdo. Isso **inverte** a
+> ordem que estava suposta entre os dois planos. Os artefatos do item ficam
+> prontos e commitados em `feature/wi-esteira4-textos-laterais`, esperando
+> revisão — nada a refazer, só a rever, aí sim clicando.
+
 ---
 
 ## 1. Estado no momento de escrever
