@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUTO_START_CONFIRM_TIMEOUT_MS,
+  AUTO_START_ECHO_TIMEOUT_MS,
   AUTO_START_ENTER,
+  AUTO_START_ENTER_DELAY_MS,
+  AUTO_START_MAX_ENTER_ATTEMPTS,
+  AUTO_START_RESEND_GAP_MS,
+  autoStartGiveUpMessage,
   autoStartWriteSteps,
+  classifyAutoStartSubmission,
   dispatchHint,
   dispatchRefusedMessage,
   esteiraPhaseCommand,
@@ -9,6 +16,7 @@ import {
   isReadyForAutoStart,
   lastSessionOfChain,
   lockStateOf,
+  nextAutoStartEnterAction,
   noRepoPreparedMessage,
   phaseDoneRefusedMessage,
   preparedMessage,
@@ -18,6 +26,7 @@ import {
   resourceBusyRefusedMessage,
   sessionActiveRefusedMessage,
 } from '../src/renderer/src/Esteira/esteiraSession';
+import type { AutoStartSubmissionVerdict } from '../src/renderer/src/Esteira/esteiraSession';
 import { TRUST_DIALOG_CONFIRM_MARKER, TRUST_DIALOG_EXIT_MARKER } from '../src/shared/trustDialog';
 import type { SessionSnapshot } from '../src/shared/esteira/store/storeFormat';
 
@@ -256,19 +265,26 @@ describe('sessionActiveRefusedMessage — B3: recusa por segunda sessão viva', 
   });
 });
 
-// wi-esteira4-autostart-enter (11/08) — o "bug fundador": até esta correção
-// `withAutoEnter` colava o Enter no MESMO write do comando (`${command}\r`).
-// Na prática o texto aparecia digitado no terminal mas o Enter nunca
-// submetia — nenhum toast, nenhum erro, porque `injectCommand` só garante
-// que ESCREVEU no stdin, nunca que o CLI executou. Achado: o REPL do CLI
-// trata qualquer chunk de stdin com mais de um caractere como colagem em
-// bloco (mesma razão pela qual este repo já embrulha colagem real de texto
-// em `\x1b[200~...\x1b[201~`, ver TerminalPane.tsx) — um `\r` embutido no
-// meio de um blob multi-caractere não dispara "Enter", só é inserido como
-// conteúdo. `autoStartWriteSteps` substitui `withAutoEnter`: em vez de UM
-// texto com o Enter colado, devolve o PLANO de dois writes — quem chama
-// (`armEsteiraAutoStart`, App.tsx) escreve o primeiro, espera um tick
-// próprio (`AUTO_START_ENTER_DELAY_MS`) e só então escreve o segundo.
+// wi-esteira4-autostart-enter (11/08) — o "bug fundador": o comando aparecia
+// digitado no terminal e nunca submetia, sem toast e sem erro, porque
+// `injectCommand` só garante que ESCREVEU no stdin, nunca que o CLI executou.
+// A correção de 11/08 separou o write do texto do write do Enter
+// (`autoStartWriteSteps` substituiu `withAutoEnter`, que colava os dois em
+// `${command}\r`), apostando que o REPL tratava chunk multi-caractere como
+// colagem em bloco.
+//
+// **A bateria manual de 13/08 REPROVOU essa teoria** (ver
+// `docs/relatorio-bateria-enter-2026-08-13.md`): separar os writes não
+// consertou, o bug reproduz FORA do app (node-pty direto contra `claude.exe`),
+// e o Enter do app é o MESMO byte pelo MESMO caminho do Enter humano — o que a
+// teoria da colagem não explicaria. A falha é NÃO DETERMINÍSTICA (varredura
+// 50/150/400/1000/2000 ms não monotônica; 0/6 repetindo o mesmo 150 ms).
+//
+// Os dois passos CONTINUAM — como higiene, não como cura. O que de fato
+// conserta está em `classifyAutoStartSubmission`/`nextAutoStartEnterAction`
+// (wi-esteira4-enter-confirmado, testados logo abaixo): confirmar no buffer
+// renderizado que a linha saiu da caixa de input, reenviar com teto, e dizer
+// num toast quando não deu — em vez de encerrar calado.
 describe('B5/wi-esteira4-autostart-enter — autoStartWriteSteps: o PLANO de escrita do auto-start', () => {
   it('devolve o comando pré-digitado e o Enter como DOIS passos, nunca um texto só', () => {
     expect(autoStartWriteSteps(esteiraPhaseCommand('discovery', 'C:/inbox/run-1.json'))).toEqual([
@@ -325,6 +341,180 @@ describe('B5 — isReadyForAutoStart: a prova de que o CLI aceita input, antes d
     // Ao contrário de `isReadyToPreType`, esta função nem recebe semáforo:
     // o único jeito de ela liberar é o CLI ter desenhado banner ou barra.
     expect(isReadyForAutoStart({ renderedLines: BANNER })).toBe(true);
+  });
+});
+
+// ===========================================================================
+// wi-esteira4-enter-confirmado (13/08) — CONFIRMA E REENVIA
+//
+// O conserto do bug fundador, depois que a bateria de 13/08 reprovou a teoria
+// da colagem em bloco (ver o comentário acima de `autoStartWriteSteps`). O
+// auto-start deixa de tratar "escrevi no stdin" como "o CLI executou": ele
+// CONFIRMA no buffer renderizado que a linha saiu da caixa de input, REENVIA o
+// Enter com teto, e quando não consegue confirmar DIZ isso num toast.
+//
+// Duas funções puras, duas responsabilidades: `classifyAutoStartSubmission`
+// lê o ESTADO (o comando ainda está na caixa?), `nextAutoStartEnterAction`
+// decide a AÇÃO (escrever, esperar, desistir). Nenhuma das duas toca timer —
+// quem os segura é o `armEsteiraAutoStart` (App.tsx), mesmo molde do
+// `primeSequencer`.
+// ===========================================================================
+
+describe('classifyAutoStartSubmission — o comando ainda está na caixa de input?', () => {
+  const RULER = '───────────────────────────────────────────────────────────────';
+  const FOOTER = '  ⏵⏵ bypass permissions on (shift+tab to cycle)              /rc · focus';
+  const COMMAND = '/esteira-implementar-3 --input "C:/inbox/run-1.json"';
+  const boxWith = (...inside: string[]): string[] => [RULER, ...inside, RULER, FOOTER];
+
+  it('comando parado na caixa: `still-typed` — o estado exato do bug', () => {
+    expect(classifyAutoStartSubmission({ renderedLines: boxWith(`❯ ${COMMAND}`), command: COMMAND })).toBe('still-typed');
+  });
+
+  it('caixa vazia: `gone`', () => {
+    expect(classifyAutoStartSubmission({ renderedLines: boxWith('❯ '), command: COMMAND })).toBe('gone');
+  });
+
+  it('ECO PARCIAL (só um prefixo do comando na caixa) é `unknown`, nunca `still-typed`', () => {
+    // Um `\r` aqui submeteria o comando TRUNCADO — o pior erro possível.
+    const parcial = boxWith('❯ /esteira-implementar-3 --inp');
+    expect(classifyAutoStartSubmission({ renderedLines: parcial, command: COMMAND })).toBe('unknown');
+  });
+
+  it('comando quebrado pelo wrap continua sendo `still-typed`', () => {
+    const wrapped = boxWith('❯ /esteira-implementar-3 --input "C:/inbox/', 'run-1.json"');
+    expect(classifyAutoStartSubmission({ renderedLines: wrapped, command: COMMAND })).toBe('still-typed');
+  });
+
+  it('o eco do comando ACIMA da régua de topo não conta — a decisão é POSICIONAL', () => {
+    // Depois de submeter, o comando CONTINUA na tela, no transcript. "O comando
+    // aparece no buffer" é verdade nos DOIS estados; por isso a prova é a caixa.
+    const submetido = [`❯ ${COMMAND}`, '  ⎿  rodando...', ...boxWith('❯ ')];
+    expect(classifyAutoStartSubmission({ renderedLines: submetido, command: COMMAND })).toBe('gone');
+  });
+
+  it('placeholder do CLI na caixa vazia é `gone` — o nosso comando saiu de lá', () => {
+    const placeholder = boxWith('❯ Try "edit <filepath> to..."');
+    expect(classifyAutoStartSubmission({ renderedLines: placeholder, command: COMMAND })).toBe('gone');
+  });
+
+  it('menu na caixa é `unknown` — jamais `gone` (não é sucesso) nem `still-typed` (não autoriza Enter)', () => {
+    const menu = boxWith('❯ 1. Yes, proceed', '  2. No');
+    expect(classifyAutoStartSubmission({ renderedLines: menu, command: COMMAND })).toBe('unknown');
+  });
+
+  it('sem moldura legível: `unknown` — ausência de evidência nunca vira ação', () => {
+    expect(classifyAutoStartSubmission({ renderedLines: ['✻ Welcome to Claude Code!'], command: COMMAND })).toBe('unknown');
+    expect(classifyAutoStartSubmission({ renderedLines: [], command: COMMAND })).toBe('unknown');
+  });
+
+  it('a barra de status do rodapé NÃO decide nada — ela é idêntica nos dois vereditos', () => {
+    // Por isso a confirmação não pode ser "sumiu o `shift+tab to cycle`" nem
+    // "apareceu `esc to interrupt`" (string que nenhuma captura deste repo tem).
+    const digitado = boxWith(`❯ ${COMMAND}`);
+    const submetido = boxWith('❯ ');
+    expect(digitado[digitado.length - 1]).toBe(submetido[submetido.length - 1]);
+    expect(classifyAutoStartSubmission({ renderedLines: digitado, command: COMMAND })).toBe('still-typed');
+    expect(classifyAutoStartSubmission({ renderedLines: submetido, command: COMMAND })).toBe('gone');
+  });
+});
+
+describe('nextAutoStartEnterAction — a política do reenvio', () => {
+  const base = {
+    verdict: 'still-typed' as AutoStartSubmissionVerdict,
+    safeToSend: true,
+    sawEcho: true,
+    attemptsUsed: 0,
+    msSinceLastWrite: AUTO_START_ENTER_DELAY_MS,
+    msSincePhaseStart: 200,
+  };
+
+  it('comando saiu da caixa DEPOIS de ter sido visto lá: confirmado', () => {
+    expect(nextAutoStartEnterAction({ ...base, verdict: 'gone' })).toBe('confirmed');
+  });
+
+  it('caixa vazia ANTES do eco é `wait`, nunca sucesso — é o estado NORMAL logo após o write', () => {
+    // Aceitar isto como sucesso reproduziria o bug de hoje: encerrar em
+    // silêncio sem nunca ter submetido nada.
+    expect(nextAutoStartEnterAction({ ...base, verdict: 'gone', sawEcho: false })).toBe('wait');
+  });
+
+  it('comando ecoado na caixa e o piso entre os dois writes cumprido: manda o Enter', () => {
+    expect(nextAutoStartEnterAction(base)).toBe('send-enter');
+  });
+
+  it('antes do piso de 50ms desde o write do texto: espera', () => {
+    expect(nextAutoStartEnterAction({ ...base, msSinceLastWrite: AUTO_START_ENTER_DELAY_MS - 1 })).toBe('wait');
+  });
+
+  it('reenvio respeita a janela de 1s desde o Enter anterior — dar tempo do CLI redesenhar', () => {
+    const depoisDoPrimeiro = { ...base, attemptsUsed: 1 };
+    expect(nextAutoStartEnterAction({ ...depoisDoPrimeiro, msSinceLastWrite: AUTO_START_RESEND_GAP_MS - 1 })).toBe('wait');
+    expect(nextAutoStartEnterAction({ ...depoisDoPrimeiro, msSinceLastWrite: AUTO_START_RESEND_GAP_MS })).toBe('send-enter');
+  });
+
+  it('estourado o teto de tentativas, desiste com o toast das tentativas', () => {
+    const noTeto = { ...base, attemptsUsed: AUTO_START_MAX_ENTER_ATTEMPTS, msSinceLastWrite: AUTO_START_RESEND_GAP_MS };
+    expect(nextAutoStartEnterAction(noTeto)).toBe('give-up-attempts');
+  });
+
+  it('ÂNCORA — `unknown` NUNCA vira `send-enter`, por mais tempo e tentativas que sobrem', () => {
+    // A armadilha central: reenviar sobre "não sei ler o estado" é exatamente
+    // o Enter danoso (responder a um diálogo, submeter comando truncado).
+    const folgado = { ...base, verdict: 'unknown' as AutoStartSubmissionVerdict, msSinceLastWrite: 60_000 };
+    expect(nextAutoStartEnterAction(folgado)).not.toBe('send-enter');
+  });
+
+  it('ÂNCORA — com a tela insegura (diálogo/menu), o comando na caixa NÃO autoriza Enter', () => {
+    expect(nextAutoStartEnterAction({ ...base, safeToSend: false })).toBe('wait');
+  });
+
+  it('o comando nunca apareceu na caixa dentro do teto de eco: desiste SEM ter escrito Enter nenhum', () => {
+    const semEco = {
+      ...base,
+      verdict: 'unknown' as AutoStartSubmissionVerdict,
+      sawEcho: false,
+      attemptsUsed: 0,
+      msSincePhaseStart: AUTO_START_ECHO_TIMEOUT_MS,
+    };
+    expect(nextAutoStartEnterAction(semEco)).toBe('give-up-no-echo');
+  });
+
+  it('Enter escrito mas sem confirmação até o teto absoluto: desiste dizendo que não sabe', () => {
+    const semConfirmacao = {
+      ...base,
+      verdict: 'unknown' as AutoStartSubmissionVerdict,
+      attemptsUsed: 1,
+      msSincePhaseStart: AUTO_START_CONFIRM_TIMEOUT_MS,
+    };
+    expect(nextAutoStartEnterAction(semConfirmacao)).toBe('give-up-unconfirmed');
+  });
+
+  it('a confirmação vence qualquer teto estourado — sucesso tardio é sucesso', () => {
+    expect(nextAutoStartEnterAction({ ...base, verdict: 'gone', msSincePhaseStart: 90_000 })).toBe('confirmed');
+  });
+});
+
+describe('autoStartGiveUpMessage — o toast honesto que faltava', () => {
+  it('sem eco: diz que NENHUM Enter foi enviado', () => {
+    const message = autoStartGiveUpMessage('no-echo');
+    expect(message).toContain('nenhum Enter');
+    expect(message).toContain('rode o comando');
+  });
+
+  it('teto de tentativas: cita o número real do teto, para o texto não envelhecer', () => {
+    expect(autoStartGiveUpMessage('attempts')).toContain(String(AUTO_START_MAX_ENTER_ATTEMPTS));
+    expect(autoStartGiveUpMessage('attempts')).toContain('aperte Enter');
+  });
+
+  it('sem confirmação: NÃO manda apertar Enter — o app não sabe o que está na tela', () => {
+    // Mandar apertar seria terceirizar ao humano o acidente que o app acabou
+    // de se recusar a cometer.
+    const message = autoStartGiveUpMessage('unconfirmed');
+    expect(message).toContain('confira');
+    // Nunca um "aperte Enter" seco: se a instrução aparece, é DEPOIS do
+    // "confira" — conferir primeiro é a única ordem segura aqui.
+    expect(message).not.toMatch(/aperte Enter/);
+    expect(message.indexOf('confira')).toBeLessThan(message.indexOf('apertar Enter'));
   });
 });
 

@@ -80,9 +80,14 @@ import type { LauncherLaunchOptions } from './Launcher';
 import { EsteiraScreen } from './Esteira/EsteiraScreen';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
 import {
+  AUTO_START_NOT_READY_MESSAGE,
+  autoStartGiveUpMessage,
   autoStartWriteSteps,
+  classifyAutoStartSubmission,
   esteiraTabName,
   isReadyForAutoStart,
+  isSafeToSendEnter,
+  nextAutoStartEnterAction,
   resolveSessionCwd,
   type EsteiraSessionRequest,
 } from './Esteira/esteiraSession';
@@ -227,26 +232,13 @@ const PRE_TYPE_READY_TIMEOUT_MS = 30_000;
 /** Intervalo do re-teste da prontidão. Não é um "delay fixo até digitar": o gatilho continua sendo o SINAL (semáforo/buffer), este tick só garante reavaliar quando o sinal chega sem um chunk novo de PTY junto. */
 const PRE_TYPE_POLL_MS = 250;
 
-/**
- * wi-esteira4-autostart-enter (11/08) — prazo entre os DOIS writes do
- * auto-start (`armEsteiraAutoStart` abaixo): primeiro o texto do comando,
- * DEPOIS o Enter (`autoStartWriteSteps`, `Esteira/esteiraSession.ts`, tem o
- * achado completo do bug). A razão de precisar de um `setTimeout` (em vez de
- * simplesmente chamar os dois writes em sequência, síncronos):
- * `window.donel.pty.input` é `ipcRenderer.send` (fire-and-forget, sem fila
- * própria) e `PtyManager.input` grava direto no PTY sem nenhum batching —
- * dois writes chamados um atrás do
- * outro no MESMO tick ainda podem chegar juntos no lado do CLI, no mesmo
- * read() do stdin, recriando o bug (o REPL trata o chunk de novo como
- * colagem em bloco). Precisa de uma folga REAL de wall-clock, maior que o
- * intervalo de batching de SAÍDA do próprio pty-manager
- * (`BATCH_INTERVAL_MS = 16`, `main/pty-manager.ts` — não é o mesmo
- * mecanismo, mas é a melhor referência de granularidade que este pipe já
- * demonstrou usar) — 50ms dá 3x essa folga e ainda é imperceptível perto do
- * teto de prontidão acima (30s) ou do tempo de boot medido do CLI
- * (14,5-20,9s).
- */
-const AUTO_START_ENTER_DELAY_MS = 50;
+// wi-esteira4-enter-confirmado (13/08) — `AUTO_START_ENTER_DELAY_MS` morava
+// aqui; migrou para `Esteira/esteiraSession.ts` junto com as outras constantes
+// do auto-start, porque virou insumo de uma decisão PURA
+// (`nextAutoStartEnterAction`) em vez de um prazo que este arquivo aplicava
+// sozinho. O docstring de lá também corrige a explicação: o prazo nunca foi a
+// cura (a varredura 50/150/400/1000/2000 ms reprovou a hipótese) — ele é só
+// higiene de stdin, e o conserto é confirmar no buffer renderizado.
 
 /** Remove uma chave de um record sem mutar o original — usado ao limpar `semaphoreStates`/`aliveTabs` no fechamento de aba. */
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -1279,89 +1271,112 @@ export function App(): React.JSX.Element {
    * `handleOpenEsteiraSession`), então não há watcher anterior para colidir —
    * a limpeza defensiva (`armWatchersRef.current[tabId]?.()`) segue o mesmo
    * padrão só por disciplina.
+   *
+   * **wi-esteira4-enter-confirmado (13/08) — CONFIRMA E REENVIA.** Até aqui
+   * esta função tratava `written === true` (o texto entrou no stdin do PTY)
+   * como "o CLI executou", e encerrava. Não é a mesma coisa: a bateria de
+   * 13/08 mostrou o comando digitado e nunca submetido, sem toast nenhum,
+   * porque ninguém conferia. Agora há uma fase de CONFIRMAÇÃO — o watcher de
+   * renderização e o poll, que antes morriam junto com o write do texto,
+   * seguem vivos até a caixa de input provar que a linha saiu (ou até um teto
+   * estourar e o app DIZER que não conseguiu). Todo o julgamento é puro
+   * (`classifyAutoStartSubmission`/`nextAutoStartEnterAction`,
+   * `Esteira/esteiraSession.ts`); aqui só o encanamento e os timers.
    */
   const armEsteiraAutoStart = useCallback((tabId: string, command: string): void => {
     armWatchersRef.current[tabId]?.();
 
-    // wi-esteira4-autostart-enter (11/08) — três fases, não um booleano
-    // `settled`: entre "o texto foi escrito" e "o Enter foi escrito" existe
-    // agora uma janela real (`AUTO_START_ENTER_DELAY_MS`), e um evento de
-    // limpeza que chegue DENTRO dela (aba fechada, um novo auto-start armado
-    // por cima) precisa saber que o texto já não pode ser reescrito, mas que
-    // o Enter ainda pode — e deve — ser cancelado.
-    let phase: 'waiting-ready' | 'text-sent' | 'done' = 'waiting-ready';
-    let enterTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    // Duas fases de trabalho, não três: o que era `text-sent` (esperar um
+    // `setTimeout` entregar o Enter) virou `submitting` — escrever o Enter,
+    // conferir, reenviar se preciso. O timer do Enter deixou de existir; quem
+    // decide quando escrever é a política pura, a cada frame renderizado.
+    let phase: 'waiting-ready' | 'submitting' | 'done' = 'waiting-ready';
+    let attemptsUsed = 0;
+    let sawEcho = false;
+    let lastWriteAt = 0;
+    let phaseStartedAt = 0;
 
     const cleanup = (): void => {
       unsubscribe();
       clearInterval(intervalId);
       clearTimeout(timeoutId);
-      // Se a aba morre (ou um novo auto-start é armado por cima) enquanto o
-      // texto já saiu mas o Enter ainda está no delay, este `clearTimeout`
-      // É o tratamento do caso novo pedido na tarefa: o Enter pendente é
-      // CANCELADO, nunca escrito. `injectCommand` já faz no-op contra um PTY
-      // morto (`ptyIdRef.current` nulo), então nada quebraria mesmo sem
-      // isto — mas cancelar explicitamente evita um timer órfão e deixa o
-      // efeito residual claro: um comando digitado, nunca submetido, numa
-      // aba que já não existe mais. Nenhum toast dispara aqui — o texto FOI
-      // escrito, então "a sessão não ficou pronta a tempo" seria mentira; e
-      // não há usuário esperando essa aba para avisar de outra coisa.
-      if (enterTimeoutId !== undefined) clearTimeout(enterTimeoutId);
       delete armWatchersRef.current[tabId];
     };
 
-    const stop = (): void => {
+    // Fechar a aba (ou armar um auto-start por cima) encerra tudo em silêncio:
+    // não há Enter pendente para cancelar — nenhum timer carrega write — e
+    // ninguém está olhando uma aba que já não existe.
+    const finish = (message?: string): void => {
       if (phase === 'done') return;
       phase = 'done';
       cleanup();
+      if (message !== undefined) setDevModeToast(message);
     };
 
     const check = (): void => {
-      if (phase !== 'waiting-ready') return;
-      if (!isReadyForAutoStart({ renderedLines: terminalRefs.current[tabId]?.getRenderedLines() ?? [] })) return;
+      if (phase === 'done') return;
+      const renderedLines = terminalRefs.current[tabId]?.getRenderedLines() ?? [];
 
-      const [text, enter] = autoStartWriteSteps(command);
+      if (phase === 'waiting-ready') {
+        if (!isReadyForAutoStart({ renderedLines })) return;
 
-      // ⬇⬇ O único lugar do repo em que uma sessão de FASE DA ESTEIRA recebe
-      // o próprio Enter. Até 11/08 texto e Enter saíam num write só
-      // (`${command}\r`), com a intenção de não deixar "janela entre
-      // digitou e enviou". Era o BUG: o REPL do CLI trata qualquer chunk de
-      // stdin com mais de um caractere como colagem em bloco (mesma razão
-      // pela qual este repo já embrulha colagem REAL de texto em
-      // `\x1b[200~...\x1b[201~`, `TerminalPane.tsx`) — o `\r` embutido no
-      // meio do blob nunca era lido como "Enter", só inserido como conteúdo.
-      // A correção separa os dois writes (`autoStartWriteSteps`,
-      // `Esteira/esteiraSession.ts`, tem o achado completo). Isso REABRE a
-      // janela que a versão antiga evitava — de propósito, e mitigada: mais
-      // ninguém escreve nesta aba enquanto ela dura (a sessão acabou de
-      // nascer), e se a aba morrer dentro dela o `cleanup` acima cancela o
-      // Enter pendente em vez de escrevê-lo no vazio. ⬇⬇
-      const written = terminalRefs.current[tabId]?.injectCommand(text) ?? false;
-      if (!written) return; // PTY ainda não nasceu — tenta de novo no próximo sinal
+        const [text] = autoStartWriteSteps(command);
+        const written = terminalRefs.current[tabId]?.injectCommand(text) ?? false;
+        if (!written) return; // PTY ainda não nasceu — tenta de novo no próximo sinal
 
-      phase = 'text-sent';
-      // O texto já saiu — o teto de prontidão deixou de fazer sentido (o CLI
-      // já provou que aceita input) e o watcher de renderização/poll não tem
-      // mais nada a decidir; só falta entregar o Enter, no seu próprio tick.
-      unsubscribe();
-      clearInterval(intervalId);
-      clearTimeout(timeoutId);
+        phase = 'submitting';
+        phaseStartedAt = Date.now();
+        lastWriteAt = phaseStartedAt;
+        // O teto de PRONTIDÃO morre aqui (o CLI já provou que aceita input);
+        // o teto da confirmação é contado por `phaseStartedAt`, dentro da
+        // política. O watcher e o poll seguem VIVOS de propósito — são eles
+        // que movem a confirmação.
+        clearTimeout(timeoutId);
+        return;
+      }
 
-      enterTimeoutId = setTimeout(() => {
-        terminalRefs.current[tabId]?.injectCommand(enter);
-        stop();
-      }, AUTO_START_ENTER_DELAY_MS);
+      const verdict = classifyAutoStartSubmission({ renderedLines, command });
+      // Ver o comando na caixa é a prova de que o leitor de stdin do REPL
+      // está armado e consumiu o que escrevemos. Sem isso, caixa vazia é só o
+      // estado de sempre — nunca sucesso.
+      if (verdict === 'still-typed') sawEcho = true;
+
+      const action = nextAutoStartEnterAction({
+        verdict,
+        safeToSend: isSafeToSendEnter(renderedLines),
+        sawEcho,
+        attemptsUsed,
+        msSinceLastWrite: Date.now() - lastWriteAt,
+        msSincePhaseStart: Date.now() - phaseStartedAt,
+      });
+
+      if (action === 'wait') return;
+      if (action === 'confirmed') return finish();
+      if (action === 'give-up-no-echo') return finish(autoStartGiveUpMessage('no-echo'));
+      if (action === 'give-up-attempts') return finish(autoStartGiveUpMessage('attempts'));
+      if (action === 'give-up-unconfirmed') return finish(autoStartGiveUpMessage('unconfirmed'));
+
+      // `send-enter` — no MESMO tick síncrono da leitura acima: entre
+      // classificar a tela e escrever o `\r` não existe await nem timer, então
+      // não há janela para um diálogo aparecer entre a decisão e o byte.
+      const [, enter] = autoStartWriteSteps(command);
+      if (!(terminalRefs.current[tabId]?.injectCommand(enter) ?? false)) return finish();
+      attemptsUsed += 1;
+      lastWriteAt = Date.now();
+      // Instrumentação da bateria manual: é o que separa "consertou" de "deu
+      // sorte" — se todos os disparos submetem no #1, o caminho de reenvio
+      // ficou por provar, e o relatório precisa dizer isso.
+      console.info(`[auto-start] enter #${attemptsUsed} (aba ${tabId})`);
     };
 
     const unsubscribe = terminalRefs.current[tabId]?.onRenderedUpdate(check) ?? ((): void => {});
     const intervalId = setInterval(check, PRE_TYPE_POLL_MS);
     const timeoutId = setTimeout(() => {
       if (phase !== 'waiting-ready') return;
-      stop();
       // O boot medido leva 14,5-20,9s; o teto (30s) sobra folga. Se estourar
       // mesmo assim, NADA foi enviado (nem o texto) — dizer isso é a única
       // frase honesta, e o comando manual continua disponível na tela do card.
-      setDevModeToast('A sessão não ficou pronta a tempo — o comando não foi enviado. Rode-o você mesmo na aba.');
+      finish(AUTO_START_NOT_READY_MESSAGE);
     }, PRE_TYPE_READY_TIMEOUT_MS);
 
     armWatchersRef.current[tabId] = cleanup;

@@ -1,3 +1,4 @@
+import { isSafeToSendEnter, readInputBox } from '../../../shared/cliInputBox';
 import type { SessionSnapshot } from '../../../shared/esteira/store/storeFormat';
 
 // Spec 010 / batch B1 — a decisão PURA do gesto "Preparar": qual comando a
@@ -347,47 +348,221 @@ export const AUTO_START_ENTER = '\r';
  * O PLANO de escrita do auto-start: `[texto, Enter]` — sempre DOIS passos,
  * nunca um write único combinando os dois.
  *
- * **wi-esteira4-autostart-enter (11/08) — o "bug fundador" da esteira: sem
- * ele, nenhuma fase roda sozinha.** Até esta correção esta função (então
- * `withAutoEnter`) devolvia `` `${command}\r` `` — comando e Enter no MESMO
- * write, com a justificativa (agora sabida errada) de que um write só seria
- * mais seguro que dois separados, por não deixar "janela entre digitou e
- * enviou". Na prática o comando aparecia digitado no terminal mas NUNCA era
- * submetido — e sem nenhum sinal de erro, porque `injectCommand` só garante
- * que o texto foi ESCRITO no stdin do PTY, nunca que o CLI o executou (ver
- * `TerminalPane.tsx`); o watcher via `written === true` e encerrava achando
- * que tinha terminado.
+ * **O que estava escrito aqui até 13/08 estava ERRADO.** A correção de 11/08
+ * (PR #59) trocou o write único (`` `${command}\r` ``, então `withAutoEnter`)
+ * por dois writes, com a justificativa de que o REPL trataria qualquer chunk
+ * de stdin com mais de um caractere como colagem em bloco (bracketed paste),
+ * engolindo o `\r` embutido. A bateria manual de 13/08 REPROVOU essa teoria
+ * (`docs/relatorio-bateria-enter-2026-08-13.md`):
  *
- * **Achado, confirmado lendo o código do CLI de fora (bracketed paste)**:
- * este repo já sabe, de outra correção (`TerminalPane.tsx`, colagem real de
- * texto em aba claude), que o REPL do `claude` liga bracketed paste
- * (`\x1b[?2004h`) e que colagem tem que ser envolvida em
- * `\x1b[200~...\x1b[201~` para o CLI não tratar o conteúdo como digitação
- * tecla-a-tecla. `armEsteiraAutoStart` nunca envolve nada nesses marcadores
- * — mas o REPL (readline/Ink por trás do CLI) trata qualquer chunk de
- * stdin com MAIS DE UM caractere chegando de uma vez como um blob colado em
- * bloco, marcador ou não: o `\r` no MEIO desse blob não é interpretado como
- * "Enter", só é inserido como conteúdo — exatamente o sintoma observado.
+ *  - separar os writes NÃO consertou — o comando continua aparecendo digitado
+ *    e não submetido;
+ *  - o bug reproduz FORA do app, com `node-pty` direto contra `claude.exe`;
+ *  - o Enter do app e o Enter humano são o MESMO byte pelo MESMO caminho
+ *    (`injectCommand` → `pty.input('\r')`), o que a teoria da colagem não
+ *    explicaria — a digitação humana é tecla-a-tecla e falha igual;
+ *  - a falha é NÃO DETERMINÍSTICA: varredura 50/150/400/1000/2000 ms não
+ *    monotônica, e 0/6 repetindo o mesmo 150 ms. **Nenhum valor de
+ *    `AUTO_START_ENTER_DELAY_MS` conserta isso.**
  *
- * **A correção**: separar os dois writes resolve, porque cada um chega como
- * um chunk de stdin PRÓPRIO — um único caractere de Enter nunca é lido como
- * início de colagem. Isso reabre, de propósito, a "janela entre digitou e
- * enviou" que a versão antiga evitava — ela não desaparece, é MITIGADA:
- * (1) ninguém mais escreve nesta aba durante a janela (a sessão acabou de
- * nascer, o auto-start é o único escritor até o CLI ecoar de volta); (2) se
- * a aba morrer NA janela (fechada, ou um novo auto-start armado por cima),
- * `armEsteiraAutoStart` cancela o Enter pendente em vez de escrevê-lo num
- * PTY que já não existe (ver `enterTimeoutId`/`cleanup` em App.tsx) — o
- * único efeito residual possível é um comando digitado e nunca submetido
- * numa aba que já foi fechada, o que é inofensivo. O prazo entre os dois
- * writes (`AUTO_START_ENTER_DELAY_MS`, App.tsx, ao lado de
- * `PRE_TYPE_READY_TIMEOUT_MS`) e a razão de precisar de um `setTimeout` (não
- * dois writes síncronos, que ainda podem cair no mesmo read() do lado do
- * CLI) estão documentados lá — é decisão de quem ORQUESTRA os dois writes,
- * não desta função pura.
+ * **Os dois passos CONTINUAM** — como higiene, não como cura: um `\r` sozinho
+ * é inequívoco, não custa nada e não há evidência de que atrapalhe. A causa
+ * raiz exata segue em aberto (a pista mais forte é a prontidão real do CLI: a
+ * marca de "pronto" é pintada ANTES de o REPL aceitar submissão).
+ *
+ * **O que de fato conserta** está logo abaixo, em
+ * `classifyAutoStartSubmission`/`nextAutoStartEnterAction`: o app deixou de
+ * tratar "escrevi no stdin" como "o CLI executou" — ele confirma no buffer
+ * renderizado que a linha saiu da caixa de input, reenvia o Enter com teto, e
+ * quando não consegue confirmar DIZ isso num toast, em vez de encerrar calado.
  */
 export function autoStartWriteSteps(command: string): readonly [string, string] {
   return [command, AUTO_START_ENTER];
+}
+
+// ---------------------------------------------------------------------------
+// wi-esteira4-enter-confirmado (13/08) — CONFIRMA E REENVIA
+// ---------------------------------------------------------------------------
+//
+// O buraco que o próprio código já nomeava: `injectCommand` garante que o
+// texto foi ESCRITO no stdin do PTY, nunca que o CLI o EXECUTOU — e o watcher
+// tratava `written === true` como sucesso, encerrava, e por isso não havia
+// toast nem erro. Silêncio era o sintoma.
+//
+// Agora o auto-start confirma no BUFFER RENDERIZADO que a linha saiu da caixa
+// de input (`shared/cliInputBox.ts` tem o porquê de a caixa ser a única fonte
+// confiável), reenvia o Enter com teto, e desiste falando.
+//
+// Duas funções, duas responsabilidades: uma lê o ESTADO, a outra decide a
+// AÇÃO. Nenhuma toca timer nem relógio — recebe os ms como número, do mesmo
+// jeito que o `primeSequencer` deixa o estado com quem chama.
+
+/**
+ * Espaço fora dos DOIS lados da comparação: o wrap parte a linha num ponto
+ * arbitrário e `translateToString(true)` faz trimRight, comendo o espaço
+ * exatamente na emenda. Comparar com espaço reprovaria um comando que está
+ * inteiro na tela.
+ */
+function squashSpaces(value: string): string {
+  return value.replace(/\s+/g, '');
+}
+
+export type AutoStartSubmissionVerdict =
+  /** O comando NÃO está mais na caixa de input. Só é prova de submissão depois de o termos VISTO lá. */
+  | 'gone'
+  /** A caixa contém EXATAMENTE o nosso comando. Único veredito que pode autorizar um `\r`. */
+  | 'still-typed'
+  /** Não sei ler o estado, ou o que está na caixa é um pedaço do comando. NUNCA vira ação. */
+  | 'unknown';
+
+export interface AutoStartSubmissionInput {
+  /** Cauda do buffer JÁ RENDERIZADO do xterm (`TerminalPaneHandle.getRenderedLines`). */
+  readonly renderedLines: readonly string[];
+  readonly command: string;
+}
+
+/**
+ * TRÊS valores, nunca dois: reenviar em cima de "não achei a confirmação" é
+ * exatamente o Enter danoso. A ambiguidade só tem uma saída permitida —
+ * esperar, e no limite desistir dizendo.
+ *
+ * Repare no ECO PARCIAL: uma caixa com um PREFIXO próprio do comando é
+ * `'unknown'`, não `'still-typed'` — um `\r` ali submeteria o comando
+ * TRUNCADO. E repare que texto ESTRANHO na caixa (o placeholder que o CLI
+ * desenha quando ela está vazia, ou alguém digitando por cima) é `'gone'`: o
+ * nosso comando saiu de lá. `'gone'` nunca escreve nada, então errar para esse
+ * lado custa no máximo um toast, jamais um byte.
+ */
+export function classifyAutoStartSubmission(input: AutoStartSubmissionInput): AutoStartSubmissionVerdict {
+  const box = readInputBox(input.renderedLines);
+  if (box.kind === 'menu' || box.kind === 'unreadable') return 'unknown';
+  if (box.kind === 'empty') return 'gone';
+
+  const shown = squashSpaces(box.text);
+  const wanted = squashSpaces(input.command);
+  if (shown === wanted) return 'still-typed';
+  if (shown.length > 0 && wanted.startsWith(shown)) return 'unknown'; // eco a meio caminho
+  return 'gone';
+}
+
+export { isSafeToSendEnter };
+
+/**
+ * Piso entre o write do TEXTO e o primeiro `\r` — o único pedaço do achado de
+ * 11/08 que sobrevive: cada write chega como um chunk de stdin próprio. NÃO é
+ * o mecanismo do conserto (a varredura 50/150/400/1000/2000 ms reprovou a
+ * hipótese do delay, e mexer neste número é o caminho que o handoff fecha).
+ * Migrou do `App.tsx` para cá porque agora é insumo de uma decisão pura.
+ */
+export const AUTO_START_ENTER_DELAY_MS = 50;
+
+/**
+ * Janela mínima entre um `\r` e a decisão de reenviar. Tem que ser maior que
+ * "o CLI ainda não redesenhou depois do Enter" e menor que a paciência de quem
+ * espera. Referências já calibradas neste repo: batching de saída do
+ * `pty-manager` = 16 ms, debounce do transcript-watcher = 300 ms, poll de
+ * prontidão = 250 ms. 1 s é 4 ticks de poll e 3× o maior debounce existente.
+ */
+export const AUTO_START_RESEND_GAP_MS = 1_000;
+
+/**
+ * Teto de Enters escritos, incluindo o primeiro. O 0/6 da bateria mostra que a
+ * falha não é cauda rara — um reenvio só pode não bastar. Do outro lado, cada
+ * tentativa estende a janela em que um modal pode aparecer entre frames. Se
+ * três Enters legítimos, espaçados, com o veto limpo, deixam o comando parado,
+ * a explicação já não é "o byte se perdeu" — é um estado que o leitor não
+ * reconhece, e aí o quarto é mais arriscado que um toast.
+ */
+export const AUTO_START_MAX_ENTER_ATTEMPTS = 3;
+
+/**
+ * Teto para o comando APARECER na caixa depois de escrito. Do write até o eco
+ * é trabalho local do REPL, não do modelo — 5 s são 20 ticks de poll. Se em 5 s
+ * o comando não apareceu, ou o texto se perdeu (não há o que submeter) ou o
+ * leitor está errado; nos dois casos mandar `\r` é ilegítimo. Estourar aqui
+ * NUNCA escreve nada.
+ */
+export const AUTO_START_ECHO_TIMEOUT_MS = 5_000;
+
+/**
+ * Teto absoluto da confirmação, contado do write do texto: cobre o eco, as
+ * três tentativas e a folga, e é a única saída de um `'unknown'` permanente
+ * (menu na tela, moldura ilegível). Metade do teto de PRONTIDÃO (30 s), porque
+ * lá se espera um processo nascer e aqui só um redraw.
+ */
+export const AUTO_START_CONFIRM_TIMEOUT_MS = 15_000;
+
+export type AutoStartEnterAction =
+  | 'wait'
+  | 'send-enter'
+  | 'confirmed'
+  | 'give-up-no-echo'
+  | 'give-up-attempts'
+  | 'give-up-unconfirmed';
+
+export interface AutoStartEnterInput {
+  readonly verdict: AutoStartSubmissionVerdict;
+  /** `isSafeToSendEnter` do MESMO frame — reavaliado imediatamente antes de cada escrita. */
+  readonly safeToSend: boolean;
+  /** Já vimos o comando dentro da caixa alguma vez nesta fase. */
+  readonly sawEcho: boolean;
+  /** Enters já escritos. 0 = nenhum ainda (estamos esperando o eco). */
+  readonly attemptsUsed: number;
+  /** ms desde o último write nesta aba (o texto, ou o Enter anterior). */
+  readonly msSinceLastWrite: number;
+  /** ms desde que o TEXTO foi escrito — o relógio único da fase. */
+  readonly msSincePhaseStart: number;
+}
+
+/**
+ * A política inteira. Três invariantes, e os testes travam os três:
+ *
+ *  1. `'unknown'` NUNCA vira `'send-enter'`, por mais tempo e tentativas que
+ *     sobrem — é a armadilha nomeada no handoff (reenviar sobre uma linha que
+ *     já submeteu manda linha vazia numa sessão que pode estar no meio de um
+ *     turno; reenviar sobre um diálogo RESPONDE o diálogo).
+ *  2. `safeToSend === false` NUNCA vira `'send-enter'`.
+ *  3. `'gone'` só é sucesso depois do eco. Antes dele a caixa vazia é o estado
+ *     NORMAL — aceitá-la seria reproduzir, em silêncio, o bug de hoje.
+ *
+ * O gatilho do PRIMEIRO Enter passou a ser o eco do comando na caixa, não o
+ * relógio: é a prova de que o leitor de stdin do REPL está armado e consumiu o
+ * que escrevemos — exatamente a hipótese aberta do handoff (a marca de
+ * prontidão é pintada ANTES de o REPL aceitar submissão).
+ */
+export function nextAutoStartEnterAction(input: AutoStartEnterInput): AutoStartEnterAction {
+  if (input.verdict === 'gone' && input.sawEcho) return 'confirmed';
+
+  if (input.verdict === 'still-typed' && input.safeToSend) {
+    const gap = input.attemptsUsed === 0 ? AUTO_START_ENTER_DELAY_MS : AUTO_START_RESEND_GAP_MS;
+    if (input.msSinceLastWrite >= gap) {
+      return input.attemptsUsed >= AUTO_START_MAX_ENTER_ATTEMPTS ? 'give-up-attempts' : 'send-enter';
+    }
+  }
+
+  if (input.attemptsUsed === 0 && input.msSincePhaseStart >= AUTO_START_ECHO_TIMEOUT_MS) return 'give-up-no-echo';
+  if (input.attemptsUsed > 0 && input.msSincePhaseStart >= AUTO_START_CONFIRM_TIMEOUT_MS) return 'give-up-unconfirmed';
+  return 'wait';
+}
+
+/** Teto de PRONTIDÃO estourado: nada foi escrito, nem o texto. Continua verdadeiro, palavra por palavra. */
+export const AUTO_START_NOT_READY_MESSAGE =
+  'A sessão não ficou pronta a tempo — o comando não foi enviado. Rode-o você mesmo na aba.';
+
+/**
+ * Três desistências, três frases — porque o que a pessoa precisa fazer é
+ * diferente em cada uma. Em especial: no caso `unconfirmed` o app NÃO manda
+ * apertar Enter, porque não sabe o que está na tela; mandar seria terceirizar
+ * ao humano o acidente que o app acabou de se recusar a cometer.
+ */
+export function autoStartGiveUpMessage(reason: 'no-echo' | 'attempts' | 'unconfirmed'): string {
+  if (reason === 'no-echo') {
+    return 'Escrevi o comando na aba, mas ele não apareceu no prompt da sessão — nenhum Enter foi enviado. Abra a aba e rode o comando você mesmo.';
+  }
+  if (reason === 'attempts') {
+    return `Mandei o Enter ${AUTO_START_MAX_ENTER_ATTEMPTS} vezes e o comando continua digitado no prompt da aba. Abra a aba e aperte Enter.`;
+  }
+  return 'Não consegui confirmar se o comando foi enviado — pode haver algo na tela do terminal esperando resposta. Abra a aba e confira antes de apertar Enter.';
 }
 
 // ---------------------------------------------------------------------------

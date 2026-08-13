@@ -18,6 +18,8 @@
 // caso hipotético de uma versão do CLI ou um hook drop em que ela não
 // dispare).
 
+import { hasPermissionPrompt } from '../shared/cliInputBox';
+
 export type SemaphoreState = 'working' | 'waiting' | 'permission' | 'done';
 
 export interface SemaphoreMachineState {
@@ -132,15 +134,10 @@ export function applyPermissionHeuristic(
  * janela recomendada pelo spike — quem monta `recentLines` é o chamador
  * (via `PtyManager.getPreview`).
  */
-const PERMISSION_PROMPT_PATTERNS: readonly RegExp[] = [
-  /do you want to proceed/i,
-  /requires confirmation/i,
-  /permission to use/i,
-  /precis[oa] de (sua )?permiss[ãa]o/i,
-  /\b1\.\s*yes\b/i,
-];
-
+// Os padrões em si vivem em `shared/cliInputBox.ts` desde 13/08
+// (wi-esteira4-enter-confirmado): o auto-start da esteira precisa do MESMO
+// veto para nunca escrever `\r` sobre um prompt de permissão, e um fato só
+// mora num lugar só. Comportamento aqui inalterado — só a origem da lista.
 export function defaultMatchesPermissionPrompt(recentLines: readonly string[]): boolean {
-  const joined = recentLines.join('\n');
-  return PERMISSION_PROMPT_PATTERNS.some((pattern) => pattern.test(joined));
+  return hasPermissionPrompt(recentLines);
 }
