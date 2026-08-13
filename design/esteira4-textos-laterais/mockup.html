@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>Textos das barras laterais — hoje × proposto</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b35; --ink: #e6e9ef;
+    --dim: #9aa3b2; --warn: #e0b341; --err: #e46a6a; --ok: #6fce8f; --accent: #7aa2f7;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px; background: var(--bg); color: var(--ink);
+         font: 14px/1.5 "Segoe UI", system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 40px 0 12px; color: var(--accent); }
+  .sub { color: var(--dim); margin: 0 0 24px; max-width: 78ch; }
+  .par { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; margin-bottom: 28px; }
+  .col > .tag { font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+                color: var(--dim); margin-bottom: 6px; display: block; }
+  .col.hoje > .tag { color: var(--err); }
+  .col.novo > .tag { color: var(--ok); }
+  /* a barra lateral: 316px, como no app (CA-7 do design v3) */
+  .panel { width: 316px; max-width: 100%; background: var(--panel); border: 1px solid var(--line);
+           border-radius: 8px; padding: 14px; }
+  .section { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 12px; }
+  .section:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+  .label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+  .title { font-weight: 600; margin: 0 0 4px; }
+  .body { margin: 0 0 6px; }
+  .dim { color: var(--dim); font-size: 13px; }
+  .mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; color: var(--dim);
+          background: #11141a; border: 1px solid var(--line); border-radius: 4px; padding: 5px 7px;
+          overflow-x: auto; white-space: nowrap; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+  .chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); }
+  .chip.state { color: var(--ok); border-color: #2f4f3b; }
+  .chip.warn { color: var(--warn); border-color: #4f452a; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 13px; }
+  .kv .k { color: var(--dim); }
+  .btn { display: inline-block; margin-top: 8px; font-size: 12px; padding: 4px 10px;
+         border: 1px solid var(--line); border-radius: 5px; color: var(--ink); }
+  .why { max-width: 42ch; color: var(--dim); font-size: 13px; }
+  .why b { color: var(--ink); font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; max-width: 1000px; font-size: 13px; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: 7px 10px; vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  td.old { color: var(--err); }
+  td.new { color: var(--ok); }
+  ol.regras { max-width: 82ch; }
+  ol.regras li { margin-bottom: 8px; }
+  ol.regras b { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>Barras laterais da Esteira — texto de hoje × texto proposto</h1>
+<p class="sub">
+  Item <code>wi-esteira4-textos-laterais</code>. As frases da coluna <b>hoje</b> foram copiadas do código
+  (<code>src/renderer/src/Esteira/esteiraView.ts</code> e <code>DevMode/esteiraMapView.ts</code>), com os
+  dados preenchidos por um exemplo plausível — não são inventadas. As duas barras são o painel de detalhe
+  de 316px à direita (<code>PhaseDetailsPanel</code>) e o cabeçalho/vazio do mapa à esquerda
+  (<code>DiscoveryMap</code>).
+</p>
+
+<h2>As cinco regras que o texto novo obedece</h2>
+<ol class="regras">
+  <li><b>Uma linha, um fato.</b> O que hoje é frase corrida com três ou quatro fatos separados por
+      “·” e vírgula vira linha rotulada ou chip. Frase corrida só sobra onde o fato é mesmo um só.</li>
+  <li><b>Estado primeiro, explicação depois.</b> A primeira linha diz em que pé está; o porquê e o
+      histórico descem para linha secundária esmaecida.</li>
+  <li><b>Vocabulário de quem opera, não de quem escreveu a spec.</b> “trava”, “contrato”, “declarado”,
+      “assumiu a fase”, “espelho” e “ciclo” não são palavras do dia a dia de quem olha a tela.</li>
+  <li><b>Teto de 90 caracteres</b> na linha principal. Acima disso, o texto quebra em três linhas na
+      barra de 316px e vira parágrafo — que ninguém lê.</li>
+  <li><b>Nada de meta-explicação do modelo.</b> A tela conta o estado do trabalho, não como a Esteira
+      funciona por dentro.</li>
+</ol>
+
+<h2>1. Item em foco — o cabeçalho do painel</h2>
+<div class="par">
+  <div class="col hoje">
+    <span class="tag">hoje</span>
+    <div class="panel">
+      <div class="label">Etapa em foco</div>
+      <p class="title">Textos das barras laterais diretos e com sentido</p>
+      <p class="body">spike · concluído · donel-dev (herdado do card) · criado pela skill · travado pela fase "validar" desde 13/08 10:22</p>
+    </div>
+    <p class="why" style="margin-top:10px">
+      Cinco fatos numa frase de 118 caracteres. Na barra de 316px isso são quatro linhas de texto corrido —
+      e o fato que muda o que a pessoa faz agora (<b>está travado</b>) é o último.
+    </p>
+  </div>
+  <div class="col novo">
+    <span class="tag">proposto</span>
+    <div class="panel">
+      <div class="label">Item em foco</div>
+      <p class="title">Textos das barras laterais diretos e com sentido</p>
+      <div class="chips">
+        <span class="chip">spike</span>
+        <span class="chip state">concluído</span>
+        <span class="chip" title="herdado do card">donel-dev</span>
+        <span class="chip warn">Validar está usando</span>
+      </div>
+      <p class="dim">Criado pela skill · em uso desde 10:22</p>
+    </div>
+    <p class="why" style="margin-top:10px">
+      Tipo, estado, repo e uso viram <b>chips</b> — varredura, não leitura. O que era metadado
+      (“herdado do card”) desce para o <code>title</code>; o que era ruído (“criado pela skill”) vira
+      uma linha esmaecida só.
+    </p>
+  </div>
+</div>
+
+<h2>2. Trava — as três frases do <code>lockView</code></h2>
+<div class="par">
+  <div class="col hoje">
+    <span class="tag">hoje</span>
+    <div class="panel">
+      <div class="section">
+        <div class="label">Trava da fase</div>
+        <p class="title">Preparada — ninguém assumiu ainda</p>
+        <p class="body">O app separou o contexto da fase plano sobre o card «Definição esteira dev» às 10:02 e travou. Nada está rodando: nenhuma sessão assumiu esta fase ainda.</p>
+        <p class="body">Rode a fase apontando para o contexto que o app deixou:</p>
+        <div class="mono">/esteira-plano-3 --input C:\Users\…\run-5c4d9b94-809.json</div>
+        <span class="btn">Liberar trava</span>
+      </div>
+      <div class="section">
+        <div class="label">Trava da fase</div>
+        <p class="title">Sessão aberta</p>
+        <p class="body">Fase implementar sobre o item «motor headless», na sessão a1b2c3d4, desde 09:14. A aba está aberta com o comando da fase escrito; o app aperta o Enter sozinho, assim que o terminal aceitar entrada.</p>
+      </div>
+    </div>
+    <p class="why" style="margin-top:10px">
+      156 e 202 caracteres. Duas orações subordinadas cada. “Preparada — ninguém assumiu ainda”,
+      “separou o contexto”, “travou”, “assumiu esta fase” são todas palavras do documento, não da tela.
+    </p>
+  </div>
+  <div class="col novo">
+    <span class="tag">proposto</span>
+    <div class="panel">
+      <div class="section">
+        <div class="label">Situação</div>
+        <p class="title">Pronta para rodar</p>
+        <div class="kv">
+          <span class="k">fase</span><span>Plano</span>
+          <span class="k">sobre</span><span>card «Definição esteira dev»</span>
+          <span class="k">desde</span><span>10:02</span>
+        </div>
+        <p class="dim" style="margin-top:6px">Ninguém começou ainda. Cole o comando numa sessão:</p>
+        <div class="mono">/esteira-plano-3 --input C:\Users\…\run-5c4d9b94-809.json</div>
+        <span class="btn">Liberar para outra fase</span>
+      </div>
+      <div class="section">
+        <div class="label">Situação</div>
+        <p class="title">Abrindo a sessão</p>
+        <div class="kv">
+          <span class="k">fase</span><span>Implementar</span>
+          <span class="k">sobre</span><span>item «motor headless»</span>
+          <span class="k">aba</span><span>aberta às 09:14 · sessão a1b2c3d4</span>
+        </div>
+        <p class="dim" style="margin-top:6px">O app envia o comando assim que o terminal aceitar.</p>
+      </div>
+    </div>
+    <p class="why" style="margin-top:10px">
+      A frase corrida vira <b>três pares chave/valor</b> — que é o que ela sempre foi. Sobra uma linha
+      só de prosa, com a única informação que não é um campo: <b>o que acontece a seguir</b>.
+      “Liberar trava” vira “Liberar para outra fase”, que diz o efeito do botão.
+    </p>
+  </div>
+</div>
+
+<h2>3. Fecho, leitura e board — as seções de baixo</h2>
+<div class="par">
+  <div class="col hoje">
+    <span class="tag">hoje</span>
+    <div class="panel">
+      <div class="section">
+        <div class="label">Não consegui ler</div>
+        <div class="kv">
+          <span class="k mono" style="border:0;background:0;padding:0">.esteira/validar/…-facts.json</span>
+          <span>campo obrigatório ausente: subject</span>
+        </div>
+        <p class="dim">O que a skill fez não se perdeu: o arquivo continua lá, fora do contrato.</p>
+      </div>
+      <div class="section">
+        <div class="label">Como este ciclo termina</div>
+        <p class="dim">concluído · pergunta respondida: fecha com a conclusão registrada — "não deu" é desfecho válido — d3-force ratificado pelo dono</p>
+      </div>
+      <div class="section">
+        <div class="label">Espelho pendente</div>
+        <div class="kv">
+          <span class="k">aplicar a etiqueta "esteira:em-andamento:plano"</span>
+          <span>3 tentativas — motivo não registrado</span>
+        </div>
+      </div>
+    </div>
+    <p class="why" style="margin-top:10px">
+      “fora do contrato”, “ciclo”, “desfecho”, “espelho pendente”: quatro termos que só existem na spec.
+      E a linha de fecho mistura <b>o que aconteceu</b> (“concluído … d3-force ratificado”) com
+      <b>a regra do modelo</b> (“fecha com a conclusão registrada”), na mesma frase de 132 caracteres.
+    </p>
+  </div>
+  <div class="col novo">
+    <span class="tag">proposto</span>
+    <div class="panel">
+      <div class="section">
+        <div class="label">Não consegui ler</div>
+        <div class="kv">
+          <span class="k mono" style="border:0;background:0;padding:0">.esteira/validar/…-facts.json</span>
+          <span>falta o campo <code>subject</code></span>
+        </div>
+        <p class="dim">O arquivo continua no disco — só não entrou no histórico.</p>
+      </div>
+      <div class="section">
+        <div class="label">Como terminou</div>
+        <p class="body">Respondido — d3-force ratificado pelo dono</p>
+        <p class="dim" title="pergunta respondida: fecha com a conclusão registrada">spike · 12/08</p>
+      </div>
+      <div class="section">
+        <div class="label">O board ainda não recebeu</div>
+        <div class="kv">
+          <span class="k">etiqueta “em andamento: plano”</span>
+          <span>3 tentativas, sem motivo registrado</span>
+        </div>
+        <p class="dim">O trabalho local não depende disso.</p>
+      </div>
+    </div>
+    <p class="why" style="margin-top:10px">
+      A regra do modelo (“o que terminar significa neste ciclo”) sai da linha e vira <b>tooltip</b>:
+      continua disponível, deixa de competir com o fato. “Espelho pendente” vira o que ele quer dizer —
+      <b>o board ainda não recebeu</b> — e ganha a linha que evita o susto: isso não trava nada.
+    </p>
+  </div>
+</div>
+
+<h2>4. Barra da esquerda — cabeçalho e vazio do mapa</h2>
+<div class="par">
+  <div class="col hoje">
+    <span class="tag">hoje</span>
+    <div class="panel">
+      <div class="label">Esteira · Definição esteira dev</div>
+      <p class="body" style="margin-top:14px">Nenhum card ainda. O histórico nasce limpo — nada foi importado do modelo antigo.</p>
+      <p class="body">Não consegui ler o histórico ainda. Nada foi afirmado sobre ele.</p>
+      <p class="dim">nascem do discovery — quem declara o primeiro plano é a skill, nunca o app</p>
+    </div>
+    <p class="why" style="margin-top:10px">
+      As três frases do vazio explicam <b>a política</b> (“nada foi importado”, “nada foi afirmado”,
+      “quem declara … é a skill”) para alguém que só queria saber por que a tela está vazia.
+    </p>
+  </div>
+  <div class="col novo">
+    <span class="tag">proposto</span>
+    <div class="panel">
+      <div class="label">Esteira · Definição esteira dev</div>
+      <p class="body" style="margin-top:14px">Nenhum card ainda.<br><span class="dim">Comece um discovery para o primeiro aparecer.</span></p>
+      <p class="body">Ainda não consegui ler o histórico.<br><span class="dim">Nada foi perdido — só não consegui abrir o arquivo.</span></p>
+      <p class="dim">os planos aparecem aqui depois do discovery</p>
+    </div>
+    <p class="why" style="margin-top:10px">
+      Cada vazio vira <b>um fato + uma saída</b>. A política continua verdadeira, mas ela não é o que
+      a pessoa precisa ler quando abre a tela pela primeira vez.
+    </p>
+  </div>
+</div>
+
+<h2>Glossário da troca — vale para toda frase nova</h2>
+<table>
+  <tr><th>Termo de spec (hoje)</th><th>Termo de tela (proposto)</th><th>Por quê</th></tr>
+  <tr><td class="old">trava / travado</td><td class="new">em uso por / está usando</td><td>“trava” soa defeito; o estado normal é uma fase estar trabalhando ali</td></tr>
+  <tr><td class="old">assumiu a fase</td><td class="new">começou</td><td>ninguém “assume” nada fora do documento</td></tr>
+  <tr><td class="old">espelho pendente</td><td class="new">o board ainda não recebeu</td><td>nomeia o que aconteceu, não o mecanismo</td></tr>
+  <tr><td class="old">fora do contrato</td><td class="new">não entrou no histórico</td><td>“contrato” é o schema — invisível para quem opera</td></tr>
+  <tr><td class="old">declarado / declarou</td><td class="new">registrado / anotou</td><td>“declarar” é do emissor de fatos, não da tela</td></tr>
+  <tr><td class="old">ciclo / desfecho</td><td class="new">como terminou</td><td>a seção já responde a pergunta; o jargão não acrescenta</td></tr>
+  <tr><td class="old">artefato</td><td class="new">arquivo / documento</td><td>só “artefato” não diz se é um .md, um print ou um PR</td></tr>
+  <tr><td class="old">o app separou o contexto e travou</td><td class="new">preparada às 10:02</td><td>o passo interno vira um horário; é tudo o que a pessoa precisa</td></tr>
+</table>
+
+<h2>O que este mockup NÃO decide</h2>
+<p class="sub">
+  Layout, tipografia, cores e o desenho do mapa em si — nada disso muda aqui; o mockup reusa a forma
+  atual de propósito, para o diff ser só de texto. As frases da coluna “proposto” são a <b>direção</b>
+  e o teto de densidade, não um roteiro literal palavra por palavra: se a implementação encontrar um
+  caso que não cabe na regra (uma frase que precisa mesmo de duas orações), isso vira nota na fase
+  Implementar — não silêncio.
+</p>
+
+</body>
+</html>
