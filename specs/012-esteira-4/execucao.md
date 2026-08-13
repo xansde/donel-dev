@@ -123,7 +123,7 @@ depois do OK dele.
 
 | Frente | Item | Tam. | Nota |
 |---|---|---|---|
-| **M1** | bloco `ships_with`, nesta ordem: `worktree-por-card` → `headless` → `fila-percorre-grafo` → `gate-barato` | G | **Construção sequencial na mesma branch.** Dois workers na mesma árvore foi o incidente dos commits entrelaçados (A8 / P24-imp, 04/08). A worktree vem primeiro: é a fundação de tudo que vem depois. Ver §7 — decisão pendente sobre fatiar |
+| **M1** | bloco `ships_with`, nesta ordem: `worktree-por-card` → `headless` → `fila-percorre-grafo` → `gate-barato` | G | **Construção sequencial na mesma branch, e um PR só** (decisão 2 do dono, 13/08 — ver §7). Dois workers na mesma árvore foi o incidente dos commits entrelaçados (A8 / P24-imp, 04/08). A worktree vem primeiro: é a fundação de tudo que vem depois. Como o PR é grande, **os commits precisam ser atômicos e na ordem de construção** — é o review commit a commit que substitui o PR pequeno |
 | **P2** | `wi-esteira4-validador-que-viaja` | M | `tools/check.py` autocontido com as regras cruzadas. Porta o que `scripts/esteira-check.mjs` faz hoje, sem depender de `npm` do donel-dev |
 
 **Gate 2 — o ponto de virada:** a fila anda sozinha num plano de brinquedo.
@@ -211,7 +211,25 @@ npm run dist:alfa
 | # | Decisão | Default assumido se não houver resposta |
 |---|---|---|
 | 1 | ~~`[P-E]` / `[P-F]` da `design.md`~~ **FECHADA em 11/08**: `[P-E]` → entra em `by-phase-when-done` com `artifact.recorded` (recomendação da spec acatada); `[P-F]` → edição in-place com proveniência na legenda (padrão para as próximas emendas) | — |
-| 2 | O `worktree-por-card` sai do bloco `ships_with` e entra sozinho na Onda 1 (PR pequeno e revisável; as frentes seguintes já nascem com árvore isolada), ou o bloco M1 sobe inteiro num PR grande? | **Sai do bloco.** Ele é útil sozinho — resolve A8 e A20, que já custaram commits entrelaçados — e nada em `headless`/`fila`/`gate-barato` exige que suba junto. PR gigante não recebe review de verdade |
+| 2 | ~~O `worktree-por-card` sai do bloco `ships_with`?~~ **FECHADA em 13/08 pelo dono: FICA no bloco.** M1 sobe inteiro, num PR só | — (ver abaixo) |
+
+**Decisão 2 — o raciocínio, porque ele muda a régua de fatiar PR nesta rodada.**
+O default assumido era "sai do bloco", por review: PR gigante não recebe review
+de verdade. O dono decidiu o contrário, e por um eixo que o default não pesava:
+**cada PR que entra custa uma rodada de validação MANUAL dele** — a bateria do
+Enter de 13/08 é o exemplo vivo (7 disparos, cada um uma sessão real). Fatiar
+não dobra só o review: dobra a bateria. Ele prefere um teste grande de uma vez.
+
+Some-se a isso o que a §3 já dizia e o default ignorava: os quatro itens de M1
+moram nos **mesmos arquivos** (`esteira-dispatch.ts`, `esteira-service.ts`,
+`src/main/esteira/*`). Fatiar não eliminaria o conflito de território — adiaria,
+cobrando um rebase e um segundo review sobre o mesmo código.
+
+**O que isso obriga, já que o PR será grande:** commits atômicos e legíveis na
+ordem de construção (`worktree-por-card` → `headless` → `fila-percorre-grafo` →
+`gate-barato`), para o review acontecer commit a commit em vez de num diff só.
+A regra nº 1 (worktree por frente) continua **manual** durante toda a Onda 2 —
+a automação dela só chega no fim do próprio bloco.
 
 ---
 
@@ -220,7 +238,12 @@ npm run dist:alfa
 - **Auto-hospedar cedo demais.** A Onda 3 roda pelo motor recém-nascido; se a
   fila engasgar, o custo é retrabalho de merge. Mitigação: dispatch manual como
   fallback declarado, e o dono olhando a primeira execução.
-- **O bloco M1 é grande.** Ver decisão 2 acima.
+- **O bloco M1 é grande, e vai subir grande** (decisão 2, fechada em 13/08). O
+  risco não sumiu, mudou de dono: um PR grande esconde defeito no meio do diff.
+  Mitigação declarada: commits atômicos na ordem de construção, typecheck e
+  suíte verdes a cada commit (não só no fim), e a bateria manual do dono como
+  gate único no fechamento — que é exatamente o que ele quis comprar ao não
+  fatiar.
 - **Flake da suíte sob carga**: 2193/2194, a falha **muda de arquivo entre
   execuções** (timeout de 5 s em spawn de PTY). Isolados, 46/46 verdes. Não
   tratar como regressão sem isolar antes.
