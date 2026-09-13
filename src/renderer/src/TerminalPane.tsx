@@ -75,6 +75,13 @@ export interface TerminalPaneProps {
    * (comportamento de hoje). Fixo por aba, mesmo espírito de `args`/`cwd`.
    */
   providerId?: string;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado em andamento
+   * nesta aba (`accounts:beginLogin`); `undefined` = aba normal (comportamento
+   * de hoje). Fixo por aba, mesmo espírito de `providerId`/`cwd`: só lido no
+   * spawn inicial, nunca muda no meio da sessão viva.
+   */
+  accountLoginId?: string;
   /** Ação real de fechar a aba na barra de abas (T010): App.tsx remove a aba do array (unmount cuida do teardown do PTY). */
   onCloseTab?: () => void;
   /**
@@ -192,6 +199,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     cwd,
     args,
     providerId,
+    accountLoginId,
     onCloseTab,
     onStateChange,
     onAliveChange,
@@ -321,7 +329,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     const requestEpoch = mountEpochRef.current;
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args, providerId })
+      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args, providerId, accountLoginId })
       .then((result) => {
         if (requestEpoch !== mountEpochRef.current) {
           // Geração já descartada (StrictMode double-invoke em dev, ou a aba
@@ -429,7 +437,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         term.write(`\r\n\x1b[31mFalha ao iniciar o terminal: ${message}\x1b[0m\r\n`);
         setStatus({ kind: 'ended', info: { exitCode: -1 } });
       });
-  }, [cwd, sessionType, args, providerId]);
+  }, [cwd, sessionType, args, providerId, accountLoginId]);
 
   useEffect(() => {
     const container = containerRef.current;

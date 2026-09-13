@@ -164,6 +164,13 @@ interface TabState {
    */
   providerId?: string;
   /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado em andamento
+   * nesta aba (`accounts:beginLogin`); `undefined` = aba normal (comportamento
+   * de hoje). Fixo por aba, mesmo espírito de `providerId`: passado ao
+   * `pty:create` pelo TerminalPane, nunca muda no meio da sessão viva.
+   */
+  accountLoginId?: string;
+  /**
    * T404/T408 — id da sessão do Claude desta aba (o mesmo que nomeia o
    * `.jsonl`), devolvido por `pty.create` e levantado pelo TerminalPane. É a
    * chave de persistência do nome (CA-6). `undefined` em aba `shell` e antes
@@ -620,6 +627,32 @@ export function App(): React.JSX.Element {
    */
   const closeTabImmediatelyRef = useRef(closeTabImmediately);
   closeTabImmediatelyRef.current = closeTabImmediately;
+
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — o painel iniciou um login
+   * isolado: abre a aba `claude` cru no diretório efêmero do login (o main
+   * resolve `cwd`/`CLAUDE_CONFIG_DIR` pelo `accountLoginId`, ver
+   * `pty:create`). Sem `cwd` nem `launchArgs` de propósito — o main escolhe
+   * o diretório, esta aba não é uma sessão de projeto.
+   */
+  const handleStartLogin = (loginId: string, label: string): void => {
+    addTab({ name: `Login · ${label}`, pinned: false, sessionType: 'claude', accountLoginId: loginId });
+  };
+
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — o login isolado concluiu
+   * (added/replaced/cancelled/failed): o main já matou o PTY sozinho (o
+   * colhedor mata a aba antes de emitir o status), então só falta fechar a
+   * aba na UI — sem confirmação (não há processo vivo esperando resposta).
+   * `tabsRef` (não `tabs`): o `AccountsPanel` guarda esta função numa ref
+   * própria (assinatura de `onLoginChanged` montada uma vez, mount-only), e
+   * ler `tabs` do escopo do render aqui congelaria a lista no momento em que
+   * aquela ref foi criada.
+   */
+  const handleLoginEnded = (loginId: string): void => {
+    const tab = tabsRef.current.find((candidate) => candidate.accountLoginId === loginId);
+    if (tab) closeTabImmediatelyRef.current(tab.id);
+  };
 
   // T010 — FR-006: "se a sessão estiver ativa (processo vivo), pede
   // confirmação" — senão fecha direto (ex.: aba já em 'ended'/'claude-not-found').
@@ -1847,7 +1880,7 @@ export function App(): React.JSX.Element {
             (accounts.mod = null) quando não há mod conectado — mesmo
             comportamento de sempre, só que sem o dropdown de perfis ao
             lado. */}
-        <AccountsPanel onViewChange={handleAccountsViewChange} />
+        <AccountsPanel onViewChange={handleAccountsViewChange} onStartLogin={handleStartLogin} onLoginEnded={handleLoginEnded} />
         {/* T1321 (011-contas-e-provedores, etapa 3) — gerenciamento do
             registry de providers classe A (criar/editar/remover, gravar
             segredo write-only). Nasce inerte (registry vazio, C14/D6) — o
@@ -2157,6 +2190,7 @@ export function App(): React.JSX.Element {
                   cwd={tab.cwd}
                   args={tab.launchArgs}
                   providerId={tab.providerId}
+                  accountLoginId={tab.accountLoginId}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}
                   onAccountResolved={(account) => handleAccountResolved(tab.id, account)}
