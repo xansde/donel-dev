@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { DevModeBoardConfig } from '../shared/devMode';
@@ -171,6 +171,10 @@ import { applyAccountSwitch, createSystemClaudeStateIoDeps } from './accounts/cl
 import { createLocalMod } from './accounts/mods/local-mod';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
 import { createSystemVaultIoDeps, decryptVaultEntry, writeVaultEntry, type VaultLike } from './accounts/vault';
+// 011-contas-e-provedores, etapa 3, Fase 1 — faxina do cofre no boot
+// (plan-etapa-3.md §4.4): remove entrada de conta órfã + `seazone:session`,
+// nunca `provider:*`.
+import { reconcileAccountsVault } from './accounts/vault-reconciliation';
 // 011-contas-e-provedores (etapa 2) — assistente de migração de perfis →
 // cofre (T1214). Temporário: existe enquanto houver `~/.claude-profiles`.
 import { archiveProfiles, createSystemArchiveIoDeps } from './accounts/migration/archive-profiles';
@@ -1817,6 +1821,23 @@ void app.whenReady().then(async () => {
   // `null` = inerte, C2 — comportamento de hoje intocado). C5: busy-tracking
   // via API pública do semáforo, sem alterar session-semaphore-manager.ts.
   accountsVaultPath = join(app.getPath('userData'), 'accounts-vault.json');
+
+  // 011-contas-e-provedores, etapa 3, Fase 1 — faxina do cofre (plan-etapa-3.md
+  // §4.4), ANTES do 1º `applyAccountsEngineConfig()` abaixo. Nunca derruba o
+  // boot: falha aqui vira log e o app segue com o cofre como estava. Só
+  // entrada de conta órfã + `seazone:session` — `provider:*` nunca é tocado
+  // (regra dura de `planVaultReconciliation`).
+  try {
+    const removed = reconcileAccountsVault(accountsVaultPath, accountsVaultIo, appConfig.accounts);
+    if (removed.length > 0) {
+      console.info(`[donel-dev] faxina do cofre de contas removeu ${removed.length} entrada(s) órfã(s):`, removed);
+      const maintenanceLogPath = join(app.getPath('userData'), 'accounts-maintenance.log');
+      appendFileSync(maintenanceLogPath, `${JSON.stringify({ at: new Date().toISOString(), event: 'vault-reconciled', removed })}\n`, 'utf8');
+    }
+  } catch (error) {
+    console.error('[donel-dev] faxina do cofre de contas falhou (boot segue normalmente):', error);
+  }
+
   semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
     if (update.state === 'working') {
       accountsBusyPtyIds.add(update.ptyId);

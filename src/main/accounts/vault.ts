@@ -162,3 +162,27 @@ export function deleteVaultEntry(filePath: string, io: VaultIoDeps, id: string):
   delete entries[id];
   writeVaultFile(filePath, { version: 1, entries }, io);
 }
+
+// 011-contas-e-provedores, etapa 3, Fase 1 — base da faxina do cofre no boot
+// (vault-reconciliation.ts). `listVaultKeys` só devolve ids (opacos) — nunca
+// o valor cifrado nem decifrado.
+export function listVaultKeys(filePath: string, io: VaultIoDeps): string[] {
+  return Object.keys(readVaultFile(filePath, io).entries);
+}
+
+/**
+ * Remove várias entradas numa ÚNICA escrita atômica — devolve as que de fato
+ * existiam (e foram removidas). Sem escrita nenhuma se nenhum `id` estiver
+ * presente (a faxina de boot não deve reescrever o arquivo à toa quando não
+ * há nada a limpar).
+ */
+export function deleteVaultEntries(filePath: string, io: VaultIoDeps, ids: readonly string[]): readonly string[] {
+  const current = readVaultFile(filePath, io);
+  const removed = ids.filter((id) => id in current.entries);
+  if (removed.length === 0) return [];
+
+  const entries = { ...current.entries };
+  for (const id of removed) delete entries[id];
+  writeVaultFile(filePath, { version: 1, entries }, io);
+  return removed;
+}

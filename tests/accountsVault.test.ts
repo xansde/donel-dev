@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   decryptVaultEntry,
+  deleteVaultEntries,
   deleteVaultEntry,
+  listVaultKeys,
   readVaultFile,
   writeVaultEntry,
   type SafeStorageLike,
@@ -143,6 +145,67 @@ describe('deleteVaultEntry', () => {
 
     expect(decryptVaultEntry(FILE_PATH, safeStorage, io, 'account-1')).toBeNull();
     expect(decryptVaultEntry(FILE_PATH, safeStorage, io, 'account-2')).toBe('token-2');
+  });
+});
+
+// 011-contas-e-provedores, etapa 3, Fase 1 — base para a faxina do cofre no
+// boot (vault-reconciliation.ts): listar os ids (opacos, nunca o valor) e
+// apagar vários numa escrita só.
+describe('listVaultKeys', () => {
+  it('arquivo ausente devolve lista vazia', () => {
+    const { io } = makeMockIo();
+    expect(listVaultKeys(FILE_PATH, io)).toEqual([]);
+  });
+
+  it('lista os ids das entradas, sem os valores', () => {
+    const { io } = makeMockIo();
+    const safeStorage = makeFakeSafeStorage(true);
+    writeVaultEntry(FILE_PATH, safeStorage, io, 'account-1', 'token-1');
+    writeVaultEntry(FILE_PATH, safeStorage, io, 'account-2', 'token-2');
+
+    expect(listVaultKeys(FILE_PATH, io).sort()).toEqual(['account-1', 'account-2']);
+  });
+});
+
+describe('deleteVaultEntries', () => {
+  it('remove só as entradas pedidas que existem, preserva as demais, numa escrita só', () => {
+    const { io, calls } = makeMockIo();
+    const safeStorage = makeFakeSafeStorage(true);
+    writeVaultEntry(FILE_PATH, safeStorage, io, 'account-1', 'token-1');
+    writeVaultEntry(FILE_PATH, safeStorage, io, 'account-2', 'token-2');
+    writeVaultEntry(FILE_PATH, safeStorage, io, 'account-3', 'token-3');
+    const writesBefore = calls.filter((c) => c.startsWith('write:')).length;
+
+    const removed = deleteVaultEntries(FILE_PATH, io, ['account-1', 'account-3', 'nunca-existiu']);
+
+    expect([...removed].sort()).toEqual(['account-1', 'account-3']);
+    expect(decryptVaultEntry(FILE_PATH, safeStorage, io, 'account-1')).toBeNull();
+    expect(decryptVaultEntry(FILE_PATH, safeStorage, io, 'account-2')).toBe('token-2');
+    expect(decryptVaultEntry(FILE_PATH, safeStorage, io, 'account-3')).toBeNull();
+    // uma única escrita nova (a remoção conjunta), não uma por id.
+    expect(calls.filter((c) => c.startsWith('write:')).length).toBe(writesBefore + 1);
+  });
+
+  it('nenhum id existe -> devolve [] sem escrever no arquivo', () => {
+    const { io, calls } = makeMockIo();
+    const safeStorage = makeFakeSafeStorage(true);
+    writeVaultEntry(FILE_PATH, safeStorage, io, 'account-1', 'token-1');
+    const writesBefore = calls.filter((c) => c.startsWith('write:')).length;
+
+    const removed = deleteVaultEntries(FILE_PATH, io, ['nunca-existiu']);
+
+    expect(removed).toEqual([]);
+    expect(calls.filter((c) => c.startsWith('write:')).length).toBe(writesBefore);
+  });
+
+  it('lista vazia de ids -> devolve [] sem escrever', () => {
+    const { io, calls } = makeMockIo();
+    const safeStorage = makeFakeSafeStorage(true);
+    writeVaultEntry(FILE_PATH, safeStorage, io, 'account-1', 'token-1');
+    const writesBefore = calls.filter((c) => c.startsWith('write:')).length;
+
+    expect(deleteVaultEntries(FILE_PATH, io, [])).toEqual([]);
+    expect(calls.filter((c) => c.startsWith('write:')).length).toBe(writesBefore);
   });
 });
 
