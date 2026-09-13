@@ -173,6 +173,8 @@ import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { applyAccountSwitch, createSystemClaudeStateIoDeps } from './accounts/claude-state';
 import { createLocalMod } from './accounts/mods/local-mod';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
+// 011-contas-e-provedores, etapa 3, Fase 1 (F2) — valida o par colado à mão (fallback do "conectar conta"; login isolado é a Fase 1.2).
+import { buildPastedPair } from './accounts/pasted-pair';
 import { createSystemVaultIoDeps, decryptVaultEntry, deleteVaultEntries, writeVaultEntry, type VaultLike } from './accounts/vault';
 // 011-contas-e-provedores, etapa 3, Fase 1 — faxina do cofre no boot
 // (plan-etapa-3.md §4.4): remove entrada de conta órfã + `seazone:session`,
@@ -1622,14 +1624,21 @@ function registerAccountsIpcHandlers(): void {
       if (writeResult.kind !== 'ok') return { kind: 'failed', reason: 'vault-unavailable' };
       appConfig = { ...appConfig, accounts: { ...appConfig.accounts, mod: 'seazone', seazone: { baseUrl: input.baseUrl.trim() } } };
     } else {
-      if (!input.label?.trim() || !input.accessToken?.trim() || !input.refreshToken?.trim()) return { kind: 'failed', reason: 'invalid-input' };
+      const label = input.label?.trim();
+      if (!label) return { kind: 'failed', reason: 'invalid-input' };
+      // F2 (011-contas-e-provedores, etapa 3, Fase 1) — `buildPastedPair`
+      // decide o `expiresAt` final: ausente/null vira 0 (vencido de
+      // propósito, o mod renova no 1º switch) em vez do prazo chutado que o
+      // renderer mandava antes.
+      const built = buildPastedPair(input);
+      if (built.kind !== 'ok') return { kind: 'failed', reason: 'invalid-input' };
+
       const id = randomUUID();
-      const pair = { accessToken: input.accessToken, refreshToken: input.refreshToken, expiresAt: input.expiresAt, scopes: [] as readonly string[] };
-      const writeResult = writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, id, JSON.stringify(pair));
+      const writeResult = writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, id, JSON.stringify(built.pair));
       if (writeResult.kind !== 'ok') return { kind: 'failed', reason: 'vault-unavailable' };
       appConfig = {
         ...appConfig,
-        accounts: { ...appConfig.accounts, mod: 'local', localAccounts: [...appConfig.accounts.localAccounts, { id, label: input.label.trim(), plan: null }] },
+        accounts: { ...appConfig.accounts, mod: 'local', localAccounts: [...appConfig.accounts.localAccounts, { id, label, plan: null }] },
       };
     }
 

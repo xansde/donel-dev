@@ -102,7 +102,22 @@ export interface AccountsViewDto {
  */
 export type ConnectModInput =
   | { readonly mod: 'seazone'; readonly baseUrl: string; readonly sessionRefreshToken: string }
-  | { readonly mod: 'local'; readonly label: string; readonly accessToken: string; readonly refreshToken: string; readonly expiresAt: number };
+  | {
+      readonly mod: 'local';
+      readonly label: string;
+      readonly accessToken: string;
+      readonly refreshToken: string;
+      /**
+       * F2 (011-contas-e-provedores, etapa 3, Fase 1) — `undefined`/`null` =
+       * validade DESCONHECIDA (ex.: token colado à mão, sem o `expiresAt`
+       * real do arquivo de credenciais) — tratada como VENCIDA de propósito:
+       * o mod local renova no primeiro switch (`local-mod.ts`, D4) em vez de
+       * confiar num prazo chutado pelo renderer. Ver `buildPastedPair`
+       * (main/accounts/pasted-pair.ts), que é quem de fato decide o valor
+       * final gravado no cofre.
+       */
+      readonly expiresAt?: number | null;
+    };
 
 export type ConnectModOutcome =
   | { readonly kind: 'connected'; readonly config: AccountsConfigDto }
