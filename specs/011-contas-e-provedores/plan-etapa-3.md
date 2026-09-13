@@ -42,7 +42,7 @@ registra uma conta por perfil —, mas a **UI perdeu o gesto**:
 O modelo novo é melhor que os perfis (config única, MCP não duplica, troca sem
 reiniciar sessão). O que falta é devolver o gesto que os perfis tinham.
 
-## 3. Os cinco furos entre hoje e o pedido
+## 3. Os furos entre hoje e o pedido (F1–F5 do planejamento, F6 da execução)
 
 | # | Furo | Evidência |
 |---|---|---|
@@ -51,6 +51,7 @@ reiniciar sessão). O que falta é devolver o gesto que os perfis tinham.
 | **F3** | **A promessa central nunca foi provada com CLI real**: "trocar de conta sem reiniciar sessão" está `[ ]` no `e2e.md` §3. Os smokes usam mod falso; a adoção sem reiniciar é hipótese de research (C5), não fato medido | `e2e.md` §3 |
 | **F4** | Depois da troca, **a tela mente**: o rótulo e a cota da aba são da conta de **nascimento** (`PtyCreateResult.account`, imutável pela vida da aba — `sessionAccountLabel.ts`), não da vigente | `index.ts:824`, `App.tsx:1755` |
 | **F5** | A troca é **global** e isso não está dito em lugar nenhum da UI: atinge todas as sessões vivas na próxima chamada delas. 4 abas **não** podem rodar em 4 contas ao mesmo tempo | `research.md` C5 |
+| **F6** | *(achado na execução da Fase 0, 13/09)* Conta **importada com o mod já ativo não entra no motor vivo**: o mod é resolvido só no construtor do motor e `updateConfig` só troca a config. As 4 contas foram para o `config.json` e o cofre, mas o painel mostrou só a primeira até reiniciar o app. Qualquer "Adicionar conta" da Fase 1 que siga o mesmo caminho herda o bug | `account-engine.ts:75`, `account-engine.ts:102`, `index.ts:1690` |
 
 ## 4. Fases
 
@@ -62,17 +63,31 @@ dono), não pelo tamanho do diff.
 Hoje mesmo, usando só o que existe. Os 4 logins não são desperdiçados: eles são
 o cadastro real das 4 contas do pool.
 
-Para cada conta, com ela logada no CLI (`/logout` → `/login` entre uma e outra):
+Para cada conta, um **login isolado** num PowerShell fora do Donel — a pasta do
+perfil é o próprio `CLAUDE_CONFIG_DIR` do login, e o `~/.claude` não é tocado:
 
-```bash
-slug=conta-a   # conta-b, conta-c, conta-d
-mkdir -p ~/.claude-profiles/$slug
-cp ~/.claude/.credentials.json ~/.claude-profiles/$slug/.credentials.json
-printf '{"name":"Pessoal"}' > ~/.claude-profiles/$slug/.donel-profile.json   # rótulo no painel
+```powershell
+$env:CLAUDE_CONFIG_DIR = "$env:USERPROFILE\.claude-profiles\conta-a"; New-Item -ItemType Directory -Force $env:CLAUDE_CONFIG_DIR | Out-Null; claude
+# onboarding → login com a conta → /exit → fechar a janela. Repetir com conta-b, conta-c, conta-d.
 ```
 
-Depois, no **Donel Dev Alfa** → botão **Contas** → **"Migrar perfis antigos"** →
-**Importar** nas 4 linhas (uma por clique, é o design D10). Isso grava os 4
+Sem `.donel-profile.json`, o rótulo no painel cai no slug ("Conta A").
+
+> **Corrigido na execução (13/09).** A versão anterior mandava `/logout` →
+> `/login` no `~/.claude` e copiar o `.credentials.json`. Não serve: (1) o
+> `/logout` **revoga no servidor** o refresh token que acabou de ser copiado
+> (`research-etapa-3-cli.md` A3); (2) atinge as sessões vivas, que dividem o
+> mesmo `~/.claude`; (3) a primeira troca depois da importação **não captura** o
+> par do `~/.claude` — `activeAccountId` nasce `null` e o motor só captura com
+> `fromId` (`account-engine.ts`, `switchTo`) —, então uma cópia que divida a
+> família de token com o CLI morre na primeira renovação. Com login isolado,
+> cada conta tem família própria. Condição: a conta logada hoje no `~/.claude`
+> precisa ser uma das 4, senão a primeira troca descarta o login dela da máquina.
+
+Depois, no Donel Dev → botão **Contas** → **"Migrar perfis antigos"** →
+**Importar** nas 4 linhas (uma por clique, é o design D10). Alfa ou Beta: os dois
+0.3.2 instalados têm o código de contas idêntico (bundles comparados em 13/09),
+mas **um canal aberto por vez**, porque dividem o `config.json`. Isso grava os 4
 pares no cofre com o `expiresAt` **real** do arquivo, registra as 4 em
 `localAccounts` e liga o mod local sozinho (`index.ts:1676`). Fechar com
 **Arquivar** (renomeia a pasta; já trata a colisão com o `.old` existente).
@@ -80,10 +95,28 @@ pares no cofre com o `expiresAt` **real** do arquivo, registra as 4 em
 **Gate — o teste que decide o resto do plano** (`e2e.md` §3, em aberto desde
 04/08):
 
-1. abrir uma sessão `claude` de verdade e rodar `/status` (anotar a conta);
-2. **sem fechar a aba**, trocar de conta pelo painel;
-3. mandar uma mensagem nova na **mesma** aba e rodar `/status` de novo;
-4. confirmar que um MCP configurado continua respondendo nessa sessão.
+1. abrir uma sessão `claude` de verdade, mandar uma mensagem e rodar `/usage` e
+   `/status` (anotar os números e a conta);
+2. **sem fechar a aba**, trocar pelo painel para uma conta com carga
+   **diferente** da atual — é o que deixa o `/usage` distinguir as duas;
+3. mandar uma mensagem nova na **mesma** aba e rodar `/usage` e `/status` de
+   novo. A evidência é o `/usage`, que usa o token em memória; o `/status` lê a
+   config vigiada e pode divergir (`research-etapa-3-cli.md` A4);
+4. abrir uma aba **nova** e rodar `/usage` — a troca vale para sessão nova?;
+5. confirmar que um MCP configurado continua respondendo na aba do passo 1.
+
+Previsão pelo código (`research-etapa-3-cli.md` A1): o passo 3 mostra a conta
+**antiga** — a sessão viva só adota a nova na próxima renovação do token (≤5 min
+do vencimento) ou num 401 —, e o passo 4 mostra a nova.
+
+**Resultado (13/09/2026): PASSOU.** A previsão acima falhou: a mesma aba passou
+para a conta nova já na mensagem seguinte (`/usage` com outra janela semanal e 1
+miss do prompt cache), a aba aberta depois nasceu na conta nova e o MCP seguiu
+respondendo. Efeito colateral a conhecer: o `/status` do CLI mostra "Claude API
+account" até refazer o fetch do perfil, alguns minutos depois — não é algo que o
+Donel conserte, mas a Fase 2 não pode usá-lo como verdade. Veredito em `e2e.md`
+§3; leitura do código em `research-etapa-3-cli.md`. Seguem as fases 1 e 2 como
+escritas, com o F6 (§3) dentro da Fase 1.
 
 - **Passou** → o desenho está certo; seguem as fases 1 e 2 como escritas.
 - **Reprovou** (o CLI cacheia o par em memória por processo) → o modelo de
