@@ -111,7 +111,7 @@ import {
   TAB_CHANNELS,
   TRANSCRIPT_CHANNELS,
 } from '../shared';
-import { createSystemResolveDeps, resolveClaudeExecutable } from './claude-executable';
+import { createSystemResolveDeps, resolveClaudeExecutable, type ResolveClaudeDeps } from './claude-executable';
 import {
   clearSessionName,
   CONFIG_FILE_NAME,
@@ -228,8 +228,28 @@ import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearan
 // notificação, substituindo os JSONs avulsos que T007/T014 usavam.
 
 const ptyManager = new PtyManager();
+/**
+ * SEAM DE TESTE (011-contas-e-provedores, etapa 3, Fase 1, Bloco 2) — mesmo
+ * espírito de `DONEL_ACCOUNTS_FAKE_MOD_FIXTURE` (mais abaixo).
+ * `resolveClaudeExecutable` prefere QUALQUER `claude.exe` do PATH a um shim
+ * (`pickBestMatch`, claude-executable.ts) e cai no fallback
+ * `~/.local/bin/claude.exe` — só pôr um `claude.cmd` falso na frente do PATH
+ * não bastaria pra controlar qual `claude` o smoke abre (um `.exe` real, ou
+ * o próprio fallback, venceria e abriria o CLI de verdade, violando a regra
+ * dura de nunca abrir sessão `claude` real em teste). Quando
+ * `DONEL_CLAUDE_EXECUTABLE_FIXTURE` aponta pra um caminho, `which` devolve
+ * só ELE — nenhuma outra resolução de PATH entra na jogada. Fora de teste a
+ * variável não existe -> resolução real (`createSystemResolveDeps`).
+ */
+function createClaudeResolveDeps(): ResolveClaudeDeps {
+  const real = createSystemResolveDeps();
+  const fixturePath = process.env.DONEL_CLAUDE_EXECUTABLE_FIXTURE;
+  if (!fixturePath) return real;
+  return { ...real, which: (command: string) => (command === 'claude' ? [fixturePath] : real.which(command)) };
+}
+
 // Resolvido uma vez (não muda durante a vida do processo) — plan.md ponto 2.
-const claudeResolveDeps = createSystemResolveDeps();
+const claudeResolveDeps = createClaudeResolveDeps();
 // Idem para o scan de projetos (T007) — mesmo padrão do claude-executable.
 const projectScanDeps = createSystemScanDeps();
 // CA-30 (009-modo-dev-v3, lote 9) — idem para a criação de projeto novo.
@@ -539,16 +559,43 @@ function createFixtureAccountMod(fixturePath: string): AccountMod {
   const raw = JSON.parse(readFileSync(fixturePath, 'utf8')) as {
     accounts: readonly { id: string; label: string; plan: string | null; available: boolean; load: import('../shared/accounts').AccountLoad | null }[];
     pairs: Record<string, import('./accounts/account-mod').CredentialPair>;
+    /**
+     * 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — quando `true`,
+     * `listAccounts` acrescenta as contas JÁ CONFIGURADAS
+     * (`appConfig.accounts.localAccounts`) que não estão nesta fixture — é
+     * o caso da conta que o COLHEDOR DO LOGIN ISOLADO grava de verdade em
+     * `localAccounts` (fora desta fixture) — e `switchTo` de uma delas
+     * devolve um par falso FIXO (nunca abre rede/sessão real). Ausente/
+     * `false`: comportamento idêntico ao de sempre, só as contas da fixture
+     * (os smokes existentes contam contas exatas e não podem ganhar uma a
+     * mais por engano).
+     */
+    includeConfiguredLocalAccounts?: boolean;
+  };
+  const fixtureIds = new Set(raw.accounts.map((account) => account.id));
+  const CONFIGURED_ACCOUNT_FAKE_PAIR: import('./accounts/account-mod').CredentialPair = {
+    accessToken: 'fixture-access-configured',
+    refreshToken: 'fixture-refresh-configured',
+    expiresAt: 4102444800000,
+    scopes: ['user:inference'],
   };
   return {
     id: 'local',
     async listAccounts() {
-      return { kind: 'ok', accounts: raw.accounts.map((account) => ({ ...account, active: false })) };
+      const configuredExtra = raw.includeConfiguredLocalAccounts
+        ? appConfig.accounts.localAccounts
+            .filter((account) => !fixtureIds.has(account.id))
+            .map((account) => ({ id: account.id, label: account.label, plan: account.plan, available: true, load: null, active: false }))
+        : [];
+      return { kind: 'ok', accounts: [...raw.accounts.map((account) => ({ ...account, active: false })), ...configuredExtra] };
     },
     async switchTo(id) {
       const pair = raw.pairs[id];
-      if (!pair) return { kind: 'failed', reason: 'unknown-account' };
-      return { kind: 'ok', pair };
+      if (pair) return { kind: 'ok', pair };
+      if (raw.includeConfiguredLocalAccounts && appConfig.accounts.localAccounts.some((account) => account.id === id)) {
+        return { kind: 'ok', pair: CONFIGURED_ACCOUNT_FAKE_PAIR };
+      }
+      return { kind: 'failed', reason: 'unknown-account' };
     },
     async captureRotatedPair() {
       // Fixture não persiste nada — smoke só confere o efeito em claude-state.ts.
