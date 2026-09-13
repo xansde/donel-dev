@@ -130,8 +130,25 @@ Saída da fase: 4 contas cadastradas e funcionando + veredito registrado no
 
 ### Fase 1 — Devolver o cadastro (o gesto que os perfis tinham)
 
+**Ponto de partida (medido depois da Fase 0, 13/09).** O pool já tem as **4
+contas** (`Interno 1..4`, todas Max), `mod: local`, uma ativa, auto-switch
+desligado. O cofre tem **14 entradas**: as 4 contas referenciadas, **8 pares
+órfãos** (`tech-*`), `seazone:session` e **1 segredo de provider**
+(`provider:openrouter:*`). **Atenção:** o cofre é **compartilhado** com os
+providers (`provider-secrets.ts` grava no mesmo arquivo, namespace
+`provider:<id>:<ENV_KEY>`) — ele **não** é órfão.
+
+Consequência para esta fase: ela **não recadastra** as 4 contas. Recadastrar
+do zero custaria 4 logins e arriscaria contas que funcionam; a bateria prova o
+gesto numa conta só (ver o fim desta seção).
+
 1. **"Adicionar conta"** disponível com o pool já conectado — o formulário deixa
-   de depender de `mod === null`.
+   de depender de `mod === null` — e a conta adicionada **entra no motor vivo sem
+   reiniciar** (corrige o **F6**). Hoje o import e o `connectMod` chamam
+   `updateConfig`, que não reconstrói o mod local (a lista de contas é capturada
+   no construtor). Caminho mais curto: `rebuildAccountEngine()` sempre que
+   `localAccounts` mudar — ele já rearma `start()` e `startPolling()`. Teste:
+   add → list **sem reiniciar** mostra a conta nova.
 2. **Login isolado, sem copiar-colar** (mata o F2): o app cria
    `<userData>/accounts-login-<uuid>/`, abre uma aba `claude` com
    `CLAUDE_CONFIG_DIR` nesse diretório, o dono faz o `/login` oficial **dentro
@@ -141,16 +158,45 @@ Saída da fase: 4 contas cadastradas e funcionando + veredito registrado no
    (`provider-registry.ts:173`) + `resolveSessionConfigDir`
    (`providers/session-config-dir.ts:19`), usados hoje pelos providers classe A.
    Colar token continua existindo como fallback, aí **com campo de validade**.
+   Aprendido na Fase 0 e obrigatório aqui:
+   - **Nunca `/logout`** dentro da aba de login — ele **revoga no servidor** o
+     refresh token (`research-etapa-3-cli.md` A3). O fechamento da aba é pelo
+     próprio app, não por comando do CLI.
+   - O `/login` num `CLAUDE_CONFIG_DIR` vazio grava `.credentials.json` **e**
+     `.claude.json` dentro dele (A6): colher o par, **encerrar o PTY** e só então
+     apagar o diretório.
+   - Rótulo pedido **antes** de abrir a aba; o nome da conta nunca é lido do
+     `.claude.json` para exibir (LGPD). Conta **repetida** (a mesma conta logada de
+     novo) é decisão desta fase: recusar ou substituir o par da existente — sem
+     mostrar e-mail para decidir.
 3. **Remover conta** (apaga do cofre **e** da config) e **Desconectar** que não
    some com a lista em silêncio — some com ela dizendo o que vai acontecer.
-4. **Faxina** das 10 entradas órfãs do cofre (uma passada de reconciliação
-   `cofre × localAccounts` no boot, registrando o que removeu).
+   **Remover a conta ativa é bloqueado** (trocar antes): o par dela vive no
+   `~/.claude`, e sem `activeAccountId` a próxima troca não captura o par
+   rotacionado — a conta morreria.
+4. **Faxina do cofre** — reconciliação no boot, registrando o que removeu. O
+   escopo é **só entrada de conta**: id opaco não referenciado em
+   `localAccounts` (hoje, os 8 `tech-*`) e `seazone:session` (pool fora). **Nunca
+   `provider:*`** — é o segredo vivo do OpenRouter; apagá-lo quebra o provider
+   sem aviso.
 5. **"Pool Seazone" sai do seletor** (decisão (a) do dono). O mod continua no
    código, inerte, até ele mandar removê-lo de vez.
 
 Testes: vitest para o colhedor (arquivo ausente/malformado/válido), para o ciclo
-add→list→remove e para a reconciliação do cofre; smoke Playwright do fluxo de
-adicionar com mod falso. PR para `staging`, **uma** bateria manual.
+add→list→remove **sem reiniciar** (F6), para o bloqueio de remover a ativa e
+para a reconciliação do cofre (com fixture que **inclui** `provider:*` e prova
+que ele sobrevive); smoke Playwright do fluxo de adicionar com mod falso. PR
+para `staging`.
+
+**Uma bateria manual**, sem recadastrar as 4:
+1. remover uma conta **não ativa** pelo painel;
+2. adicioná-la de volta por **login isolado**, sem reiniciar o app — ela aparece
+   na lista **com carga**;
+3. trocar para ela e mandar mensagem numa sessão viva (`/usage` confirma);
+4. tentar remover a conta **ativa** — bloqueado, com a explicação;
+5. reiniciar o app: as 8 órfãs e o `seazone:session` sumiram do cofre, o
+   provider OpenRouter segue **configurado**, e o seletor não oferece mais
+   "Pool Seazone".
 
 ### Fase 2 — Verdade na tela + rodízio automático
 
