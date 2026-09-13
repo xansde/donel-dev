@@ -118,3 +118,72 @@ O que os automatizados **não** provam e só um humano confere:
       perfis continua existindo e não quebra (mesmo que o app tenha duas UIs
       de troca de conta ao mesmo tempo nesta etapa — é o esperado, a
       demolição de perfis é a etapa 2).
+
+## Etapa 3, Fase 1 — devolver o cadastro (bateria de 13/09/2026)
+
+Plano: `plan-etapa-3.md` §4, Fase 1. Branch `feature/contas-fase-1-cadastro`.
+
+Cobertura automatizada já fechada (não repetir aqui): o motor reconstrói quando
+a lista de contas muda (F6) e persiste a conta ativa que ele mesmo trocou; faxina
+do cofre com fixture que inclui `provider:*` e prova que ele sobrevive; planos de
+remover e desconectar, com o bloqueio da ativa; par colado sem validade (F2);
+colhedor do login isolado (ordem cofre → encerrar PTY → apagar diretório, conta
+repetida, aba que fecha antes do login, sobras varridas no boot); e o smoke
+`accounts-add-login`, com `claude` falso e mod falso.
+
+O que só a máquina do dono prova: o `/login` do CLI real num config dir efêmero,
+a credencial real entrando no pool vivo sem reiniciar, a troca em voo para a
+conta recadastrada e a faxina no cofre de verdade.
+
+**Pré-condições**
+
+- **Beta fechado por completo.** Alfa e Beta dividem `config.json` e cofre — um
+  canal aberto por vez. `Get-Process 'Donel Dev Beta' -ErrorAction SilentlyContinue`
+  não pode listar nada.
+- Donel Dev Alfa instalado com o build desta branch.
+- Cofre antes de abrir o Alfa — só nomes de chave, nunca valor:
+  `(Get-Content "$env:APPDATA\donel-dev\accounts-vault.json" -Raw | ConvertFrom-Json).entries.PSObject.Properties.Name`
+  Medido em 13/09, antes da fase: **14** chaves — 4 contas, 8 órfãs (dos perfis
+  `tech-*`), `seazone:session` e `provider:openrouter:*`.
+
+### 1. Faxina no primeiro boot + remover uma conta não ativa
+
+- [ ] Abrir o Alfa. O comando do cofre passa a listar **5** chaves (4 ids de
+      conta + `provider:openrouter:*`), e `%APPDATA%\donel-dev\accounts-maintenance.log`
+      tem uma linha `vault-reconciled` com as 9 removidas.
+- [ ] Contas → na linha de uma conta **não** ativa (ex.: Interno 4) → Remover →
+      Remover. A linha some e o cofre fica com **4** chaves.
+
+### 2. Readicionar por login isolado, sem reiniciar
+
+- [ ] Contas → Rótulo `Interno 4` → **Entrar com login**. O painel fecha e abre a
+      aba `Login · Interno 4`.
+- [ ] Na aba, seguir o fluxo do CLI (tema → "Claude account with subscription" →
+      navegador) com **a mesma conta** que era a Interno 4. Antes de autorizar,
+      conferir que a conta logada no claude.ai é essa — se não for, abrir a URL
+      que o CLI mostra numa janela anônima. **Nunca** digitar `/logout`.
+- [ ] Segundos depois do login, a aba fecha sozinha e o painel reabre com
+      "Conta «Interno 4» adicionada." A linha aparece **com carga**, sem
+      reiniciar o app.
+- [ ] Nenhuma pasta `accounts-login-*` em `%APPDATA%\donel-dev`; o cofre volta a
+      **5** chaves.
+
+### 3. Trocar para ela numa sessão viva
+
+- [ ] Abrir uma sessão `claude` num projeto, mandar uma mensagem e rodar `/usage`.
+- [ ] Trocar para a Interno 4 pelo painel. Na mesma aba, mandar outra mensagem e
+      rodar `/usage` de novo: janela semanal e reset são outros — é a conta nova.
+      O `/status` mostra "Claude API account" por alguns minutos e não serve de
+      evidência.
+
+### 4. Remover a conta ativa é bloqueado
+
+- [ ] Contas → Remover na linha da Interno 4 (agora ativa) → Remover. Aparece
+      "«Interno 4» é a conta em uso — troque para outra antes de removê-la…", e
+      ela continua na lista e no cofre.
+
+### 5. Reiniciar
+
+- [ ] Fechar e reabrir o Alfa: as 4 contas no painel, e a seção de adicionar não
+      oferece mais "Pool Seazone".
+- [ ] Cofre com **5** chaves; em **Provedores**, o OpenRouter segue "configurado".
