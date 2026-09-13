@@ -185,6 +185,7 @@ export type {
   DonelAccountsApi,
   LocalAccountMeta,
   ModId,
+  RemoveAccountOutcome,
   SwitchOutcome,
 } from './accounts';
 

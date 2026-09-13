@@ -59,6 +59,7 @@ import type {
   PtyCreateResult,
   PhaseArchivedPayload,
   PtyExitInfo,
+  RemoveAccountOutcome,
   ResolveCardRepoIpcInput,
   ResolveCardReposIpcInput,
   SaveProjectBindingIpcInput,
@@ -83,7 +84,6 @@ import {
   CLAUDE_NOT_FOUND_PREFIX,
   closeDiscovery,
   CONFIG_CHANNELS,
-  defaultAccountsConfig,
   DEVMODE_CHANNELS,
   focusDiscovery,
   GITHUB_CHANNELS,
@@ -165,12 +165,15 @@ import { AccountEngine } from './accounts/account-engine';
 // 011-contas-e-provedores, etapa 3, Fase 1 (F6) — dono do ciclo de vida do
 // motor: decide construir/reconstruir/atualizar via `needsEngineRebuild`.
 import { AccountEngineHost } from './accounts/account-engine-host';
+// 011-contas-e-provedores, etapa 3, Fase 1 — planos PUROS de "remover conta"
+// e "desconectar" (quais chaves o cofre perde, config final).
+import { planDisconnect, planRemoveAccount } from './accounts/account-pool';
 import type { AccountMod } from './accounts/account-mod';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { applyAccountSwitch, createSystemClaudeStateIoDeps } from './accounts/claude-state';
 import { createLocalMod } from './accounts/mods/local-mod';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
-import { createSystemVaultIoDeps, decryptVaultEntry, writeVaultEntry, type VaultLike } from './accounts/vault';
+import { createSystemVaultIoDeps, decryptVaultEntry, deleteVaultEntries, writeVaultEntry, type VaultLike } from './accounts/vault';
 // 011-contas-e-provedores, etapa 3, Fase 1 — faxina do cofre no boot
 // (plan-etapa-3.md §4.4): remove entrada de conta órfã + `seazone:session`,
 // nunca `provider:*`.
@@ -1636,12 +1639,56 @@ function registerAccountsIpcHandlers(): void {
   });
 
   ipcMain.handle(ACCOUNT_CHANNELS.disconnectMod, (): AccountsConfigDto => {
-    // Volta pro default (motor inerte, C2) — preserva só `claudeHome` (não é
-    // segredo, é preferência de onde o motor escreveria se reconectado).
-    appConfig = { ...appConfig, accounts: { ...defaultAccountsConfig(), claudeHome: appConfig.accounts.claudeHome } };
+    // 011-contas-e-provedores, etapa 3, Fase 1 — `planDisconnect` decide a
+    // config final (default, preservando só `claudeHome`) e as chaves que o
+    // cofre perde (contas locais + `seazone:session`, nunca `provider:*`).
+    // Antes, desconectar só resetava a config e deixava os pares no cofre —
+    // a origem das 8 entradas órfãs medidas em 13/09.
+    const plan = planDisconnect(appConfig.accounts);
+    appConfig = { ...appConfig, accounts: plan.config };
     persistAppConfig();
     applyAccountsEngineConfig(); // F6
+
+    if (accountsVaultPath) {
+      try {
+        deleteVaultEntries(accountsVaultPath, accountsVaultIo, plan.vaultKeys);
+      } catch (error) {
+        // Best-effort: a faxina do próximo boot (vault-reconciliation.ts) recolhe a órfã. Nunca loga conteúdo, só o erro.
+        console.error('[donel-dev] desconectar: falha ao apagar do cofre (recolhida na próxima faxina):', error);
+      }
+    }
+
     return appConfig.accounts;
+  });
+
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1 — "Remover conta" (plan-etapa-3.md
+   * §4.3). Bloqueada para a conta ATIVA (`planRemoveAccount`, account-pool.ts).
+   * Ordem: config primeiro (persist + motor + `listAccounts` quando
+   * reconstruir), cofre depois, best-effort — se a escrita no cofre falhar, a
+   * config já mudou (a UI já não lista mais a conta) e a faxina do próximo
+   * boot recolhe a entrada órfã que sobrou.
+   */
+  ipcMain.handle(ACCOUNT_CHANNELS.removeAccount, (_event, id: unknown): RemoveAccountOutcome => {
+    if (typeof id !== 'string' || !id) return { kind: 'failed', reason: 'unknown-account' };
+
+    const plan = planRemoveAccount(appConfig.accounts, id);
+    if (plan.kind === 'blocked') return { kind: 'blocked', reason: 'active-account' };
+    if (plan.kind === 'unknown-account') return { kind: 'failed', reason: 'unknown-account' };
+
+    appConfig = { ...appConfig, accounts: plan.config };
+    persistAppConfig();
+    applyAccountsEngineConfig();
+
+    if (accountsVaultPath) {
+      try {
+        deleteVaultEntries(accountsVaultPath, accountsVaultIo, plan.vaultKeys);
+      } catch (error) {
+        console.error('[donel-dev] remover conta: falha ao apagar do cofre (recolhida na próxima faxina):', error);
+      }
+    }
+
+    return { kind: 'removed', config: appConfig.accounts };
   });
 }
 

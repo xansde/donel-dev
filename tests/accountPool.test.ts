@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { needsEngineRebuild } from '../src/main/accounts/account-pool';
+import { needsEngineRebuild, planDisconnect, planRemoveAccount } from '../src/main/accounts/account-pool';
 import type { AccountsConfig, LocalAccountMeta } from '../src/shared/accounts';
 import { defaultAccountsConfig } from '../src/shared/accounts';
 
@@ -96,5 +96,58 @@ describe('needsEngineRebuild — tabela', () => {
   it('nada mudou -> false', () => {
     const config = baseConfig();
     expect(needsEngineRebuild(config, config)).toBe(false);
+  });
+});
+
+// 011-contas-e-provedores, etapa 3, Fase 1 (bloco "Remover conta") —
+// `planRemoveAccount`/`planDisconnect` são PUROS: só calculam a config final
+// + as chaves que o cofre deve perder; quem chama (index.ts) aplica a config
+// e apaga do cofre.
+describe('planRemoveAccount', () => {
+  it('remove conta NÃO ativa — tira da lista, preserva a ativa, agenda só a chave dela no cofre', () => {
+    const config = baseConfig({ activeAccountId: 'a' });
+    const result = planRemoveAccount(config, 'b');
+    if (result.kind !== 'remove') throw new Error(`esperava 'remove', veio ${result.kind}`);
+    expect(result.config.localAccounts.map((account) => account.id)).toEqual(['a']);
+    expect(result.config.activeAccountId).toBe('a');
+    expect(result.vaultKeys).toEqual(['b']);
+  });
+
+  it('remover a conta ATIVA é bloqueado — o par dela vive no ~/.claude; sem activeAccountId a próxima troca não captura o par rotacionado', () => {
+    const config = baseConfig({ activeAccountId: 'a' });
+    const result = planRemoveAccount(config, 'a');
+    expect(result).toEqual({ kind: 'blocked', reason: 'active-account' });
+  });
+
+  it('id desconhecido -> unknown-account', () => {
+    const config = baseConfig({ activeAccountId: 'a' });
+    const result = planRemoveAccount(config, 'nunca-existiu');
+    expect(result).toEqual({ kind: 'unknown-account' });
+  });
+
+  it('activeAccountId null -> remover uma conta cadastrada é permitido (nenhuma é a ativa)', () => {
+    const config = baseConfig({ activeAccountId: null });
+    const result = planRemoveAccount(config, 'a');
+    if (result.kind !== 'remove') throw new Error(`esperava 'remove', veio ${result.kind}`);
+    expect(result.config.localAccounts.map((account) => account.id)).toEqual(['b']);
+    expect(result.config.activeAccountId).toBeNull();
+  });
+});
+
+describe('planDisconnect', () => {
+  it('volta ao default preservando claudeHome, e agenda as chaves das contas locais + seazone:session — nunca provider:*', () => {
+    const config = baseConfig({ activeAccountId: 'a', claudeHome: 'C:\\fake\\.claude' });
+
+    const plan = planDisconnect(config);
+
+    expect(plan.config).toEqual({ ...defaultAccountsConfig(), claudeHome: 'C:\\fake\\.claude' });
+    expect([...plan.vaultKeys].sort()).toEqual(['a', 'b', 'seazone:session'].sort());
+    expect(plan.vaultKeys.some((key) => key.startsWith('provider:'))).toBe(false);
+  });
+
+  it('sem contas locais -> agenda só seazone:session', () => {
+    const plan = planDisconnect(defaultAccountsConfig());
+    expect(plan.vaultKeys).toEqual(['seazone:session']);
+    expect(plan.config).toEqual(defaultAccountsConfig());
   });
 });

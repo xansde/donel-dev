@@ -33,6 +33,7 @@ import type {
   PtyCreateOptions,
   PtyCreateResult,
   PtyExitInfo,
+  RemoveAccountOutcome,
   ResolveCardRepoIpcInput,
   ResolveCardReposIpcInput,
   SaveProjectBindingIpcInput,
@@ -208,6 +209,10 @@ const donelApi: DonelApi = {
     connectMod: (input: ConnectModInput) => ipcRenderer.invoke(ACCOUNT_CHANNELS.connectMod, input) as Promise<ConnectModOutcome>,
 
     disconnectMod: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.disconnectMod) as Promise<AccountsConfigDto>,
+
+    // 011-contas-e-provedores, etapa 3, Fase 1 — remove uma conta cadastrada
+    // (bloqueado para a ATIVA; ver `RemoveAccountOutcome`).
+    removeAccount: (id: AccountId) => ipcRenderer.invoke(ACCOUNT_CHANNELS.removeAccount, id) as Promise<RemoveAccountOutcome>,
 
     // G5 — o canal cujo segundo assinante silencioso já custou ~80ms no boot
     // (T1232/011, etapa 2): `App.tsx` abria a própria assinatura além da que

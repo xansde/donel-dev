@@ -114,6 +114,12 @@ export type SwitchOutcome =
   | { readonly kind: 'deferred'; readonly reason: 'session-busy' }
   | { readonly kind: 'failed'; readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'io' };
 
+/** 011-contas-e-provedores, etapa 3, Fase 1 — "Remover conta" (plan-etapa-3.md §4.3). Bloqueada quando `id` é a conta ATIVA (ver `planRemoveAccount`, account-pool.ts). */
+export type RemoveAccountOutcome =
+  | { readonly kind: 'removed'; readonly config: AccountsConfigDto }
+  | { readonly kind: 'blocked'; readonly reason: 'active-account' }
+  | { readonly kind: 'failed'; readonly reason: 'unknown-account' | 'io' };
+
 export const ACCOUNT_CHANNELS = {
   list: 'accounts:list',
   switch: 'accounts:switch',
@@ -121,6 +127,7 @@ export const ACCOUNT_CHANNELS = {
   setConfig: 'accounts:setConfig',
   connectMod: 'accounts:connectMod',
   disconnectMod: 'accounts:disconnectMod',
+  removeAccount: 'accounts:removeAccount',
   changed: 'accounts:changed',
 } as const;
 
@@ -132,6 +139,8 @@ export interface DonelAccountsApi {
   setConfig(patch: Partial<AccountsConfigDto>): Promise<AccountsConfigDto>;
   connectMod(input: ConnectModInput): Promise<ConnectModOutcome>;
   disconnectMod(): Promise<AccountsConfigDto>;
+  /** 011-contas-e-provedores, etapa 3, Fase 1 — remove uma conta cadastrada (bloqueado para a ATIVA, ver `RemoveAccountOutcome`). */
+  removeAccount(id: AccountId): Promise<RemoveAccountOutcome>;
   /** Retorna função de unsubscribe (mesmo padrão de `pty.onData`). */
   onChanged(listener: (view: AccountsViewDto) => void): () => void;
 }
