@@ -9,8 +9,8 @@
 
 | # | Pergunta | Achado | Confiança |
 |---|---|---|---|
-| A1 | O processo relê `.credentials.json`? | Não a cada request: o par fica em cache por processo. Só relê o disco (a) num **401** — adota o token do disco se for outro e não vencer em ≤5 min (`tengu_oauth_401_recovered_from_disk`); (b) ao **renovar** o próprio token (≤5 min do `expiresAt`) — a gravação é compare-and-swap pelo `refreshToken`: se o disco mudou, descarta o que renovou e adota o disco (`tengu_oauth_refresh_compromised_cas_adopted_sibling`); (c) em login/logout | Alta — (a) e (b) conferidos no binário |
-| A2 | Há checagem por mtime do arquivo? | Existe fingerprint `dev:ino:size:mtime`, mas só no backend novo de secure storage, atrás de flag; o backend `plaintext` (o do Windows) não o usa | Média-baixa |
+| A1 | O processo relê `.credentials.json`? | **Corrigido depois do gate:** o par fica em cache por processo, mas antes de cada request autenticada o preflight (`wm`) chama `_Ee`, que confere o arquivo; se ele mudou, o cache é limpo e a próxima leitura pega o disco. Os caminhos de **401** (`tengu_oauth_401_recovered_from_disk`) e de **renovação** com compare-and-swap (`tengu_oauth_refresh_compromised_cas_adopted_sibling`) também existem, mas não são o que faz a troca valer na mensagem seguinte | Alta — `wm` → `_Ee` conferido no binário |
+| A2 | Há checagem por mtime do arquivo? | **Sim, nos dois backends.** `_Ee` usa `probeCredentials()` (versão `dev:ino:size:mtime`) quando a camada nova está ligada e, fora dela, compara o `mtimeMs` do `.credentials.json`. A leitura estática inicial dizia que o `plaintext` não usava — estava errada | Alta — os dois ramos conferidos no binário |
 | A3 | `/logout` só apaga local? | **Não.** Revoga o refresh token no servidor (`POST ${TOKEN_URL}/revoke`, `token_type_hint: "refresh_token"`) e depois apaga local; falha de rede não impede o logout local | Alta — chamada de revogação conferida no binário |
 | A4 | De onde vêm `/usage` e `/status`? | `/usage` chama `api/oauth/usage` com o token **em memória** — mostra a conta que o processo usa de fato. `/status` lê `oauthAccount` da config (`~/.claude.json`), que tem cache próprio | Alta (`/usage`), média (`/status`) |
 | A5 | O CLI vigia `~/.claude.json`? | Sim — push ou `fs.watchFile`: edição externa é recarregada, e as escritas do CLI são patch sobre o estado recarregado. Janela de corrida residual não descartada | Alta / média |
@@ -37,12 +37,13 @@ Medido no Donel Dev Beta 0.3.2 com o CLI 2.1.270, pelo roteiro de `plan-etapa-3.
   06:00). A janela semanal é outra, então a conta é outra. A request pós-troca teve
   **1 miss** do prompt cache, que é por organização — coerente com a inferência já
   sair pela conta nova, não só o `/usage`.
-- **A previsão de A1 estava errada:** o token não ficou preso em memória até a
-  renovação. O mecanismo exato ainda não foi lido no código. Candidatos: o watcher do
-  `~/.claude.json` (A5) reagindo à remoção de `oauthAccount`, ou o fingerprint de A2
-  ativo também no backend `plaintext`. Enquanto isso não for esclarecido, **a remoção
-  de `oauthAccount` (passo 3 de `applyAccountSwitch`) conta como parte da troca que
-  funcionou**, não como detalhe dispensável.
+- **A previsão de A1 estava errada, e o mecanismo foi lido depois do gate:** antes
+  de cada request autenticada, o preflight do CLI confere a versão ou o `mtime` do
+  `.credentials.json` (A1 e A2 corrigidos). Como a troca reescreve o arquivo, a
+  mensagem seguinte já sai com o par novo. **Apagar `oauthAccount` não é o
+  gatilho** — o watcher do `~/.claude.json` (A5) só recarrega a config, sem tocar
+  no cache da credencial. A remoção serve para o CLI buscar de novo o perfil da
+  conta que entrou; sem ela, o `oauthAccount` antigo continuaria na config.
 - **O `/status` do CLI fica errado logo depois da troca:** mostrou `Login method:
   Claude API account`, sem organização nem e-mail — efeito da remoção de
   `oauthAccount`. Cerca de 2 min depois, uma sessão viva refez o fetch do perfil e o
