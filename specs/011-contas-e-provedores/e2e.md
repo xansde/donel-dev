@@ -145,12 +145,21 @@ conta recadastrada e a faxina no cofre de verdade.
   `(Get-Content "$env:APPDATA\donel-dev\accounts-vault.json" -Raw | ConvertFrom-Json).entries.PSObject.Properties.Name`
   Medido em 13/09, antes da fase: **14** chaves — 4 contas, 8 órfãs (dos perfis
   `tech-*`), `seazone:session` e `provider:openrouter:*`.
+- **A faxina já rodou no cofre real, e não foi pelo Alfa.** Às 17:53 de 13/09 a
+  suíte de smokes rodou com o build desta branch, e o
+  `config-persistence.spec.ts` sobe o app contra o userData real (exceção
+  deliberada, descrita em `tests/smoke/userDataIsolation.ts`). O boot dele
+  removeu as 9 entradas previstas. Conferido às 18:11, sem ler valor: **5**
+  chaves (as 4 contas + `provider:openrouter:*`), ids do cofre iguais aos da
+  config, Interno 1 ativa e **uma** linha `vault-reconciled` com 9 removidas em
+  `%APPDATA%\donel-dev\accounts-maintenance.log`. Por isso o passo 1 mudou.
 
-### 1. Faxina no primeiro boot + remover uma conta não ativa
+### 1. Boot num cofre já limpo + remover uma conta não ativa
 
-- [ ] Abrir o Alfa. O comando do cofre passa a listar **5** chaves (4 ids de
-      conta + `provider:openrouter:*`), e `%APPDATA%\donel-dev\accounts-maintenance.log`
-      tem uma linha `vault-reconciled` com as 9 removidas.
+- [ ] Abrir o Alfa. O cofre segue com **5** chaves (4 ids de conta +
+      `provider:openrouter:*`), e o `accounts-maintenance.log` continua com
+      **uma** linha só, a de 17:53: num cofre limpo, o boot não remove nada nem
+      escreve no log.
 - [ ] Contas → na linha de uma conta **não** ativa (ex.: Interno 4) → Remover →
       Remover. A linha some e o cofre fica com **4** chaves.
 
