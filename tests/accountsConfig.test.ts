@@ -82,4 +82,39 @@ describe('sanitizeAccountsConfig (puro)', () => {
   it('nunca lança para qualquer entrada maluca', () => {
     expect(() => sanitizeAccountsConfig({ mod: {}, autoSwitch: null, localAccounts: null }, defaults)).not.toThrow();
   });
+
+  // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — `fingerprint` (sha256
+  // opaco do accountUuid, só existe em conta de login isolado) precisa
+  // sobreviver ao round-trip do config.json quando presente, mas a CHAVE não
+  // pode aparecer em entradas que nunca a tiveram (conta antiga, colada à
+  // mão ou migrada de perfil).
+  it('fingerprint string não vazia é preservado', () => {
+    const result = sanitizeAccountsConfig(
+      { localAccounts: [{ id: 'acc-1', label: 'Conta 1', plan: null, fingerprint: 'a'.repeat(64) }] },
+      defaults,
+    );
+    expect(result.localAccounts).toEqual([{ id: 'acc-1', label: 'Conta 1', plan: null, fingerprint: 'a'.repeat(64) }]);
+  });
+
+  it('entrada sem fingerprint não ganha a chave (nem undefined)', () => {
+    const result = sanitizeAccountsConfig({ localAccounts: [{ id: 'acc-1', label: 'Conta 1', plan: null }] }, defaults);
+    expect(result.localAccounts).toEqual([{ id: 'acc-1', label: 'Conta 1', plan: null }]);
+    expect('fingerprint' in result.localAccounts[0]).toBe(false);
+  });
+
+  it('fingerprint vazio ou de tipo errado -> chave descartada (não vira "" nem passa o valor bruto)', () => {
+    const result = sanitizeAccountsConfig(
+      {
+        localAccounts: [
+          { id: 'acc-1', label: 'Conta 1', plan: null, fingerprint: '' },
+          { id: 'acc-2', label: 'Conta 2', plan: null, fingerprint: 42 },
+          { id: 'acc-3', label: 'Conta 3', plan: null, fingerprint: null },
+        ],
+      },
+      defaults,
+    );
+    for (const account of result.localAccounts) {
+      expect('fingerprint' in account).toBe(false);
+    }
+  });
 });

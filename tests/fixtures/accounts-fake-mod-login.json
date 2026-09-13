@@ -1,0 +1,9 @@
+{
+  "accounts": [
+    { "id": "acc-fixa", "label": "Conta Fixa", "plan": "pro", "available": true, "load": { "fiveHour": 10, "sevenDay": 5, "sonnet": 2, "readAt": "2026-09-13T00:00:00.000Z" } }
+  ],
+  "pairs": {
+    "acc-fixa": { "accessToken": "fixture-access-fixa", "refreshToken": "fixture-refresh-fixa", "expiresAt": 4102444800000, "scopes": ["user:inference"] }
+  },
+  "includeConfiguredLocalAccounts": true
+}

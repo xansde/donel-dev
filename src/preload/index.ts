@@ -7,6 +7,7 @@ import type {
   AccountsViewDto,
   AppConfigDto,
   ArchiveOutcome,
+  BeginLoginOutcome,
   ConnectModInput,
   ConnectModOutcome,
   ConsolidateResult,
@@ -23,6 +24,7 @@ import type {
   GithubReadRequest,
   GithubReadResponse,
   LauncherDefaultsDto,
+  LoginStatusDto,
   NotificationPreference,
   OpenDiscoveryIpcInput,
   PhaseArchivedPayload,
@@ -33,6 +35,7 @@ import type {
   PtyCreateOptions,
   PtyCreateResult,
   PtyExitInfo,
+  RemoveAccountOutcome,
   ResolveCardRepoIpcInput,
   ResolveCardReposIpcInput,
   SaveProjectBindingIpcInput,
@@ -209,6 +212,10 @@ const donelApi: DonelApi = {
 
     disconnectMod: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.disconnectMod) as Promise<AccountsConfigDto>,
 
+    // 011-contas-e-provedores, etapa 3, Fase 1 — remove uma conta cadastrada
+    // (bloqueado para a ATIVA; ver `RemoveAccountOutcome`).
+    removeAccount: (id: AccountId) => ipcRenderer.invoke(ACCOUNT_CHANNELS.removeAccount, id) as Promise<RemoveAccountOutcome>,
+
     // G5 — o canal cujo segundo assinante silencioso já custou ~80ms no boot
     // (T1232/011, etapa 2): `App.tsx` abria a própria assinatura além da que
     // `AccountsPanel` já mantinha. A correção de então tirou a duplicata; esta
@@ -216,6 +223,19 @@ const donelApi: DonelApi = {
     onChanged: (listener: (view: AccountsViewDto) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, view: AccountsViewDto): void => listener(view);
       return subscribeChannel(ipcRenderer, ACCOUNT_CHANNELS.changed, handler);
+    },
+
+    // 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado
+    // (IsolatedLoginManager, main/accounts/isolated-login.ts). `beginLogin`
+    // só pede o rótulo (LGPD — nunca o e-mail/nome da conta); o `loginId` do
+    // retorno alimenta o `pty:create` seguinte (`accountLoginId`).
+    beginLogin: (label: string) => ipcRenderer.invoke(ACCOUNT_CHANNELS.beginLogin, label) as Promise<BeginLoginOutcome>,
+
+    cancelLogin: (loginId: string) => ipcRenderer.invoke(ACCOUNT_CHANNELS.cancelLogin, loginId) as Promise<void>,
+
+    onLoginChanged: (listener: (status: LoginStatusDto) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: LoginStatusDto): void => listener(status);
+      return subscribeChannel(ipcRenderer, ACCOUNT_CHANNELS.loginChanged, handler);
     },
   },
 

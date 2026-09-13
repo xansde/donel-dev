@@ -198,6 +198,40 @@ para `staging`.
    provider OpenRouter segue **configurado**, e o seletor não oferece mais
    "Pool Seazone".
 
+**Execução (13/09/2026) — o que foi decidido ao construir.** Branch
+`feature/contas-fase-1-cadastro`; contrato em `contracts/ipc-accounts.md`
+(emenda da etapa 3) e bateria em `e2e.md` ("Etapa 3, Fase 1").
+
+- **F6**: o motor vive num `AccountEngineHost`, e toda mudança de `mod` ou da
+  lista de contas passa por `apply` (reconstrói o motor). Achado da revisão: a
+  troca feita pelo **próprio** motor (auto-switch) não chegava ao
+  `activeAccountId` do `config.json` — com a reconstrução, o motor renasceria com
+  a ativa velha e a troca seguinte gravaria o par rotacionado na conta errada.
+  Corrigido junto: o host persiste a ativa que o motor trocou.
+- **Conta repetida → substitui** o par da existente (mesmo id, mesmo rótulo). A
+  identidade é o sha256 do `accountUuid` do `.claude.json` do login
+  (`LocalAccountMeta.fingerprint`), nunca e-mail. As 4 contas de antes da fase não
+  têm fingerprint: repetir uma delas cria linha nova, que se remove pelo painel.
+- **Login isolado**: um login por vez; o colhedor espera até 5 s pelo
+  `oauthAccount` depois de ver o par válido; aba que fecha antes do login cancela
+  sem tocar o cofre; sobras `accounts-login-*` de um app fechado no meio do login
+  são apagadas no boot (podem conter credencial em texto claro).
+- **Desconectar** apaga do cofre as credenciais das contas que saem da lista e o
+  `seazone:session`, depois de confirmar na tela.
+- **Faxina** só age com `mod: 'local'` e lista não vazia — guarda contra uma
+  config vazia ou corrompida levar as contas boas. Registro em
+  `accounts-maintenance.log`, só nomes de chave.
+- **Colar token (F2)**: validade vazia grava `expiresAt: 0` — vencido de
+  propósito, o mod renova antes do primeiro uso.
+- **Seams de teste** do smoke `accounts-add-login`: `DONEL_CLAUDE_EXECUTABLE_FIXTURE`
+  (o resolvedor prefere qualquer `claude.exe`, então um `claude.cmd` falso no PATH
+  abriria o CLI real) e `includeConfiguredLocalAccounts` no mod falso.
+- **Fica para depois**: os roteiros de captura
+  `.claude/skills/tutorial-e2e/roteiros/contas-motor-{ativo,inerte}.spec.ts` ainda
+  usam o seletor de provedor e o botão "Conectar", que saíram da tela — atualizar
+  na próxima captura visual. Nada da fase foi exercitado com CLI real fora da
+  bateria.
+
 ### Fase 2 — Verdade na tela + rodízio automático
 
 1. Rótulo e cota da aba passam a refletir a conta **vigente** (o `accounts:changed`

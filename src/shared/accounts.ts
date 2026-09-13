@@ -57,6 +57,17 @@ export interface LocalAccountMeta {
   readonly id: AccountId;
   readonly label: string;
   readonly plan: string | null;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — sha256 hex do `accountUuid`
+   * do `.claude.json` (opaco, NUNCA e-mail/nome — LGPD;
+   * `accountFingerprintFromClaudeJsonText`, main/accounts/credentials-file.ts).
+   * Só existe em conta cadastrada por LOGIN ISOLADO — ausente (chave nem
+   * existe) em conta antiga (token colado à mão, migrada de perfil). `null`
+   * = login isolado que concluiu sem conseguir ler um `accountUuid` (ainda
+   * assim uma conta válida; só não pode ser reconhecida de novo por
+   * fingerprint).
+   */
+  readonly fingerprint?: string | null;
 }
 
 /** Persistência: chave `accounts` do `config.json` (userData). */
@@ -102,7 +113,22 @@ export interface AccountsViewDto {
  */
 export type ConnectModInput =
   | { readonly mod: 'seazone'; readonly baseUrl: string; readonly sessionRefreshToken: string }
-  | { readonly mod: 'local'; readonly label: string; readonly accessToken: string; readonly refreshToken: string; readonly expiresAt: number };
+  | {
+      readonly mod: 'local';
+      readonly label: string;
+      readonly accessToken: string;
+      readonly refreshToken: string;
+      /**
+       * F2 (011-contas-e-provedores, etapa 3, Fase 1) — `undefined`/`null` =
+       * validade DESCONHECIDA (ex.: token colado à mão, sem o `expiresAt`
+       * real do arquivo de credenciais) — tratada como VENCIDA de propósito:
+       * o mod local renova no primeiro switch (`local-mod.ts`, D4) em vez de
+       * confiar num prazo chutado pelo renderer. Ver `buildPastedPair`
+       * (main/accounts/pasted-pair.ts), que é quem de fato decide o valor
+       * final gravado no cofre.
+       */
+      readonly expiresAt?: number | null;
+    };
 
 export type ConnectModOutcome =
   | { readonly kind: 'connected'; readonly config: AccountsConfigDto }
@@ -114,6 +140,42 @@ export type SwitchOutcome =
   | { readonly kind: 'deferred'; readonly reason: 'session-busy' }
   | { readonly kind: 'failed'; readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'io' };
 
+/** 011-contas-e-provedores, etapa 3, Fase 1 — "Remover conta" (plan-etapa-3.md §4.3). Bloqueada quando `id` é a conta ATIVA (ver `planRemoveAccount`, account-pool.ts). */
+export type RemoveAccountOutcome =
+  | { readonly kind: 'removed'; readonly config: AccountsConfigDto }
+  | { readonly kind: 'blocked'; readonly reason: 'active-account' }
+  | { readonly kind: 'failed'; readonly reason: 'unknown-account' | 'io' };
+
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 1.2 — resultado de iniciar um login
+ * isolado (`accounts:beginLogin`, `IsolatedLoginManager.begin`,
+ * main/accounts/isolated-login.ts). `loginId` é o mesmo id usado depois em
+ * `getPendingDir`/`attachPty`/`cancelLogin`.
+ */
+export type BeginLoginOutcome =
+  | { readonly kind: 'started'; readonly loginId: string }
+  | { readonly kind: 'failed'; readonly reason: 'invalid-input' | 'vault-unavailable' | 'login-in-progress' | 'io' };
+
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 1.2 — status final de um login
+ * isolado, emitido em `accounts:loginChanged`
+ * (main/accounts/isolated-login.ts, `IsolatedLoginManager.emitStatus`).
+ * `label` é sempre o rótulo digitado PARA ESTE login — inclusive em
+ * `replaced`, onde a conta existente mantém o PRÓPRIO rótulo em
+ * `existingLabel` (conta repetida substitui o par, nunca o rótulo, decisão
+ * da Fase 1).
+ */
+export type LoginStatusDto =
+  | { readonly loginId: string; readonly label: string; readonly state: 'added'; readonly accountId: AccountId }
+  | { readonly loginId: string; readonly label: string; readonly state: 'replaced'; readonly accountId: AccountId; readonly existingLabel: string }
+  | {
+      readonly loginId: string;
+      readonly label: string;
+      readonly state: 'cancelled';
+      readonly reason: 'user' | 'exited-without-login' | 'no-terminal';
+    }
+  | { readonly loginId: string; readonly label: string; readonly state: 'failed'; readonly reason: 'vault-unavailable' | 'io' };
+
 export const ACCOUNT_CHANNELS = {
   list: 'accounts:list',
   switch: 'accounts:switch',
@@ -121,7 +183,12 @@ export const ACCOUNT_CHANNELS = {
   setConfig: 'accounts:setConfig',
   connectMod: 'accounts:connectMod',
   disconnectMod: 'accounts:disconnectMod',
+  removeAccount: 'accounts:removeAccount',
   changed: 'accounts:changed',
+  /** 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado (`IsolatedLoginManager`, main/accounts/isolated-login.ts). */
+  beginLogin: 'accounts:beginLogin',
+  cancelLogin: 'accounts:cancelLogin',
+  loginChanged: 'accounts:loginChanged',
 } as const;
 
 /** API tipada exposta pelo preload em `window.donel.accounts` (contextBridge). */
@@ -132,6 +199,19 @@ export interface DonelAccountsApi {
   setConfig(patch: Partial<AccountsConfigDto>): Promise<AccountsConfigDto>;
   connectMod(input: ConnectModInput): Promise<ConnectModOutcome>;
   disconnectMod(): Promise<AccountsConfigDto>;
+  /** 011-contas-e-provedores, etapa 3, Fase 1 — remove uma conta cadastrada (bloqueado para a ATIVA, ver `RemoveAccountOutcome`). */
+  removeAccount(id: AccountId): Promise<RemoveAccountOutcome>;
   /** Retorna função de unsubscribe (mesmo padrão de `pty.onData`). */
   onChanged(listener: (view: AccountsViewDto) => void): () => void;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — inicia o login isolado
+   * (rótulo pedido ANTES de abrir a aba — LGPD, o nome nunca sai do
+   * `.claude.json`). `loginId` do retorno alimenta o `pty:create` seguinte
+   * (`PtyCreateOptions.accountLoginId`).
+   */
+  beginLogin(label: string): Promise<BeginLoginOutcome>;
+  /** Cancela um login isolado pendente — mata a aba, apaga o diretório, nada toca o cofre. */
+  cancelLogin(loginId: string): Promise<void>;
+  /** Retorna função de unsubscribe (mesmo padrão de `onChanged`). */
+  onLoginChanged(listener: (status: LoginStatusDto) => void): () => void;
 }
