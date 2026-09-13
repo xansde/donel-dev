@@ -226,7 +226,8 @@ escritas, com o F6 dentro da Fase 1.
   numa pasta própria) — `specs/011-contas-e-provedores/research-etapa-3-cli.md`.
 - **Depois de uma troca, o `/status` do CLI mostra "Claude API account"** até
   refazer o fetch do perfil (minutos). Para saber a conta em uso numa sessão,
-  use o `/usage`.
+  use o `/usage`. O mesmo vale para o `userEmail` que o harness carimba no
+  contexto da sessão: é lido no início e não acompanha a troca.
 - **F6 — corrigido na Fase 1 (13/09):** o mod local captura a lista de contas
   no construtor do motor. Por isso toda mudança de `mod` ou de `localAccounts`
   passa por `AccountEngineHost.apply` (`applyAccountsEngineConfig` no

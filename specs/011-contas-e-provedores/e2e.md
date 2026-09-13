@@ -123,6 +123,20 @@ O que os automatizados **não** provam e só um humano confere:
 
 Plano: `plan-etapa-3.md` §4, Fase 1. Branch `feature/contas-fase-1-cadastro`.
 
+**Veredito — PASSOU (13/09/2026, canal Alfa, build da branch, PR #73).** O dono
+rodou os 5 passos com o Beta fechado. Estado conferido na máquina depois da
+bateria: cofre com 5 chaves (4 contas + `provider:openrouter:*`), nenhuma pasta
+`accounts-login-*`, uma linha só no `accounts-maintenance.log`, a Interno 4
+recadastrada por login isolado (única com impressão) e a Interno 1 ativa de
+novo. Passo 5 relatado por ele: 4 contas após reiniciar, sem "Pool Seazone",
+OpenRouter "configurado".
+
+Tropeço no passo 3, que vale como lição: a primeira tentativa perguntou à
+sessão "qual email dessa sessão?", e ela respondeu a conta antiga. Esse email
+é o carimbo `userEmail` que o harness grava no contexto **no início da
+sessão** — não muda com a troca e não é evidência. Refeito com `/usage` antes
+e depois, na mesma aba, a janela semanal mudou: a troca em voo funcionou.
+
 Cobertura automatizada já fechada (não repetir aqui): o motor reconstrói quando
 a lista de contas muda (F6) e persiste a conta ativa que ele mesmo trocou; faxina
 do cofre com fixture que inclui `provider:*` e prova que ele sobrevive; planos de
@@ -156,43 +170,43 @@ conta recadastrada e a faxina no cofre de verdade.
 
 ### 1. Boot num cofre já limpo + remover uma conta não ativa
 
-- [ ] Abrir o Alfa. O cofre segue com **5** chaves (4 ids de conta +
+- [x] Abrir o Alfa. O cofre segue com **5** chaves (4 ids de conta +
       `provider:openrouter:*`), e o `accounts-maintenance.log` continua com
       **uma** linha só, a de 17:53: num cofre limpo, o boot não remove nada nem
       escreve no log.
-- [ ] Contas → na linha de uma conta **não** ativa (ex.: Interno 4) → Remover →
+- [x] Contas → na linha de uma conta **não** ativa (ex.: Interno 4) → Remover →
       Remover. A linha some e o cofre fica com **4** chaves.
 
 ### 2. Readicionar por login isolado, sem reiniciar
 
-- [ ] Contas → Rótulo `Interno 4` → **Entrar com login**. O painel fecha e abre a
+- [x] Contas → Rótulo `Interno 4` → **Entrar com login**. O painel fecha e abre a
       aba `Login · Interno 4`.
-- [ ] Na aba, seguir o fluxo do CLI (tema → "Claude account with subscription" →
+- [x] Na aba, seguir o fluxo do CLI (tema → "Claude account with subscription" →
       navegador) com **a mesma conta** que era a Interno 4. Antes de autorizar,
       conferir que a conta logada no claude.ai é essa — se não for, abrir a URL
       que o CLI mostra numa janela anônima. **Nunca** digitar `/logout`.
-- [ ] Segundos depois do login, a aba fecha sozinha e o painel reabre com
+- [x] Segundos depois do login, a aba fecha sozinha e o painel reabre com
       "Conta «Interno 4» adicionada." A linha aparece **com carga**, sem
       reiniciar o app.
-- [ ] Nenhuma pasta `accounts-login-*` em `%APPDATA%\donel-dev`; o cofre volta a
+- [x] Nenhuma pasta `accounts-login-*` em `%APPDATA%\donel-dev`; o cofre volta a
       **5** chaves.
 
 ### 3. Trocar para ela numa sessão viva
 
-- [ ] Abrir uma sessão `claude` num projeto, mandar uma mensagem e rodar `/usage`.
-- [ ] Trocar para a Interno 4 pelo painel. Na mesma aba, mandar outra mensagem e
+- [x] Abrir uma sessão `claude` num projeto, mandar uma mensagem e rodar `/usage`.
+- [x] Trocar para a Interno 4 pelo painel. Na mesma aba, mandar outra mensagem e
       rodar `/usage` de novo: janela semanal e reset são outros — é a conta nova.
       O `/status` mostra "Claude API account" por alguns minutos e não serve de
       evidência.
 
 ### 4. Remover a conta ativa é bloqueado
 
-- [ ] Contas → Remover na linha da Interno 4 (agora ativa) → Remover. Aparece
+- [x] Contas → Remover na linha da Interno 4 (agora ativa) → Remover. Aparece
       "«Interno 4» é a conta em uso — troque para outra antes de removê-la…", e
       ela continua na lista e no cofre.
 
 ### 5. Reiniciar
 
-- [ ] Fechar e reabrir o Alfa: as 4 contas no painel, e a seção de adicionar não
+- [x] Fechar e reabrir o Alfa: as 4 contas no painel, e a seção de adicionar não
       oferece mais "Pool Seazone".
-- [ ] Cofre com **5** chaves; em **Provedores**, o OpenRouter segue "configurado".
+- [x] Cofre com **5** chaves; em **Provedores**, o OpenRouter segue "configurado".
