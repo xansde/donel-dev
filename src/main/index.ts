@@ -162,6 +162,9 @@ import { writeHooksSettingsFile } from './hooks-settings';
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
 // arquivo só instancia/liga (T1125 — única task que toca o hub).
 import { AccountEngine } from './accounts/account-engine';
+// 011-contas-e-provedores, etapa 3, Fase 1 (F6) — dono do ciclo de vida do
+// motor: decide construir/reconstruir/atualizar via `needsEngineRebuild`.
+import { AccountEngineHost } from './accounts/account-engine-host';
 import type { AccountMod } from './accounts/account-mod';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { applyAccountSwitch, createSystemClaudeStateIoDeps } from './accounts/claude-state';
@@ -395,14 +398,14 @@ let hooksSettingsPath: string | null = null;
 // ---------------------------------------------------------------------------
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods (T1125, única
 // task que toca este arquivo). Nasce inerte (accounts.mod = null, C2): sem
-// mod configurado, `accountEngine` existe mas `getState() === 'inert'` e o
-// spawn de PTY segue exatamente como hoje (perfil ativo, ver mais abaixo).
+// mod configurado, o motor (`accountEngineHost.current()`) existe mas
+// `getState() === 'inert'` e o spawn de PTY segue exatamente como hoje
+// (perfil ativo, ver mais abaixo).
 // ---------------------------------------------------------------------------
 const accountsVaultIo = createSystemVaultIoDeps();
 const accountsClaudeStateIo = createSystemClaudeStateIoDeps();
 /** `<userData>/accounts-vault.json` — só resolvido depois de `app.whenReady()` (precisa de `app.getPath`). */
 let accountsVaultPath: string | null = null;
-let accountEngine: AccountEngine | null = null;
 /** C5 — leitura apenas do `session-semaphore-manager` via `onUpdate` (API já pública; este arquivo NUNCA altera session-semaphore-manager.ts). ptyId em `working` entra, qualquer outro estado sai. */
 const accountsBusyPtyIds = new Set<string>();
 /** Sessões `claude` vivas nesta execução (C4 — poll de 5 min só enquanto houver ao menos uma). Adicionado no registro da sessão (registerPtyIpcHandlers), removido no `onExit` (createMainWindow). */
@@ -542,18 +545,45 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
   }
 }
 
-/** Reconstrói o motor do zero — necessário sempre que `accounts.mod` muda (só o construtor resolve o mod concreto, T1120). Chamado no boot e em `connectMod`/`disconnectMod`. */
-function rebuildAccountEngine(): void {
-  accountEngine?.dispose();
-  accountEngine = new AccountEngine({
-    config: appConfig.accounts,
-    resolveMod: resolveAccountMod,
-    applySwitch: applyAccountsClaudeStateSwitch,
-    isSessionBusy: () => accountsBusyPtyIds.size > 0,
-  });
-  accountEngine.onChanged(broadcastAccountsChanged);
-  accountEngine.start();
-  accountEngine.startPolling(() => accountsLiveSessionPtyIds.size > 0);
+/**
+ * Dono do ciclo de vida do motor (F6, 011-contas-e-provedores etapa 3 Fase 1)
+ * — substitui o antigo `rebuildAccountEngine()`, que reconstruía (dispose +
+ * new) incondicionalmente a cada chamada. `AccountEngineHost.apply` decide
+ * entre construir/reconstruir/atualizar via `needsEngineRebuild`
+ * (account-pool.ts), então quem muda `appConfig.accounts` só chama
+ * `applyAccountsEngineConfig()` abaixo, sem escolher na mão.
+ */
+const accountEngineHost = new AccountEngineHost({
+  createEngine: (config) => {
+    const engine = new AccountEngine({
+      config,
+      resolveMod: resolveAccountMod,
+      applySwitch: applyAccountsClaudeStateSwitch,
+      isSessionBusy: () => accountsBusyPtyIds.size > 0,
+    });
+    engine.onChanged(broadcastAccountsChanged);
+    engine.start();
+    engine.startPolling(() => accountsLiveSessionPtyIds.size > 0);
+    return engine;
+  },
+});
+
+/**
+ * Aplica `appConfig.accounts` no motor — chamar depois de QUALQUER mudança
+ * nela (boot, `accounts:setConfig`, `accounts:connectMod`,
+ * `accounts:disconnectMod`, `accounts:removeAccount`,
+ * `migration:importCredentials`). F6: quando o resultado é `rebuilt`, a lista
+ * nova (ex.: conta recém-importada) só existe dentro do motor recém-criado —
+ * ninguém pediu `listAccounts()` ainda, então disparamos aqui pra
+ * `accounts:changed` já levar a lista atualizada ao renderer sem precisar
+ * reiniciar o app. No boot (`built`) não dispara: o primeiro `accounts:list`
+ * de verdade vem do próprio painel ao montar.
+ */
+function applyAccountsEngineConfig(): void {
+  const result = accountEngineHost.apply(appConfig.accounts);
+  if (result === 'rebuilt') {
+    void accountEngineHost.current()?.listAccounts();
+  }
 }
 
 // Achado do T009 (ao escrever o `--settings` de hooks pela primeira vez):
@@ -733,7 +763,7 @@ function registerPtyIpcHandlers(): void {
       // `providerId`, o motor nem é consultado (nenhuma sessão nasce
       // autenticada por acidente com credencial de conta viajando para um
       // endpoint de terceiro).
-      let accountsSnapshot: ReturnType<NonNullable<typeof accountEngine>['getSnapshot']> | undefined;
+      let accountsSnapshot: ReturnType<AccountEngine['getSnapshot']> | undefined;
       let motorActive = false;
       let envOverrides: Record<string, string> | undefined;
       let providerConfigDir: string | undefined;
@@ -760,7 +790,7 @@ function registerPtyIpcHandlers(): void {
         const providerEntry = providerRegistry.list().find((entry) => entry.id === options.providerId);
         spawnProvider = { id: options.providerId, label: providerEntry?.label ?? options.providerId };
       } else {
-        accountsSnapshot = accountEngine?.getSnapshot();
+        accountsSnapshot = accountEngineHost.current()?.getSnapshot();
         motorActive = accountsSnapshot !== undefined && accountsSnapshot.mod !== null;
       }
 
@@ -1548,13 +1578,15 @@ function registerGithubIpcHandlers(): void {
  */
 function registerAccountsIpcHandlers(): void {
   ipcMain.handle(ACCOUNT_CHANNELS.list, async (): Promise<AccountsViewDto> => {
-    if (!accountEngine) return { mod: null, state: 'inert', unavailableReason: null, accounts: [], activeAccountId: null, autoSwitch: appConfig.accounts.autoSwitch, lastReadAt: null };
-    return accountEngine.listAccounts();
+    const engine = accountEngineHost.current();
+    if (!engine) return { mod: null, state: 'inert', unavailableReason: null, accounts: [], activeAccountId: null, autoSwitch: appConfig.accounts.autoSwitch, lastReadAt: null };
+    return engine.listAccounts();
   });
 
   ipcMain.handle(ACCOUNT_CHANNELS.switch, async (_event, id: AccountId): Promise<SwitchOutcome> => {
-    if (!accountEngine) return { kind: 'failed', reason: 'io' };
-    const result = await accountEngine.switchTo(id);
+    const engine = accountEngineHost.current();
+    if (!engine) return { kind: 'failed', reason: 'io' };
+    const result = await engine.switchTo(id);
     if (result.kind === 'switched') {
       appConfig = { ...appConfig, accounts: { ...appConfig.accounts, activeAccountId: result.to } };
       persistAppConfig();
@@ -1565,15 +1597,10 @@ function registerAccountsIpcHandlers(): void {
   ipcMain.handle(ACCOUNT_CHANNELS.getConfig, (): AccountsConfigDto => appConfig.accounts);
 
   ipcMain.handle(ACCOUNT_CHANNELS.setConfig, (_event, patch: unknown): AccountsConfigDto => {
-    const previousMod = appConfig.accounts.mod;
     const merged = typeof patch === 'object' && patch !== null ? { ...appConfig.accounts, ...(patch as Partial<AccountsConfigDto>) } : appConfig.accounts;
     appConfig = { ...appConfig, accounts: sanitizeAccountsConfig(merged, appConfig.accounts) };
     persistAppConfig();
-    if (appConfig.accounts.mod !== previousMod) {
-      rebuildAccountEngine();
-    } else {
-      accountEngine?.updateConfig(appConfig.accounts);
-    }
+    applyAccountsEngineConfig(); // F6 — decide construir/reconstruir/atualizar, nunca mais "na mão" aqui.
     return appConfig.accounts;
   });
 
@@ -1600,7 +1627,7 @@ function registerAccountsIpcHandlers(): void {
     }
 
     persistAppConfig();
-    rebuildAccountEngine();
+    applyAccountsEngineConfig(); // F6
     return { kind: 'connected', config: appConfig.accounts };
   });
 
@@ -1609,7 +1636,7 @@ function registerAccountsIpcHandlers(): void {
     // segredo, é preferência de onde o motor escreveria se reconectado).
     appConfig = { ...appConfig, accounts: { ...defaultAccountsConfig(), claudeHome: appConfig.accounts.claudeHome } };
     persistAppConfig();
-    rebuildAccountEngine();
+    applyAccountsEngineConfig(); // F6
     return appConfig.accounts;
   });
 }
@@ -1678,7 +1705,6 @@ function registerMigrationIpcHandlers(): void {
     if (result.kind === 'imported') {
       const alreadyRegistered = appConfig.accounts.localAccounts.some((a) => a.id === result.accountId);
       if (!alreadyRegistered) {
-        const wasInert = appConfig.accounts.mod === null;
         appConfig = {
           ...appConfig,
           accounts: {
@@ -1687,8 +1713,7 @@ function registerMigrationIpcHandlers(): void {
             localAccounts: [...appConfig.accounts.localAccounts, { id: result.accountId, label: result.label, plan: null }],
           },
         };
-        if (wasInert) rebuildAccountEngine();
-        else accountEngine?.updateConfig(appConfig.accounts);
+        applyAccountsEngineConfig(); // F6 — a lista de contas mudou; antes, este ramo (mod já ativo) só chamava updateConfig e a conta nova não entrava no motor vivo.
       }
     }
 
@@ -1787,10 +1812,10 @@ void app.whenReady().then(async () => {
   lastSyncedAppConfig = appConfig;
 
   // T1125 (011-contas-e-provedores, etapa 1) — motor de contas. `accountsVaultPath`
-  // precisa de `userData` (só disponível aqui); `rebuildAccountEngine` monta o
-  // motor com `appConfig.accounts` (mod `null` = inerte, C2 — comportamento de
-  // hoje intocado). C5: busy-tracking via API pública do semáforo, sem alterar
-  // session-semaphore-manager.ts.
+  // precisa de `userData` (só disponível aqui); `applyAccountsEngineConfig()`
+  // monta o motor (via `accountEngineHost`) com `appConfig.accounts` (mod
+  // `null` = inerte, C2 — comportamento de hoje intocado). C5: busy-tracking
+  // via API pública do semáforo, sem alterar session-semaphore-manager.ts.
   accountsVaultPath = join(app.getPath('userData'), 'accounts-vault.json');
   semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
     if (update.state === 'working') {
@@ -1799,7 +1824,7 @@ void app.whenReady().then(async () => {
       accountsBusyPtyIds.delete(update.ptyId);
     }
   });
-  rebuildAccountEngine();
+  applyAccountsEngineConfig(); // F6 — 1ª chamada sempre 'built' (motor inerte se mod === null, C2).
 
   registerPtyIpcHandlers();
   registerProjectIpcHandlers();
@@ -1828,7 +1853,7 @@ app.on('window-all-closed', () => {
   semaphoreManager.dispose();
   esteiraService?.dispose();
   esteiraService = null;
-  accountEngine?.dispose(); // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.
+  accountEngineHost.dispose(); // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.
   if (process.platform !== 'darwin') {
     app.quit();
   }
