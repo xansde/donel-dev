@@ -13,6 +13,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { CredentialPair } from '../account-mod';
 import type { VaultLike } from '../vault';
 import type { ImportResult } from '../../../shared/migration';
+// 011-contas-e-provedores, etapa 3, Fase 1, Bloco 1 — `extractPairFromCredentialsJson`
+// mudou de casa para `credentials-file.ts` (o colhedor do login isolado
+// precisa do MESMO parsing do MESMO formato real de arquivo).
+import { extractPairFromCredentialsJson } from '../credentials-file';
 
 export type { ImportResult } from '../../../shared/migration';
 
@@ -50,28 +54,6 @@ export function importProfileCredentials(profile: ProfileToImport, deps: Credent
   if (writeResult.kind !== 'ok') return { kind: 'failed', reason: 'vault-unavailable' };
 
   return { kind: 'imported', accountId, label: profile.displayName };
-}
-
-/**
- * Formato REAL de `.credentials.json` do CLI (mesmo que `claude-state.ts`
- * `extractPair` já lê): o par vive dentro do bloco `claudeAiOauth`, não solto
- * na raiz do arquivo — outras chaves top-level (`unrelatedField` etc.) podem
- * existir e são ignoradas aqui de propósito.
- */
-function extractPairFromCredentialsJson(value: unknown): CredentialPair | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const oauth = (value as { claudeAiOauth?: unknown }).claudeAiOauth;
-  if (typeof oauth !== 'object' || oauth === null) return null;
-  const candidate = oauth as Partial<CredentialPair>;
-  if (typeof candidate.accessToken !== 'string' || typeof candidate.refreshToken !== 'string' || typeof candidate.expiresAt !== 'number') {
-    return null;
-  }
-  return {
-    accessToken: candidate.accessToken,
-    refreshToken: candidate.refreshToken,
-    expiresAt: candidate.expiresAt,
-    scopes: Array.isArray(candidate.scopes) ? candidate.scopes.filter((s): s is string => typeof s === 'string') : [],
-  };
 }
 
 /** Deps reais (filesystem da máquina + cofre real) — só o main process usa. Nunca loga o conteúdo lido. */

@@ -135,6 +135,36 @@ export type RemoveAccountOutcome =
   | { readonly kind: 'blocked'; readonly reason: 'active-account' }
   | { readonly kind: 'failed'; readonly reason: 'unknown-account' | 'io' };
 
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 1.2 — resultado de iniciar um login
+ * isolado (`accounts:beginLogin`, `IsolatedLoginManager.begin`,
+ * main/accounts/isolated-login.ts). `loginId` é o mesmo id usado depois em
+ * `getPendingDir`/`attachPty`/`cancelLogin`.
+ */
+export type BeginLoginOutcome =
+  | { readonly kind: 'started'; readonly loginId: string }
+  | { readonly kind: 'failed'; readonly reason: 'invalid-input' | 'vault-unavailable' | 'login-in-progress' | 'io' };
+
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 1.2 — status final de um login
+ * isolado, emitido em `accounts:loginChanged`
+ * (main/accounts/isolated-login.ts, `IsolatedLoginManager.emitStatus`).
+ * `label` é sempre o rótulo digitado PARA ESTE login — inclusive em
+ * `replaced`, onde a conta existente mantém o PRÓPRIO rótulo em
+ * `existingLabel` (conta repetida substitui o par, nunca o rótulo, decisão
+ * da Fase 1).
+ */
+export type LoginStatusDto =
+  | { readonly loginId: string; readonly label: string; readonly state: 'added'; readonly accountId: AccountId }
+  | { readonly loginId: string; readonly label: string; readonly state: 'replaced'; readonly accountId: AccountId; readonly existingLabel: string }
+  | {
+      readonly loginId: string;
+      readonly label: string;
+      readonly state: 'cancelled';
+      readonly reason: 'user' | 'exited-without-login' | 'no-terminal';
+    }
+  | { readonly loginId: string; readonly label: string; readonly state: 'failed'; readonly reason: 'vault-unavailable' | 'io' };
+
 export const ACCOUNT_CHANNELS = {
   list: 'accounts:list',
   switch: 'accounts:switch',
