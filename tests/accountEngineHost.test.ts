@@ -4,8 +4,8 @@ import { AccountEngine } from '../src/main/accounts/account-engine';
 import { createLocalMod } from '../src/main/accounts/mods/local-mod';
 import type { AccountMod, CredentialPair } from '../src/main/accounts/account-mod';
 import type { VaultLike } from '../src/main/accounts/vault';
-import type { HttpResponseLike } from '../src/main/accounts/usage-client';
-import type { AccountsConfig, LocalAccountMeta } from '../src/shared/accounts';
+import type { HttpFetchLike, HttpResponseLike } from '../src/main/accounts/usage-client';
+import type { AccountId, AccountsConfig, LocalAccountMeta } from '../src/shared/accounts';
 import { defaultAccountsConfig } from '../src/shared/accounts';
 
 // 011-contas-e-provedores, etapa 3, Fase 1 (F6) — AccountEngineHost decide
@@ -44,17 +44,16 @@ function accountOf(id: string): LocalAccountMeta {
   return { id, label: `Conta ${id.toUpperCase()}`, plan: null };
 }
 
-function makeHost(vault: FakeVault) {
+function makeHost(
+  vault: FakeVault,
+  options: { fetchImpl?: HttpFetchLike; onActiveAccountChanged?: (id: AccountId | null) => void } = {},
+) {
   const created: { engine: AccountEngine; disposeSpy: ReturnType<typeof vi.spyOn> }[] = [];
+  const fetchImpl = options.fetchImpl ?? (async () => jsonResponse(200, { five_hour: { utilization: 1 }, seven_day: { utilization: 1 } }));
   const createEngine = vi.fn((config: AccountsConfig) => {
     const engine = new AccountEngine({
       config,
-      resolveMod: (): AccountMod =>
-        createLocalMod({
-          accounts: config.localAccounts,
-          vault,
-          fetchImpl: async () => jsonResponse(200, { five_hour: { utilization: 1 }, seven_day: { utilization: 1 } }),
-        }),
+      resolveMod: (): AccountMod => createLocalMod({ accounts: config.localAccounts, vault, fetchImpl }),
       applySwitch: async (_pair, onRotatedPairCaptured) => {
         await onRotatedPairCaptured(null);
       },
@@ -63,7 +62,7 @@ function makeHost(vault: FakeVault) {
     created.push({ engine, disposeSpy: vi.spyOn(engine, 'dispose') });
     return engine;
   });
-  const host = new AccountEngineHost({ createEngine });
+  const host = new AccountEngineHost({ createEngine, onActiveAccountChanged: options.onActiveAccountChanged });
   return { host, createEngine, created };
 }
 
@@ -135,5 +134,68 @@ describe('AccountEngineHost — apply', () => {
     expect(host.current()).toBeNull();
     const entry = created.find((c) => c.engine === engine);
     expect(entry?.disposeSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 011-contas-e-provedores, etapa 3, Fase 1, Bloco 0 — a conta ativa trocada
+// PELO MOTOR (`evaluateAutoSwitch` -> `switchTo`, ou um `switchTo` manual
+// direto no engine) precisa ser observável por fora de `apply()`: sem isso,
+// `appConfig.accounts.activeAccountId` (index.ts) fica desatualizado e uma
+// reconstrução subsequente (add/remove conta) renasce o motor com a ativa
+// VELHA.
+describe('AccountEngineHost — onActiveAccountChanged', () => {
+  it('switchTo(\'b\') direto no engine (troca manual) chama a dep com o id novo', async () => {
+    const vault = new FakeVault();
+    seedPair(vault, 'a');
+    seedPair(vault, 'b');
+    const onActiveAccountChanged = vi.fn();
+    const { host } = makeHost(vault, { onActiveAccountChanged });
+
+    host.apply(makeConfig([accountOf('a'), accountOf('b')], { activeAccountId: 'a' }));
+    const result = await host.current()!.switchTo('b');
+
+    expect(result).toEqual({ kind: 'switched', from: 'a', to: 'b' });
+    expect(onActiveAccountChanged).toHaveBeenCalledTimes(1);
+    expect(onActiveAccountChanged).toHaveBeenCalledWith('b');
+  });
+
+  it('evaluateAutoSwitch que efetivamente troca também chama a dep', async () => {
+    const vault = new FakeVault();
+    seedPair(vault, 'a');
+    seedPair(vault, 'b');
+    const onActiveAccountChanged = vi.fn();
+    // 'a' carregada (95%), 'b' com folga (10%) — diferenciado pelo access
+    // token no header Authorization (seedPair grava `${id}-access`).
+    const fetchImpl: HttpFetchLike = async (_url, init) => {
+      const auth = init?.headers?.Authorization ?? '';
+      const utilization = auth.includes('a-access') ? 95 : 10;
+      return jsonResponse(200, { five_hour: { utilization }, seven_day: { utilization } });
+    };
+    const { host } = makeHost(vault, { fetchImpl, onActiveAccountChanged });
+
+    host.apply(
+      makeConfig([accountOf('a'), accountOf('b')], {
+        activeAccountId: 'a',
+        autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 },
+      }),
+    );
+    await host.current()!.listAccounts();
+    const result = await host.current()!.evaluateAutoSwitch();
+
+    expect(result).toEqual({ kind: 'switched', from: 'a', to: 'b' });
+    expect(onActiveAccountChanged).toHaveBeenCalledTimes(1);
+    expect(onActiveAccountChanged).toHaveBeenCalledWith('b');
+  });
+
+  it('listAccounts sem mudança de conta ativa NÃO chama a dep', async () => {
+    const vault = new FakeVault();
+    seedPair(vault, 'a');
+    const onActiveAccountChanged = vi.fn();
+    const { host } = makeHost(vault, { onActiveAccountChanged });
+
+    host.apply(makeConfig([accountOf('a')], { activeAccountId: 'a' }));
+    await host.current()!.listAccounts();
+
+    expect(onActiveAccountChanged).not.toHaveBeenCalled();
   });
 });

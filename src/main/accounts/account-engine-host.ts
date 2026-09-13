@@ -7,23 +7,36 @@
 // só atualizar — e index.ts nunca mais escolhe isso na mão.
 
 import type { AccountEngine } from './account-engine';
-import type { AccountsConfig } from '../../shared/accounts';
+import type { AccountId, AccountsConfig } from '../../shared/accounts';
 import { needsEngineRebuild } from './account-pool';
 
 export interface AccountEngineHostDeps {
   /** index.ts injeta o corpo atual de `rebuildAccountEngine` (monta `AccountEngine`, liga `onChanged`, `start()`, `startPolling(...)`). */
   readonly createEngine: (config: AccountsConfig) => AccountEngine;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1 (Bloco 0) — uma troca decidida
+   * pelo PRÓPRIO motor (`evaluateAutoSwitch` -> `switchTo`) muda só a config
+   * em memória do `AccountEngine`; sem este retorno, `appConfig.accounts`
+   * (index.ts) fica com a conta ativa VELHA, e uma reconstrução subsequente
+   * (add/remove conta) renasceria o motor a partir dela — a próxima troca
+   * capturaria o par rotacionado na conta ERRADA (mata uma conta). Chamado
+   * com o id novo (`null` incluso) toda vez que o motor muda de conta ativa
+   * por um caminho que não passou por `apply()`.
+   */
+  readonly onActiveAccountChanged?: (id: AccountId | null) => void;
 }
 
 export type AccountEngineApplyResult = 'built' | 'rebuilt' | 'updated';
 
 export class AccountEngineHost {
   private readonly createEngineFn: (config: AccountsConfig) => AccountEngine;
+  private readonly onActiveAccountChangedFn: ((id: AccountId | null) => void) | undefined;
   private engine: AccountEngine | null = null;
   private lastAppliedConfig: AccountsConfig | null = null;
 
   constructor(deps: AccountEngineHostDeps) {
     this.createEngineFn = deps.createEngine;
+    this.onActiveAccountChangedFn = deps.onActiveAccountChanged;
   }
 
   current(): AccountEngine | null {
@@ -40,6 +53,7 @@ export class AccountEngineHost {
     if (!this.engine || !this.lastAppliedConfig) {
       this.engine = this.createEngineFn(config);
       this.lastAppliedConfig = config;
+      this.trackActiveAccount(this.engine);
       return 'built';
     }
 
@@ -47,6 +61,7 @@ export class AccountEngineHost {
       this.engine.dispose();
       this.engine = this.createEngineFn(config);
       this.lastAppliedConfig = config;
+      this.trackActiveAccount(this.engine);
       return 'rebuilt';
     }
 
@@ -59,5 +74,24 @@ export class AccountEngineHost {
     this.engine?.dispose();
     this.engine = null;
     this.lastAppliedConfig = null;
+  }
+
+  /**
+   * Assina `engine.onChanged` (aditivo — `onChanged` aceita vários ouvintes;
+   * `createEngine` já liga o seu próprio, ex.: `broadcastAccountsChanged`).
+   * Compara `view.activeAccountId` contra a ÚLTIMA config aplicada: se
+   * diferente, atualiza essa referência (pra não disparar de novo à toa) e
+   * chama a dep. `listAccounts()` também emite via `onChanged`, mas só muda
+   * `accounts`/`lastReadAt` — nunca `activeAccountId` — então não dispara.
+   */
+  private trackActiveAccount(engine: AccountEngine): void {
+    const onActiveAccountChanged = this.onActiveAccountChangedFn;
+    if (!onActiveAccountChanged) return;
+
+    engine.onChanged((view) => {
+      if (!this.lastAppliedConfig || view.activeAccountId === this.lastAppliedConfig.activeAccountId) return;
+      this.lastAppliedConfig = { ...this.lastAppliedConfig, activeAccountId: view.activeAccountId };
+      onActiveAccountChanged(view.activeAccountId);
+    });
   }
 }

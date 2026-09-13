@@ -575,6 +575,16 @@ const accountEngineHost = new AccountEngineHost({
     engine.startPolling(() => accountsLiveSessionPtyIds.size > 0);
     return engine;
   },
+  // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 0 — uma troca decidida
+  // pelo PRÓPRIO motor (auto-switch) só mudava a config em memória do
+  // engine; `appConfig.accounts.activeAccountId` ficava com a conta VELHA, e
+  // um rebuild subsequente (add/remove conta) renascia o motor a partir
+  // dela — a próxima troca capturaria o par rotacionado na conta ERRADA.
+  onActiveAccountChanged: (id) => {
+    if (id === appConfig.accounts.activeAccountId) return;
+    appConfig = { ...appConfig, accounts: { ...appConfig.accounts, activeAccountId: id } };
+    persistAppConfig();
+  },
 });
 
 /**
@@ -591,7 +601,7 @@ const accountEngineHost = new AccountEngineHost({
 function applyAccountsEngineConfig(): void {
   const result = accountEngineHost.apply(appConfig.accounts);
   if (result === 'rebuilt') {
-    void accountEngineHost.current()?.listAccounts();
+    void accountEngineHost.current()?.listAccounts().catch(() => undefined);
   }
 }
 
