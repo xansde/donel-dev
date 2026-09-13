@@ -51,15 +51,30 @@ O que os automatizados **não** provam e só um humano confere:
 
 ### 3. Trocar de conta sem reiniciar sessão (com sessão `claude` REAL aberta)
 
-- [ ] Com uma sessão `claude` aberta e ativa (trabalhando de verdade, não
-      simulada), trocar de conta pelo painel "Contas".
-- [ ] Sem fechar/reabrir a aba, mandar uma mensagem nova nessa sessão e
+> **Veredito 13/09/2026 — PASSOU** (Fase 0 da etapa 3, `plan-etapa-3.md` §4;
+> Donel Dev Beta 0.3.2, CLI 2.1.270, troca da conta 3 para a Interno 1). Leitura
+> do código do CLI e detalhe da medição em `research-etapa-3-cli.md`.
+
+- [x] Com uma sessão `claude` aberta e ativa (trabalhando de verdade, não
+      simulada), trocar de conta pelo painel "Contas". *(13/09: aba nova com
+      mensagem enviada antes; troca pelo painel para a Interno 1, primeira troca
+      do pool — `activeAccountId` era `null`.)*
+- [x] Sem fechar/reabrir a aba, mandar uma mensagem nova nessa sessão e
       confirmar que ela responde usando a conta NOVA (ex.: rodar `/status`
       dentro da sessão `claude`, ou observar a cota da conta mudando).
-- [ ] Confirmar que o MCP já configurado (`~/.claude.json` → `mcpServers`)
+      *(13/09: na mesma aba, o `/usage` foi de 4%/45% com reset em 17/09 para
+      0%/14% com reset em 18/09 — outra conta —, e a request pós-troca teve 1
+      miss do prompt cache. O `/status` **não** serve de evidência: logo depois
+      da troca ele mostra "Claude API account", sem conta, até o CLI refazer o
+      fetch do perfil. Uma aba aberta depois da troca também nasceu na conta
+      nova.)*
+- [x] Confirmar que o MCP já configurado (`~/.claude.json` → `mcpServers`)
       continua funcionando nessa mesma sessão depois da troca (D6 — promessa
       central da spec). O smoke prova que o arquivo não muda; isto aqui prova
-      que o MCP FUNCIONA de fato depois.
+      que o MCP FUNCIONA de fato depois. *(13/09: a aba que trocou manteve os
+      mesmos 11 servidores conectados no `/status`; o MCP do GitHub respondeu
+      numa aba aberta depois da troca; e a sessão que conduziu a Fase 0, viva
+      desde antes da troca, chamou o MCP filesystem com sucesso depois dela.)*
 
 ### 4. Auto-switch em tempo real (90/20)
 

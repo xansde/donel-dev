@@ -42,7 +42,7 @@ registra uma conta por perfil —, mas a **UI perdeu o gesto**:
 O modelo novo é melhor que os perfis (config única, MCP não duplica, troca sem
 reiniciar sessão). O que falta é devolver o gesto que os perfis tinham.
 
-## 3. Os cinco furos entre hoje e o pedido
+## 3. Os furos entre hoje e o pedido (F1–F5 do planejamento, F6 da execução)
 
 | # | Furo | Evidência |
 |---|---|---|
@@ -51,6 +51,7 @@ reiniciar sessão). O que falta é devolver o gesto que os perfis tinham.
 | **F3** | **A promessa central nunca foi provada com CLI real**: "trocar de conta sem reiniciar sessão" está `[ ]` no `e2e.md` §3. Os smokes usam mod falso; a adoção sem reiniciar é hipótese de research (C5), não fato medido | `e2e.md` §3 |
 | **F4** | Depois da troca, **a tela mente**: o rótulo e a cota da aba são da conta de **nascimento** (`PtyCreateResult.account`, imutável pela vida da aba — `sessionAccountLabel.ts`), não da vigente | `index.ts:824`, `App.tsx:1755` |
 | **F5** | A troca é **global** e isso não está dito em lugar nenhum da UI: atinge todas as sessões vivas na próxima chamada delas. 4 abas **não** podem rodar em 4 contas ao mesmo tempo | `research.md` C5 |
+| **F6** | *(achado na execução da Fase 0, 13/09)* Conta **importada com o mod já ativo não entra no motor vivo**: o mod é resolvido só no construtor do motor e `updateConfig` só troca a config. As 4 contas foram para o `config.json` e o cofre, mas o painel mostrou só a primeira até reiniciar o app. Qualquer "Adicionar conta" da Fase 1 que siga o mesmo caminho herda o bug | `account-engine.ts:75`, `account-engine.ts:102`, `index.ts:1690` |
 
 ## 4. Fases
 
@@ -107,6 +108,15 @@ pares no cofre com o `expiresAt` **real** do arquivo, registra as 4 em
 Previsão pelo código (`research-etapa-3-cli.md` A1): o passo 3 mostra a conta
 **antiga** — a sessão viva só adota a nova na próxima renovação do token (≤5 min
 do vencimento) ou num 401 —, e o passo 4 mostra a nova.
+
+**Resultado (13/09/2026): PASSOU.** A previsão acima falhou: a mesma aba passou
+para a conta nova já na mensagem seguinte (`/usage` com outra janela semanal e 1
+miss do prompt cache), a aba aberta depois nasceu na conta nova e o MCP seguiu
+respondendo. Efeito colateral a conhecer: o `/status` do CLI mostra "Claude API
+account" até refazer o fetch do perfil, alguns minutos depois — não é algo que o
+Donel conserte, mas a Fase 2 não pode usá-lo como verdade. Veredito em `e2e.md`
+§3; leitura do código em `research-etapa-3-cli.md`. Seguem as fases 1 e 2 como
+escritas, com o F6 (§3) dentro da Fase 1.
 
 - **Passou** → o desenho está certo; seguem as fases 1 e 2 como escritas.
 - **Reprovou** (o CLI cacheia o par em memória por processo) → o modelo de
