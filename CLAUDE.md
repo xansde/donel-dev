@@ -191,6 +191,27 @@ incidente dos commits entrelaçados de 04/08. A rodada **termina no alfa**
 (Onda 5) — liberado sem pedir permissão, ao contrário de `main` e do repo
 público, que seguem no bloqueio total.
 
+## Gatilho — "rodar a próxima fase das contas"
+
+Pedido "**rodar a próxima fase das contas**" (ou "próxima fase do pool de
+contas") = abrir `specs/011-contas-e-provedores/plan-etapa-3.md` — o plano da
+etapa 3 (estado medido, os cinco furos, fases, riscos) — e pegar a primeira
+fase `⬜` da fila
+`Claude Seazone/Projects/donel-dev/contas-4-pool-proprio/PROXIMO.md`. Prompts
+prontos, um por fase (+ retomada), em `prompt.md`, na mesma pasta.
+
+**Escopo:** 4 contas próprias no alfa, trocando entre elas **durante** sessões
+vivas. **Pool/mod Seazone fora por decisão do dono (13/09)** — sai da UI na
+Fase 1; remover o código espera instrução dele.
+
+A ordem é **estritamente sequencial**, e a **Fase 0 é gate, não aquecimento**:
+"trocar de conta sem reiniciar sessão" é a promessa central da 011 e **nunca foi
+provada com CLI real** (`e2e.md` §3, em aberto desde 04/08) — os smokes usam mod
+falso. Se ela reprovar, o modelo de troca global em voo cai e o plano vira conta
+por PTY (`CLAUDE_CODE_OAUTH_TOKEN`/`CLAUDE_CONFIG_DIR`) ou troca com reinício
+explícito: **reescrever o plano antes de escrever código**. Nenhuma linha das
+fases 1–2 se escreve antes do veredito.
+
 ## Gotchas conhecidos (do planejamento)
 
 - node-pty precisa casar com a ABI do Electron — prebuilds/@electron/rebuild;
