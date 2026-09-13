@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -38,6 +38,11 @@ function credentialsJson(overrides: Partial<{ accessToken: string; refreshToken:
 
 function claudeJson(accountUuid: string): string {
   return JSON.stringify({ oauthAccount: { accountUuid } });
+}
+
+/** O MESMO cálculo de `accountFingerprintFromClaudeJsonText` (credentials-file.ts) — usado só pra preparar fixtures de teste, nunca pela implementação. */
+function fingerprintOf(accountUuid: string): string {
+  return createHash('sha256').update(accountUuid, 'utf8').digest('hex');
 }
 
 class FakeVault implements VaultLike {
@@ -107,6 +112,9 @@ interface Harness {
   generateAccountIdCallsLog: string[];
   readonly generateAccountIdCalls: number;
   findAccountByFingerprintBox: { impl: (fingerprint: string) => { id: AccountId; label: string } | null };
+  // 011-contas-e-provedores, etapa 3, Fase 2 (D3) — o dep novo do fluxo de
+  // "Reconectar" (`begin(label, { targetAccountId })`).
+  findAccountByIdBox: { impl: (id: AccountId) => { id: AccountId; label: string; fingerprint: string | null } | null };
   isVaultAvailableFlag: { value: boolean };
 }
 
@@ -121,6 +129,7 @@ function makeHarness(overrides: Partial<IsolatedLoginManagerDeps> = {}): Harness
   const isVaultAvailableFlag = { value: true };
   const generateAccountIdCallsLog: string[] = [];
   const findAccountByFingerprintBox = { impl: (_fp: string): { id: AccountId; label: string } | null => null };
+  const findAccountByIdBox = { impl: (_id: AccountId): { id: AccountId; label: string; fingerprint: string | null } | null => null };
 
   const trackedVaultWrite = vault.write.bind(vault);
   vault.write = (id: string, plainText: string) => {
@@ -140,6 +149,7 @@ function makeHarness(overrides: Partial<IsolatedLoginManagerDeps> = {}): Harness
     vault,
     isVaultAvailable: () => isVaultAvailableFlag.value,
     findAccountByFingerprint: (fp) => findAccountByFingerprintBox.impl(fp),
+    findAccountById: (id) => findAccountByIdBox.impl(id),
     generateLoginId: () => VALID_UUID(),
     generateAccountId: () => {
       const id = `generated-${generateAccountIdCallsLog.length + 1}`;
@@ -184,6 +194,7 @@ function makeHarness(overrides: Partial<IsolatedLoginManagerDeps> = {}): Harness
       return generateAccountIdCallsLog.length;
     },
     findAccountByFingerprintBox,
+    findAccountByIdBox,
     isVaultAvailableFlag,
   };
 }
@@ -594,6 +605,140 @@ describe('IsolatedLoginManager — sweepStaleDirs (boot)', () => {
 
     expect(calls).toBe(2);
     expect(removed).toEqual([b]); // só a que não lançou entra no resultado.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 011-contas-e-provedores, etapa 3, Fase 2 (D3) — "Reconectar":
+// `begin(label, { targetAccountId })` aponta o login PARA uma conta já
+// cadastrada. Casos a-d do desenho (fase2-design.md §Bloco 1, item 7).
+describe('IsolatedLoginManager — begin com alvo (Reconectar, D3)', () => {
+  it('sucesso: fingerprint do login bate com o do PRÓPRIO alvo -> reconnected, grava no id do alvo, sem gerar id novo, label é o do alvo (não o passado a begin)', async () => {
+    const harness = makeHarness();
+    const alvoFingerprint = fingerprintOf('uuid-alvo');
+    harness.findAccountByIdBox.impl = (id) => (id === 'target-1' ? { id: 'target-1', label: 'Rótulo Real do Alvo', fingerprint: alvoFingerprint } : null);
+    harness.findAccountByFingerprintBox.impl = (fp) => (fp === alvoFingerprint ? { id: 'target-1', label: 'Rótulo Real do Alvo' } : null);
+
+    // Label digitado deliberadamente DIFERENTE do rótulo real do alvo — prova
+    // que o status final usa o rótulo LIDO do alvo, não o parâmetro de begin
+    // (na wiring real de index.ts os dois são o mesmo valor).
+    const begun = harness.manager.begin('Rótulo Que Não Deveria Aparecer', { targetAccountId: 'target-1' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-alvo'));
+
+    await sleep(120);
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Rótulo Real do Alvo', state: 'reconnected', accountId: 'target-1' }]);
+    expect(harness.vault.writes).toEqual([{ id: 'target-1', plainText: expect.any(String) }]);
+    expect(harness.harvestedCalls).toEqual([{ kind: 'reconnected', accountId: 'target-1', label: 'Rótulo Real do Alvo', fingerprint: alvoFingerprint }]);
+    expect(harness.generateAccountIdCallsLog).toHaveLength(0); // nunca gera id novo — o alvo já tem um.
+  });
+
+  it('sucesso: alvo SEM fingerprint ainda (conta antiga) ganha o fingerprint novo do login', async () => {
+    const harness = makeHarness();
+    harness.findAccountByIdBox.impl = (id) => (id === 'target-2' ? { id: 'target-2', label: 'Conta Antiga', fingerprint: null } : null);
+    // Nenhuma conta conhece este fingerprint ainda (findAccountByFingerprintBox default -> null).
+
+    const begun = harness.manager.begin('Conta Antiga', { targetAccountId: 'target-2' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-novo'));
+
+    await sleep(120);
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Antiga', state: 'reconnected', accountId: 'target-2' }]);
+    expect(harness.harvestedCalls).toEqual([{ kind: 'reconnected', accountId: 'target-2', label: 'Conta Antiga', fingerprint: fingerprintOf('uuid-novo') }]);
+  });
+
+  it('login SEM fingerprint (claude.json nunca chega) contra alvo COM fingerprint é aceito — não dá pra provar que é outra conta', async () => {
+    const harness = makeHarness({ fingerprintGraceMs: 60 });
+    harness.findAccountByIdBox.impl = (id) => (id === 'target-3' ? { id: 'target-3', label: 'Conta Com FP', fingerprint: fingerprintOf('uuid-existente') } : null);
+
+    const begun = harness.manager.begin('Conta Com FP', { targetAccountId: 'target-3' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    // .claude.json nunca aparece.
+
+    await sleep(200);
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Com FP', state: 'reconnected', accountId: 'target-3' }]);
+    expect(harness.harvestedCalls).toEqual([{ kind: 'reconnected', accountId: 'target-3', label: 'Conta Com FP', fingerprint: null }]);
+  });
+
+  it('(a) alvo sumiu -> failed/unknown-account, nada gravado, cauda roda igual (removeDir)', async () => {
+    const harness = makeHarness();
+    // findAccountByIdBox default -> null pra qualquer id (alvo "sumiu" da config).
+
+    const begun = harness.manager.begin('Alvo Sumido', { targetAccountId: 'nunca-existiu' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-qualquer'));
+
+    await sleep(120);
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Alvo Sumido', state: 'failed', reason: 'unknown-account' }]);
+    expect(harness.vault.writes).toEqual([]);
+    expect(harness.harvestedCalls).toEqual([]);
+    expect(harness.fs.removeDirCalls).toContain(dir);
+    expect(harness.manager.getPendingDir(begun.loginId)).toBeNull();
+  });
+
+  it('(b) fingerprint do login pertence a OUTRA conta conhecida -> wrong-account com otherLabel; cauda roda (kill + removeDir)', async () => {
+    const harness = makeHarness();
+    const fingerprintDeOutraConta = fingerprintOf('uuid-de-outra-conta');
+    harness.findAccountByIdBox.impl = (id) => (id === 'target-b' ? { id: 'target-b', label: 'Alvo B', fingerprint: null } : null);
+    harness.findAccountByFingerprintBox.impl = (fp) => (fp === fingerprintDeOutraConta ? { id: 'outra-conta', label: 'Conta Outra' } : null);
+
+    const begun = harness.manager.begin('Alvo B', { targetAccountId: 'target-b' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.manager.attachPty(begun.loginId, 'pty-b');
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-de-outra-conta'));
+
+    await sleep(120);
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Alvo B', state: 'wrong-account', otherLabel: 'Conta Outra' }]);
+    expect(harness.vault.writes).toEqual([]);
+    expect(harness.harvestedCalls).toEqual([]);
+    expect(harness.killPtyCalls).toEqual(['pty-b']);
+    expect(harness.fs.removeDirCalls).toContain(dir);
+  });
+
+  it('(c) alvo tem fingerprint próprio, login traz outro (não reconhecido por nenhuma conta) -> wrong-account com otherLabel null', async () => {
+    const harness = makeHarness();
+    harness.findAccountByIdBox.impl = (id) => (id === 'target-c' ? { id: 'target-c', label: 'Alvo C', fingerprint: fingerprintOf('uuid-alvo-original') } : null);
+    // findAccountByFingerprintBox default -> null (ninguém conhece o fingerprint deste login).
+
+    const begun = harness.manager.begin('Alvo C', { targetAccountId: 'target-c' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-login-desconhecido'));
+
+    await sleep(120);
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Alvo C', state: 'wrong-account', otherLabel: null }]);
+    expect(harness.vault.writes).toEqual([]);
+    expect(harness.harvestedCalls).toEqual([]);
+  });
+
+  it('sem alvo (comportamento da Fase 1): begin sem options continua add/replace normalmente', async () => {
+    const harness = makeHarness();
+    const begun = harness.manager.begin('Conta Normal');
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-normal'));
+
+    await sleep(120);
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Normal', state: 'added', accountId: 'generated-1' }]);
   });
 });
 

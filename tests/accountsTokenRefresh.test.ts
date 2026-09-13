@@ -44,24 +44,61 @@ describe('refreshCredentialPair (I/O injetável)', () => {
     }
   });
 
-  it('recusa do servidor (4xx) devolve failed, nunca lança', async () => {
+  // 011-contas-e-provedores, etapa 3, Fase 2 (D4) — `failed` ganha `reason`:
+  // `rejected` (o servidor recusou de fato, ou a resposta 2xx não dá pra
+  // usar — o refresh token de uso único pode já ter sido consumido) vs.
+  // `unavailable` (não deu pra saber se o servidor teria aceitado — rede,
+  // timeout, ou um status que não é nem sucesso nem recusa de credencial).
+  // Só `rejected` diferencia de "sem rede" pro chamador (local-mod.ts) —
+  // antes deste D4, os dois casos colapsavam num `failed` sem razão.
+
+  it('recusa do servidor (401) devolve failed/rejected, nunca lança', async () => {
     const fetchImpl = fakeFetch(401, { error: 'invalid_grant' });
     const result = await refreshCredentialPair(REFRESH_TOKEN, { fetchImpl });
-    expect(result).toEqual({ kind: 'failed' });
+    expect(result).toEqual({ kind: 'failed', reason: 'rejected' });
   });
 
-  it('erro de rede devolve failed, nunca lança', async () => {
+  it('recusa do servidor (400) devolve failed/rejected', async () => {
+    const fetchImpl = fakeFetch(400, { error: 'invalid_request' });
+    const result = await refreshCredentialPair(REFRESH_TOKEN, { fetchImpl });
+    expect(result).toEqual({ kind: 'failed', reason: 'rejected' });
+  });
+
+  it('recusa do servidor (403) devolve failed/rejected', async () => {
+    const fetchImpl = fakeFetch(403, { error: 'forbidden' });
+    const result = await refreshCredentialPair(REFRESH_TOKEN, { fetchImpl });
+    expect(result).toEqual({ kind: 'failed', reason: 'rejected' });
+  });
+
+  it('outro não-2xx (500) devolve failed/unavailable — nunca confundido com recusa de credencial', async () => {
+    const fetchImpl = fakeFetch(500, { error: 'internal' });
+    const result = await refreshCredentialPair(REFRESH_TOKEN, { fetchImpl });
+    expect(result).toEqual({ kind: 'failed', reason: 'unavailable' });
+  });
+
+  it('erro de rede devolve failed/unavailable, nunca lança', async () => {
     const fetchImpl: HttpFetchLike = async () => {
       throw new Error('network down');
     };
     const result = await refreshCredentialPair(REFRESH_TOKEN, { fetchImpl });
-    expect(result).toEqual({ kind: 'failed' });
+    expect(result).toEqual({ kind: 'failed', reason: 'unavailable' });
   });
 
-  it('payload de sucesso malformado (sem access_token) devolve failed', async () => {
+  it('payload de sucesso malformado (sem access_token) devolve failed/rejected', async () => {
     const fetchImpl = fakeFetch(200, { refresh_token: 'x' });
     const result = await refreshCredentialPair(REFRESH_TOKEN, { fetchImpl });
-    expect(result).toEqual({ kind: 'failed' });
+    expect(result).toEqual({ kind: 'failed', reason: 'rejected' });
+  });
+
+  it('payload de sucesso com JSON inválido (json() lança) devolve failed/rejected', async () => {
+    const fetchImpl: HttpFetchLike = async () => ({
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('unexpected token');
+      },
+    });
+    const result = await refreshCredentialPair(REFRESH_TOKEN, { fetchImpl });
+    expect(result).toEqual({ kind: 'failed', reason: 'rejected' });
   });
 
   it('o refresh token nunca aparece numa mensagem de erro lançada', async () => {
@@ -70,7 +107,7 @@ describe('refreshCredentialPair (I/O injetável)', () => {
     };
     try {
       const result = await refreshCredentialPair(REFRESH_TOKEN, { fetchImpl });
-      expect(result).toEqual({ kind: 'failed' });
+      expect(result).toEqual({ kind: 'failed', reason: 'unavailable' });
     } catch (error) {
       expect(String(error)).not.toContain(REFRESH_TOKEN);
     }

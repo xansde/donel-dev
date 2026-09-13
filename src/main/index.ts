@@ -169,7 +169,7 @@ import { AccountEngineHost } from './accounts/account-engine-host';
 // 011-contas-e-provedores, etapa 3, Fase 1 — planos PUROS de "remover conta"
 // e "desconectar" (quais chaves o cofre perde, config final). Fase 1, Bloco
 // 2 — o que o login isolado grava em `appConfig.accounts` depois de colher.
-import { applyHarvestedAccount, findAccountByFingerprint, planDisconnect, planRemoveAccount } from './accounts/account-pool';
+import { applyHarvestedAccount, findAccountByFingerprint, findAccountById, planDisconnect, planRemoveAccount } from './accounts/account-pool';
 import type { AccountMod } from './accounts/account-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — colhedor do login
 // isolado (plan-etapa-3.md §4.2): `<userData>/accounts-login-<uuid>/`, poll
@@ -1714,7 +1714,21 @@ function registerGithubIpcHandlers(): void {
 function registerAccountsIpcHandlers(): void {
   ipcMain.handle(ACCOUNT_CHANNELS.list, async (): Promise<AccountsViewDto> => {
     const engine = accountEngineHost.current();
-    if (!engine) return { mod: null, state: 'inert', unavailableReason: null, accounts: [], activeAccountId: null, autoSwitch: appConfig.accounts.autoSwitch, lastReadAt: null };
+    if (!engine) {
+      // 011-contas-e-provedores, etapa 3, Fase 2 (D5) — view inerte também
+      // precisa dos dois campos novos (motor sem mod nunca troca sozinho).
+      return {
+        mod: null,
+        state: 'inert',
+        unavailableReason: null,
+        accounts: [],
+        activeAccountId: null,
+        autoSwitch: appConfig.accounts.autoSwitch,
+        lastReadAt: null,
+        autoSwitchState: 'idle',
+        lastAutoSwitch: null,
+      };
+    }
     return engine.listAccounts();
   });
 
@@ -2033,6 +2047,9 @@ void app.whenReady().then(async () => {
     vault: createRealAccountsVaultAdapter(),
     isVaultAvailable: () => safeStorage.isEncryptionAvailable(),
     findAccountByFingerprint: (fingerprint) => findAccountByFingerprint(appConfig.accounts, fingerprint),
+    // 011-contas-e-provedores, etapa 3, Fase 2 (D3) — identifica a conta-alvo
+    // de um login "Reconectar" (`accounts:beginReconnect`, Bloco 3).
+    findAccountById: (id) => findAccountById(appConfig.accounts, id),
     generateLoginId: () => randomUUID(),
     generateAccountId: () => randomUUID(),
     onAccountHarvested: (event) => {

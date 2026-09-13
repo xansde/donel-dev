@@ -310,6 +310,10 @@ export function App(): React.JSX.Element {
     activeAccountId: null,
     autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 },
     lastReadAt: null,
+    // 011-contas-e-provedores, etapa 3, Fase 2 (D5) — campos novos da view;
+    // o consumo deles na statusbar é do Bloco 2 (fora do escopo deste bloco).
+    autoSwitchState: 'idle',
+    lastAutoSwitch: null,
   });
   // T009 — estado do semáforo por aba (chave = tab.id), alimentado pelo
   // callback que cada TerminalPane levanta via onStateChange.

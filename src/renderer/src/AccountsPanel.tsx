@@ -25,16 +25,40 @@ const UNAVAILABLE_REASON_LABEL: Record<'offline' | 'unauthorized' | 'io', string
   io: 'erro ao ler contas',
 };
 
-/** Mensagens de `BeginLoginOutcome.failed.reason` (`accounts:beginLogin`, isolated-login.ts `begin()`). */
-const BEGIN_LOGIN_ERROR_LABEL: Record<'invalid-input' | 'vault-unavailable' | 'login-in-progress' | 'io', string> = {
+/**
+ * Mensagens de `BeginLoginOutcome.failed.reason` (`accounts:beginLogin`,
+ * isolated-login.ts `begin()`). 011-contas-e-provedores, etapa 3, Fase 2
+ * (D3) — `BeginLoginOutcome` passou a ser compartilhado com
+ * `accounts:beginReconnect`, que pode falhar com `active-account`/
+ * `unknown-account`; ajuste MÍNIMO aqui é só o tipo do Record acompanhar
+ * (typecheck) — o consumo de verdade dessas duas chaves (com o rótulo da
+ * conta interpolado) é do fluxo "Reconectar" (`handleReconnect`, Bloco 2),
+ * que nunca deveria cair neste fallback genérico pra elas.
+ */
+const BEGIN_LOGIN_ERROR_LABEL: Record<'invalid-input' | 'vault-unavailable' | 'login-in-progress' | 'io' | 'active-account' | 'unknown-account', string> = {
   'invalid-input': 'Dê um rótulo à conta (até 60 caracteres).',
   'vault-unavailable': 'Este dispositivo não suporta o cofre de credenciais — nada foi aberto.',
   'login-in-progress': 'Já existe um login em andamento — conclua ou cancele antes.',
   io: 'Não foi possível preparar o login — tente de novo.',
+  'active-account': 'Esta conta já está em uso — não é possível reconectar.',
+  'unknown-account': 'Esta conta não existe mais.',
 };
 
 function emptyView(): AccountsViewDto {
-  return { mod: null, state: 'inert', unavailableReason: null, accounts: [], activeAccountId: null, autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 }, lastReadAt: null };
+  // 011-contas-e-provedores, etapa 3, Fase 2 (D5) — os dois campos novos da
+  // view (`autoSwitchState`/`lastAutoSwitch`); resto do consumo deles é do
+  // Bloco 2 (fora do escopo deste bloco).
+  return {
+    mod: null,
+    state: 'inert',
+    unavailableReason: null,
+    accounts: [],
+    activeAccountId: null,
+    autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 },
+    lastReadAt: null,
+    autoSwitchState: 'idle',
+    lastAutoSwitch: null,
+  };
 }
 
 interface PasteFormState {
@@ -48,7 +72,12 @@ function emptyPasteForm(): PasteFormState {
   return { accessToken: '', refreshToken: '', expiresAt: '' };
 }
 
-/** Mensagem de um status final de login isolado (`accounts:loginChanged`, plan-etapa-3.md §4.2). */
+/**
+ * Mensagem de um status final de login isolado (`accounts:loginChanged`,
+ * plan-etapa-3.md §4.2). 011-contas-e-provedores, etapa 3, Fase 2 (D3) —
+ * `reconnected`/`wrong-account` são o fluxo "Reconectar"; em ambos,
+ * `status.label` é o rótulo da conta-ALVO (nunca o que foi digitado).
+ */
 function loginStatusMessage(status: LoginStatusDto): string {
   if (status.state === 'added') return `Conta «${status.label}» adicionada.`;
   if (status.state === 'replaced') {
@@ -59,7 +88,14 @@ function loginStatusMessage(status: LoginStatusDto): string {
     if (status.reason === 'exited-without-login') return 'A aba de login fechou antes do login terminar — nada foi guardado.';
     return 'A aba de login não abriu — nada foi guardado.'; // 'no-terminal'
   }
+  if (status.state === 'reconnected') return `Conta «${status.label}» reconectada.`;
+  if (status.state === 'wrong-account') {
+    return status.otherLabel
+      ? `Você entrou com a conta de «${status.otherLabel}», não com a de «${status.label}» — nada foi alterado.`
+      : `Você entrou com outra conta, não com a de «${status.label}» — nada foi alterado.`;
+  }
   // status.state === 'failed'
+  if (status.reason === 'unknown-account') return `A conta «${status.label}» não existe mais — nada foi guardado.`;
   return status.reason === 'vault-unavailable' ? 'O cofre recusou a credencial — nada foi guardado.' : 'Não foi possível registrar a conta — tente de novo.';
 }
 

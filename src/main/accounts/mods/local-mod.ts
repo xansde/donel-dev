@@ -5,6 +5,12 @@
 // fallback e grava o resultado no cofre ANTES de usá-lo (refresh token de
 // uso único: perder o par novo inutiliza a conta). Recusa do refresh ->
 // `expired-credentials` (a UI pede re-login uma vez).
+//
+// 011-contas-e-provedores, etapa 3, Fase 2 (D4) — `token-refresh.ts` agora
+// distingue `rejected` (recusa de verdade) de `unavailable` (rede/timeout —
+// nunca dá pra saber se o servidor teria aceitado): só `rejected` vira
+// `expired-credentials` aqui; `unavailable` vira `offline`, o mesmo `reason`
+// que qualquer outra falha de rede do mod já usa.
 
 import type { AccountLoad, AccountSummary, LocalAccountMeta } from '../../../shared/accounts';
 import type { AccountMod, CredentialPair, ListAccountsResult, SwitchToResult } from '../account-mod';
@@ -74,7 +80,7 @@ export function createLocalMod(deps: LocalModDeps): AccountMod {
       // nunca periódico, nunca fora deste caminho.
       if (pair.expiresAt <= Date.now()) {
         const result = await refresh(pair.refreshToken, { fetchImpl: deps.fetchImpl });
-        if (result.kind !== 'ok') return { kind: 'failed', reason: 'expired-credentials' };
+        if (result.kind !== 'ok') return { kind: 'failed', reason: result.reason === 'rejected' ? 'expired-credentials' : 'offline' };
 
         // Uso único: grava no cofre ANTES de usar. Falha de gravação aborta o switch.
         const writeResult = deps.vault.write(id, JSON.stringify(result.pair));
