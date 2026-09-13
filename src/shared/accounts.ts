@@ -57,6 +57,17 @@ export interface LocalAccountMeta {
   readonly id: AccountId;
   readonly label: string;
   readonly plan: string | null;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — sha256 hex do `accountUuid`
+   * do `.claude.json` (opaco, NUNCA e-mail/nome — LGPD;
+   * `accountFingerprintFromClaudeJsonText`, main/accounts/credentials-file.ts).
+   * Só existe em conta cadastrada por LOGIN ISOLADO — ausente (chave nem
+   * existe) em conta antiga (token colado à mão, migrada de perfil). `null`
+   * = login isolado que concluiu sem conseguir ler um `accountUuid` (ainda
+   * assim uma conta válida; só não pode ser reconhecida de novo por
+   * fingerprint).
+   */
+  readonly fingerprint?: string | null;
 }
 
 /** Persistência: chave `accounts` do `config.json` (userData). */
@@ -174,6 +185,10 @@ export const ACCOUNT_CHANNELS = {
   disconnectMod: 'accounts:disconnectMod',
   removeAccount: 'accounts:removeAccount',
   changed: 'accounts:changed',
+  /** 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado (`IsolatedLoginManager`, main/accounts/isolated-login.ts). */
+  beginLogin: 'accounts:beginLogin',
+  cancelLogin: 'accounts:cancelLogin',
+  loginChanged: 'accounts:loginChanged',
 } as const;
 
 /** API tipada exposta pelo preload em `window.donel.accounts` (contextBridge). */
@@ -188,4 +203,15 @@ export interface DonelAccountsApi {
   removeAccount(id: AccountId): Promise<RemoveAccountOutcome>;
   /** Retorna função de unsubscribe (mesmo padrão de `pty.onData`). */
   onChanged(listener: (view: AccountsViewDto) => void): () => void;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — inicia o login isolado
+   * (rótulo pedido ANTES de abrir a aba — LGPD, o nome nunca sai do
+   * `.claude.json`). `loginId` do retorno alimenta o `pty:create` seguinte
+   * (`PtyCreateOptions.accountLoginId`).
+   */
+  beginLogin(label: string): Promise<BeginLoginOutcome>;
+  /** Cancela um login isolado pendente — mata a aba, apaga o diretório, nada toca o cofre. */
+  cancelLogin(loginId: string): Promise<void>;
+  /** Retorna função de unsubscribe (mesmo padrão de `onChanged`). */
+  onLoginChanged(listener: (status: LoginStatusDto) => void): () => void;
 }

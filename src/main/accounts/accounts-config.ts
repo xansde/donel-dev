@@ -34,7 +34,17 @@ function sanitizeSeazoneConfig(value: unknown): { readonly baseUrl: string } | n
   return { baseUrl: candidate.baseUrl };
 }
 
-/** Entrada malformada (sem id/label válidos) é descartada isolada — as demais sobrevivem (mesmo espírito de `sanitizeSessionRegistry`). */
+/**
+ * Entrada malformada (sem id/label válidos) é descartada isolada — as demais
+ * sobrevivem (mesmo espírito de `sanitizeSessionRegistry`).
+ *
+ * 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — `fingerprint` (opaco,
+ * só existe em conta de login isolado) é preservado quando for string não
+ * vazia; caso contrário a CHAVE nem entra no objeto de saída (nunca vira
+ * `fingerprint: undefined`) — é assim que uma conta antiga (token colado à
+ * mão, migrada de perfil) permanece indistinguível de uma que nunca teve
+ * fingerprint.
+ */
 function sanitizeLocalAccounts(value: unknown): readonly LocalAccountMeta[] {
   if (!Array.isArray(value)) return [];
   const sanitized: LocalAccountMeta[] = [];
@@ -44,7 +54,8 @@ function sanitizeLocalAccounts(value: unknown): readonly LocalAccountMeta[] {
     if (typeof candidate.id !== 'string' || !candidate.id) continue;
     if (typeof candidate.label !== 'string' || !candidate.label.trim()) continue;
     const plan = typeof candidate.plan === 'string' ? candidate.plan : null;
-    sanitized.push({ id: candidate.id, label: candidate.label, plan });
+    const fingerprint = typeof candidate.fingerprint === 'string' && candidate.fingerprint ? candidate.fingerprint : null;
+    sanitized.push(fingerprint ? { id: candidate.id, label: candidate.label, plan, fingerprint } : { id: candidate.id, label: candidate.label, plan });
   }
   return sanitized;
 }

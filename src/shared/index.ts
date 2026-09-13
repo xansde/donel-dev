@@ -180,10 +180,12 @@ export type {
   AccountsViewDto,
   AccountSummary,
   AutoSwitchPolicy,
+  BeginLoginOutcome,
   ConnectModInput,
   ConnectModOutcome,
   DonelAccountsApi,
   LocalAccountMeta,
+  LoginStatusDto,
   ModId,
   RemoveAccountOutcome,
   SwitchOutcome,
@@ -262,6 +264,16 @@ export interface PtyCreateOptions {
    * (conta/perfil). Só tem efeito com `sessionType === 'claude'`.
    */
   providerId?: string;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado em andamento
+   * (`accounts:beginLogin`, `IsolatedLoginManager`). O main resolve o
+   * diretório (`getPendingDir`) e usa-o como `cwd`/`CLAUDE_CONFIG_DIR` desta
+   * sessão — mutuamente exclusivo com `providerId`. Só tem efeito com
+   * `sessionType === 'claude'`; esta aba nasce SEM argv do launcher, sem
+   * hooks do semáforo (`--settings`) e sem `--session-id` — é só o `claude`
+   * cru dentro de um diretório vazio, pro operador fazer `/login`.
+   */
+  accountLoginId?: string;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { DevModeBoardConfig } from '../shared/devMode';
@@ -39,6 +39,7 @@ import type {
   AppConfigDto,
   ArchiveOutcome,
   ArchivePhaseSessionIpcInput,
+  BeginLoginOutcome,
   ConnectModInput,
   ConnectModOutcome,
   ConsolidateResult,
@@ -166,9 +167,14 @@ import { AccountEngine } from './accounts/account-engine';
 // motor: decide construir/reconstruir/atualizar via `needsEngineRebuild`.
 import { AccountEngineHost } from './accounts/account-engine-host';
 // 011-contas-e-provedores, etapa 3, Fase 1 — planos PUROS de "remover conta"
-// e "desconectar" (quais chaves o cofre perde, config final).
-import { planDisconnect, planRemoveAccount } from './accounts/account-pool';
+// e "desconectar" (quais chaves o cofre perde, config final). Fase 1, Bloco
+// 2 — o que o login isolado grava em `appConfig.accounts` depois de colher.
+import { applyHarvestedAccount, findAccountByFingerprint, planDisconnect, planRemoveAccount } from './accounts/account-pool';
 import type { AccountMod } from './accounts/account-mod';
+// 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — colhedor do login
+// isolado (plan-etapa-3.md §4.2): `<userData>/accounts-login-<uuid>/`, poll
+// do diretório, cofre, e a limpeza obrigatória no fim (sucesso ou falha).
+import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { applyAccountSwitch, createSystemClaudeStateIoDeps } from './accounts/claude-state';
 import { createLocalMod } from './accounts/mods/local-mod';
@@ -419,6 +425,13 @@ let accountsVaultPath: string | null = null;
 const accountsBusyPtyIds = new Set<string>();
 /** Sessões `claude` vivas nesta execução (C4 — poll de 5 min só enquanto houver ao menos uma). Adicionado no registro da sessão (registerPtyIpcHandlers), removido no `onExit` (createMainWindow). */
 const accountsLiveSessionPtyIds = new Set<string>();
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — colhedor do login
+ * isolado. Instanciado em `whenReady()` (precisa de `app.getPath`); `null`
+ * antes disso e depois de `dispose()` — os handlers abaixo degradam com
+ * graça (`?.`) se chamados fora dessa janela (não deveria acontecer).
+ */
+let isolatedLoginManager: IsolatedLoginManager | null = null;
 
 /** Adaptador `VaultLike` sobre o cofre real — write-only pra fora de `accounts/` (nenhum getter daqui atravessa IPC; só os mods e este arquivo o enxergam). */
 function createRealAccountsVaultAdapter(): VaultLike {
@@ -426,6 +439,34 @@ function createRealAccountsVaultAdapter(): VaultLike {
     read: (id: string) => (accountsVaultPath ? decryptVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, id) : null),
     write: (id: string, plainText: string) =>
       accountsVaultPath ? writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, id, plainText) : { kind: 'vault-unavailable' as const },
+  };
+}
+
+/**
+ * Deps de filesystem REAIS do login isolado — `removeDir` usa `rmSync` com
+ * retry (Windows pode segurar por um instante o handle de um arquivo que o
+ * `/login` acabou de fechar) e nunca lança (best-effort, a varredura do
+ * próximo boot recolhe o que sobrar). `readText` nunca lança — ausência vira
+ * `null` (o poll do login isolado trata isso como "ainda esperando").
+ */
+function createRealIsolatedLoginFsDeps(): IsolatedLoginFsDeps {
+  return {
+    mkdir: (path: string) => mkdirSync(path, { recursive: true }),
+    removeDir: (path: string) => rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }),
+    listDir: (path: string) => {
+      try {
+        return readdirSync(path);
+      } catch {
+        return [];
+      }
+    },
+    readText: (path: string) => {
+      try {
+        return readFileSync(path, 'utf8');
+      } catch {
+        return null;
+      }
+    },
   };
 }
 
@@ -754,6 +795,34 @@ function registerPtyIpcHandlers(): void {
       const resolved = resolveClaudeExecutable(claudeResolveDeps);
       if (!resolved.found) {
         throw new Error(`${CLAUDE_NOT_FOUND_PREFIX}${resolved.expectedPath}`);
+      }
+
+      // 011-contas-e-provedores, etapa 3, Fase 1.2 — aba do login isolado:
+      // SEM argv do launcher, SEM hooks do semáforo (`--settings`), SEM
+      // `--session-id` — só o `claude` cru dentro do diretório efêmero do
+      // login, pra o operador fazer `/login` de verdade. Mutuamente
+      // exclusivo com `providerId` (mesmo espírito de C13/D2 — nenhuma
+      // sessão nasce confusa sobre qual credencial está em jogo). Sai ANTES
+      // de qualquer resolução de correlação/conta/provider abaixo: esta aba
+      // não é uma sessão "de verdade" no sentido do resto deste handler.
+      if (options.accountLoginId) {
+        if (options.providerId) {
+          throw new Error('accountLoginId e providerId são mutuamente exclusivos.');
+        }
+        const loginDir = isolatedLoginManager?.getPendingDir(options.accountLoginId) ?? null;
+        if (!loginDir) {
+          throw new Error('Login de conta não encontrado — pode ter sido cancelado.');
+        }
+        const loginPtyId = ptyManager.create({
+          cols: options.cols,
+          rows: options.rows,
+          cwd: loginDir,
+          command: resolved.launch.command,
+          args: [...resolved.launch.argsPrefix],
+          claudeConfigDir: loginDir,
+        });
+        isolatedLoginManager!.attachPty(options.accountLoginId, loginPtyId);
+        return { ptyId: loginPtyId };
       }
 
       // T008 — argv do Launcher (CommandBuilder, FR-003/CA-1); vazio
@@ -1709,6 +1778,23 @@ function registerAccountsIpcHandlers(): void {
 
     return { kind: 'removed', config: appConfig.accounts };
   });
+
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado
+   * (`IsolatedLoginManager.begin`, isolated-login.ts). Valida o TIPO aqui
+   * (fronteira IPC — o renderer pode mandar qualquer coisa); a validação de
+   * conteúdo (rótulo vazio/longo demais) é do próprio manager.
+   */
+  ipcMain.handle(ACCOUNT_CHANNELS.beginLogin, (_event, label: unknown): BeginLoginOutcome => {
+    if (typeof label !== 'string') return { kind: 'failed', reason: 'invalid-input' };
+    if (!isolatedLoginManager) return { kind: 'failed', reason: 'io' };
+    return isolatedLoginManager.begin(label);
+  });
+
+  ipcMain.handle(ACCOUNT_CHANNELS.cancelLogin, (_event, loginId: unknown): void => {
+    if (typeof loginId !== 'string' || !loginId) return;
+    isolatedLoginManager?.cancel(loginId);
+  });
 }
 
 /**
@@ -1888,6 +1974,63 @@ void app.whenReady().then(async () => {
   // via API pública do semáforo, sem alterar session-semaphore-manager.ts.
   accountsVaultPath = join(app.getPath('userData'), 'accounts-vault.json');
 
+  // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — colhedor do login
+  // isolado. Mesmo cofre do motor (`createRealAccountsVaultAdapter`), mesmo
+  // `safeStorage.isEncryptionAvailable()` de disponibilidade, `killPty`
+  // delegado ao `ptyManager` e `emitStatus` fazendo broadcast pro mesmo
+  // padrão de `broadcastAccountsChanged`.
+  isolatedLoginManager = new IsolatedLoginManager({
+    userDataDir: app.getPath('userData'),
+    platform: process.platform,
+    fs: createRealIsolatedLoginFsDeps(),
+    vault: createRealAccountsVaultAdapter(),
+    isVaultAvailable: () => safeStorage.isEncryptionAvailable(),
+    findAccountByFingerprint: (fingerprint) => findAccountByFingerprint(appConfig.accounts, fingerprint),
+    generateLoginId: () => randomUUID(),
+    generateAccountId: () => randomUUID(),
+    onAccountHarvested: (event) => {
+      appConfig = { ...appConfig, accounts: applyHarvestedAccount(appConfig.accounts, event) };
+      persistAppConfig();
+      applyAccountsEngineConfig(); // F6 — 'added' muda a lista -> rebuilt -> já relê sozinho.
+      // 'replaced' NÃO muda `localAccounts` (account-pool.ts) -> `apply()`
+      // fica em 'updated', que não relê sozinho — sem isto, o painel
+      // continuaria mostrando a carga/estado da conta com o par ANTIGO.
+      void accountEngineHost.current()?.listAccounts().catch(() => undefined);
+    },
+    killPty: (ptyId) => ptyManager.kill(ptyId),
+    emitStatus: (status) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send(ACCOUNT_CHANNELS.loginChanged, status);
+      }
+    },
+  });
+
+  // Global (não por janela) — o login isolado precisa saber quando SEU PTY
+  // morre mesmo que nenhuma janela em particular esteja de olho nisso (mesmo
+  // padrão do `semaphoreManager.onUpdate` global logo abaixo, que também não
+  // depende de nenhuma `BrowserWindow`).
+  ptyManager.onExit((ptyId) => {
+    isolatedLoginManager?.handlePtyExit(ptyId);
+  });
+
+  // Boot — apaga sobras de um app fechado no meio de um login isolado (elas
+  // podem conter credencial em texto claro). Nunca derruba o boot: falha
+  // vira log e o app segue (mesmo padrão da faxina do cofre logo abaixo).
+  try {
+    const removedLoginDirs = isolatedLoginManager.sweepStaleDirs();
+    if (removedLoginDirs.length > 0) {
+      console.info(`[donel-dev] varredura de boot removeu ${removedLoginDirs.length} diretório(s) de login isolado órfão(s):`, removedLoginDirs);
+      const maintenanceLogPath = join(app.getPath('userData'), 'accounts-maintenance.log');
+      appendFileSync(
+        maintenanceLogPath,
+        `${JSON.stringify({ at: new Date().toISOString(), event: 'login-dirs-swept', removed: removedLoginDirs })}\n`,
+        'utf8',
+      );
+    }
+  } catch (error) {
+    console.error('[donel-dev] varredura de diretórios de login isolado falhou (boot segue normalmente):', error);
+  }
+
   // 011-contas-e-provedores, etapa 3, Fase 1 — faxina do cofre (plan-etapa-3.md
   // §4.4), ANTES do 1º `applyAccountsEngineConfig()` abaixo. Nunca derruba o
   // boot: falha aqui vira log e o app segue com o cofre como estava. Só
@@ -1937,6 +2080,7 @@ void app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   ptyManager.killAll();
+  isolatedLoginManager?.dispose(); // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — DEPOIS do killAll (mesma ordem já vale pro PTY do login, que killAll já matou).
   semaphoreManager.dispose();
   esteiraService?.dispose();
   esteiraService = null;

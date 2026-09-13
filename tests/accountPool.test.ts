@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { needsEngineRebuild, planDisconnect, planRemoveAccount } from '../src/main/accounts/account-pool';
+import { applyHarvestedAccount, findAccountByFingerprint, needsEngineRebuild, planDisconnect, planRemoveAccount } from '../src/main/accounts/account-pool';
+import type { AccountHarvestedEvent } from '../src/main/accounts/isolated-login';
 import type { AccountsConfig, LocalAccountMeta } from '../src/shared/accounts';
 import { defaultAccountsConfig } from '../src/shared/accounts';
 
@@ -149,5 +150,82 @@ describe('planDisconnect', () => {
     const plan = planDisconnect(defaultAccountsConfig());
     expect(plan.vaultKeys).toEqual(['seazone:session']);
     expect(plan.config).toEqual(defaultAccountsConfig());
+  });
+});
+
+// 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — o que o login isolado
+// (isolated-login.ts) usa pra decidir add vs. substitui, e o que grava em
+// `appConfig.accounts` depois de colher a credencial.
+describe('findAccountByFingerprint', () => {
+  function configWith(accounts: readonly LocalAccountMeta[]): AccountsConfig {
+    return { ...defaultAccountsConfig(), mod: 'local', localAccounts: accounts };
+  }
+
+  it('encontra a conta cujo fingerprint bate — devolve só { id, label }', () => {
+    const config = configWith([
+      { id: 'a', label: 'Conta A', plan: null },
+      { id: 'b', label: 'Conta B', plan: 'max', fingerprint: 'hash-b' },
+    ]);
+    expect(findAccountByFingerprint(config, 'hash-b')).toEqual({ id: 'b', label: 'Conta B' });
+  });
+
+  it('nenhuma conta com esse fingerprint -> null', () => {
+    const config = configWith([{ id: 'a', label: 'Conta A', plan: null, fingerprint: 'hash-a' }]);
+    expect(findAccountByFingerprint(config, 'hash-desconhecido')).toBeNull();
+  });
+
+  it('contas sem fingerprint (undefined) nunca dão falso positivo', () => {
+    const config = configWith([{ id: 'a', label: 'Conta A', plan: null }]);
+    expect(findAccountByFingerprint(config, 'hash-a')).toBeNull();
+  });
+
+  it('conta com fingerprint null nunca dá falso positivo pra busca vazia', () => {
+    const config = configWith([{ id: 'a', label: 'Conta A', plan: null, fingerprint: null }]);
+    expect(findAccountByFingerprint(config, '')).toBeNull();
+  });
+});
+
+describe('applyHarvestedAccount', () => {
+  function configWith(accounts: readonly LocalAccountMeta[], overrides: Partial<AccountsConfig> = {}): AccountsConfig {
+    return { ...defaultAccountsConfig(), mod: null, localAccounts: accounts, ...overrides };
+  }
+
+  it('added — acrescenta { id, label, plan: null, fingerprint } no fim da lista e fixa mod: local', () => {
+    const config = configWith([{ id: 'a', label: 'Conta A', plan: 'max' }], { mod: 'local' });
+    const event: AccountHarvestedEvent = { kind: 'added', accountId: 'b', label: 'Conta B', fingerprint: 'hash-b' };
+
+    const result = applyHarvestedAccount(config, event);
+
+    expect(result.mod).toBe('local');
+    expect(result.localAccounts).toEqual([
+      { id: 'a', label: 'Conta A', plan: 'max' },
+      { id: 'b', label: 'Conta B', plan: null, fingerprint: 'hash-b' },
+    ]);
+  });
+
+  it('added — liga o mod local mesmo se o motor estava inerte (mod: null)', () => {
+    const config = configWith([], { mod: null });
+    const event: AccountHarvestedEvent = { kind: 'added', accountId: 'a', label: 'Conta A', fingerprint: null };
+
+    const result = applyHarvestedAccount(config, event);
+
+    expect(result.mod).toBe('local');
+    expect(result.localAccounts).toEqual([{ id: 'a', label: 'Conta A', plan: null, fingerprint: null }]);
+  });
+
+  it('replaced — mantém a entrada existente (id, rótulo e posição) intocada; só o par no cofre mudou', () => {
+    const config = configWith(
+      [
+        { id: 'a', label: 'Conta A', plan: 'max', fingerprint: 'hash-a' },
+        { id: 'b', label: 'Conta B (rótulo antigo)', plan: 'pro', fingerprint: 'hash-b' },
+      ],
+      { mod: 'local' },
+    );
+    // O evento carrega o rótulo/id da conta EXISTENTE (decisão da harvest() em isolated-login.ts) — aqui só confirmamos que applyHarvestedAccount não reescreve nada.
+    const event: AccountHarvestedEvent = { kind: 'replaced', accountId: 'b', label: 'Conta B (rótulo antigo)', fingerprint: 'hash-b' };
+
+    const result = applyHarvestedAccount(config, event);
+
+    expect(result).toEqual(config);
   });
 });

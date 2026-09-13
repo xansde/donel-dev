@@ -8,6 +8,9 @@
 
 import type { AccountId, AccountsConfig, LocalAccountMeta } from '../../shared/accounts';
 import { defaultAccountsConfig } from '../../shared/accounts';
+// 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — o formato do que o
+// login isolado colheu (isolated-login.ts, `AccountHarvestedEvent`).
+import type { AccountHarvestedEvent } from './isolated-login';
 
 const SEAZONE_SESSION_KEY = 'seazone:session';
 
@@ -83,4 +86,32 @@ export function planDisconnect(config: AccountsConfig): DisconnectPlan {
     config: { ...defaultAccountsConfig(), claudeHome: config.claudeHome },
     vaultKeys: [...config.localAccounts.map((account) => account.id), SEAZONE_SESSION_KEY],
   };
+}
+
+// ---------------------------------------------------------------------------
+// 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — o que o login isolado
+// (isolated-login.ts) usa pra decidir "esta conta já existe?" e o que index.ts
+// grava em `appConfig.accounts` depois de colher a credencial. PUROS, iguais
+// aos planos acima.
+// ---------------------------------------------------------------------------
+
+/** `null` = nenhuma conta local tem esse fingerprint (ou o fingerprint passado é vazio/desconhecido). Devolve só `{ id, label }` — nunca o objeto inteiro (não vaza `fingerprint` de volta pra fora à toa). */
+export function findAccountByFingerprint(config: AccountsConfig, fingerprint: string): { readonly id: AccountId; readonly label: string } | null {
+  if (!fingerprint) return null;
+  const found = config.localAccounts.find((account) => account.fingerprint === fingerprint);
+  return found ? { id: found.id, label: found.label } : null;
+}
+
+/**
+ * `added`: acrescenta `{ id, label, plan: null, fingerprint }` no FIM da
+ * lista e fixa `mod: 'local'` (liga o motor sozinho se ele estava inerte —
+ * o mesmo gesto que a migração de perfil já faz). `replaced`: a config NÃO
+ * MUDA — a entrada existente mantém id, rótulo e posição; só o par no cofre
+ * foi sobrescrito (fora daqui, em `IsolatedLoginManager.harvest`).
+ */
+export function applyHarvestedAccount(config: AccountsConfig, event: AccountHarvestedEvent): AccountsConfig {
+  if (event.kind === 'replaced') return config;
+
+  const newAccount: LocalAccountMeta = { id: event.accountId, label: event.label, plan: null, fingerprint: event.fingerprint };
+  return { ...config, mod: 'local', localAccounts: [...config.localAccounts, newAccount] };
 }
