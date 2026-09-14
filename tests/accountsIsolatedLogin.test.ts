@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   IsolatedLoginManager,
   isLoginDirPath,
@@ -313,7 +313,7 @@ describe('IsolatedLoginManager — timeout de anexação (sem PTY)', () => {
     if (begun.kind !== 'started') throw new Error('esperava started');
     const dir = manager.getPendingDir(begun.loginId)!;
 
-    await sleep(120);
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta A', state: 'cancelled', reason: 'no-terminal' }]);
     expect(fs.removeDirCalls).toContain(dir);
@@ -345,7 +345,7 @@ describe('IsolatedLoginManager — poll e conclusão (fingerprint)', () => {
     fs.files.set(credPathFor(dir), credentialsJson());
     fs.files.set(claudePathFor(dir), claudeJson(accountUuid));
 
-    await sleep(120);
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harvestedCalls).toHaveLength(1);
     expect(harvestedCalls[0].kind).toBe('added');
@@ -364,7 +364,7 @@ describe('IsolatedLoginManager — poll e conclusão (fingerprint)', () => {
     fs.files.set(credPathFor(dir), credentialsJson());
     // .claude.json nunca aparece.
 
-    await sleep(250);
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harvestedCalls).toHaveLength(1);
     expect(harvestedCalls[0]).toEqual({ kind: 'added', accountId: 'generated-1', label: 'Conta Sem Fingerprint', fingerprint: null });
@@ -382,7 +382,7 @@ describe('IsolatedLoginManager — poll e conclusão (fingerprint)', () => {
       fs.files.set(claudePathFor(dir), claudeJson('uuid-atrasado'));
     }, 20);
 
-    await sleep(250);
+    await vi.waitFor(() => expect(harvestedCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harvestedCalls).toHaveLength(1);
     expect(harvestedCalls[0].fingerprint).toMatch(/^[0-9a-f]{64}$/);
@@ -410,7 +410,7 @@ describe('IsolatedLoginManager — poll e conclusão (fingerprint)', () => {
     harness.fs.files.set(credPathFor(dir), credentialsJson());
     harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-repetido'));
 
-    await sleep(120);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.generateAccountIdCallsLog).toHaveLength(0); // reusa o id existente, nunca gera um novo.
     expect(harness.vault.writes).toEqual([{ id: 'existing-acc-id', plainText: expect.any(String) }]);
@@ -435,7 +435,7 @@ describe('IsolatedLoginManager — ordem obrigatória da conclusão', () => {
     // Sem simular a saída do PTY: a espera se resolve pelo próprio
     // `exitWaitMs` (default da harness), provando que a cauda roda até o
     // fim mesmo quando o `ptyManager` real demora a avisar a saída.
-    await sleep(200);
+    await vi.waitFor(() => expect(harness.calls).toHaveLength(5), { timeout: 2000, interval: 10 });
 
     expect(harness.calls).toEqual(['vault.write', 'onAccountHarvested', 'killPty', 'removeDir', 'emitStatus']);
   });
@@ -450,7 +450,7 @@ describe('IsolatedLoginManager — ordem obrigatória da conclusão', () => {
     harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-falha'));
     harness.vault.forceNextWriteToFail();
 
-    await sleep(200);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Falha Cofre', state: 'failed', reason: 'vault-unavailable' }]);
     expect(harness.harvestedCalls).toEqual([]); // nunca avisa a config de uma conta que não foi gravada.
@@ -471,7 +471,7 @@ describe('IsolatedLoginManager — ordem obrigatória da conclusão', () => {
     harness.fs.files.set(credPathFor(dir), credentialsJson());
     harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-harvest-falha')); // fingerprint já presente -> conclui no 1º poll, sem esperar o grace inteiro.
 
-    await sleep(200);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Falha Harvest', state: 'failed', reason: 'io' }]);
     expect(harness.killPtyCalls).toEqual(['pty-harvest-falha']);
@@ -489,7 +489,7 @@ describe('IsolatedLoginManager — saída do PTY', () => {
     manager.attachPty(begun.loginId, 'pty-sem-login');
 
     manager.handlePtyExit('pty-sem-login');
-    await sleep(10);
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Sem Login', state: 'cancelled', reason: 'exited-without-login' }]);
     expect(fs.removeDirCalls).toContain(dir);
@@ -507,7 +507,7 @@ describe('IsolatedLoginManager — saída do PTY', () => {
     // .claude.json ainda não chegou — "fingerprint do jeito que estiver".
 
     manager.handlePtyExit('pty-rapido');
-    await sleep(10);
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harvestedCalls).toEqual([{ kind: 'added', accountId: 'generated-1', label: 'Conta Rápida', fingerprint: null }]);
     expect(emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Rápida', state: 'added', accountId: 'generated-1' }]);
@@ -541,7 +541,7 @@ describe('IsolatedLoginManager — cancel', () => {
     expect(killPtyCalls).toEqual(['pty-cancel']); // kill já aconteceu de forma síncrona dentro de cancel().
 
     manager.handlePtyExit('pty-cancel'); // ptyManager real avisaria a saída pouco depois.
-    await sleep(10);
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Cancelada', state: 'cancelled', reason: 'user' }]);
     expect(fs.removeDirCalls).toContain(dir);
@@ -556,7 +556,8 @@ describe('IsolatedLoginManager — cancel', () => {
     manager.attachPty(begun.loginId, 'pty-preso');
 
     manager.cancel(begun.loginId);
-    await sleep(50); // nunca chama handlePtyExit — só o timeout resolve.
+    // nunca chama handlePtyExit — só o timeout (`exitWaitMs`) resolve.
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Cancelada Sem Saída', state: 'cancelled', reason: 'user' }]);
     expect(fs.removeDirCalls).toContain(dir);
@@ -628,7 +629,7 @@ describe('IsolatedLoginManager — begin com alvo (Reconectar, D3)', () => {
     harness.fs.files.set(credPathFor(dir), credentialsJson());
     harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-alvo'));
 
-    await sleep(120);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Rótulo Real do Alvo', state: 'reconnected', accountId: 'target-1' }]);
     expect(harness.vault.writes).toEqual([{ id: 'target-1', plainText: expect.any(String) }]);
@@ -647,7 +648,7 @@ describe('IsolatedLoginManager — begin com alvo (Reconectar, D3)', () => {
     harness.fs.files.set(credPathFor(dir), credentialsJson());
     harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-novo'));
 
-    await sleep(120);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Antiga', state: 'reconnected', accountId: 'target-2' }]);
     expect(harness.harvestedCalls).toEqual([{ kind: 'reconnected', accountId: 'target-2', label: 'Conta Antiga', fingerprint: fingerprintOf('uuid-novo') }]);
@@ -663,7 +664,7 @@ describe('IsolatedLoginManager — begin com alvo (Reconectar, D3)', () => {
     harness.fs.files.set(credPathFor(dir), credentialsJson());
     // .claude.json nunca aparece.
 
-    await sleep(200);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Com FP', state: 'reconnected', accountId: 'target-3' }]);
     expect(harness.harvestedCalls).toEqual([{ kind: 'reconnected', accountId: 'target-3', label: 'Conta Com FP', fingerprint: null }]);
@@ -679,7 +680,7 @@ describe('IsolatedLoginManager — begin com alvo (Reconectar, D3)', () => {
     harness.fs.files.set(credPathFor(dir), credentialsJson());
     harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-qualquer'));
 
-    await sleep(120);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Alvo Sumido', state: 'failed', reason: 'unknown-account' }]);
     expect(harness.vault.writes).toEqual([]);
@@ -701,7 +702,7 @@ describe('IsolatedLoginManager — begin com alvo (Reconectar, D3)', () => {
     harness.fs.files.set(credPathFor(dir), credentialsJson());
     harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-de-outra-conta'));
 
-    await sleep(120);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Alvo B', state: 'wrong-account', otherLabel: 'Conta Outra' }]);
     expect(harness.vault.writes).toEqual([]);
@@ -721,7 +722,7 @@ describe('IsolatedLoginManager — begin com alvo (Reconectar, D3)', () => {
     harness.fs.files.set(credPathFor(dir), credentialsJson());
     harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-login-desconhecido'));
 
-    await sleep(120);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Alvo C', state: 'wrong-account', otherLabel: null }]);
     expect(harness.vault.writes).toEqual([]);
@@ -736,7 +737,7 @@ describe('IsolatedLoginManager — begin com alvo (Reconectar, D3)', () => {
     harness.fs.files.set(credPathFor(dir), credentialsJson());
     harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-normal'));
 
-    await sleep(120);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Normal', state: 'added', accountId: 'generated-1' }]);
   });
