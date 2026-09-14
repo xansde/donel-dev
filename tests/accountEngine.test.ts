@@ -32,15 +32,28 @@ class FakeMod implements AccountMod {
   // Etapa 3, Fase 2 — só pra provar que `retryDeferredAutoSwitch` sem
   // deferred pendente NUNCA chama o mod (teste "mínimo" do desenho).
   switchToCalls = 0;
+  // 011-contas-e-provedores, etapa 3, Fase 2 (revisão, R3) — promessas
+  // controladas pelo teste pra segurar `listAccounts`/`switchTo`/
+  // `captureRotatedPair` em voo enquanto o teste chama `engine.dispose()`.
+  // `null` (default) = resolve na hora, como sempre foi.
+  listAccountsGate: Promise<void> | null = null;
+  switchToGate: Promise<void> | null = null;
+  captureGate: Promise<void> | null = null;
+  /** Avisa o teste, de forma síncrona, que a execução ENTROU em `captureRotatedPair` — antes de pendurar no `captureGate`. Evita contar microtasks na mão. */
+  onCaptureRotatedPairCalled: (() => void) | null = null;
 
   async listAccounts(): Promise<ListAccountsResult> {
+    if (this.listAccountsGate) await this.listAccountsGate;
     return this.listAccountsResult;
   }
   async switchTo(): Promise<SwitchToResult> {
     this.switchToCalls += 1;
+    if (this.switchToGate) await this.switchToGate;
     return this.switchResult;
   }
   async captureRotatedPair(id: string, pair: CredentialPair): Promise<void> {
+    this.onCaptureRotatedPairCalled?.();
+    if (this.captureGate) await this.captureGate;
     this.captureCalls.push({ id, pair });
   }
   keepAlive = this.hasKeepAlive ? async (): Promise<void> => {
@@ -506,5 +519,137 @@ describe('AccountEngine — autoSwitchState na view', () => {
     const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a', autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 } }) });
     await engine.listAccounts();
     expect(engine.getSnapshot().autoSwitchState).toBe('blind');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 011-contas-e-provedores, etapa 3, Fase 2 (revisão) — R3: motor descartado
+// (dispose(), tipicamente por reconstrução do host — F6) não termina de
+// trocar de conta nem emite pros ouvintes, mesmo com uma leitura/troca já em
+// voo quando dispose() foi chamado. fase2-review-fixes.md §Agente Y.
+// ---------------------------------------------------------------------------
+
+describe('AccountEngine — R3 (revisão), motor descartado não troca de conta', () => {
+  it('switchTo manual chamado depois de dispose() falha na entrada (io), sem tocar o mod', async () => {
+    const mod = new FakeMod();
+    const { engine, applySwitch } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }) });
+    engine.dispose();
+
+    const result = await engine.switchTo('b');
+
+    expect(result).toEqual({ kind: 'failed', reason: 'io' });
+    expect(mod.switchToCalls).toBe(0);
+    expect(applySwitch).not.toHaveBeenCalled();
+    expect(engine.getActiveAccountId()).toBe('a');
+  });
+
+  it('dispose() durante um mod.switchTo pendente -> failed/io, applySwitch nunca chamado, conta ativa inalterada', async () => {
+    const mod = new FakeMod();
+    let resolveSwitchGate!: () => void;
+    mod.switchToGate = new Promise<void>((resolve) => {
+      resolveSwitchGate = resolve;
+    });
+    const { engine, applySwitch } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }) });
+
+    const switchPromise = engine.switchTo('b');
+    engine.dispose(); // síncrono — antes de mod.switchTo() resolver.
+    resolveSwitchGate();
+
+    const result = await switchPromise;
+
+    expect(result).toEqual({ kind: 'failed', reason: 'io' });
+    expect(applySwitch).not.toHaveBeenCalled();
+    expect(engine.getActiveAccountId()).toBe('a');
+  });
+
+  it('dispose() durante a captura do par rotacionado (callback do applySwitch) -> applySwitch rejeita, failed/io', async () => {
+    const mod = new FakeMod();
+    let resolveCaptureGate!: () => void;
+    mod.captureGate = new Promise<void>((resolve) => {
+      resolveCaptureGate = resolve;
+    });
+    let captureCalledResolve!: () => void;
+    const captureCalledPromise = new Promise<void>((resolve) => {
+      captureCalledResolve = resolve;
+    });
+    mod.onCaptureRotatedPairCalled = () => captureCalledResolve();
+
+    const applySwitch = vi.fn(async (_pair: CredentialPair, onRotatedPairCaptured: (pair: CredentialPair | null) => void | Promise<void>) => {
+      await onRotatedPairCaptured({ accessToken: 'rotated', refreshToken: 'r', expiresAt: 1, scopes: [] });
+    });
+    const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }), applySwitch });
+
+    const switchPromise = engine.switchTo('b');
+    await captureCalledPromise; // execução parada dentro de captureRotatedPair, pendurada no captureGate.
+    engine.dispose();
+    resolveCaptureGate();
+
+    const result = await switchPromise;
+
+    expect(result).toEqual({ kind: 'failed', reason: 'io' });
+    await expect(applySwitch.mock.results[0]?.value as Promise<void>).rejects.toThrow('account engine disposed during rotated pair capture');
+    expect(engine.getActiveAccountId()).toBe('a');
+  });
+
+  it('evaluateAutoSwitch depois de dispose() devolve null sem chamar o mod', async () => {
+    const mod = new FakeMod();
+    mod.listAccountsResult = {
+      kind: 'ok',
+      accounts: [account('a', { load: { fiveHour: 95, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } })],
+    };
+    const { engine } = makeEngine({
+      mod,
+      config: makeConfig({ activeAccountId: 'a', autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 } }),
+    });
+    await engine.listAccounts();
+    engine.dispose();
+    const switchCallsBefore = mod.switchToCalls;
+
+    const result = await engine.evaluateAutoSwitch();
+
+    expect(result).toBeNull();
+    expect(mod.switchToCalls).toBe(switchCallsBefore);
+  });
+
+  it('retryDeferredAutoSwitch depois de dispose() devolve null sem chamar o mod, mesmo com deferred pendente', async () => {
+    const mod = new FakeMod();
+    mod.listAccountsResult = {
+      kind: 'ok',
+      accounts: [account('a', { load: { fiveHour: 95, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } })],
+    };
+    const { engine } = makeEngine({
+      mod,
+      config: makeConfig({ activeAccountId: 'a', autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 } }),
+      isSessionBusy: () => true,
+    });
+    await engine.listAccounts();
+    await engine.evaluateAutoSwitch(); // sessão ocupada -> fica deferred.
+    expect(engine.getSnapshot().lastAutoSwitch?.kind).toBe('deferred');
+
+    engine.dispose();
+    const switchCallsBefore = mod.switchToCalls;
+
+    const result = await engine.retryDeferredAutoSwitch();
+
+    expect(result).toBeNull();
+    expect(mod.switchToCalls).toBe(switchCallsBefore);
+  });
+
+  it('listAccounts que termina depois de dispose() não chama os ouvintes de onChanged', async () => {
+    const mod = new FakeMod();
+    let resolveListGate!: () => void;
+    mod.listAccountsGate = new Promise<void>((resolve) => {
+      resolveListGate = resolve;
+    });
+    const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }) });
+    const listener = vi.fn();
+    engine.onChanged(listener);
+
+    const listPromise = engine.listAccounts();
+    engine.dispose(); // síncrono — antes de mod.listAccounts() resolver.
+    resolveListGate();
+    await listPromise;
+
+    expect(listener).not.toHaveBeenCalled();
   });
 });

@@ -17,6 +17,15 @@
 // `switchTo` (manual) e `evaluateAutoSwitch` (auto) compartilham. D5
 // (`lastAutoSwitch`/`autoSwitchState`) dá visibilidade à última decisão do
 // auto-switch pro painel, sem esperar o próximo poll.
+//
+// 011-contas-e-provedores, etapa 3, Fase 2 (revisão) — R3: um motor
+// DESCARTADO (`dispose()`, tipicamente por reconstrução do host — F6) pode
+// estar no meio de uma leitura ou troca. Sem guarda, ele ainda troca de
+// conta, grava em `~/.claude` e deixa o motor NOVO com a conta ativa velha —
+// a próxima troca do motor novo capturaria o par vivo na conta ERRADA (mata
+// a conta). `disposed` fecha isso: `performSwitch` falha (`io`) sem tocar o
+// mod nem a config em memória, `evaluateAutoSwitch`/`retryDeferredAutoSwitch`
+// devolvem `null`, e `emit()` nunca mais notifica ouvinte nenhum.
 
 import { classifyAutoSwitch, selectSwitchTarget } from './auto-switch';
 import { createReconnectRegistry, type ReconnectRegistry } from './reconnect-registry';
@@ -79,6 +88,8 @@ export class AccountEngine {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   /** D5 — última decisão do auto-switch NESTE motor; em memória de propósito (some ao reconstruir o motor ou reiniciar o app). */
   private lastAutoSwitch: AutoSwitchEvent | null = null;
+  /** R3 (revisão) — `true` depois de `dispose()`. Ver o parágrafo no topo do arquivo. */
+  private disposed = false;
 
   constructor(deps: AccountEngineDeps) {
     this.config = deps.config;
@@ -142,6 +153,10 @@ export class AccountEngine {
   }
 
   dispose(): void {
+    // R3 (revisão) — marca ANTES de mexer nos timers: qualquer leitura/troca
+    // já em voo neste motor vê `disposed` assim que checar, mesmo que este
+    // método não espere ela terminar.
+    this.disposed = true;
     if (this.keepAliveTimer) {
       this.clearIntervalFn(this.keepAliveTimer);
       this.keepAliveTimer = null;
@@ -195,6 +210,8 @@ export class AccountEngine {
    * próximo ciclo, nunca um retry imediato).
    */
   async evaluateAutoSwitch(): Promise<SwitchOutcome | null> {
+    // R3 (revisão) — motor descartado nunca avalia nem toca o mod.
+    if (this.disposed) return null;
     if (!this.mod || this.state !== 'ready' || !this.config.autoSwitch.enabled) {
       return this.clearDeferredAutoSwitch();
     }
@@ -215,7 +232,8 @@ export class AccountEngine {
    * D5 — só reavalia se a última decisão registrada for `deferred`; senão
    * `null` sem tocar o mod (index.ts chama isto quando a última sessão
    * ocupada sai de `working`, e não deve gerar tráfego se não havia nada
-   * pendente).
+   * pendente). R3 (revisão) — motor descartado: coberto por delegação, o
+   * guard de `evaluateAutoSwitch` barra antes de tocar o mod.
    */
   async retryDeferredAutoSwitch(): Promise<SwitchOutcome | null> {
     if (this.lastAutoSwitch?.kind !== 'deferred') return null;
@@ -230,10 +248,22 @@ export class AccountEngine {
    * resultado devolvido ao chamador é o mesmo `SwitchOutcome` de sempre.
    */
   private async performSwitch(id: AccountId, origin: 'manual' | 'auto'): Promise<SwitchOutcome> {
+    // R3 (revisão) — descartado na entrada: falha sem tocar o mod nem a
+    // config em memória (cobre um `switchTo` manual chamado depois do
+    // `dispose()`; o caminho auto já é barrado antes, em `evaluateAutoSwitch`).
+    if (this.disposed) return { kind: 'failed', reason: 'io' };
     if (!this.mod) return { kind: 'failed', reason: 'io' };
     if (id === this.config.activeAccountId) return { kind: 'already-active', account: id };
 
     const switchResult = await this.mod.switchTo(id);
+
+    // R3 (revisão) — descartado ENQUANTO `mod.switchTo` estava em voo (a
+    // reconstrução do host não espera troca nenhuma terminar). O mod já
+    // persistiu no cofre, por conta própria, qualquer par renovado — nada se
+    // perde; só não deixamos ESTE motor aplicar nada em `~/.claude` nem mudar
+    // a conta ativa dele em memória (quem faz isso agora é o motor novo).
+    if (this.disposed) return { kind: 'failed', reason: 'io' };
+
     if (switchResult.kind !== 'ok') {
       // `unknown-account` não existe no vocabulário de `SwitchOutcome`
       // (contracts/ipc-accounts.md) — mapeado para `io` (falha de leitura),
@@ -257,6 +287,12 @@ export class AccountEngine {
     try {
       await this.applySwitchFn(switchResult.pair, async (rotatedPair) => {
         if (rotatedPair && fromId) await mod.captureRotatedPair(fromId, rotatedPair);
+        // R3 (revisão) — descartado ENQUANTO a captura estava em voo: lança
+        // pra abortar a sequência invariante (claude-state.ts) ANTES do
+        // passo 2 (escrita de `.credentials.json`) — nada é escrito. O catch
+        // logo abaixo devolve failed/io, igual a qualquer outra falha nesta
+        // sequência.
+        if (this.disposed) throw new Error('account engine disposed during rotated pair capture');
       });
     } catch {
       // Falha em qualquer passo da sequência invariante degrada sem
@@ -326,6 +362,10 @@ export class AccountEngine {
   }
 
   private emit(): void {
+    // R3 (revisão) — motor descartado nunca notifica ouvinte nenhum (nem
+    // view velha pro renderer, nem pro host) — uma leitura/troca dele pode
+    // terminar tarde, depois que o host já trocou pra um motor novo.
+    if (this.disposed) return;
     const view = this.buildView();
     for (const listener of this.listeners) listener(view);
   }
