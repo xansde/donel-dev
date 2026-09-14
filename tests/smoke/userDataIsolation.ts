@@ -15,12 +15,13 @@ import path from 'node:path';
 // limpo — nunca herda nem contamina o estado real do Alexandre nem o de
 // outro arquivo de spec.
 //
-// EXCEÇÃO DELIBERADA: `config-persistence.spec.ts` NÃO usa isto. O propósito
-// DECLARADO daquele teste é provar persistência no path REAL de produção
-// (`%APPDATA%\donel-dev\config.json`, T015 DoD/roteiro batch 5 passo 1) —
-// isolar o userData dele quebraria o próprio objeto do teste. A higiene
-// daquele arquivo já é outra (restaura os valores originais no `afterAll`);
-// mantém-se assim de propósito.
+// SEM EXCEÇÃO desde 13/09/2026: `config-persistence.spec.ts` era o único
+// smoke contra o userData real, para provar o path de produção. Desde a Fase 1
+// das contas (011, etapa 3) o boot faz faxina do cofre e varredura de
+// `accounts-login-*` no userData — e aquele spec limpou o cofre real do dono
+// no meio da suíte. Hoje ele também usa isto, e confere o path de produção
+// pelo nome do app e pelo `appData`, sem gravar lá. Nenhum smoke novo deve
+// subir o app sem `--user-data-dir`.
 
 /** Cria um diretório temp único (`os.tmpdir()`) pra servir de `--user-data-dir` de UM arquivo de spec — nunca compartilhado entre specs. */
 export function createIsolatedUserDataDir(specName: string): string {
