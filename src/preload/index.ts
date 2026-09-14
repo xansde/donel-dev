@@ -237,6 +237,11 @@ const donelApi: DonelApi = {
       const handler = (_event: Electron.IpcRendererEvent, status: LoginStatusDto): void => listener(status);
       return subscribeChannel(ipcRenderer, ACCOUNT_CHANNELS.loginChanged, handler);
     },
+
+    // 011-contas-e-provedores, etapa 3, Fase 2 (D3) — login isolado apontado
+    // pra uma conta já cadastrada ("Reconectar"). O rótulo vem da conta, não
+    // é digitado de novo.
+    beginReconnect: (id: AccountId) => ipcRenderer.invoke(ACCOUNT_CHANNELS.beginReconnect, id) as Promise<BeginLoginOutcome>,
   },
 
   // T1214 (011-contas-e-provedores, etapa 2) — assistente de migração

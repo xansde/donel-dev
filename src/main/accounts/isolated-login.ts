@@ -14,11 +14,23 @@
 //   `.claude.json` dentro dele (A6) — os dois podem não terminar de escrever
 //   no mesmo instante; o `fingerprintGraceMs` tolera essa defasagem antes de
 //   concluir sem fingerprint.
+//
+// 011-contas-e-provedores, etapa 3, Fase 2 (R4, revisão) — `this.vault.write`
+// pode LANÇAR (erro de I/O real em `writeVaultFile`, vault.ts) em vez de
+// devolver `vault-unavailable`. A colheita nunca pode deixar essa exceção
+// escapar: ela é chamada de dentro de `finishConclusion` (async, mas SEM
+// await antes da chamada), e uma exceção aí abortaria a função ANTES da
+// cauda obrigatória (matar PTY -> esperar exit -> apagar diretório -> limpar
+// o pendente -> emitir status) — um login que falhou em concluir não pode
+// deixar a aba viva nem o diretório (com credencial em texto claro) para
+// trás. `writeVaultSafely` trata os dois casos (retorno e exceção) como o
+// MESMO resultado; `harvest`/`harvestWithTarget` usam ela no lugar de
+// `this.vault.write` direto.
 
 import { dirname, basename, join, resolve } from 'node:path';
 import { readCredentialsPairFromText, accountFingerprintFromClaudeJsonText } from './credentials-file';
 import type { CredentialPair } from './account-mod';
-import type { VaultLike } from './vault';
+import type { VaultLike, VaultWriteResult } from './vault';
 import type { AccountId, BeginLoginOutcome, LoginStatusDto } from '../../shared/accounts';
 
 export const LOGIN_DIR_PREFIX = 'accounts-login-';
@@ -56,9 +68,16 @@ export interface IsolatedLoginFsDeps {
   readText(path: string): string | null;
 }
 
-/** Dados NÃO sensíveis do que o login colheu — quem recebe (index.ts, Bloco 2) grava em `appConfig.accounts` via `applyHarvestedAccount`. */
+/**
+ * Dados NÃO sensíveis do que o login colheu — quem recebe (index.ts, Bloco 2)
+ * grava em `appConfig.accounts` via `applyHarvestedAccount`.
+ * 011-contas-e-provedores, etapa 3, Fase 2 (D3) — `reconnected` é o login COM
+ * ALVO (`begin(label, { targetAccountId })`) que colheu a credencial da
+ * MESMA conta: o par no cofre foi renovado, e `applyHarvestedAccount` grava o
+ * fingerprint na conta-alvo se ela ainda não tinha um.
+ */
 export interface AccountHarvestedEvent {
-  readonly kind: 'added' | 'replaced';
+  readonly kind: 'added' | 'replaced' | 'reconnected';
   readonly accountId: AccountId;
   readonly label: string;
   readonly fingerprint: string | null;
@@ -71,6 +90,13 @@ export interface IsolatedLoginManagerDeps {
   readonly vault: VaultLike;
   readonly isVaultAvailable: () => boolean;
   readonly findAccountByFingerprint: (fingerprint: string) => { readonly id: AccountId; readonly label: string } | null;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 2 (D3) — identifica a conta-alvo
+   * de um login com `targetAccountId` (o fluxo "Reconectar"). Espelha
+   * `findAccountById` de account-pool.ts; index.ts injeta exatamente essa
+   * função fechada sobre `appConfig.accounts`.
+   */
+  readonly findAccountById: (id: AccountId) => { readonly id: AccountId; readonly label: string; readonly fingerprint: string | null } | null;
   readonly generateLoginId: () => string;
   readonly generateAccountId: () => AccountId;
   readonly onAccountHarvested: (event: AccountHarvestedEvent) => void;
@@ -97,6 +123,8 @@ interface PendingLogin {
   readonly loginId: string;
   readonly label: string;
   readonly dir: string;
+  /** 011-contas-e-provedores, etapa 3, Fase 2 (D3) — `null` = login normal (Fase 1, add/replace); presente = login "Reconectar" apontado pra esta conta. */
+  readonly targetAccountId: AccountId | null;
   ptyId: string | null;
   phase: LoginPhase;
   /** Instante (via `now()`) em que um par VÁLIDO foi visto pela primeira vez, ainda sem fingerprint — base do `fingerprintGraceMs`. `null` até isso acontecer. */
@@ -122,6 +150,7 @@ export class IsolatedLoginManager {
   private readonly vault: VaultLike;
   private readonly isVaultAvailableFn: () => boolean;
   private readonly findAccountByFingerprintFn: (fingerprint: string) => { readonly id: AccountId; readonly label: string } | null;
+  private readonly findAccountByIdFn: (id: AccountId) => { readonly id: AccountId; readonly label: string; readonly fingerprint: string | null } | null;
   private readonly generateLoginIdFn: () => string;
   private readonly generateAccountIdFn: () => AccountId;
   private readonly onAccountHarvestedFn: (event: AccountHarvestedEvent) => void;
@@ -146,6 +175,7 @@ export class IsolatedLoginManager {
     this.vault = deps.vault;
     this.isVaultAvailableFn = deps.isVaultAvailable;
     this.findAccountByFingerprintFn = deps.findAccountByFingerprint;
+    this.findAccountByIdFn = deps.findAccountById;
     this.generateLoginIdFn = deps.generateLoginId;
     this.generateAccountIdFn = deps.generateAccountId;
     this.onAccountHarvestedFn = deps.onAccountHarvested;
@@ -166,8 +196,14 @@ export class IsolatedLoginManager {
    * Rótulo pedido ANTES de abrir a aba (LGPD — o nome da conta nunca é lido
    * do `.claude.json` pra exibir). Um login pendente por vez (D10-like: um
    * gesto de cada vez); cofre indisponível recusa ANTES de tocar o disco.
+   *
+   * 011-contas-e-provedores, etapa 3, Fase 2 (D3) — `options.targetAccountId`
+   * é o fluxo "Reconectar": só guarda o alvo no pendente, SEM validá-lo aqui
+   * (quem valida existência/conta-ativa é `planReconnect`, account-pool.ts,
+   * chamado por index.ts ANTES de abrir este login) — as validações de hoje
+   * (rótulo, cofre, um-por-vez, mkdir) são as MESMAS, com ou sem alvo.
    */
-  begin(label: string): BeginLoginOutcome {
+  begin(label: string, options?: { readonly targetAccountId?: AccountId }): BeginLoginOutcome {
     const trimmed = label.trim();
     if (!trimmed || trimmed.length > LABEL_MAX_LENGTH) return { kind: 'failed', reason: 'invalid-input' };
     if (!this.isVaultAvailableFn()) return { kind: 'failed', reason: 'vault-unavailable' };
@@ -185,6 +221,7 @@ export class IsolatedLoginManager {
       loginId,
       label: trimmed,
       dir,
+      targetAccountId: options?.targetAccountId ?? null,
       ptyId: null,
       phase: 'awaiting',
       pairFirstSeenAt: null,
@@ -300,6 +337,19 @@ export class IsolatedLoginManager {
 
   // -- internals -------------------------------------------------------
 
+  /**
+   * R4 (revisão) — `this.vault.write` pode LANÇAR (ver comentário de
+   * cabeçalho do arquivo); nunca deixa a exceção escapar, trata como o MESMO
+   * `vault-unavailable` que o retorno normal já cobre.
+   */
+  private writeVaultSafely(id: AccountId, pair: CredentialPair): VaultWriteResult {
+    try {
+      return this.vault.write(id, JSON.stringify(pair));
+    } catch {
+      return { kind: 'vault-unavailable' };
+    }
+  }
+
   private credentialsFilePath(dir: string): string {
     return join(dir, '.credentials.json');
   }
@@ -394,15 +444,25 @@ export class IsolatedLoginManager {
     this.emitStatusFn(status);
   }
 
-  /** Só a parte síncrona da conclusão (cofre + aviso de config) — separada de `finishConclusion` para ficar clara a fronteira "isto decide o status", sem side effects. */
+  /**
+   * Só a parte síncrona da conclusão (cofre + aviso de config) — separada de
+   * `finishConclusion` para ficar clara a fronteira "isto decide o status",
+   * sem side effects. Login COM alvo (`pending.targetAccountId`) segue a
+   * regra nova de "Reconectar" (D3, `harvestWithTarget`); sem alvo, o
+   * add/replace da Fase 1 continua intocado.
+   */
   private harvest(pending: PendingLogin, pair: CredentialPair, fingerprint: string | null): LoginStatusDto {
     if (!this.isVaultAvailableFn()) {
       return { loginId: pending.loginId, label: pending.label, state: 'failed', reason: 'vault-unavailable' };
     }
 
+    if (pending.targetAccountId) {
+      return this.harvestWithTarget(pending, pending.targetAccountId, pair, fingerprint);
+    }
+
     const existing = fingerprint ? this.findAccountByFingerprintFn(fingerprint) : null;
     const accountId = existing?.id ?? this.generateAccountIdFn();
-    const writeResult = this.vault.write(accountId, JSON.stringify(pair));
+    const writeResult = this.writeVaultSafely(accountId, pair);
     if (writeResult.kind !== 'ok') {
       return { loginId: pending.loginId, label: pending.label, state: 'failed', reason: 'vault-unavailable' };
     }
@@ -421,6 +481,53 @@ export class IsolatedLoginManager {
     return existing
       ? { loginId: pending.loginId, label: pending.label, state: 'replaced', accountId, existingLabel: existing.label }
       : { loginId: pending.loginId, label: pending.label, state: 'added', accountId };
+  }
+
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 2 (D3) — "Reconectar". Casos a-d
+   * do desenho (fase2-design.md §Bloco 1, item 7). `label` no `LoginStatusDto`
+   * de saída é sempre o rótulo LIDO do alvo (`target.label`), nunca
+   * `pending.label` — os dois coincidem na wiring real (index.ts chama
+   * `begin(plan.label, { targetAccountId })` com o rótulo do próprio alvo),
+   * mas ler de `target` é o que o contrato promete e o que sobrevive a uma
+   * eventual conta renomeada entre o `begin` e a conclusão.
+   */
+  private harvestWithTarget(pending: PendingLogin, targetAccountId: AccountId, pair: CredentialPair, fingerprint: string | null): LoginStatusDto {
+    // a. alvo sumiu da config entre o `begin` e agora — nada pra reconectar.
+    const target = this.findAccountByIdFn(targetAccountId);
+    if (!target) {
+      return { loginId: pending.loginId, label: pending.label, state: 'failed', reason: 'unknown-account' };
+    }
+
+    if (fingerprint) {
+      // b. o fingerprint deste login já é conhecido, e é de OUTRA conta —
+      // dá pra nomear de quem é (mais específico que c, por isso checado antes).
+      const owner = this.findAccountByFingerprintFn(fingerprint);
+      if (owner && owner.id !== targetAccountId) {
+        return { loginId: pending.loginId, label: target.label, state: 'wrong-account', otherLabel: owner.label };
+      }
+      // c. o alvo já tem UM fingerprint próprio, e este login trouxe outro —
+      // não dá pra provar de quem é, mas dá pra provar que NÃO é do alvo.
+      if (target.fingerprint && target.fingerprint !== fingerprint) {
+        return { loginId: pending.loginId, label: target.label, state: 'wrong-account', otherLabel: null };
+      }
+    }
+    // Login SEM fingerprint (fingerprint === null) é aceito mesmo com o alvo
+    // tendo um — não dá pra provar que é outra conta (regra explícita do D3).
+
+    // d. senão, grava o par no id do ALVO (nunca gera id novo — a conta já existe).
+    const writeResult = this.writeVaultSafely(targetAccountId, pair);
+    if (writeResult.kind !== 'ok') {
+      return { loginId: pending.loginId, label: target.label, state: 'failed', reason: 'vault-unavailable' };
+    }
+
+    try {
+      this.onAccountHarvestedFn({ kind: 'reconnected', accountId: targetAccountId, label: target.label, fingerprint });
+    } catch {
+      return { loginId: pending.loginId, label: target.label, state: 'failed', reason: 'io' };
+    }
+
+    return { loginId: pending.loginId, label: target.label, state: 'reconnected', accountId: targetAccountId };
   }
 
   private async finishCancel(pending: PendingLogin): Promise<void> {

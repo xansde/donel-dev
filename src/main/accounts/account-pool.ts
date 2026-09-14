@@ -108,10 +108,65 @@ export function findAccountByFingerprint(config: AccountsConfig, fingerprint: st
  * o mesmo gesto que a migração de perfil já faz). `replaced`: a config NÃO
  * MUDA — a entrada existente mantém id, rótulo e posição; só o par no cofre
  * foi sobrescrito (fora daqui, em `IsolatedLoginManager.harvest`).
+ *
+ * `reconnected` (011-contas-e-provedores, etapa 3, Fase 2, D3): login COM
+ * ALVO que colheu a credencial da MESMA conta. Só grava fingerprint quando a
+ * conta-alvo ainda NÃO tinha um (conta antiga, cadastrada antes do login
+ * isolado existir) E o evento trouxe um — mantém posição, rótulo e plano
+ * intocados; qualquer outro caso (conta sumiu da config, já tinha
+ * fingerprint, ou o evento não trouxe um) devolve a config intacta.
  */
 export function applyHarvestedAccount(config: AccountsConfig, event: AccountHarvestedEvent): AccountsConfig {
   if (event.kind === 'replaced') return config;
 
+  if (event.kind === 'reconnected') {
+    const index = config.localAccounts.findIndex((account) => account.id === event.accountId);
+    if (index === -1) return config;
+
+    const existing = config.localAccounts[index];
+    if (existing.fingerprint || !event.fingerprint) return config;
+
+    const localAccounts = [...config.localAccounts];
+    localAccounts[index] = { ...existing, fingerprint: event.fingerprint };
+    return { ...config, localAccounts };
+  }
+
   const newAccount: LocalAccountMeta = { id: event.accountId, label: event.label, plan: null, fingerprint: event.fingerprint };
   return { ...config, mod: 'local', localAccounts: [...config.localAccounts, newAccount] };
+}
+
+// ---------------------------------------------------------------------------
+// 011-contas-e-provedores, etapa 3, Fase 2 (D3) — "Reconectar" (fase2-design.md
+// §Bloco 1). PUROS, mesmo espírito dos planos acima: só decidem/consultam;
+// quem chama (index.ts) aplica.
+// ---------------------------------------------------------------------------
+
+/**
+ * Identifica uma conta cadastrada por id (não por fingerprint — isso é
+ * `findAccountByFingerprint` acima). Usado por `accounts:beginReconnect`
+ * (index.ts) e injetado no `IsolatedLoginManager` como dependência
+ * `findAccountById`, pro colhedor do login isolado saber quem é o alvo.
+ * `fingerprint` normaliza a chave ausente (conta antiga) e o `null` explícito
+ * (login isolado sem `accountUuid`) pro mesmo valor — ambos significam "esta
+ * conta não tem fingerprint ainda".
+ */
+export function findAccountById(config: AccountsConfig, id: AccountId): { readonly id: AccountId; readonly label: string; readonly fingerprint: string | null } | null {
+  const found = config.localAccounts.find((account) => account.id === id);
+  return found ? { id: found.id, label: found.label, fingerprint: found.fingerprint ?? null } : null;
+}
+
+export type PlanReconnectResult = { readonly kind: 'ok'; readonly label: string } | { readonly kind: 'blocked'; readonly reason: 'active-account' } | { readonly kind: 'unknown-account' };
+
+/**
+ * A conta ATIVA nunca reconecta (D3): a credencial dela vive no `~/.claude`,
+ * e o próprio CLI a renova sozinho — não há nada pra "reconectar" ali. `id`
+ * desconhecido vence sobre `blocked`, mesmo que por acaso bata com
+ * `activeAccountId` (mesma ordem de checagem de `planRemoveAccount`: existe
+ * primeiro, depois é ativa).
+ */
+export function planReconnect(config: AccountsConfig, id: AccountId): PlanReconnectResult {
+  const found = config.localAccounts.find((account) => account.id === id);
+  if (!found) return { kind: 'unknown-account' };
+  if (id === config.activeAccountId) return { kind: 'blocked', reason: 'active-account' };
+  return { kind: 'ok', label: found.label };
 }

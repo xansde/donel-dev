@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyHarvestedAccount, findAccountByFingerprint, needsEngineRebuild, planDisconnect, planRemoveAccount } from '../src/main/accounts/account-pool';
+import { applyHarvestedAccount, findAccountByFingerprint, findAccountById, needsEngineRebuild, planDisconnect, planReconnect, planRemoveAccount } from '../src/main/accounts/account-pool';
 import type { AccountHarvestedEvent } from '../src/main/accounts/isolated-login';
 import type { AccountsConfig, LocalAccountMeta } from '../src/shared/accounts';
 import { defaultAccountsConfig } from '../src/shared/accounts';
@@ -227,5 +227,120 @@ describe('applyHarvestedAccount', () => {
     const result = applyHarvestedAccount(config, event);
 
     expect(result).toEqual(config);
+  });
+
+  // 011-contas-e-provedores, etapa 3, Fase 2 (D3) — `reconnected` vem do
+  // login COM ALVO (`beginReconnect`) que colheu a credencial da MESMA
+  // conta. Só grava fingerprint em conta que ainda não tinha um (conta
+  // antiga, cadastrada antes do login isolado existir) — mantém posição,
+  // rótulo e plano intocados.
+  describe('applyHarvestedAccount — reconnected', () => {
+    it('conta-alvo SEM fingerprint ganha o fingerprint do evento, mesma posição/rótulo/plano', () => {
+      const config = configWith(
+        [
+          { id: 'a', label: 'Conta A', plan: 'max' },
+          { id: 'b', label: 'Conta B', plan: 'pro' },
+        ],
+        { mod: 'local' },
+      );
+      const event: AccountHarvestedEvent = { kind: 'reconnected', accountId: 'a', label: 'Conta A', fingerprint: 'hash-a-novo' };
+
+      const result = applyHarvestedAccount(config, event);
+
+      expect(result.localAccounts).toEqual([
+        { id: 'a', label: 'Conta A', plan: 'max', fingerprint: 'hash-a-novo' },
+        { id: 'b', label: 'Conta B', plan: 'pro' },
+      ]);
+    });
+
+    it('conta-alvo com fingerprint NULL (login isolado sem accountUuid) também ganha o fingerprint novo', () => {
+      const config = configWith([{ id: 'a', label: 'Conta A', plan: null, fingerprint: null }], { mod: 'local' });
+      const event: AccountHarvestedEvent = { kind: 'reconnected', accountId: 'a', label: 'Conta A', fingerprint: 'hash-a-novo' };
+
+      const result = applyHarvestedAccount(config, event);
+
+      expect(result.localAccounts).toEqual([{ id: 'a', label: 'Conta A', plan: null, fingerprint: 'hash-a-novo' }]);
+    });
+
+    it('conta-alvo que JÁ TEM fingerprint não é reescrita — config intacta', () => {
+      const config = configWith([{ id: 'a', label: 'Conta A', plan: 'max', fingerprint: 'hash-a-antigo' }], { mod: 'local' });
+      const event: AccountHarvestedEvent = { kind: 'reconnected', accountId: 'a', label: 'Conta A', fingerprint: 'hash-a-novo' };
+
+      const result = applyHarvestedAccount(config, event);
+
+      expect(result).toEqual(config);
+    });
+
+    it('evento sem fingerprint (login sem accountUuid) nunca sobrescreve — config intacta', () => {
+      const config = configWith([{ id: 'a', label: 'Conta A', plan: 'max' }], { mod: 'local' });
+      const event: AccountHarvestedEvent = { kind: 'reconnected', accountId: 'a', label: 'Conta A', fingerprint: null };
+
+      const result = applyHarvestedAccount(config, event);
+
+      expect(result).toEqual(config);
+    });
+
+    it('accountId do evento não existe mais na config — config intacta (nunca lança)', () => {
+      const config = configWith([{ id: 'a', label: 'Conta A', plan: 'max' }], { mod: 'local' });
+      const event: AccountHarvestedEvent = { kind: 'reconnected', accountId: 'sumiu', label: 'Conta Sumida', fingerprint: 'hash-x' };
+
+      const result = applyHarvestedAccount(config, event);
+
+      expect(result).toEqual(config);
+    });
+  });
+});
+
+// 011-contas-e-provedores, etapa 3, Fase 2 (D3) — o que `accounts:beginReconnect`
+// (index.ts) e o `IsolatedLoginManager` com alvo usam pra identificar a
+// conta-alvo por id (não por fingerprint, que é o que `findAccountByFingerprint`
+// já cobre).
+describe('findAccountById', () => {
+  function configWith(accounts: readonly LocalAccountMeta[]): AccountsConfig {
+    return { ...defaultAccountsConfig(), mod: 'local', localAccounts: accounts };
+  }
+
+  it('encontra a conta pelo id — devolve { id, label, fingerprint }', () => {
+    const config = configWith([{ id: 'a', label: 'Conta A', plan: 'max', fingerprint: 'hash-a' }]);
+    expect(findAccountById(config, 'a')).toEqual({ id: 'a', label: 'Conta A', fingerprint: 'hash-a' });
+  });
+
+  it('conta sem fingerprint (chave ausente) -> fingerprint null no resultado', () => {
+    const config = configWith([{ id: 'a', label: 'Conta A', plan: null }]);
+    expect(findAccountById(config, 'a')).toEqual({ id: 'a', label: 'Conta A', fingerprint: null });
+  });
+
+  it('conta com fingerprint explicitamente null -> fingerprint null no resultado', () => {
+    const config = configWith([{ id: 'a', label: 'Conta A', plan: null, fingerprint: null }]);
+    expect(findAccountById(config, 'a')).toEqual({ id: 'a', label: 'Conta A', fingerprint: null });
+  });
+
+  it('id desconhecido -> null', () => {
+    const config = configWith([{ id: 'a', label: 'Conta A', plan: null }]);
+    expect(findAccountById(config, 'nunca-existiu')).toBeNull();
+  });
+});
+
+// 011-contas-e-provedores, etapa 3, Fase 2 (D3) — o que `accounts:beginReconnect`
+// (index.ts) usa pra decidir se abre o login isolado apontado pra uma conta,
+// recusa (bloqueado/desconhecida) ou segue.
+describe('planReconnect', () => {
+  function configWith(accounts: readonly LocalAccountMeta[], overrides: Partial<AccountsConfig> = {}): AccountsConfig {
+    return { ...defaultAccountsConfig(), mod: 'local', localAccounts: accounts, ...overrides };
+  }
+
+  it('conta cadastrada e NÃO ativa -> ok, com o rótulo dela', () => {
+    const config = configWith([{ id: 'a', label: 'Conta A', plan: 'max' }], { activeAccountId: 'outra' });
+    expect(planReconnect(config, 'a')).toEqual({ kind: 'ok', label: 'Conta A' });
+  });
+
+  it('conta ATIVA -> blocked/active-account — a credencial dela vive no ~/.claude, o CLI renova sozinho', () => {
+    const config = configWith([{ id: 'a', label: 'Conta A', plan: 'max' }], { activeAccountId: 'a' });
+    expect(planReconnect(config, 'a')).toEqual({ kind: 'blocked', reason: 'active-account' });
+  });
+
+  it('id desconhecido -> unknown-account (nunca blocked, mesmo se bater por acaso com activeAccountId)', () => {
+    const config = configWith([{ id: 'a', label: 'Conta A', plan: 'max' }], { activeAccountId: 'nunca-existiu' });
+    expect(planReconnect(config, 'nunca-existiu')).toEqual({ kind: 'unknown-account' });
   });
 });

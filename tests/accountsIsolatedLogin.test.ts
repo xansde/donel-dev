@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   IsolatedLoginManager,
   isLoginDirPath,
@@ -40,10 +40,16 @@ function claudeJson(accountUuid: string): string {
   return JSON.stringify({ oauthAccount: { accountUuid } });
 }
 
+/** O MESMO cálculo de `accountFingerprintFromClaudeJsonText` (credentials-file.ts) — usado só pra preparar fixtures de teste, nunca pela implementação. */
+function fingerprintOf(accountUuid: string): string {
+  return createHash('sha256').update(accountUuid, 'utf8').digest('hex');
+}
+
 class FakeVault implements VaultLike {
   readonly writes: { id: string; plainText: string }[] = [];
   private readonly entries = new Map<string, string>();
   private failNextWrite = false;
+  private throwNextWrite = false;
 
   read(id: string): string | null {
     return this.entries.get(id) ?? null;
@@ -51,6 +57,12 @@ class FakeVault implements VaultLike {
 
   write(id: string, plainText: string): VaultWriteResult {
     this.writes.push({ id, plainText });
+    if (this.throwNextWrite) {
+      this.throwNextWrite = false;
+      // R4 (revisão) — simula o erro de I/O real que `writeVaultFile`
+      // (vault.ts) relança, em vez do retorno `vault-unavailable` de baixo.
+      throw new Error('EIO (fake) — falha de I/O real do cofre');
+    }
     if (this.failNextWrite) {
       this.failNextWrite = false;
       return { kind: 'vault-unavailable' };
@@ -61,6 +73,10 @@ class FakeVault implements VaultLike {
 
   forceNextWriteToFail(): void {
     this.failNextWrite = true;
+  }
+
+  forceNextWriteToThrow(): void {
+    this.throwNextWrite = true;
   }
 }
 
@@ -107,6 +123,9 @@ interface Harness {
   generateAccountIdCallsLog: string[];
   readonly generateAccountIdCalls: number;
   findAccountByFingerprintBox: { impl: (fingerprint: string) => { id: AccountId; label: string } | null };
+  // 011-contas-e-provedores, etapa 3, Fase 2 (D3) — o dep novo do fluxo de
+  // "Reconectar" (`begin(label, { targetAccountId })`).
+  findAccountByIdBox: { impl: (id: AccountId) => { id: AccountId; label: string; fingerprint: string | null } | null };
   isVaultAvailableFlag: { value: boolean };
 }
 
@@ -121,6 +140,7 @@ function makeHarness(overrides: Partial<IsolatedLoginManagerDeps> = {}): Harness
   const isVaultAvailableFlag = { value: true };
   const generateAccountIdCallsLog: string[] = [];
   const findAccountByFingerprintBox = { impl: (_fp: string): { id: AccountId; label: string } | null => null };
+  const findAccountByIdBox = { impl: (_id: AccountId): { id: AccountId; label: string; fingerprint: string | null } | null => null };
 
   const trackedVaultWrite = vault.write.bind(vault);
   vault.write = (id: string, plainText: string) => {
@@ -140,6 +160,7 @@ function makeHarness(overrides: Partial<IsolatedLoginManagerDeps> = {}): Harness
     vault,
     isVaultAvailable: () => isVaultAvailableFlag.value,
     findAccountByFingerprint: (fp) => findAccountByFingerprintBox.impl(fp),
+    findAccountById: (id) => findAccountByIdBox.impl(id),
     generateLoginId: () => VALID_UUID(),
     generateAccountId: () => {
       const id = `generated-${generateAccountIdCallsLog.length + 1}`;
@@ -184,6 +205,7 @@ function makeHarness(overrides: Partial<IsolatedLoginManagerDeps> = {}): Harness
       return generateAccountIdCallsLog.length;
     },
     findAccountByFingerprintBox,
+    findAccountByIdBox,
     isVaultAvailableFlag,
   };
 }
@@ -302,7 +324,7 @@ describe('IsolatedLoginManager — timeout de anexação (sem PTY)', () => {
     if (begun.kind !== 'started') throw new Error('esperava started');
     const dir = manager.getPendingDir(begun.loginId)!;
 
-    await sleep(120);
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta A', state: 'cancelled', reason: 'no-terminal' }]);
     expect(fs.removeDirCalls).toContain(dir);
@@ -334,7 +356,7 @@ describe('IsolatedLoginManager — poll e conclusão (fingerprint)', () => {
     fs.files.set(credPathFor(dir), credentialsJson());
     fs.files.set(claudePathFor(dir), claudeJson(accountUuid));
 
-    await sleep(120);
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harvestedCalls).toHaveLength(1);
     expect(harvestedCalls[0].kind).toBe('added');
@@ -353,7 +375,7 @@ describe('IsolatedLoginManager — poll e conclusão (fingerprint)', () => {
     fs.files.set(credPathFor(dir), credentialsJson());
     // .claude.json nunca aparece.
 
-    await sleep(250);
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harvestedCalls).toHaveLength(1);
     expect(harvestedCalls[0]).toEqual({ kind: 'added', accountId: 'generated-1', label: 'Conta Sem Fingerprint', fingerprint: null });
@@ -371,7 +393,7 @@ describe('IsolatedLoginManager — poll e conclusão (fingerprint)', () => {
       fs.files.set(claudePathFor(dir), claudeJson('uuid-atrasado'));
     }, 20);
 
-    await sleep(250);
+    await vi.waitFor(() => expect(harvestedCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harvestedCalls).toHaveLength(1);
     expect(harvestedCalls[0].fingerprint).toMatch(/^[0-9a-f]{64}$/);
@@ -399,7 +421,7 @@ describe('IsolatedLoginManager — poll e conclusão (fingerprint)', () => {
     harness.fs.files.set(credPathFor(dir), credentialsJson());
     harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-repetido'));
 
-    await sleep(120);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.generateAccountIdCallsLog).toHaveLength(0); // reusa o id existente, nunca gera um novo.
     expect(harness.vault.writes).toEqual([{ id: 'existing-acc-id', plainText: expect.any(String) }]);
@@ -424,7 +446,7 @@ describe('IsolatedLoginManager — ordem obrigatória da conclusão', () => {
     // Sem simular a saída do PTY: a espera se resolve pelo próprio
     // `exitWaitMs` (default da harness), provando que a cauda roda até o
     // fim mesmo quando o `ptyManager` real demora a avisar a saída.
-    await sleep(200);
+    await vi.waitFor(() => expect(harness.calls).toHaveLength(5), { timeout: 2000, interval: 10 });
 
     expect(harness.calls).toEqual(['vault.write', 'onAccountHarvested', 'killPty', 'removeDir', 'emitStatus']);
   });
@@ -439,7 +461,7 @@ describe('IsolatedLoginManager — ordem obrigatória da conclusão', () => {
     harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-falha'));
     harness.vault.forceNextWriteToFail();
 
-    await sleep(200);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Falha Cofre', state: 'failed', reason: 'vault-unavailable' }]);
     expect(harness.harvestedCalls).toEqual([]); // nunca avisa a config de uma conta que não foi gravada.
@@ -460,11 +482,62 @@ describe('IsolatedLoginManager — ordem obrigatória da conclusão', () => {
     harness.fs.files.set(credPathFor(dir), credentialsJson());
     harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-harvest-falha')); // fingerprint já presente -> conclui no 1º poll, sem esperar o grace inteiro.
 
-    await sleep(200);
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Falha Harvest', state: 'failed', reason: 'io' }]);
     expect(harness.killPtyCalls).toEqual(['pty-harvest-falha']);
     expect(harness.fs.removeDirCalls).toContain(dir);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 011-contas-e-provedores, etapa 3, Fase 2 (R4, revisão) — o cofre real pode
+// LANÇAR (erro de I/O em `writeVaultFile`, vault.ts) em vez de devolver
+// `vault-unavailable`. A colheita nunca pode deixar essa exceção escapar: a
+// cauda obrigatória (matar PTY -> esperar exit -> apagar diretório -> limpar
+// o pendente -> emitir status) tem que rodar igual, com ou sem alvo.
+describe('IsolatedLoginManager — R4 (revisão): gravação no cofre que LANÇA', () => {
+  it('vault.write LANÇA no login SEM alvo -> failed/vault-unavailable, ainda mata o PTY, apaga o diretório e limpa o pendente (begin seguinte funciona)', async () => {
+    const harness = makeHarness();
+    const begun = harness.manager.begin('Conta Cofre Explode');
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.manager.attachPty(begun.loginId, 'pty-explode');
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-explode'));
+    harness.vault.forceNextWriteToThrow();
+
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Cofre Explode', state: 'failed', reason: 'vault-unavailable' }]);
+    expect(harness.harvestedCalls).toEqual([]); // nunca avisa a config de uma conta que não foi gravada.
+    expect(harness.killPtyCalls).toEqual(['pty-explode']);
+    expect(harness.fs.removeDirCalls).toContain(dir);
+    expect(harness.manager.getPendingDir(begun.loginId)).toBeNull();
+
+    // pendente limpo: um begin seguinte funciona normalmente.
+    const second = harness.manager.begin('Conta Seguinte');
+    expect(second.kind).toBe('started');
+  });
+
+  it('vault.write LANÇA no login COM alvo (Reconectar) -> failed/vault-unavailable, mesma cauda obrigatória', async () => {
+    const harness = makeHarness();
+    harness.findAccountByIdBox.impl = (id) => (id === 'target-r4' ? { id: 'target-r4', label: 'Alvo R4', fingerprint: null } : null);
+    const begun = harness.manager.begin('Alvo R4', { targetAccountId: 'target-r4' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.manager.attachPty(begun.loginId, 'pty-r4');
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-r4'));
+    harness.vault.forceNextWriteToThrow();
+
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Alvo R4', state: 'failed', reason: 'vault-unavailable' }]);
+    expect(harness.harvestedCalls).toEqual([]);
+    expect(harness.killPtyCalls).toEqual(['pty-r4']);
+    expect(harness.fs.removeDirCalls).toContain(dir);
+    expect(harness.manager.getPendingDir(begun.loginId)).toBeNull();
   });
 });
 
@@ -478,7 +551,7 @@ describe('IsolatedLoginManager — saída do PTY', () => {
     manager.attachPty(begun.loginId, 'pty-sem-login');
 
     manager.handlePtyExit('pty-sem-login');
-    await sleep(10);
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Sem Login', state: 'cancelled', reason: 'exited-without-login' }]);
     expect(fs.removeDirCalls).toContain(dir);
@@ -496,7 +569,7 @@ describe('IsolatedLoginManager — saída do PTY', () => {
     // .claude.json ainda não chegou — "fingerprint do jeito que estiver".
 
     manager.handlePtyExit('pty-rapido');
-    await sleep(10);
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(harvestedCalls).toEqual([{ kind: 'added', accountId: 'generated-1', label: 'Conta Rápida', fingerprint: null }]);
     expect(emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Rápida', state: 'added', accountId: 'generated-1' }]);
@@ -530,7 +603,7 @@ describe('IsolatedLoginManager — cancel', () => {
     expect(killPtyCalls).toEqual(['pty-cancel']); // kill já aconteceu de forma síncrona dentro de cancel().
 
     manager.handlePtyExit('pty-cancel'); // ptyManager real avisaria a saída pouco depois.
-    await sleep(10);
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Cancelada', state: 'cancelled', reason: 'user' }]);
     expect(fs.removeDirCalls).toContain(dir);
@@ -545,7 +618,8 @@ describe('IsolatedLoginManager — cancel', () => {
     manager.attachPty(begun.loginId, 'pty-preso');
 
     manager.cancel(begun.loginId);
-    await sleep(50); // nunca chama handlePtyExit — só o timeout resolve.
+    // nunca chama handlePtyExit — só o timeout (`exitWaitMs`) resolve.
+    await vi.waitFor(() => expect(emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
 
     expect(emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Cancelada Sem Saída', state: 'cancelled', reason: 'user' }]);
     expect(fs.removeDirCalls).toContain(dir);
@@ -594,6 +668,140 @@ describe('IsolatedLoginManager — sweepStaleDirs (boot)', () => {
 
     expect(calls).toBe(2);
     expect(removed).toEqual([b]); // só a que não lançou entra no resultado.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 011-contas-e-provedores, etapa 3, Fase 2 (D3) — "Reconectar":
+// `begin(label, { targetAccountId })` aponta o login PARA uma conta já
+// cadastrada. Casos a-d do desenho (fase2-design.md §Bloco 1, item 7).
+describe('IsolatedLoginManager — begin com alvo (Reconectar, D3)', () => {
+  it('sucesso: fingerprint do login bate com o do PRÓPRIO alvo -> reconnected, grava no id do alvo, sem gerar id novo, label é o do alvo (não o passado a begin)', async () => {
+    const harness = makeHarness();
+    const alvoFingerprint = fingerprintOf('uuid-alvo');
+    harness.findAccountByIdBox.impl = (id) => (id === 'target-1' ? { id: 'target-1', label: 'Rótulo Real do Alvo', fingerprint: alvoFingerprint } : null);
+    harness.findAccountByFingerprintBox.impl = (fp) => (fp === alvoFingerprint ? { id: 'target-1', label: 'Rótulo Real do Alvo' } : null);
+
+    // Label digitado deliberadamente DIFERENTE do rótulo real do alvo — prova
+    // que o status final usa o rótulo LIDO do alvo, não o parâmetro de begin
+    // (na wiring real de index.ts os dois são o mesmo valor).
+    const begun = harness.manager.begin('Rótulo Que Não Deveria Aparecer', { targetAccountId: 'target-1' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-alvo'));
+
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Rótulo Real do Alvo', state: 'reconnected', accountId: 'target-1' }]);
+    expect(harness.vault.writes).toEqual([{ id: 'target-1', plainText: expect.any(String) }]);
+    expect(harness.harvestedCalls).toEqual([{ kind: 'reconnected', accountId: 'target-1', label: 'Rótulo Real do Alvo', fingerprint: alvoFingerprint }]);
+    expect(harness.generateAccountIdCallsLog).toHaveLength(0); // nunca gera id novo — o alvo já tem um.
+  });
+
+  it('sucesso: alvo SEM fingerprint ainda (conta antiga) ganha o fingerprint novo do login', async () => {
+    const harness = makeHarness();
+    harness.findAccountByIdBox.impl = (id) => (id === 'target-2' ? { id: 'target-2', label: 'Conta Antiga', fingerprint: null } : null);
+    // Nenhuma conta conhece este fingerprint ainda (findAccountByFingerprintBox default -> null).
+
+    const begun = harness.manager.begin('Conta Antiga', { targetAccountId: 'target-2' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-novo'));
+
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Antiga', state: 'reconnected', accountId: 'target-2' }]);
+    expect(harness.harvestedCalls).toEqual([{ kind: 'reconnected', accountId: 'target-2', label: 'Conta Antiga', fingerprint: fingerprintOf('uuid-novo') }]);
+  });
+
+  it('login SEM fingerprint (claude.json nunca chega) contra alvo COM fingerprint é aceito — não dá pra provar que é outra conta', async () => {
+    const harness = makeHarness({ fingerprintGraceMs: 60 });
+    harness.findAccountByIdBox.impl = (id) => (id === 'target-3' ? { id: 'target-3', label: 'Conta Com FP', fingerprint: fingerprintOf('uuid-existente') } : null);
+
+    const begun = harness.manager.begin('Conta Com FP', { targetAccountId: 'target-3' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    // .claude.json nunca aparece.
+
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Com FP', state: 'reconnected', accountId: 'target-3' }]);
+    expect(harness.harvestedCalls).toEqual([{ kind: 'reconnected', accountId: 'target-3', label: 'Conta Com FP', fingerprint: null }]);
+  });
+
+  it('(a) alvo sumiu -> failed/unknown-account, nada gravado, cauda roda igual (removeDir)', async () => {
+    const harness = makeHarness();
+    // findAccountByIdBox default -> null pra qualquer id (alvo "sumiu" da config).
+
+    const begun = harness.manager.begin('Alvo Sumido', { targetAccountId: 'nunca-existiu' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-qualquer'));
+
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Alvo Sumido', state: 'failed', reason: 'unknown-account' }]);
+    expect(harness.vault.writes).toEqual([]);
+    expect(harness.harvestedCalls).toEqual([]);
+    expect(harness.fs.removeDirCalls).toContain(dir);
+    expect(harness.manager.getPendingDir(begun.loginId)).toBeNull();
+  });
+
+  it('(b) fingerprint do login pertence a OUTRA conta conhecida -> wrong-account com otherLabel; cauda roda (kill + removeDir)', async () => {
+    const harness = makeHarness();
+    const fingerprintDeOutraConta = fingerprintOf('uuid-de-outra-conta');
+    harness.findAccountByIdBox.impl = (id) => (id === 'target-b' ? { id: 'target-b', label: 'Alvo B', fingerprint: null } : null);
+    harness.findAccountByFingerprintBox.impl = (fp) => (fp === fingerprintDeOutraConta ? { id: 'outra-conta', label: 'Conta Outra' } : null);
+
+    const begun = harness.manager.begin('Alvo B', { targetAccountId: 'target-b' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.manager.attachPty(begun.loginId, 'pty-b');
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-de-outra-conta'));
+
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Alvo B', state: 'wrong-account', otherLabel: 'Conta Outra' }]);
+    expect(harness.vault.writes).toEqual([]);
+    expect(harness.harvestedCalls).toEqual([]);
+    expect(harness.killPtyCalls).toEqual(['pty-b']);
+    expect(harness.fs.removeDirCalls).toContain(dir);
+  });
+
+  it('(c) alvo tem fingerprint próprio, login traz outro (não reconhecido por nenhuma conta) -> wrong-account com otherLabel null', async () => {
+    const harness = makeHarness();
+    harness.findAccountByIdBox.impl = (id) => (id === 'target-c' ? { id: 'target-c', label: 'Alvo C', fingerprint: fingerprintOf('uuid-alvo-original') } : null);
+    // findAccountByFingerprintBox default -> null (ninguém conhece o fingerprint deste login).
+
+    const begun = harness.manager.begin('Alvo C', { targetAccountId: 'target-c' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-login-desconhecido'));
+
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Alvo C', state: 'wrong-account', otherLabel: null }]);
+    expect(harness.vault.writes).toEqual([]);
+    expect(harness.harvestedCalls).toEqual([]);
+  });
+
+  it('sem alvo (comportamento da Fase 1): begin sem options continua add/replace normalmente', async () => {
+    const harness = makeHarness();
+    const begun = harness.manager.begin('Conta Normal');
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-normal'));
+
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Normal', state: 'added', accountId: 'generated-1' }]);
   });
 });
 

@@ -9,10 +9,28 @@
 // `isSessionBusy` (leitura apenas, nunca escreve no semáforo) e devolve
 // `deferred` enquanto houver sessão trabalhando — switch MANUAL nunca é
 // adiado.
+//
+// 011-contas-e-provedores, etapa 3, Fase 2 — duas adições ortogonais:
+// D3 (`reconnectRegistry`) marca uma conta quando a troca PARA ELA falha com
+// `expired-credentials`, e decora `needsReconnect` nas contas expostas —
+// `performSwitch` (privado) concentra a lógica de sucesso/falha que
+// `switchTo` (manual) e `evaluateAutoSwitch` (auto) compartilham. D5
+// (`lastAutoSwitch`/`autoSwitchState`) dá visibilidade à última decisão do
+// auto-switch pro painel, sem esperar o próximo poll.
+//
+// 011-contas-e-provedores, etapa 3, Fase 2 (revisão) — R3: um motor
+// DESCARTADO (`dispose()`, tipicamente por reconstrução do host — F6) pode
+// estar no meio de uma leitura ou troca. Sem guarda, ele ainda troca de
+// conta, grava em `~/.claude` e deixa o motor NOVO com a conta ativa velha —
+// a próxima troca do motor novo capturaria o par vivo na conta ERRADA (mata
+// a conta). `disposed` fecha isso: `performSwitch` falha (`io`) sem tocar o
+// mod nem a config em memória, `evaluateAutoSwitch`/`retryDeferredAutoSwitch`
+// devolvem `null`, e `emit()` nunca mais notifica ouvinte nenhum.
 
-import { selectSwitchTarget } from './auto-switch';
+import { classifyAutoSwitch, selectSwitchTarget } from './auto-switch';
+import { createReconnectRegistry, type ReconnectRegistry } from './reconnect-registry';
 import type { AccountMod, CredentialPair } from './account-mod';
-import type { AccountId, AccountsConfig, AccountsViewDto, ModId, SwitchOutcome } from '../../shared/accounts';
+import type { AccountId, AccountsConfig, AccountsViewDto, AccountSummary, AutoSwitchEvent, ModId, SwitchOutcome } from '../../shared/accounts';
 
 const KEEP_ALIVE_INTERVAL_MS = 15 * 60 * 1000;
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
@@ -35,6 +53,14 @@ export interface AccountEngineDeps {
   readonly now?: () => number;
   readonly setIntervalFn?: typeof setInterval;
   readonly clearIntervalFn?: typeof clearInterval;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 2 (D3) — registro em memória de
+   * contas que precisam reconectar. Opcional (default: registro novo e
+   * vazio) pra não quebrar quem já instancia o motor sem se importar com
+   * isso; index.ts injeta UM registro compartilhado entre reconstruções do
+   * motor (F6), senão um rebuild perderia toda marca pendente.
+   */
+  readonly reconnectRegistry?: ReconnectRegistry;
 }
 
 /**
@@ -50,15 +76,20 @@ export class AccountEngine {
   private readonly now: () => number;
   private readonly setIntervalFn: typeof setInterval;
   private readonly clearIntervalFn: typeof clearInterval;
+  private readonly reconnectRegistry: ReconnectRegistry;
 
   private readonly mod: AccountMod | null;
   private state: AccountEngineState;
   private unavailableReason: 'offline' | 'unauthorized' | 'io' | null = null;
-  private accounts: readonly import('../../shared/accounts').AccountSummary[] = [];
+  private accounts: readonly AccountSummary[] = [];
   private lastReadAt: string | null = null;
   private readonly listeners = new Set<(view: AccountsViewDto) => void>();
   private keepAliveTimer: ReturnType<typeof setInterval> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  /** D5 — última decisão do auto-switch NESTE motor; em memória de propósito (some ao reconstruir o motor ou reiniciar o app). */
+  private lastAutoSwitch: AutoSwitchEvent | null = null;
+  /** R3 (revisão) — `true` depois de `dispose()`. Ver o parágrafo no topo do arquivo. */
+  private disposed = false;
 
   constructor(deps: AccountEngineDeps) {
     this.config = deps.config;
@@ -68,6 +99,7 @@ export class AccountEngine {
     this.now = deps.now ?? Date.now;
     this.setIntervalFn = deps.setIntervalFn ?? setInterval;
     this.clearIntervalFn = deps.clearIntervalFn ?? clearInterval;
+    this.reconnectRegistry = deps.reconnectRegistry ?? createReconnectRegistry();
 
     // Estado inicial segue o diagrama do data-model.md §3: `mod === null` é
     // SEMPRE `inert`; qualquer mod configurado nasce `ready` até prova em
@@ -121,6 +153,10 @@ export class AccountEngine {
   }
 
   dispose(): void {
+    // R3 (revisão) — marca ANTES de mexer nos timers: qualquer leitura/troca
+    // já em voo neste motor vê `disposed` assim que checar, mesmo que este
+    // método não espere ela terminar.
+    this.disposed = true;
     if (this.keepAliveTimer) {
       this.clearIntervalFn(this.keepAliveTimer);
       this.keepAliveTimer = null;
@@ -157,21 +193,92 @@ export class AccountEngine {
   }
 
   /**
-   * Switch MANUAL (gesto do operador) — nunca adiado por sessão ocupada
-   * (só o auto-switch adia, ver `evaluateAutoSwitch`). Motor `inert` falha
-   * com `io` (regra do contracts/ipc-accounts.md — sem caminho implícito de
-   * ativação).
+   * Switch MANUAL (gesto do operador) — nunca adiado por sessão ocupada (só
+   * o auto-switch adia, ver `evaluateAutoSwitch`). Delega a `performSwitch`
+   * (D3/D5) com `origin: 'manual'` — o gesto em si não muda.
    */
   async switchTo(id: AccountId): Promise<SwitchOutcome> {
+    return this.performSwitch(id, 'manual');
+  }
+
+  /**
+   * C5 — avaliado nos momentos de leitura de carga (sob demanda + poll de 5
+   * min). `null` = nada a fazer agora (desligado, motor não `ready`, ou
+   * nenhuma candidata elegível) — nesse caso, um `lastAutoSwitch` `deferred`
+   * pendente é limpo (D5: o adiamento acabou, mesmo sem uma troca de
+   * verdade). Sessão ocupada -> `deferred` SEM tentar o switch (reavaliado no
+   * próximo ciclo, nunca um retry imediato).
+   */
+  async evaluateAutoSwitch(): Promise<SwitchOutcome | null> {
+    // R3 (revisão) — motor descartado nunca avalia nem toca o mod.
+    if (this.disposed) return null;
+    if (!this.mod || this.state !== 'ready' || !this.config.autoSwitch.enabled) {
+      return this.clearDeferredAutoSwitch();
+    }
+
+    const target = selectSwitchTarget(this.decoratedAccounts(), this.config.activeAccountId, this.config.autoSwitch);
+    if (!target) return this.clearDeferredAutoSwitch();
+
+    if (this.isSessionBusy()) {
+      this.lastAutoSwitch = { kind: 'deferred', at: this.nowIso() };
+      this.emit();
+      return { kind: 'deferred', reason: 'session-busy' };
+    }
+
+    return this.performSwitch(target, 'auto');
+  }
+
+  /**
+   * D5 — só reavalia se a última decisão registrada for `deferred`; senão
+   * `null` sem tocar o mod (index.ts chama isto quando a última sessão
+   * ocupada sai de `working`, e não deve gerar tráfego se não havia nada
+   * pendente). R3 (revisão) — motor descartado: coberto por delegação, o
+   * guard de `evaluateAutoSwitch` barra antes de tocar o mod.
+   */
+  async retryDeferredAutoSwitch(): Promise<SwitchOutcome | null> {
+    if (this.lastAutoSwitch?.kind !== 'deferred') return null;
+    return this.evaluateAutoSwitch();
+  }
+
+  /**
+   * D3/D5 — gesto de troca de fato, compartilhado por `switchTo` (manual) e
+   * `evaluateAutoSwitch` (auto). `origin` decide só duas coisas: se marca
+   * `lastAutoSwitch` (só o auto registra `switched`/`failed`; o manual só
+   * LIMPA um `deferred` pendente em caso de sucesso) e nada mais — o
+   * resultado devolvido ao chamador é o mesmo `SwitchOutcome` de sempre.
+   */
+  private async performSwitch(id: AccountId, origin: 'manual' | 'auto'): Promise<SwitchOutcome> {
+    // R3 (revisão) — descartado na entrada: falha sem tocar o mod nem a
+    // config em memória (cobre um `switchTo` manual chamado depois do
+    // `dispose()`; o caminho auto já é barrado antes, em `evaluateAutoSwitch`).
+    if (this.disposed) return { kind: 'failed', reason: 'io' };
     if (!this.mod) return { kind: 'failed', reason: 'io' };
     if (id === this.config.activeAccountId) return { kind: 'already-active', account: id };
 
     const switchResult = await this.mod.switchTo(id);
+
+    // R3 (revisão) — descartado ENQUANTO `mod.switchTo` estava em voo (a
+    // reconstrução do host não espera troca nenhuma terminar). O mod já
+    // persistiu no cofre, por conta própria, qualquer par renovado — nada se
+    // perde; só não deixamos ESTE motor aplicar nada em `~/.claude` nem mudar
+    // a conta ativa dele em memória (quem faz isso agora é o motor novo).
+    if (this.disposed) return { kind: 'failed', reason: 'io' };
+
     if (switchResult.kind !== 'ok') {
       // `unknown-account` não existe no vocabulário de `SwitchOutcome`
       // (contracts/ipc-accounts.md) — mapeado para `io` (falha de leitura),
       // a categoria mais próxima entre as quatro expostas ao IPC.
       const reason = switchResult.reason === 'unknown-account' ? 'io' : switchResult.reason;
+      let changed = false;
+      if (reason === 'expired-credentials' && !this.reconnectRegistry.has(id)) {
+        this.reconnectRegistry.mark(id); // D3 — a UI oferece "Reconectar" pra esta conta a partir de agora.
+        changed = true;
+      }
+      if (origin === 'auto') {
+        this.lastAutoSwitch = { kind: 'failed', to: id, reason, at: this.nowIso() };
+        changed = true;
+      }
+      if (changed) this.emit();
       return { kind: 'failed', reason };
     }
 
@@ -180,52 +287,85 @@ export class AccountEngine {
     try {
       await this.applySwitchFn(switchResult.pair, async (rotatedPair) => {
         if (rotatedPair && fromId) await mod.captureRotatedPair(fromId, rotatedPair);
+        // R3 (revisão) — descartado ENQUANTO a captura estava em voo: lança
+        // pra abortar a sequência invariante (claude-state.ts) ANTES do
+        // passo 2 (escrita de `.credentials.json`) — nada é escrito. O catch
+        // logo abaixo devolve failed/io, igual a qualquer outra falha nesta
+        // sequência.
+        if (this.disposed) throw new Error('account engine disposed during rotated pair capture');
       });
     } catch {
       // Falha em qualquer passo da sequência invariante degrada sem
       // corromper o estado anterior (data-model.md §3: "falha em qualquer
       // passo -> indisponível" na leitura; no switch, especificamente, o
       // motor mantém a conta ativa ANTERIOR — nunca finge que trocou).
+      if (origin === 'auto') {
+        this.lastAutoSwitch = { kind: 'failed', to: id, reason: 'io', at: this.nowIso() };
+        this.emit();
+      }
       return { kind: 'failed', reason: 'io' };
     }
 
     this.config = { ...this.config, activeAccountId: id };
+    this.reconnectRegistry.clear(id); // D3 — trocar pra ela com sucesso prova que a credencial está boa de novo.
+    if (origin === 'auto') {
+      this.lastAutoSwitch = { kind: 'switched', from: fromId, to: id, at: this.nowIso() };
+    } else if (this.lastAutoSwitch?.kind === 'deferred') {
+      this.lastAutoSwitch = null; // manual resolveu o que o auto-switch estava esperando pra fazer.
+    }
     this.emit();
     return { kind: 'switched', from: fromId, to: id };
   }
 
+  /** `null` sempre — limpa (e emite) um `lastAutoSwitch` `deferred` pendente; no-op se não havia nenhum. */
+  private clearDeferredAutoSwitch(): null {
+    if (this.lastAutoSwitch?.kind === 'deferred') {
+      this.lastAutoSwitch = null;
+      this.emit();
+    }
+    return null;
+  }
+
+  private nowIso(): string {
+    return new Date(this.now()).toISOString();
+  }
+
   /**
-   * C5 — avaliado nos momentos de leitura de carga (sob demanda + poll de 5
-   * min). `null` = nada a fazer agora (desligado, motor não `ready`, ou
-   * nenhuma candidata elegível). Sessão ocupada -> `deferred` SEM tentar o
-   * switch (reavaliado no próximo ciclo, nunca um retry imediato).
+   * D3 — as mesmas contas decoradas que `buildView()` expõe (com `active` e
+   * `needsReconnect`), reaproveitadas na avaliação do auto-switch pra uma
+   * conta marcada nunca ser alvo. `needsReconnect` só aparece quando `true`
+   * (chave ausente caso contrário) — os testes que comparam `AccountSummary`
+   * com `toEqual` já existiam antes desta fase.
    */
-  async evaluateAutoSwitch(): Promise<SwitchOutcome | null> {
-    if (!this.mod) return null;
-    if (this.state !== 'ready') return null; // unavailable pausa o auto-switch (C9).
-    if (!this.config.autoSwitch.enabled) return null;
-
-    const target = selectSwitchTarget(this.accounts, this.config.activeAccountId, this.config.autoSwitch);
-    if (!target) return null;
-
-    if (this.isSessionBusy()) return { kind: 'deferred', reason: 'session-busy' };
-
-    return this.switchTo(target);
+  private decoratedAccounts(): readonly AccountSummary[] {
+    return this.accounts.map((account) => ({
+      ...account,
+      active: account.id === this.config.activeAccountId,
+      ...(this.reconnectRegistry.has(account.id) ? { needsReconnect: true as const } : {}),
+    }));
   }
 
   private buildView(): AccountsViewDto {
+    const decorated = this.decoratedAccounts();
+    const autoSwitchState = !this.mod || this.state !== 'ready' ? 'idle' : classifyAutoSwitch(decorated, this.config.activeAccountId, this.config.autoSwitch);
     return {
       mod: this.config.mod,
       state: this.state,
       unavailableReason: this.unavailableReason,
-      accounts: this.accounts.map((account) => ({ ...account, active: account.id === this.config.activeAccountId })),
+      accounts: decorated,
       activeAccountId: this.config.activeAccountId,
       autoSwitch: this.config.autoSwitch,
       lastReadAt: this.lastReadAt,
+      autoSwitchState,
+      lastAutoSwitch: this.lastAutoSwitch,
     };
   }
 
   private emit(): void {
+    // R3 (revisão) — motor descartado nunca notifica ouvinte nenhum (nem
+    // view velha pro renderer, nem pro host) — uma leitura/troca dele pode
+    // terminar tarde, depois que o host já trocou pra um motor novo.
+    if (this.disposed) return;
     const view = this.buildView();
     for (const listener of this.listeners) listener(view);
   }

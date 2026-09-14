@@ -208,7 +208,10 @@ describe('local-mod — só refresca no caminho de fallback', () => {
     expect(vault.read('local-1')).toBe(JSON.stringify(newPair));
   });
 
-  it('recusa do refresh -> expired-credentials', async () => {
+  // 011-contas-e-provedores, etapa 3, Fase 2 (D4) — `token-refresh.ts` agora
+  // distingue recusa (`rejected`) de "não deu pra saber" (`unavailable`); o
+  // mod local mapeia cada um pro `reason` de `SwitchToResult` certo.
+  it('recusa do refresh (rejected) -> expired-credentials', async () => {
     const vault = new FakeVault();
     const accounts: readonly LocalAccountMeta[] = [{ id: 'local-1', label: 'Conta 1', plan: null }];
     const expiredPair: CredentialPair = { accessToken: 'old', refreshToken: 'old-refresh', expiresAt: Date.now() - 1000, scopes: [] };
@@ -218,11 +221,28 @@ describe('local-mod — só refresca no caminho de fallback', () => {
       accounts,
       vault,
       fetchImpl: async () => jsonResponse(200, {}),
-      refreshImpl: async () => ({ kind: 'failed' }),
+      refreshImpl: async () => ({ kind: 'failed', reason: 'rejected' }),
     });
 
     const result = await mod.switchTo('local-1');
     expect(result).toEqual({ kind: 'failed', reason: 'expired-credentials' });
+  });
+
+  it('refresh indisponível (unavailable — rede/timeout, não recusa) -> offline', async () => {
+    const vault = new FakeVault();
+    const accounts: readonly LocalAccountMeta[] = [{ id: 'local-1', label: 'Conta 1', plan: null }];
+    const expiredPair: CredentialPair = { accessToken: 'old', refreshToken: 'old-refresh', expiresAt: Date.now() - 1000, scopes: [] };
+    vault.write('local-1', JSON.stringify(expiredPair));
+
+    const mod = createLocalMod({
+      accounts,
+      vault,
+      fetchImpl: async () => jsonResponse(200, {}),
+      refreshImpl: async () => ({ kind: 'failed', reason: 'unavailable' }),
+    });
+
+    const result = await mod.switchTo('local-1');
+    expect(result).toEqual({ kind: 'failed', reason: 'offline' });
   });
 });
 

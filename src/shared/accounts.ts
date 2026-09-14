@@ -40,7 +40,40 @@ export interface AccountSummary {
   readonly active: boolean;
   readonly available: boolean;
   readonly load: AccountLoad | null;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 2 (D3) — só o motor preenche (mods
+   * NUNCA setam este campo, ver account-mod.ts). Presente e `true` quando a
+   * última troca PARA esta conta falhou com `expired-credentials`; ausente
+   * (chave nem existe) = `false`, pra não quebrar comparação por `toEqual`
+   * nos testes que já existiam antes desta fase.
+   */
+  readonly needsReconnect?: boolean;
 }
+
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 2 (D5; `blind` no adendo D8) —
+ * estado do auto-switch pro painel decidir o que mostrar sem recalcular
+ * limiar/folga na UI. `off` desligado · `idle` nada a fazer (ativa abaixo do
+ * limiar, sem ativa, carga da ativa desconhecida, motor inerte/indisponível)
+ * · `armed` ativa >= limiar e existe candidata · `saturated` ativa >= limiar,
+ * nenhuma candidata, e TODAS as outras contas disponíveis/sem
+ * `needsReconnect` têm carga conhecida (D6 — o painel avisa, não troca) ·
+ * `blind` ativa >= limiar, nenhuma candidata, mas pelo menos UMA outra conta
+ * disponível/sem `needsReconnect` está com carga DESCONHECIDA — falta DADO,
+ * não falta folga (D8: o access token de uma conta parada vence ~8h depois
+ * da última captura).
+ */
+export type AutoSwitchState = 'off' | 'idle' | 'armed' | 'saturated' | 'blind';
+
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 2 (D5) — última decisão do
+ * auto-switch NESTE motor. Em memória de propósito: some ao reconstruir o
+ * motor (F6) ou reiniciar o app — não é histórico persistido.
+ */
+export type AutoSwitchEvent =
+  | { readonly kind: 'switched'; readonly from: AccountId | null; readonly to: AccountId; readonly at: string }
+  | { readonly kind: 'deferred'; readonly at: string }
+  | { readonly kind: 'failed'; readonly to: AccountId; readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'io'; readonly at: string };
 
 export interface AutoSwitchPolicy {
   readonly enabled: boolean;
@@ -105,6 +138,10 @@ export interface AccountsViewDto {
   readonly activeAccountId: AccountId | null;
   readonly autoSwitch: AutoSwitchPolicy;
   readonly lastReadAt: string | null;
+  /** 011-contas-e-provedores, etapa 3, Fase 2 (D5) — ver `AutoSwitchState`. */
+  readonly autoSwitchState: AutoSwitchState;
+  /** 011-contas-e-provedores, etapa 3, Fase 2 (D5) — última decisão do auto-switch neste motor; `null` = nenhuma ainda. Em memória (some ao reconstruir o motor ou reiniciar). */
+  readonly lastAutoSwitch: AutoSwitchEvent | null;
 }
 
 /**
@@ -154,7 +191,17 @@ export type RemoveAccountOutcome =
  */
 export type BeginLoginOutcome =
   | { readonly kind: 'started'; readonly loginId: string }
-  | { readonly kind: 'failed'; readonly reason: 'invalid-input' | 'vault-unavailable' | 'login-in-progress' | 'io' };
+  | {
+      readonly kind: 'failed';
+      /**
+       * 011-contas-e-provedores, etapa 3, Fase 2 (D3) — `active-account` e
+       * `unknown-account` só saem de `accounts:beginReconnect`
+       * (`planReconnect`, account-pool.ts): a conta ativa nunca reconecta (a
+       * credencial dela vive no `~/.claude`) e um id que sumiu da config não
+       * tem pra onde apontar o login.
+       */
+      readonly reason: 'invalid-input' | 'vault-unavailable' | 'login-in-progress' | 'io' | 'active-account' | 'unknown-account';
+    };
 
 /**
  * 011-contas-e-provedores, etapa 3, Fase 1.2 — status final de um login
@@ -174,7 +221,29 @@ export type LoginStatusDto =
       readonly state: 'cancelled';
       readonly reason: 'user' | 'exited-without-login' | 'no-terminal';
     }
-  | { readonly loginId: string; readonly label: string; readonly state: 'failed'; readonly reason: 'vault-unavailable' | 'io' };
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 2 (D3) — login com alvo
+   * (`beginReconnect`) que colheu a credencial da MESMA conta: o par no
+   * cofre foi renovado, a marca `needsReconnect` cai. `label` é o rótulo da
+   * conta-alvo (igual ao pedido em `beginReconnect`).
+   */
+  | { readonly loginId: string; readonly label: string; readonly state: 'reconnected'; readonly accountId: AccountId }
+  /**
+   * Fase 2 (D3) — login com alvo cuja credencial colhida é de OUTRA conta
+   * (fingerprint bate com outra, ou os dois têm fingerprint e divergem).
+   * Nada é gravado. `otherLabel` é o rótulo da conta que o fingerprint
+   * realmente identificou; `null` quando não dá pra provar de quem é (login
+   * sem fingerprint contra alvo com fingerprint diferente já é aceito — só
+   * chega aqui quando dá pra afirmar que é outra).
+   */
+  | { readonly loginId: string; readonly label: string; readonly state: 'wrong-account'; readonly otherLabel: string | null }
+  | {
+      readonly loginId: string;
+      readonly label: string;
+      readonly state: 'failed';
+      /** Fase 2 (D3) — `unknown-account` = o alvo do reconectar sumiu da config entre o `beginReconnect` e a conclusão do login. */
+      readonly reason: 'vault-unavailable' | 'io' | 'unknown-account';
+    };
 
 export const ACCOUNT_CHANNELS = {
   list: 'accounts:list',
@@ -189,6 +258,8 @@ export const ACCOUNT_CHANNELS = {
   beginLogin: 'accounts:beginLogin',
   cancelLogin: 'accounts:cancelLogin',
   loginChanged: 'accounts:loginChanged',
+  /** 011-contas-e-provedores, etapa 3, Fase 2 (D3) — login isolado direcionado a UMA conta já cadastrada (`beginReconnect`, isolated-login.ts). */
+  beginReconnect: 'accounts:beginReconnect',
 } as const;
 
 /** API tipada exposta pelo preload em `window.donel.accounts` (contextBridge). */
@@ -214,4 +285,10 @@ export interface DonelAccountsApi {
   cancelLogin(loginId: string): Promise<void>;
   /** Retorna função de unsubscribe (mesmo padrão de `onChanged`). */
   onLoginChanged(listener: (status: LoginStatusDto) => void): () => void;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 2 (D3) — login isolado apontado
+   * PARA a conta `id` (mesmo `IsolatedLoginManager` do `beginLogin`, com
+   * alvo). O rótulo vem da conta cadastrada — nunca digitado de novo.
+   */
+  beginReconnect(id: AccountId): Promise<BeginLoginOutcome>;
 }

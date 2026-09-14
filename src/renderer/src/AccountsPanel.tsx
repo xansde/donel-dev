@@ -1,7 +1,7 @@
 import { Button, Modal, TextInput, Toggle } from '@donel-dev/design-system';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AccountsConfigDto, AccountsViewDto, ConnectModInput, LoginStatusDto, RemoveAccountOutcome } from '../../shared';
-import { formatAccountLoad } from './accountsFormat';
+import { formatAccountLoad, formatAutoSwitchEvent, formatBlindWarning, formatSaturatedWarning } from './accountsFormat';
 import { MigrationWizard } from './MigrationWizard';
 import styles from './AccountsPanel.module.css';
 
@@ -25,16 +25,40 @@ const UNAVAILABLE_REASON_LABEL: Record<'offline' | 'unauthorized' | 'io', string
   io: 'erro ao ler contas',
 };
 
-/** Mensagens de `BeginLoginOutcome.failed.reason` (`accounts:beginLogin`, isolated-login.ts `begin()`). */
-const BEGIN_LOGIN_ERROR_LABEL: Record<'invalid-input' | 'vault-unavailable' | 'login-in-progress' | 'io', string> = {
+/**
+ * Mensagens de `BeginLoginOutcome.failed.reason` (`accounts:beginLogin`,
+ * isolated-login.ts `begin()`). 011-contas-e-provedores, etapa 3, Fase 2
+ * (D3) — `BeginLoginOutcome` passou a ser compartilhado com
+ * `accounts:beginReconnect`, que pode falhar com `active-account`/
+ * `unknown-account`; ajuste MÍNIMO aqui é só o tipo do Record acompanhar
+ * (typecheck) — o consumo de verdade dessas duas chaves (com o rótulo da
+ * conta interpolado) é do fluxo "Reconectar" (`handleReconnect`, Bloco 2),
+ * que nunca deveria cair neste fallback genérico pra elas.
+ */
+const BEGIN_LOGIN_ERROR_LABEL: Record<'invalid-input' | 'vault-unavailable' | 'login-in-progress' | 'io' | 'active-account' | 'unknown-account', string> = {
   'invalid-input': 'Dê um rótulo à conta (até 60 caracteres).',
   'vault-unavailable': 'Este dispositivo não suporta o cofre de credenciais — nada foi aberto.',
   'login-in-progress': 'Já existe um login em andamento — conclua ou cancele antes.',
   io: 'Não foi possível preparar o login — tente de novo.',
+  'active-account': 'Esta conta já está em uso — não é possível reconectar.',
+  'unknown-account': 'Esta conta não existe mais.',
 };
 
 function emptyView(): AccountsViewDto {
-  return { mod: null, state: 'inert', unavailableReason: null, accounts: [], activeAccountId: null, autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 }, lastReadAt: null };
+  // 011-contas-e-provedores, etapa 3, Fase 2 (D5) — os dois campos novos da
+  // view (`autoSwitchState`/`lastAutoSwitch`); resto do consumo deles é do
+  // Bloco 2 (fora do escopo deste bloco).
+  return {
+    mod: null,
+    state: 'inert',
+    unavailableReason: null,
+    accounts: [],
+    activeAccountId: null,
+    autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 },
+    lastReadAt: null,
+    autoSwitchState: 'idle',
+    lastAutoSwitch: null,
+  };
 }
 
 interface PasteFormState {
@@ -48,7 +72,12 @@ function emptyPasteForm(): PasteFormState {
   return { accessToken: '', refreshToken: '', expiresAt: '' };
 }
 
-/** Mensagem de um status final de login isolado (`accounts:loginChanged`, plan-etapa-3.md §4.2). */
+/**
+ * Mensagem de um status final de login isolado (`accounts:loginChanged`,
+ * plan-etapa-3.md §4.2). 011-contas-e-provedores, etapa 3, Fase 2 (D3) —
+ * `reconnected`/`wrong-account` são o fluxo "Reconectar"; em ambos,
+ * `status.label` é o rótulo da conta-ALVO (nunca o que foi digitado).
+ */
 function loginStatusMessage(status: LoginStatusDto): string {
   if (status.state === 'added') return `Conta «${status.label}» adicionada.`;
   if (status.state === 'replaced') {
@@ -59,7 +88,14 @@ function loginStatusMessage(status: LoginStatusDto): string {
     if (status.reason === 'exited-without-login') return 'A aba de login fechou antes do login terminar — nada foi guardado.';
     return 'A aba de login não abriu — nada foi guardado.'; // 'no-terminal'
   }
+  if (status.state === 'reconnected') return `Conta «${status.label}» reconectada.`;
+  if (status.state === 'wrong-account') {
+    return status.otherLabel
+      ? `Você entrou com a conta de «${status.otherLabel}», não com a de «${status.label}» — nada foi alterado.`
+      : `Você entrou com outra conta, não com a de «${status.label}» — nada foi alterado.`;
+  }
   // status.state === 'failed'
+  if (status.reason === 'unknown-account') return `A conta «${status.label}» não existe mais — nada foi guardado.`;
   return status.reason === 'vault-unavailable' ? 'O cofre recusou a credencial — nada foi guardado.' : 'Não foi possível registrar a conta — tente de novo.';
 }
 
@@ -93,6 +129,11 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
   const [view, setView] = useState<AccountsViewDto>(emptyView());
   const [loading, setLoading] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
+  // Fase 2 (011-contas-e-provedores, etapa 3) — mensagem de falha da troca
+  // MANUAL por linha (`SwitchOutcome.failed`, ver `handleSwitch`); chave =
+  // id da conta-ALVO da troca. `expired-credentials` nunca entra aqui — a
+  // caixa de reconectar (`account-reconnect-box`) já cobre esse caso.
+  const [switchMessages, setSwitchMessages] = useState<Record<string, string>>({});
   // T1215 (011-contas-e-provedores, etapa 2) — o assistente só aparece
   // enquanto o inventário de `~/.claude-profiles` tiver alguma entrada;
   // some sozinho depois da virada (DoD do tasks-etapa-2.md).
@@ -123,6 +164,13 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
   // Fase 1 — "Desconectar" nunca some com a lista em silêncio.
   const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+
+  // Fase 2 (D3) — "Reconectar": login isolado direcionado a uma conta com
+  // `needsReconnect` (credencial vencida, refresh recusado). `reconnectingId`
+  // desabilita o botão da própria linha em voo; `reconnectMessages` guarda o
+  // motivo de falha por id (mesma régua de `removeMessages`).
+  const [reconnectingId, setReconnectingId] = useState<string | null>(null);
+  const [reconnectMessages, setReconnectMessages] = useState<Record<string, string>>({});
 
   const refresh = useCallback((force = false): void => {
     setLoading(true);
@@ -181,11 +229,37 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
     setPasteError(null);
   };
 
+  /**
+   * Fase 2 — a troca MANUAL (clique na linha) passou a olhar o
+   * `SwitchOutcome`, não só disparar e reler a lista: `failed` ganha texto
+   * por linha (offline/unauthorized/io); `expired-credentials` fica SEM
+   * texto aqui de propósito — a marca `needsReconnect` que a própria troca
+   * deixou já abre a caixa de reconectar na próxima leitura da view.
+   * `switched`/`already-active` não têm mensagem (limpa a anterior, se havia).
+   */
   const handleSwitch = (id: string): void => {
     setSwitchingId(id);
+    setSwitchMessages((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    const targetLabel = accountLabel(id);
     void window.donel.accounts
       .switch(id)
-      .then(() => window.donel.accounts.list())
+      .then((outcome) => {
+        if (outcome.kind === 'failed' && outcome.reason !== 'expired-credentials') {
+          const message =
+            outcome.reason === 'offline'
+              ? `Sem conexão para renovar a credencial de «${targetLabel}» — tente de novo.`
+              : outcome.reason === 'unauthorized'
+                ? `O servidor recusou a troca para «${targetLabel}» — tente de novo.`
+                : `Não foi possível trocar para «${targetLabel}» — tente de novo.`; // 'io'
+          setSwitchMessages((prev) => ({ ...prev, [id]: message }));
+        }
+        return window.donel.accounts.list();
+      })
       .then(setView)
       .finally(() => setSwitchingId(null));
   };
@@ -298,6 +372,46 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
       .finally(() => setRemovingId(null));
   };
 
+  /**
+   * Fase 2 (D3) — "Reconectar": login isolado direcionado à conta `id`
+   * (`accounts:beginReconnect`). `started` segue o MESMO caminho do login
+   * comum (`setPendingLogin`, `onStartLogin`, fecha o modal) — a diferença
+   * toda está no `failed`: `active-account`/`unknown-account` ganham
+   * mensagem ESPECÍFICA (a conta-alvo já é conhecida, dá pra nomear — o
+   * genérico de `BEGIN_LOGIN_ERROR_LABEL` para essas duas chaves existe só
+   * pro typecheck do Bloco 1, nunca é lido daqui); os demais motivos
+   * (`invalid-input`/`vault-unavailable`/`login-in-progress`/`io`) caem no
+   * `BEGIN_LOGIN_ERROR_LABEL` normal, que já serve pro login comum.
+   */
+  const handleReconnect = (id: string): void => {
+    const label = accountLabel(id);
+    setReconnectingId(id);
+    setReconnectMessages((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    void window.donel.accounts
+      .beginReconnect(id)
+      .then((outcome) => {
+        if (outcome.kind === 'started') {
+          setPendingLogin({ loginId: outcome.loginId, label });
+          onStartLogin?.(outcome.loginId, label);
+          setOpen(false);
+          return;
+        }
+        const message =
+          outcome.reason === 'active-account'
+            ? `«${label}» é a conta em uso — o Claude Code renova a credencial dela sozinho.`
+            : outcome.reason === 'unknown-account'
+              ? 'Esta conta não existe mais.'
+              : BEGIN_LOGIN_ERROR_LABEL[outcome.reason];
+        setReconnectMessages((prev) => ({ ...prev, [id]: message }));
+      })
+      .finally(() => setReconnectingId(null));
+  };
+
   const handleDisconnect = (): void => {
     setDisconnecting(true);
     void window.donel.accounts
@@ -318,10 +432,18 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
         onClick={() => setOpen(true)}
         title="Contas e provedores"
       >
-        {view.mod === null ? 'Contas' : view.state === 'unavailable' ? 'Contas ⚠' : 'Contas ✓'}
+        {view.mod === null
+          ? 'Contas'
+          : // Fase 2 (D6/D8) — o botão também avisa quando o auto-switch está
+            // TRAVADO: `saturated` (ninguém tem a folga mínima) ou `blind`
+            // (falta leitura de carga de outra conta) merecem o mesmo alerta
+            // visual que `state === 'unavailable'` já dava.
+            view.state === 'unavailable' || view.autoSwitchState === 'saturated' || view.autoSwitchState === 'blind'
+            ? 'Contas ⚠'
+            : 'Contas ✓'}
       </button>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Contas e provedores">
+      <Modal open={open} onClose={() => setOpen(false)} title="Contas e provedores" className={styles.dialog}>
         <div className={styles.body} data-testid="accounts-panel">
           {hasLegacyProfiles ? (
             <div className={styles.toolbar}>
@@ -347,6 +469,40 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
                   Desconectar
                 </Button>
               </div>
+
+              {/* Fase 2 (D2) — o painel diz que a troca é GLOBAL: nenhuma
+                  sessão aberta é poupada, e sessão de provider não usa conta
+                  nenhuma (não muda). */}
+              <p className={styles.hint} data-testid="accounts-switch-scope">
+                A troca vale para todas as sessões abertas: cada uma passa a usar a conta nova na próxima mensagem. Sessões
+                de provedor não mudam.
+              </p>
+
+              {/* Fase 2 (D5) — a ÚLTIMA decisão do auto-switch NESTE motor
+                  (em memória; some ao reconstruir o motor ou reiniciar o
+                  app). `accountLabel` resolve id -> rótulo, fallback: o id. */}
+              {view.autoSwitch.enabled && view.lastAutoSwitch ? (
+                <p className={styles.hint} data-testid="accounts-autoswitch-last">
+                  {formatAutoSwitchEvent(view.lastAutoSwitch, accountLabel)}
+                </p>
+              ) : null}
+
+              {/* D6 — travado por FALTA DE FOLGA: todas as contas conhecidas
+                  já estão sem os pontos mínimos de vantagem sobre a ativa. */}
+              {view.autoSwitch.enabled && view.autoSwitchState === 'saturated' ? (
+                <p className={styles.error} data-testid="accounts-autoswitch-saturated">
+                  {formatSaturatedWarning(view.autoSwitch)}
+                </p>
+              ) : null}
+
+              {/* D8 — travado por FALTA DE LEITURA: pelo menos uma conta
+                  parada está com carga desconhecida (token vencido) — "sem
+                  leitura" não é "sem folga", texto e testid são outros. */}
+              {view.autoSwitch.enabled && view.autoSwitchState === 'blind' ? (
+                <p className={styles.error} data-testid="accounts-autoswitch-blind">
+                  {formatBlindWarning(view.autoSwitch)}
+                </p>
+              ) : null}
 
               {view.state === 'unavailable' && view.unavailableReason ? (
                 <p className={styles.error} data-testid="accounts-unavailable">
@@ -383,6 +539,7 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
                       <button
                         type="button"
                         className={styles.plainRow}
+                        data-testid="account-switch"
                         onClick={() => handleSwitch(account.id)}
                         disabled={switchingId === account.id || account.active}
                       >
@@ -403,6 +560,41 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
                         Remover
                       </Button>
                     </div>
+
+                    {/* Fase 2 (revisão) — o erro da troca manual some quando a
+                        conta vira ativa por outro caminho (auto-switch, outra
+                        tentativa): mostrá-lo numa conta ativa seria mentira. */}
+                    {switchMessages[account.id] && !account.active ? (
+                      <p className={styles.error} data-testid="account-switch-error">
+                        {switchMessages[account.id]}
+                      </p>
+                    ) : null}
+
+                    {/* Fase 2 (D3) — credencial vencida e o servidor recusou a
+                        renovação (`needsReconnect`); a conta ATIVA nunca cai
+                        aqui — a credencial dela vive no `~/.claude`, e o CLI
+                        renova sozinho. */}
+                    {account.needsReconnect && !account.active ? (
+                      <div className={styles.confirmBox} data-testid="account-reconnect-box">
+                        <p className={styles.error}>
+                          A credencial de «{account.label}» venceu e o servidor recusou a renovação. Reconecte para voltar
+                          a usar esta conta.
+                        </p>
+                        <Button
+                          variant="secondary"
+                          data-testid="account-reconnect"
+                          onClick={() => handleReconnect(account.id)}
+                          disabled={reconnectingId === account.id}
+                        >
+                          Reconectar
+                        </Button>
+                        {reconnectMessages[account.id] ? (
+                          <p className={styles.error} data-testid="account-reconnect-error">
+                            {reconnectMessages[account.id]}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
 
                     {removeConfirmId === account.id ? (
                       <div className={styles.confirmBox} data-testid="account-remove-confirm-box">
@@ -511,10 +703,12 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
             </div>
           )}
 
-          <p className={styles.hint}>
-            Trocar de conta não reinicia sessões abertas. O login acontece no terminal, pelo fluxo oficial do Claude Code — o
-            painel nunca exibe token ou segredo.
-          </p>
+          {/* Fase 2 — a frase "trocar de conta não reinicia sessões abertas"
+              saiu daqui: virou `accounts-switch-scope` (acima, junto do
+              toolbar), com o texto mais específico do escopo GLOBAL da troca
+              (D2). Rodapé fica só com a garantia de segurança, que vale
+              sempre — inclusive antes de qualquer conta existir. */}
+          <p className={styles.hint}>O login acontece no terminal, pelo fluxo oficial do Claude Code — o painel nunca exibe token ou segredo.</p>
         </div>
       </Modal>
 

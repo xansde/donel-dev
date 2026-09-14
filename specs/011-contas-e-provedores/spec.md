@@ -64,6 +64,12 @@ O "servidorzinho" solo, para contas do próprio dono:
   fallback de token vencido na hora do switch. Consequência aceita: conta
   meses sem uso pode expirar e pedir re-login uma vez. Nenhum processo
   periódico toca credencial com o app fechado.
+  **Emenda (13/09/2026, decisão do dono na etapa 3, Fase 2):** o access token
+  vence em ~8h, e a carga de conta parada ficava desconhecida — logo, nunca
+  destino do auto-switch. Com o app aberto, a leitura de carga passa a renovar
+  o par vencido de conta **parada** (nunca a ativa), com o mesmo protocolo da
+  troca: grava no cofre antes de usar, uma renovação por conta de cada vez. A
+  carga da ativa sai do token vivo do `~/.claude`. Com o app fechado, nada muda.
 - **Carga por conta**: endpoint OAuth de uso
   (`api.anthropic.com/api/oauth/usage`, janelas 5h/7d diretas) com o token de
   cada conta — sem `npx quota-axi` no caminho quente.

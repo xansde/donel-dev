@@ -237,6 +237,12 @@ escritas, com o F6 dentro da Fase 1.
   credencial; nada é digitado nela pelo app. Smoke desse fluxo usa
   `DONEL_CLAUDE_EXECUTABLE_FIXTURE` (claude falso): um `claude.cmd` no PATH não
   basta, porque o resolvedor prefere qualquer `claude.exe` e abriria o CLI real.
+- **O access token do CLI vence em ~8h** (`expiresAt` do `.credentials.json`).
+  Por isso, desde a Fase 2 (13/09), a carga da conta **ativa** é lida com o par
+  vivo do `~/.claude` (o par dela no cofre envelhece assim que o CLI renova), e
+  a leitura de carga renova o par vencido de conta **parada** (emenda da D4,
+  decisão do dono). Nunca renovar a ativa pelo cofre: o refresh token dela lá já
+  foi consumido pelo CLI, e a recusa marcaria "Reconectar" à toa.
 
 ## Vault
 
