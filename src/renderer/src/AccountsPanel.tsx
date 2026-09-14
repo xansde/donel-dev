@@ -443,7 +443,7 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
             : 'Contas ✓'}
       </button>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Contas e provedores">
+      <Modal open={open} onClose={() => setOpen(false)} title="Contas e provedores" className={styles.dialog}>
         <div className={styles.body} data-testid="accounts-panel">
           {hasLegacyProfiles ? (
             <div className={styles.toolbar}>
@@ -561,7 +561,10 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
                       </Button>
                     </div>
 
-                    {switchMessages[account.id] ? (
+                    {/* Fase 2 (revisão) — o erro da troca manual some quando a
+                        conta vira ativa por outro caminho (auto-switch, outra
+                        tentativa): mostrá-lo numa conta ativa seria mentira. */}
+                    {switchMessages[account.id] && !account.active ? (
                       <p className={styles.error} data-testid="account-switch-error">
                         {switchMessages[account.id]}
                       </p>
