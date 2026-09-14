@@ -216,7 +216,20 @@ conta recadastrada e a faxina no cofre de verdade.
 Plano: `plan-etapa-3.md` §4, Fase 2. Branch `feature/contas-fase-2-verdade-na-tela`,
 PR #76.
 
-**Veredito — pendente.**
+**Veredito — PASSOU (14/09/2026, canal Alfa, build da branch do PR #76).** O
+dono rodou os 5 passos e relatou que todos passaram: carga das 4 contas (paradas
+renovadas e ativa), linhas `account-pair-refreshed`, frase da troca global;
+statusbar em voo (aba A com "trocou em voo", aba B sem, aba de provedor);
+auto-switch adiado com sessão trabalhando, troca ao terminar e aviso "sem conta
+com folga"; "Reconectar" da `Teste vencida` (caixa sem clicar, clique não troca,
+login cancelado, remoção); e reinício (4 contas com carga, Contas ✓, cofre com 5,
+OpenRouter configurado). Conferido por esta sessão em 14/09: cofre com **5**
+chaves (4 contas + `provider:openrouter:*`, só nomes).
+
+**Pendência de estado, não de comportamento:** o limiar do auto-switch **não**
+foi devolvido no fim do passo 3 — o `config.json` seguia em `switchAtLoad: 0,
+minAdvantage: 1` em 14/09. Devolver 90/20 com o comando do passo 3, **com o
+Alfa fechado**, antes do uso normal (com 0/1 o rodízio troca a cada leitura).
 
 Cobertura automatizada já fechada (não repetir aqui): o rótulo da statusbar em
 todos os ramos (conta vigente, "trocou em voo", provedor, login, terminal, sem
@@ -248,27 +261,27 @@ refresh token inválido.
 
 ### 1. Carga das 4 contas, inclusive as paradas e a ativa
 
-- [ ] Abrir o Alfa → **Contas ✓**. As 4 linhas mostram carga (`5h NN% · semana
+- [x] Abrir o Alfa → **Contas ✓**. As 4 linhas mostram carga (`5h NN% · semana
       NN%`), nenhuma "sem dado": as paradas há mais de ~8h (renovadas na leitura)
       e a ativa (lida do `~/.claude`).
-- [ ] O log de manutenção ganhou uma linha `account-pair-refreshed` com
+- [x] O log de manutenção ganhou uma linha `account-pair-refreshed` com
       `trigger: read` para cada conta parada há mais de ~8h, e nenhuma para a
       ativa. O cofre segue com **5** chaves.
-- [ ] Abaixo dos botões do painel: "A troca vale para todas as sessões abertas:
+- [x] Abaixo dos botões do painel: "A troca vale para todas as sessões abertas:
       cada uma passa a usar a conta nova na próxima mensagem. Sessões de provedor
       não mudam."
 
 ### 2. A statusbar acompanha a troca em voo
 
-- [ ] Abrir uma sessão `claude` (aba A), mandar uma mensagem e rodar `/usage`.
+- [x] Abrir uma sessão `claude` (aba A), mandar uma mensagem e rodar `/usage`.
       Statusbar: `Sessão: <ativa> · N% usado`, com N igual ao maior número da
       linha dela no painel.
-- [ ] Trocar pelo painel para outra conta. Sem mandar nada, a statusbar da aba A
+- [x] Trocar pelo painel para outra conta. Sem mandar nada, a statusbar da aba A
       passa a `Sessão: <nova> · M% usado · trocou em voo (era <ativa de antes>)`.
-- [ ] Na aba A, mandar outra mensagem e rodar `/usage`: a janela semanal é a da
+- [x] Na aba A, mandar outra mensagem e rodar `/usage`: a janela semanal é a da
       conta nova.
-- [ ] Abrir a aba B: `Sessão: <nova> · M% usado`, sem "trocou em voo".
-- [ ] Abrir uma sessão com o provedor OpenRouter, sem mandar mensagem: a
+- [x] Abrir a aba B: `Sessão: <nova> · M% usado`, sem "trocou em voo".
+- [x] Abrir uma sessão com o provedor OpenRouter, sem mandar mensagem: a
       statusbar mostra `Sessão: <rótulo do provedor> · provedor`. Fechar a aba.
 
 ### 3. Auto-switch adia com sessão trabalhando e troca quando ela termina
@@ -277,44 +290,45 @@ Com 90/20 a troca só dispara quando uma conta passa de 90%, o que não cabe num
 bateria. O passo baixa o limiar para 0/1 com o Alfa fechado e devolve 90/20 no
 fim. A carga continua a real.
 
-- [ ] No painel, trocar para a conta de **maior** carga. Fechar o Alfa e
+- [x] No painel, trocar para a conta de **maior** carga. Fechar o Alfa e
       conferir: `Get-Process 'Donel Dev Alfa' -ErrorAction SilentlyContinue`
       vazio.
-- [ ] Baixar o limiar (imprime a política antes e depois):
+- [x] Baixar o limiar (imprime a política antes e depois):
       `node -e "const fs=require('fs');const f=process.env.APPDATA+'/donel-dev/config.json';const c=JSON.parse(fs.readFileSync(f,'utf8'));console.log('antes',c.accounts.autoSwitch);c.accounts.autoSwitch={...c.accounts.autoSwitch,enabled:true,switchAtLoad:0,minAdvantage:1};fs.writeFileSync(f,JSON.stringify(c,null,2));console.log('agora',c.accounts.autoSwitch)"`
-- [ ] Abrir o Alfa e uma sessão `claude`. Mandar um pedido que leve cerca de um
+- [x] Abrir o Alfa e uma sessão `claude`. Mandar um pedido que leve cerca de um
       minuto e, **enquanto a resposta sai**, Contas → **Atualizar**: aparece
       "Troca automática adiada às HH:MM: há sessão trabalhando. Ela sai quando a
       sessão terminar.", e a conta ativa não muda.
-- [ ] Quando a resposta termina, sem clicar em nada: em poucos segundos a
+- [x] Quando a resposta termina, sem clicar em nada: em poucos segundos a
       statusbar passa para outra conta, com "trocou em voo", e o painel mostra
       "Troca automática às HH:MM: de «<maior carga>» para «<outra>»."
-- [ ] Contas → **Atualizar**, repetindo até a ativa ser a de menor carga (no
+- [x] Contas → **Atualizar**, repetindo até a ativa ser a de menor carga (no
       máximo 3 vezes): aparece "A conta ativa passou de 0% e nenhuma outra tem 1
       ponto de folga — a troca automática não tem para onde ir.", o botão vira
       **Contas ⚠** e a statusbar termina com `· sem conta com folga`.
 - [ ] Fechar o Alfa e devolver 90/20:
       `node -e "const fs=require('fs');const f=process.env.APPDATA+'/donel-dev/config.json';const c=JSON.parse(fs.readFileSync(f,'utf8'));c.accounts.autoSwitch={...c.accounts.autoSwitch,switchAtLoad:90,minAdvantage:20};fs.writeFileSync(f,JSON.stringify(c,null,2));console.log(c.accounts.autoSwitch)"`
+      **(14/09: não feito na bateria — pendente, ver veredito.)**
       O toggle "Trocar automaticamente" fica ligado; desligue no painel se
       preferir (estava desligado desde a Fase 0).
 
 ### 4. Credencial recusada vira "Reconectar"
 
-- [ ] Contas → Rótulo `Teste vencida` → **Colar token (avançado)** → Access
+- [x] Contas → Rótulo `Teste vencida` → **Colar token (avançado)** → Access
       token `x`, Refresh token `y`, validade vazia → **Adicionar**. Em segundos,
       sem clicar na linha, aparece embaixo dela "A credencial de «Teste vencida»
       venceu e o servidor recusou a renovação. Reconecte para voltar a usar esta
       conta." e o botão **Reconectar**. (A leitura de carga tentou renovar o par
       e o servidor recusou o `y`.)
-- [ ] Clicar na linha da `Teste vencida`: a conta ativa não muda, a statusbar
+- [x] Clicar na linha da `Teste vencida`: a conta ativa não muda, a statusbar
       também não, e a caixa continua.
-- [ ] **Reconectar** → o painel fecha e abre a aba `Login · Teste vencida`. Não
+- [x] **Reconectar** → o painel fecha e abre a aba `Login · Teste vencida`. Não
       fazer login. Reabrir Contas → **Cancelar login** → "Login de «Teste
       vencida» cancelado.", e a caixa continua na linha.
-- [ ] Remover a `Teste vencida`. O cofre volta a **5** chaves.
+- [x] Remover a `Teste vencida`. O cofre volta a **5** chaves.
 
 ### 5. Reiniciar
 
-- [ ] Fechar e reabrir o Alfa: 4 contas com carga, nenhum aviso de troca
+- [x] Fechar e reabrir o Alfa: 4 contas com carga, nenhum aviso de troca
       automática, **Contas ✓**, cofre com **5** chaves e OpenRouter
       "configurado" em Provedores.
