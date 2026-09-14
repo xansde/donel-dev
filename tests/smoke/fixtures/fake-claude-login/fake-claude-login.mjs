@@ -30,8 +30,19 @@ function resolvesToRealClaudeHome(dir) {
 
 function main() {
   const configDir = process.env.CLAUDE_CONFIG_DIR;
-  if (!configDir || resolvesToRealClaudeHome(configDir)) {
-    console.error('fake-claude-login: CLAUDE_CONFIG_DIR ausente ou apontando pro ~/.claude real — recusando escrever.');
+
+  // 011-contas-e-provedores, etapa 3, Fase 2 — modo SESSÃO: sem
+  // `CLAUDE_CONFIG_DIR` é uma aba `claude` comum (a que segue a troca global),
+  // aberta pelo smoke `accounts-fase-2.spec.ts` para ler a statusbar. Não grava
+  // NADA em lugar nenhum — só fica vivo até o app matar o processo.
+  if (!configDir) {
+    console.log('Sessão falsa (fake) — nada é gravado.');
+    setInterval(() => {}, 60 * 60 * 1000);
+    return;
+  }
+
+  if (resolvesToRealClaudeHome(configDir)) {
+    console.error('fake-claude-login: CLAUDE_CONFIG_DIR apontando pro ~/.claude real — recusando escrever.');
     process.exitCode = 1;
     return;
   }
