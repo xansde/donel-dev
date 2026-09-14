@@ -169,6 +169,8 @@ import { AccountEngineHost } from './accounts/account-engine-host';
 // 011-contas-e-provedores, etapa 3, Fase 2 (D3) — registro em memória
 // compartilhado entre reconstruções do motor (item 1 do Bloco 3).
 import { createReconnectRegistry } from './accounts/reconnect-registry';
+// Fase 2 (revisão, R1) — uma renovação por conta de cada vez entre reconstruções do motor.
+import { createRefreshCoordinator } from './accounts/refresh-coordinator';
 // 011-contas-e-provedores, etapa 3, Fase 1 — planos PUROS de "remover conta"
 // e "desconectar" (quais chaves o cofre perde, config final). Fase 1, Bloco
 // 2 — o que o login isolado grava em `appConfig.accounts` depois de colher.
@@ -665,9 +667,21 @@ function resolveAccountMod(modId: ModId): AccountMod {
     // o par vencido de conta PARADA; recusa marca o mesmo registro do motor, e
     // cada renovação gravada fica no log de manutenção, só com o id.
     reconnectRegistry: accountsReconnectRegistry,
+    // Fase 2 (revisão, R1) — o MESMO coordenador para todo mod que o motor
+    // criar: uma renovação em voo num motor que está sendo substituído não
+    // pode ser repetida pelo mod do motor novo (refresh token de uso único).
+    refreshCoordinator: accountsRefreshCoordinator,
     onPairRefreshed: (id, trigger) => appendAccountsMaintenanceLog({ event: 'account-pair-refreshed', account: id, trigger }),
   });
 }
+
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 2 (revisão, R1) — uma renovação por
+ * conta de cada vez ENTRE instâncias do mod local: cada reconstrução do motor
+ * cria um mod novo, e o coordenador sobrevive a todas elas, como o registro de
+ * reconectar.
+ */
+const accountsRefreshCoordinator = createRefreshCoordinator();
 
 /**
  * A sequência invariante inteira (captura → escreve `.credentials.json` → apaga
@@ -1035,6 +1049,15 @@ function registerPtyIpcHandlers(): void {
 
       if (hooksSettingsPath) {
         semaphoreManager.registerSession(ptyId, correlationId);
+        // 011-contas-e-provedores, etapa 3, Fase 2 (C5) — o semáforo nasce em
+        // `working` enquanto o CLI sobe, e só sai dele num evento de hook (fim
+        // de turno, notificação). Para o motor de contas isso não é "sessão
+        // trabalhando": uma aba aberta e nunca usada adiaria o auto-switch para
+        // sempre, com o painel dizendo "há sessão trabalhando". Só evento de
+        // hook conta — a própria emissão do registro, que acabou de entrar no
+        // conjunto, sai dele aqui (sem `releaseAccountsBusyPty`: não houve
+        // transição de verdade para retomar nada).
+        accountsBusyPtyIds.delete(ptyId);
       }
       // C4 — poll de 5 min do motor de contas só enquanto houver sessão viva.
       accountsLiveSessionPtyIds.add(ptyId);
@@ -1821,8 +1844,13 @@ function registerAccountsIpcHandlers(): void {
     const force = typeof options === 'object' && options !== null && (options as { readonly force?: unknown }).force === true;
     if (force) {
       await engine.listAccounts();
-      await engine.evaluateAutoSwitch();
-      return engine.getSnapshot();
+      // Fase 2 (revisão) — a leitura pode levar segundos (renovação na
+      // leitura); se o motor foi reconstruído nesse meio-tempo, este `engine`
+      // já foi descartado e não pode decidir troca nenhuma. Só avalia se ele
+      // ainda é o motor atual, e a resposta é sempre a do motor atual.
+      const current = accountEngineHost.current();
+      if (current === engine) await engine.evaluateAutoSwitch();
+      return (current ?? engine).getSnapshot();
     }
     return engine.listAccounts();
   });
