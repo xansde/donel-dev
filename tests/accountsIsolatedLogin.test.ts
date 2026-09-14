@@ -49,6 +49,7 @@ class FakeVault implements VaultLike {
   readonly writes: { id: string; plainText: string }[] = [];
   private readonly entries = new Map<string, string>();
   private failNextWrite = false;
+  private throwNextWrite = false;
 
   read(id: string): string | null {
     return this.entries.get(id) ?? null;
@@ -56,6 +57,12 @@ class FakeVault implements VaultLike {
 
   write(id: string, plainText: string): VaultWriteResult {
     this.writes.push({ id, plainText });
+    if (this.throwNextWrite) {
+      this.throwNextWrite = false;
+      // R4 (revisão) — simula o erro de I/O real que `writeVaultFile`
+      // (vault.ts) relança, em vez do retorno `vault-unavailable` de baixo.
+      throw new Error('EIO (fake) — falha de I/O real do cofre');
+    }
     if (this.failNextWrite) {
       this.failNextWrite = false;
       return { kind: 'vault-unavailable' };
@@ -66,6 +73,10 @@ class FakeVault implements VaultLike {
 
   forceNextWriteToFail(): void {
     this.failNextWrite = true;
+  }
+
+  forceNextWriteToThrow(): void {
+    this.throwNextWrite = true;
   }
 }
 
@@ -476,6 +487,57 @@ describe('IsolatedLoginManager — ordem obrigatória da conclusão', () => {
     expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Falha Harvest', state: 'failed', reason: 'io' }]);
     expect(harness.killPtyCalls).toEqual(['pty-harvest-falha']);
     expect(harness.fs.removeDirCalls).toContain(dir);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 011-contas-e-provedores, etapa 3, Fase 2 (R4, revisão) — o cofre real pode
+// LANÇAR (erro de I/O em `writeVaultFile`, vault.ts) em vez de devolver
+// `vault-unavailable`. A colheita nunca pode deixar essa exceção escapar: a
+// cauda obrigatória (matar PTY -> esperar exit -> apagar diretório -> limpar
+// o pendente -> emitir status) tem que rodar igual, com ou sem alvo.
+describe('IsolatedLoginManager — R4 (revisão): gravação no cofre que LANÇA', () => {
+  it('vault.write LANÇA no login SEM alvo -> failed/vault-unavailable, ainda mata o PTY, apaga o diretório e limpa o pendente (begin seguinte funciona)', async () => {
+    const harness = makeHarness();
+    const begun = harness.manager.begin('Conta Cofre Explode');
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.manager.attachPty(begun.loginId, 'pty-explode');
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-explode'));
+    harness.vault.forceNextWriteToThrow();
+
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Conta Cofre Explode', state: 'failed', reason: 'vault-unavailable' }]);
+    expect(harness.harvestedCalls).toEqual([]); // nunca avisa a config de uma conta que não foi gravada.
+    expect(harness.killPtyCalls).toEqual(['pty-explode']);
+    expect(harness.fs.removeDirCalls).toContain(dir);
+    expect(harness.manager.getPendingDir(begun.loginId)).toBeNull();
+
+    // pendente limpo: um begin seguinte funciona normalmente.
+    const second = harness.manager.begin('Conta Seguinte');
+    expect(second.kind).toBe('started');
+  });
+
+  it('vault.write LANÇA no login COM alvo (Reconectar) -> failed/vault-unavailable, mesma cauda obrigatória', async () => {
+    const harness = makeHarness();
+    harness.findAccountByIdBox.impl = (id) => (id === 'target-r4' ? { id: 'target-r4', label: 'Alvo R4', fingerprint: null } : null);
+    const begun = harness.manager.begin('Alvo R4', { targetAccountId: 'target-r4' });
+    if (begun.kind !== 'started') throw new Error('esperava started');
+    const dir = harness.manager.getPendingDir(begun.loginId)!;
+    harness.manager.attachPty(begun.loginId, 'pty-r4');
+    harness.fs.files.set(credPathFor(dir), credentialsJson());
+    harness.fs.files.set(claudePathFor(dir), claudeJson('uuid-r4'));
+    harness.vault.forceNextWriteToThrow();
+
+    await vi.waitFor(() => expect(harness.emitStatusCalls).toHaveLength(1), { timeout: 2000, interval: 10 });
+
+    expect(harness.emitStatusCalls).toEqual([{ loginId: begun.loginId, label: 'Alvo R4', state: 'failed', reason: 'vault-unavailable' }]);
+    expect(harness.harvestedCalls).toEqual([]);
+    expect(harness.killPtyCalls).toEqual(['pty-r4']);
+    expect(harness.fs.removeDirCalls).toContain(dir);
+    expect(harness.manager.getPendingDir(begun.loginId)).toBeNull();
   });
 });
 

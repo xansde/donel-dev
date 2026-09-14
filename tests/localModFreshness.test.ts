@@ -20,6 +20,8 @@ class FakeVault implements VaultLike {
   private readonly entries = new Map<string, string>();
   readonly writeCalls: string[] = [];
   readonly failWriteFor = new Set<string>();
+  /** R4 (revisão) — ids cuja escrita LANÇA em vez de devolver `vault-unavailable`: simula o erro de I/O real que `writeVaultFile` (vault.ts) relança. */
+  readonly throwWriteFor = new Set<string>();
   /** Hook opcional pra rastrear ORDEM entre escrita no cofre e outras chamadas (ex.: leitura de usage). */
   onWrite: ((id: string) => void) | null = null;
 
@@ -29,6 +31,7 @@ class FakeVault implements VaultLike {
   write(id: string, plainText: string): VaultWriteResult {
     this.writeCalls.push(id);
     this.onWrite?.(id);
+    if (this.throwWriteFor.has(id)) throw new Error('EIO (fake) — falha de I/O real do cofre');
     if (this.failWriteFor.has(id)) return { kind: 'vault-unavailable' };
     this.entries.set(id, plainText);
     return { kind: 'ok' };
@@ -122,7 +125,12 @@ describe('local-mod — D7: a carga da ativa sai do token vivo', () => {
       vault,
       fetchImpl: makeUsageFetch(usageCalls),
       getActiveAccountId: () => 'acc-active',
-      readLiveCredentialPair: () => buildPair({ accessToken: 'live-token' }),
+      // refreshToken PRÓPRIO (diferente do default de buildPair) — R5
+      // (revisão) passa a comparar refreshToken do vivo com o da parada;
+      // sem isso os dois colidiriam no default 'refresh' de buildPair só por
+      // acidente de fixture, e este teste (que é sobre D7, não sobre R5)
+      // pegaria o ramo errado.
+      readLiveCredentialPair: () => buildPair({ accessToken: 'live-token', refreshToken: 'live-refresh-token' }),
     });
 
     await mod.listAccounts();
@@ -185,6 +193,179 @@ describe('local-mod — D7: a carga da ativa sai do token vivo', () => {
     const result = await mod.listAccounts();
     if (result.kind !== 'ok') throw new Error('esperava ok');
     expect(result.accounts[0].available).toBe(false);
+  });
+});
+
+describe('local-mod — R5 (revisão): nunca renova a família de token do CLI', () => {
+  it('parada vencida com o MESMO refresh token do par vivo -> NUNCA chama refresh, lê a carga com o token vivo', async () => {
+    const vault = new FakeVault();
+    vault.write('acc-parada', JSON.stringify(buildPair({ accessToken: 'cofre-vencido', refreshToken: 'refresh-compartilhado', expiresAt: Date.now() - 1000 })));
+    const refreshCalls: string[] = [];
+    const usageCalls: string[] = [];
+
+    const mod = createLocalMod({
+      accounts: [accountOf('acc-parada')],
+      vault,
+      fetchImpl: makeUsageFetch(usageCalls),
+      refreshImpl: makeRefreshImpl({ kind: 'ok', pair: buildPair({ accessToken: 'nunca-deveria-usar' }) }, refreshCalls),
+      readLiveCredentialPair: () => buildPair({ accessToken: 'live-token', refreshToken: 'refresh-compartilhado' }),
+    });
+
+    const result = await mod.listAccounts();
+    expect(refreshCalls).toHaveLength(0);
+    expect(usageCalls).toEqual(['live-token']);
+    if (result.kind !== 'ok') throw new Error('esperava ok');
+    expect(result.accounts[0].available).toBe(true); // ainda há par no cofre (vencido, mas existe)
+  });
+
+  it('parada JÁ marcada no registro, mas com o MESMO refresh token do par vivo -> ainda assim usa o vivo, sem renovar (R5 tem prioridade)', async () => {
+    const vault = new FakeVault();
+    vault.write('acc-parada', JSON.stringify(buildPair({ refreshToken: 'refresh-compartilhado', expiresAt: Date.now() - 1000 })));
+    const registry = createReconnectRegistry();
+    registry.mark('acc-parada');
+    const refreshCalls: string[] = [];
+    const usageCalls: string[] = [];
+
+    const mod = createLocalMod({
+      accounts: [accountOf('acc-parada')],
+      vault,
+      fetchImpl: makeUsageFetch(usageCalls),
+      refreshImpl: makeRefreshImpl({ kind: 'ok', pair: buildPair({ accessToken: 'nunca-deveria-usar' }) }, refreshCalls),
+      reconnectRegistry: registry,
+      readLiveCredentialPair: () => buildPair({ accessToken: 'live-token', refreshToken: 'refresh-compartilhado' }),
+    });
+
+    await mod.listAccounts();
+    expect(refreshCalls).toHaveLength(0);
+    expect(usageCalls).toEqual(['live-token']);
+  });
+
+  it('parada com refresh token DIFERENTE do par vivo segue o caminho normal (ensureFreshPair, renova)', async () => {
+    const vault = new FakeVault();
+    vault.write('acc-parada', JSON.stringify(buildPair({ accessToken: 'cofre-vencido', refreshToken: 'refresh-proprio', expiresAt: Date.now() - 1000 })));
+    const refreshCalls: string[] = [];
+    const usageCalls: string[] = [];
+    const newPair = buildPair({ accessToken: 'renovado' });
+
+    const mod = createLocalMod({
+      accounts: [accountOf('acc-parada')],
+      vault,
+      fetchImpl: makeUsageFetch(usageCalls),
+      refreshImpl: makeRefreshImpl({ kind: 'ok', pair: newPair }, refreshCalls),
+      readLiveCredentialPair: () => buildPair({ accessToken: 'live-token', refreshToken: 'refresh-vivo' }),
+    });
+
+    await mod.listAccounts();
+    expect(refreshCalls).toHaveLength(1); // token diferente do vivo -> não é a família viva, renova normalmente
+    expect(usageCalls).toEqual(['renovado']);
+  });
+
+  it('sem readLiveCredentialPair (dep ausente), conta parada segue o caminho normal mesmo com refreshToken igual ao default de buildPair', async () => {
+    // guarda-chuva: sem a dep pra comparar, nunca deveria achar que "é a família viva" por acidente.
+    const vault = new FakeVault();
+    vault.write('acc-parada', JSON.stringify(buildPair({ expiresAt: Date.now() - 1000 })));
+    const refreshCalls: string[] = [];
+
+    const mod = createLocalMod({
+      accounts: [accountOf('acc-parada')],
+      vault,
+      fetchImpl: async () => jsonResponse(200, {}),
+      refreshImpl: makeRefreshImpl({ kind: 'ok', pair: buildPair({ accessToken: 'renovado' }) }, refreshCalls),
+    });
+
+    await mod.listAccounts();
+    expect(refreshCalls).toHaveLength(1);
+  });
+});
+
+describe('local-mod — R2 (revisão): recusa com o cofre já renovado não é recusa', () => {
+  it('refreshImpl grava um par novo no cofre (outro processo renovou/reconectou no meio) e devolve rejected -> listAccounts NÃO marca, lê a carga com o par NOVO', async () => {
+    const vault = new FakeVault();
+    vault.write('acc-parada', JSON.stringify(buildPair({ accessToken: 'velho', refreshToken: 'refresh-velho', expiresAt: Date.now() - 1000 })));
+    const registry = createReconnectRegistry();
+    const racedPair = buildPair({ accessToken: 'par-novo-de-outro-processo', refreshToken: 'refresh-novo' });
+    const usageCalls: string[] = [];
+
+    const mod = createLocalMod({
+      accounts: [accountOf('acc-parada')],
+      vault,
+      fetchImpl: makeUsageFetch(usageCalls),
+      refreshImpl: async () => {
+        // simula outro processo (login "Reconectar", outra instância do mod,
+        // a captura do par rotacionado) renovando/reconectando a conta
+        // ENQUANTO este refresh estava em voo.
+        vault.write('acc-parada', JSON.stringify(racedPair));
+        return { kind: 'failed', reason: 'rejected' } as const;
+      },
+      reconnectRegistry: registry,
+    });
+
+    const result = await mod.listAccounts();
+    expect(registry.has('acc-parada')).toBe(false);
+    expect(usageCalls).toEqual(['par-novo-de-outro-processo']);
+    if (result.kind !== 'ok') throw new Error('esperava ok');
+    expect(result.accounts[0].load).not.toBeNull();
+  });
+
+  it('switchTo com o mesmo cenário (cofre renovado no meio de um rejected) -> ok com o par NOVO, não expired-credentials', async () => {
+    const vault = new FakeVault();
+    vault.write('acc-parada', JSON.stringify(buildPair({ accessToken: 'velho', refreshToken: 'refresh-velho', expiresAt: Date.now() - 1000 })));
+    const racedPair = buildPair({ accessToken: 'par-novo-de-outro-processo', refreshToken: 'refresh-novo' });
+
+    const mod = createLocalMod({
+      accounts: [accountOf('acc-parada')],
+      vault,
+      fetchImpl: async () => jsonResponse(200, {}),
+      refreshImpl: async () => {
+        vault.write('acc-parada', JSON.stringify(racedPair));
+        return { kind: 'failed', reason: 'rejected' } as const;
+      },
+    });
+
+    const result = await mod.switchTo('acc-parada');
+    expect(result).toEqual({ kind: 'ok', pair: racedPair });
+  });
+
+  it('cofre ainda guarda o MESMO refresh token usado -> continua sendo rejected de verdade (marca no registro)', async () => {
+    const vault = new FakeVault();
+    vault.write('acc-parada', JSON.stringify(buildPair({ refreshToken: 'refresh-inalterado', expiresAt: Date.now() - 1000 })));
+    const registry = createReconnectRegistry();
+
+    const mod = createLocalMod({
+      accounts: [accountOf('acc-parada')],
+      vault,
+      fetchImpl: async () => jsonResponse(200, {}),
+      refreshImpl: async () => ({ kind: 'failed', reason: 'rejected' }) as const, // cofre NÃO muda
+      reconnectRegistry: registry,
+    });
+
+    const result = await mod.listAccounts();
+    expect(registry.has('acc-parada')).toBe(true);
+    if (result.kind !== 'ok') throw new Error('esperava ok');
+    expect(result.accounts[0].load).toBeNull();
+  });
+
+  it('cofre passou a ter um par novo mas JÁ VENCIDO -> unavailable (não rejected, não marca)', async () => {
+    const vault = new FakeVault();
+    vault.write('acc-parada', JSON.stringify(buildPair({ refreshToken: 'refresh-velho', expiresAt: Date.now() - 1000 })));
+    const registry = createReconnectRegistry();
+    const expiredRacedPair = buildPair({ accessToken: 'novo-mas-vencido', refreshToken: 'refresh-novo', expiresAt: Date.now() - 500 });
+
+    const mod = createLocalMod({
+      accounts: [accountOf('acc-parada')],
+      vault,
+      fetchImpl: async () => jsonResponse(200, {}),
+      refreshImpl: async () => {
+        vault.write('acc-parada', JSON.stringify(expiredRacedPair));
+        return { kind: 'failed', reason: 'rejected' } as const;
+      },
+      reconnectRegistry: registry,
+    });
+
+    const result = await mod.listAccounts();
+    expect(registry.has('acc-parada')).toBe(false); // não é recusa de credencial
+    if (result.kind !== 'ok') throw new Error('esperava ok');
+    expect(result.accounts[0].load).toBeNull(); // mas também não tinha um par válido pra usar
   });
 });
 
@@ -400,6 +581,46 @@ describe('local-mod — D9: a leitura de carga renova conta parada vencida', () 
     expect(registry.has('acc-parada')).toBe(false); // só 'rejected' marca — vault-write-failed não é recusa de credencial
     if (result.kind !== 'ok') throw new Error('esperava ok');
     expect(result.accounts[0].load).toBeNull();
+  });
+});
+
+describe('local-mod — R4 (revisão): gravação no cofre que LANÇA', () => {
+  it('vault.write LANÇA (erro de I/O real) durante a renovação -> vault-write-failed, listAccounts com carga null e SEM marca', async () => {
+    const vault = new FakeVault();
+    vault.write('acc-parada', JSON.stringify(buildPair({ expiresAt: Date.now() - 1000 })));
+    vault.throwWriteFor.add('acc-parada');
+    const registry = createReconnectRegistry();
+    const calls: { id: string; trigger: string }[] = [];
+
+    const mod = createLocalMod({
+      accounts: [accountOf('acc-parada')],
+      vault,
+      fetchImpl: async () => jsonResponse(200, {}),
+      refreshImpl: makeRefreshImpl({ kind: 'ok', pair: buildPair({ accessToken: 'novo' }) }),
+      reconnectRegistry: registry,
+      onPairRefreshed: (id, trigger) => calls.push({ id, trigger }),
+    });
+
+    const result = await mod.listAccounts();
+    expect(calls).toEqual([]); // nunca chamado — a gravação falhou
+    expect(registry.has('acc-parada')).toBe(false); // vault-write-failed não é recusa de credencial
+    if (result.kind !== 'ok') throw new Error('esperava ok'); // listAccounts nunca lança, mesmo com o cofre explodindo
+    expect(result.accounts[0].load).toBeNull();
+  });
+
+  it('vault.write LANÇA durante switchTo -> nunca propaga a exceção, devolve failed/offline', async () => {
+    const vault = new FakeVault();
+    vault.write('acc-parada', JSON.stringify(buildPair({ expiresAt: Date.now() - 1000 })));
+    vault.throwWriteFor.add('acc-parada');
+
+    const mod = createLocalMod({
+      accounts: [accountOf('acc-parada')],
+      vault,
+      fetchImpl: async () => jsonResponse(200, {}),
+      refreshImpl: makeRefreshImpl({ kind: 'ok', pair: buildPair({ accessToken: 'novo' }) }),
+    });
+
+    await expect(mod.switchTo('acc-parada')).resolves.toEqual({ kind: 'failed', reason: 'offline' });
   });
 });
 

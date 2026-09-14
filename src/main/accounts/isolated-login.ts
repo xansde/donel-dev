@@ -14,11 +14,23 @@
 //   `.claude.json` dentro dele (A6) — os dois podem não terminar de escrever
 //   no mesmo instante; o `fingerprintGraceMs` tolera essa defasagem antes de
 //   concluir sem fingerprint.
+//
+// 011-contas-e-provedores, etapa 3, Fase 2 (R4, revisão) — `this.vault.write`
+// pode LANÇAR (erro de I/O real em `writeVaultFile`, vault.ts) em vez de
+// devolver `vault-unavailable`. A colheita nunca pode deixar essa exceção
+// escapar: ela é chamada de dentro de `finishConclusion` (async, mas SEM
+// await antes da chamada), e uma exceção aí abortaria a função ANTES da
+// cauda obrigatória (matar PTY -> esperar exit -> apagar diretório -> limpar
+// o pendente -> emitir status) — um login que falhou em concluir não pode
+// deixar a aba viva nem o diretório (com credencial em texto claro) para
+// trás. `writeVaultSafely` trata os dois casos (retorno e exceção) como o
+// MESMO resultado; `harvest`/`harvestWithTarget` usam ela no lugar de
+// `this.vault.write` direto.
 
 import { dirname, basename, join, resolve } from 'node:path';
 import { readCredentialsPairFromText, accountFingerprintFromClaudeJsonText } from './credentials-file';
 import type { CredentialPair } from './account-mod';
-import type { VaultLike } from './vault';
+import type { VaultLike, VaultWriteResult } from './vault';
 import type { AccountId, BeginLoginOutcome, LoginStatusDto } from '../../shared/accounts';
 
 export const LOGIN_DIR_PREFIX = 'accounts-login-';
@@ -325,6 +337,19 @@ export class IsolatedLoginManager {
 
   // -- internals -------------------------------------------------------
 
+  /**
+   * R4 (revisão) — `this.vault.write` pode LANÇAR (ver comentário de
+   * cabeçalho do arquivo); nunca deixa a exceção escapar, trata como o MESMO
+   * `vault-unavailable` que o retorno normal já cobre.
+   */
+  private writeVaultSafely(id: AccountId, pair: CredentialPair): VaultWriteResult {
+    try {
+      return this.vault.write(id, JSON.stringify(pair));
+    } catch {
+      return { kind: 'vault-unavailable' };
+    }
+  }
+
   private credentialsFilePath(dir: string): string {
     return join(dir, '.credentials.json');
   }
@@ -437,7 +462,7 @@ export class IsolatedLoginManager {
 
     const existing = fingerprint ? this.findAccountByFingerprintFn(fingerprint) : null;
     const accountId = existing?.id ?? this.generateAccountIdFn();
-    const writeResult = this.vault.write(accountId, JSON.stringify(pair));
+    const writeResult = this.writeVaultSafely(accountId, pair);
     if (writeResult.kind !== 'ok') {
       return { loginId: pending.loginId, label: pending.label, state: 'failed', reason: 'vault-unavailable' };
     }
@@ -491,7 +516,7 @@ export class IsolatedLoginManager {
     // tendo um — não dá pra provar que é outra conta (regra explícita do D3).
 
     // d. senão, grava o par no id do ALVO (nunca gera id novo — a conta já existe).
-    const writeResult = this.vault.write(targetAccountId, JSON.stringify(pair));
+    const writeResult = this.writeVaultSafely(targetAccountId, pair);
     if (writeResult.kind !== 'ok') {
       return { loginId: pending.loginId, label: target.label, state: 'failed', reason: 'vault-unavailable' };
     }
