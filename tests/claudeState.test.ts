@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { applyAccountSwitch, type ClaudeStateIoDeps } from '../src/main/accounts/claude-state';
+import { applyAccountSwitch, readCurrentCredentialPair, type ClaudeStateIoDeps } from '../src/main/accounts/claude-state';
 import type { CredentialPair } from '../src/main/accounts/account-mod';
 
 // T1108 (011-contas-e-provedores, etapa 1) — claude-state.ts é a ÚNICA
@@ -170,6 +170,51 @@ describe('escrita atômica (temp + rename)', () => {
     ).rejects.toThrow('EPERM simulado');
 
     expect(JSON.parse(files[CLAUDE_JSON_PATH])).toEqual(original); // intocado
+  });
+});
+
+// 011-contas-e-provedores, etapa 3, Fase 2 (D7/D9, adendo) — leitura PURA do
+// par vigente, sem renovar nem escrever nada. Usada pelo mod local pra ler a
+// carga da conta ATIVA com o token que o CLI mantém fresco sozinho (D7).
+describe('readCurrentCredentialPair — leitura pura do par vigente (D7/D9)', () => {
+  it('lê o par vigente de .credentials.json', () => {
+    const pair: CredentialPair = { accessToken: 'live-access', refreshToken: 'live-refresh', expiresAt: 123456, scopes: ['user:inference'] };
+    const { io } = makeMockIo({ [CREDENTIALS_PATH]: JSON.stringify({ claudeAiOauth: pair }) });
+
+    expect(readCurrentCredentialPair({ io, claudeHome: CLAUDE_HOME })).toEqual(pair);
+  });
+
+  it('sem .credentials.json devolve null (nunca lança)', () => {
+    const { io } = makeMockIo({});
+    expect(readCurrentCredentialPair({ io, claudeHome: CLAUDE_HOME })).toBeNull();
+  });
+
+  it('.credentials.json malformado (JSON inválido) devolve null (nunca lança)', () => {
+    const { io } = makeMockIo({ [CREDENTIALS_PATH]: '{not json' });
+    expect(readCurrentCredentialPair({ io, claudeHome: CLAUDE_HOME })).toBeNull();
+  });
+
+  it('claudeAiOauth com campo faltando devolve null', () => {
+    const { io } = makeMockIo({ [CREDENTIALS_PATH]: JSON.stringify({ claudeAiOauth: { accessToken: 'a' } }) });
+    expect(readCurrentCredentialPair({ io, claudeHome: CLAUDE_HOME })).toBeNull();
+  });
+
+  it('sem claudeAiOauth no arquivo devolve null', () => {
+    const { io } = makeMockIo({ [CREDENTIALS_PATH]: JSON.stringify({ someOtherField: 1 }) });
+    expect(readCurrentCredentialPair({ io, claudeHome: CLAUDE_HOME })).toBeNull();
+  });
+
+  it('nunca escreve nada — só leitura', () => {
+    const pair: CredentialPair = { accessToken: 'a', refreshToken: 'r', expiresAt: 1, scopes: [] };
+    const { io, calls } = makeMockIo({ [CREDENTIALS_PATH]: JSON.stringify({ claudeAiOauth: pair }) });
+
+    readCurrentCredentialPair({ io, claudeHome: CLAUDE_HOME });
+
+    expect(calls).toEqual([]);
+    expect(io.writeFileText).not.toHaveBeenCalled();
+    expect(io.renameFile).not.toHaveBeenCalled();
+    expect(io.mkdirSync).not.toHaveBeenCalled();
+    expect(io.unlinkFile).not.toHaveBeenCalled();
   });
 });
 
