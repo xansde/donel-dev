@@ -166,10 +166,15 @@ import { AccountEngine } from './accounts/account-engine';
 // 011-contas-e-provedores, etapa 3, Fase 1 (F6) — dono do ciclo de vida do
 // motor: decide construir/reconstruir/atualizar via `needsEngineRebuild`.
 import { AccountEngineHost } from './accounts/account-engine-host';
+// 011-contas-e-provedores, etapa 3, Fase 2 (D3) — registro em memória
+// compartilhado entre reconstruções do motor (item 1 do Bloco 3).
+import { createReconnectRegistry } from './accounts/reconnect-registry';
 // 011-contas-e-provedores, etapa 3, Fase 1 — planos PUROS de "remover conta"
 // e "desconectar" (quais chaves o cofre perde, config final). Fase 1, Bloco
 // 2 — o que o login isolado grava em `appConfig.accounts` depois de colher.
-import { applyHarvestedAccount, findAccountByFingerprint, findAccountById, planDisconnect, planRemoveAccount } from './accounts/account-pool';
+// Fase 2 (D3) — `planReconnect` decide se um `id` pode reconectar
+// (`accounts:beginReconnect`, item 4 do Bloco 3).
+import { applyHarvestedAccount, findAccountByFingerprint, findAccountById, planDisconnect, planReconnect, planRemoveAccount } from './accounts/account-pool';
 import type { AccountMod } from './accounts/account-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — colhedor do login
 // isolado (plan-etapa-3.md §4.2): `<userData>/accounts-login-<uuid>/`, poll
@@ -571,6 +576,16 @@ function createFixtureAccountMod(fixturePath: string): AccountMod {
      * mais por engano).
      */
     includeConfiguredLocalAccounts?: boolean;
+    /**
+     * 011-contas-e-provedores, etapa 3, Fase 2 (D3, item 6 do Bloco 3) —
+     * rótulos de conta (da fixture OU configurada, se
+     * `includeConfiguredLocalAccounts`) cuja `switchTo` deve falhar com
+     * `expired-credentials` — simula o cenário que o motor reage marcando
+     * `needsReconnect` (D3), sem precisar de um par de verdade vencido no
+     * smoke. Ausente/lista vazia: nenhuma conta falha por este motivo
+     * (comportamento de sempre).
+     */
+    expiredLabels?: string[];
   };
   const fixtureIds = new Set(raw.accounts.map((account) => account.id));
   const CONFIGURED_ACCOUNT_FAKE_PAIR: import('./accounts/account-mod').CredentialPair = {
@@ -579,6 +594,14 @@ function createFixtureAccountMod(fixturePath: string): AccountMod {
     expiresAt: 4102444800000,
     scopes: ['user:inference'],
   };
+  /** Rótulo do `id` (fixture OU configurada, se `includeConfiguredLocalAccounts`); `null` se o id não pertence a nenhuma das duas — usado só pelo `expiredLabels` acima. */
+  function fixtureAccountLabel(id: string): string | null {
+    const fixtureAccount = raw.accounts.find((account) => account.id === id);
+    if (fixtureAccount) return fixtureAccount.label;
+    if (!raw.includeConfiguredLocalAccounts) return null;
+    const configured = appConfig.accounts.localAccounts.find((account) => account.id === id);
+    return configured?.label ?? null;
+  }
   return {
     id: 'local',
     async listAccounts() {
@@ -590,6 +613,10 @@ function createFixtureAccountMod(fixturePath: string): AccountMod {
       return { kind: 'ok', accounts: [...raw.accounts.map((account) => ({ ...account, active: false })), ...configuredExtra] };
     },
     async switchTo(id) {
+      const label = fixtureAccountLabel(id);
+      if (label && raw.expiredLabels?.includes(label)) {
+        return { kind: 'failed', reason: 'expired-credentials' };
+      }
       const pair = raw.pairs[id];
       if (pair) return { kind: 'ok', pair };
       if (raw.includeConfiguredLocalAccounts && appConfig.accounts.localAccounts.some((account) => account.id === id)) {
@@ -643,6 +670,14 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
 }
 
 /**
+ * 011-contas-e-provedores, etapa 3, Fase 2 (D3, item 1 do Bloco 3) — UM
+ * registro compartilhado entre reconstruções do motor (F6): se cada
+ * `createEngine` criasse o seu próprio, um rebuild (add/remove conta,
+ * troca de mod) perderia toda marca de "precisa reconectar" pendente.
+ */
+const accountsReconnectRegistry = createReconnectRegistry();
+
+/**
  * Dono do ciclo de vida do motor (F6, 011-contas-e-provedores etapa 3 Fase 1)
  * — substitui o antigo `rebuildAccountEngine()`, que reconstruía (dispose +
  * new) incondicionalmente a cada chamada. `AccountEngineHost.apply` decide
@@ -657,6 +692,7 @@ const accountEngineHost = new AccountEngineHost({
       resolveMod: resolveAccountMod,
       applySwitch: applyAccountsClaudeStateSwitch,
       isSessionBusy: () => accountsBusyPtyIds.size > 0,
+      reconnectRegistry: accountsReconnectRegistry,
     });
     engine.onChanged(broadcastAccountsChanged);
     engine.start();
@@ -690,6 +726,22 @@ function applyAccountsEngineConfig(): void {
   const result = accountEngineHost.apply(appConfig.accounts);
   if (result === 'rebuilt') {
     void accountEngineHost.current()?.listAccounts().catch(() => undefined);
+  }
+}
+
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 2 (D5, item 2 do Bloco 3) — dá baixa
+ * em `accountsBusyPtyIds` (C5) e, quando esta baixa esvazia o conjunto,
+ * retoma um auto-switch adiado (`retryDeferredAutoSwitch` só age se a última
+ * decisão registrada for `deferred` — nunca gera tráfego à toa). Substitui os
+ * dois pontos que faziam `accountsBusyPtyIds.delete(ptyId)` direto: o ramo
+ * não-`working` do `semaphoreManager.onUpdate` e o `ptyManager.onExit` de
+ * `createMainWindow`.
+ */
+function releaseAccountsBusyPty(ptyId: string): void {
+  const removed = accountsBusyPtyIds.delete(ptyId);
+  if (removed && accountsBusyPtyIds.size === 0) {
+    void accountEngineHost.current()?.retryDeferredAutoSwitch().catch(() => undefined);
   }
 }
 
@@ -754,7 +806,9 @@ function createMainWindow(): void {
     transcriptWatchers.stop(ptyId);
     // T1125 (011-contas-e-provedores, etapa 1, C4) — mesma baixa, pro poll de
     // 5 min do motor de contas parar de contar esta sessão como viva.
-    accountsBusyPtyIds.delete(ptyId);
+    // Fase 2 (D5) — `releaseAccountsBusyPty` também retoma um auto-switch
+    // adiado se esta era a última sessão ocupada.
+    releaseAccountsBusyPty(ptyId);
     accountsLiveSessionPtyIds.delete(ptyId);
   });
   const unsubscribeSemaphore = semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
@@ -1712,7 +1766,7 @@ function registerGithubIpcHandlers(): void {
  * segredo (fica só no cofre).
  */
 function registerAccountsIpcHandlers(): void {
-  ipcMain.handle(ACCOUNT_CHANNELS.list, async (): Promise<AccountsViewDto> => {
+  ipcMain.handle(ACCOUNT_CHANNELS.list, async (_event, options: unknown): Promise<AccountsViewDto> => {
     const engine = accountEngineHost.current();
     if (!engine) {
       // 011-contas-e-provedores, etapa 3, Fase 2 (D5) — view inerte também
@@ -1728,6 +1782,19 @@ function registerAccountsIpcHandlers(): void {
         autoSwitchState: 'idle',
         lastAutoSwitch: null,
       };
+    }
+    // 011-contas-e-provedores, etapa 3, Fase 2 (D5, item 3 do Bloco 3) —
+    // checagem de tipo na fronteira IPC (o renderer pode mandar qualquer
+    // coisa). `force: true` é o "Atualizar" do painel — o "sob demanda" da
+    // C4: relê as contas E reavalia o auto-switch no mesmo gesto, sem
+    // esperar o próximo poll de 5 min. A conta ativa trocada pelo motor já é
+    // persistida por `onActiveAccountChanged` (accountEngineHost, F6) — não
+    // duplicar aqui.
+    const force = typeof options === 'object' && options !== null && (options as { readonly force?: unknown }).force === true;
+    if (force) {
+      await engine.listAccounts();
+      await engine.evaluateAutoSwitch();
+      return engine.getSnapshot();
     }
     return engine.listAccounts();
   });
@@ -1855,6 +1922,24 @@ function registerAccountsIpcHandlers(): void {
   ipcMain.handle(ACCOUNT_CHANNELS.cancelLogin, (_event, loginId: unknown): void => {
     if (typeof loginId !== 'string' || !loginId) return;
     isolatedLoginManager?.cancel(loginId);
+  });
+
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 2 (D3, item 4 do Bloco 3) —
+   * "Reconectar": login isolado apontado PARA uma conta já cadastrada. O
+   * rótulo vem da PRÓPRIA conta (`planReconnect`, account-pool.ts) — nunca
+   * digitado de novo pelo operador, por isso este handler recebe só o `id`.
+   * Checagem de tipo na fronteira IPC, como os handlers vizinhos.
+   */
+  ipcMain.handle(ACCOUNT_CHANNELS.beginReconnect, (_event, id: unknown): BeginLoginOutcome => {
+    if (typeof id !== 'string' || !id) return { kind: 'failed', reason: 'unknown-account' };
+
+    const plan = planReconnect(appConfig.accounts, id);
+    if (plan.kind === 'blocked') return { kind: 'failed', reason: 'active-account' };
+    if (plan.kind === 'unknown-account') return { kind: 'failed', reason: 'unknown-account' };
+
+    if (!isolatedLoginManager) return { kind: 'failed', reason: 'io' };
+    return isolatedLoginManager.begin(plan.label, { targetAccountId: id });
   });
 }
 
@@ -2056,6 +2141,11 @@ void app.whenReady().then(async () => {
       appConfig = { ...appConfig, accounts: applyHarvestedAccount(appConfig.accounts, event) };
       persistAppConfig();
       applyAccountsEngineConfig(); // F6 — 'added' muda a lista -> rebuilt -> já relê sozinho.
+      // 011-contas-e-provedores, etapa 3, Fase 2 (D3, item 5 do Bloco 3) —
+      // 'replaced' e 'reconnected' renovaram o par desta conta no cofre: uma
+      // marca de "precisa reconectar" pendente não faz mais sentido. 'added'
+      // nunca teve marca (conta nova) — nada a limpar.
+      if (event.kind !== 'added') accountsReconnectRegistry.clear(event.accountId);
       // 'replaced' NÃO muda `localAccounts` (account-pool.ts) -> `apply()`
       // fica em 'updated', que não relê sozinho — sem isto, o painel
       // continuaria mostrando a carga/estado da conta com o par ANTIGO.
@@ -2115,7 +2205,9 @@ void app.whenReady().then(async () => {
     if (update.state === 'working') {
       accountsBusyPtyIds.add(update.ptyId);
     } else {
-      accountsBusyPtyIds.delete(update.ptyId);
+      // Fase 2 (D5, item 2 do Bloco 3) — sair de `working` pode ser a
+      // última sessão ocupada: retoma um auto-switch adiado, se houver.
+      releaseAccountsBusyPty(update.ptyId);
     }
   });
   applyAccountsEngineConfig(); // F6 — 1ª chamada sempre 'built' (motor inerte se mod === null, C2).
