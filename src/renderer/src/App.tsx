@@ -13,7 +13,6 @@ import {
 import { Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  AccountLoad,
   AccountsViewDto,
   AppConfigDto,
   NotificationPreference,
@@ -1795,23 +1794,44 @@ export function App(): React.JSX.Element {
   const activeAccountSummary = accountsView.accounts.find((account) => account.id === accountsView.activeAccountId) ?? null;
   const accountLabel = activeAccountSummary?.label ?? (accountsView.mod === null ? 'Motor inerte' : 'Conta ativa');
 
-  // "Statusbar deve mostrar a conta com que a sessão EM FOCO foi criada",
-  // não a conta ATIVA global — `accountLabel` acima é só o fallback pra
-  // janela curta antes de `sessionAccounts[activeTab.id]` resolver (ver
-  // `computeSessionAccountLabel`). Sem aba ativa (0 sessões abertas), cai no
-  // `accountLabel` global também — não há "aba em foco" nesse estado.
-  //
-  // C25 — uma unidade só: a cota é `AccountLoad` (% consumido) da conta de
-  // NASCIMENTO da aba, lida do MESMO `accountsView` que alimenta o painel
-  // (não mais `ProfileQuota`/`profileHeadroom`, mortos nesta troca de fonte).
+  // "Statusbar deve mostrar a conta VIGENTE" (011-contas-e-provedores,
+  // etapa 3, Fase 2, D1/D2) — deixou de ser a conta com que a sessão em
+  // foco foi criada: sessão de conta (sem provider, sem login isolado)
+  // segue a troca GLOBAL, rótulo e cota vêm de `current` (montado abaixo a
+  // partir do MESMO `accountsView` que alimenta o painel). `accountLabel`
+  // acima é só o fallback da janela curta antes de `activeTab` existir (0
+  // sessões abertas) ou antes de `current.active` existir (motor inerte);
+  // `sessionAccounts[activeTab.id]` continua guardando a conta de
+  // NASCIMENTO da aba (`PtyCreateResult.account`) — ela virou insumo só do
+  // sufixo "trocou em voo" (ver `computeSessionAccountLabel`), não mais da
+  // cota/rótulo principal (isso fecha o C25 de outro jeito: uma unidade só,
+  // `AccountLoad`/% consumido, mas agora sempre da conta ATIVA).
   const activeSessionAccount = activeTab ? sessionAccounts[activeTab.id] : undefined;
-  const activeSessionLoad: AccountLoad | null =
-    (activeSessionAccount && accountsView.accounts.find((account) => account.id === activeSessionAccount.id)?.load) ?? null;
+  // C13/D1 — de onde vem a credencial desta aba: provider (Launcher com
+  // provider classe A escolhido, T1320) > login isolado (Fase 1.2, aba do
+  // próprio login) > conta do motor (default, comportamento de hoje).
+  const activeCredentialSource: 'account' | 'provider' | 'login' = activeTab?.providerId
+    ? 'provider'
+    : activeTab?.accountLoginId
+      ? 'login'
+      : 'account';
+  const activeProviderLabel = activeTab?.providerId
+    ? (providers.find((provider) => provider.id === activeTab.providerId)?.label ?? activeTab.providerId)
+    : undefined;
   const activeSessionAccountLabel = activeTab
     ? computeSessionAccountLabel(
-        { sessionType: activeTab.sessionType, account: activeSessionAccount },
+        {
+          sessionType: activeTab.sessionType,
+          account: activeSessionAccount,
+          credentialSource: activeCredentialSource,
+          providerLabel: activeProviderLabel,
+        },
         accountLabel,
-        activeSessionLoad,
+        {
+          active: activeAccountSummary ? { id: activeAccountSummary.id, label: activeAccountSummary.label } : null,
+          load: activeAccountSummary?.load ?? null,
+          autoSwitchState: accountsView.autoSwitchState,
+        },
       )
     : accountLabel;
 
