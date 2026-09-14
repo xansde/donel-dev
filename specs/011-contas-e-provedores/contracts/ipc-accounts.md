@@ -139,3 +139,84 @@ fingerprint?: string | null; // sha256 do accountUuid — só em conta cadastrad
 8. Nenhum DTO carrega segredo. O fingerprint é opaco e não é PII; pode voltar
    dentro de `LocalAccountMeta` pelos canais que devolvem a config, como o
    `AccountId`, mas nunca aparece em `LoginStatusDto`, log ou mensagem de erro.
+
+## Emenda — etapa 3, Fase 2: verdade na tela + rodízio (13/09/2026)
+
+A tela deixa de mentir depois de uma troca, e o auto-switch passa a funcionar com
+carga real (`plan-etapa-3.md` §4, Fase 2).
+
+```ts
+export const ACCOUNT_CHANNELS = {
+  // ...os anteriores...
+  beginReconnect: 'accounts:beginReconnect', // (id: AccountId) => BeginLoginOutcome
+} as const;
+
+export interface AccountSummary {
+  // ...
+  readonly needsReconnect?: boolean; // só o motor preenche; ausente = false
+}
+
+export type AutoSwitchState = 'off' | 'idle' | 'armed' | 'saturated' | 'blind';
+
+export type AutoSwitchEvent =
+  | { kind: 'switched'; from: AccountId | null; to: AccountId; at: string }
+  | { kind: 'deferred'; at: string }
+  | { kind: 'failed'; to: AccountId; reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'io'; at: string };
+
+export interface AccountsViewDto {
+  // ...
+  readonly autoSwitchState: AutoSwitchState;
+  readonly lastAutoSwitch: AutoSwitchEvent | null; // em memória; some ao reconstruir o motor
+}
+
+// BeginLoginOutcome, ramo failed: reason ganha 'active-account' | 'unknown-account'
+// LoginStatusDto ganha:
+//   | { loginId; label; state: 'reconnected'; accountId }
+//   | { loginId; label; state: 'wrong-account'; otherLabel: string | null }
+// e o ramo failed: reason ganha 'unknown-account'
+```
+
+### Mudanças em canais existentes
+
+- `accounts:list` com `{ force: true }` (o "Atualizar" do painel) relê a carga e
+  avalia o auto-switch antes de responder. Sem `force`, só relê.
+- `accounts:changed` sai também quando a troca para uma conta é recusada com
+  `expired-credentials`, quando o auto-switch adia, falha ou troca, e quando um
+  adiamento deixa de valer.
+
+### Regras da emenda
+
+9. `autoSwitchState`: `off` desligado; `idle` nada a fazer (ativa abaixo do
+   limiar, carga da ativa desconhecida, sem ativa, motor inerte ou
+   indisponível); `armed` ativa no limiar e existe conta com a folga mínima;
+   `saturated` ativa no limiar e todas as outras contas disponíveis têm carga
+   conhecida, nenhuma com a folga; `blind` ativa no limiar, nenhuma candidata e
+   alguma outra conta sem leitura. Conta com `needsReconnect` não é candidata e
+   não conta para `blind`: o gesto que ela pede é reconectar, não ler carga.
+10. Auto-switch adiado por sessão trabalhando é reavaliado quando a última sessão
+    sai de `working`. Switch manual bem-sucedido, ou avaliação sem alvo, limpa o
+    adiamento. "Sessão trabalhando" é a que recebeu evento de hook e está em
+    `working`: o `working` inicial do semáforo, enquanto o CLI sobe, não adia.
+11. `needsReconnect` é marcado quando a troca para a conta falha com
+    `expired-credentials` ou quando a leitura de carga tem o refresh dela
+    recusado; é limpo por troca bem-sucedida para ela e por login isolado que a
+    renova (`replaced` ou `reconnected`). O registro vive no main, sobrevive à
+    reconstrução do motor e não é persistido.
+12. `beginReconnect(id)` recusa a conta ativa (`active-account`) e id fora de
+    `localAccounts` (`unknown-account`); senão abre o login isolado da regra 5
+    com o rótulo da conta. Na colheita: conta-alvo sumiu → `failed/unknown-account`;
+    fingerprint do login pertence a outra conta do pool, ou difere do da
+    conta-alvo → `wrong-account`, nada gravado; senão o par vai para o id da
+    conta-alvo e o status é `reconnected` (conta sem fingerprint adota o do
+    login). A cauda da regra 5 (encerrar PTY → apagar diretório → emitir) vale
+    para todos os desfechos.
+13. Refresh do mod local: HTTP 400/401/403, ou 2xx com corpo inválido, é recusa →
+    `expired-credentials`; rede, timeout e demais status → `offline`.
+14. Carga do mod local: a ativa é lida com o access token do `~/.claude` (só
+    leitura; sem par vivo, cai no do cofre, sem renovar). Conta parada com par
+    vencido é renovada na leitura com o protocolo da troca: cofre antes do uso,
+    uma renovação por conta de cada vez (compartilhada com a troca), nunca a
+    ativa. Recusa marca `needsReconnect` e não se repete nas leituras seguintes.
+    Cada renovação grava `{ event: 'account-pair-refreshed', account, trigger }`
+    em `<userData>/accounts-maintenance.log`, só com o id. **Emenda a D4**
+    (decisão do dono, 13/09): antes, o refresh só acontecia na troca.

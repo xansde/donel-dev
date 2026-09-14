@@ -246,6 +246,54 @@ para `staging`.
 
 PR para `staging`, **uma** bateria manual.
 
+**Execução (13/09/2026) — o que foi decidido ao construir.** Branch
+`feature/contas-fase-2-verdade-na-tela`; contrato em `contracts/ipc-accounts.md`
+(emenda da Fase 2) e bateria em `e2e.md` ("Etapa 3, Fase 2").
+
+- **A aba mostra a conta vigente (F4).** Sessão `claude` que usa o `~/.claude`
+  segue a troca global: a statusbar mostra a conta ativa agora e a carga dela. Se
+  a aba nasceu em outra conta, o rótulo diz `trocou em voo (era <conta de
+  nascimento>)`. Aba de provedor mostra o provedor (até aqui ela caía no rótulo da
+  conta global, outra mentira); aba de login isolado e terminal livre não mostram
+  conta.
+- **Troca global dita no painel (F5)**, logo abaixo dos botões.
+- **`expired-credentials` vira "Reconectar".** O motor marca a conta quando a
+  troca para ela é recusada. A marca vive num registro do main que sobrevive às
+  reconstruções do motor, e some numa troca bem-sucedida ou num login que renova a
+  conta. "Reconectar" abre o login isolado apontado para a conta (mesmo id e
+  rótulo). A ativa não reconecta: a credencial dela vive no `~/.claude` e o CLI
+  renova sozinho. Login com outra conta é recusado sem gravar nada (fingerprint de
+  outra conta do pool, ou diferente do da conta-alvo); conta antiga, sem
+  fingerprint, adota o do login que a reconectou.
+- **Refresh recusado ≠ sem rede.** HTTP 400/401/403, ou 2xx com corpo inválido, é
+  recusa e vira `expired-credentials`. Rede, timeout e outros status viram
+  `offline`, que não oferece reconectar.
+- **Achado: o access token vence em ~8h, e a carga era lida com o par do cofre.**
+  A ativa virava "sem dado" assim que o CLI renovava o par dela, e as paradas, ~8h
+  depois do último uso. Carga desconhecida nunca dispara nem recebe troca (C9):
+  num dia normal o rodízio ficaria inerte. Duas correções:
+  - a carga da **ativa** sai do token vivo do `~/.claude`, só leitura;
+  - **emenda da D4, decisão do dono (13/09):** a leitura de carga renova o par
+    vencido de uma conta **parada**, com o protocolo da troca: grava no cofre
+    antes de usar, uma renovação por conta de cada vez (a troca que chega no meio
+    espera a mesma renovação), nunca a ativa. Recusa marca "Reconectar" e não se
+    repete na leitura seguinte; falta de rede só deixa a carga "sem dado". Cada
+    renovação vai para o `accounts-maintenance.log`, só com o id. Consequência:
+    conta parada deixa de expirar enquanto o app fica aberto (mitiga o R3).
+- **Auto-switch visível.** Avaliado no poll de 5 min e também no "Atualizar" do
+  painel, o "sob demanda" da C4 que o handler de `accounts:list` ignorava.
+  Adiamento por sessão trabalhando é retomado quando a última sessão sai de
+  `working`, sem esperar o próximo poll. Achado do smoke: o semáforo nasce em
+  `working` e só sai dele num evento de hook, então uma aba aberta e nunca usada
+  adiava o auto-switch para sempre. Para o motor de contas, "sessão
+  trabalhando" passa a ser só a que teve evento de hook (C5 com precisão). A view diz o estado
+  (`off`/`idle`/`armed`/`saturated`/`blind`) e a última decisão (trocou, adiou ou
+  falhou, com hora).
+- **Todas acima do limiar: avisa, não troca.** Painel, botão `Contas ⚠` e
+  statusbar dizem quando nenhuma outra conta tem a folga mínima (`sem conta com
+  folga`) e, separado, quando falta a leitura de carga de outras contas (`sem
+  leitura das outras contas`): os dois pedem gestos diferentes.
+
 ### Fase 3 — Dogfooding
 
 `npm run dist:alfa` do checkout de `staging`, instalar, e rodar a semana nas 4

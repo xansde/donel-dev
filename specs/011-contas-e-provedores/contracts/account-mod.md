@@ -48,7 +48,7 @@ export type SwitchToResult =
 | Guardar o par rotacionado | `mod.captureRotatedPair` |
 | Obter o par da conta que entra | `mod.switchTo` |
 | Escrever `.credentials.json` + apagar `oauthAccount` | `claude-state.ts` (**única** escrita de credencial) |
-| Renovar token expirado | **só** `local-mod` (fallback). Mod Seazone **nunca** renova `[T-2]` |
+| Renovar token expirado | **só** `local-mod`: no switch (fallback) e, desde a Fase 2 da etapa 3, na leitura de carga de conta **parada** (nunca a ativa; uma renovação por conta de cada vez). Mod Seazone **nunca** renova `[T-2]` |
 
 ## Invariantes que todo mod deve honrar
 
