@@ -181,7 +181,7 @@ import type { AccountMod } from './accounts/account-mod';
 // do diretório, cofre, e a limpeza obrigatória no fim (sucesso ou falha).
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
-import { applyAccountSwitch, createSystemClaudeStateIoDeps } from './accounts/claude-state';
+import { applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { createLocalMod } from './accounts/mods/local-mod';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1 (F2) — valida o par colado à mão (fallback do "conectar conta"; login isolado é a Fase 1.2).
@@ -630,6 +630,20 @@ function createFixtureAccountMod(fixturePath: string): AccountMod {
   };
 }
 
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 2 (D9) — uma linha JSON em
+ * `<userData>/accounts-maintenance.log`, o mesmo arquivo da faxina do cofre e
+ * da varredura de `accounts-login-*`. Só nomes e ids, nunca conteúdo de
+ * credencial. Best-effort: falha de gravação vira log e nada mais.
+ */
+function appendAccountsMaintenanceLog(entry: Record<string, unknown>): void {
+  try {
+    appendFileSync(join(app.getPath('userData'), 'accounts-maintenance.log'), `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`, 'utf8');
+  } catch (error) {
+    console.error('[donel-dev] log de manutenção de contas: falha ao gravar (segue sem registro):', error);
+  }
+}
+
 function resolveAccountMod(modId: ModId): AccountMod {
   const fixturePath = process.env.DONEL_ACCOUNTS_FAKE_MOD_FIXTURE;
   if (fixturePath) return createFixtureAccountMod(fixturePath);
@@ -638,7 +652,21 @@ function resolveAccountMod(modId: ModId): AccountMod {
   if (modId === 'seazone') {
     return createSeazoneMod({ baseUrl: appConfig.accounts.seazone?.baseUrl ?? '', vault });
   }
-  return createLocalMod({ accounts: appConfig.accounts.localAccounts, vault });
+  return createLocalMod({
+    accounts: appConfig.accounts.localAccounts,
+    vault,
+    // 011-contas-e-provedores, etapa 3, Fase 2 (D7) — a carga da conta ATIVA
+    // sai do par vivo do `claudeHome` (o mesmo alvo do switch), só leitura: o
+    // par dela no cofre envelhece assim que o CLI renova o do `~/.claude`.
+    // O motor é lido na hora da leitura de carga, nunca capturado aqui.
+    getActiveAccountId: () => accountEngineHost.current()?.getActiveAccountId() ?? appConfig.accounts.activeAccountId,
+    readLiveCredentialPair: () => readCurrentCredentialPair({ io: accountsClaudeStateIo, claudeHome: appConfig.accounts.claudeHome ?? claudeHomeDirFor(homedir()) }),
+    // D9 (emenda da D4, decisão do dono em 13/09) — a leitura de carga renova
+    // o par vencido de conta PARADA; recusa marca o mesmo registro do motor, e
+    // cada renovação gravada fica no log de manutenção, só com o id.
+    reconnectRegistry: accountsReconnectRegistry,
+    onPairRefreshed: (id, trigger) => appendAccountsMaintenanceLog({ event: 'account-pair-refreshed', account: id, trigger }),
+  });
 }
 
 /**
