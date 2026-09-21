@@ -50,6 +50,7 @@ export function mapHookEventName(name: unknown): SemaphoreEvent['type'] | null {
     case 'PostToolUse':
       return 'postToolUse';
     case 'Stop':
+    case 'StopFailure': // turno encerrado por erro de API (ex. limite da conta) — fim de turno do mesmo jeito.
       return 'stop';
     case 'Notification':
       return 'notification';

@@ -19,6 +19,13 @@ describe('mapHookEventName', () => {
     expect(mapHookEventName('SessionEnd')).toBe('sessionEnd');
   });
 
+  it('StopFailure (turno encerrado por erro de API, ex. limite da conta) fecha o turno como Stop', () => {
+    // O CLI dispara StopFailure NO LUGAR de Stop quando rate limit/overload
+    // encerra o turno. Sem isso a sessão fica "trabalhando" para sempre e o
+    // auto-switch de contas adia indefinidamente — justo quando a conta estourou.
+    expect(mapHookEventName('StopFailure')).toBe('stop');
+  });
+
   it('null para eventos que não são do semáforo (ex.: SubagentStop de hooks globais do usuário)', () => {
     expect(mapHookEventName('SubagentStop')).toBeNull();
     expect(mapHookEventName(undefined)).toBeNull();
