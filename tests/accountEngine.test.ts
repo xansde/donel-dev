@@ -79,7 +79,10 @@ function makeEngine(overrides: {
     sessionBusy: boolean;
   }) => void;
   readCurrentPair?: () => CredentialPair | null;
+  readCurrentAccountFingerprint?: () => string | null;
   onSwitchOverwritten?: (info: { to: string }) => void;
+  onSwitchPairRotated?: (info: { to: string }) => void;
+  onSwitchCheckInconclusive?: (info: { to: string }) => void;
   raceCheckDelayMs?: number;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
@@ -98,7 +101,10 @@ function makeEngine(overrides: {
     reconnectRegistry: overrides.reconnectRegistry,
     onAutoSwitchLogged: overrides.onAutoSwitchLogged,
     readCurrentPair: overrides.readCurrentPair,
+    readCurrentAccountFingerprint: overrides.readCurrentAccountFingerprint,
     onSwitchOverwritten: overrides.onSwitchOverwritten,
+    onSwitchPairRotated: overrides.onSwitchPairRotated,
+    onSwitchCheckInconclusive: overrides.onSwitchCheckInconclusive,
     raceCheckDelayMs: overrides.raceCheckDelayMs,
     setTimeoutFn: overrides.setTimeoutFn,
     clearTimeoutFn: overrides.clearTimeoutFn,
@@ -733,26 +739,32 @@ describe('AccountEngine — emenda 22/09 (item 3), poll adaptativo', () => {
 // par que ESTE switch escreveu (comparado por `refreshToken`).
 // ---------------------------------------------------------------------------
 
-describe('AccountEngine — emenda 22/09 (item 5), checagem de corrida pós-switch', () => {
-  function makeRaceEngine(overrides: { readCurrentPair: () => CredentialPair | null; mod?: AccountMod }) {
-    const mod = overrides.mod ?? new FakeMod();
-    let scheduledFn: (() => void) | null = null;
+// Emenda 22/09 (REVISÃO, item 5) — a primeira versão comparava só
+// `refreshToken` e reaplicava a troca ao divergir: falso positivo perigoso,
+// porque o CLI rotaciona o refresh token da PRÓPRIA conta legitimamente (ex.:
+// access token vencido renovado na primeira mensagem). A versão corrigida:
+// (1) nunca reaplica — só observa; (2) token divergente sozinho não basta,
+// desempata por IDENTIDADE (`readCurrentAccountFingerprint`, comparado com o
+// fingerprint conhecido da conta-alvo em `config.localAccounts`).
+describe('AccountEngine — emenda 22/09 (revisão, item 5), checagem de corrida pós-switch', () => {
+  function scheduleCapture() {
+    const scheduled: Array<() => void> = [];
     const setTimeoutFn = vi.fn((fn: () => void) => {
-      scheduledFn = fn;
-      return 1 as unknown as ReturnType<typeof setTimeout>;
+      scheduled.push(fn);
+      return scheduled.length as unknown as ReturnType<typeof setTimeout>;
     }) as unknown as typeof setTimeout;
-    const { engine, ...rest } = makeEngine({
-      mod,
-      config: makeConfig({ activeAccountId: 'a' }),
-      readCurrentPair: overrides.readCurrentPair,
-      setTimeoutFn,
-    });
-    return { engine, mod, runScheduledCheck: async () => scheduledFn?.(), ...rest };
+    return { scheduled, setTimeoutFn };
   }
+
+  const writtenPair: CredentialPair = { accessToken: 'x', refreshToken: 'y', expiresAt: 1, scopes: [] };
+  const targetAccountWithFingerprint = (fingerprint: string) => makeConfig({
+    activeAccountId: 'a',
+    localAccounts: [{ id: 'b', label: 'b', plan: null, fingerprint }],
+  });
 
   it('sem readCurrentPair, nenhuma checagem é agendada', async () => {
     const mod = new FakeMod();
-    const setTimeoutFn = vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>) as unknown as typeof setTimeout;
+    const { setTimeoutFn } = scheduleCapture();
     const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }), setTimeoutFn });
 
     await engine.switchTo('b');
@@ -760,32 +772,56 @@ describe('AccountEngine — emenda 22/09 (item 5), checagem de corrida pós-swit
     expect(setTimeoutFn).not.toHaveBeenCalled();
   });
 
-  it('par no disco ainda bate com o escrito — sem corrida, sem aviso', async () => {
-    const writtenPair: CredentialPair = { accessToken: 'x', refreshToken: 'y', expiresAt: 1, scopes: [] };
+  it('par no disco ainda bate com o escrito — sem corrida, sem leitura de identidade', async () => {
     const mod = new FakeMod();
     mod.switchResult = { kind: 'ok', pair: writtenPair };
-    const { engine, runScheduledCheck } = makeRaceEngine({ mod, readCurrentPair: () => writtenPair });
+    const { scheduled, setTimeoutFn } = scheduleCapture();
+    const readCurrentAccountFingerprint = vi.fn(() => 'nao-deveria-ser-chamado');
+    const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }), readCurrentPair: () => writtenPair, readCurrentAccountFingerprint, setTimeoutFn });
 
     await engine.switchTo('b');
-    await runScheduledCheck();
+    await scheduled[0]?.();
 
     expect(engine.getSnapshot().lastSwitchOverwritten).toBeNull();
+    expect(readCurrentAccountFingerprint).not.toHaveBeenCalled(); // token bateu — nem lê identidade.
   });
 
-  it('par no disco divergiu — registra lastSwitchOverwritten e chama onSwitchOverwritten', async () => {
-    const writtenPair: CredentialPair = { accessToken: 'x', refreshToken: 'y', expiresAt: 1, scopes: [] };
+  it('token divergiu mas a identidade é da PRÓPRIA conta-alvo — rotação legítima, sem aviso (onSwitchPairRotated)', async () => {
     const mod = new FakeMod();
     mod.switchResult = { kind: 'ok', pair: writtenPair };
+    const { scheduled, setTimeoutFn } = scheduleCapture();
     const onSwitchOverwritten = vi.fn();
-    const scheduled: Array<() => void> = [];
-    const setTimeoutFn = vi.fn((fn: () => void) => {
-      scheduled.push(fn);
-      return 1 as unknown as ReturnType<typeof setTimeout>;
-    }) as unknown as typeof setTimeout;
+    const onSwitchPairRotated = vi.fn();
     const { engine } = makeEngine({
       mod,
-      config: makeConfig({ activeAccountId: 'a' }),
+      config: targetAccountWithFingerprint('fingerprint-b'),
+      // token renovado pelo CLI (refreshToken novo), mas a IDENTIDADE ainda é a da conta-alvo.
+      readCurrentPair: () => ({ accessToken: 'novo', refreshToken: 'novo-refresh', expiresAt: 2, scopes: [] }),
+      readCurrentAccountFingerprint: () => 'fingerprint-b',
+      onSwitchOverwritten,
+      onSwitchPairRotated,
+      setTimeoutFn,
+    });
+
+    await engine.switchTo('b');
+    await scheduled[0]?.();
+
+    expect(onSwitchPairRotated).toHaveBeenCalledWith({ to: 'b' });
+    expect(onSwitchOverwritten).not.toHaveBeenCalled();
+    expect(engine.getSnapshot().lastSwitchOverwritten).toBeNull();
+    expect(mod.switchToCalls).toBe(1); // nunca reaplica.
+  });
+
+  it('token divergiu e a identidade é de OUTRA conta — corrida confirmada, avisa', async () => {
+    const mod = new FakeMod();
+    mod.switchResult = { kind: 'ok', pair: writtenPair };
+    const { scheduled, setTimeoutFn } = scheduleCapture();
+    const onSwitchOverwritten = vi.fn();
+    const { engine } = makeEngine({
+      mod,
+      config: targetAccountWithFingerprint('fingerprint-b'),
       readCurrentPair: () => ({ accessToken: 'outro', refreshToken: 'outro-refresh', expiresAt: 2, scopes: [] }),
+      readCurrentAccountFingerprint: () => 'fingerprint-de-outra-conta',
       onSwitchOverwritten,
       setTimeoutFn,
       now: () => FIXED_NOW,
@@ -796,30 +832,74 @@ describe('AccountEngine — emenda 22/09 (item 5), checagem de corrida pós-swit
 
     expect(onSwitchOverwritten).toHaveBeenCalledWith({ to: 'b' });
     expect(engine.getSnapshot().lastSwitchOverwritten).toEqual({ to: 'b', at: FIXED_ISO });
+    expect(mod.switchToCalls).toBe(1); // nunca reaplica.
   });
 
-  it('divergência reaplica a troca NO MÁXIMO uma vez (nunca um loop)', async () => {
+  it('token divergiu mas a identidade não pôde ser lida (oauthAccount ainda ausente) — inconclusivo, sem aviso', async () => {
     const mod = new FakeMod();
-    mod.switchResult = { kind: 'ok', pair: { accessToken: 'x', refreshToken: 'y', expiresAt: 1, scopes: [] } };
-    let scheduledFns: Array<() => void> = [];
-    const setTimeoutFn = vi.fn((fn: () => void) => {
-      scheduledFns.push(fn);
-      return scheduledFns.length as unknown as ReturnType<typeof setTimeout>;
-    }) as unknown as typeof setTimeout;
+    mod.switchResult = { kind: 'ok', pair: writtenPair };
+    const { scheduled, setTimeoutFn } = scheduleCapture();
+    const onSwitchOverwritten = vi.fn();
+    const onSwitchCheckInconclusive = vi.fn();
     const { engine } = makeEngine({
       mod,
-      config: makeConfig({ activeAccountId: 'a' }),
-      readCurrentPair: () => ({ accessToken: 'sempre-outro', refreshToken: 'sempre-diverge', expiresAt: 2, scopes: [] }),
+      config: targetAccountWithFingerprint('fingerprint-b'),
+      readCurrentPair: () => ({ accessToken: 'outro', refreshToken: 'outro-refresh', expiresAt: 2, scopes: [] }),
+      readCurrentAccountFingerprint: () => null, // .claude.json ainda sem oauthAccount, ou ilegível.
+      onSwitchOverwritten,
+      onSwitchCheckInconclusive,
       setTimeoutFn,
     });
 
-    await engine.switchTo('b'); // agenda check #1.
+    await engine.switchTo('b');
+    await scheduled[0]?.();
+
+    expect(onSwitchCheckInconclusive).toHaveBeenCalledWith({ to: 'b' });
+    expect(onSwitchOverwritten).not.toHaveBeenCalled();
+    expect(engine.getSnapshot().lastSwitchOverwritten).toBeNull();
+  });
+
+  it('token divergiu mas a conta-alvo não tem fingerprint conhecido — inconclusivo, mesmo com identidade legível', async () => {
+    const mod = new FakeMod();
+    mod.switchResult = { kind: 'ok', pair: writtenPair };
+    const { scheduled, setTimeoutFn } = scheduleCapture();
+    const onSwitchOverwritten = vi.fn();
+    const onSwitchCheckInconclusive = vi.fn();
+    const { engine } = makeEngine({
+      mod,
+      config: makeConfig({ activeAccountId: 'a' }), // localAccounts vazio — 'b' sem fingerprint.
+      readCurrentPair: () => ({ accessToken: 'outro', refreshToken: 'outro-refresh', expiresAt: 2, scopes: [] }),
+      readCurrentAccountFingerprint: () => 'qualquer-fingerprint-legivel',
+      onSwitchOverwritten,
+      onSwitchCheckInconclusive,
+      setTimeoutFn,
+    });
+
+    await engine.switchTo('b');
+    await scheduled[0]?.();
+
+    expect(onSwitchCheckInconclusive).toHaveBeenCalledWith({ to: 'b' });
+    expect(onSwitchOverwritten).not.toHaveBeenCalled();
+  });
+
+  it('nunca agenda uma segunda checagem — a corrida é observada uma vez só', async () => {
+    const mod = new FakeMod();
+    mod.switchResult = { kind: 'ok', pair: writtenPair };
+    const { scheduled, setTimeoutFn } = scheduleCapture();
+    const { engine } = makeEngine({
+      mod,
+      config: targetAccountWithFingerprint('fingerprint-b'),
+      readCurrentPair: () => ({ accessToken: 'outro', refreshToken: 'outro-refresh', expiresAt: 2, scopes: [] }),
+      readCurrentAccountFingerprint: () => 'fingerprint-de-outra-conta',
+      setTimeoutFn,
+    });
+
+    await engine.switchTo('b');
+    expect(scheduled).toHaveLength(1);
+
+    await scheduled[0]?.();
+
+    expect(scheduled).toHaveLength(1); // nenhum novo agendamento depois da checagem.
     expect(mod.switchToCalls).toBe(1);
-
-    await scheduledFns[0]?.(); // diverge -> reaplica (switchToCalls=2) e agenda check #2.
-    expect(mod.switchToCalls).toBe(2);
-
-    await scheduledFns[1]?.(); // diverge de novo -> só registra, NÃO reaplica de novo.
-    expect(mod.switchToCalls).toBe(2);
   });
 });

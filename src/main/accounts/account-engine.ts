@@ -36,9 +36,28 @@
 // O risco de corrida (o CLI renovando `~/.claude/.credentials.json` no
 // mesmo instante em que o motor grava a conta nova) foi aceito pelo dono
 // COM acompanhamento: `scheduleRaceCheck` confere, ~30-60s depois de um
-// switch bem-sucedido, se o par ainda é o que o motor escreveu; divergência
-// vira `lastSwitchOverwritten` (view) + `switch-overwritten` (log), com no
-// máximo UMA reaplicação automática — nunca um loop de correção.
+// switch bem-sucedido, se o par ainda é o que o motor escreveu.
+//
+// 011-contas-e-provedores, etapa 3, Fase 2, emenda 22/09 (REVISÃO) — a
+// primeira versão desta checagem comparava só `refreshToken` e, ao divergir,
+// reaplicava a troca. Falso positivo PERIGOSO: o CLI rotaciona o refresh
+// token LEGITIMAMENTE ao renovar a conta ativa (ex.: access token vencido →
+// renova na primeira mensagem, dentro da janela de 45s) — a checagem via
+// isso como "sobrescrito" e reaplicava com o par do COFRE, cujo refresh
+// token o CLI acabara de consumir, derrubando a conta pra "Reconectar" à
+// toa (o gotcha do `CLAUDE.md`: "nunca renovar a ativa pelo cofre"). Corrigido:
+// (1) a reaplicação foi REMOVIDA — a checagem só registra e avisa, nunca
+// escreve; (2) divergência de TOKEN sozinha não basta — só é corrida de
+// verdade se o par em disco for de OUTRA conta, decidido por IDENTIDADE
+// (`readCurrentAccountFingerprint`, sha256 do `accountUuid` de
+// `oauthAccount` em `~/.claude.json` — o MESMO mecanismo que
+// `isolated-login.ts` já usa pra provar "é a mesma conta", não um endpoint
+// de rede novo: mais barato, e a fonte que o próprio CLI mantém). Mesma
+// identidade da conta-alvo = rotação legítima (`switch-pair-rotated`, sem
+// aviso); identidade de outra conta = `switch-overwritten` (aviso); sem
+// base de comparação confiável (fingerprint da conta-alvo desconhecido, ou
+// `oauthAccount` ainda ausente — ele SOME do arquivo logo no passo 3 do
+// switch, até o CLI re-fetch) = `switch-check-inconclusive`, nunca avisa.
 
 import { classifyAutoSwitch, computePollIntervalMs, selectSwitchTarget } from './auto-switch';
 import { createReconnectRegistry, type ReconnectRegistry } from './reconnect-registry';
@@ -114,8 +133,24 @@ export interface AccountEngineDeps {
    * desligada (nenhum `scheduleRaceCheck` é armado).
    */
   readonly readCurrentPair?: () => CredentialPair | null;
-  /** Emenda 22/09 (item 5) — chamado quando a checagem de corrida detecta divergência; index.ts grava em `accounts-maintenance.log` (evento `switch-overwritten`). */
+  /**
+   * Emenda 22/09 (revisão, item 5) — lê o fingerprint (sha256 do
+   * `accountUuid`, `accountFingerprintFromClaudeJsonText`) do `oauthAccount`
+   * ATUAL de `~/.claude.json`, só leitura. É o desempate entre "o CLI
+   * renovou o token da própria conta nova" (legítimo) e "outro processo
+   * sobrescreveu com outra conta" (corrida de verdade) — ver o parágrafo
+   * "Revisão 22/09" no topo do arquivo. `null`/dep ausente = identidade
+   * ilegível (o `oauthAccount` some do arquivo logo após o switch, passo 3
+   * de `claude-state.ts`, até o CLI re-fetch); a checagem nunca avisa sem
+   * essa leitura.
+   */
+  readonly readCurrentAccountFingerprint?: () => string | null;
+  /** Emenda 22/09 (item 5) — chamado quando a checagem de corrida CONFIRMA (por identidade) que outra conta sobrescreveu; index.ts grava em `accounts-maintenance.log` (evento `switch-overwritten`) e a view expõe o aviso. */
   readonly onSwitchOverwritten?: (info: { readonly to: AccountId }) => void;
+  /** Emenda 22/09 (revisão, item 5) — token divergiu mas a identidade bate com a PRÓPRIA conta-alvo (rotação legítima do CLI); opcional, log-only, nunca vira aviso na view. */
+  readonly onSwitchPairRotated?: (info: { readonly to: AccountId }) => void;
+  /** Emenda 22/09 (revisão, item 5) — token divergiu e não há base de comparação confiável (fingerprint da conta-alvo desconhecido, ou `.claude.json` ilegível/sem `oauthAccount` ainda); nunca vira aviso — evita falso positivo. */
+  readonly onSwitchCheckInconclusive?: (info: { readonly to: AccountId }) => void;
   /** Emenda 22/09 (item 5) — injetável para teste; default `RACE_CHECK_DELAY_MS` (~45s, dentro da janela "~30-60s" pedida). */
   readonly raceCheckDelayMs?: number;
 }
@@ -138,7 +173,10 @@ export class AccountEngine {
   private readonly reconnectRegistry: ReconnectRegistry;
   private readonly onAutoSwitchLogged: AccountEngineDeps['onAutoSwitchLogged'];
   private readonly readCurrentPair: AccountEngineDeps['readCurrentPair'];
+  private readonly readCurrentAccountFingerprint: AccountEngineDeps['readCurrentAccountFingerprint'];
   private readonly onSwitchOverwritten: AccountEngineDeps['onSwitchOverwritten'];
+  private readonly onSwitchPairRotated: AccountEngineDeps['onSwitchPairRotated'];
+  private readonly onSwitchCheckInconclusive: AccountEngineDeps['onSwitchCheckInconclusive'];
   private readonly raceCheckDelayMs: number;
 
   private readonly mod: AccountMod | null;
@@ -171,7 +209,10 @@ export class AccountEngine {
     this.reconnectRegistry = deps.reconnectRegistry ?? createReconnectRegistry();
     this.onAutoSwitchLogged = deps.onAutoSwitchLogged;
     this.readCurrentPair = deps.readCurrentPair;
+    this.readCurrentAccountFingerprint = deps.readCurrentAccountFingerprint;
     this.onSwitchOverwritten = deps.onSwitchOverwritten;
+    this.onSwitchPairRotated = deps.onSwitchPairRotated;
+    this.onSwitchCheckInconclusive = deps.onSwitchCheckInconclusive;
     this.raceCheckDelayMs = deps.raceCheckDelayMs ?? RACE_CHECK_DELAY_MS;
 
     // Estado inicial segue o diagrama do data-model.md §3: `mod === null` é
@@ -417,12 +458,9 @@ export class AccountEngine {
 
   /**
    * Emenda 22/09 (item 5) — agenda, ~30-60s depois de um switch
-   * bem-sucedido, uma checagem que confere se `~/.claude/.credentials.json`
-   * ainda é o par que ESTE switch escreveu (comparado pelo `refreshToken` —
-   * não há como identificar "de quem" é um par arbitrário sem I/O extra, mas
-   * comparar contra o que o próprio motor gravou basta pra detectar a
-   * corrida: se divergiu, ALGUÉM escreveu por cima, ponto). Sem
-   * `readCurrentPair` (dep ausente), a checagem fica desligada.
+   * bem-sucedido, uma checagem ÚNICA (nunca repetida — ver a revisão no topo
+   * do arquivo: esta checagem NUNCA escreve, só observa). Sem `readCurrentPair`
+   * (dep ausente), a checagem fica desligada.
    */
   private scheduleRaceCheck(id: AccountId, writtenRefreshToken: string): void {
     if (this.raceCheckTimer) {
@@ -438,44 +476,40 @@ export class AccountEngine {
   }
 
   /**
-   * Emenda 22/09 (item 5) — `alreadyRetried` garante NO MÁXIMO uma
-   * reaplicação automática (nunca um loop de correção, como o dono pediu).
-   * A reaplicação é best-effort: reescreve o par que ESTE motor já sabe ser
-   * o certo (`switchResult.pair` original não é guardado — refaz o switch
-   * completo com o mod, que é quem tem o par fresco).
+   * Emenda 22/09 (revisão, item 5) — SÓ observa, nunca escreve. Token igual
+   * ao escrito: sem corrida, sem leitura extra. Token diferente: o
+   * DESEMPATE é por identidade (`readCurrentAccountFingerprint`), nunca por
+   * token sozinho — o CLI rotaciona o token da PRÓPRIA conta legitimamente
+   * (ver o parágrafo "revisão" no topo do arquivo), e tratar isso como
+   * corrida foi o bug que esta revisão corrige.
    */
-  private async performRaceCheck(id: AccountId, writtenRefreshToken: string, alreadyRetried = false): Promise<void> {
+  private async performRaceCheck(id: AccountId, writtenRefreshToken: string): Promise<void> {
     if (this.disposed || !this.readCurrentPair) return;
 
     const current = this.readCurrentPair();
-    if (current?.refreshToken === writtenRefreshToken) return; // nada mudou — sem corrida.
+    if (current?.refreshToken === writtenRefreshToken) return; // token bate — sem corrida, sem leitura extra.
 
+    const expectedFingerprint = this.config.localAccounts.find((a) => a.id === id)?.fingerprint;
+    const currentFingerprint = this.readCurrentAccountFingerprint?.() ?? null;
+
+    if (!expectedFingerprint || currentFingerprint === null) {
+      // Sem base de comparação confiável (conta-alvo sem fingerprint
+      // conhecido, ou `oauthAccount` ainda ausente/ilegível em
+      // `~/.claude.json`) — nunca avisa. Falso negativo é aceitável aqui;
+      // falso positivo (que a reaplicação da versão anterior causava) não é.
+      this.onSwitchCheckInconclusive?.({ to: id });
+      return;
+    }
+
+    if (currentFingerprint === expectedFingerprint) {
+      this.onSwitchPairRotated?.({ to: id }); // mesma conta — o CLI renovou o token dela; legítimo, sem aviso.
+      return;
+    }
+
+    // Identidade de OUTRA conta confirmada — corrida de verdade.
     this.lastSwitchOverwritten = { to: id, at: this.nowIso() };
     this.onSwitchOverwritten?.({ to: id });
     this.emit();
-
-    if (alreadyRetried || this.disposed || !this.mod || id !== this.config.activeAccountId) return;
-
-    // Reaplica a troca UMA vez — best-effort, sem captura de par rotacionado
-    // (o par que está lá agora é de origem desconhecida; não é seguro
-    // atribuí-lo a nenhuma conta específica, então não é gravado no mod de
-    // ninguém). Falha aqui só não gera novo agendamento — "no máximo uma
-    // reaplicação", não um retry indefinido.
-    const retryResult = await this.mod.switchTo(id);
-    if (this.disposed || retryResult.kind !== 'ok') return;
-    try {
-      await this.applySwitchFn(retryResult.pair, () => {
-        if (this.disposed) throw new Error('account engine disposed during race-check reapply');
-      });
-    } catch {
-      return;
-    }
-    // Confere a reaplicação depois da MESMA janela, mas com `alreadyRetried`
-    // travado — se divergir de novo, só registra: sem um segundo retry.
-    this.raceCheckTimer = this.setTimeoutFn(async () => {
-      this.raceCheckTimer = null;
-      await this.performRaceCheck(id, retryResult.pair.refreshToken, true);
-    }, this.raceCheckDelayMs);
   }
 
   private nowIso(): string {

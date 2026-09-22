@@ -314,16 +314,33 @@ mensagem seguinte — adiar não protegia nada). Mudanças:
   API (o CLI dispara `StopFailure` no lugar de `Stop` — fix de 21/09,
   `hooks-settings.ts`/`session-semaphore-manager.ts`), o motor relê a carga e
   avalia o auto-switch na hora, sem esperar o próximo tick do poll.
-- **Risco de corrida aceito, com acompanhamento.** O dono aceitou explicitamente
-  o risco raro de o CLI renovar `~/.claude/.credentials.json` no mesmo instante
-  em que o motor grava a conta nova, DESDE QUE haja forma de acompanhar isso:
-  ~30-60s depois de todo switch (auto ou manual), o motor confere se o par no
-  disco ainda é o que ele escreveu (comparado por `refreshToken` — não há como
-  identificar "de quem" é um par arbitrário sem I/O extra, mas comparar contra o
-  que o próprio motor gravou basta pra detectar a corrida). Divergência vira
-  `lastSwitchOverwritten` na view (aviso curto no painel) e um evento
-  `switch-overwritten` no log de manutenção, com **no máximo uma** reaplicação
-  automática — nunca um loop de correção.
+- **Risco de corrida aceito, com acompanhamento (revisado em 22/09 — a
+  primeira versão tinha um falso positivo perigoso).** O dono aceitou
+  explicitamente o risco raro de o CLI renovar `~/.claude/.credentials.json`
+  no mesmo instante em que o motor grava a conta nova, DESDE QUE haja forma de
+  acompanhar isso: ~30-60s depois de todo switch (auto ou manual), o motor
+  confere se o par no disco ainda é o que ele escreveu. A primeira versão
+  comparava só `refreshToken` e, ao divergir, REAPLICAVA a troca — só que o
+  CLI rotaciona o refresh token da PRÓPRIA conta LEGITIMAMENTE (ex.: access
+  token vencido renovado na primeira mensagem, dentro da janela de 45s); a
+  checagem via isso como "sobrescrito" e reaplicava com o par do COFRE, cujo
+  refresh token o CLI acabara de consumir, derrubando a conta pra "Reconectar"
+  à toa (o gotcha do `CLAUDE.md`: nunca renovar a ativa pelo cofre). Corrigido:
+  - **a reaplicação foi REMOVIDA** — a checagem só observa e registra, nunca
+    escreve em `~/.claude`;
+  - **token divergente sozinho não basta**: o desempate é por IDENTIDADE
+    (`readCurrentAccountFingerprint`, sha256 do `accountUuid` de `oauthAccount`
+    em `~/.claude.json` — o MESMO mecanismo que `isolated-login.ts` já usa pra
+    provar "é a mesma conta", sem endpoint de rede novo), comparada com o
+    fingerprint conhecido da conta-alvo (`LocalAccountMeta.fingerprint`).
+    Mesma identidade = rotação legítima (`switch-pair-rotated`, log-only, sem
+    aviso); identidade de OUTRA conta = corrida confirmada
+    (`lastSwitchOverwritten` na view, aviso curto no painel,
+    `switch-overwritten` no log); sem base de comparação confiável
+    (fingerprint da conta-alvo desconhecido, ou `oauthAccount` ainda ausente —
+    ele SOME do arquivo no passo 3 do switch, até o CLI re-fetch) =
+    `switch-check-inconclusive`, nunca avisa (falso negativo aceitável; falso
+    positivo não).
 
 ### Fase 3 — Dogfooding
 
