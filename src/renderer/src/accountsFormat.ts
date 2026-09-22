@@ -10,7 +10,7 @@ import { overallLoad } from '../../shared';
 // ainda não foram propagados ao barrel `shared/index.ts` (fora do escopo
 // deste bloco — só toca os arquivos listados no desenho); import direto do
 // módulo, mesmo padrão que `App.tsx` já usa pra `sessionAccountLabel`/`cliColor`.
-import type { AccountId, AutoSwitchEvent } from '../../shared/accounts';
+import type { AccountId, AutoSwitchEvent, SwitchOverwrittenWarning } from '../../shared/accounts';
 
 /** `% consumido` -> `% livre` (o inverso). `null` (carga desconhecida) permanece `null` — nunca vira `100` por acidente. */
 export function consumedToRemainingPercent(consumedPercent: number | null): number | null {
@@ -75,10 +75,21 @@ export function formatAutoSwitchEvent(
       ? `Troca automática às ${time}: para «${to}».`
       : `Troca automática às ${time}: de «${labelOf(event.from)}» para «${to}».`;
   }
-  if (event.kind === 'deferred') {
-    return `Troca automática adiada às ${time}: há sessão trabalhando. Ela sai quando a sessão terminar.`;
-  }
   return `Troca automática para «${labelOf(event.to)}» falhou às ${time} — ${AUTO_SWITCH_FAILURE_REASON_LABEL[event.reason]}.`;
+}
+
+/**
+ * 22/09 (emenda da D5, item 5) — narra a corrida detectada depois de um
+ * switch: o CLI pode ter sobrescrito `~/.claude/.credentials.json` no mesmo
+ * instante em que o app gravou a troca. `labelOf` mesma régua de
+ * `formatAutoSwitchEvent`.
+ */
+export function formatSwitchOverwrittenWarning(
+  warning: SwitchOverwrittenWarning,
+  labelOf: (id: AccountId) => string,
+  formatTime: (iso: string) => string = defaultAutoSwitchTime,
+): string {
+  return `A troca para «${labelOf(warning.to)}» às ${formatTime(warning.at)} pode ter sido sobrescrita por outro processo — confira a conta ativa.`;
 }
 
 /** D6 — "todas acima do limiar: avisa, não troca" (`autoSwitchState === 'saturated'`): nenhuma outra conta tem a folga mínima. */

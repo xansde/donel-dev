@@ -99,6 +99,21 @@ export function selectSwitchTarget(
  * nunca conta pra essa checagem — ela já está fora de cogitação por outro
  * motivo, sem leitura ou com.
  */
+// 011-contas-e-provedores, etapa 3, Fase 2, emenda 22/09 (item 3) — poll
+// adaptativo: 5 min é lento demais perto do limite (a conta pode estourar
+// entre dois polls), e 1 min o tempo todo seria tráfego à toa quando a carga
+// está de boa. `computePollIntervalMs` é PURA — o motor (account-engine.ts)
+// injeta e agenda o próximo tick com o valor que ela devolve.
+export const POLL_INTERVAL_NORMAL_MS = 5 * 60 * 1000;
+export const POLL_INTERVAL_HIGH_LOAD_MS = 60 * 1000;
+export const HIGH_LOAD_POLL_THRESHOLD = 80;
+
+/** `activeLoad` é o `overallLoad` da conta ATIVA (não de toda a lista) — `null` (carga desconhecida) usa o intervalo normal, nunca o agressivo. */
+export function computePollIntervalMs(activeLoad: number | null, highLoadThreshold: number = HIGH_LOAD_POLL_THRESHOLD): number {
+  if (activeLoad !== null && activeLoad >= highLoadThreshold) return POLL_INTERVAL_HIGH_LOAD_MS;
+  return POLL_INTERVAL_NORMAL_MS;
+}
+
 export function classifyAutoSwitch(accounts: readonly AccountSummary[], activeId: AccountId | null, policy: AutoSwitchPolicy): AutoSwitchState {
   if (!policy.enabled) return 'off';
   if (!activeId) return 'idle';

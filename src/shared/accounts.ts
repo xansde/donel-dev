@@ -69,11 +69,28 @@ export type AutoSwitchState = 'off' | 'idle' | 'armed' | 'saturated' | 'blind';
  * 011-contas-e-provedores, etapa 3, Fase 2 (D5) — última decisão do
  * auto-switch NESTE motor. Em memória de propósito: some ao reconstruir o
  * motor (F6) ou reiniciar o app — não é histórico persistido.
+ *
+ * 22/09 — `deferred` foi removido (emenda da D5, ver plan-etapa-3.md): o
+ * auto-switch não adia mais por sessão ocupada, então esse estado nunca mais
+ * é produzido.
  */
 export type AutoSwitchEvent =
   | { readonly kind: 'switched'; readonly from: AccountId | null; readonly to: AccountId; readonly at: string }
-  | { readonly kind: 'deferred'; readonly at: string }
   | { readonly kind: 'failed'; readonly to: AccountId; readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'io'; readonly at: string };
+
+/**
+ * 22/09 (011-contas-e-provedores, etapa 3, Fase 2, emenda da D5) — corrida
+ * observada depois de um switch (auto ou manual): o CLI pode renovar o par
+ * de `~/.claude/.credentials.json` no mesmo instante em que o app grava a
+ * conta nova, sobrescrevendo a troca. `SwitchOverwrittenWarning` é o que o
+ * motor detecta ~30-60s depois de um switch bem-sucedido (ver
+ * `AccountEngine` — checagem de corrida), exposto na view pro painel avisar
+ * o operador. Em memória, mesma régua de `lastAutoSwitch`.
+ */
+export interface SwitchOverwrittenWarning {
+  readonly to: AccountId;
+  readonly at: string;
+}
 
 export interface AutoSwitchPolicy {
   readonly enabled: boolean;
@@ -142,6 +159,8 @@ export interface AccountsViewDto {
   readonly autoSwitchState: AutoSwitchState;
   /** 011-contas-e-provedores, etapa 3, Fase 2 (D5) — última decisão do auto-switch neste motor; `null` = nenhuma ainda. Em memória (some ao reconstruir o motor ou reiniciar). */
   readonly lastAutoSwitch: AutoSwitchEvent | null;
+  /** 22/09 (emenda da D5) — corrida detectada depois do último switch; `null` = nenhuma (caso comum). Em memória, mesma régua de `lastAutoSwitch`. */
+  readonly lastSwitchOverwritten: SwitchOverwrittenWarning | null;
 }
 
 /**
@@ -171,10 +190,10 @@ export type ConnectModOutcome =
   | { readonly kind: 'connected'; readonly config: AccountsConfigDto }
   | { readonly kind: 'failed'; readonly reason: 'unauthorized' | 'offline' | 'vault-unavailable' | 'invalid-input' };
 
+/** 22/09 — `deferred`/`session-busy` foi removido: o switch (manual ou auto) nunca mais adia por sessão ocupada. */
 export type SwitchOutcome =
   | { readonly kind: 'switched'; readonly from: AccountId | null; readonly to: AccountId }
   | { readonly kind: 'already-active'; readonly account: AccountId }
-  | { readonly kind: 'deferred'; readonly reason: 'session-busy' }
   | { readonly kind: 'failed'; readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'io' };
 
 /** 011-contas-e-provedores, etapa 3, Fase 1 — "Remover conta" (plan-etapa-3.md §4.3). Bloqueada quando `id` é a conta ATIVA (ver `planRemoveAccount`, account-pool.ts). */

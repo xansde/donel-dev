@@ -1,7 +1,7 @@
 import { Button, Modal, TextInput, Toggle } from '@donel-dev/design-system';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AccountsConfigDto, AccountsViewDto, ConnectModInput, LoginStatusDto, RemoveAccountOutcome } from '../../shared';
-import { formatAccountLoad, formatAutoSwitchEvent, formatBlindWarning, formatSaturatedWarning } from './accountsFormat';
+import { formatAccountLoad, formatAutoSwitchEvent, formatBlindWarning, formatSaturatedWarning, formatSwitchOverwrittenWarning } from './accountsFormat';
 import { MigrationWizard } from './MigrationWizard';
 import styles from './AccountsPanel.module.css';
 
@@ -58,6 +58,7 @@ function emptyView(): AccountsViewDto {
     lastReadAt: null,
     autoSwitchState: 'idle',
     lastAutoSwitch: null,
+    lastSwitchOverwritten: null,
   };
 }
 
@@ -501,6 +502,15 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
               {view.autoSwitch.enabled && view.autoSwitchState === 'blind' ? (
                 <p className={styles.error} data-testid="accounts-autoswitch-blind">
                   {formatBlindWarning(view.autoSwitch)}
+                </p>
+              ) : null}
+
+              {/* 22/09 (emenda da D5, item 5) — corrida detectada depois do
+                  ÚLTIMO switch (o CLI pode ter sobrescrito o que o app
+                  gravou); some ao reconstruir o motor ou reiniciar o app. */}
+              {view.lastSwitchOverwritten ? (
+                <p className={styles.error} data-testid="accounts-switch-overwritten">
+                  {formatSwitchOverwrittenWarning(view.lastSwitchOverwritten, accountLabel)}
                 </p>
               ) : null}
 

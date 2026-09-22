@@ -70,6 +70,16 @@ export class SessionSemaphoreManager {
   /** ptyId cujo processo saiu com exit code != 0 — sobrepõe `done` -> `error` na emissão pública. */
   private readonly erroredPtyIds = new Set<string>();
   private readonly listeners = new Set<(update: SemaphoreUpdate) => void>();
+  /**
+   * Emenda 22/09 (011-contas-e-provedores, etapa 3, Fase 2, item 4) —
+   * `mapHookEventName` funde `Stop` e `StopFailure` no mesmo evento `stop`
+   * (fim de turno é fim de turno pro semáforo), então `onUpdate` sozinho não
+   * distingue "encerrou por erro de API" de "encerrou normal". Este segundo
+   * conjunto de ouvintes existe só pra isso: o gatilho imediato de
+   * auto-switch (index.ts) precisa saber especificamente de `StopFailure`,
+   * sem duplicar a máquina de estados pura.
+   */
+  private readonly stopFailureListeners = new Set<(ptyId: string) => void>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   private readonly tickIntervalMs: number;
@@ -141,6 +151,12 @@ export class SessionSemaphoreManager {
     return () => this.listeners.delete(listener);
   }
 
+  /** Emenda 22/09 (item 4) — ver comentário do campo `stopFailureListeners`. Mesmo padrão de unsubscribe de `onUpdate`. */
+  onStopFailure(listener: (ptyId: string) => void): () => void {
+    this.stopFailureListeners.add(listener);
+    return () => this.stopFailureListeners.delete(listener);
+  }
+
   getSnapshot(ptyId: string): SemaphoreUpdate | undefined {
     const state = this.ptyState.get(ptyId);
     if (!state) return undefined;
@@ -180,7 +196,15 @@ export class SessionSemaphoreManager {
     const ptyId = this.sessionToPty.get(claudeSessionId);
     if (!ptyId) return; // sessão claude não rastreada por este app (ex.: settings globais do usuário rodando outra sessão em paralelo).
 
-    const eventType = mapHookEventName((payload as Record<string, unknown>).hook_event_name);
+    const rawHookEventName = (payload as Record<string, unknown>).hook_event_name;
+    // Emenda 22/09 (item 4) — dispara ANTES do mapeamento genérico (que
+    // funde StopFailure em 'stop'), pro gatilho imediato de auto-switch
+    // saber especificamente que este fim de turno foi por erro de API.
+    if (rawHookEventName === 'StopFailure') {
+      for (const listener of this.stopFailureListeners) listener(ptyId);
+    }
+
+    const eventType = mapHookEventName(rawHookEventName);
     if (!eventType) return;
 
     const current = this.ptyState.get(ptyId) ?? INITIAL_SEMAPHORE_STATE;

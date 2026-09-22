@@ -313,6 +313,7 @@ export function App(): React.JSX.Element {
     // o consumo deles na statusbar é do Bloco 2 (fora do escopo deste bloco).
     autoSwitchState: 'idle',
     lastAutoSwitch: null,
+    lastSwitchOverwritten: null,
   });
   // T009 — estado do semáforo por aba (chave = tab.id), alimentado pelo
   // callback que cada TerminalPane levanta via onStateChange.

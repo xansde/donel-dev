@@ -29,8 +29,6 @@ class FakeMod implements AccountMod {
   captureCalls: { id: string; pair: CredentialPair }[] = [];
   keepAliveCalls = 0;
   hasKeepAlive = true;
-  // Etapa 3, Fase 2 — só pra provar que `retryDeferredAutoSwitch` sem
-  // deferred pendente NUNCA chama o mod (teste "mínimo" do desenho).
   switchToCalls = 0;
   // 011-contas-e-provedores, etapa 3, Fase 2 (revisão, R3) — promessas
   // controladas pelo teste pra segurar `listAccounts`/`switchTo`/
@@ -72,6 +70,19 @@ function makeEngine(overrides: {
   isSessionBusy?: () => boolean;
   now?: () => number;
   reconnectRegistry?: ReconnectRegistry;
+  onAutoSwitchLogged?: (entry: {
+    outcome: 'switched' | 'failed';
+    from: string | null;
+    to: string;
+    activeLoad: number | null;
+    targetLoad: number | null;
+    sessionBusy: boolean;
+  }) => void;
+  readCurrentPair?: () => CredentialPair | null;
+  onSwitchOverwritten?: (info: { to: string }) => void;
+  raceCheckDelayMs?: number;
+  setTimeoutFn?: typeof setTimeout;
+  clearTimeoutFn?: typeof clearTimeout;
 } = {}) {
   const applySwitch = overrides.applySwitch ?? vi.fn(async (_pair, onRotatedPairCaptured) => {
     await onRotatedPairCaptured({ accessToken: 'rotated', refreshToken: 'r', expiresAt: 1, scopes: [] });
@@ -85,6 +96,12 @@ function makeEngine(overrides: {
     isSessionBusy,
     now: overrides.now,
     reconnectRegistry: overrides.reconnectRegistry,
+    onAutoSwitchLogged: overrides.onAutoSwitchLogged,
+    readCurrentPair: overrides.readCurrentPair,
+    onSwitchOverwritten: overrides.onSwitchOverwritten,
+    raceCheckDelayMs: overrides.raceCheckDelayMs,
+    setTimeoutFn: overrides.setTimeoutFn,
+    clearTimeoutFn: overrides.clearTimeoutFn,
   });
   return { engine, applySwitch, isSessionBusy };
 }
@@ -176,8 +193,12 @@ describe('AccountEngine — unavailable pausa o auto-switch', () => {
   });
 });
 
-describe('AccountEngine — C5, adiamento por sessão ocupada', () => {
-  it('auto-switch devolve deferred/session-busy enquanto há sessão trabalhando', async () => {
+// Emenda 22/09 — o adiamento por sessão ocupada (C5) foi REMOVIDO: o
+// auto-switch troca na hora, mesmo com sessão `working`. `isSessionBusy`
+// segue injetado só para anotar `sessionBusy` no log (ver describe abaixo,
+// "onAutoSwitchLogged").
+describe('AccountEngine — emenda 22/09, auto-switch não adia mais por sessão ocupada', () => {
+  it('auto-switch troca na hora mesmo com sessão trabalhando', async () => {
     const mod = new FakeMod();
     mod.listAccountsResult = {
       kind: 'ok',
@@ -190,17 +211,17 @@ describe('AccountEngine — C5, adiamento por sessão ocupada', () => {
     });
     await engine.listAccounts();
     const result = await engine.evaluateAutoSwitch();
-    expect(result).toEqual({ kind: 'deferred', reason: 'session-busy' });
+    expect(result).toEqual({ kind: 'switched', from: 'a', to: 'b' });
   });
 
-  it('switch MANUAL não é adiado mesmo com sessão ocupada', async () => {
+  it('switch MANUAL também nunca foi adiado (comportamento preservado)', async () => {
     const mod = new FakeMod();
     const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }), isSessionBusy: () => true });
     const result = await engine.switchTo('b');
     expect(result).toEqual({ kind: 'switched', from: 'a', to: 'b' });
   });
 
-  it('sem sessão ocupada, auto-switch dispara o switch de verdade', async () => {
+  it('sem sessão ocupada, auto-switch dispara o switch de verdade (caso comum, sem regressão)', async () => {
     const mod = new FakeMod();
     mod.listAccountsResult = {
       kind: 'ok',
@@ -214,6 +235,76 @@ describe('AccountEngine — C5, adiamento por sessão ocupada', () => {
     await engine.listAccounts();
     const result = await engine.evaluateAutoSwitch();
     expect(result).toEqual({ kind: 'switched', from: 'a', to: 'b' });
+  });
+
+  it('AccountEngine não expõe mais retryDeferredAutoSwitch (removido junto com o adiamento)', async () => {
+    const { engine } = makeEngine();
+    expect((engine as unknown as Record<string, unknown>).retryDeferredAutoSwitch).toBeUndefined();
+  });
+});
+
+describe('AccountEngine — emenda 22/09 (item 2), onAutoSwitchLogged', () => {
+  it('switch bem-sucedido registra outcome switched com from/to/cargas/sessionBusy', async () => {
+    const mod = new FakeMod();
+    mod.listAccountsResult = {
+      kind: 'ok',
+      accounts: [account('a', { load: { fiveHour: 95, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } })],
+    };
+    const onAutoSwitchLogged = vi.fn();
+    const { engine } = makeEngine({
+      mod,
+      config: makeConfig({ activeAccountId: 'a', autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 } }),
+      isSessionBusy: () => true,
+      onAutoSwitchLogged,
+    });
+    await engine.listAccounts();
+    await engine.evaluateAutoSwitch();
+
+    expect(onAutoSwitchLogged).toHaveBeenCalledWith({
+      outcome: 'switched',
+      from: 'a',
+      to: 'b',
+      activeLoad: 95,
+      targetLoad: 10,
+      sessionBusy: true,
+    });
+  });
+
+  it('switch que falha registra outcome failed', async () => {
+    const mod = new FakeMod();
+    mod.listAccountsResult = {
+      kind: 'ok',
+      accounts: [account('a', { load: { fiveHour: 95, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } })],
+    };
+    mod.switchResult = { kind: 'failed', reason: 'offline' };
+    const onAutoSwitchLogged = vi.fn();
+    const { engine } = makeEngine({
+      mod,
+      config: makeConfig({ activeAccountId: 'a', autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 } }),
+      isSessionBusy: () => false,
+      onAutoSwitchLogged,
+    });
+    await engine.listAccounts();
+    await engine.evaluateAutoSwitch();
+
+    expect(onAutoSwitchLogged).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'failed', from: 'a', to: 'b', sessionBusy: false }),
+    );
+  });
+
+  it('sem alvo elegível, nunca chama onAutoSwitchLogged (não houve decisão)', async () => {
+    const mod = new FakeMod();
+    mod.listAccountsResult = { kind: 'ok', accounts: [account('a', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b')] };
+    const onAutoSwitchLogged = vi.fn();
+    const { engine } = makeEngine({
+      mod,
+      config: makeConfig({ activeAccountId: 'a', autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 } }),
+      onAutoSwitchLogged,
+    });
+    await engine.listAccounts();
+    await engine.evaluateAutoSwitch();
+
+    expect(onAutoSwitchLogged).not.toHaveBeenCalled();
   });
 });
 
@@ -337,25 +428,6 @@ describe('AccountEngine — D5, lastAutoSwitch', () => {
     expect(engine.getSnapshot().lastAutoSwitch).toEqual({ kind: 'switched', from: 'a', to: 'b', at: FIXED_ISO });
   });
 
-  it('evaluateAutoSwitch adiado (sessão ocupada) registra lastAutoSwitch deferred', async () => {
-    const mod = new FakeMod();
-    mod.listAccountsResult = {
-      kind: 'ok',
-      accounts: [account('a', { load: { fiveHour: 95, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } })],
-    };
-    const { engine } = makeEngine({
-      mod,
-      config: makeConfig({ activeAccountId: 'a', autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 } }),
-      isSessionBusy: () => true,
-      now: () => FIXED_NOW,
-    });
-    await engine.listAccounts();
-    const result = await engine.evaluateAutoSwitch();
-
-    expect(result).toEqual({ kind: 'deferred', reason: 'session-busy' });
-    expect(engine.getSnapshot().lastAutoSwitch).toEqual({ kind: 'deferred', at: FIXED_ISO });
-  });
-
   it('evaluateAutoSwitch cuja troca falha registra lastAutoSwitch failed', async () => {
     const mod = new FakeMod();
     mod.listAccountsResult = {
@@ -375,85 +447,18 @@ describe('AccountEngine — D5, lastAutoSwitch', () => {
     expect(engine.getSnapshot().lastAutoSwitch).toEqual({ kind: 'failed', to: 'b', reason: 'offline', at: FIXED_ISO });
   });
 
-  it('switch manual bem-sucedido limpa um lastAutoSwitch deferred pendente', async () => {
+  it('evaluateAutoSwitch sem alvo elegível devolve null sem tocar lastAutoSwitch', async () => {
     const mod = new FakeMod();
-    mod.listAccountsResult = {
-      kind: 'ok',
-      accounts: [account('a', { load: { fiveHour: 95, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } })],
-    };
+    mod.listAccountsResult = { kind: 'ok', accounts: [account('a', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b')] };
     const { engine } = makeEngine({
       mod,
       config: makeConfig({ activeAccountId: 'a', autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 } }),
-      isSessionBusy: () => true,
     });
-    await engine.listAccounts();
-    await engine.evaluateAutoSwitch();
-    expect(engine.getSnapshot().lastAutoSwitch?.kind).toBe('deferred');
-
-    await engine.switchTo('b'); // gesto manual — nunca adiado, mesmo com sessão ocupada.
-    expect(engine.getSnapshot().lastAutoSwitch).toBeNull();
-  });
-
-  it('evaluateAutoSwitch sem alvo elegível limpa um lastAutoSwitch deferred anterior', async () => {
-    const mod = new FakeMod();
-    mod.listAccountsResult = {
-      kind: 'ok',
-      accounts: [account('a', { load: { fiveHour: 95, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } })],
-    };
-    let busy = true;
-    const { engine } = makeEngine({
-      mod,
-      config: makeConfig({ activeAccountId: 'a', autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 } }),
-      isSessionBusy: () => busy,
-    });
-    await engine.listAccounts();
-    await engine.evaluateAutoSwitch();
-    expect(engine.getSnapshot().lastAutoSwitch?.kind).toBe('deferred');
-
-    busy = false;
-    // Carga da ativa caiu abaixo do limiar -> ninguém mais é candidata.
-    mod.listAccountsResult = {
-      kind: 'ok',
-      accounts: [account('a', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b', { load: { fiveHour: 5, sevenDay: 0, sonnet: 0, readAt: 'x' } })],
-    };
     await engine.listAccounts();
     const result = await engine.evaluateAutoSwitch();
 
     expect(result).toBeNull();
     expect(engine.getSnapshot().lastAutoSwitch).toBeNull();
-  });
-});
-
-describe('AccountEngine — retryDeferredAutoSwitch', () => {
-  it('sem deferred pendente não chama o mod, devolve null', async () => {
-    const mod = new FakeMod();
-    const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }) });
-    await engine.listAccounts();
-    const before = mod.switchToCalls;
-
-    const result = await engine.retryDeferredAutoSwitch();
-
-    expect(result).toBeNull();
-    expect(mod.switchToCalls).toBe(before);
-  });
-
-  it('com deferred pendente, reavalia de verdade', async () => {
-    const mod = new FakeMod();
-    mod.listAccountsResult = {
-      kind: 'ok',
-      accounts: [account('a', { load: { fiveHour: 95, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } })],
-    };
-    const { engine } = makeEngine({
-      mod,
-      config: makeConfig({ activeAccountId: 'a', autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 } }),
-      isSessionBusy: () => true,
-    });
-    await engine.listAccounts();
-    await engine.evaluateAutoSwitch(); // fica deferred.
-
-    const result = await engine.retryDeferredAutoSwitch();
-
-    expect(result).toEqual({ kind: 'deferred', reason: 'session-busy' }); // ainda ocupada -> adia de novo, mas reavaliou.
   });
 });
 
@@ -611,28 +616,27 @@ describe('AccountEngine — R3 (revisão), motor descartado não troca de conta'
     expect(mod.switchToCalls).toBe(switchCallsBefore);
   });
 
-  it('retryDeferredAutoSwitch depois de dispose() devolve null sem chamar o mod, mesmo com deferred pendente', async () => {
+  it('dispose() cancela a checagem de corrida agendada — readCurrentPair nunca é chamado depois', async () => {
     const mod = new FakeMod();
-    mod.listAccountsResult = {
-      kind: 'ok',
-      accounts: [account('a', { load: { fiveHour: 95, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } })],
-    };
-    const { engine } = makeEngine({
-      mod,
-      config: makeConfig({ activeAccountId: 'a', autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 } }),
-      isSessionBusy: () => true,
-    });
-    await engine.listAccounts();
-    await engine.evaluateAutoSwitch(); // sessão ocupada -> fica deferred.
-    expect(engine.getSnapshot().lastAutoSwitch?.kind).toBe('deferred');
+    const readCurrentPair = vi.fn(() => null);
+    const scheduled: Array<() => void> = [];
+    const setTimeoutFn = vi.fn((fn: () => void) => {
+      scheduled.push(fn);
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout;
+    const clearTimeoutFn = vi.fn();
+    const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }), readCurrentPair, setTimeoutFn, clearTimeoutFn: clearTimeoutFn as unknown as typeof clearTimeout });
+
+    await engine.switchTo('b');
+    expect(setTimeoutFn).toHaveBeenCalled();
 
     engine.dispose();
-    const switchCallsBefore = mod.switchToCalls;
+    expect(clearTimeoutFn).toHaveBeenCalled();
 
-    const result = await engine.retryDeferredAutoSwitch();
-
-    expect(result).toBeNull();
-    expect(mod.switchToCalls).toBe(switchCallsBefore);
+    // Mesmo se o timer (fake, nunca de verdade cancelado pelo ambiente de
+    // teste) disparasse depois, `performRaceCheck` tem que respeitar `disposed`.
+    scheduled[0]?.();
+    expect(readCurrentPair).not.toHaveBeenCalled();
   });
 
   it('listAccounts que termina depois de dispose() não chama os ouvintes de onChanged', async () => {
@@ -651,5 +655,171 @@ describe('AccountEngine — R3 (revisão), motor descartado não troca de conta'
     await listPromise;
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Emenda 22/09 (item 3) — poll adaptativo: 1 min perto do limite (carga da
+// ativa >= HIGH_LOAD_POLL_THRESHOLD), 5 min caso contrário.
+// ---------------------------------------------------------------------------
+
+describe('AccountEngine — emenda 22/09 (item 3), poll adaptativo', () => {
+  it('agenda o próximo tick com o intervalo normal (5 min) quando ainda não há leitura de carga', () => {
+    const mod = new FakeMod();
+    const setTimeoutFn = vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>) as unknown as typeof setTimeout;
+    const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }), setTimeoutFn });
+
+    engine.startPolling(() => false);
+
+    expect(setTimeoutFn).toHaveBeenCalledWith(expect.any(Function), 5 * 60 * 1000);
+  });
+
+  it('agenda o próximo tick com o intervalo agressivo (1 min) quando a ativa já leu carga >= 80', async () => {
+    const mod = new FakeMod();
+    mod.listAccountsResult = { kind: 'ok', accounts: [account('a', { load: { fiveHour: 85, sevenDay: 0, sonnet: 0, readAt: 'x' } })] };
+    const setTimeoutFn = vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>) as unknown as typeof setTimeout;
+    const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }), setTimeoutFn });
+    await engine.listAccounts();
+
+    engine.startPolling(() => false);
+
+    expect(setTimeoutFn).toHaveBeenCalledWith(expect.any(Function), 60 * 1000);
+  });
+
+  it('cada tick relê e reavalia SÓ com sessão viva, e reagenda o próximo tick', async () => {
+    const mod = new FakeMod();
+    mod.listAccountsResult = { kind: 'ok', accounts: [account('a', { load: { fiveHour: 10, sevenDay: 0, sonnet: 0, readAt: 'x' } }), account('b')] };
+    const scheduled: Array<() => void> = [];
+    const setTimeoutFn = vi.fn((fn: () => void) => {
+      scheduled.push(fn);
+      return scheduled.length as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout;
+    const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }), setTimeoutFn });
+
+    let hasLiveSession = false;
+    engine.startPolling(() => hasLiveSession);
+    expect(scheduled).toHaveLength(1);
+
+    hasLiveSession = true;
+    await scheduled[0]();
+
+    expect(engine.getSnapshot().lastReadAt).not.toBeNull(); // listAccounts rodou.
+    expect(scheduled).toHaveLength(2); // reagendou o próximo tick.
+  });
+
+  it('dispose() para o loop de reagendamento — nenhum novo tick depois dele', () => {
+    const mod = new FakeMod();
+    const scheduled: Array<() => void> = [];
+    const setTimeoutFn = vi.fn((fn: () => void) => {
+      scheduled.push(fn);
+      return scheduled.length as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout;
+    const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }), setTimeoutFn });
+
+    engine.startPolling(() => false);
+    expect(scheduled).toHaveLength(1);
+
+    engine.dispose();
+    // Se o tick agendado ainda disparasse (timer real, não cancelado pelo
+    // fake), `scheduleNext` tem que respeitar `disposed` e não reagendar.
+    void scheduled[0]();
+    expect(scheduled).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Emenda 22/09 (item 5) — checagem de corrida pós-switch: ~30-60s depois de
+// um switch bem-sucedido, confere se `~/.claude/.credentials.json` ainda é o
+// par que ESTE switch escreveu (comparado por `refreshToken`).
+// ---------------------------------------------------------------------------
+
+describe('AccountEngine — emenda 22/09 (item 5), checagem de corrida pós-switch', () => {
+  function makeRaceEngine(overrides: { readCurrentPair: () => CredentialPair | null; mod?: AccountMod }) {
+    const mod = overrides.mod ?? new FakeMod();
+    let scheduledFn: (() => void) | null = null;
+    const setTimeoutFn = vi.fn((fn: () => void) => {
+      scheduledFn = fn;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout;
+    const { engine, ...rest } = makeEngine({
+      mod,
+      config: makeConfig({ activeAccountId: 'a' }),
+      readCurrentPair: overrides.readCurrentPair,
+      setTimeoutFn,
+    });
+    return { engine, mod, runScheduledCheck: async () => scheduledFn?.(), ...rest };
+  }
+
+  it('sem readCurrentPair, nenhuma checagem é agendada', async () => {
+    const mod = new FakeMod();
+    const setTimeoutFn = vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>) as unknown as typeof setTimeout;
+    const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }), setTimeoutFn });
+
+    await engine.switchTo('b');
+
+    expect(setTimeoutFn).not.toHaveBeenCalled();
+  });
+
+  it('par no disco ainda bate com o escrito — sem corrida, sem aviso', async () => {
+    const writtenPair: CredentialPair = { accessToken: 'x', refreshToken: 'y', expiresAt: 1, scopes: [] };
+    const mod = new FakeMod();
+    mod.switchResult = { kind: 'ok', pair: writtenPair };
+    const { engine, runScheduledCheck } = makeRaceEngine({ mod, readCurrentPair: () => writtenPair });
+
+    await engine.switchTo('b');
+    await runScheduledCheck();
+
+    expect(engine.getSnapshot().lastSwitchOverwritten).toBeNull();
+  });
+
+  it('par no disco divergiu — registra lastSwitchOverwritten e chama onSwitchOverwritten', async () => {
+    const writtenPair: CredentialPair = { accessToken: 'x', refreshToken: 'y', expiresAt: 1, scopes: [] };
+    const mod = new FakeMod();
+    mod.switchResult = { kind: 'ok', pair: writtenPair };
+    const onSwitchOverwritten = vi.fn();
+    const scheduled: Array<() => void> = [];
+    const setTimeoutFn = vi.fn((fn: () => void) => {
+      scheduled.push(fn);
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout;
+    const { engine } = makeEngine({
+      mod,
+      config: makeConfig({ activeAccountId: 'a' }),
+      readCurrentPair: () => ({ accessToken: 'outro', refreshToken: 'outro-refresh', expiresAt: 2, scopes: [] }),
+      onSwitchOverwritten,
+      setTimeoutFn,
+      now: () => FIXED_NOW,
+    });
+
+    await engine.switchTo('b');
+    await scheduled[0]?.();
+
+    expect(onSwitchOverwritten).toHaveBeenCalledWith({ to: 'b' });
+    expect(engine.getSnapshot().lastSwitchOverwritten).toEqual({ to: 'b', at: FIXED_ISO });
+  });
+
+  it('divergência reaplica a troca NO MÁXIMO uma vez (nunca um loop)', async () => {
+    const mod = new FakeMod();
+    mod.switchResult = { kind: 'ok', pair: { accessToken: 'x', refreshToken: 'y', expiresAt: 1, scopes: [] } };
+    let scheduledFns: Array<() => void> = [];
+    const setTimeoutFn = vi.fn((fn: () => void) => {
+      scheduledFns.push(fn);
+      return scheduledFns.length as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout;
+    const { engine } = makeEngine({
+      mod,
+      config: makeConfig({ activeAccountId: 'a' }),
+      readCurrentPair: () => ({ accessToken: 'sempre-outro', refreshToken: 'sempre-diverge', expiresAt: 2, scopes: [] }),
+      setTimeoutFn,
+    });
+
+    await engine.switchTo('b'); // agenda check #1.
+    expect(mod.switchToCalls).toBe(1);
+
+    await scheduledFns[0]?.(); // diverge -> reaplica (switchToCalls=2) e agenda check #2.
+    expect(mod.switchToCalls).toBe(2);
+
+    await scheduledFns[1]?.(); // diverge de novo -> só registra, NÃO reaplica de novo.
+    expect(mod.switchToCalls).toBe(2);
   });
 });

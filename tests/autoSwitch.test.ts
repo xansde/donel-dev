@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { classifyAutoSwitch, eligibleSwitchCandidates, selectSwitchTarget } from '../src/main/accounts/auto-switch';
+import {
+  classifyAutoSwitch,
+  computePollIntervalMs,
+  eligibleSwitchCandidates,
+  HIGH_LOAD_POLL_THRESHOLD,
+  POLL_INTERVAL_HIGH_LOAD_MS,
+  POLL_INTERVAL_NORMAL_MS,
+  selectSwitchTarget,
+} from '../src/main/accounts/auto-switch';
 import type { AccountSummary, AutoSwitchPolicy } from '../src/shared/accounts';
 
 // T1110 (011-contas-e-provedores, etapa 1) — auto-switch.ts é FUNÇÃO PURA
@@ -232,5 +240,30 @@ describe('classifyAutoSwitch (puro)', () => {
   it('conta sem leitura mas indisponível NÃO vira blind — continua saturated', () => {
     const accounts = [withLoad('active', 95), withLoad('sem-folga', 80), account('indisponivel-sem-leitura', { load: null, available: false })];
     expect(classifyAutoSwitch(accounts, 'active', POLICY)).toBe('saturated');
+  });
+});
+
+// Emenda 22/09 (item 3) — poll adaptativo: 1 min perto do limite, 5 min
+// caso contrário (ou carga desconhecida).
+describe('computePollIntervalMs', () => {
+  it('carga desconhecida (null) usa o intervalo normal', () => {
+    expect(computePollIntervalMs(null)).toBe(POLL_INTERVAL_NORMAL_MS);
+  });
+
+  it('carga abaixo do limiar usa o intervalo normal', () => {
+    expect(computePollIntervalMs(HIGH_LOAD_POLL_THRESHOLD - 1)).toBe(POLL_INTERVAL_NORMAL_MS);
+  });
+
+  it('carga no limiar (inclusive) usa o intervalo agressivo', () => {
+    expect(computePollIntervalMs(HIGH_LOAD_POLL_THRESHOLD)).toBe(POLL_INTERVAL_HIGH_LOAD_MS);
+  });
+
+  it('carga acima do limiar usa o intervalo agressivo', () => {
+    expect(computePollIntervalMs(100)).toBe(POLL_INTERVAL_HIGH_LOAD_MS);
+  });
+
+  it('limiar customizado é respeitado', () => {
+    expect(computePollIntervalMs(50, 50)).toBe(POLL_INTERVAL_HIGH_LOAD_MS);
+    expect(computePollIntervalMs(49, 50)).toBe(POLL_INTERVAL_NORMAL_MS);
   });
 });
