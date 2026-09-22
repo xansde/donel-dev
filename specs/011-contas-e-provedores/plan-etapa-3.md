@@ -294,6 +294,54 @@ PR para `staging`, **uma** bateria manual.
   folga`) e, separado, quando falta a leitura de carga de outras contas (`sem
   leitura das outras contas`): os dois pedem gestos diferentes.
 
+**Emenda da D5, decisão do dono (22/09/2026) — o adiamento por sessão
+trabalhando foi REMOVIDO.** Observado ao vivo: com sessões longas sempre há
+alguém `working`, então a troca só acontecia depois do limite da conta
+estourar de verdade — inútil, e o próprio motivo do adiamento (a Fase 0,
+`e2e.md` §3, já tinha provado que uma sessão viva adota a conta nova na
+mensagem seguinte — adiar não protegia nada). Mudanças:
+
+- `evaluateAutoSwitch` troca NA HORA, mesmo com sessão `working`. O ramo
+  `deferred`/`retryDeferredAutoSwitch` foi removido do motor (`account-engine.ts`),
+  do vocabulário de `SwitchOutcome`/`AutoSwitchEvent` (`shared/accounts.ts`) e do
+  texto "Troca automática adiada..." do painel. `isSessionBusy` continua
+  injetado, mas só anota `sessionBusy` no evento gravado em
+  `accounts-maintenance.log` (`onAutoSwitchLogged`) — nunca mais decide.
+- **Poll adaptativo** (`computePollIntervalMs`, `auto-switch.ts`): 1 min quando a
+  carga da conta ativa já está >= 80 (perto do limite), 5 min caso contrário —
+  substitui o poll fixo de 5 min citado acima.
+- **Gatilho imediato em `StopFailure`**: quando uma sessão encerra por erro de
+  API (o CLI dispara `StopFailure` no lugar de `Stop` — fix de 21/09,
+  `hooks-settings.ts`/`session-semaphore-manager.ts`), o motor relê a carga e
+  avalia o auto-switch na hora, sem esperar o próximo tick do poll.
+- **Risco de corrida aceito, com acompanhamento (revisado em 22/09 — a
+  primeira versão tinha um falso positivo perigoso).** O dono aceitou
+  explicitamente o risco raro de o CLI renovar `~/.claude/.credentials.json`
+  no mesmo instante em que o motor grava a conta nova, DESDE QUE haja forma de
+  acompanhar isso: ~30-60s depois de todo switch (auto ou manual), o motor
+  confere se o par no disco ainda é o que ele escreveu. A primeira versão
+  comparava só `refreshToken` e, ao divergir, REAPLICAVA a troca — só que o
+  CLI rotaciona o refresh token da PRÓPRIA conta LEGITIMAMENTE (ex.: access
+  token vencido renovado na primeira mensagem, dentro da janela de 45s); a
+  checagem via isso como "sobrescrito" e reaplicava com o par do COFRE, cujo
+  refresh token o CLI acabara de consumir, derrubando a conta pra "Reconectar"
+  à toa (o gotcha do `CLAUDE.md`: nunca renovar a ativa pelo cofre). Corrigido:
+  - **a reaplicação foi REMOVIDA** — a checagem só observa e registra, nunca
+    escreve em `~/.claude`;
+  - **token divergente sozinho não basta**: o desempate é por IDENTIDADE
+    (`readCurrentAccountFingerprint`, sha256 do `accountUuid` de `oauthAccount`
+    em `~/.claude.json` — o MESMO mecanismo que `isolated-login.ts` já usa pra
+    provar "é a mesma conta", sem endpoint de rede novo), comparada com o
+    fingerprint conhecido da conta-alvo (`LocalAccountMeta.fingerprint`).
+    Mesma identidade = rotação legítima (`switch-pair-rotated`, log-only, sem
+    aviso); identidade de OUTRA conta = corrida confirmada
+    (`lastSwitchOverwritten` na view, aviso curto no painel,
+    `switch-overwritten` no log); sem base de comparação confiável
+    (fingerprint da conta-alvo desconhecido, ou `oauthAccount` ainda ausente —
+    ele SOME do arquivo no passo 3 do switch, até o CLI re-fetch) =
+    `switch-check-inconclusive`, nunca avisa (falso negativo aceitável; falso
+    positivo não).
+
 ### Fase 3 — Dogfooding
 
 `npm run dist:alfa` do checkout de `staging`, instalar, e rodar a semana nas 4
@@ -307,7 +355,7 @@ bloqueio total.
 | R1 | O CLI pode cachear o par em memória por processo → troca em voo não pega | É o gate da Fase 0. Se cair, o plano muda de forma antes de qualquer código |
 | R2 | Refresh token é de **uso único**: perder o par rotacionado mata a conta | Já é o desenho (`captureRotatedPair` antes de qualquer escrita, `claude-state.ts`). Cobrir com teste a captura no encerramento do app |
 | R3 | Conta parada semanas expira (refresh só acontece no switch) | Aceito na spec; a Fase 2.3 transforma isso em "reconectar", um gesto, não um beco |
-| R4 | 4 contas × poll de 5 min = ~48 chamadas/h ao endpoint de usage | Observar na Fase 3; se irritar, ler carga só da ativa + sob demanda das outras |
+| R4 | 4 contas × poll de 5 min = ~48 chamadas/h ao endpoint de usage; emenda 22/09 sobe pra ~60/h nas janelas em que a ativa está >= 80% (poll adaptativo de 1 min) | Observar na Fase 3; se irritar, ler carga só da ativa + sob demanda das outras |
 | R5 | Trocar para conta de plano diferente no meio da sessão pode tirar o modelo em uso | Mostrar o plano na lista e no aviso de troca |
 
 ## 6. Fora de escopo

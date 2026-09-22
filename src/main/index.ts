@@ -184,6 +184,7 @@ import type { AccountMod } from './accounts/account-mod';
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
+import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1 (F2) — valida o par colado à mão (fallback do "conectar conta"; login isolado é a Fase 1.2).
@@ -697,12 +698,29 @@ const accountsRefreshCoordinator = createRefreshCoordinator();
  * `~/.claude.json` DA MÁQUINA, derrubando o login do CLI de quem rodasse o
  * smoke. Achado da captura visual da etapa 1 (011), 04/08/2026.
  */
+/** Mesma resolução de `claudeJsonPath` que `applyAccountsClaudeStateSwitch` já fazia inline — extraída pra ser reaproveitada pela leitura de fingerprint da checagem de corrida (emenda 22/09, revisão do item 5). */
+function accountsClaudeJsonPath(): string {
+  const overrideHome = appConfig.accounts.claudeHome;
+  const realClaudeJsonPath = globalClaudeJsonPathFor(homedir());
+  return overrideHome === null ? realClaudeJsonPath : join(dirname(overrideHome), basename(realClaudeJsonPath));
+}
+
 function applyAccountsClaudeStateSwitch(pair: import('./accounts/account-mod').CredentialPair, onRotatedPairCaptured: (pair: import('./accounts/account-mod').CredentialPair | null) => void | Promise<void>): Promise<void> {
   const overrideHome = appConfig.accounts.claudeHome;
   const claudeHome = overrideHome ?? claudeHomeDirFor(homedir());
-  const realClaudeJsonPath = globalClaudeJsonPathFor(homedir());
-  const claudeJsonPath = overrideHome === null ? realClaudeJsonPath : join(dirname(overrideHome), basename(realClaudeJsonPath));
-  return applyAccountSwitch({ io: accountsClaudeStateIo, claudeHome, claudeJsonPath, onRotatedPairCaptured }, pair);
+  return applyAccountSwitch({ io: accountsClaudeStateIo, claudeHome, claudeJsonPath: accountsClaudeJsonPath(), onRotatedPairCaptured }, pair);
+}
+
+/**
+ * Emenda 22/09 (revisão, item 5) — lê o fingerprint do `oauthAccount` ATUAL
+ * de `~/.claude.json`, só leitura (mesmo parsing que `isolated-login.ts` já
+ * usa pra reconhecer "é a mesma conta", `accountFingerprintFromClaudeJsonText`).
+ * `null` se o arquivo não existir/estiver ilegível, ou o bloco `oauthAccount`
+ * ainda não tiver sido re-escrito pelo CLI (ele some no passo 3 do switch).
+ */
+function readCurrentAccountsClaudeJsonFingerprint(): string | null {
+  const text = accountsClaudeStateIo.readFileText(accountsClaudeJsonPath());
+  return accountFingerprintFromClaudeJsonText(text);
 }
 
 function broadcastAccountsChanged(view: AccountsViewDto): void {
@@ -733,8 +751,25 @@ const accountEngineHost = new AccountEngineHost({
       config,
       resolveMod: resolveAccountMod,
       applySwitch: applyAccountsClaudeStateSwitch,
+      // Emenda 22/09 (item 2) — não decide mais SE o auto-switch troca; só
+      // alimenta `sessionBusy` no log de `onAutoSwitchLogged` abaixo.
       isSessionBusy: () => accountsBusyPtyIds.size > 0,
       reconnectRegistry: accountsReconnectRegistry,
+      // Emenda 22/09 (item 2) — uma linha em accounts-maintenance.log por
+      // decisão de auto-switch que trocou ou tentou trocar, com from/to,
+      // carga dos dois lados e se havia sessão ocupada (observabilidade —
+      // não influencia mais a decisão).
+      onAutoSwitchLogged: (entry) => appendAccountsMaintenanceLog({ event: 'auto-switch', ...entry }),
+      // Emenda 22/09 (item 5) — mesma leitura só-leitura que o mod local usa
+      // pra ler a carga da conta ativa (D7); aqui serve pra checagem de
+      // corrida pós-switch (`scheduleRaceCheck`/`performRaceCheck`).
+      readCurrentPair: () => readCurrentCredentialPair({ io: accountsClaudeStateIo, claudeHome: appConfig.accounts.claudeHome ?? claudeHomeDirFor(homedir()) }),
+      // Emenda 22/09 (revisão, item 5) — desempate por IDENTIDADE (não por
+      // token): ver `readCurrentAccountsClaudeJsonFingerprint`.
+      readCurrentAccountFingerprint: () => readCurrentAccountsClaudeJsonFingerprint(),
+      onSwitchOverwritten: (info) => appendAccountsMaintenanceLog({ event: 'switch-overwritten', account: info.to }),
+      onSwitchPairRotated: (info) => appendAccountsMaintenanceLog({ event: 'switch-pair-rotated', account: info.to }),
+      onSwitchCheckInconclusive: (info) => appendAccountsMaintenanceLog({ event: 'switch-check-inconclusive', account: info.to }),
     });
     engine.onChanged(broadcastAccountsChanged);
     engine.start();
@@ -773,18 +808,39 @@ function applyAccountsEngineConfig(): void {
 
 /**
  * 011-contas-e-provedores, etapa 3, Fase 2 (D5, item 2 do Bloco 3) — dá baixa
- * em `accountsBusyPtyIds` (C5) e, quando esta baixa esvazia o conjunto,
- * retoma um auto-switch adiado (`retryDeferredAutoSwitch` só age se a última
- * decisão registrada for `deferred` — nunca gera tráfego à toa). Substitui os
- * dois pontos que faziam `accountsBusyPtyIds.delete(ptyId)` direto: o ramo
- * não-`working` do `semaphoreManager.onUpdate` e o `ptyManager.onExit` de
- * `createMainWindow`.
+ * em `accountsBusyPtyIds` (C5, só observabilidade desde a emenda 22/09).
+ * Substitui os dois pontos que faziam `accountsBusyPtyIds.delete(ptyId)`
+ * direto: o ramo não-`working` do `semaphoreManager.onUpdate` e o
+ * `ptyManager.onExit` de `createMainWindow`.
+ *
+ * Emenda 22/09 (item 2) — não retoma mais `retryDeferredAutoSwitch` (removido
+ * do motor junto com o adiamento por sessão ocupada): o auto-switch já troca
+ * na hora, em `evaluateAutoSwitch`, sem esperar sessão nenhuma esvaziar.
  */
 function releaseAccountsBusyPty(ptyId: string): void {
-  const removed = accountsBusyPtyIds.delete(ptyId);
-  if (removed && accountsBusyPtyIds.size === 0) {
-    void accountEngineHost.current()?.retryDeferredAutoSwitch().catch(() => undefined);
-  }
+  accountsBusyPtyIds.delete(ptyId);
+}
+
+/**
+ * Emenda 22/09 (item 4) — gatilho imediato: uma sessão que encerra por
+ * `StopFailure` (limite da conta, ou qualquer outro erro de API — o payload
+ * do hook não distingue os dois, então reavalia em qualquer `StopFailure`,
+ * como o dono pediu) relê a carga e avalia o auto-switch NA HORA, sem
+ * esperar o próximo tick do poll adaptativo (item 3).
+ */
+function triggerAccountsAutoSwitchOnStopFailure(): void {
+  const engine = accountEngineHost.current();
+  if (!engine) return;
+  void engine
+    .listAccounts()
+    .then(() => {
+      const current = accountEngineHost.current();
+      // Fase 2 (revisão) — mesma guarda de accounts:list force=true: só
+      // avalia se o motor não foi reconstruído durante a leitura.
+      if (current === engine) return engine.evaluateAutoSwitch();
+      return undefined;
+    })
+    .catch(() => undefined);
 }
 
 // Achado do T009 (ao escrever o `--settings` de hooks pela primeira vez):
@@ -1832,6 +1888,7 @@ function registerAccountsIpcHandlers(): void {
         lastReadAt: null,
         autoSwitchState: 'idle',
         lastAutoSwitch: null,
+        lastSwitchOverwritten: null,
       };
     }
     // 011-contas-e-provedores, etapa 3, Fase 2 (D5, item 3 do Bloco 3) —
@@ -2261,11 +2318,12 @@ void app.whenReady().then(async () => {
     if (update.state === 'working') {
       accountsBusyPtyIds.add(update.ptyId);
     } else {
-      // Fase 2 (D5, item 2 do Bloco 3) — sair de `working` pode ser a
-      // última sessão ocupada: retoma um auto-switch adiado, se houver.
       releaseAccountsBusyPty(update.ptyId);
     }
   });
+  // Emenda 22/09 (item 4) — StopFailure (limite da conta ou outro erro de
+  // API) reavalia o auto-switch imediatamente, sem esperar o poll.
+  semaphoreManager.onStopFailure(() => triggerAccountsAutoSwitchOnStopFailure());
   applyAccountsEngineConfig(); // F6 — 1ª chamada sempre 'built' (motor inerte se mod === null, C2).
 
   registerPtyIpcHandlers();

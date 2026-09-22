@@ -7,8 +7,9 @@ import {
   formatLoadWindow,
   formatOverallLoad,
   formatSaturatedWarning,
+  formatSwitchOverwrittenWarning,
 } from '../src/renderer/src/accountsFormat';
-import type { AccountLoad, AutoSwitchEvent, AutoSwitchPolicy } from '../src/shared/accounts';
+import type { AccountLoad, AutoSwitchEvent, AutoSwitchPolicy, SwitchOverwrittenWarning } from '../src/shared/accounts';
 
 // T1123 (011-contas-e-provedores, etapa 1) — teste de unidade do formatador
 // de carga, cobrindo a CONVERSÃO entre `AccountLoad` (% consumido) e o
@@ -83,13 +84,6 @@ describe('formatAutoSwitchEvent', () => {
     expect(formatAutoSwitchEvent(event, labelOf, fixedTime)).toBe('Troca automática às 10:32: para «Conta B».');
   });
 
-  it('deferred: avisa que ficou pra depois da sessão terminar', () => {
-    const event: AutoSwitchEvent = { kind: 'deferred', at: '2026-08-04T13:05:00.000Z' };
-    expect(formatAutoSwitchEvent(event, labelOf, fixedTime)).toBe(
-      'Troca automática adiada às 10:32: há sessão trabalhando. Ela sai quando a sessão terminar.',
-    );
-  });
-
   it.each([
     ['offline', 'sem conexão'],
     ['unauthorized', 'o servidor recusou'],
@@ -106,9 +100,20 @@ describe('formatAutoSwitchEvent', () => {
   });
 
   it('sem formatTime informado usa o default (HH:MM em pt-BR) — não trava sem a dependência injetada', () => {
-    const event: AutoSwitchEvent = { kind: 'deferred', at: '2026-08-04T13:05:00.000Z' };
+    const event: AutoSwitchEvent = { kind: 'switched', from: null, to: 'acc-b', at: '2026-08-04T13:05:00.000Z' };
     const text = formatAutoSwitchEvent(event, labelOf);
-    expect(text).toMatch(/^Troca automática adiada às \d{2}:\d{2}: há sessão trabalhando\. Ela sai quando a sessão terminar\.$/);
+    expect(text).toMatch(/^Troca automática às \d{2}:\d{2}: para «Conta B»\.$/);
+  });
+});
+
+// 22/09 (emenda da D5, item 5) — `formatSwitchOverwrittenWarning` narra a
+// corrida detectada depois de um switch (ver `AccountsViewDto.lastSwitchOverwritten`).
+describe('formatSwitchOverwrittenWarning', () => {
+  it('narra a conta-alvo e a hora, mesma régua de labelOf/formatTime', () => {
+    const warning: SwitchOverwrittenWarning = { to: 'acc-b', at: '2026-08-04T13:05:00.000Z' };
+    expect(formatSwitchOverwrittenWarning(warning, labelOf, fixedTime)).toBe(
+      'A troca para «Conta B» às 10:32 pode ter sido sobrescrita por outro processo — confira a conta ativa.',
+    );
   });
 });
 

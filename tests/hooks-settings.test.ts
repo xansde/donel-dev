@@ -29,14 +29,20 @@ describe('buildHookForwarderScript', () => {
 describe('buildHooksSettingsContent', () => {
   const scriptPath = 'C:\\Users\\test\\AppData\\Roaming\\donel-dev\\session-hook-forward.ps1';
 
-  it('registra todos os 6 eventos da matriz do spike', () => {
+  it('registra os 6 eventos da matriz do spike + StopFailure', () => {
     const content = buildHooksSettingsContent(scriptPath);
 
     for (const event of SEMAPHORE_HOOK_EVENTS) {
       expect(content.hooks[event]).toBeDefined();
       expect(content.hooks[event][0].hooks[0].type).toBe('command');
     }
-    expect(Object.keys(content.hooks)).toHaveLength(6);
+    expect(Object.keys(content.hooks)).toHaveLength(7);
+  });
+
+  it('registra StopFailure — o CLI dispara ele no lugar de Stop quando o limite da conta encerra o turno', () => {
+    const content = buildHooksSettingsContent(scriptPath);
+
+    expect(Object.keys(content.hooks)).toContain('StopFailure');
   });
 
   it('cada comando usa -File apontando pro script gerado, não -Command inline', () => {
