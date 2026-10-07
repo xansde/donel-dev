@@ -54,9 +54,10 @@ via `CLAUDE_CONFIG_DIR`.
   dono, 11/08, precedente de `skills/` em 03/08)**: `scripts/esteira-check.mjs`,
   `scripts/esteira-custo-fase.mjs` e `.esteira/review-policy.json` entram no
   espelho — testes espelhados os exercitam, e teste que só passa no repo de
-  trabalho não vale como gate. Os scripts de publicação seguem fora. Pendência
-  para a próxima promoção: quando a 4.0 chegar ao beta, `docs/esteira-dev/`
-  (nova casa do contrato) precisará da mesma decisão.
+  trabalho não vale como gate. Os scripts de publicação seguem fora. Na
+  promoção de 07/10 entrou também `docs/esteira-dev/` (só o pacote do
+  contrato, nova casa dele desde a 012); e `tests/esteiraLayoutCanalV2.test.ts`
+  ficou fora do espelho, porque confronta `specs/` e `.esteira/`.
 - **Promover**: `powershell -File scripts/sincronizar-publico.ps1` espelha
   `src/ tests/ patches/ design-system/` + configs de build e imprime o `git
   status` do lado público. Ele **não** commita nem faz push — revisar, rodar
