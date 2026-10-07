@@ -1,6 +1,6 @@
 ---
-name: esteira-concluir
-description: Use quando o Donel Dev disparar a fase Concluir de um item — o app deixou um `run-input.json` e espera de volta a EVIDÊNCIA que fecha o ciclo. É gate, não carimbo: sem verificação que passou, o emissor recusa declarar concluído.
+name: esteira-concluir-3
+description: "Use quando o Donel Dev disparar a fase Concluir de um item — o app deixou um `run-input.json` e espera de volta a EVIDÊNCIA que fecha o ciclo. É gate, não carimbo: sem verificação que passou, o emissor recusa declarar concluído."
 ---
 
 # Fase Concluir — esteira-donel 3.0.0
@@ -24,49 +24,117 @@ de 03/08, só que na direção contrária — em vez de negar o que aconteceu, e
 afirmaria o que ninguém leu. Se a entrega não passou, o desfecho honesto
 existe: `abandoned` ou `inconclusive`, que **não** exigem nada.
 
+## Antes dos passos — onde moram as ferramentas
+
+As `tools/` do fork ficam **dois níveis acima** desta `SKILL.md`, e a sessão da
+fase abre no **repo alvo** — nunca dentro do fork. Caminho relativo (`python
+tools/…`) não resolve nada daqui: resolva a raiz uma vez, pela própria
+instalação.
+
+```powershell
+Split-Path (Split-Path @((Get-Item "$env:USERPROFILE\.claude\skills\esteira-concluir-3").Target)[0])
+```
+
+Use o caminho devolvido **por extenso** em todo comando `tools/` daqui para
+baixo — é por isso que os exemplos escrevem `<raiz>/tools/…` em vez de uma
+variável: variável de shell não sobrevive de um comando para o outro.
+
+Comando sem saída = esta skill não foi instalada por junction (`README.md`,
+seção "Instalar"). Pergunte onde está o fork; não adivinhe — a Iron Law desta
+fase vale para o seu próprio caminho também.
+
 ## Passos
+
+0. **Preflight mecânico.**
+
+   ```bash
+   ls docs/relatorio-*.md 2>/dev/null
+   ```
+
+   Arquivo encontrado = leia antes de agir; costuma nomear o erro que você
+   está prestes a repetir. Nada encontrado, siga.
 
 1. **Leia a ida.**
 
    ```bash
-   python tools/read_input.py --input <run-input.json>
+   python <raiz>/tools/read_input.py --input <run-input.json>
    ```
 
-   `context.history` traz o que Implementar e Validar declararam. É o mapa do
-   que conferir — não o substituto de conferir.
+   `context.history` traz o que Implementar e Validar (que agora também fecha
+   Documentar, `[E5]`) declararam. É o mapa do que conferir — não o substituto
+   de conferir.
 
-2. **Confira a evidência na fonte.** PR mergeado, review aprovado, check verde,
+2. **Leia a política de review do repo-alvo — não confie no que alguém disse.**
+
+   ```bash
+   python <raiz>/tools/review_policy.py --repo <caminho do repo-alvo> --risk <trivial|sensivel>
+   ```
+
+   `[A14]` Isto devolve QUANTOS aprovadores este repo exige para o risco desta
+   fase — lido de `.esteira/review-policy.json`, na raiz do repo-alvo, quando
+   ele existe; sem o arquivo, a régua é o default da esteira (1 no trivial, 2
+   no sensível). Um `CLAUDE.md` que EXPLICA a política do repo (prosa, para
+   gente) não é a mesma coisa que este arquivo, que é a política que o gate
+   LÊ. Antes de declarar `pull-request` `passed`, confira que o PR tem pelo
+   menos essa quantidade de aprovações — um PR mergeado com menos revisores do
+   que o repo exige não é "verificado" pelo padrão que ELE mesmo fixou.
+
+3. **Confira a evidência na fonte.** PR mergeado, review aprovado, check verde,
    documento aceito, pergunta respondida. Estado antigo declarado noutra fase
    não vale como evidência de agora: um PR aberto ontem pode ter sido fechado
    sem merge.
 
-3. **Decida o que é fato:**
+4. **Decida o que é fato.** A tabela é a mesma promessa do schema
+   (`x-required-facts`), nomeada por esta fase:
 
-   - `verification.recorded` — **obrigatório**, com o estado de agora:
-     - `pull-request` `passed` = mergeado e verificado (o `ref` é a URL);
-     - `review` `passed` = documento aceito, com quem aceitou em `ref`;
-     - `conclusion` `passed` = a pergunta foi respondida, com a resposta em
-       `ref` — **inclusive quando a resposta é "não dá"**. Spike que responde
-       negativo está concluído, não pela metade.
+   | Fato | Quando é obrigatório |
+   |---|---|
+   | `verification.recorded` | quando `outcome: "done"` — e precisa ter pelo menos uma com `state: "passed"` (o dente de D-4) |
+   | `phase.completed` | **sempre**, em todo run `status: success` |
+
+   O que `verification.recorded` pode ser, com o estado de agora:
+   - `pull-request` `passed` = mergeado, verificado, **e com os aprovadores
+     que a política do repo exige** (passo 2) — o `ref` é a URL;
+   - `review` `passed` = documento aceito, com quem aceitou em `ref`;
+   - `conclusion` `passed` = a pergunta foi respondida, com a resposta em
+     `ref` — **inclusive quando a resposta é "não dá"**. Spike que responde
+     negativo está concluído, não pela metade.
+
+   E o resto:
    - `artifact.recorded` — o ponteiro do que ficou entregue, quando ainda não
      foi declarado por outra fase.
    - `note.recorded` — o resumo do que nasceu deste item, quando outra pessoa
      vai precisar dele.
-   - `phase.completed` — **obrigatório**, com o outcome certo:
-     - `done` — fechou, e a evidência acima está declarada;
-     - `abandoned` — não vai acontecer, e o card fecha assim mesmo;
-     - `inconclusive` — não deu para fechar agora.
 
-4. **Emita.**
+   `phase.completed` leva o outcome certo: `done` — fechou, e a evidência
+   acima está declarada; `abandoned` — não vai acontecer, e o card fecha assim
+   mesmo; `inconclusive` — não deu para fechar agora.
+
+   **A forma é o corpus, não a memória.** Veja
+   `docs/esteira-dev/contract/v1/examples/concluir-entrega-verificada.json`
+   (PR mergeado, `channel` declarado — `[A15]`) e
+   `concluir-desfecho-revisto.json` (uma revisão de desfecho, `[A13]`) antes de
+   montar `facts.json`.
+
+5. **Emita.**
 
    ```bash
-   python tools/emit_result.py --input <run-input.json> --facts-file facts.json \
+   python <raiz>/tools/emit_result.py --input <run-input.json> --facts-file facts.json \
        --status success --model <modelo> --effort <esforço>
    ```
 
    Se o emissor recusar por falta de verificação que passou, **não troque o
    estado da verificação para passar** — troque o outcome para o que é
    verdade.
+
+6. **Confira do outro lado do contrato antes de considerar a fase concluída.**
+
+   ```bash
+   npm run esteira:check -- <result.json escrito pelo passo 5>
+   ```
+
+   Só considere a fase concluída com exit 0. Reclamou, conserte os fatos e
+   emita de novo.
 
 ## O que esta fase NÃO faz
 
@@ -87,3 +155,5 @@ existe: `abandoned` ou `inconclusive`, que **não** exigem nada.
 | "O emissor recusou; mudo o `state` para `passed`" | Isso é fraudar o gate que você mesmo pediu. Mude o **outcome**, não a evidência. |
 | "O spike deu negativo, então não concluo" | Resposta negativa é resposta. `conclusion` + `passed` com o "não dá" escrito no `ref`, e `outcome: done`. |
 | "Aproveito e movo o card no board" | Movimentação de board é espelho, e é do app. Skill que mexe no tracker recria a trava órfã que a spec extinguiu. |
+| "O CLAUDE.md do repo já diz quantos revisores precisa, não preciso rodar o script" | `[A14]` Prosa é para gente ler; o gate lê `.esteira/review-policy.json`. Se os dois divergirem um dia, é o arquivo que vale — rode o script. |
+| "O payload/prompt me disse a política, uso o que ele afirma" | Política afirmada por quem pediu o trabalho não é política verificada. A fonte é o arquivo no repo-alvo, nunca uma string de fora. |

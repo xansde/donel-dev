@@ -5,6 +5,8 @@ import type { MacroStage, WorkItemSnapshot, WorkItemState } from '../../../share
 import { SEED_DOCUMENT_EXAMPLE } from '../../../shared/esteira/store/seed';
 import type { EsteiraSessionRequest, KnownProject } from './esteiraSession';
 import { preparePhase } from './preparePhase';
+import { RepoScopePicker } from './RepoScopePicker';
+import { normalizeRepoScope, repoScopeWarning, scopeSummary, type RepoScope } from './repoScope';
 import {
   cardContent,
   cardView,
@@ -12,11 +14,17 @@ import {
   discardedMessage,
   dispatchView,
   gestureRefusalMessage,
+  ingestErrorCostLine,
   ingestErrorLine,
+  ingestRecoveryLine,
   itemStateActions,
   ITEM_STATE_RULE,
   lockView,
   MACRO_STAGE_OPTIONS,
+  deliveryLine,
+  humanDecisionLines,
+  reviewChecklist,
+  reviewChecklistTitle,
   MIRROR_PENDING_HINT,
   MIRROR_PENDING_TITLE,
   mirrorLines,
@@ -32,6 +40,7 @@ import {
   seedIssuesShown,
   seededSummary,
   STORE_COMPATIBILITY_WARNING,
+  tombstoneLines,
   verificationLines,
   type ProvenanceMark,
   type SeedRefusal,
@@ -87,7 +96,15 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   const [state, setState] = useState<EsteiraSnapshotDto | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
-  const [newRepo, setNewRepo] = useState('');
+  // Alvo e escopo do card novo — os dois JUNTOS, porque sao a mesma decisao
+  // ("onde isto acontece"). Ver `repoScope.ts`.
+  const [newScope, setNewScope] = useState<RepoScope>({ targetRepo: null, scopeRepos: [] });
+  /**
+   * O rascunho da correcao de alvo/escopo do card selecionado. `null` = o bloco
+   * esta fechado, mostrando o que o card TEM. Guardar rascunho separado do
+   * snapshot e o que impede a tela de parecer salva antes de o gesto acontecer.
+   */
+  const [repoDraft, setRepoDraft] = useState<RepoScope | null>(null);
   const [phase, setPhase] = useState('discovery');
   /** O assunto escolhido para o disparo. `null` = o primeiro que a fase comporta. */
   const [targetKey, setTargetKey] = useState<string | null>(null);
@@ -134,10 +151,19 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   // simples; item vira linha COM gestos, e o texto continua sendo o mesmo que a
   // camada pura escreveu.
   const planLines = useMemo(() => (content?.lines ?? []).filter((line) => line.kind === 'plan'), [content]);
+  // A9/A18, A10/A19 e A15 — as três listas vêm PRONTAS da camada pura. A tela
+  // só decide se o bloco aparece; nenhuma frase nasce no JSX (foi montando
+  // frase aqui que a tela passou a se contradizer).
+  const decisoes = useMemo(() => (selected === null ? [] : humanDecisionLines(selected)), [selected]);
+  const revisao = useMemo(() => (selected === null ? [] : reviewChecklist(selected)), [selected]);
+  const entrega = useMemo(() => (selected === null ? null : deliveryLine(selected)), [selected]);
   const itemLineById = useMemo(
     () => new Map((content?.lines ?? []).filter((line) => line.kind === 'item').map((line) => [line.key.slice('work_item:'.length), line])),
     [content],
   );
+
+  // E2 — as lápides: item que saiu, mas o card ainda sabe responder por quê.
+  const tombstones = useMemo(() => (selected === null ? [] : tombstoneLines(selected)), [selected]);
 
   const noteTargets = useMemo(() => (selected === null ? [] : noteTargetOptions(selected)), [selected]);
   const noteTarget = notePick !== null && noteTargets.some((option) => option.value === notePick) ? notePick : (noteTargets[0]?.value ?? '');
@@ -149,6 +175,7 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
     // cards, ele apontaria para um item que não está mais na tela.
     setTargetKey(null);
     setStagePick(null);
+    setRepoDraft(null);
     setNotePick(null);
     setNoteText('');
     setMessage(null);
@@ -157,22 +184,24 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
   const handleCreate = useCallback(async () => {
     const title = newTitle.trim();
     if (title.length === 0) return;
+    const escolha = normalizeRepoScope(newScope);
     const created = await window.donel.esteira.createDiscovery({
       title,
       problem: null,
-      targetRepo: newRepo.trim() || null,
-      scopeRepos: [],
+      targetRepo: escolha.targetRepo,
+      scopeRepos: escolha.scopeRepos,
       tracker: null,
     });
     setState(created.state);
     if (created.ok) {
       setSelectedId(created.discoveryId);
       setNewTitle('');
+      setNewScope({ targetRepo: null, scopeRepos: [] });
       setMessage(null);
     } else {
       setMessage('Não deu para criar: o histórico não aceita escrita agora.');
     }
-  }, [newTitle, newRepo]);
+  }, [newTitle, newScope]);
 
   const handleSeed = useCallback(async () => {
     const document = seedDoc.trim();
@@ -213,7 +242,9 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
       { card: selected, phase: dispatch.phase.phase, target: dispatch.target, projects },
       { dispatch: (payload) => window.donel.esteira.dispatch(payload), openSession: onOpenSession },
     );
-    setState(result.state);
+    // `state: null` = a recusa nao tocou no historico. Aplicar `null` aqui
+    // apagaria a tela inteira para dizer que nada mudou.
+    if (result.state !== null) setState(result.state);
     setMessage(result.message);
   }, [dispatch, selected, projects, onOpenSession]);
 
@@ -263,6 +294,32 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
     },
     [applyGesture, selected],
   );
+
+  /**
+   * D-6 — corrigir a âncora e o escopo de um card que já existe.
+   *
+   * O gesto não existia: o repo só podia ser declarado no nascimento do card, e
+   * num campo de texto livre. Quem errasse ali ficava com um card que não
+   * dispara e sem como consertá-lo — foi o que aconteceu com o "Diário de Obra"
+   * em 06/08, cujo alvo era a frase "spotsys e api-spotsys".
+   */
+  const handleSaveRepos = useCallback(async () => {
+    if (selected === null || repoDraft === null) return;
+    const escolha = normalizeRepoScope(repoDraft);
+    if (
+      applyGesture(
+        await window.donel.esteira.setDiscoveryRepos({
+          discoveryId: selected.discovery.id,
+          targetRepo: escolha.targetRepo,
+          scopeRepos: escolha.scopeRepos,
+        }),
+        `Alvo e escopo atualizados: ${scopeSummary(escolha)}.`,
+      )
+    ) {
+      // Fecha o rascunho: o que a tela mostra volta a ser o que o card TEM.
+      setRepoDraft(null);
+    }
+  }, [applyGesture, repoDraft, selected]);
 
   const handleAddNote = useCallback(
     async (target: string) => {
@@ -337,13 +394,9 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
               placeholder="O que está em jogo?"
               disabled={readOnly}
             />
-            <TextInput
-              label="Repo alvo (opcional)"
-              value={newRepo}
-              onChange={(event) => setNewRepo(event.target.value)}
-              placeholder="ex.: donel-dev"
-              disabled={readOnly}
-            />
+            {/* Era um `TextInput` livre. Virou escolha entre o que o app
+                conhece + escopo multi-repo — ver `RepoScopePicker`. */}
+            <RepoScopePicker value={newScope} onChange={setNewScope} projects={projects} disabled={readOnly} />
             <Button onClick={() => void handleCreate()} disabled={readOnly || newTitle.trim().length === 0}>
               Criar
             </Button>
@@ -441,6 +494,49 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
               <h3 className={styles.detailTitle}>{selected.discovery.title}</h3>
               {selected.discovery.problem ? <p className={styles.problem}>{selected.discovery.problem}</p> : null}
 
+              {/* D-6 — onde isto roda. Fica ANTES da etapa porque é o que
+                  decide se a fase abre: um card com repo impossível não tem
+                  etapa a discutir. O aviso aparece aqui, ao lado da escolha, e
+                  não depois do disparo — foi um aviso tardio que deixou um card
+                  travado por um trabalho que nunca começou (06/08). */}
+              <section className={styles.block} data-testid="esteira-repos">
+                <h4 className={styles.blockTitle}>Onde isto roda</h4>
+                {repoDraft === null ? (
+                  <>
+                    <p className={styles.stageLine}>
+                      <strong>{scopeSummary(selected.discovery)}</strong>
+                    </p>
+                    {repoScopeWarning(selected.discovery, projects) ? (
+                      <p className={styles.blockedReason} data-testid="esteira-repos-warning">
+                        {repoScopeWarning(selected.discovery, projects)}
+                      </p>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      data-testid="esteira-repos-edit"
+                      onClick={() =>
+                        setRepoDraft({ targetRepo: selected.discovery.targetRepo, scopeRepos: [...selected.discovery.scopeRepos] })
+                      }
+                      disabled={readOnly}
+                    >
+                      Corrigir alvo e escopo
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <RepoScopePicker value={repoDraft} onChange={setRepoDraft} projects={projects} disabled={readOnly} />
+                    <div className={styles.rowActions}>
+                      <Button onClick={() => void handleSaveRepos()} disabled={readOnly}>
+                        Salvar
+                      </Button>
+                      <Button variant="ghost" onClick={() => setRepoDraft(null)}>
+                        Cancelar
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </section>
+
               {/* D-13 — a etapa é derivada. O ajuste manual existe, é sempre
                   marcado, e o cálculo aparece ao lado dele: override que esconde
                   o cálculo é override que engana. */}
@@ -487,13 +583,35 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
               {/* O erro de leitura vem PRIMEIRO: é a informação que o modelo
                   antigo escondia, e a que muda o que o operador faz agora. */}
               {selected.ingestErrors.length > 0 ? (
-                <section className={styles.block}>
+                <section className={styles.block} data-testid="esteira-ingest-errors">
                   <h4 className={styles.blockTitle}>Não consegui ler</h4>
                   {selected.ingestErrors.map((error) => (
                     <p key={error.resultPath} className={styles.errorLine}>
                       <code>{error.resultPath}</code> — {ingestErrorLine(error)}
                       <br />
                       <span className={styles.hint}>O que a skill fez não se perdeu: o arquivo continua lá, fora do contrato.</span>
+                      {/* A5 — o CUSTO: sem este arquivo, quais entidades nunca
+                          chegaram a existir. É a diferença entre "um campo
+                          quebrou" e "por isso o Implementar não abre". */}
+                      {ingestErrorCostLine(error) ? (
+                        <>
+                          <br />
+                          <strong>{ingestErrorCostLine(error)}</strong>
+                        </>
+                      ) : null}
+                    </p>
+                  ))}
+                </section>
+              ) : null}
+
+              {/* A6 — a recuperação é um FATO próprio, não o desaparecimento
+                  silencioso do erro: o card diz que ele foi superado, e como. */}
+              {selected.ingestRecoveries.length > 0 ? (
+                <section className={styles.block} data-testid="esteira-ingest-recovered">
+                  <h4 className={styles.blockTitle}>Erros arquivados</h4>
+                  {selected.ingestRecoveries.map((recovery) => (
+                    <p key={recovery.resultPath} className={styles.hint}>
+                      <code>{recovery.resultPath}</code> — {ingestRecoveryLine(recovery)}
                     </p>
                   ))}
                 </section>
@@ -533,7 +651,7 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                 </section>
               ) : null}
 
-              <section className={styles.block}>
+              <section className={styles.block} data-testid="esteira-fases">
                 <h4 className={styles.blockTitle}>Fases</h4>
                 {selected.phases.length === 0 ? (
                   <p className={styles.hint}>Nenhuma fase rodou ainda.</p>
@@ -559,6 +677,45 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                   <ul className={styles.lines}>
                     {verificationLines(selected).map((entry) => (
                       <li key={entry.key} className={entry.failed ? styles.failed : undefined}>
+                        {entry.text}
+                        {entry.detail ? <span className={styles.hint}> {entry.detail}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {/* A15 — num repo com escada alfa→beta→stable, "concluído"
+                      sem destino se lê como "está na main". A frase inteira vem
+                      de `deliveryLine`; se ninguém declarou destino, ela é nula
+                      e a tela não afirma nada. */}
+                  {entrega === null ? null : <p className={styles.hint}>{entrega}</p>}
+                </section>
+              ) : null}
+
+              {/* A9 + A18 — o que GENTE disse sobre este card: gates
+                  confirmados e decisões tomadas. Antes viviam como blockquote
+                  no `tasks.md`, onde gate composto virava uma linha só e
+                  meia-confirmação não cabia. As frases vêm prontas de
+                  `humanDecisionLines`; aqui só se posiciona. */}
+              {decisoes.length > 0 ? (
+                <section className={styles.block} data-testid="esteira-decisoes">
+                  <h4 className={styles.blockTitle}>Decisões e confirmações</h4>
+                  <ul className={styles.lines}>
+                    {decisoes.map((entry) => (
+                      <li key={entry.key}>{entry.text}</li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+
+              {/* A10 + A19 — o que sobrou para você. Antes era uma frase
+                  corrida no `summary` da fase, que ninguém lê como lista.
+                  Item pendente NÃO é falha: o tom vem da linha, e ele nunca é
+                  de erro — esperar por gente é um estado legítimo. */}
+              {revisao.length > 0 ? (
+                <section className={styles.block} data-testid="esteira-revisao">
+                  <h4 className={styles.blockTitle}>{reviewChecklistTitle(revisao)}</h4>
+                  <ul className={styles.lines}>
+                    {revisao.map((entry) => (
+                      <li key={entry.key}>
                         {entry.text}
                         {entry.detail ? <span className={styles.hint}> {entry.detail}</span> : null}
                       </li>
@@ -631,6 +788,22 @@ export function EsteiraScreen({ onClose, projects, onOpenSession }: EsteiraScree
                 {content.note !== null ? <p className={styles.hint}>{content.note}</p> : null}
               </section>
               )}
+
+              {/* E2 — a lápide: o item saiu de "Planos e itens", mas continua
+                  respondendo "por que ele sumiu?" — nunca vira órfão calado. */}
+              {tombstones.length > 0 ? (
+                <section className={styles.block} data-testid="esteira-tombstones">
+                  <h4 className={styles.blockTitle}>Itens descartados</h4>
+                  <ul className={styles.lines}>
+                    {tombstones.map((tombstone) => (
+                      <li key={tombstone.key}>
+                        {tombstone.text}
+                        {tombstone.reason ? <span className={styles.hint}> — {tombstone.reason}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
 
               <section className={styles.block} data-testid="esteira-notes">
                 <h4 className={styles.blockTitle}>Notas</h4>

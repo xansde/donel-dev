@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildMapView, type MapSelection } from '../src/renderer/src/DevMode/esteiraMapView';
+import { buildMapView, tabToFocusFor, tasksArtifactFor, type MapSelection } from '../src/renderer/src/DevMode/esteiraMapView';
+import { cardView } from '../src/renderer/src/Esteira/esteiraView';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
 import type { StoreEvent } from '../src/shared/esteira/store/storeFormat';
 
@@ -278,6 +279,8 @@ describe('buildMapView — o painel de detalhe', () => {
     const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);
     expect(view.detail?.title).toBe('Fila de importação trava sem sinal');
     expect(view.breadcrumb).toEqual(['Fila de importação trava sem sinal']);
+    // C3 — o assunto cru vai junto: é o que App.tsx usa pra pedir tasksArtifactFor sem duplicar a resolução do nó.
+    expect(view.detail?.subject).toEqual({ entity: 'discovery', id: 'dsc-1' });
   });
 
   it('o PR da fase volta a aparecer — e não só o PR (D-4)', () => {
@@ -411,5 +414,267 @@ describe('buildMapView — proveniência "semeado" nos nós (T-14)', () => {
         expect(card.tags.some((tag) => tag.text === 'semeado')).toBe(false);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C1 (batch N5) — passe de densidade: chip/glifo/uma-palavra no nó, a frase
+// honesta inteira desce para tooltip/painel de detalhe. NENHUMA informação
+// morre — muda de camada. `label` (curto) nasce ao lado de `text`/`line`
+// (a frase honesta), nas MESMAS funções puras.
+// ---------------------------------------------------------------------------
+describe('buildMapView — C1, densidade: metaLabel curto no card do item', () => {
+  it('o card do item ganha metaLabel = o TIPO (uma palavra) — a frase inteira (tipo · estado · repo · origem · trava) continua em metaLine', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), { ...SELECTION_VAZIA, itemId: 'wki-1' });
+    const item = view.levels[2].cards.find((card) => card.subject?.id === 'wki-1');
+    expect(item?.metaLabel).toBe('issue');
+    // Nada morreu: a frase inteira segue disponível pra tooltip/detalhe.
+    expect(item?.metaLine).toContain('issue');
+    expect(item?.metaLine).toContain('donel-dev');
+  });
+
+  it('discovery e plano não ganham metaLabel — a meta deles já é curta (contagem), sem frase pra encurtar', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);
+    expect(view.levels[0].cards[0].metaLabel).toBeNull();
+    expect(view.levels[1].cards[0].metaLabel).toBeNull();
+  });
+});
+
+describe('buildMapView — C1, densidade: closureLabel curto + tooltip da trava', () => {
+  it('item fechado ganha closureLabel curto; closureLine segue com a frase inteira', () => {
+    const events = [
+      ...eventosBase(),
+      evt('work_item.created', { id: 'wki-spike', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'spike', title: 'Um spike' }),
+      evt('verification.updated', {
+        subject: { entity: 'work_item', id: 'wki-spike' },
+        verificationKind: 'conclusion',
+        state: 'passed',
+        ref: 'não dá',
+      }),
+      evt('work_item.updated', { id: 'wki-spike', state: 'done' }),
+    ];
+    const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, itemId: 'wki-spike' });
+    const card = view.levels[2].cards.find((c) => c.subject?.id === 'wki-spike');
+    expect(card?.closureLabel).toBe('ver desfecho');
+    expect(card?.closureLine).toContain('não dá');
+  });
+
+  it('item aberto: closureLabel e closureLine são os dois null — nada a mostrar', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), { ...SELECTION_VAZIA, itemId: 'wki-1' });
+    const card = view.levels[2].cards.find((c) => c.subject?.id === 'wki-1');
+    expect(card?.closureLabel).toBeNull();
+    expect(card?.closureLine).toBeNull();
+  });
+
+  it('a etiqueta de trava carrega a frase honesta no title — dono, hora e sessão não somem mais', () => {
+    const events = [...eventosBase(), evt('lock.acquired', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', holderKind: 'app', acquiredAt: 'x' })];
+    const view = buildMapView(snapshotDe(events), SELECTION_VAZIA);
+    const etiqueta = view.levels[0].cards[0].tags.find((tag) => tag.text.startsWith('trava:'));
+    expect(etiqueta?.title).toContain('discovery');
+    expect(etiqueta?.title).not.toBeNull();
+  });
+});
+
+describe('buildMapView — C1, densidade: label curto em cada passo da trilha', () => {
+  it('passo já rodado: label é só a palavra de estado; text continua sendo a frase inteira', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);
+    const [passo] = view.levels[0].cards[0].trail;
+    expect(passo.text).toBe('discovery — concluída');
+    expect(passo.label).toBe('concluída');
+  });
+
+  it('passo "é a próxima": label curto, text continua a frase inteira', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);
+    const proxima = view.levels[1].cards[0].trail.find((step) => step.isNext)!;
+    expect(proxima.text).toBe('plano — é a próxima');
+    expect(proxima.label.length).toBeLessThan(proxima.text.length);
+  });
+
+  it('passo que falhou: label é curto ("falhou"), o código do motivo fica só na frase/detalhe', () => {
+    const events = [
+      ...eventosBase(),
+      evt('phase.failed', {
+        subject: { entity: 'work_item', id: 'wki-1' },
+        phase: 'implementar',
+        failure: { code: 'worktree-dirty', message: 'a worktree tem mudança não commitada' },
+      }),
+    ];
+    const view = buildMapView(snapshotDe(events), { ...SELECTION_VAZIA, itemId: 'wki-1' });
+    const item = view.levels[2].cards.find((card) => card.subject?.id === 'wki-1');
+    expect(item?.trail[0].text).toBe('implementar — falhou: worktree-dirty');
+    expect(item?.trail[0].label).toBe('falhou');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B1 (batch N5) — "retomar fase concluída por clique": o passo da trilha
+// carrega a sessão a reabrir (`resume`), quando a fase já fechou e há uma
+// sessão de CLI completa (cliSessionId + cwd) pra ela. Sem dispatch novo, sem
+// mudar estado do card — a decisão de QUAL sessão é a mesma de
+// `esteiraSession.resolveResume`, importada, nunca recalculada aqui.
+// ---------------------------------------------------------------------------
+describe('buildMapView — B1, o passo concluído carrega a sessão pra "Retomar"', () => {
+  function eventosComFaseConcluida(): StoreEvent[] {
+    return [
+      ...eventosBase(),
+      evt('session.started', {
+        id: 'ses-discovery-1',
+        cliSessionId: 'cli-discovery-1',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        phase: 'discovery',
+        cwd: 'C:/dev/donel-dev',
+        startedAt: '2026-08-04T09:00:00.000Z',
+      }),
+      evt('session.ended', { id: 'ses-discovery-1', at: '2026-08-04T09:05:00.000Z' }),
+    ];
+  }
+
+  it('passo concluído com sessão completa (cliSessionId + cwd): carrega resume', () => {
+    const view = buildMapView(snapshotDe(eventosComFaseConcluida()), SELECTION_VAZIA);
+    const passo = view.levels[0].cards[0].trail.find((step) => step.phase === 'discovery')!;
+    expect(passo.label).toBe('concluída');
+    expect(passo.resume).toEqual({ cliSessionId: 'cli-discovery-1', cwd: 'C:/dev/donel-dev' });
+  });
+
+  it('passo concluído SEM nenhuma sessão de CLI (ex.: fase semeada): resume é null — nada pra retomar', () => {
+    const view = buildMapView(snapshotDe(eventosBase()), SELECTION_VAZIA);
+    const passo = view.levels[0].cards[0].trail.find((step) => step.phase === 'discovery')!;
+    expect(passo.label).toBe('concluída');
+    expect(passo.resume).toBeNull();
+  });
+
+  it('passo que é "a próxima" (ainda não rodou) nunca carrega resume', () => {
+    const view = buildMapView(snapshotDe(eventosComFaseConcluida()), SELECTION_VAZIA);
+    const proxima = view.levels[1].cards[0].trail.find((step) => step.isNext)!;
+    expect(proxima.resume).toBeNull();
+  });
+
+  it('cadeia de handoff: resume aponta pra ÚLTIMA sessão da cadeia, não a primeira', () => {
+    const events = [
+      ...eventosComFaseConcluida(),
+      evt('session.started', {
+        id: 'ses-discovery-2',
+        cliSessionId: 'cli-discovery-2',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        phase: 'discovery',
+        cwd: 'C:/dev/donel-dev',
+        continuesSessionId: 'ses-discovery-1',
+        startedAt: '2026-08-04T09:06:00.000Z',
+      }),
+      evt('session.ended', { id: 'ses-discovery-2', at: '2026-08-04T09:10:00.000Z' }),
+    ];
+    const view = buildMapView(snapshotDe(events), SELECTION_VAZIA);
+    const passo = view.levels[0].cards[0].trail.find((step) => step.phase === 'discovery')!;
+    expect(passo.resume?.cliSessionId).toBe('cli-discovery-2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B2 (batch N5) — "navegar no mapa alterna para a aba da sessão VIVA do nó".
+// `tabToFocusFor` é a decisão pura: dado o snapshot, o assunto e as abas
+// abertas, qual aba (se alguma) merece o foco. Nó sem sessão viva não rouba
+// foco (devolve null); sessão fechada nunca é alvo (existe o retomar
+// explícito do B1 pra isso).
+// ---------------------------------------------------------------------------
+describe('tabToFocusFor — a aba da sessão viva do nó, quando existe', () => {
+  const abas = [
+    { id: 'tab-1', claudeSessionId: 'cli-viva' },
+    { id: 'tab-2', claudeSessionId: 'cli-outra' },
+  ];
+
+  it('sessão viva com aba aberta: devolve o id da aba', () => {
+    const events = [
+      ...eventosBase(),
+      evt('session.started', {
+        id: 'ses-1',
+        cliSessionId: 'cli-viva',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        phase: 'discovery',
+        startedAt: 'x',
+      }),
+    ];
+    const snapshot = snapshotDe(events);
+    expect(tabToFocusFor(snapshot, 'dsc-1', { entity: 'discovery', id: 'dsc-1' }, abas)).toBe('tab-1');
+  });
+
+  it('sem sessão viva nenhuma do assunto: null — nunca rouba foco', () => {
+    const snapshot = snapshotDe(eventosBase());
+    expect(tabToFocusFor(snapshot, 'dsc-1', { entity: 'discovery', id: 'dsc-1' }, abas)).toBeNull();
+  });
+
+  it('sessão viva, mas SEM aba aberta pra ela agora: null', () => {
+    const events = [
+      ...eventosBase(),
+      evt('session.started', {
+        id: 'ses-1',
+        cliSessionId: 'cli-sem-aba',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        phase: 'discovery',
+        startedAt: 'x',
+      }),
+    ];
+    const snapshot = snapshotDe(events);
+    expect(tabToFocusFor(snapshot, 'dsc-1', { entity: 'discovery', id: 'dsc-1' }, abas)).toBeNull();
+  });
+
+  it('sessão JÁ encerrada nunca é alvo — mesmo tendo uma aba com o mesmo cliSessionId por coincidência', () => {
+    const events = [
+      ...eventosBase(),
+      evt('session.started', {
+        id: 'ses-1',
+        cliSessionId: 'cli-viva',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        phase: 'discovery',
+        startedAt: 'x',
+      }),
+      evt('session.ended', { id: 'ses-1', at: 'y' }),
+    ];
+    const snapshot = snapshotDe(events);
+    expect(tabToFocusFor(snapshot, 'dsc-1', { entity: 'discovery', id: 'dsc-1' }, abas)).toBeNull();
+  });
+
+  it('sem snapshot: null, nunca lança', () => {
+    expect(tabToFocusFor(null, 'dsc-1', { entity: 'discovery', id: 'dsc-1' }, abas)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C3 (batch N5) — "o card do item mostra O QUE RODA JUNTO". `tasksArtifactFor`
+// é só a SELEÇÃO de qual artefato do item parece o tasks.md — não lê disco
+// (isso é IPC, no main); o texto já lido é interpretado por
+// `shared/tasksDoc.parseTasksDoc`/`taskScope`, meia camada acima da UI.
+// ---------------------------------------------------------------------------
+describe('tasksArtifactFor — qual artefato do item parece o tasks.md', () => {
+  function comArtefato(artifactKind: string, path: string) {
+    return snapshotDe([
+      ...eventosBase(),
+      evt('artifact.pinned', { owner: { entity: 'work_item', id: 'wki-1' }, artifactKind, location: 'repo', repo: 'donel-dev', path }),
+    ]);
+  }
+
+  it('artifactKind "tasks": é o escolhido', () => {
+    const card = cardView(comArtefato('tasks', 'specs/010-esteira-donel/tasks.md'), 'dsc-1')!;
+    const found = tasksArtifactFor(card, { entity: 'work_item', id: 'wki-1' });
+    expect(found?.path).toBe('specs/010-esteira-donel/tasks.md');
+  });
+
+  it('sem artifactKind "tasks", mas o caminho termina em tasks.md: também é escolhido — a única convenção real hoje é o nome do arquivo', () => {
+    const card = cardView(comArtefato('spec', 'specs/010-esteira-donel/tasks.md'), 'dsc-1')!;
+    const found = tasksArtifactFor(card, { entity: 'work_item', id: 'wki-1' });
+    expect(found?.artifactKind).toBe('spec');
+  });
+
+  it('artefato que não é tasks.md nem kind "tasks": null — nunca inventa escopo do que não é lista de tasks', () => {
+    const card = cardView(comArtefato('spec', 'specs/010-esteira-donel/spec.md'), 'dsc-1')!;
+    expect(tasksArtifactFor(card, { entity: 'work_item', id: 'wki-1' })).toBeNull();
+  });
+
+  it('artefato de OUTRO assunto no mesmo card nunca é escolhido para este item', () => {
+    const snapshot = snapshotDe([
+      ...eventosBase(),
+      evt('artifact.pinned', { owner: { entity: 'discovery', id: 'dsc-1' }, artifactKind: 'tasks', location: 'repo', repo: 'donel-dev', path: 'specs/x/tasks.md' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(tasksArtifactFor(card, { entity: 'work_item', id: 'wki-1' })).toBeNull();
   });
 });

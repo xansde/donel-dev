@@ -50,6 +50,9 @@ const OK: EsteiraDispatchDto = {
   state: estado(),
 };
 
+/** O repo do card, conhecido — para os testes que precisam CHEGAR ao dispatch. */
+const CONHECIDOS = [{ name: 'donel-dev', path: 'C:/repos/donel-dev' }];
+
 describe('preparePhase', () => {
   it('repo conhecido: dispara, abre a aba com o comando escrito e diz onde ela abriu', async () => {
     const openSession = vi.fn();
@@ -72,17 +75,52 @@ describe('preparePhase', () => {
     expect(request.cwd).toBe('C:/repos/donel-dev');
     expect(request.sessionId).toBe('ses-1');
     // Invariante 2: o comando é escrito, nunca enviado.
-    expect(request.command).toBe('/esteira-discovery --input "C:/inbox/run-1.json"');
+    // A2 — a skill do FORK (sufixo -3), nunca o plugin 2.1.0 sem sufixo.
+    expect(request.command).toBe('/esteira-discovery-3 --input "C:/inbox/run-1.json"');
     expect(request.command).not.toMatch(/[\r\n]/);
-    expect(result.message).toContain('O Enter é seu');
+    // B5 — o Enter deixou de ser gesto humano nesta frase: o app aperta
+    // sozinho assim que o terminal aceita entrada (ver esteiraSession.test.ts).
+    expect(result.message).toContain('aperta o Enter sozinho');
+    expect(result.message).not.toContain('O Enter é seu');
   });
 
-  it('repo que o app não conhece: a fase fica preparada, NENHUMA aba abre, e a razão nomeia o repo', async () => {
+  // Achado do dogfooding de 06/08 — o card "Diário de Obra" nasceu com repo
+  // `"spotsys e api-spotsys"` (uma frase, não uma pasta). O gesto gravava o
+  // contexto e travava o card ANTES de descobrir isso, e o card ficou preso num
+  // trabalho que nunca começou. A ordem agora é a inversa, e o teste prende as
+  // três consequências: sem dispatch, sem aba, sem estado novo.
+  it('repo que o app não conhece: NADA é gravado, o card não trava, e a razão nomeia o repo', async () => {
     const openSession = vi.fn();
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(OK), openSession });
+    const dispatch = vi.fn().mockResolvedValue(OK);
+    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch, openSession });
 
+    expect(dispatch).not.toHaveBeenCalled();
     expect(openSession).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    // Nada mudou no histórico — e o tipo diz isso, em vez de devolver o snapshot velho.
+    expect(result.state).toBeNull();
     expect(result.message).toContain('não conheço o repo "donel-dev"');
+    expect(result.message).toContain('não ficou travado');
+    // A recusa não pode citar um contexto que ela não gravou.
+    expect(result.message).not.toContain('C:/inbox/run-1.json');
+  });
+
+  // A distinção que o gesto passou a fazer: "sem repo" é declaração legítima da
+  // spec (discovery investiga problema, não repositório); "repo que não existe"
+  // é erro. Só o erro é que não deixa resíduo.
+  it('card SEM repo: dispara e grava o contexto — o que não abre é a aba, e a frase diz onde rodar', async () => {
+    const semRepo: StoreSnapshot = reduceEvents([evt('discovery.created', { id: 'dsc-2', title: 'Investigar a fila', targetRepo: null })]);
+    const card = cardView(semRepo, 'dsc-2')!;
+    const view = dispatchView(card, { phase: 'discovery', targetKey: null });
+    const openSession = vi.fn();
+    const dispatch = vi.fn().mockResolvedValue(OK);
+
+    const result = await preparePhase({ card, phase: view.phase.phase, target: view.target!, projects: [] }, { dispatch, openSession });
+
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ workspace: null }));
+    expect(openSession).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain('não declara repo');
     expect(result.message).toContain('C:/inbox/run-1.json');
   });
 
@@ -97,11 +135,12 @@ describe('preparePhase', () => {
         acquiredAt: '2026-08-04T09:30:00.000Z',
         cliSessionId: null,
         mirroredLabel: null,
+        resource: null,
       },
       state: estado(),
     };
     const openSession = vi.fn();
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('em andamento');
@@ -109,9 +148,94 @@ describe('preparePhase', () => {
     expect(openSession).not.toHaveBeenCalled();
   });
 
+  it('A8/A20: recurso ocupado por outro assunto — a recusa nomeia o repo e quem segura', async () => {
+    const recusa: EsteiraDispatchDto = {
+      ok: false,
+      reason: 'resource-busy',
+      lock: {
+        subject: { entity: 'work_item', id: 'wi-2' },
+        phase: 'implementar',
+        holderKind: 'app',
+        acquiredAt: '2026-08-05T09:00:00.000Z',
+        cliSessionId: null,
+        mirroredLabel: null,
+        resource: { targetRepo: 'donel-dev', branch: 'feat/wi-2', treePath: null },
+      },
+      state: estado(),
+    };
+    const openSession = vi.fn();
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('donel-dev');
+    expect(result.message).toContain('feat/wi-2');
+    expect(result.message).toContain('implementar');
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('B3: sessão viva já existente para o mesmo assunto+fase — a recusa não deixa abrir uma segunda', async () => {
+    const recusa: EsteiraDispatchDto = {
+      ok: false,
+      reason: 'session-active',
+      session: {
+        id: 'ses-1',
+        cliSessionId: 'cli-1',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        phase: 'discovery',
+        continuesSessionId: null,
+        handoffReason: null,
+        cwd: 'C:/repos/donel-dev',
+        model: null,
+        effort: null,
+        modelEffortAssumed: false,
+        startedAt: '2026-08-05T09:00:00.000Z',
+        endedAt: null,
+        endReason: null,
+        inputPath: 'C:/inbox/run-1.json',
+        resultPath: 'C:/outbox/run-1.json',
+        claimed: true,
+      },
+      state: estado(),
+    };
+    const openSession = vi.fn();
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('discovery');
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('A1: fase já concluída sobre este assunto — a recusa nomeia o desfecho e pede confirmação', async () => {
+    const recusa: EsteiraDispatchDto = {
+      ok: false,
+      reason: 'phase-done',
+      phase: {
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        phase: 'discovery',
+        startedAt: '2026-08-04T09:00:00.000Z',
+        completedAt: '2026-08-04T09:30:00.000Z',
+        outcome: 'done',
+        summary: null,
+        failure: null,
+        lastRunId: 'run-1',
+        channel: null,
+        risk: null,
+        seeded: false,
+      },
+      state: estado(),
+    };
+    const openSession = vi.fn();
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('concluída');
+    expect(result.message).toContain('confirme');
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
   it('histórico só de leitura: nada é gravado, e a tela diz isso', async () => {
     const recusa: EsteiraDispatchDto = { ok: false, reason: 'store-refused', state: estado() };
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession: vi.fn() });
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession: vi.fn() });
     expect(result.ok).toBe(false);
     expect(result.message).toContain('não aceita escrita');
   });
@@ -123,7 +247,7 @@ describe('preparePhase', () => {
       issues: [{ code: 'issue_without_target_repo', path: 'run.workspace', message: 'x' }],
       state: estado(),
     };
-    const result = await preparePhase({ ...alvo(), projects: [] }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession: vi.fn() });
+    const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession: vi.fn() });
     expect(result.message).toContain('issue_without_target_repo');
   });
 });

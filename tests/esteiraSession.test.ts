@@ -1,13 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUTO_START_CONFIRM_TIMEOUT_MS,
+  AUTO_START_ECHO_TIMEOUT_MS,
+  AUTO_START_ENTER,
+  AUTO_START_ENTER_DELAY_MS,
+  AUTO_START_MAX_ENTER_ATTEMPTS,
+  AUTO_START_RESEND_GAP_MS,
+  autoStartGiveUpMessage,
+  autoStartWriteSteps,
+  classifyAutoStartSubmission,
   dispatchHint,
   dispatchRefusedMessage,
   esteiraPhaseCommand,
   esteiraTabName,
+  isReadyForAutoStart,
+  lastSessionOfChain,
   lockStateOf,
+  nextAutoStartEnterAction,
+  noRepoPreparedMessage,
+  phaseDoneRefusedMessage,
   preparedMessage,
+  repoRefusalMessage,
+  resolveResume,
   resolveSessionCwd,
+  resourceBusyRefusedMessage,
+  sessionActiveRefusedMessage,
 } from '../src/renderer/src/Esteira/esteiraSession';
+import type { AutoStartSubmissionVerdict } from '../src/renderer/src/Esteira/esteiraSession';
+import { TRUST_DIALOG_CONFIRM_MARKER, TRUST_DIALOG_EXIT_MARKER } from '../src/shared/trustDialog';
+import type { SessionSnapshot } from '../src/shared/esteira/store/storeFormat';
 
 // Spec 010 / batch B1 — a decisao PURA do que o "Preparar" abre. Ela existe
 // separada do componente por dois motivos, os dois com historia neste repo:
@@ -21,12 +42,23 @@ import {
 //    melhor palpite.
 
 describe('esteiraPhaseCommand — o comando que a sessao recebe escrito', () => {
-  it('chama a skill da fase e aponta para o contexto que o app deixou', () => {
-    expect(esteiraPhaseCommand('discovery', 'C:/inbox/run-1.json')).toBe('/esteira-discovery --input "C:/inbox/run-1.json"');
+  // A2 — a skill que REALMENTE le `--input <run-input.json>` e o fork
+  // (`skills/esteira-donel-3.0.0`), instalado com sufixo `-3` (README,
+  // "Instalar") justamente para conviver sem colidir com o plugin `esteira:`
+  // da 2.1.0, que responde ao MESMO nome sem sufixo (`/esteira-discovery
+  // <card_id>`, um formato de argumento diferente). Sem o sufixo, o texto
+  // pré-digitado invoca o plugin errado — reincidiu em seis runs seguidos
+  // antes desta correção.
+  it('chama a skill do FORK (sufixo -3) e aponta para o contexto que o app deixou', () => {
+    expect(esteiraPhaseCommand('discovery', 'C:/inbox/run-1.json')).toBe('/esteira-discovery-3 --input "C:/inbox/run-1.json"');
+  });
+
+  it('NUNCA o nome sem sufixo — esse é o plugin 2.1.0, que espera <card_id>, não --input', () => {
+    expect(esteiraPhaseCommand('discovery', 'C:/inbox/run-1.json')).not.toMatch(/^\/esteira-discovery /);
   });
 
   it('serve qualquer nome de fase — `run.phase` e string livre no contrato (P-4)', () => {
-    expect(esteiraPhaseCommand('plano', 'C:/inbox/run-2.json')).toContain('/esteira-plano');
+    expect(esteiraPhaseCommand('plano', 'C:/inbox/run-2.json')).toContain('/esteira-plano-3');
   });
 
   it('NUNCA carrega quebra de linha — o Enter e gesto humano (invariante 2/CA-3)', () => {
@@ -61,26 +93,60 @@ describe('resolveSessionCwd — o alvo e explicito, sem segundo melhor palpite (
 });
 
 describe('preparedMessage — a frase depois do "Preparar"', () => {
-  const base = { phase: 'discovery', targetRepo: 'atlas', inputPath: 'C:/inbox/run-1.json' };
-
-  it('sessao aberta: diz onde ela abriu e que o Enter continua sendo seu', () => {
-    const message = preparedMessage({ ...base, outcome: { opened: true, tabName: '[atlas] discovery' } });
+  it('sessao aberta: diz onde ela abriu e que o app aperta o Enter sozinho (B5)', () => {
+    // B5 (05/08, pedido literal do dono): o gesto humano ACABA no clique em
+    // "Preparar" — o app aperta o próprio Enter assim que o terminal aceita
+    // entrada. Antes do B5 esta frase dizia "o Enter é seu"; ficou falsa no
+    // instante em que `autoStartWriteSteps` (então `withAutoEnter`) passou a
+    // existir, porque toda sessão de fase da esteira passa por
+    // `armEsteiraAutoStart` (App.tsx), sem exceção.
+    const message = preparedMessage({ phase: 'discovery', tabName: '[atlas] discovery' });
     expect(message).toContain('[atlas] discovery');
-    expect(message.toLowerCase()).toContain('enter');
+    expect(message).toContain('aperta o Enter sozinho');
+    expect(message).not.toContain('O Enter é seu');
+    expect(message).not.toContain('nunca envia por você');
   });
+});
 
-  it('repo desconhecido: nomeia o repo e diz que o app nao abre noutro lugar por palpite', () => {
-    const message = preparedMessage({ ...base, targetRepo: 'vega', outcome: { opened: false, reason: 'unknown-repo' } });
+// Emenda de 06/08 — a recusa por repo passou a acontecer ANTES de o gesto
+// gravar qualquer coisa. Antes disso ela dizia "preparada, mas a sessao nao
+// abriu" e citava o contexto em disco: o card ficava travado por um trabalho
+// que nunca comecaria (o card "Diario de Obra", preso desde 06/08 11:42).
+describe('repoRefusalMessage — a recusa que nao deixa residuo', () => {
+  it('nomeia o repo, invoca o "sem palpite" e diz o que NAO aconteceu', () => {
+    const message = repoRefusalMessage('discovery', 'vega', 'unknown-repo');
     expect(message).toContain('vega');
     expect(message).toContain('palpite');
-    // O trabalho preparado nao se perde: o caminho do contexto continua na frase.
-    expect(message).toContain('C:/inbox/run-1.json');
+    expect(message).toContain('Nada foi gravado');
+    expect(message).toContain('não ficou travado');
   });
 
-  it('card sem repo alvo: a fase fica preparada e a tela diz por que a sessao nao abriu', () => {
-    const message = preparedMessage({ ...base, targetRepo: null, outcome: { opened: false, reason: 'no-target-repo' } });
+  it('nao cita caminho de contexto nenhum — nao ha contexto a citar', () => {
+    expect(repoRefusalMessage('discovery', 'vega', 'unknown-repo')).not.toContain('inbox');
+  });
+
+  it('card sem alvo pede a ancora, em vez de acusar repo errado', () => {
+    const message = repoRefusalMessage('plano', null, 'no-target-repo');
     expect(message).toContain('sem repo alvo');
+    expect(message).toContain('âncora');
+  });
+});
+
+// O outro lado da mesma distincao: card SEM repo e declaracao legitima da spec
+// ("discovery investiga um problema, nao um repositorio"), entao ele PREPARA —
+// o que nao existe e a aba, porque nao ha cwd a inventar.
+describe('noRepoPreparedMessage — preparou, e agora e com voce', () => {
+  it('diz onde o contexto ficou e entrega o comando pronto para rodar', () => {
+    const message = noRepoPreparedMessage('discovery', 'C:/inbox/run-1.json');
+    expect(message).toContain('não declara repo');
     expect(message).toContain('C:/inbox/run-1.json');
+    // O sufixo `-3` do A2 vale aqui tambem: a frase entrega o MESMO comando que
+    // a aba receberia — sem ele, o texto copiado invoca o plugin 2.1.0.
+    expect(message).toContain('/esteira-discovery-3 --input');
+  });
+
+  it('o comando que ela mostra continua sem quebra de linha — a frase tambem e copiada e colada', () => {
+    expect(noRepoPreparedMessage('discovery', 'C:/inbox/run\n-1.json')).not.toMatch(/[\r\n]/);
   });
 });
 
@@ -111,8 +177,10 @@ describe('lockStateOf — um estado de trava, três fatos distintos', () => {
 });
 
 describe('dispatchHint — a razão do botão desabilitado usa a MESMA palavra do bloco', () => {
-  it('sem trava, explica o que o gesto faz', () => {
-    expect(dispatchHint(null)).toContain('O Enter é seu');
+  it('sem trava, explica o que o gesto faz — inclusive que o Enter é automático (B5)', () => {
+    const hint = dispatchHint(null);
+    expect(hint).toContain('aperta o Enter sozinho');
+    expect(hint).not.toContain('O Enter é seu');
   });
 
   it('sessão aberta: nunca chama de "preparada" o que o bloco chama de sessão aberta', () => {
@@ -146,5 +214,386 @@ describe('dispatchRefusedMessage — a recusa não inventa um estado que o card 
 
   it('recusa por skill rodando diz em andamento', () => {
     expect(dispatchRefusedMessage('running', 'plano', '03/08, 12:00')).toContain('em andamento');
+  });
+});
+
+describe('phaseDoneRefusedMessage — A1: redisparo de fase concluída exige confirmação', () => {
+  it('done: diz "concluída"', () => {
+    const message = phaseDoneRefusedMessage('discovery', 'done', '03/08, 12:00');
+    expect(message).toContain('concluída');
+    expect(message).toContain('discovery');
+    expect(message).toContain('03/08, 12:00');
+    expect(message).toContain('confirme');
+  });
+
+  it('abandoned: diz "abandonada" — não some com o desfecho real', () => {
+    expect(phaseDoneRefusedMessage('validar', 'abandoned', '03/08, 12:00')).toContain('abandonada');
+  });
+
+  it('inconclusive: "terminou sem conclusão" — não é "não realizada"', () => {
+    const message = phaseDoneRefusedMessage('discovery', 'inconclusive', '03/08, 12:00');
+    expect(message).toContain('terminou sem conclusão');
+    expect(message).not.toContain('não realizada');
+  });
+});
+
+describe('resourceBusyRefusedMessage — A8/A20: recusa por recurso ocupado', () => {
+  it('nomeia o repo, a fase que segura e desde quando — "registro visível" começa na frase', () => {
+    const message = resourceBusyRefusedMessage('atlas', null, 'implementar', '05/08, 09:00');
+    expect(message).toContain('atlas');
+    expect(message).toContain('implementar');
+    expect(message).toContain('05/08, 09:00');
+    expect(message).toContain('outro assunto');
+  });
+
+  it('branch conhecida aparece na frase', () => {
+    expect(resourceBusyRefusedMessage('atlas', 'feat/wi-1', 'implementar', '05/08, 09:00')).toContain('feat/wi-1');
+  });
+
+  it('branch desconhecida não inventa nome nenhum', () => {
+    const message = resourceBusyRefusedMessage('atlas', null, 'implementar', '05/08, 09:00');
+    expect(message).not.toContain('branch ""');
+  });
+});
+
+describe('sessionActiveRefusedMessage — B3: recusa por segunda sessão viva', () => {
+  it('nomeia a fase e desde quando a sessão está aberta', () => {
+    const message = sessionActiveRefusedMessage('implementar', '05/08, 09:00');
+    expect(message).toContain('implementar');
+    expect(message).toContain('05/08, 09:00');
+    expect(message).toContain('sessão aberta');
+  });
+});
+
+// wi-esteira4-autostart-enter (11/08) — o "bug fundador": o comando aparecia
+// digitado no terminal e nunca submetia, sem toast e sem erro, porque
+// `injectCommand` só garante que ESCREVEU no stdin, nunca que o CLI executou.
+// A correção de 11/08 separou o write do texto do write do Enter
+// (`autoStartWriteSteps` substituiu `withAutoEnter`, que colava os dois em
+// `${command}\r`), apostando que o REPL tratava chunk multi-caractere como
+// colagem em bloco.
+//
+// **A bateria manual de 13/08 REPROVOU essa teoria** (ver
+// `docs/relatorio-bateria-enter-2026-08-13.md`): separar os writes não
+// consertou, o bug reproduz FORA do app (node-pty direto contra `claude.exe`),
+// e o Enter do app é o MESMO byte pelo MESMO caminho do Enter humano — o que a
+// teoria da colagem não explicaria. A falha é NÃO DETERMINÍSTICA (varredura
+// 50/150/400/1000/2000 ms não monotônica; 0/6 repetindo o mesmo 150 ms).
+//
+// Os dois passos CONTINUAM — como higiene, não como cura. O que de fato
+// conserta está em `classifyAutoStartSubmission`/`nextAutoStartEnterAction`
+// (wi-esteira4-enter-confirmado, testados logo abaixo): confirmar no buffer
+// renderizado que a linha saiu da caixa de input, reenviar com teto, e dizer
+// num toast quando não deu — em vez de encerrar calado.
+describe('B5/wi-esteira4-autostart-enter — autoStartWriteSteps: o PLANO de escrita do auto-start', () => {
+  it('devolve o comando pré-digitado e o Enter como DOIS passos, nunca um texto só', () => {
+    expect(autoStartWriteSteps(esteiraPhaseCommand('discovery', 'C:/inbox/run-1.json'))).toEqual([
+      '/esteira-discovery-3 --input "C:/inbox/run-1.json"',
+      '\r',
+    ]);
+  });
+
+  it('o primeiro passo NUNCA carrega o Enter embutido — é a regressão que causou o bug', () => {
+    const [text] = autoStartWriteSteps('/esteira-plano-3 --input "x.json"');
+    expect(text).not.toMatch(/\r/);
+    expect(text).not.toMatch(/\n/);
+  });
+
+  it('o segundo passo é SÓ o Enter — nenhum texto colado nele', () => {
+    const [, enter] = autoStartWriteSteps('/esteira-plano-3 --input "x.json"');
+    expect(enter).toBe(AUTO_START_ENTER);
+    expect(enter).toHaveLength(1);
+  });
+
+  it('AUTO_START_ENTER é exatamente `\\r` — o mesmo caractere de Enter usado no resto do repo (buildModelInjection)', () => {
+    expect(AUTO_START_ENTER).toBe('\r');
+  });
+});
+
+describe('B5 — isReadyForAutoStart: a prova de que o CLI aceita input, antes de mandar o Enter', () => {
+  const BANNER = ['✻ Welcome to Claude Code!', '> '];
+  const TRUST = [...BANNER, TRUST_DIALOG_CONFIRM_MARKER, TRUST_DIALOG_EXIT_MARKER];
+  const IDLE_FOOTER_NO_BANNER = [
+    '───────────────────────────────────────────────────────────────',
+    '❯ /esteira-implementar-3 --input "C:/inbox/run-1.json"',
+    '───────────────────────────────────────────────────────────────',
+    '  ⏵⏵ bypass permissions on (shift+tab to cycle)              /rc · focus',
+  ];
+
+  it('banner do CLI já desenhado: pronto — o boot leva 14,5-20,9s e é isso que se espera', () => {
+    expect(isReadyForAutoStart({ renderedLines: BANNER })).toBe(true);
+  });
+
+  it('barra de status do prompt ocioso, sem banner: também pronto (mesmo achado do T329)', () => {
+    expect(isReadyForAutoStart({ renderedLines: IDLE_FOOTER_NO_BANNER })).toBe(true);
+  });
+
+  it('sem banner e sem barra de status: CLI ainda subindo — não manda nada', () => {
+    expect(isReadyForAutoStart({ renderedLines: ['conectando...'] })).toBe(false);
+    expect(isReadyForAutoStart({ renderedLines: [] })).toBe(false);
+  });
+
+  it('diálogo de confiança de pasta na tela BLOQUEIA — um Enter aqui cairia dentro da pergunta', () => {
+    expect(isReadyForAutoStart({ renderedLines: TRUST })).toBe(false);
+  });
+
+  it('NÃO depende do semáforo — sessão nova nunca chega a "waiting" antes do 1º turno, e é ANTES do 1º turno que o auto-start precisa disparar', () => {
+    // Ao contrário de `isReadyToPreType`, esta função nem recebe semáforo:
+    // o único jeito de ela liberar é o CLI ter desenhado banner ou barra.
+    expect(isReadyForAutoStart({ renderedLines: BANNER })).toBe(true);
+  });
+});
+
+// ===========================================================================
+// wi-esteira4-enter-confirmado (13/08) — CONFIRMA E REENVIA
+//
+// O conserto do bug fundador, depois que a bateria de 13/08 reprovou a teoria
+// da colagem em bloco (ver o comentário acima de `autoStartWriteSteps`). O
+// auto-start deixa de tratar "escrevi no stdin" como "o CLI executou": ele
+// CONFIRMA no buffer renderizado que a linha saiu da caixa de input, REENVIA o
+// Enter com teto, e quando não consegue confirmar DIZ isso num toast.
+//
+// Duas funções puras, duas responsabilidades: `classifyAutoStartSubmission`
+// lê o ESTADO (o comando ainda está na caixa?), `nextAutoStartEnterAction`
+// decide a AÇÃO (escrever, esperar, desistir). Nenhuma das duas toca timer —
+// quem os segura é o `armEsteiraAutoStart` (App.tsx), mesmo molde do
+// `primeSequencer`.
+// ===========================================================================
+
+describe('classifyAutoStartSubmission — o comando ainda está na caixa de input?', () => {
+  const RULER = '───────────────────────────────────────────────────────────────';
+  const FOOTER = '  ⏵⏵ bypass permissions on (shift+tab to cycle)              /rc · focus';
+  const COMMAND = '/esteira-implementar-3 --input "C:/inbox/run-1.json"';
+  const boxWith = (...inside: string[]): string[] => [RULER, ...inside, RULER, FOOTER];
+
+  it('comando parado na caixa: `still-typed` — o estado exato do bug', () => {
+    expect(classifyAutoStartSubmission({ renderedLines: boxWith(`❯ ${COMMAND}`), command: COMMAND })).toBe('still-typed');
+  });
+
+  it('caixa vazia: `gone`', () => {
+    expect(classifyAutoStartSubmission({ renderedLines: boxWith('❯ '), command: COMMAND })).toBe('gone');
+  });
+
+  it('ECO PARCIAL (só um prefixo do comando na caixa) é `unknown`, nunca `still-typed`', () => {
+    // Um `\r` aqui submeteria o comando TRUNCADO — o pior erro possível.
+    const parcial = boxWith('❯ /esteira-implementar-3 --inp');
+    expect(classifyAutoStartSubmission({ renderedLines: parcial, command: COMMAND })).toBe('unknown');
+  });
+
+  it('comando quebrado pelo wrap continua sendo `still-typed`', () => {
+    const wrapped = boxWith('❯ /esteira-implementar-3 --input "C:/inbox/', 'run-1.json"');
+    expect(classifyAutoStartSubmission({ renderedLines: wrapped, command: COMMAND })).toBe('still-typed');
+  });
+
+  it('o eco do comando ACIMA da régua de topo não conta — a decisão é POSICIONAL', () => {
+    // Depois de submeter, o comando CONTINUA na tela, no transcript. "O comando
+    // aparece no buffer" é verdade nos DOIS estados; por isso a prova é a caixa.
+    const submetido = [`❯ ${COMMAND}`, '  ⎿  rodando...', ...boxWith('❯ ')];
+    expect(classifyAutoStartSubmission({ renderedLines: submetido, command: COMMAND })).toBe('gone');
+  });
+
+  it('placeholder do CLI na caixa vazia é `gone` — o nosso comando saiu de lá', () => {
+    const placeholder = boxWith('❯ Try "edit <filepath> to..."');
+    expect(classifyAutoStartSubmission({ renderedLines: placeholder, command: COMMAND })).toBe('gone');
+  });
+
+  it('menu na caixa é `unknown` — jamais `gone` (não é sucesso) nem `still-typed` (não autoriza Enter)', () => {
+    const menu = boxWith('❯ 1. Yes, proceed', '  2. No');
+    expect(classifyAutoStartSubmission({ renderedLines: menu, command: COMMAND })).toBe('unknown');
+  });
+
+  it('sem moldura legível: `unknown` — ausência de evidência nunca vira ação', () => {
+    expect(classifyAutoStartSubmission({ renderedLines: ['✻ Welcome to Claude Code!'], command: COMMAND })).toBe('unknown');
+    expect(classifyAutoStartSubmission({ renderedLines: [], command: COMMAND })).toBe('unknown');
+  });
+
+  it('a barra de status do rodapé NÃO decide nada — ela é idêntica nos dois vereditos', () => {
+    // Por isso a confirmação não pode ser "sumiu o `shift+tab to cycle`" nem
+    // "apareceu `esc to interrupt`" (string que nenhuma captura deste repo tem).
+    const digitado = boxWith(`❯ ${COMMAND}`);
+    const submetido = boxWith('❯ ');
+    expect(digitado[digitado.length - 1]).toBe(submetido[submetido.length - 1]);
+    expect(classifyAutoStartSubmission({ renderedLines: digitado, command: COMMAND })).toBe('still-typed');
+    expect(classifyAutoStartSubmission({ renderedLines: submetido, command: COMMAND })).toBe('gone');
+  });
+});
+
+describe('nextAutoStartEnterAction — a política do reenvio', () => {
+  const base = {
+    verdict: 'still-typed' as AutoStartSubmissionVerdict,
+    safeToSend: true,
+    sawEcho: true,
+    attemptsUsed: 0,
+    msSinceLastWrite: AUTO_START_ENTER_DELAY_MS,
+    msSincePhaseStart: 200,
+  };
+
+  it('comando saiu da caixa DEPOIS de ter sido visto lá: confirmado', () => {
+    expect(nextAutoStartEnterAction({ ...base, verdict: 'gone' })).toBe('confirmed');
+  });
+
+  it('caixa vazia ANTES do eco é `wait`, nunca sucesso — é o estado NORMAL logo após o write', () => {
+    // Aceitar isto como sucesso reproduziria o bug de hoje: encerrar em
+    // silêncio sem nunca ter submetido nada.
+    expect(nextAutoStartEnterAction({ ...base, verdict: 'gone', sawEcho: false })).toBe('wait');
+  });
+
+  it('comando ecoado na caixa e o piso entre os dois writes cumprido: manda o Enter', () => {
+    expect(nextAutoStartEnterAction(base)).toBe('send-enter');
+  });
+
+  it('antes do piso de 50ms desde o write do texto: espera', () => {
+    expect(nextAutoStartEnterAction({ ...base, msSinceLastWrite: AUTO_START_ENTER_DELAY_MS - 1 })).toBe('wait');
+  });
+
+  it('reenvio respeita a janela de 1s desde o Enter anterior — dar tempo do CLI redesenhar', () => {
+    const depoisDoPrimeiro = { ...base, attemptsUsed: 1 };
+    expect(nextAutoStartEnterAction({ ...depoisDoPrimeiro, msSinceLastWrite: AUTO_START_RESEND_GAP_MS - 1 })).toBe('wait');
+    expect(nextAutoStartEnterAction({ ...depoisDoPrimeiro, msSinceLastWrite: AUTO_START_RESEND_GAP_MS })).toBe('send-enter');
+  });
+
+  it('estourado o teto de tentativas, desiste com o toast das tentativas', () => {
+    const noTeto = { ...base, attemptsUsed: AUTO_START_MAX_ENTER_ATTEMPTS, msSinceLastWrite: AUTO_START_RESEND_GAP_MS };
+    expect(nextAutoStartEnterAction(noTeto)).toBe('give-up-attempts');
+  });
+
+  it('ÂNCORA — `unknown` NUNCA vira `send-enter`, por mais tempo e tentativas que sobrem', () => {
+    // A armadilha central: reenviar sobre "não sei ler o estado" é exatamente
+    // o Enter danoso (responder a um diálogo, submeter comando truncado).
+    const folgado = { ...base, verdict: 'unknown' as AutoStartSubmissionVerdict, msSinceLastWrite: 60_000 };
+    expect(nextAutoStartEnterAction(folgado)).not.toBe('send-enter');
+  });
+
+  it('ÂNCORA — com a tela insegura (diálogo/menu), o comando na caixa NÃO autoriza Enter', () => {
+    expect(nextAutoStartEnterAction({ ...base, safeToSend: false })).toBe('wait');
+  });
+
+  it('o comando nunca apareceu na caixa dentro do teto de eco: desiste SEM ter escrito Enter nenhum', () => {
+    const semEco = {
+      ...base,
+      verdict: 'unknown' as AutoStartSubmissionVerdict,
+      sawEcho: false,
+      attemptsUsed: 0,
+      msSincePhaseStart: AUTO_START_ECHO_TIMEOUT_MS,
+    };
+    expect(nextAutoStartEnterAction(semEco)).toBe('give-up-no-echo');
+  });
+
+  it('Enter escrito mas sem confirmação até o teto absoluto: desiste dizendo que não sabe', () => {
+    const semConfirmacao = {
+      ...base,
+      verdict: 'unknown' as AutoStartSubmissionVerdict,
+      attemptsUsed: 1,
+      msSincePhaseStart: AUTO_START_CONFIRM_TIMEOUT_MS,
+    };
+    expect(nextAutoStartEnterAction(semConfirmacao)).toBe('give-up-unconfirmed');
+  });
+
+  it('a confirmação vence qualquer teto estourado — sucesso tardio é sucesso', () => {
+    expect(nextAutoStartEnterAction({ ...base, verdict: 'gone', msSincePhaseStart: 90_000 })).toBe('confirmed');
+  });
+});
+
+describe('autoStartGiveUpMessage — o toast honesto que faltava', () => {
+  it('sem eco: diz que NENHUM Enter foi enviado', () => {
+    const message = autoStartGiveUpMessage('no-echo');
+    expect(message).toContain('nenhum Enter');
+    expect(message).toContain('rode o comando');
+  });
+
+  it('teto de tentativas: cita o número real do teto, para o texto não envelhecer', () => {
+    expect(autoStartGiveUpMessage('attempts')).toContain(String(AUTO_START_MAX_ENTER_ATTEMPTS));
+    expect(autoStartGiveUpMessage('attempts')).toContain('aperte Enter');
+  });
+
+  it('sem confirmação: NÃO manda apertar Enter — o app não sabe o que está na tela', () => {
+    // Mandar apertar seria terceirizar ao humano o acidente que o app acabou
+    // de se recusar a cometer.
+    const message = autoStartGiveUpMessage('unconfirmed');
+    expect(message).toContain('confira');
+    // Nunca um "aperte Enter" seco: se a instrução aparece, é DEPOIS do
+    // "confira" — conferir primeiro é a única ordem segura aqui.
+    expect(message).not.toMatch(/aperte Enter/);
+    expect(message.indexOf('confira')).toBeLessThan(message.indexOf('apertar Enter'));
+  });
+});
+
+// B1 (batch N5) — "retomar fase concluída por clique": continua a ÚLTIMA
+// sessão da cadeia, `claude -r <cliSessionId>` no `cwd` DA SESSÃO — sem
+// dispatch novo, sem mudar estado do card. `continuesSessionId` aponta para
+// TRÁS (a sessão que esta continua, por orçamento de contexto); a última da
+// cadeia é a que ninguém mais continua.
+function sessao(overrides: Partial<SessionSnapshot> & { readonly id: string }): SessionSnapshot {
+  return {
+    cliSessionId: null,
+    subject: { entity: 'work_item', id: 'wki-1' },
+    phase: 'implementar',
+    continuesSessionId: null,
+    handoffReason: null,
+    cwd: null,
+    model: null,
+    effort: null,
+    modelEffortAssumed: false,
+    startedAt: '2026-08-04T09:00:00.000Z',
+    endedAt: '2026-08-04T09:30:00.000Z',
+    endReason: null,
+    inputPath: null,
+    resultPath: null,
+    claimed: true,
+    ...overrides,
+  };
+}
+
+describe('lastSessionOfChain — a sessão que "Retomar" reabre', () => {
+  it('sem sessão nenhuma, não há o que retomar', () => {
+    expect(lastSessionOfChain([])).toBeNull();
+  });
+
+  it('uma sessão só: ela é a última (cadeia de um elo)', () => {
+    const unica = sessao({ id: 'ses-1' });
+    expect(lastSessionOfChain([unica])).toBe(unica);
+  });
+
+  it('cadeia de handoff: a última é a que NINGUÉM continua — não a primeira', () => {
+    const primeira = sessao({ id: 'ses-1', continuesSessionId: null });
+    const segunda = sessao({ id: 'ses-2', continuesSessionId: 'ses-1' });
+    const terceira = sessao({ id: 'ses-3', continuesSessionId: 'ses-2' });
+    // Ordem de chegada embaralhada de propósito: a função encontra a cauda
+    // pelo grafo, não pela posição no array.
+    expect(lastSessionOfChain([segunda, terceira, primeira])).toBe(terceira);
+  });
+});
+
+describe('resolveResume — o que falta para "Retomar" funcionar', () => {
+  it('sessão sem cliSessionId (a skill nunca assumiu): recusa nomeando o motivo', () => {
+    expect(resolveResume([sessao({ id: 'ses-1', cliSessionId: null, cwd: 'C:/dev/atlas' })])).toEqual({
+      ok: false,
+      reason: 'no-cli-session-id',
+    });
+  });
+
+  it('sessão sem cwd registrado: recusa — sem cwd não há onde abrir', () => {
+    expect(resolveResume([sessao({ id: 'ses-1', cliSessionId: 'cli-abc', cwd: null })])).toEqual({
+      ok: false,
+      reason: 'no-cwd',
+    });
+  });
+
+  it('sem sessão nenhuma no histórico do assunto+fase: recusa', () => {
+    expect(resolveResume([])).toEqual({ ok: false, reason: 'no-session' });
+  });
+
+  it('sessão completa (cliSessionId + cwd): resolve com os dois, prontos para `-r`', () => {
+    expect(resolveResume([sessao({ id: 'ses-1', cliSessionId: 'cli-abc', cwd: 'C:/dev/atlas' })])).toEqual({
+      ok: true,
+      cliSessionId: 'cli-abc',
+      cwd: 'C:/dev/atlas',
+    });
+  });
+
+  it('cadeia de handoff: resolve com a ÚLTIMA sessão, não a primeira', () => {
+    const primeira = sessao({ id: 'ses-1', cliSessionId: 'cli-primeira', cwd: 'C:/dev/atlas' });
+    const segunda = sessao({ id: 'ses-2', continuesSessionId: 'ses-1', cliSessionId: 'cli-segunda', cwd: 'C:/dev/atlas' });
+    expect(resolveResume([primeira, segunda])).toEqual({ ok: true, cliSessionId: 'cli-segunda', cwd: 'C:/dev/atlas' });
   });
 });

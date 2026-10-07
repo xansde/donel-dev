@@ -21,7 +21,7 @@ import { createSchemaWalker, type JsonNode } from './helpers/contractSchemaPaths
 //      partir de um store real passa pelo parser. E o unico teste que prova que
 //      as duas metades falam a mesma lingua antes de o fork existir.
 
-const CONTRACT_DIR = fileURLToPath(new URL('../src/shared/esteira/contract/v1/', import.meta.url));
+const CONTRACT_DIR = fileURLToPath(new URL('../docs/esteira-dev/contract/v1/', import.meta.url));
 const SCHEMA_PATH = `${CONTRACT_DIR}esteira-run-input.schema.json`;
 const EXAMPLES_DIR = `${CONTRACT_DIR}input-examples/`;
 

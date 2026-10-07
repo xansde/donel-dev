@@ -114,6 +114,12 @@ export const STORE_EVENT_TYPES = [
   'plan.created',
   'work_item.created',
   'work_item.updated',
+  /**
+   * D-16 — item nascido pela skill, descartado num gesto. O evento fica no log
+   * e a entidade sai do snapshot. A LAPIDE (`DiscardedItemTombstone`) esta
+   * DECLARADA e ainda nao derivada: hoje o item some sem nada dizendo que
+   * existiu, e "por que este item sumiu?" nao tem resposta na tela.
+   */
   'work_item.discarded',
   'relation.added',
   'relation.removed',
@@ -141,10 +147,53 @@ export const STORE_EVENT_TYPES = [
   'session.handed-off',
   'lock.acquired',
   'lock.released',
+  /**
+   * A9 — alguem confirmou uma condicao de gate. Fato de primeira classe porque
+   * a confirmacao vivia como blockquote no `tasks.md`, onde gate composto nao
+   * expressa meia-confirmacao: uma condicao confirmada e outra em aberto viravam
+   * a mesma frase. Skills e specs consultam o STORE.
+   */
+  'gate.confirmed',
+  /** A18 — uma decisao tomada na fase, com quem a confirmou. Irma de `gate.confirmed`: gate confirma condicao, decisao escolhe caminho. */
+  'decision.recorded',
+  /** A10/A19 — a lista do que sobrou para uma PESSOA conferir ou fazer, no lugar de uma frase enterrada no `summary`. */
+  'human_review.recorded',
   'stage.overridden',
   'stage.override.cleared',
   'note.added',
+  /**
+   * A4 — o LIVRO DOS RUNS: um run entrou, com a impressao digital do que ele
+   * declarava. E o que permite distinguir "o mesmo arquivo, relido" (dedupe
+   * normal) de "o mesmo run, reescrito com outro desfecho" — que a `dedupe_key`
+   * sozinha nao distingue, e por isso engoliu em silencio a revisao da Concluir.
+   */
+  'run.ingested',
   'ingest.failed',
+  /**
+   * DECLARADO, NAO IMPLEMENTADO (contrato para o batch da ingestao sanavel).
+   *
+   * Um `result.json` que tinha sido RECUSADO passou a ser legivel — porque a
+   * skill reemitiu uma versao corrigida, ou porque uma passada de saneamento o
+   * recuperou. O evento existe para que a recuperacao seja um FATO, e nao o
+   * apagamento do erro anterior: o `ingest.failed` continua no log, e este diz
+   * que ele foi superado. Apagar o erro seria o app reescrevendo a propria
+   * historia — o mesmo silencio que a spec 010 extingue, com sinal trocado.
+   *
+   * O reducer NAO trata este tipo ainda: ele cai no `default` e e preservado
+   * sem derivacao, exatamente como o formato promete para evento de canal mais
+   * novo. Quem o reduz e quem for implementar `IngestRecovery`.
+   */
+  'ingest.recovered',
+  /**
+   * F26 — a anistia do outbox historico. Um `ingest.failed` que o parser NOVO
+   * emitiria para um `run_id` JA CONSTANTE no livro (`run.ingested`) vira isto
+   * em vez daquilo: revalidacao/re-scan so LIMPA a tela, nunca SUJA um run que
+   * ja foi ingerido legitimamente por um contrato mais antigo. Diferente de
+   * `ingest.recovered` (que supera um `ingest.failed` ja gravado), este evento
+   * substitui o `ingest.failed` que SERIA emitido agora — o log nunca chega a
+   * ganhar a linha de erro.
+   */
+  'ingest.amnestied',
   'mirror.queued',
   'mirror.synced',
   'mirror.failed',
@@ -281,6 +330,32 @@ export interface ArtifactPointer {
   readonly recordedAt: string;
 }
 
+/**
+ * A8/A20 — o RECURSO DE ESCRITA que um disparo ocupa: o repo e o caminho
+ * FISICO que a fase vai tocar (a worktree dedicada, ou a arvore principal na
+ * ausencia dela). E um alcance DIFERENTE de `LockRecord.subject`: o subject e
+ * "quem" (o card/plano/item); o recurso e "onde no disco" — e dois assuntos
+ * IRMAOS (D-5/D-7, paralelismo desejado) podem ocupar o MESMO recurso sem que
+ * a trava de assunto veja problema nenhum, porque ela nunca olha os dois ao
+ * mesmo tempo.
+ *
+ * `branch` viaja para EXIBICAO (o card consegue dizer "branch X ocupada"),
+ * mas NAO decide conflito sozinho — ver `resourceConflicts` em
+ * `store/lockChain.ts` para o porque (nem sempre é conhecida hoje, e tratá-la
+ * como curinga quebraria o paralelismo de irmãos que a spec pede).
+ */
+export interface LockResource {
+  readonly targetRepo: string;
+  readonly branch: string | null;
+  /**
+   * `worktree_path`, ou `repo_path` na ausencia dele — o caminho que este run
+   * de fato toca. `null` quando nem isso e conhecido: tratado, na checagem de
+   * conflito, como a arvore principal/compartilhada — o caso mais arriscado
+   * (P32/A20), e o default hoje (`worktree_path` ainda vem `null` na pratica).
+   */
+  readonly treePath: string | null;
+}
+
 /** D-11 — a trava e local e e FATO: dono, hora e sessao, visivel no card, liberavel num gesto. Nunca arquivo `.lock` solto, nunca so etiqueta remota. */
 export interface LockRecord {
   readonly subject: EntityId;
@@ -290,6 +365,8 @@ export interface LockRecord {
   readonly cliSessionId: string | null;
   /** Espelho no board, quando o adapter esta ligado (D-12). Nunca condiciona a trava local. */
   readonly mirroredLabel: string | null;
+  /** A8/A20 — `null` quando a fase nao declarou workspace (no repo nenhum a ocupar). */
+  readonly resource: LockResource | null;
 }
 
 export interface StageOverride {
@@ -405,8 +482,27 @@ export interface SessionSnapshot {
   readonly cwd: string | null;
   readonly model: string | null;
   readonly effort: string | null;
+  /**
+   * A21 — `true` quando `model`/`effort` foram aplicados por DEFAULT, sem
+   * confirmacao explicita de quem disparou (P33: o anuncio pre-disparo saiu,
+   * mas o disparo seguiu no mesmo turno, sem esperar override). `false` cobre
+   * tanto "sem model/effort nenhum" quanto "escolha confirmada" — os dois sao
+   * decisao explicita, so o terceiro caso e assumido. E o app registrando a
+   * proveniencia da PRÓPRIA decisao, o mesmo espirito de `SeededFlag` para
+   * entidades vindas de seed.
+   */
+  readonly modelEffortAssumed: boolean;
   readonly startedAt: string;
   readonly endedAt: string | null;
+  /**
+   * A7 — por que ESTA sessao terminou, quando `session.ended` (nao handoff) o
+   * disse. Existe porque `endSession` sempre recebeu um `reason`, mas ate aqui
+   * so `session.handed-off` o guardava (em `handoffReason`) — uma sessao
+   * encerrada pela reconciliacao de boot ("o app reiniciou sem o result
+   * aparecer") ficava com o motivo escrito no log e invisivel no snapshot.
+   * `null` = ninguem declarou motivo (ex.: aba fechada antes desta causa existir).
+   */
+  readonly endReason: string | null;
   /**
    * O `run-input.json` que o app deixou para esta sessao, e o `result.json` que
    * ela deve devolver. Ficam no snapshot porque a TELA precisa deles: enquanto
@@ -451,6 +547,10 @@ export interface PhaseRunSnapshot {
   readonly failure: { readonly code: string; readonly message: string } | null;
   /** Ultimo run que tocou esta fase — a trilha de volta ao `result.json` que a produziu. */
   readonly lastRunId: string | null;
+  /** A16 — o risco que esta fase classificou. `null` = ela nao classificou. */
+  readonly risk: PhaseRisk | null;
+  /** A15 — o canal em que esta fase entregou (`alfa`, `beta`, `stable`). `null` = a fase nao declarou. */
+  readonly channel: string | null;
   /**
    * D-2 — o ULTIMO fato desta fase foi semeado (afirmado), nao observado. A
    * fase e estado de agora: um run de verdade em cima de uma fase semeada tira
@@ -459,7 +559,11 @@ export interface PhaseRunSnapshot {
   readonly seeded: SeededFlag;
 }
 
-export type VerificationKind = 'pull-request' | 'check' | 'review' | 'conclusion';
+/** A16 — `e2e-manual` e o roteiro rodado A MAO por gente; `check` e o que a maquina roda. */
+export type VerificationKind = 'pull-request' | 'check' | 'review' | 'conclusion' | 'e2e-manual';
+
+/** A16 — a regua de aprovacao classificada pela fase. */
+export type PhaseRisk = 'trivial' | 'sensivel';
 export type VerificationState = 'pending' | 'passed' | 'failed';
 
 /** D-4 — como o ciclo termina. PR e so UMA das formas; ADR e spike terminam de outro jeito. */
@@ -468,7 +572,58 @@ export interface VerificationSnapshot {
   readonly verificationKind: VerificationKind;
   readonly state: VerificationState;
   readonly ref: string | null;
+  /** A15 — a base do PR. Num repo com escada de canais, o destino E parte do desfecho. */
+  readonly base: string | null;
   readonly recordedAt: string;
+}
+
+/**
+ * A9 — UMA condicao de gate confirmada por UMA pessoa. Chave natural
+ * `subject|condition`: reconfirmar a mesma condicao atualiza quem confirmou e
+ * quando, e um gate de duas condicoes ocupa duas linhas — que e exatamente o
+ * que o blockquote do `tasks.md` nao sabia fazer.
+ */
+export interface GateConfirmationSnapshot {
+  readonly subject: EntityId;
+  readonly condition: string;
+  readonly confirmedBy: string;
+  readonly confirmedAt: string;
+}
+
+export type HumanReviewKind = 'review' | 'action';
+export type HumanReviewState = 'pending' | 'done' | 'waived';
+
+/** A10/A19 — uma linha da lista do humano: confira (`review`) ou faca (`action`). */
+export interface HumanReviewItem {
+  readonly item: string;
+  readonly kind: HumanReviewKind;
+  readonly state: HumanReviewState;
+  readonly detail: string | null;
+}
+
+/**
+ * A10 — a lista de UMA fase sobre UM assunto. Chave natural `subject|phase`:
+ * redeclarar substitui, porque a lista e o estado de AGORA — uma revisao
+ * respondida pela metade nao deve conviver com a versao anterior inteira.
+ */
+export interface HumanReviewSnapshot {
+  readonly subject: EntityId;
+  readonly phase: string;
+  readonly checklist: readonly HumanReviewItem[];
+  readonly at: string;
+}
+
+/**
+ * A18 — UMA decisao tomada, com quem a confirmou. Chave natural
+ * `subject|decision`: redecidir a mesma coisa atualiza quem confirmou; decidir
+ * outra coisa e outra linha, porque uma fase toma varias decisoes.
+ */
+export interface DecisionSnapshot {
+  readonly subject: EntityId;
+  readonly decision: string;
+  readonly confirmedBy: string;
+  readonly rationale: string | null;
+  readonly at: string;
 }
 
 /** Texto humano amarrado a uma entidade. Nunca deduplica por conteudo — duas notas iguais sao dois gestos. */
@@ -478,10 +633,114 @@ export interface NoteSnapshot {
   readonly at: string;
 }
 
+/**
+ * A4/A13 — um run ja ingerido. O `contentHash` responde "o mesmo run voltou
+ * com o mesmo conteudo?"; `complementsRunId`/`revisesRunId` respondem "de quem
+ * ele descende?". A segunda pergunta e o que torna desfecho revisto um dado
+ * CONSULTAVEL em vez de uma sobrescrita silenciosa.
+ */
+export interface IngestedRunSnapshot {
+  readonly runId: string;
+  readonly phase: string;
+  readonly kind: string;
+  readonly contentHash: string;
+  readonly complementsRunId: string | null;
+  readonly revisesRunId: string | null;
+  readonly subject: EntityId | null;
+  readonly resultPath: string | null;
+  readonly at: string;
+}
+
+/**
+ * A6 — a estrutura minima da ingestao sanavel.
+ *
+ * - `resultPath` e a MESMA chave do `IngestErrorSnapshot` que ela supera — e
+ *   por ela que o card sabe qual erro deixou de valer.
+ * - `recoveredCodes` diz o que foi sanado, nao "estava tudo bem": a recuperacao
+ *   e um fato sobre o documento, nao um perdao retroativo.
+ * - `runId` so aparece quando o documento sanado tinha um run legivel; `null` e
+ *   um estado honesto, nao um buraco a preencher com palpite.
+ * - O `ingest.failed` anterior PERMANECE no log. O snapshot e que para de
+ *   mostra-lo como pendente (`reduceEvents` — o path recuperado sai de
+ *   `ingestErrors` e entra aqui).
+ */
+export interface IngestRecovery {
+  readonly resultPath: string;
+  readonly at: string;
+  readonly runId: string | null;
+  readonly subject: EntityId | null;
+  /** Os codigos de `ContractIssue` que o documento trazia e deixaram de valer. */
+  readonly recoveredCodes: readonly string[];
+  /** Como foi sanado, em uma frase — "a skill reemitiu", "campo desconhecido descartado". */
+  readonly how: string;
+}
+
+/**
+ * E2 — a LAPIDE de um item descartado.
+ *
+ * `work_item.discarded` remove a entidade do snapshot e o evento fica so no
+ * log: sem a lapide, quem olha o card veria o item sumir, sem nada dizendo que
+ * ele existiu. Para um item nascido pela skill (D-16) isso e barato de
+ * descartar e caro de explicar depois — "por que este item sumiu?" precisa de
+ * resposta na tela.
+ *
+ * A lapide guarda o MINIMO para responder essa pergunta (o que era, de quem
+ * era, quando e por que saiu) e nada alem — ela e um registro de que algo foi
+ * descartado, nao uma copia do item para ressuscitar. O item descartado
+ * continua FORA de `workItems`; notas, fases e sessoes que apontavam para ele
+ * continuam pertencendo ao card (`cardView` inclui a lapide em `owned`).
+ */
+export interface DiscardedItemTombstone {
+  readonly id: string;
+  readonly discoveryId: string;
+  readonly title: string;
+  readonly itemType: WorkItemType;
+  readonly discardedAt: string;
+  /** Por que saiu, quando quem descartou disse. `null` = ninguem disse, e o card nao inventa. */
+  readonly reason: string | null;
+}
+
+/**
+ * A5 — o CUSTO de um documento recusado: o que ELE declararia, se entrasse.
+ * Best-effort e nunca inventado — quando o campo de identidade do fato nao
+ * esta la, `id`/`title` ficam `null` em vez de um palpite. Existe porque
+ * apontar so o campo que quebrou ("unknown_field em facts[3].fanout") nao diz
+ * o que se perde: o dono viveu isso como "nao consigo abrir as tasks", porque
+ * os `work_item.recorded` que este arquivo carregava nunca chegaram a existir.
+ */
+export interface DeclaredFactSummary {
+  readonly factType: string;
+  /** A entidade que este fato criaria. `null` para fatos que nao criam entidade propria (relacao, verificacao, gate...). */
+  readonly entity: EntityKind | null;
+  readonly id: string | null;
+  readonly title: string | null;
+}
+
 /** D-10 — documento fora do contrato vira ERRO visivel no card, nunca silencio. */
 export interface IngestErrorSnapshot {
   readonly resultPath: string;
   readonly at: string;
+  readonly subject: EntityId | null;
+  readonly issues: readonly { readonly code: string; readonly path: string; readonly message: string }[];
+  /** A5 — o custo: os fatos que este arquivo declarava, tipo + id, sem entrar no store. */
+  readonly declaredFacts: readonly DeclaredFactSummary[];
+}
+
+/**
+ * F26 — um `resultPath` que o parser novo RECUSARIA, mas que e um run
+ * HISTORICO: a anistia e um FATO de migracao (o log registra que o arquivo
+ * foi perdoado), nunca silencio. `issues` guarda o que o parser novo
+ * apontaria — a auditoria de por que este arquivo teria falhado hoje, se
+ * fosse um run novo.
+ *
+ * `runId` e `null` quando o proprio documento nao tinha um `run.run_id`
+ * legivel (a anistia por CORTE DE DATA so precisa do timestamp) — honesto em
+ * vez de um palpite, igual `IngestRecovery.runId`.
+ */
+export interface IngestAmnesty {
+  readonly resultPath: string;
+  readonly at: string;
+  readonly runId: string | null;
   readonly subject: EntityId | null;
   readonly issues: readonly { readonly code: string; readonly path: string; readonly message: string }[];
 }
@@ -529,10 +788,40 @@ export interface StoreSnapshot {
   readonly locks: readonly LockRecord[];
   readonly phases: readonly PhaseRunSnapshot[];
   readonly verifications: readonly VerificationSnapshot[];
+  /** A9 — as confirmacoes de gate deste store, uma condicao por registro. */
+  readonly gates: readonly GateConfirmationSnapshot[];
+  /** A18 — as decisoes tomadas, uma por registro, cada uma com quem a confirmou. */
+  readonly decisions: readonly DecisionSnapshot[];
+  /** A10/A19 — o que sobrou para uma pessoa conferir ou fazer, por fase. */
+  readonly humanReviews: readonly HumanReviewSnapshot[];
   readonly notes: readonly NoteSnapshot[];
+  /** A4 — o livro dos runs ingeridos, na ordem em que entraram. */
+  readonly runs: readonly IngestedRunSnapshot[];
+  /**
+   * F26 — todo `run_id` que JA PASSOU pela ingestao, mesmo antes do livro
+   * (`runs`/`run.ingested`) existir: qualquer evento cuja origem e
+   * `{ kind: 'ingest' }` carrega o `run_id` do documento que o gerou
+   * (`EventSource`), e essa e a unica fonte que alcanca os 10 runs
+   * pre-ledger do incidente de 05/08 — eles tem fatos no store, mas nunca
+   * ganharam um `run.ingested` porque o evento nao existia quando entraram.
+   * `runs` (o livro) e um SUBCONJUNTO deste set; a anistia consulta os dois
+   * pela mesma razao que consultaria so este.
+   */
+  readonly knownIngestRunIds: ReadonlySet<string>;
+  /** D-10 — erros AINDA pendentes: um path recuperado (A6) sai daqui, nao fica acumulando. */
   readonly ingestErrors: readonly IngestErrorSnapshot[];
+  /** A6 — as recuperacoes conhecidas, uma por `resultPath` (a mais recente). */
+  readonly ingestRecoveries: readonly IngestRecovery[];
+  /**
+   * F26 — as anistias conhecidas, uma por `resultPath`. Auditoria, nao sinal
+   * de UI: o objetivo e limpar a tela ("nao consegui ler"), nao adicionar um
+   * chip novo — o fato fica registrado aqui e no log, nao na tela do card.
+   */
+  readonly ingestAmnesties: readonly IngestAmnesty[];
   readonly mirrorQueue: readonly MirrorQueueEntry[];
   readonly mirrorSynced: readonly MirrorSyncedEntry[];
+  /** E2 — as lapides dos itens descartados, uma por item. */
+  readonly tombstones: readonly DiscardedItemTombstone[];
 }
 
 /** D-4 — o ciclo de vida de cada tipo. Tabela, nao regra espalhada. */

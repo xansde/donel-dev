@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseEsteiraResultText, type EsteiraResult } from '../src/shared/esteira/contract/resultContract';
-import { ingestFailureEvent, resultToEvents } from '../src/shared/esteira/ingest/resultToEvents';
+import { ingestFailureEvent, ingestRecoveryEvent, resultToEvents } from '../src/shared/esteira/ingest/resultToEvents';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
 import type { StoreEvent } from '../src/shared/esteira/store/storeFormat';
 
@@ -16,7 +16,7 @@ import type { StoreEvent } from '../src/shared/esteira/store/storeFormat';
 // - documento fora do contrato vira `ingest.failed` com os issues do parser,
 //   NUNCA silencio (foi silencio que virou "fase nao realizada" em 03/08).
 
-const EXAMPLES_DIR = join(__dirname, '..', 'src', 'shared', 'esteira', 'contract', 'v1', 'examples');
+const EXAMPLES_DIR = join(__dirname, '..', 'docs', 'esteira-dev', 'contract', 'v1', 'examples');
 
 function loadExample(name: string): EsteiraResult {
   const parsed = parseEsteiraResultText(readFileSync(join(EXAMPLES_DIR, `${name}.json`), 'utf8'));
@@ -93,7 +93,10 @@ describe('resultToEvents — cada fato vira um evento', () => {
     // O card F3 (evidencia 1): discovery concluido, ZERO plano declarado.
     const events = resultToEvents(loadExample('discovery-sem-repo-nem-tracker'), { resultPath: 'C:/x.json' });
     expect(events.some((event) => event.type === 'plan.created')).toBe(false);
-    expect(events.map((event) => event.type)).toEqual(['discovery.created', 'phase.completed']);
+    // A decisao esta la porque A18 a exige de uma discovery concluida — e ela
+    // e justamente o oposto de lacuna preenchida: e o que a fase declarou.
+    // `run.ingested` abre a lista: e o livro dos runs (A4), nao um fato.
+    expect(events.map((event) => event.type)).toEqual(['run.ingested', 'discovery.created', 'decision.recorded', 'phase.completed']);
   });
 
   it('run que falhou vira phase.failed com codigo e motivo — falha nunca vira silencio', () => {
@@ -127,7 +130,10 @@ describe('resultToEvents — cada fato vira um evento', () => {
     for (const name of examples) {
       const result = loadExample(name);
       const events = resultToEvents(result, { resultPath: 'C:/x.json' });
-      const factEvents = events.filter((event) => event.type !== 'phase.failed');
+      // `phase.failed` fala do run inteiro; `run.ingested` e o LIVRO dos runs
+      // (A4). Nenhum dos dois nasce de um fato declarado — os fatos e que
+      // precisam sair inteiros do outro lado.
+      const factEvents = events.filter((event) => event.type !== 'phase.failed' && event.type !== 'run.ingested');
       expect(factEvents.length, `${name}: fato sem evento correspondente`).toBe(result.facts.length);
     }
   });
@@ -144,6 +150,7 @@ describe('ingestFailureEvent — o documento fora do contrato aparece no card', 
       issues: parsed.issues,
       subject: { entity: 'discovery', id: 'dsc-1' },
       at: '2026-08-03T12:00:00.000Z',
+      declaredFacts: [],
     });
 
     expect(draft.type).toBe('ingest.failed');
@@ -153,11 +160,83 @@ describe('ingestFailureEvent — o documento fora do contrato aparece no card', 
   });
 
   it('o mesmo arquivo quebrado, reprocessado, nao empilha erro repetido', () => {
-    const draft = ingestFailureEvent({ resultPath: 'C:/outbox/run-9.json', issues: [], subject: null, at: '2026-08-03T12:00:00.000Z' });
-    const other = ingestFailureEvent({ resultPath: 'C:/outbox/run-9.json', issues: [], subject: null, at: '2026-08-03T13:00:00.000Z' });
+    const draft = ingestFailureEvent({
+      resultPath: 'C:/outbox/run-9.json',
+      issues: [],
+      subject: null,
+      at: '2026-08-03T12:00:00.000Z',
+      declaredFacts: [],
+    });
+    const other = ingestFailureEvent({
+      resultPath: 'C:/outbox/run-9.json',
+      issues: [],
+      subject: null,
+      at: '2026-08-03T13:00:00.000Z',
+      declaredFacts: [],
+    });
 
     expect(draft.dedupe_key).toBe(other.dedupe_key);
     expect(draft.dedupe_key).not.toBeNull();
+  });
+
+  // A5 — o CUSTO: o payload carrega o que o documento declararia, para o card
+  // dizer "sem este arquivo não existe X" em vez de só o campo que quebrou.
+  it('carrega os fatos declarados no payload, para o card dizer o CUSTO (A5)', () => {
+    const draft = ingestFailureEvent({
+      resultPath: 'C:/outbox/run-9.json',
+      issues: [],
+      subject: { entity: 'plan', id: 'pln-1' },
+      at: '2026-08-03T12:00:00.000Z',
+      declaredFacts: [{ factType: 'work_item.recorded', entity: 'work_item', id: 'wi-1', title: 'Instrumentar a fila' }],
+    });
+
+    expect(draft.payload.declaredFacts).toEqual([{ factType: 'work_item.recorded', entity: 'work_item', id: 'wi-1', title: 'Instrumentar a fila' }]);
+  });
+});
+
+// A6 — a recuperação: um `result.json` recusado que passou a ser legível é um
+// FATO próprio, ancorado no MESMO `resultPath` do erro que ela supera.
+describe('ingestRecoveryEvent — a recuperação é um fato, não o apagamento do erro (A6)', () => {
+  it('carrega o path, os códigos sanados e COMO — nunca inventa quem consertou', () => {
+    const draft = ingestRecoveryEvent({
+      resultPath: 'C:/outbox/run-9.json',
+      at: '2026-08-05T12:00:00.000Z',
+      runId: 'run-9',
+      subject: { entity: 'discovery', id: 'dsc-1' },
+      recoveredCodes: ['unknown_field'],
+      how: 'o documento agora passa no contrato',
+    });
+
+    expect(draft.type).toBe('ingest.recovered');
+    expect(draft.payload).toMatchObject({
+      resultPath: 'C:/outbox/run-9.json',
+      runId: 'run-9',
+      subject: { entity: 'discovery', id: 'dsc-1' },
+      recoveredCodes: ['unknown_field'],
+      how: 'o documento agora passa no contrato',
+    });
+  });
+
+  it('a dedupe_key é o PATH, sem timestamp — uma recuperação por path, uma vez recuperado não volta a ser revalidado', () => {
+    const first = ingestRecoveryEvent({
+      resultPath: 'C:/outbox/run-9.json',
+      at: '2026-08-05T12:00:00.000Z',
+      runId: null,
+      subject: null,
+      recoveredCodes: [],
+      how: 'x',
+    });
+    const second = ingestRecoveryEvent({
+      resultPath: 'C:/outbox/run-9.json',
+      at: '2026-08-05T13:00:00.000Z',
+      runId: null,
+      subject: null,
+      recoveredCodes: [],
+      how: 'y',
+    });
+
+    expect(first.dedupe_key).toBe(second.dedupe_key);
+    expect(first.dedupe_key).toBe('ingest.recovered:C:/outbox/run-9.json');
   });
 });
 

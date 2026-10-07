@@ -10,14 +10,15 @@ import {
   TerminalTab,
   Toast,
 } from '@donel-dev/design-system';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
+import { Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  AccountsViewDto,
   AppConfigDto,
   NotificationPreference,
-  ProfileHeadroomMap,
   ProjectInfo,
   ProjectScanMode,
+  ProviderSummaryDto,
   SemaphoreStateInfo,
   SessionSummaryDto,
   TabColorToken,
@@ -33,6 +34,10 @@ import {
   parseModelEffortFromArgs,
 } from '../../shared/commandBuilder';
 import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
+// T1317 (011-contas-e-provedores, etapa 3, C18/D7) — decide se --model/--effort
+// entram no argv (sem provider) ou são omitidos (com provider); commandBuilder.ts
+// (buildClaudeArgs acima) continua intocado.
+import { buildLauncherArgs } from './launchArgsForProvider';
 // CA-22 (009) — só o DENOMINADOR do `%` de contexto vem daqui (`min(300k,
 // janela do modelo)`, decisão de 24/07); a formatação e as faixas de cor são do
 // `SmartZoneMeter` do design-system.
@@ -61,11 +66,10 @@ import { sessionTabName } from '../../shared/sessions';
 // Spec 010 / batch B6 — o Modo Dev continua sendo o mapa; a fonte dele passou
 // a ser o STORE (`esteiraMapView.ts`, puro e testado). Aqui fica só o
 // encanamento com PTY/IPC — nenhuma decisão de domínio, nenhuma frase de estado.
-import { isReadyToPreType } from '../../shared/preTypeReadiness';
 import { DiscoveryMap } from './DevMode/DiscoveryMap';
 import { PhaseDetailsPanel } from './DevMode/PhaseDetailsPanel';
-import { buildMapView, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
-import { createPrimeSequencer } from './DevMode/primeSequencer';
+import { buildMapView, parseEntityKey, tabToFocusFor, tasksArtifactFor, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
+import type { TasksRunningTogetherView } from './DevMode/PhaseDetailsPanel';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import type { LauncherLaunchOptions } from './Launcher';
@@ -74,13 +78,33 @@ import type { LauncherLaunchOptions } from './Launcher';
 // gesto interno, para dar para comparar as duas com o mesmo dado.
 import { EsteiraScreen } from './Esteira/EsteiraScreen';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
-import type { EsteiraSessionRequest } from './Esteira/esteiraSession';
+import {
+  AUTO_START_NOT_READY_MESSAGE,
+  autoStartGiveUpMessage,
+  autoStartWriteSteps,
+  classifyAutoStartSubmission,
+  esteiraTabName,
+  isReadyForAutoStart,
+  isSafeToSendEnter,
+  nextAutoStartEnterAction,
+  resolveSessionCwd,
+  type EsteiraSessionRequest,
+} from './Esteira/esteiraSession';
 import { preparePhase } from './Esteira/preparePhase';
 import type { EsteiraSnapshotDto } from '../../shared/esteira/ipc';
+import type { EntityId } from '../../shared/esteira/store/storeFormat';
+// C3 — o parser do tasks.md (puro, testado) fica fora do domínio da esteira
+// de propósito: é interpretação de TEXTO de um artefato, não fato do store.
+import { parseTasksDoc, taskScope } from '../../shared/tasksDoc';
+// N7 (010, D1) — o mapa de nós em tela cheia: outra projeção do MESMO
+// snapshot da esteira (`esteiraState` acima), isolada de propósito na sua
+// própria pasta (nenhuma edição em EsteiraScreen/esteiraMapView) — ver o
+// comentário do estado `nodeGraphOpen` mais abaixo.
+import { NodeGraphOverlay } from './DevMode/NodeGraphOverlay';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { AccountsPanel } from './AccountsPanel';
-import { ProfileSwitcher } from './ProfileSwitcher';
+import { ProviderForm } from './ProviderForm';
 import { ProjectSidebar } from './ProjectSidebar';
 import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from './ProjectSidebar';
 // CA-30 (009-modo-dev-v3, lote 9) — seletor de projetos no titlebar + modal de criação.
@@ -131,6 +155,20 @@ interface TabState {
   launchArgs?: string[];
   /** 'claude' (default) = sessão claude direta no PTY; 'shell' = terminal livre (FR-008, powershell.exe). */
   sessionType: 'claude' | 'shell';
+  /**
+   * T1320 (011-contas-e-provedores, etapa 3, C13) — provider classe A
+   * escolhido no Launcher para ESTA sessão; `undefined` = sessão de conta
+   * (comportamento de hoje). Fixo por aba, igual `launchArgs` — passado ao
+   * `pty:create` pelo TerminalPane (T1318).
+   */
+  providerId?: string;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado em andamento
+   * nesta aba (`accounts:beginLogin`); `undefined` = aba normal (comportamento
+   * de hoje). Fixo por aba, mesmo espírito de `providerId`: passado ao
+   * `pty:create` pelo TerminalPane, nunca muda no meio da sessão viva.
+   */
+  accountLoginId?: string;
   /**
    * T404/T408 — id da sessão do Claude desta aba (o mesmo que nomeia o
    * `.jsonl`), devolvido por `pty.create` e levantado pelo TerminalPane. É a
@@ -200,6 +238,14 @@ const PRE_TYPE_READY_TIMEOUT_MS = 30_000;
 /** Intervalo do re-teste da prontidão. Não é um "delay fixo até digitar": o gatilho continua sendo o SINAL (semáforo/buffer), este tick só garante reavaliar quando o sinal chega sem um chunk novo de PTY junto. */
 const PRE_TYPE_POLL_MS = 250;
 
+// wi-esteira4-enter-confirmado (13/08) — `AUTO_START_ENTER_DELAY_MS` morava
+// aqui; migrou para `Esteira/esteiraSession.ts` junto com as outras constantes
+// do auto-start, porque virou insumo de uma decisão PURA
+// (`nextAutoStartEnterAction`) em vez de um prazo que este arquivo aplicava
+// sozinho. O docstring de lá também corrige a explicação: o prazo nunca foi a
+// cura (a varredura 50/150/400/1000/2000 ms reprovou a hipótese) — ele é só
+// higiene de stdin, e o conserto é confirmar no buffer renderizado.
+
 /** Remove uma chave de um record sem mutar o original — usado ao limpar `semaphoreStates`/`aliveTabs` no fechamento de aba. */
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   if (!(key in record)) return record;
@@ -249,18 +295,26 @@ export function App(): React.JSX.Element {
   const [appConfig, setAppConfig] = useState<AppConfigDto | null>(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const tabIdCounter = useRef(0);
-  // T014 — rótulo de conta pra Statusbar (ui-spec §2 zona 5), reportado pelo
-  // ProfileSwitcher (que já busca `window.donel.profiles.*` pro dropdown do
-  // titlebar — ver comentário de topo de ProfileSwitcher.tsx).
-  const [accountLabel, setAccountLabel] = useState('Principal');
-  // FIX (auditoria rodada 5, achado alta "regressão de cota") — mapa
-  // COMPLETO de headroom (slug -> percent|null) reportado por
-  // `ProfileSwitcher.onHeadroomChange`, alimentado só quando o dropdown de
-  // perfis abre (FR-012). Usado por `activeSessionAccountLabel` abaixo pra
-  // compor a cota do perfil de NASCIMENTO da sessão em foco — que pode ser
-  // um perfil diferente do ativo global, por isso não dá pra reusar
-  // `accountLabel` (que só carrega a cota do perfil ATIVO).
-  const [profileHeadroom, setProfileHeadroom] = useState<ProfileHeadroomMap>({});
+  // T1221 (011-contas-e-provedores, etapa 2) — `AccountsPanel` substitui o
+  // `ProfileSwitcher` (dropdown de perfis) como fonte da statusbar/badge:
+  // este estado é a MESMA leitura que `AccountsPanel` já faz
+  // (`window.donel.accounts.list()`/`onChanged`), só que também precisa
+  // estar disponível aqui pro rótulo global de fallback e pra cota (uma
+  // unidade só, C25) da conta em foco.
+  const [accountsView, setAccountsView] = useState<AccountsViewDto>({
+    mod: null,
+    state: 'inert',
+    unavailableReason: null,
+    accounts: [],
+    activeAccountId: null,
+    autoSwitch: { enabled: true, switchAtLoad: 90, minAdvantage: 20 },
+    lastReadAt: null,
+    // 011-contas-e-provedores, etapa 3, Fase 2 (D5) — campos novos da view;
+    // o consumo deles na statusbar é do Bloco 2 (fora do escopo deste bloco).
+    autoSwitchState: 'idle',
+    lastAutoSwitch: null,
+    lastSwitchOverwritten: null,
+  });
   // T009 — estado do semáforo por aba (chave = tab.id), alimentado pelo
   // callback que cada TerminalPane levanta via onStateChange.
   const [semaphoreStates, setSemaphoreStates] = useState<Record<string, SemaphoreStateInfo>>({});
@@ -301,7 +355,7 @@ export function App(): React.JSX.Element {
   // "afeta só sessões novas"). `undefined` = aba 'shell' OU ainda não
   // resolvido (`computeSessionAccountLabel` decide o rótulo pros dois
   // casos). Limpo em `closeTabImmediately` (mesmo padrão de `sessionModelEffort`).
-  const [sessionProfiles, setSessionProfiles] = useState<Record<string, { slug: string; name: string } | undefined>>({});
+  const [sessionAccounts, setSessionAccounts] = useState<Record<string, { id: string; label: string } | undefined>>({});
   // T010 — aba com fechamento pendente de confirmação (modal "Fechar sessão?", ui-spec §2); null = nenhum modal aberto.
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
   // T011 — modelo/esforço "atual" de cada aba claude (chave = tab.id), pro
@@ -346,6 +400,15 @@ export function App(): React.JSX.Element {
   /** Spec 010 — tela da esteira nova (gesto interno: botão no titlebar do Modo Dev). */
   const [esteiraOpen, setEsteiraOpen] = useState(false);
   /**
+   * Spec 010 / N7 (D1) — o mapa de nós, em tela cheia. Estado de TELA isolado
+   * de propósito (só este booleano + o botão do titlebar + o overlay
+   * condicional lá embaixo): o componente e a projeção pura moram inteiros em
+   * `DevMode/NodeGraphOverlay.tsx`/`DevMode/nodeGraphView.ts` e não editam
+   * `EsteiraScreen`/`esteiraMapView` — a mesma casca de UI que outro batch
+   * (mapa de carrossel) também mexe.
+   */
+  const [nodeGraphOpen, setNodeGraphOpen] = useState(false);
+  /**
    * Spec 010 / B6 — o mapa é PROJEÇÃO do store: o snapshot chega pronto do main
    * (macro etapa já derivada, D-13) e é empurrado a cada mudança. O renderer
    * nunca lê disco nem calcula etapa.
@@ -365,27 +428,14 @@ export function App(): React.JSX.Element {
   /** D4 — Toast informativo (o que o gesto fez, por que foi recusado); nunca tem desfazer. */
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
   /**
-   * CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": aba +
-   * sessão-alvo confirmadas no modal, antes do resume de verdade. `null` =
-   * modal fechado. Funciona nos dois modos (Dev e Uso geral) — não é
-   * exclusivo do Modo Dev, ao contrário do resto deste bloco de estado.
+   * C3 — cache do texto de tasks.md já lido, por caminho ABSOLUTO. `null` =
+   * já tentou e não achou/não leu (não refaz o IPC); ausente = ainda não
+   * tentou. `buildMapView` é síncrona e não lê disco (D-13 continua valendo
+   * pro resto do snapshot) — este cache vive fora dela de propósito.
    */
-  const [restartTarget, setRestartTarget] = useState<{
-    tabId: string;
-    sessionId: string;
-    cwd?: string;
-    projectName?: string;
-    sourceProfileSlug: string;
-    // FIX (#21) — modelo/esforço que a aba reiniciada estava mostrando ANTES
-    // do restart (`sessionModelEffort[tab.id]`, já resolvido com o fallback de
-    // `appConfig.launcherDefaults`): sem isto, `confirmRestart` reconstruía o
-    // argv só com `continuation: resume` — sem `--model`/`--effort` — e a aba
-    // nova caía no default hardcoded, "esquecendo" o valor que a StatusBar já
-    // mostrava pra ela um instante antes do reinício.
-    modelEffort: { model: ModelAlias; effort: EffortLevel };
-  } | null>(null);
-  /** CA-24 — mesmo hook de teste de `lastDevModeSession`/`lastLaunch`: o argv REAL montado pro resume, sem depender de ler o output do terminal. */
-  const [lastRestartSession, setLastRestartSession] = useState<{ args: readonly string[]; cwd?: string } | null>(null);
+  const [taskDocByPath, setTaskDocByPath] = useState<Record<string, string | null>>({});
+  /** Evita reler o mesmo caminho enquanto o fetch está em voo (guard por ref, mesmo padrão de `armWatchersRef`). */
+  const taskDocFetchingRef = useRef<Set<string>>(new Set());
   /** Cleanup do watcher de prontidão em voo por aba (mesmo padrão de `pendingInjectionWatchersRef`). */
   const armWatchersRef = useRef<Record<string, (() => void) | undefined>>({});
   /**
@@ -398,11 +448,9 @@ export function App(): React.JSX.Element {
   const esteiraTabSessionsRef = useRef<Record<string, string | undefined>>({});
   const semaphoreStatesRef = useRef<Record<string, SemaphoreStateInfo>>({});
   semaphoreStatesRef.current = semaphoreStates;
-  /** CA-22 — slug do perfil ATIVO agora (reportado pelo ProfileSwitcher, que já busca a lista). */
-  const [activeProfileSlug, setActiveProfileSlug] = useState('principal');
   /** Mesma razão de `appConfigRef`/`tabsRef`: a assinatura de `onPhaseArchived` tem deps vazias e precisa do valor ATUAL. */
-  const sessionProfilesRef = useRef<Record<string, { slug: string; name: string } | undefined>>({});
-  sessionProfilesRef.current = sessionProfiles;
+  const sessionAccountsRef = useRef<Record<string, { id: string; label: string } | undefined>>({});
+  sessionAccountsRef.current = sessionAccounts;
 
   const handleSemaphoreChange = useCallback((tabId: string, info: SemaphoreStateInfo): void => {
     setSemaphoreStates((prev) => ({ ...prev, [tabId]: info }));
@@ -428,8 +476,19 @@ export function App(): React.JSX.Element {
   // única vez (TerminalPane chama isto só uma vez por `spawnSession`, ver
   // comentário do prop) — nunca sobrescrito por uma troca de perfil ATIVO
   // global depois (isso é `accountLabel`/ProfileSwitcher, estado separado).
-  const handleProfileResolved = useCallback((tabId: string, profile: { slug: string; name: string } | undefined): void => {
-    setSessionProfiles((prev) => ({ ...prev, [tabId]: profile }));
+  const handleAccountResolved = useCallback((tabId: string, account: { id: string; label: string } | undefined): void => {
+    setSessionAccounts((prev) => ({ ...prev, [tabId]: account }));
+  }, []);
+
+  // T1232 (011-contas-e-provedores, etapa 2, achado da regressão final) —
+  // ANTES este efeito abria a SUA PRÓPRIA assinatura de
+  // `window.donel.accounts.list()`/`onChanged`, duplicando a que
+  // `AccountsPanel` já mantém — dois round-trips de IPC no boot estouraram
+  // a cerca de regressão do CA-7 (250 ms → ~330 ms medidos). Agora
+  // `AccountsPanel` reporta a mesma leitura pra cima via `onViewChange`
+  // (prop nova), uma assinatura só, no lugar de duas.
+  const handleAccountsViewChange = useCallback((view: AccountsViewDto): void => {
+    setAccountsView(view);
   }, []);
 
   /**
@@ -546,7 +605,7 @@ export function App(): React.JSX.Element {
     setSemaphoreStates((prev) => omitKey(prev, tabId));
     setAliveTabs((prev) => omitKey(prev, tabId));
     delete aliveSinceRef.current[tabId]; // FIX (feedback E2E rodada 5) — mesmo padrão de limpeza dos maps acima.
-    setSessionProfiles((prev) => omitKey(prev, tabId)); // FIX (feedback E2E rodada 5) — idem.
+    setSessionAccounts((prev) => omitKey(prev, tabId)); // FIX (feedback E2E rodada 5) — idem.
     setSessionModelEffort((prev) => omitKey(prev, tabId));
     delete terminalRefs.current[tabId];
     // 003-modo-dev/T312 — nenhum watcher de prontidão sobrevive à aba que ele
@@ -572,6 +631,32 @@ export function App(): React.JSX.Element {
    */
   const closeTabImmediatelyRef = useRef(closeTabImmediately);
   closeTabImmediatelyRef.current = closeTabImmediately;
+
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — o painel iniciou um login
+   * isolado: abre a aba `claude` cru no diretório efêmero do login (o main
+   * resolve `cwd`/`CLAUDE_CONFIG_DIR` pelo `accountLoginId`, ver
+   * `pty:create`). Sem `cwd` nem `launchArgs` de propósito — o main escolhe
+   * o diretório, esta aba não é uma sessão de projeto.
+   */
+  const handleStartLogin = (loginId: string, label: string): void => {
+    addTab({ name: `Login · ${label}`, pinned: false, sessionType: 'claude', accountLoginId: loginId });
+  };
+
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — o login isolado concluiu
+   * (added/replaced/cancelled/failed): o main já matou o PTY sozinho (o
+   * colhedor mata a aba antes de emitir o status), então só falta fechar a
+   * aba na UI — sem confirmação (não há processo vivo esperando resposta).
+   * `tabsRef` (não `tabs`): o `AccountsPanel` guarda esta função numa ref
+   * própria (assinatura de `onLoginChanged` montada uma vez, mount-only), e
+   * ler `tabs` do escopo do render aqui congelaria a lista no momento em que
+   * aquela ref foi criada.
+   */
+  const handleLoginEnded = (loginId: string): void => {
+    const tab = tabsRef.current.find((candidate) => candidate.accountLoginId === loginId);
+    if (tab) closeTabImmediatelyRef.current(tab.id);
+  };
 
   // T010 — FR-006: "se a sessão estiver ativa (processo vivo), pede
   // confirmação" — senão fecha direto (ex.: aba já em 'ended'/'claude-not-found').
@@ -616,6 +701,19 @@ export function App(): React.JSX.Element {
       cancelled = true;
     };
   }, []);
+
+  // T1320 (011-contas-e-provedores, etapa 3) — registry de providers classe
+  // A; `[]` (registry inerte, C14/D6) faz o Launcher renderizar sem o campo
+  // "Provedor" — comportamento de hoje intocado. `refreshProviders` é
+  // passado ao `ProviderForm` (titlebar) pra repor a lista depois de
+  // criar/editar/remover uma entrada, sem duplicar a leitura aqui.
+  const [providers, setProviders] = useState<readonly ProviderSummaryDto[]>([]);
+  const refreshProviders = useCallback((): void => {
+    void window.donel.providers.list().then(setProviders).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    refreshProviders();
+  }, [refreshProviders]);
 
   // T015 — carrega o ConfigStore uma vez no boot (roots/notificação/defaults
   // do launcher). Falha de IPC aqui não trava o shell (mesmo espírito do
@@ -735,14 +833,27 @@ export function App(): React.JSX.Element {
   // Launcher é lançamento configurado, distinto do clique direto no nome do
   // projeto acima, que reaproveita/foca uma aba existente com defaults).
   const handleLaunch = (options: LauncherLaunchOptions): void => {
-    const args = buildClaudeArgs({
+    // T1317 (011-contas-e-provedores, etapa 3, C18/D7) — com provider classe
+    // A selecionado, --model/--effort são omitidos do argv (o modelo vem do
+    // env da entrada); buildClaudeArgs (commandBuilder.ts) continua intocado,
+    // buildLauncherArgs só decide quais opções passar pra ela.
+    const args = buildLauncherArgs({
+      providerId: options.providerId ?? undefined,
       model: options.model,
       effort: options.effort,
       permissionMode: options.permissionMode,
-      sessionName: options.sessionName || undefined,
+      sessionName: options.sessionName,
     });
     const name = options.sessionName || options.projectName;
-    addTab({ name, cwd: options.projectPath, projectName: options.projectName, pinned: false, launchArgs: args, sessionType: 'claude' });
+    addTab({
+      name,
+      cwd: options.projectPath,
+      projectName: options.projectName,
+      pinned: false,
+      launchArgs: args,
+      sessionType: 'claude',
+      providerId: options.providerId ?? undefined,
+    });
     setSelectedProjectPath(options.projectPath);
     setLastLaunch({ args, cwd: options.projectPath, name });
     // T015 (FR-007 "defaults do launcher") — cada lançamento configurado vira
@@ -1132,10 +1243,14 @@ export function App(): React.JSX.Element {
   // =========================================================================
   // 003-modo-dev (Batch B) — Zonas 1/2/3
   //
-  // INVARIANTE 2 (CA-3): o único ponto deste bloco que escreve no PTY é
-  // `armPhaseCommands` abaixo, via `TerminalPaneHandle.injectCommand`, com o
-  // texto EXATO devolvido por `resolveCommandSequence` — nunca com `\r`/`\n`
-  // concatenado. O Enter é sempre gesto humano.
+  // INVARIANTE 2 (CA-3): o Enter é sempre gesto humano — a ÚNICA exceção
+  // FECHADA é o auto-start de sessão de fase da esteira (batch B5,
+  // `armEsteiraAutoStart`, mais abaixo), que nunca é a abertura genérica de
+  // aba. A infra GENÉRICA de pré-digitar-sem-enviar (`isReadyToPreType`,
+  // `createPrimeSequencer`) segue viva e testada em `shared/preTypeReadiness.ts`
+  // / `DevMode/primeSequencer.ts`, mesmo sem uma função de encanamento própria
+  // neste arquivo hoje — `handleOpenEsteiraSession` (o único lugar do Modo Dev
+  // que abria aba com comando pré-digitado) migrou para o auto-start no B5.
   // =========================================================================
 
   /**
@@ -1150,6 +1265,20 @@ export function App(): React.JSX.Element {
   const storeWarning = esteiraState === null ? null : STORE_COMPATIBILITY_WARNING[esteiraState.compatibility];
   const storeReadOnly = esteiraState !== null && esteiraState.compatibility !== 'read-write';
 
+  /**
+   * B3 — os `cliSessionId` que o store da Esteira reconhece como sessão de
+   * FASE (o disparo, não a sessão livre em que alguém orquestra várias
+   * fases). É este conjunto que `PreviousSessions` usa para ocultá-las por
+   * default — dado que o app JÁ tem (nenhuma leitura nova), só recortado.
+   */
+  const esteiraPhaseSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const session of esteiraState?.snapshot.sessions ?? []) {
+      if (session.cliSessionId) ids.add(session.cliSessionId);
+    }
+    return ids;
+  }, [esteiraState]);
+
   // Um evento só cobre os três caminhos de mudança do histórico (ingestão,
   // gesto do app, gesto de outro canal). O mapa e o painel do store assinam o
   // MESMO canal — nenhum dos dois relê disco.
@@ -1159,22 +1288,50 @@ export function App(): React.JSX.Element {
   }, []);
 
   /**
-   * T312/CA-3 — escreve a sequência no PTY, um comando por vez, SEM `\r`.
-   * Só escreve quando `isReadyToPreType` diz que a sessão aceita input
-   * (semáforo em `'waiting'` ou REPL desenhado; nunca com o diálogo de
-   * confiança na tela). O 2º comando do CA-16 só sai depois de um `'waiting'`
-   * NOVO — ou seja, depois do Enter humano do 1º ter fechado o turno.
-   * Estourou o teto sem sinal: para, avisa, e deixa o resto manual.
+   * Batch B5 (05/08, pedido literal do dono) — a sessão de FASE DA ESTEIRA
+   * aperta o próprio Enter, assim que o CLI PROVA que aceita input
+   * (`isReadyForAutoStart`, o mesmo sinal de boot do pré-digitar genérico
+   * acima: banner do CLI ou barra de status do prompt ocioso; nunca com o
+   * diálogo de confiança na tela). O gesto explícito continua sendo o clique
+   * em "Preparar" — o que some é a SEGUNDA confirmação (apertar Enter dentro
+   * do terminal depois de ver o comando escrito).
+   *
+   * Função PRÓPRIA, de propósito — NUNCA uma bifurcação dentro de
+   * `armPhaseCommands`: aquela é o mecanismo GENÉRICO de pré-digitar sem
+   * enviar (invariante 2/CA-3), que outro código pode voltar a usar um dia, e
+   * esta é a exceção FECHADA, chamada só pelo caminho de disparo de fase da
+   * esteira (`handleOpenEsteiraSession`, logo abaixo) — nunca pela abertura
+   * genérica de aba.
+   *
+   * Reaproveita `armWatchersRef`/`terminalRefs` (mesmos refs de
+   * `armPhaseCommands`): a aba é NOVA aqui (acabou de nascer em
+   * `handleOpenEsteiraSession`), então não há watcher anterior para colidir —
+   * a limpeza defensiva (`armWatchersRef.current[tabId]?.()`) segue o mesmo
+   * padrão só por disciplina.
+   *
+   * **wi-esteira4-enter-confirmado (13/08) — CONFIRMA E REENVIA.** Até aqui
+   * esta função tratava `written === true` (o texto entrou no stdin do PTY)
+   * como "o CLI executou", e encerrava. Não é a mesma coisa: a bateria de
+   * 13/08 mostrou o comando digitado e nunca submetido, sem toast nenhum,
+   * porque ninguém conferia. Agora há uma fase de CONFIRMAÇÃO — o watcher de
+   * renderização e o poll, que antes morriam junto com o write do texto,
+   * seguem vivos até a caixa de input provar que a linha saiu (ou até um teto
+   * estourar e o app DIZER que não conseguiu). Todo o julgamento é puro
+   * (`classifyAutoStartSubmission`/`nextAutoStartEnterAction`,
+   * `Esteira/esteiraSession.ts`); aqui só o encanamento e os timers.
    */
-  const armPhaseCommands = useCallback((tabId: string, commands: readonly string[], warning?: string): void => {
+  const armEsteiraAutoStart = useCallback((tabId: string, command: string): void => {
     armWatchersRef.current[tabId]?.();
-    const sequencer = createPrimeSequencer(commands);
-    if (sequencer.done) return;
 
-    let armedAt = 0;
-    let isFirstStep = true;
-    let settled = false;
-    let armedAny = false;
+    // Duas fases de trabalho, não três: o que era `text-sent` (esperar um
+    // `setTimeout` entregar o Enter) virou `submitting` — escrever o Enter,
+    // conferir, reenviar se preciso. O timer do Enter deixou de existir; quem
+    // decide quando escrever é a política pura, a cada frame renderizado.
+    let phase: 'waiting-ready' | 'submitting' | 'done' = 'waiting-ready';
+    let attemptsUsed = 0;
+    let sawEcho = false;
+    let lastWriteAt = 0;
+    let phaseStartedAt = 0;
 
     const cleanup = (): void => {
       unsubscribe();
@@ -1183,50 +1340,80 @@ export function App(): React.JSX.Element {
       delete armWatchersRef.current[tabId];
     };
 
-    const stop = (): void => {
-      if (settled) return;
-      settled = true;
+    // Fechar a aba (ou armar um auto-start por cima) encerra tudo em silêncio:
+    // não há Enter pendente para cancelar — nenhum timer carrega write — e
+    // ninguém está olhando uma aba que já não existe.
+    const finish = (message?: string): void => {
+      if (phase === 'done') return;
+      phase = 'done';
       cleanup();
+      if (message !== undefined) setDevModeToast(message);
     };
 
     const check = (): void => {
-      if (settled) return;
-      const ready = isReadyToPreType({
-        isFirstStep,
-        semaphore: semaphoreStatesRef.current[tabId],
-        armedAt,
-        renderedLines: terminalRefs.current[tabId]?.getRenderedLines() ?? [],
-      });
-      if (!ready) return;
+      if (phase === 'done') return;
+      const renderedLines = terminalRefs.current[tabId]?.getRenderedLines() ?? [];
 
-      const command = sequencer.next();
-      if (command === null) {
-        stop();
+      if (phase === 'waiting-ready') {
+        if (!isReadyForAutoStart({ renderedLines })) return;
+
+        const [text] = autoStartWriteSteps(command);
+        const written = terminalRefs.current[tabId]?.injectCommand(text) ?? false;
+        if (!written) return; // PTY ainda não nasceu — tenta de novo no próximo sinal
+
+        phase = 'submitting';
+        phaseStartedAt = Date.now();
+        lastWriteAt = phaseStartedAt;
+        // O teto de PRONTIDÃO morre aqui (o CLI já provou que aceita input);
+        // o teto da confirmação é contado por `phaseStartedAt`, dentro da
+        // política. O watcher e o poll seguem VIVOS de propósito — são eles
+        // que movem a confirmação.
+        clearTimeout(timeoutId);
         return;
       }
 
-      // ⬇⬇ O gesto central: texto puro, nunca `\r`. ⬇⬇
-      const written = terminalRefs.current[tabId]?.injectCommand(command) ?? false;
-      if (!written) return; // PTY ainda não nasceu — tenta de novo no próximo sinal
+      const verdict = classifyAutoStartSubmission({ renderedLines, command });
+      // Ver o comando na caixa é a prova de que o leitor de stdin do REPL
+      // está armado e consumiu o que escrevemos. Sem isso, caixa vazia é só o
+      // estado de sempre — nunca sucesso.
+      if (verdict === 'still-typed') sawEcho = true;
 
-      armedAt = Date.now();
-      isFirstStep = false;
-      armedAny = true;
-      // #24 — sem a moldura, só o AVISO precisa de voz própria: ele é
-      // informação que o terminal não mostra (trava, divergência).
-      if (warning) setDevModeToast(warning);
-      if (sequencer.done) stop();
+      const action = nextAutoStartEnterAction({
+        verdict,
+        safeToSend: isSafeToSendEnter(renderedLines),
+        sawEcho,
+        attemptsUsed,
+        msSinceLastWrite: Date.now() - lastWriteAt,
+        msSincePhaseStart: Date.now() - phaseStartedAt,
+      });
+
+      if (action === 'wait') return;
+      if (action === 'confirmed') return finish();
+      if (action === 'give-up-no-echo') return finish(autoStartGiveUpMessage('no-echo'));
+      if (action === 'give-up-attempts') return finish(autoStartGiveUpMessage('attempts'));
+      if (action === 'give-up-unconfirmed') return finish(autoStartGiveUpMessage('unconfirmed'));
+
+      // `send-enter` — no MESMO tick síncrono da leitura acima: entre
+      // classificar a tela e escrever o `\r` não existe await nem timer, então
+      // não há janela para um diálogo aparecer entre a decisão e o byte.
+      const [, enter] = autoStartWriteSteps(command);
+      if (!(terminalRefs.current[tabId]?.injectCommand(enter) ?? false)) return finish();
+      attemptsUsed += 1;
+      lastWriteAt = Date.now();
+      // Instrumentação da bateria manual: é o que separa "consertou" de "deu
+      // sorte" — se todos os disparos submetem no #1, o caminho de reenvio
+      // ficou por provar, e o relatório precisa dizer isso.
+      console.info(`[auto-start] enter #${attemptsUsed} (aba ${tabId})`);
     };
 
     const unsubscribe = terminalRefs.current[tabId]?.onRenderedUpdate(check) ?? ((): void => {});
     const intervalId = setInterval(check, PRE_TYPE_POLL_MS);
     const timeoutId = setTimeout(() => {
-      if (settled) return;
-      stop();
-      // Só avisa quando NADA foi preparado. Numa sequência do CA-16, o 2º
-      // passo depende do Enter humano do 1º — o humano demorar não é falha,
-      // é o fluxo normal; um aviso aqui seria ruído (e mentira).
-      if (!armedAny) setDevModeToast('A sessão não ficou pronta a tempo — o comando não foi preparado.');
+      if (phase !== 'waiting-ready') return;
+      // O boot medido leva 14,5-20,9s; o teto (30s) sobra folga. Se estourar
+      // mesmo assim, NADA foi enviado (nem o texto) — dizer isso é a única
+      // frase honesta, e o comando manual continua disponível na tela do card.
+      finish(AUTO_START_NOT_READY_MESSAGE);
     }, PRE_TYPE_READY_TIMEOUT_MS);
 
     armWatchersRef.current[tabId] = cleanup;
@@ -1237,8 +1424,10 @@ export function App(): React.JSX.Element {
    * Spec 010 / batch B1 — o "Preparar" da esteira nova abre a sessão de
    * verdade. Mesma divisão do Modo Dev: a DECISÃO (onde abrir, com que comando)
    * é pura e vive em `Esteira/esteiraSession.ts`; aqui só o encanamento —
-   * criar a aba, escrever o comando (sem `\r`, invariante 2/CA-3) e amarrar a
-   * aba à sessão registrada no histórico.
+   * criar a aba e amarrá-la à sessão registrada no histórico.
+   *
+   * Batch B5 — o comando não fica só pré-digitado: `armEsteiraAutoStart`
+   * também aperta o Enter, sozinho, assim que o CLI prova que está pronto.
    */
   const handleOpenEsteiraSession = (request: EsteiraSessionRequest): void => {
     const tabId = addTab({
@@ -1253,7 +1442,7 @@ export function App(): React.JSX.Element {
       sessionType: 'claude',
     });
     esteiraTabSessionsRef.current[tabId] = request.sessionId;
-    armPhaseCommands(tabId, [request.command]);
+    armEsteiraAutoStart(tabId, request.command);
   };
 
   /**
@@ -1280,10 +1469,92 @@ export function App(): React.JSX.Element {
       { card, phase: step.phase, target: oferta.target, projects },
       { dispatch: (payload) => window.donel.esteira.dispatch(payload), openSession: handleOpenEsteiraSession },
     ).then((result) => {
-      setEsteiraState(result.state);
+      // `state: null` = recusa que nao gravou nada; manter o estado que ja esta
+      // na tela, em vez de zera-la para anunciar que nada aconteceu.
+      if (result.state !== null) setEsteiraState(result.state);
       setDevModeToast(result.message);
     });
   };
+
+  /**
+   * B1 (batch N5) — "↺ Retomar" na trilha do mapa: reabre a ÚLTIMA sessão da
+   * cadeia daquele passo já FECHADO (`claude -r <cliSessionId>` no `cwd`
+   * dela — `step.resume` já vem resolvido de `esteiraMapView.trailFor`,
+   * pura). SEM dispatch novo, SEM mudar estado do card: quem muda estado é
+   * fato declarado por skill, nunca o gesto de abrir. Mesmo padrão de
+   * `handleFocusOrResumeFavoriteSession` (007): aba já aberta com essa
+   * sessão ganha foco, em vez de abrir outra.
+   */
+  const handleMapResume = (step: MapTrailStep): void => {
+    if (step.resume === null) return;
+    const { cliSessionId, cwd } = step.resume;
+    const existingTab = tabs.find((tab) => tab.claudeSessionId === cliSessionId);
+    if (existingTab) {
+      setActiveTabId(existingTab.id);
+      return;
+    }
+    const discoveryTitle = mapView.breadcrumb[0] ?? step.phase;
+    addTab({
+      name: esteiraTabName(step.phase, discoveryTitle),
+      cwd,
+      projectName: projects.find((project) => project.path === cwd)?.name,
+      pinned: false,
+      launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId: cliSessionId } }),
+      sessionType: 'claude',
+    });
+  };
+
+  /**
+   * B2 (batch N5) — navegar o mapa até um nó alterna para a aba da sessão
+   * VIVA dele, quando existe. `tabToFocusFor` (esteiraMapView, pura) é quem
+   * decide o FATO — `SessionSnapshot.endedAt === null` cruzado com as abas
+   * abertas; esta função só aplica o resultado. Nó sem sessão viva não rouba
+   * foco (`tabId` vem `null`, nada muda) — sessão fechada nunca é alvo de
+   * alternância; para isso existe o retomar explícito do B1.
+   */
+  const focusLiveSessionOf = (discoveryId: string, subject: EntityId): void => {
+    const tabId = tabToFocusFor(esteiraState?.snapshot ?? null, discoveryId, subject, tabs);
+    if (tabId !== null) setActiveTabId(tabId);
+  };
+
+  /**
+   * C3 — o artefato de tasks.md do nó em foco no detalhe, e o caminho
+   * ABSOLUTO resolvido pra lê-lo. `resolveSessionCwd` é a MESMA resolução
+   * repo→caminho local que já decide onde a sessão de terminal abre (D-6) —
+   * reusada aqui, não recalculada: um repo que o app não conhece não vira
+   * leitura silenciosa por palpite, do mesmo jeito que não vira sessão.
+   */
+  const tasksTarget = useMemo(() => {
+    const snapshot = esteiraState?.snapshot;
+    if (!snapshot || mapView.focused.discoveryId === null || mapView.detail === null) return null;
+    const card = cardView(snapshot, mapView.focused.discoveryId);
+    if (card === null) return null;
+    const artifact = tasksArtifactFor(card, mapView.detail.subject);
+    if (artifact === null || artifact.location !== 'repo' || artifact.repo === null) return null;
+    const resolved = resolveSessionCwd(artifact.repo, projects);
+    if (!resolved.ok) return null;
+    const separator = resolved.cwd.endsWith('/') || resolved.cwd.endsWith('\\') ? '' : '/';
+    return { path: `${resolved.cwd}${separator}${artifact.path}` };
+  }, [esteiraState, mapView.focused.discoveryId, mapView.detail, projects]);
+
+  useEffect(() => {
+    if (tasksTarget === null) return;
+    if (taskDocFetchingRef.current.has(tasksTarget.path)) return;
+    taskDocFetchingRef.current.add(tasksTarget.path);
+    void window.donel.esteira.readArtifactText({ path: tasksTarget.path }).then((result) => {
+      setTaskDocByPath((prev) => ({ ...prev, [tasksTarget.path]: result.ok ? result.text : null }));
+    });
+  }, [tasksTarget]);
+
+  /** C3 — o texto já lido (se houver) interpretado por `shared/tasksDoc` (puro): o painel de detalhe só desenha o que sai daqui. */
+  const tasksView = useMemo((): TasksRunningTogetherView | null => {
+    if (tasksTarget === null) return null;
+    const text = taskDocByPath[tasksTarget.path];
+    if (text === undefined || text === null) return null;
+    const tasks = parseTasksDoc(text);
+    const scope = taskScope(tasks);
+    return scope === null ? null : { scope, tasks };
+  }, [tasksTarget, taskDocByPath]);
 
   /** D-11 — a trava é fato local, e sai num gesto. Nada de etiqueta órfã no board. */
   const handleMapReleaseLock = (): void => {
@@ -1308,135 +1579,6 @@ export function App(): React.JSX.Element {
         setDevModeToast(pendente === 0 ? 'O board recebeu o que faltava.' : `${pendente} operação(ões) ainda não foram aceitas pelo board.`);
       })
       .catch(() => undefined);
-  };
-
-  /**
-   * CA-24 (009-modo-dev-v3, lote 8) — abre o modal de confirmação do
-   * "Reiniciar sessão em foco". Sem aba Claude em foco (ou sem
-   * `claudeSessionId` já resolvido — janela curta entre `pty:create` e a
-   * promise responder), o botão simplesmente não faz nada: nunca cria uma
-   * sessão "vazia" só para ter algo a reiniciar.
-   */
-  const handleOpenRestart = (): void => {
-    if (!activeClaudeTab?.claudeSessionId) return;
-    const tab = activeClaudeTab;
-    // FIX (rodada de feedback 30/07, item 1) — degradação por exceção: nenhum
-    // handler de gesto do usuário pode lançar sem ser pego (uma exceção não
-    // tratada num handler de evento do React derruba a árvore inteira — a
-    // "tela preta" já conhecida do projeto). `setRestartTarget` só monta um
-    // objeto plano a partir de campos já lidos — não deveria lançar nunca —
-    // mas o try/catch é a rede de segurança: pior caso vira um toast, nunca
-    // um app travado.
-    try {
-      setRestartTarget({
-        tabId: tab.id,
-        sessionId: tab.claudeSessionId as string,
-        cwd: tab.cwd,
-        projectName: tab.projectName,
-        // CA-25 — perfil de NASCIMENTO da aba (`sessionProfiles`, T707/handleProfileResolved), nunca o perfil ATIVO agora.
-        sourceProfileSlug: sessionProfiles[tab.id]?.slug ?? activeProfileSlug,
-        // FIX (#21) — o que a StatusBar mostra pra esta aba AGORA, mesma
-        // resolução de `addTab` (launchArgs > launcherDefaults > literal).
-        modelEffort: {
-          model: sessionModelEffort[tab.id]?.model ?? appConfig?.launcherDefaults.model ?? DEFAULT_MODEL_ALIAS,
-          effort: sessionModelEffort[tab.id]?.effort ?? appConfig?.launcherDefaults.effort ?? DEFAULT_EFFORT_LEVEL,
-        },
-      });
-    } catch {
-      setDevModeToast('Não foi possível preparar o reinício desta sessão.');
-    }
-  };
-
-  /**
-   * CA-24 — confirmado o reinício: retoma (`-r <sessionId>`) na conta
-   * SELECIONADA (`activeProfileSlug`, o perfil ativo agora no
-   * ProfileSwitcher — "a conta selecionada" do CA-24), copiando o transcript
-   * pra dentro do perfil dela ANTES quando ela é diferente da que rodou a
-   * sessão (achado 14: o `.jsonl` mora no `CLAUDE_CONFIG_DIR` do perfil
-   * dono). A cópia é best-effort (C4): se falhar, o resume segue mesmo assim
-   * — o pior caso é idêntico a hoje, sem este botão (`-r` começa do zero,
-   * calado). A aba antiga fecha (ela "congela", CA-25) e uma aba nova nasce
-   * já retomando; sem `cwd` conhecido (aba sem projeto associado) a cópia
-   * nem tenta — não há como resolver o diretório de sessões do projeto.
-   */
-  const confirmRestart = (): void => {
-    const target = restartTarget;
-    setRestartTarget(null);
-    if (!target) return;
-
-    const targetProfileSlug = activeProfileSlug;
-    const crossProfile = target.sourceProfileSlug !== targetProfileSlug;
-
-    const resumeWithNewTab = (): void => {
-      // FIX (rodada de feedback 30/07, item 1) — degradação por exceção:
-      // qualquer falha aqui dentro (ex.: `buildClaudeArgs` recebendo um
-      // `sessionId` degenerado numa sessão recém-nascida sem transcript
-      // ainda) vira um toast, nunca uma exceção não tratada dentro de um
-      // handler de evento — essa é a "tela preta" conhecida do projeto (uma
-      // exceção em render/handler desmonta a árvore React inteira).
-      try {
-        // ORDEM IMPORTA (bug pego pelo smoke restart-session.spec.ts): `addTab`/
-        // `closeTabImmediately` fazem `setTabs(<array direto>)` a partir do
-        // `tabs` do CLOSURE desta render — não são updates funcionais. Chamar
-        // `addTab` e DEPOIS `closeTabImmediately` faz o `setTabs` do close
-        // sobrescrever o array já com a aba nova por um array calculado ANTES
-        // dela existir (o `tabs` capturado no fechamento nunca viu o `addTab`),
-        // apagando a aba recém-criada — 0 abas no fim, não 1. Fechar PRIMEIRO
-        // (sobre o `tabs` desta render, ainda correto) e só then criar a nova
-        // evita a corrida: o `setTabs` de `addTab` (que É funcional,
-        // `prev => [...prev, novo]`) compõe corretamente em cima do resultado
-        // do close, processado antes dele na mesma fila de updates do React.
-        closeTabImmediately(target.tabId);
-        // FIX (#21) — leva o modelo/esforço que a aba já mostrava (capturado em
-        // `handleOpenRestart`) pro argv real do resume: sem isto, a aba nova
-        // nascia sem `--model`/`--effort` e `addTab` caía no fallback,
-        // "esquecendo" o valor que estava na StatusBar um instante antes.
-        const args = buildClaudeArgs({
-          model: target.modelEffort.model,
-          effort: target.modelEffort.effort,
-          continuation: { type: 'resume', sessionId: target.sessionId },
-        });
-        setLastRestartSession({ args, cwd: target.cwd });
-        addTab({
-          name: target.projectName ?? 'Sessão reiniciada',
-          cwd: target.cwd,
-          projectName: target.projectName,
-          pinned: false,
-          launchArgs: args,
-          sessionType: 'claude',
-        });
-        if (crossProfile) {
-          setDevModeToast(`Sessão reiniciada na conta ${targetProfileSlug} — a sessão original (conta ${target.sourceProfileSlug}) continua congelada.`);
-        }
-      } catch {
-        setDevModeToast('Não foi possível reiniciar esta sessão.');
-      }
-    };
-
-    if (!crossProfile || !target.cwd) {
-      // Mesma conta: resume direto, sem cópia (CA-24). Sem `cwd` conhecido:
-      // não há como resolver o diretório do projeto pra copiar — segue sem
-      // cópia mesmo assim (degradação por omissão, nunca bloqueia o gesto).
-      resumeWithNewTab();
-      return;
-    }
-
-    try {
-      window.donel.transcripts
-        .copyForResume({
-          sessionId: target.sessionId,
-          projectPath: target.cwd,
-          sourceProfileSlug: target.sourceProfileSlug,
-          targetProfileSlug,
-        })
-        .catch(() => undefined) // best-effort (C4) — a cópia falhar não impede o resume.
-        .finally(resumeWithNewTab);
-    } catch {
-      // FIX (item 1) — `window.donel.transcripts` ausente/quebrado lançaria
-      // SINCRONAMENTE aqui (fora de qualquer promise, um `.catch` não pegaria):
-      // degrada pro mesmo caminho best-effort, resume segue sem a cópia.
-      resumeWithNewTab();
-    }
   };
 
   // T009 — antes do primeiro evento de hook chegar pra uma aba recém-criada,
@@ -1646,30 +1788,51 @@ export function App(): React.JSX.Element {
       ? { usedTokens: activeContextTokens, maxTokens: effectiveContextZone(activeModel) }
       : undefined;
 
-  // FIX (feedback E2E rodada 5) — "statusbar deve mostrar a conta com que a
-  // sessão EM FOCO foi criada", não a conta ATIVA global (`accountLabel`,
-  // ProfileSwitcher). `accountLabel` continua sendo o badge do
-  // titlebar/dropdown ("que conta a PRÓXIMA sessão usa") — aqui é só o
-  // fallback pra janela curta antes de `sessionProfiles[activeTab.id]`
-  // resolver (ver `computeSessionAccountLabel`). Sem aba ativa (0 sessões
-  // abertas), cai no `accountLabel` global também — não há "aba em foco"
-  // nesse estado.
-  //
-  // FIX (auditoria rodada 5, achado alta "regressão de cota") — cota do
-  // perfil de NASCIMENTO da aba (`profileHeadroom[slug]`, alimentado por
-  // `ProfileSwitcher.onHeadroomChange`), não a do perfil ativo global —
-  // `?? null` cobre tanto "perfil sem entrada no mapa ainda" (dropdown nunca
-  // foi aberto) quanto "mapa devolveu unavailable pra este slug" (mesmo
-  // contrato "—" da rodada 4). T204 (002-quota-headroom): `profileHeadroom`
-  // guarda `ProfileQuota` (não mais `number|null`) — `computeSessionAccountLabel`
-  // já lê `.fiveHour.percentRemaining` internamente.
-  const activeSessionProfile = activeTab ? sessionProfiles[activeTab.id] : undefined;
-  const activeSessionQuota = activeSessionProfile ? (profileHeadroom[activeSessionProfile.slug] ?? null) : null;
+  // T1221 (011-contas-e-provedores, etapa 2) — `accountLabel` é o rótulo
+  // GLOBAL (badge do titlebar/AccountsPanel, "que conta a PRÓXIMA sessão
+  // usa"): conta ativa do motor quando ele está ligado; "Motor inerte"
+  // enquanto `accounts.mod` for `null` (comportamento de hoje, sem perfis).
+  const activeAccountSummary = accountsView.accounts.find((account) => account.id === accountsView.activeAccountId) ?? null;
+  const accountLabel = activeAccountSummary?.label ?? (accountsView.mod === null ? 'Motor inerte' : 'Conta ativa');
+
+  // "Statusbar deve mostrar a conta VIGENTE" (011-contas-e-provedores,
+  // etapa 3, Fase 2, D1/D2) — deixou de ser a conta com que a sessão em
+  // foco foi criada: sessão de conta (sem provider, sem login isolado)
+  // segue a troca GLOBAL, rótulo e cota vêm de `current` (montado abaixo a
+  // partir do MESMO `accountsView` que alimenta o painel). `accountLabel`
+  // acima é só o fallback da janela curta antes de `activeTab` existir (0
+  // sessões abertas) ou antes de `current.active` existir (motor inerte);
+  // `sessionAccounts[activeTab.id]` continua guardando a conta de
+  // NASCIMENTO da aba (`PtyCreateResult.account`) — ela virou insumo só do
+  // sufixo "trocou em voo" (ver `computeSessionAccountLabel`), não mais da
+  // cota/rótulo principal (isso fecha o C25 de outro jeito: uma unidade só,
+  // `AccountLoad`/% consumido, mas agora sempre da conta ATIVA).
+  const activeSessionAccount = activeTab ? sessionAccounts[activeTab.id] : undefined;
+  // C13/D1 — de onde vem a credencial desta aba: provider (Launcher com
+  // provider classe A escolhido, T1320) > login isolado (Fase 1.2, aba do
+  // próprio login) > conta do motor (default, comportamento de hoje).
+  const activeCredentialSource: 'account' | 'provider' | 'login' = activeTab?.providerId
+    ? 'provider'
+    : activeTab?.accountLoginId
+      ? 'login'
+      : 'account';
+  const activeProviderLabel = activeTab?.providerId
+    ? (providers.find((provider) => provider.id === activeTab.providerId)?.label ?? activeTab.providerId)
+    : undefined;
   const activeSessionAccountLabel = activeTab
     ? computeSessionAccountLabel(
-        { sessionType: activeTab.sessionType, profile: activeSessionProfile },
+        {
+          sessionType: activeTab.sessionType,
+          account: activeSessionAccount,
+          credentialSource: activeCredentialSource,
+          providerLabel: activeProviderLabel,
+        },
         accountLabel,
-        activeSessionQuota,
+        {
+          active: activeAccountSummary ? { id: activeAccountSummary.id, label: activeAccountSummary.label } : null,
+          load: activeAccountSummary?.load ?? null,
+          autoSwitchState: accountsView.autoSwitchState,
+        },
       )
     : accountLabel;
 
@@ -1718,7 +1881,7 @@ export function App(): React.JSX.Element {
             (mockup linhas 39-51): esquerda = marca + pill de projeto (acima);
             CENTRO = SegmentedControl "Uso geral | Dev" entre dois espaçadores
             flex:1, substituindo o rótulo solto "Principal —" + o Toggle
-            azul; direita = AccountBadge (ProfileSwitcher) + os ícones que já
+            azul; direita = AccountBadge (AccountsPanel, T1221) + os ícones que já
             existiam. T310/CA-20 — ligar REORGANIZA o layout desta mesma
             janela; desligar volta à tela de hoje, que não é aposentada (nem
             desmontada — mesmo princípio do T007 "todas as abas ficam
@@ -1736,16 +1899,19 @@ export function App(): React.JSX.Element {
           />
         </div>
         <div className={styles.titlebarSpacer} />
-        <ProfileSwitcher
-          onActiveProfileLabelChange={setAccountLabel}
-          onHeadroomChange={setProfileHeadroom}
-          onActiveProfileSlugChange={setActiveProfileSlug}
-        />
-        {/* 011-contas-e-provedores (etapa 1) — motor de contas, ao lado do
-            ProfileSwitcher (nenhum dos dois substitui o outro nesta etapa).
-            Nasce inerte (accounts.mod = null): o painel abre e mostra "nenhum
-            provedor conectado" sem afetar perfis. */}
-        <AccountsPanel />
+        {/* T1221 (011-contas-e-provedores, etapa 2) — `AccountsPanel`
+            SUBSTITUI o `ProfileSwitcher` (dropdown de perfis): é agora o
+            único badge/entrada de troca de conta no titlebar. Nasce inerte
+            (accounts.mod = null) quando não há mod conectado — mesmo
+            comportamento de sempre, só que sem o dropdown de perfis ao
+            lado. */}
+        <AccountsPanel onViewChange={handleAccountsViewChange} onStartLogin={handleStartLogin} onLoginEnded={handleLoginEnded} />
+        {/* T1321 (011-contas-e-provedores, etapa 3) — gerenciamento do
+            registry de providers classe A (criar/editar/remover, gravar
+            segredo write-only). Nasce inerte (registry vazio, C14/D6) — o
+            trigger sempre aparece, mesmo sem entrada nenhuma (é como um
+            provider passa a existir). */}
+        <ProviderForm onChanged={refreshProviders} />
         {/* T015 — UI de Preferências (FR-007, feedback E2E rodada 3/4). */}
         <button
           type="button"
@@ -1761,21 +1927,18 @@ export function App(): React.JSX.Element {
           )}
         </button>
         {devModeOn ? (
-          // FIX (rodada de feedback 30/07, item 2) — "o botão de ocultar
-          // barra lateral não oculta a barra direita": o ícone é
-          // Panel-RIGHT-Close/Open, mas até aqui `rightCollapsed` só zerava
-          // a coluna ESQUERDA (o mapa, que migrou de lado no lote 7 —
-          // `bodyMapCollapsed`). O painel de 316px à direita
-          // (`PhaseDetailsPanel`) nunca obedecia a este botão. Mesmo
-          // estado, agora os dois painéis do Modo Dev — mapa e detalhe —
-          // respondem ao mesmo gesto (ver `.bodyMapCollapsed` no CSS e a
-          // condição de `PhaseDetailsPanel` logo abaixo).
+          // FIX (feedback e2e 05/08, C4) — a versão de 30/07 deste comentário
+          // dizia que `rightCollapsed` devia zerar mapa E painel de detalhe
+          // juntos; era o próprio bug. "Recolher a barra direita" só pode
+          // recolher a barra direita: este botão agora afeta SÓ
+          // `PhaseDetailsPanel` (coluna direita, 316px) — o mapa
+          // (`DiscoveryMap`, coluna esquerda) nunca mais reage a este estado.
           <button
             type="button"
             className={styles.preferencesButton}
             onClick={() => setRightCollapsed((prev) => !prev)}
-            aria-label={rightCollapsed ? 'Mostrar painéis do Modo Dev' : 'Recolher painéis do Modo Dev'}
-            title={rightCollapsed ? 'Mostrar painéis do Modo Dev' : 'Recolher painéis do Modo Dev'}
+            aria-label={rightCollapsed ? 'Mostrar painel de detalhes' : 'Recolher painel de detalhes'}
+            title={rightCollapsed ? 'Mostrar painel de detalhes' : 'Recolher painel de detalhes'}
           >
             {rightCollapsed ? (
               <PanelRightOpen size={16} strokeWidth={1.5} aria-hidden="true" />
@@ -1796,6 +1959,23 @@ export function App(): React.JSX.Element {
             data-testid="esteira-toggle"
           >
             <Route size={16} strokeWidth={1.5} aria-hidden="true" />
+          </button>
+        ) : null}
+        {/* Spec 010 / N7 (D1) — navegação rápida: o mapa de nós, em tela
+            cheia, para acompanhar o trabalho de ponta a ponta (todos os
+            discoveries, não um card por vez). Só abre — fechar é gesto do
+            próprio overlay (botão "Fechar" ou Esc), porque ele cobre a
+            titlebar inteira enquanto está aberto. */}
+        {devModeOn ? (
+          <button
+            type="button"
+            className={styles.preferencesButton}
+            onClick={() => setNodeGraphOpen(true)}
+            aria-label="Abrir o mapa de nós"
+            title="Mapa de nós — visão geral e navegação rápida (spec 010, D1)"
+            data-testid="node-graph-toggle"
+          >
+            <Network size={16} strokeWidth={1.5} aria-hidden="true" />
           </button>
         ) : null}
         <button
@@ -1838,10 +2018,11 @@ export function App(): React.JSX.Element {
           sidebarCollapsed ? styles.bodySidebarCollapsed : '',
           // Clássico sem Launcher: coluna direita (320px, Launcher) zerada.
           !devModeOn && !launcherOpen ? styles.bodyRightCollapsed : '',
-          // Lote 7 — o mapa mudou de coluna (CA-7: agora é a ESQUERDA, 480px).
-          // "Recolher mapa" (botão do titlebar) zera essa coluna; o Launcher
-          // aberto por cima não depende dela (vive na coluna direita).
-          devModeOn && rightCollapsed ? styles.bodyMapCollapsed : '',
+          // FIX (feedback e2e 05/08, C4) — Modo Dev com painel de detalhe
+          // recolhido: só a coluna DIREITA zera (mesma classe do modo
+          // clássico). O mapa (coluna ESQUERDA, 480px) nunca depende deste
+          // estado — `.bodyMapCollapsed`, que zerava as duas, morreu.
+          devModeOn && rightCollapsed ? styles.bodyRightCollapsed : '',
         ]
           .filter(Boolean)
           .join(' ')}
@@ -1980,11 +2161,6 @@ export function App(): React.JSX.Element {
                   label={SESSION_STATE_LABEL_PT[semaphoreStates[activeClaudeTab.id]?.state ?? 'working']}
                 />
               ) : null}
-              {activeClaudeTab?.claudeSessionId ? (
-                <Button variant="ghost" onClick={handleOpenRestart} data-testid="restart-session-button">
-                  ⟳ Reiniciar
-                </Button>
-              ) : null}
             </div>
           ) : null}
           <div className={styles.terminal}>
@@ -2038,9 +2214,11 @@ export function App(): React.JSX.Element {
                   sessionType={tab.sessionType}
                   cwd={tab.cwd}
                   args={tab.launchArgs}
+                  providerId={tab.providerId}
+                  accountLoginId={tab.accountLoginId}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}
-                  onProfileResolved={(profile) => handleProfileResolved(tab.id, profile)}
+                  onAccountResolved={(account) => handleAccountResolved(tab.id, account)}
                   // T404/T408 — o id da sessão chega aqui e vira a chave de
                   // persistência do nome desta aba (CA-6).
                   onClaudeSessionIdResolved={(claudeSessionId) => {
@@ -2093,22 +2271,37 @@ export function App(): React.JSX.Element {
             lateral deixa o mapa desenhado POR CIMA do terminal": recolher só
             zerava a COLUNA (`--col-left: 0px`) e o mapa continuava montado,
             transbordando de uma caixa de largura zero. Colapsar a lateral
-            agora desmonta o mapa, do mesmo jeito que "Recolher painéis" já
-            fazia. */}
-        {devModeOn && !rightCollapsed && !sidebarCollapsed ? (
+            agora desmonta o mapa — preservado abaixo (`!sidebarCollapsed`).
+            FIX (feedback e2e 05/08, C4) — a versão anterior deste comentário
+            (batch N5) fazia `rightCollapsed` também encolher o mapa via prop
+            `collapsed` (largura 0 via CSS); era exatamente o bug relatado
+            ("ocultar a barra direita derruba o mapa"). O mapa não recebe mais
+            essa prop e não reage a `rightCollapsed` de forma alguma — só
+            `sidebarCollapsed` (acima) controla se ele está montado. */}
+        {devModeOn && !sidebarCollapsed ? (
           <DiscoveryMap
             view={mapView}
             selection={mapSelection}
             warning={storeWarning}
-            onFocusDiscovery={(discoveryId) =>
+            onFocusDiscovery={(discoveryId) => {
               // Trocar de card zera o que pertence ao card: o plano, o item e o
               // nó do detalhe apontariam para algo que não está mais na tela.
-              setMapSelection({ discoveryId, planId: null, itemId: null, nodeKey: null, phase: null })
-            }
-            onFocusPlan={(planId) => setMapSelection((prev) => ({ ...prev, planId, itemId: null, nodeKey: null, phase: null }))}
-            onFocusItem={(itemId) => setMapSelection((prev) => ({ ...prev, itemId, nodeKey: `work_item:${itemId}`, phase: null }))}
+              setMapSelection({ discoveryId, planId: null, itemId: null, nodeKey: null, phase: null });
+              // B2 — navegar até o discovery alterna para a aba da sessão viva
+              // DELE, quando existe (nó sem sessão viva não rouba foco).
+              focusLiveSessionOf(discoveryId, { entity: 'discovery', id: discoveryId });
+            }}
+            onFocusPlan={(planId) => {
+              setMapSelection((prev) => ({ ...prev, planId, itemId: null, nodeKey: null, phase: null }));
+              if (mapView.focused.discoveryId) focusLiveSessionOf(mapView.focused.discoveryId, { entity: 'plan', id: planId });
+            }}
+            onFocusItem={(itemId) => {
+              setMapSelection((prev) => ({ ...prev, itemId, nodeKey: `work_item:${itemId}`, phase: null }));
+              if (mapView.focused.discoveryId) focusLiveSessionOf(mapView.focused.discoveryId, { entity: 'work_item', id: itemId });
+            }}
             onSelectNode={(nodeKey, phase) => setMapSelection((prev) => ({ ...prev, nodeKey, phase }))}
             onPrepare={handleMapPrepare}
+            onResume={handleMapResume}
             onNewDiscovery={() => setEsteiraOpen(true)}
           />
         ) : null}
@@ -2116,15 +2309,16 @@ export function App(): React.JSX.Element {
         {/* Painel de 316px à direita (CA-7) — o mapa NUNCA carrega o detalhe
             dentro de si; esqueleto aqui, conteúdo rico no lote 8. Quando o
             Launcher está aberto, ele ocupa esta mesma coluna (mesmo padrão
-            de antes). FIX (item 2, rodada 30/07) — `!rightCollapsed`: o
-            botão "Recolher painéis" do titlebar agora também esconde este
-            painel, não só o mapa (ver comentário do botão e `.bodyMapCollapsed`). */}
+            de antes). `!rightCollapsed`: o botão "Recolher painel de
+            detalhes" do titlebar desmonta só este painel — desde a correção
+            de 05/08 (C4) o mapa não é mais afetado por este estado. */}
         {devModeOn && !launcherOpen && !rightCollapsed ? (
           <PhaseDetailsPanel
             detail={mapView.detail}
             onReleaseLock={handleMapReleaseLock}
             onRetryMirror={handleMapRetryMirror}
             readOnly={storeReadOnly}
+            tasks={tasksView}
           />
         ) : null}
 
@@ -2145,6 +2339,7 @@ export function App(): React.JSX.Element {
               projects={projects}
               defaultProjectPath={selectedProjectPath}
               launcherDefaults={appConfig?.launcherDefaults}
+              providers={providers}
               onLaunch={handleLaunch}
             />
           </aside>
@@ -2163,10 +2358,6 @@ export function App(): React.JSX.Element {
         */}
         <pre data-testid="launcher-last-command" data-cwd={lastLaunch?.cwd ?? ''} hidden>
           {lastLaunch ? ['claude', ...lastLaunch.args].join(' ') : ''}
-        </pre>
-        {/* CA-24 (009-modo-dev-v3, lote 8) — idem, pro "Reiniciar sessão em foco". */}
-        <pre data-testid="restart-last-session" data-cwd={lastRestartSession?.cwd ?? ''} hidden>
-          {lastRestartSession ? ['claude', ...lastRestartSession.args].join(' ') : ''}
         </pre>
       </div>
 
@@ -2197,36 +2388,6 @@ export function App(): React.JSX.Element {
         <p>O processo desta aba será encerrado.</p>
       </Modal>
 
-      {/* CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": mesmo
-          padrão de modal de confirmação do "Fechar sessão?" acima. Avisa a
-          conta de destino e, quando diferente da que rodou a sessão, que a
-          sessão passa a existir em duas contas (CA-25) — retomada também é
-          um comando "preparado" no sentido de que só dispara ao confirmar
-          aqui, nunca antes. */}
-      <Modal
-        open={restartTarget !== null}
-        onClose={() => setRestartTarget(null)}
-        title="Reiniciar sessão em foco?"
-        actions={
-          <>
-            <Button variant="secondary" onClick={() => setRestartTarget(null)}>
-              Cancelar
-            </Button>
-            <Button variant="primary" onClick={confirmRestart} data-testid="restart-session-confirm">
-              ⟳ Reiniciar
-            </Button>
-          </>
-        }
-      >
-        <p>A sessão é retomada (<code>-r</code>) na conta <strong>{activeProfileSlug}</strong>, a conta selecionada agora.</p>
-        {restartTarget && restartTarget.sourceProfileSlug !== activeProfileSlug ? (
-          <p>
-            Ela rodou na conta <strong>{restartTarget.sourceProfileSlug}</strong> — o transcript é copiado pra conta{' '}
-            <strong>{activeProfileSlug}</strong> antes de retomar. A sessão passa a existir nas duas contas; a original congela.
-          </p>
-        ) : null}
-      </Modal>
-
       {/* T013 — PARTE PRINCIPAL (FR-004, CA-2, ui-spec §5). Item 11 — a
           tela não é mais um `Modal` portalizado: precisa do wrapper
           posicionado no grid do `.shell` (`.previousSessionsScreen`, mesma
@@ -2246,6 +2407,7 @@ export function App(): React.JSX.Element {
             // nome dado na UI), não só a 1ª mensagem: é o caminho do US-A.
             sessionNames={appConfig?.sessionNames ?? {}}
             contextLabelBySessionId={previousSessionsContextLabel}
+            esteiraPhaseSessionIds={esteiraPhaseSessionIds}
           />
         </div>
       ) : null}
@@ -2267,6 +2429,32 @@ export function App(): React.JSX.Element {
         onChangeProjectScanMode={handleChangeProjectScanMode}
         onChangeNotificationPreference={handleChangeNotificationPreference}
       />
+
+      {/* Spec 010 / N7→F25 (D1) — o mapa de nós. Renderizado condicionalmente
+          (monta/desmonta com `nodeGraphOpen`) para que o Esc do próprio
+          overlay só exista enquanto ele está na tela. `onNavigate` entrega o
+          MESMO alvo de seleção que o carrossel já consome (`mapSelection`) —
+          o grafo é controle de navegação, não só visualização — e fecha
+          qualquer tela que estivesse por cima do carrossel para o destino
+          ficar visível. F25 — o clique também alterna para a aba da sessão
+          VIVA do alvo, a mesma semântica de `onFocusDiscovery`/`onFocusPlan`
+          /`onFocusItem` logo acima: navegar pelo grafo não pode deixar o
+          usuário olhando pra aba errada enquanto o card certo aparece. */}
+      {nodeGraphOpen ? (
+        <NodeGraphOverlay
+          snapshot={esteiraState?.snapshot ?? null}
+          onClose={() => setNodeGraphOpen(false)}
+          onNavigate={(target) => {
+            setMapSelection(target);
+            setEsteiraOpen(false);
+            setNodeGraphOpen(false);
+            const subject = parseEntityKey(target.nodeKey);
+            if (target.discoveryId !== null && subject !== null) {
+              focusLiveSessionOf(target.discoveryId, subject);
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

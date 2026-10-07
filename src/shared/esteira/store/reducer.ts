@@ -22,16 +22,29 @@ import {
   STORE_SCHEMA_VERSION,
   WORK_ITEM_STATES,
   type ArtifactPointer,
+  type DeclaredFactSummary,
+  type DiscardedItemTombstone,
   type DiscoverySnapshot,
   type EntityId,
+  type DecisionSnapshot,
   type EntityKind,
+  type GateConfirmationSnapshot,
+  type HumanReviewItem,
+  type HumanReviewKind,
+  type HumanReviewSnapshot,
+  type HumanReviewState,
+  type IngestAmnesty,
+  type IngestedRunSnapshot,
   type IngestErrorSnapshot,
+  type IngestRecovery,
   type LockRecord,
+  type LockResource,
   type MacroStage,
   type MirrorQueueEntry,
   type MirrorSyncedEntry,
   type NoteSnapshot,
   type PhaseOutcome,
+  type PhaseRisk,
   type PhaseRunSnapshot,
   type PlanSnapshot,
   type RelationKind,
@@ -193,6 +206,18 @@ function oneOf<T extends string>(node: Record<string, unknown>, key: string, all
 
 const ENTITY_KINDS: readonly EntityKind[] = ['discovery', 'plan', 'work_item'];
 
+/** A5 — le `declaredFacts` do payload de `ingest.failed`. Entrada ilegivel e OMITIDA, nunca inventada. */
+function declaredFactList(node: Record<string, unknown>, key: string): readonly DeclaredFactSummary[] {
+  const value = node[key];
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): DeclaredFactSummary[] => {
+    if (!isPlainObject(entry)) return [];
+    const factType = str(entry, 'factType');
+    if (factType === null) return [];
+    return [{ factType, entity: oneOf<EntityKind>(entry, 'entity', ENTITY_KINDS), id: str(entry, 'id'), title: str(entry, 'title') }];
+  });
+}
+
 function entityId(node: Record<string, unknown>, key: string): EntityId | null {
   const raw = node[key];
   if (!isPlainObject(raw)) return null;
@@ -211,6 +236,15 @@ function trackerRef(node: Record<string, unknown>, key: string): TrackerRef | nu
   return { provider, cardId };
 }
 
+/** A8/A20 — le `LockResource` de um payload. `targetRepo` ausente = sem recurso (fase sem workspace). */
+function lockResource(node: Record<string, unknown>, key: string): LockResource | null {
+  const raw = node[key];
+  if (!isPlainObject(raw)) return null;
+  const targetRepo = str(raw, 'targetRepo');
+  if (targetRepo === null) return null;
+  return { targetRepo, branch: str(raw, 'branch'), treePath: str(raw, 'treePath') };
+}
+
 function entityKey(id: EntityId): string {
   return `${id.entity}:${id.id}`;
 }
@@ -219,10 +253,13 @@ function relationKey(relation: string, from: EntityId, to: EntityId): string {
   return `${relation}|${entityKey(from)}|${entityKey(to)}`;
 }
 
+const HUMAN_REVIEW_KINDS: readonly HumanReviewKind[] = ['review', 'action'];
+const HUMAN_REVIEW_STATES: readonly HumanReviewState[] = ['pending', 'done', 'waived'];
 const WORK_ITEM_TYPES: readonly WorkItemType[] = ['issue', 'spec', 'process-map', 'adr', 'prototype', 'spike', 'eval'];
 const RELATION_KINDS: readonly RelationKind[] = ['originated', 'flows_into', 'ships_with'];
 const PHASE_OUTCOMES: readonly PhaseOutcome[] = ['done', 'abandoned', 'inconclusive'];
-const VERIFICATION_KINDS: readonly VerificationKind[] = ['pull-request', 'check', 'review', 'conclusion'];
+const VERIFICATION_KINDS: readonly VerificationKind[] = ['pull-request', 'check', 'review', 'conclusion', 'e2e-manual'];
+const PHASE_RISKS: readonly PhaseRisk[] = ['trivial', 'sensivel'];
 const VERIFICATION_STATES: readonly VerificationState[] = ['pending', 'passed', 'failed'];
 
 // ---------------------------------------------------------------------------
@@ -266,12 +303,28 @@ interface MutableSession {
   cwd: string | null;
   model: string | null;
   effort: string | null;
+  modelEffortAssumed: boolean;
   startedAt: string;
   endedAt: string | null;
+  endReason: string | null;
   inputPath: string | null;
   resultPath: string | null;
   claimed: boolean;
 }
+
+/**
+ * A6 — o status ATUAL de um `resultPath`: a ultima palavra sobre ele, no
+ * sentido do log. Um mesmo path so aparece numa das duas listas de saida
+ * (`ingestErrors` OU `ingestRecoveries`) — nunca nas duas, porque a recuperacao
+ * nao apaga o `ingest.failed` do LOG, so para de mostra-lo como pendente.
+ */
+type IngestPathStatus =
+  | { readonly kind: 'failed'; readonly error: IngestErrorSnapshot }
+  | { readonly kind: 'recovered'; readonly recovery: IngestRecovery }
+  // F26 — o path foi ANISTIADO: nao entra em `ingestErrors` nem em
+  // `ingestRecoveries` (ele nunca chegou a ser um `ingest.failed` gravado
+  // nesta passada — ou, se foi, a anistia e a palavra mais recente sobre ele).
+  | { readonly kind: 'amnestied'; readonly amnesty: IngestAmnesty };
 
 interface MutableMirror {
   subject: EntityId;
@@ -297,10 +350,19 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
   const locks = new Map<string, LockRecord>();
   const phases = new Map<string, PhaseRunSnapshot>();
   const verifications = new Map<string, VerificationSnapshot>();
+  const gates = new Map<string, GateConfirmationSnapshot>();
+  const decisions = new Map<string, DecisionSnapshot>();
+  const humanReviews = new Map<string, HumanReviewSnapshot>();
   const notes: NoteSnapshot[] = [];
-  const ingestErrors: IngestErrorSnapshot[] = [];
+  const runs = new Map<string, IngestedRunSnapshot>();
+  /** A6 — chave e `resultPath`: o ULTIMO evento sobre aquele arquivo decide o status de agora. */
+  const ingestStatusByPath = new Map<string, IngestPathStatus>();
   const mirrorQueue = new Map<string, MutableMirror>();
   const mirrorSynced = new Map<string, MirrorSyncedEntry>();
+  /** E2 — a lapide de cada item descartado, por id. */
+  const tombstones = new Map<string, DiscardedItemTombstone>();
+  /** F26 — todo `run_id` que ja passou pela ingestao, mesmo sem `run.ingested`. */
+  const knownIngestRunIds = new Set<string>();
 
   const seenDedupeKeys = new Set<string>();
   let throughSeq = 0;
@@ -324,6 +386,13 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
 
   for (const event of events) {
     if (event.seq > throughSeq) throughSeq = event.seq;
+
+    // F26 — o `run_id` conta como CONHECIDO pelo simples fato de ter passado
+    // pela ingestao, mesmo que o evento em si seja um duplicado descartado a
+    // seguir (dedupe) ou um fato de um tempo em que `run.ingested` nao
+    // existia ainda: e exatamente essa segunda situacao que os 10 runs
+    // pre-ledger do incidente de 05/08 estao em.
+    if (event.source.kind === 'ingest') knownIngestRunIds.add(event.source.run_id);
 
     // Dois eventos com a mesma chave natural sao o MESMO fato: o segundo e
     // descartado na leitura. E dai que vem a idempotencia da ingestao.
@@ -352,7 +421,13 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           title,
           problem: str(p, 'problem') ?? current?.problem ?? null,
           tracker: trackerRef(p, 'tracker') ?? current?.tracker ?? null,
-          targetRepo: str(p, 'targetRepo') ?? current?.targetRepo ?? null,
+          // `'targetRepo' in p` e nao `?? current`: os dois casos existem e sao
+          // diferentes. Um `discovery.updated` que NAO fala do alvo (uma skill
+          // declarando so o problema) preserva o que estava la; um que manda
+          // `null` esta LIMPANDO o alvo, e limpar e um gesto legitimo — o card
+          // volta a ser investigacao sem repo. Com `??`, apagar era impossivel:
+          // o `null` era lido como "nao falou" e o alvo velho ressuscitava.
+          targetRepo: 'targetRepo' in p ? str(p, 'targetRepo') : (current?.targetRepo ?? null),
           scopeRepos: 'scopeRepos' in p ? strList(p, 'scopeRepos') : (current?.scopeRepos ?? []),
           createdAt: current?.createdAt ?? str(p, 'createdAt') ?? event.at,
           stageOverride: current?.stageOverride ?? null,
@@ -426,7 +501,22 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         // D-16: item nascido pela skill se descarta num gesto. O evento fica no
         // log (historico nunca some); a entidade sai do snapshot.
         const id = str(p, 'id');
-        if (id !== null) workItems.delete(id);
+        if (id === null) break;
+        // E2 — a LAPIDE nasce do item COMO ELE ERA no instante do descarte,
+        // antes de sair do mapa. Sem o item (fantasma, ja descartado antes) nao
+        // ha o que gravar: uma lapide sem conteudo nao responde pergunta nenhuma.
+        const item = workItems.get(id);
+        if (item !== undefined) {
+          tombstones.set(id, {
+            id: item.id,
+            discoveryId: item.discoveryId,
+            title: item.title,
+            itemType: item.itemType,
+            discardedAt: str(p, 'at') ?? event.at,
+            reason: str(p, 'reason'),
+          });
+        }
+        workItems.delete(id);
         break;
       }
 
@@ -476,6 +566,9 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           verificationKind,
           state,
           ref,
+          // A15 — a base do PR faz parte do desfecho num repo com escada de
+          // canais: "concluido" sem destino se le como "esta na main".
+          base: str(p, 'base'),
           recordedAt: str(p, 'recordedAt') ?? event.at,
         });
         break;
@@ -498,6 +591,8 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           // AGORA, e o historico continua no log.
           failure: null,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
+          channel: current?.channel ?? null,
+          risk: current?.risk ?? null,
           seeded: fromSeed,
         });
         break;
@@ -519,6 +614,12 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           summary: str(p, 'summary'),
           failure: null,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
+          // A15 — o canal so muda quando a fase declara um: nao se herda o
+          // destino de uma entrega anterior nem se inventa um.
+          channel: str(p, 'channel') ?? current?.channel ?? null,
+          // A16 — o risco so muda quando a fase declara um: nao se herda a
+          // regua de uma passagem anterior nem se classifica por ela.
+          risk: oneOf<PhaseRisk>(p, 'risk', PHASE_RISKS) ?? current?.risk ?? null,
           // A fase e estado de AGORA: quem afirmou o ultimo desfecho define a
           // marca. Fase semeada e depois de fato executada vira observada.
           seeded: fromSeed,
@@ -566,6 +667,8 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           summary: current?.summary ?? null,
           failure,
           lastRunId: str(p, 'runId') ?? current?.lastRunId ?? null,
+          channel: current?.channel ?? null,
+          risk: current?.risk ?? null,
           seeded: fromSeed,
         });
         // Falhar nao e "nao ter comecado": o item continua em curso, e a falha
@@ -598,8 +701,10 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           cwd: str(p, 'cwd'),
           model: str(p, 'model'),
           effort: str(p, 'effort'),
+          modelEffortAssumed: bool(p, 'modelEffortAssumed'),
           startedAt: str(p, 'startedAt') ?? event.at,
           endedAt: null,
+          endReason: null,
           inputPath: str(p, 'inputPath'),
           resultPath: str(p, 'resultPath'),
           // Nasce NAO assumida: o app preparou, ninguem pegou ainda.
@@ -641,6 +746,9 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           // O motivo do handoff fica na sessao que ENCERRA e na que continua —
           // a cadeia da fase precisa ser legivel dos dois lados.
           handoffReason: event.type === 'session.handed-off' ? (str(p, 'reason') ?? current.handoffReason) : current.handoffReason,
+          // A7 — por que ESTA sessao terminou (nao a de handoff, que tem
+          // sucessora e conta outra historia). `null` quando ninguem declarou.
+          endReason: event.type === 'session.ended' ? str(p, 'reason') : current.endReason,
         });
         break;
       }
@@ -657,6 +765,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
           acquiredAt,
           cliSessionId: str(p, 'cliSessionId'),
           mirroredLabel: str(p, 'mirroredLabel'),
+          resource: lockResource(p, 'resource'),
         });
         break;
       }
@@ -666,6 +775,61 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         const phase = str(p, 'phase');
         if (subject === null || phase === null) break;
         locks.delete(`${entityKey(subject)}|${phase}`);
+        break;
+      }
+
+      case 'gate.confirmed': {
+        // A9 — uma condicao por registro. Reconfirmar a MESMA condicao atualiza
+        // quem confirmou; nao empilha, porque duas confirmacoes da mesma coisa
+        // sao a mesma coisa confirmada.
+        const subject = entityId(p, 'subject');
+        const condition = str(p, 'condition');
+        const confirmedBy = str(p, 'confirmedBy');
+        if (subject === null || condition === null || confirmedBy === null) break;
+        gates.set(`${entityKey(subject)}|${condition}`, {
+          subject,
+          condition,
+          confirmedBy,
+          confirmedAt: str(p, 'confirmedAt') ?? event.at,
+        });
+        break;
+      }
+
+      case 'decision.recorded': {
+        // A18 — uma decisao por registro. Redecidir a MESMA coisa atualiza quem
+        // confirmou e por que; decidir outra coisa e outra linha, porque uma
+        // fase de conversa toma varias decisoes.
+        const subject = entityId(p, 'subject');
+        const decision = str(p, 'decision');
+        const confirmedBy = str(p, 'confirmedBy');
+        if (subject === null || decision === null || confirmedBy === null) break;
+        decisions.set(`${entityKey(subject)}|${decision}`, {
+          subject,
+          decision,
+          confirmedBy,
+          rationale: str(p, 'rationale'),
+          at: str(p, 'at') ?? event.at,
+        });
+        break;
+      }
+
+      case 'human_review.recorded': {
+        // A10 — a lista e o estado de AGORA: redeclarar SUBSTITUI. Mesclar
+        // deixaria conviver uma revisao respondida pela metade com a versao
+        // anterior inteira, e a tela mostraria as duas como se fossem uma.
+        const subject = entityId(p, 'subject');
+        const phase = str(p, 'phase');
+        const rawChecklist = Array.isArray(p.checklist) ? p.checklist : [];
+        if (subject === null || phase === null) break;
+        const checklist = rawChecklist.filter(isPlainObject).flatMap((entry): HumanReviewItem[] => {
+          const item = str(entry, 'item');
+          const kind = oneOf<HumanReviewKind>(entry, 'kind', HUMAN_REVIEW_KINDS);
+          const state = oneOf<HumanReviewState>(entry, 'state', HUMAN_REVIEW_STATES);
+          if (item === null || kind === null || state === null) return [];
+          return [{ item, kind, state, detail: str(entry, 'detail') }];
+        });
+        if (checklist.length === 0) break;
+        humanReviews.set(`${entityKey(subject)}|${phase}`, { subject, phase, checklist, at: str(p, 'at') ?? event.at });
         break;
       }
 
@@ -696,17 +860,89 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
         break;
       }
 
+      case 'run.ingested': {
+        // A4 — o livro dos runs. Chave e o `run_id`: um run e um so, e e por
+        // ele que a ingestao pergunta "isto ja entrou, e com que conteudo?".
+        const runId = str(p, 'runId');
+        const contentHash = str(p, 'contentHash');
+        if (runId === null || contentHash === null) break;
+        runs.set(runId, {
+          runId,
+          phase: str(p, 'phase') ?? '',
+          kind: str(p, 'kind') ?? 'esteira.result',
+          contentHash,
+          complementsRunId: str(p, 'complementsRunId'),
+          revisesRunId: str(p, 'revisesRunId'),
+          subject: entityId(p, 'subject'),
+          resultPath: str(p, 'resultPath'),
+          at: str(p, 'at') ?? event.at,
+        });
+        break;
+      }
+
       case 'ingest.failed': {
         const resultPath = str(p, 'resultPath');
         if (resultPath === null) break;
         const rawIssues = Array.isArray(p.issues) ? p.issues : [];
-        ingestErrors.push({
-          resultPath,
-          at: str(p, 'at') ?? event.at,
-          subject: entityId(p, 'subject'),
-          issues: rawIssues
-            .filter(isPlainObject)
-            .map((issue) => ({ code: str(issue, 'code') ?? 'unknown', path: str(issue, 'path') ?? '', message: str(issue, 'message') ?? '' })),
+        ingestStatusByPath.set(resultPath, {
+          kind: 'failed',
+          error: {
+            resultPath,
+            at: str(p, 'at') ?? event.at,
+            subject: entityId(p, 'subject'),
+            issues: rawIssues
+              .filter(isPlainObject)
+              .map((issue) => ({ code: str(issue, 'code') ?? 'unknown', path: str(issue, 'path') ?? '', message: str(issue, 'message') ?? '' })),
+            // A5 — o custo: o que o documento declararia, se entrasse.
+            declaredFacts: declaredFactList(p, 'declaredFacts'),
+          },
+        });
+        break;
+      }
+
+      case 'ingest.recovered': {
+        // A6 — o MESMO path que falhou passou a ser legivel. Isto NAO apaga o
+        // `ingest.failed` do log (ele continua la, evento anterior); so troca o
+        // status DE AGORA daquele path — e e por isso que a chave e o path, nao
+        // um id novo: recuperar e suceder, nao e um fato solto.
+        const resultPath = str(p, 'resultPath');
+        if (resultPath === null) break;
+        ingestStatusByPath.set(resultPath, {
+          kind: 'recovered',
+          recovery: {
+            resultPath,
+            at: str(p, 'at') ?? event.at,
+            runId: str(p, 'runId'),
+            subject: entityId(p, 'subject'),
+            recoveredCodes: strList(p, 'recoveredCodes'),
+            how: str(p, 'how') ?? '',
+          },
+        });
+        break;
+      }
+
+      case 'ingest.amnestied': {
+        // F26 — este path nao aparece como erro, sob nenhuma hipotese: o
+        // `run_id` ja consta no livro, ingerido por um contrato mais antigo.
+        // Chave e o path, igual `ingest.failed`/`ingest.recovered`: o ULTIMO
+        // evento sobre aquele arquivo decide o status de agora.
+        const resultPath = str(p, 'resultPath');
+        // F26 — `runId` pode ser `null`: a anistia por CORTE DE DATA nao exige
+        // um `run_id` legivel, so um timestamp anterior ao corte. Ver
+        // `IngestAmnesty.runId`.
+        if (resultPath === null) break;
+        const rawIssues = Array.isArray(p.issues) ? p.issues : [];
+        ingestStatusByPath.set(resultPath, {
+          kind: 'amnestied',
+          amnesty: {
+            resultPath,
+            at: str(p, 'at') ?? event.at,
+            runId: str(p, 'runId'),
+            subject: entityId(p, 'subject'),
+            issues: rawIssues
+              .filter(isPlainObject)
+              .map((issue) => ({ code: str(issue, 'code') ?? 'unknown', path: str(issue, 'path') ?? '', message: str(issue, 'message') ?? '' })),
+          },
         });
         break;
       }
@@ -777,9 +1013,20 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
 
   const planList = [...plans.values()];
   const itemList = [...workItems.values()];
-  const errorList = ingestErrors;
+  // A6 — so o status DE AGORA de cada path: um path recuperado saiu da lista de
+  // erros e entrou na de recuperacoes, sem que o `ingest.failed` original tenha
+  // sido apagado do log (ele so nao aparece mais aqui).
+  const statusList = [...ingestStatusByPath.values()];
+  const errorList = statusList.filter((entry): entry is Extract<IngestPathStatus, { kind: 'failed' }> => entry.kind === 'failed').map((entry) => entry.error);
+  const recoveryList = statusList
+    .filter((entry): entry is Extract<IngestPathStatus, { kind: 'recovered' }> => entry.kind === 'recovered')
+    .map((entry) => entry.recovery);
+  const amnestyList = statusList
+    .filter((entry): entry is Extract<IngestPathStatus, { kind: 'amnestied' }> => entry.kind === 'amnestied')
+    .map((entry) => entry.amnesty);
   const mirrorList = [...mirrorQueue.values()];
   const phaseList = [...phases.values()];
+  const tombstoneList = [...tombstones.values()];
 
   const discoveryList: DiscoverySnapshot[] = [...discoveries.values()].map((discovery) => {
     const ownPlans = planList.filter((plan) => plan.discoveryId === discovery.id);
@@ -800,10 +1047,15 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     // dos documentos recusados vem ancorada num work item. Olhar so o discovery
     // deixaria o card limpo na lista enquanto um `result.json` foi recusado —
     // o silencio que a spec inteira existe para acabar.
+    //
+    // E2 — o item DESCARTADO continua contando: um erro ou espelho pendente
+    // ancorado nele nao vira orfao so porque o item saiu de `workItems`.
+    const ownTombstones = tombstoneList.filter((tombstone) => tombstone.discoveryId === discovery.id);
     const owned = new Set<string>([
       `discovery:${discovery.id}`,
       ...ownPlans.map((plan) => `plan:${plan.id}`),
       ...ownItems.map((item) => `work_item:${item.id}`),
+      ...ownTombstones.map((tombstone) => `work_item:${tombstone.id}`),
     ]);
 
     const signals: StageSignal[] = [...derived.signals];
@@ -845,8 +1097,15 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
     locks: [...locks.values()],
     phases: phaseList,
     verifications: [...verifications.values()],
+    gates: [...gates.values()],
+    decisions: [...decisions.values()],
+    humanReviews: [...humanReviews.values()],
     notes,
+    runs: [...runs.values()],
+    knownIngestRunIds,
     ingestErrors: errorList,
+    ingestRecoveries: recoveryList,
+    ingestAmnesties: amnestyList,
     mirrorQueue: mirrorList.map(({ subject, operation, payload, queuedAt, attempts, lastError }) => ({
       subject,
       operation,
@@ -856,6 +1115,7 @@ export function reduceEvents(events: readonly StoreEvent[], options: ReduceOptio
       lastError,
     })) satisfies MirrorQueueEntry[],
     mirrorSynced: [...mirrorSynced.values()],
+    tombstones: tombstoneList,
   };
 }
 

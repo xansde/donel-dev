@@ -1,0 +1,122 @@
+{
+  "contract_version": "1.0.0",
+  "kind": "esteira.result",
+  "run": {
+    "run_id": "run-2026-08-08-0900",
+    "phase": "implementar",
+    "status": "success",
+    "started_at": "2026-08-08T12:00:00.000Z",
+    "finished_at": "2026-08-08T15:41:03.000Z",
+    "failure": null,
+    "complements_run_id": null,
+    "revises_run_id": null
+  },
+  "actor": {
+    "tool": "esteira-donel",
+    "tool_version": "3.0.0",
+    "executor": "claude-code",
+    "model": "claude-opus-5",
+    "effort": "high",
+    "cli_session_id": "0198f5ab-2c3d-7e79-9b2d-3e4f5a6b7c8d"
+  },
+  "subject": {
+    "discovery_id": "dsc-2026-08-03-a",
+    "plan_id": "pln-2026-08-03-a1",
+    "work_item_id": "wi-2026-08-03-a1-05"
+  },
+  "workspace": {
+    "target_repo": "atlas",
+    "repo_path": "C:/Users/dev/code/atlas",
+    "worktree_path": "C:/Users/dev/code/atlas-wt/wi-2026-08-03-a1-05",
+    "branch": "feat/lote-vazio"
+  },
+  "facts": [
+    {
+      "type": "verification.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
+      "verification_kind": "check",
+      "state": "passed",
+      "ref": "npm test"
+    },
+    {
+      "type": "artifact.recorded",
+      "owner": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
+      "artifact_kind": "adr",
+      "location": "repo",
+      "repo": "atlas",
+      "path": "docs/adr/0009-lote-vazio.md"
+    },
+    {
+      "type": "verification.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
+      "verification_kind": "pull-request",
+      "state": "passed",
+      "ref": "https://github.com/exemplo/atlas/pull/141"
+    },
+    {
+      "type": "phase.completed",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
+      "phase": "implementar",
+      "outcome": "done",
+      "summary": "Correcao e teste no mesmo commit.",
+      "risk": null,
+      "channel": null
+    },
+    {
+      "type": "phase.completed",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
+      "phase": "validar",
+      "outcome": "done",
+      "summary": "Review e verificacao rodados na mesma sessao.",
+      "risk": "trivial",
+      "channel": null
+    },
+    {
+      "type": "phase.completed",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
+      "phase": "documentar",
+      "outcome": "done",
+      "summary": "ADR escrita junto, enquanto a decisao ainda estava fresca.",
+      "risk": null,
+      "channel": null
+    },
+    {
+      "type": "phase.completed",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
+      "phase": "concluir",
+      "outcome": "done",
+      "summary": "PR mergeado e verificado.",
+      "risk": null,
+      "channel": "alfa"
+    },
+    {
+      "type": "lock.released",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-2026-08-03-a1-05"
+      },
+      "phase": "implementar"
+    }
+  ]
+}

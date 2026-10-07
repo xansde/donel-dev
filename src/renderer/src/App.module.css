@@ -315,17 +315,16 @@
   --col-right: 0px;
 }
 
-/* Lote 7 — "Recolher painéis" (botão do titlebar, PanelRightClose/Open) no
-   Modo Dev zera as DUAS colunas laterais: a ESQUERDA (o mapa, que mudou de
-   lado, CA-7) e, FIX (item 2, rodada de feedback 30/07), a DIREITA também
-   (`PhaseDetailsPanel`, 316px) — antes só o mapa obedecia ao botão, e o
-   painel de detalhe ficava sempre reservando 316px mesmo com o conteúdo
-   desmontado em App.tsx. Depois de `.bodyDevMode` de propósito (a ordem
-   decide a var). */
-.bodyMapCollapsed {
-  --col-left: 0px;
-  --col-right: 0px;
-}
+/* FIX (feedback e2e 05/08, C4) — a decisão de 30/07 acima (zerar as DUAS
+   colunas) estava ERRADA: "ocultar a barra direita" derrubava o mapa junto,
+   porque as colunas ESQUERDA (mapa) e DIREITA (`PhaseDetailsPanel`) eram a
+   mesma variável de estado (`rightCollapsed`) zerando as duas larguras. O
+   pedido do dono é ocultar só o painel de detalhe — o mapa fica. `.bodyMapCollapsed`
+   morreu; `rightCollapsed` no Modo Dev agora reaproveita a mesma
+   `.bodyRightCollapsed` do modo clássico (zera só `--col-right`), aplicada
+   depois de `.bodyDevMode` de propósito (a ordem decide a var). O mapa
+   (`DiscoveryMap`) NUNCA MAIS reage a `rightCollapsed` — só
+   `sidebarCollapsed` o desmonta (FIX #15, intocado). */
 
 /* Teste manual 27/07 — sidebar (projetos ou porta de entrada) colapsável
    pra facilitar o foco no terminal. */

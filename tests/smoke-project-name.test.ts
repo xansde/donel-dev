@@ -24,16 +24,12 @@ const SMOKE_DIRS = ['tests/smoke', 'tests/smoke-dev'];
 const ALLOWLIST: Record<string, readonly { readonly snippet: string; readonly reason: string }[]> = {
   'config-persistence.spec.ts': [
     {
-      snippet: `path.join(String(process.env.APPDATA), 'donel-dev', 'config.json')`,
-      reason: 'nome do APP (app.setName), não da pasta do repo — %APPDATA%\\donel-dev é o mesmo em qualquer worktree',
+      snippet: `const APP_NAME = 'donel-dev'`,
+      reason: 'nome do APP (app.setName), não da pasta do repo — compõe o userData de produção, o mesmo em qualquer worktree',
     },
     {
       snippet: `const TEST_ROOT = 'C:\\\\donel-dev-smoke-t015-root'`,
       reason: 'root de projeto FANTASMA inventado pelo teste, não existe no disco',
-    },
-    {
-      snippet: `'Verifique %APPDATA%\\\\donel-dev\\\\config.json manualmente.'`,
-      reason: 'texto do aviso de falha de restauração — cita o userData do APP, não a pasta do repo',
     },
   ],
   'userDataIsolation.ts': [
@@ -111,7 +107,7 @@ describe('a cerca de verdade pega o hardcode (autoteste do detector)', () => {
     const benign = [
       `// numa worktree (donel-dev-wt-007) o projeto aparece com ESSE nome`,
       `/* %APPDATA%\\donel-dev\\config.json é o userData do app */`,
-      `const configPath = path.join(String(process.env.APPDATA), 'donel-dev', 'config.json');`,
+      `const APP_NAME = 'donel-dev';`,
     ].join('\n');
     const allowed = ALLOWLIST['config-persistence.spec.ts'].map((entry) => entry.snippet);
     expect(findHardcodedProjectName(benign, allowed)).toEqual([]);

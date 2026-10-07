@@ -35,6 +35,31 @@ export type ContractIssueCode =
   | 'missing_required_fact'
   /** Fase que declarou o ciclo encerrado (`outcome: done`) sem a verificacao que o encerra (D-4). */
   | 'done_without_passed_verification'
+  /** A18 — fase de conversa (discovery, plano) fechada `done` sem nenhum fato humano: ela nao perguntou nada. */
+  | 'done_without_human_decision'
+  /** A4 — complemento sem o run ao qual se ancora: acrescentar fatos a coisa nenhuma. */
+  | 'complement_without_anchor'
+  /** A4 — result normal declarando `complements_run_id`: complemento sem se dizer complemento. */
+  | 'complement_without_kind'
+  /** A4 — complemento redeclarando a fase: a mesma execucao contada duas vezes. */
+  | 'complement_redeclares_phase'
+  /** A4/A13 — o `run_id` nao traz o sufixo do parentesco que ele declara. */
+  | 'lineage_suffix_mismatch'
+  /** A22 — o MESMO assunto e a MESMA fase fechados duas vezes no mesmo result: duas historias sobre uma execucao. */
+  | 'duplicate_phase_completed'
+  /** A22 — o run fechou outras fases e nao disse o que houve com a SUA. */
+  | 'phase_completed_missing_for_run'
+  /** A16 — fase de risco sensivel fechada sem declarar o roteiro e2e manual. */
+  | 'sensitive_without_e2e'
+  /** A16 — aprovacao humana registrada com o roteiro e2e ainda pendente, em risco sensivel. */
+  | 'approval_before_e2e'
+  /**
+   * A4 — o MESMO `run_id`, ja ingerido, voltou com conteudo DIFERENTE e sem se
+   * declarar complemento nem revisao. Caso real: a Concluir regravou o run com
+   * o desfecho revisto e o card ficou "terminou sem conclusao" em silencio —
+   * porque a segunda leitura casava com a `dedupe_key` da primeira e sumia.
+   */
+  | 'run_changed_after_ingest'
   | 'issue_without_target_repo'
   | 'artifact_repo_mismatch'
   | 'failure_missing'

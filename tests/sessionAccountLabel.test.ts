@@ -1,104 +1,210 @@
-// FIX (feedback E2E rodada 5) — statusbar mostra a conta de NASCIMENTO da
-// sessão em foco, não a conta ATIVA global (ver comentário de topo de
-// src/shared/sessionAccountLabel.ts pra causa raiz completa).
-// T204 (002-quota-headroom) — 3º parâmetro passou de `number|null` pro shape
-// `ProfileQuota|null`. T208: o rótulo agora explicita "5h" antes do percentual
-// (CA-4) — "—" continua "—" (nunca "5h —") quando não há leitura.
+// T1218 (011-contas-e-provedores, etapa 2) — troca de fonte: a entrada vira
+// `account: { id, label }` (motor, `shared/accounts.ts`), imutável pela vida
+// da aba (mesma regra "por valor na criação" de sempre).
+//
+// 011-contas-e-provedores, etapa 3, Fase 2 (D1/D2, ajuste ao desenho) —
+// reescrita completa do contrato: a aba passa a mostrar a conta VIGENTE
+// (`current.active`/`current.load`), não mais a de nascimento; `account`
+// (nascimento) só alimenta o sufixo "trocou em voo". `credentialSource`
+// decide o ramo (provider/login/account) antes de qualquer conta entrar em
+// jogo. `current.autoSwitchState` substitui o booleano `saturated` do
+// desenho original — cobre também `blind` (D8).
 import { describe, expect, it } from 'vitest';
-import type { ProfileQuota } from '../src/shared/profiles';
-import { computeSessionAccountLabel, formatArchivedAccountLabel } from '../src/shared/sessionAccountLabel';
+import type { AccountLoad } from '../src/shared/accounts';
+import { computeSessionAccountLabel, formatArchivedAccountLabel, type CurrentAccountContext } from '../src/shared/sessionAccountLabel';
 
-const quotaWithFiveHour = (percentRemaining: number): ProfileQuota => ({
-  status: 'ok',
-  fiveHour: { percentRemaining, resetsAt: null },
-  sevenDay: null,
-  fable: null,
+const loadWithFiveHour = (fiveHour: number): AccountLoad => ({ fiveHour, sevenDay: null, sonnet: null, readAt: '2026-08-04T00:00:00.000Z' });
+
+/** Motor sem conta ativa (inerte, ou ainda sem leitura) — reutilizado pelos ramos que nem chegam a olhar `current`. */
+const NO_ACTIVE: CurrentAccountContext = { active: null, load: null, autoSwitchState: 'idle' };
+
+const activeContext = (overrides: Partial<CurrentAccountContext> = {}): CurrentAccountContext => ({
+  active: { id: 'acc-active', label: 'Conta Ativa' },
+  load: null,
+  autoSwitchState: 'idle',
+  ...overrides,
 });
 
 describe('computeSessionAccountLabel', () => {
-  it('aba claude com perfil resolvido fora da convenção "Tecnologia Claude {n}" mostra o nome cru prefixado + cota', () => {
-    const label = computeSessionAccountLabel(
-      { sessionType: 'claude', profile: { slug: 'principal', name: 'Principal' } },
-      'FALLBACK_NAO_USADO',
-      quotaWithFiveHour(62),
-    );
-    expect(label).toBe('Sessão: Principal · 5h 62%');
+  describe('aba shell — sempre neutra, current nunca é olhado', () => {
+    it('sem conta de nascimento', () => {
+      const label = computeSessionAccountLabel({ sessionType: 'shell', account: undefined }, 'FALLBACK_NAO_USADO', activeContext());
+      expect(label).toBe('Terminal (sem conta)');
+    });
+
+    it('com conta de nascimento presente (ignorada mesmo assim)', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'shell', account: { id: 'acc-1', label: 'Conta 1' } },
+        'FALLBACK_NAO_USADO',
+        activeContext(),
+      );
+      expect(label).toBe('Terminal (sem conta)');
+    });
   });
 
-  it('aba claude com perfil no formato "Tecnologia Claude {n}" normaliza via parseAccountNumber + cota', () => {
-    const label = computeSessionAccountLabel(
-      { sessionType: 'claude', profile: { slug: 'tecnologia-claude-3', name: 'Tecnologia Claude 3' } },
-      'FALLBACK_NAO_USADO',
-      quotaWithFiveHour(45),
-    );
-    expect(label).toBe('Sessão: Tecnologia Claude 3 · 5h 45%');
+  describe("credentialSource: 'login' — a própria aba de login isolado", () => {
+    it('rótulo neutro, ignora account/current', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: { id: 'acc-1', label: 'Conta 1' }, credentialSource: 'login' },
+        'FALLBACK_NAO_USADO',
+        activeContext(),
+      );
+      expect(label).toBe('Login de conta (sem sessão)');
+    });
   });
 
-  it('aba claude com perfil de teste (nome arbitrário) e quota unavailable (sem fiveHour) mostra o nome cru prefixado + —', () => {
-    const label = computeSessionAccountLabel(
-      { sessionType: 'claude', profile: { slug: 'e2e-profile-test', name: 'e2e-profile-test' } },
-      'FALLBACK_NAO_USADO',
-      { status: 'unavailable', fiveHour: null, sevenDay: null, fable: null },
-    );
-    expect(label).toBe('Sessão: e2e-profile-test · —');
+  describe("credentialSource: 'provider' — sem cota, sem conta", () => {
+    it('com providerLabel', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: undefined, credentialSource: 'provider', providerLabel: 'Provedor X' },
+        'FALLBACK_NAO_USADO',
+        NO_ACTIVE,
+      );
+      expect(label).toBe('Sessão: Provedor X · provedor');
+    });
+
+    it('sem providerLabel cai no genérico "provedor"', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: undefined, credentialSource: 'provider' },
+        'FALLBACK_NAO_USADO',
+        NO_ACTIVE,
+      );
+      expect(label).toBe('Sessão: provedor · provedor');
+    });
   });
 
-  // FIX (auditoria rodada 5, achado alta "regressão de cota") — trava a
-  // PRESENÇA da cota mesmo quando quem chama omite o 3º argumento (default
-  // `null` -> '—'), pra nunca mais o slot sumir silenciosamente do rótulo.
-  it('cota omitida (default) cai em "—" — nunca omite o slot inteiro', () => {
-    const label = computeSessionAccountLabel(
-      { sessionType: 'claude', profile: { slug: 'principal', name: 'Principal' } },
-      'FALLBACK_NAO_USADO',
-    );
-    expect(label).toBe('Sessão: Principal · —');
+  describe("credentialSource: 'account' (default) com current.active — a virada do D1", () => {
+    it('credentialSource omitido cai em account', () => {
+      const label = computeSessionAccountLabel({ sessionType: 'claude', account: undefined }, 'FALLBACK_NAO_USADO', activeContext());
+      expect(label).toBe('Sessão: Conta Ativa · —');
+    });
+
+    it('cota vem de current.load (da conta ATIVA), não da de nascimento', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: { id: 'acc-active', label: 'Conta Ativa' } },
+        'FALLBACK_NAO_USADO',
+        activeContext({ load: loadWithFiveHour(62) }),
+      );
+      expect(label).toBe('Sessão: Conta Ativa · 62% usado');
+    });
+
+    it('cota desconhecida (todas as janelas null) cai em "—"', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: { id: 'acc-active', label: 'Conta Ativa' } },
+        'FALLBACK_NAO_USADO',
+        activeContext({ load: { fiveHour: null, sevenDay: null, sonnet: null, readAt: '2026-08-04T00:00:00.000Z' } }),
+      );
+      expect(label).toBe('Sessão: Conta Ativa · —');
+    });
+
+    it('load ausente (null) cai em "—" — nunca omite o slot inteiro', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: { id: 'acc-active', label: 'Conta Ativa' } },
+        'FALLBACK_NAO_USADO',
+        activeContext({ load: null }),
+      );
+      expect(label).toBe('Sessão: Conta Ativa · —');
+    });
+
+    it('nascimento === ativa agora: sem sufixo "trocou em voo"', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: { id: 'acc-active', label: 'Conta Ativa' } },
+        'FALLBACK_NAO_USADO',
+        activeContext(),
+      );
+      expect(label).not.toContain('trocou em voo');
+    });
+
+    it('nascimento diverge da ativa agora: ganha "trocou em voo (era <nascimento>)"', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: { id: 'acc-1', label: 'Conta 1' } },
+        'FALLBACK_NAO_USADO',
+        activeContext(),
+      );
+      expect(label).toBe('Sessão: Conta Ativa · — · trocou em voo (era Conta 1)');
+    });
+
+    it('nascimento ainda não resolvido (undefined): sem sufixo, mesmo com conta ativa presente', () => {
+      const label = computeSessionAccountLabel({ sessionType: 'claude', account: undefined }, 'FALLBACK_NAO_USADO', activeContext());
+      expect(label).not.toContain('trocou em voo');
+    });
+
+    it('autoSwitchState "saturated" acrescenta "sem conta com folga" (D6)', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: { id: 'acc-active', label: 'Conta Ativa' } },
+        'FALLBACK_NAO_USADO',
+        activeContext({ autoSwitchState: 'saturated' }),
+      );
+      expect(label).toBe('Sessão: Conta Ativa · — · sem conta com folga');
+    });
+
+    it('autoSwitchState "blind" acrescenta "sem leitura das outras contas" (D8)', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: { id: 'acc-active', label: 'Conta Ativa' } },
+        'FALLBACK_NAO_USADO',
+        activeContext({ autoSwitchState: 'blind' }),
+      );
+      expect(label).toBe('Sessão: Conta Ativa · — · sem leitura das outras contas');
+    });
+
+    it.each(['off', 'idle', 'armed'] as const)('autoSwitchState "%s" não acrescenta sufixo nenhum', (autoSwitchState) => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: { id: 'acc-active', label: 'Conta Ativa' } },
+        'FALLBACK_NAO_USADO',
+        activeContext({ autoSwitchState }),
+      );
+      expect(label).toBe('Sessão: Conta Ativa · —');
+    });
+
+    it('combina "trocou em voo" com "sem conta com folga" quando os dois se aplicam', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: { id: 'acc-1', label: 'Conta 1' } },
+        'FALLBACK_NAO_USADO',
+        activeContext({ autoSwitchState: 'saturated' }),
+      );
+      expect(label).toBe('Sessão: Conta Ativa · — · trocou em voo (era Conta 1) · sem conta com folga');
+    });
   });
 
-  it('quota ok mas sem fiveHour (só sevenDay) cai em "—" — o rótulo não faz fallback pra semanal', () => {
-    const label = computeSessionAccountLabel(
-      { sessionType: 'claude', profile: { slug: 'principal', name: 'Principal' } },
-      'FALLBACK_NAO_USADO',
-      { status: 'ok', fiveHour: null, sevenDay: { percentRemaining: 80, resetsAt: null }, fable: null },
-    );
-    expect(label).toBe('Sessão: Principal · —');
-  });
+  describe('account sem current.active — motor inerte ou sem leitura ainda', () => {
+    it('com account (nascimento) resolvido -> rótulo da conta de nascimento, cota "—"', () => {
+      const label = computeSessionAccountLabel(
+        { sessionType: 'claude', account: { id: 'acc-1', label: 'Conta 1' } },
+        'FALLBACK_NAO_USADO',
+        NO_ACTIVE,
+      );
+      expect(label).toBe('Sessão: Conta 1 · —');
+    });
 
-  it('aba claude AINDA sem perfil resolvido (janela curta até pty:create responder) cai no fallback global, ignorando o parâmetro de cota', () => {
-    const label = computeSessionAccountLabel(
-      { sessionType: 'claude', profile: undefined },
-      'Tecnologia Claude 3 · 62%',
-      quotaWithFiveHour(99),
-    );
-    expect(label).toBe('Tecnologia Claude 3 · 62%');
-  });
-
-  it('aba shell (terminal livre) sempre mostra o rótulo neutro, mesmo com perfil e cota presentes', () => {
-    const label = computeSessionAccountLabel(
-      { sessionType: 'shell', profile: { slug: 'principal', name: 'Principal' } },
-      'FALLBACK_NAO_USADO',
-      quotaWithFiveHour(62),
-    );
-    expect(label).toBe('Terminal (sem conta)');
-  });
-
-  it('aba shell sem perfil também mostra o rótulo neutro', () => {
-    const label = computeSessionAccountLabel({ sessionType: 'shell', profile: undefined }, 'FALLBACK_NAO_USADO');
-    expect(label).toBe('Terminal (sem conta)');
+    it('sem account (janela curta até pty:create responder) cai no fallback global', () => {
+      const label = computeSessionAccountLabel({ sessionType: 'claude', account: undefined }, 'Conta 1 · 62%', NO_ACTIVE);
+      expect(label).toBe('Conta 1 · 62%');
+    });
   });
 });
 
-// CA-25 (009-modo-dev-v3, lote 8) — extensão pra ENTRADAS ARQUIVADAS (sessão
-// de etapa concluída no mapa; "sessões anteriores" fica de fora — sem
-// mapeamento sessão→perfil persistido pra sessões gerais, ver report do
-// lote). Mesma sessão pode existir em duas contas depois de um "Reiniciar"
-// cross-conta (CA-24): a original congela, a copiada segue — as duas nunca
-// devem aparecer indistinguíveis.
+// CA-25 (009-modo-dev-v3, lote 8), adaptado pela troca de vocabulário
+// (C24): `formatArchivedAccountLabel` opera sobre `accountId` — o slug de
+// perfil legado nunca chega aqui diretamente, quem o resolve pra `accountId`
+// é o sanitize de `devMode.ts`/`config-store.ts` (T1220, leitura tolerante).
+// Esta suíte prova que a função em si é agnóstica à origem do valor. Não
+// mudou na Fase 2 — segue coberta aqui pra manter o arquivo de teste único.
 describe('formatArchivedAccountLabel', () => {
-  it('conta arquivada igual à ativa agora → rótulo com o slug, mismatch false', () => {
+  it('conta arquivada igual à ativa agora → rótulo com o id, mismatch false', () => {
     expect(formatArchivedAccountLabel('tech-2', 'tech-2')).toEqual({ label: 'conta: tech-2', mismatch: false });
   });
 
   it('conta arquivada diferente da ativa agora → mismatch true (mesmo rótulo, tom de aviso é decisão da UI)', () => {
     expect(formatArchivedAccountLabel('tech-1', 'tech-2')).toEqual({ label: 'conta: tech-1', mismatch: true });
+  });
+
+  it('caso legado: um accountId resolvido a partir de um profileSlug antigo (mesmo formato de string) rotula normalmente', () => {
+    // Simula o que `sanitizeArchivedPhaseSessions` (config-store.ts) faz:
+    // lê `profileSlug` legado como `accountId` quando o campo novo não existe.
+    const legacyProfileSlugAsAccountId = 'tecnologia-claude-2';
+    expect(formatArchivedAccountLabel(legacyProfileSlugAsAccountId, 'tecnologia-claude-2')).toEqual({
+      label: 'conta: tecnologia-claude-2',
+      mismatch: false,
+    });
   });
 });

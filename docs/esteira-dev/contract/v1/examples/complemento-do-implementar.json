@@ -1,0 +1,48 @@
+{
+  "contract_version": "1.0.0",
+  "kind": "esteira.result.complement",
+  "run": {
+    "run_id": "run-2026-08-05-1100.c1",
+    "phase": "implementar",
+    "status": "success",
+    "started_at": "2026-08-05T18:00:00.000Z",
+    "finished_at": "2026-08-05T18:04:30.000Z",
+    "failure": null,
+    "complements_run_id": "run-2026-08-05-1100",
+    "revises_run_id": null
+  },
+  "actor": {
+    "tool": "esteira-donel",
+    "tool_version": "3.0.0",
+    "executor": "claude-code",
+    "model": "claude-sonnet-5",
+    "effort": "low",
+    "cli_session_id": "0198f3a1-1b2c-7d34-8e5f-9a0b1c2d3e4f"
+  },
+  "subject": {
+    "discovery_id": "dsc-2026-08-03-a",
+    "plan_id": "pln-2026-08-03-a1",
+    "work_item_id": "wi-2026-08-03-a1-04"
+  },
+  "workspace": {
+    "target_repo": "atlas",
+    "repo_path": "C:/Users/dev/code/atlas",
+    "worktree_path": null,
+    "branch": null
+  },
+  "facts": [
+    {
+      "type": "artifact.recorded",
+      "owner": { "entity": "work_item", "id": "wi-2026-08-03-a1-04" },
+      "artifact_kind": "spike-report",
+      "location": "disk",
+      "repo": null,
+      "path": "C:/Users/dev/.donel/reports/wi-2026-08-03-a1-04-spike.md"
+    },
+    {
+      "type": "note.recorded",
+      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-04" },
+      "text": "O relatorio do spike so ficou pronto depois que o run fechou; entra como complemento, sem refazer a fase."
+    }
+  ]
+}

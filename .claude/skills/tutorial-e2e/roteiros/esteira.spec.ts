@@ -153,6 +153,14 @@ function emitirResultadoDaSkill(esteiraRoot: string): void {
         subject: { entity: 'discovery', id: discoveryId },
         text: 'Duas hipóteses descartadas: timeout do worker e limite de conexão.',
       },
+      // A18 — discovery concluída fecha com o que alguém disse. Sem este
+      // fato o emissor recusa: fase que não perguntou nada não fecha.
+      {
+        type: 'decision.recorded',
+        subject: { entity: 'discovery', id: discoveryId },
+        decision: 'instrumentar a fila antes de mexer no consumo',
+        confirmed_by: 'dono do repo',
+      },
       {
         type: 'phase.completed',
         subject: { entity: 'discovery', id: discoveryId },

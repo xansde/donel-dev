@@ -30,31 +30,53 @@ function jsonResponse(status: number, body: unknown): HttpResponseLike {
   return { status, json: async () => body };
 }
 
-function makeSeazoneFetch(calls: string[]): HttpFetchLike {
-  return async (url) => {
-    calls.push(url);
+// As respostas abaixo são o formato REAL da API do claude-switcher, CAPTURADO
+// contra `https://claude-switcher-api.seazone.dev` em 04/08/2026 (rótulos
+// anonimizados — no pool real eles são e-mails de colegas). Antes deste
+// arquivo, o dublê respondia o contrato IMAGINADO de `backends-http.md`
+// (`{jwt,expiresIn}`, `{accounts:[…]}`, `fiveHour`/`sevenDay`, campo `id`) —
+// nenhum dos quatro existe. O mod passava nos testes e falhava no primeiro
+// contato com o servidor: dublê escrito a partir do contrato não testa o
+// contrato, testa a lembrança de quem o escreveu.
+const RESPOSTA_REAL_REFRESH = {
+  accessJwt: 'short-lived-jwt',
+  sessionRefreshToken: 'session-refresh-token',
+  actorEmail: 'pessoa@exemplo.com',
+  sessionExpiresAt: '2026-09-03T18:49:10.301793+00:00',
+  minimumClientVersion: '0.4.1',
+};
+/** `/accounts` devolve uma LISTA no topo, e o identificador da conta é o `label` — não existe campo `id`. */
+const RESPOSTA_REAL_ACCOUNTS = [
+  { label: 'conta-um@exemplo.com', plan: 'max', fiveHourUtil: 10.0, sevenDayUtil: 5.0, sonnetUtil: 2.0, available: true, unavailableReason: null },
+  { label: 'conta-dois@exemplo.com', plan: 'max', fiveHourUtil: 100.0, sevenDayUtil: 41.0, sonnetUtil: 76.0, available: false, unavailableReason: 'rate-limited' },
+];
+
+function makeSeazoneFetch(calls: { url: string; body: unknown }[], overrides: Record<string, HttpResponseLike> = {}): HttpFetchLike {
+  return async (url, init) => {
+    calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
     if (url.includes('platform.claude.com')) throw new Error('seazone-mod NUNCA deveria chamar platform.claude.com');
-    if (url.includes('/auth/exchange') || url.includes('/auth/refresh')) return jsonResponse(200, { jwt: 'short-lived-jwt', expiresIn: 900 });
-    if (url.includes('/accounts')) {
-      return jsonResponse(200, {
-        accounts: [
-          { id: 'sz-1', label: 'Conta Seazone 1', plan: 'pool', fiveHour: 10, sevenDay: 5, sonnetUtil: 2, available: true },
-        ],
-      });
+    for (const [fragmento, resposta] of Object.entries(overrides)) {
+      if (url.includes(fragmento)) return resposta;
     }
+    // `/auth/exchange` é o exchange do OAuth Google (exige `code` + `redirect_uri`):
+    // quem troca o sessionRefreshToken por JWT é `/auth/refresh`. Bater no
+    // exchange devolve 422 aqui, igual ao servidor real.
+    if (url.includes('/auth/exchange')) return jsonResponse(422, { detail: [{ type: 'missing', loc: ['body', 'code'] }] });
+    if (url.includes('/auth/refresh')) return jsonResponse(200, RESPOSTA_REAL_REFRESH);
+    if (url.includes('/accounts')) return jsonResponse(200, RESPOSTA_REAL_ACCOUNTS);
     if (url.includes('/session/switch')) {
-      return jsonResponse(200, { accessToken: 'sz-access', refreshToken: 'sz-refresh', expiresAt: Date.now() + 3600_000, scopes: ['user'] });
+      return jsonResponse(200, { label: 'conta-um@exemplo.com', accessToken: 'sz-access', refreshToken: 'sz-refresh', expiresAt: Date.now() + 3600_000 });
     }
-    if (url.includes('/session/heartbeat')) return jsonResponse(200, { ok: true });
+    if (url.includes('/session/heartbeat')) return jsonResponse(200, { accessToken: 'sz-access', refreshToken: 'sz-refresh', expiresAt: '2026-08-04T19:00:00+00:00' });
     return jsonResponse(404, {});
   };
 }
 
-function buildSeazoneMod(): { mod: AccountMod; vault: FakeVault; calls: string[] } {
+function buildSeazoneMod(overrides?: Record<string, HttpResponseLike>): { mod: AccountMod; vault: FakeVault; calls: { url: string; body: unknown }[] } {
   const vault = new FakeVault();
   vault.write('seazone:session', 'session-refresh-token');
-  const calls: string[] = [];
-  const mod = createSeazoneMod({ baseUrl: 'https://switcher.seazone.dev', vault, fetchImpl: makeSeazoneFetch(calls) });
+  const calls: { url: string; body: unknown }[] = [];
+  const mod = createSeazoneMod({ baseUrl: 'https://claude-switcher-api.seazone.dev', vault, fetchImpl: makeSeazoneFetch(calls, overrides) });
   return { mod, vault, calls };
 }
 
@@ -131,7 +153,7 @@ describe('seazone-mod — nunca chama platform.claude.com', () => {
     if (listResult.kind === 'ok' && listResult.accounts.length > 0) {
       await mod.switchTo(listResult.accounts[0].id);
     }
-    expect(calls.every((url) => !url.includes('platform.claude.com'))).toBe(true);
+    expect(calls.every(({ url }) => !url.includes('platform.claude.com'))).toBe(true);
     expect(calls.length).toBeGreaterThan(0);
   });
 
@@ -186,7 +208,10 @@ describe('local-mod — só refresca no caminho de fallback', () => {
     expect(vault.read('local-1')).toBe(JSON.stringify(newPair));
   });
 
-  it('recusa do refresh -> expired-credentials', async () => {
+  // 011-contas-e-provedores, etapa 3, Fase 2 (D4) — `token-refresh.ts` agora
+  // distingue recusa (`rejected`) de "não deu pra saber" (`unavailable`); o
+  // mod local mapeia cada um pro `reason` de `SwitchToResult` certo.
+  it('recusa do refresh (rejected) -> expired-credentials', async () => {
     const vault = new FakeVault();
     const accounts: readonly LocalAccountMeta[] = [{ id: 'local-1', label: 'Conta 1', plan: null }];
     const expiredPair: CredentialPair = { accessToken: 'old', refreshToken: 'old-refresh', expiresAt: Date.now() - 1000, scopes: [] };
@@ -196,10 +221,128 @@ describe('local-mod — só refresca no caminho de fallback', () => {
       accounts,
       vault,
       fetchImpl: async () => jsonResponse(200, {}),
-      refreshImpl: async () => ({ kind: 'failed' }),
+      refreshImpl: async () => ({ kind: 'failed', reason: 'rejected' }),
     });
 
     const result = await mod.switchTo('local-1');
     expect(result).toEqual({ kind: 'failed', reason: 'expired-credentials' });
+  });
+
+  it('refresh indisponível (unavailable — rede/timeout, não recusa) -> offline', async () => {
+    const vault = new FakeVault();
+    const accounts: readonly LocalAccountMeta[] = [{ id: 'local-1', label: 'Conta 1', plan: null }];
+    const expiredPair: CredentialPair = { accessToken: 'old', refreshToken: 'old-refresh', expiresAt: Date.now() - 1000, scopes: [] };
+    vault.write('local-1', JSON.stringify(expiredPair));
+
+    const mod = createLocalMod({
+      accounts,
+      vault,
+      fetchImpl: async () => jsonResponse(200, {}),
+      refreshImpl: async () => ({ kind: 'failed', reason: 'unavailable' }),
+    });
+
+    const result = await mod.switchTo('local-1');
+    expect(result).toEqual({ kind: 'failed', reason: 'offline' });
+  });
+});
+
+// Bateria de CONTRATO REAL — cada caso aqui corresponde a uma divergência
+// medida contra `https://claude-switcher-api.seazone.dev` em 04/08/2026. Não
+// são testes de comportamento novo: são a prova de que o mod fala a língua que
+// o servidor fala, que era exatamente o que faltava.
+describe('seazone-mod — fala o contrato REAL do switcher', () => {
+  it('troca o sessionRefreshToken por JWT em /auth/refresh, nunca em /auth/exchange', async () => {
+    const { mod, calls } = buildSeazoneMod();
+    await mod.listAccounts();
+    const auth = calls.filter(({ url }) => url.includes('/auth/'));
+    expect(auth.length).toBeGreaterThan(0);
+    expect(auth.every(({ url }) => url.includes('/auth/refresh'))).toBe(true);
+    expect(auth.some(({ url }) => url.includes('/auth/exchange'))).toBe(false);
+    expect(auth[0].body).toEqual({ sessionRefreshToken: 'session-refresh-token' });
+  });
+
+  it('lê o JWT de accessJwt (o campo `jwt` não existe na resposta)', async () => {
+    const { mod, calls } = buildSeazoneMod();
+    const result = await mod.listAccounts();
+    expect(result.kind).toBe('ok');
+    const listagem = calls.find(({ url }) => url.includes('/accounts'));
+    expect(listagem).toBeDefined();
+  });
+
+  it('/accounts devolve LISTA no topo, e o identificador da conta é o label', async () => {
+    const { mod } = buildSeazoneMod();
+    const result = await mod.listAccounts();
+    if (result.kind !== 'ok') throw new Error(`esperava ok, veio ${result.kind}`);
+    expect(result.accounts).toHaveLength(2);
+    expect(result.accounts[0].id).toBe('conta-um@exemplo.com');
+    expect(result.accounts[0].label).toBe('conta-um@exemplo.com');
+  });
+
+  it('mapeia a carga de fiveHourUtil/sevenDayUtil (e não dos nomes sem sufixo)', async () => {
+    const { mod } = buildSeazoneMod();
+    const result = await mod.listAccounts();
+    if (result.kind !== 'ok') throw new Error(`esperava ok, veio ${result.kind}`);
+    // Sem esta correção as duas janelas principais chegavam `null`, e carga
+    // desconhecida nunca é destino de auto-switch (C9): o recurso ficaria
+    // inerte, com 61 contas na tela e nenhuma elegível.
+    const load = result.accounts[0].load;
+    if (load === null) throw new Error('esperava carga preenchida, veio null');
+    expect(load.fiveHour).toBe(10);
+    expect(load.sevenDay).toBe(5);
+    expect(load.sonnet).toBe(2);
+  });
+
+  it('preserva available e a razão de indisponibilidade que o servidor manda', async () => {
+    const { mod } = buildSeazoneMod();
+    const result = await mod.listAccounts();
+    if (result.kind !== 'ok') throw new Error(`esperava ok, veio ${result.kind}`);
+    expect(result.accounts[0].available).toBe(true);
+    expect(result.accounts[1].available).toBe(false);
+  });
+
+  it('o switch identifica a conta por `account`, não por `accountId`', async () => {
+    const { mod, calls } = buildSeazoneMod();
+    const result = await mod.switchTo('conta-um@exemplo.com');
+    expect(result.kind).toBe('ok');
+    const troca = calls.find(({ url }) => url.includes('/session/switch'));
+    expect(troca?.body).toEqual({ account: 'conta-um@exemplo.com' });
+  });
+
+  it('o heartbeat manda o par com expiresAt em ISO — int epoch fazia todo tick dar 422', async () => {
+    const { mod, calls } = buildSeazoneMod();
+    const pair: CredentialPair = { accessToken: 'a', refreshToken: 'r', expiresAt: Date.parse('2026-08-04T19:00:00Z'), scopes: [] };
+    await mod.captureRotatedPair('conta-um@exemplo.com', pair);
+    const hb = calls.find(({ url }) => url.includes('/session/heartbeat'));
+    const body = hb?.body as Record<string, unknown>;
+    expect(body.label).toBe('conta-um@exemplo.com');
+    expect(body.accessToken).toBe('a');
+    expect(typeof body.expiresAt).toBe('string');
+    expect(String(body.expiresAt)).toContain('2026-08-04T19:00:00');
+  });
+
+  it('persiste no cofre o sessionRefreshToken rotacionado pelo servidor', async () => {
+    // `/auth/refresh` pode devolver um token novo; o cliente oficial regrava o
+    // seu. Ignorar a rotação deixa o cofre com um token morto e a sessão cai na
+    // chamada seguinte — sem nada na tela explicando por quê.
+    const rotacionado = { ...RESPOSTA_REAL_REFRESH, sessionRefreshToken: 'token-rotacionado' };
+    const { mod, vault } = buildSeazoneMod({ '/auth/refresh': jsonResponse(200, rotacionado) });
+    await mod.listAccounts();
+    expect(vault.read('seazone:session')).toBe('token-rotacionado');
+  });
+
+  it('recusa de contrato (422) não é reportada como rede fora do ar', async () => {
+    // O 422 que a API devolveu no primeiro teste real chegou à tela como
+    // "backend indisponível (offline)", e mandou o diagnóstico investigar rede.
+    const { mod } = buildSeazoneMod({ '/accounts': jsonResponse(422, { detail: 'payload invalido' }) });
+    const result = await mod.listAccounts();
+    if (result.kind !== 'unavailable') throw new Error('esperava unavailable');
+    expect(result.reason).toBe('io');
+  });
+
+  it('sessão recusada é unauthorized, não offline', async () => {
+    const { mod } = buildSeazoneMod({ '/auth/refresh': jsonResponse(401, { detail: 'sessao expirada' }) });
+    const result = await mod.listAccounts();
+    if (result.kind !== 'unavailable') throw new Error('esperava unavailable');
+    expect(result.reason).toBe('unauthorized');
   });
 });

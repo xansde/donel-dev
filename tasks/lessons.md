@@ -215,3 +215,260 @@ o valor fabricado só existe no caminho da UI.
 **Lesson:** campo que alimenta uma decisão de negócio (aqui, "renovo ou não")
 nunca deve ser fabricado com um default plausível na borda — ou vem do
 provedor, ou é perguntado, ou o consumidor trata `null` explicitamente.
+
+### Override de isolamento que cobre metade do alvo
+
+O motor de contas escreve em dois arquivos: `.credentials.json` (dentro de
+`claudeHome`) e `~/.claude.json` (de onde apaga o bloco `oauthAccount`). O
+`accounts.claudeHome` existe para testes redirecionarem essas escritas, mas em
+`main/index.ts` só o primeiro alvo o respeitava — o segundo saía sempre de
+`homedir()`. Os três smokes da etapa 1 isolavam o `claudeHome`, acreditavam
+estar em sandbox, e ao rodar apagavam o `oauthAccount` do `~/.claude.json`
+REAL da máquina: o login do CLI Claude Code caía, e a asserção falhava ainda
+por cima. Ninguém tinha visto porque os smokes nunca haviam sido executados —
+`npm test` é vitest e não os inclui. Descoberto na captura visual da etapa 1
+(04/08/2026), com o dano acontecendo de verdade na máquina antes da correção.
+
+**Lesson:** override de isolamento é contrato de tudo ou nada — se ele cobre
+parte dos alvos, promete sandbox e entrega estrago fora dele; derive os alvos
+irmãos do mesmo override em vez de resolver cada um pela sua própria fonte.
+
+### Garantia escrita numa tela que só conhece metade do app
+
+O rodapé do painel de perfis afirmava "o app nunca lê nem grava credenciais".
+Verdade sobre perfis; falsa sobre o app a partir do momento em que o botão
+vizinho no mesmo titlebar passou a pedir access/refresh token e guardá-los no
+cofre. A frase não foi revisada porque a etapa 1 não tocou no `ProfileSwitcher`
+— e nenhum teste cobre texto de garantia. Só apareceu quando um print pôs as
+duas telas lado a lado.
+
+**Lesson:** frase que promete algo sobre *o app inteiro* deve morar onde o app
+inteiro é conhecido, ou ser reescrita no escopo da tela que a exibe; do
+contrário a primeira feature vizinha a transforma em mentira sem que ninguém
+edite aquele arquivo.
+
+### Dublê escrito a partir do contrato não testa o contrato
+
+O mod Seazone foi implementado contra `backends-http.md`, escrito na fase de
+pesquisa pela leitura do servidor e nunca exercitado contra a API. Quatro
+divergências passaram: a rota de auth (`/auth/exchange` em vez de
+`/auth/refresh`), o campo do JWT (`jwt` em vez de `accessJwt`), o envelope de
+`/accounts` (lista no topo, e o identificador é o `label` — campo `id` não
+existe) e os nomes da carga (`fiveHourUtil`/`sevenDayUtil`). A suíte tinha um
+`fetch` falso que respondia exatamente o contrato imaginado, então cada teste
+novo aumentava a confiança numa suposição. 1699 verdes, e o primeiro contato
+com o servidor real devolveu 422.
+
+A divergência mais perigosa era a silenciosa: com os nomes de carga errados, as
+61 contas do pool apareceriam na tela com carga `null`, e carga desconhecida
+nunca é destino de auto-switch (C9) — o recurso ficaria inerte, sem erro
+nenhum, parecendo apenas "não trocou ainda".
+
+**Lesson:** dublê de HTTP tem que nascer de uma resposta CAPTURADA do servidor
+real (basta um `curl` salvo), nunca do documento de contrato — senão o teste
+confirma a leitura de quem escreveu o documento, e a primeira execução real é
+que vira o teste. Quando não dá para capturar (sem credencial, sem acesso),
+isso é um bloqueio a declarar, não uma suposição a seguir.
+
+### Toda falha virando "offline" apaga o diagnóstico
+
+O mesmo mod classificava qualquer falha como indisponibilidade de rede. O 422
+de contrato acima chegou ao operador como "Contas indisponíveis: backend
+indisponível (offline)" — que mandou o diagnóstico para DNS e disponibilidade
+do host, quando o servidor estava no ar e tinha respondido em 105 ms.
+
+**Lesson:** "não consegui falar com o servidor" e "o servidor recusou o que eu
+mandei" são estados diferentes e levam a ações opostas; colapsar os dois numa
+palavra transfere para quem lê o custo de descobrir qual dos dois é. Separe ao
+menos rede / credencial / resposta-inesperada, e deixe a razão do servidor
+chegar à tela.
+
+### Correção que não visita os irmãos do lugar onde nasceu
+
+A rodada 2 de Validar (04/08/2026) revisou as três correções acima e achou, nas
+três, o mesmo resíduo: a correção parou no caminho exato onde o defeito foi
+observado e não visitou os caminhos gêmeos ao lado.
+
+1. A separação rede/credencial/resposta-inesperada entrou em `listAccounts`
+   (não-2xx → `io`), mas `switchTo`, no mesmo arquivo e a 20 linhas de
+   distância, ainda devolve `offline` para qualquer não-2xx — inclusive o 422
+   que originou a lição. O tipo `SwitchToResult` ganhou `'io'` no mesmo commit
+   e o caminho continua sem usá-lo.
+2. A bateria de contrato nova cobre 422 e 401 em `/accounts`; `/session/switch`
+   só tem caso feliz. O teste seguiu o mesmo recorte da correção.
+3. O roteiro `contas-motor-ativo.spec.ts`, criado no MESMO commit que consertou
+   o `claudeJsonPath`, descreve no cabeçalho o bug em tempo presente ("é
+   resolvido SEMPRE por `homedir()`") e afirma que o smoke "isola só o
+   primeiro" — as duas frases nasceram falsas.
+
+**Lesson:** ao corrigir, listar os irmãos do ponto corrigido — o outro método
+da mesma interface, o outro campo do mesmo contrato, o comentário que descrevia
+o defeito — e ou corrigir, ou registrar por que ficaram de fora. Um defeito
+aparece onde alguém olhou, não onde ele mora; corrigir só o ponto observado
+deixa o resto do padrão vivo e agora protegido por um verde novo, que faz o
+lugar parecer revisado.
+
+### Flag de closure lida depois de um `await` não sobrevive a chamada concorrente
+
+`seazone-mod.ts` distingue "sessão recusada" de "sem rede" por uma variável de
+closure (`sessaoRecusada`) que `authedFetch` zera na entrada e o chamador lê
+depois do `await`. Duas chamadas concorrentes — o poll de 5 min do motor e um
+clique de troca — se sobrepõem: a segunda zera a flag que a primeira acabou de
+levantar, e um `unauthorized` real chega à tela como `offline`. Só o rótulo do
+erro é afetado (nenhuma credencial se perde), e nenhum teste cobre o
+entrelaçamento, porque cada teste roda uma chamada por vez.
+
+**Lesson:** informação produzida dentro de uma chamada assíncrona volta pelo
+valor de retorno, não por variável compartilhada — estado de closura lido
+depois de um `await` pertence a quem escreveu por último, não a quem está
+lendo. A suíte não pega: teste sequencial nunca produz o entrelaçamento.
+
+## 2026-08-04 — wi-demolicao-perfis-migracao (demolicao-perfis-migracao)
+
+### O dublê de teste tinha o formato errado de `.credentials.json`
+
+`credentials-import.ts` nasceu (T1210/T1211) com `readCredentialsFile`
+devolvendo o par **solto** na raiz do JSON (`{ accessToken, refreshToken,
+expiresAt, scopes }`). A suíte de vitest passou verde de primeira — o dublê
+injetado nos testes também usava esse formato, então o contrato entre teste e
+implementação estava consistente e cego ao mesmo tempo. O formato REAL do
+arquivo que o CLI escreve (confirmado em `claude-state.ts`, `extractPair`, já
+existente da etapa 1) embrulha o par dentro do bloco `claudeAiOauth`:
+`{ claudeAiOauth: { accessToken, ... } }`. Se `createSystemCredentialsImportDeps`
+(a implementação de IO real, escrita depois dos testes) tivesse ido para
+produção sem o smoke em árvore de perfis falsa (T1216/T1217) — que seeda um
+`.credentials.json` no formato real —, toda importação de perfil real teria
+devolvido `invalid-format` silenciosamente, e só apareceria no dia da virada.
+
+**Lesson:** quando o módulo sob teste lê um arquivo cujo formato já existe em
+outro lugar do código (aqui, `claude-state.ts` já lia o mesmo arquivo), o
+dublê de teste do vitest tem que espelhar esse formato desde o primeiro
+vermelho — não o formato mais simples que passa a asserção. Um smoke que seeda
+o arquivo real (fixture de disco, não dublê em memória) é o que de fato prova
+isso; sem ele, o vermelho→verde do módulo puro certifica só a lógica interna,
+nunca o contrato com o mundo real.
+
+### Duas telas, duas assinaturas do mesmo IPC — a cerca de performance que pegou
+
+T1221 fez `App.tsx` assinar `window.donel.accounts.list()`/`onChanged` para
+alimentar o badge/statusbar, sem perceber que `AccountsPanel` (etapa 1,
+T1123) já mantinha a MESMA assinatura, montada sempre (independente do
+painel estar aberto). O resultado só apareceu na regressão final (T1232): o
+smoke `ca7-measurement.spec.ts` (cerca de 250ms no tempo de boot até a
+sidebar pintar) passou a medir ~330ms, quase o dobro do pior caso histórico
+(167ms) — dois round-trips de IPC sequenciais no boot em vez de um. A
+correção (`AccountsPanel` ganha um prop `onViewChange`, reporta a MESMA
+leitura pra cima em vez de `App.tsx` abrir a sua própria) trouxe a medição
+de volta pra perto da faixa histórica, embora a cerca continue sensível a
+ruído de máquina (variação observada entre 168ms e 274ms em execuções
+consecutivas do mesmo código).
+
+**Lesson:** ao adicionar um consumidor novo de um estado que outro componente
+já busca via IPC, primeiro perguntar "quem mais já assina isso?" — a resposta
+certa quase sempre é reportar pra cima (callback/prop), nunca abrir uma
+segunda assinatura própria. Testes de performance com cerca apertada são o
+jeito que esse tipo de duplicação silenciosa se denuncia; rodar a suíte de
+smoke completa (não só a fatia que parece relacionada) antes de declarar uma
+fase pronta é o que pega isso — mudança de estado/dado, não de UI visível,
+não aparece em revisão de tela.
+
+## 2026-08-04 — wi-demolicao-perfis-migracao (validação manual e2e)
+
+### O canal antigo aberto apaga o progresso da migração — o risco aceito disparou no primeiro uso real
+
+Na primeira execução real do MigrationWizard (8 perfis `tech-*` importados um
+a um, pelo app em modo dev na branch da etapa 2), as 8 credenciais chegaram ao
+cofre (`accounts-vault.json`, 8 entradas novas) — mas minutos depois o
+`config.json` compartilhado estava sem a chave `migration` e com
+`accounts.localAccounts` vazio. Causa: os canais instalados coexistem
+compartilhando o MESMO `userData` (decisão de 2026-07-28), e o alfa (etapa 1,
+não conhece `migration`) e o beta estavam abertos durante a migração; qualquer
+persist deles reescreve o `config.json` inteiro a partir da cópia em memória
+deles — o sanitize derruba a chave desconhecida e o last-writer-wins clobbera
+`localAccounts` com a cópia velha. Exatamente o risco aceito como item de
+produto "sanitize com passthrough" no CLAUDE.md — que aqui deixou de ser
+teórico: o cenário normal do operador (usar o Donel enquanto migra… dentro do
+próprio Donel) destrói o registro das contas migradas e o progresso do wizard.
+Agravante: reimportar não é idempotente entre execuções — `generateAccountId`
+é `randomUUID()` por import, então cada nova tentativa cria entradas novas no
+cofre e as anteriores viram órfãs inatribuíveis (o payload cifrado guarda só o
+par, sem label).
+
+**Lesson:** estado novo que vive no `config.json` compartilhado entre canais
+não sobrevive a um canal antigo aberto — antes de construir feature que
+persiste chave nova ali, ou o sanitize ganha passthrough de chaves
+desconhecidas (e escrita vira read-merge-write), ou a feature precisa detectar
+outra instância viva e recusar rodar. Teste automatizado de processo único
+nunca pega isso; só o e2e na máquina real com os canais coexistindo.
+
+## 2026-08-05 — wi-registry-providers-classe-a (registry-providers-classe-a)
+
+### `claude` CLI duplica `/v1/messages` em cima de `ANTHROPIC_BASE_URL` — path errado, não credencial
+
+No spike do piloto (T1302), apontar `ANTHROPIC_BASE_URL=https://openrouter.ai/api/v1`
+(o valor que a documentação do OpenRouter recomenda para outros clientes,
+igual ao que qualquer SDK Anthropic community usaria) fazia o `claude` CLI
+recusar toda tentativa de lançamento com "There's an issue with the selected
+model" — mensagem que aponta pro nome do modelo, não pro path, então a
+primeira hipótese natural foi "o modelo não existe no catálogo do
+OpenRouter". Testar o MESMO modelo direto via `curl` contra
+`https://openrouter.ai/api/v1/messages` respondeu 200 — a API em si estava
+certa. Só rodando o CLI com `--debug` (`ANTHROPIC_LOG=debug`) apareceu a
+request de verdade: `POST https://openrouter.ai/api/v1/v1/messages` — o
+binário concatena um sufixo fixo `/v1/messages` em cima de QUALQUER
+`ANTHROPIC_BASE_URL`, então a base precisa terminar ANTES do `/v1` (aqui:
+`https://openrouter.ai/api`, sem o `/v1` final) para o path final bater.
+
+**Lesson:** quando um provider Anthropic-compatible falha com uma mensagem
+que aponta pro MODELO, mas o problema é o ROTEAMENTO da URL, `--debug`
+(`ANTHROPIC_LOG=debug`) que mostra a request HTTP de verdade resolve em um
+comando o que tentativa-e-erro por variação de nome de modelo não resolveria
+nunca — o path duplicado (`/v1/v1/`) só aparece ali, nunca na mensagem de
+erro da CLI. Ao documentar `ANTHROPIC_BASE_URL` pra um provider novo no
+registry, testar o valor exato com `curl` primeiro (confirma a API) e depois
+com `--debug` do CLI (confirma o path que o binário de fato monta) — os dois
+podem discordar mesmo com a mesma API funcionando.
+
+### Prop de callback nova + painel que ainda lê o home default = sessão que some sem ninguém dizer
+
+Na etapa 3 o `pty:create` passou a devolver `provider: { id, label }` e o
+`TerminalPane` ganhou a prop `onProviderResolved` para levantá-lo — mas
+nenhum chamador foi ligado (`grep onProviderResolved` fora do próprio
+`TerminalPane.tsx` não devolve nada), e o handler de `SESSION_CHANNELS.list`
+segue chamando `indexProjectSessions(projectPath)` sem `claudeHome`, ou
+seja, sempre `~/.claude`. Como uma sessão de provider nasce com
+`CLAUDE_CONFIG_DIR = <userData>/providers/<id>/`, o `.jsonl` dela é gravado
+lá — e o painel "Sessões anteriores" simplesmente não a encontra, sem
+nenhuma mensagem. É exatamente o risco que a C17 antecipou ("a origem da
+lista é mostrada, nunca silenciosa") e que o DoD da T1321 pedia na UI. Os
+1729 testes de vitest e os 7 smokes ficam todos verdes: nenhum deles abre o
+painel de sessões anteriores DEPOIS de lançar com provider, então a lacuna
+não tem cor vermelha em lugar nenhum.
+
+**Lesson:** prop de callback declarada e nunca consumida é o sintoma barato
+de um encanamento que parou no meio — `grep` do nome da prop fora do arquivo
+que a declara custa um comando e pega o que a suíte inteira não pega. Quando
+uma feature muda a RAIZ de onde um artefato é lido/gravado (`claudeHome`,
+config dir, workspace), a checagem que fecha o ciclo não é "spawnou com o
+env certo", é "o painel que lista aquele artefato ainda o acha depois" —
+teste de leitura pós-escrita, não só de escrita.
+
+### Campo de segredo desenhado sobre `envKeys` (que inclui os não-secretos) grava entrada órfã no cofre
+
+O `ProviderSummaryDto.envKeys` é, de propósito, `[...Object.keys(entry.env),
+...entry.secretEnvKeys]` — a lista de diagnóstico com TODOS os nomes. O
+`ProviderForm` reaproveitou essa lista para renderizar a seção "Segredos de
+<label>", então aparece um campo `password` também para as variáveis NÃO
+secretas (ex.: `ANTHROPIC_BASE_URL`). Salvar ali grava
+`provider:<id>:ANTHROPIC_BASE_URL` no cofre — um valor que `buildProviderEnv`
+nunca lê (ele só resolve `secretEnvKeys`) e que `remove()` nunca apaga
+(`deleteSecrets` também itera só `secretEnvKeys`): entrada órfã, cifrada,
+sobrevivendo à remoção do provider. Nenhum teste pega porque todos os testes
+constroem entradas em que as duas listas coincidem com a intenção.
+
+**Lesson:** um DTO de DIAGNÓSTICO (lista de nomes "para o operador ver") e um
+DTO de AÇÃO (lista sobre a qual a UI oferece escrita) parecem o mesmo array e
+não são — reusar o primeiro como fonte do segundo abre escrita em chaves que
+o motor nunca vai ler nem limpar. Quando um campo de UI gera escrita
+persistente, derive a lista do campo do MESMO array que o consumidor lê
+(aqui: `secretEnvKeys`), nunca da união de diagnóstico.

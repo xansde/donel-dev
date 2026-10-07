@@ -40,9 +40,20 @@ async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<voi
   }
 }
 
+/**
+ * Janela do teste de rajada. Separada do `DEBOUNCE_MS` de propósito: aquele é
+ * curto para os testes correrem rápido, mas a rajada é o ÚNICO caso cuja
+ * asserção depende de as escritas caberem DENTRO da janela — e 40 ms não cabem
+ * sob carga. Medido nesta máquina com a suíte inteira rodando em paralelo: o
+ * maior intervalo entre dois `appendFile` consecutivos estourou 40 ms em 5 de
+ * 20 rodadas, com pico de 150 ms. Não é bug do watcher (rajada espalhada por
+ * mais que a janela DEVE virar dois emits) — é o orçamento do teste.
+ */
+const BURST_WINDOW_MS = 500;
+
 /** Dá tempo de um evento INDESEJADO aparecer — a única forma honesta de provar "não emitiu". */
-async function settle(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, DEBOUNCE_MS * 6));
+async function settle(windowMs = DEBOUNCE_MS): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, windowMs * 6));
 }
 
 const titleLine = (title: string, sessionId = 'abc-123'): string =>
@@ -109,11 +120,11 @@ describe('watchTranscript', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function start(path = filePath): () => void {
+  function start(path = filePath, debounceMs = DEBOUNCE_MS): () => void {
     const watcher = watchTranscript({
       sessionId: 'abc-123',
       filePath: path,
-      debounceMs: DEBOUNCE_MS,
+      debounceMs,
       retryMs: 20,
       onChange: (change) => changes.push(change),
     });
@@ -202,8 +213,8 @@ describe('watchTranscript', () => {
 
   it('junta uma rajada de escritas num emit só (debounce)', async () => {
     await fs.writeFile(filePath, userLine('trabalho'), 'utf8');
-    start();
-    await settle();
+    start(filePath, BURST_WINDOW_MS);
+    await settle(BURST_WINDOW_MS);
 
     // Cinco escritas dentro da janela de debounce: o valor final é o que vale.
     for (const title of ['a', 'b', 'c', 'd', 'final']) {
@@ -211,10 +222,10 @@ describe('watchTranscript', () => {
     }
 
     await waitFor(() => changes.length >= 1);
-    await settle();
+    await settle(BURST_WINDOW_MS);
     expect(changes).toHaveLength(1);
     expect(changes[0].customTitle).toBe('final');
-  });
+  }, 20_000);
 
   it('arquivo que ainda NÃO existe na abertura (o CLI cria na 1ª mensagem) — dispara quando ele nasce', async () => {
     expect(existsSync(filePath)).toBe(false);

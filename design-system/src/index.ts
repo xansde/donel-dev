@@ -27,7 +27,7 @@ export type { SmartZoneMeterProps } from './components/SmartZoneMeter';
 export { AccountBadge, getHeadroomTier } from './components/AccountBadge';
 export type { AccountBadgeProps, HeadroomTier } from './components/AccountBadge';
 
-export { PhaseChip, ESTEIRA_PHASE_LABEL_PT } from './components/PhaseChip';
+export { PhaseChip, ESTEIRA_PHASE_LABEL_PT, ESTEIRA_PHASES, isEsteiraPhase } from './components/PhaseChip';
 export type { PhaseChipProps, EsteiraPhase } from './components/PhaseChip';
 
 export { Button, SplitButton } from './components/Button';

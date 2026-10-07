@@ -17,11 +17,20 @@ import type {
 } from '../shared/devMode';
 import { DEFAULT_PHASE_DEFAULTS } from '../shared/devModeDefaults';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
+import { defaultMigrationState, sanitizeMigrationState, type MigrationState } from './accounts/migration/migration-state';
+import { sanitizeProvidersConfig } from './providers/providers-config';
+import { defaultProvidersConfig } from '../shared/providers';
+import type { ProvidersConfigDto } from '../shared/providers';
 import type { StoredSessionName } from '../shared/sessionName';
 import type { RegisteredSession, SessionRegistry } from '../shared/sessionRegistry';
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
 import { isTabColorToken, type TabAppearance, type TabAppearanceMap } from '../shared/tabAppearance';
-import { PRINCIPAL_PROFILE_SLUG } from './profile-manager';
+
+// T1222 (011-contas-e-provedores, etapa 2) — `profile-manager.ts` morreu na
+// demolição; `activeProfileSlug` é campo LEGADO (D15/C30, nunca mais
+// escrito, só aceito no sanitize) — o default é o literal que o perfil
+// "Principal" sempre usou, sem depender do módulo morto.
+const LEGACY_PRINCIPAL_PROFILE_SLUG = 'principal';
 
 // T015 — ConfigStore formal (FR-007): `%APPDATA%\donel-dev\config.json` (na
 // prática `app.getPath('userData')`, que resolve pro nome real do app —
@@ -42,15 +51,13 @@ import { PRINCIPAL_PROFILE_SLUG } from './profile-manager';
 //    foi DELETADO nesta task, exatamente como o comentário de topo dele já
 //    previa ("o ConfigStore formal... chega no T015 e absorve este arquivo").
 //    `toggleFavorite` (pura) foi portada pra cá sem mudança de comportamento.
-//  - `active-profile.json` (T014, `{ activeSlug }`) — `profile-manager.ts`
-//    continua com `ActiveProfileConfig`/`readActiveProfileConfig`/
-//    `writeActiveProfileConfig` INTOCADOS (módulo já auditado, testes
-//    próprios em profile-manager.test.ts) — só deixam de ser CHAMADOS por
-//    `main/index.ts` (o caminho de leitura/escrita ativo passa a ser só este
-//    arquivo). A migração abaixo lê o `active-profile.json` legado de forma
-//    INDEPENDENTE (parsing próprio do formato `{ activeSlug }`, sem importar
-//    de profile-manager.ts) pra não acoplar os dois módulos nem reabrir
-//    escopo do T014 fora desta task.
+//  - `active-profile.json` (T014, `{ activeSlug }`) — o formato `{
+//    activeSlug }` original vivia em `profile-manager.ts`
+//    (`ActiveProfileConfig`), morto na demolição de perfis (T1222,
+//    011-contas-e-provedores etapa 2). A migração abaixo sempre leu o
+//    arquivo de forma INDEPENDENTE (parsing próprio, sem importar do
+//    módulo) — sobrevive intacta, `activeProfileSlug` é campo legado
+//    (D15/C30): aceito no sanitize, nunca mais escrito.
 //
 // Campos NOVOS neste batch (feedback E2E, specs/001-mvp/feedback-e2e.md):
 //  - `projectRoots` (rodada 3) — era hardcoded em `defaultProjectRoots`,
@@ -104,6 +111,37 @@ export interface AppConfig {
    * separado, accounts-vault.json).
    */
   readonly accounts: AccountsConfig;
+  /**
+   * T1209 (011-contas-e-provedores, etapa 2) — estado da migração assistida
+   * (perfis → cofre). Nasce `defaultMigrationState()` (nada iniciado).
+   * Não exposta via `AppConfigDto`/`config:get` — tem canal IPC próprio
+   * (`migration:*`, contracts/migration-etapa-2.md), mesmo padrão de `accounts`.
+   */
+  readonly migration: MigrationState;
+  /**
+   * T1305 (011-contas-e-provedores, etapa 3) — registry de providers classe
+   * A (`providers-config.ts`). Nasce `defaultProvidersConfig()` (`entries:
+   * []`, C14/D6) — registry inerte, comportamento de hoje byte a byte. NÃO
+   * exposta via `AppConfigDto`/`config:get` — canal IPC próprio
+   * (`PROVIDER_CHANNELS`, src/shared/providers.ts), mesmo padrão de
+   * `accounts`/`migration`. Segredo nunca mora aqui (cofre separado,
+   * namespace `provider:<id>`, accounts-vault.json reusado).
+   */
+  readonly providers: ProvidersConfigDto;
+  /**
+   * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
+   * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
+   * `sanitizeAppConfig` NUNCA as descarta — guarda aqui em vez de jogar fora
+   * (mesmo espírito de `claude-state.ts` preservando chaves desconhecidas do
+   * `.credentials.json`). Nunca exposta via `AppConfigDto`; na hora de
+   * gravar, o conteúdo é espalhado de volta no nível raiz do JSON (nunca
+   * aninhado sob um campo `unknownFields` literal) — ver
+   * `mergeConfigForWrite`. Serve principalmente de rede de segurança: quem
+   * garante a sobrevivência de verdade contra escrita concorrente é o
+   * read-merge-write de `writeAppConfig`, que relê o disco na hora de gravar
+   * e por isso nem precisa consultar este campo no caminho comum.
+   */
+  readonly unknownFields: Readonly<Record<string, unknown>>;
 }
 
 /** `projectRoots` não tem um default universal (depende do homedir da máquina) — quem chama monta com `defaultProjectRoots(homedir)` (project-scanner.ts) e passa aqui. */
@@ -113,7 +151,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     projectRoots,
     projectScanMode: 'markers',
     favorites: [],
-    activeProfileSlug: PRINCIPAL_PROFILE_SLUG,
+    activeProfileSlug: LEGACY_PRINCIPAL_PROFILE_SLUG,
     launcherDefaults: DEFAULT_LAUNCHER_DEFAULTS,
     notificationPreference: DEFAULT_NOTIFICATION_PREFERENCE,
     sessionNames: {},
@@ -123,6 +161,9 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     devMode: defaultDevModeState(),
     tabAppearance: {},
     accounts: defaultAccountsConfig(),
+    migration: defaultMigrationState(),
+    providers: defaultProvidersConfig(),
+    unknownFields: {},
   };
 }
 
@@ -392,19 +433,32 @@ function sanitizeDevModeDiscoveries(value: unknown): DevModeDiscoveries {
   return sanitized;
 }
 
-/** Chave vem do mapa (evita divergência), mesmo espírito de `sanitizeSessionRegistry`. */
+/**
+ * Chave vem do mapa (evita divergência), mesmo espírito de
+ * `sanitizeSessionRegistry`. T1220 (011-contas-e-provedores, etapa 2, C30) —
+ * leitura TOLERANTE do campo legado `profileSlug`: `accountId` é lido dele
+ * quando o campo novo não existe. Nunca escrito de novo — só aceito. Motivo
+ * direto do CLAUDE.md: os canais alfa/beta/stable compartilham `userData`, e
+ * um canal antigo aberto depois não pode ter o estado destruído por um
+ * sanitize novo.
+ */
 function sanitizeArchivedPhaseSessions(value: unknown): ArchivedPhaseSessions {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
 
   const sanitized: Record<string, ArchivedPhaseSession> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
     if (!key || typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
-    const candidate = entry as Partial<ArchivedPhaseSession>;
+    const candidate = entry as Partial<ArchivedPhaseSession> & { profileSlug?: unknown };
     if (typeof candidate.sessionId !== 'string' || !candidate.sessionId) continue;
-    if (typeof candidate.profileSlug !== 'string' || !candidate.profileSlug) continue;
+    const accountId = typeof candidate.accountId === 'string' && candidate.accountId
+      ? candidate.accountId
+      : typeof candidate.profileSlug === 'string' && candidate.profileSlug
+        ? candidate.profileSlug
+        : null;
+    if (accountId === null) continue;
     if (typeof candidate.archivedAt !== 'number' || !Number.isFinite(candidate.archivedAt)) continue;
 
-    sanitized[key] = { sessionId: candidate.sessionId, profileSlug: candidate.profileSlug, archivedAt: candidate.archivedAt };
+    sanitized[key] = { sessionId: candidate.sessionId, accountId, archivedAt: candidate.archivedAt };
   }
   return sanitized;
 }
@@ -489,6 +543,18 @@ function sanitizeLauncherDefaults(value: unknown, fallback: LauncherDefaultsDto)
 }
 
 /**
+ * Nomes de campo do schema atual, derivados do próprio objeto — nunca uma
+ * lista hardcoded separada (que desatualizaria sozinha a cada campo novo).
+ * Exclui `unknownFields`: não é um campo real do JSON gravado, é o BAG
+ * (conteúdo espalhado no nível raiz na hora de serializar — ver
+ * `mergeConfigForWrite`). Usado tanto pelo sanitize (o que é "conhecido",
+ * pra decidir o que sobra pro bag) quanto pelo read-merge-write da escrita.
+ */
+function knownAppConfigKeys(sample: AppConfig): string[] {
+  return Object.keys(sample).filter((key) => key !== 'unknownFields');
+}
+
+/**
  * Puro (testável sem I/O): preenche campo a campo a partir de `defaults`
  * quando `parsed` não é um objeto, ou um campo individual tem tipo/valor
  * inválido — nunca lança, nunca deixa um campo `undefined`. `version`
@@ -496,10 +562,27 @@ function sanitizeLauncherDefaults(value: unknown, fallback: LauncherDefaultsDto)
  * versão corrente); uma migração real de schema (campo renomeado/formato
  * mudado entre versões) entraria aqui verificando `candidate.version` antes
  * de sanitizar — não necessária ainda, só existe a versão 1.
+ *
+ * G1 (issue 08) — PASSTHROUGH: qualquer chave de TOPO em `parsed` que não é
+ * um campo conhecido de `AppConfig` (ex.: `migration` visto por um build que
+ * nasceu antes dela existir) não é descartada — sobra em `unknownFields`.
  */
 export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConfig {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return defaults;
-  const candidate = parsed as Partial<AppConfig>;
+  const candidate = parsed as Partial<AppConfig> & Record<string, unknown>;
+
+  const known = new Set(knownAppConfigKeys(defaults));
+  const unknownFields: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(candidate)) {
+    // `unknownFields` nunca é, ele mesmo, uma chave "desconhecida" — é o BAG.
+    // `parsed` nunca deveria trazer essa chave literal de verdade (o
+    // read-merge-write jamais a escreve — ver `mergeConfigForWrite`), mas um
+    // candidato construído por spread de um `AppConfig` já sanitizado
+    // (`{...defaults, ...}`, comum em teste) TEM essa chave — sem esta
+    // exclusão ela se aninharia dentro de si mesma a cada leitura.
+    if (key === 'unknownFields') continue;
+    if (!known.has(key)) unknownFields[key] = value;
+  }
 
   return {
     version: CONFIG_SCHEMA_VERSION,
@@ -521,6 +604,9 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     devMode: sanitizeDevModeState(candidate.devMode, defaults.devMode),
     tabAppearance: sanitizeTabAppearance(candidate.tabAppearance),
     accounts: sanitizeAccountsConfig(candidate.accounts, defaults.accounts),
+    migration: sanitizeMigrationState(candidate.migration, defaults.migration),
+    providers: sanitizeProvidersConfig(candidate.providers),
+    unknownFields,
   };
 }
 
@@ -627,6 +713,75 @@ export function readAppConfig(filePath: string, defaults: AppConfig, legacy: Leg
   }
 }
 
+/** Lê `filePath` como objeto JSON cru (sem tipar/sanitizar pro schema) — só para o read-merge-write de `writeAppConfig`; a leitura pública (`readAppConfig`) sempre passa por `sanitizeAppConfig`. Ausente/ilegível/não-objeto vira `{}`, nunca lança (mesmo espírito defensivo do resto do arquivo). */
+function readRawConfigObject(filePath: string, io: ConfigIoDeps): Record<string, unknown> {
+  const raw = io.readFileText(filePath);
+  if (raw === null) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Igualdade estrutural (objetos/arrays/primitivos — o bastante pro shape JSON deste arquivo; nunca precisa lidar com Date/Map/etc). Usada só para decidir, campo a campo, se ESTA sessão mudou o valor desde `baseline`. */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((item, index) => deepEqual(item, b[index]));
+  }
+  const aObj = a as Record<string, unknown>;
+  const bObj = b as Record<string, unknown>;
+  const aKeys = Object.keys(aObj);
+  const bKeys = Object.keys(bObj);
+  return aKeys.length === bKeys.length && aKeys.every((key) => key in bObj && deepEqual(aObj[key], bObj[key]));
+}
+
+/**
+ * G1 (011-contas-e-provedores, issue 08) — mescla por CHAVE DE TOPO em vez
+ * de despejar a config inteira da memória: só a chave que ESTA sessão mudou
+ * desde `baseline` (comparação estrutural, não `===`) sobrescreve o disco;
+ * toda outra chave — conhecida e intocada, OU desconhecida deste build —
+ * vem de `diskRaw`, relido imediatamente antes de gravar. Corrige os dois
+ * defeitos da issue 08 de uma vez:
+ *   (a) canal antigo que não conhece uma chave nova (ex.: `migration`) nunca
+ *       a apaga — a chave nem entra no loop (não está em
+ *       `knownAppConfigKeys`), sobrevive só por estar em `diskRaw`.
+ *   (b) canal com cópia em memória desatualizada de uma chave CONHECIDA
+ *       (ex.: `accounts.localAccounts` mudado por outro processo enquanto
+ *       este dormia) não reverte a escrita mais recente alheia — só
+ *       sobrescreve o que ele mesmo mudou desde o último sync.
+ * `baseline === null` (nunca sincronizado nesta sessão — 1ª escrita) trata
+ * toda chave conhecida como mudada, ou seja, dump completo (comportamento
+ * anterior a este batch) — correto pra quem está escrevendo pela 1ª vez.
+ * `current.unknownFields` entra como camada de baixo (fallback) só para o
+ * caso raro de `diskRaw` não ter mais aquela chave (ex.: arquivo recriado
+ * entre o boot e esta escrita) — disco fresco, quando presente, sempre vence.
+ */
+export function mergeConfigForWrite(diskRaw: Record<string, unknown>, baseline: AppConfig | null, current: AppConfig): Record<string, unknown> {
+  // `unknownFields` nunca é, ela mesma, uma chave de passthrough válida — é o
+  // nome reservado do BAG (nunca escrito como campo literal por este
+  // caminho). Se `diskRaw` tiver uma por algum motivo externo (arquivo
+  // adulterado à mão, versão anterior a este fix), ela é descartada aqui —
+  // nunca ressurge como chave literal no JSON gravado.
+  const { unknownFields: _staleLiteralKey, ...diskRawKnownAndUnknown } = diskRaw;
+  const merged: Record<string, unknown> = { ...current.unknownFields, ...diskRawKnownAndUnknown };
+  const currentRaw = current as unknown as Record<string, unknown>;
+  const baselineRaw = baseline as unknown as Record<string, unknown> | null;
+
+  for (const key of knownAppConfigKeys(current)) {
+    const changedSinceSync = baselineRaw === null || !deepEqual(currentRaw[key], baselineRaw[key]);
+    if (changedSinceSync || !(key in merged)) {
+      merged[key] = currentRaw[key];
+    }
+  }
+
+  return merged;
+}
+
 /**
  * Escrita atômica (FR-007: "temp + rename") — nunca deixa uma janela em que
  * `config.json` fica truncado: grava tudo num arquivo temporário e só então
@@ -642,13 +797,24 @@ export function readAppConfig(filePath: string, defaults: AppConfig, legacy: Leg
  * quanto "conteúdo durável contra power-loss" (fsync). Ver comentário do
  * `writeFileText` pra por que fsync do DIRETÓRIO pai não se aplica aqui
  * (Windows/NTFS, não POSIX/ext4).
+ *
+ * G1 (issue 08) — READ-MERGE-WRITE: relê `filePath` no disco AGORA (não usa
+ * uma cópia antiga) e mescla por chave de topo com `mergeConfigForWrite`
+ * antes de serializar — nunca mais despeja a config inteira da memória por
+ * cima do que outro processo/canal possa ter escrito nesse meio-tempo.
+ * `baseline` é a config como este processo a viu pela última vez em sync com
+ * o disco (o retorno da última `readAppConfig`/`writeAppConfig`); `null` só
+ * na 1ª escrita da sessão (nunca sincronizou, então tudo conta como mudado).
  */
-export function writeAppConfig(filePath: string, config: AppConfig, io: ConfigIoDeps): void {
+export function writeAppConfig(filePath: string, config: AppConfig, io: ConfigIoDeps, baseline: AppConfig | null): void {
   const dir = dirname(filePath);
   if (!io.existsSync(dir)) io.mkdirSync(dir);
 
+  const diskRaw = readRawConfigObject(filePath, io);
+  const merged = mergeConfigForWrite(diskRaw, baseline, config);
+
   const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  io.writeFileText(tmpPath, JSON.stringify(config, null, 2));
+  io.writeFileText(tmpPath, JSON.stringify(merged, null, 2));
   try {
     io.renameFile(tmpPath, filePath);
   } catch (error) {

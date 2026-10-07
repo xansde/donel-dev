@@ -4,6 +4,9 @@ import {
   filterSessionsByQuery,
   formatFileSize,
   formatRelativeTime,
+  partitionSessionsByPhaseWork,
+  phaseOnlyResultsMessage,
+  phaseSessionsToggleLabel,
   sessionTabName,
 } from '../src/shared/sessions';
 import type { SessionSummaryDto } from '../src/shared/sessions';
@@ -145,5 +148,60 @@ describe('deriveSessionEtapa', () => {
 
   it('espaços em volta do comando não impedem o casamento', () => {
     expect(deriveSessionEtapa('  /esteira-validar PRJ-1 --fase=3  ')).toBe('PRJ-1 · Validação fase 3');
+  });
+});
+
+describe('partitionSessionsByPhaseWork — B3: sessões de fase da esteira somem por default da lista genérica', () => {
+  function session(id: string): { id: string } {
+    return { id };
+  }
+
+  it('sem ids de fase, tudo fica visível', () => {
+    const result = partitionSessionsByPhaseWork([session('a'), session('b')], new Set());
+    expect(result.visible).toEqual([session('a'), session('b')]);
+    expect(result.hidden).toEqual([]);
+  });
+
+  it('reparte: ids que batem com o cruzamento da Esteira vão para "hidden"', () => {
+    const result = partitionSessionsByPhaseWork([session('cockpit'), session('fase-1'), session('fase-2')], new Set(['fase-1', 'fase-2']));
+    expect(result.visible).toEqual([session('cockpit')]);
+    expect(result.hidden).toEqual([session('fase-1'), session('fase-2')]);
+  });
+
+  it('preserva a ORDEM original dentro de cada grupo', () => {
+    const result = partitionSessionsByPhaseWork(
+      [session('fase-1'), session('cockpit-1'), session('fase-2'), session('cockpit-2')],
+      new Set(['fase-1', 'fase-2']),
+    );
+    expect(result.visible.map((entry) => entry.id)).toEqual(['cockpit-1', 'cockpit-2']);
+    expect(result.hidden.map((entry) => entry.id)).toEqual(['fase-1', 'fase-2']);
+  });
+
+  it('lista vazia devolve as duas partições vazias, sem lançar', () => {
+    expect(partitionSessionsByPhaseWork([], new Set(['x']))).toEqual({ visible: [], hidden: [] });
+  });
+});
+
+describe('phaseSessionsToggleLabel — B3: o rótulo do toggle nasce na camada pura', () => {
+  it('singular: "1 sessão", sem plural errado', () => {
+    expect(phaseSessionsToggleLabel(1, false)).toBe('1 sessão de fase da esteira oculta — mostrar');
+  });
+
+  it('plural: concorda em número', () => {
+    expect(phaseSessionsToggleLabel(3, false)).toBe('3 sessões de fase da esteira ocultas — mostrar');
+  });
+
+  it('mostrando: oferece ocultar, sem contagem nenhuma', () => {
+    expect(phaseSessionsToggleLabel(3, true)).toBe('Ocultar sessões de fase da esteira');
+  });
+});
+
+describe('phaseOnlyResultsMessage — B3: busca achou, mas é tudo sessão de fase oculta', () => {
+  it('singular', () => {
+    expect(phaseOnlyResultsMessage(1)).toBe('A sessão encontrada é de fase da esteira.');
+  });
+
+  it('plural', () => {
+    expect(phaseOnlyResultsMessage(2)).toBe('As sessões encontradas são de fase da esteira.');
   });
 });

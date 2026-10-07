@@ -10,12 +10,14 @@
   ],
   "scripts": {
     "prebuild": "npm run build -w @donel-dev/design-system",
+    "pretypecheck": "npm run build -w @donel-dev/design-system",
     "postinstall": "patch-package && electron-rebuild -f -w node-pty",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "preview": "electron-vite preview",
     "test": "vitest run",
+    "esteira:check": "node scripts/esteira-check.mjs",
     "test:smoke": "playwright test -c tests/smoke/playwright.config.ts",
     "test:smoke:dev": "playwright test -c tests/smoke-dev/playwright.config.ts",
     "tutorial": "npm run build && playwright test -c .claude/skills/tutorial-e2e/lib/playwright.config.ts && node .claude/skills/tutorial-e2e/lib/relatorio.mjs",
@@ -23,12 +25,14 @@
     "dist:alfa": "npm run build && electron-builder --win nsis --config.appId=com.seazone.doneldev.alfa \"--config.productName=Donel Dev Alfa\" \"--config.nsis.shortcutName=Donel Dev Alfa\"",
     "dist:beta": "npm run build && electron-builder --win nsis --config.appId=com.seazone.doneldev.beta \"--config.productName=Donel Dev Beta\" \"--config.nsis.shortcutName=Donel Dev Beta\"",
     "publicar": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publicar.ps1",
-    "publicar:rapido": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publicar.ps1 -SkipBuild"
+    "publicar:rapido": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publicar.ps1 -SkipBuild",
+    "esteira:custo": "node scripts/esteira-custo-fase.mjs"
   },
   "dependencies": {
     "@donel-dev/design-system": "0.1.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
+    "d3-force": "^3.0.0",
     "node-pty": "1.1.0",
     "react": "18.3.1",
     "react-dom": "18.3.1"
@@ -36,6 +40,7 @@
   "devDependencies": {
     "@electron/rebuild": "4.2.0",
     "@playwright/test": "1.61.1",
+    "@types/d3-force": "^3.0.10",
     "@types/node": "22.10.5",
     "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",

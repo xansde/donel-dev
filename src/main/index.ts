@@ -1,8 +1,8 @@
 import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
 import { createEsteiraService, type EsteiraService } from './esteira-service';
@@ -19,8 +19,10 @@ import {
   isValidDiscardWorkItemIpcInput,
   isValidDispatchIpcInput,
   isValidEndSessionIpcInput,
+  isValidReadArtifactTextIpcInput,
   isValidReleaseLockIpcInput,
   isValidSeedIpcInput,
+  isValidSetDiscoveryReposIpcInput,
   isValidSetStageOverrideIpcInput,
   isValidSetWorkItemStateIpcInput,
   type EsteiraCreateDiscoveryDto,
@@ -28,19 +30,22 @@ import {
   type EsteiraGestureDto,
   type EsteiraSeedDto,
   type EsteiraSnapshotDto,
+  type ReadArtifactTextDto,
 } from '../shared/esteira/ipc';
 import type {
   AccountId,
   AccountsConfigDto,
   AccountsViewDto,
   AppConfigDto,
+  ArchiveOutcome,
   ArchivePhaseSessionIpcInput,
+  BeginLoginOutcome,
   ConnectModInput,
   ConnectModOutcome,
-  CopyTranscriptForResumeIpcInput,
-  CopyTranscriptForResumeResult,
+  ConsolidateResult,
+  ImportResult,
+  MigrationPlan,
   CreateProjectResponse,
-  DeleteProfileOutcome,
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
@@ -48,9 +53,6 @@ import type {
   NotificationPreference,
   OpenDiscoveryIpcInput,
   PhaseDefaultsTable,
-  ProfileDoctorReportDto,
-  ProfileHeadroomMap,
-  ProfileSummaryDto,
   ProjectBindingDto,
   ProjectInfo,
   ProjectScanMode,
@@ -58,6 +60,7 @@ import type {
   PtyCreateResult,
   PhaseArchivedPayload,
   PtyExitInfo,
+  RemoveAccountOutcome,
   ResolveCardRepoIpcInput,
   ResolveCardReposIpcInput,
   SaveProjectBindingIpcInput,
@@ -68,21 +71,27 @@ import type {
   SwitchOutcome,
   TranscriptChangedPayload,
   WatchPhaseIpcInput,
+  // 011-contas-e-provedores (etapa 3) — registry de providers classe A.
+  ProviderId,
+  ProviderSummaryDto,
+  SetSecretResult,
+  UpsertProviderInput,
+  UpsertProviderResult,
 } from '../shared';
 import {
   ACCOUNT_CHANNELS,
+  PROVIDER_CHANNELS,
   archivePhaseSession,
   CLAUDE_NOT_FOUND_PREFIX,
   closeDiscovery,
   CONFIG_CHANNELS,
-  defaultAccountsConfig,
   DEVMODE_CHANNELS,
   focusDiscovery,
   GITHUB_CHANNELS,
+  MIGRATION_CHANNELS,
   isValidArchivePhaseSessionIpcInput,
   isValidCardId,
   isValidCardIdList,
-  isValidCopyTranscriptForResumeIpcInput,
   isValidCreateProjectIpcInput,
   isValidGithubReadRequest,
   isValidOpenDiscoveryIpcInput,
@@ -92,7 +101,6 @@ import {
   isValidWatchPhaseIpcInput,
   normalizeSessionName,
   openDiscovery,
-  PROFILE_CHANNELS,
   PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
   PTY_CHANNELS,
@@ -102,10 +110,8 @@ import {
   SESSION_CHANNELS,
   TAB_CHANNELS,
   TRANSCRIPT_CHANNELS,
-  TRANSCRIPT_COPY_CHANNELS,
 } from '../shared';
-import { copyTranscriptForResume, createSystemTranscriptCopyIoDeps } from './transcript-copy';
-import { createSystemResolveDeps, resolveClaudeExecutable } from './claude-executable';
+import { createSystemResolveDeps, resolveClaudeExecutable, type ResolveClaudeDeps } from './claude-executable';
 import {
   clearSessionName,
   CONFIG_FILE_NAME,
@@ -153,35 +159,56 @@ import {
 } from './taskdex-board-client';
 import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
 import { writeHooksSettingsFile } from './hooks-settings';
-import {
-  claudeHomeDir,
-  createProfile,
-  createSystemProfileCreationIoDeps,
-  createSystemProfileDeletionIoDeps,
-  createSystemProfileDoctorDeps,
-  createSystemProfileListDeps,
-  createSystemProfileRepairIoDeps,
-  deleteProfile,
-  globalClaudeJsonPath,
-  listProfiles,
-  PRINCIPAL_PROFILE,
-  PRINCIPAL_PROFILE_SLUG,
-  profileDirPath,
-  repairProfileJunctions,
-  runProfileDoctor,
-  titleCaseFromSlug,
-  type ProfileInfo,
-} from './profile-manager';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
 // arquivo só instancia/liga (T1125 — única task que toca o hub).
 import { AccountEngine } from './accounts/account-engine';
+// 011-contas-e-provedores, etapa 3, Fase 1 (F6) — dono do ciclo de vida do
+// motor: decide construir/reconstruir/atualizar via `needsEngineRebuild`.
+import { AccountEngineHost } from './accounts/account-engine-host';
+// 011-contas-e-provedores, etapa 3, Fase 2 (D3) — registro em memória
+// compartilhado entre reconstruções do motor (item 1 do Bloco 3).
+import { createReconnectRegistry } from './accounts/reconnect-registry';
+// Fase 2 (revisão, R1) — uma renovação por conta de cada vez entre reconstruções do motor.
+import { createRefreshCoordinator } from './accounts/refresh-coordinator';
+// 011-contas-e-provedores, etapa 3, Fase 1 — planos PUROS de "remover conta"
+// e "desconectar" (quais chaves o cofre perde, config final). Fase 1, Bloco
+// 2 — o que o login isolado grava em `appConfig.accounts` depois de colher.
+// Fase 2 (D3) — `planReconnect` decide se um `id` pode reconectar
+// (`accounts:beginReconnect`, item 4 do Bloco 3).
+import { applyHarvestedAccount, findAccountByFingerprint, findAccountById, planDisconnect, planReconnect, planRemoveAccount } from './accounts/account-pool';
 import type { AccountMod } from './accounts/account-mod';
+// 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — colhedor do login
+// isolado (plan-etapa-3.md §4.2): `<userData>/accounts-login-<uuid>/`, poll
+// do diretório, cofre, e a limpeza obrigatória no fim (sucesso ou falha).
+import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
-import { applyAccountSwitch, createSystemClaudeStateIoDeps } from './accounts/claude-state';
+import { applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
+import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
-import { createSystemVaultIoDeps, decryptVaultEntry, writeVaultEntry, type VaultLike } from './accounts/vault';
+// 011-contas-e-provedores, etapa 3, Fase 1 (F2) — valida o par colado à mão (fallback do "conectar conta"; login isolado é a Fase 1.2).
+import { buildPastedPair } from './accounts/pasted-pair';
+import { createSystemVaultIoDeps, decryptVaultEntry, deleteVaultEntries, writeVaultEntry, type VaultLike } from './accounts/vault';
+// 011-contas-e-provedores, etapa 3, Fase 1 — faxina do cofre no boot
+// (plan-etapa-3.md §4.4): remove entrada de conta órfã + `seazone:session`,
+// nunca `provider:*`.
+import { reconcileAccountsVault } from './accounts/vault-reconciliation';
+// 011-contas-e-provedores (etapa 2) — assistente de migração de perfis →
+// cofre (T1214). Temporário: existe enquanto houver `~/.claude-profiles`.
+import { archiveProfiles, createSystemArchiveIoDeps } from './accounts/migration/archive-profiles';
+import { createSystemCredentialsImportDeps, importProfileCredentials } from './accounts/migration/credentials-import';
+import { buildMigrationPlan } from './accounts/migration/migration-plan';
+import { computeMcpDiffFromDisk } from './accounts/migration/mcp-diff';
+import { createSystemProfileInventoryDeps, readProfileInventory } from './accounts/migration/profile-inventory';
+import { executeTranscriptCopyOperations, planTranscriptConsolidation, readTranscriptConsolidationInput } from './accounts/migration/transcript-consolidation';
+// 011-contas-e-provedores (etapa 3) — registry de providers classe A
+// (T1319 — única task que toca o hub, mesma disciplina da etapa 1). Reusa o
+// MESMO cofre da etapa 1 (accountsVaultPath/accountsVaultIo acima) —
+// nenhum arquivo/mecanismo novo de segredo.
+import { createProviderRegistry, type ProviderRegistry } from './providers/provider-registry';
+import { deleteProviderSecrets, providerSecretsStatus, readProviderSecret, writeProviderSecret } from './providers/provider-secrets';
+import { resolveSessionConfigDir } from './providers/session-config-dir';
 import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects, sortProjects } from './project-scanner';
 // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
 import { createNewProject, createSystemCreateProjectDeps } from './project-creator';
@@ -190,7 +217,6 @@ import { PtyManager } from './pty-manager';
 // imports acima (não reordena o bloco existente).
 import { hasImage, readText, writeText } from './clipboard-bridge';
 import { CLIPBOARD_CHANNELS } from '../shared';
-import { HeadroomCache, readAllProfilesHeadroom } from './quota-headroom';
 import { resolveClaudeCorrelation } from './session-correlation';
 import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
 import { seedProject } from './session-seed';
@@ -210,8 +236,28 @@ import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearan
 // notificação, substituindo os JSONs avulsos que T007/T014 usavam.
 
 const ptyManager = new PtyManager();
+/**
+ * SEAM DE TESTE (011-contas-e-provedores, etapa 3, Fase 1, Bloco 2) — mesmo
+ * espírito de `DONEL_ACCOUNTS_FAKE_MOD_FIXTURE` (mais abaixo).
+ * `resolveClaudeExecutable` prefere QUALQUER `claude.exe` do PATH a um shim
+ * (`pickBestMatch`, claude-executable.ts) e cai no fallback
+ * `~/.local/bin/claude.exe` — só pôr um `claude.cmd` falso na frente do PATH
+ * não bastaria pra controlar qual `claude` o smoke abre (um `.exe` real, ou
+ * o próprio fallback, venceria e abriria o CLI de verdade, violando a regra
+ * dura de nunca abrir sessão `claude` real em teste). Quando
+ * `DONEL_CLAUDE_EXECUTABLE_FIXTURE` aponta pra um caminho, `which` devolve
+ * só ELE — nenhuma outra resolução de PATH entra na jogada. Fora de teste a
+ * variável não existe -> resolução real (`createSystemResolveDeps`).
+ */
+function createClaudeResolveDeps(): ResolveClaudeDeps {
+  const real = createSystemResolveDeps();
+  const fixturePath = process.env.DONEL_CLAUDE_EXECUTABLE_FIXTURE;
+  if (!fixturePath) return real;
+  return { ...real, which: (command: string) => (command === 'claude' ? [fixturePath] : real.which(command)) };
+}
+
 // Resolvido uma vez (não muda durante a vida do processo) — plan.md ponto 2.
-const claudeResolveDeps = createSystemResolveDeps();
+const claudeResolveDeps = createClaudeResolveDeps();
 // Idem para o scan de projetos (T007) — mesmo padrão do claude-executable.
 const projectScanDeps = createSystemScanDeps();
 // CA-30 (009-modo-dev-v3, lote 9) — idem para a criação de projeto novo.
@@ -226,6 +272,18 @@ const createProjectDeps = createSystemCreateProjectDeps();
 // pela UI de Preferências, feedback E2E rodada 3).
 const configIoDeps = createSystemConfigIoDeps();
 let appConfig: AppConfig = defaultAppConfig(defaultProjectRoots(homedir));
+/**
+ * G1 (011-contas-e-provedores, issue 08) — baseline do read-merge-write:
+ * a config como ESTE processo a viu pela última vez em sync com o disco
+ * (logo após o boot ler `config.json`, e logo após cada `persistAppConfig`
+ * bem-sucedido). `writeAppConfig` só sobrescreve no disco as chaves de topo
+ * que divergem desta baseline — o resto vem do disco FRESCO relido na hora
+ * de gravar, preservando escrita concorrente de outro canal/processo mesmo
+ * em chave já conhecida (ex.: `accounts.localAccounts`). `null` só antes do
+ * boot terminar (nunca observável por um handler real, que só registra
+ * depois do `whenReady().then(...)`).
+ */
+let lastSyncedAppConfig: AppConfig | null = null;
 
 // T303/T305 (003-modo-dev) — leitura dos artefatos da Esteira em disco (raiz
 // v3, CA-4: `~/.claude/esteira-state/<repo_slug>/`); injetável (mesmo padrão
@@ -356,25 +414,22 @@ function disposeAllEsteiraResultWatchers(): void {
   esteiraResultWatchers.clear();
 }
 
-// T014 — ProfileManager (FR-005, FR-012, CA-3). `profilePathDeps` é a única
-// dependência de path (homedir) reaproveitada por toda função pura do
-// módulo. `activeProfileSlug`/`activeProfileConfigDir` vivem em memória
-// (persistidos no ConfigStore, T015) — toda sessão `claude` nova (T005/T008)
-// nasce com o `CLAUDE_CONFIG_DIR` do perfil ativo NESTE INSTANTE (FR-005:
-// "trocar de perfil afeta apenas sessões novas" — abas já abertas já
-// receberam seu env por VALOR na criação, ver PtyManager.create).
-const profilePathDeps = { homedir };
-let activeProfileSlug: string = PRINCIPAL_PROFILE_SLUG;
-let activeProfileConfigDir: string | undefined;
-// FIX (feedback E2E rodada 5) — nome de exibição do perfil ativo, mantido ao
-// lado de `activeProfileSlug`/`activeProfileConfigDir` (mesmos pontos de
-// atualização: boot e `profiles:activate` abaixo) só pra devolver no
-// `pty:create` de sessão claude (ver `PtyCreateResult.profile`) — a
-// statusbar (App.tsx) usa isso pra saber com que perfil CADA ABA nasceu,
-// distinto do perfil ATIVO global (que pode já ter mudado quando o foco
-// volta pra essa aba).
-let activeProfileName: string = PRINCIPAL_PROFILE.name;
-const headroomCache = new HeadroomCache();
+// T1222 (011-contas-e-provedores, etapa 2) — o mecanismo de perfis
+// (`profile-manager.ts`, `activeProfileSlug`/`activeProfileConfigDir`/
+// `activeProfileName` em memória) morreu nesta etapa: a única config é
+// `~/.claude`, o único lugar de conta é o motor (`account-engine.ts`).
+// `claudeHomeDirFor`/`globalClaudeJsonPathFor` abaixo substituem os
+// helpers homônimos de `profile-manager.ts` (join trivial sobre um
+// `homedir()` já resolvido) — os dois únicos pontos que ainda precisavam
+// deles são o switch de conta (`applyAccountsClaudeStateSwitch`) e a
+// migração (`migrationHomedir()`), nenhum dos dois é sobre perfil.
+function claudeHomeDirFor(home: string): string {
+  return join(home, '.claude');
+}
+
+function globalClaudeJsonPathFor(home: string): string {
+  return join(home, '.claude.json');
+}
 
 // T009 — semáforo de sessões (FR-010). `getRecentLines` reaproveita o ring
 // buffer que o PtyManager já mantém (plan.md ponto 8) como sinal B da
@@ -386,18 +441,25 @@ let hooksSettingsPath: string | null = null;
 // ---------------------------------------------------------------------------
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods (T1125, única
 // task que toca este arquivo). Nasce inerte (accounts.mod = null, C2): sem
-// mod configurado, `accountEngine` existe mas `getState() === 'inert'` e o
-// spawn de PTY segue exatamente como hoje (perfil ativo, ver mais abaixo).
+// mod configurado, o motor (`accountEngineHost.current()`) existe mas
+// `getState() === 'inert'` e o spawn de PTY segue exatamente como hoje
+// (perfil ativo, ver mais abaixo).
 // ---------------------------------------------------------------------------
 const accountsVaultIo = createSystemVaultIoDeps();
 const accountsClaudeStateIo = createSystemClaudeStateIoDeps();
 /** `<userData>/accounts-vault.json` — só resolvido depois de `app.whenReady()` (precisa de `app.getPath`). */
 let accountsVaultPath: string | null = null;
-let accountEngine: AccountEngine | null = null;
 /** C5 — leitura apenas do `session-semaphore-manager` via `onUpdate` (API já pública; este arquivo NUNCA altera session-semaphore-manager.ts). ptyId em `working` entra, qualquer outro estado sai. */
 const accountsBusyPtyIds = new Set<string>();
 /** Sessões `claude` vivas nesta execução (C4 — poll de 5 min só enquanto houver ao menos uma). Adicionado no registro da sessão (registerPtyIpcHandlers), removido no `onExit` (createMainWindow). */
 const accountsLiveSessionPtyIds = new Set<string>();
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — colhedor do login
+ * isolado. Instanciado em `whenReady()` (precisa de `app.getPath`); `null`
+ * antes disso e depois de `dispose()` — os handlers abaixo degradam com
+ * graça (`?.`) se chamados fora dessa janela (não deveria acontecer).
+ */
+let isolatedLoginManager: IsolatedLoginManager | null = null;
 
 /** Adaptador `VaultLike` sobre o cofre real — write-only pra fora de `accounts/` (nenhum getter daqui atravessa IPC; só os mods e este arquivo o enxergam). */
 function createRealAccountsVaultAdapter(): VaultLike {
@@ -406,6 +468,90 @@ function createRealAccountsVaultAdapter(): VaultLike {
     write: (id: string, plainText: string) =>
       accountsVaultPath ? writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, id, plainText) : { kind: 'vault-unavailable' as const },
   };
+}
+
+/**
+ * Deps de filesystem REAIS do login isolado — `removeDir` usa `rmSync` com
+ * retry (Windows pode segurar por um instante o handle de um arquivo que o
+ * `/login` acabou de fechar) e nunca lança (best-effort, a varredura do
+ * próximo boot recolhe o que sobrar). `readText` nunca lança — ausência vira
+ * `null` (o poll do login isolado trata isso como "ainda esperando").
+ */
+function createRealIsolatedLoginFsDeps(): IsolatedLoginFsDeps {
+  return {
+    mkdir: (path: string) => mkdirSync(path, { recursive: true }),
+    removeDir: (path: string) => rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }),
+    listDir: (path: string) => {
+      try {
+        return readdirSync(path);
+      } catch {
+        return [];
+      }
+    },
+    readText: (path: string) => {
+      try {
+        return readFileSync(path, 'utf8');
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 011-contas-e-provedores (etapa 3) — registry de providers classe A (T1319).
+// Todas as closures abaixo leem `appConfig`/`accountsVaultPath` AO VIVO (nunca
+// capturam um valor antigo) — não precisa de um "rebuild" como o motor de
+// contas, porque o registry não guarda estado próprio além do que já vive em
+// `appConfig.providers` e no cofre. Nasce inerte (`providers.entries = []`,
+// C14/D6): sem entrada, `providerRegistry.list()` devolve `[]` e o `pty:create`
+// de sessão claude nunca entra no ramo `options.providerId` (T1319, acima).
+// ---------------------------------------------------------------------------
+const providerRegistry: ProviderRegistry = createProviderRegistry({
+  getConfig: () => appConfig.providers,
+  setConfig: (next) => {
+    appConfig = { ...appConfig, providers: next };
+    persistAppConfig();
+  },
+  readSecret: (providerId, envKey) =>
+    accountsVaultPath ? readProviderSecret(accountsVaultPath, safeStorage, accountsVaultIo, providerId, envKey) : null,
+  writeSecret: (providerId, envKey, value) =>
+    accountsVaultPath
+      ? writeProviderSecret(accountsVaultPath, safeStorage, accountsVaultIo, providerId, envKey, value)
+      : { kind: 'vault-unavailable' as const },
+  deleteSecrets: (providerId, envKeys) => {
+    if (accountsVaultPath) deleteProviderSecrets(accountsVaultPath, accountsVaultIo, providerId, envKeys);
+  },
+  secretsStatus: (providerId, envKeys) =>
+    accountsVaultPath ? providerSecretsStatus(accountsVaultPath, safeStorage, accountsVaultIo, providerId, envKeys) : 'vault-unavailable',
+  // C16/D4 — `<userData>/providers/<configDirName>/`, criado VAZIO: nenhuma
+  // cópia automática de MCPs/CLAUDE.md/settings.json do usuário.
+  ensureConfigDir: (configDirName) => {
+    const dir = join(app.getPath('userData'), 'providers', configDirName);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    return dir;
+  },
+});
+
+/**
+ * T1319 — handlers de `PROVIDER_CHANNELS` (contracts/provider-registry.md).
+ * Não existe `providers:resolveLaunch`: essa resolução acontece só dentro do
+ * `pty:create` (registerPtyIpcHandlers, acima), pro env nunca atravessar o
+ * preload. `setSecret` é write-only — nunca ecoa o valor de volta.
+ */
+function registerProviderIpcHandlers(): void {
+  ipcMain.handle(PROVIDER_CHANNELS.list, (): readonly ProviderSummaryDto[] => providerRegistry.list());
+
+  ipcMain.handle(PROVIDER_CHANNELS.upsert, (_event, input: UpsertProviderInput): UpsertProviderResult => providerRegistry.upsert(input));
+
+  ipcMain.handle(PROVIDER_CHANNELS.remove, (_event, id: ProviderId): readonly ProviderSummaryDto[] => {
+    providerRegistry.remove(id);
+    return providerRegistry.list();
+  });
+
+  ipcMain.handle(PROVIDER_CHANNELS.setSecret, (_event, id: ProviderId, envKey: string, value: string): SetSecretResult =>
+    providerRegistry.setSecret(id, envKey, value),
+  );
 }
 
 /**
@@ -421,21 +567,84 @@ function createFixtureAccountMod(fixturePath: string): AccountMod {
   const raw = JSON.parse(readFileSync(fixturePath, 'utf8')) as {
     accounts: readonly { id: string; label: string; plan: string | null; available: boolean; load: import('../shared/accounts').AccountLoad | null }[];
     pairs: Record<string, import('./accounts/account-mod').CredentialPair>;
+    /**
+     * 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — quando `true`,
+     * `listAccounts` acrescenta as contas JÁ CONFIGURADAS
+     * (`appConfig.accounts.localAccounts`) que não estão nesta fixture — é
+     * o caso da conta que o COLHEDOR DO LOGIN ISOLADO grava de verdade em
+     * `localAccounts` (fora desta fixture) — e `switchTo` de uma delas
+     * devolve um par falso FIXO (nunca abre rede/sessão real). Ausente/
+     * `false`: comportamento idêntico ao de sempre, só as contas da fixture
+     * (os smokes existentes contam contas exatas e não podem ganhar uma a
+     * mais por engano).
+     */
+    includeConfiguredLocalAccounts?: boolean;
+    /**
+     * 011-contas-e-provedores, etapa 3, Fase 2 (D3, item 6 do Bloco 3) —
+     * rótulos de conta (da fixture OU configurada, se
+     * `includeConfiguredLocalAccounts`) cuja `switchTo` deve falhar com
+     * `expired-credentials` — simula o cenário que o motor reage marcando
+     * `needsReconnect` (D3), sem precisar de um par de verdade vencido no
+     * smoke. Ausente/lista vazia: nenhuma conta falha por este motivo
+     * (comportamento de sempre).
+     */
+    expiredLabels?: string[];
   };
+  const fixtureIds = new Set(raw.accounts.map((account) => account.id));
+  const CONFIGURED_ACCOUNT_FAKE_PAIR: import('./accounts/account-mod').CredentialPair = {
+    accessToken: 'fixture-access-configured',
+    refreshToken: 'fixture-refresh-configured',
+    expiresAt: 4102444800000,
+    scopes: ['user:inference'],
+  };
+  /** Rótulo do `id` (fixture OU configurada, se `includeConfiguredLocalAccounts`); `null` se o id não pertence a nenhuma das duas — usado só pelo `expiredLabels` acima. */
+  function fixtureAccountLabel(id: string): string | null {
+    const fixtureAccount = raw.accounts.find((account) => account.id === id);
+    if (fixtureAccount) return fixtureAccount.label;
+    if (!raw.includeConfiguredLocalAccounts) return null;
+    const configured = appConfig.accounts.localAccounts.find((account) => account.id === id);
+    return configured?.label ?? null;
+  }
   return {
     id: 'local',
     async listAccounts() {
-      return { kind: 'ok', accounts: raw.accounts.map((account) => ({ ...account, active: false })) };
+      const configuredExtra = raw.includeConfiguredLocalAccounts
+        ? appConfig.accounts.localAccounts
+            .filter((account) => !fixtureIds.has(account.id))
+            .map((account) => ({ id: account.id, label: account.label, plan: account.plan, available: true, load: null, active: false }))
+        : [];
+      return { kind: 'ok', accounts: [...raw.accounts.map((account) => ({ ...account, active: false })), ...configuredExtra] };
     },
     async switchTo(id) {
+      const label = fixtureAccountLabel(id);
+      if (label && raw.expiredLabels?.includes(label)) {
+        return { kind: 'failed', reason: 'expired-credentials' };
+      }
       const pair = raw.pairs[id];
-      if (!pair) return { kind: 'failed', reason: 'unknown-account' };
-      return { kind: 'ok', pair };
+      if (pair) return { kind: 'ok', pair };
+      if (raw.includeConfiguredLocalAccounts && appConfig.accounts.localAccounts.some((account) => account.id === id)) {
+        return { kind: 'ok', pair: CONFIGURED_ACCOUNT_FAKE_PAIR };
+      }
+      return { kind: 'failed', reason: 'unknown-account' };
     },
     async captureRotatedPair() {
       // Fixture não persiste nada — smoke só confere o efeito em claude-state.ts.
     },
   };
+}
+
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 2 (D9) — uma linha JSON em
+ * `<userData>/accounts-maintenance.log`, o mesmo arquivo da faxina do cofre e
+ * da varredura de `accounts-login-*`. Só nomes e ids, nunca conteúdo de
+ * credencial. Best-effort: falha de gravação vira log e nada mais.
+ */
+function appendAccountsMaintenanceLog(entry: Record<string, unknown>): void {
+  try {
+    appendFileSync(join(app.getPath('userData'), 'accounts-maintenance.log'), `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`, 'utf8');
+  } catch (error) {
+    console.error('[donel-dev] log de manutenção de contas: falha ao gravar (segue sem registro):', error);
+  }
 }
 
 function resolveAccountMod(modId: ModId): AccountMod {
@@ -446,16 +655,72 @@ function resolveAccountMod(modId: ModId): AccountMod {
   if (modId === 'seazone') {
     return createSeazoneMod({ baseUrl: appConfig.accounts.seazone?.baseUrl ?? '', vault });
   }
-  return createLocalMod({ accounts: appConfig.accounts.localAccounts, vault });
+  return createLocalMod({
+    accounts: appConfig.accounts.localAccounts,
+    vault,
+    // 011-contas-e-provedores, etapa 3, Fase 2 (D7) — a carga da conta ATIVA
+    // sai do par vivo do `claudeHome` (o mesmo alvo do switch), só leitura: o
+    // par dela no cofre envelhece assim que o CLI renova o do `~/.claude`.
+    // O motor é lido na hora da leitura de carga, nunca capturado aqui.
+    getActiveAccountId: () => accountEngineHost.current()?.getActiveAccountId() ?? appConfig.accounts.activeAccountId,
+    readLiveCredentialPair: () => readCurrentCredentialPair({ io: accountsClaudeStateIo, claudeHome: appConfig.accounts.claudeHome ?? claudeHomeDirFor(homedir()) }),
+    // D9 (emenda da D4, decisão do dono em 13/09) — a leitura de carga renova
+    // o par vencido de conta PARADA; recusa marca o mesmo registro do motor, e
+    // cada renovação gravada fica no log de manutenção, só com o id.
+    reconnectRegistry: accountsReconnectRegistry,
+    // Fase 2 (revisão, R1) — o MESMO coordenador para todo mod que o motor
+    // criar: uma renovação em voo num motor que está sendo substituído não
+    // pode ser repetida pelo mod do motor novo (refresh token de uso único).
+    refreshCoordinator: accountsRefreshCoordinator,
+    onPairRefreshed: (id, trigger) => appendAccountsMaintenanceLog({ event: 'account-pair-refreshed', account: id, trigger }),
+  });
 }
 
-/** A sequência invariante inteira (captura → escreve `.credentials.json` → apaga `oauthAccount`) — `claude-state.ts` é a ÚNICA escrita de credencial do sistema. `claudeHome` respeita o override de `accounts.claudeHome` (C1); default é o `~/.claude` real (nunca o de um perfil — motor e perfis não escrevem no mesmo lugar ao mesmo tempo). */
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 2 (revisão, R1) — uma renovação por
+ * conta de cada vez ENTRE instâncias do mod local: cada reconstrução do motor
+ * cria um mod novo, e o coordenador sobrevive a todas elas, como o registro de
+ * reconectar.
+ */
+const accountsRefreshCoordinator = createRefreshCoordinator();
+
+/**
+ * A sequência invariante inteira (captura → escreve `.credentials.json` → apaga
+ * `oauthAccount`) — `claude-state.ts` é a ÚNICA escrita de credencial do
+ * sistema. `claudeHome` respeita o override de `accounts.claudeHome` (C1);
+ * default é o `~/.claude` real (nunca o de um perfil — motor e perfis não
+ * escrevem no mesmo lugar ao mesmo tempo).
+ *
+ * O `.claude.json` acompanha o override: ele é sempre o IRMÃO do `claudeHome`
+ * (em produção, `dirname(~/.claude)` é o próprio `~`, então nada muda). Antes
+ * ele saía direto de `homedir()`, e o override movia só metade do alvo — um
+ * switch com `claudeHome` isolado ainda apagava o bloco `oauthAccount` do
+ * `~/.claude.json` DA MÁQUINA, derrubando o login do CLI de quem rodasse o
+ * smoke. Achado da captura visual da etapa 1 (011), 04/08/2026.
+ */
+/** Mesma resolução de `claudeJsonPath` que `applyAccountsClaudeStateSwitch` já fazia inline — extraída pra ser reaproveitada pela leitura de fingerprint da checagem de corrida (emenda 22/09, revisão do item 5). */
+function accountsClaudeJsonPath(): string {
+  const overrideHome = appConfig.accounts.claudeHome;
+  const realClaudeJsonPath = globalClaudeJsonPathFor(homedir());
+  return overrideHome === null ? realClaudeJsonPath : join(dirname(overrideHome), basename(realClaudeJsonPath));
+}
+
 function applyAccountsClaudeStateSwitch(pair: import('./accounts/account-mod').CredentialPair, onRotatedPairCaptured: (pair: import('./accounts/account-mod').CredentialPair | null) => void | Promise<void>): Promise<void> {
-  const claudeHome = appConfig.accounts.claudeHome ?? claudeHomeDir(profilePathDeps);
-  return applyAccountSwitch(
-    { io: accountsClaudeStateIo, claudeHome, claudeJsonPath: globalClaudeJsonPath(profilePathDeps), onRotatedPairCaptured },
-    pair,
-  );
+  const overrideHome = appConfig.accounts.claudeHome;
+  const claudeHome = overrideHome ?? claudeHomeDirFor(homedir());
+  return applyAccountSwitch({ io: accountsClaudeStateIo, claudeHome, claudeJsonPath: accountsClaudeJsonPath(), onRotatedPairCaptured }, pair);
+}
+
+/**
+ * Emenda 22/09 (revisão, item 5) — lê o fingerprint do `oauthAccount` ATUAL
+ * de `~/.claude.json`, só leitura (mesmo parsing que `isolated-login.ts` já
+ * usa pra reconhecer "é a mesma conta", `accountFingerprintFromClaudeJsonText`).
+ * `null` se o arquivo não existir/estiver ilegível, ou o bloco `oauthAccount`
+ * ainda não tiver sido re-escrito pelo CLI (ele some no passo 3 do switch).
+ */
+function readCurrentAccountsClaudeJsonFingerprint(): string | null {
+  const text = accountsClaudeStateIo.readFileText(accountsClaudeJsonPath());
+  return accountFingerprintFromClaudeJsonText(text);
 }
 
 function broadcastAccountsChanged(view: AccountsViewDto): void {
@@ -464,18 +729,118 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
   }
 }
 
-/** Reconstrói o motor do zero — necessário sempre que `accounts.mod` muda (só o construtor resolve o mod concreto, T1120). Chamado no boot e em `connectMod`/`disconnectMod`. */
-function rebuildAccountEngine(): void {
-  accountEngine?.dispose();
-  accountEngine = new AccountEngine({
-    config: appConfig.accounts,
-    resolveMod: resolveAccountMod,
-    applySwitch: applyAccountsClaudeStateSwitch,
-    isSessionBusy: () => accountsBusyPtyIds.size > 0,
-  });
-  accountEngine.onChanged(broadcastAccountsChanged);
-  accountEngine.start();
-  accountEngine.startPolling(() => accountsLiveSessionPtyIds.size > 0);
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 2 (D3, item 1 do Bloco 3) — UM
+ * registro compartilhado entre reconstruções do motor (F6): se cada
+ * `createEngine` criasse o seu próprio, um rebuild (add/remove conta,
+ * troca de mod) perderia toda marca de "precisa reconectar" pendente.
+ */
+const accountsReconnectRegistry = createReconnectRegistry();
+
+/**
+ * Dono do ciclo de vida do motor (F6, 011-contas-e-provedores etapa 3 Fase 1)
+ * — substitui o antigo `rebuildAccountEngine()`, que reconstruía (dispose +
+ * new) incondicionalmente a cada chamada. `AccountEngineHost.apply` decide
+ * entre construir/reconstruir/atualizar via `needsEngineRebuild`
+ * (account-pool.ts), então quem muda `appConfig.accounts` só chama
+ * `applyAccountsEngineConfig()` abaixo, sem escolher na mão.
+ */
+const accountEngineHost = new AccountEngineHost({
+  createEngine: (config) => {
+    const engine = new AccountEngine({
+      config,
+      resolveMod: resolveAccountMod,
+      applySwitch: applyAccountsClaudeStateSwitch,
+      // Emenda 22/09 (item 2) — não decide mais SE o auto-switch troca; só
+      // alimenta `sessionBusy` no log de `onAutoSwitchLogged` abaixo.
+      isSessionBusy: () => accountsBusyPtyIds.size > 0,
+      reconnectRegistry: accountsReconnectRegistry,
+      // Emenda 22/09 (item 2) — uma linha em accounts-maintenance.log por
+      // decisão de auto-switch que trocou ou tentou trocar, com from/to,
+      // carga dos dois lados e se havia sessão ocupada (observabilidade —
+      // não influencia mais a decisão).
+      onAutoSwitchLogged: (entry) => appendAccountsMaintenanceLog({ event: 'auto-switch', ...entry }),
+      // Emenda 22/09 (item 5) — mesma leitura só-leitura que o mod local usa
+      // pra ler a carga da conta ativa (D7); aqui serve pra checagem de
+      // corrida pós-switch (`scheduleRaceCheck`/`performRaceCheck`).
+      readCurrentPair: () => readCurrentCredentialPair({ io: accountsClaudeStateIo, claudeHome: appConfig.accounts.claudeHome ?? claudeHomeDirFor(homedir()) }),
+      // Emenda 22/09 (revisão, item 5) — desempate por IDENTIDADE (não por
+      // token): ver `readCurrentAccountsClaudeJsonFingerprint`.
+      readCurrentAccountFingerprint: () => readCurrentAccountsClaudeJsonFingerprint(),
+      onSwitchOverwritten: (info) => appendAccountsMaintenanceLog({ event: 'switch-overwritten', account: info.to }),
+      onSwitchPairRotated: (info) => appendAccountsMaintenanceLog({ event: 'switch-pair-rotated', account: info.to }),
+      onSwitchCheckInconclusive: (info) => appendAccountsMaintenanceLog({ event: 'switch-check-inconclusive', account: info.to }),
+    });
+    engine.onChanged(broadcastAccountsChanged);
+    engine.start();
+    engine.startPolling(() => accountsLiveSessionPtyIds.size > 0);
+    return engine;
+  },
+  // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 0 — uma troca decidida
+  // pelo PRÓPRIO motor (auto-switch) só mudava a config em memória do
+  // engine; `appConfig.accounts.activeAccountId` ficava com a conta VELHA, e
+  // um rebuild subsequente (add/remove conta) renascia o motor a partir
+  // dela — a próxima troca capturaria o par rotacionado na conta ERRADA.
+  onActiveAccountChanged: (id) => {
+    if (id === appConfig.accounts.activeAccountId) return;
+    appConfig = { ...appConfig, accounts: { ...appConfig.accounts, activeAccountId: id } };
+    persistAppConfig();
+  },
+});
+
+/**
+ * Aplica `appConfig.accounts` no motor — chamar depois de QUALQUER mudança
+ * nela (boot, `accounts:setConfig`, `accounts:connectMod`,
+ * `accounts:disconnectMod`, `accounts:removeAccount`,
+ * `migration:importCredentials`). F6: quando o resultado é `rebuilt`, a lista
+ * nova (ex.: conta recém-importada) só existe dentro do motor recém-criado —
+ * ninguém pediu `listAccounts()` ainda, então disparamos aqui pra
+ * `accounts:changed` já levar a lista atualizada ao renderer sem precisar
+ * reiniciar o app. No boot (`built`) não dispara: o primeiro `accounts:list`
+ * de verdade vem do próprio painel ao montar.
+ */
+function applyAccountsEngineConfig(): void {
+  const result = accountEngineHost.apply(appConfig.accounts);
+  if (result === 'rebuilt') {
+    void accountEngineHost.current()?.listAccounts().catch(() => undefined);
+  }
+}
+
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 2 (D5, item 2 do Bloco 3) — dá baixa
+ * em `accountsBusyPtyIds` (C5, só observabilidade desde a emenda 22/09).
+ * Substitui os dois pontos que faziam `accountsBusyPtyIds.delete(ptyId)`
+ * direto: o ramo não-`working` do `semaphoreManager.onUpdate` e o
+ * `ptyManager.onExit` de `createMainWindow`.
+ *
+ * Emenda 22/09 (item 2) — não retoma mais `retryDeferredAutoSwitch` (removido
+ * do motor junto com o adiamento por sessão ocupada): o auto-switch já troca
+ * na hora, em `evaluateAutoSwitch`, sem esperar sessão nenhuma esvaziar.
+ */
+function releaseAccountsBusyPty(ptyId: string): void {
+  accountsBusyPtyIds.delete(ptyId);
+}
+
+/**
+ * Emenda 22/09 (item 4) — gatilho imediato: uma sessão que encerra por
+ * `StopFailure` (limite da conta, ou qualquer outro erro de API — o payload
+ * do hook não distingue os dois, então reavalia em qualquer `StopFailure`,
+ * como o dono pediu) relê a carga e avalia o auto-switch NA HORA, sem
+ * esperar o próximo tick do poll adaptativo (item 3).
+ */
+function triggerAccountsAutoSwitchOnStopFailure(): void {
+  const engine = accountEngineHost.current();
+  if (!engine) return;
+  void engine
+    .listAccounts()
+    .then(() => {
+      const current = accountEngineHost.current();
+      // Fase 2 (revisão) — mesma guarda de accounts:list force=true: só
+      // avalia se o motor não foi reconstruído durante a leitura.
+      if (current === engine) return engine.evaluateAutoSwitch();
+      return undefined;
+    })
+    .catch(() => undefined);
 }
 
 // Achado do T009 (ao escrever o `--settings` de hooks pela primeira vez):
@@ -539,7 +904,9 @@ function createMainWindow(): void {
     transcriptWatchers.stop(ptyId);
     // T1125 (011-contas-e-provedores, etapa 1, C4) — mesma baixa, pro poll de
     // 5 min do motor de contas parar de contar esta sessão como viva.
-    accountsBusyPtyIds.delete(ptyId);
+    // Fase 2 (D5) — `releaseAccountsBusyPty` também retoma um auto-switch
+    // adiado se esta era a última sessão ocupada.
+    releaseAccountsBusyPty(ptyId);
     accountsLiveSessionPtyIds.delete(ptyId);
   });
   const unsubscribeSemaphore = semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
@@ -580,10 +947,10 @@ const transcriptWatchers = new TranscriptWatcherRegistry();
 
 /**
  * Path do `.jsonl` da sessão. O CLI o deriva do `cwd` (slug do path absoluto) e
- * do diretório de config ATIVO — com um perfil ativo, `CLAUDE_CONFIG_DIR`
- * aponta para o diretório do perfil, e o transcript vive lá dentro, não em
- * `~/.claude`. Usa o mesmo `activeProfileConfigDir` passado ao spawn, para o
- * watcher não vigiar um arquivo que nunca vai aparecer.
+ * do diretório de config ATIVO. T1222 (etapa 2) — perfis mortos: nenhum
+ * spawn passa mais `claudeConfigDir` (sempre `undefined`), então o parâmetro
+ * aqui só sobrevive pra `sessions:forgetIfOrphan`/`seedProject` (T404/T706),
+ * que também passam `undefined` desde a demolição.
  */
 function resolveTranscriptPath(sessionId: string, cwd: string | undefined, claudeConfigDir: string | undefined): string {
   const claudeHome = claudeConfigDir ?? defaultClaudeHome();
@@ -629,6 +996,34 @@ function registerPtyIpcHandlers(): void {
         throw new Error(`${CLAUDE_NOT_FOUND_PREFIX}${resolved.expectedPath}`);
       }
 
+      // 011-contas-e-provedores, etapa 3, Fase 1.2 — aba do login isolado:
+      // SEM argv do launcher, SEM hooks do semáforo (`--settings`), SEM
+      // `--session-id` — só o `claude` cru dentro do diretório efêmero do
+      // login, pra o operador fazer `/login` de verdade. Mutuamente
+      // exclusivo com `providerId` (mesmo espírito de C13/D2 — nenhuma
+      // sessão nasce confusa sobre qual credencial está em jogo). Sai ANTES
+      // de qualquer resolução de correlação/conta/provider abaixo: esta aba
+      // não é uma sessão "de verdade" no sentido do resto deste handler.
+      if (options.accountLoginId) {
+        if (options.providerId) {
+          throw new Error('accountLoginId e providerId são mutuamente exclusivos.');
+        }
+        const loginDir = isolatedLoginManager?.getPendingDir(options.accountLoginId) ?? null;
+        if (!loginDir) {
+          throw new Error('Login de conta não encontrado — pode ter sido cancelado.');
+        }
+        const loginPtyId = ptyManager.create({
+          cols: options.cols,
+          rows: options.rows,
+          cwd: loginDir,
+          command: resolved.launch.command,
+          args: [...resolved.launch.argsPrefix],
+          claudeConfigDir: loginDir,
+        });
+        isolatedLoginManager!.attachPty(options.accountLoginId, loginPtyId);
+        return { ptyId: loginPtyId };
+      }
+
       // T008 — argv do Launcher (CommandBuilder, FR-003/CA-1); vazio
       // preserva o comportamento antigo (T005: sessão sem flags).
       const launcherArgs = options.args ?? [];
@@ -642,16 +1037,59 @@ function registerPtyIpcHandlers(): void {
       const semaphoreArgs = hooksSettingsPath ? ['--settings', hooksSettingsPath] : [];
       const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs];
 
-      // T1125 (011-contas-e-provedores, etapa 1, C1/C10) — com o motor de
-      // contas ATIVO (`mod !== null`), sessões novas nascem SEM override de
-      // `CLAUDE_CONFIG_DIR` (o motor escreve credencial só no `~/.claude`
-      // real — motor e perfis nunca escrevem no mesmo lugar ao mesmo tempo,
-      // D6/C1) e `PtyCreateResult.profile` reflete a conta ativa do motor,
-      // não o perfil. Motor INERTE (default, C2): byte a byte o
-      // comportamento de hoje (`activeProfileConfigDir`/perfil).
-      const accountsSnapshot = accountEngine?.getSnapshot();
-      const motorActive = accountsSnapshot !== undefined && accountsSnapshot.mod !== null;
-      const spawnConfigDir = motorActive ? undefined : activeProfileConfigDir;
+      // T1222 (011-contas-e-provedores, etapa 2, D8/entregável) — com os
+      // perfis demolidos, sessões SEM provider nunca mais recebem override de
+      // `CLAUDE_CONFIG_DIR`: a única config é `~/.claude` (o motor escreve
+      // credencial nela, ou em `accounts.claudeHome` só em teste). O
+      // parâmetro `claudeConfigDir` do `PtyManager` é agora alimentado
+      // exatamente pela porta que a etapa 3 (registry de providers) atravessa
+      // — ver bloco `options.providerId` abaixo.
+      //
+      // T1319 (011-contas-e-provedores, etapa 3, C13/D2) — provider classe A
+      // e motor de contas são MUTUAMENTE EXCLUSIVOS por sessão: com
+      // `providerId`, o motor nem é consultado (nenhuma sessão nasce
+      // autenticada por acidente com credencial de conta viajando para um
+      // endpoint de terceiro).
+      let accountsSnapshot: ReturnType<AccountEngine['getSnapshot']> | undefined;
+      let motorActive = false;
+      let envOverrides: Record<string, string> | undefined;
+      let providerConfigDir: string | undefined;
+      let spawnProvider: { id: string; label: string } | undefined;
+
+      if (options.providerId) {
+        const launchResult = providerRegistry.resolveLaunch(options.providerId);
+        if (launchResult.kind !== 'ok') {
+          // Nenhum valor de env cruza esta mensagem — só o NOME da variável
+          // faltando, quando aplicável (C22, "erro nomeia a variável, nunca
+          // o valor").
+          const message =
+            launchResult.kind === 'not-found'
+              ? 'Provedor não encontrado — pode ter sido removido.'
+              : launchResult.kind === 'unsupported-class'
+                ? 'Este provedor ainda não é suportado nesta versão (classe B, C20).'
+                : launchResult.kind === 'missing-secret'
+                  ? `Falta configurar a variável "${launchResult.envKey}" deste provedor antes de lançar uma sessão.`
+                  : 'O cofre de credenciais está indisponível neste dispositivo — não é possível lançar com provedor.';
+          throw new Error(message);
+        }
+        envOverrides = launchResult.env;
+        providerConfigDir = launchResult.configDir;
+        const providerEntry = providerRegistry.list().find((entry) => entry.id === options.providerId);
+        spawnProvider = { id: options.providerId, label: providerEntry?.label ?? options.providerId };
+      } else {
+        accountsSnapshot = accountEngineHost.current()?.getSnapshot();
+        motorActive = accountsSnapshot !== undefined && accountsSnapshot.mod !== null;
+      }
+
+      // T1319 (C21/D3) — única resposta do app pra "qual CLAUDE_CONFIG_DIR
+      // esta sessão usa": provider > motor > perfil. Perfis morreram na etapa
+      // 2 (`activeProfileConfigDir` sempre `undefined` nesta árvore) — o
+      // terceiro ramo já não existe, sem precisar tocar os dois primeiros.
+      const claudeConfigDirForSession = resolveSessionConfigDir({
+        providerConfigDir,
+        accountsEngineActive: motorActive,
+        activeProfileConfigDir: undefined,
+      });
 
       const ptyId = ptyManager.create({
         cols: options.cols,
@@ -661,46 +1099,55 @@ function registerPtyIpcHandlers(): void {
         // (npm -g) no interpretador; ConPTY não executa script direto.
         command: resolved.launch.command,
         args: [...resolved.launch.argsPrefix, ...finalArgs],
-        // T014 (FR-005/CA-3) — perfil ativo NO MOMENTO da criação da aba;
-        // `undefined` pro perfil Principal (sem override de env). T1125:
-        // `undefined` também quando o motor de contas está ativo (acima).
-        claudeConfigDir: spawnConfigDir,
+        claudeConfigDir: claudeConfigDirForSession,
+        envOverrides,
       });
 
       if (hooksSettingsPath) {
         semaphoreManager.registerSession(ptyId, correlationId);
+        // 011-contas-e-provedores, etapa 3, Fase 2 (C5) — o semáforo nasce em
+        // `working` enquanto o CLI sobe, e só sai dele num evento de hook (fim
+        // de turno, notificação). Para o motor de contas isso não é "sessão
+        // trabalhando": uma aba aberta e nunca usada adiaria o auto-switch para
+        // sempre, com o painel dizendo "há sessão trabalhando". Só evento de
+        // hook conta — a própria emissão do registro, que acabou de entrar no
+        // conjunto, sai dele aqui (sem `releaseAccountsBusyPty`: não houve
+        // transição de verdade para retomar nada).
+        accountsBusyPtyIds.delete(ptyId);
       }
       // C4 — poll de 5 min do motor de contas só enquanto houver sessão viva.
       accountsLiveSessionPtyIds.add(ptyId);
 
       // T412 (004) — reflexo AO VIVO do `/rename` (CA-4). O path do `.jsonl` já
       // é conhecido aqui: o id da sessão foi IMPOSTO no spawn logo acima.
-      const transcriptPath = resolveTranscriptPath(correlationId, options.cwd, spawnConfigDir);
+      // T1319/C17 — com provider, o home consultado é o config dir DELE (mesmo
+      // padrão de sempre com perfil/motor).
+      const transcriptPath = resolveTranscriptPath(correlationId, options.cwd, claudeConfigDirForSession);
       // T710 — guardado ANTES de qualquer coisa poder falhar: é o caminho que o
       // `forgetIfOrphan` vai conferir se esta retomada morrer (ver comentário de
       // `spawnedTranscriptPaths`).
       spawnedTranscriptPaths.set(correlationId, transcriptPath);
       startTranscriptWatcher(ptyId, transcriptPath, correlationId);
 
-      // FIX (feedback E2E rodada 5) — perfil de NASCIMENTO desta sessão
-      // (mesmo `activeProfileSlug`/Name usados em `claudeConfigDir` acima,
-      // por VALOR — trocar de perfil depois não reescreve isto). Só pra
-      // 'claude' (branch abaixo, shell, nunca aplica `CLAUDE_CONFIG_DIR` —
-      // não tem "perfil" que fizesse sentido devolver aqui).
       // T404 (004) — `correlationId` é o id da sessão do Claude (imposto no
       // spawn acima, ou herdado do `-r` numa retomada); devolvê-lo aqui é o
       // que dá ao renderer a chave para nomear/persistir esta sessão.
-      // T1125/C10 — com o motor ativo, o "perfil" devolvido é a CONTA ativa
-      // dele (mesmo formato `{slug, name}`, sessionAccountLabel.ts não muda
-      // de contrato nesta etapa).
-      const spawnProfile = motorActive && accountsSnapshot?.activeAccountId
-        ? {
-            slug: accountsSnapshot.activeAccountId,
-            name: accountsSnapshot.accounts.find((account) => account.id === accountsSnapshot.activeAccountId)?.label ?? accountsSnapshot.activeAccountId,
-          }
-        : { slug: activeProfileSlug, name: activeProfileName };
+      // T1219/T1222 (etapa 2) — com o motor ativo, a conta devolvida é a
+      // CONTA ativa dele (`{id, label}`); motor inerte (sem mod conectado,
+      // C2) devolve `undefined` — não existe mais "conta ativa" fallback
+      // (os perfis morreram; `computeSessionAccountLabel` cai no rótulo
+      // global "Motor inerte" nesse caso).
+      // T1319 (C13/D2) — com provider, `account` fica `undefined` de
+      // propósito (mutuamente exclusivo) e `provider` é quem é preenchido.
+      const spawnAccount =
+        !spawnProvider && motorActive && accountsSnapshot?.activeAccountId
+          ? {
+              id: accountsSnapshot.activeAccountId,
+              label: accountsSnapshot.accounts.find((account) => account.id === accountsSnapshot.activeAccountId)?.label ?? accountsSnapshot.activeAccountId,
+            }
+          : undefined;
 
-      return { ptyId, claudeSessionId: correlationId, profile: spawnProfile };
+      return { ptyId, claudeSessionId: correlationId, account: spawnAccount, provider: spawnProvider };
     }
 
     const ptyId = ptyManager.create(options);
@@ -752,9 +1199,17 @@ function legacyConfigPaths(): { projectConfigPath: string; activeProfilePath: st
   };
 }
 
-/** Escrita atômica (FR-007) do `appConfig` em memória — chamada depois de TODA mutação (favoritos, roots, perfil ativo, defaults do launcher, notificação). */
+/**
+ * Escrita atômica (FR-007) do `appConfig` em memória — chamada depois de TODA
+ * mutação (favoritos, roots, perfil ativo, defaults do launcher, notificação).
+ * G1 (issue 08): read-merge-write contra `lastSyncedAppConfig` (só as chaves
+ * que ESTE processo mudou desde o último sync sobrescrevem o disco); depois
+ * de gravar, `lastSyncedAppConfig` avança para o `appConfig` atual — é a
+ * baseline da PRÓXIMA chamada.
+ */
 function persistAppConfig(): void {
-  writeAppConfig(getAppConfigPath(), appConfig, configIoDeps);
+  writeAppConfig(getAppConfigPath(), appConfig, configIoDeps, lastSyncedAppConfig);
+  lastSyncedAppConfig = appConfig;
 }
 
 /** Scan + merge de favoritos + ordenação — a mesma pipeline usada por list e favorite (T007), agora sobre `appConfig.projectRoots`/`appConfig.favorites` (T015). */
@@ -890,7 +1345,7 @@ function registerDevModeIpcHandlers(): void {
       devMode: archivePhaseSession(
         appConfig.devMode,
         { cardId: input.cardId, phase: input.phase },
-        { sessionId: input.sessionId, profileSlug: input.profileSlug, archivedAt: Date.now() },
+        { sessionId: input.sessionId, accountId: input.accountId, archivedAt: Date.now() },
       ),
     };
     persistAppConfig();
@@ -1133,6 +1588,12 @@ function registerEsteiraIpcHandlers(): void {
     return esteiraService.setStageOverride(input);
   });
 
+  ipcMain.handle(ESTEIRA_CHANNELS.setDiscoveryRepos, (_event, input: unknown): EsteiraGestureDto | null => {
+    if (esteiraService === null) return null;
+    if (!isValidSetDiscoveryReposIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
+    return esteiraService.setDiscoveryRepos(input);
+  });
+
   ipcMain.handle(ESTEIRA_CHANNELS.setWorkItemState, (_event, input: unknown): EsteiraGestureDto | null => {
     if (esteiraService === null) return null;
     if (!isValidSetWorkItemStateIpcInput(input)) return { ok: false, reason: 'invalid-input', state: esteiraService.snapshotDto() };
@@ -1157,6 +1618,20 @@ function registerEsteiraIpcHandlers(): void {
   ipcMain.handle(ESTEIRA_CHANNELS.retryMirror, async (): Promise<EsteiraSnapshotDto | null> => {
     if (esteiraService === null) return null;
     return esteiraService.retryMirror();
+  });
+
+  // C3 (batch N5) — lê o texto de um artefato apontado pelo store (D-8), só
+  // leitura, restrito a `.md`. O `path` chega ABSOLUTO, já resolvido no
+  // renderer contra a lista de projetos conhecidos — a MESMA fronteira de
+  // confiança de onde a sessão de terminal abre (D-6): este canal não é uma
+  // capacidade nova de acesso a disco, é uma MENOR que a que já existe
+  // (spawn de shell). `fileIo` (`file-io.ts`) nunca lança — degrada por
+  // omissão, mesmo padrão do resto do main.
+  ipcMain.handle(ESTEIRA_CHANNELS.readArtifactText, (_event, input: unknown): ReadArtifactTextDto => {
+    if (!isValidReadArtifactTextIpcInput(input)) return { ok: false, reason: 'invalid-input' };
+    if (!fileIo.existsSync(input.path)) return { ok: false, reason: 'not-found' };
+    const text = fileIo.readFileText(input.path);
+    return text === null ? { ok: false, reason: 'read-error' } : { ok: true, text };
   });
 }
 
@@ -1258,7 +1733,7 @@ function registerSessionIpcHandlers(): void {
     const entry = appConfig.sessionRegistry[sessionId];
     if (!entry) return toAppConfigDto(appConfig);
 
-    const transcriptPath = spawnedTranscriptPaths.get(sessionId) ?? resolveTranscriptPath(sessionId, entry.projectPath, activeProfileConfigDir);
+    const transcriptPath = spawnedTranscriptPaths.get(sessionId) ?? resolveTranscriptPath(sessionId, entry.projectPath, undefined);
     appConfig = {
       ...appConfig,
       sessionRegistry: forgetIfOrphan(appConfig.sessionRegistry, sessionId, existsSync(transcriptPath)),
@@ -1282,7 +1757,7 @@ function registerSessionIpcHandlers(): void {
       projectPath,
       appConfig.sessionNames,
       { indexProjectSessions },
-      activeProfileConfigDir,
+      undefined,
     );
     appConfig = { ...appConfig, sessionRegistry };
     persistAppConfig();
@@ -1350,26 +1825,6 @@ function registerProjectBindingIpcHandlers(): void {
 }
 
 /**
- * Lote 8 (009-modo-dev-v3), CA-24 — "Reiniciar sessão em foco" na conta
- * SELECIONADA: copia o `.jsonl` do perfil de origem pro perfil ativo quando
- * são diferentes (achado 14). Payload inválido é no-op (`same-profile`,
- * nunca lança) — mesmo espírito defensivo do resto dos handlers deste
- * arquivo. Nenhuma escrita fora do `.jsonl` da própria sessão sendo
- * reiniciada; nenhuma leitura/escrita de credencial (`.credentials.json`/
- * `oauthAccount`) — regra dura do projeto, preservada aqui como em
- * profile-manager.ts.
- */
-function registerTranscriptCopyIpcHandlers(): void {
-  const transcriptCopyIoDeps = createSystemTranscriptCopyIoDeps();
-
-  ipcMain.handle(TRANSCRIPT_COPY_CHANNELS.copyForResume, (_event, input: unknown): CopyTranscriptForResumeResult => {
-    if (!isValidCopyTranscriptForResumeIpcInput(input)) return { copied: false, reason: 'invalid-payload' };
-    const typed = input as CopyTranscriptForResumeIpcInput;
-    return copyTranscriptForResume(typed, { homedir }, transcriptCopyIoDeps);
-  });
-}
-
-/**
  * CA-3/CA-5 (009-modo-dev-v3, lote 4) — GitHub por `gh` CLI (spec-issue,
  * sub-issues nativas, PR da fase + etiquetas homologado/revertido-ciclo).
  * `github:read` cobre os 3 fatos do CA-3 num canal só, discriminado por
@@ -1410,110 +1865,6 @@ function registerGithubIpcHandlers(): void {
   });
 }
 
-/** Sempre inclui o Principal + varre `~/.claude-profiles/*` de novo a cada chamada (mesmo espírito de `listProjectsWithFavorites` — lista pequena, I/O local, sem necessidade de cache próprio aqui). */
-function currentProfileList(): ProfileInfo[] {
-  return listProfiles(createSystemProfileListDeps(homedir));
-}
-
-function toProfileSummaryDto(profile: ProfileInfo): ProfileSummaryDto {
-  return { name: profile.name, slug: profile.slug, isPrimary: profile.isPrimary, active: profile.slug === activeProfileSlug };
-}
-
-/** Doctor/repair podem ser chamados por slug que não está (mais) na listagem atual — sintetiza um `ProfileInfo` a partir do slug em vez de silenciosamente cair pro Principal (que mentiria "saudável" pra um perfil que não existe). */
-function resolveProfileOrSynthesize(slug: string): ProfileInfo {
-  const existing = currentProfileList().find((profile) => profile.slug === slug);
-  if (existing) return existing;
-  if (slug === PRINCIPAL_PROFILE_SLUG) return PRINCIPAL_PROFILE;
-  return { name: titleCaseFromSlug(slug), slug, configDir: profileDirPath(slug, profilePathDeps), isPrimary: false };
-}
-
-/**
- * T014 — ProfileManager (FR-005, FR-012, CA-3). GATE HUMANO: a mecânica de
- * isolamento por `CLAUDE_CONFIG_DIR` foi validada ponta-a-ponta pelo
- * Alexandre em 2026-07-23 (login real concorrente, ver addendum de
- * `specs/001-mvp/spike-t001-resultado.md`) — mas o app em si NUNCA lê/grava/
- * exibe credenciais; qualquer conta nova cadastrada aqui só fica "pronta de
- * verdade" depois de um `/login` real dentro do terminal daquele perfil.
- */
-function registerProfileIpcHandlers(): void {
-  ipcMain.handle(PROFILE_CHANNELS.list, (): ProfileSummaryDto[] => currentProfileList().map(toProfileSummaryDto));
-
-  ipcMain.handle(PROFILE_CHANNELS.create, async (_event, name: string): Promise<ProfileSummaryDto[]> => {
-    // Mesma resolução do `claude` usada pro spawn de sessão (T005) — o
-    // bootstrap do `.claude.json` do perfil (spike seção 4/5) precisa do
-    // mesmo executável; CA-5 (claude ausente) degrada com graça aqui também
-    // (createSystemProfileCreationIoDeps trata `claudeExecutablePath: null`
-    // como no-op no passo de bootstrap, não como erro fatal). Handler async
-    // — `createProfile` aguarda o bootstrap sem travar o event loop do main
-    // (ver comentário de topo de `ProfileCreationIoDeps.runBootstrapPrompt`).
-    const resolved = resolveClaudeExecutable(claudeResolveDeps);
-    const io = createSystemProfileCreationIoDeps(resolved.found ? resolved.launch : null, profilePathDeps);
-    await createProfile(name, profilePathDeps, io);
-    return currentProfileList().map(toProfileSummaryDto);
-  });
-
-  ipcMain.handle(PROFILE_CHANNELS.activate, (_event, slug: string): ProfileSummaryDto[] => {
-    const profiles = currentProfileList();
-    const target = profiles.find((profile) => profile.slug === slug);
-    // Slug desconhecido = no-op silencioso (lista devolvida sem o campo
-    // `active` mudar) — não há perfil válido pra ativar.
-    if (target) {
-      activeProfileSlug = target.slug;
-      activeProfileConfigDir = target.configDir;
-      activeProfileName = target.name; // FIX (feedback E2E rodada 5) — mesmo ponto de atualização de activeProfileSlug/activeProfileConfigDir acima.
-      // T015 — perfil ativo agora persiste dentro do ConfigStore unificado
-      // (antes: active-profile.json próprio, T014).
-      appConfig = { ...appConfig, activeProfileSlug: target.slug };
-      persistAppConfig();
-    }
-    return profiles.map(toProfileSummaryDto);
-  });
-
-  /**
-   * Item 3 (rodada de feedback 30/07) — "excluir um perfil, não só
-   * adicionar". `deleteProfile` (profile-manager.ts) checa as duas regras
-   * duras (nunca Principal, nunca o perfil ATIVO agora) ANTES de tocar disco
-   * — a lista devolvida é sempre re-escaneada, mesmo em recusa, pro
-   * chamador nunca precisar de round-trip extra (mesmo idioma de `create`/
-   * `activate`).
-   */
-  ipcMain.handle(PROFILE_CHANNELS.delete, (_event, slug: string): DeleteProfileOutcome => {
-    const profiles = currentProfileList();
-    const io = createSystemProfileDeletionIoDeps();
-    const result = deleteProfile(slug, activeProfileSlug, profiles, io);
-    const refreshed = result.ok ? currentProfileList() : profiles;
-    return result.ok
-      ? { ok: true, profiles: refreshed.map(toProfileSummaryDto) }
-      : { ok: false, reason: result.reason, profiles: refreshed.map(toProfileSummaryDto) };
-  });
-
-  ipcMain.handle(PROFILE_CHANNELS.doctor, (_event, slug: string): ProfileDoctorReportDto => {
-    const profile = resolveProfileOrSynthesize(slug);
-    return runProfileDoctor(profile, claudeHomeDir(profilePathDeps), createSystemProfileDoctorDeps(profilePathDeps));
-  });
-
-  ipcMain.handle(PROFILE_CHANNELS.repair, (_event, slug: string): ProfileDoctorReportDto => {
-    const profile = resolveProfileOrSynthesize(slug);
-    const claudeHome = claudeHomeDir(profilePathDeps);
-    const doctorDeps = createSystemProfileDoctorDeps(profilePathDeps);
-    const report = runProfileDoctor(profile, claudeHome, doctorDeps);
-    repairProfileJunctions(profile, report, claudeHome, createSystemProfileRepairIoDeps());
-    // Re-roda o doctor pós-reparo — devolve o estado REAL, não um "healthy" otimista.
-    return runProfileDoctor(profile, claudeHome, doctorDeps);
-  });
-
-  ipcMain.handle(PROFILE_CHANNELS.headroom, async (_event, rawOptions?: unknown): Promise<ProfileHeadroomMap> => {
-    // T205 — payload vem do renderer via IPC; nunca confiar cegamente
-    // (poderia ser qualquer coisa vinda de um preload comprometido/versão
-    // desalinhada) — só aceita `{ force: true }`, qualquer outra forma vira
-    // `force: false` (comportamento anterior, respeita cache).
-    const force =
-      typeof rawOptions === 'object' && rawOptions !== null && (rawOptions as { force?: unknown }).force === true;
-    const targets = currentProfileList().map((profile) => ({ slug: profile.slug, configDir: profile.configDir }));
-    return readAllProfilesHeadroom(targets, headroomCache, undefined, { force });
-  });
-}
-
 /**
  * T1125 (011-contas-e-provedores, etapa 1) — handlers do motor de contas
  * (contracts/ipc-accounts.md). `connectMod` é o ÚNICO ponto por onde segredo
@@ -1522,14 +1873,49 @@ function registerProfileIpcHandlers(): void {
  * segredo (fica só no cofre).
  */
 function registerAccountsIpcHandlers(): void {
-  ipcMain.handle(ACCOUNT_CHANNELS.list, async (): Promise<AccountsViewDto> => {
-    if (!accountEngine) return { mod: null, state: 'inert', unavailableReason: null, accounts: [], activeAccountId: null, autoSwitch: appConfig.accounts.autoSwitch, lastReadAt: null };
-    return accountEngine.listAccounts();
+  ipcMain.handle(ACCOUNT_CHANNELS.list, async (_event, options: unknown): Promise<AccountsViewDto> => {
+    const engine = accountEngineHost.current();
+    if (!engine) {
+      // 011-contas-e-provedores, etapa 3, Fase 2 (D5) — view inerte também
+      // precisa dos dois campos novos (motor sem mod nunca troca sozinho).
+      return {
+        mod: null,
+        state: 'inert',
+        unavailableReason: null,
+        accounts: [],
+        activeAccountId: null,
+        autoSwitch: appConfig.accounts.autoSwitch,
+        lastReadAt: null,
+        autoSwitchState: 'idle',
+        lastAutoSwitch: null,
+        lastSwitchOverwritten: null,
+      };
+    }
+    // 011-contas-e-provedores, etapa 3, Fase 2 (D5, item 3 do Bloco 3) —
+    // checagem de tipo na fronteira IPC (o renderer pode mandar qualquer
+    // coisa). `force: true` é o "Atualizar" do painel — o "sob demanda" da
+    // C4: relê as contas E reavalia o auto-switch no mesmo gesto, sem
+    // esperar o próximo poll de 5 min. A conta ativa trocada pelo motor já é
+    // persistida por `onActiveAccountChanged` (accountEngineHost, F6) — não
+    // duplicar aqui.
+    const force = typeof options === 'object' && options !== null && (options as { readonly force?: unknown }).force === true;
+    if (force) {
+      await engine.listAccounts();
+      // Fase 2 (revisão) — a leitura pode levar segundos (renovação na
+      // leitura); se o motor foi reconstruído nesse meio-tempo, este `engine`
+      // já foi descartado e não pode decidir troca nenhuma. Só avalia se ele
+      // ainda é o motor atual, e a resposta é sempre a do motor atual.
+      const current = accountEngineHost.current();
+      if (current === engine) await engine.evaluateAutoSwitch();
+      return (current ?? engine).getSnapshot();
+    }
+    return engine.listAccounts();
   });
 
   ipcMain.handle(ACCOUNT_CHANNELS.switch, async (_event, id: AccountId): Promise<SwitchOutcome> => {
-    if (!accountEngine) return { kind: 'failed', reason: 'io' };
-    const result = await accountEngine.switchTo(id);
+    const engine = accountEngineHost.current();
+    if (!engine) return { kind: 'failed', reason: 'io' };
+    const result = await engine.switchTo(id);
     if (result.kind === 'switched') {
       appConfig = { ...appConfig, accounts: { ...appConfig.accounts, activeAccountId: result.to } };
       persistAppConfig();
@@ -1540,15 +1926,10 @@ function registerAccountsIpcHandlers(): void {
   ipcMain.handle(ACCOUNT_CHANNELS.getConfig, (): AccountsConfigDto => appConfig.accounts);
 
   ipcMain.handle(ACCOUNT_CHANNELS.setConfig, (_event, patch: unknown): AccountsConfigDto => {
-    const previousMod = appConfig.accounts.mod;
     const merged = typeof patch === 'object' && patch !== null ? { ...appConfig.accounts, ...(patch as Partial<AccountsConfigDto>) } : appConfig.accounts;
     appConfig = { ...appConfig, accounts: sanitizeAccountsConfig(merged, appConfig.accounts) };
     persistAppConfig();
-    if (appConfig.accounts.mod !== previousMod) {
-      rebuildAccountEngine();
-    } else {
-      accountEngine?.updateConfig(appConfig.accounts);
-    }
+    applyAccountsEngineConfig(); // F6 — decide construir/reconstruir/atualizar, nunca mais "na mão" aqui.
     return appConfig.accounts;
   });
 
@@ -1563,29 +1944,262 @@ function registerAccountsIpcHandlers(): void {
       if (writeResult.kind !== 'ok') return { kind: 'failed', reason: 'vault-unavailable' };
       appConfig = { ...appConfig, accounts: { ...appConfig.accounts, mod: 'seazone', seazone: { baseUrl: input.baseUrl.trim() } } };
     } else {
-      if (!input.label?.trim() || !input.accessToken?.trim() || !input.refreshToken?.trim()) return { kind: 'failed', reason: 'invalid-input' };
+      const label = input.label?.trim();
+      if (!label) return { kind: 'failed', reason: 'invalid-input' };
+      // F2 (011-contas-e-provedores, etapa 3, Fase 1) — `buildPastedPair`
+      // decide o `expiresAt` final: ausente/null vira 0 (vencido de
+      // propósito, o mod renova no 1º switch) em vez do prazo chutado que o
+      // renderer mandava antes.
+      const built = buildPastedPair(input);
+      if (built.kind !== 'ok') return { kind: 'failed', reason: 'invalid-input' };
+
       const id = randomUUID();
-      const pair = { accessToken: input.accessToken, refreshToken: input.refreshToken, expiresAt: input.expiresAt, scopes: [] as readonly string[] };
-      const writeResult = writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, id, JSON.stringify(pair));
+      const writeResult = writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, id, JSON.stringify(built.pair));
       if (writeResult.kind !== 'ok') return { kind: 'failed', reason: 'vault-unavailable' };
       appConfig = {
         ...appConfig,
-        accounts: { ...appConfig.accounts, mod: 'local', localAccounts: [...appConfig.accounts.localAccounts, { id, label: input.label.trim(), plan: null }] },
+        accounts: { ...appConfig.accounts, mod: 'local', localAccounts: [...appConfig.accounts.localAccounts, { id, label, plan: null }] },
       };
     }
 
     persistAppConfig();
-    rebuildAccountEngine();
+    applyAccountsEngineConfig(); // F6
     return { kind: 'connected', config: appConfig.accounts };
   });
 
   ipcMain.handle(ACCOUNT_CHANNELS.disconnectMod, (): AccountsConfigDto => {
-    // Volta pro default (motor inerte, C2) — preserva só `claudeHome` (não é
-    // segredo, é preferência de onde o motor escreveria se reconectado).
-    appConfig = { ...appConfig, accounts: { ...defaultAccountsConfig(), claudeHome: appConfig.accounts.claudeHome } };
+    // 011-contas-e-provedores, etapa 3, Fase 1 — `planDisconnect` decide a
+    // config final (default, preservando só `claudeHome`) e as chaves que o
+    // cofre perde (contas locais + `seazone:session`, nunca `provider:*`).
+    // Antes, desconectar só resetava a config e deixava os pares no cofre —
+    // a origem das 8 entradas órfãs medidas em 13/09.
+    const plan = planDisconnect(appConfig.accounts);
+    appConfig = { ...appConfig, accounts: plan.config };
     persistAppConfig();
-    rebuildAccountEngine();
+    applyAccountsEngineConfig(); // F6
+
+    if (accountsVaultPath) {
+      try {
+        deleteVaultEntries(accountsVaultPath, accountsVaultIo, plan.vaultKeys);
+      } catch (error) {
+        // Best-effort: a faxina do próximo boot (vault-reconciliation.ts) recolhe a órfã. Nunca loga conteúdo, só o erro.
+        console.error('[donel-dev] desconectar: falha ao apagar do cofre (recolhida na próxima faxina):', error);
+      }
+    }
+
     return appConfig.accounts;
+  });
+
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1 — "Remover conta" (plan-etapa-3.md
+   * §4.3). Bloqueada para a conta ATIVA (`planRemoveAccount`, account-pool.ts).
+   * Ordem: config primeiro (persist + motor + `listAccounts` quando
+   * reconstruir), cofre depois, best-effort — se a escrita no cofre falhar, a
+   * config já mudou (a UI já não lista mais a conta) e a faxina do próximo
+   * boot recolhe a entrada órfã que sobrou.
+   */
+  ipcMain.handle(ACCOUNT_CHANNELS.removeAccount, (_event, id: unknown): RemoveAccountOutcome => {
+    if (typeof id !== 'string' || !id) return { kind: 'failed', reason: 'unknown-account' };
+
+    const plan = planRemoveAccount(appConfig.accounts, id);
+    if (plan.kind === 'blocked') return { kind: 'blocked', reason: 'active-account' };
+    if (plan.kind === 'unknown-account') return { kind: 'failed', reason: 'unknown-account' };
+
+    appConfig = { ...appConfig, accounts: plan.config };
+    persistAppConfig();
+    applyAccountsEngineConfig();
+
+    if (accountsVaultPath) {
+      try {
+        deleteVaultEntries(accountsVaultPath, accountsVaultIo, plan.vaultKeys);
+      } catch (error) {
+        console.error('[donel-dev] remover conta: falha ao apagar do cofre (recolhida na próxima faxina):', error);
+      }
+    }
+
+    return { kind: 'removed', config: appConfig.accounts };
+  });
+
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado
+   * (`IsolatedLoginManager.begin`, isolated-login.ts). Valida o TIPO aqui
+   * (fronteira IPC — o renderer pode mandar qualquer coisa); a validação de
+   * conteúdo (rótulo vazio/longo demais) é do próprio manager.
+   */
+  ipcMain.handle(ACCOUNT_CHANNELS.beginLogin, (_event, label: unknown): BeginLoginOutcome => {
+    if (typeof label !== 'string') return { kind: 'failed', reason: 'invalid-input' };
+    if (!isolatedLoginManager) return { kind: 'failed', reason: 'io' };
+    return isolatedLoginManager.begin(label);
+  });
+
+  ipcMain.handle(ACCOUNT_CHANNELS.cancelLogin, (_event, loginId: unknown): void => {
+    if (typeof loginId !== 'string' || !loginId) return;
+    isolatedLoginManager?.cancel(loginId);
+  });
+
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 2 (D3, item 4 do Bloco 3) —
+   * "Reconectar": login isolado apontado PARA uma conta já cadastrada. O
+   * rótulo vem da PRÓPRIA conta (`planReconnect`, account-pool.ts) — nunca
+   * digitado de novo pelo operador, por isso este handler recebe só o `id`.
+   * Checagem de tipo na fronteira IPC, como os handlers vizinhos.
+   */
+  ipcMain.handle(ACCOUNT_CHANNELS.beginReconnect, (_event, id: unknown): BeginLoginOutcome => {
+    if (typeof id !== 'string' || !id) return { kind: 'failed', reason: 'unknown-account' };
+
+    const plan = planReconnect(appConfig.accounts, id);
+    if (plan.kind === 'blocked') return { kind: 'failed', reason: 'active-account' };
+    if (plan.kind === 'unknown-account') return { kind: 'failed', reason: 'unknown-account' };
+
+    if (!isolatedLoginManager) return { kind: 'failed', reason: 'io' };
+    return isolatedLoginManager.begin(plan.label, { targetAccountId: id });
+  });
+}
+
+/**
+ * Reaproveita o MESMO seam de teste que `accounts.claudeHome` já abre para o
+ * switch (`applyAccountsClaudeStateSwitch`): quando o override está setado
+ * (`<homeFalso>/.claude`), a migração inteira passa a operar sob
+ * `dirname(override)` em vez do `homedir()` real — é o que permite ao smoke
+ * `migration-nunca-deleta.spec.ts` injetar uma árvore falsa em `mkdtemp` sem
+ * tocar `~/.claude-profiles`/`~/.claude` reais (regra dura desta etapa).
+ */
+function migrationHomedir(): string {
+  const override = appConfig.accounts.claudeHome;
+  return override ? dirname(override) : homedir();
+}
+
+/** Monta o `MigrationPlan` corrente lendo o inventário + diffs de MCP do disco, cruzado com `appConfig.migration` (estado persistido). Somente leitura. */
+function currentMigrationPlan(): MigrationPlan {
+  const inventory = readProfileInventory(createSystemProfileInventoryDeps(migrationHomedir));
+  const diffs = inventory.map((profile) => computeMcpDiffFromDisk(profile.slug, profile.path, globalClaudeJsonPathFor(migrationHomedir())));
+  return buildMigrationPlan(inventory, appConfig.migration, diffs);
+}
+
+/**
+ * T1214 (011-contas-e-provedores, etapa 2) — handlers do assistente de
+ * migração (contracts/migration-etapa-2.md). Cada canal atua sobre UM
+ * perfil por chamada (D10) — nunca existe "migrar tudo". Nenhum canal
+ * devolve conteúdo de arquivo de perfil; `importCredentials` devolve só
+ * enum (`ImportResult`), nunca o par (fronteira de credencial preservada).
+ */
+function registerMigrationIpcHandlers(): void {
+  ipcMain.handle(MIGRATION_CHANNELS.scan, (): MigrationPlan => currentMigrationPlan());
+
+  ipcMain.handle(MIGRATION_CHANNELS.importCredentials, (_event, profileSlug: unknown): ImportResult => {
+    if (typeof profileSlug !== 'string' || !profileSlug) return { kind: 'absent' };
+
+    const inventory = readProfileInventory(createSystemProfileInventoryDeps(migrationHomedir));
+    const profile = inventory.find((p) => p.slug === profileSlug);
+    if (!profile) return { kind: 'absent' };
+
+    const vault = createRealAccountsVaultAdapter();
+    const deps = createSystemCredentialsImportDeps(vault, () => safeStorage.isEncryptionAvailable());
+    const result = importProfileCredentials(
+      { slug: profile.slug, displayName: profile.displayName, credentialsPath: join(profile.path, '.credentials.json') },
+      deps,
+    );
+
+    const step = result.kind === 'imported' ? 'imported' : result.kind === 'absent' ? 'absent' : 'failed';
+    const previous = appConfig.migration.profiles[profileSlug];
+    appConfig = {
+      ...appConfig,
+      migration: {
+        ...appConfig.migration,
+        startedAt: appConfig.migration.startedAt ?? Date.now(),
+        profiles: {
+          ...appConfig.migration.profiles,
+          [profileSlug]: { credentials: step, transcripts: previous?.transcripts ?? 'pending', mcpReviewed: previous?.mcpReviewed ?? false },
+        },
+      },
+    };
+
+    // Registra a conta no pool do mod local (plan.md, arquitetura em uma
+    // tela) — o mod local nasce ativo se o motor ainda estava inerte,
+    // exatamente o gesto que torna a credencial migrada utilizável.
+    if (result.kind === 'imported') {
+      const alreadyRegistered = appConfig.accounts.localAccounts.some((a) => a.id === result.accountId);
+      if (!alreadyRegistered) {
+        appConfig = {
+          ...appConfig,
+          accounts: {
+            ...appConfig.accounts,
+            mod: appConfig.accounts.mod ?? 'local',
+            localAccounts: [...appConfig.accounts.localAccounts, { id: result.accountId, label: result.label, plan: null }],
+          },
+        };
+        applyAccountsEngineConfig(); // F6 — a lista de contas mudou; antes, este ramo (mod já ativo) só chamava updateConfig e a conta nova não entrava no motor vivo.
+      }
+    }
+
+    persistAppConfig();
+    return result;
+  });
+
+  ipcMain.handle(MIGRATION_CHANNELS.consolidateTranscripts, (_event, profileSlug: unknown): ConsolidateResult => {
+    if (typeof profileSlug !== 'string' || !profileSlug) return { result: 'nothing-to-copy', copied: 0 };
+
+    const inventory = readProfileInventory(createSystemProfileInventoryDeps(migrationHomedir));
+    const profile = inventory.find((p) => p.slug === profileSlug);
+    if (!profile) return { result: 'nothing-to-copy', copied: 0 };
+
+    const claudeHome = claudeHomeDirFor(migrationHomedir());
+    const input = readTranscriptConsolidationInput(join(profile.path, 'projects'), join(claudeHome, 'projects'));
+    const outcome = planTranscriptConsolidation(input);
+    const copied = outcome.kind === 'copy' ? executeTranscriptCopyOperations(outcome.operations) : 0;
+
+    const previous = appConfig.migration.profiles[profileSlug];
+    const transcriptsStep = outcome.kind === 'nothing-to-copy' ? 'absent' : 'imported';
+    appConfig = {
+      ...appConfig,
+      migration: {
+        ...appConfig.migration,
+        profiles: {
+          ...appConfig.migration.profiles,
+          [profileSlug]: { credentials: previous?.credentials ?? 'pending', transcripts: transcriptsStep, mcpReviewed: previous?.mcpReviewed ?? false },
+        },
+      },
+    };
+    persistAppConfig();
+
+    return { result: outcome.kind, copied };
+  });
+
+  ipcMain.handle(MIGRATION_CHANNELS.markMcpReviewed, (_event, profileSlug: unknown): MigrationPlan => {
+    if (typeof profileSlug === 'string' && profileSlug) {
+      const previous = appConfig.migration.profiles[profileSlug];
+      appConfig = {
+        ...appConfig,
+        migration: {
+          ...appConfig.migration,
+          profiles: {
+            ...appConfig.migration.profiles,
+            [profileSlug]: { credentials: previous?.credentials ?? 'pending', transcripts: previous?.transcripts ?? 'pending', mcpReviewed: true },
+          },
+        },
+      };
+      persistAppConfig();
+    }
+    return currentMigrationPlan();
+  });
+
+  /** `archive` recusa quando algum perfil está `pending` — a checagem é do main (contracts/migration-etapa-2.md §invariante 3), botão desabilitado na UI é só conforto. */
+  ipcMain.handle(MIGRATION_CHANNELS.archive, (): ArchiveOutcome => {
+    const plan = currentMigrationPlan();
+    if (!plan.canArchive) return { kind: 'nothing-to-archive' };
+
+    const inventory = readProfileInventory(createSystemProfileInventoryDeps(migrationHomedir));
+    const outcome = archiveProfiles(
+      { ...createSystemArchiveIoDeps(), paths: { homedir: migrationHomedir() }, profileSlugs: inventory.map((p) => p.slug) },
+      new Date(),
+    );
+
+    if (outcome.kind === 'archived') {
+      appConfig = { ...appConfig, migration: { ...appConfig.migration, completedAt: Date.now(), archivedTo: outcome.archivedTo } };
+      persistAppConfig();
+    }
+
+    return outcome;
   });
 }
 
@@ -1608,49 +2222,122 @@ void app.whenReady().then(async () => {
   // ainda não existir nesta máquina (ver comentário de topo de
   // config-store.ts) — nunca lança, cai nos defaults na pior hipótese.
   appConfig = readAppConfig(getAppConfigPath(), defaultAppConfig(defaultProjectRoots(homedir)), legacyConfigPaths(), configIoDeps);
-
-  // T014 — perfil ativo persistido ANTES de registrar os handlers de PTY (o
-  // primeiro `pty:create` de sessão claude já precisa do
-  // `activeProfileConfigDir` certo). Slug persistido que não existe mais
-  // (perfil removido do disco manualmente) cai pro Principal, nunca lança.
-  const bootProfile = currentProfileList().find((profile) => profile.slug === appConfig.activeProfileSlug) ?? PRINCIPAL_PROFILE;
-  activeProfileSlug = bootProfile.slug;
-  activeProfileConfigDir = bootProfile.configDir;
-  activeProfileName = bootProfile.name; // FIX (feedback E2E rodada 5) — mesmo ponto de atualização de activeProfileSlug/activeProfileConfigDir acima.
-  // Slug persistido pode ter sido normalizado pro Principal acima (perfil
-  // morto) — reflete de volta no config em memória pra próxima escrita não
-  // reintroduzir um slug inexistente.
-  if (appConfig.activeProfileSlug !== bootProfile.slug) {
-    appConfig = { ...appConfig, activeProfileSlug: bootProfile.slug };
-  }
+  // G1 (issue 08) — este é o 1º sync com o disco: vira a baseline do
+  // read-merge-write (ver comentário de topo de `lastSyncedAppConfig`).
+  lastSyncedAppConfig = appConfig;
 
   // T1125 (011-contas-e-provedores, etapa 1) — motor de contas. `accountsVaultPath`
-  // precisa de `userData` (só disponível aqui); `rebuildAccountEngine` monta o
-  // motor com `appConfig.accounts` (mod `null` = inerte, C2 — comportamento de
-  // hoje intocado). C5: busy-tracking via API pública do semáforo, sem alterar
-  // session-semaphore-manager.ts.
+  // precisa de `userData` (só disponível aqui); `applyAccountsEngineConfig()`
+  // monta o motor (via `accountEngineHost`) com `appConfig.accounts` (mod
+  // `null` = inerte, C2 — comportamento de hoje intocado). C5: busy-tracking
+  // via API pública do semáforo, sem alterar session-semaphore-manager.ts.
   accountsVaultPath = join(app.getPath('userData'), 'accounts-vault.json');
+
+  // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — colhedor do login
+  // isolado. Mesmo cofre do motor (`createRealAccountsVaultAdapter`), mesmo
+  // `safeStorage.isEncryptionAvailable()` de disponibilidade, `killPty`
+  // delegado ao `ptyManager` e `emitStatus` fazendo broadcast pro mesmo
+  // padrão de `broadcastAccountsChanged`.
+  isolatedLoginManager = new IsolatedLoginManager({
+    userDataDir: app.getPath('userData'),
+    platform: process.platform,
+    fs: createRealIsolatedLoginFsDeps(),
+    vault: createRealAccountsVaultAdapter(),
+    isVaultAvailable: () => safeStorage.isEncryptionAvailable(),
+    findAccountByFingerprint: (fingerprint) => findAccountByFingerprint(appConfig.accounts, fingerprint),
+    // 011-contas-e-provedores, etapa 3, Fase 2 (D3) — identifica a conta-alvo
+    // de um login "Reconectar" (`accounts:beginReconnect`, Bloco 3).
+    findAccountById: (id) => findAccountById(appConfig.accounts, id),
+    generateLoginId: () => randomUUID(),
+    generateAccountId: () => randomUUID(),
+    onAccountHarvested: (event) => {
+      appConfig = { ...appConfig, accounts: applyHarvestedAccount(appConfig.accounts, event) };
+      persistAppConfig();
+      applyAccountsEngineConfig(); // F6 — 'added' muda a lista -> rebuilt -> já relê sozinho.
+      // 011-contas-e-provedores, etapa 3, Fase 2 (D3, item 5 do Bloco 3) —
+      // 'replaced' e 'reconnected' renovaram o par desta conta no cofre: uma
+      // marca de "precisa reconectar" pendente não faz mais sentido. 'added'
+      // nunca teve marca (conta nova) — nada a limpar.
+      if (event.kind !== 'added') accountsReconnectRegistry.clear(event.accountId);
+      // 'replaced' NÃO muda `localAccounts` (account-pool.ts) -> `apply()`
+      // fica em 'updated', que não relê sozinho — sem isto, o painel
+      // continuaria mostrando a carga/estado da conta com o par ANTIGO.
+      void accountEngineHost.current()?.listAccounts().catch(() => undefined);
+    },
+    killPty: (ptyId) => ptyManager.kill(ptyId),
+    emitStatus: (status) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send(ACCOUNT_CHANNELS.loginChanged, status);
+      }
+    },
+  });
+
+  // Global (não por janela) — o login isolado precisa saber quando SEU PTY
+  // morre mesmo que nenhuma janela em particular esteja de olho nisso (mesmo
+  // padrão do `semaphoreManager.onUpdate` global logo abaixo, que também não
+  // depende de nenhuma `BrowserWindow`).
+  ptyManager.onExit((ptyId) => {
+    isolatedLoginManager?.handlePtyExit(ptyId);
+  });
+
+  // Boot — apaga sobras de um app fechado no meio de um login isolado (elas
+  // podem conter credencial em texto claro). Nunca derruba o boot: falha
+  // vira log e o app segue (mesmo padrão da faxina do cofre logo abaixo).
+  try {
+    const removedLoginDirs = isolatedLoginManager.sweepStaleDirs();
+    if (removedLoginDirs.length > 0) {
+      console.info(`[donel-dev] varredura de boot removeu ${removedLoginDirs.length} diretório(s) de login isolado órfão(s):`, removedLoginDirs);
+      const maintenanceLogPath = join(app.getPath('userData'), 'accounts-maintenance.log');
+      appendFileSync(
+        maintenanceLogPath,
+        `${JSON.stringify({ at: new Date().toISOString(), event: 'login-dirs-swept', removed: removedLoginDirs })}\n`,
+        'utf8',
+      );
+    }
+  } catch (error) {
+    console.error('[donel-dev] varredura de diretórios de login isolado falhou (boot segue normalmente):', error);
+  }
+
+  // 011-contas-e-provedores, etapa 3, Fase 1 — faxina do cofre (plan-etapa-3.md
+  // §4.4), ANTES do 1º `applyAccountsEngineConfig()` abaixo. Nunca derruba o
+  // boot: falha aqui vira log e o app segue com o cofre como estava. Só
+  // entrada de conta órfã + `seazone:session` — `provider:*` nunca é tocado
+  // (regra dura de `planVaultReconciliation`).
+  try {
+    const removed = reconcileAccountsVault(accountsVaultPath, accountsVaultIo, appConfig.accounts);
+    if (removed.length > 0) {
+      console.info(`[donel-dev] faxina do cofre de contas removeu ${removed.length} entrada(s) órfã(s):`, removed);
+      const maintenanceLogPath = join(app.getPath('userData'), 'accounts-maintenance.log');
+      appendFileSync(maintenanceLogPath, `${JSON.stringify({ at: new Date().toISOString(), event: 'vault-reconciled', removed })}\n`, 'utf8');
+    }
+  } catch (error) {
+    console.error('[donel-dev] faxina do cofre de contas falhou (boot segue normalmente):', error);
+  }
+
   semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
     if (update.state === 'working') {
       accountsBusyPtyIds.add(update.ptyId);
     } else {
-      accountsBusyPtyIds.delete(update.ptyId);
+      releaseAccountsBusyPty(update.ptyId);
     }
   });
-  rebuildAccountEngine();
+  // Emenda 22/09 (item 4) — StopFailure (limite da conta ou outro erro de
+  // API) reavalia o auto-switch imediatamente, sem esperar o poll.
+  semaphoreManager.onStopFailure(() => triggerAccountsAutoSwitchOnStopFailure());
+  applyAccountsEngineConfig(); // F6 — 1ª chamada sempre 'built' (motor inerte se mod === null, C2).
 
   registerPtyIpcHandlers();
   registerProjectIpcHandlers();
   registerSessionIpcHandlers();
-  registerProfileIpcHandlers();
   registerAccountsIpcHandlers(); // T1125 (011-contas-e-provedores, etapa 1)
+  registerMigrationIpcHandlers(); // T1214 (011-contas-e-provedores, etapa 2)
+  registerProviderIpcHandlers(); // T1319 (011-contas-e-provedores, etapa 3)
   registerConfigIpcHandlers();
   registerClipboardIpcHandlers(); // T504 (005-terminal-copy-paste)
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
   registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)
-  registerTranscriptCopyIpcHandlers(); // CA-24 (009-modo-dev-v3, lote 8)
   registerEsteiraIpcHandlers(); // Spec 010 — esteira nova (store + contrato), ao LADO do mapa atual
   createMainWindow();
 
@@ -1663,10 +2350,11 @@ void app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   ptyManager.killAll();
+  isolatedLoginManager?.dispose(); // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — DEPOIS do killAll (mesma ordem já vale pro PTY do login, que killAll já matou).
   semaphoreManager.dispose();
   esteiraService?.dispose();
   esteiraService = null;
-  accountEngine?.dispose(); // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.
+  accountEngineHost.dispose(); // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.
   if (process.platform !== 'darwin') {
     app.quit();
   }

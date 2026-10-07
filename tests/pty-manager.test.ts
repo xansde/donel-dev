@@ -47,7 +47,13 @@ describe('PtyManager — ciclo de vida de um processo que sai sozinho', () => {
     expect(collected).toContain(marker);
 
     manager.kill(ptyId);
-  });
+    // Teto explícito: este teste spawna um PowerShell DE VERDADE, com o profile
+    // do usuário. O default de 5 s do vitest não é uma régua do produto — é o
+    // default — e a suíte roda os arquivos em paralelo, então o spawn compete
+    // por CPU com os outros workers. Medido nesta máquina: mediana 1,8 s e pico
+    // 3,2 s isolado; dentro da suíte cheia estourou os 5 s (5328 ms). O input
+    // nunca se perdeu em 8 sondagens de 30 s — é latência de cauda, não race.
+  }, 20_000);
 });
 
 // T014 (FR-005/CA-3) — env efetivo do PTY quando uma aba nasce sob um perfil
@@ -91,6 +97,43 @@ describe('buildPtyEnv (puro)', () => {
     expect('CLAUDE_CODE_ENTRYPOINT' in env).toBe(false);
     expect('CLAUDE_CODE_SSE_PORT' in env).toBe(false);
     expect(env.PATH).toBe('C:\\bin');
+  });
+});
+
+// T1314 (011-contas-e-provedores, etapa 3) — `buildPtyEnv` ganha o 2º
+// parâmetro `envOverrides` (env do provider, já resolvido por
+// `buildProviderEnv`). Regressão byte a byte: sem overrides, a saída é
+// IDÊNTICA à de hoje (os testes acima continuam passando sem alteração,
+// porque a chamada de 2 args é só o caso `envOverrides === undefined`).
+describe('buildPtyEnv (puro) — envOverrides (T1314)', () => {
+  it('overrides são aplicados sobre o env base', () => {
+    const env = buildPtyEnv({ PATH: 'C:\\bin' }, undefined, { ANTHROPIC_BASE_URL: 'https://provider.test', ANTHROPIC_AUTH_TOKEN: 'segredo' });
+    expect(env.PATH).toBe('C:\\bin');
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://provider.test');
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('segredo');
+  });
+
+  it('override tentando setar CLAUDE_CONFIG_DIR é ignorado — só o parâmetro próprio governa essa chave', () => {
+    const env = buildPtyEnv({ PATH: 'C:\\bin' }, 'C:\\perfil-legitimo\\.claude', { CLAUDE_CONFIG_DIR: 'C:\\hack-do-provider' });
+    expect(env.CLAUDE_CONFIG_DIR).toBe('C:\\perfil-legitimo\\.claude');
+  });
+
+  it('override tentando setar CLAUDE_CONFIG_DIR sem claudeConfigDir próprio também não vaza (chave continua ausente)', () => {
+    const env = buildPtyEnv({ PATH: 'C:\\bin' }, undefined, { CLAUDE_CONFIG_DIR: 'C:\\hack-do-provider' });
+    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
+  });
+
+  it('marcadores de sessão-filha continuam removidos mesmo com overrides presentes', () => {
+    const env = buildPtyEnv({ PATH: 'C:\\bin', CLAUDECODE: '1' }, undefined, { ANTHROPIC_BASE_URL: 'https://provider.test' });
+    expect('CLAUDECODE' in env).toBe(false);
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://provider.test');
+  });
+
+  it('sem overrides (2 args, chamada de hoje), a saída é idêntica à de sempre — regressão byte a byte', () => {
+    const withoutThirdArg = buildPtyEnv({ PATH: 'C:\\bin', USERNAME: 'x' }, 'C:\\perfil\\.claude');
+    const withUndefinedThirdArg = buildPtyEnv({ PATH: 'C:\\bin', USERNAME: 'x' }, 'C:\\perfil\\.claude', undefined);
+    expect(withoutThirdArg).toEqual(withUndefinedThirdArg);
+    expect(withoutThirdArg).toEqual({ PATH: 'C:\\bin', USERNAME: 'x', CLAUDE_CONFIG_DIR: 'C:\\perfil\\.claude' });
   });
 });
 

@@ -121,6 +121,21 @@
   color: var(--state-error);
 }
 
+/* B3 — o toggle de sessões de fase da esteira: texto clicável, sem virar botão cheio (é um ajuste de visibilidade, não uma ação primária). */
+.phaseToggle {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.phaseToggle:hover {
+  color: var(--text-primary, inherit);
+}
+
 /* === Tabela (mockup linhas 490-504): SESSÃO · ETAPA · QUANDO — a última
    coluna (ações) não existe no desenho; reservada pra Retomar/Fork (nossos,
    sem equivalente no mockup). #26 — colunas CONTA e CONTEXTO removidas

@@ -20,6 +20,13 @@
   grid-row: 1;
 }
 
+/* FIX (feedback e2e 05/08, C4) — `.mapCollapsed` morreu: a versão anterior
+   (batch N5) zerava a largura do mapa quando só a coluna DIREITA recolhia
+   (`rightCollapsed`); era exatamente o bug relatado ("ocultar a barra
+   direita derruba o mapa"). O mapa não tem mais um estado de colapso
+   próprio — só `sidebarCollapsed`, em `App.tsx`, decide se ele está
+   montado. */
+
 /* CA-7 (mockup linhas 71-79) — "Esteira · id · Trocar…" dentro do painel. */
 .header {
   flex: none;

@@ -1,0 +1,182 @@
+{
+  "contract_version": "1.0.0",
+  "kind": "esteira.result",
+  "run": {
+    "run_id": "run-d456e18e-892",
+    "phase": "validar",
+    "status": "success",
+    "started_at": "2026-08-08T02:06:03.482Z",
+    "finished_at": "2026-08-08T02:26:26.890Z",
+    "failure": null,
+    "complements_run_id": null,
+    "revises_run_id": null
+  },
+  "actor": {
+    "tool": "esteira-donel",
+    "tool_version": "3.0.0",
+    "executor": "claude-code",
+    "model": "claude-opus-5",
+    "effort": "high",
+    "cli_session_id": null
+  },
+  "subject": {
+    "discovery_id": "dsc-15a7e7f5-fbb",
+    "plan_id": "pln-esteira4-skills-portateis",
+    "work_item_id": "wi-esteira4-layout-esteira-dir"
+  },
+  "workspace": {
+    "target_repo": "donel-dev",
+    "repo_path": null,
+    "worktree_path": null,
+    "branch": "feature/wi-esteira4-layout-esteira-dir"
+  },
+  "facts": [
+    {
+      "type": "verification.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "verification_kind": "check",
+      "state": "passed",
+      "ref": "npm test 2189/2189 (119 arquivos) + npm run typecheck exit 0, rodados no worktree donel-dev-wt-layout nesta sessao. Nao ha script de lint neste repo.",
+      "base": null
+    },
+    {
+      "type": "verification.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "verification_kind": "check",
+      "state": "passed",
+      "ref": "npm run esteira:check sobre o run pousado em .esteira/ciclos/dsc-15a7e7f5-fbb/runs/20260808T0157Z--implementar--run-8ac1a2d4-7e4.json: valido pelo contrato 1.0.0 com os tres campos sanitizados em null. [P-2] provado em disco, nao so argumentado.",
+      "base": null
+    },
+    {
+      "type": "verification.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "verification_kind": "review",
+      "state": "failed",
+      "ref": "Dois consertos pedidos, ambos ja decididos ao vivo pelo dono. (1) O nome de run com granularidade de MINUTO ja empata: em 64 runs reais do outbox, 4 minutos tem mais de um run terminando neles (um com tres) - logo a afirmacao da secao 4 de que 'a ordem cronologica sai do ls' e falsa hoje, antes da fila paralela. Vai para <YYYYMMDD>T<HHMMSSmmm>Z, regex ^\\d{8}T\\d{9}Z--, e o run ja pousado e renomeado. (3) workspace.branch, que [P-4] declara ser o que costura os dois PRs, e opcional e veio null neste run (22 de 64 no historico) - passa a ser OBRIGATORIO no layout v2, nao no schema v1, porque a secao 9 promete que o contrato v1 nao muda. Detalhe integral no relatorio de review.",
+      "base": null
+    },
+    {
+      "type": "verification.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "verification_kind": "e2e-manual",
+      "state": "pending",
+      "ref": "NENHUM ROTEIRO SE APLICA, e o estado fica pending em vez de ser marcado por mim: o item entrega um documento normativo, dois arquivos de config e um teste - nao ha superficie interativa para dirigir nem tela para fotografar. Escrever um roteiro Playwright aqui seria encenar um gate, nao cumpri-lo. O gate de gente que este item de fato exige e a ratificacao das cinco decisoes de alcance [P-1]..[P-5], registrada no human_review.recorded e colhida na Validar da rodada 2, quando o texto ja tiver os dois consertos.",
+      "base": null
+    },
+    {
+      "type": "artifact.recorded",
+      "owner": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "artifact_kind": "review-report",
+      "location": "disk",
+      "repo": null,
+      "path": "C:/Users/xansd/.claude/esteira-donel/relatorios/wi-esteira4-layout-esteira-dir--validar-2026-08-08.md"
+    },
+    {
+      "type": "human_review.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "phase": "validar",
+      "checklist": [
+        {
+          "item": "ratificar as cinco decisoes de alcance [P-1]..[P-5] da secao 8 - o gate de gente que a propria secao 10 nomeia",
+          "kind": "review",
+          "state": "pending",
+          "detail": "specs/012-esteira-4/layout-esteira.md, secao 8. Fica para a Validar da rodada 2, quando o texto ja tiver os dois consertos - ratificar agora seria ratificar um texto que vai mudar."
+        },
+        {
+          "item": "conferir, na rodada 2, que o timestamp de milissegundos foi aplicado nos tres lugares",
+          "kind": "review",
+          "state": "pending",
+          "detail": "secao 4 (gabarito, regex e os cinco exemplos), tests/esteiraLayoutCanalV2.test.ts, e o rename do run ja pousado em runs/"
+        },
+        {
+          "item": "conferir que branch obrigatoria foi escrita no LAYOUT e nao no schema v1",
+          "kind": "review",
+          "state": "pending",
+          "detail": "secao 6 (regra de escrita de runs/), secao 8 [P-2] e [P-4]. src/shared/esteira/contract/v1/esteira-result.schema.json nao pode aparecer no diff."
+        }
+      ]
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "PENDENCIA DECLARADA pelo dono nesta sessao, para ele amarrar no fim - nao e conserto desta rodada e nao bloqueia o item: worktree por card nao tem endereco no layout. local/repos.json e slug -> UM caminho; workspace.worktree_path e sanitizado para null por [P-2]; e a palavra 'worktree' aparece UMA vez na spec inteira, justamente na linha que a apaga. Medido: 0 de 64 runs preenchem worktree_path, e o unico lugar do app que le o campo e src/main/esteira-dispatch.ts:120, como fallback de onde abrir a sessao. Ou seja, hoje o unico endereco do worktree e exatamente o campo que a sanitizacao remove. Proposta levada a ele e nao fechada: local/worktrees.json com chave <work_item_id> -> caminho, arquivo separado de repos.json (que responde outra pergunta), na zona local pelo mesmo motivo."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "A NOTA DA FASE IMPLEMENTAR ERRA num ponto factual, conferido aqui: ela afirma que os dois artefatos do Design foram movidos 'via git mv - o historico do arquivo segue'. Nao houve rename. Em 66eab91 os dois entram como adicao pura (A), git log --follow para nele, e o commit de origem a472b66 esta ORFAO (git branch --contains nao devolve ref, e ele nao e ancestral da branch do irmao). Nao ha perda de conteudo - a copia nova esta commitada -, so a afirmacao esta errada. De quebra, o risco de integracao que isso levantava foi medido e NAO existe: a branch do irmao (feature/wi-esteira4-catalogo-fases, HEAD 6e21dfa) ja nao tem a pasta .esteira/design/wi-esteira4-layout-esteira-dir/, entao o merge nao cria copia dupla e a assercao da linha 107 do teste sobrevive."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "ROTEIRO E2E NAO SE APLICA a este item, e a lacuna fica declarada em vez de silenciada: o risco e sensivel (o item fixa o contrato que os cinco irmaos vao implementar e reverte a CA-4 da 009), mas a entrega e um documento normativo, dois arquivos de config e um teste - nao ha superficie interativa para dirigir. Nenhum roteiro foi escrito porque nao haveria o que fotografar. O gate de gente que substitui e a ratificacao das cinco decisoes de alcance, registrada no human_review.recorded e ainda pending."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "O RUN DESTA FASE NAO FOI POUSADO em .esteira/ciclos/<dsc>/runs/, de proposito e por dois motivos: (1) o padrao de nome muda no conserto do achado 1, entao um arquivo escrito agora nasceria invalido pelo regex novo e derrubaria o teste 'todo arquivo de runs/ obedece ao padrao da secao 4'; (2) a fase Validar nao commita na branch do item. A proxima rodada de Implementar pousa os DOIS - o run de implementar renomeado e este - ja no formato de milissegundos."
+    },
+    {
+      "type": "note.recorded",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "text": "O QUE SOBREVIVEU A VERIFICACAO, para a rodada 2 nao remexer: as cinco evidencias [E] de linha que a spec cita conferem exatamente (src/main/index.ts:314, esteira-dispatch.ts:55, esteira-ingest.ts:58, esteira-ingest.ts:309 e o schema v1 com subject.required == ['discovery_id'] e os tres campos anulaveis); o .gitignore da zona local funciona de fato (git check-ignore aponta a regra .esteira/.gitignore:1:local/ e o git status fica limpo com arquivo dentro de local/); e o result sanitizado passa pelo MESMO validador do contrato, que era a afirmacao central de [P-2]. As tres zonas, o arquivo por run e os quatro degraus da descoberta nao foram contestados por nada que rodou aqui."
+    },
+    {
+      "type": "phase.completed",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "phase": "validar",
+      "outcome": "done",
+      "summary": "Suite 2189/2189, typecheck limpo e o run sanitizado valido pelo contrato - [P-2] provado em disco. A review REPROVA por dois pontos do texto normativo, com a decisao ja colhida do dono: timestamp de run passa a ter segundos e milissegundos (4 minutos do historico real ja tem mais de um run, entao a ordem lexicografica nao e a cronologica) e workspace.branch vira obrigatoria no layout - nao no schema v1, que a secao 9 promete nao mudar. Worktree por card sem endereco fica como pendencia que o dono vai amarrar no fim. A arquitetura nao foi contestada.",
+      "risk": "sensivel",
+      "channel": null
+    },
+    {
+      "type": "phase.completed",
+      "subject": {
+        "entity": "work_item",
+        "id": "wi-esteira4-layout-esteira-dir"
+      },
+      "phase": "documentar",
+      "outcome": "abandoned",
+      "summary": "Nada a registrar fora do item. O que esta sessao aprendeu sao emendas ao texto de uma spec que ainda esta em revisao e volta para Implementar - escrever um ADR agora criaria um segundo endereco dizendo o que a spec vai dizer, e a spec E o endereco. A decisao que mais pareceria ADR (obrigatoriedade mora no layout, nao no schema v1) so vira fato quando a rodada 2 a escrever; documenta-la antes seria inventar fato. O achado de review em si esta no relatorio em disco, ja apontado por artifact.recorded.",
+      "risk": null,
+      "channel": null
+    }
+  ]
+}

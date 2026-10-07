@@ -4,6 +4,7 @@ import path, { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { refuseIfRealClaudeHome } from './accountsCredentialGuard';
 
 // T1126 (011-contas-e-provedores, etapa 1) — mod FALSO (via
 // `DONEL_ACCOUNTS_FAKE_MOD_FIXTURE`, mesmo espírito de `DONEL_QUOTA_AXI_FIXTURE`),
@@ -11,6 +12,13 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // -> listar -> trocar; confere que `.credentials.json` foi reescrito e que
 // `oauthAccount` sumiu do `.claude.json` de teste. NUNCA abre sessão `claude`
 // real (o mod é 100% em memória, sem rede).
+//
+// O `.claude.json` de teste é IRMÃO do `claudeHome` de teste de propósito: é
+// assim que `applyAccountsClaudeStateSwitch` deriva o segundo alvo quando o
+// override existe. Até 04/08/2026 ele saía direto de `homedir()`, e este
+// smoke — que nunca tinha rodado — teria apagado o `oauthAccount` do
+// `~/.claude.json` REAL da máquina, derrubando o login do CLI de quem o
+// rodasse (e falhado a asserção mesmo assim). Achado da captura visual.
 
 const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
 const APP_CWD = path.join(__dirname, '../..');
@@ -27,6 +35,10 @@ test.beforeAll(async () => {
   const claudeHomeParent = mkdtempSync(path.join(tmpdir(), 'donel-accounts-smoke-claude-'));
   claudeHomeDir = join(claudeHomeParent, '.claude');
   claudeJsonPath = join(claudeHomeParent, '.claude.json');
+  // G2 (batch n3) — cinto de segurança: recusa rodar ANTES de qualquer IPC
+  // se `claudeHomeDir` por acaso resolver pra pasta real (ver comentário de
+  // topo do arquivo — este smoke já causou o incidente uma vez).
+  refuseIfRealClaudeHome(claudeHomeDir);
   // Seed: `.claude.json` de teste com `oauthAccount` presente (simula uma
   // sessão CLI já logada) + uma chave qualquer que TEM que sobreviver ao
   // switch — só assim o "oauthAccount sumiu, o resto ficou" é uma prova real.

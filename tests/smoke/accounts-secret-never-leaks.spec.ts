@@ -4,6 +4,7 @@ import path, { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { refuseIfRealClaudeHome } from './accountsCredentialGuard';
 
 // T1128 (011-contas-e-provedores, etapa 1) — varredura de TODOS os payloads
 // de leitura dos `ACCOUNT_CHANNELS` (list/getConfig) e do evento
@@ -28,6 +29,10 @@ function assertNoLeak(payload: unknown): void {
 test.beforeAll(async () => {
   userDataDir = createIsolatedUserDataDir('accounts-secret-never-leaks');
   claudeHomeParent = mkdtempSync(path.join(tmpdir(), 'donel-accounts-smoke-secret-'));
+  // G2 (batch n3) — cinto de segurança (ver accounts-switch.spec.ts): o
+  // `claudeHome` real usado é `join(claudeHomeParent, '.claude')`, setado
+  // dentro do teste — checa aqui, cedo, antes até de abrir o Electron.
+  refuseIfRealClaudeHome(join(claudeHomeParent, '.claude'));
 
   electronApp = await electron.launch({
     args: [APP_MAIN, `--user-data-dir=${userDataDir}`],

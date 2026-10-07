@@ -7,6 +7,7 @@ import {
   PHASES_REQUIRING_PASSED_VERIFICATION,
   REQUIRED_FACTS_ANY_SUCCESS,
   REQUIRED_FACTS_BY_PHASE,
+  REQUIRED_FACTS_BY_PHASE_WHEN_DONE,
   parseEsteiraResultText,
 } from '../src/shared/esteira/contract/resultContract';
 import { createSchemaWalker, type JsonNode } from './helpers/contractSchemaPaths';
@@ -20,7 +21,7 @@ import { createSchemaWalker, type JsonNode } from './helpers/contractSchemaPaths
 // sozinho — o que faltava era um lugar onde os dois fossem confrontados.
 //
 // Sao tres amarras sobre o MESMO arquivo canonico
-// (`src/shared/esteira/contract/v1/esteira-result.schema.json`):
+// (`docs/esteira-dev/contract/v1/esteira-result.schema.json`):
 //
 //   1. schema x parser  — o conjunto de campos declarados no schema e o
 //      conjunto que o app promete ler (CONSUMED_PATHS) tem que ser IGUAL.
@@ -35,7 +36,7 @@ import { createSchemaWalker, type JsonNode } from './helpers/contractSchemaPaths
 // os campos declarados. O corpus e o mesmo arquivo, copiado com hash conferido.
 // Desenho completo em `specs/010-esteira-donel/passo-zero.md`.
 
-const CONTRACT_DIR = fileURLToPath(new URL('../src/shared/esteira/contract/v1/', import.meta.url));
+const CONTRACT_DIR = fileURLToPath(new URL('../docs/esteira-dev/contract/v1/', import.meta.url));
 const SCHEMA_PATH = `${CONTRACT_DIR}esteira-result.schema.json`;
 const EXAMPLES_DIR = `${CONTRACT_DIR}examples/`;
 
@@ -83,21 +84,44 @@ describe('contrato result.json — x-required-facts dos dois lados', () => {
   const table = schema['x-required-facts'] as {
     'any-phase-success': string[];
     'by-phase': Record<string, string[]>;
+    'by-phase-when-done': Record<string, string[]>;
     'done-requires-passed-verification': string[];
   };
 
-  it('a tabela do schema nomeia as fases do ciclo completo', () => {
-    expect(Object.keys(table['by-phase']).sort()).toEqual(['concluir', 'discovery', 'documentar', 'implementar', 'validar']);
+  it('a tabela do PRODUTO nomeia as fases do ciclo completo', () => {
+    expect(Object.keys(table['by-phase-when-done']).sort()).toEqual([
+      'concluir',
+      'documentar',
+      'implementar',
+      'plano',
+      'validar',
+    ]);
   });
 
   it('o que o app exige em todo run bem-sucedido e o que o schema promete', () => {
     expect([...REQUIRED_FACTS_ANY_SUCCESS].sort()).toEqual([...table['any-phase-success']].sort());
   });
 
-  it('o que o app exige POR FASE e exatamente a tabela do schema', () => {
+  it('o que o app exige POR FASE, em qualquer desfecho, e exatamente a tabela do schema', () => {
     const fromApp = Object.fromEntries(Object.entries(REQUIRED_FACTS_BY_PHASE).map(([phase, facts]) => [phase, [...facts].sort()]));
     const fromSchema = Object.fromEntries(Object.entries(table['by-phase']).map(([phase, facts]) => [phase, [...facts].sort()]));
     expect(fromApp).toEqual(fromSchema);
+  });
+
+  // A3 — a tabela do produto e a que olha o desfecho. Ela precisa vir do schema
+  // pelo mesmo motivo das outras: promessa que so um lado conhece e o
+  // desencontro que a spec 010 existe para acabar.
+  it('o que o app exige de quem declara CONCLUIDO e exatamente a tabela do schema', () => {
+    const fromApp = Object.fromEntries(
+      Object.entries(REQUIRED_FACTS_BY_PHASE_WHEN_DONE).map(([phase, facts]) => [phase, [...facts].sort()]),
+    );
+    const fromSchema = Object.fromEntries(Object.entries(table['by-phase-when-done']).map(([phase, facts]) => [phase, [...facts].sort()]));
+    expect(fromApp).toEqual(fromSchema);
+  });
+
+  it('nenhuma fase e cobrada nas duas tabelas — o mesmo fato exigido duas vezes vira mensagem duplicada', () => {
+    const emAmbas = Object.keys(table['by-phase']).filter((phase) => phase in table['by-phase-when-done']);
+    expect(emAmbas).toEqual([]);
   });
 
   it('a regra do desfecho verificado tambem vem da tabela, nao do codigo', () => {
@@ -105,7 +129,11 @@ describe('contrato result.json — x-required-facts dos dois lados', () => {
   });
 
   it('todo fato exigido pela tabela existe como tipo de fato', () => {
-    const required = new Set([...table['any-phase-success'], ...Object.values(table['by-phase']).flat()]);
+    const required = new Set([
+      ...table['any-phase-success'],
+      ...Object.values(table['by-phase']).flat(),
+      ...Object.values(table['by-phase-when-done']).flat(),
+    ]);
     expect([...required].filter((type) => !(FACT_TYPES as readonly string[]).includes(type))).toEqual([]);
   });
 });

@@ -7,6 +7,7 @@ import { storeEventsPath } from '../src/main/esteira-store';
 import {
   isValidAddNoteIpcInput,
   isValidDiscardWorkItemIpcInput,
+  isValidReadArtifactTextIpcInput,
   isValidSetStageOverrideIpcInput,
   isValidSetWorkItemStateIpcInput,
 } from '../src/shared/esteira/ipc';
@@ -275,7 +276,7 @@ describe('discardHint — D-16 diz por que o descarte nao tem bloqueio', () => {
 // Os gestos, ponta a ponta pelo servico
 // ---------------------------------------------------------------------------
 
-const EXAMPLES_DIR = join(__dirname, '..', 'src', 'shared', 'esteira', 'contract', 'v1', 'examples');
+const EXAMPLES_DIR = join(__dirname, '..', 'docs', 'esteira-dev', 'contract', 'v1', 'examples');
 
 /** Ids do corpus do contrato — o mesmo dado que a skill 3.0 devolve de verdade. */
 const DISCOVERY_ID = 'dsc-2026-08-03-a';
@@ -413,6 +414,18 @@ describe('descartar item (D-16)', () => {
     expect(etapa()).toBe('planned');
   });
 
+  // E2 — a lápide: o item saiu, mas o card ainda sabe responder "o que era?".
+  it('a lápide guarda o que o item era, e o card continua servindo o gesto (E2)', () => {
+    plantarCardDoCorpus();
+
+    const gesture = service.discardWorkItem({ workItemId: ITEM_ISSUE_BEACON, reason: 'nasceu duplicado' });
+    expect(gesture.ok).toBe(true);
+
+    const tombstone = service.snapshotDto().snapshot.tombstones.find((entry) => entry.id === ITEM_ISSUE_BEACON);
+    expect(tombstone?.reason).toBe('nasceu duplicado');
+    expect(tombstone?.discoveryId).toBe(DISCOVERY_ID);
+  });
+
   it('item com fase travada NÃO se descarta — descartar deixaria a trava orfa', () => {
     plantarCardDoCorpus();
     const dispatched = service.dispatch({
@@ -508,5 +521,14 @@ describe('validacao de payload do IPC — o main so muta depois de validar', () 
     expect(isValidAddNoteIpcInput({ subject: { entity: 'discovery', id: 'dsc-1' }, text: 'ok' })).toBe(true);
     expect(isValidAddNoteIpcInput({ subject: { entity: 'discovery', id: 'dsc-1' }, text: '   ' })).toBe(false);
     expect(isValidAddNoteIpcInput({ subject: { entity: 'cartao', id: 'x' }, text: 'ok' })).toBe(false);
+  });
+
+  // C3 (batch N5) — leitura de artefato restrita a `.md`: este canal existe
+  // pra tasks.md, não é um leitor de arquivo genérico.
+  it('leitura de artefato exige caminho não vazio terminando em .md', () => {
+    expect(isValidReadArtifactTextIpcInput({ path: 'C:/dev/atlas/specs/010/tasks.md' })).toBe(true);
+    expect(isValidReadArtifactTextIpcInput({ path: '  ' })).toBe(false);
+    expect(isValidReadArtifactTextIpcInput({ path: 'C:/dev/atlas/.env' })).toBe(false);
+    expect(isValidReadArtifactTextIpcInput({})).toBe(false);
   });
 });

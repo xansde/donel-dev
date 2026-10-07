@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mockup — Layout do .esteira/ como canal entre fases · wi-esteira4-layout-esteira-dir</title>
+    <style>
+      :root {
+        --bg-app: #0e1116;
+        --bg-panel: #151a21;
+        --bg-raised: #1c232c;
+        --border: #28303b;
+        --text-primary: #d7dde5;
+        --text-muted: #828d9c;
+        --accent: #4c9cf0;
+        --state-waiting: #e8b44c;
+        --state-error: #f0684c;
+        --zone-ok: #3dce8f;
+        --zone-local: #8896b3;
+        --zone-legado: #5e6873;
+        --phase-discovery: #8896b3;
+        --phase-plano: #9b8fd9;
+        --phase-design: #c97fa8;
+        --phase-implementar: #5fb0a8;
+        --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+        --radius-sm: 6px;
+        --radius-md: 8px;
+        --hairline: 1px solid var(--border);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        padding: 32px 24px 64px;
+        background: var(--bg-app);
+        color: var(--text-primary);
+        font-family: var(--font-ui);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .page { max-width: 1120px; margin: 0 auto; }
+
+      header.doc { border-bottom: var(--hairline); padding-bottom: 16px; margin-bottom: 24px; }
+      header.doc h1 { font-size: 18px; margin: 0 0 4px; font-weight: 600; }
+      header.doc p { margin: 0 0 4px; color: var(--text-muted); font-size: 11px; max-width: 86ch; }
+      header.doc code { font-family: var(--font-mono); color: var(--text-primary); }
+
+      h2.sec {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 40px 0 4px;
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+      h2.sec span.num { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+      p.sec-note { margin: 0 0 16px; color: var(--text-muted); font-size: 11px; max-width: 86ch; }
+      p.sec-note code { font-family: var(--font-mono); color: var(--text-primary); }
+
+      /* ---- moldura de terminal ---- */
+      .term {
+        background: var(--bg-panel);
+        border: var(--hairline);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+      }
+      .term > .titlebar {
+        height: 28px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        background: var(--bg-raised);
+        border-bottom: var(--hairline);
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+      .term > .titlebar .dots { display: flex; gap: 5px; }
+      .term > .titlebar .dots i {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--border); display: block;
+      }
+      .term > pre {
+        margin: 0;
+        padding: 14px 16px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        line-height: 1.65;
+        white-space: pre;
+        overflow-x: auto;
+        color: var(--text-primary);
+      }
+
+      .cmd { color: var(--zone-ok); }
+      .dim { color: var(--text-muted); }
+      .warn { color: var(--state-waiting); }
+      .err { color: var(--state-error); }
+      .acc { color: var(--accent); }
+      .b { font-weight: 600; }
+      .ph-disc { color: var(--phase-discovery); }
+      .ph-plan { color: var(--phase-plano); }
+      .ph-des { color: var(--phase-design); }
+      .ph-impl { color: var(--phase-implementar); }
+      .zone-v { color: var(--zone-ok); }
+      .zone-l { color: var(--zone-local); }
+      .zone-x { color: var(--zone-legado); }
+
+      /* ---- legenda de zona ---- */
+      .legend { display: flex; gap: 18px; flex-wrap: wrap; margin: 10px 0 0; }
+      .legend .item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); }
+      .legend .item i { width: 9px; height: 9px; border-radius: 2px; display: block; }
+
+      /* ---- diff ---- */
+      .diff {
+        background: var(--bg-panel);
+        border: var(--hairline);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        font-family: var(--font-mono);
+        font-size: 12px;
+      }
+      .diff .head {
+        padding: 8px 12px;
+        background: var(--bg-raised);
+        border-bottom: var(--hairline);
+        font-family: var(--font-ui);
+        font-size: 11px;
+        color: var(--text-muted);
+        display: flex;
+        justify-content: space-between;
+      }
+      .diff .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 12px;
+        border-bottom: 1px solid rgba(40, 48, 59, 0.5);
+      }
+      .diff .row:last-child { border-bottom: none; }
+      .diff .row .tag {
+        font-size: 10px;
+        font-family: var(--font-ui);
+        padding: 1px 6px;
+        border-radius: 3px;
+        border: var(--hairline);
+        white-space: nowrap;
+      }
+      .tag.add { color: var(--zone-ok); border-color: rgba(61, 206, 143, 0.4); }
+      .tag.mod { color: var(--state-waiting); border-color: rgba(232, 180, 76, 0.4); }
+      .diff .row .path { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+      .diff .row .why { font-family: var(--font-ui); font-size: 10px; color: var(--text-muted); }
+
+      /* ---- tabela ---- */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        margin-top: 8px;
+      }
+      th, td {
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: var(--hairline);
+        vertical-align: top;
+      }
+      th { color: var(--text-muted); font-weight: 500; font-size: 11px; }
+      td code { font-family: var(--font-mono); font-size: 11px; }
+
+      .callout {
+        border: var(--hairline);
+        border-left: 3px solid var(--state-waiting);
+        background: var(--bg-panel);
+        border-radius: var(--radius-sm);
+        padding: 12px 14px;
+        margin-top: 16px;
+        font-size: 12px;
+        color: var(--text-primary);
+        max-width: 92ch;
+      }
+      .callout.ok { border-left-color: var(--zone-ok); }
+      .callout b { color: var(--text-primary); }
+      .callout code { font-family: var(--font-mono); font-size: 11px; }
+      footer.doc {
+        margin-top: 48px;
+        padding-top: 16px;
+        border-top: var(--hairline);
+        color: var(--text-muted);
+        font-size: 11px;
+        max-width: 92ch;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="doc">
+        <h1>Layout do <code>.esteira/</code> como canal entre fases</h1>
+        <p>
+          Fase <b>Design</b> · item <code>wi-esteira4-layout-esteira-dir</code> · plano
+          <code>pln-esteira4-skills-portateis</code> · repo <code>donel-dev</code> · 08/08/2026.
+        </p>
+        <p>
+          A superfície deste item não é uma tela: é <b>o que a pessoa vê no terminal</b> quando roda uma
+          skill solta, e <b>o que ela vê no diff do PR</b> quando revisa. As quatro cenas abaixo são
+          essa superfície. Forma vence; alcance e comportamento continuam sendo da spec que a fase
+          Implementar vai escrever.
+        </p>
+      </header>
+
+      <h2 class="sec"><span class="num">1</span> A árvore — três zonas, uma regra de escrita cada</h2>
+      <p class="sec-note">
+        O <code>.esteira/</code> de hoje mistura contrato e resto histórico na mesma raiz. A proposta
+        separa por <b>quem escreve</b> e <b>o que acontece no merge</b>, não por fase.
+      </p>
+
+      <div class="term">
+        <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span> donel-dev — árvore proposta</div>
+        <pre><span class="cmd">$</span> tree .esteira
+
+.esteira/
+├── <span class="zone-v b">esteira.json</span>                    <span class="dim">← cabeçalho do canal: layout_version, contract_version, repo âncora</span>
+├── <span class="zone-v b">review-policy.json</span>              <span class="dim">← já existe hoje, não muda</span>
+├── <span class="zone-l">.gitignore</span>                      <span class="dim">← uma linha: local/</span>
+│
+├── <span class="zone-l b">local/</span>                          <span class="dim">← ZONA LOCAL · não versionada · some no PR</span>
+│   ├── <span class="zone-l">repos.json</span>                   <span class="dim">slug → caminho do checkout NESTA máquina</span>
+│   ├── <span class="zone-l">cursor.json</span>                  <span class="dim">em que item esta máquina está</span>
+│   └── <span class="zone-l">travas/</span>                      <span class="dim">trava com dono, hora e sessão (D-3 da 010)</span>
+│
+├── <span class="zone-v b">ciclos/</span>                         <span class="dim">← ZONA VERSIONADA · uma pasta por ciclo (raiz = discovery)</span>
+│   └── <span class="zone-v">dsc-15a7e7f5-fbb/</span>
+│       ├── <span class="zone-v b">runs/</span>                   <span class="dim">APPEND-ONLY · um arquivo por run · nome único</span>
+│       │   ├── <span class="ph-disc">20260807T2312Z--discovery--run-3f2ab1c4-902.json</span>
+│       │   ├── <span class="ph-plan">20260808T0018Z--plano--run-9c14e77a-4d1.json</span>
+│       │   └── <span class="ph-des">20260808T0124Z--design--run-65bc73cc-11e.json</span>
+│       ├── <span class="zone-v">grafo.json</span>                <span class="dim">o esteira.grafo do plano — dono único: a fase Plano</span>
+│       └── <span class="zone-v">itens/</span>
+│           └── <span class="zone-v">wi-esteira4-layout-esteira-dir/</span>
+│               └── <span class="ph-des">design/</span>
+│                   ├── <span class="ph-des">mockup-layout-esteira.html</span>
+│                   └── <span class="ph-des">diagrama-arquitetura.md</span>
+│
+└── <span class="zone-x b">_legado-2x/</span>                     <span class="dim">← ZONA CONGELADA · o que existe hoje · leitor novo NUNCA olha aqui</span>
+    ├── <span class="zone-x">design/  documentar/  implementar/  plano/  validar/</span>
+    └── <span class="zone-x">…&lt;id&gt;-ctx.md e handoffs/&lt;id&gt;/&lt;fase&gt;-result.json</span></pre>
+      </div>
+
+      <div class="legend">
+        <span class="item"><i style="background: #3dce8f"></i> versionada — entra no PR, é contrato</span>
+        <span class="item"><i style="background: #8896b3"></i> local — é da máquina, nunca do diff</span>
+        <span class="item"><i style="background: #5e6873"></i> congelada — resto histórico da 2.1.0, só leitura humana</span>
+      </div>
+
+      <div class="callout ok">
+        <b>O nome do arquivo de run é decisão de contrato, não de gosto.</b>
+        <code>&lt;UTC compacto&gt;--&lt;fase&gt;--&lt;run_id&gt;.json</code> resolve três coisas de uma vez:
+        ordena por leitura lexicográfica (a ordem cronológica sai do <code>ls</code>, sem abrir arquivo),
+        é único por run (duas branches nunca escrevem o mesmo caminho) e diz no próprio nome o que a
+        pessoa procura no diff. Um único agregador reescrito por todas as fases faria o contrário nas três.
+      </div>
+
+      <h2 class="sec"><span class="num">2</span> A skill solta descobre o assunto sozinha</h2>
+      <p class="sec-note">
+        Hoje a ida vem de um <code>run-input.json</code> que o app escreve. Sem o app, ninguém escreve —
+        e a proposta é que <b>ninguém precise</b>: a ida é <b>derivada</b> da volta anterior, lendo só
+        <code>.esteira/</code>. O que a fase imprime na tela é uma projeção, não um arquivo.
+      </p>
+
+      <div class="term">
+        <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span> pwsh — C:\Users\xansd\seazone\donel-dev</div>
+        <pre><span class="cmd">$</span> esteira design
+
+<span class="dim">canal .esteira/ v2 · ciclo dsc-15a7e7f5-fbb · 3 runs lidos (0 ignorados)</span>
+
+<span class="b">ASSUNTO</span>  <span class="acc">wi-esteira4-layout-esteira-dir</span> — Layout do .esteira/ como canal entre fases
+         <span class="dim">tipo</span> spec   <span class="dim">estado</span> open   <span class="dim">plano</span> pln-esteira4-skills-portateis
+         <span class="dim">como foi escolhido:</span> único item deste ciclo pronto para <span class="ph-des">design</span>
+         <span class="dim">                    (confirmado pela branch atual: feature/wi-esteira4-layout-esteira-dir)</span>
+
+<span class="b">ALVO</span>     donel-dev → C:\Users\xansd\seazone\donel-dev
+         <span class="dim">slug declarado em work_item.recorded · caminho resolvido por local/repos.json</span>
+
+<span class="b">A IDA</span>    <span class="dim">(derivada — nenhum arquivo de entrada existe)</span>
+         <span class="ph-disc">discovery</span>  done  · 11 decisões ao vivo, 2 perguntas em aberto
+         <span class="ph-plan">plano</span>      done  · 6 itens; este é o 1º da sequência de merge
+         <span class="dim">notas herdadas: 7 (a pasta é VERSIONADA por decisão do Discovery — nome</span>
+         <span class="dim">de arquivo e granularidade são contrato, não gosto)</span>
+
+<span class="warn">→</span> pronto. A fase Design escreve em .esteira/ciclos/dsc-15a7e7f5-fbb/itens/
+  wi-esteira4-layout-esteira-dir/ e fecha com um run novo em runs/.</pre>
+      </div>
+
+      <div class="callout">
+        <b>O canal não tem mensagem de ida.</b> Ele só tem voltas — os <code>result.json</code> de
+        <code>runs/</code>, lidos em ordem e reduzidos a estado. Um arquivo de ida escrito por alguém é
+        exatamente o acoplamento que amarra a skill ao app; derivar a ida é o que a solta.
+      </div>
+
+      <h2 class="sec"><span class="num">3</span> Quando falta o que só a máquina sabe, o erro ensina</h2>
+      <p class="sec-note">
+        O slug do repo é contrato (vai no diff); o caminho do checkout é da máquina (não vai).
+        Numa máquina nova, o mapa local não existe — e é aí que o layout tem de falar, não adivinhar.
+      </p>
+
+      <div class="term">
+        <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span> pwsh — máquina nova, primeiro clone</div>
+        <pre><span class="cmd">$</span> esteira implementar
+
+<span class="dim">canal .esteira/ v2 · ciclo dsc-15a7e7f5-fbb · 4 runs lidos</span>
+
+<span class="err">✗ repo alvo sem caminho nesta máquina</span>
+
+  O item <span class="acc">wi-esteira4-pacote-portatil</span> declara o alvo <span class="b">donel-dev</span>, mas
+  local/repos.json não tem esse slug — e caminho de máquina nunca é versionado,
+  então ele não veio no clone.
+
+  <span class="warn">resolva com:</span>  esteira repo add donel-dev C:\caminho\do\checkout
+
+<span class="dim">nada foi escrito. nenhum run aberto.</span></pre>
+      </div>
+
+      <h2 class="sec"><span class="num">4</span> O mesmo layout, visto do lado do review</h2>
+      <p class="sec-note">
+        A pasta é versionada por decisão do Discovery — então ela aparece no PR e <b>pode conflitar</b>.
+        A prova de que o layout funciona é esta tela: um PR de duas fases só <b>acrescenta</b> arquivo.
+      </p>
+
+      <div class="diff">
+        <div class="head"><span>Files changed · PR #— feature/wi-esteira4-layout-esteira-dir → staging</span><span>6 arquivos · 0 conflitos</span></div>
+        <div class="row"><span class="tag add">novo</span><span class="path">.esteira/ciclos/dsc-15a7e7f5-fbb/runs/20260808T0124Z--design--run-65bc73cc-11e.json</span><span class="why">a volta da fase Design</span></div>
+        <div class="row"><span class="tag add">novo</span><span class="path">.esteira/ciclos/dsc-15a7e7f5-fbb/itens/wi-esteira4-layout-esteira-dir/design/mockup-layout-esteira.html</span><span class="why">artefato declarado</span></div>
+        <div class="row"><span class="tag add">novo</span><span class="path">.esteira/ciclos/dsc-15a7e7f5-fbb/itens/wi-esteira4-layout-esteira-dir/design/diagrama-arquitetura.md</span><span class="why">artefato declarado</span></div>
+        <div class="row"><span class="tag add">novo</span><span class="path">.esteira/ciclos/dsc-15a7e7f5-fbb/runs/20260808T0932Z--implementar--run-b70e2f19-55c.json</span><span class="why">a volta da fase seguinte</span></div>
+        <div class="row"><span class="tag add">novo</span><span class="path">specs/013-layout-esteira/spec.md</span><span class="why">o que a Implementar escreveu</span></div>
+        <div class="row"><span class="tag mod">alterado</span><span class="path">.esteira/ciclos/dsc-15a7e7f5-fbb/grafo.json</span><span class="why">dono único: só a fase Plano escreve aqui</span></div>
+      </div>
+
+      <div class="callout ok">
+        <b>Nenhuma linha de <code>runs/</code> é "alterado".</b> Duas branches rodando fases diferentes
+        do mesmo ciclo produzem arquivos de nomes distintos; o merge une as duas árvores sem tocar
+        conteúdo. O único arquivo que aparece como <span class="warn">alterado</span> tem <b>dono
+        único</b> declarado — e é por isso que ele pode ser mutável sem virar campo de batalha.
+      </div>
+
+      <h2 class="sec"><span class="num">5</span> A regra de escrita, item por item</h2>
+      <p class="sec-note">
+        Esta tabela é a forma que o mockup propõe. Ela é o que evita a pergunta "posso mexer neste
+        arquivo?" aparecer no meio de uma fase.
+      </p>
+
+      <table>
+        <thead>
+          <tr><th style="width: 27%">caminho</th><th style="width: 16%">quem escreve</th><th style="width: 14%">mutável?</th><th style="width: 12%">versionado?</th><th>o que acontece num merge</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>ciclos/&lt;dsc&gt;/runs/*.json</code></td>
+            <td>a fase que fecha</td>
+            <td><b>não</b> — append-only</td>
+            <td>sim</td>
+            <td>a árvore só ganha arquivo; conflito é impossível por construção</td>
+          </tr>
+          <tr>
+            <td><code>ciclos/&lt;dsc&gt;/grafo.json</code></td>
+            <td>só a fase Plano</td>
+            <td>sim, dono único</td>
+            <td>sim</td>
+            <td>conflito só se dois Planos rodarem no mesmo ciclo — e aí o conflito é real, e é útil</td>
+          </tr>
+          <tr>
+            <td><code>ciclos/&lt;dsc&gt;/itens/&lt;wi&gt;/**</code></td>
+            <td>a fase que produz o artefato</td>
+            <td>por artefato</td>
+            <td>sim</td>
+            <td>caminho contém o item; duas fases de itens diferentes nunca se cruzam</td>
+          </tr>
+          <tr>
+            <td><code>esteira.json</code> · <code>review-policy.json</code></td>
+            <td>humano</td>
+            <td>raro</td>
+            <td>sim</td>
+            <td>igual a qualquer config de repo — conflito raro e legível</td>
+          </tr>
+          <tr>
+            <td><code>local/**</code></td>
+            <td>a máquina</td>
+            <td>sim</td>
+            <td><b>não</b></td>
+            <td>não existe no merge; some do PR por <code>.gitignore</code></td>
+          </tr>
+          <tr>
+            <td><code>_legado-2x/**</code></td>
+            <td>ninguém</td>
+            <td>congelado</td>
+            <td>sim</td>
+            <td>não muda mais; o leitor v2 não olha e não valida nada aqui</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <footer class="doc">
+        <b>O que este mockup NÃO decide</b> — são alcance, e por isso saem daqui como pergunta para a
+        spec, não como desenho: (1) a pasta é por <b>ciclo</b> (discovery) ou por <b>plano</b>, já que
+        um ciclo pode ter vários planos; (2) o <code>result.json</code> versionado ainda carrega
+        <code>workspace.repo_path</code> absoluto e <code>actor.cli_session_id</code> — o que é
+        sanitizado antes de virar arquivo de repo; (3) retenção: <code>runs/</code> cresce para sempre,
+        e poda de ciclo concluído é decisão a tomar; (4) item cujo alvo é <b>outro</b> repo — o run cai
+        no <code>.esteira/</code> do âncora ou no do alvo, e o PR de qual dos dois o carrega.
+      </footer>
+    </div>
+  </body>
+</html>

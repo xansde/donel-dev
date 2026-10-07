@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONTRACT_VERSION,
+  declaredFactsFromRawText,
   parseEsteiraResult,
   parseEsteiraResultText,
   type ContractIssueCode,
@@ -28,6 +29,16 @@ function validResult(): Record<string, unknown> {
     workspace: null,
     facts: [
       { type: 'discovery.recorded', discovery_id: 'dsc-1', title: 'Titulo', problem: null, tracker: null, target_repo: null, scope_repos: [] },
+      // A18 — discovery concluida fecha com o que alguem disse. Sem isto o
+      // documento nao passa, e e para nao passar mesmo: fase que nao perguntou
+      // nada nao fecha.
+      {
+        type: 'gate.confirmed',
+        subject: { entity: 'discovery', id: 'dsc-1' },
+        condition: 'o problema e esse mesmo',
+        confirmed_by: 'dono do repo',
+        confirmed_at: null,
+      },
       { type: 'phase.completed', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'done', summary: null },
     ],
   };
@@ -44,7 +55,7 @@ describe('parseEsteiraResult — caminho feliz', () => {
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.result.run.phase).toBe('discovery');
-    expect(parsed.result.facts).toHaveLength(2);
+    expect(parsed.result.facts).toHaveLength(3);
     expect(parsed.result.facts[0].type).toBe('discovery.recorded');
   });
 
@@ -142,7 +153,7 @@ describe('parseEsteiraResult — fatos', () => {
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
     expect(parsed.issues[0].code).toBe('unknown_fact_type');
-    expect(parsed.issues[0].path).toBe('facts[2].type');
+    expect(parsed.issues[0].path).toBe('facts[3].type');
   });
 
   it('recusa campo desconhecido DENTRO de um fato', () => {
@@ -347,6 +358,65 @@ describe('parseEsteiraResult — o que cada fase promete declarar (D-4)', () => 
   it('fase que a tabela nao nomeia so precisa de phase.completed — `run.phase` continua livre (P-4)', () => {
     expect(parseEsteiraResult(resultForPhase('explorar', [completed('explorar')])).ok).toBe(true);
   });
+
+  // A3 — a tabela passa a olhar o DESFECHO, nao so o `status`. O que se cobra e
+  // o produto da fase, e fase que nao chegou ao produto nao tem produto para
+  // mostrar: um run de implementar que parou num gate teve que declarar uma
+  // verificacao `pending` so para caber no contrato. Declarar verificacao que
+  // nao houve para escapar da regra e a inverdade de 03/08 pela porta do gate.
+  describe('A3 — o que se cobra depende do desfecho', () => {
+    it('implementar INCONCLUSIVO nao precisa declarar verificacao', () => {
+      expect(parseEsteiraResult(resultForPhase('implementar', [completed('implementar', 'inconclusive')])).ok).toBe(true);
+    });
+
+    it('validar ABANDONADO nao precisa declarar verificacao', () => {
+      expect(parseEsteiraResult(resultForPhase('validar', [completed('validar', 'abandoned')])).ok).toBe(true);
+    });
+
+    it('documentar INCONCLUSIVO nao precisa apontar artefato', () => {
+      expect(parseEsteiraResult(resultForPhase('documentar', [completed('documentar', 'inconclusive')])).ok).toBe(true);
+    });
+
+    it('implementar CONCLUIDO continua exigindo a verificacao — o desfecho bom e o que tem produto', () => {
+      expect(codesOf(resultForPhase('implementar', [completed('implementar')]))).toContain('missing_required_fact');
+    });
+
+    it('plano CONCLUIDO sem nenhum item declarado e recusado — plano que nao propoe nada nao e plano', () => {
+      expect(codesOf(resultForPhase('plano', [completed('plano')]))).toContain('missing_required_fact');
+    });
+
+    it('plano CONCLUIDO com um item declarado e aceito', () => {
+      const item = {
+        type: 'work_item.recorded',
+        work_item_id: 'wi-1',
+        plan_id: 'pln-1',
+        item_type: 'spike',
+        title: 'Medir onde o lote para',
+        target_repo: null,
+        scope_repos: [],
+      };
+      // A decisao vem junto porque A18 tambem cobra o plano concluido.
+      const decisao = {
+        type: 'decision.recorded',
+        subject: { entity: 'plan', id: 'pln-1' },
+        decision: 'medir antes de mexer',
+        confirmed_by: 'dono do repo',
+        rationale: null,
+      };
+      expect(parseEsteiraResult(resultForPhase('plano', [item, decisao, completed('plano')])).ok).toBe(true);
+    });
+
+    it('plano ABANDONADO nao precisa de item — desistir de planejar e um desfecho', () => {
+      expect(parseEsteiraResult(resultForPhase('plano', [completed('plano', 'abandoned')])).ok).toBe(true);
+    });
+
+    it('a discovery continua declarando a si mesma em QUALQUER desfecho — a entidade e o assunto do run', () => {
+      const doc = resultForPhase('discovery', [
+        { type: 'phase.completed', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', outcome: 'abandoned', summary: null },
+      ]);
+      expect(codesOf(doc)).toContain('missing_required_fact');
+    });
+  });
 });
 
 describe('parseEsteiraResultText', () => {
@@ -365,5 +435,59 @@ describe('parseEsteiraResultText', () => {
     for (const input of inputs) {
       expect(() => parseEsteiraResult(input)).not.toThrow();
     }
+  });
+});
+
+// A5 — o CUSTO de um documento recusado: o que ELE declararia, se entrasse.
+// Le o texto CRU porque o parser ja pode ter recusado o documento inteiro por
+// causa de UM campo — a pergunta aqui e outra.
+describe('declaredFactsFromRawText', () => {
+  it('extrai discovery/plan/work_item pelo campo de identidade certo de cada um', () => {
+    const doc = validResult();
+    (doc.facts as unknown[]).push(
+      { type: 'plan.recorded', plan_id: 'pln-1', discovery_id: 'dsc-1', title: 'Plano', summary: null },
+      { type: 'work_item.recorded', work_item_id: 'wi-1', plan_id: 'pln-1', item_type: 'issue', title: 'Item', target_repo: 'x', scope_repos: [] },
+    );
+
+    const declared = declaredFactsFromRawText(JSON.stringify(doc));
+
+    expect(declared).toContainEqual({ factType: 'discovery.recorded', entity: 'discovery', id: 'dsc-1', title: 'Titulo' });
+    expect(declared).toContainEqual({ factType: 'plan.recorded', entity: 'plan', id: 'pln-1', title: 'Plano' });
+    expect(declared).toContainEqual({ factType: 'work_item.recorded', entity: 'work_item', id: 'wi-1', title: 'Item' });
+  });
+
+  it('fato que nao cria entidade propria (relacao, gate...) aparece so com o factType', () => {
+    const doc = validResult();
+    const declared = declaredFactsFromRawText(JSON.stringify(doc));
+    const gate = declared.find((fact) => fact.factType === 'gate.confirmed');
+    expect(gate).toEqual({ factType: 'gate.confirmed', entity: null, id: null, title: null });
+  });
+
+  it('funciona mesmo quando o resto do documento e invalido — a pergunta nao e "isto passa?"', () => {
+    // work_item_id teria que casar com ID_PATTERN para o PARSER aceitar, mas
+    // esta funcao nao valida — so extrai o que esta escrito, best-effort.
+    const declared = declaredFactsFromRawText(
+      JSON.stringify({ facts: [{ type: 'work_item.recorded', work_item_id: 'wi um espaço não permitido', title: 'X' }] }),
+    );
+    expect(declared).toEqual([{ factType: 'work_item.recorded', entity: 'work_item', id: 'wi um espaço não permitido', title: 'X' }]);
+  });
+
+  it('JSON invalido devolve lista vazia, nunca lanca', () => {
+    expect(declaredFactsFromRawText('{ nao json')).toEqual([]);
+  });
+
+  it('documento sem facts (ou facts que nao e array) devolve lista vazia', () => {
+    expect(declaredFactsFromRawText('{}')).toEqual([]);
+    expect(declaredFactsFromRawText('{"facts": "nao e lista"}')).toEqual([]);
+  });
+
+  it('fato sem o campo de identidade esperado devolve id null — nunca inventa', () => {
+    const declared = declaredFactsFromRawText(JSON.stringify({ facts: [{ type: 'work_item.recorded', title: 'Sem id' }] }));
+    expect(declared).toEqual([{ factType: 'work_item.recorded', entity: 'work_item', id: null, title: 'Sem id' }]);
+  });
+
+  it('entrada que nao e objeto (array no lugar de fato) e ignorada, nao derruba os demais', () => {
+    const declared = declaredFactsFromRawText(JSON.stringify({ facts: [['nao', 'e', 'objeto'], { type: 'plan.recorded', plan_id: 'pln-1' }] }));
+    expect(declared).toEqual([{ factType: 'plan.recorded', entity: 'plan', id: 'pln-1', title: null }]);
   });
 });

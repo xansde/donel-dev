@@ -1,0 +1,49 @@
+{
+  "contract_version": "1.0.0",
+  "kind": "esteira.result",
+  "run": {
+    "run_id": "run-2026-08-06-1600.rev2",
+    "phase": "concluir",
+    "status": "success",
+    "started_at": "2026-08-07T13:00:00.000Z",
+    "finished_at": "2026-08-07T13:11:20.000Z",
+    "failure": null,
+    "complements_run_id": null,
+    "revises_run_id": "run-2026-08-06-1600"
+  },
+  "actor": {
+    "tool": "esteira-donel",
+    "tool_version": "3.0.0",
+    "executor": "claude-code",
+    "model": "claude-opus-5",
+    "effort": "high",
+    "cli_session_id": "0198f4cd-8e9f-7b68-8a1c-2d3e4f5a6b7c"
+  },
+  "subject": {
+    "discovery_id": "dsc-2026-08-03-a",
+    "plan_id": "pln-2026-08-03-a1",
+    "work_item_id": "wi-2026-08-03-a1-03"
+  },
+  "workspace": {
+    "target_repo": "beacon",
+    "repo_path": "C:/Users/dev/code/beacon",
+    "worktree_path": null,
+    "branch": "feat/painel-da-fila"
+  },
+  "facts": [
+    {
+      "type": "verification.recorded",
+      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-03" },
+      "verification_kind": "conclusion",
+      "state": "failed",
+      "ref": "O PR foi revertido no dia seguinte: o painel quebrou com lote vazio."
+    },
+    {
+      "type": "phase.completed",
+      "subject": { "entity": "work_item", "id": "wi-2026-08-03-a1-03" },
+      "phase": "concluir",
+      "outcome": "abandoned",
+      "summary": "Desfecho revisto: o que estava dado como entregue voltou atras."
+    }
+  ]
+}

@@ -9,7 +9,16 @@
 
 import type { ContractIssue } from './contract/parsing';
 import { MACRO_STAGES, WORK_ITEM_STATES } from './store/storeFormat';
-import type { EntityId, LockRecord, MacroStage, StoreCompatibility, StoreSnapshot, WorkItemState } from './store/storeFormat';
+import type {
+  EntityId,
+  LockRecord,
+  MacroStage,
+  PhaseRunSnapshot,
+  SessionSnapshot,
+  StoreCompatibility,
+  StoreSnapshot,
+  WorkItemState,
+} from './store/storeFormat';
 
 export const ESTEIRA_CHANNELS = {
   /** Estado atual: snapshot derivado + de onde ele veio. */
@@ -30,6 +39,8 @@ export const ESTEIRA_CHANNELS = {
   releaseLock: 'esteira:releaseLock',
   /** D-13 — forca a macro etapa a mao, ou volta ao calculo (`value: null`). */
   setStageOverride: 'esteira:setStageOverride',
+  /** D-6 — corrige a ancora e o escopo de um card que ja existe. */
+  setDiscoveryRepos: 'esteira:setDiscoveryRepos',
   /** Abrir/comecar/concluir/abandonar um item — e o que move a macro etapa, inclusive PARA TRAS. */
   setWorkItemState: 'esteira:setWorkItemState',
   /** D-16 — descarta um item num gesto; o evento fica no log, a entidade sai do snapshot. */
@@ -38,6 +49,14 @@ export const ESTEIRA_CHANNELS = {
   addNote: 'esteira:addNote',
   /** Reenvia o que o board nao recebeu (D-12). Gesto humano: ignora o teto de tentativas. */
   retryMirror: 'esteira:retryMirror',
+  /**
+   * C3 — le o TEXTO de um artefato ja conhecido pelo store (D-8), so leitura.
+   * O `path` chega ABSOLUTO, ja resolvido no renderer contra a lista de
+   * projetos conhecidos — a MESMA fronteira de confianca de onde a sessao de
+   * terminal abre (D-6): o app ja executa shell nesses caminhos sem validacao
+   * extra, e ler um arquivo de texto e uma capacidade menor que essa.
+   */
+  readArtifactText: 'esteira:readArtifactText',
   /** main → renderer: o store mudou (ingestao, disparo, gesto de outro canal). */
   changed: 'esteira:changed',
 } as const;
@@ -116,6 +135,12 @@ export interface DispatchIpcInput {
   } | null;
   readonly continuesSessionId: string | null;
   readonly handoffReason: string | null;
+  readonly model?: string | null;
+  readonly effort?: string | null;
+  /** A21 — `true` so quando model/effort vieram de DEFAULT, sem confirmacao explicita (P33). */
+  readonly modelEffortAssumed?: boolean;
+  /** A1 — confirma a reabertura explicita de uma fase ja concluida sobre o mesmo assunto. */
+  readonly confirmReopen?: boolean;
 }
 
 export function isValidDispatchIpcInput(input: unknown): input is DispatchIpcInput {
@@ -129,6 +154,10 @@ export function isValidDispatchIpcInput(input: unknown): input is DispatchIpcInp
     const workspace = candidate.workspace as Partial<DispatchIpcInput['workspace']> & Record<string, unknown>;
     if (typeof workspace.target_repo !== 'string' || workspace.target_repo.trim().length === 0) return false;
   }
+  if (candidate.model !== null && candidate.model !== undefined && typeof candidate.model !== 'string') return false;
+  if (candidate.effort !== null && candidate.effort !== undefined && typeof candidate.effort !== 'string') return false;
+  if (candidate.modelEffortAssumed !== undefined && typeof candidate.modelEffortAssumed !== 'boolean') return false;
+  if (candidate.confirmReopen !== undefined && typeof candidate.confirmReopen !== 'boolean') return false;
   return true;
 }
 
@@ -206,6 +235,36 @@ export function isValidSetStageOverrideIpcInput(input: unknown): input is SetSta
   return true;
 }
 
+/**
+ * D-6 — corrigir a ancora e o escopo de um card que ja existe.
+ *
+ * Nasceu do dogfooding de 06/08: o card so podia declarar repo no instante em
+ * que nascia, e num campo de texto livre. Quem descobriu depois que o alvo
+ * estava errado — ou que o trabalho atravessava um segundo servico — nao tinha
+ * gesto nenhum; ficava com um card que nao dispara e sem como conserta-lo.
+ *
+ * Os dois campos viajam JUNTOS de propósito: alvo e escopo sao a mesma decisao
+ * ("onde isto acontece"), e salva-los separado deixaria o card num estado
+ * intermediario onde a ancora nao pertence ao proprio escopo.
+ */
+export interface SetDiscoveryReposIpcInput {
+  readonly discoveryId: string;
+  /** A ancora: onde a sessao senta. `null` e legitimo — discovery investiga problema, nao repo. */
+  readonly targetRepo: string | null;
+  /** O alcance: o que a mudanca toca. Microsservico atravessa repo por natureza. */
+  readonly scopeRepos: readonly string[];
+}
+
+export function isValidSetDiscoveryReposIpcInput(input: unknown): input is SetDiscoveryReposIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<SetDiscoveryReposIpcInput>;
+  if (typeof candidate.discoveryId !== 'string' || candidate.discoveryId.trim().length === 0) return false;
+  if (candidate.targetRepo !== null && candidate.targetRepo !== undefined && typeof candidate.targetRepo !== 'string') return false;
+  if (candidate.scopeRepos !== undefined && !Array.isArray(candidate.scopeRepos)) return false;
+  if (candidate.scopeRepos?.some((repo) => typeof repo !== 'string' || repo.trim().length === 0)) return false;
+  return true;
+}
+
 /** Abrir, comecar, concluir, abandonar — os quatro estados de D-4, um gesto cada. */
 export interface SetWorkItemStateIpcInput {
   readonly workItemId: string;
@@ -249,6 +308,27 @@ export function isValidAddNoteIpcInput(input: unknown): input is AddNoteIpcInput
 }
 
 /**
+ * C3 — o pedido de leitura de um artefato. Restrito a `.md`: este canal
+ * existe pra `tasks.md` (e documentos irmãos), não é um leitor de arquivo
+ * genérico — abrir pra qualquer extensão seria uma capacidade nova que
+ * ninguém revisou.
+ */
+export interface ReadArtifactTextIpcInput {
+  readonly path: string;
+}
+
+export function isValidReadArtifactTextIpcInput(input: unknown): input is ReadArtifactTextIpcInput {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Partial<ReadArtifactTextIpcInput>;
+  return typeof candidate.path === 'string' && candidate.path.trim().length > 0 && candidate.path.toLowerCase().endsWith('.md');
+}
+
+/** `not-found`/`read-error` nunca lançam pro renderer — degradam por omissão (o mesmo padrão de `FileReadIoDeps`, que nunca lança). */
+export type ReadArtifactTextDto =
+  | { readonly ok: true; readonly text: string }
+  | { readonly ok: false; readonly reason: 'not-found' | 'read-error' | 'invalid-input' };
+
+/**
  * A resposta dos gestos que so mudam o estado local. `unknown-subject` existe
  * porque o reducer ignora, calado, evento sobre entidade que nao existe: gravar
  * assim mesmo produziria um fato sobre um fantasma e uma tela que nao muda, sem
@@ -273,6 +353,12 @@ export type EsteiraDispatchDto =
       readonly state: EsteiraSnapshotDto;
     }
   | { readonly ok: false; readonly reason: 'locked'; readonly lock: LockRecord; readonly state: EsteiraSnapshotDto }
+  /** A8/A20 — o repo+caminho que esta fase tocaria ja esta ocupado por outro assunto (irmao). */
+  | { readonly ok: false; readonly reason: 'resource-busy'; readonly lock: LockRecord; readonly state: EsteiraSnapshotDto }
+  /** A1 — a fase ja concluiu sobre este assunto; redisparar exige `confirmReopen: true`. */
+  | { readonly ok: false; readonly reason: 'phase-done'; readonly phase: PhaseRunSnapshot; readonly state: EsteiraSnapshotDto }
+  /** B3 — ja existe uma sessao VIVA para este MESMO assunto+fase. */
+  | { readonly ok: false; readonly reason: 'session-active'; readonly session: SessionSnapshot; readonly state: EsteiraSnapshotDto }
   | { readonly ok: false; readonly reason: 'invalid-target'; readonly issues: readonly ContractIssue[]; readonly state: EsteiraSnapshotDto }
   | { readonly ok: false; readonly reason: 'store-refused' | 'write-failed' | 'invalid-input'; readonly state: EsteiraSnapshotDto };
 
@@ -303,6 +389,7 @@ export interface DonelEsteiraApi {
   endSession(input: EndSessionIpcInput): Promise<EsteiraSnapshotDto>;
   releaseLock(input: ReleaseLockIpcInput): Promise<EsteiraSnapshotDto>;
   setStageOverride(input: SetStageOverrideIpcInput): Promise<EsteiraGestureDto>;
+  setDiscoveryRepos(input: SetDiscoveryReposIpcInput): Promise<EsteiraGestureDto>;
   setWorkItemState(input: SetWorkItemStateIpcInput): Promise<EsteiraGestureDto>;
   discardWorkItem(input: DiscardWorkItemIpcInput): Promise<EsteiraGestureDto>;
   addNote(input: AddNoteIpcInput): Promise<EsteiraGestureDto>;
@@ -312,6 +399,8 @@ export interface DonelEsteiraApi {
    * atras, sem segurar gesto nenhum.
    */
   retryMirror(): Promise<EsteiraSnapshotDto>;
+  /** C3 — le o texto de um artefato (D-8), so leitura, restrito a `.md`. */
+  readArtifactText(input: ReadArtifactTextIpcInput): Promise<ReadArtifactTextDto>;
   /** Devolve a funcao de desinscricao (mesmo padrao dos outros canais de push). */
   onChanged(listener: (state: EsteiraSnapshotDto) => void): () => void;
 }

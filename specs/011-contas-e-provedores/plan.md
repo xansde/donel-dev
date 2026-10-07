@@ -136,6 +136,16 @@ vencido, tenta **um** refresh HTTP como fallback e grava o resultado no cofre
 **antes** de usá-lo (uso único: perder o par novo inutiliza a conta).
 Consequência aceita: conta parada por meses pede re-login uma vez.
 
+> **Emenda (13/09/2026, decisão do dono na etapa 3, Fase 2).** O access token
+> vence em ~8h e a carga era lida com o par do cofre: conta parada virava "sem
+> dado" e nunca era destino do auto-switch (C9). Com o app aberto, a leitura de
+> carga renova o par vencido de conta **parada**, com o mesmo protocolo do
+> fallback acima — grava antes de usar, uma renovação por conta de cada vez
+> (compartilhada com o switch), nunca a conta ativa, cuja carga passa a ser
+> lida com o token vivo do `~/.claude`. Continua sem heartbeat e sem agendador:
+> a renovação só acontece quando alguém lê a carga. Detalhe em
+> `plan-etapa-3.md` §4, Fase 2, e `contracts/ipc-accounts.md`, regra 14.
+
 ### D5 — Auto-switch é função pura
 
 ```ts

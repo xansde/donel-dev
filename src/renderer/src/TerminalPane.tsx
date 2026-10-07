@@ -69,6 +69,19 @@ export interface TerminalPaneProps {
   cwd?: string;
   /** Argv do Launcher (T008 — CommandBuilder, FR-003). Fixo por aba: só lido no spawn/reabertura, nunca muda no meio da sessão viva (isso é FR-011, T011). */
   args?: string[];
+  /**
+   * T1318 (011-contas-e-provedores, etapa 3, C13) — provider classe A
+   * escolhido no Launcher para esta aba; `undefined` = sessão de conta
+   * (comportamento de hoje). Fixo por aba, mesmo espírito de `args`/`cwd`.
+   */
+  providerId?: string;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado em andamento
+   * nesta aba (`accounts:beginLogin`); `undefined` = aba normal (comportamento
+   * de hoje). Fixo por aba, mesmo espírito de `providerId`/`cwd`: só lido no
+   * spawn inicial, nunca muda no meio da sessão viva.
+   */
+  accountLoginId?: string;
   /** Ação real de fechar a aba na barra de abas (T010): App.tsx remove a aba do array (unmount cuida do teardown do PTY). */
   onCloseTab?: () => void;
   /**
@@ -88,16 +101,24 @@ export interface TerminalPaneProps {
    */
   onAliveChange?: (alive: boolean) => void;
   /**
-   * FIX (feedback E2E rodada 5) — perfil de NASCIMENTO desta sessão
-   * (`PtyCreateResult.profile`, main/index.ts `activeProfileSlug`/`Name` NO
-   * MOMENTO da criação — por valor, como `claudeConfigDir` já é, T014).
-   * Chamado uma única vez, junto com `ptyIdRef.current = result.ptyId`
-   * (mesmo instante que `onAliveChange(true)`/`setStatus('running')`
-   * refletem). `undefined` só chega aqui pra sessão 'shell' (branch shell
-   * do handler `pty:create` nunca preenche `profile`) — App.tsx decide o
-   * que fazer com isso (`sessionAccountLabel.ts`).
+   * T1219 (011-contas-e-provedores, etapa 2, C24) — CONTA de NASCIMENTO
+   * desta sessão (`PtyCreateResult.account`, main/index.ts NO MOMENTO da
+   * criação — por valor, como `claudeConfigDir` já é, T014). Chamado uma
+   * única vez, junto com `ptyIdRef.current = result.ptyId` (mesmo instante
+   * que `onAliveChange(true)`/`setStatus('running')` refletem). `undefined`
+   * só chega aqui pra sessão 'shell' (branch shell do handler `pty:create`
+   * nunca preenche `account`) — App.tsx decide o que fazer com isso
+   * (`sessionAccountLabel.ts`). Prop chamava-se `onProfileResolved` até a
+   * troca de vocabulário perfil → conta.
    */
-  onProfileResolved?: (profile: { slug: string; name: string } | undefined) => void;
+  onAccountResolved?: (account: { id: string; label: string } | undefined) => void;
+  /**
+   * T1318 (011-contas-e-provedores, etapa 3, data-model.md §7) — provider de
+   * NASCIMENTO desta sessão (`PtyCreateResult.provider`), mesmo espírito de
+   * `onAccountResolved`. `undefined` para sessão de conta/perfil ou aba
+   * 'shell' (o caso de hoje).
+   */
+  onProviderResolved?: (provider: { id: string; label: string } | undefined) => void;
   /**
    * T404/T408 (004-nomear-sessoes) — id da sessão do Claude desta aba
    * (`PtyCreateResult.claudeSessionId`, imposto pelo main no spawn via
@@ -177,10 +198,13 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     sessionType = 'shell',
     cwd,
     args,
+    providerId,
+    accountLoginId,
     onCloseTab,
     onStateChange,
     onAliveChange,
-    onProfileResolved,
+    onAccountResolved,
+    onProviderResolved,
     onClaudeSessionIdResolved,
     onProcessExit,
   },
@@ -221,8 +245,10 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   onStateChangeRef.current = onStateChange;
   const onAliveChangeRef = useRef(onAliveChange);
   onAliveChangeRef.current = onAliveChange;
-  const onProfileResolvedRef = useRef(onProfileResolved);
-  onProfileResolvedRef.current = onProfileResolved;
+  const onAccountResolvedRef = useRef(onAccountResolved);
+  onAccountResolvedRef.current = onAccountResolved;
+  const onProviderResolvedRef = useRef(onProviderResolved);
+  onProviderResolvedRef.current = onProviderResolved;
   const onClaudeSessionIdResolvedRef = useRef(onClaudeSessionIdResolved);
   onClaudeSessionIdResolvedRef.current = onClaudeSessionIdResolved;
   const onProcessExitRef = useRef(onProcessExit);
@@ -303,7 +329,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     const requestEpoch = mountEpochRef.current;
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args })
+      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args, providerId, accountLoginId })
       .then((result) => {
         if (requestEpoch !== mountEpochRef.current) {
           // Geração já descartada (StrictMode double-invoke em dev, ou a aba
@@ -321,7 +347,10 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         // única vez, no mesmo instante que `onAliveChange(true)` reflete
         // (efeito de `status.kind` acima) — App.tsx grava por tab.id, nunca
         // reconsultado depois (mesmo espírito "por valor" de `claudeConfigDir`).
-        onProfileResolvedRef.current?.(result.profile);
+        onAccountResolvedRef.current?.(result.account);
+        // T1318 (011-contas-e-provedores, etapa 3) — provider de nascimento,
+        // mesmo instante/espírito do perfil/conta acima.
+        onProviderResolvedRef.current?.(result.provider);
         // T404 (004) — id da sessão do Claude desta aba, no mesmo instante e pelo
         // mesmo motivo do perfil acima: é a chave de persistência do nome (CA-6).
         onClaudeSessionIdResolvedRef.current?.(result.claudeSessionId);
@@ -408,7 +437,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         term.write(`\r\n\x1b[31mFalha ao iniciar o terminal: ${message}\x1b[0m\r\n`);
         setStatus({ kind: 'ended', info: { exitCode: -1 } });
       });
-  }, [cwd, sessionType, args]);
+  }, [cwd, sessionType, args, providerId, accountLoginId]);
 
   useEffect(() => {
     const container = containerRef.current;

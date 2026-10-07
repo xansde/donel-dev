@@ -19,6 +19,13 @@ describe('mapHookEventName', () => {
     expect(mapHookEventName('SessionEnd')).toBe('sessionEnd');
   });
 
+  it('StopFailure (turno encerrado por erro de API, ex. limite da conta) fecha o turno como Stop', () => {
+    // O CLI dispara StopFailure NO LUGAR de Stop quando rate limit/overload
+    // encerra o turno. Sem isso a sessão fica "trabalhando" para sempre e o
+    // auto-switch de contas adia indefinidamente — justo quando a conta estourou.
+    expect(mapHookEventName('StopFailure')).toBe('stop');
+  });
+
   it('null para eventos que não são do semáforo (ex.: SubagentStop de hooks globais do usuário)', () => {
     expect(mapHookEventName('SubagentStop')).toBeNull();
     expect(mapHookEventName(undefined)).toBeNull();
@@ -116,6 +123,61 @@ describe('SessionSemaphoreManager (servidor HTTP real, porta efêmera)', () => {
     await manager.start();
     try {
       expect(manager.getSnapshot('never-registered')).toBeUndefined();
+    } finally {
+      manager.dispose();
+    }
+  });
+
+  // Emenda 22/09 (011-contas-e-provedores, etapa 3, Fase 2, item 4) —
+  // `onStopFailure` distingue especificamente StopFailure (limite da conta),
+  // que `mapHookEventName`/`onUpdate` fundem em `stop` junto com Stop normal.
+  it('onStopFailure dispara SÓ em StopFailure, nunca em Stop normal', async () => {
+    const manager = new SessionSemaphoreManager({ getRecentLines: () => [] });
+    const port = await manager.start();
+
+    try {
+      const stopFailurePtyIds: string[] = [];
+      manager.onStopFailure((ptyId) => stopFailurePtyIds.push(ptyId));
+      manager.registerSession('pty-1', 'claude-session-abc');
+
+      await postHook(port, { hook_event_name: 'Stop', session_id: 'claude-session-abc' });
+      expect(stopFailurePtyIds).toEqual([]);
+
+      await postHook(port, { hook_event_name: 'StopFailure', session_id: 'claude-session-abc' });
+      expect(stopFailurePtyIds).toEqual(['pty-1']);
+    } finally {
+      manager.dispose();
+    }
+  });
+
+  it('onStopFailure também move o semáforo pra "waiting" (StopFailure ainda fecha o turno como Stop)', async () => {
+    const manager = new SessionSemaphoreManager({ getRecentLines: () => [] });
+    const port = await manager.start();
+
+    try {
+      manager.registerSession('pty-1', 'claude-session-abc');
+      await postHook(port, { hook_event_name: 'UserPromptSubmit', session_id: 'claude-session-abc' });
+      await postHook(port, { hook_event_name: 'StopFailure', session_id: 'claude-session-abc' });
+
+      expect(manager.getSnapshot('pty-1')?.state).toBe('waiting');
+    } finally {
+      manager.dispose();
+    }
+  });
+
+  it('unsubscribe de onStopFailure para de notificar', async () => {
+    const manager = new SessionSemaphoreManager({ getRecentLines: () => [] });
+    const port = await manager.start();
+
+    try {
+      const stopFailurePtyIds: string[] = [];
+      const unsubscribe = manager.onStopFailure((ptyId) => stopFailurePtyIds.push(ptyId));
+      manager.registerSession('pty-1', 'claude-session-abc');
+      unsubscribe();
+
+      await postHook(port, { hook_event_name: 'StopFailure', session_id: 'claude-session-abc' });
+
+      expect(stopFailurePtyIds).toEqual([]);
     } finally {
       manager.dispose();
     }

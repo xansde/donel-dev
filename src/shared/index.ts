@@ -4,17 +4,17 @@
 // (src/shared/projects.ts) — os demais (sessions:*, profiles:*, config:*)
 // chegam junto das tasks que os implementam.
 
-import type { DonelAccountsApi } from './accounts';
+import type { AccountId, DonelAccountsApi } from './accounts';
+import type { DonelMigrationApi } from './migration';
 import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
-import type { DonelProfilesApi } from './profiles';
 import type { DonelProjectBindingApi } from './projectBinding';
 import type { DonelProjectsApi } from './projects';
+import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
-import type { DonelTranscriptsApi } from './transcriptCopy';
 
 export { PROJECT_CHANNELS, sortProjects } from './projects';
 export type { DonelProjectsApi, ProjectInfo } from './projects';
@@ -41,19 +41,6 @@ export type {
 
 export { SESSION_CHANNELS, TRANSCRIPT_CHANNELS } from './sessions';
 export type { DonelSessionsApi, SessionSummaryDto, TranscriptChangedPayload } from './sessions';
-
-export { PROFILE_CHANNELS, parseAccountNumber } from './profiles';
-export type {
-  DeleteProfileErrorReason,
-  DeleteProfileOutcome,
-  DonelProfilesApi,
-  JunctionIssueDto,
-  ProfileDoctorReportDto,
-  ProfileHeadroomMap,
-  ProfileQuota,
-  ProfileSummaryDto,
-  QuotaWindow,
-} from './profiles';
 
 // T710 (007/CA-11 2º momento) — decisão de esquecer a entrada órfã quando a
 // retomada falha. Puro; medição do sinal em specs/008-fechar-pendencias/.
@@ -153,13 +140,6 @@ export type { BoardFacts, EntryColumn, EntryColumnCard } from '../main/taskdex-b
 /** Issue #34 — resultado de `devMode:resolveCardRepo`; mesmo motivo do `DiscoveryTree` acima: tipo só, `import type` erasa no build. */
 export type { CardRepoResolution, RepoCandidate } from '../main/cardRepoResolver';
 
-// Lote 8 (009-modo-dev-v3), CA-24 — "Reiniciar sessão em foco" retoma na
-// conta SELECIONADA, copiando o `.jsonl` pro perfil dela quando a sessão
-// rodou em outro perfil (achado 14). Lógica pura + contrato IPC em
-// src/shared/transcriptCopy.ts; o fs real vive em src/main/transcript-copy.ts.
-export { isValidCopyTranscriptForResumeIpcInput, planTranscriptCopy, TRANSCRIPT_COPY_CHANNELS } from './transcriptCopy';
-export type { CopyTranscriptForResumeIpcInput, CopyTranscriptForResumeResult, DonelTranscriptsApi, TranscriptCopyPlan } from './transcriptCopy';
-
 // Spec 010 / B6 — o view-model do painel direito saiu com o modelo antigo
 // (ele lia o nó de fase da árvore de disco). O painel é
 // alimentado hoje por `renderer/src/DevMode/esteiraMapView.ts`, sobre o store.
@@ -200,13 +180,50 @@ export type {
   AccountsViewDto,
   AccountSummary,
   AutoSwitchPolicy,
+  BeginLoginOutcome,
   ConnectModInput,
   ConnectModOutcome,
   DonelAccountsApi,
   LocalAccountMeta,
+  LoginStatusDto,
   ModId,
+  RemoveAccountOutcome,
   SwitchOutcome,
 } from './accounts';
+
+// 011-contas-e-provedores (etapa 2) — assistente de migração (temporário:
+// existe enquanto houver `~/.claude-profiles`). Nenhum canal devolve
+// conteúdo de arquivo de perfil, em nenhuma direção.
+export { MIGRATION_CHANNELS } from './migration';
+export type {
+  ArchiveOutcome,
+  ConsolidateResult,
+  ConsolidationKind,
+  DonelMigrationApi,
+  ImportResult,
+  McpDiff,
+  MigrationPlan,
+  MigrationPlanEntry,
+  ProfileMigrationStep,
+} from './migration';
+
+// 011-contas-e-provedores (etapa 3) — registry de providers classe A. Mesmo
+// espírito de accounts: nenhum campo aqui carrega valor de segredo (fica só
+// no cofre, src/main/providers/provider-secrets.ts).
+export { defaultProvidersConfig, PROVIDER_CHANNELS } from './providers';
+export type {
+  DonelProvidersApi,
+  ProviderClass,
+  ProviderEntry,
+  ProviderId,
+  ProviderSummaryDto,
+  ProvidersConfigDto,
+  ResolveLaunchResult,
+  SetSecretResult,
+  UpsertProviderInput,
+  UpsertProviderResult,
+  ValidationReason,
+} from './providers';
 
 /** Nomes dos canais IPC do domínio PTY (plan.md linha 37). */
 export const PTY_CHANNELS = {
@@ -239,6 +256,24 @@ export interface PtyCreateOptions {
    * (que sempre spawna `powershell.exe -NoLogo`, PtyManager.FREE_TERMINAL_ARGS).
    */
   args?: string[];
+  /**
+   * T1318 (011-contas-e-provedores, etapa 3, C13) — provider classe A
+   * escolhido nesta sessão. Mutuamente exclusivo com o motor de contas
+   * (D2): quando presente, o main resolve env/config dir pelo registry
+   * (`resolveLaunch`) e IGNORA o motor. `undefined` = comportamento de hoje
+   * (conta/perfil). Só tem efeito com `sessionType === 'claude'`.
+   */
+  providerId?: string;
+  /**
+   * 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado em andamento
+   * (`accounts:beginLogin`, `IsolatedLoginManager`). O main resolve o
+   * diretório (`getPendingDir`) e usa-o como `cwd`/`CLAUDE_CONFIG_DIR` desta
+   * sessão — mutuamente exclusivo com `providerId`. Só tem efeito com
+   * `sessionType === 'claude'`; esta aba nasce SEM argv do launcher, sem
+   * hooks do semáforo (`--settings`) e sem `--session-id` — é só o `claude`
+   * cru dentro de um diretório vazio, pro operador fazer `/login`.
+   */
+  accountLoginId?: string;
 }
 
 /**
@@ -263,16 +298,19 @@ export function parseClaudeNotFound(error: unknown): string | null {
 export interface PtyCreateResult {
   ptyId: string;
   /**
-   * FIX (feedback E2E rodada 5) — perfil ATIVO no momento em que esta sessão
-   * nasceu (main/index.ts `activeProfileSlug`/`activeProfileName`), o mesmo
-   * valor por trás do `claudeConfigDir` passado a `PtyManager.create`
-   * (T014/FR-005). Só preenchido pra `sessionType: 'claude'` — terminal
-   * livre (shell) nunca aplica `CLAUDE_CONFIG_DIR`, então não tem "perfil de
-   * nascimento" (App.tsx usa isso pra distinguir os dois casos no rótulo da
-   * statusbar, ver `sessionAccountLabel.ts`). `undefined` também é o valor
-   * legítimo de um `pty:create` de shell — não é "ainda não resolvido".
+   * T1219 (011-contas-e-provedores, etapa 2, C24) — CONTA ativa no momento
+   * em que esta sessão nasceu (main/index.ts, motor de contas — ou o perfil
+   * ativo legado enquanto o motor estiver inerte, C1/C10), o mesmo valor por
+   * trás do `claudeConfigDir` passado a `PtyManager.create` (T014/FR-005).
+   * Só preenchido pra `sessionType: 'claude'` — terminal livre (shell)
+   * nunca aplica `CLAUDE_CONFIG_DIR`, então não tem "conta de nascimento"
+   * (App.tsx usa isso pra distinguir os dois casos no rótulo da statusbar,
+   * ver `sessionAccountLabel.ts`). `undefined` também é o valor legítimo de
+   * um `pty:create` de shell — não é "ainda não resolvido". Campo chamava-se
+   * `profile` até a etapa 1/início da 2 (`{slug, name}`) — renomeado junto
+   * com a troca de vocabulário perfil → conta.
    */
-  profile?: { slug: string; name: string };
+  account?: { id: AccountId; label: string };
   /**
    * T404 (004-nomear-sessoes) — id da sessão do Claude para ESTA aba, o mesmo
    * que nomeia o `.jsonl` do transcript. O app não descobre esse id: ele o
@@ -285,6 +323,14 @@ export interface PtyCreateResult {
    * terminal livre não tem sessão de Claude, e por isso não persiste nome (C4).
    */
   claudeSessionId?: string;
+  /**
+   * T1318 (011-contas-e-provedores, etapa 3, data-model.md §7) — preenchido
+   * só quando a sessão nasceu de um provider classe A (`undefined` = sessão
+   * de conta/perfil, o caso de hoje). Permite ao renderer rotular a
+   * statusbar e resolver a origem do transcript/retomada (C17) sem carregar
+   * nenhum valor de env sensível — `label` é o texto livre do operador.
+   */
+  provider?: { id: string; label: string };
 }
 
 export interface PtyExitInfo {
@@ -365,9 +411,12 @@ export interface DonelApi {
   projects: DonelProjectsApi;
   semaphore: DonelSemaphoreApi;
   sessions: DonelSessionsApi;
-  profiles: DonelProfilesApi;
   /** 011-contas-e-provedores (etapa 1) — motor de contas + mods; nasce inerte (accounts.mod = null). */
   accounts: DonelAccountsApi;
+  /** 011-contas-e-provedores (etapa 2) — assistente de migração de perfis → cofre. */
+  migration: DonelMigrationApi;
+  /** 011-contas-e-provedores (etapa 3) — registry de providers classe A; nasce inerte (`providers.entries = []`). */
+  providers: DonelProvidersApi;
   /** T015 — ConfigStore (FR-007/FR-009); ver src/shared/config.ts. */
   config: DonelConfigApi;
   /** T504 (005-terminal-copy-paste) — clipboard-bridge no main, atrás de IPC. */
@@ -380,8 +429,6 @@ export interface DonelApi {
   projectBinding: DonelProjectBindingApi;
   /** CA-3/CA-5 (009-modo-dev-v3, lote 4) — leitura do GitHub por `gh` CLI (spec-issue, sub-issues, PR da fase). Só leitura. */
   github: DonelGithubApi;
-  /** CA-24 (009-modo-dev-v3, lote 8) — cópia de transcript entre perfis pro "Reiniciar sessão em foco". */
-  transcripts: DonelTranscriptsApi;
   /** Spec 010 — a esteira nova (store de eventos + contrato com as skills), ao lado do Modo Dev atual. */
   esteira: DonelEsteiraApi;
 }

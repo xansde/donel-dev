@@ -1,9 +1,10 @@
 // Spec 010 (D-10) — lado APP do contrato `result.json`. O arquivo canonico do
-// contrato e o JSON Schema vizinho (`v1/esteira-result.schema.json`), que o
-// fork `esteira-donel-3.0.0` le na mesma versao; este modulo e a leitura que o
-// app promete fazer dele. Os dois lados sao amarrados pelo teste de cobertura
-// (`tests/esteiraContractCoverage.test.ts`), que compara CONSUMED_PATHS com os
-// campos declarados no schema — e por um teste espelho do lado da skill.
+// contrato mora no pacote portatil (`docs/esteira-dev/contract/v1/esteira-result.schema.json`),
+// que o fork `esteira-donel-3.0.0` le na mesma versao; este modulo e a leitura
+// que o app promete fazer dele. Os dois lados sao amarrados pelo teste de
+// cobertura (`tests/esteiraContractCoverage.test.ts`), que compara
+// CONSUMED_PATHS com os campos declarados no schema — e por um teste espelho
+// do lado da skill.
 //
 // Por que fatos e nao `outputs.<campo>`: o bug de 03/08 (evidencia 1 da spec)
 // foi o app deduzir "houve plano" de `outputs.plan_cards[]`, um campo OPCIONAL
@@ -43,7 +44,18 @@ export type PhaseOutcome = 'done' | 'abandoned' | 'inconclusive';
 export type EntityKind = 'discovery' | 'plan' | 'work_item';
 export type RelationKind = 'originated' | 'flows_into' | 'ships_with';
 export type ArtifactLocation = 'repo' | 'disk';
-export type VerificationKind = 'pull-request' | 'check' | 'review' | 'conclusion';
+/**
+ * A16 — `e2e-manual` e o roteiro rodado A MAO por uma pessoa, separado de
+ * `check` (o que a maquina roda). Confundir os dois foi como uma fase fechou
+ * verde sem ninguem ter validado: o gate conferia a EXISTENCIA do arquivo de
+ * roteiro na branch, nunca o resultado dele.
+ */
+export type VerificationKind = 'pull-request' | 'check' | 'review' | 'conclusion' | 'e2e-manual';
+export const VERIFICATION_KINDS: readonly VerificationKind[] = ['pull-request', 'check', 'review', 'conclusion', 'e2e-manual'];
+
+/** A16 — a regua de aprovacao de D-4, classificada pela fase. `null` = ela nao classificou. */
+export type PhaseRisk = 'trivial' | 'sensivel';
+export const PHASE_RISKS: readonly PhaseRisk[] = ['trivial', 'sensivel'];
 export type VerificationState = 'pending' | 'passed' | 'failed';
 export type LockHolderKind = 'skill' | 'app';
 
@@ -68,7 +80,27 @@ export interface ResultRun {
   readonly started_at: string;
   readonly finished_at: string;
   readonly failure: { readonly code: string; readonly message: string } | null;
+  /** A4 — o run ao qual este complemento se ancora. `null` num result normal. */
+  readonly complements_run_id: string | null;
+  /** A13 — o run cujo desfecho este revisa. `null` quando nao ha revisao. */
+  readonly revises_run_id: string | null;
 }
+
+/** A4 — os dois tipos de documento que o outbox aceita. */
+export type ResultKind = 'esteira.result' | 'esteira.result.complement';
+export const RESULT_KINDS: readonly ResultKind[] = ['esteira.result', 'esteira.result.complement'];
+
+/**
+ * A4/A13 — a convencao de sufixo, num lugar so. Um run NAO se reescreve:
+ * complemento e revisao sao runs NOVOS ancorados no anterior, e o sufixo faz o
+ * parentesco visivel a olho nu no nome do arquivo do outbox — que e onde alguem
+ * vai procurar quando o card disser "houve revisao".
+ *
+ * O padrao de id (`[A-Za-z0-9._:-]`) aceita ponto, entao o sufixo cabe sem
+ * ampliar o alfabeto.
+ */
+export const COMPLEMENT_SUFFIX = /^(.+)\.c(\d+)$/;
+export const REVISION_SUFFIX = /^(.+)\.rev(\d+)$/;
 
 export interface ResultActor {
   readonly tool: string;
@@ -138,6 +170,8 @@ export type EsteiraFact =
       readonly verification_kind: VerificationKind;
       readonly state: VerificationState;
       readonly ref: string | null;
+      /** A15 — a base do PR. `null` quando a verificacao nao e de PR, ou quando a fase nao a declarou. */
+      readonly base: string | null;
     }
   | {
       readonly type: 'phase.completed';
@@ -145,6 +179,10 @@ export type EsteiraFact =
       readonly phase: string;
       readonly outcome: PhaseOutcome;
       readonly summary: string | null;
+      /** A16 — o risco que esta fase classificou. `null` = ela nao classificou, e o app nao classifica por ela. */
+      readonly risk: PhaseRisk | null;
+      /** A15 — onde a entrega chegou, no vocabulario do repo (`alfa`, `beta`, `stable`). */
+      readonly channel: string | null;
     }
   | {
       readonly type: 'lock.acquired';
@@ -161,7 +199,40 @@ export type EsteiraFact =
       readonly type: 'note.recorded';
       readonly subject: EntityRef;
       readonly text: string;
+    }
+  | {
+      readonly type: 'gate.confirmed';
+      readonly subject: EntityRef;
+      readonly condition: string;
+      readonly confirmed_by: string;
+      readonly confirmed_at: string | null;
+    }
+  | {
+      readonly type: 'decision.recorded';
+      readonly subject: EntityRef;
+      readonly decision: string;
+      readonly confirmed_by: string;
+      readonly rationale: string | null;
+    }
+  | {
+      readonly type: 'human_review.recorded';
+      readonly subject: EntityRef;
+      readonly phase: string;
+      readonly checklist: readonly HumanReviewEntry[];
     };
+
+/** A10/A19 — uma linha da lista do humano. `review` = confira; `action` = faca. */
+export type HumanReviewKind = 'review' | 'action';
+export type HumanReviewState = 'pending' | 'done' | 'waived';
+export const HUMAN_REVIEW_KINDS: readonly HumanReviewKind[] = ['review', 'action'];
+export const HUMAN_REVIEW_STATES: readonly HumanReviewState[] = ['pending', 'done', 'waived'];
+
+export interface HumanReviewEntry {
+  readonly item: string;
+  readonly kind: HumanReviewKind;
+  readonly state: HumanReviewState;
+  readonly detail: string | null;
+}
 
 export type FactType = EsteiraFact['type'];
 
@@ -176,11 +247,14 @@ export const FACT_TYPES: readonly FactType[] = [
   'lock.acquired',
   'lock.released',
   'note.recorded',
+  'gate.confirmed',
+  'decision.recorded',
+  'human_review.recorded',
 ];
 
 export interface EsteiraResult {
   readonly contract_version: string;
-  readonly kind: 'esteira.result';
+  readonly kind: ResultKind;
   readonly run: ResultRun;
   readonly actor: ResultActor;
   readonly subject: ResultSubject;
@@ -218,6 +292,8 @@ export const CONSUMED_PATHS: readonly string[] = [
   'run.finished_at',
   'run.failure.code',
   'run.failure.message',
+  'run.complements_run_id',
+  'run.revises_run_id',
   'actor.tool',
   'actor.tool_version',
   'actor.executor',
@@ -270,12 +346,15 @@ export const CONSUMED_PATHS: readonly string[] = [
   'facts[verification.recorded].verification_kind',
   'facts[verification.recorded].state',
   'facts[verification.recorded].ref',
+  'facts[verification.recorded].base',
   'facts[phase.completed].type',
   'facts[phase.completed].subject.entity',
   'facts[phase.completed].subject.id',
   'facts[phase.completed].phase',
   'facts[phase.completed].outcome',
   'facts[phase.completed].summary',
+  'facts[phase.completed].risk',
+  'facts[phase.completed].channel',
   'facts[lock.acquired].type',
   'facts[lock.acquired].subject.entity',
   'facts[lock.acquired].subject.id',
@@ -291,6 +370,26 @@ export const CONSUMED_PATHS: readonly string[] = [
   'facts[note.recorded].subject.entity',
   'facts[note.recorded].subject.id',
   'facts[note.recorded].text',
+  'facts[gate.confirmed].type',
+  'facts[gate.confirmed].subject.entity',
+  'facts[gate.confirmed].subject.id',
+  'facts[gate.confirmed].condition',
+  'facts[gate.confirmed].confirmed_by',
+  'facts[gate.confirmed].confirmed_at',
+  'facts[decision.recorded].type',
+  'facts[decision.recorded].subject.entity',
+  'facts[decision.recorded].subject.id',
+  'facts[decision.recorded].decision',
+  'facts[decision.recorded].confirmed_by',
+  'facts[decision.recorded].rationale',
+  'facts[human_review.recorded].type',
+  'facts[human_review.recorded].subject.entity',
+  'facts[human_review.recorded].subject.id',
+  'facts[human_review.recorded].phase',
+  'facts[human_review.recorded].checklist[].item',
+  'facts[human_review.recorded].checklist[].kind',
+  'facts[human_review.recorded].checklist[].state',
+  'facts[human_review.recorded].checklist[].detail',
 ];
 
 /**
@@ -307,7 +406,30 @@ export const CONSUMED_PATHS: readonly string[] = [
 export const REQUIRED_FACTS_ANY_SUCCESS: readonly FactType[] = ['phase.completed'];
 
 export const REQUIRED_FACTS_BY_PHASE: Readonly<Record<string, readonly FactType[]>> = {
+  // A entidade E o assunto do run: uma discovery que abandonou continua sendo a
+  // discovery que aquele run declarou. Por isso ela e cobrada em QUALQUER
+  // desfecho — ao contrario do PRODUTO das outras fases, que so se cobra de
+  // quem diz ter chegado nele.
   discovery: ['discovery.recorded'],
+};
+
+/**
+ * A3 — o produto de cada fase, cobrado apenas de quem declara ter CHEGADO nele
+ * (`phase.completed.outcome = done`).
+ *
+ * Antes a cobranca era por `status: success`, e isso obrigava um run que parou
+ * num gate a declarar uma `verification.recorded` com `state: pending` so para
+ * caber no contrato — o contrato empurrando a skill a inventar fato, que e a
+ * inverdade de 03/08 entrando pela porta do gate. Desfecho ruim continua
+ * valido e nao pede nada.
+ *
+ * A cobranca e por FASE FECHADA, nao por `run.phase`: um result que fecha N
+ * fases (A22) responde pelo produto de cada uma que declarou `done`.
+ */
+export const REQUIRED_FACTS_BY_PHASE_WHEN_DONE: Readonly<Record<string, readonly FactType[]>> = {
+  // Plano concluido sem nenhum item e o card F3 da evidencia 1 pelo avesso: a
+  // fase diz que terminou bem e nao deixa nada para a seguinte tomar.
+  plano: ['work_item.recorded'],
   // O que a fase produziu tem que poder ser conferido: o check que ela escreveu
   // e rodou, o documento pronto para revisao, ou a resposta do spike (D-4).
   implementar: ['verification.recorded'],
@@ -331,6 +453,37 @@ export const REQUIRED_FACTS_BY_PHASE: Readonly<Record<string, readonly FactType[
  */
 export const PHASES_REQUIRING_PASSED_VERIFICATION: readonly string[] = ['concluir'];
 
+/**
+ * A18 — os fatos que carregam a palavra de uma PESSOA. Os dois nomeiam quem
+ * confirmou no mesmo campo (`confirmed_by`) de proposito: a regra que fecha a
+ * fase de conversa pergunta "houve fato humano com dono?", e um nome so evita
+ * duas leituras da mesma pergunta.
+ */
+export const HUMAN_DECISION_FACTS: readonly FactType[] = ['gate.confirmed', 'decision.recorded'];
+
+/**
+ * A18 — as fases de CONVERSA. Elas existem para produzir decisao: fase que nao
+ * perguntou nada nao fechou coisa nenhuma, e deixa-la sair "concluida" sem
+ * nenhum fato humano seria a tela sem lastro que D-4 ja combate do outro lado.
+ * Desfecho ruim nao pede nada — abandonar sem perguntar e legitimo.
+ */
+export const PHASES_REQUIRING_HUMAN_DECISION: readonly string[] = ['discovery', 'plano'];
+
+/**
+ * A16 — as fases em que `risk: sensivel` liga o gate do roteiro e2e manual.
+ *
+ * O defeito que ele fecha: o gate de e2e conferia a EXISTENCIA do arquivo de
+ * roteiro na branch. "Escrito" e "rodado" viraram a mesma coisa, e uma fase
+ * fechou verde sem ninguem ter validado. Aqui o roteiro e uma
+ * `verification.recorded` de tipo proprio (`e2e-manual`), e o `state` dela so
+ * sai de `pending` com resultado COLHIDO do dono.
+ *
+ * Ficar `pending` e legitimo (A19: esperar por gente nao e falha). O que nao
+ * pode e a MESMA fase registrar aprovacao humana por cima de um e2e que
+ * ninguem rodou.
+ */
+export const PHASES_REQUIRING_E2E_WHEN_SENSITIVE: readonly string[] = ['validar'];
+
 function parseEntityRef(node: Record<string, unknown>, key: string, path: string, c: Collector): EntityRef | null {
   const raw = node[key];
   if (!isPlainObject(raw)) {
@@ -350,7 +503,12 @@ function parseRun(raw: unknown, c: Collector): ResultRun | null {
     c.add(raw === undefined ? 'missing_field' : 'wrong_type', 'run', 'field "run" must be an object');
     return null;
   }
-  rejectUnknownKeys(raw, ['run_id', 'phase', 'status', 'started_at', 'finished_at', 'failure'], 'run', c);
+  rejectUnknownKeys(
+    raw,
+    ['run_id', 'phase', 'status', 'started_at', 'finished_at', 'failure', 'complements_run_id', 'revises_run_id'],
+    'run',
+    c,
+  );
 
   const runId = requirePattern(raw, 'run_id', ID_PATTERN, 'run', c);
   const phase = requirePattern(raw, 'phase', PHASE_PATTERN, 'run', c);
@@ -380,8 +538,62 @@ function parseRun(raw: unknown, c: Collector): ResultRun | null {
     c.add('failure_unexpected', 'run.failure', 'run.failure must be null when status is "success"');
   }
 
+  const complementsRunId = optionalPattern(raw, 'complements_run_id', ID_PATTERN, 'run', c);
+  const revisesRunId = optionalPattern(raw, 'revises_run_id', ID_PATTERN, 'run', c);
+
   if (runId === null || phase === null || status === null || startedAt === null || finishedAt === null) return null;
-  return { run_id: runId, phase, status, started_at: startedAt, finished_at: finishedAt, failure };
+  return {
+    run_id: runId,
+    phase,
+    status,
+    started_at: startedAt,
+    finished_at: finishedAt,
+    failure,
+    complements_run_id: complementsRunId,
+    revises_run_id: revisesRunId,
+  };
+}
+
+/**
+ * A4/A13 — o parentesco entre runs, verificado. Um run que se diz complemento
+ * (ou revisao) de outro tem que trazer o sufixo combinado sobre o run ancorado:
+ * sem isso, o parentesco existe so no campo, e olhar o outbox nao conta a
+ * historia. E foi olhar o outbox — arquivo por arquivo — que revelou a Concluir
+ * regravando o MESMO `run_id` com desfecho revisto.
+ */
+function checkRunLineage(run: ResultRun, kind: ResultKind, c: Collector): void {
+  if (kind === 'esteira.result.complement') {
+    if (run.complements_run_id === null) {
+      c.add('complement_without_anchor', 'run.complements_run_id', 'a complement result must declare "complements_run_id"');
+    } else {
+      const match = COMPLEMENT_SUFFIX.exec(run.run_id);
+      if (match === null || match[1] !== run.complements_run_id) {
+        c.add(
+          'lineage_suffix_mismatch',
+          'run.run_id',
+          `a complement of "${run.complements_run_id}" must be named "${run.complements_run_id}.c<N>"`,
+        );
+      }
+    }
+  } else if (run.complements_run_id !== null) {
+    c.add('complement_without_kind', 'run.complements_run_id', 'only a "esteira.result.complement" may declare "complements_run_id"');
+  }
+
+  if (run.revises_run_id === null) return;
+  if (run.revises_run_id === run.run_id) {
+    // Reescrever o proprio run e exatamente o que a revisao existe para
+    // substituir: o run anterior tem que continuar legivel.
+    c.add('lineage_suffix_mismatch', 'run.revises_run_id', 'a run cannot revise itself');
+    return;
+  }
+  const match = REVISION_SUFFIX.exec(run.run_id);
+  if (match === null || match[1] !== run.revises_run_id || Number.parseInt(match[2], 10) < 2) {
+    c.add(
+      'lineage_suffix_mismatch',
+      'run.run_id',
+      `a revision of "${run.revises_run_id}" must be named "${run.revises_run_id}.rev<N>" with N >= 2`,
+    );
+  }
 }
 
 function parseActor(raw: unknown, c: Collector): ResultActor | null {
@@ -521,22 +733,25 @@ function parseFact(raw: unknown, path: string, c: Collector): EsteiraFact | null
       return { type: factType,owner, artifact_kind: artifactKind, location, repo, path: artifactPath };
     }
     case 'verification.recorded': {
-      rejectUnknownKeys(raw, ['type', 'subject', 'verification_kind', 'state', 'ref'], path, c);
+      rejectUnknownKeys(raw, ['type', 'subject', 'verification_kind', 'state', 'ref', 'base'], path, c);
       const subject = parseEntityRef(raw, 'subject', path, c);
-      const verificationKind = requireEnum<VerificationKind>(raw, 'verification_kind', ['pull-request', 'check', 'review', 'conclusion'], path, c);
+      const verificationKind = requireEnum<VerificationKind>(raw, 'verification_kind', VERIFICATION_KINDS, path, c);
       const state = requireEnum<VerificationState>(raw, 'state', ['pending', 'passed', 'failed'], path, c);
       const ref = optionalString(raw, 'ref', path, c);
+      const base = optionalString(raw, 'base', path, c);
       if (subject === null || verificationKind === null || state === null) return null;
-      return { type: factType,subject, verification_kind: verificationKind, state, ref };
+      return { type: factType, subject, verification_kind: verificationKind, state, ref, base };
     }
     case 'phase.completed': {
-      rejectUnknownKeys(raw, ['type', 'subject', 'phase', 'outcome', 'summary'], path, c);
+      rejectUnknownKeys(raw, ['type', 'subject', 'phase', 'outcome', 'summary', 'risk', 'channel'], path, c);
       const subject = parseEntityRef(raw, 'subject', path, c);
       const phase = requirePattern(raw, 'phase', PHASE_PATTERN, path, c);
       const outcome = requireEnum<PhaseOutcome>(raw, 'outcome', ['done', 'abandoned', 'inconclusive'], path, c);
       const summary = optionalString(raw, 'summary', path, c);
+      const channel = optionalString(raw, 'channel', path, c);
+      const risk = raw.risk === undefined || raw.risk === null ? null : requireEnum<PhaseRisk>(raw, 'risk', PHASE_RISKS, path, c);
       if (subject === null || phase === null || outcome === null) return null;
-      return { type: factType,subject, phase, outcome, summary };
+      return { type: factType, subject, phase, outcome, summary, risk, channel };
     }
     case 'lock.acquired': {
       rejectUnknownKeys(raw, ['type', 'subject', 'phase', 'holder'], path, c);
@@ -570,7 +785,164 @@ function parseFact(raw: unknown, path: string, c: Collector): EsteiraFact | null
       if (subject === null || text === null) return null;
       return { type: factType,subject, text };
     }
+    case 'gate.confirmed': {
+      // A9 — uma condicao por fato. O gate composto virava UMA linha de texto no
+      // tasks.md, e meia-confirmacao nao cabia nela: a tela dizia "confirmado"
+      // com metade do gate em aberto.
+      rejectUnknownKeys(raw, ['type', 'subject', 'condition', 'confirmed_by', 'confirmed_at'], path, c);
+      const subject = parseEntityRef(raw, 'subject', path, c);
+      const condition = requireString(raw, 'condition', path, c);
+      const confirmedBy = requireString(raw, 'confirmed_by', path, c);
+      const confirmedAt = optionalPattern(raw, 'confirmed_at', TIMESTAMP_PATTERN, path, c);
+      if (subject === null || condition === null || confirmedBy === null) return null;
+      return { type: factType, subject, condition, confirmed_by: confirmedBy, confirmed_at: confirmedAt };
+    }
+    case 'human_review.recorded': {
+      rejectUnknownKeys(raw, ['type', 'subject', 'phase', 'checklist'], path, c);
+      const subject = parseEntityRef(raw, 'subject', path, c);
+      const phase = requirePattern(raw, 'phase', PHASE_PATTERN, path, c);
+      const rawChecklist = raw.checklist;
+      const checklist: HumanReviewEntry[] = [];
+      if (!Array.isArray(rawChecklist)) {
+        c.add(rawChecklist === undefined ? 'missing_field' : 'wrong_type', `${path}.checklist`, 'field "checklist" must be an array');
+      } else if (rawChecklist.length === 0) {
+        // Lista vazia e o mesmo que nao declarar: "tem coisa para voce" sem
+        // dizer o que e nao ajuda ninguem e ainda ocupa espaco na tela.
+        c.add('empty_facts', `${path}.checklist`, 'checklist must not be empty');
+      } else {
+        rawChecklist.forEach((entry, index) => {
+          const entryPath = `${path}.checklist[${index}]`;
+          if (!isPlainObject(entry)) {
+            c.add('wrong_type', entryPath, 'checklist entry must be an object');
+            return;
+          }
+          rejectUnknownKeys(entry, ['item', 'kind', 'state', 'detail'], entryPath, c);
+          const item = requireString(entry, 'item', entryPath, c);
+          const entryKind = requireEnum<HumanReviewKind>(entry, 'kind', HUMAN_REVIEW_KINDS, entryPath, c);
+          const state = requireEnum<HumanReviewState>(entry, 'state', HUMAN_REVIEW_STATES, entryPath, c);
+          const detail = optionalString(entry, 'detail', entryPath, c);
+          if (item === null || entryKind === null || state === null) return;
+          checklist.push({ item, kind: entryKind, state, detail });
+        });
+      }
+      if (subject === null || phase === null || checklist.length === 0) return null;
+      return { type: factType, subject, phase, checklist };
+    }
+    case 'decision.recorded': {
+      rejectUnknownKeys(raw, ['type', 'subject', 'decision', 'confirmed_by', 'rationale'], path, c);
+      const subject = parseEntityRef(raw, 'subject', path, c);
+      const decision = requireString(raw, 'decision', path, c);
+      const confirmedBy = requireString(raw, 'confirmed_by', path, c);
+      const rationale = optionalString(raw, 'rationale', path, c);
+      if (subject === null || decision === null || confirmedBy === null) return null;
+      return { type: factType, subject, decision, confirmed_by: confirmedBy, rationale };
+    }
   }
+}
+
+/**
+ * A5 — o que cada fato QUE CRIA ENTIDADE usa como identidade, para extrair o
+ * CUSTO de um documento recusado. So os tres fatos de D-16/D-2 criam entidade
+ * propria; os demais (relacao, artefato, verificacao...) descrevem algo SOBRE
+ * uma entidade que ja existe, e nao tem "id proprio" que valha a pena nomear
+ * aqui — a lista deles ainda aparece (por `factType`), so sem `entity`/`id`.
+ */
+const ENTITY_CREATING_FACTS: Readonly<Partial<Record<FactType, { readonly entity: EntityKind; readonly idField: string }>>> = {
+  'discovery.recorded': { entity: 'discovery', idField: 'discovery_id' },
+  'plan.recorded': { entity: 'plan', idField: 'plan_id' },
+  'work_item.recorded': { entity: 'work_item', idField: 'work_item_id' },
+};
+
+/** A5 — um fato declarado, resumido para o card dizer "sem este arquivo não existe X". */
+export interface DeclaredFactRef {
+  readonly factType: string;
+  readonly entity: EntityKind | null;
+  readonly id: string | null;
+  readonly title: string | null;
+}
+
+/**
+ * A5 — o CUSTO de um documento recusado: o que ELE declararia, se entrasse.
+ * Le o texto CRU porque o parser pode ja ter recusado o documento inteiro por
+ * causa de UM campo — a pergunta aqui nao e "isto e valido?" (o parser ja
+ * respondeu), e sim "o que este arquivo diria que existe?".
+ *
+ * Best-effort e nunca lanca: JSON invalido, `facts` ausente ou fato sem o
+ * campo de identidade esperado devolvem menos informacao, nunca um erro novo
+ * por cima do que ja existe. Nao inventa: sem o campo, `id`/`title` ficam
+ * `null` em vez de um palpite.
+ */
+export function declaredFactsFromRawText(text: string): readonly DeclaredFactRef[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  if (!isPlainObject(parsed)) return [];
+  const rawFacts = parsed.facts;
+  if (!Array.isArray(rawFacts)) return [];
+
+  return rawFacts.flatMap((raw): DeclaredFactRef[] => {
+    if (!isPlainObject(raw)) return [];
+    const factType = raw.type;
+    if (typeof factType !== 'string') return [];
+
+    const title = typeof raw.title === 'string' ? raw.title : null;
+    const creates = ENTITY_CREATING_FACTS[factType as FactType];
+    if (creates === undefined) return [{ factType, entity: null, id: null, title: null }];
+
+    const id = typeof raw[creates.idField] === 'string' ? (raw[creates.idField] as string) : null;
+    return [{ factType, entity: creates.entity, id, title }];
+  });
+}
+
+/**
+ * F26 — a anistia do outbox historico: para decidir se um documento RECUSADO
+ * pelo contrato novo era, na verdade, um run ja ingerido pelo contrato antigo,
+ * o chamador precisa do `run_id` sem esperar que o documento inteiro seja
+ * valido. Leitura leniente, best-effort e nunca lanca — igual
+ * `declaredFactsFromRawText`, mas so para este campo: JSON invalido ou
+ * `run.run_id` ausente/nao-string devolvem `null`, nunca um palpite.
+ */
+export function runIdFromRawText(text: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(parsed)) return null;
+  const run = parsed.run;
+  if (!isPlainObject(run)) return null;
+  const runId = run.run_id;
+  return typeof runId === 'string' && runId.length > 0 ? runId : null;
+}
+
+/**
+ * F26 — o CORTE POR DATA: quando o `run_id` nao e conhecido de nenhuma
+ * ingestao anterior (nem o livro, nem qualquer fato ja gravado), o segundo
+ * criterio para anistiar e "este run e de ANTES do contrato endurecer?".
+ * `finished_at` e preferido (e quando o run terminou, o dado mais proximo do
+ * "quando isto foi ingerido de fato"); `started_at` e o fallback quando o
+ * documento nao chegou a declarar `finished_at` de forma legivel. Mesma
+ * leitura leniente e best-effort de `runIdFromRawText`: nunca lanca, nunca
+ * inventa — sem nenhum dos dois campos como string, devolve `null`.
+ */
+export function runTimestampFromRawText(text: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(parsed)) return null;
+  const run = parsed.run;
+  if (!isPlainObject(run)) return null;
+  const finishedAt = run.finished_at;
+  if (typeof finishedAt === 'string' && finishedAt.length > 0) return finishedAt;
+  const startedAt = run.started_at;
+  return typeof startedAt === 'string' && startedAt.length > 0 ? startedAt : null;
 }
 
 /**
@@ -587,8 +959,9 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
 
   rejectUnknownKeys(input, ['contract_version', 'kind', 'run', 'actor', 'subject', 'workspace', 'facts'], '', c);
 
-  if (input.kind !== 'esteira.result') {
-    c.add('wrong_kind', 'kind', 'kind must be "esteira.result"');
+  const kind = (RESULT_KINDS as readonly unknown[]).includes(input.kind) ? (input.kind as ResultKind) : null;
+  if (kind === null) {
+    c.add('wrong_kind', 'kind', `kind must be one of ${RESULT_KINDS.join(' | ')}`);
   }
 
   const contractVersion = requirePattern(input, 'contract_version', SEMVER_PATTERN, '', c);
@@ -616,29 +989,138 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
     });
   }
 
+  if (run !== null && kind !== null) checkRunLineage(run, kind, c);
+
+  // A4 — o complemento ACRESCENTA fatos a um run ja ingerido; ele nao conta a
+  // fase de novo. Por isso nao e cobrado pela tabela (a fase ja respondeu por
+  // ela no run ancorado) e nao pode declarar `phase.completed`: a fase contada
+  // duas vezes viraria duas passagens no card sobre a mesma execucao.
+  if (kind === 'esteira.result.complement') {
+    for (const fact of facts) {
+      if (fact.type !== 'phase.completed') continue;
+      c.add('complement_redeclares_phase', 'facts', 'a complement must not declare "phase.completed" — it adds facts, it does not close the phase again');
+      break;
+    }
+  }
+
   // A promessa do outro lado, verificada aqui: run bem-sucedido SEM os fatos
   // que a fase promete seria de novo o app tendo que adivinhar o que aconteceu.
   // A tabela vem do schema (`x-required-facts`), nao de regra escrita duas
   // vezes — e o teste de cobertura reprova se as duas se afastarem.
-  if (run !== null && run.status === 'success') {
-    const required = [...REQUIRED_FACTS_ANY_SUCCESS, ...(REQUIRED_FACTS_BY_PHASE[run.phase] ?? [])];
-    for (const factType of required) {
+  // A22 — um run PODE fechar N fases: Validar, Documentar e Concluir feitas
+  // dentro da sessao de Implementar sao quatro fases fechadas, e o mapa tem que
+  // mostrar quatro. O que ele NAO pode e contar a mesma duas vezes: duas
+  // `phase.completed` do mesmo assunto e da mesma fase sao duas historias sobre
+  // uma execucao, e o reducer ficaria com a ultima sem ninguem saber.
+  const completedKeys = new Set<string>();
+  for (const fact of facts) {
+    if (fact.type !== 'phase.completed') continue;
+    const key = `${fact.subject.entity}:${fact.subject.id}|${fact.phase}`;
+    if (completedKeys.has(key)) {
+      c.add('duplicate_phase_completed', 'facts', `phase "${fact.phase}" is completed twice for the same subject in one result`);
+    }
+    completedKeys.add(key);
+  }
+
+  if (run !== null && run.status === 'success' && kind === 'esteira.result') {
+    // A22 — fechar as fases seguintes nao dispensa dizer o que houve com a
+    // PROPRIA: o run foi disparado como esta fase, e quem o disparou precisa
+    // saber em que ela parou.
+    const fechouAPropria = facts.some((fact) => fact.type === 'phase.completed' && fact.phase === run.phase);
+    if (!fechouAPropria && facts.some((fact) => fact.type === 'phase.completed')) {
+      c.add(
+        'phase_completed_missing_for_run',
+        'facts',
+        `this run declares itself as "${run.phase}" but closes other phases without saying what happened to its own`,
+      );
+    }
+
+    // As fases que este result declara FECHADAS com desfecho bom. A cobranca de
+    // produto (A3) e por elas, nao por `run.phase`: quem diz "documentar
+    // concluida" mostra o artefato, mesmo que o run se chame `implementar`.
+    const donePhases = facts
+      .filter((fact): fact is Extract<EsteiraFact, { type: 'phase.completed' }> => fact.type === 'phase.completed')
+      .filter((fact) => fact.outcome === 'done')
+      .map((fact) => fact.phase);
+
+    const required: { readonly factType: FactType; readonly because: string }[] = [
+      ...REQUIRED_FACTS_ANY_SUCCESS.map((factType) => ({ factType, because: run.phase })),
+      ...(REQUIRED_FACTS_BY_PHASE[run.phase] ?? []).map((factType) => ({ factType, because: run.phase })),
+      ...donePhases.flatMap((phase) => (REQUIRED_FACTS_BY_PHASE_WHEN_DONE[phase] ?? []).map((factType) => ({ factType, because: phase }))),
+    ];
+
+    for (const { factType, because } of required) {
       if (!facts.some((fact) => fact.type === factType)) {
-        c.add('missing_required_fact', 'facts', `a successful "${run.phase}" run must declare a "${factType}" fact`);
+        c.add('missing_required_fact', 'facts', `a successful "${because}" run must declare a "${factType}" fact`);
+      }
+    }
+
+    // A18 — a fase de conversa fecha com o que alguem DISSE. Sem nenhum fato
+    // humano, "discovery concluida" e uma fase que nao perguntou nada saindo
+    // como se tivesse decidido algo.
+    for (const phase of donePhases) {
+      if (!PHASES_REQUIRING_HUMAN_DECISION.includes(phase)) continue;
+      if (facts.some((fact) => (HUMAN_DECISION_FACTS as readonly string[]).includes(fact.type))) continue;
+      c.add(
+        'done_without_human_decision',
+        'facts',
+        `a "${phase}" run completed as "done" must declare at least one of ${HUMAN_DECISION_FACTS.join(' | ')}`,
+      );
+    }
+
+    // A16 — o gate do roteiro e2e, em risco sensivel.
+    const fechadasSensiveis = facts.filter(
+      (fact): fact is Extract<EsteiraFact, { type: 'phase.completed' }> =>
+        fact.type === 'phase.completed' &&
+        fact.outcome === 'done' &&
+        fact.risk === 'sensivel' &&
+        PHASES_REQUIRING_E2E_WHEN_SENSITIVE.includes(fact.phase),
+    );
+
+    if (fechadasSensiveis.length > 0) {
+      const e2e = facts.filter(
+        (fact): fact is Extract<EsteiraFact, { type: 'verification.recorded' }> =>
+          fact.type === 'verification.recorded' && fact.verification_kind === 'e2e-manual',
+      );
+
+      if (e2e.length === 0) {
+        c.add(
+          'sensitive_without_e2e',
+          'facts',
+          `a "${fechadasSensiveis[0].phase}" run classified as "sensivel" must declare an "e2e-manual" verification`,
+        );
+      }
+
+      // Aprovacao humana por cima de um roteiro que ninguem rodou e exatamente
+      // o gate de EXISTENCIA que deixou a fase fechar verde. O e2e pode ficar
+      // pendente; o que nao pode e o aval sair junto.
+      if (e2e.some((fact) => fact.state === 'pending')) {
+        const aprovacao = facts.some(
+          (fact) =>
+            fact.type === 'gate.confirmed' ||
+            (fact.type === 'verification.recorded' && fact.verification_kind === 'review' && fact.state === 'passed'),
+        );
+        if (aprovacao) {
+          c.add(
+            'approval_before_e2e',
+            'facts',
+            'human approval cannot be recorded while the "e2e-manual" verification is still pending in a "sensivel" run',
+          );
+        }
       }
     }
 
     // D-4 com dente: a fase que declara o ciclo ENCERRADO precisa da evidencia
     // que o encerra. Sem isto, "Concluído" na tela seria palavra sem lastro —
     // a inverdade de 03/08 na direcao contraria.
-    if (PHASES_REQUIRING_PASSED_VERIFICATION.includes(run.phase)) {
-      const declaredDone = facts.some((fact) => fact.type === 'phase.completed' && fact.outcome === 'done');
+    for (const phase of donePhases) {
+      if (!PHASES_REQUIRING_PASSED_VERIFICATION.includes(phase)) continue;
       const passed = facts.some((fact) => fact.type === 'verification.recorded' && fact.state === 'passed');
-      if (declaredDone && !passed) {
+      if (!passed) {
         c.add(
           'done_without_passed_verification',
           'facts',
-          `a "${run.phase}" run completed as "done" must declare a "verification.recorded" fact with state "passed"`,
+          `a "${phase}" run completed as "done" must declare a "verification.recorded" fact with state "passed"`,
         );
       }
     }
@@ -651,7 +1133,7 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
 
   return {
     ok: true,
-    result: { contract_version: contractVersion ?? CONTRACT_VERSION, kind: 'esteira.result', run, actor, subject, workspace, facts },
+    result: { contract_version: contractVersion ?? CONTRACT_VERSION, kind: kind ?? 'esteira.result', run, actor, subject, workspace, facts },
   };
 }
 

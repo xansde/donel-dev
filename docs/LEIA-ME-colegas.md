@@ -133,12 +133,11 @@ Duas coisas que valem saber para não estranhar:
 ### Suas contas são suas
 
 O app **não vem com conta nenhuma configurada** — não há como: o instalador
-carrega só o programa, e a lista de contas é montada lendo a **sua** máquina
-(`~/.claude` e `~/.claude-profiles`) a cada abertura. Você começa com um único
-perfil, **Principal**, que é o seu `~/.claude` de sempre — a mesma conta que já
-usa no terminal. Se quiser mais de uma conta na mesma máquina, o app cria perfis
-isolados por `CLAUDE_CONFIG_DIR`; o `/login` de cada um continua sendo ato seu,
-no terminal.
+carrega só o programa. A tela de Contas nasce **inerte**, sem provedor
+conectado, até você mesmo conectar um (pool da Seazone ou suas próprias
+contas). Sem provedor conectado, o app funciona exatamente como o terminal
+de sempre, na sua conta já logada em `~/.claude` — o `/login` continua
+sendo ato seu, sempre dentro do terminal.
 
 ---
 
@@ -146,7 +145,7 @@ no terminal.
 
 **Sempre o mesmo link desta pasta.** Baixe o `Donel-Dev-Setup.exe` de novo e
 execute — ele substitui a instalação anterior no lugar. Não precisa
-desinstalar nada, e suas configurações (projetos, perfis, nomes de sessão)
+desinstalar nada, e suas configurações (projetos, contas, nomes de sessão)
 continuam onde estavam.
 
 O app **não se atualiza sozinho** ainda. Quando sair versão nova, o Alexandre

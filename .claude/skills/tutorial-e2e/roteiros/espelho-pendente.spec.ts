@@ -200,6 +200,13 @@ function emitirResultadoDaSkill(esteiraRoot: string): void {
         from: { entity: 'discovery', id: discoveryId },
         to: { entity: 'plan', id: 'pln-espelho-01' },
       },
+      // A18 — discovery concluída fecha com o que alguém disse.
+      {
+        type: 'decision.recorded',
+        subject: { entity: 'discovery', id: discoveryId },
+        decision: 'instrumentar antes de mexer no consumo',
+        confirmed_by: 'dono do repo',
+      },
       {
         type: 'phase.completed',
         subject: { entity: 'discovery', id: discoveryId },

@@ -19,9 +19,17 @@ import { LIFECYCLE_BY_ITEM_TYPE, MACRO_STAGES } from '../../../shared/esteira/st
 import { esteiraPhaseCommand, LOCK_WORD, lockStateOf, noLockDispatchHint, type LockState } from './esteiraSession';
 import type {
   ArtifactPointer,
+  DecisionSnapshot,
+  DiscardedItemTombstone,
   DiscoverySnapshot,
   EntityId,
+  EntityKind,
+  GateConfirmationSnapshot,
+  HumanReviewKind,
+  HumanReviewSnapshot,
+  HumanReviewState,
   IngestErrorSnapshot,
+  IngestRecovery,
   LifecycleKind,
   LockRecord,
   MacroStage,
@@ -390,6 +398,27 @@ export function discardHint(item: WorkItemSnapshot, lock: LockRecord | null = nu
   return `${origem} O item sai do card; o fato de ele ter existido fica no histórico.`;
 }
 
+// ---------------------------------------------------------------------------
+// E2 — a lápide: o item saiu, mas o card ainda responde "por que ele sumiu?"
+// ---------------------------------------------------------------------------
+
+export interface TombstoneView {
+  readonly key: string;
+  /** "«Instrumentar a fila» · spike · descartado em 05/08 14:22" */
+  readonly text: string;
+  /** Por que saiu, quando quem descartou disse. `null` = ninguém disse — o card não inventa. */
+  readonly reason: string | null;
+}
+
+/** As lápides do card, cada uma com a frase pronta — a tela só posiciona. */
+export function tombstoneLines(card: CardView): readonly TombstoneView[] {
+  return card.tombstones.map((tombstone) => ({
+    key: `work_item:${tombstone.id}`,
+    text: `${tombstone.title} · ${tombstone.itemType} · descartado em ${formatTimestamp(tombstone.discardedAt)}`,
+    reason: tombstone.reason,
+  }));
+}
+
 /** Uma nota do card, já sabendo dizer sobre o que ela é. */
 export interface NoteView {
   readonly text: string;
@@ -421,6 +450,8 @@ export interface CardView {
   /** Todas as sessões do card: é delas que sai o "alguém assumiu?" de cada fase. */
   readonly sessions: readonly SessionSnapshot[];
   readonly ingestErrors: readonly IngestErrorSnapshot[];
+  /** A6 — os erros deste card que foram SUPERADOS. O `ingest.failed` continua no log; isto é o que diz que ele deixou de valer. */
+  readonly ingestRecoveries: readonly IngestRecovery[];
   /** D-12 — o que o board ainda não recebeu. Nunca bloqueia nada; só precisa ser visível. */
   readonly mirrorQueue: readonly MirrorQueueEntry[];
   readonly notes: readonly NoteView[];
@@ -433,6 +464,14 @@ export interface CardView {
   readonly verifications: readonly VerificationSnapshot[];
   /** D-8 — "cadê o artefato?" tem resposta única, e ela mora no store. */
   readonly artifacts: readonly ArtifactPointer[];
+  /** A9 — o que uma pessoa confirmou, condição por condição. */
+  readonly gates: readonly GateConfirmationSnapshot[];
+  /** A18 — o que ficou decidido, com quem decidiu. */
+  readonly decisions: readonly DecisionSnapshot[];
+  /** A10/A19 — o que sobrou para uma pessoa conferir ou fazer. */
+  readonly humanReviews: readonly HumanReviewSnapshot[];
+  /** E2 — as lápides dos itens descartados deste card: o que eram, quando e por quê saíram. */
+  readonly tombstones: readonly DiscardedItemTombstone[];
 }
 
 /**
@@ -470,8 +509,13 @@ export function lockSubjectLabel(card: CardView, lock: LockRecord): string {
   return item === undefined ? 'um item que não está mais no card' : `o item «${item.title}»`;
 }
 
-export function lockView(card: CardView): LockView | null {
-  const lock = card.lock;
+/**
+ * `lock` é opcional (default `card.lock`, a primeira do card) — C1 (batch N5)
+ * o pede explícito, porque com disparo por item (B2 da 010) um card pode ter
+ * mais de uma trava viva, e o mapa precisa da linha honesta de UMA delas, não
+ * necessariamente a primeira.
+ */
+export function lockView(card: CardView, lock: LockRecord | null = card.lock): LockView | null {
   if (lock === null) return null;
 
   const holder = lock.holderKind === 'skill' ? 'uma skill' : 'o app';
@@ -492,14 +536,20 @@ export function lockView(card: CardView): LockView | null {
   }
 
   if (state === 'session-open') {
-    // Abrir a aba NÃO é começar a fase. O app escreveu o comando e parou ali —
-    // enviar é gesto humano (invariante 2), e o app não tem como saber se você
-    // já o fez. Chamar isto de "em andamento" era o defeito de 03/08 pela
-    // quarta porta: os prints 07 e 10 do roteiro se desmentiam na mesma rodada.
+    // Abrir a aba NÃO é começar a fase — quem começa é a skill, ao declarar a
+    // trava. Chamar isto de "em andamento" era o defeito de 03/08 pela quarta
+    // porta: os prints 07 e 10 do roteiro se desmentiam na mesma rodada.
+    //
+    // B5 (05/08): o app aperta o próprio Enter assim que o terminal aceita
+    // entrada (`autoStartWriteSteps`, `esteiraSession.ts` — até 11/08
+    // `withAutoEnter`) — enviar deixou de ser gesto exclusivamente humano.
+    // Até 05/08 esta linha dizia "o app não sabe
+    // se você já o enviou"; achado da captura `auto-start-e-redisparo-recusado`:
+    // a frase continuou prometendo uma incerteza que o app não tinha mais.
     return {
       state,
       title: 'Sessão aberta',
-      line: `${desde} A aba está aberta com o comando da fase escrito; o app não sabe se você já o enviou.`,
+      line: `${desde} A aba está aberta com o comando da fase escrito; o app aperta o Enter sozinho, assim que o terminal aceitar entrada.`,
       nextStep: null,
     };
   }
@@ -550,10 +600,16 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
 
   const plans = snapshot.plans.filter((plan) => plan.discoveryId === discovery.id);
   const items = snapshot.workItems.filter((item) => item.discoveryId === discovery.id);
+  // E2 — o item descartado continua PERTENCENDO ao card: sem ele em `owned`,
+  // toda nota/fase/sessão que apontava para ele viraria órfã no instante em
+  // que `work_item.discarded` o tirasse de `items` — o mesmo silêncio que o
+  // descarte prometia NÃO fazer.
+  const tombstones = snapshot.tombstones.filter((tombstone) => tombstone.discoveryId === discovery.id);
   const owned = new Set<string>([
     `discovery:${discovery.id}`,
     ...plans.map((plan) => `plan:${plan.id}`),
     ...items.map((item) => `work_item:${item.id}`),
+    ...tombstones.map((tombstone) => `work_item:${tombstone.id}`),
   ]);
   const belongs = (subject: { entity: string; id: string }): boolean => owned.has(`${subject.entity}:${subject.id}`);
   const locks = snapshot.locks.filter((lock) => belongs(lock.subject));
@@ -572,17 +628,22 @@ export function cardView(snapshot: StoreSnapshot, discoveryId: string): CardView
     openSession: [...snapshot.sessions].reverse().find((session) => belongs(session.subject) && session.endedAt === null) ?? null,
     sessions: snapshot.sessions.filter((session) => belongs(session.subject)),
     ingestErrors: snapshot.ingestErrors.filter((error) => error.subject !== null && belongs(error.subject)),
+    ingestRecoveries: snapshot.ingestRecoveries.filter((recovery) => recovery.subject !== null && belongs(recovery.subject)),
     mirrorQueue: snapshot.mirrorQueue.filter((entry) => belongs(entry.subject)),
     verifications: snapshot.verifications.filter((entry) => belongs(entry.subject)),
     artifacts: snapshot.artifacts.filter((entry) => belongs(entry.owner)),
+    gates: snapshot.gates.filter((entry) => belongs(entry.subject)),
+    decisions: snapshot.decisions.filter((entry) => belongs(entry.subject)),
+    humanReviews: snapshot.humanReviews.filter((entry) => belongs(entry.subject)),
     notes: snapshot.notes
       .filter((note) => belongs(note.subject))
       .map((note) => ({
         text: note.text,
         at: note.at,
         subject: note.subject,
-        about: aboutSubject(note.subject, plans, items),
+        about: aboutSubject(note.subject, plans, items, tombstones),
       })),
+    tombstones,
   };
 }
 
@@ -707,15 +768,28 @@ export type PhasePresence =
   /** Fase iniciada sem sessão do app: quem afirmou o início foi a skill, pelo outbox. */
   | 'declared';
 
-/** Como se chama, em português, o assunto de uma nota deste card. */
-function aboutSubject(subject: EntityId, plans: readonly PlanLike[], items: readonly WorkItemSnapshot[]): string {
+/**
+ * Como se chama, em português, o assunto de uma nota deste card.
+ *
+ * E2 — `tombstones` é o que impede uma nota sobre um item DESCARTADO de virar
+ * "um item" genérico: o item saiu de `workItems`, mas a lápide sabe o título,
+ * e a nota continua contando A HISTÓRIA DO DESCARTE, não um fantasma sem nome.
+ */
+function aboutSubject(
+  subject: EntityId,
+  plans: readonly PlanLike[],
+  items: readonly WorkItemSnapshot[],
+  tombstones: readonly DiscardedItemTombstone[] = [],
+): string {
   if (subject.entity === 'discovery') return 'o card';
   if (subject.entity === 'plan') {
     const plan = plans.find((entry) => entry.id === subject.id);
     return plan === undefined ? 'um plano' : `o plano «${plan.title}»`;
   }
   const item = items.find((entry) => entry.id === subject.id);
-  return item === undefined ? 'um item' : `o item «${item.title}»`;
+  if (item !== undefined) return `o item «${item.title}»`;
+  const tombstone = tombstones.find((entry) => entry.id === subject.id);
+  return tombstone === undefined ? 'um item' : `o item «${tombstone.title}» (descartado)`;
 }
 
 interface PlanLike {
@@ -835,6 +909,14 @@ const VERIFICATION_TEXT: Readonly<Record<VerificationKind, Readonly<Record<Verif
     passed: 'conclusão registrada',
     failed: 'conclusão registrada: não deu certo',
   },
+  // A16 — as três frases dizem o que o gate antigo não dizia. Ele conferia que
+  // o arquivo do roteiro estava na branch; "escrito" e "rodado" viraram a mesma
+  // coisa, e foi assim que uma fase fechou verde sem ninguém ter validado.
+  'e2e-manual': {
+    pending: 'roteiro e2e escrito, esperando você rodar',
+    passed: 'roteiro e2e rodado por você: passou',
+    failed: 'roteiro e2e rodado por você: falhou',
+  },
 };
 
 export interface VerificationLineView {
@@ -844,6 +926,42 @@ export interface VerificationLineView {
   readonly detail: string | null;
   readonly failed: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// A15 — o canal da entrega
+// ---------------------------------------------------------------------------
+//
+// Num repo com escada alfa→beta→stable, "concluído" sem destino se lê como
+// "está na main". O card precisa dizer ONDE a coisa chegou — e não pode
+// deduzir: o apelido do canal é vocabulário do repo, não do contrato. Se a
+// fase declarou só a base do PR, a frase diz a base; se declarou o canal
+// também, os dois aparecem. Nenhum dos dois se inventa a partir do outro.
+
+/**
+ * Onde a entrega chegou, se alguém disse. `null` quando nenhuma fase declarou
+ * base nem canal — e aí a tela não afirma nada, que é o ponto.
+ */
+export function deliveryLine(card: CardView, subject: EntityId | null = null): string | null {
+  const escopo = <T extends { readonly subject: EntityId }>(entries: readonly T[]): readonly T[] =>
+    subject === null ? entries : entries.filter((entry) => entry.subject.entity === subject.entity && entry.subject.id === subject.id);
+
+  // Achado da captura tutorial-e2e (batch n1, 2026-08-05): havia um segundo
+  // `find` de fallback aqui, sem exigir `state === 'passed'` — um PR 'pending'
+  // com `base` já bastava para "Entregue em X.", lado a lado com "PR aberto,
+  // ainda não verificado" na mesma tela. "Chegou" é o que esta função promete
+  // (ver docstring); só um PR PASSADO chegou.
+  const base = escopo(card.verifications).find((entry) => entry.verificationKind === 'pull-request' && entry.state === 'passed' && entry.base)?.base ?? null;
+
+  const channel = escopo(card.phases).find((phase) => phase.channel !== null)?.channel ?? null;
+
+  if (base === null && channel === null) return null;
+  if (base === null) return `Entregue no canal ${channel}.`;
+  if (channel === null) return `Entregue em ${base}.`;
+  return `Entregue em ${base} (${channel}).`;
+}
+
+export const DELIVERY_UNKNOWN_NOTE =
+  'Nenhuma fase declarou o destino da entrega. Num repo com escada de canais, “concluído” sozinho não diz se chegou ao canal fechado.';
 
 /**
  * `subject` filtra por assunto — é o que o painel de detalhe do mapa (B6)
@@ -862,6 +980,141 @@ export function verificationLines(card: CardView, subject: EntityId | null = nul
     failed: verification.state === 'failed',
   }));
 }
+
+// ---------------------------------------------------------------------------
+// A9 — o que uma pessoa confirmou
+// ---------------------------------------------------------------------------
+//
+// A confirmação de gate viajava como blockquote no `tasks.md`: gate composto
+// virava UMA linha, e meia-confirmação não cabia nela. Agora cada condição tem
+// seu fato no store — e o card mostra uma linha por condição, com quem
+// confirmou. A frase nasce aqui; a tela só posiciona.
+
+export interface GateLineView {
+  readonly key: string;
+  /** "«o repo alvo é atlas» — confirmado por dono do repo, em 03/08 12:22" */
+  readonly text: string;
+  readonly subject: EntityId;
+}
+
+/** `subject` filtra por assunto — o painel de detalhe do mapa precisa de um nó por vez. */
+export function gateLines(card: CardView, subject: EntityId | null = null): readonly GateLineView[] {
+  const escopo =
+    subject === null
+      ? card.gates
+      : card.gates.filter((gate) => gate.subject.entity === subject.entity && gate.subject.id === subject.id);
+
+  return escopo.map((gate) => ({
+    key: `${gate.subject.entity}:${gate.subject.id}:${gate.condition}`,
+    text: `«${gate.condition}» — confirmado por ${gate.confirmedBy}, em ${formatTimestamp(gate.confirmedAt)}`,
+    subject: gate.subject,
+  }));
+}
+
+/**
+ * A18 — o que ficou decidido, com quem decidiu. O motivo entra na MESMA frase
+ * quando a fase o registrou: nomear a decisão e esconder o porquê é contar a
+ * conversa pela metade, que é o mesmo defeito do plano sem resumo (B4).
+ */
+export function decisionLines(card: CardView, subject: EntityId | null = null): readonly GateLineView[] {
+  const escopo =
+    subject === null
+      ? card.decisions
+      : card.decisions.filter((entry) => entry.subject.entity === subject.entity && entry.subject.id === subject.id);
+
+  return escopo.map((decision) => ({
+    key: `${decision.subject.entity}:${decision.subject.id}:${decision.decision}`,
+    text: decision.rationale
+      ? `«${decision.decision}» — decidido por ${decision.confirmedBy}. Motivo: ${decision.rationale}`
+      : `«${decision.decision}» — decidido por ${decision.confirmedBy}`,
+    subject: decision.subject,
+  }));
+}
+
+/**
+ * O bloco inteiro do que GENTE disse sobre este card: gates confirmados e
+ * decisões tomadas, na mesma lista. Cada frase continua nascendo da sua função
+ * — o que se junta aqui são as linhas prontas, nunca a redação delas.
+ */
+export function humanDecisionLines(card: CardView, subject: EntityId | null = null): readonly GateLineView[] {
+  return [...gateLines(card, subject), ...decisionLines(card, subject)];
+}
+
+export const GATES_EMPTY_NOTE =
+  'Nenhuma condição confirmada por gente. Não é pendência: só quer dizer que nenhuma fase declarou ter perguntado.';
+
+// ---------------------------------------------------------------------------
+// A10 + A19 — o que sobrou para VOCÊ
+// ---------------------------------------------------------------------------
+//
+// Antes isto viajava como texto no `summary` da fase: uma frase corrida com
+// três coisas dentro, que ninguém lê como lista e ninguém marca como feita. E
+// no `summary` não cabe a distinção que importa — "confira o que eu fiz" e
+// "faça o que eu não podia fazer" são pedidos diferentes.
+//
+// A19: item `action` pendente NÃO é falha da fase. Falha é o que a fase deveria
+// ter feito e não fez; esperar por gente é um estado legítimo, e pintá-lo de
+// vermelho ensina a ignorar o vermelho.
+
+/** O verbo de cada natureza, num lugar só. */
+const REVIEW_KIND_VERB: Readonly<Record<HumanReviewKind, string>> = {
+  review: 'Confira',
+  action: 'Você precisa',
+};
+
+/** A palavra de cada estado. Nenhuma delas é "pendência" para o que ainda não foi pedido. */
+const REVIEW_STATE_WORD: Readonly<Record<HumanReviewState, string>> = {
+  pending: 'aguardando você',
+  done: 'respondido',
+  waived: 'dispensado',
+};
+
+export interface ReviewLineView {
+  readonly key: string;
+  /** "Confira: o teste cobre lote vazio — aguardando você" */
+  readonly text: string;
+  readonly detail: string | null;
+  readonly kind: HumanReviewKind;
+  readonly state: HumanReviewState;
+  /** A19 — o tom NUNCA é de erro: esperar por gente não é falha da fase. */
+  readonly tone: SignalTone;
+  readonly phase: string;
+}
+
+/**
+ * A lista da revisão humana, uma linha por item. `subject` filtra por assunto,
+ * como as demais listas do card.
+ */
+export function reviewChecklist(card: CardView, subject: EntityId | null = null): readonly ReviewLineView[] {
+  const escopo =
+    subject === null
+      ? card.humanReviews
+      : card.humanReviews.filter((entry) => entry.subject.entity === subject.entity && entry.subject.id === subject.id);
+
+  return escopo.flatMap((review) =>
+    review.checklist.map((entry, index) => ({
+      key: `${review.subject.entity}:${review.subject.id}:${review.phase}:${index}`,
+      text: `${REVIEW_KIND_VERB[entry.kind]}: ${entry.item} — ${REVIEW_STATE_WORD[entry.state]}`,
+      detail: entry.detail,
+      kind: entry.kind,
+      state: entry.state,
+      // Aguardando é `attention` (há algo a fazer), nunca `error` (algo deu
+      // errado). A19 mora nesta linha.
+      tone: entry.state === 'pending' ? ('attention' as const) : ('neutral' as const),
+      phase: review.phase,
+    })),
+  );
+}
+
+/** O título do bloco, com o que falta contado — a lista abaixo mostra tudo o que ele contou. */
+export function reviewChecklistTitle(lines: readonly ReviewLineView[]): string {
+  const pendentes = lines.filter((line) => line.state === 'pending').length;
+  if (lines.length === 0) return 'Revisão da fase';
+  return `Revisão da fase (${contagem(pendentes, 'item aguardando você', 'itens aguardando você', 'nada aguardando você')})`;
+}
+
+export const REVIEW_EMPTY_NOTE =
+  'Nenhuma fase deixou lista de revisão. Não é pendência: quer dizer que nenhuma delas declarou ter deixado algo para você.';
 
 /**
  * A frase de UMA passagem de fase. Cada estado tem palavra própria — e nenhuma
@@ -946,6 +1199,33 @@ export interface PhaseLineView {
 }
 
 /**
+ * As sessões de UM assunto+fase, na ordem em que existiram. Era um filtro
+ * inline dentro de `phaseLines` até o B1 (batch N5) precisar da MESMA fatia
+ * fora dela — "Retomar" precisa da cadeia inteira daquela fase para achar a
+ * última sessão (`esteiraSession.lastSessionOfChain`). Uma origem só: duas
+ * cópias do mesmo filtro divergem no primeiro conserto.
+ */
+export function phaseSessions(card: CardView, subject: EntityId, phase: string): readonly SessionSnapshot[] {
+  return card.sessions.filter(
+    (entry) => entry.phase === phase && entry.subject.entity === subject.entity && entry.subject.id === subject.id,
+  );
+}
+
+/**
+ * B2 (batch N5) — a sessão VIVA de um assunto (`endedAt === null`), quando
+ * existe. É o único fato que decide se navegar o mapa até este nó alterna a
+ * aba ativa: nó sem sessão viva nunca rouba foco, e sessão fechada nunca é
+ * alvo — para isso existe o retomar explícito do B1.
+ */
+export function liveSessionOf(card: CardView, subject: EntityId): SessionSnapshot | null {
+  return (
+    card.sessions.find(
+      (entry) => entry.subject.entity === subject.entity && entry.subject.id === subject.id && entry.endedAt === null,
+    ) ?? null
+  );
+}
+
+/**
  * As fases do card, cada uma com a frase certa. `subject` filtra por assunto —
  * é o que a trilha do mapa precisa (um nó de cada vez) sem que exista uma
  * segunda implementação da regra de presença.
@@ -957,21 +1237,22 @@ export function phaseLines(card: CardView, subject: EntityId | null = null): rea
       : card.phases.filter((phase) => phase.subject.entity === subject.entity && phase.subject.id === subject.id);
 
   return doCard.map((phase) => {
-    const doAssunto = card.sessions.filter(
-      (entry) =>
-        entry.phase === phase.phase && entry.subject.entity === phase.subject.entity && entry.subject.id === phase.subject.id,
-    );
+    const doAssunto = phaseSessions(card, phase.subject, phase.phase);
     const aberta = doAssunto.find((entry) => entry.endedAt === null);
     // Sessão aberta manda: assumida ou só preparada. Sem sessão aberta, mas com
     // sessão que já existiu, a fase ficou pelo meio — e é isso que a tela diz.
     // Sem sessão nenhuma (fase vinda só da ingestão), a frase não depende disso.
     const presence: PhasePresence =
       aberta !== undefined ? (aberta.claimed ? 'claimed' : 'prepared') : doAssunto.length > 0 ? 'interrupted' : 'declared';
+    // A7 — por que a interrupção aconteceu, quando alguém (a reconciliação de
+    // boot, ou o próprio `endSession`) declarou. A sessão mais RECENTE da
+    // cadeia é a que tem a palavra sobre esta interrupção especificamente.
+    const interruptedReason = presence === 'interrupted' ? (doAssunto.at(-1)?.endReason ?? null) : null;
     return {
       key: `${phase.subject.entity}:${phase.subject.id}:${phase.phase}`,
       text: phaseLine(phase, presence),
       failed: phase.failure !== null,
-      detail: phase.failure?.message ?? null,
+      detail: phase.failure?.message ?? interruptedReason,
       state: phaseTrailState(phase, presence),
       phase,
       // A marca vai AO LADO da frase, não dentro dela: a frase descreve o
@@ -1027,6 +1308,16 @@ const PHASE_CATALOG: readonly PhaseSpec[] = [
     missing:
       'Nenhum plano declarado ainda. A fase Plano detalha um plano que já existe — quem declara o primeiro é o Discovery.',
   },
+  // E1 (05/08) — Design roda ANTES de Implementar: mockup e diagrama de
+  // arquitetura se veem antes de codar, não depois (F11). `run.phase`
+  // continua string livre ([P-4]) — a linha nova é só oferta da tela.
+  {
+    phase: 'design',
+    label: 'Design',
+    runsOn: 'work_item',
+    missing:
+      'Nenhum item de trabalho ainda. Design produz o mockup e o diagrama de arquitetura de um item antes de implementar, e item nasce pela skill (D-16) — o app não tem formulário de criação.',
+  },
   {
     phase: 'implementar',
     label: 'Implementar',
@@ -1034,23 +1325,19 @@ const PHASE_CATALOG: readonly PhaseSpec[] = [
     missing:
       'Nenhum item de trabalho ainda. Implementar roda sobre um item, e item nasce pela skill (D-16) — o app não tem formulário de criação.',
   },
+  // E5 (05/08) — Validar e Documentar viram UMA fase: a fronteira que
+  // justificaria fase separada (gate humano · olho novo · orçamento de
+  // contexto) não separa as duas — Documentar escreve com o que Validar
+  // acabou de construir, na mesma sessão. A fase composta declara os DOIS
+  // `phase.completed` (A22, suporte a múltiplos por run já no contrato); o
+  // catálogo, que é oferta da tela e não enum do contrato ([P-4]), mostra
+  // uma linha só. `run.phase` continua "validar" — só o rótulo muda.
   {
     phase: 'validar',
-    label: 'Validar',
+    label: 'Validar + Documentar',
     runsOn: 'work_item',
     missing:
-      'Nenhum item de trabalho ainda. Validar roda sobre um item, e item nasce pela skill (D-16) — o app não tem formulário de criação.',
-  },
-  // As duas fases que fecham o ciclo entraram com o B7 (skill 3.0). O handoff
-  // do B2 pediu exatamente isto: uma linha por fase, com a frase de "por que
-  // não dá agora" junto — o catálogo continua oferta da tela, não enum do
-  // contrato ([P-4]).
-  {
-    phase: 'documentar',
-    label: 'Documentar',
-    runsOn: 'work_item',
-    missing:
-      'Nenhum item de trabalho ainda. Documentar registra o artefato de um item (D-8) — sem item, não há o que apontar; item nasce pela skill (D-16).',
+      'Nenhum item de trabalho ainda. Validar roda a verificação e Documentar registra o artefato (D-8) sobre um item, e item nasce pela skill (D-16) — o app não tem formulário de criação.',
   },
   {
     phase: 'concluir',
@@ -1293,11 +1580,64 @@ export function scanOutcomeMessage(throughSeqBefore: number | null, rejected: nu
 }
 
 /** Um erro de ingestão, em português, sem esconder o caminho do arquivo. */
+/**
+ * A4 — os motivos de recusa que precisam de frase própria, porque o código
+ * sozinho não diz o que fazer a seguir. O caso que originou a lista: um run
+ * regravado com outro desfecho aparecia como nada; agora aparece com o nome do
+ * defeito E com a saída (complemento ou revisão).
+ */
+const INGEST_ISSUE_TEXT: Readonly<Partial<Record<ContractIssueCode, string>>> = {
+  run_changed_after_ingest:
+    'este run já tinha sido ingerido com outro conteúdo — para acrescentar fatos use um complemento, para rever o desfecho use uma revisão',
+  complement_without_anchor: 'complemento sem dizer a que run ele se ancora',
+  complement_without_kind: 'só um complemento pode declarar “complements_run_id”',
+  complement_redeclares_phase: 'complemento não fecha a fase de novo — ele acrescenta fatos ao run que a fechou',
+  lineage_suffix_mismatch: 'o nome do run não traz o sufixo do parentesco que ele declara',
+};
+
 export function ingestErrorLine(error: IngestErrorSnapshot): string {
   const first = error.issues[0];
-  const detail = first === undefined ? 'motivo não registrado' : `${first.code}${first.path ? ` em ${first.path}` : ''}`;
+  if (first === undefined) return 'motivo não registrado';
+  const explained = INGEST_ISSUE_TEXT[first.code as ContractIssueCode];
+  const detail = explained ?? `${first.code}${first.path ? ` em ${first.path}` : ''}`;
   const more = error.issues.length > 1 ? ` (+${error.issues.length - 1})` : '';
   return `${detail}${more}`;
+}
+
+/** Como cada entidade se chama em português, no singular — o vocabulário do custo (A5). */
+const ENTITY_LABEL: Readonly<Record<EntityKind, string>> = {
+  discovery: 'o card',
+  plan: 'o plano',
+  work_item: 'o item',
+};
+
+/**
+ * A5 — o CUSTO de um erro de ingestão: o que ESTE arquivo declararia, se
+ * entrasse. "Campo desconhecido em facts[3].fanout" não diz o que se perde; o
+ * dono viveu isso como "não consigo abrir as tasks" — porque os
+ * `work_item.recorded` que o arquivo carregava nunca chegaram a existir.
+ *
+ * `null` quando o documento não declarava nenhuma entidade nova (ex.: JSON
+ * truncado antes de `facts`, ou um erro só sobre fatos que não criam
+ * entidade) — nesse caso não há custo de "algo deixou de existir" a dizer.
+ */
+export function ingestErrorCostLine(error: IngestErrorSnapshot): string | null {
+  const named = error.declaredFacts.filter((fact): fact is typeof fact & { entity: EntityKind } => fact.entity !== null);
+  if (named.length === 0) return null;
+
+  const pieces = named.map((fact) => (fact.title ? `${ENTITY_LABEL[fact.entity]} «${fact.title}»` : `${ENTITY_LABEL[fact.entity]} ${fact.id ?? '(sem id)'}`));
+  const outros = error.declaredFacts.length - named.length;
+  const resto = outros > 0 ? `, e mais ${outros} fato${outros === 1 ? '' : 's'}` : '';
+  return `Sem este arquivo não existe: ${pieces.join(', ')}${resto}.`;
+}
+
+/**
+ * A6 — a recuperação de um erro superado. Não é "erro sumiu": é um FATO
+ * próprio, com o que foi sanado e como — o mesmo rigor que faz o erro
+ * original nunca desaparecer do log.
+ */
+export function ingestRecoveryLine(recovery: IngestRecovery): string {
+  return `Voltou a ler: ${recovery.how}.`;
 }
 
 /** O que a última varredura do outbox encontrou — os três desfechos possíveis. */

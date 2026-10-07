@@ -128,6 +128,7 @@ describe('discardHint — a frase do descarte nao promete o que o app recusa', (
     acquiredAt: '2026-08-04T12:00:00.000Z',
     cliSessionId: null,
     mirroredLabel: null,
+    resource: null,
   };
 
   it('sem trava, o descarte e um gesto so — D-16 inteiro', () => {

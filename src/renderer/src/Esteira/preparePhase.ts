@@ -21,11 +21,15 @@ import {
   esteiraPhaseCommand,
   esteiraTabName,
   lockStateOf,
+  noRepoPreparedMessage,
+  phaseDoneRefusedMessage,
   preparedMessage,
+  repoRefusalMessage,
   resolveSessionCwd,
+  resourceBusyRefusedMessage,
+  sessionActiveRefusedMessage,
   type EsteiraSessionRequest,
   type KnownProject,
-  type SessionOpenOutcome,
 } from './esteiraSession';
 import { formatTimestamp, type CardView, type DispatchTargetView } from './esteiraView';
 
@@ -47,7 +51,8 @@ export interface PreparePhaseResult {
   readonly ok: boolean;
   /** O que dizer na tela. Nunca vazio: disparo mudo é o que a spec 010 extingue. */
   readonly message: string;
-  readonly state: EsteiraSnapshotDto;
+  /** O estado depois do gesto — `null` quando o gesto foi recusado sem tocar no histórico. */
+  readonly state: EsteiraSnapshotDto | null;
 }
 
 export async function preparePhase(input: PreparePhaseInput, deps: PreparePhaseDeps): Promise<PreparePhaseResult> {
@@ -58,6 +63,31 @@ export async function preparePhase(input: PreparePhaseInput, deps: PreparePhaseD
   // (B2), não o do card: a fase de um item roda no repo do item, ou no herdado.
   const resolved = resolveSessionCwd(target.targetRepo, projects);
 
+  // Emenda de 06/08 — o repo IMPOSSÍVEL encerra o gesto aqui, antes de qualquer
+  // escrita.
+  //
+  // Até então a ordem era a inversa: despachar (gravando o `run-input.json` e
+  // travando o card) e só depois olhar o resultado da resolução. O comentário
+  // que defendia isso dizia "travar o card e ficar calada seria pior" — e está
+  // certo sobre o silêncio, mas a escolha não era entre travar e calar. Um card
+  // travado por um trabalho que nunca começou é sujeira que exige um gesto de
+  // "Liberar trava" para desfazer, e foi exatamente o que o dogfooding produziu:
+  // o card "Diário de Obra" preso desde 06/08 11:42, com contexto em disco que
+  // ninguém podia usar, porque o repo declarado (`"spotsys e api-spotsys"`) não
+  // existia como pasta nenhuma.
+  //
+  // **Só `unknown-repo` recusa** — e a distinção é de propósito. Card SEM repo é
+  // uma declaração legítima da spec ("discovery investiga um problema, não um
+  // repositório", `workspace` pode ser `null`): ele segue disparando, o contexto
+  // vai para o inbox e o operador roda a skill onde fizer sentido. Card com repo
+  // que não existe é ERRO de declaração, e erro não merece resíduo.
+  if (!resolved.ok && resolved.reason === 'unknown-repo') {
+    // `state: null` é literal: nada foi escrito, então não há estado novo para a
+    // tela aplicar. É diferente de devolver o snapshot antigo — este `null` é o
+    // que garante, no tipo, que a recusa não passou perto do histórico.
+    return { ok: false, state: null, message: repoRefusalMessage(phase, target.targetRepo, 'unknown-repo') };
+  }
+
   const dispatched = await deps.dispatch({
     phase,
     discoveryId: target.discoveryId,
@@ -66,39 +96,27 @@ export async function preparePhase(input: PreparePhaseInput, deps: PreparePhaseD
     workspace:
       target.targetRepo === null
         ? null
-        : {
-            target_repo: target.targetRepo,
-            repo_path: resolved.ok ? resolved.cwd : null,
-            worktree_path: null,
-            branch: null,
-          },
+        : { target_repo: target.targetRepo, repo_path: resolved.ok ? resolved.cwd : null, worktree_path: null, branch: null },
     continuesSessionId: null,
     handoffReason: null,
   });
 
   if (dispatched.ok) {
-    let outcome: SessionOpenOutcome;
-    if (resolved.ok) {
-      const tabName = esteiraTabName(phase, card.discovery.title);
-      deps.openSession({
-        sessionId: dispatched.sessionId,
-        phase,
-        cwd: resolved.cwd,
-        tabName,
-        command: esteiraPhaseCommand(phase, dispatched.inputPath),
-      });
-      outcome = { opened: true, tabName };
-    } else {
-      // Preparou e não abriu: a fase continua preparada e a tela diz o motivo,
-      // em vez de fingir que abriu. Travar o card e ficar calada seria pior.
-      outcome = { opened: false, reason: resolved.reason };
+    // Sem cwd não há aba: só resta o contexto em disco, e a frase diz isso.
+    if (!resolved.ok) {
+      return { ok: true, state: dispatched.state, message: noRepoPreparedMessage(phase, dispatched.inputPath) };
     }
 
-    return {
-      ok: true,
-      state: dispatched.state,
-      message: preparedMessage({ phase, targetRepo: target.targetRepo, inputPath: dispatched.inputPath, outcome }),
-    };
+    const tabName = esteiraTabName(phase, card.discovery.title);
+    deps.openSession({
+      sessionId: dispatched.sessionId,
+      phase,
+      cwd: resolved.cwd,
+      tabName,
+      command: esteiraPhaseCommand(phase, dispatched.inputPath),
+    });
+
+    return { ok: true, state: dispatched.state, message: preparedMessage({ phase, tabName }) };
   }
 
   if (dispatched.reason === 'locked') {
@@ -112,6 +130,50 @@ export async function preparePhase(input: PreparePhaseInput, deps: PreparePhaseD
         lockStateOf(dispatched.lock.holderKind, dispatched.lock.cliSessionId !== null),
         dispatched.lock.phase,
         formatTimestamp(dispatched.lock.acquiredAt),
+      ),
+    };
+  }
+
+  if (dispatched.reason === 'resource-busy') {
+    // A8/A20 — o repo (às vezes a branch) que esta fase tocaria já está
+    // ocupado por OUTRO assunto (irmão): a trava por assunto (`locked`,
+    // acima) nunca veria isto — é o buraco que a trava de recurso fecha.
+    const resource = dispatched.lock.resource;
+    return {
+      ok: false,
+      state: dispatched.state,
+      message: resourceBusyRefusedMessage(
+        resource?.targetRepo ?? target.targetRepo ?? 'este repositório',
+        resource?.branch ?? null,
+        dispatched.lock.phase,
+        formatTimestamp(dispatched.lock.acquiredAt),
+      ),
+    };
+  }
+
+  if (dispatched.reason === 'session-active') {
+    // B3 — a trava (`locked`, acima) já teria pego o caso comum; isto é a
+    // rede de segurança para quando ela caiu por outro caminho e a sessão
+    // anterior nunca terminou.
+    return {
+      ok: false,
+      state: dispatched.state,
+      message: sessionActiveRefusedMessage(dispatched.session.phase, formatTimestamp(dispatched.session.startedAt)),
+    };
+  }
+
+  if (dispatched.reason === 'phase-done') {
+    // A1 — a fase já concluiu sobre este MESMO assunto; redisparar exige
+    // `confirmReopen: true` explícito (o gesto de reabrir é do B1, fora deste
+    // batch — aqui só a recusa e a razão, para quem chamar decidir o que
+    // oferecer em cima dela).
+    return {
+      ok: false,
+      state: dispatched.state,
+      message: phaseDoneRefusedMessage(
+        dispatched.phase.phase,
+        dispatched.phase.outcome,
+        formatTimestamp(dispatched.phase.completedAt ?? dispatched.phase.startedAt),
       ),
     };
   }

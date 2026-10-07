@@ -16,8 +16,8 @@
 import { watch, type FSWatcher } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
-import { claimSession, dispatchPhase, endSession, releaseLock } from './esteira-dispatch';
-import { ingestOutbox } from './esteira-ingest';
+import { claimSession, dispatchPhase, endSession, reconcileOrphanedSessions, releaseLock } from './esteira-dispatch';
+import { ingestOutbox, revalidateIngestErrors } from './esteira-ingest';
 import { drainMirrorQueue, type BoardMirrorAdapter, type MirrorDrainSummary } from './esteira-mirror';
 import { openEsteiraStore, type EsteiraStore } from './esteira-store';
 import { MIRROR_DISABLED, type MirrorConfig } from '../shared/esteira/mirror/mirrorConfig';
@@ -37,6 +37,7 @@ import type {
   EsteiraSnapshotDto,
   ReleaseLockIpcInput,
   SeedIpcInput,
+  SetDiscoveryReposIpcInput,
   SetStageOverrideIpcInput,
   SetWorkItemStateIpcInput,
 } from '../shared/esteira/ipc';
@@ -82,6 +83,7 @@ export interface EsteiraService {
   releaseLock(input: ReleaseLockIpcInput): EsteiraSnapshotDto;
   /** D-13 — forca a macro etapa, ou volta ao calculo com `value: null`. */
   setStageOverride(input: SetStageOverrideIpcInput): EsteiraGestureDto;
+  setDiscoveryRepos(input: SetDiscoveryReposIpcInput): EsteiraGestureDto;
   setWorkItemState(input: SetWorkItemStateIpcInput): EsteiraGestureDto;
   discardWorkItem(input: DiscardWorkItemIpcInput): EsteiraGestureDto;
   addNote(input: AddNoteIpcInput): EsteiraGestureDto;
@@ -230,6 +232,22 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
   // Boot: o que a skill deixou com o app fechado entra agora.
   scanOutbox();
 
+  // A6 — revalida os erros AINDA pendentes depois da varredura acima (ela ja
+  // recupera sozinha todo path cujo arquivo continua no outbox e agora passa;
+  // isto cobre o outro desfecho — o arquivo nao existe mais).
+  const revalidated = revalidateIngestErrors(store);
+
+  // A7 — reconciliacao manifesto-sem-result: sessao que sobrou aberta de uma
+  // execucao ANTERIOR do app, sem o `result.json` ter aparecido no outbox.
+  // Depois da varredura acima, o que ficou e so o que de fato morreu.
+  const reconciledSessions = reconcileOrphanedSessions(store);
+
+  if (revalidated.recovered > 0 || reconciledSessions.reconciled > 0) {
+    store.persistSnapshot();
+    notify();
+    mirrorAfterChange();
+  }
+
   function openWatch(): void {
     if (disposed || watcher) return;
     try {
@@ -342,6 +360,10 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
       outboxDir: options.outboxDir,
       continuesSessionId: input.continuesSessionId,
       handoffReason: input.handoffReason,
+      model: input.model ?? null,
+      effort: input.effort ?? null,
+      modelEffortAssumed: input.modelEffortAssumed ?? false,
+      confirmReopen: input.confirmReopen ?? false,
       now,
       newId,
     });
@@ -451,6 +473,36 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
     return written.ok ? commit() : refuse('store-refused');
   }
 
+  /**
+   * D-6 — a ancora e o escopo de um card que ja existe, corrigidos num gesto.
+   *
+   * Ate 06/08 o repo so podia ser declarado no nascimento do card, num campo de
+   * texto livre. Foi assim que nasceu um card com alvo `"spotsys e
+   * api-spotsys"` — uma frase nomeando dois servicos, que nao bate com pasta
+   * nenhuma —, e nao havia gesto que o consertasse: o card so podia ser
+   * abandonado.
+   *
+   * A normalizacao (apara, deduplica, poe a ancora dentro do escopo) mora na
+   * camada pura do renderer (`repoScope.ts`), que e quem a tela usa para avisar
+   * ANTES do gesto. Aqui o servico so apara o obvio e grava o fato: duas
+   * normalizacoes divergiriam, e divergir significaria a tela aprovar um card
+   * que o store guarda diferente.
+   */
+  function setDiscoveryRepos(input: SetDiscoveryReposIpcInput): EsteiraGestureDto {
+    if (!writable()) return refuse('store-refused');
+    const snapshot = store.snapshot();
+    if (!findSubject(snapshot, { entity: 'discovery', id: input.discoveryId })) return refuse('unknown-subject');
+
+    const at = now();
+    const targetRepo = input.targetRepo === null || input.targetRepo === undefined ? null : input.targetRepo.trim() || null;
+    const scopeRepos = (input.scopeRepos ?? []).map((repo) => repo.trim()).filter((repo) => repo.length > 0);
+    const written = store.append([
+      { type: 'discovery.updated', at, dedupe_key: null, payload: { id: input.discoveryId, targetRepo, scopeRepos, at } },
+    ]);
+
+    return written.ok ? commit() : refuse('store-refused');
+  }
+
   function setWorkItemState(input: SetWorkItemStateIpcInput): EsteiraGestureDto {
     if (!writable()) return refuse('store-refused');
     const snapshot = store.snapshot();
@@ -538,6 +590,7 @@ export function createEsteiraService(options: EsteiraServiceOptions): EsteiraSer
     endSession: endSessionFact,
     releaseLock: releaseLockGesture,
     setStageOverride,
+    setDiscoveryRepos,
     setWorkItemState,
     discardWorkItem,
     addNote,

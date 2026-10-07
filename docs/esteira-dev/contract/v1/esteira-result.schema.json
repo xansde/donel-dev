@@ -1,0 +1,454 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://donel.dev/contracts/esteira-result/v1",
+  "title": "Esteira result.json — contrato app <-> skills, v1",
+  "description": "ARQUIVO CANONICO do contrato (spec 010, D-10). Referenciado pelos DOIS lados: o app (Donel Dev) le este arquivo em tests/esteiraContractCoverage.test.ts; o fork esteira-donel-3.0.0 le a MESMA copia e valida o que grava contra ela. Nenhum campo pode existir de um lado so: 'x-consumed' marca o que o app promete ler, 'x-required-facts' o que a skill promete gravar.",
+  "x-contract-version": "1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "kind", "run", "actor", "subject", "facts"],
+  "properties": {
+    "contract_version": {
+      "description": "Semver do CONTRATO, nao da skill. Major diferente do que o app conhece = recusa de ingestao com erro visivel no card (nunca silencio).",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "kind": {
+      "description": "Discriminante de arquivo. Existe para o watcher rejeitar um JSON qualquer que caia na pasta. A4 — `esteira.result.complement` e um result de COMPLEMENTO: acrescenta fatos a um run ja ingerido SEM redeclarar a fase. Sem essa marca, regravar o mesmo `run_id` com conteudo diferente e recusado, porque a alternativa e o app engolir a versao nova em silencio (foi o que aconteceu: a Concluir regravou o mesmo run com desfecho revisto e o card ficou 'terminou sem conclusao' calado).",
+      "enum": ["esteira.result", "esteira.result.complement"]
+    },
+    "run": { "$ref": "#/$defs/run" },
+    "actor": { "$ref": "#/$defs/actor" },
+    "subject": { "$ref": "#/$defs/subject" },
+    "workspace": {
+      "description": "Onde a sessao rodou. Ausente quando a fase nao tocou repo nenhum (discovery sem repo).",
+      "oneOf": [{ "$ref": "#/$defs/workspace" }, { "type": "null" }]
+    },
+    "facts": {
+      "description": "O que aconteceu, declarado. NAO ha inferencia: fato nao declarado e fato que nao aconteceu, e o app diz 'a skill nao declarou', nunca 'nao aconteceu'.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/fact" }
+    }
+  },
+  "$defs": {
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "phase", "status", "started_at", "finished_at"],
+      "properties": {
+        "run_id": {
+          "description": "Identidade da execucao. Chave de idempotencia da ingestao: reingerir o mesmo arquivo nao duplica evento no store. Um run NAO se reescreve: complemento e revisao sao runs NOVOS, com sufixo (`.c1`, `.rev2`) sobre o run ancorado.",
+          "$ref": "#/$defs/id"
+        },
+        "complements_run_id": {
+          "description": "A4 — o run ao qual este COMPLEMENTO se ancora. Obrigatorio quando `kind` e `esteira.result.complement`, proibido no result normal. O complemento acrescenta fatos e NAO redeclara a fase: `phase.completed` nele seria a fase contada duas vezes.",
+          "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "revises_run_id": {
+          "description": "A13 — o run cujo DESFECHO este revisa. Desfecho revisto vira dado consultavel em vez de sobrescrita silenciosa: o card mostra que houve revisao, e de qual run. Convencao de sufixo cobrada pelo parser: `<run revisado>.rev<N>`, com N >= 2.",
+          "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "phase": {
+          "description": "Nome da fase. String livre de proposito: [P-4] deixou os nomes das fases por ciclo de vida em aberto, e um enum aqui fecharia essa decisao por acidente.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$"
+        },
+        "status": { "enum": ["success", "failed", "aborted"] },
+        "started_at": { "$ref": "#/$defs/timestamp" },
+        "finished_at": { "$ref": "#/$defs/timestamp" },
+        "failure": {
+          "description": "Obrigatoriamente preenchido quando status != success — e o que faz 'falhou' ser um desfecho legivel em vez de ausencia.",
+          "oneOf": [{ "$ref": "#/$defs/failure" }, { "type": "null" }]
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool", "tool_version"],
+      "properties": {
+        "tool": { "type": "string", "minLength": 1 },
+        "tool_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+" },
+        "executor": { "type": ["string", "null"] },
+        "model": { "type": ["string", "null"] },
+        "effort": { "type": ["string", "null"] },
+        "cli_session_id": {
+          "description": "sessionId do CLI. E o que amarra Session do store a esta execucao.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "subject": {
+      "description": "A quem este resultado pertence no store. discovery_id e sempre exigido — a raiz do grafo (spec 010, Entidades).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["discovery_id"],
+      "properties": {
+        "discovery_id": { "$ref": "#/$defs/id" },
+        "plan_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "work_item_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_repo"],
+      "properties": {
+        "target_repo": {
+          "description": "Repo ALVO (D-6): onde a sessao abriu e onde o PR acontece. Nunca inferido do projeto em foco — foi esse fallback silencioso que abriu sessao no repo errado (evidencia 2).",
+          "type": "string",
+          "minLength": 1
+        },
+        "repo_path": { "type": ["string", "null"] },
+        "worktree_path": { "type": ["string", "null"] },
+        "branch": { "type": ["string", "null"] }
+      }
+    },
+    "fact": {
+      "oneOf": [
+        { "$ref": "#/$defs/fact_discovery_recorded" },
+        { "$ref": "#/$defs/fact_plan_recorded" },
+        { "$ref": "#/$defs/fact_work_item_recorded" },
+        { "$ref": "#/$defs/fact_relation_recorded" },
+        { "$ref": "#/$defs/fact_artifact_recorded" },
+        { "$ref": "#/$defs/fact_verification_recorded" },
+        { "$ref": "#/$defs/fact_phase_completed" },
+        { "$ref": "#/$defs/fact_lock_acquired" },
+        { "$ref": "#/$defs/fact_lock_released" },
+        { "$ref": "#/$defs/fact_note_recorded" },
+        { "$ref": "#/$defs/fact_gate_confirmed" },
+        { "$ref": "#/$defs/fact_decision_recorded" },
+        { "$ref": "#/$defs/fact_human_review_recorded" }
+      ]
+    },
+    "fact_discovery_recorded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "discovery_id", "title"],
+      "properties": {
+        "type": { "const": "discovery.recorded" },
+        "discovery_id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "problem": { "type": ["string", "null"] },
+        "tracker": { "oneOf": [{ "$ref": "#/$defs/tracker_ref" }, { "type": "null" }] },
+        "target_repo": { "type": ["string", "null"] },
+        "scope_repos": { "$ref": "#/$defs/repo_list" }
+      }
+    },
+    "fact_plan_recorded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "plan_id", "discovery_id", "title"],
+      "properties": {
+        "type": { "const": "plan.recorded" },
+        "plan_id": { "$ref": "#/$defs/id" },
+        "discovery_id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "summary": { "type": ["string", "null"] }
+      }
+    },
+    "fact_work_item_recorded": {
+      "description": "Substitui o antigo outputs.plan_cards[]/fases[]: o item e DECLARADO, nao deduzido de um campo opcional que a skill podia nao gravar (evidencia 1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "work_item_id", "item_type", "title"],
+      "properties": {
+        "type": { "const": "work_item.recorded" },
+        "work_item_id": { "$ref": "#/$defs/id" },
+        "plan_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "item_type": {
+          "description": "Tipos de D-4. Teste e CI/CD NAO sao tipos, de proposito.",
+          "enum": ["issue", "spec", "process-map", "adr", "prototype", "spike", "eval"]
+        },
+        "title": { "type": "string", "minLength": 1 },
+        "target_repo": {
+          "description": "Alvo (D-6): item_type=issue exige exatamente um; os demais podem ser null. Regra checada pelo parser, nao expressavel aqui.",
+          "type": ["string", "null"]
+        },
+        "scope_repos": { "$ref": "#/$defs/repo_list" }
+      }
+    },
+    "fact_relation_recorded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "relation", "from", "to"],
+      "properties": {
+        "type": { "const": "relation.recorded" },
+        "relation": {
+          "description": "D-5: originated = 'originou', flows_into = 'desagua em'. ships_with = 'entra junto' (co-merge visivel, D-7).",
+          "enum": ["originated", "flows_into", "ships_with"]
+        },
+        "from": { "$ref": "#/$defs/entity_ref" },
+        "to": { "$ref": "#/$defs/entity_ref" }
+      }
+    },
+    "fact_artifact_recorded": {
+      "description": "D-8: o store guarda o PONTEIRO. 'Cade o artefato?' tem uma resposta so, esteja ele versionado no repo ancora ou solto no disco.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "owner", "artifact_kind", "location", "path"],
+      "properties": {
+        "type": { "const": "artifact.recorded" },
+        "owner": { "$ref": "#/$defs/entity_ref" },
+        "artifact_kind": { "type": "string", "minLength": 1 },
+        "location": { "enum": ["repo", "disk"] },
+        "repo": {
+          "description": "Repo ancora da familia quando location=repo; null quando location=disk. Checado pelo parser.",
+          "type": ["string", "null"]
+        },
+        "path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "fact_verification_recorded": {
+      "description": "Como um ciclo de vida termina (D-4): PR mergeado e verificado, documento aceito, pergunta respondida.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "subject", "verification_kind", "state"],
+      "properties": {
+        "type": { "const": "verification.recorded" },
+        "subject": { "$ref": "#/$defs/entity_ref" },
+        "verification_kind": {
+          "description": "A16 — `e2e-manual` e o roteiro rodado A MAO por uma pessoa. Existe separado de `check` porque `check` e o que a maquina roda, e confundir os dois foi como uma fase fechou verde sem ninguem ter validado: o gate conferia a EXISTENCIA do arquivo de roteiro na branch, nao o resultado dele. `state` de um `e2e-manual` so sai de `pending` com resultado COLHIDO do dono.",
+          "enum": ["pull-request", "check", "review", "conclusion", "e2e-manual"]
+        },
+        "state": { "enum": ["pending", "passed", "failed"] },
+        "ref": {
+          "description": "URL do PR, nome do check, ou o texto da conclusao registrada.",
+          "type": ["string", "null"]
+        },
+        "base": {
+          "description": "A15 — a BASE do PR (a branch de destino), quando `verification_kind` e `pull-request`. Num repo com escada de canais, 'concluido' sem canal se le como 'esta na main': foi por isso que uma entrega em staging passou por entrega fechada. Nome da branch como esta no repo — nunca traduzido para canal aqui, porque quem sabe o apelido do canal e a fase, nao o contrato.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "fact_phase_completed": {
+      "description": "Obrigatorio em todo run com status=success. 'Nao deu certo' e desfecho valido: outcome=abandoned/inconclusive.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "subject", "phase", "outcome"],
+      "properties": {
+        "type": { "const": "phase.completed" },
+        "subject": { "$ref": "#/$defs/entity_ref" },
+        "phase": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+        "outcome": { "enum": ["done", "abandoned", "inconclusive"] },
+        "summary": { "type": ["string", "null"] },
+        "risk": {
+          "description": "A16 — o risco classificado por esta fase (a regua de aprovacao de D-4). `sensivel` liga o gate do roteiro e2e manual; ausente = a fase nao classificou, e o app nao classifica por ela.",
+          "oneOf": [{ "enum": ["trivial", "sensivel"] }, { "type": "null" }]
+        },
+        "channel": {
+          "description": "A15 — ONDE a entrega chegou, no vocabulario do repo (`alfa`, `beta`, `stable`). String livre pelo mesmo motivo de `run.phase`: a escada de canais e de cada repo, e um enum aqui decidiria por todos. Ausente = o card diz so a base do PR, e nao inventa canal nenhum.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "fact_lock_acquired": {
+      "description": "D-11: a trava e local e e FATO, com dono, hora e sessao. Nunca arquivo .lock solto; a etiqueta no board, quando existe, e espelho.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "subject", "phase", "holder"],
+      "properties": {
+        "type": { "const": "lock.acquired" },
+        "subject": { "$ref": "#/$defs/entity_ref" },
+        "phase": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+        "holder": { "$ref": "#/$defs/lock_holder" }
+      }
+    },
+    "fact_lock_released": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "subject", "phase"],
+      "properties": {
+        "type": { "const": "lock.released" },
+        "subject": { "$ref": "#/$defs/entity_ref" },
+        "phase": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" }
+      }
+    },
+    "fact_note_recorded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "subject", "text"],
+      "properties": {
+        "type": { "const": "note.recorded" },
+        "subject": { "$ref": "#/$defs/entity_ref" },
+        "text": { "type": "string", "minLength": 1 }
+      }
+    },
+    "fact_gate_confirmed": {
+      "description": "A9 — a confirmacao de um gate e FATO de primeira classe, nao um blockquote no tasks.md. Uma condicao por fato, de proposito: gate composto ('spec aprovada E repo alvo confirmado') nao expressa meia-confirmacao quando vira uma linha de texto, e foi assim que 'confirmado' apareceu na tela com metade do gate em aberto. Skills e specs consultam o store, nao o markdown.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "subject", "condition", "confirmed_by"],
+      "properties": {
+        "type": { "const": "gate.confirmed" },
+        "subject": { "$ref": "#/$defs/entity_ref" },
+        "condition": {
+          "description": "A condicao confirmada, UMA por fato. Texto curto e afirmativo ('o repo alvo e atlas').",
+          "type": "string",
+          "minLength": 1
+        },
+        "confirmed_by": {
+          "description": "Quem confirmou. Nunca a propria skill: confirmacao sem gente e o app se dando o aval que ninguem deu.",
+          "type": "string",
+          "minLength": 1
+        },
+        "confirmed_at": {
+          "description": "Quando a pessoa confirmou — nao e a hora em que o run terminou. Ausente = usa-se a hora do run.",
+          "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }]
+        }
+      }
+    },
+    "fact_human_review_recorded": {
+      "description": "A10 + A19 — o que sobrou para uma PESSOA fazer, em forma de lista, no lugar de uma frase enterrada no `summary`. Duas naturezas na mesma lista porque as duas sao a mesma pergunta ('o que falta de mim?') e separa-las faria a tela ter dois blocos que ninguem cruza: `review` = confira o que a fase fez; `action` = faca o que a fase nao podia fazer (A19). Item `action` pendente NAO rebaixa a fase: esperar por gente e um estado legitimo, e chama-lo de falha e o mesmo vicio da spec por outra porta.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "subject", "phase", "checklist"],
+      "properties": {
+        "type": { "const": "human_review.recorded" },
+        "subject": { "$ref": "#/$defs/entity_ref" },
+        "phase": {
+          "description": "De que fase e esta lista. Chave natural junto com o assunto: redeclarar substitui, porque a lista e o estado de agora.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$"
+        },
+        "checklist": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/human_review_entry" }
+        }
+      }
+    },
+    "human_review_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item", "kind", "state"],
+      "properties": {
+        "item": {
+          "description": "O que conferir ou fazer, no imperativo e sem jargao. Uma coisa por entrada.",
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "description": "`review` = confira o que a fase fez. `action` = gesto humano que a fase nao podia dar (abrir o PR, rodar o roteiro e2e e reportar).",
+          "enum": ["review", "action"]
+        },
+        "state": {
+          "description": "`pending` ate alguem responder. `done` so com resultado COLHIDO da pessoa — a skill nunca marca por conta propria. `waived` = dispensado por quem podia dispensar.",
+          "enum": ["pending", "done", "waived"]
+        },
+        "detail": {
+          "description": "Onde olhar, ou o que a pessoa respondeu. Nunca preenchido com suposicao.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "fact_decision_recorded": {
+      "description": "A18 — uma decisao TOMADA na fase, com quem a confirmou. Irma de `gate.confirmed` e diferente dela: o gate confirma uma condicao ('a spec esta aprovada'), a decisao escolhe um caminho entre outros ('fila por lote, nao por item'). As duas sao o que uma fase de conversa produz, e as duas viviam soltas no texto.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "subject", "decision", "confirmed_by"],
+      "properties": {
+        "type": { "const": "decision.recorded" },
+        "subject": { "$ref": "#/$defs/entity_ref" },
+        "decision": {
+          "description": "O que ficou decidido, afirmativo e curto. Uma decisao por fato.",
+          "type": "string",
+          "minLength": 1
+        },
+        "confirmed_by": {
+          "description": "Quem decidiu. Mesmo campo de `gate.confirmed` de proposito: a regra que fecha a fase pergunta 'ha fato humano com dono?', e um nome so evita duas leituras da mesma pergunta.",
+          "type": "string",
+          "minLength": 1
+        },
+        "rationale": {
+          "description": "Por que, quando a fase registrou. Nunca inventado a posteriori.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "lock_holder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "acquired_at"],
+      "properties": {
+        "kind": { "enum": ["skill", "app"] },
+        "acquired_at": { "$ref": "#/$defs/timestamp" },
+        "cli_session_id": { "type": ["string", "null"] }
+      }
+    },
+    "entity_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entity", "id"],
+      "properties": {
+        "entity": { "enum": ["discovery", "plan", "work_item"] },
+        "id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "tracker_ref": {
+      "description": "D-1: o tracker e plugue opcional. Aparece aqui como referencia guardada, nunca como fonte consultada para saber estado.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "card_id"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "card_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "repo_list": {
+      "description": "Escopo (D-6): 0..N repos que o artefato abrange. Distinto do alvo, que e um so.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$" },
+    "timestamp": {
+      "description": "ISO 8601 em UTC, com Z. Sem fuso local: o store ordena por tempo entre canais.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+    }
+  },
+  "x-required-facts": {
+    "description": "O que cada lado PROMETE gravar. O teste de contrato dos dois lados le esta tabela: a skill falha se nao gravar, o app falha se nao exigir. So vale para run com status=success — o que se cobra e promessa CUMPRIDA, nao promessa feita; run que falhou declara `failure`, e isso ja e o desfecho legivel.",
+    "any-phase-success": ["phase.completed"],
+    "by-phase": {
+      "discovery": ["discovery.recorded"]
+    },
+    "x-by-phase-rationale": {
+      "discovery": "A entidade E o assunto do run: uma discovery que abandonou continua sendo a discovery que o run declarou. Por isso ela e cobrada em QUALQUER desfecho, ao contrario do produto das outras fases."
+    },
+    "by-phase-when-done": {
+      "plano": ["work_item.recorded"],
+      "implementar": ["verification.recorded"],
+      "validar": ["verification.recorded"],
+      "documentar": ["artifact.recorded"],
+      "concluir": ["verification.recorded"]
+    },
+    "x-when-done-rationale": {
+      "x-por-que-o-desfecho-importa": "A3 — o que se cobra e o PRODUTO da fase, e fase que nao chegou ao produto nao tem produto para mostrar. Cobrar de todo run `success` obrigava um run que parou num gate a declarar uma verificacao `pending` so para caber no contrato: o contrato empurrando a skill a inventar fato, que e a inverdade de 03/08 pela porta do gate. `abandoned` e `inconclusive` sao desfechos legitimos e nao pedem nada.",
+      "x-quando-se-aplica": "Vale por FASE FECHADA, nao por `run.phase`: um result que fecha N fases (A22) e cobrado do produto de CADA uma que declarou `outcome: done`. Quem declara 'documentar concluida' mostra o artefato, mesmo que o run se chame `implementar`.",
+      "plano": "Plano concluido sem nenhum item declarado nao e plano — e o card F3 da evidencia 1 pelo avesso: a fase diz que terminou bem e nao deixa nada para a seguinte tomar.",
+      "implementar": "O que a fase produziu tem que poder ser conferido por outra pessoa: o check que ela escreveu e rodou (codigo), o documento pronto para revisao, ou a resposta de um spike — inclusive negativa (D-4). 'Implementei' sem nada verificavel e afirmacao sem lastro.",
+      "validar": "Rodar a verificacao E validar (D-4). A fase que valida sem declarar o que verificou nao deixou registro nenhum do que examinou.",
+      "documentar": "D-8 — o store guarda o PONTEIRO do artefato. Documento sem endereco nao responde 'cade o artefato?', que e a unica pergunta que a fase existe para fechar.",
+      "concluir": "D-4 — o ciclo termina com PR mergeado e verificado, documento aceito, ou conclusao registrada. Concluir sem verificacao seria o app afirmar 'terminou' sem ter lido nada."
+    },
+    "done-requires-passed-verification": ["concluir"],
+    "x-done-rationale": "Fases desta lista com `phase.completed.outcome = done` exigem ao menos uma `verification.recorded` com `state = passed`. E o dente de D-4: 'PR mergeado E VERIFICADO'. Desfecho ruim continua valido — `abandoned`/`inconclusive` nao pedem nada. Tambem se cobra por FASE FECHADA, nao por `run.phase`.",
+    "e2e-required-when-sensitive": ["validar"],
+    "x-e2e-rationale": "A16 — fase desta lista fechada `done` com `risk: sensivel` exige uma `verification.recorded` de `verification_kind: e2e-manual`. Ela PODE ficar `pending`: esperar o dono rodar o roteiro e um estado legitimo (A19). O que nao pode e a mesma fase registrar aprovacao humana (`review` que passou, ou `gate.confirmed`) com o e2e ainda `pending` — foi assim que uma fase fechou verde sem ninguem ter validado, com o gate conferindo so a EXISTENCIA do arquivo de roteiro na branch.",
+    "human-decision-facts": ["gate.confirmed", "decision.recorded"],
+    "done-requires-human-decision": ["discovery", "plano"],
+    "x-human-decision-rationale": "A18 — as fases de CONVERSA fecham com o que uma pessoa disse. Discovery e plano existem para produzir decisao; fase que nao perguntou nada nao fechou coisa nenhuma, e deixar 'concluida' sem nenhum fato humano era a mesma tela sem lastro que D-4 ja combate do outro lado. Qualquer um dos dois fatos serve — os dois nomeiam quem confirmou em `confirmed_by`, e e essa a pergunta. Desfecho ruim nao pede nada: abandonar sem perguntar e legitimo."
+  }
+}

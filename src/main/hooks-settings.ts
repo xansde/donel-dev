@@ -17,8 +17,14 @@ import { join } from 'node:path';
 // em produção. O script é regravado a cada boot (porta efêmera muda), então
 // não precisa ser um asset versionado — nada pra T016 empacotar.
 
-/** Eventos registrados — matriz do spike (specs/001-mvp/spike-t002-resultado.md). */
-export const SEMAPHORE_HOOK_EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'Notification', 'SessionEnd'] as const;
+/**
+ * Eventos registrados — matriz do spike (specs/001-mvp/spike-t002-resultado.md)
+ * + `StopFailure`: o CLI dispara ele NO LUGAR de `Stop` quando um erro de API
+ * (rate limit, overload, auth) encerra o turno. Sem ele a sessão ficava
+ * `working` para sempre e o auto-switch de contas adiava indefinidamente —
+ * justo quando a conta estourou (bateria da Fase 2 das contas, 21/09).
+ */
+export const SEMAPHORE_HOOK_EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'StopFailure', 'Notification', 'SessionEnd'] as const;
 
 const SETTINGS_FILE_NAME = 'session-hooks-settings.json';
 const FORWARDER_SCRIPT_FILE_NAME = 'session-hook-forward.ps1';

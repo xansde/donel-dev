@@ -109,6 +109,13 @@ describe('espinha — do gesto no app ao card na tela', () => {
         to: { entity: 'plan', id: 'pln-espinha-1' },
       },
       { type: 'note.recorded', subject: { entity: 'discovery', id: created.discoveryId }, text: 'Duas hipoteses descartadas.' },
+      // A18 — a discovery so fecha porque alguem confirmou alguma coisa.
+      {
+        type: 'gate.confirmed',
+        subject: { entity: 'discovery', id: created.discoveryId },
+        condition: 'o repo alvo e atlas',
+        confirmed_by: 'dono do repo',
+      },
       {
         type: 'phase.completed',
         subject: { entity: 'discovery', id: created.discoveryId },
@@ -157,7 +164,8 @@ describe('espinha — do gesto no app ao card na tela', () => {
     expect(lockView(preparada)?.title).toBe('Preparada — ninguém assumiu ainda');
     expect(phaseLines(preparada)[0].text).toBe('discovery — preparada, ninguém assumiu');
     // O comando oferecido é o MESMO que a aba recebe pré-digitado.
-    expect(lockView(preparada)?.nextStep?.command).toBe(`/esteira-discovery --input "${dispatched.inputPath}"`);
+    // A2 — a skill do FORK (sufixo -3), nunca o plugin 2.1.0 sem sufixo.
+    expect(lockView(preparada)?.nextStep?.command).toBe(`/esteira-discovery-3 --input "${dispatched.inputPath}"`);
 
     // 2. A aba abriu e o CLI devolveu o id: a trava ganha dono com nome. E só
     //    isso — a aba existir não é a fase estar rodando, porque o Enter é
@@ -203,6 +211,7 @@ describe('espinha — do gesto no app ao card na tela', () => {
 
     runSkill(dispatched.inputPath, [
       { type: 'discovery.recorded', discovery_id: created.discoveryId, title: 'Card concluido' },
+      { type: 'gate.confirmed', subject: { entity: 'discovery', id: created.discoveryId }, condition: 'o problema e esse', confirmed_by: 'dono do repo' },
       { type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'discovery', outcome: 'done' },
     ]);
     service.scanOutbox();
@@ -229,6 +238,12 @@ describe('espinha — do gesto no app ao card na tela', () => {
 
     runSkill(dispatched.inputPath, [
       { type: 'discovery.recorded', discovery_id: created.discoveryId, title: 'Como o time decide a semana' },
+      {
+        type: 'decision.recorded',
+        subject: { entity: 'discovery', id: created.discoveryId },
+        decision: 'a fila da semana se decide na segunda',
+        confirmed_by: 'dono do repo',
+      },
       { type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'discovery', outcome: 'done' },
     ]);
 
@@ -300,6 +315,7 @@ describe('espinha — do gesto no app ao card na tela', () => {
     runSkill(dispatch('discovery'), [
       { type: 'discovery.recorded', discovery_id: created.discoveryId, title: 'Fila de importacao trava sem sinal', target_repo: 'atlas' },
       { type: 'plan.recorded', plan_id: 'pln-ciclo-1', discovery_id: created.discoveryId, title: 'Tornar observavel' },
+      { type: 'gate.confirmed', subject: { entity: 'discovery', id: created.discoveryId }, condition: 'o repo alvo e atlas', confirmed_by: 'dono do repo' },
       { type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'discovery', outcome: 'done' },
     ]);
     service.scanOutbox();
@@ -312,6 +328,12 @@ describe('espinha — do gesto no app ao card na tela', () => {
         item_type: 'issue',
         title: 'Expor estado da fila',
         target_repo: 'atlas',
+      },
+      {
+        type: 'decision.recorded',
+        subject: { entity: 'plan', id: 'pln-ciclo-1' },
+        decision: 'expor o estado antes de mexer no consumo',
+        confirmed_by: 'dono do repo',
       },
       { type: 'phase.completed', subject: { entity: 'plan', id: 'pln-ciclo-1' }, phase: 'plano', outcome: 'done' },
     ]);
@@ -380,7 +402,9 @@ describe('espinha — do gesto no app ao card na tela', () => {
       JSON.stringify({
         contract_version: '1.0.0',
         kind: 'esteira.result',
-        run: { run_id: 'run-incompleto', phase: 'validar', status: 'success', started_at: '2026-08-04T14:00:00.000Z', finished_at: '2026-08-04T14:20:00.000Z', failure: null },
+        // F26 — timestamp DEPOIS do HISTORIC_CONTRACT_CUTOFF: este documento e
+        // um invalido de HOJE, sem relacao com a anistia do outbox historico.
+        run: { run_id: 'run-incompleto', phase: 'validar', status: 'success', started_at: '2026-08-06T14:00:00.000Z', finished_at: '2026-08-06T14:20:00.000Z', failure: null },
         actor: { tool: 'esteira-donel', tool_version: '3.0.0' },
         subject: { discovery_id: created.discoveryId },
         facts: [{ type: 'phase.completed', subject: { entity: 'discovery', id: created.discoveryId }, phase: 'validar', outcome: 'done' }],
@@ -407,7 +431,8 @@ describe('espinha — do gesto no app ao card na tela', () => {
       JSON.stringify({
         contract_version: '1.0.0',
         kind: 'esteira.result',
-        run: { run_id: 'run-rogue', phase: 'discovery', status: 'success', started_at: '2026-08-04T14:00:00.000Z', finished_at: '2026-08-04T14:10:00.000Z', failure: null },
+        // F26 — ver comentario no teste irmao acima (timestamp depois do corte).
+        run: { run_id: 'run-rogue', phase: 'discovery', status: 'success', started_at: '2026-08-06T14:00:00.000Z', finished_at: '2026-08-06T14:10:00.000Z', failure: null },
         actor: { tool: 'esteira-donel', tool_version: '2.1.0' },
         subject: { discovery_id: created.discoveryId },
         facts: [

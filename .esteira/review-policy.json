@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0.0",
+  "required_reviewers": {
+    "trivial": 1,
+    "sensivel": 1
+  },
+  "note": "Repo pessoal de mantenedor único (xansde): 1 revisor para qualquer risco, inclusive sensível — o próprio dono, após validação manual (e2e quando a fase Validar apontar). Substitui o default-risco-esteira (2 no sensível). Política fixada pelo dono em 2026-08-04 — ver CLAUDE.md, seção \"Política de review do repo\". Revisar esta seção se o repo ganhar um segundo mantenedor."
+}

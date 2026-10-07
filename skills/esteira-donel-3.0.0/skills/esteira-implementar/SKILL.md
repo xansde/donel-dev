@@ -1,6 +1,6 @@
 ---
-name: esteira-implementar
-description: Use quando o Donel Dev disparar a fase Implementar de um item — o app deixou um `run-input.json` com o item em `subject.work_item_id` e espera de volta o que foi construído E o que pode ser conferido. Escreve código e teste na branch do item; nunca abre PR.
+name: esteira-implementar-3
+description: "Use quando o Donel Dev disparar a fase Implementar de um item — o app deixou um `run-input.json` com o item em `subject.work_item_id` e espera de volta o que foi construído E o que pode ser conferido. Escreve código e teste na branch do item; nunca abre PR."
 ---
 
 # Fase Implementar — esteira-donel 3.0.0
@@ -26,12 +26,40 @@ ninguém consegue verificar é indistinguível de um item que ninguém tocou. Fo
 essa indistinção — ausência lida como negação — que produziu a tela mentirosa
 de 03/08.
 
+## Antes dos passos — onde moram as ferramentas
+
+As `tools/` do fork ficam **dois níveis acima** desta `SKILL.md`, e a sessão da
+fase abre no **repo alvo** — nunca dentro do fork. Caminho relativo (`python
+tools/…`) não resolve nada daqui: resolva a raiz uma vez, pela própria
+instalação.
+
+```powershell
+Split-Path (Split-Path @((Get-Item "$env:USERPROFILE\.claude\skills\esteira-implementar-3").Target)[0])
+```
+
+Use o caminho devolvido **por extenso** em todo comando `tools/` daqui para
+baixo — é por isso que os exemplos escrevem `<raiz>/tools/…` em vez de uma
+variável: variável de shell não sobrevive de um comando para o outro.
+
+Comando sem saída = esta skill não foi instalada por junction (`README.md`,
+seção "Instalar"). Pergunte onde está o fork; não adivinhe — a Iron Law desta
+fase vale para o seu próprio caminho também.
+
 ## Passos
+
+0. **Preflight mecânico.**
+
+   ```bash
+   ls docs/relatorio-*.md 2>/dev/null
+   ```
+
+   Arquivo encontrado = leia antes de agir; costuma nomear o erro que você
+   está prestes a repetir. Nada encontrado, siga.
 
 1. **Leia a ida.**
 
    ```bash
-   python tools/read_input.py --input <run-input.json>
+   python <raiz>/tools/read_input.py --input <run-input.json>
    ```
 
    `context.work_item` diz **o quê**: tipo, título, repo alvo e estado.
@@ -39,7 +67,9 @@ de 03/08.
    nunca abra a sessão noutro checkout porque "é obviamente esse". O
    `context.history` traz as fases anteriores, inclusive as que falharam, com o
    código do erro: repetir uma tentativa já reprovada é o desperdício mais caro
-   da esteira.
+   da esteira. Se o item já passou pela fase Design, o mockup e o diagrama de
+   arquitetura estão apontados por `artifact.recorded` no histórico — olhe
+   antes de codar, não depois.
 
 2. **Construa, com teste antes quando for código de produção.** A disciplina de
    TDD do repo alvo vale aqui: teste que falha → implementação mínima →
@@ -51,28 +81,44 @@ de 03/08.
    `inconclusive` e uma nota dizendo onde parou. Meia entrega declarada é
    informação; meia entrega escondida é retrabalho.
 
-4. **Decida o que é fato:**
+4. **Decida o que é fato.** A tabela é a mesma promessa do schema
+   (`x-required-facts`), nomeada por esta fase:
 
-   - `verification.recorded` — **obrigatório**. O que dá para conferir:
-     - `check` — a verificação que você escreveu e rodou (`state: passed` se
-       ficou verde, `failed` se você está entregando com ela vermelha e sabe
-       disso);
-     - `review` — o documento pronto para alguém revisar (`state: pending`);
-     - `conclusion` — a resposta do spike/eval, inclusive "não dá"
-       (`state: passed` = a pergunta foi respondida; o texto vai em `ref`).
-     - `pull-request` **não** é desta fase: aqui não se abre PR.
+   | Fato | Quando é obrigatório |
+   |---|---|
+   | `verification.recorded` | quando `outcome: "done"` — o que outra pessoa consegue conferir |
+   | `phase.completed` | **sempre**, em todo run `status: success` |
+
+   O que `verification.recorded` pode ser:
+   - `check` — a verificação que você escreveu e rodou (`state: passed` se
+     ficou verde, `failed` se você está entregando com ela vermelha e sabe
+     disso);
+   - `review` — o documento pronto para alguém revisar (`state: pending`);
+   - `conclusion` — a resposta do spike/eval, inclusive "não dá"
+     (`state: passed` = a pergunta foi respondida; o texto vai em `ref`).
+   - `pull-request` **não** é desta fase: aqui não se abre PR.
+
+   E o resto:
    - `artifact.recorded` — o ponteiro do que ficou fora do código: a spec, o
      documento, o relatório. `location: "repo"` exige `repo`; `location:
      "disk"` proíbe. Ponteiro que não resolve não é ponteiro `[D-8]`.
    - `note.recorded` — o que um humano precisa ler depois e não cabe em campo.
-   - `phase.completed` — **obrigatório**, com o outcome certo: `done` quando
-     entregou, `abandoned` quando o item morreu aqui, `inconclusive` quando
-     terminou sem fechar. As três são respostas.
+
+   `phase.completed` leva o outcome certo: `done` quando entregou, `abandoned`
+   quando o item morreu aqui, `inconclusive` quando terminou sem fechar. As
+   três são respostas.
+
+   **A forma é o corpus, não a memória.** Veja
+   `docs/esteira-dev/contract/v1/examples/implementar-que-fecha-o-ciclo.json`
+   (um run que fecha implementar E as fases seguintes, via A22) e
+   `spike-inconclusivo.json` (um `conclusion` que respondeu "não dá" e ainda
+   assim fechou `done`) antes de montar `facts.json`. `implementar-falhou.json`
+   mostra a forma de um `status: "failed"`.
 
 5. **Emita.**
 
    ```bash
-   python tools/emit_result.py --input <run-input.json> --facts-file facts.json \
+   python <raiz>/tools/emit_result.py --input <run-input.json> --facts-file facts.json \
        --status success --model <modelo> --effort <esforço>
    ```
 
@@ -80,10 +126,19 @@ de 03/08.
    id fora do padrão, artefato com ponteiro que não resolve. Se ele reclamar,
    **conserte o fato — não contorne a ferramenta**.
 
-6. **Se a fase falhou**, emita mesmo assim:
+6. **Confira do outro lado do contrato antes de considerar a fase concluída.**
 
    ```bash
-   python tools/emit_result.py --input <run-input.json> --facts-file facts.json \
+   npm run esteira:check -- <result.json escrito pelo passo 5>
+   ```
+
+   Só considere a fase concluída com exit 0. Reclamou, conserte os fatos e
+   emita de novo.
+
+7. **Se a fase falhou**, emita mesmo assim:
+
+   ```bash
+   python <raiz>/tools/emit_result.py --input <run-input.json> --facts-file facts.json \
        --status failed --failure-code <código> --failure-message "<o que houve>"
    ```
 

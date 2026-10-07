@@ -1,37 +1,41 @@
 import { contextBridge, ipcRenderer } from 'electron';
+// G5 (batch N5) — guarda contra segundo assinante silencioso de canal IPC:
+// todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
+import { subscribeChannel } from './subscribeChannel';
 import type {
   AccountsConfigDto,
   AccountsViewDto,
   AppConfigDto,
+  ArchiveOutcome,
+  BeginLoginOutcome,
   ConnectModInput,
   ConnectModOutcome,
+  ConsolidateResult,
+  ImportResult,
+  MigrationPlan,
   ArchivePhaseSessionIpcInput,
   BoardFacts,
   CardRepoResolution,
-  CopyTranscriptForResumeIpcInput,
-  CopyTranscriptForResumeResult,
   CreateProjectIpcInput,
   CreateProjectResponse,
-  DeleteProfileOutcome,
   DonelApi,
   EntryColumnCard,
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
   LauncherDefaultsDto,
+  LoginStatusDto,
   NotificationPreference,
   OpenDiscoveryIpcInput,
   PhaseArchivedPayload,
   PhaseDefaultsTable,
-  ProfileDoctorReportDto,
-  ProfileHeadroomMap,
-  ProfileSummaryDto,
   ProjectBindingDto,
   ProjectInfo,
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
   PtyExitInfo,
+  RemoveAccountOutcome,
   ResolveCardRepoIpcInput,
   ResolveCardReposIpcInput,
   SaveProjectBindingIpcInput,
@@ -50,16 +54,17 @@ import {
   CONFIG_CHANNELS,
   DEVMODE_CHANNELS,
   GITHUB_CHANNELS,
-  PROFILE_CHANNELS,
+  MIGRATION_CHANNELS,
   PROJECT_BINDING_CHANNELS,
   PROJECT_CHANNELS,
+  PROVIDER_CHANNELS,
   PTY_CHANNELS,
   SEMAPHORE_CHANNELS,
   SESSION_CHANNELS,
   TAB_CHANNELS,
   TRANSCRIPT_CHANNELS,
-  TRANSCRIPT_COPY_CHANNELS,
 } from '../shared';
+import type { ProviderId, ProviderSummaryDto, SetSecretResult, UpsertProviderInput, UpsertProviderResult } from '../shared';
 // T504 (005-terminal-copy-paste) — canal do clipboard-bridge (main), aditivo
 // aos imports acima (não reordena o bloco existente).
 import { CLIPBOARD_CHANNELS } from '../shared';
@@ -77,8 +82,11 @@ import {
   type EsteiraGestureDto,
   type EsteiraSeedDto,
   type EsteiraSnapshotDto,
+  type ReadArtifactTextDto,
+  type ReadArtifactTextIpcInput,
   type ReleaseLockIpcInput,
   type SeedIpcInput,
+  type SetDiscoveryReposIpcInput,
   type SetStageOverrideIpcInput,
   type SetWorkItemStateIpcInput,
 } from '../shared/esteira/ipc';
@@ -109,6 +117,10 @@ const donelApi: DonelApi = {
 
     getPreview: (ptyId: string) => ipcRenderer.invoke(PTY_CHANNELS.preview, ptyId) as Promise<string[]>,
 
+    // NÃO passa por `subscribeChannel` (G5): este canal é broadcast DE
+    // PROPÓSITO — uma aba, um `TerminalPane`, um listener, todos no MESMO
+    // canal, cada um filtrando pelo próprio `ptyId`. Múltiplos assinantes
+    // aqui são o desenho certo, não o bug que G5 existe para pegar.
     onData: (ptyId: string, listener: (data: string) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, eventPtyId: string, data: string): void => {
         if (eventPtyId === ptyId) listener(data);
@@ -158,12 +170,14 @@ const donelApi: DonelApi = {
     // T412 (004) — push do watcher de transcript (CA-4). Sem filtro por
     // sessionId aqui, ao contrário de `pty.onData`: é UMA assinatura no App
     // para TODAS as abas vivas, e quem despacha por sessão é o renderer.
+    // G5 — canal pensado para UMA assinatura só (o comentário acima já dizia
+    // "UMA assinatura no App para TODAS as abas vivas"); `subscribeChannel`
+    // torna essa intenção auditável, não só comentada.
     onTranscriptChanged: (listener: (payload: TranscriptChangedPayload) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: TranscriptChangedPayload): void => {
         listener(payload);
       };
-      ipcRenderer.on(TRANSCRIPT_CHANNELS.changed, handler);
-      return () => ipcRenderer.removeListener(TRANSCRIPT_CHANNELS.changed, handler);
+      return subscribeChannel(ipcRenderer, TRANSCRIPT_CHANNELS.changed, handler);
     },
 
     // T705 (007-favoritos-sessoes) — os três canais de escrita do registro.
@@ -182,28 +196,9 @@ const donelApi: DonelApi = {
     seedProject: (projectPath: string) => ipcRenderer.invoke(SESSION_CHANNELS.seedProject, projectPath) as Promise<AppConfigDto>,
   },
 
-  profiles: {
-    list: () => ipcRenderer.invoke(PROFILE_CHANNELS.list) as Promise<ProfileSummaryDto[]>,
-
-    create: (name: string) => ipcRenderer.invoke(PROFILE_CHANNELS.create, name) as Promise<ProfileSummaryDto[]>,
-
-    activate: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.activate, slug) as Promise<ProfileSummaryDto[]>,
-
-    doctor: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.doctor, slug) as Promise<ProfileDoctorReportDto>,
-
-    repair: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.repair, slug) as Promise<ProfileDoctorReportDto>,
-
-    // T205 — repassa `{ force }` cru pro main; o main é quem valida/normaliza
-    // o payload (é IPC, não confia cegamente no que o renderer manda).
-    headroom: (options?: { force?: boolean }) => ipcRenderer.invoke(PROFILE_CHANNELS.headroom, options) as Promise<ProfileHeadroomMap>,
-
-    // Item 3 (rodada de feedback 30/07) — exclusão de perfil.
-    delete: (slug: string) => ipcRenderer.invoke(PROFILE_CHANNELS.delete, slug) as Promise<DeleteProfileOutcome>,
-  },
-
   // 011-contas-e-provedores (etapa 1) — motor de contas + mods (nasce inerte,
   // accounts.mod = null). `ConnectModInput` é write-only: o segredo digitado
-  // nunca volta em NENHUM canal de leitura abaixo. Mesmo padrão de `profiles.*`.
+  // nunca volta em NENHUM canal de leitura abaixo.
   accounts: {
     list: (options?: { force?: boolean }) => ipcRenderer.invoke(ACCOUNT_CHANNELS.list, options) as Promise<AccountsViewDto>,
 
@@ -217,11 +212,71 @@ const donelApi: DonelApi = {
 
     disconnectMod: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.disconnectMod) as Promise<AccountsConfigDto>,
 
+    // 011-contas-e-provedores, etapa 3, Fase 1 — remove uma conta cadastrada
+    // (bloqueado para a ATIVA; ver `RemoveAccountOutcome`).
+    removeAccount: (id: AccountId) => ipcRenderer.invoke(ACCOUNT_CHANNELS.removeAccount, id) as Promise<RemoveAccountOutcome>,
+
+    // G5 — o canal cujo segundo assinante silencioso já custou ~80ms no boot
+    // (T1232/011, etapa 2): `App.tsx` abria a própria assinatura além da que
+    // `AccountsPanel` já mantinha. A correção de então tirou a duplicata; esta
+    // guarda pega a PRÓXIMA vez que alguém reintroduzir o mesmo padrão.
     onChanged: (listener: (view: AccountsViewDto) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, view: AccountsViewDto): void => listener(view);
-      ipcRenderer.on(ACCOUNT_CHANNELS.changed, handler);
-      return () => ipcRenderer.removeListener(ACCOUNT_CHANNELS.changed, handler);
+      return subscribeChannel(ipcRenderer, ACCOUNT_CHANNELS.changed, handler);
     },
+
+    // 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado
+    // (IsolatedLoginManager, main/accounts/isolated-login.ts). `beginLogin`
+    // só pede o rótulo (LGPD — nunca o e-mail/nome da conta); o `loginId` do
+    // retorno alimenta o `pty:create` seguinte (`accountLoginId`).
+    beginLogin: (label: string) => ipcRenderer.invoke(ACCOUNT_CHANNELS.beginLogin, label) as Promise<BeginLoginOutcome>,
+
+    cancelLogin: (loginId: string) => ipcRenderer.invoke(ACCOUNT_CHANNELS.cancelLogin, loginId) as Promise<void>,
+
+    onLoginChanged: (listener: (status: LoginStatusDto) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: LoginStatusDto): void => listener(status);
+      return subscribeChannel(ipcRenderer, ACCOUNT_CHANNELS.loginChanged, handler);
+    },
+
+    // 011-contas-e-provedores, etapa 3, Fase 2 (D3) — login isolado apontado
+    // pra uma conta já cadastrada ("Reconectar"). O rótulo vem da conta, não
+    // é digitado de novo.
+    beginReconnect: (id: AccountId) => ipcRenderer.invoke(ACCOUNT_CHANNELS.beginReconnect, id) as Promise<BeginLoginOutcome>,
+  },
+
+  // T1214 (011-contas-e-provedores, etapa 2) — assistente de migração
+  // (contracts/migration-etapa-2.md). Temporário: existe enquanto houver
+  // `~/.claude-profiles`. Nenhum canal devolve conteúdo de arquivo de perfil.
+  migration: {
+    scan: () => ipcRenderer.invoke(MIGRATION_CHANNELS.scan) as Promise<MigrationPlan>,
+
+    importCredentials: (profileSlug: string) =>
+      ipcRenderer.invoke(MIGRATION_CHANNELS.importCredentials, profileSlug) as Promise<ImportResult>,
+
+    consolidateTranscripts: (profileSlug: string) =>
+      ipcRenderer.invoke(MIGRATION_CHANNELS.consolidateTranscripts, profileSlug) as Promise<ConsolidateResult>,
+
+    markMcpReviewed: (profileSlug: string) =>
+      ipcRenderer.invoke(MIGRATION_CHANNELS.markMcpReviewed, profileSlug) as Promise<MigrationPlan>,
+
+    archive: () => ipcRenderer.invoke(MIGRATION_CHANNELS.archive) as Promise<ArchiveOutcome>,
+  },
+
+  // T1318 (011-contas-e-provedores, etapa 3) — registry de providers classe
+  // A; nasce inerte (`providers.entries = []`). `UpsertProviderInput` nunca
+  // carrega o VALOR de um segredo — só `setSecret` grava segredo, e devolve
+  // só o status (write-only, C19). Não existe canal `resolveLaunch`: essa
+  // resolução acontece dentro do `pty:create`, no main, pro env nunca
+  // atravessar este arquivo (contracts/provider-registry.md).
+  providers: {
+    list: () => ipcRenderer.invoke(PROVIDER_CHANNELS.list) as Promise<readonly ProviderSummaryDto[]>,
+
+    upsert: (input: UpsertProviderInput) => ipcRenderer.invoke(PROVIDER_CHANNELS.upsert, input) as Promise<UpsertProviderResult>,
+
+    remove: (id: ProviderId) => ipcRenderer.invoke(PROVIDER_CHANNELS.remove, id) as Promise<readonly ProviderSummaryDto[]>,
+
+    setSecret: (id: ProviderId, envKey: string, value: string) =>
+      ipcRenderer.invoke(PROVIDER_CHANNELS.setSecret, id, envKey, value) as Promise<SetSecretResult>,
   },
 
   config: {
@@ -296,8 +351,7 @@ const donelApi: DonelApi = {
       const handler = (_event: Electron.IpcRendererEvent, payload: PhaseArchivedPayload): void => {
         listener(payload);
       };
-      ipcRenderer.on(DEVMODE_CHANNELS.phaseArchived, handler);
-      return () => ipcRenderer.removeListener(DEVMODE_CHANNELS.phaseArchived, handler);
+      return subscribeChannel(ipcRenderer, DEVMODE_CHANNELS.phaseArchived, handler);
     },
 
     // Issue #34 (P0) — resolve o repo-alvo do card por rastro em disco, nunca
@@ -327,13 +381,6 @@ const donelApi: DonelApi = {
     read: (request: GithubReadRequest) => ipcRenderer.invoke(GITHUB_CHANNELS.read, request) as Promise<GithubReadResponse>,
 
     checkAvailability: () => ipcRenderer.invoke(GITHUB_CHANNELS.checkAvailability) as Promise<GhAvailabilityDto>,
-  },
-
-  // CA-24 (009-modo-dev-v3, lote 8) — "Reiniciar sessão em foco": copia o
-  // `.jsonl` pro perfil ATIVO quando a sessão rodou em outro (achado 14).
-  transcripts: {
-    copyForResume: (input: CopyTranscriptForResumeIpcInput) =>
-      ipcRenderer.invoke(TRANSCRIPT_COPY_CHANNELS.copyForResume, input) as Promise<CopyTranscriptForResumeResult>,
   },
 
   // Spec 010 — a esteira nova. O renderer NUNCA lê disco nem calcula macro
@@ -366,6 +413,8 @@ const donelApi: DonelApi = {
     // está aqui de propósito — D-16 manda ela passar sempre pela skill.
     setStageOverride: (input: SetStageOverrideIpcInput) =>
       ipcRenderer.invoke(ESTEIRA_CHANNELS.setStageOverride, input) as Promise<EsteiraGestureDto>,
+    setDiscoveryRepos: (input: SetDiscoveryReposIpcInput) =>
+      ipcRenderer.invoke(ESTEIRA_CHANNELS.setDiscoveryRepos, input) as Promise<EsteiraGestureDto>,
 
     setWorkItemState: (input: SetWorkItemStateIpcInput) =>
       ipcRenderer.invoke(ESTEIRA_CHANNELS.setWorkItemState, input) as Promise<EsteiraGestureDto>,
@@ -379,10 +428,13 @@ const donelApi: DonelApi = {
     // muda o que já aconteceu localmente.
     retryMirror: () => ipcRenderer.invoke(ESTEIRA_CHANNELS.retryMirror) as Promise<EsteiraSnapshotDto>,
 
+    // C3 — lê o texto de um artefato (D-8), só leitura.
+    readArtifactText: (input: ReadArtifactTextIpcInput) =>
+      ipcRenderer.invoke(ESTEIRA_CHANNELS.readArtifactText, input) as Promise<ReadArtifactTextDto>,
+
     onChanged: (listener: (state: EsteiraSnapshotDto) => void) => {
       const handler = (_event: unknown, state: EsteiraSnapshotDto): void => listener(state);
-      ipcRenderer.on(ESTEIRA_CHANNELS.changed, handler);
-      return () => ipcRenderer.removeListener(ESTEIRA_CHANNELS.changed, handler);
+      return subscribeChannel(ipcRenderer, ESTEIRA_CHANNELS.changed, handler);
     },
   },
 };

@@ -1,5 +1,14 @@
 # Spike T002 — Resultado: semáforo de sessões via hooks (FR-010)
 
+> **SUPERSEDED (2026-08-04, C32 — 011-contas-e-provedores, etapa 2).** O
+> mecanismo de perfis (`~/.claude-profiles`, `CLAUDE_CONFIG_DIR` por perfil,
+> dropdown `ProfileSwitcher`) descrito abaixo foi DEMOLIDO na etapa 2 da 011
+> (T1222/T1225): o único caminho de conta hoje é o motor
+> (`src/main/accounts/`), documentado em `specs/011-contas-e-provedores/`.
+> Marcação apenas — nada abaixo foi apagado ou reescrito (mesma regra do
+> `backlog.md`, itens riscados com nota, nunca deletados).
+
+
 **Status:** concluído (parcial — ver "Não verificado")
 **Data:** 2026-07-23
 **Branch:** `feature/mvp-p0`

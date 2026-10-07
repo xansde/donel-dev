@@ -97,6 +97,8 @@ test('o ciclo completo de um item', async () => {
         from: { entity: 'discovery', id: discoveryId },
         to: { entity: 'plan', id: ID_PLANO },
       },
+      // A18 — a fase de conversa só fecha com o que alguém disse.
+      { type: 'decision.recorded', subject: { entity: 'discovery', id: discoveryId }, decision: 'instrumentar antes de mexer no consumo', confirmed_by: 'dono do repo' },
       { type: 'phase.completed', subject: { entity: 'discovery', id: discoveryId }, phase: 'discovery', outcome: 'done', summary: 'Um plano proposto.' },
     ]);
 
@@ -115,6 +117,7 @@ test('o ciclo completo de um item', async () => {
         title: 'Expor estado da fila no endpoint de saúde',
         target_repo: REPO_ALVO,
       },
+      { type: 'decision.recorded', subject: { entity: 'plan', id: ID_PLANO }, decision: 'um item só, para o ciclo caber numa rodada', confirmed_by: 'dono do repo' },
       { type: 'phase.completed', subject: { entity: 'plan', id: ID_PLANO }, phase: 'plano', outcome: 'done', summary: 'Um item.' },
     ]);
     await varrer.click();

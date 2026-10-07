@@ -261,6 +261,36 @@ segue no log (histórico não se reescreve), mas nenhum consumidor novo o lê co
 próximo consumidor não vai saber do contorno — e a contradição reaparece em
 outro lugar da mesma tela.
 
+### B. Item da revisão que não sabe que já foi feito
+
+**Sintoma (captura do batch n1, roteiro `decisoes-revisao-e-canal`, print
+final):** o card dizia, ao mesmo tempo, "PR mergeado e verificado" (bloco
+VERIFICAÇÕES) e "Você precisa: abrir o PR contra staging — aguardando você"
+(bloco REVISÃO DA FASE), duas seções abaixo, na MESMA tela.
+
+**Causa:** `human_review.recorded` grava o checklist inteiro por `(subject,
+phase)` — a fase `implementar` declarou "abrir o PR" como pendente, e nada
+emitido DEPOIS (nem `validar`, nem `concluir`) tem como corrigir ESSE
+registro: seria preciso um NOVO `human_review.recorded` com `phase:
+'implementar'` e o mesmo item agora `state: 'done'`. O mecanismo para isso
+existe no contrato (`HumanReviewState` tem `done` e `waived`, não só
+`pending`) — só que nada o aciona. Indo na origem: nenhum `SKILL.md` de fase
+(`skills/esteira-donel-3.0.0/skills/*/SKILL.md`) sequer MENCIONA
+`human_review.recorded` — o fato é novo (A10+A19, este mesmo batch) e as
+instruções que guiam a skill de verdade ainda não sabem dele, muito menos de
+resolvê-lo depois.
+
+**Por que não corrigi aqui:** duas saídas possíveis, as duas são decisão de
+produto. (1) O app inferir sozinho que "abrir o PR" foi feito quando chega uma
+`verification.recorded(pull-request, passed)` — frágil (que texto de item
+"conta" como resolvido por qual kind de verificação?), e este mesmo arquivo de
+código evita esse tipo de inferência de propósito (`esteiraView.ts`: "nenhuma
+delas é pendência para o que ainda não foi pedido"). (2) Ensinar a skill, via
+`SKILL.md`, a reemitir o `human_review.recorded` da fase anterior marcando o
+item feito quando uma fase posterior resolve a pendência — exige tocar as
+instruções de produção da skill, não só o roteiro de captura. **Fica como
+achado pendente.**
+
 ---
 
 ## No roteiro (achados da automação)
@@ -373,6 +403,58 @@ assentar antes do flash.
 
 **Correção:** fechar o que abriu sozinho antes de agir. Se o overlay é
 legítimo, fotografe-o — ele faz parte do fluxo que o leitor vai encontrar.
+
+### 7. Ref que carrega o resultado vira "outro" check, não o mesmo atualizado
+
+**Sintoma (captura do batch n1, roteiro `decisoes-revisao-e-canal`):** o card
+mostrava, ao mesmo tempo, "roteiro e2e escrito, esperando você rodar" E
+"roteiro e2e rodado por você: passou" — duas linhas para o MESMO roteiro e2e,
+uma dizendo que ele ainda espera e outra dizendo que já passou.
+
+**Causa:** o store guarda uma verificação por `(subject, kind, ref)` — de
+propósito, para um kind como `check` admitir vários checks distintos (`npm
+test` e `npm run lint`, por exemplo) lado a lado, cada um sua linha. O roteiro
+emitiu o `e2e-manual` pendente com `ref: ROTEIRO_E2E` e, ao registrar o
+resultado, trocou o `ref` para `` `${ROTEIRO_E2E} — rodado por você, passou}`
+`` — o texto do resultado (que a tela já escolhe sozinha a partir de
+kind+state, via `VERIFICATION_TEXT`) foi parar dentro do campo que deveria só
+identificar QUAL check é. Ref diferente = chave diferente = duas entradas, não
+uma atualizada.
+
+**Correção:** manter `ref` estável entre as duas emissões (`ROTEIRO_E2E` nos
+dois fatos), do jeito que o PR vizinho no MESMO roteiro já fazia (mesma
+`URL_PR` em pending e em passed — por isso ele nunca duplicou). O app está
+certo; o roteiro é quem inventou uma identidade nova para o mesmo check.
+
+**A regra que sai daqui:** `ref` é IDENTIDADE, não é onde se escreve o
+resultado — o resultado já tem campo próprio (`state`) e frase própria
+(`VERIFICATION_TEXT`). Fato novo de `verification.recorded` que queira
+ATUALIZAR um check existente precisa repetir o `ref` anterior byte a byte.
+
+### 8. Travessão vira "�" quando o stderr do Python é lido como UTF-8
+
+**Sintoma (captura do batch n1):** a legenda do print (qualquer captura que
+passasse pela recusa do `emit_result.py`) mostrava "... exige ao menos um
+gate.confirmed ou decision.recorded � fase que nao perguntou nada nao fecha" —
+um "�" no lugar do travessão da mensagem de erro.
+
+**Causa:** no Windows, quando o stdout/stderr do Python é PIPED (não é um
+console de verdade — é exatamente o caso de `execFileSync` capturando a
+saída), o interpretador cai no codepage do locale (cp1252, nesta máquina) em
+vez de UTF-8. O travessão "—" sai como o byte único `0x97` (válido em cp1252,
+inválido como UTF-8 sozinho); quem decodifica como UTF-8 do outro lado recebe
+o caractere de substituição.
+
+**Correção:** `emit_result.py` força `sys.stdout`/`sys.stderr` para UTF-8 logo
+no início de `main()` (`stream.reconfigure(encoding="utf-8")`), então qualquer
+leitor — piped ou console — recebe UTF-8 de verdade. Teste de regressão em
+`test_emit_result.py`
+(`test_contract_error_reaches_piped_stderr_as_utf8`) roda o CLI como
+subprocesso de verdade e falha se o "�" reaparecer.
+
+**A regra que sai daqui:** ferramenta de linha de comando cujo stderr pode ser
+CAPTURADO (por um roteiro, por um CI, por um log) não pode confiar no encoding
+default do console — ele muda com o locale de quem roda.
 
 ---
 

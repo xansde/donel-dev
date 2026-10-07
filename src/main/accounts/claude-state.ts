@@ -99,6 +99,22 @@ function extractPair(credentialsJson: Record<string, unknown>): CredentialPair |
   };
 }
 
+/**
+ * 011-contas-e-provedores, etapa 3, Fase 2 (D7/D9, adendo) — lê o par VIGENTE
+ * de `.credentials.json`, sem renovar nem escrever nada. Usada pelo mod local
+ * pra ler a carga da conta ATIVA com o token que o próprio CLI mantém fresco
+ * (D7) — nunca passa pelo caminho de renovação via cofre, que consumiria um
+ * refresh token que o CLI já pode ter usado (o refresh token do cofre da
+ * ativa fica órfão assim que o CLI renova o `~/.claude` dela por fora).
+ * Reaproveita os mesmos privados (`readJsonObject`/`extractPair`) da captura
+ * em `applyAccountSwitch`. Nunca lança; `null` se o arquivo não existir, ou o
+ * par estiver ausente/malformado.
+ */
+export function readCurrentCredentialPair(deps: { readonly io: ClaudeStateIoDeps; readonly claudeHome: string }): CredentialPair | null {
+  const credentialsJson = readJsonObject(credentialsFilePath(deps.claudeHome), deps.io);
+  return extractPair(credentialsJson);
+}
+
 export interface ApplySwitchDeps {
   readonly io: ClaudeStateIoDeps;
   readonly claudeHome: string;

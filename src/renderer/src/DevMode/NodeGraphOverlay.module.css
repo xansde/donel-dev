@@ -1,0 +1,196 @@
+/* 012 Esteira 4.0 / wi-esteira4-mapa-grafos — mapa de nós em TELA CHEIA,
+   motor A (d3-force + SVG próprio). Mesmos tokens do resto do app
+   (`design-system/src/tokens.css`); nenhuma cor solta. O SVG lê CSS var
+   nativamente — nada de getComputedStyle (a gambiarra era só para WebGL,
+   na bancada). As classes de tom (.toneX) são o contrato com o componente
+   (`TONE_CLASS` em `nodeGraphForce.ts`) e estão travadas por teste
+   (`tests/nodeGraphStateClasses.test.ts`). */
+
+.overlay {
+  /* TELA CHEIA de verdade: cobre a janela inteira (inclusive titlebar e
+     status bar), não só a área do corpo — diferente da tela da Esteira
+     (`EsteiraScreen.module.css`, absolute/inset:0 dentro de `.body`). z-index
+     acima do Modal (100) e abaixo do Toast (200): é uma tela de navegação,
+     não uma notificação — se um toast disparar por cima, ele continua visível. */
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-heading-size);
+  font-weight: var(--weight-semibold);
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.empty {
+  margin: var(--space-3);
+  color: var(--text-muted);
+}
+
+.canvas {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.toolbar {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  z-index: 1;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.svg:active {
+  cursor: grabbing;
+}
+
+/* === Arestas === */
+
+.link {
+  stroke: var(--border);
+  stroke-width: 1.5;
+  transition: opacity var(--duration-micro) var(--ease-standard);
+}
+
+.linkLateral {
+  /* As duas relações LATERAIS entre itens (`deságua em`/`entra junto`, não a
+     hierarquia discovery → plano → item) ganham traço tracejado —
+     distinguível sem depender só da cor. */
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  transition: opacity var(--duration-micro) var(--ease-standard);
+}
+
+/* === Nós (círculo + rótulo embaixo, D-M1/D-M3) === */
+
+.node {
+  cursor: pointer;
+}
+
+.node circle {
+  transition: opacity var(--duration-micro) var(--ease-standard);
+}
+
+.node text {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  fill: var(--text-muted);
+  pointer-events: none;
+  user-select: none;
+}
+
+.node:focus-visible {
+  outline: none;
+}
+
+.node:focus-visible circle {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+/* Desvio sinalizado pela projeção (ex.: item sem plano, verificação que
+   falhou): o contorno vira tracejado — distinguível além da cor. */
+.nodeDeviation circle {
+  stroke: var(--state-waiting);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+}
+
+/* === Cores por estado (D-M2) — uma classe por tom da projeção. ===
+   ok=concluído · accent=rodando · warn=esperando o dono · error/lock=travado
+   (falha e trava, os dois vermelhos que o app já distingue) · muted=ainda
+   não começou (cinza VAZADO — fundo com contorno, não cheio). */
+
+.toneOk circle {
+  fill: var(--zone-ok);
+}
+
+.toneAccent circle {
+  fill: var(--accent);
+}
+
+.toneWarn circle {
+  fill: var(--state-waiting);
+}
+
+.toneError circle {
+  fill: var(--state-permission);
+}
+
+.toneLock circle {
+  fill: var(--state-error);
+}
+
+.toneMuted circle {
+  fill: var(--bg-raised);
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+}
+
+/* === Tooltip (D-M4) === */
+
+.tooltip {
+  position: absolute;
+  z-index: 2;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  pointer-events: none;
+  font-size: var(--text-caption-size);
+}
+
+.tooltip strong {
+  font-size: var(--text-body-size);
+  font-weight: var(--weight-semibold);
+}
+
+.tooltip p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.tooltipState {
+  font-weight: var(--weight-semibold);
+}
+
+.tooltipDeviation {
+  color: var(--state-waiting);
+}

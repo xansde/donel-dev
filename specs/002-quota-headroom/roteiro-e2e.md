@@ -1,5 +1,14 @@
 # Roteiro E2E — 002 Quota headroom (validação do Alexandre)
 
+> **SUPERSEDED (2026-08-04, C32 — 011-contas-e-provedores, etapa 2).** O
+> mecanismo de perfis (`~/.claude-profiles`, `CLAUDE_CONFIG_DIR` por perfil,
+> dropdown `ProfileSwitcher`) descrito abaixo foi DEMOLIDO na etapa 2 da 011
+> (T1222/T1225): o único caminho de conta hoje é o motor
+> (`src/main/accounts/`), documentado em `specs/011-contas-e-provedores/`.
+> Marcação apenas — nada abaixo foi apagado ou reescrito (mesma regra do
+> `backlog.md`, itens riscados com nota, nunca deletados).
+
+
 **Build:** `release/Donel Dev-Setup-0.1.0.exe` (gerado em 2026-07-24, HEAD
 `c1425e8` na `feature/mvp-p0`). Instalação é ato humano — o NSIS não é
 one-click (pede pasta). Fechar o Donel Dev antigo antes de instalar.

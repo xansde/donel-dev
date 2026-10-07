@@ -16,8 +16,9 @@
 // A traducao snake_case (contrato) → camelCase (modelo do store) acontece AQUI
 // e em nenhum outro lugar: o contrato e do mundo externo, o snapshot e do app.
 
-import type { ContractIssue, EntityRef, EsteiraFact, EsteiraResult } from '../contract/resultContract';
+import type { ContractIssue, DeclaredFactRef, EntityRef, EsteiraFact, EsteiraResult } from '../contract/resultContract';
 import type { EntityId, StoreEventType } from '../store/storeFormat';
+import { resultFingerprint } from './runLedger';
 
 export interface EventDraft {
   readonly type: StoreEventType;
@@ -154,6 +155,7 @@ function factToDraft(fact: EsteiraFact, index: number, result: EsteiraResult): E
           verificationKind: fact.verification_kind,
           state: fact.state,
           ref: fact.ref,
+          base: fact.base,
           recordedAt: at,
         },
       };
@@ -168,6 +170,8 @@ function factToDraft(fact: EsteiraFact, index: number, result: EsteiraResult): E
           phase: fact.phase,
           outcome: fact.outcome,
           summary: fact.summary,
+          channel: fact.channel,
+          risk: fact.risk,
           at,
           runId,
         },
@@ -196,6 +200,60 @@ function factToDraft(fact: EsteiraFact, index: number, result: EsteiraResult): E
         payload: { subject: refToId(fact.subject), phase: fact.phase, at },
       };
 
+    case 'gate.confirmed':
+      // A9 — a chave natural e `assunto + condicao`: cada condicao do gate tem
+      // seu registro, e reconfirmar a mesma condicao noutro run atualiza aquela
+      // linha em vez de empilhar outra.
+      return {
+        type: 'gate.confirmed',
+        at,
+        dedupe_key: dedupeKey(runId, fact.type, `${refKey(fact.subject)}:${fact.condition}`),
+        payload: {
+          subject: refToId(fact.subject),
+          condition: fact.condition,
+          confirmedBy: fact.confirmed_by,
+          // A hora da PESSOA, quando ela foi declarada; senao a do run. Nunca
+          // se inventa uma hora mais precisa do que a que se leu.
+          confirmedAt: fact.confirmed_at ?? at,
+        },
+      };
+
+    case 'human_review.recorded':
+      // A10 — chave natural `assunto + fase`: a lista e o estado de AGORA, e
+      // redeclara-la substitui a anterior em vez de empilhar duas versoes.
+      return {
+        type: 'human_review.recorded',
+        at,
+        dedupe_key: dedupeKey(runId, fact.type, `${refKey(fact.subject)}:${fact.phase}`),
+        payload: {
+          subject: refToId(fact.subject),
+          phase: fact.phase,
+          checklist: fact.checklist.map((entry) => ({
+            item: entry.item,
+            kind: entry.kind,
+            state: entry.state,
+            detail: entry.detail,
+          })),
+          at,
+        },
+      };
+
+    case 'decision.recorded':
+      // A18 — chave natural `assunto + decisao`: uma fase de conversa toma
+      // varias decisoes, e redecidir a mesma atualiza aquela linha.
+      return {
+        type: 'decision.recorded',
+        at,
+        dedupe_key: dedupeKey(runId, fact.type, `${refKey(fact.subject)}:${fact.decision}`),
+        payload: {
+          subject: refToId(fact.subject),
+          decision: fact.decision,
+          confirmedBy: fact.confirmed_by,
+          rationale: fact.rationale,
+          at,
+        },
+      };
+
     case 'note.recorded':
       // Chave pelo INDICE: duas notas de texto igual no mesmo run sao dois
       // gestos, e a chave so precisa impedir que o MESMO arquivo, relido, empilhe.
@@ -214,8 +272,28 @@ function factToDraft(fact: EsteiraFact, index: number, result: EsteiraResult): E
  * run inteiro, nao de um fato.
  */
 export function resultToEvents(result: EsteiraResult, source: IngestSource): readonly EventDraft[] {
-  void source; // o caminho do arquivo viaja no `source` do envelope, gravado pelo writer
   const drafts: EventDraft[] = [];
+
+  // A4 — o run entra no LIVRO antes dos fatos dele. E o registro que distingue
+  // "o mesmo arquivo, relido" de "o mesmo run, reescrito com outro desfecho":
+  // a `dedupe_key` sozinha nao distingue, e por isso engoliu em silencio a
+  // revisao da Concluir.
+  drafts.push({
+    type: 'run.ingested',
+    at: result.run.finished_at,
+    dedupe_key: `run.ingested:${result.run.run_id}:${resultFingerprint(result)}`,
+    payload: {
+      runId: result.run.run_id,
+      phase: result.run.phase,
+      kind: result.kind,
+      contentHash: resultFingerprint(result),
+      complementsRunId: result.run.complements_run_id,
+      revisesRunId: result.run.revises_run_id,
+      subject: runSubject(result),
+      resultPath: source.resultPath,
+      at: result.run.finished_at,
+    },
+  });
 
   result.facts.forEach((fact, index) => {
     const draft = factToDraft(fact, index, result);
@@ -248,6 +326,8 @@ export interface IngestFailureInput {
   /** O card em que o erro aparece, quando da para saber pelo documento. `null` = erro sem dono conhecido. */
   readonly subject: EntityId | null;
   readonly at: string;
+  /** A5 — o custo: os fatos que o documento declararia, se entrasse. Best-effort, `[]` quando nao ha o que extrair. */
+  readonly declaredFacts: readonly DeclaredFactRef[];
 }
 
 /**
@@ -265,6 +345,86 @@ export function ingestFailureEvent(input: IngestFailureInput): EventDraft {
       at: input.at,
       subject: input.subject,
       issues: input.issues.map((issue) => ({ code: issue.code, path: issue.path, message: issue.message })),
+      declaredFacts: input.declaredFacts.map((fact) => ({ factType: fact.factType, entity: fact.entity, id: fact.id, title: fact.title })),
+    },
+  };
+}
+
+export interface IngestAmnestyInput {
+  /** A MESMA chave que `ingest.failed` teria usado — a linha que este evento evita. */
+  readonly resultPath: string;
+  readonly at: string;
+  /**
+   * O run_id lido de forma leniente do texto cru. `null` quando a anistia
+   * veio pelo CORTE DE DATA sem um `run.run_id` legivel — honesto em vez de
+   * um palpite, nunca inventado.
+   */
+  readonly runId: string | null;
+  readonly subject: EntityId | null;
+  /** Os issues que o parser NOVO apontou — para auditoria: por que este arquivo teria falhado hoje. */
+  readonly issues: readonly ContractIssue[];
+}
+
+/**
+ * F26 — a anistia do outbox historico. Um run HISTORICO — cujo `run_id` JA
+ * PASSOU pela ingestao (livro ou qualquer evento com origem `ingest`, mesmo
+ * anterior ao livro existir) OU cujo timestamp e anterior ao corte do
+ * contrato endurecido — foi legitimo por um contrato mais antigo; endurecer
+ * o contrato nao pode fazer esse mesmo arquivo reaparecer como "nao consegui
+ * ler" so porque o parser de HOJE o recusaria. Revalidacao/re-scan so LIMPA,
+ * nunca SUJA.
+ *
+ * `dedupe_key` e `ingest.amnestied:<resultPath>` — prefixada com o proprio
+ * tipo, igual `ingest.failed:<path>` e `ingest.recovered:<path>`: as tres
+ * chaves nunca colidem entre si mesmo apontando para o MESMO arquivo, e o
+ * mesmo arquivo reprocessado a cada boot produz UMA anistia, nao uma pilha.
+ */
+export function ingestAmnestyEvent(input: IngestAmnestyInput): EventDraft {
+  return {
+    type: 'ingest.amnestied',
+    at: input.at,
+    dedupe_key: `ingest.amnestied:${input.resultPath}`,
+    payload: {
+      resultPath: input.resultPath,
+      at: input.at,
+      runId: input.runId,
+      subject: input.subject,
+      issues: input.issues.map((issue) => ({ code: issue.code, path: issue.path, message: issue.message })),
+    },
+  };
+}
+
+export interface IngestRecoveryInput {
+  /** A MESMA chave do `ingest.failed` que esta recuperacao supera. */
+  readonly resultPath: string;
+  readonly at: string;
+  readonly runId: string | null;
+  readonly subject: EntityId | null;
+  /** Os codigos de `ContractIssue` que o documento trazia e deixaram de valer. */
+  readonly recoveredCodes: readonly string[];
+  /** Como foi sanado, em uma frase — nunca inventa QUEM consertou, so O QUE mudou. */
+  readonly how: string;
+}
+
+/**
+ * A6 — um `result.json` RECUSADO passou a ser legivel. O `ingest.failed`
+ * anterior permanece no log (a recuperacao NAO o apaga); este evento e o fato
+ * de que ele foi superado. `dedupe_key` e o path, sem timestamp: uma vez
+ * recuperado, o path sai de `ingestErrors` e nao volta a ser revalidado — nao
+ * ha "segunda recuperacao do mesmo evento" para dedupe distinguir.
+ */
+export function ingestRecoveryEvent(input: IngestRecoveryInput): EventDraft {
+  return {
+    type: 'ingest.recovered',
+    at: input.at,
+    dedupe_key: `ingest.recovered:${input.resultPath}`,
+    payload: {
+      resultPath: input.resultPath,
+      at: input.at,
+      runId: input.runId,
+      subject: input.subject,
+      recoveredCodes: input.recoveredCodes,
+      how: input.how,
     },
   };
 }

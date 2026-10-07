@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   cardView,
+  ingestErrorCostLine,
   ingestErrorLine,
+  ingestRecoveryLine,
   cardContent,
+  liveSessionOf,
   lockView,
   MIRROR_PENDING_HINT,
   mirrorLines,
   phaseLine,
   phaseLines,
+  phaseSessions,
   provenanceMark,
   scanMessage,
   SEEDED_CARD_NOTE,
@@ -16,6 +20,7 @@ import {
   seededSummary,
   signalViews,
   stageView,
+  tombstoneLines,
   verificationLines,
 } from '../src/renderer/src/Esteira/esteiraView';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
@@ -42,6 +47,8 @@ function phase(overrides: Partial<PhaseRunSnapshot>): PhaseRunSnapshot {
     summary: null,
     failure: null,
     lastRunId: null,
+    channel: null,
+    risk: null,
     seeded: false,
     ...overrides,
   };
@@ -190,6 +197,109 @@ describe('cardView — a tela é projeção, não cálculo', () => {
   });
 });
 
+// E2 — o item descartado sai da lista viva, mas o card continua sabendo dele:
+// nota/fase/sessão que apontavam para ele não viram órfãs, e a lápide diz o
+// que aconteceu.
+describe('cardView + tombstoneLines — o item descartado não vira órfão (E2)', () => {
+  function cardComItemDescartado() {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('work_item.created', { id: 'wi-1', discoveryId: 'dsc-1', itemType: 'spike', title: 'Medir onde o lote para', createdAt: 'x' }),
+      evt('note.added', { subject: { entity: 'work_item', id: 'wi-1' }, text: 'nota sobre o item', at: 'x' }),
+      evt('phase.completed', { subject: { entity: 'work_item', id: 'wi-1' }, phase: 'implementar', outcome: 'abandoned', at: 'x' }),
+      evt('work_item.discarded', { id: 'wi-1', at: '2026-08-05T14:22:00.000Z', reason: 'nasceu duplicado' }),
+    ]);
+    return cardView(snapshot, 'dsc-1')!;
+  }
+
+  it('o item sai de `items`, mas a lápide aparece em `tombstones`', () => {
+    const card = cardComItemDescartado();
+    expect(card.items).toHaveLength(0);
+    expect(card.tombstones).toHaveLength(1);
+    expect(card.tombstones[0].title).toBe('Medir onde o lote para');
+  });
+
+  it('a nota do item descartado continua no card, nomeando o item (descartado)', () => {
+    const card = cardComItemDescartado();
+    expect(card.notes).toHaveLength(1);
+    expect(card.notes[0].about).toBe('o item «Medir onde o lote para» (descartado)');
+  });
+
+  it('a fase do item descartado continua no card', () => {
+    const card = cardComItemDescartado();
+    expect(card.phases).toHaveLength(1);
+    expect(card.phases[0].subject).toEqual({ entity: 'work_item', id: 'wi-1' });
+  });
+
+  it('tombstoneLines produz a frase pronta, com tipo e data', () => {
+    // A hora exata depende do fuso da máquina (`formatTimestamp`); o que este
+    // teste garante é a FORMA da frase, não um horário hardcoded.
+    const [line] = tombstoneLines(cardComItemDescartado());
+    expect(line.text).toMatch(/^Medir onde o lote para · spike · descartado em \d{2}\/\d{2}, \d{2}:\d{2}$/);
+    expect(line.reason).toBe('nasceu duplicado');
+  });
+
+  it('card sem item descartado tem tombstones e tombstoneLines vazios', () => {
+    const snapshot = reduceEvents([evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' })]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(card.tombstones).toEqual([]);
+    expect(tombstoneLines(card)).toEqual([]);
+  });
+});
+
+// A5 — o CUSTO de um erro de ingestão: o que o arquivo declararia, se entrasse.
+describe('ingestErrorCostLine — o custo do documento recusado (A5)', () => {
+  it('nomeia as entidades que nunca chegaram a existir', () => {
+    const line = ingestErrorCostLine({
+      resultPath: 'C:/x.json',
+      at: 'x',
+      subject: null,
+      issues: [],
+      declaredFacts: [
+        { factType: 'work_item.recorded', entity: 'work_item', id: 'wi-1', title: 'Instrumentar a fila' },
+        { factType: 'work_item.recorded', entity: 'work_item', id: 'wi-2', title: null },
+      ],
+    });
+    expect(line).toBe('Sem este arquivo não existe: o item «Instrumentar a fila», o item wi-2.');
+  });
+
+  it('conta os fatos que não criam entidade própria como "e mais N"', () => {
+    const line = ingestErrorCostLine({
+      resultPath: 'C:/x.json',
+      at: 'x',
+      subject: null,
+      issues: [],
+      declaredFacts: [
+        { factType: 'plan.recorded', entity: 'plan', id: 'pln-1', title: 'Plano' },
+        { factType: 'relation.recorded', entity: null, id: null, title: null },
+      ],
+    });
+    expect(line).toBe('Sem este arquivo não existe: o plano «Plano», e mais 1 fato.');
+  });
+
+  it('sem nenhuma entidade declarada, devolve null — não há "deixou de existir" para dizer', () => {
+    expect(ingestErrorCostLine({ resultPath: 'C:/x.json', at: 'x', subject: null, issues: [], declaredFacts: [] })).toBeNull();
+    expect(
+      ingestErrorCostLine({
+        resultPath: 'C:/x.json',
+        at: 'x',
+        subject: null,
+        issues: [],
+        declaredFacts: [{ factType: 'gate.confirmed', entity: null, id: null, title: null }],
+      }),
+    ).toBeNull();
+  });
+});
+
+// A6 — a recuperação é um FATO com o que foi sanado, não "erro sumiu".
+describe('ingestRecoveryLine (A6)', () => {
+  it('diz COMO foi recuperado', () => {
+    expect(
+      ingestRecoveryLine({ resultPath: 'C:/x.json', at: 'x', runId: null, subject: null, recoveredCodes: [], how: 'o arquivo não existe mais no outbox' }),
+    ).toBe('Voltou a ler: o arquivo não existe mais no outbox.');
+  });
+});
+
 describe('lockView — a tela não promete o que não cumpre', () => {
   function cardWithLock(claimed: boolean, holderKind: 'app' | 'skill' = 'app') {
     const snapshot = reduceEvents([
@@ -224,14 +334,17 @@ describe('lockView — a tela não promete o que não cumpre', () => {
     const view = lockView(cardWithLock(false))!;
     // Uma função só produz o comando (`esteiraPhaseCommand`) — se aqui fosse
     // outro texto, a correção de um dos dois envelheceria calada.
-    expect(view.nextStep?.command).toBe('/esteira-discovery --input "C:/inbox/run-1.json"');
+    // A2 — a skill do FORK (sufixo -3), nunca o plugin 2.1.0 sem sufixo.
+    expect(view.nextStep?.command).toBe('/esteira-discovery-3 --input "C:/inbox/run-1.json"');
   });
 
-  it('sessão aberta pelo app NÃO se chama "em andamento": abrir a aba não é apertar o Enter', () => {
+  it('sessão aberta pelo app NÃO se chama "em andamento": abrir a aba não é a skill declarar que roda', () => {
     // O print 07 do roteiro `disparo-abre-sessao` dizia "Em andamento" enquanto
     // o print 10, da MESMA rodada, mostrava o comando parado no prompt. O app
-    // sabe que a aba abriu; ele não sabe se alguém enviou o comando — e a tela
-    // não pode afirmar o que o app não sabe.
+    // sabe que a aba abriu e que o CLI devolveu um id — isso ainda não é a
+    // SKILL declarando que está trabalhando (só ela pode dizer isso, via
+    // holderKind: 'skill'). "Em andamento" fica reservado pra quando existe
+    // alguém, de fato, tocando a fase.
     const view = lockView(cardWithLock(true))!;
     expect(view.state).toBe('session-open');
     expect(view.title).toBe('Sessão aberta');
@@ -239,8 +352,19 @@ describe('lockView — a tela não promete o que não cumpre', () => {
     expect(view.nextStep).toBeNull();
   });
 
-  it('e a linha admite o limite do que o app sabe, em vez de prometer trabalho acontecendo', () => {
-    expect(lockView(cardWithLock(true))!.line).toContain('o app não sabe se você já o enviou');
+  it('e a linha diz que o app aperta o Enter sozinho — o gesto humano acabou no clique em Preparar (B5)', () => {
+    // Achado da captura `auto-start-e-redisparo-recusado` (05/08): esta linha
+    // dizia "o app não sabe se você já o enviou", texto escrito quando enviar
+    // era SEMPRE gesto humano. O batch B5 (mesma leva) fechou essa lacuna com
+    // `autoStartWriteSteps`/`armEsteiraAutoStart` (até 11/08, `withAutoEnter`)
+    // sem atualizar esta frase — a tela
+    // continuou prometendo incerteza sobre um fato que o app passou a
+    // controlar. `handleOpenEsteiraSession` arma o auto-start para TODA sessão
+    // de fase da esteira, sem exceção — não sobra caso em que o texto antigo
+    // ainda fosse verdade.
+    const line = lockView(cardWithLock(true))!.line;
+    expect(line).toContain('aperta o Enter sozinho');
+    expect(line).not.toContain('não sabe se você já o enviou');
   });
 
   it('assumida: a linha nomeia a SESSÃO que segura a trava — dono, hora e sessão (D-11)', () => {
@@ -261,6 +385,90 @@ describe('lockView — a tela não promete o que não cumpre', () => {
   it('card sem trava não tem bloco nenhum', () => {
     const snapshot = reduceEvents([evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' })]);
     expect(lockView(cardView(snapshot, 'dsc-1')!)).toBeNull();
+  });
+
+  // C1 (batch N5) — o mapa precisa da linha honesta de UMA trava que não é
+  // `card.lock` (a primeira do card): com disparo por item (B2 da 010), um
+  // card pode ter mais de uma trava ao mesmo tempo. Parâmetro opcional,
+  // default `card.lock`, para as chamadas existentes continuarem intocadas.
+  it('aceita uma trava explícita, diferente da primeira do card — o mapa pede a de UM assunto específico', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+      evt('work_item.created', { id: 'wki-1', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'issue', title: 'Item' }),
+      evt('lock.acquired', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', holderKind: 'app', acquiredAt: 'x' }),
+      evt('lock.acquired', { subject: { entity: 'work_item', id: 'wki-1' }, phase: 'implementar', holderKind: 'skill', acquiredAt: 'y' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(card.locks).toHaveLength(2);
+    const travaDoItem = card.locks.find((entry) => entry.subject.entity === 'work_item')!;
+
+    // Sem o parâmetro, continua sendo `card.lock` (a primeira) — nada quebra.
+    expect(lockView(card)!.line).toContain('o card');
+
+    // Com o parâmetro, é a trava PEDIDA que a frase descreve.
+    const viewDoItem = lockView(card, travaDoItem)!;
+    expect(viewDoItem.state).toBe('running');
+    expect(viewDoItem.line).toContain('Item');
+    expect(viewDoItem.line).not.toContain('o card,');
+  });
+});
+
+describe('phaseSessions — as sessões de UM assunto+fase', () => {
+  it('filtra por assunto E fase — a mesma fatia que a lista de fases já calculava', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+      evt('work_item.created', { id: 'wki-1', discoveryId: 'dsc-1', planId: 'pln-1', itemType: 'issue', title: 'Item' }),
+      evt('session.started', { id: 'ses-discovery', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+      evt('session.started', { id: 'ses-item', subject: { entity: 'work_item', id: 'wki-1' }, phase: 'implementar', startedAt: 'x' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    const doItem = phaseSessions(card, { entity: 'work_item', id: 'wki-1' }, 'implementar');
+    expect(doItem.map((session) => session.id)).toEqual(['ses-item']);
+  });
+
+  it('sem sessão nenhuma daquele assunto+fase, devolve vazio — nunca as de outro assunto', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('session.started', { id: 'ses-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(phaseSessions(card, { entity: 'discovery', id: 'dsc-1' }, 'plano')).toHaveLength(0);
+  });
+});
+
+// B2 (batch N5) — "navegar no mapa alterna para a aba da sessão VIVA do nó".
+// `endedAt === null` é o único fato que decide: sessão fechada nunca é alvo
+// de alternância (existe o retomar explícito do B1 para isso).
+describe('liveSessionOf — a sessão viva de um assunto, quando existe', () => {
+  it('sessão aberta (endedAt null) é a viva', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('session.started', { id: 'ses-1', cliSessionId: 'cli-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(liveSessionOf(card, { entity: 'discovery', id: 'dsc-1' })?.id).toBe('ses-1');
+  });
+
+  it('sessão encerrada NÃO é viva — mesmo sendo a única do assunto', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('session.started', { id: 'ses-1', cliSessionId: 'cli-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+      evt('session.ended', { id: 'ses-1', at: 'x', reason: 'tab-closed' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(liveSessionOf(card, { entity: 'discovery', id: 'dsc-1' })).toBeNull();
+  });
+
+  it('sem sessão nenhuma do assunto, devolve null — nunca a de outro assunto', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('plan.created', { id: 'pln-1', discoveryId: 'dsc-1', title: 'Plano' }),
+      evt('session.started', { id: 'ses-1', cliSessionId: 'cli-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+    ]);
+    const card = cardView(snapshot, 'dsc-1')!;
+    expect(liveSessionOf(card, { entity: 'plan', id: 'pln-1' })).toBeNull();
   });
 });
 
@@ -329,6 +537,32 @@ describe('phaseLines — "disparar" não é "começar", nem na lista de fases', 
       evt('session.ended', { id: 'ses-1', at: 'x', reason: 'tab-closed' }),
     ]);
     expect(phaseLines(cardView(snapshot, 'dsc-1')!)[0].text).toBe('discovery — interrompida: a sessão terminou sem concluir');
+  });
+
+  // A7 — a reconciliação de boot encerra a sessão órfã com um MOTIVO; a lista
+  // de fases precisa mostrá-lo, ou "interrompida" fica tão calada quanto o
+  // silêncio que ela substitui.
+  it('fase interrompida mostra o MOTIVO do encerramento no detail, quando declarado (A7)', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
+      evt('session.started', { id: 'ses-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+      evt('session.ended', { id: 'ses-1', at: 'x', reason: 'o app foi fechado ou reiniciado antes de o result.json aparecer no outbox' }),
+    ]);
+    const [line] = phaseLines(cardView(snapshot, 'dsc-1')!);
+    expect(line.state).toBe('interrompida');
+    expect(line.detail).toBe('o app foi fechado ou reiniciado antes de o result.json aparecer no outbox');
+  });
+
+  it('fase interrompida SEM motivo declarado tem detail null — nunca inventa explicação', () => {
+    const snapshot = reduceEvents([
+      evt('discovery.created', { id: 'dsc-1', title: 'Card', createdAt: 'x' }),
+      evt('phase.started', { subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', at: 'x' }),
+      evt('session.started', { id: 'ses-1', subject: { entity: 'discovery', id: 'dsc-1' }, phase: 'discovery', startedAt: 'x' }),
+      evt('session.ended', { id: 'ses-1', at: 'x' }),
+    ]);
+    const [line] = phaseLines(cardView(snapshot, 'dsc-1')!);
+    expect(line.detail).toBeNull();
   });
 
   it('fase que falhou traz o motivo junto', () => {

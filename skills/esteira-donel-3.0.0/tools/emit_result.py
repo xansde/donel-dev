@@ -55,14 +55,23 @@ FACT_BUILDERS = {
         f["owner"], f["artifact_kind"], f["location"], f["path"], repo=f.get("repo")
     ),
     "verification.recorded": lambda f: contract.verification_recorded(
-        f["subject"], f["verification_kind"], f["state"], ref=f.get("ref")
+        f["subject"], f["verification_kind"], f["state"], ref=f.get("ref"), base=f.get("base")
     ),
-    "phase.completed": lambda f: contract.phase_completed(f["subject"], f["phase"], f["outcome"], summary=f.get("summary")),
+    "phase.completed": lambda f: contract.phase_completed(
+        f["subject"], f["phase"], f["outcome"], summary=f.get("summary"), channel=f.get("channel"), risk=f.get("risk")
+    ),
     "lock.acquired": lambda f: contract.lock_acquired(
         f["subject"], f["phase"], f["acquired_at"], cli_session_id=f.get("cli_session_id")
     ),
     "lock.released": lambda f: contract.lock_released(f["subject"], f["phase"]),
     "note.recorded": lambda f: contract.note_recorded(f["subject"], f["text"]),
+    "gate.confirmed": lambda f: contract.gate_confirmed(
+        f["subject"], f["condition"], f["confirmed_by"], confirmed_at=f.get("confirmed_at")
+    ),
+    "decision.recorded": lambda f: contract.decision_recorded(
+        f["subject"], f["decision"], f["confirmed_by"], rationale=f.get("rationale")
+    ),
+    "human_review.recorded": lambda f: contract.human_review_recorded(f["subject"], f["phase"], f["checklist"]),
 }
 
 
@@ -85,6 +94,17 @@ def build_facts(raw_facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # No Windows, stdout/stderr PIPED (nao ligado a um console) caem no
+    # codepage do locale (cp1252 aqui) em vez de UTF-8 — um travessao vira um
+    # byte que nao e UTF-8 valido sozinho. Achado da captura tutorial-e2e
+    # (batch n1, 2026-08-05): a legenda do roteiro `decisoes-revisao-e-canal`
+    # mostrava "�" no lugar do travessao das mensagens de erro. Forcar UTF-8
+    # aqui cobre qualquer leitor — piped (o roteiro e2e via execFileSync) ou
+    # console.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
     parser = argparse.ArgumentParser(description="Emite o result.json da esteira (contrato v1).")
     parser.add_argument("--input", required=True, help="run-input.json que o app deixou no inbox")
     parser.add_argument("--facts-file", required=True, help="JSON com a lista de fatos declarados")
@@ -95,6 +115,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default=None)
     parser.add_argument("--effort", default=None)
     parser.add_argument("--cli-session-id", default=None)
+    # A4/A13 — um run NAO se reescreve. Para acrescentar fatos a um run ja
+    # ingerido, emita um COMPLEMENTO; para rever o desfecho, uma REVISAO. Os
+    # dois sao runs novos, e o `--run-id` traz o sufixo que o contrato cobra
+    # (`<base>.c<N>`, `<base>.rev<N>`) — quem compoe o nome e quem sabe qual
+    # rodada e esta, nao o emissor.
+    parser.add_argument("--kind", default=contract.RESULT_KIND, choices=[contract.RESULT_KIND, contract.COMPLEMENT_KIND])
+    parser.add_argument("--run-id", default=None, help="sobrescreve o run_id do run-input (complemento/revisao)")
+    parser.add_argument("--complements-run-id", default=None)
+    parser.add_argument("--revises-run-id", default=None)
     args = parser.parse_args(argv)
 
     try:
@@ -112,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
             failure = {"code": args.failure_code, "message": args.failure_message}
 
         result = contract.build_result(
-            run_id=run_input["run"]["run_id"],
+            run_id=args.run_id or run_input["run"]["run_id"],
             phase=run_input["run"]["phase"],
             status=args.status,
             started_at=args.started_at or run_input["run"]["requested_at"],
@@ -126,6 +155,9 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             effort=args.effort,
             cli_session_id=args.cli_session_id,
+            kind=args.kind,
+            complements_run_id=args.complements_run_id,
+            revises_run_id=args.revises_run_id,
         )
 
         written = contract.write_result(result, run_input["outbox"]["result_path"])

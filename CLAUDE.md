@@ -21,6 +21,12 @@ via `CLAUDE_CONFIG_DIR`.
 - **Regra dura (inalterada)**: push/PR/merge em `main` e publicação no repo
   público só com instrução literal do Alexandre. "Comita", "deploya",
   "atualiza staging" NÃO autorizam tocar em `main` nem no público.
+- **PR e merge (redefinido pelo dono em 2026-08-09)**: **abrir PR contra
+  `staging` é livre para o Claude**, sem pedir confirmação — inclusive quando
+  quem abre é a fase Implementar da Esteira. A regra anterior ("PR é sempre
+  ato humano") **caiu**, aqui e no baseline do squad. O que **não** mudou:
+  **merge é sempre decisão humana, e só depois de validação**; e `main` e o
+  repo público seguem no bloqueio total do bullet acima.
 - **Canais instalados coexistindo (decisão de 2026-07-28)**: `npm run
   dist:alfa` / `dist:beta` / `dist` empacotam com identidade própria de
   INSTALADOR (`appId`/`productName`/atalho "Donel Dev Alfa"/"Donel Dev
@@ -44,7 +50,13 @@ via `CLAUDE_CONFIG_DIR`.
   buildar na própria máquina. Não há histórico compartilhado entre os dois.
 - **Nunca vão para o público**: `specs/`, `docs/`, `scripts/`, `design/`,
   `.claude/`. O público tem `README.md`, `LICENSE` e `CLAUDE.md` **próprios**,
-  editados à mão — o sync não os sobrescreve.
+  editados à mão — o sync não os sobrescreve. **Exceção nomeada (decisão do
+  dono, 11/08, precedente de `skills/` em 03/08)**: `scripts/esteira-check.mjs`,
+  `scripts/esteira-custo-fase.mjs` e `.esteira/review-policy.json` entram no
+  espelho — testes espelhados os exercitam, e teste que só passa no repo de
+  trabalho não vale como gate. Os scripts de publicação seguem fora. Pendência
+  para a próxima promoção: quando a 4.0 chegar ao beta, `docs/esteira-dev/`
+  (nova casa do contrato) precisará da mesma decisão.
 - **Promover**: `powershell -File scripts/sincronizar-publico.ps1` espelha
   `src/ tests/ patches/ design-system/` + configs de build e imprime o `git
   status` do lado público. Ele **não** commita nem faz push — revisar, rodar
@@ -57,6 +69,17 @@ via `CLAUDE_CONFIG_DIR`.
   nome genérico. Ainda expostos e assumidos: `Esteira`/`EsteiraPhase` e
   `TaskDex` (intenção de design real, não placeholder) e `seazone` como nome de
   pasta-raiz default.
+
+## Política de review do repo (fixada pelo dono em 2026-08-04)
+
+Repo pessoal de mantenedor único (`xansde`): a política de review do
+repositório-alvo é **1 revisor** para qualquer classificação de risco,
+inclusive `sensivel` — o próprio dono, após validação manual (e2e quando a
+fase Validar apontar). Esta política **substitui** o default por risco da
+esteira (`default-risco-esteira`, que pediria 2 revisores no sensível), como
+o contrato de Concluir prevê para repos com política própria. Se o repo um
+dia ganhar um segundo mantenedor, revisar esta seção antes de concluir card
+sensível.
 
 ## Regras do projeto
 
@@ -77,12 +100,17 @@ via `CLAUDE_CONFIG_DIR`.
   do par rotacionado → escreve `.credentials.json` → apaga `oauthAccount`).
   `CredentialPair` nunca sai de `src/main/accounts/`: não cruza o preload,
   não entra em log nem em mensagem de erro. O core do app e a UI (inclusive
-  `AccountsPanel.tsx`) seguem sem tocar segredo — o formulário de conectar é
-  write-only, nenhum canal de leitura devolve o que foi digitado. **Não
-  generalizar esta exceção**: nenhum outro módulo ganha licença de tocar
-  credencial por causa dela.
-- **TDD com escopo**: CommandBuilder, SessionIndexer e paths de perfil são
-  módulos puros com vitest; PTY/UI validam por smoke roteirizado (T014).
+  `AccountsPanel.tsx`/`MigrationWizard.tsx`) seguem sem tocar segredo — o
+  formulário de conectar é write-only, nenhum canal de leitura devolve o que
+  foi digitado. **Não generalizar esta exceção**: nenhum outro módulo ganha
+  licença de tocar credencial por causa dela. A emenda **não foi ampliada**
+  na etapa 2 (011, demolição de perfis + migração assistida, 2026-08-04):
+  `src/main/accounts/migration/` já mora dentro de `src/main/accounts/`, é o
+  mesmo perímetro — o par migrado do `.credentials.json` de um perfil vai
+  direto pro cofre, nunca passa por variável de retorno exposta.
+- **TDD com escopo**: CommandBuilder, SessionIndexer e os módulos de
+  `src/main/accounts/` (motor, mods, migração) são puros com vitest; PTY/UI
+  validam por smoke roteirizado (T014).
 - UI em pt-BR; código, comentários e identificadores em inglês.
 
 ## Issue tracker (para skills que precisam de um)
@@ -112,8 +140,8 @@ Fonte de verdade do escopo: `specs/009-modo-dev-v3/spec.md` (31 CA). Forma da UI
 `design/modo-dev-v3-handoff/project/Modo Dev v3.dc.html` **lido junto de**
 `design/modo-dev-v3-verificacao.md`, que nomeia **7 divergências (D-V1..D-V7)** —
 ler ANTES de implementar. Regra de conflito: **forma** → vence o design, sem
-abrandar; **alcance ou comportamento** → vence a spec. Um lote por sessão; PR é
-ato humano.
+abrandar; **alcance ou comportamento** → vence a spec. Um lote por sessão; o PR
+para `staging` pode ser aberto pelo Claude (ver "PR e merge" abaixo).
 
 > **Fila anterior (003), cumprida:** `implementar-modo-dev/PROXIMO.md` zerou em
 > 28/07 (PRs #2 e #3). A forma da v2 (`design/modo-dev-handoff/` +
@@ -142,13 +170,79 @@ Cada fase termina com **revisão do Alexandre** antes da seguinte começar.
 um mapa que será substituído) e #35 (a trilha sintética **será revertida** — ela
 pinta "não realizada" o que é "não consegui ler").
 
+## Gatilho — "executar a próxima onda da 012"
+
+Pedido "**executar a próxima onda da 012**" (ou "próxima onda da Esteira 4.0")
+= abrir `specs/012-esteira-4/execucao.md` — o plano completo da rodada (grafo,
+trilhas por arquivo, gates, regras, riscos) — e pegar a primeira onda `⬜` da
+fila `Claude Seazone/Projects/donel-dev/execucao-012-esteira4/PROXIMO.md`.
+Prompts prontos (execução, retomada e fechamento no alfa) em `prompt.md`, na
+mesma pasta.
+
+**Escopo:** os **14 itens `open`** do discovery «Definicao esteira dev»
+(`dsc-15a7e7f5-fbb`). **Fora do escopo por decisão do dono (11/08):** os planos
+`forma-e-leitura` e `donel-leitor` — começam **depois** desta rodada fechar.
+
+**Dentro de uma onda as frentes são PARALELAS** (uma worktree por frente);
+**entre ondas a ordem é estritamente sequencial** — cada gate existe porque a
+onda seguinte assume o que ele provou. Bloco `ships_with` é **uma entrega**,
+construída sequencialmente na mesma branch: dois workers na mesma árvore foi o
+incidente dos commits entrelaçados de 04/08. A rodada **termina no alfa**
+(Onda 5) — liberado sem pedir permissão, ao contrário de `main` e do repo
+público, que seguem no bloqueio total.
+
+## Gatilho — "rodar a próxima fase das contas"
+
+Pedido "**rodar a próxima fase das contas**" (ou "próxima fase do pool de
+contas") = abrir `specs/011-contas-e-provedores/plan-etapa-3.md` — o plano da
+etapa 3 (estado medido, os furos F1–F6, fases, riscos) — e pegar a primeira
+fase `⬜` da fila
+`Claude Seazone/Projects/donel-dev/contas-4-pool-proprio/PROXIMO.md`. Prompts
+prontos, um por fase (+ retomada), em `prompt.md`, na mesma pasta.
+
+**Escopo:** 4 contas próprias no alfa, trocando entre elas **durante** sessões
+vivas. **Pool/mod Seazone fora por decisão do dono (13/09)** — sai da UI na
+Fase 1; remover o código espera instrução dele.
+
+A ordem é **estritamente sequencial**. A **Fase 0 era o gate** da promessa
+central da 011 — "trocar de conta sem reiniciar sessão" — e **passou com CLI
+real em 13/09** (`e2e.md` §3): a sessão viva adota a conta nova na mensagem
+seguinte, e o MCP segue respondendo. Por isso as fases 1 e 2 seguem como
+escritas, com o F6 dentro da Fase 1.
+
 ## Gotchas conhecidos (do planejamento)
 
 - node-pty precisa casar com a ABI do Electron — prebuilds/@electron/rebuild;
   pin de versões testadas.
-- `~/.claude-profiles` fica no home local, nunca no OneDrive (junctions).
+- (histórico — o mecanismo morreu na 011, etapa 2) `~/.claude-profiles`
+  ficava no home local, nunca no OneDrive (junctions). O app hoje só toca
+  `~/.claude`; o histórico dos perfis, se algum dia migrado, fica arquivado
+  em `~/.claude-profiles.old` (nunca deletado pelo app).
 - Transcripts JSONL nunca são lidos inteiros — streaming + stat.
 - Junction em Node: `fs.symlinkSync(target, path, 'junction')` — não pede admin.
+- **`/logout` do CLI revoga o refresh token no servidor** (lido no binário
+  2.1.270). Nunca usar para cadastrar ou trocar conta: a cópia de credencial
+  feita antes dele morre. Cadastro é por login isolado (`CLAUDE_CONFIG_DIR`
+  numa pasta própria) — `specs/011-contas-e-provedores/research-etapa-3-cli.md`.
+- **Depois de uma troca, o `/status` do CLI mostra "Claude API account"** até
+  refazer o fetch do perfil (minutos). Para saber a conta em uso numa sessão,
+  use o `/usage`. O mesmo vale para o `userEmail` que o harness carimba no
+  contexto da sessão: é lido no início e não acompanha a troca.
+- **F6 — corrigido na Fase 1 (13/09):** o mod local captura a lista de contas
+  no construtor do motor. Por isso toda mudança de `mod` ou de `localAccounts`
+  passa por `AccountEngineHost.apply` (`applyAccountsEngineConfig` no
+  `index.ts`), que reconstrói o motor — nunca `updateConfig` direto para mudar
+  a lista.
+- **Login isolado:** o app encerra a aba de login depois de colher a
+  credencial; nada é digitado nela pelo app. Smoke desse fluxo usa
+  `DONEL_CLAUDE_EXECUTABLE_FIXTURE` (claude falso): um `claude.cmd` no PATH não
+  basta, porque o resolvedor prefere qualquer `claude.exe` e abriria o CLI real.
+- **O access token do CLI vence em ~8h** (`expiresAt` do `.credentials.json`).
+  Por isso, desde a Fase 2 (13/09), a carga da conta **ativa** é lida com o par
+  vivo do `~/.claude` (o par dela no cofre envelhece assim que o CLI renova), e
+  a leitura de carga renova o par vencido de conta **parada** (emenda da D4,
+  decisão do dono). Nunca renovar a ativa pelo cofre: o refresh token dela lá já
+  foi consumido pelo CLI, e a recusa marcaria "Reconectar" à toa.
 
 ## Vault
 

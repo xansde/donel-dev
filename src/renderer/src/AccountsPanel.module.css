@@ -27,6 +27,27 @@
   flex-direction: column;
   gap: var(--space-2);
   min-width: 340px;
+  /* Fase 2 (011-contas-e-provedores, etapa 3) — rola por dentro quando a
+     caixa do modal chega ao limite de altura (ver `.dialog`). */
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Fase 2 — com o `.body` limitado em altura, os itens da coluna flex
+   encolhiam em vez de o `.body` rolar (a `.list`, que tem `overflow` próprio,
+   encolhia até quase zero) e um bloco passava por cima do outro, engolindo o
+   clique nas linhas. Nenhum item encolhe: quem rola é o `.body`. */
+.body > * {
+  flex-shrink: 0;
+}
+
+/* Fase 2 — o painel cresceu (frase da troca global, avisos do auto-switch,
+   caixa de reconectar) e, com várias contas e o formulário de colar aberto,
+   passava da altura da janela. O Modal centraliza sem limite de altura por
+   padrão, então o fim do painel ficava fora da tela, sem como alcançar o
+   botão. A caixa passa a respeitar a janela, pela variável que o Modal lê. */
+.dialog {
+  --modal-max-height: calc(100vh - var(--titlebar-height, 34px) - 2 * var(--space-3));
 }
 
 .toolbar {
@@ -65,12 +86,32 @@
   border: var(--hairline);
 }
 
+/* Fase 1 (011-contas-e-provedores, etapa 3) — a linha ganhou um segundo
+   botão ("Remover") AO LADO do botão de troca, nunca aninhado nele. */
+.rowMain {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Fase 1 — confirmação inline (remover conta / desconectar), sempre dentro
+   do próprio painel — nunca um segundo Modal por cima do primeiro. */
+.confirmBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+}
+
 .plainRow {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: var(--space-1);
   background: transparent;
   border: none;

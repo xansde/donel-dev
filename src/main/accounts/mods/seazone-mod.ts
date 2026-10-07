@@ -7,7 +7,7 @@
 // (guardado no cofre, entrada `seazone:session`, C11).
 
 import type { AccountLoad, AccountSummary } from '../../../shared/accounts';
-import type { AccountMod, CredentialPair, ListAccountsResult, SwitchToResult } from '../account-mod';
+import type { AccountMod, ListAccountsResult, SwitchToResult } from '../account-mod';
 import type { HttpFetchLike, HttpRequestInit, HttpResponseLike } from '../usage-client';
 import type { VaultLike } from '../vault';
 
@@ -25,26 +25,66 @@ export interface SeazoneModDeps {
  * "de verdade" (isso é estado do motor/config, `AccountsConfig.activeAccountId`).
  * `account-engine.ts` sobrescreve o campo ao montar `AccountsViewDto`.
  */
+/**
+ * O `label` É o identificador: a resposta de `/accounts` não tem campo `id`
+ * (verificado contra a API real em 04/08/2026 — os campos são `label`, `plan`,
+ * `fiveHourUtil`, `sevenDayUtil`, `sonnetUtil`, `available`,
+ * `unavailableReason`), e o cliente oficial identifica conta por label no
+ * `/session/switch`. Antes daqui o mod lia `candidate.id` (sempre ausente →
+ * `''`) e `fiveHour`/`sevenDay` (idem → `null`): as contas chegavam sem
+ * identidade e sem carga, e carga desconhecida nunca é destino de auto-switch
+ * (C9).
+ */
 function mapSeazoneAccount(raw: unknown): AccountSummary {
   const candidate = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
-  const id = typeof candidate.id === 'string' ? candidate.id : '';
-  const label = typeof candidate.label === 'string' ? candidate.label : id;
+  const label = typeof candidate.label === 'string' ? candidate.label : '';
   const plan = typeof candidate.plan === 'string' ? candidate.plan : null;
   const available = typeof candidate.available === 'boolean' ? candidate.available : true;
   const load: AccountLoad = {
-    fiveHour: typeof candidate.fiveHour === 'number' ? candidate.fiveHour : null,
-    sevenDay: typeof candidate.sevenDay === 'number' ? candidate.sevenDay : null,
+    fiveHour: typeof candidate.fiveHourUtil === 'number' ? candidate.fiveHourUtil : null,
+    sevenDay: typeof candidate.sevenDayUtil === 'number' ? candidate.sevenDayUtil : null,
     sonnet: typeof candidate.sonnetUtil === 'number' ? candidate.sonnetUtil : null,
     readAt: new Date().toISOString(),
   };
-  return { id, label, plan, active: false, available, load };
+  return { id: label, label, plan, active: false, available, load };
+}
+
+/**
+ * `expiresAt` cruza a fronteira em dois formatos: o `.credentials.json` do CLI
+ * guarda epoch ms (número), e a API do switcher declara ISO-8601. Normalizar
+ * nos dois sentidos, num lugar só, é o que impede o bug que o cliente oficial
+ * já pagou: mandar o int cru fazia TODO tick do heartbeat responder 422, o
+ * token rotacionado nunca chegava ao pool e os switches seguintes davam 403.
+ */
+function toEpochMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
 }
 
 export function createSeazoneMod(deps: SeazoneModDeps): AccountMod {
   const fetchImpl = deps.fetchImpl ?? (globalThis.fetch as unknown as HttpFetchLike);
   let cachedJwt: { readonly token: string; readonly expiresAt: number } | null = null;
 
-  /** Troca/renova o JWT curto a partir do `sessionRefreshToken` do cofre. `null` = sem sessão utilizável (cofre vazio ou servidor recusou). Nunca lança. */
+  /**
+   * A sessão morreu de um jeito que reconectar não resolve (o servidor recusou
+   * o `sessionRefreshToken`) — diferente de "não consegui falar com o
+   * servidor". A distinção existe porque as duas chegavam à tela como
+   * "backend indisponível (offline)", mandando quem lê procurar problema de
+   * rede quando o problema era a credencial.
+   */
+  let sessionRefused = false;
+
+  /**
+   * Troca o `sessionRefreshToken` por um JWT curto. A rota é `/auth/refresh` —
+   * `/auth/exchange` é o exchange do OAuth Google (exige `code` +
+   * `redirect_uri`) e responde 422 a este payload, que foi exatamente o erro
+   * que chegou à tela como "offline". `null` = sem sessão utilizável.
+   * Nunca lança.
+   */
   async function ensureJwt(): Promise<string | null> {
     if (cachedJwt && cachedJwt.expiresAt > Date.now() + 5_000) return cachedJwt.token;
 
@@ -52,26 +92,37 @@ export function createSeazoneMod(deps: SeazoneModDeps): AccountMod {
     if (!sessionToken) return null;
 
     try {
-      const path = cachedJwt ? '/auth/refresh' : '/auth/exchange';
-      const response = await fetchImpl(`${deps.baseUrl}${path}`, {
+      const response = await fetchImpl(`${deps.baseUrl}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionRefreshToken: sessionToken }),
       });
+      if (response.status === 401 || response.status === 403) {
+        sessionRefused = true;
+        return null;
+      }
       if (response.status < 200 || response.status >= 300) return null;
 
-      const body = (await response.json()) as { jwt?: unknown; expiresIn?: unknown };
-      if (typeof body.jwt !== 'string') return null;
-      const expiresIn = typeof body.expiresIn === 'number' ? body.expiresIn : DEFAULT_JWT_TTL_SECONDS;
-      cachedJwt = { token: body.jwt, expiresAt: Date.now() + expiresIn * 1000 };
+      const body = (await response.json()) as { accessJwt?: unknown; sessionRefreshToken?: unknown };
+      if (typeof body.accessJwt !== 'string') return null;
+
+      // O servidor pode ROTACIONAR a sessão a cada refresh; guardar o token
+      // novo é obrigatório. Ignorá-lo deixa o cofre com um token morto e a
+      // sessão cai na chamada seguinte, sem nada na tela dizendo por quê.
+      if (typeof body.sessionRefreshToken === 'string' && body.sessionRefreshToken !== sessionToken) {
+        deps.vault.write(SESSION_VAULT_KEY, body.sessionRefreshToken);
+      }
+
+      cachedJwt = { token: body.accessJwt, expiresAt: Date.now() + DEFAULT_JWT_TTL_SECONDS * 1000 };
       return cachedJwt.token;
     } catch {
       return null;
     }
   }
 
-  /** `null` = falha de rede/sessão (nunca lança) — chamador decide o `reason`. */
+  /** `null` = falha de rede/sessão (nunca lança) — chamador decide o `reason`, lendo `sessionRefused` para separar credencial de rede. */
   async function authedFetch(path: string, init?: HttpRequestInit): Promise<HttpResponseLike | null> {
+    sessionRefused = false;
     const token = await ensureJwt();
     if (!token) return null;
     try {
@@ -84,63 +135,84 @@ export function createSeazoneMod(deps: SeazoneModDeps): AccountMod {
   return {
     id: 'seazone',
 
+    /** `/accounts` devolve a LISTA no topo — não um envelope `{ accounts: [...] }`. */
     async listAccounts(): Promise<ListAccountsResult> {
       const response = await authedFetch('/accounts');
-      if (!response) return { kind: 'unavailable', reason: 'offline' };
-      if (response.status === 401) return { kind: 'unavailable', reason: 'unauthorized' };
+      if (!response) return { kind: 'unavailable', reason: sessionRefused ? 'unauthorized' : 'offline' };
+      if (response.status === 401 || response.status === 403) return { kind: 'unavailable', reason: 'unauthorized' };
       if (response.status < 200 || response.status >= 300) return { kind: 'unavailable', reason: 'io' };
 
       try {
-        const body = (await response.json()) as { accounts?: unknown };
-        if (!Array.isArray(body.accounts)) return { kind: 'unavailable', reason: 'io' };
-        return { kind: 'ok', accounts: body.accounts.map(mapSeazoneAccount) };
+        const body = (await response.json()) as unknown;
+        if (!Array.isArray(body)) return { kind: 'unavailable', reason: 'io' };
+        return { kind: 'ok', accounts: body.map(mapSeazoneAccount) };
       } catch {
         return { kind: 'unavailable', reason: 'io' };
       }
     },
 
+    /** A conta é identificada por `account` (o label), como no cliente oficial — `accountId` não existe no contrato. */
     async switchTo(id): Promise<SwitchToResult> {
       const response = await authedFetch('/session/switch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId: id }),
+        body: JSON.stringify({ account: id }),
       });
-      if (!response) return { kind: 'failed', reason: 'offline' };
-      if (response.status === 401) return { kind: 'failed', reason: 'unauthorized' };
+      if (!response) return { kind: 'failed', reason: sessionRefused ? 'unauthorized' : 'offline' };
+      if (response.status === 401 || response.status === 403) return { kind: 'failed', reason: 'unauthorized' };
       if (response.status === 404) return { kind: 'failed', reason: 'unknown-account' };
       if (response.status < 200 || response.status >= 300) return { kind: 'failed', reason: 'offline' };
 
       try {
-        const body = (await response.json()) as Partial<CredentialPair>;
-        if (typeof body.accessToken !== 'string' || typeof body.refreshToken !== 'string' || typeof body.expiresAt !== 'number') {
-          return { kind: 'failed', reason: 'offline' };
+        const body = (await response.json()) as Record<string, unknown>;
+        const expiresAt = toEpochMs(body.expiresAt);
+        if (typeof body.accessToken !== 'string' || typeof body.refreshToken !== 'string' || expiresAt === null) {
+          return { kind: 'failed', reason: 'io' };
         }
         return {
           kind: 'ok',
           pair: {
             accessToken: body.accessToken,
             refreshToken: body.refreshToken,
-            expiresAt: body.expiresAt,
+            expiresAt,
             scopes: Array.isArray(body.scopes) ? body.scopes.filter((s): s is string => typeof s === 'string') : [],
           },
         };
       } catch {
-        return { kind: 'failed', reason: 'offline' };
+        return { kind: 'failed', reason: 'io' };
       }
     },
 
-    /** Repassa o par rotacionado ao servidor deles (eles são a fonte de verdade do pool) — nunca grava localmente. */
+    /**
+     * Repassa o par rotacionado ao servidor deles (eles são a fonte de verdade
+     * do pool) — nunca grava localmente. O corpo é o do cliente oficial:
+     * `accessToken`/`refreshToken` na raiz, `label` para dizer de qual conta é,
+     * e `expiresAt` em ISO (int cru dá 422 e o par nunca chega ao pool).
+     */
     async captureRotatedPair(id, pair): Promise<void> {
       await authedFetch('/session/heartbeat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId: id, rotatedPair: pair }),
+        body: JSON.stringify({
+          accessToken: pair.accessToken,
+          refreshToken: pair.refreshToken,
+          expiresAt: new Date(pair.expiresAt).toISOString(),
+          label: id,
+        }),
       }).catch(() => null);
     },
 
-    /** Heartbeat de 15 min (C3) — só enquanto o app está aberto, timer do main (account-engine.ts). */
+    /**
+     * Heartbeat de 15 min (C3) — só enquanto o app está aberto, timer do main
+     * (account-engine.ts). Renova o JWT em vez de bater no `/session/heartbeat`
+     * sem corpo: aquele endpoint EXIGE o par (`accessToken`/`refreshToken`) e
+     * responderia 422 a um POST vazio. Sincronizar o par é papel do
+     * `captureRotatedPair`, que tem o par em mãos; aqui o que se mantém viva é
+     * a sessão do switcher.
+     */
     async keepAlive(): Promise<void> {
-      await authedFetch('/session/heartbeat', { method: 'POST' }).catch(() => null);
+      cachedJwt = null;
+      await ensureJwt();
     },
   };
 }

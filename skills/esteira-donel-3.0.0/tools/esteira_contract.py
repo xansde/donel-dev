@@ -33,8 +33,13 @@ CONTRACT_VERSION = "1.0.0"
 TOOL_NAME = "esteira-donel"
 TOOL_VERSION = "3.0.0"
 
-# O schema canonico vive no app; o fork o le do mesmo lugar.
-CONTRACT_DIR = Path(__file__).resolve().parents[3] / "src" / "shared" / "esteira" / "contract" / "v1"
+RESULT_KIND = "esteira.result"
+COMPLEMENT_KIND = "esteira.result.complement"
+
+# O schema canonico vive no pacote portatil `docs/esteira-dev/`; o app e o
+# fork leem os DOIS do mesmo lugar — nenhum dos dois guarda copia propria
+# (spec 010, D-3: foi copia divergente que produziu o desencontro de campo).
+CONTRACT_DIR = Path(__file__).resolve().parents[3] / "docs" / "esteira-dev" / "contract" / "v1"
 RESULT_SCHEMA_PATH = CONTRACT_DIR / "esteira-result.schema.json"
 RUN_INPUT_SCHEMA_PATH = CONTRACT_DIR / "esteira-run-input.schema.json"
 
@@ -55,6 +60,8 @@ EMITTED_PATHS: tuple[str, ...] = (
     "run.finished_at",
     "run.failure.code",
     "run.failure.message",
+    "run.complements_run_id",
+    "run.revises_run_id",
     "actor.tool",
     "actor.tool_version",
     "actor.executor",
@@ -107,12 +114,15 @@ EMITTED_PATHS: tuple[str, ...] = (
     "facts[verification.recorded].verification_kind",
     "facts[verification.recorded].state",
     "facts[verification.recorded].ref",
+    "facts[verification.recorded].base",
     "facts[phase.completed].type",
     "facts[phase.completed].subject.entity",
     "facts[phase.completed].subject.id",
     "facts[phase.completed].phase",
     "facts[phase.completed].outcome",
     "facts[phase.completed].summary",
+    "facts[phase.completed].risk",
+    "facts[phase.completed].channel",
     "facts[lock.acquired].type",
     "facts[lock.acquired].subject.entity",
     "facts[lock.acquired].subject.id",
@@ -128,6 +138,26 @@ EMITTED_PATHS: tuple[str, ...] = (
     "facts[note.recorded].subject.entity",
     "facts[note.recorded].subject.id",
     "facts[note.recorded].text",
+    "facts[gate.confirmed].type",
+    "facts[gate.confirmed].subject.entity",
+    "facts[gate.confirmed].subject.id",
+    "facts[gate.confirmed].condition",
+    "facts[gate.confirmed].confirmed_by",
+    "facts[gate.confirmed].confirmed_at",
+    "facts[decision.recorded].type",
+    "facts[decision.recorded].subject.entity",
+    "facts[decision.recorded].subject.id",
+    "facts[decision.recorded].decision",
+    "facts[decision.recorded].confirmed_by",
+    "facts[decision.recorded].rationale",
+    "facts[human_review.recorded].type",
+    "facts[human_review.recorded].subject.entity",
+    "facts[human_review.recorded].subject.id",
+    "facts[human_review.recorded].phase",
+    "facts[human_review.recorded].checklist[].item",
+    "facts[human_review.recorded].checklist[].kind",
+    "facts[human_review.recorded].checklist[].state",
+    "facts[human_review.recorded].checklist[].detail",
 )
 
 # O que a skill LE do `run-input.json`. Mesma disciplina, na outra direcao:
@@ -300,20 +330,60 @@ def artifact_recorded(
     }
 
 
-def verification_recorded(subject: dict[str, str], verification_kind: str, state: str, ref: str | None = None) -> dict[str, Any]:
+def verification_recorded(
+    subject: dict[str, str],
+    verification_kind: str,
+    state: str,
+    ref: str | None = None,
+    base: str | None = None,
+) -> dict[str, Any]:
+    """A15 — `base` e a branch de destino do PR.
+
+    Num repo com escada de canais, "concluido" sem destino se le como "esta na
+    main". A base vai como esta no repo; traduzir para canal e trabalho de quem
+    conhece a escada, e isso vai em `phase_completed(channel=...)`.
+    """
+    if verification_kind not in VERIFICATION_KINDS:
+        raise ContractError(f"verification_kind fora do contrato: {verification_kind!r}")
+    if base and verification_kind != "pull-request":
+        raise ContractError('"base" so faz sentido em verification_kind "pull-request"')
     return {
         "type": "verification.recorded",
         "subject": subject,
         "verification_kind": verification_kind,
         "state": state,
         "ref": ref,
+        "base": base,
     }
 
 
-def phase_completed(subject: dict[str, str], phase: str, outcome: str, summary: str | None = None) -> dict[str, Any]:
+def phase_completed(
+    subject: dict[str, str],
+    phase: str,
+    outcome: str,
+    summary: str | None = None,
+    channel: str | None = None,
+    risk: str | None = None,
+) -> dict[str, Any]:
+    """A15 — `channel` diz ONDE a entrega chegou. A16 — `risk` e a regua de aprovacao.
+
+    `risk='sensivel'` liga o gate do roteiro e2e manual: a fase precisa declarar
+    uma `verification.recorded` de tipo `e2e-manual`, e nao pode registrar
+    aprovacao humana enquanto ela estiver `pending`.
+    """
     if not PHASE_PATTERN.match(phase):
         raise ContractError(f"nome de fase fora do padrao: {phase!r}")
-    return {"type": "phase.completed", "subject": subject, "phase": phase, "outcome": outcome, "summary": summary}
+    if risk is not None and risk not in PHASE_RISKS:
+        raise ContractError(f"risco fora do contrato: {risk!r}")
+    return {
+        "type": "phase.completed",
+        "subject": subject,
+        "phase": phase,
+        "outcome": outcome,
+        "summary": summary,
+        "risk": risk,
+        "channel": channel,
+    }
 
 
 def lock_acquired(subject: dict[str, str], phase: str, acquired_at: str, cli_session_id: str | None = None) -> dict[str, Any]:
@@ -333,14 +403,139 @@ def note_recorded(subject: dict[str, str], text: str) -> dict[str, Any]:
     return {"type": "note.recorded", "subject": subject, "text": text}
 
 
+def gate_confirmed(
+    subject: dict[str, str],
+    condition: str,
+    confirmed_by: str,
+    confirmed_at: str | None = None,
+) -> dict[str, Any]:
+    """A9 — UMA condicao de gate confirmada por UMA pessoa.
+
+    Gate composto vira N fatos, um por condicao: meia-confirmacao nao cabe numa
+    linha de texto, e foi como blockquote no `tasks.md` que "confirmado"
+    apareceu com metade do gate em aberto.
+    """
+    if not condition:
+        raise ContractError("gate.confirmed exige a condicao confirmada")
+    if not confirmed_by:
+        # Confirmacao sem gente e o app se dando o aval que ninguem deu.
+        raise ContractError("gate.confirmed exige confirmed_by — quem confirmou")
+    return {
+        "type": "gate.confirmed",
+        "subject": subject,
+        "condition": condition,
+        "confirmed_by": confirmed_by,
+        "confirmed_at": confirmed_at,
+    }
+
+
+def decision_recorded(
+    subject: dict[str, str],
+    decision: str,
+    confirmed_by: str,
+    rationale: str | None = None,
+) -> dict[str, Any]:
+    """A18 — uma decisao TOMADA na fase, com quem a confirmou.
+
+    Irma de `gate_confirmed` e diferente dela: o gate confirma uma condicao, a
+    decisao escolhe um caminho entre outros. As duas fecham as fases de conversa
+    (discovery, plano): fase que nao perguntou nada nao fechou coisa nenhuma.
+    """
+    if not decision:
+        raise ContractError("decision.recorded exige o que ficou decidido")
+    if not confirmed_by:
+        raise ContractError("decision.recorded exige confirmed_by — quem decidiu")
+    return {
+        "type": "decision.recorded",
+        "subject": subject,
+        "decision": decision,
+        "confirmed_by": confirmed_by,
+        "rationale": rationale,
+    }
+
+
+PHASE_RISKS = ("trivial", "sensivel")
+VERIFICATION_KINDS = ("pull-request", "check", "review", "conclusion", "e2e-manual")
+
+HUMAN_REVIEW_KINDS = ("review", "action")
+HUMAN_REVIEW_STATES = ("pending", "done", "waived")
+
+
+def human_review_recorded(subject: dict[str, str], phase: str, checklist: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """A10 + A19 — o que sobrou para uma PESSOA, em forma de lista.
+
+    Antes viajava como frase corrida no `summary`, onde ninguem le como lista e
+    ninguem marca como feita. Duas naturezas na mesma lista porque as duas
+    respondem "o que falta de mim?": `review` = confira o que a fase fez;
+    `action` = faca o que ela nao podia fazer (A19). Item `action` pendente NAO
+    rebaixa a fase — esperar por gente e um estado legitimo.
+
+    `state='done'` so com resultado COLHIDO da pessoa. A skill nunca marca por
+    conta propria: seria ela se dando o aval que ninguem deu.
+    """
+    if not PHASE_PATTERN.match(phase):
+        raise ContractError(f"nome de fase fora do padrao: {phase!r}")
+    entradas = []
+    for index, entry in enumerate(checklist):
+        if not entry.get("item"):
+            raise ContractError(f"checklist[{index}] exige o que conferir ou fazer")
+        if entry.get("kind") not in HUMAN_REVIEW_KINDS:
+            raise ContractError(f"checklist[{index}].kind deve ser um de {'/'.join(HUMAN_REVIEW_KINDS)}")
+        if entry.get("state") not in HUMAN_REVIEW_STATES:
+            raise ContractError(f"checklist[{index}].state deve ser um de {'/'.join(HUMAN_REVIEW_STATES)}")
+        entradas.append(
+            {"item": entry["item"], "kind": entry["kind"], "state": entry["state"], "detail": entry.get("detail")}
+        )
+    if not entradas:
+        # "Tem coisa para voce" sem dizer o que e nao ajuda ninguem.
+        raise ContractError("human_review.recorded exige ao menos um item na checklist")
+    return {"type": "human_review.recorded", "subject": subject, "phase": phase, "checklist": entradas}
+
+
+def human_decision_facts() -> list[str]:
+    """Os tipos de fato que carregam a palavra de uma pessoa (A18)."""
+    return list(_required_facts_table().get("human-decision-facts", []))
+
+
+def phases_requiring_human_decision() -> list[str]:
+    """Fases de CONVERSA: com `outcome: done`, exigem ao menos um fato humano (A18)."""
+    return list(_required_facts_table().get("done-requires-human-decision", []))
+
+
+def phases_requiring_e2e_when_sensitive() -> list[str]:
+    """Fases em que `risk: sensivel` liga o gate do roteiro e2e manual (A16)."""
+    return list(_required_facts_table().get("e2e-required-when-sensitive", []))
+
+
 def _required_facts_table() -> dict[str, Any]:
     """A tabela `x-required-facts` do arquivo canonico. Lida do schema, nunca copiada."""
     schema = json.loads(RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
     return schema.get("x-required-facts", {})
 
 
-def required_facts_for(phase: str, status: str) -> list[str]:
+def done_phases(facts: Iterable[dict[str, Any]]) -> list[str]:
+    """As fases que este result declara FECHADAS com desfecho bom.
+
+    A cobranca de produto e por elas, nao por `run.phase`: um result que fecha N
+    fases responde pelo produto de cada uma que declarou `done`.
+    """
+    return [
+        fact["phase"]
+        for fact in facts
+        if fact.get("type") == "phase.completed" and fact.get("outcome") == "done" and isinstance(fact.get("phase"), str)
+    ]
+
+
+def required_facts_for(phase: str, status: str, facts: Iterable[dict[str, Any]] = ()) -> list[str]:
     """A tabela `x-required-facts` do schema — dado compartilhado, nao regra duplicada.
+
+    Duas camadas, e a diferenca entre elas e A3:
+
+    - `by-phase` vale em QUALQUER desfecho (a entidade e o assunto do run);
+    - `by-phase-when-done` so se cobra de quem declarou ter chegado no produto.
+      Cobrar de todo `success` obrigava um run que parou num gate a declarar uma
+      verificacao `pending` so para caber no contrato — o contrato empurrando a
+      skill a inventar fato.
 
     So vale para run bem-sucedido: o que se cobra e promessa CUMPRIDA. Run que
     falhou ja declara `failure` com codigo e motivo — cobrar dele os fatos da
@@ -351,6 +546,11 @@ def required_facts_for(phase: str, status: str) -> list[str]:
     table = _required_facts_table()
     required = list(table.get("any-phase-success", []))
     required.extend(table.get("by-phase", {}).get(phase, []))
+    when_done = table.get("by-phase-when-done", {})
+    for closed in done_phases(facts):
+        for fact_type in when_done.get(closed, []):
+            if fact_type not in required:
+                required.append(fact_type)
     return required
 
 
@@ -376,8 +576,41 @@ def build_result(
     effort: str | None = None,
     executor: str | None = "claude-code",
     cli_session_id: str | None = None,
+    kind: str = RESULT_KIND,
+    complements_run_id: str | None = None,
+    revises_run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Monta o `result.json`. Recusa documento que ja nasceria invalido."""
+    """Monta o `result.json`. Recusa documento que ja nasceria invalido.
+
+    A4/A13 — um run NAO se reescreve. Para acrescentar fatos a um run ja
+    ingerido use `complement(...)`; para rever o desfecho, `revision(...)`. Os
+    dois devolvem runs NOVOS, com sufixo sobre o anterior, e o anterior continua
+    legivel. Regravar o mesmo `run_id` com outro conteudo e o que fez a Concluir
+    trocar o desfecho e o card nao contar.
+    """
+    if kind not in (RESULT_KIND, COMPLEMENT_KIND):
+        raise ContractError(f"kind fora do contrato: {kind!r}")
+
+    if kind == COMPLEMENT_KIND:
+        if not complements_run_id:
+            raise ContractError("complemento exige complements_run_id — acrescentar fatos a coisa nenhuma nao e complemento")
+        sufixo = run_id[len(complements_run_id) + 2 :] if run_id.startswith(f"{complements_run_id}.c") else ""
+        if not sufixo.isdigit():
+            raise ContractError(f"complemento de {complements_run_id!r} deve se chamar '{complements_run_id}.c<N>'")
+        if any(fact["type"] == "phase.completed" for fact in facts):
+            raise ContractError("complemento nao declara phase.completed — ele acrescenta fatos, nao fecha a fase de novo")
+    elif complements_run_id:
+        raise ContractError("so um complemento declara complements_run_id")
+
+    if revises_run_id:
+        if revises_run_id == run_id:
+            raise ContractError("um run nao revisa a si mesmo — o anterior tem que continuar legivel")
+        if not run_id.startswith(f"{revises_run_id}.rev"):
+            raise ContractError(f"revisao de {revises_run_id!r} deve se chamar '{revises_run_id}.rev<N>' com N >= 2")
+        sufixo = run_id[len(revises_run_id) + 4 :]
+        if not sufixo.isdigit() or int(sufixo) < 2:
+            raise ContractError(f"revisao de {revises_run_id!r} deve se chamar '{revises_run_id}.rev<N>' com N >= 2")
+
     if status != "success" and failure is None:
         # "Falhou, nao sei por que" e o mesmo vicio de "nao sei" travestido de fato.
         raise ContractError("status != success exige failure com code e message")
@@ -386,27 +619,95 @@ def build_result(
     if not facts:
         raise ContractError("um run que nao declara nada nao tem resultado para ingerir")
 
+    # A22 — um run PODE fechar N fases (Validar, Documentar e Concluir feitas
+    # dentro da sessao de Implementar sao quatro fases fechadas). O que ele NAO
+    # pode e contar a mesma duas vezes.
+    vistas: set[tuple[str, str, str]] = set()
+    for fact in facts:
+        if fact["type"] != "phase.completed":
+            continue
+        chave = (fact["subject"]["entity"], fact["subject"]["id"], fact["phase"])
+        if chave in vistas:
+            raise ContractError(f"fase {fact['phase']!r} fechada duas vezes para o mesmo assunto no mesmo result")
+        vistas.add(chave)
+
+    # A4 — o complemento nao e cobrado pela tabela: a fase ja respondeu por ela
+    # no run ancorado, e cobrar de novo obrigaria a redeclarar o que ja foi dito.
     declared = {fact["type"] for fact in facts}
-    missing = [required for required in required_facts_for(phase, status) if required not in declared]
-    if missing:
-        raise ContractError(f"fase {phase!r} concluida sem declarar: {', '.join(missing)}")
+    if kind == RESULT_KIND and status == "success" and any(f["type"] == "phase.completed" for f in facts):
+        # Fechar as fases seguintes nao dispensa dizer o que houve com a PROPRIA.
+        if not any(f["type"] == "phase.completed" and f["phase"] == phase for f in facts):
+            raise ContractError(
+                f"o run se declara {phase!r} e fecha outras fases sem dizer o que houve com a dele"
+            )
+    if kind == RESULT_KIND:
+        missing = [required for required in required_facts_for(phase, status, facts) if required not in declared]
+        if missing:
+            raise ContractError(f"fase {phase!r} concluida sem declarar: {', '.join(missing)}")
+
+    # A18 — a fase de conversa fecha com o que alguem DISSE. Sem nenhum fato
+    # humano, "discovery concluida" e uma fase que nao perguntou nada saindo
+    # como se tivesse decidido algo.
+    if status == "success":
+        humanas = phases_requiring_human_decision()
+        sem_gente = [closed for closed in done_phases(facts) if closed in humanas]
+        tem_gente = any(fact["type"] in human_decision_facts() for fact in facts)
+        if sem_gente and not tem_gente:
+            raise ContractError(
+                f"fase {sem_gente[0]!r} com outcome 'done' exige ao menos um "
+                f"{' ou '.join(human_decision_facts())} — fase que nao perguntou nada nao fecha"
+            )
+
+    # A16 — o gate do roteiro e2e, em risco sensivel. O gate antigo conferia a
+    # EXISTENCIA do arquivo de roteiro na branch: "escrito" e "rodado" viraram a
+    # mesma coisa, e uma fase fechou verde sem ninguem ter validado.
+    if status == "success":
+        exigem_e2e = phases_requiring_e2e_when_sensitive()
+        sensiveis = [
+            fact
+            for fact in facts
+            if fact["type"] == "phase.completed"
+            and fact.get("outcome") == "done"
+            and fact.get("risk") == "sensivel"
+            and fact["phase"] in exigem_e2e
+        ]
+        if sensiveis:
+            e2e = [f for f in facts if f["type"] == "verification.recorded" and f.get("verification_kind") == "e2e-manual"]
+            if not e2e:
+                raise ContractError(
+                    f"fase {sensiveis[0]['phase']!r} classificada 'sensivel' exige uma verification.recorded "
+                    "de verification_kind 'e2e-manual' — gate de existencia de roteiro nao e validacao"
+                )
+            if any(f.get("state") == "pending" for f in e2e):
+                aprovou = any(
+                    f["type"] == "gate.confirmed"
+                    or (f["type"] == "verification.recorded" and f.get("verification_kind") == "review" and f.get("state") == "passed")
+                    for f in facts
+                )
+                if aprovou:
+                    raise ContractError(
+                        "aprovacao humana com o roteiro e2e ainda 'pending' em risco sensivel — "
+                        "o e2e pode esperar por voce, o aval nao sai junto"
+                    )
 
     # D-4 com dente: a fase que declara o ciclo ENCERRADO precisa da evidencia
     # que o encerra ("PR mergeado E VERIFICADO"). Sem isto, "Concluido" na tela
     # seria palavra sem lastro. Desfecho ruim continua valido: `abandoned` e
-    # `inconclusive` nao pedem nada.
-    if status == "success" and phase in phases_requiring_passed_verification():
-        declared_done = any(f["type"] == "phase.completed" and f.get("outcome") == "done" for f in facts)
+    # `inconclusive` nao pedem nada. Cobrado por FASE FECHADA, nao por
+    # `run.phase`: quem fecha `concluir` de dentro de outro run responde igual.
+    if status == "success":
+        exigem = phases_requiring_passed_verification()
+        fechadas = [closed for closed in done_phases(facts) if closed in exigem]
         has_passed = any(f["type"] == "verification.recorded" and f.get("state") == "passed" for f in facts)
-        if declared_done and not has_passed:
+        if fechadas and not has_passed:
             raise ContractError(
-                f"fase {phase!r} com outcome 'done' exige uma verification.recorded com state 'passed' — "
+                f"fase {fechadas[0]!r} com outcome 'done' exige uma verification.recorded com state 'passed' — "
                 "concluir sem evidencia e afirmar o que ninguem leu"
             )
 
     return {
         "contract_version": CONTRACT_VERSION,
-        "kind": "esteira.result",
+        "kind": kind,
         "run": {
             "run_id": _require_id(run_id, "run_id"),
             "phase": phase,
@@ -414,6 +715,8 @@ def build_result(
             "started_at": started_at,
             "finished_at": finished_at,
             "failure": None if failure is None else {"code": failure["code"], "message": failure["message"]},
+            "complements_run_id": None if complements_run_id is None else _require_id(complements_run_id, "complements_run_id"),
+            "revises_run_id": None if revises_run_id is None else _require_id(revises_run_id, "revises_run_id"),
         },
         "actor": {
             "tool": TOOL_NAME,

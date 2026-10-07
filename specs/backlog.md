@@ -7,9 +7,12 @@ Nada aqui entra em implementação sem passar pelo ciclo de spec
 ## Fila já especificada (spec 001, aguardando priorização do Alexandre)
 
 - **P1**: US-8 tokens/smart zone · US-9 subagentes · US-10 post-its ·
-  US-11 todo do projeto · US-12 quota das 15 contas · US-14 rotinas ·
-  US-15 novo projeto decente · **auto-switch** (auto-seleção de perfil
-  por headroom; insumo em `001-mvp/analise-switch-account-amanda.md`).
+  US-11 todo do projeto · US-12 quota das 15 contas (**absorvido no motor —
+  `specs/011-contas-e-provedores/`, ver B8**) · US-14 rotinas ·
+  US-15 novo projeto decente · ~~**auto-switch**~~ (**absorvido no motor —
+  `specs/011-contas-e-provedores/`, 90/20 puro em `accounts/auto-switch.ts`**;
+  era "auto-seleção de perfil por headroom", insumo em
+  `001-mvp/analise-switch-account-amanda.md`).
 - **P2**: US-13 Modo Dev (task → fases da Esteira, ui-spec §11) ·
   US-16 Donel buddy.
 
@@ -122,7 +125,15 @@ Ctrl+Shift+C, menu de contexto com Copiar, e seleção que sobrevive a
 output novo chegando. Critério: copiar um trecho do terminal tem que ser
 tão fácil quanto no Windows Terminal.
 
-### B8. Painel de cotas de todas as contas (novo — feedback 23/07, rodada 6)
+### B8. ~~Painel de cotas de todas as contas~~ — **ABSORVIDO no motor de contas (`specs/011-contas-e-provedores/`)**
+
+> **Absorvido em 2026-08-04 (011-contas-e-provedores, etapa 2).** O painel
+> dedicado listando todas as contas com cota (5h e semanal), refresh manual e
+> uma unidade só de leitura (C25 fecha o achado A3 da etapa 1: `AccountLoad`,
+> % consumido, sem o `ProfileQuota` de perfil convivendo do lado) é o
+> `AccountsPanel`/`MigrationWizard` de hoje — o dropdown de perfis que este
+> item descrevia morreu na demolição (T1225). Nada deste texto é apagado —
+> fica como registro do pedido original.
 
 "Seria interessante um botão que rode um script olhando todas as contas
 ativas e suas cotas de uso disponível (5h e semanal)." Encaixa em **US-12
@@ -185,10 +196,13 @@ cada projeto (vitest, pytest, etc.).
 para testar as novidades." **Decisões do Alexandre (2026-07-24):** (a) entra
 DEPOIS de fechar a 002 (dist + reinstalação + E2E da 002 acontecem no app
 atual, como já combinado); (b) isolamento **só do estado do app** —
-`~/.claude` e `~/.claude-profiles` seguem COMPARTILHADOS entre os canais, de
-propósito, para o canal de teste ver as contas e a cota reais (é o que
-permite testar perfis/quota de verdade). Consequência aceita: "Criar perfil"/
-"Recriar links" no canal de teste mexe nas junctions REAIS.
+`~/.claude` segue COMPARTILHADO entre os canais, de propósito, para o canal
+de teste ver as contas e a cota reais (é o que permite testar o motor de
+verdade). **Atualizado em 2026-08-04 (011-contas-e-provedores, etapa 2):** a
+frase sobre `~/.claude-profiles` compartilhado saiu — perfis não existem
+mais (demolidos, T1222/T1225); o fundo do item continua o mesmo, um só
+`~/.claude` para os canais instalados lado a lado (ver `CLAUDE.md`, seção
+"Canais instalados coexistindo").
 
 Investigação feita (24/07) — o app já está quase pronto para isso: todo
 estado próprio (config, favoritos, launcher defaults, e o
@@ -520,10 +534,14 @@ teste nenhum.
 Levantado ao responder "o sistema de pastas será intuitivo para as outras
 pessoas?". **Nada de estado dele viaja** — isso está verificado e é o menor dos
 problemas (`app.asar` = `out/` + `package.json`; config vive em
-`%APPDATA%\donel-dev\config.json`, criado na máquina de cada um; perfis são
-listados varrendo `~/.claude-profiles` do próprio usuário, com guarda de
-`existsSync`, então a lista nasce só com o **Principal**, que é o `~/.claude`
-dele mesmo). O problema é o **primeiro contato**:
+`%APPDATA%\donel-dev\config.json`, criado na máquina de cada um). **Atualizado
+em 2026-08-04 (011-contas-e-provedores, etapa 2):** a frase original descrevia
+a listagem de perfis (`~/.claude-profiles` do próprio usuário, lista nascendo
+só com o Principal) — mecanismo demolido (T1222/T1225). Numa máquina nova
+hoje, a tela de contas nasce **inerte** (`accounts.mod = null`), sem conta
+nenhuma até o operador conectar um provedor — comportamento equivalente
+("nada pré-existe"), vocabulário atualizado. O problema é o **primeiro
+contato**:
 
 1. **`defaultProjectRoots` é a convenção de pastas do Alexandre** —
    `project-scanner.ts:110` devolve `~/seazone` e `~/pessoal`. Numa máquina que
@@ -762,13 +780,184 @@ em `~/seazone/CLAUDE.md`.
 Diferença do escopo aqui: o pedido é sobre a dor de **outras pessoas**, não
 só a dele — sugere um painel/indicador na própria UI do Donel Dev (visível
 sem depender de hook do Claude Code), possivelmente com **troca** de conta,
-não só leitura. Related: B8 (painel de perfis/cotas) já resolve um problema
-parecido de "qual perfil está ativo" para contas Claude — mesmo padrão de UI
-pode servir de referência para o indicador de conta GitHub.
+não só leitura. Related: B8 (painel de contas/cotas, absorvido no motor —
+`specs/011-contas-e-provedores/`) já resolve um problema parecido de "qual
+conta está ativa" para contas Claude — mesmo padrão de UI pode servir de
+referência para o indicador de conta GitHub.
 
 Clarify futuro: é só indicador (qual conta está ativa) ou também switcher
 (trocar sem sair do app)? Por repo (cada projeto pode ter conta diferente,
 via `includeIf` do git) ou global? Onde na UI (status bar, preferências)?
+
+### B25. Priorizar contas específicas no pool Seazone (novo — dogfooding 04/08)
+
+Pedido do Alexandre durante a validação da etapa 1 da 011, com o pool real na
+tela: *"gostaria que esse mod-seazone eu pudesse priorizar algumas contas
+específicas"*. Contexto que dá peso ao pedido: o pool do switcher tem **61
+contas de toda a empresa** — o auto-switch, como está, pode mover o Alexandre
+para a conta de um colega de outro squad sem ele pedir.
+
+**Decisão fechada em 04/08 (a restrição vale para o automático, não para o
+manual):** o auto-switch considera **apenas** as contas preferidas — allowlist
+dura no que o app faz sozinho; se nenhuma preferida tiver folga, ele não troca.
+A lista do painel continua mostrando as 61, e um clique deliberado em qualquer
+uma segue funcionando. Assim o app nunca escolhe uma conta alheia por conta
+própria, e a saída manual não se perde num momento de aperto.
+
+Forma técnica (levantada, não implementada): `selectSwitchTarget`
+(`src/main/accounts/auto-switch.ts`) já é função pura que filtra candidatas —
+priorizar é mais um filtro ali, antes do power-of-two-choices. A config ganha
+uma lista em `accounts` e o painel, um gesto para marcar/desmarcar. Como o
+identificador da conta **é o label** (o e-mail, ver
+`contracts/backends-http.md` corrigido em 04/08), a lista de preferidas é uma
+lista de e-mails — legível direto no `config.json`.
+
+Quando: **fora da etapa 1**, que está fechada e em Validar (risco sensível,
+esperando PR + 2 aprovações) — mexer naquela branch reabriria um diff já
+revisado. Entra como spec própria ou como emenda à etapa 2, depois que o PR da
+etapa 1 fechar.
+
+Clarify futuro: preferidas são uma lista simples ou têm ordem entre si? O que
+a UI mostra quando o auto-switch não troca por nenhuma preferida ter folga —
+silêncio, ou uma linha dizendo por quê? (Vale lembrar que hoje o painel já
+descarta `available`/`unavailableReason` que a API manda — achado do mesmo dia,
+mesmo lugar da tela.)
+
+### B26. Alvo × escopo: microsserviço na Esteira (dogfooding 06/08) — **PARCIALMENTE ENTREGUE em 06/08**
+
+Achado com o card real "Diário de Obra" na tela: ele nasceu com repo alvo
+`"spotsys e api-spotsys"` — uma **frase**, digitada num campo de texto livre,
+nomeando dois serviços. Ela nunca poderia bater com pasta nenhuma, então o
+"Preparar" gravou o `run-input.json`, travou o card e **só então** disse que não
+abriria a sessão. O card ficou preso desde 06/08 11:42 num trabalho que nunca
+começou.
+
+Causa raiz: o store já separa **âncora** (`targetRepo`, 0..1 — onde a sessão
+senta) de **escopo** (`scopeRepos`, 0..N — o que a mudança toca) desde a spec
+010 `[D-6]`, e o contrato os carrega ponta a ponta. Só a TELA não separava: um
+`TextInput` livre rotulado "Repo alvo", e `scopeRepos: []` fixo no código. Quem
+trabalha em microsserviço — que atravessa repositórios por natureza — não tinha
+onde declarar o segundo repo, e escreveu "e api-spotsys" dentro do primeiro.
+
+**Entregue em 06/08** (branch `feature/repo-alvo-e-escopo`):
+- `repoScope.ts` — o vocabulário puro de âncora/escopo: normalização (a âncora
+  sempre pertence ao escopo), resumo em uma linha, e o **aviso antes do gesto**.
+- `RepoScopePicker` — âncora vira `Select` entre os projetos que o app conhece;
+  escopo vira chip que liga/desliga. Repo declarado que o app não enxerga
+  **aparece marcado como desconhecido**, em vez de sumir do formulário.
+- Gesto `setDiscoveryRepos` — corrigir alvo e escopo de um card que **já
+  existe**. Não havia: o repo só podia ser declarado no nascimento do card.
+- `preparePhase` recusa repo impossível **antes** de gravar e travar. Card SEM
+  repo continua preparando (é declaração legítima da spec: "discovery investiga
+  um problema, não um repositório") — o que não abre é a aba.
+- Correção no reducer: `discovery.updated` com `targetRepo: null` agora LIMPA o
+  alvo. Antes, `?? current` lia `null` como "o evento não falou do campo" e
+  ressuscitava o valor antigo — apagar era impossível.
+
+**Fica em aberto (não entrou nesta leva):**
+- **Escopo no item, pela tela.** `WorkItemSnapshot` tem os mesmos dois campos, e
+  a fase de um item roda no repo do item. Hoje só a skill os declara — não há
+  gesto de corrigir alvo/escopo de item, e o `RepoScopePicker` já serviria.
+- **Herança item←card não existe no motor.** O comentário de `DiscoverySnapshot`
+  diz "alvo default herdado pelos itens", mas o reducer (`work_item.created`)
+  grava `targetRepo` cru do fato. Quem herda é a VIEW (`itemRepoOf`). Decidir:
+  a herança sobe para o reducer, ou o comentário desce para a realidade?
+- **`ships_with` não tem gesto na tela.** A relação "entra junto" existe no
+  store e é o mecanismo certo para item do back + item do front que sobem na
+  mesma janela — o caso canônico de microsserviço. Nenhuma UI a cria hoje.
+- **O escopo não chega à skill como instrução.** Ele viaja no `run-input.json`
+  (`context.discovery.scope_repos[]`), mas nenhuma skill 3.0 fala dele no
+  prompt. Uma skill de Plano que ignore o escopo vai quebrar em itens de um
+  repo só, que é o erro que este item nasceu para evitar.
+
+### B27. O Claude Code já anuncia o próprio estado — e a gente joga fora (achado 10/08)
+
+**A mentira do semáforo tem cura barata, e ela está no stream que o app já
+intercepta.** O `PtyManager` (`src/main/pty-manager.ts:195`) vê cada byte que o
+CLI emite. Entre esses bytes vai a sequência OSC que define o **título do
+terminal** — e o Claude Code escreve nela, em tempo real, o próprio estado:
+
+| Título OSC começa com | Significa |
+|---|---|
+| um caractere braille `U+2800`–`U+28FF` (o spinner girando) | **trabalhando** |
+| `✳` (`U+2733`) | **ocioso** |
+
+Não é heurística nossa: é o CLI declarando. A evidência veio do `herdr`
+(`src/detect/manifests/claude.toml`, Apache-2.0), que usa exatamente essas duas
+regras como as de **maior prioridade** (1100 e 250) na detecção dele — acima de
+qualquer leitura de tela.
+
+**Por que isto importa agora.** A arquitetura do nosso semáforo já está certa e
+é a mesma do herdr: hooks do CLI como fonte autoritativa, com fallback quando o
+hook não conta a história toda (`semaphore-state-machine.ts`, cabeçalho). O que
+difere é a **qualidade do fallback**: o nosso é temporal
+(`applyPermissionHeuristic`, `:113` — `PreToolUse` pendente sem `PostToolUse`),
+e é exatamente ele que produz a mentira nomeada no dogfooding: *"afirma trabalho
+com o comando parado no prompt"*. Um `PreToolUse` que nunca fecha deixa o
+semáforo em `working` para sempre; o título OSC, nesse mesmo instante, já diz
+`✳`. Detalhe agravante: `INITIAL_SEMAPHORE_STATE` nasce em `working` — o app
+**começa** afirmando trabalho antes de ter observado qualquer coisa.
+
+**Segunda metade do achado: `blocked` de graça.** O mesmo `claude.toml` mapeia,
+em regras declarativas mantidas por terceiros, o que é uma **UI de bloqueio** do
+Claude Code — prompt de permissão de bash, formulário com "enter to confirm /
+esc to cancel", "do you want to proceed?", o menu de escolha. É o sinal que o
+**motor da 012 pressupõe existir**: a fila só sabe parar e chamar o dono quando
+alguém consegue dizer "esta sessão está bloqueada esperando gente". Hoje a gente
+deriva isso de `Notification` (que o spike T002 provou que dispara) — o OSC + as
+regras de tela são a rede quando ela não dispara.
+
+**O que fazer (não implementar sem spec):**
+- ler a sequência OSC de título no `PtyManager` e expor como evento tipado;
+- trocar o fallback temporal do semáforo por esse sinal, mantendo os hooks como
+  fonte primária (a hierarquia não muda, só o segundo tier);
+- portar as regras de `blocked` do `claude.toml` como fallback do
+  `permission`/`blocked`, com a licença creditada;
+- **não** copiar o manifest inteiro nem criar dependência do binário `herdr`
+  para isto — o que atravessa é o padrão e duas regex.
+
+**Risco conhecido:** o formato do título é contrato **de facto**, não público —
+uma versão do CLI pode mudar o spinner. Por isso ele entra como **fallback**,
+nunca acima dos hooks, e a ausência do sinal tem que degradar para o
+comportamento de hoje, não para `unknown`.
+
+### B28. `herdr` como runtime das sessões da Esteira — spike, não decisão (10/08)
+
+`github.com/herdrdev/herdr` (26.9k ★, Rust, Apache-2.0, v0.8.0) — "o runtime
+onde seus agentes moram": servidor de fundo + TUI cliente, com socket API
+(**named pipe no Windows**) e CLI que **agentes dirigem**. Ele resolve, prontos,
+quatro buracos que a 012 tem em aberto:
+
+| Buraco nosso | O que ele tem |
+|---|---|
+| o app **não envia o próprio Enter** na sessão que ele abre (problema fundador do catálogo) | `agent prompt <nome> "texto" --wait` — texto + Enter atômicos, honrando bracketed-paste |
+| o motor precisa saber que a fase **parou e precisa do dono** | `agent wait --until blocked --timeout N` — a definição de gate da 012 |
+| **sessão órfã** quando o app fecha (decisão nº2 do dogfooding) | servidor de fundo: sessões sobrevivem a fechar o cliente, cair a rede, reiniciar |
+| **A8** — worktree/lock de árvore para o worker | `worktree.create` / `open` / `remove` na própria API |
+
+Traz também um conceito que a nossa fila noturna precisa e não tem nome: **`done`
+≠ `idle`** — `done` é "terminou e **ninguém olhou ainda**"; vira `idle` quando um
+humano vê. É precisamente o estado que distingue "a fila avançou de madrugada" de
+"o dono já leu".
+
+**Os dois motivos de isto ser spike e não adoção:**
+
+1. **Não existe stream de output bruto.** Varredura da lista de métodos da socket
+   API: `pane.read` é snapshot, `events.subscribe` é ciclo de vida, e
+   `pane.graphics.stream` é imagem. **Nenhum canal entrega os bytes do PTY.** O
+   `xterm.js` do Donel vive desses bytes — então o herdr **não substitui**
+   `node-pty`. Adotar de verdade seria abrir mão da UI que é o Donel.
+2. **Windows é beta, e a issue mais próxima do nosso caso é de ontem:**
+   [#2545](https://github.com/herdrdev/herdr/issues/2545) (09/08) — *"agent
+   progress stalls for hours when herdr window is backgrounded on Windows"*.
+   Fila da Esteira rodando de fundo no Windows **é** esse cenário. Há mais de uma
+   dúzia de issues Windows abertas.
+
+**Recorte do spike, se um dia rodar:** herdr como runtime **só das sessões de
+fase da Esteira** — que não precisam de renderização rica, só nascer, receber
+prompt e avisar quando travaram —, com o Donel seguindo dono das abas
+interativas. **Gate do spike:** reproduzir a #2545. Se a fila trava de fundo no
+Windows, o spike morre ali e o B27 (que não depende de nada) segue sozinho.
 
 ## Decidido, aguardando spec
 
