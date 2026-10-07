@@ -55,6 +55,32 @@ projeto — B3)** ficam para specs próprias.
   CLI (que segue valendo só na vista do terminal). Verificado: o modo foco do
   CLI não omite nada do arquivo da conversa.
 
+## Clarifications
+
+### Session 2026-10-07
+
+- Q: O que o chat mostra quando a conversa da aba muda (`/clear` e apelidos
+  `/new`/`/reset`, `/resume`)? → A: Segue a conversa nova — mostra só a
+  conversa ativa, com uma linha de aviso no topo apontando a anterior em
+  Sessões anteriores; nome, semáforo, contexto e cor da aba acompanham a
+  troca.
+- Q: Onde abre a conversa de um subagente? → A: Num painel lateral dentro da
+  aba, à direita, ao vivo, com a conversa principal visível e utilizável ao
+  lado; a faixa do topo troca o subagente mostrado; o painel fecha com × ou
+  Esc.
+- Q: O que o chat mostra quando o processo `claude` da aba sai? → A: A
+  conversa segue visível para ler e copiar; a caixa dá lugar à barra "Sessão
+  encerrada (código N)" com Retomar (continua a mesma conversa) e Fechar aba;
+  o rascunho fica guardado e volta para a caixa ao retomar.
+- Q: Como o painel trata várias pendências independentes abertas ao mesmo
+  tempo? → A: Uma por vez, na ordem de chegada, com o contador "mais N
+  esperando"; responder uma mostra a próxima.
+- Q: O que "na fila" quer dizer para mensagem enviada com o Claude
+  trabalhando? → A: Fila do próprio CLI, como no terminal — a mensagem vai ao
+  CLI na hora e o Claude a lê na próxima pausa entre ações, sem interromper;
+  o chat mostra "na fila" até ela aparecer na conversa; depois de enviada,
+  não se edita.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — Conversar com o Claude pelo chat (Priority: P1)
@@ -99,6 +125,17 @@ app.
 8. **Given** um `/compact`, uma troca de conta em voo ou um limite de conta
    atingido, **When** acontece, **Then** o chat mostra uma linha discreta de
    aviso no ponto da conversa onde ocorreu.
+9. **Given** uma conversa em andamento, **When** o dono usa `/clear` (ou
+   `/new`, `/reset`) ou `/resume`, pelo chat ou pelo terminal, **Then** o chat
+   passa a mostrar só a conversa ativa, com uma linha no topo indicando a
+   troca ("conversa nova — a anterior está em Sessões anteriores", no caso do
+   `/clear`), e o nome, o semáforo, o contexto e a cor da aba acompanham a
+   conversa nova.
+10. **Given** uma conversa no chat, **When** o processo `claude` da aba sai
+    (`/exit`, travamento, Ctrl+C duplo), **Then** a conversa segue visível
+    para ler e copiar, a caixa dá lugar à barra "Sessão encerrada (código N)"
+    com Retomar — que continua a mesma conversa — e Fechar aba, e o rascunho
+    volta para a caixa ao retomar.
 
 ---
 
@@ -144,6 +181,10 @@ painel, com o app em segundo plano em pelo menos um dos casos.
    você" com botão para abrir o terminal; nenhuma pendência fica invisível.
 8. **Given** um pedido de permissão vindo de um subagente, **When** chega,
    **Then** o painel identifica "pedido do subagente <descrição>".
+9. **Given** duas ou mais pendências abertas ao mesmo tempo (ex.: pedidos de
+   subagentes em paralelo e uma pergunta do principal), **When** chegam,
+   **Then** o painel mostra uma por vez, na ordem de chegada, com o contador
+   "mais N esperando", e responder uma mostra a próxima.
 
 ---
 
@@ -244,15 +285,19 @@ um deles em segundo plano; acompanhar ambos até o fim.
 1. **Given** o Claude lança um subagente, **When** ele começa, **Then**
    aparece uma linha na mensagem que o lançou com descrição, tipo, modelo e
    estado (rodando com tempo e última ação / terminou / falhou).
-2. **Given** a linha do subagente, **When** o dono clica, **Then** abre a
-   conversa do subagente no mesmo formato (ações recolhidas, foco valendo),
-   acompanhando ao vivo se ainda roda.
+2. **Given** a linha do subagente, **When** o dono clica, **Then** abre um
+   painel lateral à direita, dentro da aba, com a conversa do subagente no
+   mesmo formato (ações recolhidas, foco valendo), acompanhando ao vivo se
+   ainda roda; a conversa principal segue visível e utilizável ao lado, e o
+   painel fecha com × ou Esc.
 3. **Given** vários subagentes rodando, **When** estão ativos, **Then** uma
-   faixa no topo da aba mostra quantos são e leva a cada um.
+   faixa no topo da aba mostra quantos são e leva a cada um, trocando o
+   subagente mostrado no painel lateral.
 4. **Given** um subagente em segundo plano, **When** o Claude principal já
    respondeu, **Then** a linha segue "rodando" e muda sozinha ao terminar.
 5. **Given** um subagente lançado por outro subagente, **When** aparece,
-   **Then** o primeiro nível é mostrado com um "ver" para entrar no seguinte.
+   **Then** o primeiro nível é mostrado com um "ver" que abre o seguinte no
+   mesmo painel lateral.
 
 ---
 
@@ -270,7 +315,9 @@ outra com "interromper e mandar agora".
 **Acceptance Scenarios**:
 
 1. **Given** o Claude trabalhando, **When** o dono envia, **Then** a mensagem
-   aparece "na fila" e entra quando o CLI a aceitar.
+   vai na hora para a fila do CLI e aparece "na fila" até o Claude recebê-la
+   na próxima pausa entre ações, sem interromper a rodada; aí passa a
+   "entrou", no ponto da conversa em que ele a leu.
 2. **Given** o Claude trabalhando, **When** o dono usa "interromper e mandar
    agora", **Then** a rodada é interrompida e a mensagem é enviada em seguida.
 
@@ -300,6 +347,9 @@ outra com "interromper e mandar agora".
 - **Hooks globais do usuário** rodando junto aos do chat: não interferem na
   resposta do chat (e vice-versa).
 - **Troca de conta em voo durante uma pendência**: a pendência segue válida.
+- **`/clear` ou `/resume` enviado pelo chat**: o envio termina em "entrou"
+  quando a troca de conversa acontece — nunca fica "enviando…" esperando a
+  mensagem aparecer na conversa que acabou de ser deixada.
 - **Tela interativa do CLI** (login, configuração): faixa "o terminal precisa
   de você".
 
@@ -318,6 +368,15 @@ outra com "interromper e mandar agora".
 - **FR-004**: Sempre que a sessão precisar de algo que o chat não resolve, o
   chat MUST mostrar a faixa "o terminal precisa de você" com acesso direto ao
   terminal.
+- **FR-033**: Quando a conversa da aba mudar sem a aba fechar (`/clear` e
+  apelidos, `/resume`), o chat MUST passar a mostrar só a conversa ativa, com
+  uma linha de aviso no topo indicando a troca e apontando a conversa anterior
+  em Sessões anteriores; nome, semáforo, contexto e cor da aba MUST acompanhar
+  a conversa ativa, nas duas vistas.
+- **FR-034**: Quando o processo `claude` da aba sair, o chat MUST manter a
+  conversa visível e copiável e MUST trocar a caixa pela barra "Sessão
+  encerrada (código N)" com Retomar (continua a conversa ativa) e Fechar aba,
+  preservando o rascunho para depois de retomar.
 
 **Conversa**
 
@@ -364,9 +423,11 @@ outra com "interromper e mandar agora".
 - **FR-018**: Mensagem iniciada por `!` MUST mostrar o selo de comando de
   shell antes do envio; outros prefixos com significado na TUI MUST ter
   tratamento explícito definido no plano.
-- **FR-019**: Mensagens enviadas durante uma rodada MUST ir para a fila
-  (visível como "na fila") ou, por ação explícita, interromper a rodada e ser
-  enviadas em seguida.
+- **FR-019**: Mensagens enviadas durante uma rodada MUST ir na hora para a
+  fila do próprio CLI — que as entrega ao Claude na próxima pausa entre
+  ações, sem interromper — e aparecer como "na fila" até a conversa
+  registrá-las; por ação explícita, MUST poder interromper a rodada e ser
+  enviadas em seguida. Mensagem já entregue à fila não é editável pelo chat.
 - **FR-020**: Comandos pré-digitados pela Esteira MUST aparecer na caixa;
   fases com auto-start MUST usar o mesmo envio confiável do FR-017.
 
@@ -388,20 +449,27 @@ outra com "interromper e mandar agora".
   FR-004; nenhuma pendência MUST ficar sem sinal visível.
 - **FR-026**: O mecanismo de resposta a pendências MUST valer só para sessões
   abertas pelo app e MUST NOT alterar a configuração global do usuário.
+- **FR-035**: Pendências abertas ao mesmo tempo MUST aparecer uma por vez no
+  painel, na ordem de chegada, com o contador "mais N esperando"; responder
+  uma MUST mostrar a próxima.
 
 **Subagentes**
 
 - **FR-027**: Cada subagente MUST aparecer como linha viva na mensagem que o
   lançou (descrição, tipo, modelo, estado, tempo, última ação), abrindo a
-  conversa dele no mesmo formato e ao vivo.
-- **FR-028**: Subagentes simultâneos MUST ser indicados numa faixa da aba;
-  subagentes em segundo plano MUST seguir atualizando após a resposta do
-  principal; aninhados MUST mostrar o primeiro nível com acesso ao seguinte.
+  conversa dele no mesmo formato e ao vivo num painel lateral da aba, com a
+  conversa principal visível e utilizável ao lado; o painel MUST fechar com ×
+  ou Esc.
+- **FR-028**: Subagentes simultâneos MUST ser indicados numa faixa da aba que
+  troca o subagente mostrado no painel lateral; subagentes em segundo plano
+  MUST seguir atualizando após a resposta do principal; aninhados MUST
+  mostrar o primeiro nível com acesso ao seguinte no mesmo painel.
 
 **Integridade com o resto do app**
 
 - **FR-029**: Troca de conta em voo, semáforo, faixa de cor do `/color`,
-  statusbar e Esteira MUST seguir funcionando com a aba no chat.
+  statusbar e Esteira MUST seguir funcionando com a aba no chat, inclusive
+  depois de a conversa da aba mudar (FR-033).
 - **FR-030**: O app MUST garantir que a sessão grave a conversa em disco
   (ambiente herdado limpo) e MUST passar o modo de permissão explicitamente;
   se a conversa não estiver sendo recebida, o chat MUST avisar (FR-004).
@@ -424,18 +492,21 @@ outra com "interromper e mandar agora".
 
 ### Key Entities
 
-- **Sessão de chat**: a aba `claude` com sua PTY oculta, o arquivo da
-  conversa, o modo de permissão, a vista atual (chat/terminal), o rascunho e
-  a preferência de Modo Foco.
+- **Sessão de chat**: a aba `claude` com sua PTY oculta e o estado do
+  processo (vivo ou encerrado, FR-034), o arquivo da conversa ativa (muda com
+  `/clear` e `/resume`, FR-033), o modo de permissão, a vista atual
+  (chat/terminal), o subagente aberto no painel lateral (se houver), o
+  rascunho e a preferência de Modo Foco.
 - **Linha da conversa**: unidade que a tela exibe — mensagem do dono,
   resposta, pensamento, ação, grupo de ações, ação ao vivo, aviso de sistema,
   selo de skill, subagente, conteúdo não reconhecido.
 - **Rodada**: uma mensagem do dono e tudo até a resposta final; unidade do
   Modo Foco.
 - **Pendência**: pergunta, permissão ou plano aguardando o dono; tem origem
-  (principal ou subagente), estado (aberta, respondida, caiu no terminal).
-- **Envio**: mensagem do dono com anexos e estado (enviando, na fila, entrou,
-  não foi).
+  (principal ou subagente), estado (aberta, respondida, caiu no terminal) e
+  ordem de chegada (o painel mostra uma por vez, FR-035).
+- **Envio**: mensagem do dono com anexos e estado (enviando, na fila — do
+  CLI, FR-019 —, entrou, não foi).
 - **Subagente**: tipo, modelo, descrição, chamada de origem, estado e sua
   própria conversa.
 
@@ -448,8 +519,8 @@ outra com "interromper e mandar agora".
   pergunta com opções, permissão permitida e negada, plano aprovado,
   subagente acompanhado ao vivo.
 - **SC-002**: Com Modo Foco ligado, **100%** das perguntas e permissões de uma
-  bateria roteirizada aparecem no painel ou na faixa — zero pendências
-  invisíveis.
+  bateria roteirizada aparecem no painel (as simultâneas pelo contador "mais N
+  esperando") ou na faixa — zero pendências invisíveis.
 - **SC-003**: **100%** das mensagens de uma bateria de envios (incluindo
   multilinha, `/skill`, `@arquivo`, colagem grande e auto-start da Esteira)
   terminam em "entrou" ou "não foi"; zero "enviando…" eternos; zero envios
@@ -489,3 +560,5 @@ outra com "interromper e mandar agora".
   camada adaptadora do D3).
 - Busca dentro da conversa.
 - Árvore completa de subagentes aninhados.
+- Fila própria do chat, editável, que segura a mensagem até o fim da rodada
+  (a fila é a do CLI, FR-019).
