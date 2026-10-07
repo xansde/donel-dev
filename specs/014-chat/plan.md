@@ -355,7 +355,8 @@ specs/014-chat/
 │   ├── send-protocol.md
 │   └── ipc-chat.md
 ├── checklists/requirements.md
-└── tasks.md              # /speckit.tasks (ainda não criado)
+├── spike/                # evidência das verificações de 07/10 (harness, protocolo de referência, capturas)
+└── tasks.md              # /speckit.tasks
 ```
 
 ### Código (novo e alterado)
@@ -418,7 +419,7 @@ tests/
 ├── chat-*.test.ts                   # vitest
 ├── hook-bridge.contract.test.ts
 ├── fixtures/chat/                   # JSONL sintéticos por versão + telas capturadas + gerador grande
-├── fixtures/fake-claude/            # CLI falso roteirizado
+├── smoke/fixtures/fake-claude-chat/ # CLI falso roteirizado (padrão do fake-claude-login)
 └── smoke/chat-*.spec.ts
 ```
 

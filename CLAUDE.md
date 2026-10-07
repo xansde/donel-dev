@@ -211,6 +211,19 @@ real em 13/09** (`e2e.md` §3): a sessão viva adota a conta nova na mensagem
 seguinte, e o MCP segue respondendo. Por isso as fases 1 e 2 seguem como
 escritas, com o F6 dentro da Fase 1.
 
+## Gatilho — "rodar a próxima fase do chat"
+
+Pedido "**rodar a próxima fase do chat**" (ou "próxima fase da 014") = abrir a
+fila `Claude Seazone/Projects/donel-dev/execucao-014-chat/PROXIMO.md` no vault
+e pegar a primeira fase `⬜` que não seja do dono e cujo gate de entrada esteja
+cumprido. Prompts prontos (execução e retomada) em `prompt.md`, na mesma pasta.
+
+Fonte de verdade: `specs/014-chat/plan.md` + `specs/014-chat/tasks.md`
+(T001–T102). A **Fase 0 é o protótipo de forma no Claude Design** (do dono;
+`design/prompt-design-chat.md`) e corre em paralelo com a **Fase 1**, que não
+tem tela. Da Fase 2 em diante: sequencial, só com `design/chat-verificacao.md`
+aprovado, e tudo atrás de `chat.enabled` até a virada (Fase 7).
+
 ## Gotchas conhecidos (do planejamento)
 
 - node-pty precisa casar com a ABI do Electron — prebuilds/@electron/rebuild;
