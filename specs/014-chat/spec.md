@@ -20,6 +20,10 @@ Esta entrega põe uma tela de chat como vista padrão dessas abas, **sem trocar
 o motor**: o mesmo CLI interativo segue vivo por trás, de modo que troca de
 conta em voo, semáforo, hooks, `/color` e Esteira continuam valendo.
 
+Neste documento, **terminal do Claude** é a tela de texto que o `claude`
+desenha: a que a aba mostra hoje e que continua disponível na vista do
+terminal. Nos documentos técnicos do plano ela é chamada de *TUI*.
+
 Recorte do brainstorm: esta spec é a **frente 1 (chat núcleo)** com as
 frentes **2 (decisões)** e **3 (subagentes)** dentro do desenho. As frentes
 **4 (leitor de arquivos, widgets e artefatos — spec 013/B4)** e **5 (GitHub do
@@ -35,7 +39,7 @@ projeto — B3)** ficam para specs próprias.
 - **D2 — Perguntas e permissões por hooks.** Respondidas por hooks instalados
   **só nas sessões que o app abre**, por configuração própria da sessão; a
   configuração global do usuário não é tocada. Provado no spike: o hook
-  responde AskUserQuestion sem a TUI mostrar o diálogo, nega/permite Bash sem
+  responde AskUserQuestion sem o terminal do Claude mostrar o diálogo, nega/permite Bash sem
   prompt, e o CLI espera um hook lento (45 s) sem efeito colateral.
 - **D3 — Modelo de "linhas da conversa".** A tela conhece apenas um modelo
   próprio de linhas (mensagem, pensamento, grupo de ações, ação ao vivo,
@@ -80,6 +84,13 @@ projeto — B3)** ficam para specs próprias.
   CLI na hora e o Claude a lê na próxima pausa entre ações, sem interromper;
   o chat mostra "na fila" até ela aparecer na conversa; depois de enviada,
   não se edita.
+- Q (revisão do plano): o AS 2.2 exige que nada apareça no terminal do Claude?
+  → A: Não. Basta o dono não precisar abrir o terminal. Enquanto espera, a
+  pergunta também aparece no terminal oculto, e responder lá vale. Ajuste de
+  redação feito no plano: o dono não conhecia o termo "TUI", que esta spec
+  deixou de usar.
+- Q (revisão do plano): a meta de 1 s para uma linha nova aparecer vira
+  critério de sucesso? → A: Sim (SC-008).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -146,7 +157,7 @@ dono responde por botões num painel que não some até a resposta — com o Mod
 Foco ligado ou não, com a aba em foco ou não.
 
 **Why this priority**: É a dor nomeada que o terminal não resolve (perguntas
-perdidas no modo foco) e o ganho mais claro sobre a TUI.
+perdidas no modo foco) e o ganho mais claro sobre o terminal do Claude.
 
 **Independent Test**: Numa sessão em modo de permissão padrão, pedir ao
 Claude que faça uma pergunta com duas opções, que rode um comando que exige
@@ -161,7 +172,8 @@ painel, com o app em segundo plano em pelo menos um dos casos.
    quando for o caso e o campo "Outra" para resposta livre; até 4 perguntas
    aparecem empilhadas com um único botão Responder.
 2. **Given** o dono responde no painel, **When** confirma, **Then** o Claude
-   recebe exatamente as escolhas feitas e segue, sem nada aparecer na TUI.
+   recebe exatamente as escolhas feitas e segue, sem o dono precisar abrir o
+   terminal.
 3. **Given** o Claude precisa de permissão que o CLI pediria, **When** o
    pedido chega, **Then** o painel diz em português o que ele quer fazer (com
    o diff, no caso de edição) e oferece Permitir, Permitir sempre neste
@@ -325,7 +337,7 @@ outra com "interromper e mandar agora".
 
 ### Edge Cases
 
-- **Hook que estoura o tempo**: a pergunta cai na TUI oculta → faixa "o
+- **Hook que estoura o tempo**: a pergunta fica só no terminal do Claude → faixa "o
   terminal precisa de você"; ao voltar do terminal, o chat reflete a resposta
   dada lá.
 - **Responder pelo terminal** uma pendência que também está no painel: o
@@ -335,7 +347,7 @@ outra com "interromper e mandar agora".
 - **Arquivo da conversa ausente ou parado** (variáveis de ambiente herdadas
   desligam a gravação; CLI travado): o chat avisa que não está recebendo a
   conversa e oferece o terminal, em vez de ficar em branco.
-- **Mensagem que não entra** (Enter engolido, TUI ocupada): "não foi" +
+- **Mensagem que não entra** (Enter engolido, terminal do Claude ocupado): "não foi" +
   tentar de novo; nunca "enviando…" eterno; nunca envio em duplicidade.
 - **Colagem com prefixos especiais** do CLI (`!` e outros): tratamento
   explícito, nunca disparo acidental.
@@ -417,11 +429,11 @@ outra com "interromper e mandar agora".
 - **FR-016**: Colagem acima de um limite de tamanho MUST virar anexo de texto
   conferível.
 - **FR-017**: Todo envio MUST chegar ao CLI exatamente como escrito (sem
-  interferência do autocomplete da TUI), MUST ser confirmado pela conversa
+  interferência do autocomplete do terminal do Claude), MUST ser confirmado pela conversa
   registrada e MUST terminar em "entrou" ou "não foi" (com tentar de novo),
   sem duplicidade.
 - **FR-018**: Mensagem iniciada por `!` MUST mostrar o selo de comando de
-  shell antes do envio; outros prefixos com significado na TUI MUST ter
+  shell antes do envio; outros prefixos com significado no terminal do Claude MUST ter
   tratamento explícito definido no plano.
 - **FR-019**: Mensagens enviadas durante uma rodada MUST ir na hora para a
   fila do próprio CLI — que as entrega ao Claude na próxima pausa entre
@@ -435,8 +447,8 @@ outra com "interromper e mandar agora".
 
 - **FR-021**: Perguntas com opções MUST aparecer num painel acima da caixa,
   persistente até a resposta, com opções, prévia, seleção múltipla, resposta
-  livre e várias perguntas por vez; a resposta MUST chegar ao Claude sem
-  passar pela TUI.
+  livre e várias perguntas por vez; a resposta MUST chegar ao Claude direto
+  do painel, sem o dono precisar passar pelo terminal.
 - **FR-022**: Pedidos de permissão MUST aparecer no mesmo painel **somente
   quando o CLI pediria**, descrevendo a ação em português (com diff em
   edições), com Permitir, Permitir sempre neste projeto e Negar com motivo
@@ -487,8 +499,11 @@ outra com "interromper e mandar agora".
    CLI sem gastar cota; reconciliação (FR-014).
 4. Imagem: caminho de arquivo colado vira imagem anexada no CLI, ou segue
    como caminho para a ferramenta de leitura (plano B garantido)? (FR-015).
-5. Colar texto iniciado por `!` ou outros prefixos dispara modo da TUI?
-   (FR-018).
+5. Colar texto iniciado por `!` ou outros prefixos dispara modo especial no
+   terminal do Claude? (FR-018).
+
+**Resultado (07/10)**: os cinco itens foram verificados ao vivo no CLI 2.1.293
+e todos têm caminho principal, sem plano B. Detalhes em `research.md`, R1–R5.
 
 ### Key Entities
 
@@ -534,6 +549,8 @@ outra com "interromper e mandar agora".
 - **SC-007**: Ao fim de uma semana de uso diário, o dono declara que não
   precisou abrir a vista do terminal para conversar, só para telas
   interativas do CLI.
+- **SC-008**: Uma linha nova da conversa (resposta, ação ou aviso) aparece no
+  chat em até **1 s** depois de o Claude registrá-la.
 
 ## Assumptions
 

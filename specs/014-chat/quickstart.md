@@ -34,6 +34,9 @@ npm run build; npm run test:smoke   # Playwright + CLI falso roteirizado (tests/
 - **Sessão longa (SC-005)**: o gerador sintético cria uma conversa de ~10 mil
   linhas, e a smoke `chat-long-session` mede abrir no fim em até 2 s e rolar
   sem saltos.
+- **Latência ao vivo (SC-008)**: a smoke `chat-live-latency` mede o tempo
+  entre o CLI falso acrescentar uma linha ao transcript e a linha aparecer na
+  tela. Passa com até 1 s.
 
 ## 2. Bateria com o CLI real
 

@@ -14,6 +14,12 @@ plano:
 - `contracts/ipc-chat.md`;
 - `quickstart.md` — validação.
 
+Glossário técnico: **TUI** = a tela de texto que o `claude` desenha (o que a
+aba mostra na vista do terminal; na spec, "terminal do Claude"). **PTY** = o
+terminal virtual onde o `claude` roda escondido. **Hook** = aviso que o CLI
+manda ao app a cada evento (e, no caso das pendências, a resposta que o app
+devolve).
+
 ## Sumário
 
 O chat vira a vista padrão das abas `claude` **sem trocar o motor**. O mesmo
@@ -49,7 +55,7 @@ tela começa sem ele.
 **Testing**: vitest (módulos puros, contrato HTTP da ponte de hooks) + Playwright/Electron com CLI falso roteirizado + bateria com o CLI real no alfa (`quickstart.md`)
 **Target Platform**: Windows 11 (canal alfa → beta → público), ConPTY
 **Project Type**: desktop-app (Electron: main + preload + renderer, design-system em workspace)
-**Performance Goals**: sessão longa abre no fim em ≤ 2 s (SC-005); linha nova na tela ≤ 1 s após o CLI gravar; hooks não bloqueantes respondidos em ≤ 10 ms
+**Performance Goals**: sessão longa abre no fim em ≤ 2 s (SC-005); linha nova na tela ≤ 1 s após o CLI gravar (SC-008); hooks não bloqueantes respondidos em ≤ 10 ms
 **Constraints**: transcript nunca lido inteiro; o app não toca credencial; o CLI não é modificado; o chat só pergunta quando o CLI perguntaria; UI em pt-BR, código em inglês; espelho público sem vocabulário interno
 **Scale/Scope**: um operador; dezenas de abas; transcripts de até ~40 MB e linhas de até 1,4 MB; 6 user stories, 35 FRs
 
@@ -144,8 +150,8 @@ constituição de fato do repo é o `CLAUDE.md`, como no plano da 011.
 
 Cada fase entra por PR em `staging`, atrás de `chat.enabled` (desligado), e
 termina com **revisão do dono** antes da seguinte (cadência da 010). A
-Fase 1 pode correr junto com a Fase 0, porque não tem tela. As demais só
-começam com o protótipo aprovado.
+**Fase 1 corre junto com a Fase 0** (aprovado pelo dono em 07/10), porque
+não tem tela. As demais só começam com o protótipo aprovado.
 
 ### Fase 0 — Protótipo de forma *(gate; sem código de produção)*
 
@@ -158,15 +164,15 @@ começam com o protótipo aprovado.
   conversa"); barra "Sessão encerrada"; pé "trabalhando" + Parar;
   subagentes (linha viva, faixa no topo, painel lateral); alternância;
   aviso de conversa nova.
-- **Rota** (escolha do dono, pendente):
-  - **A — Claude Design, como no Modo Dev** *(recomendada)*: fluxo
-    `design/prompt-design-chat.md` → claude.ai/design →
-    `design/chat-handoff/` → `design/chat-verificacao.md`, com as
-    divergências nomeadas. Regra de conflito do Modo Dev: na forma vence o
-    design; no comportamento vence a spec.
-  - **B — protótipo HTML clicável** com dados falsos e os tokens do
-    design-system.
-  - **C — os dois**.
+- **Rota decidida pelo dono (07/10): Claude Design, como no Modo Dev.**
+  1. O prompt pronto `design/prompt-design-chat.md` é colado no
+     claude.ai/design.
+  2. O resultado é salvo em `design/chat-handoff/`.
+  3. A conferência contra a spec vai para `design/chat-verificacao.md`, com
+     as divergências nomeadas.
+
+  Regra de conflito do Modo Dev: na forma vence o design; no comportamento
+  vence a spec.
 - **Gate**: protótipo aprovado + documento de verificação. Sem isso, nenhuma
   tarefa das Fases 2–6.
 
@@ -295,8 +301,8 @@ Resumo (detalhes em `research.md` R24 e roteiro em `quickstart.md`):
 - **Contrato HTTP da ponte de hooks**: servidor real + cliente que imita o
   CLI (segurar, responder, primeira resposta vence, `expired`, `401`,
   limite de corpo, `SessionStart` re-apontando).
-- **Smokes Playwright** com o CLI falso roteirizado (SC-002, SC-003, SC-006
-  e a sessão longa do SC-005).
+- **Smokes Playwright** com o CLI falso roteirizado (SC-002, SC-003, SC-006,
+  a sessão longa do SC-005 e a latência do SC-008).
 - **Bateria real no alfa** a cada fase com tela, e o diário do SC-007 depois
   da virada.
 
@@ -313,14 +319,15 @@ Resumo (detalhes em `research.md` R24 e roteiro em `quickstart.md`):
 | Throttling de timers do renderer em segundo plano | Auto-start da Esteira mais lento com a janela minimizada | Igual ao de hoje; o envio do chat é ação do dono com a janela em foco. |
 | Dependências novas fora do espelho público | Clone público não builda | Nota da Fase 7; o script de sincronização já avisa sobre diferença no `package.json`. |
 
-## Ajustes de spec propostos (não aplicados — pedem OK do dono)
+## Ajustes de spec aplicados na revisão do plano (07/10)
 
-1. **AS 2.2**: "sem nada aparecer na TUI" → **"sem precisar passar pela
-   TUI"**. Com o hook escolhido, o diálogo é desenhado no terminal oculto
-   enquanto espera, e é isso que torna verdadeiro o caso de borda
-   "responder pelo terminal" (R1).
-2. **Meta de latência** (opcional, como SC-008): linha nova na tela em até
-   1 s depois de o CLI gravar. Hoje é só meta do plano.
+1. **AS 2.2** passou a "sem o dono precisar abrir o terminal". Com o hook
+   escolhido, o diálogo é desenhado no terminal oculto enquanto espera, e é
+   isso que torna verdadeiro o caso de borda "responder pelo terminal" (R1).
+   A spec deixou de usar o termo "TUI": agora diz "terminal do Claude", que
+   é o mesmo que o dono vê.
+2. **SC-008**: linha nova na tela em até 1 s depois de o CLI gravar
+   (aprovado pelo dono).
 
 ## Complexidade
 
@@ -433,5 +440,5 @@ O desenho da Fase 1 em diante mantém as regras da tabela do gate:
 - decisão pura com testes;
 - UI em pt-BR.
 
-**Passa.** Pendente só o que é decisão do dono: a rota do protótipo (Fase 0)
-e os 2 ajustes de spec propostos.
+**Passa.** As decisões do dono de 07/10 já estão incorporadas: Claude Design
+na Fase 0, Fase 1 em paralelo, AS 2.2 e SC-008.
