@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Chat — Começo e carregamento</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="donel/styles.css">
+<script src="donel/_ds_bundle.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<script src="donel/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:var(--bg-app)}
+a{color:var(--accent);text-decoration:none}
+a:hover{color:var(--text-primary)}
+@keyframes dd-caret{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes dd-blink{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes dd-spin{to{transform:rotate(360deg)}}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+</style>
+</helmet>
+
+<div style="position:relative;width:1440px;height:900px;overflow:hidden;box-sizing:border-box;padding:24px;display:flex;flex-direction:column;gap:14px;background:var(--bg-app);color:var(--text-primary);font-family:var(--font-ui);font-size:13px;line-height:1.5;">
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-cr" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path></symbol>
+    <symbol id="i-loader" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"></path><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"></path><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"></path></symbol>
+  </svg>
+
+  <div style="flex:none;display:flex;align-items:center;gap:10px;">
+    <span style="display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:4px;background:var(--accent);color:var(--bg-app);font-size:11px;font-weight:600;">9</span>
+    <span style="font-size:15px;font-weight:600;">Começo e carregamento</span>
+    <span style="font-size:13px;color:var(--text-muted);">sessão nova, Claude iniciando, conversa nova depois de limpar e sessão antiga retomada</span>
+  </div>
+
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:repeat(2,680px);column-gap:24px;row-gap:14px;align-content:start;">
+
+    <!-- ===== A · SESSÃO NOVA ===== -->
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">A</span><span style="font-size:13px;font-weight:600;">Sessão nova</span><span style="flex:1;"></span><span style="font-size:11px;color:var(--text-muted);">conversa vazia, caixa focada</span></div>
+      <div style="height:352px;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);border-radius:8px;background:var(--bg-app);">
+        <div style="flex:none;display:flex;align-items:center;gap:10px;height:36px;box-sizing:border-box;padding:0 12px;background:var(--bg-panel);border-bottom:1px solid var(--border);">
+          <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="waiting" label="aguardando resposta"></x-import>
+          <span style="font-family:var(--font-mono);font-size:12.5px;">atlas · parcelamento</span>
+        </div>
+        <div style="flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+            <span style="font-family:var(--font-mono);font-size:12.5px;">atlas · parcelamento</span>
+            <span style="font-size:11px;color:var(--text-muted);">Opus 5.5 · alto · Conta 2</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-muted);"><kbd style="display:inline-grid;place-items:center;min-width:22px;height:20px;padding:0 5px;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-raised);font-family:var(--font-mono);font-size:11px;color:var(--text-primary);">/</kbd><span>skills e comandos</span></div>
+            <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-muted);"><kbd style="display:inline-grid;place-items:center;min-width:22px;height:20px;padding:0 5px;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-raised);font-family:var(--font-mono);font-size:11px;color:var(--text-primary);">@</kbd><span>arquivos do projeto</span></div>
+            <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-muted);"><kbd style="display:inline-grid;place-items:center;min-width:22px;height:20px;padding:0 5px;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-raised);color:var(--text-primary);"><svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-image"></use></svg></kbd><span>colar uma imagem</span></div>
+          </div>
+        </div>
+        <div style="flex:none;padding:0 14px 14px;">
+          <div data-composer="1" style="display:flex;align-items:flex-end;gap:6px;box-sizing:border-box;padding:7px 8px 7px 6px;border:1px solid var(--accent);border-radius:8px;background:var(--bg-panel);box-shadow:var(--focus-ring);">
+            <span style="flex:none;display:inline-grid;place-items:center;width:32px;height:32px;color:var(--text-muted);"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-clip"></use></svg></span>
+            <div style="flex:1;min-width:0;display:flex;align-items:center;gap:1px;font-size:13px;line-height:20px;padding:6px 4px;color:var(--text-muted);"><span style="flex:none;width:2px;height:16px;background:var(--accent);animation:dd-caret 1.1s step-end infinite;"></span><span style="margin-left:3px;">Escreva para o Claude — Enter envia, Shift+Enter quebra a linha</span></div>
+            <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" disabled="{{ true }}">Enviar</x-import>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== B · INICIANDO O CLAUDE ===== -->
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">B</span><span style="font-size:13px;font-weight:600;">Iniciando o Claude…</span><span style="flex:1;"></span><span style="font-size:11px;color:var(--text-muted);">a caixa já aceita escrever</span></div>
+      <div style="height:352px;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);border-radius:8px;background:var(--bg-app);">
+        <div style="flex:none;display:flex;align-items:center;gap:10px;height:36px;box-sizing:border-box;padding:0 12px;background:var(--bg-panel);border-bottom:1px solid var(--border);">
+          <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="working" label="iniciando"></x-import>
+          <span style="font-family:var(--font-mono);font-size:12.5px;">atlas · parcelamento</span>
+        </div>
+        <div style="flex:1;min-height:0;box-sizing:border-box;padding:16px 16px 0;display:flex;flex-direction:column;gap:14px;">
+          <div style="display:flex;align-items:center;gap:10px;min-height:28px;font-size:13px;color:var(--text-muted);">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--accent);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;animation:dd-spin 1.2s linear infinite" aria-hidden="true"><use href="#i-loader"></use></svg>
+            <span>iniciando o Claude…</span>
+            <span style="font-size:11px;">leva alguns segundos</span>
+          </div>
+          <div style="display:flex;gap:10px;padding:10px 12px;background:var(--bg-panel);border:1px dashed var(--border);border-radius:6px;">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;margin-top:3px;fill:none;stroke:var(--accent);stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round" aria-label="Você"><use href="#i-cr"></use></svg>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;line-height:1.55;">Lê o README e me diz onde mora o cálculo de parcelas.</div>
+              <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:4px;font-size:11px;">
+                <span style="color:var(--text-muted);">entra assim que o Claude ficar pronto</span>
+                <span style="display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:4px;font-weight:600;white-space:nowrap;color:var(--state-waiting);background:color-mix(in srgb,var(--state-waiting) 10%,transparent);border:1px solid color-mix(in srgb,var(--state-waiting) 40%,transparent);">na fila</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="flex:none;padding:0 14px 14px;">
+          <div data-composer="1" style="display:flex;align-items:flex-end;gap:6px;box-sizing:border-box;padding:7px 8px 7px 6px;border:1px solid var(--border);border-radius:8px;background:var(--bg-panel);">
+            <span style="flex:none;display:inline-grid;place-items:center;width:32px;height:32px;color:var(--text-muted);"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-clip"></use></svg></span>
+            <div style="flex:1;min-width:0;font-size:13px;line-height:20px;padding:6px 4px;color:var(--text-muted);">Escreva para o Claude — Enter envia, Shift+Enter quebra a linha</div>
+            <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" disabled="{{ true }}">Enviar</x-import>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== C · CONVERSA NOVA DEPOIS DE LIMPAR ===== -->
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">C</span><span style="font-size:13px;font-weight:600;">Conversa nova, depois de limpar</span><span style="flex:1;"></span><span style="font-size:11px;color:var(--text-muted);">o chat mostra só a conversa nova</span></div>
+      <div style="height:352px;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);border-radius:8px;background:var(--bg-app);">
+        <div style="flex:none;display:flex;align-items:center;gap:10px;height:36px;box-sizing:border-box;padding:0 12px;background:var(--bg-panel);border-bottom:1px solid var(--border);">
+          <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="waiting" label="aguardando resposta"></x-import>
+          <span style="font-family:var(--font-mono);font-size:12.5px;">atlas · parcelamento</span>
+        </div>
+        <div style="flex:none;display:flex;align-items:center;gap:8px;height:32px;box-sizing:border-box;padding:0 12px;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--accent) 6%,var(--bg-app));font-size:12px;">
+          <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;fill:none;stroke:var(--accent);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-info"></use></svg>
+          <span>Conversa nova — a anterior está em Sessões anteriores</span>
+          <span style="flex:1;"></span>
+          <a href="#sessoes-anteriores" style="font-weight:600;">abrir</a>
+        </div>
+        <div style="flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;">
+          <span style="font-size:13px;color:var(--text-muted);">Nada aqui ainda.</span>
+          <span style="font-size:11px;color:var(--text-muted);">O nome, o semáforo e o contexto da aba já acompanham a conversa nova.</span>
+        </div>
+        <div style="flex:none;padding:0 14px 14px;">
+          <div data-composer="1" style="display:flex;align-items:flex-end;gap:6px;box-sizing:border-box;padding:7px 8px 7px 6px;border:1px solid var(--accent);border-radius:8px;background:var(--bg-panel);box-shadow:var(--focus-ring);">
+            <span style="flex:none;display:inline-grid;place-items:center;width:32px;height:32px;color:var(--text-muted);"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-clip"></use></svg></span>
+            <div style="flex:1;min-width:0;display:flex;align-items:center;gap:1px;font-size:13px;line-height:20px;padding:6px 4px;color:var(--text-muted);"><span style="flex:none;width:2px;height:16px;background:var(--accent);animation:dd-caret 1.1s step-end infinite;"></span><span style="margin-left:3px;">Escreva para o Claude — Enter envia, Shift+Enter quebra a linha</span></div>
+            <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" disabled="{{ true }}">Enviar</x-import>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== D · SESSÃO ANTIGA RETOMADA ===== -->
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">D</span><span style="font-size:13px;font-weight:600;">Sessão antiga retomada</span><span style="flex:1;"></span><span style="font-size:11px;color:var(--text-muted);">as mais recentes primeiro; as anteriores chegam ao rolar</span></div>
+      <div style="height:352px;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);border-radius:8px;background:var(--bg-app);">
+        <div style="flex:none;display:flex;align-items:center;gap:10px;height:36px;box-sizing:border-box;padding:0 12px;background:var(--bg-panel);border-bottom:1px solid var(--border);">
+          <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="waiting" label="aguardando resposta"></x-import>
+          <span style="font-family:var(--font-mono);font-size:12.5px;">atlas · parcelamento</span>
+        </div>
+        <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;box-sizing:border-box;padding:0 16px 12px;">
+          <div style="flex:none;display:flex;align-items:center;justify-content:center;gap:8px;min-height:32px;margin-bottom:6px;font-size:12px;color:var(--text-muted);">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;animation:dd-spin 1.2s linear infinite" aria-hidden="true"><use href="#i-loader"></use></svg>
+            <span>carregando mensagens anteriores…</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <p style="margin:0;padding:0 4px;font-size:13px;line-height:1.6;color:var(--text-muted);">… e o total fecha em R$ 1.000,00. Os 42 testes passam e o lint está limpo.</p>
+            <div style="display:flex;gap:10px;padding:10px 12px;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;">
+              <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;margin-top:3px;fill:none;stroke:var(--accent);stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round" aria-label="Você"><use href="#i-cr"></use></svg>
+              <div style="flex:1;min-width:0;font-size:13px;line-height:1.55;">Troca o cálculo para usar decimal.js e me mostra o plano antes.</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;height:36px;box-sizing:border-box;padding:0 12px;border:1px solid var(--border);border-radius:6px;background:transparent;font-size:13px;">
+              <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:2;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-cr"></use></svg>
+              <svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-layers"></use></svg>
+              <span>trabalhou — 6 ações, 2 notas</span>
+              <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">1 min 52 s</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+              <span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);">Claude</span>
+              <span style="font-size:13px;line-height:1.55;">Plano pronto: cinco passos, quatro arquivos tocados. Nada foi alterado.</span>
+            </div>
+          </div>
+        </div>
+        <div style="flex:none;padding:0 14px 14px;">
+          <div data-composer="1" style="display:flex;align-items:flex-end;gap:6px;box-sizing:border-box;padding:7px 8px 7px 6px;border:1px solid var(--border);border-radius:8px;background:var(--bg-panel);">
+            <span style="flex:none;display:inline-grid;place-items:center;width:32px;height:32px;color:var(--text-muted);"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-clip"></use></svg></span>
+            <div style="flex:1;min-width:0;font-size:13px;line-height:20px;padding:6px 4px;color:var(--text-muted);">Escreva para o Claude — Enter envia, Shift+Enter quebra a linha</div>
+            <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" disabled="{{ true }}">Enviar</x-import>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { noop: () => {} };
+  }
+}
+</script>
+</body>
+</html>
