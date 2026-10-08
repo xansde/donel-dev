@@ -1,9 +1,11 @@
 import { appendFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT, SESSIONS_DIR } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { PROJECT_NAME, SESSIONS_DIR } from './repoUnderTest';
+import { launchIsolatedApp } from './helpers/launch';
+import { openProjectClaudeTab, waitForClaudeBooted } from './helpers/ui';
+import { removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da Fase C da 006 (T611/T612), adaptado duas vezes:
 //
@@ -68,10 +70,7 @@ let userDataDir: string;
 let createdTranscriptPath: string | null = null;
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('session-context');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow, userDataDir } = await launchIsolatedApp({ name: 'session-context' }));
 });
 
 test.afterAll(async () => {
@@ -90,7 +89,7 @@ test.afterAll(async () => {
   }
 });
 
-test('T611/T612 (CA-22 da 009) — a StatusBar mostra o `%` de contexto da aba em foco, atualiza ao vivo com o turno novo, sinaliza acima da zona e cai quando o turno fica menor (não é acumulado)', async () => {
+test('T611/T612 (CA-22 da 009) — a StatusBar mostra o `%` de contexto da aba em foco, atualiza ao vivo com o turno novo, sinaliza acima da zona e cai quando o turno fica menor (não é acumulado) @sessoes', async () => {
   test.setTimeout(180_000);
 
   // T1227 (011-contas-e-provedores, etapa 2) — o guard de "só faz sentido com
@@ -101,21 +100,11 @@ test('T611/T612 (CA-22 da 009) — a StatusBar mostra o `%` de contexto da aba e
   // de feedback do teste de 30/07) — a árvore "Projetos" da sidebar saiu;
   // abrir um projeto qualquer agora é sempre pelo popover do seletor no
   // titlebar.
-  await appWindow.getByRole('button', { name: 'Trocar de projeto' }).click();
-  const projectsPopover = appWindow.getByRole('dialog', { name: 'Projetos' });
-  await expect(projectsPopover).toBeVisible();
-  await projectsPopover.getByRole('button', { name: PROJECT_NAME, exact: true }).click();
-  await expect(projectsPopover).toBeHidden();
+  await openProjectClaudeTab(appWindow);
 
   const tab = appWindow.locator('[role="tab"]').first();
   await expect(tab).toBeVisible();
-  const pane = appWindow.locator('[data-testid="terminal-pane"]:visible');
-  await expect(async () => {
-    const text = await pane.innerText();
-    expect(text.length).toBeGreaterThan(0);
-    expect(text).not.toContain('CLAUDE_NOT_FOUND');
-    expect(text).not.toContain('Falha ao iniciar');
-  }).toPass({ timeout: 30_000 });
+  await waitForClaudeBooted(appWindow, { startTimeout: 30_000 });
 
   // 2. CA-4 — sessão recém-nascida, sem nenhum turno → a StatusBar mostra
   // modelo/esforço da aba (tem "/"), mas NENHUM medidor de contexto: sem
@@ -192,7 +181,7 @@ test('T611/T612 (CA-22 da 009) — a StatusBar mostra o `%` de contexto da aba e
   await expect(appWindow.locator('[role="tab"]')).toHaveCount(0);
 });
 
-test('aba de terminal livre (shell) não mostra modelo/esforço nem medidor de contexto no rodapé (CA-4/CA-5 adaptado — a toolbar por-aba foi removida, a leitura agora é a StatusBar global)', async () => {
+test('aba de terminal livre (shell) não mostra modelo/esforço nem medidor de contexto no rodapé (CA-4/CA-5 adaptado — a toolbar por-aba foi removida, a leitura agora é a StatusBar global) @sessoes', async () => {
   test.setTimeout(60_000);
 
   // FIX (teste manual 27/07) — `[data-testid="session-details"]`/

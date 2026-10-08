@@ -985,3 +985,73 @@ describe('discovery.updated — apagar o alvo e diferente de nao falar dele', ()
     expect(snapshot.discoveries[0].problem).toBe('O que o card investiga.');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Print 12 — "Planejado" para um card que ja concluiu um item
+// ---------------------------------------------------------------------------
+
+describe('deriveStage — trabalho que ja fechou nao volta a ser trabalho que nunca comecou', () => {
+  const base = { discoveryConcluded: true, discoveryOutcome: 'done' as const, planCount: 1 };
+
+  it('print 12: um item concluido e outro aberto e Execucao, nunca Planejado', () => {
+    const { stage } = deriveStage({
+      ...base,
+      items: [
+        { state: 'done', everConcluded: true },
+        { state: 'open', everConcluded: false },
+      ],
+    });
+    expect(stage).toBe('execution');
+  });
+
+  it('prints 12 e 15: um aberto + um concluido da a MESMA etapa, nao importa qual dos dois esta aberto', () => {
+    const primeiroFechado = deriveStage({
+      ...base,
+      items: [
+        { state: 'done', everConcluded: true },
+        { state: 'open', everConcluded: false },
+      ],
+    });
+    const segundoFechado = deriveStage({
+      ...base,
+      items: [
+        { state: 'open', everConcluded: true },
+        { state: 'done', everConcluded: true },
+      ],
+    });
+    expect(primeiroFechado.stage).toBe(segundoFechado.stage);
+  });
+
+  it('item abandonado tambem e trabalho que aconteceu — desistir nao devolve o card para Planejado', () => {
+    const { stage } = deriveStage({
+      ...base,
+      items: [
+        { state: 'abandoned', everConcluded: true },
+        { state: 'open', everConcluded: false },
+      ],
+    });
+    expect(stage).toBe('execution');
+  });
+
+  it('Planejado continua existindo: plano declarado e nenhum item jamais tocado', () => {
+    const { stage } = deriveStage({
+      ...base,
+      items: [
+        { state: 'open', everConcluded: false },
+        { state: 'open', everConcluded: false },
+      ],
+    });
+    expect(stage).toBe('planned');
+  });
+
+  it('o retrocesso do print 15 segue de pe: item reaberto puxa o card de Concluido para Execucao', () => {
+    const { stage } = deriveStage({
+      ...base,
+      items: [
+        { state: 'open', everConcluded: true },
+        { state: 'done', everConcluded: true },
+      ],
+    });
+    expect(stage).toBe('execution');
+  });
+});

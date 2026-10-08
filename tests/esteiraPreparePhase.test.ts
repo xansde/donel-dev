@@ -1,6 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import { preparePhase } from '../src/renderer/src/Esteira/preparePhase';
-import { cardView, dispatchView } from '../src/renderer/src/Esteira/esteiraView';
+import { cardView, dispatchView, formatTimestamp } from '../src/renderer/src/Esteira/esteiraView';
+import {
+  dispatchRefusedMessage,
+  esteiraTabName,
+  noRepoPreparedMessage,
+  phaseDoneRefusedMessage,
+  preparedMessage,
+  repoRefusalMessage,
+  resourceBusyRefusedMessage,
+  sessionActiveRefusedMessage,
+} from '../src/renderer/src/Esteira/esteiraSession';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
 import type { EsteiraDispatchDto, EsteiraSnapshotDto } from '../src/shared/esteira/ipc';
 import type { StoreEvent, StoreSnapshot } from '../src/shared/esteira/store/storeFormat';
@@ -80,8 +90,8 @@ describe('preparePhase', () => {
     expect(request.command).not.toMatch(/[\r\n]/);
     // B5 — o Enter deixou de ser gesto humano nesta frase: o app aperta
     // sozinho assim que o terminal aceita entrada (ver esteiraSession.test.ts).
-    expect(result.message).toContain('aperta o Enter sozinho');
-    expect(result.message).not.toContain('O Enter é seu');
+    // O TEXTO da frase é de `preparedMessage` (esteiraSession.test.ts); aqui só a fiação.
+    expect(result.message).toBe(preparedMessage({ phase: 'discovery', tabName: esteiraTabName('discovery', 'Fila trava sem sinal') }));
   });
 
   // Achado do dogfooding de 06/08 — o card "Diário de Obra" nasceu com repo
@@ -99,8 +109,7 @@ describe('preparePhase', () => {
     expect(result.ok).toBe(false);
     // Nada mudou no histórico — e o tipo diz isso, em vez de devolver o snapshot velho.
     expect(result.state).toBeNull();
-    expect(result.message).toContain('não conheço o repo "donel-dev"');
-    expect(result.message).toContain('não ficou travado');
+    expect(result.message).toBe(repoRefusalMessage('discovery', 'donel-dev', 'unknown-repo'));
     // A recusa não pode citar um contexto que ela não gravou.
     expect(result.message).not.toContain('C:/inbox/run-1.json');
   });
@@ -120,8 +129,7 @@ describe('preparePhase', () => {
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ workspace: null }));
     expect(openSession).not.toHaveBeenCalled();
     expect(result.ok).toBe(true);
-    expect(result.message).toContain('não declara repo');
-    expect(result.message).toContain('C:/inbox/run-1.json');
+    expect(result.message).toBe(noRepoPreparedMessage('discovery', 'C:/inbox/run-1.json'));
   });
 
   it('card já travado: a recusa usa a MESMA palavra do bloco da trava', async () => {
@@ -143,8 +151,7 @@ describe('preparePhase', () => {
     const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
 
     expect(result.ok).toBe(false);
-    expect(result.message).toContain('em andamento');
-    expect(result.message).toContain('plano');
+    expect(result.message).toBe(dispatchRefusedMessage('running', 'plano', formatTimestamp('2026-08-04T09:30:00.000Z')));
     expect(openSession).not.toHaveBeenCalled();
   });
 
@@ -167,9 +174,7 @@ describe('preparePhase', () => {
     const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
 
     expect(result.ok).toBe(false);
-    expect(result.message).toContain('donel-dev');
-    expect(result.message).toContain('feat/wi-2');
-    expect(result.message).toContain('implementar');
+    expect(result.message).toBe(resourceBusyRefusedMessage('donel-dev', 'feat/wi-2', 'implementar', formatTimestamp('2026-08-05T09:00:00.000Z')));
     expect(openSession).not.toHaveBeenCalled();
   });
 
@@ -201,7 +206,7 @@ describe('preparePhase', () => {
     const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
 
     expect(result.ok).toBe(false);
-    expect(result.message).toContain('discovery');
+    expect(result.message).toBe(sessionActiveRefusedMessage('discovery', formatTimestamp('2026-08-05T09:00:00.000Z')));
     expect(openSession).not.toHaveBeenCalled();
   });
 
@@ -228,8 +233,7 @@ describe('preparePhase', () => {
     const result = await preparePhase({ ...alvo(), projects: CONHECIDOS }, { dispatch: vi.fn().mockResolvedValue(recusa), openSession });
 
     expect(result.ok).toBe(false);
-    expect(result.message).toContain('concluída');
-    expect(result.message).toContain('confirme');
+    expect(result.message).toBe(phaseDoneRefusedMessage('discovery', 'done', formatTimestamp('2026-08-04T09:30:00.000Z')));
     expect(openSession).not.toHaveBeenCalled();
   });
 

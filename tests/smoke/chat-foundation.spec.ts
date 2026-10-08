@@ -74,7 +74,7 @@ async function typeInTerminal(text: string): Promise<void> {
   await appWindow.keyboard.press('Enter');
 }
 
-test('T041 — semáforo pela ponte HTTP; /clear mantém semáforo, nome e cor da aba', async () => {
+test('T041 — semáforo pela ponte HTTP; /clear mantém semáforo, nome e cor da aba @chat', async () => {
   test.setTimeout(120_000);
 
   // Opens a claude tab through the project switcher (same path as the other smokes).

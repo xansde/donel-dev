@@ -1,11 +1,12 @@
-import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT, SESSIONS_DIR } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { launchIsolatedApp } from './helpers/launch';
+import { removeSessionFile, seedSession } from './helpers/sessions';
+import type { SeededSession } from './helpers/sessions';
+import { openPreviousSessionsDialog, waitForClaudeBooted } from './helpers/ui';
+import { removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T013 (UI de sessões anteriores, FR-004/CA-2).
 //
@@ -52,94 +53,19 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // bug do §B19 (o clique achava o `donel-dev` de verdade e a lista voltava vazia).
 
 
-function detectClaudeCliVersion(): string {
-  try {
-    const raw = execSync('claude --version', { encoding: 'utf8' });
-    const match = raw.match(/^(\S+)/);
-    return match ? match[1] : '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
-}
-
-function detectGitBranch(): string {
-  try {
-    return execSync('git rev-parse --abbrev-ref HEAD', { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
-  } catch {
-    return '';
-  }
-}
-
-const CLI_VERSION = detectClaudeCliVersion();
-const GIT_BRANCH = detectGitBranch();
-
-interface SyntheticSessionSeed {
-  readonly id: string;
-  readonly filePath: string;
-  readonly marker: string;
-}
-
-/**
- * Escreve uma sessão sintética válida (schema inspecionado numa sessão real
- * desta máquina — só as chaves, nunca conteúdo) com UMA linha `type: user`
- * cujo texto começa pelo `marker` — único o bastante pra localizar via busca
- * na UI sem depender de ordenação. `parentUuid: null` porque é a única
- * mensagem da sessão (mesmo formato de uma sessão real interrompida antes da
- * resposta do assistente — caso legítimo que o CLI já sabe carregar).
- */
-function seedSyntheticSession(marker: string): SyntheticSessionSeed {
-  const id = randomUUID();
-  const filePath = join(SESSIONS_DIR, `${id}.jsonl`);
-  const line = {
-    type: 'user',
-    message: {
-      role: 'user',
-      content: `${marker} — fixture sintética do smoke E2E do Donel Dev (T013), sem conteúdo real de trabalho.`,
-    },
-    uuid: randomUUID(),
-    parentUuid: null,
-    sessionId: id,
-    timestamp: new Date().toISOString(),
-    cwd: REPO_ROOT,
-    gitBranch: GIT_BRANCH,
-    permissionMode: 'bypassPermissions',
-    version: CLI_VERSION,
-    entrypoint: 'claude-desktop',
-    userType: 'external',
-    promptId: randomUUID(),
-    promptSource: 'sdk',
-    isSidechain: false,
-  };
-  mkdirSync(SESSIONS_DIR, { recursive: true });
-  writeFileSync(filePath, `${JSON.stringify(line)}\n`, 'utf8');
-  return { id, filePath, marker };
-}
-
-function removeSessionFile(filePath: string | undefined): void {
-  if (!filePath || !existsSync(filePath)) return;
-  try {
-    unlinkSync(filePath);
-  } catch {
-    // Já removido — ok.
-  }
-}
-
 let electronApp: ElectronApplication;
 let window: Page;
 let userDataDir: string;
-let resumeSeed: SyntheticSessionSeed;
-let forkSeed: SyntheticSessionSeed;
+let resumeSeed: SeededSession;
+let forkSeed: SeededSession;
 let forkOriginalContent: string;
 
 test.beforeAll(async () => {
-  resumeSeed = seedSyntheticSession(`MARCADOR-SMOKE-RESUME-${randomUUID().slice(0, 8)}`);
-  forkSeed = seedSyntheticSession(`MARCADOR-SMOKE-FORK-${randomUUID().slice(0, 8)}`);
+  resumeSeed = seedSession({ marker: `MARCADOR-SMOKE-RESUME-${randomUUID().slice(0, 8)}`, origin: 'T013', resumable: true });
+  forkSeed = seedSession({ marker: `MARCADOR-SMOKE-FORK-${randomUUID().slice(0, 8)}`, origin: 'T013', resumable: true });
   forkOriginalContent = readFileSync(forkSeed.filePath, 'utf8');
 
-  userDataDir = createIsolatedUserDataDir('previous-sessions');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
-  window = await electronApp.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ name: 'previous-sessions' }));
 });
 
 test.afterAll(async () => {
@@ -168,24 +94,10 @@ test.afterAll(async () => {
 // FIX (item 1, rodada de feedback do teste de 30/07) — o botão "Sessões
 // anteriores de X" morava numa linha da árvore "Projetos" da sidebar
 // (removida); migrou pro popover "Projetos" do seletor no titlebar.
-async function openPreviousSessionsDialog() {
-  await window.getByRole('button', { name: 'Trocar de projeto' }).click();
-  const projectsPopover = window.getByRole('dialog', { name: 'Projetos' });
-  await expect(projectsPopover).toBeVisible();
-
-  const historyButton = projectsPopover.getByRole('button', { name: `Sessões anteriores de ${PROJECT_NAME}`, exact: true });
-  await expect(historyButton).toBeVisible({ timeout: 15_000 });
-  await historyButton.click();
-
-  const dialog = window.getByRole('region', { name: new RegExp(`Sessões anteriores · ${PROJECT_NAME}`) });
-  await expect(dialog).toBeVisible();
-  return dialog;
-}
-
-test('T013 — Retomar restaura o histórico da sessão sintética via marcador determinístico (FR-004, CA-2)', async () => {
+test('T013 — Retomar restaura o histórico da sessão sintética via marcador determinístico (FR-004, CA-2) @sessoes @real', async () => {
   test.setTimeout(120_000);
 
-  const dialog = await openPreviousSessionsDialog();
+  const dialog = await openPreviousSessionsDialog(window);
 
   // Isola a sessão sintética pela busca da própria UI — nunca pela posição
   // na lista (independe do estado das dezenas de sessões reais da máquina).
@@ -197,21 +109,7 @@ test('T013 — Retomar restaura o histórico da sessão sintética via marcador 
 
   // Modal fecha (App.tsx `handleResumeSession`) e a aba nova abre.
   await expect(dialog).toBeHidden();
-  const activePane = window.locator('[data-testid="terminal-pane"]:visible');
-  await expect(activePane).toHaveCount(1);
-
-  await expect(async () => {
-    const text = await activePane.innerText();
-    expect(text.length).toBeGreaterThan(0);
-    expect(text).not.toContain('CLAUDE_NOT_FOUND');
-    expect(text).not.toContain('Falha ao iniciar');
-  }).toPass({ timeout: 20_000 });
-
-  // Mesmo diálogo de "Quick safety check" dos outros smokes (terminal.spec.ts).
-  await activePane.click();
-  if ((await activePane.innerText()).includes('trust this folder')) {
-    await window.keyboard.press('Enter');
-  }
+  const activePane = await waitForClaudeBooted(window, { acceptTrust: true });
 
   // Prova real de CA-2: o histórico da sessão RETOMADA aparece no terminal —
   // o marcador sintético (conhecido, gerado por este arquivo) surge na tela
@@ -222,10 +120,10 @@ test('T013 — Retomar restaura o histórico da sessão sintética via marcador 
   }).toPass({ timeout: 30_000 });
 });
 
-test('T013 — Fork cria sessão nova a partir do histórico e mantém a sessão original intacta (FR-004, CA-2)', async () => {
+test('T013 — Fork cria sessão nova a partir do histórico e mantém a sessão original intacta (FR-004, CA-2) @sessoes @real', async () => {
   test.setTimeout(120_000);
 
-  const dialog = await openPreviousSessionsDialog();
+  const dialog = await openPreviousSessionsDialog(window);
 
   await dialog.getByLabel('Filtrar sessões anteriores por nome').fill(forkSeed.marker);
   const row = dialog.locator('[data-testid="previous-session-row"]');
@@ -234,20 +132,7 @@ test('T013 — Fork cria sessão nova a partir do histórico e mantém a sessão
   await row.getByRole('button', { name: 'Fork' }).click();
   await expect(dialog).toBeHidden();
 
-  const activePane = window.locator('[data-testid="terminal-pane"]:visible');
-  await expect(activePane).toHaveCount(1);
-
-  await expect(async () => {
-    const text = await activePane.innerText();
-    expect(text.length).toBeGreaterThan(0);
-    expect(text).not.toContain('CLAUDE_NOT_FOUND');
-    expect(text).not.toContain('Falha ao iniciar');
-  }).toPass({ timeout: 20_000 });
-
-  await activePane.click();
-  if ((await activePane.innerText()).includes('trust this folder')) {
-    await window.keyboard.press('Enter');
-  }
+  const activePane = await waitForClaudeBooted(window, { acceptTrust: true });
 
   // Prova real de CA-2 (Fork): o histórico da sessão original aparece na
   // sessão FORKADA (mesmo mecanismo local de reimpressão do scrollback que
