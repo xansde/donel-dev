@@ -454,8 +454,15 @@ function onData(chunk) {
     const start = data.indexOf(PASTE_START);
     const plain = start === -1 ? data : data.slice(0, start);
     for (const ch of plain) {
-      if (ch === '\r' || ch === '\n') {
+      if (ch === '\r') {
         pressEnter();
+        continue;
+      }
+      // ConPTY drops the bracketed-paste markers before a Node child sees them, so a multi-line paste arrives
+      // as plain text with LF: like the real CLI (Ctrl+J), LF inserts a line break instead of sending.
+      if (ch === '\n') {
+        state.input += '\n';
+        state.menuClosed = false;
         continue;
       }
       if (ch === '\x7f' || ch === '\b') state.input = state.input.slice(0, -1);

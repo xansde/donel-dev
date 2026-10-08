@@ -39,6 +39,8 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
   Esc fecha o menu mantendo o texto. **Enter com o menu aberto COMPLETA** o comando (`/mod` -> `/model`)
   em vez de enviar - e isso que o driver evita com o Esc antes do Enter. Com o texto ja igual ao comando, Enter envia.
 - Esc Esc numa escrita so, ocioso: descarta o texto da caixa.
+- `
+` (LF) fora de Enter insere quebra de linha na caixa; so `` envia. No Windows o ConPTY descarta os marcadores de bracketed paste antes de um filho Node, entao uma colagem de varias linhas chega como texto puro com LF (como o Ctrl+J do CLI real).
 - Inicio: cria o transcript e roda o `command` do `SessionStart` (JSON no stdin) com `session_id`,
   `transcript_path`, `source`, `cwd`, `hook_event_name`.
 - Enter: `POST UserPromptSubmit` (header de token do settings) e linha `user` (`turnOrigin: human`,
