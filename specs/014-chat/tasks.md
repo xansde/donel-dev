@@ -271,31 +271,31 @@ e B11; smokes `chat-reading`, `chat-long-session` (SC-005) e
 divergências de `design/chat-verificacao.md`.
 
 - [ ] T043 [US1] Pedir OK do dono para instalar `react-markdown@10`, `remark-gfm@4` e `shiki@4` (regra do baseline) e, com o OK, instalar como `dependencies` em `package.json`; rodar `npm run typecheck` e `npm run build`.
-- [ ] T044 [P] [US1] Escrever `tests/chat-link-policy.test.ts` (falhando) e implementar `src/shared/chat/linkPolicy.ts`:
+- [x] T044 [P] [US1] Escrever `tests/chat-link-policy.test.ts` (falhando) e implementar `src/shared/chat/linkPolicy.ts`:
   - `isExternalUrlAllowed`: só `http:`/`https:`;
   - `isGeneratedFileOpenable`: só extensões de documento ou imagem (`html`, `md`, `pdf`, `png`, `jpg`, `svg`, `csv`, `txt`), dentro do `cwd` ou da pasta de anexos;
   - `isAssetPathAllowed`.
-- [ ] T045 [US1] Segurança da janela (R21) em `src/main/index.ts`, `src/renderer/index.html` e `src/main/chat/chat-ipc.ts`:
+- [x] T045 [US1] Segurança da janela (R21) em `src/main/index.ts`, `src/renderer/index.html` e `src/main/chat/chat-ipc.ts`:
   - em `src/main/index.ts`, `will-navigate` com `preventDefault` e `setWindowOpenHandler` negando tudo;
   - CSP de `src/renderer/index.html` (`script-src 'self' 'wasm-unsafe-eval'`, `img-src 'self' data: blob: donel-asset:`);
   - handlers `chat:open-external` e `chat:open-generated` em `src/main/chat/chat-ipc.ts`, usando o T044.
-- [ ] T046 [P] [US1] Protocolo `donel-asset:` em `src/main/chat/assets-protocol.ts` (`protocol.handle`):
+- [x] T046 [P] [US1] Protocolo `donel-asset:` em `src/main/chat/assets-protocol.ts` (`protocol.handle`):
   - serve bloco de imagem por `LineRef` + `blockIndex` e anexo por id;
   - valida caminho pelo T044;
   - teste da resolução pura em `tests/chat-assets-protocol.test.ts`.
-- [ ] T047 [US1] Escrever `tests/chat-hub.test.ts` (falhando), com eventos de ponte falsos e transcripts temporários:
+- [x] T047 [US1] Escrever `tests/chat-hub.test.ts` (falhando), com eventos de ponte falsos e transcripts temporários:
   - `attach` devolve a primeira página a partir do fim, e `load-older` pagina;
   - `row-detail` relê o `LineRef`;
   - troca de conversa reinicia e põe o aviso no topo;
   - `accounts:changed` gera o aviso `account-switch`;
   - `reception` vira `missing` (arquivo não nasce) e `stale` (atividade sem crescimento);
   - nenhum handler registrado com `chat.enabled = false`.
-- [ ] T048 [US1] Implementar `src/main/chat/chat-hub.ts` e `src/main/chat/chat-ipc.ts` (`registerChatIpcHandlers`): por `ptyId`, fonte + seguidor + paginador + adaptador e `LiveState` básico (`starting`/`idle`/`working`/`ended`). Emite:
+- [x] T048 [US1] Implementar `src/main/chat/chat-hub.ts` e `src/main/chat/chat-ipc.ts` (`registerChatIpcHandlers`): por `ptyId`, fonte + seguidor + paginador + adaptador e `LiveState` básico (`starting`/`idle`/`working`/`ended`). Emite:
   - `chat:rows`, `chat:live`;
   - `chat:conversation-switched`, `chat:reception`.
 
   Responde `chat:attach`, `chat:detach`, `chat:load-older` e `chat:row-detail`. Faz passar T047.
-- [ ] T049 [US1] Expor `window.donel.chat.*` em `src/preload/index.ts` (tipos no `DonelApi` de `src/shared/index.ts`) e criar `src/renderer/src/chat/ChatStore.ts` (uma assinatura por canal, distribuída por `ptyId` — trava de `src/preload/subscribeChannel.ts:35`) + `useChatSession(ptyId)`.
+- [x] T049 [US1] Expor `window.donel.chat.*` em `src/preload/index.ts` (tipos no `DonelApi` de `src/shared/index.ts`) e criar `src/renderer/src/chat/ChatStore.ts` (uma assinatura por canal, distribuída por `ptyId` — trava de `src/preload/subscribeChannel.ts:35`) + `useChatSession(ptyId)`.
 - [ ] T050 [P] [US1] Implementar no `design-system/` as extensões aprovadas em `design/chat-verificacao.md` que a leitura usa (ex.: faixa de aviso, linha de conversa, cabeçalho de alternância), com tokens apenas e exportadas em `design-system/src/index.ts`.
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Peças da leitura conforme a §4 de `design/chat-verificacao.md`: `OwnerMessage`, `MessageHeader`, `NoticeLine`, `ActionLine`, `ActionGroup`, `WorkFold`, `CodeBlock` + tokens `--code-*`, `DiffBlock`, `CommandOutput`, `Banner`, `Kbd`, `Button·link` e `SubagentRow` (só leitura). Atualizar a regra de cor do `design/design-system.md`: coral fixo = falhou; coral pulsando = precisa de você (D-C26).
 - [ ] T051 [US1] Markdown e código em `src/renderer/src/chat/markdown/`:
