@@ -59,8 +59,8 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
 
 ### Tipos, configuração e diagnóstico
 
-- [ ] T005 [P] Criar os tipos do modelo em `src/shared/chat/rows.ts`, conforme `data-model.md` §1–§12: `ChatSession`, `ConversationSource`, `TranscriptEntry`, `LineRef`, `ConversationRow` (todas as variantes de `kind`), `ActionCategory`, `ActionSummary`, `NoticeKind`, `Turn`, `FocusItem`, `LiveAction`, `Subagent`, `Pending`, `Send`, `LiveState`, `ImageAttachment`, `PastedText`, `ComposerDraft`, `RowAttachment`. Tudo serializável: sem `Map`, `Date` nem funções.
-- [ ] T006 [P] Criar `src/shared/chat/ipc.ts`, conforme `contracts/ipc-chat.md` §1–§2: `CHAT_CHANNELS`, os tipos de entrada e saída de cada canal, `PendingAnswer`, `RowPatch`, `ChatSnapshot`, `RowDetail`, `CommandEntry`.
+- [x] T005 [P] Criar os tipos do modelo em `src/shared/chat/rows.ts`, conforme `data-model.md` §1–§12: `ChatSession`, `ConversationSource`, `TranscriptEntry`, `LineRef`, `ConversationRow` (todas as variantes de `kind`), `ActionCategory`, `ActionSummary`, `NoticeKind`, `Turn`, `FocusItem`, `LiveAction`, `Subagent`, `Pending`, `Send`, `LiveState`, `ImageAttachment`, `PastedText`, `ComposerDraft`, `RowAttachment`. Tudo serializável: sem `Map`, `Date` nem funções.
+- [x] T006 [P] Criar `src/shared/chat/ipc.ts`, conforme `contracts/ipc-chat.md` §1–§2: `CHAT_CHANNELS`, os tipos de entrada e saída de cada canal, `PendingAnswer`, `RowPatch`, `ChatSnapshot`, `RowDetail`, `CommandEntry`.
 - [ ] T007 [P] Escrever `tests/chat-config.test.ts` (falhando), com os casos:
   - `chat.enabled` com padrão `false` e `chat.focusMode` com padrão `true`;
   - sanitize de valores inválidos;
