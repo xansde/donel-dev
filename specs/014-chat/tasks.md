@@ -270,7 +270,7 @@ e B11; smokes `chat-reading`, `chat-long-session` (SC-005) e
 **Forma**: toda tarefa de UI desta fase segue `design/chat-handoff/` e as
 divergências de `design/chat-verificacao.md`.
 
-- [ ] T043 [US1] Pedir OK do dono para instalar `react-markdown@10`, `remark-gfm@4` e `shiki@4` (regra do baseline) e, com o OK, instalar como `dependencies` em `package.json`; rodar `npm run typecheck` e `npm run build`.
+- [x] T043 [US1] Pedir OK do dono para instalar `react-markdown@10`, `remark-gfm@4` e `shiki@4` (regra do baseline) e, com o OK, instalar como `dependencies` em `package.json`; rodar `npm run typecheck` e `npm run build`.
 - [ ] T044 [P] [US1] Escrever `tests/chat-link-policy.test.ts` (falhando) e implementar `src/shared/chat/linkPolicy.ts`:
   - `isExternalUrlAllowed`: só `http:`/`https:`;
   - `isGeneratedFileOpenable`: só extensões de documento ou imagem (`html`, `md`, `pdf`, `png`, `jpg`, `svg`, `csv`, `txt`), dentro do `cwd` ou da pasta de anexos;
