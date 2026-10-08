@@ -248,7 +248,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - depois de `/clear` na vista do terminal, semáforo, nome e cor seguem a conversa nova.
 
   Depois rodar a suíte inteira (`npm run build; npm run test:smoke`) sem regressão.
-- [ ] T042 Fechar a fase (registro em `specs/014-chat/e2e.md`):
+- [x] T042 Fechar a fase (registro em `specs/014-chat/e2e.md`):
   - `npm test`, `npm run typecheck` e smokes verdes;
   - abrir o PR da Phase 2 contra `staging` (o merge é do dono);
   - roteiro de validação no alfa em `specs/014-chat/e2e.md` (seção "Fase 1"): semáforo durante uma sessão real e `/clear` mantendo nome e cor.
