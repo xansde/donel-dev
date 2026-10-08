@@ -98,3 +98,24 @@ describe('mergeOptimistic', () => {
     expect(out.overlays.get('u4')).toMatchObject({ sendState: 'queued', queuedReason: 'entra na próxima pausa do Claude' });
   });
 });
+
+describe('mergeOptimistic - cartão "não foi" no ponto do envio', () => {
+  it('falho enviado antes de uma mensagem posterior aparece ANTES dela', () => {
+    const later = real('u9', 'depois', '2026-10-08T12:05:00.000Z');
+    const before = real('u0', 'antes', '2026-10-08T11:00:00.000Z');
+    const out = mergeOptimistic([before, later], [item('s1', 'falhou', 'failed', { reason: 'x', createdAt: T0 })]);
+    expect(ids(out.rows)).toEqual(['u0', 'local:s1', 'u9']);
+    expect(out.overlays.get('local:s1')).toMatchObject({ sendState: 'failed', sendId: 's1' });
+  });
+
+  it('falho mais novo que tudo continua no fim', () => {
+    const out = mergeOptimistic([real('u0', 'antes', '2026-10-08T11:00:00.000Z')], [item('s1', 'falhou', 'failed', { reason: 'x' })]);
+    expect(ids(out.rows)).toEqual(['u0', 'local:s1']);
+  });
+
+  it('descartado (item removido do driver) some da lista', () => {
+    const later = real('u9', 'depois', '2026-10-08T12:05:00.000Z');
+    const out = mergeOptimistic([later], []);
+    expect(ids(out.rows)).toEqual(['u9']);
+  });
+});

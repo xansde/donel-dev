@@ -189,6 +189,7 @@ export const ChatView = memo(function ChatView({
       live: session.live,
       sendOverlay: (rowId) => merged.overlays.get(rowId),
       retrySend: (sendId) => driver.retry(sendId),
+      discardSend: (sendId) => driver.dismiss(sendId),
     }),
     [session, ptyId, onOpenPreviousSessions, answers, merged.overlays, driver],
   );

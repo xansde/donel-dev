@@ -17,6 +17,7 @@ export interface UserMessageProps {
   queuedReason?: string;
   failedReason?: string;
   onRetry?: () => void;
+  onDiscard?: () => void;
 }
 
 const DEFAULT_QUEUED_REASON = 'entra na próxima pausa do Claude';
@@ -25,7 +26,7 @@ const DEFAULT_QUEUED_REASON = 'entra na próxima pausa do Claude';
  * Message of the owner (T052): `OwnerMessage`, mono when it starts with `/` or
  * `!`, with image thumbnails (`donel-asset:`) and `@` mentions inside the card.
  */
-function UserMessageImpl({ row, assetUrl, sendState, queuedReason, failedReason, onRetry }: UserMessageProps) {
+function UserMessageImpl({ row, assetUrl, sendState, queuedReason, failedReason, onRetry, onDiscard }: UserMessageProps) {
   const images = row.attachments.filter((a): a is UserImageAttachment => a.kind === 'image');
   const mentions = row.attachments.filter((a): a is Extract<UserRow['attachments'][number], { kind: 'mention' }> => a.kind === 'mention');
 
@@ -71,6 +72,7 @@ function UserMessageImpl({ row, assetUrl, sendState, queuedReason, failedReason,
       queuedReason={state === 'queued' ? (queuedReason ?? DEFAULT_QUEUED_REASON) : undefined}
       failedReason={failedReason}
       onRetry={onRetry}
+      onDiscard={onDiscard}
       mono={mono}
       attachments={attachments}
     >

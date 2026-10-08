@@ -56,6 +56,8 @@ export interface RowRenderContext {
   sendOverlay?(rowId: string): SendOverlay | undefined;
   /** "tentar de novo" on a failed send. */
   retrySend?(sendId: string): void;
+  /** "descartar" on a failed send: removes the card. */
+  discardSend?(sendId: string): void;
 }
 
 /** The children of a group are not in the patches: load them once, show the group meanwhile. */
@@ -91,6 +93,7 @@ export function renderRow(row: ConversationRow, ctx: RowRenderContext): ReactNod
           queuedReason={overlay?.queuedReason}
           failedReason={overlay?.failedReason}
           onRetry={overlay?.sendId !== undefined ? () => ctx.retrySend?.(overlay.sendId!) : undefined}
+          onDiscard={overlay?.sendId !== undefined ? () => ctx.discardSend?.(overlay.sendId!) : undefined}
         />
       );
     }
