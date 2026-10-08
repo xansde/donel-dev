@@ -211,6 +211,19 @@ real em 13/09** (`e2e.md` §3): a sessão viva adota a conta nova na mensagem
 seguinte, e o MCP segue respondendo. Por isso as fases 1 e 2 seguem como
 escritas, com o F6 dentro da Fase 1.
 
+## Gatilho — "rodar a próxima fase do chat"
+
+Pedido "**rodar a próxima fase do chat**" (ou "próxima fase da 014") = abrir a
+fila `Claude Seazone/Projects/donel-dev/execucao-014-chat/PROXIMO.md` no vault
+e pegar a primeira fase `⬜` que não seja do dono e cujo gate de entrada esteja
+cumprido. Prompts prontos (execução e retomada) em `prompt.md`, na mesma pasta.
+
+Fonte de verdade: `specs/014-chat/plan.md` + `specs/014-chat/tasks.md`
+(T001–T102). A **Fase 0 é o protótipo de forma no Claude Design** (do dono;
+`design/prompt-design-chat.md`) e corre em paralelo com a **Fase 1**, que não
+tem tela. Da Fase 2 em diante: sequencial, só com `design/chat-verificacao.md`
+aprovado, e tudo atrás de `chat.enabled` até a virada (Fase 7).
+
 ## Gotchas conhecidos (do planejamento)
 
 - node-pty precisa casar com a ABI do Electron — prebuilds/@electron/rebuild;
@@ -249,3 +262,10 @@ escritas, com o F6 dentro da Fase 1.
 
 Documentação viva em `Claude Seazone/Projects/donel-dev/` (context.md, todo.md).
 Atualizar ao concluir marcos.
+
+## Active Technologies
+- TypeScript 5.7 (main, preload e renderer), React 18.3.1, Node do Electron 43.2 + Electron 43.2, node-pty 1.1.0 (patch), @xterm/xterm 6.0.0; novas: react-markdown 10, remark-gfm 4, shiki 4 (núcleo + Oniguruma WASM) (014-chat)
+- transcripts JSONL do CLI (só leitura) + `config.json` do app (`chat.enabled`, `chat.focusMode`) + `userData/hook-settings/<ptyId>.json` + `userData/chat-attachments/` + `userData/chat-diagnostics.log` (014-chat)
+
+## Recent Changes
+- 014-chat: Added TypeScript 5.7 (main, preload e renderer), React 18.3.1, Node do Electron 43.2 + Electron 43.2, node-pty 1.1.0 (patch), @xterm/xterm 6.0.0; novas: react-markdown 10, remark-gfm 4, shiki 4 (núcleo + Oniguruma WASM)

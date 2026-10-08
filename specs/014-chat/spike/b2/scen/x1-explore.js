@@ -1,0 +1,31 @@
+// Exploration: how does the empty box / typed text / multi-line / '?' / '/' look, and are placeholder cells dim?
+module.exports = async (A) => {
+  const s = A.start({ name: 'x1', cwd: A.dir('cwd'), quiet: true });
+  const tl = await s.ready();
+  await A.sleep(600);
+  A.say('ready', JSON.stringify(tl));
+  const dump = (label, n = 10) => { const st = s.boxState(); A.say(label, JSON.stringify({ kind: st.kind, placeholder: st.placeholder, text: st.text, rawText: st.rawText, mark: st.mark, cursor: st.cursor })); s.snap(label, { show: n }); return st; };
+  dump('empty');
+  A.say('attrs of placeholder cells:', JSON.stringify(s.cellAttrs(37, 0, 12)));
+  s.paste('hello world'); await A.sleep(250);
+  dump('after paste hello world');
+  A.say('attrs typed cells:', JSON.stringify(s.cellAttrs(37, 0, 14)));
+  s.write('\x15', 'ctrl-u'); await A.sleep(250);
+  dump('after ctrl-u');
+  s.paste('line1\nline2\nline3'); await A.sleep(250);
+  dump('after paste 3 lines (LF)', 12);
+  s.write('\x15', 'ctrl-u'); await A.sleep(250);
+  dump('after ctrl-u #1 on multiline', 12);
+  s.write('\x15', 'ctrl-u'); await A.sleep(250);
+  dump('after ctrl-u #2 on multiline', 12);
+  s.write('\x15', 'ctrl-u'); await A.sleep(250);
+  dump('after ctrl-u #3 on multiline', 12);
+  s.write('?', 'q-mark'); await A.sleep(400);
+  dump('after ? key', 24);
+  s.write('\x1b', 'esc'); await A.sleep(300);
+  dump('after esc', 6);
+  s.write('/', 'slash'); await A.sleep(500);
+  dump('after / key', 26);
+  s.write('\x1b', 'esc'); await A.sleep(300);
+  dump('after esc 2', 6);
+};

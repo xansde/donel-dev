@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Chat — Modo Foco desligado</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="donel/styles.css">
+<script src="donel/_ds_bundle.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<script src="donel/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:var(--bg-app)}
+a{color:var(--accent);text-decoration:none}
+a:hover{color:var(--text-primary)}
+@keyframes dd-caret{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes dd-blink{0%,100%{opacity:1}50%{opacity:.35}}
+textarea::placeholder{color:var(--text-muted);opacity:1}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+</style>
+</helmet>
+
+<div style="position:relative;width:1440px;height:900px;overflow:hidden;box-sizing:border-box;display:flex;flex-direction:column;background:var(--bg-app);color:var(--text-primary);font-family:var(--font-ui);font-size:13px;line-height:1.5;">
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-cr" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
+    <symbol id="i-cd" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></symbol>
+    <symbol id="i-term" viewBox="0 0 24 24"><path d="m7 11 2-2-2-2"></path><path d="M11 13h4"></path><rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"></path><path d="M5 3v4"></path><path d="M19 17v4"></path><path d="M3 5h4"></path><path d="M17 19h4"></path></symbol>
+    <symbol id="i-think" viewBox="0 0 24 24"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"></path><path d="M9 18h6"></path><path d="M10 22h4"></path></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></symbol>
+    <symbol id="i-xc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="m15 9-6 6"></path><path d="m9 9 6 6"></path></symbol>
+    <symbol id="i-cc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="m9 12 2 2 4-4"></path></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><path d="M12 17h.01"></path></symbol>
+    <symbol id="i-branch" viewBox="0 0 24 24"><line x1="6" x2="6" y1="3" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"></path><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"></path><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"></path></symbol>
+  </svg>
+
+  <!-- TITLEBAR -->
+  <div style="height:40px;flex:none;box-sizing:border-box;display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--bg-panel);border-bottom:1px solid var(--border);">
+    <div style="display:flex;gap:8px;padding-right:4px;">
+      <span style="width:11px;height:11px;border-radius:50%;background:var(--state-done);"></span>
+      <span style="width:11px;height:11px;border-radius:50%;background:var(--state-done);"></span>
+      <span style="width:11px;height:11px;border-radius:50%;background:var(--state-done);"></span>
+    </div>
+    <span style="font-size:13px;font-weight:600;">Donel Dev</span>
+    <button type="button" aria-label="Trocar de projeto" style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:4px;border:1px solid var(--border);background:transparent;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);cursor:pointer;">~/projetos/atlas <svg viewBox="0 0 24 24" style="width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-cd"></use></svg></button>
+    <div style="flex:1;"></div>
+    <x-import component-from-global-scope="DonelDesignSystem.SegmentedControl" ariaLabel="Modo" options="{{ modeOptions }}" value="geral" onChange="{{ noop }}"></x-import>
+    <div style="flex:1;"></div>
+    <x-import component-from-global-scope="DonelDesignSystem.AccountBadge" account-number="{{ 2 }}" headroom-percent="{{ 62 }}" expandable="{{ true }}"></x-import>
+  </div>
+
+  <!-- ABAS -->
+  <div role="tablist" aria-label="Sessões abertas" style="height:36px;flex:none;box-sizing:border-box;display:flex;align-items:flex-end;padding:4px 8px 0;background:var(--bg-panel);border-bottom:1px solid var(--border);">
+    <x-import component-from-global-scope="DonelDesignSystem.TerminalTab" name="atlas · parcelamento" model="opus" state="waiting" active="{{ true }}"></x-import>
+    <x-import component-from-global-scope="DonelDesignSystem.TerminalTab" name="atlas · relatório" model="sonnet" state="waiting"></x-import>
+    <x-import component-from-global-scope="DonelDesignSystem.TerminalTab" name="atlas · repasse" model="sonnet" state="working"></x-import>
+    <x-import component-from-global-scope="DonelDesignSystem.TerminalTab" name="zsh"></x-import>
+  </div>
+
+  <!-- CORPO -->
+  <div style="flex:1;min-height:0;display:flex;">
+
+    <nav aria-label="Projeto e sessões" style="width:240px;flex:none;box-sizing:border-box;display:flex;flex-direction:column;gap:20px;padding:12px;background:var(--bg-panel);border-right:1px solid var(--border);">
+      <section>
+        <h2 style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);">Projeto</h2>
+        <div style="display:flex;flex-direction:column;gap:2px;padding:0 4px;">
+          <span style="font-size:13px;font-weight:600;">atlas</span>
+          <span style="display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);"><svg viewBox="0 0 24 24" style="width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-branch"></use></svg>fix/parcelas-taxa-zero</span>
+        </div>
+      </section>
+      <section>
+        <h2 style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);">Sessões</h2>
+        <div style="display:flex;flex-direction:column;gap:2px;">
+          <div style="display:flex;align-items:center;gap:8px;height:30px;padding:0 6px;border-radius:6px;background:var(--bg-raised);">
+            <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="waiting"></x-import>
+            <span style="flex:1;min-width:0;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">atlas · parcelamento</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;height:30px;padding:0 6px;border-radius:6px;color:var(--text-muted);">
+            <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="waiting"></x-import>
+            <span style="flex:1;min-width:0;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">atlas · relatório</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;height:30px;padding:0 6px;border-radius:6px;color:var(--text-muted);">
+            <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="working"></x-import>
+            <span style="flex:1;min-width:0;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">atlas · repasse</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;height:30px;padding:0 6px;border-radius:6px;color:var(--text-muted);">
+            <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="done"></x-import>
+            <span style="flex:1;min-width:0;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">zsh</span>
+          </div>
+        </div>
+      </section>
+      <div style="margin-top:auto;display:flex;">
+        <x-import component-from-global-scope="DonelDesignSystem.Button" variant="ghost" onClick="{{ noop }}">Sessões anteriores…</x-import>
+      </div>
+    </nav>
+
+    <!-- CORPO DA ABA -->
+    <div style="flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;">
+
+      <div style="height:44px;flex:none;box-sizing:border-box;display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--bg-panel);border-bottom:1px solid var(--border);">
+        <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="waiting" label="aguardando resposta"></x-import>
+        <span style="font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;">atlas · parcelamento</span>
+        <span style="display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);white-space:nowrap;"><svg viewBox="0 0 24 24" style="width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-branch"></use></svg>fix/parcelas-taxa-zero</span>
+        <div style="flex:1;"></div>
+        <div style="flex:none;">
+          <x-import component-from-global-scope="DonelDesignSystem.Toggle" checked="{{ false }}" onChange="{{ noop }}" label="Modo Foco"></x-import>
+        </div>
+        <x-import component-from-global-scope="DonelDesignSystem.SegmentedControl" ariaLabel="Vista da aba" options="{{ viewOptions }}" value="chat" onChange="{{ noop }}"></x-import>
+        <kbd title="Atalho: alterna entre Chat e Terminal sem perder a conversa nem o rascunho" style="display:inline-flex;align-items:center;height:20px;padding:0 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-raised);font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">Ctrl+`</kbd>
+      </div>
+
+      <!-- conversa (rodada 1 desdobrada, Modo Foco desligado) -->
+      <div style="position:relative;flex:1;min-height:0;overflow:hidden;">
+        <div style="max-width:800px;margin:0 auto;box-sizing:border-box;padding:12px 24px 0;display:flex;flex-direction:column;gap:10px;">
+
+          <div style="display:flex;gap:10px;padding:10px 12px;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;margin-top:3px;fill:none;stroke:var(--accent);stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round" aria-label="Você"><use href="#i-cr"></use></svg>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;line-height:1.55;">O simulador está arredondando errado as parcelas quando a taxa é zero. Corrige e roda os testes.</div>
+              <div style="display:flex;justify-content:flex-end;margin-top:2px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">14:02</div>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:2px;">
+            <!-- pensou (recolhido) -->
+            <button type="button" aria-expanded="false" style-hover="background:var(--bg-panel)" style="display:flex;align-items:center;gap:8px;min-height:28px;padding:0 4px;border:none;border-radius:6px;background:transparent;color:var(--text-muted);cursor:pointer;text-align:left;font-family:var(--font-ui);font-size:13px;">
+              <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-cr"></use></svg>
+              <svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-think"></use></svg>
+              <span>Pensou</span>
+              <span style="font-family:var(--font-mono);font-size:11px;">6 s</span>
+            </button>
+
+            <p style="margin:0;padding:2px 4px;font-size:13px;line-height:1.6;">Vou cobrir primeiro com teste.</p>
+
+            <!-- grupo aberto -->
+            <div>
+              <button type="button" aria-expanded="true" style-hover="background:var(--bg-panel)" style="width:100%;box-sizing:border-box;display:flex;align-items:center;gap:8px;min-height:30px;padding:0 4px;border:none;border-radius:6px;background:transparent;color:var(--text-primary);text-align:left;cursor:pointer;font-family:var(--font-ui);font-size:13px;">
+                <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transform:rotate(90deg)" aria-hidden="true"><use href="#i-cr"></use></svg>
+                <svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-layers"></use></svg>
+                <span>9 ações — leu 4, editou 2, rodou 3</span>
+                <span style="flex:1;"></span>
+                <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">2 min 41 s</span>
+              </button>
+
+              <div style="margin:2px 0 0 11px;padding:0 0 0 14px;border-left:1px solid var(--border);display:flex;flex-direction:column;">
+
+                <!-- 1 Leu -->
+                <div style="display:flex;align-items:center;gap:8px;min-height:28px;"><svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-file"></use></svg><span style="color:var(--text-muted);">Leu</span><span style="font-family:var(--font-mono);font-size:12.5px;">src/simulador/parcelas.ts</span><span style="flex:1;"></span><span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">0,3 s</span></div>
+                <!-- 2 Buscou -->
+                <div style="display:flex;align-items:center;gap:8px;min-height:28px;"><svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-search"></use></svg><span style="color:var(--text-muted);">Buscou</span><span style="font-family:var(--font-mono);font-size:12.5px;">'toFixed' em 6 arquivos</span><span style="flex:1;"></span><span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">0,8 s</span></div>
+                <!-- 3 skill (selo recolhido) -->
+                <div style="display:flex;align-items:center;gap:8px;min-height:28px;"><span style="display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 8px;border-radius:4px;font-size:11px;white-space:nowrap;color:var(--text-muted);background:var(--bg-panel);border:1px solid var(--border);"><svg viewBox="0 0 24 24" style="width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-spark"></use></svg>usou a skill <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-primary);">tdd</span></span></div>
+                <!-- 4 Editou teste -->
+                <div style="display:flex;align-items:center;gap:8px;min-height:28px;"><svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-edit"></use></svg><span style="color:var(--text-muted);">Editou</span><span style="font-family:var(--font-mono);font-size:12.5px;">src/simulador/parcelas.test.ts</span><span style="font-family:var(--font-mono);font-size:11px;color:var(--zone-ok);">+18</span><span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">−0</span><span style="flex:1;"></span><span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">0,2 s</span></div>
+
+                <!-- 5 Rodou npm test — FALHOU, comando expandido -->
+                <div>
+                  <div style="display:flex;align-items:center;gap:8px;min-height:28px;margin-left:-6px;padding:0 6px;border-radius:4px;background:color-mix(in srgb,var(--state-permission) 8%,transparent);"><svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--state-permission);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-xc"></use></svg><span style="color:var(--text-muted);">Rodou</span><span style="font-family:var(--font-mono);font-size:12.5px;">npm test</span><span style="color:var(--state-permission);">— falhou: 1 de 42</span><span style="flex:1;"></span><svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transform:rotate(90deg)" aria-hidden="true"><use href="#i-cr"></use></svg><span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">6,4 s</span></div>
+                  <div style="margin:4px 0 4px 26px;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--bg-panel);">
+                    <div style="display:flex;align-items:center;gap:8px;height:24px;padding:0 8px 0 10px;background:var(--bg-raised);border-bottom:1px solid var(--border);">
+                      <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">$ npm test</span>
+                      <span style="flex:1;"></span>
+                      <span style="font-family:var(--font-mono);font-size:11px;color:var(--state-permission);">saiu com código 1</span>
+                      <button type="button" aria-label="Copiar saída do comando" style-hover="background:var(--bg-panel)" style="display:inline-grid;place-items:center;width:20px;height:20px;border:none;border-radius:4px;background:transparent;color:var(--text-muted);cursor:pointer;"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-copy"></use></svg></button>
+                    </div>
+                    <div style="padding:6px 10px;font-family:var(--font-mono);font-size:12px;line-height:17px;">
+                      <div style="white-space:pre;color:var(--state-permission);">FAIL  src/simulador/parcelas.test.ts &gt; taxa zero &gt; fecha o total</div>
+                      <div style="white-space:pre;">AssertionError: expected 1000.01 to be 1000</div>
+                      <div style="white-space:pre;color:var(--text-muted);">  - Expected  1000   + Received  1000.01</div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;height:22px;padding:0 10px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted);">
+                      <span style="font-family:var(--font-mono);">… 14 linhas ocultas</span>
+                      <span style="flex:1;"></span>
+                      <a href="#ver-tudo-saida">ver tudo</a>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 6 Editou parcelas.ts — EDIÇÃO expandida (diff) -->
+                <div>
+                  <div style="display:flex;align-items:center;gap:8px;min-height:28px;"><svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-edit"></use></svg><span style="color:var(--text-muted);">Editou</span><span style="font-family:var(--font-mono);font-size:12.5px;">src/simulador/parcelas.ts</span><span style="font-family:var(--font-mono);font-size:11px;color:var(--zone-ok);">+12</span><span style="font-family:var(--font-mono);font-size:11px;color:var(--state-permission);">−3</span><span style="flex:1;"></span><svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transform:rotate(90deg)" aria-hidden="true"><use href="#i-cr"></use></svg><span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">0,2 s</span></div>
+                  <div style="margin:4px 0 4px 26px;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--bg-panel);">
+                    <div style="display:flex;align-items:center;gap:8px;height:24px;padding:0 8px 0 10px;background:var(--bg-raised);border-bottom:1px solid var(--border);">
+                      <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">src/simulador/parcelas.ts</span>
+                      <span style="flex:1;"></span>
+                      <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">@@ −18,9 +18,18 @@</span>
+                    </div>
+                    <div style="font-family:var(--font-mono);font-size:12px;line-height:17px;">
+                      <div style="display:flex;white-space:pre;background:color-mix(in srgb,var(--state-permission) 12%,transparent);"><span style="width:34px;flex:none;text-align:right;padding-right:8px;color:color-mix(in srgb,var(--text-primary) 62%,transparent);">19</span><span style="width:14px;flex:none;color:var(--state-permission);">−</span><span>const installment = Number((total / count).toFixed(2));</span></div>
+                      <div style="display:flex;white-space:pre;background:color-mix(in srgb,var(--state-permission) 12%,transparent);"><span style="width:34px;flex:none;text-align:right;padding-right:8px;color:color-mix(in srgb,var(--text-primary) 62%,transparent);">20</span><span style="width:14px;flex:none;color:var(--state-permission);">−</span><span>const installments = Array(count).fill(installment);</span></div>
+                      <div style="display:flex;white-space:pre;background:color-mix(in srgb,var(--zone-ok) 12%,transparent);"><span style="width:34px;flex:none;text-align:right;padding-right:8px;color:color-mix(in srgb,var(--text-primary) 62%,transparent);">19</span><span style="width:14px;flex:none;color:var(--zone-ok);">+</span><span>const base = rate === 0</span></div>
+                      <div style="display:flex;white-space:pre;background:color-mix(in srgb,var(--zone-ok) 12%,transparent);"><span style="width:34px;flex:none;text-align:right;padding-right:8px;color:color-mix(in srgb,var(--text-primary) 62%,transparent);">20</span><span style="width:14px;flex:none;color:var(--zone-ok);">+</span><span>  ? Math.floor((total / count) * 100) / 100</span></div>
+                      <div style="display:flex;white-space:pre;background:color-mix(in srgb,var(--zone-ok) 12%,transparent);"><span style="width:34px;flex:none;text-align:right;padding-right:8px;color:color-mix(in srgb,var(--text-primary) 62%,transparent);">21</span><span style="width:14px;flex:none;color:var(--zone-ok);">+</span><span>  : pmt(total, count, rate);</span></div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;height:22px;padding:0 10px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted);">
+                      <span style="font-family:var(--font-mono);">… mais 10 linhas alteradas</span>
+                      <span style="flex:1;"></span>
+                      <a href="#ver-tudo-diff">ver tudo</a>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 7 Rodou npm test — passou -->
+                <div style="display:flex;align-items:center;gap:8px;min-height:28px;"><svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--zone-ok);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-cc"></use></svg><span style="color:var(--text-muted);">Rodou</span><span style="font-family:var(--font-mono);font-size:12.5px;">npm test</span><span style="color:var(--zone-ok);">— 42 passaram</span><span style="flex:1;"></span><span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">5,9 s</span></div>
+                <!-- 8 Leu README -->
+                <div style="display:flex;align-items:center;gap:8px;min-height:28px;"><svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-file"></use></svg><span style="color:var(--text-muted);">Leu</span><span style="font-family:var(--font-mono);font-size:12.5px;">README.md</span><span style="flex:1;"></span><span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">0,1 s</span></div>
+                <!-- 9 Rodou lint -->
+                <div style="display:flex;align-items:center;gap:8px;min-height:28px;"><svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-term"></use></svg><span style="color:var(--text-muted);">Rodou</span><span style="font-family:var(--font-mono);font-size:12.5px;">npm run lint</span><span style="flex:1;"></span><span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">4,1 s</span></div>
+              </div>
+            </div>
+
+            <p style="margin:0;padding:2px 4px;font-size:13px;line-height:1.6;display:flex;align-items:flex-start;gap:8px;"><svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;margin-top:3px;fill:none;stroke:var(--state-waiting);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-label="Pergunta"><use href="#i-help"></use></svg><span>Achei também um caso com taxa negativa — trato agora ou deixo para depois?</span></p>
+          </div>
+
+          <article aria-label="Resposta do Claude" style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;align-items:center;gap:8px;min-height:30px;">
+              <span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);">Claude</span>
+              <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">14:05</span>
+            </div>
+            <h2 style="margin:0;font-size:16px;line-height:1.35;font-weight:600;">Corrigido: arredondamento com taxa zero</h2>
+          </article>
+        </div>
+      </div>
+
+      <!-- caixa de escrever (ociosa) -->
+      <div style="flex:none;box-sizing:border-box;padding:10px 24px 12px;">
+        <div style="max-width:752px;margin:0 auto;">
+          <div data-composer="1" style-focus-within="border-color:var(--accent);box-shadow:var(--focus-ring)" style="display:flex;align-items:flex-end;gap:6px;box-sizing:border-box;padding:7px 8px 7px 6px;border:1px solid var(--border);border-radius:8px;background:var(--bg-panel);">
+            <button type="button" aria-label="Anexar arquivo ou imagem" title="Anexar" style-hover="background:var(--bg-raised)" style="flex:none;display:inline-grid;place-items:center;width:32px;height:32px;border:none;border-radius:6px;background:transparent;color:var(--text-muted);cursor:pointer;"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-clip"></use></svg></button>
+            <textarea aria-label="Mensagem para o Claude" placeholder="Escreva para o Claude — Enter envia, Shift+Enter quebra a linha" rows="1" style="flex:1;min-width:0;box-sizing:border-box;resize:none;border:none;outline:none;background:transparent;color:var(--text-primary);font-family:var(--font-ui);font-size:13px;line-height:20px;padding:6px 4px;min-height:32px;max-height:208px;field-sizing:content;"></textarea>
+            <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" disabled="{{ true }}">Enviar</x-import>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex:none;">
+    <x-import component-from-global-scope="DonelDesignSystem.StatusBar" account-label="Conta 2 · 62%" model-effort="Opus 5.5 · alto" session-count="{{ 4 }}" smart-zone="{{ status.zone }}"></x-import>
+  </div>
+</div>
+</x-dc>
+
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      noop: () => {},
+      modeOptions: [{ value: 'geral', label: 'Uso geral' }, { value: 'dev', label: 'Dev' }],
+      viewOptions: [{ value: 'chat', label: 'Chat' }, { value: 'terminal', label: 'Terminal' }],
+      status: { zone: { usedTokens: 212000, maxTokens: 400000 } }
+    };
+  }
+}
+</script>
+</body>
+</html>

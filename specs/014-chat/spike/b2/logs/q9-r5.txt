@@ -1,0 +1,67 @@
+=== [q9-r5 +3428ms] after-dismiss /mcp  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ Try "write a test for <filepath>"
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on · ? for shortcuts · ← for agents
+
+=== [q9-r5 +6033ms] after /status  (cursor 49,18; buffer=alternate) ===
+ 0| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 1|
+ 2|▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔
+ 3|   Settings  Status   Config   Usage   Stats
+ 4|
+ 5|   Version:           2.1.293
+ 6|   Session name:      /rename to add a name
+ 7|   Session ID:        eb8fe805-2f40-4a95-9060-99e0aefed0c8
+ 8|   Session kind:      interactive
+ 9|   Peer address:      uds:\\.\pipe\LOCAL\cc-msg-8633ddd749c15cf8140ef25fe3449b47
+10|   cwd:               C:\Users\xansd\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c
+11|                      56-484f03770e11\scratchpad\research-014\b2\cwd
+12|   Login method:      Claude Max account
+13|   Organization:      <email>'s Organization
+14|   Email:             <email>
+15|   Cloud sessions:    Not set up · /web-setup to connect GitHub
+16|
+17|   Model:             haiku (claude-haiku-5-5)
+18|   MCP servers:       5 connected, 3 need auth, 8 pending, 2 failed · /mcp
+19|   Setting sources:   User settings, Command line arguments
+20|   Auto mode server:  Disabled
+21|
+22|   Esc to cancel
+
