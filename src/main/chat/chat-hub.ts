@@ -366,14 +366,14 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       const hadSession = rec.session !== null;
       closeSession(rec);
       rec.source = next;
-      rec.topNotice = noticeRow(`app:conversation-switch:${event.sessionId}`, 'conversation-switch', {});
+      const reason: ConversationSwitchReason = event.source === 'resume' || event.source === 'fork' ? event.source : 'clear';
+      rec.topNotice = noticeRow(`app:conversation-switch:${event.sessionId}`, 'conversation-switch', { source: reason });
       rec.appNotices = [];
       rec.fileSeen = false;
       rec.lastActivityAt = 0;
       rec.lastGrowthAt = 0;
       if (hadSession) await openSession(rec, next);
       setReception(rec, 'ok');
-      const reason: ConversationSwitchReason = event.source === 'resume' || event.source === 'fork' ? event.source : 'clear';
       deps.events.conversationSwitched({ ptyId: rec.ptyId, sessionId: event.sessionId, reason });
     });
   }

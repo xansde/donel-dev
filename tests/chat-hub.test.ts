@@ -252,6 +252,7 @@ describe('conversation switch', () => {
     const notice = snap.rows[0] as NoticeRow;
     expect(notice.kind).toBe('notice');
     expect(notice.notice).toBe('conversation-switch');
+    expect(notice.params.source).toBe('clear');
 
     // the new file is followed; the old one is not
     h.rows.length = 0;
