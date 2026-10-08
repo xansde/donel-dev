@@ -35,6 +35,17 @@ export type TranscriptEntry =
       readonly role: TranscriptNodeRole;
       readonly at: string;
       readonly raw: LineRef;
+      /**
+       * Parsed JSON object of the line (T021). Kept so the adapter never re-parses;
+       * heavy payloads are the adapter's job to drop (conversation-rows.md §1.4).
+       */
+      readonly data: Readonly<Record<string, unknown>>;
+      /**
+       * Set when a `system` subtype / `attachment.type` is not recognised
+       * (conversation-rows.md §2.1/§2.2): label for the adapter's `unknown` row.
+       * The line stays a node so the parent chain is not broken.
+       */
+      readonly unknownLabel?: string;
     }
   | {
       readonly k: 'meta';
@@ -45,6 +56,15 @@ export type TranscriptEntry =
       readonly k: 'invalid';
       readonly reason: 'json' | 'too-large';
       readonly raw: LineRef;
+    }
+  | {
+      /** Top-level `type` the adapter does not know (§2 rule 8). */
+      readonly k: 'unknown';
+      readonly typeLabel: string;
+      readonly uuid: string | null;
+      readonly parentUuid: string | null;
+      readonly raw: LineRef;
+      readonly data: Readonly<Record<string, unknown>>;
     };
 
 // ---------------------------------------------------------------------------
