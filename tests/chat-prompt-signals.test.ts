@@ -17,7 +17,7 @@ const queueOp = (operation: string, content?: string): TranscriptEntry =>
 
 describe('normalizeForMatch', () => {
   it('unwraps pasted_content, CRLF, TAB, borders and [Image #N]', () => {
-    expect(normalizeForMatch('  a\r\nb\tc  ')).toBe('a\nb    c');
+    expect(normalizeForMatch('  a\r\nb\tc  ')).toBe('a\nb c');
     expect(normalizeForMatch('x\n\n<pasted_content id="1">linha1\nlinha2</pasted_content id="1">\n')).toBe('x\n\nlinha1\nlinha2');
     expect(normalizeForMatch('veja [Image #3] agora')).toBe(normalizeForMatch('veja [Image #1] agora'));
   });

@@ -3,6 +3,7 @@
 // `UserPromptSubmit` de uma aba e responde ao `chat:ack-lookup` (aceite tardio).
 
 import type { PromptSignalKind } from '../../shared/chat/ipc';
+import { matchesPrompt, normalizePrompt } from '../../shared/chat/promptMatch';
 import type { TranscriptEntry } from '../../shared/chat/rows';
 
 export interface PromptSignal {
@@ -24,17 +25,10 @@ export interface AckResult {
   readonly via?: string;
 }
 
-// TODO(014-F3): trocar por promptMatch quando a frente A entrar
-export function normalizeForMatch(text: string): string {
-  return text
-    .replace(/<pasted_content id="([^"]*)">([\s\S]*?)<\/pasted_content id="\1">/g, '$2')
-    .replace(/\r\n?/g, '\n')
-    .replace(/\t/g, '    ')
-    .replace(/\[Image #\d+\]/g, '[Image]')
-    .trim();
-}
+/** Canonical comparison form: the shared `promptMatch` (014-F3). */
+export const normalizeForMatch = normalizePrompt;
 
-const sameText = (a: string, b: string): boolean => normalizeForMatch(a) === normalizeForMatch(b);
+const sameText = (a: string, b: string): boolean => matchesPrompt(a, b);
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Json) : {});
