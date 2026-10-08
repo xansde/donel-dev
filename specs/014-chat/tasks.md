@@ -169,21 +169,21 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - paginação para trás com `expectedParent` e resultados pendurados;
   - rewind detectado no seguimento adiante.
 - [ ] T023 Implementar `src/shared/chat/activeChain.ts`. Faz passar T022.
-- [ ] T024 [P] Escrever `tests/chat-tool-summary.test.ts` (falhando), cobrindo `conversation-rows.md` §4:
+- [x] T024 [P] Escrever `tests/chat-tool-summary.test.ts` (falhando), cobrindo `conversation-rows.md` §4:
   - verbos, alvos e estatísticas em português por ferramenta;
   - caminho relativo ao `cwd`;
   - rótulo de Bash/PowerShell sem invólucros;
   - MCP;
   - ferramenta desconhecida.
-- [ ] T025 Implementar `src/shared/chat/toolSummary.ts` e adaptar `pingdotgg/t3code@9f48092 packages/client-runtime/src/work-log/commandLabel.ts` em `src/shared/chat/t3/commandLabel.ts`, com o cabeçalho MIT de `research.md` R20. Faz passar T024.
-- [ ] T026 [P] Escrever `tests/chat-grouping.test.ts` (falhando), cobrindo `conversation-rows.md` §5:
+- [x] T025 Implementar `src/shared/chat/toolSummary.ts` e adaptar `pingdotgg/t3code@9f48092 packages/client-runtime/src/work-log/commandLabel.ts` em `src/shared/chat/t3/commandLabel.ts`, com o cabeçalho MIT de `research.md` R20. Faz passar T024.
+- [x] T026 [P] Escrever `tests/chat-grouping.test.ts` (falhando), cobrindo `conversation-rows.md` §5:
   - grupo só com 2 ou mais ações;
   - `thinking` absorvido;
   - o que quebra um grupo;
   - rótulo "N ações — leu a, editou b, rodou c";
   - lista de falhas no cabeçalho;
   - id estável `group:<toolUseId>`.
-- [ ] T027 Implementar `src/shared/chat/grouping.ts`. Faz passar T026.
+- [x] T027 Implementar `src/shared/chat/grouping.ts`. Faz passar T026.
 - [ ] T028 [P] Escrever `tests/chat-adapter.test.ts` (falhando), rodando sobre as fixtures do T019:
   - linhas produzidas (`kind`, `id`, `turnId`, `status`);
   - leitura incremental igual à leitura de uma vez;
@@ -194,12 +194,12 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - `unknown` com o gancho de diagnóstico;
   - **privacidade**: nenhum dado de `session_context`/`credential_org` em linha nenhuma.
 - [ ] T029 Implementar `src/shared/chat/adapter.ts` (`adapt(state, entries) → { state, patches }`), usando T021, T023, T025 e T027. Faz passar T028.
-- [ ] T030 [P] Escrever `tests/chat-focus-fold.test.ts` (falhando), cobrindo `data-model.md` §5:
+- [x] T030 [P] Escrever `tests/chat-focus-fold.test.ts` (falhando), cobrindo `data-model.md` §5:
   - dobra por rodada e `finalRowId`;
   - `hasQuestion` (nota recolhida terminando em `?`);
   - rodada em andamento;
   - rodada aberta por notificação.
-- [ ] T031 Implementar `src/shared/chat/focusFold.ts`. Faz passar T030.
+- [x] T031 Implementar `src/shared/chat/focusFold.ts`. Faz passar T030.
 - [ ] T032 [P] Escrever `tests/chat-transcript-io.test.ts` (falhando), com arquivos temporários.
   - **Seguidor**: offset; resto de linha; debounce de 50 ms; arquivo que nasce depois; re-apontar.
   - **Paginador**: blocos de 256 KB; linhas de até 8 MB atravessando blocos; página de 30 rodadas ou 2 MB.
