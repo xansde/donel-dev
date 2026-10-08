@@ -304,7 +304,7 @@ divergências de `design/chat-verificacao.md`.
   - `CodeBlock.tsx`: rótulo da linguagem e copiar.
   - `shiki.ts`: núcleo + Oniguruma WASM; gramáticas sob demanda; tema em variáveis CSS dos tokens ou paleta aprovada; destaque quando visível; cache LRU com `src/shared/chat/t3/lruCache.ts` adaptado do T3, com cabeçalho MIT.
   - "Copiar resposta inteira" com `src/shared/chat/t3/markdownClipboard.ts` adaptado.
-- [ ] T052 [US1] Linhas de mensagem em `src/renderer/src/chat/rows/`, conforme o design:
+- [x] T052 [US1] Linhas de mensagem em `src/renderer/src/chat/rows/`, conforme o design:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): `Notice` → `NoticeLine` (critério G3); `Unknown` mostra o tipo (D-C8); `ShellRow` e `LocalCommand` = `OwnerMessage` mono + `CommandOutput`; anexos dentro do `OwnerMessage`.
   - `UserMessage.tsx`, com miniaturas via `donel-asset:`;
   - `AssistantMessage.tsx`;
