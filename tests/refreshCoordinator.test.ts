@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { FakeVault, accountOf, buildPair, jsonResponse } from './helpers/localModFixtures';
 import { createRefreshCoordinator } from '../src/main/accounts/refresh-coordinator';
 import { createLocalMod } from '../src/main/accounts/mods/local-mod';
-import type { CredentialPair } from '../src/main/accounts/account-mod';
-import type { VaultLike, VaultWriteResult } from '../src/main/accounts/vault';
-import type { HttpFetchLike, HttpResponseLike } from '../src/main/accounts/usage-client';
+import type { HttpFetchLike } from '../src/main/accounts/usage-client';
 import type { RefreshResult } from '../src/main/accounts/token-refresh';
-import type { AccountId, LocalAccountMeta } from '../src/shared/accounts';
 
 // 011-contas-e-provedores, etapa 3, Fase 2 (R1, revisão) — o coordenador de
 // renovação PRECISA sobreviver à reconstrução do mod (o motor troca de mod
@@ -112,30 +110,6 @@ describe('createRefreshCoordinator (puro)', () => {
 });
 
 // -- integração com o mod local ---------------------------------------------
-
-class FakeVault implements VaultLike {
-  private readonly entries = new Map<string, string>();
-
-  read(id: string): string | null {
-    return this.entries.get(id) ?? null;
-  }
-  write(id: string, plainText: string): VaultWriteResult {
-    this.entries.set(id, plainText);
-    return { kind: 'ok' };
-  }
-}
-
-function jsonResponse(status: number, body: unknown): HttpResponseLike {
-  return { status, json: async () => body };
-}
-
-function buildPair(overrides: Partial<CredentialPair> = {}): CredentialPair {
-  return { accessToken: 'access', refreshToken: 'refresh', expiresAt: Date.now() + 3600_000, scopes: [], ...overrides };
-}
-
-function accountOf(id: AccountId, label = `Conta ${id}`): LocalAccountMeta {
-  return { id, label, plan: null };
-}
 
 describe('R1 — uma renovação por conta ENTRE instâncias do mod local', () => {
   it('DOIS mods (duas createLocalMod) com o MESMO coordenador e o mesmo cofre: listAccounts dos dois em paralelo para a mesma conta parada vencida -> refreshImpl chamado UMA vez, os dois leem a carga com o token novo', async () => {

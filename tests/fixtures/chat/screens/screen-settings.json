@@ -1,0 +1,171 @@
+{
+ "name": "screen-settings",
+ "description": "Tela sem caixa de entrada: \"Settings\".",
+ "source": "real",
+ "origin": "q9-r2.txt :: after /config",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔",
+   "dim": []
+  },
+  {
+   "text": "   Settings  Status   Config   Usage   Stats",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+   "dim": []
+  },
+  {
+   "text": "   │ ⌕ Search settings…                                                                                             │",
+   "dim": []
+  },
+  {
+   "text": "   ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   ❯ Auto-compact                                true",
+   "dim": []
+  },
+  {
+   "text": "     Continue automatically at usage limit       true",
+   "dim": []
+  },
+  {
+   "text": "     Switch models when a message is flagged     Not asked yet ›",
+   "dim": []
+  },
+  {
+   "text": "     Show tips                                   true",
+   "dim": []
+  },
+  {
+   "text": "     Claude-drafted feedback                     notify",
+   "dim": []
+  },
+  {
+   "text": "     Reduce motion                               false",
+   "dim": []
+  },
+  {
+   "text": "     Thinking mode                               true",
+   "dim": []
+  },
+  {
+   "text": "     Thinking can't be turned off for Haiku 5.5",
+   "dim": []
+  },
+  {
+   "text": "     Prompt suggestions                          true",
+   "dim": []
+  },
+  {
+   "text": "     Session recap                               false",
+   "dim": []
+  },
+  {
+   "text": "     Rewind code (checkpoints)                   true",
+   "dim": []
+  },
+  {
+   "text": "     Dynamic workflows                           true",
+   "dim": []
+  },
+  {
+   "text": "     Ultracode keyword trigger                   true",
+   "dim": []
+  },
+  {
+   "text": "     Dynamic workflow size                       medium (default)",
+   "dim": []
+  },
+  {
+   "text": "     Artifacts                                   true",
+   "dim": []
+  },
+  {
+   "text": "     Verbose output                              false",
+   "dim": []
+  },
+  {
+   "text": "     Terminal progress bar                       true",
+   "dim": []
+  },
+  {
+   "text": "     Show turn duration                          true",
+   "dim": []
+  },
+  {
+   "text": "     Precompute compaction                       true",
+   "dim": []
+  },
+  {
+   "text": "     Time format                                 auto ›",
+   "dim": []
+  },
+  {
+   "text": "     Default permission mode                     Bypass Permissions",
+   "dim": []
+  },
+  {
+   "text": "     Worktree base ref                           fresh",
+   "dim": []
+  },
+  {
+   "text": "     Use auto mode during plan                   false",
+   "dim": []
+  },
+  {
+   "text": "     Respect .gitignore in file picker           true",
+   "dim": []
+  },
+  {
+   "text": "     Skip the /copy picker                       false",
+   "dim": []
+  },
+  {
+   "text": "     Copy on select                              true",
+   "dim": []
+  },
+  {
+   "text": "     Auto-scroll                                 true",
+   "dim": []
+  },
+  {
+   "text": "     Open agents view by default                 false",
+   "dim": []
+  },
+  {
+   "text": "     ↓ 19 more",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Type to filter · Enter/↓ to select · ↑ to tabs · Esc to clear",
+   "dim": []
+  }
+ ]
+}

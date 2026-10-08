@@ -1,0 +1,173 @@
+{
+ "name": "working-typed",
+ "description": "Trabalhando com texto real digitado na caixa.",
+ "source": "synthetic",
+ "origin": "built from q7.txt#q7 r1 working",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " ▐▛███▛█   Claude Code v2.1.293",
+   "dim": []
+  },
+  {
+   "text": "▝▜██████▀  Haiku 5.5 · Claude Max",
+   "dim": []
+  },
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "  ⎿  SessionStart:startup says: GitHub ativo: xansde",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "❯ Run this exact bash command and then reply with the single word DONE: ping -n 8 127.0.0.1",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "● Running ping to localhost 8 times",
+   "dim": []
+  },
+  {
+   "text": "  ⎿  $ ping -n 8 127.0.0.1",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "· Forging… (6s · ↓ 333 tokens · thought for 1s)",
+   "dim": []
+  },
+  {
+   "text": "                                                                                                    ◐ medium · /effort",
+   "dim": []
+  },
+  {
+   "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+   "dim": []
+  },
+  {
+   "text": "❯ half written message",
+   "dim": []
+  },
+  {
+   "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+   "dim": []
+  },
+  {
+   "text": "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents",
+   "dim": [
+    [2,81]
+   ]
+  }
+ ]
+}

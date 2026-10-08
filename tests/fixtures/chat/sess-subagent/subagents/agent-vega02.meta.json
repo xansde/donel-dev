@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Check vega",
+  "requestShape": "background",
+  "requestNonInteractive": true,
+  "spawnDepth": 1,
+  "toolUseId": "toolu_s4"
+}

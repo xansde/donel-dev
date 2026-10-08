@@ -1,0 +1,210 @@
+=== [q6b +6073ms] tall 8  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|                                                                                             ctrl+g to edit in Notepad
+28|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+29|❯ line1
+30|  line2
+31|  line3
+32|  line4
+33|  line5
+34|  line6
+35|  line7
+36|  line8
+37|
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q6b +9658ms] tall 20  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|                                                                                             ctrl+g to edit in Notepad
+22|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+23|❯ line7
+24|  line8
+25|  line9
+26|  line10
+27|  line11
+28|  line12
+29|  line13
+30|  line14
+31|  line15
+32|  line16
+33|  line17
+34|  line18
+35|  line19
+36|  line20
+37|
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q6b +15442ms] tall 34  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|                                                                                             ctrl+g to edit in Notepad
+22|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+23|❯ line21
+24|  line22
+25|  line23
+26|  line24
+27|  line25
+28|  line26
+29|  line27
+30|  line28
+31|  line29
+32|  line30
+33|  line31
+34|  line32
+35|  line33
+36|  line34
+37|
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q6b +24490ms] tall 60  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|                                                                                                    ◐ medium · /effort
+22|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+23|❯ line47
+24|  line48
+25|  line49
+26|  line50
+27|  line51
+28|  line52
+29|  line53
+30|  line54
+31|  line55
+32|  line56
+33|  line57
+34|  line58
+35|  line59
+36|  line60
+37|
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q6b +65225ms] ghost shown  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|❯ reply with only the word R1
+ 8|
+ 9|● R1
+10|
+11|✻ Churned for 1s · done 18:24
+12|
+13|❯ reply with only the word R2
+14|
+15|● R2
+16|
+17|✻ Brewed for 1s · done 18:24
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ reply with only the word R3
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on · ? for shortcuts · ← for agents
+

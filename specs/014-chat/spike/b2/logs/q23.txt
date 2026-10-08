@@ -1,0 +1,2352 @@
+=== [q23 +4310ms] slash-full-cmd [paste]  (cursor 8,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|  ❯ /clear                                       Start a new session with empty context; previous session stays on
+33|                                                 disk (resumable with /resume)
+34|    /wiki-write                                  Create a fleeting note in the Obsidian vault's Inbox/ from Claude
+35|                                                 Code. Use PROACTIVELY when the user says anything like 'anota aí', '…
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ /clear
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +5322ms] slash-skill-args [paste]  (cursor 25,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ /spike-skill alpha beta
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +6447ms] slash-prefix-pair [paste]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|  ❯ /spike-help                                  spike short command (project)
+35|    /spike-helper                                spike long command (project)
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ /spike-help
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +8143ms] slash-only [paste]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|  ❯ /playwright-cli                              Automates browser interactions for web testing, form filling,
+33|                                                 screenshots, and data extraction. Use when the user needs to navigat…
+34|    /bitwarden-save                              Use IMMEDIATELY upon receiving any credential, token, API key, OAuth
+35|                                                 client secret, service ID, credentials JSON file, or sensitive data.…
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ /
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +9583ms] slash-partial [paste]  (cursor 7,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|  ❯ /spike-help                                  spike short command (project)
+33|    /spike-skill                                 Spike skill used only to test slash autocomplete. Never use
+34|                                                 automatically. (project)
+35|    /spike-helper                                spike long command (project)
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ /spik
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +11214ms] slash-partial-typed [type]  (cursor 7,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|  ❯ /spike-help                                  spike short command (project)
+33|    /spike-skill                                 Spike skill used only to test slash autocomplete. Never use
+34|                                                 automatically. (project)
+35|    /spike-helper                                spike long command (project)
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ /spik
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +12829ms] at-partial [paste]  (cursor 11,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ @notes/al
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +14137ms] at-partial-typed [type]  (cursor 11,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ @notes/al
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +15201ms] at-full-then-text [paste]  (cursor 30,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ read @notes/alpha.txt please
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +16712ms] at-full-typed [type]  (cursor 30,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ read @notes/alpha.txt please
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +17772ms] multi-LF [paste]  (cursor 7,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|                                                                                             ctrl+g to edit in Notepad
+34|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+35|❯ line1
+36|  line2
+37|  line3
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +18834ms] multi-CRLF [paste]  (cursor 7,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|                                                                                             ctrl+g to edit in Notepad
+34|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+35|❯ line1
+36|  line2
+37|  line3
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +19909ms] multi-CR [paste]  (cursor 7,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|                                                                                             ctrl+g to edit in Notepad
+34|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+35|❯ line1
+36|  line2
+37|  line3
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +21308ms] prefix ! [type]  (cursor 12,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|! echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ! for shell mode
+
+=== [q23 +22385ms] prefix ! [paste]  (cursor 12,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|! echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ! for shell mode
+
+=== [q23 +25950ms] prefix-only ! [paste]  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|! Try "how does <filepath> work?"
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ! for shell mode
+
+=== [q23 +30179ms] prefix-only ! [type]  (cursor 119,39; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔
+35|   Rewind
+36|
+37|   Nothing to rewind to yet.
+38|
+39|   Esc to cancel
+
+=== [q23 +31458ms] prefix # [type]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ #echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +32537ms] prefix # [paste]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ #echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +33631ms] prefix-only # [paste]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ #
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +34694ms] prefix-only # [type]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ #
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +36083ms] prefix & [type]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ &echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +37147ms] prefix & [paste]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ &echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +38237ms] prefix-only & [paste]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ &
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +39296ms] prefix-only & [type]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ &
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +40667ms] prefix ? [type]  (cursor 12,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +41732ms] prefix ? [paste]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ ?echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +42796ms] prefix-only ? [paste]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ ?
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +46426ms] prefix-only ? [type]  (cursor 2,32; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|                                                                                                    ◐ medium · /effort
+31|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+32|❯ Try "how does <filepath> work?"
+33|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+34|  ! for shell mode        double tap esc to clear input      ctrl + shift + _ to undo
+35|  / for commands          shift + tab to auto-accept edits   alt + v to paste images
+36|  @ for file paths        ctrl + o for verbose output        alt + p to switch model
+37|  /btw for side question  ctrl + t to toggle tasks           ctrl + s to stash prompt
+38|                          \⏎ for newline                     ctrl + g to edit in $EDITOR
+39|                                                             /keybindings to customize
+
+=== [q23 +47703ms] prefix / [type]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ /echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +48764ms] prefix / [paste]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ /echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +49839ms] prefix-only / [paste]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|  ❯ /playwright-cli                              Automates browser interactions for web testing, form filling,
+33|                                                 screenshots, and data extraction. Use when the user needs to navigat…
+34|    /bitwarden-save                              Use IMMEDIATELY upon receiving any credential, token, API key, OAuth
+35|                                                 client secret, service ID, credentials JSON file, or sensitive data.…
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ /
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +51240ms] prefix-only / [type]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|  ❯ /playwright-cli                              Automates browser interactions for web testing, form filling,
+33|                                                 screenshots, and data extraction. Use when the user needs to navigat…
+34|    /bitwarden-save                              Use IMMEDIATELY upon receiving any credential, token, API key, OAuth
+35|                                                 client secret, service ID, credentials JSON file, or sensitive data.…
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ /
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +52969ms] prefix @ [type]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ @echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +54032ms] prefix @ [paste]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ @echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +55154ms] prefix-only @ [paste]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|    + .claude\
+32|    + assets-red.png
+33|    + notes\
+34|    + src\
+35|    * claude (agent) – Catch-all for any task that doesn't fit a more specific age…
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ @
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +56609ms] prefix-only @ [type]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|    + .claude\
+32|    + assets-red.png
+33|    + notes\
+34|    + src\
+35|    * claude (agent) – Catch-all for any task that doesn't fit a more specific age…
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ @
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +58283ms] prefix * [type]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ *echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +59349ms] prefix * [paste]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ *echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +60381ms] prefix-only * [paste]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ *
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +61444ms] prefix-only * [type]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ *
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +62831ms] prefix \ [type]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ \echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +63925ms] prefix \ [paste]  (cursor 13,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ \echo spike
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +64984ms] prefix-only \ [paste]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ \
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +66045ms] prefix-only \ [type]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ \
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +67140ms] tab-in-paste [paste]  (cursor 8,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ a    b
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +68203ms] esc-in-paste [paste]  (cursor 3,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ x
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +69264ms] endmarker-in-paste [paste]  (cursor 9,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ prepost
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +70323ms] ctrlc-in-paste [paste]  (cursor 6,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ c1c2
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +71398ms] ctrlu-in-paste [paste]  (cursor 10,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ keepthis
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +72462ms] bs-in-paste [paste]  (cursor 5,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ abc
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +73477ms] nul-in-paste [paste]  (cursor 4,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ nz
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +74539ms] unicode-in-paste [paste]  (cursor 16,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ ação 你好 😀 z
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +75570ms] trailing-newline-paste [paste]  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|                                                                                             ctrl+g to edit in Notepad
+35|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+36|❯ abc
+37|
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +76630ms] leading-newline-paste [paste]  (cursor 5,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|                                                                                             ctrl+g to edit in Notepad
+35|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+36|❯
+37|  abc
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q23 +77194ms] end  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ Try "how does <filepath> work?"
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on · ? for shortcuts · ← for agents
+

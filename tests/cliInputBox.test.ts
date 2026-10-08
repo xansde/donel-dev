@@ -6,6 +6,7 @@ import {
   isSafeToSendEnter,
   readInputBox,
 } from '../src/shared/cliInputBox';
+import type { ScreenLine } from '../src/shared/screenLine';
 import { TRUST_DIALOG_CONFIRM_MARKER, TRUST_DIALOG_EXIT_MARKER } from '../src/shared/trustDialog';
 
 // wi-esteira4-enter-confirmado (13/08) — o leitor da CAIXA DE INPUT do REPL.
@@ -113,7 +114,7 @@ describe('readInputBox', () => {
   });
 
   it('muitas linhas entre duas réguas não viram caixa', () => {
-    const transcript = [RULER_63, ...Array.from({ length: 9 }, (_, i) => `❯ linha ${i}`), RULER_63];
+    const transcript = [RULER_63, ...Array.from({ length: 16 }, (_, i) => `❯ linha ${i}`), RULER_63];
     expect(readInputBox(transcript)).toEqual({ kind: 'unreadable' });
   });
 
@@ -151,5 +152,90 @@ describe('isSafeToSendEnter', () => {
     // O popup pode ser desenhado FORA da caixa — o veto varre a cauda inteira.
     expect(hasMenuOption([...BOX_TYPED, '❯ 1. Yes, proceed'])).toBe(true);
     expect(isSafeToSendEnter([...BOX_TYPED, '❯ 1. Yes, proceed'])).toBe(false);
+  });
+});
+
+// 014-chat T035 — leitura da caixa considerando o atributo *dim* (CLI 2.1.293).
+// As linhas abaixo seguem as capturas reais de `tests/fixtures/chat/screens/`
+// (placeholder `Try "..."`, `Press up to edit queued messages`, prompt `!`).
+
+const RULER_120 = '─'.repeat(120);
+const line = (text: string, ...dim: Array<[number, number]>): ScreenLine => ({ text, dim });
+const boxOf = (...inside: ScreenLine[]): ScreenLine[] => [
+  line(RULER_120),
+  ...inside,
+  line(RULER_120),
+  line('  ⏸ manual mode on · ? for shortcuts', [2, 36]),
+];
+
+describe('readInputBox com máscara dim', () => {
+  it('placeholder dim (`Try "..."`) NÃO é texto digitado', () => {
+    const placeholder = 'Try "how does <filepath> work?"';
+    const box = boxOf(line(`❯ ${placeholder}`, [2, 2 + placeholder.length]));
+    expect(readInputBox(box)).toEqual({ kind: 'empty' });
+  });
+
+  it('o mesmo texto SEM dim é texto digitado (a máscara é o que decide)', () => {
+    const box = boxOf(line('❯ Try "how does <filepath> work?"'));
+    expect(readInputBox(box)).toEqual({ kind: 'typed', text: 'Try "how does <filepath> work?"' });
+  });
+
+  it('sugestão fantasma dim depois do texto real: só o texto real conta', () => {
+    const box = boxOf(line('❯ run the tests and fix', [11, 23]));
+    expect(readInputBox(box)).toEqual({ kind: 'typed', text: 'run the t' });
+  });
+
+  it('"Press up to edit queued messages" (dim) com fila é caixa vazia', () => {
+    const hint = 'Press up to edit queued messages';
+    expect(readInputBox(boxOf(line(`❯ ${hint}`, [2, 2 + hint.length])))).toEqual({ kind: 'empty' });
+  });
+
+  it('continuação de wrap traz 2 espaços de recuo: não entram no texto', () => {
+    const box = boxOf(line('❯ file:///C:/a/b/c/484f03770e'), line('  11/scratchpad/red.png'));
+    expect(readInputBox(box)).toEqual({ kind: 'typed', text: 'file:///C:/a/b/c/484f03770e11/scratchpad/red.png' });
+  });
+
+  it('strings simples continuam aceitas (chamadores legados, sem dim)', () => {
+    expect(readInputBox([RULER_120, '❯ oi', RULER_120, '  rodapé'])).toEqual({ kind: 'typed', text: 'oi' });
+  });
+});
+
+describe('readInputBox: prompt `!` (modo shell)', () => {
+  it('`! echo spike` é texto digitado em modo shell', () => {
+    const box = boxOf(line('! echo spike'));
+    expect(readInputBox(box)).toEqual({ kind: 'typed', text: 'echo spike', shell: true });
+  });
+
+  it('`!` com placeholder dim é caixa vazia em modo shell', () => {
+    const placeholder = 'Try "how does <filepath> work?"';
+    const box = boxOf(line(`! ${placeholder}`, [2, 2 + placeholder.length]));
+    expect(readInputBox(box)).toEqual({ kind: 'empty', shell: true });
+  });
+
+  it('texto normal começando com `!` depois do `❯` NÃO é modo shell', () => {
+    expect(readInputBox(boxOf(line('❯ !ls')))).toEqual({ kind: 'typed', text: '!ls' });
+  });
+});
+
+describe('readInputBox: até 15 linhas', () => {
+  const rows = (n: number): ScreenLine[] => Array.from({ length: n }, (_, i) => line(i === 0 ? '❯ line1' : `  line${i + 1}`));
+
+  it('caixa de 15 linhas é lida inteira', () => {
+    const result = readInputBox(boxOf(...rows(15)));
+    expect(result.kind).toBe('typed');
+    expect(result).toMatchObject({ text: Array.from({ length: 15 }, (_, i) => `line${i + 1}`).join('') });
+  });
+
+  it('16 linhas já não é caixa', () => {
+    expect(readInputBox(boxOf(...rows(16)))).toEqual({ kind: 'unreadable' });
+  });
+});
+
+describe('readInputBox: máscara dim como boolean[] (forma do contrato ipc-chat §3)', () => {
+  it('um flag por caractere equivale aos intervalos', () => {
+    const text = '❯ Try "x"';
+    const flags = [...text].map((_, i) => i >= 2);
+    const box = [line(RULER_120), { text, dim: flags }, line(RULER_120), line('  rodapé')];
+    expect(readInputBox(box)).toEqual({ kind: 'empty' });
   });
 });

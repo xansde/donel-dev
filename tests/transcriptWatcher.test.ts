@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, promises as fs, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   TranscriptWatcherRegistry,
   readTranscriptTail,
@@ -10,6 +10,16 @@ import {
   type TranscriptWatcherHandle,
   type TranscriptWatcherOptions,
 } from '../src/main/transcript-watcher';
+import { drainIo, fakeFsWatch, pollUntil, realDelay, trackReads, untilReadsSettle, type ReadTracker } from './helpers/fsWatchWait';
+
+// `fs.watch` switchable: REAL by default, FAKE while `fakeFsWatch.active`. The
+// rest of `node:fs` (reads, writes, tmpdir) stays real in both modes.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  // Dynamic import: a static one is not initialised yet when this hoisted factory runs.
+  const { wrapWatch } = await import('./helpers/fsWatchWait');
+  return { ...actual, watch: wrapWatch(actual.watch) };
+});
 
 // T411 (004-nomear-sessoes, Fase C) — watcher do transcript da sessão VIVA:
 // é ele que faz um `/rename` no CLI refletir na aba em menos de 1 s (CA-4).
@@ -21,40 +31,22 @@ import {
 // muda. Se nascesse emitindo só o título, a 006 reescreveria este arquivo na
 // semana seguinte (o `contextTokens` muda a cada turn, sem rename nenhum).
 //
-// `fs.watch` REAL em tmpdir, de propósito: o que este módulo pode errar é
-// justamente a parte que um mock esconderia — arquivo que ainda não existe,
-// handle que não fecha, evento que não chega no Windows.
+// DOIS MECANISMOS, de propósito (docs/testes/proposta.md §3 "Acelerar"):
 //
-// Timers REAIS com debounce curto (em vez de fake timers): `fs.watch` entrega
-// eventos pelo loop de I/O do libuv, que timers fake não adiantam — a
-// combinação dos dois não compõe. Daí o `waitFor` abaixo.
+//  - `describe('watchTranscript')` — casos de LÓGICA (debounce, comparação por
+//    valor, "não apaga o que já sabe", dispose). Usam um `fs.watch` FALSO
+//    (`fakeFsWatch`, disparado à mão) e timers falsos SÓ para o debounce
+//    (`setTimeout`/`clearTimeout`). A leitura do `.jsonl` continua REAL em
+//    tmpdir; a espera por ela é condicionada (`pollUntil`/`drainIo`), nunca
+//    `sleep` fixo. Sem janela de 240 ms nem rajada de 500 ms.
+//  - `describe('watchTranscript — fs.watch real')` — o que um falso esconderia:
+//    evento do SO chegando de verdade, arquivo/diretório que nasce depois,
+//    repoint de ponta a ponta. Poucos casos, todos com `fs.watch` real.
 
 const DEBOUNCE_MS = 40;
 
-/** Espera até `predicate` virar true, ou estoura. Evita `sleep` fixo (flake sob carga). */
-async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
-  const startedAt = Date.now();
-  while (!predicate()) {
-    if (Date.now() - startedAt > timeoutMs) throw new Error(`waitFor: condição não satisfeita em ${timeoutMs} ms`);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
-/**
- * Janela do teste de rajada. Separada do `DEBOUNCE_MS` de propósito: aquele é
- * curto para os testes correrem rápido, mas a rajada é o ÚNICO caso cuja
- * asserção depende de as escritas caberem DENTRO da janela — e 40 ms não cabem
- * sob carga. Medido nesta máquina com a suíte inteira rodando em paralelo: o
- * maior intervalo entre dois `appendFile` consecutivos estourou 40 ms em 5 de
- * 20 rodadas, com pico de 150 ms. Não é bug do watcher (rajada espalhada por
- * mais que a janela DEVE virar dois emits) — é o orçamento do teste.
- */
-const BURST_WINDOW_MS = 500;
-
-/** Dá tempo de um evento INDESEJADO aparecer — a única forma honesta de provar "não emitiu". */
-async function settle(windowMs = DEBOUNCE_MS): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, windowMs * 6));
-}
+/** Alias de leitura: espera condicionada com timers REAIS (serve nos dois mecanismos). */
+const waitFor = (predicate: () => boolean, timeoutMs = 3_000): Promise<void> => pollUntil(predicate, timeoutMs);
 
 const titleLine = (title: string, sessionId = 'abc-123'): string =>
   `${JSON.stringify({ type: 'custom-title', customTitle: title, sessionId })}\n`;
@@ -107,16 +99,25 @@ describe('watchTranscript', () => {
   let filePath: string;
   let changes: TranscriptChange[];
   let disposers: (() => void)[];
+  let reads: ReadTracker;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'donel-dev-transcript-watcher-'));
     filePath = join(dir, 'abc-123.jsonl');
     changes = [];
     disposers = [];
+    reads = trackReads(fs, filePath);
+    fakeFsWatch.reset();
+    fakeFsWatch.active = true;
+    // Só o debounce é falso. `setImmediate`/I/O ficam reais: a leitura do `.jsonl` é de verdade.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   });
 
   afterEach(() => {
     for (const dispose of disposers) dispose();
+    reads.restore();
+    vi.useRealTimers();
+    fakeFsWatch.reset();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -132,25 +133,35 @@ describe('watchTranscript', () => {
     return watcher.dispose;
   }
 
-  it('emite o nome novo quando um custom-title é acrescentado à sessão viva (CA-4)', async () => {
-    await fs.writeFile(filePath, userLine('trabalhando'), 'utf8');
-    start();
-    await settle(); // consome a leitura inicial (sem título, não emite)
-    expect(changes).toEqual([]);
+  /**
+   * Espera a leitura inicial (ou qualquer leitura em voo) TERMINAR — sinal
+   * observado (`trackReads`), não palpite de tempo. Substitui o `settle()` de
+   * 240 ms; e evita o falso negativo em que um evento cai durante uma leitura
+   * (o watcher descarta a releitura concorrente de propósito).
+   */
+  const idle = (): Promise<void> => untilReadsSettle(reads);
 
-    await fs.appendFile(filePath, titleLine('renomeado ao vivo'), 'utf8');
+  /** O SO avisou que o arquivo mudou: dispara o evento e deixa o debounce correr. */
+  async function osNotices(debounceMs = DEBOUNCE_MS): Promise<void> {
+    await idle();
+    fakeFsWatch.emit('abc-123.jsonl');
+    vi.advanceTimersByTime(debounceMs);
+    await idle();
+  }
 
-    await waitFor(() => changes.length === 1);
-    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'renomeado ao vivo', contextTokens: null, cliColorName: null });
-  });
+  /** Escreve no arquivo e avisa (a dupla que o `fs.watch` real faz sozinho). */
+  async function appendAndNotice(text: string): Promise<void> {
+    await fs.appendFile(filePath, text, 'utf8');
+    await osNotices();
+  }
 
   it('Fix #19 — emite a cor quando o operador roda /color na sessão viva', async () => {
     await fs.writeFile(filePath, userLine('trabalhando'), 'utf8');
     start();
-    await settle();
+    await idle();
     expect(changes).toEqual([]);
 
-    await fs.appendFile(filePath, colorLine('blue'), 'utf8');
+    await appendAndNotice(colorLine('blue'));
 
     await waitFor(() => changes.length === 1);
     expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: null, contextTokens: null, cliColorName: 'blue' });
@@ -162,7 +173,7 @@ describe('watchTranscript', () => {
     await waitFor(() => changes.length === 1);
     expect(changes[0].cliColorName).toBe('blue');
 
-    await fs.appendFile(filePath, colorLine('red'), 'utf8');
+    await appendAndNotice(colorLine('red'));
     await waitFor(() => changes.length === 2);
     expect(changes[1].cliColorName).toBe('red');
   });
@@ -181,8 +192,9 @@ describe('watchTranscript', () => {
     await waitFor(() => changes.length === 1);
 
     await fs.appendFile(filePath, userLine('mais uma mensagem'), 'utf8');
+    await osNotices();
     await fs.appendFile(filePath, userLine('e outra'), 'utf8');
-    await settle();
+    await osNotices();
 
     expect(changes).toHaveLength(1); // só o da abertura
   });
@@ -192,8 +204,7 @@ describe('watchTranscript', () => {
     start();
     await waitFor(() => changes.length === 1);
 
-    await fs.appendFile(filePath, titleLine('igual'), 'utf8');
-    await settle();
+    await appendAndNotice(titleLine('igual'));
 
     expect(changes).toHaveLength(1);
   });
@@ -201,11 +212,11 @@ describe('watchTranscript', () => {
   it('emite a cada mudança REAL de título, em sequência', async () => {
     await fs.writeFile(filePath, userLine('trabalho'), 'utf8');
     start();
-    await settle();
+    await idle();
 
-    await fs.appendFile(filePath, titleLine('primeiro'), 'utf8');
+    await appendAndNotice(titleLine('primeiro'));
     await waitFor(() => changes.length === 1);
-    await fs.appendFile(filePath, titleLine('segundo'), 'utf8');
+    await appendAndNotice(titleLine('segundo'));
     await waitFor(() => changes.length === 2);
 
     expect(changes.map((c) => c.customTitle)).toEqual(['primeiro', 'segundo']);
@@ -213,42 +224,24 @@ describe('watchTranscript', () => {
 
   it('junta uma rajada de escritas num emit só (debounce)', async () => {
     await fs.writeFile(filePath, userLine('trabalho'), 'utf8');
-    start(filePath, BURST_WINDOW_MS);
-    await settle(BURST_WINDOW_MS);
+    start();
+    await idle();
 
-    // Cinco escritas dentro da janela de debounce: o valor final é o que vale.
+    // Cinco escritas, cada uma com o seu evento, TODAS dentro da janela de
+    // debounce (o relógio é falso: nenhuma passagem de tempo entre elas). O
+    // valor final é o que vale. Sem orçamento de 500 ms nem flake sob carga.
     for (const title of ['a', 'b', 'c', 'd', 'final']) {
       await fs.appendFile(filePath, titleLine(title), 'utf8');
+      fakeFsWatch.emit('abc-123.jsonl');
     }
+    await idle();
+    expect(changes).toEqual([]); // nada leu ainda: a janela não fechou
 
+    vi.advanceTimersByTime(DEBOUNCE_MS);
     await waitFor(() => changes.length >= 1);
-    await settle(BURST_WINDOW_MS);
+    await idle();
     expect(changes).toHaveLength(1);
     expect(changes[0].customTitle).toBe('final');
-  }, 20_000);
-
-  it('arquivo que ainda NÃO existe na abertura (o CLI cria na 1ª mensagem) — dispara quando ele nasce', async () => {
-    expect(existsSync(filePath)).toBe(false);
-    start();
-    await settle();
-
-    await fs.writeFile(filePath, `${userLine('primeira mensagem')}${titleLine('nasceu com nome')}`, 'utf8');
-
-    await waitFor(() => changes.length >= 1);
-    expect(changes[0].customTitle).toBe('nasceu com nome');
-  });
-
-  it('DIRETÓRIO que ainda não existe (projeto que nunca abriu sessão) — dispara quando ele aparece', async () => {
-    const nestedDir = join(dir, 'projeto-novo');
-    const nestedFile = join(nestedDir, 'abc-123.jsonl');
-    start(nestedFile);
-    await settle();
-
-    mkdirSync(nestedDir, { recursive: true });
-    await fs.writeFile(nestedFile, titleLine('projeto novo'), 'utf8');
-
-    await waitFor(() => changes.length >= 1, 5_000);
-    expect(changes[0].customTitle).toBe('projeto novo');
   });
 
   it('dispose() para de emitir — prova de que o handle não vaza', async () => {
@@ -257,8 +250,12 @@ describe('watchTranscript', () => {
     await waitFor(() => changes.length === 1);
 
     dispose();
+    expect(fakeFsWatch.openCount).toBe(0); // o handle do watch foi fechado
     await fs.appendFile(filePath, titleLine('depois do dispose'), 'utf8');
-    await settle();
+    // Evento perdido que ainda chegue a um listener já fechado: não pode virar leitura.
+    fakeFsWatch.emit('abc-123.jsonl', { includeClosed: true });
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await idle();
 
     expect(changes).toHaveLength(1);
     expect(changes[0].customTitle).toBe('antes do dispose');
@@ -280,7 +277,7 @@ describe('watchTranscript', () => {
     await waitFor(() => changes.length === 1);
 
     await fs.unlink(filePath);
-    await settle();
+    await osNotices();
 
     expect(changes).toHaveLength(1);
     expect(changes[0].customTitle).toBe('vai sumir');
@@ -295,10 +292,10 @@ describe('watchTranscript', () => {
   it('emite contextTokens do turno novo (a soma da última usage)', async () => {
     await fs.writeFile(filePath, userLine('primeira pergunta'), 'utf8');
     start();
-    await settle();
+    await idle();
     expect(changes).toEqual([]);
 
-    await fs.appendFile(filePath, assistantUsageLine({ input: 290, cacheCreation: 1505, cacheRead: 132_807 }), 'utf8');
+    await appendAndNotice(assistantUsageLine({ input: 290, cacheCreation: 1505, cacheRead: 132_807 }));
 
     await waitFor(() => changes.length === 1);
     expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: null, contextTokens: 134_602, cliColorName: null });
@@ -311,7 +308,7 @@ describe('watchTranscript', () => {
     expect(changes[0].contextTokens).toBe(50_100);
 
     // Nenhum rename: só um turno novo, com contexto maior.
-    await fs.appendFile(filePath, assistantUsageLine({ input: 120, cacheRead: 90_000 }), 'utf8');
+    await appendAndNotice(assistantUsageLine({ input: 120, cacheRead: 90_000 }));
 
     await waitFor(() => changes.length === 2);
     expect(changes[1].contextTokens).toBe(90_120);
@@ -336,7 +333,7 @@ describe('watchTranscript', () => {
     await waitFor(() => changes.length === 1);
 
     // Pós-compact: o contexto real encolheu, e o número tem de acompanhar.
-    await fs.appendFile(filePath, assistantUsageLine({ input: 150, cacheRead: 20_000 }), 'utf8');
+    await appendAndNotice(assistantUsageLine({ input: 150, cacheRead: 20_000 }));
 
     await waitFor(() => changes.length === 2);
     expect(changes[1].contextTokens).toBe(20_150);
@@ -356,8 +353,7 @@ describe('watchTranscript', () => {
     expect(changes[0].contextTokens).toBe(130_100);
 
     // Linha grande o bastante para empurrar a usage fora da cauda de 64 KB.
-    await fs.appendFile(filePath, userLine('x'.repeat(70 * 1024)), 'utf8');
-    await settle();
+    await appendAndNotice(userLine('x'.repeat(70 * 1024)));
 
     expect(changes).toHaveLength(1); // nada novo: o valor conhecido permanece
   });
@@ -367,8 +363,7 @@ describe('watchTranscript', () => {
     start();
     await waitFor(() => changes.length === 1);
 
-    await fs.appendFile(filePath, assistantUsageLine({ input: 10, cacheRead: 5_000, sidechain: true }), 'utf8');
-    await settle();
+    await appendAndNotice(assistantUsageLine({ input: 10, cacheRead: 5_000, sidechain: true }));
 
     expect(changes).toHaveLength(1);
     expect(changes[0].contextTokens).toBe(130_100);
@@ -377,12 +372,86 @@ describe('watchTranscript', () => {
   it('emite os DOIS campos numa rajada que muda título e usage ao mesmo tempo', async () => {
     await fs.writeFile(filePath, userLine('oi'), 'utf8');
     start();
-    await settle();
+    await idle();
 
-    await fs.appendFile(filePath, `${assistantUsageLine({ input: 10, cacheRead: 60_000 })}${titleLine('com nome')}`, 'utf8');
+    await appendAndNotice(`${assistantUsageLine({ input: 10, cacheRead: 60_000 })}${titleLine('com nome')}`);
 
     await waitFor(() => changes.length === 1);
     expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'com nome', contextTokens: 60_010, cliColorName: null });
+  });
+});
+
+// O que um watch falso esconderia: o evento do SO chegando de verdade, o
+// arquivo/diretório que nasce depois (retry real), o repoint de ponta a ponta.
+// `fs.watch` REAL em tmpdir e timers reais (debounce curto): `fs.watch` entrega
+// pelo loop de I/O do libuv, que timers fake não adiantam.
+describe('watchTranscript — fs.watch real', () => {
+  let dir: string;
+  let filePath: string;
+  let changes: TranscriptChange[];
+  let disposers: (() => void)[];
+
+  beforeEach(() => {
+    fakeFsWatch.reset(); // active=false: `fs.watch` real
+    dir = mkdtempSync(join(tmpdir(), 'donel-dev-transcript-watcher-real-'));
+    filePath = join(dir, 'abc-123.jsonl');
+    changes = [];
+    disposers = [];
+  });
+
+  afterEach(() => {
+    for (const dispose of disposers) dispose();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function start(path = filePath): () => void {
+    const watcher = watchTranscript({
+      sessionId: 'abc-123',
+      filePath: path,
+      debounceMs: DEBOUNCE_MS,
+      retryMs: 20,
+      onChange: (change) => changes.push(change),
+    });
+    disposers.push(watcher.dispose);
+    return watcher.dispose;
+  }
+
+  it('emite o nome novo quando um custom-title é acrescentado à sessão viva (CA-4)', async () => {
+    await fs.writeFile(filePath, userLine('trabalhando'), 'utf8');
+    start();
+    await drainIo(() => fs.stat(dir)); // consome a leitura inicial (sem título, não emite)
+    expect(changes).toEqual([]);
+
+    await fs.appendFile(filePath, titleLine('renomeado ao vivo'), 'utf8');
+
+    await waitFor(() => changes.length === 1);
+    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'renomeado ao vivo', contextTokens: null, cliColorName: null });
+  });
+
+  it('arquivo que ainda NÃO existe na abertura (o CLI cria na 1ª mensagem) — dispara quando ele nasce', async () => {
+    expect(existsSync(filePath)).toBe(false);
+    start();
+    await drainIo(() => fs.stat(dir));
+    expect(changes).toEqual([]);
+
+    await fs.writeFile(filePath, `${userLine('primeira mensagem')}${titleLine('nasceu com nome')}`, 'utf8');
+
+    await waitFor(() => changes.length >= 1);
+    expect(changes[0].customTitle).toBe('nasceu com nome');
+  });
+
+  it('DIRETÓRIO que ainda não existe (projeto que nunca abriu sessão) — dispara quando ele aparece', async () => {
+    const nestedDir = join(dir, 'projeto-novo');
+    const nestedFile = join(nestedDir, 'abc-123.jsonl');
+    start(nestedFile);
+    await drainIo(() => fs.stat(dir));
+    expect(changes).toEqual([]);
+
+    mkdirSync(nestedDir, { recursive: true });
+    await fs.writeFile(nestedFile, titleLine('projeto novo'), 'utf8');
+
+    await waitFor(() => changes.length >= 1, 5_000);
+    expect(changes[0].customTitle).toBe('projeto novo');
   });
 });
 
@@ -526,5 +595,66 @@ describe('TranscriptWatcherRegistry', () => {
 
     expect(registry.size).toBe(0);
     expect(disposed).toEqual(['s1', 's2']);
+  });
+});
+
+
+// T016 (014-chat, FR-033) — `/clear`/`/resume` trocam a conversa da aba: o
+// registro re-aponta o watcher da MESMA chave (ptyId) para o `.jsonl` novo, que
+// pode ainda não existir (conversa sem mensagem não cria arquivo).
+describe('TranscriptWatcherRegistry.repoint', () => {
+  let dir: string;
+  beforeEach(() => {
+    fakeFsWatch.reset(); // `fs.watch` real nos casos que usam o watcher de verdade
+    dir = mkdtempSync(join(tmpdir(), 'donel-repoint-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('re-aponta para arquivo que ainda não existe e emite quando ele nasce, com o sessionId novo', async () => {
+    const registry = new TranscriptWatcherRegistry();
+    const changes: TranscriptChange[] = [];
+    const oldFile = join(dir, 'old.jsonl');
+    const newFile = join(dir, 'new.jsonl');
+    await fs.writeFile(oldFile, titleLine('antigo', 'old'));
+
+    registry.start('pty-1', { sessionId: 'old', filePath: oldFile, onChange: (c) => changes.push(c), debounceMs: DEBOUNCE_MS });
+    await waitFor(() => changes.some((c) => c.sessionId === 'old'));
+
+    registry.repoint('pty-1', { sessionId: 'new', transcriptPath: newFile });
+    expect(existsSync(newFile)).toBe(false);
+    expect(registry.size).toBe(1);
+
+    await fs.writeFile(newFile, titleLine('novo', 'new'));
+    await waitFor(() => changes.some((c) => c.sessionId === 'new' && c.customTitle === 'novo'));
+
+    // O arquivo velho deixou de ser observado: escrever nele não emite mais.
+    // Barreira em vez de `settle()` de 240 ms: depois da escrita no velho vem uma
+    // mudança REAL no novo; quando ela chega, o evento do velho (se existisse,
+    // no mesmo diretório vigiado) já teve a mesma chance de chegar.
+    const before = changes.length;
+    await fs.appendFile(oldFile, titleLine('antigo 2', 'old'));
+    await fs.appendFile(newFile, titleLine('novo 2', 'new'));
+    await waitFor(() => changes.some((c) => c.customTitle === 'novo 2'));
+    await realDelay(DEBOUNCE_MS * 2);
+    expect(changes.length).toBe(before + 1);
+    expect(changes.slice(before).every((c) => c.sessionId === 'new')).toBe(true);
+    registry.disposeAll();
+  });
+
+  it('repoint de chave sem watcher é no-op (aba de terminal livre) e não abre handle', () => {
+    const registry = new TranscriptWatcherRegistry();
+    registry.repoint('pty-livre', { sessionId: 'x', transcriptPath: join(dir, 'x.jsonl') });
+    expect(registry.size).toBe(0);
+  });
+
+  it('repoint fecha o handle anterior (zero handle vazado)', () => {
+    const disposed: string[] = [];
+    const registry = new TranscriptWatcherRegistry((o) => ({ dispose: () => disposed.push(o.sessionId) }));
+    registry.start('pty-1', { sessionId: 'a', filePath: join(dir, 'a.jsonl'), onChange: () => undefined });
+    registry.repoint('pty-1', { sessionId: 'b', transcriptPath: join(dir, 'b.jsonl') });
+    expect(disposed).toEqual(['a']);
+    expect(registry.size).toBe(1);
   });
 });

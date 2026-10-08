@@ -1,0 +1,95 @@
+{
+ "name": "dialog-permission-inline",
+ "description": "Permissão de ferramenta (Create file), layout inline.",
+ "source": "real",
+ "origin": "q9c-perm.txt :: perm dialog",
+ "layout": "inline",
+ "cols": 120,
+ "rows": 21,
+ "lines": [
+  {
+   "text": " ▐▛███▛█   Claude Code v2.1.293",
+   "dim": []
+  },
+  {
+   "text": "▝▜██████▀  Haiku 5.5 · Claude Max",
+   "dim": []
+  },
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\scratc…",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "❯ Create a file named spike-perm2.txt in the current directory containing the text hi. Use the Write tool.",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "● Write(spike-perm2.txt)",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+   "dim": []
+  },
+  {
+   "text": " Create file",
+   "dim": []
+  },
+  {
+   "text": " spike-perm2.txt",
+   "dim": []
+  },
+  {
+   "text": "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+   "dim": []
+  },
+  {
+   "text": "  1 hi",
+   "dim": []
+  },
+  {
+   "text": "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+   "dim": []
+  },
+  {
+   "text": " Do you want to create spike-perm2.txt?",
+   "dim": []
+  },
+  {
+   "text": " ❯ 1. Yes",
+   "dim": []
+  },
+  {
+   "text": "   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)",
+   "dim": []
+  },
+  {
+   "text": "   3. No",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " Esc to cancel · Tab to amend",
+   "dim": []
+  }
+ ]
+}

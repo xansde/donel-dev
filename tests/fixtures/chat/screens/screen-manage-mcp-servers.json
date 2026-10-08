@@ -1,0 +1,171 @@
+{
+ "name": "screen-manage-mcp-servers",
+ "description": "Tela sem caixa de entrada: \"Manage MCP servers\".",
+ "source": "real",
+ "origin": "q9-r4.txt :: after /mcp",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " ▐▛███▛█   Claude Code v2.1.293",
+   "dim": []
+  },
+  {
+   "text": "▝▜██████▀  Haiku 5.5 · Claude Max",
+   "dim": []
+  },
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔",
+   "dim": []
+  },
+  {
+   "text": "   Manage MCP servers",
+   "dim": []
+  },
+  {
+   "text": "   18 servers",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     User MCPs (C:\\Users\\xansd\\.claude.json)",
+   "dim": []
+  },
+  {
+   "text": "   ❯ … bitwarden",
+   "dim": []
+  },
+  {
+   "text": "     ⚠ data-lake-airbnb           needs authentication",
+   "dim": []
+  },
+  {
+   "text": "     … filesystem",
+   "dim": []
+  },
+  {
+   "text": "     … github",
+   "dim": []
+  },
+  {
+   "text": "     … google-workspace",
+   "dim": []
+  },
+  {
+   "text": "     ✔ mcp-spotsys-prod           28 tools",
+   "dim": []
+  },
+  {
+   "text": "     ✘ mcp-spotsys-stg",
+   "dim": []
+  },
+  {
+   "text": "     … nekt",
+   "dim": []
+  },
+  {
+   "text": "     … obsidian",
+   "dim": []
+  },
+  {
+   "text": "     ⚠ olimpo                     needs authentication",
+   "dim": []
+  },
+  {
+   "text": "     ✔ pipedrive                  88 tools",
+   "dim": []
+  },
+  {
+   "text": "     … sapron",
+   "dim": []
+  },
+  {
+   "text": "     ✘ seazone-kb",
+   "dim": []
+  },
+  {
+   "text": "     ✔ slack                      14 tools",
+   "dim": []
+  },
+  {
+   "text": "     … taskdex",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     claude.ai",
+   "dim": []
+  },
+  {
+   "text": "     ✔ claude.ai Claude Docs      8 tools",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     Built-in MCPs (always available)",
+   "dim": []
+  },
+  {
+   "text": "     … claude-in-chrome",
+   "dim": []
+  },
+  {
+   "text": "     ⚠ plugin:supabase:supabase   needs authentication",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   ※ Run claude --debug to see error logs",
+   "dim": []
+  },
+  {
+   "text": "   https://code.claude.com/docs/en/mcp for help",
+   "dim": []
+  },
+  {
+   "text": "   ↑/↓ to navigate · Enter to confirm · Esc to cancel",
+   "dim": []
+  }
+ ]
+}
