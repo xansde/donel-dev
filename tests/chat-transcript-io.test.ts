@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TranscriptFollower, type FollowBatch, type FollowedLine } from '../src/main/chat/transcript-follower';
 import { readLineRef, readPageBackward } from '../src/main/chat/transcript-pager';
+import { pollUntil, realDelay } from './helpers/fsWatchWait';
 
 let dir: string;
 
@@ -18,15 +19,14 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-async function waitFor(cond: () => boolean, timeoutMs = 4000): Promise<void> {
-  const t0 = Date.now();
-  while (!cond()) {
-    if (Date.now() - t0 > timeoutMs) throw new Error('waitFor timed out');
-    await sleep(10);
-  }
-}
+// Conditioned waits (see helpers/fsWatchWait.ts). Where a test needs "the
+// follower has already looked at the file and found nothing", it awaits
+// `follower.readNow()` (serialised on the follower's own read queue) instead
+// of sleeping a fixed time.
+const waitFor = (cond: () => boolean, timeoutMs = 4000): Promise<void> => pollUntil(cond, timeoutMs);
+// Only for "nothing more must arrive" windows after `stop()`/late writes, where
+// there is no event to wait for; kept above 3x the 20 ms debounce.
+const quietFor = realDelay;
 
 function collector(): { batches: FollowBatch[]; lines: () => FollowedLine[]; onBatch: (b: FollowBatch) => void } {
   const batches: FollowBatch[] = [];
@@ -70,7 +70,7 @@ describe('TranscriptFollower - forward by offset', () => {
     const c = collector();
     const f = new TranscriptFollower({ path, offset: Buffer.byteLength(first), onBatch: c.onBatch, debounceMs: 20 });
     f.start();
-    await sleep(120);
+    await f.readNow();
     expect(c.lines()).toHaveLength(0);
     appendFileSync(path, `${userLine(2)}\n`);
     await waitFor(() => c.lines().length === 1);
@@ -90,7 +90,7 @@ describe('TranscriptFollower - forward by offset', () => {
     const full = asstLine(1);
     const cut = Math.floor(full.length / 2);
     appendFileSync(path, full.slice(0, cut));
-    await sleep(150);
+    await f.readNow();
     expect(c.lines()).toHaveLength(1); // nothing delivered yet
     // resume point = start of the incomplete line, never inside it
     expect(f.forward()).toEqual({ offset: Buffer.byteLength(userLine(1)) + 1, partial: '' });
@@ -112,7 +112,7 @@ describe('TranscriptFollower - forward by offset', () => {
     const line = Buffer.from(`${JSON.stringify({ type: 'user', t: 'ação é ü' })}\n`, 'utf8');
     const cut = line.indexOf(0xc3) + 1; // in the middle of the first 2-byte char
     appendFileSync(path, line.subarray(0, cut));
-    await sleep(120);
+    await f.readNow();
     appendFileSync(path, line.subarray(cut));
     await waitFor(() => c.lines().length === 1);
     f.stop();
@@ -125,10 +125,11 @@ describe('TranscriptFollower - forward by offset', () => {
     const c = collector();
     const f = new TranscriptFollower({ path, onBatch: c.onBatch }); // default debounce = 50 ms
     f.start();
-    await sleep(100);
+    await f.readNow();
     for (let i = 0; i < 10; i += 1) appendFileSync(path, `${userLine(i)}\n`);
     await waitFor(() => c.lines().length === 10);
-    await sleep(200);
+    // No trailing sleep: the 10th line only shows up once its batch was delivered,
+    // so a split burst would already be visible in `c.batches` here.
     f.stop();
     expect(c.batches.filter((b) => b.lines.length > 0)).toHaveLength(1);
   });
@@ -138,7 +139,7 @@ describe('TranscriptFollower - forward by offset', () => {
     const c = collector();
     const f = new TranscriptFollower({ path, onBatch: c.onBatch, debounceMs: 20, retryMs: 30 });
     f.start();
-    await sleep(120);
+    await f.readNow();
     expect(c.lines()).toHaveLength(0);
     writeFileSync(path, `${userLine(1)}\n`);
     await waitFor(() => c.lines().length === 1);
@@ -152,7 +153,7 @@ describe('TranscriptFollower - forward by offset', () => {
     const c = collector();
     const f = new TranscriptFollower({ path, onBatch: c.onBatch, debounceMs: 20, retryMs: 30 });
     f.start();
-    await sleep(100);
+    await f.readNow();
     mkdirSync(sub, { recursive: true });
     writeFileSync(path, `${userLine(1)}\n`);
     await waitFor(() => c.lines().length === 1);
@@ -169,11 +170,11 @@ describe('TranscriptFollower - forward by offset', () => {
     await waitFor(() => c.lines().length === 1);
 
     f.repoint(b); // b is born ~50 ms later (as in /clear)
-    await sleep(60);
+    await f.readNow(); // reads the (still missing) new file: nothing yet
     appendFileSync(a, `${userLine(99)}\n`); // late write to the old file must be ignored
     writeFileSync(b, `${userLine(2)}\n${asstLine(2)}\n`);
     await waitFor(() => c.lines().length === 3);
-    await sleep(150);
+    await quietFor(60);
     f.stop();
 
     const texts = c.lines().map((l) => l.text);
@@ -224,7 +225,7 @@ describe('TranscriptFollower - forward by offset', () => {
     const c = collector();
     const f = new TranscriptFollower({ path, offset: size - 2000, onBatch: c.onBatch, debounceMs: 20 });
     f.start();
-    await sleep(150);
+    await f.readNow();
     appendFileSync(path, `${asstLine(1)}\n`);
     await waitFor(() => c.lines().some((l) => l.text === asstLine(1)));
     f.stop();
@@ -256,7 +257,7 @@ describe('TranscriptFollower - forward by offset', () => {
     f.stop();
     f.stop();
     appendFileSync(path, `${userLine(2)}\n`);
-    await sleep(200);
+    await quietFor(80);
     expect(c.lines()).toHaveLength(1);
   });
 
