@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
+import { launchIsolatedApp } from './helpers/launch';
+import { PROJECT_NAME } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T015 (ConfigStore + statusbar — FR-007, FR-009): prova de
@@ -72,9 +73,7 @@ async function openPreferences(win: Page): Promise<import('@playwright/test').Lo
 }
 
 async function launchApp(): Promise<void> {
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow } = await launchIsolatedApp({ userDataDir }));
 }
 
 test.beforeAll(async () => {
@@ -94,7 +93,7 @@ test.afterAll(async () => {
   }
 });
 
-test('o app grava no userData isolado, e o de produção seria <appData>\\<nome do app> — sem tocar nele', async () => {
+test('o app grava no userData isolado, e o de produção seria <appData>\\<nome do app> — sem tocar nele @config', async () => {
   const paths = await electronApp.evaluate(({ app }) => ({
     name: app.getName(),
     appData: app.getPath('appData'),
@@ -111,7 +110,7 @@ test('o app grava no userData isolado, e o de produção seria <appData>\\<nome 
   expect(path.resolve(paths.appData).toLowerCase()).toBe(path.resolve(String(process.env.APPDATA)).toLowerCase());
 });
 
-test('preferências (roots, notificação, launcher defaults, favoritos) sobrevivem a fechar e reabrir o app', async () => {
+test('preferências (roots, notificação, launcher defaults, favoritos) sobrevivem a fechar e reabrir o app @config', async () => {
   test.setTimeout(90_000);
 
   const targetPreference = original.notificationPreference === 'all' ? 'none' : 'all';

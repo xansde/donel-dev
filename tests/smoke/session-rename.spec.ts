@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { writeFileSync } from 'node:fs';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT, SESSIONS_DIR } from './repoUnderTest';
+import { launchIsolatedApp } from './helpers/launch';
+import { removeSessionFile, seedSession } from './helpers/sessions';
+import type { SeededSession } from './helpers/sessions';
+import { confirmCloseModalIfOpen, openFreeTerminalTab, openPreviousSessionsDialog } from './helpers/ui';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T409 (004-nomear-sessoes): renomear sessão pela UI (CA-3),
@@ -37,65 +39,13 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // bug do §B19 (o clique achava o `donel-dev` de verdade e a lista voltava vazia).
 
 
-interface SeededSession {
-  readonly id: string;
-  readonly filePath: string;
-  readonly marker: string;
-  readonly customTitle: string;
-}
-
-/**
- * Sessão sintética com UMA mensagem de usuário (que vira o `preview`, o
- * fallback) e UM registro `custom-title` (o que o `/rename` do CLI grava).
- * Schema confirmado em transcritos reais — só as chaves, nunca conteúdo.
- */
-function seedSessionWithCustomTitle(): SeededSession {
-  const id = randomUUID();
-  const marker = `MARCADOR-SMOKE-RENAME-${randomUUID().slice(0, 8)}`;
-  const customTitle = `nome-do-rename-${randomUUID().slice(0, 6)}`;
-  const filePath = join(SESSIONS_DIR, `${id}.jsonl`);
-
-  const userLine = {
-    type: 'user',
-    message: { role: 'user', content: `${marker} — fixture sintética do smoke de rename (T409), sem conteúdo real.` },
-    uuid: randomUUID(),
-    parentUuid: null,
-    sessionId: id,
-    timestamp: new Date().toISOString(),
-    cwd: REPO_ROOT,
-    isSidechain: false,
-  };
-  // Dois registros de propósito: o ÚLTIMO tem de vencer (spec.md §Notas).
-  const firstTitle = { type: 'custom-title', customTitle: 'nome-antigo-que-nao-deve-aparecer', sessionId: id };
-  const lastTitle = { type: 'custom-title', customTitle, sessionId: id };
-
-  mkdirSync(SESSIONS_DIR, { recursive: true });
-  writeFileSync(
-    filePath,
-    `${[JSON.stringify(firstTitle), JSON.stringify(userLine), JSON.stringify(lastTitle)].join('\n')}\n`,
-    'utf8',
-  );
-  return { id, filePath, marker, customTitle };
-}
-
-function removeSessionFile(filePath: string | undefined): void {
-  if (!filePath || !existsSync(filePath)) return;
-  try {
-    unlinkSync(filePath);
-  } catch {
-    // já removido — ok
-  }
-}
-
 let electronApp: ElectronApplication;
 let appWindow: Page;
 let userDataDir: string;
-let seeded: SeededSession;
+let seeded: SeededSession & { readonly customTitle: string };
 
 async function launchApp(): Promise<void> {
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow } = await launchIsolatedApp({ userDataDir }));
 }
 
 /** Recarrega só o renderer — o boot do App refaz `config.get()`, então mudanças feitas por `evaluate` (fora do React) aparecem na UI. */
@@ -104,41 +54,12 @@ async function reloadRenderer(): Promise<void> {
   await appWindow.waitForLoadState('domcontentloaded');
 }
 
-async function openFreeTerminalTab(): Promise<void> {
-  await appWindow.getByRole('button', { name: 'Mais opções de ＋ Nova sessão' }).click();
-  await appWindow.getByRole('menuitem', { name: 'Terminal (shell livre)' }).click();
-}
-
-// FIX (item 1, rodada de feedback do teste de 30/07) — o botão "Sessões
-// anteriores de X" morava numa linha da árvore "Projetos" da sidebar
-// (removida); migrou pro popover "Projetos" do seletor no titlebar.
-async function openPreviousSessionsDialog() {
-  await appWindow.getByRole('button', { name: 'Trocar de projeto' }).click();
-  const projectsPopover = appWindow.getByRole('dialog', { name: 'Projetos' });
-  await expect(projectsPopover).toBeVisible();
-  const historyButton = projectsPopover.getByRole('button', { name: `Sessões anteriores de ${PROJECT_NAME}`, exact: true });
-  await expect(historyButton).toBeVisible({ timeout: 15_000 });
-  await historyButton.click();
-  // FIX (bug pré-existente, achado ao mexer nesta função pro item 1) — Item 11
-  // (fix/009-board-real-e-modal) trocou a tela de "Sessões anteriores" de
-  // `Modal` (role="dialog") pra uma TELA no grid do `.shell` (role="region"),
-  // mas este arquivo nunca tinha sido atualizado — a query aqui achava um
-  // dialog que não existe mais, sempre estourando timeout.
-  const dialog = appWindow.getByRole('region', { name: new RegExp(`Sessões anteriores · ${PROJECT_NAME}`) });
-  await expect(dialog).toBeVisible();
-  return dialog;
-}
-
-/** Fecha o modal de confirmação de fechar aba, quando ele aparece (processo vivo). */
-async function confirmCloseModalIfOpen(): Promise<void> {
-  const modal = appWindow.getByRole('dialog', { name: 'Fechar sessão?' });
-  if (await modal.isVisible().catch(() => false)) {
-    await modal.getByRole('button', { name: 'Fechar' }).click();
-  }
-}
-
 test.beforeAll(async () => {
-  seeded = seedSessionWithCustomTitle();
+  seeded = seedSession({
+    marker: `MARCADOR-SMOKE-RENAME-${randomUUID().slice(0, 8)}`,
+    origin: 'T409',
+    customTitle: `nome-do-rename-${randomUUID().slice(0, 6)}`,
+  });
   userDataDir = createIsolatedUserDataDir('session-rename');
   await launchApp();
 });
@@ -155,10 +76,10 @@ test.afterAll(async () => {
   }
 });
 
-test('T409 — gesto de edição inline na aba: duplo-clique renomeia, Esc restaura, clicar ainda ativa e o × ainda fecha', async () => {
+test('T409 — gesto de edição inline na aba: duplo-clique renomeia, Esc restaura, clicar ainda ativa e o × ainda fecha @sessoes', async () => {
   test.setTimeout(90_000);
 
-  await openFreeTerminalTab();
+  await openFreeTerminalTab(appWindow);
   const tabs = appWindow.locator('[role="tab"]');
   await expect(tabs).toHaveCount(1);
   // POSIÇÃO, não texto: em modo edição o nome vive no `value` de um `<input>`,
@@ -199,7 +120,7 @@ test('T409 — gesto de edição inline na aba: duplo-clique renomeia, Esc resta
 
   // 4. Interação preservada (lição do ProfileSwitcher, entrega 002): com duas
   // abas, clicar na renomeada ainda ATIVA ela.
-  await openFreeTerminalTab();
+  await openFreeTerminalTab(appWindow);
   await expect(tabs).toHaveCount(2);
   await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
   await tab.getByText('nome pela aba', { exact: true }).click();
@@ -207,20 +128,20 @@ test('T409 — gesto de edição inline na aba: duplo-clique renomeia, Esc resta
 
   // 5. …e o × ainda FECHA (o gesto de rename não roubou o clique do botão).
   await tab.getByRole('button', { name: 'Fechar aba nome pela aba' }).click();
-  await confirmCloseModalIfOpen();
+  await confirmCloseModalIfOpen(appWindow);
   await expect(tabs).toHaveCount(1);
   await expect(tabs.first()).toHaveAttribute('title', /^Terminal —/);
 
   // Limpa a aba restante para não vazar processo pro próximo teste.
   await tabs.first().getByRole('button', { name: /^Fechar aba / }).click();
-  await confirmCloseModalIfOpen();
+  await confirmCloseModalIfOpen(appWindow);
   await expect(tabs).toHaveCount(0);
 });
 
-test('T409 — CA-1: a lista de sessões anteriores mostra o custom-title do /rename (o último), não a 1ª mensagem', async () => {
+test('T409 — CA-1: a lista de sessões anteriores mostra o custom-title do /rename (o último), não a 1ª mensagem @sessoes', async () => {
   test.setTimeout(90_000);
 
-  const dialog = await openPreviousSessionsDialog();
+  const dialog = await openPreviousSessionsDialog(appWindow);
 
   // A busca casa contra o preview (1ª mensagem) — é por isso que o marcador
   // ainda acha a linha mesmo com o label exibindo outro texto.
@@ -237,7 +158,7 @@ test('T409 — CA-1: a lista de sessões anteriores mostra o custom-title do /re
   await expect(dialog).toBeHidden();
 });
 
-test('T409 — CA-6/C5: nome dado na UI vence o custom-title, sobrevive ao restart e vazio volta ao fallback', async () => {
+test('T409 — CA-6/C5: nome dado na UI vence o custom-title, sobrevive ao restart e vazio volta ao fallback @sessoes', async () => {
   test.setTimeout(120_000);
 
   const uiName = `nome-pela-ui-${randomUUID().slice(0, 6)}`;
@@ -253,7 +174,7 @@ test('T409 — CA-6/C5: nome dado na UI vence o custom-title, sobrevive ao resta
   await reloadRenderer();
 
   // 2. Dirty-check do C2: `seenTitle` == custom-title atual → vence a UI.
-  let dialog = await openPreviousSessionsDialog();
+  let dialog = await openPreviousSessionsDialog(appWindow);
   await dialog.getByLabel('Filtrar sessões anteriores por nome').fill(seeded.marker);
   let row = dialog.locator('[data-testid="previous-session-row"]');
   await expect(row).toHaveCount(1, { timeout: 10_000 });
@@ -269,7 +190,7 @@ test('T409 — CA-6/C5: nome dado na UI vence o custom-title, sobrevive ao resta
   expect(persisted.sessionNames[seeded.id]?.name).toBe(uiName);
   expect(persisted.sessionNames[seeded.id]?.seenTitle).toBe(seeded.customTitle);
 
-  dialog = await openPreviousSessionsDialog();
+  dialog = await openPreviousSessionsDialog(appWindow);
   await dialog.getByLabel('Filtrar sessões anteriores por nome').fill(seeded.marker);
   row = dialog.locator('[data-testid="previous-session-row"]');
   await expect(row).toHaveCount(1, { timeout: 10_000 });
@@ -284,7 +205,7 @@ test('T409 — CA-6/C5: nome dado na UI vence o custom-title, sobrevive ao resta
   expect(cleared.sessionNames[seeded.id]).toBeUndefined();
   await reloadRenderer();
 
-  dialog = await openPreviousSessionsDialog();
+  dialog = await openPreviousSessionsDialog(appWindow);
   await dialog.getByLabel('Filtrar sessões anteriores por nome').fill(seeded.marker);
   row = dialog.locator('[data-testid="previous-session-row"]');
   await expect(row).toHaveCount(1, { timeout: 10_000 });
@@ -294,7 +215,7 @@ test('T409 — CA-6/C5: nome dado na UI vence o custom-title, sobrevive ao resta
   await expect(dialog).toBeHidden();
 });
 
-test('T409 — C2: um /rename NOVO no CLI (custom-title diferente do seenTitle) vence o nome da UI', async () => {
+test('T409 — C2: um /rename NOVO no CLI (custom-title diferente do seenTitle) vence o nome da UI @sessoes', async () => {
   test.setTimeout(90_000);
 
   const uiName = `ui-vai-perder-${randomUUID().slice(0, 6)}`;
@@ -314,7 +235,7 @@ test('T409 — C2: um /rename NOVO no CLI (custom-title diferente do seenTitle) 
   );
   await reloadRenderer();
 
-  const dialog = await openPreviousSessionsDialog();
+  const dialog = await openPreviousSessionsDialog(appWindow);
   await dialog.getByLabel('Filtrar sessões anteriores por nome').fill(seeded.marker);
   const row = dialog.locator('[data-testid="previous-session-row"]');
   await expect(row).toHaveCount(1, { timeout: 10_000 });

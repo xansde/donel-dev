@@ -50,7 +50,7 @@ test.afterAll(async () => {
   rmSync(path.dirname(claudeHomeDir), { recursive: true, force: true });
 });
 
-test('T1127 — mcpServers sobrevive a duas trocas de conta seguidas', async () => {
+test('T1127 — mcpServers sobrevive a duas trocas de conta seguidas @contas', async () => {
   test.setTimeout(60_000);
 
   await appWindow.evaluate((home) => window.donel.accounts.setConfig({ claudeHome: home }), claudeHomeDir);

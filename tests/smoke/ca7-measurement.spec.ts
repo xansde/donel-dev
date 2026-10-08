@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import path, { join } from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { join } from 'node:path';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { launchIsolatedApp } from './helpers/launch';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 import { median } from './statistics';
 
@@ -50,8 +51,6 @@ import { median } from './statistics';
 // no número é o round-trip do `evaluate` final, inevitável em qualquer medição
 // feita de fora do processo medido.
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
 const RECENT_PER_PROJECT = 5;
 const FAVORITES_COUNT = 5;
 /** Cerca de regressão, não alvo (ver decisão de 26/07 no topo). Pior caso medido numa amostra isolada: 274 ms — a MEDIANA de N amostras fica bem abaixo disso (ver comentário G4). */
@@ -64,9 +63,7 @@ let appWindow: Page;
 let userDataDir: string;
 
 async function launchApp(): Promise<void> {
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow } = await launchIsolatedApp({ userDataDir }));
 }
 
 /**
@@ -120,7 +117,7 @@ test.afterAll(async () => {
   }
 });
 
-test('T712/CA-7 — domcontentloaded → sidebar com o registro cheio (5×6 linhas), mediana de 5 boots independentes', async () => {
+test('T712/CA-7 — domcontentloaded → sidebar com o registro cheio (5×6 linhas), mediana de 5 boots independentes @perf', async () => {
   // G4 — orçamento generoso: SAMPLE_COUNT boots completos (cada um com seu
   // próprio polling de até 10s) mais o boot de descoberta abaixo.
   test.setTimeout(180_000);

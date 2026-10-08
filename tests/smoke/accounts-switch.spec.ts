@@ -60,7 +60,7 @@ test.afterAll(async () => {
   rmSync(path.dirname(claudeHomeDir), { recursive: true, force: true });
 });
 
-test('T1126 — conectar, listar, trocar: .credentials.json reescrito e oauthAccount removido', async () => {
+test('T1126 — conectar, listar, trocar: .credentials.json reescrito e oauthAccount removido @contas', async () => {
   test.setTimeout(60_000);
 
   // Isola o motor no claudeHome de teste ANTES de conectar (nunca toca o
@@ -94,7 +94,7 @@ test('T1126 — conectar, listar, trocar: .credentials.json reescrito e oauthAcc
   expect(credentialsAfter.claudeAiOauth.accessToken).toBe('fixture-access-beta');
 });
 
-test('T1126 — painel AccountsPanel renderiza sem quebrar (motor já conectado)', async () => {
+test('T1126 — painel AccountsPanel renderiza sem quebrar (motor já conectado) @contas', async () => {
   const trigger = appWindow.locator('[data-testid="accounts-panel-trigger"]');
   await expect(trigger).toBeVisible();
   await trigger.click();

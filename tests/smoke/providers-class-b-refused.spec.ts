@@ -1,7 +1,6 @@
-import path from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
 
 // T1324b (011-contas-e-provedores, etapa 3, C20/D5) — entrada `class: 'B'`
 // (aceita e persistida pelo registry — D5, "estrutura sim, execução não") é
@@ -11,26 +10,20 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // 'B'`; só a UI não oferece o formulário), simulando o "config.json editado
 // à mão" que o contrato também cobre.
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
 
 let electronApp: ElectronApplication;
 let appWindow: Page;
 let userDataDir: string;
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('providers-class-b-refused');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow, userDataDir } = await launchIsolatedApp({ name: 'providers-class-b-refused' }));
 });
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  await closeIsolatedApp({ app: electronApp, userDataDir });
 });
 
-test('T1324b — classe B é listada como não suportada e o lançamento é recusado com mensagem', async () => {
+test('T1324b — classe B é listada como não suportada e o lançamento é recusado com mensagem @provedores', async () => {
   test.setTimeout(60_000);
 
   const created = await appWindow.evaluate(() =>

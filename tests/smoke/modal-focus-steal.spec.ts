@@ -1,7 +1,6 @@
-import path from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
 
 // FIX (teste manual da T1325, 2026-08-04 — issue 09 de contas-e-provedores):
 // digitar em qualquer campo do painel "Provedores" roubava o foco para o
@@ -11,26 +10,20 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // campo. O contrato agora é: o foco inicial acontece UMA vez por abertura;
 // re-renders com o modal aberto nunca movem o foco de onde o usuário está.
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
 
 let electronApp: ElectronApplication;
 let appWindow: Page;
 let userDataDir: string;
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('modal-focus-steal');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow, userDataDir } = await launchIsolatedApp({ name: 'modal-focus-steal' }));
 });
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  await closeIsolatedApp({ app: electronApp, userDataDir });
 });
 
-test('digitar num campo do painel Provedores não move o foco para o campo Nome', async () => {
+test('digitar num campo do painel Provedores não move o foco para o campo Nome @provedores', async () => {
   await appWindow.click('[data-testid="providers-panel-trigger"]');
   await appWindow.waitForSelector('[data-testid="providers-panel"]');
 

@@ -1,8 +1,8 @@
-import { execSync } from 'node:child_process';
 import path from 'node:path';
 import react from '@vitejs/plugin-react';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { listPids, waitForNewPids } from '../smoke/helpers/processes';
 import { createServer } from 'vite';
 import type { ViteDevServer } from 'vite';
 import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from '../smoke/repoUnderTest';
@@ -29,36 +29,6 @@ let viteServer: ViteDevServer;
 let electronApp: ElectronApplication;
 let window: Page;
 let userDataDir: string;
-
-/** PIDs vivos de `imageName` agora, via `tasklist` real — mesmo helper de tabs-lifecycle.spec.ts (diferença de PID, nunca contagem absoluta). */
-function listPids(imageName: string): Set<number> {
-  let output: string;
-  try {
-    output = execSync(`tasklist /FI "IMAGENAME eq ${imageName}" /FO CSV /NH`, { encoding: 'utf8' });
-  } catch {
-    return new Set();
-  }
-  const pids = new Set<number>();
-  for (const line of output.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('"')) continue;
-    const cols = trimmed.split('","').map((col) => col.replace(/^"|"$/g, ''));
-    const pid = Number(cols[1]);
-    if (Number.isFinite(pid)) pids.add(pid);
-  }
-  return pids;
-}
-
-/** Novos PIDs de `imageName` que apareceram depois de `before` — reavalia até achar exatamente `count` (`toPass`, tolera o polling de `tasklist`). Mesmo helper de tabs-lifecycle.spec.ts. */
-async function waitForExactlyNewPids(imageName: string, before: Set<number>, count: number, timeoutMs = 20_000): Promise<number[]> {
-  let added: number[] = [];
-  await expect(async () => {
-    const now = listPids(imageName);
-    added = [...now].filter((pid) => !before.has(pid));
-    expect(added.length).toBe(count);
-  }).toPass({ timeout: timeoutMs });
-  return added;
-}
 
 test.beforeAll(async () => {
   // Dev server de verdade do renderer (mesma root/plugin de
@@ -95,7 +65,7 @@ test.afterAll(async () => {
   if (userDataDir) removeIsolatedUserDataDir(userDataDir);
 });
 
-test('modo dev (StrictMode ativo): aba nova via launcher fica viva e digitável', async () => {
+test('modo dev (StrictMode ativo): aba nova via launcher fica viva e digitável @abas @real', async () => {
   test.setTimeout(60_000);
 
   // Confirma que a janela realmente carregou do DEV SERVER (não do
@@ -129,7 +99,7 @@ test('modo dev (StrictMode ativo): aba nova via launcher fica viva e digitável'
   // 1 `claude.exe` novo (sem o double-spawn órfão do bug original, que
   // deixava um processo morto gerenciado + um vivo órfão, ou os dois
   // mortos).
-  await waitForExactlyNewPids('claude.exe', claudeBaseline, 1, 30_000);
+  await waitForNewPids('claude.exe', claudeBaseline, 1, 30_000, true);
 
   const activePane = window.locator('[data-testid="terminal-pane"]:visible');
   await expect(activePane).toHaveCount(1);

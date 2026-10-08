@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
+import { launchClaudeTab } from './helpers/ui';
+import { APP_MAIN, REPO_ROOT } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 import { refuseIfRealClaudeHome } from './accountsCredentialGuard';
 
@@ -101,29 +102,6 @@ function accountRow(label: string): Locator {
   return appWindow.locator('[data-testid="account-row"]').filter({ has: appWindow.getByText(label, { exact: true }) });
 }
 
-/**
- * Abre a aba "＋ Nova sessão" -> projeto (só na primeira vez; o Launcher
- * lembra o último projeto lançado) -> Nome -> "▶ Iniciar". Mesmo gesto de
- * `model-per-tab.spec.ts`, sem tocar modelo/esforço (esta suíte não olha
- * pra eles).
- */
-async function launchClaudeTab(name: string, selectProject: boolean): Promise<Locator> {
-  await appWindow.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
-  const launcher = appWindow.locator('aside[aria-label="Lançar sessão"]');
-  await expect(launcher).toBeVisible();
-  if (selectProject) {
-    await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
-    await appWindow.getByRole('option', { name: PROJECT_NAME, exact: true }).click();
-  }
-  await launcher.getByLabel('Nome').fill(name);
-  await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
-
-  const tab = appWindow.locator('[role="tab"]', { hasText: name });
-  await expect(tab).toBeVisible();
-  await expect(tab).toHaveAttribute('aria-selected', 'true');
-  return tab;
-}
-
 async function openAccountsPanel(): Promise<void> {
   await appWindow.getByTestId('accounts-panel-trigger').click();
   await expect(appWindow.getByTestId('accounts-panel')).toBeVisible();
@@ -179,7 +157,7 @@ async function reconnectAndWaitLoginEnd(row: Locator, targetLabel: string): Prom
 
 // ---------------------------------------------------------------------------
 
-test('cenário 1 — liga o motor sem criar conta; a aba claude mostra a conta ativa (D1)', async () => {
+test('cenário 1 — liga o motor sem criar conta; a aba claude mostra a conta ativa (D1) @contas', async () => {
   test.setTimeout(90_000);
 
   await appWindow.evaluate((home) => window.donel.accounts.setConfig({ claudeHome: home }), claudeHomeDir);
@@ -188,12 +166,12 @@ test('cenário 1 — liga o motor sem criar conta; a aba claude mostra a conta a
   const switchOutcome = await appWindow.evaluate(() => window.donel.accounts.switch('acc-folga'));
   expect(switchOutcome.kind).toBe('switched');
 
-  tabA = await launchClaudeTab('aba-a', true);
+  tabA = await launchClaudeTab(appWindow, { name: 'aba-a' });
 
   await expect(statusBarAccount()).toHaveText('Sessão: Conta folga · 10% usado');
 });
 
-test('cenário 2 — troca em voo aparece na aba já aberta, não na aba nova; painel confirma o escopo global (D1/D2)', async () => {
+test('cenário 2 — troca em voo aparece na aba já aberta, não na aba nova; painel confirma o escopo global (D1/D2) @contas', async () => {
   test.setTimeout(90_000);
 
   const switchOutcome = await appWindow.evaluate(() => window.donel.accounts.switch('acc-lotada'));
@@ -204,7 +182,7 @@ test('cenário 2 — troca em voo aparece na aba já aberta, não na aba nova; p
   await expect(statusBarAccount()).toHaveText('Sessão: Conta lotada · 92% usado · trocou em voo (era Conta folga)');
 
   // Aba B nasce DEPOIS da troca -> nasce já com "Conta lotada", sem mismatch.
-  tabB = await launchClaudeTab('aba-b', false);
+  tabB = await launchClaudeTab(appWindow, { project: null, name: 'aba-b' });
   await expect(statusBarAccount()).toHaveText('Sessão: Conta lotada · 92% usado');
 
   await openAccountsPanel();
@@ -214,7 +192,7 @@ test('cenário 2 — troca em voo aparece na aba já aberta, não na aba nova; p
   await appWindow.keyboard.press('Escape');
 });
 
-test('cenário 3 — "Atualizar" dispara o auto-switch de verdade: "Conta cheia" cede pra "Conta folga" (D5)', async () => {
+test('cenário 3 — "Atualizar" dispara o auto-switch de verdade: "Conta cheia" cede pra "Conta folga" (D5) @contas', async () => {
   test.setTimeout(60_000);
 
   const switchOutcome = await appWindow.evaluate(() => window.donel.accounts.switch('acc-cheia'));
@@ -237,7 +215,7 @@ test('cenário 3 — "Atualizar" dispara o auto-switch de verdade: "Conta cheia"
   await expect(statusBarAccount()).toHaveText('Sessão: Conta folga · 10% usado · trocou em voo (era Conta lotada)');
 });
 
-test('cenário 4 — sem candidata com folga suficiente: auto-switch fica "saturated", avisa e não troca (D6)', async () => {
+test('cenário 4 — sem candidata com folga suficiente: auto-switch fica "saturated", avisa e não troca (D6) @contas', async () => {
   test.setTimeout(60_000);
 
   await appWindow.evaluate(() =>
@@ -265,7 +243,7 @@ test('cenário 4 — sem candidata com folga suficiente: auto-switch fica "satur
   await expect(statusBarAccount()).toContainText('· sem conta com folga');
 });
 
-test('cenário 5 — conta colada sem leitura de carga vira "blind", não "saturated" (D8)', async () => {
+test('cenário 5 — conta colada sem leitura de carga vira "blind", não "saturated" (D8) @contas', async () => {
   test.setTimeout(60_000);
 
   await openAccountsPanel();
@@ -283,7 +261,7 @@ test('cenário 5 — conta colada sem leitura de carga vira "blind", não "satur
   await expect(statusBarAccount()).toContainText('· sem leitura das outras contas');
 });
 
-test('cenário 6 — expired-credentials marca "Reconectar"; reconectar renova a credencial e grava o fingerprint (D3)', async () => {
+test('cenário 6 — expired-credentials marca "Reconectar"; reconectar renova a credencial e grava o fingerprint (D3) @contas', async () => {
   test.setTimeout(120_000);
 
   await appWindow.evaluate(() =>
@@ -315,7 +293,7 @@ test('cenário 6 — expired-credentials marca "Reconectar"; reconectar renova a
   await appWindow.keyboard.press('Escape');
 });
 
-test('cenário 7 — reconectar com a conta errada (mesmo fingerprint fixo) recusa e não altera nada (D3)', async () => {
+test('cenário 7 — reconectar com a conta errada (mesmo fingerprint fixo) recusa e não altera nada (D3) @contas', async () => {
   test.setTimeout(120_000);
 
   await openAccountsPanel();

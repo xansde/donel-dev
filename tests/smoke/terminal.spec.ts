@@ -1,8 +1,9 @@
 import { execSync } from 'node:child_process';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
+import { launchClaudeTab, openLauncherPanel, openProjectClaudeTab, waitForClaudeBooted } from './helpers/ui';
+import { PROJECT_NAME } from './repoUnderTest';
 
 // Smoke da T004 (overnight, sem humano): abre o app buildado e prova que
 // node-pty carrega dentro do Electron (não só do Node puro). Redimensiona a
@@ -41,24 +42,8 @@ let window: Page;
 let userDataDir: string;
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('terminal');
-  electronApp = await electron.launch({
-    args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
-    cwd: REPO_ROOT,
-  });
-  window = await electronApp.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ name: 'terminal' }));
 });
-
-// FIX (teste manual 27/07) — o corpo do "＋ Nova sessão" passou a ABRIR o
-// Launcher direto (App.tsx, `launcherOpen`), em vez do quick-launch cego; o
-// antigo item de menu "Sessão Claude" foi removido do dropdown (o
-// quick-launch virou "Rápida (última config)"). Testes que interagem direto
-// com `[data-testid="launcher"]` só precisam clicar no corpo do botão.
-async function openLauncherPanel(): Promise<void> {
-  await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
-  await expect(window.locator('[data-testid="launcher"]')).toBeVisible();
-}
 
 /**
  * Nº de processos `claude.exe` vivos AGORA, via `tasklist` real (mesmo
@@ -76,11 +61,10 @@ function countClaudeProcesses(): number {
 }
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  await closeIsolatedApp({ app: electronApp, userDataDir });
 });
 
-test('terminal spawns a real claude session inside Electron', async () => {
+test('terminal spawns a real claude session inside Electron @abas @real', async () => {
   test.setTimeout(60_000);
 
   // FIX (decisão A, 2026-07-23) — o app nasce com ZERO abas agora (empty
@@ -108,48 +92,15 @@ test('terminal spawns a real claude session inside Electron', async () => {
   // uma — se este teste também usasse `donel-dev`, o clique da sidebar no
   // T007 só focaria esta aba em vez de provar a criação).
   await expect(window.locator('[data-testid="empty-state"]')).toBeVisible();
-  await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
-
-  const launcher = window.locator('[data-testid="launcher"]');
-  await expect(launcher).toBeVisible();
-  await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
-  await window.getByRole('option', { name: 'ai-rats', exact: true }).click();
-  await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
-  await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
-
+  await launchClaudeTab(window, { project: 'ai-rats', model: 'haiku' });
   await expect(window.locator('[data-testid="empty-state"]')).toHaveCount(0);
 
-  const terminalPane = window.locator('[data-testid="terminal-pane"]');
-  await expect(terminalPane).toBeVisible();
-
-  // xterm monta e o pty:create (IPC async) resolve; espera a sessão claude
-  // real imprimir algo (o CLI é encontrado nesta máquina — where.exe claude
-  // resolve pra ~/.local/bin/claude.exe). Não digitamos nenhum prompt aqui:
-  // é só o boot da sessão, sem turno de API.
-  await expect(async () => {
-    const text = await terminalPane.innerText();
-    expect(text.length).toBeGreaterThan(0);
-    expect(text).not.toContain('CLAUDE_NOT_FOUND');
-    expect(text).not.toContain('Falha ao iniciar');
-  }).toPass({ timeout: 20_000 });
-
-  // `ai-rats` pode não ter sido usada pelo CLI real nesta máquina ainda —
-  // pode disparar o "Quick safety check" (diálogo de confiança) na primeira
-  // vez que essa pasta é usada; Enter aceita a opção default ("1. Yes, trust
-  // folder"). Se a pasta já estiver confiável, o terminal já está no prompt
-  // normal e esse Enter no campo de input vazio não tem efeito nenhum.
-  await terminalPane.click();
-  if ((await terminalPane.innerText()).includes('trust this folder')) {
-    await window.keyboard.press('Enter');
-  }
-
-  await expect(async () => {
-    const text = await terminalPane.innerText();
-    expect(text.toLowerCase()).toContain('claude code');
-  }).toPass({ timeout: 15_000 });
+  // Boot only (no API turn): the real CLI prints its banner; the "trust this
+  // folder" dialog (first use of a folder) is accepted with Enter.
+  await waitForClaudeBooted(window, { until: 'banner' });
 });
 
-test('opening a project from the project switcher creates a tab with a claude session in that project cwd', async () => {
+test('opening a project from the project switcher creates a tab with a claude session in that project cwd @abas', async () => {
   // T007 — prova o DoD ("abrir projeto funciona", FR-001/FR-002): clicar num
   // projeto real spawna uma sessão claude nova com `cwd` correto, sem matar
   // a aba "Sessão" default (continua montada, só fica display:none —
@@ -161,46 +112,21 @@ test('opening a project from the project switcher creates a tab with a claude se
   // "Projetos" da sidebar saiu (só ficaram Favoritos + Sessões); abrir um
   // projeto qualquer agora é sempre pelo popover "Projetos" do seletor no
   // titlebar.
-  await window.getByRole('button', { name: 'Trocar de projeto' }).click();
-  const projectsPopover = window.getByRole('dialog', { name: 'Projetos' });
-  await expect(projectsPopover).toBeVisible();
-
-  const projectButton = projectsPopover.getByRole('button', { name: PROJECT_NAME, exact: true });
-  await expect(projectButton).toBeVisible({ timeout: 15_000 });
-  await projectButton.click();
-  await expect(projectsPopover).toBeHidden();
+  await openProjectClaudeTab(window);
 
   const newTab = window.locator('[role="tab"]', { hasText: PROJECT_NAME });
   await expect(newTab).toBeVisible();
   await expect(newTab).toHaveAttribute('aria-selected', 'true');
 
-  // Só a aba ativa fica com o terminal-pane visível — a "Sessão" default virou display:none.
-  const activePane = window.locator('[data-testid="terminal-pane"]:visible');
-  await expect(activePane).toHaveCount(1);
-
+  // Only the active tab keeps its terminal-pane visible.
+  const activePane = await waitForClaudeBooted(window, { until: 'banner' });
   await expect(async () => {
-    const text = await activePane.innerText();
-    expect(text.length).toBeGreaterThan(0);
-    expect(text).not.toContain('CLAUDE_NOT_FOUND');
-    expect(text).not.toContain('Falha ao iniciar');
-  }).toPass({ timeout: 20_000 });
-
-  // Mesmo diálogo de "Quick safety check" do primeiro teste, agora pra uma
-  // pasta possivelmente ainda não confiável na sessão anterior desta run.
-  await activePane.click();
-  if ((await activePane.innerText()).includes('trust this folder')) {
-    await window.keyboard.press('Enter');
-  }
-
-  await expect(async () => {
-    const text = await activePane.innerText();
-    expect(text.toLowerCase()).toContain('claude code');
-    // Prova o cwd: o prompt do claude mostra o path do projeto clicado.
-    expect(text).toContain(PROJECT_NAME);
+    // Proves the cwd: the claude prompt shows the path of the clicked project.
+    expect(await activePane.innerText()).toContain(PROJECT_NAME);
   }).toPass({ timeout: 15_000 });
 });
 
-test('resizing the window does not crash the app', async () => {
+test('resizing the window does not crash the app @abas', async () => {
   const originalSize = window.viewportSize();
   await window.setViewportSize({ width: 1000, height: 700 });
   await window.waitForTimeout(500);
@@ -214,7 +140,7 @@ test('resizing the window does not crash the app', async () => {
   expect(electronApp.windows().length).toBeGreaterThan(0);
 });
 
-test('launcher builds the exact CommandBuilder argv and opens a tab wired to it (T008, CA-1)', async () => {
+test('launcher builds the exact CommandBuilder argv and opens a tab wired to it (T008, CA-1) @abas', async () => {
   // CA-1 (spec.md): modelo=sonnet, esforço=high, permissões=acceptEdits,
   // nome=radar, projeto=donel-dev → aba com `claude --model sonnet --effort
   // high --permission-mode acceptEdits -n radar` e cwd no projeto.
@@ -230,9 +156,7 @@ test('launcher builds the exact CommandBuilder argv and opens a tab wired to it 
   // só de teste (`data-testid="launcher-last-command"`, ver comentário lá).
   // A prova de que os args/cwd realmente funcionam (não só que foram
   // montados) vem da sessão claude real subindo na aba nova logo abaixo.
-  await openLauncherPanel();
-  const launcher = window.locator('[data-testid="launcher"]');
-  await expect(launcher).toBeVisible();
+  const launcher = await openLauncherPanel(window);
 
   // Modelo nasce 'fable' (default do Launcher) — CA-1 pede 'sonnet'.
   await launcher.getByRole('radio', { name: 'sonnet', exact: true }).click();
@@ -257,15 +181,7 @@ test('launcher builds the exact CommandBuilder argv and opens a tab wired to it 
 
   // Prova funcional: a aba lançada pelo Launcher sobe uma sessão claude de
   // verdade (os args não quebraram o spawn), mesmo padrão do teste T007.
-  const activePane = window.locator('[data-testid="terminal-pane"]:visible');
-  await expect(activePane).toHaveCount(1);
-
-  await expect(async () => {
-    const text = await activePane.innerText();
-    expect(text.length).toBeGreaterThan(0);
-    expect(text).not.toContain('CLAUDE_NOT_FOUND');
-    expect(text).not.toContain('Falha ao iniciar');
-  }).toPass({ timeout: 20_000 });
+  await waitForClaudeBooted(window);
 
   // NÃO perseguimos aqui o banner completo "Claude Code" nem diálogos
   // interativos de onboarding (trust folder / "chrome in extension
@@ -288,7 +204,7 @@ test('launcher builds the exact CommandBuilder argv and opens a tab wired to it 
   // etc.) ficam como "Não verificado" — ver dossiê do T008.
 });
 
-test('semáforo: o StateDot de uma aba em BACKGROUND muda de trabalhando pra aguardando resposta sem precisar focá-la (T009, FR-010/CA-6)', async () => {
+test('semáforo: o StateDot de uma aba em BACKGROUND muda de trabalhando pra aguardando resposta sem precisar focá-la (T009, FR-010/CA-6) @abas @real', async () => {
   // Timeout default do arquivo (30s, playwright.config.ts) não sobra pro
   // turno real completar (boot + espera pelo prompt pronto + resposta do
   // modelo) — as duas esperas de 60s/240s abaixo já somam mais que isso
@@ -302,38 +218,11 @@ test('semáforo: o StateDot de uma aba em BACKGROUND muda de trabalhando pra agu
   // claude real, SEM nunca focar a aba de novo depois do prompt enviado —
   // é exatamente isso que uma UI hardcoded (o estado fixo 'working' de
   // antes do T009) não conseguiria fingir.
-  await openLauncherPanel();
-  const launcher = window.locator('[data-testid="launcher"]');
-  await expect(launcher).toBeVisible();
-
-  await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
-  await launcher.getByLabel('Nome').fill('semaforo-test');
-
   const tabsBefore = await window.locator('[role="tab"]').count();
-  await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
-
-  const newTab = window.locator('[role="tab"]', { hasText: 'semaforo-test' });
-  await expect(newTab).toBeVisible();
+  const newTab = await launchClaudeTab(window, { project: null, model: 'haiku', name: 'semaforo-test' });
   await expect(window.locator('[role="tab"]')).toHaveCount(tabsBefore + 1);
-  await expect(newTab).toHaveAttribute('aria-selected', 'true');
 
-  const activePane = window.locator('[data-testid="terminal-pane"]:visible');
-  await expect(activePane).toHaveCount(1);
-  await expect(async () => {
-    const text = await activePane.innerText();
-    expect(text.length).toBeGreaterThan(0);
-    expect(text).not.toContain('CLAUDE_NOT_FOUND');
-    expect(text).not.toContain('Falha ao iniciar');
-  }).toPass({ timeout: 20_000 });
-
-  await activePane.click();
-  if ((await activePane.innerText()).includes('trust this folder')) {
-    await window.keyboard.press('Enter');
-  }
-  await expect(async () => {
-    const text = await activePane.innerText();
-    expect(text.toLowerCase()).toContain('claude code');
-  }).toPass({ timeout: 15_000 });
+  const activePane = await waitForClaudeBooted(window, { until: 'banner' });
 
   // StateDot fica dentro da própria aba na barra de abas — TerminalTab não
   // passa `label` pro StateDot, então o estado só é exposto via aria-label

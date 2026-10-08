@@ -67,7 +67,7 @@ test.afterAll(async () => {
   rmSync(claudeHomeParent, { recursive: true, force: true });
 });
 
-test('painel sem Pool Seazone; login isolado adiciona "Conta smoke" sem reiniciar o app (F6 ponta a ponta)', async () => {
+test('painel sem Pool Seazone; login isolado adiciona "Conta smoke" sem reiniciar o app (F6 ponta a ponta) @contas', async () => {
   test.setTimeout(90_000);
 
   await appWindow.locator('[data-testid="accounts-panel-trigger"]').click();
@@ -113,7 +113,7 @@ test('painel sem Pool Seazone; login isolado adiciona "Conta smoke" sem reinicia
   await appWindow.keyboard.press('Escape');
 });
 
-test('conta repetida (mesmo uuid falso) substitui o par — nunca duplica nem troca o rótulo existente', async () => {
+test('conta repetida (mesmo uuid falso) substitui o par — nunca duplica nem troca o rótulo existente @contas', async () => {
   test.setTimeout(90_000);
 
   const before = await appWindow.evaluate(() => window.donel.accounts.getConfig());
@@ -137,7 +137,7 @@ test('conta repetida (mesmo uuid falso) substitui o par — nunca duplica nem tr
   await appWindow.keyboard.press('Escape');
 });
 
-test('colar token com validade vazia adiciona "Conta colada"; confirmar remoção apaga da lista e do cofre', async () => {
+test('colar token com validade vazia adiciona "Conta colada"; confirmar remoção apaga da lista e do cofre @contas', async () => {
   await appWindow.locator('[data-testid="accounts-panel-trigger"]').click();
   await appWindow.getByLabel('Rótulo da conta').fill('Conta colada');
   await appWindow.getByTestId('accounts-paste-toggle').click();
@@ -168,7 +168,7 @@ test('colar token com validade vazia adiciona "Conta colada"; confirmar remoçã
   await appWindow.keyboard.press('Escape');
 });
 
-test('trocar para "Conta smoke" e tentar remover a conta ativa mostra o bloqueio, sem tirá-la da lista', async () => {
+test('trocar para "Conta smoke" e tentar remover a conta ativa mostra o bloqueio, sem tirá-la da lista @contas', async () => {
   test.setTimeout(30_000);
 
   const switchOutcome = await appWindow.evaluate((id) => window.donel.accounts.switch(id), contaSmokeId);

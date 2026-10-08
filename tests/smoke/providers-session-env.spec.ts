@@ -1,8 +1,8 @@
 import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
 
 // T1323 (011-contas-e-provedores, etapa 3) — entrada FICTÍCIA classe A (sem
 // rede real): sessão nasce com o env da entrada aplicado (via `pty:create`
@@ -11,26 +11,20 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // usado pra falar com um endpoint de verdade — o smoke mata o PTY assim que
 // confirma o resultado.
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
 
 let electronApp: ElectronApplication;
 let appWindow: Page;
 let userDataDir: string;
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('providers-session-env');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow, userDataDir } = await launchIsolatedApp({ name: 'providers-session-env' }));
 });
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  await closeIsolatedApp({ app: electronApp, userDataDir });
 });
 
-test('T1323 — sessão nasce com o env da entrada e config dir próprio, vazio', async () => {
+test('T1323 — sessão nasce com o env da entrada e config dir próprio, vazio @provedores', async () => {
   test.setTimeout(60_000);
 
   const created = await appWindow.evaluate(() =>

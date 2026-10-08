@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
-import { APP_MAIN, REPO_ROOT } from './repoUnderTest';
+import { launchIsolatedApp } from './helpers/launch';
+import { confirmCloseModalIfOpen, openFreeTerminalTab } from './helpers/ui';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke do lote 1 (009-modo-dev-v3) — TerminalTab · variante v3 (extensão 7):
@@ -39,9 +40,7 @@ let appWindow: Page;
 let userDataDir: string;
 
 async function launchApp(): Promise<void> {
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow } = await launchIsolatedApp({ userDataDir }));
 }
 
 test.beforeAll(async () => {
@@ -60,11 +59,6 @@ test.afterAll(async () => {
   }
 });
 
-async function openFreeTerminalTab(): Promise<void> {
-  await appWindow.getByRole('button', { name: 'Mais opções de ＋ Nova sessão' }).click();
-  await appWindow.getByRole('menuitem', { name: 'Terminal (shell livre)' }).click();
-}
-
 /** Renomeia a aba pelo MESMO gesto de sempre (duplo-clique + Enter, T407/T408) — só pra dar identidade única a cada aba livre (as duas nascem com o nome "Terminal"). */
 async function renameTab(tab: Locator, next: string): Promise<void> {
   await tab.getByText('Terminal', { exact: true }).dblclick();
@@ -73,23 +67,15 @@ async function renameTab(tab: Locator, next: string): Promise<void> {
   await input.press('Enter');
 }
 
-/** Fecha o modal de confirmação de fechar aba, quando ele aparece (processo vivo). */
-async function confirmCloseModalIfOpen(): Promise<void> {
-  const modal = appWindow.getByRole('dialog', { name: 'Fechar sessão?' });
-  if (await modal.isVisible().catch(() => false)) {
-    await modal.getByRole('button', { name: 'Fechar' }).click();
-  }
-}
-
-test('CA-26 — arrastar uma aba pela alça reordena a barra (drag nativo HTML5)', async () => {
+test('CA-26 — arrastar uma aba pela alça reordena a barra (drag nativo HTML5) @abas', async () => {
   test.setTimeout(60_000);
 
-  await openFreeTerminalTab();
+  await openFreeTerminalTab(appWindow);
   const tabs = appWindow.locator('[role="tab"]');
   await expect(tabs).toHaveCount(1);
   await renameTab(tabs.nth(0), 'aba-um');
 
-  await openFreeTerminalTab();
+  await openFreeTerminalTab(appWindow);
   await expect(tabs).toHaveCount(2);
   await renameTab(tabs.nth(1), 'aba-dois');
 
@@ -106,13 +92,13 @@ test('CA-26 — arrastar uma aba pela alça reordena a barra (drag nativo HTML5)
   // Limpa as duas abas (terminal livre não gasta cota, mas não deixa
   // powershell.exe pendurado pro próximo teste do arquivo).
   await tabs.nth(0).getByRole('button', { name: /^Fechar aba / }).click();
-  await confirmCloseModalIfOpen();
+  await confirmCloseModalIfOpen(appWindow);
   await tabs.nth(0).getByRole('button', { name: /^Fechar aba / }).click();
-  await confirmCloseModalIfOpen();
+  await confirmCloseModalIfOpen(appWindow);
   await expect(tabs).toHaveCount(0);
 });
 
-test('CA-27 — cor e ordem da aba sobrevivem a um restart completo do app (API de persistência)', async () => {
+test('CA-27 — cor e ordem da aba sobrevivem a um restart completo do app (API de persistência) @abas', async () => {
   test.setTimeout(90_000);
 
   const sessionId = randomUUID();

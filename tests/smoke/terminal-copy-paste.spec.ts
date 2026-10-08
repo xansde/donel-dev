@@ -1,7 +1,6 @@
-import path from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
 
 // T508 (005-terminal-copy-paste) — smoke roteirizado: prova que o decisor
 // (`resolveTerminalKeyAction`, T501) está LIGADO no caminho real do
@@ -33,23 +32,17 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // DURANTE uma execução longa; a execução NÃO PODE morrer" — com um turno
 // real do modelo, a única forma honesta de provar isso.
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
 
 let electronApp: ElectronApplication;
 let window: Page;
 let userDataDir: string;
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('terminal-copy-paste');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
-  window = await electronApp.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ name: 'terminal-copy-paste' }));
 });
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  await closeIsolatedApp({ app: electronApp, userDataDir });
 });
 
 /**
@@ -89,7 +82,7 @@ async function waitForStableOutput(pane: Locator, timeoutMs: number): Promise<vo
   }).toPass({ timeout: timeoutMs });
 }
 
-test('aba shell: Ctrl+C sem seleção mata um processo real em execução (CA-6, zero regressão no terminal livre)', async () => {
+test('aba shell: Ctrl+C sem seleção mata um processo real em execução (CA-6, zero regressão no terminal livre) @abas', async () => {
   test.setTimeout(60_000);
 
   await window.getByRole('button', { name: 'Mais opções de ＋ Nova sessão' }).click();
@@ -131,7 +124,7 @@ test('aba shell: Ctrl+C sem seleção mata um processo real em execução (CA-6,
 // textarea oculto do xterm (o keydown não recebia preventDefault), e o texto
 // entrava em dobro. Este teste asserta ocorrência ÚNICA — `toContain` não
 // pega dobra ("XX" contém "X"); contagem pega.
-test('aba shell: Ctrl+V cola o texto do clipboard UMA única vez', async () => {
+test('aba shell: Ctrl+V cola o texto do clipboard UMA única vez @abas', async () => {
   test.setTimeout(60_000);
 
   await window.getByRole('button', { name: 'Mais opções de ＋ Nova sessão' }).click();

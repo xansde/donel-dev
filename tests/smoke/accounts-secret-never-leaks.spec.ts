@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path, { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { assertNoLeak as assertNoLeakOf } from './helpers/leaks';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 import { refuseIfRealClaudeHome } from './accountsCredentialGuard';
 
@@ -22,9 +23,7 @@ let appWindow: Page;
 let userDataDir: string;
 let claudeHomeParent: string;
 
-function assertNoLeak(payload: unknown): void {
-  expect(JSON.stringify(payload)).not.toContain(PLANTED_SECRET);
-}
+const assertNoLeak = (payload: unknown): void => assertNoLeakOf(payload, PLANTED_SECRET);
 
 test.beforeAll(async () => {
   userDataDir = createIsolatedUserDataDir('accounts-secret-never-leaks');
@@ -49,7 +48,7 @@ test.afterAll(async () => {
   rmSync(claudeHomeParent, { recursive: true, force: true });
 });
 
-test('T1128 — segredo plantado no connectMod nunca aparece em list/getConfig/changed nem no DOM', async () => {
+test('T1128 — segredo plantado no connectMod nunca aparece em list/getConfig/changed nem no DOM @contas', async () => {
   test.setTimeout(60_000);
 
   await appWindow.evaluate((home) => window.donel.accounts.setConfig({ claudeHome: home }), join(claudeHomeParent, '.claude'));

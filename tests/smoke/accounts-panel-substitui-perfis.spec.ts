@@ -1,7 +1,6 @@
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import path from 'path';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
 
 // T1227 (011-contas-e-provedores, etapa 2, Fase 4) — o dropdown de perfis
 // (`ProfileSwitcher`) morreu na demolição (T1225): não existe mais nenhum
@@ -10,26 +9,20 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // smoke prova o negativo (dropdown de perfis não existe) e o positivo
 // (AccountsPanel está lá, funcional) no mesmo lugar da tela.
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
 
 let electronApp: ElectronApplication;
 let appWindow: Page;
 let userDataDir: string;
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('accounts-panel-substitui-perfis');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow, userDataDir } = await launchIsolatedApp({ name: 'accounts-panel-substitui-perfis' }));
 });
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  await closeIsolatedApp({ app: electronApp, userDataDir });
 });
 
-test('T1227 — não existe mais dropdown de perfis; a tela de contas está no lugar dele', async () => {
+test('T1227 — não existe mais dropdown de perfis; a tela de contas está no lugar dele @contas', async () => {
   // Negativo: nenhum elemento do ProfileSwitcher morto sobrevive no DOM.
   await expect(appWindow.locator('[data-testid="profile-switcher-trigger"]')).toHaveCount(0);
   await expect(appWindow.locator('text=Tecnologia Claude')).toHaveCount(0);
@@ -47,7 +40,7 @@ test('T1227 — não existe mais dropdown de perfis; a tela de contas está no l
   await appWindow.keyboard.press('Escape');
 });
 
-test('T1227 — window.donel.profiles não existe mais (ponte do preload removida)', async () => {
+test('T1227 — window.donel.profiles não existe mais (ponte do preload removida) @contas', async () => {
   const hasProfilesBridge = await appWindow.evaluate(() => 'profiles' in window.donel);
   expect(hasProfilesBridge).toBe(false);
 });

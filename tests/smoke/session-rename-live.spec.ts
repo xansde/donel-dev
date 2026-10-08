@@ -1,9 +1,11 @@
 import { appendFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT, SESSIONS_DIR } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { PROJECT_NAME, SESSIONS_DIR } from './repoUnderTest';
+import { launchIsolatedApp } from './helpers/launch';
+import { openProjectClaudeTab, waitForClaudeBooted } from './helpers/ui';
+import { removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T413 (004-nomear-sessoes, Fase C) — o CA-4: um `/rename` feito no CLI
 // reflete na aba em MENOS DE 1 s, sem reabrir a sessão nem reiniciar o app.
@@ -38,10 +40,7 @@ let userDataDir: string;
 let createdTranscriptPath: string | null = null;
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('session-rename-live');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow, userDataDir } = await launchIsolatedApp({ name: 'session-rename-live' }));
 });
 
 test.afterAll(async () => {
@@ -60,7 +59,7 @@ test.afterAll(async () => {
   }
 });
 
-test('T413 — CA-4: custom-title escrito no transcript da sessão VIVA reflete na aba em < 1 s, e o CLI vence o nome da UI (C2)', async () => {
+test('T413 — CA-4: custom-title escrito no transcript da sessão VIVA reflete na aba em < 1 s, e o CLI vence o nome da UI (C2) @sessoes', async () => {
   test.setTimeout(180_000);
 
   // T1227 (011-contas-e-provedores, etapa 2) — o guard de "só faz sentido com
@@ -71,21 +70,11 @@ test('T413 — CA-4: custom-title escrito no transcript da sessão VIVA reflete 
   //    "Projetos" do seletor, sem Launcher — o watcher nasce no
   //    `pty:create`, não no launcher). FIX (item 1, rodada de feedback do
   //    teste de 30/07) — a árvore "Projetos" da sidebar saiu.
-  await appWindow.getByRole('button', { name: 'Trocar de projeto' }).click();
-  const projectsPopover = appWindow.getByRole('dialog', { name: 'Projetos' });
-  await expect(projectsPopover).toBeVisible();
-  await projectsPopover.getByRole('button', { name: PROJECT_NAME, exact: true }).click();
-  await expect(projectsPopover).toBeHidden();
+  await openProjectClaudeTab(appWindow);
 
   const tab = appWindow.locator('[role="tab"]').first();
   await expect(tab).toBeVisible();
-  const pane = appWindow.locator('[data-testid="terminal-pane"]:visible');
-  await expect(async () => {
-    const text = await pane.innerText();
-    expect(text.length).toBeGreaterThan(0);
-    expect(text).not.toContain('CLAUDE_NOT_FOUND');
-    expect(text).not.toContain('Falha ao iniciar');
-  }).toPass({ timeout: 30_000 });
+  await waitForClaudeBooted(appWindow, { startTimeout: 30_000 });
 
   // 2. Renomeia pela UI — é o que revela o `sessionId` desta sessão viva
   //    (o main persiste sob essa chave) sem inventar API de teste.

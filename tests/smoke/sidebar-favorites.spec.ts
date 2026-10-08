@@ -1,7 +1,7 @@
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { PROJECT_NAME } from './repoUnderTest';
+import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
 
 // Smoke do feedback E2E rodada 3 ("BUG — favoritar projeto só reflete após
 // reiniciar o app", → Batch 5): a lógica de merge/ordenação já estava
@@ -41,10 +41,7 @@ let appWindow: Page;
 let userDataDir: string;
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('sidebar-favorites');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow, userDataDir } = await launchIsolatedApp({ name: 'sidebar-favorites' }));
 });
 
 test.afterAll(async () => {
@@ -55,11 +52,10 @@ test.afterAll(async () => {
       if (target?.favorite) await window.donel.projects.setFavorite(target.path, false);
     })
     .catch(() => undefined);
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  await closeIsolatedApp({ app: electronApp, userDataDir });
 });
 
-test('favoritar um projeto pelo seletor reflete no grupo Favoritos da sidebar imediatamente, sem restart', async () => {
+test('favoritar um projeto pelo seletor reflete no grupo Favoritos da sidebar imediatamente, sem restart @sessoes', async () => {
   const sidebar = appWindow.locator('nav[aria-label="Projetos e sessões"]');
   await expect(sidebar).toBeVisible();
   const favoriteGroup = sidebar.locator(`[data-testid="favorite-group-${PROJECT_NAME}"]`);

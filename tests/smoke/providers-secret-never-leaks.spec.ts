@@ -1,7 +1,7 @@
-import path from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { assertNoLeak as assertNoLeakOf } from './helpers/leaks';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
 
 // T1324a (011-contas-e-provedores, etapa 3) — varredura de TODOS os payloads
 // dos `PROVIDER_CHANNELS` (list/upsert/setSecret/remove), do `config:get` e
@@ -9,31 +9,23 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // hit, nem truncado. Mesmo padrão de `accounts-secret-never-leaks.spec.ts`
 // (T1128).
 
-const APP_MAIN = path.join(__dirname, '../../out/main/index.js');
-const APP_CWD = path.join(__dirname, '../..');
 const PLANTED_SECRET = 'PLANTED-PROVIDER-SECRET-q7m4k1-nunca-deve-vazar';
 
 let electronApp: ElectronApplication;
 let appWindow: Page;
 let userDataDir: string;
 
-function assertNoLeak(payload: unknown): void {
-  expect(JSON.stringify(payload)).not.toContain(PLANTED_SECRET);
-}
+const assertNoLeak = (payload: unknown): void => assertNoLeakOf(payload, PLANTED_SECRET);
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('providers-secret-never-leaks');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: APP_CWD });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow, userDataDir } = await launchIsolatedApp({ name: 'providers-secret-never-leaks' }));
 });
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  await closeIsolatedApp({ app: electronApp, userDataDir });
 });
 
-test('T1324a — segredo plantado nunca aparece em list/upsert/setSecret/remove/config:get/pty:create nem no DOM', async () => {
+test('T1324a — segredo plantado nunca aparece em list/upsert/setSecret/remove/config:get/pty:create nem no DOM @provedores', async () => {
   test.setTimeout(60_000);
 
   const created = await appWindow.evaluate(() =>
