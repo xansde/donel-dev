@@ -65,9 +65,18 @@ describe('formatElapsed', () => {
 describe('deriveFooter', () => {
   it('keeps the footer (and Parar) while a pending is open and the status is waiting', () => {
     const pending = { id: 'p1' } as unknown as LiveState['pendings'][number];
-    expect(deriveFooter({ live: live({ status: 'waiting-you' as LiveState['status'], pendings: [pending] }), rows: [], lastAction: null })).toEqual({ kind: 'working', waitingSubagents: 0 });
+    expect(deriveFooter({ live: live({ status: 'waiting-you' as LiveState['status'], pendings: [pending] }), rows: [], lastAction: null })).toMatchObject({ kind: 'working' });
     expect(deriveFooter({ live: live({ status: 'idle' as LiveState['status'] }), rows: [], lastAction: null })).toBeNull();
   });
+  it.each(['question', 'permission', 'plan'] as const)('names the open %s pending instead of a bare "trabalhando"', (kind) => {
+    const pending = { id: 'p1', kind } as unknown as LiveState['pendings'][number];
+    expect(deriveFooter({ live: live({ status: 'waiting-you' as LiveState['status'], pendings: [pending] }), rows: [], lastAction: null })).toEqual({
+      kind: 'working',
+      waitingSubagents: 0,
+      waitingFor: kind,
+    });
+  });
+
   it('shows the live action in gerund', () => {
     const f = deriveFooter({ live: live({ currentAction: action('Rodou', 'npm test') }), rows: [], lastAction: null });
     expect(f).toEqual({ kind: 'working', verb: 'Rodando', target: 'npm test', waitingSubagents: 0 });

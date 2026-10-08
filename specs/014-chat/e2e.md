@@ -206,6 +206,7 @@ driver com a caixa, juntados na mesma branch.
     a `ok` não é emitido ou não chega ao renderer.
   - Aceite da correção: o aviso some sozinho assim que uma linha nova
     chega, e um smoke cobre esse caminho com `/compact` no meio.
+  - **Corrigido** (08/10): o hook `Stop` contava como "atividade" e chega depois de o follower ler a última linha, então todo turno terminado virava `stale` 8 s depois, sem nada a chegar; `Stop` saiu dos eventos de atividade do hub (teste de reprodução em `chat-hub.test.ts`). Não verificado com CLI real nem com `/compact` de verdade.
 
 ## Fase 4 — Pendências (08/10)
 
@@ -244,6 +245,7 @@ A smoke (T081) veio por último.
   `waiting-you`, e o pé de trabalho sumia junto com o Parar. Nesse estado o
   `interrupt` era inalcançável. Agora o pé fica, mas o texto durante a
   pendência é só "trabalhando —", sem verbo, e precisa melhorar.
+  **Corrigido** (08/10): o pé dizia só "trabalhando —" com pendência aberta; agora diz "esperando você — pergunta/permissão/plano" (cronômetro e Parar mantidos).
 - **Diálogo da TUI fora do `PermissionRequest`:** com o chat ligado, o toast
   antigo de `permission` da aba claude deixa de aparecer. Esse diálogo segue
   pela faixa "o terminal precisa de você", mas sem notificação do sistema.

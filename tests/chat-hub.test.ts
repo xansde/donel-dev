@@ -338,6 +338,42 @@ describe('reception', () => {
     expect(h.reception[1]!.reception).toBe('ok');
   });
 
+  it('does not go stale after the turn ended: Stop arrives after the last line was read', async () => {
+    const path = join(dir, 's1.jsonl');
+    writeRounds(path, 1, 1);
+    const h = harness({ 'pty-1': src(path) }, { staleMs: 8_000 });
+    await h.hub.attach('pty-1');
+    h.bridge.hook('pty-1', 'UserPromptSubmit');
+    h.clock.t += 50;
+    appendRounds(path, 2, 2);
+    await pollUntil(() => h.rows.some((e) => e.patches.some((p) => JSON.stringify(p).includes('resp 2'))));
+    h.clock.t += 100; // the Stop hook lands after the follower read the final line
+    h.bridge.hook('pty-1', 'Stop');
+    h.clock.t += 60_000;
+    h.hub.checkReception();
+    expect(h.reception).toEqual([]);
+  });
+
+  it('goes back to ok on its own when a new line arrives after a stale warning, even with hooks after it', async () => {
+    const path = join(dir, 's1.jsonl');
+    writeRounds(path, 1, 1);
+    const h = harness({ 'pty-1': src(path) }, { staleMs: 8_000 });
+    await h.hub.attach('pty-1');
+    h.bridge.hook('pty-1', 'UserPromptSubmit');
+    h.clock.t += 9_000;
+    h.hub.checkReception();
+    expect(h.reception.map((e) => e.reception)).toEqual(['stale']);
+
+    appendRounds(path, 2, 2);
+    await pollUntil(() => h.reception.length > 1);
+    h.clock.t += 100;
+    h.bridge.hook('pty-1', 'Stop');
+    h.clock.t += 60_000;
+    h.hub.checkReception();
+    expect(h.reception.map((e) => e.reception)).toEqual(['stale', 'ok']);
+    expect((await h.hub.attach('pty-1')).live.status).toBe('idle');
+  });
+
   it('does not flag an idle tab with no transcript yet', async () => {
     const h = harness({ 'pty-1': src(join(dir, 'idle.jsonl')) });
     await h.hub.attach('pty-1');
