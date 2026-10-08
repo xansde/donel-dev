@@ -184,7 +184,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - lista de falhas no cabeçalho;
   - id estável `group:<toolUseId>`.
 - [x] T027 Implementar `src/shared/chat/grouping.ts`. Faz passar T026.
-- [ ] T028 [P] Escrever `tests/chat-adapter.test.ts` (falhando), rodando sobre as fixtures do T019:
+- [x] T028 [P] Escrever `tests/chat-adapter.test.ts` (falhando), rodando sobre as fixtures do T019:
   - linhas produzidas (`kind`, `id`, `turnId`, `status`);
   - leitura incremental igual à leitura de uma vez;
   - patches `append`/`replace`/`prepend`/`reset`;
@@ -193,7 +193,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - skill, `question`, `plan`, `shell`, `local-command`;
   - `unknown` com o gancho de diagnóstico;
   - **privacidade**: nenhum dado de `session_context`/`credential_org` em linha nenhuma.
-- [ ] T029 Implementar `src/shared/chat/adapter.ts` (`adapt(state, entries) → { state, patches }`), usando T021, T023, T025 e T027. Faz passar T028.
+- [x] T029 Implementar `src/shared/chat/adapter.ts` (`adapt(state, entries) → { state, patches }`), usando T021, T023, T025 e T027. Faz passar T028.
 - [x] T030 [P] Escrever `tests/chat-focus-fold.test.ts` (falhando), cobrindo `data-model.md` §5:
   - dobra por rodada e `finalRowId`;
   - `hasQuestion` (nota recolhida terminando em `?`);
