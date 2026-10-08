@@ -1103,14 +1103,22 @@ function handleConversationSwitched(event: Extract<BridgeEvent, { type: 'convers
  * protocolo `donel-asset:` também não: o app é o de antes do chat.
  */
 function registerChatDomain(): void {
+  const smokeNotificationsLog = process.env.DONEL_SMOKE_NOTIFICATIONS_LOG || undefined;
   if (!appConfig.chat.enabled || hookBridge === null) return;
   const attachmentsRoot = join(app.getPath('userData'), 'chat-attachments');
   // T079 - notificacao do sistema quando uma pendencia abre (janela sem foco ou aba nao ativa).
   const notifier = createPendingNotifier({
     preference: () => appConfig.notificationPreference,
     isWindowFocused: () => BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isFocused()),
-    isSupported: () => Notification.isSupported(),
-    create: (options) => new Notification(options),
+    isSupported: () => smokeNotificationsLog !== undefined || Notification.isSupported(),
+    create: (options) => {
+      // Smoke-only hook (T081): records instead of showing a system notification.
+      if (smokeNotificationsLog !== undefined) {
+        appendFileSync(smokeNotificationsLog, `${JSON.stringify(options)}\n`, 'utf8');
+        return { on: () => undefined, show: () => undefined };
+      }
+      return new Notification(options);
+    },
     onClick: (ptyId) => {
       const window = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
       if (window === undefined) return;
