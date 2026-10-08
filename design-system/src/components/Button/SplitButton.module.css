@@ -76,6 +76,14 @@
   box-shadow: var(--shadow-modal);
 }
 
+.menuAbove {
+  top: auto;
+  bottom: calc(100% + 4px);
+  left: auto;
+  right: 0;
+  white-space: nowrap;
+}
+
 .menuItem {
   width: 100%;
   text-align: left;
