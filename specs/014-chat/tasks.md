@@ -341,12 +341,12 @@ divergências de `design/chat-verificacao.md`.
   - `src/renderer/src/chat/SessionEndedBar.tsx` toma o lugar da caixa, com "Sessão encerrada (código N)", Retomar (`TerminalPane.respawn({ resume: sessionId atual })`) e Fechar aba;
   - a conversa continua legível e copiável;
   - o "Reabrir" do overlay do terminal (`TerminalPane.tsx:586-592`) passa a retomar a mesma conversa.
-- [ ] T058 [P] [US1] Criar o gerador `tests/fixtures/chat/generate-large.mjs` (sessão sintética de ~10 mil linhas, com linhas grandes) e o cenário do CLI falso para leitura.
-- [ ] T059 [US1] Escrever as smokes com o CLI falso em `tests/smoke/`:
+- [x] T058 [P] [US1] Criar o gerador `tests/fixtures/chat/generate-large.mjs` (sessão sintética de ~10 mil linhas, com linhas grandes) e o cenário do CLI falso para leitura.
+- [x] T059 [US1] Escrever as smokes com o CLI falso em `tests/smoke/`:
   - `tests/smoke/chat-reading.spec.ts`: a aba abre no chat; markdown, tabela e código renderizados; copiar bloco e resposta; alternar 10× preserva a sessão; aviso após `/clear`; barra de fim + Retomar.
   - `tests/smoke/chat-long-session.spec.ts`: fim em ≤ 2 s e rolagem sem salto (SC-005).
   - `tests/smoke/chat-live-latency.spec.ts`: ≤ 1 s do append até a linha na tela (SC-008).
-- [ ] T060 [US1] Fechar a fase (registro em `specs/014-chat/e2e.md`):
+- [x] T060 [US1] Fechar a fase (registro em `specs/014-chat/e2e.md`):
   - suíte verde;
   - PR contra `staging`;
   - bateria no alfa com o dono (B1 passos 1, 2, 4 e 5; B5; B7; B8; B10; B11), registrada em `specs/014-chat/e2e.md`, seção "Fase 2";
