@@ -65,9 +65,9 @@ export const fakeFsWatch = {
     this.watchers = [];
   },
   /** Delivers a change event to every open fake watcher (as the OS would). */
-  emit(fileName: string | null): void {
+  emit(fileName: string | null, options: { includeClosed?: boolean } = {}): void {
     for (const watcher of this.watchers) {
-      if (!watcher.closed) watcher.listener('change', fileName);
+      if (!watcher.closed || options.includeClosed) watcher.listener('change', fileName);
     }
   },
   get openCount(): number {
@@ -85,4 +85,72 @@ export function wrapWatch<T extends (...args: never[]) => unknown>(actualWatch: 
     return watcher;
   };
   return wrapped as unknown as T;
+}
+
+// --- read tracking -----------------------------------------------------------
+
+export interface ReadTracker {
+  /** `stat`/`open` on the tracked file not yet finished (an `open` counts until its handle is closed). */
+  readonly inFlight: () => number;
+  readonly restore: () => void;
+}
+
+/**
+ * Counts reads of ONE file in flight by wrapping `fs.promises.stat/open` (the
+ * same object `src` imports as `fs`). It is the completion signal that lets a
+ * test assert "nothing was emitted" without guessing how long the read takes.
+ * Calls on other paths (probes, tmpdir cleanup) are passed through untouched.
+ */
+export function trackReads(
+  fsp: { stat: (...a: never[]) => Promise<unknown>; open: (...a: never[]) => Promise<unknown> },
+  filePath: string,
+): ReadTracker {
+  type AnyFn = (...args: unknown[]) => Promise<unknown>;
+  const target = fsp as unknown as { stat: AnyFn; open: AnyFn };
+  const originalStat = target.stat;
+  const originalOpen = target.open;
+  let inFlight = 0;
+
+  target.stat = (path, ...rest) => {
+    if (path !== filePath) return originalStat.call(fsp, path, ...rest);
+    inFlight += 1;
+    return originalStat.call(fsp, path, ...rest).finally(() => {
+      inFlight -= 1;
+    });
+  };
+  target.open = async (path, ...rest) => {
+    if (path !== filePath) return originalOpen.call(fsp, path, ...rest);
+    inFlight += 1;
+    let handle: { close: () => Promise<void> };
+    try {
+      handle = (await originalOpen.call(fsp, path, ...rest)) as typeof handle;
+    } catch (error) {
+      inFlight -= 1;
+      throw error;
+    }
+    const close = handle.close.bind(handle);
+    handle.close = () =>
+      close().finally(() => {
+        inFlight -= 1;
+      });
+    return handle;
+  };
+
+  return {
+    inFlight: () => inFlight,
+    restore: () => {
+      target.stat = originalStat;
+      target.open = originalOpen;
+    },
+  };
+}
+
+/** Resolves once the tracked file has had no read in flight for three event-loop turns in a row. */
+export async function untilReadsSettle(tracker: ReadTracker, timeoutMs = 3_000): Promise<void> {
+  const startedAt = Date.now();
+  for (let calm = 0; calm < 3; ) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error(`untilReadsSettle: reads still in flight after ${timeoutMs} ms`);
+    await new Promise<void>((resolve) => realSetImmediate(resolve));
+    calm = tracker.inFlight() === 0 ? calm + 1 : 0;
+  }
 }
