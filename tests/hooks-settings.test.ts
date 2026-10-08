@@ -105,7 +105,7 @@ describe('buildSessionHooksSettings', () => {
   const base = { port: 4567, token: 'tok123', chatEnabled: true, curlPath: 'curl.exe' };
 
   it('registers http entries with url, X-Donel-Token header and no matcher', () => {
-    const { hooks } = buildSessionHooksSettings(base) as { hooks: Record<string, Array<Record<string, unknown>>> };
+    const { hooks } = buildSessionHooksSettings(base) as unknown as { hooks: Record<string, Array<Record<string, unknown>>> };
     for (const event of HTTP_EVENTS) {
       const group = hooks[event][0];
       expect(group).not.toHaveProperty('matcher');
@@ -115,7 +115,7 @@ describe('buildSessionHooksSettings', () => {
   });
 
   it('uses the timeouts from the table', () => {
-    const { hooks } = buildSessionHooksSettings(base) as { hooks: Record<string, Array<{ hooks: Array<{ timeout: number }> }>> };
+    const { hooks } = buildSessionHooksSettings(base) as unknown as { hooks: Record<string, Array<{ hooks: Array<{ timeout: number }> }>> };
     expect(hooks.PermissionRequest[0].hooks[0].timeout).toBe(86400);
     expect(hooks.SessionEnd[0].hooks[0].timeout).toBe(2);
     for (const e of ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'StopFailure', 'Notification', 'SubagentStart', 'SubagentStop']) {
@@ -130,7 +130,7 @@ describe('buildSessionHooksSettings', () => {
   });
 
   it('SessionStart is a curl.exe command reading stdin as bytes', () => {
-    const { hooks } = buildSessionHooksSettings(base) as { hooks: Record<string, Array<{ hooks: Array<{ type: string; command: string; timeout: number }> }>> };
+    const { hooks } = buildSessionHooksSettings(base) as unknown as { hooks: Record<string, Array<{ hooks: Array<{ type: string; command: string; timeout: number }> }>> };
     const entry = hooks.SessionStart[0].hooks[0];
     expect(entry.type).toBe('command');
     expect(entry.timeout).toBe(10);
@@ -138,7 +138,7 @@ describe('buildSessionHooksSettings', () => {
   });
 
   it('falls back to the PowerShell forwarder when curl is missing', () => {
-    const { hooks } = buildSessionHooksSettings({ ...base, curlPath: null, forwarderScriptPath: 'C:/x/p1.forward.ps1' }) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
+    const { hooks } = buildSessionHooksSettings({ ...base, curlPath: null, forwarderScriptPath: 'C:/x/p1.forward.ps1' }) as unknown as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
     expect(hooks.SessionStart[0].hooks[0].command).toContain('-File "C:/x/p1.forward.ps1"');
     expect(hooks.SessionStart[0].hooks[0].command).not.toContain('curl');
   });

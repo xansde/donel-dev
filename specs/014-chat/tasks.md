@@ -71,27 +71,27 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - handler `config:setChatPrefs` em `src/main/index.ts` e exposição em `src/preload/index.ts`.
 
   Faz passar T007.
-- [ ] T009 [P] Escrever `tests/chat-diagnostics-log.test.ts` (falhando) e implementar `src/main/chat/diagnostics-log.ts`:
+- [x] T009 [P] Escrever `tests/chat-diagnostics-log.test.ts` (falhando) e implementar `src/main/chat/diagnostics-log.ts`:
   - **Formato**: JSONL em `userData/chat-diagnostics.log`.
   - **Eventos**: `unknown-entry` (uma vez por sessão e tipo), `hook` (evento, `ptyId`, duração) e `send-failed` (motivo).
   - **Nunca** conteúdo de conversa nem payload de hook.
 
 ### Ponte de hooks HTTP (`contracts/hook-bridge.md`)
 
-- [ ] T010 [P] Reescrever `tests/hooks-settings.test.ts` (falhando) para o arquivo **por sessão**, conforme `hook-bridge.md` §1–§2:
+- [x] T010 [P] Reescrever `tests/hooks-settings.test.ts` (falhando) para o arquivo **por sessão**, conforme `hook-bridge.md` §1–§2:
   - eventos e timeouts da tabela;
   - entradas `type:"http"` com url `http://127.0.0.1:<porta>/h/<Evento>` e header `X-Donel-Token`, sem `matcher`;
   - `PermissionRequest` (timeout 86400) só com `chatEnabled`;
   - `SessionStart` como `command` `curl.exe -s --data-binary @- -H "X-Donel-Token: <token>" …`, com fallback para o encaminhador PowerShell que lê e envia **bytes**;
   - caminho `userData/hook-settings/<ptyId>.json`;
   - limpeza de arquivos com mais de 1 dia.
-- [ ] T011 Implementar em `src/main/hooks-settings.ts`:
+- [x] T011 Implementar em `src/main/hooks-settings.ts`:
   - `buildSessionHooksSettings({ port, token, chatEnabled, curlPath })` (puro);
   - `writeSessionHooksSettings`, `removeSessionHooksSettings` e `cleanupStaleHookSettings` (I/O);
   - `buildByteSafeForwarderScript` para o fallback.
 
   Faz passar T010.
-- [ ] T012 [P] Escrever o teste de contrato `tests/hook-bridge.contract.test.ts` (falhando), com servidor real e cliente HTTP que imita o CLI:
+- [x] T012 [P] Escrever o teste de contrato `tests/hook-bridge.contract.test.ts` (falhando), com servidor real e cliente HTTP que imita o CLI:
   - `401` sem token ou com token desconhecido; `400` com JSON inválido; `413` acima de 32 MB;
   - eventos não bloqueantes respondidos `{}` em ≤ 10 ms;
   - `PermissionRequest` segurado até `respond(decision)`;
@@ -100,7 +100,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - `PostToolUse` com a mesma tripla de uma decisão segurada → responde `{}` e emite `resolved-elsewhere`;
   - `SessionStart` (`source` clear/resume/fork) emite `conversation-switched` com o `session_id` e o `transcript_path` novos;
   - `SessionEnd` com `reason` clear/resume **não** emite fim.
-- [ ] T013 Implementar `src/main/hook-bridge.ts`:
+- [x] T013 Implementar `src/main/hook-bridge.ts`:
   - `createHookBridge()` com porta efêmera em 127.0.0.1;
   - `registerSession(ptyId) → token` e `unregisterSession(ptyId)`;
   - rotas `/h/<Evento>`, limite de corpo, parse tolerante;
