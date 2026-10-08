@@ -1,0 +1,171 @@
+{
+ "name": "screen-skills",
+ "description": "Tela sem caixa de entrada: \"Skills\".",
+ "source": "real",
+ "origin": "q9-r10.txt :: after /skills",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "❯ /context",
+   "dim": []
+  },
+  {
+   "text": "  ctrl+x ctrl+s to send now",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "✻ Onioning… (53s · ↓ 3.8k tokens · thinking more)",
+   "dim": []
+  },
+  {
+   "text": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔",
+   "dim": []
+  },
+  {
+   "text": "   Skills",
+   "dim": []
+  },
+  {
+   "text": "   71 skills · enter/space to cycle, / to search, t to sort, Esc to close",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+   "dim": []
+  },
+  {
+   "text": "   │ ⌕ Search skills…                                                                                               │",
+   "dim": []
+  },
+  {
+   "text": "   ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+   "dim": []
+  },
+  {
+   "text": "   ❯ ✔ anthropic-skills:deep-research              claude.ai sync · ~200 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ built-in-browser                            claude.ai sync · ~280 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ chrome-browser                              claude.ai sync · ~260 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ computer-use                                claude.ai sync · ~320 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ docs                                        claude.ai sync · ~340 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ docx                                        claude.ai sync · ~320 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ google-workspace                            claude.ai sync · ~330 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ import-memory                               claude.ai sync · ~60 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ morning                                     claude.ai sync · ~120 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ pdf                                         claude.ai sync · ~150 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ pptx                                        claude.ai sync · ~330 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ skill-creator                               claude.ai sync · ~120 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ xlsx                                        claude.ai sync · ~320 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ hookify:writing-rules                       locked by plugin · plugin · ~70 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ supabase:supabase                           locked by plugin · plugin · ~270 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ supabase:supabase-postgres-best-practices   locked by plugin · plugin · ~290 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ spike-help                                  project · < 20 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ spike-helper                                project · < 20 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ spike-skill                                 locked by author · user-only · project · ~30 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ ai-rats                                     user · ~100 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ ask-xande                                   user · < 20 tok",
+   "dim": []
+  },
+  {
+   "text": "     ✔ batch-gated-development                     user · ~80 tok",
+   "dim": []
+  },
+  {
+   "text": "     ↓ 49 more",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Plugin skills are managed via /plugin",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   /deep-research runs a workflow, not your claude.ai skill.",
+   "dim": []
+  }
+ ]
+}

@@ -1,0 +1,171 @@
+{
+ "name": "screen-effort",
+ "description": "Tela sem caixa de entrada: \"Effort\".",
+ "source": "real",
+ "origin": "q9-r23.txt :: after /effort",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " ▐▛███▛█   Claude Code v2.1.293",
+   "dim": []
+  },
+  {
+   "text": "▝▜██████▀  Haiku 5.5 · Claude Max",
+   "dim": []
+  },
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔",
+   "dim": []
+  },
+  {
+   "text": "   Effort",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "                             Faster                             Smarter",
+   "dim": []
+  },
+  {
+   "text": "                             ──────────▲───────────────────────────────      Ultracode  off",
+   "dim": []
+  },
+  {
+   "text": "                             low     medium     high     xhigh      max      Tab to toggle",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   ←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel",
+   "dim": []
+  }
+ ]
+}

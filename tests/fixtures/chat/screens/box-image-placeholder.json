@@ -1,0 +1,173 @@
+{
+ "name": "box-image-placeholder",
+ "description": "Marcador [Image #N] na caixa, antes do texto.",
+ "source": "synthetic",
+ "origin": "built from q2d-ghost.txt#ghost",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " ▐▛███▛█   Claude Code v2.1.293",
+   "dim": []
+  },
+  {
+   "text": "▝▜██████▀  Haiku 5.5 · Claude Max",
+   "dim": []
+  },
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "  ⎿  SessionStart:startup says: GitHub ativo: xansde",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "! echo GHOST1",
+   "dim": []
+  },
+  {
+   "text": "  ⎿  GHOST1",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "● O comando echo GHOST1 rodou e a saída foi GHOST1. Não há outra pendência nesta mensagem. Se quiser que eu faça algo",
+   "dim": []
+  },
+  {
+   "text": "  com isso, me diga o que é.",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "✻ Churned for 4s · done 18:22",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+   "dim": []
+  },
+  {
+   "text": "❯ [Image #8] describe the image in 3 words",
+   "dim": []
+  },
+  {
+   "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+   "dim": []
+  },
+  {
+   "text": "  ⏸ manual mode on",
+   "dim": [
+    [2,18]
+   ]
+  }
+ ]
+}

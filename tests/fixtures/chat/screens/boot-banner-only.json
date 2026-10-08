@@ -1,0 +1,171 @@
+{
+ "name": "boot-banner-only",
+ "description": "Boot: banner pintado, REPL ainda sem caixa de entrada (stdin não armado).",
+ "source": "synthetic",
+ "origin": "built from q2d-ghost.txt#ghost",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " ▐▛███▛█   Claude Code v2.1.293",
+   "dim": []
+  },
+  {
+   "text": "▝▜██████▀  Haiku 5.5 · Claude Max",
+   "dim": []
+  },
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  }
+ ]
+}
