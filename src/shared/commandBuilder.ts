@@ -124,3 +124,33 @@ export function parseModelEffortFromArgs(args: readonly string[] | undefined): P
   }
   return result;
 }
+
+// T018 (014-chat, FR-030/R17) — todo spawn de sessão `claude` passa
+// `--permission-mode` explícito, para o app saber o modo de partida sem
+// adivinhar. Precedência: launcher (já no argv) > padrão do CLI do usuário
+// (`permissions.defaultMode`, lido por main/cli-user-settings.ts) > `default`.
+
+/** Modos aceitos pelo CLI em `--permission-mode` (superconjunto do `PermissionMode` do launcher). */
+const CLI_PERMISSION_MODES: readonly string[] = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'];
+
+function findExplicitPermissionMode(argv: readonly string[]): string | undefined {
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--permission-mode') return argv[i + 1];
+    if (arg.startsWith('--permission-mode=')) return arg.slice('--permission-mode='.length);
+  }
+  return undefined;
+}
+
+export function resolvePermissionMode(argv: readonly string[], userDefault: string | undefined): string {
+  const explicit = findExplicitPermissionMode(argv);
+  if (explicit) return explicit;
+  if (userDefault && CLI_PERMISSION_MODES.includes(userDefault)) return userDefault;
+  return 'default';
+}
+
+/** Devolve o argv com `--permission-mode <resolvido>` acrescentado quando o launcher não o trouxe. */
+export function withResolvedPermissionMode(argv: readonly string[], userDefault: string | undefined): string[] {
+  if (findExplicitPermissionMode(argv)) return [...argv];
+  return [...argv, '--permission-mode', resolvePermissionMode(argv, userDefault)];
+}

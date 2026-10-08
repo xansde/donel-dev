@@ -9,7 +9,7 @@
 // just human-readable shorthand for "the flag followed by the value as one
 // argv token" — adding real quote chars would corrupt the session name.
 import { describe, expect, it } from 'vitest';
-import { buildClaudeArgs, parseModelEffortFromArgs, type BuildClaudeArgsOptions } from '../src/shared/commandBuilder';
+import { buildClaudeArgs, parseModelEffortFromArgs, resolvePermissionMode, withResolvedPermissionMode, type BuildClaudeArgsOptions } from '../src/shared/commandBuilder';
 
 describe('buildClaudeArgs', () => {
   it('returns an empty argv when no option is provided (all flags omitted, CLI uses user default)', () => {
@@ -224,5 +224,35 @@ describe('buildClaudeArgs', () => {
       expect(first).toEqual(second);
       expect(first).not.toBe(second);
     });
+  });
+});
+
+// T017 (014-chat, FR-030/R17) — modo de permissão explícito em todo spawn de sessão.
+describe('resolvePermissionMode', () => {
+  it('launcher (argv já tem --permission-mode) vence o padrão do usuário', () => {
+    expect(resolvePermissionMode(['--model', 'opus', '--permission-mode', 'plan'], 'acceptEdits')).toBe('plan');
+    expect(resolvePermissionMode(['--permission-mode=auto'], 'plan')).toBe('auto');
+  });
+
+  it('sem launcher: padrão do usuário; sem nada: default', () => {
+    expect(resolvePermissionMode([], 'acceptEdits')).toBe('acceptEdits');
+    expect(resolvePermissionMode(['--model', 'opus'], undefined)).toBe('default');
+  });
+
+  it('padrão do usuário inválido cai em default', () => {
+    expect(resolvePermissionMode([], 'banana')).toBe('default');
+    expect(resolvePermissionMode([], '')).toBe('default');
+  });
+});
+
+describe('withResolvedPermissionMode', () => {
+  it('acrescenta --permission-mode <resolvido> quando o argv não tem', () => {
+    expect(withResolvedPermissionMode(['-r', 'abc'], 'plan')).toEqual(['-r', 'abc', '--permission-mode', 'plan']);
+    expect(withResolvedPermissionMode([], undefined)).toEqual(['--permission-mode', 'default']);
+  });
+
+  it('não altera o argv quando já tem --permission-mode (nem a forma com =)', () => {
+    expect(withResolvedPermissionMode(['--permission-mode', 'auto'], 'plan')).toEqual(['--permission-mode', 'auto']);
+    expect(withResolvedPermissionMode(['--permission-mode=auto'], 'plan')).toEqual(['--permission-mode=auto']);
   });
 });

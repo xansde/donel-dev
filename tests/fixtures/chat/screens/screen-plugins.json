@@ -1,0 +1,171 @@
+{
+ "name": "screen-plugins",
+ "description": "Tela sem caixa de entrada: \"Plugins\".",
+ "source": "real",
+ "origin": "q9-r10.txt :: after /plugin",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "❯ /doctor",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "  Checking latest version, subagent MCP calls, denial sources",
+   "dim": []
+  },
+  {
+   "text": "  ⎿  $ cd ~ && echo \"--- latest version (channel latest)\"; curl -s --max-time 15",
+   "dim": []
+  },
+  {
+   "text": "     https://downloads.claude.ai/claude-code-releases/latest; echo; echo \"--- subagent transcripts (count, MCP calls)\";",
+   "dim": []
+  },
+  {
+   "text": "     ls ~/.claude/projects/*/*/subagents/*.jsonl 2>/dev/null | wc -l; ls -t ~/.claude/projects/*/*/subagents/*.js…",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "❯ /context",
+   "dim": []
+  },
+  {
+   "text": "  ctrl+x ctrl+s to send now",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "✻ Onioning… (1m 5s · ↓ 11.6k tokens)",
+   "dim": []
+  },
+  {
+   "text": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔",
+   "dim": []
+  },
+  {
+   "text": "   Plugins  Discover   Installed   Marketplaces   Errors (4)   Stats",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Discover plugins (1/3332)",
+   "dim": []
+  },
+  {
+   "text": "   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+   "dim": []
+  },
+  {
+   "text": "   │ ⌕ Search…                                                                                                      │",
+   "dim": []
+  },
+  {
+   "text": "   ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+   "dim": []
+  },
+  {
+   "text": "    All 3332 · Anthropic Directory 3226 · claude-plugins-official 311 · superpowers-marketplace 10  (ctrl+s to filter",
+   "dim": []
+  },
+  {
+   "text": "    by marketplace)",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   ❯ ◯ frontend-design · Anthropic Directory · 1.3M installs",
+   "dim": []
+  },
+  {
+   "text": "       Frontend design skill for UI/UX implementation",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     ◯ Superpowers · Anthropic Directory · 1.2M installs",
+   "dim": []
+  },
+  {
+   "text": "       Core skills library for Claude Code: TDD, debugging, collab…",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     ◯ code-review · Anthropic Directory · 492.1K installs",
+   "dim": []
+  },
+  {
+   "text": "       Automated code review for pull requests using multiple spec…",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     ◯ context7 · Anthropic Directory · 458.1K installs",
+   "dim": []
+  },
+  {
+   "text": "       Upstash Context7 MCP server for up-to-date documentation lo…",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     ◯ skill-creator · Anthropic Directory · 440.5K installs",
+   "dim": []
+  },
+  {
+   "text": "       Create new skills, improve existing skills, and measure ski…",
+   "dim": []
+  },
+  {
+   "text": "    ↓ more below",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Type to search · Space to toggle · Enter to view · Esc to go back",
+   "dim": []
+  }
+ ]
+}

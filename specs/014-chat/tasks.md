@@ -59,39 +59,39 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
 
 ### Tipos, configuração e diagnóstico
 
-- [ ] T005 [P] Criar os tipos do modelo em `src/shared/chat/rows.ts`, conforme `data-model.md` §1–§12: `ChatSession`, `ConversationSource`, `TranscriptEntry`, `LineRef`, `ConversationRow` (todas as variantes de `kind`), `ActionCategory`, `ActionSummary`, `NoticeKind`, `Turn`, `FocusItem`, `LiveAction`, `Subagent`, `Pending`, `Send`, `LiveState`, `ImageAttachment`, `PastedText`, `ComposerDraft`, `RowAttachment`. Tudo serializável: sem `Map`, `Date` nem funções.
-- [ ] T006 [P] Criar `src/shared/chat/ipc.ts`, conforme `contracts/ipc-chat.md` §1–§2: `CHAT_CHANNELS`, os tipos de entrada e saída de cada canal, `PendingAnswer`, `RowPatch`, `ChatSnapshot`, `RowDetail`, `CommandEntry`.
-- [ ] T007 [P] Escrever `tests/chat-config.test.ts` (falhando), com os casos:
+- [x] T005 [P] Criar os tipos do modelo em `src/shared/chat/rows.ts`, conforme `data-model.md` §1–§12: `ChatSession`, `ConversationSource`, `TranscriptEntry`, `LineRef`, `ConversationRow` (todas as variantes de `kind`), `ActionCategory`, `ActionSummary`, `NoticeKind`, `Turn`, `FocusItem`, `LiveAction`, `Subagent`, `Pending`, `Send`, `LiveState`, `ImageAttachment`, `PastedText`, `ComposerDraft`, `RowAttachment`. Tudo serializável: sem `Map`, `Date` nem funções.
+- [x] T006 [P] Criar `src/shared/chat/ipc.ts`, conforme `contracts/ipc-chat.md` §1–§2: `CHAT_CHANNELS`, os tipos de entrada e saída de cada canal, `PendingAnswer`, `RowPatch`, `ChatSnapshot`, `RowDetail`, `CommandEntry`.
+- [x] T007 [P] Escrever `tests/chat-config.test.ts` (falhando), com os casos:
   - `chat.enabled` com padrão `false` e `chat.focusMode` com padrão `true`;
   - sanitize de valores inválidos;
   - a chave `chat` preservada por canal antigo (`unknownFields`).
-- [ ] T008 Implementar `chat.enabled`/`chat.focusMode` em `src/main/config-store.ts`, `src/shared/config.ts`, `src/main/index.ts` e `src/preload/index.ts`:
+- [x] T008 Implementar `chat.enabled`/`chat.focusMode` em `src/main/config-store.ts`, `src/shared/config.ts`, `src/main/index.ts` e `src/preload/index.ts`:
   - `src/main/config-store.ts` (campo, sanitize, padrão);
   - `src/shared/config.ts` (`AppConfigDto`);
   - handler `config:setChatPrefs` em `src/main/index.ts` e exposição em `src/preload/index.ts`.
 
   Faz passar T007.
-- [ ] T009 [P] Escrever `tests/chat-diagnostics-log.test.ts` (falhando) e implementar `src/main/chat/diagnostics-log.ts`:
+- [x] T009 [P] Escrever `tests/chat-diagnostics-log.test.ts` (falhando) e implementar `src/main/chat/diagnostics-log.ts`:
   - **Formato**: JSONL em `userData/chat-diagnostics.log`.
   - **Eventos**: `unknown-entry` (uma vez por sessão e tipo), `hook` (evento, `ptyId`, duração) e `send-failed` (motivo).
   - **Nunca** conteúdo de conversa nem payload de hook.
 
 ### Ponte de hooks HTTP (`contracts/hook-bridge.md`)
 
-- [ ] T010 [P] Reescrever `tests/hooks-settings.test.ts` (falhando) para o arquivo **por sessão**, conforme `hook-bridge.md` §1–§2:
+- [x] T010 [P] Reescrever `tests/hooks-settings.test.ts` (falhando) para o arquivo **por sessão**, conforme `hook-bridge.md` §1–§2:
   - eventos e timeouts da tabela;
   - entradas `type:"http"` com url `http://127.0.0.1:<porta>/h/<Evento>` e header `X-Donel-Token`, sem `matcher`;
   - `PermissionRequest` (timeout 86400) só com `chatEnabled`;
   - `SessionStart` como `command` `curl.exe -s --data-binary @- -H "X-Donel-Token: <token>" …`, com fallback para o encaminhador PowerShell que lê e envia **bytes**;
   - caminho `userData/hook-settings/<ptyId>.json`;
   - limpeza de arquivos com mais de 1 dia.
-- [ ] T011 Implementar em `src/main/hooks-settings.ts`:
+- [x] T011 Implementar em `src/main/hooks-settings.ts`:
   - `buildSessionHooksSettings({ port, token, chatEnabled, curlPath })` (puro);
   - `writeSessionHooksSettings`, `removeSessionHooksSettings` e `cleanupStaleHookSettings` (I/O);
   - `buildByteSafeForwarderScript` para o fallback.
 
   Faz passar T010.
-- [ ] T012 [P] Escrever o teste de contrato `tests/hook-bridge.contract.test.ts` (falhando), com servidor real e cliente HTTP que imita o CLI:
+- [x] T012 [P] Escrever o teste de contrato `tests/hook-bridge.contract.test.ts` (falhando), com servidor real e cliente HTTP que imita o CLI:
   - `401` sem token ou com token desconhecido; `400` com JSON inválido; `413` acima de 32 MB;
   - eventos não bloqueantes respondidos `{}` em ≤ 10 ms;
   - `PermissionRequest` segurado até `respond(decision)`;
@@ -100,7 +100,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - `PostToolUse` com a mesma tripla de uma decisão segurada → responde `{}` e emite `resolved-elsewhere`;
   - `SessionStart` (`source` clear/resume/fork) emite `conversation-switched` com o `session_id` e o `transcript_path` novos;
   - `SessionEnd` com `reason` clear/resume **não** emite fim.
-- [ ] T013 Implementar `src/main/hook-bridge.ts`:
+- [x] T013 Implementar `src/main/hook-bridge.ts`:
   - `createHookBridge()` com porta efêmera em 127.0.0.1;
   - `registerSession(ptyId) → token` e `unregisterSession(ptyId)`;
   - rotas `/h/<Evento>`, limite de corpo, parse tolerante;
@@ -108,25 +108,25 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - `PendingDecisionHandle` (`respond`, `release`), registro de `PreToolUse` por 10 s e medições para o T009.
 
   Faz passar T012.
-- [ ] T014 Migrar o semáforo para a ponte, em `src/main/session-semaphore-manager.ts` e `src/main/semaphore-state-machine.ts`:
+- [x] T014 Migrar o semáforo para a ponte, em `src/main/session-semaphore-manager.ts` e `src/main/semaphore-state-machine.ts`:
   - eventos por `ptyId` (sai o mapa por `session_id`);
   - `SessionEnd` com `reason` clear/resume deixa de levar a `done`;
   - caminho antigo (encaminhador PowerShell + `/hook`) selecionável por uma versão via `DONEL_HOOKS_TRANSPORT=legacy`.
 
   Atualizar `tests/session-semaphore-manager.test.ts` e `tests/semaphore-state-machine.test.ts`, com casos novos para `/clear` e `/resume`.
-- [ ] T015 Ligar a ponte no spawn, em `src/main/index.ts` (handler em ~988–1155):
+- [x] T015 Ligar a ponte no spawn, em `src/main/index.ts` (handler em ~988–1155):
   - gerar token e arquivo `--settings` por sessão no lugar do arquivo único;
   - registrar o token antes do spawn e, no `onExit`, apagar o arquivo e desregistrar;
   - no boot, detectar `curl.exe` (`where.exe curl`) e rodar `cleanupStaleHookSettings`;
   - aba de login continua sem hooks.
-- [ ] T016 Re-apontar a conversa da aba (FR-033, nas duas vistas) em `src/main/transcript-watcher.ts`, `src/main/index.ts` e `src/renderer/src/App.tsx`:
+- [x] T016 Re-apontar a conversa da aba (FR-033, nas duas vistas) em `src/main/transcript-watcher.ts`, `src/main/index.ts` e `src/renderer/src/App.tsx`:
   - **Main**: `src/main/transcript-watcher.ts` ganha `repoint(ptyId, { sessionId, transcriptPath })`, que espera o arquivo nascer. `src/main/index.ts` reage ao `conversation-switched` da ponte re-apontando o watcher e emitindo `session:switched` ao renderer.
   - **Renderer**: `src/renderer/src/App.tsx` atualiza `claudeSessionId` da aba (nome, cor e aparência passam a usar o id novo).
   - **Testes**: caso novo em `tests/transcriptWatcher.test.ts` (re-apontar para arquivo que ainda não existe).
 
 ### Ambiente e modo de permissão (FR-030, R17)
 
-- [ ] T017 [P] Escrever casos (falhando) em `tests/pty-manager.test.ts` e `tests/commandBuilder.test.ts`.
+- [x] T017 [P] Escrever casos (falhando) em `tests/pty-manager.test.ts` e `tests/commandBuilder.test.ts`.
   - **`buildPtyEnv`**:
     - acrescenta `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1`;
     - remove as variáveis de ponte/mensageria herdadas de uma sessão-mãe;
@@ -136,7 +136,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - **Spawn de sessão `claude`**: sem `--permission-mode` no argv, ganha o resolvido.
 
   Antes de escrever, confirmar os nomes exatos das variáveis de ponte/mensageria buscando `BRIDGE_SESSION_ID` e `MESSAGING` no binário (`grep -a -o -E` em `~/.local/bin/claude.exe`, com `timeout 120`).
-- [ ] T018 Implementar o modo de permissão e o ambiente em `src/main/cli-user-settings.ts`, `src/shared/commandBuilder.ts`, `src/main/index.ts` e `src/main/pty-manager.ts`:
+- [x] T018 Implementar o modo de permissão e o ambiente em `src/main/cli-user-settings.ts`, `src/shared/commandBuilder.ts`, `src/main/index.ts` e `src/main/pty-manager.ts`:
   - `src/main/cli-user-settings.ts`: lê **só** `permissions.defaultMode` de `~/.claude/settings.json`, sem credencial e tolerando arquivo ausente;
   - `resolvePermissionMode(argv, userDefault)` em `src/shared/commandBuilder.ts`: launcher > padrão do usuário > `default`;
   - aplicação no handler de spawn de `src/main/index.ts`, que cobre barra lateral, retomar/fork, favoritos, mapa e Esteira;
@@ -146,21 +146,21 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
 
 ### Leitura do transcript e adaptador (`contracts/conversation-rows.md`)
 
-- [ ] T019 [P] Criar as fixtures sintéticas em `tests/fixtures/chat/`, geradas por `tests/fixtures/chat/build-fixtures.mjs` (determinístico, conteúdo genérico com `atlas`/`beacon`/`vega`), com um `README.md` dos cenários. Base de estrutura: `specs/014-chat/spike/transcript-schema.md`. Cenários:
+- [x] T019 [P] Criar as fixtures sintéticas em `tests/fixtures/chat/`, geradas por `tests/fixtures/chat/build-fixtures.mjs` (determinístico, conteúdo genérico com `atlas`/`beacon`/`vega`), com um `README.md` dos cenários. Base de estrutura: `specs/014-chat/spike/transcript-schema.md`. Cenários:
   - **Básicos**: rodada simples (text, thinking, tool_use, tool_result); todos os `toolUseResult` da tabela do catálogo; comando `/` + corpo de skill `isMeta`; modo `!`; interrupção; prompt com imagem.
   - **Fila e compactação**: `queued_command` + `queue-operation`; `compact_boundary` com `logicalParentUuid`.
   - **Árvore**: galho de rewind; resultados paralelos.
   - **Erros e ruído**: erro sintético de API e de limite; attachments de ruído, incluindo `session_context` e `credential_org`; tipo desconhecido; linhas de metadados.
   - **Subagentes**: arquivo de subagente + `.meta.json` + `<task-notification>`.
   - **Bordas**: linha de mais de 1 MB; última linha incompleta.
-- [ ] T020 [P] Escrever `tests/chat-transcript-entry.test.ts` (falhando), cobrindo `conversation-rows.md` §2:
+- [x] T020 [P] Escrever `tests/chat-transcript-entry.test.ts` (falhando), cobrindo `conversation-rows.md` §2:
   - ordem de precedência;
   - metadados;
   - ruído descartado **antes** de `unknown`;
   - `isSidechain` descartado;
   - inválido e grande demais.
-- [ ] T021 Implementar `src/shared/chat/transcriptEntry.ts` (`classifyLine(raw, lineRef)`). Faz passar T020.
-- [ ] T022 [P] Escrever `tests/chat-active-chain.test.ts` (falhando), cobrindo `conversation-rows.md` §3:
+- [x] T021 Implementar `src/shared/chat/transcriptEntry.ts` (`classifyLine(raw, lineRef)`). Faz passar T020.
+- [x] T022 [P] Escrever `tests/chat-active-chain.test.ts` (falhando), cobrindo `conversation-rows.md` §3:
   - escolha da folha;
   - subida por `parentUuid`;
   - salto de compactação;
@@ -168,23 +168,23 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - `tool_result` preso por `tool_use_id`;
   - paginação para trás com `expectedParent` e resultados pendurados;
   - rewind detectado no seguimento adiante.
-- [ ] T023 Implementar `src/shared/chat/activeChain.ts`. Faz passar T022.
-- [ ] T024 [P] Escrever `tests/chat-tool-summary.test.ts` (falhando), cobrindo `conversation-rows.md` §4:
+- [x] T023 Implementar `src/shared/chat/activeChain.ts`. Faz passar T022.
+- [x] T024 [P] Escrever `tests/chat-tool-summary.test.ts` (falhando), cobrindo `conversation-rows.md` §4:
   - verbos, alvos e estatísticas em português por ferramenta;
   - caminho relativo ao `cwd`;
   - rótulo de Bash/PowerShell sem invólucros;
   - MCP;
   - ferramenta desconhecida.
-- [ ] T025 Implementar `src/shared/chat/toolSummary.ts` e adaptar `pingdotgg/t3code@9f48092 packages/client-runtime/src/work-log/commandLabel.ts` em `src/shared/chat/t3/commandLabel.ts`, com o cabeçalho MIT de `research.md` R20. Faz passar T024.
-- [ ] T026 [P] Escrever `tests/chat-grouping.test.ts` (falhando), cobrindo `conversation-rows.md` §5:
+- [x] T025 Implementar `src/shared/chat/toolSummary.ts` e adaptar `pingdotgg/t3code@9f48092 packages/client-runtime/src/work-log/commandLabel.ts` em `src/shared/chat/t3/commandLabel.ts`, com o cabeçalho MIT de `research.md` R20. Faz passar T024.
+- [x] T026 [P] Escrever `tests/chat-grouping.test.ts` (falhando), cobrindo `conversation-rows.md` §5:
   - grupo só com 2 ou mais ações;
   - `thinking` absorvido;
   - o que quebra um grupo;
   - rótulo "N ações — leu a, editou b, rodou c";
   - lista de falhas no cabeçalho;
   - id estável `group:<toolUseId>`.
-- [ ] T027 Implementar `src/shared/chat/grouping.ts`. Faz passar T026.
-- [ ] T028 [P] Escrever `tests/chat-adapter.test.ts` (falhando), rodando sobre as fixtures do T019:
+- [x] T027 Implementar `src/shared/chat/grouping.ts`. Faz passar T026.
+- [x] T028 [P] Escrever `tests/chat-adapter.test.ts` (falhando), rodando sobre as fixtures do T019:
   - linhas produzidas (`kind`, `id`, `turnId`, `status`);
   - leitura incremental igual à leitura de uma vez;
   - patches `append`/`replace`/`prepend`/`reset`;
@@ -193,40 +193,40 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - skill, `question`, `plan`, `shell`, `local-command`;
   - `unknown` com o gancho de diagnóstico;
   - **privacidade**: nenhum dado de `session_context`/`credential_org` em linha nenhuma.
-- [ ] T029 Implementar `src/shared/chat/adapter.ts` (`adapt(state, entries) → { state, patches }`), usando T021, T023, T025 e T027. Faz passar T028.
-- [ ] T030 [P] Escrever `tests/chat-focus-fold.test.ts` (falhando), cobrindo `data-model.md` §5:
+- [x] T029 Implementar `src/shared/chat/adapter.ts` (`adapt(state, entries) → { state, patches }`), usando T021, T023, T025 e T027. Faz passar T028.
+- [x] T030 [P] Escrever `tests/chat-focus-fold.test.ts` (falhando), cobrindo `data-model.md` §5:
   - dobra por rodada e `finalRowId`;
   - `hasQuestion` (nota recolhida terminando em `?`);
   - rodada em andamento;
   - rodada aberta por notificação.
-- [ ] T031 Implementar `src/shared/chat/focusFold.ts`. Faz passar T030.
-- [ ] T032 [P] Escrever `tests/chat-transcript-io.test.ts` (falhando), com arquivos temporários.
+- [x] T031 Implementar `src/shared/chat/focusFold.ts`. Faz passar T030.
+- [x] T032 [P] Escrever `tests/chat-transcript-io.test.ts` (falhando), com arquivos temporários.
   - **Seguidor**: offset; resto de linha; debounce de 50 ms; arquivo que nasce depois; re-apontar.
   - **Paginador**: blocos de 256 KB; linhas de até 8 MB atravessando blocos; página de 30 rodadas ou 2 MB.
   - **Leitura nunca inteira**: afirmar bytes lidos menores que o tamanho do arquivo.
-- [ ] T033 Implementar `src/main/chat/transcript-follower.ts` e `src/main/chat/transcript-pager.ts`. Faz passar T032.
+- [x] T033 Implementar `src/main/chat/transcript-follower.ts` e `src/main/chat/transcript-pager.ts`. Faz passar T032.
 
 ### Tela do terminal do Claude (R6, R16)
 
-- [ ] T034 [P] Criar as fixtures de tela em `tests/fixtures/chat/screens/` (JSON: `lines[]` com `text` e máscara `dim`, nos layouts fullscreen e inline), derivadas de `specs/014-chat/spike/b2/logs/*.txt`. Estados:
+- [x] T034 [P] Criar as fixtures de tela em `tests/fixtures/chat/screens/` (JSON: `lines[]` com `text` e máscara `dim`, nos layouts fullscreen e inline), derivadas de `specs/014-chat/spike/b2/logs/*.txt`. Estados:
   - **Ciclo de vida**: fases do boot; ocioso vazio; ocioso com texto; trabalhando; com fila; interrompido.
   - **Caixa de entrada**: placeholder e sugestão fantasma (*dim*); prompt `!`; caixa de 15 linhas.
   - **Menus e marcadores**: menu `/` aberto; menu `@` aberto; `[Pasted text #N +M lines]`; `[Image #N]`.
   - **Diálogos**: confiança 2.1.293; "external imports"; cada tela com título da lista R16; diálogos de pergunta, plano e permissão.
   - **Mensagens**: "Unknown command"; "Transcript saving is off"; "Press Ctrl-C again to exit"; "Esc again to clear".
-- [ ] T035 [P] Atualizar `tests/cliInputBox.test.ts` e `tests/trustDialog.test.ts` (falhando):
+- [x] T035 [P] Atualizar `tests/cliInputBox.test.ts` e `tests/trustDialog.test.ts` (falhando):
   - leitura da caixa considerando *dim* (placeholder e fantasma não são texto);
   - prompt `!`;
   - até 15 linhas;
   - diálogo de confiança pelos textos da 2.1.293 ("Quick safety check", "Yes, I trust this folder", "Enter to confirm · Esc to cancel").
-- [ ] T036 Corrigir `src/shared/cliInputBox.ts` e `src/shared/trustDialog.ts` (a assinatura passa a aceitar linhas com máscara *dim*). Fazem passar T035, sem regressão em `tests/esteiraSession.test.ts` e `tests/preTypeReadiness.test.ts`.
-- [ ] T037 [P] Escrever `tests/chat-screen.test.ts` (falhando) sobre as fixtures do T034, para os detectores de `src/shared/chat/screen.ts`:
+- [x] T036 Corrigir `src/shared/cliInputBox.ts` e `src/shared/trustDialog.ts` (a assinatura passa a aceitar linhas com máscara *dim*). Fazem passar T035, sem regressão em `tests/esteiraSession.test.ts` e `tests/preTypeReadiness.test.ts`.
+- [x] T037 [P] Escrever `tests/chat-screen.test.ts` (falhando) sobre as fixtures do T034, para os detectores de `src/shared/chat/screen.ts`:
   - `isReadyForInput` (gate do `send-protocol.md` §1) e `readInputText` (*dim*-aware);
   - `isWorking`, `hasQueuedMessages`, `slashMenuOpen`, `atMenuOpen`;
   - `blockingScreen() → { kind, title } | null`, `modelDialog()`, `transcriptSavingOff`;
   - `pastedPlaceholder()`, `imagePlaceholderCount()`.
-- [ ] T038 Implementar `src/shared/chat/screen.ts`. Faz passar T037.
-- [ ] T039 Ampliar o handle de `src/renderer/src/TerminalPane.tsx`, conforme `contracts/ipc-chat.md` §3:
+- [x] T038 Implementar `src/shared/chat/screen.ts`. Faz passar T037.
+- [x] T039 Ampliar o handle de `src/renderer/src/TerminalPane.tsx`, conforme `contracts/ipc-chat.md` §3:
   - `write(data)`;
   - `readScreen()`, lendo do buffer do xterm (não do DOM): linhas com máscara *dim* via `IBufferCell.isDim()`, `bracketedPaste`, `altScreen`, `cols`, `rows`;
   - `onScreenUpdate(cb)`;
@@ -237,18 +237,18 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
 
 ### CLI falso e smoke da fundação
 
-- [ ] T040 Criar o CLI falso roteirizado em `tests/smoke/fixtures/fake-claude-chat/` (`claude.cmd` → `node fake-claude-chat.mjs %*`, padrão do `fake-claude-login`):
+- [x] T040 Criar o CLI falso roteirizado em `tests/smoke/fixtures/fake-claude-chat/` (`claude.cmd` → `node fake-claude-chat.mjs %*`, padrão do `fake-claude-login`):
   - **Argumentos**: lê `--session-id`, `--settings` (URLs, token e comando do `SessionStart`) e `-r`.
   - **Tela**: desenha a caixa entre réguas e o rodapé ("? for shortcuts" / "esc to interrupt"); liga o bracketed paste; ecoa colagens, inclusive os placeholders.
   - **No Enter**: faz `POST` de `UserPromptSubmit` e acrescenta a linha `user` a um transcript numa pasta temporária, anunciada pelo `transcript_path` do `SessionStart`.
   - **Roteiro**: `DONEL_FAKE_CLAUDE_SCENARIO` (JSON) descreve linhas de assistente e de ferramenta e chamadas de hook.
   - **Comandos**: atende `/clear` (`SessionEnd` + `SessionStart` com id novo) e `/exit`.
-- [ ] T041 Escrever a smoke `tests/smoke/chat-foundation.spec.ts`, com `DONEL_CLAUDE_EXECUTABLE_FIXTURE` apontando para o T040:
+- [x] T041 Escrever a smoke `tests/smoke/chat-foundation.spec.ts`, com `DONEL_CLAUDE_EXECUTABLE_FIXTURE` apontando para o T040:
   - o semáforo muda pela ponte HTTP (trabalhando → aguardando);
   - depois de `/clear` na vista do terminal, semáforo, nome e cor seguem a conversa nova.
 
   Depois rodar a suíte inteira (`npm run build; npm run test:smoke`) sem regressão.
-- [ ] T042 Fechar a fase (registro em `specs/014-chat/e2e.md`):
+- [x] T042 Fechar a fase (registro em `specs/014-chat/e2e.md`):
   - `npm test`, `npm run typecheck` e smokes verdes;
   - abrir o PR da Phase 2 contra `staging` (o merge é do dono);
   - roteiro de validação no alfa em `specs/014-chat/e2e.md` (seção "Fase 1"): semáforo durante uma sessão real e `/clear` mantendo nome e cor.

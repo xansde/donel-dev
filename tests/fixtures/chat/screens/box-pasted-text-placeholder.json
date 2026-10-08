@@ -1,0 +1,173 @@
+{
+ "name": "box-pasted-text-placeholder",
+ "description": "Marcador [Pasted text #N +M lines] na caixa.",
+ "source": "real",
+ "origin": "q4.txt :: l500 box",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " ▐▛███▛█   Claude Code v2.1.293",
+   "dim": []
+  },
+  {
+   "text": "▝▜██████▀  Haiku 5.5 · Claude Max",
+   "dim": []
+  },
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "  ⎿  SessionStart:startup says: GitHub ativo: xansde",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "❯ Reply with only the word OK [tag-mixed]. [LF-TEST]",
+   "dim": []
+  },
+  {
+   "text": "  A    TAB-after",
+   "dim": []
+  },
+  {
+   "text": "  B ação 你好 😀 end",
+   "dim": []
+  },
+  {
+   "text": " [CRLF-TEST]",
+   "dim": []
+  },
+  {
+   "text": " C1",
+   "dim": []
+  },
+  {
+   "text": " C2",
+   "dim": []
+  },
+  {
+   "text": " [CR-TEST]",
+   "dim": []
+  },
+  {
+   "text": " D1",
+   "dim": []
+  },
+  {
+   "text": " D2",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "● OK",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "✻ Brewed for 3s · done 18:10",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "                                                                                                    ◐ medium · /effort",
+   "dim": []
+  },
+  {
+   "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+   "dim": []
+  },
+  {
+   "text": "❯ [Pasted text #11 +500 lines]",
+   "dim": []
+  },
+  {
+   "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+   "dim": []
+  },
+  {
+   "text": "  paste again to expand",
+   "dim": [
+    [2,23]
+   ]
+  }
+ ]
+}
