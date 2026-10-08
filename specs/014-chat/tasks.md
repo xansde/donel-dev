@@ -243,7 +243,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - **No Enter**: faz `POST` de `UserPromptSubmit` e acrescenta a linha `user` a um transcript numa pasta temporária, anunciada pelo `transcript_path` do `SessionStart`.
   - **Roteiro**: `DONEL_FAKE_CLAUDE_SCENARIO` (JSON) descreve linhas de assistente e de ferramenta e chamadas de hook.
   - **Comandos**: atende `/clear` (`SessionEnd` + `SessionStart` com id novo) e `/exit`.
-- [ ] T041 Escrever a smoke `tests/smoke/chat-foundation.spec.ts`, com `DONEL_CLAUDE_EXECUTABLE_FIXTURE` apontando para o T040:
+- [x] T041 Escrever a smoke `tests/smoke/chat-foundation.spec.ts`, com `DONEL_CLAUDE_EXECUTABLE_FIXTURE` apontando para o T040:
   - o semáforo muda pela ponte HTTP (trabalhando → aguardando);
   - depois de `/clear` na vista do terminal, semáforo, nome e cor seguem a conversa nova.
 
