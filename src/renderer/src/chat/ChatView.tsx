@@ -7,12 +7,16 @@
 import { memo, useCallback, useMemo, type ReactNode } from 'react';
 import { buildImageAssetUrl } from '../../../shared/chat/assetUrl';
 import type { ConversationRow } from '../../../shared/chat/rows';
+import type { TerminalPaneHandle } from '../TerminalPane';
 import styles from './ChatView.module.css';
 import { ConversationSwitchBanner, ReceptionBanner } from './ReceptionBanner';
 import { joinAnswerMarkdown } from './markdown';
 import type { AnswerInfo, RowRenderContext } from './renderRow';
 import { SessionEndedBar } from './SessionEndedBar';
 import { Timeline } from './Timeline';
+import { WorkingFooter } from './WorkingFooter';
+import { shouldStopOnEsc, stopWorking } from './stopWorking';
+import { useTerminalNeededReporter } from './useTerminalNeededReporter';
 import { useChatSession } from './useChatSession';
 
 /**
@@ -27,6 +31,8 @@ export interface ChatViewActions {
   closeTab(tabId: string): void;
   /** "abrir" on the new-conversation notice. */
   openPreviousSessions(tabId: string): void;
+  /** T068/T070: the tab's live terminal (screen detectors and Parar); `null` before it mounts. */
+  terminal(tabId: string): TerminalPaneHandle | null;
 }
 
 export interface ChatViewProps {
@@ -85,6 +91,18 @@ export const ChatView = memo(function ChatView({
   const onCloseTab = useCallback(() => actions.closeTab(tabId), [actions, tabId]);
   const onOpenPreviousSessions = useCallback(() => actions.openPreviousSessions(tabId), [actions, tabId]);
 
+  const terminal = actions.terminal(tabId);
+  useTerminalNeededReporter(terminal, ptyId, session.live);
+  const onKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key !== 'Escape' || !active) return;
+      const live = session.live;
+      if (!shouldStopOnEsc({ defaultPrevented: event.defaultPrevented, working: live?.status === 'working', openPendings: live?.pendings.length ?? 0 })) return;
+      if (stopWorking(actions.terminal(tabId))) event.preventDefault();
+    },
+    [actions, tabId, active, session.live],
+  );
+
   const answers = useMemo(() => buildAnswerInfo(session.rows), [session.rows]);
   const ctx = useMemo<RowRenderContext>(
     () => ({
@@ -116,7 +134,7 @@ export const ChatView = memo(function ChatView({
     ) : null;
 
   return (
-    <div className={styles.root} data-testid="chat-view">
+    <div className={styles.root} data-testid="chat-view" tabIndex={-1} onKeyDown={onKeyDown}>
       {pinnedSwitch !== null || reception !== null ? (
         <div className={styles.strips}>
           {reception}
@@ -132,7 +150,10 @@ export const ChatView = memo(function ChatView({
       {effectiveEnded !== null ? (
         <SessionEndedBar exitCode={effectiveEnded.exitCode} onResume={onResume} onCloseTab={onCloseTab} />
       ) : (
-        footer ?? null
+        <>
+          <WorkingFooter live={session.live} rows={session.rows} terminal={terminal} />
+          {footer ?? null}
+        </>
       )}
     </div>
   );

@@ -1150,8 +1150,10 @@ export function App(): React.JSX.Element {
     resume: () => undefined,
     closeTab: () => undefined,
     openPreviousSessions: () => undefined,
+    terminal: () => null,
   });
   chatActionsRef.current = {
+    terminal: (tabId) => terminalRefs.current[tabId] ?? null,
     openTerminal: (tabId) => setTabView(tabId, 'terminal'),
     // FR-034 — retoma a MESMA conversa (a atual da aba, mesmo após /clear ou /resume).
     resume: (tabId) => {
@@ -1171,6 +1173,7 @@ export function App(): React.JSX.Element {
       resume: (tabId) => chatActionsRef.current.resume(tabId),
       closeTab: (tabId) => chatActionsRef.current.closeTab(tabId),
       openPreviousSessions: (tabId) => chatActionsRef.current.openPreviousSessions(tabId),
+      terminal: (tabId) => chatActionsRef.current.terminal(tabId),
     }),
     [],
   );

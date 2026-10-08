@@ -154,7 +154,7 @@ async function startSession(source) {
 }
 
 // ------------------------------------------------------------------- screen
-const state = { working: false, input: '', pastes: [], history: [], menuClosed: false, images: 0 };
+const state = { dialog: false, working: false, input: '', pastes: [], history: [], menuClosed: false, images: 0 };
 const pending = []; // messages submitted during a round, waiting in the CLI's queue
 const NATIVE_COMMANDS = ['/clear', '/compact', '/config', '/cost', '/exit', '/help', '/mcp', '/memory', '/model', '/status'];
 const LOCAL_COMMANDS = new Set(['/config', '/cost', '/help', '/mcp', '/memory', '/model', '/status']);
@@ -172,6 +172,12 @@ function ruler() {
 }
 
 function render() {
+  if (state.dialog) {
+    // `/pick`: a model-selection dialog that replaces the input box and stays until Esc (smoke of the "terminal needed" strip).
+    const dialog = ['▔'.repeat(Math.max(20, process.stdout.columns || 100)), 'Select model', '', '  ❯ 1. Default (recommended) ✔', '    2. Fake Model', '', '  Enter to confirm · Esc to exit'];
+    out(`\x1b[2J\x1b[H${dialog.join('\r\n')}`);
+    return;
+  }
   const lines = [' ▐▛███▜▌   Claude Code v2.1.293', `▝▜█████▛▘  Fake Model · fake-claude-chat`, ` ▘▘ ▝▝    ${cwd}`, ''];
   lines.push(...state.history.slice(-12));
   for (const queued of pending) lines.push(`  ⎿ queued: ${queued.replace(/\n/g, ' ').slice(0, 60)}`);
@@ -305,6 +311,9 @@ async function handleSlash(text) {
     appendLine({ type: 'system', subtype: 'compact_boundary', parentUuid: null, logicalParentUuid: before, content: 'Conversation compacted', level: 'info', compactMetadata: { trigger: 'manual', preTokens: 1200, postTokens: 300, durationMs: 50 } });
     note('✻ Conversation compacted');
     await fireHook('SessionStart', { source: 'compact' });
+  } else if (name === '/pick') {
+    state.dialog = true;
+    render();
   } else if (LOCAL_COMMANDS.has(name)) {
     playLocalCommand(name, args);
   } else {
@@ -416,6 +425,13 @@ function pressEnter() {
 
 function onData(chunk) {
   let data = chunk.toString('utf8');
+  if (state.dialog) {
+    if (data === '\x1b') {
+      state.dialog = false;
+      render();
+    }
+    return;
+  }
   if (!inPaste && data === '\x1b') {
     if (state.working) turnState.interrupted = true;
     else if (menuMatches().length > 0) {
