@@ -89,15 +89,22 @@ describe('classifyLine - rule 3: noise attachments are discarded before unknown'
     'agent_listing_delta', 'mcp_instructions_delta', 'nested_memory',
   ];
   for (const t of noise) {
-    it(`discards attachment ${t}`, () => {
-      expect(classify({ ...NODE, type: 'attachment', attachment: { type: t, email: 'fake@example.invalid' } })).toBeNull();
+    it(`reduces attachment ${t} to a link-only noise node (never unknown)`, () => {
+      const e = classify({ ...NODE, type: 'attachment', attachment: { type: t, email: 'fake@example.invalid' } });
+      expect(e).toMatchObject({ k: 'node', role: 'attachment', noise: true, uuid: 'u-1', parentUuid: 'u-0' });
+      expect((e as { data: unknown }).data).toEqual({ type: 'attachment', attachment: { type: t } });
     });
   }
 
+  it('drops a noise attachment that has no uuid (nothing to link)', () => {
+    expect(classify({ type: 'attachment', attachment: { type: 'date' } })).toBeNull();
+  });
+
   it('never exposes session_context / credential_org data (privacy, FR-031)', () => {
     for (const t of ['session_context', 'credential_org']) {
-      const e = classify({ ...NODE, type: 'attachment', attachment: { type: t, token: 'FAKE-TOKEN' } });
-      expect(e).toBeNull();
+      const e = classify({ ...NODE, type: 'attachment', attachment: { type: t, token: 'FAKE-TOKEN', email: 'a@b.invalid' } });
+      expect(JSON.stringify(e)).not.toContain('FAKE-TOKEN');
+      expect(JSON.stringify(e)).not.toContain('a@b.invalid');
     }
   });
 });
@@ -173,7 +180,7 @@ describe('classifyLine - precedence', () => {
     expect(classify({ type: 'mode', isSidechain: true })).toMatchObject({ k: 'meta' });
   });
 
-  it('sidechain (rule 2) wins over noise (rule 3) - both discard, no entry', () => {
+  it('sidechain (rule 2) wins over noise (rule 3) - discards, no entry', () => {
     expect(classify({ ...NODE, isSidechain: true, type: 'attachment', attachment: { type: 'date' } })).toBeNull();
   });
 
@@ -204,7 +211,8 @@ describe('classifyLine - over the fixtures', () => {
 
   it('errors-noise: no account data survives, sidechain/noise dropped, unknowns surfaced', () => {
     const { entries, dropped } = classifyFile('errors-noise.jsonl');
-    expect(dropped).toBeGreaterThanOrEqual(22); // 21 noise attachments + 1 sidechain
+    expect(dropped).toBe(1); // the leaked sidechain line; the 21 noise attachments stay as link-only nodes
+    expect(entries.filter((e) => e.k === 'node' && e.noise === true)).toHaveLength(21);
     const blob = JSON.stringify(entries);
     expect(blob).not.toContain('fake.user@example.invalid');
     expect(blob).not.toContain('FAKE-ORG-TOKEN-0000');

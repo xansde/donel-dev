@@ -46,6 +46,14 @@ export type TranscriptEntry =
        * The line stays a node so the parent chain is not broken.
        */
       readonly unknownLabel?: string;
+      /**
+       * Noise attachment (conversation-rows.md §6). It produces NO row, but real
+       * transcripts chain lines THROUGH these (a child's `parentUuid` points at
+       * them), so the entry is kept only as a link: `data` is stripped to the
+       * attachment type (never any account data) and the chain walkers treat it
+       * as a pass-through.
+       */
+      readonly noise?: true;
     }
   | {
       readonly k: 'meta';

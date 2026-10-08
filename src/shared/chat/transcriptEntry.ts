@@ -2,10 +2,11 @@
 // specs/014-chat/contracts/conversation-rows.md §2 (precedence order). Pure.
 //
 // `classifyLine` never throws. It returns:
-//   - `null`   -> the line is discarded (sidechain, noise attachment);
+//   - `null`   -> the line is discarded (sidechain; noise attachment WITHOUT uuid);
 //   - `invalid`-> not JSON / too large (rule 0);
 //   - `meta`   -> metadata line without uuid (rule 1);
-//   - `node`   -> user / assistant / system / attachment (rules 4-7); finer
+//   - `node`   -> user / assistant / system / attachment (rules 3-7); noise
+//                 attachments come as `noise: true` link-only nodes (see rows.ts); finer
 //                 routing (§2.1-§2.4) is the adapter's job, EXCEPT unrecognised
 //                 `attachment.type` / `system.subtype`, flagged via `unknownLabel`;
 //   - `unknown`-> any other top-level `type` (rule 8).
@@ -81,9 +82,23 @@ export function classifyLine(raw: string, lineRef: LineRef): TranscriptEntry | n
 
   // Rule 3 - noise attachments, BEFORE any `unknown` is recorded (privacy: the
   // account attachments must never reach the raw block).
-  if (attachmentType !== null && NOISE_ATTACHMENTS.has(attachmentType)) return null;
-
   const parentUuid = str(data.parentUuid);
+  if (attachmentType !== null && NOISE_ATTACHMENTS.has(attachmentType)) {
+    // Real transcripts chain lines THROUGH noise attachments (measured: most
+    // noise attachments have children), so dropping the uuid would cut the
+    // active chain. Keep only the link; the body (account data) is stripped.
+    if (uuid === null) return null;
+    return {
+      k: 'node',
+      uuid,
+      parentUuid,
+      role: 'attachment',
+      at: str(data.timestamp) ?? '',
+      raw: lineRef,
+      data: { type: 'attachment', attachment: { type: attachmentType } },
+      noise: true,
+    };
+  }
 
   if (type !== null && uuid !== null && NODE_ROLES.has(type)) {
     const logical = str(data.logicalParentUuid);
