@@ -98,6 +98,8 @@ export function watchTranscript(options: TranscriptWatcherOptions): TranscriptWa
   let lastEmitted: { customTitle: string | null; contextTokens: number | null; cliColorName: string | null } | null = null;
   /** Uma releitura por vez: rajada longa não empilha leituras concorrentes do mesmo arquivo. */
   let reading = false;
+  /** Um evento caiu no debounce com a leitura ainda em voo: relê assim que ela terminar (sem isso a escrita se perdia). */
+  let rereadRequested = false;
 
   const dispose = (): void => {
     disposed = true;
@@ -110,7 +112,13 @@ export function watchTranscript(options: TranscriptWatcherOptions): TranscriptWa
   };
 
   async function readAndMaybeEmit(): Promise<void> {
-    if (disposed || reading) return;
+    if (disposed) return;
+    if (reading) {
+      // Descartar aqui perdia a escrita quando nenhum outro evento vinha depois
+      // (append único + silêncio): a leitura em voo já "viu" o arquivo antigo.
+      rereadRequested = true;
+      return;
+    }
     reading = true;
     try {
       const tail = await readTranscriptTail(filePath);
@@ -144,6 +152,10 @@ export function watchTranscript(options: TranscriptWatcherOptions): TranscriptWa
       onChange({ sessionId, ...next });
     } finally {
       reading = false;
+      if (rereadRequested && !disposed) {
+        rereadRequested = false;
+        void readAndMaybeEmit();
+      }
     }
   }
 
