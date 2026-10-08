@@ -239,6 +239,7 @@ export const ChatView = memo(function ChatView({
             tabId={tabId}
             ptyId={ptyId}
             cwd={cwd}
+            terminal={terminal}
             driver={driver}
             rows={allRows}
             items={items}
