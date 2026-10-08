@@ -24,6 +24,7 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
 | `DONEL_FAKE_CLAUDE_RESUME_STRICT` | `1`: `-r <id>` sem transcript (na raiz do falso nem em `~/.claude`) imprime `No conversation found with session ID` e sai com 1, como o CLI real. O `launchIsolatedApp` liga |
 | `DONEL_FAKE_CLAUDE_LOG` | Se definida, acrescenta uma linha JSON por hook disparado (diagnostico) |
 | `DONEL_FAKE_CLAUDE_HOOK_TIMEOUT_MS` | Espera maxima por resposta de hook `http` (padrao 5000) |
+| `DONEL_FAKE_CLAUDE_PERMISSION_TIMEOUT_MS` | Espera maxima (padrao 600000) pela resposta do `PermissionRequest` dos passos segurados; depois cai no dialogo da TUI |
 | `DONEL_FAKE_CLAUDE_SLOW_MS` | Duracao extra (padrao 3000) de uma rodada cujo prompt contem `demorar`; Esc a encerra antes |
 | `DONEL_FAKE_CLAUDE_DROP_FIRST_ENTER` | `1`: o primeiro Enter com texto na caixa e engolido (Enter perdido), para testar o reenvio de `\r` |
 
@@ -85,6 +86,48 @@ Passos (`type`):
   - grava `tool_use`, (se `permission`) `PermissionRequest`, `PreToolUse`, espera `delayMs`, grava
   `tool_result` e dispara `PostToolUse`. `PermissionRequest` segura ate a resposta HTTP (limite: timeout acima).
 
+### Pedidos segurados (014, T080)
+
+Passos que simulam o CLI pedindo permissao/pergunta/plano. Cada um grava o `tool_use` no transcript, dispara
+`PreToolUse` e depois `PermissionRequest` (**sem** `tool_use_id`, como o CLI real; com `permission_suggestions` se houver,
+e `agent_id`/`agent_type` para subagentes) e **espera** a resposta do hook por `DONEL_FAKE_CLAUDE_PERMISSION_TIMEOUT_MS`.
+Enquanto espera, desenha no lugar da caixa um dialogo da TUI (barra `▔▔▔`, nome da ferramenta, "Do you want to proceed?").
+Campos comuns (todos opcionais): `id` (tool_use_id), `result` (texto do `tool_result` ao permitir), `delayMs`,
+`denyReply` (texto do assistente apos uma negacao), `suggestions` (`permission_suggestions`).
+
+- `{"type":"bash_permission","command":"npm install left-pad","description":"Install","rule":"npm install:*"}` - Bash; sugestao
+  `addRules` `Bash(<rule>)` (`rule` padrao: duas primeiras palavras do comando + `:*`).
+- `{"type":"edit_permission","file_path":"a.ts","old_string":"a","new_string":"b"}` - Edit (sem sugestao de regra).
+- `{"type":"ask","questions":[{"question":"Which db?","header":"DB","options":[{"label":"Postgres"},{"label":"SQLite"}],"multiSelect":false}]}` - `AskUserQuestion`.
+- `{"type":"plan","plan":"# Plan\n- a","planFilePath":"C:/x/plan.md"}` - `ExitPlanMode`.
+- `{"type":"permission","name":"WebFetch","input":{...},"suggestions":[...]}` - qualquer ferramenta.
+- `{"type":"subagent_permissions","requests":[{"type":"bash_permission","command":"npm test","agentType":"tester"},{"type":"edit_permission",...}]}` -
+  dispara `SubagentStart` (`agent_id` `agent-1`, `agent-2`..., ou `agentId` explicito) e segura **todos os pedidos em
+  paralelo**, cada um com a sua resposta; ao fim, `SubagentStop`. Pedidos de subagente nao gravam `tool_use`/`tool_result` no
+  transcript principal (no CLI real ficam no arquivo do subagente); `"transcript":true` forca. O dialogo da TUI mostra o
+  primeiro da fila ("1 of N"); responder o dialogo avanca para o seguinte.
+
+Resposta do hook (`hookSpecificOutput.decision`) e como o falso a aplica:
+
+| Decisao | Efeito |
+|---|---|
+| `allow` (+ `updatedInput` opcional) | `tool_result` (em `AskUserQuestion` traz as `answers` do `updatedInput`) e `PostToolUse` |
+| `allow` + `updatedPermissions` (`addRules`, `destination` `localSettings`) | alem do acima, grava/mescla `<cwd>/.claude/settings.local.json` (`permissions.allow` com `Tool(ruleContent)` ou `Tool`) |
+| `deny` + `message` | `tool_result` com `is_error` e a mensagem; sem `PostToolUse`; o turno segue (`denyReply`) |
+| `deny` + `interrupt:true` | sem `tool_result`; linha `[Request interrupted by user]` e o turno termina sem os passos seguintes (sem `Stop`) |
+| `{}`, corpo vazio, timeout ou porta fechada | cai no dialogo da TUI |
+| `allow` **sem** `updatedInput` em `ExitPlanMode` | **ignorado**, como no CLI real: segue esperando (TUI) |
+
+**Responder pela TUI** (vale a primeira resposta - a do hook que chegar depois e ignorada e registrada como `lateHookResponse`):
+
+- permissao/plano: `1` = permitir (`tool_result` + `PostToolUse`); `2` = permitir sempre (grava a regra sugerida, ou `Tool`, em
+  `settings.local.json`); `3` ou `Esc` = negar (`tool_result` de erro, sem `PostToolUse`; o turno segue).
+- `ask`: `1`..`N` escolhe a opcao N da primeira pergunta (as demais pegam a primeira opcao); `Esc` nega.
+
+`DONEL_FAKE_CLAUDE_LOG` registra, alem dos hooks disparados: `{"hookResponse":"PermissionRequest","tool_use_id","tool_name","agent_id"?,"body","effective"}`
+para cada resposta recebida (`effective:false` = vazia/ignorada), `{"permissionOutcome":"allow|deny","source":"hook|tui","tool_use_id",...}` e
+`{"lateHookResponse":"PermissionRequest","tool_use_id"}`.
+
 Exemplo (trabalhando -> aguardando): `{"default":{"steps":[{"type":"hook","event":"Notification","payload":{"message":"Claude needs your permission"}},{"type":"wait","ms":800},{"type":"hook","event":"Stop"}]}}`
 
-Teste do proprio falso: `tests/fake-claude-chat.test.ts`.
+Teste do proprio falso: `tests/fake-claude-chat.test.ts` e `tests/fake-claude-chat-permissions.test.ts` (pedidos segurados).
