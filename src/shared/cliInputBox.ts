@@ -111,6 +111,22 @@ export type CliInputBox =
   /** Não localizei a moldura. Ausência de evidência — nunca vira ação. */
   | { readonly kind: 'unreadable' };
 
+/** Posição da última caixa de input (régua de topo e de base), ou `null` se não há par de réguas. */
+export function locateInputBox(lines: readonly LineInput[]): { readonly top: number; readonly bottom: number } | null {
+  let bottom = -1;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (isRulerLine(lineText(lines[i]))) {
+      bottom = i;
+      break;
+    }
+  }
+  if (bottom <= 0) return null;
+  for (let i = bottom - 1; i >= 0; i -= 1) {
+    if (isRulerLine(lineText(lines[i]))) return { top: i, bottom };
+  }
+  return null;
+}
+
 /**
  * A ÚLTIMA caixa do viewport: a última régua é a base, a régua anterior é o
  * topo, e o que está entre elas é o input. Ler de baixo para cima é o que faz
@@ -121,24 +137,9 @@ export type CliInputBox =
  * fantasma são descartados antes de decidir se há texto — são dim, não texto.
  */
 export function readInputBox(lines: readonly LineInput[]): CliInputBox {
-  let bottom = -1;
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (isRulerLine(lineText(lines[i]))) {
-      bottom = i;
-      break;
-    }
-  }
-  if (bottom <= 0) return { kind: 'unreadable' };
-
-  let top = -1;
-  for (let i = bottom - 1; i >= 0; i -= 1) {
-    if (isRulerLine(lineText(lines[i]))) {
-      top = i;
-      break;
-    }
-  }
-  if (top < 0) return { kind: 'unreadable' };
-
+  const located = locateInputBox(lines);
+  if (!located) return { kind: 'unreadable' };
+  const { top, bottom } = located;
   const inside = lines.slice(top + 1, bottom);
   if (inside.length === 0 || inside.length > MAX_INPUT_BOX_LINES) return { kind: 'unreadable' };
   if (inside.some((line) => MENU_OPTION_PATTERN.test(lineText(line)))) return { kind: 'menu' };

@@ -230,3 +230,12 @@ describe('readInputBox: até 15 linhas', () => {
     expect(readInputBox(boxOf(...rows(16)))).toEqual({ kind: 'unreadable' });
   });
 });
+
+describe('readInputBox: máscara dim como boolean[] (forma do contrato ipc-chat §3)', () => {
+  it('um flag por caractere equivale aos intervalos', () => {
+    const text = '❯ Try "x"';
+    const flags = [...text].map((_, i) => i >= 2);
+    const box = [line(RULER_120), { text, dim: flags }, line(RULER_120), line('  rodapé')];
+    expect(readInputBox(box)).toEqual({ kind: 'empty' });
+  });
+});

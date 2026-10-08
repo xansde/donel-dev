@@ -7,12 +7,16 @@
 export type DimRange = readonly [number, number];
 
 /**
- * One rendered line. `text` is `IBufferLine.translateToString(true)`; `dim` lists the runs of
- * consecutive cells whose `IBufferCell.isDim()` is true, as indices into `text`. `[]` = none.
+ * Dim mask of a line, in either of two equivalent shapes (both index `text` by UTF-16 position):
+ * - `DimRange[]`: runs of consecutive dim characters (the fixtures' format; `[]` = none);
+ * - `boolean[]`: one flag per character (the shape `contracts/ipc-chat.md` §3 sketches for `readScreen()`).
  */
+export type DimMask = readonly DimRange[] | readonly boolean[];
+
+/** One rendered line: `text` is `IBufferLine.translateToString(true)`; `dim` marks the cells where `IBufferCell.isDim()` is true. */
 export interface ScreenLine {
   readonly text: string;
-  readonly dim: readonly DimRange[];
+  readonly dim: DimMask;
 }
 
 /** Detectors accept plain strings (legacy callers, no dim information) or `ScreenLine`s. */
@@ -23,17 +27,39 @@ export function lineText(line: LineInput): string {
   return typeof line === 'string' ? line : line.text;
 }
 
+/** Normalises a mask to sorted, half-open ranges. */
+export function dimRanges(line: LineInput): DimRange[] {
+  if (typeof line === 'string' || line.dim.length === 0) return [];
+  const mask = line.dim;
+  if (typeof mask[0] === 'boolean') {
+    const flags = mask as readonly boolean[];
+    const ranges: DimRange[] = [];
+    let start = -1;
+    for (let i = 0; i <= flags.length; i += 1) {
+      const on = i < flags.length && flags[i];
+      if (on && start < 0) start = i;
+      if (!on && start >= 0) {
+        ranges.push([start, i]);
+        start = -1;
+      }
+    }
+    return ranges;
+  }
+  return [...(mask as readonly DimRange[])].sort((a, b) => a[0] - b[0]);
+}
+
 /** Text of a line WITHOUT the dim runs (placeholder, ghost suggestion and hints removed). */
 export function visibleText(line: LineInput): string {
-  if (typeof line === 'string' || line.dim.length === 0) return lineText(line);
+  const ranges = dimRanges(line);
+  if (ranges.length === 0) return lineText(line);
+  const text = lineText(line);
   let out = '';
   let cursor = 0;
-  const ranges = [...line.dim].sort((a, b) => a[0] - b[0]);
   for (const [start, end] of ranges) {
-    if (start > cursor) out += line.text.slice(cursor, start);
+    if (start > cursor) out += text.slice(cursor, start);
     cursor = Math.max(cursor, end);
   }
-  return out + line.text.slice(cursor);
+  return out + text.slice(cursor);
 }
 
 export function toPlainLines(lines: readonly LineInput[]): string[] {

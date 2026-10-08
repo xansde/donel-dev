@@ -208,24 +208,24 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
 
 ### Tela do terminal do Claude (R6, R16)
 
-- [ ] T034 [P] Criar as fixtures de tela em `tests/fixtures/chat/screens/` (JSON: `lines[]` com `text` e máscara `dim`, nos layouts fullscreen e inline), derivadas de `specs/014-chat/spike/b2/logs/*.txt`. Estados:
+- [x] T034 [P] Criar as fixtures de tela em `tests/fixtures/chat/screens/` (JSON: `lines[]` com `text` e máscara `dim`, nos layouts fullscreen e inline), derivadas de `specs/014-chat/spike/b2/logs/*.txt`. Estados:
   - **Ciclo de vida**: fases do boot; ocioso vazio; ocioso com texto; trabalhando; com fila; interrompido.
   - **Caixa de entrada**: placeholder e sugestão fantasma (*dim*); prompt `!`; caixa de 15 linhas.
   - **Menus e marcadores**: menu `/` aberto; menu `@` aberto; `[Pasted text #N +M lines]`; `[Image #N]`.
   - **Diálogos**: confiança 2.1.293; "external imports"; cada tela com título da lista R16; diálogos de pergunta, plano e permissão.
   - **Mensagens**: "Unknown command"; "Transcript saving is off"; "Press Ctrl-C again to exit"; "Esc again to clear".
-- [ ] T035 [P] Atualizar `tests/cliInputBox.test.ts` e `tests/trustDialog.test.ts` (falhando):
+- [x] T035 [P] Atualizar `tests/cliInputBox.test.ts` e `tests/trustDialog.test.ts` (falhando):
   - leitura da caixa considerando *dim* (placeholder e fantasma não são texto);
   - prompt `!`;
   - até 15 linhas;
   - diálogo de confiança pelos textos da 2.1.293 ("Quick safety check", "Yes, I trust this folder", "Enter to confirm · Esc to cancel").
-- [ ] T036 Corrigir `src/shared/cliInputBox.ts` e `src/shared/trustDialog.ts` (a assinatura passa a aceitar linhas com máscara *dim*). Fazem passar T035, sem regressão em `tests/esteiraSession.test.ts` e `tests/preTypeReadiness.test.ts`.
-- [ ] T037 [P] Escrever `tests/chat-screen.test.ts` (falhando) sobre as fixtures do T034, para os detectores de `src/shared/chat/screen.ts`:
+- [x] T036 Corrigir `src/shared/cliInputBox.ts` e `src/shared/trustDialog.ts` (a assinatura passa a aceitar linhas com máscara *dim*). Fazem passar T035, sem regressão em `tests/esteiraSession.test.ts` e `tests/preTypeReadiness.test.ts`.
+- [x] T037 [P] Escrever `tests/chat-screen.test.ts` (falhando) sobre as fixtures do T034, para os detectores de `src/shared/chat/screen.ts`:
   - `isReadyForInput` (gate do `send-protocol.md` §1) e `readInputText` (*dim*-aware);
   - `isWorking`, `hasQueuedMessages`, `slashMenuOpen`, `atMenuOpen`;
   - `blockingScreen() → { kind, title } | null`, `modelDialog()`, `transcriptSavingOff`;
   - `pastedPlaceholder()`, `imagePlaceholderCount()`.
-- [ ] T038 Implementar `src/shared/chat/screen.ts`. Faz passar T037.
+- [x] T038 Implementar `src/shared/chat/screen.ts`. Faz passar T037.
 - [ ] T039 Ampliar o handle de `src/renderer/src/TerminalPane.tsx`, conforme `contracts/ipc-chat.md` §3:
   - `write(data)`;
   - `readScreen()`, lendo do buffer do xterm (não do DOM): linhas com máscara *dim* via `IBufferCell.isDim()`, `bracketedPaste`, `altScreen`, `cols`, `rows`;

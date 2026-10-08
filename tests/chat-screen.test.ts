@@ -27,7 +27,7 @@ interface Fixture {
   name: string;
   source: 'real' | 'synthetic';
   layout: 'fullscreen' | 'inline';
-  lines: ScreenLine[];
+  lines: Array<{ text: string; dim: Array<[number, number]> }>;
 }
 
 function load(name: string): ScreenLine[] {
