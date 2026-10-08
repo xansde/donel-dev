@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { FakeVault, jsonResponse } from './helpers/localModFixtures';
 import { createLocalMod } from '../src/main/accounts/mods/local-mod';
 import { createSeazoneMod } from '../src/main/accounts/mods/seazone-mod';
 import type { AccountMod, CredentialPair } from '../src/main/accounts/account-mod';
-import type { VaultLike } from '../src/main/accounts/vault';
 import type { HttpFetchLike, HttpResponseLike } from '../src/main/accounts/usage-client';
 import type { LocalAccountMeta } from '../src/shared/accounts';
 
@@ -11,24 +11,6 @@ import type { LocalAccountMeta } from '../src/shared/accounts';
 // os DOIS mods concretos, com HTTP e cofre FALSOS. As 5 invariantes + shapes
 // de retorno + `listAccounts` nunca lança + mod não escreve em `~/.claude*` +
 // `seazone-mod` nunca chama `platform.claude.com`.
-
-class FakeVault implements VaultLike {
-  private readonly entries = new Map<string, string>();
-  writeCalls: string[] = [];
-
-  read(id: string): string | null {
-    return this.entries.get(id) ?? null;
-  }
-  write(id: string, plainText: string) {
-    this.entries.set(id, plainText);
-    this.writeCalls.push(id);
-    return { kind: 'ok' as const };
-  }
-}
-
-function jsonResponse(status: number, body: unknown): HttpResponseLike {
-  return { status, json: async () => body };
-}
 
 // As respostas abaixo são o formato REAL da API do claude-switcher, CAPTURADO
 // contra `https://claude-switcher-api.seazone.dev` em 04/08/2026 (rótulos

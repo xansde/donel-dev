@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { FakeVault, accountOf, buildPair, jsonResponse } from './helpers/localModFixtures';
 import { createLocalMod } from '../src/main/accounts/mods/local-mod';
 import { createReconnectRegistry } from '../src/main/accounts/reconnect-registry';
-import type { CredentialPair } from '../src/main/accounts/account-mod';
-import type { VaultLike, VaultWriteResult } from '../src/main/accounts/vault';
-import type { HttpFetchLike, HttpResponseLike } from '../src/main/accounts/usage-client';
+import type { HttpFetchLike } from '../src/main/accounts/usage-client';
 import type { RefreshResult } from '../src/main/accounts/token-refresh';
-import type { AccountId, LocalAccountMeta } from '../src/shared/accounts';
 
 // 011-contas-e-provedores, etapa 3, Fase 2 (D7/D9, adendo ao desenho) —
 // bateria dedicada ao mod local sobre os dois furos do achado pós-desenho:
@@ -15,40 +13,6 @@ import type { AccountId, LocalAccountMeta } from '../src/shared/accounts';
 // usar; no máx. uma renovação em voo por conta — refresh token de uso único).
 // Mesmos padrões de tests/accountModContract.test.ts: cofre em memória, HTTP
 // falso e refreshImpl injetado.
-
-class FakeVault implements VaultLike {
-  private readonly entries = new Map<string, string>();
-  readonly writeCalls: string[] = [];
-  readonly failWriteFor = new Set<string>();
-  /** R4 (revisão) — ids cuja escrita LANÇA em vez de devolver `vault-unavailable`: simula o erro de I/O real que `writeVaultFile` (vault.ts) relança. */
-  readonly throwWriteFor = new Set<string>();
-  /** Hook opcional pra rastrear ORDEM entre escrita no cofre e outras chamadas (ex.: leitura de usage). */
-  onWrite: ((id: string) => void) | null = null;
-
-  read(id: string): string | null {
-    return this.entries.get(id) ?? null;
-  }
-  write(id: string, plainText: string): VaultWriteResult {
-    this.writeCalls.push(id);
-    this.onWrite?.(id);
-    if (this.throwWriteFor.has(id)) throw new Error('EIO (fake) — falha de I/O real do cofre');
-    if (this.failWriteFor.has(id)) return { kind: 'vault-unavailable' };
-    this.entries.set(id, plainText);
-    return { kind: 'ok' };
-  }
-}
-
-function jsonResponse(status: number, body: unknown): HttpResponseLike {
-  return { status, json: async () => body };
-}
-
-function buildPair(overrides: Partial<CredentialPair> = {}): CredentialPair {
-  return { accessToken: 'access', refreshToken: 'refresh', expiresAt: Date.now() + 3600_000, scopes: [], ...overrides };
-}
-
-function accountOf(id: AccountId, label = `Conta ${id}`): LocalAccountMeta {
-  return { id, label, plan: null };
-}
 
 /** Fetch falso pro endpoint de usage — registra o access token usado (via header Authorization) em `calls`, na ordem das chamadas. */
 function makeUsageFetch(calls: string[], usage: { fiveHour: number; sevenDay: number } = { fiveHour: 1, sevenDay: 2 }): HttpFetchLike {
