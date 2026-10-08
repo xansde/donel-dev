@@ -65,7 +65,7 @@ test.beforeAll(async () => {
   forkSeed = seedSession({ marker: `MARCADOR-SMOKE-FORK-${randomUUID().slice(0, 8)}`, origin: 'T013', resumable: true });
   forkOriginalContent = readFileSync(forkSeed.filePath, 'utf8');
 
-  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ name: 'previous-sessions' }));
+  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ name: 'previous-sessions', fakeClaude: false }));
 });
 
 test.afterAll(async () => {

@@ -46,12 +46,24 @@ let electronApp: ElectronApplication;
 let window: Page;
 let userDataDir: string;
 
-test.beforeAll(async () => {
-  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ name: 'terminal' }));
-});
+// Só o primeiro teste (@real) precisa do CLI de verdade: ele sobe o próprio app
+// (com `fakeClaude: false`) e o fecha ao fim; os demais usam um app com o claude
+// falso (docs/testes/proposta.md §2). Sem `describe`, para os títulos não mudarem.
+let appOpen = false;
+
+async function openApp(name: string, fakeClaude: boolean): Promise<void> {
+  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ name, fakeClaude }));
+  appOpen = true;
+}
+
+async function closeApp(): Promise<void> {
+  if (!appOpen) return;
+  appOpen = false;
+  await closeIsolatedApp({ app: electronApp, userDataDir });
+}
 
 test.afterAll(async () => {
-  await closeIsolatedApp({ app: electronApp, userDataDir });
+  await closeApp();
 });
 
 test('terminal spawns a real claude session inside Electron @abas @real', async () => {
@@ -81,6 +93,7 @@ test('terminal spawns a real claude session inside Electron @abas @real', async 
   // (`handleOpenProject` reaproveita a aba existente quando o `cwd` já tem
   // uma — se este teste também usasse `donel-dev`, o clique da sidebar no
   // T007 só focaria esta aba em vez de provar a criação).
+  await openApp('terminal-real', false);
   await expect(window.locator('[data-testid="empty-state"]')).toBeVisible();
   await launchClaudeTab(window, { project: 'ai-rats', model: 'haiku' });
   await expect(window.locator('[data-testid="empty-state"]')).toHaveCount(0);
@@ -88,9 +101,11 @@ test('terminal spawns a real claude session inside Electron @abas @real', async 
   // Boot only (no API turn): the real CLI prints its banner; the "trust this
   // folder" dialog (first use of a folder) is accepted with Enter.
   await waitForClaudeBooted(window, { until: 'banner' });
+  await closeApp();
 });
 
 test('opening a project from the project switcher creates a tab with a claude session in that project cwd @abas', async () => {
+  await openApp('terminal-fake', true);
   // T007 — prova o DoD ("abrir projeto funciona", FR-001/FR-002): clicar num
   // projeto real spawna uma sessão claude nova com `cwd` correto, sem matar
   // a aba "Sessão" default (continua montada, só fica display:none —

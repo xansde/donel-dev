@@ -29,8 +29,10 @@ import { removeIsolatedUserDataDir } from './userDataIsolation';
 // (régua/denominador) e `tests/smartZone.test.ts` (aritmética do `%` e as
 // faixas de cor) cobrem a parte pura; aqui se prova a ligação ao vivo.
 //
-// Custo: uma sessão `claude` REAL é aberta (o watcher só existe para abas
-// claude), mas **nenhum turno de API é consumido** — nada é digitado no prompt.
+// Custo: uma sessão `claude` é aberta (o watcher só existe para abas claude) —
+// desde 08/10 é o `claude` FALSO (fake-claude-chat, padrão do `launchIsolatedApp`),
+// então nada vai à API e o transcript só recebe as linhas que ESTE teste escreve
+// (o CLI real escrevia as próprias e disputava o arquivo).
 // O que exercita a feature é a ESCRITA no `.jsonl`: o teste escreve a MESMA
 // linha `assistant` com `message.usage` que o CLI escreveria ao fim de um turno
 // (forma conferida no disco em 26/07 — ver `medicao-t606.md`). Depender de um
@@ -162,6 +164,9 @@ test('T611/T612 (CA-22 da 009) — a StatusBar mostra o `%` de contexto da aba e
   // 6. C1: o número é o contexto AGORA, não acumulado — um turno menor (o que um
   //    `/compact` produz) faz o valor CAIR: 150 + 20.000 + 0 = 20.150 → 7%.
   appendFileSync(transcriptPath, usageLine(150, 20_000, 0), 'utf8');
+  // Causa do flake (corrigida em src/main/transcript-watcher.ts): o evento deste
+  // append caía no debounce com a leitura do append anterior ainda em voo e era
+  // DESCARTADO; sem outro evento depois, o valor velho ficava para sempre.
   // Timeout maior que os anteriores por um motivo MEDIDO, não por superstição:
   // na primeira execução deste smoke este passo ficou 5 s inteiros exibindo o
   // valor anterior e passou com folga maior. Um append único seguido de silêncio
