@@ -4,7 +4,7 @@
 // The header (Toggle / Chat | Terminal / Kbd) lives in App's `sessionHeader`
 // (D-C22); this component draws only the area below it.
 
-import { useMemo, type ReactNode } from 'react';
+import { memo, useCallback, useMemo, type ReactNode } from 'react';
 import { buildImageAssetUrl } from '../../../shared/chat/assetUrl';
 import type { ConversationRow } from '../../../shared/chat/rows';
 import styles from './ChatView.module.css';
@@ -14,7 +14,23 @@ import { SessionEndedBar } from './SessionEndedBar';
 import { Timeline } from './Timeline';
 import { useChatSession } from './useChatSession';
 
+/**
+ * What the view asks of the App, by tab id. The object must be STABLE (App
+ * builds it once, behind a ref) so `ChatView` can be memoised: the App
+ * re-renders on every semaphore tick and a 10k-row timeline must not follow.
+ */
+export interface ChatViewActions {
+  openTerminal(tabId: string): void;
+  /** "Retomar": respawns the PTY resuming this same conversation. */
+  resume(tabId: string): void;
+  closeTab(tabId: string): void;
+  /** "abrir" on the new-conversation notice. */
+  openPreviousSessions(tabId: string): void;
+}
+
 export interface ChatViewProps {
+  tabId: string;
+  actions: ChatViewActions;
   /** PTY of the tab (kept after the process exits so the conversation stays readable); `null` before the first spawn. */
   ptyId: string | null;
   /** The tab is the active one AND its view is the chat. */
@@ -22,30 +38,26 @@ export interface ChatViewProps {
   focusMode: boolean;
   /** The process exited (FR-034). `null` = alive. */
   ended: { readonly exitCode: number | null } | null;
-  onOpenTerminal: () => void;
-  /** "Retomar": respawns the PTY resuming this same conversation. */
-  onResume: () => void;
-  onCloseTab: () => void;
-  /** "abrir" on the new-conversation notice. */
-  onOpenPreviousSessions: () => void;
   /** Bottom slot above which nothing else sits: the composer (later phase). */
   footer?: ReactNode;
 }
 
 const isSwitchNotice = (row: ConversationRow): boolean => row.kind === 'notice' && row.notice === 'conversation-switch';
 
-export function ChatView({
+export const ChatView = memo(function ChatView({
+  tabId,
+  actions,
   ptyId,
   active,
   focusMode,
   ended,
-  onOpenTerminal,
-  onResume,
-  onCloseTab,
-  onOpenPreviousSessions,
   footer,
 }: ChatViewProps): React.JSX.Element {
   const session = useChatSession(ptyId);
+  const onOpenTerminal = useCallback(() => actions.openTerminal(tabId), [actions, tabId]);
+  const onResume = useCallback(() => actions.resume(tabId), [actions, tabId]);
+  const onCloseTab = useCallback(() => actions.closeTab(tabId), [actions, tabId]);
+  const onOpenPreviousSessions = useCallback(() => actions.openPreviousSessions(tabId), [actions, tabId]);
 
   const ctx = useMemo<RowRenderContext>(
     () => ({
@@ -96,4 +108,4 @@ export function ChatView({
       )}
     </div>
   );
-}
+});

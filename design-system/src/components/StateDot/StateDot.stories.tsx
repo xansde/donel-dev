@@ -32,7 +32,7 @@ export const Waiting: Story = {
 
 /** "revisão PR 214" — permissão pendente, vai para o topo absoluto da lista, pulso rápido + halo (Brief 2). */
 export const PermissionPending: Story = {
-  args: { state: 'permission', label: 'Permissão pendente' },
+  args: { state: 'permission', label: 'Esperando você' },
 };
 
 /** "fix build_real.py" — encerrada, mostra ações inline "reabrir · fechar" (Brief 2). */
@@ -67,7 +67,7 @@ export const WithSmartZoneRingOver: Story = {
 export const AllStates: Story = {
   render: () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <StateDot state="permission" label="Permissão pendente" />
+      <StateDot state="permission" label="Esperando você" />
       <StateDot state="waiting" label="Aguardando resposta" />
       <StateDot state="working" label="Trabalhando" />
       <StateDot state="done" label="Encerrada" />
