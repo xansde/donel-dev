@@ -45,6 +45,7 @@
 //  - NÃO depende do rodapé 'shift+tab to cycle': ele está presente ANTES e
 //    DEPOIS do submit (as duas fixtures acima o contêm) — não discrimina nada.
 
+import { lineText, visibleText, type LineInput } from './screenLine';
 import { isTrustDialogVisible } from './trustDialog';
 
 const RULER_CHAR = '─';
@@ -52,11 +53,14 @@ const RULER_CHAR = '─';
 /** Mínimo de traços para uma linha ser régua. O comprimento VARIA (63 e 90 nas capturas) — régua nunca se reconhece por igualdade. */
 const MIN_RULER_DASHES = 10;
 
-/** Teto de linhas dentro da caixa: um comando com caminho absoluto ocupa 2-3 com wrap; 8 é folga sem transformar duas réguas quaisquer do transcript em "caixa". */
-const MAX_INPUT_BOX_LINES = 8;
+/** Teto de linhas dentro da caixa: a 2.1.293 cresce até 15 (014/R6); acima disso são duas réguas quaisquer do transcript, não uma "caixa". */
+const MAX_INPUT_BOX_LINES = 15;
 
-/** A marca do prompt. `>` entra porque o banner de boot desenha `'> '`. */
-const PROMPT_MARK_PATTERN = /^\s*[❯>]\s?/;
+/** A marca do prompt. `>` entra porque o banner de boot desenha `'> '`; `!` é o prompt do modo shell (a 2.1.293 troca o `❯` por `!`). */
+const PROMPT_MARK_PATTERN = /^\s*([❯>!])\s?/;
+
+/** A caixa multilinha recua as continuações em 2 colunas, para alinhar com o texto depois da marca. */
+const CONTINUATION_INDENT_PATTERN = /^ {1,2}/;
 
 /** Opção de menu/diálogo: '❯ 1. Yes, switch to Sonnet 5', '  2. No, keep current model'. */
 const MENU_OPTION_PATTERN = /^\s*[❯>]?\s*\d+\.\s+\S/;
@@ -94,60 +98,77 @@ export function isRulerLine(line: string): boolean {
 }
 
 export type CliInputBox =
-  /** Há texto digitado na caixa. `text` já vem sem a marca de prompt, com as continuações do wrap concatenadas. */
-  | { readonly kind: 'typed'; readonly text: string }
-  /** A caixa existe e está vazia (só a marca de prompt). */
-  | { readonly kind: 'empty' }
+  /**
+   * Há texto REAL digitado na caixa (o que está em dim — placeholder, sugestão fantasma — não conta). `text` já vem
+   * sem a marca de prompt, com as continuações do wrap concatenadas. `shell: true` = prompt `!` (modo shell); o
+   * `!` NÃO está em `text` (o CLI o desenha no lugar do `❯`).
+   */
+  | { readonly kind: 'typed'; readonly text: string; readonly shell?: true }
+  /** A caixa existe e está vazia (só a marca de prompt, ou só texto dim). */
+  | { readonly kind: 'empty'; readonly shell?: true }
   /** Um seletor sequestrou a caixa ('Switch model?', permissão) — o `❯` ali é cursor de seleção, não prompt. */
   | { readonly kind: 'menu' }
   /** Não localizei a moldura. Ausência de evidência — nunca vira ação. */
   | { readonly kind: 'unreadable' };
 
-/**
- * A ÚLTIMA caixa do viewport: a última régua é a base, a régua anterior é o
- * topo, e o que está entre elas é o input. Ler de baixo para cima é o que faz
- * a função encontrar a caixa ATUAL mesmo com um transcript cheio de réguas.
- */
-export function readInputBox(lines: readonly string[]): CliInputBox {
+/** Posição da última caixa de input (régua de topo e de base), ou `null` se não há par de réguas. */
+export function locateInputBox(lines: readonly LineInput[]): { readonly top: number; readonly bottom: number } | null {
   let bottom = -1;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (isRulerLine(lines[i])) {
+    if (isRulerLine(lineText(lines[i]))) {
       bottom = i;
       break;
     }
   }
-  if (bottom <= 0) return { kind: 'unreadable' };
-
-  let top = -1;
+  if (bottom <= 0) return null;
   for (let i = bottom - 1; i >= 0; i -= 1) {
-    if (isRulerLine(lines[i])) {
-      top = i;
-      break;
-    }
+    if (isRulerLine(lineText(lines[i]))) return { top: i, bottom };
   }
-  if (top < 0) return { kind: 'unreadable' };
+  return null;
+}
 
+/**
+ * A ÚLTIMA caixa do viewport: a última régua é a base, a régua anterior é o
+ * topo, e o que está entre elas é o input. Ler de baixo para cima é o que faz
+ * a função encontrar a caixa ATUAL mesmo com um transcript cheio de réguas.
+ *
+ * Aceita `string` (sem informação de atributo) ou `ScreenLine` (com a máscara
+ * *dim*). Com a máscara, o placeholder (`Try "…"`), a dica de fila e a sugestão
+ * fantasma são descartados antes de decidir se há texto — são dim, não texto.
+ */
+export function readInputBox(lines: readonly LineInput[]): CliInputBox {
+  const located = locateInputBox(lines);
+  if (!located) return { kind: 'unreadable' };
+  const { top, bottom } = located;
   const inside = lines.slice(top + 1, bottom);
   if (inside.length === 0 || inside.length > MAX_INPUT_BOX_LINES) return { kind: 'unreadable' };
-  if (inside.some((line) => MENU_OPTION_PATTERN.test(line))) return { kind: 'menu' };
+  if (inside.some((line) => MENU_OPTION_PATTERN.test(lineText(line)))) return { kind: 'menu' };
 
-  const promptAt = inside.findIndex((line) => PROMPT_MARK_PATTERN.test(line));
+  const visible = inside.map(visibleText);
+  const promptAt = visible.findIndex((line) => PROMPT_MARK_PATTERN.test(line));
   if (promptAt < 0) return { kind: 'unreadable' };
 
+  const mark = PROMPT_MARK_PATTERN.exec(visible[promptAt]);
+  const shell = mark?.[1] === '!';
   // As linhas depois da marca são continuação do MESMO input lógico, quebrado
-  // pela largura do terminal — junta sem separador nenhum.
-  const text = [inside[promptAt].replace(PROMPT_MARK_PATTERN, ''), ...inside.slice(promptAt + 1)].join('');
-  return text.trim() === '' ? { kind: 'empty' } : { kind: 'typed', text };
+  // pela largura do terminal — junta sem separador nenhum (e sem o recuo de 2
+  // colunas com que a caixa alinha as continuações).
+  const text = [
+    visible[promptAt].replace(PROMPT_MARK_PATTERN, ''),
+    ...visible.slice(promptAt + 1).map((line) => line.replace(CONTINUATION_INDENT_PATTERN, '')),
+  ].join('');
+  if (text.trim() === '') return shell ? { kind: 'empty', shell: true } : { kind: 'empty' };
+  return shell ? { kind: 'typed', text, shell: true } : { kind: 'typed', text };
 }
 
 /** Alguma linha da cauda é opção numerada de um seletor — dentro ou fora da moldura. */
-export function hasMenuOption(lines: readonly string[]): boolean {
-  return lines.some((line) => MENU_OPTION_PATTERN.test(line));
+export function hasMenuOption(lines: readonly LineInput[]): boolean {
+  return lines.some((line) => MENU_OPTION_PATTERN.test(lineText(line)));
 }
 
 /** O prompt interativo de permissão de ferramenta está na tela. */
-export function hasPermissionPrompt(lines: readonly string[]): boolean {
-  const joined = lines.join('\n');
+export function hasPermissionPrompt(lines: readonly LineInput[]): boolean {
+  const joined = lines.map(lineText).join('\n');
   return PERMISSION_PROMPT_PATTERNS.some((pattern) => pattern.test(joined));
 }
 
@@ -162,7 +183,7 @@ export function hasPermissionPrompt(lines: readonly string[]): boolean {
  * veto varre a cauda INTEIRA, não só a caixa: o popup pode ser desenhado fora
  * dela.
  */
-export function isSafeToSendEnter(lines: readonly string[]): boolean {
+export function isSafeToSendEnter(lines: readonly LineInput[]): boolean {
   if (isTrustDialogVisible(lines)) return false;
   if (hasMenuOption(lines)) return false;
   if (hasPermissionPrompt(lines)) return false;

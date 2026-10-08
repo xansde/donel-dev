@@ -1,0 +1,35 @@
+{
+  "v": 3,
+  "createdOnFiles": { "v": 1, "at": "2026-10-07T23:02:49Z" },
+  "title": "Donel Dev — Chat (protótipo 014)",
+  "launch": { "view": "canvas" },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": { "x": 0, "y": 0, "w": 1440, "h": 900, "title": "1 · Conversa — Modo Foco ligado (padrão)", "is_interactive": true },
+    "T02-foco-desligado.dc.html": { "x": 1520, "y": 0, "w": 1440, "h": 900, "title": "2 · Mesma rodada — Modo Foco desligado" },
+    "T03-pendencia-pergunta.dc.html": { "x": 3040, "y": 0, "w": 1440, "h": 900, "title": "3 · Pendência — pergunta com opções", "is_interactive": true },
+    "T04-pendencia-permissao.dc.html": { "x": 0, "y": 1020, "w": 1440, "h": 900, "title": "4 · Pendência — permissão (comando, edição, subagente)" },
+    "T05-pendencia-plano.dc.html": { "x": 1520, "y": 1020, "w": 1440, "h": 900, "title": "5 · Pendência — plano (aprovar / pedir ajuste)" },
+    "T06-caixa-de-escrever.dc.html": { "x": 3040, "y": 1020, "w": 1440, "h": 900, "title": "6 · Caixa de escrever — menus, anexos, estados de envio" },
+    "T07-subagentes.dc.html": { "x": 0, "y": 2040, "w": 1440, "h": 900, "title": "7 · Subagentes — linhas vivas, faixa e painel lateral", "is_interactive": true },
+    "T07b-subagentes-1280.dc.html": { "x": 1520, "y": 2040, "w": 1280, "h": 760, "title": "7b · Subagentes em 1280×760" },
+    "T08-faixas-e-avisos.dc.html": { "x": 2880, "y": 2040, "w": 1440, "h": 900, "title": "8 · Faixas, barras e avisos" },
+    "T09-comeco-e-carregamento.dc.html": { "x": 0, "y": 3060, "w": 1440, "h": 900, "title": "9 · Começo da sessão e carregamento" },
+    "T10-aba.dc.html": { "x": 1520, "y": 3060, "w": 1440, "h": 900, "title": "10 · A aba — alternância Chat | Terminal" }
+  },
+  "order": [
+    "Main.dc.html",
+    "T02-foco-desligado.dc.html",
+    "T03-pendencia-pergunta.dc.html",
+    "T04-pendencia-permissao.dc.html",
+    "T05-pendencia-plano.dc.html",
+    "T06-caixa-de-escrever.dc.html",
+    "T07-subagentes.dc.html",
+    "T07b-subagentes-1280.dc.html",
+    "T08-faixas-e-avisos.dc.html",
+    "T09-comeco-e-carregamento.dc.html",
+    "T10-aba.dc.html"
+  ],
+  "notes": {},
+  "designSystems": []
+}

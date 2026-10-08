@@ -1,8 +1,11 @@
 import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { readUserDefaultPermissionMode } from './cli-user-settings';
+import { withResolvedPermissionMode } from '../shared/commandBuilder';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
 import { createEsteiraService, type EsteiraService } from './esteira-service';
@@ -49,6 +52,7 @@ import type {
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
+  ChatPrefs,
   LauncherDefaultsDto,
   NotificationPreference,
   OpenDiscoveryIpcInput,
@@ -70,6 +74,7 @@ import type {
   SessionSummaryDto,
   SwitchOutcome,
   TranscriptChangedPayload,
+  SessionSwitchedPayload,
   WatchPhaseIpcInput,
   // 011-contas-e-provedores (etapa 3) — registry de providers classe A.
   ProviderId,
@@ -120,6 +125,7 @@ import {
   LEGACY_ACTIVE_PROFILE_FILE_NAME,
   LEGACY_PROJECT_CONFIG_FILE_NAME,
   readAppConfig,
+  sanitizeChatPrefs,
   sanitizePhaseDefaultsTable,
   setSessionName,
   toAppConfigDto,
@@ -158,7 +164,9 @@ import {
   type EntryColumnCard,
 } from './taskdex-board-client';
 import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
-import { writeHooksSettingsFile } from './hooks-settings';
+import { cleanupStaleHookSettings, removeSessionHooksSettings, writeHooksSettingsFile, writeSessionHooksSettings } from './hooks-settings';
+import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-bridge';
+import { createDiagnosticsLog } from './chat/diagnostics-log';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
 // arquivo só instancia/liga (T1125 — única task que toca o hub).
@@ -435,8 +443,35 @@ function globalClaudeJsonPathFor(home: string): string {
 // buffer que o PtyManager já mantém (plan.md ponto 8) como sinal B da
 // heurística de fallback (spike §"Fallback heurístico").
 const semaphoreManager = new SessionSemaphoreManager({ getRecentLines: (ptyId) => ptyManager.getPreview(ptyId) });
-/** Path do `--settings` adicional (hooks-settings.ts) — resolvido uma vez no boot, reaproveitado por todo spawn de sessão claude. `null` até `app.whenReady()` rodar. */
+/**
+ * T014/T015 (014-chat, P4) — transporte dos hooks. Padrão: ponte HTTP com token por
+ * aba e um `--settings` por sessão. `DONEL_HOOKS_TRANSPORT=legacy` volta ao caminho
+ * antigo (encaminhador PowerShell + servidor `/hook` + mapa por session_id, arquivo
+ * único) — a reversão por uma versão que o plano pede.
+ */
+const hooksTransport: 'bridge' | 'legacy' = process.env.DONEL_HOOKS_TRANSPORT === 'legacy' ? 'legacy' : 'bridge';
+/** Legado: path do `--settings` único (hooks-settings.ts), resolvido no boot. `null` até `app.whenReady()` rodar (ou fora do modo legado). */
 let hooksSettingsPath: string | null = null;
+/** Ponte de hooks (transporte novo). `null` até o boot — ou se ela não subiu: sessões nascem sem semáforo, como no legado. */
+let hookBridge: HookBridge | null = null;
+/** `curl.exe` achado no boot (`where.exe curl`); `null` = fallback no encaminhador PowerShell que lê bytes. */
+let curlPath: string | null = null;
+/** Conversa ativa de cada aba (ptyId -> session id); muda com `/clear` e `/resume` (FR-033). */
+const activeSessionByPty = new Map<string, string>();
+
+/** Primeiro `curl.exe` do PATH, ou `null` — nunca lança (o boot não pode cair por isso). */
+function detectCurlPath(): string | null {
+  try {
+    const output = execFileSync('where.exe', ['curl'], { encoding: 'utf8', timeout: 5_000, windowsHide: true });
+    const first = output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+    return first ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods (T1125, única
@@ -902,6 +937,11 @@ function createMainWindow(): void {
     // kill forçado não dispara o hook, e um watcher sobrevivente é handle
     // vazado. No-op para aba de terminal livre (nunca abriu watcher).
     transcriptWatchers.stop(ptyId);
+    // T015 (014-chat) — baixa da ponte: apaga o `--settings` da sessão e esquece o token.
+    // No-op para aba sem hooks (terminal livre, login isolado, transporte legado).
+    hookBridge?.unregisterSession(ptyId);
+    removeSessionHooksSettings(app.getPath('userData'), ptyId);
+    activeSessionByPty.delete(ptyId);
     // T1125 (011-contas-e-provedores, etapa 1, C4) — mesma baixa, pro poll de
     // 5 min do motor de contas parar de contar esta sessão como viva.
     // Fase 2 (D5) — `releaseAccountsBusyPty` também retoma um auto-switch
@@ -984,6 +1024,26 @@ function startTranscriptWatcher(ptyId: string, filePath: string, sessionId: stri
   });
 }
 
+/**
+ * T016 (014-chat, FR-033) — a ponte avisou que a aba passou a outra conversa
+ * (`/clear`, `/resume`, fork). Re-aponta o watcher de nome/contexto/cor para o
+ * `.jsonl` novo (que pode ainda não existir) e avisa o renderer, que troca o
+ * `claudeSessionId` da aba. O semáforo é por aba e não precisa de nada.
+ */
+function handleConversationSwitched(event: Extract<BridgeEvent, { type: 'conversation-switched' }>): void {
+  const { ptyId, sessionId, transcriptPath, source } = event;
+  if (!transcriptPath) return; // sem caminho não há o que seguir; o payload do CLI sempre o traz.
+  const previousSessionId = activeSessionByPty.get(ptyId) ?? null;
+  if (previousSessionId === sessionId) return;
+  activeSessionByPty.set(ptyId, sessionId);
+  spawnedTranscriptPaths.set(sessionId, transcriptPath);
+  transcriptWatchers.repoint(ptyId, { sessionId, transcriptPath });
+  const payload: SessionSwitchedPayload = { ptyId, previousSessionId, sessionId, source };
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(TRANSCRIPT_CHANNELS.switched, payload);
+  }
+}
+
 function registerPtyIpcHandlers(): void {
   ipcMain.handle(PTY_CHANNELS.create, (_event, options: PtyCreateOptions): PtyCreateResult => {
     if (options.sessionType === 'claude') {
@@ -1034,8 +1094,35 @@ function registerPtyIpcHandlers(): void {
       // graça se o servidor do semáforo não subiu no boot (app.whenReady):
       // a sessão continua funcionando, só sem os indicadores de estado.
       const { correlationId, extraArgs } = resolveClaudeCorrelation(launcherArgs, randomUUID);
-      const semaphoreArgs = hooksSettingsPath ? ['--settings', hooksSettingsPath] : [];
+      // T015 (014-chat) — ponte: id da aba escolhido AQUI (o arquivo `--settings` leva o ptyId
+      // no nome) e token registrado ANTES do spawn. Legado: arquivo único, sem token.
+      const plannedPtyId = randomUUID();
+      let sessionHooksSettingsPath: string | null = null;
+      if (hooksTransport === 'bridge') {
+        if (hookBridge && hookBridge.port !== null) {
+          try {
+            const token = hookBridge.registerSession(plannedPtyId);
+            sessionHooksSettingsPath = writeSessionHooksSettings({
+              userDataDir: app.getPath('userData'),
+              ptyId: plannedPtyId,
+              port: hookBridge.port,
+              token,
+              chatEnabled: appConfig.chat.enabled,
+              curlPath,
+            });
+          } catch (error) {
+            // Degrada como o boot sem servidor: a sessão nasce sem semáforo, nunca sem terminal.
+            console.error('[donel-dev] --settings da sessão não gravou — sessão sem hooks:', error);
+            hookBridge.unregisterSession(plannedPtyId);
+            sessionHooksSettingsPath = null;
+          }
+        }
+      } else {
+        sessionHooksSettingsPath = hooksSettingsPath;
+      }
+      const semaphoreArgs = sessionHooksSettingsPath ? ['--settings', sessionHooksSettingsPath] : [];
       const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs];
+      // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
 
       // T1222 (011-contas-e-provedores, etapa 2, D8/entregável) — com os
       // perfis demolidos, sessões SEM provider nunca mais recebem override de
@@ -1091,19 +1178,35 @@ function registerPtyIpcHandlers(): void {
         activeProfileConfigDir: undefined,
       });
 
-      const ptyId = ptyManager.create({
-        cols: options.cols,
-        rows: options.rows,
-        cwd: options.cwd,
-        // FIX ambiente genérico (28/07) — `launch` embrulha shim `.cmd`/`.ps1`
-        // (npm -g) no interpretador; ConPTY não executa script direto.
-        command: resolved.launch.command,
-        args: [...resolved.launch.argsPrefix, ...finalArgs],
-        claudeConfigDir: claudeConfigDirForSession,
-        envOverrides,
-      });
+      let ptyId: string;
+      try {
+        ptyId = ptyManager.create({
+          id: plannedPtyId,
+          cols: options.cols,
+          rows: options.rows,
+          cwd: options.cwd,
+          // FIX ambiente genérico (28/07) — `launch` embrulha shim `.cmd`/`.ps1`
+          // (npm -g) no interpretador; ConPTY não executa script direto.
+          command: resolved.launch.command,
+          // T018 (014-chat, FR-030) — sessão `claude` sempre com modo de permissão
+          // explícito: launcher > `permissions.defaultMode` do CLI do usuário > default.
+          // Só este ramo: o shell e a aba de login (retorno antecipado acima) não passam por aqui.
+          args: [
+            ...resolved.launch.argsPrefix,
+            ...withResolvedPermissionMode(finalArgs, readUserDefaultPermissionMode(claudeConfigDirForSession)),
+          ],
+          claudeConfigDir: claudeConfigDirForSession,
+          envOverrides,
+        });
+      } catch (error) {
+        // O spawn falhou: nada de token nem arquivo órfão.
+        hookBridge?.unregisterSession(plannedPtyId);
+        removeSessionHooksSettings(app.getPath('userData'), plannedPtyId);
+        throw error;
+      }
 
-      if (hooksSettingsPath) {
+      activeSessionByPty.set(ptyId, correlationId);
+      if (sessionHooksSettingsPath) {
         semaphoreManager.registerSession(ptyId, correlationId);
         // 011-contas-e-provedores, etapa 3, Fase 2 (C5) — o semáforo nasce em
         // `working` enquanto o CLI sobe, e só sai dele num evento de hook (fim
@@ -1286,6 +1389,17 @@ function registerConfigIpcHandlers(): void {
 
   ipcMain.handle(CONFIG_CHANNELS.setLauncherDefaults, (_event, defaults: LauncherDefaultsDto): AppConfigDto => {
     appConfig = { ...appConfig, launcherDefaults: defaults };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** T008 (014-chat) — atualização parcial de `chat`; campo que não é boolean é ignorado. */
+  ipcMain.handle(CONFIG_CHANNELS.setChatPrefs, (_event, prefs: Partial<ChatPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = {
+      ...appConfig,
+      chat: sanitizeChatPrefs({ ...appConfig.chat, ...patch }, appConfig.chat),
+    };
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });
@@ -2210,8 +2324,21 @@ void app.whenReady().then(async () => {
   // `hooksSettingsPath` fica `null` e as sessões nascem sem semáforo
   // (degradação, não crash — mesmo espírito do catch de `projects.list`).
   try {
-    const port = await semaphoreManager.start();
-    hooksSettingsPath = writeHooksSettingsFile(app.getPath('userData'), port);
+    const userDataDir = app.getPath('userData');
+    if (hooksTransport === 'legacy') {
+      const port = await semaphoreManager.start();
+      hooksSettingsPath = writeHooksSettingsFile(userDataDir, port);
+    } else {
+      cleanupStaleHookSettings(userDataDir);
+      curlPath = detectCurlPath();
+      const bridge = createHookBridge({ diagnostics: createDiagnosticsLog(userDataDir) });
+      await bridge.start();
+      semaphoreManager.attachBridge(bridge);
+      bridge.onAny((event) => {
+        if (event.type === 'conversation-switched') handleConversationSwitched(event);
+      });
+      hookBridge = bridge;
+    }
   } catch (error) {
     console.error('[donel-dev] semáforo de sessões não subiu (T009) — sessões claude vão nascer sem indicador de estado:', error);
   }
@@ -2352,6 +2479,7 @@ app.on('window-all-closed', () => {
   ptyManager.killAll();
   isolatedLoginManager?.dispose(); // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — DEPOIS do killAll (mesma ordem já vale pro PTY do login, que killAll já matou).
   semaphoreManager.dispose();
+  void hookBridge?.close();
   esteiraService?.dispose();
   esteiraService = null;
   accountEngineHost.dispose(); // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.

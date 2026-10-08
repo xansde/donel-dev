@@ -8,6 +8,7 @@ import {
   type SemaphoreEvent,
   type SemaphoreMachineState,
 } from './semaphore-state-machine';
+import type { BridgeEvent, HookBridge } from './hook-bridge';
 
 // T009 — camada de integração (I/O: servidor HTTP local + Maps + timer de
 // heurística) sobre a máquina de estados pura (semaphore-state-machine.ts).
@@ -110,8 +111,24 @@ export class SessionSemaphoreManager {
       });
     });
 
-    this.tickTimer = setInterval(() => this.tick(), this.tickIntervalMs);
+    this.startTicking();
     return this.port;
+  }
+
+  private startTicking(): void {
+    if (this.tickTimer) return;
+    this.tickTimer = setInterval(() => this.tick(), this.tickIntervalMs);
+  }
+
+  /**
+   * T014 (014-chat) — transporte novo: o semáforo passa a receber os eventos da
+   * ponte de hooks (HTTP + token por aba) já resolvidos por `ptyId`; o mapa por
+   * `session_id` não participa. O servidor legado (`start()`) não sobe. Devolve o
+   * cancelamento da assinatura.
+   */
+  attachBridge(bridge: HookBridge): () => void {
+    this.startTicking();
+    return bridge.onAny((event) => this.handleBridgeEvent(event));
   }
 
   dispose(): void {
@@ -197,18 +214,35 @@ export class SessionSemaphoreManager {
     if (!ptyId) return; // sessão claude não rastreada por este app (ex.: settings globais do usuário rodando outra sessão em paralelo).
 
     const rawHookEventName = (payload as Record<string, unknown>).hook_event_name;
-    // Emenda 22/09 (item 4) — dispara ANTES do mapeamento genérico (que
-    // funde StopFailure em 'stop'), pro gatilho imediato de auto-switch
-    // saber especificamente que este fim de turno foi por erro de API.
-    if (rawHookEventName === 'StopFailure') {
+    this.applyHookEvent(ptyId, rawHookEventName, (payload as Record<string, unknown>).reason);
+  }
+
+  private handleBridgeEvent(event: BridgeEvent): void {
+    if (!this.ptyState.has(event.ptyId)) return; // aba sem semáforo (ou já encerrada): nada a mover.
+    if (event.type === 'hook') {
+      this.applyHookEvent(event.ptyId, event.event, undefined);
+    } else if (event.type === 'session-end') {
+      // A ponte já filtra clear/resume; a máquina pura protege de novo (defesa em profundidade).
+      this.applyHookEvent(event.ptyId, 'SessionEnd', event.reason);
+    }
+    // 'conversation-switched' não mexe no estado: o semáforo é por aba (ptyId), não por conversa.
+  }
+
+  private applyHookEvent(ptyId: string, hookEventName: unknown, reason: unknown): void {
+    // Emenda 22/09 (item 4) — dispara ANTES do mapeamento genérico (que funde
+    // StopFailure em 'stop'), pro gatilho imediato de auto-switch saber que este
+    // fim de turno foi por erro de API.
+    if (hookEventName === 'StopFailure') {
       for (const listener of this.stopFailureListeners) listener(ptyId);
     }
-
-    const eventType = mapHookEventName(rawHookEventName);
+    const eventType = mapHookEventName(hookEventName);
     if (!eventType) return;
-
     const current = this.ptyState.get(ptyId) ?? INITIAL_SEMAPHORE_STATE;
-    const next = reduceSemaphoreState(current, { type: eventType, at: this.now() } as SemaphoreEvent);
+    const event: SemaphoreEvent =
+      eventType === 'sessionEnd'
+        ? { type: 'sessionEnd', at: this.now(), reason: typeof reason === 'string' ? reason : null }
+        : ({ type: eventType, at: this.now() } as SemaphoreEvent);
+    const next = reduceSemaphoreState(current, event);
     this.ptyState.set(ptyId, next);
     this.emit(ptyId);
   }

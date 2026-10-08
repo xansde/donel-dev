@@ -40,7 +40,7 @@ export type {
 } from './newProject';
 
 export { SESSION_CHANNELS, TRANSCRIPT_CHANNELS } from './sessions';
-export type { DonelSessionsApi, SessionSummaryDto, TranscriptChangedPayload } from './sessions';
+export type { DonelSessionsApi, SessionSummaryDto, SessionSwitchedPayload, TranscriptChangedPayload } from './sessions';
 
 // T710 (007/CA-11 2º momento) — decisão de esquecer a entrada órfã quando a
 // retomada falha. Puro; medição do sinal em specs/008-fechar-pendencias/.
@@ -48,7 +48,7 @@ export { RESUME_FAILURE_WINDOW_MS, forgetIfOrphan, resumedSessionIdFromArgs, sho
 export type { ResumeFailureSignal } from './resumeFailure';
 
 export { CONFIG_CHANNELS } from './config';
-export type { AppConfigDto, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, ProjectScanMode, SessionNamesMap } from './config';
+export type { AppConfigDto, ChatPrefs, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, ProjectScanMode, SessionNamesMap } from './config';
 
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — aba v3: reordenar (CA-26) e cor por
 // aba (CA-27). Lógica pura em tabAppearance.ts; canais `tabs:*` em

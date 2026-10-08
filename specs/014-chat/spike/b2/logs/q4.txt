@@ -1,0 +1,210 @@
+=== [q4 +20810ms] after send mixed  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|❯ Reply with only the word OK [tag-mixed]. [LF-TEST]
+ 8|  A    TAB-after
+ 9|  B ação 你好 😀 end
+10| [CRLF-TEST]
+11| C1
+12| C2
+13| [CR-TEST]
+14| D1
+15| D2
+16|
+17|● OK
+18|
+19|✻ Brewed for 3s · done 18:10
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  paste again to expand
+
+=== [q4 +22235ms] l500 box  (cursor 30,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|  ⎿  SessionStart:startup says: GitHub ativo: xansde
+ 6|
+ 7|❯ Reply with only the word OK [tag-mixed]. [LF-TEST]
+ 8|  A    TAB-after
+ 9|  B ação 你好 😀 end
+10| [CRLF-TEST]
+11| C1
+12| C2
+13| [CR-TEST]
+14| D1
+15| D2
+16|
+17|● OK
+18|
+19|✻ Brewed for 3s · done 18:10
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ [Pasted text #11 +500 lines]
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  paste again to expand
+
+=== [q4 +24575ms] after send l500  (cursor 2,37; buffer=alternate) ===
+ 0|  L0470 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 1|  L0471 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 2|  L0472 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 3|  L0473 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 4|  L0474 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 5|  L0475 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 6|  L0476 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 7|  L0477 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 8|  L0478 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 9|  L0479 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+10| [L0480 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+11| CL0481 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+12| CL0482 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+13| [L0483 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+14| DL0484 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+15| DL0485 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+16|  L0486 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+17|  L0487 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+18|  L0488 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+19|  L0489 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+20|  L0490 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+21|  L0491 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+22|  L0492 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+23|  L0493 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+24|  L0494 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+25|  L0495 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+26|  L0496 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+27|  L0497 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+28|  L0498 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+29|  L0499 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+30|  L0500 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+31|
+32|● OK
+33|
+34|✻ Baked for 1s · done 18:10
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  paste again to expand
+
+=== [q4 +30908ms] l200k box  (cursor 31,37; buffer=alternate) ===
+ 0|  L0470 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 1|  L0471 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 2|  L0472 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 3|  L0473 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 4|  L0474 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 5|  L0475 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 6|  L0476 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 7|  L0477 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 8|  L0478 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 9|  L0479 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+10| [L0480 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+11| CL0481 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+12| CL0482 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+13| [L0483 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+14| DL0484 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+15| DL0485 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+16|  L0486 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+17|  L0487 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+18|  L0488 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+19|  L0489 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+20|  L0490 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+21|  L0491 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+22|  L0492 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+23|  L0493 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+24|  L0494 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+25|  L0495 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+26|  L0496 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+27|  L0497 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+28|  L0498 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+29|  L0499 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+30|  L0500 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+31|
+32|● OK
+33|
+34|✻ Baked for 1s · done 18:10
+35|
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ [Pasted text #12 +3600 lines]
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on
+
+=== [q4 +34254ms] after send l200k  (cursor 2,37; buffer=alternate) ===
+ 0|  L3570 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 1|  L3571 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 2|  L3572 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 3|  L3573 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 4|  L3574 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 5|  L3575 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 6|  L3576 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 7|  L3577 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 8|  L3578 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+ 9|  L3579 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+10| [L3580 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+11| CL3581 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+12| CL3582 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+13| [L3583 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+14| DL3584 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+15| DL3585 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+16|  L3586 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+17|  L3587 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+18|  L3588 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+19|  L3589 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+20|  L3590 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+21|  L3591 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+22|  L3592 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+23|  L3593 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+24|  L3594 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+25|  L3595 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+26|  L3596 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+27|  L3597 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+28|  L3598 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+29|  L3599 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+30|  L3600 abcdefghijklmnopqrstuvwxyz0123456789 ABCDEFGHIJ
+31|
+32|● OK
+33|
+34|✻ Churned for 2s · done 18:10
+35|
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on · ? for shortcuts · ← for agents
+
