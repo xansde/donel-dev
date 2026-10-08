@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -169,6 +169,7 @@ import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-brid
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { createChatHub, type ChatHub, type ChatSourceInfo } from './chat/chat-hub';
 import { registerChatIpcHandlers } from './chat/chat-ipc';
+import { createPendingNotifier } from './chat/notifications';
 import { registerAssetScheme, registerAssetsProtocol } from './chat/assets-protocol';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
@@ -1100,12 +1101,34 @@ function handleConversationSwitched(event: Extract<BridgeEvent, { type: 'convers
 function registerChatDomain(): void {
   if (!appConfig.chat.enabled || hookBridge === null) return;
   const attachmentsRoot = join(app.getPath('userData'), 'chat-attachments');
+  // T079 - notificacao do sistema quando uma pendencia abre (janela sem foco ou aba nao ativa).
+  const notifier = createPendingNotifier({
+    preference: () => appConfig.notificationPreference,
+    isWindowFocused: () => BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isFocused()),
+    isSupported: () => Notification.isSupported(),
+    create: (options) => new Notification(options),
+    onClick: (ptyId) => {
+      const window = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+      if (window === undefined) return;
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+      window.webContents.send(CHAT_CHANNELS.focusPending, { ptyId });
+    },
+  });
   const hub = createChatHub({
     bridge: hookBridge,
     getSource: (ptyId) => initialChatSourceByPty.get(ptyId) ?? null,
     events: {
       rows: (event) => broadcastChat(CHAT_CHANNELS.rows, event),
-      live: (event) => broadcastChat(CHAT_CHANNELS.live, event),
+      live: (event) => {
+        // o semaforo da aba fica em `permission` ("esperando voce") enquanto houver pendencia aberta
+        semaphoreManager.setPendingOpen(event.ptyId, event.live.pendings.length > 0);
+        broadcastChat(CHAT_CHANNELS.live, event);
+      },
+      pendingOpened: ({ ptyId, pending }) => {
+        notifier.notifyPending(ptyId, pending);
+      },
       conversationSwitched: (event) => broadcastChat(CHAT_CHANNELS.conversationSwitched, event),
       reception: (event) => broadcastChat(CHAT_CHANNELS.reception, event),
       promptSignal: (event) => broadcastChat(CHAT_CHANNELS.promptSignal, event),
@@ -1120,6 +1143,7 @@ function registerChatDomain(): void {
     hub,
     openExternal: (url) => shell.openExternal(url),
     openPath: (path) => shell.openPath(path),
+    onFocusState: (input) => notifier.setFocusState(input.activePtyId, input.tabNames),
   });
   registerAssetsProtocol(protocol, { transcriptRoots: (ptyId) => hub.transcriptRoots(ptyId), attachmentsRoot });
 }

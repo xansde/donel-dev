@@ -4,16 +4,19 @@
 // preference at runtime takes effect on the next start of the app.
 //
 // Handlers here: attach, detach, load-older, row-detail, open-external,
-// open-generated, ack-lookup (T064), screen-state (T070). The other contract
-// channels (answer, subagent-*, catalog, files, save-image, focus-state) belong to later tasks.
+// open-generated, ack-lookup (T064), screen-state (T070), answer (T076), focus-state (T079). The
+// other contract channels (subagent-*, catalog, files, save-image) belong to later tasks.
 
 import { CHAT_CHANNELS } from '../../shared/chat/ipc';
 import type {
   ChatAckLookupInput,
   ChatAckLookupOutput,
+  ChatAnswerInput,
+  ChatAnswerOutput,
   ChatAttachInput,
   ChatAttachOutput,
   ChatDetachInput,
+  ChatFocusStateInput,
   ChatLoadOlderInput,
   ChatLoadOlderOutput,
   ChatOpenExternalInput,
@@ -41,6 +44,8 @@ export interface ChatIpcDeps {
   readonly openExternal: (url: string) => Promise<void>;
   /** `shell.openPath` (resolves to an error message, '' on success) */
   readonly openPath: (path: string) => Promise<string>;
+  /** T079 - `chat:focus-state`: the active tab (and tab names) for the notification rule. */
+  readonly onFocusState?: (input: ChatFocusStateInput) => void;
 }
 
 export interface ChatIpcRegistration {
@@ -58,6 +63,8 @@ const HANDLED: readonly string[] = [
   CHAT_CHANNELS.openGenerated,
   CHAT_CHANNELS.ackLookup,
   CHAT_CHANNELS.screenState,
+  CHAT_CHANNELS.answer,
+  CHAT_CHANNELS.focusState,
 ];
 
 const SCREEN_REASONS: ReadonlySet<string> = new Set(['hook-timeout', 'interactive-screen', 'permission-dialog', 'unrecognized']);
@@ -107,6 +114,23 @@ export function registerChatIpcHandlers(deps: ChatIpcDeps): ChatIpcRegistration 
     if (!isString(input?.ptyId)) return;
     const reason = input.terminalNeeded;
     if (reason === null || SCREEN_REASONS.has(reason)) hub.reportScreenState(input.ptyId, reason);
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.answer, (_e, input: ChatAnswerInput): ChatAnswerOutput => {
+    if (!isString(input?.ptyId) || !isString(input.pendingId) || input.answer === null || typeof input.answer !== 'object') {
+      return { ok: false, reason: 'unknown' };
+    }
+    return hub.answer(input.ptyId, input.pendingId, input.answer);
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.focusState, (_e, input: ChatFocusStateInput): void => {
+    if (input === null || typeof input !== 'object') return;
+    if (input.activePtyId !== null && !isString(input.activePtyId)) return;
+    const names: Record<string, string> = {};
+    if (input.tabNames !== undefined && input.tabNames !== null && typeof input.tabNames === 'object') {
+      for (const [key, value] of Object.entries(input.tabNames)) if (isString(value)) names[key] = value;
+    }
+    deps.onFocusState?.({ activePtyId: input.activePtyId ?? null, tabNames: names });
   });
 
   return {

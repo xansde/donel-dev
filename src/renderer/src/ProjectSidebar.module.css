@@ -120,6 +120,18 @@
   min-width: 0;
 }
 
+.sessionStatus {
+  color: var(--state-permission);
+  font-size: var(--text-caption-size);
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.sessionStatus + .sessionProject {
+  margin-left: 0;
+}
+
 .sessionProject {
   color: var(--text-muted);
   font-size: var(--text-caption-size);

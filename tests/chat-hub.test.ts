@@ -578,3 +578,226 @@ describe('live extras (T070 main)', () => {
     expect(lastLive(h).currentAction).toBeNull();
   });
 });
+
+describe('pendings (T076)', () => {
+  const lastLive = (h: Harness) => h.live[h.live.length - 1]!.live;
+
+  interface FakeHandle {
+    id: string;
+    ptyId: string;
+    respond(decision: Record<string, unknown>): boolean;
+    release(): boolean;
+    responded: Record<string, unknown>[];
+    released: number;
+    settled: boolean;
+  }
+  function fakeHandle(id: string, ptyId = 'pty-1'): FakeHandle {
+    const h: FakeHandle = {
+      id,
+      ptyId,
+      responded: [],
+      released: 0,
+      settled: false,
+      respond(decision) {
+        if (h.settled) return false;
+        h.settled = true;
+        h.responded.push(decision);
+        return true;
+      },
+      release() {
+        if (h.settled) return false;
+        h.settled = true;
+        h.released += 1;
+        return true;
+      },
+    };
+    return h;
+  }
+  const bash = { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } };
+  function open(h: Harness, handle: FakeHandle, payload: Record<string, unknown> = bash, toolUseId: string | null = 'tu-1'): void {
+    h.bridge.emit({ type: 'pending', ptyId: 'pty-1', handle, payload, toolUseId });
+  }
+  const toolResultLine = (toolUseId: string, parent: string): string =>
+    JSON.stringify({
+      parentUuid: parent,
+      isSidechain: false,
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'denied', is_error: true }] },
+      uuid: uid(900),
+      timestamp: '2026-10-01T10:00:02.000Z',
+    });
+  const interruptLine = (parent: string): string =>
+    JSON.stringify({
+      parentUuid: parent,
+      isSidechain: false,
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] },
+      uuid: uid(901),
+      timestamp: '2026-10-01T10:00:03.000Z',
+    });
+
+  it('opens a Pending in LiveState: waiting-you, in arrival order, with main scope; fires pendingOpened', () => {
+    const opened: string[] = [];
+    const bridge = new FakeBridge();
+    const live: ChatLiveEvent[] = [];
+    const hub = createChatHub({
+      bridge,
+      getSource: () => src(join(dir, 'x.jsonl')),
+      events: { ...noopEvents, live: (e) => live.push(e), pendingOpened: (e) => opened.push(`${e.ptyId}:${e.pending.id}`) },
+      receptionPollMs: 0,
+    });
+    hubs.push(hub);
+    bridge.hook('pty-1', 'SessionStart');
+    bridge.emit({ type: 'pending', ptyId: 'pty-1', handle: fakeHandle('r1'), payload: bash, toolUseId: 'tu-1' });
+    bridge.emit({
+      type: 'pending',
+      ptyId: 'pty-1',
+      handle: fakeHandle('r2'),
+      payload: { ...bash, tool_name: 'Edit', tool_input: { file_path: 'a.ts', old_string: 'a', new_string: 'b' } },
+      toolUseId: null,
+    });
+    const state = live[live.length - 1]!.live;
+    expect(state.status).toBe('waiting-you');
+    expect(state.pendings.map((p) => p.id)).toEqual(['r1', 'r2']);
+    expect(state.pendings[0]).toMatchObject({ kind: 'permission', scope: 'main', state: 'open', toolUseId: 'tu-1' });
+    expect(opened).toEqual(['pty-1:r1', 'pty-1:r2']);
+  });
+
+  it('scopes a sub-agent request by agent_id with the agent_type as fallback description', () => {
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    open(h, fakeHandle('r1'), { ...bash, agent_id: 'ag-7', agent_type: 'Explore' });
+    expect(lastLive(h).pendings[0]!.scope).toEqual({ agentId: 'ag-7', description: 'Explore' });
+  });
+
+  it('reads the sub-agent description from its .meta.json', () => {
+    const path = join(dir, 'proj', 's1.jsonl');
+    mkdirSync(join(dir, 'proj', 's1', 'subagents'), { recursive: true });
+    writeFileSync(join(dir, 'proj', 's1', 'subagents', 'agent-ag-7.meta.json'), JSON.stringify({ description: 'varrer o repasse', toolUseId: 'tu-9' }));
+    const h = harness({ 'pty-1': src(path) });
+    open(h, fakeHandle('r1'), { ...bash, agent_id: 'ag-7', agent_type: 'Explore' });
+    expect(lastLive(h).pendings[0]!.scope).toEqual({ agentId: 'ag-7', description: 'varrer o repasse' });
+  });
+
+  it('answer() translates through toHookDecision, closes the pending and goes back to the base status', () => {
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    h.bridge.hook('pty-1', 'UserPromptSubmit', { prompt: 'x' });
+    const handle = fakeHandle('r1');
+    open(h, handle);
+    expect(h.hub.answer('pty-1', 'r1', { kind: 'deny', reason: 'não' })).toEqual({ ok: true });
+    expect(handle.responded).toEqual([{ behavior: 'deny', message: 'não' }]);
+    expect(lastLive(h).pendings).toEqual([]);
+    expect(lastLive(h).status).toBe('working');
+    expect(h.hub.answer('pty-1', 'r1', { kind: 'allow' })).toEqual({ ok: false, reason: 'not-open' });
+  });
+
+  it('answer() reports unknown ids and impossible combinations', () => {
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    open(h, fakeHandle('r1'));
+    expect(h.hub.answer('pty-1', 'nope', { kind: 'allow' })).toEqual({ ok: false, reason: 'unknown' });
+    expect(h.hub.answer('pty-1', 'r1', { kind: 'plan-approve' })).toEqual({ ok: false, reason: 'unknown' });
+    expect(lastLive(h).pendings).toHaveLength(1); // still open
+  });
+
+  it('answer() says not-open when the bridge already settled the request', () => {
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    const handle = fakeHandle('r1');
+    open(h, handle);
+    handle.settled = true;
+    expect(h.hub.answer('pty-1', 'r1', { kind: 'allow' })).toEqual({ ok: false, reason: 'not-open' });
+    expect(lastLive(h).pendings).toEqual([]);
+  });
+
+  it('closes on resolved-elsewhere from the bridge without releasing again', () => {
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    const handle = fakeHandle('r1');
+    open(h, handle);
+    h.bridge.emit({ type: 'resolved-elsewhere', ptyId: 'pty-1', requestId: 'r1' });
+    expect(lastLive(h).pendings).toEqual([]);
+    expect(handle.released).toBe(0);
+    expect(h.hub.answer('pty-1', 'r1', { kind: 'allow' })).toEqual({ ok: false, reason: 'not-open' });
+  });
+
+  it('closes on a tool_result of the same tool_use in the transcript and releases the held request', async () => {
+    const path = join(dir, 's1.jsonl');
+    writeRounds(path, 1, 1);
+    const h = harness({ 'pty-1': src(path) });
+    await h.hub.attach('pty-1');
+    const handle = fakeHandle('r1');
+    open(h, handle, bash, 'tu-1');
+    const other = fakeHandle('r2');
+    open(h, other, bash, 'tu-2');
+    appendFileSync(path, `${toolResultLine('tu-1', uid(2))}\n`);
+    await pollUntil(() => lastLive(h).pendings.length === 1);
+    expect(handle.released).toBe(1);
+    expect(other.released).toBe(0);
+    expect(lastLive(h).pendings.map((p) => p.id)).toEqual(['r2']);
+  });
+
+  it('cancels the open pendings on an interruption marker in the transcript', async () => {
+    const path = join(dir, 's1.jsonl');
+    writeRounds(path, 1, 1);
+    const h = harness({ 'pty-1': src(path) });
+    await h.hub.attach('pty-1');
+    const handle = fakeHandle('r1');
+    open(h, handle);
+    appendFileSync(path, `${interruptLine(uid(2))}\n`);
+    await pollUntil(() => lastLive(h).pendings.length === 0);
+    expect(handle.released).toBe(1);
+  });
+
+  it('expired lights terminalNeeded hook-timeout (FR-025) and closes the pending', () => {
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    open(h, fakeHandle('r1'));
+    h.bridge.emit({ type: 'expired', ptyId: 'pty-1', requestId: 'r1' });
+    expect(lastLive(h).pendings).toEqual([]);
+    expect(lastLive(h).terminalNeeded).toEqual({ reason: 'hook-timeout' });
+    expect(lastLive(h).status).toBe('terminal-needed');
+  });
+
+  it('cancelled (bridge) and PTY exit leave no pending open', () => {
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')), 'pty-2': src(join(dir, 'y.jsonl'), 's2') });
+    open(h, fakeHandle('r1'));
+    h.bridge.emit({ type: 'cancelled', ptyId: 'pty-1', requestId: 'r1' });
+    expect(lastLive(h).pendings).toEqual([]);
+
+    const handle = fakeHandle('r9', 'pty-2');
+    h.bridge.emit({ type: 'pending', ptyId: 'pty-2', handle, payload: bash, toolUseId: null });
+    h.hub.markEnded('pty-2');
+    expect(handle.released).toBe(1);
+    const last = h.live.filter((e) => e.ptyId === 'pty-2').pop()!.live;
+    expect(last.pendings).toEqual([]);
+    expect(last.status).toBe('ended');
+  });
+
+  it('a Notification dialog with an open pending does not set terminalNeeded (coherent with the queue)', () => {
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    open(h, fakeHandle('r1'));
+    h.bridge.hook('pty-1', 'Notification', { notification_type: 'permission_prompt' });
+    expect(lastLive(h).terminalNeeded).toBeNull();
+    expect(lastLive(h).status).toBe('waiting-you');
+  });
+
+  it('chat:answer IPC handler forwards to the hub and validates input', () => {
+    const calls: unknown[] = [];
+    const handlers = new Map<string, (e: unknown, input: unknown) => unknown>();
+    registerChatIpcHandlers({
+      ipcMain: { handle: (c, l) => void handlers.set(c, l), removeHandler: () => undefined },
+      enabled: true,
+      hub: { answer: (...a: unknown[]) => (calls.push(a), { ok: true }) } as unknown as ChatHub,
+      openExternal: () => Promise.resolve(),
+      openPath: () => Promise.resolve(''),
+    });
+    const answer = handlers.get(CHAT_CHANNELS.answer)!;
+    expect(answer({}, { ptyId: 'p', pendingId: 'x', answer: { kind: 'allow' } })).toEqual({ ok: true });
+    expect(answer({}, { ptyId: 'p', pendingId: 1, answer: { kind: 'allow' } })).toEqual({ ok: false, reason: 'unknown' });
+    expect(calls).toEqual([['p', 'x', { kind: 'allow' }]]);
+  });
+});
+
+const noopEvents: ChatHubEvents = {
+  rows: () => undefined,
+  live: () => undefined,
+  conversationSwitched: () => undefined,
+  reception: () => undefined,
+  promptSignal: () => undefined,
+};
