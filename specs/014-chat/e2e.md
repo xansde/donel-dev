@@ -30,10 +30,10 @@ Branch `feature/014-fase-1`, T005–T041.
   `tests/smoke/playwright.config.ts` (fora do escopo; não feita).
 - **`session-context.spec.ts` (T611/T612)**: falhou em 2 de 4 rodadas da
   suíte inteira na fase (com `127% · 380k/300k` onde esperava `7% · 20k/300k`:
-  o turno menor não chegou à StatusBar a tempo) e passa isolado. A linha de
-  base em `staging` **não foi medida**: a rodada foi interrompida por falta de
-  memória na máquina. Investigar antes do merge: a fase mexeu no
-  `transcript-watcher` (`repoint`).
+  o turno menor não chegou à StatusBar a tempo) e passa isolado. **Já falha em
+  `staging`**: na única rodada de linha de base que completou (a seguinte
+  foi interrompida por falta de memória), a mesma asserção falhou, com 61
+  verdes. É intermitência anterior a esta fase.
 
 ### Bateria real no alfa — **pendente (dono)**
 
