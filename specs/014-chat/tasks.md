@@ -311,7 +311,7 @@ divergências de `design/chat-verificacao.md`.
   - `Notice.tsx` (todos os `NoticeKind`, incluindo "Gerou … — abrir");
   - `Unknown.tsx` ("ver bruto");
   - `LocalCommand.tsx` e `ShellRow.tsx`.
-- [ ] T053 [US3] Linhas de trabalho em `src/renderer/src/chat/rows/`, conforme o design:
+- [x] T053 [US3] Linhas de trabalho em `src/renderer/src/chat/rows/`, conforme o design:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Sem estatística de teste (D-C3); verbo no gerúndio enquanto roda (D-C4, nota no `conversation-rows.md` §4); chevron do "pensou" só com `hasText` (D-C5); diff cortado em 40 linhas (D-C7); `QuestionRow` e `PlanRow` a partir do `ActionLine`.
   - `ActionRow.tsx`: resumo em português, ícone por categoria, `error`/`denied` visíveis;
   - `ActionGroup.tsx`: recolhido com a lista de falhas visível; expande;

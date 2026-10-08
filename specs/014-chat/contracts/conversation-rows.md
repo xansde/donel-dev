@@ -141,6 +141,12 @@ arquivo, com o caminho inteiro no título (tooltip).
 | `mcp__<servidor>__<ferramenta>` | "Usou" / `servidor · ferramenta` | entrada (JSON truncado) + saída |
 | desconhecida | "Usou" / nome da ferramenta | entrada e saída cruas, truncadas |
 
+**Verbo em andamento (D-C4).** O `verb` da tabela é sempre o passado. Enquanto a ação está
+`running`, a tela mostra o gerúndio do primeiro verbo — "Leu" → "Lendo", "Editou" → "Editando",
+"Rodou" → "Rodando", "Buscou" → "Buscando", "Viu a imagem" → "Vendo a imagem" — na linha, no pé
+("trabalhando — Rodando `npm test`") e no painel do subagente; concluída, volta ao passado. A conversão é
+de apresentação (`progressiveVerb`, `src/renderer/src/chat/rows/format.ts`); o adaptador não muda.
+
 `category` sai da mesma tabela (`read`, `write`, `edit`, `bash`, `search`,
 `web`, `task`, `mcp`, `other`). Diffs vêm **do próprio transcript**
 (`structuredPatch`): o app não recalcula diff.
