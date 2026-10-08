@@ -48,7 +48,7 @@ interface TopRow {
   readonly rounds: number;
 }
 
-const FIRST_VISIBLE_SCRIPT = (scroller: HTMLElement): TopRow => {
+const FIRST_VISIBLE_SCRIPT = (scroller: Element): TopRow => {
   const sections = Array.from(scroller.querySelectorAll<HTMLElement>('section[data-turn-id]'));
   const top = scroller.getBoundingClientRect().top;
   const first = sections.find((s) => s.getBoundingClientRect().bottom > top + 1);
@@ -110,11 +110,11 @@ test('T059 - sessao longa: rolar ate o topo carrega historico sem salto (SC-005)
     const before = await scroller.evaluate((el, script) => {
       el.scrollTop = 100;
       // eslint-disable-next-line no-new-func
-      return (new Function('scroller', `return (${script})(scroller)`) as (e: HTMLElement) => TopRow)(el);
+      return (new Function('scroller', `return (${script})(scroller)`) as (e: Element) => TopRow)(el);
     }, FIRST_VISIBLE_SCRIPT.toString());
     // wait for the load triggered by being at the top (the round count grows) ...
     await expect
-      .poll(async () => scroller.evaluate((el, script) => (new Function('scroller', `return (${script})(scroller)`) as (e: HTMLElement) => TopRow)(el).rounds, FIRST_VISIBLE_SCRIPT.toString()), {
+      .poll(async () => scroller.evaluate((el, script) => (new Function('scroller', `return (${script})(scroller)`) as (e: Element) => TopRow)(el).rounds, FIRST_VISIBLE_SCRIPT.toString()), {
         timeout: 20_000,
         intervals: [100, 250, 500],
       })

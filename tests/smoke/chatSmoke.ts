@@ -42,7 +42,7 @@ export async function launchChatApp(options: LaunchChatAppOptions): Promise<Chat
   mkdirSync(sessionsDir, { recursive: true });
   options.seed?.(sessionsDir);
 
-  const userDataDir = mkdtempSync(path.join(tmpdir(), `donel-dev-smoke-${options.name}-`));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), `donel-chat-smoke-${options.name}-`));
   writeFileSync(
     path.join(userDataDir, 'config.json'),
     JSON.stringify({
