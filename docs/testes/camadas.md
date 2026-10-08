@@ -26,7 +26,8 @@ A etiqueta vai no fim do título do `test(...)`, por exemplo
 | `@sessoes` | Sessões anteriores, nomes, favoritos, contexto na StatusBar |
 | `@projetos` | Criar projeto, configuração por projeto (board + repo) |
 | `@config` | Persistência de preferências entre restarts |
-| `@esteira`, `@chat` | Reservadas: ainda não há smoke Playwright dessas áreas neste branch |
+| `@chat` | Chat (014): `chat-foundation` e os smokes de leitura/envio que vierem |
+| `@esteira` | Reservada: ainda não há smoke Playwright da Esteira |
 | `@real` | Precisa do CLI `claude` real e/ou gasta cota. Fora do gate (camada C) |
 | `@perf` | Medição de desempenho (`ca7-measurement`). Fora do gate: falha conforme a carga |
 
