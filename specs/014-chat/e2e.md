@@ -292,6 +292,9 @@ A smoke (T081) veio por último.
     `readInputText` pode ler só a primeira linha da caixa, ou a segunda vem
     com recuo/prefixo que o `collapse` não iguala. O `Esc Esc` de limpeza
     também não rodou, o que bate com `boxIsOurs` falhando pelo mesmo motivo.
+  - Isolamento feito pelo dono no mesmo dia: pelo chat, uma linha sem
+    imagem chegou e uma linha com imagem também. A falha fica no texto de
+    2+ linhas, com ou sem imagem: o caso sem imagem ainda falta testar.
   - Aceite da correção: imagem + texto de 2+ linhas pelo chat chega ao CLI
     e o cartão confirma. Um smoke cobre o caso multilinha com imagem e outro
     sem imagem.
