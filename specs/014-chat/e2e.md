@@ -194,3 +194,15 @@ driver com a caixa, juntados na mesma branch.
   visão terminal para colar a imagem. Colar/arrastar imagem é o **T088**
   (Fase 5). O envio já sabe mandar imagem (`imagePaths`, §4 do contrato);
   falta a caixa aceitar a colagem e gravar o arquivo (`chat:save-image`).
+- **"Não estou recebendo a conversa" que não sai** (alfa, 08/10, para depois):
+  numa sessão longa (72% de contexto), o aviso FR-030 apareceu e ficou
+  preso. Segundo o dono, "perdeu a conexão com o terminal e nunca mais
+  recuperou". No print, porém, a última resposta do Claude está renderizada
+  logo abaixo do aviso: as linhas continuam chegando e só o estado
+  `reception` não volta a `ok`.
+  - Suspeitas a investigar: o poll de recepção (`checkReception` no hub,
+    2 s) compara com um caminho ou um `mtime` que ficou velho depois de
+    `/compact` ou da troca de conversa; ou o evento `chat:reception` de volta
+    a `ok` não é emitido ou não chega ao renderer.
+  - Aceite da correção: o aviso some sozinho assim que uma linha nova
+    chega, e um smoke cobre esse caminho com `/compact` no meio.
