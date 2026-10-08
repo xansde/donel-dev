@@ -23,6 +23,7 @@ import type {
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
+  ChatPrefs,
   LauncherDefaultsDto,
   LoginStatusDto,
   NotificationPreference,
@@ -46,6 +47,7 @@ import type {
   SwitchOutcome,
   TabColorToken,
   TranscriptChangedPayload,
+  SessionSwitchedPayload,
   WatchPhaseIpcInput,
 } from '../shared';
 import type { AccountId } from '../shared';
@@ -180,6 +182,14 @@ const donelApi: DonelApi = {
       return subscribeChannel(ipcRenderer, TRANSCRIPT_CHANNELS.changed, handler);
     },
 
+    // T016 (014-chat, FR-033) — troca de conversa da aba (`/clear`, `/resume`).
+    onSessionSwitched: (listener: (payload: SessionSwitchedPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: SessionSwitchedPayload): void => {
+        listener(payload);
+      };
+      return subscribeChannel(ipcRenderer, TRANSCRIPT_CHANNELS.switched, handler);
+    },
+
     // T705 (007-favoritos-sessoes) — os três canais de escrita do registro.
     registerVisit: (sessionId: string, projectPath: string, label: string) =>
       ipcRenderer.invoke(SESSION_CHANNELS.registerVisit, sessionId, projectPath, label) as Promise<AppConfigDto>,
@@ -292,6 +302,8 @@ const donelApi: DonelApi = {
     setLauncherDefaults: (defaults: LauncherDefaultsDto) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setLauncherDefaults, defaults) as Promise<AppConfigDto>,
 
+    setChatPrefs: (prefs: Partial<ChatPrefs>) =>
+      ipcRenderer.invoke(CONFIG_CHANNELS.setChatPrefs, prefs) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },

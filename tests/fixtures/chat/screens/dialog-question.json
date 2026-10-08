@@ -1,0 +1,111 @@
+{
+ "name": "dialog-question",
+ "description": "AskUserQuestion: opções numeradas, \"Enter to select · ↑/↓ to navigate\".",
+ "source": "real",
+ "origin": "q9b-ask.txt :: ask dialog",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 25,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " ▐▛███▛█   Claude Code v2.1.293",
+   "dim": []
+  },
+  {
+   "text": "▝▜██████▀  Haiku 5.5 · Claude Max",
+   "dim": []
+  },
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "  ⎿  SessionStart:startup says: GitHub ativo: xansde",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "❯ Use the AskUserQuestion tool to ask me whether I prefer Red or Blue (two options), then wait for my answer. Do",
+   "dim": []
+  },
+  {
+   "text": "  nothing else.",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "● Você prefere Red ou Blue?",
+   "dim": []
+  },
+  {
+   "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+   "dim": []
+  },
+  {
+   "text": " ☐ Cor",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "Você prefere Red ou Blue?",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "❯ 1. Red",
+   "dim": []
+  },
+  {
+   "text": "     Escolher Red",
+   "dim": []
+  },
+  {
+   "text": "  2. Blue",
+   "dim": []
+  },
+  {
+   "text": "     Escolher Blue",
+   "dim": []
+  },
+  {
+   "text": "  3. Type something.",
+   "dim": []
+  },
+  {
+   "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+   "dim": []
+  },
+  {
+   "text": "  4. Chat about this",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "Enter to select · ↑/↓ to navigate · Esc to cancel",
+   "dim": []
+  }
+ ]
+}

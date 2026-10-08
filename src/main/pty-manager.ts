@@ -24,6 +24,8 @@ interface PtyRecord {
 }
 
 export interface PtyCreateOptions {
+  /** T015 (014-chat) — id escolhido pelo chamador (o arquivo `--settings` por sessão leva o `ptyId` no nome e o token da ponte é registrado antes do spawn). Omitido = `randomUUID()`. */
+  id?: string;
   cols: number;
   rows: number;
   cwd?: string;
@@ -77,7 +79,33 @@ const INHERITED_CLAUDE_SESSION_MARKERS = [
   'CLAUDE_CODE_CHILD_SESSION',
   'CLAUDE_CODE_ENTRYPOINT',
   'CLAUDE_CODE_SSE_PORT',
+  // T018 (014-chat, FR-030/R17) — ponte/mensageria entre sessões. Nomes
+  // confirmados no binário do CLI (`grep -a -o -E` em claude.exe, 2026-10-08):
+  // CLAUDE_CODE_BRIDGE_SESSION_ID, CLAUDE_CODE_MESSAGING_SOCKET,
+  // CLAUDE_CODE_MESSAGING_TOKEN. Uma sessão-mãe que os exporta faria a aba
+  // nova falar com o socket dela.
+  'CLAUDE_CODE_BRIDGE_SESSION_ID',
+  'CLAUDE_CODE_MESSAGING_SOCKET',
+  'CLAUDE_CODE_MESSAGING_TOKEN',
 ] as const;
+
+/** Hosts que o proxy do sistema nunca pode interceptar: a ponte de hooks HTTP fala com 127.0.0.1 (hook-bridge.md §1). */
+const LOOPBACK_NO_PROXY = ['127.0.0.1', 'localhost'] as const;
+
+/**
+ * Acrescenta o loopback ao `NO_PROXY` herdado, só o que falta. No Windows o
+ * `process.env` é case-insensitive mas a cópia para objeto comum não é:
+ * respeita a grafia que já existir (`NO_PROXY` ou `no_proxy`) em vez de criar
+ * uma segunda chave.
+ */
+function appendLoopbackToNoProxy(env: Record<string, string>): void {
+  const key = Object.keys(env).find((name) => name.toUpperCase() === 'NO_PROXY') ?? 'NO_PROXY';
+  const entries = (env[key] ?? '').split(',').map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  for (const host of LOOPBACK_NO_PROXY) {
+    if (!entries.some((entry) => entry.toLowerCase() === host)) entries.push(host);
+  }
+  env[key] = entries.join(',');
+}
 
 export function buildPtyEnv(
   baseEnv: NodeJS.ProcessEnv,
@@ -91,6 +119,9 @@ export function buildPtyEnv(
   for (const marker of INHERITED_CLAUDE_SESSION_MARKERS) {
     delete env[marker];
   }
+  // T018 (014-chat, FR-030) — garantia de que a sessão grava o transcript em
+  // disco (o chat depende dele). Antes do overlay, que continua por cima.
+  env.CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1';
   // T1315 (011-contas-e-provedores, etapa 3) — overrides do provider (env não
   // sensível + segredos já resolvidos) por cima do env base. Aplicado ANTES
   // do bloco de CLAUDE_CONFIG_DIR abaixo de propósito: essa chave continua
@@ -106,6 +137,7 @@ export function buildPtyEnv(
       delete env[marker];
     }
   }
+  appendLoopbackToNoProxy(env);
   if (claudeConfigDir) {
     env.CLAUDE_CONFIG_DIR = claudeConfigDir;
   } else {
@@ -155,7 +187,7 @@ export class PtyManager {
   }
 
   create(options: PtyCreateOptions): string {
-    const id = randomUUID();
+    const id = options.id ?? randomUUID();
     const command = options.command ?? FREE_TERMINAL_SHELL;
     const args = options.args ?? FREE_TERMINAL_ARGS;
     // Env herdado sem alteração (plan.md ponto 2 — nunca sobrescrever PATH;

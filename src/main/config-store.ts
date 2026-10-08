@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
-import type { AppConfigDto, LauncherDefaultsDto, NotificationPreference, ProjectScanMode, SessionNamesMap } from '../shared/config';
+import type { AppConfigDto, ChatPrefs, LauncherDefaultsDto, NotificationPreference, ProjectScanMode, SessionNamesMap } from '../shared/config';
 import type {
   ArchivedPhaseSession,
   ArchivedPhaseSessions,
@@ -128,6 +128,8 @@ export interface AppConfig {
    * namespace `provider:<id>`, accounts-vault.json reusado).
    */
   readonly providers: ProvidersConfigDto;
+  /** T008 (014-chat) — interruptor da entrega incremental (R22) e modo foco global (FR-009). Exposta no DTO. */
+  readonly chat: ChatPrefs;
   /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
@@ -163,7 +165,23 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     accounts: defaultAccountsConfig(),
     migration: defaultMigrationState(),
     providers: defaultProvidersConfig(),
+    chat: defaultChatPrefs(),
     unknownFields: {},
+  };
+}
+
+/** T008 (014-chat) — `enabled` false até a Fase 7 (R22); `focusMode` true (FR-009). */
+export function defaultChatPrefs(): ChatPrefs {
+  return { enabled: false, focusMode: true };
+}
+
+/** T008 — campo a campo: valor que não é boolean cai no default daquele campo. */
+export function sanitizeChatPrefs(value: unknown, fallback: ChatPrefs = defaultChatPrefs()): ChatPrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return fallback;
+  const candidate = value as Record<string, unknown>;
+  return {
+    enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : fallback.enabled,
+    focusMode: typeof candidate.focusMode === 'boolean' ? candidate.focusMode : fallback.focusMode,
   };
 }
 
@@ -191,6 +209,7 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     collapsedFavorites: config.collapsedFavorites,
     devMode: config.devMode,
     tabAppearance: config.tabAppearance,
+    chat: config.chat,
   };
 }
 
@@ -606,6 +625,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     accounts: sanitizeAccountsConfig(candidate.accounts, defaults.accounts),
     migration: sanitizeMigrationState(candidate.migration, defaults.migration),
     providers: sanitizeProvidersConfig(candidate.providers),
+    chat: sanitizeChatPrefs(candidate.chat, defaults.chat),
     unknownFields,
   };
 }

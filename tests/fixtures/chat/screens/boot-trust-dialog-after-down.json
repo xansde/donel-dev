@@ -1,0 +1,83 @@
+{
+ "name": "boot-trust-dialog-after-down",
+ "description": "Boot: confiança após seta para baixo (cursor em Yes).",
+ "source": "real",
+ "origin": "s0-boot.txt :: trust-after-down",
+ "layout": "inline",
+ "cols": 120,
+ "rows": 18,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+   "dim": []
+  },
+  {
+   "text": " Accessing workspace:",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " C:\\Users\\xansd\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\scratch",
+   "dim": []
+  },
+  {
+   "text": " pad\\research-014\\b2\\cwd",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source",
+   "dim": []
+  },
+  {
+   "text": " project, or work from your team). If not, take a moment to review what's in this folder first.",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " Claude Code'll be able to read, edit, and execute files here.",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " Security guide",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   No, exit",
+   "dim": []
+  },
+  {
+   "text": " ❯ Yes, I trust this folder",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " Enter to confirm · Esc to cancel",
+   "dim": []
+  }
+ ]
+}

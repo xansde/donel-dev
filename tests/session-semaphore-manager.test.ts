@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createHookBridge } from '../src/main/hook-bridge';
 import { mapHookEventName, SessionSemaphoreManager, type SemaphoreUpdate } from '../src/main/session-semaphore-manager';
 
 // T009 — mapHookEventName é puro (testado direto). O resto da classe tem I/O
@@ -178,6 +179,139 @@ describe('SessionSemaphoreManager (servidor HTTP real, porta efêmera)', () => {
       await postHook(port, { hook_event_name: 'StopFailure', session_id: 'claude-session-abc' });
 
       expect(stopFailurePtyIds).toEqual([]);
+    } finally {
+      manager.dispose();
+    }
+  });
+});
+
+// T014 (014-chat) — transporte novo: eventos chegam da ponte por ptyId (sem mapa
+// por session_id). HTTP real na ponte, porque o fio token -> ptyId -> estado é o
+// que importa.
+async function postBridge(port: number, token: string, event: string, body: Record<string, unknown>): Promise<void> {
+  await fetch(`http://127.0.0.1:${port}/h/${event}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Donel-Token': token },
+    body: JSON.stringify(body),
+  });
+}
+
+describe('SessionSemaphoreManager pela ponte de hooks (por ptyId)', () => {
+  async function setup() {
+    const bridge = createHookBridge();
+    const { port } = await bridge.start();
+    const manager = new SessionSemaphoreManager({ getRecentLines: () => [] });
+    const detach = manager.attachBridge(bridge);
+    const updates: SemaphoreUpdate[] = [];
+    manager.onUpdate((update) => updates.push(update));
+    const token = bridge.registerSession('pty-1');
+    manager.registerSession('pty-1', 'claude-session-a');
+    return {
+      bridge,
+      manager,
+      port,
+      token,
+      updates,
+      close: async () => {
+        detach();
+        manager.dispose();
+        await bridge.close();
+      },
+    };
+  }
+
+  it('roteia o hook pelo token da aba, sem depender do session_id', async () => {
+    const { port, token, updates, close } = await setup();
+    try {
+      await postBridge(port, token, 'UserPromptSubmit', { session_id: 'qualquer-outro-id' });
+      await postBridge(port, token, 'Stop', { session_id: 'qualquer-outro-id' });
+      await vi.waitFor(() => expect(updates.at(-1)).toMatchObject({ ptyId: 'pty-1', state: 'waiting' }));
+    } finally {
+      await close();
+    }
+  });
+
+  it('/clear: SessionEnd(clear) + SessionStart(clear) não levam a done e o semáforo segue vivo com o id novo', async () => {
+    const { manager, port, token, updates, close } = await setup();
+    try {
+      await postBridge(port, token, 'Stop', { session_id: 'claude-session-a' });
+      await vi.waitFor(() => expect(updates.at(-1)?.state).toBe('waiting'));
+
+      await postBridge(port, token, 'SessionEnd', { session_id: 'claude-session-a', reason: 'clear' });
+      await postBridge(port, token, 'SessionStart', { session_id: 'claude-session-b', source: 'clear', transcript_path: 'C:/x/b.jsonl' });
+      await postBridge(port, token, 'UserPromptSubmit', { session_id: 'claude-session-b' });
+      await vi.waitFor(() => expect(updates.at(-1)?.state).toBe('working'));
+      expect(updates.some((u) => u.state === 'done')).toBe(false);
+      expect(manager.getSnapshot('pty-1')?.state).toBe('working');
+    } finally {
+      await close();
+    }
+  });
+
+  it('/resume: SessionEnd(resume) não leva a done; o hook do id retomado ainda move o estado', async () => {
+    const { port, token, updates, close } = await setup();
+    try {
+      await postBridge(port, token, 'SessionEnd', { session_id: 'claude-session-a', reason: 'resume' });
+      await postBridge(port, token, 'SessionStart', { session_id: 'claude-session-old', source: 'resume' });
+      await postBridge(port, token, 'Stop', { session_id: 'claude-session-old' });
+      await vi.waitFor(() => expect(updates.at(-1)?.state).toBe('waiting'));
+      expect(updates.some((u) => u.state === 'done')).toBe(false);
+    } finally {
+      await close();
+    }
+  });
+
+  it('SessionEnd com outro motivo leva a done', async () => {
+    const { port, token, updates, close } = await setup();
+    try {
+      await postBridge(port, token, 'SessionEnd', { session_id: 'claude-session-a', reason: 'prompt_input_exit' });
+      await vi.waitFor(() => expect(updates.at(-1)?.state).toBe('done'));
+    } finally {
+      await close();
+    }
+  });
+
+  it('StopFailure pela ponte avisa onStopFailure e fecha o turno', async () => {
+    const { manager, port, token, updates, close } = await setup();
+    try {
+      const failed: string[] = [];
+      manager.onStopFailure((ptyId) => failed.push(ptyId));
+      await postBridge(port, token, 'StopFailure', { session_id: 'claude-session-a' });
+      await vi.waitFor(() => expect(failed).toEqual(['pty-1']));
+      expect(updates.at(-1)?.state).toBe('waiting');
+    } finally {
+      await close();
+    }
+  });
+
+  it('ignora evento de pty não registrado no semáforo e hooks fora do conjunto do semáforo', async () => {
+    const { bridge, port, token, updates, close } = await setup();
+    try {
+      const otherToken = bridge.registerSession('pty-ghost');
+      await postBridge(port, otherToken, 'Stop', {});
+      await postBridge(port, token, 'SubagentStop', {});
+      await postBridge(port, token, 'Stop', {});
+      await vi.waitFor(() => expect(updates.at(-1)?.ptyId).toBe('pty-1'));
+      expect(updates.some((u) => u.ptyId === 'pty-ghost')).toBe(false);
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe('legado (DONEL_HOOKS_TRANSPORT=legacy): SessionEnd clear/resume também não leva a done', () => {
+  it('SessionEnd(clear) pelo /hook antigo é ignorado', async () => {
+    const manager = new SessionSemaphoreManager({ getRecentLines: () => [] });
+    const port = await manager.start();
+    try {
+      const updates: SemaphoreUpdate[] = [];
+      manager.onUpdate((update) => updates.push(update));
+      manager.registerSession('pty-1', 'claude-session-abc');
+      await postHook(port, { hook_event_name: 'Stop', session_id: 'claude-session-abc' });
+      await postHook(port, { hook_event_name: 'SessionEnd', session_id: 'claude-session-abc', reason: 'clear' });
+      expect(updates.at(-1)?.state).toBe('waiting');
+      await postHook(port, { hook_event_name: 'SessionEnd', session_id: 'claude-session-abc', reason: 'logout' });
+      expect(updates.at(-1)?.state).toBe('done');
     } finally {
       manager.dispose();
     }

@@ -1,0 +1,84 @@
+=== [q9-r8 +3920ms] after-dismiss /hooks  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ Try "edit <filepath> to..."
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on · ? for shortcuts · ← for agents
+
+=== [q9-r8 +6038ms] after /memory  (cursor 28,35; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔
+19|   Memory
+20|
+21|   ❯ Auto-memory  true
+22|
+23|   ❯ User instructions                             Saved in ~/.claude/CLAUDE.md
+24|     L ~\.claude\squad-szi-baseline.md             Saved in ~/.claude/CLAUDE.md
+25|     ~\.claude\rules\agent-research-sonnet.md      Saved in ~/.claude/CLAUDE.md
+26|     ~\.claude\rules\economia-tokens.md            Saved in ~/.claude/CLAUDE.md
+27|     ~\.claude\rules\gestao-pessoas-proativa.md    Saved in ~/.claude/CLAUDE.md
+28|     ~\.claude\rules\google-workspace-account.md   Saved in ~/.claude/CLAUDE.md
+29|     ~\.claude\rules\governance.md                 Saved in ~/.claude/CLAUDE.md
+30|     ~\.claude\rules\no-chrome-extension.md        Saved in ~/.claude/CLAUDE.md
+31|     ~\.claude\rules\opus-delegation.md            Saved in ~/.claude/CLAUDE.md
+32|     ~\.claude\rules\orquestracao-subagentes.md    Saved in ~/.claude/CLAUDE.md
+33|     ~\.claude\rules\taskdex-routing.md            Saved in ~/.claude/CLAUDE.md
+34|     Project instructions                          Saved in ./CLAUDE.md
+35|     Open auto-memory folder
+36|
+37|   Learn more: https://code.claude.com/docs/en/memory
+38|
+39|   Enter to confirm · Esc to cancel
+

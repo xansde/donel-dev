@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Chat — Faixas e avisos</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="donel/styles.css">
+<script src="donel/_ds_bundle.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<script src="donel/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:var(--bg-app)}
+a{color:var(--accent);text-decoration:none}
+a:hover{color:var(--text-primary)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+</style>
+</helmet>
+
+<div style="position:relative;width:1440px;height:900px;overflow:hidden;box-sizing:border-box;padding:24px;display:flex;flex-direction:column;gap:16px;background:var(--bg-app);color:var(--text-primary);font-family:var(--font-ui);font-size:13px;line-height:1.5;">
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-cr" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
+    <symbol id="i-tty" viewBox="0 0 24 24"><path d="M12 19h8"></path><path d="m4 17 6-6-6-6"></path></symbol>
+    <symbol id="i-wifioff" viewBox="0 0 24 24"><path d="M12 20h.01"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path><path d="M5 12.859a10 10 0 0 1 5.17-2.69"></path><path d="M19 12.859a10 10 0 0 0-2.007-1.523"></path><path d="M2 8.82a15 15 0 0 1 4.177-2.643"></path><path d="M22 8.82a15 15 0 0 0-11.288-3.764"></path><path d="m2 2 20 20"></path></symbol>
+    <symbol id="i-compact" viewBox="0 0 24 24"><path d="m14 10 7-7"></path><path d="M20 10h-6V4"></path><path d="m3 21 7-7"></path><path d="M4 14h6v6"></path></symbol>
+    <symbol id="i-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4"></path><path d="M3.34 19a10 10 0 1 1 17.32 0"></path></symbol>
+    <symbol id="i-swap" viewBox="0 0 24 24"><path d="M8 3 4 7l4 4"></path><path d="M4 7h16"></path><path d="m16 21 4-4-4-4"></path><path d="M20 17H4"></path></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><path d="M12 17h.01"></path></symbol>
+  </svg>
+
+  <div style="flex:none;display:flex;align-items:center;gap:10px;">
+    <span style="display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:4px;background:var(--accent);color:var(--bg-app);font-size:11px;font-weight:600;">8</span>
+    <span style="font-size:15px;font-weight:600;">Faixas, barras e avisos</span>
+    <span style="font-size:13px;color:var(--text-muted);">o que o chat diz quando não resolve sozinho, quando a sessão acaba e o que acontece no meio da conversa</span>
+  </div>
+
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:700px 1fr;column-gap:32px;align-items:start;">
+
+    <!-- ============ COLUNA ESQUERDA ============ -->
+    <div style="display:flex;flex-direction:column;gap:18px;">
+
+      <!-- A: o terminal precisa de você -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">A</span><span style="font-size:13px;font-weight:600;">Faixa “O terminal precisa de você”</span><span style="flex:1;"></span><span style="font-size:11px;color:var(--text-muted);">no topo da conversa, abaixo do cabeçalho da aba</span></div>
+        <div style="overflow:hidden;border:1px solid var(--border);border-radius:8px;background:var(--bg-app);">
+          <div style="display:flex;align-items:center;gap:10px;height:36px;box-sizing:border-box;padding:0 12px;background:var(--bg-panel);border-bottom:1px solid var(--border);">
+            <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="permission" label="esperando você"></x-import>
+            <span style="font-family:var(--font-mono);font-size:12.5px;">atlas · parcelamento</span>
+          </div>
+          <div style="padding:12px;display:flex;flex-direction:column;gap:10px;">
+            <div role="alert" style="display:flex;align-items:center;gap:12px;box-sizing:border-box;padding:10px 12px;border:1px solid color-mix(in srgb,var(--state-permission) 45%,transparent);border-radius:8px;background:color-mix(in srgb,var(--state-permission) 8%,var(--bg-panel));">
+              <svg viewBox="0 0 24 24" style="width:18px;height:18px;flex:none;fill:none;stroke:var(--state-permission);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-tty"></use></svg>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:600;">O terminal precisa de você</div>
+                <div style="font-size:12px;line-height:1.45;color:var(--text-muted);">O Claude abriu uma tela que só funciona lá: <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--text-primary);">Escolher modelo</span>. Responda no terminal e a conversa continua aqui.</div>
+              </div>
+              <x-import component-from-global-scope="DonelDesignSystem.Button" variant="secondary" onClick="{{ noop }}">Abrir terminal</x-import>
+            </div>
+            <div style="display:flex;gap:10px;padding:8px 12px;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;opacity:.9;">
+              <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;margin-top:3px;fill:none;stroke:var(--accent);stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round" aria-label="Você"><use href="#i-cr"></use></svg>
+              <div style="font-size:13px;line-height:1.55;">/model</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- B: não estou recebendo a conversa -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">B</span><span style="font-size:13px;font-weight:600;">Faixa “Não estou recebendo a conversa”</span><span style="flex:1;"></span><span style="font-size:11px;color:var(--text-muted);">no lugar de uma tela em branco</span></div>
+        <div style="overflow:hidden;border:1px solid var(--border);border-radius:8px;background:var(--bg-app);">
+          <div style="display:flex;align-items:center;gap:10px;height:36px;box-sizing:border-box;padding:0 12px;background:var(--bg-panel);border-bottom:1px solid var(--border);">
+            <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="working" label="trabalhando"></x-import>
+            <span style="font-family:var(--font-mono);font-size:12.5px;">atlas · parcelamento</span>
+          </div>
+          <div style="padding:12px;">
+            <div role="alert" style="display:flex;align-items:center;gap:12px;box-sizing:border-box;padding:10px 12px;border:1px solid color-mix(in srgb,var(--state-waiting) 45%,transparent);border-radius:8px;background:color-mix(in srgb,var(--state-waiting) 8%,var(--bg-panel));">
+              <svg viewBox="0 0 24 24" style="width:18px;height:18px;flex:none;fill:none;stroke:var(--state-waiting);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-wifioff"></use></svg>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:600;">Não estou recebendo a conversa</div>
+                <div style="font-size:12px;line-height:1.45;color:var(--text-muted);">O chat não vê nada novo desde 14:09. A sessão pode seguir trabalhando, então o terminal mostra o que está acontecendo.</div>
+              </div>
+              <x-import component-from-global-scope="DonelDesignSystem.Button" variant="secondary" onClick="{{ noop }}">Abrir terminal</x-import>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- C: sessão encerrada -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">C</span><span style="font-size:13px;font-weight:600;">Sessão encerrada</span><span style="flex:1;"></span><span style="font-size:11px;color:var(--text-muted);">a barra toma o lugar da caixa; a conversa segue legível e copiável</span></div>
+        <div style="overflow:hidden;border:1px solid var(--border);border-radius:8px;background:var(--bg-app);">
+          <div style="display:flex;align-items:center;gap:10px;height:36px;box-sizing:border-box;padding:0 12px;background:var(--bg-panel);border-bottom:1px solid var(--border);">
+            <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="done" label="encerrada"></x-import>
+            <span style="font-family:var(--font-mono);font-size:12.5px;">atlas · parcelamento</span>
+          </div>
+          <div style="padding:12px 12px 0;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;gap:10px;padding:9px 12px;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;">
+              <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;margin-top:3px;fill:none;stroke:var(--accent);stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round" aria-label="Você"><use href="#i-cr"></use></svg>
+              <div style="font-size:13px;line-height:1.55;">Troca o cálculo para usar decimal.js e me mostra o plano antes.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+              <span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);">Claude</span>
+              <span style="font-size:13px;line-height:1.55;">Plano pronto: cinco passos, quatro arquivos tocados. Nada foi alterado.</span>
+            </div>
+          </div>
+          <div style="padding:12px;">
+            <div role="status" style="display:flex;align-items:center;gap:12px;box-sizing:border-box;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-panel);">
+              <x-import component-from-global-scope="DonelDesignSystem.StateDot" state="done"></x-import>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:600;">Sessão encerrada (código 0)</div>
+                <div style="font-size:11px;color:var(--text-muted);">A conversa continua aqui para ler e copiar. O rascunho fica guardado até você retomar.</div>
+              </div>
+              <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" onClick="{{ noop }}">Retomar</x-import>
+              <x-import component-from-global-scope="DonelDesignSystem.Button" variant="secondary" onClick="{{ noop }}">Fechar aba</x-import>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ COLUNA DIREITA ============ -->
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">D</span><span style="font-size:13px;font-weight:600;">Avisos discretos, no ponto onde aconteceram</span></div>
+      <div style="box-sizing:border-box;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--bg-app);display:flex;flex-direction:column;gap:12px;">
+
+        <div style="display:flex;gap:10px;padding:10px 12px;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;">
+          <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;margin-top:3px;fill:none;stroke:var(--accent);stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round" aria-label="Você"><use href="#i-cr"></use></svg>
+          <div style="font-size:13px;line-height:1.55;">Troca o cálculo para usar decimal.js e me mostra o plano antes.</div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:8px;min-height:28px;font-size:12px;color:var(--text-muted);">
+          <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-compact"></use></svg>
+          <span style="white-space:nowrap;">Conversa compactada — 180 mil → 12 mil tokens</span>
+          <span style="flex:1;height:1px;background:var(--border);"></span>
+        </div>
+
+        <p style="margin:0;padding:0 4px;font-size:13px;line-height:1.6;">Retomo do resumo: o módulo de parcelas e os 42 testes já estão mapeados.</p>
+
+        <div style="display:flex;align-items:center;gap:8px;min-height:28px;font-size:12px;color:var(--state-waiting);">
+          <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-gauge"></use></svg>
+          <span style="white-space:nowrap;">Limite da conta atingido</span>
+          <span style="flex:1;height:1px;background:color-mix(in srgb,var(--state-waiting) 35%,var(--border));"></span>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:8px;min-height:28px;font-size:12px;color:var(--text-muted);">
+          <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-swap"></use></svg>
+          <span style="white-space:nowrap;">Conta trocada para Conta 3</span>
+          <span style="flex:1;height:1px;background:var(--border);"></span>
+        </div>
+
+        <p style="margin:0;padding:0 4px;font-size:13px;line-height:1.6;">Continuando daqui. O relatório de repasse sai em HTML.</p>
+
+        <div style="display:flex;align-items:center;gap:8px;min-height:28px;font-size:12px;color:var(--text-muted);">
+          <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-file"></use></svg>
+          <span style="white-space:nowrap;">Gerou <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--text-primary);">relatorio-parcelas.html</span> —</span>
+          <a href="#abrir-relatorio" style="font-weight:600;">abrir</a>
+          <span style="flex:1;height:1px;background:var(--border);"></span>
+        </div>
+
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;min-height:28px;font-size:12px;color:var(--text-muted);">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-help"></use></svg>
+            <span style="white-space:nowrap;">Conteúdo não reconhecido —</span>
+            <a href="#ver-bruto" style="font-weight:600;">ver bruto</a>
+            <span style="flex:1;height:1px;background:var(--border);"></span>
+          </div>
+          <div style="margin:4px 0 0 22px;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-panel);font-family:var(--font-mono);font-size:11.5px;line-height:1.5;color:var(--text-muted);white-space:pre;overflow:hidden;">{"type":"progress","stage":"hook","name":"pre-tool"}
+{"detail":"…","elapsedMs":412}</div>
+        </div>
+      </div>
+      <div style="margin-top:10px;font-size:12px;line-height:1.55;color:var(--text-muted);">Cada aviso ocupa uma linha, sem caixa, com ícone e uma linha fina até a borda. Só o limite da conta ganha cor, porque é o único que pede decisão. “abrir” e “ver bruto” são ações de verdade, não decoração.</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { noop: () => {} };
+  }
+}
+</script>
+</body>
+</html>

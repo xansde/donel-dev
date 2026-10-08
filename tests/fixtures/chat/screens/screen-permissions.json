@@ -1,0 +1,171 @@
+{
+ "name": "screen-permissions",
+ "description": "Tela sem caixa de entrada: \"Permissions\".",
+ "source": "real",
+ "origin": "q9-r3.txt :: after /permissions",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " ▐▛███▛█   Claude Code v2.1.293",
+   "dim": []
+  },
+  {
+   "text": "▝▜██████▀  Haiku 5.5 · Claude Max",
+   "dim": []
+  },
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔",
+   "dim": []
+  },
+  {
+   "text": "   Permissions  Recently denied   Allow   Ask   Deny   Auto mode   Workspace",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Claude Code won't ask before using allowed tools.",
+   "dim": []
+  },
+  {
+   "text": "   ╭───────────────────────────────────────────────╮",
+   "dim": []
+  },
+  {
+   "text": "   │ ⌕ Search…                                     │",
+   "dim": []
+  },
+  {
+   "text": "   ╰───────────────────────────────────────────────╯",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     1.  Add a new rule…",
+   "dim": []
+  },
+  {
+   "text": "     2.  Bash",
+   "dim": []
+  },
+  {
+   "text": "     3.  Edit",
+   "dim": []
+  },
+  {
+   "text": "     4.  Glob",
+   "dim": []
+  },
+  {
+   "text": "     5.  Grep",
+   "dim": []
+  },
+  {
+   "text": "     6.  PowerShell",
+   "dim": []
+  },
+  {
+   "text": "     7.  Read",
+   "dim": []
+  },
+  {
+   "text": "     8.  WebFetch",
+   "dim": []
+  },
+  {
+   "text": "     9.  WebSearch",
+   "dim": []
+  },
+  {
+   "text": "     10. Write",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   ←/→ to switch · ↓ to select · Esc to cancel",
+   "dim": []
+  }
+ ]
+}
