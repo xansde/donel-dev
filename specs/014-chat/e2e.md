@@ -300,3 +300,15 @@ A smoke (T081) veio por último.
   - Aceite da correção: imagem + texto de 2+ linhas pelo chat chega ao CLI
     e o cartão confirma. Um smoke cobre o caso multilinha com imagem e outro
     sem imagem.
+- **Cartões "não foi" se acumulam e não saem** (alfa, 08/10, para depois):
+  cada envio multilinha que falha deixa um cartão vermelho, e o único gesto
+  que ele oferece é "tentar de novo". Não há como descartar. Os cartões
+  também ficam presos no fim da conversa, abaixo das mensagens e respostas
+  mais novas, em vez de ficarem na posição em que foram enviados. Com o bug
+  acima, a lista cresce a cada tentativa.
+  - Lacuna de spec, não só de código: a FR do envio (spec, linhas ~135 e
+    ~459) prevê só "entrou" ou "não foi" com "tentar de novo". Falta um
+    "descartar", e falta decidir a posição do cartão falho (no ponto do
+    envio ou fixo no fim).
+  - Aceite: um cartão "não foi" sai num gesto, e a posição dele segue a
+    decisão registrada na spec.
