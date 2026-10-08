@@ -35,6 +35,8 @@ export interface ComposerProps {
   /** Modo ajuste do plano (T05): borda `--accent` + etiqueta. Preparado para a Fase 4. */
   adjust?: boolean;
   adjustLabel?: string;
+  /** Fills the container instead of capping at `COMPOSER_MAX_WIDTH` (chat view, full-width column). */
+  fluid?: boolean;
   className?: string;
 }
 
@@ -65,13 +67,14 @@ export function Composer({
   footerHint,
   adjust = false,
   adjustLabel = 'Ajuste no plano',
+  fluid = false,
   className,
 }: ComposerProps) {
   const showSplit = working && Boolean(onInterruptAndSend);
   const hint = footerHint === true ? <DefaultFooterHint /> : footerHint || null;
 
   return (
-    <div className={[styles.root, className].filter(Boolean).join(' ')} style={{ maxWidth: COMPOSER_MAX_WIDTH }}>
+    <div className={[styles.root, className].filter(Boolean).join(' ')} style={{ maxWidth: fluid ? 'none' : COMPOSER_MAX_WIDTH }}>
       {banner ? <div className={styles.banner}>{banner}</div> : null}
       <div className={[styles.box, adjust ? styles.adjust : ''].filter(Boolean).join(' ')}>
         {adjust ? (

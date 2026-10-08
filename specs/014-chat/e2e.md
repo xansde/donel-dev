@@ -177,3 +177,20 @@ driver com a caixa, juntados na mesma branch.
 | B2 itens 1, 3, 9–13 | várias linhas; Enter/Shift+Enter; ↑ do histórico; `/mod` não vira `/model`; comando desconhecido; `!comando`; rascunho por aba | pendente |
 | B4 | diálogo da TUI sem pendência (ex.: `/model`, permissão em modo legado): faixa aparece com o texto certo, "Abrir terminal" leva até ele e ela some ao voltar | pendente |
 | SC-003 | bateria de envio: 20 mensagens variadas (curta, longa, colagem grande, durante a rodada, interromper e mandar) sem perda nem duplicata | pendente |
+
+### Uso real no alfa (dono, 08/10)
+
+- **`/compact` pela caixa do chat**: o comando saiu e compactou a sessão.
+  Não houve autocompletar nem menu ao digitar `/`. **Esperado nesta fase**:
+  o menu `/` com o catálogo é da Fase 5 (T083–T087), e o envio da Fase 3
+  só manda o texto como foi escrito. Fica como item a conferir no B2 completo.
+- **Largura do chat**: a coluna ficava presa em 800 px (e a caixa em 752 px),
+  com a tela larga sobrando dos lados. E os caminhos `@` longos da linha do
+  `/compact` vazavam para fora do cartão. **Corrigido** (decisão do dono, que
+  vence a coluna de 800 px do design): conversa, pé de trabalho e caixa
+  ocupam a largura do painel (`Composer fluid`), e o caminho longo é cortado
+  com reticências, com o caminho inteiro no `title`.
+- **Anexar print pela vista de chat**: não dá ainda; o dono teve de ir à
+  visão terminal para colar a imagem. Colar/arrastar imagem é o **T088**
+  (Fase 5). O envio já sabe mandar imagem (`imagePaths`, §4 do contrato);
+  falta a caixa aceitar a colagem e gravar o arquivo (`chat:save-image`).

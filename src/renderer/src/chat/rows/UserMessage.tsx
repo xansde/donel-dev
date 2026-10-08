@@ -54,7 +54,9 @@ function UserMessageImpl({ row, assetUrl, sendState, queuedReason, failedReason,
           <div className={styles.thumbs}>
             {mentions.map((mention) => (
               <AnnotationTag key={mention.path} tone="muted">
-                <span className={styles.mention}>@{mention.path}</span>
+                <span className={styles.mention} title={mention.path}>
+                  @{mention.path}
+                </span>
               </AnnotationTag>
             ))}
           </div>

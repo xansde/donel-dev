@@ -146,6 +146,7 @@ export function ChatComposer({ tabId, driver, rows, working, active, items, onOp
         onInterruptAndSend={() => submit('interrupt-first')}
         banner={banner}
         footerHint
+        fluid
       >
         <TextArea
           ref={areaRef}
