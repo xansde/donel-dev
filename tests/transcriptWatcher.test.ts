@@ -137,7 +137,7 @@ describe('watchTranscript', () => {
    * Espera a leitura inicial (ou qualquer leitura em voo) TERMINAR — sinal
    * observado (`trackReads`), não palpite de tempo. Substitui o `settle()` de
    * 240 ms; e evita o falso negativo em que um evento cai durante uma leitura
-   * (o watcher descarta a releitura concorrente de propósito).
+   * (o watcher enfileira uma releitura ao fim da leitura em voo).
    */
   const idle = (): Promise<void> => untilReadsSettle(reads);
 
@@ -378,6 +378,51 @@ describe('watchTranscript', () => {
 
     await waitFor(() => changes.length === 1);
     expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'com nome', contextTokens: 60_010, cliColorName: null });
+  });
+
+  // Flake do smoke session-context (T611/T612): um append único seguido de
+  // silêncio caía no debounce ENQUANTO a leitura do append anterior ainda
+  // estava em voo (disco/CPU sob carga) e era descartado — sem outro evento
+  // depois, a StatusBar ficava para sempre no valor velho.
+  it('escrita que chega durante uma leitura em voo NÃO se perde: o watcher relê ao terminar', async () => {
+    await fs.writeFile(filePath, assistantUsageLine({ input: 1_000 }), 'utf8');
+    start();
+    await waitFor(() => changes.length === 1);
+    expect(changes[0].contextTokens).toBe(1_000);
+
+    // Segura o próximo `open` do arquivo: a leitura do append B fica em voo.
+    const originalOpen = fs.open;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let gated = false;
+    (fs as unknown as { open: unknown }).open = async (path: unknown, ...rest: never[]) => {
+      if (!gated && path === filePath) {
+        gated = true;
+        await gate;
+      }
+      return (originalOpen as (...a: unknown[]) => Promise<unknown>).call(fs, path, ...rest);
+    };
+
+    try {
+      await fs.appendFile(filePath, assistantUsageLine({ input: 2_000 }), 'utf8');
+      fakeFsWatch.emit('abc-123.jsonl');
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+      await pollUntil(() => gated);
+
+      // Append C chega com a leitura de B em voo; o debounce dele dispara agora.
+      await fs.appendFile(filePath, assistantUsageLine({ input: 3_000 }), 'utf8');
+      fakeFsWatch.emit('abc-123.jsonl');
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+
+      release();
+      await waitFor(() => changes.some((change) => change.contextTokens === 3_000));
+    } finally {
+      (fs as unknown as { open: unknown }).open = originalOpen;
+      release();
+    }
+    expect(changes[changes.length - 1].contextTokens).toBe(3_000);
   });
 });
 

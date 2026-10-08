@@ -168,4 +168,17 @@ describe('fake-claude-chat', { timeout: 20000 }, () => {
     const start = await waitFor(() => hooks('SessionStart')[0], 'SessionStart');
     expect(start.body).toMatchObject({ source: 'resume', session_id: 'bbbbbbbb-0000-4000-8000-000000000009' });
   });
+
+  it('-r <id> sem transcript, com DONEL_FAKE_CLAUDE_RESUME_STRICT=1, falha como o CLI real (mensagem + exit 1)', async () => {
+    process.env.DONEL_FAKE_CLAUDE_RESUME_STRICT = '1';
+    try {
+      launch(['-r', 'cccccccc-0000-4000-8000-000000000001']);
+    } finally {
+      delete process.env.DONEL_FAKE_CLAUDE_RESUME_STRICT;
+    }
+    await waitFor(() => exitCode !== null, 'process exit');
+    expect(exitCode).toBe(1);
+    expect(output).toContain('No conversation found with session ID: cccccccc-0000-4000-8000-000000000001');
+    expect(hooks('SessionStart')).toHaveLength(0);
+  });
 });

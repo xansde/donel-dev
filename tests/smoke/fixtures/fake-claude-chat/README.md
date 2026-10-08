@@ -8,7 +8,12 @@ para `fake-claude-chat.mjs`). Node puro, sem dependencias; funciona com qualquer
 
 `--session-id <id>`, `--settings <arquivo>` (o JSON por sessao do app: entradas `http`
 e o `command` do `SessionStart`), `-r|--resume <id>` (usa o id e dispara `SessionStart`
-com `source: resume`). Os demais sao ignorados.
+com `source: resume`), `--permission-mode <modo>` (com `acceptEdits` o rodape mostra
+`accept edits on`, o sinal de "pronto" que `waitForClaudeBooted(until: 'prompt')` espera). Os demais sao ignorados.
+
+Os smokes que abrem aba `claude` usam este falso por padrao (`launchIsolatedApp`, opcao
+`fakeClaude`, `tests/smoke/helpers/launch.ts`); so os `@real` passam `fakeClaude: false`.
+Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o ativa.
 
 ## Ambiente
 
@@ -16,6 +21,7 @@ com `source: resume`). Os demais sao ignorados.
 |---|---|
 | `DONEL_FAKE_CLAUDE_SCENARIO` | Roteiro: JSON inline (comeca com `{`) ou caminho de um arquivo JSON |
 | `DONEL_FAKE_CLAUDE_HOME` | Raiz dos transcripts: `<home>/projects/<cwd-codificado>/<session_id>.jsonl` (padrao: pasta temporaria do SO) |
+| `DONEL_FAKE_CLAUDE_RESUME_STRICT` | `1`: `-r <id>` sem transcript (na raiz do falso nem em `~/.claude`) imprime `No conversation found with session ID` e sai com 1, como o CLI real. O `launchIsolatedApp` liga |
 | `DONEL_FAKE_CLAUDE_LOG` | Se definida, acrescenta uma linha JSON por hook disparado (diagnostico) |
 | `DONEL_FAKE_CLAUDE_HOOK_TIMEOUT_MS` | Espera maxima por resposta de hook `http` (padrao 5000) |
 

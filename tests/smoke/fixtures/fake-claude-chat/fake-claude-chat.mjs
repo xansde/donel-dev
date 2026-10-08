@@ -16,6 +16,7 @@ function parseArgs(argv) {
     if (a === '--session-id') out.sessionId = argv[++i] ?? null;
     else if (a === '--settings') out.settings = argv[++i] ?? null;
     else if (a === '-r' || a === '--resume') out.resume = argv[++i] ?? null;
+    else if (a === '--permission-mode') out.permissionMode = argv[++i] ?? null;
   }
   return out;
 }
@@ -157,6 +158,8 @@ function render() {
   lines.push(...state.history.slice(-12));
   lines.push(ruler(), `❯ ${displayInput()}`, ruler());
   lines.push(state.working ? '  esc to interrupt' : state.input === '' ? '  ? for shortcuts' : '  ! for shell mode');
+  // The real CLI shows the permission mode in the footer; the smokes use it as the "ready for keys" signal.
+  if (args.permissionMode === 'acceptEdits' && !state.working) lines.push('  ⏵⏵ accept edits on (shift+tab to cycle)');
   out(`\x1b[2J\x1b[H${lines.join('\r\n')}`);
 }
 
@@ -350,7 +353,20 @@ function onData(chunk) {
 }
 
 // --------------------------------------------------------------------- main
+// Like the real CLI: `-r <id>` with no transcript anywhere ends with an error and exit 1.
+// Opt-in (DONEL_FAKE_CLAUDE_RESUME_STRICT=1) so scripted tests may resume any id.
+function resumeTargetMissing() {
+  if (!args.resume || process.env.DONEL_FAKE_CLAUDE_RESUME_STRICT !== '1') return false;
+  const folder = cwd.replace(/[^A-Za-z0-9]/g, '-');
+  return ![homeDir, join(homedir(), '.claude')].some((root) => existsSync(join(root, 'projects', folder, `${args.resume}.jsonl`)));
+}
+
 async function main() {
+  if (resumeTargetMissing()) {
+    out(`No conversation found with session ID: ${args.resume}\r\n`);
+    setTimeout(() => process.exit(1), 300);
+    return;
+  }
   out('\x1b[?2004h');
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdin.on('data', onData);

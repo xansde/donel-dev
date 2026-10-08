@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
-import { listPids, waitForNewPids, waitForPidsGone } from './helpers/processes';
+import { listPids, listPidsByCommandLine, waitForNewPids, waitForPidsGone } from './helpers/processes';
 import { confirmCloseModalIfOpen, launchClaudeTab, openFreeTerminalTab } from './helpers/ui';
 
 // Smoke da T010 (abas múltiplas + ciclo de vida + terminal livre, FR-006/
@@ -109,7 +109,8 @@ test('T010 — 5 sessões simultâneas (1 claude + 4 shell); fechar 3 mata só o
   // já rodando na máquina (fora do controle deste teste) — a diferença de
   // PID (`waitForNewPids` abaixo) continua sendo a prova real, nunca uma
   // contagem absoluta.
-  const claudeBaseline = listPids('claude.exe');
+  // The claude of this spec is the scripted fake: a `node.exe` running fake-claude-chat.mjs.
+  const claudeBaseline = listPidsByCommandLine('node.exe', 'fake-claude-chat');
 
   // 4 abas de terminal livre (FR-008) via "+" > Terminal.
   for (let i = 0; i < 4; i += 1) await openFreeTerminalTab(window);
@@ -125,7 +126,7 @@ test('T010 — 5 sessões simultâneas (1 claude + 4 shell); fechar 3 mata só o
   // teste) direto no Select do Launcher, sem passar pela sidebar (evita abrir
   // uma 6ª aba redundante).
   const claudeTab = await launchClaudeTab(window, { model: 'haiku', name: 'lifecycle-test' });
-  const claudePidsAdded = await waitForNewPids('claude.exe', claudeBaseline, 1, 30_000);
+  const claudePidsAdded = await waitForNewPids('node.exe', claudeBaseline, 1, 30_000, false, 'fake-claude-chat');
 
   // Total: lifecycle-test (claude) + 4 Terminal (shell) = 5 (sem aba
   // "Sessão" default — decisão A).
@@ -168,7 +169,7 @@ test('T010 — 5 sessões simultâneas (1 claude + 4 shell); fechar 3 mata só o
     expect(stillAlive.length).toBeGreaterThanOrEqual(2); // as 2 que continuam na barra de abas NÃO foram mortas por engano
   }).toPass({ timeout: 15_000 });
 
-  await waitForPidsGone('claude.exe', claudePidsAdded); // a sessão claude nova (lifecycle-test) também morreu de verdade
+  await waitForPidsGone('node.exe', claudePidsAdded, 15_000, 'fake-claude-chat'); // a sessão claude nova (lifecycle-test) também morreu de verdade
 
   // App segue vivo e sem crash depois de todo o ciclo.
   expect(electronApp.windows().length).toBeGreaterThan(0);
