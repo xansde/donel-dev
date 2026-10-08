@@ -243,12 +243,27 @@ export class PtyManager {
   }
 
   input(id: string, data: string): void {
-    this.ptys.get(id)?.pty.write(data);
+    this.ignoreIfExited(() => this.ptys.get(id)?.pty.write(data));
   }
 
   resize(id: string, cols: number, rows: number): void {
     if (cols <= 0 || rows <= 0) return;
-    this.ptys.get(id)?.pty.resize(cols, rows);
+    this.ignoreIfExited(() => this.ptys.get(id)?.pty.resize(cols, rows));
+  }
+
+  /**
+   * Between the process dying and our `onExit` removing the record, node-pty
+   * already throws ("Cannot resize a pty that has already exited"). A late
+   * resize/input from the renderer in that window is harmless — the exit is
+   * on its way — so it must not become an uncaught exception in main.
+   */
+  private ignoreIfExited(action: () => void): void {
+    try {
+      action();
+    } catch (error) {
+      if (error instanceof Error && /already exited/i.test(error.message)) return;
+      throw error;
+    }
   }
 
   kill(id: string): void {
