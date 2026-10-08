@@ -276,3 +276,22 @@ A smoke (T081) veio por último.
 | B3 | responder pelo terminal com o painel aberto: o painel fecha sozinho | pendente |
 | SC-002 | nenhuma pergunta ou permissão perdida num dia de uso; notificação do Windows com a janela fora de foco, e o clique leva ao painel | pendente |
 | T088 | colar um print com Ctrl+V na caixa e mandar: o Claude recebe a imagem | pendente |
+
+### Uso real no alfa (dono, 08/10)
+
+- **"não foi · o texto não entrou na caixa" com o texto na caixa** (alfa,
+  08/10, para depois): o dono mandou pelo chat um print colado e duas linhas
+  (`Shift+Enter` entre elas). O cartão ficou vermelho com "o texto não entrou
+  na caixa", mas a imagem e as duas linhas entraram na caixa do CLI. O dono
+  trocou para o Terminal, completou a mensagem e apertou Enter, e o Claude
+  recebeu `[Image #1]Estou rodando o e2e aqui` + `Descreva o que tem nessa
+  imagem` com o anexo de `chat-attachments/`. Ou seja, um falso negativo: o
+  envio parou antes do Enter e a caixa não foi limpa.
+  - Suspeita: `textSeen`/`boxIsOurs` (`src/shared/chat/sendMachine.ts:393`)
+    não reconhecem texto com quebra de linha + placeholder de imagem. O
+    `readInputText` pode ler só a primeira linha da caixa, ou a segunda vem
+    com recuo/prefixo que o `collapse` não iguala. O `Esc Esc` de limpeza
+    também não rodou, o que bate com `boxIsOurs` falhando pelo mesmo motivo.
+  - Aceite da correção: imagem + texto de 2+ linhas pelo chat chega ao CLI
+    e o cartão confirma. Um smoke cobre o caso multilinha com imagem e outro
+    sem imagem.
