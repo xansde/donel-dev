@@ -25,3 +25,12 @@ Os `.jsonl` gerados ficam commitados. A pasta `screens/` e de outra frente.
 | `edge-incomplete-last.jsonl` | Ultima linha cortada no meio da escrita (sem `\n`, JSON incompleto). |
 
 Linhas maiores que 8 MB e arquivos para paginacao sao gerados em runtime pelos testes (nao ficam no repo).
+
+## T058 - sessao grande e cenarios do CLI falso
+
+- `generate-large.mjs <out.jsonl> [sessionId] [cwd] [rounds]`: sessao sintetica deterministica de ~10 mil linhas
+  (2000 rodadas de 5 linhas: prompt, pensamento, Bash, resultado, texto), com resultados de ~300 KB a cada 250 rodadas
+  e tabela + codigo a cada 100. Marcadores: `INICIO-SESSAO-SINTETICA-ATLAS` (primeiro prompt) e `FIM-SESSAO-SINTETICA-VEGA` (ultima resposta).
+- `scenarios/reading.json`: roteiro do CLI falso (`DONEL_FAKE_CLAUDE_SCENARIO=<caminho>`) para o smoke de leitura;
+  um prompt que comeca com `leitura` produz pensamento, 3 acoes Bash (1 com erro) e uma resposta com tabela e codigo;
+  `oi` produz uma resposta curta.
