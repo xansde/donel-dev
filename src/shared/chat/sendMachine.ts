@@ -388,13 +388,20 @@ function fail(s: Draft, reason: string): void {
 }
 
 const collapse = (t: string) => t.replace(/\s+/g, ' ').trim();
+/**
+ * Whitespace-blind form for comparing against the box: the box joins wrapped/continuation
+ * lines with no separator (a space at the wrap point or a real `
+` vanishes), so only the
+ * non-blank characters are comparable.
+ */
+const squash = (t: string) => t.replace(/\s+/g, '');
 
 /** The pasted text is in the box: literally, or as `[Pasted text #N +M lines]` (M = number of `\n`). */
 function textSeen(s: Draft, lines: readonly LineInput[]): boolean {
   const raw = readInputText(lines);
   if (raw === null) return false;
   const stripped = collapse(raw.replace(/\[Image #\d+\]/g, ''));
-  if (stripped === collapse(s.text)) return true;
+  if (squash(stripped) === squash(s.text)) return true;
   const placeholder = pastedPlaceholder(lines);
   if (placeholder && /^\[Pasted text #\d+(?: \+\d+ lines?)?\]$/.test(stripped)) {
     const breaks = (s.text.match(/\n/g) ?? []).length;
@@ -407,8 +414,8 @@ function textSeen(s: Draft, lines: readonly LineInput[]): boolean {
 function boxIsOurs(s: Draft, lines: readonly LineInput[]): boolean {
   const raw = readInputText(lines);
   if (raw === null) return false;
-  const stripped = collapse(raw.replace(/\[Image #\d+\]/g, ''));
-  return stripped !== '' && collapse(s.text).startsWith(stripped);
+  const stripped = squash(raw.replace(/\[Image #\d+\]/g, ''));
+  return stripped !== '' && squash(s.text).startsWith(stripped);
 }
 
 function textDeadlineMs(s: Draft): number {
