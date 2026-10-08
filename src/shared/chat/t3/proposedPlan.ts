@@ -2,7 +2,7 @@
 // Local changes: kept only the title/heading helpers and the collapse rule (`stripDisplayedPlanMarkdown`,
 // the 8-visible-line limit); dropped the implementation prompt, thread title, filename and download helpers;
 // added the collapsed shape required by the design (title + first 3 steps, D-C16) and `planStepCount`
-// ("N passos" only for a first-level numbered list); the title falls back to the first non-blank line.
+// ("N passos" from `extractPlanSteps`: the list under a steps-like heading, never just the first list); the title falls back to the first non-blank line.
 // License text in ./LICENSE.
 
 /** A plan with more visible body lines than this opens collapsed (T3 `maxLines`). */
@@ -36,25 +36,125 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
   return source.join('\n');
 }
 
-/** Text of each first-level numbered item ("1. x" / "1) x" at column 0), ignoring fenced code. */
-function firstLevelSteps(planMarkdown: string): string[] {
-  const steps: string[] = [];
+const NUMBERED_HEADING_RE = /^\d+[.)]\s+(.*\S.*)$/;
+const NESTED_LIST_RE = /^\s+([-*+]|\d+[.)])\s/;
+/** Headings whose section holds the plan's steps. */
+const STEPS_HEADING_RE = /passos|steps|mudan[cç]as|changes|implementa|plano de a[cç][aã]o/i;
+
+/** Longest step text shown while collapsed, in characters. */
+export const PLAN_STEP_PREVIEW_MAX_CHARS = 140;
+
+interface PlanHeading {
+  readonly level: number;
+  readonly text: string;
+  readonly line: number;
+}
+
+interface PlanList {
+  readonly line: number;
+  readonly items: string[];
+}
+
+/** Headings and first-level numbered lists of a plan, ignoring fenced code. */
+function scanPlan(planMarkdown: string): { headings: PlanHeading[]; lists: PlanList[] } {
+  const headings: PlanHeading[] = [];
+  const lists: PlanList[] = [];
+  let current: PlanList | null = null;
+  let afterBlank = false;
   let inFence = false;
-  for (const line of planMarkdown.split(/\r?\n/)) {
+  planMarkdown.split(/\r?\n/).forEach((line, index) => {
     if (FENCE_RE.test(line)) {
       inFence = !inFence;
-      continue;
+      return;
     }
-    if (inFence) continue;
-    const match = line.match(FIRST_LEVEL_STEP_RE);
-    if (match) steps.push(match[1].trim());
+    if (inFence) return;
+    if (line.trim().length === 0) {
+      afterBlank = true;
+      return;
+    }
+    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      headings.push({ level: heading[1].length, text: heading[2].trim(), line: index });
+      current = null;
+      afterBlank = false;
+      return;
+    }
+    const step = line.match(FIRST_LEVEL_STEP_RE);
+    if (step) {
+      if (!current) {
+        current = { line: index, items: [] };
+        lists.push(current);
+      }
+      current.items.push(step[1].trim());
+      afterBlank = false;
+      return;
+    }
+    const indented = /^\s+\S/.test(line);
+    if (current && (indented || !afterBlank)) {
+      // Continuation of the last item (indented, or lazy right after it); nested lists are not part of the text.
+      if (!NESTED_LIST_RE.test(line) && !(/^([-*+])\s/.test(line))) {
+        const last = current.items.length - 1;
+        current.items[last] = `${current.items[last]} ${line.trim()}`;
+      } else if (!indented) {
+        current = null;
+      }
+    } else {
+      current = null;
+    }
+    afterBlank = false;
+  });
+  return { headings, lists };
+}
+
+/**
+ * The plan's steps (D-C16): the numbered list under a steps-like heading ("Passos", "Mudanças"...); else the
+ * numbered level-3 headings ("### 1. ...") of such a section; else the LAST first-level numbered list; else none.
+ * A list item continued on following lines is one item.
+ */
+export function extractPlanSteps(planMarkdown: string): string[] {
+  const { headings, lists } = scanPlan(planMarkdown);
+  const nextHeadingLine = (i: number): number => headings[i + 1]?.line ?? Number.POSITIVE_INFINITY;
+  for (let i = 0; i < headings.length; i++) {
+    if (!STEPS_HEADING_RE.test(headings[i].text)) continue;
+    const list = lists.find((l) => l.line > headings[i].line && l.line < nextHeadingLine(i));
+    if (list) return list.items;
   }
-  return steps;
+  for (let i = 0; i < headings.length; i++) {
+    const section = headings[i];
+    if (!STEPS_HEADING_RE.test(section.text)) continue;
+    const numbered: string[] = [];
+    for (let j = i + 1; j < headings.length && headings[j].level > section.level; j++) {
+      if (headings[j].level !== 3) continue;
+      const m = headings[j].text.match(NUMBERED_HEADING_RE);
+      if (m) numbered.push(m[1].trim());
+    }
+    if (numbered.length > 0) return numbered;
+  }
+  return lists.length > 0 ? lists[lists.length - 1].items : [];
+}
+
+/** Shortens a step for the collapsed card: at a sentence end, else at a word boundary with an explicit "…". */
+export function shortenPlanStep(text: string, maxChars = PLAN_STEP_PREVIEW_MAX_CHARS): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (clean.length <= maxChars) return clean;
+  const window = clean.slice(0, maxChars);
+  let sentenceEnd = -1;
+  for (let i = window.length - 1; i >= 0; i--) {
+    if (/[.!?]/.test(window[i]) && (i === clean.length - 1 || /\s/.test(clean[i + 1]))) {
+      sentenceEnd = i;
+      break;
+    }
+  }
+  if (sentenceEnd >= maxChars * 0.4) return window.slice(0, sentenceEnd + 1);
+  const wordEnd = window.lastIndexOf(' ');
+  let cut = (wordEnd > 0 ? window.slice(0, wordEnd) : window).replace(/[\s,;:\-—(]+$/, '');
+  if ((cut.match(/`/g) ?? []).length % 2 === 1) cut += '`';
+  return `${cut}…`;
 }
 
 /** Number of steps for the "N passos" tag — `null` unless the plan has a first-level numbered list (D-C16). */
 export function planStepCount(planMarkdown: string): number | null {
-  const count = firstLevelSteps(planMarkdown).length;
+  const count = extractPlanSteps(planMarkdown).length;
   return count > 0 ? count : null;
 }
 
@@ -85,7 +185,7 @@ export function buildCollapsedPlanPreview(
   const title = planTitle(planMarkdown);
   const body = stripDisplayedPlanMarkdown(planMarkdown);
   const visible = body.split(/\r?\n/).filter((line) => line.trim().length > 0);
-  const allSteps = firstLevelSteps(body);
+  const allSteps = extractPlanSteps(planMarkdown);
   const stepCount = allSteps.length > 0 ? allSteps.length : null;
   if (visible.length <= maxLines) {
     return { title, collapsed: false, stepCount, steps: [], hiddenStepCount: 0, previewMarkdown: '' };

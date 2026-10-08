@@ -15,6 +15,8 @@ import {
   PLAN_COLLAPSE_VISIBLE_LINES,
   buildCollapsedPlanPreview,
   planStepCount,
+  extractPlanSteps,
+  shortenPlanStep,
   planTitle
 } from '../src/shared/chat/t3/proposedPlan';
 import type { Question } from '../src/shared/chat/rows';
@@ -154,5 +156,77 @@ describe('plano', () => {
 
   it('passos em bloco de código não contam', () => {
     expect(planStepCount('1. a\n```\n1. x\n2. y\n```\n2. b')).toBe(2);
+  });
+
+  const REAL_PLAN = [
+    '# Plano — envio multilinha do chat + cartão "não foi"',
+    '',
+    '## Contexto',
+    '',
+    'Achados do e2e no alfa:',
+    '',
+    '1. **Todo texto que ocupa mais de uma linha na caixa do CLI falha.** Isso vale',
+    '   para `Shift+Enter` e também para uma linha longa que quebra pela largura.',
+    '2. **O cartão "não foi" não tem descartar** e fica preso no fim da conversa.',
+    '',
+    '### Causa provável do item 1',
+    '- ...',
+    '',
+    '## Mudanças',
+    '',
+    '### 1. Reconhecimento do texto (TDD, vitest)',
+    '- ...',
+    '### 2. Cartão "não foi": descartar e posição',
+    '- ...',
+    '### 3. Registro',
+    '- ...',
+    '',
+    '## Verificação',
+    '- ...'
+  ].join('\n');
+
+  it('plano real: passos são os cabeçalhos numerados de "Mudanças", não a lista do Contexto', () => {
+    expect(extractPlanSteps(REAL_PLAN)).toEqual([
+      'Reconhecimento do texto (TDD, vitest)',
+      'Cartão "não foi": descartar e posição',
+      'Registro'
+    ]);
+    expect(planStepCount(REAL_PLAN)).toBe(3);
+    expect(buildCollapsedPlanPreview(REAL_PLAN).stepCount).toBe(3);
+  });
+
+  it('lista numerada sob "## Passos" vence a lista do Contexto; continuação vira um item só', () => {
+    const md = [
+      '# P', '## Contexto', '1. contexto a', '2. contexto b', '',
+      '## Passos', '1. Primeiro passo que continua', '   na linha seguinte.', '   - sub item ignorado',
+      '2. Segundo', '', '3. Terceiro'
+    ].join('\n');
+    expect(extractPlanSteps(md)).toEqual(['Primeiro passo que continua na linha seguinte.', 'Segundo', 'Terceiro']);
+    expect(planStepCount(md)).toBe(3);
+  });
+
+  it('sem cabeçalho de passos: vale a ÚLTIMA lista numerada de topo', () => {
+    const md = '# P\n\n1. a\n2. b\n\ntexto solto\n\n1. x\n2. y\n3. z';
+    expect(extractPlanSteps(md)).toEqual(['x', 'y', 'z']);
+  });
+
+  it('sem lista numerada nem cabeçalhos numerados: sem contagem', () => {
+    expect(planStepCount('# P\n## Mudanças\n- a\n- b')).toBeNull();
+  });
+
+  it('recolhido: item encurtado em fim de frase, ou em limite de palavra com reticências', () => {
+    const cut = shortenPlanStep('palavra '.repeat(30).trim());
+    expect(cut.endsWith('palavra…')).toBe(true);
+    expect(cut.length).toBeLessThanOrEqual(141);
+    const sentence = 'Esta é a primeira frase do passo, longa o bastante para passar do mínimo. ' + 'depois vem mais texto sem fim '.repeat(8);
+    expect(shortenPlanStep(sentence)).toBe('Esta é a primeira frase do passo, longa o bastante para passar do mínimo.');
+    expect(shortenPlanStep('curto')).toBe('curto');
+  });
+
+  it('recolhido mostra o passo inteiro, não a primeira linha física', () => {
+    const md = ['# P', '## Passos', '1. Faz a primeira coisa', '   e termina aqui.', ...Array.from({ length: 9 }, (_, i) => `${i + 2}. s${i}`)].join('\n');
+    const p = buildCollapsedPlanPreview(md);
+    expect(p.collapsed).toBe(true);
+    expect(p.steps[0]).toBe('Faz a primeira coisa e termina aqui.');
   });
 });
