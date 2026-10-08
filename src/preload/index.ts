@@ -47,6 +47,7 @@ import type {
   SwitchOutcome,
   TabColorToken,
   TranscriptChangedPayload,
+  SessionSwitchedPayload,
   WatchPhaseIpcInput,
 } from '../shared';
 import type { AccountId } from '../shared';
@@ -179,6 +180,14 @@ const donelApi: DonelApi = {
         listener(payload);
       };
       return subscribeChannel(ipcRenderer, TRANSCRIPT_CHANNELS.changed, handler);
+    },
+
+    // T016 (014-chat, FR-033) — troca de conversa da aba (`/clear`, `/resume`).
+    onSessionSwitched: (listener: (payload: SessionSwitchedPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: SessionSwitchedPayload): void => {
+        listener(payload);
+      };
+      return subscribeChannel(ipcRenderer, TRANSCRIPT_CHANNELS.switched, handler);
     },
 
     // T705 (007-favoritos-sessoes) — os três canais de escrita do registro.

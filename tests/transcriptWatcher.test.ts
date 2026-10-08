@@ -528,3 +528,56 @@ describe('TranscriptWatcherRegistry', () => {
     expect(disposed).toEqual(['s1', 's2']);
   });
 });
+
+// T016 (014-chat, FR-033) — `/clear`/`/resume` trocam a conversa da aba: o
+// registro re-aponta o watcher da MESMA chave (ptyId) para o `.jsonl` novo, que
+// pode ainda não existir (conversa sem mensagem não cria arquivo).
+describe('TranscriptWatcherRegistry.repoint', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'donel-repoint-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('re-aponta para arquivo que ainda não existe e emite quando ele nasce, com o sessionId novo', async () => {
+    const registry = new TranscriptWatcherRegistry();
+    const changes: TranscriptChange[] = [];
+    const oldFile = join(dir, 'old.jsonl');
+    const newFile = join(dir, 'new.jsonl');
+    await fs.writeFile(oldFile, titleLine('antigo', 'old'));
+
+    registry.start('pty-1', { sessionId: 'old', filePath: oldFile, onChange: (c) => changes.push(c), debounceMs: DEBOUNCE_MS });
+    await waitFor(() => changes.some((c) => c.sessionId === 'old'));
+
+    registry.repoint('pty-1', { sessionId: 'new', transcriptPath: newFile });
+    expect(existsSync(newFile)).toBe(false);
+    expect(registry.size).toBe(1);
+
+    await fs.writeFile(newFile, titleLine('novo', 'new'));
+    await waitFor(() => changes.some((c) => c.sessionId === 'new' && c.customTitle === 'novo'));
+
+    // O arquivo velho deixou de ser observado: escrever nele não emite mais.
+    const before = changes.length;
+    await fs.appendFile(oldFile, titleLine('antigo 2', 'old'));
+    await settle();
+    expect(changes.length).toBe(before);
+    registry.disposeAll();
+  });
+
+  it('repoint de chave sem watcher é no-op (aba de terminal livre) e não abre handle', () => {
+    const registry = new TranscriptWatcherRegistry();
+    registry.repoint('pty-livre', { sessionId: 'x', transcriptPath: join(dir, 'x.jsonl') });
+    expect(registry.size).toBe(0);
+  });
+
+  it('repoint fecha o handle anterior (zero handle vazado)', () => {
+    const disposed: string[] = [];
+    const registry = new TranscriptWatcherRegistry((o) => ({ dispose: () => disposed.push(o.sessionId) }));
+    registry.start('pty-1', { sessionId: 'a', filePath: join(dir, 'a.jsonl'), onChange: () => undefined });
+    registry.repoint('pty-1', { sessionId: 'b', transcriptPath: join(dir, 'b.jsonl') });
+    expect(disposed).toEqual(['a']);
+    expect(registry.size).toBe(1);
+  });
+});

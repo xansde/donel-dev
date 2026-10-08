@@ -77,6 +77,22 @@ describe('reduceSemaphoreState', () => {
     }
   });
 
+  it('sessionEnd com reason clear/resume NÃO leva a done (FR-033): a aba continua, só a conversa trocou', () => {
+    for (const reason of ['clear', 'resume']) {
+      for (const state of ['working', 'waiting', 'permission'] as const) {
+        const current: SemaphoreMachineState = { state, pendingToolSince: null, stateEnteredAt: 3 };
+        expect(reduceSemaphoreState(current, { type: 'sessionEnd', at: 5, reason })).toBe(current);
+      }
+    }
+  });
+
+  it('sessionEnd com outro reason (ou sem reason) segue levando a done', () => {
+    for (const reason of ['logout', 'prompt_input_exit', 'other', null, undefined]) {
+      const after = reduceSemaphoreState({ state: 'waiting', pendingToolSince: null, stateEnteredAt: 0 }, { type: 'sessionEnd', at: 5, reason });
+      expect(after.state).toBe('done');
+    }
+  });
+
   it('processExit -> done, tem prioridade e nunca depende de sessionEnd (kill forçado do spike)', () => {
     const permission: SemaphoreMachineState = { state: 'permission', pendingToolSince: null, stateEnteredAt: 10 };
     const after = reduceSemaphoreState(permission, { type: 'processExit', at: 15 });

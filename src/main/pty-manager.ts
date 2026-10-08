@@ -24,6 +24,8 @@ interface PtyRecord {
 }
 
 export interface PtyCreateOptions {
+  /** T015 (014-chat) — id escolhido pelo chamador (o arquivo `--settings` por sessão leva o `ptyId` no nome e o token da ponte é registrado antes do spawn). Omitido = `randomUUID()`. */
+  id?: string;
   cols: number;
   rows: number;
   cwd?: string;
@@ -185,7 +187,7 @@ export class PtyManager {
   }
 
   create(options: PtyCreateOptions): string {
-    const id = randomUUID();
+    const id = options.id ?? randomUUID();
     const command = options.command ?? FREE_TERMINAL_SHELL;
     const args = options.args ?? FREE_TERMINAL_ARGS;
     // Env herdado sem alteração (plan.md ponto 2 — nunca sobrescrever PATH;
