@@ -16,7 +16,16 @@
   object-fit: contain;
 }
 
+.thumbs > * {
+  min-width: 0;
+}
+
+/* Long paths ellipsize inside the tag instead of escaping the card. */
 .mention {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-caption-size);
 }

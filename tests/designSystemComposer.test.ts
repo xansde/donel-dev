@@ -54,3 +54,14 @@ describe('Composer — Enviar ⇄ SplitButton', () => {
     expect(html).toContain('Ajuste no plano');
   });
 });
+
+describe('Composer — largura', () => {
+  const field = createElement(TextArea, { value: '', onChange: noop, 'aria-label': 'Mensagem', appearance: 'bare' });
+
+  it('limita a 752 px por padrão e ocupa a largura toda com fluid', () => {
+    const capped = renderToStaticMarkup(createElement(Composer, { onSend: noop, children: field }));
+    expect(capped).toContain('max-width:752px');
+    const fluid = renderToStaticMarkup(createElement(Composer, { onSend: noop, fluid: true, children: field }));
+    expect(fluid).toContain('max-width:none');
+  });
+});

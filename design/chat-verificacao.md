@@ -516,9 +516,10 @@ No diff, + usa `--zone-ok` e − usa `--state-permission` (D-C26), com faixas a 
   com "copiar resposta" (ghost) na ponta. No painel lateral, a legenda é "SUBAGENTE".
 - **Barra "trabalhou"**: só contorno, com 36 px e fundo transparente.
 - **Medidas**:
-  - coluna de até 800 px, centrada, padding 20/24;
+  - ~~coluna de até 800 px, centrada~~ — **o dono, em 08/10, pediu a largura inteira** (uso real no alfa):
+    a coluna e a caixa ocupam o painel todo; padding 20/24;
   - 28 px entre rodadas e 12 px dentro delas;
-  - caixa e painel de pendência de até 752 px.
+  - caixa e painel de pendência na largura da coluna (eram até 752 px; mesma decisão de 08/10).
 
 **B. Linha de ação e grupo.**
 - **Linha**: 28 px de altura.
