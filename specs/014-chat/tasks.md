@@ -365,41 +365,41 @@ Esteira pelo mesmo envio.
 **Independent Test**: `quickstart.md` B1 completo, B2 itens 1, 3 e 9–13, B4;
 smoke `chat-send` (SC-003, SC-006).
 
-- [ ] T061 [P] [US1] Escrever `tests/chat-send-machine.test.ts` (falhando), cobrindo `contracts/send-protocol.md`:
+- [x] T061 [P] [US1] Escrever `tests/chat-send-machine.test.ts` (falhando), cobrindo `contracts/send-protocol.md`:
   - **Entrada**: gate do §1, incluindo `/` e `!` só com o CLI ocioso; saneamento do §2; sobras do §3.
   - **Bytes** (§4): imagens uma por colagem; Esc do menu `/` só ocioso; Enter separado.
   - **Aceite**: tabela de sinais do §5; prazos do §6 (12 s na primeira colagem; 15 s de aceite; 30 s sem motivo).
   - **Falhas**: reenvio e anti-duplicidade do §7.
   - **Modos**: estados `waiting-cli`/`typing`/`confirming`/`queued`/`accepted`/`failed`; modo `interrupt-first`.
-- [ ] T062 [P] [US1] Escrever `tests/chat-prompt-match.test.ts` (falhando), cobrindo:
+- [x] T062 [P] [US1] Escrever `tests/chat-prompt-match.test.ts` (falhando), cobrindo:
   - desembrulhar `<pasted_content id=…>`;
   - normalizar `\n`, TAB e bordas;
   - `[Image #N]` casando com qualquer número;
   - mensagens idênticas seguidas casadas em ordem.
-- [ ] T063 [US1] Implementar `src/shared/chat/sendMachine.ts` e `src/shared/chat/promptMatch.ts`. Fazem passar T061 e T062.
-- [ ] T064 [US1] Sinais de aceite no main, em `src/main/chat/chat-hub.ts`/`chat-ipc.ts`:
+- [x] T063 [US1] Implementar `src/shared/chat/sendMachine.ts` e `src/shared/chat/promptMatch.ts`. Fazem passar T061 e T062.
+- [x] T064 [US1] Sinais de aceite no main, em `src/main/chat/chat-hub.ts`/`chat-ipc.ts`:
   - **Fontes**: `UserPromptSubmit` da ponte (anel dos últimos 20 por aba); `queue-operation` enqueue/remove e `queued_command`; `<command-name>`, `<bash-input>`, `system/local_command`, `compact_boundary` e "Unknown command" do transcript; troca de conversa.
   - **Saídas**: evento `chat:prompt-signal` e handler `chat:ack-lookup`.
   - **Testes**: casos novos em `tests/chat-hub.test.ts`.
-- [ ] T065 [US1] Implementar o driver `src/renderer/src/chat/sendDriver.ts`:
+- [x] T065 [US1] Implementar o driver `src/renderer/src/chat/sendDriver.ts`:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): A faixa de texto não enviado é `Banner·waiting`; com o CLI trabalhando, fica sem "Descartar".
   - executa a `sendMachine` sobre o handle do `TerminalPane` (`write`, `readScreen`, `onScreenUpdate`) e os `chat:prompt-signal`;
   - mostra o aviso "Há texto não enviado no terminal: «…»" com Descartar e enviar (`\x1b\x1b` numa escrita só e releitura) e Abrir terminal.
-- [ ] T066 [P] [US1] Adaptar `pingdotgg/t3code@9f48092 apps/web/src/components/chat/composerPromptHistory.ts` em `src/shared/chat/t3/promptHistory.ts`, com cabeçalho MIT e `tests/chat-prompt-history.test.ts` (↑ só com a caixa vazia ou na borda; sem duplicatas seguidas).
-- [ ] T067 [US1] Caixa básica em `src/renderer/src/chat/composer/Composer.tsx`, conforme o design:
+- [x] T066 [P] [US1] Adaptar `pingdotgg/t3code@9f48092 apps/web/src/components/chat/composerPromptHistory.ts` em `src/shared/chat/t3/promptHistory.ts`, com cabeçalho MIT e `tests/chat-prompt-history.test.ts` (↑ só com a caixa vazia ou na borda; sem duplicatas seguidas).
+- [x] T067 [US1] Caixa básica em `src/renderer/src/chat/composer/Composer.tsx`, conforme o design:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Causa do "na fila" e motivo do "não foi" visíveis (D-C10); regra do "entrou" (D-C11).
   - TextArea do design-system que cresce até ~10 linhas e depois rola; Enter envia, Shift+Enter quebra;
   - rascunho por aba em memória, que sobrevive à troca de aba e de vista e ao fim da sessão;
   - ↑ do histórico;
   - estados de envio na mensagem ("enviando…", "entrou", "não foi · tentar de novo", "na fila").
-- [ ] T068 [US1] Pé de trabalho em `src/renderer/src/chat/WorkingFooter.tsx`:
+- [x] T068 [US1] Pé de trabalho em `src/renderer/src/chat/WorkingFooter.tsx`:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Gerúndio; "Aguardando N subagentes" (D-C18); estado "Interrompido" (G2); Esc na precedência do FR-008 (D-C24, decisão 4).
   - "trabalhando — <ação atual>" a partir do `LiveAction`/`PreToolUse` da ponte;
   - Parar = `\x1b` só com "esc to interrupt" visível;
   - interrupção detectada pelo marcador do transcript ou pela tela.
-- [ ] T069 [US6] "Interromper e mandar agora" em `src/renderer/src/chat/composer/Composer.tsx` (gesto conforme o design) → modo `interrupt-first` da máquina. Mensagem enviada durante a rodada mostra "na fila" até a entrega (`queue-operation remove` + `queued_command`).
+- [x] T069 [US6] "Interromper e mandar agora" em `src/renderer/src/chat/composer/Composer.tsx` (gesto conforme o design) → modo `interrupt-first` da máquina. Mensagem enviada durante a rodada mostra "na fila" até a entrega (`queue-operation remove` + `queued_command`).
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Gesto: com o Claude trabalhando, o Enviar vira `SplitButton`. O clique manda para a fila, e o menu oferece "Interromper e mandar agora"; sem atalho novo (decisão 5).
-- [ ] T070 [US1] Faixa em `src/renderer/src/chat/TerminalNeededBanner.tsx` + `LiveState.terminalNeeded` no hub (R16). Fontes:
+- [x] T070 [US1] Faixa em `src/renderer/src/chat/TerminalNeededBanner.tsx` + `LiveState.terminalNeeded` no hub (R16). Fontes:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Um texto por `terminalNeeded.reason`.
   - `Notification` dos tipos de diálogo sem pendência aberta;
   - `blockingScreen`/`modelDialog` por mais de 2 s sem pendência;
@@ -407,11 +407,11 @@ smoke `chat-send` (SC-003, SC-006).
   - envio de comando marcado `opensScreen`.
 
   Some quando a caixa de entrada volta sem diálogo. Botão Abrir terminal.
-- [ ] T071 [US1] Esteira pelo driver (FR-020) em `src/renderer/src/App.tsx`:
+- [x] T071 [US1] Esteira pelo driver (FR-020) em `src/renderer/src/App.tsx`:
   - `armEsteiraAutoStart` (`src/renderer/src/App.tsx:1323-1421`) passa a usar o `sendDriver`;
   - comando pré-digitado vai para o rascunho do chat quando a aba está no chat;
   - `tests/esteiraSession.test.ts` continua verde.
-- [ ] T072 [US1] Escrever a smoke `tests/smoke/chat-send.spec.ts` com o CLI falso:
+- [x] T072 [US1] Escrever a smoke `tests/smoke/chat-send.spec.ts` com o CLI falso:
   - **SC-003**:
     - várias linhas;
     - `/mod` não vira `/model`;
