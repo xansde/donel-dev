@@ -237,7 +237,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
 
 ### CLI falso e smoke da fundação
 
-- [ ] T040 Criar o CLI falso roteirizado em `tests/smoke/fixtures/fake-claude-chat/` (`claude.cmd` → `node fake-claude-chat.mjs %*`, padrão do `fake-claude-login`):
+- [x] T040 Criar o CLI falso roteirizado em `tests/smoke/fixtures/fake-claude-chat/` (`claude.cmd` → `node fake-claude-chat.mjs %*`, padrão do `fake-claude-login`):
   - **Argumentos**: lê `--session-id`, `--settings` (URLs, token e comando do `SessionStart`) e `-r`.
   - **Tela**: desenha a caixa entre réguas e o rodapé ("? for shortcuts" / "esc to interrupt"); liga o bracketed paste; ecoa colagens, inclusive os placeholders.
   - **No Enter**: faz `POST` de `UserPromptSubmit` e acrescenta a linha `user` a um transcript numa pasta temporária, anunciada pelo `transcript_path` do `SessionStart`.
