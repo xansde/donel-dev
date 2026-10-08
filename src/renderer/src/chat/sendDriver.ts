@@ -33,6 +33,8 @@ export interface SendDriverPorts {
   /** Current screen of the hidden terminal (`[]` without a terminal). */
   readLines(): readonly LineInput[];
   ackLookup(text: string, sinceIso: string): Promise<{ readonly matched: boolean }>;
+  /** The Enter of a command marked `opensScreen` went out: the terminal-needed strip shows up (T070). */
+  opensScreen?(): void;
 }
 
 export interface SendRequest {
@@ -366,6 +368,7 @@ export class SendDriver {
       switch (effect.type) {
         case 'write':
           this.ports.write(effect.data);
+          if (effect.data === '\r' && item.request.opensScreen === true) this.ports.opensScreen?.();
           break;
         case 'wake-at': {
           this.ports.clearTimeout(item.timer);

@@ -53,6 +53,7 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
   `/config /cost /help /mcp /memory /model /status` -> caveat meta, linha `<command-name>`, stdout e
   `system/local_command` (`commandRun.command`); `/outro` -> `system/informational` `Unknown command: /outro`
   (sem `UserPromptSubmit`); `!cmd` -> linhas `<bash-input>` e `<bash-stdout>`.
+- `/pick`: abre um dialogo "Select model" no lugar da caixa de entrada; fica ate Esc (smoke da faixa "o terminal precisa de voce").
 - `/clear`: `SessionEnd` (`reason: clear`) + `SessionStart` (`source: clear`, id e transcript novos).
   `/exit` (ou Ctrl-C ocioso): `SessionEnd` (`reason: prompt_input_exit`) e sai com 0.
   Esc / Ctrl-C trabalhando: interrompe o turno (linha `[Request interrupted by user]`); a fila segue.

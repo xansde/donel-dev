@@ -17,6 +17,9 @@ import { joinAnswerMarkdown } from './markdown';
 import type { AnswerInfo, RowRenderContext } from './renderRow';
 import { SessionEndedBar } from './SessionEndedBar';
 import { Timeline } from './Timeline';
+import { WorkingFooter } from './WorkingFooter';
+import { shouldStopOnEsc, stopWorking } from './stopWorking';
+import { useTerminalNeededReporter } from './useTerminalNeededReporter';
 import { useChatSession } from './useChatSession';
 
 /**
@@ -31,7 +34,7 @@ export interface ChatViewActions {
   closeTab(tabId: string): void;
   /** "abrir" on the new-conversation notice. */
   openPreviousSessions(tabId: string): void;
-  /** Hidden terminal of the tab: the send driver writes to it and reads its screen (T065). */
+  /** Hidden terminal of the tab: the send driver writes to it and reads its screen (T065); screen detectors and Parar use it too (T068/T070). `null` before it mounts. */
   terminal(tabId: string): TerminalPaneHandle | null;
 }
 
@@ -113,6 +116,19 @@ export const ChatView = memo(function ChatView({
     driver.setEnv({ alive, pendingOpen, terminalNeeded });
   }, [driver, alive, pendingOpen, terminalNeeded]);
 
+  const terminal = actions.terminal(tabId);
+  useTerminalNeededReporter(terminal, ptyId, session.live);
+  const onKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key !== 'Escape' || !active) return;
+      const live = session.live;
+      if (!shouldStopOnEsc({ defaultPrevented: event.defaultPrevented, working: live?.status === 'working', openPendings: live?.pendings.length ?? 0 })) return;
+      if (stopWorking(actions.terminal(tabId))) event.preventDefault();
+    },
+    [actions, tabId, active, session.live],
+  );
+
+
   const answers = useMemo(() => buildAnswerInfo(allRows), [allRows]);
   const ctx = useMemo<RowRenderContext>(
     () => ({
@@ -145,7 +161,7 @@ export const ChatView = memo(function ChatView({
     ) : null;
 
   return (
-    <div className={styles.root} data-testid="chat-view">
+    <div className={styles.root} data-testid="chat-view" tabIndex={-1} onKeyDown={onKeyDown}>
       {pinnedSwitch !== null || reception !== null ? (
         <div className={styles.strips}>
           {reception}
@@ -162,6 +178,7 @@ export const ChatView = memo(function ChatView({
         <SessionEndedBar exitCode={effectiveEnded.exitCode} onResume={onResume} onCloseTab={onCloseTab} />
       ) : (
         <>
+          <WorkingFooter live={session.live} rows={session.rows} terminal={terminal} />
           {footer ?? null}
           <ChatComposer
             tabId={tabId}

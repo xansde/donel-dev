@@ -7,6 +7,7 @@
 
 import type { TerminalPaneHandle } from '../../TerminalPane';
 import { getChatStore, type ChatStore } from '../ChatStore';
+import { markOpensScreen } from '../useTerminalNeededReporter';
 import { SendDriver, type SendDriverPorts, type SendRequest } from '../sendDriver';
 
 export interface TabTerminalSource {
@@ -36,6 +37,10 @@ function buildPorts(w: () => Wired, store: ChatStore): SendDriverPorts {
     ackLookup: (text, since) => {
       const ptyId = w().source.terminal()?.ptyId ?? w().ptyId;
       return ptyId === null ? Promise.resolve({ matched: false }) : store.ackLookup(ptyId, text, since);
+    },
+    opensScreen: () => {
+      const ptyId = w().source.terminal()?.ptyId ?? w().ptyId;
+      if (ptyId !== null) markOpensScreen(ptyId);
     },
   };
 }

@@ -118,6 +118,23 @@ describe('SendDriver', () => {
     expect(h.items.map((i) => i.state)).toEqual(['accepted', 'accepted']);
   });
 
+  it('comando que abre tela avisa a faixa do terminal no Enter (T070), e só ele', () => {
+    const h = new Harness();
+    let marks = 0;
+    const ports: SendDriverPorts = { ...h.ports, opensScreen: () => (marks += 1) };
+    h.driver = new SendDriver(ports);
+    h.driver.enqueue({ text: '/model', opensScreen: true });
+    h.screenChanged();
+    expect(marks).toBe(0);
+    h.advance(100);
+    expect(h.writes.at(-1)).toBe('\r');
+    expect(marks).toBe(1);
+    h.driver.enqueue({ text: 'oi' });
+    h.screenChanged();
+    h.advance(100);
+    expect(marks).toBe(1);
+  });
+
   it('o segundo envio espera o primeiro (fila FIFO, uma ativa por vez)', () => {
     const h = new Harness();
     h.driver.enqueue({ text: 'primeiro' });
