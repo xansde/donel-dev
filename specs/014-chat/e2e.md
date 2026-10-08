@@ -310,5 +310,7 @@ A smoke (T081) veio por último.
     ~459) prevê só "entrou" ou "não foi" com "tentar de novo". Falta um
     "descartar", e falta decidir a posição do cartão falho (no ponto do
     envio ou fixo no fim).
-  - Aceite: um cartão "não foi" sai num gesto, e a posição dele segue a
-    decisão registrada na spec.
+  - Decisão do dono (08/10, respondida pelo painel de pergunta no alfa): o
+    cartão falho fica **no ponto do envio**, na ordem do tempo. Levar à spec.
+  - Aceite: um cartão "não foi" sai num gesto e fica na posição em que foi
+    enviado.
