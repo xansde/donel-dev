@@ -226,7 +226,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - `blockingScreen() → { kind, title } | null`, `modelDialog()`, `transcriptSavingOff`;
   - `pastedPlaceholder()`, `imagePlaceholderCount()`.
 - [x] T038 Implementar `src/shared/chat/screen.ts`. Faz passar T037.
-- [ ] T039 Ampliar o handle de `src/renderer/src/TerminalPane.tsx`, conforme `contracts/ipc-chat.md` §3:
+- [x] T039 Ampliar o handle de `src/renderer/src/TerminalPane.tsx`, conforme `contracts/ipc-chat.md` §3:
   - `write(data)`;
   - `readScreen()`, lendo do buffer do xterm (não do DOM): linhas com máscara *dim* via `IBufferCell.isDim()`, `bracketedPaste`, `altScreen`, `cols`, `rows`;
   - `onScreenUpdate(cb)`;
