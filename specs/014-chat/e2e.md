@@ -272,7 +272,7 @@ A smoke (T081) veio por último.
 
 | Item | O que verificar | Resultado |
 |---|---|---|
-| B3 | pergunta, permissão (com "Permitir sempre" e Negar com motivo) e plano (aprovar e pedir ajuste) pelo painel, com o CLI real | **pergunta ok** (08/10: painel com opções, "Outra" e Responder; aba e semáforo em "esperando você"; toast do Windows "Esperando você — pergunta"). Permissão e plano pendentes |
+| B3 | pergunta, permissão (com "Permitir sempre" e Negar com motivo) e plano (aprovar e pedir ajuste) pelo painel, com o CLI real | **pergunta ok** (08/10: painel com opções, "Outra" e Responder; aba e semáforo em "esperando você"; toast do Windows "Esperando você — pergunta"). **Plano ok** (08/10): cartão "Plano proposto" abriu, "Pedir ajuste" devolveu o texto ao Claude e "Aprovar e seguir" liberou a execução. **Permissão: não deu para testar**, porque o setup do dono auto-aprova tudo (hook `pretooluse-safety-check.ps1` sem matcher + allow global), e não é problema do produto agora |
 | B3 | responder pelo terminal com o painel aberto: o painel fecha sozinho | pendente |
 | SC-002 | nenhuma pergunta ou permissão perdida num dia de uso; notificação do Windows com a janela fora de foco, e o clique leva ao painel | pendente |
 | T088 | colar um print com Ctrl+V na caixa e mandar: o Claude recebe a imagem | pendente |
@@ -330,3 +330,13 @@ A smoke (T081) veio por último.
   entrar em modo plano a partir do chat: o dono precisou ir ao Terminal.
   Decidir se vale um atalho (repassar `Shift+Tab` ao PTY com a caixa vazia,
   por exemplo) ou só uma dica na tela.
+- **Cartão de plano: resumo recolhido corta e conta errado** (alfa, 08/10):
+  com o plano recolhido (D-C16: título + 3 primeiros passos), o cartão pegou
+  a **primeira** lista numerada do markdown, que era a do `## Contexto`, e
+  não a dos passos. Mostrou "2 passos" e cortou cada item na primeira linha,
+  no meio da frase ("… Isso vale"). O dono leu o plano como "muita
+  informação" ao comparar com o terminal, e o plano era mesmo verboso. A
+  segunda versão, mais curta, passou melhor.
+  - Aceite: "N passos" conta a lista da seção de passos (ou a última lista
+    de topo, se não houver cabeçalho reconhecível), e o recolhido corta em
+    fim de frase ou com reticências explícitas.
