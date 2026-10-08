@@ -298,7 +298,7 @@ divergências de `design/chat-verificacao.md`.
 - [x] T049 [US1] Expor `window.donel.chat.*` em `src/preload/index.ts` (tipos no `DonelApi` de `src/shared/index.ts`) e criar `src/renderer/src/chat/ChatStore.ts` (uma assinatura por canal, distribuída por `ptyId` — trava de `src/preload/subscribeChannel.ts:35`) + `useChatSession(ptyId)`.
 - [x] T050 [P] [US1] Implementar no `design-system/` as extensões aprovadas em `design/chat-verificacao.md` que a leitura usa (ex.: faixa de aviso, linha de conversa, cabeçalho de alternância), com tokens apenas e exportadas em `design-system/src/index.ts`.
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Peças da leitura conforme a §4 de `design/chat-verificacao.md`: `OwnerMessage`, `MessageHeader`, `NoticeLine`, `ActionLine`, `ActionGroup`, `WorkFold`, `CodeBlock` + tokens `--code-*`, `DiffBlock`, `CommandOutput`, `Banner`, `Kbd`, `Button·link` e `SubagentRow` (só leitura). Atualizar a regra de cor do `design/design-system.md`: coral fixo = falhou; coral pulsando = precisa de você (D-C26).
-- [ ] T051 [US1] Markdown e código em `src/renderer/src/chat/markdown/`:
+- [x] T051 [US1] Markdown e código em `src/renderer/src/chat/markdown/`:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Paleta = tokens `--code-*` (§4 da conferência); caminho no cabeçalho do bloco só quando vier na cerca (D-C6); "copiar tabela" como markdown (FR-005, decisão 4).
   - `src/renderer/src/chat/markdown/Markdown.tsx`: `react-markdown` + `remark-gfm`, sem HTML cru; links pelo `chat:open-external`; caminho do Windows não vira link quebrado.
   - `CodeBlock.tsx`: rótulo da linguagem e copiar.
