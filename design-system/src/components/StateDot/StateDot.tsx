@@ -10,7 +10,7 @@ export type SessionState = 'working' | 'waiting' | 'permission' | 'done' | 'erro
 export const SESSION_STATE_LABEL_PT: Record<SessionState, string> = {
   working: 'Trabalhando',
   waiting: 'Aguardando resposta',
-  permission: 'Permissão pendente',
+  permission: 'Esperando você',
   done: 'Encerrada',
   error: 'Falha ou quota esgotada',
 };

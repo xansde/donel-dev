@@ -1,6 +1,7 @@
 import {
   Button,
   formatSmartZoneLabel,
+  Kbd,
   Modal,
   SegmentedControl,
   SESSION_STATE_LABEL_PT,
@@ -9,6 +10,7 @@ import {
   StatusBar,
   TerminalTab,
   Toast,
+  Toggle,
 } from '@donel-dev/design-system';
 import { Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -109,6 +111,9 @@ import { ProjectSidebar } from './ProjectSidebar';
 import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from './ProjectSidebar';
 // CA-30 (009-modo-dev-v3, lote 9) — seletor de projetos no titlebar + modal de criação.
 import { ProjectSwitcher } from './ProjectSwitcher';
+import { ChatView, type ChatViewActions } from './chat/ChatView';
+import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
+import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import type { TerminalPaneHandle } from './TerminalPane';
 
@@ -201,6 +206,12 @@ interface TabState {
    * Precedência sobre `color` (token) na renderização — ver `TerminalTab`.
    */
   cliColorName?: string | null;
+  /**
+   * T056 (014-chat) — vista escolhida para a aba (Chat | Terminal). Sem valor,
+   * vale o padrão de `effectiveTabView`: chat numa aba `claude` (que não é de
+   * login) com `chat.enabled`, terminal em qualquer outro caso.
+   */
+  view?: ChatViewMode;
 }
 
 /** Último lançamento do Launcher — CA-1 (comando exato) + reaproveitado pelo corpo do "＋ Nova sessão" (ui-spec §2, zona 1). */
@@ -294,6 +305,16 @@ export function App(): React.JSX.Element {
   // fallbacks locais enquanto isso.
   const [appConfig, setAppConfig] = useState<AppConfigDto | null>(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  // T056 (014-chat) — `chat.enabled` só vale depois de reiniciar o app (os
+  // handlers do chat só existem no main se estava ligado no boot): a UI usa o
+  // valor LIDO NA ABERTURA, nunca o que o interruptor das Preferências acabou de
+  // gravar. `null` até a config chegar (= chat desligado, o app de sempre).
+  const [chatEnabledAtLaunch, setChatEnabledAtLaunch] = useState<boolean | null>(null);
+  const chatEnabled = chatEnabledAtLaunch === true;
+  // ptyId mais recente de cada aba (o chat se liga por ele; sobrevive à saída do processo).
+  const [chatPtyIds, setChatPtyIds] = useState<Record<string, string>>({});
+  // Aba cujo processo saiu (FR-034): alimenta a barra "Sessão encerrada" do chat.
+  const [tabExits, setTabExits] = useState<Record<string, { exitCode: number | null }>>({});
   const tabIdCounter = useRef(0);
   // T1221 (011-contas-e-provedores, etapa 2) — `AccountsPanel` substitui o
   // `ProfileSwitcher` (dropdown de perfis) como fonte da statusbar/badge:
@@ -607,6 +628,8 @@ export function App(): React.JSX.Element {
     delete aliveSinceRef.current[tabId]; // FIX (feedback E2E rodada 5) — mesmo padrão de limpeza dos maps acima.
     setSessionAccounts((prev) => omitKey(prev, tabId)); // FIX (feedback E2E rodada 5) — idem.
     setSessionModelEffort((prev) => omitKey(prev, tabId));
+    setChatPtyIds((prev) => omitKey(prev, tabId));
+    setTabExits((prev) => omitKey(prev, tabId));
     delete terminalRefs.current[tabId];
     // 003-modo-dev/T312 — nenhum watcher de prontidão sobrevive à aba que ele
     // vigiava (senão tentaria escrever num PTY que já não existe).
@@ -724,7 +747,9 @@ export function App(): React.JSX.Element {
     window.donel.config
       .get()
       .then((config) => {
-        if (!cancelled) setAppConfig(config);
+        if (cancelled) return;
+        setAppConfig(config);
+        setChatEnabledAtLaunch((previous) => previous ?? config.chat.enabled);
       })
       .catch(() => undefined);
     return () => {
@@ -1015,6 +1040,8 @@ export function App(): React.JSX.Element {
    * apaga nada. Sem aviso na tela, como o CA-11 pede.
    */
   const handleTabProcessExit = (tab: TabState, info: { exitCode: number | undefined; msSinceSpawn: number }): void => {
+    // T057 (014-chat, FR-034) — a barra "Sessão encerrada (código N)" do chat.
+    setTabExits((prev) => ({ ...prev, [tab.id]: { exitCode: info.exitCode ?? null } }));
     // Spec 010 / B1 — o processo da sessão morreu (saiu sozinho, ou foi morto).
     // A aba pode continuar na tela, mas a SESSÃO acabou: deixar o card dizendo
     // "em andamento" com nada rodando é a mesma inverdade que fechar a aba
@@ -1087,6 +1114,66 @@ export function App(): React.JSX.Element {
   const handleChangeNotificationPreference = (preference: NotificationPreference): void => {
     void window.donel.config.setNotificationPreference(preference).then(setAppConfig).catch(() => undefined);
   };
+
+  // T056 (014-chat) — interruptor "Chat (experimental)" (vale após reiniciar) e Modo Foco (vale já).
+  const handleChangeChatEnabled = (enabled: boolean): void => {
+    void window.donel.config.setChatPrefs({ enabled }).then(setAppConfig).catch(() => undefined);
+  };
+
+  const handleChangeFocusMode = (focusMode: boolean): void => {
+    void window.donel.config.setChatPrefs({ focusMode }).then(setAppConfig).catch(() => undefined);
+  };
+
+  /** T056 — troca a vista da aba (Chat | Terminal). A sessão e o PTY seguem os mesmos; só muda o que se vê. */
+  const setTabView = (tabId: string, view: ChatViewMode): void => {
+    updateTab(tabId, { view });
+    if (view === 'terminal') {
+      // O terminal volta a ter layout no próximo frame; só então aceita o foco.
+      requestAnimationFrame(() => terminalRefs.current[tabId]?.focus());
+    }
+  };
+
+  /** Ctrl+` — alterna a vista da aba ativa. Devolve se tratou (aba sem vista de chat deixa a tecla passar). */
+  const toggleActiveTabView = (): boolean => {
+    const tab = tabsRef.current.find((candidate) => candidate.id === activeTabIdRef.current);
+    if (!tab || !hasChatView(tab, chatEnabled)) return false;
+    setTabView(tab.id, nextTabView(effectiveTabView(tab, chatEnabled)));
+    return true;
+  };
+  const toggleActiveTabViewRef = useRef(toggleActiveTabView);
+  toggleActiveTabViewRef.current = toggleActiveTabView;
+
+  // O objeto é ESTÁVEL (ChatView é memoizado: o App re-renderiza a cada tique do semáforo);
+  // o que muda a cada render fica atrás de `chatActionsRef`.
+  const chatActionsRef = useRef<ChatViewActions>({
+    openTerminal: () => undefined,
+    resume: () => undefined,
+    closeTab: () => undefined,
+    openPreviousSessions: () => undefined,
+  });
+  chatActionsRef.current = {
+    openTerminal: (tabId) => setTabView(tabId, 'terminal'),
+    // FR-034 — retoma a MESMA conversa (a atual da aba, mesmo após /clear ou /resume).
+    resume: (tabId) => {
+      const sessionId = tabsRef.current.find((candidate) => candidate.id === tabId)?.claudeSessionId;
+      terminalRefs.current[tabId]?.respawn(sessionId ? { resume: sessionId } : undefined);
+    },
+    closeTab: (tabId) => handleRequestCloseTab(tabId),
+    openPreviousSessions: (tabId) => {
+      const cwd = tabsRef.current.find((candidate) => candidate.id === tabId)?.cwd;
+      const project = projects.find((candidate) => candidate.path === cwd);
+      if (project) handleShowPreviousSessions(project);
+    },
+  };
+  const chatActions = useMemo<ChatViewActions>(
+    () => ({
+      openTerminal: (tabId) => chatActionsRef.current.openTerminal(tabId),
+      resume: (tabId) => chatActionsRef.current.resume(tabId),
+      closeTab: (tabId) => chatActionsRef.current.closeTab(tabId),
+      openPreviousSessions: (tabId) => chatActionsRef.current.openPreviousSessions(tabId),
+    }),
+    [],
+  );
 
   // FIX ambiente genérico (28/07) — troca do critério da listagem re-escaneia
   // na hora, mesmo espírito instantâneo do add/remove de root.
@@ -1482,6 +1569,8 @@ export function App(): React.JSX.Element {
       // aqui seria o app decidindo o que ninguém declarou.
       launchArgs: [],
       sessionType: 'claude',
+      // A fase pré-digita o comando e o auto-start aperta o Enter: quem acompanha precisa ver o terminal.
+      view: 'terminal',
     });
     esteiraTabSessionsRef.current[tabId] = request.sessionId;
     armEsteiraAutoStart(tabId, request.command);
@@ -1716,6 +1805,16 @@ export function App(): React.JSX.Element {
     function handleKeyDown(event: KeyboardEvent): void {
       if (!event.ctrlKey || event.altKey || event.metaKey) return;
 
+      // T056 (014-chat) — Ctrl+` alterna Chat | Terminal (capture, como os demais: o xterm
+      // embaixo não pode receber a tecla). Aba sem vista de chat deixa passar.
+      if (shouldHandleViewShortcut(event)) {
+        if (toggleActiveTabViewRef.current()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+
       if (event.key === 'Tab') {
         const target = nextAttentionSessionId(orderedSessions, activeTabIdRef.current);
         if (!target) return;
@@ -1819,6 +1918,9 @@ export function App(): React.JSX.Element {
   // dele — e NÃO do default de 400k do design-system.
   const activeContextTokens = activeTab?.claudeSessionId ? (contextTokens[activeTab.claudeSessionId] ?? null) : null;
   const activeClaudeTab = activeTab && activeTab.sessionType === 'claude' ? activeTab : null;
+  // T056 — a aba ativa tem vista de chat? (D-C22: o chat só ACRESCENTA controles ao cabeçalho, e só em aba claude.)
+  const activeChatTab = activeTab && hasChatView(activeTab, chatEnabled) ? activeTab : null;
+  const activeChatView = activeChatTab ? effectiveTabView(activeChatTab, chatEnabled) : null;
   const activeModel = activeClaudeTab ? (sessionModelEffort[activeClaudeTab.id]?.model ?? DEFAULT_MODEL_ALIAS) : null;
   const activeModelEffort = activeClaudeTab
     ? `${activeModel}/${sessionModelEffort[activeClaudeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}`
@@ -2197,6 +2299,32 @@ export function App(): React.JSX.Element {
                 </>
               )}
               <div className={styles.sessionHeaderSpacer} />
+              {activeChatTab && activeChatView ? (
+                <>
+                  {/* D-C21: o Modo Foco é do chat — some na vista Terminal. */}
+                  {activeChatView === 'chat' ? (
+                    <div className={styles.sessionHeaderControl} data-testid="chat-focus-toggle">
+                      <Toggle checked={appConfig?.chat.focusMode ?? true} onChange={handleChangeFocusMode} label="Modo Foco" />
+                    </div>
+                  ) : null}
+                  <div
+                    className={styles.sessionHeaderControl}
+                    data-testid="chat-view-switch"
+                    title={'Alternar para ' + (activeChatView === 'chat' ? 'o Terminal' : 'o Chat') + ' — mesma sessão, mesma conversa. Atalho Ctrl+`.'}
+                  >
+                    <SegmentedControl
+                      ariaLabel="Vista da aba"
+                      options={[
+                        { value: 'chat', label: 'Chat' },
+                        { value: 'terminal', label: 'Terminal' },
+                      ]}
+                      value={activeChatView}
+                      onChange={(value) => setTabView(activeChatTab.id, value === 'terminal' ? 'terminal' : 'chat')}
+                    />
+                  </div>
+                  <Kbd>Ctrl+`</Kbd>
+                </>
+              ) : null}
               {activeClaudeTab ? (
                 <StateDot
                   state={semaphoreStates[activeClaudeTab.id]?.state ?? 'working'}
@@ -2247,8 +2375,26 @@ export function App(): React.JSX.Element {
                 ) : null}
               </div>
             ) : null}
-            {tabs.map((tab) => (
+            {tabs.map((tab) => {
+              // T056 — o TerminalPane fica SEMPRE montado (o PTY e o xterm sobrevivem à troca de vista);
+              // a vista que não está em foco só é ocultada por CSS.
+              const chatTab = hasChatView(tab, chatEnabled);
+              const view = effectiveTabView(tab, chatEnabled);
+              return (
               <div key={tab.id} className={tab.id === activeTabId ? styles.terminalPane : styles.terminalPaneHidden}>
+                {chatTab ? (
+                  <div className={view === 'chat' ? styles.terminalPane : styles.terminalPaneHidden} data-testid="chat-layer">
+                    <ChatView
+                      tabId={tab.id}
+                      actions={chatActions}
+                      ptyId={chatPtyIds[tab.id] ?? null}
+                      active={tab.id === activeTabId && view === 'chat'}
+                      focusMode={appConfig?.chat.focusMode ?? true}
+                      ended={tabExits[tab.id] ?? null}
+                    />
+                  </div>
+                ) : null}
+                <div className={view === 'chat' ? styles.terminalPaneHidden : styles.terminalPane}>
                 <TerminalPane
                   ref={(handle) => {
                     terminalRefs.current[tab.id] = handle;
@@ -2294,9 +2440,16 @@ export function App(): React.JSX.Element {
                   // spawn faz a entrada órfã sair da lista.
                   onProcessExit={(info) => handleTabProcessExit(tab, info)}
                   onCloseTab={() => handleRequestCloseTab(tab.id)}
+                  onPtyChange={(ptyId) => {
+                    setChatPtyIds((prev) => (prev[tab.id] === ptyId ? prev : { ...prev, [tab.id]: ptyId }));
+                    setTabExits((prev) => omitKey(prev, tab.id));
+                  }}
+                  resumeSessionId={chatTab ? tab.claudeSessionId : undefined}
                 />
+                </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </main>
 
@@ -2470,6 +2623,9 @@ export function App(): React.JSX.Element {
         onRemoveRoot={handleRemoveProjectRoot}
         onChangeProjectScanMode={handleChangeProjectScanMode}
         onChangeNotificationPreference={handleChangeNotificationPreference}
+        chatEnabled={appConfig?.chat.enabled ?? false}
+        chatRestartPending={(appConfig?.chat.enabled ?? false) !== chatEnabled}
+        onChangeChatEnabled={handleChangeChatEnabled}
       />
 
       {/* Spec 010 / N7→F25 (D1) — o mapa de nós. Renderizado condicionalmente

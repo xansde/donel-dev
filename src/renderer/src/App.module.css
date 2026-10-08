@@ -201,6 +201,11 @@
   flex: 1;
 }
 
+/* T056 (014-chat, D-C22) — controles que o chat soma ao cabeçalho: Modo Foco, Chat | Terminal. */
+.sessionHeaderControl {
+  flex: none;
+}
+
 .terminal {
   flex: 1;
   display: flex;
