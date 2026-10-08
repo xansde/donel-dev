@@ -55,6 +55,23 @@ export function isWorking(lines: readonly LineInput[]): boolean {
   return footerLines(lines).some((line) => /esc to interrupt/i.test(line));
 }
 
+export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypass';
+
+/**
+ * Permission mode the CLI footer reports ("⏵⏵ accept edits on (shift+tab to cycle)", "⏸ plan mode on ...",
+ * "⏵⏵ bypass permissions on ...", "⏸ manual mode on" = default). Only the footer counts: the box and the
+ * transcript above it can contain the same words. `null` = no box, or the footer names no mode.
+ */
+export function readPermissionMode(lines: readonly LineInput[]): PermissionMode | null {
+  for (const line of footerLines(lines)) {
+    if (/bypass permissions on/i.test(line)) return 'bypass';
+    if (/accept edits on/i.test(line)) return 'acceptEdits';
+    if (/plan mode on/i.test(line)) return 'plan';
+    if (/(?:manual|default) mode on/i.test(line)) return 'default';
+  }
+  return null;
+}
+
 /** Messages typed while the CLI works wait in its own queue. Two independent markers. */
 export function hasQueuedMessages(lines: readonly LineInput[]): boolean {
   return boxAndAbove(lines, 6).some((line) => /Press up to edit queued messages/i.test(line) || /ctrl\+x ctrl\+s to send now/i.test(line));

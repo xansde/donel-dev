@@ -132,8 +132,9 @@ app.
    carregar, **Then** a vista é o chat, com a caixa de escrever focada.
 2. **Given** o chat aberto, **When** o dono escreve e aperta Enter, **Then** a
    mensagem aparece como "enviando…" e passa a "entrou" quando o CLI a aceita;
-   se não entrar dentro do tempo limite, vira "não foi" com a ação "tentar de
-   novo".
+   se não entrar dentro do tempo limite, vira "não foi" com as ações "tentar de
+   novo" e "descartar" (que remove o cartão); o cartão "não foi" fica na posição
+   do envio, em ordem cronológica com o resto da conversa, nunca preso no fim.
 3. **Given** uma resposta com títulos, listas, tabela, links e blocos de
    código, **When** ela chega, **Then** aparece renderizada, com código
    colorido por linguagem, botão copiar em cada bloco e um botão para copiar
@@ -364,7 +365,7 @@ outra com "interromper e mandar agora".
   desligam a gravação; CLI travado): o chat avisa que não está recebendo a
   conversa e oferece o terminal, em vez de ficar em branco.
 - **Mensagem que não entra** (Enter engolido, terminal do Claude ocupado): "não foi" +
-  tentar de novo; nunca "enviando…" eterno; nunca envio em duplicidade.
+  tentar de novo ou descartar (no ponto do envio); nunca "enviando…" eterno; nunca envio em duplicidade.
 - **Colagem com prefixos especiais** do CLI (`!` e outros): tratamento
   explícito, nunca disparo acidental.
 - **Linha do arquivo da conversa que o chat não entende** (formato novo do
@@ -444,7 +445,12 @@ outra com "interromper e mandar agora".
 **Escrita e envio**
 
 - **FR-013**: A caixa MUST suportar várias linhas (Enter envia, Shift+Enter
-  quebra), histórico por ↑, rascunho preservado por aba.
+  quebra), histórico por ↑, rascunho preservado por aba. Shift+Tab na caixa
+  (vazia ou com texto) MUST ser repassado ao CLI, como no terminal — alterna
+  o modo de permissão — em vez de mover o foco; não é repassado enquanto um
+  diálogo do CLI segura a tela. A dica sob a caixa MUST mostrar o modo atual
+  lido do rodapé do CLI («Shift+Tab modo: padrão / aceitar edições / plano /
+  bypass»). Isto não é um botão de troca de modo (ver Out of Scope).
 - **FR-014**: A caixa MUST oferecer autocomplete de skills/comandos (`/`) com
   nome e descrição e de arquivos do projeto (`@`).
 - **FR-015**: A caixa MUST aceitar imagem colada ou arrastada como anexo que
@@ -456,8 +462,9 @@ outra com "interromper e mandar agora".
   conferível.
 - **FR-017**: Todo envio MUST chegar ao CLI exatamente como escrito (sem
   interferência do autocomplete do terminal do Claude), MUST ser confirmado pela conversa
-  registrada e MUST terminar em "entrou" ou "não foi" (com tentar de novo),
-  sem duplicidade.
+  registrada e MUST terminar em "entrou" ou "não foi" (com tentar de novo e
+  descartar; o cartão fica na posição do envio, em ordem cronológica), sem
+  duplicidade.
 - **FR-018**: Mensagem iniciada por `!` MUST mostrar o selo de comando de
   shell antes do envio; outros prefixos com significado no terminal do Claude MUST ter
   tratamento explícito definido no plano.

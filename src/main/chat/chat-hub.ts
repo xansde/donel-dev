@@ -122,7 +122,10 @@ export interface ChatHub {
 // internals
 // ---------------------------------------------------------------------------
 
-const ACTIVITY_EVENTS: ReadonlySet<string> = new Set(['UserPromptSubmit', 'PostToolUse', 'Stop']);
+// Hooks after which the CLI owes the transcript new lines. `Stop` is NOT here: it is the end of the
+// turn, and it lands after the follower already read the final line, so counting it as "activity
+// newer than the last growth" flagged every finished turn as stale, with nothing left to arrive.
+const ACTIVITY_EVENTS: ReadonlySet<string> = new Set(['UserPromptSubmit', 'PostToolUse']);
 const WORKING_EVENTS: ReadonlySet<string> = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'SubagentStart', 'PreCompact']);
 const IDLE_EVENTS: ReadonlySet<string> = new Set(['Stop', 'StopFailure', 'SessionStart']);
 const PERMISSION_MODES: ReadonlySet<string> = new Set(['default', 'acceptEdits', 'plan', 'bypassPermissions', 'auto']);

@@ -1,4 +1,4 @@
-import { ChevronRight, RotateCcw } from 'lucide-react';
+import { ChevronRight, RotateCcw, Trash2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Button } from '../Button';
 import styles from './OwnerMessage.module.css';
@@ -9,7 +9,7 @@ import styles from './OwnerMessage.module.css';
  * - `sending`: "enviando…" (ponto piscando);
  * - `queued`: "na fila" + a causa em `queuedReason` (D-C10);
  * - `sent`: "hh:mm · ✓ entrou" (só o que o chat enviou neste uso da aba);
- * - `failed`: "✕ não foi · <motivo> · ↻ tentar de novo".
+ * - `failed`: "✕ não foi · <motivo> · ↻ tentar de novo · descartar".
  */
 export type OwnerMessageSendState = 'history' | 'sending' | 'queued' | 'sent' | 'failed';
 
@@ -25,6 +25,8 @@ export interface OwnerMessageProps {
   failedReason?: string;
   /** Sem `onRetry` o "tentar de novo" não aparece. */
   onRetry?: () => void;
+  /** Sem `onDiscard` o "descartar" do "não foi" não aparece. */
+  onDiscard?: () => void;
   /** Mensagem que começa com `/` ou `!` vai em mono (D-C11). */
   mono?: boolean;
   /** Miniaturas e fichas de anexo, abaixo do texto (FR-005). */
@@ -51,6 +53,7 @@ export function OwnerMessage({
   queuedReason,
   failedReason,
   onRetry,
+  onDiscard,
   mono = false,
   attachments,
   variant = 'message',
@@ -102,6 +105,15 @@ export function OwnerMessage({
                     iconLeft={<RotateCcw size={12} strokeWidth={2} aria-hidden="true" />}
                   >
                     tentar de novo
+                  </Button>
+                ) : null}
+                {onDiscard ? (
+                  <Button
+                    variant="link"
+                    onClick={onDiscard}
+                    iconLeft={<Trash2 size={12} strokeWidth={2} aria-hidden="true" />}
+                  >
+                    descartar
                   </Button>
                 ) : null}
               </>

@@ -338,6 +338,59 @@ describe('sequência de bytes (§4)', () => {
   });
 });
 
+/** Caixa real do CLI com texto multilinha: `❯ ` + 1ª linha, continuações com 2 espaços de recuo, sem espaço no fim. */
+function multilineScreen(rows: string[], footer = IDLE_FOOTER): LineInput[] {
+  return ['● resposta anterior', RULE, `❯ ${rows[0]}`, ...rows.slice(1).map((r) => `  ${r}`), RULE, footer];
+}
+
+describe('texto multilinha na caixa (quebra por \n ou pela largura)', () => {
+  it('rascunho com \n (Shift+Enter) é reconhecido', () => {
+    const sim = new Sim({ text: 'primeira linha\nsegunda linha' });
+    sim.screen(idleEmpty(), 0);
+    sim.screen(multilineScreen(['primeira linha', 'segunda linha']), 100);
+    expect(sim.phase).toBe('confirming');
+  });
+
+  it('linha longa quebrada num espaço pela largura é reconhecida', () => {
+    const sim = new Sim({ text: 'quebra de texto longo demais' });
+    sim.screen(idleEmpty(), 0);
+    sim.screen(multilineScreen(['quebra', 'de texto longo demais']), 100);
+    expect(sim.phase).toBe('confirming');
+  });
+
+  it('com [Image #1] na frente, \n e quebra pela largura', () => {
+    const a = new Sim({ text: 'uma\nduas', imagePaths: ['a.png'] });
+    a.screen(idleEmpty(), 0);
+    a.screen(screen('[Image #1]'), 100);
+    a.screen(multilineScreen(['[Image #1] uma', 'duas']), 200);
+    expect(a.phase).toBe('confirming');
+
+    const b = new Sim({ text: 'quebra de texto longo', imagePaths: ['a.png'] });
+    b.screen(idleEmpty(), 0);
+    b.screen(screen('[Image #1]'), 100);
+    b.screen(multilineScreen(['[Image #1] quebra', 'de texto longo']), 200);
+    expect(b.phase).toBe('confirming');
+  });
+
+  it('timeout: prefixo multilinha parcial é nosso e a caixa é limpa com Esc Esc', () => {
+    const sim = new Sim({ text: 'primeira linha\nsegunda linha\nterceira' });
+    sim.screen(idleEmpty(), 0);
+    sim.screen(multilineScreen(['primeira linha', 'segunda']), 100);
+    expect(sim.phase).toBe('typing');
+    sim.tick(3000);
+    expect(sim.phase).toBe('failed');
+    expect(sim.allWrites()).toContain('\x1b\x1b');
+  });
+
+  it('timeout: texto multilinha alheio não é limpo', () => {
+    const sim = new Sim({ text: 'primeira linha\nsegunda linha' });
+    sim.screen(idleEmpty(), 0);
+    sim.screen(multilineScreen(['outra coisa', 'do dono']), 100);
+    sim.tick(3000);
+    expect(sim.allWrites()).not.toContain('\x1b\x1b');
+  });
+});
+
 describe('prazos (§6)', () => {
   it('imagem: 3 s por imagem, senão "a imagem não entrou"', () => {
     const sim = new Sim({ text: 'x', imagePaths: ['a.png'] });

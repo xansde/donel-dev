@@ -45,6 +45,7 @@ export function mergeOptimistic(realRows: readonly ConversationRow[], items: rea
   const overlays = new Map<string, SendOverlay>();
   const claimedRows = new Set<string>();
   const local: ConversationRow[] = [];
+  const failedLocal: ConversationRow[] = [];
 
   const users = realRows.filter((r): r is UserRow => r.kind === 'user');
   for (const item of [...items].sort((a, b) => a.createdAt - b.createdAt)) {
@@ -62,7 +63,7 @@ export function mergeOptimistic(realRows: readonly ConversationRow[], items: rea
     // The real row of a command is drawn by the transcript itself (command/output): drop the local copy.
     if (item.state === 'accepted' && item.kind !== 'prompt') continue;
     const id = `${LOCAL_PREFIX}${item.id}`;
-    local.push({
+    (overlayOf(item, false).sendState === 'failed' ? failedLocal : local).push({
       kind: 'user',
       id,
       turnId: null,
@@ -74,5 +75,13 @@ export function mergeOptimistic(realRows: readonly ConversationRow[], items: rea
     });
     overlays.set(id, overlayOf(item, false));
   }
-  return { rows: local.length === 0 ? realRows : [...realRows, ...local], overlays };
+  // A failed card stays where the send happened (chronological order), not stuck below newer messages.
+  let rows: ConversationRow[] = [...realRows];
+  for (const card of failedLocal) {
+    const at = Date.parse(card.at);
+    const index = rows.findIndex((row) => Date.parse(row.at) > at);
+    rows.splice(index < 0 ? rows.length : index, 0, card);
+  }
+  rows = [...rows, ...local];
+  return { rows: failedLocal.length === 0 && local.length === 0 ? realRows : rows, overlays };
 }

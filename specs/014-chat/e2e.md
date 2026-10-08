@@ -206,6 +206,7 @@ driver com a caixa, juntados na mesma branch.
     a `ok` não é emitido ou não chega ao renderer.
   - Aceite da correção: o aviso some sozinho assim que uma linha nova
     chega, e um smoke cobre esse caminho com `/compact` no meio.
+  - **Corrigido** (08/10): o hook `Stop` contava como "atividade" e chega depois de o follower ler a última linha, então todo turno terminado virava `stale` 8 s depois, sem nada a chegar; `Stop` saiu dos eventos de atividade do hub (teste de reprodução em `chat-hub.test.ts`). Não verificado com CLI real nem com `/compact` de verdade.
 
 ## Fase 4 — Pendências (08/10)
 
@@ -244,6 +245,7 @@ A smoke (T081) veio por último.
   `waiting-you`, e o pé de trabalho sumia junto com o Parar. Nesse estado o
   `interrupt` era inalcançável. Agora o pé fica, mas o texto durante a
   pendência é só "trabalhando —", sem verbo, e precisa melhorar.
+  **Corrigido** (08/10): o pé dizia só "trabalhando —" com pendência aberta; agora diz "esperando você — pergunta/permissão/plano" (cronômetro e Parar mantidos).
 - **Diálogo da TUI fora do `PermissionRequest`:** com o chat ligado, o toast
   antigo de `permission` da aba claude deixa de aparecer. Esse diálogo segue
   pela faixa "o terminal precisa de você", mas sem notificação do sistema.
@@ -272,7 +274,75 @@ A smoke (T081) veio por último.
 
 | Item | O que verificar | Resultado |
 |---|---|---|
-| B3 | pergunta, permissão (com "Permitir sempre" e Negar com motivo) e plano (aprovar e pedir ajuste) pelo painel, com o CLI real | pendente |
+| B3 | pergunta, permissão (com "Permitir sempre" e Negar com motivo) e plano (aprovar e pedir ajuste) pelo painel, com o CLI real | **pergunta ok** (08/10: painel com opções, "Outra" e Responder; aba e semáforo em "esperando você"; toast do Windows "Esperando você — pergunta"). **Plano ok** (08/10): cartão "Plano proposto" abriu, "Pedir ajuste" devolveu o texto ao Claude e "Aprovar e seguir" liberou a execução. **Permissão: não deu para testar**, porque o setup do dono auto-aprova tudo (hook `pretooluse-safety-check.ps1` sem matcher + allow global), e não é problema do produto agora |
 | B3 | responder pelo terminal com o painel aberto: o painel fecha sozinho | pendente |
 | SC-002 | nenhuma pergunta ou permissão perdida num dia de uso; notificação do Windows com a janela fora de foco, e o clique leva ao painel | pendente |
 | T088 | colar um print com Ctrl+V na caixa e mandar: o Claude recebe a imagem | pendente |
+
+### Uso real no alfa (dono, 08/10)
+
+- **"não foi · o texto não entrou na caixa" em todo texto multilinha** (alfa,
+  08/10, para depois): o dono mandou pelo chat um print colado e duas linhas
+  (`Shift+Enter` entre elas). O cartão ficou vermelho com "o texto não entrou
+  na caixa", mas a imagem e as duas linhas entraram na caixa do CLI. O dono
+  trocou para o Terminal, completou a mensagem e apertou Enter, e o Claude
+  recebeu `[Image #1]Estou rodando o e2e aqui` + `Descreva o que tem nessa
+  imagem` com o anexo de `chat-attachments/`. Ou seja, um falso negativo: o
+  envio parou antes do Enter e a caixa não foi limpa.
+  - Suspeita: `textSeen`/`boxIsOurs` (`src/shared/chat/sendMachine.ts:393`)
+    não reconhecem texto com quebra de linha + placeholder de imagem. O
+    `readInputText` pode ler só a primeira linha da caixa, ou a segunda vem
+    com recuo/prefixo que o `collapse` não iguala. O `Esc Esc` de limpeza
+    também não rodou, o que bate com `boxIsOurs` falhando pelo mesmo motivo.
+  - Isolamento feito pelo dono no mesmo dia: pelo chat, uma linha sem
+    imagem chegou e uma linha com imagem também. A falha fica no texto de
+    2+ linhas, com ou sem imagem. Confirmado depois: duas linhas sem imagem
+    (`Shift+Enter`) também falham, então a causa é a quebra de linha e não
+    a imagem.
+  - Ampliado no mesmo dia: uma mensagem de **uma linha só, porém longa**
+    (~190 caracteres, com espaço duplo e parênteses) também falhou. A
+    hipótese mais forte passa a ser o wrap: `readInputBox`
+    (`src/shared/cliInputBox.ts:156`) junta as linhas de continuação com
+    `join('')`. Se o espaço no ponto de quebra (ou o `
+` de um `Shift+Enter`)
+    não sobrevive ao `visibleText`, o texto lido vira `palavraseguinte` e o
+    `collapse` de `textSeen` nunca iguala ao rascunho. Não verificado com
+    captura de tela real.
+  - **Corrigido** (08/10): a hipótese do wrap se confirmou em teste. `textSeen` e `boxIsOurs` passaram a comparar sem espaço em branco nenhum, o que cobre `Shift+Enter`, linha longa e imagem. Falta conferir no alfa.
+  - Aceite da correção: imagem + texto de 2+ linhas pelo chat chega ao CLI
+    e o cartão confirma. Um smoke cobre o caso multilinha com imagem e outro
+    sem imagem.
+- **Cartões "não foi" se acumulam e não saem** (alfa, 08/10, para depois):
+  cada envio multilinha que falha deixa um cartão vermelho, e o único gesto
+  que ele oferece é "tentar de novo". Não há como descartar. Os cartões
+  também ficam presos no fim da conversa, abaixo das mensagens e respostas
+  mais novas, em vez de ficarem na posição em que foram enviados. Com o bug
+  acima, a lista cresce a cada tentativa.
+  - Lacuna de spec, não só de código: a FR do envio (spec, linhas ~135 e
+    ~459) prevê só "entrou" ou "não foi" com "tentar de novo". Falta um
+    "descartar", e falta decidir a posição do cartão falho (no ponto do
+    envio ou fixo no fim).
+  - Decisão do dono (08/10, respondida pelo painel de pergunta no alfa): o
+    cartão falho fica **no ponto do envio**, na ordem do tempo. Levar à spec.
+  - **Corrigido** (08/10): o cartão ganhou "descartar" (`driver.dismiss`) e fica antes da primeira linha posterior ao envio. A spec FR-017 foi atualizada.
+  - Aceite: um cartão "não foi" sai num gesto e fica na posição em que foi
+    enviado.
+- **`Shift+Tab` no chat navega o foco, não troca o modo do CLI** (alfa,
+  08/10): no chat, `Shift+Tab` anda entre os botões como num navegador.
+  Pela spec isso é esperado: trocar o modo de permissão pela caixa está no
+  Out of Scope, e o modo vem do launcher. Mas ficou sem caminho óbvio para
+  entrar em modo plano a partir do chat: o dono precisou ir ao Terminal.
+  **Corrigido** (08/10, pedido do dono: "quero que shift+tab não seja problema"): `Shift+Tab` na caixa do chat repassa `[Z` ao CLI, e a dica mostra o modo lido do rodapé. FR-013 foi estendida. Falta conferir com o CLI real.
+    Decidir se vale um atalho (repassar `Shift+Tab` ao PTY com a caixa vazia,
+  por exemplo) ou só uma dica na tela.
+- **Cartão de plano: resumo recolhido corta e conta errado** (alfa, 08/10):
+  com o plano recolhido (D-C16: título + 3 primeiros passos), o cartão pegou
+  a **primeira** lista numerada do markdown, que era a do `## Contexto`, e
+  não a dos passos. Mostrou "2 passos" e cortou cada item na primeira linha,
+  no meio da frase ("… Isso vale"). O dono leu o plano como "muita
+  informação" ao comparar com o terminal, e o plano era mesmo verboso. A
+  segunda versão, mais curta, passou melhor.
+  - **Corrigido** (08/10): `extractPlanSteps` (`src/shared/chat/t3/proposedPlan.ts`) prefere a seção de passos, depois a última lista de topo. Itens com continuação viram um só, e o encurtamento corta em fim de frase ou com `…`.
+  - Aceite: "N passos" conta a lista da seção de passos (ou a última lista
+    de topo, se não houver cabeçalho reconhecível), e o recolhido corta em
+    fim de frase ou com reticências explícitas.
