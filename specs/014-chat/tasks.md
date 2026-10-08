@@ -146,21 +146,21 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
 
 ### Leitura do transcript e adaptador (`contracts/conversation-rows.md`)
 
-- [ ] T019 [P] Criar as fixtures sintéticas em `tests/fixtures/chat/`, geradas por `tests/fixtures/chat/build-fixtures.mjs` (determinístico, conteúdo genérico com `atlas`/`beacon`/`vega`), com um `README.md` dos cenários. Base de estrutura: `specs/014-chat/spike/transcript-schema.md`. Cenários:
+- [x] T019 [P] Criar as fixtures sintéticas em `tests/fixtures/chat/`, geradas por `tests/fixtures/chat/build-fixtures.mjs` (determinístico, conteúdo genérico com `atlas`/`beacon`/`vega`), com um `README.md` dos cenários. Base de estrutura: `specs/014-chat/spike/transcript-schema.md`. Cenários:
   - **Básicos**: rodada simples (text, thinking, tool_use, tool_result); todos os `toolUseResult` da tabela do catálogo; comando `/` + corpo de skill `isMeta`; modo `!`; interrupção; prompt com imagem.
   - **Fila e compactação**: `queued_command` + `queue-operation`; `compact_boundary` com `logicalParentUuid`.
   - **Árvore**: galho de rewind; resultados paralelos.
   - **Erros e ruído**: erro sintético de API e de limite; attachments de ruído, incluindo `session_context` e `credential_org`; tipo desconhecido; linhas de metadados.
   - **Subagentes**: arquivo de subagente + `.meta.json` + `<task-notification>`.
   - **Bordas**: linha de mais de 1 MB; última linha incompleta.
-- [ ] T020 [P] Escrever `tests/chat-transcript-entry.test.ts` (falhando), cobrindo `conversation-rows.md` §2:
+- [x] T020 [P] Escrever `tests/chat-transcript-entry.test.ts` (falhando), cobrindo `conversation-rows.md` §2:
   - ordem de precedência;
   - metadados;
   - ruído descartado **antes** de `unknown`;
   - `isSidechain` descartado;
   - inválido e grande demais.
-- [ ] T021 Implementar `src/shared/chat/transcriptEntry.ts` (`classifyLine(raw, lineRef)`). Faz passar T020.
-- [ ] T022 [P] Escrever `tests/chat-active-chain.test.ts` (falhando), cobrindo `conversation-rows.md` §3:
+- [x] T021 Implementar `src/shared/chat/transcriptEntry.ts` (`classifyLine(raw, lineRef)`). Faz passar T020.
+- [x] T022 [P] Escrever `tests/chat-active-chain.test.ts` (falhando), cobrindo `conversation-rows.md` §3:
   - escolha da folha;
   - subida por `parentUuid`;
   - salto de compactação;
@@ -168,7 +168,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - `tool_result` preso por `tool_use_id`;
   - paginação para trás com `expectedParent` e resultados pendurados;
   - rewind detectado no seguimento adiante.
-- [ ] T023 Implementar `src/shared/chat/activeChain.ts`. Faz passar T022.
+- [x] T023 Implementar `src/shared/chat/activeChain.ts`. Faz passar T022.
 - [x] T024 [P] Escrever `tests/chat-tool-summary.test.ts` (falhando), cobrindo `conversation-rows.md` §4:
   - verbos, alvos e estatísticas em português por ferramenta;
   - caminho relativo ao `cwd`;
@@ -200,11 +200,11 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - rodada em andamento;
   - rodada aberta por notificação.
 - [x] T031 Implementar `src/shared/chat/focusFold.ts`. Faz passar T030.
-- [ ] T032 [P] Escrever `tests/chat-transcript-io.test.ts` (falhando), com arquivos temporários.
+- [x] T032 [P] Escrever `tests/chat-transcript-io.test.ts` (falhando), com arquivos temporários.
   - **Seguidor**: offset; resto de linha; debounce de 50 ms; arquivo que nasce depois; re-apontar.
   - **Paginador**: blocos de 256 KB; linhas de até 8 MB atravessando blocos; página de 30 rodadas ou 2 MB.
   - **Leitura nunca inteira**: afirmar bytes lidos menores que o tamanho do arquivo.
-- [ ] T033 Implementar `src/main/chat/transcript-follower.ts` e `src/main/chat/transcript-pager.ts`. Faz passar T032.
+- [x] T033 Implementar `src/main/chat/transcript-follower.ts` e `src/main/chat/transcript-pager.ts`. Faz passar T032.
 
 ### Tela do terminal do Claude (R6, R16)
 
