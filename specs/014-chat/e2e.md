@@ -206,6 +206,7 @@ driver com a caixa, juntados na mesma branch.
     a `ok` não é emitido ou não chega ao renderer.
   - Aceite da correção: o aviso some sozinho assim que uma linha nova
     chega, e um smoke cobre esse caminho com `/compact` no meio.
+  - **Corrigido** (08/10): o hook `Stop` contava como "atividade" e chega depois de o follower ler a última linha, então todo turno terminado virava `stale` 8 s depois, sem nada a chegar; `Stop` saiu dos eventos de atividade do hub (teste de reprodução em `chat-hub.test.ts`). Não verificado com CLI real nem com `/compact` de verdade.
 
 ## Fase 4 — Pendências (08/10)
 
