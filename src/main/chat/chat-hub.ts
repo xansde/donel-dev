@@ -9,10 +9,12 @@
 // `action-group` never travel in patches: the renderer asks for them with
 // `chat:row-detail` (part `content` on the group id -> `RowDetail.rows`).
 
-import { dirname } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { adapt, expandGroup, initAdapterState, viewOf, type AdapterState } from '../../shared/chat/adapter';
 import type {
   ChatAckLookupOutput,
+  ChatAnswerOutput,
   ChatConversationSwitchedEvent,
   ChatLiveEvent,
   ChatLoadOlderOutput,
@@ -22,6 +24,7 @@ import type {
   ChatRowsEvent,
   ChatSnapshot,
   ConversationSwitchReason,
+  PendingAnswer,
   RowDetail,
   RowPatch,
 } from '../../shared/chat/ipc';
@@ -34,12 +37,16 @@ import type {
   LiveAction,
   LiveStatus,
   NoticeRow,
+  Pending,
+  PendingScope,
+  PendingState,
   RowScope,
   TerminalNeededReason,
   TranscriptEntry,
 } from '../../shared/chat/rows';
 import { classifyLine } from '../../shared/chat/transcriptEntry';
-import type { BridgeEvent } from '../hook-bridge';
+import type { BridgeEvent, PendingDecisionHandle } from '../hook-bridge';
+import { closePending, pendingFromRequest, toHookDecision } from '../../shared/chat/pendingQueue';
 import { summarizeTool } from '../../shared/chat/toolSummary';
 import { createSubmitRing, lookupAck, signalsFromEntries, type PromptSignal } from './prompt-signals';
 import { buildRowDetail } from './row-detail';
@@ -62,6 +69,8 @@ export interface ChatHubEvents {
   conversationSwitched(event: ChatConversationSwitchedEvent): void;
   reception(event: ChatReceptionEvent): void;
   promptSignal(event: ChatPromptSignalEvent): void;
+  /** T079 - a pending just opened (the main decides whether to notify). */
+  pendingOpened?(event: { readonly ptyId: string; readonly pending: Pending }): void;
 }
 
 export interface ChatHubDeps {
@@ -98,8 +107,12 @@ export interface ChatHub {
   ackLookup(ptyId: string, text: string, since: string): Promise<ChatAckLookupOutput>;
   /** T070 - fonte de tela que pede o terminal (chat:screen-state); null = a caixa voltou. */
   reportScreenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): void;
+  /** T076 - the owner's answer to an open pending (chat:answer). */
+  answer(ptyId: string, pendingId: string, answer: PendingAnswer): ChatAnswerOutput;
   /** Folders the tab's transcript files (and sub-agent files) may be served from. */
   transcriptRoots(ptyId: string): readonly string[];
+  /** Id of the conversation the tab is on now (`null` until its first hook). */
+  sessionIdOf(ptyId: string): string | null;
   /** Folders `chat:open-generated` may open from: the tab's `cwd` and the attachments folder. */
   generatedFileRoots(ptyId: string): readonly string[];
   dispose(): void;
@@ -139,6 +152,14 @@ interface Session {
   olderQueue: Promise<unknown>;
 }
 
+interface PendingEntry {
+  pending: Pending;
+  handle: PendingDecisionHandle;
+}
+
+/** Closed pendings kept per tab so a late `chat:answer` gets `not-open`, not `unknown`. */
+const CLOSED_PENDINGS_KEPT = 30;
+
 interface Rec {
   readonly ptyId: string;
   source: ChatSourceInfo | null;
@@ -157,8 +178,8 @@ interface Rec {
   readonly submits: ReturnType<typeof createSubmitRing>;
   /** Sinais recentes lidos do transcript (para o aceite tardio). */
   signals: PromptSignal[];
-  /** Pendencias (PermissionRequest) abertas: o dialogo delas ja e tratado. */
-  readonly openPendings: Set<string>;
+  /** Pendencias (PermissionRequest), em ordem de chegada; as fechadas ficam um tempo para o `not-open`. */
+  readonly pendings: Map<string, PendingEntry>;
   hookTerminalNeeded: TerminalNeededReason | null;
   screenTerminalNeeded: TerminalNeededReason | null;
   currentAction: LiveAction | null;
@@ -216,7 +237,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         appNotices: [],
         submits: createSubmitRing(SUBMIT_RING),
         signals: [],
-        openPendings: new Set(),
+        pendings: new Map(),
         hookTerminalNeeded: null,
         screenTerminalNeeded: null,
         currentAction: null,
@@ -241,14 +262,29 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
 
   // ---- live state ----------------------------------------------------------
 
+  function openPendingsOf(rec: Rec): Pending[] {
+    const out: Pending[] = [];
+    for (const entry of rec.pendings.values()) if (entry.pending.state === 'open') out.push(entry.pending);
+    return out;
+  }
+
   function liveOf(rec: Rec): LiveState {
     const reason = rec.hookTerminalNeeded ?? rec.screenTerminalNeeded;
+    const pendings = openPendingsOf(rec);
     const status: LiveStatus =
-      rec.base === 'ended' ? 'ended' : rec.reception !== 'ok' ? 'not-receiving' : reason !== null ? 'terminal-needed' : rec.base;
+      rec.base === 'ended'
+        ? 'ended'
+        : rec.reception !== 'ok'
+          ? 'not-receiving'
+          : reason !== null
+            ? 'terminal-needed'
+            : pendings.length > 0
+              ? 'waiting-you'
+              : rec.base;
     return {
       status,
       currentAction: rec.currentAction,
-      pendings: [],
+      pendings,
       sends: [],
       activeSubagents: [...rec.activeSubagents],
       terminalNeeded: reason === null ? null : { reason },
@@ -257,7 +293,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
 
   function emitLiveIfChanged(rec: Rec): void {
     const live = liveOf(rec);
-    const key = `${live.status}|${live.currentAction?.toolUseId ?? ''}|${live.activeSubagents.join(',')}|${live.terminalNeeded?.reason ?? ''}`;
+    const key = `${live.status}|${live.currentAction?.toolUseId ?? ''}|${live.activeSubagents.join(',')}|${live.terminalNeeded?.reason ?? ''}|${live.pendings.map((p) => p.id).join(',')}`;
     if (key === rec.lastLiveKey) return;
     rec.lastLiveKey = key;
     deps.events.live({ ptyId: rec.ptyId, live });
@@ -341,6 +377,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         for (const sig of signals) emitSignal(rec, sig);
       }
     }
+    if (!batch.reset) closePendingsFromEntries(rec, toEntries(batch.lines));
     if (batch.lines.length > 0) {
       rec.fileSeen = true;
       rec.lastGrowthAt = now();
@@ -429,6 +466,100 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     };
   }
 
+  // ---- pendings (T076) ---------------------------------------------------------
+
+  /** Description of the sub-agent that asked: adapter row, then `.meta.json`, then `agent_type`. */
+  function subagentDescription(rec: Rec, agentId: string, payload: Record<string, unknown>): string {
+    const row = rec.session?.state.rows.find((r) => r.kind === 'subagent' && r.agentId === agentId);
+    if (row !== undefined && row.kind === 'subagent' && row.description !== '') return row.description;
+    const source = sourceOf(rec);
+    if (source !== null && source.sessionId !== '') {
+      try {
+        const metaPath = join(dirname(source.transcriptPath), source.sessionId, 'subagents', `agent-${agentId}.meta.json`);
+        const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as { description?: unknown };
+        if (typeof meta.description === 'string' && meta.description.trim() !== '') return meta.description;
+      } catch {
+        // no meta file (yet): fall back to the agent type
+      }
+    }
+    return typeof payload.agent_type === 'string' ? payload.agent_type : '';
+  }
+
+  function openPending(rec: Rec, event: Extract<BridgeEvent, { type: 'pending' }>): void {
+    const agentId = typeof event.payload.agent_id === 'string' && event.payload.agent_id !== '' ? event.payload.agent_id : undefined;
+    const scope: PendingScope = agentId === undefined ? 'main' : { agentId, description: subagentDescription(rec, agentId, event.payload) };
+    const pending = pendingFromRequest({
+      id: event.handle.id,
+      payload: event.payload,
+      toolUseId: event.toolUseId,
+      arrivedAt: new Date(now()).toISOString(),
+      scope,
+    });
+    rec.pendings.set(pending.id, { pending, handle: event.handle });
+    rec.hookTerminalNeeded = null; // the dialog of an open pending is handled by the panel
+    emitLiveIfChanged(rec);
+    deps.events.pendingOpened?.({ ptyId: rec.ptyId, pending });
+  }
+
+  function prunePendings(rec: Rec): void {
+    const closed = [...rec.pendings.values()].filter((e) => e.pending.state !== 'open');
+    for (const e of closed.slice(0, Math.max(0, closed.length - CLOSED_PENDINGS_KEPT))) rec.pendings.delete(e.pending.id);
+  }
+
+  /** Marks an open pending as closed. `release` hands the held request back to the TUI (`{}`). */
+  function closeOpenPending(rec: Rec, id: string, state: Exclude<PendingState, 'open'>, release: boolean): boolean {
+    const entry = rec.pendings.get(id);
+    if (entry === undefined || entry.pending.state !== 'open') return false;
+    if (release) entry.handle.release();
+    entry.pending = closePending(entry.pending, state);
+    prunePendings(rec);
+    return true;
+  }
+
+  function closeAllPendings(rec: Rec, state: Exclude<PendingState, 'open'>): void {
+    let changed = false;
+    for (const id of [...rec.pendings.keys()]) changed = closeOpenPending(rec, id, state, true) || changed;
+    if (changed) emitLiveIfChanged(rec);
+  }
+
+  /** The transcript is the second witness: a result / permission decision for the same tool_use, or an interruption. */
+  function closePendingsFromEntries(rec: Rec, entries: readonly TranscriptEntry[]): void {
+    if (![...rec.pendings.values()].some((e) => e.pending.state === 'open')) return;
+    const answered = new Set<string>();
+    let interrupted = false;
+    for (const entry of entries) {
+      if (entry.k !== 'node') continue;
+      const data = entry.data;
+      if (entry.role === 'attachment') {
+        const att = data.attachment;
+        if (att !== null && typeof att === 'object' && (att as Record<string, unknown>).type === 'hook_permission_decision') {
+          const a = att as Record<string, unknown>;
+          for (const v of [a.toolUseID, a.tool_use_id, a.toolUseId]) if (typeof v === 'string') answered.add(v);
+        }
+        continue;
+      }
+      if (entry.role !== 'user') continue;
+      const content = (data.message as { content?: unknown } | undefined)?.content;
+      if (typeof content === 'string') {
+        if (content.startsWith('[Request interrupted by user')) interrupted = true;
+        continue;
+      }
+      if (!Array.isArray(content)) continue;
+      for (const block of content as Record<string, unknown>[]) {
+        if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') answered.add(block.tool_use_id);
+        else if (block?.type === 'text' && typeof block.text === 'string' && block.text.startsWith('[Request interrupted by user')) interrupted = true;
+      }
+    }
+    let changed = false;
+    for (const entry of [...rec.pendings.values()]) {
+      const p = entry.pending;
+      if (p.state !== 'open') continue;
+      if (p.toolUseId !== null && answered.has(p.toolUseId)) changed = closeOpenPending(rec, p.id, 'resolved-elsewhere', true) || changed;
+      else if (interrupted) changed = closeOpenPending(rec, p.id, 'cancelled', true) || changed;
+    }
+    if (changed) emitLiveIfChanged(rec);
+  }
+
   // ---- bridge --------------------------------------------------------------
 
   function handleSwitch(rec: Rec, event: Extract<BridgeEvent, { type: 'conversation-switched' }>): Promise<void> {
@@ -450,6 +581,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       rec.currentAction = null;
       rec.activeSubagents.clear();
       rec.hookTerminalNeeded = null;
+      closeAllPendings(rec, 'cancelled');
       if (hadSession) await openSession(rec, next);
       setReception(rec, 'ok');
       deps.events.conversationSwitched({ ptyId: rec.ptyId, sessionId: event.sessionId, reason });
@@ -495,7 +627,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
 
     if (DIALOG_CLEARING_EVENTS.has(name)) {
       rec.hookTerminalNeeded = null;
-    } else if (name === 'Notification' && rec.openPendings.size === 0) {
+    } else if (name === 'Notification' && openPendingsOf(rec).length === 0) {
       const reason = DIALOG_NOTIFICATIONS[text(payload.notification_type) ?? ''];
       if (reason !== undefined) rec.hookTerminalNeeded = reason;
     }
@@ -507,11 +639,18 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     if (event.type === 'conversation-switched') {
       void handleSwitch(rec, event);
     } else if (event.type === 'session-end') {
+      closeAllPendings(rec, 'cancelled');
       setBase(rec, 'ended');
     } else if (event.type === 'pending') {
-      rec.openPendings.add(event.handle.id);
-    } else if (event.type === 'expired' || event.type === 'resolved-elsewhere' || event.type === 'cancelled') {
-      rec.openPendings.delete(event.requestId);
+      openPending(rec, event);
+    } else if (event.type === 'expired') {
+      // the CLI gave up: nobody is waiting, the terminal must take over (FR-025)
+      if (closeOpenPending(rec, event.requestId, 'expired', false)) {
+        rec.hookTerminalNeeded = 'hook-timeout';
+        emitLiveIfChanged(rec);
+      }
+    } else if (event.type === 'resolved-elsewhere' || event.type === 'cancelled') {
+      if (closeOpenPending(rec, event.requestId, event.type, false)) emitLiveIfChanged(rec);
     } else if (event.type === 'hook') {
       if (ACTIVITY_EVENTS.has(event.event)) rec.lastActivityAt = now();
       if (WORKING_EVENTS.has(event.event)) setBase(rec, 'working');
@@ -597,6 +736,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
 
     markEnded(ptyId) {
       const rec = recOf(ptyId);
+      closeAllPendings(rec, 'cancelled');
       setBase(rec, 'ended');
       const session = rec.session;
       if (session !== null) {
@@ -635,9 +775,35 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       emitLiveIfChanged(rec);
     },
 
+    answer(ptyId, pendingId, answer) {
+      const rec = recs.get(ptyId);
+      const entry = rec?.pendings.get(pendingId);
+      if (rec === undefined || entry === undefined) return { ok: false, reason: 'unknown' };
+      if (entry.pending.state !== 'open') return { ok: false, reason: 'not-open' };
+      let decision: Record<string, unknown>;
+      try {
+        decision = toHookDecision(entry.pending, answer);
+      } catch {
+        return { ok: false, reason: 'unknown' };
+      }
+      if (!entry.handle.respond(decision)) {
+        closeOpenPending(rec, pendingId, 'resolved-elsewhere', false);
+        emitLiveIfChanged(rec);
+        return { ok: false, reason: 'not-open' };
+      }
+      closeOpenPending(rec, pendingId, 'answered', false);
+      emitLiveIfChanged(rec);
+      return { ok: true };
+    },
+
     transcriptRoots(ptyId) {
       const path = recs.get(ptyId)?.source?.transcriptPath ?? deps.getSource(ptyId)?.transcriptPath;
       return path === undefined ? [] : [dirname(path)];
+    },
+
+    sessionIdOf(ptyId) {
+      const source = recs.get(ptyId)?.source ?? deps.getSource(ptyId);
+      return source !== undefined && source !== null && source.sessionId !== '' ? source.sessionId : null;
     },
 
     generatedFileRoots(ptyId) {

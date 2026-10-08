@@ -528,7 +528,7 @@ um por vez, com notificação em segundo plano.
   - setas e Tab escolhem, Esc fecha;
   - insere o texto;
   - selo de `/login` e `/logout`.
-- [ ] T088 [US4] Imagens em `src/main/chat/chat-ipc.ts` e `src/renderer/src/chat/composer/Attachments.tsx`:
+- [x] T088 [US4] Imagens em `src/main/chat/chat-ipc.ts` e `src/renderer/src/chat/composer/Attachments.tsx`:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Botão de clipe abre o seletor de arquivos: imagem vira anexo, outro arquivo vira `@caminho` (FR-015, decisão 4); a miniatura colada se chama "imagem colada N".
   - colar ou arrastar → `chat:save-image`, que grava em `userData/chat-attachments/<sessionId>/` (limpeza ao fechar a aba e, no boot, do que tiver mais de 7 dias);
   - miniatura removível em `src/renderer/src/chat/composer/Attachments.tsx`;

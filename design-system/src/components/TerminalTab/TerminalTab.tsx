@@ -67,6 +67,12 @@ export interface TerminalTabProps {
   /** Modelo abreviado, ex. "sonnet", "fable". */
   model?: string;
   /**
+   * 014-chat (T079, D-C20) — texto de estado ao lado do nome, ex. "esperando você"
+   * quando há pendência aberta. Tem slot próprio: nunca reaproveita `model`.
+   * Quando presente, toma o lugar visual do modelo (a aba continua estreita).
+   */
+  statusText?: string;
+  /**
    * Estado do semáforo. Omitido = "terminal comum" (sem sessão Claude) — a
    * aba troca o dot por um ícone de shell (design-system.md §6, Brief 1).
    */
@@ -119,6 +125,7 @@ export interface TerminalTabProps {
 export function TerminalTab({
   name,
   model,
+  statusText,
   state,
   active = false,
   onClick,
@@ -135,7 +142,7 @@ export function TerminalTab({
   onDrop,
 }: TerminalTabProps) {
   const stateLabel = state ? SESSION_STATE_LABEL_PT[state] : 'Terminal comum';
-  const tooltip = model ? `${stateLabel} · ${model}` : stateLabel;
+  const tooltip = statusText ? `${stateLabel} · ${statusText}` : model ? `${stateLabel} · ${model}` : stateLabel;
   const labelRef = useRef<EditableLabelHandle>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [colorMenuOpen, setColorMenuOpen] = useState(false);
@@ -237,7 +244,11 @@ export function TerminalTab({
         ) : (
           <span className={styles.name}>{name}</span>
         )}
-        {model ? <span className={styles.model}>{model}</span> : null}
+        {statusText ? (
+          <span className={styles.statusText}>{statusText}</span>
+        ) : model ? (
+          <span className={styles.model}>{model}</span>
+        ) : null}
       </button>
       {onColorChange && colorMenuOpen ? (
         <div ref={menuRef} className={styles.colorMenu} role="menu" aria-label={`Cor da aba ${name}`}>

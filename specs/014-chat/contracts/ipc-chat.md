@@ -29,7 +29,7 @@ vivo seguem `data-model.md`.
 | `chat:ack-lookup` | `{ ptyId, text, since }` | `{ matched: boolean, via? }` | Aceite tardio antes do "tentar de novo" (contrato de envio §7). |
 | `chat:open-external` | `{ url }` | `void` | Só `http:`/`https:` (R21). |
 | `chat:open-generated` | `{ ptyId, path }` | `void` | Só extensões de documento ou imagem, e dentro do `cwd` ou da pasta de anexos. |
-| `chat:focus-state` | `{ activePtyId \| null }` | `void` | Aba ativa, para a regra de notificação (R23). O main lê o foco da janela por conta própria. |
+| `chat:focus-state` | `{ activePtyId \| null, tabNames?: Record<ptyId, string> }` | `void` | Aba ativa, para a regra de notificação (R23). O main lê o foco da janela por conta própria. `tabNames` (T079) é o nome atual de cada aba: o título da notificação é o nome da aba, que só o renderer resolve. |
 | `chat:screen-state` | `{ ptyId, terminalNeeded: 'hook-timeout' \| 'interactive-screen' \| 'permission-dialog' \| 'unrecognized' \| null }` | `void` | Fontes de tela que pedem o terminal (R16 item 3-4: diálogo >2 s, "Transcript saving is off", comando `opensScreen`); `null` = a caixa voltou. O main combina com a fonte dos hooks (`Notification` sem pendência) num só `LiveState.terminalNeeded`. |
 | `config:setChatPrefs` | `{ enabled?, focusMode? }` | `AppConfigDto` | Padrão de `config:set*`. |
 
@@ -58,6 +58,7 @@ O main traduz cada `PendingAnswer` na resposta do hook
 | `chat:conversation-switched` | `{ ptyId, sessionId, reason: 'clear' \| 'resume' \| 'fork' }` | A conversa da aba mudou (FR-033): o renderer zera a timeline e chama `chat:attach`. |
 | `chat:prompt-signal` | `{ ptyId, signal: 'submit' \| 'enqueue' \| 'deliver' \| 'command' \| 'shell' \| 'local' \| 'unknown-command' \| 'session-switch' \| 'compact', text?, at, origin?: 'hook' | 'transcript' }` | Sinais de aceite do envio (contrato de envio §5). |
 | `chat:reception` | `{ ptyId, reception: 'ok' \| 'missing' \| 'stale' }` | Aviso de "não estou recebendo a conversa" (FR-030). |
+| `chat:focus-pending` | `{ ptyId }` | Clique na notificação de uma pendência (T079): o main já focou a janela; o renderer ativa a aba, abre a vista Chat e dispara o evento de DOM `donel:chat-focus-pending` (`detail: { ptyId }`), que o painel de pendências escuta para tomar o foco. Um só assinante (o `App`). |
 
 `RowPatch` = `{ op: 'append' | 'replace' | 'prepend' | 'reset', rows }`.
 

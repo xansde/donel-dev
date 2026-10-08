@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -167,8 +167,10 @@ import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-t
 import { cleanupStaleHookSettings, removeSessionHooksSettings, writeHooksSettingsFile, writeSessionHooksSettings } from './hooks-settings';
 import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-bridge';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
+import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
 import { createChatHub, type ChatHub, type ChatSourceInfo } from './chat/chat-hub';
 import { registerChatIpcHandlers } from './chat/chat-ipc';
+import { createPendingNotifier } from './chat/notifications';
 import { registerAssetScheme, registerAssetsProtocol } from './chat/assets-protocol';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
@@ -469,6 +471,8 @@ const activeSessionByPty = new Map<string, string>();
  * ou sem ponte de hooks (transporte legado / ponte que não subiu).
  */
 let chatHub: ChatHub | null = null;
+/** T088 - imagens coladas na caixa do chat (limpas ao fechar a aba e, no boot, por idade). */
+let chatAttachments: AttachmentStore | null = null;
 /** Fonte INICIAL da conversa de cada aba `claude` (a troca de conversa é do hub, não daqui). */
 const initialChatSourceByPty = new Map<string, ChatSourceInfo>();
 /** Conta ativa vista no último `accounts:changed` — a troca vira aviso `account-switch` no chat. */
@@ -990,6 +994,7 @@ function createMainWindow(): void {
     removeSessionHooksSettings(app.getPath('userData'), ptyId);
     activeSessionByPty.delete(ptyId);
     chatHub?.markEnded(ptyId);
+    void chatAttachments?.releasePty(ptyId);
     // T1125 (011-contas-e-provedores, etapa 1, C4) — mesma baixa, pro poll de
     // 5 min do motor de contas parar de contar esta sessão como viva.
     // Fase 2 (D5) — `releaseAccountsBusyPty` também retoma um auto-switch
@@ -1100,12 +1105,34 @@ function handleConversationSwitched(event: Extract<BridgeEvent, { type: 'convers
 function registerChatDomain(): void {
   if (!appConfig.chat.enabled || hookBridge === null) return;
   const attachmentsRoot = join(app.getPath('userData'), 'chat-attachments');
+  // T079 - notificacao do sistema quando uma pendencia abre (janela sem foco ou aba nao ativa).
+  const notifier = createPendingNotifier({
+    preference: () => appConfig.notificationPreference,
+    isWindowFocused: () => BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isFocused()),
+    isSupported: () => Notification.isSupported(),
+    create: (options) => new Notification(options),
+    onClick: (ptyId) => {
+      const window = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+      if (window === undefined) return;
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+      window.webContents.send(CHAT_CHANNELS.focusPending, { ptyId });
+    },
+  });
   const hub = createChatHub({
     bridge: hookBridge,
     getSource: (ptyId) => initialChatSourceByPty.get(ptyId) ?? null,
     events: {
       rows: (event) => broadcastChat(CHAT_CHANNELS.rows, event),
-      live: (event) => broadcastChat(CHAT_CHANNELS.live, event),
+      live: (event) => {
+        // o semaforo da aba fica em `permission` ("esperando voce") enquanto houver pendencia aberta
+        semaphoreManager.setPendingOpen(event.ptyId, event.live.pendings.length > 0);
+        broadcastChat(CHAT_CHANNELS.live, event);
+      },
+      pendingOpened: ({ ptyId, pending }) => {
+        notifier.notifyPending(ptyId, pending);
+      },
       conversationSwitched: (event) => broadcastChat(CHAT_CHANNELS.conversationSwitched, event),
       reception: (event) => broadcastChat(CHAT_CHANNELS.reception, event),
       promptSignal: (event) => broadcastChat(CHAT_CHANNELS.promptSignal, event),
@@ -1114,12 +1141,16 @@ function registerChatDomain(): void {
     attachmentsRoot,
   });
   chatHub = hub;
+  chatAttachments = new AttachmentStore({ root: attachmentsRoot });
+  void chatAttachments.sweepOlderThan(ATTACHMENT_MAX_AGE_MS);
   registerChatIpcHandlers({
     ipcMain,
     enabled: true,
     hub,
+    attachments: chatAttachments,
     openExternal: (url) => shell.openExternal(url),
     openPath: (path) => shell.openPath(path),
+    onFocusState: (input) => notifier.setFocusState(input.activePtyId, input.tabNames),
   });
   registerAssetsProtocol(protocol, { transcriptRoots: (ptyId) => hub.transcriptRoots(ptyId), attachmentsRoot });
 }

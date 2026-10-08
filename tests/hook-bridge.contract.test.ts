@@ -204,6 +204,35 @@ describe('PermissionRequest', () => {
     expect(events.some((e) => e.type === 'resolved-elsewhere')).toBe(false);
   });
 
+  it('a PostToolUse after respond() is not reported as resolved-elsewhere', async () => {
+    const pending = send(port, 'PermissionRequest', token, perm);
+    await tick();
+    const ev = pendingEvent();
+    expect(ev.handle.respond({ behavior: 'allow' })).toBe(true);
+    await pending;
+    await send(port, 'PostToolUse', token, { agent_id: 'a1', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'toolu_1' });
+    await tick();
+    expect(events.some((e) => e.type === 'resolved-elsewhere')).toBe(false);
+    expect(ev.handle.release()).toBe(false);
+  });
+
+  it('two simultaneous requests from different agents are independent', async () => {
+    const first = send(port, 'PermissionRequest', token, perm);
+    const second = send(port, 'PermissionRequest', token, { ...perm, agent_id: 'a2' });
+    await tick();
+    const pendings = events.filter((e): e is Extract<BridgeEvent, { type: 'pending' }> => e.type === 'pending');
+    expect(pendings).toHaveLength(2);
+    expect(pendings[0]!.handle.id).not.toBe(pendings[1]!.handle.id);
+    // PostToolUse for agent a1 releases only the first
+    await send(port, 'PostToolUse', token, { agent_id: 'a1', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    expect(await first).toEqual({ status: 200, body: '{}' });
+    expect(events.filter((e) => e.type === 'resolved-elsewhere')).toEqual([
+      { type: 'resolved-elsewhere', ptyId: 'pty-1', requestId: pendings[0]!.handle.id },
+    ]);
+    expect(pendings[1]!.handle.respond({ behavior: 'deny', message: 'no' })).toBe(true);
+    expect(JSON.parse((await second).body).hookSpecificOutput.decision).toEqual({ behavior: 'deny', message: 'no' });
+  });
+
   it('unregisterSession cancels open pendings and answers {}', async () => {
     const pending = send(port, 'PermissionRequest', token, perm);
     await tick();

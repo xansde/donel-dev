@@ -53,6 +53,8 @@ export interface ChatViewProps {
   ended: { readonly exitCode: number | null } | null;
   /** Slot right above the composer (live footer, terminal-needed strip). The composer itself is always drawn. */
   footer?: ReactNode;
+  /** Folder of the tab (a file picked inside it is mentioned as `@relative`). */
+  cwd?: string;
 }
 
 /**
@@ -90,6 +92,7 @@ export const ChatView = memo(function ChatView({
   focusMode,
   ended,
   footer,
+  cwd,
 }: ChatViewProps): React.JSX.Element {
   const session = useChatSession(ptyId);
   const onOpenTerminal = useCallback(() => actions.openTerminal(tabId), [actions, tabId]);
@@ -234,6 +237,8 @@ export const ChatView = memo(function ChatView({
           {footer ?? null}
           <ChatComposer
             tabId={tabId}
+            ptyId={ptyId}
+            cwd={cwd}
             driver={driver}
             rows={allRows}
             items={items}

@@ -47,6 +47,8 @@ const scenario = loadScenario();
 const homeDir = process.env.DONEL_FAKE_CLAUDE_HOME || join(tmpdir(), `fake-claude-chat-${process.pid}`);
 const callLogPath = process.env.DONEL_FAKE_CLAUDE_LOG || null;
 const hookTimeoutMs = Number(process.env.DONEL_FAKE_CLAUDE_HOOK_TIMEOUT_MS || 5000);
+// Held PermissionRequest hooks (permission/ask/plan steps) wait this long for the app's decision before falling back to the TUI dialog.
+const permissionTimeoutMs = Number(process.env.DONEL_FAKE_CLAUDE_PERMISSION_TIMEOUT_MS || 600000);
 // A message containing "demorar" makes the round last this long (interruptible), so smokes can queue / interrupt.
 const slowMs = Number(process.env.DONEL_FAKE_CLAUDE_SLOW_MS || 3000);
 // Swallows the first Enter that has text in the box (a lost Enter), to exercise the driver's single `\r` resend.
@@ -124,7 +126,7 @@ function runCommandHook(command, payload) {
 }
 
 /** Posts a hook event the way the settings say. Resolves with the parsed response body (or null). */
-async function fireHook(event, extra = {}) {
+async function fireHook(event, extra = {}, options = {}) {
   const entry = settings.hooks?.[event]?.[0]?.hooks?.[0];
   if (!entry) return null;
   const payload = { ...basePayload(event), ...extra };
@@ -139,7 +141,7 @@ async function fireHook(event, extra = {}) {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(entry.headers ?? {}) },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(event === 'PermissionRequest' ? Math.max(hookTimeoutMs, 1000) : hookTimeoutMs),
+      signal: AbortSignal.timeout(options.timeoutMs ?? (event === 'PermissionRequest' ? Math.max(hookTimeoutMs, 1000) : hookTimeoutMs)),
     });
     const text = await response.text();
     return text ? JSON.parse(text) : null;
@@ -172,6 +174,10 @@ function ruler() {
 }
 
 function render() {
+  if (permissionQueue.length > 0) {
+    out(`\x1b[2J\x1b[H${permissionDialogLines(permissionQueue[0]).join('\r\n')}`);
+    return;
+  }
   if (state.dialog) {
     // `/pick`: a model-selection dialog that replaces the input box and stays until Esc (smoke of the "terminal needed" strip).
     const dialog = ['▔'.repeat(Math.max(20, process.stdout.columns || 100)), 'Select model', '', '  ❯ 1. Default (recommended) ✔', '    2. Fake Model', '', '  Enter to confirm · Esc to exit'];
@@ -249,9 +255,200 @@ async function runStep(step) {
       await fireHook('PostToolUse', { ...toolPayload, tool_response: { output: step.result ?? '' } });
       break;
     }
+    case 'permission':
+    case 'ask':
+    case 'bash_permission':
+    case 'edit_permission':
+    case 'plan':
+      await handlePermission(expandPermissionStep(step));
+      break;
+    case 'subagent_permissions': {
+      // Two (or more) subagents asking at the same time: SubagentStart for each, all requests held in parallel.
+      const requests = (step.requests ?? []).map((request, i) => expandPermissionStep({ type: 'permission', agentId: `agent-${i + 1}`, agentType: 'general-purpose', ...request }));
+      for (const request of requests) await fireHook('SubagentStart', { agent_id: request.agentId, agent_type: request.agentType });
+      await Promise.all(requests.map((request) => handlePermission(request)));
+      for (const request of requests) await fireHook('SubagentStop', { agent_id: request.agentId, agent_type: request.agentType });
+      break;
+    }
     default:
       break;
   }
+}
+
+// -------------------------------------------------------------- permissions
+// Held-permission steps (T080). Mirrors hook-bridge.md section 3: PreToolUse, then PermissionRequest held until the
+// app answers or the TUI dialog is keyed (first answer wins; a late hook answer is ignored and only logged).
+const permissionQueue = []; // dialogs on screen, head first; each is a pending request
+
+const COMMON_FIELDS = ['id', 'agentId', 'agentType', 'result', 'delayMs', 'denyReply', 'transcript', 'suggestions'];
+
+function expandPermissionStep(step) {
+  const common = Object.fromEntries(COMMON_FIELDS.filter((k) => step[k] !== undefined).map((k) => [k, step[k]]));
+  if (step.type === 'ask') return { ...common, name: 'AskUserQuestion', input: { questions: step.questions ?? [] } };
+  if (step.type === 'bash_permission') {
+    const rule = step.rule ?? `${String(step.command ?? '').split(/\s+/).slice(0, 2).join(' ')}:*`;
+    const suggestions = step.suggestions ?? [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: rule }], behavior: 'allow', destination: 'localSettings' }];
+    return { ...common, suggestions, name: 'Bash', input: { command: step.command ?? '', description: step.description ?? '' } };
+  }
+  if (step.type === 'edit_permission') return { ...common, name: 'Edit', input: { file_path: step.file_path ?? '', old_string: step.old_string ?? '', new_string: step.new_string ?? '' } };
+  if (step.type === 'plan') return { ...common, name: 'ExitPlanMode', input: { plan: step.plan ?? '', planFilePath: step.planFilePath ?? '' } };
+  return { ...common, name: step.name ?? 'Bash', input: step.input ?? {} };
+}
+
+/** The hook's decision, or null when the CLI would not act on it (empty body, unknown behavior, ExitPlanMode allow without updatedInput). */
+function effectiveDecision(body, spec) {
+  const decision = body?.hookSpecificOutput?.decision;
+  if (!decision || typeof decision !== 'object') return null;
+  if (decision.behavior === 'deny') return decision;
+  if (decision.behavior === 'allow') {
+    if (spec.name === 'ExitPlanMode' && !decision.updatedInput) return null; // ignored by the real CLI on this tool
+    return decision;
+  }
+  return null;
+}
+
+function summarizeInput(spec) {
+  const i = spec.input;
+  return String(i.command ?? i.file_path ?? i.questions?.[0]?.question ?? i.planFilePath ?? JSON.stringify(i)).replace(/\s+/g, ' ').slice(0, 70);
+}
+
+function askOptions(entry) {
+  return entry.spec.input.questions?.[0]?.options ?? [];
+}
+
+function permissionDialogLines(entry) {
+  const { spec } = entry;
+  const bar = '▔'.repeat(Math.max(20, process.stdout.columns || 100));
+  const queue = permissionQueue.length > 1 ? ` (1 of ${permissionQueue.length})` : '';
+  const agent = spec.agentId ? `  Subagent ${spec.agentId} (${spec.agentType ?? 'general-purpose'}) requests permission` : '';
+  const head = [bar, `${spec.name}${queue}`, ...(agent ? [agent] : []), `  ${summarizeInput(spec)}`, ''];
+  if (spec.name === 'AskUserQuestion') {
+    const q = spec.input.questions?.[0];
+    return [...head, `  ${q?.question ?? ''}`, ...askOptions(entry).map((o, i) => `  ${i === 0 ? '❯' : ' '} ${i + 1}. ${o.label ?? o}`), '', '  Esc to cancel'];
+  }
+  if (spec.name === 'ExitPlanMode') {
+    return [...head, 'Would you like to proceed?', '', '  ❯ 1. Yes, and auto-accept edits', "    2. Yes, and don't ask again", '    3. No, keep planning', '', '  Esc to cancel'];
+  }
+  return [...head, 'Do you want to proceed?', '  ❯ 1. Yes', `    2. Yes, and don't ask again for ${spec.name} commands in ${cwd}`, '    3. No, and tell Claude what to do differently', '', '  Esc to cancel'];
+}
+
+/** Rules for "always allow": the suggested addRules (destination forced to localSettings) or the bare tool name. */
+function alwaysAllowPermissions(spec) {
+  const suggested = (spec.suggestions ?? []).filter((s) => s.type === 'addRules').map((s) => ({ ...s, destination: 'localSettings' }));
+  return suggested.length > 0 ? suggested : [{ type: 'addRules', rules: [{ toolName: spec.name }], behavior: 'allow', destination: 'localSettings' }];
+}
+
+function answerPermissionByKey(data) {
+  const entry = permissionQueue[0];
+  const esc = data === '\x1b';
+  if (!esc && !/^[1-9]$/.test(data)) return;
+  let decision = null;
+  if (entry.spec.name === 'AskUserQuestion') {
+    const options = askOptions(entry);
+    if (esc) decision = { behavior: 'deny' };
+    else if (Number(data) <= options.length) {
+      const answers = {};
+      (entry.spec.input.questions ?? []).forEach((q, i) => {
+        const list = q.options ?? [];
+        const pick = i === 0 ? list[Number(data) - 1] : list[0];
+        answers[q.question] = pick?.label ?? pick ?? '';
+      });
+      decision = { behavior: 'allow', updatedInput: { ...entry.spec.input, answers } };
+    }
+  } else if (esc || data === '3') decision = { behavior: 'deny' };
+  else if (data === '1') decision = { behavior: 'allow' };
+  else if (data === '2') decision = { behavior: 'allow', updatedPermissions: alwaysAllowPermissions(entry.spec) };
+  if (decision) entry.finish('tui', decision);
+}
+
+function writeLocalRules(permissions) {
+  const folder = join(cwd, '.claude');
+  const file = join(folder, 'settings.local.json');
+  let current = {};
+  try {
+    current = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    // no file yet
+  }
+  current.permissions = current.permissions ?? {};
+  for (const permission of permissions) {
+    if (permission.type !== 'addRules' || (permission.destination ?? 'localSettings') !== 'localSettings') continue;
+    const behavior = permission.behavior ?? 'allow';
+    const list = Array.isArray(current.permissions[behavior]) ? current.permissions[behavior] : [];
+    for (const rule of permission.rules ?? []) {
+      const text = rule.ruleContent ? `${rule.toolName}(${rule.ruleContent})` : rule.toolName;
+      if (!list.includes(text)) list.push(text);
+    }
+    current.permissions[behavior] = list;
+  }
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(file, `${JSON.stringify(current, null, 2)}\n`);
+}
+
+function defaultResult(spec, input) {
+  if (spec.result !== undefined) return spec.result;
+  if (spec.name === 'AskUserQuestion') {
+    const pairs = Object.entries(input.answers ?? {}).map(([q, a]) => `"${q}"="${a}"`).join(', ');
+    return `User has answered your questions: ${pairs}. You can now continue with the user's answers in mind.`;
+  }
+  if (spec.name === 'ExitPlanMode') return 'User has approved your plan. You can now start coding.';
+  if (spec.name === 'Edit') return `The file ${input.file_path ?? ''} has been updated successfully.`;
+  return 'ok';
+}
+
+async function handlePermission(spec) {
+  const id = spec.id ?? `toolu_${randomUUID().slice(0, 12)}`;
+  const agent = spec.agentId ? { agent_id: spec.agentId, agent_type: spec.agentType ?? 'general-purpose' } : {};
+  // Subagent calls live in the subagent's own file in the real CLI, so by default they stay out of the main transcript.
+  const inTranscript = spec.transcript ?? !spec.agentId;
+  if (inTranscript) appendAssistant({ type: 'tool_use', id, name: spec.name, input: spec.input, caller: { type: 'direct' } });
+  note(`● ${spec.name}(${summarizeInput(spec)})`);
+  await fireHook('PreToolUse', { tool_name: spec.name, tool_input: spec.input, tool_use_id: id, ...agent });
+
+  const outcome = await new Promise((resolve) => {
+    const entry = { spec, id, settled: false };
+    entry.finish = (source, decision) => {
+      if (entry.settled) return false;
+      entry.settled = true;
+      const at = permissionQueue.indexOf(entry);
+      if (at >= 0) permissionQueue.splice(at, 1);
+      render();
+      resolve({ source, decision });
+      return true;
+    };
+    permissionQueue.push(entry);
+    render();
+    // PermissionRequest has no tool_use_id in the real CLI: the app correlates by the (agent, tool, input) triple.
+    const payload = { tool_name: spec.name, tool_input: spec.input, ...(spec.suggestions ? { permission_suggestions: spec.suggestions } : {}), ...agent };
+    void fireHook('PermissionRequest', payload, { timeoutMs: permissionTimeoutMs }).then((body) => {
+      const decision = effectiveDecision(body, spec);
+      logCall({ hookResponse: 'PermissionRequest', tool_use_id: id, tool_name: spec.name, ...agent, body, effective: decision !== null });
+      if (decision && !entry.finish('hook', decision)) logCall({ lateHookResponse: 'PermissionRequest', tool_use_id: id });
+    });
+  });
+
+  const { source, decision } = outcome;
+  logCall({ permissionOutcome: decision.behavior, source, tool_use_id: id, tool_name: spec.name, ...agent });
+  if (decision.behavior === 'deny') {
+    if (decision.interrupt) {
+      turnState.interrupted = true; // aborts the round; runTurn writes `[Request interrupted by user]`
+      return;
+    }
+    const message = decision.message ?? "The user doesn't want to proceed with this tool use. The tool use was rejected.";
+    if (inTranscript) appendToolResult(id, message, true);
+    note(`  ⎿  ${message}`);
+    if (spec.denyReply) {
+      appendAssistant({ type: 'text', text: spec.denyReply });
+      note(`● ${spec.denyReply}`);
+    }
+    return;
+  }
+  const input = decision.updatedInput ?? spec.input;
+  if (Array.isArray(decision.updatedPermissions)) writeLocalRules(decision.updatedPermissions);
+  await sleep(spec.delayMs ?? 0);
+  const result = defaultResult(spec, input);
+  if (inTranscript) appendToolResult(id, result, false);
+  await fireHook('PostToolUse', { tool_name: spec.name, tool_input: input, tool_use_id: id, tool_response: { output: result }, ...agent });
 }
 
 async function runTurn(text, queued = false) {
@@ -386,6 +583,17 @@ function commitPaste(text) {
   }
 }
 
+// ConPTY drops the bracketed-paste markers (see onData), so an image path pasted by the app arrives as plain
+// typed text. Like the real CLI, an absolute image path that ends up at the start of the box (or right after
+// another `[Image #N]`) becomes the `[Image #N]` placeholder.
+const TYPED_IMAGE_PATH = /(^|\])((?:[A-Za-z]:[\\/]|\/)[^\r\n]*\.(?:png|jpe?g|gif|webp))$/i;
+function convertTypedImagePath() {
+  const match = TYPED_IMAGE_PATH.exec(state.input);
+  if (!match) return;
+  state.images += 1;
+  state.input = `${state.input.slice(0, match.index)}${match[1]}[Image #${state.images}]`;
+}
+
 function submitInput() {
   let text = state.input;
   state.pastes.forEach((paste, i) => {
@@ -425,6 +633,10 @@ function pressEnter() {
 
 function onData(chunk) {
   let data = chunk.toString('utf8');
+  if (permissionQueue.length > 0) {
+    answerPermissionByKey(data);
+    return;
+  }
   if (state.dialog) {
     if (data === '\x1b') {
       state.dialog = false;
@@ -486,6 +698,7 @@ function onData(chunk) {
       else continue;
       state.menuClosed = false;
     }
+    convertTypedImagePath();
     if (start === -1) break;
     inPaste = true;
     data = data.slice(start + PASTE_START.length);

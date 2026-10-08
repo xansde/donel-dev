@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // G5 (batch N5) — guarda contra segundo assinante silencioso de canal IPC:
 // todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
 import { subscribeChannel } from './subscribeChannel';
@@ -6,15 +6,17 @@ import { CHAT_CHANNELS } from '../shared/chat/ipc';
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
-  PendingAnswer,
   ChatConversationSwitchedEvent,
+  ChatFocusPendingEvent,
   ChatLiveEvent,
   ChatLoadOlderOutput,
   ChatPromptSignalEvent,
   ChatReceptionEvent,
   ChatRowDetailInput,
   ChatRowsEvent,
+  ChatSaveImageOutput,
   ChatSnapshot,
+  PendingAnswer,
   RowDetail,
 } from '../shared/chat/ipc';
 import type { RowScope, TerminalNeededReason } from '../shared/chat/rows';
@@ -477,12 +479,29 @@ const donelApi: DonelApi = {
     openExternal: (url: string) => ipcRenderer.invoke(CHAT_CHANNELS.openExternal, { url }) as Promise<void>,
     openGenerated: (ptyId: string, path: string) => ipcRenderer.invoke(CHAT_CHANNELS.openGenerated, { ptyId, path }) as Promise<void>,
 
+    saveImage: (ptyId: string, bytes: ArrayBuffer, mediaType: string) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.saveImage, { ptyId, bytes, mediaType }) as Promise<ChatSaveImageOutput>,
+    pathForFile: (file: unknown): string => {
+      try {
+        return webUtils.getPathForFile(file as File);
+      } catch {
+        return '';
+      }
+    },
     ackLookup: (ptyId: string, text: string, since: string) =>
       ipcRenderer.invoke(CHAT_CHANNELS.ackLookup, { ptyId, text, since }) as Promise<ChatAckLookupOutput>,
-    answer: (ptyId: string, pendingId: string, answer: PendingAnswer) =>
-      ipcRenderer.invoke(CHAT_CHANNELS.answer, { ptyId, pendingId, answer }) as Promise<ChatAnswerOutput>,
     screenState: (ptyId: string, terminalNeeded: TerminalNeededReason | null) =>
       ipcRenderer.invoke(CHAT_CHANNELS.screenState, { ptyId, terminalNeeded }) as Promise<void>,
+
+    // T076/T079 - pendencias e foco
+    answer: (ptyId: string, pendingId: string, answer: PendingAnswer) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.answer, { ptyId, pendingId, answer }) as Promise<ChatAnswerOutput>,
+    focusState: (activePtyId: string | null, tabNames?: Readonly<Record<string, string>>) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.focusState, { activePtyId, ...(tabNames !== undefined ? { tabNames } : {}) }) as Promise<void>,
+    onFocusPending: (listener: (event: ChatFocusPendingEvent) => void) => {
+      const handler = (_event: unknown, payload: ChatFocusPendingEvent): void => listener(payload);
+      return subscribeChannel(ipcRenderer, CHAT_CHANNELS.focusPending, handler);
+    },
 
     onRows: (listener: (event: ChatRowsEvent) => void) => {
       const handler = (_event: unknown, payload: ChatRowsEvent): void => listener(payload);

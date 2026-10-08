@@ -16,12 +16,12 @@ import type {
   ChatConversationSwitchedEvent,
   ChatAckLookupOutput,
   ChatAnswerOutput,
-  PendingAnswer,
   ChatLiveEvent,
   ChatPromptSignalEvent,
   ChatReceptionEvent,
   ChatRowsEvent,
   ChatSnapshot,
+  PendingAnswer,
   RowDetail,
   RowDetailPart,
   RowPatch,
@@ -196,9 +196,24 @@ export class ChatStore {
     return this.api.ackLookup(ptyId, text, since);
   }
 
-  /** Owner's answer to an open pending. `not-open` = someone answered first (the live update removes it). */
+  /** T076 - answers an open pending; the main builds the hook decision (the renderer never does). */
   answer(ptyId: string, pendingId: string, answer: PendingAnswer): Promise<ChatAnswerOutput> {
-    return this.api.answer(ptyId, pendingId, answer);
+    return Promise.resolve(this.api.answer(ptyId, pendingId, answer)).catch((): ChatAnswerOutput => ({ ok: false, reason: 'unknown' }));
+  }
+
+  /** T079 - active tab and tab names for the notification rule (the main reads the window focus itself). */
+  reportFocusState(activePtyId: string | null, tabNames?: Readonly<Record<string, string>>): void {
+    void Promise.resolve(this.api.focusState(activePtyId, tabNames)).catch(() => undefined);
+  }
+
+  /** T088 - saves a pasted/dropped image through the main (which validates it) and returns its absolute path. */
+  saveImage(ptyId: string, bytes: ArrayBuffer, mediaType: string): Promise<{ readonly id: string; readonly path: string }> {
+    return this.api.saveImage(ptyId, bytes, mediaType);
+  }
+
+  /** T088 - disk path of a `File` from the picker or a drop (`''` when it has none). */
+  pathForFile(file: unknown): string {
+    return this.api.pathForFile(file);
   }
 
   /** The renderer's screen detectors report what needs the terminal (`null` = the input box is back). */
