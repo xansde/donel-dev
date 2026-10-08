@@ -4,16 +4,18 @@
 // renderer's single `ChatStore` is that subscriber and fans out by `ptyId`.
 
 import type {
+  ChatAckLookupOutput,
   ChatConversationSwitchedEvent,
   ChatLiveEvent,
   ChatLoadOlderOutput,
+  ChatPromptSignalEvent,
   ChatReceptionEvent,
   ChatRowDetailInput,
   ChatRowsEvent,
   ChatSnapshot,
   RowDetail,
 } from './ipc';
-import type { RowScope } from './rows';
+import type { RowScope, TerminalNeededReason } from './rows';
 
 export interface DonelChatApi {
   /** First page from the end of the tab's conversation. Idempotent. */
@@ -26,8 +28,14 @@ export interface DonelChatApi {
   /** Document/image files inside the tab's cwd or the attachments folder only. */
   openGenerated(ptyId: string, path: string): Promise<void>;
 
+  /** Aceite tardio: o texto entrou desde `since` (ISO)? Procura nos `UserPromptSubmit` guardados e no transcript. */
+  ackLookup(ptyId: string, text: string, since: string): Promise<ChatAckLookupOutput>;
+  /** Fontes de tela que pedem o terminal (`null` = a caixa voltou); o main as combina com as dos hooks. */
+  screenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): Promise<void>;
+
   onRows(listener: (event: ChatRowsEvent) => void): () => void;
   onLive(listener: (event: ChatLiveEvent) => void): () => void;
   onConversationSwitched(listener: (event: ChatConversationSwitchedEvent) => void): () => void;
   onReception(listener: (event: ChatReceptionEvent) => void): () => void;
+  onPromptSignal(listener: (event: ChatPromptSignalEvent) => void): () => void;
 }

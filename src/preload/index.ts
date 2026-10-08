@@ -4,16 +4,18 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { subscribeChannel } from './subscribeChannel';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 import type {
+  ChatAckLookupOutput,
   ChatConversationSwitchedEvent,
   ChatLiveEvent,
   ChatLoadOlderOutput,
+  ChatPromptSignalEvent,
   ChatReceptionEvent,
   ChatRowDetailInput,
   ChatRowsEvent,
   ChatSnapshot,
   RowDetail,
 } from '../shared/chat/ipc';
-import type { RowScope } from '../shared/chat/rows';
+import type { RowScope, TerminalNeededReason } from '../shared/chat/rows';
 import type {
   AccountsConfigDto,
   AccountsViewDto,
@@ -473,6 +475,11 @@ const donelApi: DonelApi = {
     openExternal: (url: string) => ipcRenderer.invoke(CHAT_CHANNELS.openExternal, { url }) as Promise<void>,
     openGenerated: (ptyId: string, path: string) => ipcRenderer.invoke(CHAT_CHANNELS.openGenerated, { ptyId, path }) as Promise<void>,
 
+    ackLookup: (ptyId: string, text: string, since: string) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.ackLookup, { ptyId, text, since }) as Promise<ChatAckLookupOutput>,
+    screenState: (ptyId: string, terminalNeeded: TerminalNeededReason | null) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.screenState, { ptyId, terminalNeeded }) as Promise<void>,
+
     onRows: (listener: (event: ChatRowsEvent) => void) => {
       const handler = (_event: unknown, payload: ChatRowsEvent): void => listener(payload);
       return subscribeChannel(ipcRenderer, CHAT_CHANNELS.rows, handler);
@@ -488,6 +495,10 @@ const donelApi: DonelApi = {
     onReception: (listener: (event: ChatReceptionEvent) => void) => {
       const handler = (_event: unknown, payload: ChatReceptionEvent): void => listener(payload);
       return subscribeChannel(ipcRenderer, CHAT_CHANNELS.reception, handler);
+    },
+    onPromptSignal: (listener: (event: ChatPromptSignalEvent) => void) => {
+      const handler = (_event: unknown, payload: ChatPromptSignalEvent): void => listener(payload);
+      return subscribeChannel(ipcRenderer, CHAT_CHANNELS.promptSignal, handler);
     },
   },
 };
