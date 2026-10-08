@@ -108,18 +108,18 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - `PendingDecisionHandle` (`respond`, `release`), registro de `PreToolUse` por 10 s e medições para o T009.
 
   Faz passar T012.
-- [ ] T014 Migrar o semáforo para a ponte, em `src/main/session-semaphore-manager.ts` e `src/main/semaphore-state-machine.ts`:
+- [x] T014 Migrar o semáforo para a ponte, em `src/main/session-semaphore-manager.ts` e `src/main/semaphore-state-machine.ts`:
   - eventos por `ptyId` (sai o mapa por `session_id`);
   - `SessionEnd` com `reason` clear/resume deixa de levar a `done`;
   - caminho antigo (encaminhador PowerShell + `/hook`) selecionável por uma versão via `DONEL_HOOKS_TRANSPORT=legacy`.
 
   Atualizar `tests/session-semaphore-manager.test.ts` e `tests/semaphore-state-machine.test.ts`, com casos novos para `/clear` e `/resume`.
-- [ ] T015 Ligar a ponte no spawn, em `src/main/index.ts` (handler em ~988–1155):
+- [x] T015 Ligar a ponte no spawn, em `src/main/index.ts` (handler em ~988–1155):
   - gerar token e arquivo `--settings` por sessão no lugar do arquivo único;
   - registrar o token antes do spawn e, no `onExit`, apagar o arquivo e desregistrar;
   - no boot, detectar `curl.exe` (`where.exe curl`) e rodar `cleanupStaleHookSettings`;
   - aba de login continua sem hooks.
-- [ ] T016 Re-apontar a conversa da aba (FR-033, nas duas vistas) em `src/main/transcript-watcher.ts`, `src/main/index.ts` e `src/renderer/src/App.tsx`:
+- [x] T016 Re-apontar a conversa da aba (FR-033, nas duas vistas) em `src/main/transcript-watcher.ts`, `src/main/index.ts` e `src/renderer/src/App.tsx`:
   - **Main**: `src/main/transcript-watcher.ts` ganha `repoint(ptyId, { sessionId, transcriptPath })`, que espera o arquivo nascer. `src/main/index.ts` reage ao `conversation-switched` da ponte re-apontando o watcher e emitindo `session:switched` ao renderer.
   - **Renderer**: `src/renderer/src/App.tsx` atualiza `claudeSessionId` da aba (nome, cor e aparência passam a usar o id novo).
   - **Testes**: caso novo em `tests/transcriptWatcher.test.ts` (re-apontar para arquivo que ainda não existe).

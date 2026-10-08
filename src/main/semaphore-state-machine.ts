@@ -51,7 +51,8 @@ export type SemaphoreEvent =
   | { readonly type: 'postToolUse'; readonly at: number }
   | { readonly type: 'stop'; readonly at: number }
   | { readonly type: 'notification'; readonly at: number }
-  | { readonly type: 'sessionEnd'; readonly at: number }
+  /** `reason` do hook `SessionEnd`: `clear`/`resume` trocam a conversa da aba, não a encerram (FR-033, T014). */
+  | { readonly type: 'sessionEnd'; readonly at: number; readonly reason?: string | null }
   /** Evento do SO via `PtyManager.onExit` — nunca vem de um hook. Tem
    * PRIORIDADE sobre `sessionEnd` (spike: kill forçado não dispara
    * `SessionEnd`, então este é o único sinal confiável pra "encerrada" em
@@ -68,8 +69,13 @@ export function reduceSemaphoreState(current: SemaphoreMachineState, event: Sema
   if (current.state === 'done') return current;
 
   switch (event.type) {
-    case 'processExit':
     case 'sessionEnd':
+      // FR-033 — `/clear` e `/resume` emitem SessionEnd do id velho e, logo depois,
+      // SessionStart do novo: a aba segue viva, então isto não é fim.
+      if (event.reason === 'clear' || event.reason === 'resume') return current;
+      return transition('done', event.at, current);
+
+    case 'processExit':
       return transition('done', event.at, current);
 
     case 'userPromptSubmit':

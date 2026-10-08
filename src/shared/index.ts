@@ -40,7 +40,7 @@ export type {
 } from './newProject';
 
 export { SESSION_CHANNELS, TRANSCRIPT_CHANNELS } from './sessions';
-export type { DonelSessionsApi, SessionSummaryDto, TranscriptChangedPayload } from './sessions';
+export type { DonelSessionsApi, SessionSummaryDto, SessionSwitchedPayload, TranscriptChangedPayload } from './sessions';
 
 // T710 (007/CA-11 2º momento) — decisão de esquecer a entrada órfã quando a
 // retomada falha. Puro; medição do sinal em specs/008-fechar-pendencias/.

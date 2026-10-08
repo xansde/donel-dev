@@ -206,6 +206,8 @@ export function watchTranscript(options: TranscriptWatcherOptions): TranscriptWa
  */
 export class TranscriptWatcherRegistry {
   private readonly watchers = new Map<string, TranscriptWatcherHandle>();
+  /** Opções do watcher vivo de cada chave — `repoint` as reaproveita (mesmo `onChange`/debounce) trocando só a conversa. */
+  private readonly optionsByKey = new Map<string, TranscriptWatcherOptions>();
 
   /** `watchFn` injetável só para teste; em produção é o `watchTranscript` real. */
   constructor(private readonly watchFn: (options: TranscriptWatcherOptions) => TranscriptWatcherHandle = watchTranscript) {}
@@ -219,6 +221,20 @@ export class TranscriptWatcherRegistry {
   start(key: string, options: TranscriptWatcherOptions): void {
     this.stop(key);
     this.watchers.set(key, this.watchFn(options));
+    this.optionsByKey.set(key, options);
+  }
+
+  /**
+   * T016 (014-chat, FR-033) — `/clear`/`/resume` trocam a conversa da aba sem
+   * fechá-la: o watcher da mesma chave passa a observar o `.jsonl` novo. O
+   * arquivo pode ainda não existir (conversa sem mensagem não cria arquivo) —
+   * `watchTranscript` vigia o diretório, então o seguidor espera ele nascer.
+   * No-op para chave sem watcher (aba de terminal livre).
+   */
+  repoint(key: string, target: { readonly sessionId: string; readonly transcriptPath: string }): void {
+    const previous = this.optionsByKey.get(key);
+    if (!previous) return;
+    this.start(key, { ...previous, sessionId: target.sessionId, filePath: target.transcriptPath });
   }
 
   /** No-op se a chave não tem watcher (aba de terminal livre nunca abriu um). */
@@ -227,6 +243,7 @@ export class TranscriptWatcherRegistry {
     if (!existing) return;
     existing.dispose();
     this.watchers.delete(key);
+    this.optionsByKey.delete(key);
   }
 
   /** Fecha todos — usado quando a janela morre e leva os PTYs com ela. */

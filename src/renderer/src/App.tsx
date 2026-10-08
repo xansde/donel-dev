@@ -1240,6 +1240,48 @@ export function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * T016 (014-chat, FR-033) — `/clear`, `/resume` e fork trocam a CONVERSA da
+   * aba sem fechá-la. A aba é achada pelo id anterior (o renderer não conhece o
+   * `ptyId`) e passa a apontar para o id novo; contexto, cor do CLI e título do
+   * CLI recomeçam (pertencem à conversa). O que o dono vê como "nome" e "cor" da
+   * aba SEGUE a aba: o nome efetivo de agora é gravado sob o id novo (quando difere
+   * do fallback) e a cor escolhida é persistida também para ele. Um `/rename`
+   * posterior no CLI vence, como sempre (`seenTitle: null`). A conversa anterior
+   * mantém o que tinha, em Sessões anteriores.
+   *
+   * Deps vazias de propósito, como a assinatura de `onTranscriptChanged`: lê o
+   * estado atual por ref.
+   */
+  useEffect(() => {
+    const unsubscribe = window.donel.sessions.onSessionSwitched(({ previousSessionId, sessionId }) => {
+      if (!previousSessionId || previousSessionId === sessionId) return;
+      const tab = tabsRef.current.find((candidate) => candidate.claudeSessionId === previousSessionId);
+      if (!tab) return;
+
+      const stored = appConfigRef.current?.sessionNames[previousSessionId] ?? null;
+      const effectiveName = resolveSessionName({ fallback: tab.name, customTitle: tab.customTitle ?? null, stored });
+
+      setTabs((prev) =>
+        prev.map((candidate) =>
+          candidate.claudeSessionId === previousSessionId
+            ? { ...candidate, claudeSessionId: sessionId, customTitle: null, cliColorName: null }
+            : candidate,
+        ),
+      );
+
+      if (effectiveName !== tab.name && !appConfigRef.current?.sessionNames[sessionId]) {
+        void window.donel.sessions.setName(sessionId, effectiveName, null).then(setAppConfig).catch(() => undefined);
+      }
+      if (tab.color && tab.color !== 'none') {
+        void window.donel.tabs.setColor(sessionId, tab.color).then(setAppConfig).catch(() => undefined);
+      }
+      if (tab.cwd) maybeRegisterVisit(sessionId, tab.cwd, effectiveName);
+    });
+    return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // =========================================================================
   // 003-modo-dev (Batch B) — Zonas 1/2/3
   //

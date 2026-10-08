@@ -60,7 +60,23 @@ export const SESSION_CHANNELS = {
  */
 export const TRANSCRIPT_CHANNELS = {
   changed: 'transcript:changed',
+  /** T016 (014-chat, FR-033) — a conversa da aba mudou (`/clear`, `/resume`, fork) sem a aba fechar. */
+  switched: 'session:switched',
 } as const;
+
+/**
+ * T016 (014-chat, FR-033) — push do `main` quando a ponte de hooks avisa que a
+ * aba passou a outra conversa. O renderer não conhece o `ptyId` da aba (quem o
+ * conhece é o TerminalPane), por isso o payload leva o id ANTERIOR: é por ele que
+ * o App acha a aba e troca `claudeSessionId` para o novo.
+ */
+export interface SessionSwitchedPayload {
+  readonly ptyId: string;
+  readonly previousSessionId: string | null;
+  readonly sessionId: string;
+  /** `clear`, `resume` ou `fork`. */
+  readonly source: string;
+}
 
 export interface TranscriptChangedPayload {
   readonly sessionId: string;
@@ -122,6 +138,8 @@ export interface DonelSessionsApi {
    * Devolve a função de cancelamento (mesmo padrão de `pty.onData`).
    */
   onTranscriptChanged(listener: (payload: TranscriptChangedPayload) => void): () => void;
+  /** T016 (014-chat, FR-033) — assina a troca de conversa de uma aba viva (`/clear`, `/resume`). Devolve o cancelamento. */
+  onSessionSwitched(listener: (payload: SessionSwitchedPayload) => void): () => void;
   /** T705 (007) — upsert de uma visita (CA-7/D9). `label` já vem resolvido (`resolveSessionName`) pelo chamador — o main não recalcula. */
   registerVisit(sessionId: string, projectPath: string, label: string): Promise<AppConfigDto>;
   /** T705/CA-5 — fixa/desfixa a SESSÃO, persistido; continua servindo de desempate na lista geral (C2). */
