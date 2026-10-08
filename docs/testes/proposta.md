@@ -127,3 +127,24 @@ depois, no corpo do PR.
 4. O `reviewPolicy.ts` provavelmente morto: posso confirmar e remover?
 5. Quando fazer: **antes** da Fase 2 do chat, ou **intercalado** (este
    trabalho não depende dela)?
+
+### Respostas do dono (08/10)
+
+1. Camadas: **sim**.
+2. `terminal` nº 5: **sai**.
+3. Smokes da demolição dos perfis: **pela recomendação**. Ficam até a
+   migração sair, e o `migration-nunca-deleta` fica enquanto ela existir.
+4. `reviewPolicy.ts`: **sim**. Confirmar que está morto e remover.
+5. Quando: **em paralelo** ao chat.
+
+Execução: três frentes em paralelo.
+
+- **Smoke**: camadas, etiquetas e helpers (empilhada sobre o #83), depois as
+  fusões e remoções.
+- **Vitest da Esteira**.
+- **Vitest das demais áreas**.
+
+Ficam para depois do merge do #82, porque ele altera os mesmos arquivos:
+
+- a troca do CLI real pelo falso nos smokes (o CLI falso chega com o #82);
+- a aceleração do `transcriptWatcher` e a separação do `pty-manager`.
