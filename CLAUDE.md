@@ -24,8 +24,13 @@ via `CLAUDE_CONFIG_DIR`.
 - **PR e merge (redefinido pelo dono em 2026-08-09)**: **abrir PR contra
   `staging` é livre para o Claude**, sem pedir confirmação — inclusive quando
   quem abre é a fase Implementar da Esteira. A regra anterior ("PR é sempre
-  ato humano") **caiu**, aqui e no baseline do squad. O que **não** mudou:
-  **merge é sempre decisão humana, e só depois de validação**; e `main` e o
+  ato humano") **caiu**, aqui e no baseline do squad.
+- **Merge em `staging` (redefinido pelo dono em 2026-10-08)**: **o Claude
+  mergeia** os PRs contra `staging` assim que a verificação automática
+  (vitest, typecheck, build, smokes da camada pertinente) estiver verde, sem
+  esperar o dono ("mergeie você. Não fica me esperando para mergear nada").
+  A bateria manual no alfa passa a ser validação **depois** do merge, não
+  pré-requisito. Sempre `gh pr merge --merge`, nunca `--admin`. `main` e o
   repo público seguem no bloqueio total do bullet acima.
 - **Canais instalados coexistindo (decisão de 2026-07-28)**: `npm run
   dist:alfa` / `dist:beta` / `dist` empacotam com identidade própria de
