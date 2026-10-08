@@ -20,6 +20,9 @@ const GENERATOR = path.join(REPO_ROOT, 'tests/fixtures/chat/generate-large.mjs')
 const END_MARKER = 'FIM-SESSAO-SINTETICA-VEGA';
 const START_MARKER = 'INICIO-SESSAO-SINTETICA-ATLAS';
 const END_BUDGET_MS = 2_000;
+const JUMP_TOLERANCE_PX = 24;
+// 4000 rounds (20k lines): a page is bounded by 2 MB read, so the 10k-line fixture only has two loads above the initial window; three need more history.
+const ROUNDS = 4000;
 
 test.describe.configure({ mode: 'serial' });
 
@@ -31,7 +34,7 @@ test.beforeAll(async () => {
   chat = await launchChatApp({
     name: 'chat-long-session',
     seed: (sessionsDir) => {
-      execFileSync(process.execPath, [GENERATOR, path.join(sessionsDir, `${sessionId}.jsonl`), sessionId, REPO_ROOT]);
+      execFileSync(process.execPath, [GENERATOR, path.join(sessionsDir, `${sessionId}.jsonl`), sessionId, REPO_ROOT, String(ROUNDS)]);
     },
   });
   page = chat.window;
@@ -43,18 +46,18 @@ test.afterAll(async () => {
 });
 
 interface TopRow {
-  readonly turnId: string | null;
+  readonly roundTail: string | null;
   readonly offset: number;
   readonly rounds: number;
 }
 
 const FIRST_VISIBLE_SCRIPT = (scroller: Element): TopRow => {
-  const sections = Array.from(scroller.querySelectorAll<HTMLElement>('section[data-turn-id]'));
+  const sections = Array.from(scroller.querySelectorAll<HTMLElement>('section[data-round-tail]'));
   const top = scroller.getBoundingClientRect().top;
   const first = sections.find((s) => s.getBoundingClientRect().bottom > top + 1);
   return {
-    turnId: first?.getAttribute('data-turn-id') ?? null,
-    offset: first ? first.getBoundingClientRect().top - top : 0,
+    roundTail: first?.getAttribute('data-round-tail') ?? null,
+    offset: first ? first.getBoundingClientRect().bottom - top : 0,
     rounds: sections.length,
   };
 };
@@ -82,13 +85,9 @@ test('T059 - sessao longa: fim visivel em <= 2 s (SC-005) @chat', async () => {
   expect(endMs).toBeLessThanOrEqual(END_BUDGET_MS);
 });
 
-// SC-005 (parte da rolagem) MEDIDO E REPROVADO em 2026-10-08: ao carregar historico, a posicao do primeiro item
-// visivel salta ~1068 px (constante nas 3 cargas) - o `preservedScrollTop` usa a altura medida com as rodadas
-// fora da tela em 480 px estimados (`content-visibility: auto`), e as vizinhas ganham a altura real depois.
-// `test.fail` mantem o gate verde e VIRA ERRO quando o salto for corrigido (entao: remover o `test.fail`).
-// Plano B do R19 (react-virtuoso) NAO foi adotado: tarefa a abrir pelo dono.
+// SC-005 (parte da rolagem): o historico entra por ANCORA (rodada visivel + deslocamento), refeita enquanto as
+// rodadas fora da tela trocam a altura estimada pela real. Tolerancia: 24 px (~1 linha de texto) - antes: ~1068 px.
 test('T059 - sessao longa: rolar ate o topo carrega historico sem salto (SC-005) @chat', async () => {
-  test.fail(true, 'SC-005 salto de ~1068 px ao carregar historico - ver comentario acima e specs/014-chat/e2e.md');
   test.setTimeout(180_000);
   const { shot } = chatHelpers(page);
 
@@ -121,18 +120,18 @@ test('T059 - sessao longa: rolar ate o topo carrega historico sem salto (SC-005)
       .toBeGreaterThan(before.rounds);
     // ... and for the layout to settle
     await page.waitForTimeout(400);
-    console.log('DIAG', JSON.stringify(await scroller.evaluate((el) => ({ top: el.scrollTop, h: el.scrollHeight, c: el.clientHeight, r: el.querySelectorAll('section[data-turn-id]').length }))));
-    const after = await page.evaluate((turnId) => {
+    console.log(`DIAG pass ${pass}`, JSON.stringify(await scroller.evaluate((el) => ({ top: el.scrollTop, h: el.scrollHeight, c: el.clientHeight, r: el.querySelectorAll('section[data-round-tail]').length }))));
+    const after = await page.evaluate((roundTail) => {
       const scrollerEl = document.querySelector<HTMLElement>('[data-testid="chat-timeline"]');
-      const section = scrollerEl?.querySelector<HTMLElement>(`section[data-turn-id="${turnId}"]`);
+      const section = scrollerEl?.querySelector<HTMLElement>(`section[data-round-tail="${roundTail}"]`);
       if (!scrollerEl || !section) return null;
-      return section.getBoundingClientRect().top - scrollerEl.getBoundingClientRect().top;
-    }, before.turnId);
+      return section.getBoundingClientRect().bottom - scrollerEl.getBoundingClientRect().top;
+    }, before.roundTail);
     expect(after, 'the first visible round must still exist after loading older history').not.toBeNull();
     jumps.push(Math.round(Math.abs((after as number) - before.offset)));
   }
   console.log(`SC-005 salto (px) por carga de historico: ${jumps.join(', ')}`);
   test.info().annotations.push({ type: 'SC-005 salto (px)', description: jumps.join(', ') });
   await shot('11-sessao-longa-topo');
-  for (const jump of jumps) expect(jump).toBeLessThanOrEqual(4);
+  for (const jump of jumps) expect(jump).toBeLessThanOrEqual(JUMP_TOLERANCE_PX);
 });

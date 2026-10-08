@@ -6,8 +6,10 @@
 //     pill appears ONLY when a new row landed below the reading position: an
 //     in-place update (streaming text, a patched row) or an older page loaded
 //     above never raises it;
-//   - prepending older history preserves the reading position by the
-//     `scrollHeight` difference;
+//   - prepending older history preserves the reading position by ANCHOR: the
+//     first visible round and its offset from the viewport top are remembered
+//     and restored after the commit - and again while the off-screen rounds
+//     (`content-visibility: auto`, estimated heights) settle to real ones;
 //   - the per-tab view state (following / position) survives the Chat |
 //     Terminal toggle.
 
@@ -96,6 +98,43 @@ export function onRowsChange(state: ScrollState, change: RowsChange): { state: S
 /** New `scrollTop` after older rows were inserted above: the height gained is added. */
 export function preservedScrollTop(prevScrollTop: number, prevScrollHeight: number, nextScrollHeight: number): number {
   return Math.max(0, prevScrollTop + (nextScrollHeight - prevScrollHeight));
+}
+
+/**
+ * How long after a prepend the anchor keeps being re-aligned while rounds
+ * outside the viewport trade their estimated height for the real one.
+ */
+export const ANCHOR_SETTLE_MS = 800;
+
+/**
+ * Anchor-based preservation: the anchor round sat `offsetBefore` px below the
+ * viewport top; it now sits `offsetNow` px below it. Moving the scroll by the
+ * drift puts it back. Unlike `preservedScrollTop` it does not trust
+ * `scrollHeight`, which with `content-visibility: auto` mixes estimated and
+ * real heights and changes again after the commit.
+ */
+export function anchoredScrollTop(scrollTop: number, offsetBefore: number, offsetNow: number): number {
+  return Math.max(0, scrollTop + (offsetNow - offsetBefore));
+}
+
+/**
+ * Index of the first block (blocks ordered top to bottom) whose bottom edge is
+ * below `viewportTop`, by binary search; -1 when there is none.
+ */
+export function firstVisibleIndex(count: number, bottomOf: (index: number) => number, viewportTop: number): number {
+  let lo = 0;
+  let hi = count - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (bottomOf(mid) > viewportTop + 1) {
+      found = mid;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return found;
 }
 
 export function shouldLoadOlder(

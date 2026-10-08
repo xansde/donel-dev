@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ANCHOR_SETTLE_MS,
   FOLLOW_THRESHOLD_PX,
   INITIAL_SCROLL_STATE,
+  anchoredScrollTop,
+  firstVisibleIndex,
   classifyRowsChange,
   isFollowing,
   onRowsChange,
@@ -164,5 +167,40 @@ describe('per-tab view state (survives the Chat | Terminal toggle)', () => {
   it('clamps to the available range', () => {
     const snap = snapshotView({ following: false, pill: false }, m(1400));
     expect(restoreScrollTop(snap, m(0, 500, 1000))).toBe(500);
+  });
+});
+
+describe('anchoredScrollTop (prepend keeps the reader by ANCHOR, not by scrollHeight)', () => {
+  it('moves the scroll by how far the anchor drifted from its remembered offset', () => {
+    // anchor was 30 px below the viewport top; after the prepend it sits 1098 px below
+    expect(anchoredScrollTop(100, 30, 1098)).toBe(1168);
+  });
+  it('is a no-op once the anchor is back where it was', () => {
+    expect(anchoredScrollTop(1168, 30, 30)).toBe(1168);
+  });
+  it('corrects upward when off-screen rounds measured shorter than estimated', () => {
+    expect(anchoredScrollTop(1168, 30, 130)).toBe(1268);
+    expect(anchoredScrollTop(1168, 30, -70)).toBe(1068);
+  });
+  it('never goes negative', () => {
+    expect(anchoredScrollTop(10, 30, -500)).toBe(0);
+  });
+  it('has a bounded settle window', () => {
+    expect(ANCHOR_SETTLE_MS).toBeGreaterThan(0);
+    expect(ANCHOR_SETTLE_MS).toBeLessThanOrEqual(2000);
+  });
+});
+
+describe('firstVisibleIndex (first block whose bottom is below the viewport top)', () => {
+  const bottoms = [-300, -120, 40, 400, 900];
+  it('finds it by binary search over ordered bottoms', () => {
+    expect(firstVisibleIndex(bottoms.length, (i) => bottoms[i]!, 0)).toBe(2);
+  });
+  it('returns the first block when all are visible', () => {
+    expect(firstVisibleIndex(3, (i) => 50 + i * 100, 0)).toBe(0);
+  });
+  it('returns -1 when none is visible or the list is empty', () => {
+    expect(firstVisibleIndex(2, () => -10, 0)).toBe(-1);
+    expect(firstVisibleIndex(0, () => 0, 0)).toBe(-1);
   });
 });
