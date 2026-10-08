@@ -75,6 +75,19 @@ class FakeApi implements DonelChatApi {
   openGenerated(): Promise<void> {
     return Promise.resolve();
   }
+  answerCalls: { ptyId: string; pendingId: string; kind: string }[] = [];
+  focusCalls: { activePtyId: string | null; tabNames?: Readonly<Record<string, string>> }[] = [];
+  answer(ptyId: string, pendingId: string, answer: { kind: string }): Promise<{ ok: true }> {
+    this.answerCalls.push({ ptyId, pendingId, kind: answer.kind });
+    return Promise.resolve({ ok: true });
+  }
+  focusState(activePtyId: string | null, tabNames?: Readonly<Record<string, string>>): Promise<void> {
+    this.focusCalls.push({ activePtyId, tabNames });
+    return Promise.resolve();
+  }
+  onFocusPending(): () => void {
+    return () => undefined;
+  }
   onRows(l: (e: ChatRowsEvent) => void): () => void {
     this.subs.rows += 1;
     this.rowsL.push(l);
@@ -98,6 +111,12 @@ class FakeApi implements DonelChatApi {
   ackLookup(ptyId: string, text: string, since: string): Promise<{ matched: boolean }> {
     this.ackCalls.push({ ptyId, text, since });
     return Promise.resolve({ matched: true });
+  }
+  saveImage(): Promise<{ id: string; path: string }> {
+    return Promise.resolve({ id: 'img.png', path: 'C:/ud/chat-attachments/s/img.png' });
+  }
+  pathForFile(): string {
+    return '';
   }
   screenState(ptyId: string, reason: string | null): Promise<void> {
     this.screenCalls.push({ ptyId, reason });
@@ -189,6 +208,15 @@ describe('ChatStore', () => {
     store.reportScreenState('p1', 'interactive-screen');
     expect(api.ackCalls).toEqual([{ ptyId: 'p1', text: 'oi', since: 'since' }]);
     expect(api.screenCalls).toEqual([{ ptyId: 'p1', reason: 'interactive-screen' }]);
+  });
+
+  it('forwards answers and the focus state without building any hook JSON', async () => {
+    const api = new FakeApi();
+    const store = new ChatStore(api);
+    expect(await store.answer('p1', 'p1:3', { kind: 'allow' })).toEqual({ ok: true });
+    store.reportFocusState('p1', { p1: 'atlas' });
+    expect(api.answerCalls).toEqual([{ ptyId: 'p1', pendingId: 'p1:3', kind: 'allow' }]);
+    expect(api.focusCalls).toEqual([{ activePtyId: 'p1', tabNames: { p1: 'atlas' } }]);
   });
 
   it('attaches on the first subscriber, detaches on the last, and exposes the snapshot', async () => {

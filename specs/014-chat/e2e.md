@@ -194,3 +194,85 @@ driver com a caixa, juntados na mesma branch.
   visão terminal para colar a imagem. Colar/arrastar imagem é o **T088**
   (Fase 5). O envio já sabe mandar imagem (`imagePaths`, §4 do contrato);
   falta a caixa aceitar a colagem e gravar o arquivo (`chat:save-image`).
+- **"Não estou recebendo a conversa" que não sai** (alfa, 08/10, para depois):
+  numa sessão longa (72% de contexto), o aviso FR-030 apareceu e ficou
+  preso. Segundo o dono, "perdeu a conexão com o terminal e nunca mais
+  recuperou". No print, porém, a última resposta do Claude está renderizada
+  logo abaixo do aviso: as linhas continuam chegando e só o estado
+  `reception` não volta a `ok`.
+  - Suspeitas a investigar: o poll de recepção (`checkReception` no hub,
+    2 s) compara com um caminho ou um `mtime` que ficou velho depois de
+    `/compact` ou da troca de conversa; ou o evento `chat:reception` de volta
+    a `ok` não é emitido ou não chega ao renderer.
+  - Aceite da correção: o aviso some sozinho assim que uma linha nova
+    chega, e um smoke cobre esse caminho com `/compact` no meio.
+
+## Fase 4 — Pendências (08/10)
+
+Branch `feature/014-fase-4`, T074–T081, mais a **T088** (imagem colada,
+arrastada ou anexada na caixa), antecipada da Fase 5 a pedido do dono.
+
+Seis frentes paralelas, juntadas na mesma branch:
+- fila e tradução das respostas para o hook (T074, T075);
+- assistente de perguntas e plano, adaptados do T3 (T077);
+- CLI falso com pedidos segurados (T080);
+- hub, `chat:answer` e notificações (T076, T079);
+- painel (T078);
+- imagem na caixa (T088).
+
+A smoke (T081) veio por último.
+
+### Automático
+
+- **vitest:** 3640 testes verdes (163 arquivos).
+- **typecheck e build:** verdes.
+- **Smokes:** `npm run test:smoke` 74/74 e `@chat` 17/17.
+- **`chat-pending` (SC-002), 7 cenários, estável em 4 rodadas:**
+  - pergunta respondida pelo painel;
+  - "Permitir sempre" gravando `Bash(npm install:*)` no `settings.local.json`;
+  - Negar com motivo;
+  - aprovar plano (`updatedInput` ecoado) e "Pedir ajuste" (deny com o texto);
+  - dois subagentes em fila ("mais 1 esperando", a origem, e a próxima pendência sobe na hora);
+  - resposta pela TUI fechando o painel;
+  - Parar com pendência → `interrupt`;
+  - notificação com a aba inativa sem o comando no corpo (gancho de smoke `DONEL_SMOKE_NOTIFICATIONS_LOG`).
+- **`chat-composer-image`:** colar, clipe, remover, rascunho, só imagem e arquivo comum → `@caminho`.
+
+### Achados e limites conhecidos
+
+- **Bug achado pela smoke e corrigido:** com pendência aberta o status vira
+  `waiting-you`, e o pé de trabalho sumia junto com o Parar. Nesse estado o
+  `interrupt` era inalcançável. Agora o pé fica, mas o texto durante a
+  pendência é só "trabalhando —", sem verbo, e precisa melhorar.
+- **Diálogo da TUI fora do `PermissionRequest`:** com o chat ligado, o toast
+  antigo de `permission` da aba claude deixa de aparecer. Esse diálogo segue
+  pela faixa "o terminal precisa de você", mas sem notificação do sistema.
+- **Pendência sem `PreToolUse` casado (sem `toolUseId`):** fecha só por
+  `PostToolUse` ou pelo marcador de interrupção, não pelo `tool_result`. Uma
+  negação pela TUI nesse caso deixaria o painel aberto até a rodada acabar.
+- **Formato de `hook_permission_decision` no transcript:** não verificado com
+  o CLI real; o código aceita as três grafias do id.
+- **Imagem:**
+  - a mensagem otimista do dono mostra "imagem enviada" sem miniatura (ela
+    chega com a linha do transcript);
+  - o arraste com o mouse não é exercitado pela smoke;
+  - `@` com caminho absoluto fora do projeto não foi verificado no CLI real
+    (R4).
+- **Forma do painel:**
+  - a permissão ganhou o cabeçalho com contador, igual às outras variantes;
+  - "Cancelar" do ajuste fica na dica abaixo da caixa;
+  - a origem de subagente é texto simples até a Fase 6;
+  - a altura máxima usa `62vh`.
+- **Smokes instáveis** (passam isolados e na rodada seguinte):
+  - `chat-long-session`, SC-005 sob carga;
+  - `chat-send`, checagem de `Request interrupted by user`;
+  - `chat-live-latency`, 897 ms numa rodada.
+
+### Bateria real no alfa — **pendente (dono, pós-merge)**
+
+| Item | O que verificar | Resultado |
+|---|---|---|
+| B3 | pergunta, permissão (com "Permitir sempre" e Negar com motivo) e plano (aprovar e pedir ajuste) pelo painel, com o CLI real | pendente |
+| B3 | responder pelo terminal com o painel aberto: o painel fecha sozinho | pendente |
+| SC-002 | nenhuma pergunta ou permissão perdida num dia de uso; notificação do Windows com a janela fora de foco, e o clique leva ao painel | pendente |
+| T088 | colar um print com Ctrl+V na caixa e mandar: o Claude recebe a imagem | pendente |

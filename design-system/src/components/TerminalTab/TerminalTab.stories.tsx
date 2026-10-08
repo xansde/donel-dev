@@ -39,6 +39,11 @@ export const PermissionTab: Story = {
   args: { name: 'onvio/etl', model: 'sonnet', state: 'permission', onClose: () => {} },
 };
 
+/** 014-chat (T079, D-C20) — pendência aberta: `statusText` no slot próprio, no lugar visual do modelo. */
+export const PendingTab: Story = {
+  args: { name: 'atlas · repasse', model: 'sonnet', statusText: 'esperando você', state: 'permission', onClose: () => {} },
+};
+
 /** Ícone `■`, `--state-done`, estático. */
 export const DoneTab: Story = {
   args: { name: 'fix build_real.py', model: 'sonnet', state: 'done', onClose: () => {} },

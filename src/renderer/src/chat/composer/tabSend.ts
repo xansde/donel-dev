@@ -9,6 +9,7 @@ import type { TerminalPaneHandle } from '../../TerminalPane';
 import { getChatStore, type ChatStore } from '../ChatStore';
 import { markOpensScreen } from '../useTerminalNeededReporter';
 import { SendDriver, type SendDriverPorts, type SendRequest } from '../sendDriver';
+import type { DraftImage } from './attachmentsModel';
 
 export interface TabTerminalSource {
   terminal(): TerminalPaneHandle | null;
@@ -114,6 +115,7 @@ export function disposeTabSend(tabId: string): void {
   w.driver.dispose();
   wired.delete(tabId);
   drafts.delete(tabId);
+  draftImages.delete(tabId);
 }
 
 // ---------------------------------------------------------------- drafts
@@ -136,6 +138,35 @@ export function subscribeDraft(tabId: string, listener: () => void): () => void 
   if (set === undefined) {
     set = new Set();
     draftListeners.set(tabId, set);
+  }
+  set.add(listener);
+  return () => {
+    set!.delete(listener);
+  };
+}
+
+// ---------------------------------------------------------------- image drafts (T088)
+
+const EMPTY_IMAGES: readonly DraftImage[] = [];
+const draftImages = new Map<string, readonly DraftImage[]>();
+const imageListeners = new Map<string, Set<() => void>>();
+
+/** Stable reference while nothing changes (it feeds `useSyncExternalStore`). */
+export function getDraftImages(tabId: string): readonly DraftImage[] {
+  return draftImages.get(tabId) ?? EMPTY_IMAGES;
+}
+
+export function setDraftImages(tabId: string, images: readonly DraftImage[]): void {
+  if (images.length === 0) draftImages.delete(tabId);
+  else draftImages.set(tabId, images);
+  for (const l of [...(imageListeners.get(tabId) ?? [])]) l();
+}
+
+export function subscribeDraftImages(tabId: string, listener: () => void): () => void {
+  let set = imageListeners.get(tabId);
+  if (set === undefined) {
+    set = new Set();
+    imageListeners.set(tabId, set);
   }
   set.add(listener);
   return () => {

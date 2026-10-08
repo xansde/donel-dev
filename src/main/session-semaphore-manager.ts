@@ -70,6 +70,8 @@ export class SessionSemaphoreManager {
   private readonly ptyState = new Map<string, SemaphoreMachineState>();
   /** ptyId cujo processo saiu com exit code != 0 — sobrepõe `done` -> `error` na emissão pública. */
   private readonly erroredPtyIds = new Set<string>();
+  /** T079 (014-chat) - abas com pendencia aberta (PermissionRequest): o estado publico e `permission` enquanto durar. */
+  private readonly pendingOpenPtyIds = new Set<string>();
   private readonly listeners = new Set<(update: SemaphoreUpdate) => void>();
   /**
    * Emenda 22/09 (011-contas-e-provedores, etapa 3, Fase 2, item 4) —
@@ -149,6 +151,7 @@ export class SessionSemaphoreManager {
   unregisterSession(ptyId: string): void {
     this.ptyState.delete(ptyId);
     this.erroredPtyIds.delete(ptyId);
+    this.pendingOpenPtyIds.delete(ptyId);
     for (const [claudeSessionId, mappedPtyId] of this.sessionToPty) {
       if (mappedPtyId === ptyId) this.sessionToPty.delete(claudeSessionId);
     }
@@ -160,6 +163,14 @@ export class SessionSemaphoreManager {
     const next = reduceSemaphoreState(current, { type: 'processExit', at: this.now() });
     this.ptyState.set(ptyId, next);
     if (exitCode !== 0) this.erroredPtyIds.add(ptyId);
+    this.emit(ptyId);
+  }
+
+  /** T079 (014-chat) - o hub do chat avisa quando a aba ganha/perde pendencia aberta. */
+  setPendingOpen(ptyId: string, open: boolean): void {
+    if (this.pendingOpenPtyIds.has(ptyId) === open) return;
+    if (open) this.pendingOpenPtyIds.add(ptyId);
+    else this.pendingOpenPtyIds.delete(ptyId);
     this.emit(ptyId);
   }
 
@@ -262,6 +273,7 @@ export class SessionSemaphoreManager {
 
   private publicStateFor(ptyId: string, state: SemaphoreMachineState): PublicSemaphoreState {
     if (state.state === 'done' && this.erroredPtyIds.has(ptyId)) return 'error';
+    if (state.state !== 'done' && this.pendingOpenPtyIds.has(ptyId)) return 'permission';
     return state.state;
   }
 

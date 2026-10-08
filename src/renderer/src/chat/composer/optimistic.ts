@@ -68,7 +68,8 @@ export function mergeOptimistic(realRows: readonly ConversationRow[], items: rea
       turnId: null,
       at: new Date(item.createdAt).toISOString(),
       scope: 'main',
-      text: item.text,
+      // An images-only message has no text to show; the thumbnails live in the composer until the real row arrives.
+      text: item.text !== '' || item.images.length === 0 ? item.text : item.images.length === 1 ? 'imagem enviada' : `${item.images.length} imagens enviadas`,
       attachments: [],
     });
     overlays.set(id, overlayOf(item, false));

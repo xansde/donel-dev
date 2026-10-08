@@ -4,25 +4,31 @@
 // preference at runtime takes effect on the next start of the app.
 //
 // Handlers here: attach, detach, load-older, row-detail, open-external,
-// open-generated, ack-lookup (T064), screen-state (T070). The other contract
-// channels (answer, subagent-*, catalog, files, save-image, focus-state) belong to later tasks.
+// open-generated, ack-lookup (T064), screen-state (T070), answer (T076), focus-state (T079), save-image
+// (T088). The other contract channels (subagent-*, catalog, files) belong to later tasks.
 
 import { CHAT_CHANNELS } from '../../shared/chat/ipc';
 import type {
   ChatAckLookupInput,
   ChatAckLookupOutput,
+  ChatAnswerInput,
+  ChatAnswerOutput,
   ChatAttachInput,
   ChatAttachOutput,
   ChatDetachInput,
+  ChatFocusStateInput,
   ChatLoadOlderInput,
   ChatLoadOlderOutput,
   ChatOpenExternalInput,
   ChatOpenGeneratedInput,
   ChatRowDetailInput,
+  ChatSaveImageInput,
+  ChatSaveImageOutput,
   ChatScreenStateInput,
   RowDetail,
 } from '../../shared/chat/ipc';
 import { isExternalUrlAllowed, isGeneratedFileOpenable } from '../../shared/chat/linkPolicy';
+import type { AttachmentStore } from './attachments';
 import type { ChatHub } from './chat-hub';
 
 /** The slice of Electron's `ipcMain` used here. */
@@ -37,10 +43,14 @@ export interface ChatIpcDeps {
   /** `chat.enabled` from the config, read at boot. */
   readonly enabled: boolean;
   readonly hub: ChatHub;
+  /** T088 - where `chat:save-image` writes. Without it the channel is not registered. */
+  readonly attachments?: AttachmentStore;
   /** `shell.openExternal` */
   readonly openExternal: (url: string) => Promise<void>;
   /** `shell.openPath` (resolves to an error message, '' on success) */
   readonly openPath: (path: string) => Promise<string>;
+  /** T079 - `chat:focus-state`: the active tab (and tab names) for the notification rule. */
+  readonly onFocusState?: (input: ChatFocusStateInput) => void;
 }
 
 export interface ChatIpcRegistration {
@@ -58,6 +68,9 @@ const HANDLED: readonly string[] = [
   CHAT_CHANNELS.openGenerated,
   CHAT_CHANNELS.ackLookup,
   CHAT_CHANNELS.screenState,
+  CHAT_CHANNELS.answer,
+  CHAT_CHANNELS.focusState,
+  CHAT_CHANNELS.saveImage,
 ];
 
 const SCREEN_REASONS: ReadonlySet<string> = new Set(['hook-timeout', 'interactive-screen', 'permission-dialog', 'unrecognized']);
@@ -108,6 +121,37 @@ export function registerChatIpcHandlers(deps: ChatIpcDeps): ChatIpcRegistration 
     const reason = input.terminalNeeded;
     if (reason === null || SCREEN_REASONS.has(reason)) hub.reportScreenState(input.ptyId, reason);
   });
+
+  ipcMain.handle(CHAT_CHANNELS.answer, (_e, input: ChatAnswerInput): ChatAnswerOutput => {
+    if (!isString(input?.ptyId) || !isString(input.pendingId) || input.answer === null || typeof input.answer !== 'object') {
+      return { ok: false, reason: 'unknown' };
+    }
+    return hub.answer(input.ptyId, input.pendingId, input.answer);
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.focusState, (_e, input: ChatFocusStateInput): void => {
+    if (input === null || typeof input !== 'object') return;
+    if (input.activePtyId !== null && !isString(input.activePtyId)) return;
+    const names: Record<string, string> = {};
+    if (input.tabNames !== undefined && input.tabNames !== null && typeof input.tabNames === 'object') {
+      for (const [key, value] of Object.entries(input.tabNames)) if (isString(value)) names[key] = value;
+    }
+    deps.onFocusState?.({ activePtyId: input.activePtyId ?? null, tabNames: names });
+  });
+
+  const { attachments } = deps;
+  if (attachments !== undefined) {
+    ipcMain.handle(CHAT_CHANNELS.saveImage, async (_e, input: ChatSaveImageInput): Promise<ChatSaveImageOutput> => {
+      if (!isString(input?.ptyId) || !isString(input.mediaType)) throw new Error('chat:save-image: pedido inválido');
+      const bytes: unknown = input.bytes;
+      if (!(bytes instanceof ArrayBuffer) && !ArrayBuffer.isView(bytes)) throw new Error('chat:save-image: bytes inválidos');
+      // The folder is named by the main (the tab's conversation), never by the renderer.
+      const sessionId = hub.sessionIdOf(input.ptyId);
+      if (sessionId === null) throw new Error('chat:save-image: a conversa da aba ainda não começou');
+      const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      return attachments.save(input.ptyId, sessionId, view, input.mediaType);
+    });
+  }
 
   return {
     registered: true,

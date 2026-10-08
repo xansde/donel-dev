@@ -60,6 +60,9 @@ export function deriveFooter({ live, rows, lastAction, screenWorking = null }: F
     }
     return { kind: 'working', waitingSubagents: live.activeSubagents.length };
   }
+  // A pending is open (the status turned to waiting-for-you): the round is held, not over, and Parar must stay
+  // reachable - it answers the pending with `interrupt` (T078/T081).
+  if (live.pendings.length > 0) return { kind: 'working', waitingSubagents: 0 };
   return null;
 }
 

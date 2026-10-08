@@ -439,24 +439,24 @@ um por vez, com notificação em segundo plano.
 
 **Independent Test**: `quickstart.md` B3; smoke `chat-pending` (SC-002).
 
-- [ ] T074 [P] [US2] Escrever `tests/chat-pending-queue.test.ts` (falhando):
+- [x] T074 [P] [US2] Escrever `tests/chat-pending-queue.test.ts` (falhando):
   - fila FR-035 (cabeça = menor `arrivedAt`; "mais N esperando");
   - estados de `data-model.md` §8;
   - `toHookDecision(pending, answer)` conforme `hook-bridge.md` §3: permitir; permitir sempre com `permission_suggestions` (`destination` forçado a `localSettings`) e `{toolName}` sem sugestão; negar com motivo padrão; respostas múltiplas unidas por `", "`; aprovar plano ecoando o `tool_input` inteiro; pedir ajuste; interromper.
-- [ ] T075 [US2] Implementar `src/shared/chat/pendingQueue.ts`. Faz passar T074.
-- [ ] T076 [US2] Pendências no hub e na ponte (`src/main/chat/chat-hub.ts`, `src/main/hook-bridge.ts`):
+- [x] T075 [US2] Implementar `src/shared/chat/pendingQueue.ts`. Faz passar T074.
+- [x] T076 [US2] Pendências no hub e na ponte (`src/main/chat/chat-hub.ts`, `src/main/hook-bridge.ts`):
   - `PermissionRequest` entra no `--settings` quando `chat.enabled` (T011);
   - o hub segura pelo `PendingDecisionHandle` e casa o `tool_use_id` pela tripla;
   - fecha como `resolved-elsewhere` (`PostToolUse`, `hook_permission_decision` ou `tool_result` do mesmo id), `expired` (conexão fechada → `terminalNeeded`) ou `cancelled` (PTY saiu ou interrupção);
   - handler `chat:answer` (`not-open` quando já respondida) e `LiveState.pendings`.
 
   Casos novos em `tests/chat-hub.test.ts` e `tests/hook-bridge.contract.test.ts`.
-- [ ] T077 [P] [US2] Adaptar `apps/web/src/pendingUserInput.ts` e `apps/web/src/proposedPlan.ts` do T3 em `src/shared/chat/t3/pendingUserInput.ts` e `src/shared/chat/t3/proposedPlan.ts` (cabeçalho MIT):
+- [x] T077 [P] [US2] Adaptar `apps/web/src/pendingUserInput.ts` e `apps/web/src/proposedPlan.ts` do T3 em `src/shared/chat/t3/pendingUserInput.ts` e `src/shared/chat/t3/proposedPlan.ts` (cabeçalho MIT):
   - assistente de perguntas: única ou múltipla; texto livre vence a opção; até 4 perguntas;
   - regra de recolher plano longo.
 
   Testes em `tests/chat-question-wizard.test.ts`.
-- [ ] T078 [US2] Painel em `src/renderer/src/chat/pending/`, conforme o design:
+- [x] T078 [US2] Painel em `src/renderer/src/chat/pending/`, conforme o design:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Frase-modelo + `description` do Claude, sem explicação inventada (D-C12); o rótulo do "sempre" diz a regra real, e vale para o projeto inteiro (FR-022, decisão 2) — edição: "sempre: todas as edições neste projeto"; comando: "sempre: `<regra sugerida>`" (D-C13); diff da pendência a partir da entrada, sem número de linha (D-C14, nota no `data-model.md` §8); próxima pendência na hora e "(Recomendado)" intacto (D-C15); plano sem metadados calculados (D-C16); Esc = Negar sem motivo, na precedência do FR-008 (decisão 4).
   - `PendingPanel.tsx`: acima da caixa, persistente; mostra a cabeça da fila + "mais N esperando" e a origem ("pedido do subagente <descrição>").
   - `QuestionCard.tsx`: cartões com rótulo e descrição; prévia; múltipla; "Outra"; um Responder para até 4 perguntas.
@@ -464,7 +464,7 @@ um por vez, com notificação em segundo plano.
   - `PlanCard.tsx`: markdown recolhível; Aprovar e seguir; Pedir ajuste — a caixa vira o campo do ajuste, que sai como `plan-adjust`.
 
   Parar com pendência aberta → resposta `interrupt`.
-- [ ] T079 [US2] Notificações em `src/main/chat/notifications.ts`:
+- [x] T079 [US2] Notificações em `src/main/chat/notifications.ts`:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Texto da notificação (D-C17); `statusText` "esperando você" na aba e rótulo na barra lateral (D-C20).
   - `Notification` do Electron quando uma pendência abre e a janela não está em foco **ou** a aba não está ativa;
   - clique foca a janela e a aba e põe o foco no painel;
@@ -472,11 +472,11 @@ um por vez, com notificação em segundo plano.
   - canal `chat:focus-state`;
   - semáforo em `permission` ("esperando você") enquanto houver pendência;
   - ajustar a regra que pula a aba ativa com a janela fora de foco (`src/renderer/src/App.tsx:1714-1740`).
-- [ ] T080 [US2] Estender o CLI falso (`tests/smoke/fixtures/fake-claude-chat/`) com roteiros de `PermissionRequest`:
+- [x] T080 [US2] Estender o CLI falso (`tests/smoke/fixtures/fake-claude-chat/`) com roteiros de `PermissionRequest`:
   - pergunta, permissão e plano;
   - dois pedidos simultâneos de subagentes;
   - segura até a decisão e aplica: grava o `tool_result`; "permitir sempre" grava `.claude/settings.local.json` falso.
-- [ ] T081 [US2] Escrever a smoke `tests/smoke/chat-pending.spec.ts` (SC-002):
+- [x] T081 [US2] Escrever a smoke `tests/smoke/chat-pending.spec.ts` (SC-002):
   - toda pendência aparece no painel ou na faixa;
   - contador da fila;
   - resposta pelo painel chega ao CLI falso;
@@ -528,7 +528,7 @@ um por vez, com notificação em segundo plano.
   - setas e Tab escolhem, Esc fecha;
   - insere o texto;
   - selo de `/login` e `/logout`.
-- [ ] T088 [US4] Imagens em `src/main/chat/chat-ipc.ts` e `src/renderer/src/chat/composer/Attachments.tsx`:
+- [x] T088 [US4] (antecipada para a Fase 4 a pedido do dono, 08/10) Imagens em `src/main/chat/chat-ipc.ts` e `src/renderer/src/chat/composer/Attachments.tsx`:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Botão de clipe abre o seletor de arquivos: imagem vira anexo, outro arquivo vira `@caminho` (FR-015, decisão 4); a miniatura colada se chama "imagem colada N".
   - colar ou arrastar → `chat:save-image`, que grava em `userData/chat-attachments/<sessionId>/` (limpeza ao fechar a aba e, no boot, do que tiver mais de 7 dias);
   - miniatura removível em `src/renderer/src/chat/composer/Attachments.tsx`;
