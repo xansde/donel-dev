@@ -279,7 +279,7 @@ A smoke (T081) veio por último.
 
 ### Uso real no alfa (dono, 08/10)
 
-- **"não foi · o texto não entrou na caixa" com o texto na caixa** (alfa,
+- **"não foi · o texto não entrou na caixa" em todo texto multilinha** (alfa,
   08/10, para depois): o dono mandou pelo chat um print colado e duas linhas
   (`Shift+Enter` entre elas). O cartão ficou vermelho com "o texto não entrou
   na caixa", mas a imagem e as duas linhas entraram na caixa do CLI. O dono
@@ -294,7 +294,9 @@ A smoke (T081) veio por último.
     também não rodou, o que bate com `boxIsOurs` falhando pelo mesmo motivo.
   - Isolamento feito pelo dono no mesmo dia: pelo chat, uma linha sem
     imagem chegou e uma linha com imagem também. A falha fica no texto de
-    2+ linhas, com ou sem imagem: o caso sem imagem ainda falta testar.
+    2+ linhas, com ou sem imagem. Confirmado depois: duas linhas sem imagem
+    (`Shift+Enter`) também falham, então a causa é a quebra de linha e não
+    a imagem.
   - Aceite da correção: imagem + texto de 2+ linhas pelo chat chega ao CLI
     e o cartão confirma. Um smoke cobre o caso multilinha com imagem e outro
     sem imagem.
