@@ -272,7 +272,7 @@ A smoke (T081) veio por último.
 
 | Item | O que verificar | Resultado |
 |---|---|---|
-| B3 | pergunta, permissão (com "Permitir sempre" e Negar com motivo) e plano (aprovar e pedir ajuste) pelo painel, com o CLI real | pendente |
+| B3 | pergunta, permissão (com "Permitir sempre" e Negar com motivo) e plano (aprovar e pedir ajuste) pelo painel, com o CLI real | **pergunta ok** (08/10: painel com opções, "Outra" e Responder; aba e semáforo em "esperando você"; toast do Windows "Esperando você — pergunta"). Permissão e plano pendentes |
 | B3 | responder pelo terminal com o painel aberto: o painel fecha sozinho | pendente |
 | SC-002 | nenhuma pergunta ou permissão perdida num dia de uso; notificação do Windows com a janela fora de foco, e o clique leva ao painel | pendente |
 | T088 | colar um print com Ctrl+V na caixa e mandar: o Claude recebe a imagem | pendente |
