@@ -1,0 +1,173 @@
+{
+ "name": "box-15-lines",
+ "description": "Caixa com 15 linhas (limite alto da caixa).",
+ "source": "synthetic",
+ "origin": "built from q23.txt#multi-LF [paste]",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " ▐▛███▛█   Claude Code v2.1.293",
+   "dim": []
+  },
+  {
+   "text": "▝▜██████▀  Haiku 5.5 · Claude Max",
+   "dim": []
+  },
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "  ⎿  SessionStart:startup says: GitHub ativo: xansde",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+   "dim": []
+  },
+  {
+   "text": "❯ line1",
+   "dim": []
+  },
+  {
+   "text": "  line2",
+   "dim": []
+  },
+  {
+   "text": "  line3",
+   "dim": []
+  },
+  {
+   "text": "  line4",
+   "dim": []
+  },
+  {
+   "text": "  line5",
+   "dim": []
+  },
+  {
+   "text": "  line6",
+   "dim": []
+  },
+  {
+   "text": "  line7",
+   "dim": []
+  },
+  {
+   "text": "  line8",
+   "dim": []
+  },
+  {
+   "text": "  line9",
+   "dim": []
+  },
+  {
+   "text": "  line10",
+   "dim": []
+  },
+  {
+   "text": "  line11",
+   "dim": []
+  },
+  {
+   "text": "  line12",
+   "dim": []
+  },
+  {
+   "text": "  line13",
+   "dim": []
+  },
+  {
+   "text": "  line14",
+   "dim": []
+  },
+  {
+   "text": "  line15",
+   "dim": []
+  },
+  {
+   "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+   "dim": []
+  },
+  {
+   "text": "  ⏸ manual mode on",
+   "dim": [
+    [2,18]
+   ]
+  }
+ ]
+}

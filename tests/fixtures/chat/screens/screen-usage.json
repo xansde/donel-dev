@@ -1,0 +1,171 @@
+{
+ "name": "screen-usage",
+ "description": "Mesmas abas (/usage).",
+ "source": "real",
+ "origin": "q9-r10.txt :: after /usage",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "✢ Onioning… (16s · ↓ 1.5k tokens · thinking)",
+   "dim": []
+  },
+  {
+   "text": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔",
+   "dim": []
+  },
+  {
+   "text": "   Settings  Status   Config   Usage   Stats",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Session",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Total cost:            $0.0113",
+   "dim": []
+  },
+  {
+   "text": "   Total duration (API):  5s",
+   "dim": []
+  },
+  {
+   "text": "   Total duration (wall): 14s",
+   "dim": []
+  },
+  {
+   "text": "   Total code changes:    0 lines added, 0 lines removed",
+   "dim": []
+  },
+  {
+   "text": "   Usage by model:",
+   "dim": []
+  },
+  {
+   "text": "       claude-haiku-5-5:  2 input, 1.5k output, 35.7k cache read, 50.7k cache write ($0.0113)",
+   "dim": []
+  },
+  {
+   "text": "   Prompt cache (main):   1 request · 41% of input tokens from cache · no misses · warm (1h TTL, last activity 6s",
+   "dim": []
+  },
+  {
+   "text": "   ago)",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Plugin skill-listing footprint",
+   "dim": []
+  },
+  {
+   "text": "   What each plugin's skill descriptions add to the system prompt (cached input after the first turn). Agents and MCP",
+   "dim": []
+  },
+  {
+   "text": "   tools not yet counted.",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   hookify                     4 skills · ~93 tok/turn",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Total                       ~93 tok/turn",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Current session",
+   "dim": []
+  },
+  {
+   "text": "   ███▌                                               7% used",
+   "dim": []
+  },
+  {
+   "text": "   Resets 10:40pm (America/Sao_Paulo)",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Current week (all models)",
+   "dim": []
+  },
+  {
+   "text": "   █████████████████████████████████                  66% used",
+   "dim": []
+  },
+  {
+   "text": "   Resets Oct 11, 11am (America/Sao_Paulo)",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Current week (Fable)",
+   "dim": []
+  },
+  {
+   "text": "   ███████████                                        22% used",
+   "dim": []
+  },
+  {
+   "text": "   Resets Oct 11, 11am (America/Sao_Paulo)",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   What's contributing to your limits usage?",
+   "dim": []
+  },
+  {
+   "text": "   Approximate, based on local sessions on this machine — does not include other devices or claude.ai",
+   "dim": []
+  },
+  {
+   "text": "                                                                                                                      ↓",
+   "dim": []
+  }
+ ]
+}
