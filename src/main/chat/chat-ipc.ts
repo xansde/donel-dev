@@ -1,0 +1,100 @@
+// T045/T048 (014-chat) - IPC handlers of the `chat:` domain. With
+// `chat.enabled = false` NOTHING is registered (ipc-chat.md §4): the app is the
+// one of before the chat. `enabled` is read once at boot, so flipping the
+// preference at runtime takes effect on the next start of the app.
+//
+// Handlers here: attach, detach, load-older, row-detail, open-external,
+// open-generated. The other contract channels (answer, subagent-*, catalog,
+// files, save-image, ack-lookup, focus-state) belong to later tasks.
+
+import { CHAT_CHANNELS } from '../../shared/chat/ipc';
+import type {
+  ChatAttachInput,
+  ChatAttachOutput,
+  ChatDetachInput,
+  ChatLoadOlderInput,
+  ChatLoadOlderOutput,
+  ChatOpenExternalInput,
+  ChatOpenGeneratedInput,
+  ChatRowDetailInput,
+  RowDetail,
+} from '../../shared/chat/ipc';
+import { isExternalUrlAllowed, isGeneratedFileOpenable } from '../../shared/chat/linkPolicy';
+import type { ChatHub } from './chat-hub';
+
+/** The slice of Electron's `ipcMain` used here. */
+export interface IpcMainLike {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handle(channel: string, listener: (event: any, ...args: any[]) => unknown): void;
+  removeHandler(channel: string): void;
+}
+
+export interface ChatIpcDeps {
+  readonly ipcMain: IpcMainLike;
+  /** `chat.enabled` from the config, read at boot. */
+  readonly enabled: boolean;
+  readonly hub: ChatHub;
+  /** `shell.openExternal` */
+  readonly openExternal: (url: string) => Promise<void>;
+  /** `shell.openPath` (resolves to an error message, '' on success) */
+  readonly openPath: (path: string) => Promise<string>;
+}
+
+export interface ChatIpcRegistration {
+  readonly registered: boolean;
+  /** Removes every handler it registered. */
+  dispose(): void;
+}
+
+const HANDLED: readonly string[] = [
+  CHAT_CHANNELS.attach,
+  CHAT_CHANNELS.detach,
+  CHAT_CHANNELS.loadOlder,
+  CHAT_CHANNELS.rowDetail,
+  CHAT_CHANNELS.openExternal,
+  CHAT_CHANNELS.openGenerated,
+];
+
+const isString = (v: unknown): v is string => typeof v === 'string';
+
+export function registerChatIpcHandlers(deps: ChatIpcDeps): ChatIpcRegistration {
+  if (!deps.enabled) return { registered: false, dispose: () => undefined };
+  const { ipcMain, hub } = deps;
+
+  ipcMain.handle(CHAT_CHANNELS.attach, (_e, input: ChatAttachInput): Promise<ChatAttachOutput> => {
+    if (!isString(input?.ptyId)) throw new Error('chat:attach: ptyId inválido');
+    return hub.attach(input.ptyId);
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.detach, (_e, input: ChatDetachInput): void => {
+    if (isString(input?.ptyId)) hub.detach(input.ptyId);
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.loadOlder, (_e, input: ChatLoadOlderInput): Promise<ChatLoadOlderOutput> => {
+    if (!isString(input?.ptyId) || !isString(input.cursor)) return Promise.resolve({ rows: [], cursor: null });
+    return hub.loadOlder(input.ptyId, input.scope ?? 'main', input.cursor);
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.rowDetail, (_e, input: ChatRowDetailInput): Promise<RowDetail> => {
+    if (!isString(input?.ptyId) || !isString(input.rowId)) return Promise.resolve({ part: input?.part ?? 'raw', text: '', truncated: false });
+    return hub.rowDetail(input);
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.openExternal, async (_e, input: ChatOpenExternalInput): Promise<void> => {
+    if (!isString(input?.url) || !isExternalUrlAllowed(input.url)) return;
+    await deps.openExternal(input.url);
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.openGenerated, async (_e, input: ChatOpenGeneratedInput): Promise<void> => {
+    if (!isString(input?.ptyId) || !isString(input.path)) return;
+    if (!isGeneratedFileOpenable(input.path, hub.generatedFileRoots(input.ptyId))) return;
+    await deps.openPath(input.path);
+  });
+
+  return {
+    registered: true,
+    dispose: () => {
+      for (const channel of HANDLED) ipcMain.removeHandler(channel);
+    },
+  };
+}

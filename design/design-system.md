@@ -61,8 +61,15 @@ contas ela roda.
 
 ### Regras de cor
 
-- Vermelho-coral (`#F0684C`) é EXCLUSIVO de "precisa de você agora"
-  (permissão, zona estourada). Roxo (`#B678F0`) é exclusivo de falha/quota.
+- Vermelho-coral (`#F0684C`) tem dois sentidos, separados pelo movimento
+  (014-chat, D-C26): coral **pulsando** = "precisa de você agora" (aba,
+  `StateDot` de permissão, zona estourada); coral **fixo** = "falhou" ou
+  "removido" (ação que falhou, "não foi", "saiu com código N", linha − do
+  diff). Precedente: o `PhaseStateGlyph` já pinta `failed` de coral. Roxo
+  (`#B678F0`) é exclusivo de falha de sessão/quota (`state-error`).
+- Paleta de código (`--code-*`, 014-chat): derivada dos tokens existentes —
+  nenhum hex novo. Componentes de código leem só `--code-*`, nunca a fase
+  direto.
 - Dourado de vela (`#E8B44C`) acumula três papéis compatíveis: aguardando,
   zona de atenção e acento esotérico das ilustrações do Donel.
 - Headroom de conta: verde > 40%, dourado 15–40%, vermelho < 15%, cinza "—"

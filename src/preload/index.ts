@@ -2,6 +2,18 @@ import { contextBridge, ipcRenderer } from 'electron';
 // G5 (batch N5) — guarda contra segundo assinante silencioso de canal IPC:
 // todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
 import { subscribeChannel } from './subscribeChannel';
+import { CHAT_CHANNELS } from '../shared/chat/ipc';
+import type {
+  ChatConversationSwitchedEvent,
+  ChatLiveEvent,
+  ChatLoadOlderOutput,
+  ChatReceptionEvent,
+  ChatRowDetailInput,
+  ChatRowsEvent,
+  ChatSnapshot,
+  RowDetail,
+} from '../shared/chat/ipc';
+import type { RowScope } from '../shared/chat/rows';
 import type {
   AccountsConfigDto,
   AccountsViewDto,
@@ -447,6 +459,35 @@ const donelApi: DonelApi = {
     onChanged: (listener: (state: EsteiraSnapshotDto) => void) => {
       const handler = (_event: unknown, state: EsteiraSnapshotDto): void => listener(state);
       return subscribeChannel(ipcRenderer, ESTEIRA_CHANNELS.changed, handler);
+    },
+  },
+
+  // 014-chat (T049) — conversa da aba como chat. Cada evento tem UM assinante (a
+  // `ChatStore` do renderer, que distribui por ptyId): trava do subscribeChannel.
+  chat: {
+    attach: (ptyId: string) => ipcRenderer.invoke(CHAT_CHANNELS.attach, { ptyId }) as Promise<ChatSnapshot>,
+    detach: (ptyId: string) => ipcRenderer.invoke(CHAT_CHANNELS.detach, { ptyId }) as Promise<void>,
+    loadOlder: (ptyId: string, scope: RowScope, cursor: string) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.loadOlder, { ptyId, scope, cursor }) as Promise<ChatLoadOlderOutput>,
+    rowDetail: (input: ChatRowDetailInput) => ipcRenderer.invoke(CHAT_CHANNELS.rowDetail, input) as Promise<RowDetail>,
+    openExternal: (url: string) => ipcRenderer.invoke(CHAT_CHANNELS.openExternal, { url }) as Promise<void>,
+    openGenerated: (ptyId: string, path: string) => ipcRenderer.invoke(CHAT_CHANNELS.openGenerated, { ptyId, path }) as Promise<void>,
+
+    onRows: (listener: (event: ChatRowsEvent) => void) => {
+      const handler = (_event: unknown, payload: ChatRowsEvent): void => listener(payload);
+      return subscribeChannel(ipcRenderer, CHAT_CHANNELS.rows, handler);
+    },
+    onLive: (listener: (event: ChatLiveEvent) => void) => {
+      const handler = (_event: unknown, payload: ChatLiveEvent): void => listener(payload);
+      return subscribeChannel(ipcRenderer, CHAT_CHANNELS.live, handler);
+    },
+    onConversationSwitched: (listener: (event: ChatConversationSwitchedEvent) => void) => {
+      const handler = (_event: unknown, payload: ChatConversationSwitchedEvent): void => listener(payload);
+      return subscribeChannel(ipcRenderer, CHAT_CHANNELS.conversationSwitched, handler);
+    },
+    onReception: (listener: (event: ChatReceptionEvent) => void) => {
+      const handler = (_event: unknown, payload: ChatReceptionEvent): void => listener(payload);
+      return subscribeChannel(ipcRenderer, CHAT_CHANNELS.reception, handler);
     },
   },
 };

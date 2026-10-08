@@ -52,6 +52,8 @@ export interface ChatSnapshot {
   readonly cursor: ChatCursor | null;
   readonly live: LiveState;
   readonly permissionMode: ChatPermissionMode;
+  /** Current reception state, so a late `chat:attach` does not miss the last `chat:reception` event. */
+  readonly reception: ChatReception;
 }
 
 export type PendingAnswer =
@@ -83,6 +85,8 @@ export interface RowDetail {
   readonly truncated: boolean;
   /** Para `files`: lista de caminhos, quando aplicável. */
   readonly files?: readonly string[];
+  /** Para uma linha `action-group`: as ações filhas (o grupo da vista agrupada esconde-as dos patches). */
+  readonly rows?: readonly ConversationRow[];
 }
 
 export type CommandSource = 'builtin' | 'skill' | 'command' | 'plugin';

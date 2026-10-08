@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, protocol, safeStorage, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -167,6 +167,10 @@ import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-t
 import { cleanupStaleHookSettings, removeSessionHooksSettings, writeHooksSettingsFile, writeSessionHooksSettings } from './hooks-settings';
 import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-bridge';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
+import { createChatHub, type ChatHub, type ChatSourceInfo } from './chat/chat-hub';
+import { registerChatIpcHandlers } from './chat/chat-ipc';
+import { registerAssetScheme, registerAssetsProtocol } from './chat/assets-protocol';
+import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
 // arquivo só instancia/liga (T1125 — única task que toca o hub).
@@ -458,6 +462,26 @@ let hookBridge: HookBridge | null = null;
 let curlPath: string | null = null;
 /** Conversa ativa de cada aba (ptyId -> session id); muda com `/clear` e `/resume` (FR-033). */
 const activeSessionByPty = new Map<string, string>();
+
+/**
+ * T048 (014-chat) — hub do chat (uma conversa por aba). `null` com `chat.enabled = false`
+ * (lido no boot: mudar a preferência em tempo de execução só vale no próximo início do app)
+ * ou sem ponte de hooks (transporte legado / ponte que não subiu).
+ */
+let chatHub: ChatHub | null = null;
+/** Fonte INICIAL da conversa de cada aba `claude` (a troca de conversa é do hub, não daqui). */
+const initialChatSourceByPty = new Map<string, ChatSourceInfo>();
+/** Conta ativa vista no último `accounts:changed` — a troca vira aviso `account-switch` no chat. */
+let lastBroadcastActiveAccountId: string | null | undefined;
+
+// T046 (014-chat) — o esquema `donel-asset:` precisa ser registrado ANTES do `ready`.
+registerAssetScheme(protocol);
+
+function broadcastChat(channel: string, payload: unknown): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(channel, payload);
+  }
+}
 
 /** Primeiro `curl.exe` do PATH, ou `null` — nunca lança (o boot não pode cair por isso). */
 function detectCurlPath(): string | null {
@@ -762,6 +786,13 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send(ACCOUNT_CHANNELS.changed, view);
   }
+  // T048 (014-chat) — troca de conta vira aviso no fim das conversas abertas (só o rótulo, nunca e-mail).
+  const previous = lastBroadcastActiveAccountId;
+  lastBroadcastActiveAccountId = view.activeAccountId;
+  if (previous !== undefined && previous !== null && view.activeAccountId !== null && previous !== view.activeAccountId) {
+    const label = view.accounts.find((account) => account.id === view.activeAccountId)?.label ?? view.activeAccountId;
+    chatHub?.notifyAccountSwitch(label);
+  }
 }
 
 /**
@@ -916,6 +947,22 @@ function createMainWindow(): void {
     mainWindow.show();
   });
 
+  // T045 (014-chat, R21) — guarda de navegação. Esta janela expõe `window.donel.pty.input`; um
+  // link do markdown que a navegasse entregaria o app a uma página externa. Navegar para outra
+  // URL é sempre negado (só a recarga da própria página passa, para o HMR do dev); janelas novas
+  // são sempre negadas — links externos saem pelo IPC `chat:open-external` (http/https).
+  const sameDocument = (url: string): boolean => {
+    const strip = (u: string): string => u.split('#')[0] ?? u;
+    return strip(url) === strip(mainWindow.webContents.getURL());
+  };
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!sameDocument(url)) event.preventDefault();
+  });
+  mainWindow.webContents.on('will-redirect', (event, url) => {
+    if (!sameDocument(url)) event.preventDefault();
+  });
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
   const unsubscribeData = ptyManager.onData((ptyId, data) => {
     mainWindow.webContents.send(PTY_CHANNELS.data, ptyId, data);
   });
@@ -942,6 +989,7 @@ function createMainWindow(): void {
     hookBridge?.unregisterSession(ptyId);
     removeSessionHooksSettings(app.getPath('userData'), ptyId);
     activeSessionByPty.delete(ptyId);
+    chatHub?.markEnded(ptyId);
     // T1125 (011-contas-e-provedores, etapa 1, C4) — mesma baixa, pro poll de
     // 5 min do motor de contas parar de contar esta sessão como viva.
     // Fase 2 (D5) — `releaseAccountsBusyPty` também retoma um auto-switch
@@ -1042,6 +1090,37 @@ function handleConversationSwitched(event: Extract<BridgeEvent, { type: 'convers
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send(TRANSCRIPT_CHANNELS.switched, payload);
   }
+}
+
+/**
+ * T048 (014-chat) — liga o hub do chat à ponte de hooks e registra os handlers `chat:*`.
+ * Com `chat.enabled = false` (lido da config no boot), ou sem ponte, NADA é registrado e o
+ * protocolo `donel-asset:` também não: o app é o de antes do chat.
+ */
+function registerChatDomain(): void {
+  if (!appConfig.chat.enabled || hookBridge === null) return;
+  const attachmentsRoot = join(app.getPath('userData'), 'chat-attachments');
+  const hub = createChatHub({
+    bridge: hookBridge,
+    getSource: (ptyId) => initialChatSourceByPty.get(ptyId) ?? null,
+    events: {
+      rows: (event) => broadcastChat(CHAT_CHANNELS.rows, event),
+      live: (event) => broadcastChat(CHAT_CHANNELS.live, event),
+      conversationSwitched: (event) => broadcastChat(CHAT_CHANNELS.conversationSwitched, event),
+      reception: (event) => broadcastChat(CHAT_CHANNELS.reception, event),
+    },
+    diagnostics: createDiagnosticsLog(app.getPath('userData')),
+    attachmentsRoot,
+  });
+  chatHub = hub;
+  registerChatIpcHandlers({
+    ipcMain,
+    enabled: true,
+    hub,
+    openExternal: (url) => shell.openExternal(url),
+    openPath: (path) => shell.openPath(path),
+  });
+  registerAssetsProtocol(protocol, { transcriptRoots: (ptyId) => hub.transcriptRoots(ptyId), attachmentsRoot });
 }
 
 function registerPtyIpcHandlers(): void {
@@ -1230,6 +1309,7 @@ function registerPtyIpcHandlers(): void {
       // `forgetIfOrphan` vai conferir se esta retomada morrer (ver comentário de
       // `spawnedTranscriptPaths`).
       spawnedTranscriptPaths.set(correlationId, transcriptPath);
+      initialChatSourceByPty.set(ptyId, { sessionId: correlationId, transcriptPath, cwd: options.cwd ?? homedir() });
       startTranscriptWatcher(ptyId, transcriptPath, correlationId);
 
       // T404 (004) — `correlationId` é o id da sessão do Claude (imposto no
@@ -2453,6 +2533,7 @@ void app.whenReady().then(async () => {
   semaphoreManager.onStopFailure(() => triggerAccountsAutoSwitchOnStopFailure());
   applyAccountsEngineConfig(); // F6 — 1ª chamada sempre 'built' (motor inerte se mod === null, C2).
 
+  registerChatDomain();
   registerPtyIpcHandlers();
   registerProjectIpcHandlers();
   registerSessionIpcHandlers();
@@ -2479,6 +2560,7 @@ app.on('window-all-closed', () => {
   ptyManager.killAll();
   isolatedLoginManager?.dispose(); // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — DEPOIS do killAll (mesma ordem já vale pro PTY do login, que killAll já matou).
   semaphoreManager.dispose();
+  chatHub?.dispose();
   void hookBridge?.close();
   esteiraService?.dispose();
   esteiraService = null;

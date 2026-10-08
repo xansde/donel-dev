@@ -1,0 +1,184 @@
+/* Prose of the assistant (T051). Tokens only. Matches Main.dc.html: 13/1.6 body,
+   16 px semibold h2, mono 12.5 px inline code on --bg-raised, bordered tables
+   with a 11 px caps header. */
+.root {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-body-size);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.root > * + * {
+  margin-top: 10px;
+}
+
+.root p,
+.root ul,
+.root ol,
+.root blockquote,
+.root h1,
+.root h2,
+.root h3,
+.root h4,
+.root h5,
+.root h6 {
+  margin: 0;
+}
+
+.root > * + *,
+.root li > * + * {
+  margin-top: 10px;
+}
+
+.root h1 {
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: var(--weight-semibold);
+}
+
+.root h2 {
+  font-size: 16px;
+  line-height: 1.35;
+  font-weight: var(--weight-semibold);
+}
+
+.root h3 {
+  font-size: 14px;
+  line-height: 1.4;
+  font-weight: var(--weight-semibold);
+}
+
+.root h4,
+.root h5,
+.root h6 {
+  font-size: var(--text-body-size);
+  font-weight: var(--weight-semibold);
+}
+
+.root ul,
+.root ol {
+  padding-left: 22px;
+}
+
+.root li + li {
+  margin-top: 4px;
+}
+
+.root li > ul,
+.root li > ol {
+  margin-top: 4px;
+}
+
+.root blockquote {
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+  color: var(--text-muted);
+}
+
+.root hr {
+  height: 1px;
+  border: none;
+  background: var(--border);
+}
+
+.root a {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.root a:hover {
+  text-decoration: underline;
+}
+
+.root a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 2px;
+}
+
+.inlineCode {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+}
+
+/* Windows path written as a link: plain text, never an anchor. */
+.path {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+  color: var(--text-primary);
+}
+
+.image {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.tableFrame {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-panel);
+}
+
+.tableScroll {
+  overflow-x: auto;
+}
+
+.tableFrame table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-body-size);
+}
+
+.tableFrame th {
+  padding: 7px 12px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* Room for the copy button in the header row's last cell. */
+.tableFrame th:last-child {
+  padding-right: 44px;
+}
+
+.tableFrame td {
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.tableFrame td[align='right'],
+.tableFrame th[align='right'] {
+  text-align: right;
+}
+
+.tableFrame td[align='center'],
+.tableFrame th[align='center'] {
+  text-align: center;
+}
+
+.tableFrame .tableCopy {
+  position: absolute;
+  top: 3px;
+  right: 6px;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
+}
+
+.root input[type='checkbox'] {
+  margin-right: 6px;
+  accent-color: var(--accent);
+}

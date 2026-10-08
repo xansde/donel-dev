@@ -192,6 +192,20 @@ export interface TerminalPaneProps {
    * assunto, e tem estado próprio na vista).
    */
   onProcessExit?: (info: { exitCode: number | undefined; signal: number | undefined; msSinceSpawn: number }) => void;
+  /**
+   * T056 (014-chat) — o `ptyId` de cada geração, no instante em que nasce. O chat
+   * da aba se liga ao PTY por ele (`useChatSession(ptyId)`) e PRECISA mantê-lo
+   * depois da saída do processo (a conversa segue legível, FR-034), por isso não
+   * há chamada com `null` no exit: o pai guarda o último e troca no próximo spawn.
+   */
+  onPtyChange?: (ptyId: string) => void;
+  /**
+   * T057 (014-chat, FR-034) — id da conversa atual desta aba (o pai o mantém em
+   * dia através de `/clear`/`/resume`). Quando presente, o "Reabrir" do overlay
+   * de sessão encerrada RETOMA essa conversa (`-r <id>`) em vez de abrir uma
+   * nova. Só o chat ligado passa isto: sem a prop o Reabrir é o de sempre.
+   */
+  resumeSessionId?: string;
 }
 
 /**
@@ -249,6 +263,8 @@ export interface TerminalPaneHandle {
   onScreenUpdate: (listener: () => void) => () => void;
   /** T039 — mata a PTY e sobe outra com os mesmos flags; `resume` acrescenta `-r <id>`. */
   respawn: (options?: { resume?: string }) => void;
+  /** T056 — devolve o foco do teclado ao terminal (ao alternar do chat para a vista Terminal). */
+  focus: () => void;
   /** T039 — id da PTY viva (null sem processo). */
   readonly ptyId: string | null;
 }
@@ -267,6 +283,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     onProviderResolved,
     onClaudeSessionIdResolved,
     onProcessExit,
+    onPtyChange,
+    resumeSessionId,
   },
   ref
 ): React.JSX.Element {
@@ -317,6 +335,10 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   onClaudeSessionIdResolvedRef.current = onClaudeSessionIdResolved;
   const onProcessExitRef = useRef(onProcessExit);
   onProcessExitRef.current = onProcessExit;
+  const onPtyChangeRef = useRef(onPtyChange);
+  onPtyChangeRef.current = onPtyChange;
+  const resumeSessionIdRef = useRef(resumeSessionId);
+  resumeSessionIdRef.current = resumeSessionId;
   /** T710 — instante em que o PTY desta geração nasceu; base do `msSinceSpawn` levantado no `onExit`. */
   const spawnedAtRef = useRef<number | null>(null);
   // T505 (005-terminal-copy-paste) — atualizada a cada render, mesmo padrão
@@ -409,6 +431,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         };
       },
       respawn: (options?: { resume?: string }): void => respawnRef.current(options),
+      focus: (): void => termRef.current?.focus(),
       get ptyId(): string | null {
         return ptyIdRef.current;
       },
@@ -449,6 +472,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
           return;
         }
         ptyIdRef.current = result.ptyId;
+        onPtyChangeRef.current?.(result.ptyId);
         spawnedAtRef.current = Date.now(); // T710 — base do msSinceSpawn (ver onExit abaixo)
         setStatus({ kind: 'running' });
         // FIX (feedback E2E rodada 5) — perfil de nascimento desta sessão
@@ -712,9 +736,14 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     // Nova tentativa = nova geração (mesmo raciocínio do mount effect acima)
     // — invalida qualquer `pty.create` velho ainda pendente desta aba.
     mountEpochRef.current += 1;
+    // T057 (FR-034) — com o chat ligado, Reabrir retoma a MESMA conversa.
+    const resumeId = resumeSessionIdRef.current;
+    if (sessionTypeRef.current === 'claude' && resumeId) {
+      spawnArgsRef.current = withResumeArgs(spawnArgsRef.current ?? args, resumeId);
+    }
     termRef.current?.clear();
     spawnSession();
-  }, [spawnSession]);
+  }, [args, spawnSession]);
 
   const handleCloseTab = useCallback(() => {
     teardownPty();

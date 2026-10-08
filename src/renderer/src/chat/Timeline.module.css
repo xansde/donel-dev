@@ -1,0 +1,133 @@
+.root {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.scroller {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  /* The scroll controller compensates prepends itself (R19): no double adjustment. */
+  overflow-anchor: none;
+  /* Dark theme: the native (light) scrollbar clashed with the panel. */
+  color-scheme: dark;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.content {
+  box-sizing: border-box;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.round {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* R19: no virtualiser in v1 - off-screen rounds skip layout and paint.
+   The last round is excluded: it is the one the reader follows. */
+.roundDeferred {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 480px;
+}
+
+.row {
+  min-width: 0;
+}
+
+.foldRows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Overlay (not in the flow): showing/hiding it must not move the reading position. */
+.loadingOlder {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  font-size: 12px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.spin {
+  animation: timeline-spin 1.2s linear infinite;
+}
+
+@keyframes timeline-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 48px 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.emptyTitle {
+  font-size: 13px;
+}
+
+.emptyHint {
+  font-size: 11px;
+}
+
+.pillHost {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 12px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.pill {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  background: var(--bg-raised);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-modal);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

@@ -37,7 +37,10 @@
     "d3-force": "^3.0.0",
     "node-pty": "1.1.0",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
+    "shiki": "4.4.3"
   },
   "devDependencies": {
     "@electron/rebuild": "4.2.0",

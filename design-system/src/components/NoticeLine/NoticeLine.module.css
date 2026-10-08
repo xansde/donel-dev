@@ -1,0 +1,53 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--text-muted);
+  --rule: var(--border);
+}
+
+.warn {
+  color: var(--state-waiting);
+  --rule: color-mix(in srgb, var(--state-waiting) 35%, var(--border));
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.icon > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.text {
+  white-space: nowrap;
+}
+
+.rule {
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+
+.action {
+  flex: none;
+}
+
+.detail {
+  margin-left: 22px;
+}

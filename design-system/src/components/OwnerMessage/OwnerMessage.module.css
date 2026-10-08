@@ -1,0 +1,115 @@
+.card {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.queued {
+  border-style: dashed;
+}
+
+.failed {
+  border-color: color-mix(in srgb, var(--state-permission) 50%, var(--border));
+}
+
+.marker {
+  flex: none;
+  margin-top: 3px;
+  color: var(--accent);
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+}
+
+.taskLabel {
+  margin-bottom: 4px;
+  font-size: var(--text-caption-size);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.text {
+  font-size: var(--text-body-size);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+}
+
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.time {
+  font-family: var(--font-mono);
+}
+
+.entered {
+  color: var(--zone-ok);
+}
+
+/* Coral FIXO = falhou (D-C26). Só o pulso do StateDot/aba é "precisa de você". */
+.failedText {
+  color: var(--state-permission);
+}
+
+.queuedTag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  color: var(--state-waiting);
+  background: color-mix(in srgb, var(--state-waiting) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--state-waiting) 40%, transparent);
+}
+
+.blink {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: blink 1s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blink {
+    animation: none;
+  }
+}

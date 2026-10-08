@@ -270,48 +270,48 @@ e B11; smokes `chat-reading`, `chat-long-session` (SC-005) e
 **Forma**: toda tarefa de UI desta fase segue `design/chat-handoff/` e as
 divergências de `design/chat-verificacao.md`.
 
-- [ ] T043 [US1] Pedir OK do dono para instalar `react-markdown@10`, `remark-gfm@4` e `shiki@4` (regra do baseline) e, com o OK, instalar como `dependencies` em `package.json`; rodar `npm run typecheck` e `npm run build`.
-- [ ] T044 [P] [US1] Escrever `tests/chat-link-policy.test.ts` (falhando) e implementar `src/shared/chat/linkPolicy.ts`:
+- [x] T043 [US1] Pedir OK do dono para instalar `react-markdown@10`, `remark-gfm@4` e `shiki@4` (regra do baseline) e, com o OK, instalar como `dependencies` em `package.json`; rodar `npm run typecheck` e `npm run build`.
+- [x] T044 [P] [US1] Escrever `tests/chat-link-policy.test.ts` (falhando) e implementar `src/shared/chat/linkPolicy.ts`:
   - `isExternalUrlAllowed`: só `http:`/`https:`;
   - `isGeneratedFileOpenable`: só extensões de documento ou imagem (`html`, `md`, `pdf`, `png`, `jpg`, `svg`, `csv`, `txt`), dentro do `cwd` ou da pasta de anexos;
   - `isAssetPathAllowed`.
-- [ ] T045 [US1] Segurança da janela (R21) em `src/main/index.ts`, `src/renderer/index.html` e `src/main/chat/chat-ipc.ts`:
+- [x] T045 [US1] Segurança da janela (R21) em `src/main/index.ts`, `src/renderer/index.html` e `src/main/chat/chat-ipc.ts`:
   - em `src/main/index.ts`, `will-navigate` com `preventDefault` e `setWindowOpenHandler` negando tudo;
   - CSP de `src/renderer/index.html` (`script-src 'self' 'wasm-unsafe-eval'`, `img-src 'self' data: blob: donel-asset:`);
   - handlers `chat:open-external` e `chat:open-generated` em `src/main/chat/chat-ipc.ts`, usando o T044.
-- [ ] T046 [P] [US1] Protocolo `donel-asset:` em `src/main/chat/assets-protocol.ts` (`protocol.handle`):
+- [x] T046 [P] [US1] Protocolo `donel-asset:` em `src/main/chat/assets-protocol.ts` (`protocol.handle`):
   - serve bloco de imagem por `LineRef` + `blockIndex` e anexo por id;
   - valida caminho pelo T044;
   - teste da resolução pura em `tests/chat-assets-protocol.test.ts`.
-- [ ] T047 [US1] Escrever `tests/chat-hub.test.ts` (falhando), com eventos de ponte falsos e transcripts temporários:
+- [x] T047 [US1] Escrever `tests/chat-hub.test.ts` (falhando), com eventos de ponte falsos e transcripts temporários:
   - `attach` devolve a primeira página a partir do fim, e `load-older` pagina;
   - `row-detail` relê o `LineRef`;
   - troca de conversa reinicia e põe o aviso no topo;
   - `accounts:changed` gera o aviso `account-switch`;
   - `reception` vira `missing` (arquivo não nasce) e `stale` (atividade sem crescimento);
   - nenhum handler registrado com `chat.enabled = false`.
-- [ ] T048 [US1] Implementar `src/main/chat/chat-hub.ts` e `src/main/chat/chat-ipc.ts` (`registerChatIpcHandlers`): por `ptyId`, fonte + seguidor + paginador + adaptador e `LiveState` básico (`starting`/`idle`/`working`/`ended`). Emite:
+- [x] T048 [US1] Implementar `src/main/chat/chat-hub.ts` e `src/main/chat/chat-ipc.ts` (`registerChatIpcHandlers`): por `ptyId`, fonte + seguidor + paginador + adaptador e `LiveState` básico (`starting`/`idle`/`working`/`ended`). Emite:
   - `chat:rows`, `chat:live`;
   - `chat:conversation-switched`, `chat:reception`.
 
   Responde `chat:attach`, `chat:detach`, `chat:load-older` e `chat:row-detail`. Faz passar T047.
-- [ ] T049 [US1] Expor `window.donel.chat.*` em `src/preload/index.ts` (tipos no `DonelApi` de `src/shared/index.ts`) e criar `src/renderer/src/chat/ChatStore.ts` (uma assinatura por canal, distribuída por `ptyId` — trava de `src/preload/subscribeChannel.ts:35`) + `useChatSession(ptyId)`.
-- [ ] T050 [P] [US1] Implementar no `design-system/` as extensões aprovadas em `design/chat-verificacao.md` que a leitura usa (ex.: faixa de aviso, linha de conversa, cabeçalho de alternância), com tokens apenas e exportadas em `design-system/src/index.ts`.
+- [x] T049 [US1] Expor `window.donel.chat.*` em `src/preload/index.ts` (tipos no `DonelApi` de `src/shared/index.ts`) e criar `src/renderer/src/chat/ChatStore.ts` (uma assinatura por canal, distribuída por `ptyId` — trava de `src/preload/subscribeChannel.ts:35`) + `useChatSession(ptyId)`.
+- [x] T050 [P] [US1] Implementar no `design-system/` as extensões aprovadas em `design/chat-verificacao.md` que a leitura usa (ex.: faixa de aviso, linha de conversa, cabeçalho de alternância), com tokens apenas e exportadas em `design-system/src/index.ts`.
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Peças da leitura conforme a §4 de `design/chat-verificacao.md`: `OwnerMessage`, `MessageHeader`, `NoticeLine`, `ActionLine`, `ActionGroup`, `WorkFold`, `CodeBlock` + tokens `--code-*`, `DiffBlock`, `CommandOutput`, `Banner`, `Kbd`, `Button·link` e `SubagentRow` (só leitura). Atualizar a regra de cor do `design/design-system.md`: coral fixo = falhou; coral pulsando = precisa de você (D-C26).
-- [ ] T051 [US1] Markdown e código em `src/renderer/src/chat/markdown/`:
+- [x] T051 [US1] Markdown e código em `src/renderer/src/chat/markdown/`:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Paleta = tokens `--code-*` (§4 da conferência); caminho no cabeçalho do bloco só quando vier na cerca (D-C6); "copiar tabela" como markdown (FR-005, decisão 4).
   - `src/renderer/src/chat/markdown/Markdown.tsx`: `react-markdown` + `remark-gfm`, sem HTML cru; links pelo `chat:open-external`; caminho do Windows não vira link quebrado.
   - `CodeBlock.tsx`: rótulo da linguagem e copiar.
   - `shiki.ts`: núcleo + Oniguruma WASM; gramáticas sob demanda; tema em variáveis CSS dos tokens ou paleta aprovada; destaque quando visível; cache LRU com `src/shared/chat/t3/lruCache.ts` adaptado do T3, com cabeçalho MIT.
   - "Copiar resposta inteira" com `src/shared/chat/t3/markdownClipboard.ts` adaptado.
-- [ ] T052 [US1] Linhas de mensagem em `src/renderer/src/chat/rows/`, conforme o design:
+- [x] T052 [US1] Linhas de mensagem em `src/renderer/src/chat/rows/`, conforme o design:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): `Notice` → `NoticeLine` (critério G3); `Unknown` mostra o tipo (D-C8); `ShellRow` e `LocalCommand` = `OwnerMessage` mono + `CommandOutput`; anexos dentro do `OwnerMessage`.
   - `UserMessage.tsx`, com miniaturas via `donel-asset:`;
   - `AssistantMessage.tsx`;
   - `Notice.tsx` (todos os `NoticeKind`, incluindo "Gerou … — abrir");
   - `Unknown.tsx` ("ver bruto");
   - `LocalCommand.tsx` e `ShellRow.tsx`.
-- [ ] T053 [US3] Linhas de trabalho em `src/renderer/src/chat/rows/`, conforme o design:
+- [x] T053 [US3] Linhas de trabalho em `src/renderer/src/chat/rows/`, conforme o design:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Sem estatística de teste (D-C3); verbo no gerúndio enquanto roda (D-C4, nota no `conversation-rows.md` §4); chevron do "pensou" só com `hasText` (D-C5); diff cortado em 40 linhas (D-C7); `QuestionRow` e `PlanRow` a partir do `ActionLine`.
   - `ActionRow.tsx`: resumo em português, ícone por categoria, `error`/`denied` visíveis;
   - `ActionGroup.tsx`: recolhido com a lista de falhas visível; expande;
@@ -320,33 +320,33 @@ divergências de `design/chat-verificacao.md`.
   - `SubagentRow.tsx`: só leitura nesta fase.
 
   Detalhes pelo `chat:row-detail`: `markdown/DiffView.tsx` (a partir do `structuredPatch`), saída de comando cortada + "ver tudo" e lista de arquivos.
-- [ ] T054 [US3] Modo Foco na timeline (`src/renderer/src/chat/Timeline.tsx`):
+- [x] T054 [US3] Modo Foco na timeline (`src/renderer/src/chat/Timeline.tsx`):
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Liga/desliga = `Toggle` no cabeçalho da aba + clique na barra da rodada; rótulo da dobra por estado (G1); a mensagem que lança subagentes e as linhas deles ficam fora da dobra (FR-009, decisão 1).
   - liga/desliga onde o design indicar, persistido por `config:setChatPrefs` (`chat.focusMode`);
   - `foldForFocus` (T031) aplicado na timeline;
   - bloco "trabalhou — N ações, M notas" com o selo "tem pergunta aqui", que expande.
-- [ ] T055 [US1] Timeline em `src/renderer/src/chat/Timeline.tsx` + `src/renderer/src/chat/scrollController.ts` (R19):
+- [x] T055 [US1] Timeline em `src/renderer/src/chat/Timeline.tsx` + `src/renderer/src/chat/scrollController.ts` (R19):
   - **Ajuste da conferência** (`design/chat-verificacao.md`): A pílula "novas mensagens ↓" só aparece com linha nova (D-C9).
   - **Rolagem**: modo "seguindo o fim" quando a rolagem está a até 40 px do fim; modo livre com a pílula "novas mensagens ↓".
   - **Histórico**: prepend preservando a posição pela diferença de `scrollHeight`; "carregando mensagens anteriores…" ao chegar no topo.
   - **Desempenho**: `content-visibility: auto` por rodada.
   - **Do T3**: geometria de âncora em `src/shared/chat/t3/scrollAnchor.ts`, se servir.
-- [ ] T056 [US1] Vista e alternância em `src/renderer/src/chat/ChatView.tsx` e `src/renderer/src/App.tsx`:
+- [x] T056 [US1] Vista e alternância em `src/renderer/src/chat/ChatView.tsx` e `src/renderer/src/App.tsx`:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Controles somados ao `sessionHeader` atual (D-C22); `Toggle` do Modo Foco escondido na vista Terminal (D-C21); `SESSION_STATE_LABEL_PT.permission` → "Esperando você" (D-C20); aviso de troca de conversa como `Banner·compact`, com "abrir" e texto próprio para o `/resume`.
   - `src/renderer/src/chat/ChatView.tsx` e `ReceptionBanner.tsx` ("não estou recebendo a conversa" → Abrir terminal);
   - em `src/renderer/src/App.tsx`: `TabState.view` (padrão `chat` com `chat.enabled` em aba `claude` que não é de login); botão no cabeçalho da aba conforme o design; atalho `Ctrl+\`` no mapa global (`App.tsx:1673-1698`, com `capture`); `TerminalPane` sempre montado, oculto por CSS;
   - o aviso "Conversa nova — a anterior está em Sessões anteriores" no topo;
   - o interruptor "Chat (experimental)" nas Configurações.
-- [ ] T057 [US1] Fim de sessão (FR-034) em `src/renderer/src/chat/SessionEndedBar.tsx` e `src/renderer/src/TerminalPane.tsx`:
+- [x] T057 [US1] Fim de sessão (FR-034) em `src/renderer/src/chat/SessionEndedBar.tsx` e `src/renderer/src/TerminalPane.tsx`:
   - `src/renderer/src/chat/SessionEndedBar.tsx` toma o lugar da caixa, com "Sessão encerrada (código N)", Retomar (`TerminalPane.respawn({ resume: sessionId atual })`) e Fechar aba;
   - a conversa continua legível e copiável;
   - o "Reabrir" do overlay do terminal (`TerminalPane.tsx:586-592`) passa a retomar a mesma conversa.
-- [ ] T058 [P] [US1] Criar o gerador `tests/fixtures/chat/generate-large.mjs` (sessão sintética de ~10 mil linhas, com linhas grandes) e o cenário do CLI falso para leitura.
-- [ ] T059 [US1] Escrever as smokes com o CLI falso em `tests/smoke/`:
+- [x] T058 [P] [US1] Criar o gerador `tests/fixtures/chat/generate-large.mjs` (sessão sintética de ~10 mil linhas, com linhas grandes) e o cenário do CLI falso para leitura.
+- [x] T059 [US1] Escrever as smokes com o CLI falso em `tests/smoke/`:
   - `tests/smoke/chat-reading.spec.ts`: a aba abre no chat; markdown, tabela e código renderizados; copiar bloco e resposta; alternar 10× preserva a sessão; aviso após `/clear`; barra de fim + Retomar.
   - `tests/smoke/chat-long-session.spec.ts`: fim em ≤ 2 s e rolagem sem salto (SC-005).
   - `tests/smoke/chat-live-latency.spec.ts`: ≤ 1 s do append até a linha na tela (SC-008).
-- [ ] T060 [US1] Fechar a fase (registro em `specs/014-chat/e2e.md`):
+- [x] T060 [US1] Fechar a fase (registro em `specs/014-chat/e2e.md`):
   - suíte verde;
   - PR contra `staging`;
   - bateria no alfa com o dono (B1 passos 1, 2, 4 e 5; B5; B7; B8; B10; B11), registrada em `specs/014-chat/e2e.md`, seção "Fase 2";
