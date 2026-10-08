@@ -34,12 +34,12 @@ roteirizado com o CLI falso e pela bateria real do `quickstart.md`.
 **Propósito**: o dono vê e aprova as telas antes de qualquer código de UI.
 Roda **em paralelo** com a Phase 2 (aprovado em 07/10).
 
-- [ ] T001 **(dono)** Colar o conteúdo de `design/prompt-design-chat.md` (abaixo da linha divisória) em claude.ai/design, anexando `design/modo-dev-v3-handoff/project/Modo Dev v3.dc.html`, e gerar as 10 telas pedidas.
-- [ ] T002 Salvar o resultado do Claude Design em `design/chat-handoff/`, no mesmo formato de `design/modo-dev-v3-handoff/`:
+- [x] T001 **(dono)** Colar o conteúdo de `design/prompt-design-chat.md` (abaixo da linha divisória) em claude.ai/design, anexando `design/modo-dev-v3-handoff/project/Modo Dev v3.dc.html`, e gerar as 10 telas pedidas. *(07/10: a conta antiga do Claude Design não existe mais, então as 11 telas foram geradas desta sessão, a partir do mesmo brief, num canvas de design temporário da conta atual.)*
+- [x] T002 Salvar o resultado do Claude Design em `design/chat-handoff/`, no mesmo formato de `design/modo-dev-v3-handoff/`:
   - `project/*.dc.html`;
   - `prints/`;
   - `README.md` com a data, o prompt usado e a lista de telas.
-- [ ] T003 Conferir o handoff contra `specs/014-chat/spec.md` e escrever `design/chat-verificacao.md` (modelo: `design/modo-dev-v3-verificacao.md`), contendo:
+- [x] T003 Conferir o handoff contra `specs/014-chat/spec.md` e escrever `design/chat-verificacao.md` (modelo: `design/modo-dev-v3-verificacao.md`), contendo:
   - divergências nomeadas D-C1..D-Cn, cada uma classificada como "forma" (vence o design) ou "comportamento" (vence a spec);
   - extensões propostas pelo design, aceitas ou recusadas, com o nome final de cada componente;
   - mapa tela → componentes do design-system;

@@ -164,11 +164,15 @@ não tem tela. As demais só começam com o protótipo aprovado.
   conversa"); barra "Sessão encerrada"; pé "trabalhando" + Parar;
   subagentes (linha viva, faixa no topo, painel lateral); alternância;
   aviso de conversa nova.
-- **Rota decidida pelo dono (07/10): Claude Design, como no Modo Dev.**
-  1. O prompt pronto `design/prompt-design-chat.md` é colado no
-     claude.ai/design.
-  2. O resultado é salvo em `design/chat-handoff/`.
-  3. A conferência contra a spec vai para `design/chat-verificacao.md`, com
+- **Rota decidida pelo dono (07/10): Claude Design, como no Modo Dev.** A
+  conta antiga do Claude Design não existe mais, então o desenho foi feito
+  nesta sessão:
+  1. O brief `design/prompt-design-chat.md` virou 11 telas num canvas de
+     design temporário da conta atual, que é compartilhada.
+  2. O dono **aprovou o protótipo em 07/10**.
+  3. O backup está em `design/chat-handoff/`, e o canvas é apagado depois
+     dele, a pedido do dono.
+  4. A conferência contra a spec vai para `design/chat-verificacao.md`, com
      as divergências nomeadas.
 
   Regra de conflito do Modo Dev: na forma vence o design; no comportamento
