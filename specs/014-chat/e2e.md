@@ -135,3 +135,45 @@ Com o build do alfa desta branch e o CLI real. Roteiro (`quickstart.md`):
 | B8 | `/exit`: conversa legível e copiável, barra "Sessão encerrada (código N)", **Retomar** continua a mesma conversa | pendente |
 | B10 | retomar a maior sessão real (> 10 MB): fim em ≤ 2 s; a rolagem para cima **sem pular** (corrigida na sintética; confirmar no real) | pendente |
 | B11 | 10× chat ⇄ terminal: sessão intacta (o rascunho só existe a partir da Fase 3) | pendente |
+
+## Fase 3 — Envio confiável (08/10)
+
+Branch `feature/014-fase-3`, T061–T072. Quatro frentes (máquina de envio pura;
+sinais de aceite no main + CLI falso; peças do design-system; pé e faixa) e o
+driver com a caixa, juntados na mesma branch.
+
+### Automático
+
+| Verificação | Resultado |
+|---|---|
+| `npx vitest run` | 154 arquivos, 3499 testes verdes (máquina de envio 70, casamento 12, histórico 11, driver 13, linhas otimistas 9, sinais, pé, faixa) |
+| `npm run typecheck` / `npm run build` | limpos |
+| `chat-send.spec.ts` (CLI falso) | **verde** — envio durante "iniciando" com a caixa focada; "enviando…" → "✓ entrou"; várias linhas viram uma mensagem; `/mod` → "não foi · comando desconhecido" sem `/model` no transcript; `/foobar` → "não foi"; `/status` entra; na fila com a causa → entrou, uma vez só no transcript; interromper e mandar (SplitButton); `!echo oi` entra sem faixa de sobra; **SC-006**: 10 alternâncias preservando o rascunho; Enter perdido reenviado sem duplicar |
+| `chat-working.spec.ts` (CLI falso) | **verde** — pé "trabalhando — <ação>"; Parar interrompe e mostra "Interrompido"; faixa "o terminal precisa de você" com diálogo de tela (`/pick` do falso) e some quando a caixa volta |
+| `npm run test:smoke:gate` | **62/62** (2,5 min) |
+
+### Achados e limites conhecidos
+
+- **ConPTY e bracketed paste**: o ConPTY tira `ESC[200~`/`ESC[201~` antes de
+  um filho Node, então o CLI falso agora trata LF como quebra e só CR como
+  envio (como o Ctrl+J do CLI real). Confirmar no real que várias linhas
+  chegam numa mensagem só (B2 item 1).
+- **"Interrompido"**: o CLI não dispara `Stop` na interrupção; o estado vem do
+  marcador `[Request interrupted by user]` no fim do transcript somado à tela
+  sem "esc to interrupt".
+- **Faixa por `opensScreen`**: o driver avisa a faixa no Enter de um comando
+  marcado, mas quem marca é o catálogo do menu `/` (Fase 5). Até lá, a faixa
+  desses comandos vem pelo detector de tela (> 2 s).
+- **Auto-start da Esteira pelo driver (T071)**: sem smoke (o falso não simula
+  card nem fase); coberto por typecheck e pelos testes do driver.
+- **Mapeamento de `Notification` → motivo da faixa** e formato de
+  `commandRun.command`: sem payload real nos spikes; confirmar no B4.
+
+### Bateria real no alfa — **pendente (dono, pós-merge)**
+
+| Item | O que verificar | Resultado |
+|---|---|---|
+| B1 completo | conversa inteira só pelo chat: escrever, "entrou", resposta, alternar, voltar | pendente |
+| B2 itens 1, 3, 9–13 | várias linhas; Enter/Shift+Enter; ↑ do histórico; `/mod` não vira `/model`; comando desconhecido; `!comando`; rascunho por aba | pendente |
+| B4 | diálogo da TUI sem pendência (ex.: `/model`, permissão em modo legado): faixa aparece com o texto certo, "Abrir terminal" leva até ele e ela some ao voltar | pendente |
+| SC-003 | bateria de envio: 20 mensagens variadas (curta, longa, colagem grande, durante a rodada, interromper e mandar) sem perda nem duplicata | pendente |

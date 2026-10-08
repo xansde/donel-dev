@@ -47,6 +47,10 @@ const scenario = loadScenario();
 const homeDir = process.env.DONEL_FAKE_CLAUDE_HOME || join(tmpdir(), `fake-claude-chat-${process.pid}`);
 const callLogPath = process.env.DONEL_FAKE_CLAUDE_LOG || null;
 const hookTimeoutMs = Number(process.env.DONEL_FAKE_CLAUDE_HOOK_TIMEOUT_MS || 5000);
+// A message containing "demorar" makes the round last this long (interruptible), so smokes can queue / interrupt.
+const slowMs = Number(process.env.DONEL_FAKE_CLAUDE_SLOW_MS || 3000);
+// Swallows the first Enter that has text in the box (a lost Enter), to exercise the driver's single `\r` resend.
+let dropFirstEnter = process.env.DONEL_FAKE_CLAUDE_DROP_FIRST_ENTER === '1';
 
 // ------------------------------------------------------------------ session
 const cwd = process.cwd();
@@ -78,8 +82,13 @@ function appendLine(line) {
   appendFileSync(transcriptPath, `${JSON.stringify(full)}\n`);
 }
 
-function appendUser(content) {
-  appendLine({ type: 'user', message: { role: 'user', content } });
+function appendUser(content, extra = {}) {
+  appendLine({ type: 'user', message: { role: 'user', content }, ...extra });
+}
+
+/** Metadata line of the CLI's input queue: no uuid, outside the parentUuid chain. */
+function appendQueueOp(operation, extra = {}) {
+  appendFileSync(transcriptPath, `${JSON.stringify({ type: 'queue-operation', operation, timestamp: new Date().toISOString(), sessionId, ...extra })}\n`);
 }
 
 function appendToolResult(toolUseId, content, isError = false) {
@@ -145,7 +154,16 @@ async function startSession(source) {
 }
 
 // ------------------------------------------------------------------- screen
-const state = { working: false, input: '', pastes: [], history: [] };
+const state = { dialog: false, working: false, input: '', pastes: [], history: [], menuClosed: false, images: 0 };
+const pending = []; // messages submitted during a round, waiting in the CLI's queue
+const NATIVE_COMMANDS = ['/clear', '/compact', '/config', '/cost', '/exit', '/help', '/mcp', '/memory', '/model', '/status'];
+const LOCAL_COMMANDS = new Set(['/config', '/cost', '/help', '/mcp', '/memory', '/model', '/status']);
+
+/** Slash-menu candidates for the text in the box (the CLI shows them above the ruler). */
+function menuMatches() {
+  if (state.menuClosed || !state.input.startsWith('/') || /\s/.test(state.input)) return [];
+  return NATIVE_COMMANDS.filter((c) => c.startsWith(state.input));
+}
 const out = (text) => process.stdout.write(text);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -154,8 +172,16 @@ function ruler() {
 }
 
 function render() {
+  if (state.dialog) {
+    // `/pick`: a model-selection dialog that replaces the input box and stays until Esc (smoke of the "terminal needed" strip).
+    const dialog = ['▔'.repeat(Math.max(20, process.stdout.columns || 100)), 'Select model', '', '  ❯ 1. Default (recommended) ✔', '    2. Fake Model', '', '  Enter to confirm · Esc to exit'];
+    out(`\x1b[2J\x1b[H${dialog.join('\r\n')}`);
+    return;
+  }
   const lines = [' ▐▛███▜▌   Claude Code v2.1.293', `▝▜█████▛▘  Fake Model · fake-claude-chat`, ` ▘▘ ▝▝    ${cwd}`, ''];
   lines.push(...state.history.slice(-12));
+  for (const queued of pending) lines.push(`  ⎿ queued: ${queued.replace(/\n/g, ' ').slice(0, 60)}`);
+  menuMatches().slice(0, 6).forEach((c, i) => lines.push(i === 0 ? `  ❯ ${c}` : `    ${c}`));
   lines.push(ruler(), `❯ ${displayInput()}`, ruler());
   lines.push(state.working ? '  esc to interrupt' : state.input === '' ? '  ? for shortcuts' : '  ! for shell mode');
   // The real CLI shows the permission mode in the footer; the smokes use it as the "ready for keys" signal.
@@ -175,6 +201,12 @@ function note(line) {
 // ------------------------------------------------------------------- turns
 const turnState = { counter: 0, sequential: 0, interrupted: false };
 
+/** Sleeps in slices so Esc ends a long round promptly. */
+async function sleepInterruptible(ms) {
+  const end = Date.now() + ms;
+  while (!turnState.interrupted && Date.now() < end) await sleep(Math.min(40, end - Date.now()));
+}
+
 function pickTurn(text) {
   const turns = Array.isArray(scenario.turns) ? scenario.turns : [];
   const matched = turns.find((t) => t.match !== undefined && matches(t.match, text));
@@ -193,7 +225,7 @@ function matches(pattern, text) {
 async function runStep(step) {
   switch (step.type) {
     case 'wait':
-      await sleep(step.ms ?? 0);
+      await sleepInterruptible(step.ms ?? 0);
       break;
     case 'assistant':
       appendAssistant({ type: 'text', text: step.text ?? '' });
@@ -222,13 +254,14 @@ async function runStep(step) {
   }
 }
 
-async function runTurn(text) {
+async function runTurn(text, queued = false) {
   state.working = true;
   turnState.interrupted = false;
   render();
   const startedAt = Date.now();
-  appendUser(text);
+  appendUser(text, { turnOrigin: 'human', promptSource: queued ? 'queued' : 'typed' });
   await fireHook('UserPromptSubmit', { prompt: text });
+  if (/demorar/.test(text)) await sleepInterruptible(slowMs);
   const turn = pickTurn(text);
   for (const step of turn.steps ?? []) {
     if (turnState.interrupted) break;
@@ -246,37 +279,85 @@ async function runTurn(text) {
 }
 
 // ----------------------------------------------------------------- commands
-const queue = [];
 let busy = false;
 
 async function endSession(reason) {
   await fireHook('SessionEnd', { reason });
 }
 
-async function handleSubmit(text) {
-  const trimmed = text.trim();
-  if (trimmed === '/exit') {
+/** Native commands that print to the transcript: caveat, command echo, stdout and `system/local_command` (2.1.293). */
+function playLocalCommand(name, args) {
+  appendLine({ type: 'user', isMeta: true, message: { role: 'user', content: '<local-command-caveat>Caveat: the messages below were generated by the user while running local commands.</local-command-caveat>' } });
+  appendUser(`<command-name>${name}</command-name>\n<command-message>${name.slice(1)}</command-message>\n<command-args>${args}</command-args>`);
+  appendUser(`<local-command-stdout>${name} ok</local-command-stdout>`);
+  appendLine({ type: 'system', subtype: 'local_command', content: `${name} ${args}`.trim(), level: 'info', commandRun: { command: name, args } });
+  note(`  ⎿  ${name} ok`);
+}
+
+async function handleSlash(text) {
+  const [name, ...rest] = text.trim().split(/\s+/);
+  const args = rest.join(' ');
+  if (name === '/exit') {
     await endSession('prompt_input_exit');
     shutdown(0);
-    return;
-  }
-  if (trimmed === '/clear') {
+  } else if (name === '/clear') {
     await endSession('clear');
     sessionId = randomUUID();
     state.history = [];
     await startSession('clear');
     render();
+  } else if (name === '/compact') {
+    const before = lastUuid;
+    appendLine({ type: 'system', subtype: 'compact_boundary', parentUuid: null, logicalParentUuid: before, content: 'Conversation compacted', level: 'info', compactMetadata: { trigger: 'manual', preTokens: 1200, postTokens: 300, durationMs: 50 } });
+    note('✻ Conversation compacted');
+    await fireHook('SessionStart', { source: 'compact' });
+  } else if (name === '/pick') {
+    state.dialog = true;
+    render();
+  } else if (LOCAL_COMMANDS.has(name)) {
+    playLocalCommand(name, args);
+  } else {
+    appendLine({ type: 'system', subtype: 'informational', content: `Unknown command: ${name}`, level: 'warning' });
+    note(`  ⎿  Unknown command: ${name}`);
+  }
+}
+
+function handleShell(text) {
+  const command = text.trim().slice(1).trim();
+  appendUser(`<bash-input>${command}</bash-input>`);
+  appendUser('<bash-stdout>fake output</bash-stdout><bash-stderr></bash-stderr>');
+  note(`! ${command}`);
+}
+
+async function handleSubmit(text, queued = false) {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('/')) {
+    await handleSlash(trimmed);
+    return;
+  }
+  if (trimmed.startsWith('!')) {
+    handleShell(trimmed);
     return;
   }
   note(`❯ ${text.replace(/\n/g, ' ')}`);
-  await runTurn(text);
+  await runTurn(text, queued);
 }
 
-async function drain() {
-  if (busy) return;
+/** One submission at a time; what was queued during it is delivered right after (queue-operation remove + queued_command). */
+async function run(text) {
   busy = true;
-  while (queue.length > 0) await handleSubmit(queue.shift());
-  busy = false;
+  try {
+    await handleSubmit(text);
+    while (pending.length > 0) {
+      const next = pending.shift();
+      appendQueueOp('remove');
+      appendLine({ type: 'attachment', attachment: { type: 'queued_command', prompt: next, commandMode: 'prompt', humanTurn: true } });
+      render();
+      await handleSubmit(next, true);
+    }
+  } finally {
+    busy = false;
+  }
 }
 
 function shutdown(code) {
@@ -293,7 +374,11 @@ let pasteBuffer = '';
 function commitPaste(text) {
   const normalized = text.replace(/\r\n|\r/g, '\n');
   const lineCount = normalized.split('\n').length;
-  if (lineCount > 2 || normalized.length > 800) {
+  state.menuClosed = false;
+  if (/^(?:[A-Za-z]:[\\/]|\/).+\.(?:png|jpe?g|gif|webp)$/i.test(normalized.trim())) {
+    state.images += 1;
+    state.input += `[Image #${state.images}]`;
+  } else if (lineCount >= 5 || normalized.length >= 1000) {
     state.pastes.push(normalized);
     state.input += `[Pasted text #${state.pastes.length} +${lineCount - 1} lines]`;
   } else {
@@ -308,16 +393,60 @@ function submitInput() {
   });
   state.input = '';
   state.pastes = [];
+  state.menuClosed = false;
+  if (text.trim() === '') {
+    render();
+    return;
+  }
+  if (busy) {
+    // the CLI keeps what is typed during a round in its input queue
+    appendQueueOp('enqueue', { content: text });
+    pending.push(text);
+    render();
+    return;
+  }
   render();
-  if (text.trim() === '') return;
-  queue.push(text);
-  void drain();
+  void run(text);
+}
+
+function pressEnter() {
+  if (dropFirstEnter && state.input !== '') {
+    dropFirstEnter = false;
+    return;
+  }
+  const matches = menuMatches();
+  if (matches.length > 0 && matches[0] !== state.input) {
+    // with the slash menu open Enter COMPLETES the highlighted command instead of sending
+    state.input = matches[0];
+    return;
+  }
+  submitInput();
 }
 
 function onData(chunk) {
   let data = chunk.toString('utf8');
+  if (state.dialog) {
+    if (data === '\x1b') {
+      state.dialog = false;
+      render();
+    }
+    return;
+  }
   if (!inPaste && data === '\x1b') {
     if (state.working) turnState.interrupted = true;
+    else if (menuMatches().length > 0) {
+      state.menuClosed = true; // Esc closes the menu and keeps the text
+      render();
+    }
+    return;
+  }
+  if (!inPaste && data === '\x1b\x1b') {
+    if (!state.working) {
+      state.input = '';
+      state.pastes = [];
+      state.menuClosed = false;
+      render();
+    }
     return;
   }
   if (!inPaste && data === '\x03') {
@@ -341,9 +470,21 @@ function onData(chunk) {
     const start = data.indexOf(PASTE_START);
     const plain = start === -1 ? data : data.slice(0, start);
     for (const ch of plain) {
-      if (ch === '\r' || ch === '\n') submitInput();
-      else if (ch === '\x7f' || ch === '\b') state.input = state.input.slice(0, -1);
+      if (ch === '\r') {
+        pressEnter();
+        continue;
+      }
+      // ConPTY drops the bracketed-paste markers before a Node child sees them, so a multi-line paste arrives
+      // as plain text with LF: like the real CLI (Ctrl+J), LF inserts a line break instead of sending.
+      if (ch === '\n') {
+        state.input += '\n';
+        state.menuClosed = false;
+        continue;
+      }
+      if (ch === '\x7f' || ch === '\b') state.input = state.input.slice(0, -1);
       else if (ch >= ' ') state.input += ch;
+      else continue;
+      state.menuClosed = false;
     }
     if (start === -1) break;
     inPaste = true;

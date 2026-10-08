@@ -113,6 +113,7 @@ import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from '.
 import { ProjectSwitcher } from './ProjectSwitcher';
 import { ChatView, type ChatViewActions } from './chat/ChatView';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
+import { disposeTabSend, sendDriverFor, sendToTab } from './chat/composer/tabSend';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import type { TerminalPaneHandle } from './TerminalPane';
@@ -631,6 +632,7 @@ export function App(): React.JSX.Element {
     setChatPtyIds((prev) => omitKey(prev, tabId));
     setTabExits((prev) => omitKey(prev, tabId));
     delete terminalRefs.current[tabId];
+    disposeTabSend(tabId); // 014/T065 — driver de envio e rascunho do chat morrem com a aba
     // 003-modo-dev/T312 — nenhum watcher de prontidão sobrevive à aba que ele
     // vigiava (senão tentaria escrever num PTY que já não existe).
     armWatchersRef.current[tabId]?.();
@@ -1150,8 +1152,10 @@ export function App(): React.JSX.Element {
     resume: () => undefined,
     closeTab: () => undefined,
     openPreviousSessions: () => undefined,
+    terminal: () => null,
   });
   chatActionsRef.current = {
+    terminal: (tabId) => terminalRefs.current[tabId] ?? null,
     openTerminal: (tabId) => setTabView(tabId, 'terminal'),
     // FR-034 — retoma a MESMA conversa (a atual da aba, mesmo após /clear ou /resume).
     resume: (tabId) => {
@@ -1171,6 +1175,7 @@ export function App(): React.JSX.Element {
       resume: (tabId) => chatActionsRef.current.resume(tabId),
       closeTab: (tabId) => chatActionsRef.current.closeTab(tabId),
       openPreviousSessions: (tabId) => chatActionsRef.current.openPreviousSessions(tabId),
+      terminal: (tabId) => chatActionsRef.current.terminal(tabId),
     }),
     [],
   );
@@ -1550,6 +1555,26 @@ export function App(): React.JSX.Element {
   }, []);
 
   /**
+   * 014-chat / T071 (FR-020) — auto-start da Esteira com o chat ligado: o comando da fase entra pelo MESMO
+   * `sendDriver` da caixa do chat (fila única, espera o CLI ficar pronto, confirma por sinal de aceite e
+   * reenvia o Enter perdido sem duplicar). Com `chat.enabled` desligado, `armEsteiraAutoStart` (acima)
+   * segue intacto. Falha vira aviso: a mensagem fica visível no chat com "tentar de novo".
+   */
+  const armEsteiraDriverSend = useCallback((tabId: string, command: string): void => {
+    const source = { terminal: () => terminalRefs.current[tabId] ?? null };
+    const id = sendToTab(tabId, source, { text: command });
+    const driver = sendDriverFor(tabId, source);
+    const off = driver.subscribe(() => {
+      const item = driver.getItems().find((candidate) => candidate.id === id);
+      if (item === undefined || item.state === 'accepted' || item.state === 'queued') return off();
+      if (item.state === 'failed') {
+        off();
+        setDevModeToast(`Não consegui enviar o comando da fase (${item.reason ?? 'sem motivo'}). Use «tentar de novo» no chat da aba.`);
+      }
+    });
+  }, []);
+
+  /**
    * Spec 010 / batch B1 — o "Preparar" da esteira nova abre a sessão de
    * verdade. Mesma divisão do Modo Dev: a DECISÃO (onde abrir, com que comando)
    * é pura e vive em `Esteira/esteiraSession.ts`; aqui só o encanamento —
@@ -1570,10 +1595,12 @@ export function App(): React.JSX.Element {
       launchArgs: [],
       sessionType: 'claude',
       // A fase pré-digita o comando e o auto-start aperta o Enter: quem acompanha precisa ver o terminal.
-      view: 'terminal',
+      // Com o chat ligado a aba abre no chat: o comando aparece como mensagem enviada (T071).
+      ...(chatEnabled ? {} : { view: 'terminal' as const }),
     });
     esteiraTabSessionsRef.current[tabId] = request.sessionId;
-    armEsteiraAutoStart(tabId, request.command);
+    if (chatEnabled) armEsteiraDriverSend(tabId, request.command);
+    else armEsteiraAutoStart(tabId, request.command);
   };
 
   /**

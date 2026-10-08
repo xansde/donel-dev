@@ -4,11 +4,13 @@
 // preference at runtime takes effect on the next start of the app.
 //
 // Handlers here: attach, detach, load-older, row-detail, open-external,
-// open-generated. The other contract channels (answer, subagent-*, catalog,
-// files, save-image, ack-lookup, focus-state) belong to later tasks.
+// open-generated, ack-lookup (T064), screen-state (T070). The other contract
+// channels (answer, subagent-*, catalog, files, save-image, focus-state) belong to later tasks.
 
 import { CHAT_CHANNELS } from '../../shared/chat/ipc';
 import type {
+  ChatAckLookupInput,
+  ChatAckLookupOutput,
   ChatAttachInput,
   ChatAttachOutput,
   ChatDetachInput,
@@ -17,6 +19,7 @@ import type {
   ChatOpenExternalInput,
   ChatOpenGeneratedInput,
   ChatRowDetailInput,
+  ChatScreenStateInput,
   RowDetail,
 } from '../../shared/chat/ipc';
 import { isExternalUrlAllowed, isGeneratedFileOpenable } from '../../shared/chat/linkPolicy';
@@ -53,7 +56,11 @@ const HANDLED: readonly string[] = [
   CHAT_CHANNELS.rowDetail,
   CHAT_CHANNELS.openExternal,
   CHAT_CHANNELS.openGenerated,
+  CHAT_CHANNELS.ackLookup,
+  CHAT_CHANNELS.screenState,
 ];
+
+const SCREEN_REASONS: ReadonlySet<string> = new Set(['hook-timeout', 'interactive-screen', 'permission-dialog', 'unrecognized']);
 
 const isString = (v: unknown): v is string => typeof v === 'string';
 
@@ -89,6 +96,17 @@ export function registerChatIpcHandlers(deps: ChatIpcDeps): ChatIpcRegistration 
     if (!isString(input?.ptyId) || !isString(input.path)) return;
     if (!isGeneratedFileOpenable(input.path, hub.generatedFileRoots(input.ptyId))) return;
     await deps.openPath(input.path);
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.ackLookup, (_e, input: ChatAckLookupInput): Promise<ChatAckLookupOutput> => {
+    if (!isString(input?.ptyId) || !isString(input.text) || !isString(input.since)) return Promise.resolve({ matched: false });
+    return hub.ackLookup(input.ptyId, input.text, input.since);
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.screenState, (_e, input: ChatScreenStateInput): void => {
+    if (!isString(input?.ptyId)) return;
+    const reason = input.terminalNeeded;
+    if (reason === null || SCREEN_REASONS.has(reason)) hub.reportScreenState(input.ptyId, reason);
   });
 
   return {

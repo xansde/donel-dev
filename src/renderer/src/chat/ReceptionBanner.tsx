@@ -4,15 +4,9 @@
 //   blue, compact : "Conversa nova - a anterior está em Sessões anteriores" (with "abrir")
 
 import { Banner, Button } from '@donel-dev/design-system';
-import { Info, Terminal, TriangleAlert } from 'lucide-react';
+import { Info, TriangleAlert } from 'lucide-react';
 import type { ChatReception, TerminalNeededReason } from '../../../shared/chat/rows';
-
-const TERMINAL_NEEDED_TEXT: Record<TerminalNeededReason, string> = {
-  'permission-dialog': 'O Claude abriu uma tela de permissão que só funciona lá. Responda no terminal e a conversa continua aqui.',
-  'interactive-screen': 'O Claude abriu uma tela que só funciona lá. Responda no terminal e a conversa continua aqui.',
-  'hook-timeout': 'O chat não conseguiu acompanhar o que o Claude pediu. Responda no terminal e a conversa continua aqui.',
-  unrecognized: 'Há uma tela no terminal que o chat não reconhece. Responda lá e a conversa continua aqui.',
-};
+import { TerminalNeededBanner } from './TerminalNeededBanner';
 
 export interface ReceptionBannerProps {
   reception: ChatReception;
@@ -27,19 +21,7 @@ export function ReceptionBanner({ reception, terminalNeeded, onOpenTerminal }: R
       Abrir terminal
     </Button>
   );
-  if (terminalNeeded) {
-    return (
-      <Banner
-        tone="permission"
-        role="alert"
-        icon={<Terminal size={18} strokeWidth={1.75} />}
-        title="O terminal precisa de você"
-        actions={openTerminal}
-      >
-        {TERMINAL_NEEDED_TEXT[terminalNeeded.reason]}
-      </Banner>
-    );
-  }
+  if (terminalNeeded) return <TerminalNeededBanner reason={terminalNeeded.reason} onOpenTerminal={onOpenTerminal} />;
   if (reception !== 'ok') {
     return (
       <Banner

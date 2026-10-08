@@ -1108,6 +1108,7 @@ function registerChatDomain(): void {
       live: (event) => broadcastChat(CHAT_CHANNELS.live, event),
       conversationSwitched: (event) => broadcastChat(CHAT_CHANNELS.conversationSwitched, event),
       reception: (event) => broadcastChat(CHAT_CHANNELS.reception, event),
+      promptSignal: (event) => broadcastChat(CHAT_CHANNELS.promptSignal, event),
     },
     diagnostics: createDiagnosticsLog(app.getPath('userData')),
     attachmentsRoot,

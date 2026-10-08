@@ -17,6 +17,8 @@ export interface SplitButtonProps {
   items: SplitButtonMenuItem[];
   variant?: Extract<ButtonVariant, 'primary' | 'secondary'>;
   disabled?: boolean;
+  /** Onde o menu abre: `below` (padrão) ou `above` (botão no pé da tela, ex. a caixa do chat), alinhado à direita. */
+  menuPlacement?: 'below' | 'above';
   className?: string;
 }
 
@@ -31,6 +33,7 @@ export function SplitButton({
   items,
   variant = 'primary',
   disabled = false,
+  menuPlacement = 'below',
   className,
 }: SplitButtonProps) {
   const [open, setOpen] = useState(false);
@@ -84,7 +87,7 @@ export function SplitButton({
         <ChevronDown size={14} strokeWidth={1.5} aria-hidden="true" />
       </button>
       {open ? (
-        <ul className={styles.menu} role="menu">
+        <ul className={[styles.menu, menuPlacement === "above" ? styles.menuAbove : ""].filter(Boolean).join(" ")} role="menu">
           {items.map((item) => (
             <li key={item.label} role="none">
               <button

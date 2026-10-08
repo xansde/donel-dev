@@ -14,7 +14,9 @@
 import type { DonelChatApi } from '../../../shared/chat/api';
 import type {
   ChatConversationSwitchedEvent,
+  ChatAckLookupOutput,
   ChatLiveEvent,
+  ChatPromptSignalEvent,
   ChatReceptionEvent,
   ChatRowsEvent,
   ChatSnapshot,
@@ -29,6 +31,7 @@ import type {
   ConversationSource,
   LiveState,
   RowScope,
+  TerminalNeededReason,
 } from '../../../shared/chat/rows';
 
 export type ChatSessionStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -120,6 +123,8 @@ const messageOf = (err: unknown): string => (err instanceof Error ? err.message 
 export class ChatStore {
   private readonly entries = new Map<string, Entry>();
   private unsubscribers: (() => void)[] = [];
+  /** T064: prompt-signal listeners by tab; they are not tied to the timeline attach. */
+  private readonly signalListeners = new Map<string, Set<(event: ChatPromptSignalEvent) => void>>();
 
   constructor(private readonly api: DonelChatApi) {}
 
@@ -150,7 +155,7 @@ export class ChatStore {
     entry.attachGen += 1;
     this.entries.delete(ptyId);
     void Promise.resolve(this.api.detach(ptyId)).catch(() => undefined);
-    if (this.entries.size === 0) this.dropChannels();
+    if (this.entries.size === 0 && this.signalListeners.size === 0) this.dropChannels();
   }
 
   dispose(): void {
@@ -160,7 +165,48 @@ export class ChatStore {
       this.entries.delete(ptyId);
       void Promise.resolve(this.api.detach(ptyId)).catch(() => undefined);
     }
+    this.signalListeners.clear();
     this.dropChannels();
+  }
+
+  // ---- T064/T070: send acceptance signals and screen state -------------------
+
+  /** Acceptance signals of one tab (contracts/send-protocol.md §5). Returns the unsubscribe function. */
+  onPromptSignal(ptyId: string, listener: (event: ChatPromptSignalEvent) => void): () => void {
+    let set = this.signalListeners.get(ptyId);
+    if (set === undefined) {
+      set = new Set();
+      this.signalListeners.set(ptyId, set);
+    }
+    set.add(listener);
+    this.ensureChannels();
+    return () => {
+      const current = this.signalListeners.get(ptyId);
+      if (current === undefined) return;
+      current.delete(listener);
+      if (current.size === 0) this.signalListeners.delete(ptyId);
+      if (this.entries.size === 0 && this.signalListeners.size === 0) this.dropChannels();
+    };
+  }
+
+  /** Late acceptance lookup (contracts/send-protocol.md §7). */
+  ackLookup(ptyId: string, text: string, since: string): Promise<ChatAckLookupOutput> {
+    return this.api.ackLookup(ptyId, text, since);
+  }
+
+  /** The renderer's screen detectors report what needs the terminal (`null` = the input box is back). */
+  reportScreenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): void {
+    void Promise.resolve(this.api.screenState(ptyId, terminalNeeded)).catch(() => undefined);
+  }
+
+  private onPromptSignal_(event: ChatPromptSignalEvent): void {
+    for (const listener of [...(this.signalListeners.get(event.ptyId) ?? [])]) {
+      try {
+        listener(event);
+      } catch {
+        // a faulty listener must not break the others
+      }
+    }
   }
 
   // ---- channels: ONE subscription per event, distributed by ptyId ----------
@@ -172,6 +218,7 @@ export class ChatStore {
       this.api.onLive((event) => this.onLive(event)),
       this.api.onReception((event) => this.onReception(event)),
       this.api.onConversationSwitched((event) => this.onSwitched(event)),
+      this.api.onPromptSignal((event) => this.onPromptSignal_(event)),
     ];
   }
 

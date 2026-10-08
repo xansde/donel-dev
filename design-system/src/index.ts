@@ -171,3 +171,11 @@ export {
   formatHiddenLines,
 } from './lib/clipLines';
 export type { ClippedLines } from './lib/clipLines';
+
+// === 014-chat Fase 3 (frente C) — caixa de escrever ===
+
+export { TextArea, computeTextAreaHeight, textAreaHeightForRows } from './components/TextArea';
+export type { TextAreaProps } from './components/TextArea';
+
+export { Composer, COMPOSER_MAX_WIDTH } from './components/Composer';
+export type { ComposerProps } from './components/Composer';
