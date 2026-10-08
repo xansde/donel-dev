@@ -12,6 +12,7 @@ import type {
   ChatReceptionEvent,
   ChatRowDetailInput,
   ChatRowsEvent,
+  ChatSaveImageOutput,
   ChatSnapshot,
   RowDetail,
 } from './ipc';
@@ -27,6 +28,11 @@ export interface DonelChatApi {
   openExternal(url: string): Promise<void>;
   /** Document/image files inside the tab's cwd or the attachments folder only. */
   openGenerated(ptyId: string, path: string): Promise<void>;
+
+  /** T088 - grava a imagem colada/arrastada em `userData/chat-attachments/<sessionId>/` e devolve o caminho absoluto (o main valida tipo e tamanho). */
+  saveImage(ptyId: string, bytes: ArrayBuffer, mediaType: string): Promise<ChatSaveImageOutput>;
+  /** T088 - caminho no disco de um `File` do seletor/arraste (Electron: `webUtils`); `''` quando o arquivo nao tem caminho. */
+  pathForFile(file: unknown): string;
 
   /** Aceite tardio: o texto entrou desde `since` (ISO)? Procura nos `UserPromptSubmit` guardados e no transcript. */
   ackLookup(ptyId: string, text: string, since: string): Promise<ChatAckLookupOutput>;

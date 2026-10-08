@@ -201,6 +201,9 @@ describe('fake-claude-chat', { timeout: 20000 }, () => {
     await waitFor(() => screen().includes('[Pasted text #1 +4 lines]'), 'placeholder at 5 lines');
     send('\x1b[200~C:\\tmp\\foto.png\x1b[201~');
     await waitFor(() => screen().includes('[Image #1]'), 'image placeholder');
+    // ConPTY drops the paste markers: the same path arriving as plain typed text is an image too.
+    send('D:\\tmp\\outra.png');
+    await waitFor(() => screen().includes('[Image #1][Image #2]'), 'image placeholder without paste markers');
   });
 
   it('queues a message submitted during a round: enqueue, then remove + queued_command, then processes it', async () => {

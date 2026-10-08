@@ -100,6 +100,8 @@ export interface ChatHub {
   reportScreenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): void;
   /** Folders the tab's transcript files (and sub-agent files) may be served from. */
   transcriptRoots(ptyId: string): readonly string[];
+  /** Id of the conversation the tab is on now (`null` until its first hook). */
+  sessionIdOf(ptyId: string): string | null;
   /** Folders `chat:open-generated` may open from: the tab's `cwd` and the attachments folder. */
   generatedFileRoots(ptyId: string): readonly string[];
   dispose(): void;
@@ -638,6 +640,11 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     transcriptRoots(ptyId) {
       const path = recs.get(ptyId)?.source?.transcriptPath ?? deps.getSource(ptyId)?.transcriptPath;
       return path === undefined ? [] : [dirname(path)];
+    },
+
+    sessionIdOf(ptyId) {
+      const source = recs.get(ptyId)?.source ?? deps.getSource(ptyId);
+      return source !== undefined && source !== null && source.sessionId !== '' ? source.sessionId : null;
     },
 
     generatedFileRoots(ptyId) {

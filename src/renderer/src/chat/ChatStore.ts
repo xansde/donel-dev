@@ -194,6 +194,16 @@ export class ChatStore {
     return this.api.ackLookup(ptyId, text, since);
   }
 
+  /** T088 - saves a pasted/dropped image through the main (which validates it) and returns its absolute path. */
+  saveImage(ptyId: string, bytes: ArrayBuffer, mediaType: string): Promise<{ readonly id: string; readonly path: string }> {
+    return this.api.saveImage(ptyId, bytes, mediaType);
+  }
+
+  /** T088 - disk path of a `File` from the picker or a drop (`''` when it has none). */
+  pathForFile(file: unknown): string {
+    return this.api.pathForFile(file);
+  }
+
   /** The renderer's screen detectors report what needs the terminal (`null` = the input box is back). */
   reportScreenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): void {
     void Promise.resolve(this.api.screenState(ptyId, terminalNeeded)).catch(() => undefined);
