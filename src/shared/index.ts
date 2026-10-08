@@ -8,6 +8,7 @@ import type { AccountId, DonelAccountsApi } from './accounts';
 import type { DonelMigrationApi } from './migration';
 import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
+import type { DonelChatApi } from './chat/api';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProjectBindingApi } from './projectBinding';
@@ -431,4 +432,6 @@ export interface DonelApi {
   github: DonelGithubApi;
   /** Spec 010 — a esteira nova (store de eventos + contrato com as skills), ao lado do Modo Dev atual. */
   esteira: DonelEsteiraApi;
+  /** 014-chat — conversa da aba `claude` como chat (ler, paginar, abrir links). Com `chat.enabled = false` os pedidos rejeitam: não há handler. */
+  chat: DonelChatApi;
 }
