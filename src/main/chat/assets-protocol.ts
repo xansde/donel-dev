@@ -1,4 +1,4 @@
-﻿// T046 (014-chat) - `donel-asset:` protocol (research.md R21; ipc-chat.md §4).
+// T046 (014-chat) - `donel-asset:` protocol (research.md R21; ipc-chat.md §4).
 // Serves transcript image blocks (by LineRef + blockIndex) and attachments (by
 // id) to <img> without sending base64 through IPC. Every path is validated here
 // with the T044 policy; the renderer never gets to name a path outside the

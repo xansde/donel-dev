@@ -1,4 +1,4 @@
-﻿// T046 (014-chat) - `donel-asset:` resolution (pure part). Real temp files; no Electron.
+// T046 (014-chat) - `donel-asset:` resolution (pure part). Real temp files; no Electron.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
