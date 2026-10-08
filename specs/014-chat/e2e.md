@@ -69,23 +69,40 @@ sessão que fechou a ligação das linhas reais (`renderRow`) e as smokes.
 | `chat-reading.spec.ts` (CLI falso) | **verde** (~5 s): a aba abre no chat; título, tabela e código renderizados, com Shiki aplicado; copiar bloco e copiar resposta (clipboard lido no main); 10 alternâncias (5 pelo botão, 5 por `Ctrl+\``) sem perder a sessão, e o mesmo processo ainda responde depois; Modo Foco dobra o trabalho; aviso "Conversa nova" depois do `/clear`; `/exit` → barra "Sessão encerrada" e **Retomar** volta a sessão |
 | `chat-live-latency.spec.ts` | **verde** — SC-008: append no transcript → linha na tela. 5 medições (ms): 144, 104, 99, 100, 80 e 93, 97, 97, 75, 89 em duas rodadas; **mediana 93–100 ms** (orçamento 1000 ms) |
 | `chat-long-session.spec.ts`, fim visível | **verde** — SC-005: sessão sintética de 10 000 linhas / 6,5 MB (T058). Do clique em Retomar até a última resposta dentro da tela: **0,8 a 1,07 s** (orçamento 2 s), já contando o spawn do CLI falso |
-| `chat-long-session.spec.ts`, rolagem sem salto | **REPROVADO** — ver abaixo. Está como `test.fail`: o gate fica verde e o teste vira erro quando o salto for corrigido |
+| `chat-long-session.spec.ts`, rolagem sem salto | **verde (corrigido em 08/10, `fix/014-rolagem-historico`)** — salto 1068 px → **0 px** nas 3 cargas, em 3 execuções seguidas; sem `test.fail` |
 | `chat-foundation.spec.ts` | verde |
-| `npm run test:smoke:gate` | 57 verdes, 1 falha: `session-context.spec.ts` (T611/T612), a intermitência conhecida (`7% · 20k/300k` não chegou à StatusBar); o `test.fail` do SC-005 conta como verde |
+| `npm run test:smoke:gate` | 57 verdes, 1 falha: `session-context.spec.ts` (T611/T612), a intermitência conhecida (`7% · 20k/300k` não chegou à StatusBar); o `test.fail` do SC-005 conta como verde. **Após a correção da rolagem: 58 verdes** |
 
-### SC-005 — rolagem para o topo: salto de posição (ABERTO)
+### SC-005 — rolagem para o topo: salto de posição (CORRIGIDO em 08/10)
 
-Medido em 08/10: ao rolar até o topo e carregar a página anterior, o primeiro
-item visível **se desloca 1068 px** (idêntico nas 3 cargas seguidas; mesmo com a
-aproximação em passos e 500 ms de acomodação). Esperado: ≤ 4 px.
+**Antes**: ao rolar até o topo e carregar a página anterior, o primeiro item
+visível se deslocava **1068 px** (idêntico nas 3 cargas; reproduzido de novo com a
+medição nova antes de corrigir).
 
-Hipótese (não confirmada): `preservedScrollTop` soma a diferença de
-`scrollHeight` medida com as rodadas fora da tela em 480 px estimados
-(`content-visibility: auto` + `contain-intrinsic-size`); as vizinhas da janela
-ganham a altura real depois, e o `overflow-anchor: none` não deixa o navegador
-compensar. O plano B do R19 (react-virtuoso) **não foi adotado**. Tarefa a abrir:
-corrigir a âncora (guardar o elemento âncora e o deslocamento e restaurá-los após
-o commit) ou, se não bastar, adotar o virtualizador.
+**Causa raiz**: `preservedScrollTop` somava a diferença de `scrollHeight` medida
+logo após o commit. Com `content-visibility: auto`, as rodadas recém-inseridas
+entram com a altura estimada (480 px) e trocam pela real depois do commit (medido
+no renderer: a âncora derivava −881 px, depois −347 px, em vez de ficar parada), e
+o `overflow-anchor: none` impede o navegador de compensar. Uma segunda falha: a
+página mais antiga pode terminar no meio de uma rodada, que ganha linhas no início —
+o topo e a chave (`round:<primeira linha>`) dessa rodada mudam, então âncora por
+topo/chave se perde.
+
+**Correção** (`scrollController.ts`, `Timeline.tsx`): preservar por âncora, não por
+altura. Na renderização que traz as linhas novas (o DOM ainda é o antigo) guarda-se
+a primeira rodada visível e a distância do **fundo** dela ao topo da viewport
+(`data-round-tail` = chave do último item da rodada; o fundo é o que o prepend não
+mexe). Depois do commit, `anchoredScrollTop` reposiciona; um `ResizeObserver` refaz o
+alinhamento por até `ANCHOR_SETTLE_MS` = 800 ms enquanto as alturas se resolvem;
+wheel/touch/pointer/teclado do leitor encerram a trava. Sem dependência nova, sem
+virtualizador (plano B do R19 segue não adotado).
+
+**Medição** (sessão sintética de 4000 rodadas / 20 mil linhas — com 2 MB por página
+a de 10 mil linhas só tem 2 cargas acima da janela inicial; 3 cargas exigem mais
+histórico): salto por carga **0, 0, 0 px** em 3 execuções seguidas (antes 1068,
+1068, 1068, com a mesma medição). Tolerância do teste: **24 px** (~1 linha de
+texto, o que o olho não percebe como pulo). Fim visível após Retomar: 0,73 a
+0,80 s (orçamento 2 s). Teste unitário novo: `anchoredScrollTop`, `firstVisibleIndex`.
 
 ### Conferência de forma (screenshots em `test-results/chat-fase-2/`)
 
@@ -116,5 +133,5 @@ Com o build do alfa desta branch e o CLI real. Roteiro (`quickstart.md`):
 | B5 | rodada com ≥ 10 ações, uma edição e um comando que falha, com Modo Foco ligado e desligado; "tem pergunta aqui"; skill como selo | pendente |
 | B7 | `/clear` e `/resume <id>` (no terminal, nesta fase): aviso da conversa nova e o texto próprio do `/resume` | pendente |
 | B8 | `/exit`: conversa legível e copiável, barra "Sessão encerrada (código N)", **Retomar** continua a mesma conversa | pendente |
-| B10 | retomar a maior sessão real (> 10 MB): fim em ≤ 2 s; a rolagem para cima **sem pular** (hoje reprovada na sintética) | pendente |
+| B10 | retomar a maior sessão real (> 10 MB): fim em ≤ 2 s; a rolagem para cima **sem pular** (corrigida na sintética; confirmar no real) | pendente |
 | B11 | 10× chat ⇄ terminal: sessão intacta (o rascunho só existe a partir da Fase 3) | pendente |

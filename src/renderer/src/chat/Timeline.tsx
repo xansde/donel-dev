@@ -10,11 +10,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ConversationRow } from '../../../shared/chat/rows';
 import { renderRow, type RowRenderContext } from './renderRow';
 import {
+  ANCHOR_SETTLE_MS,
   INITIAL_SCROLL_STATE,
+  anchoredScrollTop,
+  firstVisibleIndex,
   classifyRowsChange,
   onRowsChange,
   onUserScroll,
-  preservedScrollTop,
   restoreScrollTop,
   shouldLoadOlder,
   snapshotView,
@@ -91,6 +93,36 @@ const measure = (el: HTMLElement): ScrollMetrics => ({
   scrollHeight: el.scrollHeight,
 });
 
+/**
+ * The first round on screen and how far below the viewport top its BOTTOM edge sits. The bottom, keyed by the
+ * round's last item, is what a prepend leaves alone: the oldest page can end in the middle of a round, so
+ * that round gains rows at its start (its top and its key move) while everything under it stays put.
+ */
+interface ScrollAnchor {
+  readonly key: string;
+  readonly offset: number;
+}
+
+const findAnchor = (el: HTMLElement): ScrollAnchor | null => {
+  const sections = el.querySelectorAll<HTMLElement>('section[data-round-tail]');
+  const top = el.getBoundingClientRect().top;
+  const index = firstVisibleIndex(sections.length, (i) => sections[i]!.getBoundingClientRect().bottom, top);
+  if (index < 0) return null;
+  const section = sections[index]!;
+  return { key: section.dataset.roundTail!, offset: section.getBoundingClientRect().bottom - top };
+};
+
+/** Re-aligns the scroll so the anchor round's bottom is `anchor.offset` below the top again. Returns false if it is gone. */
+const realign = (el: HTMLElement, anchor: ScrollAnchor): boolean => {
+  const section = Array.from(el.querySelectorAll<HTMLElement>('section[data-round-tail]')).find(
+    (s) => s.dataset.roundTail === anchor.key,
+  );
+  if (!section) return false;
+  const offsetNow = section.getBoundingClientRect().bottom - el.getBoundingClientRect().top;
+  if (Math.abs(offsetNow - anchor.offset) >= 0.5) el.scrollTop = anchoredScrollTop(el.scrollTop, anchor.offset, offsetNow);
+  return true;
+};
+
 export function Timeline({ rows, session, focusMode, active, ctx }: TimelineProps): React.JSX.Element {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -98,6 +130,10 @@ export function Timeline({ rows, session, focusMode, active, ctx }: TimelineProp
   const lastMetrics = useRef<ScrollMetrics>({ scrollTop: 0, clientHeight: 0, scrollHeight: 0 });
   const snapshot = useRef<ViewSnapshot | null>(null);
   const prevIds = useRef<string[]>([]);
+  // Anchor remembered while the reader scrolls (so a prepend can be undone), and the lock held after one.
+  const readingAnchor = useRef<ScrollAnchor | null>(null);
+  const anchorLock = useRef<{ anchor: ScrollAnchor; until: number } | null>(null);
+  const seenRows = useRef<readonly ConversationRow[] | null>(null);
   const [pill, setPill] = useState(false);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -110,6 +146,7 @@ export function Timeline({ rows, session, focusMode, active, ctx }: TimelineProp
     if (el.clientHeight === 0) return; // hidden (display: none) - keep the last real measure
     lastMetrics.current = measure(el);
     snapshot.current = snapshotView(scrollState.current, lastMetrics.current);
+    if (anchorLock.current !== null && performance.now() > anchorLock.current.until) anchorLock.current = null;
   }, []);
 
   // A switch of conversation (`/clear`, `/resume`, fork) forgets which folds were open.
@@ -121,6 +158,14 @@ export function Timeline({ rows, session, focusMode, active, ctx }: TimelineProp
     () => buildTimeline(rows, { focusMode, live: session.live, expanded }),
     [rows, focusMode, session.live, expanded],
   );
+
+  // The DOM still shows the previous rows while this render runs: this is the last moment the reader's
+  // round and its offset can be read before a prepend is committed (a scroll-time snapshot goes stale).
+  if (seenRows.current !== rows) {
+    seenRows.current = rows;
+    const el = scrollerRef.current;
+    if (el && el.clientHeight > 0 && anchorLock.current === null) readingAnchor.current = findAnchor(el);
+  }
 
   // Rows changed: decide follow / pill / preserve (before paint, so nothing jumps).
   useLayoutEffect(() => {
@@ -134,7 +179,9 @@ export function Timeline({ rows, session, focusMode, active, ctx }: TimelineProp
     if (action.kind === 'scroll-to-end') {
       el.scrollTop = el.scrollHeight;
     } else if (action.kind === 'preserve' && el.clientHeight > 0) {
-      el.scrollTop = preservedScrollTop(lastMetrics.current.scrollTop, lastMetrics.current.scrollHeight, el.scrollHeight);
+      // Hold the reader's round in place now and while the off-screen rounds measure themselves.
+      const anchor = readingAnchor.current;
+      if (anchor && realign(el, anchor)) anchorLock.current = { anchor, until: performance.now() + ANCHOR_SETTLE_MS };
     }
     setScrollState(state);
     remember(el);
@@ -161,12 +208,31 @@ export function Timeline({ rows, session, focusMode, active, ctx }: TimelineProp
     if (!el || !content || typeof ResizeObserver === 'undefined') return undefined;
     const observer = new ResizeObserver(() => {
       if (el.clientHeight === 0) return;
-      if (scrollState.current.following) el.scrollTop = el.scrollHeight;
+      const lock = anchorLock.current;
+      if (lock !== null) {
+        if (performance.now() > lock.until || !realign(el, lock.anchor)) anchorLock.current = null;
+      } else if (scrollState.current.following) {
+        el.scrollTop = el.scrollHeight;
+      }
       remember(el);
     });
     observer.observe(content);
     observer.observe(el);
-    return () => observer.disconnect();
+    // Reader input ends the lock: from here on the reader, not the anchor, decides where the scroll is.
+    const release = (): void => {
+      anchorLock.current = null;
+    };
+    el.addEventListener('wheel', release, { passive: true });
+    el.addEventListener('touchmove', release, { passive: true });
+    el.addEventListener('pointerdown', release);
+    el.addEventListener('keydown', release);
+    return () => {
+      observer.disconnect();
+      el.removeEventListener('wheel', release);
+      el.removeEventListener('touchmove', release);
+      el.removeEventListener('pointerdown', release);
+      el.removeEventListener('keydown', release);
+    };
   }, [remember]);
 
   // Near the top (or content shorter than the viewport) with older history left: load it.
@@ -233,6 +299,7 @@ export function Timeline({ rows, session, focusMode, active, ctx }: TimelineProp
               key={round.key}
               className={[styles.round, index < rounds.length - 1 ? styles.roundDeferred : ''].filter(Boolean).join(' ')}
               data-turn-id={round.turnId ?? undefined}
+              data-round-tail={round.items[round.items.length - 1]?.key}
             >
               {round.items.map((item) =>
                 item.kind === 'row' ? (
