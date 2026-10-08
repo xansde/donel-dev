@@ -49,6 +49,7 @@ import type {
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
+  ChatPrefs,
   LauncherDefaultsDto,
   NotificationPreference,
   OpenDiscoveryIpcInput,
@@ -120,6 +121,7 @@ import {
   LEGACY_ACTIVE_PROFILE_FILE_NAME,
   LEGACY_PROJECT_CONFIG_FILE_NAME,
   readAppConfig,
+  sanitizeChatPrefs,
   sanitizePhaseDefaultsTable,
   setSessionName,
   toAppConfigDto,
@@ -1286,6 +1288,17 @@ function registerConfigIpcHandlers(): void {
 
   ipcMain.handle(CONFIG_CHANNELS.setLauncherDefaults, (_event, defaults: LauncherDefaultsDto): AppConfigDto => {
     appConfig = { ...appConfig, launcherDefaults: defaults };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** T008 (014-chat) — atualização parcial de `chat`; campo que não é boolean é ignorado. */
+  ipcMain.handle(CONFIG_CHANNELS.setChatPrefs, (_event, prefs: Partial<ChatPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = {
+      ...appConfig,
+      chat: sanitizeChatPrefs({ ...appConfig.chat, ...patch }, appConfig.chat),
+    };
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });

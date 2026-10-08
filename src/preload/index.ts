@@ -23,6 +23,7 @@ import type {
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
+  ChatPrefs,
   LauncherDefaultsDto,
   LoginStatusDto,
   NotificationPreference,
@@ -292,6 +293,8 @@ const donelApi: DonelApi = {
     setLauncherDefaults: (defaults: LauncherDefaultsDto) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setLauncherDefaults, defaults) as Promise<AppConfigDto>,
 
+    setChatPrefs: (prefs: Partial<ChatPrefs>) =>
+      ipcRenderer.invoke(CONFIG_CHANNELS.setChatPrefs, prefs) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },

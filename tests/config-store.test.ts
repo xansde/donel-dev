@@ -65,6 +65,7 @@ describe('defaultAppConfig (puro)', () => {
       },
       migration: { startedAt: null, completedAt: null, profiles: {}, archivedTo: null },
       providers: { version: 1, entries: [] },
+      chat: { enabled: false, focusMode: true },
       unknownFields: {},
     });
   });
@@ -94,6 +95,7 @@ describe('toAppConfigDto (puro)', () => {
         boardConfig: null,
       },
       tabAppearance: {},
+      chat: { enabled: false, focusMode: true },
     });
   });
 
@@ -222,6 +224,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
           { id: 'meu-provider', label: 'Meu provider', class: 'A', command: null, env: { ANTHROPIC_BASE_URL: 'https://x.test' }, secretEnvKeys: ['ANTHROPIC_AUTH_TOKEN'], configDirName: 'meu-provider' },
         ],
       },
+      chat: { enabled: true, focusMode: false },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -308,6 +311,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       accounts: defaults.accounts, // ausente no objeto → default
       migration: defaults.migration, // ausente no objeto → default
       providers: defaults.providers, // ausente no objeto → default
+      chat: defaults.chat, // ausente no objeto → default
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });
