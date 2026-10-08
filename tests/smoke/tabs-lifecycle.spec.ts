@@ -1,8 +1,8 @@
-import { execSync } from 'node:child_process';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
+import { listPids, waitForNewPids, waitForPidsGone } from './helpers/processes';
+import { confirmCloseModalIfOpen, launchClaudeTab, openFreeTerminalTab } from './helpers/ui';
 
 // Smoke da T010 (abas múltiplas + ciclo de vida + terminal livre, FR-006/
 // FR-008). Instância própria de Electron (não compartilha janela com
@@ -24,10 +24,7 @@ let window: Page;
 let userDataDir: string;
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('tabs-lifecycle');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
-  window = await electronApp.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ name: 'tabs-lifecycle' }));
 });
 
 test.afterAll(async () => {
@@ -52,85 +49,16 @@ test.afterAll(async () => {
   // `donel-dev-smoke-tabs-lifecycle-*` encontrados na auditoria rodada 6,
   // já limpos manualmente). `finally` garante a limpeza mesmo se o close
   // falhar/estourar.
-  try {
-    await electronApp.close();
-  } finally {
-    removeIsolatedUserDataDir(userDataDir);
-  }
+  await closeIsolatedApp({ app: electronApp, userDataDir });
 });
 
-/** PIDs vivos de `imageName` agora, via `tasklist` real (não a UI). CSV sem cabeçalho (`/NH`) — 2ª coluna = PID. */
-function listPids(imageName: string): Set<number> {
-  let output: string;
-  try {
-    output = execSync(`tasklist /FI "IMAGENAME eq ${imageName}" /FO CSV /NH`, { encoding: 'utf8' });
-  } catch {
-    return new Set();
-  }
-  const pids = new Set<number>();
-  for (const line of output.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('"')) continue; // "INFO: No tasks..." quando não há processo nenhum
-    const cols = trimmed.split('","').map((col) => col.replace(/^"|"$/g, ''));
-    const pid = Number(cols[1]);
-    if (Number.isFinite(pid)) pids.add(pid);
-  }
-  return pids;
-}
-
-/** Novos PIDs de `imageName` que apareceram depois de `before` — reavalia até achar pelo menos `minNew` (`toPass`, tolera o polling de `tasklist`). */
-async function waitForNewPids(imageName: string, before: Set<number>, minNew: number, timeoutMs = 20_000): Promise<number[]> {
-  let added: number[] = [];
-  await expect(async () => {
-    const now = listPids(imageName);
-    added = [...now].filter((pid) => !before.has(pid));
-    expect(added.length).toBeGreaterThanOrEqual(minNew);
-  }).toPass({ timeout: timeoutMs });
-  return added;
-}
-
-/** Nenhum dos `pids` (subconjunto de interesse) segue vivo em `imageName` — reavalia até sumirem de vez (processo realmente terminado, não só a UI mudando de estado). */
-async function waitForPidsGone(imageName: string, pids: number[], timeoutMs = 15_000): Promise<void> {
-  await expect(async () => {
-    const now = listPids(imageName);
-    for (const pid of pids) expect(now.has(pid)).toBe(false);
-  }).toPass({ timeout: timeoutMs });
-}
-
-async function openFreeTerminalTab(): Promise<void> {
-  await window.getByRole('button', { name: 'Mais opções de ＋ Nova sessão' }).click();
-  await window.getByRole('menuitem', { name: 'Terminal' }).click();
-}
-
-// FIX (teste manual 27/07) — o corpo do "＋ Nova sessão" passou a ABRIR o
-// Launcher direto (App.tsx, `launcherOpen`); o antigo item de menu "Sessão
-// Claude" foi removido do dropdown (quick-launch virou "Rápida (última
-// config)").
-async function openLauncherPanel(): Promise<void> {
-  await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
-  await expect(window.locator('[data-testid="launcher"]')).toBeVisible();
-}
-
-/**
- * Confirma o modal "Fechar sessão?" (FR-006) clicando "Fechar sessão"
- * (danger) — só aparece quando o processo da aba está vivo. `.click()` já
- * espera o botão ficar acionável dentro do timeout; se o modal nunca abrir
- * (processo já não estava vivo), o timeout estoura e é engolido — não é erro.
- */
-async function confirmCloseModalIfOpen(): Promise<void> {
-  await window
-    .getByRole('button', { name: 'Fechar sessão' })
-    .click({ timeout: 2_000 })
-    .catch(() => undefined);
-}
-
-test('T010 — abrir/fechar um terminal livre 3x não deixa powershell.exe órfão, e "sessão encerrada" -> Reabrir respawna processo de verdade (FR-006/FR-008)', async () => {
+test('T010 — abrir/fechar um terminal livre 3x não deixa powershell.exe órfão, e "sessão encerrada" -> Reabrir respawna processo de verdade (FR-006/FR-008) @abas', async () => {
   test.setTimeout(120_000);
 
   for (let cycle = 1; cycle <= 3; cycle += 1) {
     const beforeOpen = listPids('powershell.exe');
 
-    await openFreeTerminalTab();
+    await openFreeTerminalTab(window);
     const newTab = window.locator('[role="tab"]', { hasText: 'Terminal' }).last();
     await expect(newTab).toBeVisible();
     await expect(newTab).toHaveAttribute('aria-selected', 'true');
@@ -160,7 +88,7 @@ test('T010 — abrir/fechar um terminal livre 3x não deixa powershell.exe órf�
     // Fecha pela barra de abas — processo está vivo de novo (pós-Reabrir) => pede confirmação (FR-006, 1ª metade).
     await newTab.getByRole('button', { name: 'Fechar aba Terminal' }).click();
     await expect(window.getByRole('dialog', { name: 'Fechar sessão?' })).toBeVisible();
-    await confirmCloseModalIfOpen();
+    await confirmCloseModalIfOpen(window);
     await waitForPidsGone('powershell.exe', reopenedPids);
 
     await expect(window.locator('[role="tab"]', { hasText: 'Terminal' })).toHaveCount(0);
@@ -171,7 +99,7 @@ test('T010 — abrir/fechar um terminal livre 3x não deixa powershell.exe órf�
   }
 });
 
-test('T010 — 5 sessões simultâneas (1 claude + 4 shell); fechar 3 mata só os processos certos, sem vazamento (tasklist)', async () => {
+test('T010 — 5 sessões simultâneas (1 claude + 4 shell); fechar 3 mata só os processos certos, sem vazamento (tasklist) @abas', async () => {
   test.setTimeout(180_000);
 
   const shellBaseline = listPids('powershell.exe');
@@ -184,7 +112,7 @@ test('T010 — 5 sessões simultâneas (1 claude + 4 shell); fechar 3 mata só o
   const claudeBaseline = listPids('claude.exe');
 
   // 4 abas de terminal livre (FR-008) via "+" > Terminal.
-  for (let i = 0; i < 4; i += 1) await openFreeTerminalTab();
+  for (let i = 0; i < 4; i += 1) await openFreeTerminalTab(window);
   const shellTabs = window.locator('[role="tab"]', { hasText: 'Terminal' });
   await expect(shellTabs).toHaveCount(4);
   const shellPidsAdded = await waitForNewPids('powershell.exe', shellBaseline, 4);
@@ -196,15 +124,7 @@ test('T010 — 5 sessões simultâneas (1 claude + 4 shell); fechar 3 mata só o
   // (`canLaunch`, Launcher.tsx). Seleciona `donel-dev` (o próprio repo sob
   // teste) direto no Select do Launcher, sem passar pela sidebar (evita abrir
   // uma 6ª aba redundante).
-  await openLauncherPanel();
-  const launcher = window.locator('[data-testid="launcher"]');
-  await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
-  await window.getByRole('option', { name: PROJECT_NAME, exact: true }).click();
-  await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
-  await launcher.getByLabel('Nome').fill('lifecycle-test');
-  await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
-  const claudeTab = window.locator('[role="tab"]', { hasText: 'lifecycle-test' });
-  await expect(claudeTab).toBeVisible();
+  const claudeTab = await launchClaudeTab(window, { model: 'haiku', name: 'lifecycle-test' });
   const claudePidsAdded = await waitForNewPids('claude.exe', claudeBaseline, 1, 30_000);
 
   // Total: lifecycle-test (claude) + 4 Terminal (shell) = 5 (sem aba
@@ -228,7 +148,7 @@ test('T010 — 5 sessões simultâneas (1 claude + 4 shell); fechar 3 mata só o
   // Fecha 3 abas — 2 terminais livres + a sessão claude nova — misturando os dois sessionType (FR-006 genérico, não só claude).
   const closeTab = async (tabLocator: Locator, closeButtonName: string): Promise<void> => {
     await tabLocator.getByRole('button', { name: closeButtonName }).click();
-    await confirmCloseModalIfOpen();
+    await confirmCloseModalIfOpen(window);
   };
   await closeTab(shellTabs.nth(0), 'Fechar aba Terminal');
   await closeTab(shellTabs.nth(0), 'Fechar aba Terminal'); // depois de fechar a 1ª, a próxima 0-index é a 2ª

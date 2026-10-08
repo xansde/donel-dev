@@ -1,9 +1,10 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
+import { launchIsolatedApp } from './helpers/launch';
+import { PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // CA-23 (009-modo-dev-v3, lote 3) — smoke da engrenagem de configuração por
@@ -47,13 +48,7 @@ function reposConfigOnDisk(): Record<string, unknown> {
 }
 
 async function launchApp(): Promise<void> {
-  electronApp = await electron.launch({
-    args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
-    cwd: REPO_ROOT,
-    env: { ...process.env, DONEL_ESTEIRA_CONFIG_DIR: configDir },
-  });
-  window = await electronApp.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: window } = await launchIsolatedApp({ userDataDir, env: { ...process.env, DONEL_ESTEIRA_CONFIG_DIR: configDir } }));
 }
 
 // Item 11 (rodada de forma fix/009-board-real-e-modal) — a tela deixou de
@@ -122,7 +117,7 @@ test.afterAll(async () => {
   }
 });
 
-test('CA-23 — engrenagem lê vazio na 1ª vez, grava board+repo (num só repos.json), persiste a restart e preserva campos desconhecidos', async () => {
+test('CA-23 — engrenagem lê vazio na 1ª vez, grava board+repo (num só repos.json), persiste a restart e preserva campos desconhecidos @projetos', async () => {
   test.setTimeout(120_000);
 
   // 1. Projeto ainda não tem entrada em repos.json — os campos nascem vazios (degradação por omissão, C4).

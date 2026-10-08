@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import path, { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { closeIsolatedApp } from './helpers/launch';
+import { createIsolatedUserDataDir } from './userDataIsolation';
 
 // T1216 (011-contas-e-provedores, etapa 2) — assistente de migração:
 // árvore de perfis FALSA em `mkdtemp`, isolada do `homedir()` e do
@@ -53,12 +54,11 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  await closeIsolatedApp({ app: electronApp, userDataDir });
   rmSync(fakeHomeRoot, { recursive: true, force: true });
 });
 
-test('T1216 — inventário aparece, importar UM perfil deixa o outro pendente, estado persiste ao reabrir', async () => {
+test('T1216 — inventário aparece, importar UM perfil deixa o outro pendente, estado persiste ao reabrir @contas', async () => {
   test.setTimeout(60_000);
 
   const firstScan = await appWindow.evaluate(() => window.donel.migration.scan());
@@ -81,7 +81,7 @@ test('T1216 — inventário aparece, importar UM perfil deixa o outro pendente, 
   expect(reopened.entries.find((e) => e.slug === 'acc-1')?.credentials).toBe('imported');
 });
 
-test('T1216 — painel de contas mostra a entrada do assistente e a tela renderiza', async () => {
+test('T1216 — painel de contas mostra a entrada do assistente e a tela renderiza @contas', async () => {
   const trigger = appWindow.locator('[data-testid="accounts-panel-trigger"]');
   await expect(trigger).toBeVisible();
   await trigger.click();
