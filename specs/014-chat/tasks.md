@@ -320,24 +320,24 @@ divergências de `design/chat-verificacao.md`.
   - `SubagentRow.tsx`: só leitura nesta fase.
 
   Detalhes pelo `chat:row-detail`: `markdown/DiffView.tsx` (a partir do `structuredPatch`), saída de comando cortada + "ver tudo" e lista de arquivos.
-- [ ] T054 [US3] Modo Foco na timeline (`src/renderer/src/chat/Timeline.tsx`):
+- [x] T054 [US3] Modo Foco na timeline (`src/renderer/src/chat/Timeline.tsx`):
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Liga/desliga = `Toggle` no cabeçalho da aba + clique na barra da rodada; rótulo da dobra por estado (G1); a mensagem que lança subagentes e as linhas deles ficam fora da dobra (FR-009, decisão 1).
   - liga/desliga onde o design indicar, persistido por `config:setChatPrefs` (`chat.focusMode`);
   - `foldForFocus` (T031) aplicado na timeline;
   - bloco "trabalhou — N ações, M notas" com o selo "tem pergunta aqui", que expande.
-- [ ] T055 [US1] Timeline em `src/renderer/src/chat/Timeline.tsx` + `src/renderer/src/chat/scrollController.ts` (R19):
+- [x] T055 [US1] Timeline em `src/renderer/src/chat/Timeline.tsx` + `src/renderer/src/chat/scrollController.ts` (R19):
   - **Ajuste da conferência** (`design/chat-verificacao.md`): A pílula "novas mensagens ↓" só aparece com linha nova (D-C9).
   - **Rolagem**: modo "seguindo o fim" quando a rolagem está a até 40 px do fim; modo livre com a pílula "novas mensagens ↓".
   - **Histórico**: prepend preservando a posição pela diferença de `scrollHeight`; "carregando mensagens anteriores…" ao chegar no topo.
   - **Desempenho**: `content-visibility: auto` por rodada.
   - **Do T3**: geometria de âncora em `src/shared/chat/t3/scrollAnchor.ts`, se servir.
-- [ ] T056 [US1] Vista e alternância em `src/renderer/src/chat/ChatView.tsx` e `src/renderer/src/App.tsx`:
+- [x] T056 [US1] Vista e alternância em `src/renderer/src/chat/ChatView.tsx` e `src/renderer/src/App.tsx`:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): Controles somados ao `sessionHeader` atual (D-C22); `Toggle` do Modo Foco escondido na vista Terminal (D-C21); `SESSION_STATE_LABEL_PT.permission` → "Esperando você" (D-C20); aviso de troca de conversa como `Banner·compact`, com "abrir" e texto próprio para o `/resume`.
   - `src/renderer/src/chat/ChatView.tsx` e `ReceptionBanner.tsx` ("não estou recebendo a conversa" → Abrir terminal);
   - em `src/renderer/src/App.tsx`: `TabState.view` (padrão `chat` com `chat.enabled` em aba `claude` que não é de login); botão no cabeçalho da aba conforme o design; atalho `Ctrl+\`` no mapa global (`App.tsx:1673-1698`, com `capture`); `TerminalPane` sempre montado, oculto por CSS;
   - o aviso "Conversa nova — a anterior está em Sessões anteriores" no topo;
   - o interruptor "Chat (experimental)" nas Configurações.
-- [ ] T057 [US1] Fim de sessão (FR-034) em `src/renderer/src/chat/SessionEndedBar.tsx` e `src/renderer/src/TerminalPane.tsx`:
+- [x] T057 [US1] Fim de sessão (FR-034) em `src/renderer/src/chat/SessionEndedBar.tsx` e `src/renderer/src/TerminalPane.tsx`:
   - `src/renderer/src/chat/SessionEndedBar.tsx` toma o lugar da caixa, com "Sessão encerrada (código N)", Retomar (`TerminalPane.respawn({ resume: sessionId atual })`) e Fechar aba;
   - a conversa continua legível e copiável;
   - o "Reabrir" do overlay do terminal (`TerminalPane.tsx:586-592`) passa a retomar a mesma conversa.
