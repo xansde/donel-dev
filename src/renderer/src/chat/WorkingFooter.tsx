@@ -10,7 +10,7 @@ import { isWorking } from '../../../shared/chat/screen';
 import type { LineInput } from '../../../shared/chat/screen';
 import { stopWorking, type StoppableTerminal } from './stopWorking';
 import styles from './WorkingFooter.module.css';
-import { deriveFooter, formatElapsed, type FooterAction } from './workingFooterModel';
+import { deriveFooter, formatElapsed, WAITING_FOR_LABEL, type FooterAction } from './workingFooterModel';
 
 /** The slice of `TerminalPaneHandle` the footer reads (screen) and writes (Parar). */
 export interface FooterTerminal extends StoppableTerminal {
@@ -104,8 +104,10 @@ export function WorkingFooter({ live, rows, terminal, onInterruptPending }: Work
         icon={<StateDot state="working" />}
         title={
           <span data-testid="working-footer" data-state="working" className={styles.line}>
-            <span>trabalhando —</span>
-            {model.verb !== undefined ? (
+            <span>{model.waitingFor !== undefined ? 'esperando você —' : 'trabalhando —'}</span>
+            {model.waitingFor !== undefined ? (
+              <span className={styles.verb}>{WAITING_FOR_LABEL[model.waitingFor]}</span>
+            ) : model.verb !== undefined ? (
               <ActionText action={{ verb: model.verb, ...(model.target !== undefined ? { target: model.target } : {}) }} />
             ) : model.waitingSubagents > 0 ? (
               <span className={styles.verb}>

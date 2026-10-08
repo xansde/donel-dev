@@ -16,6 +16,8 @@ export type FooterModel =
       readonly target?: string;
       /** > 0 only when no action is running and subagents remain: "Aguardando N subagentes" (D-C18). */
       readonly waitingSubagents: number;
+      /** Set while a pending is open: the round is held on the owner ("esperando você — <what>"). */
+      readonly waitingFor?: 'question' | 'permission' | 'plan';
     }
   | { readonly kind: 'interrupted'; readonly after: FooterAction | null };
 
@@ -62,9 +64,17 @@ export function deriveFooter({ live, rows, lastAction, screenWorking = null }: F
   }
   // A pending is open (the status turned to waiting-for-you): the round is held, not over, and Parar must stay
   // reachable - it answers the pending with `interrupt` (T078/T081).
-  if (live.pendings.length > 0) return { kind: 'working', waitingSubagents: 0 };
+  const pending = live.pendings[0];
+  if (pending !== undefined) return { kind: 'working', waitingSubagents: 0, waitingFor: pending.kind };
   return null;
 }
+
+/** What the footer says while a pending is open; same wording as the "Esperando você" label on the tab. */
+export const WAITING_FOR_LABEL: Record<'question' | 'permission' | 'plan', string> = {
+  question: 'pergunta',
+  permission: 'permissão',
+  plan: 'plano',
+};
 
 /** m:ss, minutes unbounded. */
 export function formatElapsed(ms: number): string {

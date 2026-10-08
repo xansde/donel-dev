@@ -245,6 +245,7 @@ A smoke (T081) veio por último.
   `waiting-you`, e o pé de trabalho sumia junto com o Parar. Nesse estado o
   `interrupt` era inalcançável. Agora o pé fica, mas o texto durante a
   pendência é só "trabalhando —", sem verbo, e precisa melhorar.
+  **Corrigido** (08/10): o pé dizia só "trabalhando —" com pendência aberta; agora diz "esperando você — pergunta/permissão/plano" (cronômetro e Parar mantidos).
 - **Diálogo da TUI fora do `PermissionRequest`:** com o chat ligado, o toast
   antigo de `permission` da aba claude deixa de aparecer. Esse diálogo segue
   pela faixa "o terminal precisa de você", mas sem notificação do sistema.
