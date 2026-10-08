@@ -27,6 +27,32 @@ describe('PtyManager — ciclo de vida de um processo que sai sozinho', () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it('resize e input não lançam na janela entre o processo morrer e o onExit chegar', async () => {
+    // Bug visto no alfa (08/10): o renderer manda resize de uma aba cuja sessão
+    // acabou de sair; o node-pty já marcou o processo como encerrado, mas o
+    // onExit ainda não removeu o registro — "Cannot resize a pty that has
+    // already exited" virava exceção não tratada no main.
+    const manager = new PtyManager();
+    const ptyId = manager.create({ cols: 80, rows: 24, command: 'cmd.exe', args: ['/c', 'exit'] });
+    let exited = false;
+    manager.onExit(() => {
+      exited = true;
+    });
+    const errors: unknown[] = [];
+    while (!exited) {
+      try {
+        manager.resize(ptyId, 100, 30);
+        manager.input(ptyId, '');
+      } catch (error) {
+        errors.push(error);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    // Depois do onExit também não lança (registro já removido).
+    expect(() => manager.resize(ptyId, 90, 20)).not.toThrow();
+    expect(errors).toEqual([]);
+  });
+
   it('spawna o comando/args default (terminal livre, PowerShell) quando command/args são omitidos', async () => {
     // Ciclo de correção 1 (auditoria batch 2) — antes só afirmava que o id
     // era string e que não lançava (smoke fraco). Agora exercita o caminho
