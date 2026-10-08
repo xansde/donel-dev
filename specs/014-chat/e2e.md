@@ -308,6 +308,7 @@ A smoke (T081) veio por último.
     não sobrevive ao `visibleText`, o texto lido vira `palavraseguinte` e o
     `collapse` de `textSeen` nunca iguala ao rascunho. Não verificado com
     captura de tela real.
+  - **Corrigido** (08/10): a hipótese do wrap se confirmou em teste. `textSeen` e `boxIsOurs` passaram a comparar sem espaço em branco nenhum, o que cobre `Shift+Enter`, linha longa e imagem. Falta conferir no alfa.
   - Aceite da correção: imagem + texto de 2+ linhas pelo chat chega ao CLI
     e o cartão confirma. Um smoke cobre o caso multilinha com imagem e outro
     sem imagem.
@@ -323,6 +324,7 @@ A smoke (T081) veio por último.
     envio ou fixo no fim).
   - Decisão do dono (08/10, respondida pelo painel de pergunta no alfa): o
     cartão falho fica **no ponto do envio**, na ordem do tempo. Levar à spec.
+  - **Corrigido** (08/10): o cartão ganhou "descartar" (`driver.dismiss`) e fica antes da primeira linha posterior ao envio. A spec FR-017 foi atualizada.
   - Aceite: um cartão "não foi" sai num gesto e fica na posição em que foi
     enviado.
 - **`Shift+Tab` no chat navega o foco, não troca o modo do CLI** (alfa,
@@ -330,7 +332,8 @@ A smoke (T081) veio por último.
   Pela spec isso é esperado: trocar o modo de permissão pela caixa está no
   Out of Scope, e o modo vem do launcher. Mas ficou sem caminho óbvio para
   entrar em modo plano a partir do chat: o dono precisou ir ao Terminal.
-  Decidir se vale um atalho (repassar `Shift+Tab` ao PTY com a caixa vazia,
+  **Corrigido** (08/10, pedido do dono: "quero que shift+tab não seja problema"): `Shift+Tab` na caixa do chat repassa `[Z` ao CLI, e a dica mostra o modo lido do rodapé. FR-013 foi estendida. Falta conferir com o CLI real.
+    Decidir se vale um atalho (repassar `Shift+Tab` ao PTY com a caixa vazia,
   por exemplo) ou só uma dica na tela.
 - **Cartão de plano: resumo recolhido corta e conta errado** (alfa, 08/10):
   com o plano recolhido (D-C16: título + 3 primeiros passos), o cartão pegou
@@ -339,6 +342,7 @@ A smoke (T081) veio por último.
   no meio da frase ("… Isso vale"). O dono leu o plano como "muita
   informação" ao comparar com o terminal, e o plano era mesmo verboso. A
   segunda versão, mais curta, passou melhor.
+  - **Corrigido** (08/10): `extractPlanSteps` (`src/shared/chat/t3/proposedPlan.ts`) prefere a seção de passos, depois a última lista de topo. Itens com continuação viram um só, e o encurtamento corta em fim de frase ou com `…`.
   - Aceite: "N passos" conta a lista da seção de passos (ou a última lista
     de topo, se não houver cabeçalho reconhecível), e o recolhido corta em
     fim de frase ou com reticências explícitas.
