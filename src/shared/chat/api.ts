@@ -5,6 +5,8 @@
 
 import type {
   ChatAckLookupOutput,
+  ChatAnswerOutput,
+  ChatFocusPendingEvent,
   ChatConversationSwitchedEvent,
   ChatLiveEvent,
   ChatLoadOlderOutput,
@@ -13,6 +15,7 @@ import type {
   ChatRowDetailInput,
   ChatRowsEvent,
   ChatSnapshot,
+  PendingAnswer,
   RowDetail,
 } from './ipc';
 import type { RowScope, TerminalNeededReason } from './rows';
@@ -32,6 +35,13 @@ export interface DonelChatApi {
   ackLookup(ptyId: string, text: string, since: string): Promise<ChatAckLookupOutput>;
   /** Fontes de tela que pedem o terminal (`null` = a caixa voltou); o main as combina com as dos hooks. */
   screenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): Promise<void>;
+
+  /** T076 - responde a pendência aberta; o renderer nunca monta o JSON do hook. */
+  answer(ptyId: string, pendingId: string, answer: PendingAnswer): Promise<ChatAnswerOutput>;
+  /** T079 - aba ativa e nomes das abas, para a regra de notificação; o main lê o foco da janela por conta própria. */
+  focusState(activePtyId: string | null, tabNames?: Readonly<Record<string, string>>): Promise<void>;
+  /** T079 - clique na notificação de uma pendência. Um só assinante (o `App`). */
+  onFocusPending(listener: (event: ChatFocusPendingEvent) => void): () => void;
 
   onRows(listener: (event: ChatRowsEvent) => void): () => void;
   onLive(listener: (event: ChatLiveEvent) => void): () => void;

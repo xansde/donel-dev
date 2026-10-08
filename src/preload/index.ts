@@ -5,7 +5,9 @@ import { subscribeChannel } from './subscribeChannel';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 import type {
   ChatAckLookupOutput,
+  ChatAnswerOutput,
   ChatConversationSwitchedEvent,
+  ChatFocusPendingEvent,
   ChatLiveEvent,
   ChatLoadOlderOutput,
   ChatPromptSignalEvent,
@@ -13,6 +15,7 @@ import type {
   ChatRowDetailInput,
   ChatRowsEvent,
   ChatSnapshot,
+  PendingAnswer,
   RowDetail,
 } from '../shared/chat/ipc';
 import type { RowScope, TerminalNeededReason } from '../shared/chat/rows';
@@ -479,6 +482,16 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(CHAT_CHANNELS.ackLookup, { ptyId, text, since }) as Promise<ChatAckLookupOutput>,
     screenState: (ptyId: string, terminalNeeded: TerminalNeededReason | null) =>
       ipcRenderer.invoke(CHAT_CHANNELS.screenState, { ptyId, terminalNeeded }) as Promise<void>,
+
+    // T076/T079 - pendencias e foco
+    answer: (ptyId: string, pendingId: string, answer: PendingAnswer) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.answer, { ptyId, pendingId, answer }) as Promise<ChatAnswerOutput>,
+    focusState: (activePtyId: string | null, tabNames?: Readonly<Record<string, string>>) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.focusState, { activePtyId, ...(tabNames !== undefined ? { tabNames } : {}) }) as Promise<void>,
+    onFocusPending: (listener: (event: ChatFocusPendingEvent) => void) => {
+      const handler = (_event: unknown, payload: ChatFocusPendingEvent): void => listener(payload);
+      return subscribeChannel(ipcRenderer, CHAT_CHANNELS.focusPending, handler);
+    },
 
     onRows: (listener: (event: ChatRowsEvent) => void) => {
       const handler = (_event: unknown, payload: ChatRowsEvent): void => listener(payload);

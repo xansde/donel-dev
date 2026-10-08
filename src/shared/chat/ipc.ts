@@ -36,6 +36,8 @@ export const CHAT_CHANNELS = {
   conversationSwitched: 'chat:conversation-switched',
   promptSignal: 'chat:prompt-signal',
   reception: 'chat:reception',
+  /** T079 - o clique na notificação de uma pendência: ativar a aba e pôr o foco no painel. */
+  focusPending: 'chat:focus-pending',
 } as const;
 
 export type ChatChannel = (typeof CHAT_CHANNELS)[keyof typeof CHAT_CHANNELS];
@@ -194,7 +196,11 @@ export type ChatOpenExternalOutput = void;
 export interface ChatOpenGeneratedInput { readonly ptyId: string; readonly path: string }
 export type ChatOpenGeneratedOutput = void;
 
-export interface ChatFocusStateInput { readonly activePtyId: string | null }
+export interface ChatFocusStateInput {
+  readonly activePtyId: string | null;
+  /** T079 - nome atual de cada aba (`ptyId` -> nome): o título da notificação é o nome da aba, que só o renderer resolve. */
+  readonly tabNames?: Readonly<Record<string, string>>;
+}
 export type ChatFocusStateOutput = void;
 
 /** `chat:screen-state` - fontes de tela (detectores do renderer) que pedem o terminal; `null` = a caixa voltou. */
@@ -229,6 +235,11 @@ export interface ChatConversationSwitchedEvent {
   readonly ptyId: string;
   readonly sessionId: string;
   readonly reason: ConversationSwitchReason;
+}
+
+/** `chat:focus-pending` - clique na notificação: ativar a aba `ptyId` e pôr o foco no painel de pendências. */
+export interface ChatFocusPendingEvent {
+  readonly ptyId: string;
 }
 
 export interface ChatPromptSignalEvent {
