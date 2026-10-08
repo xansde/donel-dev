@@ -61,11 +61,11 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
 
 - [x] T005 [P] Criar os tipos do modelo em `src/shared/chat/rows.ts`, conforme `data-model.md` §1–§12: `ChatSession`, `ConversationSource`, `TranscriptEntry`, `LineRef`, `ConversationRow` (todas as variantes de `kind`), `ActionCategory`, `ActionSummary`, `NoticeKind`, `Turn`, `FocusItem`, `LiveAction`, `Subagent`, `Pending`, `Send`, `LiveState`, `ImageAttachment`, `PastedText`, `ComposerDraft`, `RowAttachment`. Tudo serializável: sem `Map`, `Date` nem funções.
 - [x] T006 [P] Criar `src/shared/chat/ipc.ts`, conforme `contracts/ipc-chat.md` §1–§2: `CHAT_CHANNELS`, os tipos de entrada e saída de cada canal, `PendingAnswer`, `RowPatch`, `ChatSnapshot`, `RowDetail`, `CommandEntry`.
-- [ ] T007 [P] Escrever `tests/chat-config.test.ts` (falhando), com os casos:
+- [x] T007 [P] Escrever `tests/chat-config.test.ts` (falhando), com os casos:
   - `chat.enabled` com padrão `false` e `chat.focusMode` com padrão `true`;
   - sanitize de valores inválidos;
   - a chave `chat` preservada por canal antigo (`unknownFields`).
-- [ ] T008 Implementar `chat.enabled`/`chat.focusMode` em `src/main/config-store.ts`, `src/shared/config.ts`, `src/main/index.ts` e `src/preload/index.ts`:
+- [x] T008 Implementar `chat.enabled`/`chat.focusMode` em `src/main/config-store.ts`, `src/shared/config.ts`, `src/main/index.ts` e `src/preload/index.ts`:
   - `src/main/config-store.ts` (campo, sanitize, padrão);
   - `src/shared/config.ts` (`AppConfigDto`);
   - handler `config:setChatPrefs` em `src/main/index.ts` e exposição em `src/preload/index.ts`.
@@ -126,7 +126,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
 
 ### Ambiente e modo de permissão (FR-030, R17)
 
-- [ ] T017 [P] Escrever casos (falhando) em `tests/pty-manager.test.ts` e `tests/commandBuilder.test.ts`.
+- [x] T017 [P] Escrever casos (falhando) em `tests/pty-manager.test.ts` e `tests/commandBuilder.test.ts`.
   - **`buildPtyEnv`**:
     - acrescenta `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1`;
     - remove as variáveis de ponte/mensageria herdadas de uma sessão-mãe;
@@ -136,7 +136,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - **Spawn de sessão `claude`**: sem `--permission-mode` no argv, ganha o resolvido.
 
   Antes de escrever, confirmar os nomes exatos das variáveis de ponte/mensageria buscando `BRIDGE_SESSION_ID` e `MESSAGING` no binário (`grep -a -o -E` em `~/.local/bin/claude.exe`, com `timeout 120`).
-- [ ] T018 Implementar o modo de permissão e o ambiente em `src/main/cli-user-settings.ts`, `src/shared/commandBuilder.ts`, `src/main/index.ts` e `src/main/pty-manager.ts`:
+- [x] T018 Implementar o modo de permissão e o ambiente em `src/main/cli-user-settings.ts`, `src/shared/commandBuilder.ts`, `src/main/index.ts` e `src/main/pty-manager.ts`:
   - `src/main/cli-user-settings.ts`: lê **só** `permissions.defaultMode` de `~/.claude/settings.json`, sem credencial e tolerando arquivo ausente;
   - `resolvePermissionMode(argv, userDefault)` em `src/shared/commandBuilder.ts`: launcher > padrão do usuário > `default`;
   - aplicação no handler de spawn de `src/main/index.ts`, que cobre barra lateral, retomar/fork, favoritos, mapa e Esteira;

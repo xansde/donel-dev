@@ -48,7 +48,7 @@ export { RESUME_FAILURE_WINDOW_MS, forgetIfOrphan, resumedSessionIdFromArgs, sho
 export type { ResumeFailureSignal } from './resumeFailure';
 
 export { CONFIG_CHANNELS } from './config';
-export type { AppConfigDto, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, ProjectScanMode, SessionNamesMap } from './config';
+export type { AppConfigDto, ChatPrefs, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, ProjectScanMode, SessionNamesMap } from './config';
 
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — aba v3: reordenar (CA-26) e cor por
 // aba (CA-27). Lógica pura em tabAppearance.ts; canais `tabs:*` em

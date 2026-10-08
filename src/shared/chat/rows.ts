@@ -471,7 +471,5 @@ export interface LiveState {
 // §12 — preferências persistidas
 // ---------------------------------------------------------------------------
 
-export interface ChatPrefs {
-  readonly enabled: boolean;
-  readonly focusMode: boolean;
-}
+// Single source: the persisted config DTO (T008).
+export type { ChatPrefs } from '../config';

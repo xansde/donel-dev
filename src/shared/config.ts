@@ -29,6 +29,8 @@ export const CONFIG_CHANNELS = {
   setCollapsedFavorites: 'config:setCollapsedFavorites',
   /** FIX ambiente genérico (28/07) — critério da listagem de projetos configurável. */
   setProjectScanMode: 'config:setProjectScanMode',
+  /** T008 (014-chat) — `chat.enabled` / `chat.focusMode`. */
+  setChatPrefs: 'config:setChatPrefs',
 } as const;
 
 /**
@@ -62,6 +64,12 @@ export interface LauncherDefaultsDto {
  * valor (CA-5).
  */
 export type SessionNamesMap = Readonly<Record<string, StoredSessionName>>;
+
+/** T008 (014-chat) — interruptor do chat (R22) e modo foco global (FR-009). */
+export interface ChatPrefs {
+  readonly enabled: boolean;
+  readonly focusMode: boolean;
+}
 
 /** Subconjunto do `AppConfig` (main) exposto ao renderer — ver comentário de topo. */
 export interface AppConfigDto {
@@ -101,6 +109,8 @@ export interface AppConfigDto {
    * comentário de `TabAppearanceMap`, src/shared/tabAppearance.ts).
    */
   readonly tabAppearance: TabAppearanceMap;
+  /** T008 (014-chat) — preferências do chat. */
+  readonly chat: ChatPrefs;
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */
@@ -115,4 +125,6 @@ export interface DonelConfigApi {
   setCollapsedFavorites(collapsed: string[]): Promise<AppConfigDto>;
   /** FIX ambiente genérico (28/07) — troca o critério da listagem; quem chama refaz `projects.list()` em seguida. */
   setProjectScanMode(mode: ProjectScanMode): Promise<AppConfigDto>;
+  /** T008 (014-chat) — atualização parcial: só os campos boolean enviados mudam. */
+  setChatPrefs(prefs: Partial<ChatPrefs>): Promise<AppConfigDto>;
 }
