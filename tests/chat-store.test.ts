@@ -6,6 +6,7 @@ import type {
   ChatConversationSwitchedEvent,
   ChatLiveEvent,
   ChatLoadOlderOutput,
+  ChatPromptSignalEvent,
   ChatReceptionEvent,
   ChatRowDetailInput,
   ChatRowsEvent,
@@ -38,7 +39,9 @@ function deferred<T>(): Deferred<T> {
 }
 
 class FakeApi implements DonelChatApi {
-  subs = { rows: 0, live: 0, switched: 0, reception: 0 };
+  subs = { rows: 0, live: 0, switched: 0, reception: 0, signal: 0 };
+  ackCalls: { ptyId: string; text: string; since: string }[] = [];
+  screenCalls: { ptyId: string; reason: string | null }[] = [];
   attached: string[] = [];
   detached: string[] = [];
   attachReplies: Promise<ChatSnapshot>[] = [];
@@ -49,6 +52,7 @@ class FakeApi implements DonelChatApi {
   private liveL: ((e: ChatLiveEvent) => void)[] = [];
   private switchedL: ((e: ChatConversationSwitchedEvent) => void)[] = [];
   private receptionL: ((e: ChatReceptionEvent) => void)[] = [];
+  private signalL: ((e: ChatPromptSignalEvent) => void)[] = [];
 
   attach(ptyId: string): Promise<ChatSnapshot> {
     this.attached.push(ptyId);
@@ -90,6 +94,22 @@ class FakeApi implements DonelChatApi {
     this.subs.reception += 1;
     this.receptionL.push(l);
     return () => void (this.subs.reception -= 1);
+  }
+  ackLookup(ptyId: string, text: string, since: string): Promise<{ matched: boolean }> {
+    this.ackCalls.push({ ptyId, text, since });
+    return Promise.resolve({ matched: true });
+  }
+  screenState(ptyId: string, reason: string | null): Promise<void> {
+    this.screenCalls.push({ ptyId, reason });
+    return Promise.resolve();
+  }
+  onPromptSignal(l: (e: ChatPromptSignalEvent) => void): () => void {
+    this.subs.signal += 1;
+    this.signalL.push(l);
+    return () => void (this.subs.signal -= 1);
+  }
+  emitSignal(e: ChatPromptSignalEvent): void {
+    this.signalL.forEach((l) => l(e));
   }
   emitRows(e: ChatRowsEvent): void {
     this.rowsL.forEach((l) => l(e));
@@ -134,11 +154,41 @@ describe('ChatStore', () => {
     const off1 = store.subscribe('p1', () => undefined);
     const off2 = store.subscribe('p2', () => undefined);
     const off3 = store.subscribe('p1', () => undefined);
-    expect(api.subs).toEqual({ rows: 1, live: 1, switched: 1, reception: 1 });
+    expect(api.subs).toEqual({ rows: 1, live: 1, switched: 1, reception: 1, signal: 1 });
     off1();
     off2();
     off3();
-    expect(api.subs).toEqual({ rows: 0, live: 0, switched: 0, reception: 0 });
+    expect(api.subs).toEqual({ rows: 0, live: 0, switched: 0, reception: 0, signal: 0 });
+  });
+
+  it('fans prompt signals out by ptyId with a single channel subscription', () => {
+    const api = new FakeApi();
+    const store = new ChatStore(api);
+    const got1: string[] = [];
+    const got2: string[] = [];
+    const off1 = store.onPromptSignal('p1', (e) => got1.push(e.signal));
+    const off2 = store.onPromptSignal('p2', (e) => got2.push(e.signal));
+    expect(api.subs.signal).toBe(1);
+    api.emitSignal({ ptyId: 'p1', signal: 'submit', text: 'a', at: 'x' });
+    api.emitSignal({ ptyId: 'p2', signal: 'enqueue', at: 'x' });
+    api.emitSignal({ ptyId: 'p3', signal: 'deliver', at: 'x' });
+    expect(got1).toEqual(['submit']);
+    expect(got2).toEqual(['enqueue']);
+    off1();
+    api.emitSignal({ ptyId: 'p1', signal: 'submit', at: 'x' });
+    expect(got1).toEqual(['submit']);
+    expect(api.subs.signal).toBe(1);
+    off2();
+    expect(api.subs.signal).toBe(0);
+  });
+
+  it('passes ack-lookup and screen-state through to the api', async () => {
+    const api = new FakeApi();
+    const store = new ChatStore(api);
+    expect(await store.ackLookup('p1', 'oi', 'since')).toEqual({ matched: true });
+    store.reportScreenState('p1', 'interactive-screen');
+    expect(api.ackCalls).toEqual([{ ptyId: 'p1', text: 'oi', since: 'since' }]);
+    expect(api.screenCalls).toEqual([{ ptyId: 'p1', reason: 'interactive-screen' }]);
   });
 
   it('attaches on the first subscriber, detaches on the last, and exposes the snapshot', async () => {

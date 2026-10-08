@@ -12,9 +12,11 @@
 import { dirname } from 'node:path';
 import { adapt, expandGroup, initAdapterState, viewOf, type AdapterState } from '../../shared/chat/adapter';
 import type {
+  ChatAckLookupOutput,
   ChatConversationSwitchedEvent,
   ChatLiveEvent,
   ChatLoadOlderOutput,
+  ChatPromptSignalEvent,
   ChatReceptionEvent,
   ChatRowDetailInput,
   ChatRowsEvent,
@@ -29,13 +31,17 @@ import type {
   ConversationRow,
   ConversationSource,
   LiveState,
+  LiveAction,
   LiveStatus,
   NoticeRow,
   RowScope,
+  TerminalNeededReason,
   TranscriptEntry,
 } from '../../shared/chat/rows';
 import { classifyLine } from '../../shared/chat/transcriptEntry';
 import type { BridgeEvent } from '../hook-bridge';
+import { summarizeTool } from '../../shared/chat/toolSummary';
+import { createSubmitRing, lookupAck, signalsFromEntries, type PromptSignal } from './prompt-signals';
 import { buildRowDetail } from './row-detail';
 import { TranscriptFollower, type FollowBatch, type FollowedLine } from './transcript-follower';
 import { readLineRef, readPageBackward, type PagedLine } from './transcript-pager';
@@ -55,6 +61,7 @@ export interface ChatHubEvents {
   live(event: ChatLiveEvent): void;
   conversationSwitched(event: ChatConversationSwitchedEvent): void;
   reception(event: ChatReceptionEvent): void;
+  promptSignal(event: ChatPromptSignalEvent): void;
 }
 
 export interface ChatHubDeps {
@@ -87,6 +94,10 @@ export interface ChatHub {
   /** Extra "the PTY is doing something" signal (hooks already count). */
   noteActivity(ptyId: string): void;
   checkReception(): void;
+  /** T064 - aceite tardio (chat:ack-lookup): UserPromptSubmit guardados + sinais do transcript desde since. */
+  ackLookup(ptyId: string, text: string, since: string): Promise<ChatAckLookupOutput>;
+  /** T070 - fonte de tela que pede o terminal (chat:screen-state); null = a caixa voltou. */
+  reportScreenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): void;
   /** Folders the tab's transcript files (and sub-agent files) may be served from. */
   transcriptRoots(ptyId: string): readonly string[];
   /** Folders `chat:open-generated` may open from: the tab's `cwd` and the attachments folder. */
@@ -102,6 +113,18 @@ const ACTIVITY_EVENTS: ReadonlySet<string> = new Set(['UserPromptSubmit', 'PostT
 const WORKING_EVENTS: ReadonlySet<string> = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'SubagentStart', 'PreCompact']);
 const IDLE_EVENTS: ReadonlySet<string> = new Set(['Stop', 'StopFailure', 'SessionStart']);
 const PERMISSION_MODES: ReadonlySet<string> = new Set(['default', 'acceptEdits', 'plan', 'bypassPermissions', 'auto']);
+
+/** Notification.notification_type que desenham um dialogo no terminal (research.md R16). */
+const DIALOG_NOTIFICATIONS: Readonly<Record<string, TerminalNeededReason>> = {
+  permission_prompt: 'permission-dialog',
+  worker_permission_prompt: 'permission-dialog',
+  elicitation_dialog: 'interactive-screen',
+  agent_needs_input: 'interactive-screen',
+};
+/** Hooks que provam que o CLI voltou a andar: apagam o sinal de dialogo vindo de hook. */
+const DIALOG_CLEARING_EVENTS: ReadonlySet<string> = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'StopFailure']);
+const SIGNAL_RING = 60;
+const SUBMIT_RING = 20;
 
 type BaseStatus = 'starting' | 'idle' | 'working' | 'ended';
 
@@ -130,6 +153,16 @@ interface Rec {
   topNotice: NoticeRow | null;
   /** App-born notices (`account-switch`): memory only, always at the end. */
   appNotices: NoticeRow[];
+  /** Ultimos UserPromptSubmit (contrato de envio §5: 20). */
+  readonly submits: ReturnType<typeof createSubmitRing>;
+  /** Sinais recentes lidos do transcript (para o aceite tardio). */
+  signals: PromptSignal[];
+  /** Pendencias (PermissionRequest) abertas: o dialogo delas ja e tratado. */
+  readonly openPendings: Set<string>;
+  hookTerminalNeeded: TerminalNeededReason | null;
+  screenTerminalNeeded: TerminalNeededReason | null;
+  currentAction: LiveAction | null;
+  readonly activeSubagents: Set<string>;
   /** Serialises attach / switch / detach for this tab. */
   chain: Promise<unknown>;
 }
@@ -181,6 +214,13 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         session: null,
         topNotice: null,
         appNotices: [],
+        submits: createSubmitRing(SUBMIT_RING),
+        signals: [],
+        openPendings: new Set(),
+        hookTerminalNeeded: null,
+        screenTerminalNeeded: null,
+        currentAction: null,
+        activeSubagents: new Set(),
         chain: Promise.resolve(),
       };
       recs.set(ptyId, rec);
@@ -202,13 +242,22 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
   // ---- live state ----------------------------------------------------------
 
   function liveOf(rec: Rec): LiveState {
-    const status: LiveStatus = rec.base === 'ended' ? 'ended' : rec.reception !== 'ok' ? 'not-receiving' : rec.base;
-    return { status, currentAction: null, pendings: [], sends: [], activeSubagents: [], terminalNeeded: null };
+    const reason = rec.hookTerminalNeeded ?? rec.screenTerminalNeeded;
+    const status: LiveStatus =
+      rec.base === 'ended' ? 'ended' : rec.reception !== 'ok' ? 'not-receiving' : reason !== null ? 'terminal-needed' : rec.base;
+    return {
+      status,
+      currentAction: rec.currentAction,
+      pendings: [],
+      sends: [],
+      activeSubagents: [...rec.activeSubagents],
+      terminalNeeded: reason === null ? null : { reason },
+    };
   }
 
   function emitLiveIfChanged(rec: Rec): void {
     const live = liveOf(rec);
-    const key = live.status;
+    const key = `${live.status}|${live.currentAction?.toolUseId ?? ''}|${live.activeSubagents.join(',')}|${live.terminalNeeded?.reason ?? ''}`;
     if (key === rec.lastLiveKey) return;
     rec.lastLiveKey = key;
     deps.events.live({ ptyId: rec.ptyId, live });
@@ -218,6 +267,24 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     if (rec.base === 'ended' || rec.base === base) return;
     rec.base = base;
     emitLiveIfChanged(rec);
+  }
+
+  // ---- prompt signals (T064) -------------------------------------------------
+
+  function emitSignal(rec: Rec, signal: PromptSignal): void {
+    // hook submits live in their own ring (20, §5)
+    if (!(signal.origin === 'hook' && signal.signal === 'submit')) rec.signals = [...rec.signals, signal].slice(-SIGNAL_RING);
+    deps.events.promptSignal({
+      ptyId: rec.ptyId,
+      signal: signal.signal,
+      ...(signal.text !== undefined ? { text: signal.text } : {}),
+      at: signal.at,
+      origin: signal.origin,
+    });
+  }
+
+  function hookSignal(rec: Rec, signal: PromptSignal['signal'], text?: string): void {
+    emitSignal(rec, { signal, ...(text !== undefined ? { text } : {}), at: new Date(now()).toISOString(), origin: 'hook' });
   }
 
   // ---- reception -----------------------------------------------------------
@@ -267,6 +334,13 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     const result = adapt(session.state, toEntries(batch.lines));
     session.state = result.state;
     reportUnknown(rec, result.unknownLabels);
+    if (!batch.reset && batch.lines.length > 0) {
+      // a reset re-reads old lines: those are not new acceptances
+      const signals = signalsFromEntries(toEntries(batch.lines), new Date(now()).toISOString());
+      if (signals.length > 0) {
+        for (const sig of signals) emitSignal(rec, sig);
+      }
+    }
     if (batch.lines.length > 0) {
       rec.fileSeen = true;
       rec.lastGrowthAt = now();
@@ -372,14 +446,60 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       rec.fileSeen = false;
       rec.lastActivityAt = 0;
       rec.lastGrowthAt = 0;
+      rec.signals = [];
+      rec.currentAction = null;
+      rec.activeSubagents.clear();
+      rec.hookTerminalNeeded = null;
       if (hadSession) await openSession(rec, next);
       setReception(rec, 'ok');
       deps.events.conversationSwitched({ ptyId: rec.ptyId, sessionId: event.sessionId, reason });
+      hookSignal(rec, 'session-switch');
+      emitLiveIfChanged(rec);
     });
   }
 
   function noticeRow(id: string, notice: NoticeRow['notice'], params: Record<string, unknown>): NoticeRow {
     return { id, kind: 'notice', notice, params, turnId: null, at: new Date(now()).toISOString(), scope: 'main' };
+  }
+
+  /** Efeitos dos hooks alem do semaforo: sinais de envio, acao atual, subagentes, dialogo (T064/T070). */
+  function onHook(rec: Rec, name: string, payload: Record<string, unknown>): void {
+    const text = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+    const agentId = text(payload.agent_id);
+    if (name === 'UserPromptSubmit') {
+      const prompt = text(payload.prompt);
+      const at = new Date(now()).toISOString();
+      if (prompt !== undefined) rec.submits.push({ text: prompt, at });
+      emitSignal(rec, { signal: 'submit', ...(prompt !== undefined ? { text: prompt } : {}), at, origin: 'hook' });
+    } else if (name === 'SessionStart' && payload.source === 'compact') {
+      hookSignal(rec, 'compact');
+    }
+
+    if (name === 'PreToolUse' && agentId === undefined) {
+      const tool = text(payload.tool_name);
+      const toolUseId = text(payload.tool_use_id);
+      if (tool !== undefined && toolUseId !== undefined) {
+        const { summary } = summarizeTool({ name: tool, input: payload.tool_input, cwd: rec.source?.cwd ?? '' });
+        rec.currentAction = { toolUseId, tool, summary, startedAt: new Date(now()).toISOString(), scope: 'main' };
+      }
+    } else if (name === 'PostToolUse' && agentId === undefined) {
+      const id = text(payload.tool_use_id);
+      if (id === undefined || rec.currentAction?.toolUseId === id) rec.currentAction = null;
+    } else if (name === 'Stop' || name === 'StopFailure' || name === 'UserPromptSubmit' || name === 'SessionStart') {
+      rec.currentAction = null;
+    } else if (name === 'SubagentStart' && agentId !== undefined) {
+      rec.activeSubagents.add(agentId);
+    } else if (name === 'SubagentStop' && agentId !== undefined) {
+      rec.activeSubagents.delete(agentId);
+    }
+
+    if (DIALOG_CLEARING_EVENTS.has(name)) {
+      rec.hookTerminalNeeded = null;
+    } else if (name === 'Notification' && rec.openPendings.size === 0) {
+      const reason = DIALOG_NOTIFICATIONS[text(payload.notification_type) ?? ''];
+      if (reason !== undefined) rec.hookTerminalNeeded = reason;
+    }
+    emitLiveIfChanged(rec);
   }
 
   function onBridge(event: BridgeEvent): void {
@@ -388,10 +508,15 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       void handleSwitch(rec, event);
     } else if (event.type === 'session-end') {
       setBase(rec, 'ended');
+    } else if (event.type === 'pending') {
+      rec.openPendings.add(event.handle.id);
+    } else if (event.type === 'expired' || event.type === 'resolved-elsewhere' || event.type === 'cancelled') {
+      rec.openPendings.delete(event.requestId);
     } else if (event.type === 'hook') {
       if (ACTIVITY_EVENTS.has(event.event)) rec.lastActivityAt = now();
       if (WORKING_EVENTS.has(event.event)) setBase(rec, 'working');
       else if (IDLE_EVENTS.has(event.event) || rec.base === 'starting') setBase(rec, 'idle');
+      onHook(rec, event.event, event.payload);
     }
   }
 
@@ -487,6 +612,28 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     },
 
     checkReception,
+
+    async ackLookup(ptyId, text, since) {
+      const rec = recs.get(ptyId) ?? (deps.getSource(ptyId) !== null ? recOf(ptyId) : undefined);
+      if (rec === undefined) return { matched: false };
+      const early = lookupAck(rec.submits.items(), rec.signals, text, since);
+      if (early.matched) return early;
+      // late acceptance may sit in lines read before the tab was attached: look at the file's tail
+      const path = sourceOf(rec)?.transcriptPath;
+      if (path === undefined) return { matched: false };
+      try {
+        const page = await readPageBackward(path);
+        return lookupAck([], signalsFromEntries(toEntries(page.lines), new Date(now()).toISOString()), text, since);
+      } catch {
+        return { matched: false };
+      }
+    },
+
+    reportScreenState(ptyId, terminalNeeded) {
+      const rec = recOf(ptyId);
+      rec.screenTerminalNeeded = terminalNeeded;
+      emitLiveIfChanged(rec);
+    },
 
     transcriptRoots(ptyId) {
       const path = recs.get(ptyId)?.source?.transcriptPath ?? deps.getSource(ptyId)?.transcriptPath;

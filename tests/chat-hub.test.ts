@@ -8,7 +8,7 @@ import { createChatHub, type ChatHub, type ChatHubEvents } from '../src/main/cha
 import { registerChatIpcHandlers } from '../src/main/chat/chat-ipc';
 import type { BridgeEvent } from '../src/main/hook-bridge';
 import { CHAT_CHANNELS } from '../src/shared/chat/ipc';
-import type { ChatConversationSwitchedEvent, ChatLiveEvent, ChatReceptionEvent, ChatRowsEvent } from '../src/shared/chat/ipc';
+import type { ChatConversationSwitchedEvent, ChatLiveEvent, ChatPromptSignalEvent, ChatReceptionEvent, ChatRowsEvent } from '../src/shared/chat/ipc';
 import type { ConversationRow, NoticeRow } from '../src/shared/chat/rows';
 import { pollUntil } from './helpers/fsWatchWait';
 
@@ -71,8 +71,8 @@ class FakeBridge {
   emit(e: BridgeEvent): void {
     for (const l of [...this.listeners]) l(e);
   }
-  hook(ptyId: string, event: string): void {
-    this.emit({ type: 'hook', ptyId, event, payload: { hook_event_name: event } });
+  hook(ptyId: string, event: string, extra: Record<string, unknown> = {}): void {
+    this.emit({ type: 'hook', ptyId, event, payload: { hook_event_name: event, ...extra } });
   }
 }
 
@@ -83,6 +83,7 @@ interface Harness {
   live: ChatLiveEvent[];
   switched: ChatConversationSwitchedEvent[];
   reception: ChatReceptionEvent[];
+  signals: ChatPromptSignalEvent[];
   unknown: { ptyId: string; entryType: string }[];
   clock: { t: number };
 }
@@ -93,6 +94,7 @@ function harness(sources: Record<string, { sessionId: string; transcriptPath: st
   const live: ChatLiveEvent[] = [];
   const switched: ChatConversationSwitchedEvent[] = [];
   const reception: ChatReceptionEvent[] = [];
+  const signals: ChatPromptSignalEvent[] = [];
   const unknown: { ptyId: string; entryType: string }[] = [];
   const clock = { t: 1_000_000 };
   const events: ChatHubEvents = {
@@ -100,6 +102,7 @@ function harness(sources: Record<string, { sessionId: string; transcriptPath: st
     live: (e) => live.push(e),
     conversationSwitched: (e) => switched.push(e),
     reception: (e) => reception.push(e),
+    promptSignal: (e) => signals.push(e),
   };
   const hub = createChatHub({
     bridge,
@@ -113,7 +116,7 @@ function harness(sources: Record<string, { sessionId: string; transcriptPath: st
     follower: { debounceMs: 10, pollMs: 50, retryMs: 20 },
   });
   hubs.push(hub);
-  return { hub, bridge, rows, live, switched, reception, unknown, clock };
+  return { hub, bridge, rows, live, switched, reception, signals, unknown, clock };
 }
 
 const src = (path: string, sessionId = 's1') => ({ sessionId, transcriptPath: path, cwd: dir });
@@ -402,6 +405,23 @@ describe('registerChatIpcHandlers', () => {
     expect(result.registered).toBe(false);
   });
 
+  it('routes ack-lookup and screen-state, ignoring malformed input and unknown reasons', async () => {
+    const ipc = fakeIpc();
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    registerChatIpcHandlers({ ipcMain: ipc, enabled: true, hub: h.hub, openExternal: async () => undefined, openPath: async () => '' });
+    const lookup = ipc.handlers.get(CHAT_CHANNELS.ackLookup) as (e: unknown, i: unknown) => Promise<{ matched: boolean }>;
+    const screen = ipc.handlers.get(CHAT_CHANNELS.screenState) as (e: unknown, i: unknown) => void;
+    h.bridge.hook('pty-1', 'UserPromptSubmit', { prompt: 'oi' });
+    expect(await lookup({}, { ptyId: 'pty-1', text: 'oi', since: '1969-01-01T00:00:00.000Z' })).toMatchObject({ matched: true });
+    expect(await lookup({}, { ptyId: 1, text: 'oi' })).toEqual({ matched: false });
+    screen({}, { ptyId: 'pty-1', terminalNeeded: 'interactive-screen' });
+    expect(h.live[h.live.length - 1]!.live.terminalNeeded).toEqual({ reason: 'interactive-screen' });
+    screen({}, { ptyId: 'pty-1', terminalNeeded: 'bogus' });
+    expect(h.live[h.live.length - 1]!.live.terminalNeeded).toEqual({ reason: 'interactive-screen' });
+    screen({}, { ptyId: 'pty-1', terminalNeeded: null });
+    expect(h.live[h.live.length - 1]!.live.terminalNeeded).toBeNull();
+  });
+
   it('registers the attach/detach/load-older/row-detail/open-* handlers when enabled', async () => {
     const ipc = fakeIpc();
     const path = join(dir, 's1.jsonl');
@@ -426,5 +446,135 @@ describe('registerChatIpcHandlers', () => {
     await openGenerated({}, { ptyId: 'pty-1', path: join(dir, 'out', 'r.exe') });
     await openGenerated({}, { ptyId: 'pty-1', path: join(tmpdir(), 'outside.html') });
     expect(opened).toEqual(['https://example.com', join(dir, 'out', 'r.html')]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T064 - sinais de aceite
+// ---------------------------------------------------------------------------
+
+describe('prompt signals (T064)', () => {
+  const line = (o: Record<string, unknown>): string => JSON.stringify({ isSidechain: false, timestamp: new Date().toISOString(), ...o });
+
+  it('emits submit from the UserPromptSubmit hook and keeps only the last 20 for ack-lookup', async () => {
+    const h = harness({ 'pty-1': src(join(dir, 'none.jsonl')) });
+    h.bridge.hook('pty-1', 'UserPromptSubmit', { prompt: 'ola mundo' });
+    expect(h.signals).toHaveLength(1);
+    expect(h.signals[0]).toMatchObject({ ptyId: 'pty-1', signal: 'submit', text: 'ola mundo', origin: 'hook' });
+    expect(typeof h.signals[0]!.at).toBe('string');
+    expect(await h.hub.ackLookup('pty-1', 'ola mundo', '1969-01-01T00:00:00.000Z')).toEqual({ matched: true, via: 'UserPromptSubmit' });
+    for (let i = 0; i < 25; i += 1) h.bridge.hook('pty-1', 'UserPromptSubmit', { prompt: `p${i}` });
+    expect((await h.hub.ackLookup('pty-1', 'ola mundo', '1969-01-01T00:00:00.000Z')).matched).toBe(false);
+    expect((await h.hub.ackLookup('pty-1', 'p24', '1969-01-01T00:00:00.000Z')).matched).toBe(true);
+  });
+
+  it('emits enqueue / deliver / command / unknown-command from appended transcript lines', async () => {
+    const path = join(dir, 's1.jsonl');
+    writeRounds(path, 1, 1);
+    const h = harness({ 'pty-1': src(path) });
+    await h.hub.attach('pty-1');
+    appendFileSync(
+      path,
+      [
+        JSON.stringify({ type: 'queue-operation', operation: 'enqueue', timestamp: '2026-10-08T10:00:00.000Z', sessionId: 's1', content: 'depois' }),
+        JSON.stringify({ type: 'queue-operation', operation: 'remove', timestamp: '2026-10-08T10:00:05.000Z', sessionId: 's1' }),
+        line({ type: 'attachment', uuid: uid(10), parentUuid: uid(2), attachment: { type: 'queued_command', commandMode: 'prompt', prompt: 'depois', humanTurn: true } }),
+        line({ type: 'user', uuid: uid(11), parentUuid: uid(10), message: { role: 'user', content: '<command-name>/model</command-name><command-args>opus</command-args>' }, turnOrigin: 'human' }),
+        line({ type: 'system', subtype: 'informational', uuid: uid(12), parentUuid: uid(11), content: 'Unknown command: /naoexiste', level: 'warning' }),
+      ].join('\n') + '\n',
+    );
+    await pollUntil(() => h.signals.length >= 4);
+    expect(h.signals.map((s) => s.signal)).toEqual(['enqueue', 'deliver', 'command', 'unknown-command']);
+    expect(h.signals[2]!.text).toBe('/model opus');
+    expect(h.signals.every((s) => s.origin === 'transcript')).toBe(true);
+    // nothing is replayed for what was already in the file at attach time
+    expect(h.signals.some((s) => s.text === 'prompt 1')).toBe(false);
+  });
+
+  it('answers ack-lookup from the transcript tail even when the tab was never attached', async () => {
+    const path = join(dir, 's1.jsonl');
+    writeFileSync(path, line({ type: 'user', uuid: uid(1), parentUuid: null, message: { role: 'user', content: 'fila' }, turnOrigin: 'human', timestamp: '2026-10-08T10:00:00.000Z' }) + '\n');
+    const h = harness({ 'pty-1': src(path) });
+    expect(await h.hub.ackLookup('pty-1', 'fila', '2026-10-08T09:00:00.000Z')).toEqual({ matched: true, via: 'submit' });
+    expect((await h.hub.ackLookup('pty-1', 'fila', '2026-10-08T11:00:00.000Z')).matched).toBe(false);
+    expect((await h.hub.ackLookup('pty-9', 'fila', '1969-01-01T00:00:00.000Z')).matched).toBe(false);
+  });
+
+  it('emits session-switch on a conversation switch and compact on SessionStart(compact)', async () => {
+    const a = join(dir, 'a.jsonl');
+    const b = join(dir, 'b.jsonl');
+    writeRounds(a, 1, 1);
+    writeRounds(b, 1, 1);
+    const h = harness({ 'pty-1': src(a, 'sa') });
+    await h.hub.attach('pty-1');
+    h.bridge.emit({ type: 'conversation-switched', ptyId: 'pty-1', sessionId: 'sb', transcriptPath: b, source: 'clear' });
+    await pollUntil(() => h.switched.length === 1);
+    h.bridge.hook('pty-1', 'SessionStart', { source: 'compact' });
+    expect(h.signals.map((s) => s.signal)).toEqual(['session-switch', 'compact']);
+    expect((await h.hub.ackLookup('pty-1', '/clear', '1969-01-01T00:00:00.000Z')).via).toBe('session-switch');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T070 (main) - terminalNeeded, currentAction, activeSubagents
+// ---------------------------------------------------------------------------
+
+describe('live extras (T070 main)', () => {
+  const lastLive = (h: Harness) => h.live[h.live.length - 1]!.live;
+
+  it('lights terminalNeeded from a dialog Notification without an open pending, and clears on activity hooks', () => {
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    h.bridge.hook('pty-1', 'SessionStart');
+    h.bridge.hook('pty-1', 'Notification', { notification_type: 'idle_prompt' });
+    expect(lastLive(h).terminalNeeded).toBeNull();
+    h.bridge.hook('pty-1', 'Notification', { notification_type: 'permission_prompt' });
+    expect(lastLive(h).terminalNeeded).toEqual({ reason: 'permission-dialog' });
+    expect(lastLive(h).status).toBe('terminal-needed');
+    h.bridge.hook('pty-1', 'PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'a.ts' }, tool_use_id: 't1' });
+    expect(lastLive(h).terminalNeeded).toBeNull();
+    h.bridge.hook('pty-1', 'Notification', { notification_type: 'elicitation_dialog' });
+    expect(lastLive(h).terminalNeeded).toEqual({ reason: 'interactive-screen' });
+    h.bridge.hook('pty-1', 'Stop');
+    expect(lastLive(h).terminalNeeded).toBeNull();
+  });
+
+  it('does not light terminalNeeded while a pending is open', () => {
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    const handle = { id: 'r1', ptyId: 'pty-1', respond: () => true, release: () => true };
+    h.bridge.emit({ type: 'pending', ptyId: 'pty-1', handle, payload: {}, toolUseId: null });
+    h.bridge.hook('pty-1', 'Notification', { notification_type: 'permission_prompt' });
+    expect(h.live.some((e) => e.live.terminalNeeded !== null)).toBe(false);
+    h.bridge.emit({ type: 'resolved-elsewhere', ptyId: 'pty-1', requestId: 'r1' });
+    h.bridge.hook('pty-1', 'Notification', { notification_type: 'permission_prompt' });
+    expect(lastLive(h).terminalNeeded).not.toBeNull();
+  });
+
+  it('combines the renderer screen reason with the hook one', () => {
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    h.bridge.hook('pty-1', 'SessionStart');
+    h.hub.reportScreenState('pty-1', 'interactive-screen');
+    expect(lastLive(h).terminalNeeded).toEqual({ reason: 'interactive-screen' });
+    h.bridge.hook('pty-1', 'Notification', { notification_type: 'permission_prompt' });
+    expect(lastLive(h).terminalNeeded).toEqual({ reason: 'permission-dialog' }); // hook wins
+    h.bridge.hook('pty-1', 'PostToolUse', { tool_name: 'Read', tool_use_id: 't1' });
+    expect(lastLive(h).terminalNeeded).toEqual({ reason: 'interactive-screen' }); // screen source stays
+    h.hub.reportScreenState('pty-1', null);
+    expect(lastLive(h).terminalNeeded).toBeNull();
+  });
+
+  it('feeds currentAction from Pre/PostToolUse and activeSubagents from SubagentStart/Stop', () => {
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    h.bridge.hook('pty-1', 'PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'a.ts' }, tool_use_id: 't1' });
+    expect(lastLive(h).currentAction).toMatchObject({ toolUseId: 't1', tool: 'Read', scope: 'main' });
+    expect(lastLive(h).currentAction!.summary.verb).toBeTruthy();
+    h.bridge.hook('pty-1', 'PreToolUse', { tool_name: 'Grep', tool_input: {}, tool_use_id: 't2', agent_id: 'ag1' });
+    expect(lastLive(h).currentAction!.toolUseId).toBe('t1'); // sub-agent tools are not the main action
+    h.bridge.hook('pty-1', 'SubagentStart', { agent_id: 'ag1' });
+    h.bridge.hook('pty-1', 'SubagentStart', { agent_id: 'ag2' });
+    expect(lastLive(h).activeSubagents).toEqual(['ag1', 'ag2']);
+    h.bridge.hook('pty-1', 'SubagentStop', { agent_id: 'ag1' });
+    expect(lastLive(h).activeSubagents).toEqual(['ag2']);
+    h.bridge.hook('pty-1', 'PostToolUse', { tool_name: 'Read', tool_use_id: 't1' });
+    expect(lastLive(h).currentAction).toBeNull();
   });
 });

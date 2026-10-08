@@ -9,6 +9,7 @@ import type {
   ConversationSource,
   LiveState,
   RowScope,
+  TerminalNeededReason,
 } from './rows';
 
 export const CHAT_CHANNELS = {
@@ -27,6 +28,7 @@ export const CHAT_CHANNELS = {
   openExternal: 'chat:open-external',
   openGenerated: 'chat:open-generated',
   focusState: 'chat:focus-state',
+  screenState: 'chat:screen-state',
   setChatPrefs: 'config:setChatPrefs',
   // Eventos (main -> renderer)
   rows: 'chat:rows',
@@ -195,6 +197,13 @@ export type ChatOpenGeneratedOutput = void;
 export interface ChatFocusStateInput { readonly activePtyId: string | null }
 export type ChatFocusStateOutput = void;
 
+/** `chat:screen-state` - fontes de tela (detectores do renderer) que pedem o terminal; `null` = a caixa voltou. */
+export interface ChatScreenStateInput {
+  readonly ptyId: string;
+  readonly terminalNeeded: TerminalNeededReason | null;
+}
+export type ChatScreenStateOutput = void;
+
 /** `config:setChatPrefs` — a saída (`AppConfigDto`) é tipada em ../config. */
 export interface SetChatPrefsInput {
   readonly enabled?: boolean;
@@ -227,6 +236,8 @@ export interface ChatPromptSignalEvent {
   readonly signal: PromptSignalKind;
   readonly text?: string;
   readonly at: string;
+  /** `hook` = UserPromptSubmit/SessionStart da ponte; `transcript` = linha do transcript. */
+  readonly origin?: 'hook' | 'transcript';
 }
 
 export interface ChatReceptionEvent {
