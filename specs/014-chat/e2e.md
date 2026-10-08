@@ -297,6 +297,15 @@ A smoke (T081) veio por último.
     2+ linhas, com ou sem imagem. Confirmado depois: duas linhas sem imagem
     (`Shift+Enter`) também falham, então a causa é a quebra de linha e não
     a imagem.
+  - Ampliado no mesmo dia: uma mensagem de **uma linha só, porém longa**
+    (~190 caracteres, com espaço duplo e parênteses) também falhou. A
+    hipótese mais forte passa a ser o wrap: `readInputBox`
+    (`src/shared/cliInputBox.ts:156`) junta as linhas de continuação com
+    `join('')`. Se o espaço no ponto de quebra (ou o `
+` de um `Shift+Enter`)
+    não sobrevive ao `visibleText`, o texto lido vira `palavraseguinte` e o
+    `collapse` de `textSeen` nunca iguala ao rascunho. Não verificado com
+    captura de tela real.
   - Aceite da correção: imagem + texto de 2+ linhas pelo chat chega ao CLI
     e o cartão confirma. Um smoke cobre o caso multilinha com imagem e outro
     sem imagem.
@@ -314,3 +323,10 @@ A smoke (T081) veio por último.
     cartão falho fica **no ponto do envio**, na ordem do tempo. Levar à spec.
   - Aceite: um cartão "não foi" sai num gesto e fica na posição em que foi
     enviado.
+- **`Shift+Tab` no chat navega o foco, não troca o modo do CLI** (alfa,
+  08/10): no chat, `Shift+Tab` anda entre os botões como num navegador.
+  Pela spec isso é esperado: trocar o modo de permissão pela caixa está no
+  Out of Scope, e o modo vem do launcher. Mas ficou sem caminho óbvio para
+  entrar em modo plano a partir do chat: o dono precisou ir ao Terminal.
+  Decidir se vale um atalho (repassar `Shift+Tab` ao PTY com a caixa vazia,
+  por exemplo) ou só uma dica na tela.
