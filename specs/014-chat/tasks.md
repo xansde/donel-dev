@@ -126,7 +126,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
 
 ### Ambiente e modo de permissão (FR-030, R17)
 
-- [ ] T017 [P] Escrever casos (falhando) em `tests/pty-manager.test.ts` e `tests/commandBuilder.test.ts`.
+- [x] T017 [P] Escrever casos (falhando) em `tests/pty-manager.test.ts` e `tests/commandBuilder.test.ts`.
   - **`buildPtyEnv`**:
     - acrescenta `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1`;
     - remove as variáveis de ponte/mensageria herdadas de uma sessão-mãe;
@@ -136,7 +136,7 @@ exceto que semáforo, nome e cor passam a sobreviver ao `/clear`.
   - **Spawn de sessão `claude`**: sem `--permission-mode` no argv, ganha o resolvido.
 
   Antes de escrever, confirmar os nomes exatos das variáveis de ponte/mensageria buscando `BRIDGE_SESSION_ID` e `MESSAGING` no binário (`grep -a -o -E` em `~/.local/bin/claude.exe`, com `timeout 120`).
-- [ ] T018 Implementar o modo de permissão e o ambiente em `src/main/cli-user-settings.ts`, `src/shared/commandBuilder.ts`, `src/main/index.ts` e `src/main/pty-manager.ts`:
+- [x] T018 Implementar o modo de permissão e o ambiente em `src/main/cli-user-settings.ts`, `src/shared/commandBuilder.ts`, `src/main/index.ts` e `src/main/pty-manager.ts`:
   - `src/main/cli-user-settings.ts`: lê **só** `permissions.defaultMode` de `~/.claude/settings.json`, sem credencial e tolerando arquivo ausente;
   - `resolvePermissionMode(argv, userDefault)` em `src/shared/commandBuilder.ts`: launcher > padrão do usuário > `default`;
   - aplicação no handler de spawn de `src/main/index.ts`, que cobre barra lateral, retomar/fork, favoritos, mapa e Esteira;

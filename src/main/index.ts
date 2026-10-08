@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { readUserDefaultPermissionMode } from './cli-user-settings';
+import { withResolvedPermissionMode } from '../shared/commandBuilder';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
 import { createEsteiraService, type EsteiraService } from './esteira-service';
@@ -1038,6 +1040,7 @@ function registerPtyIpcHandlers(): void {
       const { correlationId, extraArgs } = resolveClaudeCorrelation(launcherArgs, randomUUID);
       const semaphoreArgs = hooksSettingsPath ? ['--settings', hooksSettingsPath] : [];
       const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs];
+      // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
 
       // T1222 (011-contas-e-provedores, etapa 2, D8/entregável) — com os
       // perfis demolidos, sessões SEM provider nunca mais recebem override de
@@ -1100,7 +1103,13 @@ function registerPtyIpcHandlers(): void {
         // FIX ambiente genérico (28/07) — `launch` embrulha shim `.cmd`/`.ps1`
         // (npm -g) no interpretador; ConPTY não executa script direto.
         command: resolved.launch.command,
-        args: [...resolved.launch.argsPrefix, ...finalArgs],
+        // T018 (014-chat, FR-030) — sessão `claude` sempre com modo de permissão
+        // explícito: launcher > `permissions.defaultMode` do CLI do usuário > default.
+        // Só este ramo: o shell e a aba de login (retorno antecipado acima) não passam por aqui.
+        args: [
+          ...resolved.launch.argsPrefix,
+          ...withResolvedPermissionMode(finalArgs, readUserDefaultPermissionMode(claudeConfigDirForSession)),
+        ],
         claudeConfigDir: claudeConfigDirForSession,
         envOverrides,
       });
