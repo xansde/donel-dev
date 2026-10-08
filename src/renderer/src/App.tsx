@@ -112,6 +112,7 @@ import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from '.
 // CA-30 (009-modo-dev-v3, lote 9) — seletor de projetos no titlebar + modal de criação.
 import { ProjectSwitcher } from './ProjectSwitcher';
 import { ChatView, type ChatViewActions } from './chat/ChatView';
+import { getChatStore } from './chat/ChatStore';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
 import { disposeTabSend, sendDriverFor, sendToTab } from './chat/composer/tabSend';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
@@ -1781,6 +1782,7 @@ export function App(): React.JSX.Element {
       projectName: tab.projectName,
       state: semaphoreStates[tab.id]?.state ?? 'working',
       stateEnteredAt: semaphoreStates[tab.id]?.stateEnteredAt,
+      ...(chatEnabled && tab.sessionType === 'claude' && semaphoreStates[tab.id]?.state === 'permission' ? { statusText: 'esperando você' } : {}),
       pinned: tab.pinned,
       active: tab.id === activeTabId,
     }));
@@ -1890,6 +1892,9 @@ export function App(): React.JSX.Element {
         if (!nextState || nextState === prevState) continue; // só na TRANSIÇÃO de estado, não a cada update
         if (tab.id === activeTabId) continue; // aba em foco não precisa de toast
         if (nextState !== 'waiting' && nextState !== 'permission') continue;
+        // 014-chat (T079): com o chat ligado a pendência notifica pelo main (título = nome da aba, texto sem
+        // conteúdo, aba ativa com janela fora de foco inclusive) — esta aqui duplicaria. Sem chat, intacto.
+        if (chatEnabled && nextState === 'permission' && tab.sessionType === 'claude') continue;
         if (preference === 'permission-only' && nextState !== 'permission') continue;
 
         try {
@@ -1905,7 +1910,29 @@ export function App(): React.JSX.Element {
       }
     }
     previousSemaphoreStatesRef.current = semaphoreStates;
-  }, [semaphoreStates, tabs, activeTabId, appConfig?.notificationPreference]);
+  }, [semaphoreStates, tabs, activeTabId, appConfig?.notificationPreference, chatEnabled]);
+
+  // T079 (014-chat) — o main decide notificar pela aba ativa e pelo foco da janela (que ele lê sozinho);
+  // o renderer só informa a aba ativa e os nomes das abas (título da notificação).
+  useEffect(() => {
+    if (!chatEnabled) return;
+    const names: Record<string, string> = {};
+    for (const tab of tabs) names[tab.id] = resolveTabName(tab);
+    getChatStore().reportFocusState(activeTabId === '' ? null : activeTabId, names);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatEnabled, tabs, activeTabId, appConfig?.sessionNames]);
+
+  // T079 — clique na notificação: ativa a aba, abre a vista Chat e avisa o painel de pendências (evento de DOM
+  // `donel:chat-focus-pending`, `detail: { ptyId }`) para tomar o foco.
+  useEffect(() => {
+    if (!chatEnabled) return undefined;
+    return window.donel.chat.onFocusPending(({ ptyId }) => {
+      setActiveTabId(ptyId);
+      setTabView(ptyId, 'chat');
+      window.dispatchEvent(new CustomEvent('donel:chat-focus-pending', { detail: { ptyId } }));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatEnabled]);
 
   // FIX (feedback E2E rodada 3) — painel colapsável: "fecha ao... Esc".
   // Efeito próprio (não reaproveita o listener de atalhos Ctrl+1..9/Ctrl+Tab
@@ -2255,6 +2282,8 @@ export function App(): React.JSX.Element {
                 // de shell); só abas 'claude' mostram o ícone de estado
                 // (CA-28) do T009.
                 state={tab.sessionType === 'shell' ? undefined : (semaphoreStates[tab.id]?.state ?? 'working')}
+                // T079 (D-C20) — slot próprio, nunca o `model`.
+                statusText={chatEnabled && tab.sessionType === 'claude' && semaphoreStates[tab.id]?.state === 'permission' ? 'esperando você' : undefined}
                 active={tab.id === activeTabId}
                 onClick={() => setActiveTabId(tab.id)}
                 onClose={() => handleRequestCloseTab(tab.id)}

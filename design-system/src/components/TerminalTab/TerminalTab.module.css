@@ -160,6 +160,12 @@
   color: var(--text-muted);
 }
 
+.statusText {
+  font-size: var(--text-caption-size);
+  color: var(--state-permission);
+  white-space: nowrap;
+}
+
 .close {
   display: inline-flex;
   align-items: center;
