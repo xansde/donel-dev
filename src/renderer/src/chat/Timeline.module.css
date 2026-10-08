@@ -11,6 +11,10 @@
   overflow-y: auto;
   /* The scroll controller compensates prepends itself (R19): no double adjustment. */
   overflow-anchor: none;
+  /* Dark theme: the native (light) scrollbar clashed with the panel. */
+  color-scheme: dark;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 .content {
