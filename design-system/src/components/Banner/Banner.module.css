@@ -1,0 +1,100 @@
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  --tone: var(--text-muted);
+}
+
+.permission {
+  --tone: var(--state-permission);
+  border-color: color-mix(in srgb, var(--state-permission) 45%, transparent);
+  background: color-mix(in srgb, var(--state-permission) 8%, var(--bg-panel));
+}
+
+.waiting {
+  --tone: var(--state-waiting);
+  border-color: color-mix(in srgb, var(--state-waiting) 45%, transparent);
+  background: color-mix(in srgb, var(--state-waiting) 8%, var(--bg-panel));
+}
+
+.accent {
+  --tone: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
+}
+
+.muted {
+  --tone: var(--text-muted);
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--tone);
+}
+
+.icon > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  font-size: var(--text-body-size);
+  font-weight: var(--weight-semibold);
+}
+
+.description {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+/* compact: uma linha, raio 6, ícone de 14 px */
+.compact {
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+}
+
+.compact .icon > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.compact .title {
+  font-weight: var(--weight-regular);
+  font-size: 12px;
+}
+
+/* live: barra de 36 px do pé da conversa */
+.live {
+  height: 36px;
+  gap: 10px;
+  padding: 0 6px 0 12px;
+}
+
+.live .icon > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.live .title {
+  font-weight: var(--weight-regular);
+}

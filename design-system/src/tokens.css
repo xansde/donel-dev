@@ -74,6 +74,19 @@
      permission (~9°) e o roxo de error, sem encostar em nenhum dos dois. */
   --phase-design: #c97fa8; /* rosa dessaturado */
 
+  /* === Paleta de código — 014-chat, T050 (design/chat-verificacao.md §4) === */
+  /* Os componentes de código leem só `--code-*`, nunca a fase direto. Nenhum
+     hex novo: cada papel aponta para um token que já existe. Contraste medido
+     sobre `--bg-panel` (>= 5,2:1). O tema do Shiki mapeia escopos TextMate
+     para estes papéis (keyword/storage -> kw, entity.name.function -> fn, ...). */
+  --code-tx: var(--text-primary); /* texto e pontuação */
+  --code-kw: var(--phase-plano); /* palavra-chave */
+  --code-fn: var(--accent); /* função */
+  --code-ty: var(--phase-implementar); /* tipo */
+  --code-nu: var(--phase-validar); /* número e constante */
+  --code-st: var(--zone-ok); /* string */
+  --code-cm: var(--text-muted); /* comentário */
+
   /* === Tipografia (§3) === */
   --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;

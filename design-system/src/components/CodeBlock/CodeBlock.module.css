@@ -1,0 +1,72 @@
+.block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-panel);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px 0 12px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.meta {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-caption-size);
+  cursor: pointer;
+}
+
+.copy:hover {
+  background: var(--bg-panel);
+}
+
+.copy:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.copied {
+  color: var(--zone-ok);
+}
+
+/* Variáveis lidas pelo tema do Shiki e por qualquer realce que use as classes
+   `.kw/.fn/...` do contêiner: os componentes leem só `--code-*`. */
+.body {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  color: var(--code-tx);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+  line-height: 18px;
+  tab-size: 2;
+}
+
+.body code {
+  font-family: inherit;
+  white-space: pre;
+}

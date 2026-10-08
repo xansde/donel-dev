@@ -124,3 +124,50 @@ export type { CarouselLevelInput } from './lib/carouselGeometry';
 
 export { computeClockTier } from './lib/homologationClock';
 export type { ClockTier, ClockTierResult } from './lib/homologationClock';
+
+// === 014-chat, T050 — peças de leitura (design/chat-verificacao.md §4) ===
+
+export { Kbd } from './components/Kbd';
+export type { KbdProps } from './components/Kbd';
+
+export { MessageHeader } from './components/MessageHeader';
+export type { MessageHeaderProps } from './components/MessageHeader';
+
+export { OwnerMessage } from './components/OwnerMessage';
+export type { OwnerMessageProps, OwnerMessageSendState } from './components/OwnerMessage';
+
+export { NoticeLine } from './components/NoticeLine';
+export type { NoticeLineProps } from './components/NoticeLine';
+
+export { ActionLine } from './components/ActionLine';
+export type { ActionLineProps, ActionCategory, ActionStatus } from './components/ActionLine';
+
+export { ActionGroup } from './components/ActionGroup';
+export type { ActionGroupProps } from './components/ActionGroup';
+
+export { WorkFold } from './components/WorkFold';
+export type { WorkFoldProps, WorkFoldState } from './components/WorkFold';
+
+export { CodeBlock } from './components/CodeBlock';
+export type { CodeBlockProps } from './components/CodeBlock';
+
+export { DiffBlock } from './components/DiffBlock';
+export type { DiffBlockProps, DiffLine, DiffLineKind } from './components/DiffBlock';
+
+export { CommandOutput } from './components/CommandOutput';
+export type { CommandOutputProps, CommandOutputLine } from './components/CommandOutput';
+
+export { Banner } from './components/Banner';
+export type { BannerProps, BannerTone, BannerVariant } from './components/Banner';
+
+export { SubagentRow, SUBAGENT_STATE_LABEL_PT } from './components/SubagentRow';
+export type { SubagentRowProps, SubagentState } from './components/SubagentRow';
+
+export {
+  DETAIL_MAX_LINES,
+  DETAIL_MAX_BYTES,
+  clipLines,
+  clipOutputText,
+  formatHiddenLines,
+} from './lib/clipLines';
+export type { ClippedLines } from './lib/clipLines';

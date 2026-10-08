@@ -1,0 +1,90 @@
+.block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-panel);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 8px 0 10px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.meta {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.body {
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.line {
+  display: flex;
+  white-space: pre;
+  min-width: max-content;
+}
+
+.add {
+  background: color-mix(in srgb, var(--zone-ok) 12%, transparent);
+}
+
+.del {
+  background: color-mix(in srgb, var(--state-permission) 12%, transparent);
+}
+
+.number {
+  flex: none;
+  width: 34px;
+  padding-right: 8px;
+  text-align: right;
+  color: color-mix(in srgb, var(--text-primary) 62%, transparent);
+}
+
+.sign {
+  flex: none;
+  width: 14px;
+  padding-left: 4px;
+  box-sizing: border-box;
+}
+
+.add .sign {
+  color: var(--zone-ok);
+}
+
+/* Coral FIXO = removido (D-C26). */
+.del .sign {
+  color: var(--state-permission);
+}
+
+.text {
+  padding-right: 10px;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  padding: 0 10px;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
