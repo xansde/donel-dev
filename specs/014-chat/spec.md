@@ -91,6 +91,22 @@ projeto — B3)** ficam para specs próprias.
   deixou de usar.
 - Q (revisão do plano): a meta de 1 s para uma linha nova aparecer vira
   critério de sucesso? → A: Sim (SC-008).
+- Q (revisão do protótipo, D-C19): com o Modo Foco ligado, as linhas de
+  subagente recolhem junto com o resto? → A: Não. A mensagem que os lança e
+  as linhas vivas ficam fora da parte recolhida (FR-009).
+- Q (revisão do protótipo, D-C13): "Permitir sempre neste projeto" numa
+  edição vale só para aquele arquivo? → A: Não. Vale para o projeto inteiro,
+  e o rótulo diz isso (FR-022).
+- Q (revisão do protótipo, D-C23): onde fica o painel do subagente no Modo
+  Dev? → A: Na coluna da direita, no lugar do painel de detalhes da fase,
+  enquanto estiver aberto (FR-027).
+- Q (revisão do protótipo, D-C24/D-C25): os extras do protótipo entram? → A:
+  Sim, os quatro: copiar tabela (FR-005), clipe para anexar (FR-015), Esc
+  para Parar e Negar com precedência definida (FR-008), e "resultado:" no
+  subagente concluído (FR-027).
+- Q (revisão do protótipo, AS 6.2): qual o gesto de "interromper e mandar
+  agora"? → A: Com o Claude trabalhando, o Enviar vira um botão com menu. O
+  clique manda para a fila, e o menu oferece "Interromper e mandar agora".
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -394,7 +410,8 @@ outra com "interromper e mandar agora".
 
 - **FR-005**: O chat MUST exibir mensagens do dono (com anexos) e respostas do
   Claude com markdown renderizado, código com destaque por linguagem, copiar
-  por bloco de código e copiar a resposta inteira.
+  por bloco de código, copiar tabela como markdown e copiar a resposta
+  inteira.
 - **FR-006**: O chat MUST exibir cada ação de ferramenta como linha curta em
   português com detalhe expansível (diff, comando + saída truncada com "ver
   tudo", lista de arquivos), agrupando ações consecutivas e mantendo erros
@@ -403,11 +420,18 @@ outra com "interromper e mandar agora".
   sistema (compactação, troca de conta, limite) como linhas recolhidas ou
   discretas.
 - **FR-008**: O chat MUST mostrar o estado vivo da rodada ("trabalhando —
-  <ação>") e oferecer Parar.
+  <ação>") e oferecer Parar. Com o foco na vista do chat, o Esc MUST seguir
+  esta precedência:
+  1. fecha o menu `/` ou `@`;
+  2. cancela o campo de motivo ou de ajuste;
+  3. fecha o painel lateral;
+  4. nega a pendência da vez, sem motivo;
+  5. Parar.
 - **FR-009**: O chat MUST oferecer Modo Foco (padrão ligado, preferência
   lembrada) que mostra por rodada a mensagem do dono e a resposta final,
   recolhendo o resto com contagem e o selo "tem pergunta aqui" quando uma nota
-  recolhida terminar em pergunta.
+  recolhida terminar em pergunta. A mensagem do Claude que lança subagentes,
+  com as linhas vivas deles, MUST ficar fora da parte recolhida.
 - **FR-010**: O chat MUST carregar o histórico de sessões retomadas a partir
   do fim, buscando o anterior sob demanda, sem ler o histórico inteiro de uma
   vez.
@@ -425,7 +449,9 @@ outra com "interromper e mandar agora".
   nome e descrição e de arquivos do projeto (`@`).
 - **FR-015**: A caixa MUST aceitar imagem colada ou arrastada como anexo que
   chega ao Claude como imagem legível; arquivo não-imagem arrastado MUST
-  virar menção `@caminho`.
+  virar menção `@caminho`. Um botão de clipe MUST abrir o seletor de
+  arquivos, com o mesmo destino: imagem vira anexo, outro arquivo vira
+  `@caminho`.
 - **FR-016**: Colagem acima de um limite de tamanho MUST virar anexo de texto
   conferível.
 - **FR-017**: Todo envio MUST chegar ao CLI exatamente como escrito (sem
@@ -452,7 +478,9 @@ outra com "interromper e mandar agora".
 - **FR-022**: Pedidos de permissão MUST aparecer no mesmo painel **somente
   quando o CLI pediria**, descrevendo a ação em português (com diff em
   edições), com Permitir, Permitir sempre neste projeto e Negar com motivo
-  que chega ao Claude.
+  que chega ao Claude. "Permitir sempre neste projeto" vale para o projeto
+  inteiro: numa edição de arquivo, para todas as edições do projeto. O rótulo
+  MUST dizer a regra que será gravada.
 - **FR-023**: A proposta de saída do modo plano MUST aparecer como cartão com
   Aprovar e seguir e Pedir ajuste.
 - **FR-024**: Pendência aberta MUST sinalizar a aba e notificar o sistema
@@ -471,7 +499,10 @@ outra com "interromper e mandar agora".
   lançou (descrição, tipo, modelo, estado, tempo, última ação), abrindo a
   conversa dele no mesmo formato e ao vivo num painel lateral da aba, com a
   conversa principal visível e utilizável ao lado; o painel MUST fechar com ×
-  ou Esc.
+  ou Esc. No Modo Dev, o painel MUST ocupar a coluna da direita no lugar do
+  painel de detalhes da fase, enquanto estiver aberto. Subagente concluído
+  MUST mostrar "resultado:" com a primeira linha não vazia da resposta final
+  dele.
 - **FR-028**: Subagentes simultâneos MUST ser indicados numa faixa da aba que
   troca o subagente mostrado no painel lateral; subagentes em segundo plano
   MUST seguir atualizando após a resposta do principal; aninhados MUST

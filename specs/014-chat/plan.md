@@ -169,7 +169,8 @@ não tem tela. As demais só começam com o protótipo aprovado.
   nesta sessão:
   1. O brief `design/prompt-design-chat.md` virou 11 telas num canvas de
      design temporário da conta atual, que é compartilhada.
-  2. O dono **aprovou o protótipo em 07/10**.
+  2. O dono **aprovou o protótipo em 07/10** e respondeu às 5 decisões da
+     conferência no mesmo dia. **Gate fechado.**
   3. O backup está em `design/chat-handoff/`, e o canvas é apagado depois
      dele, a pedido do dono.
   4. A conferência contra a spec vai para `design/chat-verificacao.md`, com

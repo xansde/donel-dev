@@ -152,6 +152,9 @@ português ("Leu" / `src/x.ts`; "Editou" / `App.tsx` / `+12 −3`; "Buscou" /
 dono e `finalRowId`; o resto vira `{ kind: 'folded', actions: n, notes: m,
 hasQuestion: boolean, rows: string[] }`. `hasQuestion` = alguma nota
 recolhida termina em `?` (ignorando espaços e pontuação de markdown no fim).
+**Exceção** (decisão do dono, 07/10, D-C19): o bloco `assistant` que lança
+subagentes e as linhas `subagent` dele ficam **fora** da dobra, na posição
+deles.
 Rodada em andamento: mostra a mensagem do dono + o bloco recolhido parcial; a
 resposta final entra quando a rodada fecha.
 

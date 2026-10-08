@@ -414,6 +414,19 @@ você (aba, `StateDot`); coral **fixo** = falhou ou removido. Atualizar a regra 
    vira `SplitButton`, que já existe. O clique envia para a fila, e o menu traz "Interromper e mandar agora". Sem
    atalho novo.
 
+**Decidido pelo dono em 07/10/2026:**
+
+| # | Decisão |
+|---|---|
+| 1 | **(b)**, como recomendado. |
+| 2 | **(a)**: "Permitir sempre neste projeto" vale para o **projeto inteiro**. Nas edições, o rótulo diz "sempre: todas as edições neste projeto"; o `hook-bridge.md` §3 fica como está. |
+| 3 | Aceita a recomendação. |
+| 4 | Aceita os quatro aditivos. |
+| 5 | Aceita a recomendação. |
+
+As decisões entraram na spec (FR-005, FR-008, FR-009, FR-015, FR-022, FR-027 e clarificações), no `data-model.md` §5
+e nas tarefas da §7.
+
 ## 4. Extensões
 
 As peças do DS são apresentacionais: recebem props e não fazem IPC. Os arquivos que o plano lista em
@@ -612,7 +625,7 @@ Com a T004 aprovada:
   - o painel do subagente no Modo Dev, na T094 (decisão 3);
   - o texto da notificação da T079, proposto na D-C17.
 
-Textos de tarefa a ajustar (não editados aqui):
+Textos de tarefa a ajustar (aplicados no `specs/014-chat/tasks.md` em 07/10, já com as decisões da §3):
 
 | Tarefa | Ajuste |
 |---|---|
@@ -643,5 +656,6 @@ Textos de tarefa a ajustar (não editados aqui):
   publicação.
 - **Divergências da seção 2 que a regra de conflito resolve** (forma → vence o
   desenho; comportamento → vence a spec): valem a partir desta data.
-- **Pendente**: as 5 decisões da seção 3. O gate da Fase 0 (T004) fecha quando
-  o dono responder. As respostas e a data entram aqui.
+- **07/10/2026 — as 5 decisões da seção 3 respondidas pelo dono**: 1 (b), 2
+  (a) projeto inteiro, 3, 4 e 5 como recomendado. **Gate da Fase 0 fechado
+  (T004).**

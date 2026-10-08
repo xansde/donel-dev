@@ -45,7 +45,7 @@ Roda **em paralelo** com a Phase 2 (aprovado em 07/10).
   - mapa tela → componentes do design-system;
   - paleta de código, se o design propôs uma;
   - a ordem de implementação que o desenho desbloqueia.
-- [ ] T004 **(dono)** Aprovar `design/chat-verificacao.md`; registrar a aprovação, com data, numa seção "Aprovação" do mesmo arquivo. **Gate**: sem isto, nenhuma tarefa das Phases 3–7.
+- [x] T004 **(dono)** Aprovar `design/chat-verificacao.md`; registrar a aprovação, com data, numa seção "Aprovação" do mesmo arquivo. **Gate**: sem isto, nenhuma tarefa das Phases 3–7.
 
 ---
 
@@ -297,18 +297,22 @@ divergências de `design/chat-verificacao.md`.
   Responde `chat:attach`, `chat:detach`, `chat:load-older` e `chat:row-detail`. Faz passar T047.
 - [ ] T049 [US1] Expor `window.donel.chat.*` em `src/preload/index.ts` (tipos no `DonelApi` de `src/shared/index.ts`) e criar `src/renderer/src/chat/ChatStore.ts` (uma assinatura por canal, distribuída por `ptyId` — trava de `src/preload/subscribeChannel.ts:35`) + `useChatSession(ptyId)`.
 - [ ] T050 [P] [US1] Implementar no `design-system/` as extensões aprovadas em `design/chat-verificacao.md` que a leitura usa (ex.: faixa de aviso, linha de conversa, cabeçalho de alternância), com tokens apenas e exportadas em `design-system/src/index.ts`.
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Peças da leitura conforme a §4 de `design/chat-verificacao.md`: `OwnerMessage`, `MessageHeader`, `NoticeLine`, `ActionLine`, `ActionGroup`, `WorkFold`, `CodeBlock` + tokens `--code-*`, `DiffBlock`, `CommandOutput`, `Banner`, `Kbd`, `Button·link` e `SubagentRow` (só leitura). Atualizar a regra de cor do `design/design-system.md`: coral fixo = falhou; coral pulsando = precisa de você (D-C26).
 - [ ] T051 [US1] Markdown e código em `src/renderer/src/chat/markdown/`:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Paleta = tokens `--code-*` (§4 da conferência); caminho no cabeçalho do bloco só quando vier na cerca (D-C6); "copiar tabela" como markdown (FR-005, decisão 4).
   - `src/renderer/src/chat/markdown/Markdown.tsx`: `react-markdown` + `remark-gfm`, sem HTML cru; links pelo `chat:open-external`; caminho do Windows não vira link quebrado.
   - `CodeBlock.tsx`: rótulo da linguagem e copiar.
   - `shiki.ts`: núcleo + Oniguruma WASM; gramáticas sob demanda; tema em variáveis CSS dos tokens ou paleta aprovada; destaque quando visível; cache LRU com `src/shared/chat/t3/lruCache.ts` adaptado do T3, com cabeçalho MIT.
   - "Copiar resposta inteira" com `src/shared/chat/t3/markdownClipboard.ts` adaptado.
 - [ ] T052 [US1] Linhas de mensagem em `src/renderer/src/chat/rows/`, conforme o design:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): `Notice` → `NoticeLine` (critério G3); `Unknown` mostra o tipo (D-C8); `ShellRow` e `LocalCommand` = `OwnerMessage` mono + `CommandOutput`; anexos dentro do `OwnerMessage`.
   - `UserMessage.tsx`, com miniaturas via `donel-asset:`;
   - `AssistantMessage.tsx`;
   - `Notice.tsx` (todos os `NoticeKind`, incluindo "Gerou … — abrir");
   - `Unknown.tsx` ("ver bruto");
   - `LocalCommand.tsx` e `ShellRow.tsx`.
 - [ ] T053 [US3] Linhas de trabalho em `src/renderer/src/chat/rows/`, conforme o design:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Sem estatística de teste (D-C3); verbo no gerúndio enquanto roda (D-C4, nota no `conversation-rows.md` §4); chevron do "pensou" só com `hasText` (D-C5); diff cortado em 40 linhas (D-C7); `QuestionRow` e `PlanRow` a partir do `ActionLine`.
   - `ActionRow.tsx`: resumo em português, ícone por categoria, `error`/`denied` visíveis;
   - `ActionGroup.tsx`: recolhido com a lista de falhas visível; expande;
   - `Thinking.tsx`: "pensou" + duração;
@@ -317,15 +321,18 @@ divergências de `design/chat-verificacao.md`.
 
   Detalhes pelo `chat:row-detail`: `markdown/DiffView.tsx` (a partir do `structuredPatch`), saída de comando cortada + "ver tudo" e lista de arquivos.
 - [ ] T054 [US3] Modo Foco na timeline (`src/renderer/src/chat/Timeline.tsx`):
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Liga/desliga = `Toggle` no cabeçalho da aba + clique na barra da rodada; rótulo da dobra por estado (G1); a mensagem que lança subagentes e as linhas deles ficam fora da dobra (FR-009, decisão 1).
   - liga/desliga onde o design indicar, persistido por `config:setChatPrefs` (`chat.focusMode`);
   - `foldForFocus` (T031) aplicado na timeline;
   - bloco "trabalhou — N ações, M notas" com o selo "tem pergunta aqui", que expande.
 - [ ] T055 [US1] Timeline em `src/renderer/src/chat/Timeline.tsx` + `src/renderer/src/chat/scrollController.ts` (R19):
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): A pílula "novas mensagens ↓" só aparece com linha nova (D-C9).
   - **Rolagem**: modo "seguindo o fim" quando a rolagem está a até 40 px do fim; modo livre com a pílula "novas mensagens ↓".
   - **Histórico**: prepend preservando a posição pela diferença de `scrollHeight`; "carregando mensagens anteriores…" ao chegar no topo.
   - **Desempenho**: `content-visibility: auto` por rodada.
   - **Do T3**: geometria de âncora em `src/shared/chat/t3/scrollAnchor.ts`, se servir.
 - [ ] T056 [US1] Vista e alternância em `src/renderer/src/chat/ChatView.tsx` e `src/renderer/src/App.tsx`:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Controles somados ao `sessionHeader` atual (D-C22); `Toggle` do Modo Foco escondido na vista Terminal (D-C21); `SESSION_STATE_LABEL_PT.permission` → "Esperando você" (D-C20); aviso de troca de conversa como `Banner·compact`, com "abrir" e texto próprio para o `/resume`.
   - `src/renderer/src/chat/ChatView.tsx` e `ReceptionBanner.tsx` ("não estou recebendo a conversa" → Abrir terminal);
   - em `src/renderer/src/App.tsx`: `TabState.view` (padrão `chat` com `chat.enabled` em aba `claude` que não é de login); botão no cabeçalho da aba conforme o design; atalho `Ctrl+\`` no mapa global (`App.tsx:1673-1698`, com `capture`); `TerminalPane` sempre montado, oculto por CSS;
   - o aviso "Conversa nova — a anterior está em Sessões anteriores" no topo;
@@ -375,20 +382,25 @@ smoke `chat-send` (SC-003, SC-006).
   - **Saídas**: evento `chat:prompt-signal` e handler `chat:ack-lookup`.
   - **Testes**: casos novos em `tests/chat-hub.test.ts`.
 - [ ] T065 [US1] Implementar o driver `src/renderer/src/chat/sendDriver.ts`:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): A faixa de texto não enviado é `Banner·waiting`; com o CLI trabalhando, fica sem "Descartar".
   - executa a `sendMachine` sobre o handle do `TerminalPane` (`write`, `readScreen`, `onScreenUpdate`) e os `chat:prompt-signal`;
   - mostra o aviso "Há texto não enviado no terminal: «…»" com Descartar e enviar (`\x1b\x1b` numa escrita só e releitura) e Abrir terminal.
 - [ ] T066 [P] [US1] Adaptar `pingdotgg/t3code@9f48092 apps/web/src/components/chat/composerPromptHistory.ts` em `src/shared/chat/t3/promptHistory.ts`, com cabeçalho MIT e `tests/chat-prompt-history.test.ts` (↑ só com a caixa vazia ou na borda; sem duplicatas seguidas).
 - [ ] T067 [US1] Caixa básica em `src/renderer/src/chat/composer/Composer.tsx`, conforme o design:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Causa do "na fila" e motivo do "não foi" visíveis (D-C10); regra do "entrou" (D-C11).
   - TextArea do design-system que cresce até ~10 linhas e depois rola; Enter envia, Shift+Enter quebra;
   - rascunho por aba em memória, que sobrevive à troca de aba e de vista e ao fim da sessão;
   - ↑ do histórico;
   - estados de envio na mensagem ("enviando…", "entrou", "não foi · tentar de novo", "na fila").
 - [ ] T068 [US1] Pé de trabalho em `src/renderer/src/chat/WorkingFooter.tsx`:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Gerúndio; "Aguardando N subagentes" (D-C18); estado "Interrompido" (G2); Esc na precedência do FR-008 (D-C24, decisão 4).
   - "trabalhando — <ação atual>" a partir do `LiveAction`/`PreToolUse` da ponte;
   - Parar = `\x1b` só com "esc to interrupt" visível;
   - interrupção detectada pelo marcador do transcript ou pela tela.
 - [ ] T069 [US6] "Interromper e mandar agora" em `src/renderer/src/chat/composer/Composer.tsx` (gesto conforme o design) → modo `interrupt-first` da máquina. Mensagem enviada durante a rodada mostra "na fila" até a entrega (`queue-operation remove` + `queued_command`).
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Gesto: com o Claude trabalhando, o Enviar vira `SplitButton`. O clique manda para a fila, e o menu oferece "Interromper e mandar agora"; sem atalho novo (decisão 5).
 - [ ] T070 [US1] Faixa em `src/renderer/src/chat/TerminalNeededBanner.tsx` + `LiveState.terminalNeeded` no hub (R16). Fontes:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Um texto por `terminalNeeded.reason`.
   - `Notification` dos tipos de diálogo sem pendência aberta;
   - `blockingScreen`/`modelDialog` por mais de 2 s sem pendência;
   - `transcriptSavingOff`;
@@ -445,6 +457,7 @@ um por vez, com notificação em segundo plano.
 
   Testes em `tests/chat-question-wizard.test.ts`.
 - [ ] T078 [US2] Painel em `src/renderer/src/chat/pending/`, conforme o design:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Frase-modelo + `description` do Claude, sem explicação inventada (D-C12); o rótulo do "sempre" diz a regra real, e vale para o projeto inteiro (FR-022, decisão 2) — edição: "sempre: todas as edições neste projeto"; comando: "sempre: `<regra sugerida>`" (D-C13); diff da pendência a partir da entrada, sem número de linha (D-C14, nota no `data-model.md` §8); próxima pendência na hora e "(Recomendado)" intacto (D-C15); plano sem metadados calculados (D-C16); Esc = Negar sem motivo, na precedência do FR-008 (decisão 4).
   - `PendingPanel.tsx`: acima da caixa, persistente; mostra a cabeça da fila + "mais N esperando" e a origem ("pedido do subagente <descrição>").
   - `QuestionCard.tsx`: cartões com rótulo e descrição; prévia; múltipla; "Outra"; um Responder para até 4 perguntas.
   - `PermissionCard.tsx`: ação descrita em português; diff em `Edit`/`Write` via `DiffView`; Permitir / Permitir sempre neste projeto / Negar + motivo.
@@ -452,6 +465,7 @@ um por vez, com notificação em segundo plano.
 
   Parar com pendência aberta → resposta `interrupt`.
 - [ ] T079 [US2] Notificações em `src/main/chat/notifications.ts`:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Texto da notificação (D-C17); `statusText` "esperando você" na aba e rótulo na barra lateral (D-C20).
   - `Notification` do Electron quando uma pendência abre e a janela não está em foco **ou** a aba não está ativa;
   - clique foca a janela e a aba e põe o foco no painel;
   - respeita `notificationPreference`;
@@ -508,12 +522,14 @@ um por vez, com notificação em segundo plano.
   - handler `chat:files`;
   - teste em `tests/chat-project-files.test.ts`, com pasta temporária.
 - [ ] T087 [US4] Menu em `src/renderer/src/chat/composer/CommandMenu.tsx`, com o Menu/Popover do design-system conforme o design:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): `Listbox`; Enter envia o que está escrito e Tab escolhe; ficha de origem com "plugin"; selo de `/login` e `/logout`.
   - `/` com nome e descrição, filtrando;
   - `@` com arquivos;
   - setas e Tab escolhem, Esc fecha;
   - insere o texto;
   - selo de `/login` e `/logout`.
 - [ ] T088 [US4] Imagens em `src/main/chat/chat-ipc.ts` e `src/renderer/src/chat/composer/Attachments.tsx`:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Botão de clipe abre o seletor de arquivos: imagem vira anexo, outro arquivo vira `@caminho` (FR-015, decisão 4); a miniatura colada se chama "imagem colada N".
   - colar ou arrastar → `chat:save-image`, que grava em `userData/chat-attachments/<sessionId>/` (limpeza ao fechar a aba e, no boot, do que tiver mais de 7 dias);
   - miniatura removível em `src/renderer/src/chat/composer/Attachments.tsx`;
   - envio pela máquina: uma colagem por imagem, esperando `[Image #N]`;
@@ -521,6 +537,7 @@ um por vez, com notificação em segundo plano.
 
   Para arquivo fora do `cwd`, verificar no CLI se `@` com caminho absoluto funciona e, se não, inserir o caminho como texto; registrar o resultado em `specs/014-chat/research.md`, R4.
 - [ ] T089 [US4] Colagem grande e selo de shell em `src/renderer/src/chat/composer/Composer.tsx`:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): A ficha de texto colado abre num `Modal` só leitura, em mono.
   - colagem com mais de 20 linhas ou mais de 2.000 caracteres vira a ficha "texto colado — N linhas", que abre para conferir e no envio volta inteira ao lugar;
   - selo "vai rodar como comando de shell" para mensagem começando com `!`.
 - [ ] T090 [US4] Escrever a smoke `tests/smoke/chat-composer.spec.ts`, cobrindo:
@@ -559,6 +576,7 @@ vivo.
 
   Faz passar T092.
 - [ ] T094 [US5] UI conforme o design em `src/renderer/src/chat/`:
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): Contagem "N rodando · M concluídos" (D-C18); estados `failed`/`killed`/`stopped`/`unknown`; largura 460/420 px e trilho de sessões a 1280 (F); alça acessível com `role=separator` (D-C27); no Modo Dev, o painel ocupa a coluna da direita no lugar do `PhaseDetailsPanel` (FR-027, decisão 3); subagente concluído mostra "resultado:" com a primeira linha não vazia da resposta final (FR-027, decisão 4).
   - `SubagentRow.tsx`: tempo, última ação, estado e segundo plano, ao vivo;
   - `src/renderer/src/chat/SubagentStrip.tsx`: faixa no topo com a contagem; troca o subagente do painel;
   - `src/renderer/src/chat/SubagentPanel.tsx`:
