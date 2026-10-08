@@ -28,3 +28,16 @@ export function stopWorking(terminal: StoppableTerminal | null): boolean {
 export function shouldStopOnEsc(input: { defaultPrevented: boolean; working: boolean; openPendings: number }): boolean {
   return !input.defaultPrevented && input.working && input.openPendings === 0;
 }
+
+export type EscapeAction = 'none' | 'deny-head' | 'stop';
+
+/**
+ * Cases 4 and 5 of the Esc precedence (FR-008 / D-C24), after menus, fields and the side panel have had their
+ * turn (they call `preventDefault`): a pending at the head of the panel is denied without reason; otherwise,
+ * while the Claude works, Parar.
+ */
+export function escapeAction(input: { defaultPrevented: boolean; working: boolean; openPendings: number }): EscapeAction {
+  if (input.defaultPrevented) return 'none';
+  if (input.openPendings > 0) return 'deny-head';
+  return input.working ? 'stop' : 'none';
+}

@@ -179,3 +179,34 @@ export type { TextAreaProps } from './components/TextArea';
 
 export { Composer, COMPOSER_MAX_WIDTH } from './components/Composer';
 export type { ComposerProps } from './components/Composer';
+
+// === 014-chat Fase 4 (T078) - painel de pendencias ===
+
+export {
+  ChoiceCard,
+  ClaudeNote,
+  DenyField,
+  DenyForm,
+  DiffStat,
+  MonoChip,
+  OtherChoice,
+  PendingActions,
+  PendingFooterStack,
+  PendingFrame,
+  PendingIconButton,
+  PendingIndent,
+  PendingNote,
+  PendingSpacer,
+  PlanBody,
+  PlanCollapsedTitle,
+  PlanTitle,
+  PreviewPane,
+  QuestionBlock,
+} from './components/PendingPanel';
+export type {
+  ChoiceCardProps,
+  OtherChoiceProps,
+  PendingFrameProps,
+  PendingOrigin,
+  QuestionBlockProps,
+} from './components/PendingPanel';

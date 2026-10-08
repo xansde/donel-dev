@@ -4,21 +4,24 @@
 // The header (Toggle / Chat | Terminal / Kbd) lives in App's `sessionHeader`
 // (D-C22); this component draws only the area below it.
 
-import { memo, useCallback, useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { buildImageAssetUrl } from '../../../shared/chat/assetUrl';
+import type { PendingAnswer } from '../../../shared/chat/ipc';
+import { pendingQueueView } from '../../../shared/chat/pendingQueue';
 import type { ConversationRow } from '../../../shared/chat/rows';
 import type { TerminalPaneHandle } from '../TerminalPane';
 import styles from './ChatView.module.css';
 import { ChatComposer } from './composer/ChatComposer';
 import { mergeOptimistic } from './composer/optimistic';
 import { rewireTab, sendDriverFor } from './composer/tabSend';
+import { PendingPanel } from './pending/PendingPanel';
 import { ConversationSwitchBanner, ReceptionBanner } from './ReceptionBanner';
 import { joinAnswerMarkdown } from './markdown';
 import type { AnswerInfo, RowRenderContext } from './renderRow';
 import { SessionEndedBar } from './SessionEndedBar';
 import { Timeline } from './Timeline';
 import { WorkingFooter } from './WorkingFooter';
-import { shouldStopOnEsc, stopWorking } from './stopWorking';
+import { escapeAction, stopWorking } from './stopWorking';
 import { useTerminalNeededReporter } from './useTerminalNeededReporter';
 import { useChatSession } from './useChatSession';
 
@@ -111,6 +114,38 @@ export const ChatView = memo(function ChatView({
   const alive = effectiveEnded === null;
   const pendingOpen = (session.live?.pendings.length ?? 0) > 0;
   const terminalNeeded = session.live?.terminalNeeded != null;
+  const pendings = session.live?.pendings;
+  const head = useMemo(() => pendingQueueView(pendings ?? []).head, [pendings]);
+  const headId = head?.id ?? null;
+  // T078: the plan whose adjustment field is open in the chat box. Closes when that plan is no longer the head.
+  const [adjustingPlanId, setAdjustingPlanId] = useState<string | null>(null);
+  useEffect(() => {
+    setAdjustingPlanId((current) => (current !== null && current !== headId ? null : current));
+  }, [headId]);
+  // "not-open" (someone answered first) is not an error: the live update removes the pending.
+  const onAnswer = useCallback(
+    (pendingId: string, answer: PendingAnswer) => {
+      void session.answer(pendingId, answer).catch(() => undefined);
+    },
+    [session.answer],
+  );
+  const onAdjustSubmit = useCallback(
+    (text: string) => {
+      if (adjustingPlanId === null) return;
+      onAnswer(adjustingPlanId, { kind: 'plan-adjust', text });
+      setAdjustingPlanId(null);
+    },
+    [adjustingPlanId, onAnswer],
+  );
+  const onAdjustCancel = useCallback(() => setAdjustingPlanId(null), []);
+  const adjustMode = useMemo(
+    () => (adjustingPlanId === null ? null : { onSubmit: onAdjustSubmit, onCancel: onAdjustCancel }),
+    [adjustingPlanId, onAdjustSubmit, onAdjustCancel],
+  );
+  const onInterruptPending = useMemo(
+    () => (headId === null ? undefined : () => onAnswer(headId, { kind: 'interrupt' })),
+    [headId, onAnswer],
+  );
   // A respawn (resume) gives the tab a new PTY: re-attach the screen and signal subscriptions.
   useEffect(() => {
     rewireTab(tabId);
@@ -125,10 +160,19 @@ export const ChatView = memo(function ChatView({
     (event: React.KeyboardEvent) => {
       if (event.key !== 'Escape' || !active) return;
       const live = session.live;
-      if (!shouldStopOnEsc({ defaultPrevented: event.defaultPrevented, working: live?.status === 'working', openPendings: live?.pendings.length ?? 0 })) return;
-      if (stopWorking(actions.terminal(tabId))) event.preventDefault();
+      // D-C24: menus, fields and the side panel already took their Esc (defaultPrevented); then the head
+      // pending is denied without reason; Parar is the last case.
+      const action = escapeAction({
+        defaultPrevented: event.defaultPrevented,
+        working: live?.status === 'working',
+        openPendings: live?.pendings.length ?? 0,
+      });
+      if (action === 'deny-head' && headId !== null) {
+        event.preventDefault();
+        onAnswer(headId, { kind: 'deny' });
+      } else if (action === 'stop' && stopWorking(actions.terminal(tabId))) event.preventDefault();
     },
-    [actions, tabId, active, session.live],
+    [actions, tabId, active, session.live, headId, onAnswer],
   );
 
 
@@ -181,7 +225,15 @@ export const ChatView = memo(function ChatView({
         <SessionEndedBar exitCode={effectiveEnded.exitCode} onResume={onResume} onCloseTab={onCloseTab} />
       ) : (
         <>
-          <WorkingFooter live={session.live} rows={session.rows} terminal={terminal} />
+          <PendingPanel
+            ptyId={ptyId}
+            pendings={session.live?.pendings ?? []}
+            adjustingPlanId={adjustingPlanId}
+            onAnswer={onAnswer}
+            onAdjustStart={setAdjustingPlanId}
+            onOpenExternal={ctx.onOpenExternal}
+          />
+          <WorkingFooter live={session.live} rows={session.rows} terminal={terminal} onInterruptPending={onInterruptPending} />
           {footer ?? null}
           <ChatComposer
             tabId={tabId}
@@ -193,6 +245,7 @@ export const ChatView = memo(function ChatView({
             working={session.live?.status === 'working'}
             active={active}
             onOpenTerminal={onOpenTerminal}
+            adjust={adjustMode}
           />
         </>
       )}
