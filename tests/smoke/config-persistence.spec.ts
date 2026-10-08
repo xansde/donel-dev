@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -110,7 +111,7 @@ test('o app grava no userData isolado, e o de produção seria <appData>\\<nome 
   expect(path.resolve(paths.appData).toLowerCase()).toBe(path.resolve(String(process.env.APPDATA)).toLowerCase());
 });
 
-test('preferências (roots, notificação, launcher defaults, favoritos) sobrevivem a fechar e reabrir o app @config', async () => {
+test('preferências (roots, notificação, launcher defaults, favoritos, cor/ordem de aba — ex-tabs-v3 CA-27) sobrevivem a fechar e reabrir o app @config', async () => {
   test.setTimeout(90_000);
 
   const targetPreference = original.notificationPreference === 'all' ? 'none' : 'all';
@@ -147,9 +148,31 @@ test('preferências (roots, notificação, launcher defaults, favoritos) sobrevi
     expect(onDisk.launcherDefaults).toEqual(NEW_LAUNCHER_DEFAULTS);
   }).toPass({ timeout: 5_000 });
 
+  // CA-27 (moved from tabs-v3): tab color and order go through the same restart.
+  // Direct persistence API, because the app is born with zero tabs.
+  const tabSessionId = randomUUID();
+  await appWindow.evaluate(({ id }) => window.donel.tabs.setColor(id, 'accent'), { id: tabSessionId });
+  await appWindow.evaluate(({ id }) => window.donel.tabs.setOrder(id, 2), { id: tabSessionId });
+  const tabBeforeRestart = await appWindow.evaluate(() => window.donel.config.get());
+  expect(tabBeforeRestart.tabAppearance[tabSessionId]).toEqual({ color: 'accent', order: 2 });
+
   // 4. Restart COMPLETO — fecha o processo inteiro e relança do zero, no MESMO userData.
   await electronApp.close();
   await launchApp();
+
+  const tabAfterRestart = await appWindow.evaluate(() => window.donel.config.get());
+  expect(tabAfterRestart.tabAppearance[tabSessionId]).toEqual({ color: 'accent', order: 2 });
+
+  // A color change keeps the order; an invalid payload is ignored (sanitized by the main process).
+  await appWindow.evaluate(({ id }) => window.donel.tabs.setColor(id, 'permission'), { id: tabSessionId });
+  const afterColorChange = await appWindow.evaluate(() => window.donel.config.get());
+  expect(afterColorChange.tabAppearance[tabSessionId]).toEqual({ color: 'permission', order: 2 });
+  await appWindow.evaluate(
+    ({ id }) => window.donel.tabs.setColor(id, 'roxo-inventado' as unknown as Parameters<typeof window.donel.tabs.setColor>[1]),
+    { id: tabSessionId },
+  );
+  const afterInvalidPayload = await appWindow.evaluate(() => window.donel.config.get());
+  expect(afterInvalidPayload.tabAppearance[tabSessionId]).toEqual({ color: 'permission', order: 2 });
 
   // 5. Verifica tudo persistiu — via API (config.json relido do disco, sem cache de processo).
   const afterRestart = await readConfig(appWindow);

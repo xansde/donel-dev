@@ -56,3 +56,17 @@ documentar que usa o CLI real.
 Cercas mantidas: `refuseIfRealClaudeHome` (`accountsCredentialGuard.ts`) nos
 smokes de conta e `tests/smoke-project-name.test.ts` (nenhum smoke hardcoda o
 nome do projeto).
+
+## Arquivos fundidos (revisão de 08/10)
+
+- `accounts.spec.ts`: ex-`accounts-panel-substitui-perfis`, `accounts-switch`,
+  `accounts-mcp-survives-switch`, `accounts-secret-never-leaks` (mesmo mod falso,
+  um app, estado isolado por `resetEngine`), `accounts-add-login` e
+  `accounts-fase-2` (cada um com a sua fixture de mod falso, então com o seu app).
+- `providers.spec.ts`: ex-`providers-*` e `modal-focus-steal`, um app só.
+- `session-rename.spec.ts`: absorveu o `session-rename-live`.
+- `config-persistence.spec.ts`: absorveu o CA-27 do `tabs-v3` (cor/ordem de aba).
+- `model-injection.spec.ts`: absorveu o argv exato do `terminal` T008 (CA-1).
+- `favorite-sessions.spec.ts`: absorveu o gesto de favoritar pelo seletor do
+  `sidebar-favorites`.
+- Saiu: o semáforo com turno real do `terminal` (T009, 420 s, gastava cota).

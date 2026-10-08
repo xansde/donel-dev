@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { launchIsolatedApp } from './helpers/launch';
 import { removeSessionFile, seedSession } from './helpers/sessions';
 import type { SeededSession } from './helpers/sessions';
-import { confirmCloseModalIfOpen, openFreeTerminalTab, openPreviousSessionsDialog } from './helpers/ui';
+import { confirmCloseModalIfOpen, openFreeTerminalTab, openPreviousSessionsDialog, openProjectClaudeTab, waitForClaudeBooted } from './helpers/ui';
+import { PROJECT_NAME, SESSIONS_DIR } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke da T409 (004-nomear-sessoes): renomear sessão pela UI (CA-3),
@@ -43,6 +45,8 @@ let electronApp: ElectronApplication;
 let appWindow: Page;
 let userDataDir: string;
 let seeded: SeededSession & { readonly customTitle: string };
+/** Only removed at the end if the live-rename test created the file. */
+let createdTranscriptPath: string | null = null;
 
 async function launchApp(): Promise<void> {
   ({ app: electronApp, window: appWindow } = await launchIsolatedApp({ userDataDir }));
@@ -73,6 +77,7 @@ test.afterAll(async () => {
   } finally {
     removeIsolatedUserDataDir(userDataDir);
     removeSessionFile(seeded?.filePath);
+    removeSessionFile(createdTranscriptPath ?? undefined);
   }
 });
 
@@ -246,4 +251,90 @@ test('T409 — C2: um /rename NOVO no CLI (custom-title diferente do seenTitle) 
 
   await appWindow.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
+});
+
+// Fused from session-rename-live.spec.ts (revisão de testes, 08/10): same matter
+// (session names), one app opening less. Runs last: it opens a REAL claude session
+// (no API turn) and leaves zero tabs behind. Context from the original header:
+// the CLI `/rename` is simulated by appending the same `custom-title` record to the
+// transcript of the live session; its `sessionId` is discovered by renaming the tab
+// in the UI (the main process persists the name under that key). The `.jsonl` lives
+// under the REAL homedir (that is where the CLI writes): if this test creates the
+// file it removes it in `afterAll`. Content is synthetic (a session title, LGPD-safe).
+test('T413 — CA-4 (ex-session-rename-live): custom-title escrito no transcript da sessão VIVA reflete na aba em < 1 s, e o CLI vence o nome da UI (C2) @sessoes', async () => {
+  test.setTimeout(180_000);
+
+  // T1227 (011-contas-e-provedores, etapa 2) — o guard de "só faz sentido com
+  // o perfil Principal ativo" morreu junto com os perfis (T1222): sem
+  // `CLAUDE_CONFIG_DIR` por perfil, o transcript SEMPRE fica em `~/.claude`.
+
+  // 1. Abre uma sessão claude real clicando no projeto (1 clique no popover
+  //    "Projetos" do seletor, sem Launcher — o watcher nasce no
+  //    `pty:create`, não no launcher). FIX (item 1, rodada de feedback do
+  //    teste de 30/07) — a árvore "Projetos" da sidebar saiu.
+  await openProjectClaudeTab(appWindow);
+
+  // The new tab is the selected one (a text filter would stop matching while the label is an <input>).
+  const tab = appWindow.locator('[role="tab"][aria-selected="true"]');
+  await expect(tab).toBeVisible();
+  await waitForClaudeBooted(appWindow, { startTimeout: 30_000 });
+
+  // 2. Renomeia pela UI — é o que revela o `sessionId` desta sessão viva
+  //    (o main persiste sob essa chave) sem inventar API de teste.
+  const uiName = `ui-${Date.now().toString(36)}`;
+  await tab.getByText(PROJECT_NAME, { exact: true }).dblclick();
+  const input = tab.getByRole('textbox');
+  await expect(input).toBeVisible();
+  await input.fill(uiName);
+  await input.press('Enter');
+  await expect(tab).toHaveAttribute('title', new RegExp(`^${uiName} —`));
+
+  const config = await appWindow.evaluate(() => window.donel.config.get());
+  const entries = Object.entries(config.sessionNames).filter(([, entry]) => entry.name === uiName);
+  expect(entries, 'o rename pela UI tinha de ter persistido sob o sessionId da sessão viva').toHaveLength(1);
+  const [sessionId] = entries[0];
+
+  // 3. Escreve no transcript exatamente o que o `/rename` do CLI escreve.
+  const transcriptPath = join(SESSIONS_DIR, `${sessionId}.jsonl`);
+  if (!existsSync(transcriptPath)) {
+    mkdirSync(SESSIONS_DIR, { recursive: true });
+    createdTranscriptPath = transcriptPath;
+  }
+  const cliTitle = `cli-${Date.now().toString(36)}`;
+  const startedAt = Date.now();
+  appendFileSync(transcriptPath, `${JSON.stringify({ type: 'custom-title', customTitle: cliTitle, sessionId })}\n`, 'utf8');
+
+  // 4. CA-4: a aba troca sozinha, em menos de 1 s.
+  //    Medição com polling APERTADO (25 ms) em vez de `expect().toHaveAttribute`:
+  //    o polling progressivo do Playwright chega a ~500 ms de intervalo e
+  //    inflaria a latência medida (a primeira medição saiu 852 ms por isso, com
+  //    debounce de 300 ms — o número não era do app, era do amostrador).
+  await appWindow.waitForFunction(
+    (expected: string) =>
+      [...document.querySelectorAll('[role="tab"]')].some((el) => el.getAttribute('title')?.startsWith(expected) === true),
+    cliTitle,
+    { polling: 25, timeout: 3_000 },
+  );
+  const elapsedMs = Date.now() - startedAt;
+  // eslint-disable-next-line no-console
+  console.log(`[CA-4] aba refletiu o custom-title em ${elapsedMs} ms (debounce 300 ms + fs.watch + IPC; alvo < 1000 ms)`);
+  expect(elapsedMs).toBeLessThan(1_000);
+
+  // 5. …e a sidebar (seção "Sessões", que continua existindo — só a árvore
+  //    "Projetos" saiu) mostra o mesmo valor (CA-5: uma resolução só).
+  const sidebar = appWindow.locator('nav[aria-label="Projetos e sessões"]');
+  await expect(sidebar.getByText(cliTitle, { exact: true })).toBeVisible();
+
+  // 6. C2 fechado: o `/rename` veio DEPOIS do nome da UI, então o CLI vence e a
+  //    entrada da UI é descartada do storage — não fica nome morto competindo.
+  await expect(async () => {
+    const after = await appWindow.evaluate(() => window.donel.config.get());
+    expect(after.sessionNames[sessionId]).toBeUndefined();
+  }).toPass({ timeout: 5_000 });
+
+  // 7. Fecha a aba (mata o PTY) — o watcher tem de sair com ela; a prova de que
+  //    não vaza handle é o unit do registry, aqui só não deixamos sujeira.
+  await tab.getByRole('button', { name: new RegExp(`^Fechar aba ${cliTitle}`) }).click();
+  await confirmCloseModalIfOpen(appWindow);
+  await expect(appWindow.locator('[role="tab"]')).toHaveCount(0);
 });

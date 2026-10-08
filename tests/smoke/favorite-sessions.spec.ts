@@ -38,11 +38,31 @@ async function launchApp(): Promise<void> {
   ({ app: electronApp, window: appWindow } = await launchIsolatedApp({ userDataDir }));
 }
 
-async function favoriteRepo(favorite: boolean): Promise<void> {
-  await appWindow.evaluate(
-    ({ path: projectPath, favorite: fav }) => window.donel.projects.setFavorite(projectPath, fav),
-    { path: REPO_ROOT, favorite },
-  );
+/**
+ * Favorites/unfavorites REPO_ROOT through the project-switcher star (the real UI
+ * gesture, ex-`sidebar-favorites`) and asserts the sidebar group reacts
+ * IMMEDIATELY, without a reload or restart.
+ */
+async function setFavoriteViaSelector(favorite: boolean): Promise<void> {
+  const group = appWindow.locator(`[data-testid="favorite-group-${PROJECT_NAME}"]`);
+  const popover = appWindow.getByRole('dialog', { name: 'Projetos' });
+  await appWindow.getByRole('button', { name: 'Trocar de projeto' }).click();
+  await expect(popover).toBeVisible();
+  const star = popover.getByRole('button', {
+    name: new RegExp(`^(Favoritar ${PROJECT_NAME}|Remover ${PROJECT_NAME} dos favoritos)$`),
+  });
+  await expect(star).toBeVisible({ timeout: 15_000 });
+  // Normalize the starting state so the toggle below is the transition under test.
+  if ((await star.getAttribute('aria-pressed')) === String(favorite)) {
+    await star.click();
+    await expect(star).toHaveAttribute('aria-pressed', String(!favorite));
+  }
+  await star.click();
+  await expect(star).toHaveAttribute('aria-pressed', String(favorite));
+  await appWindow.keyboard.press('Escape');
+  await expect(popover).toBeHidden();
+  if (favorite) await expect(group).toBeVisible({ timeout: 2_000 });
+  else await expect(group).toHaveCount(0);
 }
 
 function favoritesSection() {
@@ -73,9 +93,7 @@ test('T711 — grupo aparece só com favoritados, dedupe da lista geral, cabeça
   // Sem favorito nenhum, a seção "Favoritos" não existe.
   await expect(favoritesSection()).toHaveCount(0);
 
-  await favoriteRepo(true);
-  await appWindow.reload();
-  await appWindow.waitForLoadState('domcontentloaded');
+  await setFavoriteViaSelector(true);
 
   // Favoritado mas AINDA sem entrada no registro — grupo aparece vazio/coletável (CA-8 é a semeadura, testada em unit).
   await expect(favoritesSection()).toBeVisible({ timeout: 15_000 });
@@ -237,9 +255,7 @@ test('T711/T710 — poda na 6ª visita, fixada além das 5, colapso sobrevive ao
 test('T711 — CA-9: desfavoritar remove o grupo e devolve as sessões à lista geral, sem perder a fixada @sessoes', async () => {
   test.setTimeout(60_000);
 
-  await favoriteRepo(false);
-  await appWindow.reload();
-  await appWindow.waitForLoadState('domcontentloaded');
+  await setFavoriteViaSelector(false);
 
   await expect(favoritesSection()).toHaveCount(0);
 

@@ -65,6 +65,7 @@ test('corpo do "＋ Nova sessão" abre o Launcher; escolher modelo/esforço ali 
   await launcher.getByRole('radio', { name: 'sonnet', exact: true }).click();
   await launcher.getByRole('radio', { name: 'high', exact: true }).click();
   await launcher.getByLabel('Nome').fill('model-injection-test');
+  const tabsBefore = await window.locator('[role="tab"]').count();
   await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
 
   const newTab = window.locator('[role="tab"]', { hasText: 'model-injection-test' });
@@ -73,10 +74,18 @@ test('corpo do "＋ Nova sessão" abre o Launcher; escolher modelo/esforço ali 
   await expect(launcher).toHaveCount(0);
 
   const lastCommand = window.locator('[data-testid="launcher-last-command"]');
-  await expect(lastCommand).toHaveText(/--model sonnet --effort high/);
+  // Exact argv built by the CommandBuilder (ex-`terminal` T008/CA-1): model,
+  // effort, the default permission mode and the name, plus the project cwd.
+  await expect(lastCommand).toHaveText('claude --model sonnet --effort high --permission-mode acceptEdits -n model-injection-test');
+  const cwd = await lastCommand.getAttribute('data-cwd');
+  expect(cwd).toBeTruthy();
+  expect(cwd).toContain(PROJECT_NAME);
+  await expect(window.locator('[role="tab"]')).toHaveCount(tabsBefore + 1);
 
   // 3. Prova funcional: a sessão claude real sobe com esses args.
   await waitForClaudeBooted(window, { until: 'prompt' });
+  // The CLI accepted the argv: a rejected flag would drop the tab into "sessão encerrada".
+  await expect(window.locator('[data-testid="session-ended-overlay"]')).toHaveCount(0);
 
   const statusBar = window.locator('div:has(> [data-testid="statusbar-account"])');
   await expect(statusBar).toContainText('sonnet/high');

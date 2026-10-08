@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { launchIsolatedApp } from './helpers/launch';
@@ -6,7 +5,9 @@ import { confirmCloseModalIfOpen, openFreeTerminalTab } from './helpers/ui';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // Smoke do lote 1 (009-modo-dev-v3) — TerminalTab · variante v3 (extensão 7):
-// CA-26 (reordenar por arraste) e CA-27 (cor por aba, sobrevive a restart).
+// CA-26 (reordenar por arraste). O CA-27 (cor/ordem sobrevivem a restart) foi
+// movido para `config-persistence.spec.ts` na revisão de testes de 08/10: é o
+// mesmo "fecha/reabre com o mesmo userData".
 // CA-28 (ícone de estado) é coberto por Storybook (os 5 estados são texto
 // puro por CSS, sem PTY envolvido — nada aqui adiciona sobre o que os
 // stories já provam visualmente).
@@ -96,41 +97,4 @@ test('CA-26 — arrastar uma aba pela alça reordena a barra (drag nativo HTML5)
   await tabs.nth(0).getByRole('button', { name: /^Fechar aba / }).click();
   await confirmCloseModalIfOpen(appWindow);
   await expect(tabs).toHaveCount(0);
-});
-
-test('CA-27 — cor e ordem da aba sobrevivem a um restart completo do app (API de persistência) @abas', async () => {
-  test.setTimeout(90_000);
-
-  const sessionId = randomUUID();
-
-  // 1. Grava pelo MESMO canal que a UI usa ao escolher a cor no menu da aba
-  // (clique direito) e ao soltar um arraste — `window.donel.tabs.*`.
-  await appWindow.evaluate(({ id }) => window.donel.tabs.setColor(id, 'accent'), { id: sessionId });
-  await appWindow.evaluate(({ id }) => window.donel.tabs.setOrder(id, 2), { id: sessionId });
-
-  const beforeRestart = await appWindow.evaluate(() => window.donel.config.get());
-  expect(beforeRestart.tabAppearance[sessionId]).toEqual({ color: 'accent', order: 2 });
-
-  // 2. Restart COMPLETO do app (mesmo `--user-data-dir`) — CA-27.
-  await electronApp.close();
-  await launchApp();
-
-  const afterRestart = await appWindow.evaluate(() => window.donel.config.get());
-  expect(afterRestart.tabAppearance[sessionId]).toEqual({ color: 'accent', order: 2 });
-
-  // 3. Trocar só a cor preserva a ordem já persistida, e vice-versa (mesma
-  // garantia provada em tests/tabAppearance.test.ts, agora ponta-a-ponta
-  // pelo canal IPC real).
-  await appWindow.evaluate(({ id }) => window.donel.tabs.setColor(id, 'permission'), { id: sessionId });
-  const afterColorChange = await appWindow.evaluate(() => window.donel.config.get());
-  expect(afterColorChange.tabAppearance[sessionId]).toEqual({ color: 'permission', order: 2 });
-
-  // 4. Payload inválido (cor fora dos 4 tokens conhecidos) é no-op — o main
-  // nunca confia cegamente no que o renderer manda.
-  await appWindow.evaluate(
-    ({ id }) => window.donel.tabs.setColor(id, 'roxo-inventado' as unknown as Parameters<typeof window.donel.tabs.setColor>[1]),
-    { id: sessionId },
-  );
-  const afterInvalidPayload = await appWindow.evaluate(() => window.donel.config.get());
-  expect(afterInvalidPayload.tabAppearance[sessionId]).toEqual({ color: 'permission', order: 2 });
 });
