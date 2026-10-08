@@ -23,6 +23,8 @@ export interface WorkingFooterProps {
   rows: readonly ConversationRow[];
   /** The tab's terminal: its screen proves "esc to interrupt" and Parar writes Esc to it. `null` before it mounts. */
   terminal: FooterTerminal | null;
+  /** A pending is open: Parar answers it with `interrupt` instead of writing Esc to the terminal (T078). */
+  onInterruptPending?: () => void;
 }
 
 /** `true` while the screen footer says "esc to interrupt"; `null` without a terminal. Re-renders only on change. */
@@ -50,12 +52,15 @@ function ActionText({ action }: { action: FooterAction }): React.JSX.Element {
 }
 
 /** Renders nothing unless the round is running or was just interrupted. */
-export function WorkingFooter({ live, rows, terminal }: WorkingFooterProps): React.JSX.Element | null {
+export function WorkingFooter({ live, rows, terminal, onInterruptPending }: WorkingFooterProps): React.JSX.Element | null {
   const lastAction = useRef<LiveAction | null>(null);
   if (live?.currentAction) lastAction.current = live.currentAction;
   const screenWorking = useScreenWorking(terminal);
   const model = deriveFooter({ live, rows, lastAction: lastAction.current, screenWorking });
-  const onStop = (): void => void stopWorking(terminal);
+  const onStop = (): void => {
+    if (onInterruptPending) onInterruptPending();
+    else void stopWorking(terminal);
+  };
 
   // Elapsed time of the round: counted from when this view first saw it working.
   const workingSince = useRef<number | null>(null);

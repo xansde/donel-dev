@@ -5,6 +5,8 @@ import { subscribeChannel } from './subscribeChannel';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 import type {
   ChatAckLookupOutput,
+  ChatAnswerOutput,
+  PendingAnswer,
   ChatConversationSwitchedEvent,
   ChatLiveEvent,
   ChatLoadOlderOutput,
@@ -477,6 +479,8 @@ const donelApi: DonelApi = {
 
     ackLookup: (ptyId: string, text: string, since: string) =>
       ipcRenderer.invoke(CHAT_CHANNELS.ackLookup, { ptyId, text, since }) as Promise<ChatAckLookupOutput>,
+    answer: (ptyId: string, pendingId: string, answer: PendingAnswer) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.answer, { ptyId, pendingId, answer }) as Promise<ChatAnswerOutput>,
     screenState: (ptyId: string, terminalNeeded: TerminalNeededReason | null) =>
       ipcRenderer.invoke(CHAT_CHANNELS.screenState, { ptyId, terminalNeeded }) as Promise<void>,
 

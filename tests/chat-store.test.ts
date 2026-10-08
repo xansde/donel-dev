@@ -99,6 +99,11 @@ class FakeApi implements DonelChatApi {
     this.ackCalls.push({ ptyId, text, since });
     return Promise.resolve({ matched: true });
   }
+  answerCalls: { ptyId: string; pendingId: string; answer: unknown }[] = [];
+  answer(ptyId: string, pendingId: string, answer: unknown): Promise<{ ok: true }> {
+    this.answerCalls.push({ ptyId, pendingId, answer });
+    return Promise.resolve({ ok: true });
+  }
   screenState(ptyId: string, reason: string | null): Promise<void> {
     this.screenCalls.push({ ptyId, reason });
     return Promise.resolve();
@@ -186,6 +191,8 @@ describe('ChatStore', () => {
     const api = new FakeApi();
     const store = new ChatStore(api);
     expect(await store.ackLookup('p1', 'oi', 'since')).toEqual({ matched: true });
+    expect(await store.answer('p1', 'pd1', { kind: 'allow' })).toEqual({ ok: true });
+    expect(api.answerCalls).toEqual([{ ptyId: 'p1', pendingId: 'pd1', answer: { kind: 'allow' } }]);
     store.reportScreenState('p1', 'interactive-screen');
     expect(api.ackCalls).toEqual([{ ptyId: 'p1', text: 'oi', since: 'since' }]);
     expect(api.screenCalls).toEqual([{ ptyId: 'p1', reason: 'interactive-screen' }]);

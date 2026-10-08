@@ -5,7 +5,7 @@
 // touches no IPC.
 
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
-import type { RowDetail, RowDetailPart } from '../../../shared/chat/ipc';
+import type { ChatAnswerOutput, PendingAnswer, RowDetail, RowDetailPart } from '../../../shared/chat/ipc';
 import type { ConversationRow } from '../../../shared/chat/rows';
 import { getChatStore, type ChatSessionState, type ChatStore } from './ChatStore';
 
@@ -32,6 +32,8 @@ export interface ChatSession extends ChatSessionState {
   groupChildren(groupId: string): Promise<readonly ConversationRow[]>;
   openExternal(url: string): Promise<void>;
   openGenerated(path: string): Promise<void>;
+  /** Owner answer to an open pending (T078). */
+  answer(pendingId: string, answer: PendingAnswer): Promise<ChatAnswerOutput>;
 }
 
 export function useChatSession(ptyId: string | null, store: ChatStore = getChatStore()): ChatSession {
@@ -51,6 +53,8 @@ export function useChatSession(ptyId: string | null, store: ChatStore = getChatS
       groupChildren: (groupId) => (ptyId === null ? Promise.resolve([]) : store.groupChildren(ptyId, groupId)),
       openExternal: (url) => store.openExternal(url),
       openGenerated: (path) => (ptyId === null ? Promise.resolve() : store.openGenerated(ptyId, path)),
+      answer: (pendingId, answer) =>
+        ptyId === null ? Promise.resolve({ ok: false, reason: 'unknown' } as const) : store.answer(ptyId, pendingId, answer),
     }),
     [state, store, ptyId],
   );

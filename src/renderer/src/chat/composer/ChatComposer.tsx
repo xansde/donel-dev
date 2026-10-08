@@ -4,8 +4,8 @@
 // queue, menu = "Interromper e mandar agora" (`interrupt-first`). The unsent text left in the terminal box
 // shows up as a `Banner·waiting` above the field (T065).
 
-import { Banner, Button, Composer, TextArea } from '@donel-dev/design-system';
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, type KeyboardEvent } from 'react';
+import { Banner, Button, Composer, Kbd, TextArea } from '@donel-dev/design-system';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import {
   buildPromptHistoryEntries,
   stepPromptHistory,
@@ -29,6 +29,13 @@ export interface ChatComposerProps {
   items: readonly SendItemView[];
   /** "Abrir terminal" on the unsent-text banner. */
   onOpenTerminal: () => void;
+  /** Plan adjustment mode (T078): the box becomes the adjustment field; the ordinary draft is kept aside. */
+  adjust?: PlanAdjustMode | null;
+}
+
+export interface PlanAdjustMode {
+  onSubmit: (text: string) => void;
+  onCancel: () => void;
 }
 
 const isComposing = (event: KeyboardEvent<HTMLTextAreaElement>): boolean =>
@@ -40,7 +47,7 @@ const preview = (text: string): string => {
   return flat.length > LEFTOVER_PREVIEW ? `${flat.slice(0, LEFTOVER_PREVIEW)}…` : flat;
 };
 
-export function ChatComposer({ tabId, driver, rows, working, active, items, onOpenTerminal }: ChatComposerProps): React.JSX.Element {
+function ChatComposerMain({ tabId, driver, rows, working, active, items, onOpenTerminal }: ChatComposerProps): React.JSX.Element {
   const draft = useSyncExternalStore(
     useCallback((cb) => subscribeDraft(tabId, cb), [tabId]),
     () => getDraft(tabId),
@@ -163,4 +170,71 @@ export function ChatComposer({ tabId, driver, rows, working, active, items, onOp
       </Composer>
     </div>
   );
+}
+
+/**
+ * T05: while a plan waits for adjustment the box turns into its field - accent border, "Ajuste no plano" tag,
+ * "Enviar ajuste" / "Cancelar". Enter sends, Shift+Enter breaks the line, Esc cancels (D-C24, case 2). The
+ * ordinary draft lives in tabSend.ts and is untouched; it is back when the field closes. No sending state: the
+ * mode closes as soon as the text leaves.
+ */
+function PlanAdjustBox({ adjust }: { adjust: PlanAdjustMode }): React.JSX.Element {
+  const [text, setText] = useState('');
+  const areaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    areaRef.current?.focus();
+  }, []);
+  const submit = (): void => {
+    const value = text.trim();
+    if (value !== '') adjust.onSubmit(value);
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (isComposing(event)) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      adjust.onCancel();
+    } else if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault();
+      submit();
+    }
+  };
+  return (
+    <div className={styles.wrap} data-testid="chat-composer" data-mode="adjust">
+      <Composer
+        adjust
+        sendLabel="Enviar ajuste"
+        sendDisabled={text.trim() === ''}
+        onSend={submit}
+        fluid
+        footerHint={
+          <>
+            <Button variant="ghost" onClick={adjust.onCancel} data-testid="pending-plan-adjust-cancel">
+              Cancelar
+            </Button>
+            O Claude refaz o plano. Nada é editado antes da sua aprovação. · <Kbd>Esc</Kbd> cancela · <Kbd>Enter</Kbd> envia ·{' '}
+            <Kbd>Shift+Enter</Kbd> quebra a linha
+          </>
+        }
+      >
+        <TextArea
+          ref={areaRef}
+          appearance="bare"
+          aria-label="O que mudar no plano"
+          placeholder="O que mudar no plano"
+          value={text}
+          onChange={setText}
+          onKeyDown={onKeyDown}
+          minRows={3}
+          maxRows={10}
+          data-testid="pending-plan-adjust-input"
+        />
+      </Composer>
+    </div>
+  );
+}
+
+export function ChatComposer(props: ChatComposerProps): React.JSX.Element {
+  if (props.adjust) return <PlanAdjustBox adjust={props.adjust} />;
+  return <ChatComposerMain {...props} />;
 }

@@ -15,6 +15,8 @@ import type { DonelChatApi } from '../../../shared/chat/api';
 import type {
   ChatConversationSwitchedEvent,
   ChatAckLookupOutput,
+  ChatAnswerOutput,
+  PendingAnswer,
   ChatLiveEvent,
   ChatPromptSignalEvent,
   ChatReceptionEvent,
@@ -192,6 +194,11 @@ export class ChatStore {
   /** Late acceptance lookup (contracts/send-protocol.md §7). */
   ackLookup(ptyId: string, text: string, since: string): Promise<ChatAckLookupOutput> {
     return this.api.ackLookup(ptyId, text, since);
+  }
+
+  /** Owner's answer to an open pending. `not-open` = someone answered first (the live update removes it). */
+  answer(ptyId: string, pendingId: string, answer: PendingAnswer): Promise<ChatAnswerOutput> {
+    return this.api.answer(ptyId, pendingId, answer);
   }
 
   /** The renderer's screen detectors report what needs the terminal (`null` = the input box is back). */

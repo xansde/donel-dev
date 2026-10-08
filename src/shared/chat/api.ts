@@ -5,6 +5,8 @@
 
 import type {
   ChatAckLookupOutput,
+  ChatAnswerOutput,
+  PendingAnswer,
   ChatConversationSwitchedEvent,
   ChatLiveEvent,
   ChatLoadOlderOutput,
@@ -30,6 +32,8 @@ export interface DonelChatApi {
 
   /** Aceite tardio: o texto entrou desde `since` (ISO)? Procura nos `UserPromptSubmit` guardados e no transcript. */
   ackLookup(ptyId: string, text: string, since: string): Promise<ChatAckLookupOutput>;
+  /** Resposta do dono a uma pendência aberta (`chat:answer`). `not-open` = alguém respondeu antes. */
+  answer(ptyId: string, pendingId: string, answer: PendingAnswer): Promise<ChatAnswerOutput>;
   /** Fontes de tela que pedem o terminal (`null` = a caixa voltou); o main as combina com as dos hooks. */
   screenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): Promise<void>;
 
