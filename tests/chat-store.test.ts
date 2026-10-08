@@ -112,6 +112,12 @@ class FakeApi implements DonelChatApi {
     this.ackCalls.push({ ptyId, text, since });
     return Promise.resolve({ matched: true });
   }
+  saveImage(): Promise<{ id: string; path: string }> {
+    return Promise.resolve({ id: 'img.png', path: 'C:/ud/chat-attachments/s/img.png' });
+  }
+  pathForFile(): string {
+    return '';
+  }
   screenState(ptyId: string, reason: string | null): Promise<void> {
     this.screenCalls.push({ ptyId, reason });
     return Promise.resolve();

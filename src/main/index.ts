@@ -167,6 +167,7 @@ import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-t
 import { cleanupStaleHookSettings, removeSessionHooksSettings, writeHooksSettingsFile, writeSessionHooksSettings } from './hooks-settings';
 import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-bridge';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
+import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
 import { createChatHub, type ChatHub, type ChatSourceInfo } from './chat/chat-hub';
 import { registerChatIpcHandlers } from './chat/chat-ipc';
 import { createPendingNotifier } from './chat/notifications';
@@ -470,6 +471,8 @@ const activeSessionByPty = new Map<string, string>();
  * ou sem ponte de hooks (transporte legado / ponte que não subiu).
  */
 let chatHub: ChatHub | null = null;
+/** T088 - imagens coladas na caixa do chat (limpas ao fechar a aba e, no boot, por idade). */
+let chatAttachments: AttachmentStore | null = null;
 /** Fonte INICIAL da conversa de cada aba `claude` (a troca de conversa é do hub, não daqui). */
 const initialChatSourceByPty = new Map<string, ChatSourceInfo>();
 /** Conta ativa vista no último `accounts:changed` — a troca vira aviso `account-switch` no chat. */
@@ -991,6 +994,7 @@ function createMainWindow(): void {
     removeSessionHooksSettings(app.getPath('userData'), ptyId);
     activeSessionByPty.delete(ptyId);
     chatHub?.markEnded(ptyId);
+    void chatAttachments?.releasePty(ptyId);
     // T1125 (011-contas-e-provedores, etapa 1, C4) — mesma baixa, pro poll de
     // 5 min do motor de contas parar de contar esta sessão como viva.
     // Fase 2 (D5) — `releaseAccountsBusyPty` também retoma um auto-switch
@@ -1137,10 +1141,13 @@ function registerChatDomain(): void {
     attachmentsRoot,
   });
   chatHub = hub;
+  chatAttachments = new AttachmentStore({ root: attachmentsRoot });
+  void chatAttachments.sweepOlderThan(ATTACHMENT_MAX_AGE_MS);
   registerChatIpcHandlers({
     ipcMain,
     enabled: true,
     hub,
+    attachments: chatAttachments,
     openExternal: (url) => shell.openExternal(url),
     openPath: (path) => shell.openPath(path),
     onFocusState: (input) => notifier.setFocusState(input.activePtyId, input.tabNames),

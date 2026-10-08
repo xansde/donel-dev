@@ -2447,6 +2447,7 @@ export function App(): React.JSX.Element {
                       active={tab.id === activeTabId && view === 'chat'}
                       focusMode={appConfig?.chat.focusMode ?? true}
                       ended={tabExits[tab.id] ?? null}
+                      cwd={tab.cwd}
                     />
                   </div>
                 ) : null}

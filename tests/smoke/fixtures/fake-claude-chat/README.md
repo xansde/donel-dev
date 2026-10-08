@@ -34,7 +34,9 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
   rodape: `? for shortcuts` ocioso, `! for shell mode` com texto digitado, `esc to interrupt` trabalhando.
 - Colagem com 5+ linhas ou 1000+ caracteres vira `[Pasted text #N +M lines]` (M = quebras
   de linha); no Enter o texto completo volta no `prompt`. Colagem menor fica literal na caixa.
-  Colagem de um caminho absoluto de imagem (`.png/.jpg/.jpeg/.gif/.webp`) vira `[Image #N]`.
+  Colagem de um caminho absoluto de imagem (`.png/.jpg/.jpeg/.gif/.webp`) vira `[Image #N]` - tambem
+  quando chega sem os marcadores de colagem (ConPTY os descarta): um caminho absoluto de imagem no comeco da
+  caixa, ou logo depois de outro `[Image #N]`, vira o placeholder.
 - Menu `/`: texto que comeca com `/` (sem espaco) e casa com um comando nativo (`/clear /compact /config
   /cost /exit /help /mcp /memory /model /status`) desenha `  ❯ /model` (e `    /outro`) **acima da regua**.
   Esc fecha o menu mantendo o texto. **Enter com o menu aberto COMPLETA** o comando (`/mod` -> `/model`)

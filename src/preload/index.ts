@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // G5 (batch N5) — guarda contra segundo assinante silencioso de canal IPC:
 // todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
 import { subscribeChannel } from './subscribeChannel';
@@ -14,6 +14,7 @@ import type {
   ChatReceptionEvent,
   ChatRowDetailInput,
   ChatRowsEvent,
+  ChatSaveImageOutput,
   ChatSnapshot,
   PendingAnswer,
   RowDetail,
@@ -478,6 +479,15 @@ const donelApi: DonelApi = {
     openExternal: (url: string) => ipcRenderer.invoke(CHAT_CHANNELS.openExternal, { url }) as Promise<void>,
     openGenerated: (ptyId: string, path: string) => ipcRenderer.invoke(CHAT_CHANNELS.openGenerated, { ptyId, path }) as Promise<void>,
 
+    saveImage: (ptyId: string, bytes: ArrayBuffer, mediaType: string) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.saveImage, { ptyId, bytes, mediaType }) as Promise<ChatSaveImageOutput>,
+    pathForFile: (file: unknown): string => {
+      try {
+        return webUtils.getPathForFile(file as File);
+      } catch {
+        return '';
+      }
+    },
     ackLookup: (ptyId: string, text: string, since: string) =>
       ipcRenderer.invoke(CHAT_CHANNELS.ackLookup, { ptyId, text, since }) as Promise<ChatAckLookupOutput>,
     screenState: (ptyId: string, terminalNeeded: TerminalNeededReason | null) =>

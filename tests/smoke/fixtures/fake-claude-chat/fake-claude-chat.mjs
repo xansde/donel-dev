@@ -583,6 +583,17 @@ function commitPaste(text) {
   }
 }
 
+// ConPTY drops the bracketed-paste markers (see onData), so an image path pasted by the app arrives as plain
+// typed text. Like the real CLI, an absolute image path that ends up at the start of the box (or right after
+// another `[Image #N]`) becomes the `[Image #N]` placeholder.
+const TYPED_IMAGE_PATH = /(^|\])((?:[A-Za-z]:[\\/]|\/)[^\r\n]*\.(?:png|jpe?g|gif|webp))$/i;
+function convertTypedImagePath() {
+  const match = TYPED_IMAGE_PATH.exec(state.input);
+  if (!match) return;
+  state.images += 1;
+  state.input = `${state.input.slice(0, match.index)}${match[1]}[Image #${state.images}]`;
+}
+
 function submitInput() {
   let text = state.input;
   state.pastes.forEach((paste, i) => {
@@ -687,6 +698,7 @@ function onData(chunk) {
       else continue;
       state.menuClosed = false;
     }
+    convertTypedImagePath();
     if (start === -1) break;
     inPaste = true;
     data = data.slice(start + PASTE_START.length);
