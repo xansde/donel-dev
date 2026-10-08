@@ -445,7 +445,12 @@ outra com "interromper e mandar agora".
 **Escrita e envio**
 
 - **FR-013**: A caixa MUST suportar várias linhas (Enter envia, Shift+Enter
-  quebra), histórico por ↑, rascunho preservado por aba.
+  quebra), histórico por ↑, rascunho preservado por aba. Shift+Tab na caixa
+  (vazia ou com texto) MUST ser repassado ao CLI, como no terminal — alterna
+  o modo de permissão — em vez de mover o foco; não é repassado enquanto um
+  diálogo do CLI segura a tela. A dica sob a caixa MUST mostrar o modo atual
+  lido do rodapé do CLI («Shift+Tab modo: padrão / aceitar edições / plano /
+  bypass»). Isto não é um botão de troca de modo (ver Out of Scope).
 - **FR-014**: A caixa MUST oferecer autocomplete de skills/comandos (`/`) com
   nome e descrição e de arquivos do projeto (`@`).
 - **FR-015**: A caixa MUST aceitar imagem colada ou arrastada como anexo que

@@ -17,6 +17,7 @@ import {
 import type { ConversationRow } from '../../../../shared/chat/rows';
 import type { SendDriver, SendItemView } from '../sendDriver';
 import { getChatStore } from '../ChatStore';
+import { forwardBackTab, permissionModeLabel, useScreenPermissionMode, type ModeTerminal } from '../cycleMode';
 import { Attachments } from './Attachments';
 import { appendMention, canSend, imageTypeOf, mentionFor, sendRequestOf, type DraftImage } from './attachmentsModel';
 import { getDraft, getDraftImages, setDraft, setDraftImages, subscribeDraft, subscribeDraftImages } from './tabSend';
@@ -28,6 +29,8 @@ export interface ChatComposerProps {
   ptyId?: string | null;
   /** Folder of the tab: a file inside it is mentioned as `@relative`. */
   cwd?: string;
+  /** The tab's terminal: Shift+Tab is written to it and the permission mode is read from its screen. `null` before it mounts. */
+  terminal?: ModeTerminal | null;
   driver: SendDriver;
   /** Rows as the owner sees them (real + local ones): source of the ArrowUp history. */
   rows: readonly ConversationRow[];
@@ -57,7 +60,7 @@ const preview = (text: string): string => {
   return flat.length > LEFTOVER_PREVIEW ? `${flat.slice(0, LEFTOVER_PREVIEW)}…` : flat;
 };
 
-function ChatComposerMain({ tabId, ptyId = null, cwd, driver, rows, working, active, items, onOpenTerminal }: ChatComposerProps): React.JSX.Element {
+function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, rows, working, active, items, onOpenTerminal }: ChatComposerProps): React.JSX.Element {
   const draft = useSyncExternalStore(
     useCallback((cb) => subscribeDraft(tabId, cb), [tabId]),
     () => getDraft(tabId),
@@ -180,11 +183,19 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, driver, rows, working, act
     void addFiles([...event.dataTransfer.files], 'picked');
   };
 
+  const mode = useScreenPermissionMode(terminal);
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (isComposing(event)) return;
     if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
       event.preventDefault();
       submit('normal');
+      return;
+    }
+    // Shift+Tab does what it does in the CLI terminal (cycles the permission mode) instead of moving the focus.
+    if (event.key === 'Tab' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault();
+      forwardBackTab(terminal);
       return;
     }
     if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
@@ -273,7 +284,12 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, driver, rows, working, act
         onInterruptAndSend={() => submit('interrupt-first')}
         banner={banner}
         leading={paperclip}
-        footerHint
+        footerHint={
+          <>
+            <Kbd>Enter</Kbd> envia · <Kbd>Shift+Enter</Kbd> quebra linha · <Kbd>Shift+Tab</Kbd>{' '}
+            <span data-testid="chat-composer-mode">{mode === null ? 'alterna o modo' : `modo: ${permissionModeLabel(mode)}`}</span>
+          </>
+        }
         fluid
       >
         {/* Thumbnails sit above the text, inside the box (design T06 "Anexos"). */}
