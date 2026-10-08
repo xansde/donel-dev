@@ -36,10 +36,10 @@ async function waitFor<T>(probe: () => T | undefined | false, label: string, tim
   }
 }
 
-function launch(args: string[], scenario?: unknown): void {
+function launch(args: string[], scenario?: unknown, extraEnv: Record<string, string> = {}): void {
   const settingsPath = join(workDir, 'settings.json');
   writeFileSync(settingsPath, JSON.stringify(buildSessionHooksSettings({ port, token: TOKEN, chatEnabled: true, curlPath: 'curl' })));
-  const env: NodeJS.ProcessEnv = { ...process.env, DONEL_FAKE_CLAUDE_HOME: join(workDir, 'home') };
+  const env: NodeJS.ProcessEnv = { ...process.env, DONEL_FAKE_CLAUDE_HOME: join(workDir, 'home'), ...extraEnv };
   if (scenario !== undefined) env.DONEL_FAKE_CLAUDE_SCENARIO = JSON.stringify(scenario);
   child = spawn(process.execPath, [SCRIPT, '--settings', settingsPath, ...args], { cwd: workDir, env });
   child.stdout.on('data', (d: Buffer) => (output += d.toString('utf8')));
@@ -47,6 +47,16 @@ function launch(args: string[], scenario?: unknown): void {
 }
 
 const send = (text: string): void => void child!.stdin.write(text);
+/** The last painted screen (the fake repaints with a clear-screen). */
+const screen = (): string => output.split('\x1b[2J').pop() ?? '';
+const transcriptLines = (path: string): Record<string, any>[] =>
+  readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+async function bootIdle(args: string[] = [], scenario?: unknown, extraEnv: Record<string, string> = {}): Promise<string> {
+  launch(args, scenario, extraEnv);
+  const start = await waitFor(() => hooks('SessionStart')[0], 'SessionStart');
+  await waitFor(() => output.includes('? for shortcuts'), 'idle');
+  return start.body.transcript_path as string;
+}
 const hooks = (event: string): Received[] => received.filter((r) => r.event === event);
 
 beforeEach(async () => {
@@ -180,5 +190,118 @@ describe('fake-claude-chat', { timeout: 20000 }, () => {
     expect(exitCode).toBe(1);
     expect(output).toContain('No conversation found with session ID: cccccccc-0000-4000-8000-000000000001');
     expect(hooks('SessionStart')).toHaveLength(0);
+  });
+  it('shows a 5+ line paste as a placeholder, keeps shorter pastes literal, and shows image paths as [Image #N]', async () => {
+    await bootIdle();
+    send('\x1b[200~um\ndois\ntres\x1b[201~');
+    await waitFor(() => screen().includes('um dois tres'), 'short paste literal');
+    send('\x7f'.repeat(12));
+    await waitFor(() => !screen().includes('um dois'), 'cleared');
+    send(`\x1b[200~${['a', 'b', 'c', 'd', 'e'].join('\n')}\x1b[201~`);
+    await waitFor(() => screen().includes('[Pasted text #1 +4 lines]'), 'placeholder at 5 lines');
+    send('\x1b[200~C:\\tmp\\foto.png\x1b[201~');
+    await waitFor(() => screen().includes('[Image #1]'), 'image placeholder');
+  });
+
+  it('queues a message submitted during a round: enqueue, then remove + queued_command, then processes it', async () => {
+    const transcript = await bootIdle([], undefined, { DONEL_FAKE_CLAUDE_SLOW_MS: '700' });
+    send('primeira demorar');
+    send('\r');
+    await waitFor(() => screen().includes('esc to interrupt'), 'working footer');
+    send('segunda');
+    send('\r');
+    await waitFor(() => transcriptLines(transcript).some((l) => l.type === 'queue-operation' && l.operation === 'enqueue'), 'enqueue');
+    expect(hooks('UserPromptSubmit')).toHaveLength(1); // the queued one has not been submitted yet
+    await waitFor(() => hooks('UserPromptSubmit').length === 2, 'queued message processed');
+    const lines = transcriptLines(transcript);
+    const enqueue = lines.find((l) => l.type === 'queue-operation' && l.operation === 'enqueue')!;
+    expect(enqueue).toMatchObject({ content: 'segunda', sessionId: expect.any(String), timestamp: expect.any(String) });
+    expect(enqueue.uuid).toBeUndefined();
+    const iRemove = lines.findIndex((l) => l.type === 'queue-operation' && l.operation === 'remove');
+    const iQueued = lines.findIndex((l) => l.type === 'attachment' && l.attachment?.type === 'queued_command');
+    expect(iRemove).toBeGreaterThan(-1);
+    expect(iQueued).toBeGreaterThan(iRemove);
+    expect(lines[iQueued].attachment).toMatchObject({ prompt: 'segunda', commandMode: 'prompt', humanTurn: true });
+    expect(hooks('UserPromptSubmit')[1].body.prompt).toBe('segunda');
+  });
+
+  it('Esc during a round interrupts it and writes the interruption marker', async () => {
+    const transcript = await bootIdle([], undefined, { DONEL_FAKE_CLAUDE_SLOW_MS: '5000' });
+    send('longa demorar\r');
+    await waitFor(() => screen().includes('esc to interrupt'), 'working footer');
+    send('\x1b');
+    await waitFor(() => screen().includes('? for shortcuts'), 'idle again');
+    const marker = transcriptLines(transcript).find((l) => l.type === 'user' && JSON.stringify(l.message).includes('[Request interrupted by user]'));
+    expect(marker).toBeTruthy();
+  });
+
+  it('opens the slash menu above the ruler, Esc closes it keeping the text, Enter with it open completes instead of sending', async () => {
+    const transcript = await bootIdle();
+    send('/mod');
+    await waitFor(() => screen().includes('  ❯ /model'), 'menu');
+    const lines = screen().split('\r\n');
+    const iMenu = lines.findIndex((l) => l.includes('  ❯ /model'));
+    const iRuler = lines.findIndex((l) => l.startsWith('───'));
+    expect(iMenu).toBeLessThan(iRuler);
+    send('\x1b');
+    await waitFor(() => !screen().includes('  ❯ /model'), 'menu closed');
+    expect(screen()).toContain('❯ /mod');
+    send('\r'); // menu closed: Enter submits what is in the box ("/mod" is not a command)
+    const line = await waitFor(() => transcriptLines(transcript).find((l) => l.subtype === 'informational'), 'closed menu lets Enter through');
+    expect(line.content).toBe('Unknown command: /mod');
+  });
+
+  it('Enter with the slash menu open completes the command instead of sending it', async () => {
+    const transcript = await bootIdle();
+    send('/mod');
+    await waitFor(() => screen().includes('  ❯ /model'), 'menu');
+    send('\r');
+    await waitFor(() => screen().includes('❯ /model'), 'completed');
+    await new Promise((r) => setTimeout(r, 150));
+    expect(hooks('UserPromptSubmit')).toHaveLength(0);
+    expect(transcriptLines(transcript)).toHaveLength(0);
+  });
+
+  it('writes system/informational "Unknown command" for an unknown slash command', async () => {
+    const transcript = await bootIdle();
+    send('/naoexiste\r');
+    const line = await waitFor(() => transcriptLines(transcript).find((l) => l.type === 'system' && l.subtype === 'informational'), 'informational');
+    expect(line.content).toBe('Unknown command: /naoexiste');
+    expect(hooks('UserPromptSubmit')).toHaveLength(0);
+  });
+
+  it('plays native commands: local_command with command tags, compact_boundary + SessionStart(compact), and ! shell mode', async () => {
+    const transcript = await bootIdle();
+    send('/cost\r');
+    await waitFor(() => transcriptLines(transcript).some((l) => l.type === 'system' && l.subtype === 'local_command'), 'local_command');
+    let lines = transcriptLines(transcript);
+    expect(lines.some((l) => l.type === 'user' && String(l.message.content).includes('<command-name>/cost</command-name>'))).toBe(true);
+    expect(lines.find((l) => l.subtype === 'local_command')!.commandRun).toMatchObject({ command: '/cost' });
+    send('/compact\r');
+    await waitFor(() => hooks('SessionStart').some((r) => r.body.source === 'compact'), 'SessionStart(compact)');
+    expect(transcriptLines(transcript).some((l) => l.type === 'system' && l.subtype === 'compact_boundary')).toBe(true);
+    send('!ls -la\r');
+    await waitFor(() => transcriptLines(transcript).some((l) => l.type === 'user' && String(l.message.content).includes('<bash-input>ls -la</bash-input>')), 'bash-input');
+    lines = transcriptLines(transcript);
+    expect(lines.some((l) => l.type === 'user' && String(l.message.content).includes('<bash-stdout>'))).toBe(true);
+  });
+
+  it('Esc Esc in one write discards the box text when idle', async () => {
+    await bootIdle();
+    send('rascunho');
+    await waitFor(() => screen().includes('rascunho'), 'typed');
+    send('\x1b\x1b');
+    await waitFor(() => !screen().includes('rascunho'), 'discarded');
+  });
+
+  it('DONEL_FAKE_CLAUDE_DROP_FIRST_ENTER swallows the first Enter: the text stays in the box until a second one', async () => {
+    await bootIdle([], undefined, { DONEL_FAKE_CLAUDE_DROP_FIRST_ENTER: '1' });
+    send('oi');
+    send('\r');
+    await new Promise((r) => setTimeout(r, 300));
+    expect(hooks('UserPromptSubmit')).toHaveLength(0);
+    expect(screen()).toContain('❯ oi');
+    send('\r');
+    await waitFor(() => hooks('UserPromptSubmit')[0], 'UserPromptSubmit after the second Enter');
   });
 });
