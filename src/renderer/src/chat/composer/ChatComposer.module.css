@@ -1,0 +1,7 @@
+.wrap {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  padding: 8px 16px 12px;
+  background: var(--bg-app);
+}

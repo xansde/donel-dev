@@ -6,6 +6,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { RowDetail, RowDetailPart } from '../../../shared/chat/ipc';
 import type { ActionGroupRow, ConversationRow, LiveState, RowAttachment } from '../../../shared/chat/rows';
+import type { SendOverlay } from './composer/optimistic';
 import { ConversationSwitchBanner } from './ReceptionBanner';
 import {
   ActionGroupView,
@@ -51,6 +52,10 @@ export interface RowRenderContext {
   onOpenPreviousSessions(): void;
   /** Live state of the conversation (`null` until the first one arrives). */
   readonly live: LiveState | null;
+  /** Live send state of a message the chat itself sent (T067, D-C11); `undefined` = history. */
+  sendOverlay?(rowId: string): SendOverlay | undefined;
+  /** "tentar de novo" on a failed send. */
+  retrySend?(sendId: string): void;
 }
 
 /** The children of a group are not in the patches: load them once, show the group meanwhile. */
@@ -76,7 +81,19 @@ function GroupRow({ row, ctx }: { row: ActionGroupRow; ctx: RowRenderContext }):
 export function renderRow(row: ConversationRow, ctx: RowRenderContext): ReactNode {
   switch (row.kind) {
     case 'user':
-      return <UserMessage row={row} assetUrl={ctx.assetUrl} />;
+    {
+      const overlay = ctx.sendOverlay?.(row.id);
+      return (
+        <UserMessage
+          row={row}
+          assetUrl={ctx.assetUrl}
+          sendState={overlay?.sendState}
+          queuedReason={overlay?.queuedReason}
+          failedReason={overlay?.failedReason}
+          onRetry={overlay?.sendId !== undefined ? () => ctx.retrySend?.(overlay.sendId!) : undefined}
+        />
+      );
+    }
     case 'assistant': {
       const info = ctx.answerInfo(row.id);
       return (

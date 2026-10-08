@@ -191,6 +191,14 @@ export class SendDriver {
       canDiscard: false,
       dismissed: false,
     });
+    // Finished sends only matter while the composer/timeline merge them; keep the list bounded.
+    const finished = (i: Item): boolean => i.machine !== null && (i.machine.phase === 'accepted' || i.machine.phase === 'failed');
+    while (this.items.length > 200) {
+      const old = this.items.find(finished);
+      if (old === undefined) break;
+      this.ports.clearTimeout(old.timer);
+      this.items = this.items.filter((i) => i !== old);
+    }
     this.pump();
     this.publish();
     return id;

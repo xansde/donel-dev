@@ -4,10 +4,14 @@
 // The header (Toggle / Chat | Terminal / Kbd) lives in App's `sessionHeader`
 // (D-C22); this component draws only the area below it.
 
-import { memo, useCallback, useMemo, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import { buildImageAssetUrl } from '../../../shared/chat/assetUrl';
 import type { ConversationRow } from '../../../shared/chat/rows';
+import type { TerminalPaneHandle } from '../TerminalPane';
 import styles from './ChatView.module.css';
+import { ChatComposer } from './composer/ChatComposer';
+import { mergeOptimistic } from './composer/optimistic';
+import { rewireTab, sendDriverFor } from './composer/tabSend';
 import { ConversationSwitchBanner, ReceptionBanner } from './ReceptionBanner';
 import { joinAnswerMarkdown } from './markdown';
 import type { AnswerInfo, RowRenderContext } from './renderRow';
@@ -27,6 +31,8 @@ export interface ChatViewActions {
   closeTab(tabId: string): void;
   /** "abrir" on the new-conversation notice. */
   openPreviousSessions(tabId: string): void;
+  /** Hidden terminal of the tab: the send driver writes to it and reads its screen (T065). */
+  terminal(tabId: string): TerminalPaneHandle | null;
 }
 
 export interface ChatViewProps {
@@ -39,7 +45,7 @@ export interface ChatViewProps {
   focusMode: boolean;
   /** The process exited (FR-034). `null` = alive. */
   ended: { readonly exitCode: number | null } | null;
-  /** Bottom slot above which nothing else sits: the composer (later phase). */
+  /** Slot right above the composer (live footer, terminal-needed strip). The composer itself is always drawn. */
   footer?: ReactNode;
 }
 
@@ -85,7 +91,29 @@ export const ChatView = memo(function ChatView({
   const onCloseTab = useCallback(() => actions.closeTab(tabId), [actions, tabId]);
   const onOpenPreviousSessions = useCallback(() => actions.openPreviousSessions(tabId), [actions, tabId]);
 
-  const answers = useMemo(() => buildAnswerInfo(session.rows), [session.rows]);
+  // T065/T067: one send driver per tab; the messages it is sending show up as optimistic rows.
+  const source = useMemo(() => ({ terminal: () => actions.terminal(tabId) }), [actions, tabId]);
+  const driver = useMemo(() => sendDriverFor(tabId, source), [tabId, source]);
+  const items = useSyncExternalStore(
+    useCallback((onChange) => driver.subscribe(onChange), [driver]),
+    () => driver.getItems(),
+  );
+  const merged = useMemo(() => mergeOptimistic(session.rows, items), [session.rows, items]);
+  const allRows = merged.rows;
+
+  const effectiveEnded = ended ?? (session.live?.status === 'ended' ? { exitCode: null } : null);
+  const alive = effectiveEnded === null;
+  const pendingOpen = (session.live?.pendings.length ?? 0) > 0;
+  const terminalNeeded = session.live?.terminalNeeded != null;
+  // A respawn (resume) gives the tab a new PTY: re-attach the screen and signal subscriptions.
+  useEffect(() => {
+    rewireTab(tabId);
+  }, [tabId, ptyId]);
+  useEffect(() => {
+    driver.setEnv({ alive, pendingOpen, terminalNeeded });
+  }, [driver, alive, pendingOpen, terminalNeeded]);
+
+  const answers = useMemo(() => buildAnswerInfo(allRows), [allRows]);
   const ctx = useMemo<RowRenderContext>(
     () => ({
       onOpenExternal: (url) => void session.openExternal(url),
@@ -96,16 +124,17 @@ export const ChatView = memo(function ChatView({
       answerInfo: (rowId) => answers.get(rowId),
       onOpenPreviousSessions,
       live: session.live,
+      sendOverlay: (rowId) => merged.overlays.get(rowId),
+      retrySend: (sendId) => driver.retry(sendId),
     }),
-    [session, ptyId, onOpenPreviousSessions, answers],
+    [session, ptyId, onOpenPreviousSessions, answers, merged.overlays, driver],
   );
 
   // G4: while the new conversation is empty the notice stays pinned on top; once
   // there is content it becomes the first row (Timeline renders it via renderRow).
-  const pinnedSwitch = session.rows.length > 0 && session.rows.every(isSwitchNotice) ? session.rows[0]! : null;
-  const rows = pinnedSwitch ? [] : session.rows;
+  const pinnedSwitch = allRows.length > 0 && allRows.every(isSwitchNotice) ? allRows[0]! : null;
+  const rows = pinnedSwitch ? [] : allRows;
 
-  const effectiveEnded = ended ?? (session.live?.status === 'ended' ? { exitCode: null } : null);
   const reception =
     effectiveEnded === null ? (
       <ReceptionBanner
@@ -132,7 +161,18 @@ export const ChatView = memo(function ChatView({
       {effectiveEnded !== null ? (
         <SessionEndedBar exitCode={effectiveEnded.exitCode} onResume={onResume} onCloseTab={onCloseTab} />
       ) : (
-        footer ?? null
+        <>
+          {footer ?? null}
+          <ChatComposer
+            tabId={tabId}
+            driver={driver}
+            rows={allRows}
+            items={items}
+            working={session.live?.status === 'working'}
+            active={active}
+            onOpenTerminal={onOpenTerminal}
+          />
+        </>
       )}
     </div>
   );
