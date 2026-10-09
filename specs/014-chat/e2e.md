@@ -547,3 +547,17 @@ Observações do print do teste 7:
 **Correção:**
 - (a) aceitar `prompt` em array no `queued_command`: juntar os textos e mapear as imagens para anexos, como o prompt direto faz;
 - (b) um otimista aceito sem linha real nunca vai para o fim da conversa: fica na posição cronológica do envio ou sai depois de aceito. A exceção é o estado "interrompida" do item 4, que fica no lugar do envio até a próxima mensagem.
+
+#### Lote de ajustes da bateria de 09/10 — entregue em `staging` no mesmo dia
+
+| Item | PR | Conferir no alfa reinstalado |
+|---|---|---|
+| 1. Atalhos do CLI (tabela do binário 2.1.295) + seletor de modelo no chat (`Alt+P`, `/model` puro), `Ctrl+O` dobras, `Ctrl+Enter` interromper e mandar | #100 | efeito real de `Alt+O`/`Alt+T`/`Alt+W`/`Ctrl+T`/`Ctrl+B`/`Ctrl+]` no CLI; `/model` sem ir ao terminal |
+| 2. Tags de colagem fora do cartão | #101 | colar ~1.000 caracteres: cartão sem tags, "entrou" |
+| 3. Enter escolhe o item do menu `/` e `@` + casamento tolerante a `/mod`→`/model` | #102 | `/mod`+Enter completa; `@caminh`+Enter completa; sem cartões fantasmas. Pendente: o Esc do driver sobre o menu do CLI (precisa de captura da tela real) |
+| 4. Esc antes da resposta: texto volta à caixa do chat, cartão "interrompida", fim de rodada pela tela, "parando…" + achado 22 (cartões presos no fim, `queued_command` com imagem) | #103 | repetir o 19.5; mandar imagem durante uma rodada |
+| 5. `/compact` como marcador "conversa compactada · Nk → Mk", sem eco/selos/grupos vazios; aviso de recepção com espera de compact | #104 | repetir o teste 8 e o passo 8. Conhecido: ao reabrir a sessão o cartão do `/compact` digitado some |
+| 6. `!` e saída no nível de cima, com "entrou" | #104 | repetir o 16.5 |
+| 7. Grade sem órfã (4 opções → 2×2, cartão cresce com a descrição) + uma pergunta por vez com abas e Anterior/Próxima | este PR | pedir uma pergunta com 4 opções e um painel com 2 perguntas |
+
+Teste instável observado no lote: `tests/fake-claude-chat.test.ts` ("queues a message submitted during a round") falha às vezes na suíte inteira com `AttachConsole failed` (PTY no Windows sob carga). Passa isolado e nas reexecuções, inclusive em `staging` sem as mudanças.
