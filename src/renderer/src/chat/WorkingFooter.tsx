@@ -29,6 +29,8 @@ export interface WorkingFooterProps {
   stopRequestedAt?: number | null;
   /** Parar was pressed (stamp) or the round ended (`null`). The view owns the stamp because Esc also sets it. */
   onStopRequestedAt?: (at: number | null) => void;
+  /** The screen proved the round over after a stop: the footer leaves "trabalhando" without waiting for a Stop hook. */
+  endedByScreen?: boolean;
 }
 
 /** `true` while the screen footer says "esc to interrupt"; `null` without a terminal. Re-renders only on change. */
@@ -56,11 +58,11 @@ function ActionText({ action }: { action: FooterAction }): React.JSX.Element {
 }
 
 /** Renders nothing unless the round is running or was just interrupted. */
-export function WorkingFooter({ live, rows, terminal, onInterruptPending, stopRequestedAt = null, onStopRequestedAt }: WorkingFooterProps): React.JSX.Element | null {
+export function WorkingFooter({ live, rows, terminal, onInterruptPending, stopRequestedAt = null, onStopRequestedAt, endedByScreen = false }: WorkingFooterProps): React.JSX.Element | null {
   const lastAction = useRef<LiveAction | null>(null);
   if (live?.currentAction) lastAction.current = live.currentAction;
   const screenWorking = useScreenWorking(terminal);
-  const model = deriveFooter({ live, rows, lastAction: lastAction.current, screenWorking });
+  const model = deriveFooter({ live, rows, lastAction: lastAction.current, screenWorking, endedByScreen });
   const onStop = (): void => {
     let reached = true;
     if (onInterruptPending) onInterruptPending();

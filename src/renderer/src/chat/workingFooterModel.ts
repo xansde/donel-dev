@@ -31,6 +31,8 @@ export interface FooterInput {
    * `status` can stay `working`: the marker in the transcript plus a screen that stopped working is the proof.
    */
   readonly screenWorking?: boolean | null;
+  /** The screen proved the round over after a Parar/Esc (`stopWindow.ts`): no Stop hook will come. */
+  readonly endedByScreen?: boolean;
 }
 
 /** The interruption is the latest event of the conversation: no `user` row after the `[Request interrupted...]` notice. */
@@ -48,12 +50,13 @@ const toFooterAction = (action: LiveAction): FooterAction => ({
   ...(action.summary.target !== undefined ? { target: action.summary.target } : {}),
 });
 
-export function deriveFooter({ live, rows, lastAction, screenWorking = null }: FooterInput): FooterModel | null {
+export function deriveFooter({ live, rows, lastAction, screenWorking = null, endedByScreen = false }: FooterInput): FooterModel | null {
   if (live === null) return null;
   const interruptedNow = screenWorking !== true && endsInterrupted(rows);
   if (interruptedNow && (live.status === 'working' || live.status === 'idle')) {
     return { kind: 'interrupted', after: lastAction === null ? null : toFooterAction(lastAction) };
   }
+  if (live.status === 'working' && endedByScreen) return null;
   if (live.status === 'working') {
     const action = live.currentAction;
     if (action !== null) {
@@ -102,3 +105,6 @@ export function stopFeedback(requestedAt: number | null, now: number): StopFeedb
 export const expiredStopRequest = (now: number): number => now - STOP_TIMEOUT_MS;
 
 export const STOP_STUCK_HINT = 'o Claude não parou — tente de novo ou abra o terminal';
+
+/** A press that wrote nothing is stored already expired. */
+export const isExpiredStop = (requestedAt: number, now: number): boolean => now - requestedAt >= STOP_TIMEOUT_MS;

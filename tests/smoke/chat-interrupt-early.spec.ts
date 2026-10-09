@@ -49,3 +49,31 @@ test('Esc antes da resposta: cartão "interrompida", texto volta para a caixa e 
     await chat.dispose();
   }
 });
+
+test('Esc antes da resposta SEM mensagem seguinte: a tela encerra a rodada, o pé sai e o texto volta @chat', async () => {
+  test.setTimeout(180_000);
+  const chat = await launchChatApp({ name: 'chat-interrupt-early-alone' });
+  const page = chat.window;
+  const helpers = chatHelpers(page);
+  try {
+    await launchClaudeTab(page, {});
+    await expect(page.locator('[data-testid="chat-view"]:visible')).toBeVisible({ timeout: 20_000 });
+    await helpers.waitForFakeFooter();
+    await helpers.showView('chat');
+
+    await input(page).fill('cancelavel sozinha');
+    await input(page).press('Enter');
+    await expect(timeline(page).getByText('✓ entrou')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('working-footer')).toHaveAttribute('data-state', 'working', { timeout: 20_000 });
+
+    await page.getByRole('button', { name: 'Parar' }).click();
+    // Sem Stop hook (o CLI não o dispara): é a tela que encerra a rodada dentro da janela do pedido.
+    await expect(page.getByTestId('working-footer')).toHaveCount(0, { timeout: 15_000 });
+    await expect(input(page)).toHaveValue('cancelavel sozinha', { timeout: 10_000 });
+    await expect(timeline(page).getByText('o texto voltou para a caixa')).toBeVisible();
+    await expect(page.getByText('Há texto não enviado no terminal')).toHaveCount(0);
+    await helpers.shot('interrupt-early-02-sozinha');
+  } finally {
+    await chat.dispose();
+  }
+});

@@ -4,7 +4,7 @@
 // The header (Toggle / Chat | Terminal / Kbd) lives in App's `sessionHeader`
 // (D-C22); this component draws only the area below it.
 
-import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { buildImageAssetUrl } from '../../../shared/chat/assetUrl';
 import type { PendingAnswer } from '../../../shared/chat/ipc';
 import { pendingQueueView } from '../../../shared/chat/pendingQueue';
@@ -13,7 +13,7 @@ import type { TerminalPaneHandle } from '../TerminalPane';
 import styles from './ChatView.module.css';
 import { ChatComposer } from './composer/ChatComposer';
 import { mergeOptimistic } from './composer/optimistic';
-import { rewireTab, sendDriverFor } from './composer/tabSend';
+import { getDraft, rewireTab, sendDriverFor, setDraft } from './composer/tabSend';
 import { PendingPanel } from './pending/PendingPanel';
 import { ConversationSwitchBanner, ReceptionBanner } from './ReceptionBanner';
 import { joinAnswerMarkdown } from './markdown';
@@ -22,7 +22,11 @@ import { SessionEndedBar } from './SessionEndedBar';
 import { Timeline } from './Timeline';
 import { WorkingFooter } from './WorkingFooter';
 import { escapeAction, stopWorking } from './stopWorking';
-import { expiredStopRequest } from './workingFooterModel';
+import { expiredStopRequest, isExpiredStop } from './workingFooterModel';
+import { isReadyForInput, isWorking, readInputText } from '../../../shared/chat/screen';
+import { restoreDraft } from '../../../shared/chat/returnedPrompt';
+import { planReturned } from './composer/returnedReclaim';
+import { openStopWindow, stepStopWindow, type StopWindow } from './stopWindow';
 import { useTerminalNeededReporter } from './useTerminalNeededReporter';
 import { useChatSession } from './useChatSession';
 
@@ -160,7 +164,49 @@ export const ChatView = memo(function ChatView({
 
   // Parar / Esc feedback ("parando…" until the round ends or a short timeout); both entry points stamp it.
   const [stopRequestedAt, setStopRequestedAt] = useState<number | null>(null);
+  // No Stop hook comes after an Esc: inside the window of a stop that reached the terminal, the screen ends the round.
+  const [stopWindow, setStopWindow] = useState<StopWindow | null>(null);
+  const windowRef = useRef<StopWindow | null>(null);
+  const onStopRequestedAt = useCallback((at: number | null) => {
+    setStopRequestedAt(at);
+    if (at !== null && !isExpiredStop(at, Date.now())) {
+      windowRef.current = openStopWindow(at);
+      setStopWindow(windowRef.current);
+    }
+  }, []);
   const terminal = actions.terminal(tabId);
+  const latest = useRef({ rows: allRows, items });
+  latest.current = { rows: allRows, items };
+  const windowOpen = stopWindow !== null;
+  useEffect(() => {
+    if (!windowOpen || terminal === null) return undefined;
+    const read = (): void => {
+      const lines = terminal.readScreen().lines;
+      const step = stepStopWindow(windowRef.current, { working: isWorking(lines), ready: isReadyForInput(lines), boxText: readInputText(lines) }, Date.now());
+      if (step.box !== null) {
+        // The CLI gave the message back to its box (Esc before the first answer): same treatment as the leftover seen
+        // by a waiting message - clear the box (idle, so Esc Esc is safe), text to the chat box, card "interrompida".
+        const plan = planReturned(step.box, latest.current.rows, latest.current.items);
+        if (plan !== null) {
+          terminal.write('\x1b\x1b');
+          setDraft(tabId, restoreDraft(getDraft(tabId), plan.text));
+          if (plan.sourceId !== null) driver.markReturned(plan.sourceId);
+        }
+      }
+      windowRef.current = step.window;
+      setStopWindow(step.window);
+    };
+    read();
+    return terminal.onScreenUpdate(read);
+  }, [windowOpen, terminal, tabId, driver]);
+  // The live round is over for real (a Stop hook came, or the process ended): the window means nothing any more.
+  useEffect(() => {
+    if (session.live?.status !== 'working') {
+      windowRef.current = null;
+      setStopWindow(null);
+    }
+  }, [session.live?.status]);
+  const endedByScreen = stopWindow?.confirmed === true;
   useTerminalNeededReporter(terminal, ptyId, session.live);
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -179,10 +225,10 @@ export const ChatView = memo(function ChatView({
       } else if (action === 'stop') {
         const reached = stopWorking(actions.terminal(tabId));
         if (reached) event.preventDefault();
-        setStopRequestedAt(reached ? Date.now() : expiredStopRequest(Date.now()));
+        onStopRequestedAt(reached ? Date.now() : expiredStopRequest(Date.now()));
       }
     },
-    [actions, tabId, active, session.live, headId, onAnswer],
+    [actions, tabId, active, session.live, headId, onAnswer, onStopRequestedAt],
   );
 
 
@@ -247,7 +293,8 @@ export const ChatView = memo(function ChatView({
           <WorkingFooter live={session.live} rows={session.rows} terminal={terminal}
             onInterruptPending={onInterruptPending}
             stopRequestedAt={stopRequestedAt}
-            onStopRequestedAt={setStopRequestedAt}
+            onStopRequestedAt={onStopRequestedAt}
+            endedByScreen={endedByScreen}
           />
           {footer ?? null}
           <ChatComposer
@@ -258,7 +305,7 @@ export const ChatView = memo(function ChatView({
             driver={driver}
             rows={allRows}
             items={items}
-            working={session.live?.status === 'working'}
+            working={session.live?.status === 'working' && !endedByScreen}
             active={active}
             onOpenTerminal={onOpenTerminal}
             adjust={adjustMode}
