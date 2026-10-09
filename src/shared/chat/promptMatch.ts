@@ -5,7 +5,7 @@ const PASTED_CONTENT_TAG = /<\/?pasted_content\b[^>]*>/g;
 // An opening tag takes the line break after it; a closing tag takes the one before it.
 const PASTED_CONTENT_OPEN = /<pasted_content\b[^>]*>\r?\n?/g;
 const PASTED_CONTENT_CLOSE = /\r?\n?<\/pasted_content\b[^>]*>/g;
-const IMAGE_MARKER =/\[Image #\d+\]/g;
+const IMAGE_MARKER = /\[Image #\d+\]/g;
 
 /**
  * Removes the `<pasted_content id=…>…</pasted_content id=…>` wrapper the CLI puts around collapsed pastes in
