@@ -25,7 +25,7 @@ const META_TYPES: ReadonlySet<string> = new Set([
 
 /** conversation-rows.md §6. `session_context` and `credential_org` carry account data. */
 const NOISE_ATTACHMENTS: ReadonlySet<string> = new Set([
-  'hook_success', 'hook_additional_context', 'total_tokens_reminder', 'deferred_tools_record', 'deferred_tools_delta',
+  'hook_success', 'plan_file_reference', 'hook_additional_context', 'total_tokens_reminder', 'deferred_tools_record', 'deferred_tools_delta',
   'prompt_snapshot', 'environment', 'date', 'model', 'language', 'instructions', 'session_context', 'credential_org',
   'auto_mode', 'remote_session_change', 'thinking_drop', 'structured_output', 'command_permissions',
   'agent_listing_delta', 'mcp_instructions_delta', 'nested_memory',

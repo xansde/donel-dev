@@ -144,10 +144,10 @@ describe('DS mapping', () => {
 describe('noticeContent (G3 tones, params -> text)', () => {
   it('compact shows the token drop', () => {
     expect(noticeContent('compact', { preTokens: 180_000, postTokens: 12_400 })).toMatchObject({
-      text: 'Conversa compactada — 180 mil → 12 mil tokens',
+      text: 'conversa compactada · 180k → 12k',
       tone: 'muted',
     });
-    expect(noticeContent('compact', {}).text).toBe('Conversa compactada');
+    expect(noticeContent('compact', {}).text).toBe('conversa compactada');
   });
   it('limit and api-error are amber', () => {
     expect(noticeContent('limit', {})).toMatchObject({ text: 'Limite da conta atingido', tone: 'warn' });

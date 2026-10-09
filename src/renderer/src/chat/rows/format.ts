@@ -159,7 +159,7 @@ function asNumber(value: unknown): number | undefined {
 }
 
 function formatTokens(tokens: number): string {
-  return tokens >= 1000 ? `${Math.round(tokens / 1000)} mil` : String(tokens);
+  return tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
 }
 
 const PREVIOUS_CONVERSATION = 'a anterior está em Sessões anteriores';
@@ -172,8 +172,8 @@ export function noticeContent(kind: NoticeKind, params: Readonly<Record<string, 
       const after = asNumber(params.postTokens);
       const text =
         before !== undefined && after !== undefined
-          ? `Conversa compactada — ${formatTokens(before)} → ${formatTokens(after)} tokens`
-          : 'Conversa compactada';
+          ? `conversa compactada · ${formatTokens(before)} → ${formatTokens(after)}`
+          : 'conversa compactada';
       return { icon: 'compact', tone: 'muted', text };
     }
     case 'limit':
