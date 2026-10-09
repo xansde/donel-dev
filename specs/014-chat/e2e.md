@@ -325,6 +325,7 @@ A smoke (T081) veio por último.
   - Decisão do dono (08/10, respondida pelo painel de pergunta no alfa): o
     cartão falho fica **no ponto do envio**, na ordem do tempo. Levar à spec.
   - **Corrigido** (08/10): o cartão ganhou "descartar" (`driver.dismiss`) e fica antes da primeira linha posterior ao envio. A spec FR-017 foi atualizada.
+  - **Smokes escritos** (10/10, `feature/014-fase-4-5`): `tests/smoke/chat-send-multiline.spec.ts` (multilinha sem imagem, com imagem, linha longa) e `tests/smoke/chat-reception.spec.ts` (`/compact` + aviso forçado que some). O falso passou a desenhar a caixa como o CLI real (wrap, recuo de 2 colunas); contra o código pré-#97 os multilinha e os dois de recepção falham.
   - Aceite: um cartão "não foi" sai num gesto e fica na posição em que foi
     enviado.
 - **`Shift+Tab` no chat navega o foco, não troca o modo do CLI** (alfa,

@@ -26,6 +26,7 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
 | `DONEL_FAKE_CLAUDE_HOOK_TIMEOUT_MS` | Espera maxima por resposta de hook `http` (padrao 5000) |
 | `DONEL_FAKE_CLAUDE_PERMISSION_TIMEOUT_MS` | Espera maxima (padrao 600000) pela resposta do `PermissionRequest` dos passos segurados; depois cai no dialogo da TUI |
 | `DONEL_FAKE_CLAUDE_SLOW_MS` | Duracao extra (padrao 3000) de uma rodada cujo prompt contem `demorar`; Esc a encerra antes |
+| `DONEL_SMOKE_SHOTS_DIR` | (do `chatHelpers.shot`, nao do falso) copia extra dos prints dos smokes de chat para esta pasta |
 | `DONEL_FAKE_CLAUDE_DROP_FIRST_ENTER` | `1`: o primeiro Enter com texto na caixa e engolido (Enter perdido), para testar o reenvio de `\r` |
 
 ## Comportamento
@@ -42,6 +43,7 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
   Esc fecha o menu mantendo o texto. **Enter com o menu aberto COMPLETA** o comando (`/mod` -> `/model`)
   em vez de enviar - e isso que o driver evita com o Esc antes do Enter. Com o texto ja igual ao comando, Enter envia.
 - Esc Esc numa escrita so, ocioso: descarta o texto da caixa.
+- **Caixa como a do CLI real** (2.1.293, capturas em `specs/014-chat/spike/b2/logs/q6.txt`): `❯ ` + 1a linha; cada LF abre uma linha nova; linha longa quebra no ultimo espaco que cabe na largura do PTY (`columns - 2`; 100 sem TTY) e **esse espaco nao e desenhado**; toda linha depois da primeira ganha recuo de 2 colunas. E o que fazia o envio multilinha/longo falhar no alfa (`readInputBox` juntava as linhas sem separador). Suposicao sem captura: a largura exata da quebra e o tratamento de espaco duplo no ponto de quebra (o spike mostra linhas de 116 colunas num terminal de 120, que o modelo reproduz). Antes, o falso colava tudo numa linha so e por isso nao reproduzia o bug.
 - LF (`\n`) insere quebra de linha na caixa; so CR (`\r`) envia. No Windows o ConPTY descarta os marcadores de bracketed paste antes de um filho Node, entao uma colagem de varias linhas chega como texto puro com LF (como o Ctrl+J do CLI real).
 - Inicio: cria o transcript e roda o `command` do `SessionStart` (JSON no stdin) com `session_id`,
   `transcript_path`, `source`, `cwd`, `hook_event_name`.
@@ -73,6 +75,8 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
   "default": { "steps": [ ... ] }
 }
 ```
+
+Opcao de turno `"skipTurnDuration": true`: nao grava a linha `system/turn_duration` no fim da rodada. Sem ela a ultima linha do transcript antecede o hook `Stop` (a ordem que o alfa mostrou), o que o smoke de recepcao precisa para reproduzir o falso "nao estou recebendo a conversa".
 
 Turno escolhido: o primeiro com `match` que casa com o prompt (substring, ou `re:<regex>`); senao
 o proximo turno **sem** `match`, em ordem; senao `default` (padrao: espera 150 ms, assistente `OK`, `Stop`).

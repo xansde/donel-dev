@@ -188,15 +188,40 @@ function render() {
   lines.push(...state.history.slice(-12));
   for (const queued of pending) lines.push(`  ⎿ queued: ${queued.replace(/\n/g, ' ').slice(0, 60)}`);
   menuMatches().slice(0, 6).forEach((c, i) => lines.push(i === 0 ? `  ❯ ${c}` : `    ${c}`));
-  lines.push(ruler(), `❯ ${displayInput()}`, ruler());
+  const [firstRow, ...nextRows] = inputRows();
+  lines.push(ruler(), `❯ ${firstRow}`, ...nextRows.map((row) => `  ${row}`), ruler());
   lines.push(state.working ? '  esc to interrupt' : state.input === '' ? '  ? for shortcuts' : '  ! for shell mode');
   // The real CLI shows the permission mode in the footer; the smokes use it as the "ready for keys" signal.
   if (args.permissionMode === 'acceptEdits' && !state.working) lines.push('  ⏵⏵ accept edits on (shift+tab to cycle)');
   out(`\x1b[2J\x1b[H${lines.join('\r\n')}`);
 }
 
-function displayInput() {
-  return state.input.replace(/\n/g, ' ');
+/**
+ * Rows the box draws for the typed text, as the real CLI 2.1.293 does (captured in
+ * specs/014-chat/spike/b2/logs/q6.txt, "long-wrapped" and the Shift+Enter shapes): a real LF starts a
+ * new row, a long line wraps at the last space that fits the terminal width, the space at the wrap
+ * point is NOT drawn, and every row after the first is indented by 2 columns (the first row carries the
+ * "❯ " mark). Text area width = columns - 2. Words longer than the area are hard-cut.
+ * Assumption (no capture): the exact width the real CLI wraps at; the spike shows 116-char rows on a
+ * 120-column terminal, which this model reproduces.
+ */
+function inputRows() {
+  const width = Math.max(10, (process.stdout.columns || 100) - 2);
+  const rows = [];
+  for (let rest of state.input.split('\n')) {
+    while (rest.length > width) {
+      const cut = rest.lastIndexOf(' ', width);
+      if (cut <= 0) {
+        rows.push(rest.slice(0, width));
+        rest = rest.slice(width);
+      } else {
+        rows.push(rest.slice(0, cut));
+        rest = rest.slice(cut + 1);
+      }
+    }
+    rows.push(rest);
+  }
+  return rows;
 }
 
 function note(line) {
@@ -467,7 +492,7 @@ async function runTurn(text, queued = false) {
   if (turnState.interrupted) {
     appendUser([{ type: 'text', text: '[Request interrupted by user]' }]);
     note('  ⎿  Interrupted · What should Claude do instead?');
-  } else {
+  } else if (!turn.skipTurnDuration) {
     appendLine({ type: 'system', subtype: 'turn_duration', durationMs: Date.now() - startedAt });
   }
   state.working = false;
