@@ -26,7 +26,7 @@
 // from ./promptMatch (identical messages are closed oldest first).
 
 import { NATIVE_COMMAND_NAMES } from './commandCatalog';
-import { matchesPrompt, normalizePrompt } from './promptMatch';
+import { commandResolvesTo, matchesPrompt, normalizePrompt } from './promptMatch';
 import {
   blockingScreen,
   imagePlaceholderCount,
@@ -341,7 +341,7 @@ function applySignal(s: Draft, sig: PromptSignal): void {
     case 'skill': {
       if (sig.signal === 'command' && cls.kind === 'skill') {
         const name = /^\/?(\S*)/.exec(sig.text ?? '')?.[1] ?? '';
-        if (name === cls.name) accept();
+        if (name === cls.name || commandResolvesTo(s.text, sig.text ?? '')) accept();
         return;
       }
       if (!textOk || sig.text === undefined) return;

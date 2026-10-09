@@ -522,7 +522,7 @@ um por vez, com notificação em segundo plano.
   - handler `chat:files`;
   - teste em `tests/chat-project-files.test.ts`, com pasta temporária.
 - [x] T087 [US4] Menu em `src/renderer/src/chat/composer/CommandMenu.tsx`, com o Menu/Popover do design-system conforme o design:
-  - **Ajuste da conferência** (`design/chat-verificacao.md`): `Listbox`; Enter envia o que está escrito e Tab escolhe; ficha de origem com "plugin"; selo de `/login` e `/logout`.
+  - **Ajuste da conferência** (`design/chat-verificacao.md`): `Listbox`; Enter envia o que está escrito e Tab escolhe; ficha de origem com "plugin"; selo de `/login` e `/logout`. — **revertido em 09/10** pelo e2e (ver emenda do FR-017)
   - `/` com nome e descrição, filtrando;
   - `@` com arquivos;
   - setas e Tab escolhem, Esc fecha;

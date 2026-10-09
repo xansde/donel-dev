@@ -10,7 +10,7 @@
 //     the view the composer renders.
 
 import type { PromptSignalKind } from '../../../shared/chat/ipc';
-import { matchOldestPending, matchesPrompt, normalizePrompt, oldestPending } from '../../../shared/chat/promptMatch';
+import { commandResolvesTo, matchOldestPending, matchesPrompt, normalizePrompt, oldestPending } from '../../../shared/chat/promptMatch';
 import type { SendKind, SendMode, SendState } from '../../../shared/chat/rows';
 import {
   createSend,
@@ -147,7 +147,7 @@ function accepts(cls: MessageClass, text: string, sig: DriverSignal): boolean {
     case 'deliver':
       return (cls.kind === 'prompt' || cls.kind === 'skill') && sig.text !== undefined && matchesPrompt(text, sig.text);
     case 'command':
-      return cls.kind === 'skill' && /^\/?(\S*)/.exec(sig.text ?? '')?.[1] === cls.name;
+      return cls.kind === 'skill' && (/^\/?(\S*)/.exec(sig.text ?? '')?.[1] === cls.name || commandResolvesTo(text, sig.text ?? ''));
     case 'shell':
       return cls.kind === 'shell';
     case 'local':

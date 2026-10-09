@@ -34,9 +34,22 @@ export function normalizePrompt(text: string): string {
     .trim();
 }
 
+const BARE_SLASH_COMMAND = /^\/([^\s/]+)$/;
+
+/**
+ * The CLI completes a bare slash command on its own (`/mod` + Enter runs `/model`), so the transcript records
+ * the full name. True only when BOTH are slash commands without argument and the recorded name starts with the
+ * sent one; ordinary messages and commands with arguments stay exact.
+ */
+export function commandResolvesTo(sent: string, signalText: string): boolean {
+  const a = BARE_SLASH_COMMAND.exec(normalizePrompt(sent))?.[1];
+  const b = BARE_SLASH_COMMAND.exec(normalizePrompt(signalText))?.[1];
+  return a !== undefined && b !== undefined && b !== a && b.startsWith(a);
+}
+
 /** True when the signal text is the message that was sent. */
 export function matchesPrompt(sent: string, signalText: string): boolean {
-  return normalizePrompt(sent) === normalizePrompt(signalText);
+  return normalizePrompt(sent) === normalizePrompt(signalText) || commandResolvesTo(sent, signalText);
 }
 
 export interface PendingPrompt {

@@ -8,7 +8,7 @@ import { launchClaudeTab } from './helpers/ui';
 
 // 014-chat, T072 - smoke do ENVIO (Fase 3), contra o `claude` FALSO (T040): nunca o CLI real.
 //
-// SC-003: varias linhas; `/mod` nao vira `/model`; comando desconhecido -> "nao foi" com motivo; enviando ->
+// SC-003: varias linhas; `/mod` com o menu fechado nao vira `/model`; comando desconhecido -> "nao foi" com motivo; enviando ->
 // entrou; na fila -> entrou (`demorar`); interromper e mandar; `!cmd`; Enter perdido reenviado sem duplicar
 // (`DONEL_FAKE_CLAUDE_DROP_FIRST_ENTER=1`). SC-006: alternar chat <-> terminal 10x com rascunho.
 // O auto-start da Esteira nao tem caso aqui: ele exige um store da Esteira com card e disparo de fase, que o
@@ -99,8 +99,11 @@ test('T072 - envio: linhas, /mod, desconhecido, enviando, na fila, interromper, 
     await expect(timeline(page).getByText('✓ entrou')).toHaveCount(2, { timeout: 30_000 });
     expect(userLines(chat.sessionsDir).some((l) => l.text === 'linha um\nlinha dois')).toBe(true);
 
-    // `/mod` nao vira `/model` (o menu de comandos completaria no Enter).
-    await send(page, '/mod');
+    // `/mod` enviado com o menu da caixa FECHADO (Esc antes; com ele aberto o Enter completaria para `/model `):
+    // chega literal, o CLI nao o conhece e o cartao fecha em "nao foi" - sem duplicar nem ficar orfao.
+    await input(page).fill('/mod');
+    await input(page).press('Escape');
+    await input(page).press('Enter');
     await expect(timeline(page).getByText('✕ não foi').first()).toBeVisible({ timeout: 30_000 });
     await expect(timeline(page).getByText(/comando desconhecido/).first()).toBeVisible();
     await expect(timeline(page).getByRole('button', { name: 'tentar de novo' }).first()).toBeVisible();
