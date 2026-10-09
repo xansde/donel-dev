@@ -23,6 +23,7 @@ import {
   type ChainLine,
 } from './activeChain';
 import { groupActions } from './grouping';
+import { unwrapPastedContent } from './promptMatch';
 import type { RowPatch } from './ipc';
 import type {
   ActionRow,
@@ -766,7 +767,8 @@ function foldUser(w: Work, line: Extract<ChainLine, { k: 'node' }>): void {
   const turnId = str(data.promptId) ?? uuid;
   w.heldLocal = null;
   w.lastCommand = null;
-  const q = w.queued.findIndex((x) => x.text === text);
+  const shown = unwrapPastedContent(text);
+  const q = w.queued.findIndex((x) => x.text === shown);
   if (q >= 0) {
     const entry = w.queued[q]!;
     w.queued.splice(q, 1);
@@ -776,7 +778,7 @@ function foldUser(w: Work, line: Extract<ChainLine, { k: 'node' }>): void {
     return;
   }
   openTurn(w, turnId, 'human');
-  put(w, { kind: 'user', ...base(w, uuid, at), text, attachments });
+  put(w, { kind: 'user', ...base(w, uuid, at), text: shown, attachments });
 }
 
 function lastUserIndex(w: Work): number {
@@ -799,8 +801,9 @@ function foldAttachment(w: Work, line: Extract<ChainLine, { k: 'node' }>): void 
           notify(w, n.toolUseId, pending);
         }
       } else if (a.commandMode === 'prompt' && a.humanTurn === true) {
-        put(w, { kind: 'user', ...base(w, uuid, at), text: prompt, attachments: [], queued: true });
-        w.queued.push({ rowId: uuid, text: prompt });
+        const shown = unwrapPastedContent(prompt);
+        put(w, { kind: 'user', ...base(w, uuid, at), text: shown, attachments: [], queued: true });
+        w.queued.push({ rowId: uuid, text: shown });
       }
       return;
     }
