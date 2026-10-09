@@ -80,7 +80,7 @@ describe('mergeOptimistic', () => {
   });
 
   it('prompt aceito sem linha real ainda fica visível como "entrou"', () => {
-    const out = mergeOptimistic([], [item('s1', 'oi', 'accepted', { label: 'entrou' })]);
+    const out = mergeOptimistic([], [item('s1', 'oi', 'accepted', { label: 'entrou' })], T0 + 1_000);
     expect(out.overlays.get('local:s1')).toMatchObject({ sendState: 'sent' });
   });
 
@@ -117,5 +117,53 @@ describe('mergeOptimistic - cartão "não foi" no ponto do envio', () => {
     const later = real('u9', 'depois', '2026-10-08T12:05:00.000Z');
     const out = mergeOptimistic([later], []);
     expect(ids(out.rows)).toEqual(['u9']);
+  });
+
+  it('envio marcado como devolvido pelo CLI vira "interrompida", com ou sem a linha real', () => {
+    const withReal = mergeOptimistic([real('u1', 'oi')], [item('s1', 'oi', 'accepted', { label: 'entrou', returned: true })]);
+    expect(withReal.overlays.get('u1')).toMatchObject({ sendState: 'interrupted' });
+    // A cadeia foi reescrita (a próxima mensagem se pendurou antes dela): o cartão segue como local.
+    const rewritten = mergeOptimistic([], [item('s1', 'oi', 'accepted', { label: 'entrou', returned: true })]);
+    expect(ids(rewritten.rows)).toEqual(['local:s1']);
+    expect(rewritten.overlays.get('local:s1')).toMatchObject({ sendState: 'interrupted' });
+  });
+
+  describe('aceito sem linha real (cadeia reescrita ou nunca casou)', () => {
+    const accepted = (id: string, text: string, createdAt: number) => item(id, text, 'accepted', { label: 'entrou', createdAt });
+
+    it('fica na posição cronológica do envio, nunca no fim da conversa', () => {
+      const rows = [
+        real('u0', 'antes', '2026-10-08T11:59:00.000Z'),
+        real('u2', 'depois', '2026-10-08T12:00:30.000Z'),
+      ];
+      const out = mergeOptimistic(rows, [accepted('s1', 'sumiu', T0)], T0 + 5_000);
+      expect(ids(out.rows)).toEqual(['u0', 'local:s1', 'u2']);
+      expect(out.overlays.get('local:s1')).toMatchObject({ sendState: 'sent' });
+    });
+
+    it('some depois de um teto curto sem linha real', () => {
+      const out = mergeOptimistic([], [accepted('s1', 'sumiu', T0)], T0 + 61_000);
+      expect(ids(out.rows)).toEqual([]);
+      expect(out.overlays.has('local:s1')).toBe(false);
+    });
+
+    it('some quando o Claude já produziu algo depois do envio', () => {
+      const answer = { kind: 'assistant', id: 'a1', turnId: 'u9', at: '2026-10-08T12:00:10.000Z', scope: 'main', markdown: 'oi' } as unknown as ConversationRow;
+      const out = mergeOptimistic([answer], [accepted('s1', 'sumiu', T0)], T0 + 15_000);
+      expect(ids(out.rows)).toEqual(['a1']);
+    });
+
+    it('"interrompida" não expira: fica no lugar do envio', () => {
+      const answer = { kind: 'assistant', id: 'a1', turnId: 'u9', at: '2026-10-08T12:05:00.000Z', scope: 'main', markdown: 'oi' } as unknown as ConversationRow;
+      const out = mergeOptimistic([answer], [item('s1', 'oi', 'accepted', { label: 'entrou', returned: true })], T0 + 600_000);
+      expect(ids(out.rows)).toEqual(['local:s1', 'a1']);
+      expect(out.overlays.get('local:s1')).toMatchObject({ sendState: 'interrupted' });
+    });
+
+    it('enviando e na fila continuam no fim (ainda não aconteceram)', () => {
+      const rows = [real('u0', 'antes', '2026-10-08T12:10:00.000Z')];
+      const out = mergeOptimistic(rows, [item('s1', 'novo', 'typing', { createdAt: T0 })], T0 + 1_000);
+      expect(ids(out.rows)).toEqual(['u0', 'local:s1']);
+    });
   });
 });

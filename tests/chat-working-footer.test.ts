@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { toGerund } from '../src/shared/chat/gerund';
-import { deriveFooter, formatElapsed } from '../src/renderer/src/chat/workingFooterModel';
+import { deriveFooter, expiredStopRequest, formatElapsed, STOP_TIMEOUT_MS, stopFeedback } from '../src/renderer/src/chat/workingFooterModel';
 import type { ConversationRow, LiveAction, LiveState } from '../src/shared/chat/rows';
 
 const action = (verb: string, target?: string): LiveAction => ({
@@ -127,5 +127,24 @@ describe('deriveFooter', () => {
   it('skips trailing rows that are not user/notice when looking for the interruption', () => {
     const rows = [row('user'), interrupted(), row('action')];
     expect(deriveFooter({ live: live({ status: 'idle' }), rows, lastAction: null })?.kind).toBe('interrupted');
+  });
+});
+
+describe('stopFeedback (retorno do Parar/Esc)', () => {
+  it('sem pedido: nada', () => {
+    expect(stopFeedback(null, 10_000)).toBe('none');
+  });
+
+  it('dentro do teto: "parando…"', () => {
+    expect(stopFeedback(1000, 1000)).toBe('stopping');
+    expect(stopFeedback(1000, 1000 + STOP_TIMEOUT_MS - 1)).toBe('stopping');
+  });
+
+  it('vencido o teto: volta ao normal com o aviso (stuck)', () => {
+    expect(stopFeedback(1000, 1000 + STOP_TIMEOUT_MS)).toBe('stuck');
+  });
+
+  it('pedido que não escreveu nada já nasce vencido', () => {
+    expect(stopFeedback(expiredStopRequest(50_000), 50_000)).toBe('stuck');
   });
 });

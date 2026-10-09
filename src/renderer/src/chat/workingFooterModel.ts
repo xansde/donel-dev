@@ -31,6 +31,8 @@ export interface FooterInput {
    * `status` can stay `working`: the marker in the transcript plus a screen that stopped working is the proof.
    */
   readonly screenWorking?: boolean | null;
+  /** The screen proved the round over after a Parar/Esc (`stopWindow.ts`): no Stop hook will come. */
+  readonly endedByScreen?: boolean;
 }
 
 /** The interruption is the latest event of the conversation: no `user` row after the `[Request interrupted...]` notice. */
@@ -48,12 +50,13 @@ const toFooterAction = (action: LiveAction): FooterAction => ({
   ...(action.summary.target !== undefined ? { target: action.summary.target } : {}),
 });
 
-export function deriveFooter({ live, rows, lastAction, screenWorking = null }: FooterInput): FooterModel | null {
+export function deriveFooter({ live, rows, lastAction, screenWorking = null, endedByScreen = false }: FooterInput): FooterModel | null {
   if (live === null) return null;
   const interruptedNow = screenWorking !== true && endsInterrupted(rows);
   if (interruptedNow && (live.status === 'working' || live.status === 'idle')) {
     return { kind: 'interrupted', after: lastAction === null ? null : toFooterAction(lastAction) };
   }
+  if (live.status === 'working' && endedByScreen) return null;
   if (live.status === 'working') {
     const action = live.currentAction;
     if (action !== null) {
@@ -82,3 +85,26 @@ export function formatElapsed(ms: number): string {
   const seconds = total % 60;
   return `${Math.floor(total / 60)}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
+
+/** How long the footer says "parando…" before admitting the Claude did not stop. */
+export const STOP_TIMEOUT_MS = 5000;
+
+export type StopFeedback = 'none' | 'stopping' | 'stuck';
+
+/**
+ * What Parar / Esc shows while the round still runs: nothing before a request, "parando…" (button off) until the
+ * round ends or the timeout, then `stuck` (button back + a discreet "o Claude não parou" hint). A request is the
+ * `Date.now()` of the press; one that wrote nothing is stored already expired (`expiredStopRequest`).
+ */
+export function stopFeedback(requestedAt: number | null, now: number): StopFeedback {
+  if (requestedAt === null) return 'none';
+  return now - requestedAt < STOP_TIMEOUT_MS ? 'stopping' : 'stuck';
+}
+
+/** A press that reached nothing (the screen did not show "esc to interrupt"): no point waiting 5 s to say so. */
+export const expiredStopRequest = (now: number): number => now - STOP_TIMEOUT_MS;
+
+export const STOP_STUCK_HINT = 'o Claude não parou — tente de novo ou abra o terminal';
+
+/** A press that wrote nothing is stored already expired. */
+export const isExpiredStop = (requestedAt: number, now: number): boolean => now - requestedAt >= STOP_TIMEOUT_MS;

@@ -44,6 +44,8 @@ import {
   setTrigger,
   type ComposerTriggerState,
 } from '../../../../shared/chat/t3/composerTriggerState';
+import { restoreDraft } from '../../../../shared/chat/returnedPrompt';
+import { planReturned } from './returnedReclaim';
 import type { ConversationRow } from '../../../../shared/chat/rows';
 import type { SendDriver, SendItemView } from '../sendDriver';
 import { getChatStore } from '../ChatStore';
@@ -480,8 +482,25 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
   );
 
   const leftover = items.find((item) => item.leftover !== null);
+
+  // Esc before the first answer: the CLI cancels the request and gives the message back to ITS box. That sobra is
+  // not typing to discard - it is the owner's own message, so it goes back to the chat box and the card says so.
+  const returned = useMemo(() => {
+    if (leftover === undefined || leftover.leftover === null || !leftover.leftover.canDiscard) return null;
+    const plan = planReturned(leftover.leftover.text, rows, items, leftover.id);
+    return plan === null ? null : { leftoverId: leftover.id, text: plan.text, sourceId: plan.sourceId };
+  }, [leftover, rows, items]);
+  const reclaimedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (returned === null || reclaimedFor.current === returned.leftoverId) return;
+    reclaimedFor.current = returned.leftoverId;
+    setDraft(tabId, restoreDraft(getDraft(tabId), returned.text));
+    if (returned.sourceId !== null) driver.markReturned(returned.sourceId);
+    driver.discardAndSend(returned.leftoverId);
+  }, [returned, tabId, driver]);
+
   const banner =
-    leftover !== undefined && leftover.leftover !== null ? (
+    returned === null && leftover !== undefined && leftover.leftover !== null ? (
       <Banner
         tone="waiting"
         variant="compact"
