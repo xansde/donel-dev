@@ -210,3 +210,8 @@ export type {
   PendingOrigin,
   QuestionBlockProps,
 } from './components/PendingPanel';
+
+// === 014-chat Fase 5 (T087) - menu `/` e `@` da caixa de escrever (extensao 8) ===
+
+export { Listbox, listboxOptionId } from './components/Listbox';
+export type { ListboxItem, ListboxProps } from './components/Listbox';

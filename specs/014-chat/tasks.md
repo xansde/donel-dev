@@ -521,7 +521,7 @@ um por vez, com notificação em segundo plano.
   - sem git, varredura limitada (pula `node_modules`, `.git` e `dist`; teto de 20 mil);
   - handler `chat:files`;
   - teste em `tests/chat-project-files.test.ts`, com pasta temporária.
-- [ ] T087 [US4] Menu em `src/renderer/src/chat/composer/CommandMenu.tsx`, com o Menu/Popover do design-system conforme o design:
+- [x] T087 [US4] Menu em `src/renderer/src/chat/composer/CommandMenu.tsx`, com o Menu/Popover do design-system conforme o design:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): `Listbox`; Enter envia o que está escrito e Tab escolhe; ficha de origem com "plugin"; selo de `/login` e `/logout`.
   - `/` com nome e descrição, filtrando;
   - `@` com arquivos;
@@ -536,11 +536,11 @@ um por vez, com notificação em segundo plano.
   - arquivo não-imagem arrastado → `@relativo`.
 
   Para arquivo fora do `cwd`, verificar no CLI se `@` com caminho absoluto funciona e, se não, inserir o caminho como texto; registrar o resultado em `specs/014-chat/research.md`, R4.
-- [ ] T089 [US4] Colagem grande e selo de shell em `src/renderer/src/chat/composer/Composer.tsx`:
+- [x] T089 [US4] Colagem grande e selo de shell em `src/renderer/src/chat/composer/Composer.tsx`:
   - **Ajuste da conferência** (`design/chat-verificacao.md`): A ficha de texto colado abre num `Modal` só leitura, em mono.
   - colagem com mais de 20 linhas ou mais de 2.000 caracteres vira a ficha "texto colado — N linhas", que abre para conferir e no envio volta inteira ao lugar;
   - selo "vai rodar como comando de shell" para mensagem começando com `!`.
-- [ ] T090 [US4] Escrever a smoke `tests/smoke/chat-composer.spec.ts`, cobrindo:
+- [x] T090 [US4] Escrever a smoke `tests/smoke/chat-composer.spec.ts`, cobrindo:
   - menu `/` filtra e insere;
   - menu `@`;
   - imagem → miniatura, e o CLI falso recebe a colagem do caminho;

@@ -1,7 +1,9 @@
 // T088 (014-chat) - pure model of the composer attachments: which files are images, how a non-image file
 // becomes an `@` mention (FR-015, decision 4), the "imagem colada N" label and the request the driver gets.
 
+import { inspectTypedCommand } from '../../../../shared/chat/commandCatalog';
 import type { SendRequest } from '../sendDriver';
+import { expandPastes, type DraftPaste } from './pastedText';
 
 /** A pasted/dropped/picked image already saved by the main (`chat:save-image`). */
 export interface DraftImage {
@@ -68,11 +70,31 @@ export function imageLabels(images: readonly DraftImage[]): string[] {
   });
 }
 
-export function canSend(text: string, images: readonly DraftImage[]): boolean {
-  return text.trim() !== '' || images.length > 0;
+export function canSend(text: string, images: readonly DraftImage[], pastes: readonly DraftPaste[] = []): boolean {
+  return text.trim() !== '' || images.length > 0 || pastes.length > 0;
 }
 
-/** What the driver gets: the text and one pasted path per image, in the order they sit in the draft. */
-export function sendRequestOf(text: string, images: readonly DraftImage[], mode: 'normal' | 'interrupt-first'): SendRequest {
-  return { text, mode, ...(images.length > 0 ? { imagePaths: images.map((i) => i.path) } : {}) };
+export interface SendExtras {
+  /** Large pastes kept aside: they go back into the message in full (T089). */
+  readonly pastes?: readonly DraftPaste[];
+  /** Names of skills/custom commands: they win over a native command of the same name. */
+  readonly customCommands?: ReadonlySet<string>;
+}
+
+/**
+ * What the driver gets: the full text (pastes back in), one pasted path per image in the order they sit in the
+ * draft, the custom command names (so a skill is classified as a skill) and whether the command typed opens a
+ * CLI screen (T087, so the "o terminal precisa de voce" strip is expected).
+ */
+export function sendRequestOf(text: string, images: readonly DraftImage[], mode: 'normal' | 'interrupt-first', extras: SendExtras = {}): SendRequest {
+  const full = expandPastes(text, extras.pastes ?? []);
+  const custom = extras.customCommands;
+  const opensScreen = inspectTypedCommand(full, custom).opensScreen;
+  return {
+    text: full,
+    mode,
+    ...(images.length > 0 ? { imagePaths: images.map((i) => i.path) } : {}),
+    ...(opensScreen ? { opensScreen } : {}),
+    ...(custom !== undefined && custom.size > 0 ? { customCommands: custom } : {}),
+  };
 }
