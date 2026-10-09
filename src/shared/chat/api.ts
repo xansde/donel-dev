@@ -6,6 +6,8 @@
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
+  ChatCatalogOutput,
+  ChatFilesOutput,
   ChatFocusPendingEvent,
   ChatConversationSwitchedEvent,
   ChatLiveEvent,
@@ -31,6 +33,11 @@ export interface DonelChatApi {
   openExternal(url: string): Promise<void>;
   /** Document/image files inside the tab's cwd or the attachments folder only. */
   openGenerated(ptyId: string, path: string): Promise<void>;
+
+  /** T084 - entradas do menu `/` (nativos + disco + `skill_listing`), com cache por pasta no main. `/login` e `/logout` não vêm: ver `inspectTypedCommand`. */
+  catalog(ptyId: string): Promise<ChatCatalogOutput>;
+  /** T086 - arquivos do projeto para o menu `@`, relativos ao `cwd` da aba, já ranqueados pela consulta. */
+  files(ptyId: string, query: string, limit: number): Promise<ChatFilesOutput>;
 
   /** T088 - grava a imagem colada/arrastada em `userData/chat-attachments/<sessionId>/` e devolve o caminho absoluto (o main valida tipo e tamanho). */
   saveImage(ptyId: string, bytes: ArrayBuffer, mediaType: string): Promise<ChatSaveImageOutput>;

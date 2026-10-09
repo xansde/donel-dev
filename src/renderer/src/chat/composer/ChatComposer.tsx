@@ -5,22 +5,63 @@
 // shows up as a `Banner·waiting` above the field (T065). Images (T088): Ctrl+V / drop / the paperclip save the
 // picture through the main (`chat:save-image`) and show a removable thumbnail above the text; a non-image file
 // from the paperclip or a drop becomes an `@` mention in the text. The draft keeps the images too.
+// T087: `/` at the start of the message and `@path` open a menu above the box (`CommandMenu`): arrows move, Tab
+// picks, Esc closes, and Enter still SENDS what is written (`/mod` goes out as `/mod`, it is never completed).
+// T089: a paste of more than 20 lines or 2.000 characters becomes a "texto colado" chip (`PastedTexts`) that goes
+// back into the message in full on send; a message starting with `!` (or `/login`, `/logout`) shows a seal.
 
-import { Banner, Button, Composer, Kbd, TextArea } from '@donel-dev/design-system';
-import { Paperclip } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
+import { AnnotationTag, Banner, Button, Composer, Kbd, TextArea, listboxOptionId } from '@donel-dev/design-system';
+import { Paperclip, SquareTerminal } from 'lucide-react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ClipboardEvent,
+  type DragEvent,
+  type KeyboardEvent,
+} from 'react';
+import { ACCOUNT_COMMAND_WARNING, filterCatalog, inspectTypedCommand } from '../../../../shared/chat/commandCatalog';
+import type { CommandEntry } from '../../../../shared/chat/ipc';
 import {
   buildPromptHistoryEntries,
   stepPromptHistory,
   type PromptHistoryPosition,
 } from '../../../../shared/chat/t3/promptHistory';
+import { resolveComposerMenuActiveItemId } from '../../../../shared/chat/t3/composerMenuHighlight';
+import { detectComposerTrigger } from '../../../../shared/chat/t3/composerTrigger';
+import {
+  dismissTrigger,
+  initialTriggerState,
+  resetTrigger,
+  setTrigger,
+  type ComposerTriggerState,
+} from '../../../../shared/chat/t3/composerTriggerState';
 import type { ConversationRow } from '../../../../shared/chat/rows';
 import type { SendDriver, SendItemView } from '../sendDriver';
 import { getChatStore } from '../ChatStore';
 import { forwardBackTab, permissionModeLabel, useScreenPermissionMode, type ModeTerminal } from '../cycleMode';
 import { Attachments } from './Attachments';
 import { appendMention, canSend, imageTypeOf, mentionFor, sendRequestOf, type DraftImage } from './attachmentsModel';
-import { getDraft, getDraftImages, setDraft, setDraftImages, subscribeDraft, subscribeDraftImages } from './tabSend';
+import { CommandMenu, rowIdsOf, type MenuRows } from './CommandMenu';
+import { insertionFor, menuKeyAction, stepHighlight } from './composerMenu';
+import { PastedTexts } from './PastedTexts';
+import { isLargePaste, makePaste } from './pastedText';
+import {
+  getDraft,
+  getDraftImages,
+  getDraftPastes,
+  setDraft,
+  setDraftImages,
+  setDraftPastes,
+  subscribeDraft,
+  subscribeDraftImages,
+  subscribeDraftPastes,
+} from './tabSend';
 import styles from './ChatComposer.module.css';
 
 export interface ChatComposerProps {
@@ -54,6 +95,13 @@ export interface PlanAdjustMode {
 const isComposing = (event: KeyboardEvent<HTMLTextAreaElement>): boolean =>
   event.nativeEvent.isComposing || event.keyCode === 229;
 
+/** Rows the `/` menu shows at most (the rest is reached by typing more). */
+const SLASH_MENU_LIMIT = 6;
+/** Rows the `@` menu asks the main for. */
+const PATH_MENU_LIMIT = 8;
+/** Wait after the last keystroke before asking the main for files. */
+const FILES_DEBOUNCE_MS = 80;
+
 const LEFTOVER_PREVIEW = 80;
 const preview = (text: string): string => {
   const flat = text.replace(/\s+/g, ' ').trim();
@@ -69,10 +117,25 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
     useCallback((cb) => subscribeDraftImages(tabId, cb), [tabId]),
     () => getDraftImages(tabId),
   );
+  const pastes = useSyncExternalStore(
+    useCallback((cb) => subscribeDraftPastes(tabId, cb), [tabId]),
+    () => getDraftPastes(tabId),
+  );
   const [imageError, setImageError] = useState<string | null>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const historyPosition = useRef<PromptHistoryPosition | null>(null);
+  const pendingCaret = useRef<{ value: string; cursor: number } | null>(null);
+
+  // --- menus `/` and `@` (T087)
+  const [trigState, setTrigState] = useState<ComposerTriggerState>(() => initialTriggerState());
+  const [highlight, setHighlight] = useState<{ id: string | null; key: string | null }>({ id: null, key: null });
+  const [catalog, setCatalog] = useState<readonly CommandEntry[]>([]);
+  const [fileResults, setFileResults] = useState<{ readonly query: string; readonly paths: readonly string[] }>({ query: '', paths: [] });
+  const listId = useId();
+  const trigger = trigState.trigger;
+  const slashOpen = trigger?.kind === 'slash-command';
+  const pathQuery = trigger?.kind === 'path' ? trigger.query : null;
 
   // The box is focused when the tab opens on (or comes back to) the chat.
   useEffect(() => {
@@ -91,23 +154,119 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
     [rows],
   );
 
+  useLayoutEffect(() => {
+    const pending = pendingCaret.current;
+    const el = areaRef.current;
+    if (pending === null || el === null || el.value !== pending.value) return;
+    pendingCaret.current = null;
+    el.setSelectionRange(pending.cursor, pending.cursor);
+  });
+
+  // The catalog is read when the tab appears and again each time the `/` menu opens (the main caches by folder).
+  useEffect(() => {
+    if (ptyId === null) return undefined;
+    let live = true;
+    void getChatStore()
+      .catalog(ptyId)
+      .then((entries) => {
+        if (live) setCatalog(entries);
+      });
+    return () => {
+      live = false;
+    };
+  }, [ptyId, slashOpen]);
+
+  // Custom commands/skills win over a native command of the same name (decides `skill` vs `native` on send).
+  const customNames = useMemo(() => new Set(catalog.filter((entry) => entry.source !== 'builtin').map((entry) => entry.name)), [catalog]);
+  const customRef = useRef(customNames);
+  customRef.current = customNames;
+
+  useEffect(() => {
+    if (ptyId === null || pathQuery === null) {
+      setFileResults({ query: '', paths: [] });
+      return undefined;
+    }
+    let live = true;
+    const timer = setTimeout(() => {
+      void getChatStore()
+        .files(ptyId, pathQuery, PATH_MENU_LIMIT)
+        .then((paths) => {
+          if (live) setFileResults({ query: pathQuery, paths });
+        });
+    }, FILES_DEBOUNCE_MS);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [ptyId, pathQuery]);
+
+  const menuRows = useMemo<MenuRows | null>(() => {
+    if (trigger === null) return null;
+    if (trigger.kind === 'slash-command') return { kind: 'slash', entries: filterCatalog(catalog, trigger.query, SLASH_MENU_LIMIT), total: catalog.length };
+    // Results of a SHORTER query are kept while the next ones load (typing narrows, so they are still a fair
+    // superset); results of any other query are not shown: Tab must never pick a row of a stale search.
+    const fresh = trigger.query.startsWith(fileResults.query);
+    return { kind: 'path', paths: fresh ? fileResults.paths : [] };
+  }, [trigger, catalog, fileResults]);
+  const menuIds = useMemo(() => (menuRows === null ? [] : rowIdsOf(menuRows)), [menuRows]);
+  const searchKey = trigger === null ? null : `${trigger.kind}:${trigger.query}`;
+  const activeId = resolveComposerMenuActiveItemId({
+    items: menuIds.map((id) => ({ id })),
+    highlightedItemId: highlight.id,
+    currentSearchKey: searchKey,
+    highlightedSearchKey: highlight.key,
+  });
+  const menuOpen = menuRows !== null && menuIds.length > 0;
+
+  const syncTrigger = useCallback((text: string, caret: number) => {
+    const candidate = detectComposerTrigger(text, caret);
+    setTrigState((state) => setTrigger(state, candidate));
+  }, []);
+
   const onChange = useCallback(
-    (value: string) => {
+    (value: string, event: { target: HTMLTextAreaElement }) => {
       setDraft(tabId, value);
+      syncTrigger(value, event.target.selectionStart);
     },
-    [tabId],
+    [tabId, syncTrigger],
+  );
+
+  /** Puts the picked row where the trigger was (`/name ` or `@path `) and the caret right after it. */
+  const pick = useCallback(
+    (id: string) => {
+      if (trigger === null || menuRows === null) return;
+      const text = getDraft(tabId);
+      let inserted: { text: string; cursor: number } | null = null;
+      if (menuRows.kind === 'slash') {
+        const entry = menuRows.entries.find((e) => e.name === id);
+        if (entry !== undefined) inserted = insertionFor(text, trigger, { kind: 'command', entry });
+      } else if (menuRows.paths.includes(id)) {
+        inserted = insertionFor(text, trigger, { kind: 'file', path: id });
+      }
+      if (inserted === null) return;
+      const result = inserted;
+      setDraft(tabId, result.text);
+      setTrigState((state) => resetTrigger(state, null));
+      // The caret is placed in a layout effect (below), before the next keystroke: a frame later it would land
+      // in the middle of what the owner already typed after the Tab.
+      pendingCaret.current = { value: result.text, cursor: result.cursor };
+    },
+    [tabId, trigger, menuRows],
   );
 
   const submit = useCallback(
     (mode: 'normal' | 'interrupt-first') => {
       const text = getDraft(tabId);
       const attached = getDraftImages(tabId);
-      if (!canSend(text, attached)) return;
+      const pasted = getDraftPastes(tabId);
+      if (!canSend(text, attached, pasted)) return;
       historyPosition.current = null;
       setDraft(tabId, '');
       setDraftImages(tabId, []);
+      setDraftPastes(tabId, []);
       setImageError(null);
-      driver.enqueue(sendRequestOf(text, attached, mode));
+      setTrigState(initialTriggerState());
+      driver.enqueue(sendRequestOf(text, attached, mode, { pastes: pasted, customCommands: customRef.current }));
     },
     [tabId, driver],
   );
@@ -162,11 +321,30 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
     [tabId],
   );
 
+  const removePaste = useCallback(
+    (id: string) => {
+      setDraftPastes(
+        tabId,
+        getDraftPastes(tabId).filter((paste) => paste.id !== id),
+      );
+      areaRef.current?.focus();
+    },
+    [tabId],
+  );
+
   const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
     const data = event.clipboardData;
+    // A paste too big for the box becomes a chip (FR-016); it goes back into the message on send.
+    const pastedText = data.getData('text/plain');
+    if (isLargePaste(pastedText)) {
+      event.preventDefault();
+      const kept = getDraftPastes(tabId);
+      setDraftPastes(tabId, [...kept, makePaste(`paste-${Date.now()}-${kept.length}`, pastedText)]);
+      return;
+    }
     const files = [...data.files].filter((file) => imageTypeOf(file) !== null);
     // Text wins when the clipboard has both (a spreadsheet copies its cells AND a picture of them).
-    if (files.length === 0 || data.getData('text/plain') !== '') return;
+    if (files.length === 0 || pastedText !== '') return;
     event.preventDefault();
     void addFiles(files, 'pasted');
   };
@@ -187,6 +365,17 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (isComposing(event)) return;
+    // Menu open: arrows move, Tab picks, Esc closes (marked handled so it does not reach the Parar of the view).
+    // Enter is NOT here on purpose: it sends what is written.
+    const menuAction = menuOpen ? menuKeyAction(event, menuIds.length) : null;
+    if (menuAction !== null) {
+      event.preventDefault();
+      if (menuAction === 'close') setTrigState((state) => dismissTrigger(state, state.trigger));
+      else if (menuAction === 'choose') {
+        if (activeId !== null) pick(activeId);
+      } else setHighlight({ id: stepHighlight(menuIds, activeId, menuAction), key: searchKey });
+      return;
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
       event.preventDefault();
       submit('normal');
@@ -213,6 +402,7 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
       if (result === null) return;
       event.preventDefault();
       historyPosition.current = result.position;
+      setTrigState(initialTriggerState());
       setDraft(tabId, result.prompt);
       requestAnimationFrame(() => {
         const el = areaRef.current;
@@ -274,40 +464,72 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
     ) : undefined;
 
   const mono = draft.startsWith('/') || draft.startsWith('!');
+  // FR-018: a message starting with `!` runs in the shell; `/login` and `/logout` change the account behind the app.
+  const shellSeal = draft.trimStart().startsWith('!');
+  const accountSeal = !shellSeal && inspectTypedCommand(draft, customNames).accountWarning;
 
   return (
     <div className={styles.wrap} data-testid="chat-composer" onDragOver={onDragOver} onDrop={onDrop}>
-      <Composer
-        working={working}
-        sendDisabled={!canSend(draft, images)}
-        onSend={() => submit('normal')}
-        onInterruptAndSend={() => submit('interrupt-first')}
-        banner={banner}
-        leading={paperclip}
-        footerHint={
-          <>
-            <Kbd>Enter</Kbd> envia · <Kbd>Shift+Enter</Kbd> quebra linha · <Kbd>Shift+Tab</Kbd>{' '}
-            <span data-testid="chat-composer-mode">{mode === null ? 'alterna o modo' : `modo: ${permissionModeLabel(mode)}`}</span>
-          </>
-        }
-        fluid
-      >
-        {/* Thumbnails sit above the text, inside the box (design T06 "Anexos"). */}
-        <Attachments images={images} onRemove={removeImage} />
-        <TextArea
-          ref={areaRef}
-          appearance="bare"
-          aria-label="Mensagem para o Claude"
-          placeholder="Escreva para o Claude"
-          value={draft}
-          onChange={onChange}
-          onKeyDown={onKeyDown}
-          onPaste={onPaste}
-          mono={mono}
-          maxRows={10}
-          data-testid="chat-composer-input"
-        />
-      </Composer>
+      <div className={styles.stack}>
+        {menuOpen && menuRows !== null ? (
+          <div className={styles.menu}>
+            <CommandMenu
+              rows={menuRows}
+              query={trigger?.query ?? ''}
+              activeId={activeId}
+              listId={listId}
+              onActiveChange={(id) => setHighlight({ id, key: searchKey })}
+              onSelect={pick}
+            />
+          </div>
+        ) : null}
+        <Composer
+          working={working}
+          sendDisabled={!canSend(draft, images, pastes)}
+          onSend={() => submit('normal')}
+          onInterruptAndSend={() => submit('interrupt-first')}
+          banner={banner}
+          leading={paperclip}
+          footerHint={
+            <>
+              <Kbd>Enter</Kbd> envia · <Kbd>Shift+Enter</Kbd> quebra linha · <Kbd>Shift+Tab</Kbd>{' '}
+              <span data-testid="chat-composer-mode">{mode === null ? 'alterna o modo' : `modo: ${permissionModeLabel(mode)}`}</span>
+            </>
+          }
+          fluid
+        >
+          {/* Thumbnails and pasted-text chips sit above the text, inside the box (design T06 "Anexos"). */}
+          <Attachments images={images} onRemove={removeImage} />
+          <PastedTexts pastes={pastes} onRemove={removePaste} />
+          {shellSeal || accountSeal ? (
+            <div className={styles.seals}>
+              <AnnotationTag tone="warn">
+                <span className={styles.seal} data-testid={shellSeal ? 'chat-composer-seal-shell' : 'chat-composer-seal-account'}>
+                  <SquareTerminal size={12} strokeWidth={2} aria-hidden="true" />
+                  {shellSeal ? 'vai rodar como comando de shell' : ACCOUNT_COMMAND_WARNING}
+                </span>
+              </AnnotationTag>
+            </div>
+          ) : null}
+          <TextArea
+            ref={areaRef}
+            appearance="bare"
+            aria-label="Mensagem para o Claude"
+            placeholder="Escreva para o Claude"
+            value={draft}
+            onChange={onChange}
+            onKeyDown={onKeyDown}
+            onSelect={(event) => syncTrigger(event.currentTarget.value, event.currentTarget.selectionStart)}
+            onPaste={onPaste}
+            aria-autocomplete="list"
+            aria-controls={menuOpen ? listId : undefined}
+            aria-activedescendant={menuOpen && activeId !== null ? listboxOptionId(listId, Math.max(0, menuIds.indexOf(activeId))) : undefined}
+            mono={mono}
+            maxRows={10}
+            data-testid="chat-composer-input"
+          />
+        </Composer>
+      </div>
     </div>
   );
 }

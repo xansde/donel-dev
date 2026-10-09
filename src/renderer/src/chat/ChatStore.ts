@@ -17,6 +17,7 @@ import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
   ChatLiveEvent,
+  CommandEntry,
   ChatPromptSignalEvent,
   ChatReceptionEvent,
   ChatRowsEvent,
@@ -209,6 +210,16 @@ export class ChatStore {
   /** T088 - saves a pasted/dropped image through the main (which validates it) and returns its absolute path. */
   saveImage(ptyId: string, bytes: ArrayBuffer, mediaType: string): Promise<{ readonly id: string; readonly path: string }> {
     return this.api.saveImage(ptyId, bytes, mediaType);
+  }
+
+  /** T087 - entries of the `/` menu (the main caches by folder). Empty when the call fails: the menu just stays closed. */
+  catalog(ptyId: string): Promise<readonly CommandEntry[]> {
+    return Promise.resolve(this.api.catalog(ptyId)).catch((): readonly CommandEntry[] => []);
+  }
+
+  /** T087 - project files for the `@` menu, relative to the tab's cwd, already ranked. */
+  files(ptyId: string, query: string, limit: number): Promise<readonly string[]> {
+    return Promise.resolve(this.api.files(ptyId, query, limit)).catch((): readonly string[] => []);
   }
 
   /** T088 - disk path of a `File` from the picker or a drop (`''` when it has none). */

@@ -608,6 +608,37 @@ function commitPaste(text) {
   }
 }
 
+// ConPTY drops the bracketed-paste markers (see onData), so a LARGE paste arrives as plain chunks of text with LF
+// and no marker. The real CLI collapses a big paste into `[Pasted text #N +M lines]` (T089); to stay faithful the
+// fake treats a marker-less chunk of 5+ lines or 1000+ characters as a paste, and the chunks that follow it within
+// BURST_WINDOW_MS (the PTY splits one write into several) as the continuation of the same paste.
+const BURST_WINDOW_MS = 250;
+let burstIdx = -1;
+let burstAt = 0;
+function commitBurst(chunk) {
+  const now = Date.now();
+  const text = chunk.replace(/\r\n|\r/g, '\n');
+  const big = (text.match(/\n/g) ?? []).length >= 4 || text.length >= 1000;
+  if (burstIdx >= 0 && now - burstAt < BURST_WINDOW_MS) {
+    state.pastes[burstIdx] += text;
+    const lineCount = state.pastes[burstIdx].split('\n').length;
+    state.input = state.input.replace(
+      new RegExp(`\\[Pasted text #${burstIdx + 1} \\+\\d+ lines\\]`),
+      `[Pasted text #${burstIdx + 1} +${lineCount - 1} lines]`,
+    );
+    burstAt = now;
+    return true;
+  }
+  if (!big) {
+    burstIdx = -1;
+    return false;
+  }
+  commitPaste(text);
+  burstIdx = state.pastes.length - 1;
+  burstAt = now;
+  return true;
+}
+
 // ConPTY drops the bracketed-paste markers (see onData), so an image path pasted by the app arrives as plain
 // typed text. Like the real CLI, an absolute image path that ends up at the start of the box (or right after
 // another `[Image #N]`) becomes the `[Image #N]` placeholder.
@@ -706,6 +737,7 @@ function onData(chunk) {
     }
     const start = data.indexOf(PASTE_START);
     const plain = start === -1 ? data : data.slice(0, start);
+    if (start === -1 && plain.length > 1 && !/[\r\x1b\x7f\b]/.test(plain) && commitBurst(plain)) break;
     for (const ch of plain) {
       if (ch === '\r') {
         pressEnter();

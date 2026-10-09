@@ -24,3 +24,30 @@
   color: var(--text-primary);
   background: var(--bg-raised);
 }
+
+.stack {
+  position: relative;
+  width: 100%;
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  z-index: 20;
+  margin-bottom: 6px;
+}
+
+.seals {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 6px;
+}
+
+.seal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

@@ -133,12 +133,13 @@ const bodyText = (line: LogLine): string => JSON.stringify(line.body ?? '');
 
 const panel = (): Locator => page.locator('[data-testid="pending-panel"]:visible');
 const composer = (): Locator => page.locator('[data-testid="chat-composer-input"]:visible');
-const footer = (): Locator => page.getByTestId('working-footer');
 
 /** The footer only exists while the Claude is working or just stopped: absent counts as "not working". */
 async function expectNotWorking(): Promise<void> {
   await expect
-    .poll(async () => (await footer().count()) > 0 && (await footer().getAttribute('data-state')) === 'working', { timeout: 30_000 })
+    // One atomic read in the page: `count()` + `getAttribute()` as two calls raced with the footer unmounting
+    // (the happy path!) and `getAttribute` then waited for an element that was gone until the poll timed out.
+    .poll(() => page.evaluate(() => document.querySelector('[data-testid="working-footer"]')?.getAttribute('data-state') === 'working'), { timeout: 30_000 })
     .toBe(false);
 }
 

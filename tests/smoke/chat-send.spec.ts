@@ -111,9 +111,10 @@ test('T072 - envio: linhas, /mod, desconhecido, enviando, na fila, interromper, 
     await send(page, '/foobar');
     await expect(timeline(page).getByText('✕ não foi')).toHaveCount(2, { timeout: 30_000 });
 
-    // Comando nativo conhecido entra.
-    await send(page, '/status');
-    await expect(timeline(page).getByText('/status').first()).toBeVisible({ timeout: 30_000 });
+    // Comando nativo conhecido entra. `/cost` e nativo SEM tela propria: um que abre tela (`/status`) agora chega
+    // marcado `opensScreen` (T087) e segura a fila ate a tela aparecer - o falso nao a desenha.
+    await send(page, '/cost');
+    await expect(timeline(page).getByText('/cost').first()).toBeVisible({ timeout: 30_000 });
     await expect(timeline(page).getByText('✕ não foi')).toHaveCount(2);
 
     // Na fila -> entrou: durante a rodada (`demorar`) a segunda mensagem espera a proxima pausa.

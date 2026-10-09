@@ -94,12 +94,15 @@ export interface RowDetail {
 }
 
 export type CommandSource = 'builtin' | 'skill' | 'command' | 'plugin';
+/** Where the entry comes from (the origin chip of the menu): CLI, `~/.claude`, the project's `.claude`, or a plugin. */
+export type CommandScope = 'builtin' | 'user' | 'project' | 'plugin';
 
 export interface CommandEntry {
   readonly name: string;
   readonly aliases: readonly string[];
   readonly description: string;
   readonly source: CommandSource;
+  readonly scope: CommandScope;
   readonly opensScreen: boolean;
 }
 

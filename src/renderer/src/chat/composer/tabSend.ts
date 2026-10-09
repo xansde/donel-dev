@@ -10,6 +10,7 @@ import { getChatStore, type ChatStore } from '../ChatStore';
 import { markOpensScreen } from '../useTerminalNeededReporter';
 import { SendDriver, type SendDriverPorts, type SendRequest } from '../sendDriver';
 import type { DraftImage } from './attachmentsModel';
+import type { DraftPaste } from './pastedText';
 
 export interface TabTerminalSource {
   terminal(): TerminalPaneHandle | null;
@@ -116,6 +117,7 @@ export function disposeTabSend(tabId: string): void {
   wired.delete(tabId);
   drafts.delete(tabId);
   draftImages.delete(tabId);
+  draftPastes.delete(tabId);
 }
 
 // ---------------------------------------------------------------- drafts
@@ -167,6 +169,35 @@ export function subscribeDraftImages(tabId: string, listener: () => void): () =>
   if (set === undefined) {
     set = new Set();
     imageListeners.set(tabId, set);
+  }
+  set.add(listener);
+  return () => {
+    set!.delete(listener);
+  };
+}
+
+// ---------------------------------------------------------------- large-paste drafts (T089)
+
+const EMPTY_PASTES: readonly DraftPaste[] = [];
+const draftPastes = new Map<string, readonly DraftPaste[]>();
+const pasteListeners = new Map<string, Set<() => void>>();
+
+/** Stable reference while nothing changes (it feeds `useSyncExternalStore`). */
+export function getDraftPastes(tabId: string): readonly DraftPaste[] {
+  return draftPastes.get(tabId) ?? EMPTY_PASTES;
+}
+
+export function setDraftPastes(tabId: string, pastes: readonly DraftPaste[]): void {
+  if (pastes.length === 0) draftPastes.delete(tabId);
+  else draftPastes.set(tabId, pastes);
+  for (const l of [...(pasteListeners.get(tabId) ?? [])]) l();
+}
+
+export function subscribeDraftPastes(tabId: string, listener: () => void): () => void {
+  let set = pasteListeners.get(tabId);
+  if (set === undefined) {
+    set = new Set();
+    pasteListeners.set(tabId, set);
   }
   set.add(listener);
   return () => {
