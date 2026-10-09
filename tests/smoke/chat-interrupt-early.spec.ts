@@ -11,7 +11,7 @@ import { launchClaudeTab } from './helpers/ui';
 const input = (page: Page): Locator => page.locator('[data-testid="chat-composer-input"]:visible');
 const timeline = (page: Page): Locator => page.locator('[data-testid="chat-timeline"]:visible');
 
-test('Esc antes da resposta: cartão "interrompida", texto volta para a caixa e a fila segue @chat', async () => {
+test('Esc antes da resposta: texto volta, cartão "interrompida" e a mensagem seguinte sai sem faixa @chat', async () => {
   test.setTimeout(180_000);
   const chat = await launchChatApp({ name: 'chat-interrupt-early' });
   const page = chat.window;
@@ -28,22 +28,20 @@ test('Esc antes da resposta: cartão "interrompida", texto volta para a caixa e 
     await expect(timeline(page).getByText('✓ entrou')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('working-footer')).toHaveAttribute('data-state', 'working', { timeout: 20_000 });
 
-    // Parar: o pé mostra "parando…" enquanto o falso devolve o texto à caixa dele.
+    // Parar: o falso devolve o texto a caixa dele; a tela encerra a rodada (o CLI nao dispara Stop) e o texto volta.
     await page.getByRole('button', { name: 'Parar' }).click();
-    await expect(page.getByRole('button', { name: 'parando…' })).toBeDisabled();
-    // O falso nao dispara o Stop (o CLI real tambem nao): o estado segue "trabalhando" e, vencido o teto, o pe avisa.
-    await expect(page.getByTestId('working-footer-stuck')).toContainText('o Claude não parou', { timeout: 15_000 });
-    await expect(page.getByRole('button', { name: 'Parar' })).toBeEnabled();
+    await expect(page.getByTestId('working-footer')).toHaveCount(0, { timeout: 15_000 });
+    await expect(input(page)).toHaveValue('cancelavel teste grande', { timeout: 10_000 });
+    await expect(timeline(page).getByText('interrompida')).toBeVisible();
 
-    // A mensagem seguinte encontra a sobra, que é o texto devolvido: nada de faixa, texto de volta na caixa do chat.
+    // A mensagem seguinte sai sem faixa de sobra: a caixa do terminal ja foi limpa.
     await input(page).fill('segunda mensagem');
     await input(page).press('Enter');
-    await expect(timeline(page).getByText('interrompida')).toBeVisible({ timeout: 30_000 });
-    await expect(timeline(page).getByText('o texto voltou para a caixa')).toBeVisible();
-    await expect(input(page)).toHaveValue('cancelavel teste grande', { timeout: 10_000 });
+    await expect(timeline(page).getByText('segunda mensagem')).toBeVisible({ timeout: 30_000 });
+    await expect(timeline(page).getByText('✓ entrou').first()).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('Há texto não enviado no terminal')).toHaveCount(0);
-    await expect(timeline(page).getByText('segunda mensagem')).toBeVisible();
     await expect(timeline(page).getByText('na fila', { exact: true })).toHaveCount(0, { timeout: 30_000 });
+    await expect(timeline(page).getByText('interrompida')).toBeVisible();
     await helpers.shot('interrupt-early-01');
   } finally {
     await chat.dispose();

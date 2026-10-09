@@ -28,6 +28,20 @@ function realText(row: UserRow): string {
 }
 
 const SLACK_MS = 2_000;
+/** An accepted send whose real row never showed up is dropped after this long (or after the Claude answered). */
+export const ACCEPTED_ORPHAN_MS = 60_000;
+
+/**
+ * An accepted prompt with no real row (the chain was rewritten, or the row never matched) must not hang at the end
+ * of the conversation: it stays where it was sent, and goes away once it is clearly stale - the Claude produced
+ * something after it, or `ACCEPTED_ORPHAN_MS` passed. `interrupted` is the exception: it stays until the next
+ * message of the owner (the card that explains where the text went).
+ */
+function orphanIsStale(item: SendItemView, realRows: readonly ConversationRow[], now: number): boolean {
+  if (item.returned === true) return false;
+  if (now - item.createdAt > ACCEPTED_ORPHAN_MS) return true;
+  return realRows.some((row) => row.kind !== 'user' && row.kind !== 'notice' && Date.parse(row.at) > item.createdAt);
+}
 
 function overlayOf(item: SendItemView, claimed: boolean): SendOverlay {
   const base = ownerSendState(item);
@@ -40,7 +54,7 @@ function overlayOf(item: SendItemView, claimed: boolean): SendOverlay {
   };
 }
 
-export function mergeOptimistic(realRows: readonly ConversationRow[], items: readonly SendItemView[]): MergedRows {
+export function mergeOptimistic(realRows: readonly ConversationRow[], items: readonly SendItemView[], now: number = Date.now()): MergedRows {
   if (items.length === 0) return { rows: realRows, overlays: new Map() };
   const overlays = new Map<string, SendOverlay>();
   const claimedRows = new Set<string>();
@@ -62,8 +76,10 @@ export function mergeOptimistic(realRows: readonly ConversationRow[], items: rea
     }
     // The real row of a command is drawn by the transcript itself (command/output): drop the local copy.
     if (item.state === 'accepted' && item.kind !== 'prompt') continue;
+    const orphan = item.state === 'accepted';
+    if (orphan && orphanIsStale(item, realRows, now)) continue;
     const id = `${LOCAL_PREFIX}${item.id}`;
-    (overlayOf(item, false).sendState === 'failed' ? failedLocal : local).push({
+    (orphan || overlayOf(item, false).sendState === 'failed' ? failedLocal : local).push({
       kind: 'user',
       id,
       turnId: null,
@@ -75,7 +91,7 @@ export function mergeOptimistic(realRows: readonly ConversationRow[], items: rea
     });
     overlays.set(id, overlayOf(item, false));
   }
-  // A failed card stays where the send happened (chronological order), not stuck below newer messages.
+  // A failed or accepted-without-row card stays where the send happened (chronological order), not stuck below newer messages.
   let rows: ConversationRow[] = [...realRows];
   for (const card of failedLocal) {
     const at = Date.parse(card.at);

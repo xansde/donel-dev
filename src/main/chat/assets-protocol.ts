@@ -74,7 +74,7 @@ export async function resolveAsset(url: string, deps: AssetResolverDeps): Promis
   }
 }
 
-/** The `blockIndex`-th block of `message.content`, when it is a base64 image of a served type. */
+/** The `blockIndex`-th block of `message.content` (or of a queued `attachment.prompt`), when it is a base64 image of a served type. */
 function imageBlockOf(lineText: string, blockIndex: number): { bytes: Buffer; mediaType: string } | null {
   let line: unknown;
   try {
@@ -82,8 +82,9 @@ function imageBlockOf(lineText: string, blockIndex: number): { bytes: Buffer; me
   } catch {
     return null;
   }
-  const message = (line as { message?: { content?: unknown } } | null)?.message;
-  const content = message?.content;
+  // A user line carries the blocks in `message.content`; a prompt queued mid-round, in `attachment.prompt`.
+  const holder = line as { message?: { content?: unknown }; attachment?: { prompt?: unknown } } | null;
+  const content = holder?.message?.content ?? holder?.attachment?.prompt;
   if (!Array.isArray(content)) return null;
   const block = content[blockIndex] as { type?: unknown; source?: { type?: unknown; media_type?: unknown; data?: unknown } } | undefined;
   if (block?.type !== 'image' || block.source?.type !== 'base64') return null;

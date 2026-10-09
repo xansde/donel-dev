@@ -292,7 +292,10 @@ function slimAttachment(a: unknown): Json {
   const out: Json = { type };
   switch (type) {
     case 'queued_command':
-      out.prompt = cut(str(att.prompt) ?? '', 20_000);
+      // An array prompt (message with an image sent mid-round) keeps its block positions; the base64 stays in the file.
+      out.prompt = Array.isArray(att.prompt)
+        ? att.prompt.map((b) => (obj(b).type === 'image' ? { type: 'image' } : { type: 'text', text: cut(str(obj(b).text) ?? '', 20_000) }))
+        : cut(str(att.prompt) ?? '', 20_000);
       out.commandMode = att.commandMode;
       out.humanTurn = att.humanTurn;
       out.origin = att.origin;
@@ -791,7 +794,12 @@ function foldAttachment(w: Work, line: Extract<ChainLine, { k: 'node' }>): void 
   const { uuid, at } = line;
   switch (a.type) {
     case 'queued_command': {
-      const prompt = str(a.prompt) ?? '';
+      // `prompt` is a string, or (a message with an image sent mid-round) an array of blocks: text + base64 image.
+      const promptBlocks = Array.isArray(a.prompt) ? (a.prompt as unknown[]) : null;
+      const prompt =
+        promptBlocks === null
+          ? (str(a.prompt) ?? '')
+          : promptBlocks.map(obj).filter((b) => b.type === 'text').map((b) => str(b.text) ?? '').join('\n');
       if (a.commandMode === 'task-notification') {
         const n = parseNotification(prompt);
         if (n !== null) {
@@ -802,7 +810,11 @@ function foldAttachment(w: Work, line: Extract<ChainLine, { k: 'node' }>): void 
         }
       } else if (a.commandMode === 'prompt' && a.humanTurn === true) {
         const shown = unwrapPastedContent(prompt);
-        put(w, { kind: 'user', ...base(w, uuid, at), text: shown, attachments: [], queued: true });
+        const images: RowAttachment[] = [];
+        promptBlocks?.forEach((b, i) => {
+          if (obj(b).type === 'image') images.push({ kind: 'image', ref: line.raw, blockIndex: i });
+        });
+        put(w, { kind: 'user', ...base(w, uuid, at), text: shown, attachments: images, queued: true });
         w.queued.push({ rowId: uuid, text: shown });
       }
       return;

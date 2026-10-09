@@ -750,4 +750,29 @@ describe('adapt - collapsed paste is unwrapped in the user row', () => {
     const users = ofKind(r.state.rows, 'user');
     expect(users.map((u) => u.text)).toEqual(['primeiro', 'teste 3:\nlinha']);
   });
+
+  it('queued_command com prompt em array (texto + imagem): cria a linha com o texto e as imagens', () => {
+    const entries = inlineEntries([
+      userLine('u1', null, 'primeiro'),
+      {
+        parentUuid: 'u1', type: 'attachment', uuid: 'a1', timestamp: '2026-10-01T12:00:02.000Z',
+        attachment: {
+          type: 'queued_command',
+          commandMode: 'prompt',
+          humanTurn: true,
+          imagePasteIds: [10],
+          prompt: [
+            { type: 'text', text: '[Image #10]Olha isto' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+          ],
+        },
+      },
+      userLine('u2', 'a1', '[Image #10]Olha isto', { promptSource: 'queued', timestamp: '2026-10-01T12:00:03.000Z' }),
+    ]);
+    const r = adapt(initAdapterState({ cwd: '/work/atlas' }), entries);
+    const users = ofKind(r.state.rows, 'user');
+    expect(users.map((u) => u.text)).toEqual(['primeiro', '[Image #10]Olha isto']);
+    expect(users[1]!.attachments).toEqual([expect.objectContaining({ kind: 'image', blockIndex: 1 })]);
+    expect(users[1]!.queued).toBe(true);
+  });
 });
