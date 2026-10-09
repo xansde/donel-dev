@@ -67,3 +67,35 @@ export function stepRadio(current: number, count: number, key: string): number |
       return null;
   }
 }
+
+/**
+ * Columns of the multiple-choice grid, chosen so the last row is never a lone option:
+ * 1 -> 1, 2 -> 2, 3 -> 3, 4 -> 2 (2x2); above 4: 3 when divisible by 3, else 2 when even, else 3.
+ */
+export function choiceColumns(count: number): number {
+  if (count <= 1) return 1;
+  if (count <= 3) return count;
+  if (count === 4) return 2;
+  if (count % 3 === 0) return 3;
+  return count % 2 === 0 ? 2 : 3;
+}
+
+/** Keeps a page index inside `[0, count - 1]` (0 when there are no pages). */
+export function clampPage(page: number, count: number): number {
+  if (count <= 0) return 0;
+  return Math.min(Math.max(page, 0), count - 1);
+}
+
+/** Wizard navigation: one question per page. The "Responder" send stays global (all answers together). */
+export function questionPager(
+  page: number,
+  count: number,
+): { page: number; label: string; hasPrev: boolean; hasNext: boolean } {
+  const current = clampPage(page, count);
+  return {
+    page: current,
+    label: `Pergunta ${current + 1} de ${count}`,
+    hasPrev: current > 0,
+    hasNext: current < count - 1,
+  };
+}

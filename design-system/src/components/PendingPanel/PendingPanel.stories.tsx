@@ -90,13 +90,15 @@ function QuestionDemo() {
         title="Onde aplicar?"
         hint="escolha uma ou mais"
         multiple
-        options={['sim', 'rep', 'api'].map((id) => (
+        columns={2}
+        options={['sim', 'rep', 'api', 'exp'].map((id) => (
           <ChoiceCard
             key={id}
             kind="checkbox"
             compact
             checked={many.includes(id)}
-            label={{ sim: 'Simulador', rep: 'Relatório de repasse', api: 'API pública' }[id]!}
+            label={{ sim: 'Simulador', rep: 'Relatório de repasse', api: 'API pública', exp: 'Exportação' }[id]!}
+            description={{ sim: 'Cálculo exibido ao proprietário.', rep: 'Valores mensais por unidade.', api: 'Endpoints consumidos por parceiros e integrações externas.', exp: 'Arquivos CSV e PDF gerados sob demanda para o financeiro.' }[id]}
             onSelect={() => setMany((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]))}
           />
         ))}

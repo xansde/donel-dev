@@ -1,6 +1,6 @@
 // 014-chat (T078) - AskUserQuestion card: up to 4 questions, ONE "Responder" (FR-021). Cards with label and
-// description, the preview of the picked option in a column, multiple choice in a 3-column grid, "Outra" last
-// with a TextInput. "(Recomendado)" is styled but the label sent back stays exactly as the CLI wrote it (D-C15).
+// description, the preview of the picked option in a column, multiple choice in a grid with no orphan option, "Outra" last
+// with a TextInput. With 2+ questions, ONE is shown at a time (tabs + Anterior/Próxima); answers are all sent together. "(Recomendado)" is styled but the label sent back stays exactly as the CLI wrote it (D-C15).
 
 import {
   Button,
@@ -11,6 +11,7 @@ import {
   PendingSpacer,
   PreviewPane,
   QuestionBlock,
+  SegmentedControl,
   TextInput,
 } from '@donel-dev/design-system';
 import { CircleHelp } from 'lucide-react';
@@ -20,13 +21,14 @@ import type { Pending, Question } from '../../../../shared/chat/rows';
 import {
   areAllQuestionsAnswered,
   buildQuestionAnswers,
+  isQuestionAnswered,
   limitQuestions,
   setCustomAnswer,
   toggleOption,
   type QuestionDraft,
   type QuestionDrafts,
 } from '../../../../shared/chat/t3/pendingUserInput';
-import { previewForQuestion, splitRecommended, stepRadio, waitingLabel } from './pendingModel';
+import { choiceColumns, previewForQuestion, questionPager, splitRecommended, stepRadio, waitingLabel } from './pendingModel';
 
 export interface QuestionCardProps {
   pending: Extract<Pending, { kind: 'question' }>;
@@ -102,6 +104,7 @@ function OneQuestion({ question, index, draft, onChange }: OneQuestionProps): Re
       titleId={titleId}
       hint={multiple ? 'escolha uma ou mais' : 'escolha uma'}
       multiple={multiple}
+      columns={choiceColumns(question.options.length)}
       options={options}
       other={
         <OtherChoice kind={multiple ? 'checkbox' : 'radio'} active={customActive}>
@@ -124,6 +127,9 @@ export function QuestionCard({ pending, waiting, onAnswer, onOpenOrigin }: Quest
   const [drafts, setDrafts] = useState<QuestionDrafts>(() => initialDrafts(questions));
   const ready = areAllQuestionsAnswered(questions, drafts);
   const many = questions.length > 1;
+  const [requestedPage, setPage] = useState(0);
+  const pager = questionPager(requestedPage, questions.length);
+  const question = questions[pager.page];
 
   const submit = (): void => {
     const answers = buildQuestionAnswers(questions, drafts);
@@ -135,7 +141,7 @@ export function QuestionCard({ pending, waiting, onAnswer, onOpenOrigin }: Quest
       ariaLabel="Pergunta do Claude"
       icon={<CircleHelp size={16} strokeWidth={1.75} />}
       title="O Claude pergunta"
-      headerExtra={<PendingNote>{many ? `${questions.length} perguntas, uma resposta` : 'uma pergunta'}</PendingNote>}
+      headerExtra={<PendingNote>{many ? `${pager.label} · uma resposta` : 'uma pergunta'}</PendingNote>}
       waiting={waitingLabel(waiting)}
       origin={pending.scope === 'main' ? undefined : { name: pending.scope.description, onOpen: onOpenOrigin }}
       footer={
@@ -144,6 +150,16 @@ export function QuestionCard({ pending, waiting, onAnswer, onOpenOrigin }: Quest
             {many ? 'Responder envia as respostas juntas.' : 'Responder envia a resposta.'} O Claude espera por você.
           </PendingNote>
           <PendingSpacer />
+          {many && pager.hasPrev ? (
+            <Button onClick={() => setPage(pager.page - 1)} data-testid="pending-prev">
+              Anterior
+            </Button>
+          ) : null}
+          {many && pager.hasNext ? (
+            <Button onClick={() => setPage(pager.page + 1)} data-testid="pending-next">
+              Próxima
+            </Button>
+          ) : null}
           <Button variant="primary" disabled={!ready} onClick={submit} data-testid="pending-answer">
             Responder
           </Button>
@@ -151,15 +167,26 @@ export function QuestionCard({ pending, waiting, onAnswer, onOpenOrigin }: Quest
       }
       data-testid="pending-question"
     >
-      {questions.map((question, index) => (
+      {many ? (
+        <SegmentedControl
+          ariaLabel="Perguntas"
+          value={String(pager.page)}
+          onChange={(value) => setPage(Number(value))}
+          options={questions.map((q, i) => ({
+            value: String(i),
+            label: `${i + 1}${isQuestionAnswered(q, drafts[q.question]) ? ' ✓' : ''}`,
+          }))}
+        />
+      ) : null}
+      {question !== undefined ? (
         <OneQuestion
           key={question.question}
           question={question}
-          index={index}
+          index={pager.page}
           draft={drafts[question.question]}
           onChange={(draft) => setDrafts((current) => ({ ...current, [question.question]: draft }))}
         />
-      ))}
+      ) : null}
     </PendingFrame>
   );
 }
