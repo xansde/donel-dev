@@ -24,7 +24,6 @@ describe('shortcutFor: forwarded to the CLI', () => {
     ['alt+o', alt('o'), '\x1bo'],
     ['alt+t', alt('t'), '\x1bt'],
     ['alt+w', alt('w'), '\x1bw'],
-    ['ctrl+y', ctrl('y'), '\x19'],
     ['ctrl+t', ctrl('t'), '\x14'],
     ['ctrl+b', ctrl('b'), '\x02'],
     ['ctrl+]', ctrl(']'), '\x1d'],
@@ -57,6 +56,7 @@ describe('shortcutFor: left to the box or never forwarded', () => {
     ['ctrl+c', ctrl('c')],
     ['ctrl+x', ctrl('x')],
     ['ctrl+r', ctrl('r')],
+    ['ctrl+y (redo on Windows)', ctrl('y')],
     ['ctrl+l', ctrl('l')],
     ['ctrl+g', ctrl('g')],
     ['ctrl+s', ctrl('s')],
@@ -79,7 +79,7 @@ describe('shortcutFor: left to the box or never forwarded', () => {
 
   it('every table entry is reachable and nothing in it is on the exclusion list', () => {
     expect(Object.keys(CLI_SHORTCUTS).sort()).toEqual(
-      ['alt+o', 'alt+p', 'alt+t', 'alt+w', 'ctrl+]', 'ctrl+b', 'ctrl+enter', 'ctrl+o', 'ctrl+t', 'ctrl+y', 'shift+tab'].sort(),
+      ['alt+o', 'alt+p', 'alt+t', 'alt+w', 'ctrl+]', 'ctrl+b', 'ctrl+enter', 'ctrl+o', 'ctrl+t', 'shift+tab'].sort(),
     );
   });
 });
