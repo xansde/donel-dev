@@ -723,6 +723,8 @@ function foldUser(w: Work, line: Extract<ChainLine, { k: 'node' }>): void {
   }
   const cmdName = tagText(text, 'command-name');
   if (cmdName !== undefined) {
+    // the echo the CLI records AFTER the boundary: the typed `/compact` row (before it) already stands for it
+    if (cmdName.trim().replace(/^\//, '') === 'compact' && inCompactTail(w)) return;
     const args = (tagText(text, 'command-args') ?? '').trim();
     const name = cmdName.trim().replace(/^\//, '');
     openTurn(w, str(data.promptId) ?? uuid, 'human');
@@ -784,6 +786,20 @@ function foldUser(w: Work, line: Extract<ChainLine, { k: 'node' }>): void {
   put(w, { kind: 'user', ...base(w, uuid, at), text: shown, attachments });
 }
 
+/**
+ * True while the tail of the conversation is a compaction that no prompt has followed yet: a `compact` notice
+ * sits after the last user row. The CLI writes its own bookkeeping there (the `<command-name>/compact` echo,
+ * the files it re-reads, the SessionStart hooks) - none of it is the owner's doing or the assistant's work.
+ */
+function inCompactTail(w: Work): boolean {
+  for (let i = w.rows.length - 1; i >= 0; i -= 1) {
+    const r = w.rows[i]!;
+    if (r.kind === 'notice' && r.notice === 'compact') return true;
+    if (r.kind === 'user') return false;
+  }
+  return false;
+}
+
 function lastUserIndex(w: Work): number {
   for (let i = w.rows.length - 1; i >= 0; i -= 1) if (w.rows[i]!.kind === 'user') return i;
   return -1;
@@ -822,7 +838,7 @@ function foldAttachment(w: Work, line: Extract<ChainLine, { k: 'node' }>): void 
     case 'file': {
       const path = str(a.filename);
       const i = lastUserIndex(w);
-      if (path === undefined || i < 0) return;
+      if (path === undefined || i < 0 || inCompactTail(w)) return; // re-read by the CLI on compaction, not attached by the owner
       const row = w.rows[i] as Extract<ConversationRow, { kind: 'user' }>;
       w.rows[i] = { ...row, attachments: [...row.attachments, { kind: 'mention', path }] };
       return;
@@ -847,6 +863,7 @@ function foldAttachment(w: Work, line: Extract<ChainLine, { k: 'node' }>): void 
     case 'hook_non_blocking_error':
     case 'hook_system_message':
     case 'hook_permission_decision':
+      if (inCompactTail(w)) return; // SessionStart:compact chatter
       notice(w, uuid, at, 'informational', { text: `hook ${str(a.hookName) ?? ''}`.trim(), hook: str(a.hookName) ?? '' });
       return;
     case 'skill_listing':

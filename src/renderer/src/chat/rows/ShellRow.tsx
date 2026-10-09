@@ -1,5 +1,5 @@
 import { CommandOutput, OwnerMessage } from '@donel-dev/design-system';
-import type { CommandOutputLine } from '@donel-dev/design-system';
+import type { CommandOutputLine, OwnerMessageSendState } from '@donel-dev/design-system';
 import { memo, useMemo, useState } from 'react';
 import type { ShellRow } from '../../../../shared/chat/rows';
 import { formatClock } from './format';
@@ -7,6 +7,8 @@ import styles from './rows.module.css';
 
 export interface ShellRowViewProps {
   row: ShellRow;
+  /** Send state of the owner's message ("entrou"), when the chat itself sent it. */
+  sendState?: OwnerMessageSendState;
 }
 
 function splitLines(text: string | undefined): string[] {
@@ -18,7 +20,7 @@ function splitLines(text: string | undefined): string[] {
  * The owner's `!command` (T052): `OwnerMessage` in mono ("! cmd") + the output
  * in the `CommandOutput` frame, stderr lines in the failure color.
  */
-function ShellRowViewImpl({ row }: ShellRowViewProps) {
+function ShellRowViewImpl({ row, sendState }: ShellRowViewProps) {
   const [showAll, setShowAll] = useState(false);
   const lines = useMemo<CommandOutputLine[]>(
     () => [
@@ -29,7 +31,7 @@ function ShellRowViewImpl({ row }: ShellRowViewProps) {
   );
   return (
     <div>
-      <OwnerMessage mono time={formatClock(row.at)}>
+      <OwnerMessage mono time={formatClock(row.at)} sendState={sendState}>
         {`! ${row.command}`}
       </OwnerMessage>
       {lines.length > 0 ? (

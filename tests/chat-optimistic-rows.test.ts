@@ -91,6 +91,13 @@ describe('mergeOptimistic', () => {
     expect(out.overlays.get('u3')).toMatchObject({ sendState: 'sent' });
   });
 
+  it('linha real de shell (<bash-input>) casa com o envio "!cmd" e recebe "entrou"', () => {
+    const sh: ConversationRow = { kind: 'shell', id: 'sh1', turnId: 't1', at: '2026-10-08T12:00:03.000Z', scope: 'main', command: 'echo oi', stdout: 'oi' };
+    const out = mergeOptimistic([sh], [item('s1', '!echo oi', 'accepted', { label: 'entrou' })]);
+    expect(ids(out.rows)).toEqual(['sh1']);
+    expect(out.overlays.get('sh1')).toMatchObject({ sendState: 'sent' });
+  });
+
   it('linha real já na fila do CLI recebe "na fila"', () => {
     const r = real('u4', 'depois', '2026-10-08T12:00:03.000Z', { queued: true });
     const out = mergeOptimistic([r], [item('s1', 'depois', 'queued', { queuedReason: 'entra na próxima pausa do Claude' })]);

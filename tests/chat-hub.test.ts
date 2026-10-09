@@ -338,6 +338,34 @@ describe('reception', () => {
     expect(h.reception[1]!.reception).toBe('ok');
   });
 
+  it('does not go stale while /compact summarises (no writes for a long time), only after the grace', async () => {
+    const path = join(dir, 's1.jsonl');
+    writeRounds(path, 1, 1);
+    const h = harness({ 'pty-1': src(path) }, { staleMs: 8_000 });
+    await h.hub.attach('pty-1');
+    h.bridge.hook('pty-1', 'UserPromptSubmit', { prompt: '/compact' });
+    h.clock.t += 24_000; // real session: 24 s between the typed /compact and the boundary
+    h.hub.checkReception();
+    expect(h.reception).toEqual([]);
+
+    h.clock.t += 300_000; // the CLI died mid-compaction: the warning is back
+    h.hub.checkReception();
+    expect(h.reception).toEqual([{ ptyId: 'pty-1', reception: 'stale' }]);
+  });
+
+  it('goes stale again for a plain message after the compaction finished (SessionStart:compact)', async () => {
+    const path = join(dir, 's1.jsonl');
+    writeRounds(path, 1, 1);
+    const h = harness({ 'pty-1': src(path) }, { staleMs: 8_000 });
+    await h.hub.attach('pty-1');
+    h.bridge.hook('pty-1', 'UserPromptSubmit', { prompt: '/compact' });
+    h.bridge.hook('pty-1', 'SessionStart', { source: 'compact' });
+    h.bridge.hook('pty-1', 'UserPromptSubmit', { prompt: 'oi' });
+    h.clock.t += 9_000;
+    h.hub.checkReception();
+    expect(h.reception).toEqual([{ ptyId: 'pty-1', reception: 'stale' }]);
+  });
+
   it('does not go stale after the turn ended: Stop arrives after the last line was read', async () => {
     const path = join(dir, 's1.jsonl');
     writeRounds(path, 1, 1);

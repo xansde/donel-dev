@@ -1,6 +1,6 @@
 // T031 (014-chat) — Modo Foco (data-model.md §5, FR-009): transformação de vista
 // pura. Por rodada mostra a mensagem do dono e a resposta final; o resto vira
-// um bloco recolhido. Exceção (D-C19): a mensagem do Claude que lança
+// um bloco recolhido. O que é do dono (`!`, comando local) e o marcador de /compact ficam fora da dobra. Exceção (D-C19): a mensagem do Claude que lança
 // subagentes e as linhas `subagent` ficam fora da dobra, na posição delas.
 
 import type { ConversationRow, FocusItem, Turn } from './rows';
@@ -17,6 +17,10 @@ function actionsIn(row: ConversationRow): number {
   if (row.kind === 'action') return 1;
   if (row.kind === 'action-group') return Object.values(row.counts).reduce((a, b) => a + b, 0);
   return 0;
+}
+
+function isMarker(row: ConversationRow | undefined): boolean {
+  return row !== undefined && (row.kind === 'notice' || row.kind === 'unknown');
 }
 
 /** Ids of assistant rows that launch the subagent rows following them (thinking in between is skipped). */
@@ -51,13 +55,18 @@ export function foldForFocus(turns: readonly Turn[], rows: readonly Conversation
 
     let pending: { actions: number; notes: number; hasQuestion: boolean; rows: string[] } | null = null;
     const flush = (): void => {
-      if (pending && pending.rows.length > 0) out.push({ kind: 'folded', ...pending });
+      if (pending && pending.rows.length > 0) {
+        // notices/unknowns alone are not work: a "trabalhou - 1 etapa" bar over them would be a lie
+        const noWork = pending.actions === 0 && pending.notes === 0 && pending.rows.every((rid) => isMarker(byId.get(rid)));
+        if (noWork) for (const rid of pending.rows) out.push({ kind: 'row', rowId: rid });
+        else out.push({ kind: 'folded', ...pending });
+      }
       pending = null;
     };
 
     for (const id of turn.rows) {
       const row = byId.get(id);
-      const shown = row !== undefined && (row.kind === 'user' || row.kind === 'subagent' || id === finalId || launchers.has(id));
+      const shown = row !== undefined && (row.kind === 'user' || row.kind === 'subagent' || row.kind === 'shell' || row.kind === 'local-command' || (row.kind === 'notice' && row.notice === 'compact') || id === finalId || launchers.has(id));
       if (shown) {
         flush();
         out.push({ kind: 'row', rowId: id });

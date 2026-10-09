@@ -84,6 +84,8 @@ export interface ChatHubDeps {
   readonly missingMs?: number;
   /** Activity without the file growing for this long -> `stale`. Default 8 s. */
   readonly staleMs?: number;
+  /** `/compact` writes nothing while the summary is generated (measured: 24 s): no `stale` for this long. Default 3 min. */
+  readonly compactGraceMs?: number;
   /** Interval of the reception check; 0 = off (tests call `checkReception`). Default 2 s. */
   readonly receptionPollMs?: number;
   /** Folder of `chat:save-image` attachments; allowed for `chat:open-generated`. */
@@ -174,6 +176,8 @@ interface Rec {
   lastLiveKey: string;
   lastActivityAt: number;
   lastGrowthAt: number;
+  /** When a typed `/compact` was submitted and its boundary has not been written yet; 0 = none. */
+  compactingSince: number;
   fileSeen: boolean;
   session: Session | null;
   /** `conversation-switch` notice that opens the timeline after a switch. */
@@ -221,6 +225,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
   const now = deps.now ?? Date.now;
   const missingMs = deps.missingMs ?? 10_000;
   const staleMs = deps.staleMs ?? 8_000;
+  const compactGraceMs = deps.compactGraceMs ?? 180_000;
   const recs = new Map<string, Rec>();
   let noticeSeq = 0;
 
@@ -237,6 +242,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         lastLiveKey: '',
         lastActivityAt: 0,
         lastGrowthAt: 0,
+        compactingSince: 0,
         fileSeen: false,
         session: null,
         topNotice: null,
@@ -343,7 +349,11 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     if (rec.lastActivityAt <= rec.lastGrowthAt) return; // nothing is waiting on the file
     const idle = now() - rec.lastActivityAt;
     if (!rec.fileSeen && idle >= missingMs) setReception(rec, 'missing');
-    else if (rec.fileSeen && idle >= staleMs) setReception(rec, 'stale');
+    else if (rec.fileSeen && idle >= staleMs) {
+      // the summary of a /compact takes a while with the file still: waiting, not lost
+      if (rec.compactingSince > 0 && now() - rec.compactingSince < compactGraceMs) return;
+      setReception(rec, 'stale');
+    }
   }
 
   function checkReception(): void {
@@ -379,6 +389,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     if (!batch.reset && batch.lines.length > 0) {
       // a reset re-reads old lines: those are not new acceptances
       const signals = signalsFromEntries(toEntries(batch.lines), new Date(now()).toISOString());
+      if (signals.some((sig) => sig.signal === 'compact')) rec.compactingSince = 0;
       if (signals.length > 0) {
         for (const sig of signals) emitSignal(rec, sig);
       }
@@ -583,6 +594,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       rec.fileSeen = false;
       rec.lastActivityAt = 0;
       rec.lastGrowthAt = 0;
+      rec.compactingSince = 0;
       rec.signals = [];
       rec.currentAction = null;
       rec.activeSubagents.clear();
@@ -608,8 +620,10 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       const prompt = text(payload.prompt);
       const at = new Date(now()).toISOString();
       if (prompt !== undefined) rec.submits.push({ text: prompt, at });
+      rec.compactingSince = prompt !== undefined && /^\/compact(\s|$)/.test(prompt.trim()) ? now() : 0;
       emitSignal(rec, { signal: 'submit', ...(prompt !== undefined ? { text: prompt } : {}), at, origin: 'hook' });
     } else if (name === 'SessionStart' && payload.source === 'compact') {
+      rec.compactingSince = 0;
       hookSignal(rec, 'compact');
     }
 

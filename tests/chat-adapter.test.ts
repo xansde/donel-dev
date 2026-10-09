@@ -114,6 +114,7 @@ function firstPromptId(name: string): string {
 const ALL = [
   'basic-round', 'tool-results', 'commands', 'interrupt', 'image-prompt', 'queue-compact', 'tree-rewind',
   'tree-parallel', 'errors-noise', 'sess-subagent', 'edge-big-line', 'edge-incomplete-last',
+  'compact-real', 'shell-real',
 ];
 
 // ---------------------------------------------------------------------------
@@ -330,6 +331,36 @@ describe('adapt - queue, compact (queue-compact)', () => {
   it('crosses the compaction: rows before and after it are all there', () => {
     expect(ofKind(rows, 'user').some((u) => u.text === 'Inicie o build do atlas.')).toBe(true);
     expect(ofKind(rows, 'user').some((u) => u.text === 'Continue de onde parou.')).toBe(true);
+  });
+});
+
+describe('adapt - real /compact (compact-real)', () => {
+  const rows = rowsOf('compact-real');
+
+  it('keeps the typed /compact, draws ONE compact notice with the tokens and nothing else from the boundary', () => {
+    expect(ofKind(rows, 'user').map((u) => u.text)).toEqual(['/compact']);
+    expect(notices(rows).map((n) => n.notice)).toEqual(['compact']);
+    expect(notices(rows)[0]!.params).toMatchObject({ preTokens: expect.any(Number), postTokens: expect.any(Number) });
+  });
+
+  it('does not echo the post-boundary <command-name>/compact card nor turn the re-read files into mentions', () => {
+    expect(ofKind(rows, 'user')[0]!.attachments).toEqual([]);
+  });
+
+  it('does not leave context/hook leftovers as rows (no unknown, no hook notices after the boundary)', () => {
+    expect(kinds(rows)).not.toContain('unknown');
+    expect(kinds(rows)).toEqual(['assistant', 'user', 'notice']);
+  });
+});
+
+describe('adapt - real ! shell mode (shell-real)', () => {
+  const rows = rowsOf('shell-real');
+
+  it('builds the shell row with its stdout', () => {
+    const sh = ofKind(rows, 'shell');
+    expect(sh).toHaveLength(1);
+    expect(sh[0]!.command).toBe('echo oi');
+    expect(sh[0]!.stdout).toBe('oi');
   });
 });
 
@@ -664,7 +695,7 @@ describe('adapt - backward pagination (prepend)', () => {
     return out;
   }
 
-  for (const name of ['basic-round', 'commands', 'queue-compact', 'tool-results', 'sess-subagent']) {
+  for (const name of ['basic-round', 'commands', 'queue-compact', 'tool-results', 'sess-subagent', 'shell-real']) {
     it(`${name}: pages read backwards give the same rows as reading forward`, () => {
       let state = initAdapterState({ cwd: '/work/atlas' });
       let client: ConversationRow[] = [];
