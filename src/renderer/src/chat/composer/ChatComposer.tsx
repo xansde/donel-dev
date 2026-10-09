@@ -44,6 +44,8 @@ import {
   setTrigger,
   type ComposerTriggerState,
 } from '../../../../shared/chat/t3/composerTriggerState';
+import { matchesPrompt } from '../../../../shared/chat/promptMatch';
+import { isReturnedPrompt, lastTurnOf, restoreDraft, userRowText } from '../../../../shared/chat/returnedPrompt';
 import type { ConversationRow } from '../../../../shared/chat/rows';
 import type { SendDriver, SendItemView } from '../sendDriver';
 import { getChatStore } from '../ChatStore';
@@ -480,8 +482,28 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
   );
 
   const leftover = items.find((item) => item.leftover !== null);
+
+  // Esc before the first answer: the CLI cancels the request and gives the message back to ITS box. That sobra is
+  // not typing to discard - it is the owner's own message, so it goes back to the chat box and the card says so.
+  const returned = useMemo(() => {
+    if (leftover === undefined || leftover.leftover === null || !leftover.leftover.canDiscard) return null;
+    const turn = lastTurnOf(rows);
+    if (turn === null || !isReturnedPrompt(leftover.leftover.text, turn.user, turn.hasAssistantOutput)) return null;
+    const text = userRowText(turn.user);
+    const source = [...items].reverse().find((item) => item.id !== leftover.id && item.state === 'accepted' && item.kind === 'prompt' && matchesPrompt(item.text, text));
+    return { leftoverId: leftover.id, text, sourceId: source?.id ?? null };
+  }, [leftover, rows, items]);
+  const reclaimedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (returned === null || reclaimedFor.current === returned.leftoverId) return;
+    reclaimedFor.current = returned.leftoverId;
+    setDraft(tabId, restoreDraft(getDraft(tabId), returned.text));
+    if (returned.sourceId !== null) driver.markReturned(returned.sourceId);
+    driver.discardAndSend(returned.leftoverId);
+  }, [returned, tabId, driver]);
+
   const banner =
-    leftover !== undefined && leftover.leftover !== null ? (
+    returned === null && leftover !== undefined && leftover.leftover !== null ? (
       <Banner
         tone="waiting"
         variant="compact"

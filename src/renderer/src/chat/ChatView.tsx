@@ -22,6 +22,7 @@ import { SessionEndedBar } from './SessionEndedBar';
 import { Timeline } from './Timeline';
 import { WorkingFooter } from './WorkingFooter';
 import { escapeAction, stopWorking } from './stopWorking';
+import { expiredStopRequest } from './workingFooterModel';
 import { useTerminalNeededReporter } from './useTerminalNeededReporter';
 import { useChatSession } from './useChatSession';
 
@@ -157,6 +158,8 @@ export const ChatView = memo(function ChatView({
     driver.setEnv({ alive, pendingOpen, terminalNeeded });
   }, [driver, alive, pendingOpen, terminalNeeded]);
 
+  // Parar / Esc feedback ("parando…" until the round ends or a short timeout); both entry points stamp it.
+  const [stopRequestedAt, setStopRequestedAt] = useState<number | null>(null);
   const terminal = actions.terminal(tabId);
   useTerminalNeededReporter(terminal, ptyId, session.live);
   const onKeyDown = useCallback(
@@ -173,7 +176,11 @@ export const ChatView = memo(function ChatView({
       if (action === 'deny-head' && headId !== null) {
         event.preventDefault();
         onAnswer(headId, { kind: 'deny' });
-      } else if (action === 'stop' && stopWorking(actions.terminal(tabId))) event.preventDefault();
+      } else if (action === 'stop') {
+        const reached = stopWorking(actions.terminal(tabId));
+        if (reached) event.preventDefault();
+        setStopRequestedAt(reached ? Date.now() : expiredStopRequest(Date.now()));
+      }
     },
     [actions, tabId, active, session.live, headId, onAnswer],
   );
@@ -237,7 +244,11 @@ export const ChatView = memo(function ChatView({
             onAdjustStart={setAdjustingPlanId}
             onOpenExternal={ctx.onOpenExternal}
           />
-          <WorkingFooter live={session.live} rows={session.rows} terminal={terminal} onInterruptPending={onInterruptPending} />
+          <WorkingFooter live={session.live} rows={session.rows} terminal={terminal}
+            onInterruptPending={onInterruptPending}
+            stopRequestedAt={stopRequestedAt}
+            onStopRequestedAt={setStopRequestedAt}
+          />
           {footer ?? null}
           <ChatComposer
             tabId={tabId}

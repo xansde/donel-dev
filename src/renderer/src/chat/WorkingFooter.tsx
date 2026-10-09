@@ -10,7 +10,7 @@ import { isWorking } from '../../../shared/chat/screen';
 import type { LineInput } from '../../../shared/chat/screen';
 import { stopWorking, type StoppableTerminal } from './stopWorking';
 import styles from './WorkingFooter.module.css';
-import { deriveFooter, formatElapsed, WAITING_FOR_LABEL, type FooterAction } from './workingFooterModel';
+import { deriveFooter, expiredStopRequest, formatElapsed, STOP_STUCK_HINT, stopFeedback, WAITING_FOR_LABEL, type FooterAction } from './workingFooterModel';
 
 /** The slice of `TerminalPaneHandle` the footer reads (screen) and writes (Parar). */
 export interface FooterTerminal extends StoppableTerminal {
@@ -25,6 +25,10 @@ export interface WorkingFooterProps {
   terminal: FooterTerminal | null;
   /** A pending is open: Parar answers it with `interrupt` instead of writing Esc to the terminal (T078). */
   onInterruptPending?: () => void;
+  /** `Date.now()` of the last Parar / Esc press (or an already expired stamp when it reached nothing); `null` = none. */
+  stopRequestedAt?: number | null;
+  /** Parar was pressed (stamp) or the round ended (`null`). The view owns the stamp because Esc also sets it. */
+  onStopRequestedAt?: (at: number | null) => void;
 }
 
 /** `true` while the screen footer says "esc to interrupt"; `null` without a terminal. Re-renders only on change. */
@@ -52,14 +56,16 @@ function ActionText({ action }: { action: FooterAction }): React.JSX.Element {
 }
 
 /** Renders nothing unless the round is running or was just interrupted. */
-export function WorkingFooter({ live, rows, terminal, onInterruptPending }: WorkingFooterProps): React.JSX.Element | null {
+export function WorkingFooter({ live, rows, terminal, onInterruptPending, stopRequestedAt = null, onStopRequestedAt }: WorkingFooterProps): React.JSX.Element | null {
   const lastAction = useRef<LiveAction | null>(null);
   if (live?.currentAction) lastAction.current = live.currentAction;
   const screenWorking = useScreenWorking(terminal);
   const model = deriveFooter({ live, rows, lastAction: lastAction.current, screenWorking });
   const onStop = (): void => {
+    let reached = true;
     if (onInterruptPending) onInterruptPending();
-    else void stopWorking(terminal);
+    else reached = stopWorking(terminal);
+    onStopRequestedAt?.(reached ? Date.now() : expiredStopRequest(Date.now()));
   };
 
   // Elapsed time of the round: counted from when this view first saw it working.
@@ -68,6 +74,10 @@ export function WorkingFooter({ live, rows, terminal, onInterruptPending }: Work
   if (working && workingSince.current === null) workingSince.current = Date.now();
   if (!working) workingSince.current = null;
   const [, setTick] = useState(0);
+  // The round ended (or never was): a stop stamp from before means nothing for the next one.
+  useEffect(() => {
+    if (!working && stopRequestedAt !== null) onStopRequestedAt?.(null);
+  }, [working, stopRequestedAt, onStopRequestedAt]);
   useEffect(() => {
     if (!working) return undefined;
     const timer = setInterval(() => setTick((n) => n + 1), 1000);
@@ -95,6 +105,7 @@ export function WorkingFooter({ live, rows, terminal, onInterruptPending }: Work
     );
   }
 
+  const feedback = stopFeedback(stopRequestedAt, Date.now());
   const elapsed = formatElapsed(Date.now() - (workingSince.current ?? Date.now()));
   return (
     <div className={styles.wrap}>
@@ -119,9 +130,19 @@ export function WorkingFooter({ live, rows, terminal, onInterruptPending }: Work
         }
         actions={
           <>
+            {feedback === 'stuck' ? (
+              <span className={styles.hint} data-testid="working-footer-stuck">
+                {STOP_STUCK_HINT}
+              </span>
+            ) : null}
             <Kbd>Esc</Kbd>
-            <Button variant="secondary" onClick={onStop} iconLeft={<Square size={12} fill="currentColor" strokeWidth={1.75} />}>
-              Parar
+            <Button
+              variant="secondary"
+              onClick={onStop}
+              disabled={feedback === 'stopping'}
+              iconLeft={<Square size={12} fill="currentColor" strokeWidth={1.75} />}
+            >
+              {feedback === 'stopping' ? 'parando…' : 'Parar'}
             </Button>
           </>
         }

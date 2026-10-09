@@ -7,7 +7,7 @@ import type { ConversationRow, UserRow } from '../../../../shared/chat/rows';
 import { ownerSendState, type SendItemView } from '../sendDriver';
 
 export interface SendOverlay {
-  readonly sendState: 'sending' | 'queued' | 'sent' | 'failed';
+  readonly sendState: 'sending' | 'queued' | 'sent' | 'failed' | 'interrupted';
   readonly queuedReason?: string;
   readonly failedReason?: string;
   /** Send to retry ("tentar de novo"); only for `failed`. */

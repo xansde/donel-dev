@@ -75,6 +75,8 @@ export interface SendItemView {
   readonly queuedReason?: string;
   readonly leftover: { readonly text: string; readonly canDiscard: boolean } | null;
   readonly createdAt: number;
+  /** Esc before the first answer: the CLI gave the text back to its box, so the message did not stay (see `markReturned`). */
+  readonly returned?: boolean;
 }
 
 interface Item {
@@ -88,6 +90,7 @@ interface Item {
   reason: string | undefined;
   canDiscard: boolean;
   dismissed: boolean;
+  returned: boolean;
 }
 
 const ACTIVE_PHASES: ReadonlySet<SendState> = new Set(['waiting-cli', 'typing', 'confirming']);
@@ -125,7 +128,8 @@ const FAIL_REASON_ALIASES: Readonly<Record<string, string>> = {
 };
 
 /** State the design-system `OwnerMessage` draws for this send. */
-export function ownerSendState(view: Pick<SendItemView, 'state'>): 'sending' | 'queued' | 'sent' | 'failed' {
+export function ownerSendState(view: Pick<SendItemView, 'state' | 'returned'>): 'sending' | 'queued' | 'sent' | 'failed' | 'interrupted' {
+  if (view.returned === true) return 'interrupted';
   switch (view.state) {
     case 'typing':
     case 'confirming':
@@ -192,6 +196,7 @@ export class SendDriver {
       reason: undefined,
       canDiscard: false,
       dismissed: false,
+      returned: false,
     });
     // Finished sends only matter while the composer/timeline merge them; keep the list bounded.
     const finished = (i: Item): boolean => i.machine !== null && (i.machine.phase === 'accepted' || i.machine.phase === 'failed');
@@ -277,6 +282,17 @@ export class SendDriver {
       return;
     }
     this.act(id, 'interrupt-and-send');
+  }
+
+  /**
+   * The CLI cancelled this (accepted) message before any answer and gave its text back to the terminal box:
+   * the card says "interrompida" instead of "entrou" from now on.
+   */
+  markReturned(id: string): void {
+    const item = this.items.find((i) => i.id === id);
+    if (item === undefined || item.returned) return;
+    item.returned = true;
+    this.publish();
   }
 
   /** Drops a finished send from the list (the real transcript row took over). */
@@ -432,6 +448,7 @@ export class SendDriver {
         ...(waiting ? { queuedReason: state === 'pending' ? (activeCause ?? CAUSE_PREVIOUS) : queuedCause(item, activeCause) } : {}),
         leftover,
         createdAt: item.createdAt,
+        ...(item.returned ? { returned: true } : {}),
       };
     });
     for (const l of [...this.listeners]) l();

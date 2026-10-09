@@ -483,7 +483,16 @@ async function runTurn(text, queued = false) {
   const startedAt = Date.now();
   appendUser(text, { turnOrigin: 'human', promptSource: queued ? 'queued' : 'typed' });
   await fireHook('UserPromptSubmit', { prompt: text });
-  if (/demorar/.test(text)) await sleepInterruptible(slowMs);
+  if (/demorar|cancelavel/.test(text)) await sleepInterruptible(slowMs);
+  // A message containing "cancelavel": Esc before the first answer makes the CLI drop the request and give the text
+  // back to ITS box (no assistant line, no "[Request interrupted]", no Stop hook) - the real CLI at 09/10 (e2e 19.5).
+  if (/cancelavel/.test(text) && turnState.interrupted) {
+    state.input = text;
+    state.working = false;
+    turnState.counter += 1;
+    render();
+    return;
+  }
   const turn = pickTurn(text);
   for (const step of turn.steps ?? []) {
     if (turnState.interrupted) break;

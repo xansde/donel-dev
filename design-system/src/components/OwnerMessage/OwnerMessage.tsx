@@ -9,9 +9,10 @@ import styles from './OwnerMessage.module.css';
  * - `sending`: "enviando…" (ponto piscando);
  * - `queued`: "na fila" + a causa em `queuedReason` (D-C10);
  * - `sent`: "hh:mm · ✓ entrou" (só o que o chat enviou neste uso da aba);
- * - `failed`: "✕ não foi · <motivo> · ↻ tentar de novo · descartar".
+ * - `failed`: "✕ não foi · <motivo> · ↻ tentar de novo · descartar";
+ * - `interrupted`: "hh:mm · interrompida · o texto voltou para a caixa" (Esc antes da primeira resposta).
  */
-export type OwnerMessageSendState = 'history' | 'sending' | 'queued' | 'sent' | 'failed';
+export type OwnerMessageSendState = 'history' | 'sending' | 'queued' | 'sent' | 'failed' | 'interrupted';
 
 export interface OwnerMessageProps {
   /** Texto (ou nós) da mensagem. Quebras de linha são preservadas. */
@@ -123,6 +124,14 @@ export function OwnerMessage({
                 {time ? <span className={styles.time}>{time}</span> : null}
                 {time ? <span aria-hidden="true">·</span> : null}
                 <span className={styles.entered}>✓ entrou</span>
+              </>
+            ) : null}
+            {sendState === 'interrupted' ? (
+              <>
+                {time ? <span className={styles.time}>{time}</span> : null}
+                {time ? <span aria-hidden="true">·</span> : null}
+                <span className={styles.interruptedText}>interrompida</span>
+                <span>· o texto voltou para a caixa</span>
               </>
             ) : null}
             {sendState === 'history' && time ? <span className={styles.time}>{time}</span> : null}

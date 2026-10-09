@@ -82,3 +82,23 @@ export function formatElapsed(ms: number): string {
   const seconds = total % 60;
   return `${Math.floor(total / 60)}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
+
+/** How long the footer says "parando…" before admitting the Claude did not stop. */
+export const STOP_TIMEOUT_MS = 5000;
+
+export type StopFeedback = 'none' | 'stopping' | 'stuck';
+
+/**
+ * What Parar / Esc shows while the round still runs: nothing before a request, "parando…" (button off) until the
+ * round ends or the timeout, then `stuck` (button back + a discreet "o Claude não parou" hint). A request is the
+ * `Date.now()` of the press; one that wrote nothing is stored already expired (`expiredStopRequest`).
+ */
+export function stopFeedback(requestedAt: number | null, now: number): StopFeedback {
+  if (requestedAt === null) return 'none';
+  return now - requestedAt < STOP_TIMEOUT_MS ? 'stopping' : 'stuck';
+}
+
+/** A press that reached nothing (the screen did not show "esc to interrupt"): no point waiting 5 s to say so. */
+export const expiredStopRequest = (now: number): number => now - STOP_TIMEOUT_MS;
+
+export const STOP_STUCK_HINT = 'o Claude não parou — tente de novo ou abra o terminal';

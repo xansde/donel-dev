@@ -222,6 +222,31 @@ describe('SendDriver', () => {
     expect(h.writes).toEqual(['\x1b\x1b']);
   });
 
+  it('texto devolvido pelo CLI: marcar o envio, descartar a sobra e a fila segue sem ficar presa', () => {
+    const h = new Harness();
+    const first = h.driver.enqueue({ text: 'teste grande' });
+    h.screenChanged();
+    h.advance(100);
+    h.signal('submit', 'teste grande', 'hook');
+    expect(h.items[0]!.state).toBe('accepted');
+    // Esc antes da resposta: o CLI devolve o texto à caixa.
+    h.lines = screen('teste grande');
+    h.driver.enqueue({ text: 'segunda' });
+    expect(h.items[1]!.leftover).toEqual({ text: 'teste grande', canDiscard: true });
+    expect(h.items[1]!.queuedReason).toBe('entra quando a caixa do terminal esvaziar');
+    h.driver.markReturned(first);
+    expect(h.items[0]!.returned).toBe(true);
+    expect(ownerSendState(h.items[0]!)).toBe('interrupted');
+    h.driver.discardAndSend(h.items[1]!.id);
+    expect(h.writes.at(-1)).toBe('');
+    // A caixa esvazia: a segunda mensagem sai.
+    h.lines = screen('');
+    h.screenChanged();
+    expect(h.writes.at(-1)).toBe(paste('segunda'));
+    expect(h.items[1]!.leftover).toBeNull();
+    expect(h.items[1]!.state).toBe('typing');
+  });
+
   it('interromper e mandar: Esc primeiro, só depois o texto', () => {
     const h = new Harness();
     h.footer = WORKING_FOOTER;

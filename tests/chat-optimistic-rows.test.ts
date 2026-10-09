@@ -118,4 +118,13 @@ describe('mergeOptimistic - cartão "não foi" no ponto do envio', () => {
     const out = mergeOptimistic([later], []);
     expect(ids(out.rows)).toEqual(['u9']);
   });
+
+  it('envio marcado como devolvido pelo CLI vira "interrompida", com ou sem a linha real', () => {
+    const withReal = mergeOptimistic([real('u1', 'oi')], [item('s1', 'oi', 'accepted', { label: 'entrou', returned: true })]);
+    expect(withReal.overlays.get('u1')).toMatchObject({ sendState: 'interrupted' });
+    // A cadeia foi reescrita (a próxima mensagem se pendurou antes dela): o cartão segue como local.
+    const rewritten = mergeOptimistic([], [item('s1', 'oi', 'accepted', { label: 'entrou', returned: true })]);
+    expect(ids(rewritten.rows)).toEqual(['local:s1']);
+    expect(rewritten.overlays.get('local:s1')).toMatchObject({ sendState: 'interrupted' });
+  });
 });
