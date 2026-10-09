@@ -147,6 +147,27 @@ describe('fake-claude-chat', { timeout: 20000 }, () => {
     expect(submit.body.prompt).toBe(big);
   });
 
+  it('draws the box like the real CLI: LF starts a row, long lines wrap at a space (dropped), continuation rows are indented by 2', async () => {
+    launch([]); // piped stdout: no columns, so the fake assumes 100 and the text area is 98 wide
+    await waitFor(() => hooks('SessionStart')[0], 'SessionStart');
+    await waitFor(() => output.includes('? for shortcuts'), 'idle');
+    const long = Array.from({ length: 30 }, (_, i) => `w${String(i).padStart(2, '0')}`).join(' '); // 119 chars
+    send('linha um\n');
+    send(long);
+    await waitFor(() => screen().includes('w29'), 'long text drawn');
+    const rows = screen().split('\r\n');
+    const top = rows.findIndex((r) => /^─+$/.test(r));
+    const bottom = rows.findIndex((r, i) => i > top && /^─+$/.test(r));
+    const box = rows.slice(top + 1, bottom);
+    expect(box[0]).toBe('❯ linha um');
+    expect(box.length).toBe(3);
+    expect(box[1]!.startsWith('  w00 ')).toBe(true);
+    expect(box[2]!.startsWith('  w')).toBe(true);
+    // the space at the wrap point is gone: the rows glued back together lose exactly one space
+    expect(box[1]!.slice(2).length).toBeLessThanOrEqual(98);
+    expect(box[1]!.slice(2) + box[2]!.slice(2)).toBe(long.replace(/ /g, (m, at: number) => (at === box[1]!.slice(2).length ? '' : m)));
+  });
+
   it('/clear ends the session with reason clear and starts a new one', async () => {
     launch(['--session-id', 'aaaaaaaa-0000-4000-8000-000000000003']);
     const first = await waitFor(() => hooks('SessionStart')[0], 'SessionStart');
@@ -194,9 +215,9 @@ describe('fake-claude-chat', { timeout: 20000 }, () => {
   it('shows a 5+ line paste as a placeholder, keeps shorter pastes literal, and shows image paths as [Image #N]', async () => {
     await bootIdle();
     send('\x1b[200~um\ndois\ntres\x1b[201~');
-    await waitFor(() => screen().includes('um dois tres'), 'short paste literal');
+    await waitFor(() => screen().includes('❯ um\r\n  dois\r\n  tres'), 'short paste literal, one row per LF');
     send('\x7f'.repeat(12));
-    await waitFor(() => !screen().includes('um dois'), 'cleared');
+    await waitFor(() => !screen().includes('dois'), 'cleared');
     send(`\x1b[200~${['a', 'b', 'c', 'd', 'e'].join('\n')}\x1b[201~`);
     await waitFor(() => screen().includes('[Pasted text #1 +4 lines]'), 'placeholder at 5 lines');
     send('\x1b[200~C:\\tmp\\foto.png\x1b[201~');

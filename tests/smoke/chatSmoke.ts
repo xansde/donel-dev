@@ -101,6 +101,12 @@ export function chatHelpers(page: Page) {
   };
   const shot = async (name: string): Promise<void> => {
     await page.screenshot({ path: path.join(SHOTS_DIR, `${name}.png`) });
+    // Optional extra copy (evidence for a review), off by default so the suite stays clean.
+    const extra = process.env.DONEL_SMOKE_SHOTS_DIR;
+    if (extra) {
+      mkdirSync(extra, { recursive: true });
+      await page.screenshot({ path: path.join(extra, `${name}.png`) });
+    }
   };
   return { viewSwitch, showView, typeInTerminal, waitForFakeFooter, shot, timeline: (): Locator => page.locator('[data-testid="chat-timeline"]:visible') };
 }
