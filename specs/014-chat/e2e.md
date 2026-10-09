@@ -325,7 +325,7 @@ A smoke (T081) veio por último.
   - Decisão do dono (08/10, respondida pelo painel de pergunta no alfa): o
     cartão falho fica **no ponto do envio**, na ordem do tempo. Levar à spec.
   - **Corrigido** (08/10): o cartão ganhou "descartar" (`driver.dismiss`) e fica antes da primeira linha posterior ao envio. A spec FR-017 foi atualizada.
-  - **Smokes escritos** (10/10, `feature/014-fase-4-5`): `tests/smoke/chat-send-multiline.spec.ts` (multilinha sem imagem, com imagem, linha longa) e `tests/smoke/chat-reception.spec.ts` (`/compact` + aviso forçado que some). O falso passou a desenhar a caixa como o CLI real (wrap, recuo de 2 colunas); contra o código pré-#97 os multilinha e os dois de recepção falham.
+  - **Smokes escritos** (09/10, PR #98): `tests/smoke/chat-send-multiline.spec.ts` (multilinha sem imagem, com imagem, linha longa) e `tests/smoke/chat-reception.spec.ts` (`/compact` + aviso forçado que some). O falso passou a desenhar a caixa como o CLI real (wrap, recuo de 2 colunas); contra o código pré-#97 os multilinha e os dois de recepção falham.
   - Aceite: um cartão "não foi" sai num gesto e fica na posição em que foi
     enviado.
 - **`Shift+Tab` no chat navega o foco, não troca o modo do CLI** (alfa,
@@ -347,3 +347,48 @@ A smoke (T081) veio por último.
   - Aceite: "N passos" conta a lista da seção de passos (ou a última lista
     de topo, se não houver cabeçalho reconhecível), e o recolhido corta em
     fim de frase ou com reticências explícitas.
+
+## Fase 4.5 — Achados do alfa (09/10)
+
+Fase intermediária, criada pelo dono em 09/10. Os achados de 08/10 já tinham sido corrigidos no #97, mas só com teste unitário.
+
+- **#98**: os smokes que os aceites pediam (`chat-send-multiline`, `chat-reception`). O CLI falso passou a desenhar a caixa como o real. Cada smoke falha com o código anterior ao #97 e passa com o atual.
+- **Conferência no alfa**: fica junto com a da Fase 5, na mesma página (`conferencia-fase-4-5-e-5.html`, no vault).
+
+## Fase 5 — Caixa rica (09/10)
+
+Branch `feature/014-fase-5`, T083–T087 e T089–T090 (a T088 entrou na Fase 4).
+
+- **Catálogo do `/`** (`commandCatalog.ts`, `command-catalog-scanner.ts`). Junta três fontes:
+  - os comandos nativos, 45 deles, uma lista só que o envio também usa;
+  - o disco: usuário, projeto e plugins habilitados;
+  - o `skill_listing`.
+
+  `/login` e `/logout` ficam fora do menu e ganham selo quando digitados.
+- **Arquivos do `@`** (`project-files.ts`): `git ls-files` mais os não rastreados que não são ignorados. Sem git, uma varredura limitada.
+- **Menu** (`CommandMenu.tsx` + o `Listbox` novo no design-system):
+  - Tab escolhe;
+  - Enter envia o que está escrito, então `/mod` vai literal;
+  - Esc fecha o menu sem acionar o Parar.
+
+  A ficha de origem segue o design: CLI, global, projeto, plugin.
+- **Ficha "texto colado — N linhas"**: aparece acima de 20 linhas ou acima de 2.000 caracteres e abre num `Modal` só de leitura. No envio, o texto colado entra **depois** do que foi digitado, para `/skill` e `!` continuarem no começo da mensagem (`expandPastes`).
+- **Selos** do `!` e do `/login`/`/logout`.
+- **Automático**:
+  - vitest com 3751 testes;
+  - typecheck e build limpos;
+  - `test:smoke:gate` com 78/78 (duas rodadas do subagente e uma minha).
+- **Corrida no `chat-pending`, que é anterior a esta fase**: o poll do pé de trabalho lia `count` e `getAttribute` em duas chamadas. Quando o pé desmontava entre uma e outra, a leitura travava 30 s e derrubava os 7 testes em cascata. Agora é uma leitura só, dentro da página.
+- **Limites conhecidos**:
+  - nada rodou contra o CLI real, então o `[Pasted text]` real e o aceite de `/skill argumento` não foram verificados;
+  - os `opensScreen` da lista nativa foram montados de memória sobre o 2.1.29x;
+  - a barra de rolagem do modal fica clara no tema escuro;
+  - o smoke só cobre colagem acima do limite.
+
+### Bateria real no alfa — **pendente (dono, pós-merge)**
+
+| Item | O que verificar | Resultado |
+|---|---|---|
+| B2 completo | os 13 envios do `quickstart.md` B2 | pendente |
+| 4.5 | os 8 achados de 08/10 com o CLI real | pendente |
+| Fase 4 | responder pelo terminal com o painel aberto; notificação do Windows | pendente |
