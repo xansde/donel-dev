@@ -149,9 +149,9 @@
   gap: 6px;
 }
 
-.grid3 {
+.grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--choice-columns, 3), minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -186,8 +186,9 @@
 
 .compact {
   align-items: center;
-  height: 38px;
-  padding: 0 10px;
+  /* min-height, not height: a description of 2+ lines grows the card instead of touching its border */
+  min-height: 38px;
+  padding: 6px 10px;
 }
 
 .on {

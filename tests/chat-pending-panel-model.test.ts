@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { escapeAction } from '../src/renderer/src/chat/stopWorking';
 import {
+  choiceColumns,
+  clampPage,
   diffToLines,
+  questionPager,
   previewForQuestion,
   splitRecommended,
   stepRadio,
@@ -81,5 +84,27 @@ describe('stepRadio (roving tabindex)', () => {
     expect(stepRadio(1, 3, 'Home')).toBe(0);
     expect(stepRadio(1, 3, 'End')).toBe(2);
     expect(stepRadio(1, 3, 'a')).toBeNull();
+  });
+});
+
+describe('choiceColumns (no orphan option)', () => {
+  it.each([[1, 1], [2, 2], [3, 3], [4, 2], [5, 3], [6, 3], [8, 2], [9, 3]])('%i options -> %i columns', (n, cols) => {
+    expect(choiceColumns(n)).toBe(cols);
+  });
+  it('never leaves a single option alone on the last row for 2..9 options except odd counts above 4', () => {
+    for (const n of [2, 3, 4, 6, 8, 9]) expect(n % choiceColumns(n)).not.toBe(1);
+  });
+});
+
+describe('questionPager', () => {
+  it('labels and bounds the pages', () => {
+    expect(questionPager(0, 2)).toEqual({ page: 0, label: 'Pergunta 1 de 2', hasPrev: false, hasNext: true });
+    expect(questionPager(1, 2)).toEqual({ page: 1, label: 'Pergunta 2 de 2', hasPrev: true, hasNext: false });
+  });
+  it('clamps out-of-range pages', () => {
+    expect(clampPage(5, 2)).toBe(1);
+    expect(clampPage(-1, 2)).toBe(0);
+    expect(clampPage(3, 0)).toBe(0);
+    expect(questionPager(9, 3).page).toBe(2);
   });
 });

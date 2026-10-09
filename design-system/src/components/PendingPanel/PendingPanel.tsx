@@ -185,6 +185,8 @@ export interface QuestionBlockProps {
   /** "escolha uma" / "escolha uma ou mais". */
   hint: string;
   multiple: boolean;
+  /** Columns of the multiple-choice grid (default 3); callers pick a count that leaves no orphan option. */
+  columns?: number;
   /** The option cards (already wrapped in the group element is NOT needed: the block does it). */
   options: ReactNode;
   other: ReactNode;
@@ -200,6 +202,7 @@ export function QuestionBlock({
   title,
   hint,
   multiple,
+  columns = 3,
   options,
   other,
   preview,
@@ -221,7 +224,8 @@ export function QuestionBlock({
           <div
             role={multiple ? 'group' : 'radiogroup'}
             aria-labelledby={titleId}
-            className={multiple ? styles.grid3 : styles.stack}
+            className={multiple ? styles.grid : styles.stack}
+            style={multiple ? ({ '--choice-columns': columns } as React.CSSProperties) : undefined}
           >
             {options}
           </div>
