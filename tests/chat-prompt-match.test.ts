@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchOldestPending, matchesPrompt, normalizePrompt } from '../src/shared/chat/promptMatch';
+import { matchOldestPending, matchesPrompt, normalizePrompt, unwrapPastedContent } from '../src/shared/chat/promptMatch';
 
 // 014-chat T062 — comparação do texto enviado com o texto dos sinais de aceite (send-protocol §5).
 
@@ -74,5 +74,28 @@ describe('matchOldestPending', () => {
 
   it('devolve null sem candidatos', () => {
     expect(matchOldestPending([], 'x')).toBeNull();
+  });
+});
+
+describe('unwrapPastedContent', () => {
+  it('removes the tags and the line break glued to each one', () => {
+    expect(unwrapPastedContent('<pasted_content id="x">\nabc\n</pasted_content id="x">')).toBe('abc');
+  });
+
+  it('keeps text typed before the paste', () => {
+    expect(unwrapPastedContent('teste\n<pasted_content id="x">\nabc\n</pasted_content id="x">')).toBe('teste\nabc');
+  });
+
+  it('handles two pastes', () => {
+    const text = '<pasted_content id="a">\none\n</pasted_content id="a">\nmeio\n<pasted_content id="b">\ntwo\n</pasted_content id="b">';
+    expect(unwrapPastedContent(text)).toBe('one\nmeio\ntwo');
+  });
+
+  it('keeps [Image #1] and inner spaces', () => {
+    expect(unwrapPastedContent('[Image #1]  veja\n<pasted_content id="x">\n  a   b\n</pasted_content id="x">')).toBe('[Image #1]  veja\n  a   b');
+  });
+
+  it('leaves text without tags untouched', () => {
+    expect(unwrapPastedContent('  a\n\n b  \n')).toBe('  a\n\n b  \n');
   });
 });

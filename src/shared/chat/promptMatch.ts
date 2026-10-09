@@ -2,7 +2,19 @@
 // (`contracts/send-protocol.md` §5). Pure.
 
 const PASTED_CONTENT_TAG = /<\/?pasted_content\b[^>]*>/g;
+// An opening tag takes the line break after it; a closing tag takes the one before it.
+const PASTED_CONTENT_OPEN = /<pasted_content\b[^>]*>\r?\n?/g;
+const PASTED_CONTENT_CLOSE = /\r?\n?<\/pasted_content\b[^>]*>/g;
 const IMAGE_MARKER = /\[Image #\d+\]/g;
+
+/**
+ * Removes the `<pasted_content id=…>…</pasted_content id=…>` wrapper the CLI puts around collapsed pastes in
+ * the recorded prompt: only the tags and the line break glued to each one go. Inner spaces and `[Image #N]`
+ * markers are kept, so the result is fit to display.
+ */
+export function unwrapPastedContent(text: string): string {
+  return text.replace(PASTED_CONTENT_OPEN, '').replace(PASTED_CONTENT_CLOSE, '').replace(PASTED_CONTENT_TAG, '');
+}
 
 /**
  * Canonical form for comparison: unwraps `<pasted_content id=…>…</pasted_content id=…>` (the CLI wraps

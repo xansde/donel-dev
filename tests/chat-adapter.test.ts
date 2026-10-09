@@ -705,3 +705,49 @@ describe('adapt - backward pagination (prepend)', () => {
     expect(viewOf(next.state).map((r) => r.id)).toEqual(whole.map((r) => r.id));
   });
 });
+
+// ---------------------------------------------------------------------------
+// pasted_content unwrapping in the user card (e2e test 3 finding)
+// ---------------------------------------------------------------------------
+
+describe('adapt - collapsed paste is unwrapped in the user row', () => {
+  const WRAPPED = '<pasted_content id="x">\nteste 3:\nlinha\n</pasted_content id="x">';
+
+  function inlineEntries(lines: readonly object[]): TranscriptEntry[] {
+    const out: TranscriptEntry[] = [];
+    let offset = 0;
+    for (const obj of lines) {
+      const raw = JSON.stringify({ sessionId: 's', cwd: '/work/atlas', isSidechain: false, ...obj });
+      const e = classifyLine(raw, { path: 'inline.jsonl', offset, length: raw.length });
+      if (e !== null) out.push(e);
+      offset += raw.length + 1;
+    }
+    return out;
+  }
+
+  const userLine = (uuid: string, parent: string | null, content: string, extra: object = {}) => ({
+    parentUuid: parent, type: 'user', message: { role: 'user', content }, promptId: `p-${uuid}`,
+    turnOrigin: 'human', promptSource: 'typed', uuid, timestamp: '2026-10-01T12:00:01.000Z', ...extra,
+  });
+
+  it('direct prompt: UserRow.text has no tags and no leading blank line', () => {
+    const r = adapt(initAdapterState({ cwd: '/work/atlas' }), inlineEntries([userLine('u1', null, WRAPPED)]));
+    const users = ofKind(r.state.rows, 'user');
+    expect(users).toHaveLength(1);
+    expect(users[0]!.text).toBe('teste 3:\nlinha');
+  });
+
+  it('queued path: the queued row and its later delivery share one unwrapped row', () => {
+    const entries = inlineEntries([
+      userLine('u1', null, 'primeiro'),
+      {
+        parentUuid: 'u1', type: 'attachment', uuid: 'a1', timestamp: '2026-10-01T12:00:02.000Z',
+        attachment: { type: 'queued_command', prompt: WRAPPED, commandMode: 'prompt', humanTurn: true },
+      },
+      userLine('u2', 'a1', WRAPPED, { promptSource: 'queued', timestamp: '2026-10-01T12:00:03.000Z' }),
+    ]);
+    const r = adapt(initAdapterState({ cwd: '/work/atlas' }), entries);
+    const users = ofKind(r.state.rows, 'user');
+    expect(users.map((u) => u.text)).toEqual(['primeiro', 'teste 3:\nlinha']);
+  });
+});
