@@ -23,8 +23,8 @@ vivo seguem `data-model.md`.
 | `chat:answer` | `{ ptyId, pendingId, answer: PendingAnswer }` | `{ ok: true } \| { ok: false, reason: 'not-open' \| 'unknown' }` | `not-open`: alguém respondeu antes (TUI ou outro hook). |
 | `chat:subagent-open` | `{ ptyId, agentId }` | `ChatSnapshot` do subagente | Passa a seguir `agent-<id>.jsonl` (AS 5.2). |
 | `chat:subagent-close` | `{ ptyId, agentId }` | `void` | |
-| `chat:catalog` | `{ ptyId }` | `CommandEntry[]` = `{ name, aliases, description, source: 'builtin' \| 'skill' \| 'command' \| 'plugin', opensScreen }` | Menu `/` (R3), com cache por `cwd`. |
-| `chat:files` | `{ ptyId, query, limit }` | `string[]` | Menu `@`: arquivos do projeto, relativos ao `cwd`; `git ls-files` (+ não rastreados não ignorados) ou varredura limitada. |
+| `chat:catalog` | `{ ptyId }` | `CommandEntry[]` = `{ name, aliases, description, source: 'builtin' \| 'skill' \| 'command' \| 'plugin', scope: 'builtin' \| 'user' \| 'project' \| 'plugin', opensScreen }` | Menu `/` (R3), com cache por `cwd` invalidado por `mtime`. `scope` é a ficha de origem (T087). `/login` e `/logout` não vêm: o aviso de conta sai de `inspectTypedCommand`. O main resolve `cwd` e transcript pela aba. |
+| `chat:files` | `{ ptyId, query, limit }` | `string[]` | Menu `@`: arquivos do projeto, já ranqueados pela `query` (`limit` entre 1 e 200, padrão 50), relativos ao `cwd`; `git ls-files` (+ não rastreados não ignorados) ou varredura limitada. |
 | `chat:save-image` | `{ ptyId, bytes: ArrayBuffer, mediaType }` | `{ id, path }` | Grava em `userData/chat-attachments/<sessionId>/` (R4). |
 | `chat:ack-lookup` | `{ ptyId, text, since }` | `{ matched: boolean, via? }` | Aceite tardio antes do "tentar de novo" (contrato de envio §7). |
 | `chat:open-external` | `{ url }` | `void` | Só `http:`/`https:` (R21). |

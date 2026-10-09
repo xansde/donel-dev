@@ -830,6 +830,47 @@ describe('pendings (T076)', () => {
   });
 });
 
+describe('chat:catalog and chat:files (T084/T086)', () => {
+  function fakeIpc() {
+    const handlers = new Map<string, unknown>();
+    return { handlers, handle: (c: string, fn: unknown) => void handlers.set(c, fn), removeHandler: (c: string) => void handlers.delete(c) };
+  }
+
+  it('is not registered without the providers', () => {
+    const ipc = fakeIpc();
+    const h = harness({ 'pty-1': src(join(dir, 'x.jsonl')) });
+    registerChatIpcHandlers({ ipcMain: ipc, enabled: true, hub: h.hub, openExternal: async () => undefined, openPath: async () => '' });
+    expect(ipc.handlers.has(CHAT_CHANNELS.catalog)).toBe(false);
+    expect(ipc.handlers.has(CHAT_CHANNELS.files)).toBe(false);
+  });
+
+  it('resolves cwd and transcript in the main, validates and clamps the input', async () => {
+    const ipc = fakeIpc();
+    const path = join(dir, 'x.jsonl');
+    const h = harness({ 'pty-1': src(path) });
+    const calls: unknown[][] = [];
+    registerChatIpcHandlers({
+      ipcMain: ipc,
+      enabled: true,
+      hub: h.hub,
+      openExternal: async () => undefined,
+      openPath: async () => '',
+      catalog: async (cwd, transcript) => (calls.push(['catalog', cwd, transcript]), []),
+      files: async (cwd, query, limit) => (calls.push(['files', cwd, query, limit]), ['a.ts']),
+    });
+    const catalog = ipc.handlers.get(CHAT_CHANNELS.catalog) as (e: unknown, i: unknown) => Promise<unknown[]>;
+    const files = ipc.handlers.get(CHAT_CHANNELS.files) as (e: unknown, i: unknown) => Promise<string[]>;
+    await catalog({}, { ptyId: 'pty-1', cwd: '/evil' });
+    expect(calls[0]).toEqual(['catalog', dir, path]);
+    expect(await catalog({}, { ptyId: 3 })).toEqual([]);
+    expect(await files({}, { ptyId: 'pty-1', query: 'x'.repeat(500), limit: 99999 })).toEqual(['a.ts']);
+    expect(calls[1]).toEqual(['files', dir, 'x'.repeat(200), 200]);
+    await files({}, { ptyId: 'pty-1', query: 5, limit: 'many' });
+    expect(calls[2]).toEqual(['files', dir, '', 50]);
+    expect(await files({}, { ptyId: 'unknown-pty', query: 'a', limit: 5 })).toEqual([]);
+  });
+});
+
 const noopEvents: ChatHubEvents = {
   rows: () => undefined,
   live: () => undefined,

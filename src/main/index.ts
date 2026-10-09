@@ -170,6 +170,8 @@ import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
 import { createChatHub, type ChatHub, type ChatSourceInfo } from './chat/chat-hub';
 import { registerChatIpcHandlers } from './chat/chat-ipc';
+import { createCommandCatalogScanner } from './chat/command-catalog-scanner';
+import { createProjectFiles } from './chat/project-files';
 import { createPendingNotifier } from './chat/notifications';
 import { registerAssetScheme, registerAssetsProtocol } from './chat/assets-protocol';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
@@ -1151,11 +1153,15 @@ function registerChatDomain(): void {
   chatHub = hub;
   chatAttachments = new AttachmentStore({ root: attachmentsRoot });
   void chatAttachments.sweepOlderThan(ATTACHMENT_MAX_AGE_MS);
+  const commandCatalog = createCommandCatalogScanner();
+  const projectFiles = createProjectFiles();
   registerChatIpcHandlers({
     ipcMain,
     enabled: true,
     hub,
     attachments: chatAttachments,
+    catalog: (cwd, transcriptPath) => commandCatalog.catalog(cwd, transcriptPath),
+    files: (cwd, query, limit) => projectFiles.query(cwd, query, limit),
     openExternal: (url) => shell.openExternal(url),
     openPath: (path) => shell.openPath(path),
     onFocusState: (input) => notifier.setFocusState(input.activePtyId, input.tabNames),

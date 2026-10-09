@@ -115,6 +115,9 @@ export interface ChatHub {
   sessionIdOf(ptyId: string): string | null;
   /** Folders `chat:open-generated` may open from: the tab's `cwd` and the attachments folder. */
   generatedFileRoots(ptyId: string): readonly string[];
+  /** T084/T086 - the tab's working folder and current transcript file (`null` until the first hook / initial source). */
+  cwdOf(ptyId: string): string | null;
+  transcriptPathOf(ptyId: string): string | null;
   dispose(): void;
 }
 
@@ -807,6 +810,16 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     sessionIdOf(ptyId) {
       const source = recs.get(ptyId)?.source ?? deps.getSource(ptyId);
       return source !== undefined && source !== null && source.sessionId !== '' ? source.sessionId : null;
+    },
+
+    cwdOf(ptyId) {
+      const cwd = recs.get(ptyId)?.source?.cwd ?? deps.getSource(ptyId)?.cwd;
+      return cwd !== undefined && cwd !== '' ? cwd : null;
+    },
+
+    transcriptPathOf(ptyId) {
+      const path = recs.get(ptyId)?.source?.transcriptPath ?? deps.getSource(ptyId)?.transcriptPath;
+      return path !== undefined && path !== '' ? path : null;
     },
 
     generatedFileRoots(ptyId) {

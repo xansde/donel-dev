@@ -14,6 +14,8 @@ import type {
   ChatReceptionEvent,
   ChatRowDetailInput,
   ChatRowsEvent,
+  ChatCatalogOutput,
+  ChatFilesOutput,
   ChatSaveImageOutput,
   ChatSnapshot,
   PendingAnswer,
@@ -478,6 +480,10 @@ const donelApi: DonelApi = {
     rowDetail: (input: ChatRowDetailInput) => ipcRenderer.invoke(CHAT_CHANNELS.rowDetail, input) as Promise<RowDetail>,
     openExternal: (url: string) => ipcRenderer.invoke(CHAT_CHANNELS.openExternal, { url }) as Promise<void>,
     openGenerated: (ptyId: string, path: string) => ipcRenderer.invoke(CHAT_CHANNELS.openGenerated, { ptyId, path }) as Promise<void>,
+
+    catalog: (ptyId: string) => ipcRenderer.invoke(CHAT_CHANNELS.catalog, { ptyId }) as Promise<ChatCatalogOutput>,
+    files: (ptyId: string, query: string, limit: number) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.files, { ptyId, query, limit }) as Promise<ChatFilesOutput>,
 
     saveImage: (ptyId: string, bytes: ArrayBuffer, mediaType: string) =>
       ipcRenderer.invoke(CHAT_CHANNELS.saveImage, { ptyId, bytes, mediaType }) as Promise<ChatSaveImageOutput>,

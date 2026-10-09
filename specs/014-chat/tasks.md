@@ -497,26 +497,26 @@ um por vez, com notificação em segundo plano.
 
 **Independent Test**: `quickstart.md` B2 completo; smoke `chat-composer`.
 
-- [ ] T083 [P] [US4] Escrever `tests/chat-command-catalog.test.ts` (falhando):
+- [x] T083 [P] [US4] Escrever `tests/chat-command-catalog.test.ts` (falhando):
   - união das três fontes (nativos, disco, `skill_listing`);
   - entradas só do disco mantidas;
   - `/login` e `/logout` fora do menu e com selo de aviso quando digitados;
   - `opensScreen`;
   - invalidação por `mtime` (parte pura).
-- [ ] T084 [US4] Implementar o catálogo em `src/shared/chat/commandCatalog.ts` e `src/main/chat/command-catalog-scanner.ts`:
+- [x] T084 [US4] Implementar o catálogo em `src/shared/chat/commandCatalog.ts` e `src/main/chat/command-catalog-scanner.ts`:
   - `src/shared/chat/commandCatalog.ts`: lista de comandos nativos do CLI 2.1.29x com descrição em português, apelidos e `opensScreen` (R16);
   - `src/main/chat/command-catalog-scanner.ts`: só frontmatter, de `~/.claude/skills/*/SKILL.md`, `~/.claude/commands/**/*.md`, `<cwd>/.claude/skills|commands` e plugins habilitados;
   - handler `chat:catalog`.
 
   Faz passar T083.
-- [ ] T085 [P] [US4] Adaptar do T3, para `src/shared/chat/t3/`:
+- [x] T085 [P] [US4] Adaptar do T3, para `src/shared/chat/t3/`:
   - `packages/shared/src/composerTrigger.ts` (só `/` e `@`);
   - `packages/shared/src/searchRanking.ts`;
   - `apps/web/src/components/chat/composerMenuHighlight.ts`;
   - `useComposerTriggerState.ts`.
 
   Com cabeçalho MIT e teste em `tests/chat-composer-trigger.test.ts`.
-- [ ] T086 [US4] Arquivos do projeto para o `@` em `src/main/chat/project-files.ts`:
+- [x] T086 [US4] Arquivos do projeto para o `@` em `src/main/chat/project-files.ts`:
   - `git ls-files` + não rastreados não ignorados;
   - sem git, varredura limitada (pula `node_modules`, `.git` e `dist`; teto de 20 mil);
   - handler `chat:files`;

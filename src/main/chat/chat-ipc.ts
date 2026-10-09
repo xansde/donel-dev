@@ -5,7 +5,7 @@
 //
 // Handlers here: attach, detach, load-older, row-detail, open-external,
 // open-generated, ack-lookup (T064), screen-state (T070), answer (T076), focus-state (T079), save-image
-// (T088). The other contract channels (subagent-*, catalog, files) belong to later tasks.
+// (T088), catalog (T084) and files (T086). The other contract channel (subagent-*) belongs to a later task.
 
 import { CHAT_CHANNELS } from '../../shared/chat/ipc';
 import type {
@@ -15,7 +15,11 @@ import type {
   ChatAnswerOutput,
   ChatAttachInput,
   ChatAttachOutput,
+  ChatCatalogInput,
+  ChatCatalogOutput,
   ChatDetachInput,
+  ChatFilesInput,
+  ChatFilesOutput,
   ChatFocusStateInput,
   ChatLoadOlderInput,
   ChatLoadOlderOutput,
@@ -45,6 +49,10 @@ export interface ChatIpcDeps {
   readonly hub: ChatHub;
   /** T088 - where `chat:save-image` writes. Without it the channel is not registered. */
   readonly attachments?: AttachmentStore;
+  /** T084 - `chat:catalog`: the `/` menu entries for the tab's folder and conversation. Without it the channel is not registered. */
+  readonly catalog?: (cwd: string, transcriptPath: string | null) => Promise<ChatCatalogOutput>;
+  /** T086 - `chat:files`: ranked project files for the `@` menu. Without it the channel is not registered. */
+  readonly files?: (cwd: string, query: string, limit: number) => Promise<ChatFilesOutput>;
   /** `shell.openExternal` */
   readonly openExternal: (url: string) => Promise<void>;
   /** `shell.openPath` (resolves to an error message, '' on success) */
@@ -71,6 +79,8 @@ const HANDLED: readonly string[] = [
   CHAT_CHANNELS.answer,
   CHAT_CHANNELS.focusState,
   CHAT_CHANNELS.saveImage,
+  CHAT_CHANNELS.catalog,
+  CHAT_CHANNELS.files,
 ];
 
 const SCREEN_REASONS: ReadonlySet<string> = new Set(['hook-timeout', 'interactive-screen', 'permission-dialog', 'unrecognized']);
@@ -150,6 +160,27 @@ export function registerChatIpcHandlers(deps: ChatIpcDeps): ChatIpcRegistration 
       if (sessionId === null) throw new Error('chat:save-image: a conversa da aba ainda não começou');
       const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       return attachments.save(input.ptyId, sessionId, view, input.mediaType);
+    });
+  }
+
+  const { catalog, files } = deps;
+  if (catalog !== undefined) {
+    ipcMain.handle(CHAT_CHANNELS.catalog, async (_e, input: ChatCatalogInput): Promise<ChatCatalogOutput> => {
+      if (!isString(input?.ptyId)) return [];
+      // The folder and the transcript are the tab's (known by the main), never taken from the renderer.
+      const cwd = hub.cwdOf(input.ptyId);
+      return catalog(cwd ?? '', hub.transcriptPathOf(input.ptyId));
+    });
+  }
+
+  if (files !== undefined) {
+    ipcMain.handle(CHAT_CHANNELS.files, async (_e, input: ChatFilesInput): Promise<ChatFilesOutput> => {
+      if (!isString(input?.ptyId)) return [];
+      const cwd = hub.cwdOf(input.ptyId);
+      if (cwd === null) return [];
+      const query = isString(input.query) ? input.query.slice(0, 200) : '';
+      const limit = Number.isFinite(input.limit) ? Math.max(1, Math.min(200, Math.floor(input.limit))) : 50;
+      return files(cwd, query, limit);
     });
   }
 

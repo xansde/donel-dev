@@ -25,6 +25,7 @@
 // `signal.at >= createdAt`; the driver picks WHICH pending send receives a signal with `oldestPending`
 // from ./promptMatch (identical messages are closed oldest first).
 
+import { NATIVE_COMMAND_NAMES } from './commandCatalog';
 import { matchesPrompt, normalizePrompt } from './promptMatch';
 import {
   blockingScreen,
@@ -166,13 +167,6 @@ export function sanitizeOutgoing(text: string): string {
     .trim();
 }
 
-const NATIVE_COMMANDS: ReadonlySet<string> = new Set([
-  'add-dir', 'agents', 'bug', 'config', 'context', 'copy', 'cost', 'doctor', 'effort', 'exit', 'export', 'fast',
-  'help', 'hooks', 'ide', 'init', 'login', 'logout', 'mcp', 'memory', 'model', 'output-style', 'permissions',
-  'plugin', 'plugins', 'pr-comments', 'privacy-settings', 'quit', 'release-notes', 'rename', 'resume', 'review',
-  'rewind', 'skills', 'stats', 'status', 'statusline', 'terminal-setup', 'theme', 'upgrade', 'usage', 'vim',
-]);
-
 /** Which acceptance signals apply (§5 table). Expects the sanitized text. */
 export function classifyOutgoing(text: string, options: { readonly customCommands?: ReadonlySet<string> } = {}): MessageClass {
   if (text.startsWith('!')) return { kind: 'shell' };
@@ -182,7 +176,7 @@ export function classifyOutgoing(text: string, options: { readonly customCommand
   if (options.customCommands?.has(name) || options.customCommands?.has(lower)) return { kind: 'skill', name };
   if (lower === 'clear' || lower === 'new' || lower === 'reset') return { kind: 'clear' };
   if (lower === 'compact') return { kind: 'compact' };
-  if (NATIVE_COMMANDS.has(lower)) return { kind: 'native', name };
+  if (NATIVE_COMMAND_NAMES.has(lower)) return { kind: 'native', name };
   return { kind: 'skill', name };
 }
 
