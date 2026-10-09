@@ -152,6 +152,10 @@ test('T072 - envio: linhas, /mod, desconhecido, enviando, na fila, interromper, 
     // `!cmd`: modo shell do CLI (risco conhecido: a caixa em modo shell le "!" mesmo vazia).
     await send(page, '!echo oi');
     await expect.poll(() => allTranscriptText(chat.sessionsDir), { timeout: 40_000 }).toContain('<bash-input>echo oi</bash-input>');
+    // O cartão do `!` fica no nível de cima da conversa (não dentro de um grupo recolhido) e recebe "entrou".
+    const shellCard = timeline(page).getByText('! echo oi');
+    await expect(shellCard).toBeVisible({ timeout: 30_000 });
+    await expect(shellCard.locator('xpath=../..').getByText('✓ entrou')).toBeVisible({ timeout: 30_000 });
     await expect(timeline(page).getByText('✕ não foi')).toHaveCount(2);
     await expect(page.getByText(/Há texto não enviado no terminal/)).toHaveCount(0);
     // E o que vem depois ainda entra (a caixa nao ficou presa em modo shell).

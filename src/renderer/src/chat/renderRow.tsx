@@ -122,8 +122,10 @@ export function renderRow(row: ConversationRow, ctx: RowRenderContext): ReactNod
       return <QuestionRowView row={row} />;
     case 'plan':
       return <PlanRowView row={row} onOpenExternal={ctx.onOpenExternal} />;
-    case 'shell':
-      return <ShellRowView row={row} />;
+    case 'shell': {
+      const overlay = ctx.sendOverlay?.(row.id);
+      return <ShellRowView row={row} sendState={overlay?.sendState} />;
+    }
     case 'local-command':
       return <LocalCommand row={row} />;
     case 'notice':

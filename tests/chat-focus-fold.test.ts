@@ -160,8 +160,19 @@ describe('foldForFocus — subagents stay outside the fold (D-C19)', () => {
 });
 
 describe('foldForFocus — owner turns and system markers stay on top', () => {
+  const shell = (id: string): ConversationRow => ({ ...base, kind: 'shell', id, command: 'echo oi', stdout: 'oi' });
   const notice = (id: string, kind: 'compact' | 'informational'): ConversationRow => ({
     ...base, kind: 'notice', id, notice: kind, params: {},
+  });
+
+  it('keeps the ! command and its output outside the work fold; the fold counts only Claude actions', () => {
+    const rows = [shell('sh'), think('th'), act('a1'), note('fin', 'pronto')];
+    const out = foldForFocus([turn(rows, { finalRowId: 'fin' })], rows);
+    expect(out).toEqual([
+      row('sh'),
+      { kind: 'folded', actions: 1, notes: 0, hasQuestion: false, rows: ['th', 'a1'] },
+      row('fin'),
+    ]);
   });
 
   it('keeps the compact marker on top and creates no fold for notices that carry no work', () => {

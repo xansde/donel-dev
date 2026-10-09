@@ -1,6 +1,6 @@
 // T031 (014-chat) — Modo Foco (data-model.md §5, FR-009): transformação de vista
 // pura. Por rodada mostra a mensagem do dono e a resposta final; o resto vira
-// um bloco recolhido. O marcador de /compact fica fora da dobra. Exceção (D-C19): a mensagem do Claude que lança
+// um bloco recolhido. O que é do dono (`!`, comando local) e o marcador de /compact ficam fora da dobra. Exceção (D-C19): a mensagem do Claude que lança
 // subagentes e as linhas `subagent` ficam fora da dobra, na posição delas.
 
 import type { ConversationRow, FocusItem, Turn } from './rows';
@@ -66,7 +66,7 @@ export function foldForFocus(turns: readonly Turn[], rows: readonly Conversation
 
     for (const id of turn.rows) {
       const row = byId.get(id);
-      const shown = row !== undefined && (row.kind === 'user' || row.kind === 'subagent' || (row.kind === 'notice' && row.notice === 'compact') || id === finalId || launchers.has(id));
+      const shown = row !== undefined && (row.kind === 'user' || row.kind === 'subagent' || row.kind === 'shell' || row.kind === 'local-command' || (row.kind === 'notice' && row.notice === 'compact') || id === finalId || launchers.has(id));
       if (shown) {
         flush();
         out.push({ kind: 'row', rowId: id });

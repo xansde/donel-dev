@@ -2,8 +2,8 @@
 // `user` row (`local:<sendId>`) with its live send state; when the real transcript row arrives the local one
 // disappears and the real row inherits the state ("hh:mm - entrou", D-C11) - never two bubbles.
 
-import { matchesPrompt } from '../../../../shared/chat/promptMatch';
-import type { ConversationRow, UserRow } from '../../../../shared/chat/rows';
+import { matchesPrompt, normalizePrompt } from '../../../../shared/chat/promptMatch';
+import type { ConversationRow, ShellRow, UserRow } from '../../../../shared/chat/rows';
 import { ownerSendState, type SendItemView } from '../sendDriver';
 
 export interface SendOverlay {
@@ -26,6 +26,9 @@ function realText(row: UserRow): string {
   if (row.text !== '') return row.text;
   return row.command ? `/${row.command.name} ${row.command.args}`.trim() : '';
 }
+
+/** The command of a `!` message, as the transcript records it in `<bash-input>`. */
+const shellCommandOf = (text: string): string => text.replace(/^!\s*/, '').trim();
 
 const SLACK_MS = 2_000;
 /** An accepted send whose real row never showed up is dropped after this long (or after the Claude answered). */
@@ -62,7 +65,22 @@ export function mergeOptimistic(realRows: readonly ConversationRow[], items: rea
   const failedLocal: ConversationRow[] = [];
 
   const users = realRows.filter((r): r is UserRow => r.kind === 'user');
+  const shells = realRows.filter((r): r is ShellRow => r.kind === 'shell');
   for (const item of [...items].sort((a, b) => a.createdAt - b.createdAt)) {
+    if (item.kind === 'shell') {
+      // a `!` message is drawn by the transcript as a shell row (command + output), not as a user row
+      const shell = shells.find(
+        (row) =>
+          !claimedRows.has(row.id) &&
+          Date.parse(row.at) >= item.createdAt - SLACK_MS &&
+          normalizePrompt(row.command) === normalizePrompt(shellCommandOf(item.text)),
+      );
+      if (shell !== undefined) {
+        claimedRows.add(shell.id);
+        overlays.set(shell.id, overlayOf(item, true));
+        continue;
+      }
+    }
     const match = users.find(
       (row) =>
         !claimedRows.has(row.id) &&

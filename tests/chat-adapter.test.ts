@@ -353,6 +353,17 @@ describe('adapt - real /compact (compact-real)', () => {
   });
 });
 
+describe('adapt - real ! shell mode (shell-real)', () => {
+  const rows = rowsOf('shell-real');
+
+  it('builds the shell row with its stdout', () => {
+    const sh = ofKind(rows, 'shell');
+    expect(sh).toHaveLength(1);
+    expect(sh[0]!.command).toBe('echo oi');
+    expect(sh[0]!.stdout).toBe('oi');
+  });
+});
+
 describe('adapt - tree (tree-rewind, tree-parallel)', () => {
   it('shows only the active branch of a rewind', () => {
     const rows = rowsOf('tree-rewind');
@@ -684,7 +695,7 @@ describe('adapt - backward pagination (prepend)', () => {
     return out;
   }
 
-  for (const name of ['basic-round', 'commands', 'queue-compact', 'tool-results', 'sess-subagent']) {
+  for (const name of ['basic-round', 'commands', 'queue-compact', 'tool-results', 'sess-subagent', 'shell-real']) {
     it(`${name}: pages read backwards give the same rows as reading forward`, () => {
       let state = initAdapterState({ cwd: '/work/atlas' });
       let client: ConversationRow[] = [];
