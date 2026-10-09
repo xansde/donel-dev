@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BACK_TAB, forwardBackTab, permissionModeLabel } from '../src/renderer/src/chat/cycleMode';
+import { BACK_TAB, forwardShortcut, permissionModeLabel } from '../src/renderer/src/chat/cycleMode';
 import { readPermissionMode } from '../src/shared/chat/screen';
 
 // 014-chat - Shift+Tab on the composer is handed to the CLI (it cycles the permission mode) and the hint under
@@ -41,25 +41,25 @@ describe('permissionModeLabel', () => {
   });
 });
 
-describe('forwardBackTab', () => {
+describe('forwardShortcut', () => {
   const terminal = (lines: string[]) => ({ readScreen: () => ({ lines }), write: vi.fn(() => true) });
 
   it('writes the back-tab sequence the xterm sends', () => {
     expect(BACK_TAB).toBe('\x1b[Z');
     const t = terminal(screen('  ⏸ manual mode on · ? for shortcuts'));
-    expect(forwardBackTab(t)).toBe(true);
+    expect(forwardShortcut(t, BACK_TAB)).toBe(true);
     expect(t.write).toHaveBeenCalledWith(BACK_TAB);
   });
   it('writes with a mode-less footer too (the box may hold text)', () => {
     const t = terminal(screen('  ? for shortcuts'));
-    expect(forwardBackTab(t)).toBe(true);
+    expect(forwardShortcut(t, BACK_TAB)).toBe(true);
   });
   it('does not write while a CLI dialog holds the screen (it would navigate the dialog)', () => {
     const t = terminal(['', '  Exit plan mode?', '', ' 1. Yes', ' 2. No']);
-    expect(forwardBackTab(t)).toBe(false);
+    expect(forwardShortcut(t, BACK_TAB)).toBe(false);
     expect(t.write).not.toHaveBeenCalled();
   });
   it('is a no-op without a terminal', () => {
-    expect(forwardBackTab(null)).toBe(false);
+    expect(forwardShortcut(null, BACK_TAB)).toBe(false);
   });
 });

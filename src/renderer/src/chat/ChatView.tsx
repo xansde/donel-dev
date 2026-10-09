@@ -97,6 +97,9 @@ export const ChatView = memo(function ChatView({
   const session = useChatSession(ptyId);
   const onOpenTerminal = useCallback(() => actions.openTerminal(tabId), [actions, tabId]);
   const onResume = useCallback(() => actions.resume(tabId), [actions, tabId]);
+  // Ctrl+O in the box toggles every fold of the timeline.
+  const [foldToggleTick, setFoldToggleTick] = useState(0);
+  const onToggleFolds = useCallback(() => setFoldToggleTick((tick) => tick + 1), []);
   const onCloseTab = useCallback(() => actions.closeTab(tabId), [actions, tabId]);
   const onOpenPreviousSessions = useCallback(() => actions.openPreviousSessions(tabId), [actions, tabId]);
 
@@ -221,7 +224,7 @@ export const ChatView = memo(function ChatView({
           ) : null}
         </div>
       ) : null}
-      <Timeline rows={rows} session={session} focusMode={focusMode} active={active} ctx={ctx} />
+      <Timeline rows={rows} session={session} focusMode={focusMode} active={active} ctx={ctx} foldToggleTick={foldToggleTick} />
       {effectiveEnded !== null ? (
         <SessionEndedBar exitCode={effectiveEnded.exitCode} onResume={onResume} onCloseTab={onCloseTab} />
       ) : (
@@ -248,6 +251,7 @@ export const ChatView = memo(function ChatView({
             active={active}
             onOpenTerminal={onOpenTerminal}
             adjust={adjustMode}
+            onToggleFolds={onToggleFolds}
           />
         </>
       )}

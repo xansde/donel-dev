@@ -2,6 +2,7 @@
 // open (Tab picks, Enter does NOT complete - it sends what is written, Esc closes), how the highlight moves, what
 // text a pick inserts and how the matched part of a row is marked.
 
+import type { ModelAlias } from '../../../../shared/commandBuilder';
 import type { CommandEntry, CommandScope } from '../../../../shared/chat/ipc';
 import { formatFileMention, replaceTextRange, type ComposerTrigger } from '../../../../shared/chat/t3/composerTrigger';
 
@@ -62,4 +63,22 @@ export function matchRange(value: string, query: string): readonly [number, numb
   if (q === '') return null;
   const at = value.toLowerCase().indexOf(q);
   return at < 0 ? null : [at, at + q.length];
+}
+
+// --- model picker (Alt+P / a bare `/model`): the CLI's own picker only exists in the terminal, so the chat lists
+// the aliases in the same menu and sends `/model <alias>` through the ordinary send path.
+
+/** The aliases the launcher offers (same list as `ModelAlias`). */
+export const MODEL_CHOICES: readonly ModelAlias[] = ['fable', 'opus', 'sonnet', 'haiku'];
+
+/** The message a pick sends. */
+export const modelCommandText = (alias: ModelAlias): string => `/model ${alias}`;
+
+/** A bare `/model` (no argument) would open the CLI picker; the box opens its own instead of sending it. */
+export const isBareModelCommand = (text: string): boolean => text.trim() === '/model';
+
+/** Keys of the model menu: like `menuKeyAction`, but Enter picks too (nothing written is competing with it). */
+export function modelMenuKeyAction(input: MenuKeyInput, itemCount: number): MenuKeyAction | null {
+  if (input.key === 'Enter' && !input.shiftKey && !input.ctrlKey && !input.altKey && !input.metaKey) return itemCount === 0 ? null : 'choose';
+  return menuKeyAction(input, itemCount);
 }

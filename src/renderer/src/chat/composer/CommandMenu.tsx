@@ -6,11 +6,13 @@ import { Listbox, type ListboxItem } from '@donel-dev/design-system';
 import { File as FileIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { CommandEntry } from '../../../../shared/chat/ipc';
+import type { ModelAlias } from '../../../../shared/commandBuilder';
 import { SCOPE_BADGE, matchRange } from './composerMenu';
 
 export type MenuRows =
   | { readonly kind: 'slash'; readonly entries: readonly CommandEntry[]; readonly total: number }
-  | { readonly kind: 'path'; readonly paths: readonly string[] };
+  | { readonly kind: 'path'; readonly paths: readonly string[] }
+  | { readonly kind: 'model'; readonly models: readonly ModelAlias[] };
 
 export interface CommandMenuProps {
   rows: MenuRows;
@@ -22,7 +24,7 @@ export interface CommandMenuProps {
 }
 
 /** Row ids: the command name / the relative path (unique inside one menu). */
-export const rowIdsOf = (rows: MenuRows): string[] => (rows.kind === 'slash' ? rows.entries.map((e) => e.name) : [...rows.paths]);
+export const rowIdsOf = (rows: MenuRows): string[] => (rows.kind === 'slash' ? rows.entries.map((e) => e.name) : rows.kind === 'model' ? [...rows.models] : [...rows.paths]);
 
 /** `value` with the part matching `query` in the accent colour (design: the typed prefix is highlighted). */
 function marked(value: string, query: string, prefix = ''): ReactNode {
@@ -48,15 +50,17 @@ export function CommandMenu({ rows, query, activeId, listId, onActiveChange, onS
           secondary: entry.description,
           badge: SCOPE_BADGE[entry.scope],
         }))
-      : rows.paths.map((path) => ({
-          id: path,
-          leading: <FileIcon size={16} strokeWidth={1.75} aria-hidden="true" />,
-          primary: marked(path, query),
-        }));
-  const meta = rows.kind === 'slash' ? `${items.length} de ${rows.total} · /${query}` : `${items.length} · @${query}`;
-  const title = rows.kind === 'slash' ? 'Skills e comandos' : 'Arquivos do projeto';
+      : rows.kind === 'model'
+        ? rows.models.map((model) => ({ id: model, primary: model }))
+        : rows.paths.map((path) => ({
+            id: path,
+            leading: <FileIcon size={16} strokeWidth={1.75} aria-hidden="true" />,
+            primary: marked(path, query),
+          }));
+  const meta = rows.kind === 'slash' ? `${items.length} de ${rows.total} · /${query}` : rows.kind === 'model' ? `${items.length} modelos` : `${items.length} · @${query}`;
+  const title = rows.kind === 'slash' ? 'Skills e comandos' : rows.kind === 'model' ? 'Trocar de modelo' : 'Arquivos do projeto';
   return (
-    <div data-testid={rows.kind === 'slash' ? 'chat-menu-slash' : 'chat-menu-path'}>
+    <div data-testid={`chat-menu-${rows.kind}`}>
       <Listbox
         id={listId}
         label={title}
@@ -70,8 +74,14 @@ export function CommandMenu({ rows, query, activeId, listId, onActiveChange, onS
         footer={
           <>
             <span>↑ ↓ navegam</span>
-            <span>{rows.kind === 'slash' ? 'Tab escolhe' : 'Tab insere a menção'}</span>
-            <span>Enter envia o que está escrito</span>
+            {rows.kind === 'model' ? (
+              <span>Enter ou Tab escolhem</span>
+            ) : (
+              <>
+                <span>{rows.kind === 'slash' ? 'Tab escolhe' : 'Tab insere a menção'}</span>
+                <span>Enter envia o que está escrito</span>
+              </>
+            )}
             <span>Esc fecha</span>
           </>
         }

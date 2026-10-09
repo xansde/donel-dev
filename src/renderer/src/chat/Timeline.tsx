@@ -25,7 +25,7 @@ import {
   type ViewSnapshot,
 } from './scrollController';
 import styles from './Timeline.module.css';
-import { buildTimeline, formatElapsed, type TimelineItem } from './timelineModel';
+import { buildTimeline, formatElapsed, toggleAllFolds, type TimelineItem } from './timelineModel';
 import type { ChatSession } from './useChatSession';
 
 export interface TimelineProps {
@@ -36,6 +36,8 @@ export interface TimelineProps {
   /** The tab is the active one AND on the chat view (the scroller has layout). */
   active: boolean;
   ctx: RowRenderContext;
+  /** Ctrl+O in the box: each increment toggles ALL folds (open every one, or close them all). */
+  foldToggleTick?: number;
 }
 
 type FoldItem = Extract<TimelineItem, { kind: 'fold' }>;
@@ -123,7 +125,7 @@ const realign = (el: HTMLElement, anchor: ScrollAnchor): boolean => {
   return true;
 };
 
-export function Timeline({ rows, session, focusMode, active, ctx }: TimelineProps): React.JSX.Element {
+export function Timeline({ rows, session, focusMode, active, ctx, foldToggleTick = 0 }: TimelineProps): React.JSX.Element {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const scrollState = useRef<ScrollState>(INITIAL_SCROLL_STATE);
@@ -158,6 +160,14 @@ export function Timeline({ rows, session, focusMode, active, ctx }: TimelineProp
     () => buildTimeline(rows, { focusMode, live: session.live, expanded }),
     [rows, focusMode, session.live, expanded],
   );
+
+  // Ctrl+O: toggles every fold at once (the tick starts at 0 = nothing pressed yet).
+  const roundsRef = useRef(rounds);
+  roundsRef.current = rounds;
+  useEffect(() => {
+    if (foldToggleTick === 0) return;
+    setExpanded((prev) => toggleAllFolds(roundsRef.current, prev));
+  }, [foldToggleTick]);
 
   // The DOM still shows the previous rows while this render runs: this is the last moment the reader's
   // round and its offset can be read before a prepend is committed (a scroll-time snapshot goes stale).

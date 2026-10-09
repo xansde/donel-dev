@@ -1,4 +1,4 @@
-// 014-chat - Shift+Tab on the composer. In the CLI it cycles the permission mode (default -> accept edits ->
+// 014-chat - Shift+Tab on the composer (and, through `forwardShortcut`, the other CLI shortcuts). In the CLI it cycles the permission mode (default -> accept edits ->
 // plan -> ...); in the chat the browser would move the focus between buttons. The composer swallows the key and
 // writes the back-tab sequence the xterm itself sends, through the same PTY handle the send driver uses (no new
 // IPC). The mode is read back from the footer of the CLI screen so the hint under the box shows the effect.
@@ -29,13 +29,14 @@ export function permissionModeLabel(mode: PermissionMode): string {
 }
 
 /**
- * Writes Shift+Tab to the CLI. Not while a dialog or box-less screen holds it: there the key would navigate
- * the dialog instead of cycling the mode. Returns whether it was written.
+ * Writes a shortcut's bytes (Shift+Tab, Alt+O, Ctrl+T... - see `cliShortcuts.ts`) to the CLI. Not while a dialog or
+ * box-less screen holds it: there the key would navigate the dialog instead of doing its job. Returns whether it
+ * was written.
  */
-export function forwardBackTab(terminal: ModeTerminal | null): boolean {
+export function forwardShortcut(terminal: ModeTerminal | null, bytes: string): boolean {
   if (terminal === null) return false;
   if (blockingScreen(terminal.readScreen().lines) !== null) return false;
-  return terminal.write(BACK_TAB);
+  return terminal.write(bytes);
 }
 
 /**
