@@ -392,3 +392,146 @@ Branch `feature/014-fase-5`, T083–T087 e T089–T090 (a T088 entrou na Fase 4)
 | B2 completo | os 13 envios do `quickstart.md` B2 | pendente |
 | 4.5 | os 8 achados de 08/10 com o CLI real | pendente |
 | Fase 4 | responder pelo terminal com o painel aberto; notificação do Windows | pendente |
+
+### Sessão de e2e com o dono — 09/10 (registro passo a passo)
+
+Roteiro conduzido pelo dono no alfa, um teste por vez. O Claude da sessão registra o que chegou do lado do CLI.
+
+| # | Teste | O que o dono enviou | O que chegou ao CLI | Resultado |
+|---|---|---|---|---|
+| 1 | Mensagem de múltiplas linhas | duas linhas: "Teste um:" / "Mensagem de multiplas linhas" | uma mensagem só, com a quebra de linha preservada; enviada com o Claude no meio de um turno, entrou como mensagem na fila do turno em andamento | ✅ passou |
+| 2 | Múltiplas linhas com imagem | uma imagem (print do próprio chat) + duas linhas: "teste 2:" / "Multiplas linhas com imagem" | uma mensagem só: `[Image #1]` no começo da primeira linha, depois o texto com a quebra preservada; a imagem chegou legível, servida de `userData/chat-attachments/<sessão>/img-….png` | ✅ passou |
+
+Observações colhidas do print do teste 2 (estado da tela após o teste 1):
+- o teste 1 aparece como cartão próprio, com as duas linhas e "✓ entrou", seguido de "trabalhou — 1 ação";
+- a notificação do Windows "Claude terminou a tarefa" disparou ao fim do turno — conta como evidência parcial do item "Fase 4 — notificação do Windows" da bateria;
+- rodapé lê "modo: bypass" do CLI, coerente com a sessão.
+| 3 | Linha longa (muito texto) | "teste 3:" + uma linha de ~1.070 caracteres ("Muito texto" + 12 blocos de `a` separados por espaço) | uma mensagem só, completa, com a quebra depois de "teste 3:" preservada; o CLI a recebeu **como colagem** (bloco de texto colado), não como digitação — abaixo do limite da ficha (20 linhas / 2.000 caracteres), então a ficha não era esperada | ✅ passou — conferir na tela se o cartão mostrou o texto inteiro ou recolhido |
+
+**Achado do teste 3 — ajuste fino, para depois** (dono, 09/10: "nada problemático, mas digno de to-do"):
+- o cartão da mensagem enviada mostra as **tags cruas do invólucro de colagem** que o harness grava no transcript: `<pasted_content id="07c5">` na abertura e `</pasted_content id="07c5">` no fim. O chat lê o texto do transcript tal como gravado e não desembrulha o invólucro;
+- o cartão abre com uma **linha vazia** só com o chevron `>` à esquerda, e o texto começa uma linha abaixo, desalinhado do chevron (nos cartões dos testes 1 e 2 o texto fica na mesma linha do chevron);
+- o conteúdo em si está íntegro e o "✓ entrou" apareceu.
+- Aceite proposto: o cartão de mensagem do usuário remove o invólucro `<pasted_content …>`/`</pasted_content …>` (e as quebras que ele deixa em volta) e mostra o texto colado começando na linha do chevron, como uma mensagem digitada.
+| 4 | — | não reportado pelo dono nesta sessão | — | sem registro |
+| 5 | Atalhos do CLI pela caixa do chat | `Shift+Tab` e o atalho de troca de modelo (o dono tentou `Shift+P`) | `Shift+Tab` chegou: o harness desta sessão registrou a saída do modo plano e do modo auto, ou seja, o ciclo de modo andou. A troca de modelo não aconteceu | ⚠️ parcial — `Shift+Tab` ✅, troca de modelo ❌ |
+
+**Achado do teste 5 — ajuste não-tão-fino** (dono, 09/10: "ajustar um comando e deixar os outros de fora é meio ridículo até"):
+- a correção de 08/10 repassou ao CLI **só** o `Shift+Tab` (`BACK_TAB = '\x1b[Z'` em `src/renderer/src/chat/cycleMode.ts`). Os outros atalhos de teclado do CLI morrem na caixa do chat;
+- o caso que o dono tentou é a troca de modelo. No CLI o atalho documentado é `Alt+P` (`Option+P` no Mac), não `Shift+P` — `Shift+P` na caixa só digita "P". Conferir na lista de atalhos do binário em uso antes de implementar;
+- Aceite proposto: a caixa do chat repassa ao PTY, por uma tabela única, os atalhos do CLI que não têm sentido de edição de texto (troca de modelo, alternar raciocínio, modo de permissão, e o que mais a lista do binário trouxer), e a dica do rodapé os mostra. Os atalhos que a caixa usa para editar (`Enter`, `Shift+Enter`, `Tab` do menu, `Esc` do menu) continuam da caixa. Levar à spec (FR-013, que hoje só fala do `Shift+Tab`).
+| 6 | Cartão de plano (D-C16) + aprovação | pediu "um plano teste para o teste 6" em modo plano | o plano (`~/.claude/plans/idempotent-singing-flask.md`) foi montado de propósito com uma lista numerada no `## Contexto` antes dos 5 itens de `## Passos`, que tinham várias frases (o caso do bug de 08/10). A aprovação chegou ao CLI (`ExitPlanMode` aprovado) e a sessão saiu do modo plano | ✅ passou — dono, 09/10: "os dados do teste 6 estão muuuito bons. Não omitiu nada". O cartão de plano fecha o achado de 08/10 (contagem e recorte) com CLI real |
+
+O plano do teste 6 é real e corrige o achado do teste 3 (desembrulhar `<pasted_content>` no `UserRow`, reaproveitando `PASTED_CONTENT_TAG` de `promptMatch.ts`). Pela regra do alfa (feedback no meio de fase: registrar e seguir), a aprovação **não** disparou a implementação nesta sessão. Ela fica para o lote de ajustes.
+| 7 | Pergunta de múltipla escolha (painel `AskUserQuestion`) | pediu "me faça uma pergunta de múltipla escolha"; o Claude mandou 2 perguntas no mesmo painel, uma de escolha única e uma de várias escolhas, com opção "(Recomendado)" | as duas respostas voltaram ao CLI completas: escolha única = "Atalhos do CLI (Recomendado)"; várias = as 4 opções marcadas, separadas por vírgula | ✅ passou — dono aprovou o passo; preferência: uma pergunta por vez nessas telas (ver abaixo) |
+
+**Decisões do dono colhidas no teste 7** (valem para o lote de ajustes):
+- o primeiro do lote é o **achado do teste 5 (atalhos do CLI)**; as tags de colagem (teste 3) vêm depois;
+- repassar **todos os atalhos que o binário em uso listar** e que não sejam de edição de texto. Isso inclui, no mínimo, trocar modelo (`Alt+P`), alternar raciocínio (`Alt+T`) e ver o transcript (`Ctrl+O`). A tabela sai da lista do binário, não de memória.
+
+Observações do print do teste 7:
+- o painel funcionou como desenhado: o cabeçalho diz "2 perguntas, uma resposta", a primeira pergunta usa rádio e mostra "escolha uma", a segunda usa caixas de marcar e mostra "escolha uma ou mais". O "(Recomendado)" aparece em verde, há um "Outra" com campo livre em cada pergunta, e o botão "Responder" envia as duas juntas. A aba e o cabeçalho mostram "esperando você" em vermelho, e o pé mostra "esperando você — pergunta" com o cronômetro;
+- **ajuste fino:** na pergunta de várias escolhas, a grade de 3 colunas deixou a 4ª opção sozinha numa linha. A descrição dela quebra em duas linhas e encosta na borda de baixo do cartão ("edição de texto.");
+- com duas perguntas o painel precisa de rolagem interna: a 2ª pergunta fica com o "Outra" parcialmente abaixo da dobra.
+
+**Preferência do dono** (09/10): "evitasse ao máximo mais de uma pergunta por vez nessas telas". Do lado do Claude, a regra é fazer uma pergunta por chamada sempre que der. Do lado do produto, é uma possível melhoria a decidir: quando vierem várias perguntas, paginar uma por vez, como o CLI faz com abas, em vez de empilhar tudo.
+
+| # | Teste | O que o dono enviou | O que chegou ao CLI | Resultado |
+|---|---|---|---|---|
+| 8 | `/compact` pelo chat (não planejado: o dono compactou no meio da bateria) | digitou `/compac` e deu Enter para confirmar | o transcript tem **um só** `/compact` (17:11:27Z), depois o `compact_boundary`, a entrada `<command-name>/compact</command-name>` e 5 anexos `file` que o CLI relê depois de compactar (memória e rules) | ⚠️ o compact funcionou, mas a conversa ficou "zoada" (3 achados abaixo) |
+
+**Achados do teste 8** (prints do dono, 09/10):
+1. **Cartão fantasma `/compac` com "✗ não foi".** O cartão aparece com "enviando…" e depois vira "não foi · o Claude não confirmou o recebimento", com "tentar de novo" e "descartar". O transcript não tem nenhum `/compac`. Hipótese mais provável: o autocompletar do próprio CLI completou `/compac` para `/compact` dentro do PTY, então o texto gravado não bate com o que o chat mandou, o casamento envio × aceite (`normalizePrompt`) falha e o cartão otimista fica órfão. Pode ser também o menu `/` da caixa rica, que completa e envia ao mesmo tempo. **Risco:** o "tentar de novo" mandaria o comando de novo, ou seja, um segundo compact. Correção a decidir: casar o comando de barra pelo prefixo ou pelo comando resolvido, ou completar no menu `/` antes de enviar.
+2. **O compact aparece como mensagem do usuário.** Há um segundo cartão `/compact` (o `<command-name>` pós-boundary) com 5 selos `@C:\Users\…\memory\feedback_uma_pergunta_por_vez.md`, `@…\rules\no-artifacts.md` etc. Esses são os arquivos que o CLI relê ao compactar, e não algo que o dono anexou. O esperado é um marcador de sistema, como "conversa compactada · 121k → 10k", sem cartão de usuário e sem selos. Ficaram dois `/compact` na tela: o envio real e o eco do comando.
+3. **Grupos "trabalhou" vazios em volta do compact:** "trabalhou — 1 etapa 0 s" e "trabalhou — 3 etapas 1 s". São entradas de modo, hook e anexos do boundary contadas como etapas de trabalho. Isso é ruído, porque o Claude não trabalhou ali.
+
+| # | Teste | O que o dono enviou | O que chegou ao CLI | Resultado |
+|---|---|---|---|---|
+| 9 | `/model` pelo chat | digitou `/mod` e deu Enter, duas vezes | o CLI abriu o seletor de modelo (tela interativa). O dono teve de ir ao terminal, e as duas vezes terminaram em "Kept model as Opus 5.5" | ❌ funciona, mas obriga a voltar ao terminal; o dono não aceita isso ("não gostei nem um pouco") |
+
+**Achados do teste 9** (print do dono, 09/10):
+1. **O faixa "O terminal precisa de você" apareceu como desenhado**, mas o dono rejeita a experiência. Comandos que abrem tela interativa no CLI (`/model` e também `Alt+P`, `/config`, `/permissions`, `/resume`, `/agents`, `/mcp`…) não têm equivalente no chat.
+2. **O fantasma do teste 8 se repetiu:** o cartão `/mod` ficou em "enviando…", e o `/model` completado apareceu à parte. Isso confirma a hipótese do autocompletar do CLI.
+3. **O cartão `/model` ficou "na fila · entra assim que o Claude ficar pronto"** enquanto o seletor esperava no terminal. O estado está errado: o comando já tinha entrado.
+
+**Viável, sim, sem renderizar a tela do CLI no chat.** O caminho é interceptar no chat: o `/model` sem argumento abre um seletor **próprio** (o app já conhece os modelos e o esforço, pelo launcher e pela barra de status), e a escolha vai ao CLI como `/model <id>` **com argumento**, o que não abre tela interativa. O mesmo molde vale, comando a comando, para os outros interativos. Os que não ganharem painel próprio continuam com a faixa. Espelhar a tela do Ink no chat foi descartado: seria frágil e acoplado à versão do binário. Proposta para o lote: `/model` (com `Alt+P`) entra junto do achado dos atalhos (teste 5), porque é a mesma frente.
+
+| # | Teste | O que o dono enviou | O que chegou ao CLI | Resultado |
+|---|---|---|---|---|
+| 13.5 | Enter com o menu `/` ou `@` aberto (numeração do roteiro do dono) | digitou um trecho com o menu aberto e deu Enter (o "@caminh" que chegou solto na conversa) | o texto **literal** e incompleto | ❌ negativo — o Enter envia; clicando no item, completa certinho |
+
+**Achado do teste 13.5 — mesma causa raiz dos fantasmas `/compac` (teste 8) e `/mod` (teste 9):**
+- **Causa:** é uma decisão de projeto, não um acidente. Em `ChatComposer.tsx:367-368` está escrito: "Enter is NOT here on purpose: it sends what is written". A regra veio da conferência (`tasks.md:525`, "Enter envia o que está escrito e Tab escolhe") e da pesquisa (`research.md:167-168`). Com o menu aberto, só o Tab e o clique escolhem.
+- **Efeito em cadeia no `/`:** o chat manda `/compac` ou `/mod` literal, e o menu do próprio CLI completa isso para `/compact` ou `/model` e executa. O transcript grava o comando completado, o casamento envio × aceite não reconhece o envio, e o cartão otimista fica órfão em "enviando…" ou "não foi". No `@` não há quem complete, então a mensagem sai cortada.
+- **Correção proposta (inverte a decisão da conferência, por veredito do dono no alfa):** com o menu aberto e um item realçado, o **Enter escolhe** o item, como o clique e como o CLI já fazem. Um segundo Enter envia. O Enter só envia literal quando o menu está fechado ou sem item realçado. A dica do rodapé muda junto. Isso resolve os três sintomas. Mesmo assim, vale dar ao casamento uma tolerância a comando de barra resolvido pelo CLI (prefixo único no catálogo), para o caso de alguém enviar `/mod` com o menu fechado.
+- **Levar à spec:** reabrir o ajuste de `tasks.md:525` e o FR do menu.
+
+> A numeração "N.5" do dono segue o **passo N da conferência das Fases 4.5 e 5** (página de 21 passos): 13.5 = passo 13, "Menu @"; 14.5 = passo 14, "Colagem grande".
+
+| # | Teste | O que o dono enviou | O que chegou ao CLI | Resultado |
+|---|---|---|---|---|
+| 14.5 | Colagem grande (passo 14) | colou o texto da página da conferência, com cerca de 45 linhas | **completo**: o "Teste 14.5" e os 21 passos, a descrição do passo 14, os botões e o rodapé, tudo dentro de `<pasted_content id="07c5">…</pasted_content>`, sem corte e sem nada fora de ordem | ✅ do lado do CLI; falta o que o dono viu na tela: ficha, quadro mono e "entrou" |
+
+| # | Teste | O que o dono enviou | O que chegou ao CLI | Resultado |
+|---|---|---|---|---|
+| 15.5 | Arrastar arquivo não-imagem (passo 15; o dono escreveu "1.5", lido como 15.5) | arrastou `acessorios branco.gcode`, que está **fora** do `cwd` (`D:/claquete/`), e escreveu "Teste 1.5" | `"D:/claquete/acessorios branco.gcode"` + quebra + "Teste 1.5": caminho absoluto, barras normais, entre aspas por causa do espaço, **sem `@`** | ✅ conforme o código (`attachmentsModel.ts:45`, `mentionFor`): fora do `cwd` vai o caminho puro, porque o `@` com caminho absoluto não foi confirmado no CLI (pesquisa R4 em aberto). Dentro do `cwd` viraria `@relativo`. Não testado aqui: arrastar arquivo de dentro do projeto |
+
+| # | Teste | O que o dono enviou | O que chegou ao CLI | Resultado |
+|---|---|---|---|---|
+| 16.5 | `!` modo shell (passo 16, presumido: o dono não numerou) | `!echo oi` | o CLI rodou o comando no modo shell: `<bash-input>echo oi</bash-input>`, `<bash-stdout>oi</bash-stdout>`, `<bash-stderr></bash-stderr>` vazio | ⚠️ o CLI executou certo, mas a saída ficou **escondida** (achado abaixo) |
+
+**Achado do teste 16.5** (print do dono, 09/10): o cartão `! echo oi` (14:16) e o bloco "saída · oi" estão bem formatados, mas caem **dentro** do grupo recolhido "trabalhou — 1 ação 9 s". Recolhido, o grupo esconde exatamente o que o dono pediu para ler. O cartão também não mostra "✓ entrou". O esperado: um `!` digitado pelo dono é um turno dele. O cartão do comando e a saída ficam no nível de cima da conversa, como uma mensagem do usuário com a resposta embaixo, e nunca dentro do agrupador de trabalho do Claude. Com isso, o "trabalhou" do turno do Claude que vem a seguir passa a contar só as ações dele.
+
+| # | Teste | O que o dono enviou | O que chegou ao CLI | Resultado |
+|---|---|---|---|---|
+| 19.5 | Interromper (passo 19): `Esc` e botão Parar | "teste grande espere 15 segundos para responder" e, durante a espera, `Esc` e depois Parar | transcript: a mensagem entrou às 17:17:46Z (l. 751) e **não existe nenhuma resposta do Claude** até a seguinte, às 17:18:40Z. Não há "[Request interrupted]". O Claude **nunca viu** essa mensagem no contexto | ❌ na tela: "nada funcionou". Pelo transcript, o interromper **funcionou no CLI** e o chat não refletiu (achados abaixo) |
+
+**Achados do teste 19.5** (prints do dono, 09/10):
+- **O que aconteceu de fato (inferido do transcript e do faixa):** o `Esc` cancelou o pedido antes de sair qualquer resposta. Nesse caso, o CLI tira a mensagem da conversa e **devolve o texto à caixa do terminal**. Por isso não há "Request interrupted" e por isso o Claude não a recebeu. Falta confirmar no terminal se o texto voltou para a caixa.
+- **O chat não acompanhou nada disso:**
+  1. o cartão "teste grande…" seguiu como "✓ entrou", mas a mensagem tinha sido retirada. O esperado: virar "interrompida", com o texto de volta à caixa do **chat**;
+  2. o pé seguiu em "trabalhando" e o botão Parar não deu retorno. O dono não teve nenhum sinal de que o `Esc` pegou;
+  3. o faixa "Há texto não enviado no terminal: «teste grande…»" é o texto devolvido pelo CLI, mas o chat o trata como sobra de digitação no terminal. A oferta "Descartar e enviar" apagaria a mensagem;
+  4. a mensagem seguinte ("Apertei esc… Teste 19.5") ficou "na fila · entra quando a caixa do terminal esvaziar", mas **foi entregue** às 17:18:40Z. O chat bloqueou por causa do texto devolvido e perdeu o rastro do envio.
+- **Correção a estudar:** quando o chat detectar o `Esc` antes da primeira resposta, recolher o texto que o CLI devolveu à caixa, limpar a caixa do terminal e pôr o texto na caixa do chat, marcando o cartão como interrompido. É o equivalente do comportamento do CLI no chat. O mesmo detector precisa dar retorno visível ao Parar.
+
+| # | Teste | O que o dono enviou | O que chegou ao CLI | Resultado |
+|---|---|---|---|---|
+| 21.5 | Fase da Esteira com auto-start (passo 21) | — | — | ⏸️ adiado por decisão do dono (09/10): "não quero testar o modo dev agora". Roteiro: Dev → "⌁ Preparar" → a aba abre no Chat → o cartão da fase vai a "entrou" sem Enter (T071, `App.tsx:1603`) |
+
+#### Respostas da página de conferência (salvas às 17:22:15Z, `conferencia-fase-4-5-e-5-respostas.json`, sem notas)
+
+| Passo | Item | Marcação do dono | Cruzamento com o registro acima |
+|---|---|---|---|
+| 1 | Várias linhas | ✅ | teste 1 |
+| 2 | Print + linhas | ✅ | teste 2 |
+| 3 | Linha longa | ✅ | teste 3 (ajuste fino das tags) |
+| 4 | Cartão "não foi" | ✅ | fecha o "teste 4 sem registro" |
+| 5 | Shift+Tab | ✅ | o `Shift+Tab` passou; o achado dos outros atalhos (teste 5) segue de pé |
+| 6 | Plano | ✅ | teste 6 |
+| 7 | Pé do chat | ✅ | — |
+| 8 | Recepção ("Não estou recebendo a conversa" não aparece à toa, depois de `/compact`) | ❌ | sem nota; o detalhe do que apareceu fica por colher com o dono. Coincide com o teste 8 (`/compact`) |
+| 9 | Os dois lados | ✅ | — |
+| 10 | Notificação | ✅ | — |
+| 11 | Menu / | ✅ | — |
+| 12 | /mod não vira /model | ❌ | testes 9 e 13.5: o chat manda `/mod` literal, como o roteiro pede, mas **o menu do próprio CLI completa e roda o `/model`**. A premissa do passo (vira "não foi · comando desconhecido") não se sustenta com o CLI real. A correção do 13.5 (Enter escolhe o item do menu) **substitui** este critério |
+| 13 | Menu @ | ❌ | teste 13.5 |
+| 14 | Colagem grande | ✅ | teste 14.5: a tela confirma a ficha, o quadro e o "entrou" |
+| 15 | Arrastar | ✅ | teste 15.5 (fora do `cwd`); o caso dentro do `cwd` segue não exercitado |
+| 16 | ! | ✅ | teste 16.5: a página marca ✅, mas o registro tem o achado da saída escondida no "trabalhou" |
+| 17 | /login | ✅ | — |
+| 18 | Fila | ✅ | ✅ no caso simples; o 19.5 mostrou "na fila" errado depois de um `Esc` |
+| 19 | Interromper | ❌ | teste 19.5 |
+| 20 | ↑ | ✅ | — |
+| 21 | Esteira | — | adiado (21.5) |
+
+**Placar da bateria de 09/10:** 16 ✅ · 4 ❌ (8 Recepção, 12 /mod, 13 Menu @, 19 Interromper) · 1 adiado. O 12 e o 13 têm a **mesma causa raiz** (o Enter com o menu aberto envia o literal).
+
+**Lote de ajustes saído da bateria** (ordem do dono para os dois primeiros):
+1. atalhos do CLI repassados pela tabela do binário (teste 5), **com o `/model` e outros interativos ganhando seletor próprio no chat** (teste 9);
+2. tags de colagem no cartão do usuário (teste 3; plano pronto);
+3. Enter com o menu `/` ou `@` aberto escolhe o item (13.5, 12; inverte a decisão da conferência), mais a tolerância do casamento a comando resolvido pelo CLI (fantasmas dos testes 8 e 9);
+4. interromper: refletir o `Esc` antes da primeira resposta e recolher o texto devolvido pelo CLI (19.5);
+5. `/compact`: marcador de sistema no lugar do cartão de usuário com selos, e sem grupos "trabalhou" vazios (teste 8), mais o aviso de recepção (passo 8);
+6. `!`: o comando e a saída no nível de cima, fora do "trabalhou" (16.5);
+7. ajustes finos: a grade do painel de várias escolhas e a paginação com várias perguntas (teste 7).
