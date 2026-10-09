@@ -75,7 +75,7 @@ async function expectNoFailureCard(page: Page): Promise<void> {
   await expect(timeline(page).getByText('✕ não foi')).toHaveCount(0);
 }
 
-test('menu / : filtra, mostra a origem, Tab insere a skill e Enter envia o que esta escrito @chat', async () => {
+test('menu / : filtra, mostra a origem, Tab e Enter escolhem, Enter fechado envia @chat', async () => {
   test.setTimeout(180_000);
   await withChat('chat-composer-slash', async (chat, page) => {
     const helpers = chatHelpers(page);
@@ -114,11 +114,23 @@ test('menu / : filtra, mostra a origem, Tab insere a skill e Enter envia o que e
     await expect(slashMenu(page)).toHaveCount(0);
     await expect(input(page)).toHaveValue('/c');
 
-    // `/mod` + Enter: o menu NAO completa para /model; o CLI recebe o literal `/mod`.
+    // `/mod` + Enter com o menu aberto: ESCOLHE (como Tab e clique) - a caixa fica com `/model ` e nada e enviado
+    // (e2e do dono, 09/10; antes o literal saia e o CLI completava sozinho, deixando o cartao orfao).
     // (apagar antes: o Esc fecha o menu para aquele token ate o cursor sair dele)
     await input(page).fill('');
     await input(page).fill('/mod');
     await expect(slashMenu(page)).toBeVisible();
+    await input(page).press('Enter');
+    await expect(input(page)).toHaveValue('/model ');
+    await expect(slashMenu(page)).toHaveCount(0);
+    expect(transcriptTexts(chat.sessionsDir).some((t) => t.includes('/mod'))).toBe(false);
+
+    // Com o menu FECHADO (Esc antes), o Enter envia o literal `/mod`: o CLI nao o conhece e a caixa esvazia.
+    await input(page).fill('');
+    await input(page).fill('/mod');
+    await expect(slashMenu(page)).toBeVisible();
+    await input(page).press('Escape');
+    await expect(slashMenu(page)).toHaveCount(0);
     await input(page).press('Enter');
     await expect(input(page)).toHaveValue('');
     await expect(slashMenu(page)).toHaveCount(0);
@@ -185,11 +197,15 @@ test('menu @ : lista arquivos do projeto e Tab insere a mencao @caminho @chat', 
     // A tecla Esc foi do menu: nada foi interrompido nem negado.
     await expect(timeline(page).getByText(/interrompid/i)).toHaveCount(0);
 
-    // Enter envia o que esta escrito: a mencao chega intacta.
+    // Enter com o menu aberto escolhe o arquivo (como o Tab): a mencao completa, nada e enviado.
     await input(page).fill('Veja o @specs/014-chat/quickstart.m');
     await expect(pathMenu(page)).toBeVisible({ timeout: 15_000 });
     await expect(options(pathMenu(page)).first()).toContainText('specs/014-chat/quickstart.md');
-    await input(page).press('Tab');
+    await input(page).press('Enter');
+    await expect(input(page)).toHaveValue('Veja o @specs/014-chat/quickstart.md ');
+    await expect(pathMenu(page)).toHaveCount(0);
+    await expect(timeline(page).getByText('✓ entrou')).toHaveCount(0);
+    // Fechado o menu, o Enter envia o que esta escrito: a mencao chega intacta.
     await input(page).pressSequentially('e diga a versao');
     await input(page).press('Enter');
     await expect(timeline(page).getByText('✓ entrou')).toHaveCount(1, { timeout: 60_000 });

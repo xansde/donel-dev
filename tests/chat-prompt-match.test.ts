@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchOldestPending, matchesPrompt, normalizePrompt, unwrapPastedContent } from '../src/shared/chat/promptMatch';
+import { commandResolvesTo, matchOldestPending, matchesPrompt, normalizePrompt, unwrapPastedContent } from '../src/shared/chat/promptMatch';
 
 // 014-chat T062 — comparação do texto enviado com o texto dos sinais de aceite (send-protocol §5).
 
@@ -45,6 +45,29 @@ describe('matchesPrompt', () => {
 
   it('tolera TAB e CRLF de diferença', () => {
     expect(matchesPrompt('a\tb\nc', 'a    b\r\nc')).toBe(true);
+  });
+
+  it('aceita o comando de barra puro que o CLI completou (`/mod` -> `/model`)', () => {
+    expect(matchesPrompt('/mod', '/model')).toBe(true);
+    expect(matchesPrompt('/compac', '/compact')).toBe(true);
+  });
+
+  it('não estende a tolerância: mensagens normais, argumentos e nomes sem prefixo seguem exatos', () => {
+    expect(matchesPrompt('mod', 'model')).toBe(false);
+    expect(matchesPrompt('/mod', '/model opus')).toBe(false);
+    expect(matchesPrompt('/mod x', '/model x')).toBe(false);
+    expect(matchesPrompt('/model', '/mod')).toBe(false);
+    expect(matchesPrompt('/mod', '/compact')).toBe(false);
+    expect(matchesPrompt('/', '/model')).toBe(false);
+  });
+});
+
+describe('commandResolvesTo', () => {
+  it('só vale para dois comandos de barra sem argumento, o enviado sendo prefixo do gravado', () => {
+    expect(commandResolvesTo('/mod', '/model')).toBe(true);
+    expect(commandResolvesTo(' /mod ', '/model\n')).toBe(true);
+    expect(commandResolvesTo('/model', '/model')).toBe(false);
+    expect(commandResolvesTo('/mod', 'model')).toBe(false);
   });
 });
 

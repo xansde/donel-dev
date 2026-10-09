@@ -6,7 +6,7 @@
 // picture through the main (`chat:save-image`) and show a removable thumbnail above the text; a non-image file
 // from the paperclip or a drop becomes an `@` mention in the text. The draft keeps the images too.
 // T087: `/` at the start of the message and `@path` open a menu above the box (`CommandMenu`): arrows move, Tab
-// picks, Esc closes, and Enter still SENDS what is written (`/mod` goes out as `/mod`, it is never completed).
+// and Enter pick, Esc closes (`/mod` + Enter completes to `/model `; with the token already whole, Enter sends).
 // T089: a paste of more than 20 lines or 2.000 characters becomes a "texto colado" chip (`PastedTexts`) that goes
 // back into the message in full on send; a message starting with `!` (or `/login`, `/logout`) shows a seal.
 // CLI shortcuts (`cliShortcuts.ts`): most are written to the terminal as the CLI would get them; Alt+P and a bare
@@ -53,7 +53,7 @@ import { forwardShortcut, permissionModeLabel, useScreenPermissionMode, type Mod
 import { Attachments } from './Attachments';
 import { appendMention, canSend, imageTypeOf, mentionFor, sendRequestOf, type DraftImage } from './attachmentsModel';
 import { CommandMenu, rowIdsOf, type MenuRows } from './CommandMenu';
-import { MODEL_CHOICES, insertionFor, isBareModelCommand, menuKeyAction, modelCommandText, modelMenuKeyAction, stepHighlight } from './composerMenu';
+import { MODEL_CHOICES, insertionFor, isBareModelCommand, isTokenComplete, menuKeyAction, modelCommandText, modelMenuKeyAction, stepHighlight } from './composerMenu';
 import { PastedTexts } from './PastedTexts';
 import { isLargePaste, makePaste } from './pastedText';
 import {
@@ -397,8 +397,9 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (isComposing(event)) return;
     // Menu open: arrows move, Tab picks, Esc closes (marked handled so it does not reach the Parar of the view).
-    // Enter is NOT here on purpose: it sends what is written.
-    const menuAction = menuOpen ? (modelMenu ? modelMenuKeyAction(event, menuIds.length) : menuKeyAction(event, menuIds.length)) : null;
+    // Enter picks the highlighted row too, unless the token already is that row (then it sends).
+    const tokenComplete = !modelMenu && trigger !== null && isTokenComplete(trigger.query, activeId);
+    const menuAction = menuOpen ? (modelMenu ? modelMenuKeyAction(event, menuIds.length) : menuKeyAction(event, menuIds.length, tokenComplete)) : null;
     if (menuAction !== null) {
       event.preventDefault();
       if (menuAction === 'close') {
@@ -531,7 +532,7 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
           leading={paperclip}
           footerHint={
             <>
-              <Kbd>Enter</Kbd> envia · <Kbd>Shift+Enter</Kbd> quebra linha · <Kbd>Shift+Tab</Kbd>{' '}
+              <Kbd>Enter</Kbd> envia (com o menu aberto, escolhe) · <Kbd>Shift+Enter</Kbd> quebra linha · <Kbd>Shift+Tab</Kbd>{' '}
               <span data-testid="chat-composer-mode">{mode === null ? 'alterna o modo' : `modo: ${permissionModeLabel(mode)}`}</span> · <Kbd>Alt+P</Kbd> modelo
             </>
           }

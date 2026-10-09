@@ -2,7 +2,7 @@
 // inserts, the large-paste chip and the request that leaves the box. Pure functions; no DOM.
 import { describe, expect, it } from 'vitest';
 import { canSend, sendRequestOf } from '../src/renderer/src/chat/composer/attachmentsModel';
-import { SCOPE_BADGE, insertionFor, matchRange, menuKeyAction, stepHighlight } from '../src/renderer/src/chat/composer/composerMenu';
+import { SCOPE_BADGE, insertionFor, isTokenComplete, matchRange, menuKeyAction, stepHighlight } from '../src/renderer/src/chat/composer/composerMenu';
 import { PASTE_MAX_CHARS, PASTE_MAX_LINES, countLines, expandPastes, isLargePaste, makePaste, pasteLabel } from '../src/renderer/src/chat/composer/pastedText';
 import type { CommandEntry } from '../src/shared/chat/ipc';
 import { detectComposerTrigger } from '../src/shared/chat/t3/composerTrigger';
@@ -33,9 +33,23 @@ describe('menuKeyAction', () => {
     expect(menuKeyAction(key('Escape'), 3)).toBe('close');
   });
 
-  it('Enter is never the menu\'s: it sends what is written (`/mod` is not completed to `/model`)', () => {
-    expect(menuKeyAction(key('Enter'), 3)).toBeNull();
+  it('Enter picks the highlighted row (`/mod` + Enter completes to `/model `, like Tab and the click)', () => {
+    expect(menuKeyAction(key('Enter'), 3)).toBe('choose');
+    expect(menuKeyAction(key('Enter'), 3, false)).toBe('choose');
+  });
+
+  it('Enter sends when the token is already the highlighted row (a whole `/compact` needs one Enter)', () => {
+    expect(menuKeyAction(key('Enter'), 3, true)).toBeNull();
+    expect(isTokenComplete('compact', 'compact')).toBe(true);
+    expect(isTokenComplete('compac', 'compact')).toBe(false);
+    expect(isTokenComplete('src/a.ts', 'src/a.ts')).toBe(true);
+    expect(isTokenComplete('', null)).toBe(false);
+    expect(isTokenComplete('x', null)).toBe(false);
+  });
+
+  it('Shift+Enter stays a line break and a menu without rows takes no Enter', () => {
     expect(menuKeyAction(key('Enter', { shiftKey: true }), 3)).toBeNull();
+    expect(menuKeyAction(key('Enter'), 0)).toBeNull();
   });
 
   it('Shift+Tab stays the CLI mode switch', () => {

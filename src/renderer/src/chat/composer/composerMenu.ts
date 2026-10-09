@@ -1,5 +1,5 @@
 // T087 (014-chat) - pure decisions of the `/` and `@` menus of the composer: which key does what while a menu is
-// open (Tab picks, Enter does NOT complete - it sends what is written, Esc closes), how the highlight moves, what
+// open (Tab and Enter pick - Enter sends only when the token already is the row -, Esc closes), how the highlight moves, what
 // text a pick inserts and how the matched part of a row is marked.
 
 import type { ModelAlias } from '../../../../shared/commandBuilder';
@@ -24,15 +24,23 @@ export interface MenuKeyInput {
   readonly metaKey: boolean;
 }
 
+/** True when what is typed after the `/` or `@` already is exactly the highlighted row (nothing left to complete). */
+export function isTokenComplete(query: string, activeId: string | null): boolean {
+  return activeId !== null && query !== '' && query === activeId;
+}
+
 /**
  * What a key does while a menu with `itemCount` rows is showing; `null` = not the menu's business (the box
- * handles it as usual). Enter is deliberately absent: `/mod` + Enter sends `/mod`, it never completes to `/model`
- * (spec FR-017, B2 item 3). Shift+Tab stays the CLI's mode switch.
+ * handles it as usual). Enter picks the highlighted row (like Tab and the click), so `/mod` + Enter completes to
+ * `/model ` instead of sending a literal the CLI would complete on its own (spec FR-017 amendment, 09/10); when
+ * `tokenComplete` (the token already is the row) Enter is left to the box and sends. Shift+Tab stays the CLI's
+ * mode switch.
  */
-export function menuKeyAction(input: MenuKeyInput, itemCount: number): MenuKeyAction | null {
+export function menuKeyAction(input: MenuKeyInput, itemCount: number, tokenComplete = false): MenuKeyAction | null {
   if (itemCount === 0 || input.ctrlKey || input.altKey || input.metaKey) return null;
   if (input.key === 'Escape') return 'close';
   if (input.shiftKey) return null;
+  if (input.key === 'Enter') return tokenComplete ? null : 'choose';
   if (input.key === 'ArrowUp') return 'prev';
   if (input.key === 'ArrowDown') return 'next';
   if (input.key === 'Tab') return 'choose';

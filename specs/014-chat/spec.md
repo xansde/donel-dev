@@ -465,6 +465,7 @@ outra com "interromper e mandar agora".
   registrada e MUST terminar em "entrou" ou "não foi" (com tentar de novo e
   descartar; o cartão fica na posição do envio, em ordem cronológica), sem
   duplicidade.
+  *Emenda (e2e do dono, 09/10): com o menu `/` ou `@` da caixa aberto, o Enter escolhe o item realçado (como o clique e o Tab); com o token já completo, envia. Comando de barra puro resolvido pelo CLI (`/mod` → `/model`) conta como aceito.*
 - **FR-018**: Mensagem iniciada por `!` MUST mostrar o selo de comando de
   shell antes do envio; outros prefixos com significado no terminal do Claude MUST ter
   tratamento explícito definido no plano.
