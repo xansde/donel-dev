@@ -535,3 +535,15 @@ Observações do print do teste 7:
 5. `/compact`: marcador de sistema no lugar do cartão de usuário com selos, e sem grupos "trabalhou" vazios (teste 8), mais o aviso de recepção (passo 8);
 6. `!`: o comando e a saída no nível de cima, fora do "trabalhou" (16.5);
 7. ajustes finos: a grade do painel de várias escolhas e a paginação com várias perguntas (teste 7).
+
+| # | Teste | O que o dono enviou | O que chegou ao CLI | Resultado |
+|---|---|---|---|---|
+| 22 | Cartões velhos presos no fim da conversa (achado espontâneo, 09/10 ~15h) | — | — | ❌ "fica na minha tela toda hora, mesmo sendo uma mensagem de muito tempo atrás" |
+
+**Achado 22** (print do dono): dois cartões do dono de 14:17 e 14:18 ficam grudados no **fim** da conversa, logo acima do pé, com "✓ entrou", embora horas de conversa tenham vindo depois. Os dois são cartões otimistas aceitos que nunca ganharam linha real, e o `optimistic.ts` os desenha como linha local no fim até saírem do driver (teto de 200). Cada um tem uma causa:
+1. **"Olha s´[o o que aconteceu" (mensagem com imagem mandada durante a rodada):** o transcript grava `attachment.type: "queued_command"` com `commandMode: "prompt"`, `humanTurn: true` e **`prompt` como array** `[{type:'text'}, {type:'image'}]` (l. 770). O ramo do adaptador (`adapter.ts`, `foldAttachment`, `queued_command`) só trata `prompt` string. Por isso a mensagem com imagem entregue na fila nunca vira cartão real.
+2. **"teste grande espere 15 segundos…" (o do `Esc`, teste 19.5):** a cadeia foi reescrita, a mensagem saiu da conversa e o cartão real sumiu.
+
+**Correção:**
+- (a) aceitar `prompt` em array no `queued_command`: juntar os textos e mapear as imagens para anexos, como o prompt direto faz;
+- (b) um otimista aceito sem linha real nunca vai para o fim da conversa: fica na posição cronológica do envio ou sai depois de aceito. A exceção é o estado "interrompida" do item 4, que fica no lugar do envio até a próxima mensagem.
