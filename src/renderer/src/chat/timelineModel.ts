@@ -40,6 +40,16 @@ export interface TimelineOptions {
 
 export const foldKey = (firstFoldedRowId: string): string => `fold:${firstFoldedRowId}`;
 
+/**
+ * Ctrl+O: the open-folds set after toggling ALL folds at once - every one opens unless every one already is,
+ * then they all close. Returns `prev` untouched when there is no fold (Focus Mode off, or nothing folded yet).
+ */
+export function toggleAllFolds(rounds: readonly { readonly items: readonly { readonly kind: string; readonly key: string }[] }[], prev: ReadonlySet<string>): ReadonlySet<string> {
+  const keys = rounds.flatMap((round) => round.items.filter((item) => item.kind === 'fold').map((item) => item.key));
+  if (keys.length === 0) return prev;
+  return keys.every((key) => prev.has(key)) ? new Set() : new Set(keys);
+}
+
 // ---- labels ------------------------------------------------------------------
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;

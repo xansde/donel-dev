@@ -9,6 +9,9 @@
 // picks, Esc closes, and Enter still SENDS what is written (`/mod` goes out as `/mod`, it is never completed).
 // T089: a paste of more than 20 lines or 2.000 characters becomes a "texto colado" chip (`PastedTexts`) that goes
 // back into the message in full on send; a message starting with `!` (or `/login`, `/logout`) shows a seal.
+// CLI shortcuts (`cliShortcuts.ts`): most are written to the terminal as the CLI would get them; Alt+P and a bare
+// `/model` open a model picker in this same menu (the CLI's own picker only exists in the terminal), Ctrl+O
+// toggles the work folds and Ctrl+Enter is "Interromper e mandar agora".
 
 import { AnnotationTag, Banner, Button, Composer, Kbd, TextArea, listboxOptionId } from '@donel-dev/design-system';
 import { Paperclip, SquareTerminal } from 'lucide-react';
@@ -44,11 +47,13 @@ import {
 import type { ConversationRow } from '../../../../shared/chat/rows';
 import type { SendDriver, SendItemView } from '../sendDriver';
 import { getChatStore } from '../ChatStore';
-import { forwardBackTab, permissionModeLabel, useScreenPermissionMode, type ModeTerminal } from '../cycleMode';
+import { shortcutFor } from '../cliShortcuts';
+import type { ModelAlias } from '../../../../shared/commandBuilder';
+import { forwardShortcut, permissionModeLabel, useScreenPermissionMode, type ModeTerminal } from '../cycleMode';
 import { Attachments } from './Attachments';
 import { appendMention, canSend, imageTypeOf, mentionFor, sendRequestOf, type DraftImage } from './attachmentsModel';
 import { CommandMenu, rowIdsOf, type MenuRows } from './CommandMenu';
-import { insertionFor, menuKeyAction, stepHighlight } from './composerMenu';
+import { MODEL_CHOICES, insertionFor, isBareModelCommand, menuKeyAction, modelCommandText, modelMenuKeyAction, stepHighlight } from './composerMenu';
 import { PastedTexts } from './PastedTexts';
 import { isLargePaste, makePaste } from './pastedText';
 import {
@@ -85,6 +90,8 @@ export interface ChatComposerProps {
   onOpenTerminal: () => void;
   /** Plan adjustment mode (T078): the box becomes the adjustment field; the ordinary draft is kept aside. */
   adjust?: PlanAdjustMode | null;
+  /** Ctrl+O: toggles every work fold of the timeline. */
+  onToggleFolds?: () => void;
 }
 
 export interface PlanAdjustMode {
@@ -108,7 +115,7 @@ const preview = (text: string): string => {
   return flat.length > LEFTOVER_PREVIEW ? `${flat.slice(0, LEFTOVER_PREVIEW)}…` : flat;
 };
 
-function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, rows, working, active, items, onOpenTerminal }: ChatComposerProps): React.JSX.Element {
+function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, rows, working, active, items, onOpenTerminal, onToggleFolds }: ChatComposerProps): React.JSX.Element {
   const draft = useSyncExternalStore(
     useCallback((cb) => subscribeDraft(tabId, cb), [tabId]),
     () => getDraft(tabId),
@@ -132,6 +139,7 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
   const [highlight, setHighlight] = useState<{ id: string | null; key: string | null }>({ id: null, key: null });
   const [catalog, setCatalog] = useState<readonly CommandEntry[]>([]);
   const [fileResults, setFileResults] = useState<{ readonly query: string; readonly paths: readonly string[] }>({ query: '', paths: [] });
+  const [modelMenu, setModelMenu] = useState(false);
   const listId = useId();
   const trigger = trigState.trigger;
   const slashOpen = trigger?.kind === 'slash-command';
@@ -201,15 +209,16 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
   }, [ptyId, pathQuery]);
 
   const menuRows = useMemo<MenuRows | null>(() => {
+    if (modelMenu) return { kind: 'model', models: MODEL_CHOICES };
     if (trigger === null) return null;
     if (trigger.kind === 'slash-command') return { kind: 'slash', entries: filterCatalog(catalog, trigger.query, SLASH_MENU_LIMIT), total: catalog.length };
     // Results of a SHORTER query are kept while the next ones load (typing narrows, so they are still a fair
     // superset); results of any other query are not shown: Tab must never pick a row of a stale search.
     const fresh = trigger.query.startsWith(fileResults.query);
     return { kind: 'path', paths: fresh ? fileResults.paths : [] };
-  }, [trigger, catalog, fileResults]);
+  }, [modelMenu, trigger, catalog, fileResults]);
   const menuIds = useMemo(() => (menuRows === null ? [] : rowIdsOf(menuRows)), [menuRows]);
-  const searchKey = trigger === null ? null : `${trigger.kind}:${trigger.query}`;
+  const searchKey = modelMenu ? 'model:' : trigger === null ? null : `${trigger.kind}:${trigger.query}`;
   const activeId = resolveComposerMenuActiveItemId({
     items: menuIds.map((id) => ({ id })),
     highlightedItemId: highlight.id,
@@ -226,14 +235,29 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
   const onChange = useCallback(
     (value: string, event: { target: HTMLTextAreaElement }) => {
       setDraft(tabId, value);
+      setModelMenu(false);
       syncTrigger(value, event.target.selectionStart);
     },
     [tabId, syncTrigger],
   );
 
+  /** A pick of the model menu: `/model <alias>` leaves through the ordinary send path (card, "entrou"). */
+  const chooseModel = useCallback(
+    (alias: ModelAlias) => {
+      setModelMenu(false);
+      driver.enqueue(sendRequestOf(modelCommandText(alias), [], 'normal', { customCommands: customRef.current }));
+    },
+    [driver],
+  );
+
   /** Puts the picked row where the trigger was (`/name ` or `@path `) and the caret right after it. */
   const pick = useCallback(
     (id: string) => {
+      if (menuRows?.kind === 'model') {
+        const alias = menuRows.models.find((m) => m === id);
+        if (alias !== undefined) chooseModel(alias);
+        return;
+      }
       if (trigger === null || menuRows === null) return;
       const text = getDraft(tabId);
       let inserted: { text: string; cursor: number } | null = null;
@@ -251,7 +275,7 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
       // in the middle of what the owner already typed after the Tab.
       pendingCaret.current = { value: result.text, cursor: result.cursor };
     },
-    [tabId, trigger, menuRows],
+    [tabId, trigger, menuRows, chooseModel],
   );
 
   const submit = useCallback(
@@ -260,6 +284,13 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
       const attached = getDraftImages(tabId);
       const pasted = getDraftPastes(tabId);
       if (!canSend(text, attached, pasted)) return;
+      // A bare `/model` would open the CLI picker, which only exists in the terminal: the chat's own opens instead.
+      if (attached.length === 0 && pasted.length === 0 && isBareModelCommand(text)) {
+        setDraft(tabId, '');
+        setTrigState(initialTriggerState());
+        setModelMenu(true);
+        return;
+      }
       historyPosition.current = null;
       setDraft(tabId, '');
       setDraftImages(tabId, []);
@@ -367,10 +398,13 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
     if (isComposing(event)) return;
     // Menu open: arrows move, Tab picks, Esc closes (marked handled so it does not reach the Parar of the view).
     // Enter is NOT here on purpose: it sends what is written.
-    const menuAction = menuOpen ? menuKeyAction(event, menuIds.length) : null;
+    const menuAction = menuOpen ? (modelMenu ? modelMenuKeyAction(event, menuIds.length) : menuKeyAction(event, menuIds.length)) : null;
     if (menuAction !== null) {
       event.preventDefault();
-      if (menuAction === 'close') setTrigState((state) => dismissTrigger(state, state.trigger));
+      if (menuAction === 'close') {
+        if (modelMenu) setModelMenu(false);
+        else setTrigState((state) => dismissTrigger(state, state.trigger));
+      }
       else if (menuAction === 'choose') {
         if (activeId !== null) pick(activeId);
       } else setHighlight({ id: stepHighlight(menuIds, activeId, menuAction), key: searchKey });
@@ -381,10 +415,15 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
       submit('normal');
       return;
     }
-    // Shift+Tab does what it does in the CLI terminal (cycles the permission mode) instead of moving the focus.
-    if (event.key === 'Tab' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    // CLI shortcuts (Shift+Tab cycles the permission mode, Alt+O fast mode...): written to the terminal instead of
+    // doing what the browser would. The native ones have a chat answer (picker, folds, send now).
+    const shortcut = shortcutFor(event);
+    if (shortcut !== null) {
       event.preventDefault();
-      forwardBackTab(terminal);
+      if (shortcut.kind === 'forward') forwardShortcut(terminal, shortcut.bytes);
+      else if (shortcut.action === 'modelPicker') setModelMenu(true);
+      else if (shortcut.action === 'toggleFolds') onToggleFolds?.();
+      else submit(working ? 'interrupt-first' : 'normal');
       return;
     }
     if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
@@ -493,7 +532,7 @@ function ChatComposerMain({ tabId, ptyId = null, cwd, terminal = null, driver, r
           footerHint={
             <>
               <Kbd>Enter</Kbd> envia · <Kbd>Shift+Enter</Kbd> quebra linha · <Kbd>Shift+Tab</Kbd>{' '}
-              <span data-testid="chat-composer-mode">{mode === null ? 'alterna o modo' : `modo: ${permissionModeLabel(mode)}`}</span>
+              <span data-testid="chat-composer-mode">{mode === null ? 'alterna o modo' : `modo: ${permissionModeLabel(mode)}`}</span> · <Kbd>Alt+P</Kbd> modelo
             </>
           }
           fluid

@@ -137,6 +137,31 @@ test('menu / : filtra, mostra a origem, Tab insere a skill e Enter envia o que e
   });
 });
 
+test('seletor de modelo: /model puro e Alt+P abrem o menu proprio; escolher envia /model <alias> @chat', async () => {
+  test.setTimeout(180_000);
+  await withChat('chat-composer-model', async (chat, page) => {
+    const modelMenu = page.locator('[data-testid="chat-menu-model"]:visible');
+
+    // `/model` puro nao vai ao CLI: abre o seletor e limpa o rascunho.
+    await input(page).fill('/model');
+    await input(page).press('Enter');
+    await expect(modelMenu).toBeVisible({ timeout: 10_000 });
+    await expect(options(modelMenu)).toHaveCount(4);
+    await expect(input(page)).toHaveValue('');
+    // Esc fecha; Alt+P reabre.
+    await input(page).press('Escape');
+    await expect(modelMenu).toHaveCount(0);
+    await input(page).press('Alt+p');
+    await expect(modelMenu).toBeVisible();
+
+    // Setas movem, Enter escolhe: o CLI recebe `/model opus`.
+    await input(page).press('ArrowDown');
+    await input(page).press('Enter');
+    await expect(modelMenu).toHaveCount(0);
+    await expect.poll(() => transcriptTexts(chat.sessionsDir).some((t) => t.includes('/model opus')), { timeout: 30_000 }).toBe(true);
+  });
+});
+
 test('menu @ : lista arquivos do projeto e Tab insere a mencao @caminho @chat', async () => {
   test.setTimeout(180_000);
   await withChat('chat-composer-path', async (chat, page) => {
