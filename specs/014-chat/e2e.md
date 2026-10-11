@@ -561,3 +561,23 @@ Observações do print do teste 7:
 | 7. Grade sem órfã (4 opções → 2×2, cartão cresce com a descrição) + uma pergunta por vez com abas e Anterior/Próxima | este PR | pedir uma pergunta com 4 opções e um painel com 2 perguntas |
 
 Teste instável observado no lote: `tests/fake-claude-chat.test.ts` ("queues a message submitted during a round") falha às vezes na suíte inteira com `AttachConsole failed` (PTY no Windows sob carga). Passa isolado e nas reexecuções, inclusive em `staging` sem as mudanças.
+
+### Uso real no alfa (dono, 11/10) — achado 23
+
+**Achado 23 — `/compact` com instruções de várias linhas não roda pelo chat.** Numa sessão longa do Fusion, o dono foi compactar com instruções: `/compact` mais 9 linhas, ~2.900 caracteres. Pelo chat, o comando não rodou em nenhuma das duas tentativas. Nas duas, a mensagem chegou ao Claude como texto comum, embrulhada em `<pasted_content id="a2f2">`, e o Claude respondeu em vez de compactar. Fonte: transcript `~/.claude/projects/…-fusion/186633ad-3ef4-457b-8b88-6500d12d40ed.jsonl`.
+
+| Tentativa | Como mandou | O que o transcript gravou | Resultado |
+|---|---|---|---|
+| 1 (15:40:54Z) | colou o bloco inteiro, já com o `/compact` dentro | `\n\n<pasted_content id="a2f2">\n/compact Resuma…` | ❌ mensagem comum |
+| 2 (15:41:43Z) | seguiu o passo a passo: digitou `/compact `, colou as instruções (ficha "texto colado") e mandou | `\n\n<pasted_content id="a2f2">\n/compact\n\nResuma…`. O `/compact` digitado ficou **dentro** do invólucro, no formato do `expandPastes` (digitado, linha em branco, colagem) | ❌ mensagem comum |
+| 3 (15:42:03Z) | pelo terminal, fora do modo chat: digitou `/compact ` e colou o mesmo texto | `<command-name>/compact</command-name>`, com as 9 linhas inteiras em `<command-args>` | ✅ compactou |
+
+**Causa provável** (lida no código, sem reprodução no alfa):
+- o `startText` (`src/shared/chat/sendMachine.ts:421-425`) escreve a mensagem inteira no PTY como uma colagem só (`ESC[200~…ESC[201~`), qualquer que seja o tipo da mensagem;
+- com texto grande, o CLI recolhe a colagem em `[Pasted text #N +M lines]`, e o próprio `sendMachine.ts:399-403` já conta com esse marcador na caixa. A caixa deixa de começar com `/compact`, e o Enter manda tudo como mensagem, dentro do invólucro `<pasted_content>`;
+- o `expandPastes` (`pastedText.ts:39`) põe o digitado primeiro, mas isso só garante a classificação do lado do chat: o `/compact` também chega colado ao CLI;
+- `/compact` curto, sem argumento grande (teste 8), vira texto literal na caixa do CLI, e o comando roda.
+
+**Correção a decidir:** num comando de barra, mandar o nome do comando como digitação e colar só os argumentos. Assim a caixa do CLI fica `/compact [Pasted text #1 +M lines]`, como no terminal. Deve valer também para `/skill` e `!` com argumento grande (não testado). Cuidado: digitar `/` abre o menu do CLI (item 3 do lote).
+
+**Contorno até lá:** `/compact` com instruções longas só pelo terminal, ou instruções numa linha curta, bem abaixo dos ~1.000 caracteres que já viraram colagem no teste 3.
