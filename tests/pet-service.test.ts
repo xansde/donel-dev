@@ -6,6 +6,7 @@
 // tabs, the focus, the semaphore and the clock say turns into the face the owner sees (US1).
 import { describe, expect, it } from 'vitest';
 import type { PetPrefs } from '../src/shared/config';
+import { PET_BUBBLE_MS } from '../src/shared/pet/bubble';
 import { PET_CHANNELS } from '../src/shared/pet/ipc';
 import { alignFor, anchorOf, defaultPlacement, windowBoundsFor } from '../src/shared/pet/placement';
 import type { PetDisplay, PetPoint, PetRect, PetView, SemaphorePublicState } from '../src/shared/pet/types';
@@ -437,10 +438,10 @@ describe('pet:ready handshake and the view', () => {
     service.onTabs({ activePtyId: 'pty-a', sessions: [tab('pty-a', 'atlas')] });
     service.onSemaphoreUpdate(sem('pty-a', 'working'));
     service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
-    expect(lastView(h)).toMatchObject({ badge: '1', pose: 'impatient' });
+    expect(lastView(h)).toMatchObject({ badge: '1', pose: 'calling' }); // the bubble of the turn that ended is in front of the face
     service.onMainFocusChanged(true); // the owner comes back to the Donel, with the tab already in front
-    expect(lastView(h)).toMatchObject({ badge: null, pose: 'laughing' });
-    expect(h.windows[0]?.views.map((view) => view.pose)).toEqual(['sleeping', 'incense', 'reading', 'impatient', 'laughing']);
+    expect(lastView(h)).toMatchObject({ badge: null, pose: 'laughing', bubble: null });
+    expect(h.windows[0]?.views.map((view) => view.pose)).toEqual(['sleeping', 'incense', 'reading', 'calling', 'laughing']);
   });
 });
 
@@ -680,14 +681,17 @@ describe('what the semaphore says becomes the face (US1, R2)', () => {
     expect(lastView(h).pose).toBe('reading');
   });
 
-  it('working, then the turn ends while the owner is elsewhere: impatient, badge 1, the tab in the list', () => {
+  it('working, then the turn ends while the owner is elsewhere: badge 1 and the tab in the list, the bubble first and then the impatient face', () => {
     const { h, service } = readyPet();
     service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
     service.onSemaphoreUpdate(sem('a', 'working'));
     expect(lastView(h).pose).toBe('reading');
     service.onSemaphoreUpdate(sem('a', 'waiting'));
-    expect(lastView(h)).toMatchObject({ pose: 'impatient', badge: '1' });
+    expect(lastView(h)).toMatchObject({ pose: 'calling', badge: '1' });
     expect(lastView(h).waiting).toEqual([{ ptyId: 'a', name: 'atlas', waitingLabel: 'agora' }]);
+    h.clock.now += PET_BUBBLE_MS;
+    h.tickAll();
+    expect(lastView(h)).toMatchObject({ pose: 'impatient', badge: '1', bubble: null });
   });
 
   it('permission counts as waiting too', () => {
@@ -695,6 +699,9 @@ describe('what the semaphore says becomes the face (US1, R2)', () => {
     service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
     service.onSemaphoreUpdate(sem('a', 'working'));
     service.onSemaphoreUpdate(sem('a', 'permission'));
+    expect(lastView(h)).toMatchObject({ pose: 'surprised', badge: '1' });
+    h.clock.now += PET_BUBBLE_MS;
+    h.tickAll();
     expect(lastView(h)).toMatchObject({ pose: 'impatient', badge: '1' });
   });
 
@@ -792,8 +799,10 @@ describe('what the semaphore says becomes the face (US1, R2)', () => {
     service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
     service.onSemaphoreUpdate(sem('a', 'working'));
     service.onSemaphoreUpdate(sem('a', 'waiting'));
+    h.clock.now += PET_BUBBLE_MS; // the bubble of the turn that ended goes first: that is one view, and it is not what is measured here
+    h.tickAll();
     const sent = h.windows[0]?.views.length ?? 0;
-    for (let i = 0; i < 59; i += 1) {
+    for (let i = 0; i < 53; i += 1) {
       h.clock.now += SEC;
       h.tickAll();
     }

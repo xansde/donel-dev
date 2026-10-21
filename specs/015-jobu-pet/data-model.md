@@ -28,23 +28,32 @@ Abas de terminal comum nunca entram na lista.
 
 | Evento | Campos | Quando |
 |---|---|---|
-| `accountSwitched` | `label`, `at` | troca de conta, pelo painel ou automática |
+| `accountSwitched` | `label`, `at` | troca de conta, pelo painel ou automática (US4) |
 | `sessionExited` | `ptyId`, `name`, `byUser`, `at` | a PTY saiu; `byUser = true` quando o dono fechou a aba |
+| `pendingOpened` | `ptyId`, `kind`, `at` | o chat abriu uma pendência (`question`, `permission` ou `plan`) |
 | `silence` | `until \| null` | Silenciar por 1 hora / Retomar avisos |
+| `fullscreen` | `active` | um app tomou a tela inteira, ou a devolveu (o vigia da US5) |
+| `bubbleDismissed` | — | o dono clicou no balão, no Jobu ou num item da lista: o balão cumpriu o papel |
 | `tick` | — | relógio do main (1 s); o instante vai à parte, no argumento `now` de `reducePet` |
+
+O reducer decide com o `now` do 3º argumento; o `at` dos eventos é o mesmo relógio, visto pelo main, e só
+serve de registro.
 
 ## Estado interno (`PetState`)
 
 | Campo | Tipo | Regra |
 |---|---|---|
 | `sessions` | `Map<ptyId, TrackedSession>` | um registro por aba vigiada |
+| `focus` | `FocusSignal` | o último sinal de foco: "visto agora" depende dele |
 | `bubble` | `Bubble \| null` | o balão em exibição |
-| `pendingBurst` | `BubbleEvent[]` | eventos de sessão do último segundo, ainda não publicados |
+| `lastBubbleId` | `number` | o `id` do último balão nascido; o próximo é `lastBubbleId + 1` e o número nunca volta (nem no `resume`) |
+| `pendingBurst` | `BubbleEvent[]` | os eventos de sessão por trás do balão em exibição, um por sessão (vale o mais recente). Os que chegam no 1º segundo se juntam a ele, e é deles que sai o texto agregado; também é por eles que se sabe se o balão ainda faz sentido. Vazio sem balão, e num balão que não é de sessão (o da conta) |
 | `laughUntil` | `number \| null` | fim do riso de fila zerada |
 | `sereneSince` | `number \| null` | início do período sereno atual |
 | `waffleShown` | `boolean` | o waffle já apareceu neste período sereno |
 | `waffleUntil` | `number \| null` | fim do waffle em exibição |
 | `silencedUntil` | `number \| null` | fim do silêncio (só em memória) |
+| `fullscreen` | `boolean` | um app tem a tela inteira: nenhum balão nasce. O `resume` o esquece, porque o vigia diz a verdade de novo ao começar |
 
 ### `TrackedSession`
 
@@ -65,7 +74,7 @@ aba):
 | qualquer → `working` / `done` (ou `idle`) | `waitingSince = null`, `seen = false` |
 | a aba aparece pela primeira vez já esperando (ex.: o pet foi ligado depois) | `waitingSince = now` e `seen = vistaAgora(aba)`, **sem evento**: ninguém a viu mudar. A idade da espera recomeça no momento em que o núcleo a conhece |
 | sai da lista (aba fechada) | registro removido, sem evento |
-| `sessionExited` com `byUser = false` | evento `ended` e registro removido (US2) |
+| `sessionExited` | o registro sai, seja qual for o `byUser`. Com `byUser = false` há o evento `ended`, salvo se o dono está olhando a aba agora (aba ativa e Donel em foco, Q9): o processo que encerra à vista nasce visto, como a espera. Com `byUser = true` (o dono fechou a aba) não há evento. Uma PTY que o núcleo não conhece (terminal comum, aba nunca informada) não é nada |
 
 `vistaAgora(aba) = focus.donelFocused && focus.activePtyId === aba`. A cada
 mudança de foco ou de sinal, toda sessão esperando e vista agora passa a
@@ -81,11 +90,12 @@ no 3º argumento. As entradas:
 | `sessions` | a lista **inteira** das abas vigiadas, a cada mudança de abas ou de sinal do semáforo; o reducer a compara com a anterior (quem sumiu foi fechado) |
 | `focus` | a aba ativa mudou ou o Donel ganhou/perdeu o foco |
 | `tick` | o relógio de 1 s |
-| `resume` | a janela do pet reabriu depois de um tempo sem relógio: riso, waffle, período sereno e balão recomeçam de agora; as esperas (com a idade real) ficam |
-| eventos avulsos | `accountSwitched`, `sessionExited`, `pendingOpened`, `silence` (US2, US4 e US5) |
+| `resume` | a janela do pet reabriu depois de um tempo sem relógio: riso, waffle, período sereno, balão e tela cheia recomeçam de agora; as esperas (com a idade real) ficam |
+| eventos avulsos | `sessionExited`, `pendingOpened`, `silence`, `fullscreen`, `bubbleDismissed` (US2 e US5) e `accountSwitched` (US4, ainda sem efeito) |
 
 Depois de qualquer entrada, o reducer marca como vistas as esperas que o dono
-está olhando, decide o riso e atualiza o período sereno e o waffle.
+está olhando, decide o riso, tira o balão que venceu ou deixou de fazer sentido
+e atualiza o período sereno e o waffle.
 
 ## Derivados
 
@@ -139,20 +149,40 @@ de `incense` zera os dois.
 | `ended` | `<aba> · encerrou` | `sad` | a sessão |
 | `accountSwitched` | `Conta → <rótulo>` | `mirror` | o Donel |
 | ≥ 2 `finished` no mesmo segundo | `N sessões terminaram` | `calling` | a lista |
+| ≥ 2 `ended` no mesmo segundo (Q9) | `N sessões encerraram` | `sad` | a lista |
 | ≥ 2 de tipos mistos no mesmo segundo | `N sessões esperando você` | `surprised` | a lista |
+
+"Mistos" é tudo o que não é só `finished` nem só `ended`: um `ended` no meio dos
+outros conta como mais uma esperando, e várias `blocked` (de qualquer tipo)
+também são sessões esperando o dono. O agregado nunca nomeia uma aba, só conta.
+O nome da aba é cortado em 28 caracteres, contados como caracteres (um emoji na
+borda não é partido), e fecha com `…`.
 
 Regras:
 
-- Um balão por vez. Evento novo substitui o atual.
-- Um evento de sessão que chega **até 1 s depois do nascimento** de um balão de
-  sessão se junta a ele. O texto vira o agregado e o `id` não muda, então não há
-  segundo pulinho. O `ended` entra na contagem como esperando.
+- Um balão por vez. Evento novo substitui o atual: `id` novo e 6 s novos.
+- Um evento de sessão que chega **até 1 s depois do nascimento** (inclusive) de um
+  balão de sessão se junta a ele. O texto vira o agregado e o `id` não muda, então
+  não há segundo pulinho; o fim (`until`) também não muda. A sessão conta uma vez,
+  pelo evento mais recente dela. O 1º evento do balão **não espera** o segundo:
+  nasce na hora, e o texto se refaz se outro chegar.
 - Um `pendingOpened` da mesma aba nessa janela só **refina o tipo** do evento
   `blocked` (o semáforo vira `permission` antes de o chat dizer se é pergunta ou
-  plano).
-- Troca de conta nunca se junta a evento de sessão.
+  plano). Nunca cria balão e nunca mexe num `finished`.
+- Troca de conta nunca se junta a evento de sessão, e um balão que não é de
+  sessão nunca absorve um evento de sessão.
 - `waiting → permission` não gera evento (R3).
-- Com `now < silencedUntil`, nenhum balão nasce, mas o estado segue mudando.
+- Com `now < silencedUntil`, nenhum balão nasce, mas o estado segue mudando. Ligar
+  o silêncio também tira o balão que está na tela (FR-027); o que se perdeu nele
+  não se repete no fim.
+- Com um app em tela cheia (`fullscreen`), nenhum balão nasce, e o que estava na
+  tela sai (Q9).
+- O balão sai antes dos 6 s quando **todas** as sessões por trás dele deixam de
+  pedir: o dono abriu a aba dela (Q9), a aba fechou ou ela voltou a trabalhar. Um
+  agregado fica enquanto alguma delas ainda pede. O `ended` nunca fica velho: a
+  sessão dele já se foi por definição. Clicar no balão (ou no Jobu, ou num item da
+  lista) também o tira (`bubbleDismissed`).
+- O balão vence aos 6 s, no tick.
 
 ## Vista entregue à janela (`PetView`)
 

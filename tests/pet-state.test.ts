@@ -3,8 +3,10 @@
 // that belongs to User Story 1 is checked here without a window, a timer or a semaphore.
 //
 // The pose is read through `toPetView` (the same function the screen uses), so "the pose priority, line
-// by line" is tested where it is decided. Balloons are not part of this story: `state.bubble` is only
-// ever set by hand here, to prove its place at the top of the priority table.
+// by line" is tested where it is decided. The bubbles of US2 are tested in pet-bubble.test.ts: `pose`
+// here is the face the SESSIONS ask for, with the bubble that a wait born out of sight raises for 6 s
+// taken out of the way (`poseInFront` is the one that has it). The priority table's first row sets a
+// bubble by hand to prove its place at the top.
 import { describe, expect, it } from 'vitest';
 import {
   PET_LAUGH_MS,
@@ -67,7 +69,13 @@ class Pet {
     return toPetView(this.state, this.now, UI);
   }
 
+  /** The face the sessions ask for: the view with the bubble (US2) out of the way. */
   get pose(): PoseName {
+    return toPetView({ ...this.state, bubble: null }, this.now, UI).pose;
+  }
+
+  /** The face as the screen draws it, bubble in front included. */
+  get poseInFront(): PoseName {
     return this.view.pose;
   }
 
@@ -353,14 +361,14 @@ describe('the pose priority (FR-010), line by line', () => {
     const pet = worldWithWaiting(1).advance(11 * MIN);
     expect(pet.pose).toBe('very-impatient');
     pet.state = { ...pet.state, laughUntil: pet.now + SEC, bubble: aBubble(pet.now, 6 * SEC) };
-    expect(pet.pose).toBe('calling');
+    expect(pet.poseInFront).toBe('calling');
   });
 
   it('1. ...and only while it lasts: an expired bubble no longer decides', () => {
     const pet = worldWithWaiting(1);
     pet.state = { ...pet.state, bubble: aBubble(pet.now, 6 * SEC) };
     pet.advance(6 * SEC);
-    expect(pet.pose).toBe('impatient');
+    expect(pet.poseInFront).toBe('impatient');
   });
 
   it('2. laughing wins over a waiting session while the laugh lasts', () => {

@@ -153,7 +153,7 @@ impaciente com selo 1; abrir a aba → selo some.
 **Teste independente**: cada evento com o Donel minimizado gera o balão certo,
 e nenhum aviso do Windows sai.
 
-- [ ] T030 [P] [US2] `tests/pet-bubble.test.ts` (TDD):
+- [x] T030 [P] [US2] `tests/pet-bubble.test.ts` (TDD):
   - textos exatos do FR-015 e corte em 28 caracteres + `…`;
   - pose por evento;
   - agregação até 1 s depois do nascimento, com o mesmo `id` (`N sessões terminaram` / `N sessões esperando você`);
@@ -165,7 +165,7 @@ e nenhum aviso do Windows sai.
   - conta nunca se junta;
   - expira em 6 s;
   - `target` certo.
-- [ ] T031 [US2] `src/shared/pet/bubble.ts` (textos, corte, agregação) e eventos no `petState.ts` (passa T030).
+- [x] T031 [US2] `src/shared/pet/bubble.ts` (textos, corte, agregação) e eventos no `petState.ts` (passa T030).
 - [ ] T032 [US2] Fontes de evento no main (`src/main/index.ts` + `pet-service.ts`):
   - `pendingOpened` do chat (≈`:1143`) → `onPendingOpened(ptyId, pending.kind)`;
   - saída de PTY com `consumeKillRequested` → `onSessionExited(ptyId, byUser)`.

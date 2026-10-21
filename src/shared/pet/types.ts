@@ -1,8 +1,8 @@
 // 015 (Jobu pet) - types of the pure core. Everything here is serializable and free of
 // Electron/React, so main, preload, renderer and vitest all import the same shapes.
 // Data model: specs/015-jobu-pet/data-model.md. The reducer (petState.ts) and the view projection
-// (petView.ts) are here since US1; the bubble rules (bubble.ts) arrive with US2. The shapes they
-// work on are fixed in this file.
+// (petView.ts) are here since US1; the bubble texts and aggregation (bubble.ts) since US2. The shapes
+// they work on are fixed in this file.
 
 // ---------------------------------------------------------------------------
 // Poses
@@ -127,12 +127,34 @@ export interface SilenceEvent {
   readonly until: number | null;
 }
 
+/**
+ * An app took the whole screen, or gave it back (the watcher of US5, T050). No bubble is born while it
+ * lasts, and the one that is up goes (Q9): the Jobu is hidden then, and a bubble must not be waiting for
+ * him when he comes back.
+ */
+export interface FullscreenEvent {
+  readonly type: 'fullscreen';
+  readonly active: boolean;
+}
+
+/** The owner clicked the bubble (or the Jobu, or an item of the list): the bubble has served and goes away at once. */
+export interface BubbleDismissedEvent {
+  readonly type: 'bubbleDismissed';
+}
+
 /** The 1 s clock of the main. The instant itself is the `now` argument of `reducePet`. */
 export interface TickEvent {
   readonly type: 'tick';
 }
 
-export type PetEvent = AccountSwitchedEvent | SessionExitedEvent | PendingOpenedEvent | SilenceEvent | TickEvent;
+export type PetEvent =
+  | AccountSwitchedEvent
+  | SessionExitedEvent
+  | PendingOpenedEvent
+  | SilenceEvent
+  | FullscreenEvent
+  | BubbleDismissedEvent
+  | TickEvent;
 
 /**
  * The tabs the pet watches, as a whole: every call carries ALL of them, so the reducer compares it
@@ -158,7 +180,7 @@ export interface ResumeInput {
   readonly type: 'resume';
 }
 
-/** Everything `reducePet` takes. US2 and US5 give the events of `PetEvent` other than `tick` their effect. */
+/** Everything `reducePet` takes. The account switch (`accountSwitched`) is the one event still without an effect: it arrives with US4. */
 export type PetInput = SessionsInput | FocusInput | ResumeInput | PetEvent;
 
 // ---------------------------------------------------------------------------
@@ -212,6 +234,12 @@ export interface PetState {
   readonly bubble: Bubble | null;
   /** Id of the last bubble born (`Bubble.id` grows from it). */
   readonly lastBubbleId: number;
+  /**
+   * The session events behind the bubble in view, one per session (the latest wins). Events that arrive
+   * within the first second of the bubble join it, and this is what its aggregate text is made from; it is
+   * also what tells that the bubble stopped making sense. Empty when there is no bubble, and for a bubble
+   * that is not about sessions (the account one, US4).
+   */
   readonly pendingBurst: readonly BubbleEvent[];
   readonly laughUntil: number | null;
   readonly sereneSince: number | null;
@@ -219,6 +247,8 @@ export interface PetState {
   readonly waffleUntil: number | null;
   /** In memory only: silence does not survive a restart (Q3). */
   readonly silencedUntil: number | null;
+  /** An app has the whole screen: no bubble is born (Q9). Set by the full-screen watcher; `resume` forgets it. */
+  readonly fullscreen: boolean;
 }
 
 // ---------------------------------------------------------------------------

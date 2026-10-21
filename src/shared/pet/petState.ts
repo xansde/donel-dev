@@ -1,17 +1,32 @@
-// T025 (015-jobu-pet, US1) - the reducer of the pet core. It takes what the main knows (the tabs and
-// what the semaphore says of each, the focus of the Donel window, the 1 s clock) and keeps what the
-// owner should see: who is waiting, whether the owner has seen it, the laugh, the serene period and the
-// waffle. Pure: no Electron, no timer, no `Date.now()`. The clock is the `now` argument, so every rule
-// of specs/015-jobu-pet/data-model.md is tested with a clock the test moves by hand.
+// T025/T031 (015-jobu-pet, US1/US2) - the reducer of the pet core. It takes what the main knows (the tabs
+// and what the semaphore says of each, the focus of the Donel window, the 1 s clock, the exit of a
+// process, a pending the chat opened) and keeps what the owner should see: who is waiting, whether the
+// owner has seen it, the laugh, the serene period, the waffle and the bubble. Pure: no Electron, no
+// timer, no `Date.now()`. The clock is the `now` argument, so every rule of
+// specs/015-jobu-pet/data-model.md is tested with a clock the test moves by hand.
 //
-// What the face and the badge are made of is derived from the state at a given instant by petView.ts.
+// What the face and the badge are made of is derived from the state at a given instant by petView.ts;
+// what a bubble SAYS is bubble.ts; here is when one is born, joined, refined, dismissed or expires.
 //
-// EXTENSION POINTS (US2 bubbles, US5 menu): the events of `PetEvent` other than `tick` are accepted by
-// `reducePet` and still do nothing; each `case` in the switch names the task that gives it an effect.
-// The transitions that will become `finished`/`blocked` events (entering `waiting`/`permission` unseen)
-// are decided in `trackSession`, the only place where a wait is born.
+// A wait is born in `trackSession`, the only place where a session enters `waiting`/`permission`. If the
+// session was already known and the owner is not looking at it, that birth is also the `finished` or
+// `blocked` event of a bubble. The one event still without an effect is `accountSwitched` (US4, T042).
 
-import type { FocusSignal, PetInput, PetSemaphore, PetState, SemaphorePublicState, TrackedSession, WatchedSession } from './types';
+import { PET_BUBBLE_JOIN_MS, PET_BUBBLE_MS, composeBubble } from './bubble';
+import type {
+  BubbleEvent,
+  FocusSignal,
+  FullscreenEvent,
+  PendingOpenedEvent,
+  PetInput,
+  PetSemaphore,
+  PetState,
+  SemaphorePublicState,
+  SessionExitedEvent,
+  SilenceEvent,
+  TrackedSession,
+  WatchedSession,
+} from './types';
 
 /** D10: a session that has waited more than this makes the Jobu very impatient. */
 export const PET_VERY_IMPATIENT_MS = 10 * 60_000;
@@ -34,6 +49,7 @@ export function createPetState(): PetState {
     waffleShown: false,
     waffleUntil: null,
     silencedUntil: null,
+    fullscreen: false,
   };
 }
 
@@ -103,6 +119,12 @@ export function baseState(state: PetState, now: number): BaseState {
 // Sessions
 // ---------------------------------------------------------------------------
 
+/** What one tab's signal turns into: its record, and the event of the bubble when a wait was born out of sight. */
+interface Tracked {
+  readonly session: TrackedSession;
+  readonly event: BubbleEvent | null;
+}
+
 /**
  * One tab, one signal. A wait is born when the session enters `waiting`/`permission` and was not in
  * one: that moment dates it and decides whether the owner is already looking at it ("born seen",
@@ -110,13 +132,15 @@ export function baseState(state: PetState, now: number): BaseState {
  * the same state again (dedupe), `waiting` to `permission` and back (R3). Working or done clear the
  * wait, so the next one is a new wait.
  *
- * EXTENSION POINT (US2, T031): a wait born unseen is where the `finished` (`waiting`) or `blocked`
- * (`permission`) event comes from; a session met for the first time (`previous === undefined`) never
- * gives one, because it was not seen changing.
+ * A wait born unseen, on a session the core already knew, is also the event of a bubble: `finished` for
+ * `waiting`, `blocked` for `permission` (with the kind of the pending when the service knows it). A
+ * session met for the first time (`previous === undefined`) never gives one, because nobody saw it
+ * change, and neither does one born seen (FR-019).
  */
-function trackSession(previous: TrackedSession | undefined, watched: WatchedSession, now: number, focus: FocusSignal): TrackedSession {
+function trackSession(previous: TrackedSession | undefined, watched: WatchedSession, now: number, focus: FocusSignal): Tracked {
   let waitingSince: number | null = null;
   let seen = false;
+  let event: BubbleEvent | null = null;
   if (isWaitingSemaphore(watched.semaphore)) {
     if (previous !== undefined && previous.waitingSince !== null) {
       waitingSince = previous.waitingSince;
@@ -124,16 +148,37 @@ function trackSession(previous: TrackedSession | undefined, watched: WatchedSess
     } else {
       waitingSince = now;
       seen = isSeenNow(focus, watched.ptyId);
+      if (previous !== undefined && !seen) {
+        const blocked = watched.semaphore === 'permission';
+        event = { kind: blocked ? 'blocked' : 'finished', ptyId: watched.ptyId, name: watched.name, blockedKind: blocked ? watched.blockedKind : null, at: now };
+      }
     }
   }
-  return { name: watched.name, semaphore: watched.semaphore, blockedKind: watched.blockedKind, waitingSince, seen };
+  return { session: { name: watched.name, semaphore: watched.semaphore, blockedKind: watched.blockedKind, waitingSince, seen }, event };
 }
 
-/** The new list replaces the old one: whoever is not in it was closed (no event, FR-009). */
+/** The new list replaces the old one: whoever is not in it was closed (no event, FR-009). The events its changes gave go to the bubble. */
 function withSessions(state: PetState, incoming: readonly WatchedSession[], now: number): PetState {
   const sessions = new Map<string, TrackedSession>();
-  for (const watched of incoming) sessions.set(watched.ptyId, trackSession(state.sessions.get(watched.ptyId), watched, now, state.focus));
-  return { ...state, sessions };
+  const events: BubbleEvent[] = [];
+  for (const watched of incoming) {
+    const tracked = trackSession(state.sessions.get(watched.ptyId), watched, now, state.focus);
+    sessions.set(watched.ptyId, tracked.session);
+    if (tracked.event !== null) events.push(tracked.event);
+  }
+  return announce({ ...state, sessions }, events, now);
+}
+
+/** The process of a session exited. The record goes, and unless the owner closed the tab or is looking at it, the bubble says it ended. */
+function withSessionExited(state: PetState, input: SessionExitedEvent, now: number): PetState {
+  const tracked = state.sessions.get(input.ptyId);
+  if (tracked === undefined) return state; // a plain terminal, or a tab never reported: nothing to announce
+  const sessions = new Map(state.sessions);
+  sessions.delete(input.ptyId);
+  const next: PetState = { ...state, sessions };
+  // `byUser`: the owner closed it (R6). Looking at it: born seen, like a wait (Q9). Neither deserves a bubble.
+  if (input.byUser || isSeenNow(state.focus, input.ptyId)) return next;
+  return announce(next, [{ kind: 'ended', ptyId: input.ptyId, name: tracked.name, blockedKind: null, at: now }], now);
 }
 
 /** "A cada mudança de foco ou de sinal, toda sessão esperando e vista agora passa a `seen = true`." */
@@ -147,6 +192,101 @@ function markSeen(state: PetState): { readonly state: PetState; readonly flipped
     flipped += 1;
   }
   return sessions === null ? { state, flipped: 0 } : { state: { ...state, sessions }, flipped };
+}
+
+// ---------------------------------------------------------------------------
+// Bubbles
+// ---------------------------------------------------------------------------
+
+/** No bubble is born while the owner silenced them (FR-020, FR-027) or while an app has the whole screen (Q9). */
+function bubblesAllowed(state: PetState, now: number): boolean {
+  if (state.fullscreen) return false;
+  return state.silencedUntil === null || now >= state.silencedUntil;
+}
+
+/**
+ * Does the bubble in view still take events? Only a bubble about sessions (it has events behind it), up
+ * to a second after it was born (it was born at `until - 6 s`): a bubble of another kind, like the
+ * account one, is never joined.
+ */
+function acceptsEvents(state: PetState, now: number): boolean {
+  const { bubble } = state;
+  if (bubble === null || state.pendingBurst.length === 0 || now >= bubble.until) return false;
+  return now - (bubble.until - PET_BUBBLE_MS) <= PET_BUBBLE_JOIN_MS;
+}
+
+function withoutBubble(state: PetState): PetState {
+  return state.bubble === null && state.pendingBurst.length === 0 ? state : { ...state, bubble: null, pendingBurst: [] };
+}
+
+/**
+ * Session events become the bubble (FR-014, FR-017). Within the first second of a bubble they join it:
+ * the text becomes the aggregate, the id stays (so the screen does not hop twice) and the end stays too.
+ * A session counts once, by its latest event. Out of that window an event REPLACES the bubble, with a new
+ * id and a fresh 6 s. Silenced, or with an app on the whole screen, nothing is born: the sessions keep
+ * being counted all the same, and what was lost is not repeated when the silence ends.
+ */
+function announce(state: PetState, events: readonly BubbleEvent[], now: number): PetState {
+  if (events.length === 0 || !bubblesAllowed(state, now)) return state;
+  let next = state;
+  for (const event of events) {
+    if (next.bubble !== null && acceptsEvents(next, now)) {
+      const burst = [...next.pendingBurst.filter((joined) => joined.ptyId !== event.ptyId), event];
+      next = { ...next, pendingBurst: burst, bubble: { ...next.bubble, ...composeBubble(burst) } };
+    } else {
+      const id = next.lastBubbleId + 1;
+      const burst = [event];
+      next = { ...next, lastBubbleId: id, pendingBurst: burst, bubble: { id, ...composeBubble(burst), until: now + PET_BUBBLE_MS } };
+    }
+  }
+  return next;
+}
+
+/**
+ * The chat says what the pending is. It refines the kind of the `blocked` event of that session while the
+ * bubble is still inside its first second (the semaphore turns `permission` before the chat says whether it
+ * is a question or a plan), and does nothing else: it never creates a bubble (R3) and never touches a
+ * `finished` one.
+ */
+function withPendingKind(state: PetState, input: PendingOpenedEvent, now: number): PetState {
+  if (state.bubble === null || !acceptsEvents(state, now)) return state;
+  const index = state.pendingBurst.findIndex((event) => event.kind === 'blocked' && event.ptyId === input.ptyId);
+  const current = state.pendingBurst[index];
+  if (current === undefined || current.blockedKind === input.kind) return state;
+  const burst = state.pendingBurst.map((event, at) => (at === index ? { ...event, blockedKind: input.kind } : event));
+  return { ...state, pendingBurst: burst, bubble: { ...state.bubble, ...composeBubble(burst) } };
+}
+
+/** "Silenciar por 1 hora" calms the bubbles, the one in view included (FR-027); "Retomar avisos" lifts it. The face and the badge never stop. */
+function withSilence(state: PetState, input: SilenceEvent, now: number): PetState {
+  const next: PetState = { ...state, silencedUntil: input.until };
+  return input.until !== null && now < input.until ? withoutBubble(next) : next;
+}
+
+/** An app took the whole screen: the Jobu hides, so no bubble stays waiting for him (Q9). */
+function withFullscreen(state: PetState, input: FullscreenEvent): PetState {
+  const next: PetState = { ...state, fullscreen: input.active };
+  return input.active ? withoutBubble(next) : next;
+}
+
+/** An event of the burst no longer asks for anything: its session is gone, or stopped waiting, or the owner saw it. An `ended` never goes stale: its session is gone by definition. */
+function isStale(state: PetState, event: BubbleEvent): boolean {
+  if (event.kind === 'ended') return false;
+  const session = state.sessions.get(event.ptyId);
+  return session === undefined || session.waitingSince === null || session.seen;
+}
+
+/**
+ * The bubble goes when its time is up, and before that when it stops making sense (Q9): every session
+ * behind it was seen by the owner (he opened its tab), closed, or went back to work. An aggregate
+ * stays while any of its sessions still asks.
+ */
+function pruneBubble(state: PetState, now: number): PetState {
+  const { bubble } = state;
+  if (bubble === null) return state;
+  if (now >= bubble.until) return withoutBubble(state);
+  if (state.pendingBurst.length > 0 && state.pendingBurst.every((event) => isStale(state, event))) return withoutBubble(state);
+  return state;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +317,8 @@ function settleTimers(state: PetState, now: number): PetState {
 }
 
 function resumed(state: PetState): PetState {
-  return { ...state, bubble: null, pendingBurst: [], laughUntil: null, sereneSince: null, waffleShown: false, waffleUntil: null };
+  // The full-screen watcher starts again with the pet and says the truth, so what it said before is forgotten.
+  return { ...state, bubble: null, pendingBurst: [], fullscreen: false, laughUntil: null, sereneSince: null, waffleShown: false, waffleUntil: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -186,8 +327,9 @@ function resumed(state: PetState): PetState {
 
 /**
  * Applies one input at the instant `now`. Never mutates `state`; returns the same object when nothing
- * changed. After every input, whatever the owner is looking at counts as seen, the laugh is decided and
- * the clock-driven parts (laugh, serene period, waffle) catch up.
+ * changed. After every input, whatever the owner is looking at counts as seen, the laugh is decided, the
+ * bubble that expired or stopped making sense goes, and the clock-driven parts (laugh, serene period,
+ * waffle) catch up.
  */
 export function reducePet(state: PetState, input: PetInput, now: number): PetState {
   const waitingBefore = waitingCount(state);
@@ -206,11 +348,23 @@ export function reducePet(state: PetState, input: PetInput, now: number): PetSta
     case 'tick':
       next = state;
       break;
-    // EXTENSION POINTS: these arrive with the stories that need them and change nothing until then.
-    case 'accountSwitched': // US4 (T042): a bubble `Conta → <rótulo>` with the mirror pose
-    case 'sessionExited': //   US2 (T031/T032): the `ended` event, when `byUser` is false
-    case 'pendingOpened': //   US2 (T031/T032): refines the kind of a `blocked` event
-    case 'silence': //         US5 (T047): `silencedUntil`
+    case 'sessionExited':
+      next = withSessionExited(state, input, now);
+      break;
+    case 'pendingOpened':
+      next = withPendingKind(state, input, now);
+      break;
+    case 'silence':
+      next = withSilence(state, input, now);
+      break;
+    case 'fullscreen':
+      next = withFullscreen(state, input);
+      break;
+    case 'bubbleDismissed':
+      next = withoutBubble(state);
+      break;
+    // EXTENSION POINT: this arrives with the story that needs it and changes nothing until then.
+    case 'accountSwitched': // US4 (T042): a bubble `Conta → <rótulo>` with the mirror pose, which never joins a session bubble
       next = state;
       break;
     default:
@@ -225,7 +379,7 @@ export function reducePet(state: PetState, input: PetInput, now: number): PetSta
   // at those: only a visit (a wait that turned `seen` in this very input) counts.
   if (waitingBefore > 0 && flipped > 0 && waitingCount(settled) === 0) settled = { ...settled, laughUntil: now + PET_LAUGH_MS };
 
-  return settleTimers(settled, now);
+  return settleTimers(pruneBubble(settled, now), now);
 }
 
 function assertNever(value: never): never {
