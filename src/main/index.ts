@@ -1198,6 +1198,8 @@ function registerChatDomain(): void {
   // T079 - notificacao do sistema quando uma pendencia abre (janela sem foco ou aba nao ativa).
   const notifier = createPendingNotifier({
     preference: () => appConfig.notificationPreference,
+    // 015-jobu-pet (T033, R8) - with the Jobu on screen the bubble says it, and a Windows notification would repeat it.
+    isPetEnabled: () => petService?.isEnabled() ?? false,
     // C1 (015-jobu-pet) — a janela PRINCIPAL em foco, não "alguma janela": o Jobu é outra janela do app.
     isWindowFocused: () => getMainWindow()?.isFocused() ?? false,
     isSupported: () => smokeNotificationsLog !== undefined || Notification.isSupported(),

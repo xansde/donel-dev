@@ -1888,11 +1888,18 @@ export function App(): React.JSX.Element {
   // de volta pra mais permissiva no meio de uma sessão não deve disparar
   // notificação retroativa de uma transição que já aconteceu enquanto
   // estava desligado.
+  //
+  // 015-jobu-pet (T033, R8) - with the Jobu on, his bubble already says this and a Windows notification would
+  // repeat the same news (FR-020): the loop is skipped, but `previousSemaphoreStatesRef` is still updated, for the
+  // reason above. `pet.enabled` comes from the Preferences and from the `pet:prefs-changed` push (the "Esconder"
+  // of his menu), so turning him off brings the notifications back at once. It holds while he is silenced or
+  // hidden by a full-screen app too (Q2).
+  const petEnabled = appConfig?.pet?.enabled === true;
   useEffect(() => {
     const preference = appConfig?.notificationPreference ?? FALLBACK_NOTIFICATION_PREFERENCE;
     const previous = previousSemaphoreStatesRef.current;
 
-    if (preference !== 'none') {
+    if (preference !== 'none' && !petEnabled) {
       for (const tab of tabs) {
         const nextState = semaphoreStates[tab.id]?.state;
         const prevState = previous[tab.id]?.state;
@@ -1917,7 +1924,7 @@ export function App(): React.JSX.Element {
       }
     }
     previousSemaphoreStatesRef.current = semaphoreStates;
-  }, [semaphoreStates, tabs, activeTabId, appConfig?.notificationPreference, chatEnabled]);
+  }, [semaphoreStates, tabs, activeTabId, appConfig?.notificationPreference, chatEnabled, petEnabled]);
 
   // T079 (014-chat) — o main decide notificar pela aba ativa e pelo foco da janela (que ele lê sozinho);
   // o renderer só informa a aba ativa e os nomes das abas (título da notificação).

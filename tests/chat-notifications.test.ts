@@ -40,8 +40,10 @@ function notifierHarness(over: { focused?: boolean; supported?: boolean; prefere
   const shown: { title: string; body: string }[] = [];
   const clicks: string[] = [];
   const listeners: (() => void)[] = [];
+  const pet = { enabled: false };
   const notifier = createPendingNotifier({
     preference: () => over.preference ?? 'permission-only',
+    isPetEnabled: () => pet.enabled,
     isWindowFocused: () => over.focused ?? false,
     isSupported: () => over.supported ?? true,
     create: (options) => {
@@ -53,7 +55,7 @@ function notifierHarness(over: { focused?: boolean; supported?: boolean; prefere
     },
     onClick: (ptyId) => clicks.push(ptyId),
   });
-  return { notifier, shown, clicks, listeners };
+  return { notifier, shown, clicks, listeners, pet };
 }
 
 describe('createPendingNotifier', () => {
@@ -79,6 +81,29 @@ describe('createPendingNotifier', () => {
     const h = notifierHarness();
     h.notifier.notifyPending('p1', pending);
     expect(h.shown[0]!.title).toBe('Donel Dev');
+  });
+
+  it('with the Jobu on it never notifies: his bubble says it (015, R8), whatever the focus and the preference', () => {
+    for (const preference of ['all', 'permission-only'] as const) {
+      const h = notifierHarness({ focused: false, preference });
+      h.pet.enabled = true;
+      h.notifier.setFocusState('other', { p1: 'atlas' });
+      expect(h.notifier.notifyPending('p1', pending)).toBe(false);
+      expect(h.shown).toEqual([]);
+    }
+  });
+
+  it('...and it is asked every time: with the Jobu hidden or turned off the notification is back as before', () => {
+    const h = notifierHarness({ focused: false });
+    h.notifier.setFocusState('other', { p1: 'atlas' });
+    h.pet.enabled = true;
+    expect(h.notifier.notifyPending('p1', pending)).toBe(false);
+    h.pet.enabled = false;
+    expect(h.notifier.notifyPending('p1', pending)).toBe(true);
+    expect(h.shown).toEqual([{ title: 'atlas', body: 'Esperando você — permissão para rodar um comando' }]);
+    h.pet.enabled = true;
+    expect(h.notifier.notifyPending('p1', pending)).toBe(false);
+    expect(h.shown).toHaveLength(1);
   });
 });
 

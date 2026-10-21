@@ -169,7 +169,7 @@ e nenhum aviso do Windows sai.
 - [ ] T032 [US2] Fontes de evento no main (`src/main/index.ts` + `pet-service.ts`):
   - `pendingOpened` do chat (≈`:1143`) → `onPendingOpened(ptyId, pending.kind)`;
   - saída de PTY com `consumeKillRequested` → `onSessionExited(ptyId, byUser)`.
-- [ ] T033 [US2] Supressão dos avisos do Windows (R8):
+- [x] T033 [US2] Supressão dos avisos do Windows (R8):
   - `src/renderer/src/App.tsx` (efeito ≈`:1884`) sai cedo com `appConfig.pet?.enabled`;
   - `src/main/chat/notifications.ts` ganha a dependência `isPetEnabled` (com o pet ligado, não notifica);
   - caso novo em `tests/chat-notifications.test.ts`.

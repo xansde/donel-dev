@@ -31,6 +31,12 @@ export interface NotificationLike {
 
 export interface PendingNotifierDeps {
   readonly preference: () => NotificationPreference;
+  /**
+   * 015-jobu-pet (R8): the Jobu is on screen. He says it with a bubble, so the system notification would be
+   * the same news twice (FR-020): with him on, it stays quiet - also while he is silenced or hidden by a
+   * full-screen app, so nothing pops up over a presentation. Off or hidden by the owner, it is back as before.
+   */
+  readonly isPetEnabled: () => boolean;
   readonly isWindowFocused: () => boolean;
   readonly isSupported: () => boolean;
   readonly create: (options: { title: string; body: string }) => NotificationLike;
@@ -58,6 +64,7 @@ export function createPendingNotifier(deps: PendingNotifierDeps): PendingNotifie
       if (names !== undefined) tabNames = names;
     },
     notifyPending(ptyId, pending) {
+      if (deps.isPetEnabled()) return false;
       if (!deps.isSupported()) return false;
       if (!shouldNotifyPending({ preference: deps.preference(), windowFocused: deps.isWindowFocused(), activePtyId, ptyId })) return false;
       try {
