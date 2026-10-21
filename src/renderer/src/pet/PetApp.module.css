@@ -82,3 +82,127 @@
     0 0 0 2px var(--bg-app),
     0 3px 10px rgb(0 0 0 / 0.45);
 }
+
+/*
+ * The bubble (FR-014 to FR-017) sits above the head, anchored to the drawing like a CSS alignment: `right` =
+ * its right edge on the right edge of the drawing, growing to the left (the default corner is at the right
+ * edge of the screen, where the window sticks out); `left` is the mirror, `center` is centered. It lives
+ * inside the stage, so `bottom: 100%` is the top of the drawing; `--stage-w` (set on the stage) is how wide
+ * the drawing is. Up to 300 px, and what is cut is the name of the tab, never what happened.
+ */
+.popups {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: max-content;
+  max-width: min(300px, calc(50vw + var(--stage-w) / 2 - 8px));
+  pointer-events: none;
+}
+
+.popups[data-align='right'] {
+  right: 0;
+  align-items: flex-end;
+}
+
+.popups[data-align='left'] {
+  left: 0;
+  align-items: flex-start;
+}
+
+.popups[data-align='center'] {
+  left: 50%;
+  align-items: center;
+  max-width: min(300px, calc(100vw - 16px));
+  transform: translateX(-50%);
+}
+
+.bubble {
+  --bubble-edge: color-mix(in srgb, var(--donel-accent) 60%, transparent);
+
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--bubble-edge);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-modal);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.3;
+  pointer-events: auto;
+}
+
+/* The little tail that points at the drawing. */
+.bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid var(--bubble-edge);
+  border-bottom: 1px solid var(--bubble-edge);
+  background: var(--bg-raised);
+  transform: rotate(45deg);
+}
+
+.popups[data-align='right'] .bubble::after {
+  right: clamp(10px, calc(var(--stage-w) / 2 - 5px), calc(100% - 20px));
+}
+
+.popups[data-align='left'] .bubble::after {
+  left: clamp(10px, calc(var(--stage-w) / 2 - 5px), calc(100% - 20px));
+}
+
+.popups[data-align='center'] .bubble::after {
+  left: calc(50% - 5px);
+}
+
+/* The dot says how urgent it is: candle gold, coral when the session is blocked, slate when it ended. */
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--donel-accent);
+}
+
+.bubble[data-pose='surprised'] .dot {
+  background: var(--state-permission);
+}
+
+.bubble[data-pose='sad'] .dot {
+  background: var(--state-done);
+}
+
+/* One line: the part that gives way (`lead`) and the part that does not (`tail`). */
+.text {
+  display: flex;
+  min-width: 0;
+}
+
+/* The part that gives way when the line is too long (the name of the tab, or the whole text of an aggregate). */
+.lead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.name {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/* What happened: never cut. */
+.tail {
+  flex: none;
+  margin-left: 0.4em;
+  white-space: nowrap;
+}

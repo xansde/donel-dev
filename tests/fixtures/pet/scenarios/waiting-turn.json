@@ -7,6 +7,14 @@
         { "type": "assistant", "text": "Pronto." },
         { "type": "hook", "event": "Stop" }
       ]
+    },
+    {
+      "match": "re:^rapido",
+      "steps": [
+        { "type": "wait", "ms": 6000 },
+        { "type": "assistant", "text": "Pronto." },
+        { "type": "hook", "event": "Stop" }
+      ]
     }
   ],
   "default": {

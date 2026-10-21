@@ -173,11 +173,11 @@ e nenhum aviso do Windows sai.
   - `src/renderer/src/App.tsx` (efeito ≈`:1884`) sai cedo com `appConfig.pet?.enabled`;
   - `src/main/chat/notifications.ts` ganha a dependência `isPetEnabled` (com o pet ligado, não notifica);
   - caso novo em `tests/chat-notifications.test.ts`.
-- [ ] T034 [US2] Balão no `PetApp.tsx`:
+- [x] T034 [US2] Balão no `PetApp.tsx`:
   - acima do desenho, alinhado por `view.align`, largura até 300 px, reticências;
   - pulinho só quando o `bubble.id` muda;
   - `data-bubble` com o texto.
-- [ ] T035 [US2] `tests/smoke/pet.spec.ts` parte 2: com a principal minimizada, o balão `atlas · terminou` aparece; com chat e permissão, o stub `DONEL_SMOKE_NOTIFICATIONS_LOG` fica vazio com o pet ligado.
+- [x] T035 [US2] `tests/smoke/pet.spec.ts` parte 2: com a principal minimizada, o balão `atlas · terminou` aparece; com chat e permissão, o stub `DONEL_SMOKE_NOTIFICATIONS_LOG` fica vazio com o pet ligado.
 
 ---
 

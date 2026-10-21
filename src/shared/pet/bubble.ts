@@ -57,6 +57,20 @@ export function eventPose(event: BubbleEvent): PoseName {
   }
 }
 
+const NAME_EVENT_SEPARATOR = ' · ';
+
+/**
+ * The text of a bubble about ONE session, split in the tab name and what happened, so the screen can give
+ * the name its own face and cut only IT when the line is too long (the event is what matters). It splits
+ * at the last separator: a name can have ` · ` inside, none of the events does. `null` for a text that is
+ * not `<aba> · <evento>` (an aggregate, an account).
+ */
+export function splitSessionBubbleText(text: string): { readonly name: string; readonly event: string } | null {
+  const at = text.lastIndexOf(NAME_EVENT_SEPARATOR);
+  if (at <= 0) return null;
+  return { name: text.slice(0, at), event: text.slice(at + NAME_EVENT_SEPARATOR.length) };
+}
+
 /** What the screen needs of a bubble that the clock does not decide: the words, the pose and where a click goes. */
 export interface BubbleFace {
   readonly text: string;

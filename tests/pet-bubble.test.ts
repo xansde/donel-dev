@@ -16,6 +16,7 @@ import {
   composeBubble,
   eventPose,
   eventText,
+  splitSessionBubbleText,
   truncateTabName,
 } from '../src/shared/pet/bubble';
 import { PET_LAUGH_MS, createPetState, reducePet } from '../src/shared/pet/petState';
@@ -167,6 +168,35 @@ describe('the text of an event (FR-015) and its pose (FR-016)', () => {
     ['ended', 'sad'],
   ])('the pose of %s is %s', (kind, pose) => {
     expect(eventPose(ev(kind))).toBe(pose);
+  });
+});
+
+describe('splitSessionBubbleText: the screen styles the name of the tab apart from what happened', () => {
+  it('splits `<aba> · <evento>` in two', () => {
+    expect(splitSessionBubbleText('atlas · terminou')).toEqual({ name: 'atlas', event: 'terminou' });
+    expect(splitSessionBubbleText('atlas · tem uma pergunta')).toEqual({ name: 'atlas', event: 'tem uma pergunta' });
+  });
+
+  it('every text of FR-015 splits back into the name and the event that made it', () => {
+    for (const event of [ev('finished', 'beacon'), ev('blocked', 'beacon', { blockedKind: 'plan' }), ev('ended', 'beacon')]) {
+      const split = splitSessionBubbleText(eventText(event));
+      expect(split?.name).toBe('beacon');
+      expect(`${split?.name} · ${split?.event}`).toBe(eventText(event));
+    }
+  });
+
+  it('a name with the separator inside is still one name: it splits at the LAST one, because no event has it', () => {
+    expect(splitSessionBubbleText('atlas · repasse · quer permissão')).toEqual({ name: 'atlas · repasse', event: 'quer permissão' });
+  });
+
+  it('a cut name keeps its ellipsis', () => {
+    expect(splitSessionBubbleText(eventText(ev('finished', 'x'.repeat(40))))).toEqual({ name: `${'x'.repeat(28)}…`, event: 'terminou' });
+  });
+
+  it('a text that is not of one session (an aggregate, an account) does not split', () => {
+    expect(splitSessionBubbleText('3 sessões terminaram')).toBeNull();
+    expect(splitSessionBubbleText('Conta → Interno 3')).toBeNull();
+    expect(splitSessionBubbleText('')).toBeNull();
   });
 });
 
