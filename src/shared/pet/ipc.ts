@@ -17,6 +17,8 @@ export const PET_CHANNELS = {
   prefsChanged: 'pet:prefs-changed',
   // Main -> pet window
   view: 'pet:view',
+  /** The window lost the focus while the list was open: the screen closes it (the page itself never hears about it). */
+  closeList: 'pet:close-list',
   // Pet window -> main
   ready: 'pet:ready',
   interactive: 'pet:interactive',
@@ -159,6 +161,8 @@ export interface DonelPetApi {
   /** The pet screen is subscribed to the view: the main answers with the current one and shows the window. */
   ready(): void;
   onView(listener: (view: PetView) => void): () => void;
+  /** The main says the window lost the focus: a list that is open must close (FR-023, a click anywhere else). */
+  onCloseList(listener: () => void): () => void;
   /** Only when the value changes: the hit test of the pet screen decides it from the mouse position. */
   setInteractive(interactive: boolean): void;
   click(): void;

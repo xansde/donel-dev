@@ -40,6 +40,7 @@ class FakePetWindow implements PetWindowHandle {
   hidden = 0;
   readonly interactive: boolean[] = [];
   readonly listOpen: boolean[] = [];
+  closeRequests = 0;
   readonly moves: PetPoint[] = [];
   readonly bounds: PetRect[] = [];
   constructor(
@@ -63,6 +64,9 @@ class FakePetWindow implements PetWindowHandle {
   }
   setListOpen(open: boolean): void {
     this.listOpen.push(open);
+  }
+  requestCloseList(): void {
+    this.closeRequests += 1;
   }
   moveTo(point: PetPoint): void {
     this.moves.push(point);
@@ -949,6 +953,74 @@ describe('a click leads to the session (US3, T038)', () => {
     service.handleListOpen(true);
     service.handleListOpen(false);
     expect(h.windows[0]?.listOpen).toEqual([true, false]);
+  });
+
+  describe('the window losing the focus closes the list (FR-023: a click anywhere else)', () => {
+    // The page never hears about it: with the list open, Electron deactivates the window and the page keeps
+    // `document.hasFocus()` true and gets no `blur` (measured on Electron 43, Windows). The window's own `blur`
+    // event is the signal that works, so the main hears it and tells the screen to close the list.
+
+    it('asks the screen to close it, and the window stops being focusable at once', () => {
+      const { h, service } = readyPet();
+      service.handleListOpen(true);
+      h.windows[0]!.options.onBlur();
+      expect(h.windows[0]?.closeRequests).toBe(1);
+      expect(h.windows[0]?.listOpen).toEqual([true, false]);
+    });
+
+    it('the report of the screen that follows is harmless: it only repeats that the list is closed', () => {
+      const { h, service } = readyPet();
+      service.handleListOpen(true);
+      h.windows[0]!.options.onBlur();
+      service.handleListOpen(false);
+      expect(h.windows[0]?.closeRequests).toBe(1);
+      service.handleListOpen(true); // and it can open again
+      h.windows[0]!.options.onBlur();
+      expect(h.windows[0]?.closeRequests).toBe(2);
+    });
+
+    it('with the list closed a blur does nothing: the window is not focusable, and a blur is no news', () => {
+      const { h } = readyPet();
+      h.windows[0]!.options.onBlur();
+      expect(h.windows[0]?.closeRequests).toBe(0);
+      expect(h.windows[0]?.listOpen).toEqual([]);
+    });
+
+    it('a list that the screen closed by itself (Esc) is closed for the main too: the next blur does nothing', () => {
+      const { h, service } = readyPet();
+      service.handleListOpen(true);
+      service.handleListOpen(false);
+      h.windows[0]!.options.onBlur();
+      expect(h.windows[0]?.closeRequests).toBe(0);
+    });
+
+    it('the late blur of a window the service already replaced does not touch the new one', () => {
+      const { h, service } = readyPet();
+      const first = h.windows[0]!;
+      service.setEnabled(false);
+      service.setEnabled(true);
+      service.handleListOpen(true);
+      first.options.onBlur();
+      expect(h.windows[1]?.closeRequests).toBe(0);
+      expect(h.windows[1]?.listOpen).toEqual([true]);
+    });
+
+    it('turning the pet off and on again starts with the list closed', () => {
+      const { h, service } = readyPet();
+      service.handleListOpen(true);
+      service.setEnabled(false);
+      service.setEnabled(true);
+      h.windows[1]!.options.onBlur();
+      expect(h.windows[1]?.closeRequests).toBe(0);
+    });
+
+    it('after dispose a blur does nothing', () => {
+      const { h, service } = readyPet();
+      service.handleListOpen(true);
+      service.dispose();
+      expect(() => h.windows[0]!.options.onBlur()).not.toThrow();
+      expect(h.windows[0]?.closeRequests).toBe(0);
+    });
   });
 
   /** Two quiet-working sessions with the owner elsewhere, for the cases that need the bubble of an exit. */

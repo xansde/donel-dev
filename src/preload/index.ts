@@ -564,6 +564,10 @@ const donelApi: DonelApi = {
       const handler = (_event: unknown, view: PetView): void => listener(view);
       return subscribeChannel(ipcRenderer, PET_CHANNELS.view, handler);
     },
+    onCloseList: (listener: () => void) => {
+      const handler = (): void => listener();
+      return subscribeChannel(ipcRenderer, PET_CHANNELS.closeList, handler);
+    },
     setInteractive: (interactive: boolean) => {
       ipcRenderer.send(PET_CHANNELS.interactive, { interactive });
     },

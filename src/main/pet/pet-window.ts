@@ -71,6 +71,9 @@ export function createPetWindow(options: CreatePetWindowOptions): PetWindowHandl
   const webContentsId = win.webContents.id;
 
   win.on('closed', options.onClosed);
+  // The window's own `blur` is the signal that the owner clicked elsewhere while the list was open: the page
+  // does not get a DOM `blur` for it (measured on Electron 43, Windows: `document.hasFocus()` stays true).
+  win.on('blur', options.onBlur);
 
   const loaded = process.env.ELECTRON_RENDERER_URL
     ? win.loadURL(`${process.env.ELECTRON_RENDERER_URL}#pet`)
@@ -94,6 +97,9 @@ export function createPetWindow(options: CreatePetWindowOptions): PetWindowHandl
     },
     setInteractive: (interactive: boolean) => {
       if (!win.isDestroyed()) win.setIgnoreMouseEvents(!interactive, { forward: true });
+    },
+    requestCloseList: () => {
+      if (!win.isDestroyed()) win.webContents.send(PET_CHANNELS.closeList);
     },
     setListOpen: (open: boolean) => {
       if (win.isDestroyed()) return;

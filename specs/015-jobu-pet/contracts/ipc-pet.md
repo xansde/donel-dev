@@ -17,7 +17,7 @@ a sua parte.
 
 | Canal | Payload | Efeito |
 |---|---|---|
-| `app:activate-session` | `{ ptyId: string }` | ativa a aba cujo PTY é `ptyId` (mapa reverso do `tabPtyMap`); o main já trouxe a janela à frente |
+| `app:activate-session` | `{ ptyId: string }` | ativa a aba cujo PTY é `ptyId` (mapa reverso do `tabPtyMap`, feito com o ÚLTIMO ptyId de cada aba, também a de um processo que encerrou: o balão "encerrou" leva a ela); o main já trouxe a janela à frente |
 | `pet:prefs-changed` | `{ enabled: boolean }` | atualiza `appConfig.pet.enabled` (toggle e supressão dos toasts) |
 
 ## Main → janela do pet
@@ -25,6 +25,7 @@ a sua parte.
 | Canal | Payload | Efeito |
 |---|---|---|
 | `pet:view` | `PetView` (ver `data-model.md`) | redesenha; enviado só quando muda |
+| `pet:close-list` | — | a janela do pet perdeu o foco com a lista aberta (o dono clicou em outro lugar): a tela fecha a lista. A página nunca recebe o `blur` do DOM nesse caso (medido no Electron 43: `document.hasFocus()` segue `true`), então é o evento `blur` da própria janela, ouvido no main, que avisa |
 
 ## Janela do pet → main
 
@@ -32,9 +33,9 @@ a sua parte.
 |---|---|---|---|
 | `pet:ready` | `send` | — | manda a vista atual e mostra a janela (`showInactive`) |
 | `pet:interactive` | `send` | `{ interactive: boolean }` | `setIgnoreMouseEvents(!interactive, { forward: true })` |
-| `pet:click` | `send` | — | uma esperando → ativa; nenhuma → traz o Donel; várias → nada (a lista é da tela) |
-| `pet:open` | `send` | `{ target: { kind: 'session', ptyId } \| { kind: 'donel' } }` | traz o Donel à frente e, se for sessão, `app:activate-session` |
-| `pet:list-open` | `send` | `{ open: boolean }` | `setFocusable(open)`; `open` → `focus()` |
+| `pet:click` | `send` | — | o main decide com o estado dele (`decideClick`): uma esperando → ativa; nenhuma → traz o Donel; várias → nada (a lista é da tela). Quando age, dispensa o balão |
+| `pet:open` | `send` | `{ target: { kind: 'session', ptyId } \| { kind: 'donel' } }` | traz o Donel à frente (`restore`, `show`, `focus`; a reserva `setAlwaysOnTop(true)`, `focus`, `setAlwaysOnTop(false)` só roda se o foco não pegar, R7) e, se for sessão, `app:activate-session`. Dispensa o balão, também o de uma sessão que já não espera |
+| `pet:list-open` | `send` | `{ open: boolean }` | `open` → `setFocusable(true)` e `focus()`; fechar → `blur()` (se ela é a janela ativa) e `setFocusable(false)`, para a janela transparente não ficar com o teclado do dono |
 | `pet:context-menu` | `send` | — | `Menu.popup` com Silenciar por 1 hora / Retomar avisos · Liberar print por 1 minuto / Bloquear print agora · Tamanho · Esconder · Voltar ao canto |
 | `pet:drag-start` | `send` | `{ screenX, screenY }` | guarda o deslocamento ponteiro→janela |
 | `pet:drag-move` | `send` | `{ screenX, screenY }` | `setPosition` (arredondado) |
@@ -61,3 +62,6 @@ O `PetView` ganha `size: number`, que é a altura do desenho em DIP.
 |---|---|---|
 | `chat:focus-state` | `activePtyId` e `tabNames` indexados por `tab.id` | indexados por **ptyId** (`tabPtyMap`), como diz `specs/014-chat/contracts/ipc-chat.md` |
 | `chat:focus-pending` | o renderer usava o ptyId como `tab.id` | o renderer mapeia ptyId → `tab.id` antes de ativar |
+
+Os dois lados do mapa saem de `src/shared/pet/tabPtyMap.ts` (`buildChatFocusState` para o `chat:focus-state`,
+`tabPtyMap(...).tabIdOf` para a ativação), com testes em `tests/pet-tab-pty-map.test.ts`.

@@ -22,6 +22,7 @@ describe('PET_CHANNELS', () => {
       activateSession: 'app:activate-session',
       prefsChanged: 'pet:prefs-changed',
       view: 'pet:view',
+      closeList: 'pet:close-list',
       ready: 'pet:ready',
       interactive: 'pet:interactive',
       click: 'pet:click',

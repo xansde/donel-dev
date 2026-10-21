@@ -97,6 +97,8 @@ export interface PetWindowHandle {
   setInteractive(interactive: boolean): void;
   /** The window is focusable only while the list is open (R12). */
   setListOpen(open: boolean): void;
+  /** Tells the screen to close the list: the window lost the focus, and the page itself never hears about it. */
+  requestCloseList(): void;
   /** Moves the window by its top-left corner, in DIP. */
   moveTo(point: PetPoint): void;
   applyBounds(bounds: PetRect): void;
@@ -107,6 +109,8 @@ export interface CreatePetWindowOptions {
   readonly bounds: PetRect;
   /** Called once, when the window is gone (destroyed by the service or by something else). */
   readonly onClosed: () => void;
+  /** The window lost the focus (the owner clicked elsewhere, or another window of the app was activated). */
+  readonly onBlur: () => void;
 }
 
 /** What the semaphore manager publishes on every update (`SemaphoreUpdate`, src/main/session-semaphore-manager.ts): the service reads only these two. */
@@ -179,7 +183,7 @@ export interface PetService {
   handleClick(): void;
   /** `pet:open`: the Donel comes to the front and, for a session, activates its tab (an item of the list, or the bubble). */
   handleOpen(target: PetOpenTarget): void;
-  /** `pet:list-open`: the window can take the focus while the list is open, so that Esc and a click outside close it (R12). */
+  /** `pet:list-open`: the window can take the focus while the list is open, so that Esc reaches it and its `blur` (a click elsewhere) closes the list (R12). */
   handleListOpen(open: boolean): void;
   /** The main window closed: the window and the tick go away and the service goes inert. */
   dispose(): void;
@@ -191,6 +195,8 @@ export function createPetService(deps: PetServiceDeps): PetService {
   let tickHandle: unknown = null;
   let petReady = false;
   let lastSentJson: string | null = null;
+  /** The list is open on the screen (what `pet:list-open` last said): only then does losing the focus mean "close it". */
+  let listOpen = false;
 
   let tabs: PetTabsPayload = { activePtyId: null, sessions: [] };
   let donelFocused = deps.getMainWindow()?.isFocused() ?? false;
@@ -296,7 +302,12 @@ export function createPetService(deps: PetServiceDeps): PetService {
           window = null;
           petReady = false;
           lastSentJson = null;
+          listOpen = false;
           stopTick();
+        },
+        // Same guard: a blur that arrives late, from a window this service already replaced, is not news.
+        onBlur: () => {
+          if (window === created) closeListOnBlur();
         },
       });
     } catch (error) {
@@ -307,6 +318,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
     window = created;
     petReady = false;
     lastSentJson = null;
+    listOpen = false;
     // The core had no clock while the pet was off: its timed parts start from now.
     reduce({ type: 'resume' });
     tickHandle = deps.setInterval(() => feed({ type: 'tick' }), PET_TICK_MS);
@@ -318,7 +330,20 @@ export function createPetService(deps: PetServiceDeps): PetService {
     window = null;
     petReady = false;
     lastSentJson = null;
+    listOpen = false;
     if (closing !== null && !closing.isDestroyed()) closing.destroy();
+  }
+
+  /**
+   * The window lost the focus while the list was open - the owner clicked somewhere else (FR-023). The list is
+   * the screen's state, so the screen is told to close it, and the window stops being focusable right away
+   * instead of waiting for the screen's own report (`pet:list-open`, which will only repeat it).
+   */
+  function closeListOnBlur(): void {
+    if (!listOpen || window === null || window.isDestroyed()) return;
+    listOpen = false;
+    window.requestCloseList();
+    window.setListOpen(false);
   }
 
   /**
@@ -441,6 +466,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
 
     handleListOpen(open) {
       if (disposed || window === null || window.isDestroyed()) return;
+      listOpen = open;
       window.setListOpen(open);
     },
 
