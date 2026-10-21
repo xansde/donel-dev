@@ -191,6 +191,7 @@ analogias improváveis que fazem sentido.
   evento); a persona fica no rosto e nos gestos, e a regra "clareza acima de
   charme" vale para o balão. Dentro do app, "onde ele vive" e "onde nunca
   entra" seguem como acima até a spec do layout místico.
+- **Pet implementado (015):** mapa de poses em `specs/015-jobu-pet/data-model.md`.
 
 ## 11. Dados de exemplo padrão (usar em todas as telas)
 

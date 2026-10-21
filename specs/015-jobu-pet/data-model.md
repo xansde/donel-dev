@@ -91,7 +91,7 @@ no 3º argumento. As entradas:
 | `focus` | a aba ativa mudou ou o Donel ganhou/perdeu o foco |
 | `tick` | o relógio de 1 s |
 | `resume` | a janela do pet reabriu depois de um tempo sem relógio: riso, waffle, período sereno, balão e tela cheia recomeçam de agora; as esperas (com a idade real) ficam |
-| eventos avulsos | `sessionExited`, `pendingOpened`, `silence`, `fullscreen`, `bubbleDismissed` (US2 e US5) e `accountSwitched` (US4, ainda sem efeito) |
+| eventos avulsos | `sessionExited`, `pendingOpened`, `silence`, `fullscreen`, `bubbleDismissed` (US2 e US5) e `accountSwitched` (US4) |
 
 Depois de qualquer entrada, o reducer marca como vistas as esperas que o dono
 está olhando, decide o riso, tira o balão que venceu ou deixou de fazer sentido
@@ -147,7 +147,7 @@ de `incense` zera os dois.
 | `blocked` (permission) | `<aba> · quer permissão` | `surprised` | a sessão |
 | `blocked` (plan) | `<aba> · plano para aprovar` | `surprised` | a sessão |
 | `ended` | `<aba> · encerrou` | `sad` | a sessão |
-| `accountSwitched` | `Conta → <rótulo>` | `mirror` | o Donel |
+| `accountSwitched` | `Conta → <rótulo>` (rótulo cortado em 28 caracteres, como o nome da aba) | `mirror` | o Donel |
 | ≥ 2 `finished` no mesmo segundo | `N sessões terminaram` | `calling` | a lista |
 | ≥ 2 `ended` no mesmo segundo (Q9) | `N sessões encerraram` | `sad` | a lista |
 | ≥ 2 de tipos mistos no mesmo segundo | `N sessões esperando você` | `surprised` | a lista |
@@ -170,7 +170,11 @@ Regras:
   `blocked` (o semáforo vira `permission` antes de o chat dizer se é pergunta ou
   plano). Nunca cria balão e nunca mexe num `finished`.
 - Troca de conta nunca se junta a evento de sessão, e um balão que não é de
-  sessão nunca absorve um evento de sessão.
+  sessão nunca absorve um evento de sessão: ela substitui o balão em exibição (`id`
+  novo, 6 s novos, `pendingBurst` vazio), e um evento de sessão que chega logo depois
+  a substitui em vez de se dobrar nela. A primeira conta ativa (de nenhuma para uma)
+  não é troca e não gera balão (Q25); vale a mesma porta dos outros balões (silêncio e
+  tela cheia não deixam nascer).
 - `waiting → permission` não gera evento (R3).
 - Com `now < silencedUntil`, nenhum balão nasce, mas o estado segue mudando. Ligar
   o silêncio também tira o balão que está na tela (FR-027); o que se perdeu nele
@@ -211,7 +215,22 @@ mantendo o **ponto da base, no centro do desenho** (a âncora, que é também o
 do lugar. O teste de clique usa o alfa do
 desenho na escala atual, então o clique acompanha o tamanho.
 
-O silêncio não é gravado (vale para a execução atual — dúvida Q3).
+**Se o tamanho muda na posição padrão** (`placement = null`), o canto manda: a base continua na
+borda da barra e a borda direita do desenho a 16 px da borda da tela, então a âncora anda um
+pouco (Q24). Num lugar que o dono escolheu, a âncora é fixa.
+
+O silêncio não é gravado (vale para a execução atual — dúvida Q3). "Silenciar por 1 hora" é
+`silencedUntil = agora + 1 h` (`PET_SILENCE_MS`); sobrevive a Esconder e religar na mesma
+execução (Q28).
+
+## Captura de tela (FR-034, FR-035)
+
+Estado do serviço, não do núcleo da vista (`src/shared/pet/capture.ts`): `releasedUntil`
+(`number | null`, só em memória) e `alwaysCapturable` (o override de teste). `captureAllowed(state,
+now)` é `alwaysCapturable || (releasedUntil !== null && now < releasedUntil)`: protegido por
+padrão; "Liberar print por 1 minuto" dá 60 s e o vencimento volta sozinho (o tick avisa a janela
+só quando a resposta muda); "Bloquear print agora" volta na hora. Uma janela nova nasce com a
+resposta de agora (liberada dentro do minuto, protegida depois).
 
 ## Posição
 
@@ -222,4 +241,7 @@ O silêncio não é gravado (vale para a execução atual — dúvida Q3).
   monitor e a barra de tarefas está embaixo. Soltar a até 24 px dessa linha
   encaixa nela.
 - **Validade:** posição lembrada cujo desenho não tenha ao menos metade da área
-  dentro de alguma área útil volta ao padrão (FR-005).
+  dentro de alguma área útil volta ao padrão (FR-005) **enquanto durar**: o lugar gravado
+  não é apagado, e o Jobu volta a ele quando o monitor volta (Q27).
+- **Soltar:** uma soltura que deixaria o desenho abaixo dessa metade é recusada, e ele volta
+  à âncora do começo do arraste sem gravar nada (Q26).

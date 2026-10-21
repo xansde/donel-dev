@@ -293,3 +293,26 @@ Levantamento do código em 21/10/2026 (branch `015-jobu-pet`, base `staging`
 - **Decisão**: o pet só nasce depois do `ready-to-show` da janela principal,
   então a primeira janela continua sendo a principal. O smoke `@pet` acha o pet
   pela URL (`#pet`).
+
+## R22 — O que o Electron 43 faz no Windows 11 (medido em 21/10, monitor a 125%)
+
+Quatro medidas que mudaram o código da US5. Cada uma foi tirada de um app Electron mínimo e
+repetida no app do Donel.
+
+- **A afinidade de captura só vale com a janela mostrada.** `setContentProtection(true)` numa
+  janela ainda escondida deixa `GetWindowDisplayAffinity` em `0x0`; o `showInactive()` o põe em
+  `0x11` (`WDA_EXCLUDEFROMCAPTURE`) na mesma chamada, e `0x0` volta com `setContentProtection(false)`.
+  O que se muda com ela escondida (tela cheia) vale no próximo `show`. A janela nasce escondida e
+  protegida, então o primeiro quadro que ela mostra já está fora das capturas.
+- **`setPosition` repetido faz a janela transparente crescer**: 300 chamadas transformaram 480x340
+  em 780x681. `setBounds` com o retângulo inteiro a mantém em 480x340 depois de 300 chamadas. Por isso
+  todo movimento da janela (arraste, tamanho, monitores) é `applyBounds`. O `getBounds()` ainda pode
+  ler 481 em vez de 480 em certas posições: é o arredondamento entre pixels físicos e DIP, não deriva.
+- **`setOpacity(0)` apaga uma janela transparente sem moldura**: `GetLayeredWindowAttributes` diz
+  alfa 0 e a amostra de pixel sob a janela é a do fundo, não a dela (controle com opacidade 1: o
+  pixel é o da janela). É o que sustenta o fantasma dos smokes (`DONEL_PET_SMOKE_INVISIBLE`).
+- **O mouse do Playwright dá `screenX = x da janela + clientX`**: o evento injetado por CDP calcula a
+  coordenada de tela a partir da posição da janela naquele instante, então, quando a janela segue o
+  ponteiro, o ponteiro de teste tem de voltar para o mesmo ponto da janela depois de cada passo —
+  é assim que o smoke do arraste imita uma mão. Ctrl + roda do Playwright chega com `ctrlKey` e
+  `deltaY` de 100, e o `contextmenu` leva as coordenadas de tela.
