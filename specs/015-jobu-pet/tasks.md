@@ -136,7 +136,7 @@ impaciente com selo 1; abrir a aba → selo some.
   - atributos `data-pose`, `data-badge` e `data-size`;
   - teste de clique pelo alfa (canvas fora da tela), mandando `pet.setInteractive` só na mudança;
   - altura do desenho = `view.size`.
-- [ ] T029 [US1] `tests/smoke/pet.spec.ts` (`@pet`, parte 1):
+- [x] T029 [US1] `tests/smoke/pet.spec.ts` (`@pet`, parte 1):
   - config semeada com `pet.enabled` e CLI falso com roteiro de espera antes do `Stop` (fixture em `tests/fixtures/pet/scenarios/*.json`);
   - acha o pet pela URL `#pet`;
   - `sleeping` → aba aberta (`incense`) → prompt (`reading`);
