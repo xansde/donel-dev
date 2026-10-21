@@ -3,6 +3,10 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
 import { subscribeChannel } from './subscribeChannel';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
+// 015-jobu-pet — canais do pet; mesmos nomes do contrato (specs/015-jobu-pet/contracts/ipc-pet.md).
+import { PET_CHANNELS } from '../shared/pet/ipc';
+import type { PetActivateSessionPayload, PetOpenTarget, PetPrefsChangedPayload, PetTabsPayload } from '../shared/pet/ipc';
+import type { PetView } from '../shared/pet/types';
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
@@ -532,6 +536,60 @@ const donelApi: DonelApi = {
     onPromptSignal: (listener: (event: ChatPromptSignalEvent) => void) => {
       const handler = (_event: unknown, payload: ChatPromptSignalEvent): void => listener(payload);
       return subscribeChannel(ipcRenderer, CHAT_CHANNELS.promptSignal, handler);
+    },
+  },
+
+  // 015-jobu-pet — exposto nas DUAS janelas (o pet carrega o mesmo preload, R18); cada uma usa a sua
+  // metade. Cada `onX` tem UM assinante (o App na principal, o PetApp no pet): trava do subscribeChannel.
+  // Tudo que sai do pet é `send` (sem resposta): o main nunca bloqueia um gesto esperando retorno.
+  pet: {
+    // --- janela principal ---
+    sendTabs: (payload: PetTabsPayload) => {
+      ipcRenderer.send(PET_CHANNELS.tabs, payload);
+    },
+    onActivateSession: (listener: (payload: PetActivateSessionPayload) => void) => {
+      const handler = (_event: unknown, payload: PetActivateSessionPayload): void => listener(payload);
+      return subscribeChannel(ipcRenderer, PET_CHANNELS.activateSession, handler);
+    },
+    onPrefsChanged: (listener: (payload: PetPrefsChangedPayload) => void) => {
+      const handler = (_event: unknown, payload: PetPrefsChangedPayload): void => listener(payload);
+      return subscribeChannel(ipcRenderer, PET_CHANNELS.prefsChanged, handler);
+    },
+
+    // --- janela do pet ---
+    ready: () => {
+      ipcRenderer.send(PET_CHANNELS.ready);
+    },
+    onView: (listener: (view: PetView) => void) => {
+      const handler = (_event: unknown, view: PetView): void => listener(view);
+      return subscribeChannel(ipcRenderer, PET_CHANNELS.view, handler);
+    },
+    setInteractive: (interactive: boolean) => {
+      ipcRenderer.send(PET_CHANNELS.interactive, { interactive });
+    },
+    click: () => {
+      ipcRenderer.send(PET_CHANNELS.click);
+    },
+    open: (target: PetOpenTarget) => {
+      ipcRenderer.send(PET_CHANNELS.open, { target });
+    },
+    setListOpen: (open: boolean) => {
+      ipcRenderer.send(PET_CHANNELS.listOpen, { open });
+    },
+    openContextMenu: () => {
+      ipcRenderer.send(PET_CHANNELS.contextMenu);
+    },
+    dragStart: (screenX: number, screenY: number) => {
+      ipcRenderer.send(PET_CHANNELS.dragStart, { screenX, screenY });
+    },
+    dragMove: (screenX: number, screenY: number) => {
+      ipcRenderer.send(PET_CHANNELS.dragMove, { screenX, screenY });
+    },
+    dragEnd: (screenX: number, screenY: number) => {
+      ipcRenderer.send(PET_CHANNELS.dragEnd, { screenX, screenY });
+    },
+    resizeStep: (direction: 1 | -1) => {
+      ipcRenderer.send(PET_CHANNELS.resizeStep, { direction });
     },
   },
 };

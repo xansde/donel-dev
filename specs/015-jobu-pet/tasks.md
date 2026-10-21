@@ -72,11 +72,11 @@ principal. Com `false`, nada muda no app.
   - `let mainWindowRef` mais `getMainWindow()`;
   - `isWindowFocused` (≈`:1114`) e o `onClick` do notifier (≈`:1124-1131`) passam a usar a principal;
   - gancho `onMainWindowClosed` chamado no `closed` da principal (≈`:1013`) **antes** do `killAll`, para o pet ser destruído.
-- [ ] T017 Rota `#pet` em `src/renderer/src/main.tsx`:
+- [x] T017 Rota `#pet` em `src/renderer/src/main.tsx`:
   - mantém os imports de CSS e do design system;
   - `location.hash === '#pet'` → `import('./pet/mountPet')`; senão → `import('./App')`, os dois dinâmicos;
   - `src/renderer/src/pet/mountPet.tsx` monta `<PetApp/>` e força fundo transparente em `html`, `body` e `#root`.
-- [ ] T018 Domínio `pet` no preload e nos tipos:
+- [x] T018 Domínio `pet` no preload e nos tipos:
   - `src/shared/index.ts`: `DonelPetApi` em `DonelApi.pet`, com `sendTabs`, `onActivateSession`, `onPrefsChanged` (lado principal) e `ready`, `onView`, `setInteractive`, `click`, `open`, `setListOpen`, `openContextMenu`, `dragStart`/`dragMove`/`dragEnd`, `resizeStep` (lado pet);
   - `src/preload/index.ts`: implementação com `ipcRenderer.send` e `subscribeChannel`, como os outros domínios.
 - [ ] T019 `src/main/pet/pet-window.ts`:

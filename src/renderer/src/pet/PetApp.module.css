@@ -1,0 +1,25 @@
+/*
+ * 015 (Jobu pet) — a janela do pet é transparente e o desenho fica na base, ao centro (R9): o resto
+ * é espaço para o balão e a lista, que crescem para cima. Nada aqui pinta fundo: o que aparece é
+ * só o que a tela desenha.
+ */
+
+.root {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+/* Marcador provisório (esqueleto da Fase 2): um anel dourado de vela, onde o desenho vai entrar. */
+.placeholder {
+  width: 56px;
+  height: 56px;
+  border: 2px solid var(--donel-accent);
+  border-radius: 50%;
+  background: rgb(14 17 22 / 0.55);
+}

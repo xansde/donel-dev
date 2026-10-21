@@ -13,15 +13,32 @@ import '@donel-dev/design-system';
 // cuja hit-area dependesse da largura real das colunas — o dropdown do
 // SplitButton foi o primeiro a esbarrar nisso, T010).
 import '@donel-dev/design-system/style.css';
-import { App } from './App';
 
 const container = document.getElementById('root');
 if (!container) {
   throw new Error('#root element not found');
 }
 
-createRoot(container).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+/**
+ * T017 (015-jobu-pet, R18) — um `index.html` só, duas telas. A janela principal carrega a página
+ * sem hash e monta o `App`; a janela do Jobu carrega a mesma página em `#pet` e monta o `PetApp`.
+ * Os dois imports são DINÂMICOS de propósito: o pet nunca avalia o módulo do `App` (que sobe o
+ * app inteiro), e a principal nunca carrega o código do pet.
+ */
+async function boot(root: HTMLElement): Promise<void> {
+  if (window.location.hash === '#pet') {
+    const { mountPet } = await import('./pet/mountPet');
+    mountPet(root);
+    return;
+  }
+  const { App } = await import('./App');
+  createRoot(root).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+}
+
+boot(container).catch((error: unknown) => {
+  console.error('[donel-dev] a tela não montou:', error);
+});
