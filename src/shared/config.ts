@@ -15,6 +15,8 @@ import type { EffortLevel, ModelAlias, PermissionMode } from './commandBuilder';
 import type { DevModeState } from './devMode';
 import type { StoredSessionName } from './sessionName';
 import type { SessionRegistry } from './sessionRegistry';
+// 015-jobu-pet — o ponto de ancoragem da posição lembrada do pet (src/shared/pet/types.ts).
+import type { PetPoint } from './pet/types';
 // CA-26/CA-27 (009-modo-dev-v3) — cor+ordem da aba v3 por sessão claude, ver
 // src/shared/tabAppearance.ts (lógica pura) e src/shared/tabChannels.ts
 // (canais `tabs:*`).
@@ -31,6 +33,8 @@ export const CONFIG_CHANNELS = {
   setProjectScanMode: 'config:setProjectScanMode',
   /** T008 (014-chat) — `chat.enabled` / `chat.focusMode`. */
   setChatPrefs: 'config:setChatPrefs',
+  /** T014 (015-jobu-pet) — `pet.enabled`; posição e tamanho só o main grava, pelos gestos do pet. */
+  setPetPrefs: 'config:setPetPrefs',
 } as const;
 
 /**
@@ -69,6 +73,22 @@ export type SessionNamesMap = Readonly<Record<string, StoredSessionName>>;
 export interface ChatPrefs {
   readonly enabled: boolean;
   readonly focusMode: boolean;
+}
+
+/**
+ * T014 (015-jobu-pet) — o Jobu na área de trabalho. `enabled` é o interruptor das Preferências
+ * (desligado por padrão); `placement` é o ponto da base, no centro do desenho (`null` = posição
+ * padrão); `size` é a altura do desenho em DIP (FR-033, 80–320, padrão 140).
+ */
+export interface PetPrefs {
+  readonly enabled: boolean;
+  readonly placement: PetPoint | null;
+  readonly size: number;
+}
+
+/** O que o renderer pode pedir ao main: só o interruptor. */
+export interface PetPrefsInput {
+  readonly enabled?: boolean;
 }
 
 /** Subconjunto do `AppConfig` (main) exposto ao renderer — ver comentário de topo. */

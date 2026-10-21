@@ -21,8 +21,8 @@ provisória aplicada; nunca parar para perguntar.
 - [ ] T001 [P] Recortar a folha v2 em 12 poses transparentes, com âncora comum e altura de 320 px, mais `manifest.json` e a opção `--extra` → `scripts/pet/slice-sprites.py`, `src/renderer/src/pet/assets/poses/` (em curso na worktree `../donel-dev-wt/015-jobu-arte`, branch `015-jobu-arte`).
 - [ ] T002 [P] Montar o protótipo navegável autocontido e os prints → `design/jobu-pet/prototipo.html`, `design/jobu-pet/prints/`, `scripts/pet/build-prototype.*` (mesma worktree).
 - [ ] T003 Integrar a branch `015-jobu-arte` em `015-jobu-pet` (merge `--no-ff`), conferir a prancha `design/jobu-pet/poses-contact-sheet.png` e os prints contra a spec, e remover a worktree `../donel-dev-wt/015-jobu-arte` (sem junction de `node_modules` lá).
-- [ ] T004 [P] Criar os tipos do núcleo em `src/shared/pet/types.ts`: `PoseName` (15 lógicas, data-model), `WatchedSession` (`semaphore: 'idle'|'working'|'waiting'|'permission'|'done'`, `blockedKind`), `FocusSignal`, eventos (`accountSwitched`, `sessionExited`, `pendingOpened`, `silence`, `tick`), `PetState`, `TrackedSession`, `Bubble`, `BubbleTarget`, `PetView` (inclui `size`, `docked`, `align`, `silenced`, `waiting[]`).
-- [ ] T005 [P] Criar `src/shared/pet/ipc.ts` com `PET_CHANNELS` (todos os canais de `contracts/ipc-pet.md`, mais `app:activate-session` e `pet:prefs-changed`), os tipos de payload e os validadores `isValidPetTabsPayload`, `isValidPetDragPayload`, `isValidPetOpenPayload`, `isValidPetResizeStepPayload` e `isValidPetPrefsInput`.
+- [x] T004 [P] Criar os tipos do núcleo em `src/shared/pet/types.ts`: `PoseName` (15 lógicas, data-model), `WatchedSession` (`semaphore: 'idle'|'working'|'waiting'|'permission'|'done'`, `blockedKind`), `FocusSignal`, eventos (`accountSwitched`, `sessionExited`, `pendingOpened`, `silence`, `tick`), `PetState`, `TrackedSession`, `Bubble`, `BubbleTarget`, `PetView` (inclui `size`, `docked`, `align`, `silenced`, `waiting[]`).
+- [x] T005 [P] Criar `src/shared/pet/ipc.ts` com `PET_CHANNELS` (todos os canais de `contracts/ipc-pet.md`, mais `app:activate-session` e `pet:prefs-changed`), os tipos de payload e os validadores `isValidPetTabsPayload`, `isValidPetDragPayload`, `isValidPetOpenPayload`, `isValidPetResizeStepPayload` e `isValidPetPrefsInput`.
 
 ---
 
@@ -34,12 +34,12 @@ principal. Com `false`, nada muda no app.
 
 ### Testes primeiro (devem falhar antes da implementação)
 
-- [ ] T006 [P] `tests/pet-tab-pty-map.test.ts`:
+- [x] T006 [P] `tests/pet-tab-pty-map.test.ts`:
   - `tabPtyMap` dá `tab.id → ptyId` e o reverso;
   - aba sem PTY fica fora;
   - Retomar troca o ptyId da mesma aba;
   - a lista `pet:tabs` sai só com abas `claude` e com o nome resolvido.
-- [ ] T007 [P] `tests/pet-placement.test.ts` (monitores sintéticos com `bounds`/`workArea`/`scaleFactor`):
+- [x] T007 [P] `tests/pet-placement.test.ts` (monitores sintéticos com `bounds`/`workArea`/`scaleFactor`):
   - posição padrão a 16 px da direita com a base na base da área útil;
   - `docked` com barra embaixo (tolerância de 4 px);
   - encaixe ao soltar a até 24 px;
@@ -47,7 +47,7 @@ principal. Com `false`, nada muda no app.
   - `align` (`left`, `center`, `right`, 160 px das bordas);
   - limites da janela por tamanho (`max(480, 3,4 × s)` × `s + 200`), ancorados no ponto da base;
   - clamp do tamanho (80–320), passo de 10 e presets 100/140/200/260.
-- [ ] T008 [P] `tests/pet-poses.test.ts`:
+- [x] T008 [P] `tests/pet-poses.test.ts`:
   - `resolvePose` com o conjunto de arquivos disponíveis;
   - provisórias `impatient → skeptical`, `very-impatient → angry`, `calling → talking`;
   - `blink-*` opcional.
@@ -59,9 +59,9 @@ principal. Com `false`, nada muda no app.
 
 ### Implementação
 
-- [ ] T011 [P] `src/shared/pet/tabPtyMap.ts`: funções puras de mapeamento e `buildPetTabsPayload(tabs, ptyIdOf, resolveName, activeTabId)` (passa T006).
-- [ ] T012 [P] `src/shared/pet/placement.ts`: `defaultPlacement`, `isDocked`, `snapOnDrop`, `isPlacementVisible`, `alignFor`, `windowBoundsFor(anchor, size)`, `anchorOf(bounds, size)`, `clampSize`, `PET_SIZE_PRESETS` (passa T007).
-- [ ] T013 [P] `src/shared/pet/poses.ts`: `resolvePose(logical, available)` e `PROVISIONAL_POSES` (passa T008).
+- [x] T011 [P] `src/shared/pet/tabPtyMap.ts`: funções puras de mapeamento e `buildPetTabsPayload(tabs, ptyIdOf, resolveName, activeTabId)` (passa T006).
+- [x] T012 [P] `src/shared/pet/placement.ts`: `defaultPlacement`, `isDocked`, `snapOnDrop`, `isPlacementVisible`, `alignFor`, `windowBoundsFor(anchor, size)`, `anchorOf(bounds, size)`, `clampSize`, `PET_SIZE_PRESETS` (passa T007).
+- [x] T013 [P] `src/shared/pet/poses.ts`: `resolvePose(logical, available)` e `PROVISIONAL_POSES` (passa T008).
 - [ ] T014 Config `pet` (passa T009), ligando nesta ordem:
   - `src/main/config-store.ts`: `AppConfig.pet`, `defaultAppConfig`, `sanitizePetPrefs` no `sanitizeAppConfig` e `toAppConfigDto`;
   - `src/shared/config.ts`: `AppConfigDto.pet`, `CONFIG_CHANNELS.setPetPrefs` e `DonelConfigApi.setPetPrefs`;
