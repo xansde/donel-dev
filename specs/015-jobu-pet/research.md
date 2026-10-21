@@ -218,6 +218,21 @@ Levantamento do código em 21/10/2026 (branch `015-jobu-pet`, base `staging`
     (`import.meta.glob(..., { eager: true })`).
   - Uma função pura resolve a pose lógica, com a tabela de provisórias do
     FR-029. Arte nova entra só adicionando o PNG, sem tocar no código.
+  - **A arte sai inline, como `data:` URI** (achado da US1). O teste de clique
+    pelo alfa (R9) lê a imagem de um canvas, e numa página `file://` cada
+    arquivo é outra origem: um PNG servido como arquivo deixaria o canvas
+    ilegível (`getImageData` lança). Medido no Vite 5.4: o sufixo `?inline` não
+    vale para `import.meta.glob` (a URL sai com `?inline` colado e quebrada), e a
+    opção `build.assetsInlineLimit` não passa no tipo do electron-vite. Quem
+    inlina é o plugin `inlinePetArt` de `electron.vite.config.ts`, só para
+    `src/pet/assets/poses/`. Em dev a arte é servida pelo próprio servidor, da
+    mesma origem da página (conferido com `electron-vite dev`: o canvas lê e o
+    teste de clique acerta). O custo é o chunk do pet (~1,6 MB), que só a
+    janela do pet carrega.
+  - **A geometria da arte** (tela 264×320, âncora (132, 312)) está em
+    `src/shared/pet/art.ts`, e `tests/pet-art.test.ts` a confronta com o
+    `manifest.json` e com o cabeçalho dos PNGs: re-cortar a folha com outra
+    âncora reprova em vez de deixar o Jobu flutuando.
 
 ## R16 — Riso só por visita
 
