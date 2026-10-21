@@ -806,11 +806,14 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
   const previous = lastBroadcastActiveAccountId;
   lastBroadcastActiveAccountId = view.activeAccountId;
   if (previous !== undefined && previous !== null && view.activeAccountId !== null && previous !== view.activeAccountId) {
-    const label = view.accounts.find((account) => account.id === view.activeAccountId)?.label ?? view.activeAccountId;
+    const knownLabel = view.accounts.find((account) => account.id === view.activeAccountId)?.label;
+    const label = knownLabel ?? view.activeAccountId;
     chatHub?.notifyAccountSwitch(label);
     // 015-jobu-pet (T043, US4) — o Jobu olha o espelho e mostra a conta nova, com o chat ligado ou não. A primeira
-    // conta ativa (de nenhuma para uma) não é troca: a mesma regra do aviso do chat, logo acima.
-    petService?.onAccountSwitched(label);
+    // conta ativa (de nenhuma para uma) não é troca: a mesma regra do aviso do chat, logo acima. O balão leva só o
+    // RÓTULO que o dono deu à conta (FR-018): o id dela é um UUID opaco que não diz nada a ninguém, então uma conta
+    // que não está na lista (não acontece: a ativa sempre está) não vira balão com o id dentro.
+    if (knownLabel !== undefined) petService?.onAccountSwitched(knownLabel);
   }
 }
 
