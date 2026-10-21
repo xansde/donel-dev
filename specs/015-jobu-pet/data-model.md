@@ -145,7 +145,7 @@ Regras:
 | `bubble` | `{ id, text, pose, target } \| null` |
 | `waiting` | `{ ptyId, name, waitingLabel }[]`, a mais antiga primeiro (`agora`, `há 1 min`, `há 12 min`, `há 2 h`) |
 | `docked` | `boolean` — sentado na borda da barra de tarefas |
-| `align` | `'left' \| 'center' \| 'right'` — para onde balão e lista crescem |
+| `align` | `'left' \| 'center' \| 'right'` — ancoragem do balão e da lista ao desenho, como um alinhamento CSS: `right` = colados à borda direita do desenho e crescendo para a esquerda (perto da borda direita da tela, o canto padrão); `left` = o espelho; `center` = centrados. Vale a borda mais próxima a até 160 px do ponto da base |
 | `silenced` | `boolean` |
 
 ## Configuração (`config.json`)
@@ -153,13 +153,14 @@ Regras:
 | Chave | Tipo | Default | Notas |
 |---|---|---|---|
 | `pet.enabled` | `boolean` | `false` | interruptor das Preferências; Esconder grava `false` |
-| `pet.placement` | `{ x: number, y: number } \| null` | `null` | canto superior esquerdo da janela do pet, em DIP; `null` = posição padrão |
+| `pet.placement` | `{ x: number, y: number } \| null` | `null` | a **âncora**: o ponto da base, no centro do desenho, em DIP. Não é o canto da janela: assim ela independe do tamanho (a janela cresce em volta dela, FR-033) e não precisa ser regravada ao redimensionar. `null` = posição padrão |
 | `pet.size` | `number` | `140` | altura do desenho em DIP; presets 100 (Pequeno), 140 (Médio), 200 (Grande), 260 (Muito grande); Ctrl + roda em passos de 10, limitado a 80–320 (FR-033) |
 
 **Tamanho e janela:** a janela do pet mede `largura = max(480, 3,4 × size)` ×
 `altura = size + 200` DIP. Ao mudar o tamanho, o main recalcula os limites
-mantendo o **ponto da base, no centro do desenho**, fixo na tela: ele cresce
-para cima e para os lados, sem sair do lugar. O teste de clique usa o alfa do
+mantendo o **ponto da base, no centro do desenho** (a âncora, que é também o
+`pet.placement`), fixo na tela: ele cresce para cima e para os lados, sem sair
+do lugar. O teste de clique usa o alfa do
 desenho na escala atual, então o clique acompanha o tamanho.
 
 O silêncio não é gravado (vale para a execução atual — dúvida Q3).

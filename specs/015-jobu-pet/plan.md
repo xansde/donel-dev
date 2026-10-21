@@ -328,6 +328,7 @@ src/shared/pet/                 # NOVO — núcleo puro
 src/main/pet/                   # NOVO
   pet-service.ts      # sinais → núcleo → vista; tick; menu; silêncio
   pet-window.ts       # BrowserWindow, clique que atravessa, posição, screen
+  pet-ipc.ts          # handlers pet:* (confere quem mandou e o que veio)
   fullscreen-watcher.ts
 src/renderer/src/pet/           # NOVO
   PetApp.tsx  PetApp.module.css  mountPet.tsx  hitTest.ts  usePetDrag.ts
