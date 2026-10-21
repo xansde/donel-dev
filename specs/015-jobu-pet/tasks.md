@@ -236,6 +236,19 @@ e nenhum aviso do Windows sai.
   - Esconder (pelo mesmo caminho do menu, exposto para teste) → a janela do pet fecha e o toggle das Preferências aparece desligado;
   - religar → volta;
   - `resizeStep` → `data-size` muda e o desenho continua no lugar (base fixa).
+- [ ] T060 [P] [US5] `tests/pet-capture.test.ts` (TDD): regra pura `captureAllowed(state, now)`:
+  - proteção ligada por padrão;
+  - liberar dá 60 s e o vencimento religa (no tick);
+  - "Bloquear print agora" religa na hora;
+  - o override de teste `DONEL_PET_CAPTURABLE=1` desliga sempre.
+- [ ] T061 [US5] Fora de captura (FR-034) e liberar print (FR-035):
+  - `pet-window.ts`: `setContentProtection(true)` ao criar (no Windows 11, `WDA_EXCLUDEFROMCAPTURE`), salvo `DONEL_PET_CAPTURABLE=1`, mais `setCaptureAllowed(b)`;
+  - `pet-service.ts`: estado do liberar com o relógio do tick;
+  - menu (T047): "Liberar print por 1 minuto" e "Bloquear print agora".
+- [ ] T062 [US5] `tests/smoke/pet.spec.ts` parte 6:
+  - lê `GetWindowDisplayAffinity` do HWND do pet (`getNativeWindowHandle` + PowerShell/user32) e espera `0x11` (excluído da captura);
+  - depois de liberar, espera `0x0`;
+  - depois de bloquear, `0x11` de novo.
 
 ---
 
@@ -264,7 +277,7 @@ e nenhum aviso do Windows sai.
   - worktree `../donel-dev-alfa`: `git fetch` + `merge --ff-only origin/staging`, `npm install` e `npm run dist:alfa`;
   - conferir os marcadores do pet no `app.asar` do `win-unpacked`;
   - instalar só se o Alfa estiver fechado; senão, deixar o instalador pronto e dizer.
-- [ ] T058 Página de resultado em HTML local (nunca Artifact), em `design/jobu-pet/resultado.html`, aberta com `Start-Process`:
+- [ ] T058 Página de resultado em HTML local (nunca Artifact), em `design/jobu-pet/resultado.html`, aberta com `Start-Process` (as capturas do Jobu exigem `DONEL_PET_CAPTURABLE=1`, por causa do FR-034):
   - prints **reais** do pet sobre a área de trabalho, capturados com o app rodando (`@pet` + captura de tela inteira);
   - link para o protótipo;
   - as dúvidas;
@@ -278,7 +291,7 @@ e nenhum aviso do Windows sai.
 - **Setup (T001–T005)**: T001/T002 correm na worktree de arte. T003 depende dos dois. T004/T005 não têm dependência.
 - **Foundational (T006–T022)**: depende de T004/T005. Testes T006–T010 em paralelo; T011–T013 em paralelo; T014–T022 em sequência (mesmos arquivos `index.ts`/`App.tsx`). **Bloqueia todas as stories.**
 - **US1 (T023–T029)** → **US2 (T030–T035)** → **US3 (T036–T041)**: em sequência. Todas mexem em `petState.ts`, `pet-service.ts` e `PetApp.tsx`.
-- **US4 (T042–T044)** depende de US2 (balão). **US5 (T045–T051)** depende de US3 (lista, clique). **US6 (T052–T053)** depende de US1.
+- **US4 (T042–T044)** depende de US2 (balão). **US5 (T045–T051, T060–T062)** depende de US3 (lista, clique). **US6 (T052–T053)** depende de US1.
 - **Polish (T054–T059)**: depende de todas.
 
 ### Parallel Opportunities

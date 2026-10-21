@@ -218,6 +218,12 @@ ele some; silenciar e provocar um evento.
 12. **Given** o ponteiro sobre o Jobu, **When** o dono gira a roda do mouse
     com Ctrl apertado, **Then** ele cresce ou encolhe aos poucos, dentro de um
     mínimo e um máximo.
+13. **Given** o Jobu na tela, **When** o dono tira um print da tela inteira ou
+    compartilha a tela numa chamada, **Then** o Jobu não aparece na imagem —
+    no lugar dele está o que fica atrás.
+14. **Given** o menu do botão direito, **When** o dono escolhe "Liberar print
+    por 1 minuto", **Then** um print tirado logo depois mostra o Jobu; passado
+    1 minuto (ou depois de "Bloquear print agora"), ele volta a ficar de fora.
 
 ---
 
@@ -261,8 +267,9 @@ com a arte de piscar presente, conferir a piscada em repouso.
 - **Barra de tarefas fora de baixo ou oculta**: a posição padrão é o canto
   inferior direito da área útil, com a base esmaecida.
 - **Donel minimizado**: o Jobu continua na tela — é o caso principal.
-- **Compartilhamento de tela**: o balão nunca mostra conteúdo de sessão, só
-  nome da aba e evento (FR-018).
+- **Compartilhamento de tela e print**: o Jobu inteiro fica de fora da
+  captura (FR-034); se o dono liberou o print (FR-035), o balão continua sem
+  conteúdo de sessão, só nome da aba e evento (FR-018).
 - **Arte nova ainda ausente**: valem as poses provisórias (FR-027).
 
 ## Requirements *(mandatory)*
@@ -360,6 +367,14 @@ com a arte de piscar presente, conferir a piscada em repouso.
   sem sair do lugar; o tamanho MUST ser lembrado entre aberturas do app; o
   desenho MUST continuar clicável em qualquer tamanho (pedido do dono,
   21/10).
+- **FR-034**: O Jobu — desenho, balão, selo e lista — MUST ficar fora de
+  capturas e compartilhamentos de tela (print, recorte, gravação, Teams, Meet,
+  Zoom), continuando visível para o dono; na captura aparece o que está atrás
+  dele (pedido do dono, 21/10).
+- **FR-035**: O menu do botão direito MUST oferecer "Liberar print por 1
+  minuto": a proteção do FR-034 sai por 60 s e volta sozinha; enquanto vale, o
+  item MUST virar "Bloquear print agora", que a devolve na hora (pedido do
+  dono, 21/10).
 
 **Arte e vida**
 
@@ -414,6 +429,9 @@ com a arte de piscar presente, conferir a piscada em repouso.
   ou caminho de arquivo.
 - **SC-007**: Ao fim de uma semana de uso diário no alfa, o dono não desligou
   nem escondeu o Jobu por incômodo (registro no diário de uso).
+- **SC-008**: Em **100%** dos prints de tela inteira e dos compartilhamentos
+  de tela da bateria, o Jobu não aparece; com "Liberar print por 1 minuto", ele
+  aparece nesse minuto e some de novo ao fim dele.
 
 ## Assumptions
 
@@ -425,7 +443,8 @@ com a arte de piscar presente, conferir a piscada em repouso.
   fundo transparente (ou fundo verde chapado `#00FF00`), um quadro por
   arquivo, todos do mesmo tamanho e com o personagem na mesma posição. Até lá
   valem as provisórias.
-- Windows 11, um operador (o dono), um ou mais monitores.
+- Windows 11, um operador (o dono), um ou mais monitores. A exclusão de
+  captura do FR-034 depende do Windows 10 2004 ou mais novo.
 - Os 10 minutos da escalada, os ~6 s do balão, o 1 s de agrupamento e os 20
   minutos do waffle são valores iniciais, ajustáveis no plano.
 - O interruptor vem desligado enquanto a entrega estiver só no alfa.

@@ -35,7 +35,7 @@ a sua parte.
 | `pet:click` | `send` | — | uma esperando → ativa; nenhuma → traz o Donel; várias → nada (a lista é da tela) |
 | `pet:open` | `send` | `{ target: { kind: 'session', ptyId } \| { kind: 'donel' } }` | traz o Donel à frente e, se for sessão, `app:activate-session` |
 | `pet:list-open` | `send` | `{ open: boolean }` | `setFocusable(open)`; `open` → `focus()` |
-| `pet:context-menu` | `send` | — | `Menu.popup` com Silenciar por 1 hora / Retomar avisos · Esconder · Voltar ao canto |
+| `pet:context-menu` | `send` | — | `Menu.popup` com Silenciar por 1 hora / Retomar avisos · Liberar print por 1 minuto / Bloquear print agora · Tamanho · Esconder · Voltar ao canto |
 | `pet:drag-start` | `send` | `{ screenX, screenY }` | guarda o deslocamento ponteiro→janela |
 | `pet:drag-move` | `send` | `{ screenX, screenY }` | `setPosition` (arredondado) |
 | `pet:drag-end` | `send` | `{ screenX, screenY }` | encaixe (≤ 24 px), grava `pet.placement`, recalcula `docked` e `align` |
