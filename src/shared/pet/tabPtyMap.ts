@@ -1,6 +1,6 @@
-// T011 (015-jobu-pet, R4/C2) - the renderer's tab id is `tab-N`; the ptyId is a different string,
+// T011/T040 (015-jobu-pet, R4/C2) - the renderer's tab id is `tab-N`; the ptyId is a different string,
 // and it changes when a tab is resumed. The main, the chat channels and the pet only know ptyIds.
-// This is the one mapping between the two, plus the `pet:tabs` payload built on it.
+// This is the one mapping between the two, plus the `pet:tabs` and `chat:focus-state` payloads built on it.
 
 import type { PetTabsPayload } from './ipc';
 
@@ -61,4 +61,36 @@ export function buildPetTabsPayload<T extends PetTabLike>(
     if (tab.id === activeTabId) activePtyId = ptyId;
   }
   return { activePtyId, sessions };
+}
+
+/** What the chat is told about the tabs (`chat:focus-state`): which PTY is in front and what each one is called. */
+export interface ChatFocusState {
+  readonly activePtyId: string | null;
+  readonly tabNames: Record<string, string>;
+}
+
+/**
+ * C2: `chat:focus-state` speaks in ptyIds, as `specs/014-chat/contracts/ipc-chat.md` says. The main decides
+ * whether to raise a notification by comparing the PTY in front with the one of the pending, and titles it
+ * by looking the PTY up in `tabNames`. It used to be sent with the renderer's `tab.id`, which is never a
+ * ptyId, so the notification came out even for the tab in front and with the title "Donel Dev".
+ *
+ * Unlike `pet:tabs`, every tab that has a PTY is here, terminals included: a terminal in front is some PTY
+ * that is not the session of the pending, which is all the main needs to know.
+ */
+export function buildChatFocusState<T extends { readonly id: string }>(
+  tabs: readonly T[],
+  ptyIdOf: (tabId: string) => string | null | undefined,
+  resolveName: (tab: T) => string,
+  activeTabId: string,
+): ChatFocusState {
+  const tabNames: Record<string, string> = {};
+  let activePtyId: string | null = null;
+  for (const tab of tabs) {
+    const ptyId = ptyIdOf(tab.id);
+    if (typeof ptyId !== 'string' || ptyId === '') continue;
+    tabNames[ptyId] = resolveName(tab);
+    if (tab.id === activeTabId) activePtyId = ptyId;
+  }
+  return { activePtyId, tabNames };
 }

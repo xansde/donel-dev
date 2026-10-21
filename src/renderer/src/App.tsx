@@ -66,7 +66,7 @@ import {
 } from '../../shared/sessionName';
 import { sessionTabName } from '../../shared/sessions';
 // T021 (015-jobu-pet) — mapa aba <-> PTY e o payload de `pet:tabs` (puros, testados em tests/pet-tab-pty-map.test.ts).
-import { buildPetTabsPayload, tabPtyMap, type TabPtyMap } from '../../shared/pet/tabPtyMap';
+import { buildChatFocusState, buildPetTabsPayload, tabPtyMap, type TabPtyMap } from '../../shared/pet/tabPtyMap';
 // Spec 010 / batch B6 — o Modo Dev continua sendo o mapa; a fonte dele passou
 // a ser o STORE (`esteiraMapView.ts`, puro e testado). Aqui fica só o
 // encanamento com PTY/IPC — nenhuma decisão de domínio, nenhuma frase de estado.
@@ -1926,23 +1926,36 @@ export function App(): React.JSX.Element {
     previousSemaphoreStatesRef.current = semaphoreStates;
   }, [semaphoreStates, tabs, activeTabId, appConfig?.notificationPreference, chatEnabled, petEnabled]);
 
+  // C2 (015-jobu-pet, R4) — ptyId -> tab.id for the gestures that arrive from the main (a click on a notification,
+  // a click on the Jobu). Built from `chatPtyIds`, the LAST ptyId of every tab, with no filter by `tabExits`: the
+  // tab of a process that ended is still there with its "Sessão encerrada" bar, and "encerrou" must lead to it.
+  // It is read when the gesture arrives, so a ref assigned on every render, like `toggleActiveTabViewRef`.
+  const ptyActivationMapRef = useRef<TabPtyMap>(tabPtyMap([], () => null));
+  ptyActivationMapRef.current = tabPtyMap(tabs, (tabId) => chatPtyIds[tabId] ?? null);
+
   // T079 (014-chat) — o main decide notificar pela aba ativa e pelo foco da janela (que ele lê sozinho);
   // o renderer só informa a aba ativa e os nomes das abas (título da notificação).
+  // C2 (015-jobu-pet): both go by ptyId, as the contract says - the main compares the tab in front with the
+  // ptyId of the pending. They used to go by `tab.id`, which is never a ptyId, so the notification was raised
+  // even for the tab in front, and titled "Donel Dev".
   useEffect(() => {
     if (!chatEnabled) return;
-    const names: Record<string, string> = {};
-    for (const tab of tabs) names[tab.id] = resolveTabName(tab);
-    getChatStore().reportFocusState(activeTabId === '' ? null : activeTabId, names);
+    const focus = buildChatFocusState(tabs, (tabId) => chatPtyIds[tabId] ?? null, resolveTabName, activeTabId);
+    getChatStore().reportFocusState(focus.activePtyId, focus.tabNames);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatEnabled, tabs, activeTabId, appConfig?.sessionNames]);
+  }, [chatEnabled, tabs, activeTabId, chatPtyIds, appConfig?.sessionNames]);
 
   // T079 — clique na notificação: ativa a aba, abre a vista Chat e avisa o painel de pendências (evento de DOM
   // `donel:chat-focus-pending`, `detail: { ptyId }`) para tomar o foco.
+  // C2 (015-jobu-pet): the main sends the ptyId and the tab to activate is the one the map gives for it; the ptyId
+  // used to be taken as the `tab.id`, so the click on the notification activated nothing.
   useEffect(() => {
     if (!chatEnabled) return undefined;
     return window.donel.chat.onFocusPending(({ ptyId }) => {
-      setActiveTabId(ptyId);
-      setTabView(ptyId, 'chat');
+      const tabId = ptyActivationMapRef.current.tabIdOf(ptyId);
+      if (tabId === null) return; // the tab closed on the way
+      setActiveTabId(tabId);
+      setTabView(tabId, 'chat');
       window.dispatchEvent(new CustomEvent('donel:chat-focus-pending', { detail: { ptyId } }));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1954,11 +1967,9 @@ export function App(): React.JSX.Element {
   // Dedupe por JSON: o efeito reavalia a cada tique do semáforo, o canal só quando algo mudou de verdade.
   // `chatPtyIds` guarda o ÚLTIMO ptyId da aba (a conversa segue legível depois da saída), mas aba com o
   // processo encerrado (`tabExits`) não tem PTY: o ptyId dela está morto e não conta como sessão.
-  const petTabPtyMapRef = useRef<TabPtyMap>(tabPtyMap([], () => null));
   const lastPetTabsJsonRef = useRef<string | null>(null);
   useEffect(() => {
     const ptyIdOf = (tabId: string): string | null => (tabExits[tabId] === undefined ? (chatPtyIds[tabId] ?? null) : null);
-    petTabPtyMapRef.current = tabPtyMap(tabs, ptyIdOf);
     const payload = buildPetTabsPayload(tabs, ptyIdOf, resolveTabName, activeTabId);
     const json = JSON.stringify(payload);
     if (json === lastPetTabsJsonRef.current) return;
@@ -1967,11 +1978,12 @@ export function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabs, chatPtyIds, tabExits, activeTabId, appConfig?.sessionNames]);
 
-  // T021 — o Jobu manda "ativa a aba desta sessão" (o main já trouxe a janela à frente). O mapa é o do último
-  // `pet:tabs` enviado; uma sessão que já não está na lista (a aba fechou no meio do caminho) não faz nada.
+  // T021 — o Jobu manda "ativa a aba desta sessão" (o main já trouxe a janela à frente).
+  // The map is the activation one (`ptyActivationMapRef`, above), which also sees the tab of a process that ended;
+  // a ptyId that is no tab's anymore (the tab closed on the way) does nothing.
   useEffect(() => {
     return window.donel.pet.onActivateSession(({ ptyId }) => {
-      const tabId = petTabPtyMapRef.current.tabIdOf(ptyId);
+      const tabId = ptyActivationMapRef.current.tabIdOf(ptyId);
       if (tabId !== null) setActiveTabId(tabId);
     });
   }, []);
