@@ -166,7 +166,7 @@ e nenhum aviso do Windows sai.
   - expira em 6 s;
   - `target` certo.
 - [x] T031 [US2] `src/shared/pet/bubble.ts` (textos, corte, agregação) e eventos no `petState.ts` (passa T030).
-- [ ] T032 [US2] Fontes de evento no main (`src/main/index.ts` + `pet-service.ts`):
+- [x] T032 [US2] Fontes de evento no main (`src/main/index.ts` + `pet-service.ts`):
   - `pendingOpened` do chat (≈`:1143`) → `onPendingOpened(ptyId, pending.kind)`;
   - saída de PTY com `consumeKillRequested` → `onSessionExited(ptyId, byUser)`.
 - [x] T033 [US2] Supressão dos avisos do Windows (R8):
@@ -188,7 +188,7 @@ e nenhum aviso do Windows sai.
 
 - [x] T036 [P] [US3] `tests/pet-click.test.ts`: `decideClick(view)` dá `session(ptyId)` com uma esperando, `list` com várias e `donel` com nenhuma; o alvo do balão vem de `bubble.target`.
 - [x] T037 [US3] `src/shared/pet/click.ts` (passa T036).
-- [ ] T038 [US3] `pet-service.ts`:
+- [x] T038 [US3] `pet-service.ts`:
   - `pet:click` e `pet:open` → `restore`/`show`/`focus` da principal e `app:activate-session`;
   - reserva `setAlwaysOnTop` liga e desliga se o foco falhar (R7, isolada numa função).
 - [ ] T039 [US3] Lista no `PetApp.tsx`:

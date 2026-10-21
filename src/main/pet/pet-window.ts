@@ -97,8 +97,16 @@ export function createPetWindow(options: CreatePetWindowOptions): PetWindowHandl
     },
     setListOpen: (open: boolean) => {
       if (win.isDestroyed()) return;
-      win.setFocusable(open);
-      if (open) win.focus();
+      if (open) {
+        win.setFocusable(true);
+        win.focus();
+        return;
+      }
+      // Closing. A window that is still the active one when it turns non-focusable would keep the keyboard
+      // and swallow the owner's typing, so it hands the focus back first: `blur` activates the next window
+      // in the z-order, which is where the owner was.
+      if (win.isFocused()) win.blur();
+      win.setFocusable(false);
     },
     moveTo: (point: PetPoint) => {
       if (!win.isDestroyed()) win.setPosition(Math.round(point.x), Math.round(point.y));

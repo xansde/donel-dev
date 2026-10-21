@@ -1,4 +1,4 @@
-// T020/T027 (015-jobu-pet, R1/R2/R14/R19/R21) - the pet in the main process. It owns the window of the
+// T020/T027/T032/T038 (015-jobu-pet, R1/R2/R7/R14/R19/R21) - the pet in the main process. It owns the window of the
 // pet and the 1 s tick, takes the signals the main already has - the tabs the renderer reports, the
 // focus of the main window, what the session semaphore says of each tab - feeds them to the pure core
 // (src/shared/pet/petState.ts) and sends the view to the pet window only when it changes. Electron stays
@@ -11,14 +11,18 @@
 // window, the tick and the sending of views. Turning it on (`enable`) tells the core to `resume`, so
 // the hours it spent without a clock do not turn into a waffle.
 //
-// EXTENSION POINTS: `onSessionExited` gets its `byUser` meaning in US2 (the `ended` bubble); the gesture
-// handlers next to `handleInteractive` arrive with US3 and US5.
+// What the core cannot know it is told here: the kind of the pending the chat opened (`onPendingOpened`),
+// that a process exited and whether the owner asked for it (`onSessionExited`), and that an app has the
+// whole screen (`onFullscreenChanged`, called by the watcher of US5). The gestures of the window next to
+// `handleInteractive` - the click, the item of the list, the list opening - are answered here too (US3);
+// the drag and the menu are US5.
 //
 // With `pet.enabled = false` (the default) the app is the one of before the pet: no window, no timer,
 // no message to anybody.
 
 import type { PetPrefs } from '../../shared/config';
-import { PET_CHANNELS, type PetTabsPayload } from '../../shared/pet/ipc';
+import { decideClick } from '../../shared/pet/click';
+import { PET_CHANNELS, type PetOpenTarget, type PetTabsPayload } from '../../shared/pet/ipc';
 import { createPetState, reducePet, toPetSemaphore } from '../../shared/pet/petState';
 import { toPetView } from '../../shared/pet/petView';
 import {
@@ -31,6 +35,7 @@ import {
   windowBoundsFor,
 } from '../../shared/pet/placement';
 import type {
+  BlockedKind,
   FocusSignal,
   PetDisplay,
   PetInput,
@@ -51,7 +56,32 @@ export const PET_TICK_MS = 1000;
 export interface PetMainWindowLike {
   isDestroyed(): boolean;
   isFocused(): boolean;
+  isMinimized(): boolean;
+  restore(): void;
+  show(): void;
+  focus(): void;
+  setAlwaysOnTop(flag: boolean): void;
   readonly webContents: { send(channel: string, payload: unknown): void };
+}
+
+/**
+ * R7: brings the Donel in front of whatever is there, for a click the owner made on the Jobu. A click on a
+ * window of this very process is the gesture Windows lets take the foreground, so `restore`, `show` and
+ * `focus` are enough; when the foreground lock refuses all the same, the reserve raises the window above
+ * the others for an instant. Exported so the rule is tested with a fake window.
+ */
+export function bringMainWindowToFront(main: PetMainWindowLike): void {
+  if (main.isMinimized()) main.restore();
+  main.show();
+  main.focus();
+  if (!main.isFocused()) forceToForeground(main);
+}
+
+/** The reserve of R7, alone so that the day the alpha proves it is never needed it goes away in one place: on top, focus again, back to normal. */
+function forceToForeground(main: PetMainWindowLike): void {
+  main.setAlwaysOnTop(true);
+  main.focus();
+  main.setAlwaysOnTop(false);
 }
 
 /** The pet window, as the service drives it (the real one is `createPetWindow`, pet-window.ts). */
@@ -123,16 +153,34 @@ export interface PetService {
   onSessionRegistered(ptyId: string): void;
   /**
    * A PTY exited, and whether the owner asked for it (C3). The semaphore also says `done` for a
-   * session it registered; this makes the end certain whatever the order of the two. `byUser` is for
-   * US2 (T032): the `ended` bubble only when the process ended by itself.
+   * session it registered, and the `SessionEnd` hook can say it before the process is gone: this makes
+   * the end certain whatever the order of the two. The `ended` bubble only comes when the process ended
+   * by itself (`byUser = false`) and the owner was not looking at its tab.
    */
   onSessionExited(ptyId: string, byUser: boolean): void;
+  /**
+   * The chat opened a pending (`pendingOpened` of the hub). The semaphore turns `permission` a moment
+   * before, with the bubble already born as "quer permissão": this refines it into the real kind.
+   */
+  onPendingOpened(ptyId: string, kind: BlockedKind): void;
+  /** An app took the whole screen, or gave it back (the watcher of US5): no bubble is born while it lasts. */
+  onFullscreenChanged(active: boolean): void;
   /** Is this web contents the pet window? The IPC layer asks before it trusts a gesture. */
   isPetSender(sender: { readonly id: number }): boolean;
   /** `pet:ready`: the screen is subscribed. Answers with the current view and shows the window. */
   handleReady(): void;
   /** `pet:interactive`. */
   handleInteractive(interactive: boolean): void;
+  /**
+   * `pet:click`: a click on the drawing. One waiting: the Donel comes to the front on that tab. Nobody
+   * waiting: the Donel comes to the front as it is. Several: nothing here, the list is the screen's (FR-023).
+   * The answer is decided now, with the state of the main, not with the view the screen last drew.
+   */
+  handleClick(): void;
+  /** `pet:open`: the Donel comes to the front and, for a session, activates its tab (an item of the list, or the bubble). */
+  handleOpen(target: PetOpenTarget): void;
+  /** `pet:list-open`: the window can take the focus while the list is open, so that Esc and a click outside close it (R12). */
+  handleListOpen(open: boolean): void;
   /** The main window closed: the window and the tick go away and the service goes inert. */
   dispose(): void;
 }
@@ -153,16 +201,19 @@ export function createPetService(deps: PetServiceDeps): PetService {
    * no update yet). Kept with the pet on or off, so the core can be fed at any moment.
    */
   const semaphoreByPty = new Map<string, PetSemaphore>();
+  /**
+   * The kind of the pending the chat has open on a tab (R3), for as long as the tab stays in `permission`.
+   * Without the chat there is none, and "quer permissão" is what the bubble says.
+   */
+  const pendingKindByPty = new Map<string, BlockedKind>();
   let state: PetState = createPetState();
 
-  /** The tabs of `pet:tabs` crossed with the semaphore: what the core calls "the watched sessions". */
+  /** The tabs of `pet:tabs` crossed with the semaphore and the pendings: what the core calls "the watched sessions". */
   function sessionsInput(): PetInput {
-    const sessions: WatchedSession[] = tabs.sessions.map(({ ptyId, name }) => ({
-      ptyId,
-      name,
-      semaphore: semaphoreByPty.get(ptyId) ?? 'idle',
-      blockedKind: null, // EXTENSION POINT (US2, T032): the kind of the open pending, from the chat
-    }));
+    const sessions: WatchedSession[] = tabs.sessions.map(({ ptyId, name }) => {
+      const semaphore = semaphoreByPty.get(ptyId) ?? 'idle';
+      return { ptyId, name, semaphore, blockedKind: semaphore === 'permission' ? (pendingKindByPty.get(ptyId) ?? null) : null };
+    });
     return { type: 'sessions', sessions };
   }
 
@@ -176,11 +227,14 @@ export function createPetService(deps: PetServiceDeps): PetService {
     for (const input of inputs) state = reducePet(state, input, now);
   }
 
-  /** A session that is dead and no longer has a tab is forgotten; an update for a tab that has not been reported yet is kept. */
+  /** A session that is dead and no longer has a tab is forgotten, and so is a pending kind for a tab that is gone; an update for a tab that has not been reported yet is kept. */
   function pruneSemaphores(): void {
     const listed = new Set(tabs.sessions.map((session) => session.ptyId));
     for (const [ptyId, semaphore] of semaphoreByPty) {
       if (semaphore === 'done' && !listed.has(ptyId)) semaphoreByPty.delete(ptyId);
+    }
+    for (const ptyId of pendingKindByPty.keys()) {
+      if (!listed.has(ptyId)) pendingKindByPty.delete(ptyId);
     }
   }
 
@@ -201,9 +255,14 @@ export function createPetService(deps: PetServiceDeps): PetService {
     };
   }
 
+  /** What the screen would draw right now. */
+  function currentView(): PetView {
+    return toPetView(state, deps.now(), ui);
+  }
+
   function pushView(force: boolean): void {
     if (window === null || !petReady || window.isDestroyed()) return;
-    const view = toPetView(state, deps.now(), ui);
+    const view = currentView();
     const json = JSON.stringify(view);
     if (!force && json === lastSentJson) return;
     lastSentJson = json;
@@ -262,6 +321,19 @@ export function createPetService(deps: PetServiceDeps): PetService {
     if (closing !== null && !closing.isDestroyed()) closing.destroy();
   }
 
+  /**
+   * What a click on the Jobu, on his bubble or on an item of the list does here (R7): the bubble has served
+   * and goes, the Donel comes to the front and, for a session, is told to activate its tab. Nothing happens
+   * with no main window: the pet is only ever a guest of it.
+   */
+  function openTarget(target: PetOpenTarget): void {
+    const main = deps.getMainWindow();
+    if (main === null || main.isDestroyed()) return;
+    feed({ type: 'bubbleDismissed' });
+    bringMainWindowToFront(main);
+    if (target.kind === 'session') main.webContents.send(PET_CHANNELS.activateSession, { ptyId: target.ptyId });
+  }
+
   function notifyPrefsChanged(enabled: boolean): void {
     const main = deps.getMainWindow();
     if (main === null || main.isDestroyed()) return;
@@ -305,6 +377,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
     onSemaphoreUpdate(update) {
       if (disposed) return;
       const next = toPetSemaphore(update.state);
+      if (next !== 'permission') pendingKindByPty.delete(update.ptyId); // the pending is over, or never was one
       if (semaphoreByPty.get(update.ptyId) === next) return;
       semaphoreByPty.set(update.ptyId, next);
       feed(sessionsInput());
@@ -315,13 +388,28 @@ export function createPetService(deps: PetServiceDeps): PetService {
       if (semaphoreByPty.delete(ptyId)) feed(sessionsInput());
     },
 
-    onSessionExited(ptyId, _byUser) {
+    onSessionExited(ptyId, byUser) {
       if (disposed) return;
       // A plain terminal never had a semaphore and never shows up in `pet:tabs`: nothing to record.
-      const known = semaphoreByPty.has(ptyId) || tabs.sessions.some((session) => session.ptyId === ptyId);
-      if (!known || semaphoreByPty.get(ptyId) === 'done') return;
+      const listed = tabs.sessions.find((session) => session.ptyId === ptyId);
+      if (listed === undefined && !semaphoreByPty.has(ptyId)) return;
       semaphoreByPty.set(ptyId, 'done');
-      feed(sessionsInput());
+      pendingKindByPty.delete(ptyId);
+      // The exit goes first, while the core still has the session as the owner last saw it. It is announced
+      // even if the semaphore already said `done` (the SessionEnd hook can come first): the core only
+      // learns of the exit here.
+      feed({ type: 'sessionExited', ptyId, name: listed?.name ?? ptyId, byUser, at: deps.now() }, sessionsInput());
+    },
+
+    onPendingOpened(ptyId, kind) {
+      if (disposed) return;
+      pendingKindByPty.set(ptyId, kind);
+      feed(sessionsInput(), { type: 'pendingOpened', ptyId, kind, at: deps.now() });
+    },
+
+    onFullscreenChanged(active) {
+      if (disposed) return;
+      feed({ type: 'fullscreen', active });
     },
 
     isPetSender(sender) {
@@ -338,6 +426,22 @@ export function createPetService(deps: PetServiceDeps): PetService {
     handleInteractive(interactive) {
       if (disposed || window === null || window.isDestroyed()) return;
       window.setInteractive(interactive);
+    },
+
+    handleClick() {
+      if (disposed || window === null || window.isDestroyed()) return;
+      const decision = decideClick(currentView());
+      if (decision.kind !== 'list') openTarget(decision);
+    },
+
+    handleOpen(target) {
+      if (disposed || window === null || window.isDestroyed()) return;
+      openTarget(target);
+    },
+
+    handleListOpen(open) {
+      if (disposed || window === null || window.isDestroyed()) return;
+      window.setListOpen(open);
     },
 
     dispose() {

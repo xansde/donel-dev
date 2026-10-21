@@ -3,7 +3,8 @@
 // with `pet.enabled = false` the app is the one of before (no window, no timer); with `true` there
 // is exactly one window and one 1 s tick, both gone on disable and on dispose; the view goes out
 // only when it changes; the main window is told whenever `pet.enabled` changes (R19); and what the
-// tabs, the focus, the semaphore and the clock say turns into the face the owner sees (US1).
+// tabs, the focus, the semaphore and the clock say turns into the face the owner sees (US1), the bubble
+// of what happens (US2) and where a click leads (US3).
 import { describe, expect, it } from 'vitest';
 import type { PetPrefs } from '../src/shared/config';
 import { PET_BUBBLE_MS } from '../src/shared/pet/bubble';
@@ -87,7 +88,8 @@ interface Harness {
   readonly timers: FakeTimer[];
   readonly persisted: PetPrefs[];
   readonly mainSent: { channel: string; payload: unknown }[];
-  readonly main: { focused: boolean; destroyed: boolean };
+  /** The main window: what it is, and what the service did to it (`calls`, in order). `focusWorks = false` is the foreground lock refusing the focus. */
+  readonly main: { focused: boolean; destroyed: boolean; minimized: boolean; focusWorks: boolean; readonly calls: string[] };
   prefs: PetPrefs;
   clock: { now: number };
   /** Runs every live timer once, like a second passing. */
@@ -101,7 +103,7 @@ function harness(over: { prefs?: Partial<PetPrefs>; displays?: readonly PetDispl
   const timers: FakeTimer[] = [];
   const persisted: PetPrefs[] = [];
   const mainSent: { channel: string; payload: unknown }[] = [];
-  const main = { focused: false, destroyed: false };
+  const main = { focused: false, destroyed: false, minimized: false, focusWorks: true, calls: [] as string[] };
   const clock = { now: 1_000_000 };
   const state = { prefs: { enabled: false, placement: null, size: 140, ...over.prefs } as PetPrefs };
   const displays = over.displays ?? [PRIMARY];
@@ -109,6 +111,17 @@ function harness(over: { prefs?: Partial<PetPrefs>; displays?: readonly PetDispl
   const mainWindow: PetMainWindowLike = {
     isDestroyed: () => main.destroyed,
     isFocused: () => main.focused,
+    isMinimized: () => main.minimized,
+    restore: () => {
+      main.calls.push('restore');
+      main.minimized = false;
+    },
+    show: () => void main.calls.push('show'),
+    focus: () => {
+      main.calls.push('focus');
+      if (main.focusWorks) main.focused = true;
+    },
+    setAlwaysOnTop: (flag: boolean) => void main.calls.push(`alwaysOnTop:${flag}`),
     webContents: { send: (channel: string, payload: unknown) => void mainSent.push({ channel, payload }) },
   };
 
@@ -162,6 +175,7 @@ function harness(over: { prefs?: Partial<PetPrefs>; displays?: readonly PetDispl
 }
 
 const prefsChanged = (h: Harness) => h.mainSent.filter((entry) => entry.channel === PET_CHANNELS.prefsChanged);
+const activations = (h: Harness) => h.mainSent.filter((entry) => entry.channel === PET_CHANNELS.activateSession).map((entry) => entry.payload);
 
 const SEC = 1000;
 const MIN = 60 * SEC;
@@ -656,6 +670,297 @@ describe('the anchor round trip the service relies on', () => {
   });
 });
 
+describe('the events of the main become the bubble (US2, T032)', () => {
+  /** Two sessions, the owner on neither: the state in which every event deserves a bubble. */
+  function twoSessions() {
+    const ready = readyPet();
+    ready.service.onTabs({ activePtyId: null, sessions: [tab('pty-a', 'atlas'), tab('pty-b', 'beacon')] });
+    ready.service.onSemaphoreUpdate(sem('pty-a', 'working'));
+    ready.service.onSemaphoreUpdate(sem('pty-b', 'working'));
+    return ready;
+  }
+
+  it('a turn that ends out of sight: the bubble says so, with the pose of the event', () => {
+    const { h, service } = twoSessions();
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    expect(lastView(h).bubble).toMatchObject({ id: 1, text: 'atlas · terminou', pose: 'calling', target: { kind: 'session', ptyId: 'pty-a' } });
+    expect(lastView(h).pose).toBe('calling');
+  });
+
+  it('the bubble goes after 6 s, on the tick, and the face goes back to the sessions', () => {
+    const { h, service } = twoSessions();
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    h.clock.now += PET_BUBBLE_MS - 1;
+    h.tickAll();
+    expect(lastView(h).bubble).not.toBeNull();
+    h.clock.now += 1;
+    h.tickAll();
+    expect(lastView(h)).toMatchObject({ bubble: null, pose: 'impatient' });
+  });
+
+  it('a pending that the chat opens refines "quer permissão" into the kind it is: the same bubble, the same id', () => {
+    const { h, service } = twoSessions();
+    service.onSemaphoreUpdate(sem('pty-a', 'permission')); // the semaphore turns `permission` first
+    expect(lastView(h).bubble).toMatchObject({ id: 1, text: 'atlas · quer permissão' });
+    service.onPendingOpened('pty-a', 'question'); // and then the chat says what it is
+    expect(lastView(h).bubble).toMatchObject({ id: 1, text: 'atlas · tem uma pergunta', pose: 'surprised' });
+  });
+
+  it('...and into a plan', () => {
+    const { h, service } = twoSessions();
+    service.onSemaphoreUpdate(sem('pty-a', 'permission'));
+    service.onPendingOpened('pty-a', 'plan');
+    expect(lastView(h).bubble?.text).toBe('atlas · plano para aprovar');
+  });
+
+  it('with the pending known BEFORE the semaphore turns, the bubble is born with the right kind', () => {
+    const { h, service } = twoSessions();
+    service.onPendingOpened('pty-a', 'plan');
+    service.onSemaphoreUpdate(sem('pty-a', 'permission'));
+    expect(lastView(h).bubble).toMatchObject({ id: 1, text: 'atlas · plano para aprovar' });
+  });
+
+  it('the kind of a pending is forgotten when the session leaves `permission`: the next one without a pending is a plain "quer permissão"', () => {
+    const { h, service } = twoSessions();
+    service.onSemaphoreUpdate(sem('pty-a', 'permission'));
+    service.onPendingOpened('pty-a', 'plan');
+    service.onSemaphoreUpdate(sem('pty-a', 'working')); // answered
+    h.clock.now += 10 * SEC;
+    h.tickAll();
+    service.onSemaphoreUpdate(sem('pty-a', 'permission')); // a notification with no pending behind it
+    expect(lastView(h).bubble?.text).toBe('atlas · quer permissão');
+  });
+
+  it('a pending for a tab that is not a session (or nobody) is harmless', () => {
+    const { h, service } = twoSessions();
+    const sent = h.windows[0]?.views.length;
+    service.onPendingOpened('shell-1', 'permission');
+    expect(h.windows[0]?.views).toHaveLength(sent ?? -1);
+  });
+
+  it('a process that exits by itself: "encerrou", sad, and the tab of the session as the target', () => {
+    const { h, service } = twoSessions();
+    service.onSessionExited('pty-a', false);
+    expect(lastView(h).bubble).toMatchObject({ text: 'atlas · encerrou', pose: 'sad', target: { kind: 'session', ptyId: 'pty-a' } });
+  });
+
+  it('a tab the owner closed (byUser) exits without a bubble', () => {
+    const { h, service } = twoSessions();
+    service.onSessionExited('pty-a', true);
+    expect(lastView(h).bubble).toBeNull();
+  });
+
+  it('the exit is announced whatever the order of the semaphore and of the process: the SessionEnd hook can say `done` first', () => {
+    const { h, service } = twoSessions();
+    service.onSemaphoreUpdate(sem('pty-a', 'done'));
+    expect(lastView(h).bubble).toBeNull();
+    service.onSessionExited('pty-a', false);
+    expect(lastView(h).bubble?.text).toBe('atlas · encerrou');
+  });
+
+  it('the exit of a terminal that was never a session says nothing', () => {
+    const { h, service } = twoSessions();
+    const sent = h.windows[0]?.views.length;
+    service.onSessionExited('shell-1', false);
+    expect(h.windows[0]?.views).toHaveLength(sent ?? -1);
+  });
+
+  it('what ends while the owner is looking at it is not announced', () => {
+    const { h, service } = twoSessions();
+    service.onMainFocusChanged(true);
+    service.onTabs({ activePtyId: 'pty-a', sessions: [tab('pty-a', 'atlas'), tab('pty-b', 'beacon')] });
+    service.onSessionExited('pty-a', false);
+    expect(lastView(h).bubble).toBeNull();
+  });
+
+  it('two sessions that end in the same second become one bubble', () => {
+    const { h, service } = twoSessions();
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    service.onSemaphoreUpdate(sem('pty-b', 'waiting'));
+    expect(lastView(h).bubble).toMatchObject({ id: 1, text: '2 sessões terminaram', target: { kind: 'list' } });
+  });
+
+  it('the owner opening the session before the 6 s takes the bubble away at once', () => {
+    const { h, service } = twoSessions();
+    service.onMainFocusChanged(true);
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    expect(lastView(h).bubble).not.toBeNull();
+    service.onTabs({ activePtyId: 'pty-a', sessions: [tab('pty-a', 'atlas'), tab('pty-b', 'beacon')] });
+    expect(lastView(h).bubble).toBeNull();
+  });
+
+  it('with an app in full screen no bubble is born, and when it ends they come back (the watcher of US5 calls this)', () => {
+    const { h, service } = twoSessions();
+    service.onFullscreenChanged(true);
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    expect(lastView(h)).toMatchObject({ bubble: null, badge: '1' });
+    service.onFullscreenChanged(false);
+    service.onSemaphoreUpdate(sem('pty-b', 'waiting'));
+    expect(lastView(h).bubble?.text).toBe('beacon · terminou');
+  });
+
+  it('events that arrive while the pet is off make no window and no view, and the bubble they raised is gone when the pet is turned on (the clock restarts)', () => {
+    const h = harness({ prefs: { enabled: false } });
+    const service = createPetService(h.deps);
+    service.start();
+    service.onTabs({ activePtyId: null, sessions: [tab('pty-a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('pty-a', 'working'));
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    expect(h.windows).toHaveLength(0);
+    service.setEnabled(true);
+    service.handleReady();
+    expect(lastView(h)).toMatchObject({ bubble: null, pose: 'impatient', badge: '1' });
+  });
+
+  it('after dispose the new methods change nothing and send nothing', () => {
+    const { h, service } = twoSessions();
+    service.dispose();
+    service.onPendingOpened('pty-a', 'question');
+    service.onFullscreenChanged(true);
+    service.onSessionExited('pty-a', false);
+    expect(h.windows[0]?.views.every((view) => view.bubble === null)).toBe(true);
+  });
+});
+
+describe('a click leads to the session (US3, T038)', () => {
+  /** `atlas` finished out of sight while the Donel is minimized: the case of the whole feature. */
+  function waitingAtlas() {
+    const ready = readyPet();
+    ready.service.onTabs({ activePtyId: 'pty-b', sessions: [tab('pty-a', 'atlas'), tab('pty-b', 'beacon')] });
+    ready.service.onSemaphoreUpdate(sem('pty-a', 'working'));
+    ready.service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    ready.h.main.minimized = true;
+    return ready;
+  }
+
+  it('one waiting: restores and focuses the Donel, in that order, and tells it to activate the tab', () => {
+    const { h, service } = waitingAtlas();
+    service.handleClick();
+    expect(h.main.calls).toEqual(['restore', 'show', 'focus']);
+    expect(activations(h)).toEqual([{ ptyId: 'pty-a' }]);
+  });
+
+  it('with the Donel not minimized there is no restore', () => {
+    const { h, service } = waitingAtlas();
+    h.main.minimized = false;
+    service.handleClick();
+    expect(h.main.calls).toEqual(['show', 'focus']);
+  });
+
+  it('nobody waiting: the Donel comes to the front and no tab is activated (FR-024)', () => {
+    const { h, service } = readyPet();
+    h.main.minimized = true;
+    service.handleClick();
+    expect(h.main.calls).toEqual(['restore', 'show', 'focus']);
+    expect(activations(h)).toEqual([]);
+  });
+
+  it('several waiting: nothing happens in the main, the list is the screen\'s (FR-023)', () => {
+    const { h, service } = waitingAtlas();
+    service.onSemaphoreUpdate(sem('pty-b', 'working'));
+    service.onSemaphoreUpdate(sem('pty-b', 'waiting'));
+    h.main.calls.length = 0;
+    service.handleClick();
+    expect(h.main.calls).toEqual([]);
+    expect(activations(h)).toEqual([]);
+  });
+
+  it('the answer comes from the state of the main, not from a view the screen had: it follows who waits NOW', () => {
+    const { h, service } = waitingAtlas();
+    service.onSemaphoreUpdate(sem('pty-a', 'working')); // atlas went back to work: nobody waits
+    service.handleClick();
+    expect(activations(h)).toEqual([]);
+    expect(h.main.calls).toContain('focus');
+  });
+
+  it('a click that opens the target dismisses the bubble: it has served', () => {
+    const { h, service } = waitingAtlas();
+    expect(lastView(h).bubble).not.toBeNull();
+    service.handleClick();
+    expect(lastView(h).bubble).toBeNull();
+  });
+
+  it('when the foreground lock refuses the focus, the reserve runs: always on top on, focus again, always on top off (R7)', () => {
+    const { h, service } = waitingAtlas();
+    h.main.focusWorks = false;
+    service.handleClick();
+    expect(h.main.calls).toEqual(['restore', 'show', 'focus', 'alwaysOnTop:true', 'focus', 'alwaysOnTop:false']);
+    expect(activations(h)).toEqual([{ ptyId: 'pty-a' }]); // the tab is activated either way
+  });
+
+  it('when the focus takes, the reserve never runs', () => {
+    const { h, service } = waitingAtlas();
+    service.handleClick();
+    expect(h.main.calls.some((call) => call.startsWith('alwaysOnTop'))).toBe(false);
+  });
+
+  it('pet:open on a session (an item of the list, or the bubble): brings the Donel and activates that tab', () => {
+    const { h, service } = waitingAtlas();
+    service.handleOpen({ kind: 'session', ptyId: 'pty-b' });
+    expect(h.main.calls).toEqual(['restore', 'show', 'focus']);
+    expect(activations(h)).toEqual([{ ptyId: 'pty-b' }]);
+  });
+
+  it('pet:open on the Donel (the account bubble): only brings it to the front', () => {
+    const { h, service } = waitingAtlas();
+    service.handleOpen({ kind: 'donel' });
+    expect(h.main.calls).toEqual(['restore', 'show', 'focus']);
+    expect(activations(h)).toEqual([]);
+  });
+
+  it('pet:open dismisses the bubble too, also when the session is not among the waiting ones (an "encerrou" bubble)', () => {
+    const { h, service } = twoSessionsReady();
+    service.onSessionExited('pty-a', false);
+    expect(lastView(h).bubble?.text).toBe('atlas · encerrou');
+    service.handleOpen({ kind: 'session', ptyId: 'pty-a' });
+    expect(lastView(h).bubble).toBeNull();
+    expect(activations(h)).toEqual([{ ptyId: 'pty-a' }]);
+  });
+
+  it('with no main window, or a destroyed one, a click does nothing and does not throw', () => {
+    const none = readyPet({ withMain: false });
+    expect(() => none.service.handleClick()).not.toThrow();
+    expect(() => none.service.handleOpen({ kind: 'donel' })).not.toThrow();
+
+    const { h, service } = waitingAtlas();
+    h.main.destroyed = true;
+    expect(() => service.handleClick()).not.toThrow();
+    expect(h.main.calls).toEqual([]);
+    expect(activations(h)).toEqual([]);
+  });
+
+  it('with the pet off, or after dispose, the gestures are ignored', () => {
+    const off = harness({ prefs: { enabled: false } });
+    const offService = createPetService(off.deps);
+    offService.handleClick();
+    offService.handleOpen({ kind: 'donel' });
+    offService.handleListOpen(true);
+    expect(off.main.calls).toEqual([]);
+
+    const { h, service } = waitingAtlas();
+    service.dispose();
+    service.handleClick();
+    service.handleOpen({ kind: 'donel' });
+    expect(h.main.calls).toEqual([]);
+  });
+
+  it('pet:list-open reaches the window: focusable while the list is open (R12)', () => {
+    const { h, service } = readyPet();
+    service.handleListOpen(true);
+    service.handleListOpen(false);
+    expect(h.windows[0]?.listOpen).toEqual([true, false]);
+  });
+
+  /** Two quiet-working sessions with the owner elsewhere, for the cases that need the bubble of an exit. */
+  function twoSessionsReady() {
+    const ready = readyPet();
+    ready.service.onTabs({ activePtyId: null, sessions: [tab('pty-a', 'atlas'), tab('pty-b', 'beacon')] });
+    ready.service.onSemaphoreUpdate(sem('pty-a', 'working'));
+    ready.service.onSemaphoreUpdate(sem('pty-b', 'working'));
+    return ready;
+  }
+});
+
 describe('what the semaphore says becomes the face (US1, R2)', () => {
   it('a tab with no update yet is open and quiet: incense, nobody waiting', () => {
     const { h, service } = readyPet();
@@ -744,7 +1049,10 @@ describe('what the semaphore says becomes the face (US1, R2)', () => {
     service.onSemaphoreUpdate(sem('a', 'working'));
     service.onSemaphoreUpdate(sem('a', 'waiting'));
     service.onSessionExited('a', false);
-    expect(lastView(h)).toMatchObject({ pose: 'sleeping', badge: null });
+    expect(lastView(h)).toMatchObject({ badge: null, waiting: [] }); // nothing is owed to a process that is gone
+    h.clock.now += PET_BUBBLE_MS;
+    h.tickAll();
+    expect(lastView(h)).toMatchObject({ pose: 'sleeping', badge: null, bubble: null });
   });
 
   it('the exit of a terminal that was never a session is ignored', () => {

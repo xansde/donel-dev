@@ -1232,6 +1232,8 @@ function registerChatDomain(): void {
       },
       pendingOpened: ({ ptyId, pending }) => {
         notifier.notifyPending(ptyId, pending);
+        // 015-jobu-pet (T032) - the semaphore has just turned `permission`; this tells the Jobu what the pending is.
+        petService?.onPendingOpened(ptyId, pending.kind);
       },
       conversationSwitched: (event) => broadcastChat(CHAT_CHANNELS.conversationSwitched, event),
       reception: (event) => broadcastChat(CHAT_CHANNELS.reception, event),
