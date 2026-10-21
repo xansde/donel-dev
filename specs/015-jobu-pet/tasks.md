@@ -130,7 +130,7 @@ impaciente com selo 1; abrir a aba → selo some.
   - `unregister`/saída;
   - sessões vindas de `pet:tabs` (nome, quais existem) cruzadas com o semáforo.
   - Ligação em `src/main/index.ts` perto da criação do semáforo.
-- [ ] T028 [US1] `src/renderer/src/pet/PetApp.tsx`, `PetApp.module.css` e `hitTest.ts`:
+- [x] T028 [US1] `src/renderer/src/pet/PetApp.tsx`, `PetApp.module.css` e `hitTest.ts`:
   - desenho da pose (`import.meta.glob('./assets/poses/*.png', { eager: true, import: 'default' })` mais `resolvePose`);
   - selo dourado (`var(--donel-accent)`, nunca roxo);
   - atributos `data-pose`, `data-badge` e `data-size`;

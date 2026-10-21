@@ -1,10 +1,17 @@
 /*
- * 015 (Jobu pet) — a janela do pet é transparente e o desenho fica na base, ao centro (R9): o resto
- * é espaço para o balão e a lista, que crescem para cima. Nada aqui pinta fundo: o que aparece é
- * só o que a tela desenha.
+ * 015 (Jobu pet) - the pet window is transparent and the drawing sits at the bottom center (R9): the
+ * rest is room for the bubble and the list, which grow upwards. Nothing here paints a background:
+ * what shows is only what the screen draws.
+ *
+ * The base of the drawing (the anchor of the PNG) lands on the bottom edge of the window. The PNG has
+ * 8 px of transparent padding under the anchor; they fall outside the window and are cut there
+ * (see src/shared/pet/art.ts).
  */
 
 .root {
+  /* Room around the drawing so the outline (the rim light and the shadow) is not cut at the sides. */
+  --pet-room: 12px;
+
   position: fixed;
   inset: 0;
   display: flex;
@@ -15,11 +22,63 @@
   cursor: default;
 }
 
-/* Marcador provisório (esqueleto da Fase 2): um anel dourado de vela, onde o desenho vai entrar. */
-.placeholder {
-  width: 56px;
-  height: 56px;
-  border: 2px solid var(--donel-accent);
-  border-radius: 50%;
-  background: rgb(14 17 22 / 0.55);
+/* The part of the drawing above the anchor: its bottom edge IS the base point. Width and height come from the view. */
+.stage {
+  position: relative;
+  flex: none;
+}
+
+/* Cuts whatever goes past the anchor (the transparent padding of the PNG) and carries the fade mask. */
+.clip {
+  position: absolute;
+  inset: calc(var(--pet-room) * -1) calc(var(--pet-room) * -1) 0;
+  overflow: hidden;
+}
+
+/*
+ * The subtle outline (Q8): the navy robe disappears over the dark Donel, so a thin cool rim light
+ * follows the silhouette and a soft shadow below separates it from a light background. The art itself
+ * does not change.
+ */
+.figure {
+  position: absolute;
+  top: var(--pet-room);
+  left: var(--pet-room);
+  filter: drop-shadow(0 0 0.6px rgb(206 220 244 / 0.85)) drop-shadow(0 0 2px rgb(140 170 220 / 0.4)) drop-shadow(0 2px 5px rgb(0 0 0 / 0.5));
+}
+
+/* Every pose is stacked and only the current one shows: switching poses never flickers while an image decodes. */
+.pose {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.pose[data-active='true'] {
+  visibility: visible;
+}
+
+/* The badge: how many sessions wait. Candle gold, never purple (FR-031). */
+.badge {
+  position: absolute;
+  top: 4px;
+  right: -12px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
+  background: var(--donel-accent);
+  color: var(--bg-app);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  line-height: 22px;
+  text-align: center;
+  box-shadow:
+    0 0 0 2px var(--bg-app),
+    0 3px 10px rgb(0 0 0 / 0.45);
 }
