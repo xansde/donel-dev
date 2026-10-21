@@ -5,14 +5,16 @@
 // pet-state.test.ts: everything goes through `reducePet`, and what the screen would draw is read
 // through `toPetView`.
 //
-// Account bubbles (`accountSwitched`) are US4 (T042): the rule "an account never joins a session
-// bubble" is tested there. The opposite direction, "a bubble that is not a session bubble never
-// absorbs a session event", is tested here with a hand-built bubble.
+// The account bubble (`accountSwitched`, US4, T042) has its own block below: its text, its pose, the Donel
+// as the target, and the rule that it never joins a session bubble. The opposite direction, "a bubble that is
+// not a session bubble never absorbs a session event", is tested with a hand-built bubble in the block of the
+// aggregation (FR-017) and with the real one in the block of the account.
 import { describe, expect, it } from 'vitest';
 import {
   PET_BUBBLE_JOIN_MS,
   PET_BUBBLE_MS,
   PET_BUBBLE_NAME_MAX,
+  accountBubbleFace,
   composeBubble,
   eventPose,
   eventText,
@@ -93,6 +95,11 @@ class World {
 
   silence(until: number | null): this {
     return this.apply({ type: 'silence', until });
+  }
+
+  /** The account in use changed (the panel, or the automatic switch). */
+  account(label: string): this {
+    return this.apply({ type: 'accountSwitched', label, at: this.now });
   }
 
   fullscreen(active: boolean): this {
@@ -642,6 +649,155 @@ describe('the bubble goes when it stops making sense (Q9)', () => {
     expect(world.state.pendingBurst).toEqual([]);
     expect(world.view.pose).toBe('impatient'); // the face goes back to the sessions
     expect(world.view.badge).toBe('1'); // and who waits is still counted
+  });
+});
+
+describe('the account bubble (US4, FR-014, FR-015, FR-016)', () => {
+  it('a switch says "Conta → <rótulo>", with the mirror pose and the Donel as the target', () => {
+    const world = worldWithWorking('atlas').account('Interno 3');
+    expect(world.bubble).toEqual({
+      id: 1,
+      text: 'Conta → Interno 3',
+      pose: 'mirror',
+      target: { kind: 'donel' },
+      until: world.now + PET_BUBBLE_MS,
+    });
+  });
+
+  it('is born with no session at all: the Jobu asleep wakes up to look in the mirror', () => {
+    const world = new World().account('Interno 3');
+    expect(world.view.pose).toBe('mirror');
+    expect(world.view.bubble).toMatchObject({ text: 'Conta → Interno 3', target: { kind: 'donel' } });
+  });
+
+  it('shows up in the view with the mirror in front of everything: the laugh, the waiting faces and the work', () => {
+    const waiting = worldWithWorking('atlas').put('atlas', 'waiting').advance(PET_BUBBLE_MS).account('Interno 3');
+    expect(waiting.view).toMatchObject({ pose: 'mirror', badge: '1' }); // the one who waits is still counted behind the bubble
+    const laughing = worldWithWorking('atlas').put('atlas', 'waiting').look('atlas').account('Interno 3');
+    expect(laughing.state.laughUntil).not.toBeNull();
+    expect(laughing.view.pose).toBe('mirror');
+    expect(worldWithWorking('atlas').account('Interno 3').view.pose).toBe('mirror');
+  });
+
+  it('the view carries only the text, the pose and the target: a label and nothing else (FR-018)', () => {
+    const world = new World().account('Interno 3');
+    expect(Object.keys(world.view.bubble ?? {}).sort()).toEqual(['id', 'pose', 'target', 'text']);
+  });
+
+  it('replaces the bubble of a session: a new id, its own text, 6 s counted again, and no burst behind it', () => {
+    const world = worldWithWorking('atlas').put('atlas', 'waiting').advance(3 * SEC);
+    expect(world.bubble?.text).toBe('atlas · terminou');
+    world.account('Interno 3');
+    expect(world.bubble).toEqual({
+      id: 2,
+      text: 'Conta → Interno 3',
+      pose: 'mirror',
+      target: { kind: 'donel' },
+      until: world.now + PET_BUBBLE_MS,
+    });
+    expect(world.state.pendingBurst).toEqual([]);
+    expect(world.view.badge).toBe('1'); // the session still waits: the bubble replaced the notice, not the debt
+  });
+
+  it('never joins a session bubble, not even inside its first second: it does not turn into "2 sessões..." nor swallow the session', () => {
+    const world = worldWithWorking('atlas').put('atlas', 'waiting').advance(PET_BUBBLE_JOIN_MS - 1);
+    world.account('Interno 3');
+    expect(world.bubble).toMatchObject({ id: 2, text: 'Conta → Interno 3', target: { kind: 'donel' } });
+    expect(world.state.pendingBurst).toEqual([]);
+  });
+
+  it('a session event right after it replaces it too, instead of joining it (a bubble that is not of sessions absorbs none)', () => {
+    const world = worldWithWorking('atlas', 'beacon').account('Interno 3').advance(300).put('beacon', 'waiting');
+    expect(world.bubble).toMatchObject({ id: 2, text: 'beacon · terminou', target: { kind: 'session', ptyId: 'pty-beacon' } });
+    expect(world.state.pendingBurst).toHaveLength(1);
+  });
+
+  it('a `pendingOpened` has nothing to refine on it, and leaves it as it is', () => {
+    const world = worldWithWorking('atlas').account('Interno 3');
+    const before = world.bubble;
+    world.pending('atlas', 'question');
+    expect(world.bubble).toEqual(before);
+  });
+
+  it('two switches in a row: the last one speaks, each with its own id', () => {
+    const world = new World().account('Interno 2').advance(200).account('Interno 3');
+    expect(world.bubble).toMatchObject({ id: 2, text: 'Conta → Interno 3' });
+    expect(world.state.lastBubbleId).toBe(2);
+  });
+
+  it('lives 6 s and then goes, and the face goes back to what the sessions ask for', () => {
+    const world = worldWithWorking('atlas').account('Interno 3');
+    world.advance(PET_BUBBLE_MS - 1);
+    expect(world.view.bubble).not.toBeNull();
+    expect(world.view.pose).toBe('mirror');
+    world.advance(1);
+    expect(world.bubble).toBeNull();
+    expect(world.view.pose).toBe('reading');
+  });
+
+  it('does not go stale when the sessions change: it is not about any of them', () => {
+    const world = worldWithWorking('atlas', 'beacon').account('Interno 3');
+    world.look('atlas').close('beacon').put('atlas', 'done').advance(5 * SEC);
+    expect(world.bubble?.text).toBe('Conta → Interno 3');
+  });
+
+  it('a click on it (the Jobu, the bubble or an item of the list) dismisses it', () => {
+    const world = new World().account('Interno 3').apply({ type: 'bubbleDismissed' });
+    expect(world.bubble).toBeNull();
+    expect(world.view.pose).toBe('sleeping');
+  });
+
+  it('a label over 28 characters is cut with an ellipsis, like the name of a tab; a short one is left alone', () => {
+    expect(new World().account('x'.repeat(40)).bubble?.text).toBe(`Conta → ${'x'.repeat(28)}…`);
+    expect(new World().account('x'.repeat(28)).bubble?.text).toBe(`Conta → ${'x'.repeat(28)}`);
+  });
+
+  it('while silenced no bubble is born, but the state goes on; after the silence the next switch speaks', () => {
+    const world = worldWithWorking('atlas').silence(1_000_000 + HOUR).account('Interno 3');
+    expect(world.bubble).toBeNull();
+    expect(world.state.lastBubbleId).toBe(0);
+    world.advance(HOUR).account('Interno 4');
+    expect(world.bubble).toMatchObject({ id: 1, text: 'Conta → Interno 4' });
+  });
+
+  it('turning the silence on drops the account bubble that is on screen, like any other', () => {
+    const world = new World().account('Interno 3').silence(1_000_000 + HOUR);
+    expect(world.bubble).toBeNull();
+  });
+
+  it('with an app in full screen no bubble is born; when it ends, a switch speaks again', () => {
+    const world = new World().fullscreen(true).account('Interno 3');
+    expect(world.bubble).toBeNull();
+    world.fullscreen(false).account('Interno 4');
+    expect(world.bubble?.text).toBe('Conta → Interno 4');
+  });
+
+  it('a bubble that is up when the full screen starts goes with it', () => {
+    expect(new World().account('Interno 3').fullscreen(true).bubble).toBeNull();
+  });
+
+  it('`resume` (the pet window opened again) drops it, and the count of ids does not go back', () => {
+    const world = new World().account('Interno 3').apply({ type: 'resume' });
+    expect(world.bubble).toBeNull();
+    expect(world.state.lastBubbleId).toBe(1);
+  });
+
+  it('never mutates the state it receives', () => {
+    const world = worldWithWorking('atlas').put('atlas', 'waiting');
+    const frozen = world.state;
+    const snapshot = JSON.stringify({ ...frozen, sessions: [...frozen.sessions] });
+    world.account('Interno 3');
+    expect(JSON.stringify({ ...frozen, sessions: [...frozen.sessions] })).toBe(snapshot);
+  });
+});
+
+describe('accountBubbleFace: what the account bubble says', () => {
+  it('is "Conta → <rótulo>", the mirror, and the Donel', () => {
+    expect(accountBubbleFace('Interno 3')).toEqual({ text: 'Conta → Interno 3', pose: 'mirror', target: { kind: 'donel' } });
+  });
+
+  it('never splits as `<aba> · <evento>`: the screen draws it as one piece, with no name to give its own face', () => {
+    expect(splitSessionBubbleText(accountBubbleFace('Interno 3').text)).toBeNull();
   });
 });
 

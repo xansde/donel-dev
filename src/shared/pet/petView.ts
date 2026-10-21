@@ -3,7 +3,7 @@
 // carries names, ages and kinds of events and nothing else: no command, no question, no excerpt of the
 // conversation, no path (FR-018). Pure, like the reducer: the instant is an argument.
 
-import { baseState, waitingSessions } from './petState';
+import { baseState, isSilenced, waitingSessions } from './petState';
 import type { Bubble, PetState, PetUi, PetView, PetViewBubble, PetViewWaiting, PoseName } from './types';
 
 const MINUTE_MS = 60_000;
@@ -68,7 +68,7 @@ export function toPetView(state: PetState, now: number, ui: PetUi): PetView {
     waiting,
     docked: ui.docked,
     align: ui.align,
-    silenced: state.silencedUntil !== null && now < state.silencedUntil,
+    silenced: isSilenced(state, now),
     size: ui.size,
   };
 }

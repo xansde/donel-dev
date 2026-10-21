@@ -205,7 +205,7 @@ e nenhum aviso do Windows sai.
 
 ## Phase 6: User Story 4 — Troca de conta (P2)
 
-- [ ] T042 [P] [US4] Casos em `tests/pet-bubble.test.ts`: `accountSwitched` dá `Conta → Interno 3`, pose `mirror` e alvo `donel`, e substitui o balão de sessão sem se juntar a ele.
+- [x] T042 [P] [US4] Casos em `tests/pet-bubble.test.ts`: `accountSwitched` dá `Conta → Interno 3`, pose `mirror` e alvo `donel`, e substitui o balão de sessão sem se juntar a ele.
 - [ ] T043 [US4] `src/main/index.ts` `broadcastAccountsChanged` (≈`:791-802`) → `petService?.onAccountSwitched(label)`, independente do chat.
 - [ ] T044 [US4] `tests/smoke/pet.spec.ts` parte 4 (`DONEL_ACCOUNTS_FAKE_MOD_FIXTURE`, como `tests/smoke/accounts.spec.ts`): trocar de conta via `accounts.switch` → `data-bubble` com o rótulo.
 
@@ -213,7 +213,7 @@ e nenhum aviso do Windows sai.
 
 ## Phase 7: User Story 5 — Convivência (P2)
 
-- [ ] T045 [P] [US5] `tests/pet-fullscreen-state.test.ts`: parser da saída do auxiliar (`2|3|4` → oculto, resto → livre; lixo → livre).
+- [x] T045 [P] [US5] `tests/pet-fullscreen-state.test.ts`: parser da saída do auxiliar (`2|3|4` → oculto, resto → livre; lixo → livre).
 - [ ] T046 [US5] Arraste:
   - `src/renderer/src/pet/usePetDrag.ts`: limiar de 4 px, `dragStart`/`dragMove`/`dragEnd` com coordenadas de tela, sem `-webkit-app-region`;
   - `pet-service.ts`: move a janela, encaixa ao soltar, grava `pet.placement` e recalcula `docked` e `align`;
@@ -236,7 +236,7 @@ e nenhum aviso do Windows sai.
   - Esconder (pelo mesmo caminho do menu, exposto para teste) → a janela do pet fecha e o toggle das Preferências aparece desligado;
   - religar → volta;
   - `resizeStep` → `data-size` muda e o desenho continua no lugar (base fixa).
-- [ ] T060 [P] [US5] `tests/pet-capture.test.ts` (TDD): regra pura `captureAllowed(state, now)`:
+- [x] T060 [P] [US5] `tests/pet-capture.test.ts` (TDD): regra pura `captureAllowed(state, now)`:
   - proteção ligada por padrão;
   - liberar dá 60 s e o vencimento religa (no tick);
   - "Bloquear print agora" religa na hora;

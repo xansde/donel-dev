@@ -180,7 +180,7 @@ export interface ResumeInput {
   readonly type: 'resume';
 }
 
-/** Everything `reducePet` takes. The account switch (`accountSwitched`) is the one event still without an effect: it arrives with US4. */
+/** Everything `reducePet` takes. */
 export type PetInput = SessionsInput | FocusInput | ResumeInput | PetEvent;
 
 // ---------------------------------------------------------------------------

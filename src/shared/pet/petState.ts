@@ -10,10 +10,12 @@
 //
 // A wait is born in `trackSession`, the only place where a session enters `waiting`/`permission`. If the
 // session was already known and the owner is not looking at it, that birth is also the `finished` or
-// `blocked` event of a bubble. The one event still without an effect is `accountSwitched` (US4, T042).
+// `blocked` event of a bubble. A change of account (`accountSwitched`, US4) is a bubble of its own that
+// belongs to no session: it replaces whatever is up and nothing ever joins it.
 
-import { PET_BUBBLE_JOIN_MS, PET_BUBBLE_MS, composeBubble } from './bubble';
+import { PET_BUBBLE_JOIN_MS, PET_BUBBLE_MS, accountBubbleFace, composeBubble } from './bubble';
 import type {
+  AccountSwitchedEvent,
   BubbleEvent,
   FocusSignal,
   FullscreenEvent,
@@ -36,6 +38,8 @@ export const PET_LAUGH_MS = 2_500;
 export const PET_WAFFLE_AFTER_MS = 20 * 60_000;
 /** FR-013: how long the waffle stays on screen. */
 export const PET_WAFFLE_MS = 8_000;
+/** FR-026: "Silenciar por 1 hora". */
+export const PET_SILENCE_MS = 60 * 60_000;
 
 export function createPetState(): PetState {
   return {
@@ -198,10 +202,14 @@ function markSeen(state: PetState): { readonly state: PetState; readonly flipped
 // Bubbles
 // ---------------------------------------------------------------------------
 
+/** The owner silenced the notices and the hour has not passed yet (the menu then offers "Retomar avisos"). */
+export function isSilenced(state: PetState, now: number): boolean {
+  return state.silencedUntil !== null && now < state.silencedUntil;
+}
+
 /** No bubble is born while the owner silenced them (FR-020, FR-027) or while an app has the whole screen (Q9). */
 function bubblesAllowed(state: PetState, now: number): boolean {
-  if (state.fullscreen) return false;
-  return state.silencedUntil === null || now >= state.silencedUntil;
+  return !state.fullscreen && !isSilenced(state, now);
 }
 
 /**
@@ -255,6 +263,19 @@ function withPendingKind(state: PetState, input: PendingOpenedEvent, now: number
   if (current === undefined || current.blockedKind === input.kind) return state;
   const burst = state.pendingBurst.map((event, at) => (at === index ? { ...event, blockedKind: input.kind } : event));
   return { ...state, pendingBurst: burst, bubble: { ...state.bubble, ...composeBubble(burst) } };
+}
+
+/**
+ * The account in use changed (US4, FR-014): a bubble `Conta → <rótulo>` with the mirror pose and the Donel as the
+ * target. It replaces whatever bubble is up, with a new id and a fresh 6 s, and never joins one (FR-017): the burst
+ * behind it is empty, so `acceptsEvents` refuses everything that arrives next and a session event replaces it
+ * instead of folding in. The same gate as the session bubbles applies: silenced, or with an app on the whole
+ * screen, nothing is born.
+ */
+function withAccountSwitched(state: PetState, input: AccountSwitchedEvent, now: number): PetState {
+  if (!bubblesAllowed(state, now)) return state;
+  const id = state.lastBubbleId + 1;
+  return { ...state, lastBubbleId: id, pendingBurst: [], bubble: { id, ...accountBubbleFace(input.label), until: now + PET_BUBBLE_MS } };
 }
 
 /** "Silenciar por 1 hora" calms the bubbles, the one in view included (FR-027); "Retomar avisos" lifts it. The face and the badge never stop. */
@@ -363,9 +384,8 @@ export function reducePet(state: PetState, input: PetInput, now: number): PetSta
     case 'bubbleDismissed':
       next = withoutBubble(state);
       break;
-    // EXTENSION POINT: this arrives with the story that needs it and changes nothing until then.
-    case 'accountSwitched': // US4 (T042): a bubble `Conta → <rótulo>` with the mirror pose, which never joins a session bubble
-      next = state;
+    case 'accountSwitched':
+      next = withAccountSwitched(state, input, now);
       break;
     default:
       return assertNever(input);

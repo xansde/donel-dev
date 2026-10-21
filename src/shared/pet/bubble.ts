@@ -79,6 +79,15 @@ export interface BubbleFace {
 }
 
 /**
+ * The bubble of a change of account (US4, FR-015, FR-016): `Conta → <rótulo>`, the mirror, and a click brings the
+ * Donel to the front (FR-025). The label is what the owner called the account, never an e-mail (FR-018), and is
+ * cut like the name of a tab when it is long.
+ */
+export function accountBubbleFace(label: string): BubbleFace {
+  return { text: `Conta → ${truncateTabName(label)}`, pose: 'mirror', target: { kind: 'donel' } };
+}
+
+/**
  * The bubble that says a set of session events (one per session). One event speaks for itself and a click
  * leads to its tab. Two or more become a count, and a click opens the list: `N sessões terminaram` when
  * they all finished, `N sessões encerraram` when they all ended (Q9), and `N sessões esperando você` when
