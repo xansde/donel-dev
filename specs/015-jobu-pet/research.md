@@ -149,7 +149,7 @@ Levantamento do código em 21/10/2026 (branch `015-jobu-pet`, base `staging`
   - O renderer recebe o `mousemove` repassado e testa o ponto contra o alfa do
     desenho (canvas fora da tela), o balão, o selo e a lista.
   - Ele avisa `pet:interactive(true | false)` só quando o valor muda.
-- **Tamanho**: 480 × 340 DIP.
+- **Tamanho**: `max(480, 3,4 × tamanho)` × `tamanho + 200` DIP (tamanho do desenho no FR-033; Médio = 140).
   - O desenho fica embaixo, no centro, com cerca de 140 px de altura.
   - Balão e lista crescem para cima e se alinham pelo `align` da vista.
   - A janela pode passar da borda da tela. O centro do desenho fica sempre no

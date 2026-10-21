@@ -39,6 +39,11 @@ a sua parte.
 | `pet:drag-start` | `send` | `{ screenX, screenY }` | guarda o deslocamento ponteiro→janela |
 | `pet:drag-move` | `send` | `{ screenX, screenY }` | `setPosition` (arredondado) |
 | `pet:drag-end` | `send` | `{ screenX, screenY }` | encaixe (≤ 24 px), grava `pet.placement`, recalcula `docked` e `align` |
+| `pet:resize-step` | `send` | `{ direction: 1 \| -1 }` | Ctrl + roda sobre o desenho: `pet.size ± 10`, limitado a 80–320; recalcula a janela ancorada na base e grava |
+
+O submenu **Tamanho** do `pet:context-menu` (Pequeno 100 · Médio 140 · Grande
+200 · Muito grande 260, com marca no atual) grava `pet.size` pelo mesmo caminho.
+O `PetView` ganha `size: number`, que é a altura do desenho em DIP.
 
 ## Regras
 

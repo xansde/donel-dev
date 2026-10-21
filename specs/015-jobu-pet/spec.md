@@ -212,6 +212,12 @@ ele some; silenciar e provocar um evento.
    já com o estado atual das sessões.
 10. **Given** o Jobu visível, **When** o dono fecha o Donel, **Then** o Jobu
     sai junto.
+11. **Given** o menu do botão direito, **When** o dono escolhe Tamanho →
+    Grande, **Then** o Jobu cresce para cima a partir da base, continua no
+    mesmo lugar e clicável, e o tamanho é lembrado ao reabrir o Donel.
+12. **Given** o ponteiro sobre o Jobu, **When** o dono gira a roda do mouse
+    com Ctrl apertado, **Then** ele cresce ou encolhe aos poucos, dentro de um
+    mínimo e um máximo.
 
 ---
 
@@ -282,8 +288,9 @@ com a arte de piscar presente, conferir a piscada em repouso.
   espaço transparente em volta MUST deixar o clique passar à janela de baixo.
 - **FR-007**: O Jobu MUST sumir enquanto um app estiver em tela cheia e voltar
   quando ela acabar.
-- **FR-008**: O Jobu MUST ter cerca de 140 px de altura em escala 100% e
-  acompanhar a escala de exibição do Windows.
+- **FR-008**: O Jobu MUST nascer com cerca de 140 px de altura em escala 100%
+  (tamanho Médio, ajustável pelo FR-033) e acompanhar a escala de exibição do
+  Windows.
 
 **Estado e rosto**
 
@@ -347,6 +354,12 @@ com a arte de piscar presente, conferir a piscada em repouso.
 - **FR-027**: Silenciar MUST calar balões e avisos do Windows desses eventos
   pelo período, mantendo rosto e selo; Esconder MUST desligar o interruptor das
   Preferências; Voltar ao canto MUST restaurar a posição padrão.
+- **FR-033**: O dono MUST poder redimensionar o Jobu pelo menu (Tamanho:
+  Pequeno, Médio, Grande, Muito grande) e por Ctrl + roda do mouse sobre ele,
+  entre um mínimo e um máximo; o Jobu MUST crescer e encolher ancorado na base,
+  sem sair do lugar; o tamanho MUST ser lembrado entre aberturas do app; o
+  desenho MUST continuar clicável em qualquer tamanho (pedido do dono,
+  21/10).
 
 **Arte e vida**
 
@@ -378,6 +391,7 @@ com a arte de piscar presente, conferir a piscada em repouso.
   pose de evento, alvo do clique, fim), silêncio até quando, visível ou
   escondido.
 - **Posição**: monitor e ponto escolhidos pelo dono, ou "padrão".
+- **Tamanho**: altura do desenho escolhida pelo dono (Médio por padrão).
 - **Pose**: um quadro da arte com nome (as 12 da folha v2 e as 4 novas), com a
   tabela de provisórias do FR-029.
 

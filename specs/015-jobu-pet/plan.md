@@ -115,7 +115,7 @@ As decisões e os porquês estão em `research.md`. Resumo:
   o dono ter pedido.
 - **R7:** `app:activate-session` funciona sem o chat.
 - **R8:** com o pet ligado, os dois emissores de aviso do Windows se calam.
-- **R9:** a janela tem 480 × 340 DIP, não é focável e deixa o clique atravessar
+- **R9:** a janela cresce com o tamanho do desenho (FR-033), não é focável e deixa o clique atravessar
   o vazio pelo alfa do desenho.
 - **R10:** tela cheia é detectada por `SHQueryUserNotificationState`, via
   PowerShell.
@@ -141,8 +141,8 @@ As decisões e os porquês estão em `research.md`. Resumo:
 
 | Valor | Escolha |
 |---|---|
-| Altura do desenho | 140 px a 100% de escala |
-| Janela do pet | 480 × 340 DIP |
+| Altura do desenho | Médio 140 px a 100% de escala; presets 100/140/200/260; Ctrl + roda de 10 em 10, entre 80 e 320 (FR-033, pedido do dono em 21/10) |
+| Janela do pet | `max(480, 3,4 × tamanho)` × `tamanho + 200` DIP, ancorada na base do desenho |
 | Balão | 6 s; evento de sessão até 1 s depois do nascimento se junta a ele (mesmo `id`, sem segundo pulinho) |
 | Escalada | 10 min |
 | Riso | 2,5 s |
