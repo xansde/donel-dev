@@ -199,7 +199,10 @@ export function createPetService(deps: PetServiceDeps): PetService {
   let listOpen = false;
 
   let tabs: PetTabsPayload = { activePtyId: null, sessions: [] };
-  let donelFocused = deps.getMainWindow()?.isFocused() ?? false;
+  // In front of the owner: focused and not minimized (a minimized window can keep reporting the focus). The main
+  // process keeps the signal after this, from the focus, blur, minimize, restore, show and hide of the window.
+  const mainAtBirth = deps.getMainWindow();
+  let donelFocused = mainAtBirth !== null && mainAtBirth.isFocused() && !mainAtBirth.isMinimized();
   let ui: PetUi = { size: clampSize(deps.config().size), docked: false, align: 'center' };
 
   /**

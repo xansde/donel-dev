@@ -1029,9 +1029,20 @@ function createMainWindow(): void {
     startPetService(); // 015 (R21): o Jobu só nasce depois da principal aparecer
   });
 
-  // 015-jobu-pet — o foco da principal alimenta o Jobu ("visto" = aba ativa com o Donel em foco).
-  mainWindow.on('focus', () => petService?.onMainFocusChanged(true));
-  mainWindow.on('blur', () => petService?.onMainFocusChanged(false));
+  // 015-jobu-pet - the focus of the main window feeds the Jobu ("seen" = the active tab with the Donel in
+  // front of the owner). In front means focused, visible and not minimized: a window minimized while it was
+  // the active one went on answering `isFocused() === true` (measured: minimized, invisible and "focused"),
+  // and with no `blur` to tell, a session on the active tab would be born seen with the Donel on the taskbar.
+  // So the signal follows minimize, restore, show and hide as well.
+  const reportPetFocus = (): void => {
+    petService?.onMainFocusChanged(mainWindow.isFocused() && mainWindow.isVisible() && !mainWindow.isMinimized());
+  };
+  mainWindow.on('focus', reportPetFocus);
+  mainWindow.on('blur', reportPetFocus);
+  mainWindow.on('minimize', reportPetFocus);
+  mainWindow.on('restore', reportPetFocus);
+  mainWindow.on('show', reportPetFocus);
+  mainWindow.on('hide', reportPetFocus);
 
   // T045 (014-chat, R21) — guarda de navegação. Esta janela expõe `window.donel.pty.input`; um
   // link do markdown que a navegasse entregaria o app a uma página externa. Navegar para outra

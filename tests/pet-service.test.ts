@@ -451,6 +451,20 @@ describe('pet:ready handshake and the view', () => {
     expect(lastView(h)).toMatchObject({ badge: null, pose: 'incense' });
   });
 
+  it('a main window that is minimized when the service is born is not in front, even if it still reports the focus', () => {
+    const h = harness({ prefs: { enabled: true } });
+    h.main.focused = true; // measured: a window minimized while it was the active one went on answering isFocused() === true
+    h.main.minimized = true;
+    const service = createPetService(h.deps);
+    service.start();
+    service.handleReady();
+    service.onTabs({ activePtyId: 'pty-a', sessions: [tab('pty-a')] });
+    service.onSemaphoreUpdate(sem('pty-a', 'working'));
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    // the tab is the active one, but the Donel is on the taskbar: the wait is not seen, and it counts
+    expect(lastView(h)).toMatchObject({ badge: '1' });
+  });
+
   it('a focus change re-evaluates the view without waiting for the tick', () => {
     const { h, service } = readyPet();
     service.onTabs({ activePtyId: 'pty-a', sessions: [tab('pty-a', 'atlas')] });
