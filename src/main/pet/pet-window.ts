@@ -16,6 +16,7 @@
 import { BrowserWindow, Menu } from 'electron';
 import { join } from 'node:path';
 import { PET_CHANNELS } from '../../shared/pet/ipc';
+import type { PetMenuAction } from '../../shared/pet/menu';
 import type { PetRect, PetView } from '../../shared/pet/types';
 import { toMenuTemplate } from './pet-menu';
 import type { PetSeams, PetSmokeGlobal } from './pet-seams';
@@ -158,14 +159,26 @@ export function createPetWindow(options: CreatePetWindowOptions, seams: PetSeams
         hooks.__donelPetSmoke = { ...hooks.__donelPetSmoke, menu: { entries, choose: onChoose } };
         return;
       }
-      const menu = Menu.buildFromTemplate(toMenuTemplate(entries, onChoose));
+      // The chosen action runs when the menu has CLOSED (the `callback` of `popup`), not inside the click of the item: "Esconder"
+      // destroys this very window, and a window must not be destroyed from within the activation of its own native menu.
+      let chosen: PetMenuAction | null = null;
+      const menu = Menu.buildFromTemplate(
+        toMenuTemplate(entries, (action) => {
+          chosen = action;
+        }),
+      );
+      const closed = (): void => {
+        const action = chosen;
+        chosen = null;
+        if (action !== null) onChoose(action);
+      };
       if (at === null) {
-        menu.popup({ window: win });
+        menu.popup({ window: win, callback: closed });
         return;
       }
       // The coordinates of `popup` are relative to the content of the window; the click came in screen DIP.
       const content = win.getContentBounds();
-      menu.popup({ window: win, x: Math.round(at.x - content.x), y: Math.round(at.y - content.y) });
+      menu.popup({ window: win, x: Math.round(at.x - content.x), y: Math.round(at.y - content.y), callback: closed });
     },
     destroy: () => {
       if (!win.isDestroyed()) win.destroy();
