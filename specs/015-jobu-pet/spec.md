@@ -2,7 +2,7 @@
 
 **Feature Branch**: `015-jobu-pet`
 **Created**: 2026-10-21
-**Status**: Draft
+**Status**: Implementada em 21/10/2026 (branch `015-jobu-pet`); falta a bateria do dono no alfa (`quickstart.md`)
 **Input**: Descrição aprovada pelo dono no `/brainstorm` de 21/10/2026 (vault
 `Projects/donel-dev/jobu-donel/brainstorm.md`, decisões D1–D10). Arte de
 partida: a folha canônica `design/referencia/donel-buddy-sprites-v2.png`

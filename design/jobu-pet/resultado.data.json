@@ -57,6 +57,22 @@
       "caption": "No app: três esperando. O clique abre a lista `Esperando você` e o selo marca `3`."
     },
     {
+      "file": "app-us4-conta.png",
+      "caption": "No app: a conta mudou. Ele olha o espelho e o balão diz `Conta → Interno 3`."
+    },
+    {
+      "file": "app-us5-menu.png",
+      "caption": "No app: o menu do botão direito, com Silenciar por 1 hora, Liberar print por 1 minuto, Tamanho, Voltar ao canto e Esconder."
+    },
+    {
+      "file": "app-us5-solto.png",
+      "caption": "No app: solto no meio da tela, a base esmaece em vez de mostrar o corte reto."
+    },
+    {
+      "file": "app-us5-grande.png",
+      "caption": "No app: no tamanho Grande, ainda colado ao canto."
+    },
+    {
       "file": "01-dormindo.png",
       "caption": "Nenhuma sessão aberta: dormindo."
     },
@@ -128,13 +144,15 @@
     "3.2": "app-us3-lista.png",
     "3.4": { "file": "app-us2-balao.png", "caption": "O balão de uma sessão." },
     "3.5": "app-us3-lista.png",
-    "4.1": "07-conta-espelho.png",
-    "4.2": "07-conta-espelho.png",
+    "4.1": "app-us4-conta.png",
+    "4.2": "app-us4-conta.png",
     "5.1": "app-us1.png",
-    "5.2": "08-solto-esmaecido.png",
+    "5.2": "app-us5-solto.png",
     "5.5": "13-tela-cheia.png",
-    "5.6": { "file": "09-menu-botao-direito.png", "caption": "O menu do botão direito." },
-    "5.7": { "file": "09-menu-botao-direito.png", "caption": "O menu do botão direito." }
+    "5.6": { "file": "app-us5-menu.png", "caption": "O menu do botão direito." },
+    "5.7": { "file": "app-us5-menu.png", "caption": "O menu do botão direito." },
+    "5.10": "app-us5-grande.png",
+    "5.12": { "file": "app-us5-menu.png", "caption": "“Liberar print por 1 minuto” no menu." }
   },
 
   "crops": {

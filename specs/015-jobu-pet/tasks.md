@@ -1,7 +1,7 @@
 # Tasks: Jobu Donel, o assistente na área de trabalho (015)
 
-**Input**: `specs/015-jobu-pet/` — spec.md (FR-001–FR-033), plan.md, research.md
-(R1–R21), data-model.md, contracts/ipc-pet.md, quickstart.md, duvidas.md.
+**Input**: `specs/015-jobu-pet/` — spec.md (FR-001–FR-035), plan.md, research.md
+(R1–R22), data-model.md, contracts/ipc-pet.md, quickstart.md, duvidas.md.
 **Tests**: obrigatórios no núcleo puro (TDD do repo); a tela vai por smoke `@pet`.
 **Mandato**: execução autônoma (21/10). Dúvida nova → `duvidas.md` com decisão
 provisória aplicada; nunca parar para perguntar.

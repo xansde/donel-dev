@@ -1,12 +1,12 @@
 # Plano técnico — 015 Jobu Donel, o assistente na área de trabalho
 
-**Branch**: `015-jobu-pet` · **Data**: 2026-10-21 · **Spec**:
+**Branch**: `015-jobu-pet` · **Data**: 2026-10-21 · **Status**: implementado · **Spec**:
 `specs/015-jobu-pet/spec.md`
 
 Paths relativos a `C:/Users/xansd/seazone/donel-dev`. Complementos deste
 plano:
 
-- `research.md` — R1–R21, com as decisões e os fatos do código que as
+- `research.md` — R1–R22, com as decisões e os fatos do código que as
   sustentam;
 - `data-model.md` — núcleo puro, vista, configuração e posição;
 - `contracts/ipc-pet.md` — canais novos e alterados;
