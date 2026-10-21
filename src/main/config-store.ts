@@ -3,7 +3,9 @@ import { dirname } from 'node:path';
 import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
-import type { AppConfigDto, ChatPrefs, LauncherDefaultsDto, NotificationPreference, ProjectScanMode, SessionNamesMap } from '../shared/config';
+import type { AppConfigDto, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap } from '../shared/config';
+// T014 (015-jobu-pet) — limites do tamanho do pet: a mesma regra que a janela usa (placement.ts).
+import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
 import type {
   ArchivedPhaseSession,
   ArchivedPhaseSessions,
@@ -131,6 +133,12 @@ export interface AppConfig {
   /** T008 (014-chat) — interruptor da entrega incremental (R22) e modo foco global (FR-009). Exposta no DTO. */
   readonly chat: ChatPrefs;
   /**
+   * T014 (015-jobu-pet) — o Jobu na área de trabalho: interruptor (desligado por padrão), posição
+   * lembrada e tamanho. Exposta no DTO. Chave de TOPO de propósito (R20): um build sem a 015 a
+   * guarda em `unknownFields` e a regrava intacta, coisa que uma subchave nova de `chat` não teria.
+   */
+  readonly pet: PetPrefs;
+  /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
    * `sanitizeAppConfig` NUNCA as descarta — guarda aqui em vez de jogar fora
@@ -166,6 +174,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     migration: defaultMigrationState(),
     providers: defaultProvidersConfig(),
     chat: defaultChatPrefs(),
+    pet: defaultPetPrefs(),
     unknownFields: {},
   };
 }
@@ -183,6 +192,35 @@ export function sanitizeChatPrefs(value: unknown, fallback: ChatPrefs = defaultC
     enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : fallback.enabled,
     focusMode: typeof candidate.focusMode === 'boolean' ? candidate.focusMode : fallback.focusMode,
   };
+}
+
+/** T014 (015-jobu-pet) — desligado, sem posição lembrada (= canto padrão), tamanho Médio. */
+export function defaultPetPrefs(): PetPrefs {
+  return { enabled: false, placement: null, size: PET_SIZE_DEFAULT };
+}
+
+/**
+ * T014 — campo a campo, como o `chat`: um campo inválido cai no default DAQUELE campo e não leva
+ * os bons junto. `placement` só vale com `x` e `y` finitos (nunca meio ponto: valor torto volta ao
+ * canto padrão); `size` é inteiro entre 80 e 320.
+ */
+export function sanitizePetPrefs(value: unknown, fallback: PetPrefs = defaultPetPrefs()): PetPrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return fallback;
+  const candidate = value as Record<string, unknown>;
+  return {
+    enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : fallback.enabled,
+    placement: sanitizePetPlacement(candidate.placement, fallback.placement),
+    size: typeof candidate.size === 'number' && Number.isFinite(candidate.size) ? clampSize(candidate.size) : fallback.size,
+  };
+}
+
+function sanitizePetPlacement(value: unknown, fallback: PetPrefs['placement']): PetPrefs['placement'] {
+  if (value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) return fallback;
+  const point = value as Record<string, unknown>;
+  if (typeof point.x !== 'number' || !Number.isFinite(point.x)) return fallback;
+  if (typeof point.y !== 'number' || !Number.isFinite(point.y)) return fallback;
+  return { x: point.x, y: point.y };
 }
 
 /** T306 — estado inicial do Modo Dev: nada aberto, tabela de defaults do C6. */
@@ -210,6 +248,7 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     devMode: config.devMode,
     tabAppearance: config.tabAppearance,
     chat: config.chat,
+    pet: config.pet,
   };
 }
 
@@ -626,6 +665,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     migration: sanitizeMigrationState(candidate.migration, defaults.migration),
     providers: sanitizeProvidersConfig(candidate.providers),
     chat: sanitizeChatPrefs(candidate.chat, defaults.chat),
+    pet: sanitizePetPrefs(candidate.pet, defaults.pet),
     unknownFields,
   };
 }

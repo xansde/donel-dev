@@ -50,6 +50,7 @@ import type {
   OpenDiscoveryIpcInput,
   PhaseArchivedPayload,
   PhaseDefaultsTable,
+  PetPrefsInput,
   ProjectBindingDto,
   ProjectInfo,
   ProjectScanMode,
@@ -324,6 +325,9 @@ const donelApi: DonelApi = {
 
     setChatPrefs: (prefs: Partial<ChatPrefs>) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setChatPrefs, prefs) as Promise<AppConfigDto>,
+
+    // T014 (015-jobu-pet) — o interruptor do Jobu; o main aplica na hora (cria/destrói a janela do pet).
+    setPetPrefs: (prefs: PetPrefsInput) => ipcRenderer.invoke(CONFIG_CHANNELS.setPetPrefs, prefs) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },

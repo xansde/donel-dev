@@ -51,7 +51,7 @@ principal. Com `false`, nada muda no app.
   - `resolvePose` com o conjunto de arquivos disponíveis;
   - provisórias `impatient → skeptical`, `very-impatient → angry`, `calling → talking`;
   - `blink-*` opcional.
-- [ ] T009 [P] `tests/pet-config.test.ts`:
+- [x] T009 [P] `tests/pet-config.test.ts`:
   - `sanitizePetPrefs`: `enabled` booleano (padrão `false`), `placement` com `x` e `y` finitos ou `null`, `size` limitado a 80–320 (padrão 140);
   - `pet` entra em `defaultAppConfig`/`toAppConfigDto`.
   - Ajustar os testes de forma exata em `tests/config-store.test.ts` e `tests/chat-config.test.ts`.
@@ -62,7 +62,7 @@ principal. Com `false`, nada muda no app.
 - [x] T011 [P] `src/shared/pet/tabPtyMap.ts`: funções puras de mapeamento e `buildPetTabsPayload(tabs, ptyIdOf, resolveName, activeTabId)` (passa T006).
 - [x] T012 [P] `src/shared/pet/placement.ts`: `defaultPlacement`, `isDocked`, `snapOnDrop`, `isPlacementVisible`, `alignFor`, `windowBoundsFor(anchor, size)`, `anchorOf(bounds, size)`, `clampSize`, `PET_SIZE_PRESETS` (passa T007).
 - [x] T013 [P] `src/shared/pet/poses.ts`: `resolvePose(logical, available)` e `PROVISIONAL_POSES` (passa T008).
-- [ ] T014 Config `pet` (passa T009), ligando nesta ordem:
+- [x] T014 Config `pet` (passa T009), ligando nesta ordem:
   - `src/main/config-store.ts`: `AppConfig.pet`, `defaultAppConfig`, `sanitizePetPrefs` no `sanitizeAppConfig` e `toAppConfigDto`;
   - `src/shared/config.ts`: `AppConfigDto.pet`, `CONFIG_CHANNELS.setPetPrefs` e `DonelConfigApi.setPetPrefs`;
   - `src/preload/index.ts`: `config.setPetPrefs`.

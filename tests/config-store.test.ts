@@ -66,6 +66,8 @@ describe('defaultAppConfig (puro)', () => {
       migration: { startedAt: null, completedAt: null, profiles: {}, archivedTo: null },
       providers: { version: 1, entries: [] },
       chat: { enabled: false, focusMode: true },
+      // T014 (015-jobu-pet) — desligado, sem posição lembrada, tamanho Médio.
+      pet: { enabled: false, placement: null, size: 140 },
       unknownFields: {},
     });
   });
@@ -96,6 +98,7 @@ describe('toAppConfigDto (puro)', () => {
       },
       tabAppearance: {},
       chat: { enabled: false, focusMode: true },
+      pet: { enabled: false, placement: null, size: 140 },
     });
   });
 
@@ -225,6 +228,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
         ],
       },
       chat: { enabled: true, focusMode: false },
+      pet: { enabled: true, placement: { x: 1830, y: 1040 }, size: 200 },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -312,6 +316,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       migration: defaults.migration, // ausente no objeto → default
       providers: defaults.providers, // ausente no objeto → default
       chat: defaults.chat, // ausente no objeto → default
+      pet: defaults.pet, // ausente no objeto → default
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });

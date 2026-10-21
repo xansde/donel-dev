@@ -131,6 +131,8 @@ export interface AppConfigDto {
   readonly tabAppearance: TabAppearanceMap;
   /** T008 (014-chat) — preferências do chat. */
   readonly chat: ChatPrefs;
+  /** T014 (015-jobu-pet) — preferências do Jobu na área de trabalho. */
+  readonly pet: PetPrefs;
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */
@@ -147,4 +149,6 @@ export interface DonelConfigApi {
   setProjectScanMode(mode: ProjectScanMode): Promise<AppConfigDto>;
   /** T008 (014-chat) — atualização parcial: só os campos boolean enviados mudam. */
   setChatPrefs(prefs: Partial<ChatPrefs>): Promise<AppConfigDto>;
+  /** T014 (015-jobu-pet) — liga/desliga o Jobu; aplica na hora, sem reiniciar. */
+  setPetPrefs(prefs: PetPrefsInput): Promise<AppConfigDto>;
 }
