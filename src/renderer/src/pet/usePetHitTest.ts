@@ -5,14 +5,17 @@ import { isOpaqueAt, loadImage, maskSizeFor, readAlphaMask, type AlphaMask } fro
  * T028 (015-jobu-pet, US1, R9/FR-006) - the click test of the pet window, on the React side. The window
  * ignores the mouse and only receives the forwarded `mousemove`; on every one the hook asks whether the
  * pointer is over the Jobu (the alpha of the pose on screen, at the size it is drawn) or over something
- * marked `data-hit`, and tells the main (`pet:interactive`) ONLY when the answer changes.
+ * marked `data-hit` (the badge, the bubble, the list), and tells the main (`pet:interactive`) ONLY when
+ * the answer changes.
  *
  * The alpha of each pose is read once from a canvas that is never put on the page, at the current size,
  * and the pose on screen goes first so a pose change finds its mask ready. A new size throws the masks
  * away (they are a few KB each) and reads them again from the pictures, which are decoded only once.
  *
- * Returns what was last sent to the main: `data-interactive` mirrors it, which is also how the smoke
- * proves the whole chain (position, scale, alpha) without a real mouse.
+ * Returns what was last sent to the main (`interactive`: `data-interactive` mirrors it, which is also how
+ * the smoke proves the whole chain - position, scale, alpha - without a real mouse) and `isHit`, the same
+ * question for any point: a click handler asks it so a click on the transparent corner of the drawing's
+ * box is not taken for a click on the Jobu.
  */
 
 /** The pictures, decoded once: the same art is read again at every new size. */
@@ -34,29 +37,38 @@ export interface PetHitTestSource {
   readonly refreshKey: string;
 }
 
-export function usePetHitTest({ figure, arts, art, size, refreshKey }: PetHitTestSource): boolean {
+export interface PetHitTest {
+  /** What the main was last told: the window receives the mouse while the pointer is over the Jobu. */
+  readonly interactive: boolean;
+  /** Is the Jobu (the drawing by its alpha, or anything marked `data-hit`) under this point of the page? */
+  readonly isHit: (clientX: number, clientY: number) => boolean;
+}
+
+export function usePetHitTest({ figure, arts, art, size, refreshKey }: PetHitTestSource): PetHitTest {
   const [interactive, setInteractive] = useState(false);
   /** What the main knows: the window is born ignoring the mouse. */
   const sentRef = useRef(false);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const maskRef = useRef<AlphaMask | null>(null);
 
+  const isHit = useCallback(
+    (clientX: number, clientY: number): boolean => {
+      // Something marked `data-hit` is part of the Jobu.
+      if (document.elementFromPoint(clientX, clientY)?.closest('[data-hit]')) return true;
+      const box = figure.current;
+      return box !== null && isOpaqueAt(maskRef.current, box.getBoundingClientRect(), clientX, clientY);
+    },
+    [figure],
+  );
+
   const decide = useCallback(() => {
     const pointer = pointerRef.current;
-    let hit = false;
-    if (pointer !== null) {
-      // Something marked `data-hit` (the badge now; the bubble and the list later) is part of the Jobu.
-      if (document.elementFromPoint(pointer.x, pointer.y)?.closest('[data-hit]')) hit = true;
-      else {
-        const box = figure.current;
-        if (box !== null) hit = isOpaqueAt(maskRef.current, box.getBoundingClientRect(), pointer.x, pointer.y);
-      }
-    }
+    const hit = pointer !== null && isHit(pointer.x, pointer.y);
     if (hit === sentRef.current) return;
     sentRef.current = hit;
     setInteractive(hit);
     window.donel.pet.setInteractive(hit);
-  }, [figure]);
+  }, [isHit]);
 
   // The pointer: the forwarded `mousemove` while the window ignores the mouse, the real one while it does not.
   useEffect(() => {
@@ -76,7 +88,7 @@ export function usePetHitTest({ figure, arts, art, size, refreshKey }: PetHitTes
     };
   }, [decide]);
 
-  // A badge (or a bubble, later) that shows up under a pointer that does not move changes the answer too.
+  // A badge, a bubble or a list that shows up under a pointer that does not move changes the answer too.
   useEffect(() => {
     decide();
   }, [refreshKey, decide]);
@@ -129,5 +141,5 @@ export function usePetHitTest({ figure, arts, art, size, refreshKey }: PetHitTes
     };
   }, [art, arts, size, decide]);
 
-  return interactive;
+  return { interactive, isHit };
 }

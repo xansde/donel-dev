@@ -191,13 +191,13 @@ e nenhum aviso do Windows sai.
 - [x] T038 [US3] `pet-service.ts`:
   - `pet:click` e `pet:open` → `restore`/`show`/`focus` da principal e `app:activate-session`;
   - reserva `setAlwaysOnTop` liga e desliga se o foco falhar (R7, isolada numa função).
-- [ ] T039 [US3] Lista no `PetApp.tsx`:
+- [x] T039 [US3] Lista no `PetApp.tsx`:
   - itens com nome e rótulo de espera, clique → `pet.open`;
   - `pet.setListOpen(true|false)`;
   - Esc e `blur` da janela fecham;
   - clique no balão → `open(target)` ou abre a lista.
 - [x] T040 [US3] C2 em `src/renderer/src/App.tsx`: `chat:focus-state` passa a mandar ptyIds e nomes por ptyId (`tabPtyMap`), e `chat:focus-pending` mapeia ptyId → `tab.id` antes do `setActiveTabId`.
-- [ ] T041 [US3] `tests/smoke/pet.spec.ts` parte 3:
+- [x] T041 [US3] `tests/smoke/pet.spec.ts` parte 3:
   - clique no desenho com uma esperando → a principal fica visível e a aba ativa;
   - com duas esperando, a lista mostra duas e o clique na segunda ativa a aba dela.
 

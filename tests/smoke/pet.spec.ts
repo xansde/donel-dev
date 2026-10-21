@@ -11,15 +11,19 @@ import { launchClaudeTab, openFreeTerminalTab } from './helpers/ui';
 import { REPO_ROOT } from './repoUnderTest';
 import { createIsolatedUserDataDir } from './userDataIsolation';
 
-// 015-jobu-pet, T029 (US1) and T035 (US2) - smoke of the Jobu's face, badge and bubble, against the FAKE
-// `claude` (never the real CLI). The pet is a second window of the same app: the main window is still
+// 015-jobu-pet, T029 (US1), T035 (US2) and T041 (US3) - smoke of the Jobu's face, badge, bubble and clicks,
+// against the FAKE `claude` (never the real CLI). The pet is a second window of the same app: the main window is still
 // `firstWindow()` (R21) and the pet is found by its URL, which ends in `#pet`. What the test reads is the
 // `data-*` surface of the pet root (`data-pose` = the LOGICAL pose, `data-badge`, `data-bubble`,
 // `data-interactive`...), which mirrors the view.
 //
 // The scenario `waiting-turn.json` holds the turn of the prompt `pedido` for 9 s before the `Stop` and the
 // one of `rapido` for 6 s: time to move the owner to another tab and minimize the Donel. Test tab names
-// are `atlas` and `beacon` (never the real project name: the fence in tests/smoke-project-name.test.ts).
+// are `atlas`, `beacon` and `vega` (never the real project name: the fence in tests/smoke-project-name.test.ts).
+//
+// The mouse is the one of Playwright, which reaches the page straight through the debugger: it proves what
+// the page does with a click and what it asks of the main, not the OS-level click-through of the
+// transparent window (that one needs a real mouse: `SetCursorPos` does not feed the hook of Electron).
 //
 // Two blocks, two apps: the first one with the chat off (the semaphore alone drives the Jobu) and the
 // second with the chat on (a pending carries its kind and a Windows notification could be raised).
@@ -87,6 +91,30 @@ async function sendPrompt(text: string): Promise<void> {
   await pane.click();
   await main.keyboard.type(text);
   await main.keyboard.press('Enter');
+}
+
+/** The state of the Donel window as the OS sees it, from the main process. */
+async function donelWindowState(): Promise<{ minimized: boolean; visible: boolean; focused: boolean }> {
+  return launched.app.evaluate(({ BrowserWindow }) => {
+    const donel = BrowserWindow.getAllWindows().find((win) => !win.webContents.getURL().endsWith('#pet'));
+    if (donel === undefined) throw new Error('the main window is gone');
+    return { minimized: donel.isMinimized(), visible: donel.isVisible(), focused: donel.isFocused() };
+  });
+}
+
+/** A point on the chest of the drawing: inside the Jobu in every pose, and the one the click test turns the window interactive on. */
+async function chestPoint(): Promise<{ x: number; y: number }> {
+  const box = await pet.getByTestId('pet-figure').boundingBox();
+  if (box === null) throw new Error('the drawing has no box');
+  return { x: box.x + box.width / 2, y: box.y + box.height * 0.8 };
+}
+
+/** Moves the mouse onto the Jobu (waiting for the window to take it) and clicks. */
+async function clickTheJobu(): Promise<void> {
+  const chest = await chestPoint();
+  await pet.mouse.move(chest.x, chest.y);
+  await expect(root()).toHaveAttribute('data-interactive', 'true');
+  await pet.mouse.click(chest.x, chest.y);
 }
 
 /** The owner got the Donel focused again and looks at `name`: whatever waits on it is seen. */
@@ -292,6 +320,117 @@ test.describe('o Jobu sem o chat', () => {
     await lookAt('atlas');
     await expect(root()).not.toHaveAttribute('data-badge', { timeout: 10_000 });
   });
+
+  test('T041 - a click on the drawing, with one session waiting, brings the Donel back to the front on its tab @pet', async () => {
+    test.setTimeout(180_000);
+    await ensureSession('atlas');
+    await ensureSession('beacon');
+
+    // `atlas` ends a turn out of sight with the Donel minimized: exactly one waiting, and a bubble about it.
+    await tabNamed('atlas').click();
+    await sendPrompt('rapido');
+    await expect(root()).toHaveAttribute('data-pose', 'reading', { timeout: 15_000 });
+    await tabNamed('beacon').click();
+    await setDonelWindow('minimized');
+    await expect(root()).toHaveAttribute('data-badge', '1', { timeout: 40_000 });
+    await expect(root()).toHaveAttribute('data-bubble', 'atlas · terminou');
+    expect(await donelWindowState()).toMatchObject({ minimized: true });
+
+    await clickTheJobu();
+
+    // The Donel is back (restored, visible) and the tab in front is the one that waited (FR-022). The click also
+    // dismisses the bubble: it has served.
+    await expect.poll(async () => (await donelWindowState()).minimized, { timeout: 10_000, message: 'the Donel stayed minimized' }).toBe(false);
+    expect(await donelWindowState()).toMatchObject({ visible: true });
+    await expect(tabNamed('atlas')).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+    await expect(root()).not.toHaveAttribute('data-bubble', { timeout: 5_000 });
+
+    // Whether the OS gave the focus is its decision (the foreground lock): it is recorded, and the owner looks at the tab.
+    test.info().annotations.push({ type: 'donel-focused-after-click', description: String((await donelWindowState()).focused) });
+    await lookAt('atlas');
+    await expect(root()).not.toHaveAttribute('data-badge', { timeout: 10_000 });
+  });
+
+  test('T041 - with two waiting a click opens the list (the oldest on top); Esc or another window taking the focus closes it; a click on the second item brings its tab @pet', async () => {
+    test.setTimeout(240_000);
+    await ensureSession('atlas');
+    await ensureSession('beacon');
+    await ensureSession('vega');
+
+    // `atlas` and then `beacon` end a turn out of sight; the owner is on `vega`, with the Donel minimized.
+    await tabNamed('atlas').click();
+    await sendPrompt('rapido');
+    await main.waitForTimeout(1_200);
+    await tabNamed('beacon').click();
+    await sendPrompt('rapido');
+    await main.waitForTimeout(1_200);
+    await tabNamed('vega').click();
+    await setDonelWindow('minimized');
+    await expect(root()).toHaveAttribute('data-badge', '2', { timeout: 40_000 });
+    await expect(root()).toHaveAttribute('data-list', 'closed');
+
+    // One click opens the list, and nothing is brought to the front: the list belongs to the screen (FR-023).
+    await clickTheJobu();
+    const list = pet.getByTestId('pet-list');
+    await expect(list).toBeVisible();
+    await expect(root()).toHaveAttribute('data-list', 'open');
+    expect((await donelWindowState()).minimized).toBe(true);
+    const items = pet.getByTestId('pet-list-item');
+    await expect(items).toHaveCount(2);
+    await expect(items.nth(0)).toContainText('atlas'); // the oldest wait on top
+    await expect(items.nth(1)).toContainText('beacon');
+    await expect(items.nth(0)).toContainText(/agora|há \d+ min/);
+
+    // It sits above the drawing, inside the window, anchored to its right edge, and it is something the mouse can take.
+    const figure = await pet.getByTestId('pet-figure').boundingBox();
+    const box = await list.boundingBox();
+    const viewport = await pet.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    if (figure === null || box === null) throw new Error('the drawing or the list has no box');
+    expect(box.y + box.height).toBeLessThanOrEqual(figure.y + 1);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+    expect(box.x + box.width).toBeCloseTo(figure.x + figure.width, 0);
+    await pet.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(root()).toHaveAttribute('data-interactive', 'true');
+
+    // Esc closes it and does nothing else.
+    await pet.keyboard.press('Escape');
+    await expect(root()).toHaveAttribute('data-list', 'closed');
+    await expect(list).toHaveCount(0);
+    expect((await donelWindowState()).minimized).toBe(true);
+    await expect(tabNamed('vega')).toHaveAttribute('aria-selected', 'true');
+
+    // Clicking the Jobu again opens it, and the Jobu toggles it shut.
+    await clickTheJobu();
+    await expect(root()).toHaveAttribute('data-list', 'open');
+    await clickTheJobu();
+    await expect(root()).toHaveAttribute('data-list', 'closed');
+    await clickTheJobu();
+    await expect(root()).toHaveAttribute('data-list', 'open');
+
+    // Another window of the app taking the focus stands for "a click anywhere else": it closes the list too, and
+    // does nothing else (the tab in front stays `vega`). The page itself hears nothing of it (no DOM `blur`), so
+    // this is the main telling the screen (`pet:close-list`, from the `blur` of the window).
+    await setDonelWindow('focused');
+    await expect(root()).toHaveAttribute('data-list', 'closed', { timeout: 5_000 });
+    await expect(list).toHaveCount(0);
+    await expect(tabNamed('vega')).toHaveAttribute('aria-selected', 'true');
+    await setDonelWindow('minimized');
+    await clickTheJobu();
+    await expect(root()).toHaveAttribute('data-list', 'open');
+
+    // The second item leads to ITS tab (FR-023), and the list goes.
+    await items.nth(1).click();
+    await expect.poll(async () => (await donelWindowState()).minimized, { timeout: 10_000, message: 'the Donel stayed minimized' }).toBe(false);
+    await expect(tabNamed('beacon')).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+    await expect(root()).toHaveAttribute('data-list', 'closed');
+
+    // Clean up: the owner opens both.
+    await lookAt('atlas');
+    await lookAt('beacon');
+    await expect(root()).not.toHaveAttribute('data-badge', { timeout: 10_000 });
+  });
 });
 
 // With the chat on a pending is real: the semaphore turns `permission` and the hub then says what it is, and
@@ -361,6 +500,10 @@ test.describe('o Jobu com o chat ligado', () => {
     test.setTimeout(300_000);
     const composer = (): Locator => main.locator('[data-testid="chat-composer-input"]:visible');
     const send = async (text: string): Promise<void> => {
+      // The previous round must be over, or the message would only be queued.
+      await expect
+        .poll(() => main.evaluate(() => document.querySelector('[data-testid="working-footer"]')?.getAttribute('data-state') === 'working'), { timeout: 30_000 })
+        .toBe(false);
       await composer().fill(text);
       await composer().press('Enter');
     };
@@ -403,12 +546,24 @@ test.describe('o Jobu com o chat ligado', () => {
     await main.getByTestId('pending-answer').click();
     await expect(main.locator('[data-testid="pending-panel"]:visible')).toHaveCount(0, { timeout: 15_000 });
 
-    // 3. The Jobu hidden: the very same permission raises the notification again, without the command in it.
+    // 3. The Jobu hidden. With `atlas` in front and the Donel focused the owner is looking at it: no notification
+    //    (C2: the focus state speaks in ptyIds, so the main finds that the tab in front is the one of the pending).
     await setPetEnabled(false);
+    await lookAt('atlas');
+    await send('permitir olhando');
+    await expect(main.getByTestId('pending-permission')).toBeVisible({ timeout: 40_000 });
+    await main.waitForTimeout(1_500);
+    expect(readNotifications()).toEqual([]);
+    await main.getByTestId('pending-allow').click();
+    await expect(main.locator('[data-testid="pending-panel"]:visible')).toHaveCount(0, { timeout: 15_000 });
+
+    // ...and the very same permission with the owner elsewhere raises it again, titled with the name of the tab
+    // (not "Donel Dev") and without the command in it.
     await send('permitir de novo');
     await elsewhere.click();
     await expect.poll(() => readNotifications().length, { timeout: 40_000, message: 'the Windows notice did not come back with the Jobu hidden' }).toBe(1);
     const [notice] = readNotifications();
+    expect(notice?.title).toBe('atlas');
     expect(notice?.body).toBe(NOTIFICATION_BODY);
     expect(JSON.stringify(notice)).not.toContain('SEGREDO-JOBU');
     await answerAllow();

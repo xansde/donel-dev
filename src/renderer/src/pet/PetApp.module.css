@@ -135,7 +135,20 @@
   font-family: var(--font-ui);
   font-size: 13px;
   line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
   pointer-events: auto;
+}
+
+.bubble:hover {
+  filter: brightness(1.08);
+}
+
+.bubble:focus-visible {
+  outline: none;
+  box-shadow:
+    var(--focus-ring),
+    var(--shadow-modal);
 }
 
 /* The little tail that points at the drawing. */
@@ -205,4 +218,128 @@
   flex: none;
   margin-left: 0.4em;
   white-space: nowrap;
+}
+
+/*
+ * The list of who waits (FR-023), above the head like the bubble, under it when both are there. The tail
+ * belongs to the wrapper, because the list itself scrolls and would cut it. The window has about 193 px
+ * above the head (200 px of room, less the 10 px gap) for both: the list alone takes up to 188, and with the
+ * bubble over it (35 px and a 10 px gap) up to 142, which is still three whole items.
+ */
+.listWrap {
+  position: relative;
+  width: 276px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-modal);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  pointer-events: auto;
+}
+
+.listWrap::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  transform: rotate(45deg);
+}
+
+.popups[data-align='right'] .listWrap::after {
+  right: clamp(10px, calc(var(--stage-w) / 2 - 5px), calc(100% - 20px));
+}
+
+.popups[data-align='left'] .listWrap::after {
+  left: clamp(10px, calc(var(--stage-w) / 2 - 5px), calc(100% - 20px));
+}
+
+.popups[data-align='center'] .listWrap::after {
+  left: calc(50% - 5px);
+}
+
+/* With the list under it, the bubble does not point at the drawing: the list does. */
+.popups[data-both] .bubble::after {
+  display: none;
+}
+
+.list {
+  max-height: 188px;
+  padding: 6px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.popups[data-both] .list {
+  max-height: 142px;
+}
+
+.listTitle {
+  margin: 4px 8px 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover,
+.item:focus-visible {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.itemName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemAge {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Said to a screen reader, never drawn. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
