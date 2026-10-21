@@ -93,11 +93,11 @@ principal. Com `false`, nada muda no app.
   - a vista vai por `pet:view` só quando muda;
   - o handler de `config:setPetPrefs` aplica na hora e emite `pet:prefs-changed` à principal;
   - o serviço nasce depois do `ready-to-show` da principal (R21).
-- [ ] T021 `src/renderer/src/App.tsx`:
+- [x] T021 `src/renderer/src/App.tsx`:
   - efeito sempre ligado que manda `pet:tabs` (com `buildPetTabsPayload`, dedupe por JSON);
   - assina `app:activate-session` (`ptyId → tab.id` e `setActiveTabId`);
   - assina `pet:prefs-changed` e atualiza `appConfig.pet`.
-- [ ] T022 `src/renderer/src/Preferences.tsx` + handler em `App.tsx`:
+- [x] T022 `src/renderer/src/Preferences.tsx` + handler em `App.tsx`:
   - `Toggle` "Jobu na área de trabalho", com uma linha de apoio: "Avisa quando uma sessão termina ou espera você, e quando a conta muda.";
   - `data-testid="preferences-pet-toggle"`;
   - grava por `config.setPetPrefs`.

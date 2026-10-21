@@ -65,6 +65,8 @@ import {
   resolveSessionName,
 } from '../../shared/sessionName';
 import { sessionTabName } from '../../shared/sessions';
+// T021 (015-jobu-pet) — mapa aba <-> PTY e o payload de `pet:tabs` (puros, testados em tests/pet-tab-pty-map.test.ts).
+import { buildPetTabsPayload, tabPtyMap, type TabPtyMap } from '../../shared/pet/tabPtyMap';
 // Spec 010 / batch B6 — o Modo Dev continua sendo o mapa; a fonte dele passou
 // a ser o STORE (`esteiraMapView.ts`, puro e testado). Aqui fica só o
 // encanamento com PTY/IPC — nenhuma decisão de domínio, nenhuma frase de estado.
@@ -1127,6 +1129,11 @@ export function App(): React.JSX.Element {
     void window.donel.config.setChatPrefs({ focusMode }).then(setAppConfig).catch(() => undefined);
   };
 
+  // T022 (015-jobu-pet) — interruptor "Jobu na área de trabalho": liga/desliga a janela do pet na hora, sem reiniciar.
+  const handleChangePetEnabled = (enabled: boolean): void => {
+    void window.donel.config.setPetPrefs({ enabled }).then(setAppConfig).catch(() => undefined);
+  };
+
   /** T056 — troca a vista da aba (Chat | Terminal). A sessão e o PTY seguem os mesmos; só muda o que se vê. */
   const setTabView = (tabId: string, view: ChatViewMode): void => {
     updateTab(tabId, { view });
@@ -1934,6 +1941,44 @@ export function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatEnabled]);
 
+  // T021 (015-jobu-pet, R4) — o Jobu vive no main e só conhece ptyIds: este efeito diz a ele quais abas
+  // `claude` têm PTY, o nome que cada uma mostra e qual está na frente. É SEMPRE ligado (com ou sem chat,
+  // com o pet ligado ou não): o main guarda o último estado, então ligar o pet depois já o encontra pronto.
+  // Dedupe por JSON: o efeito reavalia a cada tique do semáforo, o canal só quando algo mudou de verdade.
+  // `chatPtyIds` guarda o ÚLTIMO ptyId da aba (a conversa segue legível depois da saída), mas aba com o
+  // processo encerrado (`tabExits`) não tem PTY: o ptyId dela está morto e não conta como sessão.
+  const petTabPtyMapRef = useRef<TabPtyMap>(tabPtyMap([], () => null));
+  const lastPetTabsJsonRef = useRef<string | null>(null);
+  useEffect(() => {
+    const ptyIdOf = (tabId: string): string | null => (tabExits[tabId] === undefined ? (chatPtyIds[tabId] ?? null) : null);
+    petTabPtyMapRef.current = tabPtyMap(tabs, ptyIdOf);
+    const payload = buildPetTabsPayload(tabs, ptyIdOf, resolveTabName, activeTabId);
+    const json = JSON.stringify(payload);
+    if (json === lastPetTabsJsonRef.current) return;
+    lastPetTabsJsonRef.current = json;
+    window.donel.pet.sendTabs(payload);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs, chatPtyIds, tabExits, activeTabId, appConfig?.sessionNames]);
+
+  // T021 — o Jobu manda "ativa a aba desta sessão" (o main já trouxe a janela à frente). O mapa é o do último
+  // `pet:tabs` enviado; uma sessão que já não está na lista (a aba fechou no meio do caminho) não faz nada.
+  useEffect(() => {
+    return window.donel.pet.onActivateSession(({ ptyId }) => {
+      const tabId = petTabPtyMapRef.current.tabIdOf(ptyId);
+      if (tabId !== null) setActiveTabId(tabId);
+    });
+  }, []);
+
+  // T021 (R19) — o main mudou `pet.enabled` (Preferências ou, depois, "Esconder"): o renderer não tem push de
+  // config, então este aviso mantém `appConfig.pet` em dia (o interruptor das Preferências e a supressão dos toasts).
+  useEffect(() => {
+    return window.donel.pet.onPrefsChanged(({ enabled }) => {
+      setAppConfig((previous) =>
+        previous === null || previous.pet.enabled === enabled ? previous : { ...previous, pet: { ...previous.pet, enabled } },
+      );
+    });
+  }, []);
+
   // FIX (feedback E2E rodada 3) — painel colapsável: "fecha ao... Esc".
   // Efeito próprio (não reaproveita o listener de atalhos Ctrl+1..9/Ctrl+Tab
   // acima — aquele é `capture` + exige Ctrl; Esc aqui é global e só importa
@@ -2683,6 +2728,8 @@ export function App(): React.JSX.Element {
         chatEnabled={appConfig?.chat.enabled ?? false}
         chatRestartPending={(appConfig?.chat.enabled ?? false) !== chatEnabled}
         onChangeChatEnabled={handleChangeChatEnabled}
+        petEnabled={appConfig?.pet.enabled ?? false}
+        onChangePetEnabled={handleChangePetEnabled}
       />
 
       {/* Spec 010 / N7→F25 (D1) — o mapa de nós. Renderizado condicionalmente
