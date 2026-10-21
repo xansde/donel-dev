@@ -116,7 +116,7 @@ describe('waiting[]: who waits for the owner, the oldest first', () => {
   });
 
   it('shows the tab name as it is: the screen shortens it, the view does not', () => {
-    const name = 'revisão do plano de migração das parcelas do CUB';
+    const name = 'a tab name so long that only the screen can decide where to cut it';
     const state = build([{ at: 0, sessions: [watched('a', 'working', name)] }, { at: SEC, sessions: [watched('a', 'waiting', name)] }]);
     expect(toPetView(state, T0 + MIN, UI).waiting[0]?.name).toBe(name);
   });
@@ -125,9 +125,9 @@ describe('waiting[]: who waits for the owner, the oldest first', () => {
     const state = build([
       { at: 0, sessions: [watched('a', 'working', 'novo')] },
       { at: SEC, sessions: [watched('a', 'waiting', 'novo')] },
-      { at: MIN, sessions: [watched('a', 'waiting', 'spotsys')] },
+      { at: MIN, sessions: [watched('a', 'waiting', 'vega')] },
     ]);
-    expect(toPetView(state, T0 + 2 * MIN, UI).waiting.map((entry) => entry.name)).toEqual(['spotsys']);
+    expect(toPetView(state, T0 + 2 * MIN, UI).waiting.map((entry) => entry.name)).toEqual(['vega']);
   });
 
   it('every entry is only a session id, a name and an age: nothing of the conversation (FR-018)', () => {
