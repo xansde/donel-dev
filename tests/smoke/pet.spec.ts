@@ -431,6 +431,44 @@ test.describe('o Jobu sem o chat', () => {
     await lookAt('beacon');
     await expect(root()).not.toHaveAttribute('data-badge', { timeout: 10_000 });
   });
+
+  test('T035 - a session that ends by itself: the bubble "vega · encerrou", sad, and a click on it leads to the tab that ended @pet', async () => {
+    test.setTimeout(120_000);
+    await ensureSession('vega');
+    await ensureSession('beacon');
+
+    // The terminal of `vega` has the keyboard, then the Donel is minimized: the owner is not looking, and keys
+    // still reach the page through the debugger. `/exit` makes the fake end its process by itself (no tab is closed).
+    await tabNamed('vega').click();
+    const pane = main.locator('[data-testid="terminal-pane"]:visible');
+    await expect(async () => {
+      expect(await pane.innerText()).toContain('shortcuts');
+    }).toPass({ timeout: 30_000 });
+    await pane.click();
+    await setDonelWindow('minimized');
+    await main.keyboard.type('/exit');
+    // The slash menu of the fake is still drawing for a moment, and an Enter that lands on it only completes the
+    // command: let it settle, send, and if the process is still there a second later send once more (a dead
+    // terminal ignores it).
+    await main.waitForTimeout(400);
+    await main.keyboard.press('Enter');
+    await main.waitForTimeout(1_500);
+    if ((await root().getAttribute('data-bubble')) === null) await main.keyboard.press('Enter');
+
+    await expect(root()).toHaveAttribute('data-bubble', 'vega · encerrou', { timeout: 20_000 });
+    await expect(root()).toHaveAttribute('data-pose', 'sad');
+    await expect(root()).toHaveAttribute('data-art', 'sad');
+    await expect(root()).not.toHaveAttribute('data-badge'); // nothing is owed to a process that is gone
+
+    // Clicking the bubble leads to the tab of the session that ended: the one in front was `vega`'s own, so the
+    // owner moves first, to be sure that it is the click that brings it back.
+    await tabNamed('beacon').click();
+    await expect(tabNamed('beacon')).toHaveAttribute('aria-selected', 'true');
+    await pet.getByTestId('pet-bubble').click();
+    await expect.poll(async () => (await donelWindowState()).minimized, { timeout: 10_000, message: 'the Donel stayed minimized' }).toBe(false);
+    await expect(tabNamed('vega')).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+    await expect(root()).not.toHaveAttribute('data-bubble', { timeout: 5_000 });
+  });
 });
 
 // With the chat on a pending is real: the semaphore turns `permission` and the hub then says what it is, and
@@ -452,6 +490,15 @@ const CHAT_SCENARIO = {
         { type: 'wait', ms: 4000 },
         { type: 'ask', questions: [{ question: 'Which db?', header: 'DB', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multiSelect: false }] },
         { type: 'assistant', text: 'Resposta recebida.' },
+        { type: 'hook', event: 'Stop' },
+      ],
+    },
+    {
+      match: 'aprovar',
+      steps: [
+        { type: 'wait', ms: 4000 },
+        { type: 'plan', plan: '# Plano\n- passo um\n- passo dois', planFilePath: 'C:/x/plan.md' },
+        { type: 'assistant', text: 'Executando o plano.' },
         { type: 'hook', event: 'Stop' },
       ],
     },
@@ -546,7 +593,18 @@ test.describe('o Jobu com o chat ligado', () => {
     await main.getByTestId('pending-answer').click();
     await expect(main.locator('[data-testid="pending-panel"]:visible')).toHaveCount(0, { timeout: 15_000 });
 
-    // 3. The Jobu hidden. With `atlas` in front and the Donel focused the owner is looking at it: no notification
+    // 3. A plan: the same refinement, into "plano para aprovar".
+    await send('aprovar o plano');
+    await elsewhere.click();
+    await expect(root()).toHaveAttribute('data-bubble', 'atlas · plano para aprovar', { timeout: 40_000 });
+    await pet.waitForTimeout(1_500);
+    expect(readNotifications()).toEqual([]);
+    await atlas.click();
+    await expect(main.getByTestId('pending-plan')).toBeVisible({ timeout: 15_000 });
+    await main.getByTestId('pending-plan-approve').click();
+    await expect(main.locator('[data-testid="pending-panel"]:visible')).toHaveCount(0, { timeout: 15_000 });
+
+    // 4. The Jobu hidden. With `atlas` in front and the Donel focused the owner is looking at it: no notification
     //    (C2: the focus state speaks in ptyIds, so the main finds that the tab in front is the one of the pending).
     await setPetEnabled(false);
     await lookAt('atlas');
