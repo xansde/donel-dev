@@ -64,6 +64,9 @@ a fonte da página e o lugar onde o resultado fica registrado.
 | 5.7 | Botão direito → Voltar ao canto | Volta à posição padrão |
 | 5.8 | Esconder e religar pelas Preferências | Some e volta na posição lembrada, já com o estado atual |
 | 5.9 | Fechar o Donel | O Jobu sai junto |
+| 5.10 | Botão direito → Tamanho → Grande; depois Ctrl + roda sobre ele | Cresce para cima sem sair do lugar; a roda ajusta aos poucos; ao reabrir o Donel, o tamanho continua |
+| 5.11 | Com o Jobu na tela, tirar um print de tela inteira (Win + Shift + S) e compartilhar a tela numa chamada | O Jobu não aparece em nenhum dos dois; no lugar dele está o que fica atrás |
+| 5.12 | Botão direito → Liberar print por 1 minuto; tirar um print; esperar 1 minuto e tirar outro | O primeiro print mostra o Jobu; o segundo não; durante o minuto, o menu oferece "Bloquear print agora" |
 
 ## B6 — Vida (US6)
 
