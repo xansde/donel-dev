@@ -110,7 +110,7 @@ principal. Com `false`, nada muda no app.
 **Teste independente**: duas sessões, Donel minimizado; uma termina →
 impaciente com selo 1; abrir a aba → selo some.
 
-- [ ] T023 [P] [US1] `tests/pet-state.test.ts` (TDD, antes da T025):
+- [x] T023 [P] [US1] `tests/pet-state.test.ts` (TDD, antes da T025):
   - `idle` até o primeiro update (R2) e `error` como `done`;
   - entrada em `waiting`/`permission` com `waitingSince`;
   - "visto": ao nascer com a aba ativa e o Donel em foco, e na mudança de foco;
@@ -122,9 +122,9 @@ impaciente com selo 1; abrir a aba → selo some.
   - riso 2,5 s só por visita (fechar não ri);
   - waffle aos 20 min sereno, 8 s, uma vez por período;
   - `sleeping` sem sessões.
-- [ ] T024 [P] [US1] `tests/pet-view.test.ts`: `waiting[]` com a mais antiga primeiro e os rótulos `agora`, `há 1 min`, `há 12 min`, `há 2 h`, mais a forma da `PetView`.
-- [ ] T025 [US1] `src/shared/pet/petState.ts`: reducer `reducePet(state, input, now)` para sessões, foco e tick (ainda sem balões), com dedupe por estado (passa T023).
-- [ ] T026 [US1] `src/shared/pet/petView.ts`: `toPetView(state, now, ui)` com pose, selo, lista, `size`, `docked`, `align` e `silenced` (passa T024).
+- [x] T024 [P] [US1] `tests/pet-view.test.ts`: `waiting[]` com a mais antiga primeiro e os rótulos `agora`, `há 1 min`, `há 12 min`, `há 2 h`, mais a forma da `PetView`.
+- [x] T025 [US1] `src/shared/pet/petState.ts`: reducer `reducePet(state, input, now)` para sessões, foco e tick (ainda sem balões), com dedupe por estado (passa T023).
+- [x] T026 [US1] `src/shared/pet/petView.ts`: `toPetView(state, now, ui)` com pose, selo, lista, `size`, `docked`, `align` e `silenced` (passa T024).
 - [ ] T027 [US1] Sinais em `src/main/pet/pet-service.ts`:
   - `semaphoreManager.onUpdate` (ptyId sem update ainda conta `idle`);
   - `unregister`/saída;

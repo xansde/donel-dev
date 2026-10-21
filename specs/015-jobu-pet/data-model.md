@@ -31,7 +31,7 @@ Abas de terminal comum nunca entram na lista.
 | `accountSwitched` | `label`, `at` | troca de conta, pelo painel ou automática |
 | `sessionExited` | `ptyId`, `name`, `byUser`, `at` | a PTY saiu; `byUser = true` quando o dono fechou a aba |
 | `silence` | `until \| null` | Silenciar por 1 hora / Retomar avisos |
-| `tick` | `now` | relógio do main (1 s) |
+| `tick` | — | relógio do main (1 s); o instante vai à parte, no argumento `now` de `reducePet` |
 
 ## Estado interno (`PetState`)
 
@@ -59,15 +59,33 @@ aba):
 
 | De → para | Efeito |
 |---|---|
-| qualquer → `waiting` / `permission` | `waitingSince = now`, `seen = vistaAgora(aba)`; se não vista, evento `finished` ou `blocked` |
-| `waiting` → `permission` (ou muda `blockedKind`) | evento `blocked` se não vista; `waitingSince` mantém o original |
-| qualquer → `working` | `waitingSince = null`, `seen = false` |
+| qualquer outro estado → `waiting` / `permission` | `waitingSince = now`, `seen = vistaAgora(aba)`; se não vista, evento `finished` ou `blocked` (US2) |
+| `waiting` ↔ `permission` | sem evento (R3): a sessão já estava contada, então `waitingSince` e `seen` se mantêm. Um tipo que chega depois (`blockedKind`, por `pendingOpened`) só refina o balão (US2); não conta de novo |
+| o mesmo estado outra vez | nada muda (dedupe): nem `waitingSince`, nem `seen` |
+| qualquer → `working` / `done` (ou `idle`) | `waitingSince = null`, `seen = false` |
+| a aba aparece pela primeira vez já esperando (ex.: o pet foi ligado depois) | `waitingSince = now` e `seen = vistaAgora(aba)`, **sem evento**: ninguém a viu mudar. A idade da espera recomeça no momento em que o núcleo a conhece |
 | sai da lista (aba fechada) | registro removido, sem evento |
-| `sessionExited` com `byUser = false` | evento `ended` e registro removido |
+| `sessionExited` com `byUser = false` | evento `ended` e registro removido (US2) |
 
 `vistaAgora(aba) = focus.donelFocused && focus.activePtyId === aba`. A cada
 mudança de foco ou de sinal, toda sessão esperando e vista agora passa a
 `seen = true`.
+
+## Entradas do reducer
+
+`reducePet(state, input, now)` é puro e não muta `state`. O instante vem sempre
+no 3º argumento. As entradas:
+
+| Entrada | Quando |
+|---|---|
+| `sessions` | a lista **inteira** das abas vigiadas, a cada mudança de abas ou de sinal do semáforo; o reducer a compara com a anterior (quem sumiu foi fechado) |
+| `focus` | a aba ativa mudou ou o Donel ganhou/perdeu o foco |
+| `tick` | o relógio de 1 s |
+| `resume` | a janela do pet reabriu depois de um tempo sem relógio: riso, waffle, período sereno e balão recomeçam de agora; as esperas (com a idade real) ficam |
+| eventos avulsos | `accountSwitched`, `sessionExited`, `pendingOpened`, `silence` (US2, US4 e US5) |
+
+Depois de qualquer entrada, o reducer marca como vistas as esperas que o dono
+está olhando, decide o riso e atualiza o período sereno e o waffle.
 
 ## Derivados
 

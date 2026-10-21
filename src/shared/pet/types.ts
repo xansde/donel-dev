@@ -1,8 +1,8 @@
 // 015 (Jobu pet) - types of the pure core. Everything here is serializable and free of
 // Electron/React, so main, preload, renderer and vitest all import the same shapes.
-// Data model: specs/015-jobu-pet/data-model.md. The reducer (petState.ts), the bubble rules
-// (bubble.ts) and the view projection (petView.ts) arrive with the user stories; the shapes
-// they work on are fixed here.
+// Data model: specs/015-jobu-pet/data-model.md. The reducer (petState.ts) and the view projection
+// (petView.ts) are here since US1; the bubble rules (bubble.ts) arrive with US2. The shapes they
+// work on are fixed in this file.
 
 // ---------------------------------------------------------------------------
 // Poses
@@ -74,6 +74,12 @@ export type PetAlign = 'left' | 'center' | 'right';
  */
 export type PetSemaphore = 'idle' | 'working' | 'waiting' | 'permission' | 'done';
 
+/**
+ * What the session semaphore publishes (`PublicSemaphoreState`, src/main/session-semaphore-manager.ts):
+ * the five states of the tab icon. `toPetSemaphore` (petState.ts) turns it into a `PetSemaphore`.
+ */
+export type SemaphorePublicState = 'working' | 'waiting' | 'permission' | 'error' | 'done';
+
 /** The kind of an open pending, when the chat knows it (R3). `null` + `permission` = "quer permissão". */
 export type BlockedKind = 'question' | 'permission' | 'plan';
 
@@ -121,12 +127,39 @@ export interface SilenceEvent {
   readonly until: number | null;
 }
 
+/** The 1 s clock of the main. The instant itself is the `now` argument of `reducePet`. */
 export interface TickEvent {
   readonly type: 'tick';
-  readonly now: number;
 }
 
 export type PetEvent = AccountSwitchedEvent | SessionExitedEvent | PendingOpenedEvent | SilenceEvent | TickEvent;
+
+/**
+ * The tabs the pet watches, as a whole: every call carries ALL of them, so the reducer compares it
+ * with what it knows. A tab missing from it was closed (no event, FR-009); a ptyId it has never seen
+ * is a new session.
+ */
+export interface SessionsInput {
+  readonly type: 'sessions';
+  readonly sessions: readonly WatchedSession[];
+}
+
+export interface FocusInput {
+  readonly type: 'focus';
+  readonly focus: FocusSignal;
+}
+
+/**
+ * The pet window opened again after a while with no clock (the pet was turned off): what depended on
+ * time that kept running without it (laugh, waffle, serene period, bubble) starts from now. What the
+ * owner still owes (the waiting sessions, with their real age) is kept.
+ */
+export interface ResumeInput {
+  readonly type: 'resume';
+}
+
+/** Everything `reducePet` takes. US2 and US5 give the events of `PetEvent` other than `tick` their effect. */
+export type PetInput = SessionsInput | FocusInput | ResumeInput | PetEvent;
 
 // ---------------------------------------------------------------------------
 // Internal state
