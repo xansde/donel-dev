@@ -186,8 +186,8 @@ e nenhum aviso do Windows sai.
 **Objetivo**: o clique leva à sessão certa.
 **Teste independente**: uma sessão → um clique; três → lista.
 
-- [ ] T036 [P] [US3] `tests/pet-click.test.ts`: `decideClick(view)` dá `session(ptyId)` com uma esperando, `list` com várias e `donel` com nenhuma; o alvo do balão vem de `bubble.target`.
-- [ ] T037 [US3] `src/shared/pet/click.ts` (passa T036).
+- [x] T036 [P] [US3] `tests/pet-click.test.ts`: `decideClick(view)` dá `session(ptyId)` com uma esperando, `list` com várias e `donel` com nenhuma; o alvo do balão vem de `bubble.target`.
+- [x] T037 [US3] `src/shared/pet/click.ts` (passa T036).
 - [ ] T038 [US3] `pet-service.ts`:
   - `pet:click` e `pet:open` → `restore`/`show`/`focus` da principal e `app:activate-session`;
   - reserva `setAlwaysOnTop` liga e desliga se o foco falhar (R7, isolada numa função).
