@@ -45,6 +45,61 @@
   top: var(--pet-room);
   left: var(--pet-room);
   filter: drop-shadow(0 0 0.6px rgb(206 220 244 / 0.85)) drop-shadow(0 0 2px rgb(140 170 220 / 0.4)) drop-shadow(0 2px 5px rgb(0 0 0 / 0.5));
+  /* A click takes the owner to the session; holding it drags the Jobu (the cursor says "grabbing" while it does). */
+  cursor: pointer;
+}
+
+/*
+ * US6 (FR-030): the light sway at rest. It moves the pictures INSIDE the figure, so it composes with the hop of the
+ * figure itself (the hop is a Web Animation on `.figure`). It goes from 0 to +4 px DOWN (`--sway`, set on the stage and
+ * proportional to the size), never up: the base of the drawing sits on the taskbar edge, and a sway that lifted it would
+ * show a gap between the Jobu and the bar. The part that goes below the edge is the transparent padding of the PNG and
+ * the clip of `.clip`. Asleep he is nearly still (1 to 2 px), and the system asking for less motion gets none.
+ */
+.sway {
+  position: absolute;
+  inset: 0;
+  animation: sway 3.5s ease-in-out infinite;
+}
+
+.root[data-pose='sleeping'] .sway {
+  animation: sway-sleep 6.5s ease-in-out infinite;
+}
+
+@keyframes sway {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(var(--sway, 4px));
+  }
+}
+
+@keyframes sway-sleep {
+  0%,
+  100% {
+    transform: translateY(calc(var(--sway, 4px) * 0.25));
+  }
+
+  50% {
+    transform: translateY(calc(var(--sway, 4px) * 0.5));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sway,
+  .root[data-pose='sleeping'] .sway {
+    animation: none;
+  }
+}
+
+/* While the owner holds the Jobu the whole screen says so, whatever is under the pointer. */
+.root[data-dragging='true'],
+.root[data-dragging='true'] .figure,
+.root[data-dragging='true'] .badge {
+  cursor: grabbing;
 }
 
 /* Every pose is stacked and only the current one shows: switching poses never flickers while an image decodes. */
@@ -78,6 +133,7 @@
   font-weight: var(--weight-semibold);
   line-height: 22px;
   text-align: center;
+  cursor: pointer;
   box-shadow:
     0 0 0 2px var(--bg-app),
     0 3px 10px rgb(0 0 0 / 0.45);

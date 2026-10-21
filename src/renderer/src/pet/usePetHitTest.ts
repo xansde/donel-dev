@@ -12,7 +12,7 @@ import { isOpaqueAt, loadImage, maskSizeFor, readAlphaMask, type AlphaMask } fro
  * and the pose on screen goes first so a pose change finds its mask ready. A new size throws the masks
  * away (they are a few KB each) and reads them again from the pictures, which are decoded only once.
  *
- * Returns what was last sent to the main (`interactive`: `data-interactive` mirrors it, which is also how
+ * `locked` holds the window interactive for the whole of a drag (US5). Returns what was last sent to the main (`interactive`: `data-interactive` mirrors it, which is also how
  * the smoke proves the whole chain - position, scale, alpha - without a real mouse) and `isHit`, the same
  * question for any point: a click handler asks it so a click on the transparent corner of the drawing's
  * box is not taken for a click on the Jobu.
@@ -35,6 +35,12 @@ export interface PetHitTestSource {
   readonly size: number | null;
   /** Changes whenever what is under a pointer that does not move changes (a `data-hit` element came or went). */
   readonly refreshKey: string;
+  /**
+   * While the owner drags the Jobu the window is held interactive whatever is under the pointer: the window moves
+   * under the pointer a moment after it, and a pointer that is for one frame over the transparent void would give
+   * the mouse back to the window below and lose the end of the drag.
+   */
+  readonly locked: boolean;
 }
 
 export interface PetHitTest {
@@ -44,12 +50,14 @@ export interface PetHitTest {
   readonly isHit: (clientX: number, clientY: number) => boolean;
 }
 
-export function usePetHitTest({ figure, arts, art, size, refreshKey }: PetHitTestSource): PetHitTest {
+export function usePetHitTest({ figure, arts, art, size, refreshKey, locked }: PetHitTestSource): PetHitTest {
   const [interactive, setInteractive] = useState(false);
   /** What the main knows: the window is born ignoring the mouse. */
   const sentRef = useRef(false);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const maskRef = useRef<AlphaMask | null>(null);
+  const lockedRef = useRef(false);
+  lockedRef.current = locked;
 
   const isHit = useCallback(
     (clientX: number, clientY: number): boolean => {
@@ -63,7 +71,7 @@ export function usePetHitTest({ figure, arts, art, size, refreshKey }: PetHitTes
 
   const decide = useCallback(() => {
     const pointer = pointerRef.current;
-    const hit = pointer !== null && isHit(pointer.x, pointer.y);
+    const hit = lockedRef.current || (pointer !== null && isHit(pointer.x, pointer.y));
     if (hit === sentRef.current) return;
     sentRef.current = hit;
     setInteractive(hit);
@@ -88,10 +96,11 @@ export function usePetHitTest({ figure, arts, art, size, refreshKey }: PetHitTes
     };
   }, [decide]);
 
-  // A badge, a bubble or a list that shows up under a pointer that does not move changes the answer too.
+  // A badge, a bubble or a list that shows up under a pointer that does not move changes the answer too, and so
+  // does the end of a drag (the lock comes off and the pointer is judged again).
   useEffect(() => {
     decide();
-  }, [refreshKey, decide]);
+  }, [refreshKey, locked, decide]);
 
   // The masks. A pose that changes under a pointer that does not move changes the answer as well.
   useEffect(() => {

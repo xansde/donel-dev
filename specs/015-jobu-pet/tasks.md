@@ -214,16 +214,16 @@ e nenhum aviso do Windows sai.
 ## Phase 7: User Story 5 — Convivência (P2)
 
 - [x] T045 [P] [US5] `tests/pet-fullscreen-state.test.ts`: parser da saída do auxiliar (`2|3|4` → oculto, resto → livre; lixo → livre).
-- [ ] T046 [US5] Arraste:
+- [x] T046 [US5] Arraste:
   - `src/renderer/src/pet/usePetDrag.ts`: limiar de 4 px, `dragStart`/`dragMove`/`dragEnd` com coordenadas de tela, sem `-webkit-app-region`;
   - `pet-service.ts`: move a janela, encaixa ao soltar, grava `pet.placement` e recalcula `docked` e `align`;
   - esmaecimento da base (máscara nos 18% de baixo) quando `!docked`, no `PetApp.module.css`.
-- [ ] T047 [US5] Menu nativo em `pet-service.ts`:
+- [x] T047 [US5] Menu nativo em `pet-service.ts`:
   - Silenciar por 1 hora / Retomar avisos;
   - Esconder (`pet.enabled = false`, destrói a janela, `pet:prefs-changed`);
   - Voltar ao canto (`placement = null`);
   - submenu Tamanho (presets com marca no atual).
-- [ ] T048 [US5] Redimensionar (FR-033):
+- [x] T048 [US5] Redimensionar (FR-033):
   - Ctrl + roda sobre o desenho → `pet.resizeStep(±1)`;
   - `pet-service.ts` limita o tamanho, recalcula os limites ancorados na base (`windowBoundsFor`), grava `pet.size` e manda a vista.
 - [x] T049 [US5] Eventos de `screen` (`display-added`, `display-removed`, `display-metrics-changed`) → revalidam a posição (FR-005) e o `docked`.
@@ -254,11 +254,11 @@ e nenhum aviso do Windows sai.
 
 ## Phase 8: User Story 6 — Vida (P3)
 
-- [ ] T052 [US6] `PetApp.module.css`:
+- [x] T052 [US6] `PetApp.module.css`:
   - balanço leve em repouso (±2 px, 3,5 s), quase parado em `sleeping`;
   - pulinho (classe ligada ao `bubble.id`);
   - `prefers-reduced-motion` desliga os dois.
-- [ ] T053 [US6] Piscar em `PetApp.tsx`: com `blink-neutral`/`blink-impatient` disponíveis e pose `neutral`/`impatient`, troca o quadro por 120 ms a cada 4–7 s; sem a arte, não pisca.
+- [x] T053 [US6] Piscar em `PetApp.tsx`: com `blink-neutral`/`blink-impatient` disponíveis e pose `neutral`/`impatient`, troca o quadro por 120 ms a cada 4–7 s; sem a arte, não pisca.
 
 ---
 
