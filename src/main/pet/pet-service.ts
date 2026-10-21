@@ -1,19 +1,26 @@
-// T020 (015-jobu-pet, R1/R14/R19/R21) - the pet in the main process. It owns the window of the pet
-// and the 1 s tick, takes the signals the main already has (the tabs the renderer reports, the focus
-// of the main window) and sends the view to the pet window only when it changes. Electron stays out
-// of this file: the window, the screen, the clock, the timer, the config and the main window all
-// come in through `PetServiceDeps`, so the whole life cycle is tested with fakes.
+// T020/T027 (015-jobu-pet, R1/R2/R14/R19/R21) - the pet in the main process. It owns the window of the
+// pet and the 1 s tick, takes the signals the main already has - the tabs the renderer reports, the
+// focus of the main window, what the session semaphore says of each tab - feeds them to the pure core
+// (src/shared/pet/petState.ts) and sends the view to the pet window only when it changes. Electron stays
+// out of this file: the window, the screen, the clock, the timer, the config and the main window all come
+// in through `PetServiceDeps`, so the whole life cycle is tested with fakes.
 //
-// This phase (Foundational) opens and closes the window, runs the tick, keeps the signals and
-// answers the `pet:ready` handshake with a trivial view. The user stories plug in at the seams
-// marked "EXTENSION POINT": `buildView` (US1 swaps it for the reducer and `toPetView`), the signal
-// methods `onSessionExited` (US2), and the gesture handlers next to `handleInteractive` (US3, US5).
+// The core is fed ALWAYS, with the pet on or off: it is a handful of cheap reductions, and that way
+// turning the pet on finds the current state of the sessions (US5, scenario 9) with the real age of
+// every wait, instead of starting blind. What exists only while the pet is on is what costs: the
+// window, the tick and the sending of views. Turning it on (`enable`) tells the core to `resume`, so
+// the hours it spent without a clock do not turn into a waffle.
 //
-// With `pet.enabled = false` (the default) this service holds nothing: no window, no timer, and every
-// signal is stored and forgotten. The app behaves exactly as it did before the pet.
+// EXTENSION POINTS: `onSessionExited` gets its `byUser` meaning in US2 (the `ended` bubble); the gesture
+// handlers next to `handleInteractive` arrive with US3 and US5.
+//
+// With `pet.enabled = false` (the default) the app is the one of before the pet: no window, no timer,
+// no message to anybody.
 
 import type { PetPrefs } from '../../shared/config';
 import { PET_CHANNELS, type PetTabsPayload } from '../../shared/pet/ipc';
+import { createPetState, reducePet, toPetSemaphore } from '../../shared/pet/petState';
+import { toPetView } from '../../shared/pet/petView';
 import {
   alignFor,
   clampSize,
@@ -23,7 +30,19 @@ import {
   isPlacementVisible,
   windowBoundsFor,
 } from '../../shared/pet/placement';
-import type { FocusSignal, PetDisplay, PetPoint, PetRect, PetUi, PetView } from '../../shared/pet/types';
+import type {
+  FocusSignal,
+  PetDisplay,
+  PetInput,
+  PetPoint,
+  PetRect,
+  PetSemaphore,
+  PetState,
+  PetUi,
+  PetView,
+  SemaphorePublicState,
+  WatchedSession,
+} from '../../shared/pet/types';
 
 /** The clock of the pet (R14): one second is enough, the list shows waiting time in minutes. */
 export const PET_TICK_MS = 1000;
@@ -60,27 +79,10 @@ export interface CreatePetWindowOptions {
   readonly onClosed: () => void;
 }
 
-/** What a view is computed from: everything the service knows when the clock or a signal moves. */
-export interface PetViewInputs {
-  readonly tabs: PetTabsPayload;
-  readonly focus: FocusSignal;
-  readonly now: number;
-  /** Size, docking and alignment, derived from the placement. */
-  readonly ui: PetUi;
-}
-
-/** The view of this phase: asleep, nothing to report. The reducer and `toPetView` replace it (US1). */
-export function buildTrivialView(inputs: PetViewInputs): PetView {
-  return {
-    pose: 'sleeping',
-    badge: null,
-    bubble: null,
-    waiting: [],
-    docked: inputs.ui.docked,
-    align: inputs.ui.align,
-    silenced: false,
-    size: inputs.ui.size,
-  };
+/** What the semaphore manager publishes on every update (`SemaphoreUpdate`, src/main/session-semaphore-manager.ts): the service reads only these two. */
+export interface PetSemaphoreUpdate {
+  readonly ptyId: string;
+  readonly state: SemaphorePublicState;
 }
 
 export interface PetServiceDeps {
@@ -95,8 +97,6 @@ export interface PetServiceDeps {
   readonly now: () => number;
   readonly setInterval: (callback: () => void, ms: number) => unknown;
   readonly clearInterval: (handle: unknown) => void;
-  /** EXTENSION POINT (US1): defaults to the trivial view. */
-  readonly buildView?: (inputs: PetViewInputs) => PetView;
 }
 
 export interface PetService {
@@ -111,8 +111,20 @@ export interface PetService {
   /** `focus` / `blur` of the main window. */
   onMainFocusChanged(focused: boolean): void;
   /**
-   * EXTENSION POINT (US2, T032): a PTY exited, and whether the owner asked for it (C3). Nothing
-   * consumes it in this phase.
+   * The session semaphore published a state for a tab (`semaphoreManager.onUpdate`). Every hook
+   * emits, most of them repeating the state: only a change reaches the core.
+   */
+  onSemaphoreUpdate(update: PetSemaphoreUpdate): void;
+  /**
+   * The semaphore just registered a new session (`registerSession`) and announced it as `working`
+   * only because that is how it is born (R2): forget that, so a tab nobody has used is `idle`.
+   * Called right after `registerSession`, so the next update is a real one.
+   */
+  onSessionRegistered(ptyId: string): void;
+  /**
+   * A PTY exited, and whether the owner asked for it (C3). The semaphore also says `done` for a
+   * session it registered; this makes the end certain whatever the order of the two. `byUser` is for
+   * US2 (T032): the `ended` bubble only when the process ended by itself.
    */
   onSessionExited(ptyId: string, byUser: boolean): void;
   /** Is this web contents the pet window? The IPC layer asks before it trusts a gesture. */
@@ -126,8 +138,6 @@ export interface PetService {
 }
 
 export function createPetService(deps: PetServiceDeps): PetService {
-  const buildView = deps.buildView ?? buildTrivialView;
-
   let disposed = false;
   let window: PetWindowHandle | null = null;
   let tickHandle: unknown = null;
@@ -137,6 +147,44 @@ export function createPetService(deps: PetServiceDeps): PetService {
   let tabs: PetTabsPayload = { activePtyId: null, sessions: [] };
   let donelFocused = deps.getMainWindow()?.isFocused() ?? false;
   let ui: PetUi = { size: clampSize(deps.config().size), docked: false, align: 'center' };
+
+  /**
+   * What the semaphore last said of each tab. A ptyId that is not here is `idle` (R2: registered,
+   * no update yet). Kept with the pet on or off, so the core can be fed at any moment.
+   */
+  const semaphoreByPty = new Map<string, PetSemaphore>();
+  let state: PetState = createPetState();
+
+  /** The tabs of `pet:tabs` crossed with the semaphore: what the core calls "the watched sessions". */
+  function sessionsInput(): PetInput {
+    const sessions: WatchedSession[] = tabs.sessions.map(({ ptyId, name }) => ({
+      ptyId,
+      name,
+      semaphore: semaphoreByPty.get(ptyId) ?? 'idle',
+      blockedKind: null, // EXTENSION POINT (US2, T032): the kind of the open pending, from the chat
+    }));
+    return { type: 'sessions', sessions };
+  }
+
+  function focusInput(): PetInput {
+    const focus: FocusSignal = { activePtyId: tabs.activePtyId, donelFocused };
+    return { type: 'focus', focus };
+  }
+
+  function reduce(...inputs: PetInput[]): void {
+    const now = deps.now();
+    for (const input of inputs) state = reducePet(state, input, now);
+  }
+
+  /** A session that is dead and no longer has a tab is forgotten; an update for a tab that has not been reported yet is kept. */
+  function pruneSemaphores(): void {
+    const listed = new Set(tabs.sessions.map((session) => session.ptyId));
+    for (const [ptyId, semaphore] of semaphoreByPty) {
+      if (semaphore === 'done' && !listed.has(ptyId)) semaphoreByPty.delete(ptyId);
+    }
+  }
+
+  reduce(focusInput());
 
   /** Where the pet sits and how it looks around there: the remembered anchor if it is still on a screen, else the corner. */
   function resolvePlacement(prefs: PetPrefs): { bounds: PetRect; ui: PetUi } {
@@ -155,12 +203,17 @@ export function createPetService(deps: PetServiceDeps): PetService {
 
   function pushView(force: boolean): void {
     if (window === null || !petReady || window.isDestroyed()) return;
-    const focus: FocusSignal = { activePtyId: tabs.activePtyId, donelFocused };
-    const view = buildView({ tabs, focus, now: deps.now(), ui });
+    const view = toPetView(state, deps.now(), ui);
     const json = JSON.stringify(view);
     if (!force && json === lastSentJson) return;
     lastSentJson = json;
     window.sendView(view);
+  }
+
+  /** Reduces the inputs and, if the window is there, sends the view when it changed. */
+  function feed(...inputs: PetInput[]): void {
+    reduce(...inputs);
+    pushView(false);
   }
 
   function stopTick(): void {
@@ -195,7 +248,9 @@ export function createPetService(deps: PetServiceDeps): PetService {
     window = created;
     petReady = false;
     lastSentJson = null;
-    tickHandle = deps.setInterval(() => pushView(false), PET_TICK_MS);
+    // The core had no clock while the pet was off: its timed parts start from now.
+    reduce({ type: 'resume' });
+    tickHandle = deps.setInterval(() => feed({ type: 'tick' }), PET_TICK_MS);
   }
 
   function disable(): void {
@@ -235,17 +290,38 @@ export function createPetService(deps: PetServiceDeps): PetService {
     onTabs(payload) {
       if (disposed) return;
       tabs = payload;
-      pushView(false);
+      pruneSemaphores();
+      // The list first, then the focus: whatever the owner is looking at counts as seen against the
+      // list as it is now (a tab closed in the same breath is not "visited").
+      feed(sessionsInput(), focusInput());
     },
 
     onMainFocusChanged(focused) {
       if (disposed) return;
       donelFocused = focused;
-      pushView(false);
+      feed(focusInput());
     },
 
-    onSessionExited(_ptyId, _byUser) {
-      // EXTENSION POINT (US2, T032): becomes the `sessionExited` event of the core.
+    onSemaphoreUpdate(update) {
+      if (disposed) return;
+      const next = toPetSemaphore(update.state);
+      if (semaphoreByPty.get(update.ptyId) === next) return;
+      semaphoreByPty.set(update.ptyId, next);
+      feed(sessionsInput());
+    },
+
+    onSessionRegistered(ptyId) {
+      if (disposed) return;
+      if (semaphoreByPty.delete(ptyId)) feed(sessionsInput());
+    },
+
+    onSessionExited(ptyId, _byUser) {
+      if (disposed) return;
+      // A plain terminal never had a semaphore and never shows up in `pet:tabs`: nothing to record.
+      const known = semaphoreByPty.has(ptyId) || tabs.sessions.some((session) => session.ptyId === ptyId);
+      if (!known || semaphoreByPty.get(ptyId) === 'done') return;
+      semaphoreByPty.set(ptyId, 'done');
+      feed(sessionsInput());
     },
 
     isPetSender(sender) {

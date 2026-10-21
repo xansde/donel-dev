@@ -1,21 +1,20 @@
-// T020 (015-jobu-pet) - the pet service in the main, with every dependency faked: the window, the
+// T020/T027 (015-jobu-pet) - the pet service in the main, with every dependency faked: the window, the
 // screen, the clock, the timer, the config and the main window. What it must guarantee here:
 // with `pet.enabled = false` the app is the one of before (no window, no timer); with `true` there
 // is exactly one window and one 1 s tick, both gone on disable and on dispose; the view goes out
-// only when it changes; and the main window is told whenever `pet.enabled` changes (R19).
+// only when it changes; the main window is told whenever `pet.enabled` changes (R19); and what the
+// tabs, the focus, the semaphore and the clock say turns into the face the owner sees (US1).
 import { describe, expect, it } from 'vitest';
 import type { PetPrefs } from '../src/shared/config';
 import { PET_CHANNELS } from '../src/shared/pet/ipc';
 import { alignFor, anchorOf, defaultPlacement, windowBoundsFor } from '../src/shared/pet/placement';
-import type { PetDisplay, PetPoint, PetRect, PetView } from '../src/shared/pet/types';
+import type { PetDisplay, PetPoint, PetRect, PetView, SemaphorePublicState } from '../src/shared/pet/types';
 import {
   PET_TICK_MS,
-  buildTrivialView,
   createPetService,
   type CreatePetWindowOptions,
   type PetMainWindowLike,
   type PetServiceDeps,
-  type PetViewInputs,
   type PetWindowHandle,
 } from '../src/main/pet/pet-service';
 
@@ -96,7 +95,7 @@ interface Harness {
   liveWindows(): FakePetWindow[];
 }
 
-function harness(over: { prefs?: Partial<PetPrefs>; displays?: readonly PetDisplay[]; withMain?: boolean; buildView?: (inputs: PetViewInputs) => PetView; createWindowThrows?: boolean } = {}): Harness {
+function harness(over: { prefs?: Partial<PetPrefs>; displays?: readonly PetDisplay[]; withMain?: boolean; createWindowThrows?: boolean } = {}): Harness {
   const windows: FakePetWindow[] = [];
   const timers: FakeTimer[] = [];
   const persisted: PetPrefs[] = [];
@@ -137,7 +136,6 @@ function harness(over: { prefs?: Partial<PetPrefs>; displays?: readonly PetDispl
       const timer = timers.find((candidate) => candidate.id === handle);
       if (timer !== undefined) timer.cleared = true;
     },
-    ...(over.buildView !== undefined ? { buildView: over.buildView } : {}),
   };
 
   return {
@@ -164,6 +162,26 @@ function harness(over: { prefs?: Partial<PetPrefs>; displays?: readonly PetDispl
 
 const prefsChanged = (h: Harness) => h.mainSent.filter((entry) => entry.channel === PET_CHANNELS.prefsChanged);
 
+const SEC = 1000;
+const MIN = 60 * SEC;
+const sem = (ptyId: string, state: SemaphorePublicState) => ({ ptyId, state });
+const tab = (ptyId: string, name = ptyId) => ({ ptyId, name });
+/** The last view the pet window received. */
+const lastView = (h: Harness): PetView => {
+  const views = h.windows[h.windows.length - 1]?.views ?? [];
+  const view = views[views.length - 1];
+  if (view === undefined) throw new Error('the pet window received no view');
+  return view;
+};
+/** A pet that is on, with its screen ready: the state every story below starts from. */
+function readyPet(over: Parameters<typeof harness>[0] = {}) {
+  const h = harness({ prefs: { enabled: true }, ...over });
+  const service = createPetService(h.deps);
+  service.start();
+  service.handleReady();
+  return { h, service };
+}
+
 describe('with pet.enabled = false (the default): the app is the one of before', () => {
   it('creating the service makes no window and no timer', () => {
     const h = harness({ prefs: { enabled: false } });
@@ -187,6 +205,8 @@ describe('with pet.enabled = false (the default): the app is the one of before',
     service.start();
     service.onTabs({ activePtyId: 'a', sessions: [{ ptyId: 'a', name: 'atlas' }] });
     service.onMainFocusChanged(true);
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSessionRegistered('a');
     service.onSessionExited('a', false);
     h.tickAll();
     expect(h.windows).toHaveLength(0);
@@ -274,7 +294,7 @@ describe('pet:ready handshake and the view', () => {
     expect(window.shown).toBe(1);
   });
 
-  it('the first view is the trivial one of this phase: asleep, no badge, no bubble, nobody waiting', () => {
+  it('with no session the first view is asleep, with no badge, no bubble and nobody waiting', () => {
     const h = harness({ prefs: { enabled: true } });
     const service = createPetService(h.deps);
     service.start();
@@ -319,17 +339,14 @@ describe('pet:ready handshake and the view', () => {
   });
 
   it('sends again when the view changes, and only then', () => {
-    let pose: PetView['pose'] = 'sleeping';
-    const h = harness({ prefs: { enabled: true }, buildView: (inputs) => ({ ...buildTrivialView(inputs), pose }) });
-    const service = createPetService(h.deps);
-    service.start();
-    service.handleReady();
+    const { h, service } = readyPet();
     h.tickAll();
     expect(h.windows[0]?.views).toHaveLength(1);
-    pose = 'reading';
+    service.onTabs({ activePtyId: null, sessions: [tab('a')] });
+    service.onSemaphoreUpdate(sem('a', 'working'));
     h.tickAll();
     h.tickAll();
-    expect(h.windows[0]?.views.map((view) => view.pose)).toEqual(['sleeping', 'reading']);
+    expect(h.windows[0]?.views.map((view) => view.pose)).toEqual(['sleeping', 'incense', 'reading']);
   });
 
   it('a second pet:ready (the screen reloaded) answers with the view again', () => {
@@ -348,75 +365,82 @@ describe('pet:ready handshake and the view', () => {
     expect(h.windows).toHaveLength(0);
   });
 
-  it('the view builder gets the tabs, the focus, the clock and the placement-derived ui', () => {
-    const seen: PetViewInputs[] = [];
-    const h = harness({
-      prefs: { enabled: true },
-      buildView: (inputs) => {
-        seen.push(inputs);
-        return buildTrivialView(inputs);
-      },
-    });
-    const service = createPetService(h.deps);
-    service.start();
-    service.onTabs({ activePtyId: 'pty-a', sessions: [{ ptyId: 'pty-a', name: 'atlas' }, { ptyId: 'pty-b', name: 'beacon' }] });
+  it('the view is made of the tabs, the focus, the clock and the placement together', () => {
+    const { h, service } = readyPet();
     service.onMainFocusChanged(true);
-    service.handleReady();
-    const last = seen[seen.length - 1]!;
-    expect(last.tabs.sessions.map((session) => session.name)).toEqual(['atlas', 'beacon']);
-    expect(last.focus).toEqual({ activePtyId: 'pty-a', donelFocused: true });
-    expect(last.now).toBe(h.clock.now);
-    expect(last.ui).toEqual({ size: 140, docked: true, align: 'right' });
+    service.onTabs({ activePtyId: 'pty-a', sessions: [tab('pty-a', 'atlas'), tab('pty-b', 'beacon')] });
+    service.onSemaphoreUpdate(sem('pty-a', 'working'));
+    service.onSemaphoreUpdate(sem('pty-b', 'working'));
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting')); // the owner is on this tab: born seen
+    service.onSemaphoreUpdate(sem('pty-b', 'waiting')); // not on this one: it counts
+    h.clock.now += 90 * SEC;
+    h.tickAll();
+    const view = lastView(h);
+    expect(view.waiting).toEqual([{ ptyId: 'pty-b', name: 'beacon', waitingLabel: 'há 1 min' }]);
+    expect(view).toMatchObject({ pose: 'impatient', badge: '1', size: 140, docked: true, align: 'right' });
   });
 
-  it('tabs received while the pet was off are used as soon as it is turned on', () => {
-    const seen: PetViewInputs[] = [];
-    const h = harness({
-      prefs: { enabled: false },
-      buildView: (inputs) => {
-        seen.push(inputs);
-        return buildTrivialView(inputs);
-      },
-    });
+  it('tabs and signals received while the pet was off are used as soon as it is turned on', () => {
+    const h = harness({ prefs: { enabled: false } });
     const service = createPetService(h.deps);
     service.start();
-    service.onTabs({ activePtyId: null, sessions: [{ ptyId: 'pty-a', name: 'atlas' }] });
+    service.onTabs({ activePtyId: null, sessions: [tab('pty-a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('pty-a', 'working'));
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
     service.setEnabled(true);
     service.handleReady();
-    expect(seen[seen.length - 1]?.tabs.sessions).toEqual([{ ptyId: 'pty-a', name: 'atlas' }]);
+    expect(lastView(h)).toMatchObject({ pose: 'impatient', badge: '1' });
+    expect(lastView(h).waiting.map((entry) => entry.name)).toEqual(['atlas']);
+  });
+
+  it('a wait that began while the pet was off keeps its real age when the pet is turned on', () => {
+    const h = harness({ prefs: { enabled: false } });
+    const service = createPetService(h.deps);
+    service.start();
+    service.onTabs({ activePtyId: null, sessions: [tab('pty-a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('pty-a', 'working'));
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    h.clock.now += 11 * MIN;
+    service.setEnabled(true);
+    service.handleReady();
+    expect(lastView(h).waiting[0]?.waitingLabel).toBe('há 11 min');
+    expect(lastView(h).pose).toBe('very-impatient');
+  });
+
+  it('the serene hours the pet spent off do not become a waffle the moment it is turned on', () => {
+    const h = harness({ prefs: { enabled: false } });
+    const service = createPetService(h.deps);
+    service.start();
+    service.onTabs({ activePtyId: null, sessions: [tab('pty-a')] });
+    h.clock.now += 3 * 60 * MIN;
+    service.setEnabled(true);
+    service.handleReady();
+    h.tickAll();
+    expect(lastView(h).pose).toBe('incense');
   });
 
   it('the focus state starts from the main window as it is when the service is born', () => {
-    const seen: PetViewInputs[] = [];
-    const h = harness({
-      prefs: { enabled: true },
-      buildView: (inputs) => {
-        seen.push(inputs);
-        return buildTrivialView(inputs);
-      },
-    });
+    const h = harness({ prefs: { enabled: true } });
     h.main.focused = true;
     const service = createPetService(h.deps);
     service.start();
     service.handleReady();
-    expect(seen[seen.length - 1]?.focus.donelFocused).toBe(true);
+    service.onTabs({ activePtyId: 'pty-a', sessions: [tab('pty-a')] });
+    service.onSemaphoreUpdate(sem('pty-a', 'working'));
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    // the owner is on the tab with the Donel focused from the start: the wait is born seen
+    expect(lastView(h)).toMatchObject({ badge: null, pose: 'incense' });
   });
 
   it('a focus change re-evaluates the view without waiting for the tick', () => {
-    let focusedSeen: boolean | null = null;
-    const h = harness({
-      prefs: { enabled: true },
-      buildView: (inputs) => {
-        focusedSeen = inputs.focus.donelFocused;
-        return { ...buildTrivialView(inputs), pose: inputs.focus.donelFocused ? 'neutral' : 'sleeping' };
-      },
-    });
-    const service = createPetService(h.deps);
-    service.start();
-    service.handleReady();
-    service.onMainFocusChanged(true);
-    expect(focusedSeen).toBe(true);
-    expect(h.windows[0]?.views.map((view) => view.pose)).toEqual(['sleeping', 'neutral']);
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: 'pty-a', sessions: [tab('pty-a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('pty-a', 'working'));
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    expect(lastView(h)).toMatchObject({ badge: '1', pose: 'impatient' });
+    service.onMainFocusChanged(true); // the owner comes back to the Donel, with the tab already in front
+    expect(lastView(h)).toMatchObject({ badge: null, pose: 'laughing' });
+    expect(h.windows[0]?.views.map((view) => view.pose)).toEqual(['sleeping', 'incense', 'reading', 'impatient', 'laughing']);
   });
 });
 
@@ -628,5 +652,166 @@ describe('the anchor round trip the service relies on', () => {
     const h = harness({ prefs: { enabled: true, placement: { x: 1000, y: 800 } } });
     createPetService(h.deps).start();
     expect(anchorOf(h.windows[0]!.options.bounds, 140)).toEqual({ x: 1000, y: 800 });
+  });
+});
+
+describe('what the semaphore says becomes the face (US1, R2)', () => {
+  it('a tab with no update yet is open and quiet: incense, nobody waiting', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    expect(lastView(h)).toMatchObject({ pose: 'incense', badge: null, waiting: [] });
+  });
+
+  it('the first state the semaphore announces at registration is forgotten: a new tab is not "working"', () => {
+    const { h, service } = readyPet();
+    // what the main does at `registerSession`: the semaphore emits `working`, then the service is told
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSessionRegistered('a');
+    service.onTabs({ activePtyId: 'a', sessions: [tab('a', 'atlas')] });
+    expect(lastView(h).pose).toBe('incense');
+  });
+
+  it('...and the first REAL update, even if it is `working` again, is not swallowed as a repeat', () => {
+    const { h, service } = readyPet();
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSessionRegistered('a');
+    service.onTabs({ activePtyId: 'a', sessions: [tab('a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('a', 'working')); // UserPromptSubmit on the born-working machine
+    expect(lastView(h).pose).toBe('reading');
+  });
+
+  it('working, then the turn ends while the owner is elsewhere: impatient, badge 1, the tab in the list', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    expect(lastView(h).pose).toBe('reading');
+    service.onSemaphoreUpdate(sem('a', 'waiting'));
+    expect(lastView(h)).toMatchObject({ pose: 'impatient', badge: '1' });
+    expect(lastView(h).waiting).toEqual([{ ptyId: 'a', name: 'atlas', waitingLabel: 'agora' }]);
+  });
+
+  it('permission counts as waiting too', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSemaphoreUpdate(sem('a', 'permission'));
+    expect(lastView(h)).toMatchObject({ pose: 'impatient', badge: '1' });
+  });
+
+  it('error counts as done: a session that failed is no longer alive', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('a', 'error'));
+    expect(lastView(h)).toMatchObject({ pose: 'sleeping', badge: null });
+  });
+
+  it('every hook emits, so a state that repeats is not a change: no view goes out for it', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    const sent = h.windows[0]?.views.length;
+    for (let i = 0; i < 20; i += 1) service.onSemaphoreUpdate(sem('a', 'working'));
+    expect(h.windows[0]?.views).toHaveLength(sent ?? -1);
+  });
+
+  it('an update that arrives before the tab is reported is used when the tab shows up', () => {
+    const { h, service } = readyPet();
+    service.onSemaphoreUpdate(sem('a', 'waiting'));
+    expect(lastView(h).badge).toBeNull(); // nothing to watch yet
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    expect(lastView(h)).toMatchObject({ pose: 'impatient', badge: '1' });
+  });
+
+  it('a tab that leaves takes its wait with it, with no laugh', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas'), tab('b', 'beacon')] });
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSemaphoreUpdate(sem('a', 'waiting'));
+    service.onTabs({ activePtyId: null, sessions: [tab('b', 'beacon')] });
+    expect(lastView(h)).toMatchObject({ pose: 'incense', badge: null });
+  });
+
+  it('a PTY that exits is done at once, whatever the order of the semaphore and of the exit', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSemaphoreUpdate(sem('a', 'waiting'));
+    service.onSessionExited('a', false);
+    expect(lastView(h)).toMatchObject({ pose: 'sleeping', badge: null });
+  });
+
+  it('the exit of a terminal that was never a session is ignored', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    const sent = h.windows[0]?.views.length;
+    service.onSessionExited('shell-1', true);
+    expect(h.windows[0]?.views).toHaveLength(sent ?? -1);
+  });
+
+  it('forgets a dead session once its tab is gone: the same id coming back starts from idle', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('a', 'done'));
+    service.onTabs({ activePtyId: null, sessions: [] });
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    expect(lastView(h).pose).toBe('incense');
+  });
+
+  it('the owner opening the tab of the last waiting session: the badge goes and the Jobu laughs', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: 'b', sessions: [tab('a', 'atlas'), tab('b', 'beacon')] });
+    service.onMainFocusChanged(true);
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSemaphoreUpdate(sem('a', 'waiting'));
+    expect(lastView(h).badge).toBe('1');
+    service.onTabs({ activePtyId: 'a', sessions: [tab('a', 'atlas'), tab('b', 'beacon')] });
+    expect(lastView(h)).toMatchObject({ badge: null, pose: 'laughing' });
+    for (let i = 0; i < 3; i += 1) {
+      h.clock.now += SEC;
+      h.tickAll();
+    }
+    expect(lastView(h).pose).toBe('incense');
+  });
+
+  it('the tick makes the Jobu very impatient after 10 minutes, with no signal at all', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSemaphoreUpdate(sem('a', 'waiting'));
+    h.clock.now += 10 * MIN;
+    h.tickAll();
+    expect(lastView(h).pose).toBe('impatient');
+    h.clock.now += SEC;
+    h.tickAll();
+    expect(lastView(h)).toMatchObject({ pose: 'very-impatient' });
+    expect(lastView(h).waiting[0]?.waitingLabel).toBe('há 10 min');
+  });
+
+  it('only a change of the minute label reaches the screen while someone waits: no view per second', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSemaphoreUpdate(sem('a', 'waiting'));
+    const sent = h.windows[0]?.views.length ?? 0;
+    for (let i = 0; i < 59; i += 1) {
+      h.clock.now += SEC;
+      h.tickAll();
+    }
+    expect(h.windows[0]?.views).toHaveLength(sent);
+    h.clock.now += SEC;
+    h.tickAll();
+    expect(h.windows[0]?.views).toHaveLength(sent + 1);
+    expect(lastView(h).waiting[0]?.waitingLabel).toBe('há 1 min');
+  });
+
+  it('after dispose the signals change nothing and nothing is sent', () => {
+    const { h, service } = readyPet();
+    service.dispose();
+    service.onTabs({ activePtyId: null, sessions: [tab('a')] });
+    service.onSemaphoreUpdate(sem('a', 'waiting'));
+    service.onSessionRegistered('a');
+    service.onSessionExited('a', false);
+    service.onMainFocusChanged(true);
+    expect(h.windows[0]?.views).toHaveLength(1);
   });
 });

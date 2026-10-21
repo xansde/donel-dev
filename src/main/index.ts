@@ -1421,6 +1421,10 @@ function registerPtyIpcHandlers(): void {
       activeSessionByPty.set(ptyId, correlationId);
       if (sessionHooksSettingsPath) {
         semaphoreManager.registerSession(ptyId, correlationId);
+        // 015-jobu-pet (R2) — o semáforo anuncia a sessão nova como `working` só porque nasce assim:
+        // para o Jobu isso não é um turno. O pet esquece essa emissão e a aba segue `idle` até o
+        // primeiro evento de hook de verdade (mesmo raciocínio do `accountsBusyPtyIds` logo abaixo).
+        petService?.onSessionRegistered(ptyId);
         // 011-contas-e-provedores, etapa 3, Fase 2 (C5) — o semáforo nasce em
         // `working` enquanto o CLI sobe, e só sai dele num evento de hook (fim
         // de turno, notificação). Para o motor de contas isso não é "sessão
@@ -2673,6 +2677,10 @@ void app.whenReady().then(async () => {
       releaseAccountsBusyPty(update.ptyId);
     }
   });
+  // 015-jobu-pet (T027) — o Jobu lê o semáforo. Uma assinatura só, do boot: `petService` é anulável
+  // (nasce depois da principal e morre com ela), então a lambda o lê a cada emissão. O dedupe por
+  // estado e o `error` → `done` são do serviço.
+  semaphoreManager.onUpdate((update: SemaphoreUpdate) => petService?.onSemaphoreUpdate(update));
   // Emenda 22/09 (item 4) — StopFailure (limite da conta ou outro erro de
   // API) reavalia o auto-switch imediatamente, sem esperar o poll.
   semaphoreManager.onStopFailure(() => triggerAccountsAutoSwitchOnStopFailure());
