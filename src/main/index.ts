@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, screen, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -231,6 +231,12 @@ import { createNewProject, createSystemCreateProjectDeps } from './project-creat
 import { PtyManager } from './pty-manager';
 // C3 (015-jobu-pet) — "o dono fechou a aba" × "o processo saiu sozinho".
 import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
+// 015-jobu-pet — o Jobu na área de trabalho: serviço (núcleo + janela + tick), a janela e os handlers `pet:*`.
+import { registerPetIpcHandlers } from './pet/pet-ipc';
+import { createPetService, type PetService } from './pet/pet-service';
+import { createPetWindow } from './pet/pet-window';
+import { isValidPetPrefsInput } from '../shared/pet/ipc';
+import type { PetDisplay } from '../shared/pet/types';
 // T504 (005-terminal-copy-paste) — clipboard-bridge (T503), aditivo aos
 // imports acima (não reordena o bloco existente).
 import { hasImage, readText, writeText } from './clipboard-bridge';
@@ -945,6 +951,61 @@ function getMainWindow(): BrowserWindow | null {
   return mainWindowRef !== null && !mainWindowRef.isDestroyed() ? mainWindowRef : null;
 }
 
+/**
+ * T020 (015-jobu-pet) — o serviço do Jobu. `null` até a janela principal aparecer (R21: a janela do
+ * pet só nasce DEPOIS do `ready-to-show` da principal, então `firstWindow()` dos smokes continua
+ * sendo a principal) e de novo depois que ela fecha. Com `pet.enabled = false` o serviço existe
+ * mas não guarda janela nem timer: o app é o de antes do pet.
+ */
+let petService: PetService | null = null;
+
+function toPetDisplay(display: Electron.Display): PetDisplay {
+  return { id: display.id, bounds: display.bounds, workArea: display.workArea, scaleFactor: display.scaleFactor };
+}
+
+function startPetService(): void {
+  if (petService !== null) return;
+  petService = createPetService({
+    getMainWindow,
+    config: () => appConfig.pet,
+    persist: (next) => {
+      appConfig = { ...appConfig, pet: next };
+      persistAppConfig();
+    },
+    createWindow: createPetWindow,
+    getDisplays: () => screen.getAllDisplays().map(toPetDisplay),
+    getPrimaryDisplay: () => toPetDisplay(screen.getPrimaryDisplay()),
+    now: () => Date.now(),
+    setInterval: (callback, ms) => setInterval(callback, ms),
+    clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
+  });
+  petService.start();
+}
+
+/**
+ * C1 (015-jobu-pet, R5/R21) — chamado no `closed` da principal, ANTES do `killAll`: o Jobu é uma
+ * segunda janela e morre com a principal. Sem isto ele seguiria vivo e o `window-all-closed` nunca
+ * encerraria o app.
+ */
+function onMainWindowClosed(): void {
+  petService?.dispose();
+  petService = null;
+}
+
+/**
+ * Liga/desliga o Jobu (`config:setPetPrefs`). Sem serviço (a principal ainda não apareceu, ou já
+ * fechou) só grava a preferência; com serviço ele grava, aplica e avisa a principal (R19).
+ */
+function setPetEnabled(enabled: boolean): void {
+  if (petService !== null) {
+    petService.setEnabled(enabled);
+    return;
+  }
+  if (appConfig.pet.enabled === enabled) return;
+  appConfig = { ...appConfig, pet: { ...appConfig.pet, enabled } };
+  persistAppConfig();
+}
+
 function createMainWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -965,7 +1026,12 @@ function createMainWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();
+    startPetService(); // 015 (R21): o Jobu só nasce depois da principal aparecer
   });
+
+  // 015-jobu-pet — o foco da principal alimenta o Jobu ("visto" = aba ativa com o Donel em foco).
+  mainWindow.on('focus', () => petService?.onMainFocusChanged(true));
+  mainWindow.on('blur', () => petService?.onMainFocusChanged(false));
 
   // T045 (014-chat, R21) — guarda de navegação. Esta janela expõe `window.donel.pty.input`; um
   // link do markdown que a navegasse entregaria o app a uma página externa. Navegar para outra
@@ -992,9 +1058,8 @@ function createMainWindow(): void {
 
     // C3 (015-jobu-pet) — a saída consome a intenção que o `pty:kill` marcou: `true` = o dono fechou
     // a aba (ou Retomar/Reabrir a matou), `false` = o processo saiu sozinho. Consumir aqui, em toda
-    // saída, é o que impede a marca de ficar para sempre; o resultado (`byUser`) é do Jobu, que
-    // liga neste ponto quando o serviço dele existir.
-    consumeKillRequested(ptyId);
+    // saída, é o que impede a marca de ficar para sempre; o Jobu recebe o resultado (`byUser`).
+    petService?.onSessionExited(ptyId, consumeKillRequested(ptyId));
 
     // T009 — onExit do node-pty (evento do SO) é a fonte de verdade pra
     // "encerrada"/"falha" (spike: kill forçado nunca dispara SessionEnd).
@@ -1032,6 +1097,7 @@ function createMainWindow(): void {
   // órfãos (plan.md risco de vazamento, DoD do ciclo de vida chega em T010).
   mainWindow.on('closed', () => {
     if (mainWindowRef === mainWindow) mainWindowRef = null; // C1
+    onMainWindowClosed(); // C1/R21 — o Jobu morre com a principal, ANTES do killAll
     unsubscribeData();
     unsubscribeExit();
     unsubscribeSemaphore();
@@ -1550,6 +1616,16 @@ function registerConfigIpcHandlers(): void {
       chat: sanitizeChatPrefs({ ...appConfig.chat, ...patch }, appConfig.chat),
     };
     persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /**
+   * T020 (015-jobu-pet) — o interruptor do Jobu. Só `enabled` vem do renderer (posição e tamanho
+   * são gravados pelo main, a partir dos gestos do pet) e aplica na hora, sem reiniciar. Payload
+   * inválido é no-op: devolve a config como está.
+   */
+  ipcMain.handle(CONFIG_CHANNELS.setPetPrefs, (_event, input: unknown): AppConfigDto => {
+    if (isValidPetPrefsInput(input) && input.enabled !== undefined) setPetEnabled(input.enabled);
     return toAppConfigDto(appConfig);
   });
 
@@ -2616,6 +2692,11 @@ void app.whenReady().then(async () => {
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
   registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)
   registerEsteiraIpcHandlers(); // Spec 010 — esteira nova (store + contrato), ao LADO do mapa atual
+  registerPetIpcHandlers({
+    ipcMain,
+    getService: () => petService,
+    isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
+  }); // 015-jobu-pet
   createMainWindow();
 
   app.on('activate', () => {

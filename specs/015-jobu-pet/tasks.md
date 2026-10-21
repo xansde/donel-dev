@@ -67,8 +67,8 @@ principal. Com `false`, nada muda no app.
   - `src/shared/config.ts`: `AppConfigDto.pet`, `CONFIG_CHANNELS.setPetPrefs` e `DonelConfigApi.setPetPrefs`;
   - `src/preload/index.ts`: `config.setPetPrefs`.
   - O handler em `src/main/index.ts` entra na T020.
-- [ ] T015 [P] `src/main/pty-kill-intent.ts` (passa T010) e uso em `src/main/index.ts`: o handler `pty:kill` (≈`:1394`) marca antes de matar; o listener de saída (≈`:975-1006`) consome e repassa `byUser` (C3).
-- [ ] T016 C1 em `src/main/index.ts`:
+- [x] T015 [P] `src/main/pty-kill-intent.ts` (passa T010) e uso em `src/main/index.ts`: o handler `pty:kill` (≈`:1394`) marca antes de matar; o listener de saída (≈`:975-1006`) consome e repassa `byUser` (C3).
+- [x] T016 C1 em `src/main/index.ts`:
   - `let mainWindowRef` mais `getMainWindow()`;
   - `isWindowFocused` (≈`:1114`) e o `onClick` do notifier (≈`:1124-1131`) passam a usar a principal;
   - gancho `onMainWindowClosed` chamado no `closed` da principal (≈`:1013`) **antes** do `killAll`, para o pet ser destruído.
@@ -79,14 +79,14 @@ principal. Com `false`, nada muda no app.
 - [x] T018 Domínio `pet` no preload e nos tipos:
   - `src/shared/index.ts`: `DonelPetApi` em `DonelApi.pet`, com `sendTabs`, `onActivateSession`, `onPrefsChanged` (lado principal) e `ready`, `onView`, `setInteractive`, `click`, `open`, `setListOpen`, `openContextMenu`, `dragStart`/`dragMove`/`dragEnd`, `resizeStep` (lado pet);
   - `src/preload/index.ts`: implementação com `ipcRenderer.send` e `subscribeChannel`, como os outros domínios.
-- [ ] T019 `src/main/pet/pet-window.ts`:
+- [x] T019 `src/main/pet/pet-window.ts`:
   - `createPetWindow({ bounds, onReady })` com `transparent`, `frame: false`, `resizable: false`, `hasShadow: false`, `skipTaskbar`, `alwaysOnTop`, `focusable: false`, `show: false`, `backgroundColor: '#00000000'`, `webPreferences` iguais às da principal (mesmo preload, `sandbox`, `contextIsolation`) e `backgroundThrottling: false`;
   - carga `loadFile(index.html, { hash: 'pet' })` ou URL de dev + `#pet`;
   - `setIgnoreMouseEvents(true, { forward: true })` por padrão;
   - guardas de navegação iguais às da principal;
   - `showInactive()` no `pet:ready`;
   - helpers `setInteractive`, `setListOpen` (`setFocusable` + `focus`), `moveTo` e `applyBounds`.
-- [ ] T020 `src/main/pet/pet-service.ts` (dependências injetadas) e ligação em `src/main/index.ts`:
+- [x] T020 `src/main/pet/pet-service.ts` (dependências injetadas) e ligação em `src/main/index.ts`:
   - `createPetService({ getMainWindow, config, persist, createWindow, now, setInterval })`;
   - `enable()` e `disable()` criam e destroem a janela, mais o tick de 1 s;
   - recebe `pet:tabs` e foco (`focus`/`blur` da principal);
