@@ -1421,9 +1421,9 @@ function registerPtyIpcHandlers(): void {
       activeSessionByPty.set(ptyId, correlationId);
       if (sessionHooksSettingsPath) {
         semaphoreManager.registerSession(ptyId, correlationId);
-        // 015-jobu-pet (R2) — o semáforo anuncia a sessão nova como `working` só porque nasce assim:
-        // para o Jobu isso não é um turno. O pet esquece essa emissão e a aba segue `idle` até o
-        // primeiro evento de hook de verdade (mesmo raciocínio do `accountsBusyPtyIds` logo abaixo).
+        // 015-jobu-pet (R2) — the semaphore announces a new session as `working` only because it is born
+        // that way: for the Jobu that is not a turn. The pet forgets that emission and the tab stays
+        // `idle` until the first real hook event (same reasoning as `accountsBusyPtyIds` right below).
         petService?.onSessionRegistered(ptyId);
         // 011-contas-e-provedores, etapa 3, Fase 2 (C5) — o semáforo nasce em
         // `working` enquanto o CLI sobe, e só sai dele num evento de hook (fim
@@ -2677,9 +2677,9 @@ void app.whenReady().then(async () => {
       releaseAccountsBusyPty(update.ptyId);
     }
   });
-  // 015-jobu-pet (T027) — o Jobu lê o semáforo. Uma assinatura só, do boot: `petService` é anulável
-  // (nasce depois da principal e morre com ela), então a lambda o lê a cada emissão. O dedupe por
-  // estado e o `error` → `done` são do serviço.
+  // 015-jobu-pet (T027) — the Jobu reads the semaphore. One subscription, made at boot: `petService` is
+  // nullable (it is born after the main window and dies with it), so the lambda reads it on every
+  // emission. The dedupe by state and `error` -> `done` belong to the service.
   semaphoreManager.onUpdate((update: SemaphoreUpdate) => petService?.onSemaphoreUpdate(update));
   // Emenda 22/09 (item 4) — StopFailure (limite da conta ou outro erro de
   // API) reavalia o auto-switch imediatamente, sem esperar o poll.
