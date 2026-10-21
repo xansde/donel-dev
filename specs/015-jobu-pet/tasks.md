@@ -55,7 +55,7 @@ principal. Com `false`, nada muda no app.
   - `sanitizePetPrefs`: `enabled` booleano (padrão `false`), `placement` com `x` e `y` finitos ou `null`, `size` limitado a 80–320 (padrão 140);
   - `pet` entra em `defaultAppConfig`/`toAppConfigDto`.
   - Ajustar os testes de forma exata em `tests/config-store.test.ts` e `tests/chat-config.test.ts`.
-- [ ] T010 [P] `tests/pty-kill-intent.test.ts`: `markKillRequested(ptyId)` e `consumeKillRequested(ptyId)` (`true` uma vez, depois `false`).
+- [x] T010 [P] `tests/pty-kill-intent.test.ts`: `markKillRequested(ptyId)` e `consumeKillRequested(ptyId)` (`true` uma vez, depois `false`).
 
 ### Implementação
 

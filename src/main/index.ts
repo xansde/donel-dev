@@ -229,6 +229,8 @@ import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects
 // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
 import { createNewProject, createSystemCreateProjectDeps } from './project-creator';
 import { PtyManager } from './pty-manager';
+// C3 (015-jobu-pet) — "o dono fechou a aba" × "o processo saiu sozinho".
+import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
 // T504 (005-terminal-copy-paste) — clipboard-bridge (T503), aditivo aos
 // imports acima (não reordena o bloco existente).
 import { hasImage, readText, writeText } from './clipboard-bridge';
@@ -932,6 +934,17 @@ app.setName('donel-dev');
 // Electron sem app.setAppUserModelId no Windows".
 app.setAppUserModelId('com.seazone.doneldev');
 
+/**
+ * C1 (015-jobu-pet, R5) — a janela principal. O app supunha uma janela só: "qualquer janela" servia
+ * de principal no foco e no clique da notificação. Com o Jobu há uma segunda, que nunca é a
+ * principal; quem precisa da principal pergunta aqui.
+ */
+let mainWindowRef: BrowserWindow | null = null;
+
+function getMainWindow(): BrowserWindow | null {
+  return mainWindowRef !== null && !mainWindowRef.isDestroyed() ? mainWindowRef : null;
+}
+
 function createMainWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -948,6 +961,7 @@ function createMainWindow(): void {
       sandbox: true,
     },
   });
+  mainWindowRef = mainWindow;
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();
@@ -975,6 +989,12 @@ function createMainWindow(): void {
   const unsubscribeExit = ptyManager.onExit((ptyId, exitCode, signal) => {
     const info: PtyExitInfo = { exitCode, signal };
     mainWindow.webContents.send(PTY_CHANNELS.exit, ptyId, info);
+
+    // C3 (015-jobu-pet) — a saída consome a intenção que o `pty:kill` marcou: `true` = o dono fechou
+    // a aba (ou Retomar/Reabrir a matou), `false` = o processo saiu sozinho. Consumir aqui, em toda
+    // saída, é o que impede a marca de ficar para sempre; o resultado (`byUser`) é do Jobu, que
+    // liga neste ponto quando o serviço dele existir.
+    consumeKillRequested(ptyId);
 
     // T009 — onExit do node-pty (evento do SO) é a fonte de verdade pra
     // "encerrada"/"falha" (spike: kill forçado nunca dispara SessionEnd).
@@ -1011,6 +1031,7 @@ function createMainWindow(): void {
   // Fechar a janela mata todos os PTYs dela — evita processos powershell.exe
   // órfãos (plan.md risco de vazamento, DoD do ciclo de vida chega em T010).
   mainWindow.on('closed', () => {
+    if (mainWindowRef === mainWindow) mainWindowRef = null; // C1
     unsubscribeData();
     unsubscribeExit();
     unsubscribeSemaphore();
@@ -1111,7 +1132,8 @@ function registerChatDomain(): void {
   // T079 - notificacao do sistema quando uma pendencia abre (janela sem foco ou aba nao ativa).
   const notifier = createPendingNotifier({
     preference: () => appConfig.notificationPreference,
-    isWindowFocused: () => BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isFocused()),
+    // C1 (015-jobu-pet) — a janela PRINCIPAL em foco, não "alguma janela": o Jobu é outra janela do app.
+    isWindowFocused: () => getMainWindow()?.isFocused() ?? false,
     isSupported: () => smokeNotificationsLog !== undefined || Notification.isSupported(),
     create: (options) => {
       // Smoke-only hook (T081): records instead of showing a system notification.
@@ -1122,8 +1144,8 @@ function registerChatDomain(): void {
       return new Notification(options);
     },
     onClick: (ptyId) => {
-      const window = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
-      if (window === undefined) return;
+      const window = getMainWindow(); // C1 (015-jobu-pet) — a principal, não "a primeira janela viva"
+      if (window === null) return;
       if (window.isMinimized()) window.restore();
       window.show();
       window.focus();
@@ -1392,6 +1414,7 @@ function registerPtyIpcHandlers(): void {
   });
 
   ipcMain.on(PTY_CHANNELS.kill, (_event, ptyId: string) => {
+    markKillRequested(ptyId); // C3 (015-jobu-pet) — marca ANTES de matar: a saída que vem a seguir é "do dono"
     ptyManager.kill(ptyId);
   });
 
