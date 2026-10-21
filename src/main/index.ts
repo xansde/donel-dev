@@ -235,6 +235,8 @@ import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
 import { registerPetIpcHandlers } from './pet/pet-ipc';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
+import { createFullscreenWatcher } from './pet/fullscreen-watcher';
+import { readPetSeams, type PetSmokeGlobal } from './pet/pet-seams';
 import { isValidPetPrefsInput } from '../shared/pet/ipc';
 import type { PetDisplay } from '../shared/pet/types';
 // T504 (005-terminal-copy-paste) — clipboard-bridge (T503), aditivo aos
@@ -806,6 +808,9 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
   if (previous !== undefined && previous !== null && view.activeAccountId !== null && previous !== view.activeAccountId) {
     const label = view.accounts.find((account) => account.id === view.activeAccountId)?.label ?? view.activeAccountId;
     chatHub?.notifyAccountSwitch(label);
+    // 015-jobu-pet (T043, US4) — o Jobu olha o espelho e mostra a conta nova, com o chat ligado ou não. A primeira
+    // conta ativa (de nenhuma para uma) não é troca: a mesma regra do aviso do chat, logo acima.
+    petService?.onAccountSwitched(label);
   }
 }
 
@@ -965,6 +970,8 @@ function toPetDisplay(display: Electron.Display): PetDisplay {
 
 function startPetService(): void {
   if (petService !== null) return;
+  // Os dois seams de TESTE da janela do Jobu (`DONEL_PET_SMOKE_INVISIBLE`, `DONEL_PET_CAPTURABLE`): desligados no app do dono.
+  const seams = readPetSeams(process.env);
   petService = createPetService({
     getMainWindow,
     config: () => appConfig.pet,
@@ -972,14 +979,36 @@ function startPetService(): void {
       appConfig = { ...appConfig, pet: next };
       persistAppConfig();
     },
-    createWindow: createPetWindow,
+    createWindow: (options) => createPetWindow(options, seams),
     getDisplays: () => screen.getAllDisplays().map(toPetDisplay),
     getPrimaryDisplay: () => toPetDisplay(screen.getPrimaryDisplay()),
     now: () => Date.now(),
     setInterval: (callback, ms) => setInterval(callback, ms),
     clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
+    // FR-034: com `DONEL_PET_CAPTURABLE=1` a proteção contra captura nunca liga (os prints reais da documentação).
+    alwaysCapturable: seams.capturable,
+    // T050 (R10): o auxiliar de tela cheia só existe com a janela do Jobu aberta.
+    startFullscreenWatcher: (onChange) => createFullscreenWatcher({ onChange }),
+    // T049 (FR-005): monitor plugado, desplugado ou com a área útil mudada revalida a posição.
+    subscribeDisplays: (listener) => {
+      const handler = (): void => listener();
+      screen.on('display-added', handler);
+      screen.on('display-removed', handler);
+      screen.on('display-metrics-changed', handler);
+      return () => {
+        screen.removeListener('display-added', handler);
+        screen.removeListener('display-removed', handler);
+        screen.removeListener('display-metrics-changed', handler);
+      };
+    },
   });
   petService.start();
+  if (seams.ghost) {
+    // O gancho de teste do modo fantasma: o que o vigia de tela cheia faria ao ver um app tomar a tela. A verificação
+    // com tela cheia REAL é da bateria do dono; o smoke prova só que a janela esconde e volta quando o serviço é avisado.
+    const hooks = globalThis as PetSmokeGlobal;
+    hooks.__donelPetSmoke = { ...hooks.__donelPetSmoke, setFullscreen: (active) => petService?.onFullscreenChanged(active) };
+  }
 }
 
 /**

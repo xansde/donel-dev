@@ -206,7 +206,7 @@ e nenhum aviso do Windows sai.
 ## Phase 6: User Story 4 — Troca de conta (P2)
 
 - [x] T042 [P] [US4] Casos em `tests/pet-bubble.test.ts`: `accountSwitched` dá `Conta → Interno 3`, pose `mirror` e alvo `donel`, e substitui o balão de sessão sem se juntar a ele.
-- [ ] T043 [US4] `src/main/index.ts` `broadcastAccountsChanged` (≈`:791-802`) → `petService?.onAccountSwitched(label)`, independente do chat.
+- [x] T043 [US4] `src/main/index.ts` `broadcastAccountsChanged` (≈`:791-802`) → `petService?.onAccountSwitched(label)`, independente do chat.
 - [ ] T044 [US4] `tests/smoke/pet.spec.ts` parte 4 (`DONEL_ACCOUNTS_FAKE_MOD_FIXTURE`, como `tests/smoke/accounts.spec.ts`): trocar de conta via `accounts.switch` → `data-bubble` com o rótulo.
 
 ---
@@ -226,8 +226,8 @@ e nenhum aviso do Windows sai.
 - [ ] T048 [US5] Redimensionar (FR-033):
   - Ctrl + roda sobre o desenho → `pet.resizeStep(±1)`;
   - `pet-service.ts` limita o tamanho, recalcula os limites ancorados na base (`windowBoundsFor`), grava `pet.size` e manda a vista.
-- [ ] T049 [US5] Eventos de `screen` (`display-added`, `display-removed`, `display-metrics-changed`) → revalidam a posição (FR-005) e o `docked`.
-- [ ] T050 [US5] `src/main/pet/fullscreen-watcher.ts` + `src/shared/pet/fullscreenState.ts` (passa T045):
+- [x] T049 [US5] Eventos de `screen` (`display-added`, `display-removed`, `display-metrics-changed`) → revalidam a posição (FR-005) e o `docked`.
+- [x] T050 [US5] `src/main/pet/fullscreen-watcher.ts` + `src/shared/pet/fullscreenState.ts` (passa T045):
   - PowerShell `-NoProfile` de vida longa com `Add-Type` P/Invoke `SHQueryUserNotificationState`, consulta a cada 1,5 s;
   - existe só com o pet ligado e reinicia com recuo;
   - em tela cheia faz `hide()`; ao voltar, `showInactive()`;
@@ -241,7 +241,7 @@ e nenhum aviso do Windows sai.
   - liberar dá 60 s e o vencimento religa (no tick);
   - "Bloquear print agora" religa na hora;
   - o override de teste `DONEL_PET_CAPTURABLE=1` desliga sempre.
-- [ ] T061 [US5] Fora de captura (FR-034) e liberar print (FR-035):
+- [x] T061 [US5] Fora de captura (FR-034) e liberar print (FR-035):
   - `pet-window.ts`: `setContentProtection(true)` ao criar (no Windows 11, `WDA_EXCLUDEFROMCAPTURE`), salvo `DONEL_PET_CAPTURABLE=1`, mais `setCaptureAllowed(b)`;
   - `pet-service.ts`: estado do liberar com o relógio do tick;
   - menu (T047): "Liberar print por 1 minuto" e "Bloquear print agora".

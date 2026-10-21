@@ -5,6 +5,7 @@ import { CONFIG_CHANNELS } from '../src/shared/config';
 import {
   PET_CHANNELS,
   PET_MAX_SESSIONS,
+  isValidPetContextMenuPayload,
   isValidPetDragPayload,
   isValidPetInteractivePayload,
   isValidPetListOpenPayload,
@@ -112,6 +113,23 @@ describe('isValidPetDragPayload', () => {
       { screenX: 1, screenY: Number.POSITIVE_INFINITY },
     ]) {
       expect(isValidPetDragPayload(bad)).toBe(false);
+    }
+  });
+});
+
+describe('isValidPetContextMenuPayload (US5): where the owner right-clicked, or nothing', () => {
+  it('accepts no payload at all: the menu then opens at the pointer', () => {
+    expect(isValidPetContextMenuPayload(undefined)).toBe(true);
+  });
+
+  it('accepts finite screen coordinates, like a drag does', () => {
+    expect(isValidPetContextMenuPayload({ screenX: 1850, screenY: 990 })).toBe(true);
+    expect(isValidPetContextMenuPayload({ screenX: -300.5, screenY: -2 })).toBe(true);
+  });
+
+  it('rejects everything else: null is not "no payload", and a half payload is no payload', () => {
+    for (const bad of [null, 'x', 7, [], {}, { screenX: 1 }, { screenX: '1', screenY: 2 }, { screenX: Number.NaN, screenY: 2 }, { screenX: 1, screenY: Number.NEGATIVE_INFINITY }]) {
+      expect(isValidPetContextMenuPayload(bad)).toBe(false);
     }
   });
 });

@@ -8,22 +8,31 @@
 // The core is fed ALWAYS, with the pet on or off: it is a handful of cheap reductions, and that way
 // turning the pet on finds the current state of the sessions (US5, scenario 9) with the real age of
 // every wait, instead of starting blind. What exists only while the pet is on is what costs: the
-// window, the tick and the sending of views. Turning it on (`enable`) tells the core to `resume`, so
-// the hours it spent without a clock do not turn into a waffle.
+// window, the tick, the sending of views, the listener of the monitors and the watcher of full screen. Turning it on
+// (`enable`) tells the core to `resume`, so the hours it spent without a clock do not turn into a waffle.
 //
 // What the core cannot know it is told here: the kind of the pending the chat opened (`onPendingOpened`),
-// that a process exited and whether the owner asked for it (`onSessionExited`), and that an app has the
-// whole screen (`onFullscreenChanged`, called by the watcher of US5). The gestures of the window next to
-// `handleInteractive` - the click, the item of the list, the list opening - are answered here too (US3);
-// the drag and the menu are US5.
+// that a process exited and whether the owner asked for it (`onSessionExited`), that the account changed
+// (`onAccountSwitched`, US4) and that an app has the whole screen (`onFullscreenChanged`, called by the
+// watcher of US5). The gestures of the window next to `handleInteractive` - the click, the item of the list,
+// the list opening (US3) - are answered here too, and so are the ones of US5: the drag, the Ctrl + wheel, the
+// right-click menu and what each item of it does (silence, hide, go home, the size, the capture).
+//
+// Where the pet sits is its ANCHOR, the base of the drawing (src/shared/pet/placement.ts), and every move of
+// the window is a `setBounds` with the whole rectangle (`applyBounds`), never a `setPosition`: on a screen
+// scaled to 125% a `setPosition` makes a transparent window grow (measured: 300 of them turned 480x340 into
+// 780x681), and a window that grows moves the base out from under the drawing.
 //
 // With `pet.enabled = false` (the default) the app is the one of before the pet: no window, no timer,
 // no message to anybody.
 
 import type { PetPrefs } from '../../shared/config';
+import { blockCapture, captureAllowed, captureReleased, createCaptureState, releaseCapture, type CaptureState } from '../../shared/pet/capture';
 import { decideClick } from '../../shared/pet/click';
+import { dragAnchor, settleDrop } from '../../shared/pet/gestures';
 import { PET_CHANNELS, type PetOpenTarget, type PetTabsPayload } from '../../shared/pet/ipc';
-import { createPetState, reducePet, toPetSemaphore } from '../../shared/pet/petState';
+import { buildPetMenu, type PetMenuAction, type PetMenuEntry } from '../../shared/pet/menu';
+import { PET_SILENCE_MS, createPetState, isSilenced, reducePet, toPetSemaphore } from '../../shared/pet/petState';
 import { toPetView } from '../../shared/pet/petView';
 import {
   alignFor,
@@ -32,6 +41,7 @@ import {
   displayNearestPoint,
   isDocked,
   isPlacementVisible,
+  stepSize,
   windowBoundsFor,
 } from '../../shared/pet/placement';
 import type {
@@ -99,14 +109,22 @@ export interface PetWindowHandle {
   setListOpen(open: boolean): void;
   /** Tells the screen to close the list: the window lost the focus, and the page itself never hears about it. */
   requestCloseList(): void;
-  /** Moves the window by its top-left corner, in DIP. */
-  moveTo(point: PetPoint): void;
+  /** Sets the whole rectangle of the window, in DIP: every move goes through here (see the note at the top about `setPosition`). */
   applyBounds(bounds: PetRect): void;
+  /** FR-034/FR-035: `true` lets a screen capture see the window, `false` keeps it out of the capture. */
+  setCaptureAllowed(allowed: boolean): void;
+  /**
+   * The right-click menu. `at` is where the owner clicked, in screen DIP (`null` = at the pointer). `onChoose`
+   * gets the ACTION of the item that was clicked; nothing is called when the menu closes with no choice.
+   */
+  popupMenu(entries: readonly PetMenuEntry[], onChoose: (action: PetMenuAction) => void, at: PetPoint | null): void;
   destroy(): void;
 }
 
 export interface CreatePetWindowOptions {
   readonly bounds: PetRect;
+  /** FR-034: whether a screen capture may see the window. `false` = born protected, out of every capture, from its first frame. */
+  readonly captureAllowed: boolean;
   /** Called once, when the window is gone (destroyed by the service or by something else). */
   readonly onClosed: () => void;
   /** The window lost the focus (the owner clicked elsewhere, or another window of the app was activated). */
@@ -117,6 +135,11 @@ export interface CreatePetWindowOptions {
 export interface PetSemaphoreUpdate {
   readonly ptyId: string;
   readonly state: SemaphorePublicState;
+}
+
+/** The watcher of full screen apps (src/main/pet/fullscreen-watcher.ts), as the service holds it. */
+export interface PetFullscreenWatcher {
+  stop(): void;
 }
 
 export interface PetServiceDeps {
@@ -131,6 +154,18 @@ export interface PetServiceDeps {
   readonly now: () => number;
   readonly setInterval: (callback: () => void, ms: number) => unknown;
   readonly clearInterval: (handle: unknown) => void;
+  /** FR-034 test override (`DONEL_PET_CAPTURABLE=1`): the protection against screen captures is never on. */
+  readonly alwaysCapturable?: boolean;
+  /**
+   * Starts the watcher of apps in full screen (R10); it calls `onChange(true)` when one takes the whole screen and
+   * `onChange(false)` when it gives it back. Started with the window and stopped with it. Absent = the Jobu never hides.
+   */
+  readonly startFullscreenWatcher?: (onChange: (active: boolean) => void) => PetFullscreenWatcher;
+  /**
+   * `display-added`, `display-removed` and `display-metrics-changed` of Electron's `screen` (FR-005): `listener` runs
+   * when the monitors or their work areas change. Returns the way to stop listening. Absent = the place is only judged at the start.
+   */
+  readonly subscribeDisplays?: (listener: () => void) => () => void;
 }
 
 export interface PetService {
@@ -138,7 +173,7 @@ export interface PetService {
   start(): void;
   /** The pet window exists. */
   isEnabled(): boolean;
-  /** Preferences toggle (and "Esconder", later): saves, applies at once and tells the main window (R19). */
+  /** Preferences toggle and "Esconder": saves, applies at once and tells the main window (R19). */
   setEnabled(enabled: boolean): void;
   /** `pet:tabs`, already validated and known to come from the main window. */
   onTabs(payload: PetTabsPayload): void;
@@ -167,7 +202,12 @@ export interface PetService {
    * before, with the bubble already born as "quer permissão": this refines it into the real kind.
    */
   onPendingOpened(ptyId: string, kind: BlockedKind): void;
-  /** An app took the whole screen, or gave it back (the watcher of US5): no bubble is born while it lasts. */
+  /** The account in use changed, by the panel or by the automatic switch (US4): the label, never an e-mail. */
+  onAccountSwitched(label: string): void;
+  /**
+   * An app took the whole screen, or gave it back (the watcher of US5): no bubble is born while it lasts and the
+   * window hides, to show again - without taking the focus - when the screen is free.
+   */
   onFullscreenChanged(active: boolean): void;
   /** Is this web contents the pet window? The IPC layer asks before it trusts a gesture. */
   isPetSender(sender: { readonly id: number }): boolean;
@@ -185,8 +225,34 @@ export interface PetService {
   handleOpen(target: PetOpenTarget): void;
   /** `pet:list-open`: the window can take the focus while the list is open, so that Esc reaches it and its `blur` (a click elsewhere) closes the list (R12). */
   handleListOpen(open: boolean): void;
+  /** `pet:context-menu`: the owner right-clicked. `at` is the click in screen DIP, or `null` for "where the pointer is". */
+  handleContextMenu(at: PetPoint | null): void;
+  /** What an item of the right-click menu does; the window calls it with the action of the item that was clicked. */
+  handleMenuAction(action: PetMenuAction): void;
+  /** `pet:drag-start`: the owner grabbed the Jobu with the pointer at `point`, in screen DIP. */
+  handleDragStart(point: PetPoint): void;
+  /** `pet:drag-move`: the pointer is at `point`; the window follows it. */
+  handleDragMove(point: PetPoint): void;
+  /** `pet:drag-end`: the owner let go at `point`; the Jobu snaps to the taskbar edge when it is close, and the place is saved. */
+  handleDragEnd(point: PetPoint): void;
+  /** `pet:resize-step`: one notch of Ctrl + wheel over the drawing (+1 grows, -1 shrinks). */
+  handleResizeStep(direction: 1 | -1): void;
   /** The main window closed: the window and the tick go away and the service goes inert. */
   dispose(): void;
+}
+
+/** What a drag remembers from the instant the owner grabbed the Jobu. */
+interface DragGrab {
+  /** The pointer when it went down, in screen DIP. */
+  readonly pointer: PetPoint;
+  /** The base of the drawing at that moment. */
+  readonly anchor: PetPoint;
+  /** The monitors then: judging a drop with the same ones it was dragged over. */
+  readonly displays: readonly PetDisplay[];
+}
+
+function sameRect(a: PetRect | null, b: PetRect): boolean {
+  return a !== null && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 
 export function createPetService(deps: PetServiceDeps): PetService {
@@ -197,6 +263,17 @@ export function createPetService(deps: PetServiceDeps): PetService {
   let lastSentJson: string | null = null;
   /** The list is open on the screen (what `pet:list-open` last said): only then does losing the focus mean "close it". */
   let listOpen = false;
+  /** The last rectangle the window was asked to have, to leave it alone when nothing about it changed. */
+  let appliedBounds: PetRect | null = null;
+  let drag: DragGrab | null = null;
+  /** US5/FR-034: the rule of when a capture may see the Jobu, and what the window was last told about it. */
+  let capture: CaptureState = createCaptureState({ alwaysCapturable: deps.alwaysCapturable === true });
+  let captureApplied: boolean | null = null;
+  /** US5/FR-007: what the watcher last said (an app has the whole screen), and whether it is why the window is hidden. */
+  let fullscreen = false;
+  let hiddenForFullscreen = false;
+  let fullscreenWatcher: PetFullscreenWatcher | null = null;
+  let unsubscribeDisplays: (() => void) | null = null;
 
   let tabs: PetTabsPayload = { activePtyId: null, sessions: [] };
   // In front of the owner: focused and not minimized (a minimized window can keep reporting the focus). The main
@@ -249,16 +326,28 @@ export function createPetService(deps: PetServiceDeps): PetService {
 
   reduce(focusInput());
 
-  /** Where the pet sits and how it looks around there: the remembered anchor if it is still on a screen, else the corner. */
-  function resolvePlacement(prefs: PetPrefs): { bounds: PetRect; ui: PetUi } {
-    const primary = deps.getPrimaryDisplay();
+  /** The pet window, when there is one that can still be driven. */
+  function liveWindow(): PetWindowHandle | null {
+    if (disposed || window === null || window.isDestroyed()) return null;
+    return window;
+  }
+
+  /** The monitors the pet can sit on: what Electron reports, or at least the primary one. */
+  function allDisplays(): readonly PetDisplay[] {
     const reported = deps.getDisplays();
-    const displays = reported.length > 0 ? reported : [primary];
+    return reported.length > 0 ? reported : [deps.getPrimaryDisplay()];
+  }
+
+  /** Where the pet sits and how it looks around there: the remembered anchor if it is still on a screen, else the corner. */
+  function resolvePlacement(prefs: PetPrefs): { anchor: PetPoint; bounds: PetRect; ui: PetUi } {
+    const primary = deps.getPrimaryDisplay();
+    const displays = allDisplays();
     const size = clampSize(prefs.size);
     const remembered = prefs.placement !== null && isPlacementVisible(prefs.placement, size, displays) ? prefs.placement : null;
     const anchor = remembered ?? defaultPlacement(primary, size);
     const display = displayNearestPoint(displays, anchor) ?? primary;
     return {
+      anchor,
       bounds: windowBoundsFor(anchor, size),
       ui: { size, docked: isDocked(anchor, display), align: alignFor(anchor, display) },
     };
@@ -284,29 +373,109 @@ export function createPetService(deps: PetServiceDeps): PetService {
     pushView(false);
   }
 
+  /** Gives the window a new rectangle (the whole of it, always: see the note at the top) and remembers it. */
+  function place(bounds: PetRect): void {
+    if (window === null || window.isDestroyed()) return;
+    window.applyBounds(bounds);
+    appliedBounds = bounds;
+  }
+
+  /**
+   * Works out where the window belongs from the saved preferences and moves it there if that is not where it
+   * is: after a new size, "Voltar ao canto" or a change of the monitors. A remembered place that no screen
+   * shows any more (FR-005) puts the Jobu in the corner for as long as that lasts, and is NOT forgotten: when the
+   * monitor comes back, so does he.
+   */
+  function relayout(): void {
+    if (window === null || window.isDestroyed()) return;
+    const placed = resolvePlacement(deps.config());
+    ui = placed.ui;
+    if (!sameRect(appliedBounds, placed.bounds)) place(placed.bounds);
+    pushView(false);
+  }
+
+  /** FR-034: tells the window whether a capture may see it, only when the answer changed. */
+  function applyCapture(): void {
+    if (window === null || window.isDestroyed()) return;
+    const allowed = captureAllowed(capture, deps.now());
+    if (allowed === captureApplied) return;
+    captureApplied = allowed;
+    window.setCaptureAllowed(allowed);
+  }
+
   function stopTick(): void {
     if (tickHandle === null) return;
     deps.clearInterval(tickHandle);
     tickHandle = null;
   }
 
+  /** The watcher of full screen and the listener of the monitors live exactly as long as the window does. */
+  function releaseWatchers(): void {
+    fullscreenWatcher?.stop();
+    fullscreenWatcher = null;
+    unsubscribeDisplays?.();
+    unsubscribeDisplays = null;
+  }
+
+  /** Hides the window while an app has the whole screen and brings it back, without the focus, when the screen is free. */
+  function syncVisibility(): void {
+    if (window === null || window.isDestroyed() || !petReady) return;
+    if (fullscreen && !hiddenForFullscreen) {
+      hiddenForFullscreen = true;
+      window.hide();
+    } else if (!fullscreen && hiddenForFullscreen) {
+      hiddenForFullscreen = false;
+      window.showInactive();
+    }
+  }
+
+  function onFullscreenChanged(active: boolean): void {
+    if (disposed) return;
+    fullscreen = active;
+    feed({ type: 'fullscreen', active });
+    syncVisibility();
+  }
+
+  function onDisplaysChanged(): void {
+    // A change of the monitors while the owner holds the Jobu must not take him out of the hand: the drop judges it.
+    if (disposed || drag !== null) return;
+    relayout();
+  }
+
+  function onTick(): void {
+    feed({ type: 'tick' });
+    applyCapture(); // the end of "Liberar print por 1 minuto" is noticed here, like the end of the bubble
+  }
+
+  function resetWindowState(): void {
+    petReady = false;
+    lastSentJson = null;
+    listOpen = false;
+    appliedBounds = null;
+    drag = null;
+    captureApplied = null;
+    fullscreen = false;
+    hiddenForFullscreen = false;
+  }
+
   function enable(): void {
     if (disposed || window !== null) return;
     const placement = resolvePlacement(deps.config());
     ui = placement.ui;
+    const allowedNow = captureAllowed(capture, deps.now());
     let created: PetWindowHandle;
     try {
       created = deps.createWindow({
         bounds: placement.bounds,
+        captureAllowed: allowedNow,
         onClosed: () => {
           // The window went away by itself. A "closed" that arrives late, from a window this service
           // already replaced, must not touch the new one.
           if (window !== created) return;
           window = null;
-          petReady = false;
-          lastSentJson = null;
-          listOpen = false;
+          resetWindowState();
           stopTick();
+          releaseWatchers();
         },
         // Same guard: a blur that arrives late, from a window this service already replaced, is not news.
         onBlur: () => {
@@ -319,21 +488,22 @@ export function createPetService(deps: PetServiceDeps): PetService {
       return;
     }
     window = created;
-    petReady = false;
-    lastSentJson = null;
-    listOpen = false;
+    resetWindowState();
+    appliedBounds = placement.bounds;
+    captureApplied = allowedNow;
     // The core had no clock while the pet was off: its timed parts start from now.
     reduce({ type: 'resume' });
-    tickHandle = deps.setInterval(() => feed({ type: 'tick' }), PET_TICK_MS);
+    tickHandle = deps.setInterval(onTick, PET_TICK_MS);
+    unsubscribeDisplays = deps.subscribeDisplays?.(onDisplaysChanged) ?? null;
+    fullscreenWatcher = deps.startFullscreenWatcher?.(onFullscreenChanged) ?? null;
   }
 
   function disable(): void {
     stopTick();
+    releaseWatchers();
     const closing = window;
     window = null;
-    petReady = false;
-    lastSentJson = null;
-    listOpen = false;
+    resetWindowState();
     if (closing !== null && !closing.isDestroyed()) closing.destroy();
   }
 
@@ -368,6 +538,65 @@ export function createPetService(deps: PetServiceDeps): PetService {
     main.webContents.send(PET_CHANNELS.prefsChanged, { enabled });
   }
 
+  function applyEnabled(enabled: boolean): void {
+    if (disposed) return;
+    const current = deps.config();
+    const changed = current.enabled !== enabled;
+    if (changed) deps.persist({ ...current, enabled });
+    if (enabled) enable();
+    else disable();
+    if (changed) notifyPrefsChanged(enabled);
+  }
+
+  /** FR-033: a new size (Ctrl + wheel or a preset of the menu): kept inside 80-320, saved, and the window grows from the base. */
+  function setSize(requested: number): void {
+    if (liveWindow() === null) return;
+    const size = clampSize(requested);
+    const current = deps.config();
+    if (size === clampSize(current.size)) return;
+    deps.persist({ ...current, size });
+    relayout();
+  }
+
+  /** "Voltar ao canto": the place is forgotten and the Jobu goes to the corner again. */
+  function goHome(): void {
+    if (liveWindow() === null) return;
+    const current = deps.config();
+    if (current.placement !== null) deps.persist({ ...current, placement: null });
+    relayout();
+  }
+
+  /** What each item of the right-click menu does. */
+  function menuAction(action: PetMenuAction): void {
+    if (liveWindow() === null) return; // the menu outlived the window (the Preferences turned the pet off while it was open)
+    switch (action.kind) {
+      case 'silence':
+        feed({ type: 'silence', until: deps.now() + PET_SILENCE_MS });
+        break;
+      case 'resume':
+        feed({ type: 'silence', until: null });
+        break;
+      case 'releaseCapture':
+        capture = releaseCapture(capture, deps.now());
+        applyCapture();
+        break;
+      case 'blockCapture':
+        capture = blockCapture(capture);
+        applyCapture();
+        break;
+      case 'size':
+        setSize(action.size);
+        break;
+      case 'home':
+        goHome();
+        break;
+      case 'hide':
+        // The same road as the toggle of the Preferences: it saves `pet.enabled = false`, destroys the window and tells the main window.
+        applyEnabled(false);
+        break;
+    }
+  }
+
   return {
     start() {
       if (deps.config().enabled) enable();
@@ -377,15 +606,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
       return window !== null;
     },
 
-    setEnabled(enabled) {
-      if (disposed) return;
-      const current = deps.config();
-      const changed = current.enabled !== enabled;
-      if (changed) deps.persist({ ...current, enabled });
-      if (enabled) enable();
-      else disable();
-      if (changed) notifyPrefsChanged(enabled);
-    },
+    setEnabled: applyEnabled,
 
     onTabs(payload) {
       if (disposed) return;
@@ -435,10 +656,12 @@ export function createPetService(deps: PetServiceDeps): PetService {
       feed(sessionsInput(), { type: 'pendingOpened', ptyId, kind, at: deps.now() });
     },
 
-    onFullscreenChanged(active) {
+    onAccountSwitched(label) {
       if (disposed) return;
-      feed({ type: 'fullscreen', active });
+      feed({ type: 'accountSwitched', label, at: deps.now() });
     },
+
+    onFullscreenChanged,
 
     isPetSender(sender) {
       return window !== null && sender.id === window.webContentsId;
@@ -448,29 +671,74 @@ export function createPetService(deps: PetServiceDeps): PetService {
       if (disposed || window === null) return;
       petReady = true;
       pushView(true);
-      window.showInactive();
+      // An app that has the whole screen when the screen of the pet comes up: the window stays hidden and shows when it is free.
+      if (fullscreen) hiddenForFullscreen = true;
+      else window.showInactive();
     },
 
     handleInteractive(interactive) {
-      if (disposed || window === null || window.isDestroyed()) return;
-      window.setInteractive(interactive);
+      const current = liveWindow();
+      if (current === null) return;
+      current.setInteractive(interactive);
     },
 
     handleClick() {
-      if (disposed || window === null || window.isDestroyed()) return;
+      if (liveWindow() === null) return;
       const decision = decideClick(currentView());
       if (decision.kind !== 'list') openTarget(decision);
     },
 
     handleOpen(target) {
-      if (disposed || window === null || window.isDestroyed()) return;
+      if (liveWindow() === null) return;
       openTarget(target);
     },
 
     handleListOpen(open) {
-      if (disposed || window === null || window.isDestroyed()) return;
+      const current = liveWindow();
+      if (current === null) return;
       listOpen = open;
-      window.setListOpen(open);
+      current.setListOpen(open);
+    },
+
+    handleContextMenu(at) {
+      const current = liveWindow();
+      if (current === null) return;
+      const now = deps.now();
+      current.popupMenu(buildPetMenu({ silenced: isSilenced(state, now), captureReleased: captureReleased(capture, now), size: ui.size }), menuAction, at);
+    },
+
+    handleMenuAction: menuAction,
+
+    handleDragStart(point) {
+      if (liveWindow() === null) return;
+      drag = { pointer: point, anchor: resolvePlacement(deps.config()).anchor, displays: allDisplays() };
+    },
+
+    handleDragMove(point) {
+      if (liveWindow() === null || drag === null) return;
+      const anchor = dragAnchor(drag.anchor, drag.pointer, point);
+      const display = displayNearestPoint(drag.displays, anchor) ?? deps.getPrimaryDisplay();
+      // The base fades the moment it leaves the taskbar edge, and the bubble re-anchors as he crosses the screen.
+      ui = { size: ui.size, docked: isDocked(anchor, display), align: alignFor(anchor, display) };
+      place(windowBoundsFor(anchor, ui.size));
+      pushView(false);
+    },
+
+    handleDragEnd(point) {
+      if (liveWindow() === null || drag === null) return;
+      const grab = drag;
+      drag = null;
+      const outcome = settleDrop(dragAnchor(grab.anchor, grab.pointer, point), grab.anchor, ui.size, grab.displays);
+      ui = { size: ui.size, docked: outcome.docked, align: outcome.align };
+      place(windowBoundsFor(outcome.anchor, ui.size));
+      // A drop that left less than half of the drawing on a screen was refused: he is back where he was and nothing is saved.
+      if (outcome.accepted) deps.persist({ ...deps.config(), placement: outcome.anchor });
+      pushView(false);
+    },
+
+    handleResizeStep(direction) {
+      if (liveWindow() === null) return;
+      setSize(stepSize(deps.config().size, direction));
     },
 
     dispose() {

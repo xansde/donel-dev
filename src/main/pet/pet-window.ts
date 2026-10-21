@@ -3,14 +3,27 @@
 // drawing. It loads the SAME `index.html` as the main window, on the `#pet` route, with the same
 // preload; the page decides what to mount (src/renderer/src/main.tsx). This is the only file of the
 // pet that talks to Electron's `BrowserWindow`; the service drives it through `PetWindowHandle`.
+//
+// Since US5 it also keeps the window out of screen captures (FR-034: `setContentProtection`, which on Windows 10
+// 2004 or newer is `WDA_EXCLUDEFROMCAPTURE`) and pops up the right-click menu. Measured on Electron 43 on
+// Windows 11: the display affinity only reaches the OS when the window is SHOWN (set while it is hidden, it
+// waits for the next `show`), and it is `0x11` protected and `0x0` released. The window is born hidden and
+// protected, so the first frame it ever shows is already out of captures.
+//
+// The test seams (src/main/pet/pet-seams.ts) change what this window does to the OS, never what the page
+// does: see `PetSeams`.
 
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, Menu } from 'electron';
 import { join } from 'node:path';
 import { PET_CHANNELS } from '../../shared/pet/ipc';
-import type { PetPoint, PetRect, PetView } from '../../shared/pet/types';
+import type { PetRect, PetView } from '../../shared/pet/types';
+import { toMenuTemplate } from './pet-menu';
+import type { PetSeams, PetSmokeGlobal } from './pet-seams';
 import type { CreatePetWindowOptions, PetWindowHandle } from './pet-service';
 
-export function createPetWindow(options: CreatePetWindowOptions): PetWindowHandle {
+const NO_SEAMS: PetSeams = { ghost: false, capturable: false };
+
+export function createPetWindow(options: CreatePetWindowOptions, seams: PetSeams = NO_SEAMS): PetWindowHandle {
   const { bounds } = options;
   const win = new BrowserWindow({
     x: bounds.x,
@@ -41,6 +54,17 @@ export function createPetWindow(options: CreatePetWindowOptions): PetWindowHandl
       backgroundThrottling: false,
     },
   });
+
+  // FR-034: out of every capture - print, recording, Teams, Meet, Zoom - and still in front of the owner. Born
+  // protected, before the first frame; "Liberar print por 1 minuto" turns it off through `setCaptureAllowed`.
+  win.setContentProtection(!options.captureAllowed);
+
+  // The ghost of the smokes (`DONEL_PET_SMOKE_INVISIBLE=1`): no opacity, so nothing of it shows on the screen of whoever
+  // is using the machine while the test runs. The page, the CDP and the whole state go on exactly the same.
+  if (seams.ghost) win.setOpacity(0);
+
+  // Ctrl + wheel is the gesture of the size (FR-033): the page must not also zoom itself with it.
+  void win.webContents.setVisualZoomLevelLimits(1, 1);
 
   // On Windows a frameless window comes out of the constructor a few pixels larger than asked (measured
   // on a 125% display: 482x343 for 480x340), because the invisible frame is counted when it is created.
@@ -96,13 +120,17 @@ export function createPetWindow(options: CreatePetWindowOptions): PetWindowHandl
       if (!win.isDestroyed()) win.hide();
     },
     setInteractive: (interactive: boolean) => {
-      if (!win.isDestroyed()) win.setIgnoreMouseEvents(!interactive, { forward: true });
+      // A ghost is never the owner's to click: it keeps letting the mouse through, even over the drawing.
+      if (!win.isDestroyed() && !seams.ghost) win.setIgnoreMouseEvents(!interactive, { forward: true });
     },
     requestCloseList: () => {
       if (!win.isDestroyed()) win.webContents.send(PET_CHANNELS.closeList);
     },
     setListOpen: (open: boolean) => {
       if (win.isDestroyed()) return;
+      // A ghost never takes the focus: an invisible window with the keyboard would swallow the typing of whoever is
+      // using the machine. The smokes close the list by emitting the `blur` of the window themselves.
+      if (seams.ghost) return;
       if (open) {
         win.setFocusable(true);
         win.focus();
@@ -114,11 +142,30 @@ export function createPetWindow(options: CreatePetWindowOptions): PetWindowHandl
       if (win.isFocused()) win.blur();
       win.setFocusable(false);
     },
-    moveTo: (point: PetPoint) => {
-      if (!win.isDestroyed()) win.setPosition(Math.round(point.x), Math.round(point.y));
-    },
     applyBounds: (next: PetRect) => {
+      // Always the whole rectangle: a `setPosition` on a scaled screen makes this window grow (see pet-service.ts).
       if (!win.isDestroyed()) win.setBounds(next);
+    },
+    setCaptureAllowed: (allowed: boolean) => {
+      if (!win.isDestroyed()) win.setContentProtection(!allowed);
+    },
+    popupMenu: (entries, onChoose, at) => {
+      if (win.isDestroyed()) return;
+      if (seams.ghost) {
+        // No native menu in a test: it takes the mouse of the whole desktop while it is open, and opens at the
+        // pointer of whoever is working. The model and the way to choose from it are left for the test instead.
+        const hooks = globalThis as PetSmokeGlobal;
+        hooks.__donelPetSmoke = { ...hooks.__donelPetSmoke, menu: { entries, choose: onChoose } };
+        return;
+      }
+      const menu = Menu.buildFromTemplate(toMenuTemplate(entries, onChoose));
+      if (at === null) {
+        menu.popup({ window: win });
+        return;
+      }
+      // The coordinates of `popup` are relative to the content of the window; the click came in screen DIP.
+      const content = win.getContentBounds();
+      menu.popup({ window: win, x: Math.round(at.x - content.x), y: Math.round(at.y - content.y) });
     },
     destroy: () => {
       if (!win.isDestroyed()) win.destroy();

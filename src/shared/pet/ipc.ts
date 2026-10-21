@@ -66,6 +66,13 @@ export interface PetDragPayload {
   readonly screenY: number;
 }
 
+/**
+ * `pet:context-menu`: where the owner right-clicked, in screen coordinates, so the menu opens right there
+ * (the pointer of the OS is not always where the page thinks it is). Optional: with no payload the menu
+ * opens at the pointer.
+ */
+export type PetContextMenuPayload = PetDragPayload | undefined;
+
 export type PetOpenTarget = { readonly kind: 'session'; readonly ptyId: string } | { readonly kind: 'donel' };
 
 /** `pet:open`: bring the Donel to the front, on a session when there is one. */
@@ -123,6 +130,11 @@ export function isValidPetDragPayload(input: unknown): input is PetDragPayload {
   return isRecord(input) && Number.isFinite(input.screenX) && Number.isFinite(input.screenY);
 }
 
+/** No payload at all is valid (the menu opens at the pointer); otherwise it must be finite screen coordinates. */
+export function isValidPetContextMenuPayload(input: unknown): input is PetContextMenuPayload {
+  return input === undefined || isValidPetDragPayload(input);
+}
+
 export function isValidPetOpenPayload(input: unknown): input is PetOpenPayload {
   if (!isRecord(input) || !isRecord(input.target)) return false;
   const target = input.target;
@@ -168,7 +180,9 @@ export interface DonelPetApi {
   click(): void;
   open(target: PetOpenTarget): void;
   setListOpen(open: boolean): void;
-  openContextMenu(): void;
+  /** The right button: `point` is the click in screen coordinates, so the menu opens there; without it, at the pointer. */
+  openContextMenu(point?: PetDragPayload): void;
+  /** The pointer went down on the Jobu at (screenX, screenY). The three drag calls carry screen coordinates, in DIP. */
   dragStart(screenX: number, screenY: number): void;
   dragMove(screenX: number, screenY: number): void;
   dragEnd(screenX: number, screenY: number): void;

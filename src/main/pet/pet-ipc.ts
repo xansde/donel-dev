@@ -3,15 +3,18 @@
 // and WHAT it carries (`isValid...`, src/shared/pet/ipc.ts). A message that fails either is dropped
 // without an answer: the pet channels are all `send`, nobody waits for a reply.
 //
-// This phase handles `pet:tabs`, `pet:ready`, `pet:interactive`, and since US3 `pet:click`, `pet:open` and
-// `pet:list-open`. The other gestures of the contract (context-menu, drag-*, resize-step) are registered by
-// the stories that implement them (US5), next to the ones below.
+// It handles `pet:tabs`, `pet:ready`, `pet:interactive`, since US3 `pet:click`, `pet:open` and `pet:list-open`,
+// and since US5 the rest of the contract: `pet:context-menu`, `pet:drag-start|move|end` and `pet:resize-step`.
+// Every channel of `PET_CHANNELS` that comes from a window has a listener here.
 
 import {
   PET_CHANNELS,
+  isValidPetContextMenuPayload,
+  isValidPetDragPayload,
   isValidPetInteractivePayload,
   isValidPetListOpenPayload,
   isValidPetOpenPayload,
+  isValidPetResizeStepPayload,
   isValidPetTabsPayload,
 } from '../../shared/pet/ipc';
 import type { PetService } from './pet-service';
@@ -22,7 +25,21 @@ export interface PetIpcMainLike {
 }
 
 /** What the handlers need from the service. */
-export type PetIpcService = Pick<PetService, 'onTabs' | 'isPetSender' | 'handleReady' | 'handleInteractive' | 'handleClick' | 'handleOpen' | 'handleListOpen'>;
+export type PetIpcService = Pick<
+  PetService,
+  | 'onTabs'
+  | 'isPetSender'
+  | 'handleReady'
+  | 'handleInteractive'
+  | 'handleClick'
+  | 'handleOpen'
+  | 'handleListOpen'
+  | 'handleContextMenu'
+  | 'handleDragStart'
+  | 'handleDragMove'
+  | 'handleDragEnd'
+  | 'handleResizeStep'
+>;
 
 export interface PetIpcDeps {
   readonly ipcMain: PetIpcMainLike;
@@ -79,5 +96,34 @@ export function registerPetIpcHandlers(deps: PetIpcDeps): void {
     if (service === null || !service.isPetSender(event.sender)) return;
     if (!isValidPetListOpenPayload(payload)) return;
     guarded(PET_CHANNELS.listOpen, () => service.handleListOpen(payload.open));
+  });
+
+  deps.ipcMain.on(PET_CHANNELS.contextMenu, (event, payload) => {
+    const service = deps.getService();
+    if (service === null || !service.isPetSender(event.sender)) return;
+    if (!isValidPetContextMenuPayload(payload)) return;
+    guarded(PET_CHANNELS.contextMenu, () => service.handleContextMenu(payload === undefined ? null : { x: payload.screenX, y: payload.screenY }));
+  });
+
+  // The three phases of a drag carry the pointer in screen coordinates; the main turns them into the place of the window.
+  const dragHandlers = [
+    [PET_CHANNELS.dragStart, 'handleDragStart'],
+    [PET_CHANNELS.dragMove, 'handleDragMove'],
+    [PET_CHANNELS.dragEnd, 'handleDragEnd'],
+  ] as const;
+  for (const [channel, method] of dragHandlers) {
+    deps.ipcMain.on(channel, (event, payload) => {
+      const service = deps.getService();
+      if (service === null || !service.isPetSender(event.sender)) return;
+      if (!isValidPetDragPayload(payload)) return;
+      guarded(channel, () => service[method]({ x: payload.screenX, y: payload.screenY }));
+    });
+  }
+
+  deps.ipcMain.on(PET_CHANNELS.resizeStep, (event, payload) => {
+    const service = deps.getService();
+    if (service === null || !service.isPetSender(event.sender)) return;
+    if (!isValidPetResizeStepPayload(payload)) return;
+    guarded(PET_CHANNELS.resizeStep, () => service.handleResizeStep(payload.direction));
   });
 }
