@@ -207,7 +207,7 @@ e nenhum aviso do Windows sai.
 
 - [x] T042 [P] [US4] Casos em `tests/pet-bubble.test.ts`: `accountSwitched` dá `Conta → Interno 3`, pose `mirror` e alvo `donel`, e substitui o balão de sessão sem se juntar a ele.
 - [x] T043 [US4] `src/main/index.ts` `broadcastAccountsChanged` (≈`:791-802`) → `petService?.onAccountSwitched(label)`, independente do chat.
-- [ ] T044 [US4] `tests/smoke/pet.spec.ts` parte 4 (`DONEL_ACCOUNTS_FAKE_MOD_FIXTURE`, como `tests/smoke/accounts.spec.ts`): trocar de conta via `accounts.switch` → `data-bubble` com o rótulo.
+- [x] T044 [US4] `tests/smoke/pet.spec.ts` parte 4 (`DONEL_ACCOUNTS_FAKE_MOD_FIXTURE`, como `tests/smoke/accounts.spec.ts`): trocar de conta via `accounts.switch` → `data-bubble` com o rótulo.
 
 ---
 
@@ -232,7 +232,7 @@ e nenhum aviso do Windows sai.
   - existe só com o pet ligado e reinicia com recuo;
   - em tela cheia faz `hide()`; ao voltar, `showInactive()`;
   - os avisos do Windows seguem calados (Q2).
-- [ ] T051 [US5] `tests/smoke/pet.spec.ts` parte 5:
+- [x] T051 [US5] `tests/smoke/pet.spec.ts` parte 5:
   - Esconder (pelo mesmo caminho do menu, exposto para teste) → a janela do pet fecha e o toggle das Preferências aparece desligado;
   - religar → volta;
   - `resizeStep` → `data-size` muda e o desenho continua no lugar (base fixa).
@@ -245,7 +245,7 @@ e nenhum aviso do Windows sai.
   - `pet-window.ts`: `setContentProtection(true)` ao criar (no Windows 11, `WDA_EXCLUDEFROMCAPTURE`), salvo `DONEL_PET_CAPTURABLE=1`, mais `setCaptureAllowed(b)`;
   - `pet-service.ts`: estado do liberar com o relógio do tick;
   - menu (T047): "Liberar print por 1 minuto" e "Bloquear print agora".
-- [ ] T062 [US5] `tests/smoke/pet.spec.ts` parte 6:
+- [x] T062 [US5] `tests/smoke/pet.spec.ts` parte 6:
   - lê `GetWindowDisplayAffinity` do HWND do pet (`getNativeWindowHandle` + PowerShell/user32) e espera `0x11` (excluído da captura);
   - depois de liberar, espera `0x0`;
   - depois de bloquear, `0x11` de novo.
