@@ -17,6 +17,7 @@ import { BrowserWindow, Menu } from 'electron';
 import { join } from 'node:path';
 import { PET_CHANNELS } from '../../shared/pet/ipc';
 import type { PetRect, PetView } from '../../shared/pet/types';
+import { guardNavigation } from '../navigation-guard';
 import { deferUntilMenuClosed, toMenuTemplate } from './pet-menu';
 import type { PetSeams, PetSmokeGlobal } from './pet-seams';
 import type { CreatePetWindowOptions, PetWindowHandle } from './pet-service';
@@ -77,19 +78,8 @@ export function createPetWindow(options: CreatePetWindowOptions, seams: PetSeams
   // flowing to the page so it can run that hit test (R9).
   win.setIgnoreMouseEvents(true, { forward: true });
 
-  // Same navigation guards as the main window (T045 of the chat): this window exposes
-  // `window.donel`, so it must never be navigated to another page nor open new windows.
-  const sameDocument = (url: string): boolean => {
-    const strip = (u: string): string => u.split('#')[0] ?? u;
-    return strip(url) === strip(win.webContents.getURL());
-  };
-  win.webContents.on('will-navigate', (event, url) => {
-    if (!sameDocument(url)) event.preventDefault();
-  });
-  win.webContents.on('will-redirect', (event, url) => {
-    if (!sameDocument(url)) event.preventDefault();
-  });
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Same navigation guard as the main window: this window exposes `window.donel` too.
+  guardNavigation(win.webContents);
 
   // `webContents.id` read now: asking "who sent this message?" later must not touch a destroyed window.
   const webContentsId = win.webContents.id;

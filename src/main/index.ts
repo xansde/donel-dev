@@ -232,6 +232,7 @@ import { PtyManager } from './pty-manager';
 // C3 (015-jobu-pet) — "the owner closed the tab" vs. "the process left by itself".
 import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
 // 015-jobu-pet — the Jobu on the desktop: service (core + window + tick), the window and the `pet:*` handlers.
+import { guardNavigation } from './navigation-guard';
 import { registerPetIpcHandlers } from './pet/pet-ipc';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
@@ -1076,21 +1077,8 @@ function createMainWindow(): void {
   mainWindow.on('show', reportPetFocus);
   mainWindow.on('hide', reportPetFocus);
 
-  // T045 (014-chat, R21) — guarda de navegação. Esta janela expõe `window.donel.pty.input`; um
-  // link do markdown que a navegasse entregaria o app a uma página externa. Navegar para outra
-  // URL é sempre negado (só a recarga da própria página passa, para o HMR do dev); janelas novas
-  // são sempre negadas — links externos saem pelo IPC `chat:open-external` (http/https).
-  const sameDocument = (url: string): boolean => {
-    const strip = (u: string): string => u.split('#')[0] ?? u;
-    return strip(url) === strip(mainWindow.webContents.getURL());
-  };
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!sameDocument(url)) event.preventDefault();
-  });
-  mainWindow.webContents.on('will-redirect', (event, url) => {
-    if (!sameDocument(url)) event.preventDefault();
-  });
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // T045 (014-chat, R21): this window exposes `window.donel`, so it must never be navigated away (see navigation-guard.ts).
+  guardNavigation(mainWindow.webContents);
 
   const unsubscribeData = ptyManager.onData((ptyId, data) => {
     mainWindow.webContents.send(PTY_CHANNELS.data, ptyId, data);
