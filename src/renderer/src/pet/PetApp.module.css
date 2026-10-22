@@ -44,7 +44,7 @@
   position: absolute;
   top: var(--pet-room);
   left: var(--pet-room);
-  filter: drop-shadow(0 0 0.6px rgb(206 220 244 / 0.85)) drop-shadow(0 0 2px rgb(140 170 220 / 0.4)) drop-shadow(0 2px 5px rgb(0 0 0 / 0.5));
+  filter: drop-shadow(0 0 0.6px color-mix(in srgb, var(--text-primary) 85%, transparent)) drop-shadow(0 0 2px color-mix(in srgb, var(--text-muted) 40%, transparent)) drop-shadow(0 2px 5px rgb(0 0 0 / 0.5));
   /* A click takes the owner to the session; holding it drags the Jobu (the cursor says "grabbing" while it does). */
   cursor: pointer;
 }
