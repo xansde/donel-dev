@@ -1,0 +1,27 @@
+{
+  "turns": [
+    {
+      "match": "re:^pedido",
+      "steps": [
+        { "type": "wait", "ms": 9000 },
+        { "type": "assistant", "text": "Pronto." },
+        { "type": "hook", "event": "Stop" }
+      ]
+    },
+    {
+      "match": "re:^rapido",
+      "steps": [
+        { "type": "wait", "ms": 6000 },
+        { "type": "assistant", "text": "Pronto." },
+        { "type": "hook", "event": "Stop" }
+      ]
+    }
+  ],
+  "default": {
+    "steps": [
+      { "type": "wait", "ms": 150 },
+      { "type": "assistant", "text": "OK" },
+      { "type": "hook", "event": "Stop" }
+    ]
+  }
+}

@@ -9,6 +9,7 @@ import type { DonelMigrationApi } from './migration';
 import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
 import type { DonelChatApi } from './chat/api';
+import type { DonelPetApi } from './pet/ipc';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProjectBindingApi } from './projectBinding';
@@ -16,6 +17,9 @@ import type { DonelProjectsApi } from './projects';
 import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
+
+// 015-jobu-pet — the Jobu contract (channels, payloads, validators) lives in ./pet/ipc.
+export type { DonelPetApi } from './pet/ipc';
 
 export { PROJECT_CHANNELS, sortProjects } from './projects';
 export type { DonelProjectsApi, ProjectInfo } from './projects';
@@ -49,7 +53,7 @@ export { RESUME_FAILURE_WINDOW_MS, forgetIfOrphan, resumedSessionIdFromArgs, sho
 export type { ResumeFailureSignal } from './resumeFailure';
 
 export { CONFIG_CHANNELS } from './config';
-export type { AppConfigDto, ChatPrefs, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, ProjectScanMode, SessionNamesMap } from './config';
+export type { AppConfigDto, ChatPrefs, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, PetPrefs, PetPrefsInput, ProjectScanMode, SessionNamesMap } from './config';
 
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — aba v3: reordenar (CA-26) e cor por
 // aba (CA-27). Lógica pura em tabAppearance.ts; canais `tabs:*` em
@@ -434,4 +438,6 @@ export interface DonelApi {
   esteira: DonelEsteiraApi;
   /** 014-chat — conversa da aba `claude` como chat (ler, paginar, abrir links). Com `chat.enabled = false` os pedidos rejeitam: não há handler. */
   chat: DonelChatApi;
+  /** 015-jobu-pet — the Jobu on the desktop. Exposed in both windows (the main one and the pet's); each one uses its own half. */
+  pet: DonelPetApi;
 }

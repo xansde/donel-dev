@@ -184,6 +184,14 @@ analogias improváveis que fazem sentido.
   guardaram." · "Essa rima com aquela de terça. Não acredito em coincidência
   — acredito em padrão." · "Tomo vazio. Até augúrio precisa de
   matéria-prima."
+- **Emenda de 21/10 — assistente na área de trabalho (spec 015):** o dono
+  fez dele o seu assistente. Fora da janela do app, num pet sempre por cima,
+  ele avisa sobre as sessões do Donel e a troca de conta — e entra, portanto,
+  no trabalho e nas permissões. O balão diz o fato seco (nome da aba e
+  evento); a persona fica no rosto e nos gestos, e a regra "clareza acima de
+  charme" vale para o balão. Dentro do app, "onde ele vive" e "onde nunca
+  entra" seguem como acima até a spec do layout místico.
+- **Pet implementado (015):** mapa de poses em `specs/015-jobu-pet/data-model.md`.
 
 ## 11. Dados de exemplo padrão (usar em todas as telas)
 

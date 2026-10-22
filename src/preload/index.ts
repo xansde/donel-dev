@@ -3,6 +3,10 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
 import { subscribeChannel } from './subscribeChannel';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
+// 015-jobu-pet — the pet channels; same names as the contract (specs/015-jobu-pet/contracts/ipc-pet.md).
+import { PET_CHANNELS } from '../shared/pet/ipc';
+import type { PetActivateSessionPayload, PetDragPayload, PetOpenTarget, PetPrefsChangedPayload, PetTabsPayload } from '../shared/pet/ipc';
+import type { PetView } from '../shared/pet/types';
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
@@ -50,6 +54,7 @@ import type {
   OpenDiscoveryIpcInput,
   PhaseArchivedPayload,
   PhaseDefaultsTable,
+  PetPrefsInput,
   ProjectBindingDto,
   ProjectInfo,
   ProjectScanMode,
@@ -324,6 +329,9 @@ const donelApi: DonelApi = {
 
     setChatPrefs: (prefs: Partial<ChatPrefs>) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setChatPrefs, prefs) as Promise<AppConfigDto>,
+
+    // T014 (015-jobu-pet) — the Jobu switch; the main applies it at once (creates/destroys the pet window).
+    setPetPrefs: (prefs: PetPrefsInput) => ipcRenderer.invoke(CONFIG_CHANNELS.setPetPrefs, prefs) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },
@@ -528,6 +536,64 @@ const donelApi: DonelApi = {
     onPromptSignal: (listener: (event: ChatPromptSignalEvent) => void) => {
       const handler = (_event: unknown, payload: ChatPromptSignalEvent): void => listener(payload);
       return subscribeChannel(ipcRenderer, CHAT_CHANNELS.promptSignal, handler);
+    },
+  },
+
+  // 015-jobu-pet — exposed in BOTH windows (the pet loads the same preload, R18); each one uses its own
+  // half. Each `onX` has ONE subscriber (the App in the main window, the PetApp in the pet): a lock of subscribeChannel.
+  // Everything that leaves the pet is `send` (no reply): the main never blocks a gesture waiting for a return.
+  pet: {
+    // --- main window ---
+    sendTabs: (payload: PetTabsPayload) => {
+      ipcRenderer.send(PET_CHANNELS.tabs, payload);
+    },
+    onActivateSession: (listener: (payload: PetActivateSessionPayload) => void) => {
+      const handler = (_event: unknown, payload: PetActivateSessionPayload): void => listener(payload);
+      return subscribeChannel(ipcRenderer, PET_CHANNELS.activateSession, handler);
+    },
+    onPrefsChanged: (listener: (payload: PetPrefsChangedPayload) => void) => {
+      const handler = (_event: unknown, payload: PetPrefsChangedPayload): void => listener(payload);
+      return subscribeChannel(ipcRenderer, PET_CHANNELS.prefsChanged, handler);
+    },
+
+    // --- pet window ---
+    ready: () => {
+      ipcRenderer.send(PET_CHANNELS.ready);
+    },
+    onView: (listener: (view: PetView) => void) => {
+      const handler = (_event: unknown, view: PetView): void => listener(view);
+      return subscribeChannel(ipcRenderer, PET_CHANNELS.view, handler);
+    },
+    onCloseList: (listener: () => void) => {
+      const handler = (): void => listener();
+      return subscribeChannel(ipcRenderer, PET_CHANNELS.closeList, handler);
+    },
+    setInteractive: (interactive: boolean) => {
+      ipcRenderer.send(PET_CHANNELS.interactive, { interactive });
+    },
+    click: () => {
+      ipcRenderer.send(PET_CHANNELS.click);
+    },
+    open: (target: PetOpenTarget) => {
+      ipcRenderer.send(PET_CHANNELS.open, { target });
+    },
+    setListOpen: (open: boolean) => {
+      ipcRenderer.send(PET_CHANNELS.listOpen, { open });
+    },
+    openContextMenu: (point?: PetDragPayload) => {
+      ipcRenderer.send(PET_CHANNELS.contextMenu, point);
+    },
+    dragStart: (screenX: number, screenY: number) => {
+      ipcRenderer.send(PET_CHANNELS.dragStart, { screenX, screenY });
+    },
+    dragMove: (screenX: number, screenY: number) => {
+      ipcRenderer.send(PET_CHANNELS.dragMove, { screenX, screenY });
+    },
+    dragEnd: (screenX: number, screenY: number) => {
+      ipcRenderer.send(PET_CHANNELS.dragEnd, { screenX, screenY });
+    },
+    resizeStep: (direction: 1 | -1) => {
+      ipcRenderer.send(PET_CHANNELS.resizeStep, { direction });
     },
   },
 };

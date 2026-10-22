@@ -1,0 +1,401 @@
+/*
+ * 015 (Jobu pet) - the pet window is transparent and the drawing sits at the bottom center (R9): the
+ * rest is room for the bubble and the list, which grow upwards. Nothing here paints a background:
+ * what shows is only what the screen draws.
+ *
+ * The base of the drawing (the anchor of the PNG) lands on the bottom edge of the window. The PNG has
+ * 8 px of transparent padding under the anchor; they fall outside the window and are cut there
+ * (see src/shared/pet/art.ts).
+ */
+
+.root {
+  /* Room around the drawing so the outline (the rim light and the shadow) is not cut at the sides. */
+  --pet-room: 12px;
+
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+/* The part of the drawing above the anchor: its bottom edge IS the base point. Width and height come from the view. */
+.stage {
+  position: relative;
+  flex: none;
+}
+
+/* Cuts whatever goes past the anchor (the transparent padding of the PNG) and carries the fade mask. */
+.clip {
+  position: absolute;
+  inset: calc(var(--pet-room) * -1) calc(var(--pet-room) * -1) 0;
+  overflow: hidden;
+}
+
+/*
+ * The subtle outline (Q8): the navy robe disappears over the dark Donel, so a thin cool rim light
+ * follows the silhouette and a soft shadow below separates it from a light background. The art itself
+ * does not change.
+ */
+.figure {
+  position: absolute;
+  top: var(--pet-room);
+  left: var(--pet-room);
+  filter: drop-shadow(0 0 0.6px color-mix(in srgb, var(--text-primary) 85%, transparent)) drop-shadow(0 0 2px color-mix(in srgb, var(--text-muted) 40%, transparent)) drop-shadow(0 2px 5px rgb(0 0 0 / 0.5));
+  /* A click takes the owner to the session; holding it drags the Jobu (the cursor says "grabbing" while it does). */
+  cursor: pointer;
+}
+
+/*
+ * US6 (FR-030): the light sway at rest. It moves the pictures INSIDE the figure, so it composes with the hop of the
+ * figure itself (the hop is a Web Animation on `.figure`). It goes from 0 to +4 px DOWN (`--sway`, set on the stage and
+ * proportional to the size), never up: the base of the drawing sits on the taskbar edge, and a sway that lifted it would
+ * show a gap between the Jobu and the bar. The part that goes below the edge is the transparent padding of the PNG and
+ * the clip of `.clip`. Asleep he is nearly still (1 to 2 px), and the system asking for less motion gets none.
+ */
+.sway {
+  position: absolute;
+  inset: 0;
+  animation: sway 3.5s ease-in-out infinite;
+}
+
+.root[data-pose='sleeping'] .sway {
+  animation: sway-sleep 6.5s ease-in-out infinite;
+}
+
+@keyframes sway {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(var(--sway, 4px));
+  }
+}
+
+@keyframes sway-sleep {
+  0%,
+  100% {
+    transform: translateY(calc(var(--sway, 4px) * 0.25));
+  }
+
+  50% {
+    transform: translateY(calc(var(--sway, 4px) * 0.5));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sway,
+  .root[data-pose='sleeping'] .sway {
+    animation: none;
+  }
+}
+
+/* While the owner holds the Jobu the whole screen says so, whatever is under the pointer. */
+.root[data-dragging='true'],
+.root[data-dragging='true'] .figure,
+.root[data-dragging='true'] .badge {
+  cursor: grabbing;
+}
+
+/* Every pose is stacked and only the current one shows: switching poses never flickers while an image decodes. */
+.pose {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.pose[data-active='true'] {
+  visibility: visible;
+}
+
+/* The badge: how many sessions wait. Candle gold, never purple (FR-031). */
+.badge {
+  position: absolute;
+  top: 4px;
+  right: -12px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
+  background: var(--donel-accent);
+  color: var(--bg-app);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  line-height: 22px;
+  text-align: center;
+  cursor: pointer;
+  box-shadow:
+    0 0 0 2px var(--bg-app),
+    0 3px 10px rgb(0 0 0 / 0.45);
+}
+
+/*
+ * The bubble (FR-014 to FR-017) sits above the head, anchored to the drawing like a CSS alignment: `right` =
+ * its right edge on the right edge of the drawing, growing to the left (the default corner is at the right
+ * edge of the screen, where the window sticks out); `left` is the mirror, `center` is centered. It lives
+ * inside the stage, so `bottom: 100%` is the top of the drawing; `--stage-w` (set on the stage) is how wide
+ * the drawing is. Up to 300 px, and what is cut is the name of the tab, never what happened.
+ */
+.popups {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: max-content;
+  max-width: min(300px, calc(50vw + var(--stage-w) / 2 - 8px));
+  pointer-events: none;
+}
+
+.popups[data-align='right'] {
+  right: 0;
+  align-items: flex-end;
+}
+
+.popups[data-align='left'] {
+  left: 0;
+  align-items: flex-start;
+}
+
+.popups[data-align='center'] {
+  left: 50%;
+  align-items: center;
+  max-width: min(300px, calc(100vw - 16px));
+  transform: translateX(-50%);
+}
+
+.bubble {
+  --bubble-edge: color-mix(in srgb, var(--donel-accent) 60%, transparent);
+
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--bubble-edge);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-modal);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.bubble:hover {
+  filter: brightness(1.08);
+}
+
+.bubble:focus-visible {
+  outline: none;
+  box-shadow:
+    var(--focus-ring),
+    var(--shadow-modal);
+}
+
+/* The little tail that points at the drawing. */
+.bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid var(--bubble-edge);
+  border-bottom: 1px solid var(--bubble-edge);
+  background: var(--bg-raised);
+  transform: rotate(45deg);
+}
+
+.popups[data-align='right'] .bubble::after {
+  right: clamp(10px, calc(var(--stage-w) / 2 - 5px), calc(100% - 20px));
+}
+
+.popups[data-align='left'] .bubble::after {
+  left: clamp(10px, calc(var(--stage-w) / 2 - 5px), calc(100% - 20px));
+}
+
+.popups[data-align='center'] .bubble::after {
+  left: calc(50% - 5px);
+}
+
+/* The dot says how urgent it is: candle gold, coral when the session is blocked, slate when it ended. */
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--donel-accent);
+}
+
+.bubble[data-pose='surprised'] .dot {
+  background: var(--state-permission);
+}
+
+.bubble[data-pose='sad'] .dot {
+  background: var(--state-done);
+}
+
+/* One line: the part that gives way (`lead`) and the part that does not (`tail`). */
+.text {
+  display: flex;
+  min-width: 0;
+}
+
+/* The part that gives way when the line is too long (the name of the tab, or the whole text of an aggregate). */
+.lead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.name {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/* What happened: never cut. */
+.tail {
+  flex: none;
+  margin-left: 0.4em;
+  white-space: nowrap;
+}
+
+/*
+ * The list of who waits (FR-023), above the head like the bubble, under it when both are there. The tail
+ * belongs to the wrapper, because the list itself scrolls and would cut it. The window has about 193 px
+ * above the head (200 px of room, less the 10 px gap) for both: the list alone takes up to 188, and with the
+ * bubble over it (35 px and a 10 px gap) up to 142, which is still three whole items.
+ */
+.listWrap {
+  position: relative;
+  width: 276px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-modal);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  pointer-events: auto;
+}
+
+.listWrap::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  transform: rotate(45deg);
+}
+
+.popups[data-align='right'] .listWrap::after {
+  right: clamp(10px, calc(var(--stage-w) / 2 - 5px), calc(100% - 20px));
+}
+
+.popups[data-align='left'] .listWrap::after {
+  left: clamp(10px, calc(var(--stage-w) / 2 - 5px), calc(100% - 20px));
+}
+
+.popups[data-align='center'] .listWrap::after {
+  left: calc(50% - 5px);
+}
+
+/* With the list under it, the bubble does not point at the drawing: the list does. */
+.popups[data-both] .bubble::after {
+  display: none;
+}
+
+.list {
+  max-height: 188px;
+  padding: 6px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.popups[data-both] .list {
+  max-height: 142px;
+}
+
+.listTitle {
+  margin: 4px 8px 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover,
+.item:focus-visible {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.itemName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemAge {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Said to a screen reader, never drawn. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

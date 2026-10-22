@@ -65,6 +65,8 @@ import {
   resolveSessionName,
 } from '../../shared/sessionName';
 import { sessionTabName } from '../../shared/sessions';
+// T021 (015-jobu-pet) — tab <-> PTY map and the `pet:tabs` payload (pure, tested in tests/pet-tab-pty-map.test.ts).
+import { buildChatFocusState, buildPetTabsPayload, tabPtyMap, type TabPtyMap } from '../../shared/pet/tabPtyMap';
 // Spec 010 / batch B6 — o Modo Dev continua sendo o mapa; a fonte dele passou
 // a ser o STORE (`esteiraMapView.ts`, puro e testado). Aqui fica só o
 // encanamento com PTY/IPC — nenhuma decisão de domínio, nenhuma frase de estado.
@@ -1127,6 +1129,11 @@ export function App(): React.JSX.Element {
     void window.donel.config.setChatPrefs({ focusMode }).then(setAppConfig).catch(() => undefined);
   };
 
+  // T022 (015-jobu-pet) — "Jobu na área de trabalho" switch: turns the pet window on/off at once, without a restart.
+  const handleChangePetEnabled = (enabled: boolean): void => {
+    void window.donel.config.setPetPrefs({ enabled }).then(setAppConfig).catch(() => undefined);
+  };
+
   /** T056 — troca a vista da aba (Chat | Terminal). A sessão e o PTY seguem os mesmos; só muda o que se vê. */
   const setTabView = (tabId: string, view: ChatViewMode): void => {
     updateTab(tabId, { view });
@@ -1881,11 +1888,18 @@ export function App(): React.JSX.Element {
   // de volta pra mais permissiva no meio de uma sessão não deve disparar
   // notificação retroativa de uma transição que já aconteceu enquanto
   // estava desligado.
+  //
+  // 015-jobu-pet (T033, R8) - with the Jobu on, his bubble already says this and a Windows notification would
+  // repeat the same news (FR-020): the loop is skipped, but `previousSemaphoreStatesRef` is still updated, for the
+  // reason above. `pet.enabled` comes from the Preferences and from the `pet:prefs-changed` push (the "Esconder"
+  // of his menu), so turning him off brings the notifications back at once. It holds while he is silenced or
+  // hidden by a full-screen app too (Q2).
+  const petEnabled = appConfig?.pet?.enabled === true;
   useEffect(() => {
     const preference = appConfig?.notificationPreference ?? FALLBACK_NOTIFICATION_PREFERENCE;
     const previous = previousSemaphoreStatesRef.current;
 
-    if (preference !== 'none') {
+    if (preference !== 'none' && !petEnabled) {
       for (const tab of tabs) {
         const nextState = semaphoreStates[tab.id]?.state;
         const prevState = previous[tab.id]?.state;
@@ -1910,29 +1924,79 @@ export function App(): React.JSX.Element {
       }
     }
     previousSemaphoreStatesRef.current = semaphoreStates;
-  }, [semaphoreStates, tabs, activeTabId, appConfig?.notificationPreference, chatEnabled]);
+  }, [semaphoreStates, tabs, activeTabId, appConfig?.notificationPreference, chatEnabled, petEnabled]);
+
+  // C2 (015-jobu-pet, R4) — ptyId -> tab.id for the gestures that arrive from the main (a click on a notification,
+  // a click on the Jobu). Built from `chatPtyIds`, the LAST ptyId of every tab, with no filter by `tabExits`: the
+  // tab of a process that ended is still there with its "Sessão encerrada" bar, and "encerrou" must lead to it.
+  // It is read when the gesture arrives, so a ref assigned on every render, like `toggleActiveTabViewRef`.
+  const ptyActivationMapRef = useRef<TabPtyMap>(tabPtyMap([], () => null));
+  ptyActivationMapRef.current = tabPtyMap(tabs, (tabId) => chatPtyIds[tabId] ?? null);
 
   // T079 (014-chat) — o main decide notificar pela aba ativa e pelo foco da janela (que ele lê sozinho);
   // o renderer só informa a aba ativa e os nomes das abas (título da notificação).
+  // C2 (015-jobu-pet): both go by ptyId, as the contract says - the main compares the tab in front with the
+  // ptyId of the pending. They used to go by `tab.id`, which is never a ptyId, so the notification was raised
+  // even for the tab in front, and titled "Donel Dev".
   useEffect(() => {
     if (!chatEnabled) return;
-    const names: Record<string, string> = {};
-    for (const tab of tabs) names[tab.id] = resolveTabName(tab);
-    getChatStore().reportFocusState(activeTabId === '' ? null : activeTabId, names);
+    const focus = buildChatFocusState(tabs, (tabId) => chatPtyIds[tabId] ?? null, resolveTabName, activeTabId);
+    getChatStore().reportFocusState(focus.activePtyId, focus.tabNames);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatEnabled, tabs, activeTabId, appConfig?.sessionNames]);
+  }, [chatEnabled, tabs, activeTabId, chatPtyIds, appConfig?.sessionNames]);
 
   // T079 — clique na notificação: ativa a aba, abre a vista Chat e avisa o painel de pendências (evento de DOM
   // `donel:chat-focus-pending`, `detail: { ptyId }`) para tomar o foco.
+  // C2 (015-jobu-pet): the main sends the ptyId and the tab to activate is the one the map gives for it; the ptyId
+  // used to be taken as the `tab.id`, so the click on the notification activated nothing.
   useEffect(() => {
     if (!chatEnabled) return undefined;
     return window.donel.chat.onFocusPending(({ ptyId }) => {
-      setActiveTabId(ptyId);
-      setTabView(ptyId, 'chat');
+      const tabId = ptyActivationMapRef.current.tabIdOf(ptyId);
+      if (tabId === null) return; // the tab closed on the way
+      setActiveTabId(tabId);
+      setTabView(tabId, 'chat');
       window.dispatchEvent(new CustomEvent('donel:chat-focus-pending', { detail: { ptyId } }));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatEnabled]);
+
+  // T021 (015-jobu-pet, R4) — the Jobu lives in the main process and only knows ptyIds: this effect tells it which `claude`
+  // tabs have a PTY, the name each one shows and which one is in front. It is ALWAYS on (with or without the chat,
+  // with the pet on or not): the main keeps the last state, so turning the pet on later finds it ready.
+  // Dedupe by JSON: the effect re-evaluates on every semaphore tick, the channel only when something really changed.
+  // `chatPtyIds` keeps the tab's LAST ptyId (the conversation stays readable after the exit), but a tab whose
+  // process ended (`tabExits`) has no PTY: its ptyId is dead and does not count as a session.
+  const lastPetTabsJsonRef = useRef<string | null>(null);
+  useEffect(() => {
+    const ptyIdOf = (tabId: string): string | null => (tabExits[tabId] === undefined ? (chatPtyIds[tabId] ?? null) : null);
+    const payload = buildPetTabsPayload(tabs, ptyIdOf, resolveTabName, activeTabId);
+    const json = JSON.stringify(payload);
+    if (json === lastPetTabsJsonRef.current) return;
+    lastPetTabsJsonRef.current = json;
+    window.donel.pet.sendTabs(payload);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs, chatPtyIds, tabExits, activeTabId, appConfig?.sessionNames]);
+
+  // T021 — the Jobu sends "activate this session's tab" (the main has already brought the window to the front).
+  // The map is the activation one (`ptyActivationMapRef`, above), which also sees the tab of a process that ended;
+  // a ptyId that is no tab's anymore (the tab closed on the way) does nothing.
+  useEffect(() => {
+    return window.donel.pet.onActivateSession(({ ptyId }) => {
+      const tabId = ptyActivationMapRef.current.tabIdOf(ptyId);
+      if (tabId !== null) setActiveTabId(tabId);
+    });
+  }, []);
+
+  // T021 (R19) — the main changed `pet.enabled` (Preferences or, later, "Esconder"): the renderer has no config push,
+  // so this notice keeps `appConfig.pet` up to date (the Preferences switch and the suppression of the toasts).
+  useEffect(() => {
+    return window.donel.pet.onPrefsChanged(({ enabled }) => {
+      setAppConfig((previous) =>
+        previous === null || previous.pet.enabled === enabled ? previous : { ...previous, pet: { ...previous.pet, enabled } },
+      );
+    });
+  }, []);
 
   // FIX (feedback E2E rodada 3) — painel colapsável: "fecha ao... Esc".
   // Efeito próprio (não reaproveita o listener de atalhos Ctrl+1..9/Ctrl+Tab
@@ -2683,6 +2747,8 @@ export function App(): React.JSX.Element {
         chatEnabled={appConfig?.chat.enabled ?? false}
         chatRestartPending={(appConfig?.chat.enabled ?? false) !== chatEnabled}
         onChangeChatEnabled={handleChangeChatEnabled}
+        petEnabled={appConfig?.pet.enabled ?? false}
+        onChangePetEnabled={handleChangePetEnabled}
       />
 
       {/* Spec 010 / N7→F25 (D1) — o mapa de nós. Renderizado condicionalmente

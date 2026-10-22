@@ -1,0 +1,1187 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Jobu Donel · protótipo do pet</title>
+<link rel="icon" href="data:,">
+<!--
+  Protótipo navegável da spec 015 (Fase 0, decisão D9). Arquivo gerado: NÃO edite
+  design/jobu-pet/prototipo.html. Edite este template e rode
+    python scripts/pet/build-prototype.py
+  que embute a arte (src/renderer/src/pet/assets/poses) como data: URI.
+-->
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0e1116;
+  --panel: #151a21;
+  --raised: #1c232c;
+  --raised-2: #242d38;
+  --border: #28303b;
+  --text: #d7dde5;
+  --muted: #828d9c;
+  --accent: #E8B44C;          /* dourado de vela: acento do Jobu */
+  --accent-ink: #0e1116;
+  --blue: #4C9CF0;            /* acento do app Donel (aba ativa, trabalhando) */
+  --coral: #F0684C;
+  --slate: #5E6873;
+  --font-ui: Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", ui-monospace, Consolas, monospace;
+  --taskbar-h: 48px;
+  --pet-w: 122px;
+  --pet-h: 148px;
+  --base-h: 144px;
+  --fade-px: 25px;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 400 13px/1.5 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.app { display: grid; grid-template-columns: var(--panel-w, 348px) minmax(0, 1fr); height: 100%; }
+body.panel-collapsed .app { --panel-w: 44px; }
+
+/* ------------------------------------------------------------ painel de controle */
+.panel { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 10px 10px 14px; border-bottom: 1px solid var(--border); flex: none; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; white-space: nowrap; }
+.brand-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(232,180,76,.18); flex: none; }
+.panel-body { overflow: auto; padding: 12px 14px 20px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+body.panel-collapsed .panel-body, body.panel-collapsed .brand-text { display: none; }
+body.panel-collapsed .panel-head { padding: 10px 6px; justify-content: center; }
+body.panel-collapsed .brand { display: none; }
+.lead { margin: 0; color: var(--muted); font-size: 12px; }
+.grp h2 { margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.row + .row { margin-top: 6px; }
+.note { margin: 6px 0 0; font-size: 11px; color: var(--muted); }
+.readout { margin: 8px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 12px; }
+.readout dt { color: var(--muted); }
+.readout dd { margin: 0; font-family: var(--font-mono); font-size: 11.5px; overflow-wrap: anywhere; }
+
+.btn { height: 28px; padding: 0 10px; border: 1px solid var(--border); background: transparent; color: var(--text); border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.btn:hover { background: var(--raised); }
+.btn.sm { height: 24px; padding: 0 7px; font-size: 11px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.07); background: var(--accent); }
+.btn[aria-pressed="true"] { background: var(--raised); border-color: rgba(232,180,76,.6); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg .btn { border: 0; border-radius: 0; border-right: 1px solid var(--border); }
+.seg .btn:last-child { border-right: 0; }
+.seg .btn[aria-pressed="true"] { background: var(--raised); box-shadow: inset 0 -2px 0 var(--accent); }
+select.btn { padding-right: 4px; background: var(--raised); max-width: 100%; }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; cursor: pointer; }
+.check input { margin: 3px 0 0; accent-color: var(--accent); }
+.icon-btn { width: 28px; height: 28px; border: 1px solid var(--border); background: transparent; border-radius: 6px; cursor: pointer; line-height: 1; }
+.icon-btn:hover { background: var(--raised); }
+
+.scards { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.scard { border: 1px solid var(--border); border-radius: 6px; padding: 8px; background: rgba(255,255,255,.015); }
+.scard.is-active { border-color: rgba(76,156,240,.55); }
+.scard-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; min-width: 0; }
+.sname { font: 500 12.5px var(--font-mono); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+.sacts { display: flex; flex-wrap: wrap; gap: 4px; }
+.empty { color: var(--muted); font-size: 12px; padding: 4px 0; }
+
+.log { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; }
+.log li { display: grid; grid-template-columns: 38px 1fr; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-left-width: 3px; border-radius: 6px; font-size: 12px; }
+.log time { font: 11px var(--font-mono); color: var(--muted); padding-top: 1px; }
+.log .why { display: block; font-size: 11px; color: var(--muted); }
+.log .k-suppressed { border-left-color: var(--accent); }
+.log .k-shown { border-left-color: var(--blue); }
+.log .k-off { border-left-color: var(--slate); }
+.log b { font-family: var(--font-mono); font-weight: 500; }
+
+.sdot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; background: var(--slate); }
+.sdot.working { background: var(--blue); animation: pulse 2s ease-in-out infinite; }
+.sdot.waiting { background: var(--accent); }
+.sdot.permission { background: var(--coral); animation: pulse 1s ease-in-out infinite; }
+.sdot.idle { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
+.sdot.ended { background: var(--slate); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+
+/* ------------------------------------------------------------ palco / área de trabalho falsa */
+.stage { min-width: 0; min-height: 0; padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.stage-label { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; gap: 12px; }
+.screen { position: relative; flex: 1; min-height: 0; overflow: hidden; border-radius: 8px; border: 1px solid var(--border); background: #2f3b4c; isolation: isolate; user-select: none; -webkit-user-select: none; }
+.screen.pet-hover, .screen.pet-hover * { cursor: grab !important; }
+.screen.pet-drag, .screen.pet-drag * { cursor: grabbing !important; }
+.wallpaper { position: absolute; inset: 0; z-index: 0;
+  background:
+    radial-gradient(1100px 620px at 80% 12%, rgba(130,160,200,.26), transparent 62%),
+    linear-gradient(135deg, #4a5a70 0%, #2f3b4c 52%, #232d3b 100%);
+}
+
+.win { position: absolute; display: flex; flex-direction: column; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,.14); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.titlebar { height: 32px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 4px 0 10px; font-size: 12px; }
+.titlebar .spacer { flex: 1; }
+.wbtn { width: 34px; height: 24px; display: grid; place-items: center; border: 0; background: transparent; border-radius: 4px; color: inherit; font-size: 12px; cursor: default; }
+button.wbtn { cursor: pointer; }
+button.wbtn:hover { background: rgba(255,255,255,.1); }
+button.wbtn.x:hover { background: #c4382a; color: #fff; }
+
+.win-browser { left: 34%; top: 19%; width: 58%; height: 70%; z-index: 20; background: #f6f7f9; color: #1f2933; }
+.win-browser .titlebar { background: #e6eaf0; color: #1f2933; }
+.win-browser .fav { width: 14px; height: 14px; border-radius: 3px; background: #4C9CF0; }
+.win-browser .addr { margin: 6px 10px; padding: 3px 12px; background: #fff; border: 1px solid #d5dbe3; border-radius: 999px; font-size: 12px; color: #52606d; }
+.win-browser .page { flex: 1; padding: 18px 22px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+.win-browser .page h4 { margin: 0; font-size: 18px; font-weight: 600; }
+.win-browser .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.win-browser .card { height: 96px; border-radius: 8px; background: #fff; border: 1px solid #e1e6ec; padding: 12px; }
+.win-browser .card i { display: block; height: 8px; border-radius: 4px; background: #dfe5ec; margin-bottom: 8px; }
+.win-browser .card i:first-child { width: 40%; background: #cfd8e3; }
+.win-browser .chart { flex: 1; min-height: 90px; border-radius: 8px; background: #fff; border: 1px solid #e1e6ec; display: flex; align-items: flex-end; gap: 3.5%; padding: 16px 20px 0; }
+.win-browser .chart i { flex: 1; border-radius: 4px 4px 0 0; background: linear-gradient(#cfd9e6, #b3c3d7); }
+
+.win-donel { left: 3.5%; top: 6%; width: 60%; height: 70%; background: var(--bg); color: var(--text); z-index: 10; }
+.win-donel[data-state="focus"] { z-index: 30; border-color: rgba(255,255,255,.22); }
+.win-donel.max { left: 0; top: 0; width: 100%; height: calc(100% - var(--taskbar-h)); border-radius: 0; border-width: 0; }
+.win-donel .titlebar { background: #10151b; border-bottom: 1px solid var(--border); }
+.win-donel[data-state="behind"] .titlebar { color: var(--muted); }
+.win-donel .app-ico { width: 16px; height: 16px; border-radius: 4px; background: #0b0e12; border: 1px solid var(--border); display: grid; place-items: center; }
+.win-donel .app-ico::before { content: ""; width: 4px; height: 9px; background: var(--accent); border-radius: 50% 50% 50% 0 / 80% 80% 20% 20%; transform: rotate(20deg); }
+.donel-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 150px minmax(0, 1fr); }
+.donel-side { background: var(--panel); border-right: 1px solid var(--border); padding: 10px 8px; font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.donel-side .lbl { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 0 6px 6px; }
+.donel-side .it { padding: 4px 8px; border-radius: 6px; color: var(--muted); font-family: var(--font-mono); font-size: 12px; }
+.donel-side .it.on { background: var(--raised); color: var(--text); }
+.donel-main { display: flex; flex-direction: column; min-width: 0; }
+.tabs { display: flex; height: 34px; flex: none; background: var(--panel); border-bottom: 1px solid var(--border); overflow: hidden; }
+.tabs-empty { align-self: center; padding: 0 12px; color: var(--muted); font-size: 12px; }
+.tab { display: flex; align-items: stretch; min-width: 0; max-width: 220px; border-right: 1px solid var(--border); color: var(--muted); }
+.tab.active { background: var(--raised); color: var(--text); box-shadow: inset 0 2px 0 var(--blue); }
+.tab-main { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 0 4px 0 10px; border: 0; background: transparent; cursor: pointer; font: 12px var(--font-mono); color: inherit; }
+.tab-main .tname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-main .tstate { font: 10px var(--font-ui); color: var(--muted); white-space: nowrap; }
+.tab-x { width: 22px; border: 0; background: transparent; cursor: pointer; color: var(--muted); font-size: 14px; line-height: 1; }
+.tab-x:hover { color: var(--text); }
+.term { flex: 1; min-height: 0; padding: 14px 16px; font: 12.5px/1.6 var(--font-mono); color: var(--muted); display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.term-head { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.skel { height: 9px; border-radius: 4px; background: #1b222b; }
+.term-note { margin-top: auto; font: 11px var(--font-ui); color: var(--muted); }
+.term-empty { margin: auto; text-align: center; font: 13px var(--font-ui); color: var(--muted); }
+.donel-status { flex: none; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-top: 1px solid var(--border); background: var(--panel); font: 11px var(--font-mono); color: var(--muted); }
+
+.taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: var(--taskbar-h); z-index: 40;
+  background: rgba(21,26,33,.95); border-top: 1px solid rgba(255,255,255,.09);
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 12px; }
+.tb-mid { display: flex; align-items: center; gap: 4px; }
+.tb-right { display: flex; align-items: center; justify-content: flex-end; gap: 14px; color: #c3ccd7; }
+.tb-btn { width: 40px; height: 40px; border: 0; border-radius: 6px; background: transparent; display: grid; place-items: center; position: relative; cursor: pointer; }
+.tb-btn:hover { background: rgba(255,255,255,.08); }
+.tb-btn.run::after { content: ""; position: absolute; bottom: 3px; left: 50%; width: 6px; height: 3px; margin-left: -3px; border-radius: 2px; background: #8a96a6; }
+.tb-btn.on { background: rgba(255,255,255,.1); }
+.tb-btn.on::after { width: 16px; margin-left: -8px; background: var(--blue); }
+.ico { width: 22px; height: 22px; border-radius: 6px; display: block; }
+.ico.start { background: none; display: grid; grid-template: 1fr 1fr / 1fr 1fr; gap: 2px; width: 18px; height: 18px; }
+.ico.start i { background: #4C9CF0; border-radius: 2px; }
+.ico.donel { background: #0b0e12; border: 1px solid #39424f; display: grid; place-items: center; }
+.ico.donel::before { content: ""; width: 5px; height: 11px; background: var(--accent); border-radius: 50% 50% 50% 0 / 80% 80% 20% 20%; transform: rotate(20deg); }
+.ico.web { background: radial-gradient(circle at 35% 35%, #8bc1fa, #3c7fcc); border-radius: 50%; }
+.ico.files { background: linear-gradient(#e7b94f, #d29a2a); border-radius: 4px; height: 16px; margin-top: 3px; }
+.tray { display: flex; gap: 10px; align-items: center; font-size: 12px; }
+.tray svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.clock { text-align: right; font-size: 12px; line-height: 1.25; font-variant-numeric: tabular-nums; }
+
+.wintoast { position: absolute; right: 14px; bottom: calc(var(--taskbar-h) + 14px); width: 320px; padding: 12px 14px; z-index: 55;
+  background: #202833; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+.wt-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #aeb8c5; margin-bottom: 4px; }
+.wt-ico { width: 14px; height: 14px; border-radius: 4px; background: #0b0e12; border: 1px solid #39424f; }
+.wt-time { margin-left: auto; font-size: 11px; }
+.wt-body { font-size: 13.5px; font-family: var(--font-mono); }
+
+.fsapp { position: absolute; inset: 0; z-index: 80; background: radial-gradient(900px 520px at 50% 40%, #20262f, #07090c 70%); display: grid; place-items: center; text-align: center; color: #c7d0db; }
+.fsapp .play { width: 74px; height: 74px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); margin: 0 auto 14px; position: relative; }
+.fsapp .play::after { content: ""; position: absolute; left: 29px; top: 22px; border-left: 22px solid rgba(255,255,255,.55); border-top: 15px solid transparent; border-bottom: 15px solid transparent; }
+.fsapp p { margin: 0; font-size: 15px; }
+.fsapp small { color: #7f8b99; }
+
+/* ------------------------------------------------------------ o Jobu */
+.pet { position: absolute; width: var(--pet-w); height: var(--base-h); z-index: 90; pointer-events: none; }
+.pet:focus-visible { outline: 2px dashed var(--accent); outline-offset: 4px; }
+.pet.show-hit { outline: 1px dashed rgba(232,180,76,.75); outline-offset: 0; }
+.pet.show-hit .pet-fig { filter: drop-shadow(0 0 2px rgba(232,180,76,.95)) drop-shadow(0 0 1px rgba(232,180,76,.95)); }
+.pet-clip { position: absolute; left: 0; right: 0; bottom: 0; height: calc(100% + 48px); overflow: hidden; }
+.pet.floating .pet-clip {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade-px)), transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade-px)), transparent 100%);
+}
+.pet-fig { position: absolute; left: 0; top: 48px; width: var(--pet-w); height: var(--pet-h); will-change: transform; }
+.pet.hover .pet-fig { filter: brightness(1.08); }
+.pet-sway { position: absolute; inset: 0; animation: sway 3.5s ease-in-out infinite; }
+.pet.sleeping .pet-sway { animation: sway-sleep 6.5s ease-in-out infinite; }
+.pet-fig.hop { animation: hop .52s cubic-bezier(.3,.7,.4,1) 1; }
+.pose { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; opacity: 0; }
+.pose.on { opacity: 1; }
+/* o balanço fica entre 0 e +4 px (repouso em +2): a base nunca desgruda da borda da barra */
+@keyframes sway { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
+@keyframes sway-sleep { 0%, 100% { transform: translateY(1px); } 50% { transform: translateY(2px); } }
+@keyframes hop { 0% { transform: translateY(0); } 30% { transform: translateY(-9px); } 55% { transform: translateY(0); } 75% { transform: translateY(-3px); } 100% { transform: translateY(0); } }
+@keyframes pop { 0% { transform: scale(.6); } 60% { transform: scale(1.18); } 100% { transform: scale(1); } }
+
+.badge { position: absolute; top: 4px; right: -12px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px;
+  background: var(--accent); color: var(--accent-ink); font: 600 12px/22px var(--font-ui); text-align: center;
+  box-shadow: 0 0 0 2px #0e1116, 0 3px 10px rgba(0,0,0,.45); }
+.badge.pop { animation: pop .3s ease-out; }
+
+.bubble, .plist, .pmenu { position: absolute; }
+.bubble { z-index: 95; max-width: 300px; }
+.bubble-card { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 12px; text-align: left; cursor: pointer;
+  background: var(--raised); color: var(--text); border: 1px solid rgba(232,180,76,.6); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.bubble-card::after { content: ""; position: absolute; left: var(--tail-x, 50%); bottom: -6px; width: 10px; height: 10px; background: var(--raised);
+  border-right: 1px solid rgba(232,180,76,.6); border-bottom: 1px solid rgba(232,180,76,.6); transform: translateX(-50%) rotate(45deg); }
+.bubble.below .bubble-card::after { bottom: auto; top: -6px; transform: translateX(-50%) rotate(225deg); }
+.b-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.b-dot.permission { background: var(--coral); }
+.b-dot.ended { background: var(--slate); }
+.b-text { min-width: 0; white-space: nowrap; font-size: 13px; }
+.b-name { display: inline-block; max-width: 15ch; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; font: 500 12.5px var(--font-mono); }
+
+.plist { z-index: 96; width: 276px; padding: 6px; background: var(--raised); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.plist::after { content: ""; position: absolute; left: var(--tail-x, 50%); bottom: -6px; width: 10px; height: 10px; background: var(--raised);
+  border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); transform: translateX(-50%) rotate(45deg); }
+.plist.below::after { bottom: auto; top: -6px; transform: translateX(-50%) rotate(225deg); }
+.plist h3 { margin: 4px 8px 6px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.pl-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: transparent; border-radius: 6px; text-align: left; cursor: pointer; }
+.pl-item:hover, .pl-item:focus-visible { background: var(--raised-2); }
+.pl-name { flex: 1; min-width: 0; font: 500 12.5px var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-age { color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+.pmenu { z-index: 100; min-width: 206px; padding: 4px; background: var(--raised); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.pmenu button { display: block; width: 100%; text-align: left; padding: 7px 10px; border: 0; background: transparent; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.pmenu button:hover, .pmenu button:focus-visible { background: var(--raised-2); }
+.pmenu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+
+.boot-error { margin: 40px; padding: 16px; border: 1px solid var(--coral); border-radius: 8px; color: var(--coral); }
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-sway, .pet-fig.hop, .badge.pop, .sdot.working, .sdot.permission { animation: none !important; }
+}
+@media (max-width: 900px) {
+  .app { --panel-w: 300px; }
+  .donel-body { grid-template-columns: 0 minmax(0, 1fr); }
+  .donel-side { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel" id="panel" aria-label="Controles do simulador">
+    <header class="panel-head">
+      <div class="brand"><span class="brand-dot"></span><span class="brand-text">Jobu · protótipo (spec 015)</span></div>
+      <button class="icon-btn" id="panelToggle" aria-expanded="true" aria-controls="panelBody" title="Recolher o painel">&#x2039;</button>
+    </header>
+    <div class="panel-body" id="panelBody">
+      <p class="lead">Fase 0 da spec 015: a área de trabalho ao lado é falsa e os botões simulam o que o Donel avisaria. Nada aqui lê nem mostra conteúdo de conversa.</p>
+
+      <section class="grp" aria-labelledby="g-jobu">
+        <h2 id="g-jobu">Jobu</h2>
+        <div class="row">
+          <button class="btn" id="btnPower">Desligar o Jobu</button>
+          <button class="btn" id="btnMute">Silenciar por 1 hora</button>
+          <button class="btn" id="btnHome">Voltar ao canto</button>
+        </div>
+        <dl class="readout" id="readout"></dl>
+        <p class="note">Botão direito no Jobu abre o menu; arraste para movê-lo; clique para ir até a sessão.</p>
+      </section>
+
+      <section class="grp" aria-labelledby="g-sess">
+        <h2 id="g-sess">Sessões do Donel</h2>
+        <div class="row">
+          <select class="btn" id="newName" aria-label="Nome da sessão nova"></select>
+          <button class="btn" id="btnNew">Abrir sessão nova</button>
+        </div>
+        <div class="scards" id="scards"></div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn sm" id="scnSame" title="Todas as que estão trabalhando terminam o turno no mesmo segundo">Todas terminam juntas</button>
+          <button class="btn sm" id="scnMix" title="Uma termina e outra pede permissão no mesmo segundo">Mix no mesmo segundo</button>
+          <button class="btn sm" id="scnThree" title="Cria três sessões esperando há 9, 5 e 2 minutos (+2 min deixa o Jobu muito impaciente)">3 esperando (idades)</button>
+          <button class="btn sm" id="scnReset">Reiniciar</button>
+        </div>
+      </section>
+
+      <section class="grp" aria-labelledby="g-donel">
+        <h2 id="g-donel">Janela do Donel</h2>
+        <div class="seg" role="group" aria-label="Estado da janela do Donel">
+          <button class="btn" data-donel="focus" aria-pressed="false">Em foco</button>
+          <button class="btn" data-donel="behind" aria-pressed="false">Atrás</button>
+          <button class="btn" data-donel="minimized" aria-pressed="false">Minimizado</button>
+        </div>
+        <label class="check" style="margin-top:8px"><input type="checkbox" id="chkMax"><span>Donel maximizado (o Jobu fica por cima dele)</span></label>
+        <p class="note">Aba ativa com o Donel em foco = sessão vista. O ✕ da janela fecha o Donel, e o Jobu sai junto.</p>
+        <div class="row" id="reopenRow" hidden style="margin-top:8px"><button class="btn primary" id="btnReopen">Abrir o Donel</button></div>
+      </section>
+
+      <section class="grp" aria-labelledby="g-conta">
+        <h2 id="g-conta">Conta em uso</h2>
+        <div class="seg" role="group" aria-label="Trocar de conta">
+          <button class="btn" data-account="Interno 1" aria-pressed="false">Interno 1</button>
+          <button class="btn" data-account="Interno 2" aria-pressed="false">Interno 2</button>
+          <button class="btn" data-account="Interno 3" aria-pressed="false">Interno 3</button>
+          <button class="btn" data-account="Interno 4" aria-pressed="false">Interno 4</button>
+        </div>
+        <div class="row"><button class="btn sm" id="btnAuto">Troca automática (próxima conta)</button></div>
+      </section>
+
+      <section class="grp" aria-labelledby="g-rel">
+        <h2 id="g-rel">Relógio</h2>
+        <div class="row">
+          <span id="clockNow" style="font:12px var(--font-mono);color:var(--muted)"></span>
+          <button class="btn sm" data-skew="1">+1 min</button>
+          <button class="btn sm" data-skew="10">+10 min</button>
+          <button class="btn sm" data-skew="20">+20 min</button>
+        </div>
+        <p class="note">Mais de 10 min esperando: muito impaciente. 20 min sereno: waffle. Silêncio e tempos da lista seguem este relógio.</p>
+      </section>
+
+      <section class="grp" aria-labelledby="g-fs">
+        <h2 id="g-fs">Ambiente</h2>
+        <div class="row"><button class="btn" id="btnFs" aria-pressed="false">Tela cheia: desligada</button></div>
+        <label class="check" style="margin-top:8px"><input type="checkbox" id="chkWin" checked><span>Avisos do Windows ligados (preferência de notificações que já existe)</span></label>
+        <label class="check" style="margin-top:6px"><input type="checkbox" id="chkHit"><span>Mostrar a área clicável do Jobu (o resto deixa o clique passar)</span></label>
+      </section>
+
+      <section class="grp" aria-labelledby="g-log">
+        <h2 id="g-log">Registro dos avisos do Windows</h2>
+        <div class="row"><button class="btn sm" id="btnClearLog">Limpar</button></div>
+        <ul class="log" id="log" aria-live="polite"></ul>
+        <p class="note">Mostra quando o Windows teria avisado. Com o Jobu visível o aviso é suprimido; escondido ou desligado, ele volta.</p>
+      </section>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <div class="stage-label"><span>Área de trabalho simulada</span><span>O Jobu senta na borda da barra de tarefas, no canto inferior direito</span></div>
+    <div class="screen" id="screen">
+      <div class="wallpaper"></div>
+
+      <section class="win win-browser" id="winBrowser" aria-hidden="true">
+        <header class="titlebar"><span class="fav"></span><span>Painel interno · Navegador</span><span class="spacer"></span><span class="wbtn">&#x2013;</span><span class="wbtn">&#x25A2;</span><span class="wbtn">&#x2715;</span></header>
+        <div class="addr">painel.exemplo.interno/relatorios</div>
+        <div class="page">
+          <h4>Relatório da semana</h4>
+          <div class="cards"><div class="card"><i></i><i></i><i style="width:70%"></i></div><div class="card"><i></i><i></i><i style="width:55%"></i></div><div class="card"><i></i><i></i><i style="width:80%"></i></div></div>
+          <div class="chart"><i style="height:38%"></i><i style="height:62%"></i><i style="height:48%"></i><i style="height:80%"></i><i style="height:56%"></i><i style="height:70%"></i><i style="height:92%"></i><i style="height:64%"></i></div>
+        </div>
+      </section>
+
+      <section class="win win-donel" id="winDonel" data-state="behind" aria-label="Donel Dev (simulado)">
+        <header class="titlebar">
+          <span class="app-ico"></span><span>Donel Dev</span><span class="spacer"></span>
+          <button class="wbtn" id="winMin" aria-label="Minimizar o Donel">&#x2013;</button>
+          <button class="wbtn" id="winMax" aria-label="Maximizar o Donel">&#x25A2;</button>
+          <button class="wbtn x" id="winClose" aria-label="Fechar o Donel">&#x2715;</button>
+        </header>
+        <div class="donel-body">
+          <nav class="donel-side" aria-label="Projetos"><div class="lbl">Projetos</div><div class="it on">atlas</div><div class="it">beacon</div><div class="it">vega</div></nav>
+          <div class="donel-main">
+            <div class="tabs" id="tabs" role="tablist" aria-label="Abas de sessão"></div>
+            <div class="term" id="term"></div>
+            <footer class="donel-status" id="dstatus"></footer>
+          </div>
+        </div>
+      </section>
+
+      <div class="taskbar" id="taskbar">
+        <div></div>
+        <div class="tb-mid">
+          <button class="tb-btn" tabindex="-1" aria-label="Iniciar"><span class="ico start"><i></i><i></i><i></i><i></i></span></button>
+          <button class="tb-btn" id="tbDonel" aria-label="Donel Dev na barra de tarefas"><span class="ico donel"></span></button>
+          <button class="tb-btn run" tabindex="-1" aria-label="Navegador"><span class="ico web"></span></button>
+          <button class="tb-btn run" tabindex="-1" aria-label="Arquivos"><span class="ico files"></span></button>
+        </div>
+        <div class="tb-right">
+          <span class="tray" aria-hidden="true">
+            <svg viewBox="0 0 16 16"><path d="M2 6c3.5-3 8.5-3 12 0M4 8.6c2.3-2 5.7-2 8 0M6.2 11c1-.8 2.6-.8 3.6 0"/><circle cx="8" cy="13" r=".6"/></svg>
+            <svg viewBox="0 0 16 16"><path d="M2 6h3l4-3v10l-4-3H2zM11.5 5.5c1.3 1.3 1.3 3.7 0 5"/></svg>
+            <svg viewBox="0 0 16 16"><rect x="2" y="5" width="11" height="6" rx="1.2"/><path d="M14 7v2"/></svg>
+          </span>
+          <div class="clock" id="tbClock" aria-label="Relógio simulado"></div>
+        </div>
+      </div>
+
+      <div class="wintoast" id="winToast" role="status" hidden>
+        <div class="wt-head"><span class="wt-ico"></span><span>Donel Dev</span><span class="wt-time">agora</span></div>
+        <div class="wt-body" id="winToastText"></div>
+      </div>
+
+      <div class="fsapp" id="fsapp" hidden><div><div class="play"></div><p>Vídeo em tela cheia (simulação)</p><small>O Jobu some enquanto isto durar.</small></div></div>
+
+      <div class="pet" id="pet" tabindex="0" role="button" aria-label="Jobu" hidden>
+        <div class="pet-clip">
+          <div class="pet-fig" id="petFig"><div class="pet-sway" id="petSway"></div></div>
+        </div>
+        <div class="badge" id="badge" hidden>1</div>
+      </div>
+
+      <div class="bubble" id="bubble" role="status" aria-live="polite" hidden>
+        <button class="bubble-card" id="bubbleBtn" type="button"><span class="b-dot" id="bDot"></span><span class="b-text" id="bText"></span></button>
+      </div>
+      <div class="plist" id="plist" role="dialog" aria-label="Sessões esperando você" hidden></div>
+      <div class="pmenu" id="pmenu" role="menu" aria-label="Menu do Jobu" hidden>
+        <button role="menuitem" data-menu="mute" id="mMute">Silenciar por 1 hora</button>
+        <button role="menuitem" data-menu="hide">Esconder</button>
+        <hr>
+        <button role="menuitem" data-menu="home">Voltar ao canto</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ---------- dados injetados por scripts/pet/build-prototype.py ---------- */
+const MANIFEST = /*__MANIFEST__*/ null;
+const POSES = /*__POSES__*/ {};
+
+if (!MANIFEST) {
+  document.body.innerHTML = '<div class="boot-error">Template sem a arte. Rode <code>python scripts/pet/build-prototype.py</code> e abra <code>design/jobu-pet/prototipo.html</code>.</div>';
+  return;
+}
+
+/* ---------- valores iniciais da spec (ajustáveis no plano) ---------- */
+const CFG = {
+  veryImpatientMs: 10 * 60e3,   // D10: esperando há mais de 10 min
+  balloonMs: 6000,              // FR-017: cerca de 6 s
+  groupMs: 1000,                // FR-017: eventos no mesmo segundo viram um balão
+  laughMs: 2500,                // FR-012: ri por um instante
+  waffleAfterMs: 20 * 60e3,     // FR-013: 20 min seguidos sereno
+  waffleMs: 4500,               //         ...come o waffle por alguns segundos
+  muteMs: 60 * 60e3,            // FR-026: silenciar por 1 hora
+  artHeight: 140,               // FR-008: cerca de 140 px a 100%
+  snapPx: 22,                   // soltar a menos disso da borda da barra = sentar de novo
+  toastMs: 5500,
+  startTime: new Date(2026, 9, 21, 14, 32, 0).getTime(),
+};
+const TASKBAR_H = 48;
+const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const NAMES = ['spotsys', 'radar spotsys', 'atlas', 'beacon', 'vega', 'setup do dia', 'revisão PR 214',
+               'revisão do plano de migração das parcelas do CUB'];
+const ACCOUNTS = ['Interno 1', 'Interno 2', 'Interno 3', 'Interno 4'];
+
+/* FR-015: textos exatos. FR-016: pose do evento. */
+const EVENT_TEXT = { done: 'terminou', question: 'tem uma pergunta', permission: 'quer permissão', plan: 'plano para aprovar', ended: 'encerrou' };
+const EVENT_POSE = { done: 'calling', question: 'surprised', permission: 'surprised', plan: 'surprised', ended: 'sad' };
+const STATE_POSE = { 'very-impatient': 'very-impatient', impatient: 'impatient', reading: 'reading', serene: 'incense', sleeping: 'sleeping' };
+
+/* ---------- utilidades ---------- */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const clamp = (v, a, b) => Math.min(Math.max(v, a), Math.max(a, b));
+const pad2 = (n) => String(n).padStart(2, '0');
+const rt = () => performance.now();
+
+/* relógio simulado: tempo real + saltos manuais (+1/+10/+20 min) */
+const clock = { t0: rt(), skew: 0 };
+const now = () => CFG.startTime + (rt() - clock.t0) + clock.skew;
+const hhmm = (ms) => { const d = new Date(ms); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
+const dmy = (ms) => { const d = new Date(ms); return pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + '/' + d.getFullYear(); };
+const ageText = (since) => {
+  const m = Math.floor((now() - since) / 60e3);
+  if (m < 1) return 'há menos de 1 min';
+  if (m < 60) return 'há ' + m + ' min';
+  return 'há ' + Math.floor(m / 60) + ' h ' + pad2(m % 60) + ' min';
+};
+
+/* ---------- geometria da arte (vinda do manifest) ---------- */
+const ART = (() => {
+  const c = MANIFEST.canvas, a = MANIFEST.anchor;
+  const topMin = Math.min(...Object.values(MANIFEST.poses).map((p) => p.bbox.y));
+  const s0 = CFG.artHeight / (a.y - topMin);
+  const baseH = Math.round(a.y * s0);          // linha da base em px inteiros: o corte fica nítido
+  const s = baseH / a.y;
+  return { s, w: c.width * s, h: c.height * s, baseH, artH: (a.y - topMin) * s, ax: a.x * s };
+})();
+const root = document.documentElement.style;
+root.setProperty('--pet-w', ART.w.toFixed(2) + 'px');
+root.setProperty('--pet-h', ART.h.toFixed(2) + 'px');
+root.setProperty('--base-h', ART.baseH + 'px');
+root.setProperty('--fade-px', Math.round(ART.artH * 0.18) + 'px');   // esmaece os ~18% de baixo
+
+/* FR-029: enquanto a arte nova não existe, vale a provisória. A chegada da arte não muda comportamento. */
+const hasPose = (n) => !!(MANIFEST.poses[n] && POSES[n]);
+const resolvePose = (n) => (hasPose(n) ? n : (MANIFEST.fallbacks && hasPose(MANIFEST.fallbacks[n]) ? MANIFEST.fallbacks[n] : 'neutral'));
+/* piscar só existe quando a arte de olhos fechados existe (provisória: não pisca) */
+const BLINK = { neutral: 'blink-neutral', impatient: 'blink-impatient' };
+let blinkUntil = 0;
+function scheduleBlink() {
+  setTimeout(() => {
+    if (!REDUCED && petVisible() && BLINK[wantedPose()] && hasPose(BLINK[wantedPose()])) { blinkUntil = rt() + 140; renderPet(); setTimeout(renderPet, 170); }
+    scheduleBlink();
+  }, 3200 + Math.random() * 4200);
+}
+
+/* ---------- estado ---------- */
+const S = {
+  donelOpen: true, donel: 'behind', donelMax: false,   // donel: 'focus' | 'behind' | 'minimized'
+  sessions: [], activeId: null, seq: 0,
+  account: 'Interno 1',
+  fullscreen: false, jobuOn: true, muteUntil: 0, winPref: true,
+  pos: null,                                   // null = canto padrão; {x, y} = onde o dono largou
+  balloon: null, balloonSeq: 0,
+  laughUntil: 0, waffleUntil: 0, sereneSince: null, waffleShown: false,
+  listOpen: false, menuOpen: false,
+  log: [], showHit: false, shownPose: null,
+};
+let pending = [], groupTimer = null, balloonTimer = null, toastTimer = null;
+
+const byId = (id) => S.sessions.find((s) => s.id === id);
+const isMuted = () => now() < S.muteUntil;
+const petVisible = () => S.donelOpen && S.jobuOn && !S.fullscreen;
+const canBalloon = () => petVisible() && !isMuted();
+/* esperando você = terminou o turno ou travou, e o dono ainda não abriu a aba (FR-009) */
+const waitingList = () => S.sessions.filter((s) => s.status === 'waiting' && !s.seen).sort((a, b) => a.since - b.since);
+
+/* FR-010: estado do rosto, sem a pose de evento */
+function baseState() {
+  const w = waitingList();
+  if (w.length) return (now() - w[0].since > CFG.veryImpatientMs) ? 'very-impatient' : 'impatient';
+  if (S.sessions.some((s) => s.status === 'working')) return 'reading';
+  if (S.sessions.length) return 'serene';
+  return 'sleeping';
+}
+/* FR-010: pose de evento (durante o balão) > muito impaciente > impaciente > lendo > sereno > dormindo */
+function wantedPose() {
+  if (S.balloon) return S.balloon.pose;
+  const st = baseState();
+  if (S.laughUntil > rt() && !waitingList().length) return 'laughing';       // FR-012
+  if (st === 'serene' && S.waffleUntil > rt()) return 'waffle';              // FR-013
+  return STATE_POSE[st];
+}
+
+/* ---------- regras de "visto" ---------- */
+function reconcileSeen() {
+  const before = waitingList().length;
+  if (S.donelOpen && S.donel === 'focus') {
+    if (S.activeId == null && S.sessions.length) S.activeId = S.sessions[0].id;
+    const s = byId(S.activeId);
+    if (s && s.status === 'waiting' && !s.seen) s.seen = true;               // aba ativa + Donel em foco
+  }
+  if (before > 0 && waitingList().length === 0) S.laughUntil = rt() + CFG.laughMs;   // FR-012
+}
+
+/* o balão deixa de fazer sentido se o dono já abriu a sessão dele */
+function pruneBalloon() {
+  const b = S.balloon;
+  if (!b) return;
+  const t = b.target;
+  const stale = (t.type === 'session' && b.kind !== 'ended' && (!byId(t.id) || byId(t.id).seen || byId(t.id).status !== 'waiting'))
+             || (t.type === 'list' && waitingList().length === 0);
+  if (stale) { S.balloon = null; clearTimeout(balloonTimer); }
+}
+
+/* ---------- avisos do Windows (registro) ---------- */
+function windowsNotify(text) {
+  let kind, reason;
+  if (!S.winPref) { kind = 'off'; reason = 'preferência de avisos do Windows desligada'; }
+  else if (S.jobuOn) { kind = 'suppressed'; reason = S.fullscreen ? 'Jobu ligado, em tela cheia' : isMuted() ? 'silêncio até ' + hhmm(S.muteUntil) : 'Jobu visível'; }
+  else { kind = 'shown'; reason = 'Jobu escondido ou desligado'; }
+  S.log.unshift({ t: now(), text, kind, reason });
+  S.log.length = Math.min(S.log.length, 40);
+  if (kind === 'shown') showToast(text);
+}
+function showToast(text) {
+  $('#winToastText').textContent = text;
+  $('#winToast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $('#winToast').hidden = true; }, CFG.toastMs);
+}
+
+/* ---------- eventos que geram balão ---------- */
+function emitSession(ev) {
+  windowsNotify(ev.name + ' · ' + EVENT_TEXT[ev.type]);
+  if (!canBalloon()) return;
+  pending.push(ev);
+  if (!groupTimer) groupTimer = setTimeout(flushGroup, CFG.groupMs);
+}
+function dropPending() { clearTimeout(groupTimer); groupTimer = null; pending = []; }
+function flushGroup() {
+  clearTimeout(groupTimer); groupTimer = null;
+  const evs = pending; pending = [];
+  if (!evs.length || !canBalloon()) return;
+  const last = new Map();                                    // uma entrada por sessão (a mais recente)
+  evs.forEach((e) => last.set(e.id, e));
+  const list = [...last.values()];
+  if (list.length === 1) {
+    const e = list[0];
+    showBalloon({ kind: e.type, name: e.name, text: e.name + ' · ' + EVENT_TEXT[e.type], pose: EVENT_POSE[e.type], target: { type: 'session', id: e.id } });
+    return;
+  }
+  const n = list.length;
+  const allDone = list.every((e) => e.type === 'done');
+  const allEnded = list.every((e) => e.type === 'ended');
+  showBalloon({
+    kind: allDone ? 'done' : allEnded ? 'ended' : 'mixed',
+    text: allDone ? n + ' sessões terminaram' : allEnded ? n + ' sessões encerraram' : n + ' sessões esperando você',
+    pose: allDone ? 'calling' : allEnded ? 'sad' : 'surprised',
+    target: { type: 'list' },
+  });
+}
+function emitAccount(label) {
+  windowsNotify('Conta → ' + label);
+  if (!canBalloon()) return;
+  flushGroup();
+  showBalloon({ kind: 'account', text: 'Conta → ' + label, pose: 'mirror', target: { type: 'account' } });
+}
+function showBalloon(b) {
+  clearTimeout(balloonTimer);
+  S.balloon = { ...b, id: ++S.balloonSeq };
+  balloonTimer = setTimeout(() => { S.balloon = null; commit(); }, CFG.balloonMs);
+  commit();
+}
+function clearBalloon() { clearTimeout(balloonTimer); S.balloon = null; }
+
+/* ---------- ações do simulador ---------- */
+function newSession(name) {
+  if (!S.donelOpen) return;
+  const s = { id: ++S.seq, name, status: 'idle', kind: null, since: null, seen: true };
+  S.sessions.push(s);
+  if (S.activeId == null) S.activeId = s.id;
+  commit();
+  return s.id;
+}
+/* kind: working | done | question | permission | plan | ended */
+function act(id, kind) {
+  const s = byId(id);
+  if (!s || !S.donelOpen) return;
+  if (kind === 'working') { s.status = 'working'; s.kind = null; s.since = null; s.seen = false; }
+  else if (kind === 'ended') {
+    const viewing = S.donel === 'focus' && S.activeId === id;
+    s.status = 'ended'; s.kind = null; s.since = null; s.seen = true;
+    if (!viewing) emitSession({ type: 'ended', id, name: s.name });
+  } else {
+    s.status = 'waiting'; s.kind = kind; s.since = now();
+    s.seen = S.donel === 'focus' && S.activeId === id;       // FR-009: aba ativa + Donel em foco = nasce vista
+    if (!s.seen) emitSession({ type: kind, id, name: s.name });
+  }
+  reconcileSeen();
+  commit();
+}
+function openSession(id) {                       // o dono abre a aba (Donel em foco, aba ativa)
+  if (!S.donelOpen) return;
+  S.donel = 'focus';
+  if (byId(id)) S.activeId = id;
+  reconcileSeen();
+  commit();
+}
+function closeTab(id) {                          // o dono fecha a aba: sai da contagem, sem balão de "encerrou"
+  const i = S.sessions.findIndex((s) => s.id === id);
+  if (i < 0) return;
+  S.sessions.splice(i, 1);
+  if (S.activeId === id) S.activeId = S.sessions.length ? S.sessions[Math.min(i, S.sessions.length - 1)].id : null;
+  reconcileSeen();
+  commit();
+}
+function setDonel(state) {
+  if (!S.donelOpen) return;
+  S.donel = state;
+  reconcileSeen();
+  commit();
+}
+function setDonelMax(on) {
+  if (!S.donelOpen) return;
+  S.donelMax = on;
+  if (on) S.donel = 'focus';
+  reconcileSeen();
+  commit();
+}
+function setAccount(label) {
+  if (label === S.account) return;
+  S.account = label;
+  emitAccount(label);
+  commit();
+}
+function skew(min) {
+  clock.skew += min * 60e3;
+  tick(true);
+  commit();
+}
+function setPower(on) {
+  S.jobuOn = on;
+  if (!on) { closePopups(); clearBalloon(); dropPending(); }
+  commit();
+}
+function startMute() {
+  S.muteUntil = now() + CFG.muteMs;
+  closePopups(); clearBalloon(); dropPending();
+  commit();
+}
+function stopMute() { S.muteUntil = 0; commit(); }
+function goHome() { S.pos = null; savePos(); commit(); }
+function setFullscreen(on) {
+  S.fullscreen = on;
+  if (on) { closePopups(); clearBalloon(); dropPending(); }
+  commit();
+}
+function setDonelOpen(open) {
+  S.donelOpen = open;
+  if (!open) { closePopups(); clearBalloon(); dropPending(); }
+  else reconcileSeen();
+  commit();
+}
+function resetAll() {
+  closePopups(); clearBalloon(); dropPending();
+  Object.assign(S, { donelOpen: true, donel: 'behind', donelMax: false, sessions: [], activeId: null, account: 'Interno 1', fullscreen: false,
+    jobuOn: true, muteUntil: 0, laughUntil: 0, waffleUntil: 0, sereneSince: null, waffleShown: false, log: [] });
+  clock.skew = 0; clock.t0 = rt();
+  $('#winToast').hidden = true;
+  commit();
+}
+function scenarioThree() {                        // três esperando, com idades diferentes, sem balões
+  resetAll();
+  const t = now();
+  [['spotsys', 9], ['atlas', 5], ['vega', 2]].forEach(([name, min]) => {
+    S.sessions.push({ id: ++S.seq, name, status: 'waiting', kind: 'done', since: t - min * 60e3, seen: false });
+  });
+  S.activeId = S.sessions[0].id;
+  commit();
+}
+function scenarioSame() {                         // todas as que trabalham terminam no mesmo segundo
+  S.sessions.filter((s) => s.status === 'working').forEach((s) => act(s.id, 'done'));
+}
+function scenarioMix() {                          // uma termina, outra pede permissão, no mesmo segundo
+  const w = S.sessions.filter((s) => s.status === 'working');
+  if (w[0]) act(w[0].id, 'done');
+  if (w[1]) act(w[1].id, 'permission');
+}
+
+/* ---------- posição, arrastar, clicar ---------- */
+const screenEl = $('#screen'), petEl = $('#pet'), petSway = $('#petSway'), petFig = $('#petFig');
+const bubbleEl = $('#bubble'), listEl = $('#plist'), menuEl = $('#pmenu');
+const POSE_KEY = 'jobu-proto-pos-v1';
+function loadPos() { try { const v = JSON.parse(localStorage.getItem(POSE_KEY)); if (v && isFinite(v.x) && isFinite(v.y)) return { x: v.x, y: v.y }; } catch (e) { /* sem storage */ } return null; }
+function savePos() { try { if (S.pos) localStorage.setItem(POSE_KEY, JSON.stringify(S.pos)); else localStorage.removeItem(POSE_KEY); } catch (e) { /* sem storage */ } }
+S.pos = loadPos();
+
+/* caixa interna da área de trabalho (sem a borda), em px fracionários: a base do Jobu e o topo da barra
+   caem na mesma linha mesmo quando a altura da janela do navegador não é inteira */
+const screenBox = () => {
+  const r = screenEl.getBoundingClientRect(), bx = screenEl.clientLeft, by = screenEl.clientTop;
+  return { x: r.left + bx, y: r.top + by, w: r.width - 2 * bx, h: r.height - 2 * by };
+};
+const screenSize = () => { const b = screenBox(); return { w: b.w, h: b.h }; };
+const taskbarTop = () => screenSize().h - TASKBAR_H;
+const defaultPos = () => ({ x: screenSize().w - ART.w - 28, y: taskbarTop() - ART.baseH });
+const insideScreen = (p) => { const { w, h } = screenSize(); return p.x >= 0 && p.y >= 0 && p.x + ART.w <= w && p.y + ART.baseH <= h; };
+function petPos() {
+  if (S.pos && insideScreen(S.pos)) return S.pos;     // FR-005: posição fora da área visível volta ao padrão
+  return defaultPos();
+}
+const isSeated = () => Math.abs(petPos().y + ART.baseH - taskbarTop()) < 1.5;   // FR-004: fora da borda, a base esmaece
+const petRect = () => { const p = petPos(); return { x: p.x, y: p.y, w: ART.w, h: ART.baseH }; };
+function clampPos(p) { const { w, h } = screenSize(); return { x: clamp(p.x, 0, w - ART.w), y: clamp(p.y, 0, h - ART.baseH) }; }
+
+/* máscaras de alfa na escala de exibição: só o desenho recebe clique (FR-006) */
+const MASKS = {};
+function buildMasks() {
+  const cw = Math.ceil(ART.w), ch = Math.ceil(ART.h);
+  Object.keys(POSES).forEach((name) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+        const g = cv.getContext('2d', { willReadFrequently: true });
+        g.drawImage(img, 0, 0, ART.w, ART.h);
+        const d = g.getImageData(0, 0, cw, ch).data;
+        const a = new Uint8Array(cw * ch);
+        for (let i = 0; i < a.length; i++) a[i] = d[i * 4 + 3];
+        MASKS[name] = { a, cw, ch };
+      } catch (e) { /* sem máscara: vale o retângulo */ }
+    };
+    img.src = POSES[name];
+  });
+}
+function hitPet(cx, cy) {
+  if (!petVisible()) return false;
+  const b = screenBox(), p = petPos();
+  const lx = cx - b.x - p.x, ly = cy - b.y - p.y;
+  if (lx < 0 || ly < 0 || lx >= ART.w || ly >= ART.baseH) return false;
+  const m = MASKS[S.shownPose];
+  return m ? m.a[Math.floor(ly) * m.cw + Math.floor(lx)] > 24 : true;
+}
+
+let drag = null, swallowClick = false;
+screenEl.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || e.target.closest('#bubble, #plist, #pmenu')) return;
+  if (!hitPet(e.clientX, e.clientY)) return;
+  e.preventDefault(); e.stopPropagation();           // o dono pegou o desenho: a janela de baixo não vê este clique
+  swallowClick = true;
+  const p = petPos();
+  drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y, moved: false };
+  try { screenEl.setPointerCapture(e.pointerId); } catch (err) { /* ok */ }
+}, true);
+screenEl.addEventListener('pointermove', (e) => {
+  if (drag && e.pointerId === drag.id) {
+    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    if (!drag.moved && Math.hypot(dx, dy) > 4) { drag.moved = true; screenEl.classList.add('pet-drag'); closePopups(); }
+    if (drag.moved) { S.pos = clampPos({ x: drag.ox + dx, y: drag.oy + dy }); renderPet(); renderPopups(); }
+    return;
+  }
+  const hit = hitPet(e.clientX, e.clientY);
+  screenEl.classList.toggle('pet-hover', hit);
+  petEl.classList.toggle('hover', hit);
+});
+screenEl.addEventListener('pointerup', (e) => {
+  if (!drag || e.pointerId !== drag.id) return;
+  const d = drag; drag = null;
+  screenEl.classList.remove('pet-drag');
+  try { screenEl.releasePointerCapture(e.pointerId); } catch (err) { /* ok */ }
+  setTimeout(() => { swallowClick = false; }, 60);
+  if (!d.moved) { onPetClick(); return; }
+  const p = petPos();
+  if (Math.abs(p.y + ART.baseH - taskbarTop()) <= CFG.snapPx) S.pos = clampPos({ x: p.x, y: taskbarTop() - ART.baseH });   // sentou na borda
+  savePos();
+  commit();
+});
+screenEl.addEventListener('pointercancel', () => { drag = null; screenEl.classList.remove('pet-drag'); swallowClick = false; });
+screenEl.addEventListener('click', (e) => { if (swallowClick) { e.stopPropagation(); e.preventDefault(); swallowClick = false; } }, true);
+screenEl.addEventListener('pointerleave', () => { screenEl.classList.remove('pet-hover'); petEl.classList.remove('hover'); });
+screenEl.addEventListener('contextmenu', (e) => {
+  if (e.target.closest('#pmenu') ) { e.preventDefault(); return; }
+  if (hitPet(e.clientX, e.clientY)) { e.preventDefault(); openMenu(e.clientX, e.clientY); }
+}, true);
+petEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPetClick(true); }
+  else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) { e.preventDefault(); const r = petEl.getBoundingClientRect(); openMenu(r.left + 10, r.top + 10, true); }
+});
+
+function onPetClick(fromKeyboard) {               // FR-022, FR-023, FR-024
+  closeMenu();
+  const w = waitingList();
+  if (w.length === 1) { closeList(); clearBalloon(); openSession(w[0].id); }
+  else if (w.length > 1) { if (S.listOpen) closeList(); else openList(fromKeyboard); }
+  else { closeList(); setDonel('focus'); }
+}
+$('#bubbleBtn').addEventListener('click', () => {  // FR-025
+  const b = S.balloon;
+  if (!b) return;
+  clearBalloon();
+  const w = waitingList();
+  if (b.target.type === 'session' && byId(b.target.id)) openSession(b.target.id);
+  else if (b.target.type === 'list' && w.length > 1) { commit(); openList(); }
+  else if (b.target.type === 'list' && w.length === 1) openSession(w[0].id);
+  else setDonel('focus');
+});
+
+/* ---------- popups: lista e menu ---------- */
+function openList(fromKeyboard) { S.listOpen = true; S.menuOpen = false; commit(); if (fromKeyboard) { const f = $('.pl-item', listEl); if (f) f.focus({ preventScroll: true }); } }
+function closeList() { if (S.listOpen) { S.listOpen = false; commit(); } }
+function openMenu(cx, cy, fromKeyboard) {
+  const b = screenBox();
+  S.menuOpen = true; S.listOpen = false; S.menuAt = { x: cx - b.x, y: cy - b.y };
+  commit();
+  if (fromKeyboard) { const f = $('button', menuEl); if (f) f.focus({ preventScroll: true }); }
+}
+function closeMenu() { if (S.menuOpen) { S.menuOpen = false; commit(); } }
+function closePopups() { S.listOpen = false; S.menuOpen = false; }
+listEl.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-id]');
+  if (!b) return;
+  S.listOpen = false; clearBalloon();
+  openSession(Number(b.dataset.id));
+});
+menuEl.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-menu]');
+  if (!b) return;
+  S.menuOpen = false;
+  if (b.dataset.menu === 'mute') { isMuted() ? stopMute() : startMute(); }
+  else if (b.dataset.menu === 'hide') setPower(false);
+  else if (b.dataset.menu === 'home') goHome();
+  commit();
+});
+/* FR-023: clique fora ou Esc fecha a lista (e o menu) sem fazer nada */
+document.addEventListener('pointerdown', (e) => {
+  if (!S.listOpen && !S.menuOpen) return;
+  if (e.target.closest('#plist, #pmenu')) return;
+  if (hitPet(e.clientX, e.clientY)) return;       // o clique no Jobu decide por si (alterna a lista)
+  closePopups(); commit();
+}, true);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && (S.listOpen || S.menuOpen)) { closePopups(); commit(); petEl.focus({ preventScroll: true }); }
+});
+
+/* ---------- janelas falsas ---------- */
+$('#winDonel').addEventListener('pointerdown', (e) => {
+  if (e.target.closest('#winMin, #winMax, #winClose')) return;
+  if (S.donel !== 'focus') { S.donel = 'focus'; reconcileSeen(); commit(); }
+});
+$('#winBrowser').addEventListener('pointerdown', () => { if (S.donel === 'focus') { S.donel = 'behind'; commit(); } });
+$('#winMin').addEventListener('click', () => setDonel('minimized'));
+$('#winMax').addEventListener('click', () => setDonelMax(!S.donelMax));
+$('#winClose').addEventListener('click', () => setDonelOpen(false));
+$('#tbDonel').addEventListener('click', () => { if (!S.donelOpen) return; setDonel(S.donel === 'focus' ? 'minimized' : 'focus'); });
+$('#tabs').addEventListener('click', (e) => {
+  const x = e.target.closest('[data-close]');
+  if (x) { closeTab(Number(x.dataset.close)); return; }
+  const t = e.target.closest('[data-tab]');
+  if (t) openSession(Number(t.dataset.tab));
+});
+
+/* ---------- renderização ---------- */
+const STATE_LABEL = { working: 'trabalhando', idle: 'parada', ended: 'encerrada' };
+const WAIT_LABEL = { done: 'terminou', question: 'pergunta', permission: 'permissão', plan: 'plano' };
+const labelOf = (s) => (s.status === 'waiting' ? (s.seen ? 'parada' : WAIT_LABEL[s.kind]) : STATE_LABEL[s.status]);
+const dotOf = (s) => (s.status === 'working' ? 'working' : s.status === 'waiting' && !s.seen ? (s.kind === 'permission' ? 'permission' : 'waiting') : s.status === 'ended' ? 'ended' : 'idle');
+
+function renderClock() {
+  const t = now();
+  $('#tbClock').innerHTML = hhmm(t) + '<br>' + dmy(t);
+  $('#clockNow').textContent = 'agora: ' + hhmm(t) + (clock.skew ? ' (+' + Math.round(clock.skew / 60e3) + ' min)' : '');
+}
+
+function renderDonel() {
+  const win = $('#winDonel');
+  win.hidden = !S.donelOpen || S.donel === 'minimized';
+  win.dataset.state = S.donel;
+  win.classList.toggle('max', S.donelMax);
+  $('#tabs').innerHTML = S.sessions.map((s) =>
+    '<div class="tab' + (s.id === S.activeId ? ' active' : '') + '" role="presentation">' +
+      '<button class="tab-main" role="tab" aria-selected="' + (s.id === S.activeId) + '" data-tab="' + s.id + '" title="' + esc(s.name) + ' · ' + esc(labelOf(s)) + '">' +
+        '<span class="sdot ' + dotOf(s) + '"></span><span class="tname">' + esc(s.name) + '</span><span class="tstate">' + esc(labelOf(s)) + '</span></button>' +
+      '<button class="tab-x" data-close="' + s.id + '" aria-label="Fechar a aba ' + esc(s.name) + '">×</button></div>').join('')
+    || '<span class="tabs-empty">sem sessões abertas</span>';
+  const a = byId(S.activeId);
+  $('#term').innerHTML = a
+    ? '<div class="term-head"><span class="sdot ' + dotOf(a) + '"></span><b>' + esc(a.name) + '</b><span>· ' + esc(labelOf(a)) + '</span></div>' +
+      '<div class="skel" style="width:74%"></div><div class="skel" style="width:58%"></div><div class="skel" style="width:81%"></div><div class="skel" style="width:46%"></div>' +
+      '<div class="term-note">O balão do Jobu nunca mostra nada daqui: só o nome da aba e o que aconteceu.</div>'
+    : '<div class="term-empty">Nenhuma sessão aberta. Comece uma nova.</div>';
+  $('#dstatus').textContent = S.account + ' · opus · ' + S.sessions.length + (S.sessions.length === 1 ? ' sessão' : ' sessões');
+  const tb = $('#tbDonel');
+  tb.hidden = !S.donelOpen;
+  tb.classList.toggle('run', S.donelOpen);
+  tb.classList.toggle('on', S.donelOpen && S.donel === 'focus');
+}
+
+let lastBadge = 0, lastBalloonId = 0;
+function renderPet() {
+  const vis = petVisible();
+  petEl.hidden = !vis;
+  if (!vis) return;
+  const wanted = wantedPose();
+  let shown = resolvePose(wanted);
+  if (BLINK[wanted] && blinkUntil > rt() && hasPose(BLINK[wanted])) shown = BLINK[wanted];
+  S.shownPose = shown;
+  $$('.pose', petSway).forEach((im) => im.classList.toggle('on', im.dataset.pose === shown));
+  const n = waitingList().length;
+  const badge = $('#badge');
+  badge.hidden = n === 0;
+  badge.textContent = n > 9 ? '9+' : String(n);
+  if (n !== lastBadge && n > 0 && !REDUCED) { badge.classList.remove('pop'); void badge.offsetWidth; badge.classList.add('pop'); }
+  lastBadge = n;
+  const p = petPos();
+  petEl.style.left = p.x + 'px';
+  petEl.style.top = p.y + 'px';
+  petEl.classList.toggle('floating', !isSeated());
+  petEl.classList.toggle('sleeping', baseState() === 'sleeping' && !S.balloon);
+  petEl.classList.toggle('show-hit', S.showHit);
+  petEl.setAttribute('aria-label', 'Jobu: ' + (n ? n + (n === 1 ? ' sessão esperando você' : ' sessões esperando você') : 'nenhuma sessão esperando') + (S.balloon ? '. ' + S.balloon.text : ''));
+  if (S.balloon && S.balloon.id !== lastBalloonId) {            // um pulinho ao surgir o balão
+    lastBalloonId = S.balloon.id;
+    if (!REDUCED) { petFig.classList.remove('hop'); void petFig.offsetWidth; petFig.classList.add('hop'); }
+  }
+}
+
+/* posiciona um popup acima do Jobu (ou abaixo, se não couber), alinhado para não sair da tela */
+function place(el, anchor, gap) {
+  const { w: sw, h: sh } = screenSize();
+  const w = el.offsetWidth, h = el.offsetHeight;
+  const cx = anchor.cx != null ? anchor.cx : anchor.x + anchor.w / 2;
+  const x = clamp(cx - w / 2, 8, sw - w - 8);
+  let y = anchor.y - h - gap, below = false;
+  if (y < 8) { y = anchor.y + anchor.h + gap; below = true; }
+  y = clamp(y, 8, sh - h - 8);
+  el.style.left = x + 'px'; el.style.top = y + 'px';
+  el.style.setProperty('--tail-x', clamp(cx - x, 18, w - 18) + 'px');
+  el.classList.toggle('below', below);
+}
+function renderPopups() {
+  const vis = petVisible();
+  const r = petRect();
+  const headCx = r.x + ART.ax;
+  // lista
+  const w = waitingList();
+  if (S.listOpen && (!vis || w.length < 2)) S.listOpen = false;      // ficou sem lista para mostrar
+  listEl.hidden = !S.listOpen;
+  if (S.listOpen) {
+    listEl.innerHTML = '<h3>Esperando você</h3>' + w.map((s) =>
+      '<button class="pl-item" data-id="' + s.id + '" title="' + esc(s.name) + '"><span class="sdot ' + dotOf(s) + '"></span><span class="pl-name">' + esc(s.name) + '</span><span class="pl-age" data-since="' + s.since + '">' + esc(ageText(s.since)) + '</span></button>').join('');
+    place(listEl, { x: r.x, y: r.y, w: r.w, h: r.h, cx: headCx }, 10);
+  }
+  // balão (acima da lista, se a lista estiver aberta)
+  const b = S.balloon;
+  bubbleEl.hidden = !(vis && b);
+  if (vis && b) {
+    const html = b.name
+      ? '<span class="b-name">' + esc(b.name) + '</span> · ' + esc(EVENT_TEXT[b.kind])
+      : esc(b.text);
+    $('#bText').innerHTML = html;
+    $('#bDot').className = 'b-dot' + (b.kind === 'permission' ? ' permission' : b.kind === 'ended' ? ' ended' : '');
+    $('#bubbleBtn').setAttribute('aria-label', b.text);
+    const anchor = S.listOpen ? { x: listEl.offsetLeft, y: listEl.offsetTop, w: listEl.offsetWidth, h: listEl.offsetHeight, cx: headCx } : { x: r.x, y: r.y, w: r.w, h: r.h, cx: headCx };
+    place(bubbleEl, anchor, 12);
+  }
+  // menu
+  menuEl.hidden = !(vis && S.menuOpen);
+  if (vis && S.menuOpen) {
+    $('#mMute').textContent = isMuted() ? 'Retomar avisos' : 'Silenciar por 1 hora';
+    const sw = screenSize().w;
+    const mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
+    let mx = r.x - mw - 8;                                   // ao lado do Jobu, para não cobri-lo
+    if (mx < 8) mx = Math.min(r.x + r.w + 8, sw - mw - 8);
+    menuEl.style.left = mx + 'px';
+    menuEl.style.top = clamp(S.menuAt.y - 12, 8, taskbarTop() - mh - 4) + 'px';
+  }
+}
+
+function renderPanel() {
+  const keep = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : null;
+  $('#btnPower').textContent = S.jobuOn ? 'Desligar o Jobu' : 'Ligar o Jobu';
+  $('#btnPower').classList.toggle('primary', !S.jobuOn);
+  $('#btnMute').textContent = isMuted() ? 'Retomar avisos' : 'Silenciar por 1 hora';
+  $('#btnMute').setAttribute('aria-pressed', String(isMuted()));
+  $('#btnFs').textContent = 'Tela cheia: ' + (S.fullscreen ? 'ligada' : 'desligada');
+  $('#btnFs').setAttribute('aria-pressed', String(S.fullscreen));
+  $('#reopenRow').hidden = S.donelOpen;
+  $$('[data-donel]').forEach((b) => { b.setAttribute('aria-pressed', String(S.donelOpen && b.dataset.donel === S.donel)); b.disabled = !S.donelOpen; });
+  $$('[data-account]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.account === S.account)));
+  $('#btnNew').disabled = !S.donelOpen;
+  $('#chkMax').checked = S.donelMax;
+  $('#chkWin').checked = S.winPref;
+  $('#chkHit').checked = S.showHit;
+
+  $('#scards').innerHTML = S.sessions.length ? S.sessions.map((s) => {
+    const btn = (kind, label, title) => '<button class="btn sm" data-act="' + kind + '" data-id="' + s.id + '" data-key="' + s.id + '-' + kind + '" title="' + title + '">' + label + '</button>';
+    return '<div class="scard' + (s.id === S.activeId ? ' is-active' : '') + '" data-sid="' + s.id + '">' +
+      '<div class="scard-top"><span class="sdot ' + dotOf(s) + '"></span><span class="sname" title="' + esc(s.name) + '">' + esc(s.name) + '</span>' +
+      (s.id === S.activeId ? '<span class="chip">aba ativa</span>' : '') + '<span class="chip">' + esc(labelOf(s)) + '</span></div>' +
+      '<div class="sacts">' +
+        btn('working', 'Trabalhar', 'A sessão volta a trabalhar') + btn('done', 'Terminou', 'Terminou o turno') +
+        btn('question', 'Pergunta', 'Travou numa pergunta') + btn('permission', 'Permissão', 'Travou pedindo permissão') +
+        btn('plan', 'Plano', 'Travou com um plano para aprovar') + btn('ended', 'Encerrar sozinha', 'Encerra sem o dono fechar a aba') +
+        btn('open', 'Abrir aba', 'O dono abre a aba: Donel em foco, aba ativa') + btn('close', 'Fechar aba', 'O dono fecha a aba') +
+      '</div></div>';
+  }).join('') : '<div class="empty">Nenhuma sessão. Abra uma acima.</div>';
+
+  const w = waitingList();
+  const st = baseState();
+  const wanted = wantedPose();
+  const shown = resolvePose(wanted);
+  $('#readout').innerHTML =
+    '<dt>Rosto</dt><dd>' + esc(wanted) + (shown !== wanted ? ' → ' + esc(shown) + ' (provisória)' : '') + '</dd>' +
+    '<dt>Estado</dt><dd>' + esc(st) + (S.balloon ? ' · balão ativo' : '') + '</dd>' +
+    '<dt>Selo</dt><dd id="rdBadge">' + (w.length ? (w.length > 9 ? '9+' : w.length) : 'nenhum') + '</dd>' +
+    '<dt>Mais antiga</dt><dd id="rdOldest">' + (w.length ? esc(ageText(w[0].since)) : '—') + '</dd>' +
+    '<dt>Silêncio</dt><dd>' + (isMuted() ? 'até ' + hhmm(S.muteUntil) : 'não') + '</dd>' +
+    '<dt>Aviso do Windows</dt><dd>' + (!S.winPref ? 'desligado nas preferências' : S.jobuOn ? 'suprimido (Jobu ligado)' : 'volta (Jobu desligado)') + '</dd>';
+
+  $('#log').innerHTML = S.log.length ? S.log.map((l) =>
+    '<li class="k-' + l.kind + '"><time>' + hhmm(l.t) + '</time><div>' +
+    (l.kind === 'suppressed' ? 'Windows teria avisado: ' : l.kind === 'shown' ? 'Windows avisou: ' : 'Sem aviso do Windows: ') + '<b>' + esc(l.text) + '</b>' +
+    '<span class="why">' + (l.kind === 'suppressed' ? 'suprimido' : l.kind === 'shown' ? 'apareceu' : 'desligado') + ' · ' + esc(l.reason) + '</span></div></li>').join('')
+    : '<li class="k-off"><time></time><div>Nenhum aviso ainda.</div></li>';
+  if (keep) { const el = $('[data-key="' + keep + '"]'); if (el) el.focus({ preventScroll: true }); }
+}
+
+function commit() {
+  pruneBalloon();
+  trackSerene();
+  renderClock(); renderDonel(); renderPet(); renderPopups(); renderPanel();
+  $('#fsapp').hidden = !S.fullscreen;
+}
+
+/* FR-013: 20 min seguidos sereno -> waffle por alguns segundos, uma vez por período parado */
+function trackSerene() {
+  const t = now();
+  if (baseState() === 'serene') {
+    if (S.sereneSince == null) { S.sereneSince = t; S.waffleShown = false; }
+    else if (!S.waffleShown && t - S.sereneSince >= CFG.waffleAfterMs) { S.waffleShown = true; S.waffleUntil = rt() + CFG.waffleMs; }
+  } else { S.sereneSince = null; S.waffleShown = false; S.waffleUntil = 0; }
+}
+
+/* ---------- relógio de fundo: o que depende só da passagem do tempo ---------- */
+let lastPoseKey = '';
+function tick(force) {
+  const t = now();
+  if (S.muteUntil && t >= S.muteUntil) { S.muteUntil = 0; commit(); }        // fim do silêncio: não repete balões
+  trackSerene();
+  renderClock();
+  const key = wantedPose() + '|' + waitingList().length;
+  if (force || key !== lastPoseKey) { lastPoseKey = key; renderPet(); renderPopups(); renderPanel(); }
+  // textos que mudam com o tempo
+  $$('.pl-age', listEl).forEach((el) => { el.textContent = ageText(Number(el.dataset.since)); });
+  const w = waitingList();
+  const old = $('#rdOldest'); if (old) old.textContent = w.length ? ageText(w[0].since) : '—';
+}
+
+/* ---------- ligações do painel ---------- */
+$('#newName').innerHTML = NAMES.map((n) => '<option>' + esc(n) + '</option>').join('');
+$('#btnNew').addEventListener('click', () => newSession($('#newName').value));
+$('#scards').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const id = Number(b.dataset.id), kind = b.dataset.act;
+  if (kind === 'open') openSession(id);
+  else if (kind === 'close') closeTab(id);
+  else act(id, kind);
+});
+$('#btnPower').addEventListener('click', () => setPower(!S.jobuOn));
+$('#btnMute').addEventListener('click', () => (isMuted() ? stopMute() : startMute()));
+$('#btnHome').addEventListener('click', goHome);
+$('#btnFs').addEventListener('click', () => setFullscreen(!S.fullscreen));
+$('#btnReopen').addEventListener('click', () => setDonelOpen(true));
+$('#btnAuto').addEventListener('click', () => setAccount(ACCOUNTS[(ACCOUNTS.indexOf(S.account) + 1) % ACCOUNTS.length]));
+$('#btnClearLog').addEventListener('click', () => { S.log = []; commit(); });
+$('#scnSame').addEventListener('click', scenarioSame);
+$('#scnMix').addEventListener('click', scenarioMix);
+$('#scnThree').addEventListener('click', scenarioThree);
+$('#scnReset').addEventListener('click', resetAll);
+$('#chkWin').addEventListener('change', (e) => { S.winPref = e.target.checked; commit(); });
+$('#chkMax').addEventListener('change', (e) => setDonelMax(e.target.checked));
+$('#chkHit').addEventListener('change', (e) => { S.showHit = e.target.checked; commit(); });
+$$('[data-donel]').forEach((b) => b.addEventListener('click', () => setDonel(b.dataset.donel)));
+$$('[data-account]').forEach((b) => b.addEventListener('click', () => setAccount(b.dataset.account)));
+$$('[data-skew]').forEach((b) => b.addEventListener('click', () => skew(Number(b.dataset.skew))));
+$('#panelToggle').addEventListener('click', () => {
+  const collapsed = document.body.classList.toggle('panel-collapsed');
+  $('#panelToggle').setAttribute('aria-expanded', String(!collapsed));
+  $('#panelToggle').innerHTML = collapsed ? '&#x203A;' : '&#x2039;';
+  $('#panelToggle').title = collapsed ? 'Abrir o painel' : 'Recolher o painel';
+  requestAnimationFrame(commit);
+});
+window.addEventListener('resize', () => commit());
+
+/* ---------- arranque ---------- */
+Object.keys(POSES).forEach((name) => {                // todas as poses empilhadas: trocar de rosto não pisca
+  const im = document.createElement('img');
+  im.className = 'pose'; im.dataset.pose = name; im.alt = ''; im.draggable = false; im.src = POSES[name];
+  petSway.appendChild(im);
+});
+buildMasks();
+commit();
+setInterval(() => tick(false), 250);
+scheduleBlink();
+
+/* gancho para a conferência automática (playwright) */
+window.jobuSim = { S, CFG, ART, newSession, act, openSession, closeTab, setDonel, setAccount, skew, setPower, startMute, stopMute,
+  goHome, setFullscreen, setDonelOpen, setDonelMax, resetAll, scenarioThree, scenarioSame, scenarioMix, waitingList, wantedPose, baseState,
+  petRect, hitPet, flushGroup, commit };
+})();
+</script>
+</body>
+</html>

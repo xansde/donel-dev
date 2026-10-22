@@ -1,0 +1,229 @@
+{
+  "title": "Jobu Donel — resultado",
+  "lede": "O corvo do Donel agora mora na sua área de trabalho: o rosto diz se alguma sessão do Claude espera por você, um balão avisa na hora e um clique leva até a aba.",
+  "howTo": "**Como ligar:** Preferências → **Jobu na área de trabalho**",
+  "notice": "Ele não aparece em print nem em compartilhamento de tela. Os prints desta página foram feitos num modo de teste.",
+  "hero": "src/renderer/src/pet/assets/poses/neutral.png",
+
+  "cards": [
+    {
+      "us": "US1",
+      "title": "O rosto diz o estado",
+      "text": "Dormindo (sem sessão), lendo (alguma trabalhando), sereno (tudo visto), impaciente (alguém espera) e muito impaciente (há mais de 10 minutos). Um selo conta quantas esperam."
+    },
+    {
+      "us": "US2",
+      "title": "Aviso na hora",
+      "text": "Terminou, pergunta, permissão, plano ou encerrou: ele muda de pose e o balão mostra só o nome da aba e o evento, nunca a conversa. O Windows não repete o aviso."
+    },
+    {
+      "us": "US3",
+      "title": "Um clique até a sessão",
+      "text": "Clicar nele, ou no balão, leva o Donel até a aba que espera. Com várias esperando, abre uma lista curta com a mais antiga no topo."
+    },
+    {
+      "us": "US4",
+      "title": "Troca de conta",
+      "text": "Quando a conta muda, pelo painel ou pela troca automática, ele olha o espelho e mostra `Conta → <nome>`."
+    },
+    {
+      "us": "US5",
+      "title": "Convivência",
+      "text": "Arrasta para onde quiser, muda de tamanho (menu ou Ctrl + roda), esconde, silencia por 1 hora, some em tela cheia e deixa passar o clique fora do desenho. Fica de fora de print e de compartilhamento de tela, com “Liberar print por 1 minuto” quando você precisar dele na imagem.",
+      "refs": ["FR-033", "FR-034", "FR-035"]
+    },
+    {
+      "us": "US6",
+      "title": "Vida",
+      "text": "Balanço leve em repouso, um pulinho quando o balão surge, um riso quando você abre a última sessão que esperava e, depois de 20 minutos sereno, o waffle. A piscadinha entra com a arte nova."
+    }
+  ],
+
+  "gallery": [
+    {
+      "file": "app-us1.png",
+      "caption": "No app: o Jobu na borda da barra de tarefas, impaciente, com o selo `1`."
+    },
+    {
+      "file": "app-us1-sobre-o-donel.png",
+      "caption": "No app, por cima do Donel escuro, com o contorno claro (dúvida Q8)."
+    },
+    {
+      "file": "app-us2-balao.png",
+      "caption": "No app: terminou o turno. Ele acena, o balão diz `atlas · terminou` e o selo marca `1`."
+    },
+    {
+      "file": "app-us3-lista.png",
+      "caption": "No app: três esperando. O clique abre a lista `Esperando você` e o selo marca `3`."
+    },
+    {
+      "file": "app-us4-conta.png",
+      "caption": "No app: a conta mudou. Ele olha o espelho e o balão diz `Conta → Interno 3`."
+    },
+    {
+      "file": "app-us5-menu.png",
+      "caption": "No app: o menu do botão direito, com Silenciar por 1 hora, Liberar print por 1 minuto, Tamanho, Voltar ao canto e Esconder."
+    },
+    {
+      "file": "app-us5-solto.png",
+      "caption": "No app: solto no meio da tela, a base esmaece em vez de mostrar o corte reto."
+    },
+    {
+      "file": "app-us5-grande.png",
+      "caption": "No app: no tamanho Grande, ainda colado ao canto."
+    },
+    {
+      "file": "01-dormindo.png",
+      "caption": "Nenhuma sessão aberta: dormindo."
+    },
+    {
+      "file": "02-lendo.png",
+      "caption": "Uma sessão trabalhando: lendo o grimório."
+    },
+    {
+      "file": "03-terminou-balao.png",
+      "caption": "Terminou o turno: ele acena, o balão diz `spotsys · terminou` e o selo marca `1`."
+    },
+    {
+      "file": "04-impaciente-selo.png",
+      "caption": "Logo depois do balão: impaciente, com o selo `1`."
+    },
+    {
+      "file": "05-lista-tres.png",
+      "caption": "Três esperando: o clique abre a lista, a mais antiga no topo."
+    },
+    {
+      "file": "06-muito-impaciente.png",
+      "caption": "Passou de 10 minutos esperando: muito impaciente."
+    },
+    {
+      "file": "07-conta-espelho.png",
+      "caption": "Troca de conta: o espelho e `Conta → Interno 3`."
+    },
+    {
+      "file": "08-solto-esmaecido.png",
+      "caption": "Solto no meio da tela: a base esmaece em vez de mostrar o corte reto."
+    },
+    {
+      "file": "09-menu-botao-direito.png",
+      "caption": "Botão direito: Silenciar por 1 hora, Esconder e Voltar ao canto. No app o menu tem ainda Tamanho e Liberar print."
+    },
+    {
+      "file": "10-sereno.png",
+      "caption": "Sessões abertas e todas vistas: sereno, com o incenso."
+    },
+    {
+      "file": "11-sobre-o-donel.png",
+      "caption": "Sobre o Donel escuro o robe quase some: foi daí que veio o contorno (Q8)."
+    },
+    {
+      "file": "12-aviso-do-windows.png",
+      "caption": "Com o Jobu escondido, o aviso do Windows volta como antes."
+    },
+    {
+      "file": "13-tela-cheia.png",
+      "caption": "Vídeo em tela cheia: o Jobu some até ela acabar."
+    }
+  ],
+
+  "prototype": {
+    "href": "prototipo.html",
+    "title": "Protótipo navegável",
+    "text": "A área de trabalho falsa com botões que simulam cada evento. Dá para experimentar tudo sem mexer no app.",
+    "label": "Abrir o protótipo"
+  },
+
+  "stepPrints": {
+    "1.1": "01-dormindo.png",
+    "1.2": "02-lendo.png",
+    "1.3": "app-us2-balao.png",
+    "1.4": "06-muito-impaciente.png",
+    "1.5": { "file": "10-sereno.png", "caption": "Depois do riso, volta ao estado das sessões." },
+    "1.6": "10-sereno.png",
+    "2.6": { "file": "12-aviso-do-windows.png", "caption": "O aviso do Windows de volta." },
+    "3.2": "app-us3-lista.png",
+    "3.4": { "file": "app-us2-balao.png", "caption": "O balão de uma sessão." },
+    "3.5": "app-us3-lista.png",
+    "4.1": "app-us4-conta.png",
+    "4.2": "app-us4-conta.png",
+    "5.1": "app-us1.png",
+    "5.2": "app-us5-solto.png",
+    "5.5": "13-tela-cheia.png",
+    "5.6": { "file": "app-us5-menu.png", "caption": "O menu do botão direito." },
+    "5.7": { "file": "app-us5-menu.png", "caption": "O menu do botão direito." },
+    "5.10": "app-us5-grande.png",
+    "5.12": { "file": "app-us5-menu.png", "caption": "“Liberar print por 1 minuto” no menu." }
+  },
+
+  "crops": {
+    "01-dormindo.png": [1210, 540, 390, 350],
+    "02-lendo.png": [1210, 540, 390, 350],
+    "03-terminou-balao.png": [1210, 540, 390, 350],
+    "04-impaciente-selo.png": [1210, 540, 390, 350],
+    "05-lista-tres.png": [1210, 540, 390, 350],
+    "06-muito-impaciente.png": [1210, 540, 390, 350],
+    "07-conta-espelho.png": [1210, 540, 390, 350],
+    "08-solto-esmaecido.png": [1000, 400, 390, 350],
+    "09-menu-botao-direito.png": [1210, 540, 390, 350],
+    "10-sereno.png": [1210, 540, 390, 350],
+    "11-sobre-o-donel.png": [1370, 670, 230, 220],
+    "12-aviso-do-windows.png": [1210, 540, 390, 350]
+  },
+
+  "doubtPrints": {
+    "Q8": [
+      { "file": "11-sobre-o-donel.png", "caption": "Protótipo, sem contorno: o robe quase some." },
+      { "file": "app-us1-sobre-o-donel.png", "caption": "App, com o contorno claro." }
+    ]
+  },
+
+  "art": {
+    "title": "Pedido de arte",
+    "intro": "Faltam 4 quadros. Enquanto não chegam, o Jobu usa a pose provisória indicada em cada um, e a chegada da arte não muda comportamento nenhum.",
+    "poses": [
+      {
+        "name": "Impaciente",
+        "file": "impatient.png",
+        "when": "Alguma sessão espera por você (selo `1` ou mais).",
+        "ref": "src/renderer/src/pet/assets/poses/skeptical.png",
+        "refLabel": "Hoje: desconfiado"
+      },
+      {
+        "name": "Muito impaciente",
+        "file": "very-impatient.png",
+        "when": "A sessão mais antiga espera há mais de 10 minutos.",
+        "ref": "src/renderer/src/pet/assets/poses/angry.png",
+        "refLabel": "Hoje: bravo"
+      },
+      {
+        "name": "Chamando",
+        "file": "calling.png",
+        "when": "Terminou o turno: ele acena para chamar você enquanto o balão aparece.",
+        "ref": "src/renderer/src/pet/assets/poses/talking.png",
+        "refLabel": "Hoje: falando"
+      },
+      {
+        "name": "Piscando-impaciente",
+        "file": "blink-impatient.png",
+        "when": "O impaciente de olhos fechados, que entra por um instante para ele piscar.",
+        "ref": "src/renderer/src/pet/assets/poses/skeptical.png",
+        "refLabel": "Hoje não pisca. Parte do impaciente (hoje o desconfiado), de olhos fechados."
+      }
+    ],
+    "rulesTitle": "Como entregar",
+    "rules": [
+      "Mesmo estilo da folha v2: busto, capuz com debrum dourado, pena branca no peito, mesmo enquadramento e escala (busto cortado na base, como na folha).",
+      "PNG com fundo transparente ou verde chapado `#00FF00`.",
+      "Um quadro por arquivo, com o nome indicado em cada pose.",
+      "Todos do mesmo tamanho, com o personagem no mesmo lugar do quadro."
+    ],
+    "reference": { "href": "poses-contact-sheet.png", "text": "Ver as 12 poses atuais" }
+  },
+
+  "next": [
+    "Fazer a bateria acima no alfa e baixar o `.json` ao terminar.",
+    "Responder as dúvidas; as que você não mexer ficam como estão.",
+    "Mandar as 4 poses novas. Enquanto não chegam, valem as provisórias.",
+    "Usar o Jobu por uma semana no alfa e anotar toda vez que ele foi escondido ou desligado, e o motivo (SC-007)."
+  ]
+}

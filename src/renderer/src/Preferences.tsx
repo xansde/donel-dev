@@ -44,6 +44,9 @@ export interface PreferencesProps {
   /** `chat.enabled` só vale depois de reiniciar o app: true quando o valor salvo difere do que a janela abriu. */
   chatRestartPending: boolean;
   onChangeChatEnabled: (enabled: boolean) => void;
+  /** T022 (015-jobu-pet) — "Jobu na área de trabalho" switch (`pet.enabled`); applies at once. */
+  petEnabled: boolean;
+  onChangePetEnabled: (enabled: boolean) => void;
 }
 
 export function Preferences({
@@ -59,6 +62,8 @@ export function Preferences({
   chatEnabled,
   chatRestartPending,
   onChangeChatEnabled,
+  petEnabled,
+  onChangePetEnabled,
 }: PreferencesProps): React.JSX.Element {
   const [newRoot, setNewRoot] = useState('');
 
@@ -156,6 +161,17 @@ export function Preferences({
           label="Chat (experimental)"
           description={chatRestartPending ? 'Reinicie o app para aplicar.' : undefined}
         />
+      </div>
+      <div className={styles.section} data-testid="preferences-pet-section">
+        <h3 className={styles.sectionTitle}>Jobu Donel</h3>
+        <div data-testid="preferences-pet-toggle">
+          <Toggle
+            checked={petEnabled}
+            onChange={onChangePetEnabled}
+            label="Jobu na área de trabalho"
+            description="Avisa quando uma sessão termina ou espera você, e quando a conta muda."
+          />
+        </div>
       </div>
     </Modal>
   );

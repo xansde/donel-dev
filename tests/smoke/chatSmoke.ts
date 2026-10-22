@@ -34,6 +34,10 @@ export interface LaunchChatAppOptions {
   readonly focusMode?: boolean;
   /** Runs after the temp home exists and before the app starts (e.g. to seed a transcript). */
   readonly seed?: (sessionsDir: string) => void;
+  /** Extra top-level keys of `config.json` (e.g. `pet`), over the defaults of this helper. */
+  readonly config?: Record<string, unknown>;
+  /** Extra environment of the app (e.g. `DONEL_SMOKE_NOTIFICATIONS_LOG`), over `process.env`. */
+  readonly env?: Record<string, string>;
 }
 
 export async function launchChatApp(options: LaunchChatAppOptions): Promise<ChatApp> {
@@ -49,6 +53,7 @@ export async function launchChatApp(options: LaunchChatAppOptions): Promise<Chat
       chat: { enabled: true, focusMode: options.focusMode ?? false },
       // `~/seazone` no longer resolves with the temp home: point the scanner at the real parent folder.
       projectRoots: [path.dirname(REPO_ROOT)],
+      ...options.config,
     }),
     'utf8',
   );
@@ -61,6 +66,7 @@ export async function launchChatApp(options: LaunchChatAppOptions): Promise<Chat
       DONEL_CLAUDE_EXECUTABLE_FIXTURE: FAKE_CLAUDE_CMD,
       DONEL_FAKE_CLAUDE_HOME: path.join(home, '.claude'),
       ...(options.scenario ? { DONEL_FAKE_CLAUDE_SCENARIO: options.scenario } : {}),
+      ...options.env,
     },
   });
   mkdirSync(SHOTS_DIR, { recursive: true });
