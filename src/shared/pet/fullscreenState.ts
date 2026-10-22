@@ -10,9 +10,7 @@
 // a failed call (the helper prints -1) and plain garbage. A helper that does not know must never leave the
 // Jobu hidden, so "I could not tell" is always "free". Pure: no Electron, no process, no clock.
 
-/** The `SHQueryUserNotificationState` values that mean an app has the whole screen. */
-export const FULLSCREEN_STATES: readonly number[] = [2, 3, 4];
-
+/** The `SHQueryUserNotificationState` values (2, 3 and 4) that mean an app has the whole screen. */
 const HIDING_LINE = /^[2-4]$/;
 
 /** More than this without a line break is not a number: the helper is lost, and the line is dropped as garbage. */

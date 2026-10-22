@@ -4,14 +4,12 @@
 // domains. The main also checks WHO sent: `pet:tabs` only from the main window, the gestures only
 // from the pet window (src/main/pet/pet-ipc.ts).
 
-import { CONFIG_CHANNELS } from '../config';
+import type { PetPrefsInput } from '../config';
 import type { PetView } from './types';
 
 export const PET_CHANNELS = {
   // Main window -> main
   tabs: 'pet:tabs',
-  /** `invoke`, shared with the config domain: one source for the string. */
-  setPrefs: CONFIG_CHANNELS.setPetPrefs,
   // Main -> main window
   activateSession: 'app:activate-session',
   prefsChanged: 'pet:prefs-changed',
@@ -150,7 +148,7 @@ export function isValidPetResizeStepPayload(input: unknown): input is PetResizeS
  * `config:setPetPrefs`: only `enabled` can come from the renderer. Placement and size are written
  * by the main from the gestures; keys other than `enabled` are never read by the handler.
  */
-export function isValidPetPrefsInput(input: unknown): input is { readonly enabled?: boolean } {
+export function isValidPetPrefsInput(input: unknown): input is PetPrefsInput {
   return isRecord(input) && (input.enabled === undefined || typeof input.enabled === 'boolean');
 }
 

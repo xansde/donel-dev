@@ -402,6 +402,6 @@ export function reducePet(state: PetState, input: PetInput, now: number): PetSta
   return settleTimers(pruneBubble(settled, now), now);
 }
 
-function assertNever(value: never): never {
+export function assertNever(value: never): never {
   throw new Error(`reducePet: input não tratado ${JSON.stringify(value)}`);
 }

@@ -32,7 +32,7 @@ import { decideClick } from '../../shared/pet/click';
 import { dragAnchor, settleDrop } from '../../shared/pet/gestures';
 import { PET_CHANNELS, type PetOpenTarget, type PetTabsPayload } from '../../shared/pet/ipc';
 import { buildPetMenu, type PetMenuAction, type PetMenuEntry } from '../../shared/pet/menu';
-import { PET_SILENCE_MS, createPetState, isSilenced, reducePet, toPetSemaphore } from '../../shared/pet/petState';
+import { PET_SILENCE_MS, assertNever, createPetState, isSilenced, reducePet, toPetSemaphore } from '../../shared/pet/petState';
 import { toPetView } from '../../shared/pet/petView';
 import {
   alignFor,
@@ -605,6 +605,8 @@ export function createPetService(deps: PetServiceDeps): PetService {
         // The same road as the toggle of the Preferences: it saves `pet.enabled = false`, destroys the window and tells the main window.
         applyEnabled(false);
         break;
+      default:
+        assertNever(action);
     }
   }
 

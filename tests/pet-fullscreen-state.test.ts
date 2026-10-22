@@ -4,11 +4,10 @@
 // mode) hide the Jobu; anything else shows him, garbage and a failed call (-1) included: a helper that does not
 // know must never leave the Jobu hidden.
 import { describe, expect, it } from 'vitest';
-import { FULLSCREEN_STATES, createFullscreenParser, parseFullscreenLine } from '../src/shared/pet/fullscreenState';
+import { createFullscreenParser, parseFullscreenLine } from '../src/shared/pet/fullscreenState';
 
 describe('parseFullscreenLine: 2, 3 and 4 hide the Jobu, the rest leaves him free', () => {
   it('the three states of SHQueryUserNotificationState that mean "an app has the whole screen"', () => {
-    expect([...FULLSCREEN_STATES]).toEqual([2, 3, 4]);
     expect(parseFullscreenLine('2')).toBe(true); // QUNS_BUSY
     expect(parseFullscreenLine('3')).toBe(true); // QUNS_RUNNING_D3D_FULL_SCREEN
     expect(parseFullscreenLine('4')).toBe(true); // QUNS_PRESENTATION_MODE

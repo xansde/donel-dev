@@ -1,7 +1,6 @@
 // T005 (015-jobu-pet) - the channels and the payload validators of contracts/ipc-pet.md. The main
 // ignores any payload that fails its validator, so these are the gate of every `pet:*` channel.
 import { describe, expect, it } from 'vitest';
-import { CONFIG_CHANNELS } from '../src/shared/config';
 import {
   PET_CHANNELS,
   PET_MAX_SESSIONS,
@@ -19,7 +18,6 @@ describe('PET_CHANNELS', () => {
   it('has every channel of the contract, with the names the contract gives', () => {
     expect({ ...PET_CHANNELS }).toEqual({
       tabs: 'pet:tabs',
-      setPrefs: 'config:setPetPrefs',
       activateSession: 'app:activate-session',
       prefsChanged: 'pet:prefs-changed',
       view: 'pet:view',
@@ -40,10 +38,6 @@ describe('PET_CHANNELS', () => {
   it('has no two channels with the same name', () => {
     const values = Object.values(PET_CHANNELS);
     expect(new Set(values).size).toBe(values.length);
-  });
-
-  it('shares the config channel with CONFIG_CHANNELS: one source for the string', () => {
-    expect(PET_CHANNELS.setPrefs).toBe(CONFIG_CHANNELS.setPetPrefs);
   });
 
   it('follows the domain:action pattern of the repo', () => {

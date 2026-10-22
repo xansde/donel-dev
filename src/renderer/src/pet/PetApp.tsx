@@ -4,6 +4,7 @@ import { blinkFrameFor, createBlinkScheduler } from '../../../shared/pet/blink';
 import { splitSessionBubbleText } from '../../../shared/pet/bubble';
 import { decideBubbleClick, decideClick } from '../../../shared/pet/click';
 import { normalizeWheelDelta, wheelSteps } from '../../../shared/pet/gestures';
+import { PET_SIZE_DEFAULT } from '../../../shared/pet/placement';
 import { resolvePose } from '../../../shared/pet/poses';
 import type { PetView, PetViewBubble } from '../../../shared/pet/types';
 import styles from './PetApp.module.css';
@@ -37,7 +38,7 @@ function prefersReducedMotion(): boolean {
 function hop(element: HTMLElement | null, size: number): void {
   if (element === null || typeof element.animate !== 'function') return;
   if (prefersReducedMotion()) return;
-  const lift = (size / 140) * 9;
+  const lift = (size / PET_SIZE_DEFAULT) * 9;
   element.animate(
     [
       { transform: 'translateY(0)', offset: 0 },
@@ -128,7 +129,7 @@ export function PetApp(): React.JSX.Element {
   // FR-030: one hop per bubble, keyed by its id: a bubble that grew into an aggregate keeps its id and does not hop twice.
   const bubbleId = bubble?.id ?? null;
   const hoppedForRef = useRef<number | null>(null);
-  const sizeRef = useRef(140);
+  const sizeRef = useRef(PET_SIZE_DEFAULT);
   sizeRef.current = view?.size ?? sizeRef.current;
   useEffect(() => {
     if (bubbleId === null || bubbleId === hoppedForRef.current) return;
@@ -282,7 +283,7 @@ export function PetApp(): React.JSX.Element {
         // `--sway` is how far the rest sway goes down, in proportion to the drawing (4 px at the medium size).
         <div
           className={styles.stage}
-          style={{ width: metrics.width, height: metrics.anchorY, '--stage-w': `${metrics.width}px`, '--sway': `${(view.size / 140) * 4}px` } as React.CSSProperties}
+          style={{ width: metrics.width, height: metrics.anchorY, '--stage-w': `${metrics.width}px`, '--sway': `${(view.size / PET_SIZE_DEFAULT) * 4}px` } as React.CSSProperties}
         >
           {/* The picture is the `img`; the bubble and the list are buttons, and an `img` hides its children from a screen reader. */}
           <div

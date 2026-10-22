@@ -7,6 +7,7 @@
 // (FR-033) grows the window upwards and sideways while the anchor does not move. The remembered
 // `pet.placement` is this anchor, which makes it independent of the size.
 
+import { PET_ART } from './art';
 import type { PetAlign, PetDisplay, PetPoint, PetRect } from './types';
 
 // ---------------------------------------------------------------------------
@@ -51,7 +52,7 @@ export const PET_SNAP_DISTANCE = 24;
 /** `alignFor`: this close to a side of the work area, the bubble anchors to the drawing's edge on that side. */
 export const PET_ALIGN_EDGE = 160;
 /** Width of the drawing over its height: the 264x320 canvas of the sliced art (`manifest.json`). */
-export const PET_DRAWING_ASPECT = 264 / 320;
+export const PET_DRAWING_ASPECT = PET_ART.width / PET_ART.height;
 
 /** The window never gets narrower than this: it has to hold a bubble of up to 300 px (FR-017). */
 export const PET_WINDOW_MIN_WIDTH = 480;
