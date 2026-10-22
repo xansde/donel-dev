@@ -23,3 +23,31 @@ export function toMenuTemplate(entries: readonly PetMenuEntry[], onChoose: (acti
     }
   });
 }
+
+/**
+ * Runs the chosen action once, and only after BOTH things happened: the owner chose an item and the native menu
+ * closed - in either order, because the order between the `click` of the item and the `callback` of `popup` is
+ * Electron's. "Esconder" destroys the very window that owns the menu, so the action must never run inside the
+ * activation of the menu. A menu closed with no choice runs nothing; after the run, later events are ignored.
+ */
+export function deferUntilMenuClosed<A>(run: (action: A) => void): { readonly choose: (action: A) => void; readonly closed: () => void } {
+  let chosen: { readonly action: A } | null = null;
+  let closed = false;
+  let done = false;
+  const settle = (): void => {
+    if (done || !closed || chosen === null) return;
+    done = true;
+    run(chosen.action);
+  };
+  return {
+    choose: (action) => {
+      if (done) return;
+      chosen = { action };
+      settle();
+    },
+    closed: () => {
+      closed = true;
+      settle();
+    },
+  };
+}

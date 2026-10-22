@@ -3,7 +3,7 @@
 // what the menu says is decided in src/shared/pet/menu.ts, what an action does in the service.
 import { describe, expect, it } from 'vitest';
 import { buildPetMenu, type PetMenuAction } from '../src/shared/pet/menu';
-import { toMenuTemplate } from '../src/main/pet/pet-menu';
+import { deferUntilMenuClosed, toMenuTemplate } from '../src/main/pet/pet-menu';
 
 describe('toMenuTemplate', () => {
   const entries = buildPetMenu({ silenced: false, captureReleased: false, size: 200 });
@@ -58,5 +58,56 @@ describe('toMenuTemplate', () => {
   it('a menu in the other state carries its own words over: "Retomar avisos" and "Bloquear print agora"', () => {
     const template = toMenuTemplate(buildPetMenu({ silenced: true, captureReleased: true, size: 140 }), () => undefined);
     expect(template.slice(0, 2).map((item) => item.label)).toEqual(['Retomar avisos', 'Bloquear print agora']);
+  });
+});
+
+describe('deferUntilMenuClosed', () => {
+  const home: PetMenuAction = { kind: 'home' };
+  const hide: PetMenuAction = { kind: 'hide' };
+
+  it('runs the action after the choice and then the close (click first)', () => {
+    const ran: PetMenuAction[] = [];
+    const deferred = deferUntilMenuClosed((action: PetMenuAction) => void ran.push(action));
+    deferred.choose(home);
+    expect(ran).toEqual([]); // the menu is still open
+    deferred.closed();
+    expect(ran).toEqual([home]);
+  });
+
+  it('runs the action after the close and then the choice (callback first)', () => {
+    const ran: PetMenuAction[] = [];
+    const deferred = deferUntilMenuClosed((action: PetMenuAction) => void ran.push(action));
+    deferred.closed();
+    expect(ran).toEqual([]);
+    deferred.choose(home);
+    expect(ran).toEqual([home]);
+  });
+
+  it('never runs when the menu closes with no choice', () => {
+    const ran: PetMenuAction[] = [];
+    const deferred = deferUntilMenuClosed((action: PetMenuAction) => void ran.push(action));
+    deferred.closed();
+    deferred.closed();
+    expect(ran).toEqual([]);
+  });
+
+  it('runs exactly once, whatever repeats afterwards', () => {
+    const ran: PetMenuAction[] = [];
+    const deferred = deferUntilMenuClosed((action: PetMenuAction) => void ran.push(action));
+    deferred.choose(home);
+    deferred.closed();
+    deferred.closed();
+    deferred.choose(hide);
+    deferred.closed();
+    expect(ran).toEqual([home]);
+  });
+
+  it('the last choice before the close wins', () => {
+    const ran: PetMenuAction[] = [];
+    const deferred = deferUntilMenuClosed((action: PetMenuAction) => void ran.push(action));
+    deferred.choose(home);
+    deferred.choose(hide);
+    deferred.closed();
+    expect(ran).toEqual([hide]);
   });
 });

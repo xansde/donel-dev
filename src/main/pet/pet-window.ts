@@ -16,9 +16,8 @@
 import { BrowserWindow, Menu } from 'electron';
 import { join } from 'node:path';
 import { PET_CHANNELS } from '../../shared/pet/ipc';
-import type { PetMenuAction } from '../../shared/pet/menu';
 import type { PetRect, PetView } from '../../shared/pet/types';
-import { toMenuTemplate } from './pet-menu';
+import { deferUntilMenuClosed, toMenuTemplate } from './pet-menu';
 import type { PetSeams, PetSmokeGlobal } from './pet-seams';
 import type { CreatePetWindowOptions, PetWindowHandle } from './pet-service';
 
@@ -159,19 +158,11 @@ export function createPetWindow(options: CreatePetWindowOptions, seams: PetSeams
         hooks.__donelPetSmoke = { ...hooks.__donelPetSmoke, menu: { entries, choose: onChoose } };
         return;
       }
-      // The chosen action runs when the menu has CLOSED (the `callback` of `popup`), not inside the click of the item: "Esconder"
-      // destroys this very window, and a window must not be destroyed from within the activation of its own native menu.
-      let chosen: PetMenuAction | null = null;
-      const menu = Menu.buildFromTemplate(
-        toMenuTemplate(entries, (action) => {
-          chosen = action;
-        }),
-      );
-      const closed = (): void => {
-        const action = chosen;
-        chosen = null;
-        if (action !== null) onChoose(action);
-      };
+      // The chosen action runs when the menu has CLOSED, not inside the click of the item: "Esconder" destroys this
+      // very window, and a window must not be destroyed from within the activation of its own native menu.
+      const deferred = deferUntilMenuClosed(onChoose);
+      const menu = Menu.buildFromTemplate(toMenuTemplate(entries, deferred.choose));
+      const closed = deferred.closed;
       if (at === null) {
         menu.popup({ window: win, callback: closed });
         return;
