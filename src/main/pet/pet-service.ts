@@ -561,7 +561,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
 
   /** FR-033: a new size (Ctrl + wheel or a preset of the menu): kept inside 80-320, saved, and the window grows from the base. */
   function setSize(requested: number): void {
-    if (liveWindow() === null) return;
+    if (liveWindow() === null || drag !== null) return; // mid-gesture the drop judges the place, not a relayout
     const size = clampSize(requested);
     const current = deps.config();
     if (size === clampSize(current.size)) return;
@@ -571,7 +571,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
 
   /** "Voltar ao canto": the place is forgotten and the Jobu goes to the corner again. */
   function goHome(): void {
-    if (liveWindow() === null) return;
+    if (liveWindow() === null || drag !== null) return;
     const current = deps.config();
     if (current.placement !== null) deps.persist({ ...current, placement: null });
     relayout();

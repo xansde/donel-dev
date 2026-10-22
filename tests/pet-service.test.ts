@@ -1863,6 +1863,21 @@ describe('dragging (US5, T046, R11, FR-004)', () => {
     expect(h.persisted).toHaveLength(0);
   });
 
+  it('a size change or "Voltar ao canto" in the middle of the drag is ignored: he is not pulled out of the hand (F3)', () => {
+    const { h, service } = readyPet({ prefs: { placement: CUSTOM } });
+    service.handleDragStart({ x: 500, y: 400 });
+    service.handleDragMove({ x: 560, y: 380 });
+    const boundsBefore = h.windows[0]!.bounds.length;
+    service.handleResizeStep(1);
+    service.handleMenuAction({ kind: 'size', size: 200 });
+    service.handleMenuAction({ kind: 'home' });
+    expect(h.persisted).toHaveLength(0);
+    expect(h.windows[0]!.bounds).toHaveLength(boundsBefore);
+    expect(lastBounds(h)).toEqual(windowBoundsFor({ x: 1060, y: 780 }, 140));
+    service.handleDragEnd({ x: 560, y: 380 });
+    expect(h.prefs.placement).toEqual({ x: 1060, y: 780 });
+  });
+
   it('a size changed after the drag keeps the place where he was dropped', () => {
     const { h, service } = readyPet({ prefs: { placement: CUSTOM } });
     service.handleDragStart({ x: 500, y: 400 });
