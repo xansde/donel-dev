@@ -528,6 +528,12 @@ export function createPetService(deps: PetServiceDeps): PetService {
     const main = deps.getMainWindow();
     if (main === null || main.isDestroyed()) return;
     feed({ type: 'bubbleDismissed' });
+    // The target is about to be the active tab. Raising the window fires its 'focus' event at once, and that
+    // event would be judged against the OLD active tab, marking it as seen without the owner ever looking at it.
+    // So the target is taken as the active tab first; the real `pet:tabs` that follows confirms or corrects it.
+    if (target.kind === 'session' && tabs.sessions.some((session) => session.ptyId === target.ptyId)) {
+      tabs = { ...tabs, activePtyId: target.ptyId };
+    }
     bringMainWindowToFront(main);
     if (target.kind === 'session') main.webContents.send(PET_CHANNELS.activateSession, { ptyId: target.ptyId });
   }

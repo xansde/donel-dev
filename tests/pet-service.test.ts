@@ -103,7 +103,7 @@ interface Harness {
   readonly persisted: PetPrefs[];
   readonly mainSent: { channel: string; payload: unknown }[];
   /** The main window: what it is, and what the service did to it (`calls`, in order). `focusWorks = false` is the foreground lock refusing the focus. */
-  readonly main: { focused: boolean; destroyed: boolean; minimized: boolean; focusWorks: boolean; readonly calls: string[] };
+  readonly main: { focused: boolean; destroyed: boolean; minimized: boolean; focusWorks: boolean; readonly calls: string[]; onFocus: (() => void) | null };
   prefs: PetPrefs;
   clock: { now: number };
   /** The monitors the service sees; a test changes them and fires `displaysChanged()`, like the `screen` module of Electron. */
@@ -135,7 +135,7 @@ function harness(
   const timers: FakeTimer[] = [];
   const persisted: PetPrefs[] = [];
   const mainSent: { channel: string; payload: unknown }[] = [];
-  const main = { focused: false, destroyed: false, minimized: false, focusWorks: true, calls: [] as string[] };
+  const main = { focused: false, destroyed: false, minimized: false, focusWorks: true, calls: [] as string[], onFocus: null as (() => void) | null };
   const clock = { now: 1_000_000 };
   const state = { prefs: { enabled: false, placement: null, size: 140, ...over.prefs } as PetPrefs };
   const displays: PetDisplay[] = [...(over.displays ?? [PRIMARY])];
@@ -153,7 +153,10 @@ function harness(
     show: () => void main.calls.push('show'),
     focus: () => {
       main.calls.push('focus');
-      if (main.focusWorks) main.focused = true;
+      if (main.focusWorks) {
+        main.focused = true;
+        main.onFocus?.(); // like the real window: the 'focus' event reaches the service synchronously
+      }
     },
     setAlwaysOnTop: (flag: boolean) => void main.calls.push(`alwaysOnTop:${flag}`),
     webContents: { send: (channel: string, payload: unknown) => void mainSent.push({ channel, payload }) },
@@ -972,6 +975,22 @@ describe('a click leads to the session (US3, T038)', () => {
     service.handleOpen({ kind: 'session', ptyId: 'pty-b' });
     expect(h.main.calls).toEqual(['restore', 'show', 'focus']);
     expect(activations(h)).toEqual([{ ptyId: 'pty-b' }]);
+  });
+
+  it('opening B while the active tab A also waits: the focus the raise brings does not mark A as seen (S1)', () => {
+    const { h, service } = readyPet();
+    service.onTabs({ activePtyId: 'pty-a', sessions: [tab('pty-a', 'atlas'), tab('pty-b', 'beacon')] });
+    service.onSemaphoreUpdate(sem('pty-a', 'working'));
+    service.onSemaphoreUpdate(sem('pty-b', 'working'));
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    service.onSemaphoreUpdate(sem('pty-b', 'waiting'));
+    h.main.minimized = true; // the Donel is out of sight: nothing is seen yet
+    h.main.onFocus = () => service.onMainFocusChanged(true);
+    expect(lastView(h).waiting.map((w) => w.ptyId)).toEqual(['pty-a', 'pty-b']);
+    service.handleOpen({ kind: 'session', ptyId: 'pty-b' });
+    // the screen answers the activation: B is now the active tab
+    service.onTabs({ activePtyId: 'pty-b', sessions: [tab('pty-a', 'atlas'), tab('pty-b', 'beacon')] });
+    expect(lastView(h).waiting.map((w) => w.ptyId)).toEqual(['pty-a']); // B was seen, A still owes
   });
 
   it('pet:open on the Donel (the account bubble): only brings it to the front', () => {

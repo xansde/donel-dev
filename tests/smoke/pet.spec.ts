@@ -617,6 +617,40 @@ test.describe('o Jobu sem o chat', () => {
     await expect(root()).not.toHaveAttribute('data-badge', { timeout: 10_000 });
   });
 
+  test('T041 - opening another waiting session from the list does not mark the active waiting tab as seen (S1) @pet', async () => {
+    test.setTimeout(240_000);
+    await ensureSession('atlas');
+    await ensureSession('beacon');
+
+    // `atlas` ends a turn out of sight; then `beacon` ends one too and stays the ACTIVE tab, with the Donel minimized:
+    // two are owed, and the one in front is itself waiting (so the old active tab is a session that can be wrongly "seen").
+    await tabNamed('atlas').click();
+    await sendPrompt('rapido');
+    await main.waitForTimeout(1_200);
+    await tabNamed('beacon').click();
+    await sendPrompt('rapido');
+    await main.waitForTimeout(1_200);
+    await setDonelWindow('minimized');
+    await expect(root()).toHaveAttribute('data-badge', '2', { timeout: 40_000 });
+
+    await clickTheJobu();
+    const items = pet.getByTestId('pet-list-item');
+    await expect(items).toHaveCount(2);
+    await expect(items.nth(0)).toContainText('atlas');
+    await items.nth(0).click();
+
+    // `atlas` is in front and seen; `beacon`, the old active tab, still owes the owner a look. Raising the window
+    // must not have counted it as visited.
+    await expect.poll(async () => (await donelWindowState()).minimized, { timeout: 10_000, message: 'the Donel stayed minimized' }).toBe(false);
+    await expect(tabNamed('atlas')).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+    await main.waitForTimeout(1_500);
+    await expect(root()).toHaveAttribute('data-badge', '1');
+
+    // Clean up.
+    await lookAt('beacon');
+    await expect(root()).not.toHaveAttribute('data-badge', { timeout: 10_000 });
+  });
+
   test('T035 - a session that ends by itself: the bubble "vega · encerrou", sad, and a click on it leads to the tab that ended @pet', async () => {
     test.setTimeout(120_000);
     await ensureSession('vega');
