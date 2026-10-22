@@ -641,6 +641,33 @@ describe('setEnabled (Preferences toggle, and "Esconder" later): applies at once
     expect(service.isEnabled()).toBe(false);
     expect(logged).toHaveLength(1); // the failure is reported, not swallowed
   });
+
+  it('a window that fails to open tells the screen the pet is off, without touching the saved config (F2)', () => {
+    const h = harness({ prefs: { enabled: true }, createWindowThrows: true });
+    const service = createPetService(h.deps);
+    const originalError = console.error;
+    console.error = () => undefined;
+    try {
+      service.start();
+    } finally {
+      console.error = originalError;
+    }
+    expect(prefsChanged(h).map((entry) => entry.payload)).toEqual([{ enabled: false }]);
+    expect(h.persisted).toEqual([]);
+  });
+
+  it('turning it on from the Preferences when the window fails: the screen only ever hears "off"', () => {
+    const h = harness({ prefs: { enabled: false }, createWindowThrows: true });
+    const service = createPetService(h.deps);
+    const originalError = console.error;
+    console.error = () => undefined;
+    try {
+      service.setEnabled(true);
+    } finally {
+      console.error = originalError;
+    }
+    expect(prefsChanged(h).map((entry) => entry.payload)).toEqual([{ enabled: false }]);
+  });
 });
 
 describe('dispose (the main window closed)', () => {
@@ -692,6 +719,37 @@ describe('the window going away on its own', () => {
     service.setEnabled(true);
     expect(h.liveWindows()).toHaveLength(1);
     expect(h.liveTimers()).toHaveLength(1);
+  });
+
+  it('tells the screen the pet is off, without saving it (F2: Alt+F4 with the list open)', () => {
+    const h = harness({ prefs: { enabled: true } });
+    const service = createPetService(h.deps);
+    service.start();
+    const first = h.windows[0]!;
+    first.destroyed = true;
+    first.options.onClosed();
+    expect(prefsChanged(h).map((entry) => entry.payload)).toEqual([{ enabled: false }]);
+    expect(h.persisted).toEqual([]);
+    expect(h.prefs.enabled).toBe(true);
+  });
+
+  it('an intentional disable or the shutdown does not announce the closing of the window a second time', () => {
+    const h = harness({ prefs: { enabled: true } });
+    const service = createPetService(h.deps);
+    service.start();
+    const first = h.windows[0]!;
+    service.setEnabled(false);
+    expect(prefsChanged(h)).toHaveLength(1);
+    first.options.onClosed(); // the late event of the window that disable() destroyed
+    expect(prefsChanged(h)).toHaveLength(1);
+
+    const h2 = harness({ prefs: { enabled: true } });
+    const service2 = createPetService(h2.deps);
+    service2.start();
+    const window2 = h2.windows[0]!;
+    service2.dispose();
+    window2.options.onClosed();
+    expect(prefsChanged(h2)).toHaveLength(0);
   });
 
   it('the late "closed" of a window we replaced does not touch the new one', () => {

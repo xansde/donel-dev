@@ -476,6 +476,9 @@ export function createPetService(deps: PetServiceDeps): PetService {
           resetWindowState();
           stopTick();
           releaseWatchers();
+          // The screen mutes the toasts while the pet is on (R8): it must not go on muting with no Jobu on the
+          // screen. Only told, never saved - on app exit the order the windows close in is not guaranteed.
+          if (!disposed) notifyPrefsChanged(false);
         },
         // Same guard: a blur that arrives late, from a window this service already replaced, is not news.
         onBlur: () => {
@@ -485,6 +488,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
     } catch (error) {
       // The pet is a convenience: failing to open it never takes the app with it.
       console.error('[donel-dev] a janela do Jobu não abriu:', error);
+      notifyPrefsChanged(false); // same reason as `onClosed`: no window, so the screen stops muting the toasts
       return;
     }
     window = created;
@@ -551,7 +555,8 @@ export function createPetService(deps: PetServiceDeps): PetService {
     if (changed) deps.persist({ ...current, enabled });
     if (enabled) enable();
     else disable();
-    if (changed) notifyPrefsChanged(enabled);
+    // A failed `enable()` has already told the screen "off": saying "on" afterwards would undo it.
+    if (changed && !(enabled && window === null)) notifyPrefsChanged(enabled);
   }
 
   /** FR-033: a new size (Ctrl + wheel or a preset of the menu): kept inside 80-320, saved, and the window grows from the base. */
