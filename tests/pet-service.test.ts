@@ -956,6 +956,18 @@ describe('the events of the main become the bubble (US2, T032)', () => {
   });
 });
 
+/** Two sessions waiting out of sight (the Donel minimized): the aggregated bubble is up. */
+function twoWaitingReady() {
+  const ready = readyPet();
+  ready.service.onTabs({ activePtyId: null, sessions: [tab('pty-a', 'atlas'), tab('pty-b', 'beacon')] });
+  ready.service.onSemaphoreUpdate(sem('pty-a', 'working'));
+  ready.service.onSemaphoreUpdate(sem('pty-b', 'working'));
+  ready.h.main.minimized = true;
+  ready.service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+  ready.service.onSemaphoreUpdate(sem('pty-b', 'waiting'));
+  return ready;
+}
+
 describe('a click leads to the session (US3, T038)', () => {
   /** `atlas` finished out of sight while the Donel is minimized: the case of the whole feature. */
   function waitingAtlas() {
@@ -1092,6 +1104,19 @@ describe('a click leads to the session (US3, T038)', () => {
     service.handleClick();
     service.handleOpen({ kind: 'donel' });
     expect(h.main.calls).toEqual([]);
+  });
+
+  it('opening the list dismisses the bubble: a click on the bubble or the Jobu has served it (S3, Q17)', () => {
+    const { h, service } = twoWaitingReady();
+    expect(lastView(h).bubble).not.toBeNull();
+    service.handleListOpen(true);
+    expect(lastView(h).bubble).toBeNull();
+  });
+
+  it('closing the list does not touch the bubble', () => {
+    const { h, service } = twoWaitingReady();
+    service.handleListOpen(false);
+    expect(lastView(h).bubble).not.toBeNull();
   });
 
   it('pet:list-open reaches the window: focusable while the list is open (R12)', () => {

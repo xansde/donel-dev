@@ -709,6 +709,8 @@ export function createPetService(deps: PetServiceDeps): PetService {
       if (current === null) return;
       listOpen = open;
       current.setListOpen(open);
+      // The click that opens the list also serves the bubble (Q17); nothing else reaches the main for it.
+      if (open) feed({ type: 'bubbleDismissed' });
     },
 
     handleContextMenu(at) {
