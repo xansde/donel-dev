@@ -44,7 +44,7 @@ export interface PreferencesProps {
   /** `chat.enabled` só vale depois de reiniciar o app: true quando o valor salvo difere do que a janela abriu. */
   chatRestartPending: boolean;
   onChangeChatEnabled: (enabled: boolean) => void;
-  /** T022 (015-jobu-pet) — interruptor "Jobu na área de trabalho" (`pet.enabled`); aplica na hora. */
+  /** T022 (015-jobu-pet) — "Jobu na área de trabalho" switch (`pet.enabled`); applies at once. */
   petEnabled: boolean;
   onChangePetEnabled: (enabled: boolean) => void;
 }

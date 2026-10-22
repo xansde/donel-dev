@@ -229,9 +229,9 @@ import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects
 // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
 import { createNewProject, createSystemCreateProjectDeps } from './project-creator';
 import { PtyManager } from './pty-manager';
-// C3 (015-jobu-pet) — "o dono fechou a aba" × "o processo saiu sozinho".
+// C3 (015-jobu-pet) — "the owner closed the tab" vs. "the process left by itself".
 import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
-// 015-jobu-pet — o Jobu na área de trabalho: serviço (núcleo + janela + tick), a janela e os handlers `pet:*`.
+// 015-jobu-pet — the Jobu on the desktop: service (core + window + tick), the window and the `pet:*` handlers.
 import { registerPetIpcHandlers } from './pet/pet-ipc';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
@@ -809,10 +809,10 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
     const knownLabel = view.accounts.find((account) => account.id === view.activeAccountId)?.label;
     const label = knownLabel ?? view.activeAccountId;
     chatHub?.notifyAccountSwitch(label);
-    // 015-jobu-pet (T043, US4) — o Jobu olha o espelho e mostra a conta nova, com o chat ligado ou não. A primeira
-    // conta ativa (de nenhuma para uma) não é troca: a mesma regra do aviso do chat, logo acima. O balão leva só o
-    // RÓTULO que o dono deu à conta (FR-018): o id dela é um UUID opaco que não diz nada a ninguém, então uma conta
-    // que não está na lista (não acontece: a ativa sempre está) não vira balão com o id dentro.
+    // 015-jobu-pet (T043, US4) — the Jobu looks at the mirror and shows the new account, with the chat on or not. The first
+    // active account (from none to one) is not a switch: the same rule as the chat notice, right above. The bubble carries only the
+    // LABEL the owner gave the account (FR-018): its id is an opaque UUID that tells nobody anything, so an account
+    // that is not in the list (it does not happen: the active one always is) does not become a bubble with the id inside.
     if (knownLabel !== undefined) petService?.onAccountSwitched(knownLabel);
   }
 }
@@ -949,9 +949,9 @@ app.setName('donel-dev');
 app.setAppUserModelId('com.seazone.doneldev');
 
 /**
- * C1 (015-jobu-pet, R5) — a janela principal. O app supunha uma janela só: "qualquer janela" servia
- * de principal no foco e no clique da notificação. Com o Jobu há uma segunda, que nunca é a
- * principal; quem precisa da principal pergunta aqui.
+ * C1 (015-jobu-pet, R5) — the main window. The app assumed a single window: "any window" served as the
+ * main one for the focus and for the click on the notification. With the Jobu there is a second one, which is never the
+ * main one; whoever needs the main one asks here.
  */
 let mainWindowRef: BrowserWindow | null = null;
 
@@ -960,10 +960,10 @@ function getMainWindow(): BrowserWindow | null {
 }
 
 /**
- * T020 (015-jobu-pet) — o serviço do Jobu. `null` até a janela principal aparecer (R21: a janela do
- * pet só nasce DEPOIS do `ready-to-show` da principal, então `firstWindow()` dos smokes continua
- * sendo a principal) e de novo depois que ela fecha. Com `pet.enabled = false` o serviço existe
- * mas não guarda janela nem timer: o app é o de antes do pet.
+ * T020 (015-jobu-pet) — the Jobu service. `null` until the main window appears (R21: the pet window
+ * is only born AFTER the main one's `ready-to-show`, so `firstWindow()` of the smokes is still
+ * the main one) and again after it closes. With `pet.enabled = false` the service exists
+ * but holds no window and no timer: the app is the one from before the pet.
  */
 let petService: PetService | null = null;
 
@@ -973,7 +973,7 @@ function toPetDisplay(display: Electron.Display): PetDisplay {
 
 function startPetService(): void {
   if (petService !== null) return;
-  // Os dois seams de TESTE da janela do Jobu (`DONEL_PET_SMOKE_INVISIBLE`, `DONEL_PET_CAPTURABLE`): desligados no app do dono.
+  // The two TEST seams of the Jobu window (`DONEL_PET_SMOKE_INVISIBLE`, `DONEL_PET_CAPTURABLE`): off in the owner's app.
   const seams = readPetSeams(process.env);
   petService = createPetService({
     getMainWindow,
@@ -988,11 +988,11 @@ function startPetService(): void {
     now: () => Date.now(),
     setInterval: (callback, ms) => setInterval(callback, ms),
     clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
-    // FR-034: com `DONEL_PET_CAPTURABLE=1` a proteção contra captura nunca liga (os prints reais da documentação).
+    // FR-034: with `DONEL_PET_CAPTURABLE=1` the protection against capture never turns on (the real screenshots of the docs).
     alwaysCapturable: seams.capturable,
-    // T050 (R10): o auxiliar de tela cheia só existe com a janela do Jobu aberta.
+    // T050 (R10): the full-screen helper only exists while the Jobu window is open.
     startFullscreenWatcher: (onChange) => createFullscreenWatcher({ onChange }),
-    // T049 (FR-005): monitor plugado, desplugado ou com a área útil mudada revalida a posição.
+    // T049 (FR-005): a monitor plugged in, unplugged or with its work area changed revalidates the position.
     subscribeDisplays: (listener) => {
       const handler = (): void => listener();
       screen.on('display-added', handler);
@@ -1007,17 +1007,17 @@ function startPetService(): void {
   });
   petService.start();
   if (seams.ghost) {
-    // O gancho de teste do modo fantasma: o que o vigia de tela cheia faria ao ver um app tomar a tela. A verificação
-    // com tela cheia REAL é da bateria do dono; o smoke prova só que a janela esconde e volta quando o serviço é avisado.
+    // The test hook of the ghost mode: what the full-screen watcher would do on seeing an app take the screen. Verification
+    // with a REAL full screen belongs to the owner's checklist; the smoke only proves that the window hides and comes back when the service is told.
     const hooks = globalThis as PetSmokeGlobal;
     hooks.__donelPetSmoke = { ...hooks.__donelPetSmoke, setFullscreen: (active) => petService?.onFullscreenChanged(active) };
   }
 }
 
 /**
- * C1 (015-jobu-pet, R5/R21) — chamado no `closed` da principal, ANTES do `killAll`: o Jobu é uma
- * segunda janela e morre com a principal. Sem isto ele seguiria vivo e o `window-all-closed` nunca
- * encerraria o app.
+ * C1 (015-jobu-pet, R5/R21) — called on the `closed` of the main window, BEFORE `killAll`: the Jobu is a
+ * second window and dies with the main one. Without this it would stay alive and `window-all-closed` would never
+ * end the app.
  */
 function onMainWindowClosed(): void {
   petService?.dispose();
@@ -1025,8 +1025,8 @@ function onMainWindowClosed(): void {
 }
 
 /**
- * Liga/desliga o Jobu (`config:setPetPrefs`). Sem serviço (a principal ainda não apareceu, ou já
- * fechou) só grava a preferência; com serviço ele grava, aplica e avisa a principal (R19).
+ * Turns the Jobu on/off (`config:setPetPrefs`). Without a service (the main window has not appeared yet, or has already
+ * closed) it only saves the preference; with a service it saves, applies and tells the main window (R19).
  */
 function setPetEnabled(enabled: boolean): void {
   if (petService !== null) {
@@ -1058,7 +1058,7 @@ function createMainWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();
-    startPetService(); // 015 (R21): o Jobu só nasce depois da principal aparecer
+    startPetService(); // 015 (R21): the Jobu is only born after the main window appears
   });
 
   // 015-jobu-pet - the focus of the main window feeds the Jobu ("seen" = the active tab with the Donel in
@@ -1099,9 +1099,9 @@ function createMainWindow(): void {
     const info: PtyExitInfo = { exitCode, signal };
     mainWindow.webContents.send(PTY_CHANNELS.exit, ptyId, info);
 
-    // C3 (015-jobu-pet) — a saída consome a intenção que o `pty:kill` marcou: `true` = o dono fechou
-    // a aba (ou Retomar/Reabrir a matou), `false` = o processo saiu sozinho. Consumir aqui, em toda
-    // saída, é o que impede a marca de ficar para sempre; o Jobu recebe o resultado (`byUser`).
+    // C3 (015-jobu-pet) — the exit consumes the intent that `pty:kill` marked: `true` = the owner closed
+    // the tab (or Resume/Reopen killed it), `false` = the process left by itself. Consuming here, on every
+    // exit, is what keeps the mark from staying forever; the Jobu gets the result (`byUser`).
     petService?.onSessionExited(ptyId, consumeKillRequested(ptyId));
 
     // T009 — onExit do node-pty (evento do SO) é a fonte de verdade pra
@@ -1140,7 +1140,7 @@ function createMainWindow(): void {
   // órfãos (plan.md risco de vazamento, DoD do ciclo de vida chega em T010).
   mainWindow.on('closed', () => {
     if (mainWindowRef === mainWindow) mainWindowRef = null; // C1
-    onMainWindowClosed(); // C1/R21 — o Jobu morre com a principal, ANTES do killAll
+    onMainWindowClosed(); // C1/R21 — the Jobu dies with the main window, BEFORE killAll
     unsubscribeData();
     unsubscribeExit();
     unsubscribeSemaphore();
@@ -1243,7 +1243,7 @@ function registerChatDomain(): void {
     preference: () => appConfig.notificationPreference,
     // 015-jobu-pet (T033, R8) - with the Jobu on screen the bubble says it, and a Windows notification would repeat it.
     isPetEnabled: () => petService?.isEnabled() ?? false,
-    // C1 (015-jobu-pet) — a janela PRINCIPAL em foco, não "alguma janela": o Jobu é outra janela do app.
+    // C1 (015-jobu-pet) — the MAIN window in focus, not "some window": the Jobu is another window of the app.
     isWindowFocused: () => getMainWindow()?.isFocused() ?? false,
     isSupported: () => smokeNotificationsLog !== undefined || Notification.isSupported(),
     create: (options) => {
@@ -1255,7 +1255,7 @@ function registerChatDomain(): void {
       return new Notification(options);
     },
     onClick: (ptyId) => {
-      const window = getMainWindow(); // C1 (015-jobu-pet) — a principal, não "a primeira janela viva"
+      const window = getMainWindow(); // C1 (015-jobu-pet) — the main one, not "the first live window"
       if (window === null) return;
       if (window.isMinimized()) window.restore();
       window.show();
@@ -1531,7 +1531,7 @@ function registerPtyIpcHandlers(): void {
   });
 
   ipcMain.on(PTY_CHANNELS.kill, (_event, ptyId: string) => {
-    markKillRequested(ptyId); // C3 (015-jobu-pet) — marca ANTES de matar: a saída que vem a seguir é "do dono"
+    markKillRequested(ptyId); // C3 (015-jobu-pet) — mark BEFORE killing: the exit that follows is "the owner's"
     ptyManager.kill(ptyId);
   });
 
@@ -1671,9 +1671,9 @@ function registerConfigIpcHandlers(): void {
   });
 
   /**
-   * T020 (015-jobu-pet) — o interruptor do Jobu. Só `enabled` vem do renderer (posição e tamanho
-   * são gravados pelo main, a partir dos gestos do pet) e aplica na hora, sem reiniciar. Payload
-   * inválido é no-op: devolve a config como está.
+   * T020 (015-jobu-pet) — the Jobu switch. Only `enabled` comes from the renderer (position and size
+   * are saved by the main, from the pet's gestures) and it applies at once, without a restart. An invalid
+   * payload is a no-op: it returns the config as it is.
    */
   ipcMain.handle(CONFIG_CHANNELS.setPetPrefs, (_event, input: unknown): AppConfigDto => {
     if (isValidPetPrefsInput(input) && input.enabled !== undefined) setPetEnabled(input.enabled);

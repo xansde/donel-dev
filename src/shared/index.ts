@@ -18,7 +18,7 @@ import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 
-// 015-jobu-pet — o contrato do Jobu (canais, payloads, validadores) vive em ./pet/ipc.
+// 015-jobu-pet — the Jobu contract (channels, payloads, validators) lives in ./pet/ipc.
 export type { DonelPetApi } from './pet/ipc';
 
 export { PROJECT_CHANNELS, sortProjects } from './projects';
@@ -438,6 +438,6 @@ export interface DonelApi {
   esteira: DonelEsteiraApi;
   /** 014-chat — conversa da aba `claude` como chat (ler, paginar, abrir links). Com `chat.enabled = false` os pedidos rejeitam: não há handler. */
   chat: DonelChatApi;
-  /** 015-jobu-pet — o Jobu na área de trabalho. Exposto nas duas janelas (a principal e a do pet); cada uma usa a sua metade. */
+  /** 015-jobu-pet — the Jobu on the desktop. Exposed in both windows (the main one and the pet's); each one uses its own half. */
   pet: DonelPetApi;
 }

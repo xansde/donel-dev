@@ -3,10 +3,10 @@ import { createRoot } from 'react-dom/client';
 import { PetApp } from './PetApp';
 
 /**
- * T017 (015-jobu-pet) — monta a tela do Jobu. A janela é transparente (`transparent: true` no
- * `BrowserWindow`), e o que decide se ela aparece assim é o fundo do documento: o reset global e o
- * design system não pintam `html`/`body`, mas `!important` garante que nenhuma folha de estilo,
- * hoje ou depois, pinte um retângulo em volta do desenho.
+ * T017 (015-jobu-pet) — mounts the Jobu screen. The window is transparent (`transparent: true` on the
+ * `BrowserWindow`), and what decides whether it shows up that way is the document background: the global reset and the
+ * design system do not paint `html`/`body`, but `!important` guarantees that no stylesheet,
+ * today or later, paints a rectangle around the drawing.
  */
 export function mountPet(container: HTMLElement): void {
   document.title = 'Jobu Donel';

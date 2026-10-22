@@ -3,7 +3,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
 import { subscribeChannel } from './subscribeChannel';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
-// 015-jobu-pet — canais do pet; mesmos nomes do contrato (specs/015-jobu-pet/contracts/ipc-pet.md).
+// 015-jobu-pet — the pet channels; same names as the contract (specs/015-jobu-pet/contracts/ipc-pet.md).
 import { PET_CHANNELS } from '../shared/pet/ipc';
 import type { PetActivateSessionPayload, PetDragPayload, PetOpenTarget, PetPrefsChangedPayload, PetTabsPayload } from '../shared/pet/ipc';
 import type { PetView } from '../shared/pet/types';
@@ -330,7 +330,7 @@ const donelApi: DonelApi = {
     setChatPrefs: (prefs: Partial<ChatPrefs>) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setChatPrefs, prefs) as Promise<AppConfigDto>,
 
-    // T014 (015-jobu-pet) — o interruptor do Jobu; o main aplica na hora (cria/destrói a janela do pet).
+    // T014 (015-jobu-pet) — the Jobu switch; the main applies it at once (creates/destroys the pet window).
     setPetPrefs: (prefs: PetPrefsInput) => ipcRenderer.invoke(CONFIG_CHANNELS.setPetPrefs, prefs) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
@@ -539,11 +539,11 @@ const donelApi: DonelApi = {
     },
   },
 
-  // 015-jobu-pet — exposto nas DUAS janelas (o pet carrega o mesmo preload, R18); cada uma usa a sua
-  // metade. Cada `onX` tem UM assinante (o App na principal, o PetApp no pet): trava do subscribeChannel.
-  // Tudo que sai do pet é `send` (sem resposta): o main nunca bloqueia um gesto esperando retorno.
+  // 015-jobu-pet — exposed in BOTH windows (the pet loads the same preload, R18); each one uses its own
+  // half. Each `onX` has ONE subscriber (the App in the main window, the PetApp in the pet): a lock of subscribeChannel.
+  // Everything that leaves the pet is `send` (no reply): the main never blocks a gesture waiting for a return.
   pet: {
-    // --- janela principal ---
+    // --- main window ---
     sendTabs: (payload: PetTabsPayload) => {
       ipcRenderer.send(PET_CHANNELS.tabs, payload);
     },
@@ -556,7 +556,7 @@ const donelApi: DonelApi = {
       return subscribeChannel(ipcRenderer, PET_CHANNELS.prefsChanged, handler);
     },
 
-    // --- janela do pet ---
+    // --- pet window ---
     ready: () => {
       ipcRenderer.send(PET_CHANNELS.ready);
     },

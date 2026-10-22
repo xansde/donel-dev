@@ -4,7 +4,7 @@ import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
 import type { AppConfigDto, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap } from '../shared/config';
-// T014 (015-jobu-pet) — limites do tamanho do pet: a mesma regra que a janela usa (placement.ts).
+// T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
 import type {
   ArchivedPhaseSession,
@@ -133,9 +133,9 @@ export interface AppConfig {
   /** T008 (014-chat) — interruptor da entrega incremental (R22) e modo foco global (FR-009). Exposta no DTO. */
   readonly chat: ChatPrefs;
   /**
-   * T014 (015-jobu-pet) — o Jobu na área de trabalho: interruptor (desligado por padrão), posição
-   * lembrada e tamanho. Exposta no DTO. Chave de TOPO de propósito (R20): um build sem a 015 a
-   * guarda em `unknownFields` e a regrava intacta, coisa que uma subchave nova de `chat` não teria.
+   * T014 (015-jobu-pet) — the Jobu on the desktop: switch (off by default), remembered position
+   * and size. Exposed in the DTO. A TOP-LEVEL key on purpose (R20): a build without the 015 keeps it
+   * in `unknownFields` and writes it back intact, which a new subkey of `chat` would not get.
    */
   readonly pet: PetPrefs;
   /**
@@ -194,15 +194,15 @@ export function sanitizeChatPrefs(value: unknown, fallback: ChatPrefs = defaultC
   };
 }
 
-/** T014 (015-jobu-pet) — desligado, sem posição lembrada (= canto padrão), tamanho Médio. */
+/** T014 (015-jobu-pet) — off, no remembered position (= default corner), Medium size. */
 export function defaultPetPrefs(): PetPrefs {
   return { enabled: false, placement: null, size: PET_SIZE_DEFAULT };
 }
 
 /**
- * T014 — campo a campo, como o `chat`: um campo inválido cai no default DAQUELE campo e não leva
- * os bons junto. `placement` só vale com `x` e `y` finitos (nunca meio ponto: valor torto volta ao
- * canto padrão); `size` é inteiro entre 80 e 320.
+ * T014 — field by field, like `chat`: an invalid field falls back to the default of THAT field and does not take
+ * the good ones with it. `placement` is only valid with finite `x` and `y` (never half a point: a crooked value goes back to the
+ * default corner); `size` is an integer between 80 and 320.
  */
 export function sanitizePetPrefs(value: unknown, fallback: PetPrefs = defaultPetPrefs()): PetPrefs {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return fallback;

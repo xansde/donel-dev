@@ -185,7 +185,7 @@ function withSessionExited(state: PetState, input: SessionExitedEvent, now: numb
   return announce(next, [{ kind: 'ended', ptyId: input.ptyId, name: tracked.name, blockedKind: null, at: now }], now);
 }
 
-/** "A cada mudança de foco ou de sinal, toda sessão esperando e vista agora passa a `seen = true`." */
+/** "On every change of focus or signal, every waiting session that is seen now becomes `seen = true`." */
 function markSeen(state: PetState): { readonly state: PetState; readonly flipped: number } {
   let sessions: Map<string, TrackedSession> | null = null;
   let flipped = 0;

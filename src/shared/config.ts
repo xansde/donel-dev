@@ -15,7 +15,7 @@ import type { EffortLevel, ModelAlias, PermissionMode } from './commandBuilder';
 import type { DevModeState } from './devMode';
 import type { StoredSessionName } from './sessionName';
 import type { SessionRegistry } from './sessionRegistry';
-// 015-jobu-pet — o ponto de ancoragem da posição lembrada do pet (src/shared/pet/types.ts).
+// 015-jobu-pet — the anchor point of the pet's remembered position (src/shared/pet/types.ts).
 import type { PetPoint } from './pet/types';
 // CA-26/CA-27 (009-modo-dev-v3) — cor+ordem da aba v3 por sessão claude, ver
 // src/shared/tabAppearance.ts (lógica pura) e src/shared/tabChannels.ts
@@ -33,7 +33,7 @@ export const CONFIG_CHANNELS = {
   setProjectScanMode: 'config:setProjectScanMode',
   /** T008 (014-chat) — `chat.enabled` / `chat.focusMode`. */
   setChatPrefs: 'config:setChatPrefs',
-  /** T014 (015-jobu-pet) — `pet.enabled`; posição e tamanho só o main grava, pelos gestos do pet. */
+  /** T014 (015-jobu-pet) — `pet.enabled`; position and size are only written by the main, from the pet's gestures. */
   setPetPrefs: 'config:setPetPrefs',
 } as const;
 
@@ -76,9 +76,9 @@ export interface ChatPrefs {
 }
 
 /**
- * T014 (015-jobu-pet) — o Jobu na área de trabalho. `enabled` é o interruptor das Preferências
- * (desligado por padrão); `placement` é o ponto da base, no centro do desenho (`null` = posição
- * padrão); `size` é a altura do desenho em DIP (FR-033, 80–320, padrão 140).
+ * T014 (015-jobu-pet) — the Jobu on the desktop. `enabled` is the Preferences switch
+ * (off by default); `placement` is the base point, at the center of the drawing (`null` = default
+ * position); `size` is the height of the drawing in DIP (FR-033, 80–320, default 140).
  */
 export interface PetPrefs {
   readonly enabled: boolean;
@@ -86,7 +86,7 @@ export interface PetPrefs {
   readonly size: number;
 }
 
-/** O que o renderer pode pedir ao main: só o interruptor. */
+/** What the renderer may ask of the main: only the switch. */
 export interface PetPrefsInput {
   readonly enabled?: boolean;
 }
@@ -131,7 +131,7 @@ export interface AppConfigDto {
   readonly tabAppearance: TabAppearanceMap;
   /** T008 (014-chat) — preferências do chat. */
   readonly chat: ChatPrefs;
-  /** T014 (015-jobu-pet) — preferências do Jobu na área de trabalho. */
+  /** T014 (015-jobu-pet) — the Jobu's preferences on the desktop. */
   readonly pet: PetPrefs;
 }
 
@@ -149,6 +149,6 @@ export interface DonelConfigApi {
   setProjectScanMode(mode: ProjectScanMode): Promise<AppConfigDto>;
   /** T008 (014-chat) — atualização parcial: só os campos boolean enviados mudam. */
   setChatPrefs(prefs: Partial<ChatPrefs>): Promise<AppConfigDto>;
-  /** T014 (015-jobu-pet) — liga/desliga o Jobu; aplica na hora, sem reiniciar. */
+  /** T014 (015-jobu-pet) — turns the Jobu on/off; applies at once, without a restart. */
   setPetPrefs(prefs: PetPrefsInput): Promise<AppConfigDto>;
 }

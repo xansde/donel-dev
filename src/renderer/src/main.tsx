@@ -20,10 +20,10 @@ if (!container) {
 }
 
 /**
- * T017 (015-jobu-pet, R18) — um `index.html` só, duas telas. A janela principal carrega a página
- * sem hash e monta o `App`; a janela do Jobu carrega a mesma página em `#pet` e monta o `PetApp`.
- * Os dois imports são DINÂMICOS de propósito: o pet nunca avalia o módulo do `App` (que sobe o
- * app inteiro), e a principal nunca carrega o código do pet.
+ * T017 (015-jobu-pet, R18) — one `index.html`, two screens. The main window loads the page
+ * without a hash and mounts the `App`; the Jobu window loads the same page at `#pet` and mounts the `PetApp`.
+ * Both imports are DYNAMIC on purpose: the pet never evaluates the `App` module (which brings up the
+ * whole app), and the main window never loads the pet code.
  */
 async function boot(root: HTMLElement): Promise<void> {
   if (window.location.hash === '#pet') {

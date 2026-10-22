@@ -65,7 +65,7 @@ import {
   resolveSessionName,
 } from '../../shared/sessionName';
 import { sessionTabName } from '../../shared/sessions';
-// T021 (015-jobu-pet) — mapa aba <-> PTY e o payload de `pet:tabs` (puros, testados em tests/pet-tab-pty-map.test.ts).
+// T021 (015-jobu-pet) — tab <-> PTY map and the `pet:tabs` payload (pure, tested in tests/pet-tab-pty-map.test.ts).
 import { buildChatFocusState, buildPetTabsPayload, tabPtyMap, type TabPtyMap } from '../../shared/pet/tabPtyMap';
 // Spec 010 / batch B6 — o Modo Dev continua sendo o mapa; a fonte dele passou
 // a ser o STORE (`esteiraMapView.ts`, puro e testado). Aqui fica só o
@@ -1129,7 +1129,7 @@ export function App(): React.JSX.Element {
     void window.donel.config.setChatPrefs({ focusMode }).then(setAppConfig).catch(() => undefined);
   };
 
-  // T022 (015-jobu-pet) — interruptor "Jobu na área de trabalho": liga/desliga a janela do pet na hora, sem reiniciar.
+  // T022 (015-jobu-pet) — "Jobu na área de trabalho" switch: turns the pet window on/off at once, without a restart.
   const handleChangePetEnabled = (enabled: boolean): void => {
     void window.donel.config.setPetPrefs({ enabled }).then(setAppConfig).catch(() => undefined);
   };
@@ -1961,12 +1961,12 @@ export function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatEnabled]);
 
-  // T021 (015-jobu-pet, R4) — o Jobu vive no main e só conhece ptyIds: este efeito diz a ele quais abas
-  // `claude` têm PTY, o nome que cada uma mostra e qual está na frente. É SEMPRE ligado (com ou sem chat,
-  // com o pet ligado ou não): o main guarda o último estado, então ligar o pet depois já o encontra pronto.
-  // Dedupe por JSON: o efeito reavalia a cada tique do semáforo, o canal só quando algo mudou de verdade.
-  // `chatPtyIds` guarda o ÚLTIMO ptyId da aba (a conversa segue legível depois da saída), mas aba com o
-  // processo encerrado (`tabExits`) não tem PTY: o ptyId dela está morto e não conta como sessão.
+  // T021 (015-jobu-pet, R4) — the Jobu lives in the main process and only knows ptyIds: this effect tells it which `claude`
+  // tabs have a PTY, the name each one shows and which one is in front. It is ALWAYS on (with or without the chat,
+  // with the pet on or not): the main keeps the last state, so turning the pet on later finds it ready.
+  // Dedupe by JSON: the effect re-evaluates on every semaphore tick, the channel only when something really changed.
+  // `chatPtyIds` keeps the tab's LAST ptyId (the conversation stays readable after the exit), but a tab whose
+  // process ended (`tabExits`) has no PTY: its ptyId is dead and does not count as a session.
   const lastPetTabsJsonRef = useRef<string | null>(null);
   useEffect(() => {
     const ptyIdOf = (tabId: string): string | null => (tabExits[tabId] === undefined ? (chatPtyIds[tabId] ?? null) : null);
@@ -1978,7 +1978,7 @@ export function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabs, chatPtyIds, tabExits, activeTabId, appConfig?.sessionNames]);
 
-  // T021 — o Jobu manda "ativa a aba desta sessão" (o main já trouxe a janela à frente).
+  // T021 — the Jobu sends "activate this session's tab" (the main has already brought the window to the front).
   // The map is the activation one (`ptyActivationMapRef`, above), which also sees the tab of a process that ended;
   // a ptyId that is no tab's anymore (the tab closed on the way) does nothing.
   useEffect(() => {
@@ -1988,8 +1988,8 @@ export function App(): React.JSX.Element {
     });
   }, []);
 
-  // T021 (R19) — o main mudou `pet.enabled` (Preferências ou, depois, "Esconder"): o renderer não tem push de
-  // config, então este aviso mantém `appConfig.pet` em dia (o interruptor das Preferências e a supressão dos toasts).
+  // T021 (R19) — the main changed `pet.enabled` (Preferences or, later, "Esconder"): the renderer has no config push,
+  // so this notice keeps `appConfig.pet` up to date (the Preferences switch and the suppression of the toasts).
   useEffect(() => {
     return window.donel.pet.onPrefsChanged(({ enabled }) => {
       setAppConfig((previous) =>
