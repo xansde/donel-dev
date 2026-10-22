@@ -268,7 +268,7 @@ e nenhum aviso do Windows sai.
   - `npm run typecheck`, `npx vitest run` e `npm run build`;
   - smokes `@pet`, os de chat e o de config, por área.
   - Flake conhecido (`AttachConsole`, PTY sob carga): repetir isolado e registrar.
-- [ ] T055 Fechar a documentação:
+- [x] T055 Fechar a documentação:
   - status de spec, plano e tarefas;
   - `duvidas.md` final;
   - `design/design-system.md` §10: pet implementado, com o mapa de poses.

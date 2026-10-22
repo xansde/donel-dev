@@ -30,7 +30,7 @@ a fonte da página e o lugar onde o resultado fica registrado.
 | 2.1 | Em `beacon`, pedir uma pergunta com opções; minimizar o Donel | Surpreso + `beacon · tem uma pergunta` |
 | 2.2 | Em modo de permissão padrão, pedir um comando que exige permissão | Surpreso + `beacon · quer permissão` |
 | 2.3 | Em modo plano, pedir um plano | Surpreso + `beacon · plano para aprovar` |
-| 2.4 | Encerrar o processo da sessão sem fechar a aba (ex.: `/exit`) | Triste + `beacon · encerrou` |
+| 2.4 | Em `beacon`, digitar `/exit` com o Donel em foco (o processo da sessão termina e a aba fica) | **Nenhum** balão: você está olhando a aba (Q9). O balão `Triste + beacon · encerrou` só nasce quando o Donel está minimizado ou em outra aba — é o que o smoke T035 confere |
 | 2.5 | Durante 2.1–2.4 | Nenhum aviso do Windows; nenhum balão com texto da conversa |
 | 2.6 | Esconder o Jobu (botão direito → Esconder) e repetir 2.1 | O aviso do Windows aparece como antes |
 
