@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { buildPetMenu, type PetMenuAction, type PetMenuContext, type PetMenuEntry } from '../src/shared/pet/menu';
 import { PET_SIZE_PRESETS } from '../src/shared/pet/placement';
 
-const base: PetMenuContext = { silenced: false, captureReleased: false, size: 140 };
+const base: PetMenuContext = { silenced: false, captureReleased: false, size: 140, sweeping: false };
 
 const labelsOf = (entries: readonly PetMenuEntry[]): string[] => entries.map((entry) => (entry.type === 'separator' ? '---' : entry.label));
 const itemFor = (entries: readonly PetMenuEntry[], label: string): Extract<PetMenuEntry, { type: 'item' }> => {
@@ -21,12 +21,12 @@ const sizeSubmenu = (entries: readonly PetMenuEntry[]): Extract<PetMenuEntry, { 
 
 describe('the order of the menu', () => {
   it('silence, capture, size, a separator, then "Voltar ao canto" and "Esconder"', () => {
-    expect(labelsOf(buildPetMenu(base))).toEqual(['Silenciar por 1 hora', 'Liberar print por 1 minuto', 'Tamanho', '---', 'Voltar ao canto', 'Esconder']);
+    expect(labelsOf(buildPetMenu(base))).toEqual(['Silenciar por 1 hora', 'Liberar print por 1 minuto', 'Fazer faxina', 'Tamanho', '---', 'Voltar ao canto', 'Esconder']);
   });
 
   it('the shape is the same in every state: only the two toggles change their words', () => {
-    const everything = buildPetMenu({ silenced: true, captureReleased: true, size: 200 });
-    expect(labelsOf(everything)).toEqual(['Retomar avisos', 'Bloquear print agora', 'Tamanho', '---', 'Voltar ao canto', 'Esconder']);
+    const everything = buildPetMenu({ silenced: true, captureReleased: true, size: 200, sweeping: false });
+    expect(labelsOf(everything)).toEqual(['Retomar avisos', 'Bloquear print agora', 'Fazer faxina', 'Tamanho', '---', 'Voltar ao canto', 'Esconder']);
   });
 });
 
@@ -86,7 +86,7 @@ describe('size (FR-033): the submenu "Tamanho"', () => {
 
 describe('"Voltar ao canto" and "Esconder"', () => {
   it('go home and hide, always on offer', () => {
-    for (const context of [base, { silenced: true, captureReleased: true, size: 260 }]) {
+    for (const context of [base, { silenced: true, captureReleased: true, size: 260, sweeping: false }]) {
       const entries = buildPetMenu(context);
       expect(itemFor(entries, 'Voltar ao canto').action).toEqual({ kind: 'home' });
       expect(itemFor(entries, 'Esconder').action).toEqual({ kind: 'hide' });
@@ -96,15 +96,15 @@ describe('"Voltar ao canto" and "Esconder"', () => {
 
 describe('the model is plain data', () => {
   it('survives a JSON round trip, so a test (or the main) can read it from anywhere', () => {
-    const entries = buildPetMenu({ silenced: true, captureReleased: false, size: 200 });
+    const entries = buildPetMenu({ silenced: true, captureReleased: false, size: 200, sweeping: false });
     expect(JSON.parse(JSON.stringify(entries))).toEqual(entries);
   });
 
   it('every action of every entry is one of the known kinds', () => {
-    const kinds = new Set<PetMenuAction['kind']>(['silence', 'resume', 'releaseCapture', 'blockCapture', 'size', 'home', 'hide']);
+    const kinds = new Set<PetMenuAction['kind']>(['silence', 'resume', 'releaseCapture', 'blockCapture', 'sweep', 'size', 'home', 'hide']);
     const collect = (entries: readonly PetMenuEntry[]): PetMenuAction[] =>
       entries.flatMap((entry) => (entry.type === 'item' ? [entry.action] : entry.type === 'submenu' ? entry.items.map((item) => item.action) : []));
-    for (const context of [base, { silenced: true, captureReleased: true, size: 80 }]) {
+    for (const context of [base, { silenced: true, captureReleased: true, size: 80, sweeping: false }]) {
       for (const action of collect(buildPetMenu(context))) expect(kinds.has(action.kind)).toBe(true);
     }
   });

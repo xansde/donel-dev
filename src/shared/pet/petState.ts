@@ -13,7 +13,7 @@
 // `blocked` event of a bubble. A change of account (`accountSwitched`, US4) is a bubble of its own that
 // belongs to no session: it replaces whatever is up and nothing ever joins it.
 
-import { PET_BUBBLE_JOIN_MS, PET_BUBBLE_MS, accountBubbleFace, composeBubble } from './bubble';
+import { PET_BUBBLE_JOIN_MS, PET_BUBBLE_MS, accountBubbleFace, composeBubble, sweepBubbleFace } from './bubble';
 import type {
   AccountSwitchedEvent,
   BubbleEvent,
@@ -26,6 +26,7 @@ import type {
   SemaphorePublicState,
   SessionExitedEvent,
   SilenceEvent,
+  SweepFinishedEvent,
   TrackedSession,
   WatchedSession,
 } from './types';
@@ -278,6 +279,18 @@ function withAccountSwitched(state: PetState, input: AccountSwitchedEvent, now: 
   return { ...state, lastBubbleId: id, pendingBurst: [], bubble: { id, ...accountBubbleFace(input.label), until: now + PET_BUBBLE_MS } };
 }
 
+/**
+ * The sweep the owner asked for ended (016-jobu-faxina): a bubble with its result, born like the account one (new id, fresh
+ * 6 s, replaces whatever is up, nothing joins it). It is NOT held back by "Silenciar por 1 hora": silence calms what the
+ * Jobu says on his own, and this is the answer to a request. An app on the whole screen still holds it back, because
+ * the Jobu is hidden then.
+ */
+function withSweepFinished(state: PetState, input: SweepFinishedEvent, now: number): PetState {
+  if (state.fullscreen) return state;
+  const id = state.lastBubbleId + 1;
+  return { ...state, lastBubbleId: id, pendingBurst: [], bubble: { id, ...sweepBubbleFace(input.summary), until: now + PET_BUBBLE_MS } };
+}
+
 /** "Silenciar por 1 hora" calms the bubbles, the one in view included (FR-027); "Retomar avisos" lifts it. The face and the badge never stop. */
 function withSilence(state: PetState, input: SilenceEvent, now: number): PetState {
   const next: PetState = { ...state, silencedUntil: input.until };
@@ -386,6 +399,9 @@ export function reducePet(state: PetState, input: PetInput, now: number): PetSta
       break;
     case 'accountSwitched':
       next = withAccountSwitched(state, input, now);
+      break;
+    case 'sweepFinished':
+      next = withSweepFinished(state, input, now);
       break;
     default:
       return assertNever(input);

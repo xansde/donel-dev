@@ -992,10 +992,10 @@ test.describe('o Jobu e os gestos', () => {
     await closeIsolatedApp(launched);
   });
 
-  test('T047 - o menu do botão direito: Silenciar, Liberar print, Tamanho com a marca no atual, e "Voltar ao canto" e "Esconder" @pet', async () => {
+  test('T047 - o menu do botão direito: Silenciar, Liberar print, Fazer faxina, Tamanho com a marca no atual, e "Voltar ao canto" e "Esconder" @pet', async () => {
     test.setTimeout(60_000);
     const entries = await openMenu();
-    expect(menuLabels(entries)).toEqual(['Silenciar por 1 hora', 'Liberar print por 1 minuto', 'Tamanho', '---', 'Voltar ao canto', 'Esconder']);
+    expect(menuLabels(entries)).toEqual(['Silenciar por 1 hora', 'Liberar print por 1 minuto', 'Fazer faxina', 'Tamanho', '---', 'Voltar ao canto', 'Esconder']);
     const size = entries.find((entry) => entry.type === 'submenu');
     expect(size?.items?.map((item) => item.label)).toEqual(['Pequeno', 'Médio', 'Grande', 'Muito grande']);
     expect(size?.items?.filter((item) => item.checked).map((item) => item.label)).toEqual(['Médio']); // 140 is the medium one

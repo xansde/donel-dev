@@ -147,8 +147,29 @@ export interface TickEvent {
   readonly type: 'tick';
 }
 
+/**
+ * What the bubble of the sweep (016-jobu-faxina) is made of: the totals, never a name or a path of a file.
+ * `folder` is the folder of the sweep when it was created (something was set aside or a branch was deleted).
+ */
+export interface SweepBubbleSummary {
+  readonly failed: boolean;
+  readonly freedBytes: number;
+  readonly separatedItems: number;
+  readonly branchesDeleted: number;
+  readonly worktreesRemoved: number;
+  readonly folder: string | null;
+}
+
+/** The sweep the owner asked for (menu "Fazer faxina") ended: its result is a bubble of its own, even when the notices are silenced. */
+export interface SweepFinishedEvent {
+  readonly type: 'sweepFinished';
+  readonly summary: SweepBubbleSummary;
+  readonly at: number;
+}
+
 export type PetEvent =
   | AccountSwitchedEvent
+  | SweepFinishedEvent
   | SessionExitedEvent
   | PendingOpenedEvent
   | SilenceEvent
@@ -201,7 +222,9 @@ export interface TrackedSession {
 export type BubbleTarget =
   | { readonly kind: 'session'; readonly ptyId: string }
   | { readonly kind: 'list' }
-  | { readonly kind: 'donel' };
+  | { readonly kind: 'donel' }
+  /** 016: the folder of a sweep, opened in the Explorer. The main opens the one of ITS bubble, never a path the window sends. */
+  | { readonly kind: 'folder'; readonly path: string };
 
 export interface Bubble {
   /** Grows with every new bubble; the screen keys the little hop on it. */

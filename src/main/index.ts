@@ -2,7 +2,8 @@ import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, scree
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { appendFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { readUserDefaultPermissionMode } from './cli-user-settings';
 import { withResolvedPermissionMode } from '../shared/commandBuilder';
@@ -238,6 +239,9 @@ import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
 import { createFullscreenWatcher } from './pet/fullscreen-watcher';
 import { readPetSeams, type PetSmokeGlobal } from './pet/pet-seams';
+// 016-jobu-faxina — "Fazer faxina": the sweep of repos, worktrees, branches and old sessions the Jobu runs from his menu.
+import { createGitRunner } from './sweep/git';
+import { createSweepRunner } from './sweep/sweep-service';
 import { isValidPetPrefsInput } from '../shared/pet/ipc';
 import type { PetDisplay } from '../shared/pet/types';
 // T504 (005-terminal-copy-paste) — clipboard-bridge (T503), aditivo aos
@@ -984,6 +988,21 @@ function startPetService(): void {
       persistAppConfig();
     },
     createWindow: (options) => createPetWindow(options, seams),
+    // 016-jobu-faxina — the sweep of the menu "Fazer faxina", and the click of its bubble (the Explorer opens the folder).
+    runSweep: createSweepRunner({
+      git: createGitRunner(),
+      now: () => Date.now(),
+      getRoots: () => appConfig.projectRoots,
+      getLastSweepAt: () => appConfig.sweep.lastSweepAt,
+      setLastSweepAt: (ms) => {
+        appConfig = { ...appConfig, sweep: { lastSweepAt: ms } };
+        persistAppConfig();
+      },
+      claudeProjectsDir: join(defaultClaudeHome(), 'projects'),
+      tempClaudeDir: join(tmpdir(), 'claude'),
+      log: (line) => appendFile(join(app.getPath('userData'), 'sweep.log'), `${new Date().toISOString()} ${line}\n`, 'utf8'),
+    }),
+    openFolder: (path) => void shell.openPath(path),
     getDisplays: () => screen.getAllDisplays().map(toPetDisplay),
     getPrimaryDisplay: () => toPetDisplay(screen.getPrimaryDisplay()),
     now: () => Date.now(),

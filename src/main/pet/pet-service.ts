@@ -16,7 +16,8 @@
 // (`onAccountSwitched`, US4) and that an app has the whole screen (`onFullscreenChanged`, called by the
 // watcher of US5). The gestures of the window next to `handleInteractive` - the click, the item of the list,
 // the list opening (US3) - are answered here too, and so are the ones of US5: the drag, the Ctrl + wheel, the
-// right-click menu and what each item of it does (silence, hide, go home, the size, the capture).
+// right-click menu and what each item of it does (silence, hide, go home, the size, the capture, and since 016 the sweep).
+// The sweep itself is not here: `runSweep` comes in through the deps, and this file only turns its totals into the bubble.
 //
 // Where the pet sits is its ANCHOR, the base of the drawing (src/shared/pet/placement.ts), and every move of
 // the window is a `setBounds` with the whole rectangle (`applyBounds`), never a `setPosition`: on a screen
@@ -56,6 +57,7 @@ import type {
   PetUi,
   PetView,
   SemaphorePublicState,
+  SweepBubbleSummary,
   WatchedSession,
 } from '../../shared/pet/types';
 
@@ -166,6 +168,14 @@ export interface PetServiceDeps {
    * when the monitors or their work areas change. Returns the way to stop listening. Absent = the place is only judged at the start.
    */
   readonly subscribeDisplays?: (listener: () => void) => () => void;
+  /**
+   * 016-jobu-faxina: runs the sweep the owner asked for ("Fazer faxina") and resolves with the totals the bubble says. It
+   * should not reject (a failure is `failed: true`), but one that does is taken as a failure too. Absent = the item
+   * of the menu does nothing.
+   */
+  readonly runSweep?: () => Promise<SweepBubbleSummary>;
+  /** 016: opens a folder in the Explorer (the click on the bubble of the sweep). Absent = the click only dismisses the bubble. */
+  readonly openFolder?: (path: string) => void;
 }
 
 export interface PetService {
@@ -209,6 +219,8 @@ export interface PetService {
    * window hides, to show again - without taking the focus - when the screen is free.
    */
   onFullscreenChanged(active: boolean): void;
+  /** 016: the sweep is running. The menu says "Faxinando…" and a second one does not start. */
+  isSweeping(): boolean;
   /** Is this web contents the pet window? The IPC layer asks before it trusts a gesture. */
   isPetSender(sender: { readonly id: number }): boolean;
   /** `pet:ready`: the screen is subscribed. Answers with the current view and shows the window. */
@@ -274,6 +286,8 @@ export function createPetService(deps: PetServiceDeps): PetService {
   let hiddenForFullscreen = false;
   let fullscreenWatcher: PetFullscreenWatcher | null = null;
   let unsubscribeDisplays: (() => void) | null = null;
+  /** 016: a sweep is running. Lives in the service, not in the core: it is a fact about the menu, not about what the Jobu shows. */
+  let sweeping = false;
 
   let tabs: PetTabsPayload = { activePtyId: null, sessions: [] };
   // In front of the owner: focused and not minimized (a minimized window can keep reporting the focus). The main
@@ -577,6 +591,43 @@ export function createPetService(deps: PetServiceDeps): PetService {
     relayout();
   }
 
+  /**
+   * "Fazer faxina" (016): runs the sweep once at a time and turns its result into the bubble. The menu reads `sweeping`
+   * every time it opens, so the item says "Faxinando…" for as long as this lasts.
+   */
+  function startSweep(): void {
+    if (sweeping || deps.runSweep === undefined) return;
+    sweeping = true;
+    const finish = (summary: SweepBubbleSummary): void => {
+      sweeping = false;
+      if (disposed) return;
+      feed({ type: 'sweepFinished', summary, at: deps.now() });
+    };
+    const failure: SweepBubbleSummary = { failed: true, freedBytes: 0, separatedItems: 0, branchesDeleted: 0, worktreesRemoved: 0, folder: null };
+    let started: Promise<SweepBubbleSummary>;
+    try {
+      started = deps.runSweep();
+    } catch (error) {
+      console.error('[donel-dev] a faxina não começou:', error);
+      finish(failure);
+      return;
+    }
+    started.then(finish, (error: unknown) => {
+      console.error('[donel-dev] a faxina falhou:', error);
+      finish(failure);
+    });
+  }
+
+  /**
+   * A click on the bubble of a sweep: the Explorer opens the folder of the bubble the MAIN holds. The window sends the
+   * path along (it is the type of its bubble), but a path that came from a window is never what gets opened.
+   */
+  function openSweepFolder(): void {
+    const target = state.bubble?.target;
+    feed({ type: 'bubbleDismissed' });
+    if (target !== undefined && target.kind === 'folder') deps.openFolder?.(target.path);
+  }
+
   /** What each item of the right-click menu does. */
   function menuAction(action: PetMenuAction): void {
     if (liveWindow() === null) return; // the menu outlived the window (the Preferences turned the pet off while it was open)
@@ -597,6 +648,9 @@ export function createPetService(deps: PetServiceDeps): PetService {
         break;
       case 'size':
         setSize(action.size);
+        break;
+      case 'sweep':
+        startSweep();
         break;
       case 'home':
         goHome();
@@ -674,6 +728,10 @@ export function createPetService(deps: PetServiceDeps): PetService {
       feed({ type: 'accountSwitched', label, at: deps.now() });
     },
 
+    isSweeping() {
+      return sweeping;
+    },
+
     onFullscreenChanged,
 
     isPetSender(sender) {
@@ -703,6 +761,10 @@ export function createPetService(deps: PetServiceDeps): PetService {
 
     handleOpen(target) {
       if (liveWindow() === null) return;
+      if (target.kind === 'folder') {
+        openSweepFolder();
+        return;
+      }
       openTarget(target);
     },
 
@@ -719,7 +781,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
       const current = liveWindow();
       if (current === null) return;
       const now = deps.now();
-      current.popupMenu(buildPetMenu({ silenced: isSilenced(state, now), captureReleased: captureReleased(capture, now), size: ui.size }), menuAction, at);
+      current.popupMenu(buildPetMenu({ silenced: isSilenced(state, now), captureReleased: captureReleased(capture, now), size: ui.size, sweeping }), menuAction, at);
     },
 
     handleMenuAction: menuAction,

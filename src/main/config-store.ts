@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
-import type { AppConfigDto, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap } from '../shared/config';
+import type { AppConfigDto, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs } from '../shared/config';
 // T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
 import type {
@@ -139,6 +139,11 @@ export interface AppConfig {
    */
   readonly pet: PetPrefs;
   /**
+   * 016-jobu-faxina — the stamp of the last sweep that ended well. A TOP-LEVEL key (like `pet`, R20), NOT in
+   * the DTO: only the main reads it.
+   */
+  readonly sweep: SweepPrefs;
+  /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
    * `sanitizeAppConfig` NUNCA as descarta — guarda aqui em vez de jogar fora
@@ -175,8 +180,22 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     providers: defaultProvidersConfig(),
     chat: defaultChatPrefs(),
     pet: defaultPetPrefs(),
+    sweep: defaultSweepPrefs(),
     unknownFields: {},
   };
+}
+
+/** 016-jobu-faxina — no sweep yet: every known repo enters the first one. */
+export function defaultSweepPrefs(): SweepPrefs {
+  return { lastSweepAt: null };
+}
+
+/** 016 — `lastSweepAt` is a finite, positive epoch in ms; anything else means "never swept". */
+export function sanitizeSweepPrefs(value: unknown, fallback: SweepPrefs = defaultSweepPrefs()): SweepPrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return fallback;
+  const at = (value as Record<string, unknown>).lastSweepAt;
+  if (at === null) return { lastSweepAt: null };
+  return typeof at === 'number' && Number.isFinite(at) && at > 0 ? { lastSweepAt: Math.floor(at) } : fallback;
 }
 
 /** T008 (014-chat) — `enabled` false até a Fase 7 (R22); `focusMode` true (FR-009). */
@@ -666,6 +685,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     providers: sanitizeProvidersConfig(candidate.providers),
     chat: sanitizeChatPrefs(candidate.chat, defaults.chat),
     pet: sanitizePetPrefs(candidate.pet, defaults.pet),
+    sweep: sanitizeSweepPrefs(candidate.sweep, defaults.sweep),
     unknownFields,
   };
 }

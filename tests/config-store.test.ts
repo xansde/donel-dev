@@ -68,6 +68,7 @@ describe('defaultAppConfig (puro)', () => {
       chat: { enabled: false, focusMode: true },
       // T014 (015-jobu-pet) — desligado, sem posição lembrada, tamanho Médio.
       pet: { enabled: false, placement: null, size: 140 },
+      sweep: { lastSweepAt: null },
       unknownFields: {},
     });
   });
@@ -229,6 +230,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       },
       chat: { enabled: true, focusMode: false },
       pet: { enabled: true, placement: { x: 1830, y: 1040 }, size: 200 },
+      sweep: { lastSweepAt: null },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -317,6 +319,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       providers: defaults.providers, // ausente no objeto → default
       chat: defaults.chat, // ausente no objeto → default
       pet: defaults.pet, // ausente no objeto → default
+      sweep: defaults.sweep,
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });

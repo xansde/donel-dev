@@ -21,7 +21,7 @@ export function decideClick(view: { readonly waiting: readonly PetViewWaiting[] 
 
 /**
  * A click on the bubble goes where the bubble says (FR-025): the tab of its session - also when that
- * session ended, because its tab is still there - the Donel for an account bubble, and for an aggregate
+ * session ended, because its tab is still there - the Donel for an account bubble, the folder for the bubble of a sweep, and for an aggregate
  * the list, as long as there is a list to show: with one left waiting that one is the answer, and with
  * none the Donel comes to the front.
  */
@@ -29,6 +29,7 @@ export function decideBubbleClick(bubble: PetViewBubble, waiting: readonly PetVi
   switch (bubble.target.kind) {
     case 'session':
     case 'donel':
+    case 'folder':
       return bubble.target;
     case 'list':
       return decideClick({ waiting });

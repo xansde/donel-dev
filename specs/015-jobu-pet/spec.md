@@ -34,6 +34,9 @@ ou está travada numa pergunta, permissão ou plano.
   o posto de assistente na área de trabalho. Dentro do app, onde ele vive e
   onde nunca entra não mudam nesta entrega — isso é da spec do layout místico.
 - **D2 — Escopo dos avisos:** só as sessões do Donel e a troca de conta.
+  - *Emenda (23/10/2026, decisão do dono, `specs/016-jobu-faxina/`):* o Jobu também
+    avisa o **resultado da faxina** que o próprio dono pede pelo menu ("Fazer faxina").
+    É resposta a um pedido, não aviso espontâneo: aparece mesmo com o Jobu silenciado.
 - **D3 — Impaciência:** toda sessão esperando você conta — inclusive a que só
   terminou o turno — até você abrir a aba dela. Se ela voltar a esperar, conta
   de novo.

@@ -3,7 +3,7 @@
 // (src/main/pet/pet-menu.ts) and gets the chosen action back (`PetService.handleMenuAction`).
 //
 // Silenciar por 1 hora / Retomar avisos (FR-026, FR-027) · Liberar print por 1 minuto / Bloquear print agora
-// (FR-035) · Tamanho > Pequeno, Médio, Grande, Muito grande (FR-033) · - · Voltar ao canto · Esconder.
+// (FR-035) · Fazer faxina / Faxinando… (016) · Tamanho > Pequeno, Médio, Grande, Muito grande (FR-033) · - · Voltar ao canto · Esconder.
 
 import { PET_SIZE_PRESETS } from './placement';
 
@@ -13,6 +13,7 @@ export type PetMenuAction =
   | { readonly kind: 'resume' }
   | { readonly kind: 'releaseCapture' }
   | { readonly kind: 'blockCapture' }
+  | { readonly kind: 'sweep' }
   | { readonly kind: 'size'; readonly size: number }
   | { readonly kind: 'home' }
   | { readonly kind: 'hide' };
@@ -25,7 +26,7 @@ export interface PetMenuCheckItem {
 }
 
 export type PetMenuEntry =
-  | { readonly type: 'item'; readonly label: string; readonly action: PetMenuAction }
+  | { readonly type: 'item'; readonly label: string; readonly action: PetMenuAction; readonly enabled?: boolean }
   | { readonly type: 'submenu'; readonly label: string; readonly items: readonly PetMenuCheckItem[] }
   | { readonly type: 'separator' };
 
@@ -34,6 +35,8 @@ export interface PetMenuContext {
   readonly silenced: boolean;
   readonly captureReleased: boolean;
   readonly size: number;
+  /** 016: a sweep is running, so the item says so and cannot be chosen again. */
+  readonly sweeping: boolean;
 }
 
 export function buildPetMenu(context: PetMenuContext): readonly PetMenuEntry[] {
@@ -44,6 +47,9 @@ export function buildPetMenu(context: PetMenuContext): readonly PetMenuEntry[] {
     context.captureReleased
       ? { type: 'item', label: 'Bloquear print agora', action: { kind: 'blockCapture' } }
       : { type: 'item', label: 'Liberar print por 1 minuto', action: { kind: 'releaseCapture' } },
+    context.sweeping
+      ? { type: 'item', label: 'Faxinando…', action: { kind: 'sweep' }, enabled: false }
+      : { type: 'item', label: 'Fazer faxina', action: { kind: 'sweep' } },
     {
       type: 'submenu',
       label: 'Tamanho',
