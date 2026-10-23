@@ -6,7 +6,8 @@
 // Nothing here reads the conversation: the only inputs are the name of a tab, the kind of an event and,
 // for a blocked session, the kind of its pending (FR-018).
 
-import type { BubbleEvent, BubbleTarget, PoseName } from './types';
+import { formatBytes } from '../format-bytes';
+import type { BubbleEvent, BubbleTarget, PoseName, SweepBubbleSummary } from './types';
 
 /** FR-017: a bubble stays about this long. */
 export const PET_BUBBLE_MS = 6_000;
@@ -85,6 +86,30 @@ export interface BubbleFace {
  */
 export function accountBubbleFace(label: string): BubbleFace {
   return { text: `Conta → ${truncateTabName(label)}`, pose: 'mirror', target: { kind: 'donel' } };
+}
+
+/** The facts of a sweep a bubble can carry, most important first; the line keeps only the first two so it stays small. */
+const SWEEP_FACTS_MAX = 2;
+
+function plural(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+/**
+ * The bubble of "Fazer faxina" (016): `Faxina · 319 MB liberados · 34 separados`, `Faxina · nada a limpar` or `Faxina · falhou`.
+ * A click opens the folder of the sweep when there is one (the receipt of the deleted branches and the `resumo.html`
+ * live there), and brings the Donel to the front otherwise. Totals only: no repo, branch or path name is ever said.
+ */
+export function sweepBubbleFace(summary: SweepBubbleSummary): BubbleFace {
+  if (summary.failed) return { text: 'Faxina · falhou', pose: 'sad', target: { kind: 'donel' } };
+  const target: BubbleTarget = summary.folder === null ? { kind: 'donel' } : { kind: 'folder', path: summary.folder };
+  const facts: string[] = [];
+  if (summary.freedBytes > 0) facts.push(`${formatBytes(summary.freedBytes)} liberados`);
+  if (summary.separatedItems > 0) facts.push(`${summary.separatedItems} separados`);
+  if (summary.branchesDeleted > 0) facts.push(plural(summary.branchesDeleted, 'branch', 'branches'));
+  if (summary.worktreesRemoved > 0) facts.push(plural(summary.worktreesRemoved, 'worktree', 'worktrees'));
+  if (facts.length === 0) return { text: 'Faxina · nada a limpar', pose: 'neutral', target };
+  return { text: `Faxina · ${facts.slice(0, SWEEP_FACTS_MAX).join(' · ')}`, pose: 'talking', target };
 }
 
 /**

@@ -86,6 +86,11 @@ export interface PetPrefs {
   readonly size: number;
 }
 
+/** 016-jobu-faxina — the stamp of the last sweep that ended well (epoch ms), or `null` if none ever did. Main only; not in the DTO. */
+export interface SweepPrefs {
+  readonly lastSweepAt: number | null;
+}
+
 /** What the renderer may ask of the main: only the switch. */
 export interface PetPrefsInput {
   readonly enabled?: boolean;

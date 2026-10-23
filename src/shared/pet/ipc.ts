@@ -71,7 +71,11 @@ export interface PetDragPayload {
  */
 export type PetContextMenuPayload = PetDragPayload | undefined;
 
-export type PetOpenTarget = { readonly kind: 'session'; readonly ptyId: string } | { readonly kind: 'donel' };
+export type PetOpenTarget =
+  | { readonly kind: 'session'; readonly ptyId: string }
+  | { readonly kind: 'donel' }
+  /** 016: the path travels because the type is the bubble's, but the main ignores it and opens the folder of its own bubble. */
+  | { readonly kind: 'folder'; readonly path: string };
 
 /** `pet:open`: bring the Donel to the front, on a session when there is one. */
 export interface PetOpenPayload {
@@ -137,6 +141,7 @@ export function isValidPetOpenPayload(input: unknown): input is PetOpenPayload {
   if (!isRecord(input) || !isRecord(input.target)) return false;
   const target = input.target;
   if (target.kind === 'donel') return true;
+  if (target.kind === 'folder') return typeof target.path === 'string' && target.path !== '';
   return target.kind === 'session' && isNonEmptyString(target.ptyId);
 }
 

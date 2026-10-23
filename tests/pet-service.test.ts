@@ -13,7 +13,7 @@ import { PET_CHANNELS } from '../src/shared/pet/ipc';
 import type { PetMenuAction, PetMenuEntry } from '../src/shared/pet/menu';
 import { PET_SILENCE_MS } from '../src/shared/pet/petState';
 import { alignFor, anchorOf, defaultPlacement, windowBoundsFor } from '../src/shared/pet/placement';
-import type { PetDisplay, PetPoint, PetRect, PetView, SemaphorePublicState } from '../src/shared/pet/types';
+import type { PetDisplay, PetPoint, PetRect, PetView, SemaphorePublicState, SweepBubbleSummary } from '../src/shared/pet/types';
 import {
   PET_TICK_MS,
   createPetService,
@@ -129,6 +129,9 @@ function harness(
     alwaysCapturable?: boolean;
     /** `false` = the deps of the watcher and of the screen events are left out, like the first phases of the pet were. */
     withWatchers?: boolean;
+    /** 016: the sweep the menu runs, and what opens the folder of its bubble. */
+    runSweep?: PetServiceDeps['runSweep'];
+    openFolder?: PetServiceDeps['openFolder'];
   } = {},
 ): Harness {
   const windows: FakePetWindow[] = [];
@@ -177,6 +180,8 @@ function harness(
     },
     getDisplays: () => displays,
     getPrimaryDisplay: () => displays[0] ?? PRIMARY,
+    ...(over.runSweep === undefined ? {} : { runSweep: over.runSweep }),
+    ...(over.openFolder === undefined ? {} : { openFolder: over.openFolder }),
     ...(over.alwaysCapturable === true ? { alwaysCapturable: true } : {}),
     ...(over.withWatchers === false
       ? {}
@@ -1489,7 +1494,7 @@ describe('the right-click menu (US5, T047)', () => {
     service.handleContextMenu({ x: 1850, y: 990 });
     expect(petWindow(h).menus).toHaveLength(1);
     expect(lastMenu(h).at).toEqual({ x: 1850, y: 990 });
-    expect(menuLabels(lastMenu(h).entries)).toEqual(['Silenciar por 1 hora', 'Liberar print por 1 minuto', 'Tamanho', '---', 'Voltar ao canto', 'Esconder']);
+    expect(menuLabels(lastMenu(h).entries)).toEqual(['Silenciar por 1 hora', 'Liberar print por 1 minuto', 'Fazer faxina', 'Tamanho', '---', 'Voltar ao canto', 'Esconder']);
   });
 
   it('with no place given the menu opens where the pointer is', () => {
@@ -2196,5 +2201,140 @@ describe('full screen (US5, T050, R10, FR-007, Q2, Q9)', () => {
     service.dispose();
     h.watchers[0]?.onChange(true);
     expect(petWindow(h).hidden).toBe(0);
+  });
+});
+
+// 016-jobu-faxina (T012) - "Fazer faxina" in the service: the item of the menu, one sweep at a time, the bubble with the
+// result (also when silenced), and the click that opens the folder of the bubble.
+describe('Fazer faxina (016)', () => {
+  const summary = (patch: Partial<SweepBubbleSummary> = {}): SweepBubbleSummary => ({
+    failed: false,
+    freedBytes: 5 * 1024 * 1024,
+    separatedItems: 0,
+    branchesDeleted: 0,
+    worktreesRemoved: 0,
+    folder: null,
+    ...patch,
+  });
+  /** A sweep the test finishes by hand. */
+  function pendingSweep() {
+    const calls = { count: 0 };
+    let resolve: (value: SweepBubbleSummary) => void = () => undefined;
+    let reject: (reason: unknown) => void = () => undefined;
+    const runSweep = (): Promise<SweepBubbleSummary> => {
+      calls.count += 1;
+      return new Promise<SweepBubbleSummary>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+    };
+    return { calls, runSweep, resolve: (value: SweepBubbleSummary) => resolve(value), reject: (reason: unknown) => reject(reason) };
+  }
+  const flush = async (): Promise<void> => {
+    await Promise.resolve();
+    await Promise.resolve();
+  };
+  const menuLabels = (h: Harness): string[] =>
+    (h.windows[0]?.menus.at(-1)?.entries ?? []).flatMap((entry) => (entry.type === 'item' ? [entry.label] : []));
+
+  it('the menu offers "Fazer faxina", and the choice starts the sweep', () => {
+    const sweep = pendingSweep();
+    const { h, service } = readyPet({ runSweep: sweep.runSweep });
+    service.handleContextMenu(null);
+    expect(menuLabels(h)).toContain('Fazer faxina');
+    h.windows[0]?.menus[0]?.choose({ kind: 'sweep' });
+    expect(sweep.calls.count).toBe(1);
+    expect(service.isSweeping()).toBe(true);
+  });
+
+  it('while it runs the item says "Faxinando…" and a second choice starts nothing', () => {
+    const sweep = pendingSweep();
+    const { h, service } = readyPet({ runSweep: sweep.runSweep });
+    service.handleMenuAction({ kind: 'sweep' });
+    service.handleContextMenu(null);
+    expect(menuLabels(h)).toContain('Faxinando…');
+    expect(menuLabels(h)).not.toContain('Fazer faxina');
+    service.handleMenuAction({ kind: 'sweep' });
+    expect(sweep.calls.count).toBe(1);
+  });
+
+  it('when it ends the bubble says the result and the item comes back', async () => {
+    const sweep = pendingSweep();
+    const { h, service } = readyPet({ runSweep: sweep.runSweep });
+    service.handleMenuAction({ kind: 'sweep' });
+    sweep.resolve(summary({ folder: 'C:\w\_archive\faxina-2026-10-23', separatedItems: 3 }));
+    await flush();
+    expect(lastView(h).bubble).toMatchObject({ text: 'Faxina · 5,0 MB liberados · 3 separados', target: { kind: 'folder', path: 'C:\w\_archive\faxina-2026-10-23' } });
+    expect(service.isSweeping()).toBe(false);
+    service.handleContextMenu(null);
+    expect(menuLabels(h)).toContain('Fazer faxina');
+  });
+
+  it('shows the result even with the notices silenced', async () => {
+    const sweep = pendingSweep();
+    const { h, service } = readyPet({ runSweep: sweep.runSweep });
+    service.handleMenuAction({ kind: 'silence' });
+    service.handleMenuAction({ kind: 'sweep' });
+    sweep.resolve(summary());
+    await flush();
+    expect(lastView(h).bubble?.text).toBe('Faxina · 5,0 MB liberados');
+    expect(lastView(h).silenced).toBe(true);
+  });
+
+  it('a sweep that rejects ends as "Faxina · falhou" and frees the item', async () => {
+    const sweep = pendingSweep();
+    const { h, service } = readyPet({ runSweep: sweep.runSweep });
+    service.handleMenuAction({ kind: 'sweep' });
+    sweep.reject(new Error('boom'));
+    await flush();
+    expect(lastView(h).bubble).toMatchObject({ text: 'Faxina · falhou', pose: 'sad', target: { kind: 'donel' } });
+    expect(service.isSweeping()).toBe(false);
+  });
+
+  it('a sweep that throws on start also ends as "falhou"', () => {
+    const { h, service } = readyPet({
+      runSweep: () => {
+        throw new Error('sync boom');
+      },
+    });
+    service.handleMenuAction({ kind: 'sweep' });
+    expect(lastView(h).bubble?.text).toBe('Faxina · falhou');
+    expect(service.isSweeping()).toBe(false);
+  });
+
+  it('a click on the bubble opens the folder the MAIN holds, not the one the window sends', async () => {
+    const sweep = pendingSweep();
+    const opened: string[] = [];
+    const { h, service } = readyPet({ runSweep: sweep.runSweep, openFolder: (path) => void opened.push(path) });
+    service.handleMenuAction({ kind: 'sweep' });
+    sweep.resolve(summary({ folder: 'C:\w\_archive\faxina-2026-10-23' }));
+    await flush();
+    service.handleOpen({ kind: 'folder', path: 'C:\Windows\System32' });
+    expect(opened).toEqual(['C:\w\_archive\faxina-2026-10-23']);
+    expect(lastView(h).bubble).toBeNull();
+  });
+
+  it('a "folder" click with no such bubble up opens nothing', () => {
+    const opened: string[] = [];
+    const { service } = readyPet({ openFolder: (path) => void opened.push(path) });
+    service.handleOpen({ kind: 'folder', path: 'C:\anywhere' });
+    expect(opened).toEqual([]);
+  });
+
+  it('without a sweep wired the item does nothing', () => {
+    const { service } = readyPet();
+    service.handleMenuAction({ kind: 'sweep' });
+    expect(service.isSweeping()).toBe(false);
+  });
+
+  it('a sweep that ends after the service was disposed says nothing', async () => {
+    const sweep = pendingSweep();
+    const { h, service } = readyPet({ runSweep: sweep.runSweep });
+    service.handleMenuAction({ kind: 'sweep' });
+    service.dispose();
+    const viewsBefore = h.windows[0]?.views.length ?? 0;
+    sweep.resolve(summary());
+    await flush();
+    expect(h.windows[0]?.views.length).toBe(viewsBefore);
   });
 });

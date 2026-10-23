@@ -19,7 +19,7 @@ export function toMenuTemplate(entries: readonly PetMenuEntry[], onChoose: (acti
           submenu: entry.items.map((item) => ({ label: item.label, type: 'checkbox', checked: item.checked, click: () => onChoose(item.action) })),
         };
       case 'item':
-        return { label: entry.label, click: () => onChoose(entry.action) };
+        return { label: entry.label, enabled: entry.enabled !== false, click: () => onChoose(entry.action) };
     }
   });
 }

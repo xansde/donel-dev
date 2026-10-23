@@ -178,3 +178,24 @@ describe('pet and the other channels (R20)', () => {
     expect(mergeConfigForWrite(diskRaw, baseline, changed).pet).toEqual({ enabled: true, placement: null, size: 100 });
   });
 });
+
+// 016-jobu-faxina - `sweep.lastSweepAt`: a top-level key of the config, main only (not in the DTO).
+describe('sweep.lastSweepAt in the config', () => {
+  it('is null by default and stays out of the DTO', () => {
+    expect(defaults().sweep).toEqual({ lastSweepAt: null });
+    expect(toAppConfigDto(defaults())).not.toHaveProperty('sweep');
+  });
+
+  it('keeps a valid stamp and is not an unknown field', () => {
+    const sanitized = sanitizeAppConfig({ sweep: { lastSweepAt: 1_760_000_000_000 } }, defaults());
+    expect(sanitized.sweep).toEqual({ lastSweepAt: 1_760_000_000_000 });
+    expect(sanitized.unknownFields).not.toHaveProperty('sweep');
+  });
+
+  it('garbage falls back to "never swept" without breaking the rest', () => {
+    for (const bad of ['lixo', null, [], { lastSweepAt: 'ontem' }, { lastSweepAt: -5 }, { lastSweepAt: Number.NaN }]) {
+      expect(sanitizeAppConfig({ sweep: bad, favorites: ['C:\ok'] }, defaults()).sweep).toEqual({ lastSweepAt: null });
+    }
+    expect(sanitizeAppConfig({ sweep: 'lixo', favorites: ['C:\ok'] }, defaults()).favorites).toEqual(['C:\ok']);
+  });
+});
