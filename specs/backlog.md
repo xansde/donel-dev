@@ -972,18 +972,34 @@ Jobu fazer isso sozinho.
 **Forma (decisão do dono, 23/10 — sem brainstorm):** uma **opção a mais** do
 Jobu, "Fazer faxina", que roda a tarefa inteira e, ao fim, sobe uma
 **notificação com o resultado resumido** no balão. Não há lista para o dono
-marcar antes: a quarentena (abaixo) é o que torna seguro executar direto. É
+marcar antes: o que não se recria fica de molho (abaixo), e isso basta. É
 uma emenda pequena à D2 da 015 (o Jobu passa a avisar também o resultado da
 faxina) — registrar na spec da 015 ao implementar.
 
 **Princípios (do que deu certo e do que travou na faxina manual):**
 
-- **Executa e conta; nada é irreversível.** Tudo o que sai vai para a
-  quarentena com manifesto, então rodar sem confirmação prévia é seguro.
-- **Quarentena antes de apagar.** Mover para uma pasta de arquivo datada, com
-  manifesto; esvaziar a quarentena depois de N dias (padrão 30) ou num gesto do
-  dono. A trava de segurança do Claude (`pretooluse-safety-check`) bloqueou a
-  deleção recursiva dentro de `seazone\` — o caminho que funcionou foi mover.
+- **Apagar o que se recria; deixar de molho só o que não se recria**
+  (decisão do dono, 23/10):
+  - **apaga direto:** saída regenerável (`node_modules`, `dist`,
+    `test-results`, prints, logs), instaladores velhos e scratchpads de
+    sessão;
+  - **apaga direto com recibo:** branches — antes do `git branch -D`, grava
+    `nome SHA` no manifesto (`git branch <nome> <sha>` recria enquanto o gc
+    não coletar);
+  - **de molho:** sessões antigas do Claude (transcripts) e handoffs/ctx não
+    rastreados — texto que ninguém recria, e pouco espaço.
+- **Molho de no máximo 2 dias.** O que está de molho vai para
+  `_archive/faxina-<data>/<repo>/` e é apagado na primeira faxina depois de
+  vencidos os 2 dias. Se nenhuma faxina rodar, o app apaga no boot.
+- **HTML do que está de molho.** Toda faxina gera
+  `_archive/faxina-<data>/molho.html`: um arquivo local autocontido, aberto no navegador padrão, com tudo o
+  que está lá agrupado por repo e categoria. Para cada item: caminho de
+  origem, tamanho, data, motivo de ter saído e data em que vai ser apagado. O
+  arquivo traz também a lista de branches apagadas com o comando de
+  recriação de cada uma, e o que ficou em "manter" com o motivo.
+- A trava de segurança do Claude (`pretooluse-safety-check`) bloqueou a
+  deleção recursiva dentro de `seazone\` na faxina manual. Ela não vale para
+  o app; o script do Donel apaga direto.
 - **"Mergeado" se prova por conteúdo, não por ancestralidade.** Squash e
   cherry-pick deixam a branch "não mergeada" com o conteúdo já em `staging`:
   usar `git cherry` (patch-id) e, se ainda sobrar, comparar arquivo a arquivo.
@@ -1029,19 +1045,21 @@ faxina) — registrar na spec da 015 ao implementar.
    gravado no cwd errado) → candidata. **Fora:** sondas (`probe-*`,
    `tests/probe/`, ignoradas de propósito), arquivo da entrega em curso,
    `out/`, `scripts/publicar.local.json`.
-7. **Executar** as candidatas: mover para `_archive/<repo>-limpeza-<data>/`
-   preservando o caminho relativo, gravar manifesto (`branches-apagadas.txt`,
-   lista de arquivos movidos, origem de cada um) e um README de restauração.
-   O que caiu em "manter" não é tocado — só entra no resumo.
+7. **Executar** as candidatas conforme a categoria (apaga direto, apaga com
+   recibo, de molho). O que vai de molho é movido para
+   `_archive/faxina-<data>/<repo>/` preservando o caminho relativo. O
+   manifesto (`branches-apagadas.txt`, itens movidos e apagados com a origem
+   de cada um) fica na pasta do repo; o `molho.html`, na raiz da faxina.
+   O que caiu em "manter" não é tocado — só entra no resumo e no HTML.
 8. **Conferir depois:** `git worktree list`, `git branch`, `git status`
    iguais ao esperado. Se a conferência falhar, o resumo diz isso em vez de
    "pronto".
 9. **Notificar** no balão do Jobu (fato seco, D6), por exemplo: *"Faxina:
-   3 worktrees, 143 branches e 32 sessões antigas na quarentena — 250 MB.
-   Ficaram 3 branches só locais e 1 worktree com mudança não salva."* Um
-   clique abre a pasta da quarentena (README + manifesto).
-10. **Esvaziar a quarentena** quando vencer o prazo — na próxima faxina, com o
-    tamanho liberado no mesmo resumo.
+   250 MB liberados; 32 sessões antigas de molho até 25/10. Ficaram 3
+   branches só locais e 1 worktree com mudança não salva."* Um clique abre o
+   `molho.html`.
+10. **Apagar o molho vencido** (mais de 2 dias): na próxima faxina ou no boot
+    do app, com o que foi apagado citado no resumo seguinte.
 
 **Script ou Claude headless — recomendação: script.** Os passos 1–8 são
 determinísticos (git + filesystem) e as regras "nunca tocar" são duras —
@@ -1064,11 +1082,10 @@ depois do carimbo da faxina anterior:
 O carimbo (`lastSweepAt`) fica no `config.json` do app, gravado só quando a
 faxina termina. **Na primeira rodada, sem carimbo, todo repo conhecido
 entra.** Os repos conhecidos são os das raízes da sidebar mais os que
-aparecem como cwd de transcript. A quarentena fica uma por repo
-(`_archive/<repo>-limpeza-<data>/`), e o resumo do balão agrega:
-*"Faxina em 4 repos: …"*. Um repo sem nada a limpar não aparece no resumo.
-
-**Detalhe a fixar na spec:** prazo da quarentena (padrão proposto: 30 dias).
+aparecem como cwd de transcript. Cada repo tem a sua pasta de molho
+(`_archive/faxina-<data>/<repo>/`). O resumo do balão e o `molho.html`
+agregam todos: *"Faxina em 4 repos: …"*. Um repo sem nada a limpar não
+aparece no resumo.
 
 ## Decidido, aguardando spec
 
