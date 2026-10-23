@@ -10,6 +10,11 @@ import type { BranchFact, InstallerFact, JunkFact, PlanItem, RepoFacts, RepoPlan
 export const STALE_SCRATCHPAD_MS = 7 * 24 * 60 * 60_000;
 /** A file of `.esteira/` written in the last day may belong to the delivery in progress: it stays where it is. */
 export const ESTEIRA_FRESH_MS = 24 * 60 * 60_000;
+/**
+ * A worktree touched in the last day stays. A card that was just born (Esteira, an agent) has no commit yet: it is
+ * clean and its HEAD is the integration branch, exactly like a dead one.
+ */
+export const WORKTREE_FRESH_MS = 24 * 60 * 60_000;
 
 const OUTPUT_DIR_NAMES = new Set(['test-results', '.e2e-visual', '.tutorial-shots', '.playwright-cli']);
 const PROTOTYPE_MODULES = /^prototypes\/[^/]+\/node_modules$/;
@@ -133,7 +138,7 @@ function worktreeBasename(path: string): string {
   return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
 }
 
-function planWorktree(worktree: WorktreeFact, integrationRef: string | null): PlanItem | null {
+function planWorktree(worktree: WorktreeFact, integrationRef: string | null, now: number): PlanItem | null {
   if (worktree.isMain) return null;
   const keep = (reason: string): PlanItem => ({ kind: 'keep', what: 'worktree', name: worktree.path, reason });
   if (worktree.locked) return keep('travada (git worktree lock)');
@@ -142,13 +147,12 @@ function planWorktree(worktree: WorktreeFact, integrationRef: string | null): Pl
     return { kind: 'removeWorktree', path: worktree.path, branch: worktree.branch, missing: true, reason: 'a pasta já não existia (só registro no git)' };
   }
   if (!worktree.clean) return keep('mudança não commitada');
+  if (!worktree.headInIntegration && !worktree.headEqualsRemote) return keep('commit que só existe aqui');
+  if (now - worktree.lastActivityMs < WORKTREE_FRESH_MS) return keep('usada nas últimas 24 h');
   if (worktree.headInIntegration) {
     return { kind: 'removeWorktree', path: worktree.path, branch: worktree.branch, missing: false, reason: integrationRef === null ? 'já incorporada' : `já em ${integrationRef}` };
   }
-  if (worktree.headEqualsRemote) {
-    return { kind: 'removeWorktree', path: worktree.path, branch: worktree.branch, missing: false, reason: 'publicada no remoto com o mesmo SHA' };
-  }
-  return keep('commit que só existe aqui');
+  return { kind: 'removeWorktree', path: worktree.path, branch: worktree.branch, missing: false, reason: 'publicada no remoto com o mesmo SHA' };
 }
 
 function onlyHereReason(branch: BranchFact): string {
@@ -230,7 +234,7 @@ export function planRepo(facts: RepoFacts, now: number): RepoPlan {
     (item.kind === 'keep' ? keeps : actionable).push(item);
   };
 
-  for (const worktree of facts.worktrees) sort(planWorktree(worktree, facts.integrationRef), removals);
+  for (const worktree of facts.worktrees) sort(planWorktree(worktree, facts.integrationRef, now), removals);
   for (const branch of [...facts.branches].sort(byBranchName)) sort(planBranch(branch, facts.integrationRef), branchDeletes);
 
   const junk = planJunk(facts.junk);

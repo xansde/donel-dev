@@ -2,7 +2,7 @@
 // Pure. The rules under test are the "nunca tocar" of the owner as much as the "apaga": every refusal here is a
 // guard against an incident (a junction that eats the main checkout, a branch with the only copy of a commit).
 import { describe, expect, it } from 'vitest';
-import { planRepo, parseInstallerName, compareVersions, STALE_SCRATCHPAD_MS, ESTEIRA_FRESH_MS } from '../src/main/sweep/plan';
+import { planRepo, parseInstallerName, compareVersions, STALE_SCRATCHPAD_MS, ESTEIRA_FRESH_MS, WORKTREE_FRESH_MS } from '../src/main/sweep/plan';
 import type { BranchFact, InstallerFact, JunkFact, PlanItem, RepoFacts, ScratchEntryFact, SessionFolderFact, UntrackedFileFact, WorktreeFact } from '../src/main/sweep/types';
 
 const NOW = new Date(2026, 9, 23, 12, 0, 0).getTime();
@@ -27,7 +27,7 @@ function facts(patch: Partial<RepoFacts> = {}): RepoFacts {
 }
 
 function worktree(patch: Partial<WorktreeFact> = {}): WorktreeFact {
-  return { path: 'C:\\w\\atlas-wt\\a', branch: 'feature/a', head: 'aaa', isMain: false, locked: false, missing: false, clean: true, headInIntegration: true, headEqualsRemote: false, ...patch };
+  return { path: 'C:\\w\\atlas-wt\\a', branch: 'feature/a', head: 'aaa', isMain: false, locked: false, missing: false, clean: true, headInIntegration: true, headEqualsRemote: false, lastActivityMs: NOW - 3 * DAY, ...patch };
 }
 
 function branch(patch: Partial<BranchFact> = {}): BranchFact {
@@ -78,6 +78,17 @@ describe('worktrees', () => {
   it('keeps a clean worktree with a commit that exists only here', () => {
     const items = plan({ worktrees: [worktree({ headInIntegration: false, headEqualsRemote: false })] });
     expect(ofKind(items, 'keep')[0]?.reason).toBe('commit que só existe aqui');
+  });
+
+  it('keeps a clean worktree used in the last day: a card that was just born has no commit yet and looks merged', () => {
+    const items = plan({ worktrees: [worktree({ lastActivityMs: NOW - WORKTREE_FRESH_MS + 60_000 })] });
+    expect(ofKind(items, 'removeWorktree')).toEqual([]);
+    expect(ofKind(items, 'keep')[0]?.reason).toBe('usada nas últimas 24 h');
+  });
+
+  it('removes a clean, merged worktree once the last day has passed', () => {
+    const items = plan({ worktrees: [worktree({ lastActivityMs: NOW - WORKTREE_FRESH_MS - 60_000 })] });
+    expect(ofKind(items, 'removeWorktree')).toHaveLength(1);
   });
 
   it('never touches the main checkout, and does not even mention it', () => {

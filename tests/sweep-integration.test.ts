@@ -98,6 +98,8 @@ describe('a full sweep over a repo with everything in it', () => {
     const wtRoot = join(sandbox.seazone, 'atlas-wt');
     git(repo, 'worktree', 'add', '-q', join(wtRoot, 'merged'), '-b', 'docs/merged');
     await fs.symlink(join(repo, 'node_modules'), join(wtRoot, 'merged', 'node_modules'), 'junction');
+    // Born three days ago: a worktree touched in the last day is kept as a card in progress.
+    for (const admin of ['HEAD', join('logs', 'HEAD')]) await age(join(repo, '.git', 'worktrees', 'merged', admin), 3);
     git(repo, 'worktree', 'add', '-q', join(wtRoot, 'dirty'), '-b', 'feature/dirty');
     await write(join(wtRoot, 'dirty', 'solto.txt'), 'nao salvei');
     git(repo, 'worktree', 'add', '-q', join(wtRoot, 'local'), '-b', 'feature/local');

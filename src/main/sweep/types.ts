@@ -22,6 +22,8 @@ export interface WorktreeFact {
   readonly headInIntegration: boolean;
   /** `origin/<branch>` points at exactly this HEAD. */
   readonly headEqualsRemote: boolean;
+  /** Newest write to the worktree's admin files in `.git/worktrees/<name>/` (HEAD, logs/HEAD); 0 when unknown. */
+  readonly lastActivityMs: number;
 }
 
 export interface BranchFact {

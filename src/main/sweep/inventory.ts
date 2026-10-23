@@ -61,18 +61,40 @@ async function isAncestor(git: GitRun, repoPath: string, commit: string, of: str
 // Worktrees and branches
 // ---------------------------------------------------------------------------
 
+/**
+ * The newest write to the admin files of a linked worktree (`.git/worktrees/<name>/`): HEAD and its log move on
+ * creation, checkout and commit. The index is left out on purpose: any `git status` (ours included) may rewrite it,
+ * and every worktree would look fresh. When the admin dir cannot be found, `Date.now()` - an unknown age counts as
+ * fresh, so the worktree stays.
+ */
+async function worktreeLastActivity(git: GitRun, worktreePath: string): Promise<number> {
+  const gitDir = await git(worktreePath, ['rev-parse', '--absolute-git-dir']);
+  const adminDir = gitDir.stdout.trim();
+  if (gitDir.code !== 0 || adminDir === '') return Date.now();
+  let newest = 0;
+  for (const name of ['HEAD', join('logs', 'HEAD')]) {
+    try {
+      newest = Math.max(newest, (await fs.stat(join(adminDir, name))).mtimeMs);
+    } catch {
+      // A missing file (no index yet, no reflog) says nothing.
+    }
+  }
+  return newest === 0 ? Date.now() : newest;
+}
+
 async function inventoryWorktrees(ctx: InventoryContext, repoPath: string, integrationRef: string | null): Promise<WorktreeFact[]> {
   const listed = await ctx.git(repoPath, ['worktree', 'list', '--porcelain']);
   if (listed.code !== 0) return [];
   return mapLimit(parseWorktreeList(listed.stdout), GIT_PARALLELISM, async (entry, index): Promise<WorktreeFact> => {
     const base = { path: entry.path, branch: entry.branch, head: entry.head, isMain: index === 0 || entry.bare, locked: entry.locked };
-    if (base.isMain) return { ...base, missing: false, clean: true, headInIntegration: false, headEqualsRemote: false };
-    if (!(await pathExists(entry.path))) return { ...base, missing: true, clean: false, headInIntegration: false, headEqualsRemote: false };
+    if (base.isMain) return { ...base, missing: false, clean: true, headInIntegration: false, headEqualsRemote: false, lastActivityMs: 0 };
+    if (!(await pathExists(entry.path))) return { ...base, missing: true, clean: false, headInIntegration: false, headEqualsRemote: false, lastActivityMs: 0 };
     const status = await ctx.git(entry.path, ['status', '--porcelain']);
     const clean = status.code === 0 && status.stdout.trim() === '';
     const headInIntegration = integrationRef !== null && entry.head !== '' && (await isAncestor(ctx.git, repoPath, entry.head, integrationRef));
     const remoteSha = entry.branch === null ? null : await revParse(ctx.git, repoPath, `refs/remotes/origin/${entry.branch}`);
-    return { ...base, missing: false, clean, headInIntegration, headEqualsRemote: remoteSha !== null && remoteSha === entry.head };
+    const lastActivityMs = await worktreeLastActivity(ctx.git, entry.path);
+    return { ...base, missing: false, clean, headInIntegration, headEqualsRemote: remoteSha !== null && remoteSha === entry.head, lastActivityMs };
   });
 }
 
