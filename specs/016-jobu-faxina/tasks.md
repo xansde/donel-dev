@@ -16,3 +16,4 @@ testes de integração em repos git temporários (`os.tmpdir()`), nunca nos repo
 - [x] T011 Efeito: serviço orquestrador (pasta, resumo, `lastSweepAt`, log)
 - [x] T012 Integração: `PetService` (`sweep`, "Faxinando…", abrir pasta) e `index.ts`
 - [x] T013 Verificação: typecheck, vitest, build
+- [x] T014 Pose `sweeping` durante a faxina (evento `sweepStarted`, substituto `mirror` até a arte chegar)

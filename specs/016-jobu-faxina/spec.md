@@ -46,6 +46,13 @@ no main process** (git + filesystem, testado com vitest), nunca por Claude headl
   `<userData>/sweep.log`. Falha isolada de um item vira linha "não foi possível" no resumo e
   não aborta o resto.
 
+- **D11 — Pose da faxina (feedback do dono no alfa, 23/10).** Enquanto a faxina roda o Jobu
+  mostra a pose lógica `sweeping` (evento `sweepStarted` liga, `sweepFinished` desliga). Perde
+  para sessão esperando (impaciente/muito impaciente) e para balão vivo. Até a arte do dono
+  chegar, o substituto provisório é `mirror` (`PROVISIONAL_POSES`); a arte entra só
+  largando `sweeping.png` em `src/renderer/src/pet/assets/poses/` via
+  `scripts/pet/slice-sprites.py --extra`.
+
 ## Requisitos
 
 - **FR-001** Menu do Jobu ganha a ação `sweep`; `buildPetMenu` recebe `sweeping`.

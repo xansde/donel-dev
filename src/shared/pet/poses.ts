@@ -10,6 +10,8 @@ export const PROVISIONAL_POSES: Readonly<Partial<Record<PoseName, PoseName>>> = 
   impatient: 'skeptical',
   'very-impatient': 'angry',
   calling: 'talking',
+  // 016-jobu-faxina: owner's alfa feedback (23/10); drop sweeping.png in assets/poses/ and this stops applying.
+  sweeping: 'mirror',
 };
 
 /** The picture to draw when the pose itself has no art and no stand-in is available. */

@@ -7,7 +7,8 @@ import { decideBubbleClick } from '../src/shared/pet/click';
 import { isValidPetOpenPayload } from '../src/shared/pet/ipc';
 import { buildPetMenu } from '../src/shared/pet/menu';
 import { createPetState, reducePet } from '../src/shared/pet/petState';
-import type { SweepBubbleSummary } from '../src/shared/pet/types';
+import { toPetView } from '../src/shared/pet/petView';
+import type { PetState, PetUi, SweepBubbleSummary, WatchedSession } from '../src/shared/pet/types';
 
 const MB = 1024 * 1024;
 const FOLDER = 'C:\\work\\_archive\\faxina-2026-10-23';
@@ -113,5 +114,48 @@ describe('the menu entry', () => {
     const item = entries.find((entry) => entry.type === 'item' && entry.label === 'Faxinando…');
     expect(item).toMatchObject({ action: { kind: 'sweep' }, enabled: false });
     expect(entries.some((entry) => entry.type === 'item' && entry.label === 'Fazer faxina')).toBe(false);
+  });
+});
+
+// 016-jobu-faxina (pose) - while the sweep runs the Jobu shows the `sweeping` pose.
+describe('the sweeping pose', () => {
+  const UI: PetUi = { size: 140, docked: true, align: 'right' };
+  const T = 5_000_000;
+  const MIN = 60_000;
+  const watched = (ptyId: string, semaphore: WatchedSession['semaphore']): WatchedSession => ({ ptyId, name: ptyId, semaphore, blockedKind: null });
+  const sweeping = (): PetState => reducePet(createPetState(), { type: 'sweepStarted', at: T }, T);
+  const withSessions = (state: PetState, sessions: readonly WatchedSession[], at = T): PetState => reducePet(state, { type: 'sessions', sessions }, at);
+
+  it('starts false, sweepStarted sets it and sweepFinished clears it', () => {
+    expect(createPetState().sweeping).toBe(false);
+    const started = sweeping();
+    expect(started.sweeping).toBe(true);
+    const finished = reducePet(started, { type: 'sweepFinished', summary: summary({ freedBytes: MB }), at: T + 10 }, T + 10);
+    expect(finished.sweeping).toBe(false);
+  });
+
+  it('a failed sweep also clears it', () => {
+    const finished = reducePet(sweeping(), { type: 'sweepFinished', summary: summary({ failed: true }), at: T + 10 }, T + 10);
+    expect(finished.sweeping).toBe(false);
+  });
+
+  it('beats sleeping, reading and serene', () => {
+    expect(toPetView(sweeping(), T, UI).pose).toBe('sweeping');
+    const reading = withSessions(sweeping(), [watched('a', 'working')]);
+    expect(toPetView(reading, T, UI).pose).toBe('sweeping');
+    const serene = withSessions(sweeping(), [watched('a', 'idle')], T);
+    expect(toPetView(withSessions(serene, [watched('a', 'idle')], T + 10 * MIN), T + 10 * MIN, UI).pose).toBe('sweeping');
+  });
+
+  it('loses to an impatient session, which is actionable', () => {
+    let state = withSessions(sweeping(), [watched('a', 'waiting')]);
+    const later = T + 5 * MIN;
+    state = reducePet(state, { type: 'tick' }, later);
+    expect(toPetView(state, later, UI).pose).not.toBe('sweeping');
+  });
+
+  it('loses to a live bubble: the sweepFinished bubble shows its own pose', () => {
+    const state = reducePet(sweeping(), { type: 'sweepFinished', summary: summary({ freedBytes: MB }), at: T + 10 }, T + 10);
+    expect(toPetView(state, T + 11, UI).pose).toBe('talking');
   });
 });

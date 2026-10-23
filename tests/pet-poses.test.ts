@@ -8,8 +8,8 @@ import { BLINK_POSE_NAMES, POSE_NAMES } from '../src/shared/pet/types';
 const SHEET = ['neutral', 'talking', 'sleeping', 'skeptical', 'waffle', 'incense', 'reading', 'mirror', 'laughing', 'sad', 'angry', 'surprised'];
 
 describe('PROVISIONAL_POSES (FR-029)', () => {
-  it('is exactly impatient -> skeptical, very-impatient -> angry, calling -> talking', () => {
-    expect({ ...PROVISIONAL_POSES }).toEqual({ impatient: 'skeptical', 'very-impatient': 'angry', calling: 'talking' });
+  it('is exactly impatient -> skeptical, very-impatient -> angry, calling -> talking, sweeping -> mirror', () => {
+    expect({ ...PROVISIONAL_POSES }).toEqual({ impatient: 'skeptical', 'very-impatient': 'angry', calling: 'talking', sweeping: 'mirror' });
   });
 
   it('only provisions poses that the sheet does not have, and only with poses it has', () => {
@@ -83,5 +83,10 @@ describe('resolvePose', () => {
   it('every logical pose resolves to something when the whole sheet exists', () => {
     const available = new Set(SHEET);
     for (const pose of POSE_NAMES) expect(resolvePose(pose, available)).not.toBeNull();
+  });
+
+  it('sweeping falls back to mirror while it has no art, and uses its own art once the PNG exists', () => {
+    expect(resolvePose('sweeping', new Set(SHEET))).toBe('mirror');
+    expect(resolvePose('sweeping', new Set([...SHEET, 'sweeping']))).toBe('sweeping');
   });
 });

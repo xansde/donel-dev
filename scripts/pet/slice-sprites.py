@@ -28,7 +28,7 @@ Pipeline
      anchor lands on an exact integer pixel row, so the base is a crisp horizontal line.
 
 Extra art (--extra <dir>): PNGs named impatient, very-impatient, calling, blink-neutral,
-blink-impatient, with a transparent or flat #00FF00 background. They are scaled so the robe
+blink-impatient, sweeping, with a transparent or flat #00FF00 background. They are scaled so the robe
 width at the cut line matches the median of the 12 sheet poses, and share the same anchor and
 the same output scale. The scale of the sheet never changes because of extras, so the 12 sheet
 poses stay byte-identical when the extras fit the canvas (a warning says when they do not).
@@ -62,7 +62,7 @@ SHEET_POSES = [
     "laughing", "sad", "angry", "surprised",
 ]
 GRID_COLS, GRID_ROWS = 4, 3
-EXTRA_POSES = ["impatient", "very-impatient", "calling", "blink-neutral", "blink-impatient"]
+EXTRA_POSES = ["impatient", "very-impatient", "calling", "blink-neutral", "blink-impatient", "sweeping"]
 # FR-029: until the new art exists the behaviour uses these stand-ins. The two blink poses have
 # no stand-in on purpose: without the art the Jobu simply does not blink.
 FALLBACKS = {

@@ -598,6 +598,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
   function startSweep(): void {
     if (sweeping || deps.runSweep === undefined) return;
     sweeping = true;
+    feed({ type: 'sweepStarted', at: deps.now() });
     const finish = (summary: SweepBubbleSummary): void => {
       sweeping = false;
       if (disposed) return;

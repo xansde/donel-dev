@@ -2247,6 +2247,16 @@ describe('Fazer faxina (016)', () => {
     expect(service.isSweeping()).toBe(true);
   });
 
+  it('the pet shows the sweeping pose while the sweep runs and drops it when it ends', async () => {
+    const sweep = pendingSweep();
+    const { h, service } = readyPet({ runSweep: sweep.runSweep });
+    service.handleMenuAction({ kind: 'sweep' });
+    expect(lastView(h).pose).toBe('sweeping');
+    sweep.resolve(summary());
+    await flush();
+    expect(lastView(h).pose).not.toBe('sweeping');
+  });
+
   it('while it runs the item says "Faxinando…" and a second choice starts nothing', () => {
     const sweep = pendingSweep();
     const { h, service } = readyPet({ runSweep: sweep.runSweep });
