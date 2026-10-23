@@ -959,6 +959,94 @@ prompt e avisar quando travaram —, com o Donel seguindo dono das abas
 interativas. **Gate do spike:** reproduzir a #2545. Se a fila trava de fundo no
 Windows, o spike morre ali e o B27 (que não depende de nada) segue sozinho.
 
+### B29. Jobu faxineiro — limpeza de restos de worktrees e sessões antigas (23/10)
+
+**Origem:** faxina manual de 23/10, pedida pelo dono, que achou 3 worktrees
+mortas, 143 branches locais já incorporadas, 32 pastas de sessão de spike em
+`~/.claude/projects`, handoffs órfãos em `.esteira/`, instalador velho e ~120 MB
+de saída regenerável. Tudo foi **arquivado**, não apagado, em
+`seazone/_archive/donel-dev-limpeza-2026-10-23/` (com `branches-apagadas.txt`
+nome→SHA para recriar qualquer branch). Este item registra o roteiro para o
+Jobu fazer isso sozinho, com o dono dando o OK.
+
+**Emenda que exige:** a D2 da 015 limita os avisos do Jobu a sessões e troca de
+conta. Faxina é escopo novo — vira spec própria (016?) com `/brainstorm` antes.
+
+**Princípios (do que deu certo e do que travou na faxina manual):**
+
+- **Propor, nunca executar sozinho.** O Jobu acha e mostra; o dono marca e
+  confirma. Nada some sem clique.
+- **Quarentena antes de apagar.** Mover para uma pasta de arquivo datada, com
+  manifesto; esvaziar a quarentena depois de N dias (padrão 30) ou num gesto do
+  dono. A trava de segurança do Claude (`pretooluse-safety-check`) bloqueou a
+  deleção recursiva dentro de `seazone\` — o caminho que funcionou foi mover.
+- **"Mergeado" se prova por conteúdo, não por ancestralidade.** Squash e
+  cherry-pick deixam a branch "não mergeada" com o conteúdo já em `staging`:
+  usar `git cherry` (patch-id) e, se ainda sobrar, comparar arquivo a arquivo.
+- **Nunca tocar** em: branch atual, `main`, `staging`, `backup/*`, worktrees
+  dos canais (`donel-dev-alfa`/`-beta`), worktree com mudança não commitada,
+  branch só local com commit que não está em lugar nenhum, a sessão viva.
+
+**Passo a passo (o algoritmo que a faxina manual seguiu):**
+
+1. **Inventário (só leitura).** `git fetch origin`; `git worktree list
+   --porcelain`; `git for-each-ref refs/heads`; pastas `../<repo>-wt*/` e
+   `.claude/worktrees/`; projetos de sessão em `~/.claude/projects/` cujo nome
+   contenha o slug do repo; scratchpads em `%TEMP%/claude/<slug>*`; arquivos
+   não rastreados (`git status --porcelain -uall`) e ignorados
+   (`--ignored`) do checkout principal.
+2. **Classificar worktrees.** Para cada uma: tem mudança não commitada? → manter
+   e avisar. Limpa e com HEAD contido em `origin/staging` ou já publicada no
+   remoto (mesmo SHA)? → candidata. Limpa, só local e com commit novo → manter.
+   Conferir junction de `node_modules`/`design-system` **antes** de remover
+   (memória do projeto: `git worktree remove` atravessa o junction). Remover com
+   `git worktree remove` sem `--force`; depois `git worktree prune`.
+3. **Classificar branches locais**, fora a lista "nunca tocar":
+   - ancestral de `origin/staging` → candidata;
+   - `git cherry origin/staging <b>` sem linha `+` → conteúdo já entrou →
+     candidata;
+   - publicada no remoto com o mesmo SHA → candidata (o remoto guarda);
+   - resto → manter, mostrando "N commits só aqui, último em <data>".
+   Gravar `nome SHA` no manifesto **antes** do `git branch -D`.
+4. **Sessões mortas do Claude.** Pasta em `~/.claude/projects/` cujo cwd
+   decodificado não existe mais (worktree removida, scratchpad de spike) →
+   candidata a **arquivo** (não apagar: o `SessionIndexer` lê esses
+   transcripts; arquivar some com elas do "Sessões anteriores", e o dono
+   precisa saber disso). Nunca mexer em `.credentials.json` nem em nada fora
+   de `projects/` — a regra de credenciais do projeto continua valendo.
+5. **Scratchpads** em `%TEMP%/claude/<slug>*` sem escrita há mais de 7 dias,
+   fora o da sessão atual → candidatos (apagar direto: é temp por definição).
+6. **Lixo do checkout.** Untracked e ignorados por categoria:
+   saída regenerável (`test-results/`, `.e2e-visual/`, `.tutorial-shots/`,
+   `.playwright-cli/`, `node_modules`/`dist` de `prototypes/*`) → candidata;
+   instaladores em `release/` mais velhos que o último por canal → candidata;
+   handoffs/ctx de `.esteira/` não rastreados de item já concluído →
+   arquivo; pasta estranha na raiz (ex.: `Microsoft/` — cache do PowerShell
+   gravado no cwd errado) → candidata. **Fora:** sondas (`probe-*`,
+   `tests/probe/`, ignoradas de propósito), arquivo da entrega em curso,
+   `out/`, `scripts/publicar.local.json`.
+7. **Mostrar ao dono** uma lista por categoria com tamanho, data e motivo de
+   cada item ("contido em staging", "cwd não existe", "regenerável"), já
+   marcada nas candidatas, desmarcada nas dúbias. O dono desmarca, confirma.
+8. **Executar** a seleção: mover para `_archive/<repo>-limpeza-<data>/`
+   preservando o caminho relativo, gravar manifesto (`branches-apagadas.txt`,
+   lista de arquivos movidos, origem de cada um) e um README de restauração.
+9. **Conferir depois:** `git worktree list`, `git branch`, `git status`
+   iguais ao esperado; `npm test` verde no checkout principal (nada rastreado
+   foi tocado, mas prova barata).
+10. **Esvaziar a quarentena** quando vencer o prazo ou no gesto do dono —
+    com o balão do Jobu dizendo o tamanho que vai liberar.
+
+**Onde o Jobu entra:** o balão com o fato seco (D6) — "achei 3 worktrees e 140
+branches que já estão em staging, 250 MB" — e um clique abre a lista do passo 7
+no Donel. Gatilho: no boot do app no máximo uma vez por semana, ou quando a
+contagem passar de um limiar. O Jobu não decide nada sozinho.
+
+**Pendências para o brainstorm:** varrer só o repo do Donel ou todo repo da
+sidebar (no workspace há `api-spotsys-wt-*`, `dalton-wt-*` com o mesmo padrão);
+prazo da quarentena; se a etapa de branch roda do app (tocar git de outros
+repos) ou fica como skill do Claude invocada pelo Jobu.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
