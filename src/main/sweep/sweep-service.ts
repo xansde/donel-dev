@@ -39,6 +39,14 @@ export interface SweepDeps {
   readonly log: (line: string) => Promise<void> | void;
 }
 
+/** Repos read at once: each one is mostly waiting on git and on the disk, so a few in flight pay off. */
+const REPO_CONCURRENCY = 4;
+
+/** Seconds since `from`, one decimal. */
+function seconds(from: number): string {
+  return ((Date.now() - from) / 1000).toFixed(1);
+}
+
 export const SUMMARY_FILE = 'resumo.html';
 
 const FAILED: SweepBubbleSummary = { failed: true, freedBytes: 0, separatedItems: 0, branchesDeleted: 0, worktreesRemoved: 0, folder: null };
@@ -85,9 +93,13 @@ export function createSweepRunner(deps: SweepDeps): () => Promise<SweepBubbleSum
       await log(`faxina: ${known.length} repos conhecidos, ${active.length} com trabalho desde ${lastSweepAt === null ? 'sempre' : new Date(lastSweepAt).toISOString()}`);
 
       const ctx = { git: deps.git, tempClaudeDir: deps.tempClaudeDir, knownRepos: known, claudeFolders };
-      const planned = await mapLimit(active, 2, async (repo): Promise<RepoPlan | null> => {
+      const planned = await mapLimit(active, REPO_CONCURRENCY, async (repo): Promise<RepoPlan | null> => {
+        const readStart = Date.now();
         try {
-          return planRepo(await collectRepoFacts(ctx, repo), startedAt);
+          const plan = planRepo(await collectRepoFacts(ctx, repo), startedAt);
+          const actions = plan.items.filter(isActionable).length;
+          await log(`faxina: ${plan.repoName} lido em ${seconds(readStart)} s — ${actions} ações, ${plan.items.length - actions} de lado`);
+          return plan;
         } catch (error) {
           lostRepos = true;
           notes.push(`Um repo não pôde ser lido e ficou de fora desta faxina: ${messageOf(error)}`);
@@ -102,8 +114,10 @@ export function createSweepRunner(deps: SweepDeps): () => Promise<SweepBubbleSum
       const sweepFolder = lazySweepFolder(chooseArchiveParent(plans.map((plan) => plan.repoPath)), day);
       const folder: { path: string | null } = { path: null };
 
+      await log(`faxina: executando ${plans.length} repos com ações`);
       const repos: RepoReport[] = [];
       for (const [index, plan] of plans.entries()) {
+        const execStart = Date.now();
         const folderName = folderNames[index] ?? plan.repoName;
         const executed = await executePlan(
           {
@@ -118,6 +132,8 @@ export function createSweepRunner(deps: SweepDeps): () => Promise<SweepBubbleSum
           },
           plan,
         );
+        const okCount = executed.filter((item) => item.ok).length;
+        await log(`faxina: ${plan.repoName} concluído em ${seconds(execStart)} s — ${okCount} ok, ${executed.length - okCount} falhas`);
         repos.push({
           repoPath: plan.repoPath,
           repoName: plan.repoName,
