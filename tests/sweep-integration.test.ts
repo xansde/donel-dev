@@ -106,6 +106,10 @@ describe('a full sweep over a repo with everything in it', () => {
     await write(join(wtRoot, 'local', 'novo.txt'), 'n');
     commitAll(join(wtRoot, 'local'), 'feat: so na worktree');
     git(repo, 'worktree', 'add', '-q', join(sandbox.seazone, 'atlas-alfa'), '-b', 'channel/alfa');
+    // Merged and old, but holding an ignored .env: git worktree remove would take it along.
+    git(repo, 'worktree', 'add', '-q', join(wtRoot, 'secret'), '-b', 'docs/secret');
+    await write(join(wtRoot, 'secret', '.env'), 'TOKEN=x');
+    for (const admin of ['HEAD', join('logs', 'HEAD')]) await age(join(repo, '.git', 'worktrees', 'secret', admin), 3);
 
     // Regenerable output.
     await write(join(repo, 'test-results', 'a.txt'), 'x'.repeat(2000));
@@ -172,6 +176,12 @@ describe('a full sweep over a repo with everything in it', () => {
     expect(await exists(join(sandbox.seazone, 'atlas-alfa'))).toBe(true);
     const list = git(repo, 'worktree', 'list');
     for (const name of ['dirty', 'local', 'atlas-alfa']) expect(list).toContain(name);
+  });
+
+  it('keeps a merged worktree that holds an ignored .env', async () => {
+    expect(await fs.readFile(join(sandbox.seazone, 'atlas-wt', 'secret', '.env'), 'utf8')).toBe('TOKEN=x');
+    expect(git(repo, 'worktree', 'list')).toContain('secret');
+    expect(await fs.readFile(join(folder, SUMMARY_FILE), 'utf8')).toContain('arquivo ignorado que não se recria: .env');
   });
 
   it('keeps the parent of the worktrees while it is not empty', async () => {

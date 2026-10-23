@@ -134,6 +134,25 @@ function planInstallers(installers: readonly InstallerFact[]): PlanItem[] {
 // Worktrees and branches
 // ---------------------------------------------------------------------------
 
+/** Ignored folders that a build, a test run or an install brings back, by the name of any segment. */
+const REGENERABLE_IGNORED_DIRS = new Set([
+  'node_modules', 'dist', 'out', 'build', '.next', '.turbo', '.vite', '.cache', 'coverage',
+  '__pycache__', '.pytest_cache', '.ruff_cache', '.mypy_cache', '.venv', 'venv',
+  'test-results', '.playwright-cli', '.e2e-visual', '.tutorial-shots',
+]);
+const REGENERABLE_IGNORED_FILE = /\.(log|pyc|tsbuildinfo)$/;
+
+/**
+ * Whether an ignored path of a worktree comes back by itself. `git worktree remove` takes ignored files with the
+ * folder and does not ask, so anything this does not recognise - a `.env`, a local database, an index - holds the
+ * worktree back. Unknown means precious.
+ */
+export function isRegenerableIgnored(relPath: string): boolean {
+  const segments = relPath.replace(/\/+$/, '').split('/');
+  if (segments.some((segment) => REGENERABLE_IGNORED_DIRS.has(segment))) return true;
+  return !relPath.endsWith('/') && REGENERABLE_IGNORED_FILE.test(relPath);
+}
+
 function worktreeBasename(path: string): string {
   return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
 }
@@ -149,6 +168,11 @@ function planWorktree(worktree: WorktreeFact, integrationRef: string | null, now
   if (!worktree.clean) return keep('mudança não commitada');
   if (!worktree.headInIntegration && !worktree.headEqualsRemote) return keep('commit que só existe aqui');
   if (now - worktree.lastActivityMs < WORKTREE_FRESH_MS) return keep('usada nas últimas 24 h');
+  const precious = worktree.ignored.filter((path) => !isRegenerableIgnored(path));
+  if (precious.length > 0) {
+    const shown = precious.slice(0, 3).join(', ');
+    return keep(`arquivo ignorado que não se recria: ${precious.length > 3 ? `${shown} e mais ${precious.length - 3}` : shown}`);
+  }
   if (worktree.headInIntegration) {
     return { kind: 'removeWorktree', path: worktree.path, branch: worktree.branch, missing: false, reason: integrationRef === null ? 'já incorporada' : `já em ${integrationRef}` };
   }

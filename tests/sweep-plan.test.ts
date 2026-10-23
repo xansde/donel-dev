@@ -2,7 +2,7 @@
 // Pure. The rules under test are the "nunca tocar" of the owner as much as the "apaga": every refusal here is a
 // guard against an incident (a junction that eats the main checkout, a branch with the only copy of a commit).
 import { describe, expect, it } from 'vitest';
-import { planRepo, parseInstallerName, compareVersions, STALE_SCRATCHPAD_MS, ESTEIRA_FRESH_MS, WORKTREE_FRESH_MS } from '../src/main/sweep/plan';
+import { planRepo, parseInstallerName, compareVersions, STALE_SCRATCHPAD_MS, ESTEIRA_FRESH_MS, WORKTREE_FRESH_MS, isRegenerableIgnored } from '../src/main/sweep/plan';
 import type { BranchFact, InstallerFact, JunkFact, PlanItem, RepoFacts, ScratchEntryFact, SessionFolderFact, UntrackedFileFact, WorktreeFact } from '../src/main/sweep/types';
 
 const NOW = new Date(2026, 9, 23, 12, 0, 0).getTime();
@@ -27,7 +27,7 @@ function facts(patch: Partial<RepoFacts> = {}): RepoFacts {
 }
 
 function worktree(patch: Partial<WorktreeFact> = {}): WorktreeFact {
-  return { path: 'C:\\w\\atlas-wt\\a', branch: 'feature/a', head: 'aaa', isMain: false, locked: false, missing: false, clean: true, headInIntegration: true, headEqualsRemote: false, lastActivityMs: NOW - 3 * DAY, ...patch };
+  return { path: 'C:\\w\\atlas-wt\\a', branch: 'feature/a', head: 'aaa', isMain: false, locked: false, missing: false, clean: true, headInIntegration: true, headEqualsRemote: false, lastActivityMs: NOW - 3 * DAY, ignored: [], ...patch };
 }
 
 function branch(patch: Partial<BranchFact> = {}): BranchFact {
@@ -88,6 +88,17 @@ describe('worktrees', () => {
 
   it('removes a clean, merged worktree once the last day has passed', () => {
     const items = plan({ worktrees: [worktree({ lastActivityMs: NOW - WORKTREE_FRESH_MS - 60_000 })] });
+    expect(ofKind(items, 'removeWorktree')).toHaveLength(1);
+  });
+
+  it('keeps a merged worktree holding an ignored file that nothing recreates, naming it: git worktree remove would take a .env with it', () => {
+    const items = plan({ worktrees: [worktree({ ignored: ['node_modules/', '.env.local', 'src/__pycache__/'] })] });
+    expect(ofKind(items, 'removeWorktree')).toEqual([]);
+    expect(ofKind(items, 'keep')[0]?.reason).toBe('arquivo ignorado que não se recria: .env.local');
+  });
+
+  it('removes a merged worktree whose ignored files are all regenerable', () => {
+    const items = plan({ worktrees: [worktree({ ignored: ['node_modules/', 'dist/', 'src/a/__pycache__/', '.pytest_cache/', 'debug.log'] })] });
     expect(ofKind(items, 'removeWorktree')).toHaveLength(1);
   });
 
@@ -337,4 +348,16 @@ describe('the plan as a whole', () => {
     });
     expect(items.map((item) => item.kind)).toEqual(['removeWorktree', 'deleteBranch', 'delete', 'separate', 'keep']);
   });
+});
+
+describe('isRegenerableIgnored', () => {
+  it.each(['node_modules/', 'packages/x/node_modules/', 'dist/', 'out/', 'build/', '.next/', 'coverage/', 'src/a/__pycache__/', '.pytest_cache/', '.ruff_cache/', '.mypy_cache/', '.venv/', 'test-results/', 'a/b.pyc', 'npm-debug.log', '.playwright-cli/'])(
+    'treats %s as regenerable',
+    (path) => expect(isRegenerableIgnored(path)).toBe(true),
+  );
+
+  it.each(['.env', '.env.local', 'config/secrets.json', 'knowledge-base/.index/', 'scripts/publicar.local.json', 'data.db'])(
+    'treats %s as something that does not come back',
+    (path) => expect(isRegenerableIgnored(path)).toBe(false),
+  );
 });

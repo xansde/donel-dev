@@ -87,14 +87,17 @@ async function inventoryWorktrees(ctx: InventoryContext, repoPath: string, integ
   if (listed.code !== 0) return [];
   return mapLimit(parseWorktreeList(listed.stdout), GIT_PARALLELISM, async (entry, index): Promise<WorktreeFact> => {
     const base = { path: entry.path, branch: entry.branch, head: entry.head, isMain: index === 0 || entry.bare, locked: entry.locked };
-    if (base.isMain) return { ...base, missing: false, clean: true, headInIntegration: false, headEqualsRemote: false, lastActivityMs: 0 };
-    if (!(await pathExists(entry.path))) return { ...base, missing: true, clean: false, headInIntegration: false, headEqualsRemote: false, lastActivityMs: 0 };
-    const status = await ctx.git(entry.path, ['status', '--porcelain']);
-    const clean = status.code === 0 && status.stdout.trim() === '';
+    if (base.isMain) return { ...base, missing: false, clean: true, headInIntegration: false, headEqualsRemote: false, lastActivityMs: 0, ignored: [] };
+    if (!(await pathExists(entry.path))) return { ...base, missing: true, clean: false, headInIntegration: false, headEqualsRemote: false, lastActivityMs: 0, ignored: [] };
+    const lastActivityMs = await worktreeLastActivity(ctx.git, entry.path);
+    // One status for both questions: `!!` lines are the ignored files, any other line makes the worktree dirty.
+    const status = await ctx.git(entry.path, ['status', '--porcelain', '--ignored', '-z']);
+    const lines = splitNul(status.stdout);
+    const ignored = lines.filter((line) => line.startsWith('!! ')).map((line) => line.slice(3));
+    const clean = status.code === 0 && lines.every((line) => line.startsWith('!! '));
     const headInIntegration = integrationRef !== null && entry.head !== '' && (await isAncestor(ctx.git, repoPath, entry.head, integrationRef));
     const remoteSha = entry.branch === null ? null : await revParse(ctx.git, repoPath, `refs/remotes/origin/${entry.branch}`);
-    const lastActivityMs = await worktreeLastActivity(ctx.git, entry.path);
-    return { ...base, missing: false, clean, headInIntegration, headEqualsRemote: remoteSha !== null && remoteSha === entry.head, lastActivityMs };
+    return { ...base, missing: false, clean, headInIntegration, headEqualsRemote: remoteSha !== null && remoteSha === entry.head, lastActivityMs, ignored };
   });
 }
 

@@ -24,6 +24,8 @@ export interface WorktreeFact {
   readonly headEqualsRemote: boolean;
   /** Newest write to the worktree's admin files in `.git/worktrees/<name>/` (HEAD, logs/HEAD); 0 when unknown. */
   readonly lastActivityMs: number;
+  /** What `git status --ignored` lists as ignored in the worktree (`!!` lines, folders with a trailing `/`). */
+  readonly ignored: readonly string[];
 }
 
 export interface BranchFact {

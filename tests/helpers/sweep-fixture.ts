@@ -71,7 +71,7 @@ export async function createRepo(sandbox: Sandbox, name: string, options: { with
   const repo = join(sandbox.seazone, name);
   await fs.mkdir(repo, { recursive: true });
   git(repo, 'init', '-q', '-b', 'staging');
-  await write(join(repo, '.gitignore'), 'node_modules\nout\nrelease\n.esteira-ignored\n');
+  await write(join(repo, '.gitignore'), 'node_modules\nout\nrelease\n.esteira-ignored\n.env\n');
   await write(join(repo, 'README.md'), `# ${name}\n`);
   commitAll(repo, 'chore: inicio');
   if (options.withOrigin !== false) {
