@@ -36,7 +36,10 @@ function poseOf(state: PetState, now: number): PoseName {
   const bubble = liveBubble(state, now);
   if (bubble !== null) return bubble.pose;
   if (state.laughUntil !== null && now < state.laughUntil) return 'laughing';
-  switch (baseState(state, now)) {
+  const base = baseState(state, now);
+  // 016: sweeping beats everything calm, but a waiting session is actionable and still shows.
+  if (state.sweeping && base !== 'very-impatient' && base !== 'impatient') return 'sweeping';
+  switch (base) {
     case 'very-impatient':
       return 'very-impatient';
     case 'impatient':

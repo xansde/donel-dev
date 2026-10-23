@@ -8,7 +8,7 @@
 // Poses
 // ---------------------------------------------------------------------------
 
-/** The 15 logical poses (FR-010, FR-016, FR-029). `poses.ts` resolves each one to an art file. */
+/** The 16 logical poses (FR-010, FR-016, FR-029; `sweeping` from 016-jobu-faxina). `poses.ts` resolves each one to an art file. */
 export const POSE_NAMES = [
   'neutral',
   'talking',
@@ -25,6 +25,7 @@ export const POSE_NAMES = [
   'impatient',
   'very-impatient',
   'calling',
+  'sweeping',
 ] as const;
 
 export type PoseName = (typeof POSE_NAMES)[number];
@@ -167,7 +168,14 @@ export interface SweepFinishedEvent {
   readonly at: number;
 }
 
+/** The sweep the owner asked for (menu "Fazer faxina") began: the Jobu shows the `sweeping` pose until `sweepFinished`. */
+export interface SweepStartedEvent {
+  readonly type: 'sweepStarted';
+  readonly at: number;
+}
+
 export type PetEvent =
+  | SweepStartedEvent
   | AccountSwitchedEvent
   | SweepFinishedEvent
   | SessionExitedEvent
@@ -265,6 +273,8 @@ export interface PetState {
    */
   readonly pendingBurst: readonly BubbleEvent[];
   readonly laughUntil: number | null;
+  /** A sweep is running (016): drives the `sweeping` pose. Set by `sweepStarted`, cleared by `sweepFinished`. */
+  readonly sweeping: boolean;
   readonly sereneSince: number | null;
   readonly waffleShown: boolean;
   readonly waffleUntil: number | null;

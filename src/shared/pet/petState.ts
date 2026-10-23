@@ -50,6 +50,7 @@ export function createPetState(): PetState {
     lastBubbleId: 0,
     pendingBurst: [],
     laughUntil: null,
+    sweeping: false,
     sereneSince: null,
     waffleShown: false,
     waffleUntil: null,
@@ -286,9 +287,10 @@ function withAccountSwitched(state: PetState, input: AccountSwitchedEvent, now: 
  * the Jobu is hidden then.
  */
 function withSweepFinished(state: PetState, input: SweepFinishedEvent, now: number): PetState {
-  if (state.fullscreen) return state;
+  // The sweep is over even when full screen swallows its bubble.
+  if (state.fullscreen) return { ...state, sweeping: false };
   const id = state.lastBubbleId + 1;
-  return { ...state, lastBubbleId: id, pendingBurst: [], bubble: { id, ...sweepBubbleFace(input.summary), until: now + PET_BUBBLE_MS } };
+  return { ...state, sweeping: false, lastBubbleId: id, pendingBurst: [], bubble: { id, ...sweepBubbleFace(input.summary), until: now + PET_BUBBLE_MS } };
 }
 
 /** "Silenciar por 1 hora" calms the bubbles, the one in view included (FR-027); "Retomar avisos" lifts it. The face and the badge never stop. */
@@ -399,6 +401,9 @@ export function reducePet(state: PetState, input: PetInput, now: number): PetSta
       break;
     case 'accountSwitched':
       next = withAccountSwitched(state, input, now);
+      break;
+    case 'sweepStarted':
+      next = { ...state, sweeping: true };
       break;
     case 'sweepFinished':
       next = withSweepFinished(state, input, now);
