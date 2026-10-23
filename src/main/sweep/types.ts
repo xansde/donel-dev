@@ -24,6 +24,12 @@ export interface WorktreeFact {
   readonly headEqualsRemote: boolean;
   /** Newest write to the worktree's admin files in `.git/worktrees/<name>/` (HEAD, logs/HEAD); 0 when unknown. */
   readonly lastActivityMs: number;
+  /**
+   * The worktree holds a submodule: `git worktree remove` refuses it ("working trees containing submodules cannot be
+   * moved or removed"). Git's own test is a `modules/` folder in the worktree's git dir or a gitlink in its index; a
+   * `.gitmodules` file at the root is added as a cheap early signal.
+   */
+  readonly hasSubmodules: boolean;
   /** What `git status --ignored` lists as ignored in the worktree (`!!` lines, folders with a trailing `/`). */
   readonly ignored: readonly string[];
 }

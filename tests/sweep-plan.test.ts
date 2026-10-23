@@ -27,7 +27,7 @@ function facts(patch: Partial<RepoFacts> = {}): RepoFacts {
 }
 
 function worktree(patch: Partial<WorktreeFact> = {}): WorktreeFact {
-  return { path: 'C:\\w\\atlas-wt\\a', branch: 'feature/a', head: 'aaa', isMain: false, locked: false, missing: false, clean: true, headInIntegration: true, headEqualsRemote: false, lastActivityMs: NOW - 3 * DAY, ignored: [], ...patch };
+  return { path: 'C:\\w\\atlas-wt\\a', branch: 'feature/a', head: 'aaa', isMain: false, locked: false, missing: false, clean: true, headInIntegration: true, headEqualsRemote: false, lastActivityMs: NOW - 3 * DAY, ignored: [], hasSubmodules: false, ...patch };
 }
 
 function branch(patch: Partial<BranchFact> = {}): BranchFact {
@@ -67,6 +67,22 @@ describe('worktrees', () => {
   it('removes a clean worktree whose HEAD is what the remote has of the same branch', () => {
     const items = plan({ worktrees: [worktree({ headInIntegration: false, headEqualsRemote: true })] });
     expect(ofKind(items, 'removeWorktree')[0]?.reason).toBe('publicada no remoto com o mesmo SHA');
+  });
+
+  it('keeps a worktree with a submodule, saying why: git refuses to remove it (achado da 1ª faxina real)', () => {
+    const items = plan({ worktrees: [worktree({ hasSubmodules: true })] });
+    expect(ofKind(items, 'removeWorktree')).toEqual([]);
+    expect(ofKind(items, 'keep')).toEqual([{ kind: 'keep', what: 'worktree', name: 'C:\\w\\atlas-wt\\a', reason: 'tem submódulo (o git não remove worktree com submódulo)' }]);
+  });
+
+  it('a worktree with a submodule is never removed, whatever else is true of it', () => {
+    const items = plan({ worktrees: [worktree({ hasSubmodules: true, headInIntegration: true, headEqualsRemote: true, lastActivityMs: NOW - 30 * DAY })] });
+    expect(ofKind(items, 'removeWorktree')).toEqual([]);
+  });
+
+  it('a missing worktree is still pruned (the folder is gone, nothing to refuse)', () => {
+    const items = plan({ worktrees: [worktree({ missing: true })] });
+    expect(ofKind(items, 'removeWorktree')[0]?.missing).toBe(true);
   });
 
   it('keeps a worktree with unsaved changes, saying so', () => {
