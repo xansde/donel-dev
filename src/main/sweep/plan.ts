@@ -165,6 +165,8 @@ function planWorktree(worktree: WorktreeFact, integrationRef: string | null, now
   if (worktree.missing) {
     return { kind: 'removeWorktree', path: worktree.path, branch: worktree.branch, missing: true, reason: 'a pasta já não existia (só registro no git)' };
   }
+  // Git refuses to remove it, so it is not even attempted (the first real sweep logged 31 such failures).
+  if (worktree.hasSubmodules) return keep('tem submódulo (o git não remove worktree com submódulo)');
   if (!worktree.clean) return keep('mudança não commitada');
   if (!worktree.headInIntegration && !worktree.headEqualsRemote) return keep('commit que só existe aqui');
   if (now - worktree.lastActivityMs < WORKTREE_FRESH_MS) return keep('usada nas últimas 24 h');

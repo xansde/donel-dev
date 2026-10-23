@@ -29,31 +29,64 @@ export interface Measure {
   readonly newestMs: number;
 }
 
-/** One walk for the size and the newest write. Links count as 0 bytes and are not entered. Unreadable entries are skipped. */
+/** Filesystem operations in flight at once while measuring: enough to hide the latency of a 100k-file `node_modules`, not enough to starve the rest. */
+const MEASURE_CONCURRENCY = 48;
+
+/**
+ * One walk for the size and the newest write. Links count as 0 bytes and are not entered. Unreadable entries are skipped.
+ * Concurrent: at most `MEASURE_CONCURRENCY` fs calls in flight. `readdir` with file types tells which entries are folders,
+ * so the walk goes down without waiting for their `lstat`; every entry is still `lstat`-ed once, because its mtime and
+ * size are part of the answer (a folder's own mtime counts: deleting a file only moves the folder's).
+ */
 export async function measure(path: string): Promise<Measure> {
   let bytes = 0;
   let newestMs = 0;
-  const pending: string[] = [path];
-  while (pending.length > 0) {
-    const current = pending.pop() as string;
+  let free = MEASURE_CONCURRENCY;
+  const waiting: (() => void)[] = [];
+  const acquire = (): Promise<void> => {
+    if (free > 0) {
+      free -= 1;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => waiting.push(resolve));
+  };
+  const release = (): void => {
+    const next = waiting.shift();
+    if (next === undefined) free += 1;
+    else next();
+  };
+  const limited = async <T>(operation: () => Promise<T>): Promise<T> => {
+    await acquire();
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  };
+
+  const visit = async (current: string, knownLink: boolean): Promise<void> => {
     let stats;
     try {
-      stats = await fs.lstat(current);
+      stats = await limited(() => fs.lstat(current));
     } catch {
-      continue;
+      return;
     }
     newestMs = Math.max(newestMs, stats.mtimeMs);
-    if (stats.isSymbolicLink()) continue;
-    if (stats.isDirectory()) {
-      try {
-        for (const name of await fs.readdir(current)) pending.push(join(current, name));
-      } catch {
-        // unreadable folder: measured as far as it could be
-      }
-    } else {
+    if (knownLink || stats.isSymbolicLink()) return;
+    if (!stats.isDirectory()) {
       bytes += stats.size;
+      return;
     }
-  }
+    let entries;
+    try {
+      entries = await limited(() => fs.readdir(current, { withFileTypes: true }));
+    } catch {
+      return; // unreadable folder: measured as far as it could be
+    }
+    await Promise.all(entries.map((entry) => visit(join(current, entry.name), entry.isSymbolicLink())));
+  };
+
+  await visit(path, false);
   return { bytes, newestMs };
 }
 
