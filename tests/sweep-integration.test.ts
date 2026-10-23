@@ -386,3 +386,87 @@ describe('repos without origin, with a broken origin, and the failure of the who
     expect(run.summary.failed).toBe(false);
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// Worktrees with submodules (achado da 1ª faxina real, 23/10): git refuses to remove them
+// ---------------------------------------------------------------------------
+
+describe('a worktree that holds a submodule', () => {
+  let sandbox: Sandbox;
+  let repo: string;
+  let run: Run;
+
+  beforeAll(async () => {
+    sandbox = await createSandbox();
+    repo = await createRepo(sandbox, 'orbit');
+    // The submodule's source: a plain repo outside the roots of the sweep, so it is not a known repo itself.
+    const source = join(sandbox.root, 'sub-source');
+    await fs.mkdir(source, { recursive: true });
+    git(source, 'init', '-q', '-b', 'main');
+    await write(join(source, 'lib.txt'), 'lib');
+    commitAll(source, 'chore: lib');
+    git(repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', source, 'libs/sub');
+    commitAll(repo, 'chore: adiciona submodulo');
+    git(repo, 'push', '-q', 'origin', 'staging');
+    git(repo, 'branch', 'old1'); // something actionable, so the repo is part of the report
+
+    const wtRoot = join(sandbox.seazone, 'orbit-wt');
+    // `bare`: only the gitlink and .gitmodules, the submodule never initialised.
+    git(repo, 'worktree', 'add', '-q', join(wtRoot, 'bare'), '-b', 'docs/bare');
+    // `inited`: the submodule is cloned into the worktree's git dir (`modules/`).
+    git(repo, 'worktree', 'add', '-q', join(wtRoot, 'inited'), '-b', 'docs/inited');
+    git(join(wtRoot, 'inited'), '-c', 'protocol.file.allow=always', 'submodule', 'update', '-q', '--init');
+    for (const name of ['bare', 'inited']) for (const admin of ['HEAD', join('logs', 'HEAD')]) await age(join(repo, '.git', 'worktrees', name, admin), 3);
+
+    run = await sweep(sandbox);
+  }, 120_000);
+
+  afterAll(async () => {
+    await sandbox.cleanup();
+  });
+
+  it('keeps both worktrees, tries to remove neither, and reports no failure', async () => {
+    expect(run.summary.failed).toBe(false);
+    expect(run.summary.worktreesRemoved).toBe(0);
+    expect(await exists(join(sandbox.seazone, 'orbit-wt', 'bare'))).toBe(true);
+    expect(await exists(join(sandbox.seazone, 'orbit-wt', 'inited', 'libs', 'sub', 'lib.txt'))).toBe(true);
+    const list = git(repo, 'worktree', 'list');
+    expect(list).toContain('bare');
+    expect(list).toContain('inited');
+    const html = await fs.readFile(join(run.summary.folder as string, SUMMARY_FILE), 'utf8');
+    expect(html).toContain('tem submódulo');
+    expect(html).not.toContain('não foi possível');
+    expect(run.logs.join('\n')).toMatch(/ 0 falhas/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Progress in the log (achado da 1ª faxina real: 26 min and 2 lines)
+// ---------------------------------------------------------------------------
+
+describe('the log of a sweep', () => {
+  let sandbox: Sandbox;
+  beforeAll(async () => {
+    sandbox = await createSandbox();
+  });
+  afterAll(async () => {
+    await sandbox.cleanup();
+  });
+
+  it('says, for each repo, when it was read and when it was done, plus when the execution starts', async () => {
+    const repo = await createRepo(sandbox, 'lyra');
+    await write(join(repo, 'test-results', 'a.txt'), 'secret-content-should-not-be-logged');
+    git(repo, 'branch', 'old1');
+    const run = await sweep(sandbox);
+    const lines = run.logs;
+    const read = lines.findIndex((line) => /lyra lido em [\d.,]+ s — \d+ ações?, \d+ de lado/.test(line));
+    const start = lines.findIndex((line) => /executando 1 repos?/.test(line));
+    const done = lines.findIndex((line) => /lyra concluído em [\d.,]+ s — \d+ ok, 0 falhas/.test(line));
+    const total = lines.findIndex((line) => line.includes('bytes liberados'));
+    expect(read).toBeGreaterThanOrEqual(0);
+    expect(start).toBeGreaterThan(read);
+    expect(done).toBeGreaterThan(start);
+    expect(total).toBeGreaterThan(done);
+    expect(lines.join('\n')).not.toContain('secret-content');
+  }, 60_000);
+});

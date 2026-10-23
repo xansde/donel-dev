@@ -87,6 +87,27 @@ describe('filesystem helpers', () => {
     expect(result.newestMs).toBeGreaterThanOrEqual(recent.getTime());
   });
 
+  it('measure over a wide and deep tree gives the exact bytes and the newest write', async () => {
+    const recent = new Date(2026, 8, 1);
+    let expected = 0;
+    for (let d = 0; d < 8; d += 1) {
+      const dir = join(root, 'wide', `d${d}`, 'inner');
+      await fs.mkdir(dir, { recursive: true });
+      for (let f = 0; f < 10; f += 1) {
+        await fs.writeFile(join(dir, `f${f}.txt`), 'x'.repeat(f + d));
+        expected += f + d;
+      }
+    }
+    await fs.utimes(join(root, 'wide', 'd7', 'inner', 'f3.txt'), recent, recent);
+    const result = await measure(join(root, 'wide'));
+    expect(result.bytes).toBe(expected);
+    expect(result.newestMs).toBeGreaterThanOrEqual(recent.getTime());
+  });
+
+  it('measure of a missing path is empty, not an error', async () => {
+    expect(await measure(join(root, 'nope'))).toEqual({ bytes: 0, newestMs: 0 });
+  });
+
   it('measure does not enter a junction: the target is not counted', async () => {
     await fs.mkdir(join(root, 'target'));
     await fs.writeFile(join(root, 'target', 'big.bin'), Buffer.alloc(10_000));
