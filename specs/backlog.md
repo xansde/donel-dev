@@ -1050,9 +1050,25 @@ prompt. Claude headless custaria cota a cada rodada e poderia variar o
 critério. Ele só se paga num complemento opcional: redigir o resumo ou
 opinar sobre as branches que ficaram em "manter".
 
-**Detalhes a fixar na spec:** varrer só o repo do Donel ou todo repo da
-sidebar (no workspace há `api-spotsys-wt-*`, `dalton-wt-*` com o mesmo
-padrão); prazo da quarentena (padrão proposto: 30 dias).
+**Alcance (decisão do dono, 23/10):** **todo repo que teve trabalho desde a
+última varredura** — não só o do Donel. "Teve trabalho" = algum destes sinais
+depois do carimbo da faxina anterior:
+
+- transcript em `~/.claude/projects/` com `mtime` posterior, cujo cwd seja o
+  repo ou uma worktree dele (worktree → repo dono pelo `.git` dela ou por
+  `git worktree list`);
+- entrada no reflog de `HEAD` ou de alguma branch local
+  (`git reflog --date=iso`), o que pega commit, checkout e worktree nova
+  feitos fora do Claude.
+
+O carimbo (`lastSweepAt`) fica no `config.json` do app, gravado só quando a
+faxina termina. **Na primeira rodada, sem carimbo, todo repo conhecido
+entra.** Os repos conhecidos são os das raízes da sidebar mais os que
+aparecem como cwd de transcript. A quarentena fica uma por repo
+(`_archive/<repo>-limpeza-<data>/`), e o resumo do balão agrega:
+*"Faxina em 4 repos: …"*. Um repo sem nada a limpar não aparece no resumo.
+
+**Detalhe a fixar na spec:** prazo da quarentena (padrão proposto: 30 dias).
 
 ## Decidido, aguardando spec
 
