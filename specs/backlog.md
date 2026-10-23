@@ -967,15 +967,19 @@ mortas, 143 branches locais já incorporadas, 32 pastas de sessão de spike em
 de saída regenerável. Tudo foi **arquivado**, não apagado, em
 `seazone/_archive/donel-dev-limpeza-2026-10-23/` (com `branches-apagadas.txt`
 nome→SHA para recriar qualquer branch). Este item registra o roteiro para o
-Jobu fazer isso sozinho, com o dono dando o OK.
+Jobu fazer isso sozinho.
 
-**Emenda que exige:** a D2 da 015 limita os avisos do Jobu a sessões e troca de
-conta. Faxina é escopo novo — vira spec própria (016?) com `/brainstorm` antes.
+**Forma (decisão do dono, 23/10 — sem brainstorm):** uma **opção a mais** do
+Jobu, "Fazer faxina", que roda a tarefa inteira e, ao fim, sobe uma
+**notificação com o resultado resumido** no balão. Não há lista para o dono
+marcar antes: a quarentena (abaixo) é o que torna seguro executar direto. É
+uma emenda pequena à D2 da 015 (o Jobu passa a avisar também o resultado da
+faxina) — registrar na spec da 015 ao implementar.
 
 **Princípios (do que deu certo e do que travou na faxina manual):**
 
-- **Propor, nunca executar sozinho.** O Jobu acha e mostra; o dono marca e
-  confirma. Nada some sem clique.
+- **Executa e conta; nada é irreversível.** Tudo o que sai vai para a
+  quarentena com manifesto, então rodar sem confirmação prévia é seguro.
 - **Quarentena antes de apagar.** Mover para uma pasta de arquivo datada, com
   manifesto; esvaziar a quarentena depois de N dias (padrão 30) ou num gesto do
   dono. A trava de segurança do Claude (`pretooluse-safety-check`) bloqueou a
@@ -1025,27 +1029,30 @@ conta. Faxina é escopo novo — vira spec própria (016?) com `/brainstorm` ant
    gravado no cwd errado) → candidata. **Fora:** sondas (`probe-*`,
    `tests/probe/`, ignoradas de propósito), arquivo da entrega em curso,
    `out/`, `scripts/publicar.local.json`.
-7. **Mostrar ao dono** uma lista por categoria com tamanho, data e motivo de
-   cada item ("contido em staging", "cwd não existe", "regenerável"), já
-   marcada nas candidatas, desmarcada nas dúbias. O dono desmarca, confirma.
-8. **Executar** a seleção: mover para `_archive/<repo>-limpeza-<data>/`
+7. **Executar** as candidatas: mover para `_archive/<repo>-limpeza-<data>/`
    preservando o caminho relativo, gravar manifesto (`branches-apagadas.txt`,
    lista de arquivos movidos, origem de cada um) e um README de restauração.
-9. **Conferir depois:** `git worktree list`, `git branch`, `git status`
-   iguais ao esperado; `npm test` verde no checkout principal (nada rastreado
-   foi tocado, mas prova barata).
-10. **Esvaziar a quarentena** quando vencer o prazo ou no gesto do dono —
-    com o balão do Jobu dizendo o tamanho que vai liberar.
+   O que caiu em "manter" não é tocado — só entra no resumo.
+8. **Conferir depois:** `git worktree list`, `git branch`, `git status`
+   iguais ao esperado. Se a conferência falhar, o resumo diz isso em vez de
+   "pronto".
+9. **Notificar** no balão do Jobu (fato seco, D6), por exemplo: *"Faxina:
+   3 worktrees, 143 branches e 32 sessões antigas na quarentena — 250 MB.
+   Ficaram 3 branches só locais e 1 worktree com mudança não salva."* Um
+   clique abre a pasta da quarentena (README + manifesto).
+10. **Esvaziar a quarentena** quando vencer o prazo — na próxima faxina, com o
+    tamanho liberado no mesmo resumo.
 
-**Onde o Jobu entra:** o balão com o fato seco (D6) — "achei 3 worktrees e 140
-branches que já estão em staging, 250 MB" — e um clique abre a lista do passo 7
-no Donel. Gatilho: no boot do app no máximo uma vez por semana, ou quando a
-contagem passar de um limiar. O Jobu não decide nada sozinho.
+**Script ou Claude headless — recomendação: script.** Os passos 1–8 são
+determinísticos (git + filesystem) e as regras "nunca tocar" são duras —
+melhor como código testado (vitest, como o resto de `src/main`) do que como
+prompt. Claude headless custaria cota a cada rodada e poderia variar o
+critério. Ele só se paga num complemento opcional: redigir o resumo ou
+opinar sobre as branches que ficaram em "manter".
 
-**Pendências para o brainstorm:** varrer só o repo do Donel ou todo repo da
-sidebar (no workspace há `api-spotsys-wt-*`, `dalton-wt-*` com o mesmo padrão);
-prazo da quarentena; se a etapa de branch roda do app (tocar git de outros
-repos) ou fica como skill do Claude invocada pelo Jobu.
+**Detalhes a fixar na spec:** varrer só o repo do Donel ou todo repo da
+sidebar (no workspace há `api-spotsys-wt-*`, `dalton-wt-*` com o mesmo
+padrão); prazo da quarentena (padrão proposto: 30 dias).
 
 ## Decidido, aguardando spec
 
