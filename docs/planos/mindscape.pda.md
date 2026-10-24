@@ -35,11 +35,12 @@ ligações, um mindscape por projeto, ir ao terminal), para o Alexandre usar no 
 - **01 — Forma da tela do Mindscape** → variante A, Canvas livre, escolhida pelo dono ([protótipo](../prototipos/mindscape/decisao.md))
 - **02 — De onde vem o texto do post-it escrito pela sessão** → campo `last_assistant_message` do hook `Stop`, que já chega ao app; fallback na cauda do `.jsonl` ([pesquisa](../pesquisas/mindscape-fonte-postit-sessao.md))
 - **03 — Regras de comportamento do Mindscape** → 13 regras fechadas por delegação: post-it no `Stop`, erro destacado, ligações livres, paleta de aba sem vermelho para o dono, persistência no `userData`, terceiro modo "Mindscape", baselines adiados ([refinamento](../refinamentos/mindscape-regras-v1.md))
+- **04 — Cortar as versões do Mindscape** → V1 = Mindscape por projeto no alfa; V2/V3 como hipóteses ([versões](../versoes/mindscape.md))
+- **05 — Validar MVP e versionamento com o cliente** → validado por delegação do dono, 2026-10-23; revisão real no alfa ([versões](../versoes/mindscape.md))
 
 ## Ainda não especificado
 
-- Mindscape por sequência de esteira: o spec pede "por projeto ou por esteira"; a V1 fica só
-  por projeto, e a forma do "por esteira" depende do corte de versões.
+- Mindscape por sequência de esteira: V2 (hipótese), ver [versões](../versoes/mindscape.md).
 
 ## Fora de escopo
 
@@ -90,22 +91,22 @@ ligações, um mindscape por projeto, ir ao terminal), para o Alexandre usar no 
 
 - **Tipo**: tarefa (executada pela skill de apoio `/versionamento`)
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: concluido
 - **Bloqueado por**: 03
 - **Pergunta**: separar V1 (caminho feliz do spec com as regras do item 03, um mindscape por
   projeto) de V2+ (mindscape por esteira, histórico de post-its da sessão, rabisco, prints,
   sessão que lê post-its, captura relâmpago Ctrl+Alt+N, cartas do dia, baselines medidos).
   Tipo `tarefa` porque a tabela de tipos não tem versionamento (decidido por delegação do
   dono, 2026-10-23).
-- **Resolução**: —
+- **Resolução**: V1 = Mindscape por projeto no alfa (7 histórias do spec no mínimo funcional); V2 quadro mais rico, V3 Tomo completo, como hipóteses ([versões](../versoes/mindscape.md))
 
 ### 05 — Validar MVP e versionamento com o cliente
 
 - **Tipo**: tarefa
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: concluido
 - **Bloqueado por**: 04
 - **Pergunta**: apresentar ao Alexandre o MVP proposto e as versões (V1..Vn); registrar o
   OK — quem validou, quando, onde (sem canal Slack: registrar na conversa/handoff).
   Bloqueia a `/arquitetura` em diante.
-- **Resolução**: —
+- **Resolução**: validado por delegação do dono, 2026-10-23 — o dono delegou as decisões da rodada e pediu resultado rápido; ele revê a V1 no alfa ([versões](../versoes/mindscape.md), registro em `handoffs/mindscape-versionamento.md`)
