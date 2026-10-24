@@ -85,14 +85,17 @@ import { EsteiraScreen } from './Esteira/EsteiraScreen';
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
 import {
+  addLink,
   addOwnerCard,
   archiveCard,
   editOwnerCard,
   findSessionBoard,
   moveCard,
   placeSessionCard,
+  removeLink,
   setBoardPan,
   setOwnerColor,
+  toggleLinkArrow,
   writeSessionNote,
   type OwnerCardColor,
 } from '../../shared/mindscape/model';
@@ -1893,6 +1896,19 @@ export function App(): React.JSX.Element {
     (projectPath: string, cardId: string, color: OwnerCardColor): void => updateMindscape((doc) => setOwnerColor(doc, projectPath, cardId, color)),
     [updateMindscape],
   );
+  // Mindscape, fatia 05 — links with an arrow, in a hand-made stroke.
+  const handleMindscapeAddLink = useCallback(
+    (projectPath: string, id: string, from: string, to: string): void => updateMindscape((doc) => addLink(doc, projectPath, { id, from, to })),
+    [updateMindscape],
+  );
+  const handleMindscapeToggleLinkArrow = useCallback(
+    (projectPath: string, linkId: string): void => updateMindscape((doc) => toggleLinkArrow(doc, projectPath, linkId)),
+    [updateMindscape],
+  );
+  const handleMindscapeRemoveLink = useCallback(
+    (projectPath: string, linkId: string): void => updateMindscape((doc) => removeLink(doc, projectPath, linkId)),
+    [updateMindscape],
+  );
 
   const sidebarSessions: SidebarSession[] = tabs
     .filter((tab) => !(tab.claudeSessionId && registeredFavoriteIds.has(tab.claudeSessionId)))
@@ -2420,6 +2436,9 @@ export function App(): React.JSX.Element {
             onAddOwnerCard={handleMindscapeAddOwnerCard}
             onEditOwnerCard={handleMindscapeEditOwnerCard}
             onSetOwnerColor={handleMindscapeSetOwnerColor}
+            onAddLink={handleMindscapeAddLink}
+            onToggleLinkArrow={handleMindscapeToggleLinkArrow}
+            onRemoveLink={handleMindscapeRemoveLink}
           />
         ) : null}
         {devModeOn && esteiraOpen ? (

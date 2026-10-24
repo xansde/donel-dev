@@ -204,7 +204,8 @@
   min-height: 72px;
   max-height: 96px;
   background: var(--bg-raised);
-  border: 1px solid var(--border);
+  /* Fatia 05 — the side borders come from the hand-made outline (roughjs); the stripe stays. */
+  border: 1px solid transparent;
   border-top: 3px solid var(--stripe);
   border-radius: var(--radius-md);
   padding: 12px 10px 8px;
@@ -345,6 +346,12 @@
   box-shadow: var(--focus-ring);
 }
 
+/* Fatia 05 — "Ligar" on, arrow of the selected link on. */
+.toolButton[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .toolButton:disabled {
   color: var(--text-muted);
   cursor: default;
@@ -430,6 +437,56 @@
 .noteArchive:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* Fatia 05 — links (under the cards) and the hand-made outline (over them), ADR 0004. */
+.linkLayer,
+.outlineLayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.link {
+  color: var(--text-muted);
+}
+
+.linkSelected {
+  color: var(--accent);
+}
+
+.linkStroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.linkHit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.outline {
+  fill: none;
+  stroke: color-mix(in srgb, var(--text-primary) 45%, transparent);
+  stroke-width: 1;
+}
+
+.screen[data-linking] .view [data-card-id] {
+  cursor: crosshair;
+}
+
+.screen[data-linking='destination'] .view {
+  cursor: crosshair;
 }
 
 @keyframes pulse {

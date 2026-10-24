@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SessionState } from '@donel-dev/design-system';
 import { sessionHighlight } from '../../../shared/mindscape/highlight';
-import { sessionCardId, type MindscapeDoc, type OwnerCardColor } from '../../../shared/mindscape/model';
+import { sessionCardId, visibleLinks, type MindscapeCard as Card, type MindscapeDoc, type OwnerCardColor } from '../../../shared/mindscape/model';
 import type { TabColorToken } from '../../../shared/tabAppearance';
 import { MindscapeBoard } from './MindscapeBoard';
+import { MindscapeLinkLayer, MindscapeOutlineLayer, useCardSizes } from './MindscapeLinks';
 import { MindscapeNoteCard, MindscapeOwnerCard, MindscapeSessionCard, STRIPE_BY_TOKEN } from './MindscapeCard';
 import styles from './Mindscape.module.css';
 
@@ -41,6 +42,10 @@ export interface MindscapeScreenProps {
   readonly onAddOwnerCard: (projectPath: string, id: string, origin: { x: number; y: number }) => void;
   readonly onEditOwnerCard: (projectPath: string, cardId: string, text: string) => void;
   readonly onSetOwnerColor: (projectPath: string, cardId: string, color: OwnerCardColor) => void;
+  /** Fatia 05 — "Ligar": link `from` → `to` (the link `id` is made here). */
+  readonly onAddLink: (projectPath: string, id: string, from: string, to: string) => void;
+  readonly onToggleLinkArrow: (projectPath: string, linkId: string) => void;
+  readonly onRemoveLink: (projectPath: string, linkId: string) => void;
 }
 
 /** Margin of the new owner post-it from the visible top-left corner of the board. */
@@ -70,6 +75,9 @@ export function MindscapeScreen({
   onAddOwnerCard,
   onEditOwnerCard,
   onSetOwnerColor,
+  onAddLink,
+  onToggleLinkArrow,
+  onRemoveLink,
 }: MindscapeScreenProps): React.JSX.Element {
   const boardPaths = Object.keys(doc.boards);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(initialProjectPath);
@@ -85,9 +93,57 @@ export function MindscapeScreen({
   const board = activePath ? doc.boards[activePath] : undefined;
   const boardSessions = board ? sessions.filter((session) => session.projectPath === board.projectPath) : [];
   const selectedSession = boardSessions.find((session) => session.tabId === selectedTabId);
+  // Fatia 05 — links: "Ligar" mode (origin, then destination) and the selected link.
+  const [linking, setLinking] = useState(false);
+  const [linkOrigin, setLinkOrigin] = useState<string | undefined>(undefined);
+  const [selectedLinkId, setSelectedLinkId] = useState<string | undefined>(undefined);
+  const selectedLink = board?.links.find((link) => link.id === selectedLinkId);
+  const sectionRef = useRef<HTMLElement>(null);
+  const sizes = useCardSizes(sectionRef);
+  const stopLinking = (): void => {
+    setLinking(false);
+    setLinkOrigin(undefined);
+  };
+  useEffect(() => {
+    if (!linking) return undefined;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setLinking(false);
+        setLinkOrigin(undefined);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [linking]);
+  /** In "Ligar" mode a click on a card picks it (origin, then destination) instead of its own action. */
+  const pickForLink = (event: React.MouseEvent): void => {
+    if (!linking || !board) return;
+    const cardId = (event.target as HTMLElement).closest<HTMLElement>('[data-card-id]')?.dataset.cardId;
+    if (!cardId || !board.cards[cardId]) return;
+    event.stopPropagation();
+    event.preventDefault();
+    if (!linkOrigin) {
+      setLinkOrigin(cardId);
+      return;
+    }
+    if (cardId === linkOrigin) return;
+    onAddLink(board.projectPath, crypto.randomUUID(), linkOrigin, cardId);
+    stopLinking();
+  };
+  const linkHint = linking ? (linkOrigin ? 'Clique no post-it de destino (Esc cancela)' : 'Clique no post-it de origem (Esc cancela)') : undefined;
 
   return (
-    <section className={styles.screen} aria-label="Mindscape" data-testid="mindscape-screen">
+    <section
+      ref={sectionRef}
+      className={styles.screen}
+      aria-label="Mindscape"
+      data-testid="mindscape-screen"
+      data-linking={linking ? (linkOrigin ? 'destination' : 'origin') : undefined}
+      onClickCapture={pickForLink}
+      onDoubleClickCapture={(event) => {
+        if (linking) event.stopPropagation();
+      }}
+    >
       <div className={styles.tabs} role="tablist" aria-label="Mindscapes">
         {boardPaths.map((path) => (
           <button
@@ -122,6 +178,38 @@ export function MindscapeScreen({
         <button
           type="button"
           className={styles.toolButton}
+          disabled={!board}
+          aria-pressed={linking}
+          onClick={() => {
+            if (linking) stopLinking();
+            else {
+              setLinking(true);
+              setSelectedLinkId(undefined);
+            }
+          }}
+        >
+          Ligar
+        </button>
+        {selectedLink && board ? (
+          <>
+            <button type="button" className={styles.toolButton} aria-pressed={selectedLink.arrow} onClick={() => onToggleLinkArrow(board.projectPath, selectedLink.id)}>
+              Seta
+            </button>
+            <button
+              type="button"
+              className={styles.toolButton}
+              onClick={() => {
+                onRemoveLink(board.projectPath, selectedLink.id);
+                setSelectedLinkId(undefined);
+              }}
+            >
+              Remover ligação
+            </button>
+          </>
+        ) : null}
+        <button
+          type="button"
+          className={styles.toolButton}
           disabled={!selectedSession}
           onClick={() => {
             if (selectedSession) onGoToTerminal(selectedSession.tabId);
@@ -129,7 +217,7 @@ export function MindscapeScreen({
         >
           Ir ao terminal
         </button>
-        <span className={styles.toolHint}>{selectedSession ? selectedSession.name : 'Selecione uma sessão (duplo clique abre o terminal)'}</span>
+        <span className={styles.toolHint}>{linkHint ?? (selectedSession ? selectedSession.name : 'Selecione uma sessão (duplo clique abre o terminal)')}</span>
       </div>
       {!board ? (
         <div className={styles.view} data-testid="mindscape-board">
@@ -140,10 +228,33 @@ export function MindscapeScreen({
           board={board}
           onMoveCard={(cardId, x, y) => onMoveCard(board.projectPath, cardId, x, y)}
           onPan={(pan) => onPan(board.projectPath, pan)}
-          onBackgroundClick={() => setSelectedTabId(undefined)}
+          onBackgroundClick={() => {
+            setSelectedTabId(undefined);
+            setSelectedLinkId(undefined);
+          }}
         >
-          {(positionOf) => (
+          {(positionOf) => {
+            // Cards on screen: a session card only with its tab open (rule 11); notes and the owner's always.
+            const liveSessionIds = new Set(boardSessions.map((session) => session.sessionId));
+            const visibleCards = Object.values(board.cards).filter((card) => card.kind !== 'session' || liveSessionIds.has(card.sessionId));
+            const visibleIds = new Set(visibleCards.map((card) => card.id));
+            const rectOf = (cardId: string) => {
+              const card: Card | undefined = board.cards[cardId];
+              const size = sizes[cardId];
+              if (!card || !size || !visibleIds.has(cardId)) return undefined;
+              const position = positionOf(card);
+              return { x: position.x, y: position.y, w: size.w, h: size.h };
+            };
+            return (
             <>
+              <MindscapeLinkLayer
+                links={visibleLinks(board.links, visibleIds)}
+                rectOf={rectOf}
+                selectedLinkId={selectedLinkId}
+                onSelect={(linkId) => {
+                  if (!linking) setSelectedLinkId(linkId);
+                }}
+              />
               {boardSessions.map((session) => {
                 const card = board.cards[sessionCardId(session.sessionId)];
                 if (!card) return null;
@@ -203,8 +314,10 @@ export function MindscapeScreen({
               {boardSessions.length === 0 && !Object.values(board.cards).some((card) => card.kind !== 'session') ? (
                 <p className={styles.empty}>Nenhuma sessão aberta neste projeto.</p>
               ) : null}
+              <MindscapeOutlineLayer cardIds={visibleCards.map((card) => card.id)} rectOf={rectOf} />
             </>
-          )}
+            );
+          }}
         </MindscapeBoard>
       )}
     </section>

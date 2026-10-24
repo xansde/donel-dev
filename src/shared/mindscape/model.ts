@@ -256,6 +256,69 @@ export function setOwnerColor(doc: MindscapeDoc, projectPath: string, cardId: st
 }
 
 // ---------------------------------------------------------------------------
+// Fatia 05 — links between two post-its of the same board (rule 5).
+// ---------------------------------------------------------------------------
+
+function replaceLinks(doc: MindscapeDoc, board: MindscapeBoard, links: MindscapeLink[]): MindscapeDoc {
+  return { ...doc, boards: { ...doc.boards, [board.projectPath]: { ...board, links } } };
+}
+
+export interface LinkInput {
+  /** Unique id, made by the caller (`crypto.randomUUID()` in the renderer) so the reducer stays pure. */
+  readonly id: string;
+  readonly from: string;
+  readonly to: string;
+}
+
+/**
+ * Links two cards of the board, arrow on. A card to itself, a card missing
+ * from the board, an id in use or a pair already linked (either way) → same document.
+ */
+export function addLink(doc: MindscapeDoc, projectPath: string, input: LinkInput): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  if (!board || !input.id || input.from === input.to) return doc;
+  if (!board.cards[input.from] || !board.cards[input.to]) return doc;
+  const taken = board.links.some(
+    (link) =>
+      link.id === input.id ||
+      (link.from === input.from && link.to === input.to) ||
+      (link.from === input.to && link.to === input.from),
+  );
+  if (taken) return doc;
+  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow: true }]);
+}
+
+/** Switches the arrow of the link on/off. Missing link → same document. */
+export function toggleLinkArrow(doc: MindscapeDoc, projectPath: string, linkId: string): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  if (!board || !board.links.some((link) => link.id === linkId)) return doc;
+  return replaceLinks(
+    doc,
+    board,
+    board.links.map((link) => (link.id === linkId ? { ...link, arrow: !link.arrow } : link)),
+  );
+}
+
+/** Removes only the target link. Missing link → same document. */
+export function removeLink(doc: MindscapeDoc, projectPath: string, linkId: string): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  if (!board || !board.links.some((link) => link.id === linkId)) return doc;
+  return replaceLinks(
+    doc,
+    board,
+    board.links.filter((link) => link.id !== linkId),
+  );
+}
+
+/**
+ * The links drawn on screen: both ends visible. A link to a session card
+ * without an open tab stays in the board and comes back when the session does.
+ */
+export function visibleLinks(links: readonly MindscapeLink[], visibleCardIds: ReadonlySet<string>): MindscapeLink[] {
+  return links.filter((link) => visibleCardIds.has(link.from) && visibleCardIds.has(link.to));
+}
+
+// ---------------------------------------------------------------------------
 // Guard for whatever comes from disk (or from the renderer, in the main).
 // ---------------------------------------------------------------------------
 
