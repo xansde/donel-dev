@@ -77,6 +77,21 @@
   background: color-mix(in srgb, var(--state-permission) 12%, transparent);
 }
 
+.link {
+  height: auto;
+  padding: 0;
+  gap: 4px;
+  border-radius: 4px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--accent);
+  font-size: var(--text-caption-size);
+}
+
+.link:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .button {
     transition: none;

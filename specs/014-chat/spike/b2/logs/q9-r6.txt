@@ -1,0 +1,168 @@
+=== [q9-r6 +3849ms] after-dismiss /status  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ Try "write a test for <filepath>"
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on · ? for shortcuts · ← for agents
+
+=== [q9-r6 +5827ms] after /agents  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|
+ 6|❯ /agents
+ 7|  ⎿  The /agents wizard has been removed.
+ 8|
+ 9|     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that ..."),
+10|     or edit the files directly:
+11|       • .claude/agents/       (this project)
+12|       • ~/.claude/agents/     (all projects)
+13|
+14|     Docs: https://code.claude.com/docs/en/sub-agents
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on · ? for shortcuts · ← for agents
+
+=== [q9-r6 +5828ms] after-dismiss /agents  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|
+ 6|❯ /agents
+ 7|  ⎿  The /agents wizard has been removed.
+ 8|
+ 9|     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that ..."),
+10|     or edit the files directly:
+11|       • .claude/agents/       (this project)
+12|       • ~/.claude/agents/     (all projects)
+13|
+14|     Docs: https://code.claude.com/docs/en/sub-agents
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on · ? for shortcuts · ← for agents
+
+=== [q9-r6 +7405ms] after /hooks  (cursor 31,39; buffer=alternate) ===
+ 0|
+ 1|❯ /agents
+ 2|  ⎿  The /agents wizard has been removed.
+ 3|
+ 4|     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that ..."),
+ 5|     or edit the files directly:
+ 6|       • .claude/agents/       (this project)
+ 7|       • ~/.claude/agents/     (all projects)
+ 8|
+ 9|     Docs: https://code.claude.com/docs/en/sub-agents
+10|▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔
+11|   Hooks
+12|   11 hooks on 5 events
+13|
+14|   This menu is read-only. To add or change a hook, edit settings.json or ask Claude. Learn more
+15|
+16|     PreToolUse  before tool execution
+17|   ❯ [User]   powershell -NoProfile -ExecutionPolicy Bypass -Fi…   command
+18|     [Plugin] python3 "${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.p…   hookify@claude-plugins-official · command
+19|     [User]   node C:/Users/xansd/.claude/hooks/guard-destructi…   Bash|PowerShell · command
+20|
+21|     PostToolUse  after tool execution
+22|     [Plugin] python3 "${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse.…   hookify@claude-plugins-official · command
+23|
+24|     UserPromptSubmit  when the user submits a prompt
+25|     [Plugin] python3 "${CLAUDE_PLUGIN_ROOT}/hooks/userpromptsu…   hookify@claude-plugins-official · command
+26|
+27|     SessionStart  when a new session is started
+28|     [User]   powershell -NoProfile -ExecutionPolicy Bypass -Fi…   command
+29|     [User]   powershell -NoProfile -ExecutionPolicy Bypass -Fi…   command
+30|     [User]   powershell -NoProfile -ExecutionPolicy Bypass -Fi…   command
+31|     [User]   powershell -NoProfile -ExecutionPolicy Bypass -Fi…   command
+32|
+33|     Stop  right before Claude concludes its response
+34|     [User]   powershell -NoProfile -ExecutionPolicy Bypass -Fi…   command
+35|     [Plugin] python3 "${CLAUDE_PLUGIN_ROOT}/hooks/stop.py"        hookify@claude-plugins-official · command
+36|
+37|     All events
+38|
+39|   Enter to view · Esc to close
+

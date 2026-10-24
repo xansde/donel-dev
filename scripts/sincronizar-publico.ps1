@@ -44,15 +44,22 @@ Write-Host ''
 # SKILL do contrato, e dois testes de `tests/` rodam o emissor Python dele
 # (`esteiraSkillMirrorContract`, `esteiraEspinha`). Sem a pasta, o `npm test`
 # do publico quebraria — e um teste que so passa aqui nao vale como gate.
-$pastas = @('src', 'tests', 'patches', 'design-system', 'skills')
+#
+# `docs/esteira-dev` entrou em 07/10 (promocao do beta de 07/10): a spec 012
+# moveu o contrato para docs/esteira-dev/contract/v1/, e uma dezena de testes
+# espelhados o le de la. So esse pacote entra — o resto de docs/ segue fora.
+$pastas = @('src', 'tests', 'patches', 'design-system', 'skills', 'docs/esteira-dev')
 $excluirPastas = @('node_modules', 'dist', 'storybook-static', 'coverage', '.vite', 'test-results')
+# Testes que confrontam specs/ ou .esteira/ do repo de trabalho — pastas que
+# nunca vao para o publico, entao la eles so podem falhar.
+$excluirArquivos = @('esteiraLayoutCanalV2.test.ts')
 
 foreach ($pasta in $pastas) {
   $de = Join-Path $origem $pasta
   $para = Join-Path $destino $pasta
   if (-not (Test-Path $de)) { continue }
   Write-Host "espelhando $pasta ..."
-  $args = @($de, $para, '/MIR', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/XD') + $excluirPastas
+  $args = @($de, $para, '/MIR', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/XD') + $excluirPastas + @('/XF') + $excluirArquivos
   & robocopy.exe @args | Out-Null
   # robocopy usa exit codes de bitmask: 0-7 e sucesso, >=8 e erro real.
   if ($LASTEXITCODE -ge 8) { throw "robocopy falhou em '$pasta' (exit $LASTEXITCODE)" }
@@ -66,9 +73,6 @@ foreach ($pasta in $pastas) {
 # scripts/ como um todo CONTINUA fora (publicar.ps1 e este arquivo sao processo
 # interno); entram so as ferramentas da esteira que a suite chama.
 #
-# ATENCAO futura: quando a 4.0 chegar ao beta, o contrato tera se movido para
-# docs/esteira-dev/contract/v1/ (spec 012, inversao da fonte) — docs/esteira-dev
-# precisara entrar no espelho. Decisao de fronteira pendente com o dono.
 $arquivos = @(
   '.gitignore',
   '.gitattributes',

@@ -959,6 +959,137 @@ prompt e avisar quando travaram —, com o Donel seguindo dono das abas
 interativas. **Gate do spike:** reproduzir a #2545. Se a fila trava de fundo no
 Windows, o spike morre ali e o B27 (que não depende de nada) segue sozinho.
 
+### B29. Jobu faxineiro — limpeza de restos de worktrees e sessões antigas (23/10)
+
+**Origem:** faxina manual de 23/10, pedida pelo dono, que achou 3 worktrees
+mortas, 143 branches locais já incorporadas, 32 pastas de sessão de spike em
+`~/.claude/projects`, handoffs órfãos em `.esteira/`, instalador velho e ~120 MB
+de saída regenerável. Tudo foi **arquivado**, não apagado, em
+`seazone/_archive/donel-dev-limpeza-2026-10-23/` (com `branches-apagadas.txt`
+nome→SHA para recriar qualquer branch). Este item registra o roteiro para o
+Jobu fazer isso sozinho.
+
+**Forma (decisão do dono, 23/10 — sem brainstorm):** uma **opção a mais** do
+Jobu, "Fazer faxina", que roda a tarefa inteira e, ao fim, sobe uma
+**notificação com o resultado resumido** no balão. Não há lista para o dono
+marcar antes: o que não se recria vai para uma pasta que o próprio dono
+esvazia (abaixo), e isso basta. É
+uma emenda pequena à D2 da 015 (o Jobu passa a avisar também o resultado da
+faxina) — registrar na spec da 015 ao implementar.
+
+**Princípios (do que deu certo e do que travou na faxina manual):**
+
+- **Apagar o que se recria; separar numa pasta só o que não se recria**
+  (decisão do dono, 23/10):
+  - **apaga direto:** saída regenerável (`node_modules`, `dist`,
+    `test-results`, prints, logs), instaladores velhos e scratchpads de
+    sessão;
+  - **apaga direto com recibo:** branches — antes do `git branch -D`, grava
+    `nome SHA` no manifesto (`git branch <nome> <sha>` recria enquanto o gc
+    não coletar);
+  - **separa na pasta da faxina:** sessões antigas do Claude (transcripts) e
+    handoffs/ctx não rastreados — texto que ninguém recria.
+- **Sem quarentena nem prazo; quem apaga a pasta é o dono** (decisão do
+  dono, 23/10). O que não se recria é movido para
+  `_archive/faxina-<data>/<repo>/`. O app **nunca** apaga essa pasta: ao fim
+  da faxina ele abre a pasta no Explorer, e o dono exclui à mão o que
+  quiser, quando quiser.
+- **HTML de resumo dentro da pasta, um por execução.** Cada faxina grava
+  `_archive/faxina-<data>/resumo.html`, um arquivo local autocontido que
+  resume o que está na pasta, agrupado por repo e categoria. Para cada item,
+  mostra caminho de origem, tamanho, data e motivo de ter saído. Traz
+  também as branches apagadas, com o comando de recriação de cada uma, e o
+  que ficou em "manter", com o motivo.
+- A trava de segurança do Claude (`pretooluse-safety-check`) bloqueou a
+  deleção recursiva dentro de `seazone\` na faxina manual. Ela não vale para
+  o app; o script do Donel apaga direto.
+- **"Mergeado" se prova por conteúdo, não por ancestralidade.** Squash e
+  cherry-pick deixam a branch "não mergeada" com o conteúdo já em `staging`:
+  usar `git cherry` (patch-id) e, se ainda sobrar, comparar arquivo a arquivo.
+- **Nunca tocar** em: branch atual, `main`, `staging`, `backup/*`, worktrees
+  dos canais (`donel-dev-alfa`/`-beta`), worktree com mudança não commitada,
+  branch só local com commit que não está em lugar nenhum, a sessão viva.
+
+**Passo a passo (o algoritmo que a faxina manual seguiu):**
+
+1. **Inventário (só leitura).** `git fetch origin`; `git worktree list
+   --porcelain`; `git for-each-ref refs/heads`; pastas `../<repo>-wt*/` e
+   `.claude/worktrees/`; projetos de sessão em `~/.claude/projects/` cujo nome
+   contenha o slug do repo; scratchpads em `%TEMP%/claude/<slug>*`; arquivos
+   não rastreados (`git status --porcelain -uall`) e ignorados
+   (`--ignored`) do checkout principal.
+2. **Classificar worktrees.** Para cada uma: tem mudança não commitada? → manter
+   e avisar. Limpa e com HEAD contido em `origin/staging` ou já publicada no
+   remoto (mesmo SHA)? → candidata. Limpa, só local e com commit novo → manter.
+   Conferir junction de `node_modules`/`design-system` **antes** de remover
+   (memória do projeto: `git worktree remove` atravessa o junction). Remover com
+   `git worktree remove` sem `--force`; depois `git worktree prune`.
+3. **Classificar branches locais**, fora a lista "nunca tocar":
+   - ancestral de `origin/staging` → candidata;
+   - `git cherry origin/staging <b>` sem linha `+` → conteúdo já entrou →
+     candidata;
+   - publicada no remoto com o mesmo SHA → candidata (o remoto guarda);
+   - resto → manter, mostrando "N commits só aqui, último em <data>".
+   Gravar `nome SHA` no manifesto **antes** do `git branch -D`.
+4. **Sessões mortas do Claude.** Pasta em `~/.claude/projects/` cujo cwd
+   decodificado não existe mais (worktree removida, scratchpad de spike) →
+   candidata a **arquivo** (não apagar: o `SessionIndexer` lê esses
+   transcripts; arquivar some com elas do "Sessões anteriores", e o dono
+   precisa saber disso). Nunca mexer em `.credentials.json` nem em nada fora
+   de `projects/` — a regra de credenciais do projeto continua valendo.
+5. **Scratchpads** em `%TEMP%/claude/<slug>*` sem escrita há mais de 7 dias,
+   fora o da sessão atual → candidatos (apagar direto: é temp por definição).
+6. **Lixo do checkout.** Untracked e ignorados por categoria:
+   saída regenerável (`test-results/`, `.e2e-visual/`, `.tutorial-shots/`,
+   `.playwright-cli/`, `node_modules`/`dist` de `prototypes/*`) → candidata;
+   instaladores em `release/` mais velhos que o último por canal → candidata;
+   handoffs/ctx de `.esteira/` não rastreados de item já concluído →
+   arquivo; pasta estranha na raiz (ex.: `Microsoft/` — cache do PowerShell
+   gravado no cwd errado) → candidata. **Fora:** sondas (`probe-*`,
+   `tests/probe/`, ignoradas de propósito), arquivo da entrega em curso,
+   `out/`, `scripts/publicar.local.json`.
+7. **Executar** as candidatas conforme a categoria (apaga direto, apaga com
+   recibo, separa na pasta). O que é separado vai para
+   `_archive/faxina-<data>/<repo>/`, preservando o caminho relativo. O
+   manifesto (`branches-apagadas.txt` e a lista do que foi movido e apagado,
+   com a origem de cada item) fica na pasta do repo, e o `resumo.html`, na
+   raiz da faxina.
+   O que caiu em "manter" não é tocado — só entra no resumo e no HTML.
+8. **Conferir depois:** `git worktree list`, `git branch`, `git status`
+   iguais ao esperado. Se a conferência falhar, o resumo diz isso em vez de
+   "pronto".
+9. **Notificar** no balão do Jobu (fato seco, D6), por exemplo: *"Faxina:
+   250 MB liberados; 32 sessões antigas separadas na pasta. Ficaram 3
+   branches só locais e 1 worktree com mudança não salva."* Um clique abre a
+   pasta `_archive/faxina-<data>/` no Explorer, com o `resumo.html` dentro.
+   Se nada foi separado, a pasta não é criada e o balão só dá o resumo.
+
+**Script ou Claude headless — recomendação: script.** Os passos 1–8 são
+determinísticos (git + filesystem) e as regras "nunca tocar" são duras —
+melhor como código testado (vitest, como o resto de `src/main`) do que como
+prompt. Claude headless custaria cota a cada rodada e poderia variar o
+critério. Ele só se paga num complemento opcional: redigir o resumo ou
+opinar sobre as branches que ficaram em "manter".
+
+**Alcance (decisão do dono, 23/10):** **todo repo que teve trabalho desde a
+última varredura** — não só o do Donel. "Teve trabalho" = algum destes sinais
+depois do carimbo da faxina anterior:
+
+- transcript em `~/.claude/projects/` com `mtime` posterior, cujo cwd seja o
+  repo ou uma worktree dele (worktree → repo dono pelo `.git` dela ou por
+  `git worktree list`);
+- entrada no reflog de `HEAD` ou de alguma branch local
+  (`git reflog --date=iso`), o que pega commit, checkout e worktree nova
+  feitos fora do Claude.
+
+O carimbo (`lastSweepAt`) fica no `config.json` do app, gravado só quando a
+faxina termina. **Na primeira rodada, sem carimbo, todo repo conhecido
+entra.** Os repos conhecidos são os das raízes da sidebar mais os que
+aparecem como cwd de transcript. Cada repo tem a sua subpasta
+(`_archive/faxina-<data>/<repo>/`). O resumo do balão e o `resumo.html`
+agregam todos: *"Faxina em 4 repos: …"*. Um repo sem nada a limpar não
+aparece no resumo.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo

@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Chat — Caixa de escrever</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="donel/styles.css">
+<script src="donel/_ds_bundle.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<script src="donel/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:var(--bg-app)}
+a{color:var(--accent);text-decoration:none}
+a:hover{color:var(--text-primary)}
+@keyframes dd-caret{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes dd-blink{0%,100%{opacity:1}50%{opacity:.35}}
+textarea::placeholder{color:var(--text-muted);opacity:1}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+</style>
+</helmet>
+
+<div style="position:relative;width:1440px;height:900px;overflow:hidden;box-sizing:border-box;padding:24px;display:flex;flex-direction:column;gap:16px;background:var(--bg-app);color:var(--text-primary);font-family:var(--font-ui);font-size:13px;line-height:1.5;">
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-cr" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></symbol>
+    <symbol id="i-xc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="m15 9-6 6"></path><path d="m9 9 6 6"></path></symbol>
+    <symbol id="i-term" viewBox="0 0 24 24"><path d="m7 11 2-2-2-2"></path><path d="M11 13h4"></path><rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></symbol>
+    <symbol id="i-retry" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></symbol>
+    <symbol id="i-at" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"></path></symbol>
+  </svg>
+
+  <div style="flex:none;display:flex;align-items:center;gap:10px;">
+    <span style="display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:4px;background:var(--accent);color:var(--bg-app);font-size:11px;font-weight:600;">6</span>
+    <span style="font-size:15px;font-weight:600;">Caixa de escrever</span>
+    <span style="font-size:13px;color:var(--text-muted);">multilinha, menus / e @, anexos, selo de shell, estados de envio e o aviso de texto no terminal</span>
+  </div>
+
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,448px);column-gap:24px;align-items:start;">
+
+    <!-- ================= COLUNA 1 ================= -->
+    <div style="display:flex;flex-direction:column;gap:20px;">
+
+      <!-- S1: várias linhas -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">A</span><span style="font-size:13px;font-weight:600;">Várias linhas</span><span style="flex:1;"></span><span style="font-size:11px;color:var(--text-muted);">cresce até ~10 linhas e depois rola</span></div>
+        <div data-composer="1" style="display:flex;align-items:flex-end;gap:6px;box-sizing:border-box;padding:7px 8px 7px 6px;border:1px solid var(--accent);border-radius:8px;background:var(--bg-panel);box-shadow:var(--focus-ring);">
+          <button type="button" aria-label="Anexar arquivo ou imagem" title="Anexar" style="flex:none;display:inline-grid;place-items:center;width:32px;height:32px;border:none;border-radius:6px;background:transparent;color:var(--text-muted);cursor:pointer;"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-clip"></use></svg></button>
+          <textarea aria-label="Mensagem para o Claude, várias linhas" rows="10" value="{{ longText }}" onChange="{{ noop }}" style="flex:1;min-width:0;box-sizing:border-box;resize:none;border:none;outline:none;background:transparent;color:var(--text-primary);font-family:var(--font-ui);font-size:13px;line-height:20px;padding:6px 4px;height:212px;overflow-y:auto;"></textarea>
+          <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" onClick="{{ noop }}">Enviar</x-import>
+        </div>
+        <div style="margin-top:6px;font-size:11px;color:var(--text-muted);">Enter envia · Shift+Enter quebra a linha · ↑ com a caixa vazia volta à mensagem anterior</div>
+      </div>
+
+      <!-- S2: selo de shell -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">B</span><span style="font-size:13px;font-weight:600;">Mensagem que começa com !</span></div>
+        <div data-composer="1" style="box-sizing:border-box;padding:8px 8px 7px 8px;border:1px solid var(--accent);border-radius:8px;background:var(--bg-panel);box-shadow:var(--focus-ring);display:flex;flex-direction:column;gap:6px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;color:var(--state-waiting);background:color-mix(in srgb,var(--state-waiting) 10%,transparent);border:1px solid color-mix(in srgb,var(--state-waiting) 40%,transparent);"><svg viewBox="0 0 24 24" style="width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-term"></use></svg>vai rodar como comando de shell</span>
+          </div>
+          <div style="display:flex;align-items:flex-end;gap:6px;">
+            <div style="flex:1;min-width:0;font-family:var(--font-mono);font-size:12.5px;line-height:20px;padding:6px 4px;">!npm run lint<span style="display:inline-block;width:7px;height:15px;margin-left:1px;vertical-align:text-bottom;background:var(--accent);animation:dd-caret 1.1s step-end infinite;"></span></div>
+            <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" onClick="{{ noop }}">Enviar</x-import>
+          </div>
+        </div>
+      </div>
+
+      <!-- S3: aviso de texto não enviado no terminal -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">C</span><span style="font-size:13px;font-weight:600;">Texto não enviado no terminal</span></div>
+        <div role="alert" style="box-sizing:border-box;padding:10px 12px;border:1px solid color-mix(in srgb,var(--state-waiting) 45%,transparent);border-radius:8px;background:color-mix(in srgb,var(--state-waiting) 8%,var(--bg-panel));display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;align-items:flex-start;gap:8px;">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;margin-top:2px;fill:none;stroke:var(--state-waiting);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-alert"></use></svg>
+            <span style="font-size:13px;line-height:1.5;">Há texto não enviado no terminal: <span style="font-family:var(--font-mono);font-size:12.5px;">«refatora o cálculo de…»</span></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding-left:24px;">
+            <x-import component-from-global-scope="DonelDesignSystem.Button" variant="secondary" onClick="{{ noop }}">Descartar e enviar</x-import>
+            <x-import component-from-global-scope="DonelDesignSystem.Button" variant="ghost" onClick="{{ noop }}">Abrir terminal</x-import>
+          </div>
+        </div>
+        <div style="margin-top:8px;display:flex;align-items:flex-end;gap:6px;box-sizing:border-box;padding:7px 8px 7px 6px;border:1px solid var(--border);border-radius:8px;background:var(--bg-panel);">
+          <span style="flex:none;width:32px;height:32px;"></span>
+          <div style="flex:1;min-width:0;font-size:13px;line-height:20px;padding:6px 4px;">Corrige o teste de taxa negativa.</div>
+          <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" onClick="{{ noop }}">Enviar</x-import>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= COLUNA 2 ================= -->
+    <div style="display:flex;flex-direction:column;gap:20px;">
+
+      <!-- S4: menu / -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">D</span><span style="font-size:13px;font-weight:600;">Menu /</span><span style="flex:1;"></span><span style="font-size:11px;color:var(--text-muted);">skills e comandos, filtrando enquanto digita</span></div>
+        <div role="listbox" aria-label="Skills e comandos" style="overflow:hidden;border:1px solid var(--border);border-radius:8px;background:var(--bg-panel);box-shadow:var(--shadow-modal);">
+          <div style="display:flex;align-items:center;gap:8px;height:26px;padding:0 12px;border-bottom:1px solid var(--border);font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);"><span>Skills e comandos</span><span style="flex:1;"></span><span style="text-transform:none;letter-spacing:0;font-family:var(--font-mono);">5 de 31 · /co</span></div>
+          <div role="option" aria-selected="true" style="display:flex;align-items:center;gap:10px;height:44px;box-sizing:border-box;padding:0 12px;background:color-mix(in srgb,var(--accent) 8%,var(--bg-panel));">
+            <span style="flex:none;width:136px;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;"><span style="color:var(--accent);font-weight:600;">/co</span>de-review</span>
+            <span style="flex:1;min-width:0;font-size:12px;color:var(--text-muted);line-height:1.35;">Revisa as mudanças nos padrões do repo e na spec.</span>
+            <span style="flex:none;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:4px;border:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">global</span>
+          </div>
+          <div role="option" aria-selected="false" style="display:flex;align-items:center;gap:10px;height:44px;box-sizing:border-box;padding:0 12px;">
+            <span style="flex:none;width:136px;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;"><span style="color:var(--accent);font-weight:600;">/co</span>mpact</span>
+            <span style="flex:1;min-width:0;font-size:12px;color:var(--text-muted);line-height:1.35;">Compacta a conversa para liberar contexto.</span>
+            <span style="flex:none;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:4px;border:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">CLI</span>
+          </div>
+          <div role="option" aria-selected="false" style="display:flex;align-items:center;gap:10px;height:44px;box-sizing:border-box;padding:0 12px;">
+            <span style="flex:none;width:136px;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;"><span style="color:var(--accent);font-weight:600;">/co</span>nfig</span>
+            <span style="flex:1;min-width:0;font-size:12px;color:var(--text-muted);line-height:1.35;">Abre as configurações do Claude Code.</span>
+            <span style="flex:none;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:4px;border:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">CLI</span>
+          </div>
+          <div role="option" aria-selected="false" style="display:flex;align-items:center;gap:10px;height:44px;box-sizing:border-box;padding:0 12px;">
+            <span style="flex:none;width:136px;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;"><span style="color:var(--accent);font-weight:600;">/co</span>ntext</span>
+            <span style="flex:1;min-width:0;font-size:12px;color:var(--text-muted);line-height:1.35;">Mostra o que está ocupando o contexto.</span>
+            <span style="flex:none;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:4px;border:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">CLI</span>
+          </div>
+          <div role="option" aria-selected="false" style="display:flex;align-items:center;gap:10px;height:44px;box-sizing:border-box;padding:0 12px;">
+            <span style="flex:none;width:136px;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;"><span style="color:var(--accent);font-weight:600;">/co</span>ntrato-api</span>
+            <span style="flex:1;min-width:0;font-size:12px;color:var(--text-muted);line-height:1.35;">Confere o contrato da API pública contra o código.</span>
+            <span style="flex:none;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:4px;border:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">projeto</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;height:24px;padding:0 12px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted);"><span>↑ ↓ navegam</span><span>Tab escolhe</span><span>Esc fecha</span></div>
+        </div>
+        <div data-composer="1" style="margin-top:8px;display:flex;align-items:flex-end;gap:6px;box-sizing:border-box;padding:7px 8px 7px 6px;border:1px solid var(--accent);border-radius:8px;background:var(--bg-panel);box-shadow:var(--focus-ring);">
+          <span style="flex:none;display:inline-grid;place-items:center;width:32px;height:32px;color:var(--text-muted);"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-clip"></use></svg></span>
+          <div style="flex:1;min-width:0;font-family:var(--font-mono);font-size:12.5px;line-height:20px;padding:6px 4px;">/co<span style="display:inline-block;width:7px;height:15px;margin-left:1px;vertical-align:text-bottom;background:var(--accent);animation:dd-caret 1.1s step-end infinite;"></span></div>
+          <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" disabled="{{ true }}">Enviar</x-import>
+        </div>
+      </div>
+
+      <!-- S5: menu @ -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">E</span><span style="font-size:13px;font-weight:600;">Menu @</span><span style="flex:1;"></span><span style="font-size:11px;color:var(--text-muted);">arquivos do projeto</span></div>
+        <div role="listbox" aria-label="Arquivos do projeto" style="overflow:hidden;border:1px solid var(--border);border-radius:8px;background:var(--bg-panel);box-shadow:var(--shadow-modal);">
+          <div style="display:flex;align-items:center;gap:8px;height:26px;padding:0 12px;border-bottom:1px solid var(--border);font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);"><span>Arquivos do projeto</span><span style="flex:1;"></span><span style="text-transform:none;letter-spacing:0;font-family:var(--font-mono);">5 de 212 · @parc</span></div>
+          <div role="option" aria-selected="true" style="display:flex;align-items:center;gap:10px;height:32px;box-sizing:border-box;padding:0 12px;background:color-mix(in srgb,var(--accent) 8%,var(--bg-panel));">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-file"></use></svg>
+            <span style="flex:1;min-width:0;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">src/simulador/<span style="color:var(--accent);font-weight:600;">parc</span>elas.ts</span>
+          </div>
+          <div role="option" aria-selected="false" style="display:flex;align-items:center;gap:10px;height:32px;box-sizing:border-box;padding:0 12px;">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-file"></use></svg>
+            <span style="flex:1;min-width:0;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">src/simulador/<span style="color:var(--accent);font-weight:600;">parc</span>elas.test.ts</span>
+          </div>
+          <div role="option" aria-selected="false" style="display:flex;align-items:center;gap:10px;height:32px;box-sizing:border-box;padding:0 12px;">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-file"></use></svg>
+            <span style="flex:1;min-width:0;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">src/relatorio/<span style="color:var(--accent);font-weight:600;">parc</span>elas-repasse.ts</span>
+          </div>
+          <div role="option" aria-selected="false" style="display:flex;align-items:center;gap:10px;height:32px;box-sizing:border-box;padding:0 12px;">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-file"></use></svg>
+            <span style="flex:1;min-width:0;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">docs/<span style="color:var(--accent);font-weight:600;">parc</span>elas.md</span>
+          </div>
+          <div role="option" aria-selected="false" style="display:flex;align-items:center;gap:10px;height:32px;box-sizing:border-box;padding:0 12px;">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-file"></use></svg>
+            <span style="flex:1;min-width:0;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">tests/e2e/<span style="color:var(--accent);font-weight:600;">parc</span>elas.spec.ts</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;height:24px;padding:0 12px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted);"><span>↑ ↓ navegam</span><span>Tab insere a menção</span><span>Esc fecha</span></div>
+        </div>
+        <div data-composer="1" style="margin-top:8px;display:flex;align-items:flex-end;gap:6px;box-sizing:border-box;padding:7px 8px 7px 6px;border:1px solid var(--accent);border-radius:8px;background:var(--bg-panel);box-shadow:var(--focus-ring);">
+          <span style="flex:none;display:inline-grid;place-items:center;width:32px;height:32px;color:var(--text-muted);"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-clip"></use></svg></span>
+          <div style="flex:1;min-width:0;font-size:13px;line-height:20px;padding:6px 4px;">Olha o <span style="font-family:var(--font-mono);font-size:12.5px;">@parc</span><span style="display:inline-block;width:7px;height:15px;margin-left:1px;vertical-align:text-bottom;background:var(--accent);animation:dd-caret 1.1s step-end infinite;"></span></div>
+          <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" disabled="{{ true }}">Enviar</x-import>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= COLUNA 3 ================= -->
+    <div style="display:flex;flex-direction:column;gap:20px;">
+
+      <!-- S6: anexos -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">F</span><span style="font-size:13px;font-weight:600;">Anexos</span><span style="flex:1;"></span><span style="font-size:11px;color:var(--text-muted);">imagem colada e texto longo colado</span></div>
+        <div data-composer="1" style="box-sizing:border-box;padding:10px 8px 7px 8px;border:1px solid var(--accent);border-radius:8px;background:var(--bg-panel);box-shadow:var(--focus-ring);display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <!-- miniatura de imagem, removível -->
+            <div style="display:flex;flex-direction:column;gap:3px;">
+              <div style="position:relative;width:80px;height:56px;box-sizing:border-box;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--bg-app);">
+                <div style="position:absolute;left:8px;top:8px;width:46px;height:4px;border-radius:2px;background:var(--border);"></div>
+                <div style="position:absolute;left:8px;top:18px;width:62px;height:4px;border-radius:2px;background:color-mix(in srgb,var(--state-permission) 60%,transparent);"></div>
+                <div style="position:absolute;left:8px;top:28px;width:34px;height:4px;border-radius:2px;background:var(--border);"></div>
+                <div style="position:absolute;left:8px;top:38px;width:52px;height:4px;border-radius:2px;background:var(--border);"></div>
+                <button type="button" aria-label="Remover a imagem print-erro.png" title="Remover" style="position:absolute;top:3px;right:3px;display:inline-grid;place-items:center;width:18px;height:18px;padding:0;border:1px solid var(--border);border-radius:50%;background:var(--bg-panel);color:var(--text-primary);cursor:pointer;"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-x"></use></svg></button>
+              </div>
+              <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">print-erro.png</span>
+            </div>
+            <!-- ficha de texto colado -->
+            <div style="display:flex;align-items:center;gap:8px;height:56px;box-sizing:border-box;padding:0 6px 0 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-app);">
+              <svg viewBox="0 0 24 24" style="width:16px;height:16px;flex:none;fill:none;stroke:var(--text-muted);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-file"></use></svg>
+              <button type="button" aria-label="Abrir o texto colado de 500 linhas para conferir" style-hover="color:var(--accent)" style="display:flex;flex-direction:column;align-items:flex-start;border:none;background:transparent;padding:0;color:var(--text-primary);cursor:pointer;text-align:left;font-family:var(--font-ui);">
+                <span style="font-size:12px;font-weight:600;white-space:nowrap;">texto colado — 500 linhas</span>
+                <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">abre para conferir</span>
+              </button>
+              <button type="button" aria-label="Remover o texto colado" title="Remover" style-hover="background:var(--bg-raised)" style="display:inline-grid;place-items:center;width:22px;height:22px;padding:0;border:none;border-radius:4px;background:transparent;color:var(--text-muted);cursor:pointer;"><svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-x"></use></svg></button>
+            </div>
+          </div>
+          <div style="display:flex;align-items:flex-end;gap:6px;">
+            <span style="flex:none;display:inline-grid;place-items:center;width:32px;height:32px;color:var(--text-muted);"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-clip"></use></svg></span>
+            <div style="flex:1;min-width:0;font-size:13px;line-height:20px;padding:6px 4px;">O que você acha desse erro?<span style="display:inline-block;width:7px;height:15px;margin-left:1px;vertical-align:text-bottom;background:var(--accent);animation:dd-caret 1.1s step-end infinite;"></span></div>
+            <x-import component-from-global-scope="DonelDesignSystem.Button" variant="primary" onClick="{{ noop }}">Enviar</x-import>
+          </div>
+        </div>
+      </div>
+
+      <!-- S7: estados de envio -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="display:inline-grid;place-items:center;width:20px;height:20px;border-radius:4px;background:var(--bg-raised);font-size:11px;font-weight:600;">G</span><span style="font-size:13px;font-weight:600;">Estados de envio</span><span style="flex:1;"></span><span style="font-size:11px;color:var(--text-muted);">na própria mensagem do dono</span></div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+
+          <div style="display:flex;gap:10px;padding:9px 12px;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;margin-top:3px;fill:none;stroke:var(--accent);stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round" aria-label="Você"><use href="#i-cr"></use></svg>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;line-height:1.55;">Roda o lint também.</div>
+              <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-top:2px;font-size:11px;color:var(--text-muted);"><span style="width:6px;height:6px;border-radius:50%;background:var(--text-muted);animation:dd-blink 1s ease-in-out infinite;"></span><span>enviando…</span></div>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:10px;padding:9px 12px;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;margin-top:3px;fill:none;stroke:var(--accent);stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round" aria-label="Você"><use href="#i-cr"></use></svg>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;line-height:1.55;">Troca o cálculo para usar decimal.js e me mostra o plano antes.</div>
+              <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-top:2px;font-size:11px;color:var(--text-muted);"><span style="font-family:var(--font-mono);">14:09</span><span aria-hidden="true">·</span><svg viewBox="0 0 24 24" style="width:12px;height:12px;flex:none;fill:none;stroke:var(--zone-ok);stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-check"></use></svg><span>entrou</span></div>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:10px;padding:9px 12px;background:var(--bg-panel);border:1px solid color-mix(in srgb,var(--state-permission) 50%,var(--border));border-radius:6px;">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;margin-top:3px;fill:none;stroke:var(--accent);stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round" aria-label="Você"><use href="#i-cr"></use></svg>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;line-height:1.55;">Corrige o teste de taxa negativa.</div>
+              <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-top:2px;font-size:11px;">
+                <svg viewBox="0 0 24 24" style="width:12px;height:12px;flex:none;fill:none;stroke:var(--state-permission);stroke-width:2;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-xc"></use></svg>
+                <span style="color:var(--state-permission);">não foi</span>
+                <span aria-hidden="true" style="color:var(--text-muted);">·</span>
+                <button type="button" style-hover="color:var(--text-primary)" style="display:inline-flex;align-items:center;gap:4px;border:none;background:transparent;padding:0;color:var(--accent);cursor:pointer;font-family:var(--font-ui);font-size:11px;font-weight:600;"><svg viewBox="0 0 24 24" style="width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><use href="#i-retry"></use></svg>tentar de novo</button>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:10px;padding:9px 12px;background:var(--bg-panel);border:1px dashed var(--border);border-radius:6px;">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;flex:none;margin-top:3px;fill:none;stroke:var(--accent);stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round" aria-label="Você"><use href="#i-cr"></use></svg>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;line-height:1.55;">E me avisa quando terminar.</div>
+              <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:2px;font-size:11px;">
+                <span style="color:var(--text-muted);">entra na próxima pausa do Claude</span>
+                <span style="display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:4px;font-weight:600;white-space:nowrap;color:var(--state-waiting);background:color-mix(in srgb,var(--state-waiting) 10%,transparent);border:1px solid color-mix(in srgb,var(--state-waiting) 40%,transparent);">na fila</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:11px;line-height:1.5;color:var(--text-muted);">Toda mensagem termina em “entrou” ou “não foi”, nunca em “enviando…” para sempre. Depois de enviada, não se edita.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      noop: () => {},
+      longText: [
+        'Refatora o cálculo de parcelas em 3 passos:',
+        '1. extrai a regra para dinheiro.ts',
+        '2. troca float por decimal.js',
+        '3. mantém a diferença na última parcela',
+        '',
+        'Depois:',
+        '- roda npm test e npm run lint',
+        '- atualiza o README com a regra nova',
+        '- não mexe no relatório de repasse ainda',
+        '',
+        'Se algum teste falhar, para e me avisa',
+        'antes de mudar qualquer expectativa.'
+      ].join('\n')
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "turns": [
+    {
+      "match": "re:^rodar",
+      "steps": [
+        { "type": "tool", "name": "Bash", "input": { "command": "npm test" }, "result": "ok", "delayMs": 3500 },
+        { "type": "assistant", "text": "Testes rodaram." },
+        { "type": "hook", "event": "Stop" }
+      ]
+    }
+  ]
+}

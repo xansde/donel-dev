@@ -68,7 +68,7 @@ test.afterAll(async () => {
   rmSync(fakeHomeRoot, { recursive: true, force: true });
 });
 
-test('T1217 — virada completa: .old existe, junctions desfeitas, alvo global intacto', async () => {
+test('T1217 — virada completa: .old existe, junctions desfeitas, alvo global intacto @contas', async () => {
   test.setTimeout(60_000);
 
   const scanBefore = await appWindow.evaluate(() => window.donel.migration.scan());

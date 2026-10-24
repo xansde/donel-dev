@@ -1,4 +1,4 @@
-import { Button, Modal, Select, TextInput } from '@donel-dev/design-system';
+import { Button, Modal, Select, TextInput, Toggle } from '@donel-dev/design-system';
 import type { SelectOption } from '@donel-dev/design-system';
 import { Trash2 } from 'lucide-react';
 import { useState } from 'react';
@@ -39,6 +39,14 @@ export interface PreferencesProps {
   onRemoveRoot: (root: string) => void;
   onChangeProjectScanMode: (mode: ProjectScanMode) => void;
   onChangeNotificationPreference: (preference: NotificationPreference) => void;
+  /** T056 (014-chat) — interruptor "Chat (experimental)" (`chat.enabled`). */
+  chatEnabled: boolean;
+  /** `chat.enabled` só vale depois de reiniciar o app: true quando o valor salvo difere do que a janela abriu. */
+  chatRestartPending: boolean;
+  onChangeChatEnabled: (enabled: boolean) => void;
+  /** T022 (015-jobu-pet) — "Jobu na área de trabalho" switch (`pet.enabled`); applies at once. */
+  petEnabled: boolean;
+  onChangePetEnabled: (enabled: boolean) => void;
 }
 
 export function Preferences({
@@ -51,6 +59,11 @@ export function Preferences({
   onRemoveRoot,
   onChangeProjectScanMode,
   onChangeNotificationPreference,
+  chatEnabled,
+  chatRestartPending,
+  onChangeChatEnabled,
+  petEnabled,
+  onChangePetEnabled,
 }: PreferencesProps): React.JSX.Element {
   const [newRoot, setNewRoot] = useState('');
 
@@ -133,6 +146,30 @@ export function Preferences({
             value={notificationPreference}
             options={NOTIFICATION_OPTIONS}
             onChange={(value) => onChangeNotificationPreference(value as NotificationPreference)}
+          />
+        </div>
+      </div>
+      <div className={styles.section} data-testid="preferences-chat-section">
+        <h3 className={styles.sectionTitle}>Chat (experimental)</h3>
+        <p className={styles.sectionHint}>
+          Mostra a conversa de cada sessão do Claude como um chat, com o terminal a um atalho de distância (Ctrl+`).
+          Vale a partir da próxima vez que o app abrir.
+        </p>
+        <Toggle
+          checked={chatEnabled}
+          onChange={onChangeChatEnabled}
+          label="Chat (experimental)"
+          description={chatRestartPending ? 'Reinicie o app para aplicar.' : undefined}
+        />
+      </div>
+      <div className={styles.section} data-testid="preferences-pet-section">
+        <h3 className={styles.sectionTitle}>Jobu Donel</h3>
+        <div data-testid="preferences-pet-toggle">
+          <Toggle
+            checked={petEnabled}
+            onChange={onChangePetEnabled}
+            label="Jobu na área de trabalho"
+            description="Avisa quando uma sessão termina ou espera você, e quando a conta muda."
           />
         </div>
       </div>

@@ -1,0 +1,103 @@
+{
+ "name": "screen-status",
+ "description": "Tela com abas Settings/Status/Config/Usage/Stats (/status).",
+ "source": "real",
+ "origin": "q9-r5.txt :: after /status",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 23,
+ "lines": [
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔",
+   "dim": []
+  },
+  {
+   "text": "   Settings  Status   Config   Usage   Stats",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Version:           2.1.293",
+   "dim": []
+  },
+  {
+   "text": "   Session name:      /rename to add a name",
+   "dim": []
+  },
+  {
+   "text": "   Session ID:        eb8fe805-2f40-4a95-9060-99e0aefed0c8",
+   "dim": []
+  },
+  {
+   "text": "   Session kind:      interactive",
+   "dim": []
+  },
+  {
+   "text": "   Peer address:      uds:\\\\.\\pipe\\LOCAL\\cc-msg-8633ddd749c15cf8140ef25fe3449b47",
+   "dim": []
+  },
+  {
+   "text": "   cwd:               C:\\Users\\xansd\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c",
+   "dim": []
+  },
+  {
+   "text": "                      56-484f03770e11\\scratchpad\\research-014\\b2\\cwd",
+   "dim": []
+  },
+  {
+   "text": "   Login method:      Claude Max account",
+   "dim": []
+  },
+  {
+   "text": "   Organization:      <email>'s Organization",
+   "dim": []
+  },
+  {
+   "text": "   Email:             <email>",
+   "dim": []
+  },
+  {
+   "text": "   Cloud sessions:    Not set up · /web-setup to connect GitHub",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Model:             haiku (claude-haiku-5-5)",
+   "dim": []
+  },
+  {
+   "text": "   MCP servers:       5 connected, 3 need auth, 8 pending, 2 failed · /mcp",
+   "dim": []
+  },
+  {
+   "text": "   Setting sources:   User settings, Command line arguments",
+   "dim": []
+  },
+  {
+   "text": "   Auto mode server:  Disabled",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Esc to cancel",
+   "dim": []
+  }
+ ]
+}

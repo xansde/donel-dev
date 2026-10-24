@@ -438,6 +438,11 @@ Falas de exemplo (calibram tom para design e microcopy):
 - **Nunca:** sobre o terminal, em notificações de permissão, em mensagens de
   erro, nos gates do modo Dev. O app é sala de controle calma; o Donel vive
   nos momentos de memória e rito, não sobre o trabalho.
+- **Emenda de 21/10 (spec 015):** o dono fez dele o seu assistente. Fora da
+  janela do app, num pet sempre por cima, ele avisa sobre as sessões e a troca
+  de conta — inclusive esperas por permissão —, com balão de fato seco e a
+  persona só no rosto e nos gestos. Dentro do app, "vive" e "nunca" acima
+  seguem valendo até a spec do layout místico.
 
 ### Mecânica "ele devolve, não só guarda"
 

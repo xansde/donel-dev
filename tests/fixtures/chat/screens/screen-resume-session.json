@@ -1,0 +1,171 @@
+{
+ "name": "screen-resume-session",
+ "description": "Tela sem caixa de entrada: \"Resume session\".",
+ "source": "real",
+ "origin": "q9-r1.txt :: after /resume",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " ▐▛███▛█   Claude Code v2.1.293",
+   "dim": []
+  },
+  {
+   "text": "▝▜██████▀  Haiku 5.5 · Claude Max",
+   "dim": []
+  },
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔",
+   "dim": []
+  },
+  {
+   "text": "   Resume session",
+   "dim": []
+  },
+  {
+   "text": "   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+   "dim": []
+  },
+  {
+   "text": "   │ ⌕ Search…                                                                                                      │",
+   "dim": []
+  },
+  {
+   "text": "   ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+   "dim": []
+  },
+  {
+   "text": "     cwd",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   ❯ ! echo R$((100+200))",
+   "dim": []
+  },
+  {
+   "text": "     2 minutes ago · HEAD · 285.5KB",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     Ctrl+A to show all projects · Ctrl+B to only show current branch · Space to preview · Ctrl+R to rename · Type to",
+   "dim": []
+  },
+  {
+   "text": "     search · Esc to cancel",
+   "dim": []
+  }
+ ]
+}

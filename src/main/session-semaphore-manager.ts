@@ -8,6 +8,7 @@ import {
   type SemaphoreEvent,
   type SemaphoreMachineState,
 } from './semaphore-state-machine';
+import type { BridgeEvent, HookBridge } from './hook-bridge';
 
 // T009 — camada de integração (I/O: servidor HTTP local + Maps + timer de
 // heurística) sobre a máquina de estados pura (semaphore-state-machine.ts).
@@ -69,6 +70,8 @@ export class SessionSemaphoreManager {
   private readonly ptyState = new Map<string, SemaphoreMachineState>();
   /** ptyId cujo processo saiu com exit code != 0 — sobrepõe `done` -> `error` na emissão pública. */
   private readonly erroredPtyIds = new Set<string>();
+  /** T079 (014-chat) - abas com pendencia aberta (PermissionRequest): o estado publico e `permission` enquanto durar. */
+  private readonly pendingOpenPtyIds = new Set<string>();
   private readonly listeners = new Set<(update: SemaphoreUpdate) => void>();
   /**
    * Emenda 22/09 (011-contas-e-provedores, etapa 3, Fase 2, item 4) —
@@ -110,8 +113,24 @@ export class SessionSemaphoreManager {
       });
     });
 
-    this.tickTimer = setInterval(() => this.tick(), this.tickIntervalMs);
+    this.startTicking();
     return this.port;
+  }
+
+  private startTicking(): void {
+    if (this.tickTimer) return;
+    this.tickTimer = setInterval(() => this.tick(), this.tickIntervalMs);
+  }
+
+  /**
+   * T014 (014-chat) — transporte novo: o semáforo passa a receber os eventos da
+   * ponte de hooks (HTTP + token por aba) já resolvidos por `ptyId`; o mapa por
+   * `session_id` não participa. O servidor legado (`start()`) não sobe. Devolve o
+   * cancelamento da assinatura.
+   */
+  attachBridge(bridge: HookBridge): () => void {
+    this.startTicking();
+    return bridge.onAny((event) => this.handleBridgeEvent(event));
   }
 
   dispose(): void {
@@ -132,6 +151,7 @@ export class SessionSemaphoreManager {
   unregisterSession(ptyId: string): void {
     this.ptyState.delete(ptyId);
     this.erroredPtyIds.delete(ptyId);
+    this.pendingOpenPtyIds.delete(ptyId);
     for (const [claudeSessionId, mappedPtyId] of this.sessionToPty) {
       if (mappedPtyId === ptyId) this.sessionToPty.delete(claudeSessionId);
     }
@@ -143,6 +163,14 @@ export class SessionSemaphoreManager {
     const next = reduceSemaphoreState(current, { type: 'processExit', at: this.now() });
     this.ptyState.set(ptyId, next);
     if (exitCode !== 0) this.erroredPtyIds.add(ptyId);
+    this.emit(ptyId);
+  }
+
+  /** T079 (014-chat) - o hub do chat avisa quando a aba ganha/perde pendencia aberta. */
+  setPendingOpen(ptyId: string, open: boolean): void {
+    if (this.pendingOpenPtyIds.has(ptyId) === open) return;
+    if (open) this.pendingOpenPtyIds.add(ptyId);
+    else this.pendingOpenPtyIds.delete(ptyId);
     this.emit(ptyId);
   }
 
@@ -197,18 +225,35 @@ export class SessionSemaphoreManager {
     if (!ptyId) return; // sessão claude não rastreada por este app (ex.: settings globais do usuário rodando outra sessão em paralelo).
 
     const rawHookEventName = (payload as Record<string, unknown>).hook_event_name;
-    // Emenda 22/09 (item 4) — dispara ANTES do mapeamento genérico (que
-    // funde StopFailure em 'stop'), pro gatilho imediato de auto-switch
-    // saber especificamente que este fim de turno foi por erro de API.
-    if (rawHookEventName === 'StopFailure') {
+    this.applyHookEvent(ptyId, rawHookEventName, (payload as Record<string, unknown>).reason);
+  }
+
+  private handleBridgeEvent(event: BridgeEvent): void {
+    if (!this.ptyState.has(event.ptyId)) return; // aba sem semáforo (ou já encerrada): nada a mover.
+    if (event.type === 'hook') {
+      this.applyHookEvent(event.ptyId, event.event, undefined);
+    } else if (event.type === 'session-end') {
+      // A ponte já filtra clear/resume; a máquina pura protege de novo (defesa em profundidade).
+      this.applyHookEvent(event.ptyId, 'SessionEnd', event.reason);
+    }
+    // 'conversation-switched' não mexe no estado: o semáforo é por aba (ptyId), não por conversa.
+  }
+
+  private applyHookEvent(ptyId: string, hookEventName: unknown, reason: unknown): void {
+    // Emenda 22/09 (item 4) — dispara ANTES do mapeamento genérico (que funde
+    // StopFailure em 'stop'), pro gatilho imediato de auto-switch saber que este
+    // fim de turno foi por erro de API.
+    if (hookEventName === 'StopFailure') {
       for (const listener of this.stopFailureListeners) listener(ptyId);
     }
-
-    const eventType = mapHookEventName(rawHookEventName);
+    const eventType = mapHookEventName(hookEventName);
     if (!eventType) return;
-
     const current = this.ptyState.get(ptyId) ?? INITIAL_SEMAPHORE_STATE;
-    const next = reduceSemaphoreState(current, { type: eventType, at: this.now() } as SemaphoreEvent);
+    const event: SemaphoreEvent =
+      eventType === 'sessionEnd'
+        ? { type: 'sessionEnd', at: this.now(), reason: typeof reason === 'string' ? reason : null }
+        : ({ type: eventType, at: this.now() } as SemaphoreEvent);
+    const next = reduceSemaphoreState(current, event);
     this.ptyState.set(ptyId, next);
     this.emit(ptyId);
   }
@@ -228,6 +273,7 @@ export class SessionSemaphoreManager {
 
   private publicStateFor(ptyId: string, state: SemaphoreMachineState): PublicSemaphoreState {
     if (state.state === 'done' && this.erroredPtyIds.has(ptyId)) return 'error';
+    if (state.state !== 'done' && this.pendingOpenPtyIds.has(ptyId)) return 'permission';
     return state.state;
   }
 

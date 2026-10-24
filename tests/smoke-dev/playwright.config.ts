@@ -16,6 +16,9 @@ import { defineConfig } from '@playwright/test';
 // conceito exclusivo do React no RENDERER, não afeta esses dois processos.
 export default defineConfig({
   testDir: '.',
+  // Only Playwright specs: the folder also holds vitest files (*.test.ts), and
+  // collecting them aborts the run ("Vitest cannot be imported in a CommonJS module").
+  testMatch: '**/*.spec.ts',
   timeout: 60_000,
   retries: 0,
   workers: 1,

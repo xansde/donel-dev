@@ -29,6 +29,8 @@ export interface SidebarSession {
   state: SessionState;
   /** T009 — epoch ms de quando `state` passou a valer (FR-010/CA-6 desempate por idade em `permission`). */
   stateEnteredAt?: number;
+  /** 014-chat (T079, D-C20) — "esperando você" ao lado do nome quando há pendência aberta. */
+  statusText?: string;
   pinned: boolean;
   active: boolean;
 }
@@ -118,6 +120,7 @@ function SessionRow({
           onCommit={(next) => onRenameSession(session.id, next)}
           inputAriaLabel={`Renomear sessão ${session.name}`}
         />
+        {session.statusText ? <span className={styles.sessionStatus}>{session.statusText}</span> : null}
         {session.projectName ? <span className={styles.sessionProject}>{session.projectName}</span> : null}
       </button>
       <button

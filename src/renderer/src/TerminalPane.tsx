@@ -5,6 +5,8 @@ import { Button } from '@donel-dev/design-system';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { IMAGE_PASTE_SEQUENCE, parseClaudeNotFound, resolveTerminalKeyAction } from '../../shared';
 import type { PtyExitInfo, SemaphoreStateInfo } from '../../shared';
+import type { ScreenSnapshot } from '../../shared/chat/screen';
+import { bufferLineToScreenLine, estimateGridSize, withResumeArgs } from '../../shared/terminalScreen';
 import { formatRingBufferPreview } from './ringBufferPreview';
 import styles from './TerminalPane.module.css';
 
@@ -46,6 +48,54 @@ function fitWithoutOvershoot(term: XTerm, fitAddon: FitAddon): void {
     if (element.scrollHeight <= element.clientHeight || term.rows <= 1) return;
     term.resize(term.cols, term.rows - 1);
   }
+}
+
+/** Same figure addon-fit subtracts for the viewport scrollbar. */
+const SCROLLBAR_WIDTH_PX = 14;
+
+function hasLayout(element: HTMLElement | null | undefined): boolean {
+  return !!element && element.clientWidth > 0 && element.clientHeight > 0;
+}
+
+type RenderDimensionsHost = {
+  _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } };
+};
+
+/**
+ * T039 — size for a terminal whose element has no layout (tab born hidden,
+ * e.g. in the chat view: `display: none`, so `fit()` is a no-op and xterm
+ * stays 80x24). Heuristic:
+ *  1. area = the nearest ANCESTOR of the container that has layout (the tab
+ *     area the pane will occupy once shown); if none, the window's inner size;
+ *  2. cell size = xterm's own measurement when it exists
+ *     (`_core._renderService.dimensions.css.cell`, zero while hidden), else a
+ *     canvas `measureText` of the configured font for the width and
+ *     `ceil(fontSize * 1.2)` for the height (the DOM renderer's line box);
+ *  3. cols/rows = area / cell minus the scrollbar (`estimateGridSize`).
+ * Once the pane is shown, the ResizeObserver fits for real and resizes the PTY.
+ */
+function sizeForHiddenTerminal(term: XTerm, container: HTMLElement): { cols: number; rows: number } {
+  let area = { width: window.innerWidth, height: window.innerHeight };
+  for (let el = container.parentElement; el; el = el.parentElement) {
+    if (hasLayout(el)) {
+      area = { width: el.clientWidth, height: el.clientHeight };
+      break;
+    }
+  }
+
+  const fontSize = term.options.fontSize ?? 12.5;
+  const measured = (term as unknown as RenderDimensionsHost)._core?._renderService?.dimensions?.css?.cell;
+  let cellWidth = measured?.width ?? 0;
+  let cellHeight = measured?.height ?? 0;
+  if (!(cellWidth > 0 && cellHeight > 0)) {
+    const context = document.createElement('canvas').getContext('2d');
+    if (context) {
+      context.font = `${fontSize}px ${term.options.fontFamily ?? 'monospace'}`;
+      cellWidth = context.measureText('W').width;
+    }
+    cellHeight = Math.ceil(fontSize * 1.2);
+  }
+  return estimateGridSize({ ...area, cellWidth, cellHeight }, SCROLLBAR_WIDTH_PX);
 }
 
 const XTERM_THEME = {
@@ -142,6 +192,20 @@ export interface TerminalPaneProps {
    * assunto, e tem estado próprio na vista).
    */
   onProcessExit?: (info: { exitCode: number | undefined; signal: number | undefined; msSinceSpawn: number }) => void;
+  /**
+   * T056 (014-chat) — o `ptyId` de cada geração, no instante em que nasce. O chat
+   * da aba se liga ao PTY por ele (`useChatSession(ptyId)`) e PRECISA mantê-lo
+   * depois da saída do processo (a conversa segue legível, FR-034), por isso não
+   * há chamada com `null` no exit: o pai guarda o último e troca no próximo spawn.
+   */
+  onPtyChange?: (ptyId: string) => void;
+  /**
+   * T057 (014-chat, FR-034) — id da conversa atual desta aba (o pai o mantém em
+   * dia através de `/clear`/`/resume`). Quando presente, o "Reabrir" do overlay
+   * de sessão encerrada RETOMA essa conversa (`-r <id>`) em vez de abrir uma
+   * nova. Só o chat ligado passa isto: sem a prop o Reabrir é o de sempre.
+   */
+  resumeSessionId?: string;
 }
 
 /**
@@ -191,6 +255,18 @@ export interface TerminalPaneHandle {
    * unsubscribe.
    */
   onRenderedUpdate: (listener: () => void) => () => void;
+  /** T039 — bytes crus para a PTY (colagem, Enter, Esc). `false` sem processo vivo. */
+  write: (data: string) => boolean;
+  /** T039 — tela atual (viewport ativo) lida do BUFFER do xterm; `dim` por caractere UTF-16 (`isDim()`). */
+  readScreen: () => ScreenSnapshot;
+  /** T039 — avisa a cada chunk já processado pelo parser. Retorna unsubscribe. */
+  onScreenUpdate: (listener: () => void) => () => void;
+  /** T039 — mata a PTY e sobe outra com os mesmos flags; `resume` acrescenta `-r <id>`. */
+  respawn: (options?: { resume?: string }) => void;
+  /** T056 — devolve o foco do teclado ao terminal (ao alternar do chat para a vista Terminal). */
+  focus: () => void;
+  /** T039 — id da PTY viva (null sem processo). */
+  readonly ptyId: string | null;
 }
 
 export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(function TerminalPane(
@@ -207,6 +283,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     onProviderResolved,
     onClaudeSessionIdResolved,
     onProcessExit,
+    onPtyChange,
+    resumeSessionId,
   },
   ref
 ): React.JSX.Element {
@@ -235,6 +313,10 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   // cada chunk de PTY já processado pelo parser do xterm (ver comentário do
   // handle acima pro porquê de ser evento, não poll).
   const renderListenersRef = useRef(new Set<() => void>());
+  const screenListenersRef = useRef(new Set<() => void>());
+  /** T039 — argv efetivo do próximo spawn (respawn com `-r` o substitui); `undefined` = prop `args`. */
+  const spawnArgsRef = useRef<string[] | undefined>(undefined);
+  const respawnRef = useRef<(options?: { resume?: string }) => void>(() => undefined);
   const [status, setStatus] = useState<PaneStatus>({ kind: 'connecting' });
 
   // Ref pra sempre chamar a versão mais recente do callback sem precisar
@@ -253,6 +335,10 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   onClaudeSessionIdResolvedRef.current = onClaudeSessionIdResolved;
   const onProcessExitRef = useRef(onProcessExit);
   onProcessExitRef.current = onProcessExit;
+  const onPtyChangeRef = useRef(onPtyChange);
+  onPtyChangeRef.current = onPtyChange;
+  const resumeSessionIdRef = useRef(resumeSessionId);
+  resumeSessionIdRef.current = resumeSessionId;
   /** T710 — instante em que o PTY desta geração nasceu; base do `msSinceSpawn` levantado no `onExit`. */
   const spawnedAtRef = useRef<number | null>(null);
   // T505 (005-terminal-copy-paste) — atualizada a cada render, mesmo padrão
@@ -303,6 +389,52 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
           renderListenersRef.current.delete(listener);
         };
       },
+      write: (data: string): boolean => {
+        if (!ptyIdRef.current) return false;
+        window.donel.pty.input(ptyIdRef.current, data);
+        return true;
+      },
+      readScreen: (): ScreenSnapshot => {
+        const term = termRef.current;
+        if (!term) return { lines: [], bracketedPaste: false, altScreen: false, cols: 0, rows: 0 };
+        const buffer = term.buffer.active;
+        const scratch = buffer.getNullCell();
+        const lines: ScreenSnapshot['lines'][number][] = [];
+        for (let y = 0; y < term.rows; y += 1) {
+          const line = buffer.getLine(buffer.viewportY + y);
+          if (!line) {
+            lines.push({ text: '', dim: [] });
+            continue;
+          }
+          lines.push(
+            bufferLineToScreenLine({
+              cols: term.cols,
+              getCell: (x) => {
+                const cell = line.getCell(x, scratch);
+                return cell ? { chars: cell.getChars(), width: cell.getWidth(), dim: cell.isDim() !== 0 } : undefined;
+              },
+            })
+          );
+        }
+        return {
+          lines,
+          bracketedPaste: term.modes.bracketedPasteMode,
+          altScreen: buffer.type === 'alternate',
+          cols: term.cols,
+          rows: term.rows,
+        };
+      },
+      onScreenUpdate: (listener: () => void): (() => void) => {
+        screenListenersRef.current.add(listener);
+        return () => {
+          screenListenersRef.current.delete(listener);
+        };
+      },
+      respawn: (options?: { resume?: string }): void => respawnRef.current(options),
+      focus: (): void => termRef.current?.focus(),
+      get ptyId(): string | null {
+        return ptyIdRef.current;
+      },
     }),
     []
   );
@@ -329,7 +461,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     const requestEpoch = mountEpochRef.current;
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args, providerId, accountLoginId })
+      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId })
       .then((result) => {
         if (requestEpoch !== mountEpochRef.current) {
           // Geração já descartada (StrictMode double-invoke em dev, ou a aba
@@ -340,6 +472,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
           return;
         }
         ptyIdRef.current = result.ptyId;
+        onPtyChangeRef.current?.(result.ptyId);
         spawnedAtRef.current = Date.now(); // T710 — base do msSinceSpawn (ver onExit abaixo)
         setStatus({ kind: 'running' });
         // FIX (feedback E2E rodada 5) — perfil de nascimento desta sessão
@@ -402,6 +535,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
               // (ver comentário do handle acima).
               term.write(data, () => {
                 renderListenersRef.current.forEach((listener) => listener());
+                screenListenersRef.current.forEach((listener) => listener());
               });
             });
           });
@@ -470,6 +604,11 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     // vai no `pty.create` (linha do `.create({ cols, rows })`), então corrigir
     // aqui faz o PTY nascer já com o número de linhas que de fato cabe.
     fitWithoutOvershoot(term, fitAddon);
+    // T039 — aba nascida oculta: `fit()` não rodou, o xterm ficou em 80x24.
+    if (!hasLayout(container)) {
+      const { cols, rows } = sizeForHiddenTerminal(term, container);
+      term.resize(cols, rows);
+    }
     termRef.current = term;
 
     // T506/T507 (005-terminal-copy-paste, plan.md Fatia 3) — decisor de
@@ -583,13 +722,28 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // T039 — "Retomar" (FR-034): descarta a PTY atual (os listeners saem antes
+  // do kill, então não passa pelo estado "encerrada") e sobe outra, mesmos flags.
+  respawnRef.current = (options) => {
+    if (options?.resume) spawnArgsRef.current = withResumeArgs(spawnArgsRef.current ?? args, options.resume);
+    mountEpochRef.current += 1;
+    teardownPty();
+    termRef.current?.clear();
+    spawnSession();
+  };
+
   const handleReopen = useCallback(() => {
     // Nova tentativa = nova geração (mesmo raciocínio do mount effect acima)
     // — invalida qualquer `pty.create` velho ainda pendente desta aba.
     mountEpochRef.current += 1;
+    // T057 (FR-034) — com o chat ligado, Reabrir retoma a MESMA conversa.
+    const resumeId = resumeSessionIdRef.current;
+    if (sessionTypeRef.current === 'claude' && resumeId) {
+      spawnArgsRef.current = withResumeArgs(spawnArgsRef.current ?? args, resumeId);
+    }
     termRef.current?.clear();
     spawnSession();
-  }, [spawnSession]);
+  }, [args, spawnSession]);
 
   const handleCloseTab = useCallback(() => {
     teardownPty();

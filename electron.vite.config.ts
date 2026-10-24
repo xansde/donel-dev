@@ -1,6 +1,28 @@
 import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
+import type { Plugin } from 'vite';
+
+/**
+ * 015-jobu-pet (T028): the click test of the pet reads the alpha of the art from a canvas, and a
+ * `file://` page treats every file as another origin, so a PNG served as a file would make the canvas
+ * unreadable. The poses are inlined as `data:` URIs (same origin by definition); every other asset
+ * keeps the default limit. New art is one more PNG in that folder.
+ *
+ * It is a plugin and not `renderer.build.assetsInlineLimit` because the types of electron-vite
+ * (`RendererBuildOptions`) assume the Environment API of vite 6+ and do not know that option under the
+ * vite 5 this repo pins: the same reason as the note below about `rollupOptions`.
+ */
+function inlinePetArt(): Plugin {
+  return {
+    name: 'donel:inline-pet-art',
+    config: () => ({
+      build: {
+        assetsInlineLimit: (filePath: string) => (/\/src\/pet\/assets\/poses\//.test(filePath.replace(/\\/g, '/')) ? true : undefined),
+      },
+    }),
+  };
+}
 
 // Sem `build.rollupOptions.input` explícito: electron-vite resolve por
 // convenção `src/main/index.ts`, `src/preload/index.ts` e
@@ -20,6 +42,6 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
-    plugins: [react()],
+    plugins: [react(), inlinePetArt()],
   },
 });

@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
+import { launchIsolatedApp } from './helpers/launch';
+import { PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
+import { openProjectClaudeTab, waitForClaudeBooted } from './helpers/ui';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // T710 (008-fechar-pendencias) — o 2º momento do CA-11 entra no 2º teste deste
@@ -33,16 +35,34 @@ let appWindow: Page;
 let userDataDir: string;
 
 async function launchApp(): Promise<void> {
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
-  appWindow = await electronApp.firstWindow();
-  await appWindow.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: appWindow } = await launchIsolatedApp({ userDataDir }));
 }
 
-async function favoriteRepo(favorite: boolean): Promise<void> {
-  await appWindow.evaluate(
-    ({ path: projectPath, favorite: fav }) => window.donel.projects.setFavorite(projectPath, fav),
-    { path: REPO_ROOT, favorite },
-  );
+/**
+ * Favorites/unfavorites REPO_ROOT through the project-switcher star (the real UI
+ * gesture, ex-`sidebar-favorites`) and asserts the sidebar group reacts
+ * IMMEDIATELY, without a reload or restart.
+ */
+async function setFavoriteViaSelector(favorite: boolean): Promise<void> {
+  const group = appWindow.locator(`[data-testid="favorite-group-${PROJECT_NAME}"]`);
+  const popover = appWindow.getByRole('dialog', { name: 'Projetos' });
+  await appWindow.getByRole('button', { name: 'Trocar de projeto' }).click();
+  await expect(popover).toBeVisible();
+  const star = popover.getByRole('button', {
+    name: new RegExp(`^(Favoritar ${PROJECT_NAME}|Remover ${PROJECT_NAME} dos favoritos)$`),
+  });
+  await expect(star).toBeVisible({ timeout: 15_000 });
+  // Normalize the starting state so the toggle below is the transition under test.
+  if ((await star.getAttribute('aria-pressed')) === String(favorite)) {
+    await star.click();
+    await expect(star).toHaveAttribute('aria-pressed', String(!favorite));
+  }
+  await star.click();
+  await expect(star).toHaveAttribute('aria-pressed', String(favorite));
+  await appWindow.keyboard.press('Escape');
+  await expect(popover).toBeHidden();
+  if (favorite) await expect(group).toBeVisible({ timeout: 2_000 });
+  else await expect(group).toHaveCount(0);
 }
 
 function favoritesSection() {
@@ -67,15 +87,13 @@ test.afterAll(async () => {
   }
 });
 
-test('T711 — grupo aparece só com favoritados, dedupe da lista geral, cabeçalho acende e clique foca a aba aberta', async () => {
+test('T711 — grupo aparece só com favoritados, dedupe da lista geral, cabeçalho acende e clique foca a aba aberta @sessoes', async () => {
   test.setTimeout(120_000);
 
   // Sem favorito nenhum, a seção "Favoritos" não existe.
   await expect(favoritesSection()).toHaveCount(0);
 
-  await favoriteRepo(true);
-  await appWindow.reload();
-  await appWindow.waitForLoadState('domcontentloaded');
+  await setFavoriteViaSelector(true);
 
   // Favoritado mas AINDA sem entrada no registro — grupo aparece vazio/coletável (CA-8 é a semeadura, testada em unit).
   await expect(favoritesSection()).toBeVisible({ timeout: 15_000 });
@@ -86,20 +104,11 @@ test('T711 — grupo aparece só com favoritados, dedupe da lista geral, cabeça
   // nasce). FIX (item 1, rodada de feedback do teste de 30/07) — a árvore
   // "Projetos" da sidebar saiu; abrir um projeto qualquer agora é sempre
   // pelo popover "Projetos" do seletor no titlebar.
-  await appWindow.getByRole('button', { name: 'Trocar de projeto' }).click();
-  const projectsPopover = appWindow.getByRole('dialog', { name: 'Projetos' });
-  await expect(projectsPopover).toBeVisible();
-  await projectsPopover.getByRole('button', { name: PROJECT_NAME, exact: true }).click();
-  await expect(projectsPopover).toBeHidden();
+  await openProjectClaudeTab(appWindow);
 
   const tabs = appWindow.locator('[role="tab"]');
   await expect(tabs).toHaveCount(1);
-  const pane = appWindow.locator('[data-testid="terminal-pane"]:visible');
-  await expect(async () => {
-    const text = await pane.innerText();
-    expect(text.length).toBeGreaterThan(0);
-    expect(text).not.toContain('CLAUDE_NOT_FOUND');
-  }).toPass({ timeout: 30_000 });
+  await waitForClaudeBooted(appWindow, { startTimeout: 30_000 });
 
   // 2. O gatilho 1 grava a visita sozinho — sem esperar nenhum turn. Poll no
   // config até o registro ter uma entrada para este projeto (nunca abrir uma
@@ -135,7 +144,7 @@ test('T711 — grupo aparece só com favoritados, dedupe da lista geral, cabeça
   await expect(tabs).toHaveCount(0);
 });
 
-test('T711/T710 — poda na 6ª visita, fixada além das 5, colapso sobrevive ao restart e a órfã sai quando a retomada falha', async () => {
+test('T711/T710 — poda na 6ª visita, fixada além das 5, colapso sobrevive ao restart e a órfã sai quando a retomada falha @sessoes', async () => {
   // 180 s: os 120 s originais + a espera do CLI desistir da retomada (passo 7,
   // ~8,5–10,4 s medidos, com folga para a contenção da suíte).
   test.setTimeout(180_000);
@@ -243,12 +252,10 @@ test('T711/T710 — poda na 6ª visita, fixada além das 5, colapso sobrevive ao
   await expect(tabs).toHaveCount(0);
 });
 
-test('T711 — CA-9: desfavoritar remove o grupo e devolve as sessões à lista geral, sem perder a fixada', async () => {
+test('T711 — CA-9: desfavoritar remove o grupo e devolve as sessões à lista geral, sem perder a fixada @sessoes', async () => {
   test.setTimeout(60_000);
 
-  await favoriteRepo(false);
-  await appWindow.reload();
-  await appWindow.waitForLoadState('domcontentloaded');
+  await setFavoriteViaSelector(false);
 
   await expect(favoritesSection()).toHaveCount(0);
 

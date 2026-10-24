@@ -1,0 +1,460 @@
+/* 014-chat T078 - pending panel pieces (design/chat-handoff T03/T04/T05). Tokens only. */
+
+.frame {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 62vh;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--state-permission) 40%, var(--border));
+  border-radius: 8px;
+  background: var(--bg-panel);
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.origin {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.originIcon {
+  flex: none;
+}
+
+.header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.headerIcon {
+  flex: none;
+  display: inline-flex;
+  color: var(--state-permission);
+}
+
+.title {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.aside {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.counter {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-app);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.footerNote {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ---- question ---- */
+
+.qHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  margin-bottom: 8px;
+}
+
+.qNumber {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.qTitle {
+  font-weight: 600;
+}
+
+.qHint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.qWithPreview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 12px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(var(--choice-columns, 3), minmax(0, 1fr));
+  gap: 6px;
+}
+
+.otherSpacing {
+  margin-top: 6px;
+}
+
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-ui);
+}
+
+.choice:hover {
+  filter: brightness(1.18);
+}
+
+.choice:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.compact {
+  align-items: center;
+  /* min-height, not height: a description of 2+ lines grows the card instead of touching its border */
+  min-height: 38px;
+  padding: 6px 10px;
+}
+
+.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-app));
+}
+
+.mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1.5px solid var(--text-muted);
+  box-sizing: border-box;
+}
+
+.compact .mark,
+.otherBox .mark {
+  margin-top: 0;
+}
+
+.round {
+  border-radius: 50%;
+}
+
+.square {
+  border-radius: 3px;
+}
+
+.on .mark {
+  border-color: var(--accent);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.check {
+  width: 10px;
+  height: 10px;
+  color: var(--bg-app);
+}
+
+.on .square {
+  background: var(--accent);
+}
+
+.choiceText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.choiceLabel {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+.recommended {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--zone-ok);
+}
+
+.choiceDesc {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--text-muted);
+}
+
+.otherBox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-app);
+}
+
+.otherLabel {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.otherInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.preview {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-app);
+  overflow: hidden;
+}
+
+.previewHead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.previewBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.previewEmpty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ---- permission ---- */
+
+.chip {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.indented {
+  padding-left: 26px;
+}
+
+.claudeNote {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 26px;
+}
+
+.claudeNoteTag {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.claudeNoteText {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diffStat {
+  display: inline-flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.statAdd {
+  color: var(--zone-ok);
+}
+
+.statDel {
+  color: var(--state-permission);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.denyForm {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.denyField {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- plan ---- */
+
+.planTitle {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.planCollapsedTitle {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 14px;
+  font-weight: 600;
+}
+
+.iconButton {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--bg-raised);
+}
+
+.iconButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.planBody {
+  max-height: 300px;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.footerStack {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

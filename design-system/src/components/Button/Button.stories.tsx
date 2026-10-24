@@ -33,6 +33,11 @@ export const Ghost: Story = {
   args: { variant: 'ghost', children: 'Copiar' },
 };
 
+/** Ação em linha (014-chat, D-C27): "ver tudo", "tentar de novo" — botão, nunca `<a href>`. */
+export const Link: Story = {
+  args: { variant: 'link', children: 'ver tudo' },
+};
+
 export const Danger: Story = {
   args: { variant: 'danger', children: 'Fechar sessão' },
 };

@@ -1,0 +1,84 @@
+=== [q9-r2 +3993ms] after-dismiss /resume  (cursor 2,37; buffer=alternate) ===
+ 0|
+ 1| ▐▛███▛█   Claude Code v2.1.293
+ 2|▝▜██████▀  Haiku 5.5 · Claude Max
+ 3| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 4|
+ 5|
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|                                                                                                    ◐ medium · /effort
+36|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|❯ Try "how do I log an error?"
+38|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  ⏸ manual mode on · ? for shortcuts · ← for agents
+
+=== [q9-r2 +6051ms] after /config  (cursor 7,6; buffer=alternate) ===
+ 0| ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--Users-xansd-seazone-donel-dev\1dbd900d-f2d1-41bb-9c56-484f03770e11\… · /rc
+ 1|
+ 2|▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔
+ 3|   Settings  Status   Config   Usage   Stats
+ 4|
+ 5|   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ 6|   │ ⌕ Search settings…                                                                                             │
+ 7|   ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ 8|
+ 9|   ❯ Auto-compact                                true
+10|     Continue automatically at usage limit       true
+11|     Switch models when a message is flagged     Not asked yet ›
+12|     Show tips                                   true
+13|     Claude-drafted feedback                     notify
+14|     Reduce motion                               false
+15|     Thinking mode                               true
+16|     Thinking can't be turned off for Haiku 5.5
+17|     Prompt suggestions                          true
+18|     Session recap                               false
+19|     Rewind code (checkpoints)                   true
+20|     Dynamic workflows                           true
+21|     Ultracode keyword trigger                   true
+22|     Dynamic workflow size                       medium (default)
+23|     Artifacts                                   true
+24|     Verbose output                              false
+25|     Terminal progress bar                       true
+26|     Show turn duration                          true
+27|     Precompute compaction                       true
+28|     Time format                                 auto ›
+29|     Default permission mode                     Bypass Permissions
+30|     Worktree base ref                           fresh
+31|     Use auto mode during plan                   false
+32|     Respect .gitignore in file picker           true
+33|     Skip the /copy picker                       false
+34|     Copy on select                              true
+35|     Auto-scroll                                 true
+36|     Open agents view by default                 false
+37|     ↓ 19 more
+38|
+39|   Type to filter · Enter/↓ to select · ↑ to tabs · Esc to clear
+

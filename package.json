@@ -1,6 +1,6 @@
 {
   "name": "donel-dev",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Donel Dev — IDE própria do Alexandre para operar sessões do Claude Code em paralelo.",
   "author": "Seazone",
   "private": true,
@@ -19,7 +19,9 @@
     "test": "vitest run",
     "esteira:check": "node scripts/esteira-check.mjs",
     "test:smoke": "playwright test -c tests/smoke/playwright.config.ts",
-    "test:smoke:dev": "playwright test -c tests/smoke-dev/playwright.config.ts",
+    "test:smoke:gate": "playwright test -c tests/smoke/playwright.config.ts --grep-invert \"@real|@perf\"",
+    "test:smoke:real": "playwright test -c tests/smoke/playwright.config.ts --grep \"@real|@perf\"",
+    "test:smoke:dev":"playwright test -c tests/smoke-dev/playwright.config.ts",
     "tutorial": "npm run build && playwright test -c .claude/skills/tutorial-e2e/lib/playwright.config.ts && node .claude/skills/tutorial-e2e/lib/relatorio.mjs",
     "dist": "npm run build && electron-builder --win nsis",
     "dist:alfa": "npm run build && electron-builder --win nsis --config.appId=com.seazone.doneldev.alfa \"--config.productName=Donel Dev Alfa\" \"--config.nsis.shortcutName=Donel Dev Alfa\"",
@@ -35,7 +37,10 @@
     "d3-force": "^3.0.0",
     "node-pty": "1.1.0",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
+    "shiki": "4.4.3"
   },
   "devDependencies": {
     "@electron/rebuild": "4.2.0",

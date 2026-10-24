@@ -1,0 +1,142 @@
+{
+  "generator": "scripts/pet/slice-sprites.py",
+  "source": "design/referencia/donel-buddy-sprites-v2.png",
+  "canvas": {
+    "width": 264,
+    "height": 320
+  },
+  "anchor": {
+    "x": 132,
+    "y": 312
+  },
+  "scale": 0.529617,
+  "padding": 8,
+  "medianRobeWidthPx": 443.5,
+  "fallbacks": {
+    "impatient": "skeptical",
+    "very-impatient": "angry",
+    "calling": "talking"
+  },
+  "poses": {
+    "neutral": {
+      "file": "neutral.png",
+      "source": "sheet",
+      "bbox": {
+        "x": 10,
+        "y": 29,
+        "width": 244,
+        "height": 283
+      }
+    },
+    "talking": {
+      "file": "talking.png",
+      "source": "sheet",
+      "bbox": {
+        "x": 16,
+        "y": 17,
+        "width": 233,
+        "height": 295
+      }
+    },
+    "sleeping": {
+      "file": "sleeping.png",
+      "source": "sheet",
+      "bbox": {
+        "x": 15,
+        "y": 8,
+        "width": 234,
+        "height": 304
+      }
+    },
+    "skeptical": {
+      "file": "skeptical.png",
+      "source": "sheet",
+      "bbox": {
+        "x": 16,
+        "y": 27,
+        "width": 232,
+        "height": 285
+      }
+    },
+    "waffle": {
+      "file": "waffle.png",
+      "source": "sheet",
+      "bbox": {
+        "x": 8,
+        "y": 27,
+        "width": 248,
+        "height": 285
+      }
+    },
+    "incense": {
+      "file": "incense.png",
+      "source": "sheet",
+      "bbox": {
+        "x": 9,
+        "y": 26,
+        "width": 244,
+        "height": 286
+      }
+    },
+    "reading": {
+      "file": "reading.png",
+      "source": "sheet",
+      "bbox": {
+        "x": 13,
+        "y": 31,
+        "width": 238,
+        "height": 281
+      }
+    },
+    "mirror": {
+      "file": "mirror.png",
+      "source": "sheet",
+      "bbox": {
+        "x": 8,
+        "y": 30,
+        "width": 248,
+        "height": 282
+      }
+    },
+    "laughing": {
+      "file": "laughing.png",
+      "source": "sheet",
+      "bbox": {
+        "x": 12,
+        "y": 25,
+        "width": 240,
+        "height": 287
+      }
+    },
+    "sad": {
+      "file": "sad.png",
+      "source": "sheet",
+      "bbox": {
+        "x": 12,
+        "y": 49,
+        "width": 226,
+        "height": 263
+      }
+    },
+    "angry": {
+      "file": "angry.png",
+      "source": "sheet",
+      "bbox": {
+        "x": 15,
+        "y": 27,
+        "width": 235,
+        "height": 285
+      }
+    },
+    "surprised": {
+      "file": "surprised.png",
+      "source": "sheet",
+      "bbox": {
+        "x": 16,
+        "y": 22,
+        "width": 232,
+        "height": 290
+      }
+    }
+  }
+}

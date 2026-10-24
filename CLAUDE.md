@@ -24,8 +24,13 @@ via `CLAUDE_CONFIG_DIR`.
 - **PR e merge (redefinido pelo dono em 2026-08-09)**: **abrir PR contra
   `staging` é livre para o Claude**, sem pedir confirmação — inclusive quando
   quem abre é a fase Implementar da Esteira. A regra anterior ("PR é sempre
-  ato humano") **caiu**, aqui e no baseline do squad. O que **não** mudou:
-  **merge é sempre decisão humana, e só depois de validação**; e `main` e o
+  ato humano") **caiu**, aqui e no baseline do squad.
+- **Merge em `staging` (redefinido pelo dono em 2026-10-08)**: **o Claude
+  mergeia** os PRs contra `staging` assim que a verificação automática
+  (vitest, typecheck, build, smokes da camada pertinente) estiver verde, sem
+  esperar o dono ("mergeie você. Não fica me esperando para mergear nada").
+  A bateria manual no alfa passa a ser validação **depois** do merge, não
+  pré-requisito. Sempre `gh pr merge --merge`, nunca `--admin`. `main` e o
   repo público seguem no bloqueio total do bullet acima.
 - **Canais instalados coexistindo (decisão de 2026-07-28)**: `npm run
   dist:alfa` / `dist:beta` / `dist` empacotam com identidade própria de
@@ -54,9 +59,10 @@ via `CLAUDE_CONFIG_DIR`.
   dono, 11/08, precedente de `skills/` em 03/08)**: `scripts/esteira-check.mjs`,
   `scripts/esteira-custo-fase.mjs` e `.esteira/review-policy.json` entram no
   espelho — testes espelhados os exercitam, e teste que só passa no repo de
-  trabalho não vale como gate. Os scripts de publicação seguem fora. Pendência
-  para a próxima promoção: quando a 4.0 chegar ao beta, `docs/esteira-dev/`
-  (nova casa do contrato) precisará da mesma decisão.
+  trabalho não vale como gate. Os scripts de publicação seguem fora. Na
+  promoção de 07/10 entrou também `docs/esteira-dev/` (só o pacote do
+  contrato, nova casa dele desde a 012); e `tests/esteiraLayoutCanalV2.test.ts`
+  ficou fora do espelho, porque confronta `specs/` e `.esteira/`.
 - **Promover**: `powershell -File scripts/sincronizar-publico.ps1` espelha
   `src/ tests/ patches/ design-system/` + configs de build e imprime o `git
   status` do lado público. Ele **não** commita nem faz push — revisar, rodar
@@ -210,6 +216,19 @@ real em 13/09** (`e2e.md` §3): a sessão viva adota a conta nova na mensagem
 seguinte, e o MCP segue respondendo. Por isso as fases 1 e 2 seguem como
 escritas, com o F6 dentro da Fase 1.
 
+## Gatilho — "rodar a próxima fase do chat"
+
+Pedido "**rodar a próxima fase do chat**" (ou "próxima fase da 014") = abrir a
+fila `Claude Seazone/Projects/donel-dev/execucao-014-chat/PROXIMO.md` no vault
+e pegar a primeira fase `⬜` que não seja do dono e cujo gate de entrada esteja
+cumprido. Prompts prontos (execução e retomada) em `prompt.md`, na mesma pasta.
+
+Fonte de verdade: `specs/014-chat/plan.md` + `specs/014-chat/tasks.md`
+(T001–T102). A **Fase 0 é o protótipo de forma no Claude Design** (do dono;
+`design/prompt-design-chat.md`) e corre em paralelo com a **Fase 1**, que não
+tem tela. Da Fase 2 em diante: sequencial, só com `design/chat-verificacao.md`
+aprovado, e tudo atrás de `chat.enabled` até a virada (Fase 7).
+
 ## Gotchas conhecidos (do planejamento)
 
 - node-pty precisa casar com a ABI do Electron — prebuilds/@electron/rebuild;
@@ -248,3 +267,12 @@ escritas, com o F6 dentro da Fase 1.
 
 Documentação viva em `Claude Seazone/Projects/donel-dev/` (context.md, todo.md).
 Atualizar ao concluir marcos.
+
+## Active Technologies
+- TypeScript 5.7 (main, preload e renderer), React 18.3.1, Node do Electron 43.2 + Electron 43.2, node-pty 1.1.0 (patch), @xterm/xterm 6.0.0; novas: react-markdown 10, remark-gfm 4, shiki 4 (núcleo + Oniguruma WASM) (014-chat)
+- transcripts JSONL do CLI (só leitura) + `config.json` do app (`chat.enabled`, `chat.focusMode`) + `userData/hook-settings/<ptyId>.json` + `userData/chat-attachments/` + `userData/chat-diagnostics.log` (014-chat)
+- TypeScript 5.7 (main, preload e renderer), React 18.3.1, Node do Electron 43.2 + Electron 43.2 (`BrowserWindow` transparente, `screen`, `Menu`); nenhuma dependência npm nova. Arte recortada por script Python 3.12 + Pillow 12.2 (ferramenta de autor, fora do app) (015-jobu-pet)
+- `config.json` do app — chave de topo `pet` (`enabled`, `placement`); assets PNG empacotados pelo Vite em `out/renderer/assets/` (015-jobu-pet)
+
+## Recent Changes
+- 014-chat: Added TypeScript 5.7 (main, preload e renderer), React 18.3.1, Node do Electron 43.2 + Electron 43.2, node-pty 1.1.0 (patch), @xterm/xterm 6.0.0; novas: react-markdown 10, remark-gfm 4, shiki 4 (núcleo + Oniguruma WASM)

@@ -1,0 +1,1113 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Jobu Donel — resultado</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e1116'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%23e8b44c'/%3E%3C/svg%3E">
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0e1116;
+  --panel: #151a21;
+  --raised: #1c232c;
+  --raised-2: #232c37;
+  --border: #2a323d;
+  --text: #e6e9ee;
+  --text-2: #c3cad4;
+  --muted: #8b95a3;
+  --accent: #e8b44c;
+  --accent-ink: #1a1405;
+  --accent-soft: rgba(232, 180, 76, 0.12);
+  --accent-line: rgba(232, 180, 76, 0.35);
+  --ok: #4ec08a;
+  --ok-soft: rgba(78, 192, 138, 0.14);
+  --bad: #f0684c;
+  --bad-soft: rgba(240, 104, 76, 0.13);
+  --radius: 12px;
+  --font-ui: Inter, "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", ui-monospace, Consolas, monospace;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  padding-bottom: 96px;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 15px/1.55 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+body:has(dialog[open]) { overflow: hidden; }
+h1, h2, h3, p, ol, ul, figure { margin: 0; }
+ol, ul { padding-left: 1.25em; }
+a { color: var(--accent); }
+button { font: inherit; color: inherit; }
+img { max-width: 100%; }
+code {
+  font: 500 0.88em var(--font-mono);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.08em 0.4em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+strong { font-weight: 650; }
+::selection { background: rgba(232, 180, 76, 0.35); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.wrap { max-width: 960px; margin: 0 auto; padding: 0 16px; }
+.muted { color: var(--muted); }
+
+/* ---------- hero ---------- */
+.hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-top: 44px;
+  border-bottom: 1px solid var(--border);
+}
+.hero-text { flex: 1; min-width: 0; padding-bottom: 26px; }
+h1 { font-size: clamp(26px, 4.4vw, 36px); line-height: 1.12; font-weight: 700; letter-spacing: -0.012em; }
+.lede { margin-top: 12px; max-width: 62ch; font-size: 17px; line-height: 1.5; color: var(--text); }
+.howto {
+  display: inline-block;
+  margin-top: 20px;
+  padding: 8px 14px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: 10px;
+  font-size: 14px;
+}
+.howto strong { color: var(--accent); }
+.notice {
+  margin-top: 12px;
+  max-width: 66ch;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.jump { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 20px; font-size: 14px; }
+.jump a { color: var(--muted); text-decoration: none; }
+.jump a:hover { color: var(--accent); }
+.hero-art {
+  flex: none;
+  height: 156px;
+  width: auto;
+  margin-bottom: -1px;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.5));
+}
+
+/* ---------- sections ---------- */
+.sec { margin-top: 56px; scroll-margin-top: 16px; }
+.sec h2 { font-size: 21px; line-height: 1.2; font-weight: 650; letter-spacing: -0.005em; }
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 14px; }
+.count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.sub { margin-top: 6px; max-width: 70ch; color: var(--muted); font-size: 14px; }
+.label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.chip {
+  display: inline-block;
+  padding: 3px 8px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: 8px;
+  color: var(--accent);
+  font: 600 12px var(--font-mono);
+}
+.chip.bad { background: var(--bad-soft); border-color: rgba(240, 104, 76, 0.4); color: var(--bad); }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 18px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s, filter 0.15s;
+}
+.btn:hover { border-color: #3d4756; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.07); }
+.btn.small { min-height: 36px; padding: 0 14px; font-size: 13px; }
+.link { padding: 0; background: none; border: 0; color: var(--accent); font-size: 13px; text-decoration: underline; cursor: pointer; }
+
+/* ---------- what it does ---------- */
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
+.card { padding: 16px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+.card .tag { color: var(--muted); font: 500 11px var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.card h3 { margin-top: 6px; font-size: 16px; font-weight: 650; line-height: 1.3; }
+.card .body { margin-top: 8px; color: var(--text-2); font-size: 14px; }
+
+/* ---------- gallery ---------- */
+.gal-sub { margin: 26px 0 10px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.gal { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 16px; align-items: start; }
+.thumb {
+  display: block;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: zoom-in;
+  transition: border-color 0.15s;
+}
+.thumb:hover { border-color: var(--accent); }
+.thumb img { display: block; width: 100%; height: auto; }
+.thumb .crop { display: block; position: relative; overflow: hidden; width: 100%; }
+.thumb .crop img { position: absolute; max-width: none; }
+.shot figcaption { margin-top: 8px; color: var(--text-2); font-size: 13px; line-height: 1.45; }
+
+/* ---------- prototype ---------- */
+.proto {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 24px;
+  margin-top: 16px;
+  padding: 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.proto h3 { font-size: 16px; font-weight: 650; }
+.proto p { margin-top: 4px; max-width: 58ch; color: var(--text-2); font-size: 14px; }
+
+/* ---------- battery ---------- */
+.storage-warn {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--bad-soft);
+  border: 1px solid rgba(240, 104, 76, 0.4);
+  border-radius: 10px;
+  font-size: 13px;
+}
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 16px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  scroll-margin-top: 12px;
+}
+.grp { display: flex; align-items: center; gap: 4px; }
+.grp-id { margin-right: 3px; color: var(--muted); font: 600 11px var(--font-mono); }
+.dot {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  background: transparent;
+  border: 1.5px solid #3b4553;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.dot::after { content: ""; position: absolute; inset: -5px -2px; }
+.dot:hover { border-color: var(--muted); }
+.dot.ok { background: var(--ok); border-color: var(--ok); }
+.dot.bad { background: var(--bad); border-color: var(--bad); }
+.dot.cur { box-shadow: 0 0 0 1.5px var(--panel), 0 0 0 3px var(--accent); }
+.strip-btn { padding: 2px 6px; background: none; border: 0; border-radius: 6px; color: var(--muted); font-size: 12px; cursor: pointer; }
+.strip-btn:hover { color: var(--text); }
+.strip-btn.cur { color: var(--accent); font-weight: 600; }
+
+.panel { margin-top: 12px; padding: 22px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; }
+.step-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.step-group { flex: 1; min-width: 0; font-size: 14px; }
+.step-group span { color: var(--muted); }
+.step-count { margin-left: auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.step-main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 340px); gap: 24px; align-items: start; margin-top: 20px; }
+.step-main.no-shot { grid-template-columns: minmax(0, 1fr); }
+.step-id { color: var(--muted); font: 600 13px var(--font-mono); }
+.step-text { margin-top: 4px; font-size: 21px; font-weight: 600; line-height: 1.35; }
+.expect { margin-top: 16px; padding: 12px 14px; background: var(--raised); border: 1px solid var(--border); border-radius: 10px; }
+.expect p { font-size: 15px; line-height: 1.5; }
+.verdict-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 22px; }
+.verdict {
+  min-height: 62px;
+  background: transparent;
+  border: 2px solid;
+  border-radius: 12px;
+  font-size: 17px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, transform 0.06s;
+}
+.verdict:hover { background: rgba(255, 255, 255, 0.04); }
+.verdict:active { transform: scale(0.985); }
+.verdict.ok { border-color: var(--ok); color: var(--ok); }
+.verdict.ok[aria-pressed="true"] { background: var(--ok); color: #052013; }
+.verdict.bad { border-color: var(--bad); color: var(--bad); }
+.verdict.bad[aria-pressed="true"] { background: var(--bad); color: #2a0c05; }
+.note-wrap { margin-top: 14px; }
+.note {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 12px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+.note::placeholder { color: #667181; }
+.note:focus { border-color: var(--accent); outline: none; }
+.nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 22px; }
+.prep { margin-top: 20px; display: grid; gap: 10px; }
+.prep li { padding-left: 4px; font-size: 16px; }
+.prep li::marker { color: var(--accent); font-weight: 600; }
+.tally { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 20px; }
+.tally > div { padding: 14px; background: var(--raised); border: 1px solid var(--border); border-radius: 12px; text-align: center; }
+.tally b { display: block; font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.tally span { color: var(--muted); font-size: 13px; }
+.tally .t-ok b { color: var(--ok); }
+.tally .t-bad b { color: var(--bad); }
+.fails { margin-top: 22px; }
+.fails h3 { font-size: 15px; font-weight: 650; }
+.fail { margin-top: 10px; padding: 12px 14px; background: var(--bad-soft); border: 1px solid rgba(240, 104, 76, 0.35); border-radius: 10px; }
+.fail-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.fail-text { flex: 1; min-width: 0; font-weight: 600; }
+.fail-note { margin-top: 6px; color: var(--text-2); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fail-note.muted { color: var(--muted); }
+.empty { margin-top: 22px; color: var(--muted); }
+
+/* ---------- doubts ---------- */
+.tools { display: flex; justify-content: flex-end; margin-top: 12px; }
+.qs { display: grid; gap: 12px; margin-top: 12px; }
+.q { padding: 16px 18px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); transition: border-color 0.15s; }
+.q[data-state="keep"] { border-color: rgba(78, 192, 138, 0.5); }
+.q[data-state="diff"] { border-color: rgba(232, 180, 76, 0.65); }
+.q-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.q-state { color: var(--muted); font-size: 12px; font-weight: 600; }
+.q[data-state="keep"] .q-state { color: var(--ok); }
+.q[data-state="diff"] .q-state { color: var(--accent); }
+.q-text { margin-top: 10px; font-size: 15.5px; font-weight: 550; line-height: 1.5; }
+.q-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 20px; margin-top: 12px; }
+.q-cols p { color: var(--text-2); font-size: 14px; }
+.q-prints { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; margin-top: 14px; }
+.q-prints .shot { width: 230px; max-width: 100%; }
+.choices { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.choice {
+  min-height: 42px;
+  padding: 0 16px;
+  background: var(--raised);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.choice:hover { border-color: #3d4756; }
+.choice.keep[aria-pressed="true"] { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.choice.diff[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.q .note { min-height: 52px; margin-top: 12px; }
+
+/* ---------- art request ---------- */
+.art-poses { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
+.pose { display: flex; align-items: center; gap: 16px; padding: 14px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+.pose img {
+  flex: none;
+  width: auto;
+  height: 104px;
+  background: repeating-conic-gradient(#1b222b 0 25%, #151a21 0 50%) 0 0 / 16px 16px;
+  border-radius: 8px;
+}
+.pose h3 { font-size: 16px; font-weight: 650; }
+.pose .file { margin-top: 2px; color: var(--muted); font: 500 12px var(--font-mono); }
+.pose .when { margin-top: 8px; color: var(--text-2); font-size: 14px; }
+.pose .ref-label { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
+.rules { margin-top: 12px; padding: 16px 18px; background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); }
+.rules h3 { font-size: 15px; font-weight: 650; }
+.rules ul { display: grid; gap: 6px; margin-top: 10px; color: var(--text-2); font-size: 14px; }
+.rules a { display: inline-block; margin-top: 12px; font-size: 14px; }
+
+.next { display: grid; gap: 8px; margin-top: 14px; color: var(--text-2); }
+.next li::marker { color: var(--accent); font-weight: 600; }
+.foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; margin-top: 56px; padding: 18px 0; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+.foot .link { color: var(--muted); font-size: 12px; }
+.foot .link:hover { color: var(--accent); }
+
+/* ---------- fixed bar, toast, lightbox ---------- */
+.bar { position: fixed; right: 0; bottom: 0; left: 0; z-index: 20; background: rgba(14, 17, 22, 0.93); border-top: 1px solid var(--border); backdrop-filter: blur(8px); }
+.bar-in { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 960px; margin: 0 auto; padding: 12px 16px; }
+.bar-hint { color: var(--muted); font-size: 13px; }
+.bar .btn { flex: none; min-height: 46px; padding: 0 20px; font-size: 15px; }
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 86px;
+  z-index: 30;
+  max-width: min(92vw, 560px);
+  padding: 10px 16px;
+  background: var(--raised-2);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  font-size: 14px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 12px);
+  transition: opacity 0.2s, transform 0.2s;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+dialog.lb { width: 100vw; height: 100vh; max-width: none; max-height: none; padding: 0; background: transparent; border: 0; color: var(--text); }
+dialog.lb::backdrop { background: rgba(6, 8, 11, 0.9); }
+.lb-stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; width: 100%; height: 100%; padding: 28px 64px; }
+.lb-img { max-width: none; max-height: none; background: var(--panel); border-radius: 8px; }
+.lb-cap { max-width: 80ch; color: var(--text-2); font-size: 14px; text-align: center; }
+.lb-x, .lb-nav {
+  position: fixed;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: rgba(28, 35, 44, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+.lb-x:hover, .lb-nav:hover { border-color: var(--accent); color: var(--accent); }
+.lb-x { top: 16px; right: 16px; }
+.lb-nav { top: 50%; margin-top: -22px; }
+.lb-prev { left: 12px; }
+.lb-next { right: 12px; }
+
+/* ---------- narrow screens ---------- */
+@media (max-width: 860px) {
+  .cards { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 760px) {
+  .step-main { grid-template-columns: minmax(0, 1fr); }
+  .q-cols, .art-poses { grid-template-columns: minmax(0, 1fr); }
+  .panel { padding: 16px; }
+  .lb-stage { padding: 28px 12px; }
+}
+@media (max-width: 560px) {
+  .cards { grid-template-columns: minmax(0, 1fr); }
+  .hero { padding-top: 28px; }
+  .hero-art, .bar-hint { display: none; }
+  .bar-in { justify-content: center; }
+  .bar .btn { width: 100%; }
+  .step-text { font-size: 19px; }
+  .verdict { font-size: 16px; }
+  .tally b { font-size: 26px; }
+  .q-prints .shot { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+<noscript><p style="padding:24px 16px;text-align:center">Esta página precisa de JavaScript para mostrar a bateria e guardar as respostas.</p></noscript>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="hero-text">
+      <h1 id="h-title">Jobu Donel — resultado</h1>
+      <p class="lede" id="h-lede"></p>
+      <p class="howto" id="h-howto"></p>
+      <p class="notice" id="h-notice"></p>
+      <nav class="jump" aria-label="Seções da página">
+        <a href="#faz">O que ele faz</a>
+        <a href="#galeria">Galeria</a>
+        <a href="#prototipo">Protótipo</a>
+        <a href="#bateria">Bateria</a>
+        <a href="#duvidas">Dúvidas</a>
+        <a href="#arte">Pedido de arte</a>
+      </nav>
+    </div>
+    <img class="hero-art" id="h-art" alt="" hidden>
+  </header>
+
+  <main>
+    <section class="sec" id="faz" aria-labelledby="t-faz">
+      <h2 id="t-faz">O que ele faz</h2>
+      <div class="cards" id="cards"></div>
+    </section>
+
+    <section class="sec" id="galeria" aria-labelledby="t-gal">
+      <h2 id="t-gal">Galeria</h2>
+      <p class="sub">Clique numa imagem para ampliar e ver a tela inteira.</p>
+      <div id="gallery"></div>
+    </section>
+
+    <section class="sec" id="prototipo" aria-labelledby="t-proto">
+      <h2 id="t-proto">Protótipo</h2>
+      <div class="proto" id="proto"></div>
+    </section>
+
+    <section class="sec" id="bateria" aria-labelledby="t-bat">
+      <div class="sec-head">
+        <h2 id="t-bat">Bateria no alfa</h2>
+        <span class="count" id="bat-count"></span>
+      </div>
+      <p class="sub">Um passo por vez: faça no app, volte aqui e marque o que viu.</p>
+      <p class="storage-warn" id="storage-warn" hidden>Este navegador não deixou guardar as respostas. Elas valem enquanto a página estiver aberta; use “Baixar respostas” antes de fechar.</p>
+      <div class="strip" id="strip" role="group" aria-label="Mapa dos passos"></div>
+      <div class="panel" id="card"></div>
+    </section>
+
+    <section class="sec" id="duvidas" aria-labelledby="t-dv">
+      <div class="sec-head">
+        <h2 id="t-dv">Dúvidas acumuladas</h2>
+        <span class="count" id="dv-count"></span>
+      </div>
+      <p class="sub">Cada uma já tem uma decisão aplicada, então nada ficou esperando resposta. Se a sua for outra, a mudança é pequena e está indicada.</p>
+      <div class="tools"><button class="btn small" type="button" id="keep-all">Manter todas as pendentes</button></div>
+      <div class="qs" id="doubt-list"></div>
+    </section>
+
+    <section class="sec" id="arte" aria-labelledby="t-arte">
+      <h2 id="t-arte">Pedido de arte</h2>
+      <p class="sub" id="art-intro"></p>
+      <div class="art-poses" id="art-poses"></div>
+      <div class="rules" id="art-rules"></div>
+    </section>
+
+    <section class="sec" id="proximos" aria-labelledby="t-next">
+      <h2 id="t-next">Próximos passos</h2>
+      <ol class="next" id="next-list"></ol>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p id="foot"></p>
+    <button class="link" type="button" id="reset">Limpar as respostas deste navegador</button>
+  </footer>
+</div>
+
+<div class="bar">
+  <div class="bar-in">
+    <p class="bar-hint" id="bar-hint">Suas respostas ficam salvas neste navegador. O arquivo baixado vai para a pasta Downloads.</p>
+    <button class="btn primary" type="button" id="download">Baixar respostas (.json)</button>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<dialog class="lb" id="lightbox" aria-label="Imagem ampliada">
+  <div class="lb-stage" id="lb-stage">
+    <img class="lb-img" id="lb-img" alt="">
+    <p class="lb-cap" id="lb-cap"></p>
+  </div>
+  <button class="lb-x" type="button" id="lb-x" aria-label="Fechar (Esc)">×</button>
+  <button class="lb-nav lb-prev" type="button" id="lb-prev" aria-label="Imagem anterior">‹</button>
+  <button class="lb-nav lb-next" type="button" id="lb-next" aria-label="Próxima imagem">›</button>
+</dialog>
+
+<script type="application/json" id="data">"__RESULTADO_DATA__"</script>
+<script>
+(() => {
+  'use strict';
+
+  // ---------- data (built by scripts/pet/build-result.py) ----------
+  let D = null;
+  try { D = JSON.parse(document.getElementById('data').textContent); } catch (_) { D = null; }
+  if (!D || typeof D !== 'object') {
+    document.body.innerHTML = '<p style="padding:32px;font:16px system-ui;color:#e6e9ee">Esta é a página-modelo, sem dados. Rode <code>python scripts/pet/build-result.py</code> para gerar o <code>resultado.html</code>.</p>';
+    return;
+  }
+  const IMG = D.images || {};
+  const META = D.meta || {};
+  const BAT = D.battery || { prep: [], groups: [] };
+  const DOUBTS = D.doubts || [];
+  const GALLERY = D.gallery || [];
+  const CROPS = D.crops || {}; // file -> [x, y, w, h] in source pixels (thumbnails only)
+  const SIZES = D.sizes || {}; // file -> [width, height], for the files that have a crop
+
+  // ---------- tiny DOM helpers ----------
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+  // `html` is only ever fed strings produced by build-result.py (already escaped there);
+  // anything typed by the person goes through value/textContent.
+  function el(tag, props, ...kids) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(props || {})) {
+      if (value === undefined || value === null || value === false) continue;
+      if (key === 'class') node.className = value;
+      else if (key === 'html') node.innerHTML = value;
+      else if (key === 'text') node.textContent = value;
+      else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+      else node.setAttribute(key, value === true ? '' : String(value));
+    }
+    for (const kid of kids.flat(Infinity)) {
+      if (kid === undefined || kid === null || kid === false) continue;
+      node.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+    }
+    return node;
+  }
+
+  // ---------- state, kept in localStorage when the browser allows it ----------
+  const STATE_KEY = 'jobu015:resultado:v1';
+  const steps = [];
+  BAT.groups.forEach((group) => group.steps.forEach((step) => steps.push(Object.assign({ group }, step))));
+  const TOTAL = steps.length;
+  const FIRST = (BAT.prep || []).length ? -1 : 0; // -1 is the preparation screen, TOTAL is the summary
+  const state = { pos: FIRST, bat: {}, dv: {} };
+  let storageOk = true;
+  let discarded = 0;
+  const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+
+  // The sources are edited while the page is in use. An answer is stored with a signature of the
+  // text it answered; if that text changed on a later regeneration, the answer is dropped instead
+  // of being silently applied to a different step or decision.
+  const signature = (...parts) => {
+    const text = parts.join('\u0001');
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i += 1) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619); }
+    return (hash >>> 0).toString(36);
+  };
+  steps.forEach((step) => { step.sig = signature(step.html, step.expected); });
+  DOUBTS.forEach((q) => { q.sig = signature(q.q, q.decision, q.alt || ''); });
+
+  function readSaved() {
+    let raw = null;
+    try { raw = localStorage.getItem(STATE_KEY); } catch (_) { storageOk = false; }
+    if (!raw) return;
+    let saved = null;
+    try { saved = JSON.parse(raw); } catch (_) { return; }
+    if (!saved || typeof saved !== 'object') return;
+    if (Number.isInteger(saved.pos)) state.pos = Math.max(FIRST, Math.min(TOTAL, saved.pos));
+    const bat = saved.bat && typeof saved.bat === 'object' ? saved.bat : {};
+    for (const step of steps) {
+      const a = own(bat, step.id) ? bat[step.id] : null;
+      if (!a || typeof a !== 'object') continue;
+      const r = a.r === 'ok' || a.r === 'bad' ? a.r : null;
+      const n = typeof a.n === 'string' ? a.n : '';
+      if (!r && !n) continue;
+      if (a.g === step.sig) state.bat[step.id] = { r, n, g: step.sig }; else discarded += 1;
+    }
+    const dv = saved.dv && typeof saved.dv === 'object' ? saved.dv : {};
+    for (const q of DOUBTS) {
+      const a = own(dv, q.id) ? dv[q.id] : null;
+      if (!a || typeof a !== 'object') continue;
+      const e = a.e === 'keep' || a.e === 'diff' ? a.e : null;
+      const n = typeof a.n === 'string' ? a.n : '';
+      if (!e && !n) continue;
+      if (a.g === q.sig) state.dv[q.id] = { e, n, g: q.sig }; else discarded += 1;
+    }
+  }
+
+  function showStorageWarning() {
+    $('#storage-warn').hidden = false;
+    $('#bar-hint').textContent = 'Este navegador não guarda as respostas: baixe o arquivo antes de fechar. Ele vai para a pasta Downloads.';
+  }
+
+  function persist() {
+    try {
+      localStorage.setItem(STATE_KEY, JSON.stringify(state));
+    } catch (_) {
+      if (storageOk) { storageOk = false; showStorageWarning(); }
+    }
+  }
+
+  const answerOf = (id) => state.bat[id] || { r: null, n: '' };
+  function setAnswer(step, patch) {
+    const next = Object.assign({}, answerOf(step.id), patch, { g: step.sig });
+    if (!next.r && !next.n) delete state.bat[step.id]; else state.bat[step.id] = next;
+  }
+  const doubtOf = (id) => state.dv[id] || { e: null, n: '' };
+  function setDoubt(q, patch) {
+    const next = Object.assign({}, doubtOf(q.id), patch, { g: q.sig });
+    if (!next.e && !next.n) delete state.dv[q.id]; else state.dv[q.id] = next;
+  }
+
+  function tally() {
+    let ok = 0;
+    let bad = 0;
+    for (const step of steps) {
+      const r = answerOf(step.id).r;
+      if (r === 'ok') ok += 1; else if (r === 'bad') bad += 1;
+    }
+    return { ok, bad, pending: TOTAL - ok - bad };
+  }
+
+  function refreshCounts() {
+    const t = tally();
+    $('#bat-count').textContent = `${t.ok + t.bad} de ${TOTAL} respondidos`;
+    const answered = DOUBTS.filter((q) => doubtOf(q.id).e).length;
+    $('#dv-count').textContent = `${answered} de ${DOUBTS.length} respondidas`;
+  }
+
+  function kindOf(file) {
+    const item = GALLERY.find((g) => g.file === file);
+    return item ? item.kind : (/^app-/.test(file) ? 'app' : 'prototype');
+  }
+
+  // ---------- lightbox ----------
+  const lb = $('#lightbox');
+  const lbImg = $('#lb-img');
+  const lbCap = $('#lb-cap');
+  const lbPrev = $('#lb-prev');
+  const lbNext = $('#lb-next');
+  let lbList = [];
+  let lbIndex = 0;
+
+  function paintLightbox() {
+    const item = lbList[lbIndex];
+    lbImg.style.visibility = 'hidden'; // shown again, already scaled, by the load handler below
+    lbImg.style.width = '';
+    lbImg.style.height = '';
+    lbImg.src = IMG[item.file] || '';
+    lbImg.alt = item.alt || '';
+    lbCap.innerHTML = item.caption || '';
+    const many = lbList.length > 1;
+    lbPrev.hidden = !many;
+    lbNext.hidden = !many;
+  }
+  // fit the picture to the window; small prints are enlarged (up to 2x) so details are readable
+  lbImg.addEventListener('load', () => {
+    const side = window.innerWidth < 640 ? 24 : 140; // room for the arrow buttons on wide screens
+    const scale = Math.min((window.innerWidth - side) / lbImg.naturalWidth, (window.innerHeight - 150) / lbImg.naturalHeight, 2);
+    lbImg.style.width = Math.round(lbImg.naturalWidth * scale) + 'px';
+    lbImg.style.height = Math.round(lbImg.naturalHeight * scale) + 'px';
+    lbImg.style.visibility = 'visible';
+  });
+  function openLightbox(list, index) {
+    lbList = list;
+    lbIndex = index;
+    paintLightbox();
+    if (!lb.open) lb.showModal();
+  }
+  function stepLightbox(delta) {
+    if (lbList.length < 2) return;
+    lbIndex = (lbIndex + delta + lbList.length) % lbList.length;
+    paintLightbox();
+  }
+  lb.addEventListener('close', () => lbImg.removeAttribute('src'));
+  lb.addEventListener('click', (event) => { if (event.target === lb || event.target.id === 'lb-stage') lb.close(); });
+  $('#lb-x').addEventListener('click', () => lb.close());
+  lbPrev.addEventListener('click', () => stepLightbox(-1));
+  lbNext.addEventListener('click', () => stepLightbox(1));
+
+  // A thumbnail shows the crop of the print when the data file defines one; the lightbox shows it whole.
+  function picture(file, alt) {
+    const img = el('img', { src: IMG[file] || '', alt, decoding: 'async' });
+    const crop = CROPS[file];
+    const size = SIZES[file];
+    if (!crop || !size) return img;
+    const [x, y, w, h] = crop;
+    img.style.width = (size[0] / w * 100).toFixed(3) + '%';
+    img.style.left = (-x / w * 100).toFixed(3) + '%';
+    img.style.top = (-y / h * 100).toFixed(3) + '%';
+    const box = el('span', { class: 'crop' }, img);
+    box.style.aspectRatio = `${w} / ${h}`;
+    return box;
+  }
+
+  const zoomable = (list, index, label) => el('button', {
+    class: 'thumb',
+    type: 'button',
+    'aria-label': label,
+    onclick: () => openLightbox(list, index),
+  }, picture(list[index].file, list[index].alt || ''));
+
+  // ---------- top, cards, gallery, prototype ----------
+  function renderTop() {
+    document.title = META.title || document.title;
+    $('#h-title').textContent = META.title || 'Jobu Donel — resultado';
+    for (const [id, html] of [['#h-lede', META.lede], ['#h-howto', META.howTo], ['#h-notice', META.notice]]) {
+      const node = $(id);
+      node.innerHTML = html || '';
+      node.hidden = !html;
+    }
+    if (META.hero && IMG[META.hero]) {
+      const art = $('#h-art');
+      art.src = IMG[META.hero];
+      art.hidden = false;
+    }
+  }
+
+  function renderCards() {
+    $('#cards').replaceChildren(...(D.cards || []).map((card) => el('article', { class: 'card' },
+      el('p', { class: 'tag', text: [card.us].concat(card.refs || []).join(' · ') }),
+      el('h3', { text: card.title }),
+      el('p', { class: 'body', html: card.text }))));
+  }
+
+  function renderGallery() {
+    const runs = [];
+    GALLERY.forEach((item, index) => {
+      const last = runs[runs.length - 1];
+      if (last && last.kind === item.kind) last.indexes.push(index);
+      else runs.push({ kind: item.kind, indexes: [index] });
+    });
+    const nodes = [];
+    for (const run of runs) {
+      nodes.push(el('h3', { class: 'gal-sub', text: run.kind === 'app' ? 'Do app de verdade' : 'Do protótipo' }));
+      nodes.push(el('div', { class: 'gal' }, run.indexes.map((index) => el('figure', { class: 'shot' },
+        zoomable(GALLERY, index, 'Ampliar: ' + (GALLERY[index].alt || GALLERY[index].file)),
+        el('figcaption', { html: GALLERY[index].caption })))));
+    }
+    $('#gallery').replaceChildren(...nodes);
+  }
+
+  function renderPrototype() {
+    const p = D.prototype || {};
+    $('#proto').replaceChildren(
+      el('div', {}, el('h3', { text: p.title }), el('p', { html: p.text })),
+      el('a', { class: 'btn primary', href: p.href || '#', target: '_blank', rel: 'noopener', text: (p.label || 'Abrir') + ' ↗' }));
+  }
+
+  // ---------- battery: one step at a time ----------
+  let advanceTimer = 0;
+
+  function renderStrip() {
+    const items = [];
+    if (FIRST === -1) {
+      items.push(el('button', { class: 'strip-btn' + (state.pos === -1 ? ' cur' : ''), type: 'button', onclick: () => go(-1) }, 'Preparação'));
+    }
+    let index = 0;
+    for (const group of BAT.groups) {
+      items.push(el('div', { class: 'grp' },
+        el('span', { class: 'grp-id', text: group.id }),
+        group.steps.map((step) => {
+          const i = index;
+          index += 1;
+          const r = answerOf(step.id).r;
+          return el('button', {
+            class: 'dot' + (r === 'ok' ? ' ok' : r === 'bad' ? ' bad' : '') + (state.pos === i ? ' cur' : ''),
+            type: 'button',
+            title: `${step.id} — ${step.text}`,
+            tabindex: '-1', // 34 tab stops would be a trap; Left/Right and Anterior/Próximo cover the keyboard
+            'aria-label': `Passo ${step.id}`,
+            'aria-current': state.pos === i ? 'step' : null,
+            onclick: () => go(i),
+          });
+        })));
+    }
+    items.push(el('button', { class: 'strip-btn' + (state.pos === TOTAL ? ' cur' : ''), type: 'button', onclick: () => go(TOTAL) }, 'Resumo'));
+    $('#strip').replaceChildren(...items);
+  }
+
+  function stepHead(chip, title, refs, right) {
+    return el('div', { class: 'step-head' },
+      el('span', { class: 'chip', text: chip }),
+      el('div', { class: 'step-group' }, el('strong', { text: title }), refs ? el('span', { text: ` (${refs})` }) : null),
+      el('div', { class: 'step-count', text: right }));
+  }
+
+  function prepScreen() {
+    return [
+      stepHead('Antes', 'Preparação', '', `${TOTAL} passos`),
+      el('ol', { class: 'prep' }, BAT.prep.map((item) => el('li', { html: item }))),
+      el('div', { class: 'nav' }, el('span'),
+        el('button', { class: 'btn primary', type: 'button', onclick: () => go(0) }, 'Começar →')),
+    ];
+  }
+
+  function stepShot(step) {
+    const p = step.print;
+    const label = kindOf(p.file) === 'app' ? 'app' : 'protótipo';
+    const caption = `Como deve ficar (${label})` + (p.caption ? ' · ' + p.caption : '');
+    const item = { file: p.file, alt: `Como deve ficar no passo ${step.id}`, caption };
+    return el('figure', { class: 'shot' },
+      zoomable([item], 0, 'Ampliar o print do esperado'),
+      el('figcaption', { html: caption }));
+  }
+
+  function stepScreen(step, i) {
+    const a = answerOf(step.id);
+    const shot = step.print ? stepShot(step) : null;
+    const note = el('textarea', { class: 'note', rows: '2', maxlength: '2000', placeholder: 'Nota (opcional): o que você viu', 'aria-label': `Nota do passo ${step.id}` });
+    note.value = a.n;
+    note.addEventListener('input', () => {
+      setAnswer(step, { n: note.value });
+      persist();
+      refreshCounts();
+    });
+    return [
+      stepHead(step.group.id, step.group.title, step.group.refs, `Passo ${i + 1} de ${TOTAL}`),
+      el('div', { class: 'step-main' + (shot ? '' : ' no-shot') },
+        el('div', {},
+          el('p', { class: 'step-id', text: step.id }),
+          el('h3', { class: 'step-text', html: step.html }),
+          el('div', { class: 'expect' }, el('span', { class: 'label', text: 'Esperado' }), el('p', { html: step.expected }))),
+        shot),
+      el('div', { class: 'verdict-row' },
+        el('button', { class: 'verdict ok', type: 'button', 'aria-pressed': String(a.r === 'ok'), onclick: () => answer(step, 'ok') }, '✅ funcionou'),
+        el('button', { class: 'verdict bad', type: 'button', 'aria-pressed': String(a.r === 'bad'), onclick: () => answer(step, 'bad') }, '❌ não funcionou')),
+      el('div', { class: 'note-wrap' }, note),
+      el('div', { class: 'nav' },
+        el('button', { class: 'btn', type: 'button', onclick: () => go(i - 1) }, '← Anterior'),
+        el('button', { class: 'btn' + (a.r ? ' primary' : ''), type: 'button', id: 'btn-next', onclick: () => go(i + 1) },
+          i === TOTAL - 1 ? 'Ver resumo →' : 'Próximo →')),
+    ];
+  }
+
+  function summaryScreen() {
+    const t = tally();
+    const fails = [];
+    steps.forEach((step, i) => { if (answerOf(step.id).r === 'bad') fails.push({ step, i }); });
+    const firstPending = steps.findIndex((step) => !answerOf(step.id).r);
+    const box = (cls, n, text) => el('div', { class: cls }, el('b', { text: String(n) }), el('span', { text }));
+    return [
+      stepHead('Resumo', 'Como foi a bateria', '', `${t.ok + t.bad} de ${TOTAL} respondidos`),
+      el('div', { class: 'tally' },
+        box('t-ok', t.ok, '✅ funcionaram'),
+        box('t-bad', t.bad, '❌ não funcionaram'),
+        box('t-pend', t.pending, 'sem resposta')),
+      fails.length
+        ? el('div', { class: 'fails' }, el('h3', { text: 'O que não funcionou' }), fails.map(({ step, i }) => {
+          const text = answerOf(step.id).n.trim();
+          return el('div', { class: 'fail' },
+            el('div', { class: 'fail-top' },
+              el('span', { class: 'chip bad', text: step.id }),
+              el('span', { class: 'fail-text', html: step.html }),
+              el('button', { class: 'link', type: 'button', onclick: () => go(i) }, 'abrir')),
+            el('p', { class: 'fail-note' + (text ? '' : ' muted'), text: text || 'Sem nota.' }));
+        }))
+        : el('p', { class: 'empty', text: t.bad === 0 && t.pending === 0 ? 'Nada falhou.' : 'Nenhum passo marcado como não funcionou até agora.' }),
+      el('div', { class: 'nav' },
+        el('button', { class: 'btn', type: 'button', onclick: () => go(TOTAL - 1) }, '← Anterior'),
+        firstPending >= 0
+          ? el('button', { class: 'btn primary', type: 'button', onclick: () => go(firstPending) }, 'Ir ao primeiro sem resposta →')
+          : el('span')),
+    ];
+  }
+
+  function renderCard() {
+    let nodes;
+    if (state.pos < 0) nodes = prepScreen();
+    else if (state.pos >= TOTAL) nodes = summaryScreen();
+    else nodes = stepScreen(steps[state.pos], state.pos);
+    $('#card').replaceChildren(...nodes.filter(Boolean));
+  }
+
+  function go(pos, scroll = true) {
+    clearTimeout(advanceTimer);
+    state.pos = Math.max(FIRST, Math.min(TOTAL, pos));
+    persist();
+    renderStrip();
+    renderCard();
+    if (scroll) {
+      const top = $('#strip').getBoundingClientRect().top;
+      if (top < 0 || top > window.innerHeight * 0.6) $('#strip').scrollIntoView({ block: 'start' });
+    }
+  }
+
+  function answer(step, result) {
+    clearTimeout(advanceTimer);
+    const next = answerOf(step.id).r === result ? null : result; // a second click clears the answer
+    setAnswer(step, { r: next });
+    persist();
+    $('.verdict.ok').setAttribute('aria-pressed', String(next === 'ok'));
+    $('.verdict.bad').setAttribute('aria-pressed', String(next === 'bad'));
+    $('#btn-next').classList.toggle('primary', Boolean(next));
+    renderStrip();
+    refreshCounts();
+    if (next === 'ok') advanceTimer = setTimeout(() => go(state.pos + 1), 420);
+    else if (next === 'bad') $('.note', $('#card')).focus({ preventScroll: true });
+  }
+
+  // ---------- doubts ----------
+  const CHOICE_LABEL = { keep: 'Decisão mantida', diff: 'Quero diferente' };
+
+  function paintDoubt(card) {
+    const a = doubtOf(card.dataset.id);
+    card.dataset.state = a.e || 'none';
+    $('.q-state', card).textContent = CHOICE_LABEL[a.e] || '';
+    $('.choice.keep', card).setAttribute('aria-pressed', String(a.e === 'keep'));
+    $('.choice.diff', card).setAttribute('aria-pressed', String(a.e === 'diff'));
+  }
+
+  function choose(q, card, choice) {
+    const same = doubtOf(q.id).e === choice;
+    setDoubt(q, { e: same ? null : choice });
+    persist();
+    paintDoubt(card);
+    refreshCounts();
+    if (!same && choice === 'diff') $('.note', card).focus({ preventScroll: true });
+  }
+
+  function doubtCard(q) {
+    const a = doubtOf(q.id);
+    const prints = q.prints || [];
+    const note = el('textarea', { class: 'note', rows: '2', maxlength: '2000', placeholder: 'Nota (opcional)', 'aria-label': `Nota da dúvida ${q.id}` });
+    note.value = a.n;
+    note.addEventListener('input', () => { setDoubt(q, { n: note.value }); persist(); });
+    const card = el('article', { class: 'q', id: 'q-' + q.id.toLowerCase(), 'data-id': q.id },
+      el('div', { class: 'q-head' }, el('span', { class: 'chip', text: q.id }), el('span', { class: 'q-state' })),
+      el('p', { class: 'q-text', html: q.q }),
+      el('div', { class: 'q-cols' },
+        el('div', {}, el('span', { class: 'label', text: 'Decisão aplicada' }), el('p', { html: q.decision })),
+        q.alt ? el('div', {}, el('span', { class: 'label', text: 'Se a resposta for outra' }), el('p', { html: q.alt })) : null),
+      prints.length ? el('div', { class: 'q-prints' }, prints.map((p, index) => el('figure', { class: 'shot' },
+        zoomable(prints, index, 'Ampliar: ' + (p.alt || p.file)),
+        el('figcaption', { html: p.caption })))) : null,
+      el('div', { class: 'choices' },
+        el('button', { class: 'choice keep', type: 'button', onclick: () => choose(q, card, 'keep') }, 'Manter a decisão'),
+        el('button', { class: 'choice diff', type: 'button', onclick: () => choose(q, card, 'diff') }, 'Quero diferente')),
+      note);
+    paintDoubt(card);
+    return card;
+  }
+
+  function keepAllPending() {
+    let changed = 0;
+    for (const q of DOUBTS) {
+      if (!doubtOf(q.id).e) { setDoubt(q, { e: 'keep' }); changed += 1; }
+    }
+    persist();
+    $$('.q').forEach(paintDoubt);
+    refreshCounts();
+    toast(changed ? `${changed} dúvida(s) marcada(s) como “manter a decisão”.` : 'Nenhuma dúvida pendente.');
+  }
+
+  // ---------- art request, next steps, footer ----------
+  function renderArt() {
+    const art = D.art || {};
+    $('#t-arte').textContent = art.title || 'Pedido de arte';
+    $('#art-intro').innerHTML = art.intro || '';
+    $('#art-poses').replaceChildren(...(art.poses || []).map((pose) => el('article', { class: 'pose' },
+      pose.ref ? el('img', { src: IMG[pose.ref] || '', alt: '' }) : null,
+      el('div', {},
+        el('h3', { text: pose.name }),
+        el('p', { class: 'file', text: pose.file }),
+        el('p', { class: 'when', html: pose.when }),
+        pose.refLabel ? el('p', { class: 'ref-label', html: pose.refLabel }) : null))));
+    const rules = $('#art-rules');
+    rules.replaceChildren();
+    rules.append(el('h3', { text: art.rulesTitle || 'Como entregar' }));
+    rules.append(el('ul', {}, (art.rules || []).map((rule) => el('li', { html: rule }))));
+    if (art.reference) rules.append(el('a', { href: art.reference.href, target: '_blank', rel: 'noopener', text: art.reference.text + ' ↗' }));
+  }
+
+  function renderNext() {
+    $('#next-list').replaceChildren(...(D.next || []).map((item) => el('li', { html: item })));
+  }
+
+  // ---------- toast and download ----------
+  let toastTimer = 0;
+  function toast(message) {
+    const node = $('#toast');
+    node.textContent = message;
+    node.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => node.classList.remove('show'), 7000);
+  }
+
+  function isoLocal(date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const offset = -date.getTimezoneOffset();
+    const abs = Math.abs(offset);
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+      + `${offset >= 0 ? '+' : '-'}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+  }
+
+  function buildExport() {
+    return {
+      geradoEm: isoLocal(new Date()),
+      bateria: steps.map((step) => {
+        const a = answerOf(step.id);
+        return { id: step.id, passo: step.text, resultado: a.r === 'ok' ? 'funcionou' : a.r === 'bad' ? 'nao_funcionou' : 'pendente', nota: a.n.trim() };
+      }),
+      duvidas: DOUBTS.map((q) => {
+        const a = doubtOf(q.id);
+        return { id: q.id, escolha: a.e === 'keep' ? 'manter' : a.e === 'diff' ? 'diferente' : 'pendente', nota: a.n.trim() };
+      }),
+    };
+  }
+
+  function downloadAnswers() {
+    const blob = new Blob([JSON.stringify(buildExport(), null, 2) + '\n'], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = el('a', { href: url, download: 'jobu-015-respostas.json', hidden: true });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 15000);
+    toast('Baixado: jobu-015-respostas.json. O arquivo está na pasta Downloads.');
+  }
+
+  // ---------- start over (a second round of the battery after fixes) ----------
+  function resetAnswers() {
+    if (!window.confirm('Apagar todas as respostas da bateria e das dúvidas neste navegador? Um .json que você já baixou não muda.')) return;
+    clearTimeout(advanceTimer);
+    state.bat = {};
+    state.dv = {};
+    state.pos = FIRST;
+    persist();
+    renderStrip();
+    renderCard();
+    $('#doubt-list').replaceChildren(...DOUBTS.map(doubtCard));
+    refreshCounts();
+    toast('Respostas apagadas.');
+  }
+
+  // ---------- keyboard: Left/Right move through the steps while the battery is on screen ----------
+  document.addEventListener('keydown', (event) => {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    if (lb.open) {
+      if (event.key === 'ArrowLeft') stepLightbox(-1);
+      else if (event.key === 'ArrowRight') stepLightbox(1);
+      return;
+    }
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    const target = event.target;
+    if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+    const box = $('#bateria').getBoundingClientRect();
+    if (box.bottom < 120 || box.top > window.innerHeight - 120) return;
+    event.preventDefault();
+    go(state.pos + (event.key === 'ArrowRight' ? 1 : -1));
+  });
+
+  // ---------- go ----------
+  readSaved();
+  renderTop();
+  renderCards();
+  renderGallery();
+  renderPrototype();
+  renderStrip();
+  renderCard();
+  $('#doubt-list').replaceChildren(...DOUBTS.map(doubtCard));
+  renderArt();
+  renderNext();
+  $('#foot').textContent = `Página gerada por scripts/pet/build-result.py a partir de specs/015-jobu-pet · versão ${META.build || '?'}`;
+  if (!storageOk) showStorageWarning();
+  refreshCounts();
+  if (discarded) toast(`${discarded} resposta(s) guardada(s) foram descartadas: o texto do passo ou da dúvida mudou desde que você respondeu.`);
+  $('#download').addEventListener('click', downloadAnswers);
+  $('#keep-all').addEventListener('click', keepAllPending);
+  $('#reset').addEventListener('click', resetAnswers);
+})();
+</script>
+</body>
+</html>

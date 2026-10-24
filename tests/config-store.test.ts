@@ -65,6 +65,10 @@ describe('defaultAppConfig (puro)', () => {
       },
       migration: { startedAt: null, completedAt: null, profiles: {}, archivedTo: null },
       providers: { version: 1, entries: [] },
+      chat: { enabled: false, focusMode: true },
+      // T014 (015-jobu-pet) — desligado, sem posição lembrada, tamanho Médio.
+      pet: { enabled: false, placement: null, size: 140 },
+      sweep: { lastSweepAt: null },
       unknownFields: {},
     });
   });
@@ -94,6 +98,8 @@ describe('toAppConfigDto (puro)', () => {
         boardConfig: null,
       },
       tabAppearance: {},
+      chat: { enabled: false, focusMode: true },
+      pet: { enabled: false, placement: null, size: 140 },
     });
   });
 
@@ -222,6 +228,9 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
           { id: 'meu-provider', label: 'Meu provider', class: 'A', command: null, env: { ANTHROPIC_BASE_URL: 'https://x.test' }, secretEnvKeys: ['ANTHROPIC_AUTH_TOKEN'], configDirName: 'meu-provider' },
         ],
       },
+      chat: { enabled: true, focusMode: false },
+      pet: { enabled: true, placement: { x: 1830, y: 1040 }, size: 200 },
+      sweep: { lastSweepAt: null },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -308,6 +317,9 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       accounts: defaults.accounts, // ausente no objeto → default
       migration: defaults.migration, // ausente no objeto → default
       providers: defaults.providers, // ausente no objeto → default
+      chat: defaults.chat, // ausente no objeto → default
+      pet: defaults.pet, // ausente no objeto → default
+      sweep: defaults.sweep,
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });

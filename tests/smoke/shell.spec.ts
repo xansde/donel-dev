@@ -1,7 +1,7 @@
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
+import { launchClaudeTab } from './helpers/ui';
 
 // Smoke do feedback E2E rodada 2 ("app inteiro tem scrollbar vertical" —
 // item 7 do roteiro batch 2): prova que o documento (body) nunca tem
@@ -19,18 +19,14 @@ let window: Page;
 let userDataDir: string;
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('shell');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
-  window = await electronApp.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ name: 'shell' }));
 });
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  await closeIsolatedApp({ app: electronApp, userDataDir });
 });
 
-test('o shell inteiro não tem scrollbar no documento (body.scrollHeight === body.clientHeight)', async () => {
+test('o shell inteiro não tem scrollbar no documento (body.scrollHeight === body.clientHeight) @abas', async () => {
   test.setTimeout(60_000);
 
   // FIX (decisão A, 2026-07-23) — o app nasce com ZERO abas (empty state,
@@ -62,13 +58,7 @@ test('o shell inteiro não tem scrollbar no documento (body.scrollHeight === bod
   // Modelo/Esforço (SessionDetails) foi removida — a leitura equivalente
   // agora vive na StatusBar (rodapé), fora do escopo deste teste (que só
   // mede scroll do documento).
-  await window.getByRole('button', { name: '＋ Nova sessão', exact: true }).click();
-  const launcher = window.locator('[data-testid="launcher"]');
-  await expect(launcher).toBeVisible();
-  await launcher.getByRole('button', { name: 'Selecione um projeto' }).click();
-  await window.getByRole('option', { name: PROJECT_NAME, exact: true }).click();
-  await launcher.getByRole('radio', { name: 'haiku', exact: true }).click();
-  await launcher.getByRole('button', { name: '▶ Iniciar' }).click();
+  await launchClaudeTab(window, { model: 'haiku' });
 
   const shell = window.locator('[data-testid="terminal-pane"]');
   await expect(shell).toBeVisible();
@@ -84,7 +74,7 @@ test('o shell inteiro não tem scrollbar no documento (body.scrollHeight === bod
   expect(dimensions.scrollWidth).toBe(dimensions.clientWidth);
 });
 
-test('redimensionar a janela continua sem criar scrollbar no documento', async () => {
+test('redimensionar a janela continua sem criar scrollbar no documento @abas', async () => {
   const originalSize = window.viewportSize();
   await window.setViewportSize({ width: 1000, height: 650 });
   await window.waitForTimeout(300);

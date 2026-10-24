@@ -1,0 +1,107 @@
+/* Layout glue of the conversation rows (T052/T053). Visual pieces live in the
+   design-system; this only places them. Tokens only. */
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.thumb {
+  display: block;
+  max-width: 220px;
+  max-height: 140px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  object-fit: contain;
+}
+
+.thumbs > * {
+  min-width: 0;
+}
+
+/* Long paths ellipsize inside the tag instead of escaping the card. */
+.mention {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+}
+
+.below {
+  margin-top: 6px;
+}
+
+.answer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.fileName {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--text-primary);
+}
+
+.skillName {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--text-primary);
+}
+
+.skillRow {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+}
+
+.skillTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Muted note under an action while its detail loads / failed. */
+.note {
+  padding: 4px 0;
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.thinkingText {
+  margin: 0;
+  padding: 4px 0 4px 2px;
+  color: var(--text-muted);
+  font-size: var(--text-body-size);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.qaList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.qaQuestion {
+  color: var(--text-muted);
+  font-size: var(--text-body-size);
+}
+
+.qaAnswer {
+  font-size: var(--text-body-size);
+}
+
+.planBody {
+  padding: 4px 0 4px 2px;
+}
+
+.running {
+  margin-left: 26px;
+}

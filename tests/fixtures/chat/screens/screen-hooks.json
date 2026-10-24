@@ -1,0 +1,171 @@
+{
+ "name": "screen-hooks",
+ "description": "Tela sem caixa de entrada: \"Hooks\".",
+ "source": "real",
+ "origin": "q9-r6.txt :: after /hooks",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "❯ /agents",
+   "dim": []
+  },
+  {
+   "text": "  ⎿  The /agents wizard has been removed.",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     Ask Claude to create or update subagents for you (e.g. \"create a code-reviewer subagent that ...\"),",
+   "dim": []
+  },
+  {
+   "text": "     or edit the files directly:",
+   "dim": []
+  },
+  {
+   "text": "       • .claude/agents/       (this project)",
+   "dim": []
+  },
+  {
+   "text": "       • ~/.claude/agents/     (all projects)",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     Docs: https://code.claude.com/docs/en/sub-agents",
+   "dim": []
+  },
+  {
+   "text": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔",
+   "dim": []
+  },
+  {
+   "text": "   Hooks",
+   "dim": []
+  },
+  {
+   "text": "   11 hooks on 5 events",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   This menu is read-only. To add or change a hook, edit settings.json or ask Claude. Learn more",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     PreToolUse  before tool execution",
+   "dim": []
+  },
+  {
+   "text": "   ❯ [User]   powershell -NoProfile -ExecutionPolicy Bypass -Fi…   command",
+   "dim": []
+  },
+  {
+   "text": "     [Plugin] python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.p…   hookify@claude-plugins-official · command",
+   "dim": []
+  },
+  {
+   "text": "     [User]   node C:/Users/xansd/.claude/hooks/guard-destructi…   Bash|PowerShell · command",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     PostToolUse  after tool execution",
+   "dim": []
+  },
+  {
+   "text": "     [Plugin] python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse.…   hookify@claude-plugins-official · command",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     UserPromptSubmit  when the user submits a prompt",
+   "dim": []
+  },
+  {
+   "text": "     [Plugin] python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/userpromptsu…   hookify@claude-plugins-official · command",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     SessionStart  when a new session is started",
+   "dim": []
+  },
+  {
+   "text": "     [User]   powershell -NoProfile -ExecutionPolicy Bypass -Fi…   command",
+   "dim": []
+  },
+  {
+   "text": "     [User]   powershell -NoProfile -ExecutionPolicy Bypass -Fi…   command",
+   "dim": []
+  },
+  {
+   "text": "     [User]   powershell -NoProfile -ExecutionPolicy Bypass -Fi…   command",
+   "dim": []
+  },
+  {
+   "text": "     [User]   powershell -NoProfile -ExecutionPolicy Bypass -Fi…   command",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     Stop  right before Claude concludes its response",
+   "dim": []
+  },
+  {
+   "text": "     [User]   powershell -NoProfile -ExecutionPolicy Bypass -Fi…   command",
+   "dim": []
+  },
+  {
+   "text": "     [Plugin] python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/stop.py\"        hookify@claude-plugins-official · command",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     All events",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Enter to view · Esc to close",
+   "dim": []
+  }
+ ]
+}

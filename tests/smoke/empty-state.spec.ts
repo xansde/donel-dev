@@ -1,7 +1,8 @@
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { PROJECT_NAME } from './repoUnderTest';
+import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
+import { confirmCloseModalIfOpen, openFreeTerminalTab, waitForClaudeBooted } from './helpers/ui';
 
 // Smoke da decisão A (2026-07-23, CLAUDE.md/feedback-e2e.md rodada 5) — a
 // aba inicial deixa de abrir sessão claude sozinha: o app agora nasce com
@@ -37,26 +38,14 @@ let window: Page;
 let userDataDir: string;
 
 test.beforeAll(async () => {
-  userDataDir = createIsolatedUserDataDir('empty-state');
-  electronApp = await electron.launch({ args: [APP_MAIN, `--user-data-dir=${userDataDir}`], cwd: REPO_ROOT });
-  window = await electronApp.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ name: 'empty-state' }));
 });
 
 test.afterAll(async () => {
-  await electronApp.close();
-  removeIsolatedUserDataDir(userDataDir);
+  await closeIsolatedApp({ app: electronApp, userDataDir });
 });
 
-/** Confirma o modal "Fechar sessão?" (FR-006) se ele aparecer — só some quando o processo da aba está vivo (mesmo helper de tabs-lifecycle.spec.ts). */
-async function confirmCloseModalIfOpen(): Promise<void> {
-  await window
-    .getByRole('button', { name: 'Fechar sessão' })
-    .click({ timeout: 3_000 })
-    .catch(() => undefined);
-}
-
-test('app abre com zero abas e empty state; abrir sessão faz o empty state sumir; fechar a última aba faz voltar (decisão A)', async () => {
+test('app abre com zero abas e empty state; abrir sessão faz o empty state sumir; fechar a última aba faz voltar (decisão A) @abas', async () => {
   test.setTimeout(60_000);
 
   // 1. Boot: zero abas, empty state visível com CTA, nenhum terminal-pane
@@ -76,8 +65,7 @@ test('app abre com zero abas e empty state; abrir sessão faz o empty state sumi
 
   // 2. Abre uma sessão (terminal livre, custo zero — ver cabeçalho do
   // arquivo) pelo menu do "＋ Nova sessão" — o empty state some.
-  await window.getByRole('button', { name: 'Mais opções de ＋ Nova sessão' }).click();
-  await window.getByRole('menuitem', { name: 'Terminal (shell livre)' }).click();
+  await openFreeTerminalTab(window);
 
   const tab = window.locator('[role="tab"]', { hasText: 'Terminal' });
   await expect(tab).toBeVisible();
@@ -94,14 +82,14 @@ test('app abre com zero abas e empty state; abrir sessão faz o empty state sumi
   }).toPass({ timeout: 15_000 }); // processo powershell de pé (aliveTabs=true) antes de fechar — senão o "Fechar aba" fecha direto sem modal, o que o teste também tolera via `confirmCloseModalIfOpen`.
 
   await tab.getByRole('button', { name: 'Fechar aba Terminal' }).click();
-  await confirmCloseModalIfOpen();
+  await confirmCloseModalIfOpen(window, 3_000);
 
   await expect(window.locator('[role="tab"]')).toHaveCount(0);
   await expect(emptyState).toBeVisible();
   await expect(window.locator('[data-testid="terminal-pane"]')).toHaveCount(0);
 });
 
-test('CTA "Nova sessão" do empty state abre o Launcher (sem projeto/lastLaunch, em vez de reproduzir o bug em 1 clique); escolher um projeto lança uma sessão claude saudável (auditoria rodada 6, achado media)', async () => {
+test('CTA "Nova sessão" do empty state abre o Launcher (sem projeto/lastLaunch, em vez de reproduzir o bug em 1 clique); escolher um projeto lança uma sessão claude saudável (auditoria rodada 6, achado media) @abas', async () => {
   // FIX (auditoria rodada 6 ciclo 2) — 120s, não 60s: a nova prova de
   // liveness real ("accept edits on" no buffer, abaixo) soma até 60s ao
   // orçamento anterior de 20s (texto não-vazio) + interações de UI.
@@ -159,14 +147,6 @@ test('CTA "Nova sessão" do empty state abre o Launcher (sem projeto/lastLaunch,
   await expect(newTab).toBeVisible();
   await expect(emptyState).toHaveCount(0);
 
-  const terminalPane = window.locator('[data-testid="terminal-pane"]:visible');
-  await expect(terminalPane).toBeVisible();
-  await expect(async () => {
-    const text = await terminalPane.innerText();
-    expect(text.length).toBeGreaterThan(0);
-    expect(text).not.toContain('CLAUDE_NOT_FOUND');
-    expect(text).not.toContain('Falha ao iniciar');
-  }).toPass({ timeout: 20_000 });
 
   // FIX (auditoria rodada 6, achado media "teste passa com a sessão presa no
   // diálogo") — tentativa original: asserir o hint da toolbar
@@ -194,7 +174,5 @@ test('CTA "Nova sessão" do empty state abre o Launcher (sem projeto/lastLaunch,
   // — só sobrevive no arquivo morto SessionDetails.tsx). A prova de liveness
   // acima ("accept edits on" no buffer) já era a prova REAL; o hint era só
   // confirmação redundante.
-  await expect(async () => {
-    expect(await terminalPane.innerText()).toContain('accept edits on');
-  }).toPass({ timeout: 60_000 });
+  await waitForClaudeBooted(window, { until: 'prompt' });
 });

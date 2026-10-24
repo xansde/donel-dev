@@ -61,8 +61,15 @@ contas ela roda.
 
 ### Regras de cor
 
-- Vermelho-coral (`#F0684C`) é EXCLUSIVO de "precisa de você agora"
-  (permissão, zona estourada). Roxo (`#B678F0`) é exclusivo de falha/quota.
+- Vermelho-coral (`#F0684C`) tem dois sentidos, separados pelo movimento
+  (014-chat, D-C26): coral **pulsando** = "precisa de você agora" (aba,
+  `StateDot` de permissão, zona estourada); coral **fixo** = "falhou" ou
+  "removido" (ação que falhou, "não foi", "saiu com código N", linha − do
+  diff). Precedente: o `PhaseStateGlyph` já pinta `failed` de coral. Roxo
+  (`#B678F0`) é exclusivo de falha de sessão/quota (`state-error`).
+- Paleta de código (`--code-*`, 014-chat): derivada dos tokens existentes —
+  nenhum hex novo. Componentes de código leem só `--code-*`, nunca a fase
+  direto.
 - Dourado de vela (`#E8B44C`) acumula três papéis compatíveis: aguardando,
   zona de atenção e acento esotérico das ilustrações do Donel.
 - Headroom de conta: verde > 40%, dourado 15–40%, vermelho < 15%, cinza "—"
@@ -177,6 +184,14 @@ analogias improváveis que fazem sentido.
   guardaram." · "Essa rima com aquela de terça. Não acredito em coincidência
   — acredito em padrão." · "Tomo vazio. Até augúrio precisa de
   matéria-prima."
+- **Emenda de 21/10 — assistente na área de trabalho (spec 015):** o dono
+  fez dele o seu assistente. Fora da janela do app, num pet sempre por cima,
+  ele avisa sobre as sessões do Donel e a troca de conta — e entra, portanto,
+  no trabalho e nas permissões. O balão diz o fato seco (nome da aba e
+  evento); a persona fica no rosto e nos gestos, e a regra "clareza acima de
+  charme" vale para o balão. Dentro do app, "onde ele vive" e "onde nunca
+  entra" seguem como acima até a spec do layout místico.
+- **Pet implementado (015):** mapa de poses em `specs/015-jobu-pet/data-model.md`.
 
 ## 11. Dados de exemplo padrão (usar em todas as telas)
 

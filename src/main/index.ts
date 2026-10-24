@@ -1,8 +1,12 @@
-import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, screen, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { appendFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { readUserDefaultPermissionMode } from './cli-user-settings';
+import { withResolvedPermissionMode } from '../shared/commandBuilder';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
 import { createEsteiraService, type EsteiraService } from './esteira-service';
@@ -49,6 +53,7 @@ import type {
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
+  ChatPrefs,
   LauncherDefaultsDto,
   NotificationPreference,
   OpenDiscoveryIpcInput,
@@ -70,6 +75,7 @@ import type {
   SessionSummaryDto,
   SwitchOutcome,
   TranscriptChangedPayload,
+  SessionSwitchedPayload,
   WatchPhaseIpcInput,
   // 011-contas-e-provedores (etapa 3) — registry de providers classe A.
   ProviderId,
@@ -120,6 +126,7 @@ import {
   LEGACY_ACTIVE_PROFILE_FILE_NAME,
   LEGACY_PROJECT_CONFIG_FILE_NAME,
   readAppConfig,
+  sanitizeChatPrefs,
   sanitizePhaseDefaultsTable,
   setSessionName,
   toAppConfigDto,
@@ -158,7 +165,17 @@ import {
   type EntryColumnCard,
 } from './taskdex-board-client';
 import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
-import { writeHooksSettingsFile } from './hooks-settings';
+import { cleanupStaleHookSettings, removeSessionHooksSettings, writeHooksSettingsFile, writeSessionHooksSettings } from './hooks-settings';
+import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-bridge';
+import { createDiagnosticsLog } from './chat/diagnostics-log';
+import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
+import { createChatHub, type ChatHub, type ChatSourceInfo } from './chat/chat-hub';
+import { registerChatIpcHandlers } from './chat/chat-ipc';
+import { createCommandCatalogScanner } from './chat/command-catalog-scanner';
+import { createProjectFiles } from './chat/project-files';
+import { createPendingNotifier } from './chat/notifications';
+import { registerAssetScheme, registerAssetsProtocol } from './chat/assets-protocol';
+import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
 // arquivo só instancia/liga (T1125 — única task que toca o hub).
@@ -213,6 +230,20 @@ import { createSystemScanDeps, defaultProjectRoots, mergeFavorites, scanProjects
 // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
 import { createNewProject, createSystemCreateProjectDeps } from './project-creator';
 import { PtyManager } from './pty-manager';
+// C3 (015-jobu-pet) — "the owner closed the tab" vs. "the process left by itself".
+import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
+// 015-jobu-pet — the Jobu on the desktop: service (core + window + tick), the window and the `pet:*` handlers.
+import { guardNavigation } from './navigation-guard';
+import { registerPetIpcHandlers } from './pet/pet-ipc';
+import { createPetService, type PetService } from './pet/pet-service';
+import { createPetWindow } from './pet/pet-window';
+import { createFullscreenWatcher } from './pet/fullscreen-watcher';
+import { readPetSeams, type PetSmokeGlobal } from './pet/pet-seams';
+// 016-jobu-faxina — "Fazer faxina": the sweep of repos, worktrees, branches and old sessions the Jobu runs from his menu.
+import { createGitRunner } from './sweep/git';
+import { createSweepRunner } from './sweep/sweep-service';
+import { isValidPetPrefsInput } from '../shared/pet/ipc';
+import type { PetDisplay } from '../shared/pet/types';
 // T504 (005-terminal-copy-paste) — clipboard-bridge (T503), aditivo aos
 // imports acima (não reordena o bloco existente).
 import { hasImage, readText, writeText } from './clipboard-bridge';
@@ -435,8 +466,57 @@ function globalClaudeJsonPathFor(home: string): string {
 // buffer que o PtyManager já mantém (plan.md ponto 8) como sinal B da
 // heurística de fallback (spike §"Fallback heurístico").
 const semaphoreManager = new SessionSemaphoreManager({ getRecentLines: (ptyId) => ptyManager.getPreview(ptyId) });
-/** Path do `--settings` adicional (hooks-settings.ts) — resolvido uma vez no boot, reaproveitado por todo spawn de sessão claude. `null` até `app.whenReady()` rodar. */
+/**
+ * T014/T015 (014-chat, P4) — transporte dos hooks. Padrão: ponte HTTP com token por
+ * aba e um `--settings` por sessão. `DONEL_HOOKS_TRANSPORT=legacy` volta ao caminho
+ * antigo (encaminhador PowerShell + servidor `/hook` + mapa por session_id, arquivo
+ * único) — a reversão por uma versão que o plano pede.
+ */
+const hooksTransport: 'bridge' | 'legacy' = process.env.DONEL_HOOKS_TRANSPORT === 'legacy' ? 'legacy' : 'bridge';
+/** Legado: path do `--settings` único (hooks-settings.ts), resolvido no boot. `null` até `app.whenReady()` rodar (ou fora do modo legado). */
 let hooksSettingsPath: string | null = null;
+/** Ponte de hooks (transporte novo). `null` até o boot — ou se ela não subiu: sessões nascem sem semáforo, como no legado. */
+let hookBridge: HookBridge | null = null;
+/** `curl.exe` achado no boot (`where.exe curl`); `null` = fallback no encaminhador PowerShell que lê bytes. */
+let curlPath: string | null = null;
+/** Conversa ativa de cada aba (ptyId -> session id); muda com `/clear` e `/resume` (FR-033). */
+const activeSessionByPty = new Map<string, string>();
+
+/**
+ * T048 (014-chat) — hub do chat (uma conversa por aba). `null` com `chat.enabled = false`
+ * (lido no boot: mudar a preferência em tempo de execução só vale no próximo início do app)
+ * ou sem ponte de hooks (transporte legado / ponte que não subiu).
+ */
+let chatHub: ChatHub | null = null;
+/** T088 - imagens coladas na caixa do chat (limpas ao fechar a aba e, no boot, por idade). */
+let chatAttachments: AttachmentStore | null = null;
+/** Fonte INICIAL da conversa de cada aba `claude` (a troca de conversa é do hub, não daqui). */
+const initialChatSourceByPty = new Map<string, ChatSourceInfo>();
+/** Conta ativa vista no último `accounts:changed` — a troca vira aviso `account-switch` no chat. */
+let lastBroadcastActiveAccountId: string | null | undefined;
+
+// T046 (014-chat) — o esquema `donel-asset:` precisa ser registrado ANTES do `ready`.
+registerAssetScheme(protocol);
+
+function broadcastChat(channel: string, payload: unknown): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(channel, payload);
+  }
+}
+
+/** Primeiro `curl.exe` do PATH, ou `null` — nunca lança (o boot não pode cair por isso). */
+function detectCurlPath(): string | null {
+  try {
+    const output = execFileSync('where.exe', ['curl'], { encoding: 'utf8', timeout: 5_000, windowsHide: true });
+    const first = output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+    return first ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods (T1125, única
@@ -727,6 +807,19 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send(ACCOUNT_CHANNELS.changed, view);
   }
+  // T048 (014-chat) — troca de conta vira aviso no fim das conversas abertas (só o rótulo, nunca e-mail).
+  const previous = lastBroadcastActiveAccountId;
+  lastBroadcastActiveAccountId = view.activeAccountId;
+  if (previous !== undefined && previous !== null && view.activeAccountId !== null && previous !== view.activeAccountId) {
+    const knownLabel = view.accounts.find((account) => account.id === view.activeAccountId)?.label;
+    const label = knownLabel ?? view.activeAccountId;
+    chatHub?.notifyAccountSwitch(label);
+    // 015-jobu-pet (T043, US4) — the Jobu looks at the mirror and shows the new account, with the chat on or not. The first
+    // active account (from none to one) is not a switch: the same rule as the chat notice, right above. The bubble carries only the
+    // LABEL the owner gave the account (FR-018): its id is an opaque UUID that tells nobody anything, so an account
+    // that is not in the list (it does not happen: the active one always is) does not become a bubble with the id inside.
+    if (knownLabel !== undefined) petService?.onAccountSwitched(knownLabel);
+  }
 }
 
 /**
@@ -860,6 +953,111 @@ app.setName('donel-dev');
 // Electron sem app.setAppUserModelId no Windows".
 app.setAppUserModelId('com.seazone.doneldev');
 
+/**
+ * C1 (015-jobu-pet, R5) — the main window. The app assumed a single window: "any window" served as the
+ * main one for the focus and for the click on the notification. With the Jobu there is a second one, which is never the
+ * main one; whoever needs the main one asks here.
+ */
+let mainWindowRef: BrowserWindow | null = null;
+
+function getMainWindow(): BrowserWindow | null {
+  return mainWindowRef !== null && !mainWindowRef.isDestroyed() ? mainWindowRef : null;
+}
+
+/**
+ * T020 (015-jobu-pet) — the Jobu service. `null` until the main window appears (R21: the pet window
+ * is only born AFTER the main one's `ready-to-show`, so `firstWindow()` of the smokes is still
+ * the main one) and again after it closes. With `pet.enabled = false` the service exists
+ * but holds no window and no timer: the app is the one from before the pet.
+ */
+let petService: PetService | null = null;
+
+function toPetDisplay(display: Electron.Display): PetDisplay {
+  return { id: display.id, bounds: display.bounds, workArea: display.workArea, scaleFactor: display.scaleFactor };
+}
+
+function startPetService(): void {
+  if (petService !== null) return;
+  // The two TEST seams of the Jobu window (`DONEL_PET_SMOKE_INVISIBLE`, `DONEL_PET_CAPTURABLE`): off in the owner's app.
+  const seams = readPetSeams(process.env);
+  petService = createPetService({
+    getMainWindow,
+    config: () => appConfig.pet,
+    persist: (next) => {
+      appConfig = { ...appConfig, pet: next };
+      persistAppConfig();
+    },
+    createWindow: (options) => createPetWindow(options, seams),
+    // 016-jobu-faxina — the sweep of the menu "Fazer faxina", and the click of its bubble (the Explorer opens the folder).
+    runSweep: createSweepRunner({
+      git: createGitRunner(),
+      now: () => Date.now(),
+      getRoots: () => appConfig.projectRoots,
+      getLastSweepAt: () => appConfig.sweep.lastSweepAt,
+      setLastSweepAt: (ms) => {
+        appConfig = { ...appConfig, sweep: { lastSweepAt: ms } };
+        persistAppConfig();
+      },
+      claudeProjectsDir: join(defaultClaudeHome(), 'projects'),
+      tempClaudeDir: join(tmpdir(), 'claude'),
+      log: (line) => appendFile(join(app.getPath('userData'), 'sweep.log'), `${new Date().toISOString()} ${line}\n`, 'utf8'),
+    }),
+    openFolder: (path) => void shell.openPath(path),
+    getDisplays: () => screen.getAllDisplays().map(toPetDisplay),
+    getPrimaryDisplay: () => toPetDisplay(screen.getPrimaryDisplay()),
+    now: () => Date.now(),
+    setInterval: (callback, ms) => setInterval(callback, ms),
+    clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
+    // FR-034: with `DONEL_PET_CAPTURABLE=1` the protection against capture never turns on (the real screenshots of the docs).
+    alwaysCapturable: seams.capturable,
+    // T050 (R10): the full-screen helper only exists while the Jobu window is open.
+    startFullscreenWatcher: (onChange) => createFullscreenWatcher({ onChange }),
+    // T049 (FR-005): a monitor plugged in, unplugged or with its work area changed revalidates the position.
+    subscribeDisplays: (listener) => {
+      const handler = (): void => listener();
+      screen.on('display-added', handler);
+      screen.on('display-removed', handler);
+      screen.on('display-metrics-changed', handler);
+      return () => {
+        screen.removeListener('display-added', handler);
+        screen.removeListener('display-removed', handler);
+        screen.removeListener('display-metrics-changed', handler);
+      };
+    },
+  });
+  petService.start();
+  if (seams.ghost) {
+    // The test hook of the ghost mode: what the full-screen watcher would do on seeing an app take the screen. Verification
+    // with a REAL full screen belongs to the owner's checklist; the smoke only proves that the window hides and comes back when the service is told.
+    const hooks = globalThis as PetSmokeGlobal;
+    hooks.__donelPetSmoke = { ...hooks.__donelPetSmoke, setFullscreen: (active) => petService?.onFullscreenChanged(active) };
+  }
+}
+
+/**
+ * C1 (015-jobu-pet, R5/R21) — called on the `closed` of the main window, BEFORE `killAll`: the Jobu is a
+ * second window and dies with the main one. Without this it would stay alive and `window-all-closed` would never
+ * end the app.
+ */
+function onMainWindowClosed(): void {
+  petService?.dispose();
+  petService = null;
+}
+
+/**
+ * Turns the Jobu on/off (`config:setPetPrefs`). Without a service (the main window has not appeared yet, or has already
+ * closed) it only saves the preference; with a service it saves, applies and tells the main window (R19).
+ */
+function setPetEnabled(enabled: boolean): void {
+  if (petService !== null) {
+    petService.setEnabled(enabled);
+    return;
+  }
+  if (appConfig.pet.enabled === enabled) return;
+  appConfig = { ...appConfig, pet: { ...appConfig.pet, enabled } };
+  persistAppConfig();
+}
+
 function createMainWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -876,10 +1074,30 @@ function createMainWindow(): void {
       sandbox: true,
     },
   });
+  mainWindowRef = mainWindow;
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();
+    startPetService(); // 015 (R21): the Jobu is only born after the main window appears
   });
+
+  // 015-jobu-pet - the focus of the main window feeds the Jobu ("seen" = the active tab with the Donel in
+  // front of the owner). In front means focused, visible and not minimized: a window minimized while it was
+  // the active one went on answering `isFocused() === true` (measured: minimized, invisible and "focused"),
+  // and with no `blur` to tell, a session on the active tab would be born seen with the Donel on the taskbar.
+  // So the signal follows minimize, restore, show and hide as well.
+  const reportPetFocus = (): void => {
+    petService?.onMainFocusChanged(mainWindow.isFocused() && mainWindow.isVisible() && !mainWindow.isMinimized());
+  };
+  mainWindow.on('focus', reportPetFocus);
+  mainWindow.on('blur', reportPetFocus);
+  mainWindow.on('minimize', reportPetFocus);
+  mainWindow.on('restore', reportPetFocus);
+  mainWindow.on('show', reportPetFocus);
+  mainWindow.on('hide', reportPetFocus);
+
+  // T045 (014-chat, R21): this window exposes `window.donel`, so it must never be navigated away (see navigation-guard.ts).
+  guardNavigation(mainWindow.webContents);
 
   const unsubscribeData = ptyManager.onData((ptyId, data) => {
     mainWindow.webContents.send(PTY_CHANNELS.data, ptyId, data);
@@ -887,6 +1105,11 @@ function createMainWindow(): void {
   const unsubscribeExit = ptyManager.onExit((ptyId, exitCode, signal) => {
     const info: PtyExitInfo = { exitCode, signal };
     mainWindow.webContents.send(PTY_CHANNELS.exit, ptyId, info);
+
+    // C3 (015-jobu-pet) — the exit consumes the intent that `pty:kill` marked: `true` = the owner closed
+    // the tab (or Resume/Reopen killed it), `false` = the process left by itself. Consuming here, on every
+    // exit, is what keeps the mark from staying forever; the Jobu gets the result (`byUser`).
+    petService?.onSessionExited(ptyId, consumeKillRequested(ptyId));
 
     // T009 — onExit do node-pty (evento do SO) é a fonte de verdade pra
     // "encerrada"/"falha" (spike: kill forçado nunca dispara SessionEnd).
@@ -902,6 +1125,13 @@ function createMainWindow(): void {
     // kill forçado não dispara o hook, e um watcher sobrevivente é handle
     // vazado. No-op para aba de terminal livre (nunca abriu watcher).
     transcriptWatchers.stop(ptyId);
+    // T015 (014-chat) — baixa da ponte: apaga o `--settings` da sessão e esquece o token.
+    // No-op para aba sem hooks (terminal livre, login isolado, transporte legado).
+    hookBridge?.unregisterSession(ptyId);
+    removeSessionHooksSettings(app.getPath('userData'), ptyId);
+    activeSessionByPty.delete(ptyId);
+    chatHub?.markEnded(ptyId);
+    void chatAttachments?.releasePty(ptyId);
     // T1125 (011-contas-e-provedores, etapa 1, C4) — mesma baixa, pro poll de
     // 5 min do motor de contas parar de contar esta sessão como viva.
     // Fase 2 (D5) — `releaseAccountsBusyPty` também retoma um auto-switch
@@ -916,6 +1146,8 @@ function createMainWindow(): void {
   // Fechar a janela mata todos os PTYs dela — evita processos powershell.exe
   // órfãos (plan.md risco de vazamento, DoD do ciclo de vida chega em T010).
   mainWindow.on('closed', () => {
+    if (mainWindowRef === mainWindow) mainWindowRef = null; // C1
+    onMainWindowClosed(); // C1/R21 — the Jobu dies with the main window, BEFORE killAll
     unsubscribeData();
     unsubscribeExit();
     unsubscribeSemaphore();
@@ -984,6 +1216,101 @@ function startTranscriptWatcher(ptyId: string, filePath: string, sessionId: stri
   });
 }
 
+/**
+ * T016 (014-chat, FR-033) — a ponte avisou que a aba passou a outra conversa
+ * (`/clear`, `/resume`, fork). Re-aponta o watcher de nome/contexto/cor para o
+ * `.jsonl` novo (que pode ainda não existir) e avisa o renderer, que troca o
+ * `claudeSessionId` da aba. O semáforo é por aba e não precisa de nada.
+ */
+function handleConversationSwitched(event: Extract<BridgeEvent, { type: 'conversation-switched' }>): void {
+  const { ptyId, sessionId, transcriptPath, source } = event;
+  if (!transcriptPath) return; // sem caminho não há o que seguir; o payload do CLI sempre o traz.
+  const previousSessionId = activeSessionByPty.get(ptyId) ?? null;
+  if (previousSessionId === sessionId) return;
+  activeSessionByPty.set(ptyId, sessionId);
+  spawnedTranscriptPaths.set(sessionId, transcriptPath);
+  transcriptWatchers.repoint(ptyId, { sessionId, transcriptPath });
+  const payload: SessionSwitchedPayload = { ptyId, previousSessionId, sessionId, source };
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(TRANSCRIPT_CHANNELS.switched, payload);
+  }
+}
+
+/**
+ * T048 (014-chat) — liga o hub do chat à ponte de hooks e registra os handlers `chat:*`.
+ * Com `chat.enabled = false` (lido da config no boot), ou sem ponte, NADA é registrado e o
+ * protocolo `donel-asset:` também não: o app é o de antes do chat.
+ */
+function registerChatDomain(): void {
+  const smokeNotificationsLog = process.env.DONEL_SMOKE_NOTIFICATIONS_LOG || undefined;
+  if (!appConfig.chat.enabled || hookBridge === null) return;
+  const attachmentsRoot = join(app.getPath('userData'), 'chat-attachments');
+  // T079 - notificacao do sistema quando uma pendencia abre (janela sem foco ou aba nao ativa).
+  const notifier = createPendingNotifier({
+    preference: () => appConfig.notificationPreference,
+    // 015-jobu-pet (T033, R8) - with the Jobu on screen the bubble says it, and a Windows notification would repeat it.
+    isPetEnabled: () => petService?.isEnabled() ?? false,
+    // C1 (015-jobu-pet) — the MAIN window in focus, not "some window": the Jobu is another window of the app.
+    isWindowFocused: () => getMainWindow()?.isFocused() ?? false,
+    isSupported: () => smokeNotificationsLog !== undefined || Notification.isSupported(),
+    create: (options) => {
+      // Smoke-only hook (T081): records instead of showing a system notification.
+      if (smokeNotificationsLog !== undefined) {
+        appendFileSync(smokeNotificationsLog, `${JSON.stringify(options)}\n`, 'utf8');
+        return { on: () => undefined, show: () => undefined };
+      }
+      return new Notification(options);
+    },
+    onClick: (ptyId) => {
+      const window = getMainWindow(); // C1 (015-jobu-pet) — the main one, not "the first live window"
+      if (window === null) return;
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+      window.webContents.send(CHAT_CHANNELS.focusPending, { ptyId });
+    },
+  });
+  const hub = createChatHub({
+    bridge: hookBridge,
+    getSource: (ptyId) => initialChatSourceByPty.get(ptyId) ?? null,
+    events: {
+      rows: (event) => broadcastChat(CHAT_CHANNELS.rows, event),
+      live: (event) => {
+        // o semaforo da aba fica em `permission` ("esperando voce") enquanto houver pendencia aberta
+        semaphoreManager.setPendingOpen(event.ptyId, event.live.pendings.length > 0);
+        broadcastChat(CHAT_CHANNELS.live, event);
+      },
+      pendingOpened: ({ ptyId, pending }) => {
+        notifier.notifyPending(ptyId, pending);
+        // 015-jobu-pet (T032) - the semaphore has just turned `permission`; this tells the Jobu what the pending is.
+        petService?.onPendingOpened(ptyId, pending.kind);
+      },
+      conversationSwitched: (event) => broadcastChat(CHAT_CHANNELS.conversationSwitched, event),
+      reception: (event) => broadcastChat(CHAT_CHANNELS.reception, event),
+      promptSignal: (event) => broadcastChat(CHAT_CHANNELS.promptSignal, event),
+    },
+    diagnostics: createDiagnosticsLog(app.getPath('userData')),
+    attachmentsRoot,
+  });
+  chatHub = hub;
+  chatAttachments = new AttachmentStore({ root: attachmentsRoot });
+  void chatAttachments.sweepOlderThan(ATTACHMENT_MAX_AGE_MS);
+  const commandCatalog = createCommandCatalogScanner();
+  const projectFiles = createProjectFiles();
+  registerChatIpcHandlers({
+    ipcMain,
+    enabled: true,
+    hub,
+    attachments: chatAttachments,
+    catalog: (cwd, transcriptPath) => commandCatalog.catalog(cwd, transcriptPath),
+    files: (cwd, query, limit) => projectFiles.query(cwd, query, limit),
+    openExternal: (url) => shell.openExternal(url),
+    openPath: (path) => shell.openPath(path),
+    onFocusState: (input) => notifier.setFocusState(input.activePtyId, input.tabNames),
+  });
+  registerAssetsProtocol(protocol, { transcriptRoots: (ptyId) => hub.transcriptRoots(ptyId), attachmentsRoot });
+}
+
 function registerPtyIpcHandlers(): void {
   ipcMain.handle(PTY_CHANNELS.create, (_event, options: PtyCreateOptions): PtyCreateResult => {
     if (options.sessionType === 'claude') {
@@ -1034,8 +1361,35 @@ function registerPtyIpcHandlers(): void {
       // graça se o servidor do semáforo não subiu no boot (app.whenReady):
       // a sessão continua funcionando, só sem os indicadores de estado.
       const { correlationId, extraArgs } = resolveClaudeCorrelation(launcherArgs, randomUUID);
-      const semaphoreArgs = hooksSettingsPath ? ['--settings', hooksSettingsPath] : [];
+      // T015 (014-chat) — ponte: id da aba escolhido AQUI (o arquivo `--settings` leva o ptyId
+      // no nome) e token registrado ANTES do spawn. Legado: arquivo único, sem token.
+      const plannedPtyId = randomUUID();
+      let sessionHooksSettingsPath: string | null = null;
+      if (hooksTransport === 'bridge') {
+        if (hookBridge && hookBridge.port !== null) {
+          try {
+            const token = hookBridge.registerSession(plannedPtyId);
+            sessionHooksSettingsPath = writeSessionHooksSettings({
+              userDataDir: app.getPath('userData'),
+              ptyId: plannedPtyId,
+              port: hookBridge.port,
+              token,
+              chatEnabled: appConfig.chat.enabled,
+              curlPath,
+            });
+          } catch (error) {
+            // Degrada como o boot sem servidor: a sessão nasce sem semáforo, nunca sem terminal.
+            console.error('[donel-dev] --settings da sessão não gravou — sessão sem hooks:', error);
+            hookBridge.unregisterSession(plannedPtyId);
+            sessionHooksSettingsPath = null;
+          }
+        }
+      } else {
+        sessionHooksSettingsPath = hooksSettingsPath;
+      }
+      const semaphoreArgs = sessionHooksSettingsPath ? ['--settings', sessionHooksSettingsPath] : [];
       const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs];
+      // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
 
       // T1222 (011-contas-e-provedores, etapa 2, D8/entregável) — com os
       // perfis demolidos, sessões SEM provider nunca mais recebem override de
@@ -1091,20 +1445,40 @@ function registerPtyIpcHandlers(): void {
         activeProfileConfigDir: undefined,
       });
 
-      const ptyId = ptyManager.create({
-        cols: options.cols,
-        rows: options.rows,
-        cwd: options.cwd,
-        // FIX ambiente genérico (28/07) — `launch` embrulha shim `.cmd`/`.ps1`
-        // (npm -g) no interpretador; ConPTY não executa script direto.
-        command: resolved.launch.command,
-        args: [...resolved.launch.argsPrefix, ...finalArgs],
-        claudeConfigDir: claudeConfigDirForSession,
-        envOverrides,
-      });
+      let ptyId: string;
+      try {
+        ptyId = ptyManager.create({
+          id: plannedPtyId,
+          cols: options.cols,
+          rows: options.rows,
+          cwd: options.cwd,
+          // FIX ambiente genérico (28/07) — `launch` embrulha shim `.cmd`/`.ps1`
+          // (npm -g) no interpretador; ConPTY não executa script direto.
+          command: resolved.launch.command,
+          // T018 (014-chat, FR-030) — sessão `claude` sempre com modo de permissão
+          // explícito: launcher > `permissions.defaultMode` do CLI do usuário > default.
+          // Só este ramo: o shell e a aba de login (retorno antecipado acima) não passam por aqui.
+          args: [
+            ...resolved.launch.argsPrefix,
+            ...withResolvedPermissionMode(finalArgs, readUserDefaultPermissionMode(claudeConfigDirForSession)),
+          ],
+          claudeConfigDir: claudeConfigDirForSession,
+          envOverrides,
+        });
+      } catch (error) {
+        // O spawn falhou: nada de token nem arquivo órfão.
+        hookBridge?.unregisterSession(plannedPtyId);
+        removeSessionHooksSettings(app.getPath('userData'), plannedPtyId);
+        throw error;
+      }
 
-      if (hooksSettingsPath) {
+      activeSessionByPty.set(ptyId, correlationId);
+      if (sessionHooksSettingsPath) {
         semaphoreManager.registerSession(ptyId, correlationId);
+        // 015-jobu-pet (R2) — the semaphore announces a new session as `working` only because it is born
+        // that way: for the Jobu that is not a turn. The pet forgets that emission and the tab stays
+        // `idle` until the first real hook event (same reasoning as `accountsBusyPtyIds` right below).
+        petService?.onSessionRegistered(ptyId);
         // 011-contas-e-provedores, etapa 3, Fase 2 (C5) — o semáforo nasce em
         // `working` enquanto o CLI sobe, e só sai dele num evento de hook (fim
         // de turno, notificação). Para o motor de contas isso não é "sessão
@@ -1127,6 +1501,7 @@ function registerPtyIpcHandlers(): void {
       // `forgetIfOrphan` vai conferir se esta retomada morrer (ver comentário de
       // `spawnedTranscriptPaths`).
       spawnedTranscriptPaths.set(correlationId, transcriptPath);
+      initialChatSourceByPty.set(ptyId, { sessionId: correlationId, transcriptPath, cwd: options.cwd ?? homedir() });
       startTranscriptWatcher(ptyId, transcriptPath, correlationId);
 
       // T404 (004) — `correlationId` é o id da sessão do Claude (imposto no
@@ -1163,6 +1538,7 @@ function registerPtyIpcHandlers(): void {
   });
 
   ipcMain.on(PTY_CHANNELS.kill, (_event, ptyId: string) => {
+    markKillRequested(ptyId); // C3 (015-jobu-pet) — mark BEFORE killing: the exit that follows is "the owner's"
     ptyManager.kill(ptyId);
   });
 
@@ -1287,6 +1663,27 @@ function registerConfigIpcHandlers(): void {
   ipcMain.handle(CONFIG_CHANNELS.setLauncherDefaults, (_event, defaults: LauncherDefaultsDto): AppConfigDto => {
     appConfig = { ...appConfig, launcherDefaults: defaults };
     persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** T008 (014-chat) — atualização parcial de `chat`; campo que não é boolean é ignorado. */
+  ipcMain.handle(CONFIG_CHANNELS.setChatPrefs, (_event, prefs: Partial<ChatPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = {
+      ...appConfig,
+      chat: sanitizeChatPrefs({ ...appConfig.chat, ...patch }, appConfig.chat),
+    };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /**
+   * T020 (015-jobu-pet) — the Jobu switch. Only `enabled` comes from the renderer (position and size
+   * are saved by the main, from the pet's gestures) and it applies at once, without a restart. An invalid
+   * payload is a no-op: it returns the config as it is.
+   */
+  ipcMain.handle(CONFIG_CHANNELS.setPetPrefs, (_event, input: unknown): AppConfigDto => {
+    if (isValidPetPrefsInput(input) && input.enabled !== undefined) setPetEnabled(input.enabled);
     return toAppConfigDto(appConfig);
   });
 
@@ -2210,8 +2607,21 @@ void app.whenReady().then(async () => {
   // `hooksSettingsPath` fica `null` e as sessões nascem sem semáforo
   // (degradação, não crash — mesmo espírito do catch de `projects.list`).
   try {
-    const port = await semaphoreManager.start();
-    hooksSettingsPath = writeHooksSettingsFile(app.getPath('userData'), port);
+    const userDataDir = app.getPath('userData');
+    if (hooksTransport === 'legacy') {
+      const port = await semaphoreManager.start();
+      hooksSettingsPath = writeHooksSettingsFile(userDataDir, port);
+    } else {
+      cleanupStaleHookSettings(userDataDir);
+      curlPath = detectCurlPath();
+      const bridge = createHookBridge({ diagnostics: createDiagnosticsLog(userDataDir) });
+      await bridge.start();
+      semaphoreManager.attachBridge(bridge);
+      bridge.onAny((event) => {
+        if (event.type === 'conversation-switched') handleConversationSwitched(event);
+      });
+      hookBridge = bridge;
+    }
   } catch (error) {
     console.error('[donel-dev] semáforo de sessões não subiu (T009) — sessões claude vão nascer sem indicador de estado:', error);
   }
@@ -2321,11 +2731,16 @@ void app.whenReady().then(async () => {
       releaseAccountsBusyPty(update.ptyId);
     }
   });
+  // 015-jobu-pet (T027) — the Jobu reads the semaphore. One subscription, made at boot: `petService` is
+  // nullable (it is born after the main window and dies with it), so the lambda reads it on every
+  // emission. The dedupe by state and `error` -> `done` belong to the service.
+  semaphoreManager.onUpdate((update: SemaphoreUpdate) => petService?.onSemaphoreUpdate(update));
   // Emenda 22/09 (item 4) — StopFailure (limite da conta ou outro erro de
   // API) reavalia o auto-switch imediatamente, sem esperar o poll.
   semaphoreManager.onStopFailure(() => triggerAccountsAutoSwitchOnStopFailure());
   applyAccountsEngineConfig(); // F6 — 1ª chamada sempre 'built' (motor inerte se mod === null, C2).
 
+  registerChatDomain();
   registerPtyIpcHandlers();
   registerProjectIpcHandlers();
   registerSessionIpcHandlers();
@@ -2339,6 +2754,11 @@ void app.whenReady().then(async () => {
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
   registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)
   registerEsteiraIpcHandlers(); // Spec 010 — esteira nova (store + contrato), ao LADO do mapa atual
+  registerPetIpcHandlers({
+    ipcMain,
+    getService: () => petService,
+    isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
+  }); // 015-jobu-pet
   createMainWindow();
 
   app.on('activate', () => {
@@ -2352,6 +2772,8 @@ app.on('window-all-closed', () => {
   ptyManager.killAll();
   isolatedLoginManager?.dispose(); // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — DEPOIS do killAll (mesma ordem já vale pro PTY do login, que killAll já matou).
   semaphoreManager.dispose();
+  chatHub?.dispose();
+  void hookBridge?.close();
   esteiraService?.dispose();
   esteiraService = null;
   accountEngineHost.dispose(); // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.

@@ -1,5 +1,79 @@
 # Donel Dev — o que mudou
 
+## 0.4.0 — 07/10/2026
+
+A versão que junta tudo o que veio depois da 0.3.2: o app ganhou uma Esteira
+própria, perfis viraram contas, e as contas passaram a trocar sozinhas sem
+derrubar a sessão.
+
+### Contas no lugar de perfis
+
+- **Perfis viraram contas.** O seletor de perfis da barra de título deu lugar
+  ao painel de contas. Quem vinha da 0.3.x passa por uma migração assistida
+  que traz as credenciais de cada perfil e mostra o que muda nos MCPs. As pastas
+  antigas não são apagadas: ficam arquivadas em `~/.claude-profiles.old`.
+- **Trocar de conta não reinicia nada.** A troca vale para o app inteiro, e
+  a sessão aberta passa a usar a conta nova já na mensagem seguinte, com os
+  MCPs funcionando.
+- **Adicionar conta é entrar com login.** "Entrar com login" abre uma aba do
+  `claude` numa pasta isolada, você faz o login normal do CLI e a credencial
+  vai direto para o cofre do sistema (o app fecha a aba sozinho). Colar token
+  ficou como plano B, com um campo para a validade.
+- **Remover e desconectar de verdade.** Remover tira a conta da lista e
+  apaga a credencial do cofre, e a conta ativa não pode ser removida.
+  Desconectar pede confirmação.
+- **A statusbar diz qual conta está em uso.** Ela mostra a conta ativa agora,
+  quanto ela já gastou do limite, e avisa quando a sessão trocou de conta no
+  meio do caminho ("trocou em voo").
+- **Carga real de todas as contas.** O consumo de cada conta continua
+  aparecendo horas depois. Antes, ele sumia quando o token vencia (umas 8h).
+  Credencial recusada pelo servidor vira "Reconectar", e falta de rede não é
+  mais confundida com credencial ruim.
+- **Troca automática que troca de verdade.** Quando a conta ativa se aproxima
+  do limite, o app passa para a conta com mais folga sem esperar as sessões
+  pararem. Antes, com alguma sessão sempre trabalhando, a troca só acontecia
+  depois de o limite estourar. Cada decisão fica registrada, e o painel avisa
+  quando nenhuma conta tem folga.
+- **Sessão derrubada pelo limite não trava mais o app.** Ela sai de
+  "trabalhando" e libera a troca automática.
+- **Provedores compatíveis com Claude** (começando pelo OpenRouter): uma
+  sessão pode rodar em outro provedor, com a chave guardada no cofre.
+
+### Esteira
+
+- **A Esteira tem estado próprio.** O que acontece em cada fase de um card
+  (discovery, plano, design, implementar, validar, concluir) fica gravado
+  localmente, num registro que só cresce. O board de tarefas virou espelho
+  opcional, com fila e reenvio quando falha.
+- **Disparar fase é um gesto só.** "Preparar" abre a sessão já com o comando
+  da fase, e a sessão envia o próprio Enter. O app confirma que o comando
+  saiu e reenvia o Enter se for preciso. Ele recusa disparar fase já
+  concluída, ou em recurso ou sessão ocupados.
+- **O card mostra o que importa.** Decisões, revisão humana, custo de cada
+  fase, para onde a entrega foi (PR, branch, canal) e o que roda junto.
+  Erros aparecem como erros, e esperar por uma pessoa não conta como falha.
+- **Fase Design** entre Plano e Implementar. Validar agora roda o e2e de
+  verdade e fecha a documentação junto.
+- **Repo do card escolhido, não digitado.** O card aponta para uma pasta de
+  verdade (útil quando um board cobre vários serviços), e a fase abre sempre
+  no repo do card, nunca no que estiver em foco.
+- **Mapa de nós refeito.** Agora é um grafo com física: círculos por tipo, cor
+  por estado, destaque da vizinhança ao passar o mouse, artefatos como
+  satélites. Clicar num nó leva ao item, e arrastar não conta como clique.
+- **Ferramentas da Esteira na linha de comando:** `npm run esteira:check`
+  valida o resultado de uma fase, e `npm run esteira:custo` mostra o custo
+  médio por fase.
+
+### Terminal e abas
+
+- **A faixa da aba segue o `/color` do CLI.** A cor que você escolhe na
+  sessão é a que aparece na aba.
+- **Contexto em % no rodapé** e moldura nova do terminal.
+- **Sessões de fase da Esteira** não aparecem mais, por padrão, na lista de
+  sessões anteriores.
+- **Correções de interface:** o modal da porta de entrada não vaza mais da
+  caixa, e os modais não roubam o foco enquanto você digita.
+
 ## 0.3.2 — 28/07/2026
 
 O primeiro teste numa máquina que não é a do autor rendeu três correções de

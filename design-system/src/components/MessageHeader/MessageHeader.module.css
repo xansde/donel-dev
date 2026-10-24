@@ -1,0 +1,28 @@
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.label {
+  font-size: var(--text-caption-size);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.time {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.copiedIcon {
+  color: var(--zone-ok);
+}

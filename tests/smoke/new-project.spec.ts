@@ -1,9 +1,9 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { APP_MAIN, REPO_ROOT } from './repoUnderTest';
+import { launchIsolatedApp } from './helpers/launch';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
 // CA-30 (009-modo-dev-v3, lote 9) — smoke do "lançar um projeto do zero
@@ -27,12 +27,7 @@ let userDataDir: string;
 let isolatedRoot: string;
 
 async function launchApp(): Promise<void> {
-  electronApp = await electron.launch({
-    args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
-    cwd: REPO_ROOT,
-  });
-  window = await electronApp.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
+  ({ app: electronApp, window: window } = await launchIsolatedApp({ userDataDir }));
 }
 
 /** Troca os roots default pelo `isolatedRoot` — via a UI de Preferências (T015), sem tocar ConfigStore/disco por fora do app. */
@@ -78,7 +73,7 @@ test.afterAll(async () => {
   }
 });
 
-test('CA-30 — seletor de projetos no titlebar cria um projeto novo dentro do root isolado e ele aparece na sidebar', async () => {
+test('CA-30 — seletor de projetos no titlebar cria um projeto novo dentro do root isolado e ele aparece na sidebar @projetos', async () => {
   test.setTimeout(60_000);
 
   // 1. Abre o seletor de projetos do titlebar.

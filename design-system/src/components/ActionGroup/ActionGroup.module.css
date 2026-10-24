@@ -1,0 +1,78 @@
+.group {
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 30px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  text-align: left;
+  cursor: pointer;
+}
+
+.header:hover {
+  background: var(--bg-panel);
+}
+
+.header:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.chevron {
+  flex: none;
+  color: var(--text-muted);
+  transition: transform var(--duration-micro) var(--ease-standard);
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.duration {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+/* Falha içada: recuo de 26 px, coral FIXO a 8% (D-C26). */
+.failure {
+  margin: 2px 0 0 26px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--state-permission) 8%, transparent);
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  margin: 4px 0 0 11px;
+  padding: 2px 0 2px 14px;
+  border-left: 1px solid var(--border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}

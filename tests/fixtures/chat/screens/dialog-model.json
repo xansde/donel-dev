@@ -1,0 +1,171 @@
+{
+ "name": "dialog-model",
+ "description": "Diálogo \"Select model\" (sem caixa de entrada).",
+ "source": "real",
+ "origin": "q9-r0.txt :: after /model",
+ "layout": "fullscreen",
+ "cols": 120,
+ "rows": 40,
+ "lines": [
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": " ▐▛███▛█   Claude Code v2.1.293",
+   "dim": []
+  },
+  {
+   "text": "▝▜██████▀  Haiku 5.5 · Claude Max",
+   "dim": []
+  },
+  {
+   "text": " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude\\C--Users-xansd-seazone-donel-dev\\1dbd900d-f2d1-41bb-9c56-484f03770e11\\… · /rc",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔",
+   "dim": []
+  },
+  {
+   "text": "   Select model",
+   "dim": []
+  },
+  {
+   "text": "   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,",
+   "dim": []
+  },
+  {
+   "text": "   specify with --model.",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "     1.  Default (recommended)  Fable 5.1",
+   "dim": []
+  },
+  {
+   "text": "     2.  Opus 5.5               For complex work and everyday tasks",
+   "dim": []
+  },
+  {
+   "text": "     3.  Fable 5.1              For your toughest challenges",
+   "dim": []
+  },
+  {
+   "text": "     4.  Sonnet 5.5             Most efficient for simpler tasks",
+   "dim": []
+  },
+  {
+   "text": "   ❯ 5.  Haiku 5.5 ✔            Fastest for quick answers",
+   "dim": []
+  },
+  {
+   "text": "     6.  Haiku 4.5              Fastest for quick answers",
+   "dim": []
+  },
+  {
+   "text": "     7.  Sonnet 5               Efficient for routine tasks",
+   "dim": []
+  },
+  {
+   "text": "     8.  Opus 5                 Best for everyday, complex tasks",
+   "dim": []
+  },
+  {
+   "text": "     9.  Fable 5                Most capable for your hardest and longest-running tasks",
+   "dim": []
+  },
+  {
+   "text": "   ↓ 10. Opus 4.8               Best for everyday, complex tasks",
+   "dim": []
+  },
+  {
+   "text": "      … +3 models",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   ◐ Medium effort (default) ←/→ to adjust",
+   "dim": []
+  },
+  {
+   "text": "",
+   "dim": []
+  },
+  {
+   "text": "   Enter to set as default · s to use this session only · Esc to cancel",
+   "dim": []
+  }
+ ]
+}

@@ -3,7 +3,9 @@ import { dirname } from 'node:path';
 import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
-import type { AppConfigDto, LauncherDefaultsDto, NotificationPreference, ProjectScanMode, SessionNamesMap } from '../shared/config';
+import type { AppConfigDto, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs } from '../shared/config';
+// T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
+import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
 import type {
   ArchivedPhaseSession,
   ArchivedPhaseSessions,
@@ -128,6 +130,19 @@ export interface AppConfig {
    * namespace `provider:<id>`, accounts-vault.json reusado).
    */
   readonly providers: ProvidersConfigDto;
+  /** T008 (014-chat) — interruptor da entrega incremental (R22) e modo foco global (FR-009). Exposta no DTO. */
+  readonly chat: ChatPrefs;
+  /**
+   * T014 (015-jobu-pet) — the Jobu on the desktop: switch (off by default), remembered position
+   * and size. Exposed in the DTO. A TOP-LEVEL key on purpose (R20): a build without the 015 keeps it
+   * in `unknownFields` and writes it back intact, which a new subkey of `chat` would not get.
+   */
+  readonly pet: PetPrefs;
+  /**
+   * 016-jobu-faxina — the stamp of the last sweep that ended well. A TOP-LEVEL key (like `pet`, R20), NOT in
+   * the DTO: only the main reads it.
+   */
+  readonly sweep: SweepPrefs;
   /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
@@ -163,8 +178,68 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     accounts: defaultAccountsConfig(),
     migration: defaultMigrationState(),
     providers: defaultProvidersConfig(),
+    chat: defaultChatPrefs(),
+    pet: defaultPetPrefs(),
+    sweep: defaultSweepPrefs(),
     unknownFields: {},
   };
+}
+
+/** 016-jobu-faxina — no sweep yet: every known repo enters the first one. */
+export function defaultSweepPrefs(): SweepPrefs {
+  return { lastSweepAt: null };
+}
+
+/** 016 — `lastSweepAt` is a finite, positive epoch in ms; anything else means "never swept". */
+export function sanitizeSweepPrefs(value: unknown, fallback: SweepPrefs = defaultSweepPrefs()): SweepPrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return fallback;
+  const at = (value as Record<string, unknown>).lastSweepAt;
+  if (at === null) return { lastSweepAt: null };
+  return typeof at === 'number' && Number.isFinite(at) && at > 0 ? { lastSweepAt: Math.floor(at) } : fallback;
+}
+
+/** T008 (014-chat) — `enabled` false até a Fase 7 (R22); `focusMode` true (FR-009). */
+export function defaultChatPrefs(): ChatPrefs {
+  return { enabled: false, focusMode: true };
+}
+
+/** T008 — campo a campo: valor que não é boolean cai no default daquele campo. */
+export function sanitizeChatPrefs(value: unknown, fallback: ChatPrefs = defaultChatPrefs()): ChatPrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return fallback;
+  const candidate = value as Record<string, unknown>;
+  return {
+    enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : fallback.enabled,
+    focusMode: typeof candidate.focusMode === 'boolean' ? candidate.focusMode : fallback.focusMode,
+  };
+}
+
+/** T014 (015-jobu-pet) — off, no remembered position (= default corner), Medium size. */
+export function defaultPetPrefs(): PetPrefs {
+  return { enabled: false, placement: null, size: PET_SIZE_DEFAULT };
+}
+
+/**
+ * T014 — field by field, like `chat`: an invalid field falls back to the default of THAT field and does not take
+ * the good ones with it. `placement` is only valid with finite `x` and `y` (never half a point: a crooked value goes back to the
+ * default corner); `size` is an integer between 80 and 320.
+ */
+export function sanitizePetPrefs(value: unknown, fallback: PetPrefs = defaultPetPrefs()): PetPrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return fallback;
+  const candidate = value as Record<string, unknown>;
+  return {
+    enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : fallback.enabled,
+    placement: sanitizePetPlacement(candidate.placement, fallback.placement),
+    size: typeof candidate.size === 'number' && Number.isFinite(candidate.size) ? clampSize(candidate.size) : fallback.size,
+  };
+}
+
+function sanitizePetPlacement(value: unknown, fallback: PetPrefs['placement']): PetPrefs['placement'] {
+  if (value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) return fallback;
+  const point = value as Record<string, unknown>;
+  if (typeof point.x !== 'number' || !Number.isFinite(point.x)) return fallback;
+  if (typeof point.y !== 'number' || !Number.isFinite(point.y)) return fallback;
+  return { x: point.x, y: point.y };
 }
 
 /** T306 — estado inicial do Modo Dev: nada aberto, tabela de defaults do C6. */
@@ -191,6 +266,8 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     collapsedFavorites: config.collapsedFavorites,
     devMode: config.devMode,
     tabAppearance: config.tabAppearance,
+    chat: config.chat,
+    pet: config.pet,
   };
 }
 
@@ -606,6 +683,9 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     accounts: sanitizeAccountsConfig(candidate.accounts, defaults.accounts),
     migration: sanitizeMigrationState(candidate.migration, defaults.migration),
     providers: sanitizeProvidersConfig(candidate.providers),
+    chat: sanitizeChatPrefs(candidate.chat, defaults.chat),
+    pet: sanitizePetPrefs(candidate.pet, defaults.pet),
+    sweep: sanitizeSweepPrefs(candidate.sweep, defaults.sweep),
     unknownFields,
   };
 }
