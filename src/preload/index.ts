@@ -119,7 +119,7 @@ import {
 } from '../shared/esteira/ipc';
 
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import type { MindscapeSaveResult } from '../shared/mindscape/channels';
+import type { MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
@@ -365,6 +365,11 @@ const donelApi: DonelApi = {
   mindscape: {
     load: () => ipcRenderer.invoke(MINDSCAPE_CHANNELS.load) as Promise<MindscapeDoc>,
     save: (doc: MindscapeDoc) => ipcRenderer.invoke(MINDSCAPE_CHANNELS.save, doc) as Promise<MindscapeSaveResult>,
+    onTurnEnded: (listener: (payload: MindscapeTurnEndedPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: MindscapeTurnEndedPayload): void => listener(payload);
+      ipcRenderer.on(MINDSCAPE_CHANNELS.turnEnded, handler);
+      return () => ipcRenderer.removeListener(MINDSCAPE_CHANNELS.turnEnded, handler);
+    },
   },
 
   devMode: {

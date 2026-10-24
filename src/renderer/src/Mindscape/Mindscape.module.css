@@ -264,6 +264,79 @@
   color: var(--text-muted);
 }
 
+/* Fatia 03 — post-it written by the session (PostItCard tokens: --postit-bg, meta at 65%).
+   230 wide, at most 270 tall (NOTE_CARD_WIDTH/HEIGHT in model.ts): 8 clamped lines. */
+.noteCard {
+  position: absolute;
+  box-sizing: border-box;
+  width: 230px;
+  max-height: 270px;
+  background: var(--postit-bg);
+  border-radius: var(--radius-sm);
+  border-top: 3px solid var(--stripe);
+  padding: 10px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.noteAuthor {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.15);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  color: color-mix(in srgb, var(--text-primary) 80%, transparent);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.noteText {
+  margin: 0;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+  line-clamp: 8;
+  overflow: hidden;
+}
+
+.noteMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--text-caption-size);
+  color: color-mix(in srgb, var(--text-primary) 65%, transparent);
+}
+
+.noteArchive {
+  align-self: flex-end;
+  font: inherit;
+  font-size: var(--text-caption-size);
+  color: color-mix(in srgb, var(--text-primary) 80%, transparent);
+  background: transparent;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.noteArchive:hover {
+  color: var(--text-primary);
+}
+
+.noteArchive:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 @keyframes pulse {
   0%,
   100% {

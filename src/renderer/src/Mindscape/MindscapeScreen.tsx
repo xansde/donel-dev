@@ -3,7 +3,7 @@ import type { SessionState } from '@donel-dev/design-system';
 import { sessionHighlight } from '../../../shared/mindscape/highlight';
 import { sessionCardId, type MindscapeDoc } from '../../../shared/mindscape/model';
 import type { TabColorToken } from '../../../shared/tabAppearance';
-import { MindscapeSessionCard } from './MindscapeCard';
+import { MindscapeNoteCard, MindscapeSessionCard, STRIPE_BY_TOKEN } from './MindscapeCard';
 import styles from './Mindscape.module.css';
 
 /** A `claude` tab that is open in a project — what feeds the session post-its. */
@@ -30,6 +30,8 @@ export interface MindscapeScreenProps {
   readonly seenAt: Readonly<Record<string, number>>;
   /** "Ir ao terminal" — Uso geral with the tab of the session in focus. */
   readonly onGoToTerminal: (tabId: string) => void;
+  /** "Arquivar" a post-it (fatia 03: the one written by the session) — removes it from the board. */
+  readonly onArchive: (projectPath: string, cardId: string) => void;
 }
 
 function folderName(path: string): string {
@@ -49,6 +51,7 @@ export function MindscapeScreen({
   initialProjectPath,
   seenAt,
   onGoToTerminal,
+  onArchive,
 }: MindscapeScreenProps): React.JSX.Element {
   const boardPaths = Object.keys(doc.boards);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(initialProjectPath);
@@ -127,8 +130,25 @@ export function MindscapeScreen({
                   />
                 );
               })}
+              {Object.values(board.cards).map((card) => {
+                if (card.kind !== 'session-note') return null;
+                const live = boardSessions.find((session) => session.sessionId === card.sessionId);
+                return (
+                  <MindscapeNoteCard
+                    key={card.id}
+                    sessionId={card.sessionId}
+                    sessionName={live?.name ?? card.sessionName}
+                    text={card.text}
+                    writtenAt={card.writtenAt}
+                    stripe={live ? (live.cliColorHex ?? STRIPE_BY_TOKEN[live.color]) : undefined}
+                    x={card.x}
+                    y={card.y}
+                    onArchive={() => onArchive(board.projectPath, card.id)}
+                  />
+                );
+              })}
             </div>
-            {boardSessions.length === 0 ? <p className={styles.empty}>Nenhuma sessão aberta neste projeto.</p> : null}
+            {boardSessions.length === 0 && !Object.values(board.cards).some((card) => card.kind === 'session-note') ? <p className={styles.empty}>Nenhuma sessão aberta neste projeto.</p> : null}
           </>
         )}
       </div>

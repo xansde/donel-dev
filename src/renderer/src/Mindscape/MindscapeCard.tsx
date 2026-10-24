@@ -13,7 +13,7 @@ const STATE_GLYPH: Record<SessionState, string> = {
   error: '✕',
 };
 
-const STRIPE_BY_TOKEN: Record<TabColorToken, string> = {
+export const STRIPE_BY_TOKEN: Record<TabColorToken, string> = {
   none: 'var(--border)',
   accent: 'var(--accent)',
   'donel-accent': 'var(--donel-accent)',
@@ -85,6 +85,44 @@ export function MindscapeSessionCard({
       <div className={styles.sessionState} data-testid="mindscape-session-state">
         {SESSION_STATE_LABEL_PT[state]}
       </div>
+    </article>
+  );
+}
+
+export interface MindscapeNoteCardProps {
+  readonly sessionId: string;
+  readonly sessionName: string;
+  readonly text: string;
+  readonly writtenAt: number;
+  /** Color of the live session tab; `undefined` once the tab is closed (neutral stripe). */
+  readonly stripe?: string;
+  readonly x: number;
+  readonly y: number;
+  readonly onArchive: () => void;
+}
+
+function formatHour(epochMs: number): string {
+  return new Date(epochMs).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+/** Mindscape, fatia 03 — the post-it written by the session: last answer of the turn and the hour. Stays after the tab closes, until archived. */
+export function MindscapeNoteCard({ sessionId, sessionName, text, writtenAt, stripe, x, y, onArchive }: MindscapeNoteCardProps): React.JSX.Element {
+  const style = { left: x, top: y, '--stripe': stripe ?? 'var(--border)' } as CSSProperties;
+  return (
+    <article className={styles.noteCard} style={style} data-testid="mindscape-note-card" data-session-id={sessionId} aria-label={`Post-it escrito pela sessão ${sessionName}`}>
+      <span className={styles.noteAuthor} title={sessionName}>
+        {sessionName}
+      </span>
+      <p className={styles.noteText} title={text} data-testid="mindscape-note-text">
+        {text}
+      </p>
+      <div className={styles.noteMeta}>
+        <span>escrito pela sessão</span>
+        <span data-testid="mindscape-note-time">{formatHour(writtenAt)}</span>
+      </div>
+      <button type="button" className={styles.noteArchive} onClick={onArchive}>
+        Arquivar
+      </button>
     </article>
   );
 }

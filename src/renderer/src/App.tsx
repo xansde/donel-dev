@@ -84,7 +84,7 @@ import { EsteiraScreen } from './Esteira/EsteiraScreen';
 // Mindscape V1 — third mode of the shell (docs/design/mindscape.md).
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
-import { placeSessionCard } from '../../shared/mindscape/model';
+import { archiveCard, findSessionBoard, placeSessionCard, writeSessionNote } from '../../shared/mindscape/model';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
 import {
   AUTO_START_NOT_READY_MESSAGE,
@@ -1838,6 +1838,28 @@ export function App(): React.JSX.Element {
     if (!mindscapeLoaded) return;
     updateMindscape((doc) => mindscapeSessions.reduce((acc, session) => placeSessionCard(acc, session.projectPath, session.sessionId), doc));
   }, [mindscapeLoaded, updateMindscape, mindscapeSessions]);
+  // Mindscape, fatia 03 — post-it written by the session at each end of turn.
+  // The project and the name come from the live tab; a session that is no
+  // longer open falls back to the board that already holds its card.
+  const mindscapeSessionsRef = useRef(mindscapeSessions);
+  mindscapeSessionsRef.current = mindscapeSessions;
+  useEffect(() => {
+    if (!mindscapeLoaded) return undefined;
+    return window.donel.mindscape.onTurnEnded(({ sessionId, text, at }) => {
+      const live = mindscapeSessionsRef.current.find((session) => session.sessionId === sessionId);
+      updateMindscape((doc) => {
+        const projectPath = live?.projectPath ?? findSessionBoard(doc, sessionId);
+        if (!projectPath) return doc;
+        const previous = doc.boards[projectPath]?.cards[`note:${sessionId}`];
+        const sessionName = live?.name ?? (previous?.kind === 'session-note' ? previous.sessionName : sessionId);
+        return writeSessionNote(doc, projectPath, { sessionId, sessionName, text, writtenAt: at });
+      });
+    });
+  }, [mindscapeLoaded, updateMindscape]);
+  const handleMindscapeArchive = useCallback(
+    (projectPath: string, cardId: string): void => updateMindscape((doc) => archiveCard(doc, projectPath, cardId)),
+    [updateMindscape],
+  );
 
   const sidebarSessions: SidebarSession[] = tabs
     .filter((tab) => !(tab.claudeSessionId && registeredFavoriteIds.has(tab.claudeSessionId)))
@@ -2359,6 +2381,7 @@ export function App(): React.JSX.Element {
             initialProjectPath={tabs.find((tab) => tab.id === activeTabId)?.cwd}
             seenAt={mindscapeSeenAt}
             onGoToTerminal={handleMindscapeGoToTerminal}
+            onArchive={handleMindscapeArchive}
           />
         ) : null}
         {devModeOn && esteiraOpen ? (

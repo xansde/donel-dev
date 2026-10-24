@@ -50,6 +50,11 @@ export interface MindscapeDoc {
 /** Card footprint used by the automatic grid (matches the CSS of `MindscapeCard`). */
 export const SESSION_CARD_WIDTH = 230;
 export const SESSION_CARD_HEIGHT = 96;
+/** Footprint of the post-it written by the session (8 clamped lines + author chip + meta + "Arquivar"). */
+export const NOTE_CARD_WIDTH = 230;
+export const NOTE_CARD_HEIGHT = 270;
+/** The post-it written by the session keeps at most this many characters (design: cut in the store). */
+export const MAX_SESSION_NOTE_CHARS = 4000;
 
 const GRID_ORIGIN = { x: 40, y: 40 };
 const GRID_GAP = 24;
@@ -63,6 +68,10 @@ export function sessionCardId(sessionId: string): `session:${string}` {
   return `session:${sessionId}`;
 }
 
+export function noteCardId(sessionId: string): `note:${string}` {
+  return `note:${sessionId}`;
+}
+
 /** Creates the board of `projectPath` when missing; same document back when it exists. */
 export function ensureBoard(doc: MindscapeDoc, projectPath: string): MindscapeDoc {
   if (doc.boards[projectPath]) return doc;
@@ -72,18 +81,30 @@ export function ensureBoard(doc: MindscapeDoc, projectPath: string): MindscapeDo
   };
 }
 
-function overlapsAny(x: number, y: number, cards: readonly MindscapeCard[]): boolean {
-  return cards.some(
-    (card) =>
-      x < card.x + SESSION_CARD_WIDTH && card.x < x + SESSION_CARD_WIDTH && y < card.y + SESSION_CARD_HEIGHT && card.y < y + SESSION_CARD_HEIGHT,
-  );
+interface Footprint {
+  readonly w: number;
+  readonly h: number;
 }
 
-function freeGridSlot(cards: readonly MindscapeCard[]): { x: number; y: number } {
+const SESSION_FOOTPRINT: Footprint = { w: SESSION_CARD_WIDTH, h: SESSION_CARD_HEIGHT };
+const NOTE_FOOTPRINT: Footprint = { w: NOTE_CARD_WIDTH, h: NOTE_CARD_HEIGHT };
+
+function footprintOf(card: MindscapeCard): Footprint {
+  return card.kind === 'session-note' ? NOTE_FOOTPRINT : SESSION_FOOTPRINT;
+}
+
+function overlapsAny(x: number, y: number, size: Footprint, cards: readonly MindscapeCard[]): boolean {
+  return cards.some((card) => {
+    const other = footprintOf(card);
+    return x < card.x + other.w && card.x < x + size.w && y < card.y + other.h && card.y < y + size.h;
+  });
+}
+
+function freeGridSlot(cards: readonly MindscapeCard[], size: Footprint = SESSION_FOOTPRINT): { x: number; y: number } {
   for (let index = 0; ; index += 1) {
     const x = GRID_ORIGIN.x + (index % GRID_COLUMNS) * (SESSION_CARD_WIDTH + GRID_GAP);
     const y = GRID_ORIGIN.y + Math.floor(index / GRID_COLUMNS) * (SESSION_CARD_HEIGHT + GRID_GAP);
-    if (!overlapsAny(x, y, cards)) return { x, y };
+    if (!overlapsAny(x, y, size, cards)) return { x, y };
   }
 }
 
@@ -105,6 +126,70 @@ export function placeSessionCard(doc: MindscapeDoc, projectPath: string, session
       [projectPath]: { ...board, cards: { ...board.cards, [id]: { kind: 'session', id, sessionId, ...slot } } },
     },
   };
+}
+
+/** The project of the board that holds the session card (or the note) of `sessionId`. */
+export function findSessionBoard(doc: MindscapeDoc, sessionId: string): string | undefined {
+  const sessionKey = sessionCardId(sessionId);
+  const noteKey = noteCardId(sessionId);
+  return Object.values(doc.boards).find((board) => board.cards[sessionKey] || board.cards[noteKey])?.projectPath;
+}
+
+export interface SessionNoteInput {
+  readonly sessionId: string;
+  /** Name of the session at the end of the turn — kept so the note survives the tab closing. */
+  readonly sessionName: string;
+  readonly text: string;
+  readonly writtenAt: number;
+}
+
+/** Where a new note goes: beside its session card (right, below, left), else the first free grid slot. */
+function noteSlot(cards: readonly MindscapeCard[], session: MindscapeCard | undefined): { x: number; y: number } {
+  if (session) {
+    const candidates = [
+      { x: session.x + SESSION_CARD_WIDTH + GRID_GAP, y: session.y },
+      { x: session.x, y: session.y + SESSION_CARD_HEIGHT + GRID_GAP },
+      { x: session.x - NOTE_CARD_WIDTH - GRID_GAP, y: session.y },
+    ];
+    const free = candidates.find((slot) => slot.x >= 0 && !overlapsAny(slot.x, slot.y, NOTE_FOOTPRINT, cards));
+    if (free) return free;
+  }
+  return freeGridSlot(cards, NOTE_FOOTPRINT);
+}
+
+/**
+ * The post-it written by the session (rule 2): one per session
+ * (`note:<sessionId>`), overwritten at every end of turn. The first write
+ * places it beside the session card; the next ones keep its position. Text is
+ * cut at 4.000 characters.
+ */
+export function writeSessionNote(doc: MindscapeDoc, projectPath: string, note: SessionNoteInput): MindscapeDoc {
+  const id = noteCardId(note.sessionId);
+  const withBoard = ensureBoard(doc, projectPath);
+  const board = withBoard.boards[projectPath]!;
+  const text = note.text.slice(0, MAX_SESSION_NOTE_CHARS);
+  const existing = board.cards[id];
+  const position = existing ? { x: existing.x, y: existing.y } : noteSlot(Object.values(board.cards), board.cards[sessionCardId(note.sessionId)]);
+  const card: MindscapeCard = {
+    kind: 'session-note',
+    id,
+    sessionId: note.sessionId,
+    sessionName: note.sessionName,
+    text,
+    writtenAt: note.writtenAt,
+    ...position,
+  };
+  return { ...withBoard, boards: { ...withBoard.boards, [projectPath]: { ...board, cards: { ...board.cards, [id]: card } } } };
+}
+
+/** Archive = remove the card from the board, with the links that touch it (no trash in V1). */
+export function archiveCard(doc: MindscapeDoc, projectPath: string, cardId: string): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  if (!board || !board.cards[cardId]) return doc;
+  const cards = { ...board.cards };
+  delete cards[cardId];
+  const links = board.links.filter((link) => link.from !== cardId && link.to !== cardId);
+  return { ...doc, boards: { ...doc.boards, [projectPath]: { ...board, cards, links } } };
 }
 
 // ---------------------------------------------------------------------------

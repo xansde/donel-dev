@@ -31,6 +31,9 @@ export interface SemaphoreUpdate {
   readonly stateEnteredAt: number;
 }
 
+/** Mindscape, fatia 03 — see `SessionSemaphoreManager.onTurnEnded`. */
+export type TurnEndedListener = (ptyId: string, lastAssistantMessage: string | null, transcriptPath: string | null) => void;
+
 export interface SessionSemaphoreManagerOptions {
   /** Intervalo do tick da heurística de fallback (spike: "a cada ~500ms"). */
   readonly tickIntervalMs?: number;
@@ -83,6 +86,12 @@ export class SessionSemaphoreManager {
    * sem duplicar a máquina de estados pura.
    */
   private readonly stopFailureListeners = new Set<(ptyId: string) => void>();
+  /**
+   * Mindscape, fatia 03 — end of turn (`Stop` and `StopFailure`) with the payload's
+   * `last_assistant_message` (`null` when missing or empty) and `transcript_path`
+   * (`null` when missing) — the `.jsonl` the CLI itself names, for the tail fallback.
+   */
+  private readonly turnEndedListeners = new Set<TurnEndedListener>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   private readonly tickIntervalMs: number;
@@ -185,6 +194,12 @@ export class SessionSemaphoreManager {
     return () => this.stopFailureListeners.delete(listener);
   }
 
+  /** Mindscape, fatia 03 — feeds the post-it written by the session. Same unsubscribe pattern as `onUpdate`. */
+  onTurnEnded(listener: TurnEndedListener): () => void {
+    this.turnEndedListeners.add(listener);
+    return () => this.turnEndedListeners.delete(listener);
+  }
+
   getSnapshot(ptyId: string): SemaphoreUpdate | undefined {
     const state = this.ptyState.get(ptyId);
     if (!state) return undefined;
@@ -225,21 +240,21 @@ export class SessionSemaphoreManager {
     if (!ptyId) return; // sessão claude não rastreada por este app (ex.: settings globais do usuário rodando outra sessão em paralelo).
 
     const rawHookEventName = (payload as Record<string, unknown>).hook_event_name;
-    this.applyHookEvent(ptyId, rawHookEventName, (payload as Record<string, unknown>).reason);
+    this.applyHookEvent(ptyId, rawHookEventName, (payload as Record<string, unknown>).reason, payload as Record<string, unknown>);
   }
 
   private handleBridgeEvent(event: BridgeEvent): void {
     if (!this.ptyState.has(event.ptyId)) return; // aba sem semáforo (ou já encerrada): nada a mover.
     if (event.type === 'hook') {
-      this.applyHookEvent(event.ptyId, event.event, undefined);
+      this.applyHookEvent(event.ptyId, event.event, undefined, event.payload);
     } else if (event.type === 'session-end') {
       // A ponte já filtra clear/resume; a máquina pura protege de novo (defesa em profundidade).
-      this.applyHookEvent(event.ptyId, 'SessionEnd', event.reason);
+      this.applyHookEvent(event.ptyId, 'SessionEnd', event.reason, event.payload);
     }
     // 'conversation-switched' não mexe no estado: o semáforo é por aba (ptyId), não por conversa.
   }
 
-  private applyHookEvent(ptyId: string, hookEventName: unknown, reason: unknown): void {
+  private applyHookEvent(ptyId: string, hookEventName: unknown, reason: unknown, payload: Record<string, unknown>): void {
     // Emenda 22/09 (item 4) — dispara ANTES do mapeamento genérico (que funde
     // StopFailure em 'stop'), pro gatilho imediato de auto-switch saber que este
     // fim de turno foi por erro de API.
@@ -256,6 +271,12 @@ export class SessionSemaphoreManager {
     const next = reduceSemaphoreState(current, event);
     this.ptyState.set(ptyId, next);
     this.emit(ptyId);
+    if (hookEventName === 'Stop' || hookEventName === 'StopFailure') {
+      const raw = payload.last_assistant_message;
+      const text = typeof raw === 'string' && raw.trim().length > 0 ? raw : null;
+      const transcriptPath = typeof payload.transcript_path === 'string' && payload.transcript_path.length > 0 ? payload.transcript_path : null;
+      for (const listener of this.turnEndedListeners) listener(ptyId, text, transcriptPath);
+    }
   }
 
   private tick(): void {
