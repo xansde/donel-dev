@@ -319,7 +319,49 @@ export async function readTranscriptTail(filePath: string): Promise<TranscriptTa
   }
 
   const tailText = await readFileTail(filePath, size, TAIL_READ_BYTES);
-  return tailText === null ? EMPTY_TAIL : extractTranscriptTail(tailText);
+  if (tailText === null) return EMPTY_TAIL;
+  const { customTitle, contextTokens, cliColorName } = extractTranscriptTail(tailText);
+  return { customTitle, contextTokens, cliColorName };
+}
+
+/**
+ * Mindscape, fatia 03 — fallback of the post-it written by the session: the
+ * text of the last assistant message in the tail (same 64 KB window). Read
+ * only when the `Stop` hook came without `last_assistant_message`. Never
+ * throws: missing or unreadable file → `null`.
+ */
+export async function readTranscriptLastAssistantText(filePath: string): Promise<string | null> {
+  let size: number;
+  try {
+    size = (await fs.stat(filePath)).size;
+  } catch {
+    return null;
+  }
+  const tailText = await readFileTail(filePath, size, TAIL_READ_BYTES);
+  return tailText === null ? null : extractTranscriptTail(tailText).lastAssistantText;
+}
+
+/** Text blocks of a main-thread assistant line, joined; `null` for any other line (or one without text). */
+function assistantTextFromLine(line: string): string | null {
+  if (!line.includes('"assistant"')) return null;
+  let entry: unknown;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof entry !== 'object' || entry === null) return null;
+  const record = entry as Record<string, unknown>;
+  if (record.type !== 'assistant' || record.isSidechain === true) return null;
+  const message = record.message as Record<string, unknown> | undefined;
+  const content = message?.content;
+  if (!Array.isArray(content)) return null;
+  const texts: string[] = [];
+  for (const block of content) {
+    const candidate = block as Record<string, unknown> | null;
+    if (candidate && candidate.type === 'text' && typeof candidate.text === 'string' && candidate.text.trim().length > 0) texts.push(candidate.text);
+  }
+  return texts.length > 0 ? texts.join('\n') : null;
 }
 
 /**
@@ -331,11 +373,13 @@ export async function readTranscriptTail(filePath: string): Promise<TranscriptTa
  * não respeita fronteira de linha) — os dois extratores tratam JSON inválido
  * como linha a ignorar, então o corte é o caso normal, não uma exceção.
  */
-function extractTranscriptTail(tailText: string): TranscriptTail {
+export function extractTranscriptTail(tailText: string): TranscriptTail & { readonly lastAssistantText: string | null } {
   const lines = tailText.split('\n');
   let customTitle: string | null = null;
   let contextTokens: number | null = null;
   let cliColorName: string | null = null;
+  // Mindscape, fatia 03 — fourth field of the same scan (fallback of the post-it written by the session).
+  let lastAssistantText: string | null = null;
 
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index];
@@ -344,8 +388,9 @@ function extractTranscriptTail(tailText: string): TranscriptTail {
     if (contextTokens === null) contextTokens = contextTokensFromLine(line);
     // Fix #19 — mesma varredura única, terceiro campo.
     if (cliColorName === null) cliColorName = extractCliColorNameFromLine(line);
-    if (customTitle !== null && contextTokens !== null && cliColorName !== null) break;
+    if (lastAssistantText === null) lastAssistantText = assistantTextFromLine(line);
+    if (customTitle !== null && contextTokens !== null && cliColorName !== null && lastAssistantText !== null) break;
   }
 
-  return { customTitle, contextTokens, cliColorName };
+  return { customTitle, contextTokens, cliColorName, lastAssistantText };
 }

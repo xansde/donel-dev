@@ -81,6 +81,24 @@ import type { LauncherLaunchOptions } from './Launcher';
 // desmonta ou altera o Modo Dev de hoje; a tela entra por cima, atrás de um
 // gesto interno, para dar para comparar as duas com o mesmo dado.
 import { EsteiraScreen } from './Esteira/EsteiraScreen';
+// Mindscape V1 — third mode of the shell (docs/design/mindscape.md).
+import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
+import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
+import {
+  addLink,
+  addOwnerCard,
+  archiveCard,
+  editOwnerCard,
+  findSessionBoard,
+  moveCard,
+  placeSessionCard,
+  removeLink,
+  setBoardPan,
+  setOwnerColor,
+  toggleLinkArrow,
+  writeSessionNote,
+  type OwnerCardColor,
+} from '../../shared/mindscape/model';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
 import {
   AUTO_START_NOT_READY_MESSAGE,
@@ -421,7 +439,11 @@ export function App(): React.JSX.Element {
   // arquivadas, defaults) vive no ConfigStore via `devMode:*` (CA-21). O que
   // está abaixo é só estado de TELA (modo ligado, o que está expandido, o
   // comando armado) — some no restart, e deve mesmo.
-  const [devModeOn, setDevModeOn] = useState(false);
+  // Mindscape V1 — the mode selector has three values; `devModeOn` stays as a
+  // derived flag so the Modo Dev reads exactly as before.
+  const [appMode, setAppMode] = useState<'geral' | 'dev' | 'mindscape'>('geral');
+  const devModeOn = appMode === 'dev';
+  const mindscape = useMindscapeDoc();
   /** Spec 010 — tela da esteira nova (gesto interno: botão no titlebar do Modo Dev). */
   const [esteiraOpen, setEsteiraOpen] = useState(false);
   /**
@@ -1781,6 +1803,113 @@ export function App(): React.JSX.Element {
     [appConfig, favoritedProjectPaths],
   );
 
+  // Mindscape V1 — the live `claude` tabs that belong to a project (a tab
+  // without project — shell or home — does not enter, rule 11).
+  const mindscapeSessions: MindscapeLiveSession[] = useMemo(
+    () =>
+      tabs.flatMap((tab) =>
+        tab.sessionType === 'claude' && tab.claudeSessionId && tab.cwd && tab.projectName
+          ? [
+              {
+                tabId: tab.id,
+                sessionId: tab.claudeSessionId,
+                name: resolveTabName(tab),
+                projectPath: tab.cwd,
+                color: tab.color ?? 'none',
+                cliColorHex: cliColorNameToHex(tab.cliColorName),
+                state: semaphoreStates[tab.id]?.state ?? 'working',
+                stateEnteredAt: semaphoreStates[tab.id]?.stateEnteredAt ?? 0,
+              },
+            ]
+          : [],
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tabs, semaphoreStates, appConfig],
+  );
+  // Mindscape, fatia 02 — last visit of the owner to each session, in memory
+  // only (not persisted: the app is born without tabs). Stamped when a tab
+  // gets focus in the Uso geral and when the owner leaves the Uso geral with
+  // a tab in focus (rule 4).
+  const [mindscapeSeenAt, setMindscapeSeenAt] = useState<Record<string, number>>({});
+  const previousAppModeRef = useRef(appMode);
+  useEffect(() => {
+    const leftGeral = previousAppModeRef.current === 'geral' && appMode !== 'geral';
+    previousAppModeRef.current = appMode;
+    if (appMode !== 'geral' && !leftGeral) return;
+    const sessionId = tabsRef.current.find((tab) => tab.id === activeTabId)?.claudeSessionId;
+    if (!sessionId) return;
+    setMindscapeSeenAt((previous) => ({ ...previous, [sessionId]: Date.now() }));
+  }, [appMode, activeTabId]);
+  // "Ir ao terminal" (rule 10) — the focus change above stamps `seenAt`.
+  const handleMindscapeGoToTerminal = useCallback((tabId: string): void => {
+    setAppMode('geral');
+    setActiveTabId(tabId);
+  }, []);
+  const mindscapeProjectNames = useMemo(() => Object.fromEntries(projects.map((project) => [project.path, project.name])), [projects]);
+  const { loaded: mindscapeLoaded, update: updateMindscape } = mindscape;
+  useEffect(() => {
+    // Only after the boot load: writing before it would overwrite the file with an empty document.
+    if (!mindscapeLoaded) return;
+    updateMindscape((doc) => mindscapeSessions.reduce((acc, session) => placeSessionCard(acc, session.projectPath, session.sessionId), doc));
+  }, [mindscapeLoaded, updateMindscape, mindscapeSessions]);
+  // Mindscape, fatia 03 — post-it written by the session at each end of turn.
+  // The project and the name come from the live tab; a session that is no
+  // longer open falls back to the board that already holds its card.
+  const mindscapeSessionsRef = useRef(mindscapeSessions);
+  mindscapeSessionsRef.current = mindscapeSessions;
+  useEffect(() => {
+    if (!mindscapeLoaded) return undefined;
+    return window.donel.mindscape.onTurnEnded(({ sessionId, text, at }) => {
+      const live = mindscapeSessionsRef.current.find((session) => session.sessionId === sessionId);
+      updateMindscape((doc) => {
+        const projectPath = live?.projectPath ?? findSessionBoard(doc, sessionId);
+        if (!projectPath) return doc;
+        const previous = doc.boards[projectPath]?.cards[`note:${sessionId}`];
+        const sessionName = live?.name ?? (previous?.kind === 'session-note' ? previous.sessionName : sessionId);
+        return writeSessionNote(doc, projectPath, { sessionId, sessionName, text, writtenAt: at });
+      });
+    });
+  }, [mindscapeLoaded, updateMindscape]);
+  const handleMindscapeArchive = useCallback(
+    (projectPath: string, cardId: string): void => updateMindscape((doc) => archiveCard(doc, projectPath, cardId)),
+    [updateMindscape],
+  );
+  // Mindscape, fatia 04 — free canvas: drag, pan and the owner's post-its.
+  const handleMindscapeMoveCard = useCallback(
+    (projectPath: string, cardId: string, x: number, y: number): void => updateMindscape((doc) => moveCard(doc, projectPath, cardId, x, y)),
+    [updateMindscape],
+  );
+  const handleMindscapePan = useCallback(
+    (projectPath: string, pan: { x: number; y: number }): void => updateMindscape((doc) => setBoardPan(doc, projectPath, pan)),
+    [updateMindscape],
+  );
+  const handleMindscapeAddOwnerCard = useCallback(
+    (projectPath: string, id: string, origin: { x: number; y: number }): void =>
+      updateMindscape((doc) => addOwnerCard(doc, projectPath, { id, createdAt: Date.now(), origin })),
+    [updateMindscape],
+  );
+  const handleMindscapeEditOwnerCard = useCallback(
+    (projectPath: string, cardId: string, text: string): void => updateMindscape((doc) => editOwnerCard(doc, projectPath, cardId, text)),
+    [updateMindscape],
+  );
+  const handleMindscapeSetOwnerColor = useCallback(
+    (projectPath: string, cardId: string, color: OwnerCardColor): void => updateMindscape((doc) => setOwnerColor(doc, projectPath, cardId, color)),
+    [updateMindscape],
+  );
+  // Mindscape, fatia 05 — links with an arrow, in a hand-made stroke.
+  const handleMindscapeAddLink = useCallback(
+    (projectPath: string, id: string, from: string, to: string): void => updateMindscape((doc) => addLink(doc, projectPath, { id, from, to })),
+    [updateMindscape],
+  );
+  const handleMindscapeToggleLinkArrow = useCallback(
+    (projectPath: string, linkId: string): void => updateMindscape((doc) => toggleLinkArrow(doc, projectPath, linkId)),
+    [updateMindscape],
+  );
+  const handleMindscapeRemoveLink = useCallback(
+    (projectPath: string, linkId: string): void => updateMindscape((doc) => removeLink(doc, projectPath, linkId)),
+    [updateMindscape],
+  );
+
   const sidebarSessions: SidebarSession[] = tabs
     .filter((tab) => !(tab.claudeSessionId && registeredFavoriteIds.has(tab.claudeSessionId)))
     .map((tab) => ({
@@ -2152,11 +2281,12 @@ export function App(): React.JSX.Element {
         <div className={styles.devModeToggle} data-testid="devmode-toggle">
           <SegmentedControl
             ariaLabel="Modo"
-            value={devModeOn ? 'dev' : 'geral'}
-            onChange={(next) => setDevModeOn(next === 'dev')}
+            value={appMode}
+            onChange={(next) => setAppMode(next === 'dev' || next === 'mindscape' ? next : 'geral')}
             options={[
               { value: 'geral', label: 'Uso geral' },
               { value: 'dev', label: 'Dev' },
+              { value: 'mindscape', label: 'Mindscape' },
             ]}
           />
         </div>
@@ -2292,6 +2422,25 @@ export function App(): React.JSX.Element {
         {/* Spec 010 — a esteira nova entra POR CIMA, sem desmontar nada: o
             mapa atual segue vivo por baixo (`[P-5]` — ele só sai no fim do
             vertical, quando o novo provar a espinha). */}
+        {appMode === 'mindscape' ? (
+          <MindscapeScreen
+            doc={mindscape.doc}
+            sessions={mindscapeSessions}
+            projectNames={mindscapeProjectNames}
+            initialProjectPath={tabs.find((tab) => tab.id === activeTabId)?.cwd}
+            seenAt={mindscapeSeenAt}
+            onGoToTerminal={handleMindscapeGoToTerminal}
+            onArchive={handleMindscapeArchive}
+            onMoveCard={handleMindscapeMoveCard}
+            onPan={handleMindscapePan}
+            onAddOwnerCard={handleMindscapeAddOwnerCard}
+            onEditOwnerCard={handleMindscapeEditOwnerCard}
+            onSetOwnerColor={handleMindscapeSetOwnerColor}
+            onAddLink={handleMindscapeAddLink}
+            onToggleLinkArrow={handleMindscapeToggleLinkArrow}
+            onRemoveLink={handleMindscapeRemoveLink}
+          />
+        ) : null}
         {devModeOn && esteiraOpen ? (
           <EsteiraScreen onClose={() => setEsteiraOpen(false)} projects={projects} onOpenSession={handleOpenEsteiraSession} />
         ) : null}

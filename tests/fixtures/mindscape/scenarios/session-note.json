@@ -1,0 +1,35 @@
+{
+  "turns": [
+    {
+      "match": "re:^primeiro",
+      "steps": [
+        { "type": "wait", "ms": 150 },
+        { "type": "assistant", "text": "texto do transcript, turno um" },
+        { "type": "hook", "event": "Stop", "payload": { "last_assistant_message": "Primeira resposta (hook)." } }
+      ]
+    },
+    {
+      "match": "re:^segundo",
+      "steps": [
+        { "type": "wait", "ms": 150 },
+        { "type": "assistant", "text": "texto do transcript, turno dois" },
+        { "type": "hook", "event": "Stop", "payload": { "last_assistant_message": "Segunda resposta (hook)." } }
+      ]
+    },
+    {
+      "match": "re:^cauda",
+      "steps": [
+        { "type": "wait", "ms": 150 },
+        { "type": "assistant", "text": "Resposta só na cauda." },
+        { "type": "hook", "event": "Stop" }
+      ]
+    }
+  ],
+  "default": {
+    "steps": [
+      { "type": "wait", "ms": 150 },
+      { "type": "assistant", "text": "OK" },
+      { "type": "hook", "event": "Stop", "payload": { "last_assistant_message": "OK" } }
+    ]
+  }
+}

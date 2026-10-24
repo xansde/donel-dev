@@ -17,6 +17,7 @@ import type { DonelProjectsApi } from './projects';
 import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
+import type { DonelMindscapeApi } from './mindscape/channels';
 
 // 015-jobu-pet — the Jobu contract (channels, payloads, validators) lives in ./pet/ipc.
 export type { DonelPetApi } from './pet/ipc';
@@ -438,6 +439,8 @@ export interface DonelApi {
   esteira: DonelEsteiraApi;
   /** 014-chat — conversa da aba `claude` como chat (ler, paginar, abrir links). Com `chat.enabled = false` os pedidos rejeitam: não há handler. */
   chat: DonelChatApi;
+  /** Mindscape V1 — one board per project, persisted in `mindscape.json` by the main. */
+  mindscape: DonelMindscapeApi;
   /** 015-jobu-pet — the Jobu on the desktop. Exposed in both windows (the main one and the pet's); each one uses its own half. */
   pet: DonelPetApi;
 }

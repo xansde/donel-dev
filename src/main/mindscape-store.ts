@@ -1,0 +1,62 @@
+// Mindscape (V1) — the store of `<userData>/mindscape.json`. Only the main
+// writes it (single writer); the whole document goes through temp → fsync →
+// rename (`ConfigIoDeps` of config-store.ts). `userData` is shared by the
+// alfa/beta/stable channels: a `schemaVersion` newer than ours is read and
+// never written (same principle as the header of esteira-store.ts).
+
+import { dirname, join } from 'node:path';
+import type { ConfigIoDeps } from './config-store';
+import type { MindscapeSaveResult } from '../shared/mindscape/channels';
+import { MINDSCAPE_SCHEMA_VERSION, parseMindscapeDoc, type MindscapeDoc } from '../shared/mindscape/model';
+
+/** Smoke override: isolates the board file from the real one. */
+export const MINDSCAPE_FILE_ENV_VAR = 'DONEL_MINDSCAPE_FILE';
+
+export function mindscapeFilePath(env: Record<string, string | undefined>, userDataPath: string): string {
+  const override = env[MINDSCAPE_FILE_ENV_VAR];
+  return override && override.trim() ? override : join(userDataPath, 'mindscape.json');
+}
+
+export interface MindscapeStore {
+  load(): MindscapeDoc;
+  /** Validates `payload` with `parseMindscapeDoc` before writing — never trusts the renderer. */
+  save(payload: unknown): MindscapeSaveResult;
+}
+
+function readRaw(filePath: string, io: ConfigIoDeps): unknown {
+  const text = io.readFileText(filePath);
+  if (text === null) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function isNewerSchema(raw: unknown): boolean {
+  if (typeof raw !== 'object' || raw === null) return false;
+  const version = (raw as { schemaVersion?: unknown }).schemaVersion;
+  return typeof version === 'number' && version > MINDSCAPE_SCHEMA_VERSION;
+}
+
+export function createMindscapeStore(filePath: string, io: ConfigIoDeps): MindscapeStore {
+  return {
+    load: () => parseMindscapeDoc(readRaw(filePath, io)),
+    save: (payload) => {
+      // Re-read on every save: another channel may have upgraded the file meanwhile.
+      if (isNewerSchema(readRaw(filePath, io))) return { ok: false, reason: 'read-only' };
+      const doc = parseMindscapeDoc(payload);
+      const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      try {
+        const dir = dirname(filePath);
+        if (!io.existsSync(dir)) io.mkdirSync(dir);
+        io.writeFileText(tmpPath, JSON.stringify(doc, null, 2));
+        io.renameFile(tmpPath, filePath);
+        return { ok: true };
+      } catch {
+        io.unlinkFile(tmpPath);
+        return { ok: false, reason: 'write-failed' };
+      }
+    },
+  };
+}

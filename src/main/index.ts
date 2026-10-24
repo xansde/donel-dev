@@ -11,6 +11,10 @@ import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
 import { createEsteiraService, type EsteiraService } from './esteira-service';
 import { esteiraStoreDir } from './esteira-store';
+import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
+import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import type { MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
+import type { MindscapeDoc } from '../shared/mindscape/model';
 import { esteiraOutboxDir } from './esteira-ingest';
 import { esteiraInboxDir } from './esteira-dispatch';
 import { resolveBoardMirrorAdapter } from './esteira-mirror';
@@ -252,7 +256,7 @@ import { resolveClaudeCorrelation } from './session-correlation';
 import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
 import { seedProject } from './session-seed';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
-import { TranscriptWatcherRegistry } from './transcript-watcher';
+import { readTranscriptLastAssistantText, TranscriptWatcherRegistry } from './transcript-watcher';
 import { forgetIfOrphan } from '../shared/resumeFailure';
 import { removeSession, setPinned, upsertVisit } from '../shared/sessionRegistry';
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
@@ -2185,6 +2189,45 @@ function registerTabIpcHandlers(): void {
 }
 
 /**
+ * Mindscape (V1) — load/save of `mindscape.json`. The main is the only writer
+ * and validates the payload (`parseMindscapeDoc`) before writing.
+ */
+function registerMindscapeIpcHandlers(): void {
+  const store = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps);
+  ipcMain.handle(MINDSCAPE_CHANNELS.load, (): MindscapeDoc => store.load());
+  ipcMain.handle(MINDSCAPE_CHANNELS.save, (_event, doc: unknown): MindscapeSaveResult => store.save(doc));
+}
+
+/**
+ * Mindscape, fatia 03 — end of turn → post-it written by the session. The text
+ * is the hook's `last_assistant_message`; when it is missing, the last
+ * assistant message of the `.jsonl` tail (`transcript_path` of the hook, else
+ * the path derived at spawn); neither → nothing is sent (the
+ * post-it keeps the previous text). The main only forwards: the renderer
+ * applies `writeSessionNote` and saves (single writer).
+ */
+function registerMindscapeTurnEnded(): void {
+  semaphoreManager.onTurnEnded((ptyId, lastAssistantMessage, hookTranscriptPath) => {
+    const sessionId = activeSessionByPty.get(ptyId);
+    if (!sessionId) return;
+    const at = Date.now();
+    void (async () => {
+      let text = lastAssistantMessage;
+      if (text === null) {
+        // The path the CLI names in the hook wins; the one derived at spawn is the backup.
+        const transcriptPath = hookTranscriptPath ?? spawnedTranscriptPaths.get(sessionId);
+        text = transcriptPath ? await readTranscriptLastAssistantText(transcriptPath) : null;
+      }
+      if (text === null) return;
+      const payload: MindscapeTurnEndedPayload = { sessionId, text, at };
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send(MINDSCAPE_CHANNELS.turnEnded, payload);
+      }
+    })().catch(() => undefined);
+  });
+}
+
+/**
  * CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto:
  * lê/grava os dois JSONs externos que a esteira já lia (board TaskDex + repo
  * do GitHub), hoje editados à mão fora do app (spec.md problema 8).
@@ -2751,6 +2794,8 @@ void app.whenReady().then(async () => {
   registerClipboardIpcHandlers(); // T504 (005-terminal-copy-paste)
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
+  registerMindscapeIpcHandlers(); // Mindscape V1
+  registerMindscapeTurnEnded(); // Mindscape, fatia 03
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
   registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)
   registerEsteiraIpcHandlers(); // Spec 010 — esteira nova (store + contrato), ao LADO do mapa atual
