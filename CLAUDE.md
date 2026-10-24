@@ -263,6 +263,11 @@ aprovado, e tudo atrás de `chat.enabled` até a virada (Fase 7).
   decisão do dono). Nunca renovar a ativa pelo cofre: o refresh token dela lá já
   foi consumido pelo CLI, e a recusa marcaria "Reconectar" à toa.
 
+## Domínio (mantido pelo /refinamento)
+
+- Vocabulário canônico: `docs/glossario.md` — use estes termos em código e conversa.
+- Decisões de domínio e arquitetura: `docs/adr/` — consulte antes de propor mudança.
+
 ## Vault
 
 Documentação viva em `Claude Seazone/Projects/donel-dev/` (context.md, todo.md).
