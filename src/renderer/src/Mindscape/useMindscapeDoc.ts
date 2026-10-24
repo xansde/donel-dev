@@ -46,15 +46,20 @@ export function useMindscapeDoc(): MindscapeDocHandle {
     void window.donel.mindscape.save(docRef.current).catch(() => undefined);
   }, []);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const flushPending = (): void => {
       if (timerRef.current !== null) {
         clearTimeout(timerRef.current);
         flush();
       }
-    },
-    [flush],
-  );
+    };
+    // Closing the app inside the debounce window would drop the last change.
+    window.addEventListener('beforeunload', flushPending);
+    return () => {
+      window.removeEventListener('beforeunload', flushPending);
+      flushPending();
+    };
+  }, [flush]);
 
   const update = useCallback(
     (reducer: (current: MindscapeDoc) => MindscapeDoc): void => {
