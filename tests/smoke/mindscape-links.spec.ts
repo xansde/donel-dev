@@ -137,6 +137,7 @@ test('Mindscape: ligações com seta em traço à mão — ligar, seta, acompanh
   await expect.poll(() => savedLinks(), { timeout: 10_000 }).toEqual([expect.objectContaining({ from: ownerId, to: sessionId, arrow: true })]);
   // The session card was not selected by the click of the "Ligar" mode.
   await expect(sessionCard).toHaveAttribute('data-selected', 'false');
+  if (process.env.DONEL_SMOKE_SHOTS_DIR) await window.screenshot({ path: path.join(process.env.DONEL_SMOKE_SHOTS_DIR, 'mindscape-links-seta.png') });
 
   // 2. Select the link → "Seta" off → the head goes away.
   await links.getByTestId('mindscape-link-hit').click({ force: true });
