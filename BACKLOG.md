@@ -43,7 +43,9 @@ Nenhuma fatia toca `src/main/accounts/`, o Modo Dev ou o `config.json`.
 
 ### 01 — Modo Mindscape com post-its de sessão vivos, por projeto
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/mindscape` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (modelo e store) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-implementacao-01.md`
+- **PR**: https://github.com/xansde/donel-dev/pull/114 (revisão: `handoffs/mindscape-revisao.md`)
 - **Depende de**: —
 - **Conflita com**: 02, 03, 04, 05
 - **Propósito**: o dono troca o seletor do casco para "Mindscape" e vê, numa aba por projeto, um
@@ -75,7 +77,9 @@ Nenhuma fatia toca `src/main/accounts/`, o Modo Dev ou o `config.json`.
 
 ### 02 — Destaque da sessão e "Ir ao terminal"
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/mindscape` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (`sessionHighlight`) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-implementacao-02.md`
+- **PR**: https://github.com/xansde/donel-dev/pull/114 (revisão: `handoffs/mindscape-revisao.md`)
 - **Depende de**: 01
 - **Conflita com**: 01, 03, 04, 05
 - **Propósito**: no quadro, a sessão com novidade desde o último acesso aparece destacada, a sem
@@ -98,7 +102,9 @@ Nenhuma fatia toca `src/main/accounts/`, o Modo Dev ou o `config.json`.
 
 ### 03 — Post-it escrito pela sessão a cada fim de turno
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/mindscape` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (modelo, cauda do transcript, `onTurnEnded`) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-implementacao-03.md`
+- **PR**: https://github.com/xansde/donel-dev/pull/114 (revisão: `handoffs/mindscape-revisao.md`)
 - **Depende de**: 01
 - **Conflita com**: 01, 02, 04, 05
 - **Propósito**: ao lado de cada sessão aparece o post-it escrito por ela com a última resposta e
@@ -128,7 +134,9 @@ Nenhuma fatia toca `src/main/accounts/`, o Modo Dev ou o `config.json`.
 
 ### 04 — Canvas livre: arrastar, mover a visão e post-its do dono
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/mindscape` (checkout principal, sem worktree — instrução do dono) · commit `0e11291` · caminho: `tdd` (reducers do modelo) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-implementacao-04.md`
+- **PR**: https://github.com/xansde/donel-dev/pull/114 (revisão: `handoffs/mindscape-revisao.md`)
 - **Depende de**: 01
 - **Conflita com**: 01, 02, 03, 05
 - **Propósito**: o dono arrasta qualquer post-it, move a visão do quadro arrastando o fundo e cria
@@ -151,7 +159,9 @@ Nenhuma fatia toca `src/main/accounts/`, o Modo Dev ou o `config.json`.
 
 ### 05 — Ligações com seta, em traço à mão
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/mindscape` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (reducers + `roughShapes`) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-implementacao-05.md`
+- **PR**: https://github.com/xansde/donel-dev/pull/114 (revisão: `handoffs/mindscape-revisao.md`)
 - **Depende de**: 04
 - **Conflita com**: 01, 02, 03, 04
 - **Propósito**: o dono liga dois post-its quaisquer do mesmo mindscape, liga e desliga a seta e
