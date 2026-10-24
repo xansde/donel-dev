@@ -1804,6 +1804,7 @@ export function App(): React.JSX.Element {
                 color: tab.color ?? 'none',
                 cliColorHex: cliColorNameToHex(tab.cliColorName),
                 state: semaphoreStates[tab.id]?.state ?? 'working',
+                stateEnteredAt: semaphoreStates[tab.id]?.stateEnteredAt ?? 0,
               },
             ]
           : [],
@@ -1811,6 +1812,25 @@ export function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tabs, semaphoreStates, appConfig],
   );
+  // Mindscape, fatia 02 — last visit of the owner to each session, in memory
+  // only (not persisted: the app is born without tabs). Stamped when a tab
+  // gets focus in the Uso geral and when the owner leaves the Uso geral with
+  // a tab in focus (rule 4).
+  const [mindscapeSeenAt, setMindscapeSeenAt] = useState<Record<string, number>>({});
+  const previousAppModeRef = useRef(appMode);
+  useEffect(() => {
+    const leftGeral = previousAppModeRef.current === 'geral' && appMode !== 'geral';
+    previousAppModeRef.current = appMode;
+    if (appMode !== 'geral' && !leftGeral) return;
+    const sessionId = tabsRef.current.find((tab) => tab.id === activeTabId)?.claudeSessionId;
+    if (!sessionId) return;
+    setMindscapeSeenAt((previous) => ({ ...previous, [sessionId]: Date.now() }));
+  }, [appMode, activeTabId]);
+  // "Ir ao terminal" (rule 10) — the focus change above stamps `seenAt`.
+  const handleMindscapeGoToTerminal = useCallback((tabId: string): void => {
+    setAppMode('geral');
+    setActiveTabId(tabId);
+  }, []);
   const mindscapeProjectNames = useMemo(() => Object.fromEntries(projects.map((project) => [project.path, project.name])), [projects]);
   const { loaded: mindscapeLoaded, update: updateMindscape } = mindscape;
   useEffect(() => {
@@ -2337,6 +2357,8 @@ export function App(): React.JSX.Element {
             sessions={mindscapeSessions}
             projectNames={mindscapeProjectNames}
             initialProjectPath={tabs.find((tab) => tab.id === activeTabId)?.cwd}
+            seenAt={mindscapeSeenAt}
+            onGoToTerminal={handleMindscapeGoToTerminal}
           />
         ) : null}
         {devModeOn && esteiraOpen ? (

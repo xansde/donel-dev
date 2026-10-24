@@ -179,25 +179,88 @@
   font-weight: 700;
 }
 
-.sessionCard.st-permission {
+/* Fatia 02 — the look follows what the session asks of the owner (rule 3):
+   highlighted = news since the last visit (ring in the state color),
+   normal = working, dimmed = nothing new since the last visit. */
+.sessionCard {
+  cursor: pointer;
+  transition:
+    box-shadow var(--duration-micro) var(--ease-standard),
+    opacity var(--duration-micro) var(--ease-standard);
+}
+
+.sessionCard:focus-visible {
+  outline: none;
+}
+
+.highlighted {
   box-shadow:
-    0 0 0 1px var(--state-permission),
-    0 0 0 4px color-mix(in srgb, var(--state-permission) 30%, transparent);
+    0 0 0 1px var(--st),
+    0 0 0 4px color-mix(in srgb, var(--st) 30%, transparent);
 }
 
-.sessionCard.st-waiting {
-  box-shadow: 0 0 0 1px var(--state-waiting);
-}
-
-.sessionCard.st-error {
-  box-shadow: 0 0 0 1px var(--state-error);
-}
-
-.sessionCard.st-done {
+.dimmed {
   background: var(--bg-panel);
+  opacity: 0.6;
 }
 
-.sessionCard.st-done .sessionName {
+.dimmed .sessionName {
+  color: var(--text-muted);
+}
+
+.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  opacity: 1;
+}
+
+.sessionCard:focus-visible:not(.selected) {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px var(--space-1);
+  border-bottom: var(--hairline);
+  flex: none;
+  min-width: 0;
+}
+
+.toolButton {
+  height: 26px;
+  padding: 0 10px;
+  white-space: nowrap;
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.toolButton:hover:not(:disabled) {
+  border-color: var(--text-muted);
+}
+
+.toolButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.toolButton:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.toolHint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-caption-size);
   color: var(--text-muted);
 }
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { SessionState } from '@donel-dev/design-system';
+import { sessionHighlight } from '../../../shared/mindscape/highlight';
 import { sessionCardId, type MindscapeDoc } from '../../../shared/mindscape/model';
 import type { TabColorToken } from '../../../shared/tabAppearance';
 import { MindscapeSessionCard } from './MindscapeCard';
@@ -14,6 +15,8 @@ export interface MindscapeLiveSession {
   readonly color: TabColorToken;
   readonly cliColorHex?: string | null;
   readonly state: SessionState;
+  /** When the session entered `state` (semaphore clock, epoch ms; 0 before the first hook). */
+  readonly stateEnteredAt: number;
 }
 
 export interface MindscapeScreenProps {
@@ -23,6 +26,10 @@ export interface MindscapeScreenProps {
   readonly projectNames: Readonly<Record<string, string>>;
   /** Board opened first: the project of the tab in focus, when it has one. */
   readonly initialProjectPath?: string;
+  /** Last visit of the owner to each session (`claudeSessionId` → epoch ms), in memory only. */
+  readonly seenAt: Readonly<Record<string, number>>;
+  /** "Ir ao terminal" — Uso geral with the tab of the session in focus. */
+  readonly onGoToTerminal: (tabId: string) => void;
 }
 
 function folderName(path: string): string {
@@ -35,9 +42,17 @@ function folderName(path: string): string {
  * session of that project, in the automatic grid. Covers the middle of the
  * shell like the EsteiraScreen; the terminals stay mounted underneath.
  */
-export function MindscapeScreen({ doc, sessions, projectNames, initialProjectPath }: MindscapeScreenProps): React.JSX.Element {
+export function MindscapeScreen({
+  doc,
+  sessions,
+  projectNames,
+  initialProjectPath,
+  seenAt,
+  onGoToTerminal,
+}: MindscapeScreenProps): React.JSX.Element {
   const boardPaths = Object.keys(doc.boards);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(initialProjectPath);
+  const [selectedTabId, setSelectedTabId] = useState<string | undefined>(undefined);
   const activePath =
     selectedPath && doc.boards[selectedPath]
       ? selectedPath
@@ -46,6 +61,7 @@ export function MindscapeScreen({ doc, sessions, projectNames, initialProjectPat
         : boardPaths[0];
   const board = activePath ? doc.boards[activePath] : undefined;
   const boardSessions = board ? sessions.filter((session) => session.projectPath === board.projectPath) : [];
+  const selectedSession = boardSessions.find((session) => session.tabId === selectedTabId);
 
   return (
     <section className={styles.screen} aria-label="Mindscape" data-testid="mindscape-screen">
@@ -66,7 +82,26 @@ export function MindscapeScreen({ doc, sessions, projectNames, initialProjectPat
           </button>
         ))}
       </div>
-      <div className={styles.view} data-testid="mindscape-board">
+      <div className={styles.tools} role="toolbar" aria-label="Quadro">
+        <button
+          type="button"
+          className={styles.toolButton}
+          disabled={!selectedSession}
+          onClick={() => {
+            if (selectedSession) onGoToTerminal(selectedSession.tabId);
+          }}
+        >
+          Ir ao terminal
+        </button>
+        <span className={styles.toolHint}>{selectedSession ? selectedSession.name : 'Selecione uma sessão (duplo clique abre o terminal)'}</span>
+      </div>
+      <div
+        className={styles.view}
+        data-testid="mindscape-board"
+        onClick={(event) => {
+          if (event.target === event.currentTarget) setSelectedTabId(undefined);
+        }}
+      >
         {!board ? (
           <p className={styles.empty}>Abra uma sessão claude num projeto: o quadro dele aparece aqui.</p>
         ) : (
@@ -85,6 +120,10 @@ export function MindscapeScreen({ doc, sessions, projectNames, initialProjectPat
                     cliColorHex={session.cliColorHex}
                     x={card.x}
                     y={card.y}
+                    highlight={sessionHighlight(session.state, session.stateEnteredAt, seenAt[session.sessionId])}
+                    selected={session.tabId === selectedTabId}
+                    onSelect={() => setSelectedTabId(session.tabId)}
+                    onOpen={() => onGoToTerminal(session.tabId)}
                   />
                 );
               })}
