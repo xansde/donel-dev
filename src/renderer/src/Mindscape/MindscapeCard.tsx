@@ -1,6 +1,7 @@
 import { SESSION_STATE_LABEL_PT, type SessionState } from '@donel-dev/design-system';
-import type { CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { SessionHighlight } from '../../../shared/mindscape/highlight';
+import { OWNER_COLORS, type OwnerCardColor } from '../../../shared/mindscape/model';
 import type { TabColorToken } from '../../../shared/tabAppearance';
 import styles from './Mindscape.module.css';
 
@@ -62,6 +63,7 @@ export function MindscapeSessionCard({
       style={style}
       tabIndex={0}
       data-testid="mindscape-session-card"
+      data-card-id={`session:${sessionId}`}
       data-session-id={sessionId}
       data-state={state}
       data-highlight={highlight}
@@ -109,7 +111,7 @@ function formatHour(epochMs: number): string {
 export function MindscapeNoteCard({ sessionId, sessionName, text, writtenAt, stripe, x, y, onArchive }: MindscapeNoteCardProps): React.JSX.Element {
   const style = { left: x, top: y, '--stripe': stripe ?? 'var(--border)' } as CSSProperties;
   return (
-    <article className={styles.noteCard} style={style} data-testid="mindscape-note-card" data-session-id={sessionId} aria-label={`Post-it escrito pela sessão ${sessionName}`}>
+    <article className={styles.noteCard} style={style} data-testid="mindscape-note-card" data-card-id={`note:${sessionId}`} data-session-id={sessionId} aria-label={`Post-it escrito pela sessão ${sessionName}`}>
       <span className={styles.noteAuthor} title={sessionName}>
         {sessionName}
       </span>
@@ -123,6 +125,110 @@ export function MindscapeNoteCard({ sessionId, sessionName, text, writtenAt, str
       <button type="button" className={styles.noteArchive} onClick={onArchive}>
         Arquivar
       </button>
+    </article>
+  );
+}
+
+/** Labels of the owner palette (same words as `TAB_COLOR_LABEL_PT` in the tab). */
+const OWNER_COLOR_LABEL: Record<OwnerCardColor, string> = { none: 'Sem cor', accent: 'Azul', 'donel-accent': 'Dourado' };
+
+export interface MindscapeOwnerCardProps {
+  readonly id: string;
+  readonly text: string;
+  readonly color: OwnerCardColor;
+  readonly createdAt: number;
+  readonly x: number;
+  readonly y: number;
+  /** A card just created opens already in edit mode, with the focus in the text. */
+  readonly startEditing: boolean;
+  readonly onEdit: (text: string) => void;
+  readonly onColor: (color: OwnerCardColor) => void;
+  readonly onArchive: () => void;
+}
+
+/**
+ * Mindscape, fatia 04 — the owner's post-it: "✎ você", folded corner, inline
+ * text (double click edits; leaving the field saves), Sem cor/Azul/Dourado and
+ * "Arquivar".
+ */
+export function MindscapeOwnerCard({ id, text, color, createdAt, x, y, startEditing, onEdit, onColor, onArchive }: MindscapeOwnerCardProps): React.JSX.Element {
+  const [editing, setEditing] = useState(startEditing);
+  const [draft, setDraft] = useState(text);
+  const fieldRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (editing) fieldRef.current?.focus();
+  }, [editing]);
+
+  const commit = (): void => {
+    setEditing(false);
+    onEdit(draft);
+  };
+
+  const style = { left: x, top: y, '--stripe': STRIPE_BY_TOKEN[color] } as CSSProperties;
+  return (
+    <article
+      className={`${styles.noteCard} ${styles.ownerCard}`}
+      style={style}
+      data-testid="mindscape-owner-card"
+      data-card-id={id}
+      data-color={color}
+      aria-label="Post-it seu"
+      onDoubleClick={(event) => {
+        if (!editing && !(event.target as HTMLElement).closest('button')) {
+          setDraft(text);
+          setEditing(true);
+        }
+      }}
+    >
+      {editing ? (
+        <textarea
+          ref={fieldRef}
+          className={styles.ownerField}
+          value={draft}
+          aria-label="Texto do post-it"
+          placeholder="Escreva aqui"
+          rows={4}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' || (event.key === 'Enter' && (event.ctrlKey || event.metaKey))) {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+          }}
+        />
+      ) : (
+        <p className={styles.noteText} title={text} data-testid="mindscape-owner-text">
+          {text || <span className={styles.ownerPlaceholder}>Duplo clique para escrever</span>}
+        </p>
+      )}
+      <div className={styles.noteMeta}>
+        <span className={styles.you}>✎ você</span>
+        <span>{formatHour(createdAt)}</span>
+      </div>
+      {/* The buttons do not take the focus from the text field: a blur there
+          would swap the field for the text and shift the layout between
+          mousedown and mouseup, losing the click. */}
+      <div className={styles.ownerActions} onMouseDown={(event) => event.preventDefault()}>
+        <div className={styles.ownerColors} role="group" aria-label="Cor do post-it">
+          {OWNER_COLORS.map((option) => (
+            <button
+              key={option}
+              type="button"
+              className={styles.ownerSwatch}
+              style={{ '--swatch': STRIPE_BY_TOKEN[option] } as CSSProperties}
+              aria-pressed={option === color}
+              aria-label={OWNER_COLOR_LABEL[option]}
+              title={OWNER_COLOR_LABEL[option]}
+              onClick={() => onColor(option)}
+            />
+          ))}
+        </div>
+        <button type="button" className={styles.noteArchive} onClick={onArchive}>
+          Arquivar
+        </button>
+      </div>
     </article>
   );
 }

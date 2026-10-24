@@ -64,6 +64,9 @@
   position: relative;
   flex: 1;
   overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
   background-color: var(--bg-app);
   background-image: radial-gradient(var(--border) 1px, transparent 1px);
   background-size: 22px 22px;
@@ -73,6 +76,98 @@
   position: absolute;
   left: 0;
   top: 0;
+}
+
+/* Fatia 04 — free canvas. */
+.panning {
+  cursor: grabbing;
+}
+
+.view [data-card-id] {
+  cursor: grab;
+}
+
+.view[data-dragging] [data-card-id] {
+  cursor: grabbing;
+}
+
+/* The owner's post-it: same post-it as the note, folded corner (variant A, `.note.by-user`). */
+.ownerCard {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%);
+}
+
+.ownerCard::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  background: linear-gradient(315deg, transparent 50%, color-mix(in srgb, var(--text-primary) 18%, var(--postit-bg)) 50%);
+}
+
+.you {
+  font-weight: var(--weight-semibold);
+  color: var(--donel-accent);
+}
+
+.ownerField {
+  box-sizing: border-box;
+  width: 100%;
+  resize: none;
+  font: inherit;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+  color: var(--text-primary);
+  background: rgba(0, 0, 0, 0.15);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  user-select: text;
+  cursor: text;
+}
+
+.ownerField:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.ownerPlaceholder {
+  color: color-mix(in srgb, var(--text-primary) 50%, transparent);
+  font-style: italic;
+}
+
+.ownerActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-right: 10px;
+}
+
+.ownerColors {
+  display: flex;
+  gap: 6px;
+}
+
+.ownerSwatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 30%, transparent);
+  cursor: pointer;
+}
+
+.ownerSwatch[aria-pressed='true'] {
+  border-color: var(--text-primary);
+}
+
+.ownerSwatch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .empty {

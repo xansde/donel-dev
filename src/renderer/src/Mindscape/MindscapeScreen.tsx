@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import type { SessionState } from '@donel-dev/design-system';
 import { sessionHighlight } from '../../../shared/mindscape/highlight';
-import { sessionCardId, type MindscapeDoc } from '../../../shared/mindscape/model';
+import { sessionCardId, type MindscapeDoc, type OwnerCardColor } from '../../../shared/mindscape/model';
 import type { TabColorToken } from '../../../shared/tabAppearance';
-import { MindscapeNoteCard, MindscapeSessionCard, STRIPE_BY_TOKEN } from './MindscapeCard';
+import { MindscapeBoard } from './MindscapeBoard';
+import { MindscapeNoteCard, MindscapeOwnerCard, MindscapeSessionCard, STRIPE_BY_TOKEN } from './MindscapeCard';
 import styles from './Mindscape.module.css';
 
 /** A `claude` tab that is open in a project — what feeds the session post-its. */
@@ -30,9 +31,20 @@ export interface MindscapeScreenProps {
   readonly seenAt: Readonly<Record<string, number>>;
   /** "Ir ao terminal" — Uso geral with the tab of the session in focus. */
   readonly onGoToTerminal: (tabId: string) => void;
-  /** "Arquivar" a post-it (fatia 03: the one written by the session) — removes it from the board. */
+  /** "Arquivar" a post-it (written by the session or by the owner) — removes it from the board. */
   readonly onArchive: (projectPath: string, cardId: string) => void;
+  /** Fatia 04 — end of a card drag. */
+  readonly onMoveCard: (projectPath: string, cardId: string, x: number, y: number) => void;
+  /** Fatia 04 — end of a background drag. */
+  readonly onPan: (projectPath: string, pan: { x: number; y: number }) => void;
+  /** Fatia 04 — "Novo post-it": the owner card `id`, placed from `origin` (the visible corner). */
+  readonly onAddOwnerCard: (projectPath: string, id: string, origin: { x: number; y: number }) => void;
+  readonly onEditOwnerCard: (projectPath: string, cardId: string, text: string) => void;
+  readonly onSetOwnerColor: (projectPath: string, cardId: string, color: OwnerCardColor) => void;
 }
+
+/** Margin of the new owner post-it from the visible top-left corner of the board. */
+const NEW_CARD_MARGIN = 40;
 
 function folderName(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
@@ -40,8 +52,9 @@ function folderName(path: string): string {
 }
 
 /**
- * Mindscape V1 (fatia 01) — one tab per project board, one post-it per live
- * session of that project, in the automatic grid. Covers the middle of the
+ * Mindscape V1 — one tab per project board, one post-it per live session of
+ * that project, the post-its written by the sessions and the owner's own
+ * (fatia 04: free canvas — drag cards, drag the background to move the view). Covers the middle of the
  * shell like the EsteiraScreen; the terminals stay mounted underneath.
  */
 export function MindscapeScreen({
@@ -52,10 +65,17 @@ export function MindscapeScreen({
   seenAt,
   onGoToTerminal,
   onArchive,
+  onMoveCard,
+  onPan,
+  onAddOwnerCard,
+  onEditOwnerCard,
+  onSetOwnerColor,
 }: MindscapeScreenProps): React.JSX.Element {
   const boardPaths = Object.keys(doc.boards);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(initialProjectPath);
   const [selectedTabId, setSelectedTabId] = useState<string | undefined>(undefined);
+  /** The owner card created in this visit — it opens in edit mode. */
+  const [createdCardId, setCreatedCardId] = useState<string | undefined>(undefined);
   const activePath =
     selectedPath && doc.boards[selectedPath]
       ? selectedPath
@@ -89,6 +109,19 @@ export function MindscapeScreen({
         <button
           type="button"
           className={styles.toolButton}
+          disabled={!board}
+          onClick={() => {
+            if (!board) return;
+            const id = crypto.randomUUID();
+            setCreatedCardId(id);
+            onAddOwnerCard(board.projectPath, id, { x: NEW_CARD_MARGIN - board.pan.x, y: NEW_CARD_MARGIN - board.pan.y });
+          }}
+        >
+          Novo post-it
+        </button>
+        <button
+          type="button"
+          className={styles.toolButton}
           disabled={!selectedSession}
           onClick={() => {
             if (selectedSession) onGoToTerminal(selectedSession.tabId);
@@ -98,21 +131,23 @@ export function MindscapeScreen({
         </button>
         <span className={styles.toolHint}>{selectedSession ? selectedSession.name : 'Selecione uma sessão (duplo clique abre o terminal)'}</span>
       </div>
-      <div
-        className={styles.view}
-        data-testid="mindscape-board"
-        onClick={(event) => {
-          if (event.target === event.currentTarget) setSelectedTabId(undefined);
-        }}
-      >
-        {!board ? (
+      {!board ? (
+        <div className={styles.view} data-testid="mindscape-board">
           <p className={styles.empty}>Abra uma sessão claude num projeto: o quadro dele aparece aqui.</p>
-        ) : (
-          <>
-            <div className={styles.world} style={{ transform: `translate(${board.pan.x}px, ${board.pan.y}px)` }}>
+        </div>
+      ) : (
+        <MindscapeBoard
+          board={board}
+          onMoveCard={(cardId, x, y) => onMoveCard(board.projectPath, cardId, x, y)}
+          onPan={(pan) => onPan(board.projectPath, pan)}
+          onBackgroundClick={() => setSelectedTabId(undefined)}
+        >
+          {(positionOf) => (
+            <>
               {boardSessions.map((session) => {
                 const card = board.cards[sessionCardId(session.sessionId)];
                 if (!card) return null;
+                const position = positionOf(card);
                 return (
                   <MindscapeSessionCard
                     key={session.tabId}
@@ -121,8 +156,8 @@ export function MindscapeScreen({
                     state={session.state}
                     color={session.color}
                     cliColorHex={session.cliColorHex}
-                    x={card.x}
-                    y={card.y}
+                    x={position.x}
+                    y={position.y}
                     highlight={sessionHighlight(session.state, session.stateEnteredAt, seenAt[session.sessionId])}
                     selected={session.tabId === selectedTabId}
                     onSelect={() => setSelectedTabId(session.tabId)}
@@ -131,6 +166,24 @@ export function MindscapeScreen({
                 );
               })}
               {Object.values(board.cards).map((card) => {
+                const position = positionOf(card);
+                if (card.kind === 'owner') {
+                  return (
+                    <MindscapeOwnerCard
+                      key={card.id}
+                      id={card.id}
+                      text={card.text}
+                      color={card.color}
+                      createdAt={card.createdAt}
+                      x={position.x}
+                      y={position.y}
+                      startEditing={card.id === createdCardId}
+                      onEdit={(text) => onEditOwnerCard(board.projectPath, card.id, text)}
+                      onColor={(color) => onSetOwnerColor(board.projectPath, card.id, color)}
+                      onArchive={() => onArchive(board.projectPath, card.id)}
+                    />
+                  );
+                }
                 if (card.kind !== 'session-note') return null;
                 const live = boardSessions.find((session) => session.sessionId === card.sessionId);
                 return (
@@ -141,17 +194,19 @@ export function MindscapeScreen({
                     text={card.text}
                     writtenAt={card.writtenAt}
                     stripe={live ? (live.cliColorHex ?? STRIPE_BY_TOKEN[live.color]) : undefined}
-                    x={card.x}
-                    y={card.y}
+                    x={position.x}
+                    y={position.y}
                     onArchive={() => onArchive(board.projectPath, card.id)}
                   />
                 );
               })}
-            </div>
-            {boardSessions.length === 0 && !Object.values(board.cards).some((card) => card.kind === 'session-note') ? <p className={styles.empty}>Nenhuma sessão aberta neste projeto.</p> : null}
-          </>
-        )}
-      </div>
+              {boardSessions.length === 0 && !Object.values(board.cards).some((card) => card.kind !== 'session') ? (
+                <p className={styles.empty}>Nenhuma sessão aberta neste projeto.</p>
+              ) : null}
+            </>
+          )}
+        </MindscapeBoard>
+      )}
     </section>
   );
 }

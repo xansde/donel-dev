@@ -12,7 +12,7 @@ export const MINDSCAPE_SCHEMA_VERSION = 1;
 
 export type OwnerCardColor = Exclude<TabColorToken, 'permission'>;
 
-const OWNER_COLORS: readonly OwnerCardColor[] = ['none', 'accent', 'donel-accent'];
+export const OWNER_COLORS: readonly OwnerCardColor[] = ['none', 'accent', 'donel-accent'];
 
 export type MindscapeCard =
   | { kind: 'session'; id: `session:${string}`; sessionId: string; x: number; y: number }
@@ -89,8 +89,9 @@ interface Footprint {
 const SESSION_FOOTPRINT: Footprint = { w: SESSION_CARD_WIDTH, h: SESSION_CARD_HEIGHT };
 const NOTE_FOOTPRINT: Footprint = { w: NOTE_CARD_WIDTH, h: NOTE_CARD_HEIGHT };
 
+/** Owner post-its use the same footprint as the note written by the session (same post-it shape). */
 function footprintOf(card: MindscapeCard): Footprint {
-  return card.kind === 'session-note' ? NOTE_FOOTPRINT : SESSION_FOOTPRINT;
+  return card.kind === 'session' ? SESSION_FOOTPRINT : NOTE_FOOTPRINT;
 }
 
 function overlapsAny(x: number, y: number, size: Footprint, cards: readonly MindscapeCard[]): boolean {
@@ -100,10 +101,14 @@ function overlapsAny(x: number, y: number, size: Footprint, cards: readonly Mind
   });
 }
 
-function freeGridSlot(cards: readonly MindscapeCard[], size: Footprint = SESSION_FOOTPRINT): { x: number; y: number } {
+function freeGridSlot(
+  cards: readonly MindscapeCard[],
+  size: Footprint = SESSION_FOOTPRINT,
+  origin: { x: number; y: number } = GRID_ORIGIN,
+): { x: number; y: number } {
   for (let index = 0; ; index += 1) {
-    const x = GRID_ORIGIN.x + (index % GRID_COLUMNS) * (SESSION_CARD_WIDTH + GRID_GAP);
-    const y = GRID_ORIGIN.y + Math.floor(index / GRID_COLUMNS) * (SESSION_CARD_HEIGHT + GRID_GAP);
+    const x = origin.x + (index % GRID_COLUMNS) * (SESSION_CARD_WIDTH + GRID_GAP);
+    const y = origin.y + Math.floor(index / GRID_COLUMNS) * (SESSION_CARD_HEIGHT + GRID_GAP);
     if (!overlapsAny(x, y, size, cards)) return { x, y };
   }
 }
@@ -190,6 +195,64 @@ export function archiveCard(doc: MindscapeDoc, projectPath: string, cardId: stri
   delete cards[cardId];
   const links = board.links.filter((link) => link.from !== cardId && link.to !== cardId);
   return { ...doc, boards: { ...doc.boards, [projectPath]: { ...board, cards, links } } };
+}
+
+// ---------------------------------------------------------------------------
+// Fatia 04 — free canvas: move cards, move the view, the owner's post-its.
+// ---------------------------------------------------------------------------
+
+function replaceCard(doc: MindscapeDoc, board: MindscapeBoard, card: MindscapeCard): MindscapeDoc {
+  return { ...doc, boards: { ...doc.boards, [board.projectPath]: { ...board, cards: { ...board.cards, [card.id]: card } } } };
+}
+
+/** Drag of a card: only its x/y change. Missing card, same spot or a non-finite spot → same document. */
+export function moveCard(doc: MindscapeDoc, projectPath: string, cardId: string, x: number, y: number): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  const card = board?.cards[cardId];
+  if (!board || !card || !Number.isFinite(x) || !Number.isFinite(y)) return doc;
+  if (card.x === x && card.y === y) return doc;
+  return replaceCard(doc, board, { ...card, x, y });
+}
+
+/** Drag of the background: the view offset of the board, persisted with it. */
+export function setBoardPan(doc: MindscapeDoc, projectPath: string, pan: { x: number; y: number }): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  if (!board || !Number.isFinite(pan.x) || !Number.isFinite(pan.y)) return doc;
+  if (board.pan.x === pan.x && board.pan.y === pan.y) return doc;
+  return { ...doc, boards: { ...doc.boards, [projectPath]: { ...board, pan: { x: pan.x, y: pan.y } } } };
+}
+
+export interface OwnerCardInput {
+  /** Unique id, made by the caller (`crypto.randomUUID()` in the renderer) so the reducer stays pure. */
+  readonly id: string;
+  readonly createdAt: number;
+  /** Top-left of the grid to search for a free spot (the visible corner of the view); default: the board grid. */
+  readonly origin?: { x: number; y: number };
+}
+
+/** "Novo post-it" — an owner card, empty text and no color, on the first free spot from `origin`. An id in use → same document. */
+export function addOwnerCard(doc: MindscapeDoc, projectPath: string, input: OwnerCardInput): MindscapeDoc {
+  const withBoard = ensureBoard(doc, projectPath);
+  const board = withBoard.boards[projectPath]!;
+  if (!input.id || board.cards[input.id]) return doc;
+  const slot = freeGridSlot(Object.values(board.cards), NOTE_FOOTPRINT, input.origin ?? GRID_ORIGIN);
+  return replaceCard(withBoard, board, { kind: 'owner', id: input.id, text: '', color: 'none', createdAt: input.createdAt, ...slot });
+}
+
+/** Inline edit of the owner's post-it. Same text, or a card that is not the owner's → same document. */
+export function editOwnerCard(doc: MindscapeDoc, projectPath: string, cardId: string, text: string): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  const card = board?.cards[cardId];
+  if (!board || !card || card.kind !== 'owner' || card.text === text) return doc;
+  return replaceCard(doc, board, { ...card, text });
+}
+
+/** Color of the owner's post-it: Sem cor / Azul / Dourado only — `permission` is refused (rule 6). */
+export function setOwnerColor(doc: MindscapeDoc, projectPath: string, cardId: string, color: OwnerCardColor): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  const card = board?.cards[cardId];
+  if (!board || !card || card.kind !== 'owner' || !OWNER_COLORS.includes(color) || card.color === color) return doc;
+  return replaceCard(doc, board, { ...card, color });
 }
 
 // ---------------------------------------------------------------------------

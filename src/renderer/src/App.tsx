@@ -84,7 +84,18 @@ import { EsteiraScreen } from './Esteira/EsteiraScreen';
 // Mindscape V1 — third mode of the shell (docs/design/mindscape.md).
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
-import { archiveCard, findSessionBoard, placeSessionCard, writeSessionNote } from '../../shared/mindscape/model';
+import {
+  addOwnerCard,
+  archiveCard,
+  editOwnerCard,
+  findSessionBoard,
+  moveCard,
+  placeSessionCard,
+  setBoardPan,
+  setOwnerColor,
+  writeSessionNote,
+  type OwnerCardColor,
+} from '../../shared/mindscape/model';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
 import {
   AUTO_START_NOT_READY_MESSAGE,
@@ -1860,6 +1871,28 @@ export function App(): React.JSX.Element {
     (projectPath: string, cardId: string): void => updateMindscape((doc) => archiveCard(doc, projectPath, cardId)),
     [updateMindscape],
   );
+  // Mindscape, fatia 04 — free canvas: drag, pan and the owner's post-its.
+  const handleMindscapeMoveCard = useCallback(
+    (projectPath: string, cardId: string, x: number, y: number): void => updateMindscape((doc) => moveCard(doc, projectPath, cardId, x, y)),
+    [updateMindscape],
+  );
+  const handleMindscapePan = useCallback(
+    (projectPath: string, pan: { x: number; y: number }): void => updateMindscape((doc) => setBoardPan(doc, projectPath, pan)),
+    [updateMindscape],
+  );
+  const handleMindscapeAddOwnerCard = useCallback(
+    (projectPath: string, id: string, origin: { x: number; y: number }): void =>
+      updateMindscape((doc) => addOwnerCard(doc, projectPath, { id, createdAt: Date.now(), origin })),
+    [updateMindscape],
+  );
+  const handleMindscapeEditOwnerCard = useCallback(
+    (projectPath: string, cardId: string, text: string): void => updateMindscape((doc) => editOwnerCard(doc, projectPath, cardId, text)),
+    [updateMindscape],
+  );
+  const handleMindscapeSetOwnerColor = useCallback(
+    (projectPath: string, cardId: string, color: OwnerCardColor): void => updateMindscape((doc) => setOwnerColor(doc, projectPath, cardId, color)),
+    [updateMindscape],
+  );
 
   const sidebarSessions: SidebarSession[] = tabs
     .filter((tab) => !(tab.claudeSessionId && registeredFavoriteIds.has(tab.claudeSessionId)))
@@ -2382,6 +2415,11 @@ export function App(): React.JSX.Element {
             seenAt={mindscapeSeenAt}
             onGoToTerminal={handleMindscapeGoToTerminal}
             onArchive={handleMindscapeArchive}
+            onMoveCard={handleMindscapeMoveCard}
+            onPan={handleMindscapePan}
+            onAddOwnerCard={handleMindscapeAddOwnerCard}
+            onEditOwnerCard={handleMindscapeEditOwnerCard}
+            onSetOwnerColor={handleMindscapeSetOwnerColor}
           />
         ) : null}
         {devModeOn && esteiraOpen ? (
