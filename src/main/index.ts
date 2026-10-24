@@ -11,6 +11,10 @@ import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
 import { createEsteiraService, type EsteiraService } from './esteira-service';
 import { esteiraStoreDir } from './esteira-store';
+import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
+import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import type { MindscapeSaveResult } from '../shared/mindscape/channels';
+import type { MindscapeDoc } from '../shared/mindscape/model';
 import { esteiraOutboxDir } from './esteira-ingest';
 import { esteiraInboxDir } from './esteira-dispatch';
 import { resolveBoardMirrorAdapter } from './esteira-mirror';
@@ -2185,6 +2189,16 @@ function registerTabIpcHandlers(): void {
 }
 
 /**
+ * Mindscape (V1) — load/save of `mindscape.json`. The main is the only writer
+ * and validates the payload (`parseMindscapeDoc`) before writing.
+ */
+function registerMindscapeIpcHandlers(): void {
+  const store = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps);
+  ipcMain.handle(MINDSCAPE_CHANNELS.load, (): MindscapeDoc => store.load());
+  ipcMain.handle(MINDSCAPE_CHANNELS.save, (_event, doc: unknown): MindscapeSaveResult => store.save(doc));
+}
+
+/**
  * CA-23 (009-modo-dev-v3, lote 3) — engrenagem de configuração por projeto:
  * lê/grava os dois JSONs externos que a esteira já lia (board TaskDex + repo
  * do GitHub), hoje editados à mão fora do app (spec.md problema 8).
@@ -2751,6 +2765,7 @@ void app.whenReady().then(async () => {
   registerClipboardIpcHandlers(); // T504 (005-terminal-copy-paste)
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
+  registerMindscapeIpcHandlers(); // Mindscape V1
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
   registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)
   registerEsteiraIpcHandlers(); // Spec 010 — esteira nova (store + contrato), ao LADO do mapa atual

@@ -1,0 +1,218 @@
+/* Mindscape V1 — form of variant A (docs/prototipos/mindscape/final.html):
+   tabs per project on top, dotted canvas, session post-its with the seal. */
+
+.screen {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  overflow: hidden;
+}
+
+.tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 6px var(--space-1) 0;
+  border-bottom: var(--hairline);
+  background: var(--bg-panel);
+  flex: none;
+  min-height: 37px;
+  box-sizing: border-box;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: var(--hairline);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: var(--bg-app);
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.tabOn {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.tabKind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font-weight: var(--weight-regular);
+}
+
+.view {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  background-color: var(--bg-app);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.world {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.empty {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  color: var(--text-muted);
+}
+
+/* State vocabulary (StateDot / TerminalTab). */
+.st-working {
+  --st: var(--state-working);
+}
+.st-waiting {
+  --st: var(--state-waiting);
+}
+.st-permission {
+  --st: var(--state-permission);
+}
+.st-done {
+  --st: var(--state-done);
+}
+.st-error {
+  --st: var(--state-error);
+}
+
+/* Session post-it: 230 x 96 at most (SESSION_CARD_WIDTH/HEIGHT in model.ts). */
+.sessionCard {
+  position: absolute;
+  box-sizing: border-box;
+  width: 230px;
+  min-height: 72px;
+  max-height: 96px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--stripe);
+  border-radius: var(--radius-md);
+  padding: 12px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  user-select: none;
+}
+
+.seal {
+  position: absolute;
+  top: -10px;
+  left: 8px;
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-app);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+  line-height: 16px;
+}
+
+.sessionHead {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.glyph {
+  width: 12px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--st);
+  flex-shrink: 0;
+}
+
+.sessionName {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sessionState {
+  font-size: var(--text-caption-size);
+  color: var(--st);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.st-working .glyph {
+  animation: pulse 2000ms ease-in-out infinite;
+}
+
+.st-permission .glyph {
+  animation: pulse 1000ms ease-in-out infinite;
+  font-weight: 700;
+}
+
+.sessionCard.st-permission {
+  box-shadow:
+    0 0 0 1px var(--state-permission),
+    0 0 0 4px color-mix(in srgb, var(--state-permission) 30%, transparent);
+}
+
+.sessionCard.st-waiting {
+  box-shadow: 0 0 0 1px var(--state-waiting);
+}
+
+.sessionCard.st-error {
+  box-shadow: 0 0 0 1px var(--state-error);
+}
+
+.sessionCard.st-done {
+  background: var(--bg-panel);
+}
+
+.sessionCard.st-done .sessionName {
+  color: var(--text-muted);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glyph {
+    animation: none !important;
+  }
+}

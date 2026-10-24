@@ -81,6 +81,10 @@ import type { LauncherLaunchOptions } from './Launcher';
 // desmonta ou altera o Modo Dev de hoje; a tela entra por cima, atrás de um
 // gesto interno, para dar para comparar as duas com o mesmo dado.
 import { EsteiraScreen } from './Esteira/EsteiraScreen';
+// Mindscape V1 — third mode of the shell (docs/design/mindscape.md).
+import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
+import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
+import { placeSessionCard } from '../../shared/mindscape/model';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
 import {
   AUTO_START_NOT_READY_MESSAGE,
@@ -421,7 +425,11 @@ export function App(): React.JSX.Element {
   // arquivadas, defaults) vive no ConfigStore via `devMode:*` (CA-21). O que
   // está abaixo é só estado de TELA (modo ligado, o que está expandido, o
   // comando armado) — some no restart, e deve mesmo.
-  const [devModeOn, setDevModeOn] = useState(false);
+  // Mindscape V1 — the mode selector has three values; `devModeOn` stays as a
+  // derived flag so the Modo Dev reads exactly as before.
+  const [appMode, setAppMode] = useState<'geral' | 'dev' | 'mindscape'>('geral');
+  const devModeOn = appMode === 'dev';
+  const mindscape = useMindscapeDoc();
   /** Spec 010 — tela da esteira nova (gesto interno: botão no titlebar do Modo Dev). */
   const [esteiraOpen, setEsteiraOpen] = useState(false);
   /**
@@ -1781,6 +1789,36 @@ export function App(): React.JSX.Element {
     [appConfig, favoritedProjectPaths],
   );
 
+  // Mindscape V1 — the live `claude` tabs that belong to a project (a tab
+  // without project — shell or home — does not enter, rule 11).
+  const mindscapeSessions: MindscapeLiveSession[] = useMemo(
+    () =>
+      tabs.flatMap((tab) =>
+        tab.sessionType === 'claude' && tab.claudeSessionId && tab.cwd && tab.projectName
+          ? [
+              {
+                tabId: tab.id,
+                sessionId: tab.claudeSessionId,
+                name: resolveTabName(tab),
+                projectPath: tab.cwd,
+                color: tab.color ?? 'none',
+                cliColorHex: cliColorNameToHex(tab.cliColorName),
+                state: semaphoreStates[tab.id]?.state ?? 'working',
+              },
+            ]
+          : [],
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tabs, semaphoreStates, appConfig],
+  );
+  const mindscapeProjectNames = useMemo(() => Object.fromEntries(projects.map((project) => [project.path, project.name])), [projects]);
+  const { loaded: mindscapeLoaded, update: updateMindscape } = mindscape;
+  useEffect(() => {
+    // Only after the boot load: writing before it would overwrite the file with an empty document.
+    if (!mindscapeLoaded) return;
+    updateMindscape((doc) => mindscapeSessions.reduce((acc, session) => placeSessionCard(acc, session.projectPath, session.sessionId), doc));
+  }, [mindscapeLoaded, updateMindscape, mindscapeSessions]);
+
   const sidebarSessions: SidebarSession[] = tabs
     .filter((tab) => !(tab.claudeSessionId && registeredFavoriteIds.has(tab.claudeSessionId)))
     .map((tab) => ({
@@ -2152,11 +2190,12 @@ export function App(): React.JSX.Element {
         <div className={styles.devModeToggle} data-testid="devmode-toggle">
           <SegmentedControl
             ariaLabel="Modo"
-            value={devModeOn ? 'dev' : 'geral'}
-            onChange={(next) => setDevModeOn(next === 'dev')}
+            value={appMode}
+            onChange={(next) => setAppMode(next === 'dev' || next === 'mindscape' ? next : 'geral')}
             options={[
               { value: 'geral', label: 'Uso geral' },
               { value: 'dev', label: 'Dev' },
+              { value: 'mindscape', label: 'Mindscape' },
             ]}
           />
         </div>
@@ -2292,6 +2331,14 @@ export function App(): React.JSX.Element {
         {/* Spec 010 — a esteira nova entra POR CIMA, sem desmontar nada: o
             mapa atual segue vivo por baixo (`[P-5]` — ele só sai no fim do
             vertical, quando o novo provar a espinha). */}
+        {appMode === 'mindscape' ? (
+          <MindscapeScreen
+            doc={mindscape.doc}
+            sessions={mindscapeSessions}
+            projectNames={mindscapeProjectNames}
+            initialProjectPath={tabs.find((tab) => tab.id === activeTabId)?.cwd}
+          />
+        ) : null}
         {devModeOn && esteiraOpen ? (
           <EsteiraScreen onClose={() => setEsteiraOpen(false)} projects={projects} onOpenSession={handleOpenEsteiraSession} />
         ) : null}

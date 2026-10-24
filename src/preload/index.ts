@@ -118,6 +118,10 @@ import {
   type SetWorkItemStateIpcInput,
 } from '../shared/esteira/ipc';
 
+import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import type { MindscapeSaveResult } from '../shared/mindscape/channels';
+import type { MindscapeDoc } from '../shared/mindscape/model';
+
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
 // arquivo é o único ponto por onde o renderer alcança o main process, via
 // `window.donel.*` tipado de ponta a ponta (plan.md "Arquitetura de
@@ -355,6 +359,12 @@ const donelApi: DonelApi = {
 
     setOrder: (sessionId: string, order: number) =>
       ipcRenderer.invoke(TAB_CHANNELS.setOrder, sessionId, order) as Promise<AppConfigDto>,
+  },
+
+  // Mindscape V1 — the board document (main is the only writer).
+  mindscape: {
+    load: () => ipcRenderer.invoke(MINDSCAPE_CHANNELS.load) as Promise<MindscapeDoc>,
+    save: (doc: MindscapeDoc) => ipcRenderer.invoke(MINDSCAPE_CHANNELS.save, doc) as Promise<MindscapeSaveResult>,
   },
 
   devMode: {
