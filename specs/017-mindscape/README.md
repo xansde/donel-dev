@@ -11,5 +11,7 @@ regra 13):
 - Protótipo e decisão de UI: [`docs/prototipos/mindscape/`](../../docs/prototipos/mindscape/decisao.md)
 - Pesquisa da fonte do post-it da sessão: [`docs/pesquisas/mindscape-fonte-postit-sessao.md`](../../docs/pesquisas/mindscape-fonte-postit-sessao.md)
 - Regras da V1: [`docs/refinamentos/mindscape-regras-v1.md`](../../docs/refinamentos/mindscape-regras-v1.md)
+- Versões (V1 e hipóteses): [`docs/versoes/mindscape.md`](../../docs/versoes/mindscape.md)
+- Design da V1: [`docs/design/mindscape.md`](../../docs/design/mindscape.md) e [ADR 0004](../../docs/adr/0004-base-do-quadro-mindscape.md)
 - Pesquisa de referência: [`docs/pesquisas/visao-visual-multi-sessao-postit.md`](../../docs/pesquisas/visao-visual-multi-sessao-postit.md)
 - Vocabulário: [`docs/glossario.md`](../../docs/glossario.md)
