@@ -7,9 +7,9 @@ taskdex: []  # sem card: ferramenta pessoal, por decisão do dono
 autor: Claude por delegação de Alexandre Lentz
 self-assessment: apto  # decidido por delegação do dono, 2026-10-24
 complexidade: —
-status: rascunho
-aprovado-por: —
-aprovado-em: —
+status: aprovado
+aprovado-por: Claude por delegação de Alexandre Lentz, 2026-10-24 ("vai fundo")
+aprovado-em: 2026-10-24
 champions-post: "não postado — repo pessoal fora da Seazone (xansde/donel-dev), sem canal; decidido por delegação do dono"
 adrs: []  # ADR 0004 confirmado, com nota de 2026-10-24 em "Consequências"
 ---
