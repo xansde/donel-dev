@@ -268,6 +268,7 @@ aprovado, e tudo atrás de `chat.enabled` até a virada (Fase 7).
 - Vocabulário canônico: `docs/glossario.md` — use estes termos em código e conversa.
 - Decisões de domínio e arquitetura: `docs/adr/` — consulte antes de propor mudança.
 - Mindscape: quadro próprio em React + `roughjs`, não Excalidraw; o renderer é dono do estado e só `src/main/mindscape-store.ts` grava `<userData>/mindscape.json` ([ADR 0004](docs/adr/0004-base-do-quadro-mindscape.md), [design](docs/design/mindscape.md)).
+- `mindscape.json`: campo novo no documento **sobe o `schemaVersion`**. O `parseMindscapeDoc` descarta o que não conhece e o `userData` é compartilhado entre canais, então um canal mais antigo gravaria por cima e apagaria o campo; com a versão maior ele fica read-only ([design do desenho](docs/design/mindscape-desenho.md)).
 
 ## Vault
 

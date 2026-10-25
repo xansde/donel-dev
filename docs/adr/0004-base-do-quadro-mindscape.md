@@ -51,3 +51,8 @@ dono quer vem da mesma biblioteca, a ~1% do peso.
   nativa; se quebrar, dá para fixar a cópia no repo.
 - Reabrir esta decisão só se a V2 exigir em conjunto rabisco, prints, texto livre e formas — aí
   o custo do Excalidraw passa a comprar coisa que seria cara de construir.
+- **Confirmado em 2026-10-24** (decidido por delegação do dono, em `docs/design/mindscape-desenho.md`):
+  a entrega de desenho pediu rabisco, formas e prints, mas não texto livre, e o critério que
+  decide (post-it de sessão vivo) não mudou. Os desenhos entram como uma camada SVG sob os
+  cartões, com o próprio `roughjs`. O rabisco é um `path` suavizado por função pura, **sem**
+  `perfect-freehand`, que segue como candidato se o traço precisar de pressão.
