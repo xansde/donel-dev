@@ -13,13 +13,20 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // chosen color and stroke, A/L from post-it to post-it make a link, "Ligar" is
 // gone, Esc cancels, a key in the post-it text goes to the text, and everything
 // comes back after a relaunch (mindscape.json v2). Project `atlas` in a temp root.
+// Fatia 02: Ctrl+Z / Ctrl+Shift+Z undo and redo the owner's actions one by one,
+// while the post-it written by the session keeps its new text; Ctrl+Z in the
+// post-it text is the field's own; the history survives a mode change and is
+// empty after a relaunch. Same `atlas`, its own mindscape file.
 
 const SCENARIO = path.join(REPO_ROOT, 'tests/fixtures/mindscape/scenarios/slow-turn.json');
+/** Stop hook with `last_assistant_message` after "primeiro" / "segundo" (the turn ends in the middle of the owner's actions). */
+const NOTE_SCENARIO = path.join(REPO_ROOT, 'tests/fixtures/mindscape/scenarios/session-note.json');
 
 let root: string;
 let userDataDir: string;
 let mindscapeFile: string;
 let launched: LaunchedApp | undefined;
+let scenario = SCENARIO;
 
 interface SavedDrawing {
   kind: string;
@@ -38,7 +45,7 @@ interface SavedBoard {
 }
 
 function env(): Record<string, string | undefined> {
-  return { ...process.env, DONEL_FAKE_CLAUDE_SCENARIO: SCENARIO, DONEL_MINDSCAPE_FILE: mindscapeFile };
+  return { ...process.env, DONEL_FAKE_CLAUDE_SCENARIO: scenario, DONEL_MINDSCAPE_FILE: mindscapeFile };
 }
 
 function saved(): SavedBoard {
@@ -220,4 +227,155 @@ test('Mindscape desenho 01: barra de ferramentas, formas, setas soltas e seta de
   await expect(after.getByTestId('mindscape-drawing').last()).toHaveAttribute('data-color', 'donel-accent');
   // The link waits for the session card (no tab open after the relaunch) but stays saved.
   expect(saved()).toEqual(before);
+});
+
+function terminalTab(window: Page): Locator {
+  return window.locator('[role="tab"]:not([data-testid="mindscape-tab"])', { hasText: 'atlas' }).first();
+}
+
+/** Uso geral → type the prompt in the atlas tab → back to the Mindscape (unmounts and remounts the screen). */
+async function sendOnAtlas(window: Page, prompt: string): Promise<void> {
+  await setMode(window, 'Uso geral');
+  await terminalTab(window).click();
+  const pane = window.locator('[data-testid="terminal-pane"]:visible');
+  await expect(async () => {
+    expect(await pane.innerText()).toContain('shortcuts');
+  }).toPass({ timeout: 30_000 });
+  await pane.click();
+  await window.keyboard.type(prompt);
+  await window.keyboard.press('Enter');
+  await expect(terminalTab(window).getByRole('img')).toHaveAttribute('aria-label', 'Aguardando resposta', { timeout: 20_000 });
+  await setMode(window, 'Mindscape');
+}
+
+/** Board position of a card, from its inline style (left/top are board units). */
+async function cardSpot(card: Locator): Promise<{ x: number; y: number }> {
+  return card.evaluate((element) => ({ x: Number.parseFloat((element as HTMLElement).style.left), y: Number.parseFloat((element as HTMLElement).style.top) }));
+}
+
+test('Mindscape desenho 02: Ctrl+Z e Ctrl+Shift+Z no quadro, sem desfazer o que a sessão fez @mindscape', async () => {
+  test.setTimeout(240_000);
+  if (launched) await closeIsolatedApp(launched, false);
+  launched = undefined;
+  mindscapeFile = path.join(root, 'mindscape-02.json');
+  scenario = NOTE_SCENARIO;
+  launched = await launchIsolatedApp({ userDataDir, env: env() });
+  const { window } = launched;
+
+  await openProjectClaudeTab(window, 'atlas');
+  await expect(terminalTab(window)).toHaveAttribute('aria-selected', 'true');
+  // A first turn: the post-it written by the session exists before the owner's actions.
+  await sendOnAtlas(window, 'primeiro');
+  const notes = screen(window).getByTestId('mindscape-note-card');
+  const noteText = notes.first().getByTestId('mindscape-note-text');
+  await expect(notes).toHaveCount(1, { timeout: 15_000 });
+  await expect(noteText).toHaveText('Primeira resposta (hook).');
+  await expect(screen(window).getByTestId('mindscape-session-card')).toHaveCount(1);
+
+  const boardBox = await screen(window).getByTestId('mindscape-board').boundingBox();
+  if (!boardBox) throw new Error('board not visible');
+  const H = boardBox.height;
+  const at = (x: number, y: number) => ({ x: boardBox.x + x, y: boardBox.y + y });
+  const drawings = screen(window).getByTestId('mindscape-drawing');
+  const owners = screen(window).getByTestId('mindscape-owner-card');
+
+  // 1. Three owner actions: a rect, an (empty) owner post-it, and a drag of it.
+  await window.keyboard.press('r');
+  await dragScreen(window, at(30, H - 200), at(150, H - 120));
+  await expect(drawings).toHaveCount(1);
+  await screen(window).getByRole('button', { name: 'Novo post-it' }).click();
+  await expect(owners.getByRole('textbox', { name: 'Texto do post-it' })).toBeFocused();
+  // Click on the empty corner: the field closes with the same (empty) text, so no entry.
+  await window.mouse.click(boardBox.x + boardBox.width - 30, boardBox.y + H - 30);
+  await expect(owners).toHaveCount(1);
+  await expect(owners.getByRole('textbox')).toHaveCount(0);
+  const born = await cardSpot(owners);
+  const grip = await center(owners.getByText('✎ você'));
+  await dragScreen(window, grip, { x: grip.x, y: grip.y + 200 });
+  await expect.poll(() => cardSpot(owners)).toEqual({ x: born.x, y: born.y + 200 });
+  const moved = await cardSpot(owners);
+
+  // 2. The session ends a turn now: its post-it gets the new text.
+  await sendOnAtlas(window, 'segundo');
+  await expect(noteText).toHaveText('Segunda resposta (hook).', { timeout: 15_000 });
+
+  // 3. Ctrl+Z three times: the post-it goes back to where it was born, then goes away, then the rect goes away;
+  //    the post-it written by the session keeps the new text all along.
+  await window.keyboard.press('Control+z');
+  await expect.poll(() => cardSpot(owners)).toEqual(born);
+  await expect(drawings).toHaveCount(1);
+  await window.keyboard.press('Control+z');
+  await expect(owners).toHaveCount(0);
+  await expect(drawings).toHaveCount(1);
+  await window.keyboard.press('Control+z');
+  await expect(drawings).toHaveCount(0);
+  await expect(notes).toHaveCount(1);
+  await expect(noteText).toHaveText('Segunda resposta (hook).');
+  await expect(screen(window).getByTestId('mindscape-session-card')).toHaveCount(1);
+  await expect.poll(() => saved().drawings.length, { timeout: 10_000 }).toBe(0);
+
+  // 4. Ctrl+Shift+Z → the rect comes back.
+  await window.keyboard.press('Control+Shift+z');
+  await expect(drawings).toHaveCount(1);
+  await expect(owners).toHaveCount(0);
+
+  // 5. Ctrl+Z in the middle of a gesture is ignored (Esc then cancels the gesture: nothing new).
+  await window.keyboard.press('r');
+  const from = at(200, H - 200);
+  await window.mouse.move(from.x, from.y);
+  await window.mouse.down();
+  await window.mouse.move(from.x + 60, from.y + 40, { steps: 6 });
+  await expect(screen(window).getByTestId('mindscape-drawing-draft')).toHaveCount(1);
+  await window.keyboard.press('Control+z');
+  await expect(drawings).toHaveCount(1);
+  await window.keyboard.press('Escape');
+  await window.mouse.up();
+  await expect(drawings).toHaveCount(1);
+
+  // 6. Uso geral and back → the redo stack is still there: the post-it comes back, then its drag.
+  await setMode(window, 'Uso geral');
+  await setMode(window, 'Mindscape');
+  await window.keyboard.press('Control+Shift+z');
+  await expect(owners).toHaveCount(1);
+  await expect.poll(() => cardSpot(owners)).toEqual(born);
+  // It comes back as it was, not in edit mode.
+  await expect(owners.getByRole('textbox')).toHaveCount(0);
+  await window.keyboard.press('Control+Shift+z');
+  await expect.poll(() => cardSpot(owners)).toEqual(moved);
+
+  // 7. With the focus in the post-it text, Ctrl+Z undoes only the typing.
+  await owners.getByTestId('mindscape-owner-text').dblclick();
+  const field = owners.getByRole('textbox', { name: 'Texto do post-it' });
+  await expect(field).toBeFocused();
+  await window.keyboard.type('abc');
+  await expect(field).toHaveValue('abc');
+  await window.keyboard.press('Control+z');
+  // The field's own undo (how much of the typing one step takes is Chromium's grouping); the board is untouched.
+  await expect.poll(() => field.inputValue()).toMatch(/^a?b?$/);
+  await expect(field).toBeFocused();
+  await expect(owners).toHaveCount(1);
+  await expect(drawings).toHaveCount(1);
+  expect(await cardSpot(owners)).toEqual(moved);
+  await window.keyboard.press('Escape');
+  await expect(owners.getByRole('textbox')).toHaveCount(0);
+
+  // 8. Relaunch → Ctrl+Z does nothing (the history starts empty).
+  await expect.poll(() => saved().drawings.length, { timeout: 10_000 }).toBe(1);
+  await closeIsolatedApp(launched, false);
+  launched = undefined;
+  const before = readFileSync(mindscapeFile, 'utf8');
+  launched = await launchIsolatedApp({ userDataDir, env: env() });
+  await setMode(launched.window, 'Mindscape');
+  const after = screen(launched.window);
+  await expect(after.getByTestId('mindscape-drawing')).toHaveCount(1);
+  await expect(after.getByTestId('mindscape-owner-card')).toHaveCount(1);
+  await launched.window.keyboard.press('Control+z');
+  await launched.window.keyboard.press('Control+Shift+z');
+  await expect(after.getByTestId('mindscape-drawing')).toHaveCount(1);
+  await expect(after.getByTestId('mindscape-owner-card')).toHaveCount(1);
+  expect(await cardSpot(after.getByTestId('mindscape-owner-card'))).toEqual(moved);
+  await expect(after.getByTestId('mindscape-note-card').getByTestId('mindscape-note-text')).toHaveText('Segunda resposta (hook).');
+  // Nothing was written: the file is the one left before the relaunch.
+  await launched.window.waitForTimeout(800);
+  expect(readFileSync(mindscapeFile, 'utf8')).toBe(before);
 });
