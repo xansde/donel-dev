@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "boards": {
+    "C:/work/atlas": {
+      "projectPath": "C:/work/atlas",
+      "pan": { "x": 12, "y": -30 },
+      "cards": {
+        "session:s1": { "kind": "session", "id": "session:s1", "sessionId": "s1", "x": 40, "y": 40 },
+        "o1": { "kind": "owner", "id": "o1", "text": "Ver o deploy", "color": "accent", "createdAt": 1, "x": 320, "y": 40 }
+      },
+      "links": [{ "id": "l1", "from": "o1", "to": "session:s1", "arrow": true }]
+    }
+  }
+}

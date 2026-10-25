@@ -49,7 +49,9 @@ no alfa.
 
 ### 01 — Barra de ferramentas: formas, setas soltas e seta de post-it a post-it vira Ligação
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/mindscape-desenho` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (modelo, desenhos, visão, hit-test, atalhos, store) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-desenho-implementacao-01.md`
+- **PR**: —
 - **Depende de**: —
 - **Conflita com**: 02, 03, 04, 05, 06
 - **Propósito**: o dono escolhe na barra (ou pela tecla `V H A L R O`) uma ferramenta e desenha

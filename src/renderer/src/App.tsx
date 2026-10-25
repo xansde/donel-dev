@@ -85,7 +85,6 @@ import { EsteiraScreen } from './Esteira/EsteiraScreen';
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
 import {
-  addLink,
   addOwnerCard,
   archiveCard,
   editOwnerCard,
@@ -97,6 +96,7 @@ import {
   setOwnerColor,
   toggleLinkArrow,
   writeSessionNote,
+  type MindscapeDoc,
   type OwnerCardColor,
 } from '../../shared/mindscape/model';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
@@ -1896,11 +1896,14 @@ export function App(): React.JSX.Element {
     (projectPath: string, cardId: string, color: OwnerCardColor): void => updateMindscape((doc) => setOwnerColor(doc, projectPath, cardId, color)),
     [updateMindscape],
   );
-  // Mindscape, fatia 05 — links with an arrow, in a hand-made stroke.
-  const handleMindscapeAddLink = useCallback(
-    (projectPath: string, id: string, from: string, to: string): void => updateMindscape((doc) => addLink(doc, projectPath, { id, from, to })),
+  // Mindscape desenho, fatia 01 — the single door of the new owner actions
+  // (drawings, links drawn with A/L). `projectPath` is the board the history
+  // of fatia 02 will key on; for now it is a plain update.
+  const handleMindscapeAction = useCallback(
+    (_projectPath: string, reducer: (doc: MindscapeDoc) => MindscapeDoc): void => updateMindscape(reducer),
     [updateMindscape],
   );
+  // Mindscape, fatia 05 — links with an arrow, in a hand-made stroke.
   const handleMindscapeToggleLinkArrow = useCallback(
     (projectPath: string, linkId: string): void => updateMindscape((doc) => toggleLinkArrow(doc, projectPath, linkId)),
     [updateMindscape],
@@ -2436,7 +2439,7 @@ export function App(): React.JSX.Element {
             onAddOwnerCard={handleMindscapeAddOwnerCard}
             onEditOwnerCard={handleMindscapeEditOwnerCard}
             onSetOwnerColor={handleMindscapeSetOwnerColor}
-            onAddLink={handleMindscapeAddLink}
+            onAction={handleMindscapeAction}
             onToggleLinkArrow={handleMindscapeToggleLinkArrow}
             onRemoveLink={handleMindscapeRemoveLink}
           />

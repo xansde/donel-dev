@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ConfigIoDeps } from '../src/main/config-store';
 import { createMindscapeStore, MINDSCAPE_FILE_ENV_VAR, mindscapeFilePath } from '../src/main/mindscape-store';
@@ -68,13 +70,26 @@ describe('createMindscapeStore', () => {
   });
 
   it('refuses to write over a newer schemaVersion and leaves the file as it was', () => {
-    const newer = JSON.stringify({ schemaVersion: 2, boards: {}, future: true });
+    const newer = JSON.stringify({ schemaVersion: 3, boards: {}, future: true });
     const { io, files, calls } = memoryIo({ [FILE]: newer });
     const store = createMindscapeStore(FILE, io);
     store.load();
     expect(store.save(placeSessionCard(emptyMindscapeDoc(), 'C:/work/atlas', 's1'))).toEqual({ ok: false, reason: 'read-only' });
     expect(files[FILE]).toBe(newer);
     expect(calls.filter((call) => call.startsWith('write:') || call.startsWith('rename:'))).toEqual([]);
+  });
+
+  it('reads a v1 file and writes it back as v2 (desenho, fatia 01)', () => {
+    const v1 = readFileSync(path.join(__dirname, 'fixtures/mindscape/v1-sample.json'), 'utf8');
+    const { io, files } = memoryIo({ [FILE]: v1 });
+    const store = createMindscapeStore(FILE, io);
+    const doc = store.load();
+    expect(doc.schemaVersion).toBe(2);
+    expect(doc.boards['C:/work/atlas']!.drawings).toEqual([]);
+    expect(store.save(doc)).toEqual({ ok: true });
+    const written = JSON.parse(files[FILE]!) as { schemaVersion: number; boards: Record<string, { zoom: number; drawings: unknown[] }> };
+    expect(written.schemaVersion).toBe(2);
+    expect(written.boards['C:/work/atlas']).toMatchObject({ zoom: 1, drawings: [] });
   });
 
   it('reports write-failed and cleans the temp file when the rename fails', () => {

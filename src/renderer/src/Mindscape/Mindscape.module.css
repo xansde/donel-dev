@@ -346,7 +346,7 @@
   box-shadow: var(--focus-ring);
 }
 
-/* Fatia 05 — "Ligar" on, arrow of the selected link on. */
+/* Active tool, arrow of the selected link on. */
 .toolButton[aria-pressed='true'] {
   border-color: var(--accent);
   color: var(--accent);
@@ -354,6 +354,71 @@
 
 .toolButton:disabled {
   color: var(--text-muted);
+  cursor: default;
+}
+
+.screen:focus {
+  outline: none;
+}
+
+/* Desenho, fatia 01 — groups of the bar: tools (with their key), color and stroke of the next drawing. */
+.toolGroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.toolKey {
+  margin-left: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.drawSwatch,
+.strokeButton {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.drawSwatch::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--swatch);
+}
+
+.strokeSample {
+  width: 12px;
+  border-radius: 2px;
+  background: var(--text-primary);
+}
+
+.drawSwatch[aria-pressed='true'],
+.strokeButton[aria-pressed='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.drawSwatch:focus-visible,
+.strokeButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.drawSwatch:disabled,
+.strokeButton:disabled {
+  opacity: 0.5;
   cursor: default;
 }
 
@@ -481,11 +546,38 @@
   stroke-width: 1;
 }
 
-.screen[data-linking] .view [data-card-id] {
-  cursor: crosshair;
+/* Desenho, fatia 01 — the owner's drawings, under the links (pointer-transparent until fatia 03). */
+.drawingLayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+  color: var(--text-primary);
 }
 
-.screen[data-linking='destination'] .view {
+.drawing {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The tool decides the cursor: H moves the view anywhere, A/L/R/O draw anywhere (cards included). */
+.view[data-tool='hand'],
+.view[data-tool='hand'] [data-card-id] {
+  cursor: grab;
+}
+
+.view[data-tool='arrow'],
+.view[data-tool='line'],
+.view[data-tool='rect'],
+.view[data-tool='ellipse'],
+.view[data-tool='arrow'] [data-card-id],
+.view[data-tool='line'] [data-card-id],
+.view[data-tool='rect'] [data-card-id],
+.view[data-tool='ellipse'] [data-card-id] {
   cursor: crosshair;
 }
 

@@ -1,5 +1,9 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  addLink,
+  addOwnerCard,
   emptyMindscapeDoc,
   ensureBoard,
   parseMindscapeDoc,
@@ -23,7 +27,7 @@ function overlaps(a: MindscapeCard, b: MindscapeCard): boolean {
 describe('ensureBoard', () => {
   it('creates an empty board for a project that has none', () => {
     const doc = ensureBoard(emptyMindscapeDoc(), ATLAS);
-    expect(doc.boards[ATLAS]).toEqual({ projectPath: ATLAS, pan: { x: 0, y: 0 }, cards: {}, links: [] });
+    expect(doc.boards[ATLAS]).toEqual({ projectPath: ATLAS, pan: { x: 0, y: 0 }, zoom: 1, cards: {}, links: [], drawings: [] });
   });
 
   it('is idempotent: an existing board comes back as the same document', () => {
@@ -127,5 +131,75 @@ describe('parseMindscapeDoc', () => {
     expect(Object.keys(doc.boards[ATLAS]!.cards)).toEqual(['ok']);
     expect(doc.boards[ATLAS]!.pan).toEqual({ x: 5, y: 6 });
     expect(doc.boards[ATLAS]!.links).toEqual([{ id: 'l1', from: 'ok', to: 'bad', arrow: true }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mindscape desenho, fatia 01 — schema v2: drawings and zoom; v1 still reads.
+// ---------------------------------------------------------------------------
+
+const V1_SAMPLE = path.join(__dirname, 'fixtures/mindscape/v1-sample.json');
+
+describe('parseMindscapeDoc — schema v2', () => {
+  it('reads a v1 file with no drawings and zoom 1, and comes out as v2', () => {
+    const doc = parseMindscapeDoc(JSON.parse(readFileSync(V1_SAMPLE, 'utf8')));
+    expect(doc.schemaVersion).toBe(2);
+    const board = doc.boards[ATLAS]!;
+    expect(board.drawings).toEqual([]);
+    expect(board.zoom).toBe(1);
+    expect(board.pan).toEqual({ x: 12, y: -30 });
+    expect(Object.keys(board.cards).sort()).toEqual(['o1', 'session:s1']);
+    expect(board.links).toEqual([{ id: 'l1', from: 'o1', to: 'session:s1', arrow: true }]);
+  });
+
+  it('round-trips the drawings of a v2 document', () => {
+    const drawings = [
+      { kind: 'rect', id: 'd1', color: 'none', stroke: 'thin', x: 1, y: 2, w: 30, h: 40 },
+      { kind: 'ellipse', id: 'd2', color: 'accent', stroke: 'medium', x: -5, y: 6, w: 7, h: 8 },
+      { kind: 'line', id: 'd3', color: 'donel-accent', stroke: 'thick', arrow: true, x1: 0, y1: 0, x2: 50, y2: 60 },
+    ];
+    const raw = { schemaVersion: 2, boards: { [ATLAS]: { projectPath: ATLAS, pan: { x: 0, y: 0 }, zoom: 1, cards: {}, links: [], drawings } } };
+    expect(parseMindscapeDoc(raw).boards[ATLAS]!.drawings).toEqual(drawings);
+  });
+
+  it('drops invalid drawings one by one, keeping the valid ones', () => {
+    const ok = { kind: 'rect', id: 'ok', color: 'accent', stroke: 'medium', x: 0, y: 0, w: 10, h: 10 };
+    const drawings = [
+      ok,
+      { ...ok, id: 'bad-color', color: 'permission' },
+      { ...ok, id: 'bad-stroke', stroke: 'huge' },
+      { ...ok, id: 'bad-number', x: 'zero' },
+      { ...ok, id: 'zero-w', w: 0 },
+      { ...ok, id: 'neg-h', h: -3 },
+      { kind: 'ellipse', id: 'no-h', color: 'none', stroke: 'thin', x: 0, y: 0, w: 4 },
+      { kind: 'line', id: 'no-arrow', color: 'none', stroke: 'thin', x1: 0, y1: 0, x2: 1, y2: 1 },
+      { kind: 'line', id: 'inf', color: 'none', stroke: 'thin', arrow: false, x1: 0, y1: 0, x2: 1e400, y2: 1 },
+      { kind: 'triangle', id: 'unknown', color: 'none', stroke: 'thin' },
+      { ...ok, id: '' },
+      'junk',
+    ];
+    const raw = { schemaVersion: 2, boards: { [ATLAS]: { projectPath: ATLAS, pan: { x: 0, y: 0 }, zoom: 1, cards: {}, links: [], drawings } } };
+    expect(parseMindscapeDoc(raw).boards[ATLAS]!.drawings.map((drawing) => drawing.id)).toEqual(['ok']);
+  });
+
+  it('holds a zoom out of range at the limit and falls back to 1 when it is not a number', () => {
+    const board = (zoom: unknown) => ({ schemaVersion: 2, boards: { [ATLAS]: { projectPath: ATLAS, pan: { x: 0, y: 0 }, zoom, cards: {}, links: [], drawings: [] } } });
+    expect(parseMindscapeDoc(board(10)).boards[ATLAS]!.zoom).toBe(4);
+    expect(parseMindscapeDoc(board(0.01)).boards[ATLAS]!.zoom).toBe(0.25);
+    expect(parseMindscapeDoc(board('big')).boards[ATLAS]!.zoom).toBe(1);
+  });
+});
+
+describe('addLink — arrow on the input', () => {
+  function cards(): MindscapeDoc {
+    return addOwnerCard(addOwnerCard(emptyMindscapeDoc(), ATLAS, { id: 'o1', createdAt: 1 }), ATLAS, { id: 'o2', createdAt: 2 });
+  }
+
+  it('is born with the arrow when `arrow` is left out (V1 behavior)', () => {
+    expect(addLink(cards(), ATLAS, { id: 'l1', from: 'o1', to: 'o2' }).boards[ATLAS]!.links[0]!.arrow).toBe(true);
+  });
+
+  it('is born without the arrow with `arrow: false` (drawn with L)', () => {
+    expect(addLink(cards(), ATLAS, { id: 'l1', from: 'o1', to: 'o2', arrow: false }).boards[ATLAS]!.links[0]!.arrow).toBe(false);
   });
 });
