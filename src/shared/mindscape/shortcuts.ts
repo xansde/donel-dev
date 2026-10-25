@@ -6,7 +6,12 @@
 /** The tools of the bar. Fatia 01: V H A L R O (P and E come in fatia 04). */
 export type MindscapeTool = 'select' | 'hand' | 'arrow' | 'line' | 'rect' | 'ellipse';
 
-export type MindscapeShortcut = { readonly type: 'tool'; readonly tool: MindscapeTool } | { readonly type: 'escape' };
+export type MindscapeShortcut =
+  | { readonly type: 'tool'; readonly tool: MindscapeTool }
+  | { readonly type: 'escape' }
+  /** Fatia 02 — Ctrl+Z / Ctrl+Shift+Z on the board (the text field keeps its own undo). */
+  | { readonly type: 'undo' }
+  | { readonly type: 'redo' };
 
 export interface ShortcutInput {
   readonly key: string;
@@ -34,6 +39,8 @@ const TOOL_BY_KEY: Readonly<Record<string, MindscapeTool>> = Object.fromEntries(
 export function mindscapeShortcut(input: ShortcutInput): MindscapeShortcut | null {
   if (input.editable) return null;
   if (input.key === 'Escape') return { type: 'escape' };
+  // With Shift the key comes as "Z"; Ctrl only (no Alt/Meta).
+  if (input.ctrl && !input.alt && !input.meta && input.key.toLowerCase() === 'z') return { type: input.shift ? 'redo' : 'undo' };
   if (input.ctrl || input.alt || input.meta) return null;
   const tool = TOOL_BY_KEY[input.key.toLowerCase()];
   return tool ? { type: 'tool', tool } : null;

@@ -100,7 +100,9 @@ no alfa.
 
 ### 02 — Ctrl+Z e Ctrl+Shift+Z no quadro, sem desfazer o que a sessão fez
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/mindscape-desenho` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (`history.ts`, atalhos) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-desenho-implementacao-02.md`
+- **PR**: —
 - **Depende de**: 01
 - **Conflita com**: 01, 03, 04, 05, 06
 - **Propósito**: o dono desfaz com `Ctrl+Z` e refaz com `Ctrl+Shift+Z` qualquer ação sua no quadro

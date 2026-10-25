@@ -5,12 +5,18 @@ import type { CardRect } from '../../../shared/mindscape/geometry';
 import { sessionHighlight } from '../../../shared/mindscape/highlight';
 import {
   addLink,
+  addOwnerCard,
+  archiveCard,
+  editOwnerCard,
+  moveCard,
+  removeLink,
   sessionCardId,
+  setOwnerColor,
+  toggleLinkArrow,
   visibleLinks,
   type MindscapeCard as Card,
   type MindscapeDoc,
   type MindscapeDrawing,
-  type OwnerCardColor,
 } from '../../../shared/mindscape/model';
 import { mindscapeShortcut, type MindscapeTool } from '../../../shared/mindscape/shortcuts';
 import { screenToWorld } from '../../../shared/mindscape/view';
@@ -46,24 +52,18 @@ export interface MindscapeScreenProps {
   readonly seenAt: Readonly<Record<string, number>>;
   /** "Ir ao terminal" — Uso geral with the tab of the session in focus. */
   readonly onGoToTerminal: (tabId: string) => void;
-  /** "Arquivar" a post-it (written by the session or by the owner) — removes it from the board. */
-  readonly onArchive: (projectPath: string, cardId: string) => void;
-  /** Fatia 04 — end of a card drag. */
-  readonly onMoveCard: (projectPath: string, cardId: string, x: number, y: number) => void;
-  /** Fatia 04 — end of a background drag. */
+  /** Fatia 04 — end of a background drag (out of the history: moving the view is not an action). */
   readonly onPan: (projectPath: string, pan: { x: number; y: number }) => void;
-  /** Fatia 04 — "Novo post-it": the owner card `id`, placed from `origin` (the visible corner). */
-  readonly onAddOwnerCard: (projectPath: string, id: string, origin: { x: number; y: number }) => void;
-  readonly onEditOwnerCard: (projectPath: string, cardId: string, text: string) => void;
-  readonly onSetOwnerColor: (projectPath: string, cardId: string, color: OwnerCardColor) => void;
   /**
-   * Desenho, fatia 01 — the single door of the new owner actions (drawings,
-   * links drawn with A/L): a pure reducer applied to the document. The V1
-   * callbacks join it in fatia 02 (Ctrl+Z).
+   * Desenho, fatias 01–02 — the single door of every owner action on the board
+   * (drawings, links, the owner's post-its, "Arquivar", card drags): a pure
+   * reducer applied to the document, one entry of the board history each.
    */
   readonly onAction: (projectPath: string, reducer: (doc: MindscapeDoc) => MindscapeDoc) => void;
-  readonly onToggleLinkArrow: (projectPath: string, linkId: string) => void;
-  readonly onRemoveLink: (projectPath: string, linkId: string) => void;
+  /** Desenho, fatia 02 — Ctrl+Z on the board of `projectPath`. */
+  readonly onUndo: (projectPath: string) => void;
+  /** Desenho, fatia 02 — Ctrl+Shift+Z on the board of `projectPath`. */
+  readonly onRedo: (projectPath: string) => void;
 }
 
 /** Margin of the new owner post-it from the visible top-left corner of the board. */
@@ -121,15 +121,10 @@ export function MindscapeScreen({
   initialProjectPath,
   seenAt,
   onGoToTerminal,
-  onArchive,
-  onMoveCard,
   onPan,
-  onAddOwnerCard,
-  onEditOwnerCard,
-  onSetOwnerColor,
   onAction,
-  onToggleLinkArrow,
-  onRemoveLink,
+  onUndo,
+  onRedo,
 }: MindscapeScreenProps): React.JSX.Element {
   const boardPaths = Object.keys(doc.boards);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(initialProjectPath);
@@ -150,6 +145,8 @@ export function MindscapeScreen({
   // Desenho, fatia 01 — the active tool and the style of the next drawing (screen state, not saved).
   const [tool, setTool] = useState<MindscapeTool>('select');
   const [drawStyle, setDrawStyle] = useState<DrawStyle>(DEFAULT_DRAW_STYLE);
+  /** A gesture is in flight on the board (pointer down): Ctrl+Z waits for it to end. */
+  const gestureActiveRef = useRef(false);
   const sectionRef = useRef<HTMLElement>(null);
   const sizes = useCardSizes(sectionRef);
   // The keys only exist with the focus inside the Mindscape: it takes the focus
@@ -201,6 +198,13 @@ export function MindscapeScreen({
     });
     if (!shortcut || !board) return;
     event.preventDefault();
+    if (shortcut.type === 'undo' || shortcut.type === 'redo') {
+      // Ignored while a gesture is in flight (the drag is written on pointerup, as one entry).
+      if (gestureActiveRef.current) return;
+      if (shortcut.type === 'undo') onUndo(board.projectPath);
+      else onRedo(board.projectPath);
+      return;
+    }
     // A tool change (Esc included) cancels the gesture in flight — the board ends it.
     setTool(shortcut.type === 'tool' ? shortcut.tool : 'select');
   };
@@ -246,18 +250,26 @@ export function MindscapeScreen({
         onStyle={setDrawStyle}
         selectedLink={selectedLink}
         onToggleLinkArrow={() => {
-          if (board && selectedLink) onToggleLinkArrow(board.projectPath, selectedLink.id);
+          if (!board || !selectedLink) return;
+          const { projectPath } = board;
+          const linkId = selectedLink.id;
+          onAction(projectPath, (current) => toggleLinkArrow(current, projectPath, linkId));
         }}
         onRemoveLink={() => {
           if (!board || !selectedLink) return;
-          onRemoveLink(board.projectPath, selectedLink.id);
+          const { projectPath } = board;
+          const linkId = selectedLink.id;
+          onAction(projectPath, (current) => removeLink(current, projectPath, linkId));
           setSelectedLinkId(undefined);
         }}
         onNewCard={() => {
           if (!board) return;
+          const { projectPath } = board;
           const id = crypto.randomUUID();
+          const origin = screenToWorld({ x: NEW_CARD_MARGIN, y: NEW_CARD_MARGIN }, { pan: board.pan, zoom: board.zoom });
+          const createdAt = Date.now();
           setCreatedCardId(id);
-          onAddOwnerCard(board.projectPath, id, screenToWorld({ x: NEW_CARD_MARGIN, y: NEW_CARD_MARGIN }, { pan: board.pan, zoom: board.zoom }));
+          onAction(projectPath, (current) => addOwnerCard(current, projectPath, { id, createdAt, origin }));
         }}
         canGoToTerminal={Boolean(selectedSession)}
         onGoToTerminal={() => {
@@ -274,9 +286,15 @@ export function MindscapeScreen({
           board={board}
           tool={tool}
           cardRects={cardRects}
-          onMoveCard={(cardId, x, y) => onMoveCard(board.projectPath, cardId, x, y)}
+          onMoveCard={(cardId, x, y) => {
+            const { projectPath } = board;
+            onAction(projectPath, (current) => moveCard(current, projectPath, cardId, x, y));
+          }}
           onPan={(pan) => onPan(board.projectPath, pan)}
           onDraw={handleDraw}
+          onGestureChange={(active) => {
+            gestureActiveRef.current = active;
+          }}
           onBackgroundClick={() => {
             setSelectedTabId(undefined);
             setSelectedLinkId(undefined);
@@ -328,9 +346,13 @@ export function MindscapeScreen({
                       x={position.x}
                       y={position.y}
                       startEditing={card.id === createdCardId}
-                      onEdit={(text) => onEditOwnerCard(board.projectPath, card.id, text)}
-                      onColor={(color) => onSetOwnerColor(board.projectPath, card.id, color)}
-                      onArchive={() => onArchive(board.projectPath, card.id)}
+                      onEdit={(text) => {
+                        // Only the first mount opens in edit: a redo that brings the card back must not.
+                        if (card.id === createdCardId) setCreatedCardId(undefined);
+                        onAction(board.projectPath, (current) => editOwnerCard(current, board.projectPath, card.id, text));
+                      }}
+                      onColor={(color) => onAction(board.projectPath, (current) => setOwnerColor(current, board.projectPath, card.id, color))}
+                      onArchive={() => onAction(board.projectPath, (current) => archiveCard(current, board.projectPath, card.id))}
                     />
                   );
                 }
@@ -346,7 +368,7 @@ export function MindscapeScreen({
                     stripe={live ? (live.cliColorHex ?? STRIPE_BY_TOKEN[live.color]) : undefined}
                     x={position.x}
                     y={position.y}
-                    onArchive={() => onArchive(board.projectPath, card.id)}
+                    onArchive={() => onAction(board.projectPath, (current) => archiveCard(current, board.projectPath, card.id))}
                   />
                 );
               })}

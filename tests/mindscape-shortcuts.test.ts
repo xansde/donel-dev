@@ -38,6 +38,25 @@ describe('mindscapeShortcut', () => {
     expect(mindscapeShortcut(key('Escape', { editable: true }))).toBeNull();
   });
 
+  // Fatia 02 — Ctrl+Z undoes, Ctrl+Shift+Z redoes (the key comes as "Z" with Shift).
+  it('maps Ctrl+Z to undo and Ctrl+Shift+Z to redo', () => {
+    expect(mindscapeShortcut(key('z', { ctrl: true }))).toEqual({ type: 'undo' });
+    expect(mindscapeShortcut(key('Z', { ctrl: true }))).toEqual({ type: 'undo' });
+    expect(mindscapeShortcut(key('Z', { ctrl: true, shift: true }))).toEqual({ type: 'redo' });
+    expect(mindscapeShortcut(key('z', { ctrl: true, shift: true }))).toEqual({ type: 'redo' });
+  });
+
+  it('leaves Ctrl+Z to the text field (editable → null)', () => {
+    expect(mindscapeShortcut(key('z', { ctrl: true, editable: true }))).toBeNull();
+    expect(mindscapeShortcut(key('Z', { ctrl: true, shift: true, editable: true }))).toBeNull();
+  });
+
+  it('Z without Ctrl, or with Alt or Meta, is not undo', () => {
+    expect(mindscapeShortcut(key('z'))).toBeNull();
+    expect(mindscapeShortcut(key('z', { ctrl: true, alt: true }))).toBeNull();
+    expect(mindscapeShortcut(key('z', { meta: true }))).toBeNull();
+  });
+
   it('returns null for keys that are not shortcuts (yet)', () => {
     for (const k of ['x', 'p', 'e', 'Enter', ' ', '1']) expect(mindscapeShortcut(key(k))).toBeNull();
   });

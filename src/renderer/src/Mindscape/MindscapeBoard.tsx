@@ -63,6 +63,8 @@ export interface MindscapeBoardProps {
   readonly onDraw: (gesture: DrawGesture) => void;
   /** Plain click on the background (no drag) — clears the selection. */
   readonly onBackgroundClick: () => void;
+  /** Desenho, fatia 02 — a gesture starts (`pointerdown`) or ends; Ctrl+Z is ignored in between. */
+  readonly onGestureChange?: (active: boolean) => void;
   /** Renders the cards inside the moving plane, with the live position of each one and the drawing in progress. */
   readonly children: (positionOf: (card: MindscapeCard) => { x: number; y: number }, draft: DrawGesture | null) => ReactNode;
 }
@@ -84,7 +86,7 @@ function round(value: number): number {
  * plane; with A/L/R/O, a drag draws (local preview, written on `pointerup`).
  * A tool change cancels the gesture in flight (Esc goes back to V).
  */
-export function MindscapeBoard({ board, tool, cardRects, onMoveCard, onPan, onDraw, onBackgroundClick, children }: MindscapeBoardProps): React.JSX.Element {
+export function MindscapeBoard({ board, tool, cardRects, onMoveCard, onPan, onDraw, onBackgroundClick, onGestureChange, children }: MindscapeBoardProps): React.JSX.Element {
   const [preview, setPreview] = useState<Preview | null>(null);
   const gestureRef = useRef<Gesture | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -96,8 +98,8 @@ export function MindscapeBoard({ board, tool, cardRects, onMoveCard, onPan, onDr
   boardRef.current = board;
   const rectsRef = useRef(cardRects);
   rectsRef.current = cardRects;
-  const callbacksRef = useRef({ onMoveCard, onPan, onDraw });
-  callbacksRef.current = { onMoveCard, onPan, onDraw };
+  const callbacksRef = useRef({ onMoveCard, onPan, onDraw, onGestureChange });
+  callbacksRef.current = { onMoveCard, onPan, onDraw, onGestureChange };
 
   const worldAt = useCallback((gesture: Gesture, clientX: number, clientY: number): Point => {
     const view = { pan: boardRef.current.pan, zoom: boardRef.current.zoom };
@@ -125,6 +127,7 @@ export function MindscapeBoard({ board, tool, cardRects, onMoveCard, onPan, onDr
   const detachRef = useRef<(() => void) | null>(null);
 
   const endGesture = useCallback((): void => {
+    if (gestureRef.current) callbacksRef.current.onGestureChange?.(false);
     detachRef.current?.();
     detachRef.current = null;
     if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
@@ -167,6 +170,7 @@ export function MindscapeBoard({ board, tool, cardRects, onMoveCard, onPan, onDr
       }
       endGesture();
     };
+    callbacksRef.current.onGestureChange?.(true);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
