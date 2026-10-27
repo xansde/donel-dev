@@ -7,7 +7,7 @@ canal-slack: "—"  # Donel Dev roda sem Slack nem TaskDex (ferramenta pessoal)
 taskdex: []
 origem: "porta B — demanda direta do dono em 27/10/2026 (organizar dezenas de contas do mod local e usá-las nos dois PCs)"
 criado: 2026-10-27
-status: aprovado
+status: em-execucao
 ---
 
 # PDA — Organização do pool de contas e sincronização entre PCs
@@ -66,7 +66,7 @@ indevido.
 
 - **Tipo**: pesquisa
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: em-andamento
 - **Bloqueado por**: —
 - **Pergunta**: com a mesma conta nos dois PCs, o que acontece de fato? (a) Renovar o refresh token invalida na hora o
   anterior, ou há tolerância? (b) O access token vale ao mesmo tempo nas duas máquinas? (c) O CLI renova sozinho o
@@ -79,7 +79,7 @@ indevido.
 
 - **Tipo**: refinamento
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: em-andamento
 - **Bloqueado por**: —
 - **Pergunta**: o que são grupo e prioridade (conta em um grupo ou em vários; grupo com ordem; "priorizar um grupo"
   muda o auto-switch como — só escolhe dentro do grupo, ou prefere o grupo e cai para os outros?); qual "uso
