@@ -26,6 +26,10 @@ indevido.
   atualização do app nos dois PCs que não perca nenhuma sessão.
 - **Proposta do dono para o item 04 (27/10):** todo par carrega o momento em que foi obtido e vale sempre o mais
   recente. **E1 descartado** (27/10): login separado por PC é a dor que a demanda quer evitar.
+- **Fato de rede para o item 04 (27/10, medido na casa do dono):** os dois PCs no mesmo Wi-Fi, rede marcada "Pública"
+  no Windows, não se acham pelo nome (ping, DNS, mDNS `.local` e NetBIOS falharam) e o outro PC não responde a ping;
+  pelo IP ele existe na rede (vizinho ARP), e o dono confirmou o IP no `ipconfig` dele. Consequência: o pareamento
+  aceita IP, e a tela mostra o IP do próprio PC para o dono digitar no outro.
 - **Base de código:** `staging` — o PR #115 (captura do par rotacionado da conta ativa fora do switch) está lá e é
   gancho da sincronização.
 - **Fatos do código (27/10):**
