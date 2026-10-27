@@ -153,6 +153,15 @@ export interface AccountEngineDeps {
   readonly onSwitchCheckInconclusive?: (info: { readonly to: AccountId }) => void;
   /** Emenda 22/09 (item 5) — injetável para teste; default `RACE_CHECK_DELAY_MS` (~45s, dentro da janela "~30-60s" pedida). */
   readonly raceCheckDelayMs?: number;
+  /**
+   * fix/renovacao-credencial — chamado depois que o par em disco foi guardado
+   * no cofre de uma conta: no switch (`switch`), na leitura de carga (`sync`)
+   * ou no encerramento do app (`quit`). `believedActive` é a conta que o motor
+   * achava ativa; diferente de `account` = a crença estava velha e a
+   * identidade em disco decidiu. Nunca recebe o par. index.ts grava em
+   * `accounts-maintenance.log`.
+   */
+  readonly onLivePairCaptured?: (info: { readonly account: AccountId; readonly trigger: 'switch' | 'sync' | 'quit'; readonly believedActive: AccountId | null }) => void;
 }
 
 /**
@@ -178,6 +187,14 @@ export class AccountEngine {
   private readonly onSwitchPairRotated: AccountEngineDeps['onSwitchPairRotated'];
   private readonly onSwitchCheckInconclusive: AccountEngineDeps['onSwitchCheckInconclusive'];
   private readonly raceCheckDelayMs: number;
+  private readonly onLivePairCaptured: AccountEngineDeps['onLivePairCaptured'];
+  /**
+   * fix/renovacao-credencial — último refresh token guardado no cofre, por
+   * conta, por ESTE motor. Só evita regravar o mesmo par a cada leitura; em
+   * memória de propósito (um motor novo regrava uma vez, inofensivo). Guarda
+   * só o refresh token, nunca sai daqui.
+   */
+  private readonly lastCapturedRefreshToken = new Map<AccountId, string>();
 
   private readonly mod: AccountMod | null;
   private state: AccountEngineState;
@@ -214,6 +231,7 @@ export class AccountEngine {
     this.onSwitchPairRotated = deps.onSwitchPairRotated;
     this.onSwitchCheckInconclusive = deps.onSwitchCheckInconclusive;
     this.raceCheckDelayMs = deps.raceCheckDelayMs ?? RACE_CHECK_DELAY_MS;
+    this.onLivePairCaptured = deps.onLivePairCaptured;
 
     // Estado inicial segue o diagrama do data-model.md §3: `mod === null` é
     // SEMPRE `inert`; qualquer mod configurado nasce `ready` até prova em
@@ -317,6 +335,11 @@ export class AccountEngine {
       return this.buildView();
     }
 
+    // fix/renovacao-credencial — ANTES da leitura do mod: guarda no cofre o
+    // par que o CLI rotacionou desde a última vez, e a leitura (R5 do mod
+    // local) já enxerga cofre e disco iguais.
+    await this.captureLivePairNow('sync');
+
     const result = await this.mod.listAccounts();
     if (result.kind === 'unavailable') {
       this.state = 'unavailable';
@@ -329,6 +352,71 @@ export class AccountEngine {
     }
     this.emit();
     return this.buildView();
+  }
+
+  /**
+   * fix/renovacao-credencial — guarda no cofre o par que está AGORA em
+   * `.credentials.json`, na conta a quem ele pertence. É a captura do
+   * encerramento que C6 (research.md) previa e nunca existiu, mais a mesma
+   * captura a cada leitura de carga: o par da ativa deixa de depender de um
+   * switch feito por este motor para chegar ao cofre. Só COPIA disco -> cofre;
+   * nunca renova (gotcha "nunca renovar a ativa pelo cofre") e nunca escreve
+   * em `~/.claude` (claude-state.ts segue a única escrita lá).
+   *
+   * Exige PROVA de identidade (fingerprint de `oauthAccount` em `.claude.json`
+   * batendo com uma conta do pool): sem ela (logo depois de um switch, até o
+   * CLI refazer o fetch do perfil) não grava nada — nesse intervalo a captura
+   * do próprio switch já cobriu.
+   *
+   * A gravação acontece de forma SÍNCRONA dentro desta chamada (nenhum
+   * `await` antes de `mod.captureRotatedPair`, que no mod local também grava
+   * antes do primeiro `await`): o encerramento do app chama sem esperar.
+   * Nunca lança; falha de gravação fica para a próxima vez.
+   */
+  captureLivePairNow(trigger: 'sync' | 'quit'): Promise<void> {
+    if (this.disposed || !this.mod || !this.readCurrentPair) return Promise.resolve();
+    const live = this.readCurrentPair();
+    if (!live) return Promise.resolve();
+    const believedActive = this.config.activeAccountId;
+    const owner = this.resolveLivePairOwner(believedActive, true);
+    if (!owner || this.lastCapturedRefreshToken.get(owner) === live.refreshToken) return Promise.resolve();
+
+    let pending: Promise<void>;
+    try {
+      pending = this.mod.captureRotatedPair(owner, live);
+    } catch {
+      return Promise.resolve();
+    }
+    return pending.then(
+      () => {
+        this.lastCapturedRefreshToken.set(owner, live.refreshToken);
+        this.onLivePairCaptured?.({ account: owner, trigger, believedActive });
+      },
+      () => undefined,
+    );
+  }
+
+  /**
+   * fix/renovacao-credencial — de quem é o par que está em
+   * `.credentials.json`. A identidade em disco (fingerprint) vence a crença do
+   * motor (`believed`): com a crença velha (outra instância do app, `/login`
+   * no terminal, app fechado no meio), capturar em `believed` gravaria o par
+   * de uma conta na vaga de outra. `null` = não capturar.
+   * - fingerprint de uma conta do pool -> essa conta;
+   * - fingerprint legível de fora do pool, e `believed` tem fingerprint
+   *   conhecido (logo, provadamente não é ela) -> `null`;
+   * - sem prova -> `requireProof ? null : believed` (o switch mantém o
+   *   comportamento de antes; a sincronização periódica não arrisca).
+   */
+  private resolveLivePairOwner(believed: AccountId | null, requireProof: boolean): AccountId | null {
+    const fingerprint = this.readCurrentAccountFingerprint?.() ?? null;
+    if (fingerprint) {
+      const owner = this.config.localAccounts.find((account) => account.fingerprint === fingerprint)?.id;
+      if (owner) return owner;
+      const believedFingerprint = believed ? this.config.localAccounts.find((account) => account.id === believed)?.fingerprint : undefined;
+      if (believedFingerprint) return null;
+    }
+    return requireProof ? null : believed;
   }
 
   /**
@@ -423,7 +511,16 @@ export class AccountEngine {
     const mod = this.mod;
     try {
       await this.applySwitchFn(switchResult.pair, async (rotatedPair) => {
-        if (rotatedPair && fromId) await mod.captureRotatedPair(fromId, rotatedPair);
+        // fix/renovacao-credencial — o par vai para a conta DONA dele
+        // (`resolveLivePairOwner`), não necessariamente `fromId`. Dono = a
+        // conta que entra: o cofre dela já tem o que vai para o disco, não
+        // sobrescreve.
+        const owner = rotatedPair ? this.resolveLivePairOwner(fromId, false) : null;
+        if (rotatedPair && owner && owner !== id) {
+          await mod.captureRotatedPair(owner, rotatedPair);
+          this.lastCapturedRefreshToken.set(owner, rotatedPair.refreshToken);
+          this.onLivePairCaptured?.({ account: owner, trigger: 'switch', believedActive: fromId });
+        }
         // R3 (revisão) — descartado ENQUANTO a captura estava em voo: lança
         // pra abortar a sequência invariante (claude-state.ts) ANTES do
         // passo 2 (escrita de `.credentials.json`) — nada é escrito. O catch
@@ -444,6 +541,9 @@ export class AccountEngine {
     }
 
     this.config = { ...this.config, activeAccountId: id };
+    // fix/renovacao-credencial — o par que acabou de ir para o disco saiu do
+    // cofre desta conta; a próxima sincronização só grava se o CLI rotacionar.
+    this.lastCapturedRefreshToken.set(id, switchResult.pair.refreshToken);
     this.reconnectRegistry.clear(id); // D3 — trocar pra ela com sucesso prova que a credencial está boa de novo.
     if (origin === 'auto') {
       this.lastAutoSwitch = { kind: 'switched', from: fromId, to: id, at: this.nowIso() };
