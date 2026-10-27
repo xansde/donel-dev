@@ -24,6 +24,8 @@ indevido.
   depende de estrutura da Seazone; o plano trata pareamento único entre os PCs, PC que volta de desligado recebendo os
   pares novos antes de renovar sozinho, e se PCs em redes diferentes entram na V1; o dono também quer um roteiro de
   atualização do app nos dois PCs que não perca nenhuma sessão.
+- **Proposta do dono para o item 04 (27/10):** todo par carrega o momento em que foi obtido e vale sempre o mais
+  recente. **E1 descartado** (27/10): login separado por PC é a dor que a demanda quer evitar.
 - **Base de código:** `staging` — o PR #115 (captura do par rotacionado da conta ativa fora do switch) está lá e é
   gancho da sincronização.
 - **Fatos do código (27/10):**
@@ -160,7 +162,7 @@ indevido.
 - **Prioridade**: alta
 - **Status**: pendente
 - **Bloqueado por**: —
-- **Pergunta**: o dono decide se roda e com qual conta (uma cujo login aceite perder) os experimentos da
+- **Pergunta**: (E1 descartado pelo dono em 27/10; ficam E2 e E3, com uma conta Tech já cadastrada) o dono decide com qual conta (uma cujo login aceite perder) os experimentos da
   [pesquisa 01](../pesquisas/mesma-conta-dois-pcs.md#experimentos-propostos-o-dono-decide-se-roda): E1 (dois logins da
   mesma conta convivem?), E2 (tolerância do refresh token antigo e revogação da família), E3 (mesmo access token em dois
   PCs). Sem E1, o item 04 não tem base para escolher entre "mesma cadeia sincronizada" e "uma cadeia por PC".
