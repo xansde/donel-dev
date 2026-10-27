@@ -4,7 +4,7 @@ plano: docs/planos/pool-contas.pda.md
 item: 02 — Regras da organização do pool
 data: 2026-10-27
 taskdex: []  # URLs dos cards do TaskDex (registro de uso)
-status: em-sabatina  # em-sabatina | fechado
+status: fechado  # em-sabatina | fechado
 participantes: [Alexandre, Claude]  # quem respondeu pela demanda
 ---
 
@@ -38,6 +38,11 @@ Regras de grupo, prioridade, ordem e "uso disponível" do pool de contas do mod 
 - Conta esgotada aparece no fim do grupo, esmaecida, e continua clicável.
 - Cabeçalho do grupo: nome, marca de priorizado, quantas contas têm folga e a folga somada; há busca pelo rótulo da conta.
 - Criar, renomear e apagar grupo, e mover conta entre grupos, ficam na tela de contas (arrastar ou menu da conta).
+- A troca automática escolhe sempre a conta de **mais folga** entre as elegíveis (a do topo da lista) — substitui o
+  sorteio de duas de hoje.
+- Ordem dos grupos na tela: priorizados primeiro, depois os demais, alfabética dentro de cada parte; "Sem grupo" sempre
+  por último.
+- A calibração da estimativa de tokens é **por conta**.
 
 ## Unknowns decididos
 
@@ -49,6 +54,9 @@ Regras de grupo, prioridade, ordem e "uso disponível" do pool de contas do mod 
 - Assumiria: folga em % (100 − carga geral) → Decidido: folga em tokens estimados, calibrada pelo uso real.
 - Assumiria: tabela de limites por plano tirada de estimativa pública → Decidido: não confiar na internet; calibrar.
 - Assumiria: reordenação manual como alternativa → Decidido: só a ordem padrão.
+- Assumiria: calibração por plano, compartilhada entre contas → Decidido: por conta.
+- Assumiria: enquanto a calibração não tem amostras suficientes, a tela mostra o % como hoje → Decidido: aceito no
+  fechamento (27/10).
 
 ## ADRs gerados
 
@@ -61,10 +69,12 @@ Regras de grupo, prioridade, ordem e "uso disponível" do pool de contas do mod 
 
 <!-- Termos adicionados/atualizados em docs/glossario.md nesta sabatina. -->
 
-- <termo> (novo | atualizado)
+- Carga (novo)
+- Folga (novo) — substitui "créditos"
+- Grupo priorizado (novo)
 
 ## Ficou aberto
 
-<!-- O que não fechou e por quê — candidato a nova sabatina ou a item novo no plano. -->
-
-- <pendência>
+- Fórmula da estimativa de tokens (quais tokens contam, quantas amostras bastam, como tratar a troca de modelo) →
+  `/arquitetura`, porque é desenho técnico, não regra.
+- Se as amostras de calibração viajam entre os dois PCs → item 04 do plano (sincronização).

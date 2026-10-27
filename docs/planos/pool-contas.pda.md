@@ -50,6 +50,7 @@ indevido.
 <!-- Índice: uma linha por item concluído — gist + link pro artefato. Nunca restate o conteúdo. -->
 
 - **01 — A mesma conta em dois PCs: o que o refresh e o CLI permitem** → o CLI trata o refresh token como de uso único e se recupera de troca do arquivo por fora (relê o disco antes de renovar); mesma cadeia nos dois PCs = quem renova primeiro mata a do outro; "uma cadeia por PC" é inferido, não provado — depende de experimento ([pesquisa](../pesquisas/mesma-conta-dois-pcs.md))
+- **02 — Regras da organização do pool** → grupo único por conta; grupos priorizados formam um conjunto sem ordem; troca automática sempre pela conta de mais folga, priorizados até esgotar; folga = tokens estimados, calibrados por conta pelo uso real ([refinamento](../refinamentos/organizacao-do-pool.md))
 
 ## Ainda não especificado
 
@@ -83,13 +84,13 @@ indevido.
 
 - **Tipo**: refinamento
 - **Prioridade**: alta
-- **Status**: em-andamento
+- **Status**: concluido
 - **Bloqueado por**: —
 - **Pergunta**: o que são grupo e prioridade (conta em um grupo ou em vários; grupo com ordem; "priorizar um grupo"
   muda o auto-switch como — só escolhe dentro do grupo, ou prefere o grupo e cai para os outros?); qual "uso
   disponível" ordena a lista (5h, semana, o pior dos dois, tempo até o reset); como a lista se comporta com dezenas de
   contas. Contexto: Notas (auto-switch e sanitize).
-- **Resolução**: —
+- **Resolução**: grupo único por conta; grupos priorizados formam um conjunto sem ordem; troca automática sempre pela conta de mais folga, priorizados até esgotar; folga = tokens estimados, calibrados por conta pelo uso real ([refinamento](../refinamentos/organizacao-do-pool.md))
 
 ### 03 — Protótipo da tela do pool organizado
 
@@ -117,7 +118,7 @@ indevido.
 
 - **Tipo**: pesquisa
 - **Prioridade**: media
-- **Status**: pendente
+- **Status**: em-andamento
 - **Bloqueado por**: —
 - **Pergunta**: como dois apps Electron no Windows se acham e conversam com segurança na rede local sem serviço de
   terceiros: descoberta (mDNS ou endereço digitado), autenticação do pareamento por código, cifra do canal, aviso do
@@ -160,7 +161,7 @@ indevido.
 
 - **Tipo**: tarefa
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: em-andamento
 - **Bloqueado por**: —
 - **Pergunta**: (E1 descartado pelo dono em 27/10; ficam E2 e E3, com uma conta Tech já cadastrada) o dono decide com qual conta (uma cujo login aceite perder) os experimentos da
   [pesquisa 01](../pesquisas/mesma-conta-dois-pcs.md#experimentos-propostos-o-dono-decide-se-roda): E1 (dois logins da
