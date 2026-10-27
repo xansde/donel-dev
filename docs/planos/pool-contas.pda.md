@@ -47,6 +47,8 @@ indevido.
 
 <!-- Índice: uma linha por item concluído — gist + link pro artefato. Nunca restate o conteúdo. -->
 
+- **01 — A mesma conta em dois PCs: o que o refresh e o CLI permitem** → o CLI trata o refresh token como de uso único e se recupera de troca do arquivo por fora (relê o disco antes de renovar); mesma cadeia nos dois PCs = quem renova primeiro mata a do outro; "uma cadeia por PC" é inferido, não provado — depende de experimento ([pesquisa](../pesquisas/mesma-conta-dois-pcs.md))
+
 ## Ainda não especificado
 
 - Como a sincronização aparece na tela (estado do outro PC, último contato, conflito) — depende de 04 e do protótipo.
@@ -66,14 +68,14 @@ indevido.
 
 - **Tipo**: pesquisa
 - **Prioridade**: alta
-- **Status**: em-andamento
+- **Status**: concluido
 - **Bloqueado por**: —
 - **Pergunta**: com a mesma conta nos dois PCs, o que acontece de fato? (a) Renovar o refresh token invalida na hora o
   anterior, ou há tolerância? (b) O access token vale ao mesmo tempo nas duas máquinas? (c) O CLI renova sozinho o
   token da conta ativa (fora do app) — com que frequência e gatilho? (d) A Anthropic aceita dois logins independentes da
   mesma conta (cada PC com sua própria cadeia de tokens)? Fontes: `specs/011-contas-e-provedores/research-etapa-3-cli.md`,
   ADR 0001, binário do CLI. Proibido: provar com a credencial real de uma conta em uso.
-- **Resolução**: —
+- **Resolução**: o CLI trata o refresh token como de uso único e se recupera de troca do arquivo por fora (relê o disco antes de renovar); mesma cadeia nos dois PCs = quem renova primeiro mata a do outro; "uma cadeia por PC" é inferido, não provado — depende de experimento ([pesquisa](../pesquisas/mesma-conta-dois-pcs.md))
 
 ### 02 — Regras da organização do pool
 
@@ -102,7 +104,7 @@ indevido.
 - **Tipo**: refinamento
 - **Prioridade**: alta
 - **Status**: pendente
-- **Bloqueado por**: 01, 05
+- **Bloqueado por**: 01, 05, 09
 - **Pergunta**: o que sincroniza (lista, rótulos, grupos, pares, conta ativa?); quem vale num conflito; a mesma conta
   pode estar ativa nos dois PCs ao mesmo tempo; como é o pareamento único (código); o que o PC que volta de desligado faz
   antes de renovar; remover conta num PC remove no outro; PCs em redes diferentes entram na V1. Gera a ADR que emenda as
@@ -150,4 +152,16 @@ indevido.
 - **Bloqueado por**: 07
 - **Pergunta**: apresentar ao dono o MVP proposto e as versões (V1..Vn); registrar o OK — quem validou, quando, onde
   (sem Slack: esta conversa/sessão).
+- **Resolução**: —
+
+### 09 — Experimentos com conta descartável (E1–E3)
+
+- **Tipo**: tarefa
+- **Prioridade**: alta
+- **Status**: pendente
+- **Bloqueado por**: —
+- **Pergunta**: o dono decide se roda e com qual conta (uma cujo login aceite perder) os experimentos da
+  [pesquisa 01](../pesquisas/mesma-conta-dois-pcs.md#experimentos-propostos-o-dono-decide-se-roda): E1 (dois logins da
+  mesma conta convivem?), E2 (tolerância do refresh token antigo e revogação da família), E3 (mesmo access token em dois
+  PCs). Sem E1, o item 04 não tem base para escolher entre "mesma cadeia sincronizada" e "uma cadeia por PC".
 - **Resolução**: —
