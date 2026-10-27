@@ -757,6 +757,9 @@ function resolveAccountMod(modId: ModId): AccountMod {
     // pode ser repetida pelo mod do motor novo (refresh token de uso único).
     refreshCoordinator: accountsRefreshCoordinator,
     onPairRefreshed: (id, trigger) => appendAccountsMaintenanceLog({ event: 'account-pair-refreshed', account: id, trigger }),
+    // fix/renovacao-credencial — a falha também vai pro log (antes só o
+    // sucesso ia, e uma conta caída em "Reconectar" não deixava rastro).
+    onPairRefreshFailed: (id, trigger, reason) => appendAccountsMaintenanceLog({ event: 'account-pair-refresh-failed', account: id, trigger, reason }),
   });
 }
 
@@ -867,6 +870,9 @@ const accountEngineHost = new AccountEngineHost({
       onSwitchOverwritten: (info) => appendAccountsMaintenanceLog({ event: 'switch-overwritten', account: info.to }),
       onSwitchPairRotated: (info) => appendAccountsMaintenanceLog({ event: 'switch-pair-rotated', account: info.to }),
       onSwitchCheckInconclusive: (info) => appendAccountsMaintenanceLog({ event: 'switch-check-inconclusive', account: info.to }),
+      // fix/renovacao-credencial — cada vez que o par em disco foi guardado no
+      // cofre (switch, leitura de carga ou encerramento), só ids.
+      onLivePairCaptured: (info) => appendAccountsMaintenanceLog({ event: 'live-pair-captured', account: info.account, trigger: info.trigger, believedActive: info.believedActive }),
     });
     engine.onChanged(broadcastAccountsChanged);
     engine.start();
@@ -2355,7 +2361,12 @@ function registerAccountsIpcHandlers(): void {
   ipcMain.handle(ACCOUNT_CHANNELS.switch, async (_event, id: AccountId): Promise<SwitchOutcome> => {
     const engine = accountEngineHost.current();
     if (!engine) return { kind: 'failed', reason: 'io' };
+    const from = engine.getActiveAccountId();
     const result = await engine.switchTo(id);
+    // fix/renovacao-credencial — a troca manual não deixava rastro no log de
+    // manutenção (só a automática), e a linha do tempo de uma conta ficava
+    // com buracos. Só ids e o desfecho.
+    appendAccountsMaintenanceLog({ event: 'manual-switch', outcome: result.kind, from, to: id, ...(result.kind === 'failed' ? { reason: result.reason } : {}) });
     if (result.kind === 'switched') {
       appConfig = { ...appConfig, accounts: { ...appConfig.accounts, activeAccountId: result.to } };
       persistAppConfig();
@@ -2821,6 +2832,10 @@ app.on('window-all-closed', () => {
   void hookBridge?.close();
   esteiraService?.dispose();
   esteiraService = null;
+  // fix/renovacao-credencial (C6, research.md) — antes de descartar o motor,
+  // guarda no cofre o par que o CLI deixou em `.credentials.json` para a
+  // conta ativa. A gravação acontece dentro da chamada, sem esperar promessa.
+  void accountEngineHost.current()?.captureLivePairNow('quit');
   accountEngineHost.dispose(); // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.
   if (process.platform !== 'darwin') {
     app.quit();

@@ -664,3 +664,60 @@ describe('local-mod — switchTo com ensureFreshPair (D9)', () => {
     expect(result).toEqual({ kind: 'ok', pair: validPair });
   });
 });
+
+// fix/renovacao-credencial — dois furos do mod local no caminho do par
+// rotacionado e da renovação.
+describe('local-mod — captura do par rotacionado e falha de renovação visível (fix/renovacao-credencial)', () => {
+  it('captureRotatedPair REJEITA quando o cofre recusa gravar — o switch aborta em vez de perder o par', async () => {
+    const vault = new FakeVault();
+    vault.failWriteFor.add('acc-saindo');
+    const mod = createLocalMod({ accounts: [accountOf('acc-saindo')], vault });
+
+    await expect(mod.captureRotatedPair('acc-saindo', buildPair({ refreshToken: 'rotacionado' }))).rejects.toThrow();
+  });
+
+  it('captureRotatedPair grava no cofre quando ele aceita', async () => {
+    const vault = new FakeVault();
+    const mod = createLocalMod({ accounts: [accountOf('acc-saindo')], vault });
+
+    await mod.captureRotatedPair('acc-saindo', buildPair({ refreshToken: 'rotacionado' }));
+
+    expect(JSON.parse(vault.read('acc-saindo') ?? '{}').refreshToken).toBe('rotacionado');
+  });
+
+  it('renovação recusada na leitura avisa onPairRefreshFailed com o motivo (antes só o sucesso ia pro log)', async () => {
+    const vault = new FakeVault();
+    vault.write('acc-parada', JSON.stringify(buildPair({ expiresAt: 0 })));
+    const failures: Array<{ id: string; trigger: string; reason: string }> = [];
+
+    const mod = createLocalMod({
+      accounts: [accountOf('acc-parada')],
+      vault,
+      fetchImpl: async () => jsonResponse(200, {}),
+      refreshImpl: makeRefreshImpl({ kind: 'failed', reason: 'rejected' }),
+      onPairRefreshFailed: (id, trigger, reason) => failures.push({ id, trigger, reason }),
+    });
+
+    await mod.listAccounts();
+
+    expect(failures).toEqual([{ id: 'acc-parada', trigger: 'read', reason: 'rejected' }]);
+  });
+
+  it('renovação indisponível (rede) também avisa, com o motivo certo', async () => {
+    const vault = new FakeVault();
+    vault.write('acc-parada', JSON.stringify(buildPair({ expiresAt: 0 })));
+    const failures: string[] = [];
+
+    const mod = createLocalMod({
+      accounts: [accountOf('acc-parada')],
+      vault,
+      fetchImpl: async () => jsonResponse(200, {}),
+      refreshImpl: makeRefreshImpl({ kind: 'failed', reason: 'unavailable' }),
+      onPairRefreshFailed: (_id, trigger, reason) => failures.push(`${trigger}:${reason}`),
+    });
+
+    await mod.switchTo('acc-parada');
+
+    expect(failures).toEqual(['switch:unavailable']);
+  });
+});
