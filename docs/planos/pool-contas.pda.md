@@ -51,6 +51,7 @@ indevido.
 
 - **01 — A mesma conta em dois PCs: o que o refresh e o CLI permitem** → o CLI trata o refresh token como de uso único e se recupera de troca do arquivo por fora (relê o disco antes de renovar); mesma cadeia nos dois PCs = quem renova primeiro mata a do outro; "uma cadeia por PC" é inferido, não provado — depende de experimento ([pesquisa](../pesquisas/mesma-conta-dois-pcs.md))
 - **02 — Regras da organização do pool** → grupo único por conta; grupos priorizados formam um conjunto sem ordem; troca automática sempre pela conta de mais folga, priorizados até esgotar; folga = tokens estimados, calibrados por conta pelo uso real ([refinamento](../refinamentos/organizacao-do-pool.md))
+- **05 — Transporte e pareamento na rede local** → sem serviço de terceiros, a rota viável é endereço digitado + código de 6 dígitos comparado nas duas telas + TLS 1.3 mútuo com fingerprint pinado (testado no Electron 43); abrir porta fora do loopback dispara o Firewall do Windows com UAC; redes diferentes só onde um PC alcance o outro (ex.: VPN do próprio usuário) ([pesquisa](../pesquisas/rede-local-pareamento.md))
 
 ## Ainda não especificado
 
@@ -118,12 +119,12 @@ indevido.
 
 - **Tipo**: pesquisa
 - **Prioridade**: media
-- **Status**: em-andamento
+- **Status**: concluido
 - **Bloqueado por**: —
 - **Pergunta**: como dois apps Electron no Windows se acham e conversam com segurança na rede local sem serviço de
   terceiros: descoberta (mDNS ou endereço digitado), autenticação do pareamento por código, cifra do canal, aviso do
   Firewall do Windows, dependência npm nova ou não. E o que muda se os PCs estiverem em redes diferentes.
-- **Resolução**: —
+- **Resolução**: sem serviço de terceiros, a rota viável é endereço digitado + código de 6 dígitos comparado nas duas telas + TLS 1.3 mútuo com fingerprint pinado (testado no Electron 43); abrir porta fora do loopback dispara o Firewall do Windows com UAC; redes diferentes só onde um PC alcance o outro (ex.: VPN do próprio usuário) ([pesquisa](../pesquisas/rede-local-pareamento.md))
 
 ### 06 — Atualizar o Donel Dev nos dois PCs sem perder sessão
 
