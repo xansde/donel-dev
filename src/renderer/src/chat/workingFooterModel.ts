@@ -18,6 +18,12 @@ export type FooterModel =
       readonly waitingSubagents: number;
       /** Set while a pending is open: the round is held on the owner ("esperando você — <what>"). */
       readonly waitingFor?: 'question' | 'permission' | 'plan';
+      /** When the current action started (ISO): the footer shows how long THIS tool has been running. */
+      readonly actionStartedAt?: string;
+      /** Subagents still running next to the current action ("+ N subagentes"). */
+      readonly alsoSubagents?: number;
+      /** No tool and no subagent running: the Claude is thinking or writing ("pensando"). */
+      readonly thinking?: true;
     }
   | { readonly kind: 'interrupted'; readonly after: FooterAction | null };
 
@@ -61,9 +67,18 @@ export function deriveFooter({ live, rows, lastAction, screenWorking = null, end
     const action = live.currentAction;
     if (action !== null) {
       const { verb, target } = action.summary;
-      return { kind: 'working', verb: toGerund(verb), ...(target !== undefined ? { target } : {}), waitingSubagents: 0 };
+      const subagents = live.activeSubagents.length;
+      return {
+        kind: 'working',
+        verb: toGerund(verb),
+        ...(target !== undefined ? { target } : {}),
+        waitingSubagents: 0,
+        actionStartedAt: action.startedAt,
+        ...(subagents > 0 ? { alsoSubagents: subagents } : {}),
+      };
     }
-    return { kind: 'working', waitingSubagents: live.activeSubagents.length };
+    if (live.activeSubagents.length > 0) return { kind: 'working', waitingSubagents: live.activeSubagents.length };
+    return { kind: 'working', waitingSubagents: 0, thinking: true };
   }
   // A pending is open (the status turned to waiting-for-you): the round is held, not over, and Parar must stay
   // reachable - it answers the pending with `interrupt` (T078/T081).
