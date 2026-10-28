@@ -137,6 +137,7 @@ import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } 
 import { disposeTabSend, sendDriverFor, sendToTab } from './chat/composer/tabSend';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
+import { PatchNotes } from './patchnotes/PatchNotes';
 import type { TerminalPaneHandle } from './TerminalPane';
 
 // FIX (feedback E2E, batch 3 achado "notificar toda transição vira spam") —
@@ -2248,6 +2249,7 @@ export function App(): React.JSX.Element {
 
   return (
     <div className={styles.shell}>
+      <PatchNotes />
       <header className={styles.titlebar}>
         <div className={styles.brand}>
           <span aria-hidden="true">◆</span>
