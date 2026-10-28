@@ -247,6 +247,11 @@ import { readPetSeams, type PetSmokeGlobal } from './pet/pet-seams';
 // 016-jobu-faxina — "Fazer faxina": the sweep of repos, worktrees, branches and old sessions the Jobu runs from his menu.
 import { createGitRunner } from './sweep/git';
 import { createSweepRunner } from './sweep/sweep-service';
+// Saúde do computador — samples RAM, disk and processes every minute; ends a process on request.
+import { collectHealthSnapshot, lookupProcessName } from './health/collector';
+import { createHealthService, type HealthService } from './health/health-service';
+import { HEALTH_CHANNELS, type KillProcessOutcome } from '../shared/health/ipc';
+import type { HealthReport } from '../shared/health/types';
 import { isValidPetPrefsInput } from '../shared/pet/ipc';
 import type { PetDisplay } from '../shared/pet/types';
 // T504 (005-terminal-copy-paste) — clipboard-bridge (T503), aditivo aos
@@ -2207,6 +2212,38 @@ function registerTabIpcHandlers(): void {
   });
 }
 
+/** Saúde do computador — `null` until the handlers are registered (whenReady) and again after the app closes. */
+let healthService: HealthService | null = null;
+
+/** The app's own pids: the main plus every helper Electron started (renderers, GPU, utility). */
+function ownAppPids(): number[] {
+  const pids = new Set<number>([process.pid]);
+  for (const metric of app.getAppMetrics()) pids.add(metric.pid);
+  return [...pids];
+}
+
+function registerHealthIpcHandlers(): void {
+  healthService = createHealthService({
+    collect: () => collectHealthSnapshot({ ownPids: ownAppPids }),
+    onReport: (report) => {
+      const window = getMainWindow();
+      if (window) window.webContents.send(HEALTH_CHANNELS.changed, report);
+    },
+    ownPids: ownAppPids,
+    lookupProcessName,
+    terminate: (pid) => {
+      process.kill(pid);
+    },
+  });
+  healthService.start();
+  ipcMain.handle(HEALTH_CHANNELS.get, (): HealthReport | null => healthService?.getReport() ?? null);
+  ipcMain.handle(HEALTH_CHANNELS.refresh, async (): Promise<HealthReport | null> => (healthService ? healthService.refresh() : null));
+  ipcMain.handle(HEALTH_CHANNELS.killProcess, async (_event, pid: unknown): Promise<KillProcessOutcome> =>
+    healthService ? healthService.killProcess(pid) : { ok: false, reason: 'no-report' },
+  );
+  ipcMain.handle(HEALTH_CHANNELS.openTemp, (): Promise<string> => shell.openPath(app.getPath('temp')));
+}
+
 /**
  * Mindscape (V1) — load/save of `mindscape.json`. The main is the only writer
  * and validates the payload (`parseMindscapeDoc`) before writing.
@@ -2831,6 +2868,7 @@ void app.whenReady().then(async () => {
     getService: () => petService,
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   }); // 015-jobu-pet
+  registerHealthIpcHandlers(); // Saúde do computador
   createMainWindow();
 
   app.on('activate', () => {
@@ -2848,6 +2886,8 @@ app.on('window-all-closed', () => {
   void hookBridge?.close();
   esteiraService?.dispose();
   esteiraService = null;
+  healthService?.stop();
+  healthService = null;
   // fix/renovacao-credencial (C6, research.md) — antes de descartar o motor,
   // guarda no cofre o par que o CLI deixou em `.credentials.json` para a
   // conta ativa. A gravação acontece dentro da chamada, sem esperar promessa.

@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-10-28',
     items: [
       {
+        title: 'Saúde do computador',
+        text: 'No canto direito do rodapé aparece "PC · RAM · disco", verde, amarelo ou vermelho conforme o computador está. Clique para ver quanto de memória e de disco sobra, se o disco está enchendo e em quanto tempo enche, quem mais usa memória e qual programa está gravando demais no disco. Um programa que ficou rodando sozinho depois que quem o abriu fechou pode ser encerrado ali mesmo, com confirmação, e um botão abre a pasta temporária para apagar o que sobrou.',
+      },
+      {
         title: 'Novidades a cada atualização',
         text: 'Esta janela. Ela aparece uma vez na primeira abertura depois de cada versão nova, com o que mudou.',
       },
