@@ -1,0 +1,162 @@
+/* Saúde do computador. Colors only from design-system tokens: green/gold/red of the smart zone
+   (`--zone-ok|warn|over`), the same vocabulary of "fine / careful / over" the app already uses. */
+
+.indicator {
+  --health-color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+  height: 100%;
+  padding: 0 var(--panel-padding);
+  border: none;
+  border-top: var(--hairline);
+  border-left: var(--hairline);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-caption-size);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.indicator:hover {
+  color: var(--text-primary);
+}
+
+.indicator:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.indicator.warn,
+.indicator.critical {
+  color: var(--health-color);
+}
+
+.indicator.critical {
+  font-weight: var(--weight-semibold);
+}
+
+.ok {
+  --health-color: var(--zone-ok);
+}
+
+.warn {
+  --health-color: var(--zone-warn);
+}
+
+.critical {
+  --health-color: var(--zone-over);
+}
+
+.unknown {
+  --health-color: var(--text-muted);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--health-color);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 65vh;
+  overflow-y: auto;
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  color: var(--text-primary);
+  line-height: 1.45;
+}
+
+.numbers {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-half) var(--space-2);
+  margin: 0;
+}
+
+.numbers dt {
+  color: var(--text-muted);
+}
+
+.numbers dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.finding {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: var(--space-1);
+  border: var(--hairline);
+  border-left: 3px solid var(--health-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+}
+
+.findingHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-half);
+}
+
+.badge {
+  margin-left: auto;
+  color: var(--health-color);
+  font-size: var(--text-caption-size);
+}
+
+.detail {
+  color: var(--text-muted);
+}
+
+.heading {
+  margin: 0 0 var(--space-half);
+  font-size: var(--text-body-size);
+  font-weight: var(--weight-semibold);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table td {
+  padding: 2px 0;
+}
+
+.number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.message {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}

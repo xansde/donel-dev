@@ -389,3 +389,17 @@
   composes: devModeHint;
   cursor: default;
 }
+
+/* Saúde do computador — the status row: the design-system StatusBar fills it, the health indicator
+   sits at the right end with the same height. */
+.statusRow {
+  display: flex;
+  min-width: 0;
+  height: var(--statusbar-height);
+}
+
+.statusBarFill {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
