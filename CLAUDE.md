@@ -46,6 +46,21 @@ via `CLAUDE_CONFIG_DIR`.
   O isolamento COMPLETO (userData por canal) continua sendo o **B10** do
   `specs/backlog.md`, agora opcional.
 
+## Alfa diário e novidades da versão (pedido do dono, 28/10)
+
+- O dono quer, toda manhã, um instalador novo do alfa e uma janela "O que
+  mudou" na primeira abertura de cada versão.
+- **Todo PR mergeado em `staging` que muda algo visível acrescenta um item em
+  `src/renderer/src/patchnotes/notes.ts`**, no dia do merge (cria o dia se não
+  existir). Texto de usuário: o que muda para ele, sem arquivo, PR ou jargão.
+- Build: tarefa agendada do Windows "Donel Dev Alfa diario" (06:30), registrada
+  por `scripts/registrar-alfa-diario.ps1`. Ela roda uma cópia de
+  `scripts/build-alfa-diario.ps1` guardada em `%USERPROFILE%\Donel Dev Alfa -
+  diario\`, builda `origin/staging` na worktree `.claude/worktrees/alfa-diario`
+  e deixa lá o `Donel Dev Alfa-Setup-AAAA-MM-DD.exe` (guarda os 5 últimos).
+  Falha deixa `FALHOU.txt` e o `build.log` na mesma pasta. Mudou o script?
+  Rode o registrar de novo para atualizar a cópia.
+
 ## Repo público (canal stable) — aberto em 2026-07-27
 
 - **Remoto**: `https://github.com/xansde/donel` (**público**, MIT). Cópia de
