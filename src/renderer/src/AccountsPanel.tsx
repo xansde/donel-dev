@@ -1,6 +1,6 @@
 import { Button, Modal, TextInput, Toggle } from '@donel-dev/design-system';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AccountsConfigDto, AccountsViewDto, ConnectModInput, LoginStatusDto, RemoveAccountOutcome } from '../../shared';
+import type { AccountsConfigDto, AccountsViewDto, ConnectModInput, LoginStatusDto, RemoveAccountOutcome, SeazonePoolConfig } from '../../shared';
 import { formatAccountLoad, formatAutoSwitchEvent, formatBlindWarning, formatSaturatedWarning, formatSwitchFailure, formatSwitchOverwrittenWarning } from './accountsFormat';
 import { MigrationWizard } from './MigrationWizard';
 import styles from './AccountsPanel.module.css';
@@ -130,6 +130,8 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
   const [view, setView] = useState<AccountsViewDto>(emptyView());
   const [loading, setLoading] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
+  // B25 — config do pool Seazone (só `baseUrl` e preferidas; nada sensível).
+  const [seazonePool, setSeazonePool] = useState<SeazonePoolConfig | null>(null);
   // Fase 2 (011-contas-e-provedores, etapa 3) — mensagem de falha da troca
   // MANUAL por linha (`SwitchOutcome.failed`, ver `handleSwitch`); chave =
   // id da conta-ALVO da troca. `expired-credentials` nunca entra aqui — a
@@ -200,6 +202,10 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
   }, [open, refresh]);
 
   useEffect(() => {
+    if (open) void window.donel.accounts.getConfig().then((config) => setSeazonePool(config.seazone));
+  }, [open]);
+
+  useEffect(() => {
     if (open) void window.donel.migration.scan().then((plan) => setHasLegacyProfiles(plan.entries.length > 0));
   }, [open]);
 
@@ -266,6 +272,16 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
       .then((): void => {
         setView((prev) => ({ ...prev, autoSwitch: { ...prev.autoSwitch, enabled } }));
       });
+  };
+
+  /** B25 — marca/desmarca uma conta do pool como preferida do auto-switch. */
+  const handleTogglePreferred = (label: string): void => {
+    if (!seazonePool) return;
+    const current = seazonePool.preferredLabels ?? [];
+    const preferredLabels = current.includes(label) ? current.filter((item) => item !== label) : [...current, label];
+    void window.donel.accounts
+      .setConfig({ seazone: { ...seazonePool, preferredLabels } })
+      .then((config) => setSeazonePool(config.seazone));
   };
 
   const handleBeginLogin = (): void => {
@@ -556,6 +572,17 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
                           {formatAccountLoad(account.load)}
                         </span>
                       </button>
+                      {seazonePool && poolLabel(account.id) ? (
+                        <Button
+                          variant="secondary"
+                          data-testid="account-prefer"
+                          aria-pressed={isPreferred(seazonePool, account.id)}
+                          title="Preferidas: com alguma marcada, a troca automática só usa estas contas do pool"
+                          onClick={() => handleTogglePreferred(poolLabel(account.id) ?? '')}
+                        >
+                          {isPreferred(seazonePool, account.id) ? '★ Preferida' : '☆ Preferir'}
+                        </Button>
+                      ) : null}
                       <Button
                         variant="secondary"
                         data-testid="account-remove"
@@ -722,4 +749,14 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
       </Modal>
     </>
   );
+}
+
+// B25 — mesmo prefixo de `src/main/accounts/pool-account-id.ts` (o renderer não importa do main).
+function poolLabel(id: string): string | null {
+  return id.startsWith('seazone:') && id.length > 'seazone:'.length ? id.slice('seazone:'.length) : null;
+}
+
+function isPreferred(pool: SeazonePoolConfig, id: string): boolean {
+  const label = poolLabel(id);
+  return label !== null && (pool.preferredLabels ?? []).includes(label);
 }

@@ -96,7 +96,8 @@ export function planDisconnect(config: AccountsConfig): DisconnectPlan {
  * segredo (`seazone:session`) é gravado no cofre por quem chama, antes.
  */
 export function planConnectSeazonePool(config: AccountsConfig, baseUrl: string): AccountsConfig {
-  return { ...config, seazone: { baseUrl: baseUrl.trim() } };
+  // B25 — reconectar o switcher não apaga as preferidas já marcadas.
+  return { ...config, seazone: { ...config.seazone, baseUrl: baseUrl.trim() } };
 }
 
 // ---------------------------------------------------------------------------

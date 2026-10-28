@@ -183,6 +183,7 @@ export type {
   AccountLoad,
   AccountsConfig,
   AccountsConfigDto,
+  SeazonePoolConfig,
   AccountsViewDto,
   AccountSummary,
   AutoSwitchPolicy,
