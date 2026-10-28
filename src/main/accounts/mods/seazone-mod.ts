@@ -7,12 +7,37 @@
 // (guardado no cofre, entrada `seazone:session`, C11).
 
 import type { AccountLoad, AccountSummary } from '../../../shared/accounts';
-import type { AccountMod, ListAccountsResult, SwitchToResult } from '../account-mod';
+import type { AccountMod, ListAccountsResult, SwitchToContext, SwitchToResult, SyncActivePairResult } from '../account-mod';
 import type { HttpFetchLike, HttpRequestInit, HttpResponseLike } from '../usage-client';
 import type { VaultLike } from '../vault';
 
 const SESSION_VAULT_KEY = 'seazone:session';
 const DEFAULT_JWT_TTL_SECONDS = 900; // 15 min
+
+/**
+ * Pool Seazone (patch local v2, D1) — scopes que o `/login` do Claude Code
+ * grava em `.credentials.json` (os desta máquina em 28/10/2026, CLI 2.1.312).
+ * A resposta de `/session/switch` NUNCA traz `scopes` (`SwitchResponse` da
+ * API: label, accessToken, refreshToken, expiresAt, plan, load,
+ * previousLoad, warning), e o par ia para o disco com `scopes: []`. O CLI só
+ * reconhece o login claude.ai se `scopes` contiver `user:inference`
+ * (`function emr(t){return Array.isArray(t)&&t.includes("user:inference")}`
+ * no binário; sem isso a fonte de auth vira `none` e a primeira mensagem dá
+ * erro de API). As contas do pool são contas claude.ai cadastradas a partir
+ * do `.credentials.json` de um `/login` comum, então os scopes reais delas
+ * são estes. Se a API um dia mandar `scopes`, eles vencem.
+ */
+export const CLAUDE_CODE_DEFAULT_SCOPES: readonly string[] = Object.freeze([
+  'user:file_upload',
+  'user:inference',
+  'user:mcp_servers',
+  'user:plugins',
+  'user:profile',
+  'user:sessions:claude_code',
+]);
+
+/** Valor que a API aceita em `account` para escolher, ela mesma, uma conta livre (`switch_account`, `account_query == "auto"`). */
+const AUTO_ACCOUNT_QUERY = 'auto';
 
 export interface SeazoneModDeps {
   readonly baseUrl: string;
@@ -151,16 +176,34 @@ export function createSeazoneMod(deps: SeazoneModDeps): AccountMod {
       }
     },
 
-    /** A conta é identificada por `account` (o label), como no cliente oficial — `accountId` não existe no contrato. */
-    async switchTo(id): Promise<SwitchToResult> {
+    /**
+     * A conta é identificada por `account` (o label), como no cliente oficial — `accountId` não existe no contrato.
+     *
+     * Patch local v2 (D2): com ~55 pessoas no pool, pedir por NOME uma conta
+     * que outra pessoa usa nos últimos minutos dá 409. A troca AUTOMÁTICA
+     * pede `auto` (a API escolhe uma conta livre, com folga real sobre a que
+     * sai); a MANUAL continua por nome. Nas duas, `currentAccount` vai quando
+     * a conta que sai é do pool — igual ao cliente oficial: a API devolve a
+     * posse dela mais cedo e não entrega a mesma de novo. O `label` da
+     * resposta é a conta entregue (`accountId`).
+     */
+    async switchTo(id, context?: SwitchToContext): Promise<SwitchToResult> {
+      const request: Record<string, string> = { account: context?.origin === 'auto' ? AUTO_ACCOUNT_QUERY : id };
+      if (context?.from) request.currentAccount = context.from;
       const response = await authedFetch('/session/switch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ account: id }),
+        body: JSON.stringify(request),
       });
       if (!response) return { kind: 'failed', reason: sessionRefused ? 'unauthorized' : 'offline' };
       if (response.status === 401 || response.status === 403) return { kind: 'failed', reason: 'unauthorized' };
       if (response.status === 404) return { kind: 'failed', reason: 'unknown-account' };
+      // 409 = a API recusou ESTA conta agora (em posse de outra pessoa, sem
+      // crédito, leitura recusada, ocupada pelo monitor, ou — no `auto` —
+      // nenhuma livre). Não é rede. O `detail` não é lido: é texto para o
+      // terminal (sugere `switcher switch`) e alguns ramos interpolam erro do
+      // provedor, sem garantia de que não carrega nada sensível.
+      if (response.status === 409) return { kind: 'failed', reason: 'account-unavailable' };
       if (response.status < 200 || response.status >= 300) return { kind: 'failed', reason: 'offline' };
 
       try {
@@ -169,14 +212,17 @@ export function createSeazoneMod(deps: SeazoneModDeps): AccountMod {
         if (typeof body.accessToken !== 'string' || typeof body.refreshToken !== 'string' || expiresAt === null) {
           return { kind: 'failed', reason: 'io' };
         }
+        const scopes = Array.isArray(body.scopes) ? body.scopes.filter((s): s is string => typeof s === 'string') : [];
+        const delivered = typeof body.label === 'string' && body.label.length > 0 ? body.label : null;
         return {
           kind: 'ok',
           pair: {
             accessToken: body.accessToken,
             refreshToken: body.refreshToken,
             expiresAt,
-            scopes: Array.isArray(body.scopes) ? body.scopes.filter((s): s is string => typeof s === 'string') : [],
+            scopes: scopes.length > 0 ? scopes : CLAUDE_CODE_DEFAULT_SCOPES,
           },
+          ...(delivered ? { accountId: delivered } : {}),
         };
       } catch {
         return { kind: 'failed', reason: 'io' };
@@ -213,6 +259,51 @@ export function createSeazoneMod(deps: SeazoneModDeps): AccountMod {
     async keepAlive(): Promise<void> {
       cachedJwt = null;
       await ensureJwt();
+    },
+
+    /**
+     * Patch local v3 — o heartbeat do cliente oficial: o par VIVO (o que o CLI
+     * renova em `.credentials.json`) e o label real, `expiresAt` em ISO. É o
+     * que renova a posse da conta (20 min no switcher); sem ele a conta volta
+     * ao pool enquanto a sessão ainda a usa. A resposta (`HeartbeatResponse`)
+     * é o par que o servidor tem agora — o mesmo, ou um mais novo se o monitor
+     * dele renovou. `scopes` não vem na resposta: ficam os do par enviado.
+     * O `detail` dos erros não é lido (mesma razão do `switchTo`).
+     */
+    async syncActivePair(id, pair): Promise<SyncActivePairResult> {
+      const response = await authedFetch('/session/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessToken: pair.accessToken,
+          refreshToken: pair.refreshToken,
+          expiresAt: new Date(pair.expiresAt).toISOString(),
+          label: id,
+        }),
+      });
+      if (!response) return { kind: 'failed', reason: sessionRefused ? 'unauthorized' : 'offline' };
+      if (response.status === 403) return { kind: 'lost' };
+      if (response.status === 401) return { kind: 'failed', reason: 'unauthorized' };
+      if (response.status === 409) return { kind: 'failed', reason: 'conflict' };
+      if (response.status >= 500) return { kind: 'failed', reason: 'offline' };
+      if (response.status < 200 || response.status >= 300) return { kind: 'failed', reason: 'io' };
+
+      try {
+        const body = (await response.json()) as Record<string, unknown>;
+        if (typeof body.accessToken !== 'string' || typeof body.refreshToken !== 'string') return { kind: 'failed', reason: 'io' };
+        return {
+          kind: 'ok',
+          pair: {
+            accessToken: body.accessToken,
+            refreshToken: body.refreshToken,
+            // Vazio/ilegível = o servidor não conhece a validade: fica a do par enviado.
+            expiresAt: toEpochMs(body.expiresAt) ?? pair.expiresAt,
+            scopes: pair.scopes,
+          },
+        };
+      } catch {
+        return { kind: 'failed', reason: 'io' };
+      }
     },
   };
 }
