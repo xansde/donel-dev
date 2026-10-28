@@ -1,7 +1,7 @@
 import { Button, Modal, TextInput, Toggle } from '@donel-dev/design-system';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AccountsConfigDto, AccountsViewDto, ConnectModInput, LoginStatusDto, RemoveAccountOutcome } from '../../shared';
-import { formatAccountLoad, formatAutoSwitchEvent, formatBlindWarning, formatSaturatedWarning, formatSwitchOverwrittenWarning } from './accountsFormat';
+import { formatAccountLoad, formatAutoSwitchEvent, formatBlindWarning, formatSaturatedWarning, formatSwitchFailure, formatSwitchOverwrittenWarning } from './accountsFormat';
 import { MigrationWizard } from './MigrationWizard';
 import styles from './AccountsPanel.module.css';
 
@@ -251,12 +251,7 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
       .switch(id)
       .then((outcome) => {
         if (outcome.kind === 'failed' && outcome.reason !== 'expired-credentials') {
-          const message =
-            outcome.reason === 'offline'
-              ? `Sem conexão para renovar a credencial de «${targetLabel}» — tente de novo.`
-              : outcome.reason === 'unauthorized'
-                ? `O servidor recusou a troca para «${targetLabel}» — tente de novo.`
-                : `Não foi possível trocar para «${targetLabel}» — tente de novo.`; // 'io'
+          const message = formatSwitchFailure(outcome.reason, targetLabel);
           setSwitchMessages((prev) => ({ ...prev, [id]: message }));
         }
         return window.donel.accounts.list();

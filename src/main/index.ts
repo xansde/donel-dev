@@ -197,17 +197,18 @@ import { createRefreshCoordinator } from './accounts/refresh-coordinator';
 // 2 — o que o login isolado grava em `appConfig.accounts` depois de colher.
 // Fase 2 (D3) — `planReconnect` decide se um `id` pode reconectar
 // (`accounts:beginReconnect`, item 4 do Bloco 3).
-import { applyHarvestedAccount, findAccountByFingerprint, findAccountById, planDisconnect, planReconnect, planRemoveAccount } from './accounts/account-pool';
+import { applyHarvestedAccount, findAccountByFingerprint, findAccountById, planConnectSeazonePool, planDisconnect, planReconnect, planRemoveAccount } from './accounts/account-pool';
 import type { AccountMod } from './accounts/account-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — colhedor do login
 // isolado (plan-etapa-3.md §4.2): `<userData>/accounts-login-<uuid>/`, poll
 // do diretório, cofre, e a limpeza obrigatória no fim (sucesso ou falha).
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
-import { applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
+import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
+import { createLocalWithPoolMod } from './accounts/mods/local-with-pool-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1 (F2) — valida o par colado à mão (fallback do "conectar conta"; login isolado é a Fase 1.2).
 import { buildPastedPair } from './accounts/pasted-pair';
 import { createSystemVaultIoDeps, decryptVaultEntry, deleteVaultEntries, writeVaultEntry, type VaultLike } from './accounts/vault';
@@ -739,7 +740,7 @@ function resolveAccountMod(modId: ModId): AccountMod {
   if (modId === 'seazone') {
     return createSeazoneMod({ baseUrl: appConfig.accounts.seazone?.baseUrl ?? '', vault });
   }
-  return createLocalMod({
+  const localMod = createLocalMod({
     accounts: appConfig.accounts.localAccounts,
     vault,
     // 011-contas-e-provedores, etapa 3, Fase 2 (D7) — a carga da conta ATIVA
@@ -761,6 +762,14 @@ function resolveAccountMod(modId: ModId): AccountMod {
     // sucesso ia, e uma conta caída em "Reconectar" não deixava rastro).
     onPairRefreshFailed: (id, trigger, reason) => appendAccountsMaintenanceLog({ event: 'account-pair-refresh-failed', account: id, trigger, reason }),
   });
+  // Pool Seazone AO LADO das locais (sem trocar o mod): com o switcher
+  // configurado, as contas dele entram no fim da lista como `seazone:<label>`
+  // e o mod composto roteia switch/captura/keepAlive pelo dono do id. Sem
+  // `seazone:session` no cofre, 401 ou switcher fora do ar, o pool só não
+  // aparece — as locais seguem.
+  const seazone = appConfig.accounts.seazone;
+  if (!seazone) return localMod;
+  return createLocalWithPoolMod({ local: localMod, pool: createSeazoneMod({ baseUrl: seazone.baseUrl, vault }) });
 }
 
 /**
@@ -873,6 +882,10 @@ const accountEngineHost = new AccountEngineHost({
       // fix/renovacao-credencial — cada vez que o par em disco foi guardado no
       // cofre (switch, leitura de carga ou encerramento), só ids.
       onLivePairCaptured: (info) => appendAccountsMaintenanceLog({ event: 'live-pair-captured', account: info.account, trigger: info.trigger, believedActive: info.believedActive }),
+      // Pool Seazone (patch local v3) — o heartbeat da conta ativa do pool adota o par mais novo do switcher (só se o disco ainda tiver o enviado) e registra, só com ids, o que aconteceu.
+      writeRefreshedActivePair: (expected, next) =>
+        adoptRefreshedActivePair({ io: accountsClaudeStateIo, claudeHome: appConfig.accounts.claudeHome ?? claudeHomeDirFor(homedir()) }, expected, next),
+      onPoolHeartbeatEvent: (event) => appendAccountsMaintenanceLog({ ...event }),
     });
     engine.onChanged(broadcastAccountsChanged);
     engine.start();
@@ -2393,7 +2406,10 @@ function registerAccountsIpcHandlers(): void {
       if (!input.baseUrl?.trim() || !input.sessionRefreshToken?.trim()) return { kind: 'failed', reason: 'invalid-input' };
       const writeResult = writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, 'seazone:session', input.sessionRefreshToken);
       if (writeResult.kind !== 'ok') return { kind: 'failed', reason: 'vault-unavailable' };
-      appConfig = { ...appConfig, accounts: { ...appConfig.accounts, mod: 'seazone', seazone: { baseUrl: input.baseUrl.trim() } } };
+      // Pool Seazone ao lado das locais — NÃO troca o mod nem toca
+      // `localAccounts`/`activeAccountId`: só registra o switcher. A
+      // reconstrução abaixo (F6) monta o mod composto quando o mod é `local`.
+      appConfig = { ...appConfig, accounts: planConnectSeazonePool(appConfig.accounts, input.baseUrl) };
     } else {
       const label = input.label?.trim();
       if (!label) return { kind: 'failed', reason: 'invalid-input' };

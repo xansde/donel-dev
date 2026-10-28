@@ -59,9 +59,11 @@
 // `oauthAccount` ainda ausente — ele SOME do arquivo logo no passo 3 do
 // switch, até o CLI re-fetch) = `switch-check-inconclusive`, nunca avisa.
 
-import { classifyAutoSwitch, computePollIntervalMs, selectSwitchTarget } from './auto-switch';
+import { classifyAutoSwitch, computePollIntervalMs, selectAutoSwitchTarget } from './auto-switch';
 import { createReconnectRegistry, type ReconnectRegistry } from './reconnect-registry';
 import type { AccountMod, CredentialPair } from './account-mod';
+import type { AdoptRefreshedPairResult } from './claude-state';
+import { isPoolAccountId } from './pool-account-id';
 import {
   overallLoad,
   type AccountId,
@@ -75,6 +77,22 @@ import {
 } from '../../shared/accounts';
 
 const KEEP_ALIVE_INTERVAL_MS = 15 * 60 * 1000;
+/**
+ * Pool Seazone (patch local v3) — a posse de uma conta no switcher dura 20 min
+ * (`HINT_GRACE_SECONDS`) e só o switch e o heartbeat a renovam. 5 min deixa
+ * folga para perder ciclos inteiros (rede, app suspenso) sem a conta voltar
+ * ao pool com a sessão ainda nela. O primeiro ciclo sai logo depois do
+ * `start()`: um app reaberto com conta do pool ativa renova a posse já.
+ */
+const POOL_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+const POOL_HEARTBEAT_FIRST_DELAY_MS = 10 * 1000;
+
+/** Pool Seazone (patch local v3) — o que o heartbeat registra em `accounts-maintenance.log`. Só ids e motivos, nunca o par. */
+export type PoolHeartbeatLogEvent =
+  | { readonly event: 'pool-pair-adopted'; readonly account: AccountId }
+  | { readonly event: 'pool-heartbeat-failed'; readonly account: AccountId; readonly reason: 'offline' | 'unauthorized' | 'conflict' | 'io' }
+  | { readonly event: 'pool-account-lost'; readonly account: AccountId; readonly outcome: 'switched'; readonly to: AccountId }
+  | { readonly event: 'pool-account-lost'; readonly account: AccountId; readonly outcome: 'failed' };
 /** Emenda 22/09 (item 5) — janela da checagem de corrida pós-switch; "~30-60s" do pedido do dono. */
 const RACE_CHECK_DELAY_MS = 45 * 1000;
 
@@ -162,6 +180,15 @@ export interface AccountEngineDeps {
    * `accounts-maintenance.log`.
    */
   readonly onLivePairCaptured?: (info: { readonly account: AccountId; readonly trigger: 'switch' | 'sync' | 'quit'; readonly believedActive: AccountId | null }) => void;
+  /**
+   * Pool Seazone (patch local v3) — adota em `.credentials.json` o par mais
+   * novo que o switcher devolveu no heartbeat (claude-state.ts
+   * `adoptRefreshedActivePair`: só escreve se o disco ainda tiver `expected`).
+   * Ausente = o par devolvido nunca é adotado (o heartbeat ainda renova a posse).
+   */
+  readonly writeRefreshedActivePair?: (expected: CredentialPair, next: CredentialPair) => AdoptRefreshedPairResult;
+  /** Pool Seazone (patch local v3) — index.ts grava em `accounts-maintenance.log`. Nunca recebe o par. */
+  readonly onPoolHeartbeatEvent?: (event: PoolHeartbeatLogEvent) => void;
 }
 
 /**
@@ -188,6 +215,11 @@ export class AccountEngine {
   private readonly onSwitchCheckInconclusive: AccountEngineDeps['onSwitchCheckInconclusive'];
   private readonly raceCheckDelayMs: number;
   private readonly onLivePairCaptured: AccountEngineDeps['onLivePairCaptured'];
+  private readonly writeRefreshedActivePair: AccountEngineDeps['writeRefreshedActivePair'];
+  private readonly onPoolHeartbeatEvent: AccountEngineDeps['onPoolHeartbeatEvent'];
+  private poolHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Último motivo de falha do heartbeat já registrado; a mesma falha repetida não enche o log. `null` depois de um ciclo bom. */
+  private lastPoolHeartbeatFailure: string | null = null;
   /**
    * fix/renovacao-credencial — último refresh token guardado no cofre, por
    * conta, por ESTE motor. Só evita regravar o mesmo par a cada leitura; em
@@ -232,6 +264,8 @@ export class AccountEngine {
     this.onSwitchCheckInconclusive = deps.onSwitchCheckInconclusive;
     this.raceCheckDelayMs = deps.raceCheckDelayMs ?? RACE_CHECK_DELAY_MS;
     this.onLivePairCaptured = deps.onLivePairCaptured;
+    this.writeRefreshedActivePair = deps.writeRefreshedActivePair;
+    this.onPoolHeartbeatEvent = deps.onPoolHeartbeatEvent;
 
     // Estado inicial segue o diagrama do data-model.md §3: `mod === null` é
     // SEMPRE `inert`; qualquer mod configurado nasce `ready` até prova em
@@ -274,6 +308,114 @@ export class AccountEngine {
         void this.mod?.keepAlive?.();
       }, KEEP_ALIVE_INTERVAL_MS);
     }
+    if (this.mod?.syncActivePair) this.schedulePoolHeartbeat(POOL_HEARTBEAT_FIRST_DELAY_MS);
+  }
+
+  /**
+   * Pool Seazone (patch local v3) — `setTimeout` recursivo, como o poll: o
+   * callback é `async` direto (os testes o `await`am) e reagenda o próximo
+   * ciclo só depois de terminar, então dois heartbeats nunca se sobrepõem.
+   * Fica armado com conta local ativa: a ativa pode virar do pool depois.
+   */
+  private schedulePoolHeartbeat(delayMs: number): void {
+    if (this.disposed) return;
+    this.poolHeartbeatTimer = this.setTimeoutFn(async () => {
+      this.poolHeartbeatTimer = null;
+      try {
+        await this.runPoolHeartbeat();
+      } catch {
+        // Nunca derruba o timer; o próximo ciclo tenta de novo.
+      }
+      this.schedulePoolHeartbeat(POOL_HEARTBEAT_INTERVAL_MS);
+    }, delayMs);
+  }
+
+  /**
+   * Pool Seazone (patch local v3) — um ciclo do heartbeat, igual ao do
+   * cliente oficial: manda ao switcher o par VIVO de `.credentials.json` (o
+   * que o CLI renova) com o label real da conta ativa. Isso renova a posse
+   * (20 min) e põe no pool o par que o CLI rotacionou. A resposta é o par que
+   * o servidor tem: mais novo (o monitor dele renovou) é adotado em disco; 403
+   * = a conta não é mais nossa e a sessão sai dela na hora
+   * (`leaveLostPoolAccount`); o resto é transitório e só fica no log.
+   *
+   * Não manda nada se a ativa for local, ou se a identidade em disco provar
+   * que o par é de uma conta local (o token pessoal nunca vai ao switcher).
+   * Não precisa rodar logo depois de um switch para o pool: o próprio switch
+   * renova a posse.
+   */
+  async runPoolHeartbeat(): Promise<void> {
+    if (this.disposed || !this.mod?.syncActivePair || !this.readCurrentPair) return;
+    const active = this.config.activeAccountId;
+    if (!active || !isPoolAccountId(active)) return;
+    if (this.resolveLivePairOwner(active, false) !== active) return;
+    const live = this.readCurrentPair();
+    if (!live) return;
+
+    const result = await this.mod.syncActivePair(active, live);
+    // Descartado, ou a ativa mudou enquanto o heartbeat estava em voo: a resposta descreve uma conta que já saiu.
+    if (this.disposed || this.config.activeAccountId !== active) return;
+
+    switch (result.kind) {
+      case 'skipped':
+        return;
+      case 'failed':
+        if (this.lastPoolHeartbeatFailure !== result.reason) {
+          this.lastPoolHeartbeatFailure = result.reason;
+          this.onPoolHeartbeatEvent?.({ event: 'pool-heartbeat-failed', account: active, reason: result.reason });
+        }
+        return;
+      case 'lost':
+        this.lastPoolHeartbeatFailure = null;
+        await this.leaveLostPoolAccount(active);
+        return;
+      case 'ok': {
+        this.lastPoolHeartbeatFailure = null;
+        const next = result.pair;
+        if (next.accessToken === live.accessToken && next.refreshToken === live.refreshToken) return;
+        if (this.writeRefreshedActivePair?.(live, next) === 'written') {
+          this.onPoolHeartbeatEvent?.({ event: 'pool-pair-adopted', account: active });
+        }
+        return;
+      }
+    }
+  }
+
+  /**
+   * Pool Seazone (patch local v3) — a API disse que a conta ativa não é mais
+   * nossa: seguir nela é usar o token de outra pessoa. Vale com a troca
+   * automática desligada (não é troca por carga). Ordem: uma local com folga
+   * (abaixo de `switchAtLoad`); senão uma conta livre do pool (`auto`,
+   * informando a perdida); senão a local de menor carga, mesmo cheia. O par
+   * em disco NÃO é capturado na conta perdida — ela já é de outra pessoa.
+   */
+  private async leaveLostPoolAccount(lost: AccountId): Promise<void> {
+    await this.listAccounts();
+    if (this.disposed || this.config.activeAccountId !== lost) return;
+
+    const accounts = this.decoratedAccounts();
+    const locals = accounts
+      .filter((account) => !isPoolAccountId(account.id) && account.available && !account.needsReconnect)
+      .map((account) => ({ id: account.id, load: overallLoad(account.load) }))
+      .sort((a, b) => (a.load ?? Number.POSITIVE_INFINITY) - (b.load ?? Number.POSITIVE_INFINITY));
+    const roomyLocal = locals.find((account) => account.load !== null && account.load < this.config.autoSwitch.switchAtLoad);
+    const poolCandidate = accounts.find((account) => isPoolAccountId(account.id) && account.id !== lost && account.available && !account.needsReconnect);
+
+    const attempts: AccountId[] = [];
+    if (roomyLocal) attempts.push(roomyLocal.id);
+    if (poolCandidate) attempts.push(poolCandidate.id);
+    if (!roomyLocal && locals.length > 0) attempts.push(locals[0].id);
+
+    for (const target of attempts) {
+      // Para o pool, `origin: 'auto'` faz o switcher escolher uma conta livre; o id pedido só diz que o destino é o pool.
+      const outcome = await this.performSwitch(target, 'auto', lost);
+      if (outcome.kind === 'switched') {
+        this.onPoolHeartbeatEvent?.({ event: 'pool-account-lost', account: lost, outcome: 'switched', to: outcome.to });
+        return;
+      }
+      if (this.disposed || this.config.activeAccountId !== lost) return;
+    }
+    this.onPoolHeartbeatEvent?.({ event: 'pool-account-lost', account: lost, outcome: 'failed' });
   }
 
   /**
@@ -321,6 +463,10 @@ export class AccountEngine {
     if (this.raceCheckTimer) {
       this.clearTimeoutFn(this.raceCheckTimer);
       this.raceCheckTimer = null;
+    }
+    if (this.poolHeartbeatTimer) {
+      this.clearTimeoutFn(this.poolHeartbeatTimer);
+      this.poolHeartbeatTimer = null;
     }
   }
 
@@ -447,7 +593,10 @@ export class AccountEngine {
     if (!this.mod || this.state !== 'ready' || !this.config.autoSwitch.enabled) return null;
 
     const accounts = this.decoratedAccounts();
-    const target = selectSwitchTarget(accounts, this.config.activeAccountId, this.config.autoSwitch);
+    // Pool Seazone ao lado das locais — `selectAutoSwitchTarget` deixa o pool
+    // como última opção e traz de volta para uma local livre; sem conta
+    // `seazone:*` na lista decide igual ao `selectSwitchTarget` de antes.
+    const target = selectAutoSwitchTarget(accounts, this.config.activeAccountId, this.config.autoSwitch);
     if (!target) return null;
 
     const sessionBusy = this.isSessionBusy();
@@ -458,7 +607,12 @@ export class AccountEngine {
     const outcome = await this.performSwitch(target, 'auto');
 
     if (outcome.kind === 'switched' || outcome.kind === 'failed') {
-      this.onAutoSwitchLogged?.({ outcome: outcome.kind, from: fromId, to: target, activeLoad, targetLoad, sessionBusy });
+      // Pool Seazone (patch local v2) — a troca automática para o pool pede
+      // `auto` e o switcher pode entregar outra conta: o log registra a
+      // entregue, com a carga dela.
+      const to = outcome.kind === 'switched' ? outcome.to : target;
+      const toLoad = to === target ? targetLoad : overallLoad(accounts.find((a) => a.id === to)?.load ?? null);
+      this.onAutoSwitchLogged?.({ outcome: outcome.kind, from: fromId, to, activeLoad, targetLoad: toLoad, sessionBusy });
     }
 
     return outcome;
@@ -472,7 +626,7 @@ export class AccountEngine {
    * switch bem-sucedido, de QUALQUER origem, arma a checagem de corrida
    * (`scheduleRaceCheck`).
    */
-  private async performSwitch(id: AccountId, origin: 'manual' | 'auto'): Promise<SwitchOutcome> {
+  private async performSwitch(id: AccountId, origin: 'manual' | 'auto', lostAccount: AccountId | null = null): Promise<SwitchOutcome> {
     // R3 (revisão) — descartado na entrada: falha sem tocar o mod nem a
     // config em memória (cobre um `switchTo` manual chamado depois do
     // `dispose()`; o caminho auto já é barrado antes, em `evaluateAutoSwitch`).
@@ -480,7 +634,8 @@ export class AccountEngine {
     if (!this.mod) return { kind: 'failed', reason: 'io' };
     if (id === this.config.activeAccountId) return { kind: 'already-active', account: id };
 
-    const switchResult = await this.mod.switchTo(id);
+    const fromId = this.config.activeAccountId;
+    const switchResult = await this.mod.switchTo(id, { origin, from: fromId });
 
     // R3 (revisão) — descartado ENQUANTO `mod.switchTo` estava em voo (a
     // reconstrução do host não espera troca nenhuma terminar). O mod já
@@ -507,7 +662,22 @@ export class AccountEngine {
       return { kind: 'failed', reason };
     }
 
-    const fromId = this.config.activeAccountId;
+    // Pool Seazone (patch local v2) — a conta que o backend ENTREGOU
+    // (`accountId`), que no `auto` do switcher pode não ser a pedida. Daqui
+    // em diante tudo usa ela: a captura do par que sai, a conta ativa, o
+    // registro de reconexão, a checagem de corrida e o desfecho.
+    const entered = switchResult.accountId ?? id;
+    if (entered === fromId) {
+      // O switcher só devolve a conta atual quando ela é a única elegível.
+      // Gravar o par dele por cima do que o CLI pode ter rotacionado em
+      // disco arriscaria matar a sessão; não há troca a fazer.
+      if (origin === 'auto') {
+        this.lastAutoSwitch = { kind: 'failed', to: id, reason: 'account-unavailable', at: this.nowIso() };
+        this.emit();
+      }
+      return { kind: 'failed', reason: 'account-unavailable' };
+    }
+
     const mod = this.mod;
     try {
       await this.applySwitchFn(switchResult.pair, async (rotatedPair) => {
@@ -515,8 +685,9 @@ export class AccountEngine {
         // (`resolveLivePairOwner`), não necessariamente `fromId`. Dono = a
         // conta que entra: o cofre dela já tem o que vai para o disco, não
         // sobrescreve.
+        // Patch local v3 — conta do pool perdida (403 no heartbeat) não recebe o par: já é de outra pessoa.
         const owner = rotatedPair ? this.resolveLivePairOwner(fromId, false) : null;
-        if (rotatedPair && owner && owner !== id) {
+        if (rotatedPair && owner && owner !== entered && owner !== lostAccount) {
           await mod.captureRotatedPair(owner, rotatedPair);
           this.lastCapturedRefreshToken.set(owner, rotatedPair.refreshToken);
           this.onLivePairCaptured?.({ account: owner, trigger: 'switch', believedActive: fromId });
@@ -540,20 +711,20 @@ export class AccountEngine {
       return { kind: 'failed', reason: 'io' };
     }
 
-    this.config = { ...this.config, activeAccountId: id };
+    this.config = { ...this.config, activeAccountId: entered };
     // fix/renovacao-credencial — o par que acabou de ir para o disco saiu do
     // cofre desta conta; a próxima sincronização só grava se o CLI rotacionar.
-    this.lastCapturedRefreshToken.set(id, switchResult.pair.refreshToken);
-    this.reconnectRegistry.clear(id); // D3 — trocar pra ela com sucesso prova que a credencial está boa de novo.
+    this.lastCapturedRefreshToken.set(entered, switchResult.pair.refreshToken);
+    this.reconnectRegistry.clear(entered); // D3 — trocar pra ela com sucesso prova que a credencial está boa de novo.
     if (origin === 'auto') {
-      this.lastAutoSwitch = { kind: 'switched', from: fromId, to: id, at: this.nowIso() };
+      this.lastAutoSwitch = { kind: 'switched', from: fromId, to: entered, at: this.nowIso() };
     }
     // Emenda 22/09 (item 5) — um switch novo (bem-sucedido) sempre limpa um
     // aviso de corrida anterior: ele descrevia a troca ANTERIOR, não esta.
     this.lastSwitchOverwritten = null;
-    this.scheduleRaceCheck(id, switchResult.pair.refreshToken);
+    this.scheduleRaceCheck(entered, switchResult.pair.refreshToken);
     this.emit();
-    return { kind: 'switched', from: fromId, to: id };
+    return { kind: 'switched', from: fromId, to: entered };
   }
 
   /**

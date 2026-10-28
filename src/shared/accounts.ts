@@ -76,7 +76,7 @@ export type AutoSwitchState = 'off' | 'idle' | 'armed' | 'saturated' | 'blind';
  */
 export type AutoSwitchEvent =
   | { readonly kind: 'switched'; readonly from: AccountId | null; readonly to: AccountId; readonly at: string }
-  | { readonly kind: 'failed'; readonly to: AccountId; readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'io'; readonly at: string };
+  | { readonly kind: 'failed'; readonly to: AccountId; readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'account-unavailable' | 'io'; readonly at: string };
 
 /**
  * 22/09 (011-contas-e-provedores, etapa 3, Fase 2, emenda da D5) — corrida
@@ -194,7 +194,8 @@ export type ConnectModOutcome =
 export type SwitchOutcome =
   | { readonly kind: 'switched'; readonly from: AccountId | null; readonly to: AccountId }
   | { readonly kind: 'already-active'; readonly account: AccountId }
-  | { readonly kind: 'failed'; readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'io' };
+  /** `account-unavailable` (pool Seazone, patch local v2) — o backend recusou esta conta agora (em uso por outra pessoa, sem crédito, sem conta livre); não é falta de rede. */
+  | { readonly kind: 'failed'; readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'account-unavailable' | 'io' };
 
 /** 011-contas-e-provedores, etapa 3, Fase 1 — "Remover conta" (plan-etapa-3.md §4.3). Bloqueada quando `id` é a conta ATIVA (ver `planRemoveAccount`, account-pool.ts). */
 export type RemoveAccountOutcome =

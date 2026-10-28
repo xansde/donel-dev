@@ -45,12 +45,36 @@ export function formatOverallLoad(load: AccountLoad | null): string {
 // mas é injetável pra teste determinístico (`tests/accountsFormat.test.ts`).
 // ---------------------------------------------------------------------------
 
-const AUTO_SWITCH_FAILURE_REASON_LABEL: Record<'unauthorized' | 'offline' | 'expired-credentials' | 'io', string> = {
+const AUTO_SWITCH_FAILURE_REASON_LABEL: Record<'unauthorized' | 'offline' | 'expired-credentials' | 'account-unavailable' | 'io', string> = {
   offline: 'sem conexão',
   unauthorized: 'o servidor recusou',
   'expired-credentials': 'a credencial venceu',
+  // Pool Seazone (patch local v2) — a troca automática para o pool pede
+  // `auto`; recusa (409) ali quer dizer que o switcher não achou conta livre.
+  'account-unavailable': 'nenhuma conta livre no pool agora',
   io: 'erro ao gravar a troca',
 };
+
+/**
+ * Texto da falha de uma troca MANUAL, por linha do painel
+ * (`AccountsPanel.handleSwitch`). `expired-credentials` não passa por aqui:
+ * a marca de reconectar já cobre. Patch local v2 — `account-unavailable` (409
+ * do switcher: conta em posse de outra pessoa, sem crédito) chegava como
+ * `offline` e o painel dizia "Sem conexão", mandando procurar problema de
+ * rede.
+ */
+export function formatSwitchFailure(reason: 'unauthorized' | 'offline' | 'account-unavailable' | 'io', targetLabel: string): string {
+  switch (reason) {
+    case 'offline':
+      return `Sem conexão para renovar a credencial de «${targetLabel}» — tente de novo.`;
+    case 'unauthorized':
+      return `O servidor recusou a troca para «${targetLabel}» — tente de novo.`;
+    case 'account-unavailable':
+      return `«${targetLabel}» está em uso ou indisponível agora — escolha outra ou deixe a troca automática pegar uma livre.`;
+    case 'io':
+      return `Não foi possível trocar para «${targetLabel}» — tente de novo.`;
+  }
+}
 
 /** Default de `formatTime` em `formatAutoSwitchEvent`: "HH:MM" em pt-BR. */
 function defaultAutoSwitchTime(iso: string): string {

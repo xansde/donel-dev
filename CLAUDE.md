@@ -207,8 +207,14 @@ fase `⬜` da fila
 prontos, um por fase (+ retomada), em `prompt.md`, na mesma pasta.
 
 **Escopo:** 4 contas próprias no alfa, trocando entre elas **durante** sessões
-vivas. **Pool/mod Seazone fora por decisão do dono (13/09)** — sai da UI na
-Fase 1; remover o código espera instrução dele.
+vivas. O pool Seazone saiu da UI em 13/09 e **voltou em 28/10 como opção**:
+só entra quando `accounts.seazone` está na config, e as contas dele aparecem
+no fim da lista, ao lado das locais (`local-with-pool-mod.ts`).
+
+**Ferramentas da Seazone (decisão do dono, 28/10):** o Donel Dev pode aceitá-las
+para facilitar a vida dele, mas **nunca fixo à Seazone**: toda integração é
+adaptador opcional, desligado por padrão, com URL e nomes vindos da config,
+nada hardcoded no core nem default que vaze para o repo público.
 
 A ordem é **estritamente sequencial**. A **Fase 0 era o gate** da promessa
 central da 011 — "trocar de conta sem reiniciar sessão" — e **passou com CLI
