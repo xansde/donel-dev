@@ -79,11 +79,11 @@ describe('deriveFooter', () => {
 
   it('shows the live action in gerund', () => {
     const f = deriveFooter({ live: live({ currentAction: action('Rodou', 'npm test') }), rows: [], lastAction: null });
-    expect(f).toEqual({ kind: 'working', verb: 'Rodando', target: 'npm test', waitingSubagents: 0 });
+    expect(f).toEqual({ kind: 'working', verb: 'Rodando', target: 'npm test', waitingSubagents: 0, actionStartedAt: '2026-10-08T10:00:00.000Z' });
   });
 
-  it('says only "trabalhando" when there is no action and no subagent', () => {
-    expect(deriveFooter({ live: live(), rows: [], lastAction: null })).toEqual({ kind: 'working', waitingSubagents: 0 });
+  it('says "pensando" when there is no action and no subagent (owner, 28/10: the chat must show it is alive)', () => {
+    expect(deriveFooter({ live: live(), rows: [], lastAction: null })).toEqual({ kind: 'working', waitingSubagents: 0, thinking: true });
   });
 
   it('counts subagents when only they remain (D-C18)', () => {
@@ -95,7 +95,7 @@ describe('deriveFooter', () => {
 
   it('an action wins over the subagent count', () => {
     const f = deriveFooter({ live: live({ activeSubagents: ['a'], currentAction: action('Leu', 'x.ts') }), rows: [], lastAction: null });
-    expect(f).toMatchObject({ kind: 'working', verb: 'Lendo', waitingSubagents: 0 });
+    expect(f).toMatchObject({ kind: 'working', verb: 'Lendo', waitingSubagents: 0, alsoSubagents: 1 });
   });
 
   it('is hidden when idle and nothing was interrupted', () => {
