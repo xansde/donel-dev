@@ -789,7 +789,7 @@ Clarify futuro: é só indicador (qual conta está ativa) ou também switcher
 (trocar sem sair do app)? Por repo (cada projeto pode ter conta diferente,
 via `includeIf` do git) ou global? Onde na UI (status bar, preferências)?
 
-### B25. Priorizar contas específicas no pool Seazone (novo — dogfooding 04/08)
+### B25. Priorizar contas específicas no pool Seazone (novo — dogfooding 04/08) — **ENTREGUE em 28/10** (`accounts.seazone.preferredLabels` + botão Preferir no painel; lista vazia = todas, para não mudar quem já usa o pool)
 
 Pedido do Alexandre durante a validação da etapa 1 da 011, com o pool real na
 tela: *"gostaria que esse mod-seazone eu pudesse priorizar algumas contas

@@ -127,9 +127,19 @@ export interface AccountsConfig {
   readonly autoSwitch: AutoSwitchPolicy;
   /** Alvo das escritas do switch; `null` = default `~/.claude` (C1). */
   readonly claudeHome: string | null;
-  readonly seazone: { readonly baseUrl: string } | null;
+  readonly seazone: SeazonePoolConfig | null;
   readonly localAccounts: readonly LocalAccountMeta[];
   readonly activeAccountId: AccountId | null;
+}
+
+/**
+ * B25 — pool Seazone opcional. `preferredLabels` (e-mails, o id da conta no
+ * switcher): com a lista não vazia, o auto-switch só leva para essas contas do
+ * pool; a troca manual segue livre para qualquer uma. Ausente ou vazia = todas.
+ */
+export interface SeazonePoolConfig {
+  readonly baseUrl: string;
+  readonly preferredLabels?: readonly string[];
 }
 
 export function defaultAccountsConfig(): AccountsConfig {

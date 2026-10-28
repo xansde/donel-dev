@@ -12,7 +12,7 @@
 // tenta uma troca que o próprio motor sabe que vai falhar.
 
 import { overallLoad, type AccountId, type AccountSummary, type AutoSwitchPolicy, type AutoSwitchState } from '../../shared/accounts';
-import { isPoolAccountId } from './pool-account-id';
+import { isPoolAccountId, poolLabelFromId } from './pool-account-id';
 
 /** Injetável — produção usa amostragem aleatória; teste usa uma função determinística. Devolve até 2 elementos. */
 export type PickTwo = (candidates: readonly AccountSummary[]) => readonly AccountSummary[];
@@ -131,6 +131,26 @@ export function selectAutoSwitchTarget(
   // A ativa entra nas duas listas: é contra ela que a folga é medida.
   const withActive = (family: readonly AccountSummary[]): readonly AccountSummary[] => (family.some((a) => a.id === activeId) ? family : [active, ...family]);
   return selectSwitchTarget(withActive(locals), activeId, policy, pickTwo) ?? selectSwitchTarget(withActive(poolAccounts), activeId, policy, pickTwo);
+}
+
+/**
+ * B25 — puro. Com `preferredLabels` não vazia, tira da lista as contas do pool
+ * fora dela (a ativa fica sempre: é contra ela que a folga é medida). Locais
+ * nunca saem. Sem lista, devolve `accounts` intacta. Só o automático passa por
+ * aqui; a troca manual e a lista do painel continuam vendo o pool inteiro.
+ */
+export function restrictPoolToPreferred(
+  accounts: readonly AccountSummary[],
+  activeId: AccountId | null,
+  preferredLabels: readonly string[] | undefined,
+): readonly AccountSummary[] {
+  if (!preferredLabels || preferredLabels.length === 0) return accounts;
+  const preferred = new Set(preferredLabels);
+  return accounts.filter((account) => {
+    if (account.id === activeId) return true;
+    const label = poolLabelFromId(account.id);
+    return label === null || preferred.has(label);
+  });
 }
 
 /** Melhor de duas sorteadas (mesmo critério de `selectSwitchTarget`); `null` sem candidata. */

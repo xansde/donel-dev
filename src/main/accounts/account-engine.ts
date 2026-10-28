@@ -59,7 +59,7 @@
 // `oauthAccount` ainda ausente — ele SOME do arquivo logo no passo 3 do
 // switch, até o CLI re-fetch) = `switch-check-inconclusive`, nunca avisa.
 
-import { classifyAutoSwitch, computePollIntervalMs, selectAutoSwitchTarget } from './auto-switch';
+import { classifyAutoSwitch, computePollIntervalMs, restrictPoolToPreferred, selectAutoSwitchTarget } from './auto-switch';
 import { createReconnectRegistry, type ReconnectRegistry } from './reconnect-registry';
 import type { AccountMod, CredentialPair } from './account-mod';
 import type { AdoptRefreshedPairResult } from './claude-state';
@@ -592,7 +592,7 @@ export class AccountEngine {
     if (this.disposed) return null;
     if (!this.mod || this.state !== 'ready' || !this.config.autoSwitch.enabled) return null;
 
-    const accounts = this.decoratedAccounts();
+    const accounts = restrictPoolToPreferred(this.decoratedAccounts(), this.config.activeAccountId, this.config.seazone?.preferredLabels);
     // Pool Seazone ao lado das locais — `selectAutoSwitchTarget` deixa o pool
     // como última opção e traz de volta para uma local livre; sem conta
     // `seazone:*` na lista decide igual ao `selectSwitchTarget` de antes.
@@ -804,7 +804,7 @@ export class AccountEngine {
 
   private buildView(): AccountsViewDto {
     const decorated = this.decoratedAccounts();
-    const autoSwitchState = !this.mod || this.state !== 'ready' ? 'idle' : classifyAutoSwitch(decorated, this.config.activeAccountId, this.config.autoSwitch);
+    const autoSwitchState = !this.mod || this.state !== 'ready' ? 'idle' : classifyAutoSwitch(restrictPoolToPreferred(decorated, this.config.activeAccountId, this.config.seazone?.preferredLabels), this.config.activeAccountId, this.config.autoSwitch);
     return {
       mod: this.config.mod,
       state: this.state,

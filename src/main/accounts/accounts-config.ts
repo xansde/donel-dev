@@ -5,7 +5,7 @@
 // `readAppConfig`/`writeAppConfig` (config-store.ts), esta chave só entra no
 // objeto `AppConfig` maior.
 
-import type { AccountId, AccountsConfig, AutoSwitchPolicy, LocalAccountMeta, ModId } from '../../shared/accounts';
+import type { AccountId, AccountsConfig, AutoSwitchPolicy, LocalAccountMeta, ModId, SeazonePoolConfig } from '../../shared/accounts';
 
 const KNOWN_MOD_IDS: readonly ModId[] = ['seazone', 'local'];
 
@@ -27,11 +27,19 @@ function sanitizeAutoSwitchPolicy(value: unknown, fallback: AutoSwitchPolicy): A
   };
 }
 
-function sanitizeSeazoneConfig(value: unknown): { readonly baseUrl: string } | null {
+function sanitizeSeazoneConfig(value: unknown): SeazonePoolConfig | null {
   if (typeof value !== 'object' || value === null) return null;
-  const candidate = value as { baseUrl?: unknown };
+  const candidate = value as { baseUrl?: unknown; preferredLabels?: unknown };
   if (typeof candidate.baseUrl !== 'string' || !candidate.baseUrl.trim()) return null;
-  return { baseUrl: candidate.baseUrl };
+  const preferredLabels = sanitizePreferredLabels(candidate.preferredLabels);
+  return preferredLabels.length > 0 ? { baseUrl: candidate.baseUrl, preferredLabels } : { baseUrl: candidate.baseUrl };
+}
+
+/** B25 — strings não vazias, aparadas, sem repetição; qualquer outra coisa some. */
+function sanitizePreferredLabels(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return [];
+  const labels = value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean);
+  return [...new Set(labels)];
 }
 
 /**
