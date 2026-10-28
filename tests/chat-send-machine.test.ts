@@ -462,6 +462,27 @@ describe('prazos (§6)', () => {
   });
 });
 
+describe('Enter no meio da rodada sem sinal (máquina carregada)', () => {
+  it('a caixa esvaziou: fica na fila do CLI, não "não foi"', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.screen(workingEmpty(), 0);
+    sim.screen(screen('oi tudo bem', WORKING_FOOTER), 100);
+    sim.tick(180);
+    sim.screen(workingEmpty(), 15_180);
+    expect(sim.phase).toBe('queued');
+    expect(sim.status?.label).toBe('na fila');
+  });
+
+  it('o texto continua na caixa: falha como antes', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.screen(workingEmpty(), 0);
+    sim.screen(screen('oi tudo bem', WORKING_FOOTER), 100);
+    sim.tick(180);
+    sim.screen(screen('oi tudo bem', WORKING_FOOTER), 15_180);
+    expect(sim.phase).toBe('failed');
+  });
+});
+
 describe('reenvio e anti-duplicidade (§7)', () => {
   it('texto ainda na caixa 3 s depois do Enter: reenvia só \\r, uma vez', () => {
     const sim = sendUntilEnter('oi tudo bem');

@@ -585,6 +585,13 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
       return;
     }
     if (s.ackDeadline !== null && now >= s.ackDeadline) {
+      // Enter written mid-turn and our text left the box: the CLI took it into its own queue (the signal is
+      // just late, as on a machine short of RAM). It waits there for the turn, like a `queued` send.
+      if (!s.idleAtEnter && lines !== null && !textSeen(s, lines)) {
+        s.phase = 'queued';
+        s.step = 'done';
+        return;
+      }
       fail(s, 'não foi');
       return;
     }
