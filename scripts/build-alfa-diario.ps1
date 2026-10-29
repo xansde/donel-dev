@@ -32,10 +32,19 @@ try {
     git -C $worktree clean -fdq -e node_modules
   }
 
+  # node_modules emprestado do checkout principal (junção): um npm install do
+  # zero recompila o node-pty e exige Visual Studio, que esta máquina não tem.
+  # Só vale com o mesmo package-lock; se as dependências mudaram, para e avisa.
+  $lockHere = (Get-FileHash (Join-Path $worktree 'package-lock.json')).Hash
+  $lockMain = (Get-FileHash (Join-Path $repo 'package-lock.json')).Hash
+  if ($lockHere -ne $lockMain) { throw 'as dependências de staging mudaram: rode npm install no checkout principal e tente de novo' }
+  $modules = Join-Path $worktree 'node_modules'
+  $item = Get-Item $modules -Force -ErrorAction SilentlyContinue
+  if ($item -and -not $item.LinkType) { Remove-Item -LiteralPath $modules -Recurse -Force }
+  if (-not (Test-Path $modules)) { New-Item -ItemType Junction -Path $modules -Target (Join-Path $repo 'node_modules') | Out-Null }
+
   Push-Location $worktree
   try {
-    npm install --no-audit --no-fund
-    if ($LASTEXITCODE -ne 0) { throw "npm install falhou ($LASTEXITCODE)" }
     npm run dist:alfa -- --config.npmRebuild=false
     if ($LASTEXITCODE -ne 0) { throw "dist:alfa falhou ($LASTEXITCODE)" }
   } finally {
