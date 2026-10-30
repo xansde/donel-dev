@@ -18,6 +18,14 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-10-31',
     items: [
       {
+        title: 'PR de cada projeto na barra lateral',
+        text: 'Cada projeto mostra o número do PR da branch, verde, amarelo ou vermelho conforme os checks, e avisa quando pediram mudanças. Clique nele para ver os checks e reviews e, se algo quebrou, mande o Claude consertar com um botão.',
+      },
+      {
+        title: 'Observação nas perguntas do Claude',
+        text: 'Agora dá para escrever uma observação em cada pergunta do Claude: clique em "+ observação" e ela vai junto com a sua resposta.',
+      },
+      {
         title: 'Mande mensagem com o Claude trabalhando',
         text: 'A mensagem vai na hora, aparece "na fila" e entra quando ele terminar o que está fazendo, sem precisar interromper. Se ele não pegar a mensagem, o chat avisa e oferece tentar de novo. E "Interromper e mandar agora" volta a interromper de verdade: o app espera o Claude parar antes de mandar.',
       },
