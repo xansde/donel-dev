@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PATCH_NOTES, type PatchNoteDay } from '../src/renderer/src/patchnotes/notes';
-import { formatNoteDate, latestNoteDate, unseenNotes } from '../src/renderer/src/patchnotes/patchNotesModel';
+import { formatNoteDate, latestNoteDate, recentNotes, unseenNotes } from '../src/renderer/src/patchnotes/patchNotesModel';
 
 const day = (date: string): PatchNoteDay => ({ date, items: [{ title: date, text: 'x' }] });
 const notes = [day('2026-10-27'), day('2026-10-29'), day('2026-10-28')];
@@ -23,8 +23,14 @@ describe('novidades da versão', () => {
     expect(latestNoteDate([])).toBeNull();
   });
 
-  it('data curta dd/mm', () => {
-    expect(formatNoteDate('2026-10-28')).toBe('28/10');
+  it('reabrir mostra os dias mais novos, mesmo já vistos', () => {
+    expect(recentNotes(notes, 2).map((d) => d.date)).toEqual(['2026-10-29', '2026-10-28']);
+    expect(recentNotes(notes, 10)).toHaveLength(3);
+  });
+
+  it('data por extenso', () => {
+    expect(formatNoteDate('2026-10-28')).toBe('28 de outubro');
+    expect(formatNoteDate('2026-03-05')).toBe('5 de março');
   });
 
   it('as notas publicadas têm data AAAA-MM-DD e texto em cada item', () => {
