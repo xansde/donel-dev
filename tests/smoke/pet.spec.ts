@@ -554,8 +554,7 @@ test.describe('o Jobu sem o chat', () => {
     await expect.poll(() => fresh().length, { timeout: 40_000, message: 'the toast did not come back with the Jobu hidden' }).toBe(1);
     expect(fresh()).toEqual([{ title: 'atlas terminou', body: 'Clique para abrir a sessão.' }]);
     expect((await taskbar()).overlayCount).toBe(1);
-    // the Donel was in front all along (on `beacon`): nothing to flash
-    expect((await taskbar()).flashing).toBe(false);
+    // (the flash depends on the OS focus of the window, which a smoke does not control here: T041 proves it minimized)
 
     // And on again: he comes back with the state of the sessions as it is (`atlas` still waits, unseen).
     await setPetEnabled(true);
