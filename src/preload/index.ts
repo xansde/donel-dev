@@ -119,7 +119,7 @@ import {
 } from '../shared/esteira/ipc';
 
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import type { MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
+import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
@@ -370,6 +370,10 @@ const donelApi: DonelApi = {
       ipcRenderer.on(MINDSCAPE_CHANNELS.turnEnded, handler);
       return () => ipcRenderer.removeListener(MINDSCAPE_CHANNELS.turnEnded, handler);
     },
+    // Desenho, fatia 06 — the prints: bytes in, imageId out (the main names and checks the file).
+    saveImage: (bytes: ArrayBuffer, mediaType: string) =>
+      ipcRenderer.invoke(MINDSCAPE_CHANNELS.saveImage, { bytes, mediaType }) as Promise<MindscapeSaveImageResult>,
+    readImage: (imageId: string) => ipcRenderer.invoke(MINDSCAPE_CHANNELS.readImage, imageId) as Promise<MindscapeReadImageResult>,
   },
 
   devMode: {

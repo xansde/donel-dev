@@ -21,6 +21,7 @@ import {
   placeSessionCard,
   sessionCardId,
   writeSessionNote,
+  type InkDrawing,
   type MindscapeDoc,
   type MindscapeDrawing,
 } from '../src/shared/mindscape/model';
@@ -138,9 +139,9 @@ describe('removeItems', () => {
 describe('setDrawingsStyle', () => {
   it('changes the color and the stroke of the given drawings only', () => {
     const next = setDrawingsStyle(full(), ATLAS, ['d1', 'l1'], { color: 'accent' });
-    expect(next.boards[ATLAS]!.drawings.map((drawing) => drawing.color)).toEqual(['accent', 'accent', 'accent']);
+    expect(next.boards[ATLAS]!.drawings.map((drawing) => (drawing as InkDrawing).color)).toEqual(['accent', 'accent', 'accent']);
     const thick = setDrawingsStyle(next, ATLAS, ['d1'], { stroke: 'thick' });
-    expect(thick.boards[ATLAS]!.drawings.map((drawing) => drawing.stroke)).toEqual(['thick', 'thin', 'thick']);
+    expect(thick.boards[ATLAS]!.drawings.map((drawing) => (drawing as InkDrawing).stroke)).toEqual(['thick', 'thin', 'thick']);
     expect(thick.boards[ATLAS]!.drawings[1]).toBe(next.boards[ATLAS]!.drawings[1]);
   });
 
@@ -245,5 +246,38 @@ describe('the pencil stroke in the reducers', () => {
     const withPencil = addDrawing(doc(), ATLAS, pencil);
     expect(setDrawingsStyle(withPencil, ATLAS, ['p1'], { stroke: 'thick' }).boards[ATLAS]!.drawings[0]).toMatchObject({ kind: 'pencil', stroke: 'thick' });
     expect(removeItems(withPencil, ATLAS, { cards: [], drawings: ['p1'] }).boards[ATLAS]!.drawings).toEqual([]);
+  });
+});
+
+describe('the print in the reducers (desenho, fatia 06)', () => {
+  const print: MindscapeDrawing = { kind: 'image', id: 'im', imageId: 'img-a-0a1b2c3d.png', x: 10, y: 20, w: 300, h: 150 };
+
+  it('addDrawing puts a valid print on top and refuses one with a bad imageId', () => {
+    const next = addDrawing(doc(), ATLAS, print);
+    expect(next.boards[ATLAS]!.drawings).toEqual([print]);
+    expect(addDrawing(doc(), ATLAS, { ...print, imageId: '../x.png' })).toEqual(doc());
+  });
+
+  it('moveItems moves a print with the rest', () => {
+    const start = addDrawing(addDrawing(doc(), ATLAS, print), ATLAS, rect);
+    const next = moveItems(start, ATLAS, { cards: [], drawings: ['im', 'd1'] }, 5, -5);
+    expect(next.boards[ATLAS]!.drawings.map((drawing) => [drawing.id, 'x' in drawing ? drawing.x : null, 'y' in drawing ? drawing.y : null])).toEqual([
+      ['im', 15, 15],
+      ['d1', 15, 15],
+    ]);
+  });
+
+  it('setDrawingsStyle ignores a print (it has no color nor stroke)', () => {
+    const start = addDrawing(doc(), ATLAS, print);
+    expect(setDrawingsStyle(start, ATLAS, ['im'], { color: 'accent', stroke: 'thick' })).toBe(start);
+    const both = addDrawing(start, ATLAS, rect);
+    const styled = setDrawingsStyle(both, ATLAS, ['im', 'd1'], { color: 'accent' });
+    expect(styled.boards[ATLAS]!.drawings[0]).toBe(both.boards[ATLAS]!.drawings[0]);
+    expect(styled.boards[ATLAS]!.drawings[1]).toMatchObject({ id: 'd1', color: 'accent' });
+  });
+
+  it('removeItems takes a print away', () => {
+    const start = addDrawing(doc(), ATLAS, print);
+    expect(removeItems(start, ATLAS, { cards: [], drawings: ['im'] }).boards[ATLAS]!.drawings).toEqual([]);
   });
 });

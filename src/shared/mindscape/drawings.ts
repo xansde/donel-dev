@@ -20,6 +20,11 @@ import {
 /** Stroke width in board units. */
 export const STROKE_WIDTH: Readonly<Record<DrawingStroke, number>> = { thin: 1.5, medium: 3, thick: 5 };
 
+/** The ink width of a drawing in board units; a print (fatia 06) has no ink: 0. */
+export function strokeWidthOf(drawing: MindscapeDrawing): number {
+  return drawing.kind === 'image' ? 0 : STROKE_WIDTH[drawing.stroke];
+}
+
 /** A box drawn from bottom right to top left comes with a negative w/h: make it positive. */
 function normalized(drawing: MindscapeDrawing): MindscapeDrawing {
   if (drawing.kind === 'line' || drawing.kind === 'pencil') return drawing;
@@ -127,8 +132,9 @@ export interface DrawingStyleInput {
 }
 
 /**
- * Fatia 03 — color and/or stroke of the bar applied to the selected drawings.
- * A style that is not one of the bar, or nothing to change → same document.
+ * Fatia 03 — color and/or stroke of the bar applied to the selected drawings
+ * (a print, fatia 06, has neither and is skipped). A style that is not one of
+ * the bar, or nothing to change → same document.
  */
 export function setDrawingsStyle(doc: MindscapeDoc, projectPath: string, drawingIds: readonly string[], style: DrawingStyleInput): MindscapeDoc {
   const board = doc.boards[projectPath];
@@ -138,7 +144,7 @@ export function setDrawingsStyle(doc: MindscapeDoc, projectPath: string, drawing
   const ids = new Set(drawingIds);
   let changed = false;
   const drawings = board.drawings.map((drawing) => {
-    if (!ids.has(drawing.id)) return drawing;
+    if (!ids.has(drawing.id) || drawing.kind === 'image') return drawing;
     const color = style.color ?? drawing.color;
     const stroke = style.stroke ?? drawing.stroke;
     if (color === drawing.color && stroke === drawing.stroke) return drawing;

@@ -3,7 +3,7 @@
 // rect, an ellipse and a link go whole when their stroke is touched; a post-it
 // never goes. Design: docs/design/mindscape-desenho.md, "Borracha parcial e hit-test".
 
-import { STROKE_WIDTH } from './drawings';
+import { STROKE_WIDTH, strokeWidthOf } from './drawings';
 import { distanceToDrawing, distanceToSegment, linkEndpoints, toPoints } from './geometry';
 import type { MindscapeBoard, MindscapeDoc, MindscapeDrawing, MindscapeLink } from './model';
 import type { Point } from './view';
@@ -176,7 +176,7 @@ function touches(circles: readonly Point[], distance: (point: Point) => number, 
  * `radius` (8 px of screen / zoom) on the board: pencil strokes and loose lines
  * lose the touched piece (the first piece keeps the id and the layer, the
  * others get `newId()`, injected to stay pure); rects and ellipses go whole
- * when the contour is touched; a link goes whole when its drawn segment is
+ * when the contour is touched; a print (fatia 06) goes whole when its area is; a link goes whole when its drawn segment is
  * touched (`cardSizes` are the measured sizes of the cards on screen — a link
  * without both is not drawn, so it is not erased); post-its never go. The ink
  * counts: the reach is `radius + stroke / 2`. Nothing touched → the same board.
@@ -201,7 +201,8 @@ export function eraseBoard(
       } else drawings.push(drawing);
       continue;
     }
-    if (touches(circles, (point) => distanceToDrawing(point, drawing), radius + STROKE_WIDTH[drawing.stroke] / 2)) {
+    // A rect or an ellipse goes when its contour is touched; a print (fatia 06), when its area is.
+    if (touches(circles, (point) => distanceToDrawing(point, drawing), radius + strokeWidthOf(drawing) / 2)) {
       drawingsChanged = true;
       continue;
     }

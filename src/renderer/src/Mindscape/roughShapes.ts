@@ -5,7 +5,7 @@
 
 import rough from 'roughjs';
 import type { Options } from 'roughjs/bin/core';
-import type { MindscapeDrawing } from '../../../shared/mindscape/model';
+import type { InkDrawing } from '../../../shared/mindscape/model';
 import { STROKE_WIDTH } from '../../../shared/mindscape/drawings';
 import { linkEndpoints, type Rect } from '../../../shared/mindscape/geometry';
 
@@ -141,9 +141,10 @@ export interface DrawingShape {
  * Mindscape desenho, fatia 01 — the hand-made stroke of a drawing, generated
  * in local coordinates (origin at the top-left of the box, or at the start of
  * the line) and placed by `transform`: moving it does not invalidate the cache.
- * A degenerate box (< 1 unit) has no shape.
+ * A degenerate box (< 1 unit) has no shape. The print (fatia 06) is not a
+ * stroke: `MindscapeDrawingLayer` draws it as an `<image>`.
  */
-export function drawingShape(drawing: MindscapeDrawing): DrawingShape | null {
+export function drawingShape(drawing: InkDrawing): DrawingShape | null {
   const strokeWidth = STROKE_WIDTH[drawing.stroke];
   if (drawing.kind === 'pencil') {
     // Absolute points: a moved stroke has a new `points` array anyway (the cache is by array).

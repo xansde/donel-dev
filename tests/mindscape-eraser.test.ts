@@ -183,3 +183,20 @@ describe('eraseDoc', () => {
     expect(eraseDoc(doc, 'C:/work/vega', [50, 0], 4, ids())).toBe(doc);
   });
 });
+
+describe('the print under the eraser (desenho, fatia 06)', () => {
+  const print: MindscapeDrawing = { kind: 'image', id: 'im', imageId: 'img-a-0a1b2c3d.png', x: 400, y: 400, w: 200, h: 100 };
+
+  it('goes whole when the eraser touches its area, even in the middle', () => {
+    const start = board([pencil, print]);
+    const next = eraseBoard(start, [500, 450], 4, ids());
+    expect(next.drawings.map((drawing) => drawing.id)).toEqual(['p1']);
+    // Just outside the edge, within the radius: it goes too.
+    expect(eraseBoard(start, [398, 450], 4, ids()).drawings.map((drawing) => drawing.id)).toEqual(['p1']);
+  });
+
+  it('away from it, it stays', () => {
+    const start = board([print]);
+    expect(eraseBoard(start, [380, 450, 390, 300], 4, ids())).toBe(start);
+  });
+});

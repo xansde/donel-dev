@@ -12,8 +12,9 @@ import type { DevModeBoardConfig } from '../shared/devMode';
 import { createEsteiraService, type EsteiraService } from './esteira-service';
 import { esteiraStoreDir } from './esteira-store';
 import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
+import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import type { MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
+import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
 import { esteiraOutboxDir } from './esteira-ingest';
 import { esteiraInboxDir } from './esteira-dispatch';
@@ -2191,11 +2192,19 @@ function registerTabIpcHandlers(): void {
 /**
  * Mindscape (V1) — load/save of `mindscape.json`. The main is the only writer
  * and validates the payload (`parseMindscapeDoc`) before writing.
+ * Desenho, fatia 06 — the prints in `mindscape-images/` beside it (save/read by
+ * imageId), and the boot sweep of the orphans (never during the run).
  */
 function registerMindscapeIpcHandlers(): void {
-  const store = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps);
+  const filePath = mindscapeFilePath(process.env, app.getPath('userData'));
+  const store = createMindscapeStore(filePath, configIoDeps);
   ipcMain.handle(MINDSCAPE_CHANNELS.load, (): MindscapeDoc => store.load());
   ipcMain.handle(MINDSCAPE_CHANNELS.save, (_event, doc: unknown): MindscapeSaveResult => store.save(doc));
+  const images = createMindscapeImages({ dir: mindscapeImagesDir(filePath) });
+  ipcMain.handle(MINDSCAPE_CHANNELS.saveImage, (_event, payload: unknown): Promise<MindscapeSaveImageResult> => images.save(payload));
+  ipcMain.handle(MINDSCAPE_CHANNELS.readImage, (_event, imageId: unknown): Promise<MindscapeReadImageResult> => images.read(imageId));
+  // After the handlers: the sweep reads the raw file and never runs on a missing, invalid or newer one.
+  void images.sweepOrphans(configIoDeps.readFileText(filePath)).catch(() => undefined);
 }
 
 /**

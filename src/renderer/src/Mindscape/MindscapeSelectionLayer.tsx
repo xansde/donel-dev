@@ -1,4 +1,4 @@
-import { STROKE_WIDTH } from '../../../shared/mindscape/drawings';
+import { strokeWidthOf } from '../../../shared/mindscape/drawings';
 import { drawingBounds, type Rect, type ResizeHandle } from '../../../shared/mindscape/geometry';
 import type { MindscapeDrawing } from '../../../shared/mindscape/model';
 import styles from './Mindscape.module.css';
@@ -12,7 +12,7 @@ function normalized(rect: Rect): Rect {
   return { x: rect.w < 0 ? rect.x + rect.w : rect.x, y: rect.h < 0 ? rect.y + rect.h : rect.y, w: Math.abs(rect.w), h: Math.abs(rect.h) };
 }
 
-/** Where each handle of a drawing sits (corners of a box, ends of a loose line; a pencil stroke has none). */
+/** Where each handle of a drawing sits (corners of a box or a print, ends of a loose line; a pencil stroke has none). */
 function handlesOf(drawing: MindscapeDrawing): { readonly handle: ResizeHandle; readonly x: number; readonly y: number }[] {
   if (drawing.kind === 'pencil') return [];
   if (drawing.kind === 'line') {
@@ -66,7 +66,7 @@ export function MindscapeSelectionLayer({ cards, drawings, withHandles, lasso, z
       ))}
       {drawings.map((drawing) => {
         const box = drawingBounds(drawing);
-        const pad = gap + STROKE_WIDTH[drawing.stroke] / 2;
+        const pad = gap + strokeWidthOf(drawing) / 2;
         return (
           <rect
             key={drawing.id}

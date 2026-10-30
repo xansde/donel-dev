@@ -7,6 +7,7 @@
 // same object, so the renderer can skip a save by identity.
 
 import type { TabColorToken } from '../tabAppearance';
+import { isImageId } from './images';
 import { clampZoom } from './view';
 
 /**
@@ -51,13 +52,18 @@ export const DRAWING_STROKES: readonly DrawingStroke[] = ['thin', 'medium', 'thi
  * The owner's drawings, in board units (same as `card.x/y`). Loose arrow and
  * line are one kind (`arrow` on/off), like the link. Boxes always have a
  * positive `w`/`h` and no fill. The pencil stroke (fatia 04) keeps flattened
- * points `[x0, y0, x1, y1, …]`, rounded to 0.1. Print comes in a later fatia.
+ * points `[x0, y0, x1, y1, …]`, rounded to 0.1. The print (fatia 06) has no
+ * color nor stroke: only the `imageId` of its file in `mindscape-images/` and its box.
  */
 export type MindscapeDrawing =
   | { kind: 'pencil'; id: string; color: DrawingColor; stroke: DrawingStroke; points: number[] }
   | { kind: 'line'; id: string; color: DrawingColor; stroke: DrawingStroke; arrow: boolean; x1: number; y1: number; x2: number; y2: number }
   | { kind: 'rect'; id: string; color: DrawingColor; stroke: DrawingStroke; x: number; y: number; w: number; h: number }
-  | { kind: 'ellipse'; id: string; color: DrawingColor; stroke: DrawingStroke; x: number; y: number; w: number; h: number };
+  | { kind: 'ellipse'; id: string; color: DrawingColor; stroke: DrawingStroke; x: number; y: number; w: number; h: number }
+  | { kind: 'image'; id: string; imageId: string; x: number; y: number; w: number; h: number };
+
+/** The drawings with ink (everything but the print): what the bar's color and stroke apply to. */
+export type InkDrawing = Exclude<MindscapeDrawing, { kind: 'image' }>;
 
 export interface MindscapeBoard {
   projectPath: string;
@@ -408,11 +414,18 @@ function parseLink(raw: unknown): MindscapeLink | null {
 
 /**
  * Guard of one drawing (disk, renderer or reducer input): wrong color, unknown
- * stroke, non-finite number, a box with `w`/`h` ≤ 0 or a pencil stroke with odd
- * `points` or fewer than 2 points → `null`. The result carries only the known fields.
+ * stroke, non-finite number, a box with `w`/`h` ≤ 0, a pencil stroke with odd
+ * `points` or fewer than 2 points, or a print with an `imageId` out of the
+ * pattern → `null`. The result carries only the known fields.
  */
 export function parseDrawing(raw: unknown): MindscapeDrawing | null {
   if (!isRecord(raw) || !isNonEmptyString(raw.id)) return null;
+  if (raw.kind === 'image') {
+    // Fatia 06 — the print: no color nor stroke; the imageId is the only name the main builds a path from.
+    const { x, y, w, h, imageId } = raw;
+    if (!isImageId(imageId) || !isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(w) || !isFiniteNumber(h) || w <= 0 || h <= 0) return null;
+    return { kind: 'image', id: raw.id, imageId, x, y, w, h };
+  }
   if (!OWNER_COLORS.includes(raw.color as DrawingColor) || !DRAWING_STROKES.includes(raw.stroke as DrawingStroke)) return null;
   const base = { id: raw.id, color: raw.color as DrawingColor, stroke: raw.stroke as DrawingStroke };
   switch (raw.kind) {

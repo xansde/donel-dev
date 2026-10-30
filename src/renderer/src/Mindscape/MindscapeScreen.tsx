@@ -4,6 +4,7 @@ import { addDrawing, bringToFront, moveItems, removeItems, sendToBack, setDrawin
 import { eraseDoc } from '../../../shared/mindscape/eraser';
 import type { CardRect, ItemIds } from '../../../shared/mindscape/geometry';
 import { sessionHighlight } from '../../../shared/mindscape/highlight';
+import { fitImage, imageBoxAt, isPrintInputType, MAX_PRINT_BYTES } from '../../../shared/mindscape/images';
 import {
   addLink,
   addOwnerCard,
@@ -15,11 +16,12 @@ import {
   toggleLinkArrow,
   visibleLinks,
   type MindscapeCard as Card,
+  type InkDrawing,
   type MindscapeDoc,
   type MindscapeDrawing,
 } from '../../../shared/mindscape/model';
 import { mindscapeShortcut, type MindscapeTool } from '../../../shared/mindscape/shortcuts';
-import { screenToWorld, type BoardView } from '../../../shared/mindscape/view';
+import { screenToWorld, type BoardView, type Point } from '../../../shared/mindscape/view';
 import type { TabColorToken } from '../../../shared/tabAppearance';
 import { EMPTY_ITEMS, ERASER_RADIUS_PX, isDrawTool, MindscapeBoard, sizesOf, type DrawGesture } from './MindscapeBoard';
 import { MindscapeDrawingLayer } from './MindscapeDrawingLayer';
@@ -27,6 +29,7 @@ import { MindscapeLinkLayer, MindscapeOutlineLayer, useCardSizes } from './Minds
 import { MindscapeNoteCard, MindscapeOwnerCard, MindscapeSessionCard, STRIPE_BY_TOKEN } from './MindscapeCard';
 import { MindscapeSelectionLayer } from './MindscapeSelectionLayer';
 import { MindscapeToolbar, type DrawStyle } from './MindscapeToolbar';
+import { preparePrint, useMindscapeImages } from './useMindscapeImage';
 import styles from './Mindscape.module.css';
 
 /** A `claude` tab that is open in a project — what feeds the session post-its. */
@@ -89,8 +92,14 @@ const TOOL_HINT: Readonly<Record<Exclude<MindscapeTool, 'select'>, string>> = {
   eraser: 'Borracha: passe sobre o desenho para apagar o pedaço tocado; post-it nunca sai (Esc volta para a seleção)',
 };
 
+/** Desenho, fatia 06 — the warnings of the print, in the hint strip of the bar. */
+const PRINT_TOO_BIG = 'Imagem grande demais (limite de 10 MB)';
+const PRINT_FAILED = 'Não foi possível colar a imagem';
+/** How long a warning of the print stays in the hint strip (ms). */
+const NOTICE_MS = 6000;
+
 /** The drawing a gesture makes with the current style (boxes are normalized by `addDrawing`). */
-function drawingOf(gesture: DrawGesture, style: DrawStyle): MindscapeDrawing {
+function drawingOf(gesture: DrawGesture, style: DrawStyle): InkDrawing {
   const { id, start, end } = gesture;
   if (gesture.tool === 'pencil') return { kind: 'pencil', id, ...style, points: gesture.points ?? [start.x, start.y] };
   if (gesture.tool === 'arrow' || gesture.tool === 'line') {
@@ -100,7 +109,7 @@ function drawingOf(gesture: DrawGesture, style: DrawStyle): MindscapeDrawing {
 }
 
 /** The preview: a box drawn upward or leftward is shown already normalized. */
-function draftOf(gesture: DrawGesture, style: DrawStyle): MindscapeDrawing {
+function draftOf(gesture: DrawGesture, style: DrawStyle): InkDrawing {
   const drawing = drawingOf(gesture, style);
   if (drawing.kind === 'line' || drawing.kind === 'pencil') return drawing;
   const { x, y, w, h } = drawing;
@@ -127,7 +136,8 @@ interface Selection extends ItemIds {
  * project, the post-its written by the sessions and the owner's own (V1), and
  * the drawing tools of the bar (desenho: V H A L R O, A/L from post-it to
  * post-it make a link; fatia 03: selection of several items, handles, style
- * and layer; fatia 04: P pencil and E eraser; fatia 05: zoom by board). Covers the middle of the shell like the EsteiraScreen; the
+ * and layer; fatia 04: P pencil and E eraser; fatia 05: zoom by board; fatia
+ * 06: prints pasted or dropped). Covers the middle of the shell like the EsteiraScreen; the
  * terminals stay mounted underneath.
  */
 export function MindscapeScreen({
@@ -183,6 +193,17 @@ export function MindscapeScreen({
     section.addEventListener('wheel', guard, { passive: false });
     return () => section.removeEventListener('wheel', guard);
   }, []);
+  // Desenho, fatia 06 — the files of the prints of this board (blob: URLs, revoked when the Mindscape unmounts).
+  const images = useMindscapeImages(board ? board.drawings.flatMap((drawing) => (drawing.kind === 'image' ? [drawing.imageId] : [])) : []);
+  // A warning of the print in the hint strip, for a few seconds.
+  const [notice, setNotice] = useState<string | undefined>(undefined);
+  const noticeTimerRef = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(noticeTimerRef.current), []);
+  const showNotice = (text: string): void => {
+    setNotice(text);
+    window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setNotice(undefined), NOTICE_MS);
+  };
   // Space is let go when the window loses the focus (the keyup never comes).
   useEffect(() => {
     const release = (): void => setSpaceHeld(false);
@@ -264,6 +285,42 @@ export function MindscapeScreen({
     onAction(projectPath, (current) => eraseDoc(current, projectPath, path, radius, () => crypto.randomUUID(), cardSizes));
   };
 
+  /**
+   * Fatia 06 — a pasted or dropped image becomes a print centered on `at`
+   * (board units), at most 480 wide with the proportion kept: decoded here (a
+   * GIF becomes PNG), stored by the main (which names the file and checks it
+   * all again), then added as one history entry. More than 10 MB → the warning.
+   */
+  const handleImageFile = async (file: File, at: Point): Promise<void> => {
+    if (!board || !isPrintInputType(file.type)) return;
+    const { projectPath } = board;
+    if (file.size > MAX_PRINT_BYTES) {
+      showNotice(PRINT_TOO_BIG);
+      return;
+    }
+    const prepared = await preparePrint(file);
+    if (!prepared) {
+      showNotice(PRINT_FAILED);
+      return;
+    }
+    if (prepared.bytes.byteLength > MAX_PRINT_BYTES) {
+      showNotice(PRINT_TOO_BIG);
+      return;
+    }
+    const size = fitImage(prepared.width, prepared.height);
+    if (!size) {
+      showNotice(PRINT_FAILED);
+      return;
+    }
+    const saved = await window.donel.mindscape.saveImage(prepared.bytes, prepared.mediaType).catch(() => null);
+    if (!saved || !saved.ok) {
+      showNotice(saved?.reason === 'too-big' ? PRINT_TOO_BIG : PRINT_FAILED);
+      return;
+    }
+    const drawing: MindscapeDrawing = { kind: 'image', id: crypto.randomUUID(), imageId: saved.imageId, ...imageBoxAt(at, size) };
+    onAction(projectPath, (current) => addDrawing(current, projectPath, drawing));
+  };
+
   const removeSelected = (): void => {
     if (!board) return;
     const { projectPath } = board;
@@ -336,7 +393,7 @@ export function MindscapeScreen({
     }
   };
 
-  const hint = tool !== 'select' ? TOOL_HINT[tool] : selectedSession ? selectedSession.name : SELECT_HINT;
+  const hint = notice ?? (tool !== 'select' ? TOOL_HINT[tool] : selectedSession ? selectedSession.name : SELECT_HINT);
   const selectedDrawings = board ? board.drawings.filter((drawing) => live.drawings.includes(drawing.id)) : [];
 
   return (
@@ -442,6 +499,7 @@ export function MindscapeScreen({
             clearSelection();
             setSelectedLinkId(undefined);
           }}
+          onImageFile={(file, at) => void handleImageFile(file, at)}
         >
           {({ positionOf, drawings, draft, lasso, links }) => {
             const rectOf = (cardId: string) => {
@@ -459,7 +517,7 @@ export function MindscapeScreen({
             const shownSelected = drawings.filter((drawing) => live.drawings.includes(drawing.id));
             return (
             <>
-              <MindscapeDrawingLayer drawings={drawings} selectedIds={live.drawings} draft={draft && isDrawTool(tool) ? draftOf(draft, drawStyle) : undefined} />
+              <MindscapeDrawingLayer drawings={drawings} selectedIds={live.drawings} images={images} draft={draft && isDrawTool(tool) ? draftOf(draft, drawStyle) : undefined} />
               <MindscapeLinkLayer
                 links={visibleLinks(links, visibleIds)}
                 rectOf={rectOf}

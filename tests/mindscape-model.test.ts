@@ -261,3 +261,31 @@ describe('setBoardView', () => {
     expect(parseMindscapeDoc(JSON.parse(JSON.stringify(next)))).toEqual(next);
   });
 });
+
+describe('parseMindscapeDoc — print (desenho, fatia 06)', () => {
+  const raw = (drawings: unknown[]) => ({ schemaVersion: 2, boards: { [ATLAS]: { projectPath: ATLAS, pan: { x: 0, y: 0 }, zoom: 1, cards: {}, links: [], drawings } } });
+  const print = { kind: 'image', id: 'i1', imageId: 'img-lz3k9a-0a1b2c3d.png', x: 10, y: 20.5, w: 480, h: 270 };
+
+  it('round-trips a print (no color, no stroke)', () => {
+    expect(parseMindscapeDoc(raw([print])).boards[ATLAS]!.drawings).toEqual([print]);
+  });
+
+  it('carries only the known fields', () => {
+    expect(parseMindscapeDoc(raw([{ ...print, color: 'accent', stroke: 'thick', path: 'C:/x.png' }])).boards[ATLAS]!.drawings).toEqual([print]);
+  });
+
+  it('drops a print with an imageId out of the pattern, a box ≤ 0 or a non-finite number', () => {
+    const drawings = [
+      print,
+      { ...print, id: 'dotdot', imageId: '../mindscape.json' },
+      { ...print, id: 'sep', imageId: 'sub/img-lz3k9a-0a1b2c3d.png' },
+      { ...print, id: 'gif', imageId: 'img-lz3k9a-0a1b2c3d.gif' },
+      { ...print, id: 'none', imageId: undefined },
+      { ...print, id: 'zero', w: 0 },
+      { ...print, id: 'neg', h: -5 },
+      { ...print, id: 'nan', x: Number.NaN },
+      { ...print, id: '' },
+    ];
+    expect(parseMindscapeDoc(raw(drawings)).boards[ATLAS]!.drawings.map((drawing) => drawing.id)).toEqual(['i1']);
+  });
+});

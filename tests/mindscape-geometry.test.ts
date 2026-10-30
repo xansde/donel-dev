@@ -186,3 +186,43 @@ describe('the pencil stroke in the geometry', () => {
     expect(resizeDrawing(pencil, 'end', { x: 500, y: 900 })).toBe(pencil);
   });
 });
+
+describe('the print in the geometry (desenho, fatia 06)', () => {
+  const print: MindscapeDrawing = { kind: 'image', id: 'im', imageId: 'img-a-0a1b2c3d.png', x: 100, y: 100, w: 200, h: 100 };
+
+  it('is hit on its whole area, not only near the contour', () => {
+    expect(hitTestDrawings([print], { x: 200, y: 150 }, SLACK)).toBe('im');
+    expect(hitTestDrawings([print], { x: 100, y: 100 }, SLACK)).toBe('im');
+    expect(hitTestDrawings([print], { x: 305, y: 150 }, SLACK)).toBe('im');
+    expect(hitTestDrawings([print], { x: 310, y: 150 }, SLACK)).toBeNull();
+    expect(hitTestDrawings([print], { x: 50, y: 50 }, SLACK)).toBeNull();
+  });
+
+  it('a drawing on top of the print wins where both are hit', () => {
+    const over: MindscapeDrawing = { kind: 'line', id: 'ov', color: 'none', stroke: 'thin', arrow: false, x1: 150, y1: 150, x2: 250, y2: 150 };
+    expect(hitTestDrawings([print, over], { x: 200, y: 150 }, SLACK)).toBe('ov');
+    expect(hitTestDrawings([over, print], { x: 200, y: 150 }, SLACK)).toBe('im');
+  });
+
+  it('has the box of its area and enters the lasso only whole', () => {
+    expect(drawingBounds(print)).toEqual({ x: 100, y: 100, w: 200, h: 100 });
+    expect(itemsInsideRect({ x: 90, y: 90, w: 220, h: 120 }, [], [print]).drawings).toEqual(['im']);
+    expect(itemsInsideRect({ x: 90, y: 90, w: 150, h: 120 }, [], [print]).drawings).toEqual([]);
+  });
+
+  it('resizes by a corner keeping the proportion (the bigger change wins)', () => {
+    // Opposite corner (100, 100) fixed; 2:1.
+    expect(resizeDrawing(print, 'se', { x: 500, y: 150 })).toEqual({ ...print, w: 400, h: 200 });
+    expect(resizeDrawing(print, 'se', { x: 150, y: 400 })).toEqual({ ...print, w: 600, h: 300 });
+    // nw with (300, 200) fixed.
+    expect(resizeDrawing(print, 'nw', { x: 250, y: 0 })).toEqual({ ...print, x: -100, y: 0, w: 400, h: 200 });
+  });
+
+  it('keeps the proportion at the minimum of 4 units (on the smaller side)', () => {
+    expect(resizeDrawing(print, 'se', { x: 101, y: 101 })).toEqual({ ...print, w: 8, h: 4 });
+  });
+
+  it('a line handle changes nothing on a print', () => {
+    expect(resizeDrawing(print, 'end', { x: 0, y: 0 })).toBe(print);
+  });
+});

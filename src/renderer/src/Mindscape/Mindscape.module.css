@@ -567,6 +567,25 @@
   stroke-linejoin: round;
 }
 
+/* Desenho, fatia 06 — a print whose file is gone: a dashed box the owner can select and delete. */
+.imageMissing {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+}
+
+.imageMissingText {
+  fill: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+/* The bytes are on their way from the main: a faint placeholder of the right size. */
+.imageLoading {
+  fill: var(--text-muted);
+  fill-opacity: 0.08;
+}
+
 /* The tool decides the cursor: H (or space held) moves the view anywhere, A/L/R/O draw anywhere (cards included). */
 .view[data-tool='hand'],
 .view[data-tool='hand'] [data-card-id],

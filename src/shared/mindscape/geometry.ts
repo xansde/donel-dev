@@ -2,7 +2,7 @@
 // docs/design/mindscape-desenho.md, "Ligação desenhada com A/L" and
 // "Borracha parcial e hit-test".
 
-import { STROKE_WIDTH } from './drawings';
+import { strokeWidthOf } from './drawings';
 import type { MindscapeDrawing } from './model';
 import type { Point } from './view';
 
@@ -115,9 +115,21 @@ function rectPoints(box: Rect): Point[] {
   ];
 }
 
-/** Distance from `p` to the stroke of the drawing (boxes have no fill: only the contour counts). */
+/** Distance from `p` to the area of a box: 0 inside it. */
+function distanceToArea(p: Point, box: Rect): number {
+  const dx = Math.max(box.x - p.x, 0, p.x - (box.x + box.w));
+  const dy = Math.max(box.y - p.y, 0, p.y - (box.y + box.h));
+  return Math.hypot(dx, dy);
+}
+
+/**
+ * Distance from `p` to the stroke of the drawing (boxes have no fill: only the
+ * contour counts). A print (fatia 06) is solid: its whole area counts.
+ */
 export function distanceToDrawing(p: Point, drawing: MindscapeDrawing): number {
   switch (drawing.kind) {
+    case 'image':
+      return distanceToArea(p, drawing);
     case 'pencil':
       return distanceToPolyline(p, toPoints(drawing.points));
     case 'line':
@@ -137,7 +149,7 @@ export function distanceToDrawing(p: Point, drawing: MindscapeDrawing): number {
 export function hitTestDrawings(drawings: readonly MindscapeDrawing[], point: Point, slack: number): string | null {
   for (let index = drawings.length - 1; index >= 0; index -= 1) {
     const drawing = drawings[index]!;
-    if (distanceToDrawing(point, drawing) <= STROKE_WIDTH[drawing.stroke] / 2 + slack) return drawing.id;
+    if (distanceToDrawing(point, drawing) <= strokeWidthOf(drawing) / 2 + slack) return drawing.id;
   }
   return null;
 }
@@ -187,7 +199,7 @@ export function itemsInsideRect(rect: Rect, cards: readonly CardRect[], drawings
   };
 }
 
-/** Corners of a box (rect, ellipse) and ends of a loose line. */
+/** Corners of a box (rect, ellipse, print) and ends of a loose line. */
 export type ResizeHandle = 'nw' | 'ne' | 'sw' | 'se' | 'start' | 'end';
 
 /** Smallest side of a box, and shortest line, a handle can leave (board units). */
@@ -209,7 +221,9 @@ function atLeastMin(raw: number, direction: number): number {
 /**
  * The drawing with `handle` dragged to `point`: a corner of a box moves with
  * the opposite one fixed (crossing it flips the box), an end of a loose line
- * moves with the other fixed. Never under 4 units. A handle that the drawing
+ * moves with the other fixed. A print (fatia 06) keeps its proportion: the
+ * bigger of the two changes wins, so the box always reaches the pointer.
+ * Never under 4 units (for a print, on its smaller side). A handle that the drawing
  * does not have (any, for a pencil stroke) → the same drawing. Never turns a
  * line into a link.
  */
@@ -239,6 +253,19 @@ export function resizeDrawing(drawing: MindscapeDrawing, handle: ResizeHandle, p
   if (handle === 'start' || handle === 'end') return drawing;
   const sign = CORNER_SIGN[handle];
   const fixed = { x: sign.x < 0 ? drawing.x + drawing.w : drawing.x, y: sign.y < 0 ? drawing.y + drawing.h : drawing.y };
+  if (drawing.kind === 'image') {
+    const ratio = drawing.w / drawing.h;
+    const rawW = point.x - fixed.x;
+    const rawH = point.y - fixed.y;
+    const dirX = rawW === 0 ? sign.x : Math.sign(rawW);
+    const dirY = rawH === 0 ? sign.y : Math.sign(rawH);
+    // The width at which the smaller side is MIN_DRAWING_SIZE.
+    const minWidth = ratio >= 1 ? MIN_DRAWING_SIZE * ratio : MIN_DRAWING_SIZE;
+    const width = Math.max(Math.abs(rawW), Math.abs(rawH) * ratio, minWidth);
+    const w = dirX * width;
+    const h = dirY * (width / ratio);
+    return { ...drawing, x: w < 0 ? fixed.x + w : fixed.x, y: h < 0 ? fixed.y + h : fixed.y, w: Math.abs(w), h: Math.abs(h) };
+  }
   const w = atLeastMin(point.x - fixed.x, sign.x);
   const h = atLeastMin(point.y - fixed.y, sign.y);
   return { ...drawing, x: w < 0 ? fixed.x + w : fixed.x, y: h < 0 ? fixed.y + h : fixed.y, w: Math.abs(w), h: Math.abs(h) };

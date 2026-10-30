@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { appendPencilPoint, translateDrawing } from '../../../shared/mindscape/drawings';
 import { eraseBoard } from '../../../shared/mindscape/eraser';
 import { cardAtPoint, hitTestDrawings, itemsInsideRect, resizeDrawing, type CardRect, type ItemIds, type Rect, type ResizeHandle } from '../../../shared/mindscape/geometry';
+import { isPrintInputType } from '../../../shared/mindscape/images';
 import type { MindscapeBoard as Board, MindscapeCard, MindscapeDrawing, MindscapeLink } from '../../../shared/mindscape/model';
 import type { MindscapeTool } from '../../../shared/mindscape/shortcuts';
 import { MAX_ZOOM, MIN_ZOOM, screenToWorld, stepZoom, wheelPan, wheelZoomFactor, zoomAt, zoomPercent, type BoardView, type Point } from '../../../shared/mindscape/view';
@@ -150,6 +151,13 @@ export interface MindscapeBoardProps {
   readonly onBackgroundClick: () => void;
   /** Desenho, fatia 02 — a gesture starts (`pointerdown`) or ends; Ctrl+Z is ignored in between. */
   readonly onGestureChange?: (active: boolean) => void;
+  /**
+   * Desenho, fatia 06 — an image pasted (Ctrl+V, the focus out of a text
+   * field) or dropped on the board: the file and where the print is born, in
+   * board units (the drop point; for a paste, the last point of the mouse over
+   * the board, else the middle of the view).
+   */
+  readonly onImageFile?: (file: File, at: Point) => void;
   /** Renders the layers and the cards inside the moving plane. */
   readonly children: (render: BoardRender) => ReactNode;
 }
@@ -164,6 +172,23 @@ function round(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+/** A target where a paste belongs to the field (the owner's post-it text, a terminal left focused underneath). */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+}
+
+/** Fatia 06 — the first file of an image type the print takes (PNG, JPEG, WebP, GIF), or `null`. */
+export function printFileOf(data: DataTransfer | null): File | null {
+  if (!data) return null;
+  for (const file of Array.from(data.files)) if (isPrintInputType(file.type)) return file;
+  return null;
+}
+
+function hasFiles(data: DataTransfer | null): boolean {
+  return Boolean(data && Array.from(data.types).includes('Files'));
+}
+
 /**
  * Mindscape — the free canvas: the plane moves with `transform:
  * translate(pan) scale(zoom)` (fatia 05: Ctrl+wheel or the pinch zoom on the
@@ -174,6 +199,8 @@ function round(value: number): number {
  * A/L/R/O/P, a drag draws (local preview, written on `pointerup`); with E
  * (fatia 04), a pass erases the touched pieces (local preview, written on
  * `pointerup`). A tool change cancels the gesture in flight (Esc goes back to V).
+ * Fatia 06: an image pasted (Ctrl+V) or dropped on the board goes up as
+ * `onImageFile`, with the point where the print is born.
  */
 export function MindscapeBoard({
   board,
@@ -189,6 +216,7 @@ export function MindscapeBoard({
   onErase,
   onBackgroundClick,
   onGestureChange,
+  onImageFile,
   children,
 }: MindscapeBoardProps): React.JSX.Element {
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -202,8 +230,10 @@ export function MindscapeBoard({
   boardRef.current = board;
   const rectsRef = useRef(cardRects);
   rectsRef.current = cardRects;
-  const callbacksRef = useRef({ onMoveItems, onResize, onViewChange, onDraw, onErase, onSelect, onGestureChange });
-  callbacksRef.current = { onMoveItems, onResize, onViewChange, onDraw, onErase, onSelect, onGestureChange };
+  const callbacksRef = useRef({ onMoveItems, onResize, onViewChange, onDraw, onErase, onSelect, onGestureChange, onImageFile });
+  callbacksRef.current = { onMoveItems, onResize, onViewChange, onDraw, onErase, onSelect, onGestureChange, onImageFile };
+  /** Fatia 06 — the last point of the mouse over the board (px, relative to the board element): where a pasted print is born. */
+  const lastPointerRef = useRef<Point | null>(null);
   /** The board element (fatia 05: the wheel listener and the middle of the view for the indicator). */
   const viewRef = useRef<HTMLDivElement>(null);
   /** Fatia 04 — the eraser circle that follows the pointer (moved by hand: no render per mouse move). */
@@ -290,6 +320,26 @@ export function MindscapeBoard({
     };
     element.addEventListener('wheel', onWheel, { passive: false });
     return () => element.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // Desenho, fatia 06 — Ctrl+V of an image. Heard on the `document` while the
+  // board is mounted (Chromium hands the paste to the focused element, and the
+  // focus may be anywhere in the Mindscape); a paste into a text field is the
+  // field's own. The print is born on the last point of the mouse over the
+  // board, else in the middle of the view.
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent): void => {
+      if (isEditableTarget(event.target)) return;
+      const file = printFileOf(event.clipboardData);
+      const element = viewRef.current;
+      if (!file || !element) return;
+      event.preventDefault();
+      const screenPoint = lastPointerRef.current ?? { x: element.clientWidth / 2, y: element.clientHeight / 2 };
+      const at = screenToWorld(screenPoint, { pan: boardRef.current.pan, zoom: boardRef.current.zoom });
+      callbacksRef.current.onImageFile?.(file, { x: round(at.x), y: round(at.y) });
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
   }, []);
 
   /** Fatia 05 — the indicator zooms centered on the middle of the view. */
@@ -513,11 +563,28 @@ export function MindscapeBoard({
       data-dragging={moving ? 'true' : undefined}
       onPointerDown={handlePointerDown}
       onPointerMove={(event) => {
+        const box = event.currentTarget.getBoundingClientRect();
+        lastPointerRef.current = { x: event.clientX - box.left, y: event.clientY - box.top };
         const cursor = cursorRef.current;
         if (!cursor) return;
-        const box = event.currentTarget.getBoundingClientRect();
         cursor.style.transform = `translate(${event.clientX - box.left - ERASER_RADIUS_PX}px, ${event.clientY - box.top - ERASER_RADIUS_PX}px)`;
         cursor.hidden = false;
+      }}
+      onDragOver={(event) => {
+        // Fatia 06 — a file dragged over the board can be dropped (a print).
+        if (!hasFiles(event.dataTransfer)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+      }}
+      onDrop={(event) => {
+        if (!hasFiles(event.dataTransfer)) return;
+        event.preventDefault();
+        if ((event.target as Element).closest?.(EDITABLE)) return;
+        const file = printFileOf(event.dataTransfer);
+        if (!file) return;
+        const box = event.currentTarget.getBoundingClientRect();
+        const at = screenToWorld({ x: event.clientX - box.left, y: event.clientY - box.top }, { pan: boardRef.current.pan, zoom: boardRef.current.zoom });
+        callbacksRef.current.onImageFile?.(file, { x: round(at.x), y: round(at.y) });
       }}
       onPointerLeave={() => {
         if (cursorRef.current) cursorRef.current.hidden = true;
