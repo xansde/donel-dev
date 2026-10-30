@@ -218,7 +218,9 @@ no alfa.
 
 ### 05 — Zoom de 25% a 400%, salvo por quadro
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/mindscape-desenho` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (`zoomAt`, fator da roda, passos do indicador, `wheelPan`, `setBoardView`) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-desenho-implementacao-05.md`
+- **PR**: —
 - **Depende de**: 04 <!-- usa applySession (02) para setBoardView e divide pelo zoom as tolerâncias do hit-test (03) e o raio da borracha (04) -->
 - **Conflita com**: 01, 02, 03, 04, 06
 - **Propósito**: o dono dá zoom com `Ctrl+roda` ou pinça, centrado no mouse, entre 25% e 400%, vê
