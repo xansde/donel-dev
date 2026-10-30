@@ -119,6 +119,7 @@ import { PreviousSessions } from './PreviousSessions';
 import { AccountsPanel } from './AccountsPanel';
 import { ProviderForm } from './ProviderForm';
 import { ProjectSidebar } from './ProjectSidebar';
+import { usePullRequests } from './usePullRequests';
 import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from './ProjectSidebar';
 // CA-30 (009-modo-dev-v3, lote 9) — seletor de projetos no titlebar + modal de criação.
 import { ProjectSwitcher } from './ProjectSwitcher';
@@ -1986,9 +1987,44 @@ export function App(): React.JSX.Element {
     [sidebarSessions, favoriteGroups],
   );
   const workspaceInfo = useWorkspaceInfo(workspacePaths);
+  // B3 — PR da branch de cada pasta da sidebar; o "consertar" vai para uma aba do Claude daquela pasta.
+  const pullRequestsInfo = usePullRequests(workspacePaths, workspaceInfo.branches);
+  const fixTabFor = useCallback(
+    (path: string, preferredTabId?: string): string | null => {
+      const claudeTabs = tabs.filter((tab) => tab.sessionType === 'claude' && !tab.accountLoginId && tab.cwd === path);
+      return (claudeTabs.find((tab) => tab.id === preferredTabId) ?? claudeTabs.find((tab) => tab.id === activeTabId) ?? claudeTabs[0])?.id ?? null;
+    },
+    [tabs, activeTabId],
+  );
+  const handleSendPullRequestFix = useCallback((tabId: string, text: string): void => {
+    setActiveTabId(tabId);
+    // Mesmo caminho da caixa do chat (fila única, espera o CLI, confirma o aceite): nunca escrita direta no PTY.
+    const source = { terminal: () => terminalRefs.current[tabId] ?? null };
+    const id = sendToTab(tabId, source, { text });
+    const driver = sendDriverFor(tabId, source);
+    const off = driver.subscribe(() => {
+      const item = driver.getItems().find((candidate) => candidate.id === id);
+      if (item === undefined || item.state === 'accepted' || item.state === 'queued') return off();
+      if (item.state === 'failed') {
+        off();
+        setDevModeToast(`Não consegui mandar o pedido de conserto para a aba (${item.reason ?? 'sem motivo'}). Tente de novo pelo painel do PR.`);
+      }
+    });
+  }, []);
   const sidebarWorkspace = useMemo(
-    () => ({ editor: workspaceInfo.editor, branches: workspaceInfo.branches, onOpenInEditor: workspaceInfo.openInEditor }),
-    [workspaceInfo.editor, workspaceInfo.branches, workspaceInfo.openInEditor],
+    () => ({
+      editor: workspaceInfo.editor,
+      branches: workspaceInfo.branches,
+      onOpenInEditor: workspaceInfo.openInEditor,
+      pullRequests: {
+        byPath: pullRequestsInfo.pullRequests,
+        fixTabFor,
+        onLoadDetails: pullRequestsInfo.loadDetails,
+        onOpenUrl: (url: string) => void window.donel.workspace.openPullRequestUrl(url).catch(() => undefined),
+        onSendFix: handleSendPullRequestFix,
+      },
+    }),
+    [workspaceInfo.editor, workspaceInfo.branches, workspaceInfo.openInEditor, pullRequestsInfo.pullRequests, pullRequestsInfo.loadDetails, fixTabFor, handleSendPullRequestFix],
   );
 
   // Mesma ordenação da sidebar (sessionOrdering.ts) — FR-013 usa essa lista

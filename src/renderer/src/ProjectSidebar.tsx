@@ -6,6 +6,8 @@ import { useMemo, useRef } from 'react';
 import { sortSessions } from '../../shared/sessionOrdering';
 import { SESSION_NAME_MAX_LENGTH } from '../../shared/sessionName';
 import type { EditorStatus } from '../../shared/workspace';
+import type { PullRequestStatus } from '../../shared/pullRequestStatus';
+import { PullRequestIndicator } from './PullRequestIndicator';
 import styles from './ProjectSidebar.module.css';
 
 // T007 — sidebar real (ui-spec §2, US-1, FR-001). `state` das sessões é
@@ -47,6 +49,47 @@ export interface SidebarWorkspace {
   /** pasta → branch; ausente/`null` = nada a mostrar. */
   readonly branches: Readonly<Record<string, string | null>>;
   readonly onOpenInEditor: (path: string) => void;
+  /** B3 — PR aberto da branch de cada pasta; opcional: sem ele, nenhum indicador de PR. */
+  readonly pullRequests?: SidebarPullRequests;
+}
+
+/** B3 — indicador do PR por linha + o que o painel dele precisa. */
+export interface SidebarPullRequests {
+  /** pasta → PR aberto; ausente/`null` = sem indicador. */
+  readonly byPath: Readonly<Record<string, PullRequestStatus | null>>;
+  /** Aba do Claude que recebe o "consertar": a própria sessão da linha, se for Claude nessa pasta; senão outra aba do Claude no projeto; `null` = nenhuma. */
+  readonly fixTabFor: (path: string, preferredTabId?: string) => string | null;
+  readonly onLoadDetails: (path: string) => Promise<PullRequestStatus | null>;
+  readonly onOpenUrl: (url: string) => void;
+  readonly onSendFix: (tabId: string, text: string) => void;
+}
+
+/** Indicador do PR da pasta, quando há PR aberto; nada caso contrário. */
+function PullRequestSlot({
+  path,
+  label,
+  preferredTabId,
+  workspace,
+}: {
+  path: string;
+  label: string;
+  preferredTabId?: string;
+  workspace: SidebarWorkspace;
+}): React.JSX.Element | null {
+  const prs = workspace.pullRequests;
+  const pr = prs?.byPath[path];
+  if (!prs || !pr) return null;
+  return (
+    <PullRequestIndicator
+      path={path}
+      pr={pr}
+      label={label}
+      fixTabId={prs.fixTabFor(path, preferredTabId)}
+      onLoadDetails={prs.onLoadDetails}
+      onOpenUrl={prs.onOpenUrl}
+      onSendFix={prs.onSendFix}
+    />
+  );
 }
 
 export interface ProjectSidebarProps {
@@ -173,6 +216,7 @@ function SessionRow({
         {session.projectName ? <span className={styles.sessionProject}>{session.projectName}</span> : null}
         {workspace && session.cwd ? <BranchLabel branch={workspace.branches[session.cwd]} /> : null}
       </button>
+      {workspace && session.cwd ? <PullRequestSlot path={session.cwd} label={session.name} preferredTabId={session.id} workspace={workspace} /> : null}
       {workspace && session.cwd ? <OpenInEditorButton path={session.cwd} label={session.name} workspace={workspace} /> : null}
       <button
         type="button"
@@ -266,6 +310,7 @@ function FavoriteGroupView({
         {group.loading ? <span className={styles.hint}>carregando…</span> : null}
         {workspace ? <BranchLabel branch={workspace.branches[group.project.path]} /> : null}
       </button>
+      {workspace ? <PullRequestSlot path={group.project.path} label={group.project.name} workspace={workspace} /> : null}
       {workspace ? <OpenInEditorButton path={group.project.path} label={group.project.name} workspace={workspace} /> : null}
       </div>
       {group.collapsed

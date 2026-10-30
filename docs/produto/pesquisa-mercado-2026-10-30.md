@@ -33,8 +33,8 @@ Legenda: P/M/G = tamanho · Exec = só execução · Decisão = precisa do dono.
 | 2 | Notificações de terminou/erro/limite + badge na barra de tarefas | Claude Desktop, Superset | P | Exec | em execução |
 | 3 | Ponte da statusline do CLI (cota 5h/7d, contexto, PR, worktree oficiais por sessão) | Claude Code | P–M | Exec | em execução |
 | 4 | Analytics de uso por projeto/modelo | opcode | M | Decisão (o que medir) | proposta |
-| 5 | Painel de PRs e checks por projeto/sessão (B3) | Claude Desktop, Conductor | M | Decisão | proposta |
-| 6 | "Consertar CI/comentários" com um botão (depende do 5) | Claude Desktop, Conductor | M | Decisão | proposta |
+| 5 | Painel de PRs e checks por projeto/sessão (B3) | Claude Desktop, Conductor | M | Decisão | decidido (sidebar, por projeto); em PR |
+| 6 | "Consertar CI/comentários" com um botão (depende do 5) | Claude Desktop, Conductor | M | Decisão | junto do 5; em PR |
 | 7 | "Criar PR" com descrição escrita pelo agente | Conductor, VS Code | P | Exec | fila |
 | 8 | Sessão a partir de uma issue | Emdash, Superset | M | Decisão (fronteira com a Esteira) | proposta |
 | 9 | Painel "Alterações" com comentário por linha que volta para a sessão | Claude Desktop, Conductor, Warp | G | Exec no núcleo | proposta |

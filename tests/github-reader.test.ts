@@ -4,7 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   checkGhAvailability,
   GithubReadCache,
+  isSafeBranchName,
+  PR_STATUS_FIELDS,
+  readBranchPullRequestStatus,
   readPhasePullRequestFacts,
+  readUnresolvedThreadCount,
+  REVIEW_THREADS_QUERY,
   readSpecIssueFacts,
   readSubIssueFacts,
   resetGhAvailabilityCacheForTest,
@@ -359,5 +364,121 @@ describe('readSpecIssueFacts com cache — segunda leitura não spawna de novo',
     const second = await readSpecIssueFacts({ repo: 'o/r', number: 88 }, { cache });
     expect(second).toEqual({ number: 88, title: 't', state: 'open', url: 'u', labels: [] });
     expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('B3 — pr-view-branch e pr-review-threads (painel de PRs da sidebar)', () => {
+  afterEach(() => {
+    vi.mocked(spawn).mockReset();
+  });
+
+  it('pr-view-branch: argv exato, `--` antes da branch e spawn com cwd na pasta do projeto', async () => {
+    const fake = new FakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(fake as never);
+
+    const promise = runGhReadCommand({ kind: 'pr-view-branch', cwd: '/tmp/proj', branch: 'feature/x' });
+    fake.stdout.emit('data', jsonChunk({}));
+    fake.emit('close', 0);
+    await promise;
+
+    const call = vi.mocked(spawn).mock.calls[0];
+    expect(call[0]).toBe('gh');
+    expect(call[1]).toEqual(['pr', 'view', '--json', 'number,title,url,state,isDraft,headRefName,statusCheckRollup,reviewDecision,latestReviews', '--', 'feature/x']);
+    expect(call[2]).toEqual({ windowsHide: true, cwd: '/tmp/proj' });
+    expect(PR_STATUS_FIELDS.split(',')).toContain('statusCheckRollup');
+  });
+
+  it('os kinds antigos continuam sem cwd (nada muda para a Esteira)', async () => {
+    const fake = new FakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(fake as never);
+    const promise = runGhReadCommand({ kind: 'pr-view', repo: 'o/r', number: 1 });
+    fake.emit('close', 0);
+    await promise;
+    expect(vi.mocked(spawn).mock.calls[0][2]).toEqual({ windowsHide: true });
+  });
+
+  it('pr-review-threads: `gh api graphql` com a consulta fixa; dono/nome crus (-f), número Int (-F)', async () => {
+    const fake = new FakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(fake as never);
+
+    const promise = runGhReadCommand({ kind: 'pr-review-threads', owner: 'acme', name: 'atlas', number: 142 });
+    fake.stdout.emit('data', jsonChunk({}));
+    fake.emit('close', 0);
+    await promise;
+
+    expect(vi.mocked(spawn).mock.calls[0][1]).toEqual([
+      'api',
+      'graphql',
+      '-f',
+      `query=${REVIEW_THREADS_QUERY}`,
+      '-f',
+      'owner=acme',
+      '-f',
+      'name=atlas',
+      '-F',
+      'number=142',
+    ]);
+  });
+
+  it('a consulta GraphQL é só leitura: começa por `query`, nenhuma `mutation`', () => {
+    expect(REVIEW_THREADS_QUERY.startsWith('query(')).toBe(true);
+    expect(REVIEW_THREADS_QUERY.toLowerCase()).not.toContain('mutation');
+  });
+
+  it('isSafeBranchName: aceita nomes de branch reais, recusa o que viraria flag ou argumento estranho', () => {
+    for (const ok of ['main', 'staging', 'feature/painel-prs-sidebar', 'docs/novidades-e-backlog-30-10', 'fix_1.2']) expect(isSafeBranchName(ok)).toBe(true);
+    for (const bad of ['', '-x', '--repo=evil/x', 'a b', 'a\nb', 'a\u0001b', 'a~1', 'a^', 'a:b', 'a?', 'a*', 'a[', 'a\\b', 'x'.repeat(256)]) {
+      expect(isSafeBranchName(bad)).toBe(false);
+    }
+  });
+
+  it('readBranchPullRequestStatus: branch insegura nem spawna', async () => {
+    await expect(readBranchPullRequestStatus('/tmp/proj', '--help')).resolves.toBeNull();
+    expect(vi.mocked(spawn)).not.toHaveBeenCalled();
+  });
+
+  it('readBranchPullRequestStatus: PR aberto vira o modelo do indicador', async () => {
+    const fake = new FakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(fake as never);
+    const promise = readBranchPullRequestStatus('/tmp/proj', 'feature/x');
+    fake.stdout.emit(
+      'data',
+      jsonChunk({
+        number: 7,
+        title: 't',
+        url: 'https://github.com/o/r/pull/7',
+        state: 'OPEN',
+        isDraft: false,
+        headRefName: 'feature/x',
+        statusCheckRollup: [{ __typename: 'CheckRun', name: 'ci', status: 'IN_PROGRESS', conclusion: '', detailsUrl: 'https://github.com/o/r/actions/runs/1' }],
+        reviewDecision: 'REVIEW_REQUIRED',
+        latestReviews: [],
+      }),
+    );
+    fake.emit('close', 0);
+    const pr = await promise;
+    expect(pr?.number).toBe(7);
+    expect(pr?.rollup).toBe('pending');
+    expect(pr?.review).toBe('review-required');
+  });
+
+  it('readBranchPullRequestStatus: branch sem PR (gh sai com 1) → null, nunca lança', async () => {
+    const fake = new FakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(fake as never);
+    const promise = readBranchPullRequestStatus('/tmp/proj', 'main');
+    fake.emit('close', 1);
+    await expect(promise).resolves.toBeNull();
+  });
+
+  it('readUnresolvedThreadCount: conta as abertas; dono inseguro nem spawna', async () => {
+    await expect(readUnresolvedThreadCount({ owner: '-x', name: 'r' }, 1)).resolves.toBeNull();
+    expect(vi.mocked(spawn)).not.toHaveBeenCalled();
+
+    const fake = new FakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(fake as never);
+    const promise = readUnresolvedThreadCount({ owner: 'o', name: 'r' }, 7);
+    fake.stdout.emit('data', jsonChunk({ data: { repository: { pullRequest: { reviewThreads: { nodes: [{ isResolved: false }, { isResolved: true }] } } } } }));
+    fake.emit('close', 0);
+    await expect(promise).resolves.toBe(1);
   });
 });
