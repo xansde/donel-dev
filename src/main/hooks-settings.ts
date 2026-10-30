@@ -102,11 +102,20 @@ export interface SessionHooksSettingsInput {
   readonly statusLine?: StatusLineBridgePlan | null;
   /** The `.ps1` the statusLine command runs (tee or silent forwarder); written by `writeSessionHooksSettings`. */
   readonly statusLineScriptPath?: string;
+  /**
+   * "Isolar em worktree": the tab runs `claude --worktree`. Then the file also carries `worktree.baseRef: "head"`,
+   * so the worktree starts from the CURRENT branch of the project folder instead of the remote's default branch
+   * (CLI 2.1.314 default `"fresh"` = `origin/HEAD`, which here is `main`, the beta). Measured with the real CLI on
+   * 30/10: through this same `--settings` file the worktree is born at the local HEAD; without it, at `origin/HEAD`.
+   * Only this session's file: the owner's `~/.claude/settings.json` is never touched.
+   */
+  readonly isolatedWorktree?: boolean;
 }
 
 export interface SessionHooksSettingsContent {
   readonly hooks: Record<string, ReadonlyArray<{ readonly hooks: ReadonlyArray<Record<string, unknown>> }>>;
   readonly statusLine?: StatusLineSetting;
+  readonly worktree?: { readonly baseRef: 'head' };
 }
 
 function bridgeUrl(port: number, event: string): string {
@@ -134,7 +143,11 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
   hooks.SessionStart = [{ hooks: [{ type: 'command', command, timeout: 10 }] }];
 
   const statusLine = input.statusLine ? buildStatusLineSetting(input.statusLine, input) : null;
-  return statusLine ? { hooks, statusLine } : { hooks };
+  return {
+    hooks,
+    ...(statusLine ? { statusLine } : {}),
+    ...(input.isolatedWorktree ? { worktree: { baseRef: 'head' as const } } : {}),
+  };
 }
 
 // --- Ponte da statusline ------------------------------------------------------

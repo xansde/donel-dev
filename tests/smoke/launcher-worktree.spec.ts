@@ -17,6 +17,8 @@ import { confirmCloseModalIfOpen, openLauncherPanel, waitForClaudeBooted } from 
 const PROJECT = 'wt-smoke-proj';
 let root: string;
 let repo: string;
+/** O HEAD da pasta do projeto (branch `staging`, à frente de `main`, que é o `origin/HEAD`). */
+let stagingSha: string;
 let electronApp: ElectronApplication;
 let appWindow: Page;
 let userDataDir: string;
@@ -38,6 +40,18 @@ test.beforeAll(async () => {
   writeFileSync(path.join(repo, '.gitignore'), 'node_modules\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-q', '-m', 'init');
+  // Como o repo do dono: o padrão do remoto é `main` (o beta), mas a pasta trabalha em `staging`, à frente.
+  // A sessão isolada tem de partir de `staging` (o HEAD da pasta), não de `origin/HEAD`.
+  const origin = path.join(root, 'origin.git');
+  git(root, 'init', '-q', '--bare', '-b', 'main', origin);
+  git(repo, 'remote', 'add', 'origin', origin);
+  git(repo, 'push', '-q', '-u', 'origin', 'main');
+  git(repo, 'remote', 'set-head', 'origin', 'main');
+  git(repo, 'checkout', '-q', '-b', 'staging');
+  writeFileSync(path.join(repo, 'staging.txt'), 'só em staging\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'staging: à frente de main');
+  stagingSha = git(repo, 'rev-parse', 'HEAD');
 
   const dir = createIsolatedUserDataDir('launcher-worktree');
   writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ projectRoots: [root] }), 'utf8');
@@ -109,6 +123,9 @@ test('sessão isolada sem trabalho: a aba mostra a worktree e, ao fechar, a past
   await expect.poll(() => existsSync(wtPath), { timeout: 20_000 }).toBe(true);
   // A trava vem logo depois da pasta (o falso faz `worktree add` e depois `worktree lock`, como o CLI).
   await expect.poll(() => git(repo, 'worktree', 'list', '--porcelain'), { timeout: 10_000 }).toContain(`locked claude session ${worktree} (pid `);
+  // Nasceu no HEAD da pasta (staging), não em origin/HEAD (main): o --settings da aba leva `worktree.baseRef: "head"`.
+  expect(git(wtPath, 'rev-parse', 'HEAD')).toBe(stagingSha);
+  expect(existsSync(path.join(wtPath, 'staging.txt'))).toBe(true);
 
   await closeTab('isolada');
   await expect.poll(() => existsSync(wtPath), { timeout: 30_000 }).toBe(false);
