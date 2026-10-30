@@ -1299,6 +1299,7 @@ function registerChatDomain(): void {
       window.webContents.send(CHAT_CHANNELS.focusPending, { ptyId });
     },
   });
+  const chatDiagnostics = createDiagnosticsLog(app.getPath('userData'));
   const hub = createChatHub({
     bridge: hookBridge,
     getSource: (ptyId) => initialChatSourceByPty.get(ptyId) ?? null,
@@ -1318,7 +1319,7 @@ function registerChatDomain(): void {
       reception: (event) => broadcastChat(CHAT_CHANNELS.reception, event),
       promptSignal: (event) => broadcastChat(CHAT_CHANNELS.promptSignal, event),
     },
-    diagnostics: createDiagnosticsLog(app.getPath('userData')),
+    diagnostics: chatDiagnostics,
     attachmentsRoot,
   });
   chatHub = hub;
@@ -1336,6 +1337,7 @@ function registerChatDomain(): void {
     openExternal: (url) => shell.openExternal(url),
     openPath: (path) => shell.openPath(path),
     onFocusState: (input) => notifier.setFocusState(input.activePtyId, input.tabNames),
+    onSendFailed: (entry) => chatDiagnostics.sendFailed(entry),
   });
   registerAssetsProtocol(protocol, { transcriptRoots: (ptyId) => hub.transcriptRoots(ptyId), attachmentsRoot });
 }

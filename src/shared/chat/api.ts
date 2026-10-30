@@ -22,6 +22,7 @@ import type {
   RowDetail,
 } from './ipc';
 import type { RowScope, TerminalNeededReason } from './rows';
+import type { SendFailureDetail } from './sendDiagnostics';
 
 export interface DonelChatApi {
   /** First page from the end of the tab's conversation. Idempotent. */
@@ -48,6 +49,8 @@ export interface DonelChatApi {
   ackLookup(ptyId: string, text: string, since: string): Promise<ChatAckLookupOutput>;
   /** Fontes de tela que pedem o terminal (`null` = a caixa voltou); o main as combina com as dos hooks. */
   screenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): Promise<void>;
+  /** Envio que terminou em "não foi": o detalhe do portão vai para o `chat-diagnostics.log` (nunca texto). */
+  sendFailed(ptyId: string, detail: SendFailureDetail): Promise<void>;
 
   /** T076 - responde a pendência aberta; o renderer nunca monta o JSON do hook. */
   answer(ptyId: string, pendingId: string, answer: PendingAnswer): Promise<ChatAnswerOutput>;

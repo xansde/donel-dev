@@ -50,6 +50,60 @@ describe('diagnostics log', () => {
     expect(raw).not.toContain('"oi"');
   });
 
+  it('send-failed carries the gate detail, field by field, and nothing else', () => {
+    const log = createDiagnosticsLog(dir, () => 7);
+    log.sendFailed({
+      ptyId: 'p1',
+      reason: 'o Claude não ficou pronto',
+      detail: {
+        reason: 'esperando a caixa de entrada',
+        step: 'gate',
+        lastWait: 'esperando a caixa de entrada',
+        sendKind: 'prompt',
+        mode: 'normal',
+        attempts: 0,
+        images: 0,
+        firstPaste: true,
+        screenRead: true,
+        boxFound: false,
+        footer: true,
+        screenWorking: false,
+        working: true,
+        alive: true,
+        pendingOpen: false,
+        terminalNeeded: false,
+        elapsedMs: 30000,
+        text: 'conversa',
+      } as never,
+    });
+    const raw = readFileSync(join(dir, DIAGNOSTICS_LOG_FILE_NAME), 'utf8');
+    expect(raw).not.toContain('conversa');
+    expect(lines()).toEqual([
+      {
+        ts: 7,
+        kind: 'send-failed',
+        ptyId: 'p1',
+        reason: 'o Claude não ficou pronto',
+        step: 'gate',
+        lastWait: 'esperando a caixa de entrada',
+        sendKind: 'prompt',
+        mode: 'normal',
+        attempts: 0,
+        images: 0,
+        firstPaste: true,
+        screenRead: true,
+        boxFound: false,
+        footer: true,
+        screenWorking: false,
+        working: true,
+        alive: true,
+        pendingOpen: false,
+        terminalNeeded: false,
+        elapsedMs: 30000,
+      },
+    ]);
+  });
+
   it('never throws when the directory is unwritable', () => {
     const log = createDiagnosticsLog(join(dir, 'missing', 'sub'), () => 1);
     expect(() => log.hook({ event: 'Stop', ptyId: 'p', durationMs: 1 })).not.toThrow();

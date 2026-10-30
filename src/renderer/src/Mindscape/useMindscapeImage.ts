@@ -1,58 +1,46 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { MindscapeImageLoader, type MindscapeImageEntry } from './mindscapeImageLoader';
 
-/** What the screen knows about the file of a print. */
-export type MindscapeImageEntry = { readonly status: 'loading' } | { readonly status: 'ready'; readonly url: string } | { readonly status: 'missing' };
+export type { MindscapeImageEntry } from './mindscapeImageLoader';
 
 const LOADING: MindscapeImageEntry = { status: 'loading' };
 
 /**
  * Mindscape desenho, fatia 06 — the `blob:` URL of each print on the board.
- * The bytes come from the main (`mindscape:read-image`) once per imageId and
- * stay cached while the Mindscape is mounted; every URL is revoked when it
- * unmounts. A file the main cannot give (gone, unreadable) is `missing`: the
- * layer draws the dashed "imagem não encontrada" box in its place.
+ * The bytes come from the main (`mindscape:read-image`) through a
+ * `MindscapeImageLoader` that lives while the Mindscape is mounted: one read
+ * per imageId, the URL cached, every URL revoked when it unmounts. A file the
+ * main cannot give (gone, unreadable) is `missing` — the layer draws the
+ * dashed "imagem não encontrada" box — and is asked for again a few times,
+ * with a wait between them, before it stays missing.
  */
 export function useMindscapeImages(imageIds: readonly string[]): Readonly<Record<string, MindscapeImageEntry>> {
-  const [entries, setEntries] = useState<Record<string, MindscapeImageEntry>>({});
-  const requestedRef = useRef(new Set<string>());
-  const urlsRef = useRef(new Map<string, string>());
-  const aliveRef = useRef(true);
+  const [loader, setLoader] = useState<MindscapeImageLoader | null>(null);
+  const [, setVersion] = useState(0);
 
   useEffect(() => {
-    aliveRef.current = true;
-    const urls = urlsRef.current;
-    return () => {
-      aliveRef.current = false;
-      for (const url of urls.values()) URL.revokeObjectURL(url);
-      urls.clear();
-    };
+    const created = new MindscapeImageLoader(
+      {
+        read: (imageId) => window.donel.mindscape.readImage(imageId),
+        createUrl: (bytes, mediaType) => URL.createObjectURL(new Blob([bytes], { type: mediaType })),
+        revokeUrl: (url) => URL.revokeObjectURL(url),
+        setTimeout: (cb, ms) => window.setTimeout(cb, ms),
+        clearTimeout: (handle) => window.clearTimeout(handle as number),
+      },
+      () => setVersion((v) => v + 1),
+    );
+    setLoader(created);
+    return () => created.dispose();
   }, []);
 
   const key = [...new Set(imageIds)].sort().join('|');
   useEffect(() => {
-    const wanted = key === '' ? [] : key.split('|');
-    for (const imageId of wanted) {
-      if (requestedRef.current.has(imageId)) continue;
-      requestedRef.current.add(imageId);
-      void window.donel.mindscape
-        .readImage(imageId)
-        .then((result): MindscapeImageEntry => {
-          if (!result.ok) return { status: 'missing' };
-          if (!aliveRef.current) return { status: 'missing' };
-          const url = URL.createObjectURL(new Blob([result.bytes], { type: result.mediaType }));
-          urlsRef.current.set(imageId, url);
-          return { status: 'ready', url };
-        })
-        .catch((): MindscapeImageEntry => ({ status: 'missing' }))
-        .then((entry) => {
-          if (aliveRef.current) setEntries((current) => ({ ...current, [imageId]: entry }));
-        });
-    }
-  }, [key]);
+    loader?.want(key === '' ? [] : key.split('|'));
+  }, [key, loader]);
 
   // Asked for and not answered yet: loading.
   const result: Record<string, MindscapeImageEntry> = {};
-  for (const imageId of imageIds) result[imageId] = entries[imageId] ?? LOADING;
+  for (const imageId of imageIds) result[imageId] = loader?.entry(imageId) ?? LOADING;
   return result;
 }
 

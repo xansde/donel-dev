@@ -12,6 +12,7 @@
 // `append` is not duplicated.
 
 import type { DonelChatApi } from '../../../shared/chat/api';
+import type { SendFailureDetail } from '../../../shared/chat/sendDiagnostics';
 import type {
   ChatConversationSwitchedEvent,
   ChatAckLookupOutput,
@@ -225,6 +226,11 @@ export class ChatStore {
   /** T088 - disk path of a `File` from the picker or a drop (`''` when it has none). */
   pathForFile(file: unknown): string {
     return this.api.pathForFile(file);
+  }
+
+  /** A send ended in "não foi": its gate detail goes to the main's `chat-diagnostics.log` (fire and forget). */
+  reportSendFailure(ptyId: string, detail: SendFailureDetail): void {
+    void Promise.resolve(this.api.sendFailed(ptyId, detail)).catch(() => undefined);
   }
 
   /** The renderer's screen detectors report what needs the terminal (`null` = the input box is back). */

@@ -4,7 +4,7 @@
 // preference at runtime takes effect on the next start of the app.
 //
 // Handlers here: attach, detach, load-older, row-detail, open-external,
-// open-generated, ack-lookup (T064), screen-state (T070), answer (T076), focus-state (T079), save-image
+// open-generated, ack-lookup (T064), screen-state (T070), send-failed, answer (T076), focus-state (T079), save-image
 // (T088), catalog (T084) and files (T086). The other contract channel (subagent-*) belongs to a later task.
 
 import { CHAT_CHANNELS } from '../../shared/chat/ipc';
@@ -29,8 +29,10 @@ import type {
   ChatSaveImageInput,
   ChatSaveImageOutput,
   ChatScreenStateInput,
+  ChatSendFailedInput,
   RowDetail,
 } from '../../shared/chat/ipc';
+import { sanitizeSendFailure, type SendFailureDetail } from '../../shared/chat/sendDiagnostics';
 import { isExternalUrlAllowed, isGeneratedFileOpenable } from '../../shared/chat/linkPolicy';
 import type { AttachmentStore } from './attachments';
 import type { ChatHub } from './chat-hub';
@@ -59,6 +61,8 @@ export interface ChatIpcDeps {
   readonly openPath: (path: string) => Promise<string>;
   /** T079 - `chat:focus-state`: the active tab (and tab names) for the notification rule. */
   readonly onFocusState?: (input: ChatFocusStateInput) => void;
+  /** `chat:send-failed`: a send ended in `failed`; the detail arrives already sanitized (goes to `chat-diagnostics.log`). */
+  readonly onSendFailed?: (entry: { ptyId: string; reason: string; detail: SendFailureDetail }) => void;
 }
 
 export interface ChatIpcRegistration {
@@ -76,6 +80,7 @@ const HANDLED: readonly string[] = [
   CHAT_CHANNELS.openGenerated,
   CHAT_CHANNELS.ackLookup,
   CHAT_CHANNELS.screenState,
+  CHAT_CHANNELS.sendFailed,
   CHAT_CHANNELS.answer,
   CHAT_CHANNELS.focusState,
   CHAT_CHANNELS.saveImage,
@@ -130,6 +135,13 @@ export function registerChatIpcHandlers(deps: ChatIpcDeps): ChatIpcRegistration 
     if (!isString(input?.ptyId)) return;
     const reason = input.terminalNeeded;
     if (reason === null || SCREEN_REASONS.has(reason)) hub.reportScreenState(input.ptyId, reason);
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.sendFailed, (_e, input: ChatSendFailedInput): void => {
+    if (!isString(input?.ptyId)) return;
+    const detail = sanitizeSendFailure(input.detail);
+    if (detail === null) return;
+    deps.onSendFailed?.({ ptyId: input.ptyId, reason: detail.reason, detail });
   });
 
   ipcMain.handle(CHAT_CHANNELS.answer, (_e, input: ChatAnswerInput): ChatAnswerOutput => {

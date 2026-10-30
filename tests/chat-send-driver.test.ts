@@ -5,6 +5,7 @@ import {
   type SendDriverPorts,
   type SendItemView,
 } from '../src/renderer/src/chat/sendDriver';
+import type { SendFailureDetail } from '../src/shared/chat/sendDiagnostics';
 import type { LineInput } from '../src/shared/screenLine';
 
 // 014-chat T065 — orquestração do envio (fila FIFO, dedupe hook+transcript, timers, ack-lookup, sobra).
@@ -210,6 +211,46 @@ describe('SendDriver', () => {
     h.advance(3000);
     expect(h.writes.filter((w) => w === '\r')).toHaveLength(2);
     expect(h.writes.filter((w) => w.startsWith('\x1b[200~'))).toHaveLength(1);
+  });
+
+  it('cada envio que termina em "não foi" vai uma vez ao diagnóstico, sem o texto da mensagem', async () => {
+    const h = new Harness();
+    const failures: SendFailureDetail[] = [];
+    h.driver = new SendDriver({ ...h.ports, reportFailure: (detail) => failures.push(detail) });
+    h.driver.enqueue({ text: '/foobar' });
+    h.screenChanged();
+    h.advance(100);
+    h.signal('unknown-command', '/foobar', 'transcript');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ reason: 'comando desconhecido', step: 'await-ack', sendKind: 'slash', attempts: 1 });
+    expect(JSON.stringify(failures)).not.toContain('foobar');
+    // Mais eventos sobre o envio já falho não repetem o registro.
+    h.screenChanged();
+    h.advance(20_000);
+    expect(failures).toHaveLength(1);
+    // Tentar de novo e falhar de novo é outro registro.
+    h.driver.retry(h.items[0]!.id);
+    await Promise.resolve();
+    await Promise.resolve();
+    h.screenChanged();
+    h.advance(100);
+    h.signal('unknown-command', '/foobar', 'transcript');
+    expect(h.items[0]!.state).toBe('failed');
+    expect(failures).toHaveLength(2);
+  });
+
+  it('envio aceito não vai ao diagnóstico; mensagem vazia vai', () => {
+    const h = new Harness();
+    const failures: SendFailureDetail[] = [];
+    h.driver = new SendDriver({ ...h.ports, reportFailure: (detail) => failures.push(detail) });
+    h.driver.enqueue({ text: 'oi' });
+    h.screenChanged();
+    h.advance(100);
+    h.signal('submit', 'oi', 'hook');
+    expect(h.items[0]!.state).toBe('accepted');
+    expect(failures).toHaveLength(0);
+    h.driver.enqueue({ text: '   ' });
+    expect(failures).toEqual([expect.objectContaining({ reason: 'mensagem vazia', step: 'gate' })]);
   });
 
   it('sobra de texto na caixa: avisa e permite descartar', () => {

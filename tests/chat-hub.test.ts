@@ -502,6 +502,29 @@ describe('registerChatIpcHandlers', () => {
     expect(h.live[h.live.length - 1]!.live.terminalNeeded).toBeNull();
   });
 
+  it('routes send-failed to the diagnostics through the sanitizer, ignoring malformed input', () => {
+    const ipc = fakeIpc();
+    const h = harness({});
+    const got: { ptyId: string; reason: string; detail: Record<string, unknown> }[] = [];
+    registerChatIpcHandlers({
+      ipcMain: ipc,
+      enabled: true,
+      hub: h.hub,
+      openExternal: async () => undefined,
+      openPath: async () => '',
+      onSendFailed: (entry) => void got.push(entry as never),
+    });
+    const sendFailed = ipc.handlers.get(CHAT_CHANNELS.sendFailed) as (e: unknown, i: unknown) => void;
+    sendFailed({}, { ptyId: 'pty-1', detail: { reason: 'o texto não entrou na caixa', step: 'text', attempts: 1, text: 'conversa' } });
+    sendFailed({}, { ptyId: 2, detail: { reason: 'não foi' } });
+    sendFailed({}, { ptyId: 'pty-1', detail: 'texto' });
+    expect(got).toHaveLength(1);
+    expect(got[0]!.ptyId).toBe('pty-1');
+    expect(got[0]!.reason).toBe('o texto não entrou na caixa');
+    expect(got[0]!.detail).toMatchObject({ step: 'text', attempts: 1 });
+    expect(JSON.stringify(got)).not.toContain('conversa');
+  });
+
   it('registers the attach/detach/load-older/row-detail/open-* handlers when enabled', async () => {
     const ipc = fakeIpc();
     const path = join(dir, 's1.jsonl');

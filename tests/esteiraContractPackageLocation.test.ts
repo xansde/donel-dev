@@ -37,6 +37,14 @@ const SKIP_DIRS = new Set([
   '.e2e-visual',
 ]);
 
+// Caminhos (relativos a raiz) que tambem nao sao fonte deste repo. As
+// worktrees locais (`.claude/worktrees/*`, nao versionadas) sao checkouts
+// inteiros de outras branches: cada uma traz a propria copia do contrato, e
+// conta-las como "segunda casa" reprovava a suite em toda maquina que tivesse
+// uma worktree de pe. No espelho publico a pasta nao existe, e pular um
+// caminho ausente nao muda nada.
+const SKIP_PATHS = new Set([join(REPO_ROOT, '.claude', 'worktrees')]);
+
 function findFilesNamed(root: string, targetName: string): string[] {
   const found: string[] = [];
   const stack = [root];
@@ -45,6 +53,7 @@ function findFilesNamed(root: string, targetName: string): string[] {
     for (const entry of readdirSync(dir)) {
       if (SKIP_DIRS.has(entry)) continue;
       const full = join(dir, entry);
+      if (SKIP_PATHS.has(full)) continue;
       const stat = statSync(full);
       if (stat.isDirectory()) {
         stack.push(full);

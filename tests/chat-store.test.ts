@@ -124,6 +124,9 @@ class FakeApi implements DonelChatApi {
   pathForFile(): string {
     return '';
   }
+  sendFailed(): Promise<void> {
+    return Promise.resolve();
+  }
   screenState(ptyId: string, reason: string | null): Promise<void> {
     this.screenCalls.push({ ptyId, reason });
     return Promise.resolve();

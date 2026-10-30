@@ -2,6 +2,7 @@
 // specs/014-chat/contracts/ipc-chat.md §1–§2. Tipos de linha, pendência e
 // estado vivo vêm de ./rows (data-model.md). Tudo serializável.
 
+import type { SendFailureDetail } from './sendDiagnostics';
 import type {
   ChatPermissionMode,
   ChatReception,
@@ -29,6 +30,8 @@ export const CHAT_CHANNELS = {
   openGenerated: 'chat:open-generated',
   focusState: 'chat:focus-state',
   screenState: 'chat:screen-state',
+  /** Diagnóstico de um envio que terminou em "não foi" (só o portão, nunca texto) -> `chat-diagnostics.log`. */
+  sendFailed: 'chat:send-failed',
   setChatPrefs: 'config:setChatPrefs',
   // Eventos (main -> renderer)
   rows: 'chat:rows',
@@ -212,6 +215,13 @@ export interface ChatScreenStateInput {
   readonly terminalNeeded: TerminalNeededReason | null;
 }
 export type ChatScreenStateOutput = void;
+
+/** `chat:send-failed` - o detalhe do portão de um envio que falhou; o main o filtra campo a campo antes de gravar. */
+export interface ChatSendFailedInput {
+  readonly ptyId: string;
+  readonly detail: SendFailureDetail;
+}
+export type ChatSendFailedOutput = void;
 
 /** `config:setChatPrefs` — a saída (`AppConfigDto`) é tipada em ../config. */
 export interface SetChatPrefsInput {
