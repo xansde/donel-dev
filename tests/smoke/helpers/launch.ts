@@ -55,6 +55,13 @@ export async function launchIsolatedApp(options: LaunchOptions = {}): Promise<La
   });
   const window = await app.firstWindow();
   await window.waitForLoadState('domcontentloaded');
+  // Novidades da versão: userData nova sempre abre a janela na estreia; fecha
+  // aqui para ela não cobrir a tela que o spec vai usar.
+  // A janela monta no mesmo render da casca: com o botão de Preferências na
+  // tela, ela já está lá ou não vem.
+  await window.getByRole('button', { name: 'Preferências' }).waitFor({ timeout: 30_000 }).catch(() => undefined);
+  const notes = window.getByTestId('patch-notes');
+  if (await notes.isVisible()) await notes.getByRole('button', { name: 'Entendi' }).click();
   return { app, window, userDataDir };
 }
 

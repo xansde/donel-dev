@@ -18,6 +18,7 @@ import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
+import type { DonelHealthApi } from './health/ipc';
 
 // 015-jobu-pet — the Jobu contract (channels, payloads, validators) lives in ./pet/ipc.
 export type { DonelPetApi } from './pet/ipc';
@@ -183,6 +184,7 @@ export type {
   AccountLoad,
   AccountsConfig,
   AccountsConfigDto,
+  SeazonePoolConfig,
   AccountsViewDto,
   AccountSummary,
   AutoSwitchPolicy,
@@ -443,4 +445,6 @@ export interface DonelApi {
   mindscape: DonelMindscapeApi;
   /** 015-jobu-pet — the Jobu on the desktop. Exposed in both windows (the main one and the pet's); each one uses its own half. */
   pet: DonelPetApi;
+  /** Saúde do computador — RAM, disco e processos que estão pesando, com a ação de encerrar um processo. */
+  health: DonelHealthApi;
 }

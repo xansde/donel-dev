@@ -46,6 +46,21 @@ via `CLAUDE_CONFIG_DIR`.
   O isolamento COMPLETO (userData por canal) continua sendo o **B10** do
   `specs/backlog.md`, agora opcional.
 
+## Alfa diário e novidades da versão (pedido do dono, 28/10)
+
+- O dono quer, toda manhã, um instalador novo do alfa e uma janela "O que
+  mudou" na primeira abertura de cada versão.
+- **Todo PR mergeado em `staging` que muda algo visível acrescenta um item em
+  `src/renderer/src/patchnotes/notes.ts`**, no dia do merge (cria o dia se não
+  existir). Texto de usuário: o que muda para ele, sem arquivo, PR ou jargão.
+- Build: tarefa agendada do Windows "Donel Dev Alfa diario" (06:30), registrada
+  por `scripts/registrar-alfa-diario.ps1`. Ela roda uma cópia de
+  `scripts/build-alfa-diario.ps1` guardada em `%USERPROFILE%\Donel Dev Alfa -
+  diario\`, builda `origin/staging` na worktree `.claude/worktrees/alfa-diario`
+  e deixa lá o `Donel Dev Alfa-Setup-AAAA-MM-DD.exe` (guarda os 5 últimos).
+  Falha deixa `FALHOU.txt` e o `build.log` na mesma pasta. Mudou o script?
+  Rode o registrar de novo para atualizar a cópia.
+
 ## Repo público (canal stable) — aberto em 2026-07-27
 
 - **Remoto**: `https://github.com/xansde/donel` (**público**, MIT). Cópia de
@@ -207,8 +222,14 @@ fase `⬜` da fila
 prontos, um por fase (+ retomada), em `prompt.md`, na mesma pasta.
 
 **Escopo:** 4 contas próprias no alfa, trocando entre elas **durante** sessões
-vivas. **Pool/mod Seazone fora por decisão do dono (13/09)** — sai da UI na
-Fase 1; remover o código espera instrução dele.
+vivas. O pool Seazone saiu da UI em 13/09 e **voltou em 28/10 como opção**:
+só entra quando `accounts.seazone` está na config, e as contas dele aparecem
+no fim da lista, ao lado das locais (`local-with-pool-mod.ts`).
+
+**Ferramentas da Seazone (decisão do dono, 28/10):** o Donel Dev pode aceitá-las
+para facilitar a vida dele, mas **nunca fixo à Seazone**: toda integração é
+adaptador opcional, desligado por padrão, com URL e nomes vindos da config,
+nada hardcoded no core nem default que vaze para o repo público.
 
 A ordem é **estritamente sequencial**. A **Fase 0 era o gate** da promessa
 central da 011 — "trocar de conta sem reiniciar sessão" — e **passou com CLI

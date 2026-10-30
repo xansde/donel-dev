@@ -121,11 +121,23 @@ export function WorkingFooter({ live, rows, terminal, onInterruptPending, stopRe
             {model.waitingFor !== undefined ? (
               <span className={styles.verb}>{WAITING_FOR_LABEL[model.waitingFor]}</span>
             ) : model.verb !== undefined ? (
-              <ActionText action={{ verb: model.verb, ...(model.target !== undefined ? { target: model.target } : {}) }} />
+              <>
+                <ActionText action={{ verb: model.verb, ...(model.target !== undefined ? { target: model.target } : {}) }} />
+                {model.actionStartedAt !== undefined ? (
+                  <span className={styles.hint}>há {formatElapsed(Date.now() - Date.parse(model.actionStartedAt))}</span>
+                ) : null}
+                {model.alsoSubagents !== undefined ? (
+                  <span className={styles.hint}>
+                    + {model.alsoSubagents} {model.alsoSubagents === 1 ? 'subagente' : 'subagentes'}
+                  </span>
+                ) : null}
+              </>
             ) : model.waitingSubagents > 0 ? (
               <span className={styles.verb}>
                 Aguardando {model.waitingSubagents} {model.waitingSubagents === 1 ? 'subagente' : 'subagentes'}
               </span>
+            ) : model.thinking ? (
+              <span className={styles.verb}>pensando</span>
             ) : null}
             <span className={styles.elapsed}>{elapsed}</span>
           </span>

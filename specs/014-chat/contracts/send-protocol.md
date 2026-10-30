@@ -116,6 +116,7 @@ o aceite tardio (§7).
 | Imagem virar `[Image #N]` | 3 s por imagem | `failed` "a imagem não entrou" |
 | Texto aparecer na caixa | 3 s + 1 s a cada 15 KB; **12 s** na primeira colagem da sessão | `failed` (a caixa é limpa só se o texto for o nosso) |
 | Aceite autoritativo depois do Enter | **15 s** (o primeiro envio de uma sessão confirma em 4–5 s a frio) | `failed` "não foi" + "tentar de novo" |
+| Aceite depois de um Enter **no meio da rodada**, com o texto fora da caixa | 15 s | `queued` (o CLI guardou na fila dele; o sinal só atrasou — máquina sem RAM, 28/10) |
 | Entrega de mensagem `queued` | sem prazo: depende da rodada | — (a fila do CLI aparece na tela) |
 
 Todo estado transitório tem prazo. Não existe "enviando…" eterno.

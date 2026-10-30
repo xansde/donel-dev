@@ -122,6 +122,8 @@ export const ChatView = memo(function ChatView({
   const alive = effectiveEnded === null;
   const pendingOpen = (session.live?.pendings.length ?? 0) > 0;
   const terminalNeeded = session.live?.terminalNeeded != null;
+  // "not-receiving" only happens mid-turn (activity newer than the transcript).
+  const working = session.live?.status === 'working' || session.live?.status === 'not-receiving';
   const pendings = session.live?.pendings;
   const head = useMemo(() => pendingQueueView(pendings ?? []).head, [pendings]);
   const headId = head?.id ?? null;
@@ -159,8 +161,8 @@ export const ChatView = memo(function ChatView({
     rewireTab(tabId);
   }, [tabId, ptyId]);
   useEffect(() => {
-    driver.setEnv({ alive, pendingOpen, terminalNeeded });
-  }, [driver, alive, pendingOpen, terminalNeeded]);
+    driver.setEnv({ alive, pendingOpen, terminalNeeded, working });
+  }, [driver, alive, pendingOpen, terminalNeeded, working]);
 
   // Parar / Esc feedback ("parando…" until the round ends or a short timeout); both entry points stamp it.
   const [stopRequestedAt, setStopRequestedAt] = useState<number | null>(null);

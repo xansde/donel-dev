@@ -12,6 +12,7 @@
 // tenta uma troca que o próprio motor sabe que vai falhar.
 
 import { overallLoad, type AccountId, type AccountSummary, type AutoSwitchPolicy, type AutoSwitchState } from '../../shared/accounts';
+import { isPoolAccountId, poolLabelFromId } from './pool-account-id';
 
 /** Injetável — produção usa amostragem aleatória; teste usa uma função determinística. Devolve até 2 elementos. */
 export type PickTwo = (candidates: readonly AccountSummary[]) => readonly AccountSummary[];
@@ -79,6 +80,85 @@ export function selectSwitchTarget(
   if (picked.length === 0) return null;
   if (picked.length === 1) return picked[0].id;
 
+  const [first, second] = picked;
+  const firstLoad = overallLoad(first.load) ?? Number.POSITIVE_INFINITY;
+  const secondLoad = overallLoad(second.load) ?? Number.POSITIVE_INFINITY;
+  return firstLoad <= secondLoad ? first.id : second.id;
+}
+
+/**
+ * Pool Seazone ao lado das locais — PURO, embrulha `selectSwitchTarget` sem
+ * mudar a regra dele. Sem conta `seazone:*` na lista, decide exatamente como
+ * `selectSwitchTarget` (mod local puro e mod seazone puro ficam intocados).
+ *
+ * - Ativa LOCAL: primeiro a regra de sempre (90/20) só entre as locais; o pool
+ *   só é destino quando nenhuma local passa nela (última opção).
+ * - Ativa do POOL (e presente na lista — switcher fora do ar não decide nada):
+ *   volta para uma local assim que existir uma candidata com carga conhecida
+ *   <= `switchAtLoad - minAdvantage` (disponível, sem `needsReconnect`), seja
+ *   qual for a carga do pool; entre essas, a mesma melhor-de-duas. Sem volta
+ *   possível, a regra de sempre: locais primeiro, pool depois.
+ *
+ * Conta do pool `available: false` ou com carga desconhecida nunca é destino
+ * (o filtro de `eligibleSwitchCandidates` vale para as duas famílias).
+ */
+export function selectAutoSwitchTarget(
+  accounts: readonly AccountSummary[],
+  activeId: AccountId | null,
+  policy: AutoSwitchPolicy,
+  pickTwo: PickTwo = randomPickTwo,
+): AccountId | null {
+  if (!policy.enabled) return null;
+  if (!activeId) return null;
+
+  const active = accounts.find((a) => a.id === activeId);
+  if (!active) return null;
+
+  const locals = accounts.filter((a) => !isPoolAccountId(a.id));
+  const poolAccounts = accounts.filter((a) => isPoolAccountId(a.id));
+
+  if (isPoolAccountId(activeId)) {
+    const returnLimit = policy.switchAtLoad - policy.minAdvantage;
+    const returnCandidates = locals.filter((candidate) => {
+      if (!candidate.available || candidate.needsReconnect) return false;
+      const load = overallLoad(candidate.load);
+      return load !== null && load <= returnLimit;
+    });
+    const back = pickBest(returnCandidates, pickTwo);
+    if (back) return back;
+  }
+
+  // A ativa entra nas duas listas: é contra ela que a folga é medida.
+  const withActive = (family: readonly AccountSummary[]): readonly AccountSummary[] => (family.some((a) => a.id === activeId) ? family : [active, ...family]);
+  return selectSwitchTarget(withActive(locals), activeId, policy, pickTwo) ?? selectSwitchTarget(withActive(poolAccounts), activeId, policy, pickTwo);
+}
+
+/**
+ * B25 — puro. Com `preferredLabels` não vazia, tira da lista as contas do pool
+ * fora dela (a ativa fica sempre: é contra ela que a folga é medida). Locais
+ * nunca saem. Sem lista, devolve `accounts` intacta. Só o automático passa por
+ * aqui; a troca manual e a lista do painel continuam vendo o pool inteiro.
+ */
+export function restrictPoolToPreferred(
+  accounts: readonly AccountSummary[],
+  activeId: AccountId | null,
+  preferredLabels: readonly string[] | undefined,
+): readonly AccountSummary[] {
+  if (!preferredLabels || preferredLabels.length === 0) return accounts;
+  const preferred = new Set(preferredLabels);
+  return accounts.filter((account) => {
+    if (account.id === activeId) return true;
+    const label = poolLabelFromId(account.id);
+    return label === null || preferred.has(label);
+  });
+}
+
+/** Melhor de duas sorteadas (mesmo critério de `selectSwitchTarget`); `null` sem candidata. */
+function pickBest(candidates: readonly AccountSummary[], pickTwo: PickTwo): AccountId | null {
+  if (candidates.length === 0) return null;
+  const picked = pickTwo(candidates);
+  if (picked.length === 0) return null;
+  if (picked.length === 1) return picked[0].id;
   const [first, second] = picked;
   const firstLoad = overallLoad(first.load) ?? Number.POSITIVE_INFINITY;
   const secondLoad = overallLoad(second.load) ?? Number.POSITIVE_INFINITY;

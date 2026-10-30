@@ -165,6 +165,33 @@ describe('gate (§1)', () => {
     expect(sim.status?.reason).toBe('o Claude não ficou pronto');
   });
 
+  it('Claude trabalhando (hooks) com a caixa ilegível: espera sem prazo e entra quando a caixa abre', () => {
+    // Visto no alfa (30/10): mensagem mandada durante um comando longo do Claude falhava em 30 s.
+    const sim = new Sim({ text: 'oi' }, 1000);
+    sim.ev({ type: 'env', now: 1000, working: true });
+    sim.screen(['  ● Bash(npx vitest run)', '    ⎿  Running…'], 1000);
+    sim.tick(200_000);
+    expect(sim.phase).toBe('waiting-cli');
+    expect(sim.status?.label).toBe('na fila');
+    expect(sim.status?.reason).toBe('esperando o Claude terminar o que está fazendo');
+    expect(sim.allWrites()).toEqual([]);
+    sim.screen(workingEmpty(), 200_001);
+    expect(sim.allWrites()).toEqual([paste('oi')]);
+  });
+
+  it('o turno acaba e a caixa segue ilegível: o prazo de 30 s recomeça do fim do turno', () => {
+    const sim = new Sim({ text: 'oi' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(['carregando...'], 0);
+    sim.tick(100_000);
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    sim.tick(129_999);
+    expect(sim.phase).toBe('waiting-cli');
+    sim.tick(130_000);
+    expect(sim.phase).toBe('failed');
+    expect(sim.status?.reason).toBe('o Claude não ficou pronto');
+  });
+
   it('devolve wake-at para o prazo de 30 s', () => {
     const sim = new Sim({ text: 'oi' }, 1000);
     const wake = sim.log.find((e) => e.type === 'wake-at') as Extract<SendEffect, { type: 'wake-at' }>;
@@ -459,6 +486,27 @@ describe('prazos (§6)', () => {
     sim.tick(15_180);
     expect(sim.phase).toBe('failed');
     expect(sim.status?.reason).toBe('não foi');
+  });
+});
+
+describe('Enter no meio da rodada sem sinal (máquina carregada)', () => {
+  it('a caixa esvaziou: fica na fila do CLI, não "não foi"', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.screen(workingEmpty(), 0);
+    sim.screen(screen('oi tudo bem', WORKING_FOOTER), 100);
+    sim.tick(180);
+    sim.screen(workingEmpty(), 15_180);
+    expect(sim.phase).toBe('queued');
+    expect(sim.status?.label).toBe('na fila');
+  });
+
+  it('o texto continua na caixa: falha como antes', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.screen(workingEmpty(), 0);
+    sim.screen(screen('oi tudo bem', WORKING_FOOTER), 100);
+    sim.tick(180);
+    sim.screen(screen('oi tudo bem', WORKING_FOOTER), 15_180);
+    expect(sim.phase).toBe('failed');
   });
 });
 

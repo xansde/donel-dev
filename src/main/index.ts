@@ -198,17 +198,18 @@ import { createRefreshCoordinator } from './accounts/refresh-coordinator';
 // 2 — o que o login isolado grava em `appConfig.accounts` depois de colher.
 // Fase 2 (D3) — `planReconnect` decide se um `id` pode reconectar
 // (`accounts:beginReconnect`, item 4 do Bloco 3).
-import { applyHarvestedAccount, findAccountByFingerprint, findAccountById, planDisconnect, planReconnect, planRemoveAccount } from './accounts/account-pool';
+import { applyHarvestedAccount, findAccountByFingerprint, findAccountById, planConnectSeazonePool, planDisconnect, planReconnect, planRemoveAccount } from './accounts/account-pool';
 import type { AccountMod } from './accounts/account-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — colhedor do login
 // isolado (plan-etapa-3.md §4.2): `<userData>/accounts-login-<uuid>/`, poll
 // do diretório, cofre, e a limpeza obrigatória no fim (sucesso ou falha).
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
-import { applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
+import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
+import { createLocalWithPoolMod } from './accounts/mods/local-with-pool-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1 (F2) — valida o par colado à mão (fallback do "conectar conta"; login isolado é a Fase 1.2).
 import { buildPastedPair } from './accounts/pasted-pair';
 import { createSystemVaultIoDeps, decryptVaultEntry, deleteVaultEntries, writeVaultEntry, type VaultLike } from './accounts/vault';
@@ -247,6 +248,11 @@ import { readPetSeams, type PetSmokeGlobal } from './pet/pet-seams';
 // 016-jobu-faxina — "Fazer faxina": the sweep of repos, worktrees, branches and old sessions the Jobu runs from his menu.
 import { createGitRunner } from './sweep/git';
 import { createSweepRunner } from './sweep/sweep-service';
+// Saúde do computador — samples RAM, disk and processes every minute; ends a process on request.
+import { collectHealthSnapshot, lookupProcessName } from './health/collector';
+import { createHealthService, type HealthService } from './health/health-service';
+import { HEALTH_CHANNELS, type KillProcessOutcome } from '../shared/health/ipc';
+import type { HealthReport } from '../shared/health/types';
 import { isValidPetPrefsInput } from '../shared/pet/ipc';
 import type { PetDisplay } from '../shared/pet/types';
 // T504 (005-terminal-copy-paste) — clipboard-bridge (T503), aditivo aos
@@ -740,7 +746,7 @@ function resolveAccountMod(modId: ModId): AccountMod {
   if (modId === 'seazone') {
     return createSeazoneMod({ baseUrl: appConfig.accounts.seazone?.baseUrl ?? '', vault });
   }
-  return createLocalMod({
+  const localMod = createLocalMod({
     accounts: appConfig.accounts.localAccounts,
     vault,
     // 011-contas-e-provedores, etapa 3, Fase 2 (D7) — a carga da conta ATIVA
@@ -758,7 +764,18 @@ function resolveAccountMod(modId: ModId): AccountMod {
     // pode ser repetida pelo mod do motor novo (refresh token de uso único).
     refreshCoordinator: accountsRefreshCoordinator,
     onPairRefreshed: (id, trigger) => appendAccountsMaintenanceLog({ event: 'account-pair-refreshed', account: id, trigger }),
+    // fix/renovacao-credencial — a falha também vai pro log (antes só o
+    // sucesso ia, e uma conta caída em "Reconectar" não deixava rastro).
+    onPairRefreshFailed: (id, trigger, reason) => appendAccountsMaintenanceLog({ event: 'account-pair-refresh-failed', account: id, trigger, reason }),
   });
+  // Pool Seazone AO LADO das locais (sem trocar o mod): com o switcher
+  // configurado, as contas dele entram no fim da lista como `seazone:<label>`
+  // e o mod composto roteia switch/captura/keepAlive pelo dono do id. Sem
+  // `seazone:session` no cofre, 401 ou switcher fora do ar, o pool só não
+  // aparece — as locais seguem.
+  const seazone = appConfig.accounts.seazone;
+  if (!seazone) return localMod;
+  return createLocalWithPoolMod({ local: localMod, pool: createSeazoneMod({ baseUrl: seazone.baseUrl, vault }) });
 }
 
 /**
@@ -868,6 +885,13 @@ const accountEngineHost = new AccountEngineHost({
       onSwitchOverwritten: (info) => appendAccountsMaintenanceLog({ event: 'switch-overwritten', account: info.to }),
       onSwitchPairRotated: (info) => appendAccountsMaintenanceLog({ event: 'switch-pair-rotated', account: info.to }),
       onSwitchCheckInconclusive: (info) => appendAccountsMaintenanceLog({ event: 'switch-check-inconclusive', account: info.to }),
+      // fix/renovacao-credencial — cada vez que o par em disco foi guardado no
+      // cofre (switch, leitura de carga ou encerramento), só ids.
+      onLivePairCaptured: (info) => appendAccountsMaintenanceLog({ event: 'live-pair-captured', account: info.account, trigger: info.trigger, believedActive: info.believedActive }),
+      // Pool Seazone (patch local v3) — o heartbeat da conta ativa do pool adota o par mais novo do switcher (só se o disco ainda tiver o enviado) e registra, só com ids, o que aconteceu.
+      writeRefreshedActivePair: (expected, next) =>
+        adoptRefreshedActivePair({ io: accountsClaudeStateIo, claudeHome: appConfig.accounts.claudeHome ?? claudeHomeDirFor(homedir()) }, expected, next),
+      onPoolHeartbeatEvent: (event) => appendAccountsMaintenanceLog({ ...event }),
     });
     engine.onChanged(broadcastAccountsChanged);
     engine.start();
@@ -2189,6 +2213,38 @@ function registerTabIpcHandlers(): void {
   });
 }
 
+/** Saúde do computador — `null` until the handlers are registered (whenReady) and again after the app closes. */
+let healthService: HealthService | null = null;
+
+/** The app's own pids: the main plus every helper Electron started (renderers, GPU, utility). */
+function ownAppPids(): number[] {
+  const pids = new Set<number>([process.pid]);
+  for (const metric of app.getAppMetrics()) pids.add(metric.pid);
+  return [...pids];
+}
+
+function registerHealthIpcHandlers(): void {
+  healthService = createHealthService({
+    collect: () => collectHealthSnapshot({ ownPids: ownAppPids }),
+    onReport: (report) => {
+      const window = getMainWindow();
+      if (window) window.webContents.send(HEALTH_CHANNELS.changed, report);
+    },
+    ownPids: ownAppPids,
+    lookupProcessName,
+    terminate: (pid) => {
+      process.kill(pid);
+    },
+  });
+  healthService.start();
+  ipcMain.handle(HEALTH_CHANNELS.get, (): HealthReport | null => healthService?.getReport() ?? null);
+  ipcMain.handle(HEALTH_CHANNELS.refresh, async (): Promise<HealthReport | null> => (healthService ? healthService.refresh() : null));
+  ipcMain.handle(HEALTH_CHANNELS.killProcess, async (_event, pid: unknown): Promise<KillProcessOutcome> =>
+    healthService ? healthService.killProcess(pid) : { ok: false, reason: 'no-report' },
+  );
+  ipcMain.handle(HEALTH_CHANNELS.openTemp, (): Promise<string> => shell.openPath(app.getPath('temp')));
+}
+
 /**
  * Mindscape (V1) — load/save of `mindscape.json`. The main is the only writer
  * and validates the payload (`parseMindscapeDoc`) before writing.
@@ -2364,7 +2420,12 @@ function registerAccountsIpcHandlers(): void {
   ipcMain.handle(ACCOUNT_CHANNELS.switch, async (_event, id: AccountId): Promise<SwitchOutcome> => {
     const engine = accountEngineHost.current();
     if (!engine) return { kind: 'failed', reason: 'io' };
+    const from = engine.getActiveAccountId();
     const result = await engine.switchTo(id);
+    // fix/renovacao-credencial — a troca manual não deixava rastro no log de
+    // manutenção (só a automática), e a linha do tempo de uma conta ficava
+    // com buracos. Só ids e o desfecho.
+    appendAccountsMaintenanceLog({ event: 'manual-switch', outcome: result.kind, from, to: id, ...(result.kind === 'failed' ? { reason: result.reason } : {}) });
     if (result.kind === 'switched') {
       appConfig = { ...appConfig, accounts: { ...appConfig.accounts, activeAccountId: result.to } };
       persistAppConfig();
@@ -2391,7 +2452,10 @@ function registerAccountsIpcHandlers(): void {
       if (!input.baseUrl?.trim() || !input.sessionRefreshToken?.trim()) return { kind: 'failed', reason: 'invalid-input' };
       const writeResult = writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, 'seazone:session', input.sessionRefreshToken);
       if (writeResult.kind !== 'ok') return { kind: 'failed', reason: 'vault-unavailable' };
-      appConfig = { ...appConfig, accounts: { ...appConfig.accounts, mod: 'seazone', seazone: { baseUrl: input.baseUrl.trim() } } };
+      // Pool Seazone ao lado das locais — NÃO troca o mod nem toca
+      // `localAccounts`/`activeAccountId`: só registra o switcher. A
+      // reconstrução abaixo (F6) monta o mod composto quando o mod é `local`.
+      appConfig = { ...appConfig, accounts: planConnectSeazonePool(appConfig.accounts, input.baseUrl) };
     } else {
       const label = input.label?.trim();
       if (!label) return { kind: 'failed', reason: 'invalid-input' };
@@ -2813,6 +2877,7 @@ void app.whenReady().then(async () => {
     getService: () => petService,
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   }); // 015-jobu-pet
+  registerHealthIpcHandlers(); // Saúde do computador
   createMainWindow();
 
   app.on('activate', () => {
@@ -2830,6 +2895,12 @@ app.on('window-all-closed', () => {
   void hookBridge?.close();
   esteiraService?.dispose();
   esteiraService = null;
+  healthService?.stop();
+  healthService = null;
+  // fix/renovacao-credencial (C6, research.md) — antes de descartar o motor,
+  // guarda no cofre o par que o CLI deixou em `.credentials.json` para a
+  // conta ativa. A gravação acontece dentro da chamada, sem esperar promessa.
+  void accountEngineHost.current()?.captureLivePairNow('quit');
   accountEngineHost.dispose(); // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.
   if (process.platform !== 'darwin') {
     app.quit();

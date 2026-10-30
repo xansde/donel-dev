@@ -672,9 +672,14 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     } else if (event.type === 'resolved-elsewhere' || event.type === 'cancelled') {
       if (closeOpenPending(rec, event.requestId, event.type, false)) emitLiveIfChanged(rec);
     } else if (event.type === 'hook') {
-      if (ACTIVITY_EVENTS.has(event.event)) rec.lastActivityAt = now();
-      if (WORKING_EVENTS.has(event.event)) setBase(rec, 'working');
-      else if (IDLE_EVENTS.has(event.event) || rec.base === 'starting') setBase(rec, 'idle');
+      // A sub-agent's hooks (they carry `agent_id`) say nothing about the main turn: a background agent keeps
+      // firing them after `Stop`, and it writes its own transcript, not the one followed here.
+      const fromSubagent = typeof event.payload.agent_id === 'string' && event.payload.agent_id !== '';
+      if (!fromSubagent) {
+        if (ACTIVITY_EVENTS.has(event.event)) rec.lastActivityAt = now();
+        if (WORKING_EVENTS.has(event.event)) setBase(rec, 'working');
+        else if (IDLE_EVENTS.has(event.event) || rec.base === 'starting') setBase(rec, 'idle');
+      }
       onHook(rec, event.event, event.payload);
     }
   }

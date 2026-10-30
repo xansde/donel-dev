@@ -124,6 +124,8 @@ import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } 
 import { disposeTabSend, sendDriverFor, sendToTab } from './chat/composer/tabSend';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
+import { PatchNotes } from './patchnotes/PatchNotes';
+import { HealthIndicator } from './health/HealthIndicator';
 import type { TerminalPaneHandle } from './TerminalPane';
 
 // FIX (feedback E2E, batch 3 achado "notificar toda transição vira spam") —
@@ -2788,13 +2790,20 @@ export function App(): React.JSX.Element {
         </pre>
       </div>
 
-      <StatusBar
-        accountLabel={activeSessionAccountLabel}
-        modelEffort={activeModelEffort}
-        sessionCount={tabs.length}
-        smartZone={activeSmartZone}
-        accountTestId="statusbar-account"
-      />
+      {/* Novidades and Saúde do computador — live beside the StatusBar (not inside it): the design-system
+          bar keeps its own slots, and these buttons are the app's. */}
+      <div className={styles.statusRow}>
+        <StatusBar
+          className={styles.statusBarFill}
+          accountLabel={activeSessionAccountLabel}
+          modelEffort={activeModelEffort}
+          sessionCount={tabs.length}
+          smartZone={activeSmartZone}
+          accountTestId="statusbar-account"
+        />
+        <PatchNotes />
+        <HealthIndicator />
+      </div>
 
       {/* T010 — FR-006, ui-spec §2 "fechar aba com sessão ativa": confirmação destrutiva antes de matar um PTY vivo. */}
       <Modal

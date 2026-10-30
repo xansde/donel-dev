@@ -27,8 +27,53 @@ export type ListAccountsResult =
  * responder.
  */
 export type SwitchToResult =
+  | {
+      readonly kind: 'ok';
+      readonly pair: CredentialPair;
+      /**
+       * Pool Seazone (patch local v2) — a conta que o backend ENTREGOU, quando
+       * pode ser outra que a pedida (troca automática pede `auto` ao switcher,
+       * que escolhe uma conta livre). Ausente = a conta pedida. O motor adota
+       * este id como conta ativa e captura o par seguinte nele.
+       */
+      readonly accountId?: AccountId;
+    }
+  | {
+      readonly kind: 'failed';
+      /**
+       * `account-unavailable` = o backend respondeu e recusou ESTA conta agora
+       * (switcher: 409 — em posse de outra pessoa, sem crédito, leitura
+       * recusada, pool sem conta livre). Não é falta de rede.
+       */
+      readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'unknown-account' | 'account-unavailable' | 'io';
+    };
+
+/**
+ * Pool Seazone (patch local v2) — quem pediu a troca e de onde ela sai.
+ * Opcional: o mod local ignora; o seazone-mod usa para pedir `auto` na troca
+ * automática e para informar a conta que sai (`currentAccount`).
+ */
+export interface SwitchToContext {
+  readonly origin: 'manual' | 'auto';
+  /** Conta ativa que está saindo, no id que ESTE mod entende (o composto tira o prefixo `seazone:`; `null` = não é do mod). */
+  readonly from: AccountId | null;
+}
+
+/**
+ * Pool Seazone (patch local v3) — resultado do heartbeat da conta ATIVA do pool.
+ * - `ok`: a posse foi renovada; `pair` é o par que o servidor tem agora (o
+ *   mesmo enviado, ou um mais novo se o monitor dele renovou).
+ * - `lost`: a API disse que a conta não é mais nossa (403 — entregue a outra
+ *   pessoa, ou inutilizável). O motor tira a sessão dela na hora.
+ * - `failed`: transitório (rede, 5xx, sessão do switcher, 409); tenta no
+ *   próximo ciclo, sem mexer em nada.
+ * - `skipped`: a conta não é do pool (o mod composto não manda nada).
+ */
+export type SyncActivePairResult =
   | { readonly kind: 'ok'; readonly pair: CredentialPair }
-  | { readonly kind: 'failed'; readonly reason: 'unauthorized' | 'offline' | 'expired-credentials' | 'unknown-account' | 'io' };
+  | { readonly kind: 'lost' }
+  | { readonly kind: 'failed'; readonly reason: 'offline' | 'unauthorized' | 'conflict' | 'io' }
+  | { readonly kind: 'skipped' };
 
 /**
  * A interface é EXTRAÍDA dos dois mods concretos (Seazone e local), nunca
@@ -47,11 +92,19 @@ export interface AccountMod {
   listAccounts(): Promise<ListAccountsResult>;
 
   /** Deixa `id` como a credencial vigente do CLI. NÃO escreve em disco — devolve o par para o motor aplicar. */
-  switchTo(id: AccountId): Promise<SwitchToResult>;
+  switchTo(id: AccountId, context?: SwitchToContext): Promise<SwitchToResult>;
 
   /** Persiste o par que o CLI rotacionou para a conta que está saindo. Seazone: repassa ao servidor deles. Local: grava no cofre. */
   captureRotatedPair(id: AccountId, pair: CredentialPair): Promise<void>;
 
   /** OPCIONAL — só o mod Seazone implementa (heartbeat de 15 min, C3). O mod local não implementa: switch-time-only é decisão fechada (D4). */
   keepAlive?(): Promise<void>;
+
+  /**
+   * OPCIONAL — pool Seazone (patch local v3). Heartbeat da conta ATIVA com o
+   * par VIVO de `.credentials.json`: renova a posse (que dura 20 min no
+   * switcher) e devolve o par que o servidor tem. Não escreve em disco (quem
+   * adota o par devolvido é o motor, via claude-state.ts). Nunca lança.
+   */
+  syncActivePair?(id: AccountId, pair: CredentialPair): Promise<SyncActivePairResult>;
 }

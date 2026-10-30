@@ -7,6 +7,10 @@ import { CHAT_CHANNELS } from '../shared/chat/ipc';
 import { PET_CHANNELS } from '../shared/pet/ipc';
 import type { PetActivateSessionPayload, PetDragPayload, PetOpenTarget, PetPrefsChangedPayload, PetTabsPayload } from '../shared/pet/ipc';
 import type { PetView } from '../shared/pet/types';
+// Saúde do computador — the health channels.
+import { HEALTH_CHANNELS } from '../shared/health/ipc';
+import type { KillProcessOutcome } from '../shared/health/ipc';
+import type { HealthReport } from '../shared/health/types';
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
@@ -359,6 +363,18 @@ const donelApi: DonelApi = {
 
     setOrder: (sessionId: string, order: number) =>
       ipcRenderer.invoke(TAB_CHANNELS.setOrder, sessionId, order) as Promise<AppConfigDto>,
+  },
+
+  // Saúde do computador — the last report, its change event and the two actions.
+  health: {
+    get: () => ipcRenderer.invoke(HEALTH_CHANNELS.get) as Promise<HealthReport | null>,
+    refresh: () => ipcRenderer.invoke(HEALTH_CHANNELS.refresh) as Promise<HealthReport | null>,
+    onChanged: (listener: (report: HealthReport) => void) => {
+      const handler = (_event: unknown, report: HealthReport): void => listener(report);
+      return subscribeChannel(ipcRenderer, HEALTH_CHANNELS.changed, handler);
+    },
+    killProcess: (pid: number) => ipcRenderer.invoke(HEALTH_CHANNELS.killProcess, pid) as Promise<KillProcessOutcome>,
+    openTemp: () => ipcRenderer.invoke(HEALTH_CHANNELS.openTemp) as Promise<string>,
   },
 
   // Mindscape V1 — the board document (main is the only writer).
