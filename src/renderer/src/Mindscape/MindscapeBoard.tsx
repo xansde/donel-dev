@@ -4,7 +4,8 @@ import { eraseBoard } from '../../../shared/mindscape/eraser';
 import { cardAtPoint, hitTestDrawings, itemsInsideRect, resizeDrawing, type CardRect, type ItemIds, type Rect, type ResizeHandle } from '../../../shared/mindscape/geometry';
 import type { MindscapeBoard as Board, MindscapeCard, MindscapeDrawing, MindscapeLink } from '../../../shared/mindscape/model';
 import type { MindscapeTool } from '../../../shared/mindscape/shortcuts';
-import { screenToWorld, type Point } from '../../../shared/mindscape/view';
+import { MAX_ZOOM, MIN_ZOOM, screenToWorld, stepZoom, wheelPan, wheelZoomFactor, zoomAt, zoomPercent, type BoardView, type Point } from '../../../shared/mindscape/view';
+import { normalizeWheelDelta } from '../../../shared/pet/gestures';
 import styles from './Mindscape.module.css';
 
 /** Pointer travel (px) before a press becomes a drag — below it, click and double click stay intact; a shorter drawing is dropped. */
@@ -13,6 +14,10 @@ const DRAG_THRESHOLD = 4;
 const HIT_SLACK_PX = 6;
 /** Desenho, fatia 04 — radius of the eraser, in px of screen (`8 / zoom` on the board). */
 export const ERASER_RADIUS_PX = 8;
+/** Desenho, fatia 05 — the dot grid of the background at 100% (px); it scales and moves with the view. */
+const GRID_PX = 22;
+/** Desenho, fatia 05 — "−" / "+" of the zoom indicator walk this many percentage points. */
+const ZOOM_STEP_POINTS = 10;
 
 /** The tools that draw by dragging (fatia 01; the pencil from fatia 04). */
 export type DrawTool = Extract<MindscapeTool, 'arrow' | 'line' | 'rect' | 'ellipse' | 'pencil'>;
@@ -130,8 +135,13 @@ export interface MindscapeBoardProps {
   readonly onMoveItems: (ids: ItemIds, dx: number, dy: number) => void;
   /** `pointerup` of a handle drag. */
   readonly onResize: (drawing: MindscapeDrawing) => void;
-  /** `pointerup` of a hand drag (H or space). */
-  readonly onPan: (pan: { x: number; y: number }) => void;
+  /**
+   * The view of the board changes (out of the history): `pointerup` of a hand
+   * drag (H or space); desenho, fatia 05 — the wheel (Ctrl+wheel and the pinch
+   * zoom on the mouse, the wheel alone moves the view) and the zoom indicator.
+   * `change` gets the view as it is when applied, so wheel events in a row compose.
+   */
+  readonly onViewChange: (change: (view: BoardView) => BoardView) => void;
   /** `pointerup` of a drawing gesture longer than the threshold. */
   readonly onDraw: (gesture: DrawGesture) => void;
   /** Fatia 04 — `pointerup` of an eraser pass (a single press too): its whole path, flattened, in board units. */
@@ -156,7 +166,8 @@ function round(value: number): number {
 
 /**
  * Mindscape — the free canvas: the plane moves with `transform:
- * translate(pan)`. With V (desenho, fatia 03), a press on a card or a drawing
+ * translate(pan) scale(zoom)` (fatia 05: Ctrl+wheel or the pinch zoom on the
+ * mouse, the wheel moves the view, the "− 100% +" indicator in the corner). With V (desenho, fatia 03), a press on a card or a drawing
  * selects it (Shift adds or takes out) and a drag moves the whole selection,
  * a drag on the background draws the lasso and the handles resize the single
  * selected drawing; with H, or with space held, any drag moves the plane; with
@@ -173,7 +184,7 @@ export function MindscapeBoard({
   onSelect,
   onMoveItems,
   onResize,
-  onPan,
+  onViewChange,
   onDraw,
   onErase,
   onBackgroundClick,
@@ -191,8 +202,10 @@ export function MindscapeBoard({
   boardRef.current = board;
   const rectsRef = useRef(cardRects);
   rectsRef.current = cardRects;
-  const callbacksRef = useRef({ onMoveItems, onResize, onPan, onDraw, onErase, onSelect, onGestureChange });
-  callbacksRef.current = { onMoveItems, onResize, onPan, onDraw, onErase, onSelect, onGestureChange };
+  const callbacksRef = useRef({ onMoveItems, onResize, onViewChange, onDraw, onErase, onSelect, onGestureChange });
+  callbacksRef.current = { onMoveItems, onResize, onViewChange, onDraw, onErase, onSelect, onGestureChange };
+  /** The board element (fatia 05: the wheel listener and the middle of the view for the indicator). */
+  const viewRef = useRef<HTMLDivElement>(null);
   /** Fatia 04 — the eraser circle that follows the pointer (moved by hand: no render per mouse move). */
   const cursorRef = useRef<HTMLDivElement>(null);
 
@@ -244,6 +257,48 @@ export function MindscapeBoard({
   }, []);
 
   useEffect(() => () => endGesture(), [endGesture]);
+
+  // Desenho, fatia 05 — the wheel. NATIVE and not passive (React's wheel
+  // listener is passive and cannot `preventDefault`, as on the Jobu): with Ctrl
+  // (a pinch on the touchpad arrives the same way) it zooms on the mouse and the
+  // page never zooms; without Ctrl it moves the view (Shift: horizontally). The
+  // wheel waits while a gesture is in flight (the drag converts with the view it started with).
+  useEffect(() => {
+    const element = viewRef.current;
+    if (!element) return undefined;
+    const onWheel = (event: WheelEvent): void => {
+      if (event.ctrlKey) {
+        event.preventDefault();
+        if (gestureRef.current) return;
+        const box = element.getBoundingClientRect();
+        const point = { x: event.clientX - box.left, y: event.clientY - box.top };
+        const factor = wheelZoomFactor(normalizeWheelDelta(event.deltaY, event.deltaMode));
+        callbacksRef.current.onViewChange((view) => zoomAt(view, point, view.zoom * factor));
+        return;
+      }
+      // A text field being edited keeps its own wheel.
+      if ((event.target as Element | null)?.closest?.(EDITABLE)) return;
+      event.preventDefault();
+      if (gestureRef.current) return;
+      const dx = normalizeWheelDelta(event.deltaX, event.deltaMode);
+      const dy = normalizeWheelDelta(event.deltaY, event.deltaMode);
+      const shift = event.shiftKey;
+      callbacksRef.current.onViewChange((view) => {
+        const pan = wheelPan(view.pan, dx, dy, shift);
+        return pan === view.pan ? view : { ...view, pan };
+      });
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => element.removeEventListener('wheel', onWheel);
+  }, []);
+
+  /** Fatia 05 — the indicator zooms centered on the middle of the view. */
+  const zoomOnMiddle = (next: (zoom: number) => number): void => {
+    const element = viewRef.current;
+    if (!element) return;
+    const middle = { x: element.clientWidth / 2, y: element.clientHeight / 2 };
+    callbacksRef.current.onViewChange((view) => zoomAt(view, middle, next(view.zoom)));
+  };
   // A tool change (a key, a button, Esc) cancels the gesture in flight: nothing is written.
   useEffect(() => endGesture(), [tool, endGesture]);
 
@@ -272,7 +327,7 @@ export function MindscapeBoard({
         break;
       case 'pan':
         if (gesture.swallow) swallowClickRef.current = true;
-        callbacks.onPan({ x: final.x, y: final.y });
+        callbacks.onViewChange((view) => ({ ...view, pan: { x: final.x, y: final.y } }));
         break;
       case 'lasso': {
         const inside = itemsInsideRect(final.rect, rectsRef.current, boardRef.current.drawings);
@@ -441,13 +496,20 @@ export function MindscapeBoard({
         ? board.drawings.map((drawing) => (drawing.id === resized.id ? resized : drawing))
         : board.drawings;
 
+  const zoom = board.zoom;
+  const grid = GRID_PX * zoom;
+
   return (
     <div
+      ref={viewRef}
       className={preview?.kind === 'pan' ? `${styles.view} ${styles.panning}` : styles.view}
+      // Fatia 05 — the dot grid follows the view (size with the zoom, offset with the pan).
+      style={{ backgroundSize: `${grid}px ${grid}px`, backgroundPosition: `${pan.x}px ${pan.y}px` }}
       data-testid="mindscape-board"
       data-tool={tool}
       data-space={panMode ? 'true' : undefined}
       data-pan={`${board.pan.x},${board.pan.y}`}
+      data-zoom={zoom}
       data-dragging={moving ? 'true' : undefined}
       onPointerDown={handlePointerDown}
       onPointerMove={(event) => {
@@ -461,6 +523,8 @@ export function MindscapeBoard({
         if (cursorRef.current) cursorRef.current.hidden = true;
       }}
       onClickCapture={(event) => {
+        // The zoom indicator is not part of the board: its buttons always get their click.
+        if ((event.target as Element).closest('[data-zoom-indicator]')) return;
         if (!swallowClickRef.current) return;
         swallowClickRef.current = false;
         suppressClickRef.current = false;
@@ -475,7 +539,7 @@ export function MindscapeBoard({
         if (event.target === event.currentTarget || event.target === event.currentTarget.firstElementChild) onBackgroundClick();
       }}
     >
-      <div className={styles.world} data-testid="mindscape-world" style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}>
+      <div className={styles.world} data-testid="mindscape-world" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
         {children({
           positionOf,
           drawings,
@@ -494,6 +558,45 @@ export function MindscapeBoard({
           aria-hidden="true"
         />
       ) : null}
+      <div
+        className={styles.zoom}
+        role="group"
+        aria-label="Zoom"
+        data-testid="mindscape-zoom"
+        data-zoom-indicator=""
+        // No gesture starts on the indicator, whatever the tool.
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          className={styles.zoomButton}
+          aria-label="Diminuir zoom"
+          title="Diminuir zoom"
+          disabled={zoom <= MIN_ZOOM}
+          onClick={() => zoomOnMiddle((current) => stepZoom(current, -ZOOM_STEP_POINTS))}
+        >
+          −
+        </button>
+        <button
+          type="button"
+          className={`${styles.zoomButton} ${styles.zoomValue}`}
+          title="Voltar a 100%"
+          data-testid="mindscape-zoom-value"
+          onClick={() => zoomOnMiddle(() => 1)}
+        >
+          {zoomPercent(zoom)}%
+        </button>
+        <button
+          type="button"
+          className={styles.zoomButton}
+          aria-label="Aumentar zoom"
+          title="Aumentar zoom"
+          disabled={zoom >= MAX_ZOOM}
+          onClick={() => zoomOnMiddle((current) => stepZoom(current, ZOOM_STEP_POINTS))}
+        >
+          +
+        </button>
+      </div>
     </div>
   );
 }

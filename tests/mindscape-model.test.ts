@@ -10,6 +10,7 @@ import {
   placeSessionCard,
   SESSION_CARD_HEIGHT,
   SESSION_CARD_WIDTH,
+  setBoardView,
   type MindscapeCard,
   type MindscapeDoc,
 } from '../src/shared/mindscape/model';
@@ -226,5 +227,37 @@ describe('addLink — arrow on the input', () => {
 
   it('is born without the arrow with `arrow: false` (drawn with L)', () => {
     expect(addLink(cards(), ATLAS, { id: 'l1', from: 'o1', to: 'o2', arrow: false }).boards[ATLAS]!.links[0]!.arrow).toBe(false);
+  });
+});
+
+// Fatia 05 — the view of a board (pan + zoom), out of the history; replaces setBoardPan.
+describe('setBoardView', () => {
+  const doc = () => ensureBoard(ensureBoard(emptyMindscapeDoc(), ATLAS), BEACON);
+
+  it('stores the pan and the zoom of that board only', () => {
+    const before = doc();
+    const next = setBoardView(before, ATLAS, { pan: { x: -120, y: 45 }, zoom: 2 });
+    expect(next.boards[ATLAS]!.pan).toEqual({ x: -120, y: 45 });
+    expect(next.boards[ATLAS]!.zoom).toBe(2);
+    expect(next.boards[ATLAS]!.cards).toBe(before.boards[ATLAS]!.cards);
+    expect(next.boards[BEACON]).toBe(before.boards[BEACON]);
+  });
+
+  it('gives the same document back when nothing changes, for a missing board or a non-finite value', () => {
+    const before = setBoardView(doc(), ATLAS, { pan: { x: 3, y: 4 }, zoom: 1.5 });
+    expect(setBoardView(before, ATLAS, { pan: { x: 3, y: 4 }, zoom: 1.5 })).toBe(before);
+    expect(setBoardView(before, 'C:/work/vega', { pan: { x: 1, y: 1 }, zoom: 1 })).toBe(before);
+    expect(setBoardView(before, ATLAS, { pan: { x: Number.NaN, y: 4 }, zoom: 1 })).toBe(before);
+    expect(setBoardView(before, ATLAS, { pan: { x: 3, y: 4 }, zoom: Number.POSITIVE_INFINITY })).toBe(before);
+  });
+
+  it('holds the zoom between 25% and 400%', () => {
+    expect(setBoardView(doc(), ATLAS, { pan: { x: 0, y: 0 }, zoom: 9 }).boards[ATLAS]!.zoom).toBe(4);
+    expect(setBoardView(doc(), ATLAS, { pan: { x: 0, y: 0 }, zoom: 0.1 }).boards[ATLAS]!.zoom).toBe(0.25);
+  });
+
+  it('survives a JSON round trip with the zoom', () => {
+    const next = setBoardView(doc(), ATLAS, { pan: { x: -80, y: 30 }, zoom: 1.21 });
+    expect(parseMindscapeDoc(JSON.parse(JSON.stringify(next)))).toEqual(next);
   });
 });

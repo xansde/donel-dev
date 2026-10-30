@@ -84,7 +84,8 @@ import { EsteiraScreen } from './Esteira/EsteiraScreen';
 // Mindscape V1 — third mode of the shell (docs/design/mindscape.md).
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
-import { findSessionBoard, placeSessionCard, setBoardPan, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
+import { findSessionBoard, placeSessionCard, setBoardView, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
+import type { BoardView } from '../../shared/mindscape/view';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
 import {
   AUTO_START_NOT_READY_MESSAGE,
@@ -1859,8 +1860,14 @@ export function App(): React.JSX.Element {
     });
   }, [mindscapeLoaded, applyMindscapeSession]);
   // Mindscape, fatia 04 — moving the view is not an action on the board: out of the history.
-  const handleMindscapePan = useCallback(
-    (projectPath: string, pan: { x: number; y: number }): void => applyMindscapeSession((doc) => setBoardPan(doc, projectPath, pan)),
+  // Desenho, fatia 05 — pan and zoom together (setBoardView), each change computed
+  // from the board as it is NOW (several wheel events in a row compose).
+  const handleMindscapeView = useCallback(
+    (projectPath: string, change: (view: BoardView) => BoardView): void =>
+      applyMindscapeSession((doc) => {
+        const board = doc.boards[projectPath];
+        return board ? setBoardView(doc, projectPath, change({ pan: board.pan, zoom: board.zoom })) : doc;
+      }),
     [applyMindscapeSession],
   );
   // Desenho, fatia 02 — the single door of every owner action on the board
@@ -2390,7 +2397,7 @@ export function App(): React.JSX.Element {
             initialProjectPath={tabs.find((tab) => tab.id === activeTabId)?.cwd}
             seenAt={mindscapeSeenAt}
             onGoToTerminal={handleMindscapeGoToTerminal}
-            onPan={handleMindscapePan}
+            onView={handleMindscapeView}
             onAction={handleMindscapeAction}
             onUndo={undoMindscape}
             onRedo={redoMindscape}

@@ -62,7 +62,7 @@ export type MindscapeDrawing =
 export interface MindscapeBoard {
   projectPath: string;
   pan: { x: number; y: number };
-  /** 0.25 to 4; 1 = 100%. Fixed at 1 until the zoom gestures exist (desenho, fatia 05). */
+  /** 0.25 to 4; 1 = 100%. Changed by Ctrl+wheel, the pinch and the indicator (desenho, fatia 05). */
   zoom: number;
   cards: Record<string, MindscapeCard>;
   links: MindscapeLink[];
@@ -242,12 +242,19 @@ export function moveCard(doc: MindscapeDoc, projectPath: string, cardId: string,
   return replaceCard(doc, board, { ...card, x, y });
 }
 
-/** Drag of the background: the view offset of the board, persisted with it. */
-export function setBoardPan(doc: MindscapeDoc, projectPath: string, pan: { x: number; y: number }): MindscapeDoc {
+/**
+ * Desenho, fatia 05 (replaces `setBoardPan`) — the view of the board (pan in
+ * px of screen, zoom held between 25% and 400%), persisted with it and out of
+ * the history (it goes through `applySession`). Missing board, a non-finite
+ * value or the same view → same document.
+ */
+export function setBoardView(doc: MindscapeDoc, projectPath: string, view: { pan: { x: number; y: number }; zoom: number }): MindscapeDoc {
   const board = doc.boards[projectPath];
-  if (!board || !Number.isFinite(pan.x) || !Number.isFinite(pan.y)) return doc;
-  if (board.pan.x === pan.x && board.pan.y === pan.y) return doc;
-  return { ...doc, boards: { ...doc.boards, [projectPath]: { ...board, pan: { x: pan.x, y: pan.y } } } };
+  const { pan } = view;
+  if (!board || !Number.isFinite(pan.x) || !Number.isFinite(pan.y) || !Number.isFinite(view.zoom)) return doc;
+  const zoom = clampZoom(view.zoom);
+  if (board.pan.x === pan.x && board.pan.y === pan.y && board.zoom === zoom) return doc;
+  return { ...doc, boards: { ...doc.boards, [projectPath]: { ...board, pan: { x: pan.x, y: pan.y }, zoom } } };
 }
 
 export interface OwnerCardInput {

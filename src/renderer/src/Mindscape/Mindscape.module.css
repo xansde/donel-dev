@@ -77,6 +77,8 @@
   position: absolute;
   left: 0;
   top: 0;
+  /* Desenho, fatia 05 — translate(pan) scale(zoom) from the top-left corner: screen = board x zoom + pan. */
+  transform-origin: 0 0;
 }
 
 /* Fatia 04 — free canvas. */
@@ -612,6 +614,55 @@
 
 .eraserCursor[hidden] {
   display: none;
+}
+
+/* Desenho, fatia 05 — the zoom indicator, bottom left corner of the board (as in Excalidraw), above the plane.
+   Not the right one: the bottom right corner is where a click saves the post-it text. */
+.zoom {
+  position: absolute;
+  left: var(--space-1);
+  bottom: var(--space-1);
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-panel);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  cursor: default;
+}
+
+.zoomButton {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.zoomButton:hover:not(:disabled) {
+  border-color: var(--text-muted);
+}
+
+.zoomButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.zoomButton:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+/* The number: whole percentage, fixed width so the buttons do not jump. */
+.zoomValue {
+  min-width: 52px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Desenho, fatia 03 — outline of the selection, handles of the single selected drawing and the lasso, over the cards. */

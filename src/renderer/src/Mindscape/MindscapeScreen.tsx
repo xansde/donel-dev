@@ -19,7 +19,7 @@ import {
   type MindscapeDrawing,
 } from '../../../shared/mindscape/model';
 import { mindscapeShortcut, type MindscapeTool } from '../../../shared/mindscape/shortcuts';
-import { screenToWorld } from '../../../shared/mindscape/view';
+import { screenToWorld, type BoardView } from '../../../shared/mindscape/view';
 import type { TabColorToken } from '../../../shared/tabAppearance';
 import { EMPTY_ITEMS, ERASER_RADIUS_PX, isDrawTool, MindscapeBoard, sizesOf, type DrawGesture } from './MindscapeBoard';
 import { MindscapeDrawingLayer } from './MindscapeDrawingLayer';
@@ -53,8 +53,12 @@ export interface MindscapeScreenProps {
   readonly seenAt: Readonly<Record<string, number>>;
   /** "Ir ao terminal" — Uso geral with the tab of the session in focus. */
   readonly onGoToTerminal: (tabId: string) => void;
-  /** Fatia 04 — end of a hand drag (out of the history: moving the view is not an action). */
-  readonly onPan: (projectPath: string, pan: { x: number; y: number }) => void;
+  /**
+   * Fatia 04 — end of a hand drag; desenho, fatia 05 — also the wheel, the
+   * pinch and the zoom indicator. Out of the history (moving the view is not an
+   * action); `change` gets the view of the board as it is when applied.
+   */
+  readonly onView: (projectPath: string, change: (view: BoardView) => BoardView) => void;
   /**
    * Desenho, fatias 01–02 — the single door of every owner action on the board
    * (drawings, links, the owner's post-its, "Arquivar", drags of the selection):
@@ -123,7 +127,7 @@ interface Selection extends ItemIds {
  * project, the post-its written by the sessions and the owner's own (V1), and
  * the drawing tools of the bar (desenho: V H A L R O, A/L from post-it to
  * post-it make a link; fatia 03: selection of several items, handles, style
- * and layer; fatia 04: P pencil and E eraser). Covers the middle of the shell like the EsteiraScreen; the
+ * and layer; fatia 04: P pencil and E eraser; fatia 05: zoom by board). Covers the middle of the shell like the EsteiraScreen; the
  * terminals stay mounted underneath.
  */
 export function MindscapeScreen({
@@ -133,7 +137,7 @@ export function MindscapeScreen({
   initialProjectPath,
   seenAt,
   onGoToTerminal,
-  onPan,
+  onView,
   onAction,
   onUndo,
   onRedo,
@@ -166,6 +170,18 @@ export function MindscapeScreen({
   // when it opens (a one-letter key must never reach a terminal left focused underneath).
   useEffect(() => {
     sectionRef.current?.focus({ preventScroll: true });
+  }, []);
+  // Desenho, fatia 05 — Ctrl+wheel (and the pinch) never zooms the page while
+  // the Mindscape is open, not even over the bar or the tabs: React's wheel
+  // listener is passive, so this one is native. The board zooms itself.
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (!section) return undefined;
+    const guard = (event: WheelEvent): void => {
+      if (event.ctrlKey) event.preventDefault();
+    };
+    section.addEventListener('wheel', guard, { passive: false });
+    return () => section.removeEventListener('wheel', guard);
   }, []);
   // Space is let go when the window loses the focus (the keyup never comes).
   useEffect(() => {
@@ -416,7 +432,7 @@ export function MindscapeScreen({
             const { projectPath } = board;
             onAction(projectPath, (current) => updateDrawing(current, projectPath, drawing));
           }}
-          onPan={(pan) => onPan(board.projectPath, pan)}
+          onViewChange={(change) => onView(board.projectPath, change)}
           onDraw={handleDraw}
           onErase={handleErase}
           onGestureChange={(active) => {
