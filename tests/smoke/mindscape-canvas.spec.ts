@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -6,7 +6,7 @@ import type { Locator, Page } from '@playwright/test';
 import { closeIsolatedApp, launchIsolatedApp, type LaunchedApp } from './helpers/launch';
 import { openProjectClaudeTab } from './helpers/ui';
 import { REPO_ROOT } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir, removeTempDir } from './userDataIsolation';
 
 // Mindscape V1, fatia 04 — free canvas: drag any post-it, drag the background
 // to move the view, and the owner's own post-its ("✎ você") with editable
@@ -98,7 +98,7 @@ test.afterAll(async () => {
   test.setTimeout(90_000);
   if (launched) await closeIsolatedApp(launched, false);
   removeIsolatedUserDataDir(userDataDir);
-  rmSync(root, { recursive: true, force: true });
+  removeTempDir(root);
 });
 
 test('Mindscape: canvas livre — arrastar, mover a visão e post-its do dono, que persistem @mindscape', async () => {

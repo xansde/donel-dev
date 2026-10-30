@@ -1,11 +1,11 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { dismissPatchNotes } from './helpers/launch';
 import { APP_MAIN, PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir, removeTempDir } from './userDataIsolation';
 
 // 014-chat, T041 — smoke da fundação do chat (Fase 1), contra o `claude` FALSO
 // roteirizado (T040): nunca o CLI real, nenhum turno de API.
@@ -62,7 +62,7 @@ test.afterAll(async () => {
     await electronApp.close();
   } finally {
     removeIsolatedUserDataDir(userDataDir);
-    rmSync(fakeHome, { recursive: true, force: true });
+    removeTempDir(fakeHome);
   }
 });
 

@@ -6,7 +6,7 @@ import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { closeIsolatedApp, launchIsolatedApp, type LaunchedApp } from './helpers/launch';
 import { openProjectClaudeTab } from './helpers/ui';
 import { REPO_ROOT } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir, removeTempDir } from './userDataIsolation';
 
 // Mindscape desenho — the drawing tools of the board. One `test` per fatia.
 // Fatia 01: the bar (V H A L R O), rect/ellipse/loose line and arrow with the
@@ -146,7 +146,7 @@ test.afterAll(async () => {
   test.setTimeout(90_000);
   if (launched) await closeIsolatedApp(launched, false);
   removeIsolatedUserDataDir(userDataDir);
-  rmSync(root, { recursive: true, force: true });
+  removeTempDir(root);
 });
 
 test('Mindscape desenho 01: barra de ferramentas, formas, setas soltas e seta de post-it a post-it vira Ligação @mindscape', async () => {
@@ -912,7 +912,8 @@ test('Mindscape desenho 06: print colado ou arrastado para o quadro @mindscape',
   scenario = SCENARIO;
   // The prints live beside the board file. Two orphans planted before the boot: one 2 hours old, one recent.
   const imagesDir = path.join(root, 'mindscape-images');
-  rmSync(imagesDir, { recursive: true, force: true });
+  // The app was closed a moment ago and Windows may still hold the folder: retry, but let a real failure surface (the test depends on this folder starting empty).
+  rmSync(imagesDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   mkdirSync(imagesDir, { recursive: true });
   const PNG_HEADER = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const oldOrphan = path.join(imagesDir, 'img-1-0000000a.png');

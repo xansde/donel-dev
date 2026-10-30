@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -7,6 +7,7 @@ import { chatHelpers, launchChatApp } from './chatSmoke';
 import type { ChatApp } from './chatSmoke';
 import { launchClaudeTab, openFreeTerminalTab } from './helpers/ui';
 import { REPO_ROOT } from './repoUnderTest';
+import { removeTempDir } from './userDataIsolation';
 
 // 014-chat, T081 - smoke das pendencias (Fase 4, SC-002), contra o `claude` FALSO (T080): nunca o CLI real.
 //
@@ -187,7 +188,7 @@ test.afterAll(async () => {
     if (settingsBefore === null) {
       if (existsSync(SETTINGS_LOCAL)) unlinkSync(SETTINGS_LOCAL);
     } else writeFileSync(SETTINGS_LOCAL, settingsBefore, 'utf8');
-    rmSync(tmp, { recursive: true, force: true });
+    removeTempDir(tmp);
   }
 });
 

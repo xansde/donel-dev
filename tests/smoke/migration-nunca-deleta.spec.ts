@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path, { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir, removeTempDir } from './userDataIsolation';
 
 // T1217 (011-contas-e-provedores, etapa 2) — a asserção que protege contra o
 // PIOR CASO da etapa (C27/D12/A12): depois da virada completa numa árvore de
@@ -65,7 +65,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await electronApp.close();
   removeIsolatedUserDataDir(userDataDir);
-  rmSync(fakeHomeRoot, { recursive: true, force: true });
+  removeTempDir(fakeHomeRoot);
 });
 
 test('T1217 — virada completa: .old existe, junctions desfeitas, alvo global intacto @contas', async () => {

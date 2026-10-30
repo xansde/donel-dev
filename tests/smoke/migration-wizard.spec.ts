@@ -1,10 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path, { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { closeIsolatedApp } from './helpers/launch';
-import { createIsolatedUserDataDir } from './userDataIsolation';
+import { createIsolatedUserDataDir, removeTempDir } from './userDataIsolation';
 
 // T1216 (011-contas-e-provedores, etapa 2) — assistente de migração:
 // árvore de perfis FALSA em `mkdtemp`, isolada do `homedir()` e do
@@ -55,7 +55,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await closeIsolatedApp({ app: electronApp, userDataDir });
-  rmSync(fakeHomeRoot, { recursive: true, force: true });
+  removeTempDir(fakeHomeRoot);
 });
 
 test('T1216 — inventário aparece, importar UM perfil deixa o outro pendente, estado persiste ao reabrir @contas', async () => {

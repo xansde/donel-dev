@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -12,7 +12,7 @@ import type { LaunchedApp } from './helpers/launch';
 import { listPidsByCommandLine, waitForNewPids, waitForPidsGone } from './helpers/processes';
 import { launchClaudeTab, openFreeTerminalTab } from './helpers/ui';
 import { REPO_ROOT } from './repoUnderTest';
-import { createIsolatedUserDataDir } from './userDataIsolation';
+import { createIsolatedUserDataDir, removeTempDir } from './userDataIsolation';
 
 // 015-jobu-pet, T029 (US1), T035 (US2), T041 (US3), T044 (US4), T051 (US5) and T062 (FR-034) - smoke of the
 // Jobu's face, badge, bubble, clicks, account bubble, gestures and screen-capture protection, against the FAKE
@@ -835,7 +835,7 @@ test.describe('o Jobu com o chat ligado', () => {
     try {
       await chat?.dispose();
     } finally {
-      rmSync(tmp, { recursive: true, force: true });
+      removeTempDir(tmp);
     }
   });
 
@@ -957,7 +957,7 @@ test.describe('o Jobu e a troca de conta', () => {
     try {
       await closeIsolatedApp(launched);
     } finally {
-      rmSync(claudeHomeParent, { recursive: true, force: true });
+      removeTempDir(claudeHomeParent);
     }
   });
 
