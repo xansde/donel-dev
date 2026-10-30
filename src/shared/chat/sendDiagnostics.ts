@@ -27,6 +27,7 @@ export const KNOWN_SEND_REASONS: readonly string[] = [
   'esperando o Claude terminar a rodada',
   'esperando o Claude terminar o que está fazendo',
   'há uma pergunta ou permissão esperando você',
+  'interrompendo o Claude',
   'lendo a tela do Claude',
   'o terminal precisa de você',
   'sobrou texto na caixa do terminal',

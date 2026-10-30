@@ -382,10 +382,26 @@ describe('sequência de bytes (§4)', () => {
     expect(sim.allWrites()).not.toContain('\r');
   });
 
-  it('interrupt-first: ESC com "esc to interrupt" visível e a colagem logo em seguida', () => {
+  it('interrupt-first: ESC com "esc to interrupt" visível e a colagem só quando o turno para', () => {
+    // Colado no mesmo instante, o ESC virava prefixo da colagem (ESC ESC[200~) e o turno não parava.
     const sim = new Sim({ text: 'pare e faça', mode: 'interrupt-first' });
     sim.screen(workingEmpty(), 0);
-    expect(sim.writes()).toEqual(['\x1b', paste('pare e faça')]);
+    expect(sim.writes()).toEqual(['\x1b']);
+    sim.screen(workingEmpty(), 500);
+    expect(sim.allWrites()).toEqual(['\x1b']);
+    sim.screen(idleEmpty(), 900);
+    expect(sim.allWrites()).toEqual(['\x1b', paste('pare e faça')]);
+  });
+
+  it('interrupt-first: o turno não para em 3 s → cola assim mesmo (vai para a fila do CLI), um ESC só', () => {
+    const sim = new Sim({ text: 'pare e faça', mode: 'interrupt-first' });
+    sim.screen(workingEmpty(), 0);
+    const wakes = sim.log.filter((e) => e.type === 'wake-at').map((e) => (e as Extract<SendEffect, { type: 'wake-at' }>).at);
+    expect(wakes).toContain(3_000);
+    sim.screen(workingEmpty(), 2_999);
+    expect(sim.allWrites()).toEqual(['\x1b']);
+    sim.screen(workingEmpty(), 3_000);
+    expect(sim.allWrites()).toEqual(['\x1b', paste('pare e faça')]);
   });
 
   it('interrupt-first com o CLI já ocioso: sem ESC', () => {
@@ -398,7 +414,9 @@ describe('sequência de bytes (§4)', () => {
     const sim = new Sim({ text: '/meu-skill' });
     sim.screen(workingEmpty(), 0);
     sim.ev({ type: 'action', now: 5, action: 'interrupt-and-send' });
-    expect(sim.writes()).toEqual(['\x1b', paste('/meu-skill')]);
+    expect(sim.writes()).toEqual(['\x1b']);
+    sim.screen(idleEmpty(), 400);
+    expect(sim.allWrites()).toEqual(['\x1b', paste('/meu-skill')]);
   });
 });
 

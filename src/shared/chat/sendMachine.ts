@@ -118,6 +118,8 @@ export interface SendMachineState {
   readonly waitSince: number;
   readonly reasonVisible: boolean;
   readonly interruptSent: boolean;
+  /** When the interrupt ESC went out: the paste waits for the turn to stop (or INTERRUPT_SETTLE_MS). */
+  readonly interruptAt: number | null;
   readonly imageIdx: number;
   readonly stepDeadline: number | null;
   readonly enterAt: number | null;
@@ -172,6 +174,7 @@ const ACK_MS = 15_000;
 const ENTER_GAP_MS = 80;
 const RESEND_ENTER_MS = 3_000;
 const VERIFY_MS = 15_000;
+const INTERRUPT_SETTLE_MS = 3_000;
 
 // ----------------------------------------------------------- text and class
 
@@ -245,6 +248,7 @@ export function createSend(input: SendInput, now: number): StepResult {
     waitSince: now,
     reasonVisible: false,
     interruptSent: false,
+    interruptAt: null,
     imageIdx: 0,
     stepDeadline: null,
     enterAt: null,
@@ -320,6 +324,7 @@ function resetForRetry(s: Draft, now: number): void {
   s.waitSince = now;
   s.reasonVisible = false;
   s.interruptSent = false;
+  s.interruptAt = null;
   s.imageIdx = 0;
   s.stepDeadline = null;
   s.enterAt = null;
@@ -549,6 +554,12 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
     if (interrupting && isWorking(lines) && !s.interruptSent) {
       fx.push({ type: 'write', data: '\x1b' });
       s.interruptSent = true;
+      s.interruptAt = now;
+      reason = 'interrompendo o Claude';
+    } else if (interrupting && s.interruptAt !== null && isWorking(lines) && now - s.interruptAt < INTERRUPT_SETTLE_MS) {
+      // A paste right after the ESC read as one escape sequence (ESC ESC[200~) and the turn went on: wait for the
+      // footer to drop "esc to interrupt"; if it never does, paste anyway (the CLI queues it).
+      reason = 'interrompendo o Claude';
     } else if (needsIdleKind(s.cls) && !interrupting && isWorking(lines)) {
       reason = 'esperando o Claude terminar a rodada';
       visible = true;
@@ -571,7 +582,7 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
   // mid-turn (owner's decision, 30/10). Never without a screen read (a dialog must be ruled out), never into a
   // menu, and not for images (each `[Image #N]` must be seen), `/`/`!` (need the CLI idle) or interrupt-first
   // (its Esc needs "esc to interrupt" on screen): those keep waiting, with a visible reason and no clock.
-  if (reason !== null && !visible && s.alive && s.working) {
+  if (reason !== null && !visible && s.alive && s.working && s.interruptAt === null) {
     const blindOk =
       lines !== null &&
       s.cls.kind === 'prompt' &&
@@ -733,6 +744,7 @@ function nextWake(s: Draft, now: number): number | null {
   switch (s.phase) {
     case 'waiting-cli':
       if (!s.reasonVisible) candidates.push(s.waitSince + WAIT_CLI_MS);
+      if (s.interruptAt !== null) candidates.push(s.interruptAt + INTERRUPT_SETTLE_MS);
       break;
     case 'typing':
       if (s.stepDeadline !== null) candidates.push(s.stepDeadline);

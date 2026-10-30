@@ -102,8 +102,11 @@ Enter:                \r  em escrita própria, ~80 ms depois
 - Colagens grandes são aceitas sem truncar (194 KB verificados, ~36 KB/s).
   Quem decide o placeholder é o CLI (≥ 5 linhas ou ~1000 caracteres); o chat
   só espera por ele.
-- "Interromper e mandar agora": `ESC` com "esc to interrupt" visível e, logo
-  em seguida, a sequência acima. Não precisa esperar.
+- "Interromper e mandar agora": `ESC` com "esc to interrupt" visível e a
+  sequência acima **só quando o rodapé deixa de dizer "esc to interrupt"**
+  (o turno parou), ou 3 s depois do `ESC` se ele não parar (aí a mensagem vai
+  para a fila do CLI). Colada no mesmo instante, o `ESC` virava prefixo da
+  colagem (`ESC ESC[200~`) e o turno seguia (visto em 30/10). Um `ESC` só.
 - **Texto que não aparece na caixa no meio do turno** (máquina lenta, tela que
   esconde a caixa): estourado o prazo do texto (§6) com o turno em andamento
   (rodapé "esc to interrupt" ou, sem rodapé legível, os hooks), o `\r` sai
