@@ -1090,6 +1090,34 @@ aparecem como cwd de transcript. Cada repo tem a sua subpasta
 agregam todos: *"Faxina em 4 repos: …"*. Um repo sem nada a limpar não
 aparece no resumo.
 
+### B30. Jobu como ponte entre o computador e o Donel Dev (ideia do dono, 30/10)
+
+**Pedido, nas palavras dele:** "tornar o Jobu a ponte entre o computador e o
+donel dev, ou até uma forma de dar mais autonomia e conseguir falar mais com
+ele. Não sei exatamente o que eu quero, mas acho que ele poderia ser mais
+útil." **Ainda é névoa:** precisa de discovery (porta A) antes de virar spec.
+
+**Hoje o Jobu:** avisa quando uma sessão termina, pede você ou falha (balão e,
+desde o #136, número na barra de tarefas), faz a faxina de worktrees e
+sessões (B29) e leva à aba ao clicar.
+
+**Direções para o discovery (não decididas):**
+- **Falar com ele:** uma caixa de texto (ou voz) no próprio Jobu que manda a
+  frase para a sessão certa ("pergunta pro Donel Dev se o PR passou") ou abre
+  uma sessão nova; resposta curta no balão.
+- **Ponte com o computador:** ele vê o que acontece fora do app (downloads,
+  área de transferência, janela ativa, notificações do Windows) e oferece
+  levar para uma sessão ("quer mandar esse print para o Claude?").
+- **Mais autonomia:** rotinas que ele dispara sozinho (resumo da manhã, o que
+  terminou de noite, PRs esperando, cota das contas) e pequenas ações com
+  confirmação, no lugar de só avisar.
+- **Caixa de atenção:** o Jobu como a lista única de "quem está me esperando"
+  (item 1 da `docs/produto/pesquisa-mercado-2026-10-30.md`).
+
+**Riscos a discutir:** privacidade (ler área de transferência e janela
+ativa), barulho (um pet que fala demais), e a regra de credenciais (nada de
+ler senhas que passem pela área de transferência).
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo

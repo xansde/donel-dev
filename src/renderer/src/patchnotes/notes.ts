@@ -18,6 +18,38 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-10-31',
     items: [
       {
+        title: 'Mande mensagem com o Claude trabalhando',
+        text: 'A mensagem vai na hora, aparece "na fila" e entra quando ele terminar o que está fazendo, sem precisar interromper. Se ele não pegar a mensagem, o chat avisa e oferece tentar de novo. E "Interromper e mandar agora" volta a interromper de verdade: o app espera o Claude parar antes de mandar.',
+      },
+      {
+        title: 'Quem espera você aparece na barra de tarefas',
+        text: 'O ícone do Donel mostra quantas sessões esperam você e pisca quando alguma termina, quebra ou pede algo enquanto você está em outra janela. Com o Jobu desligado, o Windows avisa "terminou", "precisa de você" ou "parou com erro: limite de uso", e um clique leva direto à aba.',
+      },
+      {
+        title: 'O Jobu avisa uma vez só',
+        text: 'Ele não avisa mais a cada agente em segundo plano que termina: fica lendo enquanto os agentes trabalham e diz "terminou" quando a sessão termina de fato.',
+      },
+      {
+        title: 'Navegador para o Claude',
+        text: 'Ligue "Navegador (Chrome/Edge)" no painel de nova sessão e o Claude passa a usar o seu Chrome ou Edge para abrir e testar páginas. O app lembra a escolha.',
+      },
+      {
+        title: 'Branch e editor na barra lateral',
+        text: 'Cada sessão e cada favorito mostram em qual branch estão e têm um botão para abrir a pasta no VS Code (ou no Cursor).',
+      },
+      {
+        title: 'O rodapé mostra o modelo de verdade',
+        text: 'Se você trocar com /model ou retomar uma sessão de outro modelo, o rodapé acompanha na próxima resposta, e o percentual de contexto usa o tamanho certo da janela. Quem tem statusline própria passa a ver também a cota de 5h e da semana lida pela sessão, sem perder a statusline.',
+      },
+      {
+        title: 'Favoritos não perdem a sessão recém-aberta',
+        text: 'Favoritar um projeto e abrir uma sessão nele logo em seguida já não tira essa sessão do grupo Favoritos.',
+      },
+      {
+        title: 'Mindscape não perde o quadro',
+        text: 'Se ele não conseguir abrir o quadro salvo, avisa e não grava nada por cima, com um botão para tentar de novo. Se não conseguir gravar, tenta mais algumas vezes, avisa e guarda suas mudanças até conseguir, inclusive ao fechar o app. Um print que não carregou também é tentado de novo sozinho.',
+      },
+      {
         title: 'Mindscape: barra de desenho',
         text: 'O quadro ganhou uma barra de ferramentas: retângulo (R), elipse (O), linha (L) e seta (A), com 3 cores e 3 espessuras. Uma seta puxada de um post-it a outro vira ligação, e o botão "Ligar" saiu. V volta para a seleção e H (ou espaço segurado) arrasta o quadro.',
       },
