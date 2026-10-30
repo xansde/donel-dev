@@ -38,6 +38,12 @@ export interface SemaphoreUpdate {
   readonly awaitingBackgroundAgents?: true;
 }
 
+/**
+ * `error` é o código do payload do hook `StopFailure` (`rate_limit`, `overloaded`, `authentication_failed`...; schema
+ * do CLI 2.1.3xx), `null` quando falta. notificacoes-completas: vira o motivo curto do aviso "parou com erro".
+ */
+export type StopFailureListener = (ptyId: string, error: string | null) => void;
+
 /** Mindscape, fatia 03 — see `SessionSemaphoreManager.onTurnEnded`. */
 export type TurnEndedListener = (ptyId: string, lastAssistantMessage: string | null, transcriptPath: string | null) => void;
 
@@ -92,7 +98,7 @@ export class SessionSemaphoreManager {
    * auto-switch (index.ts) precisa saber especificamente de `StopFailure`,
    * sem duplicar a máquina de estados pura.
    */
-  private readonly stopFailureListeners = new Set<(ptyId: string) => void>();
+  private readonly stopFailureListeners = new Set<StopFailureListener>();
   /**
    * Mindscape, fatia 03 — end of turn (`Stop` and `StopFailure`) with the payload's
    * `last_assistant_message` (`null` when missing or empty) and `transcript_path`
@@ -196,7 +202,7 @@ export class SessionSemaphoreManager {
   }
 
   /** Emenda 22/09 (item 4) — ver comentário do campo `stopFailureListeners`. Mesmo padrão de unsubscribe de `onUpdate`. */
-  onStopFailure(listener: (ptyId: string) => void): () => void {
+  onStopFailure(listener: StopFailureListener): () => void {
     this.stopFailureListeners.add(listener);
     return () => this.stopFailureListeners.delete(listener);
   }
@@ -266,7 +272,8 @@ export class SessionSemaphoreManager {
     // StopFailure em 'stop'), pro gatilho imediato de auto-switch saber que este
     // fim de turno foi por erro de API.
     if (hookEventName === 'StopFailure') {
-      for (const listener of this.stopFailureListeners) listener(ptyId);
+      const error = typeof payload.error === 'string' && payload.error.length > 0 ? payload.error : null;
+      for (const listener of this.stopFailureListeners) listener(ptyId, error);
     }
     const eventType = mapHookEventName(hookEventName);
     if (!eventType) return;

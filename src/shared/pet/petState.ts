@@ -13,6 +13,7 @@
 // `blocked` event of a bubble. A change of account (`accountSwitched`, US4) is a bubble of its own that
 // belongs to no session: it replaces whatever is up and nothing ever joins it.
 
+import { newWaitNotice, toAttentionSignal } from '../attention/rule';
 import { PET_BUBBLE_JOIN_MS, PET_BUBBLE_MS, accountBubbleFace, composeBubble, sweepBubbleFace } from './bubble';
 import type {
   AccountSwitchedEvent,
@@ -56,6 +57,8 @@ export function createPetState(): PetState {
     waffleUntil: null,
     silencedUntil: null,
     fullscreen: false,
+    noticeSeq: 0,
+    notices: [],
   };
 }
 
@@ -68,14 +71,9 @@ export function createPetState(): PetState {
  * another `Stop`: read as a wait, that gave one "terminou" per sub-agent. It reads as `working` until
  * the turn that ends with none alive, which is the real end (and the one bubble).
  */
-export function toPetSemaphore(published: SemaphorePublicState | undefined, awaitingBackgroundAgents = false): PetSemaphore {
-  if (published === undefined) return 'idle';
-  if (published === 'waiting' && awaitingBackgroundAgents) return 'working';
-  return published === 'error' ? 'done' : published;
-}
-
-function isWaitingSemaphore(semaphore: PetSemaphore): boolean {
-  return semaphore === 'waiting' || semaphore === 'permission';
+export function toPetSemaphore(published: SemaphorePublicState | undefined, awaitingBackgroundAgents = false, failed = false): PetSemaphore {
+  // notificacoes-completas: the rule lives in src/shared/attention/rule.ts, shared with the toast; a failed turn is a real wait.
+  return toAttentionSignal(published, awaitingBackgroundAgents, failed);
 }
 
 /** The owner is looking at this session right now: its tab in front, in a Donel window that has the focus. */
@@ -153,16 +151,19 @@ function trackSession(previous: TrackedSession | undefined, watched: WatchedSess
   let waitingSince: number | null = null;
   let seen = false;
   let event: BubbleEvent | null = null;
-  if (isWaitingSemaphore(watched.semaphore)) {
+  if (watched.semaphore === 'waiting' || watched.semaphore === 'permission') {
     if (previous !== undefined && previous.waitingSince !== null) {
       waitingSince = previous.waitingSince;
       seen = previous.seen;
     } else {
       waitingSince = now;
       seen = isSeenNow(focus, watched.ptyId);
-      if (previous !== undefined && !seen) {
-        const blocked = watched.semaphore === 'permission';
-        event = { kind: blocked ? 'blocked' : 'finished', ptyId: watched.ptyId, name: watched.name, blockedKind: blocked ? watched.blockedKind : null, at: now };
+      // notificacoes-completas: whether this wait is news, and of what kind, is THE rule (src/shared/attention/rule.ts).
+      const failure = watched.failure ?? null;
+      const kind = newWaitNotice({ known: previous !== undefined, semaphore: watched.semaphore, seenNow: seen, failure });
+      if (kind !== null) {
+        const base = { kind, ptyId: watched.ptyId, name: watched.name, blockedKind: kind === 'blocked' ? watched.blockedKind : null, at: now };
+        event = kind === 'failed' ? { ...base, reason: failure } : base;
       }
     }
   }
@@ -178,7 +179,7 @@ function withSessions(state: PetState, incoming: readonly WatchedSession[], now:
     sessions.set(watched.ptyId, tracked.session);
     if (tracked.event !== null) events.push(tracked.event);
   }
-  return announce({ ...state, sessions }, events, now);
+  return announce(withNotices({ ...state, sessions }, events), events, now);
 }
 
 /** The process of a session exited. The record goes, and unless the owner closed the tab or is looking at it, the bubble says it ended. */
@@ -190,7 +191,17 @@ function withSessionExited(state: PetState, input: SessionExitedEvent, now: numb
   const next: PetState = { ...state, sessions };
   // `byUser`: the owner closed it (R6). Looking at it: born seen, like a wait (Q9). Neither deserves a bubble.
   if (input.byUser || isSeenNow(state.focus, input.ptyId)) return next;
-  return announce(next, [{ kind: 'ended', ptyId: input.ptyId, name: tracked.name, blockedKind: null, at: now }], now);
+  const events: BubbleEvent[] = [{ kind: 'ended', ptyId: input.ptyId, name: tracked.name, blockedKind: null, at: now }];
+  return announce(withNotices(next, events), events, now);
+}
+
+/**
+ * notificacoes-completas: the session news of this input, for the channels other than the bubble (the toast and the
+ * taskbar flash). Recorded BEFORE the bubble's gate: silence and full screen hold back the bubble, not the news.
+ */
+function withNotices(state: PetState, events: readonly BubbleEvent[]): PetState {
+  if (events.length === 0) return state;
+  return { ...state, noticeSeq: state.noticeSeq + 1, notices: events };
 }
 
 /** "On every change of focus or signal, every waiting session that is seen now becomes `seen = true`." */

@@ -178,7 +178,10 @@ import { createChatHub, type ChatHub, type ChatSourceInfo } from './chat/chat-hu
 import { registerChatIpcHandlers } from './chat/chat-ipc';
 import { createCommandCatalogScanner } from './chat/command-catalog-scanner';
 import { createProjectFiles } from './chat/project-files';
-import { createPendingNotifier } from './chat/notifications';
+import { createPendingNotifier, type NotificationLike } from './chat/notifications';
+import { createAttentionNotifier } from './attention/attention-notifier';
+import { createTaskbarAttention, type AttentionSmokeSnapshot } from './attention/taskbar';
+import { failureReasonText } from '../shared/attention/rule';
 import { registerAssetScheme, registerAssetsProtocol } from './chat/assets-protocol';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
@@ -1003,6 +1006,49 @@ function getMainWindow(): BrowserWindow | null {
  */
 let petService: PetService | null = null;
 
+/**
+ * A system notification (Windows toast). Smoke-only seam (T081): with `DONEL_SMOKE_NOTIFICATIONS_LOG` it records
+ * `{ title, body }` in that file instead of showing anything — the chat's pending toast and the session toasts alike.
+ */
+const smokeNotificationsLog = process.env.DONEL_SMOKE_NOTIFICATIONS_LOG || undefined;
+function createSystemNotification(options: { title: string; body: string }): NotificationLike {
+  if (smokeNotificationsLog !== undefined) {
+    appendFileSync(smokeNotificationsLog, `${JSON.stringify(options)}\n`, 'utf8');
+    return { on: () => undefined, show: () => undefined };
+  }
+  return new Notification(options);
+}
+function systemNotificationsSupported(): boolean {
+  return smokeNotificationsLog !== undefined || Notification.isSupported();
+}
+
+/** With the notifications stub on, the smokes read the taskbar badge and flash from here (`electronApp.evaluate`). */
+const attentionSmoke: AttentionSmokeSnapshot | null = smokeNotificationsLog === undefined ? null : { overlayCount: 0, flashing: false };
+if (attentionSmoke !== null) (globalThis as typeof globalThis & { __donelAttentionSmoke?: AttentionSmokeSnapshot }).__donelAttentionSmoke = attentionSmoke;
+
+/**
+ * notificacoes-completas (30/10) — who finished, who needs the owner and who stopped with an error, without hunting
+ * tabs: the Windows toast (when the Jobu is not on screen), the flash of the taskbar button and the badge over it
+ * with the count of sessions waiting. The news is the pet core's, fed with or without the Jobu (`onNotices`); the
+ * rule of which channel says what is src/shared/attention/rule.ts.
+ */
+const taskbarAttention = createTaskbarAttention(getMainWindow, attentionSmoke);
+const attentionNotifier = createAttentionNotifier({
+  preference: () => appConfig.notificationPreference,
+  isPetEnabled: () => petService?.isEnabled() ?? false,
+  // the chat raises its own toast for each pending, with what it is (T079): a `blocked` here would repeat it
+  chatCoversPending: () => chatHub !== null,
+  isWindowInFront: () => {
+    const window = getMainWindow();
+    return window !== null && window.isFocused() && window.isVisible() && !window.isMinimized();
+  },
+  isSupported: systemNotificationsSupported,
+  createNotification: createSystemNotification,
+  openSession: (ptyId) => petService?.openSession(ptyId),
+  flashFrame: (flag) => taskbarAttention.flashFrame(flag),
+  setOverlay: (count) => taskbarAttention.setOverlay(count),
+});
+
 function toPetDisplay(display: Electron.Display): PetDisplay {
   return { id: display.id, bounds: display.bounds, workArea: display.workArea, scaleFactor: display.scaleFactor };
 }
@@ -1034,6 +1080,9 @@ function startPetService(): void {
       log: (line) => appendFile(join(app.getPath('userData'), 'sweep.log'), `${new Date().toISOString()} ${line}\n`, 'utf8'),
     }),
     openFolder: (path) => void shell.openPath(path),
+    // notificacoes-completas — the news and the waiting count also go to the toast and the taskbar.
+    onNotices: (events) => attentionNotifier.onNotices(events),
+    onWaitingCountChanged: (count) => attentionNotifier.onWaitingCount(count),
     getDisplays: () => screen.getAllDisplays().map(toPetDisplay),
     getPrimaryDisplay: () => toPetDisplay(screen.getPrimaryDisplay()),
     now: () => Date.now(),
@@ -1121,6 +1170,7 @@ function createMainWindow(): void {
     petService?.onMainFocusChanged(mainWindow.isFocused() && mainWindow.isVisible() && !mainWindow.isMinimized());
   };
   mainWindow.on('focus', reportPetFocus);
+  mainWindow.on('focus', () => attentionNotifier.onWindowFocused()); // notificacoes-completas: the flash has served
   mainWindow.on('blur', reportPetFocus);
   mainWindow.on('minimize', reportPetFocus);
   mainWindow.on('restore', reportPetFocus);
@@ -1273,7 +1323,6 @@ function handleConversationSwitched(event: Extract<BridgeEvent, { type: 'convers
  * protocolo `donel-asset:` também não: o app é o de antes do chat.
  */
 function registerChatDomain(): void {
-  const smokeNotificationsLog = process.env.DONEL_SMOKE_NOTIFICATIONS_LOG || undefined;
   if (!appConfig.chat.enabled || hookBridge === null) return;
   const attachmentsRoot = join(app.getPath('userData'), 'chat-attachments');
   // T079 - notificacao do sistema quando uma pendencia abre (janela sem foco ou aba nao ativa).
@@ -1283,15 +1332,8 @@ function registerChatDomain(): void {
     isPetEnabled: () => petService?.isEnabled() ?? false,
     // C1 (015-jobu-pet) — the MAIN window in focus, not "some window": the Jobu is another window of the app.
     isWindowFocused: () => getMainWindow()?.isFocused() ?? false,
-    isSupported: () => smokeNotificationsLog !== undefined || Notification.isSupported(),
-    create: (options) => {
-      // Smoke-only hook (T081): records instead of showing a system notification.
-      if (smokeNotificationsLog !== undefined) {
-        appendFileSync(smokeNotificationsLog, `${JSON.stringify(options)}\n`, 'utf8');
-        return { on: () => undefined, show: () => undefined };
-      }
-      return new Notification(options);
-    },
+    isSupported: systemNotificationsSupported,
+    create: createSystemNotification, // smoke-only seam (T081) inside: records instead of showing
     onClick: (ptyId) => {
       const window = getMainWindow(); // C1 (015-jobu-pet) — the main one, not "the first live window"
       if (window === null) return;
@@ -2867,6 +2909,9 @@ void app.whenReady().then(async () => {
   // Emenda 22/09 (item 4) — StopFailure (limite da conta ou outro erro de
   // API) reavalia o auto-switch imediatamente, sem esperar o poll.
   semaphoreManager.onStopFailure(() => triggerAccountsAutoSwitchOnStopFailure());
+  // notificacoes-completas — the reason of the failure reaches the Jobu's core BEFORE the `waiting` it causes, so that
+  // wait is announced as "parou com erro: <motivo>" (bubble and toast) instead of "terminou".
+  semaphoreManager.onStopFailure((ptyId, error) => petService?.onStopFailure(ptyId, failureReasonText(error)));
   applyAccountsEngineConfig(); // F6 — 1ª chamada sempre 'built' (motor inerte se mod === null, C2).
 
   registerChatDomain();

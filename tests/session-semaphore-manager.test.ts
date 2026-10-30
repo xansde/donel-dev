@@ -271,6 +271,23 @@ describe('SessionSemaphoreManager pela ponte de hooks (por ptyId)', () => {
     }
   });
 
+  it('notificacoes-completas: onStopFailure leva o código `error` do payload (null quando falta), antes do waiting', async () => {
+    const { manager, port, token, updates, close } = await setup();
+    try {
+      const failed: { ptyId: string; error: string | null; stateBefore: string | undefined }[] = [];
+      manager.onStopFailure((ptyId, error) => failed.push({ ptyId, error, stateBefore: updates.at(-1)?.state }));
+      await postBridge(port, token, 'UserPromptSubmit', { session_id: 'claude-session-a' });
+      await vi.waitFor(() => expect(updates.at(-1)?.state).toBe('working'));
+      await postBridge(port, token, 'StopFailure', { session_id: 'claude-session-a', error: 'rate_limit' });
+      await vi.waitFor(() => expect(failed).toEqual([{ ptyId: 'pty-1', error: 'rate_limit', stateBefore: 'working' }]));
+      expect(updates.at(-1)?.state).toBe('waiting');
+      await postBridge(port, token, 'StopFailure', { session_id: 'claude-session-a' });
+      await vi.waitFor(() => expect(failed.at(-1)?.error).toBeNull());
+    } finally {
+      await close();
+    }
+  });
+
   it('StopFailure pela ponte avisa onStopFailure e fecha o turno', async () => {
     const { manager, port, token, updates, close } = await setup();
     try {

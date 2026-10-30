@@ -827,3 +827,17 @@ describe('purity', () => {
     expect(state.fullscreen).toBe(false);
   });
 });
+
+describe('notificacoes-completas: a turn that failed (StopFailure)', () => {
+  const failed = (reason: string | null) => ({ kind: 'failed' as const, ptyId: 'p1', name: 'atlas', blockedKind: null, reason, at: 0 });
+
+  it('says the reason when the hook gave one, and the sad pose', () => {
+    expect(eventText(failed('limite de uso'))).toBe('atlas · erro: limite de uso');
+    expect(eventText(failed(null))).toBe('atlas · parou com erro');
+    expect(eventPose(failed('limite de uso'))).toBe('sad');
+  });
+
+  it('a failure among other events makes the aggregate "esperando você"', () => {
+    expect(composeBubble([failed('limite de uso'), { ...failed(null), kind: 'finished', ptyId: 'p2' }]).text).toBe('2 sessões esperando você');
+  });
+});

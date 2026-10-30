@@ -352,7 +352,6 @@ export function App(): React.JSX.Element {
   // T009 — estado do semáforo por aba (chave = tab.id), alimentado pelo
   // callback que cada TerminalPane levanta via onStateChange.
   const [semaphoreStates, setSemaphoreStates] = useState<Record<string, SemaphoreStateInfo>>({});
-  const previousSemaphoreStatesRef = useRef<Record<string, SemaphoreStateInfo>>({});
   const activeTabIdRef = useRef(activeTabId);
   activeTabIdRef.current = activeTabId;
   // T412 (004) — a assinatura do evento de transcript é ÚNICA e montada uma vez
@@ -2007,57 +2006,9 @@ export function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
   }, [orderedSessions]);
 
-  // Notificação Windows opcional (ui-spec §3, FR-010) quando uma sessão em
-  // BACKGROUND passa a precisar de atenção — nunca pra aba já em foco (o
-  // usuário já está olhando). `app.setAppUserModelId` (main/index.ts) é o
-  // que garante a notificação sair atribuída ao Donel Dev, não a "Electron".
-  //
-  // FIX (feedback E2E rodada 4, batch 3 achado "notificar toda transição
-  // vira spam") — antes SEMPRE disparava pra waiting+permission; agora
-  // filtra pela preferência do ConfigStore (T015): 'all' preserva o
-  // comportamento antigo, 'permission-only' (default) só a transição que de
-  // fato TRAVA a sessão, 'none' desliga. `previousSemaphoreStatesRef` é
-  // atualizado INCONDICIONALMENTE (mesmo com 'none') — trocar a preferência
-  // de volta pra mais permissiva no meio de uma sessão não deve disparar
-  // notificação retroativa de uma transição que já aconteceu enquanto
-  // estava desligado.
-  //
-  // 015-jobu-pet (T033, R8) - with the Jobu on, his bubble already says this and a Windows notification would
-  // repeat the same news (FR-020): the loop is skipped, but `previousSemaphoreStatesRef` is still updated, for the
-  // reason above. `pet.enabled` comes from the Preferences and from the `pet:prefs-changed` push (the "Esconder"
-  // of his menu), so turning him off brings the notifications back at once. It holds while he is silenced or
-  // hidden by a full-screen app too (Q2).
-  const petEnabled = appConfig?.pet?.enabled === true;
-  useEffect(() => {
-    const preference = appConfig?.notificationPreference ?? FALLBACK_NOTIFICATION_PREFERENCE;
-    const previous = previousSemaphoreStatesRef.current;
-
-    if (preference !== 'none' && !petEnabled) {
-      for (const tab of tabs) {
-        const nextState = semaphoreStates[tab.id]?.state;
-        const prevState = previous[tab.id]?.state;
-        if (!nextState || nextState === prevState) continue; // só na TRANSIÇÃO de estado, não a cada update
-        if (tab.id === activeTabId) continue; // aba em foco não precisa de toast
-        if (nextState !== 'waiting' && nextState !== 'permission') continue;
-        // 014-chat (T079): com o chat ligado a pendência notifica pelo main (título = nome da aba, texto sem
-        // conteúdo, aba ativa com janela fora de foco inclusive) — esta aqui duplicaria. Sem chat, intacto.
-        if (chatEnabled && nextState === 'permission' && tab.sessionType === 'claude') continue;
-        if (preference === 'permission-only' && nextState !== 'permission') continue;
-
-        try {
-          if (typeof Notification === 'undefined') continue;
-          const title = nextState === 'permission' ? 'Permissão pendente' : 'Aguardando sua resposta';
-          const body =
-            nextState === 'permission' ? `Sessão "${tab.name}" precisa da sua aprovação.` : `Sessão "${tab.name}" terminou o turno.`;
-          const notification = new Notification(title, { body });
-          notification.onclick = () => setActiveTabId(tab.id);
-        } catch {
-          // Notificação é opcional (ui-spec §3) — nunca deve derrubar a UI.
-        }
-      }
-    }
-    previousSemaphoreStatesRef.current = semaphoreStates;
-  }, [semaphoreStates, tabs, activeTabId, appConfig?.notificationPreference, chatEnabled, petEnabled]);
+  // Notificação Windows de sessão (ui-spec §3, FR-010): desde notificacoes-completas (30/10) nasce no main, junto
+  // do balão do Jobu, do piscar e do selo da barra de tarefas — uma regra só (src/shared/attention/rule.ts) que sabe
+  // o que esta aqui não sabia: o foco da janela, o subagente vivo (#109) e a falha de API (`StopFailure`).
 
   // C2 (015-jobu-pet, R4) — ptyId -> tab.id for the gestures that arrive from the main (a click on a notification,
   // a click on the Jobu). Built from `chatPtyIds`, the LAST ptyId of every tab, with no filter by `tabExits`: the
