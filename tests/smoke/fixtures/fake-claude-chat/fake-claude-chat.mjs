@@ -191,8 +191,7 @@ function render() {
   for (const queued of pending) lines.push(`  ⎿ queued: ${queued.replace(/\n/g, ' ').slice(0, 60)}`);
   if (hideBoxWhileWorking && state.working) {
     lines.push('  ● Bash(npx vitest run)', '    ⎿  Running…');
-    out(`[2J[H${lines.join('
-')}`);
+    out(`\x1b[2J\x1b[H${lines.join('\r\n')}`);
     return;
   }
   menuMatches().slice(0, 6).forEach((c, i) => lines.push(i === 0 ? `  ❯ ${c}` : `    ${c}`));
