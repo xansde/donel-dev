@@ -94,6 +94,18 @@ const assistantUsageLine = (
     },
   })}\n`;
 
+/**
+ * Issue #21 — resposta do assistente com o id do modelo em `message.model`
+ * (forma de `tests/fixtures/chat/*.jsonl`, colhida de transcript real).
+ */
+const assistantModelLine = (model: string, { sidechain = false } = {}): string =>
+  `${JSON.stringify({
+    type: 'assistant',
+    isSidechain: sidechain,
+    message: { role: 'assistant', model, content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 10, output_tokens: 5 } },
+  })}
+`;
+
 describe('watchTranscript', () => {
   let dir: string;
   let filePath: string;
@@ -164,7 +176,7 @@ describe('watchTranscript', () => {
     await appendAndNotice(colorLine('blue'));
 
     await waitFor(() => changes.length === 1);
-    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: null, contextTokens: null, cliColorName: 'blue' });
+    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: null, contextTokens: null, cliColorName: 'blue', model: null });
   });
 
   it('Fix #19 — troca de cor na mesma sessão (/color blue → /color red) emite a ÚLTIMA', async () => {
@@ -298,7 +310,7 @@ describe('watchTranscript', () => {
     await appendAndNotice(assistantUsageLine({ input: 290, cacheCreation: 1505, cacheRead: 132_807 }));
 
     await waitFor(() => changes.length === 1);
-    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: null, contextTokens: 134_602, cliColorName: null });
+    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: null, contextTokens: 134_602, cliColorName: null, model: null });
   });
 
   it('turno seguinte que só muda a usage EMITE (regressão que a regra antiga da 004 causaria)', async () => {
@@ -377,13 +389,61 @@ describe('watchTranscript', () => {
     await appendAndNotice(`${assistantUsageLine({ input: 10, cacheRead: 60_000 })}${titleLine('com nome')}`);
 
     await waitFor(() => changes.length === 1);
-    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'com nome', contextTokens: 60_010, cliColorName: null });
+    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'com nome', contextTokens: 60_010, cliColorName: null, model: null });
   });
 
   // Flake do smoke session-context (T611/T612): um append único seguido de
   // silêncio caía no debounce ENQUANTO a leitura do append anterior ainda
   // estava em voo (disco/CPU sob carga) e era descartado — sem outro evento
   // depois, a StatusBar ficava para sempre no valor velho.
+  // ---------------------------------------------------------------------------
+  // Issue #21 — QUARTO campo da mesma varredura: o modelo da última resposta.
+  // ---------------------------------------------------------------------------
+
+  it('#21 — emite o modelo da última resposta do assistente', async () => {
+    await fs.writeFile(filePath, userLine('oi'), 'utf8');
+    start();
+    await idle();
+    expect(changes).toEqual([]);
+
+    await appendAndNotice(assistantModelLine('claude-opus-5-5'));
+
+    await waitFor(() => changes.length === 1);
+    expect(changes[0].model).toBe('claude-opus-5-5');
+  });
+
+  it('#21 — `/model` no CLI: a resposta seguinte vem com outro id e o watcher EMITE a troca', async () => {
+    await fs.writeFile(filePath, assistantModelLine('claude-opus-5-5'), 'utf8');
+    start();
+    await waitFor(() => changes.length === 1);
+
+    await appendAndNotice(`${userLine('/model haiku')}${assistantModelLine('claude-haiku-4-5-20251001')}`);
+
+    await waitFor(() => changes.length === 2);
+    expect(changes[1].model).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('#21 — resposta `<synthetic>` (erro de API) e turno de subagente NÃO trocam o modelo conhecido', async () => {
+    await fs.writeFile(filePath, assistantModelLine('claude-opus-5-5'), 'utf8');
+    start();
+    await waitFor(() => changes.length === 1);
+
+    await appendAndNotice(`${assistantModelLine('<synthetic>')}${assistantModelLine('claude-haiku-5-5', { sidechain: true })}`);
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0].model).toBe('claude-opus-5-5');
+  });
+
+  it('#21 — leitura sem resposta na cauda NÃO apaga o modelo já conhecido', async () => {
+    await fs.writeFile(filePath, assistantModelLine('claude-sonnet-5-5'), 'utf8');
+    start();
+    await waitFor(() => changes.length === 1);
+
+    await appendAndNotice(userLine('x'.repeat(70 * 1024)));
+
+    expect(changes).toHaveLength(1);
+  });
+
   it('escrita que chega durante uma leitura em voo NÃO se perde: o watcher relê ao terminar', async () => {
     await fs.writeFile(filePath, assistantUsageLine({ input: 1_000 }), 'utf8');
     start();
@@ -470,7 +530,7 @@ describe('watchTranscript — fs.watch real', () => {
     await fs.appendFile(filePath, titleLine('renomeado ao vivo'), 'utf8');
 
     await waitFor(() => changes.length === 1);
-    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'renomeado ao vivo', contextTokens: null, cliColorName: null });
+    expect(changes[0]).toEqual({ sessionId: 'abc-123', customTitle: 'renomeado ao vivo', contextTokens: null, cliColorName: null, model: null });
   });
 
   it('arquivo que ainda NÃO existe na abertura (o CLI cria na 1ª mensagem) — dispara quando ele nasce', async () => {
@@ -523,7 +583,7 @@ describe('readTranscriptTail', () => {
       'utf8',
     );
 
-    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'nome', contextTokens: 134_602, cliColorName: null });
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'nome', contextTokens: 134_602, cliColorName: null, model: null });
   });
 
   it('Fix #19 — devolve os TRÊS campos (título, tokens e cor) numa leitura só', async () => {
@@ -537,6 +597,22 @@ describe('readTranscriptTail', () => {
       customTitle: 'nome',
       contextTokens: 134_602,
       cliColorName: 'purple',
+      model: null,
+    });
+  });
+
+  it('#21 — devolve o modelo da ÚLTIMA resposta junto dos outros campos', async () => {
+    await fs.writeFile(
+      filePath,
+      `${assistantModelLine('claude-opus-5-5')}${userLine('troca')}${assistantModelLine('claude-sonnet-5-5')}${titleLine('nome')}`,
+      'utf8',
+    );
+
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({
+      customTitle: 'nome',
+      contextTokens: 10,
+      cliColorName: null,
+      model: 'claude-sonnet-5-5',
     });
   });
 
@@ -552,7 +628,7 @@ describe('readTranscriptTail', () => {
       'utf8',
     );
 
-    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'nome novo', contextTokens: 2_002, cliColorName: null });
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'nome novo', contextTokens: 2_002, cliColorName: null, model: null });
   });
 
   it('linha cortada no início do chunk (a cauda corta no meio de uma linha) não lança', async () => {
@@ -560,12 +636,12 @@ describe('readTranscriptTail', () => {
     const giant = `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'x'.repeat(70 * 1024) } })}\n`;
     await fs.writeFile(filePath, `${giant}${assistantUsageLine({ input: 5, cacheRead: 500 })}${titleLine('sobreviveu')}`, 'utf8');
 
-    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'sobreviveu', contextTokens: 505, cliColorName: null });
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: 'sobreviveu', contextTokens: 505, cliColorName: null, model: null });
   });
 
   it('arquivo vazio → os dois null', async () => {
     await fs.writeFile(filePath, '', 'utf8');
-    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: null, contextTokens: null, cliColorName: null });
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: null, contextTokens: null, cliColorName: null, model: null });
   });
 
   it('arquivo inexistente → os dois null, sem lançar', async () => {
@@ -573,12 +649,13 @@ describe('readTranscriptTail', () => {
       customTitle: null,
       contextTokens: null,
       cliColorName: null,
+      model: null,
     });
   });
 
   it('transcript sem nenhuma usage e sem título → os dois null (não 0)', async () => {
     await fs.writeFile(filePath, `${userLine('só conversa')}${userLine('mais conversa')}`, 'utf8');
-    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: null, contextTokens: null, cliColorName: null });
+    await expect(readTranscriptTail(filePath)).resolves.toEqual({ customTitle: null, contextTokens: null, cliColorName: null, model: null });
   });
 });
 
