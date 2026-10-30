@@ -50,6 +50,8 @@ export interface SendEnv {
   readonly alive?: boolean;
   readonly pendingOpen?: boolean;
   readonly terminalNeeded?: boolean;
+  /** Mid-turn according to the hooks. */
+  readonly working?: boolean;
 }
 
 export interface DriverSignal {
@@ -172,7 +174,7 @@ export class SendDriver {
   private items: Item[] = [];
   private view: readonly SendItemView[] = [];
   private readonly listeners = new Set<() => void>();
-  private env: Required<SendEnv> = { alive: true, pendingOpen: false, terminalNeeded: false };
+  private env: Required<SendEnv> = { alive: true, pendingOpen: false, terminalNeeded: false, working: false };
   private seq = 0;
   private sentCount = 0;
   private disposed = false;
@@ -224,7 +226,13 @@ export class SendDriver {
 
   setEnv(env: SendEnv): void {
     const next = { ...this.env, ...stripUndefined(env) };
-    if (next.alive === this.env.alive && next.pendingOpen === this.env.pendingOpen && next.terminalNeeded === this.env.terminalNeeded) return;
+    if (
+      next.alive === this.env.alive &&
+      next.pendingOpen === this.env.pendingOpen &&
+      next.terminalNeeded === this.env.terminalNeeded &&
+      next.working === this.env.working
+    )
+      return;
     this.env = next;
     for (const item of this.items) {
       if (isActive(item) || item.machine?.phase === 'queued') this.dispatch(item, { type: 'env', now: this.ports.now(), ...env });
@@ -456,9 +464,10 @@ export class SendDriver {
 }
 
 function stripUndefined(env: SendEnv): SendEnv {
-  const out: { alive?: boolean; pendingOpen?: boolean; terminalNeeded?: boolean } = {};
+  const out: { alive?: boolean; pendingOpen?: boolean; terminalNeeded?: boolean; working?: boolean } = {};
   if (env.alive !== undefined) out.alive = env.alive;
   if (env.pendingOpen !== undefined) out.pendingOpen = env.pendingOpen;
   if (env.terminalNeeded !== undefined) out.terminalNeeded = env.terminalNeeded;
+  if (env.working !== undefined) out.working = env.working;
   return out;
 }
