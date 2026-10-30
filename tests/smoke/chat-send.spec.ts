@@ -206,3 +206,42 @@ test('T072 - Enter perdido e reenviado uma vez, sem duplicar a mensagem @chat', 
     expect(userLines(chat.sessionsDir).filter((l) => l.text === 'mensagem do enter perdido').length).toBe(1);
   });
 });
+
+// 30/10 - decisão do dono: "Só envia, sem esperar ele finalizar, e acompanha se o próprio Claude coleta". Com o
+// Claude no meio de um turno longo que ESCONDE a caixa (`DONEL_FAKE_CLAUDE_HIDE_BOX_WHILE_WORKING`), a mensagem é
+// escrita na hora, o Enter sai sem a caixa visível, o cartão diz "na fila" e ela entra na pausa - sem interromper.
+test('mensagem mandada no meio de um turno longo, com a caixa escondida, entra sem interromper @chat', async () => {
+  test.setTimeout(180_000);
+  await withChatApp(
+    'chat-send-midturn',
+    { DONEL_FAKE_CLAUDE_SLOW_MS: '15000', DONEL_FAKE_CLAUDE_HIDE_BOX_WHILE_WORKING: '1' },
+    async (chat, page) => {
+      const helpers = chatHelpers(page);
+      await launchClaudeTab(page, {});
+      await expect(page.locator('[data-testid="chat-view"]:visible')).toBeVisible({ timeout: 20_000 });
+
+      await send(page, 'demorar bastante');
+      await expect(timeline(page).getByText('✓ entrou')).toHaveCount(1, { timeout: 60_000 });
+      // Hooks dizem que o turno está em andamento (o Enviar vira SplitButton) e a caixa do terminal sumiu.
+      await expect(page.getByRole('button', { name: 'Mais opções de Enviar' })).toBeVisible({ timeout: 10_000 });
+
+      await send(page, 'mensagem no meio do turno');
+      await expect(timeline(page).getByText('mensagem no meio do turno')).toBeVisible();
+      await expect(timeline(page).getByText('na fila', { exact: true })).toBeVisible({ timeout: 12_000 });
+      await expect(timeline(page).getByText('entra na próxima pausa do Claude')).toBeVisible();
+      // O próprio CLI guardou a mensagem na fila dele DURANTE o turno (queue-operation enqueue).
+      await expect
+        .poll(() => allTranscriptText(chat.sessionsDir), { timeout: 10_000 })
+        .toMatch(/"operation":"enqueue"[^\n]*mensagem no meio do turno/);
+      await helpers.shot('send-06-fila-caixa-escondida');
+
+      await expect(timeline(page).getByText('✓ entrou')).toHaveCount(2, { timeout: 40_000 });
+      await expect(timeline(page).getByText('na fila', { exact: true })).toHaveCount(0);
+      const delivered = userLines(chat.sessionsDir).filter((l) => l.text === 'mensagem no meio do turno');
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]!.raw).toContain('"promptSource":"queued"');
+      expect(allTranscriptText(chat.sessionsDir)).not.toContain('Request interrupted by user');
+      await expect(timeline(page).getByText('✕ não foi')).toHaveCount(0);
+    },
+  );
+});

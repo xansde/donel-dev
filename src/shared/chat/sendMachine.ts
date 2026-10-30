@@ -25,7 +25,13 @@
 // Signals are only honoured after the Enter was written (`await-ack`) or while `queued`, and only when
 // `signal.at >= createdAt`; the driver picks WHICH pending send receives a signal with `oldestPending`
 // from ./promptMatch (identical messages are closed oldest first).
+//
+// Mid-turn (owner's decision, 30/10: "só envia, sem esperar ele finalizar, e acompanha se o próprio Claude
+// coleta"): a plain prompt is written into the CLI's own queue even when the screen cannot prove the box; a paste
+// that never shows up in the box still gets its Enter; and a `queued` send is checked (`verify`) once the turn is
+// over, so it never stays "na fila" forever.
 
+import { readInputBox } from '../cliInputBox';
 import { NATIVE_COMMAND_NAMES } from './commandCatalog';
 import { commandResolvesTo, matchesPrompt, normalizePrompt } from './promptMatch';
 import {
@@ -82,7 +88,7 @@ export interface SendInput {
   readonly customCommands?: ReadonlySet<string>;
 }
 
-export type SendStep = 'gate' | 'image' | 'text' | 'menu-esc' | 'enter-gap' | 'await-ack' | 'lookup' | 'done';
+export type SendStep = 'gate' | 'image' | 'text' | 'menu-esc' | 'enter-gap' | 'await-ack' | 'lookup' | 'verify' | 'done';
 
 export interface SendMachineState {
   readonly id: string;
@@ -106,7 +112,7 @@ export interface SendMachineState {
   readonly alive: boolean;
   readonly pendingOpen: boolean;
   readonly terminalNeeded: boolean;
-  /** Mid-turn according to the hooks: explains a box the screen cannot read yet (no 30 s clock). */
+  /** Mid-turn according to the hooks: a plain prompt is written even if the screen cannot prove the box. */
   readonly working: boolean;
   readonly lines: readonly LineInput[] | null;
   readonly waitSince: number;
@@ -119,6 +125,8 @@ export interface SendMachineState {
   readonly ackDeadline: number | null;
   readonly resendDone: boolean;
   readonly idleAtEnter: boolean;
+  /** `queued` and the turn is over: when to look the prompt up (`verify`) if no delivery signal came. */
+  readonly verifyAt: number | null;
   readonly leftoverShown: string | null;
   readonly lastStatusKey: string | null;
   readonly lastWake: number | null;
@@ -163,6 +171,7 @@ const FIRST_PASTE_MS = 12_000;
 const ACK_MS = 15_000;
 const ENTER_GAP_MS = 80;
 const RESEND_ENTER_MS = 3_000;
+const VERIFY_MS = 15_000;
 
 // ----------------------------------------------------------- text and class
 
@@ -194,6 +203,15 @@ function sendKindOf(cls: MessageClass): SendKind {
 }
 
 const needsIdleKind = (cls: MessageClass) => cls.kind !== 'prompt';
+
+/**
+ * Mid-turn? A screen that proves the box and its footer answers ("esc to interrupt"); otherwise the hooks do (a
+ * long command can hide the box or its footer while the turn goes on).
+ */
+function midTurn(s: { readonly working: boolean }, lines: readonly LineInput[] | null): boolean {
+  if (lines !== null && isReadyForInput(lines)) return isWorking(lines);
+  return s.working;
+}
 
 const bracketedPaste = (data: string) => `\x1b[200~${data}\x1b[201~`;
 
@@ -234,6 +252,7 @@ export function createSend(input: SendInput, now: number): StepResult {
     ackDeadline: null,
     resendDone: false,
     idleAtEnter: true,
+    verifyAt: null,
     leftoverShown: null,
     lastStatusKey: null,
     lastWake: null,
@@ -275,6 +294,11 @@ export function step(state: SendMachineState, event: SendEvent): StepResult {
           s.phase = 'accepted';
           s.step = 'done';
         } else resetForRetry(s, now);
+      } else if (s.step === 'verify' && s.phase === 'queued') {
+        if (event.found) {
+          s.phase = 'accepted';
+          s.step = 'done';
+        } else fail(s, 'o Claude não pegou a mensagem');
       }
       break;
     case 'action':
@@ -302,6 +326,7 @@ function resetForRetry(s: Draft, now: number): void {
   s.resendAt = null;
   s.ackDeadline = null;
   s.resendDone = false;
+  s.verifyAt = null;
   s.leftoverShown = null;
 }
 
@@ -343,6 +368,7 @@ function applySignal(s: Draft, sig: PromptSignal): void {
   const queue = () => {
     s.phase = 'queued';
     s.step = 'done';
+    s.verifyAt = null;
   };
 
   if (sig.signal === 'unknown-command') {
@@ -467,9 +493,37 @@ function evaluate(s: Draft, now: number, fx: SendEffect[]): void {
     case 'confirming':
       evaluateConfirming(s, now, fx);
       return;
+    case 'queued':
+      evaluateQueued(s, now, fx);
+      return;
     default:
-      return; // queued: no deadline, depends on the turn
+      return;
   }
+}
+
+/**
+ * `queued`: no deadline while the turn goes on (delivery depends on it). Once the turn is over (hooks), 15 s
+ * without `submit`/`deliver` → look the prompt up in the stored hooks/transcript (`verify`): found → accepted,
+ * not found → failed "o Claude não pegou a mensagem". A screen still saying "esc to interrupt" puts the check off.
+ */
+function evaluateQueued(s: Draft, now: number, fx: SendEffect[]): void {
+  if (s.step === 'verify') return;
+  if (s.working) {
+    s.verifyAt = null;
+    return;
+  }
+  if (s.verifyAt === null) {
+    s.verifyAt = now + VERIFY_MS;
+    return;
+  }
+  if (now < s.verifyAt) return;
+  if (s.lines !== null && isWorking(s.lines)) {
+    s.verifyAt = now + VERIFY_MS;
+    return;
+  }
+  s.step = 'verify';
+  s.verifyAt = null;
+  fx.push({ type: 'ack-lookup', text: s.text, since: s.createdAt });
 }
 
 function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
@@ -512,11 +566,23 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
     }
   }
 
-  // The screen cannot prove the box yet, but the hooks say the CLI is mid-turn (a long command can hide the box
-  // or its footer): a known wait, so the message stays queued until the box opens or the turn ends.
+  // The screen cannot prove the box, but the hooks say the CLI is mid-turn (a long command can hide the box or its
+  // footer). A plain prompt is written anyway: it goes into the CLI's own queue, which takes typed messages
+  // mid-turn (owner's decision, 30/10). Never without a screen read (a dialog must be ruled out), never into a
+  // menu, and not for images (each `[Image #N]` must be seen), `/`/`!` (need the CLI idle) or interrupt-first
+  // (its Esc needs "esc to interrupt" on screen): those keep waiting, with a visible reason and no clock.
   if (reason !== null && !visible && s.alive && s.working) {
-    reason = 'esperando o Claude terminar o que está fazendo';
-    visible = true;
+    const blindOk =
+      lines !== null &&
+      s.cls.kind === 'prompt' &&
+      s.images.length === 0 &&
+      s.mode !== 'interrupt-first' &&
+      readInputBox(lines).kind !== 'menu';
+    if (blindOk) reason = null;
+    else {
+      reason = 'esperando o Claude terminar o que está fazendo';
+      visible = true;
+    }
   }
 
   // The 30 s clock only runs while nothing visible explains the wait.
@@ -571,6 +637,14 @@ function evaluateTyping(s: Draft, now: number, fx: SendEffect[]): void {
       return;
     }
     if (s.stepDeadline !== null && now >= s.stepDeadline) {
+      // Mid-turn the box may be hidden or slow to redraw (a long command, a machine short of RAM) while the CLI did
+      // take the paste: send the Enter anyway and follow the acceptance signals. One paste only; no Esc Esc. Not
+      // with a dialog or a pending question up: there the Enter would answer it.
+      const dialogUp = s.pendingOpen || s.terminalNeeded || (lines !== null && blockingScreen(lines) !== null);
+      if (!dialogUp && midTurn(s, lines)) {
+        enterConfirming(s, lines ?? [], now, fx);
+        return;
+      }
       // Clean the box only if what is there is ours and the CLI is idle (Esc would interrupt a turn).
       if (lines !== null && !isWorking(lines) && boxIsOurs(s, lines)) fx.push({ type: 'write', data: '\x1b\x1b' });
       fail(s, 'o texto não entrou na caixa');
@@ -593,7 +667,7 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
     if (s.enterAt !== null && now >= s.enterAt) {
       fx.push({ type: 'write', data: '\r' });
       s.step = 'await-ack';
-      s.idleAtEnter = lines === null ? true : !isWorking(lines);
+      s.idleAtEnter = !midTurn(s, lines);
       s.resendAt = now + RESEND_ENTER_MS;
       s.ackDeadline = now + ACK_MS;
       s.resendDone = false;
@@ -607,14 +681,16 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
       s.step = 'done';
       return;
     }
+    // Enter written mid-turn and our text is not in the box once the Enter resend window is over: the CLI took it
+    // into its own queue (it only confirms on delivery; the signal may also just be late, as on a machine short
+    // of RAM). It waits there like any `queued` send, and is checked when the turn ends.
+    if (!s.idleAtEnter && s.resendAt !== null && now >= s.resendAt && lines !== null && !textSeen(s, lines)) {
+      s.phase = 'queued';
+      s.step = 'done';
+      s.verifyAt = null;
+      return;
+    }
     if (s.ackDeadline !== null && now >= s.ackDeadline) {
-      // Enter written mid-turn and our text left the box: the CLI took it into its own queue (the signal is
-      // just late, as on a machine short of RAM). It waits there for the turn, like a `queued` send.
-      if (!s.idleAtEnter && lines !== null && !textSeen(s, lines)) {
-        s.phase = 'queued';
-        s.step = 'done';
-        return;
-      }
       fail(s, 'não foi');
       return;
     }
@@ -666,8 +742,12 @@ function nextWake(s: Draft, now: number): number | null {
       if (s.step === 'enter-gap' && s.enterAt !== null) candidates.push(s.enterAt);
       if (s.step === 'await-ack') {
         if (s.ackDeadline !== null) candidates.push(s.ackDeadline);
-        if (!s.resendDone && s.resendAt !== null) candidates.push(s.resendAt);
+        // mid-turn the resend time is also when an empty box turns the send into `queued`
+        if (s.resendAt !== null && (!s.resendDone || !s.idleAtEnter)) candidates.push(s.resendAt);
       }
+      break;
+    case 'queued':
+      if (s.verifyAt !== null) candidates.push(s.verifyAt);
       break;
     default:
       break;

@@ -36,9 +36,29 @@ O gate é reavaliado a cada atualização da tela e se repete após spawn,
 `/clear` e `/resume`. Os bytes escritos antes de o REPL armar o stdin se
 **perdem**: o gate não é opcional.
 
+**Com o Claude trabalhando, a mensagem vai na hora** (decisão do dono,
+30/10: "só envia, sem esperar ele finalizar, e acompanha se o próprio Claude
+coleta"). O CLI aceita mensagem digitada no meio do turno e a guarda na fila
+dele. Por isso, com o turno em andamento pelos hooks (`working`), os itens 2
+e 3 **não seguram** um prompt comum: caixa ilegível ou sem rodapé (um comando
+longo às vezes a esconde) não é motivo para esperar, e a colagem sai. O
+portão só segura por motivo real e visível:
+
+- pergunta ou permissão aberta, faixa "o terminal precisa de você", diálogo
+  ou tela sem caixa reconhecida (`blockingScreen`), processo morto;
+- texto que sobrou na caixa (§3);
+- `/` e `!`, que precisam do CLI parado (item 5);
+- nenhuma leitura da tela ainda (é ela que descarta o diálogo), ou a caixa
+  tomada por um menu.
+
+Mensagem com imagem e "interromper e mandar agora" também esperam a caixa: o
+`[Image #N]` precisa ser visto, e o Esc do interromper precisa de "esc to
+interrupt" na tela. Essas esperas têm motivo visível ("esperando o Claude
+terminar o que está fazendo") e não têm prazo.
+
 Enquanto as pré-condições não valem, o envio fica em `waiting-cli` (rótulo
-"na fila"). Quando o motivo é uma pendência aberta ou a faixa "o terminal
-precisa de você", a espera é explicada por elas e não tem prazo. Sem motivo
+"na fila"). Quando o motivo é visível (pendência aberta, faixa "o terminal
+precisa de você", turno em andamento), a espera não tem prazo. Sem motivo
 visível, o prazo é de 30 s, e depois vem `failed` (§6).
 
 ## 2. Saneamento do texto
@@ -84,6 +104,13 @@ Enter:                \r  em escrita própria, ~80 ms depois
   só espera por ele.
 - "Interromper e mandar agora": `ESC` com "esc to interrupt" visível e, logo
   em seguida, a sequência acima. Não precisa esperar.
+- **Texto que não aparece na caixa no meio do turno** (máquina lenta, tela que
+  esconde a caixa): estourado o prazo do texto (§6) com o turno em andamento
+  (rodapé "esc to interrupt" ou, sem rodapé legível, os hooks), o `\r` sai
+  mesmo assim e o envio passa a ser acompanhado pelos sinais (§5). Uma colagem
+  só; sem Esc Esc. Se um diálogo ou uma pergunta apareceu nesse meio-tempo, o
+  Enter responderia a ele: aí é `failed` "o texto não entrou na caixa", como
+  antes. Com o CLI ocioso nada muda: o prazo estourado é `failed`.
 
 ## 5. Sinais de aceite
 
@@ -108,16 +135,35 @@ sinal fecha só um envio, o mais antigo pendente.
 O main guarda os últimos 20 `UserPromptSubmit` de cada aba, com horário, para
 o aceite tardio (§7).
 
+**Acompanhar se o CLI coletou** (Enter dado no meio do turno):
+
+- `enqueue` (ou `UserPromptSubmit`) → `queued`, "na fila — entra na próxima
+  pausa do Claude"; `queue-operation remove` + `queued_command` (`deliver`),
+  ou um segundo `submit` → `accepted`, "entrou".
+- **Sem sinal nenhum**: passado o prazo do reenvio do Enter (3 s) e com o nosso
+  texto fora da caixa (ou a caixa ilegível), o envio vira `queued`. O CLI só
+  confirma quando entrega.
+- **Fim do turno**: com `queued` e os hooks dizendo que o turno acabou
+  (`working` falso), passam 15 s sem `submit`/`deliver` e o chat faz o
+  `ack-lookup` (os `UserPromptSubmit` guardados e o transcript desde
+  `createdAt`). Achou → `accepted`. Não achou → `failed` "o Claude não pegou a
+  mensagem", com "tentar de novo". Se o turno recomeça antes, o relógio para e
+  recomeça do fim do novo turno; se o rodapé ainda diz "esc to interrupt", a
+  conferência fica para 15 s depois. Nenhuma mensagem fica "na fila" para
+  sempre depois que o Claude para.
+
 ## 6. Prazos
 
 | Etapa | Prazo | Ao estourar |
 |---|---|---|
 | `waiting-cli` sem motivo visível | 30 s | `failed` "o Claude não ficou pronto" |
 | Imagem virar `[Image #N]` | 3 s por imagem | `failed` "a imagem não entrou" |
-| Texto aparecer na caixa | 3 s + 1 s a cada 15 KB; **12 s** na primeira colagem da sessão | `failed` (a caixa é limpa só se o texto for o nosso) |
+| Texto aparecer na caixa | 3 s + 1 s a cada 15 KB; **12 s** na primeira colagem da sessão | ocioso: `failed` (a caixa é limpa só se o texto for o nosso); **no meio do turno**: Enter mesmo assim, sem Esc Esc (§4) |
 | Aceite autoritativo depois do Enter | **15 s** (o primeiro envio de uma sessão confirma em 4–5 s a frio) | `failed` "não foi" + "tentar de novo" |
-| Aceite depois de um Enter **no meio da rodada**, com o texto fora da caixa | 15 s | `queued` (o CLI guardou na fila dele; o sinal só atrasou — máquina sem RAM, 28/10) |
-| Entrega de mensagem `queued` | sem prazo: depende da rodada | — (a fila do CLI aparece na tela) |
+| Aceite depois de um Enter **no meio da rodada**, com o texto fora da caixa | 3 s (o prazo do reenvio) | `queued` (o CLI guardou na fila dele e só confirma na entrega; o sinal também pode atrasar — máquina sem RAM, 28/10) |
+| Enter no meio da rodada com o texto **ainda na caixa** | 15 s (com um `\r` reenviado aos 3 s) | `failed` "não foi" |
+| Entrega de mensagem `queued` com o turno em andamento | sem prazo: depende da rodada | — (a fila do CLI aparece na tela) |
+| Entrega de mensagem `queued` depois que o turno acabou | 15 s | `ack-lookup`: achou → `accepted`; não achou → `failed` "o Claude não pegou a mensagem" |
 
 Todo estado transitório tem prazo. Não existe "enviando…" eterno.
 
@@ -146,7 +192,8 @@ Todo estado transitório tem prazo. Não existe "enviando…" eterno.
 
 ## 9. Nunca
 
-- Escrever antes do gate.
+- Escrever antes do gate (com o turno em andamento, o gate é o do §1: só os
+  motivos visíveis seguram).
 - Colar com diálogo, menu de tela ou pendência aberta.
 - Esc com o CLI trabalhando, fora do Parar e do "interromper e mandar
   agora".
