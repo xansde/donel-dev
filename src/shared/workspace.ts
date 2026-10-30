@@ -14,7 +14,21 @@ export const WORKSPACE_CHANNELS = {
   pullRequest: 'workspace:pullRequest',
   /** B3 — invoke(url) -> boolean: abre o PR/job no navegador. Só `https:`. */
   openPullRequestUrl: 'workspace:openPullRequestUrl',
+  /** "Isolar em worktree" — main -> renderer: a aba fechou e a worktree FICOU (trabalho não enviado), `WorktreeKeptPayload`. */
+  worktreeKept: 'workspace:worktreeKept',
+  /** invoke(path) -> boolean: abre no Explorer uma worktree que o main avisou que ficou. */
+  openWorktreeFolder: 'workspace:openWorktreeFolder',
 } as const;
+
+/** A worktree de uma sessão isolada que não foi removida ao fechar a aba, e por quê. */
+export interface WorktreeKeptPayload {
+  /** `kept` = ficou por ter trabalho; `failed` = era para sair, mas o git recusou (nada foi apagado à força). */
+  readonly kind: 'kept' | 'failed';
+  readonly name: string;
+  readonly path: string;
+  readonly branch: string;
+  readonly reason: string;
+}
 
 export type EditorStatus = { readonly available: true; readonly name: string } | { readonly available: false };
 
@@ -44,4 +58,6 @@ export interface DonelWorkspaceApi {
   gitBranch(path: string): Promise<GitBranchResult>;
   pullRequest(path: string, options?: PullRequestRequestOptions): Promise<PullRequestStatusResult>;
   openPullRequestUrl(url: string): Promise<boolean>;
+  onWorktreeKept(listener: (payload: WorktreeKeptPayload) => void): () => void;
+  openWorktreeFolder(path: string): Promise<boolean>;
 }

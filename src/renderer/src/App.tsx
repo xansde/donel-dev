@@ -40,6 +40,8 @@ import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
 // entram no argv (sem provider) ou são omitidos (com provider); commandBuilder.ts
 // (buildClaudeArgs acima) continua intocado.
 import { buildLauncherArgs } from './launchArgsForProvider';
+import { cliWorktreeBranch, WORKTREE_TAB_MARK, worktreeNameFor, worktreeNameFromArgs } from '../../shared/sessionWorktree';
+import type { WorktreeKeptPayload } from '../../shared/workspace';
 import { useWorkspaceInfo } from './useWorkspaceInfo';
 // CA-22 (009) — só o DENOMINADOR do `%` de contexto vem daqui (`min(300k,
 // janela do modelo)`, decisão de 24/07); a formatação e as faixas de cor são do
@@ -478,6 +480,8 @@ export function App(): React.JSX.Element {
   });
   /** D4 — Toast informativo (o que o gesto fez, por que foi recusado); nunca tem desfazer. */
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
+  // "Isolar em worktree" — a aba fechou e a worktree ficou por ter trabalho não enviado: aviso discreto com "Abrir pasta".
+  const [worktreeKept, setWorktreeKept] = useState<WorktreeKeptPayload | null>(null);
   /**
    * C3 — cache do texto de tasks.md já lido, por caminho ABSOLUTO. `null` =
    * já tentou e não achou/não leu (não refaz o IPC); ausente = ainda não
@@ -893,6 +897,10 @@ export function App(): React.JSX.Element {
     // A selecionado, --model/--effort são omitidos do argv (o modelo vem do
     // env da entrada); buildClaudeArgs (commandBuilder.ts) continua intocado,
     // buildLauncherArgs só decide quais opções passar pra ela.
+    // "Isolar em worktree" — nome curto (sessão ou data) que nenhuma aba aberta usa: o CLI reabriria a mesma worktree.
+    const worktree = options.worktree
+      ? worktreeNameFor(options.sessionName, new Date(), tabs.flatMap((tab) => worktreeNameFromArgs(tab.launchArgs) ?? []))
+      : undefined;
     const args = buildLauncherArgs({
       providerId: options.providerId ?? undefined,
       model: options.model,
@@ -900,6 +908,7 @@ export function App(): React.JSX.Element {
       permissionMode: options.permissionMode,
       sessionName: options.sessionName,
       chrome: options.chrome,
+      worktree,
     });
     const name = options.sessionName || options.projectName;
     addTab({
@@ -923,6 +932,7 @@ export function App(): React.JSX.Element {
         effort: options.effort,
         permissionMode: options.permissionMode,
         ...(options.chrome ? { chrome: true } : {}),
+        ...(options.worktree ? { worktree: true } : {}),
       })
       .then(setAppConfig)
       .catch(() => undefined);
@@ -1318,6 +1328,10 @@ export function App(): React.JSX.Element {
       void window.donel.tabs.setOrder(tab.claudeSessionId, index).then(setAppConfig).catch(() => undefined);
     });
   };
+
+  // "Isolar em worktree" — o main avisa quando a worktree de uma aba fechada ficou (trabalho não enviado).
+  useEffect(() => window.donel.workspace.onWorktreeKept(setWorktreeKept), []);
+  const dismissWorktreeKept = useCallback(() => setWorktreeKept(null), []);
 
   /**
    * T412 (004) — CA-4: o `/rename` digitado no CLI reflete na aba/sidebar em
@@ -1817,6 +1831,17 @@ export function App(): React.JSX.Element {
   // assume 'working' (spike: estado inicial otimista) com stateEnteredAt=0
   // (sortSessions trata omitido/0 como "a mais antiga possível" — nunca
   // perde o desempate de FR-010/CA-6 por causa disso).
+  /**
+   * "Isolar em worktree" — a branch da aba isolada: a leitura oficial do CLI (statusline) quando já chegou, senão a
+   * `worktree-<nome>` que o CLI cria. `undefined` = aba no checkout do projeto.
+   */
+  const tabWorktreeBranch = (tab: TabState): string | undefined => {
+    const name = tab.sessionType === 'claude' ? worktreeNameFromArgs(tab.launchArgs) : null;
+    if (name === null) return undefined;
+    const ptyId = chatPtyIds[tab.id];
+    return (ptyId ? statusLines[ptyId]?.worktree?.branch : null) ?? cliWorktreeBranch(name);
+  };
+
   /**
    * T408 (004) — CA-5: UMA função de resolução por sessão, consumida pela aba,
    * pela linha da sidebar e pela lista de sessões anteriores. Se cada lugar
@@ -2550,6 +2575,8 @@ export function App(): React.JSX.Element {
                 state={tab.sessionType === 'shell' ? undefined : (semaphoreStates[tab.id]?.state ?? 'working')}
                 // T079 (D-C20) — slot próprio, nunca o `model`.
                 statusText={chatEnabled && tab.sessionType === 'claude' && semaphoreStates[tab.id]?.state === 'permission' ? 'esperando você' : undefined}
+                // "Isolar em worktree" — a marca ⎇ no slot curto ao lado do nome (a branch vai no cabeçalho da sessão).
+                model={tabWorktreeBranch(tab) ? WORKTREE_TAB_MARK : undefined}
                 active={tab.id === activeTabId}
                 onClick={() => setActiveTabId(tab.id)}
                 onClose={() => handleRequestCloseTab(tab.id)}
@@ -2618,6 +2645,11 @@ export function App(): React.JSX.Element {
                 <>
                   <span className={styles.sessionHeaderTitle}>{activeTab ? resolveTabName(activeTab) : ''}</span>
                   {activeTab?.cwd ? <span className={styles.sessionHeaderPath}>{activeTab.cwd}</span> : null}
+                  {activeTab && tabWorktreeBranch(activeTab) ? (
+                    <span className={styles.sessionHeaderWorktree} data-testid="session-header-worktree" title="Sessão isolada numa worktree (.claude/worktrees)">
+                      {WORKTREE_TAB_MARK} {tabWorktreeBranch(activeTab)}
+                    </span>
+                  ) : null}
                 </>
               )}
               <div className={styles.sessionHeaderSpacer} />
@@ -2941,6 +2973,25 @@ export function App(): React.JSX.Element {
           foco já é reversível pelo próprio gesto (clicar no outro card); uma
           máquina de "desfazer" não agregaria valor nenhum. */}
       <Toast open={devModeToast !== null} message={devModeToast ?? ''} onDismiss={() => setDevModeToast(null)} />
+
+      {/* "Isolar em worktree" — a worktree da aba fechada ficou (trabalho não enviado); nada foi apagado. */}
+      <Toast
+        open={worktreeKept !== null}
+        message={
+          worktreeKept
+            ? worktreeKept.kind === 'kept'
+              ? `A worktree ${worktreeKept.name} ficou porque tem trabalho não enviado: ${worktreeKept.reason}.`
+              : `Não consegui remover a worktree ${worktreeKept.name} (${worktreeKept.reason}); ela ficou onde estava.`
+            : ''
+        }
+        actionLabel="Abrir pasta"
+        onAction={() => {
+          if (worktreeKept) void window.donel.workspace.openWorktreeFolder(worktreeKept.path).catch(() => false);
+          setWorktreeKept(null);
+        }}
+        onDismiss={dismissWorktreeKept}
+        duration={15_000}
+      />
 
       {/* T015 — Preferências (FR-007, feedback E2E rodada 3/4). */}
       <Preferences

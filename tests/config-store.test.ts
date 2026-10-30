@@ -407,6 +407,22 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
     expect(sanitizeAppConfig({ ...defaults, launcherDefaults: base }, defaults).launcherDefaults).toEqual(base);
   });
 
+  it('launcherDefaults.worktree: true é preservado; ausente, false ou tipo errado some (mesma regra do chrome)', () => {
+    const defaults = baseDefaults();
+    const base = { model: 'opus', effort: 'max', permissionMode: 'auto' };
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, worktree: true } }, defaults).launcherDefaults).toEqual({
+      ...base,
+      worktree: true,
+    });
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, chrome: true, worktree: true } }, defaults).launcherDefaults).toEqual({
+      ...base,
+      chrome: true,
+      worktree: true,
+    });
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, worktree: false } }, defaults).launcherDefaults).toEqual(base);
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, worktree: 'sim' } }, defaults).launcherDefaults).toEqual(base);
+  });
+
   it('activeProfileSlug vazio/só espaço cai no default (mesma regra de readActiveProfileConfig)', () => {
     const defaults = baseDefaults();
     expect(sanitizeAppConfig({ ...defaults, activeProfileSlug: '   ' }, defaults).activeProfileSlug).toBe(

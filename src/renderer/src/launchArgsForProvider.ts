@@ -21,6 +21,8 @@ export interface BuildLauncherArgsOptions {
   readonly continuation?: SessionContinuation;
   /** Toggle "Navegador (Chrome/Edge)" do Launcher → `--chrome`. */
   readonly chrome?: boolean;
+  /** "Isolar em worktree" — nome já escolhido (`worktreeNameFor`); ausente = sessão no checkout do projeto. */
+  readonly worktree?: string;
 }
 
 export function buildLauncherArgs(options: BuildLauncherArgsOptions): string[] {
@@ -39,5 +41,6 @@ export function buildLauncherArgs(options: BuildLauncherArgsOptions): string[] {
     // terceiro (doc code.claude.com/docs/en/chrome). O Launcher já desabilita
     // o toggle; aqui é a segunda trava, para o argv nunca levar a flag.
     chrome: hasProvider ? undefined : options.chrome,
+    worktree: options.worktree,
   });
 }

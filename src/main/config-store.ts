@@ -617,6 +617,7 @@ function sanitizeLauncherDefaults(value: unknown, fallback: LauncherDefaultsDto)
     effort: isOneOf(candidate.effort, KNOWN_EFFORT_LEVELS) ? candidate.effort : fallback.effort,
     permissionMode: isOneOf(candidate.permissionMode, KNOWN_PERMISSION_MODES) ? candidate.permissionMode : fallback.permissionMode,
     ...(candidate.chrome === true ? { chrome: true } : {}),
+    ...(candidate.worktree === true ? { worktree: true } : {}),
   };
 }
 

@@ -10,6 +10,8 @@ export interface ListedWorktree {
   readonly branch: string | null;
   readonly bare: boolean;
   readonly locked: boolean;
+  /** The text after `locked ` (`git worktree lock --reason`); `null` when unlocked or locked without a reason. */
+  readonly lockReason: string | null;
   readonly prunable: boolean;
 }
 
@@ -24,17 +26,34 @@ export function parseWorktreeList(stdout: string): ListedWorktree[] {
     let branch: string | null = null;
     let bare = false;
     let locked = false;
+    let lockReason: string | null = null;
     let prunable = false;
     for (const line of lines.slice(1)) {
       if (line.startsWith('HEAD ')) head = line.slice(5).trim();
       else if (line.startsWith('branch ')) branch = line.slice(7).trim().replace(/^refs\/heads\//, '');
       else if (line === 'bare') bare = true;
-      else if (line === 'locked' || line.startsWith('locked ')) locked = true;
+      else if (line === 'locked' || line.startsWith('locked ')) {
+        locked = true;
+        lockReason = line.length > 'locked '.length ? line.slice('locked '.length).trim() || null : null;
+      }
       else if (line === 'prunable' || line.startsWith('prunable ')) prunable = true;
     }
-    result.push({ path: resolve(first.slice('worktree '.length).trim()), head, branch, bare, locked, prunable });
+    result.push({ path: resolve(first.slice('worktree '.length).trim()), head, branch, bare, locked, lockReason, prunable });
   }
   return result;
+}
+
+/**
+ * The lock the CLI puts on a worktree it created (`claude --worktree`, agents, background sessions):
+ * `claude session <name> (pid <pid>)`, measured with CLI 2.1.314. A killed session leaves it behind, so the pid is
+ * what tells a live session from a stale lock. `null` for any other lock (the owner's own, another tool's).
+ */
+export function parseClaudeSessionLock(reason: string | null): { readonly name: string; readonly pid: number } | null {
+  if (reason === null) return null;
+  const match = /^claude session (.+) \(pid (\d+)\)$/.exec(reason.trim());
+  if (match === null) return null;
+  const pid = Number.parseInt(match[2] ?? '', 10);
+  return Number.isSafeInteger(pid) && pid > 0 ? { name: match[1] ?? '', pid } : null;
 }
 
 export interface ListedBranch {

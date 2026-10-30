@@ -9,7 +9,10 @@ para `fake-claude-chat.mjs`). Node puro, sem dependencias; funciona com qualquer
 `--session-id <id>`, `--settings <arquivo>` (o JSON por sessao do app: entradas `http`
 e o `command` do `SessionStart`), `-r|--resume <id>` (usa o id e dispara `SessionStart`
 com `source: resume`), `--permission-mode <modo>` (com `acceptEdits` o rodape mostra
-`accept edits on`, o sinal de "pronto" que `waitForClaudeBooted(until: 'prompt')` espera). Os demais sao ignorados.
+`accept edits on`, o sinal de "pronto" que `waitForClaudeBooted(until: 'prompt')` espera), `--worktree <nome>`
+(como o CLI 2.1.314: cria ou reabre `<repo principal>/.claude/worktrees/<nome>` na branch `worktree-<nome>`, trava
+com `claude session <nome> (pid <pid>)`, roda a sessao dentro dela; fora de repo git imprime o erro do CLI e sai com 1).
+Os demais sao ignorados.
 
 Os smokes que abrem aba `claude` usam este falso por padrao (`launchIsolatedApp`, opcao
 `fakeClaude`, `tests/smoke/helpers/launch.ts`); so os `@real` passam `fakeClaude: false`.

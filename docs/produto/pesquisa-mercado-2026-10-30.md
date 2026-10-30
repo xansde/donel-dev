@@ -38,7 +38,7 @@ Legenda: P/M/G = tamanho · Exec = só execução · Decisão = precisa do dono.
 | 7 | "Criar PR" com descrição escrita pelo agente | Conductor, VS Code | P | Exec | fila |
 | 8 | Sessão a partir de uma issue | Emdash, Superset | M | Decisão (fronteira com a Esteira) | proposta |
 | 9 | Painel "Alterações" com comentário por linha que volta para a sessão | Claude Desktop, Conductor, Warp | G | Exec no núcleo | proposta |
-| 10 | "Isolar em worktree" no Launcher | Claude Desktop, Conductor | M | Decisão (pasta, convívio com a Esteira) | proposta |
+| 10 | "Isolar em worktree" no Launcher | Claude Desktop, Conductor | M | Decisão (pasta, convívio com a Esteira) | decidido (`claude --worktree` + limpeza ao fechar a aba e na faxina); em PR |
 | 11 | Scripts de setup/run por projeto (`.claude/launch.json`) | Superset, Claude Desktop | M | Decisão | proposta |
 | 12 | Painel de navegador para preview (localhost) | Claude Desktop, Superset, Antigravity | G | Decisão (o agente controla?) | proposta |
 | 13 | Toggle "Navegador (Chrome/Edge)" no Launcher (`--chrome`) | Claude Code | P | Exec | em execução |

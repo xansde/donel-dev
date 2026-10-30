@@ -40,6 +40,15 @@ describe('buildLauncherArgs (puro)', () => {
     expect(args).toEqual(['--permission-mode', 'acceptEdits']);
   });
 
+  it('isolar em worktree: --worktree <nome> no fim, com ou sem provider (worktree não depende da conta)', () => {
+    expect(
+      buildLauncherArgs({ providerId: undefined, model: 'fable', effort: 'high', permissionMode: 'acceptEdits', sessionName: 'radar', worktree: 'radar-1030-1752' }),
+    ).toEqual(['--model', 'fable', '--effort', 'high', '--permission-mode', 'acceptEdits', '-n', 'radar', '--worktree', 'radar-1030-1752']);
+    expect(
+      buildLauncherArgs({ providerId: 'openrouter-a1', model: 'fable', effort: 'high', permissionMode: 'acceptEdits', sessionName: '', worktree: 'sessao-1030-1752' }),
+    ).toEqual(['--permission-mode', 'acceptEdits', '--worktree', 'sessao-1030-1752']);
+  });
+
   it('sem provider e sem sessionName: comportamento de hoje preservado', () => {
     const args = buildLauncherArgs({ providerId: undefined, model: 'opus', effort: 'low', permissionMode: 'manual', sessionName: '' });
     expect(args).toEqual(['--model', 'opus', '--effort', 'low', '--permission-mode', 'manual']);

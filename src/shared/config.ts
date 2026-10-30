@@ -64,6 +64,8 @@ export interface LauncherDefaultsDto {
    * com a forma de sempre.
    */
   readonly chrome?: boolean;
+  /** "Isolar em worktree" (`--worktree`). Mesma regra do `chrome`: opcional e só gravado quando ligado. */
+  readonly worktree?: boolean;
 }
 
 /**

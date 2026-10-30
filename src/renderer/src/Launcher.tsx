@@ -69,6 +69,8 @@ export interface LauncherLaunchOptions {
    * sempre que há provider (a integração exige login claude.ai).
    */
   chrome: boolean;
+  /** "Isolar em worktree" → `--worktree <nome>` (o nome é escolhido por quem lança, no App). */
+  worktree: boolean;
 }
 
 export interface LauncherProps {
@@ -77,7 +79,7 @@ export interface LauncherProps {
   /** Herdado da seleção da sidebar (ui-spec §4); o campo abaixo continua editável depois. */
   defaultProjectPath?: string;
   /** T015 (FR-007 "defaults do launcher") — última escolha persistida no ConfigStore; `undefined` até `config:get` resolver (cai nos `DEFAULT_*` locais). */
-  launcherDefaults?: { model: ModelAlias; effort: EffortLevel; permissionMode: PermissionMode; chrome?: boolean };
+  launcherDefaults?: { model: ModelAlias; effort: EffortLevel; permissionMode: PermissionMode; chrome?: boolean; worktree?: boolean };
   /** T1320 — registry de providers classe A; `[]` = campo "Provedor" nem aparece (C14/D6). */
   providers?: readonly ProviderSummaryDto[];
   onLaunch: (options: LauncherLaunchOptions) => void;
@@ -88,6 +90,7 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, provi
   const [effort, setEffort] = useState<EffortLevel>(launcherDefaults?.effort ?? DEFAULT_EFFORT);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(launcherDefaults?.permissionMode ?? DEFAULT_PERMISSION);
   const [chrome, setChrome] = useState<boolean>(launcherDefaults?.chrome === true);
+  const [worktree, setWorktree] = useState<boolean>(launcherDefaults?.worktree === true);
   const [sessionName, setSessionName] = useState('');
   const [projectPath, setProjectPath] = useState(defaultProjectPath ?? '');
   // T1320 (C13) — `null` = "Claude (conta)"; provider selecionado desabilita
@@ -120,6 +123,7 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, provi
       projectName: selectedProject?.name ?? projectPath,
       providerId,
       chrome: chrome && !hasProvider,
+      worktree,
     });
   };
 
@@ -169,6 +173,13 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, provi
         checked={chrome && !hasProvider}
         onChange={setChrome}
         disabled={hasProvider}
+      />
+
+      <Toggle
+        label="Isolar em worktree"
+        description="Cópia própria do repositório em .claude/worktrees (--worktree). Ao fechar a aba, some sozinha se não tiver trabalho pendente."
+        checked={worktree}
+        onChange={setWorktree}
       />
 
       <TextInput
