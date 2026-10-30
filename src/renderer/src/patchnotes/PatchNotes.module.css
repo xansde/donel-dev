@@ -80,3 +80,29 @@
   padding-top: var(--space-1);
   border-top: 1px solid var(--border);
 }
+
+/* Botão Novidades no rodapé — mesma forma do indicador de saúde ao lado. */
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 var(--panel-padding);
+  border: none;
+  border-top: var(--hairline);
+  border-left: var(--hairline);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-caption-size);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.trigger:hover {
+  color: var(--text-primary);
+}
+
+.trigger:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}

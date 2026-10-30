@@ -21,6 +21,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         title: 'Janela de novidades mais fácil de ler',
         text: 'Esta janela ficou mais larga, o texto não escapa mais da caixa e cada novidade vem num cartão próprio. Com muitas novidades, só a lista rola e o botão Entendi fica sempre à vista.',
       },
+      {
+        title: 'Botão Novidades no rodapé',
+        text: 'No canto direito do rodapé, ao lado de "PC", o botão Novidades abre esta janela de novo quando você quiser, com o que mudou nas últimas versões.',
+      },
     ],
   },
   {

@@ -2250,7 +2250,6 @@ export function App(): React.JSX.Element {
 
   return (
     <div className={styles.shell}>
-      <PatchNotes />
       <header className={styles.titlebar}>
         <div className={styles.brand}>
           <span aria-hidden="true">◆</span>
@@ -2829,8 +2828,8 @@ export function App(): React.JSX.Element {
         </pre>
       </div>
 
-      {/* Saúde do computador — lives beside the StatusBar (not inside it): the design-system bar keeps its
-          own slots, and the indicator is the app's. */}
+      {/* Novidades and Saúde do computador — live beside the StatusBar (not inside it): the design-system
+          bar keeps its own slots, and these buttons are the app's. */}
       <div className={styles.statusRow}>
         <StatusBar
           className={styles.statusBarFill}
@@ -2840,6 +2839,7 @@ export function App(): React.JSX.Element {
           smartZone={activeSmartZone}
           accountTestId="statusbar-account"
         />
+        <PatchNotes />
         <HealthIndicator />
       </div>
 

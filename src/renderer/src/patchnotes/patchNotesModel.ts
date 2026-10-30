@@ -13,6 +13,11 @@ export function unseenNotes(notes: readonly PatchNoteDay[], lastSeen: string | n
   return sorted.filter((day) => day.date > lastSeen);
 }
 
+/** Os `limit` dias mais novos, do mais novo para o mais antigo — o que o botão Novidades reabre. */
+export function recentNotes(notes: readonly PatchNoteDay[], limit: number): readonly PatchNoteDay[] {
+  return [...notes].sort((a, b) => b.date.localeCompare(a.date)).slice(0, limit);
+}
+
 /** A data a gravar como vista depois de mostrar: a mais nova das notas, ou `null` sem notas. */
 export function latestNoteDate(notes: readonly PatchNoteDay[]): string | null {
   return notes.reduce<string | null>((max, day) => (max === null || day.date > max ? day.date : max), null);
