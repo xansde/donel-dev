@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import type { Locator, Page } from '@playwright/test';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { closeIsolatedApp, launchIsolatedApp, type LaunchedApp } from './helpers/launch';
 import { openProjectClaudeTab } from './helpers/ui';
 import { REPO_ROOT } from './repoUnderTest';
@@ -27,6 +27,11 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // piece (one stroke becomes two), takes a rect and a link away whole, never a
 // post-it; Ctrl+Z brings the last pass back whole; with V a stroke is selected
 // and moved; everything comes back after a relaunch. Same `atlas`, its own file.
+// Fatia 05: Ctrl+wheel zooms on the mouse (the page zoom stays 1), "−" walks 10
+// points, the number goes back to 100%, the wheel moves the view (Shift:
+// horizontally), a rect drawn at 200% is born under the pointer, Ctrl+Z never
+// undoes the zoom, `beacon` keeps its own zoom and `atlas` comes back at the
+// same zoom after a relaunch. `atlas` and `beacon`, its own file.
 
 const SCENARIO = path.join(REPO_ROOT, 'tests/fixtures/mindscape/scenarios/slow-turn.json');
 /** Stop hook with `last_assistant_message` after "primeiro" / "segundo" (the turn ends in the middle of the owner's actions). */
@@ -671,4 +676,172 @@ test('Mindscape desenho 04: lápis e borracha que apaga o pedaço tocado @mindsc
   await expect(after.getByTestId('mindscape-drawing')).toHaveCount(2);
   await expect(after.getByTestId('mindscape-drawing').first()).toHaveAttribute('data-kind', 'pencil');
   expect(saved()).toEqual(before);
+});
+
+/** Fatia 05 — pan and zoom of a saved board, by project folder name. */
+function savedView(name: string): { pan?: { x: number; y: number }; zoom?: number } {
+  try {
+    const doc = JSON.parse(readFileSync(mindscapeFile, 'utf8')) as { boards?: Record<string, { pan?: { x: number; y: number }; zoom?: number }> };
+    const board = Object.entries(doc.boards ?? {}).find(([key]) => path.basename(key) === name)?.[1];
+    return { pan: board?.pan, zoom: board?.zoom };
+  } catch {
+    return {};
+  }
+}
+
+/** Fatia 05 — the view the board shows (`data-pan` = "x,y" in px of screen, `data-zoom`). */
+async function viewOf(board: Locator): Promise<{ pan: { x: number; y: number }; zoom: number }> {
+  const [pan, zoom] = await Promise.all([board.getAttribute('data-pan'), board.getAttribute('data-zoom')]);
+  const [x, y] = (pan ?? '0,0').split(',').map(Number) as [number, number];
+  return { pan: { x, y }, zoom: Number(zoom) };
+}
+
+/** Fatia 05 — the zoom factor of the page of every window (the Electron zoom, not the board's). */
+async function pageZoomFactors(app: ElectronApplication): Promise<number[]> {
+  return app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((browserWindow) => browserWindow.webContents.getZoomFactor()));
+}
+
+async function ctrlWheel(window: Page, deltaY: number): Promise<void> {
+  await window.keyboard.down('Control');
+  await window.mouse.wheel(0, deltaY);
+  await window.keyboard.up('Control');
+}
+
+function boardTab(window: Page, name: string): Locator {
+  return screen(window).getByTestId('mindscape-tab').filter({ hasText: name });
+}
+
+test('Mindscape desenho 05: zoom de 25% a 400%, salvo por quadro @mindscape', async () => {
+  test.setTimeout(240_000);
+  if (launched) await closeIsolatedApp(launched, false);
+  launched = undefined;
+  mindscapeFile = path.join(root, 'mindscape-05.json');
+  scenario = SCENARIO;
+  // A second project: the zoom is per board.
+  mkdirSync(path.join(root, 'beacon'), { recursive: true });
+  writeFileSync(path.join(root, 'beacon', 'CLAUDE.md'), '# beacon\n', 'utf8');
+  launched = await launchIsolatedApp({ userDataDir, env: env() });
+  const { window, app } = launched;
+
+  await openProjectClaudeTab(window, 'beacon');
+  await openProjectClaudeTab(window, 'atlas');
+  await setMode(window, 'Mindscape');
+  await boardTab(window, 'atlas').click();
+  await expect(boardTab(window, 'atlas')).toHaveAttribute('aria-selected', 'true');
+  await expect(screen(window).getByTestId('mindscape-session-card')).toHaveCount(1, { timeout: 30_000 });
+  const owner = await newOwnerCard(window, 'Perto do mouse');
+  const board = screen(window).getByTestId('mindscape-board');
+  const zoomValue = screen(window).getByTestId('mindscape-zoom-value');
+  const drawings = screen(window).getByTestId('mindscape-drawing');
+  await expect(zoomValue).toHaveText('100%');
+  await expect(board).toHaveAttribute('data-zoom', '1');
+
+  // 1. Ctrl+wheel up over the board, next to the owner's post-it → past 100%, the page zoom stays 1,
+  //    and the board point under the mouse stays put (the post-it grows away from the mouse).
+  const ownerBefore = await owner.boundingBox();
+  if (!ownerBefore) throw new Error('owner post-it not visible');
+  const mouse = { x: ownerBefore.x + ownerBefore.width + 30, y: ownerBefore.y + 20 };
+  await window.mouse.move(mouse.x, mouse.y);
+  await ctrlWheel(window, -100);
+  await expect(zoomValue).toHaveText('110%');
+  expect((await pageZoomFactors(app)).every((factor) => factor === 1)).toBe(true);
+  const ownerAfter = await owner.boundingBox();
+  if (!ownerAfter) throw new Error('owner post-it not visible');
+  expect(Math.abs(ownerAfter.x - (mouse.x + (ownerBefore.x - mouse.x) * 1.1))).toBeLessThan(2);
+  expect(Math.abs(ownerAfter.y - (mouse.y + (ownerBefore.y - mouse.y) * 1.1))).toBeLessThan(2);
+  expect(Math.abs(ownerAfter.width - ownerBefore.width * 1.1)).toBeLessThan(2);
+  // A second notch → 121%.
+  await ctrlWheel(window, -100);
+  await expect(zoomValue).toHaveText('121%');
+  // Ctrl+wheel over the bar zooms neither the board nor the page.
+  const onBar = await center(toolButton(window, 'Seleção'));
+  await window.mouse.move(onBar.x, onBar.y);
+  await ctrlWheel(window, -100);
+  await expect(zoomValue).toHaveText('121%');
+  expect((await pageZoomFactors(app)).every((factor) => factor === 1)).toBe(true);
+  if (process.env.DONEL_SMOKE_SHOTS_DIR) await window.screenshot({ path: path.join(process.env.DONEL_SMOKE_SHOTS_DIR, 'mindscape-desenho-zoom.png') });
+
+  // 2. "−" → down 10 points; a click on the number → back to 100%.
+  await screen(window).getByRole('button', { name: 'Diminuir zoom' }).click();
+  await expect(zoomValue).toHaveText('111%');
+  await zoomValue.click();
+  await expect(zoomValue).toHaveText('100%');
+  await expect(board).toHaveAttribute('data-zoom', '1');
+
+  // 3. The wheel without Ctrl moves the view vertically; Shift+wheel, horizontally.
+  const boardBox = await board.boundingBox();
+  if (!boardBox) throw new Error('board not visible');
+  const free = { x: boardBox.x + boardBox.width / 2, y: boardBox.y + boardBox.height / 2 };
+  await window.mouse.move(free.x, free.y);
+  const start = await viewOf(board);
+  await window.mouse.wheel(0, 100);
+  await expect.poll(async () => (await viewOf(board)).pan.y, { timeout: 10_000 }).toBeCloseTo(start.pan.y - 100, 5);
+  expect((await viewOf(board)).pan.x).toBeCloseTo(start.pan.x, 5);
+  await window.keyboard.down('Shift');
+  await window.mouse.wheel(0, 100);
+  await window.keyboard.up('Shift');
+  await expect.poll(async () => (await viewOf(board)).pan.x, { timeout: 10_000 }).toBeCloseTo(start.pan.x - 100, 5);
+  expect((await viewOf(board)).pan.y).toBeCloseTo(start.pan.y - 100, 5);
+  await expect(zoomValue).toHaveText('100%');
+
+  // 4. At 200% ("+" ten times), a rect is born under the pointer, and a click on its edge selects it.
+  const plus = screen(window).getByRole('button', { name: 'Aumentar zoom' });
+  for (let step = 0; step < 10; step += 1) await plus.click();
+  await expect(zoomValue).toHaveText('200%');
+  const view = await viewOf(board);
+  expect(view.zoom).toBe(2);
+  const from = { x: boardBox.x + 200, y: boardBox.y + boardBox.height - 240 };
+  const to = { x: from.x + 160, y: from.y + 100 };
+  await window.keyboard.press('r');
+  await dragScreen(window, from, to);
+  await expect(drawings).toHaveCount(1);
+  await expect.poll(() => saved().drawings.length, { timeout: 10_000 }).toBe(1);
+  const rect = saved().drawings[0]!;
+  const toBoard = (point: { x: number; y: number }) => ({ x: (point.x - boardBox.x - view.pan.x) / view.zoom, y: (point.y - boardBox.y - view.pan.y) / view.zoom });
+  expect(rect.kind).toBe('rect');
+  expect(Math.abs(rect.x! - toBoard(from).x)).toBeLessThan(1);
+  expect(Math.abs(rect.y! - toBoard(from).y)).toBeLessThan(1);
+  expect(Math.abs(rect.w! - 80)).toBeLessThan(1);
+  expect(Math.abs(rect.h! - 50)).toBeLessThan(1);
+  const drawnBox = await drawings.first().boundingBox();
+  if (!drawnBox) throw new Error('rect not visible');
+  expect(Math.abs(drawnBox.x - from.x)).toBeLessThan(12);
+  expect(Math.abs(drawnBox.y - from.y)).toBeLessThan(12);
+  expect(Math.abs(drawnBox.width - 160)).toBeLessThan(16);
+  await expect(toolButton(window, 'Seleção')).toHaveAttribute('aria-pressed', 'true');
+  await window.mouse.click(from.x, (from.y + to.y) / 2);
+  await expect(drawings.first()).toHaveAttribute('data-selected', 'true');
+  await window.keyboard.press('Escape');
+
+  // 5. Ctrl+Z undoes the rect, never the zoom; Ctrl+Shift+Z brings the rect back.
+  await window.keyboard.press('Control+z');
+  await expect(drawings).toHaveCount(0);
+  await expect(zoomValue).toHaveText('200%');
+  await window.keyboard.press('Control+Shift+z');
+  await expect(drawings).toHaveCount(1);
+  await expect(zoomValue).toHaveText('200%');
+
+  // 6. `beacon` stays at 100%; back on `atlas`, 200%.
+  await boardTab(window, 'beacon').click();
+  await expect(zoomValue).toHaveText('100%');
+  await expect(board).toHaveAttribute('data-zoom', '1');
+  await boardTab(window, 'atlas').click();
+  await expect(zoomValue).toHaveText('200%');
+
+  // 7. Relaunch → `atlas` comes back at the same zoom and pan, `beacon` at 100%.
+  await expect.poll(() => savedView('atlas').zoom, { timeout: 10_000 }).toBe(2);
+  const savedAtlas = savedView('atlas');
+  expect(savedAtlas.pan).toEqual(view.pan);
+  expect(savedView('beacon').zoom).toBe(1);
+  await closeIsolatedApp(launched, false);
+  launched = undefined;
+  launched = await launchIsolatedApp({ userDataDir, env: env() });
+  await setMode(launched.window, 'Mindscape');
+  await boardTab(launched.window, 'atlas').click();
+  const relaunched = screen(launched.window);
+  await expect(relaunched.getByTestId('mindscape-zoom-value')).toHaveText('200%');
+  expect(await viewOf(relaunched.getByTestId('mindscape-board'))).toEqual({ pan: savedAtlas.pan, zoom: 2 });
+  await expect(relaunched.getByTestId('mindscape-drawing')).toHaveCount(1);
+  await boardTab(launched.window, 'beacon').click();
+  await expect(relaunched.getByTestId('mindscape-zoom-value')).toHaveText('100%');
 });
