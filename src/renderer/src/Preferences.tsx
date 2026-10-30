@@ -24,8 +24,8 @@ const SCAN_MODE_OPTIONS: SelectOption[] = [
 ];
 
 const NOTIFICATION_OPTIONS: SelectOption[] = [
-  { value: 'all', label: 'Todas as transições', description: 'notifica sempre que uma sessão em background passa a aguardar ou pedir permissão' },
-  { value: 'permission-only', label: 'Só permissão pendente', description: 'padrão — só quando uma sessão trava esperando sua aprovação' },
+  { value: 'all', label: 'Todas as transições', description: 'avisa quando uma sessão termina, precisa de você, para com erro ou encerra sozinha' },
+  { value: 'permission-only', label: 'Só permissão pendente', description: 'padrão — só quando uma sessão precisa de você ou para com erro (ex.: limite de uso)' },
   { value: 'none', label: 'Nenhuma', description: 'desativa notificações do Windows' },
 ];
 
@@ -140,7 +140,10 @@ export function Preferences({
 
       <div className={styles.section} data-testid="preferences-notification-section">
         <h3 className={styles.sectionTitle}>Notificação do Windows</h3>
-        <p className={styles.sectionHint}>Quando uma sessão em background precisa da sua atenção.</p>
+        <p className={styles.sectionHint}>
+          Quando uma sessão fora da sua vista precisa da sua atenção. Com o Jobu ligado, quem avisa é ele. O número no ícone da
+          barra de tarefas conta as sessões esperando você.
+        </p>
         <div data-testid="notification-preference-select">
           <Select
             value={notificationPreference}

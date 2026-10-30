@@ -248,6 +248,15 @@ async function openPetToggle(): Promise<Locator> {
 const WATCHER_COMMAND_PREFIX = Buffer.from('$ErrorActionPreference =', 'utf16le').toString('base64');
 const watcherPids = (): Set<number> => listPidsByCommandLine('powershell.exe', WATCHER_COMMAND_PREFIX);
 
+/** notificacoes-completas: the taskbar badge and flash as the main process holds them (seam on with the notifications stub). */
+async function taskbar(): Promise<{ overlayCount: number; flashing: boolean }> {
+  return launched.app.evaluate(() => {
+    const snapshot = (globalThis as typeof globalThis & { __donelAttentionSmoke?: { overlayCount: number; flashing: boolean } }).__donelAttentionSmoke;
+    if (snapshot === undefined) throw new Error('the attention seam is off: DONEL_SMOKE_NOTIFICATIONS_LOG missing');
+    return { ...snapshot };
+  });
+}
+
 /** Turns the Jobu off or on the way the Preferences do, and follows his window: it goes away, or it is a new one. */
 async function setPetEnabled(enabled: boolean): Promise<void> {
   await main.evaluate((value) => window.donel.config.setPetPrefs({ enabled: value }).then(() => undefined), enabled);
@@ -308,17 +317,31 @@ async function lookAt(name: string): Promise<void> {
 }
 
 test.describe('o Jobu sem o chat', () => {
+  // notificacoes-completas: the session toasts are raised by the main process now; the stub records them here.
+  let toastsLog: string;
+  const toasts = (): { title: string; body: string }[] => {
+    if (!existsSync(toastsLog)) return [];
+    return readFileSync(toastsLog, 'utf8')
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => JSON.parse(line) as { title: string; body: string });
+  };
+
   test.beforeAll(async () => {
+    toastsLog = path.join(mkdtempSync(path.join(tmpdir(), 'donel-pet-toasts-')), 'notifications.log');
     const userDataDir = createIsolatedUserDataDir('pet');
     writeFileSync(
       path.join(userDataDir, 'config.json'),
-      // `notificationPreference: 'all'` makes the toast of the renderer fire on any session that waits, so that
+      // `notificationPreference: 'all'` makes the toast fire on any session that finishes, so that
       // its silence with the Jobu on (T035) is a real result and not "the default preference never asked".
       // `projectRoots`: the folder that holds the repo under test, as in chatSmoke.ts, so the Launcher lists it from a worktree too.
       JSON.stringify({ pet: { enabled: true, placement: null, size: 140 }, notificationPreference: 'all', projectRoots: [path.dirname(REPO_ROOT)] }),
       'utf8',
     );
-    launched = await launchIsolatedApp({ userDataDir, env: { ...process.env, DONEL_FAKE_CLAUDE_SCENARIO: SCENARIO, ...GHOST_ENV } });
+    launched = await launchIsolatedApp({
+      userDataDir,
+      env: { ...process.env, DONEL_FAKE_CLAUDE_SCENARIO: SCENARIO, DONEL_SMOKE_NOTIFICATIONS_LOG: toastsLog, ...GHOST_ENV },
+    });
     main = launched.window;
     pet = await findPetWindow(launched.app);
   });
@@ -506,19 +529,9 @@ test.describe('o Jobu sem o chat', () => {
     test.setTimeout(240_000);
     await ensureSession('atlas');
     await ensureSession('beacon');
-    // The toast of the renderer, recorded instead of shown: a stand-in for `Notification` that keeps what it was asked.
-    await main.evaluate(() => {
-      const toasts: { title: string; body: string | undefined }[] = [];
-      const holder = window as unknown as { __toasts: typeof toasts; Notification: unknown };
-      holder.__toasts = toasts;
-      holder.Notification = class {
-        onclick: (() => void) | null = null;
-        constructor(title: string, options?: { body?: string }) {
-          toasts.push({ title, body: options?.body });
-        }
-      };
-    });
-    const toasts = (): Promise<{ title: string; body: string | undefined }[]> => main.evaluate(() => (window as unknown as { __toasts: { title: string; body: string | undefined }[] }).__toasts);
+    // The toast, recorded by the main process instead of shown (`DONEL_SMOKE_NOTIFICATIONS_LOG`): what came before this test is not its business.
+    const before = toasts().length;
+    const fresh = (): { title: string; body: string }[] => toasts().slice(before);
 
     // With the Jobu on: the turn of `atlas` ends out of sight, the bubble says so, and no toast was raised.
     await tabNamed('atlas').click();
@@ -527,16 +540,22 @@ test.describe('o Jobu sem o chat', () => {
     await tabNamed('beacon').click();
     await expect(root()).toHaveAttribute('data-bubble', 'atlas · terminou', { timeout: 40_000 });
     await pet.waitForTimeout(1_500);
-    expect(await toasts()).toEqual([]);
+    expect(fresh()).toEqual([]);
+    // notificacoes-completas: the taskbar badge counts it with the Jobu on too, and goes when the owner looks.
+    expect((await taskbar()).overlayCount).toBe(1);
     await lookAt('atlas');
+    await expect.poll(async () => (await taskbar()).overlayCount, { timeout: 10_000 }).toBe(0);
     await expect(root()).not.toHaveAttribute('data-badge', { timeout: 10_000 });
 
     // With him hidden (the same path the Preferences and "Esconder" take) the same turn raises the toast.
     await setPetEnabled(false);
     await sendPrompt('rapido');
     await tabNamed('beacon').click();
-    await expect.poll(async () => (await toasts()).length, { timeout: 40_000, message: 'the toast did not come back with the Jobu hidden' }).toBe(1);
-    expect(await toasts()).toEqual([{ title: 'Aguardando sua resposta', body: 'Sessão "atlas" terminou o turno.' }]);
+    await expect.poll(() => fresh().length, { timeout: 40_000, message: 'the toast did not come back with the Jobu hidden' }).toBe(1);
+    expect(fresh()).toEqual([{ title: 'atlas terminou', body: 'Clique para abrir a sessão.' }]);
+    expect((await taskbar()).overlayCount).toBe(1);
+    // the Donel was in front all along (on `beacon`): nothing to flash
+    expect((await taskbar()).flashing).toBe(false);
 
     // And on again: he comes back with the state of the sessions as it is (`atlas` still waits, unseen).
     await setPetEnabled(true);
@@ -559,6 +578,8 @@ test.describe('o Jobu sem o chat', () => {
     await expect(root()).toHaveAttribute('data-badge', '1', { timeout: 40_000 });
     await expect(root()).toHaveAttribute('data-bubble', 'atlas · terminou');
     expect(await donelWindowState()).toMatchObject({ minimized: true });
+    // notificacoes-completas: out of sight with the Donel minimized, the taskbar button flashes and carries the badge.
+    expect(await taskbar()).toEqual({ overlayCount: 1, flashing: true });
 
     await clickTheJobu();
 
@@ -573,6 +594,8 @@ test.describe('o Jobu sem o chat', () => {
     test.info().annotations.push({ type: 'donel-focused-after-click', description: String((await donelWindowState()).focused) });
     await lookAt('atlas');
     await expect(root()).not.toHaveAttribute('data-badge', { timeout: 10_000 });
+    // the focus stopped the flash, and looking at the session took the badge away
+    await expect.poll(() => taskbar(), { timeout: 10_000 }).toEqual({ overlayCount: 0, flashing: false });
   });
 
   test('T041 - with two waiting a click opens the list (the oldest on top); Esc or another window taking the focus closes it; a click on the second item brings its tab @pet', async () => {

@@ -656,3 +656,46 @@ describe('purity', () => {
     expect(state.focus).toEqual({ activePtyId: null, donelFocused: false });
   });
 });
+
+describe('notificacoes-completas: the news of every input, for the toast and the taskbar', () => {
+  it('a turn that failed out of sight is a `failed` event with its reason, and counts as waiting', () => {
+    const pet = new Pet().put('s1', 'working').look('other');
+    const before = pet.state.noticeSeq;
+    pet.put('s1', 'waiting', { failure: 'limite de uso' });
+    expect(pet.state.noticeSeq).toBe(before + 1);
+    expect(pet.state.notices).toEqual([{ kind: 'failed', ptyId: 's1', name: 's1', blockedKind: null, reason: 'limite de uso', at: pet.now }]);
+    expect(waitingCount(pet.state)).toBe(1);
+    expect(pet.state.bubble?.text).toBe('s1 · erro: limite de uso');
+  });
+
+  it('finished and blocked carry no reason, and a session the owner is looking at gives no news', () => {
+    const pet = new Pet().put('s1', 'working').put('s2', 'working').look('s2');
+    pet.put('s1', 'waiting');
+    expect(pet.state.notices).toEqual([{ kind: 'finished', ptyId: 's1', name: 's1', blockedKind: null, at: pet.now }]);
+    const seq = pet.state.noticeSeq;
+    pet.put('s2', 'permission');
+    expect(pet.state.noticeSeq).toBe(seq);
+  });
+
+  it('silence holds back the bubble, not the news: the toast and the flash still hear it', () => {
+    const pet = new Pet().put('s1', 'working').look('other');
+    pet.state = reducePet(pet.state, { type: 'silence', until: pet.now + 60 * MIN }, pet.now);
+    pet.put('s1', 'waiting');
+    expect(pet.state.bubble).toBeNull();
+    expect(pet.state.notices.map((event) => event.kind)).toEqual(['finished']);
+    expect(pet.state.noticeSeq).toBe(1);
+  });
+
+  it('a process that ended by itself out of sight is an `ended` event', () => {
+    const pet = new Pet().put('s1', 'working').look('other');
+    pet.state = reducePet(pet.state, { type: 'sessionExited', ptyId: 's1', name: 's1', byUser: false, at: pet.now }, pet.now);
+    expect(pet.state.notices.map((event) => event.kind)).toEqual(['ended']);
+  });
+
+  it('an input with no news keeps the same object (and the same number)', () => {
+    const pet = new Pet().put('s1', 'working');
+    const before = pet.state;
+    pet.advance(SEC);
+    expect(pet.state.noticeSeq).toBe(before.noticeSeq);
+  });
+});

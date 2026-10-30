@@ -33,7 +33,7 @@ import { decideClick } from '../../shared/pet/click';
 import { dragAnchor, settleDrop } from '../../shared/pet/gestures';
 import { PET_CHANNELS, type PetOpenTarget, type PetTabsPayload } from '../../shared/pet/ipc';
 import { buildPetMenu, type PetMenuAction, type PetMenuEntry } from '../../shared/pet/menu';
-import { PET_SILENCE_MS, assertNever, createPetState, isSilenced, reducePet, toPetSemaphore } from '../../shared/pet/petState';
+import { PET_SILENCE_MS, assertNever, createPetState, isSilenced, reducePet, toPetSemaphore, waitingCount } from '../../shared/pet/petState';
 import { toPetView } from '../../shared/pet/petView';
 import {
   alignFor,
@@ -47,6 +47,7 @@ import {
 } from '../../shared/pet/placement';
 import type {
   BlockedKind,
+  BubbleEvent,
   FocusSignal,
   PetDisplay,
   PetInput,
@@ -178,6 +179,13 @@ export interface PetServiceDeps {
   readonly runSweep?: () => Promise<SweepBubbleSummary>;
   /** 016: opens a folder in the Explorer (the click on the bubble of the sweep). Absent = the click only dismisses the bubble. */
   readonly openFolder?: (path: string) => void;
+  /**
+   * notificacoes-completas: the session news of a reduction (a wait born out of sight, a failure, an exit), with the
+   * Jobu on or off and whether or not a bubble could say it: the toast and the taskbar flash are the other channels.
+   */
+  readonly onNotices?: (events: readonly BubbleEvent[]) => void;
+  /** notificacoes-completas: the number of sessions waiting for the owner, unseen, every time it changes (the taskbar badge). */
+  readonly onWaitingCountChanged?: (count: number) => void;
 }
 
 export interface PetService {
@@ -214,6 +222,14 @@ export interface PetService {
    * before, with the bubble already born as "quer permissão": this refines it into the real kind.
    */
   onPendingOpened(ptyId: string, kind: BlockedKind): void;
+  /**
+   * notificacoes-completas: the turn of a session ended in an API error (`StopFailure`), with the short reason. It comes
+   * right BEFORE the semaphore update that turns the session `waiting`, so that wait is born as a `failed` event; it is
+   * forgotten when the session goes back to work.
+   */
+  onStopFailure(ptyId: string, reason: string): void;
+  /** notificacoes-completas: a click on a toast. The Donel comes to the front on that session's tab, with or without the Jobu. */
+  openSession(ptyId: string): void;
   /** The account in use changed, by the panel or by the automatic switch (US4): the label, never an e-mail. */
   onAccountSwitched(label: string): void;
   /**
@@ -308,13 +324,23 @@ export function createPetService(deps: PetServiceDeps): PetService {
    * Without the chat there is none, and "quer permissão" is what the bubble says.
    */
   const pendingKindByPty = new Map<string, BlockedKind>();
+  /** notificacoes-completas: the reason of the API error that ended the last turn of a tab, until it works again. */
+  const failureByPty = new Map<string, string>();
   let state: PetState = createPetState();
+  let lastWaitingCount = 0;
 
   /** The tabs of `pet:tabs` crossed with the semaphore and the pendings: what the core calls "the watched sessions". */
   function sessionsInput(): PetInput {
     const sessions: WatchedSession[] = tabs.sessions.map(({ ptyId, name }) => {
       const semaphore = semaphoreByPty.get(ptyId) ?? 'idle';
-      return { ptyId, name, semaphore, blockedKind: semaphore === 'permission' ? (pendingKindByPty.get(ptyId) ?? null) : null };
+      const failure = semaphore === 'waiting' ? failureByPty.get(ptyId) : undefined;
+      return {
+        ptyId,
+        name,
+        semaphore,
+        blockedKind: semaphore === 'permission' ? (pendingKindByPty.get(ptyId) ?? null) : null,
+        ...(failure === undefined ? {} : { failure }),
+      };
     });
     return { type: 'sessions', sessions };
   }
@@ -326,7 +352,19 @@ export function createPetService(deps: PetServiceDeps): PetService {
 
   function reduce(...inputs: PetInput[]): void {
     const now = deps.now();
-    for (const input of inputs) state = reducePet(state, input, now);
+    const notices: BubbleEvent[] = [];
+    for (const input of inputs) {
+      const seq = state.noticeSeq;
+      state = reducePet(state, input, now);
+      if (state.noticeSeq !== seq) notices.push(...state.notices);
+    }
+    // notificacoes-completas: the other channels hear it here, with the pet on or off.
+    const count = waitingCount(state);
+    if (count !== lastWaitingCount) {
+      lastWaitingCount = count;
+      deps.onWaitingCountChanged?.(count);
+    }
+    if (notices.length > 0) deps.onNotices?.(notices);
   }
 
   /** A session that is dead and no longer has a tab is forgotten, and so is a pending kind for a tab that is gone; an update for a tab that has not been reported yet is kept. */
@@ -334,6 +372,9 @@ export function createPetService(deps: PetServiceDeps): PetService {
     const listed = new Set(tabs.sessions.map((session) => session.ptyId));
     for (const [ptyId, semaphore] of semaphoreByPty) {
       if (semaphore === 'done' && !listed.has(ptyId)) semaphoreByPty.delete(ptyId);
+    }
+    for (const ptyId of failureByPty.keys()) {
+      if (!listed.has(ptyId) && !semaphoreByPty.has(ptyId)) failureByPty.delete(ptyId);
     }
     for (const ptyId of pendingKindByPty.keys()) {
       if (!listed.has(ptyId)) pendingKindByPty.delete(ptyId);
@@ -695,8 +736,9 @@ export function createPetService(deps: PetServiceDeps): PetService {
 
     onSemaphoreUpdate(update) {
       if (disposed) return;
-      const next = toPetSemaphore(update.state, update.awaitingBackgroundAgents === true);
+      const next = toPetSemaphore(update.state, update.awaitingBackgroundAgents === true, failureByPty.has(update.ptyId));
       if (next !== 'permission') pendingKindByPty.delete(update.ptyId); // the pending is over, or never was one
+      if (next !== 'waiting' && next !== 'permission') failureByPty.delete(update.ptyId); // back to work (or gone): the failure is over
       if (semaphoreByPty.get(update.ptyId) === next) return;
       semaphoreByPty.set(update.ptyId, next);
       feed(sessionsInput());
@@ -714,6 +756,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
       if (listed === undefined && !semaphoreByPty.has(ptyId)) return;
       semaphoreByPty.set(ptyId, 'done');
       pendingKindByPty.delete(ptyId);
+      failureByPty.delete(ptyId);
       // The exit goes first, while the core still has the session as the owner last saw it. It is announced
       // even if the semaphore already said `done` (the SessionEnd hook can come first): the core only
       // learns of the exit here.
@@ -724,6 +767,16 @@ export function createPetService(deps: PetServiceDeps): PetService {
       if (disposed) return;
       pendingKindByPty.set(ptyId, kind);
       feed(sessionsInput(), { type: 'pendingOpened', ptyId, kind, at: deps.now() });
+    },
+
+    onStopFailure(ptyId, reason) {
+      if (disposed) return;
+      failureByPty.set(ptyId, reason);
+    },
+
+    openSession(ptyId) {
+      if (disposed) return;
+      openTarget({ kind: 'session', ptyId });
     },
 
     onAccountSwitched(label) {

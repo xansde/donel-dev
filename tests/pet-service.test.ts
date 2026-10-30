@@ -13,7 +13,7 @@ import { PET_CHANNELS } from '../src/shared/pet/ipc';
 import type { PetMenuAction, PetMenuEntry } from '../src/shared/pet/menu';
 import { PET_SILENCE_MS } from '../src/shared/pet/petState';
 import { alignFor, anchorOf, defaultPlacement, windowBoundsFor } from '../src/shared/pet/placement';
-import type { PetDisplay, PetPoint, PetRect, PetView, SemaphorePublicState, SweepBubbleSummary } from '../src/shared/pet/types';
+import type { BubbleEvent, PetDisplay, PetPoint, PetRect, PetView, SemaphorePublicState, SweepBubbleSummary } from '../src/shared/pet/types';
 import {
   PET_TICK_MS,
   createPetService,
@@ -2368,5 +2368,68 @@ describe('Fazer faxina (016)', () => {
     sweep.resolve(summary());
     await flush();
     expect(h.windows[0]?.views.length).toBe(viewsBefore);
+  });
+});
+
+describe('notificacoes-completas: the news and the count go out to the toast and the taskbar, with the Jobu on or off', () => {
+  function withChannels(over: Parameters<typeof harness>[0] = {}) {
+    const h = harness(over);
+    const notices: BubbleEvent[][] = [];
+    const counts: number[] = [];
+    const service = createPetService({ ...h.deps, onNotices: (events) => notices.push([...events]), onWaitingCountChanged: (count) => counts.push(count) });
+    service.start();
+    return { h, service, notices, counts };
+  }
+
+  it('with the Jobu off, a turn that ends out of sight is news and counts as waiting; looking at it clears the count', () => {
+    const { service, notices, counts } = withChannels();
+    service.onTabs({ activePtyId: 'b', sessions: [tab('a', 'atlas'), tab('b', 'beacon')] });
+    service.onMainFocusChanged(true);
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSemaphoreUpdate(sem('a', 'waiting'));
+    expect(notices).toEqual([[{ kind: 'finished', ptyId: 'a', name: 'atlas', blockedKind: null, at: expect.any(Number) }]]);
+    expect(counts).toEqual([1]);
+    service.onTabs({ activePtyId: 'a', sessions: [tab('a', 'atlas'), tab('b', 'beacon')] });
+    expect(counts).toEqual([1, 0]);
+  });
+
+  it('#109: a waiting with background sub-agents alive is no news; the real end is', () => {
+    const { service, notices } = withChannels();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSemaphoreUpdate({ ptyId: 'a', state: 'waiting', awaitingBackgroundAgents: true });
+    expect(notices).toEqual([]);
+    service.onSemaphoreUpdate(sem('a', 'waiting'));
+    expect(notices.flat().map((event) => event.kind)).toEqual(['finished']);
+  });
+
+  it('a StopFailure before the waiting makes it a `failed` event with the reason, even with sub-agents alive', () => {
+    const { service, notices } = withChannels();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onStopFailure('a', 'limite de uso');
+    service.onSemaphoreUpdate({ ptyId: 'a', state: 'waiting', awaitingBackgroundAgents: true });
+    expect(notices.flat()).toEqual([{ kind: 'failed', ptyId: 'a', name: 'atlas', blockedKind: null, reason: 'limite de uso', at: expect.any(Number) }]);
+    // the next turn ends normally: the failure was forgotten when the session went back to work
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSemaphoreUpdate(sem('a', 'waiting'));
+    expect(notices.flat().map((event) => event.kind)).toEqual(['failed', 'finished']);
+  });
+
+  it('a pending is news of its own (blocked)', () => {
+    const { service, notices } = withChannels();
+    service.onTabs({ activePtyId: null, sessions: [tab('a', 'atlas')] });
+    service.onSemaphoreUpdate(sem('a', 'working'));
+    service.onSemaphoreUpdate(sem('a', 'permission'));
+    expect(notices.flat().map((event) => event.kind)).toEqual(['blocked']);
+  });
+
+  it('openSession (a click on a toast) brings the Donel to the front on that tab, with no Jobu window at all', () => {
+    const { h, service } = withChannels();
+    service.onTabs({ activePtyId: 'b', sessions: [tab('a', 'atlas'), tab('b', 'beacon')] });
+    expect(h.liveWindows()).toHaveLength(0);
+    service.openSession('a');
+    expect(h.main.calls).toContain('focus');
+    expect(activations(h)).toEqual([{ ptyId: 'a' }]);
   });
 });
