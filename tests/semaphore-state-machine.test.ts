@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyPermissionHeuristic,
+  countBackgroundSubagents,
   defaultMatchesPermissionPrompt,
   INITIAL_SEMAPHORE_STATE,
   reduceSemaphoreState,
@@ -161,5 +162,75 @@ describe('defaultMatchesPermissionPrompt', () => {
 
   it('não reconhece output arbitrário sem relação com permissão', () => {
     expect(defaultMatchesPermissionPrompt(['Compilando...', 'npm run build', '3 arquivos alterados'])).toBe(false);
+  });
+});
+
+// #109 — o Jobu avisava a cada subagente em segundo plano que terminava: cada um acorda a sessão
+// principal, que faz um turno curto e dá outro `Stop`. O próprio CLI diz no payload do `Stop`
+// (`background_tasks`) se a sessão "terminou" ou "parou esperando o trabalho em segundo plano
+// acordá-la". O semáforo da aba segue igual (`waiting`); a máquina só marca a espera como
+// provisória, para quem avisa o dono (o Jobu) calar até o turno que fecha sem subagente vivo.
+describe('fim de turno com subagentes em segundo plano (#109)', () => {
+  const working: SemaphoreMachineState = { state: 'working', pendingToolSince: null, stateEnteredAt: 0 };
+
+  it('Stop com subagente vivo vai pra waiting (aba igual) e marca a espera como provisória', () => {
+    const after = reduceSemaphoreState(working, { type: 'stop', at: 10, backgroundAgents: 2 });
+    expect(after.state).toBe('waiting');
+    expect(after.stateEnteredAt).toBe(10);
+    expect(after.awaitingBackgroundAgents).toBe(true);
+  });
+
+  it('Stop sem subagente vivo (ou sem a informação, CLI antigo) é fim de verdade', () => {
+    expect(reduceSemaphoreState(working, { type: 'stop', at: 10, backgroundAgents: 0 }).awaitingBackgroundAgents).toBeFalsy();
+    expect(reduceSemaphoreState(working, { type: 'stop', at: 10 }).awaitingBackgroundAgents).toBeFalsy();
+  });
+
+  it('o Stop seguinte sem subagente vivo encerra a espera provisória, mesmo sem passar por working', () => {
+    const provisional = reduceSemaphoreState(working, { type: 'stop', at: 10, backgroundAgents: 1 });
+    const after = reduceSemaphoreState(provisional, { type: 'stop', at: 20, backgroundAgents: 0 });
+    expect(after.state).toBe('waiting');
+    expect(after.stateEnteredAt).toBe(10); // o estado da aba não mudou
+    expect(after.awaitingBackgroundAgents).toBeFalsy();
+  });
+
+  it('Stop repetido com subagente vivo devolve o mesmo estado (sem emissão nova à toa)', () => {
+    const provisional = reduceSemaphoreState(working, { type: 'stop', at: 10, backgroundAgents: 2 });
+    expect(reduceSemaphoreState(provisional, { type: 'stop', at: 20, backgroundAgents: 1 })).toBe(provisional);
+  });
+
+  it('qualquer saída de waiting (ferramenta, prompt, permissão) desfaz a marca', () => {
+    const provisional = reduceSemaphoreState(working, { type: 'stop', at: 10, backgroundAgents: 1 });
+    expect(reduceSemaphoreState(provisional, { type: 'preToolUse', at: 20 }).awaitingBackgroundAgents).toBeFalsy();
+    expect(reduceSemaphoreState(provisional, { type: 'userPromptSubmit', at: 20 }).awaitingBackgroundAgents).toBeFalsy();
+    expect(reduceSemaphoreState(provisional, { type: 'notification', at: 20 }).awaitingBackgroundAgents).toBeFalsy();
+  });
+});
+
+describe('countBackgroundSubagents (payload do Stop)', () => {
+  it('conta só os subagentes em voo de `background_tasks`', () => {
+    const payload = {
+      background_tasks: [
+        { id: 'a1', type: 'subagent', status: 'running', description: 'revisar' },
+        { id: 'a2', type: 'subagent', status: 'pending', description: 'testar' },
+        { id: 'b1', type: 'shell', status: 'running', description: 'npm run dev' },
+        { id: 'm1', type: 'monitor', status: 'running', description: 'watch' },
+      ],
+    };
+    expect(countBackgroundSubagents(payload)).toBe(2);
+  });
+
+  it('um shell ou monitor em segundo plano (ex. servidor de dev) não segura o aviso', () => {
+    expect(countBackgroundSubagents({ background_tasks: [{ id: 'b1', type: 'shell', status: 'running' }] })).toBe(0);
+  });
+
+  it('subagente já encerrado na lista não conta', () => {
+    expect(countBackgroundSubagents({ background_tasks: [{ id: 'a1', type: 'subagent', status: 'completed' }] })).toBe(0);
+  });
+
+  it('sem o campo, com lixo ou lista vazia: zero', () => {
+    expect(countBackgroundSubagents({})).toBe(0);
+    expect(countBackgroundSubagents({ background_tasks: [] })).toBe(0);
+    expect(countBackgroundSubagents({ background_tasks: 'x' })).toBe(0);
+    expect(countBackgroundSubagents({ background_tasks: [null, 3, { type: 7 }] })).toBe(0);
   });
 });

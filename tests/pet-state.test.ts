@@ -112,6 +112,16 @@ describe('toPetSemaphore: what the semaphore says becomes what the core reads (R
     expect(toPetSemaphore('error')).toBe('done');
   });
 
+  it('#109: a turn that ended with background sub-agents still running is not a wait yet: it reads as working', () => {
+    expect(toPetSemaphore('waiting', true)).toBe('working');
+    expect(toPetSemaphore('waiting', false)).toBe('waiting');
+  });
+
+  it('#109: the mark only softens `waiting`; a permission still needs the owner', () => {
+    expect(toPetSemaphore('permission', true)).toBe('permission');
+    expect(toPetSemaphore('done', true)).toBe('done');
+  });
+
   it('the four states of the machine pass through', () => {
     expect(toPetSemaphore('working')).toBe('working');
     expect(toPetSemaphore('waiting')).toBe('waiting');
