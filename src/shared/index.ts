@@ -19,6 +19,7 @@ import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
 import type { DonelHealthApi } from './health/ipc';
+import type { DonelWorkspaceApi } from './workspace';
 
 // 015-jobu-pet — the Jobu contract (channels, payloads, validators) lives in ./pet/ipc.
 export type { DonelPetApi } from './pet/ipc';
@@ -447,4 +448,6 @@ export interface DonelApi {
   pet: DonelPetApi;
   /** Saúde do computador — RAM, disco e processos que estão pesando, com a ação de encerrar um processo. */
   health: DonelHealthApi;
+  /** Sidebar — "Abrir no editor" (VS Code/Cursor) e branch atual da pasta da sessão/projeto. */
+  workspace: DonelWorkspaceApi;
 }

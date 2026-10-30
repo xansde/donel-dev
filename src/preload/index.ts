@@ -11,6 +11,9 @@ import type { PetView } from '../shared/pet/types';
 import { HEALTH_CHANNELS } from '../shared/health/ipc';
 import type { KillProcessOutcome } from '../shared/health/ipc';
 import type { HealthReport } from '../shared/health/types';
+// Sidebar — abrir no editor + branch atual.
+import { WORKSPACE_CHANNELS } from '../shared/workspace';
+import type { EditorStatus, GitBranchResult, OpenInEditorResult } from '../shared/workspace';
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
@@ -376,6 +379,13 @@ const donelApi: DonelApi = {
     },
     killProcess: (pid: number) => ipcRenderer.invoke(HEALTH_CHANNELS.killProcess, pid) as Promise<KillProcessOutcome>,
     openTemp: () => ipcRenderer.invoke(HEALTH_CHANNELS.openTemp) as Promise<string>,
+  },
+
+  // Sidebar — abrir a pasta no VS Code/Cursor e ler a branch atual (cache curto no main).
+  workspace: {
+    editorStatus: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.editorStatus) as Promise<EditorStatus>,
+    openInEditor: (path: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.openInEditor, path) as Promise<OpenInEditorResult>,
+    gitBranch: (path: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.gitBranch, path) as Promise<GitBranchResult>,
   },
 
   // Mindscape V1 — the board document (main is the only writer).

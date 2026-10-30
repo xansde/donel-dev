@@ -268,6 +268,8 @@ import { forgetIfOrphan } from '../shared/resumeFailure';
 import { removeSession, setPinned, upsertVisit } from '../shared/sessionRegistry';
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
 import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearance';
+import { WORKSPACE_CHANNELS } from '../shared/workspace';
+import { createSystemWorkspaceToolsDeps, createWorkspaceTools } from './workspace-tools';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
 // PtyManager chega em T004 (este arquivo). ProjectScanner chega no T007
@@ -2248,6 +2250,14 @@ function registerHealthIpcHandlers(): void {
   ipcMain.handle(HEALTH_CHANNELS.openTemp, (): Promise<string> => shell.openPath(app.getPath('temp')));
 }
 
+/** Sidebar — "Abrir no editor" + branch atual. Spawn sem shell, argumentos em array (workspace-tools.ts). */
+function registerWorkspaceIpcHandlers(): void {
+  const tools = createWorkspaceTools(createSystemWorkspaceToolsDeps());
+  ipcMain.handle(WORKSPACE_CHANNELS.editorStatus, () => tools.editorStatus());
+  ipcMain.handle(WORKSPACE_CHANNELS.openInEditor, (_event, path: unknown) => tools.openInEditor(path));
+  ipcMain.handle(WORKSPACE_CHANNELS.gitBranch, (_event, path: unknown) => tools.gitBranch(path));
+}
+
 /**
  * Mindscape (V1) — load/save of `mindscape.json`. The main is the only writer
  * and validates the payload (`parseMindscapeDoc`) before writing.
@@ -2881,6 +2891,7 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   }); // 015-jobu-pet
   registerHealthIpcHandlers(); // Saúde do computador
+  registerWorkspaceIpcHandlers(); // Sidebar — abrir no editor + branch
   createMainWindow();
 
   app.on('activate', () => {

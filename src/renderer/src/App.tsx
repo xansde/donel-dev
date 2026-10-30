@@ -40,6 +40,7 @@ import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
 // entram no argv (sem provider) ou são omitidos (com provider); commandBuilder.ts
 // (buildClaudeArgs acima) continua intocado.
 import { buildLauncherArgs } from './launchArgsForProvider';
+import { useWorkspaceInfo } from './useWorkspaceInfo';
 // CA-22 (009) — só o DENOMINADOR do `%` de contexto vem daqui (`min(300k,
 // janela do modelo)`, decisão de 24/07); a formatação e as faixas de cor são do
 // `SmartZoneMeter` do design-system.
@@ -1896,6 +1897,7 @@ export function App(): React.JSX.Element {
       ...(chatEnabled && tab.sessionType === 'claude' && semaphoreStates[tab.id]?.state === 'permission' ? { statusText: 'esperando você' } : {}),
       pinned: tab.pinned,
       active: tab.id === activeTabId,
+      cwd: tab.cwd,
     }));
 
   /**
@@ -1930,6 +1932,17 @@ export function App(): React.JSX.Element {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projects, appConfig, tabs, semaphoreStates, seedingProjects]);
+
+  // Sidebar — "Abrir no editor" + branch das pastas visíveis (sessões abertas e favoritos).
+  const workspacePaths = useMemo(
+    () => [...sidebarSessions.flatMap((session) => (session.cwd ? [session.cwd] : [])), ...favoriteGroups.map((group) => group.project.path)],
+    [sidebarSessions, favoriteGroups],
+  );
+  const workspaceInfo = useWorkspaceInfo(workspacePaths);
+  const sidebarWorkspace = useMemo(
+    () => ({ editor: workspaceInfo.editor, branches: workspaceInfo.branches, onOpenInEditor: workspaceInfo.openInEditor }),
+    [workspaceInfo.editor, workspaceInfo.branches, workspaceInfo.openInEditor],
+  );
 
   // Mesma ordenação da sidebar (sessionOrdering.ts) — FR-013 usa essa lista
   // ranqueada tanto pro Ctrl+1..9 (posição N) quanto pro Ctrl+Tab (próxima
@@ -2441,6 +2454,7 @@ export function App(): React.JSX.Element {
           onToggleFavoriteGroupCollapsed={handleToggleFavoriteGroupCollapsed}
           onFocusOrResumeFavoriteSession={handleFocusOrResumeFavoriteSession}
           onToggleFavoriteSessionPinned={handleToggleFavoriteSessionPinned}
+          workspace={sidebarWorkspace}
         />
         </div>
 
