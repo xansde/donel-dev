@@ -171,6 +171,8 @@ export function useMindscapeDoc(): MindscapeDocHandle {
 
   const apply = useCallback(
     (projectPath: string, reducer: (current: MindscapeDoc) => MindscapeDoc): void => {
+      // Not loaded: no change and no history entry (commit would refuse it anyway).
+      if (loadStatusRef.current !== 'ready') return;
       const previous = docRef.current;
       const next = reducer(previous);
       if (next === previous) return;
@@ -188,7 +190,7 @@ export function useMindscapeDoc(): MindscapeDocHandle {
   const step = useCallback(
     (projectPath: string, move: (history: BoardHistory, current: MindscapeBoard) => HistoryStep | null): boolean => {
       const current = docRef.current.boards[projectPath];
-      if (!current) return false;
+      if (!current || loadStatusRef.current !== 'ready') return false;
       const result = move(historyRef.current[projectPath] ?? EMPTY_HISTORY, current);
       if (!result) return false;
       historyRef.current = { ...historyRef.current, [projectPath]: result.history };
