@@ -32,3 +32,14 @@ _Evitar_: forma (para o conjunto), anotação, elemento
 **Rabisco**:
 Traço à mão livre do lápis (`P`); um tipo de desenho.
 _Evitar_: freehand, desenho (para o traço)
+
+**Aviso de sessão**:
+Notícia de que uma sessão fora da vista do dono terminou, precisa dele, parou com erro ou
+encerrou sozinha. Nasce num lugar só (`src/shared/attention/rule.ts`) e sai pelo balão do Jobu
+ou, com ele desligado, pelo toast do Windows; a aba em foco com a janela em foco nunca avisa.
+_Evitar_: alerta, notificação (para a notícia em si; toast é só um dos canais)
+
+**Selo da barra de tarefas**:
+Número sobre o ícone do Donel na barra de tarefas do Windows com as sessões esperando o dono
+(pendência ou terminou sem ver); some quando ele olha a aba.
+_Evitar_: badge (no texto da UI), contador
