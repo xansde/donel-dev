@@ -1140,6 +1140,33 @@ sessões (B29) e leva à aba ao clicar.
 ativa), barulho (um pet que fala demais), e a regra de credenciais (nada de
 ler senhas que passem pela área de transferência).
 
+### B31. A wiki dentro do Donel Dev, para aposentar o Obsidian (pedido do dono, 30/10 — "para rodar em outro dia")
+
+**Pedido:** "Fazer a wiki ser parte do donel dev, para aposentar o obsidian."
+**Ainda não começar:** o dono marcou para outro dia; precisa de discovery antes.
+
+**O que existe hoje (fora do app):** o vault Obsidian "Claude Seazone" é a
+documentação viva (contexto dos projetos, filas `PROXIMO.md` dos gatilhos do
+CLAUDE.md, feedbacks privados, insights) e é lido/escrito pelas skills
+`wiki-ingest`, `wiki-query`, `wiki-deposit`, `wiki-write` e `wiki-synthesize`
+(via o plugin Local REST API do Obsidian + Bitwarden) e pelo MCP `obsidian`.
+Neste PC o vault não tem `Projects/donel-dev/` (verificado em 30/10), então
+há pelo menos dois lugares com cópias diferentes.
+
+**Perguntas para o discovery:**
+- Onde moram os arquivos: continuar como pasta de `.md` no disco (o Obsidian
+  vira opcional e nada se perde) ou um banco do app? Recomendação inicial:
+  pasta de `.md`, com o app sendo leitor/editor e índice.
+- O que o app precisa ter para o Obsidian não fazer falta: navegação por
+  pastas e links `[[...]]`, busca, edição markdown com prévia, backlinks,
+  frontmatter, anexos, talvez o grafo (o Mindscape é parente).
+- Como as skills `wiki-*` e o MCP passam a falar com o app em vez do plugin
+  REST do Obsidian (um MCP local do Donel Dev, como o do navegador interno?).
+- Sincronização entre os dois PCs (hoje OneDrive no outro PC) e o que é
+  privado (feedbacks de liderados nunca saem da máquina).
+- Migração: importar o vault atual sem quebrar links nem os gatilhos
+  `PROXIMO.md` citados no CLAUDE.md.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
