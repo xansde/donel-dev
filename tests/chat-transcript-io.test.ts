@@ -23,7 +23,13 @@ afterEach(() => {
 // follower has already looked at the file and found nothing", it awaits
 // `follower.readNow()` (serialised on the follower's own read queue) instead
 // of sleeping a fixed time.
-const waitFor = (cond: () => boolean, timeoutMs = 4000): Promise<void> => pollUntil(cond, timeoutMs);
+// The waits poll a condition, so a generous ceiling costs nothing when the disk is fast; under a
+// loaded parallel suite the watcher/debounce chain can take seconds. Kept below IO_TEST_TIMEOUT_MS
+// so a real miss still fails with the waitFor message, not a bare vitest timeout.
+const waitFor = (cond: () => boolean, timeoutMs = 10_000): Promise<void> => pollUntil(cond, timeoutMs);
+// These tests write and read real files of up to tens of MB (each ~0.3-0.7 s on an idle machine);
+// vitest's 5 s default was too tight with the whole suite competing for the same disk and CPU.
+const IO_TEST_TIMEOUT_MS = 30_000;
 // Only for "nothing more must arrive" windows after `stop()`/late writes, where
 // there is no event to wait for; kept above 3x the 20 ms debounce.
 const quietFor = realDelay;
@@ -42,7 +48,7 @@ const asstLine = (n: number, pad = 0): string =>
 // follower
 // ---------------------------------------------------------------------------
 
-describe('TranscriptFollower - forward by offset', () => {
+describe('TranscriptFollower - forward by offset', { timeout: IO_TEST_TIMEOUT_MS }, () => {
   it('delivers appended lines with a LineRef that re-reads exactly the line', async () => {
     const path = join(dir, 's.jsonl');
     writeFileSync(path, `${userLine(1)}\n`);
@@ -289,7 +295,7 @@ function writeRounds(path: string, rounds: number, pad = 0): string[] {
   return out;
 }
 
-describe('readPageBackward', () => {
+describe('readPageBackward', { timeout: IO_TEST_TIMEOUT_MS }, () => {
   it('returns lines in reverse order with exact refs', async () => {
     const path = join(dir, 's.jsonl');
     const all = writeRounds(path, 5);
@@ -442,7 +448,7 @@ describe('readPageBackward', () => {
   });
 });
 
-describe('readLineRef', () => {
+describe('readLineRef', { timeout: IO_TEST_TIMEOUT_MS }, () => {
   it('rereads a line by path, offset and length', async () => {
     const path = join(dir, 's.jsonl');
     writeFileSync(path, `${userLine(1)}\n${asstLine(1)}\n`);
