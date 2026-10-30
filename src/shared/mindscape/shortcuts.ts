@@ -11,7 +11,14 @@ export type MindscapeShortcut =
   | { readonly type: 'escape' }
   /** Fatia 02 — Ctrl+Z / Ctrl+Shift+Z on the board (the text field keeps its own undo). */
   | { readonly type: 'undo' }
-  | { readonly type: 'redo' };
+  | { readonly type: 'redo' }
+  /** Fatia 03 — Delete removes the selection (or the selected link). */
+  | { readonly type: 'delete' }
+  /** Fatia 03 — Ctrl+A: the visible cards and every drawing. */
+  | { readonly type: 'select-all' }
+  /** Fatia 03 — Ctrl+Shift+] / Ctrl+Shift+[ (by `key`: ABNT2 puts the brackets elsewhere than US). */
+  | { readonly type: 'bring-to-front' }
+  | { readonly type: 'send-to-back' };
 
 export interface ShortcutInput {
   readonly key: string;
@@ -41,6 +48,13 @@ export function mindscapeShortcut(input: ShortcutInput): MindscapeShortcut | nul
   if (input.key === 'Escape') return { type: 'escape' };
   // With Shift the key comes as "Z"; Ctrl only (no Alt/Meta).
   if (input.ctrl && !input.alt && !input.meta && input.key.toLowerCase() === 'z') return { type: input.shift ? 'redo' : 'undo' };
+  if (input.key === 'Delete') return input.ctrl || input.alt || input.meta ? null : { type: 'delete' };
+  if (input.ctrl && !input.alt && !input.meta) {
+    if (!input.shift && input.key.toLowerCase() === 'a') return { type: 'select-all' };
+    // With Shift, the bracket key may come as "]" or "}" (and "[" or "{"), depending on the layout.
+    if (input.shift && (input.key === ']' || input.key === '}')) return { type: 'bring-to-front' };
+    if (input.shift && (input.key === '[' || input.key === '{')) return { type: 'send-to-back' };
+  }
   if (input.ctrl || input.alt || input.meta) return null;
   const tool = TOOL_BY_KEY[input.key.toLowerCase()];
   return tool ? { type: 'tool', tool } : null;

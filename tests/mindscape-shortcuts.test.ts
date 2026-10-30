@@ -57,6 +57,30 @@ describe('mindscapeShortcut', () => {
     expect(mindscapeShortcut(key('z', { meta: true }))).toBeNull();
   });
 
+  // Fatia 03 — Delete, Ctrl+A and the layer keys (by `key`, not `code`: ABNT2 puts the brackets elsewhere).
+  it('maps Delete, with or without the selection keys around it', () => {
+    expect(mindscapeShortcut(key('Delete'))).toEqual({ type: 'delete' });
+    expect(mindscapeShortcut(key('Delete', { editable: true }))).toBeNull();
+  });
+
+  it('maps Ctrl+A to select all (not Ctrl+Shift+A, not with the focus in a field)', () => {
+    expect(mindscapeShortcut(key('a', { ctrl: true }))).toEqual({ type: 'select-all' });
+    expect(mindscapeShortcut(key('A', { ctrl: true }))).toEqual({ type: 'select-all' });
+    expect(mindscapeShortcut(key('A', { ctrl: true, shift: true }))).toBeNull();
+    expect(mindscapeShortcut(key('a', { ctrl: true, alt: true }))).toBeNull();
+    expect(mindscapeShortcut(key('a', { ctrl: true, editable: true }))).toBeNull();
+  });
+
+  it('maps Ctrl+Shift+] / } to bring to front and Ctrl+Shift+[ / { to send to back, by key', () => {
+    expect(mindscapeShortcut(key(']', { ctrl: true, shift: true }))).toEqual({ type: 'bring-to-front' });
+    expect(mindscapeShortcut(key('}', { ctrl: true, shift: true }))).toEqual({ type: 'bring-to-front' });
+    expect(mindscapeShortcut(key('[', { ctrl: true, shift: true }))).toEqual({ type: 'send-to-back' });
+    expect(mindscapeShortcut(key('{', { ctrl: true, shift: true }))).toEqual({ type: 'send-to-back' });
+    expect(mindscapeShortcut(key(']', { ctrl: true }))).toBeNull();
+    expect(mindscapeShortcut(key('}', { shift: true }))).toBeNull();
+    expect(mindscapeShortcut(key('{', { ctrl: true, shift: true, editable: true }))).toBeNull();
+  });
+
   it('returns null for keys that are not shortcuts (yet)', () => {
     for (const k of ['x', 'p', 'e', 'Enter', ' ', '1']) expect(mindscapeShortcut(key(k))).toBeNull();
   });

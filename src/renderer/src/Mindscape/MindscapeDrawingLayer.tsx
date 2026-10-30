@@ -8,7 +8,7 @@ export function drawingInk(color: DrawingColor): string {
   return color === 'none' ? 'currentColor' : STRIPE_BY_TOKEN[color];
 }
 
-function DrawingItem({ drawing, draft }: { readonly drawing: MindscapeDrawing; readonly draft?: boolean }): React.JSX.Element | null {
+function DrawingItem({ drawing, draft, selected }: { readonly drawing: MindscapeDrawing; readonly draft?: boolean; readonly selected?: boolean }): React.JSX.Element | null {
   const shape = drawingShape(drawing);
   if (!shape) return null;
   return (
@@ -23,6 +23,7 @@ function DrawingItem({ drawing, draft }: { readonly drawing: MindscapeDrawing; r
       data-color={drawing.color}
       data-stroke={drawing.stroke}
       data-arrow={drawing.kind === 'line' ? String(drawing.arrow) : undefined}
+      data-selected={draft ? undefined : selected ? 'true' : 'false'}
     >
       <path d={shape.d} />
       {shape.head ? <path d={shape.head} /> : null}
@@ -34,18 +35,20 @@ export interface MindscapeDrawingLayerProps {
   readonly drawings: readonly MindscapeDrawing[];
   /** The drawing in progress (local preview, not saved yet). */
   readonly draft?: MindscapeDrawing;
+  /** Fatia 03 — ids of the selected drawings (`data-selected`). */
+  readonly selectedIds?: readonly string[];
 }
 
 /**
  * Mindscape desenho, fatia 01 — the owner's drawings in an SVG under the links
- * and the cards, in array order (layer). Transparent to the pointer: selecting
- * a drawing comes in fatia 03.
+ * and the cards, in array order (layer). Transparent to the pointer: the
+ * selection (fatia 03) hit-tests the drawings in pure code (`hitTestDrawings`).
  */
-export function MindscapeDrawingLayer({ drawings, draft }: MindscapeDrawingLayerProps): React.JSX.Element {
+export function MindscapeDrawingLayer({ drawings, draft, selectedIds = [] }: MindscapeDrawingLayerProps): React.JSX.Element {
   return (
     <svg className={styles.drawingLayer} data-testid="mindscape-drawings" aria-hidden="true">
       {drawings.map((drawing) => (
-        <DrawingItem key={drawing.id} drawing={drawing} />
+        <DrawingItem key={drawing.id} drawing={drawing} selected={selectedIds.includes(drawing.id)} />
       ))}
       {draft ? <DrawingItem drawing={draft} draft /> : null}
     </svg>

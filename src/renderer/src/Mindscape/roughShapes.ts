@@ -7,20 +7,11 @@ import rough from 'roughjs';
 import type { Options } from 'roughjs/bin/core';
 import type { MindscapeDrawing } from '../../../shared/mindscape/model';
 import { STROKE_WIDTH } from '../../../shared/mindscape/drawings';
+import { linkEndpoints, type Rect } from '../../../shared/mindscape/geometry';
 
-export interface Rect {
-  readonly x: number;
-  readonly y: number;
-  readonly w: number;
-  readonly h: number;
-}
-
-export interface LinkSegment {
-  readonly x1: number;
-  readonly y1: number;
-  readonly x2: number;
-  readonly y2: number;
-}
+// Fatia 03 (desenho) — `linkEndpoints` and its types moved to the shared
+// geometry (pure, used by the hit-test); re-exported here for the old imports.
+export { linkEndpoints, type LinkSegment, type Rect } from '../../../shared/mindscape/geometry';
 
 export interface LinkShape {
   readonly line: string;
@@ -67,25 +58,6 @@ export function clearRoughCache(): void {
 /** Tenth of a pixel: enough for the eye, and stable as a cache key. */
 function round(value: number): number {
   return Math.round(value * 10) / 10;
-}
-
-/**
- * The center-to-center segment, cut at the border of each card, so the arrow
- * head lands on the edge of the destination. Overlapping cards → `null`.
- */
-export function linkEndpoints(from: Rect, to: Rect): LinkSegment | null {
-  const ax = from.x + from.w / 2;
-  const ay = from.y + from.h / 2;
-  const bx = to.x + to.w / 2;
-  const by = to.y + to.h / 2;
-  const dx = bx - ax;
-  const dy = by - ay;
-  if (dx === 0 && dy === 0) return null;
-  const exit = (rect: Rect): number => Math.min(dx === 0 ? Infinity : rect.w / 2 / Math.abs(dx), dy === 0 ? Infinity : rect.h / 2 / Math.abs(dy));
-  const tFrom = exit(from);
-  const tTo = exit(to);
-  if (tFrom + tTo >= 1) return null;
-  return { x1: round(ax + dx * tFrom), y1: round(ay + dy * tFrom), x2: round(bx - dx * tTo), y2: round(by - dy * tTo) };
 }
 
 function pathsOf(drawable: ReturnType<typeof generator.line>): string {

@@ -32,8 +32,8 @@ export interface MindscapeSessionCardProps {
   readonly y: number;
   /** News since the owner's last visit (fatia 02): highlighted, normal while working, dimmed. */
   readonly highlight: SessionHighlight;
+  /** In the board selection (desenho, fatia 03: the board selects on pressing, with V). */
   readonly selected: boolean;
-  readonly onSelect: () => void;
   /** Double click (or Enter) — go to the terminal of the session in the Uso geral. */
   readonly onOpen: () => void;
 }
@@ -49,7 +49,6 @@ export function MindscapeSessionCard({
   y,
   highlight,
   selected,
-  onSelect,
   onOpen,
 }: MindscapeSessionCardProps): React.JSX.Element {
   const style = {
@@ -69,7 +68,6 @@ export function MindscapeSessionCard({
       data-highlight={highlight}
       data-selected={selected ? 'true' : 'false'}
       aria-label={`Sessão ${name}: ${SESSION_STATE_LABEL_PT[state]}`}
-      onClick={onSelect}
       onDoubleClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === 'Enter') onOpen();

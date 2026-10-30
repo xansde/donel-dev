@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SessionState } from '@donel-dev/design-system';
-import { addDrawing } from '../../../shared/mindscape/drawings';
-import type { CardRect } from '../../../shared/mindscape/geometry';
+import { addDrawing, bringToFront, moveItems, removeItems, sendToBack, setDrawingsStyle, updateDrawing } from '../../../shared/mindscape/drawings';
+import type { CardRect, ItemIds } from '../../../shared/mindscape/geometry';
 import { sessionHighlight } from '../../../shared/mindscape/highlight';
 import {
   addLink,
   addOwnerCard,
   archiveCard,
   editOwnerCard,
-  moveCard,
   removeLink,
   sessionCardId,
   setOwnerColor,
@@ -21,10 +20,11 @@ import {
 import { mindscapeShortcut, type MindscapeTool } from '../../../shared/mindscape/shortcuts';
 import { screenToWorld } from '../../../shared/mindscape/view';
 import type { TabColorToken } from '../../../shared/tabAppearance';
-import { isDrawTool, MindscapeBoard, type DrawGesture } from './MindscapeBoard';
+import { EMPTY_ITEMS, isDrawTool, MindscapeBoard, type DrawGesture } from './MindscapeBoard';
 import { MindscapeDrawingLayer } from './MindscapeDrawingLayer';
 import { MindscapeLinkLayer, MindscapeOutlineLayer, useCardSizes } from './MindscapeLinks';
 import { MindscapeNoteCard, MindscapeOwnerCard, MindscapeSessionCard, STRIPE_BY_TOKEN } from './MindscapeCard';
+import { MindscapeSelectionLayer } from './MindscapeSelectionLayer';
 import { MindscapeToolbar, type DrawStyle } from './MindscapeToolbar';
 import styles from './Mindscape.module.css';
 
@@ -52,12 +52,12 @@ export interface MindscapeScreenProps {
   readonly seenAt: Readonly<Record<string, number>>;
   /** "Ir ao terminal" — Uso geral with the tab of the session in focus. */
   readonly onGoToTerminal: (tabId: string) => void;
-  /** Fatia 04 — end of a background drag (out of the history: moving the view is not an action). */
+  /** Fatia 04 — end of a hand drag (out of the history: moving the view is not an action). */
   readonly onPan: (projectPath: string, pan: { x: number; y: number }) => void;
   /**
    * Desenho, fatias 01–02 — the single door of every owner action on the board
-   * (drawings, links, the owner's post-its, "Arquivar", card drags): a pure
-   * reducer applied to the document, one entry of the board history each.
+   * (drawings, links, the owner's post-its, "Arquivar", drags of the selection):
+   * a pure reducer applied to the document, one entry of the board history each.
    */
   readonly onAction: (projectPath: string, reducer: (doc: MindscapeDoc) => MindscapeDoc) => void;
   /** Desenho, fatia 02 — Ctrl+Z on the board of `projectPath`. */
@@ -71,6 +71,8 @@ const NEW_CARD_MARGIN = 40;
 
 /** Starting style of the drawings: Sem cor, médio (memory only). */
 const DEFAULT_DRAW_STYLE: DrawStyle = { color: 'none', stroke: 'medium' };
+
+const SELECT_HINT = 'Clique seleciona, Shift soma, arraste o fundo para o laço (duplo clique na sessão abre o terminal)';
 
 const TOOL_HINT: Readonly<Record<Exclude<MindscapeTool, 'select'>, string>> = {
   hand: 'Mão: arraste para mover a visão',
@@ -107,12 +109,18 @@ function folderName(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+/** The selection, tied to the board it was made on (another board starts empty). */
+interface Selection extends ItemIds {
+  readonly path?: string;
+}
+
 /**
  * Mindscape — one tab per project board, one post-it per live session of that
  * project, the post-its written by the sessions and the owner's own (V1), and
- * the drawing tools of the bar (desenho, fatia 01: V H A L R O, A/L from
- * post-it to post-it make a link). Covers the middle of the shell like the
- * EsteiraScreen; the terminals stay mounted underneath.
+ * the drawing tools of the bar (desenho: V H A L R O, A/L from post-it to
+ * post-it make a link; fatia 03: selection of several items, handles, style
+ * and layer). Covers the middle of the shell like the EsteiraScreen; the
+ * terminals stay mounted underneath.
  */
 export function MindscapeScreen({
   doc,
@@ -128,7 +136,6 @@ export function MindscapeScreen({
 }: MindscapeScreenProps): React.JSX.Element {
   const boardPaths = Object.keys(doc.boards);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(initialProjectPath);
-  const [selectedTabId, setSelectedTabId] = useState<string | undefined>(undefined);
   /** The owner card created in this visit — it opens in edit mode. */
   const [createdCardId, setCreatedCardId] = useState<string | undefined>(undefined);
   const activePath =
@@ -139,13 +146,15 @@ export function MindscapeScreen({
         : boardPaths[0];
   const board = activePath ? doc.boards[activePath] : undefined;
   const boardSessions = board ? sessions.filter((session) => session.projectPath === board.projectPath) : [];
-  const selectedSession = boardSessions.find((session) => session.tabId === selectedTabId);
   const [selectedLinkId, setSelectedLinkId] = useState<string | undefined>(undefined);
   const selectedLink = board?.links.find((link) => link.id === selectedLinkId);
   // Desenho, fatia 01 — the active tool and the style of the next drawing (screen state, not saved).
   const [tool, setTool] = useState<MindscapeTool>('select');
   const [drawStyle, setDrawStyle] = useState<DrawStyle>(DEFAULT_DRAW_STYLE);
-  /** A gesture is in flight on the board (pointer down): Ctrl+Z waits for it to end. */
+  // Desenho, fatia 03 — the selection (cards and drawings) and space held (moves the view).
+  const [selection, setSelection] = useState<Selection>(EMPTY_ITEMS);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  /** A gesture is in flight on the board (pointer down): Ctrl+Z and the keys that change the board wait for it to end. */
   const gestureActiveRef = useRef(false);
   const sectionRef = useRef<HTMLElement>(null);
   const sizes = useCardSizes(sectionRef);
@@ -154,12 +163,18 @@ export function MindscapeScreen({
   useEffect(() => {
     sectionRef.current?.focus({ preventScroll: true });
   }, []);
+  // Space is let go when the window loses the focus (the keyup never comes).
+  useEffect(() => {
+    const release = (): void => setSpaceHeld(false);
+    window.addEventListener('blur', release);
+    return () => window.removeEventListener('blur', release);
+  }, []);
 
   // Cards on screen: a session card only with its tab open (rule 11); notes and the owner's always.
   const liveSessionIds = new Set(boardSessions.map((session) => session.sessionId));
   const visibleCards = board ? Object.values(board.cards).filter((card) => card.kind !== 'session' || liveSessionIds.has(card.sessionId)) : [];
   const visibleIds = new Set(visibleCards.map((card) => card.id));
-  /** Measured rects in drawing order (session cards first, then the others) — the hit-test of A/L. */
+  /** Measured rects in drawing order (session cards first, then the others) — the hit-test of A/L and the lasso. */
   const cardRects: CardRect[] = [];
   if (board) {
     const ordered = [
@@ -171,6 +186,29 @@ export function MindscapeScreen({
       if (size) cardRects.push({ id: card.id, x: card.x, y: card.y, w: size.w, h: size.h });
     }
   }
+
+  // What is selected and still exists on screen (an undo, an archive or a closed tab drop the rest).
+  const drawingIds = new Set(board?.drawings.map((drawing) => drawing.id));
+  const live: ItemIds =
+    board && selection.path === board.projectPath
+      ? { cards: selection.cards.filter((id) => visibleIds.has(id)), drawings: selection.drawings.filter((id) => drawingIds.has(id)) }
+      : EMPTY_ITEMS;
+  const hasSelection = live.cards.length > 0 || live.drawings.length > 0;
+  const select = (next: ItemIds): void => {
+    if (!board) return;
+    setSelection({ path: board.projectPath, cards: next.cards, drawings: next.drawings });
+    if (next.cards.length > 0 || next.drawings.length > 0) setSelectedLinkId(undefined);
+  };
+  const clearSelection = (): void => setSelection(EMPTY_ITEMS);
+  // "Ir ao terminal" and the hint: exactly one session post-it selected, nothing else.
+  const onlyCard = live.cards.length === 1 && live.drawings.length === 0 ? board?.cards[live.cards[0]!] : undefined;
+  const selectedSession = onlyCard?.kind === 'session' ? boardSessions.find((session) => session.sessionId === onlyCard.sessionId) : undefined;
+
+  const changeTool = (next: MindscapeTool): void => {
+    // A drawing tool starts with nothing selected: the color of the bar must not repaint what was selected.
+    if (isDrawTool(next)) clearSelection();
+    setTool(next);
+  };
 
   const handleDraw = (gesture: DrawGesture): void => {
     if (!board) return;
@@ -187,29 +225,80 @@ export function MindscapeScreen({
     onAction(projectPath, (current) => addDrawing(current, projectPath, drawing));
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
-    const shortcut = mindscapeShortcut({
-      key: event.key,
-      ctrl: event.ctrlKey,
-      shift: event.shiftKey,
-      alt: event.altKey,
-      meta: event.metaKey,
-      editable: isEditable(event.target),
-    });
-    if (!shortcut || !board) return;
-    event.preventDefault();
-    if (shortcut.type === 'undo' || shortcut.type === 'redo') {
-      // Ignored while a gesture is in flight (the drag is written on pointerup, as one entry).
-      if (gestureActiveRef.current) return;
-      if (shortcut.type === 'undo') onUndo(board.projectPath);
-      else onRedo(board.projectPath);
+  const removeSelected = (): void => {
+    if (!board) return;
+    const { projectPath } = board;
+    if (selectedLink) {
+      const linkId = selectedLink.id;
+      onAction(projectPath, (current) => removeLink(current, projectPath, linkId));
+      setSelectedLinkId(undefined);
       return;
     }
-    // A tool change (Esc included) cancels the gesture in flight — the board ends it.
-    setTool(shortcut.type === 'tool' ? shortcut.tool : 'select');
+    if (!hasSelection) return;
+    const ids = live;
+    onAction(projectPath, (current) => removeItems(current, projectPath, ids));
+    clearSelection();
   };
 
-  const hint = tool !== 'select' ? TOOL_HINT[tool] : selectedSession ? selectedSession.name : 'Selecione uma sessão (duplo clique abre o terminal)';
+  const restack = (toFront: boolean): void => {
+    if (!board || live.drawings.length === 0) return;
+    const { projectPath } = board;
+    const ids = live.drawings;
+    onAction(projectPath, (current) => (toFront ? bringToFront(current, projectPath, ids) : sendToBack(current, projectPath, ids)));
+  };
+
+  const applyStyle = (change: { readonly color?: DrawStyle['color']; readonly stroke?: DrawStyle['stroke'] }): void => {
+    setDrawStyle((current) => ({ ...current, ...change }));
+    if (!board || live.drawings.length === 0) return;
+    const { projectPath } = board;
+    const ids = live.drawings;
+    onAction(projectPath, (current) => setDrawingsStyle(current, projectPath, ids, change));
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
+    const editable = isEditable(event.target);
+    // Space held moves the view with any tool (the keyup lets it go).
+    if (event.key === ' ' && !editable && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault();
+      if (!event.repeat) setSpaceHeld(true);
+      return;
+    }
+    const shortcut = mindscapeShortcut({ key: event.key, ctrl: event.ctrlKey, shift: event.shiftKey, alt: event.altKey, meta: event.metaKey, editable });
+    if (!shortcut || !board) return;
+    event.preventDefault();
+    switch (shortcut.type) {
+      case 'undo':
+      case 'redo':
+        // Ignored while a gesture is in flight (the drag is written on pointerup, as one entry).
+        if (gestureActiveRef.current) return;
+        if (shortcut.type === 'undo') onUndo(board.projectPath);
+        else onRedo(board.projectPath);
+        return;
+      case 'delete':
+        if (!gestureActiveRef.current) removeSelected();
+        return;
+      case 'select-all':
+        if (gestureActiveRef.current) return;
+        setTool('select');
+        select({ cards: visibleCards.map((card) => card.id), drawings: board.drawings.map((drawing) => drawing.id) });
+        return;
+      case 'bring-to-front':
+      case 'send-to-back':
+        if (!gestureActiveRef.current) restack(shortcut.type === 'bring-to-front');
+        return;
+      case 'escape':
+        // Cancels the gesture in flight (the board ends it on a tool change) and drops the selection.
+        clearSelection();
+        setTool('select');
+        return;
+      case 'tool':
+        changeTool(shortcut.tool);
+        return;
+    }
+  };
+
+  const hint = tool !== 'select' ? TOOL_HINT[tool] : selectedSession ? selectedSession.name : SELECT_HINT;
+  const selectedDrawings = board ? board.drawings.filter((drawing) => live.drawings.includes(drawing.id)) : [];
 
   return (
     <section
@@ -219,6 +308,15 @@ export function MindscapeScreen({
       data-testid="mindscape-screen"
       tabIndex={-1}
       onKeyDown={handleKeyDown}
+      onKeyUp={(event) => {
+        if (event.key !== ' ') return;
+        if (!isEditable(event.target)) event.preventDefault();
+        setSpaceHeld(false);
+      }}
+      onBlur={(event) => {
+        // Focus leaving the Mindscape lets space go (focus moving inside it does not).
+        if (!sectionRef.current?.contains(event.relatedTarget as Node | null)) setSpaceHeld(false);
+      }}
       onPointerDown={() => {
         // Focus left outside (a terminal underneath): bring it in. Focus already inside stays where it is.
         const section = sectionRef.current;
@@ -245,9 +343,13 @@ export function MindscapeScreen({
       <MindscapeToolbar
         enabled={Boolean(board)}
         tool={tool}
-        onTool={setTool}
+        onTool={changeTool}
         style={drawStyle}
-        onStyle={setDrawStyle}
+        onColor={(color) => applyStyle({ color })}
+        onStroke={(stroke) => applyStyle({ stroke })}
+        canRestack={live.drawings.length > 0}
+        onBringToFront={() => restack(true)}
+        onSendToBack={() => restack(false)}
         selectedLink={selectedLink}
         onToggleLinkArrow={() => {
           if (!board || !selectedLink) return;
@@ -255,13 +357,7 @@ export function MindscapeScreen({
           const linkId = selectedLink.id;
           onAction(projectPath, (current) => toggleLinkArrow(current, projectPath, linkId));
         }}
-        onRemoveLink={() => {
-          if (!board || !selectedLink) return;
-          const { projectPath } = board;
-          const linkId = selectedLink.id;
-          onAction(projectPath, (current) => removeLink(current, projectPath, linkId));
-          setSelectedLinkId(undefined);
-        }}
+        onRemoveLink={removeSelected}
         onNewCard={() => {
           if (!board) return;
           const { projectPath } = board;
@@ -285,10 +381,17 @@ export function MindscapeScreen({
         <MindscapeBoard
           board={board}
           tool={tool}
+          panMode={spaceHeld}
           cardRects={cardRects}
-          onMoveCard={(cardId, x, y) => {
+          selection={live}
+          onSelect={select}
+          onMoveItems={(ids, dx, dy) => {
             const { projectPath } = board;
-            onAction(projectPath, (current) => moveCard(current, projectPath, cardId, x, y));
+            onAction(projectPath, (current) => moveItems(current, projectPath, ids, dx, dy));
+          }}
+          onResize={(drawing) => {
+            const { projectPath } = board;
+            onAction(projectPath, (current) => updateDrawing(current, projectPath, drawing));
           }}
           onPan={(pan) => onPan(board.projectPath, pan)}
           onDraw={handleDraw}
@@ -296,11 +399,11 @@ export function MindscapeScreen({
             gestureActiveRef.current = active;
           }}
           onBackgroundClick={() => {
-            setSelectedTabId(undefined);
+            clearSelection();
             setSelectedLinkId(undefined);
           }}
         >
-          {(positionOf, draft) => {
+          {({ positionOf, drawings, draft, lasso }) => {
             const rectOf = (cardId: string) => {
               const card: Card | undefined = board.cards[cardId];
               const size = sizes[cardId];
@@ -308,10 +411,25 @@ export function MindscapeScreen({
               const position = positionOf(card);
               return { x: position.x, y: position.y, w: size.w, h: size.h };
             };
+            // Outline of the selected owner post-its and notes (the session post-it outlines itself).
+            const outlinedCards = live.cards.flatMap((id) => {
+              const rect = board.cards[id]?.kind === 'session' ? undefined : rectOf(id);
+              return rect ? [{ id, ...rect }] : [];
+            });
+            const shownSelected = drawings.filter((drawing) => live.drawings.includes(drawing.id));
             return (
             <>
-              <MindscapeDrawingLayer drawings={board.drawings} draft={draft && isDrawTool(tool) ? draftOf(draft, drawStyle) : undefined} />
-              <MindscapeLinkLayer links={visibleLinks(board.links, visibleIds)} rectOf={rectOf} selectedLinkId={selectedLinkId} onSelect={setSelectedLinkId} />
+              <MindscapeDrawingLayer drawings={drawings} selectedIds={live.drawings} draft={draft && isDrawTool(tool) ? draftOf(draft, drawStyle) : undefined} />
+              <MindscapeLinkLayer
+                links={visibleLinks(board.links, visibleIds)}
+                rectOf={rectOf}
+                selectedLinkId={selectedLinkId}
+                onSelect={(linkId) => {
+                  // A link is selected alone (it never enters the lasso nor Ctrl+A).
+                  clearSelection();
+                  setSelectedLinkId(linkId);
+                }}
+              />
               {boardSessions.map((session) => {
                 const card = board.cards[sessionCardId(session.sessionId)];
                 if (!card) return null;
@@ -327,8 +445,7 @@ export function MindscapeScreen({
                     x={position.x}
                     y={position.y}
                     highlight={sessionHighlight(session.state, session.stateEnteredAt, seenAt[session.sessionId])}
-                    selected={session.tabId === selectedTabId}
-                    onSelect={() => setSelectedTabId(session.tabId)}
+                    selected={live.cards.includes(card.id)}
                     onOpen={() => onGoToTerminal(session.tabId)}
                   />
                 );
@@ -357,15 +474,15 @@ export function MindscapeScreen({
                   );
                 }
                 if (card.kind !== 'session-note') return null;
-                const live = boardSessions.find((session) => session.sessionId === card.sessionId);
+                const liveSession = boardSessions.find((session) => session.sessionId === card.sessionId);
                 return (
                   <MindscapeNoteCard
                     key={card.id}
                     sessionId={card.sessionId}
-                    sessionName={live?.name ?? card.sessionName}
+                    sessionName={liveSession?.name ?? card.sessionName}
                     text={card.text}
                     writtenAt={card.writtenAt}
-                    stripe={live ? (live.cliColorHex ?? STRIPE_BY_TOKEN[live.color]) : undefined}
+                    stripe={liveSession ? (liveSession.cliColorHex ?? STRIPE_BY_TOKEN[liveSession.color]) : undefined}
                     x={position.x}
                     y={position.y}
                     onArchive={() => onAction(board.projectPath, (current) => archiveCard(current, board.projectPath, card.id))}
@@ -376,6 +493,13 @@ export function MindscapeScreen({
                 <p className={styles.empty}>Nenhuma sessão aberta neste projeto.</p>
               ) : null}
               <MindscapeOutlineLayer cardIds={visibleCards.map((card) => card.id)} rectOf={rectOf} />
+              <MindscapeSelectionLayer
+                cards={outlinedCards}
+                drawings={shownSelected}
+                withHandles={tool === 'select' && live.cards.length === 0 && selectedDrawings.length === 1}
+                lasso={lasso}
+                zoom={board.zoom}
+              />
             </>
             );
           }}

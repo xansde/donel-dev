@@ -64,7 +64,8 @@
   position: relative;
   flex: 1;
   overflow: hidden;
-  cursor: grab;
+  /* Desenho, fatia 03 — with V the background draws the lasso; the view moves with H or space. */
+  cursor: default;
   touch-action: none;
   user-select: none;
   background-color: var(--bg-app);
@@ -564,10 +565,17 @@
   stroke-linejoin: round;
 }
 
-/* The tool decides the cursor: H moves the view anywhere, A/L/R/O draw anywhere (cards included). */
+/* The tool decides the cursor: H (or space held) moves the view anywhere, A/L/R/O draw anywhere (cards included). */
 .view[data-tool='hand'],
-.view[data-tool='hand'] [data-card-id] {
+.view[data-tool='hand'] [data-card-id],
+.view[data-space],
+.view[data-space] [data-card-id] {
   cursor: grab;
+}
+
+.view.panning,
+.view.panning [data-card-id] {
+  cursor: grabbing;
 }
 
 .view[data-tool='arrow'],
@@ -579,6 +587,55 @@
 .view[data-tool='rect'] [data-card-id],
 .view[data-tool='ellipse'] [data-card-id] {
   cursor: crosshair;
+}
+
+/* Desenho, fatia 03 — outline of the selection, handles of the single selected drawing and the lasso, over the cards. */
+.selectionLayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.selectionOutline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.selectionHandle {
+  fill: var(--bg-raised);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: all;
+}
+
+.selectionHandle[data-handle='nw'],
+.selectionHandle[data-handle='se'] {
+  cursor: nwse-resize;
+}
+
+.selectionHandle[data-handle='ne'],
+.selectionHandle[data-handle='sw'] {
+  cursor: nesw-resize;
+}
+
+.selectionHandle[data-handle='start'],
+.selectionHandle[data-handle='end'] {
+  cursor: move;
+}
+
+.lasso {
+  fill: color-mix(in srgb, var(--accent) 10%, transparent);
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
 }
 
 @keyframes pulse {

@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { addDrawing, STROKE_WIDTH } from '../src/shared/mindscape/drawings';
-import { emptyMindscapeDoc, ensureBoard, type MindscapeDoc, type MindscapeDrawing } from '../src/shared/mindscape/model';
+import { addDrawing, bringToFront, moveItems, removeItems, sendToBack, setDrawingsStyle, STROKE_WIDTH, updateDrawing } from '../src/shared/mindscape/drawings';
+import {
+  addLink,
+  addOwnerCard,
+  emptyMindscapeDoc,
+  ensureBoard,
+  noteCardId,
+  placeSessionCard,
+  sessionCardId,
+  writeSessionNote,
+  type MindscapeDoc,
+  type MindscapeDrawing,
+} from '../src/shared/mindscape/model';
 
 // Mindscape desenho, fatia 01 — the owner's drawings (rect, ellipse, loose
 // line/arrow) in board units; the array order is the layer (0 = at the back).
@@ -45,5 +56,130 @@ describe('addDrawing', () => {
 describe('STROKE_WIDTH', () => {
   it('maps the three strokes to board units', () => {
     expect(STROKE_WIDTH).toEqual({ thin: 1.5, medium: 3, thick: 5 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fatia 03 — selection: move, remove, style and layer of several items at once.
+// ---------------------------------------------------------------------------
+
+const lineD: MindscapeDrawing = { kind: 'line', id: 'l1', color: 'none', stroke: 'thin', arrow: false, x1: 0, y1: 0, x2: 40, y2: 30 };
+const ellipseD: MindscapeDrawing = { kind: 'ellipse', id: 'e1', color: 'accent', stroke: 'thick', x: 300, y: 300, w: 60, h: 40 };
+
+/** atlas with a session card, a note written by the session, an owner post-it, three drawings and two links. */
+function full(): MindscapeDoc {
+  let next = placeSessionCard(doc(), ATLAS, 's1');
+  next = writeSessionNote(next, ATLAS, { sessionId: 's1', sessionName: 'atlas', text: 'pronto', writtenAt: 5 });
+  next = addOwnerCard(next, ATLAS, { id: 'o1', createdAt: 1 });
+  for (const drawing of [rect, lineD, ellipseD]) next = addDrawing(next, ATLAS, drawing);
+  next = addLink(next, ATLAS, { id: 'k1', from: 'o1', to: sessionCardId('s1') });
+  return addLink(next, ATLAS, { id: 'k2', from: noteCardId('s1'), to: sessionCardId('s1') });
+}
+
+function drawingIds(next: MindscapeDoc): string[] {
+  return next.boards[ATLAS]!.drawings.map((drawing) => drawing.id);
+}
+
+describe('moveItems', () => {
+  it('moves cards and drawings together by the same offset', () => {
+    const base = full();
+    const before = base.boards[ATLAS]!;
+    const session = sessionCardId('s1');
+    const next = moveItems(base, ATLAS, { cards: ['o1', session], drawings: ['d1', 'l1'] }, 15, -5);
+    const after = next.boards[ATLAS]!;
+    expect(after.cards.o1).toMatchObject({ x: before.cards.o1!.x + 15, y: before.cards.o1!.y - 5 });
+    expect(after.cards[session]).toMatchObject({ x: before.cards[session]!.x + 15, y: before.cards[session]!.y - 5 });
+    expect(after.drawings[0]).toEqual({ ...rect, x: 25, y: 15 });
+    expect(after.drawings[1]).toEqual({ ...lineD, x1: 15, y1: -5, x2: 55, y2: 25 });
+    // Not in the selection: untouched.
+    expect(after.drawings[2]).toBe(before.drawings[2]);
+    expect(after.cards[noteCardId('s1')]).toBe(before.cards[noteCardId('s1')]);
+  });
+
+  it('returns the same document with no offset, no known id, a non-finite offset or a missing board', () => {
+    const base = full();
+    expect(moveItems(base, ATLAS, { cards: ['o1'], drawings: ['d1'] }, 0, 0)).toBe(base);
+    expect(moveItems(base, ATLAS, { cards: ['nope'], drawings: ['nada'] }, 10, 10)).toBe(base);
+    expect(moveItems(base, ATLAS, { cards: ['o1'], drawings: [] }, Number.NaN, 10)).toBe(base);
+    expect(moveItems(base, 'C:/work/vega', { cards: ['o1'], drawings: [] }, 10, 10)).toBe(base);
+  });
+});
+
+describe('removeItems', () => {
+  it('archives the owner post-it and the one written by the session, ignores the session post-it and takes the drawings out', () => {
+    const next = removeItems(full(), ATLAS, { cards: ['o1', noteCardId('s1'), sessionCardId('s1')], drawings: ['d1', 'e1'] });
+    const after = next.boards[ATLAS]!;
+    expect(Object.keys(after.cards)).toEqual([sessionCardId('s1')]);
+    expect(drawingIds(next)).toEqual(['l1']);
+    // The links of the archived cards go with them (archiveCard).
+    expect(after.links).toEqual([]);
+  });
+
+  it('returns the same document when only a session post-it (or nothing known) is selected', () => {
+    const base = full();
+    expect(removeItems(base, ATLAS, { cards: [sessionCardId('s1')], drawings: [] })).toBe(base);
+    expect(removeItems(base, ATLAS, { cards: ['nope'], drawings: ['nada'] })).toBe(base);
+    expect(removeItems(base, 'C:/work/vega', { cards: ['o1'], drawings: ['d1'] })).toBe(base);
+  });
+});
+
+describe('setDrawingsStyle', () => {
+  it('changes the color and the stroke of the given drawings only', () => {
+    const next = setDrawingsStyle(full(), ATLAS, ['d1', 'l1'], { color: 'accent' });
+    expect(next.boards[ATLAS]!.drawings.map((drawing) => drawing.color)).toEqual(['accent', 'accent', 'accent']);
+    const thick = setDrawingsStyle(next, ATLAS, ['d1'], { stroke: 'thick' });
+    expect(thick.boards[ATLAS]!.drawings.map((drawing) => drawing.stroke)).toEqual(['thick', 'thin', 'thick']);
+    expect(thick.boards[ATLAS]!.drawings[1]).toBe(next.boards[ATLAS]!.drawings[1]);
+  });
+
+  it('returns the same document when nothing changes or the style is not one of the bar', () => {
+    const base = full();
+    expect(setDrawingsStyle(base, ATLAS, ['d1'], { color: 'none', stroke: 'medium' })).toBe(base);
+    expect(setDrawingsStyle(base, ATLAS, ['nada'], { color: 'accent' })).toBe(base);
+    expect(setDrawingsStyle(base, ATLAS, ['d1'], {})).toBe(base);
+    expect(setDrawingsStyle(base, ATLAS, ['d1'], { color: 'permission' as never })).toBe(base);
+    expect(setDrawingsStyle(base, ATLAS, ['d1'], { stroke: 'huge' as never })).toBe(base);
+  });
+});
+
+describe('bringToFront / sendToBack', () => {
+  function five(): MindscapeDoc {
+    let next = doc();
+    for (const id of ['a', 'b', 'c', 'd', 'e']) next = addDrawing(next, ATLAS, { ...rect, id });
+    return next;
+  }
+
+  it('moves the group to the top keeping its relative order', () => {
+    expect(drawingIds(bringToFront(five(), ATLAS, ['d', 'b']))).toEqual(['a', 'c', 'e', 'b', 'd']);
+  });
+
+  it('moves the group to the back keeping its relative order', () => {
+    expect(drawingIds(sendToBack(five(), ATLAS, ['d', 'b']))).toEqual(['b', 'd', 'a', 'c', 'e']);
+  });
+
+  it('returns the same document when the group is already there, or unknown', () => {
+    const base = five();
+    expect(bringToFront(base, ATLAS, ['d', 'e'])).toBe(base);
+    expect(sendToBack(base, ATLAS, ['a', 'b'])).toBe(base);
+    expect(bringToFront(base, ATLAS, ['nada'])).toBe(base);
+    expect(sendToBack(base, 'C:/work/vega', ['a'])).toBe(base);
+  });
+});
+
+describe('updateDrawing', () => {
+  it('replaces the drawing with the same id, normalizing the box', () => {
+    const next = updateDrawing(full(), ATLAS, { ...rect, x: 110, w: -100 });
+    expect(next.boards[ATLAS]!.drawings[0]).toEqual({ ...rect, x: 10, w: 100 });
+    const resized = updateDrawing(full(), ATLAS, { ...rect, w: 200 });
+    expect(resized.boards[ATLAS]!.drawings[0]).toEqual({ ...rect, w: 200 });
+    expect(drawingIds(resized)).toEqual(['d1', 'l1', 'e1']);
+  });
+
+  it('returns the same document for an unknown id, an equal drawing or an invalid one', () => {
+    const base = full();
+    expect(updateDrawing(base, ATLAS, { ...rect, id: 'nada' })).toBe(base);
+    expect(updateDrawing(base, ATLAS, { ...rect })).toBe(base);
+    expect(updateDrawing(base, ATLAS, { ...rect, w: 0 })).toBe(base);
+    expect(updateDrawing(base, 'C:/work/vega', rect)).toBe(base);
   });
 });

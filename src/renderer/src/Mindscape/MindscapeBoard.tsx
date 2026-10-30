@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { cardAtPoint, type CardRect } from '../../../shared/mindscape/geometry';
-import type { MindscapeBoard as Board, MindscapeCard } from '../../../shared/mindscape/model';
+import { translateDrawing } from '../../../shared/mindscape/drawings';
+import { cardAtPoint, hitTestDrawings, itemsInsideRect, resizeDrawing, type CardRect, type ItemIds, type Rect, type ResizeHandle } from '../../../shared/mindscape/geometry';
+import type { MindscapeBoard as Board, MindscapeCard, MindscapeDrawing } from '../../../shared/mindscape/model';
 import type { MindscapeTool } from '../../../shared/mindscape/shortcuts';
 import { screenToWorld, type Point } from '../../../shared/mindscape/view';
 import styles from './Mindscape.module.css';
 
 /** Pointer travel (px) before a press becomes a drag — below it, click and double click stay intact; a shorter drawing is dropped. */
 const DRAG_THRESHOLD = 4;
+/** Hit-test slack of a drawing, in px of screen (design: `stroke/2 + 6 px de tela`). */
+const HIT_SLACK_PX = 6;
 
 /** The tools that draw by dragging (fatia 01). */
 export type DrawTool = Extract<MindscapeTool, 'arrow' | 'line' | 'rect' | 'ellipse'>;
@@ -27,37 +30,84 @@ export interface DrawGesture {
   readonly toCard: string | null;
 }
 
+export const EMPTY_ITEMS: ItemIds = { cards: [], drawings: [] };
+
+type Item = { readonly kind: 'cards' | 'drawings'; readonly id: string };
+
+function has(ids: ItemIds, item: Item): boolean {
+  return ids[item.kind].includes(item.id);
+}
+
+function union(a: ItemIds, b: ItemIds): ItemIds {
+  return { cards: [...new Set([...a.cards, ...b.cards])], drawings: [...new Set([...a.drawings, ...b.drawings])] };
+}
+
+function only(item: Item): ItemIds {
+  return item.kind === 'cards' ? { cards: [item.id], drawings: [] } : { cards: [], drawings: [item.id] };
+}
+
+function without(ids: ItemIds, item: Item): ItemIds {
+  return { ...ids, [item.kind]: ids[item.kind].filter((id) => id !== item.id) };
+}
+
 type Preview =
-  | { readonly kind: 'card'; readonly id: string; readonly x: number; readonly y: number }
+  | { readonly kind: 'move'; readonly ids: ItemIds; readonly dx: number; readonly dy: number }
   | { readonly kind: 'pan'; readonly x: number; readonly y: number }
-  | { readonly kind: 'draw'; readonly gesture: DrawGesture };
+  | { readonly kind: 'draw'; readonly gesture: DrawGesture }
+  | { readonly kind: 'lasso'; readonly rect: Rect }
+  | { readonly kind: 'resize'; readonly drawing: MindscapeDrawing };
 
 interface Gesture {
-  readonly kind: 'card' | 'pan' | 'draw';
+  readonly kind: 'move' | 'pan' | 'draw' | 'lasso' | 'resize';
   readonly startX: number;
   readonly startY: number;
-  /** Card being dragged (`card`). */
-  readonly cardId?: string;
+  /** `pan`: the pan when the drag started. */
   readonly originX: number;
   readonly originY: number;
-  /** `draw`: the gesture so far (board units). */
-  draw?: DrawGesture;
-  /** `draw`: top-left of the board element on screen, read on `pointerdown`. */
+  /** Top-left of the board element on screen, read on `pointerdown`. */
   readonly viewLeft: number;
   readonly viewTop: number;
+  /** `move`: the items that travel together. */
+  readonly ids?: ItemIds;
+  /** `move`: a press with no drag narrows the selection to this item (`only`) or takes it out (`toggle-off`). */
+  readonly click?: { readonly item: Item; readonly action: 'only' | 'toggle-off' };
+  /** `lasso`: Shift adds to the selection that existed before. */
+  readonly base?: ItemIds;
+  /** `resize`: the drawing as it was and the handle being dragged. */
+  readonly drawing?: MindscapeDrawing;
+  readonly handle?: ResizeHandle;
+  /** `draw`: the gesture so far (board units). */
+  draw?: DrawGesture;
+  /** `pan` started by H or space: the click that ends it reaches nobody. */
+  readonly swallow?: boolean;
   moved: boolean;
   lastX: number;
   lastY: number;
 }
 
+/** What the board hands to its children: live positions and drawings (previews applied), the drawing in progress and the lasso. */
+export interface BoardRender {
+  readonly positionOf: (card: MindscapeCard) => { x: number; y: number };
+  readonly drawings: readonly MindscapeDrawing[];
+  readonly draft: DrawGesture | null;
+  readonly lasso: Rect | null;
+}
+
 export interface MindscapeBoardProps {
   readonly board: Board;
   readonly tool: MindscapeTool;
-  /** Rects of the cards on screen, in drawing order — the hit-test of the arrow/line ends. */
+  /** Space held: any drag moves the view, whatever the tool. */
+  readonly panMode: boolean;
+  /** Rects of the cards on screen, in drawing order — the hit-test of the arrow/line ends and the lasso. */
   readonly cardRects: readonly CardRect[];
-  /** `pointerup` of a card drag — the only moment the position is written. */
-  readonly onMoveCard: (cardId: string, x: number, y: number) => void;
-  /** `pointerup` of a background drag (V) or of a hand drag (H). */
+  /** The selection (cards and drawings that exist on screen). */
+  readonly selection: ItemIds;
+  readonly onSelect: (next: ItemIds) => void;
+  /** `pointerup` of a drag of the selection — the only moment the positions are written (one entry). */
+  readonly onMoveItems: (ids: ItemIds, dx: number, dy: number) => void;
+  /** `pointerup` of a handle drag. */
+  readonly onResize: (drawing: MindscapeDrawing) => void;
+  /** `pointerup` of a hand drag (H or space). */
   readonly onPan: (pan: { x: number; y: number }) => void;
   /** `pointerup` of a drawing gesture longer than the threshold. */
   readonly onDraw: (gesture: DrawGesture) => void;
@@ -65,8 +115,8 @@ export interface MindscapeBoardProps {
   readonly onBackgroundClick: () => void;
   /** Desenho, fatia 02 — a gesture starts (`pointerdown`) or ends; Ctrl+Z is ignored in between. */
   readonly onGestureChange?: (active: boolean) => void;
-  /** Renders the cards inside the moving plane, with the live position of each one and the drawing in progress. */
-  readonly children: (positionOf: (card: MindscapeCard) => { x: number; y: number }, draft: DrawGesture | null) => ReactNode;
+  /** Renders the layers and the cards inside the moving plane. */
+  readonly children: (render: BoardRender) => ReactNode;
 }
 
 /** Elements inside a card that keep their own pointer behavior (no drag from them, with V). */
@@ -81,16 +131,32 @@ function round(value: number): number {
 
 /**
  * Mindscape — the free canvas: the plane moves with `transform:
- * translate(pan)`. With V, dragging a card moves the card and dragging the
- * background moves the plane (V1, until fatia 03); with H, any drag moves the
- * plane; with A/L/R/O, a drag draws (local preview, written on `pointerup`).
- * A tool change cancels the gesture in flight (Esc goes back to V).
+ * translate(pan)`. With V (desenho, fatia 03), a press on a card or a drawing
+ * selects it (Shift adds or takes out) and a drag moves the whole selection,
+ * a drag on the background draws the lasso and the handles resize the single
+ * selected drawing; with H, or with space held, any drag moves the plane; with
+ * A/L/R/O, a drag draws (local preview, written on `pointerup`). A tool change
+ * cancels the gesture in flight (Esc goes back to V).
  */
-export function MindscapeBoard({ board, tool, cardRects, onMoveCard, onPan, onDraw, onBackgroundClick, onGestureChange, children }: MindscapeBoardProps): React.JSX.Element {
+export function MindscapeBoard({
+  board,
+  tool,
+  panMode,
+  cardRects,
+  selection,
+  onSelect,
+  onMoveItems,
+  onResize,
+  onPan,
+  onDraw,
+  onBackgroundClick,
+  onGestureChange,
+  children,
+}: MindscapeBoardProps): React.JSX.Element {
   const [preview, setPreview] = useState<Preview | null>(null);
   const gestureRef = useRef<Gesture | null>(null);
   const frameRef = useRef<number | null>(null);
-  /** A drag just ended: the click that follows it is not a "plain click" on the background. */
+  /** A drag (or a press on an item) just ended: the click that follows it is not a "plain click" on the background. */
   const suppressClickRef = useRef(false);
   /** A drawing or a hand drag just ended: the click that follows it reaches nobody (no card selected, no link). */
   const swallowClickRef = useRef(false);
@@ -98,8 +164,8 @@ export function MindscapeBoard({ board, tool, cardRects, onMoveCard, onPan, onDr
   boardRef.current = board;
   const rectsRef = useRef(cardRects);
   rectsRef.current = cardRects;
-  const callbacksRef = useRef({ onMoveCard, onPan, onDraw, onGestureChange });
-  callbacksRef.current = { onMoveCard, onPan, onDraw, onGestureChange };
+  const callbacksRef = useRef({ onMoveItems, onResize, onPan, onDraw, onSelect, onGestureChange });
+  callbacksRef.current = { onMoveItems, onResize, onPan, onDraw, onSelect, onGestureChange };
 
   const worldAt = useCallback((gesture: Gesture, clientX: number, clientY: number): Point => {
     const view = { pan: boardRef.current.pan, zoom: boardRef.current.zoom };
@@ -109,16 +175,26 @@ export function MindscapeBoard({ board, tool, cardRects, onMoveCard, onPan, onDr
 
   const previewOf = useCallback(
     (gesture: Gesture): Preview => {
-      if (gesture.kind === 'draw') {
-        const end = worldAt(gesture, gesture.lastX, gesture.lastY);
-        return { kind: 'draw', gesture: { ...gesture.draw!, end } };
-      }
       // Whole pixels: pointer coordinates are fractional under display scaling.
       const dx = Math.round(gesture.lastX - gesture.startX);
       const dy = Math.round(gesture.lastY - gesture.startY);
-      return gesture.kind === 'card'
-        ? { kind: 'card', id: gesture.cardId!, x: gesture.originX + dx, y: gesture.originY + dy }
-        : { kind: 'pan', x: gesture.originX + dx, y: gesture.originY + dy };
+      switch (gesture.kind) {
+        case 'draw':
+          return { kind: 'draw', gesture: { ...gesture.draw!, end: worldAt(gesture, gesture.lastX, gesture.lastY) } };
+        case 'move': {
+          const zoom = boardRef.current.zoom;
+          return { kind: 'move', ids: gesture.ids!, dx: round(dx / zoom), dy: round(dy / zoom) };
+        }
+        case 'lasso': {
+          const start = worldAt(gesture, gesture.startX, gesture.startY);
+          const end = worldAt(gesture, gesture.lastX, gesture.lastY);
+          return { kind: 'lasso', rect: { x: start.x, y: start.y, w: end.x - start.x, h: end.y - start.y } };
+        }
+        case 'resize':
+          return { kind: 'resize', drawing: resizeDrawing(gesture.drawing!, gesture.handle!, worldAt(gesture, gesture.lastX, gesture.lastY)) };
+        case 'pan':
+          return { kind: 'pan', x: gesture.originX + dx, y: gesture.originY + dy };
+      }
     },
     [worldAt],
   );
@@ -140,6 +216,41 @@ export function MindscapeBoard({ board, tool, cardRects, onMoveCard, onPan, onDr
   // A tool change (a key, a button, Esc) cancels the gesture in flight: nothing is written.
   useEffect(() => endGesture(), [tool, endGesture]);
 
+  const finish = (gesture: Gesture): void => {
+    const callbacks = callbacksRef.current;
+    if (!gesture.moved) {
+      // A press with no drag on an already selected item: narrow to it, or (Shift) take it out.
+      if (gesture.kind === 'move' && gesture.click) {
+        const { item, action } = gesture.click;
+        callbacks.onSelect(action === 'only' ? only(item) : without(gesture.ids!, item));
+      }
+      return;
+    }
+    suppressClickRef.current = true;
+    const final = previewOf(gesture);
+    switch (final.kind) {
+      case 'move':
+        callbacks.onMoveItems(final.ids, final.dx, final.dy);
+        break;
+      case 'pan':
+        if (gesture.swallow) swallowClickRef.current = true;
+        callbacks.onPan({ x: final.x, y: final.y });
+        break;
+      case 'lasso': {
+        const inside = itemsInsideRect(final.rect, rectsRef.current, boardRef.current.drawings);
+        callbacks.onSelect(gesture.base ? union(gesture.base, inside) : inside);
+        break;
+      }
+      case 'resize':
+        callbacks.onResize(final.drawing);
+        break;
+      case 'draw':
+        swallowClickRef.current = true;
+        callbacks.onDraw({ ...final.gesture, toCard: cardAtPoint(final.gesture.end, rectsRef.current) });
+        break;
+    }
+  };
+
   const attachGesture = (): void => {
     const move = (event: PointerEvent): void => {
       const gesture = gestureRef.current;
@@ -156,18 +267,7 @@ export function MindscapeBoard({ board, tool, cardRects, onMoveCard, onPan, onDr
     };
     const up = (): void => {
       const gesture = gestureRef.current;
-      if (gesture?.moved) {
-        suppressClickRef.current = true;
-        const final = previewOf(gesture);
-        if (final.kind === 'card') callbacksRef.current.onMoveCard(final.id, final.x, final.y);
-        else if (final.kind === 'pan') {
-          if (gesture.kind === 'pan' && tool === 'hand') swallowClickRef.current = true;
-          callbacksRef.current.onPan({ x: final.x, y: final.y });
-        } else {
-          swallowClickRef.current = true;
-          callbacksRef.current.onDraw({ ...final.gesture, toCard: cardAtPoint(final.gesture.end, rectsRef.current) });
-        }
-      }
+      if (gesture) finish(gesture);
       endGesture();
     };
     callbacksRef.current.onGestureChange?.(true);
@@ -190,45 +290,90 @@ export function MindscapeBoard({ board, tool, cardRects, onMoveCard, onPan, onDr
     const base = {
       startX: event.clientX,
       startY: event.clientY,
+      originX: 0,
+      originY: 0,
       viewLeft: viewBox.left,
       viewTop: viewBox.top,
       moved: false,
       lastX: event.clientX,
       lastY: event.clientY,
     };
-    if (isDrawTool(tool) || tool === 'hand') {
+    if (panMode || tool === 'hand') {
       if (target.closest(EDITABLE)) return;
-      if (tool === 'hand') {
-        gestureRef.current = { ...base, kind: 'pan', originX: boardRef.current.pan.x, originY: boardRef.current.pan.y };
-      } else {
-        const gesture: Gesture = { ...base, kind: 'draw', originX: 0, originY: 0 };
-        const start = worldAt(gesture, event.clientX, event.clientY);
-        gesture.draw = { tool, id: crypto.randomUUID(), start, end: start, fromCard: cardAtPoint(start, rectsRef.current), toCard: null };
-        gestureRef.current = gesture;
-      }
+      gestureRef.current = { ...base, kind: 'pan', originX: boardRef.current.pan.x, originY: boardRef.current.pan.y, swallow: true };
       attachGesture();
       return;
     }
-    if (tool !== 'select' || target.closest(INTERACTIVE)) return;
+    if (isDrawTool(tool)) {
+      if (target.closest(EDITABLE)) return;
+      const gesture: Gesture = { ...base, kind: 'draw' };
+      const start = worldAt(gesture, event.clientX, event.clientY);
+      gesture.draw = { tool, id: crypto.randomUUID(), start, end: start, fromCard: cardAtPoint(start, rectsRef.current), toCard: null };
+      gestureRef.current = gesture;
+      attachGesture();
+      return;
+    }
+    // V: a handle of the single selected drawing resizes it.
+    const handleElement = target.closest<SVGElement>('[data-handle]');
+    if (handleElement) {
+      const drawing = boardRef.current.drawings.find((candidate) => candidate.id === handleElement.dataset.drawingId);
+      if (!drawing) return;
+      gestureRef.current = { ...base, kind: 'resize', drawing, handle: handleElement.dataset.handle as ResizeHandle };
+      attachGesture();
+      return;
+    }
+    if (target.closest(INTERACTIVE)) return;
     const cardId = target.closest<HTMLElement>('[data-card-id]')?.dataset.cardId;
-    const card = cardId ? boardRef.current.cards[cardId] : undefined;
-    if (cardId && !card) return;
-    const origin = card ? { x: card.x, y: card.y } : boardRef.current.pan;
-    gestureRef.current = { ...base, kind: card ? 'card' : 'pan', cardId: card?.id, originX: origin.x, originY: origin.y };
+    if (cardId && !boardRef.current.cards[cardId]) return;
+    let item: Item | null = cardId ? { kind: 'cards', id: cardId } : null;
+    if (!item) {
+      const point = worldAt({ ...base, kind: 'move' }, event.clientX, event.clientY);
+      const drawingId = hitTestDrawings(boardRef.current.drawings, point, HIT_SLACK_PX / boardRef.current.zoom);
+      if (drawingId) item = { kind: 'drawings', id: drawingId };
+    }
+    if (!item) {
+      // The background: the lasso (Shift adds to what was selected).
+      gestureRef.current = { ...base, kind: 'lasso', base: event.shiftKey ? selection : undefined };
+      attachGesture();
+      return;
+    }
+    // A press on an item is never a click on the background.
+    suppressClickRef.current = true;
+    const selected = has(selection, item);
+    let ids: ItemIds;
+    let click: Gesture['click'];
+    if (event.shiftKey) {
+      ids = selected ? selection : union(selection, only(item));
+      click = selected ? { item, action: 'toggle-off' } : undefined;
+    } else {
+      ids = selected ? selection : only(item);
+      click = selected ? { item, action: 'only' } : undefined;
+    }
+    if (!selected) callbacksRef.current.onSelect(ids);
+    gestureRef.current = { ...base, kind: 'move', ids, click };
     attachGesture();
   };
 
   const pan = preview?.kind === 'pan' ? preview : board.pan;
+  const moving = preview?.kind === 'move' ? preview : null;
   const positionOf = (card: MindscapeCard): { x: number; y: number } =>
-    preview?.kind === 'card' && preview.id === card.id ? { x: preview.x, y: preview.y } : { x: card.x, y: card.y };
+    moving && moving.ids.cards.includes(card.id) ? { x: card.x + moving.dx, y: card.y + moving.dy } : { x: card.x, y: card.y };
+  const resized = preview?.kind === 'resize' ? preview.drawing : null;
+  const drawings =
+    moving && moving.ids.drawings.length > 0
+      ? board.drawings.map((drawing) => (moving.ids.drawings.includes(drawing.id) ? translateDrawing(drawing, moving.dx, moving.dy) : drawing))
+      : resized
+        ? board.drawings.map((drawing) => (drawing.id === resized.id ? resized : drawing))
+        : board.drawings;
 
   return (
     <div
       className={preview?.kind === 'pan' ? `${styles.view} ${styles.panning}` : styles.view}
       data-testid="mindscape-board"
       data-tool={tool}
+      data-space={panMode ? 'true' : undefined}
       data-pan={`${board.pan.x},${board.pan.y}`}
-      data-dragging={preview?.kind === 'card' ? preview.id : undefined}
+      data-dragging={moving ? 'true' : undefined}
       onPointerDown={handlePointerDown}
       onClickCapture={(event) => {
         if (!swallowClickRef.current) return;
@@ -246,7 +391,12 @@ export function MindscapeBoard({ board, tool, cardRects, onMoveCard, onPan, onDr
       }}
     >
       <div className={styles.world} data-testid="mindscape-world" style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}>
-        {children(positionOf, preview?.kind === 'draw' ? preview.gesture : null)}
+        {children({
+          positionOf,
+          drawings,
+          draft: preview?.kind === 'draw' ? preview.gesture : null,
+          lasso: preview?.kind === 'lasso' ? preview.rect : null,
+        })}
       </div>
     </div>
   );

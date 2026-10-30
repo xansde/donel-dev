@@ -31,7 +31,14 @@ export interface MindscapeToolbarProps {
   readonly tool: MindscapeTool;
   readonly onTool: (tool: MindscapeTool) => void;
   readonly style: DrawStyle;
-  readonly onStyle: (style: DrawStyle) => void;
+  /** A color of the bar: style of the next drawing and of the selected drawings (fatia 03). */
+  readonly onColor: (color: DrawingColor) => void;
+  /** A stroke of the bar: style of the next drawing and of the selected drawings (fatia 03). */
+  readonly onStroke: (stroke: DrawingStroke) => void;
+  /** Fatia 03 — at least one drawing selected: "Trazer para frente" / "Mandar para trás". */
+  readonly canRestack: boolean;
+  readonly onBringToFront: () => void;
+  readonly onSendToBack: () => void;
   readonly selectedLink?: MindscapeLink;
   readonly onToggleLinkArrow: () => void;
   readonly onRemoveLink: () => void;
@@ -43,8 +50,9 @@ export interface MindscapeToolbarProps {
 
 /**
  * Mindscape desenho, fatia 01 — the bar of the board: tools with their key
- * (the active one pressed), color and stroke of the next drawing, the actions
- * of the selected link, "Novo post-it", "Ir ao terminal" and the hint strip.
+ * (the active one pressed), color and stroke of the next drawing (and, from
+ * fatia 03, of the selected drawings), the layer of the selected drawings, the
+ * actions of the selected link, "Novo post-it", "Ir ao terminal" and the hint strip.
  * No prototype for this delivery: the form follows the V1 bar.
  */
 export function MindscapeToolbar({
@@ -52,7 +60,11 @@ export function MindscapeToolbar({
   tool,
   onTool,
   style,
-  onStyle,
+  onColor,
+  onStroke,
+  canRestack,
+  onBringToFront,
+  onSendToBack,
   selectedLink,
   onToggleLinkArrow,
   onRemoveLink,
@@ -90,7 +102,7 @@ export function MindscapeToolbar({
             aria-pressed={color === style.color}
             aria-label={COLOR_LABEL[color]}
             title={COLOR_LABEL[color]}
-            onClick={() => onStyle({ ...style, color })}
+            onClick={() => onColor(color)}
           />
         ))}
       </div>
@@ -104,12 +116,22 @@ export function MindscapeToolbar({
             aria-pressed={stroke === style.stroke}
             aria-label={STROKE_LABEL[stroke]}
             title={STROKE_LABEL[stroke]}
-            onClick={() => onStyle({ ...style, stroke })}
+            onClick={() => onStroke(stroke)}
           >
             <span className={styles.strokeSample} style={{ height: STROKE_SAMPLE[stroke] }} />
           </button>
         ))}
       </div>
+      {canRestack ? (
+        <div className={styles.toolGroup} role="group" aria-label="Camada">
+          <button type="button" className={styles.toolButton} title="Trazer para frente (Ctrl+Shift+])" onClick={onBringToFront}>
+            Trazer para frente
+          </button>
+          <button type="button" className={styles.toolButton} title="Mandar para trás (Ctrl+Shift+[)" onClick={onSendToBack}>
+            Mandar para trás
+          </button>
+        </div>
+      ) : null}
       {selectedLink ? (
         <div className={styles.toolGroup} role="group" aria-label="Ligação selecionada">
           <button type="button" className={styles.toolButton} aria-pressed={selectedLink.arrow} onClick={onToggleLinkArrow}>
