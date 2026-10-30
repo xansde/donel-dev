@@ -33,7 +33,7 @@ export interface FooterInput {
   /** The last action the footer saw while working (the "parou depois de" part of "Interrompido"). */
   readonly lastAction: LiveAction | null;
   /**
-   * The screen shows "esc to interrupt" (`null` = unknown). The CLI fires no Stop hook on a user interrupt, so
+   * The screen proves the turn (`isWorking`; `null` = unknown). The CLI fires no Stop hook on a user interrupt, so
    * `status` can stay `working`: the marker in the transcript plus a screen that stopped working is the proof.
    */
   readonly screenWorking?: boolean | null;
@@ -116,7 +116,7 @@ export function stopFeedback(requestedAt: number | null, now: number): StopFeedb
   return now - requestedAt < STOP_TIMEOUT_MS ? 'stopping' : 'stuck';
 }
 
-/** A press that reached nothing (the screen did not show "esc to interrupt"): no point waiting 5 s to say so. */
+/** A press that reached nothing (the screen did not prove the turn): no point waiting 5 s to say so. */
 export const expiredStopRequest = (now: number): number => now - STOP_TIMEOUT_MS;
 
 export const STOP_STUCK_HINT = 'o Claude não parou — tente de novo ou abra o terminal';

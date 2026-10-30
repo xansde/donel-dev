@@ -84,3 +84,26 @@ de tela (`src/shared/cliInputBox.ts`, `trustDialog.ts`, `chat/screen.ts`).
 | `working-queued-two` | fullscreen | real | Trabalhando com 2 mensagens na fila. |
 | `working-typed` | fullscreen | synthetic | Trabalhando com texto real digitado na caixa. |
 | `working` | fullscreen | real | Trabalhando: spinner, "esc to interrupt", caixa vazia. |
+| `sl-idle-after-turn` | inline | real | **2.1.314 com `statusLine`** (que não imprime nada, modo bypass): turno encerrado ("✻ … for 30s · done"); o rodapé só tem o modo, sem "? for shortcuts". |
+| `sl-print-idle` | inline | real | **2.1.314 com `statusLine`** que imprime uma linha (modo manual): ocioso; rodapé = saída da statusline + modo. |
+| `sl-print-working` | inline | real | **2.1.314 com `statusLine`** que imprime uma linha: turno em andamento, spinner + Tip acima da caixa, rodapé sem "esc to interrupt". |
+| `sl-working` | inline | real | **2.1.314 com `statusLine`** (não imprime nada): turno começando, spinner acima da caixa, rodapé sem "esc to interrupt". |
+| `sl-working-queued` | inline | real | **2.1.314 com `statusLine`**: mensagem na fila do CLI durante o turno. |
+| `sl-working-typed` | inline | real | **2.1.314 com `statusLine`**: texto digitado durante o turno; spinner + Tip acima da caixa. |
+| `v314-working` | inline | real | 2.1.314 **sem** statusLine: turno começando; "esc to interrupt" no rodapé e `❯` dim. |
+| `v314-working-typed` | inline | real | 2.1.314 **sem** statusLine: texto digitado durante o turno; o rodapé **já não** diz "esc to interrupt". |
+
+## Fixtures `sl-*` e `v314-*` (CLI 2.1.314, 30/10)
+
+Capturadas do CLI real (haiku, `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`, por isso `inline`), com `@xterm/headless`
+e a máscara *dim* lida das células (não anotada à mão). `sl-*` têm uma `statusLine` no `--settings`; `v314-*` não
+têm nenhuma. O que elas mostram:
+
+- Com qualquer `statusLine` configurada o CLI tira "esc to interrupt" e "? for shortcuts" do rodapé.
+- **Mesmo sem statusLine**, com texto na caixa durante o turno o rodapé também não diz "esc to interrupt"
+  (`v314-working-typed`).
+- Com o turno em andamento a marca `❯` da caixa é **dim** (nos dois modos).
+- Em todos os casos o turno em andamento se prova pela linha do spinner acima da caixa (`✻ Verbo… (…)`).
+
+Caminhos locais e o texto de um hook pessoal foram trocados por genéricos (`~\projetos\atlas`,
+`running UserPromptSubmit hooks… 1/2`).

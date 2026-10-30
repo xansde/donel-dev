@@ -28,12 +28,17 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
 | `DONEL_FAKE_CLAUDE_SLOW_MS` | Duracao extra (padrao 3000) de uma rodada cujo prompt contem `demorar`; Esc a encerra antes |
 | `DONEL_SMOKE_SHOTS_DIR` | (do `chatHelpers.shot`, nao do falso) copia extra dos prints dos smokes de chat para esta pasta |
 | `DONEL_FAKE_CLAUDE_DROP_FIRST_ENTER` | `1`: o primeiro Enter com texto na caixa e engolido (Enter perdido), para testar o reenvio de `\r` |
+| `DONEL_FAKE_CLAUDE_FOOTER_HINTS` | `0`: rodape SEM as dicas (`? for shortcuts`, `! for shell mode`, `esc to interrupt`), como o CLI 2.1.314 com qualquer `statusLine`. Padrao: com as dicas (varios smokes esperam "shortcuts" como sinal de que o falso subiu) |
 | `DONEL_FAKE_CLAUDE_HIDE_BOX_WHILE_WORKING` | `1`: durante a rodada a caixa e o rodape somem (so `● Bash(...) Running…`), como o CLI real num comando longo; o que e digitado continua indo para a caixa e o Enter para a fila |
 
 ## Comportamento
 
 - Liga bracketed paste (`ESC[?2004h`); desenha banner, caixa entre reguas (`❯ ...`) e
   rodape: `? for shortcuts` ocioso, `! for shell mode` com texto digitado, `esc to interrupt` trabalhando.
+  Durante a rodada desenha tambem a linha do spinner acima da caixa (`✻ Pondering… (Ns)`), como o CLI real.
+- **Rodape sem as dicas** (o CLI 2.1.314 com qualquer `statusLine`): com `DONEL_FAKE_CLAUDE_FOOTER_HINTS=0` o
+  rodape nao tem `? for shortcuts`, `! for shell mode` nem `esc to interrupt`; so o modo (`⏸ manual mode on`, ou
+  `accept edits on`), sempre. A rodada se prova pelo spinner. Os smokes do chat rodam nos dois modos.
 - Colagem com 5+ linhas ou 1000+ caracteres vira `[Pasted text #N +M lines]` (M = quebras
   de linha); no Enter o texto completo volta no `prompt`. Colagem menor fica literal na caixa.
   Colagem de um caminho absoluto de imagem (`.png/.jpg/.jpeg/.gif/.webp`) vira `[Image #N]` - tambem

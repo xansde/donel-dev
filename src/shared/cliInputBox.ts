@@ -45,7 +45,7 @@
 //  - NÃO depende do rodapé 'shift+tab to cycle': ele está presente ANTES e
 //    DEPOIS do submit (as duas fixtures acima o contêm) — não discrimina nada.
 
-import { lineText, visibleText, type LineInput } from './screenLine';
+import { lineText, visibleText, visibleTextFrom, type LineInput } from './screenLine';
 import { isTrustDialogVisible } from './trustDialog';
 
 const RULER_CHAR = '─';
@@ -144,18 +144,20 @@ export function readInputBox(lines: readonly LineInput[]): CliInputBox {
   if (inside.length === 0 || inside.length > MAX_INPUT_BOX_LINES) return { kind: 'unreadable' };
   if (inside.some((line) => MENU_OPTION_PATTERN.test(lineText(line)))) return { kind: 'menu' };
 
-  const visible = inside.map(visibleText);
-  const promptAt = visible.findIndex((line) => PROMPT_MARK_PATTERN.test(line));
+  // A marca se procura no texto CRU: com o turno em andamento o CLI 2.1.314 pinta o `❯` em dim (medido em
+  // 30/10, com e sem statusLine), e procurá-la no texto visível dava "caixa ilegível" no meio de todo turno.
+  // O que vem depois da marca continua sem as runs dim (placeholder, dica da fila, sugestão fantasma).
+  const promptAt = inside.findIndex((line) => PROMPT_MARK_PATTERN.test(lineText(line)));
   if (promptAt < 0) return { kind: 'unreadable' };
 
-  const mark = PROMPT_MARK_PATTERN.exec(visible[promptAt]);
+  const mark = PROMPT_MARK_PATTERN.exec(lineText(inside[promptAt]));
   const shell = mark?.[1] === '!';
   // As linhas depois da marca são continuação do MESMO input lógico, quebrado
   // pela largura do terminal — junta sem separador nenhum (e sem o recuo de 2
   // colunas com que a caixa alinha as continuações).
   const text = [
-    visible[promptAt].replace(PROMPT_MARK_PATTERN, ''),
-    ...visible.slice(promptAt + 1).map((line) => line.replace(CONTINUATION_INDENT_PATTERN, '')),
+    visibleTextFrom(inside[promptAt], mark?.[0].length ?? 0),
+    ...inside.slice(promptAt + 1).map((line) => visibleText(line).replace(CONTINUATION_INDENT_PATTERN, '')),
   ].join('');
   if (text.trim() === '') return shell ? { kind: 'empty', shell: true } : { kind: 'empty' };
   return shell ? { kind: 'typed', text, shell: true } : { kind: 'typed', text };

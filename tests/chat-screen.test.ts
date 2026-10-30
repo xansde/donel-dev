@@ -87,6 +87,16 @@ const TABLE: Record<string, Expectation> = {
   'working-queued-two': { ready: true, text: '', working: true, queued: true, blocking: null },
   interrupted: idle(),
   'working-typed': { ready: true, text: 'half written message', working: true, queued: false, blocking: null },
+  // CLI 2.1.314 com `statusLine`: rodapé sem "esc to interrupt"/"? for shortcuts" (o spinner prova o turno)
+  'sl-idle-after-turn': idle(),
+  'sl-print-idle': idle(),
+  'sl-working': { ready: true, text: '', working: true, queued: false, blocking: null },
+  'sl-print-working': { ready: true, text: '', working: true, queued: false, blocking: null },
+  'sl-working-typed': { ready: true, text: 'queued follow up message', working: true, queued: false, blocking: null },
+  'sl-working-queued': { ready: true, text: '', working: true, queued: true, blocking: null },
+  // CLI 2.1.314 sem statusLine: ❯ dim no turno; com texto na caixa o rodapé já não diz "esc to interrupt"
+  'v314-working': { ready: true, text: '', working: true, queued: false, blocking: null },
+  'v314-working-typed': { ready: true, text: 'queued follow up message', working: true, queued: false, blocking: null },
   // caixa
   'box-shell-typed': idle('!echo spike'),
   'box-shell-placeholder': idle('!'),
@@ -260,5 +270,84 @@ describe('gate de prontidão (send-protocol §1)', () => {
   it('aceita entrada de strings simples (sem máscara dim)', () => {
     const plain = load('idle-empty').map((l) => l.text);
     expect(isReadyForInput(plain)).toBe(true);
+  });
+});
+
+// Com QUALQUER `statusLine` configurada o CLI 2.1.314 tira do rodapé "esc to interrupt" e "? for shortcuts"
+// (medido em 30/10 com o CLI real, haiku, com e sem statusLine). Sobram o modo de permissão e a saída da
+// statusline. A prova de turno em andamento que sobra é a linha do spinner logo acima da caixa
+// ("✻ Booping… (31s · ↓ 58 tokens)"), que aparece no mesmo quadro em que o "esc to interrupt" apareceria e some
+// no mesmo quadro em que ele sumiria (Esc ou fim do turno).
+describe('rodapé sem as dicas (statusLine configurada, CLI 2.1.314)', () => {
+  const RULE = '─'.repeat(120);
+  const shot = (opts: { above?: string[]; box?: string; footer: string[] }): string[] => [
+    '● resposta anterior',
+    '',
+    ...(opts.above ?? []),
+    '',
+    RULE,
+    opts.box === undefined || opts.box === '' ? '❯ ' : `❯ ${opts.box}`,
+    RULE,
+    ...opts.footer,
+  ];
+  const BYPASS = '  ⏵⏵ bypass permissions on (shift+tab to cycle)';
+  const MANUAL = '  ⏸ manual mode on';
+
+  it('ocioso, só com o modo no rodapé: pronto e não trabalhando', () => {
+    const lines = shot({ above: ['✻ Brewed for 55s · done 17:34'], footer: [BYPASS] });
+    expect(isReadyForInput(lines)).toBe(true);
+    expect(isWorking(lines)).toBe(false);
+  });
+
+  it('ocioso com a saída da statusline acima do modo: pronto e não trabalhando', () => {
+    const lines = shot({ footer: ['SL-TEST-LINE', MANUAL] });
+    expect(isReadyForInput(lines)).toBe(true);
+    expect(isWorking(lines)).toBe(false);
+  });
+
+  it('trabalhando: a linha do spinner acima da caixa prova o turno', () => {
+    for (const spinner of [
+      '✻ Booping… (31s · ↓ 58 tokens)',
+      '· Crystallizing… (Desbloqueando Bitwarden...… 2/4 · 0s)',
+      '✢ Razzmatazzing…',
+      '* Sautéing… (running PreToolUse hooks… 0/4 · 1s)',
+      '✶ Fiddle-faddling…',
+      '✽ Processing… (10s · ↓ 75 tokens · thinking)',
+    ]) {
+      const lines = shot({ above: ['❯ rode o ping', spinner], footer: [BYPASS] });
+      expect(isWorking(lines), spinner).toBe(true);
+      expect(isReadyForInput(lines), spinner).toBe(true);
+    }
+  });
+
+  it('o spinner pode ter linhas entre ele e a caixa (esforço, aviso)', () => {
+    const lines = shot({ above: ['✢ Onioning… (21s · ↓ 2.5k tokens)', '                                    ◐ medium · /effort'], footer: [MANUAL] });
+    expect(isWorking(lines)).toBe(true);
+  });
+
+  it('a linha de turno encerrado ("… for Ns · done") não é trabalho', () => {
+    for (const done of ['✻ Cogitated for 40s · done 17:32', '✻ Worked for 26s · done 17:38', '✻ Baked for 31s · done 17:36']) {
+      expect(isWorking(shot({ above: [done], footer: [BYPASS] })), done).toBe(false);
+    }
+  });
+
+  it('texto recuado com reticências (lista de um diálogo, resposta) não é spinner', () => {
+    expect(isWorking(shot({ above: ['    * claude (agent) – Catch-all for any task that doesn\'t fit a more specific age…'], footer: [MANUAL] }))).toBe(false);
+    expect(isWorking(shot({ above: ['● Vou conferir…'], footer: [MANUAL] }))).toBe(false);
+    expect(isWorking(shot({ above: ['  ⎿  Running…'], footer: [MANUAL] }))).toBe(false);
+  });
+
+  it('o spinner só conta logo acima da caixa: um antigo no histórico não', () => {
+    const lines = ['✻ Booping… (31s)', ...Array.from({ length: 12 }, (_, i) => `● linha ${i}`), ...shot({ footer: [BYPASS] })];
+    expect(isWorking(lines)).toBe(false);
+  });
+
+  it('sem caixa não há prova na tela', () => {
+    expect(isWorking(['✻ Booping… (31s)', '  ● Bash(npx vitest run)', '    ⎿  Running…'])).toBe(false);
+  });
+
+  it('com as dicas no rodapé segue como antes', () => {
+    expect(isWorking(shot({ footer: ['  ⏸ manual mode on · esc to interrupt · ← for agents'] }))).toBe(true);
+    expect(isWorking(shot({ footer: ['  ⏸ manual mode on · ? for shortcuts · ← for agents'] }))).toBe(false);
   });
 });

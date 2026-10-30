@@ -152,11 +152,13 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
 //    saída e o mesmo código de saída) e posta uma cópia na ponte.
 // 2. Com QUALQUER `statusLine` configurada, o CLI some com as dicas do rodapé
 //    ("esc to interrupt", "? for shortcuts") — mesmo quando ela não imprime
-//    nada. O chat lê "esc to interrupt" da tela (Parar, `shared/chat/
-//    screen.ts`). Então, sem statusline do usuário, só injetamos quando o chat
-//    está desligado (ninguém no app lê essas dicas) ou quando
-//    `DONEL_STATUSLINE_BRIDGE=always` força. Com a do usuário as dicas já
-//    tinham sumido: encadear não muda a tela.
+//    nada (e uma que não imprime nada não deixa linha em branco: o rodapé fica
+//    só com o modo de permissão). O chat NÃO depende dessas dicas: prova o
+//    turno pela linha do spinner acima da caixa (`shared/chat/screen.ts`,
+//    `isWorking`), que fica nos dois modos — medido no CLI real em 30/10. Por
+//    isso a ponte é injetada sempre (chat ligado ou não);
+//    `DONEL_STATUSLINE_BRIDGE=off` desliga tudo, e `always` vale o mesmo que
+//    o padrão (ficou por compatibilidade).
 // 3. No Windows o comando roda no Git Bash quando ele existe, senão no
 //    PowerShell (o mesmo executor dos hooks de comando, sem campo `shell`). O
 //    comando gerado vale nos dois: `powershell ... -File "<ps1>"`, `curl` e o
@@ -191,13 +193,14 @@ export function statusLineBridgeMode(raw: string | undefined): StatusLineBridgeM
 export function planStatusLineBridge(input: {
   readonly mode: StatusLineBridgeMode;
   readonly userStatusLine: UserStatusLine | null;
-  readonly chatEnabled: boolean;
+  /** Não muda mais a decisão: o chat não lê as dicas do rodapé que a statusline esconde (fato 2 acima). */
+  readonly chatEnabled?: boolean;
 }): StatusLineBridgePlan | null {
   if (input.mode === 'off') return null;
   if (input.userStatusLine) {
     return isChainableStatusLineCommand(input.userStatusLine.command) ? { kind: 'chain', user: input.userStatusLine } : null;
   }
-  return input.mode === 'always' || !input.chatEnabled ? { kind: 'forward' } : null;
+  return { kind: 'forward' };
 }
 
 /**

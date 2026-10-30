@@ -50,14 +50,19 @@ export function dimRanges(line: LineInput): DimRange[] {
 
 /** Text of a line WITHOUT the dim runs (placeholder, ghost suggestion and hints removed). */
 export function visibleText(line: LineInput): string {
-  const ranges = dimRanges(line);
-  if (ranges.length === 0) return lineText(line);
+  return visibleTextFrom(line, 0);
+}
+
+/** `visibleText` of the characters from index `start` on (UTF-16 index into `text`). */
+export function visibleTextFrom(line: LineInput, start: number): string {
   const text = lineText(line);
+  const ranges = dimRanges(line);
+  if (ranges.length === 0) return text.slice(start);
   let out = '';
-  let cursor = 0;
-  for (const [start, end] of ranges) {
-    if (start > cursor) out += text.slice(cursor, start);
-    cursor = Math.max(cursor, end);
+  let cursor = start;
+  for (const [from, to] of ranges) {
+    if (from > cursor) out += text.slice(cursor, from);
+    cursor = Math.max(cursor, to);
   }
   return out + text.slice(cursor);
 }

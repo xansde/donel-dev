@@ -994,3 +994,102 @@ describe('status para a UI', () => {
     expect(a.state).toBe(before);
   });
 });
+
+// Com qualquer `statusLine` configurada (a ponte da statusline do app, ou a do próprio usuário) o CLI 2.1.314
+// tira "esc to interrupt" e "? for shortcuts" do rodapé; sobram o modo e a saída da statusline. O turno em
+// andamento se prova pela linha do spinner acima da caixa (medido em 30/10). Os mesmos caminhos do envio,
+// com essa tela.
+describe('rodapé sem as dicas (statusLine configurada)', () => {
+  const MODE_ONLY = '  ⏵⏵ bypass permissions on (shift+tab to cycle)';
+  const SPINNER = '✻ Booping… (31s · ↓ 58 tokens)';
+  const quiet = (boxText = '', above: string[] = []) => screen(boxText, MODE_ONLY, ['✻ Worked for 26s · done 17:38', ...above]);
+  const busy = (boxText = '') => screen(boxText, MODE_ONLY, ['❯ rode os testes', SPINNER, '']);
+
+  it('ocioso: o gate abre e o Enter sai como ocioso', () => {
+    const sim = new Sim({ text: 'oi' });
+    sim.screen(quiet(), 0);
+    expect(sim.writes()).toEqual([paste('oi')]);
+    sim.screen(quiet('oi'), 100);
+    sim.tick(180);
+    expect(sim.writes()).toEqual(['\r']);
+    expect(sim.state.idleAtEnter).toBe(true);
+  });
+
+  it('trabalhando: o prompt vai na hora e o Enter sai como "no meio da rodada"', () => {
+    const sim = new Sim({ text: 'oi' });
+    sim.screen(busy(), 0);
+    expect(sim.writes()).toEqual([paste('oi')]);
+    sim.screen(busy('oi'), 100);
+    sim.tick(180);
+    expect(sim.state.idleAtEnter).toBe(false);
+    sim.screen(busy(), 3_180);
+    expect(sim.phase).toBe('queued');
+  });
+
+  it.each(['/meu-skill x', '!ls'])('%s espera o spinner sumir', (text) => {
+    const sim = new Sim({ text });
+    sim.screen(busy(), 0);
+    sim.tick(600_000);
+    expect(sim.allWrites()).toEqual([]);
+    expect(sim.status?.reason).toBe('esperando o Claude terminar a rodada');
+    sim.screen(quiet(), 600_001);
+    expect(sim.allWrites()).toEqual([paste(text)]);
+  });
+
+  it('interromper e mandar agora: ESC com o spinner e a colagem quando ele some', () => {
+    const sim = new Sim({ text: 'pare e faça', mode: 'interrupt-first' });
+    sim.screen(busy(), 0);
+    expect(sim.writes()).toEqual(['\x1b']);
+    sim.screen(busy(), 500);
+    expect(sim.allWrites()).toEqual(['\x1b']);
+    sim.screen(quiet(), 700);
+    expect(sim.allWrites()).toEqual(['\x1b', paste('pare e faça')]);
+  });
+
+  it('interromper e mandar agora: o spinner não some em 3 s → cola assim mesmo, um ESC só', () => {
+    const sim = new Sim({ text: 'pare e faça', mode: 'interrupt-first' });
+    sim.screen(busy(), 0);
+    sim.screen(busy(), 2_999);
+    expect(sim.allWrites()).toEqual(['\x1b']);
+    sim.screen(busy(), 3_000);
+    expect(sim.allWrites()).toEqual(['\x1b', paste('pare e faça')]);
+  });
+
+  it('interromper e mandar agora com o CLI ocioso: sem ESC', () => {
+    const sim = new Sim({ text: 'oi', mode: 'interrupt-first' });
+    sim.screen(quiet(), 0);
+    expect(sim.writes()).toEqual([paste('oi')]);
+  });
+
+  it('texto que sobrou na caixa com o spinner: sem "Descartar"', () => {
+    const sim = new Sim({ text: 'oi' });
+    sim.screen(busy('rascunho'), 0);
+    const left = sim.log.find((e) => e.type === 'leftover') as Extract<SendEffect, { type: 'leftover' }>;
+    expect(left.canDiscard).toBe(false);
+    sim.ev({ type: 'action', now: 10, action: 'discard-and-send' });
+    expect(sim.allWrites()).toEqual([]);
+  });
+
+  it('texto que sobrou na caixa sem o spinner: "Descartar" vale', () => {
+    const sim = new Sim({ text: 'oi' });
+    sim.screen(quiet('rascunho'), 0);
+    const left = sim.log.find((e) => e.type === 'leftover') as Extract<SendEffect, { type: 'leftover' }>;
+    expect(left.canDiscard).toBe(true);
+  });
+
+  it('"na fila": hooks parados mas o spinner ainda na tela adia a conferência', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(busy(), 0);
+    sim.screen(busy('oi tudo bem'), 100);
+    sim.tick(180);
+    sim.screen(busy(), 3_180);
+    expect(sim.phase).toBe('queued');
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    const r = sim.screen(busy(), 115_000);
+    expect(sim.log.filter((e) => e.type === 'ack-lookup')).toEqual([]);
+    expect(r.effects).toContainEqual({ type: 'wake-at', at: 130_000 });
+    sim.screen(quiet(), 130_000);
+    expect(sim.log.filter((e) => e.type === 'ack-lookup')).toHaveLength(1);
+  });
+});
