@@ -18,6 +18,30 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-10-31',
     items: [
       {
+        title: 'Mindscape: barra de desenho',
+        text: 'O quadro ganhou uma barra de ferramentas: retângulo (R), elipse (O), linha (L) e seta (A), com 3 cores e 3 espessuras. Uma seta puxada de um post-it a outro vira ligação, e o botão "Ligar" saiu. V volta para a seleção e H (ou espaço segurado) arrasta o quadro.',
+      },
+      {
+        title: 'Mindscape: selecionar, mover e arrumar',
+        text: 'Clique para selecionar, Shift+clique para somar, arraste no fundo para laçar vários e Ctrl+A para pegar tudo. A seleção anda junta, sai com Delete, cresce pelas alças, troca de cor e espessura pela barra e vai para frente ou para trás.',
+      },
+      {
+        title: 'Mindscape: lápis e borracha',
+        text: 'Com P você rabisca à mão livre. Com E, um círculo segue o cursor e apaga só o pedaço que toca: um rabisco pode virar dois, retângulos e ligações saem inteiros, post-it nunca sai.',
+      },
+      {
+        title: 'Mindscape: desfazer e refazer',
+        text: 'Ctrl+Z desfaz e Ctrl+Shift+Z refaz o que você fez no quadro, um gesto por vez, sem apagar o que a sessão escreveu nos post-its dela no meio do caminho.',
+      },
+      {
+        title: 'Mindscape: zoom',
+        text: 'Ctrl+roda do mouse (ou pinça no touchpad) aproxima e afasta de 25% a 400%, centrado no mouse. A roda sozinha move o quadro, com Shift para os lados. No canto inferior esquerdo, "− 100% +" ajusta, e clicar no número volta a 100%. Cada projeto lembra o próprio zoom.',
+      },
+      {
+        title: 'Mindscape: prints no quadro',
+        text: 'Cole um print com Ctrl+V ou arraste um arquivo de imagem para o quadro: ele aparece onde está o mouse, e dá para mover, redimensionar sem distorcer, apagar e desfazer. Acima de 10 MB aparece um aviso, e imagens que o quadro não usa mais são limpas sozinhas na abertura seguinte.',
+      },
+      {
         title: 'Mensagem mandada com o Claude ocupado não cai mais em "não foi"',
         text: 'Ainda acontecia: com o Claude rodando um comando demorado, a mensagem ficava meio minuto esperando e virava "não foi · o Claude não ficou pronto". Agora ela fica "na fila", dizendo que espera o Claude terminar o que está fazendo, e entra sozinha assim que ele libera.',
       },
