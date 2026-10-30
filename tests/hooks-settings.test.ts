@@ -123,6 +123,15 @@ describe('buildSessionHooksSettings', () => {
     }
   });
 
+  it('isolated worktree tab: the file carries worktree.baseRef "head" (start from the folder\'s current branch)', () => {
+    expect(buildSessionHooksSettings({ ...base, isolatedWorktree: true })).toMatchObject({ worktree: { baseRef: 'head' } });
+  });
+
+  it('any other tab: no worktree key at all (the CLI default and the owner\'s settings stay as they are)', () => {
+    expect(buildSessionHooksSettings(base)).not.toHaveProperty('worktree');
+    expect(buildSessionHooksSettings({ ...base, isolatedWorktree: false })).not.toHaveProperty('worktree');
+  });
+
   it('only includes PermissionRequest when chat is enabled', () => {
     const off = buildSessionHooksSettings({ ...base, chatEnabled: false }) as { hooks: Record<string, unknown> };
     expect(off.hooks).not.toHaveProperty('PermissionRequest');

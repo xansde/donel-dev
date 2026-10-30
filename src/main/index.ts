@@ -283,6 +283,7 @@ import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearan
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import { createSystemWorkspaceToolsDeps, createWorkspaceTools } from './workspace-tools';
 import { createSessionWorktreeService } from './session-worktree-service';
+import { worktreeNameFromArgs } from '../shared/sessionWorktree';
 import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
 
@@ -1552,6 +1553,8 @@ function registerPtyIpcHandlers(): void {
                 userStatusLine: readUserStatusLine(claudeConfigDirForSession, options.cwd),
                 chatEnabled: appConfig.chat.enabled,
               }),
+              // "Isolar em worktree" — a worktree parte da branch ATUAL da pasta, não de origin/HEAD.
+              isolatedWorktree: worktreeNameFromArgs(launcherArgs) !== null,
             });
           } catch (error) {
             // Degrada como o boot sem servidor: a sessão nasce sem semáforo, nunca sem terminal.

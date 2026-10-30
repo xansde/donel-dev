@@ -59,6 +59,7 @@ const hideBoxWhileWorking = process.env.DONEL_FAKE_CLAUDE_HIDE_BOX_WHILE_WORKING
 
 // ----------------------------------------------------------------- worktree
 // `--worktree <name>` as the real CLI 2.1.314 does it: `<main repo>/.claude/worktrees/<name>` on a new branch
+// (from `origin/HEAD`, or from HEAD with `worktree.baseRef: "head"` in `--settings`)
 // `worktree-<name>` (an existing one is reopened), locked as `claude session <name> (pid <pid>)`, and the session runs
 // inside it. The lock stays when the process is killed, like the real one.
 function enterWorktree(name) {
@@ -73,7 +74,16 @@ function enterWorktree(name) {
     process.exit(1);
   }
   const path = join(root, '.claude', 'worktrees', name);
-  if (!existsSync(path)) gitOut(root, ['worktree', 'add', '-q', '-b', `worktree-${name}`, path, 'HEAD']);
+  // Base like the CLI: `worktree.baseRef` "fresh" (default) = `origin/HEAD` (falls back to HEAD without it); "head" = HEAD.
+  let base = 'HEAD';
+  if (settings?.worktree?.baseRef !== 'head') {
+    try {
+      base = gitOut(root, ['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/HEAD']) || 'HEAD';
+    } catch {
+      base = 'HEAD';
+    }
+  }
+  if (!existsSync(path)) gitOut(root, ['worktree', 'add', '-q', '-b', `worktree-${name}`, path, base]);
   try {
     gitOut(root, ['worktree', 'lock', '--reason', `claude session ${name} (pid ${process.pid})`, path]);
   } catch {
