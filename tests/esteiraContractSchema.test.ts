@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { CONSUMED_PATHS, FACT_TYPES, PHASES_REQUIRING_PASSED_VERIFICATION, REQUIRED_FACTS_ANY_SUCCESS, REQUIRED_FACTS_BY_PHASE, REQUIRED_FACTS_BY_PHASE_WHEN_DONE, parseEsteiraResultText } from '../src/shared/esteira/contract/resultContract';
+import { CONSUMED_PATHS, FACT_TYPES, HUMAN_DECISION_EXAMPLES, HUMAN_DECISION_FACTS, PHASES_REQUIRING_HUMAN_DECISION, PHASES_REQUIRING_PASSED_VERIFICATION, REQUIRED_FACTS_ANY_SUCCESS, REQUIRED_FACTS_BY_PHASE, REQUIRED_FACTS_BY_PHASE_WHEN_DONE, parseEsteiraResultText } from '../src/shared/esteira/contract/resultContract';
 import { createSchemaWalker, type JsonNode } from './helpers/contractSchemaPaths';
 import { PRODUCED_PATHS, buildRunInput, parseRunInput, parseRunInputText } from '../src/shared/esteira/contract/runInput';
 import { reduceEvents } from '../src/shared/esteira/store/reducer';
@@ -168,6 +168,47 @@ describe('Cobertura do contrato de resultado (schema x parser x corpus)', () => 
       }
       expect(parsed.ok).toBe(true);
     });
+  });
+});
+
+describe('Recusa done_without_human_decision ensina o formato do fato (issue #50)', () => {
+  // Quem escrevia a skill so descobria os campos de `decision.recorded` abrindo
+  // o `app.asar`. A recusa agora traz o fato minimo em JSON e aponta o exemplo
+  // canonico; este teste segue a mensagem AO PE DA LETRA: tira os fatos humanos
+  // do exemplo, le a recusa, cola o fato que ela sugere e confere que passa.
+  const REPO_ROOT = fileURLToPath(new URL('../', import.meta.url));
+  type Doc = { facts: { type: string; phase?: string; outcome?: string; subject?: unknown }[] };
+
+  it('toda fase de conversa tem um exemplo canonico nomeado', () => {
+    expect(Object.keys(HUMAN_DECISION_EXAMPLES).sort()).toEqual([...PHASES_REQUIRING_HUMAN_DECISION].sort());
+  });
+
+  it.each(Object.entries(HUMAN_DECISION_EXAMPLES))('%s: a recusa diz o fato minimo, e colar esse fato basta', (phase, examplePath) => {
+    const doc = JSON.parse(readFileSync(`${REPO_ROOT}${examplePath}`, 'utf8')) as Doc;
+    expect(parseEsteiraResultText(JSON.stringify(doc)).ok).toBe(true);
+
+    const done = doc.facts.find((fact) => fact.type === 'phase.completed' && fact.phase === phase && fact.outcome === 'done');
+    expect(done).toBeDefined();
+    const stripped: Doc = { ...doc, facts: doc.facts.filter((fact) => !(HUMAN_DECISION_FACTS as readonly string[]).includes(fact.type)) };
+    const refused = parseEsteiraResultText(JSON.stringify(stripped));
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    const issue = refused.issues.find((entry) => entry.code === 'done_without_human_decision');
+    expect(issue).toBeDefined();
+    const message = issue!.message;
+    expect(message).toContain(`a "${phase}" run completed as "done" must declare at least one of gate.confirmed | decision.recorded`);
+    expect(message).toContain(`see ${examplePath}`);
+
+    const minimalJson = /Minimal fact: (\{.*?\}) \(or a "gate\.confirmed"/.exec(message)?.[1];
+    expect(minimalJson).toBeDefined();
+    const minimal = JSON.parse(minimalJson!) as Record<string, unknown>;
+    expect(Object.keys(minimal).sort()).toEqual(['confirmed_by', 'decision', 'rationale', 'subject', 'type']);
+    expect(minimal).toMatchObject({ type: 'decision.recorded', subject: done!.subject, rationale: null });
+
+    const fixed: Doc = { ...stripped, facts: [minimal as Doc['facts'][number], ...stripped.facts] };
+    const accepted = parseEsteiraResultText(JSON.stringify(fixed));
+    if (!accepted.ok) throw new Error(`fato sugerido pela recusa nao basta: ${JSON.stringify(accepted.issues, null, 2)}`);
+    expect(accepted.ok).toBe(true);
   });
 });
 
