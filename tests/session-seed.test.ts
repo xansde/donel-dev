@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { hasAnyEntryForProject, pruneOrphans, seedProject } from '../src/main/session-seed';
 import type { SessionSummary } from '../src/main/session-indexer';
-import type { SessionRegistry } from '../src/shared/sessionRegistry';
+import type { RegisteredSession, SessionRegistry } from '../src/shared/sessionRegistry';
 
 // T706 (007-favoritos-sessoes) — a ÚNICA leitura de disco desta feature
 // (CA-8). TDD: nenhuma implementação existia antes deste arquivo.
@@ -117,6 +117,49 @@ describe('seedProject (T706)', () => {
     const indexProjectSessions = vi.fn().mockResolvedValue([]);
     await seedProject({}, PROJECT, {}, { indexProjectSessions }, 'C:\\fake\\claude-home');
     expect(indexProjectSessions).toHaveBeenCalledWith(PROJECT, { claudeHome: 'C:\\fake\\claude-home' });
+  });
+
+  // A leitura do disco leva segundos num projeto com muito transcript (92 MB no
+  // repo do dono). Uma visita gravada NESSE intervalo — a aba que nasce logo
+  // depois de favoritar — não pode ser sobrescrita pelo retrato velho do
+  // registro: era o que fazia a sessão viva sair do grupo e voltar à lista
+  // geral (CA-3 quebrado no smoke `favorite-sessions`).
+  it('visita gravada durante a leitura do disco sobrevive à semeadura', async () => {
+    const live: Record<string, RegisteredSession> = {};
+    const indexProjectSessions = vi.fn().mockImplementation(async () => {
+      live.viva = { sessionId: 'viva', projectPath: PROJECT, label: 'aba nova', lastActivityAt: 9000, pinned: false };
+      return [1, 2, 3, 4, 5].map((n) => summary(`s${n}`, { lastActivityAt: n * 1000 }));
+    });
+
+    const result = await seedProject({}, PROJECT, {}, { indexProjectSessions, readLatestRegistry: () => ({ ...live }) });
+
+    expect(result.viva?.label).toBe('aba nova');
+    // 5 por projeto: a viva (mais recente) + as 4 semeadas mais recentes.
+    expect(Object.keys(result).sort()).toEqual(['s2', 's3', 's4', 's5', 'viva']);
+  });
+
+  it('não sobrescreve com o rótulo do disco uma sessão que ganhou visita durante a leitura', async () => {
+    const live: Record<string, RegisteredSession> = {};
+    const indexProjectSessions = vi.fn().mockImplementation(async () => {
+      live.s1 = { sessionId: 's1', projectPath: PROJECT, label: 'nome ao vivo', lastActivityAt: 9000, pinned: true };
+      return [summary('s1', { preview: 'preview do disco', lastActivityAt: 1000 })];
+    });
+
+    const result = await seedProject({}, PROJECT, {}, { indexProjectSessions, readLatestRegistry: () => ({ ...live }) });
+
+    expect(result.s1).toEqual(live.s1);
+  });
+
+  it('indexer que lança devolve o registro ATUAL, com a visita gravada durante a leitura', async () => {
+    const live: Record<string, RegisteredSession> = {};
+    const indexProjectSessions = vi.fn().mockImplementation(async () => {
+      live.viva = { sessionId: 'viva', projectPath: PROJECT, label: 'aba nova', lastActivityAt: 9000, pinned: false };
+      throw new Error('EIO simulado');
+    });
+
+    const result = await seedProject({}, PROJECT, {}, { indexProjectSessions, readLatestRegistry: () => ({ ...live }) });
+
+    expect(result.viva).toBeDefined();
   });
 
   it('sem claudeHome, chama o indexer sem opção (usa o default dele)', async () => {
