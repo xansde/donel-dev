@@ -185,7 +185,11 @@ function runStatusLine(extra = {}) {
 }
 
 // ------------------------------------------------------------------- screen
-const state = { dialog: false, working: false, input: '', pastes: [], history: [], menuClosed: false, images: 0 };
+const state = { dialog: false, working: false, workingSince: 0, input: '', pastes: [], history: [], menuClosed: false, images: 0 };
+// `0`: the footer WITHOUT "esc to interrupt" / "? for shortcuts" / "! for shell mode", only the permission mode - what
+// the real CLI 2.1.314 draws with ANY `statusLine` configured. Off by default: many smokes wait for "shortcuts" as the
+// "fake is up" signal; the chat smokes run once more with it set.
+const footerHints = process.env.DONEL_FAKE_CLAUDE_FOOTER_HINTS !== '0';
 const pending = []; // messages submitted during a round, waiting in the CLI's queue
 const NATIVE_COMMANDS = ['/clear', '/compact', '/config', '/cost', '/exit', '/help', '/mcp', '/memory', '/model', '/status'];
 const LOCAL_COMMANDS = new Set(['/config', '/cost', '/help', '/mcp', '/memory', '/model', '/status']);
@@ -221,12 +225,19 @@ function render() {
     out(`\x1b[2J\x1b[H${lines.join('\r\n')}`);
     return;
   }
+  // The spinner row the real CLI draws above the box while a turn runs (with or without footer hints).
+  if (state.working) lines.push('', `✻ Pondering… (${Math.max(0, Math.round((Date.now() - state.workingSince) / 1000))}s)`, '');
   menuMatches().slice(0, 6).forEach((c, i) => lines.push(i === 0 ? `  ❯ ${c}` : `    ${c}`));
   const [firstRow, ...nextRows] = inputRows();
   lines.push(ruler(), `❯ ${firstRow}`, ...nextRows.map((row) => `  ${row}`), ruler());
-  lines.push(state.working ? '  esc to interrupt' : state.input === '' ? '  ? for shortcuts' : '  ! for shell mode');
-  // The real CLI shows the permission mode in the footer; the smokes use it as the "ready for keys" signal.
-  if (args.permissionMode === 'acceptEdits' && !state.working) lines.push('  ⏵⏵ accept edits on (shift+tab to cycle)');
+  if (footerHints) {
+    lines.push(state.working ? '  esc to interrupt' : state.input === '' ? '  ? for shortcuts' : '  ! for shell mode');
+    // The real CLI shows the permission mode in the footer; the smokes use it as the "ready for keys" signal.
+    if (args.permissionMode === 'acceptEdits' && !state.working) lines.push('  ⏵⏵ accept edits on (shift+tab to cycle)');
+  } else {
+    // With a `statusLine` the real CLI 2.1.314 drops the hints; the permission mode stays, always.
+    lines.push(args.permissionMode === 'acceptEdits' ? '  ⏵⏵ accept edits on (shift+tab to cycle)' : '  ⏸ manual mode on');
+  }
   out(`\x1b[2J\x1b[H${lines.join('\r\n')}`);
 }
 
@@ -523,6 +534,7 @@ async function handlePermission(spec) {
 
 async function runTurn(text, queued = false) {
   state.working = true;
+  state.workingSince = Date.now();
   turnState.interrupted = false;
   render();
   const startedAt = Date.now();

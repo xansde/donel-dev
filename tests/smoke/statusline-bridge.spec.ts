@@ -17,9 +17,9 @@ import { removeIsolatedUserDataDir } from './userDataIsolation';
 //    statusline, e não da inferência);
 //  - cota da sessão (`rate_limits`) no rótulo de conta, com o motor inerte.
 //
-// `DONEL_STATUSLINE_BRIDGE=always`: o userData isolado não tem statusline do
-// usuário e o chat está ligado, caso em que o modo padrão NÃO injeta (a
-// statusline esconderia o "esc to interrupt" que o chat lê da tela).
+// Modo padrão: o userData isolado não tem statusline do usuário e o chat está
+// ligado, e a ponte é injetada assim mesmo (o chat prova o turno pelo spinner,
+// não pelas dicas do rodapé que a statusline esconde).
 
 const RESETS_AT = Math.floor(Date.now() / 1000) + 3 * 3600;
 const STATUS_LINE = {
@@ -47,7 +47,6 @@ test.beforeAll(async () => {
     userDataDir,
     env: {
       ...process.env,
-      DONEL_STATUSLINE_BRIDGE: 'always',
       DONEL_FAKE_CLAUDE_SCENARIO: JSON.stringify({ statusLine: STATUS_LINE }),
       DONEL_FAKE_CLAUDE_LOG: join(userDataDir, 'fake-claude-calls.jsonl'),
     },

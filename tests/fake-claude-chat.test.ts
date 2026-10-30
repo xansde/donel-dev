@@ -271,6 +271,27 @@ describe('fake-claude-chat', { timeout: 45_000 }, () => {
     expect(marker).toBeTruthy();
   });
 
+  it('draws the spinner row above the box while a round runs, with the footer hints', async () => {
+    await bootIdle([], undefined, { DONEL_FAKE_CLAUDE_SLOW_MS: '5000' });
+    send('longa demorar\r');
+    await waitFor(() => screen().includes('esc to interrupt') && /✻ Pondering… \(\d+s\)/.test(screen()), 'spinner + working footer');
+    send('\x1b');
+    await waitFor(() => screen().includes('? for shortcuts') && !screen().includes('Pondering…'), 'idle again');
+  });
+
+  it('DONEL_FAKE_CLAUDE_FOOTER_HINTS=0 drops the footer hints (CLI 2.1.314 with a statusLine): mode line only, the spinner proves the round', async () => {
+    launch([], undefined, { DONEL_FAKE_CLAUDE_SLOW_MS: '5000', DONEL_FAKE_CLAUDE_FOOTER_HINTS: '0' });
+    await waitFor(() => hooks('SessionStart')[0], 'SessionStart');
+    await waitFor(() => screen().includes('⏸ manual mode on'), 'idle footer without hints');
+    expect(screen()).not.toContain('? for shortcuts');
+    send('longa demorar\r');
+    await waitFor(() => screen().includes('Pondering…'), 'spinner');
+    expect(screen()).not.toContain('esc to interrupt');
+    expect(screen()).toContain('⏸ manual mode on');
+    send('\x1b');
+    await waitFor(() => !screen().includes('Pondering…') && screen().includes('Interrupted'), 'interrupted');
+  });
+
   it('opens the slash menu above the ruler, Esc closes it keeping the text, Enter with it open completes instead of sending', async () => {
     const transcript = await bootIdle();
     send('/mod');

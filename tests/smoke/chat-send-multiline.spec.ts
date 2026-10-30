@@ -63,15 +63,20 @@ async function withChat(name: string, body: (chat: ChatApp, page: Page) => Promi
   }
 }
 
-/** After the card says "entrou" the CLI box must be empty (idle footer, no leftover text). */
+/**
+ * After the card says "entrou" the CLI box must be empty (idle, no leftover text). With the statusline bridge on
+ * the fake draws the footer WITHOUT hints (CLI 2.1.314), so the box row itself is read: the last `❯` row is bare.
+ */
 async function expectCliBoxClean(page: Page): Promise<void> {
   const helpers = chatHelpers(page);
   await helpers.showView('terminal');
   const pane = page.locator('[data-testid="terminal-pane"]:visible');
   await expect(async () => {
     const text = await pane.innerText();
-    expect(text).toContain('? for shortcuts');
     expect(text).not.toContain('for shell mode');
+    expect(text).not.toContain('Pondering…');
+    const boxRows = text.split('\n').filter((row) => row.startsWith('❯'));
+    expect(boxRows.at(-1)?.trim()).toBe('❯');
   }).toPass({ timeout: 10_000 });
   await helpers.showView('chat');
 }

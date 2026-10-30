@@ -190,6 +190,20 @@ describe('readInputBox com máscara dim', () => {
     expect(readInputBox(boxOf(line(`❯ ${hint}`, [2, 2 + hint.length])))).toEqual({ kind: 'empty' });
   });
 
+  // CLI 2.1.314 (capturas reais de 30/10, com e sem statusLine): com o turno em andamento o próprio `❯` é dim.
+  it('marca `❯` dim (turno em andamento) com a caixa vazia: caixa vazia, não ilegível', () => {
+    expect(readInputBox(boxOf(line('❯', [0, 1])))).toEqual({ kind: 'empty' });
+  });
+
+  it('marca `❯` dim com texto digitado durante o turno: o texto conta', () => {
+    expect(readInputBox(boxOf(line('❯ queued follow up message', [0, 2])))).toEqual({ kind: 'typed', text: 'queued follow up message' });
+  });
+
+  it('marca `❯` dim com a dica da fila (toda dim): caixa vazia', () => {
+    const hint = '❯ Press up to edit queued messages';
+    expect(readInputBox(boxOf(line(hint, [0, hint.length])))).toEqual({ kind: 'empty' });
+  });
+
   it('continuação de wrap traz 2 espaços de recuo: não entram no texto', () => {
     const box = boxOf(line('❯ file:///C:/a/b/c/484f03770e'), line('  11/scratchpad/red.png'));
     expect(readInputBox(box)).toEqual({ kind: 'typed', text: 'file:///C:/a/b/c/484f03770e11/scratchpad/red.png' });

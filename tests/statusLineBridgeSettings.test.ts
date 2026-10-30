@@ -37,16 +37,17 @@ describe('planStatusLineBridge', () => {
     expect(planStatusLineBridge({ mode: 'auto', userStatusLine: user, chatEnabled: true })).toEqual({ kind: 'chain', user });
   });
 
-  it('sem statusline do usuário e chat ligado: NÃO injeta (o chat lê "esc to interrupt", que a statusline esconderia)', () => {
-    expect(planStatusLineBridge({ mode: 'auto', userStatusLine: null, chatEnabled: true })).toBeNull();
+  it('sem statusline do usuário e chat ligado: só encaminha (o chat prova o turno pelo spinner, não pelo rodapé)', () => {
+    expect(planStatusLineBridge({ mode: 'auto', userStatusLine: null, chatEnabled: true })).toEqual({ kind: 'forward' });
   });
 
   it('sem statusline do usuário e chat desligado: só encaminha', () => {
     expect(planStatusLineBridge({ mode: 'auto', userStatusLine: null, chatEnabled: false })).toEqual({ kind: 'forward' });
   });
 
-  it('always força o encaminhamento; off desliga tudo, até o encadeamento', () => {
+  it('always vale o mesmo que auto; off desliga tudo, até o encadeamento', () => {
     expect(planStatusLineBridge({ mode: 'always', userStatusLine: null, chatEnabled: true })).toEqual({ kind: 'forward' });
+    expect(planStatusLineBridge({ mode: 'off', userStatusLine: null, chatEnabled: true })).toBeNull();
     expect(planStatusLineBridge({ mode: 'off', userStatusLine: user, chatEnabled: false })).toBeNull();
   });
 

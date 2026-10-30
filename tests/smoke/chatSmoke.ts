@@ -102,8 +102,12 @@ export function chatHelpers(page: Page) {
   const waitForFakeFooter = async (): Promise<void> => {
     await showView('terminal');
     const pane = page.locator('[data-testid="terminal-pane"]:visible');
+    // Idle footer: "? for shortcuts", or - without the hints (DONEL_FAKE_CLAUDE_FOOTER_HINTS=0, the real CLI with a
+    // statusLine) - the permission mode with no spinner row above the box.
     await expect(async () => {
-      expect(await pane.innerText()).toContain('shortcuts');
+      const text = await pane.innerText();
+      expect(text).toMatch(/shortcuts|manual mode on|accept edits on/);
+      expect(text).not.toContain('Pondering…');
     }).toPass({ timeout: 30_000 });
   };
   const shot = async (name: string): Promise<void> => {

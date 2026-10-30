@@ -21,7 +21,7 @@ export interface FooterTerminal extends StoppableTerminal {
 export interface WorkingFooterProps {
   live: LiveState | null;
   rows: readonly ConversationRow[];
-  /** The tab's terminal: its screen proves "esc to interrupt" and Parar writes Esc to it. `null` before it mounts. */
+  /** The tab's terminal: its screen proves the turn (`isWorking`) and Parar writes Esc to it. `null` before it mounts. */
   terminal: FooterTerminal | null;
   /** A pending is open: Parar answers it with `interrupt` instead of writing Esc to the terminal (T078). */
   onInterruptPending?: () => void;
@@ -33,7 +33,7 @@ export interface WorkingFooterProps {
   endedByScreen?: boolean;
 }
 
-/** `true` while the screen footer says "esc to interrupt"; `null` without a terminal. Re-renders only on change. */
+/** `true` while the screen proves the turn (`isWorking`); `null` without a terminal. Re-renders only on change. */
 function useScreenWorking(terminal: FooterTerminal | null): boolean | null {
   const [working, setWorking] = useState<boolean | null>(null);
   useEffect(() => {

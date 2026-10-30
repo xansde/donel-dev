@@ -1,6 +1,7 @@
 // T068 (014-chat) - "Parar" and the Esc key. The send protocol (contracts/send-protocol.md section 9) forbids
 // Esc on the PTY outside Parar / "interromper e mandar": it is written ONLY when the screen proves the CLI is
-// mid-turn ("esc to interrupt" in the footer) - otherwise Esc would clear the input box or close a menu.
+// mid-turn (`isWorking`: "esc to interrupt" in the footer or the spinner row above the box) - otherwise Esc would
+// clear the input box or close a menu.
 
 import { isWorking } from '../../../shared/chat/screen';
 import type { LineInput } from '../../../shared/chat/screen';
@@ -13,7 +14,7 @@ export interface StoppableTerminal {
   write(data: string): boolean;
 }
 
-/** Writes Esc iff the screen shows "esc to interrupt". Returns whether it was written. */
+/** Writes Esc iff the screen proves the turn (`isWorking`). Returns whether it was written. */
 export function stopWorking(terminal: StoppableTerminal | null): boolean {
   if (terminal === null) return false;
   if (!isWorking(terminal.readScreen().lines)) return false;

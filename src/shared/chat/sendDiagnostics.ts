@@ -57,7 +57,7 @@ export interface SendFailureDetail {
   readonly boxFound: boolean | null;
   /** Last screen: footer under the box (`null` = no screen read). */
   readonly footer: boolean | null;
-  /** Last screen: footer says "esc to interrupt" (`null` = no screen read). */
+  /** Last screen proves the turn (`isWorking`; `null` = no screen read). */
   readonly screenWorking: boolean | null;
   /** Mid-turn according to the hooks. */
   readonly working: boolean;

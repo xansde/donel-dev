@@ -18,8 +18,8 @@ Nada é escrito na PTY antes de **todas**:
 1. Processo vivo.
 2. **Caixa de entrada visível**: linha `❯` entre duas réguas `─`, em
    qualquer dos layouts, fullscreen ou inline.
-3. **Rodapé presente**: "? for shortcuts" (ocioso) ou "esc to interrupt"
-   (trabalhando).
+3. **Rodapé presente**: qualquer texto abaixo da caixa (o modo de
+   permissão, as dicas, a saída de uma statusline).
 4. **Nenhum diálogo**:
    - diálogo de confiança;
    - tela sem caixa de entrada (`research.md` R16);
@@ -28,9 +28,29 @@ Nada é escrito na PTY antes de **todas**:
 
    Num diálogo, colar texto **responde ao diálogo**: dígitos e `j`/`k`
    escolhem opções.
-5. Mensagens que começam com `/` ou `!` exigem o CLI **ocioso** (rodapé "?
-   for shortcuts"). O Esc que fecha o menu `/` interromperia uma rodada em
-   andamento.
+5. Mensagens que começam com `/` ou `!` exigem o CLI **ocioso** (a tela não
+   prova turno em andamento, ver abaixo). O Esc que fecha o menu `/`
+   interromperia uma rodada em andamento.
+
+**Como a tela prova o turno em andamento** (`isWorking`, `shared/chat/screen.ts`):
+"esc to interrupt" no rodapé **ou** a linha do spinner logo acima da caixa
+(glifo na coluna 0, verbo e "…": `✻ Booping… (31s · ↓ 58 tokens)`). A linha de
+turno encerrado (`✻ Worked for 26s · done 17:38`) não tem "…" e não conta.
+O spinner é a prova que vale sempre. As dicas do rodapé faltam em dois casos
+medidos no CLI 2.1.314 real (30/10): com **qualquer** `statusLine`
+configurada (a ponte da statusline do app ou a do usuário), o CLI tira "esc to
+interrupt" e "? for shortcuts" do rodapé, e sobram o modo e a saída da
+statusline; e, mesmo sem statusline, com texto na caixa durante o turno. O
+spinner aparece e some nos mesmos quadros em que a dica apareceria e sumiria
+(Enter, Esc, fim do turno). Os hooks não substituem a tela aqui. No primeiro
+envio da sessão, o `UserPromptSubmit` chegou de 13 a 25 s depois do Enter,
+porque os hooks `UserPromptSubmit` do próprio usuário rodam antes. E depois de
+um Esc o CLI não dispara `Stop`.
+
+Também medido no 2.1.314: com o turno em andamento a marca `❯` da caixa é
+*dim*. A marca se procura no texto cru, e só o que vem depois dela descarta as
+runs *dim* (`cliInputBox.ts`). Sem isso, a caixa ficava "ilegível" durante
+todo turno.
 
 O gate é reavaliado a cada atualização da tela e se repete após spawn,
 `/clear` e `/resume`. Os bytes escritos antes de o REPL armar o stdin se
@@ -52,8 +72,8 @@ portão só segura por motivo real e visível:
   tomada por um menu.
 
 Mensagem com imagem e "interromper e mandar agora" também esperam a caixa: o
-`[Image #N]` precisa ser visto, e o Esc do interromper precisa de "esc to
-interrupt" na tela. Essas esperas têm motivo visível ("esperando o Claude
+`[Image #N]` precisa ser visto, e o Esc do interromper precisa da tela
+provando o turno (`isWorking`). Essas esperas têm motivo visível ("esperando o Claude
 terminar o que está fazendo") e não têm prazo.
 
 Enquanto as pré-condições não valem, o envio fica em `waiting-cli` (rótulo
@@ -83,7 +103,9 @@ fantasma **não** são texto.
 - **Texto real e CLI ocioso**: o envio pausa e o chat oferece "Descartar e
   enviar" (`\x1b\x1b` numa escrita só e releitura) ou "Abrir terminal".
 - **Texto real e CLI trabalhando**: pausa sem "Descartar". Aqui o Esc
-  interromperia a rodada.
+  interromperia a rodada. "Trabalhando" é a tela provando o turno (§1). Com
+  texto na caixa, o rodapé do 2.1.314 já não diz "esc to interrupt", mas o
+  spinner continua lá.
 - **Nunca** Esc Esc em caixa vazia: abre o Rewind.
 
 ## 4. Sequência de bytes
@@ -102,14 +124,15 @@ Enter:                \r  em escrita própria, ~80 ms depois
 - Colagens grandes são aceitas sem truncar (194 KB verificados, ~36 KB/s).
   Quem decide o placeholder é o CLI (≥ 5 linhas ou ~1000 caracteres); o chat
   só espera por ele.
-- "Interromper e mandar agora": `ESC` com "esc to interrupt" visível e a
-  sequência acima **só quando o rodapé deixa de dizer "esc to interrupt"**
-  (o turno parou), ou 3 s depois do `ESC` se ele não parar (aí a mensagem vai
+- "Interromper e mandar agora": `ESC` com a tela provando o turno
+  (`isWorking`: "esc to interrupt" ou o spinner) e a sequência acima **só
+  quando a tela deixa de provar o turno** (o turno parou; o spinner some
+  ~0,2–0,7 s depois do `ESC` no 2.1.314), ou 3 s depois do `ESC` se ele não parar (aí a mensagem vai
   para a fila do CLI). Colada no mesmo instante, o `ESC` virava prefixo da
   colagem (`ESC ESC[200~`) e o turno seguia (visto em 30/10). Um `ESC` só.
 - **Texto que não aparece na caixa no meio do turno** (máquina lenta, tela que
   esconde a caixa): estourado o prazo do texto (§6) com o turno em andamento
-  (rodapé "esc to interrupt" ou, sem rodapé legível, os hooks), o `\r` sai
+  (a tela provando o turno ou, sem caixa legível, os hooks), o `\r` sai
   mesmo assim e o envio passa a ser acompanhado pelos sinais (§5). Uma colagem
   só; sem Esc Esc. Se um diálogo ou uma pergunta apareceu nesse meio-tempo, o
   Enter responderia a ele: aí é `failed` "o texto não entrou na caixa", como
@@ -151,7 +174,7 @@ o aceite tardio (§7).
   `ack-lookup` (os `UserPromptSubmit` guardados e o transcript desde
   `createdAt`). Achou → `accepted`. Não achou → `failed` "o Claude não pegou a
   mensagem", com "tentar de novo". Se o turno recomeça antes, o relógio para e
-  recomeça do fim do novo turno; se o rodapé ainda diz "esc to interrupt", a
+  recomeça do fim do novo turno; se a tela ainda prova o turno, a
   conferência fica para 15 s depois. Nenhuma mensagem fica "na fila" para
   sempre depois que o Claude para.
 

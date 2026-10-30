@@ -508,7 +508,7 @@ let curlPath: string | null = null;
 /**
  * Ponte da statusline — o JSON oficial que o CLI entrega ao comando de `statusLine`, por aba
  * (cota 5h/7d, custo, contexto, modelo, PR...). `DONEL_STATUSLINE_BRIDGE=off` desliga;
- * `always` injeta mesmo sem statusline do usuário e com o chat ligado (hooks-settings.ts).
+ * por padrão é injetada sempre, com o chat ligado ou não (hooks-settings.ts).
  */
 const statusLineBridgeModeSetting = statusLineBridgeMode(process.env.DONEL_STATUSLINE_BRIDGE);
 const statusLineStore = createStatusLineStore();

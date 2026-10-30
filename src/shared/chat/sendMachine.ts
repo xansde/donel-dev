@@ -208,8 +208,8 @@ function sendKindOf(cls: MessageClass): SendKind {
 const needsIdleKind = (cls: MessageClass) => cls.kind !== 'prompt';
 
 /**
- * Mid-turn? A screen that proves the box and its footer answers ("esc to interrupt"); otherwise the hooks do (a
- * long command can hide the box or its footer while the turn goes on).
+ * Mid-turn? A screen that proves the box and its footer answers (`isWorking`: "esc to interrupt" or the spinner row
+ * above the box); otherwise the hooks do (a long command can hide the box or its footer while the turn goes on).
  */
 function midTurn(s: { readonly working: boolean }, lines: readonly LineInput[] | null): boolean {
   if (lines !== null && isReadyForInput(lines)) return isWorking(lines);
@@ -509,7 +509,7 @@ function evaluate(s: Draft, now: number, fx: SendEffect[]): void {
 /**
  * `queued`: no deadline while the turn goes on (delivery depends on it). Once the turn is over (hooks), 15 s
  * without `submit`/`deliver` → look the prompt up in the stored hooks/transcript (`verify`): found → accepted,
- * not found → failed "o Claude não pegou a mensagem". A screen still saying "esc to interrupt" puts the check off.
+ * not found → failed "o Claude não pegou a mensagem". A screen still showing the turn (`isWorking`) puts the check off.
  */
 function evaluateQueued(s: Draft, now: number, fx: SendEffect[]): void {
   if (s.step === 'verify') return;
@@ -558,7 +558,7 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
       reason = 'interrompendo o Claude';
     } else if (interrupting && s.interruptAt !== null && isWorking(lines) && now - s.interruptAt < INTERRUPT_SETTLE_MS) {
       // A paste right after the ESC read as one escape sequence (ESC ESC[200~) and the turn went on: wait for the
-      // footer to drop "esc to interrupt"; if it never does, paste anyway (the CLI queues it).
+      // screen to stop showing the turn (`isWorking`); if it never does, paste anyway (the CLI queues it).
       reason = 'interrompendo o Claude';
     } else if (needsIdleKind(s.cls) && !interrupting && isWorking(lines)) {
       reason = 'esperando o Claude terminar a rodada';
@@ -581,7 +581,7 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
   // footer). A plain prompt is written anyway: it goes into the CLI's own queue, which takes typed messages
   // mid-turn (owner's decision, 30/10). Never without a screen read (a dialog must be ruled out), never into a
   // menu, and not for images (each `[Image #N]` must be seen), `/`/`!` (need the CLI idle) or interrupt-first
-  // (its Esc needs "esc to interrupt" on screen): those keep waiting, with a visible reason and no clock.
+  // (its Esc needs the turn proven on screen): those keep waiting, with a visible reason and no clock.
   if (reason !== null && !visible && s.alive && s.working && s.interruptAt === null) {
     const blindOk =
       lines !== null &&
