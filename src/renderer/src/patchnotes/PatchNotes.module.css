@@ -28,6 +28,8 @@
   min-height: 0;
   overflow-y: auto;
   padding-right: var(--space-half);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 .day {
