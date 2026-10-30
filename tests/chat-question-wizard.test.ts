@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_QUESTION_NOTES_CHARS,
   MAX_WIZARD_QUESTIONS,
+  buildQuestionAnnotations,
   buildQuestionAnswers,
   countAnsweredQuestions,
   firstUnansweredQuestionIndex,
@@ -8,6 +10,7 @@ import {
   limitQuestions,
   resolveQuestionAnswer,
   setCustomAnswer,
+  setQuestionNotes,
   toggleOption,
   type QuestionDraft
 } from '../src/shared/chat/t3/pendingUserInput';
@@ -104,6 +107,68 @@ describe('assistente de perguntas', () => {
     const drafts: Record<string, QuestionDraft> = {};
     for (const q of qs.slice(0, 4)) drafts[q.question] = toggleOption(q, undefined, 'SQLite');
     expect(Object.keys(buildQuestionAnswers(qs, drafts) ?? {})).toHaveLength(4);
+  });
+});
+
+describe('observação por pergunta', () => {
+  it('sem observação não há anotação nenhuma (o payload segue igual ao de antes)', () => {
+    const drafts: Record<string, QuestionDraft> = { [single.question]: toggleOption(single, undefined, 'SQLite') };
+    expect(buildQuestionAnnotations([single], drafts)).toBeUndefined();
+  });
+
+  it('observação só com espaços não conta', () => {
+    const drafts = { [single.question]: setQuestionNotes(toggleOption(single, undefined, 'SQLite'), '  \n  ') };
+    expect(buildQuestionAnnotations([single], drafts)).toBeUndefined();
+  });
+
+  it('a observação vai em annotations[pergunta].notes, aparada e com as quebras de linha', () => {
+    const drafts = { [single.question]: setQuestionNotes(toggleOption(single, undefined, 'SQLite'), '  só em dev\nem prod é Postgres  ') };
+    expect(buildQuestionAnnotations([single], drafts)).toEqual({ 'Qual banco?': { notes: 'só em dev\nem prod é Postgres' } });
+    expect(buildQuestionAnswers([single], drafts)).toEqual({ 'Qual banco?': 'SQLite' });
+  });
+
+  it('vale para múltipla escolha e para "Outra"; só as perguntas com observação entram', () => {
+    const drafts: Record<string, QuestionDraft> = {
+      [single.question]: setQuestionNotes(setCustomAnswer(undefined, 'DuckDB'), 'é o que já usamos'),
+      [multi.question]: setQuestionNotes(toggleOption(multi, undefined, 'main'), 'preload fica para depois'),
+    };
+    expect(buildQuestionAnswers([single, multi], drafts)).toEqual({ 'Qual banco?': 'DuckDB', 'Quais camadas?': 'main' });
+    expect(buildQuestionAnnotations([single, multi], drafts)).toEqual({
+      'Qual banco?': { notes: 'é o que já usamos' },
+      'Quais camadas?': { notes: 'preload fica para depois' },
+    });
+    delete drafts[multi.question];
+    drafts[multi.question] = toggleOption(multi, undefined, 'main');
+    expect(Object.keys(buildQuestionAnnotations([single, multi], drafts) ?? {})).toEqual(['Qual banco?']);
+  });
+
+  it('escolher opção, alternar ou escrever em "Outra" não apaga a observação', () => {
+    let d = setQuestionNotes(undefined, 'nota');
+    d = toggleOption(single, d, 'SQLite');
+    d = setCustomAnswer(d, 'DuckDB');
+    d = toggleOption(single, d, 'Postgres (Recomendado)');
+    expect(d.notes).toBe('nota');
+    let m = setQuestionNotes(toggleOption(multi, undefined, 'main'), 'nota m');
+    m = toggleOption(multi, m, 'main');
+    expect(m.notes).toBe('nota m');
+  });
+
+  it('observação sozinha não responde a pergunta', () => {
+    const d = setQuestionNotes(undefined, 'ainda não sei');
+    expect(isQuestionAnswered(single, d)).toBe(false);
+  });
+
+  it('corta no limite que o CLI aceita (8192 caracteres)', () => {
+    expect(MAX_QUESTION_NOTES_CHARS).toBe(8192);
+    const drafts = { [single.question]: setQuestionNotes(toggleOption(single, undefined, 'SQLite'), 'x'.repeat(9000)) };
+    expect(buildQuestionAnnotations([single], drafts)?.['Qual banco?']?.notes).toHaveLength(8192);
+  });
+
+  it('só considera as 4 primeiras perguntas', () => {
+    const qs = Array.from({ length: 5 }, (_, i) => ({ ...single, question: `q${i}` }));
+    const drafts: Record<string, QuestionDraft> = {};
+    for (const q of qs) drafts[q.question] = setQuestionNotes(toggleOption(q, undefined, 'SQLite'), 'n');
+    expect(Object.keys(buildQuestionAnnotations(qs, drafts) ?? {})).toEqual(['q0', 'q1', 'q2', 'q3']);
   });
 });
 

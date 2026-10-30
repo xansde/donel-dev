@@ -60,7 +60,7 @@ Corpo da resposta = `{"hookSpecificOutput":{"hookEventName":"PermissionRequest",
 | Permitir | `{"behavior":"allow"}` |
 | Permitir sempre neste projeto | `{"behavior":"allow","updatedPermissions":P}` — `P` = as sugestões `addRules` de `permission_suggestions`, com `destination` forçado para `localSettings`; sem sugestão (ex.: `Edit`, `Write`): `[{"type":"addRules","rules":[{"toolName":"<tool>"}],"behavior":"allow","destination":"localSettings"}]` |
 | Negar (motivo opcional) | `{"behavior":"deny","message":"<motivo ou 'Negado pelo dono no Donel.'>"}` — o motivo chega ao Claude (AS 2.3) |
-| Responder pergunta | `{"behavior":"allow","updatedInput":{...tool_input,"answers":{"<pergunta>":"<resposta>"}}}` — seleção múltipla: rótulos unidos por `", "`; "Outra": o texto livre |
+| Responder pergunta | `{"behavior":"allow","updatedInput":{...tool_input,"answers":{"<pergunta>":"<resposta>"}}}` — seleção múltipla: rótulos unidos por `", "`; "Outra": o texto livre. Observação do dono (opcional, por pergunta): `"annotations":{"<pergunta>":{"notes":"<texto>"}}` no mesmo `updatedInput` (CLI 2.1.314 mostra ao modelo como `"<pergunta>"="<resposta>" notes: <texto>`; até 8192 caracteres); sem observação, sem a chave |
 | Aprovar plano e seguir | `{"behavior":"allow","updatedInput":<tool_input inteiro>}` — `allow` sem `updatedInput` é **ignorado** pelo CLI nesta ferramenta |
 | Pedir ajuste no plano | `{"behavior":"deny","message":"<texto do ajuste>"}` — o Claude segue no modo plano e reescreve |
 | Parar (com pendência aberta) | `{"behavior":"deny","interrupt":true}` — aborta a rodada |

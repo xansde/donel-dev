@@ -420,7 +420,15 @@ function writeLocalRules(permissions) {
 function defaultResult(spec, input) {
   if (spec.result !== undefined) return spec.result;
   if (spec.name === 'AskUserQuestion') {
-    const pairs = Object.entries(input.answers ?? {}).map(([q, a]) => `"${q}"="${a}"`).join(', ');
+    // Like the real CLI (2.1.314): a note in `annotations[question].notes` is appended as ` notes: ...`, and with
+    // any note the model is asked to read the answers carefully instead of the plain "answered" sentence.
+    const annotations = input.annotations ?? {};
+    const pairs = Object.entries(input.answers ?? {})
+      .map(([q, a]) => (annotations[q]?.notes ? `"${q}"="${a}" notes: ${annotations[q].notes}` : `"${q}"="${a}"`))
+      .join(', ');
+    if (Object.values(annotations).some((x) => x?.notes)) {
+      return `The user answered: ${pairs}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`;
+    }
     return `User has answered your questions: ${pairs}. You can now continue with the user's answers in mind.`;
   }
   if (spec.name === 'ExitPlanMode') return 'User has approved your plan. You can now start coding.';

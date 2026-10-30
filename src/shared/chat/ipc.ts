@@ -67,7 +67,12 @@ export type PendingAnswer =
   | { readonly kind: 'allow' }
   | { readonly kind: 'allow-always' }
   | { readonly kind: 'deny'; readonly reason?: string }
-  | { readonly kind: 'answers'; readonly answers: Readonly<Record<string, string>> }
+  | {
+      readonly kind: 'answers';
+      readonly answers: Readonly<Record<string, string>>;
+      /** Per-question note of the owner (`AskUserQuestion` input `annotations[question].notes`); absent = no note. */
+      readonly annotations?: Readonly<Record<string, { readonly notes: string }>>;
+    }
   | { readonly kind: 'plan-approve' }
   | { readonly kind: 'plan-adjust'; readonly text: string }
   | { readonly kind: 'interrupt' };

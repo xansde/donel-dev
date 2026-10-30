@@ -1,6 +1,7 @@
 // 014-chat (T078) - AskUserQuestion card: up to 4 questions, ONE "Responder" (FR-021). Cards with label and
 // description, the preview of the picked option in a column, multiple choice in a grid with no orphan option, "Outra" last
 // with a TextInput. With 2+ questions, ONE is shown at a time (tabs + Anterior/Próxima); answers are all sent together. "(Recomendado)" is styled but the label sent back stays exactly as the CLI wrote it (D-C15).
+// Each question takes an optional note ("+ observação"), sent with the answer as the CLI's `annotations[question].notes`.
 
 import {
   Button,
@@ -12,6 +13,7 @@ import {
   PreviewPane,
   QuestionBlock,
   SegmentedControl,
+  TextArea,
   TextInput,
 } from '@donel-dev/design-system';
 import { CircleHelp } from 'lucide-react';
@@ -19,15 +21,19 @@ import { useId, useRef, useState } from 'react';
 import type { PendingAnswer } from '../../../../shared/chat/ipc';
 import type { Pending, Question } from '../../../../shared/chat/rows';
 import {
+  MAX_QUESTION_NOTES_CHARS,
   areAllQuestionsAnswered,
+  buildQuestionAnnotations,
   buildQuestionAnswers,
   isQuestionAnswered,
   limitQuestions,
   setCustomAnswer,
+  setQuestionNotes,
   toggleOption,
   type QuestionDraft,
   type QuestionDrafts,
 } from '../../../../shared/chat/t3/pendingUserInput';
+import styles from './PendingPanel.module.css';
 import { choiceColumns, previewForQuestion, questionPager, splitRecommended, stepRadio, waitingLabel } from './pendingModel';
 
 export interface QuestionCardProps {
@@ -46,6 +52,62 @@ function initialDrafts(questions: readonly Question[]): QuestionDrafts {
     if (rec !== undefined) drafts[q.question] = { selected: [rec.label], custom: '' };
   }
   return drafts;
+}
+
+interface QuestionNotesProps {
+  question: Question;
+  draft: QuestionDraft | undefined;
+  onChange: (draft: QuestionDraft) => void;
+}
+
+/**
+ * The optional note of one question: a discreet "+ observação" that opens a multiline field. A written note keeps
+ * the field open (also when coming back to the page); "remover observação" clears it and closes.
+ */
+function QuestionNotes({ question, draft, onChange }: QuestionNotesProps): React.JSX.Element {
+  const notes = draft?.notes ?? '';
+  const [opened, setOpened] = useState(false);
+  if (!opened && notes === '') {
+    return (
+      <div className={styles.notes}>
+        <Button variant="link" onClick={() => setOpened(true)} data-testid="pending-notes-open">
+          + observação
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <div className={styles.notes}>
+      <TextArea
+        label="Observação"
+        aria-label={`Observação: ${question.question}`}
+        placeholder="Opcional — segue para o Claude junto com a resposta"
+        value={notes}
+        minRows={2}
+        maxRows={6}
+        maxLength={MAX_QUESTION_NOTES_CHARS}
+        autoFocus={notes === ''}
+        onChange={(value) => onChange(setQuestionNotes(draft, value))}
+        onKeyDown={(event) => {
+          // Esc on the chat denies the open question (D-C24): here it only leaves the field, so the note is not lost.
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          event.currentTarget.blur();
+        }}
+        data-testid="pending-notes"
+      />
+      <Button
+        variant="link"
+        onClick={() => {
+          onChange(setQuestionNotes(draft, ''));
+          setOpened(false);
+        }}
+        data-testid="pending-notes-remove"
+      >
+        remover observação
+      </Button>
+    </div>
+  );
 }
 
 interface OneQuestionProps {
@@ -98,27 +160,30 @@ function OneQuestion({ question, index, draft, onChange }: OneQuestionProps): Re
   });
 
   return (
-    <QuestionBlock
-      number={index + 1}
-      title={question.question}
-      titleId={titleId}
-      hint={multiple ? 'escolha uma ou mais' : 'escolha uma'}
-      multiple={multiple}
-      columns={choiceColumns(question.options.length)}
-      options={options}
-      other={
-        <OtherChoice kind={multiple ? 'checkbox' : 'radio'} active={customActive}>
-          <TextInput
-            aria-label={`Outra resposta: ${question.question}`}
-            placeholder="Escreva a sua resposta"
-            value={draft?.custom ?? ''}
-            onChange={(event) => onChange(setCustomAnswer(draft, event.target.value))}
-            data-testid="pending-other"
-          />
-        </OtherChoice>
-      }
-      preview={preview.show ? <PreviewPane>{preview.text}</PreviewPane> : undefined}
-    />
+    <>
+      <QuestionBlock
+        number={index + 1}
+        title={question.question}
+        titleId={titleId}
+        hint={multiple ? 'escolha uma ou mais' : 'escolha uma'}
+        multiple={multiple}
+        columns={choiceColumns(question.options.length)}
+        options={options}
+        other={
+          <OtherChoice kind={multiple ? 'checkbox' : 'radio'} active={customActive}>
+            <TextInput
+              aria-label={`Outra resposta: ${question.question}`}
+              placeholder="Escreva a sua resposta"
+              value={draft?.custom ?? ''}
+              onChange={(event) => onChange(setCustomAnswer(draft, event.target.value))}
+              data-testid="pending-other"
+            />
+          </OtherChoice>
+        }
+        preview={preview.show ? <PreviewPane>{preview.text}</PreviewPane> : undefined}
+      />
+      <QuestionNotes question={question} draft={draft} onChange={onChange} />
+    </>
   );
 }
 
@@ -133,7 +198,9 @@ export function QuestionCard({ pending, waiting, onAnswer, onOpenOrigin }: Quest
 
   const submit = (): void => {
     const answers = buildQuestionAnswers(questions, drafts);
-    if (answers !== null) onAnswer({ kind: 'answers', answers });
+    if (answers === null) return;
+    const annotations = buildQuestionAnnotations(questions, drafts);
+    onAnswer(annotations === undefined ? { kind: 'answers', answers } : { kind: 'answers', answers, annotations });
   };
 
   return (

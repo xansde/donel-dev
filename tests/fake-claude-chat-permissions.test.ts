@@ -140,6 +140,19 @@ describe('fake-claude-chat held permissions', { timeout: 25000 }, () => {
     expect(hooks('PostToolUse')[0].body.tool_input.answers).toEqual({ 'Which db?': 'Postgres' });
   });
 
+  it('AskUserQuestion: a note in updatedInput.annotations reaches the tool_result as the real CLI renders it', async () => {
+    responder = async (body) =>
+      decide({
+        behavior: 'allow',
+        updatedInput: { ...body.tool_input, answers: { 'Which db?': 'SQLite' }, annotations: { 'Which db?': { notes: 'só em dev' } } },
+      });
+    await boot([{ type: 'ask', questions: [{ question: 'Which db?', header: 'DB', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multiSelect: false }] }]);
+    await waitFor(() => hooks('Stop')[0], 'Stop');
+    expect(toolResults()[0].content).toContain('"Which db?"="SQLite" notes: só em dev');
+    expect(toolResults()[0].content).toContain('Read the answers carefully');
+    expect(hooks('PostToolUse')[0].body.tool_input.annotations).toEqual({ 'Which db?': { notes: 'só em dev' } });
+  });
+
   it('ExitPlanMode: allow without updatedInput is ignored (keeps waiting, TUI dialog stays); with updatedInput it proceeds', async () => {
     const calls: Decision[] = [{ behavior: 'allow' }];
     responder = async (body) => decide(calls.shift() ?? { behavior: 'allow', updatedInput: body.tool_input });
