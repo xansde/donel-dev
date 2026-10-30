@@ -53,6 +53,8 @@ const permissionTimeoutMs = Number(process.env.DONEL_FAKE_CLAUDE_PERMISSION_TIME
 const slowMs = Number(process.env.DONEL_FAKE_CLAUDE_SLOW_MS || 3000);
 // Swallows the first Enter that has text in the box (a lost Enter), to exercise the driver's single `\r` resend.
 let dropFirstEnter = process.env.DONEL_FAKE_CLAUDE_DROP_FIRST_ENTER === '1';
+// `1`: while a round runs the box and footer are not drawn (a long tool call, as the real CLI 2.1.314 sometimes does).
+const hideBoxWhileWorking = process.env.DONEL_FAKE_CLAUDE_HIDE_BOX_WHILE_WORKING === '1';
 
 // ------------------------------------------------------------------ session
 const cwd = process.cwd();
@@ -187,6 +189,12 @@ function render() {
   const lines = [' ▐▛███▜▌   Claude Code v2.1.293', `▝▜█████▛▘  Fake Model · fake-claude-chat`, ` ▘▘ ▝▝    ${cwd}`, ''];
   lines.push(...state.history.slice(-12));
   for (const queued of pending) lines.push(`  ⎿ queued: ${queued.replace(/\n/g, ' ').slice(0, 60)}`);
+  if (hideBoxWhileWorking && state.working) {
+    lines.push('  ● Bash(npx vitest run)', '    ⎿  Running…');
+    out(`[2J[H${lines.join('
+')}`);
+    return;
+  }
   menuMatches().slice(0, 6).forEach((c, i) => lines.push(i === 0 ? `  ❯ ${c}` : `    ${c}`));
   const [firstRow, ...nextRows] = inputRows();
   lines.push(ruler(), `❯ ${firstRow}`, ...nextRows.map((row) => `  ${row}`), ruler());

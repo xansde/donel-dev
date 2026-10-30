@@ -118,6 +118,7 @@ function queuedCause(item: Item, activeReason: string | undefined): string {
   if (m.phase === 'queued') return CAUSE_WORKING;
   switch (m.failReason) {
     case 'esperando o Claude terminar a rodada':
+    case 'esperando o Claude terminar o que está fazendo':
       return CAUSE_WORKING;
     case 'há uma pergunta ou permissão esperando você':
       return CAUSE_PENDING;

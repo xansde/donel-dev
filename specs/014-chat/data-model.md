@@ -226,17 +226,21 @@ open ──PTY saiu / rodada interrompida──▶ cancelled
 
 ```text
 waiting-cli ─(CLI pronto e caixa do terminal vazia)─▶ typing
+waiting-cli ─(Claude trabalhando pelos hooks, prompt comum, nenhum motivo visível)─▶ typing   (mesmo com a caixa ilegível)
 typing ─(texto visto na caixa)─▶ confirming
+typing ─(prazo do texto no meio do turno, sem diálogo)─▶ confirming   (Enter sem ver o texto)
 confirming ─(sinal de aceite)─▶ accepted          rótulo: "entrou"
-confirming ─(CLI ocupado: entrou na fila do CLI)─▶ queued   rótulo: "na fila"
+confirming ─(CLI ocupado: entrou na fila do CLI, ou texto fora da caixa 3 s depois do Enter)─▶ queued   rótulo: "na fila"
 queued ─(entregue: queue-operation / linha user / queued_command)─▶ accepted
+queued ─(turno acabou + 15 s sem entrega → ack-lookup achou)─▶ accepted
+queued ─(turno acabou + 15 s sem entrega → ack-lookup não achou)─▶ failed   "o Claude não pegou a mensagem"
 confirming | waiting-cli ─(tempo esgotado)─▶ failed     rótulo: "não foi" + "tentar de novo"
 failed ─(tentar de novo, sem aceite tardio)─▶ waiting-cli
 ```
 
 Rótulos na tela: `waiting-cli` e `queued` = "na fila"; `typing` e
 `confirming` = "enviando…". Nunca há um estado sem saída (SC-003): todo
-estado transitório tem prazo. Sinais de aceite, prazos e a regra contra
+estado transitório tem prazo, e `queued` é conferido quando o turno acaba. Sinais de aceite, prazos e a regra contra
 duplicidade: `contracts/send-protocol.md`.
 
 ## 10. Estado vivo (`LiveState`)

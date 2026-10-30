@@ -164,6 +164,39 @@ describe('SendDriver', () => {
     expect(h.items[0]!.state).toBe('accepted');
   });
 
+  it('caixa escondida no meio da rodada: escreve na hora, Enter sem ver o texto, "na fila" e confere no fim do turno', async () => {
+    // 30/10: "Só envia, sem esperar ele finalizar, e acompanha se o próprio Claude coleta."
+    const h = new Harness();
+    const failures: SendFailureDetail[] = [];
+    h.driver = new SendDriver({ ...h.ports, reportFailure: (detail) => failures.push(detail) });
+    h.echoPaste = false;
+    h.clearOnEnter = false;
+    h.lines = ['  ● Bash(npx vitest run)', '    ⎿  Running…'];
+    h.driver.setEnv({ working: true });
+    h.driver.enqueue({ text: 'no meio do turno' });
+    expect(h.writes).toEqual([paste('no meio do turno')]);
+    h.advance(12_100); // prazo da primeira colagem (12 s) + o intervalo do Enter
+    expect(h.writes).toEqual([paste('no meio do turno'), '\r']);
+    expect(h.items[0]!.state).toBe('confirming');
+    h.advance(3_000);
+    expect(h.items[0]!.state).toBe('queued');
+    expect(h.items[0]!.queuedReason).toBe('entra na próxima pausa do Claude');
+    h.advance(120_000);
+    expect(h.lookups).toEqual([]);
+    // O turno acaba sem entrega: 15 s depois procura o prompt; não achou → "não foi" com o motivo honesto.
+    h.lines = screen('');
+    h.driver.setEnv({ working: false });
+    h.advance(15_000);
+    expect(h.lookups).toHaveLength(1);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.items[0]!.state).toBe('failed');
+    expect(h.items[0]!.reason).toBe('o Claude não pegou a mensagem');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ reason: 'o Claude não pegou a mensagem', step: 'verify' });
+    expect(h.writes.filter((w) => w.includes('no meio do turno'))).toHaveLength(1);
+  });
+
   it('comando espera a rodada acabar e diz a causa', () => {
     const h = new Harness();
     h.footer = WORKING_FOOTER;

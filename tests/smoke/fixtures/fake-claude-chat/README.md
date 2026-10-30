@@ -28,6 +28,7 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
 | `DONEL_FAKE_CLAUDE_SLOW_MS` | Duracao extra (padrao 3000) de uma rodada cujo prompt contem `demorar`; Esc a encerra antes |
 | `DONEL_SMOKE_SHOTS_DIR` | (do `chatHelpers.shot`, nao do falso) copia extra dos prints dos smokes de chat para esta pasta |
 | `DONEL_FAKE_CLAUDE_DROP_FIRST_ENTER` | `1`: o primeiro Enter com texto na caixa e engolido (Enter perdido), para testar o reenvio de `\r` |
+| `DONEL_FAKE_CLAUDE_HIDE_BOX_WHILE_WORKING` | `1`: durante a rodada a caixa e o rodape somem (so `● Bash(...) Running…`), como o CLI real num comando longo; o que e digitado continua indo para a caixa e o Enter para a fila |
 
 ## Comportamento
 

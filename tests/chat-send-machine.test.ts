@@ -165,31 +165,68 @@ describe('gate (§1)', () => {
     expect(sim.status?.reason).toBe('o Claude não ficou pronto');
   });
 
-  it('Claude trabalhando (hooks) com a caixa ilegível: espera sem prazo e entra quando a caixa abre', () => {
-    // Visto no alfa (30/10): mensagem mandada durante um comando longo do Claude falhava em 30 s.
+  // 30/10: o dono revogou a espera do #125 ("Só envia, sem esperar ele finalizar, e acompanha se o próprio Claude
+  // coleta"). Com o turno em andamento pelos hooks, a caixa ilegível não segura mais o prompt comum.
+  it('Claude trabalhando (hooks) com a caixa ilegível: escreve na hora, para a fila do próprio CLI', () => {
     const sim = new Sim({ text: 'oi' }, 1000);
     sim.ev({ type: 'env', now: 1000, working: true });
     sim.screen(['  ● Bash(npx vitest run)', '    ⎿  Running…'], 1000);
-    sim.tick(200_000);
-    expect(sim.phase).toBe('waiting-cli');
-    expect(sim.status?.label).toBe('na fila');
-    expect(sim.status?.reason).toBe('esperando o Claude terminar o que está fazendo');
-    expect(sim.allWrites()).toEqual([]);
-    sim.screen(workingEmpty(), 200_001);
     expect(sim.allWrites()).toEqual([paste('oi')]);
+    expect(sim.phase).toBe('typing');
   });
 
-  it('o turno acaba e a caixa segue ilegível: o prazo de 30 s recomeça do fim do turno', () => {
+  it('caixa ilegível sem o turno em andamento: não escreve às cegas e o prazo de 30 s vale', () => {
     const sim = new Sim({ text: 'oi' }, 0);
     sim.ev({ type: 'env', now: 0, working: true });
-    sim.screen(['carregando...'], 0);
-    sim.tick(100_000);
-    sim.ev({ type: 'env', now: 100_000, working: false });
-    sim.tick(129_999);
+    // sem nenhuma leitura da tela ainda: nunca escreve (o portão precisa ver que não há diálogo)
+    expect(sim.allWrites()).toEqual([]);
+    sim.ev({ type: 'env', now: 10, working: false });
+    sim.screen(['carregando...'], 10);
+    sim.tick(30_009);
+    expect(sim.allWrites()).toEqual([]);
     expect(sim.phase).toBe('waiting-cli');
-    sim.tick(130_000);
+    sim.tick(30_010);
     expect(sim.phase).toBe('failed');
     expect(sim.status?.reason).toBe('o Claude não ficou pronto');
+  });
+
+  it('Claude trabalhando com a caixa ilegível, mas diálogo na tela: segura', () => {
+    const sim = new Sim({ text: 'oi' });
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(dialog(), 0);
+    sim.tick(100_000);
+    expect(sim.allWrites()).toEqual([]);
+    expect(sim.phase).toBe('waiting-cli');
+  });
+
+  it('Claude trabalhando com a caixa ilegível e pergunta aberta: segura', () => {
+    const sim = new Sim({ text: 'oi' });
+    sim.ev({ type: 'env', now: 0, working: true, pendingOpen: true });
+    sim.screen(['  ● Bash(npx vitest run)'], 0);
+    sim.tick(100_000);
+    expect(sim.allWrites()).toEqual([]);
+    expect(sim.status?.reason).toBe('há uma pergunta ou permissão esperando você');
+  });
+
+  it.each(['/meu-skill x', '!ls'])('Claude trabalhando com a caixa ilegível: %s segue esperando o CLI parar, sem prazo', (text) => {
+    const sim = new Sim({ text });
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(['  ● Bash(npx vitest run)'], 0);
+    sim.tick(200_000);
+    expect(sim.allWrites()).toEqual([]);
+    expect(sim.phase).toBe('waiting-cli');
+    expect(sim.status?.label).toBe('na fila');
+  });
+
+  it('Claude trabalhando com a caixa ilegível: mensagem com imagem espera a caixa (o [Image #N] precisa ser visto)', () => {
+    const sim = new Sim({ text: 'veja', imagePaths: ['C:\\a\\1.png'] });
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(['  ● Bash(npx vitest run)'], 0);
+    sim.tick(200_000);
+    expect(sim.allWrites()).toEqual([]);
+    expect(sim.phase).toBe('waiting-cli');
+    sim.screen(workingEmpty(), 200_001);
+    expect(sim.allWrites()).toEqual([paste('C:\\a\\1.png')]);
   });
 
   it('devolve wake-at para o prazo de 30 s', () => {
@@ -507,6 +544,201 @@ describe('Enter no meio da rodada sem sinal (máquina carregada)', () => {
     sim.tick(180);
     sim.screen(screen('oi tudo bem', WORKING_FOOTER), 15_180);
     expect(sim.phase).toBe('failed');
+  });
+});
+
+/** Leva um prompt mandado no meio da rodada (hooks `working`, caixa visível) até o Enter. */
+function sendMidTurnUntilEnter(text = 'oi tudo bem') {
+  const sim = new Sim({ text }, 0);
+  sim.ev({ type: 'env', now: 0, working: true });
+  sim.screen(workingEmpty(), 0);
+  sim.screen(screen(text, WORKING_FOOTER), 100);
+  sim.tick(180);
+  return sim;
+}
+
+const hidden = (): LineInput[] => ['  ● Bash(npx vitest run)', '    ⎿  Running…'];
+
+describe('colagem que não aparece na caixa no meio da rodada (30/10)', () => {
+  it('prazo do texto estoura com o turno em andamento: manda o Enter mesmo assim, sem colar de novo nem Esc Esc', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(hidden(), 0);
+    expect(sim.writes()).toEqual([paste('oi tudo bem')]);
+    sim.screen(hidden(), 2999);
+    expect(sim.phase).toBe('typing');
+    sim.tick(3000);
+    expect(sim.phase).toBe('confirming');
+    sim.tick(3080);
+    expect(sim.writes()).toEqual(['\r']);
+    expect(sim.allWrites().filter((w) => w.includes('oi tudo bem'))).toHaveLength(1);
+    expect(sim.allWrites()).not.toContain('\x1b\x1b');
+    expect(sim.state.failReason).toBeNull();
+  });
+
+  it('caixa visível com o rodapé de trabalho e o texto ainda sem aparecer: mesmo caminho (Enter, sem Esc Esc)', () => {
+    const sim = new Sim({ text: 'mensagem longa' }, 0);
+    sim.screen(workingEmpty(), 0);
+    sim.screen(screen('mensagem', WORKING_FOOTER), 1000);
+    sim.tick(3000);
+    expect(sim.phase).toBe('confirming');
+    sim.tick(3080);
+    expect(sim.writes()).toEqual(['\r']);
+    expect(sim.allWrites()).not.toContain('\x1b\x1b');
+  });
+
+  it('um diálogo apareceu durante a colagem: falha como antes, sem Enter (o Enter responderia o diálogo)', () => {
+    const sim = new Sim({ text: 'oi' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(hidden(), 0);
+    sim.screen(dialog(), 1000);
+    sim.tick(3000);
+    expect(sim.phase).toBe('failed');
+    expect(sim.status?.reason).toBe('o texto não entrou na caixa');
+    expect(sim.allWrites()).not.toContain('\r');
+  });
+
+  it('uma pergunta abriu durante a colagem: falha, sem Enter', () => {
+    const sim = new Sim({ text: 'oi' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(hidden(), 0);
+    sim.ev({ type: 'env', now: 1000, pendingOpen: true });
+    sim.tick(3000);
+    expect(sim.phase).toBe('failed');
+    expect(sim.allWrites()).not.toContain('\r');
+  });
+
+  it('depois do Enter às cegas, sem sinal e o texto fora da caixa: "na fila" (passado o prazo do reenvio)', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(hidden(), 0);
+    sim.tick(3000);
+    sim.tick(3080);
+    sim.screen(hidden(), 6079);
+    expect(sim.phase).toBe('confirming');
+    sim.screen(hidden(), 6080);
+    expect(sim.phase).toBe('queued');
+    expect(sim.status?.label).toBe('na fila');
+    expect(sim.allWrites().filter((w) => w === '\r')).toHaveLength(1);
+  });
+
+  it('o enqueue do CLI depois do Enter às cegas: "na fila"; a entrega: "entrou"', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(hidden(), 0);
+    sim.tick(3000);
+    sim.tick(3080);
+    sim.signal({ signal: 'enqueue', text: 'oi tudo bem', at: 3200 }, 3200);
+    expect(sim.phase).toBe('queued');
+    sim.signal({ signal: 'deliver', text: 'oi tudo bem', at: 60_000 }, 60_000);
+    expect(sim.phase).toBe('accepted');
+    expect(sim.status?.label).toBe('entrou');
+  });
+});
+
+describe('acompanhar se o CLI coletou a mensagem da fila (30/10)', () => {
+  /** Mandada no meio da rodada, sem sinal: vira "na fila" pela caixa vazia depois do Enter. */
+  function queuedWithoutSignal() {
+    const sim = sendMidTurnUntilEnter('oi tudo bem');
+    sim.screen(workingEmpty(), 3180);
+    expect(sim.phase).toBe('queued');
+    return sim;
+  }
+  const lookups = (sim: Sim) => sim.log.filter((e) => e.type === 'ack-lookup');
+
+  it('com o turno em andamento fica "na fila" sem prazo', () => {
+    const sim = queuedWithoutSignal();
+    sim.tick(600_000);
+    expect(sim.phase).toBe('queued');
+    expect(lookups(sim)).toEqual([]);
+  });
+
+  it('o turno acabou e passaram 15 s sem entrega: procura o prompt (ack-lookup); achou → "entrou"', () => {
+    const sim = queuedWithoutSignal();
+    const r = sim.ev({ type: 'env', now: 100_000, working: false });
+    expect(r.effects).toContainEqual({ type: 'wake-at', at: 115_000 });
+    sim.screen(idleEmpty(), 114_999);
+    expect(lookups(sim)).toEqual([]);
+    const v = sim.screen(idleEmpty(), 115_000);
+    expect(v.effects).toContainEqual({ type: 'ack-lookup', text: 'oi tudo bem', since: 0 });
+    expect(sim.status?.label).toBe('na fila');
+    const before = sim.allWrites().length;
+    sim.ev({ type: 'ack-result', now: 115_050, found: true });
+    expect(sim.phase).toBe('accepted');
+    expect(sim.allWrites()).toHaveLength(before);
+  });
+
+  it('não achou: "não foi" com o motivo honesto e "tentar de novo" procura antes de recolar', () => {
+    const sim = queuedWithoutSignal();
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    sim.screen(idleEmpty(), 115_000);
+    const before = sim.allWrites().length;
+    sim.ev({ type: 'ack-result', now: 115_050, found: false });
+    expect(sim.phase).toBe('failed');
+    expect(sim.status?.label).toBe('não foi');
+    expect(sim.status?.reason).toBe('o Claude não pegou a mensagem');
+    expect(sim.allWrites()).toHaveLength(before);
+    const r = sim.ev({ type: 'action', now: 120_000, action: 'retry' });
+    expect(r.effects).toContainEqual({ type: 'ack-lookup', text: 'oi tudo bem', since: 0 });
+    expect(sim.writes(r.effects)).toEqual([]);
+  });
+
+  it('a entrega chega dentro dos 15 s: "entrou" sem procurar', () => {
+    const sim = queuedWithoutSignal();
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    sim.signal({ signal: 'deliver', text: 'oi tudo bem', at: 101_000 }, 101_000);
+    expect(sim.phase).toBe('accepted');
+    sim.tick(120_000);
+    expect(lookups(sim)).toEqual([]);
+  });
+
+  it('o turno recomeça antes dos 15 s: o relógio para e recomeça do fim do novo turno', () => {
+    const sim = queuedWithoutSignal();
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    sim.ev({ type: 'env', now: 105_000, working: true });
+    sim.screen(workingEmpty(), 115_000);
+    expect(lookups(sim)).toEqual([]);
+    sim.ev({ type: 'env', now: 200_000, working: false });
+    sim.screen(idleEmpty(), 214_999);
+    expect(lookups(sim)).toEqual([]);
+    sim.screen(idleEmpty(), 215_000);
+    expect(lookups(sim)).toHaveLength(1);
+  });
+
+  it('hooks parados mas o rodapé ainda diz "esc to interrupt": não procura e confere de novo depois', () => {
+    const sim = queuedWithoutSignal();
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    const r = sim.screen(workingEmpty(), 115_000);
+    expect(lookups(sim)).toEqual([]);
+    expect(r.effects).toContainEqual({ type: 'wake-at', at: 130_000 });
+    sim.screen(idleEmpty(), 130_000);
+    expect(lookups(sim)).toHaveLength(1);
+  });
+
+  it('mensagem que o CLI pôs na fila (enqueue) também é conferida quando o turno acaba', () => {
+    const sim = sendMidTurnUntilEnter('oi');
+    sim.signal({ signal: 'enqueue', text: 'oi', at: 200 }, 200);
+    expect(sim.phase).toBe('queued');
+    sim.ev({ type: 'env', now: 50_000, working: false });
+    sim.screen(idleEmpty(), 65_000);
+    expect(lookups(sim)).toContainEqual({ type: 'ack-lookup', text: 'oi', since: 0 });
+  });
+
+  it('a entrega que chega durante a busca fecha em "entrou"; a resposta atrasada da busca não muda mais nada', () => {
+    const sim = queuedWithoutSignal();
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    sim.screen(idleEmpty(), 115_000);
+    sim.signal({ signal: 'deliver', text: 'oi tudo bem', at: 115_010 }, 115_010);
+    expect(sim.phase).toBe('accepted');
+    sim.ev({ type: 'ack-result', now: 115_050, found: false });
+    expect(sim.phase).toBe('accepted');
+  });
+
+  it('processo encerrado com a mensagem na fila: "não foi"', () => {
+    const sim = queuedWithoutSignal();
+    sim.ev({ type: 'env', now: 100_000, alive: false });
+    expect(sim.phase).toBe('failed');
+    expect(sim.status?.reason).toBe('o Claude foi encerrado');
   });
 });
 

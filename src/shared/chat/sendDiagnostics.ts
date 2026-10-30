@@ -20,6 +20,7 @@ export const KNOWN_SEND_REASONS: readonly string[] = [
   'o Claude não ficou pronto',
   'o texto da caixa mudou',
   'o texto não entrou na caixa',
+  'o Claude não pegou a mensagem',
   // gate waits
   'esperando a caixa de entrada',
   'esperando o Claude ficar pronto',
@@ -32,7 +33,7 @@ export const KNOWN_SEND_REASONS: readonly string[] = [
 ];
 
 const REASONS: ReadonlySet<string> = new Set(KNOWN_SEND_REASONS);
-const STEPS: ReadonlySet<string> = new Set<SendStep>(['gate', 'image', 'text', 'menu-esc', 'enter-gap', 'await-ack', 'lookup', 'done']);
+const STEPS: ReadonlySet<string> = new Set<SendStep>(['gate', 'image', 'text', 'menu-esc', 'enter-gap', 'await-ack', 'lookup', 'verify', 'done']);
 const KINDS: ReadonlySet<string> = new Set<SendKind>(['prompt', 'slash', 'shell']);
 const MODES: ReadonlySet<string> = new Set<SendMode>(['normal', 'interrupt-first']);
 
