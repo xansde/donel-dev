@@ -44,9 +44,33 @@ describe('mindscapeFilePath', () => {
 });
 
 describe('createMindscapeStore', () => {
-  it('loads the empty document when the file is missing or unreadable', () => {
+  it('loads the empty document when the file is missing', () => {
     expect(createMindscapeStore(FILE, memoryIo().io).load()).toEqual(emptyMindscapeDoc());
-    expect(createMindscapeStore(FILE, memoryIo({ [FILE]: '{nope' }).io).load()).toEqual(emptyMindscapeDoc());
+  });
+
+  // An empty board for a file that exists would be saved over it by the renderer:
+  // the load fails instead, and the file stays as it was (handoffs/mindscape-revisao.md, item 3).
+  it.each([
+    ['invalid JSON', '{nope'],
+    ['an empty file', ''],
+    ['JSON that is not a document', '[1, 2]'],
+    ['a document without boards', '{"schemaVersion": 2}'],
+  ])('fails to load %s and leaves the file as it was', (_label, text) => {
+    const { io, files, calls } = memoryIo({ [FILE]: text });
+    expect(() => createMindscapeStore(FILE, io).load()).toThrow();
+    expect(files[FILE]).toBe(text);
+    expect(calls).toEqual([]);
+  });
+
+  it('fails to load a file that exists but cannot be read (a folder, a lock)', () => {
+    const { io } = memoryIo();
+    const unreadable: ConfigIoDeps = { ...io, existsSync: (path) => path === FILE || io.existsSync(path) };
+    expect(() => createMindscapeStore(FILE, unreadable).load()).toThrow();
+  });
+
+  it('still loads a newer schemaVersion (read-only, never written)', () => {
+    const newer = JSON.stringify({ schemaVersion: 3, boards: {}, future: true });
+    expect(createMindscapeStore(FILE, memoryIo({ [FILE]: newer }).io).load()).toEqual(emptyMindscapeDoc());
   });
 
   it('saves through a temp file and a rename, and loads it back', () => {

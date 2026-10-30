@@ -20,6 +20,7 @@ import {
   type MindscapeDoc,
   type MindscapeDrawing,
 } from '../../../shared/mindscape/model';
+import type { MindscapeAlert } from '../../../shared/mindscape/persistence';
 import { mindscapeShortcut, type MindscapeTool } from '../../../shared/mindscape/shortcuts';
 import { screenToWorld, type BoardView, type Point } from '../../../shared/mindscape/view';
 import type { TabColorToken } from '../../../shared/tabAppearance';
@@ -72,6 +73,10 @@ export interface MindscapeScreenProps {
   readonly onUndo: (projectPath: string) => void;
   /** Desenho, fatia 02 — Ctrl+Shift+Z on the board of `projectPath`. */
   readonly onRedo: (projectPath: string) => void;
+  /** The board file could not be read or written (`useMindscapeDoc`); shown above the tabs, never blocking. */
+  readonly alert?: MindscapeAlert | null;
+  /** "Tentar de novo" of the alert. */
+  readonly onRetry?: () => void;
 }
 
 /** Margin of the new owner post-it from the visible top-left corner of the board. */
@@ -151,6 +156,8 @@ export function MindscapeScreen({
   onAction,
   onUndo,
   onRedo,
+  alert,
+  onRetry,
 }: MindscapeScreenProps): React.JSX.Element {
   const boardPaths = Object.keys(doc.boards);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(initialProjectPath);
@@ -421,6 +428,16 @@ export function MindscapeScreen({
         if (section && !section.contains(document.activeElement)) section.focus({ preventScroll: true });
       }}
     >
+      {alert ? (
+        <div className={styles.alert} role="alert" data-testid="mindscape-alert" data-kind={alert.kind}>
+          <span>{alert.text}</span>
+          {alert.retry && onRetry ? (
+            <button type="button" className={styles.alertRetry} onClick={onRetry}>
+              Tentar de novo
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className={styles.tabs} role="tablist" aria-label="Mindscapes">
         {boardPaths.map((path) => (
           <button
