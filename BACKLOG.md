@@ -253,7 +253,9 @@ no alfa.
 
 ### 06 — Print colado ou arrastado para o quadro
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/mindscape-desenho` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (`images.ts`, `mindscape-images.ts` com fs injetado, parse do print, hit-test, `resizeDrawing`, `eraseBoard`) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-desenho-implementacao-06.md`
+- **PR**: —
 - **Depende de**: 04
 - **Conflita com**: 01, 02, 03, 04, 05
 - **Propósito**: o dono cola uma imagem com `Ctrl+V` ou arrasta um arquivo de imagem para o
