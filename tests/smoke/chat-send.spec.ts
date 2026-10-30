@@ -114,6 +114,26 @@ test('T072 - envio: linhas, /mod, desconhecido, enviando, na fila, interromper, 
     await send(page, '/foobar');
     await expect(timeline(page).getByText('✕ não foi')).toHaveCount(2, { timeout: 30_000 });
 
+    // Os dois "não foi" chegam ao chat-diagnostics.log com o detalhe do portão, nunca com o texto enviado.
+    const diagnostics = (): string => {
+      try {
+        return readFileSync(path.join(chat.userDataDir, 'chat-diagnostics.log'), 'utf8');
+      } catch {
+        return '';
+      }
+    };
+    const sendFailures = (): Array<Record<string, unknown>> =>
+      diagnostics()
+        .split('\n')
+        .filter((l) => l.includes('"kind":"send-failed"'))
+        .map((l) => JSON.parse(l) as Record<string, unknown>);
+    await expect.poll(() => sendFailures().length, { timeout: 10_000 }).toBe(2);
+    for (const failure of sendFailures()) {
+      expect(failure).toMatchObject({ reason: 'comando desconhecido', step: 'await-ack', sendKind: 'slash', screenRead: true, alive: true });
+    }
+    expect(diagnostics()).not.toContain('foobar');
+    expect(diagnostics()).not.toContain('/mod');
+
     // Comando nativo conhecido entra. `/cost` e nativo SEM tela propria: um que abre tela (`/status`) agora chega
     // marcado `opensScreen` (T087) e segura a fila ate a tela aparecer - o falso nao a desenha.
     await send(page, '/cost');
