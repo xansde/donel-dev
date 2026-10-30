@@ -2403,6 +2403,8 @@ export function App(): React.JSX.Element {
             onAction={handleMindscapeAction}
             onUndo={undoMindscape}
             onRedo={redoMindscape}
+            alert={mindscape.alert}
+            onRetry={mindscape.retry}
           />
         ) : null}
         {devModeOn && esteiraOpen ? (
