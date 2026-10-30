@@ -1025,7 +1025,7 @@ test.describe('o Jobu e os gestos', () => {
 
   test.beforeAll(async () => {
     userDataDir = createIsolatedUserDataDir('pet-gestures');
-    writeFileSync(path.join(userDataDir, 'config.json'), JSON.stringify({ pet: { enabled: true, placement: null, size: 140 } }), 'utf8');
+    writeFileSync(path.join(userDataDir, 'config.json'), JSON.stringify({ pet: { enabled: true, placement: null, size: 140 }, projectRoots: [path.dirname(REPO_ROOT)] }), 'utf8');
     await launchGestureApp();
   });
 
