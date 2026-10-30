@@ -483,6 +483,16 @@ test('Mindscape desenho 03: seleção múltipla, alças, estilo e camadas @minds
   await window.keyboard.press('Control+z');
   await expect.poll(() => [byId(first), byId(second)], { timeout: 10_000 }).toEqual([firstBefore, secondBefore]);
 
+  // 3b. Esc in the middle of a drag with V (the tool does not change) → nothing moves (found in the review).
+  await window.mouse.move(oL + 60, oB + 30);
+  await window.mouse.down();
+  await window.mouse.move(oL + 80, oB + 50, { steps: 4 });
+  await window.mouse.move(oL + 100, oB + 80, { steps: 4 });
+  await window.keyboard.press('Escape');
+  await window.mouse.up();
+  await window.waitForTimeout(800);
+  expect([byId(first), byId(second)]).toEqual([firstBefore, secondBefore]);
+
   // 4. Lasso around the first rect and the owner post-it → both selected (the second rect and the session post-it stay out).
   await dragScreen(window, { x: oL - 10, y: oT - 10 }, { x: oR + 10, y: oB + 120 });
   await expect(drawing(first)).toHaveAttribute('data-selected', 'true');

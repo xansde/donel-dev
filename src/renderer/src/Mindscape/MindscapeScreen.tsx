@@ -172,6 +172,7 @@ export function MindscapeScreen({
   // Desenho, fatia 03 — the selection (cards and drawings) and space held (moves the view).
   const [selection, setSelection] = useState<Selection>(EMPTY_ITEMS);
   const [spaceHeld, setSpaceHeld] = useState(false);
+  const [cancelSignal, setCancelSignal] = useState(0);
   /** A gesture is in flight on the board (pointer down): Ctrl+Z and the keys that change the board wait for it to end. */
   const gestureActiveRef = useRef(false);
   const sectionRef = useRef<HTMLElement>(null);
@@ -383,7 +384,8 @@ export function MindscapeScreen({
         if (!gestureActiveRef.current) restack(shortcut.type === 'bring-to-front');
         return;
       case 'escape':
-        // Cancels the gesture in flight (the board ends it on a tool change) and drops the selection.
+        // Cancels the gesture in flight (also with V, where the tool does not change) and drops the selection.
+        setCancelSignal((signal) => signal + 1);
         clearSelection();
         setTool('select');
         return;
@@ -478,6 +480,7 @@ export function MindscapeScreen({
           board={board}
           tool={tool}
           panMode={spaceHeld}
+          cancelSignal={cancelSignal}
           cardRects={cardRects}
           selection={live}
           onSelect={select}

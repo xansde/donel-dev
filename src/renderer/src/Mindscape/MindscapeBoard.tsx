@@ -127,6 +127,8 @@ export interface MindscapeBoardProps {
   readonly tool: MindscapeTool;
   /** Space held: any drag moves the view, whatever the tool. */
   readonly panMode: boolean;
+  /** Bumped by Esc: cancels the gesture in flight even when the tool does not change (V stays V). */
+  readonly cancelSignal?: number;
   /** Rects of the cards on screen, in drawing order — the hit-test of the arrow/line ends and the lasso. */
   readonly cardRects: readonly CardRect[];
   /** The selection (cards and drawings that exist on screen). */
@@ -206,6 +208,7 @@ export function MindscapeBoard({
   board,
   tool,
   panMode,
+  cancelSignal = 0,
   cardRects,
   selection,
   onSelect,
@@ -288,6 +291,19 @@ export function MindscapeBoard({
 
   useEffect(() => () => endGesture(), [endGesture]);
 
+  /** Drops the gesture in flight without writing it; a drag that moved also eats the click that follows. */
+  const cancelGesture = useCallback((): void => {
+    if (gestureRef.current?.moved) {
+      swallowClickRef.current = true;
+      suppressClickRef.current = true;
+    }
+    endGesture();
+  }, [endGesture]);
+
+  useEffect(() => {
+    if (cancelSignal > 0) cancelGesture();
+  }, [cancelSignal, cancelGesture]);
+
   // Desenho, fatia 05 — the wheel. NATIVE and not passive (React's wheel
   // listener is passive and cannot `preventDefault`, as on the Jobu): with Ctrl
   // (a pinch on the touchpad arrives the same way) it zooms on the mouse and the
@@ -333,6 +349,10 @@ export function MindscapeBoard({
       const file = printFileOf(event.clipboardData);
       const element = viewRef.current;
       if (!file || !element) return;
+      // Focus in something over the board (a dialog, another panel): the paste is not the board's.
+      const focused = document.activeElement;
+      const screen = element.closest('section');
+      if (focused && focused !== document.body && screen && !screen.contains(focused)) return;
       event.preventDefault();
       const screenPoint = lastPointerRef.current ?? { x: element.clientWidth / 2, y: element.clientHeight / 2 };
       const at = screenToWorld(screenPoint, { pan: boardRef.current.pan, zoom: boardRef.current.zoom });
@@ -431,11 +451,13 @@ export function MindscapeBoard({
     callbacksRef.current.onGestureChange?.(true);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
-    window.addEventListener('pointercancel', up);
+    // The system took the pointer (a gesture of the OS, a lost capture): nothing is written.
+    const cancel = (): void => cancelGesture();
+    window.addEventListener('pointercancel', cancel);
     detachRef.current = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
-      window.removeEventListener('pointercancel', up);
+      window.removeEventListener('pointercancel', cancel);
     };
   };
 
