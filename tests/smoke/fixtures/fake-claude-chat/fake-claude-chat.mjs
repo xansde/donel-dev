@@ -2,11 +2,11 @@
 // See README.md in this folder for args, env vars and the scenario format.
 // Plain Node, no dependencies. Works with any cwd.
 
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 // ---------------------------------------------------------------- arguments
 function parseArgs(argv) {
@@ -17,6 +17,7 @@ function parseArgs(argv) {
     else if (a === '--settings') out.settings = argv[++i] ?? null;
     else if (a === '-r' || a === '--resume') out.resume = argv[++i] ?? null;
     else if (a === '--permission-mode') out.permissionMode = argv[++i] ?? null;
+    else if (a === '--worktree' || a === '-w') out.worktree = argv[++i] ?? null;
   }
   return out;
 }
@@ -55,6 +56,32 @@ const slowMs = Number(process.env.DONEL_FAKE_CLAUDE_SLOW_MS || 3000);
 let dropFirstEnter = process.env.DONEL_FAKE_CLAUDE_DROP_FIRST_ENTER === '1';
 // `1`: while a round runs the box and footer are not drawn (a long tool call, as the real CLI 2.1.314 sometimes does).
 const hideBoxWhileWorking = process.env.DONEL_FAKE_CLAUDE_HIDE_BOX_WHILE_WORKING === '1';
+
+// ----------------------------------------------------------------- worktree
+// `--worktree <name>` as the real CLI 2.1.314 does it: `<main repo>/.claude/worktrees/<name>` on a new branch
+// `worktree-<name>` (an existing one is reopened), locked as `claude session <name> (pid <pid>)`, and the session runs
+// inside it. The lock stays when the process is killed, like the real one.
+function enterWorktree(name) {
+  const gitOut = (cwdForGit, gitArgs) => execFileSync('git', gitArgs, { cwd: cwdForGit, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  let root;
+  try {
+    const common = resolve(process.cwd(), gitOut(process.cwd(), ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+    if (basename(common).toLowerCase() !== '.git') throw new Error('layout');
+    root = dirname(common);
+  } catch {
+    process.stdout.write('Error creating worktree: Can only use --worktree in a git repository\r\n');
+    process.exit(1);
+  }
+  const path = join(root, '.claude', 'worktrees', name);
+  if (!existsSync(path)) gitOut(root, ['worktree', 'add', '-q', '-b', `worktree-${name}`, path, 'HEAD']);
+  try {
+    gitOut(root, ['worktree', 'lock', '--reason', `claude session ${name} (pid ${process.pid})`, path]);
+  } catch {
+    // already locked (a reopened worktree): the real CLI keeps going too
+  }
+  process.chdir(path);
+}
+if (args.worktree) enterWorktree(args.worktree);
 
 // ------------------------------------------------------------------ session
 const cwd = process.cwd();

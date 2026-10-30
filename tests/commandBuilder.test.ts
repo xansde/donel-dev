@@ -131,6 +131,23 @@ describe('buildClaudeArgs', () => {
     });
   });
 
+  describe('Isolar em worktree — --worktree <nome>', () => {
+    it('maps worktree to --worktree <name> as two tokens, no quotes', () => {
+      expect(buildClaudeArgs({ worktree: 'radar-1030-1752' })).toEqual(['--worktree', 'radar-1030-1752']);
+    });
+
+    it('omits --worktree when absent or empty', () => {
+      expect(buildClaudeArgs({})).not.toContain('--worktree');
+      expect(buildClaudeArgs({ worktree: '' })).not.toContain('--worktree');
+    });
+
+    it('comes last, after --chrome, keeping the existing argv order stable', () => {
+      expect(
+        buildClaudeArgs({ model: 'fable', effort: 'high', permissionMode: 'acceptEdits', sessionName: 'radar', chrome: true, worktree: 'radar-1030-1752' }),
+      ).toEqual(['--model', 'fable', '--effort', 'high', '--permission-mode', 'acceptEdits', '-n', 'radar', '--chrome', '--worktree', 'radar-1030-1752']);
+    });
+  });
+
   it('omits every continuation flag when continuation is not provided', () => {
     const args = buildClaudeArgs({ model: 'sonnet' });
     expect(args).not.toContain('-r');

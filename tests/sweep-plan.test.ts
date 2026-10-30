@@ -27,7 +27,7 @@ function facts(patch: Partial<RepoFacts> = {}): RepoFacts {
 }
 
 function worktree(patch: Partial<WorktreeFact> = {}): WorktreeFact {
-  return { path: 'C:\\w\\atlas-wt\\a', branch: 'feature/a', head: 'aaa', isMain: false, locked: false, missing: false, clean: true, headInIntegration: true, headEqualsRemote: false, lastActivityMs: NOW - 3 * DAY, ignored: [], hasSubmodules: false, ...patch };
+  return { path: 'C:\\w\\atlas-wt\\a', branch: 'feature/a', head: 'aaa', isMain: false, locked: false, staleClaudeLock: false, missing: false, clean: true, headInIntegration: true, headEqualsRemote: false, headOnRemote: false, lastActivityMs: NOW - 3 * DAY, ignored: [], hasSubmodules: false, ...patch };
 }
 
 function branch(patch: Partial<BranchFact> = {}): BranchFact {
@@ -126,6 +126,24 @@ describe('worktrees', () => {
     expect(ofKind(plan({ worktrees: [worktree({ locked: true })] }), 'keep')[0]?.reason).toBe('travada (git worktree lock)');
   });
 
+  it('a stale lock of the CLI (killed --worktree session) does not hold it: removed, unlocking first', () => {
+    const [removal] = ofKind(plan({ worktrees: [worktree({ locked: true, staleClaudeLock: true })] }), 'removeWorktree');
+    expect(removal).toMatchObject({ unlock: true, reason: 'já em origin/staging' });
+  });
+
+  it('a stale CLI lock never overrides the other rules: dirty stays', () => {
+    expect(ofKind(plan({ worktrees: [worktree({ locked: true, staleClaudeLock: true, clean: false })] }), 'keep')[0]?.reason).toBe('mudança não commitada');
+  });
+
+  it('an unlocked worktree is removed without an unlock', () => {
+    expect(ofKind(plan({ worktrees: [worktree()] }), 'removeWorktree')[0]?.unlock).toBeUndefined();
+  });
+
+  it('HEAD on some remote branch (a --worktree session from origin/main) is removed even outside integration', () => {
+    const items = plan({ worktrees: [worktree({ headInIntegration: false, headEqualsRemote: false, headOnRemote: true })] });
+    expect(ofKind(items, 'removeWorktree')[0]?.reason).toBe('todos os commits já estão no remoto');
+  });
+
   it('keeps the worktrees of the installed channels (alfa, beta)', () => {
     const items = plan({ worktrees: [worktree({ path: 'C:\\w\\atlas-alfa' }), worktree({ path: 'C:\\w\\atlas-BETA' })] });
     expect(ofKind(items, 'removeWorktree')).toEqual([]);
@@ -144,6 +162,16 @@ describe('worktrees', () => {
 });
 
 describe('branches', () => {
+  it('the CLI branch of a --worktree session with nothing of its own is deleted (receipt keeps the SHA)', () => {
+    const items = plan({ branches: [branch({ name: 'worktree-radar-1030-1752', ancestorOfIntegration: false, cherryClean: false, onlyHereCount: 0 })] });
+    expect(ofKind(items, 'deleteBranch')[0]?.reason).toBe('branch de worktree do Claude sem commit só dela');
+  });
+
+  it('a CLI worktree branch with a commit of its own stays, and any other branch keeps the old rule', () => {
+    expect(ofKind(plan({ branches: [branch({ name: 'worktree-x', ancestorOfIntegration: false, cherryClean: false, onlyHereCount: 1 })] }), 'deleteBranch')).toEqual([]);
+    expect(ofKind(plan({ branches: [branch({ name: 'feature/x', ancestorOfIntegration: false, cherryClean: false, onlyHereCount: 0 })] }), 'deleteBranch')).toEqual([]);
+  });
+
   it('deletes a branch that is an ancestor of the integration branch, keeping name and SHA for the receipt', () => {
     const items = plan({ branches: [branch()] });
     expect(ofKind(items, 'deleteBranch')).toEqual([{ kind: 'deleteBranch', name: 'feature/a', sha: 'abc123', reason: 'já incorporada em origin/staging' }]);

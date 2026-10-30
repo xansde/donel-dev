@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cherryIsClean, latestReflogMs, parseBranchList, parseWorktreeList, splitNul } from '../src/main/sweep/git-parse';
+import { cherryIsClean, latestReflogMs, parseClaudeSessionLock, parseBranchList, parseWorktreeList, splitNul } from '../src/main/sweep/git-parse';
 import { isGone, isLink, mapLimit, measure, movePath, pathExists, removeIfEmpty } from '../src/main/sweep/fs-utils';
 
 describe('parseWorktreeList', () => {
@@ -181,5 +181,20 @@ describe('filesystem helpers', () => {
     });
     expect(results).toEqual([60, 10, 40, 2, 20, 4]);
     expect(peak).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('parseClaudeSessionLock', () => {
+  it('reads the name and the pid of the lock the CLI leaves on a --worktree session (CLI 2.1.314)', () => {
+    expect(parseClaudeSessionLock('claude session radar-1030-1752 (pid 6128)')).toEqual({ name: 'radar-1030-1752', pid: 6128 });
+    expect(parseClaudeSessionLock('  claude session exp1 (pid 22068)  ')).toEqual({ name: 'exp1', pid: 22068 });
+  });
+
+  it('any other lock is not the CLI one: null', () => {
+    expect(parseClaudeSessionLock(null)).toBeNull();
+    expect(parseClaudeSessionLock('razão qualquer')).toBeNull();
+    expect(parseClaudeSessionLock('claude session x (pid abc)')).toBeNull();
+    expect(parseClaudeSessionLock('claude session x (pid 0)')).toBeNull();
+    expect(parseClaudeSessionLock('meu lock: claude session x (pid 12)')).toBeNull();
   });
 });

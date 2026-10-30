@@ -184,6 +184,14 @@
   color: var(--text-muted);
 }
 
+.sessionHeaderWorktree {
+  flex: none;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--accent);
+}
+
 .sessionHeaderFase {
   flex: none;
   white-space: nowrap;

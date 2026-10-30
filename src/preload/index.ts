@@ -13,7 +13,7 @@ import type { KillProcessOutcome } from '../shared/health/ipc';
 import type { HealthReport } from '../shared/health/types';
 // Sidebar — abrir no editor + branch atual.
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
-import type { EditorStatus, GitBranchResult, OpenInEditorResult, PullRequestRequestOptions, PullRequestStatusResult } from '../shared/workspace';
+import type { EditorStatus, GitBranchResult, OpenInEditorResult, PullRequestRequestOptions, PullRequestStatusResult, WorktreeKeptPayload } from '../shared/workspace';
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
@@ -403,6 +403,11 @@ const donelApi: DonelApi = {
     pullRequest: (path: string, options?: PullRequestRequestOptions) =>
       ipcRenderer.invoke(WORKSPACE_CHANNELS.pullRequest, path, options) as Promise<PullRequestStatusResult>,
     openPullRequestUrl: (url: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.openPullRequestUrl, url) as Promise<boolean>,
+    onWorktreeKept: (listener: (payload: WorktreeKeptPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: WorktreeKeptPayload): void => listener(payload);
+      return subscribeChannel(ipcRenderer, WORKSPACE_CHANNELS.worktreeKept, handler);
+    },
+    openWorktreeFolder: (path: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.openWorktreeFolder, path) as Promise<boolean>,
   },
 
   // Mindscape V1 — the board document (main is the only writer).

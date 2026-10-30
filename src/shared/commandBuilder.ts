@@ -44,6 +44,8 @@ export interface BuildClaudeArgsOptions {
    * default" que o usuário escolheu no `/chrome`).
    */
   readonly chrome?: boolean;
+  /** "Isolar em worktree": o CLI cria e entra em `.claude/worktrees/<nome>` (`--worktree <nome>`). Vazio/ausente omite. */
+  readonly worktree?: string;
 }
 
 export function buildClaudeArgs(opts: BuildClaudeArgsOptions = {}): string[] {
@@ -83,6 +85,10 @@ export function buildClaudeArgs(opts: BuildClaudeArgsOptions = {}): string[] {
   // Por último, para não mexer na ordem estável das flags acima.
   if (opts.chrome) {
     args.push('--chrome');
+  }
+
+  if (opts.worktree) {
+    args.push('--worktree', opts.worktree);
   }
 
   return args;

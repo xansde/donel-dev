@@ -470,3 +470,51 @@ describe('the log of a sweep', () => {
     expect(lines.join('\n')).not.toContain('secret-content');
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// Worktrees of `claude --worktree` sessions ("Isolar em worktree" do Launcher)
+// ---------------------------------------------------------------------------
+
+describe('worktrees that the CLI left behind (`claude --worktree`, tab closed)', () => {
+  let sandbox: Sandbox;
+  let repo: string;
+  let run: Run;
+  const cli = (name: string): string => join(repo, '.claude', 'worktrees', name);
+
+  beforeAll(async () => {
+    sandbox = await createSandbox();
+    repo = await createRepo(sandbox, 'vega');
+    // As the CLI lays them out: `.claude/worktrees/<name>`, branch `worktree-<name>`, locked with the session pid.
+    // `morta`: the session was killed (pid that cannot exist on Windows: not a multiple of 4), clean, old.
+    git(repo, 'worktree', 'add', '-q', '-b', 'worktree-morta', cli('morta'), 'HEAD');
+    git(repo, 'worktree', 'lock', '--reason', 'claude session morta (pid 999999)', cli('morta'));
+    // `viva`: the lock names a live process (this test itself).
+    git(repo, 'worktree', 'add', '-q', '-b', 'worktree-viva', cli('viva'), 'HEAD');
+    git(repo, 'worktree', 'lock', '--reason', `claude session viva (pid ${process.pid})`, cli('viva'));
+    // `pendente`: killed too, but with a commit of its own.
+    git(repo, 'worktree', 'add', '-q', '-b', 'worktree-pendente', cli('pendente'), 'HEAD');
+    await write(join(cli('pendente'), 'novo.txt'), 'trabalho');
+    commitAll(cli('pendente'), 'feat: so na worktree');
+    git(repo, 'worktree', 'lock', '--reason', 'claude session pendente (pid 999999)', cli('pendente'));
+    for (const name of ['morta', 'viva', 'pendente']) for (const admin of ['HEAD', join('logs', 'HEAD')]) await age(join(repo, '.git', 'worktrees', name, admin), 3);
+    run = await sweep(sandbox);
+  }, 120_000);
+
+  afterAll(async () => {
+    await sandbox.cleanup();
+  });
+
+  it('removes the killed clean one, releasing the stale CLI lock first', async () => {
+    expect(run.summary.failed).toBe(false);
+    expect(await exists(cli('morta'))).toBe(false);
+    expect(git(repo, 'worktree', 'list')).not.toContain('morta');
+  });
+
+  it('keeps the one whose session process is alive and the one with a commit of its own', async () => {
+    expect(await exists(cli('viva'))).toBe(true);
+    expect(await exists(join(cli('pendente'), 'novo.txt'))).toBe(true);
+    const list = git(repo, 'worktree', 'list');
+    expect(list).toContain('viva');
+    expect(list).toContain('pendente');
+  });
+});

@@ -282,6 +282,8 @@ import { removeSession, setPinned, upsertVisit } from '../shared/sessionRegistry
 import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearance';
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import { createSystemWorkspaceToolsDeps, createWorkspaceTools } from './workspace-tools';
+import { createSessionWorktreeService } from './session-worktree-service';
+import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
@@ -512,6 +514,22 @@ let curlPath: string | null = null;
  */
 const statusLineBridgeModeSetting = statusLineBridgeMode(process.env.DONEL_STATUSLINE_BRIDGE);
 const statusLineStore = createStatusLineStore();
+/**
+ * "Isolar em worktree" — qual aba roda em qual worktree do CLI; ao fechar a aba, remove a worktree sem trabalho
+ * pendente e avisa quando ela fica (session-worktree.ts).
+ */
+const sessionWorktrees = createSessionWorktreeService({
+  git: createGitRunner(),
+  isProcessAlive,
+  sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+  notifyKept: (payload) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(WORKSPACE_CHANNELS.worktreeKept, payload);
+    }
+  },
+  openPath: (path) => shell.openPath(path),
+  log: (line) => console.log(line),
+});
 /** Conversa ativa de cada aba (ptyId -> session id); muda com `/clear` e `/resume` (FR-033). */
 const activeSessionByPty = new Map<string, string>();
 
@@ -1207,7 +1225,9 @@ function createMainWindow(): void {
     // C3 (015-jobu-pet) — the exit consumes the intent that `pty:kill` marked: `true` = the owner closed
     // the tab (or Resume/Reopen killed it), `false` = the process left by itself. Consuming here, on every
     // exit, is what keeps the mark from staying forever; the Jobu gets the result (`byUser`).
-    petService?.onSessionExited(ptyId, consumeKillRequested(ptyId));
+    const closedByOwner = consumeKillRequested(ptyId);
+    petService?.onSessionExited(ptyId, closedByOwner);
+    void sessionWorktrees.onExit(ptyId, closedByOwner); // "Isolar em worktree": a aba fechou -> worktree sem trabalho sai
 
     // T009 — onExit do node-pty (evento do SO) é a fonte de verdade pra
     // "encerrada"/"falha" (spike: kill forçado nunca dispara SessionEnd).
@@ -1594,16 +1614,19 @@ function registerPtyIpcHandlers(): void {
       // C4 — poll de 5 min do motor de contas só enquanto houver sessão viva.
       accountsLiveSessionPtyIds.add(ptyId);
 
+      // "Isolar em worktree" — o CLI roda a sessão DENTRO da worktree, e é sob ela que grava o `.jsonl`.
+      const sessionCwd = sessionWorktrees.onSpawn(ptyId, options.cwd, options.args)?.path ?? options.cwd;
+
       // T412 (004) — reflexo AO VIVO do `/rename` (CA-4). O path do `.jsonl` já
       // é conhecido aqui: o id da sessão foi IMPOSTO no spawn logo acima.
       // T1319/C17 — com provider, o home consultado é o config dir DELE (mesmo
       // padrão de sempre com perfil/motor).
-      const transcriptPath = resolveTranscriptPath(correlationId, options.cwd, claudeConfigDirForSession);
+      const transcriptPath = resolveTranscriptPath(correlationId, sessionCwd, claudeConfigDirForSession);
       // T710 — guardado ANTES de qualquer coisa poder falhar: é o caminho que o
       // `forgetIfOrphan` vai conferir se esta retomada morrer (ver comentário de
       // `spawnedTranscriptPaths`).
       spawnedTranscriptPaths.set(correlationId, transcriptPath);
-      initialChatSourceByPty.set(ptyId, { sessionId: correlationId, transcriptPath, cwd: options.cwd ?? homedir() });
+      initialChatSourceByPty.set(ptyId, { sessionId: correlationId, transcriptPath, cwd: sessionCwd ?? homedir() });
       startTranscriptWatcher(ptyId, transcriptPath, correlationId);
 
       // T404 (004) — `correlationId` é o id da sessão do Claude (imposto no
@@ -2333,6 +2356,7 @@ function registerWorkspaceIpcHandlers(): void {
     pullRequests.get(path, { details: (options as { details?: unknown } | undefined)?.details === true }),
   );
   ipcMain.handle(WORKSPACE_CHANNELS.openPullRequestUrl, (_event, url: unknown) => openPullRequestUrl(url, (safe) => shell.openExternal(safe)));
+  ipcMain.handle(WORKSPACE_CHANNELS.openWorktreeFolder, (_event, path: unknown) => sessionWorktrees.openFolder(path));
 }
 
 /**

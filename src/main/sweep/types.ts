@@ -14,6 +14,11 @@ export interface WorktreeFact {
   /** The first entry of the list: the main checkout. Never removed, never reported. */
   readonly isMain: boolean;
   readonly locked: boolean;
+  /**
+   * The lock is the CLI's own (`claude session <name> (pid N)`, left by a `--worktree` session that was killed) and
+   * that process is gone: the lock protects nothing any more, so it does not hold the worktree back.
+   */
+  readonly staleClaudeLock: boolean;
   /** The folder is gone from the disk (git still lists it as prunable). */
   readonly missing: boolean;
   /** `git status --porcelain` printed nothing (untracked files count as dirty). */
@@ -22,6 +27,8 @@ export interface WorktreeFact {
   readonly headInIntegration: boolean;
   /** `origin/<branch>` points at exactly this HEAD. */
   readonly headEqualsRemote: boolean;
+  /** Every commit of HEAD is on some remote branch (`git rev-list HEAD --not --remotes` is empty). */
+  readonly headOnRemote: boolean;
   /** Newest write to the worktree's admin files in `.git/worktrees/<name>/` (HEAD, logs/HEAD); 0 when unknown. */
   readonly lastActivityMs: number;
   /**
@@ -138,7 +145,15 @@ export type PlanItem =
       readonly bytes: number;
       readonly reason: string;
     }
-  | { readonly kind: 'removeWorktree'; readonly path: string; readonly branch: string | null; readonly missing: boolean; readonly reason: string }
+  | {
+      readonly kind: 'removeWorktree';
+      readonly path: string;
+      readonly branch: string | null;
+      readonly missing: boolean;
+      readonly reason: string;
+      /** A stale lock of the CLI is released first (`git worktree unlock`). */
+      readonly unlock?: boolean;
+    }
   | { readonly kind: 'deleteBranch'; readonly name: string; readonly sha: string; readonly reason: string }
   | {
       readonly kind: 'separate';
