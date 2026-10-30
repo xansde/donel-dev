@@ -38,23 +38,28 @@ export function PatchNotes(): React.JSX.Element | null {
   };
 
   return (
-    <Modal open={open} onClose={close} title="O que mudou no Donel Dev">
+    <Modal open={open} onClose={close} title="O que mudou no Donel Dev" className={styles.dialog}>
       <div className={styles.body} data-testid="patch-notes">
-        {days.map((day) => (
-          <section key={day.date}>
-            <h3 className={styles.date}>{formatNoteDate(day.date)}</h3>
-            <ul className={styles.list}>
-              {day.items.map((item) => (
-                <li key={item.title} className={styles.item}>
-                  <strong>{item.title}</strong>
-                  <span>{item.text}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
+        <p className={styles.intro}>Novidades desde a última vez que você abriu.</p>
+        <div className={styles.scroll}>
+          {days.map((day) => (
+            <section key={day.date} className={styles.day}>
+              <h3 className={styles.date}>{formatNoteDate(day.date)}</h3>
+              <ul className={styles.list}>
+                {day.items.map((item) => (
+                  <li key={item.title} className={styles.item}>
+                    <span className={styles.itemTitle}>{item.title}</span>
+                    <span className={styles.itemText}>{item.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
         <div className={styles.footer}>
-          <Button onClick={close}>Entendi</Button>
+          <Button variant="primary" onClick={close}>
+            Entendi
+          </Button>
         </div>
       </div>
     </Modal>

@@ -15,6 +15,15 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
+    date: '2026-10-30',
+    items: [
+      {
+        title: 'Janela de novidades mais fácil de ler',
+        text: 'Esta janela ficou mais larga, o texto não escapa mais da caixa e cada novidade vem num cartão próprio. Com muitas novidades, só a lista rola e o botão Entendi fica sempre à vista.',
+      },
+    ],
+  },
+  {
     date: '2026-10-28',
     items: [
       {

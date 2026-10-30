@@ -18,8 +18,23 @@ export function latestNoteDate(notes: readonly PatchNoteDay[]): string | null {
   return notes.reduce<string | null>((max, day) => (max === null || day.date > max ? day.date : max), null);
 }
 
-/** "28/10" a partir de `AAAA-MM-DD`. */
+const MONTHS = [
+  'janeiro',
+  'fevereiro',
+  'março',
+  'abril',
+  'maio',
+  'junho',
+  'julho',
+  'agosto',
+  'setembro',
+  'outubro',
+  'novembro',
+  'dezembro',
+];
+
+/** "28 de outubro" a partir de `AAAA-MM-DD`. */
 export function formatNoteDate(date: string): string {
   const [, month, day] = date.split('-');
-  return `${day}/${month}`;
+  return `${Number(day)} de ${MONTHS[Number(month) - 1]}`;
 }

@@ -23,8 +23,9 @@ describe('novidades da versão', () => {
     expect(latestNoteDate([])).toBeNull();
   });
 
-  it('data curta dd/mm', () => {
-    expect(formatNoteDate('2026-10-28')).toBe('28/10');
+  it('data por extenso', () => {
+    expect(formatNoteDate('2026-10-28')).toBe('28 de outubro');
+    expect(formatNoteDate('2026-03-05')).toBe('5 de março');
   });
 
   it('as notas publicadas têm data AAAA-MM-DD e texto em cada item', () => {
