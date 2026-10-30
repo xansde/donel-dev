@@ -23,6 +23,10 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // post-it is archived, the session's stays); Delete removes a selected link;
 // space + drag and H + drag move the view; "Ir ao terminal" needs exactly one
 // session post-it selected. Same `atlas`, its own mindscape file.
+// Fatia 04: P draws a pencil stroke and stays on; E erases only the touched
+// piece (one stroke becomes two), takes a rect and a link away whole, never a
+// post-it; Ctrl+Z brings the last pass back whole; with V a stroke is selected
+// and moved; everything comes back after a relaunch. Same `atlas`, its own file.
 
 const SCENARIO = path.join(REPO_ROOT, 'tests/fixtures/mindscape/scenarios/slow-turn.json');
 /** Stop hook with `last_assistant_message` after "primeiro" / "segundo" (the turn ends in the middle of the owner's actions). */
@@ -40,6 +44,7 @@ interface SavedDrawing {
   color: string;
   stroke: string;
   arrow?: boolean;
+  points?: number[];
   x?: number;
   y?: number;
   w?: number;
@@ -545,4 +550,125 @@ test('Mindscape desenho 03: seleção múltipla, alças, estilo e camadas @minds
   await expect(board).toHaveAttribute('data-pan', '-70,-30');
   await window.keyboard.press('v');
   await expect.poll(() => savedCardsAndPan().pan, { timeout: 10_000 }).toEqual({ x: -70, y: -30 });
+});
+
+test('Mindscape desenho 04: lápis e borracha que apaga o pedaço tocado @mindscape', async () => {
+  test.setTimeout(240_000);
+  if (launched) await closeIsolatedApp(launched, false);
+  launched = undefined;
+  mindscapeFile = path.join(root, 'mindscape-04.json');
+  scenario = SCENARIO;
+  launched = await launchIsolatedApp({ userDataDir, env: env() });
+  const { window } = launched;
+
+  await openProjectClaudeTab(window, 'atlas');
+  await setMode(window, 'Mindscape');
+  const sessionCard = screen(window).getByTestId('mindscape-session-card');
+  await expect(sessionCard).toHaveCount(1, { timeout: 30_000 });
+  const owner = await newOwnerCard(window, 'Ver o deploy');
+  // Away from the session card, to the right: the bottom left of the board stays free to draw.
+  const grip = await center(owner.getByText('✎ você'));
+  await dragScreen(window, grip, { x: grip.x + 260, y: grip.y + 220 });
+
+  const boardBox = await screen(window).getByTestId('mindscape-board').boundingBox();
+  if (!boardBox) throw new Error('board not visible');
+  expect(boardBox.height).toBeGreaterThan(450);
+  const H = boardBox.height;
+  // Board point (pan is 0 all along) → screen point.
+  const at = (x: number, y: number) => ({ x: boardBox.x + x, y: boardBox.y + y });
+  const drawings = screen(window).getByTestId('mindscape-drawing');
+  const links = screen(window).getByTestId('mindscape-link');
+  const pencils = () => saved().drawings.filter((drawing) => drawing.kind === 'pencil');
+
+  // A rect (bottom left) and a link from the owner's post-it to the session's, to erase later.
+  await window.keyboard.press('r');
+  await dragScreen(window, at(40, H - 200), at(160, H - 120));
+  await window.keyboard.press('a');
+  await dragScreen(window, await center(owner.getByText('✎ você')), await center(sessionCard.getByTestId('mindscape-session-state')));
+  await expect(drawings).toHaveCount(1);
+  await expect(links).toHaveCount(1);
+
+  // 1. P → a horizontal stroke → one pencil stroke in drawings, and the tool stays P.
+  await window.keyboard.press('p');
+  await expect(toolButton(window, 'Lápis')).toHaveAttribute('aria-pressed', 'true');
+  await dragScreen(window, at(40, H - 60), at(300, H - 60));
+  await expect(drawings).toHaveCount(2);
+  await expect(drawings.last()).toHaveAttribute('data-kind', 'pencil');
+  await expect(toolButton(window, 'Lápis')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => pencils().length, { timeout: 10_000 }).toBe(1);
+  const stroke = pencils()[0]!;
+  expect(stroke.points!.length).toBeGreaterThanOrEqual(4);
+  expect(stroke.points![0]).toBeCloseTo(40, 0);
+  expect(stroke.points![1]).toBeCloseTo(H - 60, 0);
+
+  // 2. E → the eraser circle follows the pointer; a pass across the middle of the stroke → two pencil strokes.
+  await window.keyboard.press('e');
+  await expect(toolButton(window, 'Borracha')).toHaveAttribute('aria-pressed', 'true');
+  const middle = at(170, H - 60);
+  await window.mouse.move(middle.x, middle.y - 40);
+  await expect(screen(window).getByTestId('mindscape-eraser-cursor')).toBeVisible();
+  await dragScreen(window, { x: middle.x, y: middle.y - 30 }, { x: middle.x, y: middle.y + 30 });
+  await expect.poll(() => pencils().length, { timeout: 10_000 }).toBe(2);
+  const [left, right] = pencils() as [SavedDrawing, SavedDrawing];
+  expect(left.id).toBe(stroke.id);
+  expect(left.points!.slice(-2)[0]).toBeLessThan(170);
+  expect(right.points![0]).toBeGreaterThan(170);
+  await expect(drawings).toHaveCount(3);
+  await expect(toolButton(window, 'Borracha')).toHaveAttribute('aria-pressed', 'true');
+
+  // 3. A pass over the left edge of the rect → it goes whole.
+  await dragScreen(window, at(20, H - 160), at(60, H - 160));
+  await expect.poll(() => saved().drawings.map((drawing) => drawing.kind), { timeout: 10_000 }).toEqual(['pencil', 'pencil']);
+
+  // 4. A pass across the link → it goes; the two post-its stay.
+  const linkMid = await center(links.getByTestId('mindscape-link-hit'));
+  await dragScreen(window, { x: linkMid.x - 25, y: linkMid.y + 25 }, { x: linkMid.x + 25, y: linkMid.y - 25 });
+  await expect(links).toHaveCount(0);
+  await expect.poll(() => saved().links, { timeout: 10_000 }).toEqual([]);
+
+  // 5. A pass over the owner's post-it → it stays (a post-it never goes), and nothing else changes.
+  const ownerMid = await center(owner.getByTestId('mindscape-owner-text'));
+  await dragScreen(window, { x: ownerMid.x - 50, y: ownerMid.y }, { x: ownerMid.x + 50, y: ownerMid.y });
+  await expect(owner).toHaveCount(1);
+  await expect(sessionCard).toHaveCount(1);
+  await expect(drawings).toHaveCount(2);
+
+  // 6. A pass along both strokes, then Ctrl+Z → that whole pass comes back in one go; Ctrl+Z again → the link comes back.
+  await expect.poll(() => saved().drawings.length, { timeout: 10_000 }).toBe(2);
+  const beforeLastPass = saved().drawings;
+  await dragScreen(window, at(70, H - 60), at(280, H - 60));
+  await expect.poll(() => JSON.stringify(saved().drawings), { timeout: 10_000 }).not.toBe(JSON.stringify(beforeLastPass));
+  await window.keyboard.press('Control+z');
+  await expect.poll(() => saved().drawings, { timeout: 10_000 }).toEqual(beforeLastPass);
+  await expect(drawings).toHaveCount(2);
+  await expect(links).toHaveCount(0);
+  await window.keyboard.press('Control+z');
+  await expect(links).toHaveCount(1);
+  await expect(drawings).toHaveCount(2);
+  if (process.env.DONEL_SMOKE_SHOTS_DIR) await window.screenshot({ path: path.join(process.env.DONEL_SMOKE_SHOTS_DIR, 'mindscape-desenho-borracha.png') });
+
+  // 7. With V, a click on a stroke selects it and a drag moves it (no handle on a pencil stroke).
+  await window.keyboard.press('v');
+  const leftStroke = screen(window).locator(`[data-testid="mindscape-drawing"][data-drawing-id="${left.id}"]`);
+  const onLeft = { x: (left.points![0]! + left.points!.slice(-2)[0]!) / 2, y: left.points![1]! };
+  await window.mouse.click(at(onLeft.x, onLeft.y).x, at(onLeft.x, onLeft.y).y);
+  await expect(leftStroke).toHaveAttribute('data-selected', 'true');
+  await expect(screen(window).getByTestId('mindscape-handle')).toHaveCount(0);
+  await dragScreen(window, at(onLeft.x, onLeft.y), at(onLeft.x + 40, onLeft.y - 30));
+  await expect.poll(() => saved().drawings.find((drawing) => drawing.id === left.id)?.points?.slice(0, 2), { timeout: 10_000 }).toEqual([
+    Math.round((left.points![0]! + 40) * 10) / 10,
+    Math.round((left.points![1]! - 30) * 10) / 10,
+  ]);
+
+  // 8. Relaunch → as left.
+  await expect.poll(() => saved().links.length, { timeout: 10_000 }).toBe(1);
+  const before = saved();
+  await closeIsolatedApp(launched, false);
+  launched = undefined;
+  launched = await launchIsolatedApp({ userDataDir, env: env() });
+  await setMode(launched.window, 'Mindscape');
+  const after = screen(launched.window);
+  await expect(after.getByTestId('mindscape-drawing')).toHaveCount(2);
+  await expect(after.getByTestId('mindscape-drawing').first()).toHaveAttribute('data-kind', 'pencil');
+  expect(saved()).toEqual(before);
 });
