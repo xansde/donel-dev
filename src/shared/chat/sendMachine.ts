@@ -8,7 +8,8 @@
 // Events (every one carries `now`, in ms; deadlines are compared against it):
 //   screen   { screen: { lines } }        fresh read of the hidden terminal (reuses ./screen.ts detectors)
 //   tick     {}                           the driver woke up (it should also re-read the screen)
-//   env      { alive?, pendingOpen?, terminalNeeded? }   process alive / `open` pending / "terminal needs you" banner
+//   env      { alive?, pendingOpen?, terminalNeeded?, working? }   process alive / `open` pending / "terminal needs
+//                                         you" banner / mid-turn by the hooks
 //   signal   { signal: PromptSignal }     acceptance signal (`chat:prompt-signal`, ipc-chat.md §2)
 //   ack-result { found }                  answer to the `ack-lookup` effect
 //   action   { action: 'retry' | 'discard-and-send' | 'interrupt-and-send' }   owner actions
@@ -101,6 +102,8 @@ export interface SendMachineState {
   readonly alive: boolean;
   readonly pendingOpen: boolean;
   readonly terminalNeeded: boolean;
+  /** Mid-turn according to the hooks: explains a box the screen cannot read yet (no 30 s clock). */
+  readonly working: boolean;
   readonly lines: readonly LineInput[] | null;
   readonly waitSince: number;
   readonly reasonVisible: boolean;
@@ -126,6 +129,7 @@ export type SendEvent =
       readonly alive?: boolean;
       readonly pendingOpen?: boolean;
       readonly terminalNeeded?: boolean;
+      readonly working?: boolean;
     }
   | { readonly type: 'signal'; readonly now: number; readonly signal: PromptSignal }
   | { readonly type: 'ack-result'; readonly now: number; readonly found: boolean }
@@ -212,6 +216,7 @@ export function createSend(input: SendInput, now: number): StepResult {
     alive: true,
     pendingOpen: false,
     terminalNeeded: false,
+    working: false,
     lines: null,
     waitSince: now,
     reasonVisible: false,
@@ -253,6 +258,7 @@ export function step(state: SendMachineState, event: SendEvent): StepResult {
       if (event.alive !== undefined) s.alive = event.alive;
       if (event.pendingOpen !== undefined) s.pendingOpen = event.pendingOpen;
       if (event.terminalNeeded !== undefined) s.terminalNeeded = event.terminalNeeded;
+      if (event.working !== undefined) s.working = event.working;
       break;
     case 'signal':
       applySignal(s, event.signal);
@@ -495,6 +501,13 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
       reason = 'sobrou texto na caixa do terminal';
       visible = true;
     }
+  }
+
+  // The screen cannot prove the box yet, but the hooks say the CLI is mid-turn (a long command can hide the box
+  // or its footer): a known wait, so the message stays queued until the box opens or the turn ends.
+  if (reason !== null && !visible && s.alive && s.working) {
+    reason = 'esperando o Claude terminar o que está fazendo';
+    visible = true;
   }
 
   // The 30 s clock only runs while nothing visible explains the wait.

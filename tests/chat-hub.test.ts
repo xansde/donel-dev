@@ -338,6 +338,22 @@ describe('reception', () => {
     expect(h.reception[1]!.reception).toBe('ok');
   });
 
+  it('a background sub-agent working after the turn ended neither marks the session working nor stale', async () => {
+    // Seen on the alfa (30/10): with a background agent running, the idle chat said "Trabalhando" and
+    // "Não estou recebendo a conversa" — the agent writes its own transcript, not the main one.
+    const path = join(dir, 's1.jsonl');
+    writeRounds(path, 1, 1);
+    const h = harness({ 'pty-1': src(path) }, { staleMs: 8_000 });
+    await h.hub.attach('pty-1');
+    h.bridge.hook('pty-1', 'Stop');
+    h.bridge.hook('pty-1', 'PreToolUse', { tool_name: 'Bash', tool_input: {}, tool_use_id: 'a1', agent_id: 'ag1' });
+    h.bridge.hook('pty-1', 'PostToolUse', { tool_name: 'Bash', tool_use_id: 'a1', agent_id: 'ag1' });
+    h.clock.t += 60_000;
+    h.hub.checkReception();
+    expect(h.reception).toEqual([]);
+    expect(h.live[h.live.length - 1]!.live.status).toBe('idle');
+  });
+
   it('does not go stale while /compact summarises (no writes for a long time), only after the grace', async () => {
     const path = join(dir, 's1.jsonl');
     writeRounds(path, 1, 1);

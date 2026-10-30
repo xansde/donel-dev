@@ -15,6 +15,19 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
+    date: '2026-10-31',
+    items: [
+      {
+        title: 'Mensagem mandada com o Claude ocupado não cai mais em "não foi"',
+        text: 'Ainda acontecia: com o Claude rodando um comando demorado, a mensagem ficava meio minuto esperando e virava "não foi · o Claude não ficou pronto". Agora ela fica "na fila", dizendo que espera o Claude terminar o que está fazendo, e entra sozinha assim que ele libera.',
+      },
+      {
+        title: 'Agente em segundo plano não engana mais o chat',
+        text: 'Quando o Claude deixava um agente trabalhando em segundo plano e terminava a resposta, o chat continuava em "Trabalhando" e mostrava o aviso amarelo "Não estou recebendo a conversa", sem nada errado. Agora o chat fica livre e o agente aparece só no cartão dele.',
+      },
+    ],
+  },
+  {
     date: '2026-10-30',
     items: [
       {
