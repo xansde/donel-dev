@@ -286,6 +286,8 @@ import { createSessionWorktreeService } from './session-worktree-service';
 import { worktreeNameFromArgs } from '../shared/sessionWorktree';
 import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
+// Navegador interno — painel com WebContentsView por sessão (docs/design/navegador-interno.md).
+import { createBrowserService, type BrowserService } from './browser/browser-service';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
 // PtyManager chega em T004 (este arquivo). ProjectScanner chega no T007
@@ -1034,6 +1036,9 @@ function getMainWindow(): BrowserWindow | null {
   return mainWindowRef !== null && !mainWindowRef.isDestroyed() ? mainWindowRef : null;
 }
 
+/** Navegador interno — `null` until `app.whenReady()` (needs `userData`). */
+let browserService: BrowserService | null = null;
+
 /**
  * T020 (015-jobu-pet) — the Jobu service. `null` until the main window appears (R21: the pet window
  * is only born AFTER the main one's `ready-to-show`, so `firstWindow()` of the smokes is still
@@ -1258,6 +1263,7 @@ function createMainWindow(): void {
     // adiado se esta era a última sessão ocupada.
     releaseAccountsBusyPty(ptyId);
     accountsLiveSessionPtyIds.delete(ptyId);
+    browserService?.releasePty(ptyId); // navegador interno: the session's browser dies with it
   });
   const unsubscribeSemaphore = semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
     mainWindow.webContents.send(SEMAPHORE_CHANNELS.update, update);
@@ -1278,6 +1284,7 @@ function createMainWindow(): void {
     // T315 (003-modo-dev) — mesma higiene do registry de transcript: nenhum
     // `fs.watch` sobrevive ao fechamento da janela.
     disposeAllEsteiraResultWatchers();
+    browserService?.destroyAll(); // navegador interno
     ptyManager.killAll();
   });
 
@@ -1616,6 +1623,7 @@ function registerPtyIpcHandlers(): void {
       }
       // C4 — poll de 5 min do motor de contas só enquanto houver sessão viva.
       accountsLiveSessionPtyIds.add(ptyId);
+      browserService?.registerPty(ptyId); // navegador interno: this session may open its panel
 
       // "Isolar em worktree" — o CLI roda a sessão DENTRO da worktree, e é sob ela que grava o `.jsonl`.
       const sessionCwd = sessionWorktrees.onSpawn(ptyId, options.cwd, options.args)?.path ?? options.cwd;
@@ -3002,6 +3010,12 @@ void app.whenReady().then(async () => {
   }); // 015-jobu-pet
   registerHealthIpcHandlers(); // Saúde do computador
   registerWorkspaceIpcHandlers(); // Sidebar — abrir no editor + branch
+  browserService = createBrowserService({
+    ipcMain,
+    getWindow: getMainWindow,
+    userDataDir: app.getPath('userData'),
+    isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
+  }); // Navegador interno
   createMainWindow();
 
   app.on('activate', () => {

@@ -133,6 +133,7 @@ import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
 import { HealthIndicator } from './health/HealthIndicator';
+import { BrowserPanel, BrowserToggleButton } from './browser/BrowserPanel'; // navegador interno
 import type { TerminalPaneHandle } from './TerminalPane';
 
 // FIX (feedback E2E, batch 3 achado "notificar toda transição vira spam") —
@@ -2679,6 +2680,7 @@ export function App(): React.JSX.Element {
                   <Kbd>Ctrl+`</Kbd>
                 </>
               ) : null}
+              {activeClaudeTab && chatPtyIds[activeClaudeTab.id] ? <BrowserToggleButton ptyId={chatPtyIds[activeClaudeTab.id]} /> : null}
               {activeClaudeTab ? (
                 <StateDot
                   state={semaphoreStates[activeClaudeTab.id]?.state ?? 'working'}
@@ -2802,6 +2804,8 @@ export function App(): React.JSX.Element {
                   resumeSessionId={chatTab ? tab.claudeSessionId : undefined}
                 />
                 </div>
+                {/* Navegador interno — o painel desta sessão (null enquanto fechado). */}
+                {tab.sessionType === 'claude' && chatPtyIds[tab.id] ? <BrowserPanel ptyId={chatPtyIds[tab.id]} active={tab.id === activeTabId} /> : null}
               </div>
               );
             })}
