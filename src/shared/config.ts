@@ -58,6 +58,12 @@ export interface LauncherDefaultsDto {
   readonly model: ModelAlias;
   readonly effort: EffortLevel;
   readonly permissionMode: PermissionMode;
+  /**
+   * Toggle "Navegador (Chrome/Edge)" → `--chrome`. Opcional e só gravado
+   * quando ligado: configs antigos (e canais mais antigos lendo este) seguem
+   * com a forma de sempre.
+   */
+  readonly chrome?: boolean;
 }
 
 /**

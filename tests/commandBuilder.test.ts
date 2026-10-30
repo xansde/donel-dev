@@ -109,6 +109,28 @@ describe('buildClaudeArgs', () => {
     });
   });
 
+  describe('Navegador — --chrome (Claude in Chrome/Edge)', () => {
+    it('maps chrome=true to --chrome', () => {
+      expect(buildClaudeArgs({ chrome: true })).toEqual(['--chrome']);
+    });
+
+    it('omits --chrome when chrome is false', () => {
+      expect(buildClaudeArgs({ chrome: false })).toEqual([]);
+    });
+
+    it('omits --chrome when not provided (never emits --no-chrome: the CLI keeps the user default)', () => {
+      const args = buildClaudeArgs({ model: 'sonnet' });
+      expect(args).not.toContain('--chrome');
+      expect(args).not.toContain('--no-chrome');
+    });
+
+    it('appends --chrome after the other flags, keeping the existing argv order stable', () => {
+      expect(
+        buildClaudeArgs({ model: 'sonnet', permissionMode: 'acceptEdits', sessionName: 'radar', continuation: { type: 'continueLast' }, chrome: true }),
+      ).toEqual(['--model', 'sonnet', '--permission-mode', 'acceptEdits', '-n', 'radar', '-c', '--chrome']);
+    });
+  });
+
   it('omits every continuation flag when continuation is not provided', () => {
     const args = buildClaudeArgs({ model: 'sonnet' });
     expect(args).not.toContain('-r');

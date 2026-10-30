@@ -38,6 +38,12 @@ export interface BuildClaudeArgsOptions {
   readonly permissionMode?: PermissionMode;
   readonly sessionName?: string;
   readonly continuation?: SessionContinuation;
+  /**
+   * Integração Claude in Chrome/Edge (`--chrome`). Só `true` emite a flag;
+   * `false`/ausente omite (nunca `--no-chrome`: o CLI segue o "Enabled by
+   * default" que o usuário escolheu no `/chrome`).
+   */
+  readonly chrome?: boolean;
 }
 
 export function buildClaudeArgs(opts: BuildClaudeArgsOptions = {}): string[] {
@@ -72,6 +78,11 @@ export function buildClaudeArgs(opts: BuildClaudeArgsOptions = {}): string[] {
       break;
     default:
       break;
+  }
+
+  // Por último, para não mexer na ordem estável das flags acima.
+  if (opts.chrome) {
+    args.push('--chrome');
   }
 
   return args;

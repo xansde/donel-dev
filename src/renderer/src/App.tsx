@@ -884,6 +884,7 @@ export function App(): React.JSX.Element {
       effort: options.effort,
       permissionMode: options.permissionMode,
       sessionName: options.sessionName,
+      chrome: options.chrome,
     });
     const name = options.sessionName || options.projectName;
     addTab({
@@ -902,7 +903,12 @@ export function App(): React.JSX.Element {
     // última config" que o corpo do "＋ Nova sessão" já tinha via
     // `lastLaunch` em memória — agora persistido, sobrevive a restart).
     void window.donel.config
-      .setLauncherDefaults({ model: options.model, effort: options.effort, permissionMode: options.permissionMode })
+      .setLauncherDefaults({
+        model: options.model,
+        effort: options.effort,
+        permissionMode: options.permissionMode,
+        ...(options.chrome ? { chrome: true } : {}),
+      })
       .then(setAppConfig)
       .catch(() => undefined);
     // FIX (feedback E2E rodada 3) — painel colapsável: "fecha ao lançar".

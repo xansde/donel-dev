@@ -19,6 +19,8 @@ export interface BuildLauncherArgsOptions {
   /** Já trim()ado; string vazia = flag `-n` omitida. */
   readonly sessionName: string;
   readonly continuation?: SessionContinuation;
+  /** Toggle "Navegador (Chrome/Edge)" do Launcher → `--chrome`. */
+  readonly chrome?: boolean;
 }
 
 export function buildLauncherArgs(options: BuildLauncherArgsOptions): string[] {
@@ -33,5 +35,9 @@ export function buildLauncherArgs(options: BuildLauncherArgsOptions): string[] {
     permissionMode: options.permissionMode,
     sessionName: options.sessionName || undefined,
     continuation: options.continuation,
+    // Claude in Chrome exige login claude.ai — não existe com provider de
+    // terceiro (doc code.claude.com/docs/en/chrome). O Launcher já desabilita
+    // o toggle; aqui é a segunda trava, para o argv nunca levar a flag.
+    chrome: hasProvider ? undefined : options.chrome,
   });
 }
