@@ -138,13 +138,17 @@ test('Mindscape: canvas livre — arrastar, mover a visão e post-its do dono, q
   // A drag is not a click: the session was not opened in the terminal.
   await expect(screen(window)).toBeVisible();
 
-  // 3. Drag the background: every card moves together on screen, the plane positions stay.
+  // 3. H + drag the background: every card moves together on screen, the plane positions stay.
+  //    (Desenho, fatia 03: with V the background draws the lasso; the view moves with H or space.)
   const board = screen(window).getByTestId('mindscape-board');
   const boardBox = await board.boundingBox();
   if (!boardBox) throw new Error('board not visible');
   const ownerScreen = await screenPosition(owner);
   const sessionScreen = await screenPosition(sessionCard);
+  await window.keyboard.press('h');
+  await expect(board).toHaveAttribute('data-tool', 'hand');
   await drag(window, { x: boardBox.x + boardBox.width - 40, y: boardBox.y + boardBox.height - 40 }, -150, -90);
+  await window.keyboard.press('v');
   await expect(board).toHaveAttribute('data-pan', '-150,-90');
   for (const [card, before] of [
     [owner, ownerScreen],

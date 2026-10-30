@@ -9,7 +9,7 @@ import {
   parseMindscapeDoc,
   placeSessionCard,
   sessionCardId,
-  setBoardPan,
+  setBoardView,
   setOwnerColor,
   type MindscapeCard,
   type MindscapeDoc,
@@ -51,14 +51,15 @@ describe('moveCard', () => {
   });
 });
 
-describe('setBoardPan', () => {
+// Desenho, fatia 05 — setBoardPan became setBoardView (pan + zoom); the pan keeps the same rules.
+describe('setBoardView (the pan)', () => {
   it('stores the pan of the board and is a no-op for the same pan', () => {
     const doc = withOwner();
-    const panned = setBoardPan(doc, ATLAS, { x: -120, y: 45 });
+    const panned = setBoardView(doc, ATLAS, { pan: { x: -120, y: 45 }, zoom: 1 });
     expect(panned.boards[ATLAS]!.pan).toEqual({ x: -120, y: 45 });
     expect(panned.boards[ATLAS]!.cards).toBe(doc.boards[ATLAS]!.cards);
-    expect(setBoardPan(panned, ATLAS, { x: -120, y: 45 })).toBe(panned);
-    expect(setBoardPan(doc, BEACON, { x: 1, y: 1 })).toBe(doc);
+    expect(setBoardView(panned, ATLAS, { pan: { x: -120, y: 45 }, zoom: 1 })).toBe(panned);
+    expect(setBoardView(doc, BEACON, { pan: { x: 1, y: 1 }, zoom: 1 })).toBe(doc);
   });
 });
 
@@ -130,7 +131,7 @@ describe('parseMindscapeDoc keeps the canvas', () => {
     doc = editOwnerCard(doc, ATLAS, 'o1', 'Texto do dono');
     doc = setOwnerColor(doc, ATLAS, 'o1', 'donel-accent');
     doc = moveCard(doc, ATLAS, 'o1', 610, 420);
-    doc = setBoardPan(doc, ATLAS, { x: -80, y: 30 });
+    doc = setBoardView(doc, ATLAS, { pan: { x: -80, y: 30 }, zoom: 1 });
     expect(parseMindscapeDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
   });
 });

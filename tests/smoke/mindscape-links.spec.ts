@@ -8,8 +8,9 @@ import { openProjectClaudeTab } from './helpers/ui';
 import { REPO_ROOT } from './repoUnderTest';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
-// Mindscape V1, fatia 05 — links with an arrow, in a hand-made stroke: "Ligar"
-// mode (origin, then destination), arrow on/off and "Remover ligação" on the
+// Mindscape V1, fatia 05 — links with an arrow, in a hand-made stroke: drawn
+// with A from a post-it to another (mindscape-desenho, fatia 01: the "Ligar"
+// mode is gone — this step used to click it), arrow on/off and "Remover ligação" on the
 // selected link; the link follows a moved card; a link to a session without
 // an open tab stays saved and is not drawn. Project `atlas` in a temp root.
 
@@ -84,14 +85,23 @@ async function newOwnerCard(window: Page, text: string): Promise<Locator> {
   return card;
 }
 
-/** "Ligar" → click the origin → click the destination. */
+async function center(locator: Locator): Promise<{ x: number; y: number }> {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error('not visible');
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+/** A (arrow tool) → drag from the origin to the destination; the tool goes back to V. */
 async function link(window: Page, from: Locator, to: Locator): Promise<void> {
-  await screen(window).getByRole('button', { name: 'Ligar' }).click();
-  await expect(screen(window)).toHaveAttribute('data-linking', 'origin');
-  await from.click();
-  await expect(screen(window)).toHaveAttribute('data-linking', 'destination');
-  await to.click();
-  await expect(screen(window)).not.toHaveAttribute('data-linking', /.+/);
+  const start = await center(from);
+  const end = await center(to);
+  await window.keyboard.press('a');
+  await window.mouse.move(start.x, start.y);
+  await window.mouse.down();
+  await window.mouse.move((start.x + end.x) / 2, (start.y + end.y) / 2, { steps: 6 });
+  await window.mouse.move(end.x, end.y, { steps: 6 });
+  await window.mouse.up();
+  await expect(screen(window).getByTestId('mindscape-board')).toHaveAttribute('data-tool', 'select');
 }
 
 test.beforeAll(() => {
@@ -124,7 +134,7 @@ test('Mindscape: ligações com seta em traço à mão — ligar, seta, acompanh
   const owner = await newOwnerCard(window, 'Ver o deploy');
   await drag(window, owner.getByText('✎ você'), 260, 220);
 
-  // 1. "Ligar": owner → session → the link appears, with the arrow, in the rough stroke.
+  // 1. A: owner → session → the link appears, with the arrow, in the rough stroke.
   await link(window, owner.getByText('✎ você'), sessionCard.getByTestId('mindscape-session-state'));
   const links = screen(window).getByTestId('mindscape-link');
   await expect(links).toHaveCount(1);
@@ -135,14 +145,15 @@ test('Mindscape: ligações com seta em traço à mão — ligar, seta, acompanh
   await expect(links).toHaveAttribute('data-from', ownerId ?? '');
   await expect(links).toHaveAttribute('data-to', sessionId ?? '');
   await expect.poll(() => savedLinks(), { timeout: 10_000 }).toEqual([expect.objectContaining({ from: ownerId, to: sessionId, arrow: true })]);
-  // The session card was not selected by the click of the "Ligar" mode.
+  // The session card was not selected by the click that ends the gesture.
   await expect(sessionCard).toHaveAttribute('data-selected', 'false');
   if (process.env.DONEL_SMOKE_SHOTS_DIR) await window.screenshot({ path: path.join(process.env.DONEL_SMOKE_SHOTS_DIR, 'mindscape-links-seta.png') });
 
   // 2. Select the link → "Seta" off → the head goes away.
   await links.getByTestId('mindscape-link-hit').click({ force: true });
   await expect(links).toHaveAttribute('data-selected', 'true');
-  const arrowButton = screen(window).getByRole('button', { name: 'Seta' });
+  // `exact`: the arrow tool of the bar is "Seta A".
+  const arrowButton = screen(window).getByRole('button', { name: 'Seta', exact: true });
   await expect(arrowButton).toHaveAttribute('aria-pressed', 'true');
   await arrowButton.click();
   await expect(links).toHaveAttribute('data-arrow', 'false');

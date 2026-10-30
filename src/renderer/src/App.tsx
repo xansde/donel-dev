@@ -84,21 +84,8 @@ import { EsteiraScreen } from './Esteira/EsteiraScreen';
 // Mindscape V1 — third mode of the shell (docs/design/mindscape.md).
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
-import {
-  addLink,
-  addOwnerCard,
-  archiveCard,
-  editOwnerCard,
-  findSessionBoard,
-  moveCard,
-  placeSessionCard,
-  removeLink,
-  setBoardPan,
-  setOwnerColor,
-  toggleLinkArrow,
-  writeSessionNote,
-  type OwnerCardColor,
-} from '../../shared/mindscape/model';
+import { findSessionBoard, placeSessionCard, setBoardView, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
+import type { BoardView } from '../../shared/mindscape/view';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
 import {
   AUTO_START_NOT_READY_MESSAGE,
@@ -1848,12 +1835,14 @@ export function App(): React.JSX.Element {
     setActiveTabId(tabId);
   }, []);
   const mindscapeProjectNames = useMemo(() => Object.fromEntries(projects.map((project) => [project.path, project.name])), [projects]);
-  const { loaded: mindscapeLoaded, update: updateMindscape } = mindscape;
+  const { loaded: mindscapeLoaded, apply: applyMindscape, applySession: applyMindscapeSession, undo: undoMindscape, redo: redoMindscape } = mindscape;
+  // Desenho, fatia 02 — what the sessions do goes through `applySession`: it
+  // never enters the history (an undo does not take a session post-it away).
   useEffect(() => {
     // Only after the boot load: writing before it would overwrite the file with an empty document.
     if (!mindscapeLoaded) return;
-    updateMindscape((doc) => mindscapeSessions.reduce((acc, session) => placeSessionCard(acc, session.projectPath, session.sessionId), doc));
-  }, [mindscapeLoaded, updateMindscape, mindscapeSessions]);
+    applyMindscapeSession((doc) => mindscapeSessions.reduce((acc, session) => placeSessionCard(acc, session.projectPath, session.sessionId), doc));
+  }, [mindscapeLoaded, applyMindscapeSession, mindscapeSessions]);
   // Mindscape, fatia 03 — post-it written by the session at each end of turn.
   // The project and the name come from the live tab; a session that is no
   // longer open falls back to the board that already holds its card.
@@ -1863,7 +1852,7 @@ export function App(): React.JSX.Element {
     if (!mindscapeLoaded) return undefined;
     return window.donel.mindscape.onTurnEnded(({ sessionId, text, at }) => {
       const live = mindscapeSessionsRef.current.find((session) => session.sessionId === sessionId);
-      updateMindscape((doc) => {
+      applyMindscapeSession((doc) => {
         const projectPath = live?.projectPath ?? findSessionBoard(doc, sessionId);
         if (!projectPath) return doc;
         const previous = doc.boards[projectPath]?.cards[`note:${sessionId}`];
@@ -1871,45 +1860,23 @@ export function App(): React.JSX.Element {
         return writeSessionNote(doc, projectPath, { sessionId, sessionName, text, writtenAt: at });
       });
     });
-  }, [mindscapeLoaded, updateMindscape]);
-  const handleMindscapeArchive = useCallback(
-    (projectPath: string, cardId: string): void => updateMindscape((doc) => archiveCard(doc, projectPath, cardId)),
-    [updateMindscape],
+  }, [mindscapeLoaded, applyMindscapeSession]);
+  // Mindscape, fatia 04 — moving the view is not an action on the board: out of the history.
+  // Desenho, fatia 05 — pan and zoom together (setBoardView), each change computed
+  // from the board as it is NOW (several wheel events in a row compose).
+  const handleMindscapeView = useCallback(
+    (projectPath: string, change: (view: BoardView) => BoardView): void =>
+      applyMindscapeSession((doc) => {
+        const board = doc.boards[projectPath];
+        return board ? setBoardView(doc, projectPath, change({ pan: board.pan, zoom: board.zoom })) : doc;
+      }),
+    [applyMindscapeSession],
   );
-  // Mindscape, fatia 04 — free canvas: drag, pan and the owner's post-its.
-  const handleMindscapeMoveCard = useCallback(
-    (projectPath: string, cardId: string, x: number, y: number): void => updateMindscape((doc) => moveCard(doc, projectPath, cardId, x, y)),
-    [updateMindscape],
-  );
-  const handleMindscapePan = useCallback(
-    (projectPath: string, pan: { x: number; y: number }): void => updateMindscape((doc) => setBoardPan(doc, projectPath, pan)),
-    [updateMindscape],
-  );
-  const handleMindscapeAddOwnerCard = useCallback(
-    (projectPath: string, id: string, origin: { x: number; y: number }): void =>
-      updateMindscape((doc) => addOwnerCard(doc, projectPath, { id, createdAt: Date.now(), origin })),
-    [updateMindscape],
-  );
-  const handleMindscapeEditOwnerCard = useCallback(
-    (projectPath: string, cardId: string, text: string): void => updateMindscape((doc) => editOwnerCard(doc, projectPath, cardId, text)),
-    [updateMindscape],
-  );
-  const handleMindscapeSetOwnerColor = useCallback(
-    (projectPath: string, cardId: string, color: OwnerCardColor): void => updateMindscape((doc) => setOwnerColor(doc, projectPath, cardId, color)),
-    [updateMindscape],
-  );
-  // Mindscape, fatia 05 — links with an arrow, in a hand-made stroke.
-  const handleMindscapeAddLink = useCallback(
-    (projectPath: string, id: string, from: string, to: string): void => updateMindscape((doc) => addLink(doc, projectPath, { id, from, to })),
-    [updateMindscape],
-  );
-  const handleMindscapeToggleLinkArrow = useCallback(
-    (projectPath: string, linkId: string): void => updateMindscape((doc) => toggleLinkArrow(doc, projectPath, linkId)),
-    [updateMindscape],
-  );
-  const handleMindscapeRemoveLink = useCallback(
-    (projectPath: string, linkId: string): void => updateMindscape((doc) => removeLink(doc, projectPath, linkId)),
-    [updateMindscape],
+  // Desenho, fatia 02 — the single door of every owner action on the board
+  // (post-its, links, drawings): each one is an entry of the board history.
+  const handleMindscapeAction = useCallback(
+    (projectPath: string, reducer: (doc: MindscapeDoc) => MindscapeDoc): void => applyMindscape(projectPath, reducer),
+    [applyMindscape],
   );
 
   const sidebarSessions: SidebarSession[] = tabs
@@ -2432,15 +2399,10 @@ export function App(): React.JSX.Element {
             initialProjectPath={tabs.find((tab) => tab.id === activeTabId)?.cwd}
             seenAt={mindscapeSeenAt}
             onGoToTerminal={handleMindscapeGoToTerminal}
-            onArchive={handleMindscapeArchive}
-            onMoveCard={handleMindscapeMoveCard}
-            onPan={handleMindscapePan}
-            onAddOwnerCard={handleMindscapeAddOwnerCard}
-            onEditOwnerCard={handleMindscapeEditOwnerCard}
-            onSetOwnerColor={handleMindscapeSetOwnerColor}
-            onAddLink={handleMindscapeAddLink}
-            onToggleLinkArrow={handleMindscapeToggleLinkArrow}
-            onRemoveLink={handleMindscapeRemoveLink}
+            onView={handleMindscapeView}
+            onAction={handleMindscapeAction}
+            onUndo={undoMindscape}
+            onRedo={redoMindscape}
           />
         ) : null}
         {devModeOn && esteiraOpen ? (

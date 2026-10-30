@@ -1,4 +1,4 @@
-// Mindscape (V1) — pure model of the board. One `MindscapeBoard` per project
+// Mindscape — pure model of the board (V1 + mindscape-desenho). One `MindscapeBoard` per project
 // (`projectPath` = the tab `cwd`), persisted whole in `<userData>/mindscape.json`
 // by the main (`src/main/mindscape-store.ts`). Design: docs/design/mindscape.md.
 //
@@ -7,8 +7,15 @@
 // same object, so the renderer can skip a save by identity.
 
 import type { TabColorToken } from '../tabAppearance';
+import { isImageId } from './images';
+import { clampZoom } from './view';
 
-export const MINDSCAPE_SCHEMA_VERSION = 1;
+/**
+ * 2 since mindscape-desenho (drawings + zoom). Not an additive-safe change: the
+ * V1 parse drops unknown fields, so a V1 channel would write over the drawings
+ * — with 2 it falls into the store guard (reads, never writes).
+ */
+export const MINDSCAPE_SCHEMA_VERSION = 2;
 
 export type OwnerCardColor = Exclude<TabColorToken, 'permission'>;
 
@@ -35,15 +42,42 @@ export interface MindscapeLink {
   arrow: boolean;
 }
 
+/** Drawings use the owner's post-it palette (Sem cor / Azul / Dourado). */
+export type DrawingColor = OwnerCardColor;
+export type DrawingStroke = 'thin' | 'medium' | 'thick';
+
+export const DRAWING_STROKES: readonly DrawingStroke[] = ['thin', 'medium', 'thick'];
+
+/**
+ * The owner's drawings, in board units (same as `card.x/y`). Loose arrow and
+ * line are one kind (`arrow` on/off), like the link. Boxes always have a
+ * positive `w`/`h` and no fill. The pencil stroke (fatia 04) keeps flattened
+ * points `[x0, y0, x1, y1, …]`, rounded to 0.1. The print (fatia 06) has no
+ * color nor stroke: only the `imageId` of its file in `mindscape-images/` and its box.
+ */
+export type MindscapeDrawing =
+  | { kind: 'pencil'; id: string; color: DrawingColor; stroke: DrawingStroke; points: number[] }
+  | { kind: 'line'; id: string; color: DrawingColor; stroke: DrawingStroke; arrow: boolean; x1: number; y1: number; x2: number; y2: number }
+  | { kind: 'rect'; id: string; color: DrawingColor; stroke: DrawingStroke; x: number; y: number; w: number; h: number }
+  | { kind: 'ellipse'; id: string; color: DrawingColor; stroke: DrawingStroke; x: number; y: number; w: number; h: number }
+  | { kind: 'image'; id: string; imageId: string; x: number; y: number; w: number; h: number };
+
+/** The drawings with ink (everything but the print): what the bar's color and stroke apply to. */
+export type InkDrawing = Exclude<MindscapeDrawing, { kind: 'image' }>;
+
 export interface MindscapeBoard {
   projectPath: string;
   pan: { x: number; y: number };
+  /** 0.25 to 4; 1 = 100%. Changed by Ctrl+wheel, the pinch and the indicator (desenho, fatia 05). */
+  zoom: number;
   cards: Record<string, MindscapeCard>;
   links: MindscapeLink[];
+  /** Array order = layer (0 = at the back). All drawings stay under the links and the cards. */
+  drawings: MindscapeDrawing[];
 }
 
 export interface MindscapeDoc {
-  schemaVersion: 1;
+  schemaVersion: 2;
   boards: Record<string, MindscapeBoard>;
 }
 
@@ -77,7 +111,7 @@ export function ensureBoard(doc: MindscapeDoc, projectPath: string): MindscapeDo
   if (doc.boards[projectPath]) return doc;
   return {
     ...doc,
-    boards: { ...doc.boards, [projectPath]: { projectPath, pan: { x: 0, y: 0 }, cards: {}, links: [] } },
+    boards: { ...doc.boards, [projectPath]: { projectPath, pan: { x: 0, y: 0 }, zoom: 1, cards: {}, links: [], drawings: [] } },
   };
 }
 
@@ -214,12 +248,19 @@ export function moveCard(doc: MindscapeDoc, projectPath: string, cardId: string,
   return replaceCard(doc, board, { ...card, x, y });
 }
 
-/** Drag of the background: the view offset of the board, persisted with it. */
-export function setBoardPan(doc: MindscapeDoc, projectPath: string, pan: { x: number; y: number }): MindscapeDoc {
+/**
+ * Desenho, fatia 05 (replaces `setBoardPan`) — the view of the board (pan in
+ * px of screen, zoom held between 25% and 400%), persisted with it and out of
+ * the history (it goes through `applySession`). Missing board, a non-finite
+ * value or the same view → same document.
+ */
+export function setBoardView(doc: MindscapeDoc, projectPath: string, view: { pan: { x: number; y: number }; zoom: number }): MindscapeDoc {
   const board = doc.boards[projectPath];
-  if (!board || !Number.isFinite(pan.x) || !Number.isFinite(pan.y)) return doc;
-  if (board.pan.x === pan.x && board.pan.y === pan.y) return doc;
-  return { ...doc, boards: { ...doc.boards, [projectPath]: { ...board, pan: { x: pan.x, y: pan.y } } } };
+  const { pan } = view;
+  if (!board || !Number.isFinite(pan.x) || !Number.isFinite(pan.y) || !Number.isFinite(view.zoom)) return doc;
+  const zoom = clampZoom(view.zoom);
+  if (board.pan.x === pan.x && board.pan.y === pan.y && board.zoom === zoom) return doc;
+  return { ...doc, boards: { ...doc.boards, [projectPath]: { ...board, pan: { x: pan.x, y: pan.y }, zoom } } };
 }
 
 export interface OwnerCardInput {
@@ -268,10 +309,12 @@ export interface LinkInput {
   readonly id: string;
   readonly from: string;
   readonly to: string;
+  /** Arrow head at `to`; default `true` (V1). Drawing with `L` passes `false`. */
+  readonly arrow?: boolean;
 }
 
 /**
- * Links two cards of the board, arrow on. A card to itself, a card missing
+ * Links two cards of the board, arrow on unless `arrow: false`. A card to itself, a card missing
  * from the board, an id in use or a pair already linked (either way) → same document.
  */
 export function addLink(doc: MindscapeDoc, projectPath: string, input: LinkInput): MindscapeDoc {
@@ -285,7 +328,7 @@ export function addLink(doc: MindscapeDoc, projectPath: string, input: LinkInput
       (link.from === input.to && link.to === input.from),
   );
   if (taken) return doc;
-  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow: true }]);
+  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow: input.arrow ?? true }]);
 }
 
 /** Switches the arrow of the link on/off. Missing link → same document. */
@@ -369,6 +412,44 @@ function parseLink(raw: unknown): MindscapeLink | null {
   return { id: raw.id, from: raw.from, to: raw.to, arrow: raw.arrow };
 }
 
+/**
+ * Guard of one drawing (disk, renderer or reducer input): wrong color, unknown
+ * stroke, non-finite number, a box with `w`/`h` ≤ 0, a pencil stroke with odd
+ * `points` or fewer than 2 points, or a print with an `imageId` out of the
+ * pattern → `null`. The result carries only the known fields.
+ */
+export function parseDrawing(raw: unknown): MindscapeDrawing | null {
+  if (!isRecord(raw) || !isNonEmptyString(raw.id)) return null;
+  if (raw.kind === 'image') {
+    // Fatia 06 — the print: no color nor stroke; the imageId is the only name the main builds a path from.
+    const { x, y, w, h, imageId } = raw;
+    if (!isImageId(imageId) || !isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(w) || !isFiniteNumber(h) || w <= 0 || h <= 0) return null;
+    return { kind: 'image', id: raw.id, imageId, x, y, w, h };
+  }
+  if (!OWNER_COLORS.includes(raw.color as DrawingColor) || !DRAWING_STROKES.includes(raw.stroke as DrawingStroke)) return null;
+  const base = { id: raw.id, color: raw.color as DrawingColor, stroke: raw.stroke as DrawingStroke };
+  switch (raw.kind) {
+    case 'pencil': {
+      const { points } = raw;
+      if (!Array.isArray(points) || points.length < 4 || points.length % 2 !== 0 || !points.every(isFiniteNumber)) return null;
+      return { kind: 'pencil', ...base, points: [...points] };
+    }
+    case 'line': {
+      const { x1, y1, x2, y2, arrow } = raw;
+      if (typeof arrow !== 'boolean' || !isFiniteNumber(x1) || !isFiniteNumber(y1) || !isFiniteNumber(x2) || !isFiniteNumber(y2)) return null;
+      return { kind: 'line', ...base, arrow, x1, y1, x2, y2 };
+    }
+    case 'rect':
+    case 'ellipse': {
+      const { x, y, w, h } = raw;
+      if (!isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(w) || !isFiniteNumber(h) || w <= 0 || h <= 0) return null;
+      return { kind: raw.kind, ...base, x, y, w, h };
+    }
+    default:
+      return null;
+  }
+}
+
 function parseBoard(key: string, raw: unknown): MindscapeBoard | null {
   if (!isRecord(raw) || raw.projectPath !== key) return null;
   const pan = isRecord(raw.pan) && isFiniteNumber(raw.pan.x) && isFiniteNumber(raw.pan.y) ? { x: raw.pan.x, y: raw.pan.y } : { x: 0, y: 0 };
@@ -380,13 +461,16 @@ function parseBoard(key: string, raw: unknown): MindscapeBoard | null {
     }
   }
   const links = Array.isArray(raw.links) ? raw.links.map(parseLink).filter((link): link is MindscapeLink => link !== null) : [];
-  return { projectPath: key, pan, cards, links };
+  // v1 has neither: no drawings, 100%.
+  const zoom = isFiniteNumber(raw.zoom) ? clampZoom(raw.zoom) : 1;
+  const drawings = Array.isArray(raw.drawings) ? raw.drawings.map(parseDrawing).filter((drawing): drawing is MindscapeDrawing => drawing !== null) : [];
+  return { projectPath: key, pan, zoom, cards, links, drawings };
 }
 
 /**
- * Sanitizes an untrusted document. Garbage or absence → empty document; bad
- * boards, cards and links are dropped one by one (an owner card colored
- * `permission` is not accepted — rule 6).
+ * Sanitizes an untrusted document, v1 or v2; always comes out as v2. Garbage
+ * or absence → empty document; bad boards, cards, links and drawings are
+ * dropped one by one (an owner card colored `permission` is not accepted — rule 6).
  */
 export function parseMindscapeDoc(raw: unknown): MindscapeDoc {
   const doc = emptyMindscapeDoc();

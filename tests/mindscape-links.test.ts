@@ -11,7 +11,7 @@ import {
   visibleLinks,
   type MindscapeDoc,
 } from '../src/shared/mindscape/model';
-import { cardOutlinePath, clearRoughCache, linkEndpoints, linkPath } from '../src/renderer/src/Mindscape/roughShapes';
+import { cardOutlinePath, clearRoughCache, drawingShape, linkEndpoints, linkPath, pencilPath } from '../src/renderer/src/Mindscape/roughShapes';
 
 // Mindscape, fatia 05 — links between two post-its of the same board, with an
 // arrow that can be switched on and off, drawn in a hand-made stroke (roughjs)
@@ -132,5 +132,31 @@ describe('roughShapes', () => {
     clearRoughCache();
     expect(cardOutlinePath('o1', 230, 96)).toBe(first);
     expect(cardOutlinePath('o1', 230, 120)).not.toBe(first);
+  });
+});
+
+// Desenho, fatia 04 — the pencil stroke: a smoothed SVG path (quadratic curves through the midpoints).
+describe('pencilPath', () => {
+  it('is stable for the same points (pure, no seed)', () => {
+    const points = [0, 0, 10, 5, 20, 0, 30, 8];
+    expect(pencilPath(points)).toBe(pencilPath([...points]));
+  });
+
+  it('starts at the first point and ends at the last; two points are a straight segment', () => {
+    expect(pencilPath([1, 2, 30, 40])).toBe('M1 2 L30 40');
+    const d = pencilPath([0, 0, 10, 10, 20, 0]);
+    expect(d.startsWith('M0 0 ')).toBe(true);
+    expect(d).toContain('Q10 10 15 5');
+    expect(d.endsWith('L20 0')).toBe(true);
+  });
+
+  it('another set of points gives another path; fewer than 2 points give none', () => {
+    expect(pencilPath([0, 0, 10, 10])).not.toBe(pencilPath([0, 0, 10, 11]));
+    expect(pencilPath([5, 5])).toBe('');
+  });
+
+  it('drawingShape of a pencil stroke uses it, with the width of the stroke', () => {
+    const shape = drawingShape({ kind: 'pencil', id: 'p1', color: 'none', stroke: 'thick', points: [0, 0, 10, 10, 20, 0] });
+    expect(shape).toMatchObject({ d: pencilPath([0, 0, 10, 10, 20, 0]), head: null, strokeWidth: 5 });
   });
 });
