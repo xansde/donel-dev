@@ -4,7 +4,7 @@ import { TOOL_KEYS, type MindscapeTool } from '../../../shared/mindscape/shortcu
 import { drawingInk } from './MindscapeDrawingLayer';
 import styles from './Mindscape.module.css';
 
-const TOOL_ORDER: readonly MindscapeTool[] = ['select', 'hand', 'arrow', 'line', 'rect', 'ellipse'];
+const TOOL_ORDER: readonly MindscapeTool[] = ['select', 'hand', 'arrow', 'line', 'rect', 'ellipse', 'pencil', 'eraser'];
 
 export const TOOL_LABEL: Readonly<Record<MindscapeTool, string>> = {
   select: 'Seleção',
@@ -13,6 +13,8 @@ export const TOOL_LABEL: Readonly<Record<MindscapeTool, string>> = {
   line: 'Linha',
   rect: 'Retângulo',
   ellipse: 'Elipse',
+  pencil: 'Lápis',
+  eraser: 'Borracha',
 };
 
 /** Same words as the owner's post-it palette. */

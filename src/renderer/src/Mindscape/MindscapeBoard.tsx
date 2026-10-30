@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { translateDrawing } from '../../../shared/mindscape/drawings';
+import { appendPencilPoint, translateDrawing } from '../../../shared/mindscape/drawings';
+import { eraseBoard } from '../../../shared/mindscape/eraser';
 import { cardAtPoint, hitTestDrawings, itemsInsideRect, resizeDrawing, type CardRect, type ItemIds, type Rect, type ResizeHandle } from '../../../shared/mindscape/geometry';
-import type { MindscapeBoard as Board, MindscapeCard, MindscapeDrawing } from '../../../shared/mindscape/model';
+import type { MindscapeBoard as Board, MindscapeCard, MindscapeDrawing, MindscapeLink } from '../../../shared/mindscape/model';
 import type { MindscapeTool } from '../../../shared/mindscape/shortcuts';
 import { screenToWorld, type Point } from '../../../shared/mindscape/view';
 import styles from './Mindscape.module.css';
@@ -10,12 +11,26 @@ import styles from './Mindscape.module.css';
 const DRAG_THRESHOLD = 4;
 /** Hit-test slack of a drawing, in px of screen (design: `stroke/2 + 6 px de tela`). */
 const HIT_SLACK_PX = 6;
+/** Desenho, fatia 04 — radius of the eraser, in px of screen (`8 / zoom` on the board). */
+export const ERASER_RADIUS_PX = 8;
 
-/** The tools that draw by dragging (fatia 01). */
-export type DrawTool = Extract<MindscapeTool, 'arrow' | 'line' | 'rect' | 'ellipse'>;
+/** The tools that draw by dragging (fatia 01; the pencil from fatia 04). */
+export type DrawTool = Extract<MindscapeTool, 'arrow' | 'line' | 'rect' | 'ellipse' | 'pencil'>;
 
 export function isDrawTool(tool: MindscapeTool): tool is DrawTool {
-  return tool === 'arrow' || tool === 'line' || tool === 'rect' || tool === 'ellipse';
+  return tool === 'arrow' || tool === 'line' || tool === 'rect' || tool === 'ellipse' || tool === 'pencil';
+}
+
+/** Card sizes by id, from the measured rects (the cards on screen) — what the eraser needs to find the links. */
+export function sizesOf(rects: readonly CardRect[]): Record<string, { w: number; h: number }> {
+  return Object.fromEntries(rects.map((rect) => [rect.id, { w: rect.w, h: rect.h }]));
+}
+
+/** Ids of the pieces in the local preview of an eraser pass (the real ones are made on `pointerup`). */
+let previewPieceCount = 0;
+function previewPieceId(): string {
+  previewPieceCount += 1;
+  return `erase-preview-${previewPieceCount}`;
 }
 
 /** A drawing gesture, in board units. `toCard` is only known on `pointerup`. */
@@ -28,6 +43,8 @@ export interface DrawGesture {
   /** Card under the pointer on `pointerdown`. */
   readonly fromCard: string | null;
   readonly toCard: string | null;
+  /** Pencil (fatia 04): the sampled stroke, flattened `[x0, y0, x1, y1, …]`. */
+  readonly points?: number[];
 }
 
 export const EMPTY_ITEMS: ItemIds = { cards: [], drawings: [] };
@@ -55,10 +72,11 @@ type Preview =
   | { readonly kind: 'pan'; readonly x: number; readonly y: number }
   | { readonly kind: 'draw'; readonly gesture: DrawGesture }
   | { readonly kind: 'lasso'; readonly rect: Rect }
-  | { readonly kind: 'resize'; readonly drawing: MindscapeDrawing };
+  | { readonly kind: 'resize'; readonly drawing: MindscapeDrawing }
+  | { readonly kind: 'erase'; readonly board: Board };
 
 interface Gesture {
-  readonly kind: 'move' | 'pan' | 'draw' | 'lasso' | 'resize';
+  readonly kind: 'move' | 'pan' | 'draw' | 'lasso' | 'resize' | 'erase';
   readonly startX: number;
   readonly startY: number;
   /** `pan`: the pan when the drag started. */
@@ -78,6 +96,9 @@ interface Gesture {
   readonly handle?: ResizeHandle;
   /** `draw`: the gesture so far (board units). */
   draw?: DrawGesture;
+  /** `erase`: the eraser path so far (flattened, board units) and the board with it applied (local preview). */
+  path?: number[];
+  erased?: Board;
   /** `pan` started by H or space: the click that ends it reaches nobody. */
   readonly swallow?: boolean;
   moved: boolean;
@@ -91,6 +112,8 @@ export interface BoardRender {
   readonly drawings: readonly MindscapeDrawing[];
   readonly draft: DrawGesture | null;
   readonly lasso: Rect | null;
+  /** The links (fatia 04: an eraser pass in flight hides the ones it touched). */
+  readonly links: readonly MindscapeLink[];
 }
 
 export interface MindscapeBoardProps {
@@ -111,6 +134,8 @@ export interface MindscapeBoardProps {
   readonly onPan: (pan: { x: number; y: number }) => void;
   /** `pointerup` of a drawing gesture longer than the threshold. */
   readonly onDraw: (gesture: DrawGesture) => void;
+  /** Fatia 04 — `pointerup` of an eraser pass (a single press too): its whole path, flattened, in board units. */
+  readonly onErase: (path: number[]) => void;
   /** Plain click on the background (no drag) — clears the selection. */
   readonly onBackgroundClick: () => void;
   /** Desenho, fatia 02 — a gesture starts (`pointerdown`) or ends; Ctrl+Z is ignored in between. */
@@ -135,8 +160,9 @@ function round(value: number): number {
  * selects it (Shift adds or takes out) and a drag moves the whole selection,
  * a drag on the background draws the lasso and the handles resize the single
  * selected drawing; with H, or with space held, any drag moves the plane; with
- * A/L/R/O, a drag draws (local preview, written on `pointerup`). A tool change
- * cancels the gesture in flight (Esc goes back to V).
+ * A/L/R/O/P, a drag draws (local preview, written on `pointerup`); with E
+ * (fatia 04), a pass erases the touched pieces (local preview, written on
+ * `pointerup`). A tool change cancels the gesture in flight (Esc goes back to V).
  */
 export function MindscapeBoard({
   board,
@@ -149,6 +175,7 @@ export function MindscapeBoard({
   onResize,
   onPan,
   onDraw,
+  onErase,
   onBackgroundClick,
   onGestureChange,
   children,
@@ -164,8 +191,10 @@ export function MindscapeBoard({
   boardRef.current = board;
   const rectsRef = useRef(cardRects);
   rectsRef.current = cardRects;
-  const callbacksRef = useRef({ onMoveItems, onResize, onPan, onDraw, onSelect, onGestureChange });
-  callbacksRef.current = { onMoveItems, onResize, onPan, onDraw, onSelect, onGestureChange };
+  const callbacksRef = useRef({ onMoveItems, onResize, onPan, onDraw, onErase, onSelect, onGestureChange });
+  callbacksRef.current = { onMoveItems, onResize, onPan, onDraw, onErase, onSelect, onGestureChange };
+  /** Fatia 04 — the eraser circle that follows the pointer (moved by hand: no render per mouse move). */
+  const cursorRef = useRef<HTMLDivElement>(null);
 
   const worldAt = useCallback((gesture: Gesture, clientX: number, clientY: number): Point => {
     const view = { pan: boardRef.current.pan, zoom: boardRef.current.zoom };
@@ -181,6 +210,8 @@ export function MindscapeBoard({
       switch (gesture.kind) {
         case 'draw':
           return { kind: 'draw', gesture: { ...gesture.draw!, end: worldAt(gesture, gesture.lastX, gesture.lastY) } };
+        case 'erase':
+          return { kind: 'erase', board: gesture.erased! };
         case 'move': {
           const zoom = boardRef.current.zoom;
           return { kind: 'move', ids: gesture.ids!, dx: round(dx / zoom), dy: round(dy / zoom) };
@@ -218,6 +249,13 @@ export function MindscapeBoard({
 
   const finish = (gesture: Gesture): void => {
     const callbacks = callbacksRef.current;
+    if (gesture.kind === 'erase') {
+      // A pass, or a single press: the click that ends it reaches nobody (no card selected, no link).
+      swallowClickRef.current = true;
+      suppressClickRef.current = true;
+      callbacks.onErase(gesture.path!);
+      return;
+    }
     if (!gesture.moved) {
       // A press with no drag on an already selected item: narrow to it, or (Shift) take it out.
       if (gesture.kind === 'move' && gesture.click) {
@@ -248,6 +286,8 @@ export function MindscapeBoard({
         swallowClickRef.current = true;
         callbacks.onDraw({ ...final.gesture, toCard: cardAtPoint(final.gesture.end, rectsRef.current) });
         break;
+      case 'erase':
+        break;
     }
   };
 
@@ -257,6 +297,19 @@ export function MindscapeBoard({
       if (!gesture) return;
       gesture.lastX = event.clientX;
       gesture.lastY = event.clientY;
+      // Pencil and eraser keep every sample (the stroke has the shape of the hand), not one per frame.
+      if (gesture.kind === 'draw' && gesture.draw?.points) {
+        gesture.draw = { ...gesture.draw, points: appendPencilPoint(gesture.draw.points, worldAt(gesture, event.clientX, event.clientY)) };
+      } else if (gesture.kind === 'erase' && gesture.path && gesture.erased) {
+        const point = worldAt(gesture, event.clientX, event.clientY);
+        const last = gesture.path.slice(-2);
+        if (point.x !== last[0] || point.y !== last[1]) {
+          gesture.path = [...gesture.path, point.x, point.y];
+          // Erasing is a union: the preview erases only the new stretch over the board erased so far.
+          const radius = ERASER_RADIUS_PX / boardRef.current.zoom;
+          gesture.erased = eraseBoard(gesture.erased, [...last, point.x, point.y], radius, previewPieceId, sizesOf(rectsRef.current));
+        }
+      }
       if (!gesture.moved && Math.abs(event.clientX - gesture.startX) + Math.abs(event.clientY - gesture.startY) <= DRAG_THRESHOLD) return;
       gesture.moved = true;
       if (frameRef.current !== null) return;
@@ -308,8 +361,28 @@ export function MindscapeBoard({
       if (target.closest(EDITABLE)) return;
       const gesture: Gesture = { ...base, kind: 'draw' };
       const start = worldAt(gesture, event.clientX, event.clientY);
-      gesture.draw = { tool, id: crypto.randomUUID(), start, end: start, fromCard: cardAtPoint(start, rectsRef.current), toCard: null };
+      gesture.draw = {
+        tool,
+        id: crypto.randomUUID(),
+        start,
+        end: start,
+        fromCard: cardAtPoint(start, rectsRef.current),
+        toCard: null,
+        points: tool === 'pencil' ? [start.x, start.y] : undefined,
+      };
       gestureRef.current = gesture;
+      attachGesture();
+      return;
+    }
+    if (tool === 'eraser') {
+      // Fatia 04 — a pass of the eraser: the press already erases where it lands (local preview until pointerup).
+      if (target.closest(EDITABLE)) return;
+      const gesture: Gesture = { ...base, kind: 'erase' };
+      const start = worldAt(gesture, event.clientX, event.clientY);
+      gesture.path = [start.x, start.y];
+      gesture.erased = eraseBoard(boardRef.current, gesture.path, ERASER_RADIUS_PX / boardRef.current.zoom, previewPieceId, sizesOf(rectsRef.current));
+      gestureRef.current = gesture;
+      setPreview({ kind: 'erase', board: gesture.erased });
       attachGesture();
       return;
     }
@@ -359,8 +432,10 @@ export function MindscapeBoard({
   const positionOf = (card: MindscapeCard): { x: number; y: number } =>
     moving && moving.ids.cards.includes(card.id) ? { x: card.x + moving.dx, y: card.y + moving.dy } : { x: card.x, y: card.y };
   const resized = preview?.kind === 'resize' ? preview.drawing : null;
-  const drawings =
-    moving && moving.ids.drawings.length > 0
+  const erased = preview?.kind === 'erase' ? preview.board : null;
+  const drawings = erased
+    ? erased.drawings
+    : moving && moving.ids.drawings.length > 0
       ? board.drawings.map((drawing) => (moving.ids.drawings.includes(drawing.id) ? translateDrawing(drawing, moving.dx, moving.dy) : drawing))
       : resized
         ? board.drawings.map((drawing) => (drawing.id === resized.id ? resized : drawing))
@@ -375,6 +450,16 @@ export function MindscapeBoard({
       data-pan={`${board.pan.x},${board.pan.y}`}
       data-dragging={moving ? 'true' : undefined}
       onPointerDown={handlePointerDown}
+      onPointerMove={(event) => {
+        const cursor = cursorRef.current;
+        if (!cursor) return;
+        const box = event.currentTarget.getBoundingClientRect();
+        cursor.style.transform = `translate(${event.clientX - box.left - ERASER_RADIUS_PX}px, ${event.clientY - box.top - ERASER_RADIUS_PX}px)`;
+        cursor.hidden = false;
+      }}
+      onPointerLeave={() => {
+        if (cursorRef.current) cursorRef.current.hidden = true;
+      }}
       onClickCapture={(event) => {
         if (!swallowClickRef.current) return;
         swallowClickRef.current = false;
@@ -396,8 +481,19 @@ export function MindscapeBoard({
           drawings,
           draft: preview?.kind === 'draw' ? preview.gesture : null,
           lasso: preview?.kind === 'lasso' ? preview.rect : null,
+          links: erased ? erased.links : board.links,
         })}
       </div>
+      {tool === 'eraser' ? (
+        <div
+          ref={cursorRef}
+          className={styles.eraserCursor}
+          data-testid="mindscape-eraser-cursor"
+          style={{ width: ERASER_RADIUS_PX * 2, height: ERASER_RADIUS_PX * 2 }}
+          hidden
+          aria-hidden="true"
+        />
+      ) : null}
     </div>
   );
 }

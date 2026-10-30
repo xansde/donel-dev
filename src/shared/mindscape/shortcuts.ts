@@ -3,8 +3,8 @@
 // never with the focus in a text field. Design: docs/design/mindscape-desenho.md,
 // "Ferramentas, seleção e atalhos".
 
-/** The tools of the bar. Fatia 01: V H A L R O (P and E come in fatia 04). */
-export type MindscapeTool = 'select' | 'hand' | 'arrow' | 'line' | 'rect' | 'ellipse';
+/** The tools of the bar. Fatia 01: V H A L R O; fatia 04: P (lápis) and E (borracha). */
+export type MindscapeTool = 'select' | 'hand' | 'arrow' | 'line' | 'rect' | 'ellipse' | 'pencil' | 'eraser';
 
 export type MindscapeShortcut =
   | { readonly type: 'tool'; readonly tool: MindscapeTool }
@@ -37,6 +37,8 @@ export const TOOL_KEYS: Readonly<Record<MindscapeTool, string>> = {
   line: 'l',
   rect: 'r',
   ellipse: 'o',
+  pencil: 'p',
+  eraser: 'e',
 };
 
 const TOOL_BY_KEY: Readonly<Record<string, MindscapeTool>> = Object.fromEntries(

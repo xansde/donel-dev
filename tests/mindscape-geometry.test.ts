@@ -154,3 +154,35 @@ describe('linkEndpoints', () => {
     expect(linkEndpoints({ x: 0, y: 0, w: 100, h: 100 }, { x: 300, y: 0, w: 100, h: 100 })).toEqual({ x1: 100, y1: 50, x2: 300, y2: 50 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fatia 04 — the pencil stroke (Rabisco) in the hit-test, the lasso and the boxes; no handle.
+// ---------------------------------------------------------------------------
+
+/** A "V": (0,500) → (50,600) → (100,500), thin stroke. */
+const pencil: MindscapeDrawing = { kind: 'pencil', id: 'pe', color: 'none', stroke: 'thin', points: [0, 500, 50, 600, 100, 500] };
+
+describe('the pencil stroke in the geometry', () => {
+  it('is hit near any of its segments and missed away from them', () => {
+    expect(hitTestDrawings([pencil], { x: 25, y: 550 }, SLACK)).toBe('pe');
+    expect(hitTestDrawings([pencil], { x: 75, y: 552 }, SLACK)).toBe('pe');
+    // Inside the "V", away from both strokes.
+    expect(hitTestDrawings([pencil], { x: 50, y: 520 }, SLACK)).toBeNull();
+  });
+
+  it('comes on top when it is the last in the array', () => {
+    const over: MindscapeDrawing = { ...pencil, id: 'over', points: [0, 0, 100, 0] };
+    expect(hitTestDrawings([rectA, over], { x: 50, y: 0 }, SLACK)).toBe('over');
+  });
+
+  it('has the min/max box of its points, and enters the lasso only whole', () => {
+    expect(drawingBounds(pencil)).toEqual({ x: 0, y: 500, w: 100, h: 100 });
+    expect(itemsInsideRect({ x: -5, y: 495, w: 110, h: 110 }, [], [pencil]).drawings).toEqual(['pe']);
+    expect(itemsInsideRect({ x: -5, y: 495, w: 60, h: 110 }, [], [pencil]).drawings).toEqual([]);
+  });
+
+  it('has no handle: resizeDrawing gives the same stroke back', () => {
+    expect(resizeDrawing(pencil, 'se', { x: 500, y: 900 })).toBe(pencil);
+    expect(resizeDrawing(pencil, 'end', { x: 500, y: 900 })).toBe(pencil);
+  });
+});

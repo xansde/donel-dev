@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { addDrawing, bringToFront, moveItems, removeItems, sendToBack, setDrawingsStyle, STROKE_WIDTH, updateDrawing } from '../src/shared/mindscape/drawings';
+import {
+  addDrawing,
+  appendPencilPoint,
+  bringToFront,
+  moveItems,
+  PENCIL_MAX_POINTS,
+  removeItems,
+  sendToBack,
+  setDrawingsStyle,
+  STROKE_WIDTH,
+  translateDrawing,
+  updateDrawing,
+} from '../src/shared/mindscape/drawings';
 import {
   addLink,
   addOwnerCard,
@@ -181,5 +193,57 @@ describe('updateDrawing', () => {
     expect(updateDrawing(base, ATLAS, { ...rect })).toBe(base);
     expect(updateDrawing(base, ATLAS, { ...rect, w: 0 })).toBe(base);
     expect(updateDrawing(base, 'C:/work/vega', rect)).toBe(base);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fatia 04 — the pencil: sampling of the stroke, and it moves with the selection.
+// ---------------------------------------------------------------------------
+
+describe('appendPencilPoint', () => {
+  it('adds a point at least 2 units away from the last, rounded to 0.1', () => {
+    expect(appendPencilPoint([0, 0], { x: 2.04, y: 0.06 })).toEqual([0, 0, 2, 0.1]);
+    expect(appendPencilPoint([], { x: 1.234, y: 5.678 })).toEqual([1.2, 5.7]);
+  });
+
+  it('skips a point closer than 2 units (same array back)', () => {
+    const points = [0, 0];
+    expect(appendPencilPoint(points, { x: 1.9, y: 0 })).toBe(points);
+    expect(appendPencilPoint(points, { x: 1, y: 1 })).toBe(points);
+  });
+
+  it('stops at 5.000 points per stroke', () => {
+    const full = Array.from({ length: PENCIL_MAX_POINTS }, (_, index) => [index * 3, 0]).flat();
+    expect(appendPencilPoint(full, { x: 1e6, y: 0 })).toBe(full);
+    const almost = full.slice(0, -2);
+    expect(appendPencilPoint(almost, { x: 1e6, y: 0 })).toHaveLength(PENCIL_MAX_POINTS * 2);
+  });
+
+  it('skips a non-finite point', () => {
+    const points = [0, 0];
+    expect(appendPencilPoint(points, { x: Number.NaN, y: 10 })).toBe(points);
+  });
+});
+
+describe('the pencil stroke in the reducers', () => {
+  const pencil: MindscapeDrawing = { kind: 'pencil', id: 'p1', color: 'accent', stroke: 'thin', points: [0, 0, 10, 5, 20, 0] };
+
+  it('is added as it is and refused with an odd or too short points list', () => {
+    expect(addDrawing(doc(), ATLAS, pencil).boards[ATLAS]!.drawings).toEqual([pencil]);
+    const base = doc();
+    expect(addDrawing(base, ATLAS, { ...pencil, points: [0, 0, 10] })).toBe(base);
+    expect(addDrawing(base, ATLAS, { ...pencil, points: [0, 0] })).toBe(base);
+  });
+
+  it('moves with the selection: every point shifts', () => {
+    expect(translateDrawing(pencil, 5, -2.5)).toEqual({ ...pencil, points: [5, -2.5, 15, 2.5, 25, -2.5] });
+    const moved = moveItems(addDrawing(doc(), ATLAS, pencil), ATLAS, { cards: [], drawings: ['p1'] }, 1, 1);
+    expect(moved.boards[ATLAS]!.drawings[0]).toEqual({ ...pencil, points: [1, 1, 11, 6, 21, 1] });
+  });
+
+  it('takes color and stroke from the bar and goes away with Delete', () => {
+    const withPencil = addDrawing(doc(), ATLAS, pencil);
+    expect(setDrawingsStyle(withPencil, ATLAS, ['p1'], { stroke: 'thick' }).boards[ATLAS]!.drawings[0]).toMatchObject({ kind: 'pencil', stroke: 'thick' });
+    expect(removeItems(withPencil, ATLAS, { cards: [], drawings: ['p1'] }).boards[ATLAS]!.drawings).toEqual([]);
   });
 });

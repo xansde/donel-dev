@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SessionState } from '@donel-dev/design-system';
 import { addDrawing, bringToFront, moveItems, removeItems, sendToBack, setDrawingsStyle, updateDrawing } from '../../../shared/mindscape/drawings';
+import { eraseDoc } from '../../../shared/mindscape/eraser';
 import type { CardRect, ItemIds } from '../../../shared/mindscape/geometry';
 import { sessionHighlight } from '../../../shared/mindscape/highlight';
 import {
@@ -20,7 +21,7 @@ import {
 import { mindscapeShortcut, type MindscapeTool } from '../../../shared/mindscape/shortcuts';
 import { screenToWorld } from '../../../shared/mindscape/view';
 import type { TabColorToken } from '../../../shared/tabAppearance';
-import { EMPTY_ITEMS, isDrawTool, MindscapeBoard, type DrawGesture } from './MindscapeBoard';
+import { EMPTY_ITEMS, ERASER_RADIUS_PX, isDrawTool, MindscapeBoard, sizesOf, type DrawGesture } from './MindscapeBoard';
 import { MindscapeDrawingLayer } from './MindscapeDrawingLayer';
 import { MindscapeLinkLayer, MindscapeOutlineLayer, useCardSizes } from './MindscapeLinks';
 import { MindscapeNoteCard, MindscapeOwnerCard, MindscapeSessionCard, STRIPE_BY_TOKEN } from './MindscapeCard';
@@ -80,11 +81,14 @@ const TOOL_HINT: Readonly<Record<Exclude<MindscapeTool, 'select'>, string>> = {
   line: 'Linha: arraste de um post-it a outro para ligar, ou no quadro para desenhar (Esc cancela)',
   rect: 'Retângulo: arraste no quadro (Esc cancela)',
   ellipse: 'Elipse: arraste no quadro (Esc cancela)',
+  pencil: 'Lápis: arraste para rabiscar; segue ativo depois do traço (Esc volta para a seleção)',
+  eraser: 'Borracha: passe sobre o desenho para apagar o pedaço tocado; post-it nunca sai (Esc volta para a seleção)',
 };
 
 /** The drawing a gesture makes with the current style (boxes are normalized by `addDrawing`). */
 function drawingOf(gesture: DrawGesture, style: DrawStyle): MindscapeDrawing {
   const { id, start, end } = gesture;
+  if (gesture.tool === 'pencil') return { kind: 'pencil', id, ...style, points: gesture.points ?? [start.x, start.y] };
   if (gesture.tool === 'arrow' || gesture.tool === 'line') {
     return { kind: 'line', id, ...style, arrow: gesture.tool === 'arrow', x1: start.x, y1: start.y, x2: end.x, y2: end.y };
   }
@@ -94,7 +98,7 @@ function drawingOf(gesture: DrawGesture, style: DrawStyle): MindscapeDrawing {
 /** The preview: a box drawn upward or leftward is shown already normalized. */
 function draftOf(gesture: DrawGesture, style: DrawStyle): MindscapeDrawing {
   const drawing = drawingOf(gesture, style);
-  if (drawing.kind === 'line') return drawing;
+  if (drawing.kind === 'line' || drawing.kind === 'pencil') return drawing;
   const { x, y, w, h } = drawing;
   return { ...drawing, x: w < 0 ? x + w : x, y: h < 0 ? y + h : y, w: Math.abs(w), h: Math.abs(h) };
 }
@@ -119,7 +123,7 @@ interface Selection extends ItemIds {
  * project, the post-its written by the sessions and the owner's own (V1), and
  * the drawing tools of the bar (desenho: V H A L R O, A/L from post-it to
  * post-it make a link; fatia 03: selection of several items, handles, style
- * and layer). Covers the middle of the shell like the EsteiraScreen; the
+ * and layer; fatia 04: P pencil and E eraser). Covers the middle of the shell like the EsteiraScreen; the
  * terminals stay mounted underneath.
  */
 export function MindscapeScreen({
@@ -205,14 +209,20 @@ export function MindscapeScreen({
   const selectedSession = onlyCard?.kind === 'session' ? boardSessions.find((session) => session.sessionId === onlyCard.sessionId) : undefined;
 
   const changeTool = (next: MindscapeTool): void => {
-    // A drawing tool starts with nothing selected: the color of the bar must not repaint what was selected.
-    if (isDrawTool(next)) clearSelection();
+    // A drawing tool (and the eraser) starts with nothing selected: the color of the bar must not repaint what was selected.
+    if (isDrawTool(next) || next === 'eraser') clearSelection();
     setTool(next);
   };
 
   const handleDraw = (gesture: DrawGesture): void => {
     if (!board) return;
     const { projectPath } = board;
+    if (gesture.tool === 'pencil') {
+      // P stays on after a stroke (A, L, R and O go back to V).
+      const drawing = drawingOf(gesture, drawStyle);
+      onAction(projectPath, (current) => addDrawing(current, projectPath, drawing));
+      return;
+    }
     // A, L, R and O go back to V after a drawing.
     setTool('select');
     if ((gesture.tool === 'arrow' || gesture.tool === 'line') && gesture.fromCard && gesture.toCard) {
@@ -223,6 +233,19 @@ export function MindscapeScreen({
     }
     const drawing = drawingOf(gesture, drawStyle);
     onAction(projectPath, (current) => addDrawing(current, projectPath, drawing));
+  };
+
+  /**
+   * Fatia 04 — end of an eraser pass: `eraseDoc` runs again with the whole
+   * path over the board as it is NOW (a post-it written by the session during
+   * the pass is not run over), one history entry. E stays on.
+   */
+  const handleErase = (path: number[]): void => {
+    if (!board) return;
+    const { projectPath } = board;
+    const radius = ERASER_RADIUS_PX / board.zoom;
+    const cardSizes = sizesOf(cardRects);
+    onAction(projectPath, (current) => eraseDoc(current, projectPath, path, radius, () => crypto.randomUUID(), cardSizes));
   };
 
   const removeSelected = (): void => {
@@ -395,6 +418,7 @@ export function MindscapeScreen({
           }}
           onPan={(pan) => onPan(board.projectPath, pan)}
           onDraw={handleDraw}
+          onErase={handleErase}
           onGestureChange={(active) => {
             gestureActiveRef.current = active;
           }}
@@ -403,7 +427,7 @@ export function MindscapeScreen({
             setSelectedLinkId(undefined);
           }}
         >
-          {({ positionOf, drawings, draft, lasso }) => {
+          {({ positionOf, drawings, draft, lasso, links }) => {
             const rectOf = (cardId: string) => {
               const card: Card | undefined = board.cards[cardId];
               const size = sizes[cardId];
@@ -421,7 +445,7 @@ export function MindscapeScreen({
             <>
               <MindscapeDrawingLayer drawings={drawings} selectedIds={live.drawings} draft={draft && isDrawTool(tool) ? draftOf(draft, drawStyle) : undefined} />
               <MindscapeLinkLayer
-                links={visibleLinks(board.links, visibleIds)}
+                links={visibleLinks(links, visibleIds)}
                 rectOf={rectOf}
                 selectedLinkId={selectedLinkId}
                 onSelect={(linkId) => {

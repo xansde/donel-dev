@@ -76,8 +76,15 @@ export function distanceToSegment(p: Point, a: Point, b: Point): number {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
+/** Flattened `[x0, y0, x1, y1, …]` (the pencil stroke) → points. */
+export function toPoints(flat: readonly number[]): Point[] {
+  const points: Point[] = [];
+  for (let index = 0; index + 1 < flat.length; index += 2) points.push({ x: flat[index]!, y: flat[index + 1]! });
+  return points;
+}
+
 /** Distance from `p` to the open polyline through `points`. */
-function distanceToPolyline(p: Point, points: readonly Point[]): number {
+export function distanceToPolyline(p: Point, points: readonly Point[]): number {
   let best = Infinity;
   for (let index = 1; index < points.length; index += 1) best = Math.min(best, distanceToSegment(p, points[index - 1]!, points[index]!));
   return best;
@@ -109,8 +116,10 @@ function rectPoints(box: Rect): Point[] {
 }
 
 /** Distance from `p` to the stroke of the drawing (boxes have no fill: only the contour counts). */
-function distanceToDrawing(p: Point, drawing: MindscapeDrawing): number {
+export function distanceToDrawing(p: Point, drawing: MindscapeDrawing): number {
   switch (drawing.kind) {
+    case 'pencil':
+      return distanceToPolyline(p, toPoints(drawing.points));
     case 'line':
       return distanceToSegment(p, { x: drawing.x1, y: drawing.y1 }, { x: drawing.x2, y: drawing.y2 });
     case 'rect':
@@ -135,6 +144,19 @@ export function hitTestDrawings(drawings: readonly MindscapeDrawing[], point: Po
 
 /** The geometric box of a drawing (a line drawn backwards included), stroke not counted. */
 export function drawingBounds(drawing: MindscapeDrawing): Rect {
+  if (drawing.kind === 'pencil') {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (let index = 0; index + 1 < drawing.points.length; index += 2) {
+      minX = Math.min(minX, drawing.points[index]!);
+      maxX = Math.max(maxX, drawing.points[index]!);
+      minY = Math.min(minY, drawing.points[index + 1]!);
+      maxY = Math.max(maxY, drawing.points[index + 1]!);
+    }
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
   if (drawing.kind === 'line') {
     const x = Math.min(drawing.x1, drawing.x2);
     const y = Math.min(drawing.y1, drawing.y2);
@@ -188,9 +210,12 @@ function atLeastMin(raw: number, direction: number): number {
  * The drawing with `handle` dragged to `point`: a corner of a box moves with
  * the opposite one fixed (crossing it flips the box), an end of a loose line
  * moves with the other fixed. Never under 4 units. A handle that the drawing
- * does not have → the same drawing. Never turns a line into a link.
+ * does not have (any, for a pencil stroke) → the same drawing. Never turns a
+ * line into a link.
  */
 export function resizeDrawing(drawing: MindscapeDrawing, handle: ResizeHandle, point: Point): MindscapeDrawing {
+  // The pencil stroke has no handle (it only moves and goes away).
+  if (drawing.kind === 'pencil') return drawing;
   if (drawing.kind === 'line') {
     if (handle !== 'start' && handle !== 'end') return drawing;
     const fixed = handle === 'end' ? { x: drawing.x1, y: drawing.y1 } : { x: drawing.x2, y: drawing.y2 };

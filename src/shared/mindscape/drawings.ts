@@ -4,6 +4,7 @@
 // docs/design/mindscape-desenho.md, "Modelo de dados".
 
 import type { ItemIds } from './geometry';
+import type { Point } from './view';
 import {
   archiveCard,
   DRAWING_STROKES,
@@ -21,7 +22,7 @@ export const STROKE_WIDTH: Readonly<Record<DrawingStroke, number>> = { thin: 1.5
 
 /** A box drawn from bottom right to top left comes with a negative w/h: make it positive. */
 function normalized(drawing: MindscapeDrawing): MindscapeDrawing {
-  if (drawing.kind === 'line') return drawing;
+  if (drawing.kind === 'line' || drawing.kind === 'pencil') return drawing;
   const { x, y, w, h } = drawing;
   return { ...drawing, x: w < 0 ? x + w : x, y: h < 0 ? y + h : y, w: Math.abs(w), h: Math.abs(h) };
 }
@@ -70,6 +71,9 @@ function round(value: number): number {
 
 /** The drawing shifted by (dx, dy), in board units. */
 export function translateDrawing(drawing: MindscapeDrawing, dx: number, dy: number): MindscapeDrawing {
+  if (drawing.kind === 'pencil') {
+    return { ...drawing, points: drawing.points.map((value, index) => round(value + (index % 2 === 0 ? dx : dy))) };
+  }
   if (drawing.kind === 'line') {
     return { ...drawing, x1: round(drawing.x1 + dx), y1: round(drawing.y1 + dy), x2: round(drawing.x2 + dx), y2: round(drawing.y2 + dy) };
   }
@@ -162,4 +166,27 @@ export function bringToFront(doc: MindscapeDoc, projectPath: string, drawingIds:
 /** Fatia 03 — the selected drawings go to the back, keeping their relative order. Already there → same document. */
 export function sendToBack(doc: MindscapeDoc, projectPath: string, drawingIds: readonly string[]): MindscapeDoc {
   return restack(doc, projectPath, drawingIds, false);
+}
+
+// ---------------------------------------------------------------------------
+// Fatia 04 — the pencil stroke (Rabisco): sampling while the pointer moves.
+// ---------------------------------------------------------------------------
+
+/** Smallest gap between two points of a pencil stroke (board units). */
+export const PENCIL_MIN_STEP = 2;
+/** Cap of points of one pencil stroke: past it, the stroke stops growing. */
+export const PENCIL_MAX_POINTS = 5000;
+
+/**
+ * One pointer sample of the pencil: the point (rounded to 0.1) goes at the end
+ * of the flattened `points` when it is at least 2 units from the last one and
+ * the stroke has fewer than 5.000 points. Otherwise the same array comes back.
+ */
+export function appendPencilPoint(points: number[], point: Point): number[] {
+  if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || points.length >= PENCIL_MAX_POINTS * 2) return points;
+  const x = round(point.x);
+  const y = round(point.y);
+  const count = points.length;
+  if (count >= 2 && Math.hypot(x - points[count - 2]!, y - points[count - 1]!) < PENCIL_MIN_STEP) return points;
+  return [...points, x, y];
 }

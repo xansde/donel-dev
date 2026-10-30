@@ -190,6 +190,31 @@ describe('parseMindscapeDoc — schema v2', () => {
   });
 });
 
+// Fatia 04 — the pencil stroke (Rabisco): `points` flattened, even, with 2 points or more.
+describe('parseMindscapeDoc — pencil', () => {
+  const raw = (drawings: unknown[]) => ({ schemaVersion: 2, boards: { [ATLAS]: { projectPath: ATLAS, pan: { x: 0, y: 0 }, zoom: 1, cards: {}, links: [], drawings } } });
+
+  it('round-trips a pencil stroke', () => {
+    const pencil = { kind: 'pencil', id: 'p1', color: 'accent', stroke: 'thin', points: [0, 0, 10.5, 2, 20, -3.1] };
+    expect(parseMindscapeDoc(raw([pencil])).boards[ATLAS]!.drawings).toEqual([pencil]);
+  });
+
+  it('drops a pencil stroke with odd points, fewer than 2 points or a non-finite number', () => {
+    const ok = { kind: 'pencil', id: 'ok', color: 'none', stroke: 'medium', points: [0, 0, 5, 5] };
+    const drawings = [
+      ok,
+      { ...ok, id: 'odd', points: [0, 0, 5, 5, 6] },
+      { ...ok, id: 'one-point', points: [0, 0] },
+      { ...ok, id: 'empty', points: [] },
+      { ...ok, id: 'nan', points: [0, 0, Number.NaN, 5] },
+      { ...ok, id: 'text', points: [0, 0, '5', 5] },
+      { ...ok, id: 'no-points' , points: undefined },
+      { ...ok, id: 'bad-color', color: 'permission' },
+    ];
+    expect(parseMindscapeDoc(raw(drawings)).boards[ATLAS]!.drawings.map((drawing) => drawing.id)).toEqual(['ok']);
+  });
+});
+
 describe('addLink — arrow on the input', () => {
   function cards(): MindscapeDoc {
     return addOwnerCard(addOwnerCard(emptyMindscapeDoc(), ATLAS, { id: 'o1', createdAt: 1 }), ATLAS, { id: 'o2', createdAt: 2 });

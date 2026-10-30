@@ -18,6 +18,17 @@ describe('mindscapeShortcut', () => {
     expect(mindscapeShortcut(key('o'))).toEqual({ type: 'tool', tool: 'ellipse' });
   });
 
+  // Fatia 04 — P (lápis) and E (borracha).
+  it('maps P to the pencil and E to the eraser, without telling the case', () => {
+    expect(mindscapeShortcut(key('p'))).toEqual({ type: 'tool', tool: 'pencil' });
+    expect(mindscapeShortcut(key('P', { shift: true }))).toEqual({ type: 'tool', tool: 'pencil' });
+    expect(mindscapeShortcut(key('e'))).toEqual({ type: 'tool', tool: 'eraser' });
+    expect(mindscapeShortcut(key('E'))).toEqual({ type: 'tool', tool: 'eraser' });
+    expect(mindscapeShortcut(key('p', { ctrl: true }))).toBeNull();
+    expect(mindscapeShortcut(key('e', { alt: true }))).toBeNull();
+    expect(mindscapeShortcut(key('e', { editable: true }))).toBeNull();
+  });
+
   it('does not tell upper from lower case', () => {
     expect(mindscapeShortcut(key('R'))).toEqual({ type: 'tool', tool: 'rect' });
     expect(mindscapeShortcut(key('A', { shift: true }))).toEqual({ type: 'tool', tool: 'arrow' });
@@ -82,6 +93,6 @@ describe('mindscapeShortcut', () => {
   });
 
   it('returns null for keys that are not shortcuts (yet)', () => {
-    for (const k of ['x', 'p', 'e', 'Enter', ' ', '1']) expect(mindscapeShortcut(key(k))).toBeNull();
+    for (const k of ['x', 'q', 'Enter', ' ', '1']) expect(mindscapeShortcut(key(k))).toBeNull();
   });
 });

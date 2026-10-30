@@ -50,9 +50,11 @@ export const DRAWING_STROKES: readonly DrawingStroke[] = ['thin', 'medium', 'thi
 /**
  * The owner's drawings, in board units (same as `card.x/y`). Loose arrow and
  * line are one kind (`arrow` on/off), like the link. Boxes always have a
- * positive `w`/`h` and no fill. Pencil and print come in later fatias.
+ * positive `w`/`h` and no fill. The pencil stroke (fatia 04) keeps flattened
+ * points `[x0, y0, x1, y1, …]`, rounded to 0.1. Print comes in a later fatia.
  */
 export type MindscapeDrawing =
+  | { kind: 'pencil'; id: string; color: DrawingColor; stroke: DrawingStroke; points: number[] }
   | { kind: 'line'; id: string; color: DrawingColor; stroke: DrawingStroke; arrow: boolean; x1: number; y1: number; x2: number; y2: number }
   | { kind: 'rect'; id: string; color: DrawingColor; stroke: DrawingStroke; x: number; y: number; w: number; h: number }
   | { kind: 'ellipse'; id: string; color: DrawingColor; stroke: DrawingStroke; x: number; y: number; w: number; h: number };
@@ -399,14 +401,19 @@ function parseLink(raw: unknown): MindscapeLink | null {
 
 /**
  * Guard of one drawing (disk, renderer or reducer input): wrong color, unknown
- * stroke, non-finite number or a box with `w`/`h` ≤ 0 → `null`. The result
- * carries only the known fields.
+ * stroke, non-finite number, a box with `w`/`h` ≤ 0 or a pencil stroke with odd
+ * `points` or fewer than 2 points → `null`. The result carries only the known fields.
  */
 export function parseDrawing(raw: unknown): MindscapeDrawing | null {
   if (!isRecord(raw) || !isNonEmptyString(raw.id)) return null;
   if (!OWNER_COLORS.includes(raw.color as DrawingColor) || !DRAWING_STROKES.includes(raw.stroke as DrawingStroke)) return null;
   const base = { id: raw.id, color: raw.color as DrawingColor, stroke: raw.stroke as DrawingStroke };
   switch (raw.kind) {
+    case 'pencil': {
+      const { points } = raw;
+      if (!Array.isArray(points) || points.length < 4 || points.length % 2 !== 0 || !points.every(isFiniteNumber)) return null;
+      return { kind: 'pencil', ...base, points: [...points] };
+    }
     case 'line': {
       const { x1, y1, x2, y2, arrow } = raw;
       if (typeof arrow !== 'boolean' || !isFiniteNumber(x1) || !isFiniteNumber(y1) || !isFiniteNumber(x2) || !isFiniteNumber(y2)) return null;

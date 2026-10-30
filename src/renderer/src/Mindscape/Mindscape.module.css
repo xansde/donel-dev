@@ -582,11 +582,36 @@
 .view[data-tool='line'],
 .view[data-tool='rect'],
 .view[data-tool='ellipse'],
+.view[data-tool='pencil'],
 .view[data-tool='arrow'] [data-card-id],
 .view[data-tool='line'] [data-card-id],
 .view[data-tool='rect'] [data-card-id],
-.view[data-tool='ellipse'] [data-card-id] {
+.view[data-tool='ellipse'] [data-card-id],
+.view[data-tool='pencil'] [data-card-id] {
   cursor: crosshair;
+}
+
+/* Desenho, fatia 04 — the eraser: the circle of its reach (8 px of screen) takes the place of the cursor. */
+.view[data-tool='eraser'],
+.view[data-tool='eraser'] [data-card-id],
+.view[data-tool='eraser'] button {
+  cursor: none;
+}
+
+.eraserCursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  border: 1.5px solid var(--text-primary);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg-raised) 60%, transparent);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.eraserCursor[hidden] {
+  display: none;
 }
 
 /* Desenho, fatia 03 — outline of the selection, handles of the single selected drawing and the lasso, over the cards. */

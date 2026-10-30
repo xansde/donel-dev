@@ -96,6 +96,38 @@ export function cardOutlinePath(id: string, w: number, h: number): string {
   return cached(`card|${id}|${width}x${height}`, () => pathsOf(generator.rectangle(1, 1, width - 2, height - 2, { ...options(id), roughness: 0.8, bowing: 0.6, strokeWidth: 1 })));
 }
 
+/** `d` of each pencil stroke, by its `points` array (an untouched stroke keeps the same array between renders). */
+const pencilCache = new WeakMap<readonly number[], string>();
+
+function format(value: number): string {
+  return String(round(value));
+}
+
+/**
+ * Desenho, fatia 04 — the pencil stroke (Rabisco) as a smoothed SVG path:
+ * quadratic curves through the midpoints of the flattened `points`
+ * (`[x0, y0, x1, y1, …]`), from the first point to the last. Two points are a
+ * straight segment; fewer give no path. Pure and stable for the same points.
+ */
+export function pencilPath(points: readonly number[]): string {
+  const hit = pencilCache.get(points);
+  if (hit !== undefined) return hit;
+  const count = Math.floor(points.length / 2);
+  let d = '';
+  if (count >= 2) {
+    const x = (index: number): number => points[index * 2]!;
+    const y = (index: number): number => points[index * 2 + 1]!;
+    const parts = [`M${format(x(0))} ${format(y(0))}`];
+    for (let index = 1; index < count - 1; index += 1) {
+      parts.push(`Q${format(x(index))} ${format(y(index))} ${format((x(index) + x(index + 1)) / 2)} ${format((y(index) + y(index + 1)) / 2)}`);
+    }
+    parts.push(`L${format(x(count - 1))} ${format(y(count - 1))}`);
+    d = parts.join(' ');
+  }
+  pencilCache.set(points, d);
+  return d;
+}
+
 export interface DrawingShape {
   /** Position of the local geometry in the board (`translate(x y)`). */
   readonly transform: string;
@@ -113,6 +145,11 @@ export interface DrawingShape {
  */
 export function drawingShape(drawing: MindscapeDrawing): DrawingShape | null {
   const strokeWidth = STROKE_WIDTH[drawing.stroke];
+  if (drawing.kind === 'pencil') {
+    // Absolute points: a moved stroke has a new `points` array anyway (the cache is by array).
+    const d = pencilPath(drawing.points);
+    return d ? { transform: 'translate(0 0)', d, head: null, strokeWidth } : null;
+  }
   const opts = { ...options(drawing.id), strokeWidth };
   if (drawing.kind === 'line') {
     const dx = round(drawing.x2 - drawing.x1);

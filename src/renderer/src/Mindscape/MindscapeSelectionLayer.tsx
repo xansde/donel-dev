@@ -12,8 +12,9 @@ function normalized(rect: Rect): Rect {
   return { x: rect.w < 0 ? rect.x + rect.w : rect.x, y: rect.h < 0 ? rect.y + rect.h : rect.y, w: Math.abs(rect.w), h: Math.abs(rect.h) };
 }
 
-/** Where each handle of a drawing sits (corners of a box, ends of a loose line). */
+/** Where each handle of a drawing sits (corners of a box, ends of a loose line; a pencil stroke has none). */
 function handlesOf(drawing: MindscapeDrawing): { readonly handle: ResizeHandle; readonly x: number; readonly y: number }[] {
+  if (drawing.kind === 'pencil') return [];
   if (drawing.kind === 'line') {
     return [
       { handle: 'start', x: drawing.x1, y: drawing.y1 },
