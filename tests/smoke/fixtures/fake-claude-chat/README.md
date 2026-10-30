@@ -48,6 +48,10 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
 - LF (`\n`) insere quebra de linha na caixa; so CR (`\r`) envia. No Windows o ConPTY descarta os marcadores de bracketed paste antes de um filho Node, entao uma colagem de varias linhas chega como texto puro com LF (como o Ctrl+J do CLI real).
 - Inicio: cria o transcript e roda o `command` do `SessionStart` (JSON no stdin) com `session_id`,
   `transcript_path`, `source`, `cwd`, `hook_event_name`.
+- **Statusline** (ponte da statusline): com `statusLine` (`type: command`) no `--settings`, roda o comando como o CLI
+  (shell, JSON no stdin) no inicio da sessao e em cada passo `{ "type": "statusline", "payload": {...} }`. O JSON e
+  `session_id`/`transcript_path`/`cwd`/`version` + `scenario.statusLine` + o `payload` do passo. A saida so vai
+  para o `DONEL_FAKE_CLAUDE_LOG` (`{ statusLine: "ran", code, stdout }`); o falso nao desenha a linha.
 - Enter: `POST UserPromptSubmit` (header de token do settings) e linha `user` (`turnOrigin: human`,
   `promptSource: typed`) no transcript; depois executa o turno do roteiro. Prompt com `demorar` segura a
   rodada por `DONEL_FAKE_CLAUDE_SLOW_MS`.
