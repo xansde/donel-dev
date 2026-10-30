@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -32,6 +32,13 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // horizontally), a rect drawn at 200% is born under the pointer, Ctrl+Z never
 // undoes the zoom, `beacon` keeps its own zoom and `atlas` comes back at the
 // same zoom after a relaunch. `atlas` and `beacon`, its own file.
+// Fatia 06: an image written to the clipboard (`clipboard.writeImage`) and
+// pasted with Ctrl+V is born under the mouse, at most 480 wide, with its file
+// in `mindscape-images/`; a click selects it, the handle keeps the proportion,
+// Delete takes it away and Ctrl+Z brings it back (file still there); a dropped
+// image file is born on the drop point; more than 10 MB shows the warning; after
+// a relaunch the prints are back, the old orphan planted before the boot is
+// gone and the recent one stays. `atlas`, its own file.
 
 const SCENARIO = path.join(REPO_ROOT, 'tests/fixtures/mindscape/scenarios/slow-turn.json');
 /** Stop hook with `last_assistant_message` after "primeiro" / "segundo" (the turn ends in the middle of the owner's actions). */
@@ -48,6 +55,7 @@ interface SavedDrawing {
   id: string;
   color: string;
   stroke: string;
+  imageId?: string;
   arrow?: boolean;
   points?: number[];
   x?: number;
@@ -844,4 +852,162 @@ test('Mindscape desenho 05: zoom de 25% a 400%, salvo por quadro @mindscape', as
   await expect(relaunched.getByTestId('mindscape-drawing')).toHaveCount(1);
   await boardTab(launched.window, 'beacon').click();
   await expect(relaunched.getByTestId('mindscape-zoom-value')).toHaveText('100%');
+});
+
+/** Fatia 06 — writes a `width` × `height` image to the clipboard (made in the main, no real photo): flat color, or noise. */
+async function writeClipboardImage(app: ElectronApplication, width: number, height: number, noise = false): Promise<void> {
+  await app.evaluate(
+    ({ clipboard, nativeImage }, size) => {
+      const bitmap = Buffer.alloc(size.width * size.height * 4);
+      for (let index = 0; index < bitmap.length; index += 4) {
+        // BGRA: a teal, or random colors that no PNG can squeeze.
+        bitmap[index] = size.noise ? Math.floor(Math.random() * 256) : 0x99;
+        bitmap[index + 1] = size.noise ? Math.floor(Math.random() * 256) : 0x88;
+        bitmap[index + 2] = size.noise ? Math.floor(Math.random() * 256) : 0x22;
+        bitmap[index + 3] = 0xff;
+      }
+      clipboard.writeImage(nativeImage.createFromBitmap(bitmap, { width: size.width, height: size.height }));
+    },
+    { width, height, noise },
+  );
+}
+
+/** Fatia 06 — drops a `width` × `height` PNG file (drawn on a canvas by the test) on the board at a screen point. */
+async function dropImageFile(window: Page, at: { x: number; y: number }, width: number, height: number): Promise<void> {
+  await window.evaluate(
+    async ({ x, y, width, height }) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d')!;
+      context.fillStyle = '#c08a2e';
+      context.fillRect(0, 0, width, height);
+      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((made) => resolve(made!), 'image/png'));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([blob], 'print.png', { type: 'image/png' }));
+      const target = document.elementFromPoint(x, y)!;
+      for (const type of ['dragenter', 'dragover', 'drop']) {
+        target.dispatchEvent(new DragEvent(type, { dataTransfer: transfer, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+      }
+    },
+    { ...at, width, height },
+  );
+}
+
+test('Mindscape desenho 06: print colado ou arrastado para o quadro @mindscape', async () => {
+  test.setTimeout(240_000);
+  if (launched) await closeIsolatedApp(launched, false);
+  launched = undefined;
+  mindscapeFile = path.join(root, 'mindscape-06.json');
+  scenario = SCENARIO;
+  // The prints live beside the board file. Two orphans planted before the boot: one 2 hours old, one recent.
+  const imagesDir = path.join(root, 'mindscape-images');
+  rmSync(imagesDir, { recursive: true, force: true });
+  mkdirSync(imagesDir, { recursive: true });
+  const PNG_HEADER = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const oldOrphan = path.join(imagesDir, 'img-1-0000000a.png');
+  const recentOrphan = path.join(imagesDir, 'img-2-0000000b.png');
+  writeFileSync(oldOrphan, PNG_HEADER);
+  writeFileSync(recentOrphan, PNG_HEADER);
+  const twoHoursAgo = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+  utimesSync(oldOrphan, twoHoursAgo, twoHoursAgo);
+
+  launched = await launchIsolatedApp({ userDataDir, env: env() });
+  const { window, app } = launched;
+  await openProjectClaudeTab(window, 'atlas');
+  await setMode(window, 'Mindscape');
+  await expect(screen(window).getByTestId('mindscape-session-card')).toHaveCount(1, { timeout: 30_000 });
+  // No mindscape-06.json yet at this boot: the sweep did not run, and the old orphan is still there.
+  expect(existsSync(oldOrphan)).toBe(true);
+
+  const board = screen(window).getByTestId('mindscape-board');
+  const boardBox = await board.boundingBox();
+  if (!boardBox) throw new Error('board not visible');
+  expect(boardBox.height).toBeGreaterThan(450);
+  expect(boardBox.width).toBeGreaterThan(900);
+  const H = boardBox.height;
+  // Board point (pan 0, zoom 100% all along) → screen point.
+  const at = (x: number, y: number) => ({ x: boardBox.x + x, y: boardBox.y + y });
+  const prints = screen(window).locator('[data-testid="mindscape-drawing"][data-kind="image"]');
+
+  // 1. clipboard.writeImage (600 × 300) + Ctrl+V with the mouse over the board → the print is born there, 480 wide.
+  const mouse = at(300, H - 200);
+  await writeClipboardImage(app, 600, 300);
+  await window.mouse.click(mouse.x, mouse.y);
+  await window.keyboard.press('Control+v');
+  await expect(prints).toHaveCount(1);
+  await expect(prints.first()).toHaveAttribute('data-image-status', 'ready');
+  await expect.poll(() => saved().drawings.length, { timeout: 10_000 }).toBe(1);
+  const pasted = saved().drawings[0]!;
+  expect(pasted.kind).toBe('image');
+  expect([pasted.w, pasted.h]).toEqual([480, 240]);
+  expect(Math.abs(pasted.x! + pasted.w! / 2 - 300)).toBeLessThan(1);
+  expect(Math.abs(pasted.y! + pasted.h! / 2 - (H - 200))).toBeLessThan(1);
+  expect(pasted.imageId).toMatch(/^img-[0-9a-z]+-[0-9a-f]{8}\.png$/);
+  const pastedFile = path.join(imagesDir, pasted.imageId!);
+  expect(existsSync(pastedFile)).toBe(true);
+  const shown = await prints.first().boundingBox();
+  if (!shown) throw new Error('print not visible');
+  expect(Math.abs(shown.width - 480)).toBeLessThan(2);
+  expect(Math.abs(shown.x + shown.width / 2 - mouse.x)).toBeLessThan(2);
+  if (process.env.DONEL_SMOKE_SHOTS_DIR) await window.screenshot({ path: path.join(process.env.DONEL_SMOKE_SHOTS_DIR, 'mindscape-desenho-print.png') });
+
+  // 2. A click in the middle of the print selects it (its whole area counts); the corner handle keeps the proportion.
+  await window.mouse.click(mouse.x, mouse.y);
+  await expect(prints.first()).toHaveAttribute('data-selected', 'true');
+  await expect(screen(window).getByTestId('mindscape-handle')).toHaveCount(4);
+  const corner = await center(screen(window).locator('[data-testid="mindscape-handle"][data-handle="se"]'));
+  await dragScreen(window, corner, { x: corner.x + 120, y: corner.y + 10 });
+  await expect.poll(() => saved().drawings[0]?.w, { timeout: 10_000 }).not.toBe(480);
+  const resized = saved().drawings[0]!;
+  expect(Math.abs(resized.w! - 600)).toBeLessThan(1);
+  expect(Math.abs(resized.w! / resized.h! - 2)).toBeLessThan(0.01);
+  expect([resized.x, resized.y]).toEqual([pasted.x, pasted.y]);
+
+  // 3. Delete → it goes (the file stays); Ctrl+Z → it comes back, with the file.
+  await window.keyboard.press('Delete');
+  await expect(prints).toHaveCount(0);
+  await expect.poll(() => saved().drawings.length, { timeout: 10_000 }).toBe(0);
+  expect(existsSync(pastedFile)).toBe(true);
+  await window.keyboard.press('Control+z');
+  await expect(prints).toHaveCount(1);
+  await expect(prints.first()).toHaveAttribute('data-image-status', 'ready');
+  await expect.poll(() => saved().drawings.map((drawing) => drawing.imageId), { timeout: 10_000 }).toEqual([pasted.imageId]);
+  expect(saved().drawings[0]!.w).toBe(resized.w);
+  await window.keyboard.press('Escape');
+
+  // 4. A PNG file dropped on the board → born on the drop point, at its natural size (120 × 80).
+  const dropAt = at(boardBox.width - 160, 140);
+  await dropImageFile(window, dropAt, 120, 80);
+  await expect(prints).toHaveCount(2);
+  await expect.poll(() => saved().drawings.length, { timeout: 10_000 }).toBe(2);
+  const dropped = saved().drawings[1]!;
+  expect([dropped.kind, dropped.w, dropped.h]).toEqual(['image', 120, 80]);
+  expect(Math.abs(dropped.x! + 60 - (boardBox.width - 160))).toBeLessThan(1);
+  expect(Math.abs(dropped.y! + 40 - 140)).toBeLessThan(1);
+  expect(existsSync(path.join(imagesDir, dropped.imageId!))).toBe(true);
+
+  // 5. More than 10 MB (2.500 × 2.500 of noise) → the warning in the hint strip, and nothing new on the board.
+  await writeClipboardImage(app, 2500, 2500, true);
+  await window.mouse.move(mouse.x, mouse.y);
+  await window.keyboard.press('Control+v');
+  await expect(screen(window).getByTestId('mindscape-hint')).toHaveText('Imagem grande demais (limite de 10 MB)', { timeout: 30_000 });
+  await expect(prints).toHaveCount(2);
+  expect(saved().drawings).toHaveLength(2);
+
+  // 6. Relaunch → both prints are back (files read again), the old orphan is gone, the recent one stays.
+  const before = saved();
+  await closeIsolatedApp(launched, false);
+  launched = undefined;
+  launched = await launchIsolatedApp({ userDataDir, env: env() });
+  await setMode(launched.window, 'Mindscape');
+  const after = screen(launched.window).locator('[data-testid="mindscape-drawing"][data-kind="image"]');
+  await expect(after).toHaveCount(2);
+  await expect(after.first()).toHaveAttribute('data-image-status', 'ready');
+  await expect(after.nth(1)).toHaveAttribute('data-image-status', 'ready');
+  await expect.poll(() => existsSync(oldOrphan), { timeout: 10_000 }).toBe(false);
+  expect(existsSync(recentOrphan)).toBe(true);
+  expect(existsSync(pastedFile)).toBe(true);
+  expect(existsSync(path.join(imagesDir, dropped.imageId!))).toBe(true);
+  expect(saved()).toEqual(before);
 });
