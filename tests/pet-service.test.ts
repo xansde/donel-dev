@@ -826,6 +826,28 @@ describe('the events of the main become the bubble (US2, T032)', () => {
     expect(lastView(h).pose).toBe('calling');
   });
 
+  it('#109: background sub-agents waking the session give no bubble; the turn that ends with none alive gives one', () => {
+    const { h, service } = twoSessions();
+    const provisional = { ...sem('pty-a', 'waiting'), awaitingBackgroundAgents: true };
+    service.onSemaphoreUpdate(provisional); // the turn that launched the agents ended
+    expect(lastView(h)).toMatchObject({ bubble: null, badge: null, pose: 'reading' });
+    service.onSemaphoreUpdate(sem('pty-a', 'working')); // one agent finished and woke the session
+    service.onSemaphoreUpdate(provisional); // its short turn ended, another agent still runs
+    expect(lastView(h)).toMatchObject({ bubble: null, badge: null, pose: 'reading' });
+    service.onSemaphoreUpdate(sem('pty-a', 'working')); // the last one finished
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting')); // and the session really stopped
+    expect(lastView(h).bubble).toMatchObject({ id: 1, text: 'atlas · terminou' });
+    expect(lastView(h).badge).toBe('1');
+  });
+
+  it('#109: the last agent ending without a new tool call still gives the bubble (waiting -> waiting, the mark gone)', () => {
+    const { h, service } = twoSessions();
+    service.onSemaphoreUpdate({ ...sem('pty-a', 'waiting'), awaitingBackgroundAgents: true });
+    expect(lastView(h).bubble).toBeNull();
+    service.onSemaphoreUpdate(sem('pty-a', 'waiting'));
+    expect(lastView(h).bubble).toMatchObject({ id: 1, text: 'atlas · terminou' });
+  });
+
   it('the bubble goes after 6 s, on the tick, and the face goes back to the sessions', () => {
     const { h, service } = twoSessions();
     service.onSemaphoreUpdate(sem('pty-a', 'waiting'));

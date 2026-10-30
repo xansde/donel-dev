@@ -133,10 +133,12 @@ export interface CreatePetWindowOptions {
   readonly onBlur: () => void;
 }
 
-/** What the semaphore manager publishes on every update (`SemaphoreUpdate`, src/main/session-semaphore-manager.ts): the service reads only these two. */
+/** What the semaphore manager publishes on every update (`SemaphoreUpdate`, src/main/session-semaphore-manager.ts): the service reads only these. */
 export interface PetSemaphoreUpdate {
   readonly ptyId: string;
   readonly state: SemaphorePublicState;
+  /** #109: the turn ended with background sub-agents alive, so the session is not done yet (`toPetSemaphore`). */
+  readonly awaitingBackgroundAgents?: boolean;
 }
 
 /** The watcher of full screen apps (src/main/pet/fullscreen-watcher.ts), as the service holds it. */
@@ -693,7 +695,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
 
     onSemaphoreUpdate(update) {
       if (disposed) return;
-      const next = toPetSemaphore(update.state);
+      const next = toPetSemaphore(update.state, update.awaitingBackgroundAgents === true);
       if (next !== 'permission') pendingKindByPty.delete(update.ptyId); // the pending is over, or never was one
       if (semaphoreByPty.get(update.ptyId) === next) return;
       semaphoreByPty.set(update.ptyId, next);

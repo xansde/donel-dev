@@ -30,7 +30,8 @@ import { createIsolatedUserDataDir } from './userDataIsolation';
 // made with the seam OFF and `DONEL_PET_CAPTURABLE=1`, over an opaque background of their own.
 //
 // The scenario `waiting-turn.json` holds the turn of the prompt `pedido` for 9 s before the `Stop` and the
-// one of `rapido` for 6 s: time to move the owner to another tab and minimize the Donel. Test tab names
+// one of `rapido` for 6 s: time to move the owner to another tab and minimize the Donel. `agentes` (#109) plays
+// two background sub-agents: three `Stop`s, the first two with sub-agents still alive in `background_tasks`. Test tab names
 // are `atlas`, `beacon` and `vega` (never the real project name: the fence in tests/smoke-project-name.test.ts).
 //
 // The mouse is the one of Playwright, which reaches the page straight through the debugger: it proves what
@@ -313,7 +314,8 @@ test.describe('o Jobu sem o chat', () => {
       path.join(userDataDir, 'config.json'),
       // `notificationPreference: 'all'` makes the toast of the renderer fire on any session that waits, so that
       // its silence with the Jobu on (T035) is a real result and not "the default preference never asked".
-      JSON.stringify({ pet: { enabled: true, placement: null, size: 140 }, notificationPreference: 'all' }),
+      // `projectRoots`: the folder that holds the repo under test, as in chatSmoke.ts, so the Launcher lists it from a worktree too.
+      JSON.stringify({ pet: { enabled: true, placement: null, size: 140 }, notificationPreference: 'all', projectRoots: [path.dirname(REPO_ROOT)] }),
       'utf8',
     );
     launched = await launchIsolatedApp({ userDataDir, env: { ...process.env, DONEL_FAKE_CLAUDE_SCENARIO: SCENARIO, ...GHOST_ENV } });
@@ -454,6 +456,46 @@ test.describe('o Jobu sem o chat', () => {
     await expect(pet.getByTestId('pet-bubble')).toHaveCount(0);
     await expect(root()).toHaveAttribute('data-pose', 'impatient');
     await expect(root()).toHaveAttribute('data-badge', '1');
+
+    // Clean up: the owner opens `atlas`, which was the one waiting.
+    await lookAt('atlas');
+    await expect(root()).not.toHaveAttribute('data-badge', { timeout: 10_000 });
+  });
+
+  test('#109 - background sub-agents that wake the session give no notice each: only the turn that ends with none alive is "terminou" @pet', async () => {
+    test.setTimeout(180_000);
+    await ensureSession('atlas');
+    await ensureSession('beacon');
+
+    await tabNamed('atlas').click();
+    await sendPrompt('agentes');
+    await expect(root()).toHaveAttribute('data-pose', 'reading', { timeout: 15_000 });
+    await tabNamed('beacon').click();
+    await setDonelWindow('minimized');
+
+    // Every time a wait is born out of sight the badge appears: count the births, from here to the end of the turn.
+    await expect(root()).not.toHaveAttribute('data-badge');
+    await pet.evaluate(() => {
+      const el = document.querySelector('[data-testid="pet-root"]');
+      if (el === null) throw new Error('no pet root');
+      const counter = window as unknown as { __badgeBirths: number };
+      counter.__badgeBirths = 0;
+      let had = el.hasAttribute('data-badge');
+      new MutationObserver(() => {
+        const has = el.hasAttribute('data-badge');
+        if (has && !had) counter.__badgeBirths += 1;
+        had = has;
+      }).observe(el, { attributes: true, attributeFilter: ['data-badge'] });
+    });
+
+    // The scenario ends its turn three times, 3.5 s apart, working in between (the woken session and the agents use
+    // tools). The bubble only comes for the last one: sub-agents done, session stopped. Waiting past the length of the
+    // whole turn after the bubble proves no other wait was born (before the fix, the first `Stop` already gave one,
+    // and each later one gave another).
+    await expect(root()).toHaveAttribute('data-bubble', 'atlas · terminou', { timeout: 60_000 });
+    await pet.waitForTimeout(9_000);
+    await expect(root()).toHaveAttribute('data-badge', '1');
+    expect(await pet.evaluate(() => (window as unknown as { __badgeBirths: number }).__badgeBirths)).toBe(1);
 
     // Clean up: the owner opens `atlas`, which was the one waiting.
     await lookAt('atlas');
@@ -983,7 +1025,7 @@ test.describe('o Jobu e os gestos', () => {
 
   test.beforeAll(async () => {
     userDataDir = createIsolatedUserDataDir('pet-gestures');
-    writeFileSync(path.join(userDataDir, 'config.json'), JSON.stringify({ pet: { enabled: true, placement: null, size: 140 } }), 'utf8');
+    writeFileSync(path.join(userDataDir, 'config.json'), JSON.stringify({ pet: { enabled: true, placement: null, size: 140 }, projectRoots: [path.dirname(REPO_ROOT)] }), 'utf8');
     await launchGestureApp();
   });
 

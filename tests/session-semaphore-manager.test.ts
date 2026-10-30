@@ -284,6 +284,35 @@ describe('SessionSemaphoreManager pela ponte de hooks (por ptyId)', () => {
     }
   });
 
+  it('#109: Stop com subagente vivo publica waiting marcado como provisório; o Stop que fecha sem subagente publica waiting limpo', async () => {
+    const { port, token, updates, close } = await setup();
+    try {
+      const subagent = { id: 'a1', type: 'subagent', status: 'running', description: 'revisar' };
+      await postBridge(port, token, 'Stop', { background_tasks: [subagent] });
+      await vi.waitFor(() => expect(updates.at(-1)).toEqual({ ptyId: 'pty-1', state: 'waiting', stateEnteredAt: expect.any(Number), awaitingBackgroundAgents: true }));
+      await postBridge(port, token, 'Stop', { background_tasks: [] });
+      await vi.waitFor(() => expect(updates.at(-1)).toEqual({ ptyId: 'pty-1', state: 'waiting', stateEnteredAt: expect.any(Number) }));
+    } finally {
+      await close();
+    }
+  });
+
+  it('#109: um shell em segundo plano não deixa a espera provisória, e pendência aberta é permission sem marca', async () => {
+    const { manager, port, token, updates, close } = await setup();
+    try {
+      await postBridge(port, token, 'Stop', { background_tasks: [{ id: 'b1', type: 'shell', status: 'running', description: 'npm run dev' }] });
+      await vi.waitFor(() => expect(updates.at(-1)?.state).toBe('waiting'));
+      expect(updates.at(-1)?.awaitingBackgroundAgents).toBeUndefined();
+
+      await postBridge(port, token, 'Stop', { background_tasks: [{ id: 'a1', type: 'subagent', status: 'running', description: 'x' }] });
+      await vi.waitFor(() => expect(updates.at(-1)?.awaitingBackgroundAgents).toBe(true));
+      manager.setPendingOpen('pty-1', true);
+      expect(updates.at(-1)).toEqual({ ptyId: 'pty-1', state: 'permission', stateEnteredAt: expect.any(Number) });
+    } finally {
+      await close();
+    }
+  });
+
   it('ignora evento de pty não registrado no semáforo e hooks fora do conjunto do semáforo', async () => {
     const { bridge, port, token, updates, close } = await setup();
     try {

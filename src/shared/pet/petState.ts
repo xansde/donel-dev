@@ -62,9 +62,15 @@ export function createPetState(): PetState {
 /**
  * From what the semaphore published to what the core reads (R2): no update at all is `idle` (a tab
  * that was just opened is not "working" because the semaphore is born that way), and `error` is `done`.
+ *
+ * #109: a `waiting` the semaphore marks `awaitingBackgroundAgents` is a turn that ended while sub-agents
+ * still run in the background. Each of them wakes the session when it finishes, for a short turn and
+ * another `Stop`: read as a wait, that gave one "terminou" per sub-agent. It reads as `working` until
+ * the turn that ends with none alive, which is the real end (and the one bubble).
  */
-export function toPetSemaphore(published: SemaphorePublicState | undefined): PetSemaphore {
+export function toPetSemaphore(published: SemaphorePublicState | undefined, awaitingBackgroundAgents = false): PetSemaphore {
   if (published === undefined) return 'idle';
+  if (published === 'waiting' && awaitingBackgroundAgents) return 'working';
   return published === 'error' ? 'done' : published;
 }
 

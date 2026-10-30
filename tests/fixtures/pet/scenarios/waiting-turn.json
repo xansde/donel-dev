@@ -9,6 +9,32 @@
       ]
     },
     {
+      "match": "re:^agentes",
+      "steps": [
+        { "type": "wait", "ms": 6000 },
+        { "type": "hook", "event": "SubagentStart", "payload": { "agent_id": "ag1", "agent_type": "general-purpose" } },
+        { "type": "hook", "event": "SubagentStart", "payload": { "agent_id": "ag2", "agent_type": "general-purpose" } },
+        { "type": "hook", "event": "Stop", "payload": { "background_tasks": [{ "id": "ag1", "type": "subagent", "status": "running", "description": "agente ag1" }, { "id": "ag2", "type": "subagent", "status": "running", "description": "agente ag2" }] } },
+        { "type": "wait", "ms": 2000 },
+        { "type": "hook", "event": "PreToolUse", "payload": { "tool_name": "Bash", "tool_input": {}, "tool_use_id": "s1", "agent_id": "ag1" } },
+        { "type": "hook", "event": "PostToolUse", "payload": { "tool_name": "Bash", "tool_use_id": "s1", "agent_id": "ag1" } },
+        { "type": "hook", "event": "SubagentStop", "payload": { "agent_id": "ag1", "agent_type": "general-purpose" } },
+        { "type": "hook", "event": "PreToolUse", "payload": { "tool_name": "Read", "tool_input": {}, "tool_use_id": "m1" } },
+        { "type": "hook", "event": "PostToolUse", "payload": { "tool_name": "Read", "tool_use_id": "m1" } },
+        { "type": "wait", "ms": 1500 },
+        { "type": "hook", "event": "Stop", "payload": { "background_tasks": [{ "id": "ag2", "type": "subagent", "status": "running", "description": "agente ag2" }] } },
+        { "type": "wait", "ms": 2000 },
+        { "type": "hook", "event": "PreToolUse", "payload": { "tool_name": "Bash", "tool_input": {}, "tool_use_id": "s2", "agent_id": "ag2" } },
+        { "type": "hook", "event": "PostToolUse", "payload": { "tool_name": "Bash", "tool_use_id": "s2", "agent_id": "ag2" } },
+        { "type": "hook", "event": "SubagentStop", "payload": { "agent_id": "ag2", "agent_type": "general-purpose" } },
+        { "type": "hook", "event": "PreToolUse", "payload": { "tool_name": "Read", "tool_input": {}, "tool_use_id": "m2" } },
+        { "type": "hook", "event": "PostToolUse", "payload": { "tool_name": "Read", "tool_use_id": "m2" } },
+        { "type": "wait", "ms": 1500 },
+        { "type": "assistant", "text": "Pronto." },
+        { "type": "hook", "event": "Stop", "payload": { "background_tasks": [] } }
+      ]
+    },
+    {
       "match": "re:^rapido",
       "steps": [
         { "type": "wait", "ms": 6000 },

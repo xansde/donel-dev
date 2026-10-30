@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import {
   applyPermissionHeuristic,
+  countBackgroundSubagents,
   defaultMatchesPermissionPrompt,
   INITIAL_SEMAPHORE_STATE,
   reduceSemaphoreState,
@@ -29,6 +30,12 @@ export interface SemaphoreUpdate {
   readonly state: PublicSemaphoreState;
   /** Epoch ms de quando `state` passou a valer — ui-spec §3 (contador "há Xmin") e FR-010/CA-6 (desempate por idade entre permissões pendentes). */
   readonly stateEnteredAt: number;
+  /**
+   * #109 — presente (e `true`) só quando `state` é `waiting` e o turno fechou com subagente em
+   * segundo plano vivo: a sessão vai ser acordada, então ainda não terminou. A aba mostra `waiting`
+   * igual; o Jobu não anuncia "terminou" por isso. Ver `SemaphoreMachineState.awaitingBackgroundAgents`.
+   */
+  readonly awaitingBackgroundAgents?: true;
 }
 
 /** Mindscape, fatia 03 — see `SessionSemaphoreManager.onTurnEnded`. */
@@ -203,7 +210,7 @@ export class SessionSemaphoreManager {
   getSnapshot(ptyId: string): SemaphoreUpdate | undefined {
     const state = this.ptyState.get(ptyId);
     if (!state) return undefined;
-    return { ptyId, state: this.publicStateFor(ptyId, state), stateEnteredAt: state.stateEnteredAt };
+    return this.updateFor(ptyId, state);
   }
 
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
@@ -267,7 +274,9 @@ export class SessionSemaphoreManager {
     const event: SemaphoreEvent =
       eventType === 'sessionEnd'
         ? { type: 'sessionEnd', at: this.now(), reason: typeof reason === 'string' ? reason : null }
-        : ({ type: eventType, at: this.now() } as SemaphoreEvent);
+        : eventType === 'stop'
+          ? { type: 'stop', at: this.now(), backgroundAgents: countBackgroundSubagents(payload) }
+          : ({ type: eventType, at: this.now() } as SemaphoreEvent);
     const next = reduceSemaphoreState(current, event);
     this.ptyState.set(ptyId, next);
     this.emit(ptyId);
@@ -298,10 +307,17 @@ export class SessionSemaphoreManager {
     return state.state;
   }
 
+  private updateFor(ptyId: string, state: SemaphoreMachineState): SemaphoreUpdate {
+    const publicState = this.publicStateFor(ptyId, state);
+    const update: SemaphoreUpdate = { ptyId, state: publicState, stateEnteredAt: state.stateEnteredAt };
+    // #109 — a marca só vale sobre `waiting`: com pendência aberta o estado público é `permission`, e isso precisa do dono.
+    return publicState === 'waiting' && state.awaitingBackgroundAgents === true ? { ...update, awaitingBackgroundAgents: true } : update;
+  }
+
   private emit(ptyId: string): void {
     const state = this.ptyState.get(ptyId);
     if (!state) return;
-    const update: SemaphoreUpdate = { ptyId, state: this.publicStateFor(ptyId, state), stateEnteredAt: state.stateEnteredAt };
+    const update = this.updateFor(ptyId, state);
     for (const listener of this.listeners) listener(update);
   }
 }
