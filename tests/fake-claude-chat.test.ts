@@ -26,7 +26,11 @@ let child: ChildProcessWithoutNullStreams | null;
 let output: string;
 let exitCode: number | null;
 
-async function waitFor<T>(probe: () => T | undefined | false, label: string, timeoutMs = 8000): Promise<T> {
+// Every wait polls a condition, so the ceiling only matters when something is slow. Each hook goes
+// through a spawned `curl` (the real settings command), and with the whole suite running in
+// parallel a single SessionStart was seen taking more than 8 s to arrive. 15 s per wait, under a
+// 45 s test budget, keeps a real miss failing with this message instead of a bare vitest timeout.
+async function waitFor<T>(probe: () => T | undefined | false, label: string, timeoutMs = 15_000): Promise<T> {
   const start = Date.now();
   for (;;) {
     const value = probe();
@@ -39,7 +43,10 @@ async function waitFor<T>(probe: () => T | undefined | false, label: string, tim
 function launch(args: string[], scenario?: unknown, extraEnv: Record<string, string> = {}): void {
   const settingsPath = join(workDir, 'settings.json');
   writeFileSync(settingsPath, JSON.stringify(buildSessionHooksSettings({ port, token: TOKEN, chatEnabled: true, curlPath: 'curl' })));
-  const env: NodeJS.ProcessEnv = { ...process.env, DONEL_FAKE_CLAUDE_HOME: join(workDir, 'home'), ...extraEnv };
+  // The fake gives up on an `http` hook after 5 s by default (fail-open, like the CLI) and the event
+  // is lost. The server below answers at once, so only a starved test worker gets near that limit;
+  // 15 s keeps a slow delivery from turning into a missing hook. A test can still override it.
+  const env: NodeJS.ProcessEnv = { ...process.env, DONEL_FAKE_CLAUDE_HOME: join(workDir, 'home'), DONEL_FAKE_CLAUDE_HOOK_TIMEOUT_MS: '15000', ...extraEnv };
   if (scenario !== undefined) env.DONEL_FAKE_CLAUDE_SCENARIO = JSON.stringify(scenario);
   child = spawn(process.execPath, [SCRIPT, '--settings', settingsPath, ...args], { cwd: workDir, env });
   child.stdout.on('data', (d: Buffer) => (output += d.toString('utf8')));
@@ -89,7 +96,7 @@ afterEach(async () => {
   await new Promise<void>((ok) => server.close(() => ok()));
 });
 
-describe('fake-claude-chat', { timeout: 20000 }, () => {
+describe('fake-claude-chat', { timeout: 45_000 }, () => {
   it('posts SessionStart through the settings command and creates the transcript', async () => {
     launch(['--session-id', 'aaaaaaaa-0000-4000-8000-000000000001']);
     const start = await waitFor(() => hooks('SessionStart')[0], 'SessionStart');
@@ -228,7 +235,12 @@ describe('fake-claude-chat', { timeout: 20000 }, () => {
   });
 
   it('queues a message submitted during a round: enqueue, then remove + queued_command, then processes it', async () => {
-    const transcript = await bootIdle([], undefined, { DONEL_FAKE_CLAUDE_SLOW_MS: '700' });
+    // The second message must land, and its `enqueue` be observed, while the first round is still
+    // running. At 700 ms a loaded machine lost that race (the round ended first: no enqueue, or the
+    // queued message already submitted). 3 s is the fake's default slow round: the window is wide,
+    // and every step below waits for a condition, so a fast machine is not slowed beyond the round.
+    const SLOW_MS = 3000;
+    const transcript = await bootIdle([], undefined, { DONEL_FAKE_CLAUDE_SLOW_MS: String(SLOW_MS) });
     send('primeira demorar');
     send('\r');
     await waitFor(() => screen().includes('esc to interrupt'), 'working footer');
@@ -236,7 +248,7 @@ describe('fake-claude-chat', { timeout: 20000 }, () => {
     send('\r');
     await waitFor(() => transcriptLines(transcript).some((l) => l.type === 'queue-operation' && l.operation === 'enqueue'), 'enqueue');
     expect(hooks('UserPromptSubmit')).toHaveLength(1); // the queued one has not been submitted yet
-    await waitFor(() => hooks('UserPromptSubmit').length === 2, 'queued message processed');
+    await waitFor(() => hooks('UserPromptSubmit').length === 2, 'queued message processed', SLOW_MS + 15_000);
     const lines = transcriptLines(transcript);
     const enqueue = lines.find((l) => l.type === 'queue-operation' && l.operation === 'enqueue')!;
     expect(enqueue).toMatchObject({ content: 'segunda', sessionId: expect.any(String), timestamp: expect.any(String) });

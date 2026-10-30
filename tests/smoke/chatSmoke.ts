@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect } from '@playwright/test';
@@ -6,6 +6,7 @@ import type { Locator, Page } from '@playwright/test';
 import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
 import type { LaunchedApp } from './helpers/launch';
 import { REPO_ROOT, slugifyProjectPath } from './repoUnderTest';
+import { removeTempDir } from './userDataIsolation';
 
 // 014-chat, T059 - shared setup of the chat smokes (Fase 2), all driven by the
 // FAKE `claude` (T040), never the real CLI.
@@ -78,7 +79,7 @@ export async function launchChatApp(options: LaunchChatAppOptions): Promise<Chat
       try {
         await closeIsolatedApp(launched);
       } finally {
-        rmSync(home, { recursive: true, force: true });
+        removeTempDir(home);
       }
     },
   };

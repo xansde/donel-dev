@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -6,7 +6,7 @@ import type { Locator, Page } from '@playwright/test';
 import { closeIsolatedApp, launchIsolatedApp, type LaunchedApp } from './helpers/launch';
 import { launchClaudeTab, openProjectClaudeTab } from './helpers/ui';
 import { REPO_ROOT } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir, removeTempDir } from './userDataIsolation';
 
 // Mindscape V1, fatia 02 — the session post-it is highlighted when it has news
 // since the owner's last visit, dimmed when it has none; double click or
@@ -49,7 +49,7 @@ test.afterAll(async () => {
   test.setTimeout(90_000);
   if (launched) await closeIsolatedApp(launched, false);
   removeIsolatedUserDataDir(userDataDir);
-  rmSync(root, { recursive: true, force: true });
+  removeTempDir(root);
 });
 
 test('Mindscape: destaque da sessão com novidade e "Ir ao terminal" @mindscape', async () => {

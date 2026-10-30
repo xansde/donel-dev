@@ -30,5 +30,29 @@ export function createIsolatedUserDataDir(specName: string): string {
 
 /** Remove o diretório temp criado por `createIsolatedUserDataDir` — chamar sempre no `afterAll`, mesmo se o teste falhou. */
 export function removeIsolatedUserDataDir(dir: string): void {
-  rmSync(dir, { recursive: true, force: true });
+  removeTempDir(dir);
+}
+
+// Windows keeps file handles open for a moment after Electron exits (the
+// renderer, GPU and crashpad children close after the main process), so an
+// immediate `rmSync` in `afterAll` failed with EPERM/EBUSY while the test
+// itself was green. Node retries those codes when `maxRetries` is set; 10
+// tries 200 ms apart (linear backoff) give the OS ~11 s to let go.
+const TEMP_DIR_RM_RETRIES = 10;
+const TEMP_DIR_RM_RETRY_DELAY_MS = 200;
+
+/**
+ * Teardown removal of a throwaway temp dir (userData, fake home, scratch
+ * repo). Retries while Windows still holds files, and if it still cannot
+ * remove the dir it only warns: a leftover folder under `os.tmpdir()` is not
+ * a test failure. Never use it for a removal the test depends on — there the
+ * error must surface.
+ */
+export function removeTempDir(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: TEMP_DIR_RM_RETRIES, retryDelay: TEMP_DIR_RM_RETRY_DELAY_MS });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? String(error);
+    console.warn(`[smoke] could not remove temp dir ${dir} (${code}); leaving it behind.`);
+  }
 }

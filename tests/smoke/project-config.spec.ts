@@ -1,11 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { launchIsolatedApp } from './helpers/launch';
 import { PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir, removeTempDir } from './userDataIsolation';
 
 // CA-23 (009-modo-dev-v3, lote 3) — smoke da engrenagem de configuração por
 // projeto: abre a tela de Sessões anteriores, abre o painel, preenche board
@@ -113,7 +113,7 @@ test.afterAll(async () => {
     await electronApp.close();
   } finally {
     removeIsolatedUserDataDir(userDataDir);
-    rmSync(configDir, { recursive: true, force: true });
+    removeTempDir(configDir);
   }
 });
 

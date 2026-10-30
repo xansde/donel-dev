@@ -470,6 +470,41 @@ export const HUMAN_DECISION_FACTS: readonly FactType[] = ['gate.confirmed', 'dec
 export const PHASES_REQUIRING_HUMAN_DECISION: readonly string[] = ['discovery', 'plano'];
 
 /**
+ * Issue #50 — o exemplo canonico de cada fase de conversa que fecha com
+ * decisao humana (em `docs/esteira-dev/contract/v1/examples/`). A recusa
+ * aponta para ele, e `tests/esteiraContractSchema.test.ts` confere que o
+ * arquivo existe e passa no parser.
+ */
+export const HUMAN_DECISION_EXAMPLES: Readonly<Record<string, string>> = {
+  discovery: 'docs/esteira-dev/contract/v1/examples/discovery-sem-repo-nem-tracker.json',
+  plano: 'docs/esteira-dev/contract/v1/examples/plano-com-itens.json',
+};
+
+/**
+ * Issue #50 — a recusa de `done_without_human_decision` diz o FORMATO do fato
+ * esperado, nao so o nome. Quem escrevia a skill so descobria os campos
+ * abrindo o `app.asar`. O fato minimo sai em JSON valido, com o `subject` do
+ * proprio `phase.completed` recusado: colado em `facts`, com os textos
+ * trocados pelo que a pessoa disse, o documento passa.
+ */
+export function humanDecisionMissingMessage(phase: string, subject: EntityRef): string {
+  const minimal = JSON.stringify({
+    type: 'decision.recorded',
+    subject: { entity: subject.entity, id: subject.id },
+    decision: '<what the person decided>',
+    confirmed_by: '<who confirmed it>',
+    rationale: null,
+  });
+  const example = HUMAN_DECISION_EXAMPLES[phase];
+  return (
+    `a "${phase}" run completed as "done" must declare at least one of ${HUMAN_DECISION_FACTS.join(' | ')}. ` +
+    `Minimal fact: ${minimal}` +
+    ' (or a "gate.confirmed" with "subject", "condition", "confirmed_by" and "confirmed_at": null)' +
+    (example ? `; see ${example}` : '')
+  );
+}
+
+/**
  * A16 — as fases em que `risk: sensivel` liga o gate do roteiro e2e manual.
  *
  * O defeito que ele fecha: o gate de e2e conferia a EXISTENCIA do arquivo de
@@ -1038,10 +1073,10 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
     // As fases que este result declara FECHADAS com desfecho bom. A cobranca de
     // produto (A3) e por elas, nao por `run.phase`: quem diz "documentar
     // concluida" mostra o artefato, mesmo que o run se chame `implementar`.
-    const donePhases = facts
+    const doneCompletions = facts
       .filter((fact): fact is Extract<EsteiraFact, { type: 'phase.completed' }> => fact.type === 'phase.completed')
-      .filter((fact) => fact.outcome === 'done')
-      .map((fact) => fact.phase);
+      .filter((fact) => fact.outcome === 'done');
+    const donePhases = doneCompletions.map((fact) => fact.phase);
 
     const required: { readonly factType: FactType; readonly because: string }[] = [
       ...REQUIRED_FACTS_ANY_SUCCESS.map((factType) => ({ factType, because: run.phase })),
@@ -1058,14 +1093,10 @@ export function parseEsteiraResult(input: unknown): ParseEsteiraResult {
     // A18 — a fase de conversa fecha com o que alguem DISSE. Sem nenhum fato
     // humano, "discovery concluida" e uma fase que nao perguntou nada saindo
     // como se tivesse decidido algo.
-    for (const phase of donePhases) {
-      if (!PHASES_REQUIRING_HUMAN_DECISION.includes(phase)) continue;
-      if (facts.some((fact) => (HUMAN_DECISION_FACTS as readonly string[]).includes(fact.type))) continue;
-      c.add(
-        'done_without_human_decision',
-        'facts',
-        `a "${phase}" run completed as "done" must declare at least one of ${HUMAN_DECISION_FACTS.join(' | ')}`,
-      );
+    const hasHumanDecision = facts.some((fact) => (HUMAN_DECISION_FACTS as readonly string[]).includes(fact.type));
+    for (const done of doneCompletions) {
+      if (!PHASES_REQUIRING_HUMAN_DECISION.includes(done.phase) || hasHumanDecision) continue;
+      c.add('done_without_human_decision', 'facts', humanDecisionMissingMessage(done.phase, done.subject));
     }
 
     // A16 — o gate do roteiro e2e, em risco sensivel.

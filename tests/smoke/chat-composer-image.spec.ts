@@ -1,10 +1,11 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 import { chatHelpers, launchChatApp } from './chatSmoke';
 import { launchClaudeTab } from './helpers/ui';
+import { removeTempDir } from './userDataIsolation';
 
 // 014-chat, T088 - smoke das IMAGENS na caixa do chat (Fase 4), contra o `claude` FALSO: nunca o CLI real.
 //
@@ -119,6 +120,6 @@ test('T088 - imagem: colar, clipe, remover, rascunho, enviar so imagem e arquivo
     await helpers.shot('image-03-arquivo-no-texto');
   } finally {
     await chat.dispose();
-    rmSync(scratch, { recursive: true, force: true });
+    removeTempDir(scratch);
   }
 });

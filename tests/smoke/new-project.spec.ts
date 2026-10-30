@@ -1,10 +1,10 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { launchIsolatedApp } from './helpers/launch';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir, removeTempDir } from './userDataIsolation';
 
 // CA-30 (009-modo-dev-v3, lote 9) — smoke do "lançar um projeto do zero
 // pelo app" (US-15): abre o seletor de projetos no titlebar → "＋ Novo
@@ -69,7 +69,7 @@ test.afterAll(async () => {
     await electronApp.close();
   } finally {
     removeIsolatedUserDataDir(userDataDir);
-    rmSync(isolatedRoot, { recursive: true, force: true });
+    removeTempDir(isolatedRoot);
   }
 });
 

@@ -6,7 +6,7 @@ import type { Locator, Page } from '@playwright/test';
 import { closeIsolatedApp, launchIsolatedApp, type LaunchedApp } from './helpers/launch';
 import { openProjectClaudeTab } from './helpers/ui';
 import { REPO_ROOT } from './repoUnderTest';
-import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
+import { createIsolatedUserDataDir, removeIsolatedUserDataDir, removeTempDir } from './userDataIsolation';
 
 // Mindscape — a failed read or write of mindscape.json never loses the board
 // (handoffs/mindscape-revisao.md, items 2 and 3). The failures are provoked
@@ -64,8 +64,8 @@ test.afterEach(async () => {
   if (launched) await closeIsolatedApp(launched, false);
   launched = undefined;
   removeIsolatedUserDataDir(userDataDir);
-  rmSync(root, { recursive: true, force: true });
-  rmSync(filesDir, { recursive: true, force: true });
+  removeTempDir(root);
+  removeTempDir(filesDir);
 });
 
 test('Mindscape: quadro que não abre fica só leitura, não sobrescreve o arquivo e lê de novo @mindscape', async () => {

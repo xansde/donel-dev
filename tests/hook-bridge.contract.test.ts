@@ -91,21 +91,23 @@ describe('authentication and parsing', () => {
 });
 
 describe('non-blocking events', () => {
-  it('answers {} within 10 ms and emits a hook event for the right ptyId', async () => {
-    // Best of 3 round trips: a single sample is flaky under a loaded parallel suite.
-    let elapsed = Infinity;
-    for (let i = 0; i < 3; i++) {
-      const t0 = performance.now();
-      const r = await send(port, 'Stop', token, { session_id: 's1', transcript_path: 'C:/t.jsonl' });
-      elapsed = Math.min(elapsed, performance.now() - t0);
-      expect(r).toEqual({ status: 200, body: '{}' });
-    }
-    expect(elapsed).toBeLessThan(10);
+  // Contract (plan.md, "Performance Goals"; tasks.md T037): a non-blocking
+  // hook is answered `{}` BEFORE the bridge does any work with it, so the CLI
+  // never waits on the app. Proven by order, not by wall clock: a subscriber
+  // that takes "500 ms" (it advances the injected clock) must not show up in
+  // the measured duration, which is taken right after the reply is written.
+  it('answers {} before dispatching and emits a hook event for the right ptyId', async () => {
+    bridge.on('pty-1', () => {
+      now += 500; // a slow subscriber: if dispatch ran before the reply, the duration would carry this
+    });
+    const r = await send(port, 'Stop', token, { session_id: 's1', transcript_path: 'C:/t.jsonl' });
+    expect(r).toEqual({ status: 200, body: '{}' });
     await tick();
-    expect(events).toHaveLength(3);
+    expect(events).toHaveLength(1);
     expect(events[0]).toEqual(expect.objectContaining({ type: 'hook', ptyId: 'pty-1', event: 'Stop' }));
+    expect(durations).toEqual([{ event: 'Stop', ptyId: 'pty-1', durationMs: 0 }]);
+    expect(now).toBe(1_000_500); // the subscriber did run, after the measurement
   });
-
   it('routes events to the subscriber of the token owner only', async () => {
     const t2 = bridge.registerSession('pty-2');
     const other: BridgeEvent[] = [];
@@ -122,6 +124,31 @@ describe('non-blocking events', () => {
     expect(durations).toHaveLength(1);
     expect(Object.keys(durations[0]).sort()).toEqual(['durationMs', 'event', 'ptyId']);
     expect(durations[0]).toMatchObject({ event: 'Notification', ptyId: 'pty-1' });
+  });
+});
+
+// Performance budget (≤ 10 ms for a non-blocking hook), kept apart from the
+// contract above. It times the bridge itself on a real clock, from the moment
+// the request reaches the handler until the reply is written, via the same
+// `diagnostics.hook` measurement production uses. The client round trip is
+// NOT timed: the HTTP client lives in this same, possibly loaded, test
+// process, and its scheduling says nothing about the bridge. Best of 5 still
+// absorbs a stray GC pause or a descheduled worker.
+describe('non-blocking events - time budget', () => {
+  it('handles a non-blocking hook in at most 10 ms (bridge-side, best of 5)', async () => {
+    const realDurations: number[] = [];
+    const timed = createHookBridge({ now: () => performance.now(), diagnostics: { hook: (e) => realDurations.push(e.durationMs) } });
+    try {
+      const timedPort = (await timed.start()).port;
+      const timedToken = timed.registerSession('pty-t');
+      for (let i = 0; i < 5; i++) {
+        expect(await send(timedPort, 'Stop', timedToken, { session_id: 's1', transcript_path: 'C:/t.jsonl' })).toEqual({ status: 200, body: '{}' });
+      }
+    } finally {
+      await timed.close();
+    }
+    expect(realDurations).toHaveLength(5);
+    expect(Math.min(...realDurations)).toBeLessThanOrEqual(10);
   });
 });
 

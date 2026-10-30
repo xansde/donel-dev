@@ -7,7 +7,7 @@ import { refuseIfRealClaudeHome } from './accountsCredentialGuard';
 import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
 import { assertNoLeak as assertNoLeakOf } from './helpers/leaks';
 import { launchClaudeTab } from './helpers/ui';
-import { createIsolatedUserDataDir } from './userDataIsolation';
+import { createIsolatedUserDataDir, removeTempDir } from './userDataIsolation';
 
 // REVISÃO DE TESTES (08/10): fusão dos smokes de contas em um arquivo. Antes eram
 // 6 arquivos / 6 aberturas do app; agora são 3, uma por fixture de mod falso
@@ -68,7 +68,7 @@ test.describe('contas · motor com mod falso (painel, switch, mcp, segredo)', ()
     try {
       await closeIsolatedApp({ app: electronApp, userDataDir });
     } finally {
-      rmSync(claudeHomeParent, { recursive: true, force: true });
+      removeTempDir(claudeHomeParent);
     }
   });
 
@@ -251,7 +251,7 @@ test.describe('contas · Adicionar conta por login isolado', () => {
 
   test.afterAll(async () => {
     await closeIsolatedApp({ app: electronApp, userDataDir });
-    rmSync(claudeHomeParent, { recursive: true, force: true });
+    removeTempDir(claudeHomeParent);
   });
 
   test('painel sem Pool Seazone; login isolado adiciona "Conta smoke" sem reiniciar o app (F6 ponta a ponta) @contas', async () => {
@@ -451,7 +451,7 @@ test.describe('contas · Fase 2 (conta vigente, auto-switch, Reconectar)', () =>
 
   test.afterAll(async () => {
     await closeIsolatedApp({ app: electronApp, userDataDir });
-    rmSync(claudeHomeParent, { recursive: true, force: true });
+    removeTempDir(claudeHomeParent);
   });
 
   // ---------------------------------------------------------------------------

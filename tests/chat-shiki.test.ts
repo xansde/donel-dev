@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { resolveLanguage } from '../src/renderer/src/chat/markdown/languages';
 import { highlightCode } from '../src/renderer/src/chat/markdown/shiki';
 
@@ -26,7 +26,15 @@ function colorOf(lines: NonNullable<Line>, content: string): string | undefined 
   return undefined;
 }
 
-describe('highlightCode (Shiki core + Oniguruma WASM)', () => {
+// The first call loads the Oniguruma WASM and the grammar: ~3 s on an idle machine, well past
+// vitest's 5 s default once the whole suite runs in parallel. That cold start is paid once, here,
+// with its own generous budget, so each test below only measures what it asserts (tokens, colors,
+// cache). The describe-level timeout is a margin for the next grammars, loaded lazily.
+beforeAll(async () => {
+  await highlightCode('const warm = 1;', 'typescript');
+}, 60_000);
+
+describe('highlightCode (Shiki core + Oniguruma WASM)', { timeout: 20_000 }, () => {
   it('maps TextMate scopes to the --code-* roles of the approved palette', async () => {
     const lines = await highlightCode(
       ['// nota', 'export function soma(a: number): number {', '  const s = "x" + 42;', '  return s;', '}'].join('\n'),
