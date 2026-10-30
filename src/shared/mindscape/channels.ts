@@ -35,6 +35,7 @@ export type MindscapeSaveImageResult = { ok: true; imageId: string } | { ok: fal
 export type MindscapeReadImageResult = { ok: true; bytes: Uint8Array; mediaType: string } | { ok: false };
 
 export interface DonelMindscapeApi {
+  /** Missing file → empty document; rejects when the file exists but is unreadable or not a document (never write over it). */
   load(): Promise<MindscapeDoc>;
   save(doc: MindscapeDoc): Promise<MindscapeSaveResult>;
   /** Subscribes to `mindscape:turn-ended`; returns the unsubscribe function. */
