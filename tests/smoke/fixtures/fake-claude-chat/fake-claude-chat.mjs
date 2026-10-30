@@ -155,6 +155,33 @@ async function fireHook(event, extra = {}, options = {}) {
 async function startSession(source) {
   openTranscript();
   await fireHook('SessionStart', { source });
+  await runStatusLine();
+}
+
+// --------------------------------------------------------------- statusline
+/**
+ * Ponte da statusline: like the CLI, runs `settings.statusLine.command` (shell) with the session JSON on stdin -
+ * at session start and on each `statusline` step. The payload is `scenario.statusLine` (plus `extra`) on top of
+ * the ids. Its stdout is only logged (the fake does not draw a status row).
+ */
+function runStatusLine(extra = {}) {
+  const entry = settings.statusLine;
+  if (!entry || entry.type !== 'command' || typeof entry.command !== 'string') return Promise.resolve();
+  const payload = { session_id: sessionId, transcript_path: transcriptPath, cwd, version: 'fake', ...(scenario.statusLine ?? {}), ...extra };
+  return new Promise((done) => {
+    const proc = spawn(entry.command, { shell: true, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+    let stdout = '';
+    const timer = setTimeout(() => proc.kill(), 10_000);
+    proc.stdout.on('data', (chunk) => (stdout += chunk));
+    proc.on('error', () => done());
+    proc.on('exit', (code) => {
+      clearTimeout(timer);
+      logCall({ statusLine: 'ran', code, stdout: stdout.trim() });
+      done();
+    });
+    proc.stdin.on('error', () => {});
+    proc.stdin.end(JSON.stringify(payload));
+  });
 }
 
 // ------------------------------------------------------------------- screen
@@ -274,6 +301,9 @@ async function runStep(step) {
       break;
     case 'hook':
       await fireHook(step.event, step.payload ?? {});
+      break;
+    case 'statusline':
+      await runStatusLine(step.payload ?? {});
       break;
     case 'tool': {
       const id = step.id ?? `toolu_${randomUUID().slice(0, 12)}`;

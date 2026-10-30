@@ -297,3 +297,30 @@ describe('conversation switching', () => {
     expect(events).toContainEqual(expect.objectContaining({ type: 'session-end', ptyId: 'pty-1', reason: 'prompt_input_exit' }));
   });
 });
+
+// Ponte da statusline: o comando `statusLine` injetado posta o stdin em
+// `/h/StatusLine`. A resposta vira a saída do `curl` — ou seja, o texto da
+// statusline do CLI —, por isso vai vazia.
+describe('StatusLine', () => {
+  const payload = { session_id: 's1', context_window: { total_input_tokens: 10 }, rate_limits: { five_hour: { used_percentage: 3 } } };
+
+  it('answers 200 with an EMPTY body and emits a statusline event (not a hook)', async () => {
+    const r = await send(port, 'StatusLine', token, payload);
+    expect(r).toEqual({ status: 200, body: '' });
+    await tick();
+    expect(events).toEqual([{ type: 'statusline', ptyId: 'pty-1', payload }]);
+  });
+
+  it('is not measured in the hooks diagnostics', async () => {
+    await send(port, 'StatusLine', token, payload);
+    await tick();
+    expect(durations).toHaveLength(0);
+  });
+
+  it('keeps the token gate', async () => {
+    const r = await send(port, 'StatusLine', 'nope', payload);
+    expect(r.status).toBe(401);
+    await tick();
+    expect(events).toHaveLength(0);
+  });
+});

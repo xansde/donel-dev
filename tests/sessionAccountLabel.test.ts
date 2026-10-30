@@ -189,6 +189,43 @@ describe('computeSessionAccountLabel', () => {
 // é o sanitize de `devMode.ts`/`config-store.ts` (T1220, leitura tolerante).
 // Esta suíte prova que a função em si é agnóstica à origem do valor. Não
 // mudou na Fase 2 — segue coberta aqui pra manter o arquivo de teste único.
+// Ponte da statusline — a cota que o CLI da aba leu (rate_limits) entra na
+// frente da leitura de 5 em 5 min do motor, janela a janela.
+describe('computeSessionAccountLabel + liveLoad (statusline)', () => {
+  const claude = { sessionType: 'claude' as const, account: undefined };
+
+  it('conta ativa: a janela viva vence a do motor; sonnet segue do motor', () => {
+    const load: AccountLoad = { fiveHour: 10, sevenDay: 20, sonnet: 30, readAt: '2026-10-30T00:00:00.000Z' };
+    expect(computeSessionAccountLabel(claude, 'F', activeContext({ load, liveLoad: { fiveHour: 55, sevenDay: null } }))).toBe('Sessão: Conta Ativa · 55% usado');
+    expect(computeSessionAccountLabel(claude, 'F', activeContext({ load, liveLoad: { fiveHour: 5, sevenDay: 6 } }))).toBe('Sessão: Conta Ativa · 30% usado');
+  });
+
+  it('conta ativa sem leitura do motor: a viva basta', () => {
+    expect(computeSessionAccountLabel(claude, 'F', activeContext({ liveLoad: { fiveHour: 12, sevenDay: 40 } }))).toBe('Sessão: Conta Ativa · 40% usado');
+  });
+
+  it('sem liveLoad: exatamente como antes', () => {
+    expect(computeSessionAccountLabel(claude, 'F', activeContext({ load: loadWithFiveHour(7), liveLoad: null }))).toBe('Sessão: Conta Ativa · 7% usado');
+    expect(computeSessionAccountLabel(claude, 'F', NO_ACTIVE)).toBe('F');
+  });
+
+  it('motor inerte: a cota do CLI aparece em vez do rótulo global', () => {
+    expect(computeSessionAccountLabel(claude, 'Motor inerte', { ...NO_ACTIVE, liveLoad: { fiveHour: 23, sevenDay: 41 } })).toBe('Sessão: conta do CLI · 41% usado');
+  });
+
+  it('sem conta ativa mas com a de nascimento: a cota viva no lugar do —', () => {
+    expect(
+      computeSessionAccountLabel({ sessionType: 'claude', account: { id: 'a', label: 'Conta A' } }, 'F', { ...NO_ACTIVE, liveLoad: { fiveHour: 9, sevenDay: null } }),
+    ).toBe('Sessão: Conta A · 9% usado');
+  });
+
+  it('provider: segue sem cota mesmo com leitura viva', () => {
+    expect(
+      computeSessionAccountLabel({ ...claude, credentialSource: 'provider', providerLabel: 'GLM' }, 'F', activeContext({ liveLoad: { fiveHour: 1, sevenDay: 1 } })),
+    ).toBe('Sessão: GLM · provedor');
+  });
+});
+
 describe('formatArchivedAccountLabel', () => {
   it('conta arquivada igual à ativa agora → rótulo com o id, mismatch false', () => {
     expect(formatArchivedAccountLabel('tech-2', 'tech-2')).toEqual({ label: 'conta: tech-2', mismatch: false });

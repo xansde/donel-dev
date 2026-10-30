@@ -46,6 +46,8 @@ import { useWorkspaceInfo } from './useWorkspaceInfo';
 // `SmartZoneMeter` do design-system. Issue #21 — e o rótulo do modelo do rodapé,
 // ambos pelo modelo REAL da sessão (transcript), não só pelo do launch.
 import { resolveSessionModel } from '../../shared/sessionModel';
+// Ponte da statusline — leitura oficial do CLI por aba (rodapé e cota da sessão).
+import { resolveSessionMeter, statusLineForSession, statusLineRateLimitPercents, type StatusLineSnapshot } from '../../shared/statusLine';
 import { sortProjects } from '../../shared';
 // T710 (007/CA-11 2º momento) — o sinal de "a retomada falhou" é o exit code do
 // PTY (medido em specs/008-fechar-pendencias/medicao-t710.md), não texto de CLI.
@@ -417,6 +419,12 @@ export function App(): React.JSX.Element {
   // usa DE FATO (segue um `/model` digitado no CLI); sem entrada, o rodapé usa
   // o modelo do launch (`sessionModelEffort`) como ponto de partida.
   const [sessionModels, setSessionModels] = useState<Record<string, string | null>>({});
+  // Ponte da statusline — última leitura oficial do CLI de cada aba, por ptyId
+  // (main → renderer, `statusline:changed`). Sem a ponte na sessão, fica vazio.
+  const [statusLines, setStatusLines] = useState<Record<string, StatusLineSnapshot>>({});
+  // Quando a conta ativa trocou pela última vez (epoch ms): cota lida antes disso é da conta anterior.
+  const lastAccountSwitchAtRef = useRef(0);
+  const lastActiveAccountIdRef = useRef<string | null | undefined>(undefined);
 
   // T013 — PARTE PRINCIPAL (FR-004, CA-2): projeto cujo painel "Sessões
   // anteriores" está aberto (null = painel fechado); dispara o fetch via
@@ -1323,6 +1331,30 @@ export function App(): React.JSX.Element {
    * `removeListener` com a mesma função), então o double-invoke do StrictMode
    * não deixa listener órfão nem cancela o da montagem nova.
    */
+  // Ponte da statusline — UMA assinatura para todas as abas, mais a carga inicial
+  // (leituras que chegaram antes da montagem). `snapshot: null` = a aba saiu.
+  useEffect(() => {
+    let disposed = false;
+    const unsubscribe = window.donel.statusLine.onChanged(({ ptyId, snapshot }) => {
+      setStatusLines((prev) => {
+        if (snapshot) return { ...prev, [ptyId]: snapshot };
+        if (!(ptyId in prev)) return prev;
+        const next = { ...prev };
+        delete next[ptyId];
+        return next;
+      });
+    });
+    void window.donel.statusLine
+      .getAll()
+      .then((all) => {
+        if (!disposed) setStatusLines((prev) => ({ ...all, ...prev }));
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
   useEffect(() => {
     const unsubscribe = window.donel.sessions.onTranscriptChanged(
       ({ sessionId, customTitle, contextTokens: tokens, cliColorName, model }) => {
@@ -2126,21 +2158,41 @@ export function App(): React.JSX.Element {
   const activeChatView = activeChatTab ? effectiveTabView(activeChatTab, chatEnabled) : null;
   // Issue #21 — o modelo exibido (e a régua do medidor) é o da última resposta
   // do assistente no transcript; o do launch só vale até a primeira resposta.
+  // Ponte da statusline — a leitura OFICIAL do CLI da aba (modelo, esforço, tokens e
+  // janela de contexto) vai na frente do que o transcript e o launch inferem; sem ela
+  // (sessão sem a ponte), o rodapé é exatamente o de antes.
+  const activePtyId = activeClaudeTab && tabExits[activeClaudeTab.id] === undefined ? (chatPtyIds[activeClaudeTab.id] ?? null) : null;
+  const activeStatusLine = activeClaudeTab
+    ? statusLineForSession(activePtyId ? statusLines[activePtyId] : null, activeClaudeTab.claudeSessionId)
+    : null;
   const activeModel = activeClaudeTab
-    ? resolveSessionModel(
-        activeClaudeTab.claudeSessionId ? sessionModels[activeClaudeTab.claudeSessionId] : null,
-        sessionModelEffort[activeClaudeTab.id]?.model ?? DEFAULT_MODEL_ALIAS,
-      )
+    ? resolveSessionMeter({
+        transcriptModelId: activeClaudeTab.claudeSessionId ? sessionModels[activeClaudeTab.claudeSessionId] : null,
+        transcriptTokens: activeContextTokens,
+        launchAlias: sessionModelEffort[activeClaudeTab.id]?.model ?? DEFAULT_MODEL_ALIAS,
+        statusLine: activeStatusLine,
+      })
     : null;
   const activeModelEffort = activeClaudeTab && activeModel
-    ? `${activeModel.label}/${sessionModelEffort[activeClaudeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}`
+    ? `${activeModel.label}/${activeStatusLine?.effortLevel ?? sessionModelEffort[activeClaudeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}`
     : undefined;
   // Sem leitura ainda (ou aba shell) o medidor NÃO aparece — nunca um `0%`
   // fabricado no lugar de "não há leitura" (CA-4 da 006).
   const activeSmartZone =
-    activeModel !== null && activeContextTokens !== null
-      ? { usedTokens: activeContextTokens, maxTokens: activeModel.contextZone }
+    activeModel !== null && activeModel.usedTokens !== null
+      ? { usedTokens: activeModel.usedTokens, maxTokens: activeModel.contextZone }
       : undefined;
+  // Cota que o CLI da aba leu — só se a leitura veio de resposta da API DEPOIS da última
+  // troca de conta (antes disso ela é da conta anterior). A troca é anotada no próprio
+  // render em que aparece, para esse mesmo render já descartar a leitura velha.
+  if (lastActiveAccountIdRef.current !== accountsView.activeAccountId) {
+    if (lastActiveAccountIdRef.current !== undefined) lastAccountSwitchAtRef.current = Date.now();
+    lastActiveAccountIdRef.current = accountsView.activeAccountId;
+  }
+  const activeLiveLoad =
+    activeStatusLine && activeStatusLine.apiActivityAt >= lastAccountSwitchAtRef.current
+      ? statusLineRateLimitPercents(activeStatusLine, Date.now())
+      : null;
 
   // T1221 (011-contas-e-provedores, etapa 2) — `accountLabel` é o rótulo
   // GLOBAL (badge do titlebar/AccountsPanel, "que conta a PRÓXIMA sessão
@@ -2186,6 +2238,7 @@ export function App(): React.JSX.Element {
           active: activeAccountSummary ? { id: activeAccountSummary.id, label: activeAccountSummary.label } : null,
           load: activeAccountSummary?.load ?? null,
           autoSwitchState: accountsView.autoSwitchState,
+          liveLoad: activeLiveLoad,
         },
       )
     : accountLabel;
