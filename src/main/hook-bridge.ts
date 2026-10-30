@@ -10,6 +10,8 @@ import type { AddressInfo } from 'node:net';
 
 export const MAX_BODY_BYTES = 32 * 1024 * 1024;
 export const PRE_TOOL_USE_TTL_MS = 10_000;
+/** Rota `/h/StatusLine` — o comando `statusLine` injetado no `--settings` da sessão posta aqui (hooks-settings.ts). */
+export const STATUS_LINE_EVENT = 'StatusLine';
 
 export type HookPayload = Record<string, unknown>;
 
@@ -32,7 +34,9 @@ export type BridgeEvent =
   | { readonly type: 'resolved-elsewhere'; readonly ptyId: string; readonly requestId: string }
   | { readonly type: 'cancelled'; readonly ptyId: string; readonly requestId: string }
   | { readonly type: 'conversation-switched'; readonly ptyId: string; readonly sessionId: string; readonly transcriptPath: string | null; readonly source: string }
-  | { readonly type: 'session-end'; readonly ptyId: string; readonly reason: string | null; readonly payload: HookPayload };
+  | { readonly type: 'session-end'; readonly ptyId: string; readonly reason: string | null; readonly payload: HookPayload }
+  /** Ponte da statusline: o JSON do stdin do comando `statusLine` (não é hook — semáforo e chat ignoram). */
+  | { readonly type: 'statusline'; readonly ptyId: string; readonly payload: HookPayload };
 
 export type BridgeListener = (event: BridgeEvent) => void;
 
@@ -272,6 +276,16 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
 
     if (event === 'PermissionRequest') {
       openDecision(state, payload, res, measure);
+      return;
+    }
+
+    // Ponte da statusline: o corpo da resposta é o que o `curl` do comando
+    // imprime na statusline do CLI, então vai VAZIO. Sem diagnóstico: o CLI
+    // roda a statusline a cada resposta e o log é dos hooks.
+    if (event === STATUS_LINE_EVENT) {
+      res.writeHead(200, { 'Content-Length': 0 });
+      res.end();
+      emit({ type: 'statusline', ptyId: state.ptyId, payload });
       return;
     }
 

@@ -100,6 +100,9 @@ import type { ProviderId, ProviderSummaryDto, SetSecretResult, UpsertProviderInp
 // T504 (005-terminal-copy-paste) — canal do clipboard-bridge (main), aditivo
 // aos imports acima (não reordena o bloco existente).
 import { CLIPBOARD_CHANNELS } from '../shared';
+// Ponte da statusline — leituras oficiais do `statusLine` do CLI, por aba.
+import { STATUS_LINE_CHANNELS } from '../shared/statusLine';
+import type { StatusLineChangedPayload, StatusLineSnapshot } from '../shared/statusLine';
 // Spec 010 — canais e shapes da esteira nova.
 import {
   ESTEIRA_CHANNELS,
@@ -182,6 +185,17 @@ const donelApi: DonelApi = {
 
     // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
     create: (input: CreateProjectIpcInput) => ipcRenderer.invoke(PROJECT_CHANNELS.create, input) as Promise<CreateProjectResponse>,
+  },
+
+  statusLine: {
+    getAll: () => ipcRenderer.invoke(STATUS_LINE_CHANNELS.getAll) as Promise<Record<string, StatusLineSnapshot>>,
+    // UMA assinatura (no App) para todas as abas; quem despacha por aba é o renderer.
+    onChanged: (listener: (payload: StatusLineChangedPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: StatusLineChangedPayload): void => {
+        listener(payload);
+      };
+      return subscribeChannel(ipcRenderer, STATUS_LINE_CHANNELS.changed, handler);
+    },
   },
 
   semaphore: {

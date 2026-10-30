@@ -5,7 +5,9 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSyn
 import { appendFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { readUserDefaultPermissionMode } from './cli-user-settings';
+import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-settings';
+import { createStatusLineStore } from './statusline-store';
+import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
 import { withResolvedPermissionMode } from '../shared/commandBuilder';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
@@ -170,7 +172,14 @@ import {
   type EntryColumnCard,
 } from './taskdex-board-client';
 import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
-import { cleanupStaleHookSettings, removeSessionHooksSettings, writeHooksSettingsFile, writeSessionHooksSettings } from './hooks-settings';
+import {
+  cleanupStaleHookSettings,
+  planStatusLineBridge,
+  removeSessionHooksSettings,
+  statusLineBridgeMode,
+  writeHooksSettingsFile,
+  writeSessionHooksSettings,
+} from './hooks-settings';
 import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-bridge';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
@@ -490,6 +499,13 @@ let hooksSettingsPath: string | null = null;
 let hookBridge: HookBridge | null = null;
 /** `curl.exe` achado no boot (`where.exe curl`); `null` = fallback no encaminhador PowerShell que lê bytes. */
 let curlPath: string | null = null;
+/**
+ * Ponte da statusline — o JSON oficial que o CLI entrega ao comando de `statusLine`, por aba
+ * (cota 5h/7d, custo, contexto, modelo, PR...). `DONEL_STATUSLINE_BRIDGE=off` desliga;
+ * `always` injeta mesmo sem statusline do usuário e com o chat ligado (hooks-settings.ts).
+ */
+const statusLineBridgeModeSetting = statusLineBridgeMode(process.env.DONEL_STATUSLINE_BRIDGE);
+const statusLineStore = createStatusLineStore();
 /** Conversa ativa de cada aba (ptyId -> session id); muda com `/clear` e `/resume` (FR-033). */
 const activeSessionByPty = new Map<string, string>();
 
@@ -1158,6 +1174,7 @@ function createMainWindow(): void {
     // No-op para aba sem hooks (terminal livre, login isolado, transporte legado).
     hookBridge?.unregisterSession(ptyId);
     removeSessionHooksSettings(app.getPath('userData'), ptyId);
+    statusLineStore.remove(ptyId);
     activeSessionByPty.delete(ptyId);
     chatHub?.markEnded(ptyId);
     void chatAttachments?.releasePty(ptyId);
@@ -1392,35 +1409,6 @@ function registerPtyIpcHandlers(): void {
       // graça se o servidor do semáforo não subiu no boot (app.whenReady):
       // a sessão continua funcionando, só sem os indicadores de estado.
       const { correlationId, extraArgs } = resolveClaudeCorrelation(launcherArgs, randomUUID);
-      // T015 (014-chat) — ponte: id da aba escolhido AQUI (o arquivo `--settings` leva o ptyId
-      // no nome) e token registrado ANTES do spawn. Legado: arquivo único, sem token.
-      const plannedPtyId = randomUUID();
-      let sessionHooksSettingsPath: string | null = null;
-      if (hooksTransport === 'bridge') {
-        if (hookBridge && hookBridge.port !== null) {
-          try {
-            const token = hookBridge.registerSession(plannedPtyId);
-            sessionHooksSettingsPath = writeSessionHooksSettings({
-              userDataDir: app.getPath('userData'),
-              ptyId: plannedPtyId,
-              port: hookBridge.port,
-              token,
-              chatEnabled: appConfig.chat.enabled,
-              curlPath,
-            });
-          } catch (error) {
-            // Degrada como o boot sem servidor: a sessão nasce sem semáforo, nunca sem terminal.
-            console.error('[donel-dev] --settings da sessão não gravou — sessão sem hooks:', error);
-            hookBridge.unregisterSession(plannedPtyId);
-            sessionHooksSettingsPath = null;
-          }
-        }
-      } else {
-        sessionHooksSettingsPath = hooksSettingsPath;
-      }
-      const semaphoreArgs = sessionHooksSettingsPath ? ['--settings', sessionHooksSettingsPath] : [];
-      const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs];
-      // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
 
       // T1222 (011-contas-e-provedores, etapa 2, D8/entregável) — com os
       // perfis demolidos, sessões SEM provider nunca mais recebem override de
@@ -1475,6 +1463,44 @@ function registerPtyIpcHandlers(): void {
         accountsEngineActive: motorActive,
         activeProfileConfigDir: undefined,
       });
+
+      // T015 (014-chat) — ponte: id da aba escolhido AQUI (o arquivo `--settings` leva o ptyId
+      // no nome) e token registrado ANTES do spawn. Legado: arquivo único, sem token.
+      // (Ponte da statusline: depois do config dir da sessão, que diz de onde ler a statusline do usuário.)
+      const plannedPtyId = randomUUID();
+      let sessionHooksSettingsPath: string | null = null;
+      if (hooksTransport === 'bridge') {
+        if (hookBridge && hookBridge.port !== null) {
+          try {
+            const token = hookBridge.registerSession(plannedPtyId);
+            sessionHooksSettingsPath = writeSessionHooksSettings({
+              userDataDir: app.getPath('userData'),
+              ptyId: plannedPtyId,
+              port: hookBridge.port,
+              token,
+              chatEnabled: appConfig.chat.enabled,
+              curlPath,
+              // Ponte da statusline — encadeia a do usuário (lida no config dir DESTA sessão
+              // e no projeto); sem a dele, só com o chat desligado (hooks-settings.ts).
+              statusLine: planStatusLineBridge({
+                mode: statusLineBridgeModeSetting,
+                userStatusLine: readUserStatusLine(claudeConfigDirForSession, options.cwd),
+                chatEnabled: appConfig.chat.enabled,
+              }),
+            });
+          } catch (error) {
+            // Degrada como o boot sem servidor: a sessão nasce sem semáforo, nunca sem terminal.
+            console.error('[donel-dev] --settings da sessão não gravou — sessão sem hooks:', error);
+            hookBridge.unregisterSession(plannedPtyId);
+            sessionHooksSettingsPath = null;
+          }
+        }
+      } else {
+        sessionHooksSettingsPath = hooksSettingsPath;
+      }
+      const semaphoreArgs = sessionHooksSettingsPath ? ['--settings', sessionHooksSettingsPath] : [];
+      const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs];
+      // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
 
       let ptyId: string;
       try {
@@ -2072,6 +2098,8 @@ function registerEsteiraIpcHandlers(): void {
  * espera a Promise antes de responder o `invoke` do renderer.
  */
 function registerSessionIpcHandlers(): void {
+  // Ponte da statusline — leituras vivas por aba, para quem monta depois do primeiro push.
+  ipcMain.handle(STATUS_LINE_CHANNELS.getAll, (): Record<string, StatusLineSnapshot> => statusLineStore.all());
   ipcMain.handle(SESSION_CHANNELS.list, async (_event, projectPath: string): Promise<SessionSummaryDto[]> => {
     return indexProjectSessions(projectPath);
   });
@@ -2738,7 +2766,10 @@ void app.whenReady().then(async () => {
       semaphoreManager.attachBridge(bridge);
       bridge.onAny((event) => {
         if (event.type === 'conversation-switched') handleConversationSwitched(event);
+        else if (event.type === 'statusline') statusLineStore.update(event.ptyId, event.payload);
       });
+      // Só leituras que MUDARAM chegam aqui (o store compara por valor).
+      statusLineStore.onChange((ptyId, snapshot) => broadcastChat(STATUS_LINE_CHANNELS.changed, { ptyId, snapshot } satisfies StatusLineChangedPayload));
       hookBridge = bridge;
     }
   } catch (error) {

@@ -14,6 +14,7 @@ import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProjectBindingApi } from './projectBinding';
 import type { DonelProjectsApi } from './projects';
+import type { DonelStatusLineApi } from './statusLine';
 import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
@@ -418,6 +419,8 @@ export interface DonelApi {
   pty: DonelPtyApi;
   projects: DonelProjectsApi;
   semaphore: DonelSemaphoreApi;
+  /** Ponte da statusline — o JSON oficial do `statusLine` do CLI, por aba (src/shared/statusLine.ts). */
+  statusLine: DonelStatusLineApi;
   sessions: DonelSessionsApi;
   /** 011-contas-e-provedores (etapa 1) — motor de contas + mods; nasce inerte (accounts.mod = null). */
   accounts: DonelAccountsApi;
