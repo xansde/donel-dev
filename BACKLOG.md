@@ -49,9 +49,9 @@ no alfa.
 
 ### 01 — Barra de ferramentas: formas, setas soltas e seta de post-it a post-it vira Ligação
 
-- **Status**: implementada
+- **Status**: concluida
 - **Branch**: `feature/mindscape-desenho` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (modelo, desenhos, visão, hit-test, atalhos, store) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-desenho-implementacao-01.md`
-- **PR**: —
+- **PR**: #126 (mergeado em `staging` em 2026-10-30)
 - **Depende de**: —
 - **Conflita com**: 02, 03, 04, 05, 06
 - **Propósito**: o dono escolhe na barra (ou pela tecla `V H A L R O`) uma ferramenta e desenha
@@ -100,9 +100,9 @@ no alfa.
 
 ### 02 — Ctrl+Z e Ctrl+Shift+Z no quadro, sem desfazer o que a sessão fez
 
-- **Status**: implementada
+- **Status**: concluida
 - **Branch**: `feature/mindscape-desenho` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (`history.ts`, atalhos) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-desenho-implementacao-02.md`
-- **PR**: —
+- **PR**: #126 (mergeado em `staging` em 2026-10-30)
 - **Depende de**: 01
 - **Conflita com**: 01, 03, 04, 05, 06
 - **Propósito**: o dono desfaz com `Ctrl+Z` e refaz com `Ctrl+Shift+Z` qualquer ação sua no quadro
@@ -138,9 +138,9 @@ no alfa.
 
 ### 03 — Seleção múltipla, alças, estilo e camadas
 
-- **Status**: implementada
+- **Status**: concluida
 - **Branch**: `feature/mindscape-desenho` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (reducers, hit-test, atalhos) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-desenho-implementacao-03.md`
-- **PR**: —
+- **PR**: #126 (mergeado em `staging` em 2026-10-30)
 - **Depende de**: 02
 - **Conflita com**: 01, 02, 04, 05, 06
 - **Propósito**: com `V`, o dono clica num desenho ou post-it para selecionar, soma com
@@ -183,9 +183,9 @@ no alfa.
 
 ### 04 — Lápis e borracha que apaga o pedaço tocado
 
-- **Status**: implementada
+- **Status**: concluida
 - **Branch**: `feature/mindscape-desenho` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (`eraser.ts`, parse e amostragem do Rabisco, `pencilPath`, hit-test, atalhos) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-desenho-implementacao-04.md`
-- **PR**: —
+- **PR**: #126 (mergeado em `staging` em 2026-10-30)
 - **Depende de**: 03
 - **Conflita com**: 01, 02, 03, 05, 06
 - **Propósito**: com `P`, o dono rabisca à mão livre; com `E`, passa a borracha e apaga só o trecho
@@ -218,9 +218,9 @@ no alfa.
 
 ### 05 — Zoom de 25% a 400%, salvo por quadro
 
-- **Status**: implementada
+- **Status**: concluida
 - **Branch**: `feature/mindscape-desenho` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (`zoomAt`, fator da roda, passos do indicador, `wheelPan`, `setBoardView`) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-desenho-implementacao-05.md`
-- **PR**: —
+- **PR**: #126 (mergeado em `staging` em 2026-10-30)
 - **Depende de**: 04 <!-- usa applySession (02) para setBoardView e divide pelo zoom as tolerâncias do hit-test (03) e o raio da borracha (04) -->
 - **Conflita com**: 01, 02, 03, 04, 06
 - **Propósito**: o dono dá zoom com `Ctrl+roda` ou pinça, centrado no mouse, entre 25% e 400%, vê
@@ -253,9 +253,9 @@ no alfa.
 
 ### 06 — Print colado ou arrastado para o quadro
 
-- **Status**: implementada
+- **Status**: concluida
 - **Branch**: `feature/mindscape-desenho` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (`images.ts`, `mindscape-images.ts` com fs injetado, parse do print, hit-test, `resizeDrawing`, `eraseBoard`) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-desenho-implementacao-06.md`
-- **PR**: —
+- **PR**: #126 (mergeado em `staging` em 2026-10-30)
 - **Depende de**: 04
 - **Conflita com**: 01, 02, 03, 04, 05
 - **Propósito**: o dono cola uma imagem com `Ctrl+V` ou arrasta um arquivo de imagem para o
