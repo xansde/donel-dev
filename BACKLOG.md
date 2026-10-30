@@ -138,7 +138,9 @@ no alfa.
 
 ### 03 — Seleção múltipla, alças, estilo e camadas
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/mindscape-desenho` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (reducers, hit-test, atalhos) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-desenho-implementacao-03.md`
+- **PR**: —
 - **Depende de**: 02
 - **Conflita com**: 01, 02, 04, 05, 06
 - **Propósito**: com `V`, o dono clica num desenho ou post-it para selecionar, soma com
