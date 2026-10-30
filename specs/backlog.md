@@ -1167,6 +1167,39 @@ há pelo menos dois lugares com cópias diferentes.
 - Migração: importar o vault atual sem quebrar links nem os gatilhos
   `PROXIMO.md` citados no CLAUDE.md.
 
+### B32. Hibernar e acordar abas para economizar RAM — porta de entrada da orquestração (pedido do dono, 30/10)
+
+**Pedido:** "Conseguir abrir/fechar abas, para economizar RAM sem deixar as
+sessões lá esperando. Isso acabará se tornando uma ferramenta de orquestração.
+Muitos falam do Herdr, mas existem várias ferramentas e quero que você seja
+autônomo nisso." **A escolha da ferramenta/abordagem é do Claude**, sem pedir
+aprovação de cada passo (mesma régua da autonomia de 28/10).
+
+**Contexto:** a máquina dele fica em 73–86% de RAM com várias abas do
+`claude` abertas; cada sessão parada segura um processo node do CLI (e o
+xterm do renderer). Hoje fechar a aba perde o lugar dela; reabrir é ir em
+Sessões anteriores e retomar.
+
+**V1 proposta (execução, sem decisão de produto pendente):**
+- "Hibernar" uma aba: encerra o processo do CLI só quando a sessão está parada
+  (nunca no meio de um turno, nem com pendência aberta), guarda o
+  `sessionId`, o nome, a cor, o projeto e o rascunho do chat, e deixa a aba
+  visível esmaecida ("hibernada · clique para acordar").
+- "Acordar": relança com `claude --resume <sessionId>` na mesma aba (o app já
+  sabe retomar; ver Sessões anteriores e o fork).
+- Hibernar sozinho, opcional: aba parada há N minutos e RAM acima de um
+  limite (o painel de saúde do PC já mede RAM).
+- O semáforo, o Jobu, o Mindscape e a caixa de atenção tratam "hibernada"
+  como estado próprio (não é "terminou", não é "trabalhando").
+
+**Depois (orquestração):** fila de sessões que acordam para trabalhar e
+voltam a dormir, sessão de fundo sem aba, despacho para vários repos. O B28
+(herdr) já mostrou por que não adotar um runtime que não entrega os bytes do
+PTY e ainda é beta no Windows; a escolha entre herdr, tmux-like próprio,
+Claude Agent View (`claude agents`, `/bg`) ou nada externo é do Claude, com
+spike curto quando precisar. Ver também `docs/produto/pesquisa-mercado-2026-10-30.md`
+(Agent View, Conductor, Superset).
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
