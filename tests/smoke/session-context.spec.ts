@@ -4,6 +4,7 @@ import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { PROJECT_NAME, SESSIONS_DIR } from './repoUnderTest';
 import { launchIsolatedApp } from './helpers/launch';
+import { seededUserDataDir } from './helpers/projectRoots';
 import { openProjectClaudeTab, waitForClaudeBooted } from './helpers/ui';
 import { removeIsolatedUserDataDir } from './userDataIsolation';
 
@@ -49,12 +50,17 @@ import { removeIsolatedUserDataDir } from './userDataIsolation';
 // bug do §B19 (o clique achava o `donel-dev` de verdade e a lista voltava vazia).
 
 
-/** Linha `assistant` como o CLI escreve: a `usage` fica em `message.usage`. */
-function usageLine(input: number, cacheRead: number, cacheCreation: number): string {
+/**
+ * Linha `assistant` como o CLI escreve: a `usage` fica em `message.usage` e o
+ * id do modelo que respondeu em `message.model` (issue #21 — sem `model`, a
+ * linha é como as das adaptações anteriores e o rodapé fica no modelo do launch).
+ */
+function usageLine(input: number, cacheRead: number, cacheCreation: number, model?: string): string {
   return `${JSON.stringify({
     type: 'assistant',
     message: {
       role: 'assistant',
+      ...(model ? { model } : {}),
       usage: {
         input_tokens: input,
         cache_read_input_tokens: cacheRead,
@@ -72,7 +78,10 @@ let userDataDir: string;
 let createdTranscriptPath: string | null = null;
 
 test.beforeAll(async () => {
-  ({ app: electronApp, window: appWindow, userDataDir } = await launchIsolatedApp({ name: 'session-context' }));
+  // O scanner varre `~/seazone`, que não lista uma worktree em
+  // `.claude/worktrees/`: aponta para a pasta-mãe REAL do repo (a mesma
+  // `~/seazone` no checkout principal), como `favorite-sessions.spec.ts`.
+  ({ app: electronApp, window: appWindow, userDataDir } = await launchIsolatedApp({ userDataDir: seededUserDataDir('session-context') }));
 });
 
 test.afterAll(async () => {
@@ -176,6 +185,16 @@ test('T611/T612 (CA-22 da 009) — a StatusBar mostra o `%` de contexto da aba e
   // dívida nomeada em `specs/backlog.md` §B15.
   await expect(contextMeter).toContainText('7% · 20k/300k', { timeout: 20_000 });
   await expect(contextMeter).toHaveAttribute('data-zone', 'ok');
+
+  // 6b. Issue #21 — `/model haiku` no CLI: a resposta seguinte grava outro id
+  //     em `message.model`. O rodapé tem de trocar de `fable/…` para o modelo
+  //     de fato, e a régua do medidor cair para a janela de 200k do Haiku 4.5
+  //     (150 + 20.000 = 20.150 → 10% de 200k, não 7% de 300k).
+  await expect(statusBar).toContainText('fable/');
+  appendFileSync(transcriptPath, usageLine(150, 20_000, 0, 'claude-haiku-4-5-20251001'), 'utf8');
+  await expect(statusBar).toContainText('haiku 4.5/', { timeout: 20_000 });
+  await expect(statusBar).not.toContainText('fable/');
+  await expect(contextMeter).toContainText('10% · 20k/200k', { timeout: 5_000 });
 
   // 7. Fecha a aba (mata o PTY e o watcher) — não deixa sujeira para os outros.
   await tab.getByRole('button', { name: new RegExp(`^Fechar aba ${uiName}`) }).click();

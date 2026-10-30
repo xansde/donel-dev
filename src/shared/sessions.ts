@@ -100,6 +100,15 @@ export interface TranscriptChangedPayload {
    * poder mudar sem tocar no contrato IPC.
    */
   readonly cliColorName: string | null;
+  /**
+   * Issue #21 — id do modelo da última resposta do assistente (ex.
+   * `'claude-opus-5-5'`), o modelo que a sessão usa DE FATO — segue um
+   * `/model` digitado no CLI. `null` antes da primeira resposta (o renderer
+   * mostra o modelo do launch até lá); leitura vazia NÃO apaga o já conhecido,
+   * mesma regra dos outros campos. Vai cru: o rótulo curto e a janela de
+   * contexto saem de `src/shared/sessionModel.ts`, do lado do renderer.
+   */
+  readonly model: string | null;
 }
 
 export interface SessionSummaryDto {

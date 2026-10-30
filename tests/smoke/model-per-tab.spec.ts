@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
+import { seededUserDataDir } from './helpers/projectRoots';
 import { launchClaudeTab } from './helpers/ui';
 
 // Investigação #21 (e2e-30-07, onda 2) — reproduz DUAS abas 'claude' com
@@ -12,7 +13,10 @@ let window: Page;
 let userDataDir: string;
 
 test.beforeAll(async () => {
-  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ name: 'model-per-tab' }));
+  // O scanner varre `~/seazone`, que não lista uma worktree em
+  // `.claude/worktrees/`: aponta para a pasta-mãe REAL do repo (a mesma
+  // `~/seazone` no checkout principal), como `favorite-sessions.spec.ts`.
+  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ userDataDir: seededUserDataDir('model-per-tab') }));
 });
 
 test.afterAll(async () => {

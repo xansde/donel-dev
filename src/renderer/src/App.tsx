@@ -42,8 +42,9 @@ import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
 import { buildLauncherArgs } from './launchArgsForProvider';
 // CA-22 (009) — só o DENOMINADOR do `%` de contexto vem daqui (`min(300k,
 // janela do modelo)`, decisão de 24/07); a formatação e as faixas de cor são do
-// `SmartZoneMeter` do design-system.
-import { effectiveContextZone } from '../../shared/contextWindow';
+// `SmartZoneMeter` do design-system. Issue #21 — e o rótulo do modelo do rodapé,
+// ambos pelo modelo REAL da sessão (transcript), não só pelo do launch.
+import { resolveSessionModel } from '../../shared/sessionModel';
 import { sortProjects } from '../../shared';
 // T710 (007/CA-11 2º momento) — o sinal de "a retomada falhou" é o exit code do
 // PTY (medido em specs/008-fechar-pendencias/medicao-t710.md), não texto de CLI.
@@ -411,6 +412,11 @@ export function App(): React.JSX.Element {
   // logo abaixo); `undefined`/`null` = sem leitura ainda → a toolbar mostra `—`
   // (CA-4), nunca `0%`.
   const [contextTokens, setContextTokens] = useState<Record<string, number | null>>({});
+  // Issue #21 — id do modelo da última resposta do assistente, mesmo evento e
+  // mesma chave (`sessionId`) do `contextTokens` acima. É o modelo que a sessão
+  // usa DE FATO (segue um `/model` digitado no CLI); sem entrada, o rodapé usa
+  // o modelo do launch (`sessionModelEffort`) como ponto de partida.
+  const [sessionModels, setSessionModels] = useState<Record<string, string | null>>({});
 
   // T013 — PARTE PRINCIPAL (FR-004, CA-2): projeto cujo painel "Sessões
   // anteriores" está aberto (null = painel fechado); dispara o fetch via
@@ -1313,7 +1319,7 @@ export function App(): React.JSX.Element {
    */
   useEffect(() => {
     const unsubscribe = window.donel.sessions.onTranscriptChanged(
-      ({ sessionId, customTitle, contextTokens: tokens, cliColorName }) => {
+      ({ sessionId, customTitle, contextTokens: tokens, cliColorName, model }) => {
         // Chave é o `sessionId`, não o `tabId` — daí o `.map` próprio em vez do
         // `updateTab`. Uma mesma sessão retomada pode estar em mais de uma aba.
         // Fix #19 — `cliColorName` entra no MESMO `.map`: é o mesmo evento, a
@@ -1327,6 +1333,8 @@ export function App(): React.JSX.Element {
         // tabela de riscos do tasks.md (dois listeners no mesmo canal, um deles
         // órfão no double-invoke do StrictMode).
         setContextTokens((prev) => (prev[sessionId] === tokens ? prev : { ...prev, [sessionId]: tokens }));
+        // Issue #21 — idem para o modelo (campo novo do mesmo payload).
+        setSessionModels((prev) => (prev[sessionId] === model ? prev : { ...prev, [sessionId]: model }));
 
         const stored = appConfigRef.current?.sessionNames[sessionId] ?? null;
         const cliWins = !!stored && reconcileStoredName(stored, customTitle) === null;
@@ -1380,6 +1388,14 @@ export function App(): React.JSX.Element {
             : candidate,
         ),
       );
+
+      // Issue #21 — o modelo é do PROCESSO do CLI, não da conversa: um `/model`
+      // sobrevive ao `/clear`. A conversa nova herda o modelo observado na
+      // anterior até a primeira resposta dela, em vez de voltar ao do launch.
+      setSessionModels((prev) => {
+        const carried = prev[previousSessionId];
+        return carried && !prev[sessionId] ? { ...prev, [sessionId]: carried } : prev;
+      });
 
       if (effectiveName !== tab.name && !appConfigRef.current?.sessionNames[sessionId]) {
         void window.donel.sessions.setName(sessionId, effectiveName, null).then(setAppConfig).catch(() => undefined);
@@ -2130,22 +2146,30 @@ export function App(): React.JSX.Element {
   // `SmartZoneMeter` compacto do slot `smartZone` da StatusBar, que a app nunca
   // tinha ligado), com a régua real da 006: `min(300k, janela do modelo)`.
   //
-  // O denominador segue vindo de `effectiveContextZone` — a decisão de 24/07
-  // dele — e NÃO do default de 400k do design-system.
+  // O denominador segue sendo `min(300k, janela)` — a decisão de 24/07 dele —
+  // e NÃO o default de 400k do design-system. Desde a issue #21 a janela é a do
+  // modelo REAL da sessão (`resolveSessionModel`), não a do alias do launch.
   const activeContextTokens = activeTab?.claudeSessionId ? (contextTokens[activeTab.claudeSessionId] ?? null) : null;
   const activeClaudeTab = activeTab && activeTab.sessionType === 'claude' ? activeTab : null;
   // T056 — a aba ativa tem vista de chat? (D-C22: o chat só ACRESCENTA controles ao cabeçalho, e só em aba claude.)
   const activeChatTab = activeTab && hasChatView(activeTab, chatEnabled) ? activeTab : null;
   const activeChatView = activeChatTab ? effectiveTabView(activeChatTab, chatEnabled) : null;
-  const activeModel = activeClaudeTab ? (sessionModelEffort[activeClaudeTab.id]?.model ?? DEFAULT_MODEL_ALIAS) : null;
-  const activeModelEffort = activeClaudeTab
-    ? `${activeModel}/${sessionModelEffort[activeClaudeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}`
+  // Issue #21 — o modelo exibido (e a régua do medidor) é o da última resposta
+  // do assistente no transcript; o do launch só vale até a primeira resposta.
+  const activeModel = activeClaudeTab
+    ? resolveSessionModel(
+        activeClaudeTab.claudeSessionId ? sessionModels[activeClaudeTab.claudeSessionId] : null,
+        sessionModelEffort[activeClaudeTab.id]?.model ?? DEFAULT_MODEL_ALIAS,
+      )
+    : null;
+  const activeModelEffort = activeClaudeTab && activeModel
+    ? `${activeModel.label}/${sessionModelEffort[activeClaudeTab.id]?.effort ?? DEFAULT_EFFORT_LEVEL}`
     : undefined;
   // Sem leitura ainda (ou aba shell) o medidor NÃO aparece — nunca um `0%`
   // fabricado no lugar de "não há leitura" (CA-4 da 006).
   const activeSmartZone =
     activeModel !== null && activeContextTokens !== null
-      ? { usedTokens: activeContextTokens, maxTokens: effectiveContextZone(activeModel) }
+      ? { usedTokens: activeContextTokens, maxTokens: activeModel.contextZone }
       : undefined;
 
   // T1221 (011-contas-e-provedores, etapa 2) — `accountLabel` é o rótulo
@@ -2209,11 +2233,14 @@ export function App(): React.JSX.Element {
       if (tab.sessionType !== 'claude' || !tab.claudeSessionId) continue;
       const used = contextTokens[tab.claudeSessionId];
       if (used === null || used === undefined) continue;
-      const model = sessionModelEffort[tab.id]?.model ?? DEFAULT_MODEL_ALIAS;
-      map[tab.claudeSessionId] = formatSmartZoneLabel(used, effectiveContextZone(model));
+      const { contextZone } = resolveSessionModel(
+        sessionModels[tab.claudeSessionId],
+        sessionModelEffort[tab.id]?.model ?? DEFAULT_MODEL_ALIAS,
+      );
+      map[tab.claudeSessionId] = formatSmartZoneLabel(used, contextZone);
     }
     return map;
-  }, [tabs, contextTokens, sessionModelEffort]);
+  }, [tabs, contextTokens, sessionModelEffort, sessionModels]);
 
   return (
     <div className={styles.shell}>
