@@ -282,6 +282,7 @@ import { removeSession, setPinned, upsertVisit } from '../shared/sessionRegistry
 import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearance';
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import { createSystemWorkspaceToolsDeps, createWorkspaceTools } from './workspace-tools';
+import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
 // PtyManager chega em T004 (este arquivo). ProjectScanner chega no T007
@@ -2326,6 +2327,12 @@ function registerWorkspaceIpcHandlers(): void {
   ipcMain.handle(WORKSPACE_CHANNELS.editorStatus, () => tools.editorStatus());
   ipcMain.handle(WORKSPACE_CHANNELS.openInEditor, (_event, path: unknown) => tools.openInEditor(path));
   ipcMain.handle(WORKSPACE_CHANNELS.gitBranch, (_event, path: unknown) => tools.gitBranch(path));
+  // B3 — PR da branch + checks/reviews, só leitura pelo `gh` (pull-request-status.ts).
+  const pullRequests = createPullRequestStatusService(createSystemPullRequestStatusDeps(async (path) => (await tools.gitBranch(path)).branch));
+  ipcMain.handle(WORKSPACE_CHANNELS.pullRequest, (_event, path: unknown, options: unknown) =>
+    pullRequests.get(path, { details: (options as { details?: unknown } | undefined)?.details === true }),
+  );
+  ipcMain.handle(WORKSPACE_CHANNELS.openPullRequestUrl, (_event, url: unknown) => openPullRequestUrl(url, (safe) => shell.openExternal(safe)));
 }
 
 /**

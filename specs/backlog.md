@@ -62,6 +62,28 @@ abertas dos repos dos projetos (autor, status de checks, reviews), via
 do Alexandre? do squad? por projeto favorito?), refresh, e ação ao clicar
 (abrir no browser × abrir sessão de review com a skill /spotsys-review).
 
+> ✅ **B3 construído em 30/10 (`feature/painel-prs-sidebar`)** — decisão do dono:
+> "Na sidebar, por projeto" (itens 5 e 6 de
+> `docs/produto/pesquisa-mercado-2026-10-30.md`). Os clarifys acima, **decididos
+> por delegação do dono (2026-10-30)**, sempre pela opção mais simples:
+> - **Escopo:** só o PR **aberto** da **branch atual** de cada pasta que já está
+>   na sidebar (sessões abertas e grupos de favoritos). Nada de lista de PRs do
+>   squad nem de todas as PRs do repo; PR de quem for, desde que seja da branch.
+> - **Refresh:** sob demanda — ao montar, ao trocar/abrir projeto (a lista de
+>   pastas ou a branch muda) e ao focar a janela; cache de 30 s no main
+>   (inclusive do "sem PR"). Polling de 90 s **só** para PR com check rodando e
+>   janela visível.
+> - **Ação ao clicar:** abre um painel (o `Modal` do design-system, mesma troca
+>   "popover → Modal" do `ProjectSwitcher`) com título, "Abrir no navegador",
+>   checks com link do job, reviews, conversas não resolvidas e **"Mandar pro
+>   Claude consertar"**, que manda um prompt pronto para a aba do Claude daquele
+>   projeto pelo `sendDriver`. Sessão de review com `/spotsys-review` fica de
+>   fora (é Seazone; aqui Seazone é só adaptador opcional).
+> - **Autor/"meu PR":** não filtra — a branch já diz de quem é o trabalho.
+> - **Leitura:** só `gh` (`github-reader.ts`, allowlist: `pr-view-branch` e
+>   `pr-review-threads`, GraphQL com consulta literal de leitura). Sem `gh` ou
+>   sem login: nada aparece.
+
 ### B4. Visualizador de widgets (novo — exige spike)
 
 "Visualizador de widgets, para continuarmos tendo essas funcionalidades."
