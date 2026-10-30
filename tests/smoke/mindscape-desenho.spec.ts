@@ -17,6 +17,12 @@ import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userData
 // while the post-it written by the session keeps its new text; Ctrl+Z in the
 // post-it text is the field's own; the history survives a mode change and is
 // empty after a relaunch. Same `atlas`, its own mindscape file.
+// Fatia 03: with V, click / Shift+click / lasso / Ctrl+A select drawings and
+// post-its; the selection moves together (one Ctrl+Z), takes the color of the
+// bar, grows by a handle, changes layer, goes away with Delete (the owner's
+// post-it is archived, the session's stays); Delete removes a selected link;
+// space + drag and H + drag move the view; "Ir ao terminal" needs exactly one
+// session post-it selected. Same `atlas`, its own mindscape file.
 
 const SCENARIO = path.join(REPO_ROOT, 'tests/fixtures/mindscape/scenarios/slow-turn.json');
 /** Stop hook with `last_assistant_message` after "primeiro" / "segundo" (the turn ends in the middle of the owner's actions). */
@@ -34,6 +40,8 @@ interface SavedDrawing {
   color: string;
   stroke: string;
   arrow?: boolean;
+  x?: number;
+  y?: number;
   w?: number;
   h?: number;
 }
@@ -55,6 +63,17 @@ function saved(): SavedBoard {
     return { schemaVersion: doc.schemaVersion, drawings: board?.drawings ?? [], links: board?.links ?? [] };
   } catch {
     return { drawings: [], links: [] };
+  }
+}
+
+/** Fatia 03 — the cards and the pan of the saved atlas board. */
+function savedCardsAndPan(): { cards: Record<string, { kind: string }>; pan?: { x: number; y: number } } {
+  try {
+    const doc = JSON.parse(readFileSync(mindscapeFile, 'utf8')) as { boards?: Record<string, { cards?: Record<string, { kind: string }>; pan?: { x: number; y: number } }> };
+    const board = Object.entries(doc.boards ?? {}).find(([key]) => path.basename(key) === 'atlas')?.[1];
+    return { cards: board?.cards ?? {}, pan: board?.pan };
+  } catch {
+    return { cards: {} };
   }
 }
 
@@ -378,4 +397,152 @@ test('Mindscape desenho 02: Ctrl+Z e Ctrl+Shift+Z no quadro, sem desfazer o que 
   // Nothing was written: the file is the one left before the relaunch.
   await launched.window.waitForTimeout(800);
   expect(readFileSync(mindscapeFile, 'utf8')).toBe(before);
+});
+
+/** Shift held around a plain click (Shift+clique adds to / takes from the selection). */
+async function shiftClick(window: Page, point: { x: number; y: number }): Promise<void> {
+  await window.keyboard.down('Shift');
+  await window.mouse.click(point.x, point.y);
+  await window.keyboard.up('Shift');
+}
+
+test('Mindscape desenho 03: seleção múltipla, alças, estilo e camadas @mindscape', async () => {
+  test.setTimeout(240_000);
+  if (launched) await closeIsolatedApp(launched, false);
+  launched = undefined;
+  mindscapeFile = path.join(root, 'mindscape-03.json');
+  scenario = SCENARIO;
+  launched = await launchIsolatedApp({ userDataDir, env: env() });
+  const { window } = launched;
+
+  await openProjectClaudeTab(window, 'atlas');
+  await setMode(window, 'Mindscape');
+  const sessionCard = screen(window).getByTestId('mindscape-session-card');
+  await expect(sessionCard).toHaveCount(1, { timeout: 30_000 });
+  const owner = await newOwnerCard(window, 'Ver o deploy');
+  const ownerId = (await owner.getAttribute('data-card-id')) ?? '';
+  const board = screen(window).getByTestId('mindscape-board');
+  const boardBox = await board.boundingBox();
+  const ownerBox = await owner.boundingBox();
+  if (!boardBox || !ownerBox) throw new Error('board not visible');
+  // Screen coordinates: rect 1 right under the owner post-it, rect 2 at the left edge of the board (away from both post-its).
+  const oL = ownerBox.x;
+  const oT = ownerBox.y;
+  const oR = ownerBox.x + ownerBox.width;
+  const oB = ownerBox.y + ownerBox.height;
+  const bx = boardBox.x;
+  const drawings = screen(window).getByTestId('mindscape-drawing');
+  const drawing = (id: string) => screen(window).locator(`[data-testid="mindscape-drawing"][data-drawing-id="${id}"]`);
+  const byId = (id: string) => saved().drawings.find((candidate) => candidate.id === id);
+
+  // 1. Two rects.
+  await window.keyboard.press('r');
+  await dragScreen(window, { x: oL, y: oB + 30 }, { x: oL + 120, y: oB + 110 });
+  await window.keyboard.press('r');
+  await dragScreen(window, { x: bx + 30, y: oB + 30 }, { x: bx + 150, y: oB + 110 });
+  await expect(drawings).toHaveCount(2);
+  await expect.poll(() => saved().drawings.length, { timeout: 10_000 }).toBe(2);
+  const [first, second] = saved().drawings.map((candidate) => candidate.id) as [string, string];
+  const firstBefore = byId(first)!;
+  const secondBefore = byId(second)!;
+
+  // 2. Click on the first (its contour), Shift+click on the second → both selected.
+  await window.mouse.click(oL, oB + 70);
+  await expect(drawing(first)).toHaveAttribute('data-selected', 'true');
+  await expect(drawing(second)).toHaveAttribute('data-selected', 'false');
+  await shiftClick(window, { x: bx + 150, y: oB + 70 });
+  await expect(drawing(first)).toHaveAttribute('data-selected', 'true');
+  await expect(drawing(second)).toHaveAttribute('data-selected', 'true');
+
+  // 3. Drag one → both move; Ctrl+Z brings both back at once.
+  await dragScreen(window, { x: oL + 60, y: oB + 30 }, { x: oL + 100, y: oB + 80 });
+  await expect.poll(() => [byId(first)?.x, byId(first)?.y, byId(second)?.x, byId(second)?.y], { timeout: 10_000 }).toEqual([
+    firstBefore.x! + 40,
+    firstBefore.y! + 50,
+    secondBefore.x! + 40,
+    secondBefore.y! + 50,
+  ]);
+  await window.keyboard.press('Control+z');
+  await expect.poll(() => [byId(first), byId(second)], { timeout: 10_000 }).toEqual([firstBefore, secondBefore]);
+
+  // 4. Lasso around the first rect and the owner post-it → both selected (the second rect and the session post-it stay out).
+  await dragScreen(window, { x: oL - 10, y: oT - 10 }, { x: oR + 10, y: oB + 120 });
+  await expect(drawing(first)).toHaveAttribute('data-selected', 'true');
+  await expect(drawing(second)).toHaveAttribute('data-selected', 'false');
+  await expect(screen(window).locator(`[data-testid="mindscape-selection-outline"][data-item-id="${ownerId}"]`)).toHaveCount(1);
+  await expect(sessionCard).toHaveAttribute('data-selected', 'false');
+
+  // 5. Azul → only the selected rect changes (the owner post-it keeps its color, the other rect too).
+  await screen(window).getByRole('group', { name: 'Cor do desenho' }).getByRole('button', { name: 'Azul' }).click();
+  await expect(drawing(first)).toHaveAttribute('data-color', 'accent');
+  await expect(drawing(second)).toHaveAttribute('data-color', 'none');
+  await expect(owner).toHaveAttribute('data-color', 'none');
+  await expect.poll(() => [byId(first)?.color, byId(second)?.color], { timeout: 10_000 }).toEqual(['accent', 'none']);
+
+  // 6. Select the second alone → 4 handles; pull the bottom-right one → it grows.
+  await window.mouse.click(bx + 150, oB + 70);
+  await expect(drawing(second)).toHaveAttribute('data-selected', 'true');
+  await expect(drawing(first)).toHaveAttribute('data-selected', 'false');
+  const handles = screen(window).getByTestId('mindscape-handle');
+  await expect(handles).toHaveCount(4);
+  const corner = await center(screen(window).locator('[data-testid="mindscape-handle"][data-handle="se"]'));
+  await dragScreen(window, corner, { x: corner.x + 60, y: corner.y + 40 });
+  await expect.poll(() => byId(second)?.w ?? 0, { timeout: 10_000 }).toBeGreaterThan(secondBefore.w! + 55);
+  expect(byId(second)!.w).toBeCloseTo(secondBefore.w! + 60, 0);
+  expect(byId(second)!.h).toBeCloseTo(secondBefore.h! + 40, 0);
+  expect(byId(second)!.x).toBe(secondBefore.x);
+  if (process.env.DONEL_SMOKE_SHOTS_DIR) await window.screenshot({ path: path.join(process.env.DONEL_SMOKE_SHOTS_DIR, 'mindscape-desenho-alcas.png') });
+
+  // 7. "Mandar para trás" → the order in drawings flips; Ctrl+Shift+] brings it back to the top.
+  await screen(window).getByRole('group', { name: 'Camada' }).getByRole('button', { name: 'Mandar para trás' }).click();
+  await expect.poll(() => saved().drawings.map((candidate) => candidate.id), { timeout: 10_000 }).toEqual([second, first]);
+  await window.keyboard.press('Control+Shift+BracketRight');
+  await expect.poll(() => saved().drawings.map((candidate) => candidate.id), { timeout: 10_000 }).toEqual([first, second]);
+
+  // 8. Ctrl+A and Delete → the drawings go away, the owner post-it is archived, the session post-it stays.
+  await window.keyboard.press('Control+a');
+  await expect(drawing(first)).toHaveAttribute('data-selected', 'true');
+  await expect(sessionCard).toHaveAttribute('data-selected', 'true');
+  await window.keyboard.press('Delete');
+  await expect(drawings).toHaveCount(0);
+  await expect(owner).toHaveCount(0);
+  await expect(sessionCard).toHaveCount(1);
+  await expect.poll(() => [saved().drawings.length, Object.values(savedCardsAndPan().cards).map((card) => card.kind)], { timeout: 10_000 }).toEqual([0, ['session']]);
+
+  // 9. A link between a new owner post-it and the session one; click on it and Delete → gone.
+  const secondOwner = await newOwnerCard(window, 'Segundo');
+  await window.keyboard.press('a');
+  await dragScreen(window, await center(secondOwner.getByText('✎ você')), await center(sessionCard.getByTestId('mindscape-session-state')));
+  const links = screen(window).getByTestId('mindscape-link');
+  await expect(links).toHaveCount(1);
+  await links.getByTestId('mindscape-link-hit').click({ force: true });
+  await expect(links).toHaveAttribute('data-selected', 'true');
+  await window.keyboard.press('Delete');
+  await expect(links).toHaveCount(0);
+  await expect(secondOwner).toHaveCount(1);
+  await expect.poll(() => saved().links, { timeout: 10_000 }).toEqual([]);
+
+  // 10. Only the session post-it selected → "Ir ao terminal" on; with the owner post-it too → off.
+  const goToTerminal = screen(window).getByRole('button', { name: 'Ir ao terminal' });
+  await expect(goToTerminal).toBeDisabled();
+  await sessionCard.getByTestId('mindscape-session-state').click();
+  await expect(sessionCard).toHaveAttribute('data-selected', 'true');
+  await expect(goToTerminal).toBeEnabled();
+  await shiftClick(window, await center(secondOwner.getByText('✎ você')));
+  await expect(goToTerminal).toBeDisabled();
+  if (process.env.DONEL_SMOKE_SHOTS_DIR) await window.screenshot({ path: path.join(process.env.DONEL_SMOKE_SHOTS_DIR, 'mindscape-desenho-selecao.png') });
+
+  // 11. Space + drag and H + drag move the view (V stays the tool under space).
+  const empty = { x: bx + boardBox.width - 40, y: boardBox.y + boardBox.height - 40 };
+  await window.keyboard.down('Space');
+  await dragScreen(window, empty, { x: empty.x - 100, y: empty.y - 50 });
+  await window.keyboard.up('Space');
+  await expect(board).toHaveAttribute('data-pan', '-100,-50');
+  await expect(board).toHaveAttribute('data-tool', 'select');
+  await expect(screen(window).getByTestId('mindscape-lasso')).toHaveCount(0);
+  await window.keyboard.press('h');
+  await dragScreen(window, empty, { x: empty.x + 30, y: empty.y + 20 });
+  await expect(board).toHaveAttribute('data-pan', '-70,-30');
+  await window.keyboard.press('v');
+  await expect.poll(() => savedCardsAndPan().pan, { timeout: 10_000 }).toEqual({ x: -70, y: -30 });
 });
