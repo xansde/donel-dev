@@ -2182,7 +2182,8 @@ function registerSessionIpcHandlers(): void {
       appConfig.sessionRegistry,
       projectPath,
       appConfig.sessionNames,
-      { indexProjectSessions },
+      // Re-read after the disk read: a visit written meanwhile must not be lost.
+      { indexProjectSessions, readLatestRegistry: () => appConfig.sessionRegistry },
       undefined,
     );
     appConfig = { ...appConfig, sessionRegistry };
