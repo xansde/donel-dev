@@ -8,10 +8,13 @@
 //     arrives twice (hook + transcript): the second copy is dropped (`dedupeSignal`).
 //   - Machine effects: write → PTY; wake-at → timer + fresh screen read; ack-lookup → IPC; status/leftover →
 //     the view the composer renders.
+//   - Every transition INTO `failed` goes once to `reportFailure` (the gate detail for `chat-diagnostics.log`,
+//     never the message text): a retry that fails again is a new report.
 
 import type { PromptSignalKind } from '../../../shared/chat/ipc';
 import { commandResolvesTo, matchOldestPending, matchesPrompt, normalizePrompt, oldestPending } from '../../../shared/chat/promptMatch';
 import type { SendKind, SendMode, SendState } from '../../../shared/chat/rows';
+import { describeSendFailure, type SendFailureDetail } from '../../../shared/chat/sendDiagnostics';
 import {
   createSend,
   step,
@@ -35,6 +38,8 @@ export interface SendDriverPorts {
   ackLookup(text: string, sinceIso: string): Promise<{ readonly matched: boolean }>;
   /** The Enter of a command marked `opensScreen` went out: the terminal-needed strip shows up (T070). */
   opensScreen?(): void;
+  /** A send has just ended in `failed`: the gate detail for the diagnostics log (no message or screen text). */
+  reportFailure?(detail: SendFailureDetail): void;
 }
 
 export interface SendRequest {
@@ -374,6 +379,7 @@ export class SendDriver {
       this.sentCount += 1;
       const created = createSend(input, this.ports.now());
       next.machine = created.state;
+      this.noteFailure(null, created.state);
       this.runEffects(next, created.effects);
       this.dispatch(next, { type: 'env', now: this.ports.now(), ...this.env });
       if (isActive(next)) this.feedScreen(next);
@@ -382,9 +388,21 @@ export class SendDriver {
 
   private dispatch(item: Item, event: SendEvent): void {
     if (item.machine === null || this.disposed || item.dismissed) return;
+    const before = item.machine.phase;
     const result = step(item.machine, event);
     item.machine = result.state;
+    this.noteFailure(before, result.state);
     this.runEffects(item, result.effects);
+  }
+
+  /** Reports the transition into `failed` (once per failure; a diagnostics port that throws never breaks the send). */
+  private noteFailure(before: SendState | null, after: SendMachineState): void {
+    if (after.phase !== 'failed' || before === 'failed' || this.ports.reportFailure === undefined) return;
+    try {
+      this.ports.reportFailure(describeSendFailure(after, this.ports.now()));
+    } catch {
+      // diagnostics must never break the send
+    }
   }
 
   private runEffects(item: Item, effects: readonly SendEffect[]): void {

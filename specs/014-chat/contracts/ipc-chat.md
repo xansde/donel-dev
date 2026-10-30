@@ -31,6 +31,7 @@ vivo seguem `data-model.md`.
 | `chat:open-generated` | `{ ptyId, path }` | `void` | Só extensões de documento ou imagem, e dentro do `cwd` ou da pasta de anexos. |
 | `chat:focus-state` | `{ activePtyId \| null, tabNames?: Record<ptyId, string> }` | `void` | Aba ativa, para a regra de notificação (R23). O main lê o foco da janela por conta própria. `tabNames` (T079) é o nome atual de cada aba: o título da notificação é o nome da aba, que só o renderer resolve. |
 | `chat:screen-state` | `{ ptyId, terminalNeeded: 'hook-timeout' \| 'interactive-screen' \| 'permission-dialog' \| 'unrecognized' \| null }` | `void` | Fontes de tela que pedem o terminal (R16 item 3-4: diálogo >2 s, "Transcript saving is off", comando `opensScreen`); `null` = a caixa voltou. O main combina com a fonte dos hooks (`Notification` sem pendência) num só `LiveState.terminalNeeded`. |
+| `chat:send-failed` | `{ ptyId, detail: SendFailureDetail }` | `void` | Envio que terminou em `failed`: o detalhe do portão (motivo, passo, última espera, caixa achada, rodapé, `working`, tentativas, tempo) vai para o `chat-diagnostics.log`. Nunca texto da mensagem nem da tela; o main refiltra campo a campo (`sanitizeSendFailure`) e troca motivo desconhecido por `outro`. |
 | `config:setChatPrefs` | `{ enabled?, focusMode? }` | `AppConfigDto` | Padrão de `config:set*`. |
 
 `PendingAnswer`:

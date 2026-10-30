@@ -30,6 +30,7 @@ import type {
   RowDetail,
 } from '../shared/chat/ipc';
 import type { RowScope, TerminalNeededReason } from '../shared/chat/rows';
+import type { SendFailureDetail } from '../shared/chat/sendDiagnostics';
 import type {
   AccountsConfigDto,
   AccountsViewDto,
@@ -541,6 +542,8 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(CHAT_CHANNELS.ackLookup, { ptyId, text, since }) as Promise<ChatAckLookupOutput>,
     screenState: (ptyId: string, terminalNeeded: TerminalNeededReason | null) =>
       ipcRenderer.invoke(CHAT_CHANNELS.screenState, { ptyId, terminalNeeded }) as Promise<void>,
+    sendFailed: (ptyId: string, detail: SendFailureDetail) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.sendFailed, { ptyId, detail }) as Promise<void>,
 
     // T076/T079 - pendencias e foco
     answer: (ptyId: string, pendingId: string, answer: PendingAnswer) =>

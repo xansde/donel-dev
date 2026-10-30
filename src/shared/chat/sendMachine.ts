@@ -99,6 +99,10 @@ export interface SendMachineState {
   readonly step: SendStep;
   readonly attempts: number;
   readonly failReason: string | null;
+  /** Last reason the gate waited for in this attempt (diagnostics: what it was waiting on before failing). */
+  readonly lastWaitReason: string | null;
+  /** Step the send was in when it failed (`step` itself becomes `done`). */
+  readonly failedStep: SendStep | null;
   readonly alive: boolean;
   readonly pendingOpen: boolean;
   readonly terminalNeeded: boolean;
@@ -213,6 +217,8 @@ export function createSend(input: SendInput, now: number): StepResult {
     step: 'gate',
     attempts: 0,
     failReason: null,
+    lastWaitReason: null,
+    failedStep: null,
     alive: true,
     pendingOpen: false,
     terminalNeeded: false,
@@ -283,6 +289,8 @@ function resetForRetry(s: Draft, now: number): void {
   s.phase = 'waiting-cli';
   s.step = 'gate';
   s.failReason = null;
+  s.lastWaitReason = null;
+  s.failedStep = null;
   s.attempts += 1;
   s.lines = null; // wait for a fresh read: never paste on a stale screen
   s.waitSince = now;
@@ -382,6 +390,7 @@ function applySignal(s: Draft, sig: PromptSignal): void {
 // ---------------------------------------------------------------- evaluate
 
 function fail(s: Draft, reason: string): void {
+  s.failedStep = s.step;
   s.phase = 'failed';
   s.step = 'done';
   s.failReason = reason;
@@ -523,6 +532,7 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
   } else if (reason === null) s.leftoverShown = null;
 
   if (reason !== null) {
+    s.lastWaitReason = reason;
     if (!visible && now - s.waitSince >= WAIT_CLI_MS) fail(s, 'o Claude não ficou pronto');
     else s.failReason = reason; // reused as the current waiting reason for the status
     return;

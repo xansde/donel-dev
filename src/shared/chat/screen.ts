@@ -223,7 +223,7 @@ export function blockingScreen(lines: readonly LineInput[]): BlockingScreen | nu
 }
 
 /** Footer present: the CLI printed something under the box (mode, hints). Typed text hides "? for shortcuts", so any text counts. */
-function hasFooter(lines: readonly LineInput[]): boolean {
+export function hasFooter(lines: readonly LineInput[]): boolean {
   return footerLines(lines).some((line) => line.trim() !== '');
 }
 

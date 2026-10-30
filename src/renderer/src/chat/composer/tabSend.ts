@@ -44,6 +44,10 @@ function buildPorts(w: () => Wired, store: ChatStore): SendDriverPorts {
       const ptyId = w().source.terminal()?.ptyId ?? w().ptyId;
       if (ptyId !== null) markOpensScreen(ptyId);
     },
+    reportFailure: (detail) => {
+      const ptyId = w().source.terminal()?.ptyId ?? w().ptyId;
+      if (ptyId !== null) store.reportSendFailure(ptyId, detail);
+    },
   };
 }
 
