@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { readdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import { launchIsolatedApp } from './helpers/launch';
-import { PROJECT_NAME, REPO_ROOT } from './repoUnderTest';
+import { fakeClaudeHome, launchIsolatedApp } from './helpers/launch';
+import { PROJECT_NAME, REPO_ROOT, slugifyProjectPath } from './repoUnderTest';
 import { openProjectClaudeTab, waitForClaudeBooted } from './helpers/ui';
 import { createIsolatedUserDataDir, removeIsolatedUserDataDir } from './userDataIsolation';
 
@@ -33,6 +35,22 @@ const RECENT_PER_PROJECT = 5; // duplicado de propósito — mesmo padrão dos o
 let electronApp: ElectronApplication;
 let appWindow: Page;
 let userDataDir: string;
+/** The session of the tab the 1st test opens — the 2nd test pins it. */
+let liveSessionId = '';
+
+/**
+ * The session id of the tab the fake CLI just opened: it writes
+ * `<fake home>/projects/<slug>/<id>.jsonl` at startup. Read from there and not
+ * from "any registry entry of the project", because favoriting SEEDS the group
+ * from the machine's real `~/.claude/projects/<slug>` (CA-8): in the owner's
+ * checkout the registry also holds his real sessions.
+ */
+function readLiveSessionId(): string {
+  const folder = path.join(fakeClaudeHome(userDataDir), 'projects', slugifyProjectPath(REPO_ROOT));
+  const ids = readdirSync(folder).filter((name) => name.endsWith('.jsonl')).map((name) => name.slice(0, -'.jsonl'.length));
+  expect(ids, 'o CLI falso deveria ter aberto exatamente uma sessão').toHaveLength(1);
+  return ids[0];
+}
 
 async function launchApp(): Promise<void> {
   ({ app: electronApp, window: appWindow } = await launchIsolatedApp({ userDataDir }));
@@ -75,6 +93,10 @@ function sessoesSection() {
 
 test.beforeAll(async () => {
   userDataDir = createIsolatedUserDataDir('favorite-sessions');
+  // The scanner's default root is `~/seazone`, which does not list a worktree
+  // under `.claude/worktrees/`: point it at the repo's real parent folder (the
+  // same folder in the main checkout), as `chatSmoke.ts` does.
+  writeFileSync(path.join(userDataDir, 'config.json'), JSON.stringify({ projectRoots: [path.dirname(REPO_ROOT)] }), 'utf8');
   await launchApp();
 });
 
@@ -111,18 +133,28 @@ test('T711 — grupo aparece só com favoritados, dedupe da lista geral, cabeça
   await waitForClaudeBooted(appWindow, { startTimeout: 30_000 });
 
   // 2. O gatilho 1 grava a visita sozinho — sem esperar nenhum turn. Poll no
-  // config até o registro ter uma entrada para este projeto (nunca abrir uma
-  // segunda sessão só para "forçar" — o próprio nascimento da aba já grava).
+  // config até o registro ter a entrada DESTA sessão (nunca abrir uma segunda
+  // sessão só para "forçar" — o próprio nascimento da aba já grava).
   let sessionId = '';
   await expect(async () => {
+    sessionId = readLiveSessionId();
     const config = await appWindow.evaluate(() => window.donel.config.get());
-    const entry = Object.values(config.sessionRegistry).find((candidate) => candidate.projectPath === REPO_ROOT);
-    expect(entry).toBeDefined();
-    sessionId = entry!.sessionId;
+    expect(config.sessionRegistry[sessionId]?.projectPath).toBe(REPO_ROOT);
   }).toPass({ timeout: 15_000 });
+  liveSessionId = sessionId;
+
+  // A semeadura (CA-8) começou no favoritar e lê o disco real do projeto —
+  // segundos, no checkout do dono. Espera ela terminar: é o momento em que ela
+  // gravava o retrato velho do registro por cima e apagava a visita da aba.
+  await expect(group.getByText('carregando…')).toHaveCount(0, { timeout: 60_000 });
+  const settled = await appWindow.evaluate(() => window.donel.config.get());
+  expect(settled.sessionRegistry[sessionId], 'a visita da aba tem de sobreviver à semeadura').toBeDefined();
 
   // 3. CA-3 (dedupe): a sessão aparece no grupo, e NÃO na lista geral "Sessões".
-  await expect(group.locator(`[aria-label*="${sessionId}"]`).or(group)).toBeVisible();
+  // A linha do grupo leva o nome resolvido ao vivo da aba (o nome do projeto,
+  // numa sessão nova); `exact` para não casar com rótulo semeado que só o contenha.
+  const favoriteRow = group.getByRole('button', { name: PROJECT_NAME, exact: true });
+  await expect(favoriteRow).toBeVisible();
   const sessoes = sessoesSection();
   await expect(sessoes.getByText(PROJECT_NAME, { exact: true })).toHaveCount(0);
 
@@ -131,8 +163,7 @@ test('T711 — grupo aparece só com favoritados, dedupe da lista geral, cabeça
   await expect(headerToggle.locator('svg')).not.toHaveCount(0); // StateDot + chevron, ambos svg
 
   // 5. CA-4: clicar na linha da sessão FOCA a aba já aberta (não duplica).
-  const favoriteRow = group.locator(`button:has-text("${PROJECT_NAME}")`).last();
-  await favoriteRow.click({ trial: false }).catch(() => undefined);
+  await favoriteRow.click();
   await expect(tabs).toHaveCount(1); // nunca abre uma segunda aba da mesma sessão
 
   // Fecha a aba (mata o PTY) — não deixa sujeira pro próximo teste.
@@ -151,9 +182,8 @@ test('T711/T710 — poda na 6ª visita, fixada além das 5, colapso sobrevive ao
 
   // 1. Fixa a sessão real que já está no registro (do teste anterior).
   const before = await appWindow.evaluate(() => window.donel.config.get());
-  const realEntry = Object.values(before.sessionRegistry).find((candidate) => candidate.projectPath === REPO_ROOT);
-  expect(realEntry, 'a sessão real do teste anterior deveria seguir no registro').toBeDefined();
-  const pinnedSessionId = realEntry!.sessionId;
+  expect(before.sessionRegistry[liveSessionId], 'a sessão real do teste anterior deveria seguir no registro').toBeDefined();
+  const pinnedSessionId = liveSessionId;
 
   await appWindow.evaluate((sessionId) => window.donel.sessions.setPinned(sessionId, true), pinnedSessionId);
 
