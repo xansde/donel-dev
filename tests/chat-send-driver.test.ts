@@ -326,7 +326,11 @@ describe('SendDriver', () => {
     h.footer = WORKING_FOOTER;
     h.lines = screen('', WORKING_FOOTER);
     h.driver.enqueue({ text: 'para tudo', mode: 'interrupt-first' });
-    // Esc primeiro; o texto vem depois dele, nunca antes.
+    // Esc primeiro; o texto só depois de o turno parar (colado junto, o ESC virava prefixo da colagem).
+    expect(h.writes).toEqual(['\x1b']);
+    h.footer = IDLE_FOOTER;
+    h.lines = screen('', IDLE_FOOTER);
+    h.screenChanged();
     expect(h.writes[0]).toBe('\x1b');
     expect(h.writes[1]).toBe(paste('para tudo'));
   });
