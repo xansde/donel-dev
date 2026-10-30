@@ -110,7 +110,7 @@ Campos comuns (todos opcionais): `id` (tool_use_id), `result` (texto do `tool_re
 - `{"type":"bash_permission","command":"npm install left-pad","description":"Install","rule":"npm install:*"}` - Bash; sugestao
   `addRules` `Bash(<rule>)` (`rule` padrao: duas primeiras palavras do comando + `:*`).
 - `{"type":"edit_permission","file_path":"a.ts","old_string":"a","new_string":"b"}` - Edit (sem sugestao de regra).
-- `{"type":"ask","questions":[{"question":"Which db?","header":"DB","options":[{"label":"Postgres"},{"label":"SQLite"}],"multiSelect":false}]}` - `AskUserQuestion`.
+- `{"type":"ask","questions":[{"question":"Which db?","header":"DB","options":[{"label":"Postgres"},{"label":"SQLite"}],"multiSelect":false}]}` - `AskUserQuestion`. O `tool_result` segue o CLI real (2.1.314): uma observacao em `updatedInput.annotations[pergunta].notes` entra como `"pergunta"="resposta" notes: ...`.
 - `{"type":"plan","plan":"# Plan\n- a","planFilePath":"C:/x/plan.md"}` - `ExitPlanMode`.
 - `{"type":"permission","name":"WebFetch","input":{...},"suggestions":[...]}` - qualquer ferramenta.
 - `{"type":"subagent_permissions","requests":[{"type":"bash_permission","command":"npm test","agentType":"tester"},{"type":"edit_permission",...}]}` -

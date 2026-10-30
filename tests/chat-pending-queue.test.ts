@@ -127,6 +127,25 @@ describe('toHookDecision', () => {
     });
   });
 
+  it('answers with annotations: notes go in updatedInput.annotations, keyed by question text', () => {
+    const questions = [{ question: 'Q?', options: [{ label: 'A' }, { label: 'B' }] }];
+    const p = perm('AskUserQuestion', { questions });
+    expect(
+      toHookDecision(p, { kind: 'answers', answers: { 'Q?': 'A' }, annotations: { 'Q?': { notes: 'só em dev' } } }),
+    ).toEqual({
+      behavior: 'allow',
+      updatedInput: { questions, answers: { 'Q?': 'A' }, annotations: { 'Q?': { notes: 'só em dev' } } },
+    });
+  });
+
+  it('answers with empty annotations keep the payload as before (no annotations key)', () => {
+    const questions = [{ question: 'Q?', options: [{ label: 'A' }, { label: 'B' }] }];
+    const p = perm('AskUserQuestion', { questions });
+    const decision = toHookDecision(p, { kind: 'answers', answers: { 'Q?': 'A' }, annotations: {} });
+    expect(decision).toEqual({ behavior: 'allow', updatedInput: { questions, answers: { 'Q?': 'A' } } });
+    expect(Object.keys(decision.updatedInput as object)).not.toContain('annotations');
+  });
+
   it('plan-approve echoes the whole tool_input', () => {
     const p = perm('ExitPlanMode', { plan: '# P', extra: 1 });
     expect(toHookDecision(p, { kind: 'plan-approve' })).toEqual({

@@ -3,7 +3,8 @@
 // shape); answers are keyed by the question text and options by their exact label (T3 had ids/values);
 // an answer is always a string (multiple selection is joined with ", "); at most 4 questions; dropped
 // attachments, the displaced-answer-into-prompt carry and the one-question-at-a-time progress (the panel has a
-// single "Responder" for all questions). License text in ./LICENSE.
+// single "Responder" for all questions); added the per-question note ("Observação"), sent as the CLI's
+// `annotations[question].notes`. License text in ./LICENSE.
 
 import type { Question } from '../rows';
 
@@ -18,11 +19,19 @@ export const MAX_WIZARD_QUESTIONS = 4;
 /** Separator used to join a multiple selection into one answer string. */
 export const MULTI_ANSWER_SEPARATOR = ', ';
 
+/** Longest `annotations[question].notes` the CLI admits (2.1.314: a longer one makes it refuse the annotations). */
+export const MAX_QUESTION_NOTES_CHARS = 8192;
+
+/** `annotations` of the `AskUserQuestion` input: per question text, the owner's free-text note. */
+export type QuestionAnnotations = Readonly<Record<string, { readonly notes: string }>>;
+
 export interface QuestionDraft {
   /** Exact option labels picked (the "(Recomendado)" suffix is part of the label and is never stripped). */
   readonly selected: readonly string[];
   /** Free text from "Outra". When non-blank it wins over `selected`. */
   readonly custom: string;
+  /** Optional note ("Observação") that goes with the answer. It never answers the question by itself. */
+  readonly notes?: string;
 }
 
 export type QuestionDrafts = Readonly<Record<string, QuestionDraft | undefined>>;
@@ -60,7 +69,17 @@ export function isQuestionAnswered(question: Question, draft: QuestionDraft | un
 
 /** Typing in "Outra". Non-blank text wins over the selection (which is kept, so clearing the text restores it). */
 export function setCustomAnswer(draft: QuestionDraft | undefined, custom: string): QuestionDraft {
-  return { selected: draft?.selected ?? [], custom };
+  return withNotes({ selected: draft?.selected ?? [], custom }, draft);
+}
+
+/** Typing in "Observação". The picked options and the "Outra" text stay as they were. */
+export function setQuestionNotes(draft: QuestionDraft | undefined, notes: string): QuestionDraft {
+  return { selected: draft?.selected ?? [], custom: draft?.custom ?? '', notes };
+}
+
+/** Carries the note of `previous` into a new draft (choosing an option is not a decision about the note). */
+function withNotes(next: QuestionDraft, previous: QuestionDraft | undefined): QuestionDraft {
+  return previous?.notes !== undefined ? { ...next, notes: previous.notes } : next;
 }
 
 /**
@@ -68,10 +87,10 @@ export function setCustomAnswer(draft: QuestionDraft | undefined, custom: string
  * toggles it. Either way the "Outra" text is cleared, because the click is a new decision.
  */
 export function toggleOption(question: Question, draft: QuestionDraft | undefined, label: string): QuestionDraft {
-  if (!question.multiSelect) return { selected: [label], custom: '' };
+  if (!question.multiSelect) return withNotes({ selected: [label], custom: '' }, draft);
   const current = draft?.selected ?? [];
   const selected = current.includes(label) ? current.filter((entry) => entry !== label) : [...current, label];
-  return { selected, custom: '' };
+  return withNotes({ selected, custom: '' }, draft);
 }
 
 /** How many of the (first 4) questions already have an answer. */
@@ -106,4 +125,20 @@ export function buildQuestionAnswers(
     answers[question.question] = answer;
   }
   return answers;
+}
+
+/**
+ * The `annotations` payload (`question text → { notes }`) with the non-blank notes, trimmed and cut at
+ * `MAX_QUESTION_NOTES_CHARS`; `undefined` when no question has a note, so the answer goes out exactly as before.
+ */
+export function buildQuestionAnnotations(
+  questions: readonly Question[],
+  drafts: QuestionDrafts
+): QuestionAnnotations | undefined {
+  const annotations: Record<string, { notes: string }> = {};
+  for (const question of limitQuestions(questions)) {
+    const notes = drafts[question.question]?.notes?.trim() ?? '';
+    if (notes !== '') annotations[question.question] = { notes: notes.slice(0, MAX_QUESTION_NOTES_CHARS) };
+  }
+  return Object.keys(annotations).length > 0 ? annotations : undefined;
 }

@@ -116,9 +116,19 @@ export function toHookDecision(pending: Pending, answer: PendingAnswer): Record<
     case 'deny':
       return { behavior: 'deny', message: answer.reason?.trim() || DEFAULT_DENY_MESSAGE };
     case 'answers':
-      return pending.kind === 'question'
-        ? { behavior: 'allow', updatedInput: { ...pending.match.toolInput, answers: answer.answers } }
-        : bad();
+      if (pending.kind !== 'question') return bad();
+      // CLI 2.1.314 takes the owner's note per question as `annotations[question].notes` and shows it to the model
+      // as `"question"="answer" notes: ...`. No note = no `annotations` key, the payload of before.
+      return {
+        behavior: 'allow',
+        updatedInput: {
+          ...pending.match.toolInput,
+          answers: answer.answers,
+          ...(answer.annotations !== undefined && Object.keys(answer.annotations).length > 0
+            ? { annotations: answer.annotations }
+            : {}),
+        },
+      };
     case 'plan-approve':
       return pending.kind === 'plan' ? { behavior: 'allow', updatedInput: { ...pending.match.toolInput } } : bad();
     case 'plan-adjust':
