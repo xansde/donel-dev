@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { PROJECT_NAME } from './repoUnderTest';
 import { closeIsolatedApp, launchIsolatedApp } from './helpers/launch';
+import { seededUserDataDir } from './helpers/projectRoots';
 import { openLauncherPanel, waitForClaudeBooted } from './helpers/ui';
 
 // FIX (teste manual 27/07) — a feature original deste arquivo (T011, injeção
@@ -40,7 +41,10 @@ let window: Page;
 let userDataDir: string;
 
 test.beforeAll(async () => {
-  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ name: 'model-injection' }));
+  // O scanner varre `~/seazone`, que não lista uma worktree em
+  // `.claude/worktrees/`: aponta para a pasta-mãe REAL do repo (a mesma
+  // `~/seazone` no checkout principal), como `favorite-sessions.spec.ts`.
+  ({ app: electronApp, window, userDataDir } = await launchIsolatedApp({ userDataDir: seededUserDataDir('model-injection') }));
 });
 
 test.afterAll(async () => {

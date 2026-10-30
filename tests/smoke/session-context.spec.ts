@@ -4,6 +4,7 @@ import { expect, test } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { PROJECT_NAME, SESSIONS_DIR } from './repoUnderTest';
 import { launchIsolatedApp } from './helpers/launch';
+import { seededUserDataDir } from './helpers/projectRoots';
 import { openProjectClaudeTab, waitForClaudeBooted } from './helpers/ui';
 import { removeIsolatedUserDataDir } from './userDataIsolation';
 
@@ -77,7 +78,10 @@ let userDataDir: string;
 let createdTranscriptPath: string | null = null;
 
 test.beforeAll(async () => {
-  ({ app: electronApp, window: appWindow, userDataDir } = await launchIsolatedApp({ name: 'session-context' }));
+  // O scanner varre `~/seazone`, que não lista uma worktree em
+  // `.claude/worktrees/`: aponta para a pasta-mãe REAL do repo (a mesma
+  // `~/seazone` no checkout principal), como `favorite-sessions.spec.ts`.
+  ({ app: electronApp, window: appWindow, userDataDir } = await launchIsolatedApp({ userDataDir: seededUserDataDir('session-context') }));
 });
 
 test.afterAll(async () => {
