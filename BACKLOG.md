@@ -183,7 +183,9 @@ no alfa.
 
 ### 04 — Lápis e borracha que apaga o pedaço tocado
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/mindscape-desenho` (checkout principal, sem worktree — instrução do dono) · caminho: `tdd` (`eraser.ts`, parse e amostragem do Rabisco, `pencilPath`, hit-test, atalhos) + `teste-depois` (tela, por smoke) · relato: `handoffs/mindscape-desenho-implementacao-04.md`
+- **PR**: —
 - **Depende de**: 03
 - **Conflita com**: 01, 02, 03, 05, 06
 - **Propósito**: com `P`, o dono rabisca à mão livre; com `E`, passa a borracha e apaga só o trecho
