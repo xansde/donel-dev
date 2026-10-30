@@ -30,6 +30,16 @@ describe('buildLauncherArgs (puro)', () => {
     expect(args).toEqual(['--permission-mode', 'acceptEdits']);
   });
 
+  it('sem provider e navegador ligado: acrescenta --chrome', () => {
+    const args = buildLauncherArgs({ providerId: undefined, model: 'fable', effort: 'high', permissionMode: 'acceptEdits', sessionName: '', chrome: true });
+    expect(args).toEqual(['--model', 'fable', '--effort', 'high', '--permission-mode', 'acceptEdits', '--chrome']);
+  });
+
+  it('com provider: --chrome é omitido mesmo com navegador ligado (integração exige login claude.ai)', () => {
+    const args = buildLauncherArgs({ providerId: 'openrouter-a1', model: 'fable', effort: 'high', permissionMode: 'acceptEdits', sessionName: '', chrome: true });
+    expect(args).toEqual(['--permission-mode', 'acceptEdits']);
+  });
+
   it('sem provider e sem sessionName: comportamento de hoje preservado', () => {
     const args = buildLauncherArgs({ providerId: undefined, model: 'opus', effort: 'low', permissionMode: 'manual', sessionName: '' });
     expect(args).toEqual(['--model', 'opus', '--effort', 'low', '--permission-mode', 'manual']);

@@ -1,4 +1,4 @@
-import { Button, Select, SegmentedControl, TextInput } from '@donel-dev/design-system';
+import { Button, Select, SegmentedControl, TextInput, Toggle } from '@donel-dev/design-system';
 import type { SegmentedControlOption, SelectOption } from '@donel-dev/design-system';
 import { useEffect, useState } from 'react';
 import type { ProjectInfo, ProviderSummaryDto } from '../../shared';
@@ -64,6 +64,11 @@ export interface LauncherLaunchOptions {
    * hoje). Mutuamente exclusivo com o motor de contas (D2).
    */
   providerId: string | null;
+  /**
+   * Toggle "Navegador (Chrome/Edge)" → `--chrome`. Já resolvido: `false`
+   * sempre que há provider (a integração exige login claude.ai).
+   */
+  chrome: boolean;
 }
 
 export interface LauncherProps {
@@ -72,7 +77,7 @@ export interface LauncherProps {
   /** Herdado da seleção da sidebar (ui-spec §4); o campo abaixo continua editável depois. */
   defaultProjectPath?: string;
   /** T015 (FR-007 "defaults do launcher") — última escolha persistida no ConfigStore; `undefined` até `config:get` resolver (cai nos `DEFAULT_*` locais). */
-  launcherDefaults?: { model: ModelAlias; effort: EffortLevel; permissionMode: PermissionMode };
+  launcherDefaults?: { model: ModelAlias; effort: EffortLevel; permissionMode: PermissionMode; chrome?: boolean };
   /** T1320 — registry de providers classe A; `[]` = campo "Provedor" nem aparece (C14/D6). */
   providers?: readonly ProviderSummaryDto[];
   onLaunch: (options: LauncherLaunchOptions) => void;
@@ -82,6 +87,7 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, provi
   const [model, setModel] = useState<ModelAlias>(launcherDefaults?.model ?? DEFAULT_MODEL);
   const [effort, setEffort] = useState<EffortLevel>(launcherDefaults?.effort ?? DEFAULT_EFFORT);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(launcherDefaults?.permissionMode ?? DEFAULT_PERMISSION);
+  const [chrome, setChrome] = useState<boolean>(launcherDefaults?.chrome === true);
   const [sessionName, setSessionName] = useState('');
   const [projectPath, setProjectPath] = useState(defaultProjectPath ?? '');
   // T1320 (C13) — `null` = "Claude (conta)"; provider selecionado desabilita
@@ -113,6 +119,7 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, provi
       projectPath,
       projectName: selectedProject?.name ?? projectPath,
       providerId,
+      chrome: chrome && !hasProvider,
     });
   };
 
@@ -150,6 +157,18 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, provi
         value={permissionMode}
         options={PERMISSION_OPTIONS}
         onChange={(value) => setPermissionMode(value as PermissionMode)}
+      />
+
+      <Toggle
+        label="Navegador (Chrome/Edge)"
+        description={
+          hasProvider
+            ? 'Indisponível com provedor de terceiro: exige login claude.ai.'
+            : 'Liga o Claude in Chrome (--chrome); precisa da extensão instalada.'
+        }
+        checked={chrome && !hasProvider}
+        onChange={setChrome}
+        disabled={hasProvider}
       />
 
       <TextInput

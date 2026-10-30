@@ -138,3 +138,71 @@
   margin-left: auto;
   flex-shrink: 0;
 }
+
+/* "Abrir no editor" + branch atual — discretos: o botão só aparece na linha em hover/foco. */
+.projectHeader {
+  display: flex;
+  align-items: center;
+}
+
+.projectHeader .projectRootToggle {
+  flex: 1;
+  min-width: 0;
+}
+
+.editorButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.sessionRow:hover .editorButton,
+.projectHeader:hover .editorButton,
+.editorButton:focus-visible {
+  opacity: 1;
+}
+
+.editorButton:hover {
+  color: var(--text-primary);
+}
+
+.editorButton[aria-disabled='true'] {
+  cursor: default;
+}
+
+.editorButton[aria-disabled='true']:hover {
+  color: var(--text-muted);
+}
+
+.editorButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 96px;
+  flex-shrink: 1;
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.branchName {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
