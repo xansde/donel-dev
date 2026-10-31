@@ -1253,17 +1253,35 @@ conversa é cada um. Nada sai do quadro sozinho.
   "Antigas", recolhida.
 - Quando o nome da sessão é o do projeto, o cartão mostra o primeiro pedido da
   conversa e a data no lugar.
+- **Sessões favoritas são fixas (decisão do dono, 31/10):** o dono favorita
+  quantas quiser, sem teto (mesma regra C4 da 007), e nada as muda: o
+  "Organizar" não as move, elas nunca vão para "Antigas" e o agente da Parte 2
+  não mexe nelas.
+- **Direção do casco (dono, 31/10):** a barra lateral esquerda do Uso geral
+  fica cada vez mais recessiva; o Mindscape passa a ser o lugar principal de
+  achar e retomar sessões. Cada leva que dá ao Mindscape algo que hoje só a
+  barra faz (favoritas, recentes, retomar) é uma chance de recolher a barra
+  por padrão.
 
 **Parte 2, o agente do Mindscape (precisa de discovery, porta A):**
-- Sob demanda ("Organizar com o Claude"), um `claude -p` em segundo plano lê os
-  post-its do quadro, os do dono e, quando precisar, os transcripts das sessões.
+- **Não é "do Claude" (decisão do dono, 31/10):** o motor do agente é
+  escolhido pelo dono entre qualquer LLM conectado, inclusive a conta ativa.
+  Nada fixo a uma IA: o agente fala com um contrato próprio do app, e cada
+  motor é um adaptador. Ponto de partida: o registro de **Provedores** que já
+  existe (011: classe A = compatível com Claude via env, classe B = CLI
+  terceiro, hoje recusada no lançamento) e as **contas** do motor de contas.
+  Provavelmente falta um adaptador de API HTTP genérica (formato OpenAI-
+  compatível cobre a maioria dos LLMs e modelos locais); decidir no discovery.
+- Sob demanda, o motor escolhido roda em segundo plano e lê os post-its do
+  quadro, os do dono e, quando precisar, os transcripts das sessões.
 - Propõe **temas** (ex.: "instalador alfa", "contas Seazone"), agrupa os
   cartões, sugere ligações e um título para cada grupo. O dono aceita ou desfaz:
   o agente nunca arquiva nem apaga sozinho.
 - Cada tema vira (ou atualiza) uma **página da wiki do B31**, com o que foi
   decidido, o que está pendente e de quais sessões veio. O quadro é a vista
   rápida; a wiki é a memória.
-- Em aberto: em qual conta roda e quanto custa por organização; se roda sozinho
+- Em aberto: contrato mínimo do motor (só texto? precisa ler arquivo, ou o app
+  entrega o contexto pronto?); custo por organização; se roda sozinho
   (ex.: ao fechar o dia) ou só quando o dono pede; formato da wiki (depende do
   B31).
 
