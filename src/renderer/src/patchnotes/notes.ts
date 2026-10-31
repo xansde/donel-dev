@@ -18,6 +18,14 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-10-31',
     items: [
       {
+        title: 'Sessão numa cópia isolada do projeto',
+        text: 'Marque "Isolar em worktree" no painel de nova sessão e o Claude trabalha numa cópia separada do repositório, que começa da branch em que você está, marcada com ⎇ na aba. Ao fechar a aba, a cópia some sozinha se não tiver trabalho pendente; se tiver, nada é apagado e o Donel avisa, com um botão para abrir a pasta. A faxina do Jobu também passa a recolher as cópias esquecidas.',
+      },
+      {
+        title: 'Chat funciona com statusline configurada',
+        text: 'O chat agora percebe quando o Claude está trabalhando mesmo com uma statusline configurada. Por isso cota, contexto e PR da sessão aparecem sempre no rodapé, e "Interromper e mandar agora" e o Parar funcionam também enquanto há texto na caixa.',
+      },
+      {
         title: 'PR de cada projeto na barra lateral',
         text: 'Cada projeto mostra o número do PR da branch, verde, amarelo ou vermelho conforme os checks, e avisa quando pediram mudanças. Clique nele para ver os checks e reviews e, se algo quebrou, mande o Claude consertar com um botão.',
       },
