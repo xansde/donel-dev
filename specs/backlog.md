@@ -1228,6 +1228,45 @@ Falha da build da manhã (`FALHOU.txt`) aparece no lugar do botão, com o log.
 - Atualização automática de verdade (`electron-updater` + GitHub Release
   privado) é outro tamanho de feature; ver **B17**.
 
+### B34. Mindscape organizado + agente do Mindscape (pedido do dono, 31/10)
+
+**Pedido:** "Só aparece uma sessão. Como podemos organizar isso melhor?" e, em
+seguida: "Adicionar uma funcionalidade de agente do Mindscape, que organize as
+ideias e entenda o contexto completo. Pode ser algo relacionado com a wiki do
+Donel Dev" (**B31**).
+
+**O que está acontecendo (medido no `mindscape.json` dele, 31/10):** o quadro
+do Donel Dev guarda 10 posições de sessão e 8 post-its escritos por sessão, mas
+só 1 aba está aberta. Pela regra 11 da V1, sessão sem aba não é desenhada; o
+post-it dela fica, solto, sem o cartão ao lado. Somando os projetos, são ~44
+post-its órfãos (BizOps 12, Homologação 11, Donel Dev 8...). Metade se chama só
+pelo nome do projeto ("Donel Dev", "BizOps"), então não dá para saber de qual
+conversa é cada um. Nada sai do quadro sozinho.
+
+**Parte 1, sem agente (pode ir direto ao alfa):**
+- Sessão fechada aparece como cartão **adormecido** (apagado, com a data), com o
+  post-it dela colado embaixo; duplo clique retoma com `claude --resume`. Muda a
+  regra 11 da V1 e casa com o **B32** (hibernar).
+- Sessão e post-it se movem juntos.
+- Botão **"Organizar"**: colunas por situação (precisa de você · trabalhando ·
+  parada · fechadas por data); fechadas há mais de 7 dias vão para uma pilha
+  "Antigas", recolhida.
+- Quando o nome da sessão é o do projeto, o cartão mostra o primeiro pedido da
+  conversa e a data no lugar.
+
+**Parte 2, o agente do Mindscape (precisa de discovery, porta A):**
+- Sob demanda ("Organizar com o Claude"), um `claude -p` em segundo plano lê os
+  post-its do quadro, os do dono e, quando precisar, os transcripts das sessões.
+- Propõe **temas** (ex.: "instalador alfa", "contas Seazone"), agrupa os
+  cartões, sugere ligações e um título para cada grupo. O dono aceita ou desfaz:
+  o agente nunca arquiva nem apaga sozinho.
+- Cada tema vira (ou atualiza) uma **página da wiki do B31**, com o que foi
+  decidido, o que está pendente e de quais sessões veio. O quadro é a vista
+  rápida; a wiki é a memória.
+- Em aberto: em qual conta roda e quanto custa por organização; se roda sozinho
+  (ex.: ao fechar o dia) ou só quando o dono pede; formato da wiki (depende do
+  B31).
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
