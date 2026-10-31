@@ -1285,6 +1285,50 @@ conversa é cada um. Nada sai do quadro sozinho.
   (ex.: ao fechar o dia) ou só quando o dono pede; formato da wiki (depende do
   B31).
 
+### B35. Laya como "Sistema 1" do Donel Dev, aprendendo com o uso (ideia do dono, 31/10 — avaliar)
+
+**Pedido:** "Pensar na possibilidade de instaurar a Laya aqui para ir aprendendo
+e melhorando sempre."
+
+**O que é a Laya** (`NandhaKishorM/laya`, Apache-2.0, já testada pelo dono no
+BizOps em 09–11/10): um modelo pequeno e local que responde decisões tipadas
+(`choice`, `score` em níveis, `noul` sim/não) e melhora com fine-tune nos
+exemplos do próprio dono. Não é um LLM de conversa: é o "reflexo" rápido e
+barato; o LLM (qualquer motor, ver B34) fica para os casos de baixa confiança.
+
+**O que o BizOps já mediu (`BizOps/handoffs/laya-decisoes-2026-10-09.md`):**
+- Sem treino, perde do palpite trivial (prioridade: 0,22 de acerto contra 0,54
+  do "sempre MEDIUM"). Com ~400 exemplos rotulados e 3 h de treino em CPU,
+  passa (0,60) e o sim/não chega a 0,875 de precisão.
+- Peso: venv de ~950 MB + pesos de ~650 MB + checkpoint de 1,26 GB; resposta
+  ~2 s por item em CPU. Precisa de Python.
+- O modo sombra parou: 22 demandas registradas, **0** sugestões do Claude e
+  **0** decisões do dono preenchidas. O registro dependia de um ritual à parte e
+  não aconteceu.
+
+**Como caberia aqui:**
+- **Aprender com gestos que o dono já faz**, nunca com formulário: abriu a
+  sessão logo depois do aviso, desfez o agrupamento do agente, dispensou o aviso
+  do Jobu. Cada gesto vira um exemplo rotulado, guardado só na máquina.
+- **Primeira decisão candidata:** "este fim de turno precisa de você?" (`noul`),
+  lendo o post-it que a sessão escreveu (ex.: "Antes de gravar, preciso do seu
+  sim" = sim). Alimenta o destaque do Mindscape, o aviso do Jobu (ver issue #109)
+  e o "Organizar".
+- **Depois:** em qual tema um post-it entra (`choice`), barateando o agente do
+  B34: a Laya agrupa o óbvio, o LLM só vê o que ela não tem certeza.
+- Retreino local periódico, e só troca o modelo se o novo vencer o atual nos
+  mesmos exemplos de teste.
+
+**Restrições:** adaptador opcional, desligado por padrão e fora do instalador
+(roda como serviço local, `laya-serve`/`laya-mcp-server`); nenhum dado sai da
+máquina (decisão do dono de 09/10); nada de Laya no repo público além do
+contrato do adaptador. A Laya é um motor entre outros do contrato de decisão,
+não uma dependência do app.
+
+**Em aberto:** quantos exemplos os gestos geram por semana (medir antes de
+treinar: sem volume, não vale a pena); se o primeiro modelo parte do checkpoint
+do BizOps ou do zero.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
