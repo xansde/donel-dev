@@ -1200,6 +1200,34 @@ Claude Agent View (`claude agents`, `/bg`) ou nada externo é do Claude, com
 spike curto quando precisar. Ver também `docs/produto/pesquisa-mercado-2026-10-30.md`
 (Agent View, Conductor, Superset).
 
+### B33. Botão "Atualizar versão" dentro do Donel Dev (pedido do dono, 31/10)
+
+**Pedido:** um botão dentro do app para atualizar para a versão nova, sem sair
+procurando o instalador.
+
+**Como é hoje:** não existe atualização automática (`publish: null` no
+`electron-builder.yml`, sem `electron-updater`). O alfa novo nasce toda manhã
+pela tarefa "Donel Dev Alfa diario" (06:30) como
+`Donel Dev Alfa-Setup-AAAA-MM-DD.exe` em `%USERPROFILE%\Donel Dev Alfa - diario\`;
+beta e stable são buildados à mão no checkout de cada canal. A janela "O que
+mudou" já aparece na primeira abertura de cada versão.
+
+**V1 proposta (alfa):** o app compara a própria versão/data com o instalador
+mais novo daquela pasta e, quando houver um mais novo, mostra "Versão nova
+disponível · Atualizar" (rodapé ou menu). O clique fecha o app de forma limpa e
+roda o instalador; ao reabrir, a janela "O que mudou" mostra a novidade.
+Falha da build da manhã (`FALHOU.txt`) aparece no lugar do botão, com o log.
+
+**Em aberto (decidir na spec):**
+- Beta e stable: o botão só existe no alfa, ou o app também builda o canal a
+  partir do checkout dele (mais lento, pode quebrar)?
+- Sessões abertas na hora de atualizar: pedir confirmação, esperar os turnos
+  terminarem ou hibernar e acordar depois (casa com o **B32**).
+- Pasta e nomes vêm da config, nada fixo no código (vale também para o repo
+  público, que não tem a tarefa agendada).
+- Atualização automática de verdade (`electron-updater` + GitHub Release
+  privado) é outro tamanho de feature; ver **B17**.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
