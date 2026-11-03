@@ -30,6 +30,7 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
   const [snapshot, setSnapshot] = useState<string | null>(null);
   const [address, setAddress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const showing = browser.open && active;
 
   // Pins the view on the viewport box, following resize, scroll, DPI/zoom and layout shifts: one rect read per
@@ -94,6 +95,16 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
   const ownerDriving = browser.control?.owner === 'human';
   const shownAddress = address ?? (state && state.url !== 'about:blank' ? state.url : '');
 
+  const tabs = state?.tabs ?? [];
+  const uploadDir = browser.rules?.uploadDir ?? null;
+
+  const chooseUploadDir = (): void => {
+    setError(null);
+    void window.donel.browser.chooseUploadDir(ptyId).then((result) => {
+      if (!result.ok && result.reason) setError(result.reason);
+    });
+  };
+
   const submit = (event: FormEvent): void => {
     event.preventDefault();
     const typed = shownAddress;
@@ -153,10 +164,52 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
             Assumir
           </Button>
         )}
+        <Button
+          type="button"
+          variant={rulesOpen ? 'secondary' : 'ghost'}
+          aria-pressed={rulesOpen}
+          title="O que o agente pode fazer neste navegador"
+          data-testid="browser-rules-toggle"
+          onClick={() => setRulesOpen(!rulesOpen)}
+        >
+          Regras
+        </Button>
         <Button type="button" variant="ghost" aria-label="Fechar navegador" title="Fechar navegador" onClick={() => browserStore.setOpen(ptyId, false)}>
           ×
         </Button>
       </form>
+      {tabs.length > 1 ? (
+        <div className={styles.tabs} role="tablist" aria-label="Abas do navegador" data-testid="browser-tabs">
+          {tabs.map((tab) => (
+            <div key={tab.id} className={tab.active ? `${styles.tab} ${styles.tabActive}` : styles.tab}>
+              <button type="button" role="tab" aria-selected={tab.active} className={styles.tabTitle} title={tab.url} onClick={() => window.donel.browser.tab(ptyId, 'switch', tab.id)}>
+                {tab.title || tab.url}
+              </button>
+              <button type="button" className={styles.tabClose} aria-label={`Fechar a aba ${tab.title || tab.url}`} onClick={() => window.donel.browser.tab(ptyId, 'close', tab.id)}>
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {rulesOpen ? (
+        <div className={styles.rules} data-testid="browser-rules">
+          <div className={styles.rulesRow}>
+            <span className={styles.rulesLabel}>Envio de arquivos</span>
+            <span className={styles.rulesValue} title={uploadDir ?? undefined}>
+              {uploadDir ?? 'desligado: nenhuma pasta autorizada'}
+            </span>
+            <Button type="button" variant="ghost" data-testid="browser-upload-choose" onClick={chooseUploadDir}>
+              {uploadDir ? 'Trocar pasta' : 'Autorizar pasta'}
+            </Button>
+            {uploadDir ? (
+              <Button type="button" variant="ghost" onClick={() => window.donel.browser.clearUploadDir(ptyId)}>
+                Tirar
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       {error ? (
         <p className={styles.error} role="alert">
           {error}

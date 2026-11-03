@@ -16,6 +16,7 @@ import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import type { EditorStatus, GitBranchResult, OpenInEditorResult, PullRequestRequestOptions, PullRequestStatusResult, WorktreeKeptPayload } from '../shared/workspace';
 // Navegador interno — the panel of each session tab.
 import { BROWSER_CHANNELS } from '../shared/browser/ipc';
+import type { BrowserAgentRules, BrowserRulesResult, BrowserTabAction } from '../shared/browser/ipc';
 import type {
   BrowserControlState,
   BrowserHistoryAction,
@@ -464,6 +465,18 @@ const donelApi: DonelApi = {
     onLog: (listener: (entry: BrowserLogEntry) => void) => {
       const handler = (_event: unknown, entry: BrowserLogEntry): void => listener(entry);
       return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.log, handler);
+    },
+    tab: (ptyId: string, action: BrowserTabAction, tabId: number) => {
+      ipcRenderer.send(BROWSER_CHANNELS.tab, ptyId, action, tabId);
+    },
+    getRules: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.getRules, ptyId) as Promise<BrowserAgentRules | null>,
+    chooseUploadDir: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.chooseUploadDir, ptyId) as Promise<BrowserRulesResult>,
+    clearUploadDir: (ptyId: string) => {
+      ipcRenderer.send(BROWSER_CHANNELS.clearUploadDir, ptyId);
+    },
+    onRules: (listener: (rules: BrowserAgentRules) => void) => {
+      const handler = (_event: unknown, rules: BrowserAgentRules): void => listener(rules);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.rules, handler);
     },
   },
 

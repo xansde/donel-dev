@@ -31,6 +31,16 @@ export const BROWSER_CHANNELS = {
   control: 'browser:control',
   /** main -> renderer: one `BrowserLogEntry` (D13). */
   log: 'browser:log',
+  /** send(ptyId, action, tabId). The panel's tab strip (V2). */
+  tab: 'browser:tab',
+  /** invoke(ptyId) -> `BrowserAgentRules | null`. */
+  getRules: 'browser:getRules',
+  /** invoke(ptyId) -> `BrowserRulesResult`. Native folder picker: the owner authorizes the upload folder (V2). */
+  chooseUploadDir: 'browser:chooseUploadDir',
+  /** send(ptyId). The owner takes the authorization back. */
+  clearUploadDir: 'browser:clearUploadDir',
+  /** main -> renderer: `BrowserAgentRules` every time they change. */
+  rules: 'browser:rules',
 } as const;
 
 export interface BrowserRect {
@@ -42,6 +52,25 @@ export interface BrowserRect {
 
 export type BrowserHistoryAction = 'back' | 'forward' | 'reload' | 'stop';
 
+export interface BrowserTabInfo {
+  readonly id: number;
+  readonly url: string;
+  readonly title: string;
+  readonly active: boolean;
+}
+
+export type BrowserTabAction = 'switch' | 'close';
+
+/** What the owner allows the agent in the browser of one session. Dies with the session. */
+export interface BrowserAgentRules {
+  readonly ptyId: string;
+  /** The only folder `navegador_enviar_arquivo` reads from (`null` = sending files is off). */
+  readonly uploadDir: string | null;
+}
+
+/** `reason: null` = the owner cancelled the picker. */
+export type BrowserRulesResult = { readonly ok: true; readonly rules: BrowserAgentRules } | { readonly ok: false; readonly reason: string | null };
+
 export interface BrowserPanelState {
   readonly ptyId: string;
   readonly url: string;
@@ -49,6 +78,7 @@ export interface BrowserPanelState {
   readonly loading: boolean;
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
+  readonly tabs: readonly BrowserTabInfo[];
 }
 
 export type BrowserNavigateResult = { readonly ok: true; readonly url: string } | { readonly ok: false; readonly reason: string };
@@ -101,6 +131,11 @@ export interface DonelBrowserApi {
   getControl(ptyId: string): Promise<BrowserControlState | null>;
   onControl(listener: (state: BrowserControlState) => void): () => void;
   onLog(listener: (entry: BrowserLogEntry) => void): () => void;
+  tab(ptyId: string, action: BrowserTabAction, tabId: number): void;
+  getRules(ptyId: string): Promise<BrowserAgentRules | null>;
+  chooseUploadDir(ptyId: string): Promise<BrowserRulesResult>;
+  clearUploadDir(ptyId: string): void;
+  onRules(listener: (rules: BrowserAgentRules) => void): () => void;
 }
 
 /** Validates a rect that came over IPC (finite, non-negative size). */

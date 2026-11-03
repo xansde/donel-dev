@@ -28,12 +28,13 @@ export function guardNavigation(contents: Pick<WebContents, 'on' | 'getURL' | 's
 // partition. That is the only reason they may navigate at all. The guard above stays exactly as it is for every
 // window that exposes `window.donel`; this one is installed ONLY on a browser panel view, by
 // `main/browser/browser-panels.ts`. It lets http/https/about:blank through, blocks every other scheme
-// (`file://` included), sends popups (`window.open`, `target=_blank`) into the same panel and refuses `<webview>`.
+// (`file://` included), sends popups (`window.open`, `target=_blank`) to the panel (a new tab, since the V2) and
+// refuses `<webview>`.
 
 export interface BrowserPanelGuardDeps {
   /** Which URLs the panel may show (`isAllowedPanelUrl` of shared/browser/url.ts). */
   isAllowed(url: string): boolean;
-  /** A popup asked to open `url` (already allowed): the panel loads it in place of a new window. */
+  /** A popup asked to open `url` (already allowed): the panel shows it in place of a new window. */
   openInPanel(url: string): void;
   /** A navigation was blocked (diagnostics only; the URL never reaches a log). */
   onBlocked?(url: string): void;

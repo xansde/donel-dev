@@ -3,21 +3,24 @@ import { join } from 'node:path';
 import { WebContentsView, session as electronSession, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { guardBrowserPanelNavigation } from '../navigation-guard';
 import { isAllowedPanelUrl } from '../../shared/browser/url';
-import type { BrowserPanelState, BrowserRect } from '../../shared/browser/ipc';
+import type { BrowserPanelState, BrowserRect, BrowserTabInfo } from '../../shared/browser/ipc';
 import { cleanUserAgent, uniqueDownloadName } from './panel-helpers';
 
 // Navegador interno — the `WebContentsView`s of the panel (docs/design/navegador-interno.md).
 //
-// One view per PTY (session tab). The renderer owns the layout: it sends the rect of the panel's viewport and
-// the view is pinned there with `setBounds`; `null` hides it (tab hidden, panel closed, a React menu or modal
-// on top). The view is a child of the main window, sandboxed, without preload, in its own partition
-// (`persist:donel-browser`, never the user's Chrome cookies). The app never reads what is typed in it: the
-// Chromium keeps the partition's cookies, the code here never touches them.
+// One browser per PTY (session tab), with up to `MAX_TABS_PER_BROWSER` tabs of its own (V2: a popup opens a new tab
+// instead of replacing the page). Each tab is one view; only the active one is shown. The renderer owns the layout:
+// it sends the rect of the panel's viewport and the view is pinned there with `setBounds`; `null` hides it (tab
+// hidden, panel closed, a React menu or modal on top). The view is a child of the main window, sandboxed, without
+// preload, in its own partition (`persist:donel-browser`, never the user's Chrome cookies). The app never reads what
+// is typed in it: the Chromium keeps the partition's cookies, the code here never touches them.
 
 export const BROWSER_PARTITION = 'persist:donel-browser';
-/** Ceiling of live views. Creating one more destroys the least recently used hidden, idle one. */
+/** Ceiling of live browsers. Creating one more destroys the least recently used hidden, idle one. */
 export const MAX_BROWSER_VIEWS = 4;
-/** A hidden, idle view is destroyed after this long (its PTY can open another one). */
+/** Tabs of one browser. A popup past this replaces the page, as in the V1. */
+export const MAX_TABS_PER_BROWSER = 4;
+/** A hidden, idle browser is destroyed after this long (its PTY can open another one). */
 export const IDLE_DESTROY_MS = 15 * 60_000;
 const SWEEP_EVERY_MS = 60_000;
 /** Size a view gets while it was never shown (the agent may drive a hidden panel). */
@@ -25,13 +28,31 @@ const HIDDEN_DEFAULT_BOUNDS: BrowserRect = { x: 0, y: 0, width: 1280, height: 80
 /** Only these permissions are granted to pages; everything else (camera, mic, location, notifications...) is denied. */
 const GRANTED_PERMISSIONS = new Set(['clipboard-sanitized-write', 'fullscreen']);
 
-export interface BrowserPanelEntry {
-  readonly ptyId: string;
+export interface BrowserTab {
+  readonly id: number;
   readonly view: WebContentsView;
   readonly contents: WebContents;
-  visible: boolean;
-  lastUsedAt: number;
-  lastBounds: BrowserRect;
+}
+
+export class BrowserPanelEntry {
+  tabs: BrowserTab[] = [];
+  activeTabId = 0;
+  visible = false;
+  lastBounds: BrowserRect = HIDDEN_DEFAULT_BOUNDS;
+
+  constructor(
+    readonly ptyId: string,
+    public lastUsedAt: number,
+  ) {}
+
+  get active(): BrowserTab {
+    return this.tabs.find((tab) => tab.id === this.activeTabId) ?? this.tabs[this.tabs.length - 1];
+  }
+
+  /** The page of the active tab. */
+  get contents(): WebContents {
+    return this.active.contents;
+  }
 }
 
 export interface BrowserPanelsDeps {
@@ -42,8 +63,6 @@ export interface BrowserPanelsDeps {
   /** The main frame of this PTY's page committed a navigation (the service decides whether it is the agent's). */
   onNavigated?(ptyId: string, url: string): void;
   onDownload?(ptyId: string, fileName: string): void;
-  /** The view of this PTY was destroyed (session gone, idle sweep, ceiling): the service drops its CDP driver. */
-  onDestroyed?(ptyId: string): void;
   /** `true` while this PTY's browser must not be destroyed (agent tool running, owner in control). */
   isPinned?(ptyId: string): boolean;
   now?: () => number;
@@ -53,6 +72,7 @@ export class BrowserPanels {
   private readonly entries = new Map<string, BrowserPanelEntry>();
   private sessionReady: Session | null = null;
   private sweepTimer: NodeJS.Timeout | null = null;
+  private nextTabId = 1;
   private readonly now: () => number;
 
   constructor(private readonly deps: BrowserPanelsDeps) {
@@ -61,14 +81,16 @@ export class BrowserPanels {
 
   get(ptyId: string): BrowserPanelEntry | null {
     const entry = this.entries.get(ptyId) ?? null;
-    if (entry && entry.contents.isDestroyed()) {
+    if (!entry) return null;
+    if (entry.tabs.some((tab) => tab.contents.isDestroyed())) entry.tabs = entry.tabs.filter((tab) => !tab.contents.isDestroyed());
+    if (entry.tabs.length === 0) {
       this.entries.delete(ptyId);
       return null;
     }
     return entry;
   }
 
-  /** The view of this PTY, created (hidden) when it does not exist. Throws when the window is gone or the ceiling is full. */
+  /** The browser of this PTY, created (hidden) when it does not exist. Throws when the window is gone or the ceiling is full. */
   ensure(ptyId: string): BrowserPanelEntry {
     const existing = this.get(ptyId);
     if (existing) {
@@ -79,59 +101,72 @@ export class BrowserPanels {
     if (!window) throw new Error('A janela do Donel não está aberta.');
     this.makeRoom();
 
-    const ses = this.partition();
-    const view = new WebContentsView({
-      webPreferences: {
-        session: ses,
-        sandbox: true,
-        nodeIntegration: false,
-        contextIsolation: true,
-        webSecurity: true,
-        // The agent drives pages that are not on screen: a hidden panel must not freeze timers.
-        backgroundThrottling: false,
-        spellcheck: false,
-      },
-    });
-    view.setBackgroundColor('#ffffff');
-    const contents = view.webContents;
-    const entry: BrowserPanelEntry = { ptyId, view, contents, visible: false, lastUsedAt: this.now(), lastBounds: HIDDEN_DEFAULT_BOUNDS };
+    const entry = new BrowserPanelEntry(ptyId, this.now());
     this.entries.set(ptyId, entry);
-
-    guardBrowserPanelNavigation(contents, {
-      isAllowed: isAllowedPanelUrl,
-      openInPanel: (url) => {
-        void contents.loadURL(url).catch(() => undefined);
-      },
-    });
-    const emit = (): void => this.emitState(ptyId);
-    contents.on('did-start-loading', emit);
-    contents.on('did-stop-loading', emit);
-    contents.on('page-title-updated', emit);
-    contents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
-      if (isMainFrame) emit();
-    });
-    contents.on('did-navigate', (_event, url) => {
-      emit();
-      this.deps.onNavigated?.(ptyId, url);
-    });
-    contents.on('render-process-gone', emit);
-
-    window.contentView.addChildView(view);
-    view.setBounds(HIDDEN_DEFAULT_BOUNDS);
-    view.setVisible(false);
+    entry.activeTabId = this.createTab(entry, window).id;
     this.startSweep();
     return entry;
   }
 
-  /** Pins the view on `rect` (CSS pixels of the main window's page) or hides it (`null`). */
+  /** A popup of this browser: a new tab, active. Past the ceiling, the page of the active tab is replaced. */
+  openTab(ptyId: string, url: string): void {
+    const entry = this.get(ptyId);
+    if (!entry) return;
+    const window = this.deps.getWindow();
+    if (!window || entry.tabs.length >= MAX_TABS_PER_BROWSER) {
+      void entry.contents.loadURL(url).catch(() => undefined);
+      return;
+    }
+    const tab = this.createTab(entry, window);
+    this.activate(entry, tab.id);
+    void tab.contents.loadURL(url).catch(() => undefined);
+  }
+
+  /** Shows tab `tabId`. `false` when it does not exist. */
+  switchTab(ptyId: string, tabId: number): boolean {
+    const entry = this.get(ptyId);
+    if (!entry || !entry.tabs.some((tab) => tab.id === tabId)) return false;
+    entry.lastUsedAt = this.now();
+    this.activate(entry, tabId);
+    return true;
+  }
+
+  /** Closes tab `tabId`; the last one stays (the browser itself closes with the panel or the session). */
+  closeTab(ptyId: string, tabId: number): 'closed' | 'last' | 'unknown' {
+    const entry = this.get(ptyId);
+    const tab = entry?.tabs.find((candidate) => candidate.id === tabId);
+    if (!entry || !tab) return 'unknown';
+    if (entry.tabs.length === 1) return 'last';
+    entry.lastUsedAt = this.now();
+    const index = entry.tabs.indexOf(tab);
+    const wasActive = entry.activeTabId === tabId;
+    entry.tabs = entry.tabs.filter((candidate) => candidate !== tab);
+    this.dispose(tab);
+    if (wasActive) this.activate(entry, entry.tabs[Math.min(index, entry.tabs.length - 1)].id);
+    else this.emitState(ptyId);
+    return 'closed';
+  }
+
+  /** The tabs of this browser, in order. */
+  tabs(ptyId: string): BrowserTabInfo[] {
+    const entry = this.get(ptyId);
+    if (!entry) return [];
+    return entry.tabs.map((tab) => {
+      const url = tab.contents.getURL();
+      return { id: tab.id, url: url === '' ? 'about:blank' : url, title: tab.contents.getTitle(), active: tab.id === entry.active.id };
+    });
+  }
+
+  /** Pins the active view on `rect` (CSS pixels of the main window's page) or hides it (`null`). */
   setBounds(ptyId: string, rect: BrowserRect | null): void {
     const entry = this.get(ptyId);
     if (!entry) return;
     entry.lastUsedAt = this.now();
+    const { view } = entry.active;
     if (rect === null) {
       if (entry.visible) {
         entry.visible = false;
-        entry.view.setVisible(false);
+        view.setVisible(false);
       }
       return;
     }
@@ -144,10 +179,10 @@ export class BrowserPanels {
       height: Math.max(1, Math.round(rect.height * zoom)),
     };
     entry.lastBounds = bounds;
-    entry.view.setBounds(bounds);
+    view.setBounds(bounds);
     if (!entry.visible) {
       entry.visible = true;
-      entry.view.setVisible(true);
+      view.setVisible(true);
     }
   }
 
@@ -163,10 +198,11 @@ export class BrowserPanels {
       loading: contents.isLoading(),
       canGoBack: contents.navigationHistory.canGoBack(),
       canGoForward: contents.navigationHistory.canGoForward(),
+      tabs: this.tabs(ptyId),
     };
   }
 
-  /** Loads an already validated URL. Resolves when the load finishes or fails (never rejects). */
+  /** Loads an already validated URL in the active tab. Resolves when the load finishes or fails (never rejects). */
   async load(ptyId: string, url: string): Promise<{ ok: true } | { ok: false; error: string }> {
     const entry = this.ensure(ptyId);
     if (!isAllowedPanelUrl(url)) return { ok: false, error: 'Endereço não permitido.' };
@@ -204,7 +240,7 @@ export class BrowserPanels {
     }
   }
 
-  /** JPEG of the page, even while the view is hidden (`stayHidden`). */
+  /** JPEG of the active page, even while the view is hidden (`stayHidden`). */
   async capture(ptyId: string, maxWidth = 1280, quality = 80): Promise<Buffer | null> {
     const entry = this.get(ptyId);
     if (!entry) return null;
@@ -223,15 +259,8 @@ export class BrowserPanels {
     const entry = this.entries.get(ptyId);
     if (!entry) return;
     this.entries.delete(ptyId);
-    const window = this.deps.getWindow();
-    try {
-      window?.contentView.removeChildView(entry.view);
-    } catch {
-      // the window is already gone
-    }
-    if (!entry.contents.isDestroyed()) entry.contents.close();
+    for (const tab of entry.tabs) this.dispose(tab);
     if (this.entries.size === 0) this.stopSweep();
-    this.deps.onDestroyed?.(ptyId);
   }
 
   destroyAll(): void {
@@ -239,7 +268,7 @@ export class BrowserPanels {
     this.stopSweep();
   }
 
-  /** Destroys hidden views idle for longer than `IDLE_DESTROY_MS`. Exposed for the sweep timer. */
+  /** Destroys hidden browsers idle for longer than `IDLE_DESTROY_MS`. Exposed for the sweep timer. */
   sweepIdle(): void {
     const cutoff = this.now() - IDLE_DESTROY_MS;
     for (const entry of [...this.entries.values()]) {
@@ -247,12 +276,97 @@ export class BrowserPanels {
     }
   }
 
+  private createTab(entry: BrowserPanelEntry, window: BrowserWindow): BrowserTab {
+    const { ptyId } = entry;
+    const view = new WebContentsView({
+      webPreferences: {
+        session: this.partition(),
+        sandbox: true,
+        nodeIntegration: false,
+        contextIsolation: true,
+        webSecurity: true,
+        // The agent drives pages that are not on screen: a hidden panel must not freeze timers.
+        backgroundThrottling: false,
+        spellcheck: false,
+      },
+    });
+    view.setBackgroundColor('#ffffff');
+    const contents = view.webContents;
+    const tab: BrowserTab = { id: this.nextTabId++, view, contents };
+    entry.tabs.push(tab);
+
+    guardBrowserPanelNavigation(contents, {
+      isAllowed: isAllowedPanelUrl,
+      openInPanel: (url) => this.openTab(ptyId, url),
+    });
+    const emit = (): void => this.emitState(ptyId);
+    contents.on('did-start-loading', emit);
+    contents.on('did-stop-loading', emit);
+    contents.on('page-title-updated', emit);
+    contents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
+      if (isMainFrame) emit();
+    });
+    contents.on('did-navigate', (_event, url) => {
+      emit();
+      this.deps.onNavigated?.(ptyId, url);
+    });
+    contents.on('render-process-gone', emit);
+    // A page may close itself (`window.close()` of a popup): the neighbor tab takes over.
+    contents.once('destroyed', () => this.onTabGone(ptyId, tab));
+
+    window.contentView.addChildView(view);
+    view.setBounds(entry.lastBounds);
+    view.setVisible(false);
+    return tab;
+  }
+
+  private onTabGone(ptyId: string, tab: BrowserTab): void {
+    const entry = this.entries.get(ptyId);
+    if (!entry || !entry.tabs.includes(tab)) return;
+    const index = entry.tabs.indexOf(tab);
+    const wasActive = entry.activeTabId === tab.id;
+    entry.tabs = entry.tabs.filter((candidate) => candidate !== tab);
+    this.removeFromWindow(tab);
+    if (entry.tabs.length === 0) {
+      this.entries.delete(ptyId);
+      return;
+    }
+    if (wasActive) this.activate(entry, entry.tabs[Math.min(index, entry.tabs.length - 1)].id);
+    else this.emitState(ptyId);
+  }
+
+  private activate(entry: BrowserPanelEntry, tabId: number): void {
+    const previous = entry.tabs.find((tab) => tab.id === entry.activeTabId);
+    const next = entry.tabs.find((tab) => tab.id === tabId);
+    if (!next) return;
+    if (previous && previous !== next) previous.view.setVisible(false);
+    entry.activeTabId = tabId;
+    if (entry.visible) {
+      next.view.setBounds(entry.lastBounds);
+      next.view.setVisible(true);
+    }
+    this.emitState(entry.ptyId);
+  }
+
+  private removeFromWindow(tab: BrowserTab): void {
+    try {
+      this.deps.getWindow()?.contentView.removeChildView(tab.view);
+    } catch {
+      // the window is already gone
+    }
+  }
+
+  private dispose(tab: BrowserTab): void {
+    this.removeFromWindow(tab);
+    if (!tab.contents.isDestroyed()) tab.contents.close();
+  }
+
   private emitState(ptyId: string): void {
     const state = this.state(ptyId);
     if (state) this.deps.onState(state);
   }
 
-  /** Below the ceiling, or destroys the least recently used hidden, unpinned view. */
+  /** Below the ceiling, or destroys the least recently used hidden, unpinned browser. */
   private makeRoom(): void {
     if (this.entries.size < MAX_BROWSER_VIEWS) return;
     const candidates = [...this.entries.values()]
@@ -279,7 +393,7 @@ export class BrowserPanels {
       }
       const name = uniqueDownloadName(dir, item.getFilename());
       item.setSavePath(join(dir, name));
-      const owner = [...this.entries.values()].find((entry) => entry.contents === contents);
+      const owner = [...this.entries.values()].find((entry) => entry.tabs.some((tab) => tab.contents === contents));
       item.once('done', (_e, state) => {
         if (state === 'completed' && owner) this.deps.onDownload?.(owner.ptyId, name);
       });

@@ -18,6 +18,14 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-03',
     items: [
       {
+        title: 'Abas no navegador da sessão',
+        text: 'Link que abre em nova janela e popup agora viram uma aba nova no navegador da sessão, em vez de trocar a página em que você estava. As abas aparecem no topo do painel, até quatro por sessão, e o agente também sabe trocar e fechar.',
+      },
+      {
+        title: 'O agente escolhe em listas, procura texto e envia arquivos',
+        text: 'No navegador, o agente agora abre listas e escolhe uma opção, rola até um texto da página e coloca um arquivo num campo de envio. O envio só funciona de uma pasta que você autorizar em "Regras", no próprio navegador, e vale só para aquela sessão. Pastas com credenciais não podem ser autorizadas.',
+      },
+      {
         title: 'O agente enxerga melhor as páginas',
         text: 'Quando o agente lê uma página, ele vê só o que está na tela de verdade: o que está escondido atrás de um aviso ou de uma janela fica de fora, e o que está mais abaixo ou mais acima aparece só como contagem ("12 abaixo"). Ele também passa a enxergar e usar o que está dentro de quadros embutidos de outros sites, como formulários e players. E ganhou um jeito de ler a página inteira como texto organizado, com títulos, listas, tabelas e links.',
       },
