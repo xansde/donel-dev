@@ -106,8 +106,8 @@ Compilado em [`final.html`](final.html).
 | 1 | Forma | A + C com o Jobu em caixa de fala |
 | 2 | A ligação autoriza mandar mensagem sem pedir OK? | **Sim** |
 | 3 | Mensagem retida enquanto ele digita entra sozinha depois? | **Sim** |
-| 4 | Papel trocado numa sessão viva vale quando? | Pediu explicação; reapresentada em linguagem simples |
-| 5 | Montar a esteira no quadro antes de rodar? | Pediu explicação; reapresentada em linguagem simples |
+| 4 | Papel trocado numa sessão viva vale quando? | Dono questionou a premissa: "os papéis deveriam mudar? Não deveria apenas delegar para a sessão com o papel adequado?" Recomendação: **papel fixo por lugar; precisa de outro papel → delega** (ver PDA, item 12). Aguarda o OK dele |
+| 5 | Montar a esteira no quadro antes de rodar? | **Sim** — desenhar o molde antes de rodar pode; nunca arquivo de configuração escrito à mão |
 | 6 | App fechado → CLI e MCP param? | **Sim, por enquanto.** "Vamos evoluir em breve para ser persistente em nuvem." |
 
 ## Limitações do mock
