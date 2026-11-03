@@ -28,6 +28,16 @@ O guia (fundo creme, à direita) **não faz parte do design avaliado**: é a cam
 Conteúdo: [estudo profundo do OpenRig](../../pesquisas/openrig-estudo-profundo-2026-11.md)
 (seções 6, 6.1, 7 e 9).
 
+## O centro (dono, 03/11)
+
+"A ideia desse excalidraw é conseguir me comunicar contigo exatamente como eu funciono:
+graficamente. Palavras não são meu forte." e "quero o excalidraw bem mais coerente com o
+mindscape, bem co-relato". Por isso o protótipo abre em **Falar desenhando** (ele desenha, manda
+um trecho, o agente recebe print + leitura do desenho e responde no quadro, em azul tracejado, até
+ele aceitar) e **Desenho = quadro** (seta vira ligação, retângulo vira moldura, rabisco gruda no
+cartão). Quadro, ligações, cartões e esteira usam o mesmo traço do app: roughjs embutido, com os
+parâmetros de `src/renderer/src/Mindscape/roughShapes.ts`, e as ferramentas reais (V H A L R O P E).
+
 ## Ângulos gerados
 
 O que muda entre eles é **onde o dono decide e como fala com o time**; o quadro (cartão-lugar,
@@ -52,6 +62,7 @@ Também no protótipo (não são variantes, são explicação do que vem):
 
 ## Para o dono decidir (além da forma)
 
+0. Falar desenhando é o centro, antes de papéis e conexões? (proposta: sim)
 1. A ligação **autoriza** mandar mensagem sem pedir OK? (proposta: sim, no sentido da ligação)
 2. Mensagem retida enquanto ele digita entra **sozinha** depois? (proposta: sim)
 3. Papel trocado numa sessão viva vale **na próxima retomada**? (proposta: sim, com aviso)
@@ -68,7 +79,8 @@ Também no protótipo (não são variantes, são explicação do que vem):
 
 ## Limitações do mock
 
-- Posições fixas: não arrasta cartão, não cria ligação, não edita papel.
+- Desenhar, arrastar, ligar e criar moldura funcionam só na memória da página (recarregar zera).
+- A leitura do desenho e a resposta do agente são roteiro fixo; nenhum agente real lê nada.
 - Dados de exemplo (projeto `atlas`); nada fala com sessão, CLI ou MCP de verdade.
 - Prévia do terminal é texto parado; "ao vivo" só muda o rótulo e o contador.
 - Animação da ligação existe só no cenário "Revisor devolve achado".
