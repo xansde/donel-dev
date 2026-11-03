@@ -309,7 +309,8 @@ button { font: inherit; color: inherit; }
 .jb-hist { max-height: 180px; overflow-y: auto; border-bottom: 2px dashed #cfc5a5; margin-bottom: 8px; padding-bottom: 6px; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
 .jb-hist[hidden] { display: none; }
 .jb-h b { font-weight: 800; margin-right: 4px; }
-.jb-h.me { color: #4a5568; }
+.jb-h { overflow-wrap: anywhere; }
+.jb-h.from-me { color: #4a5568; }
 .jb-say { display: flex; gap: 6px; align-items: baseline; margin-top: 10px; padding-top: 8px; border-top: 2px dashed #cfc5a5; font-size: 13px; }
 .jb-say span { font-weight: 800; color: #6b6656; }
 .jb-say [contenteditable] { flex: 1; outline: none; min-height: 18px; }
@@ -482,7 +483,7 @@ var JB_LOG = [
 var jbTimer = null;
 function jbRender() {
   var h = document.getElementById('c-chat');
-  h.innerHTML = JB_LOG.map(function (m) { return '<div class="jb-h ' + m.who + '"><b>' + (m.who === 'me' ? 'você' : 'Jobu') + '</b> ' + m.t + '</div>'; }).join('');
+  h.innerHTML = JB_LOG.map(function (m) { return '<div class="jb-h from-' + m.who + '"><b>' + (m.who === 'me' ? 'você' : 'Jobu') + '</b> ' + m.t + '</div>'; }).join('');
   h.scrollTop = h.scrollHeight;
 }
 function jbSpeak(text, pose, replies, urgent) {
