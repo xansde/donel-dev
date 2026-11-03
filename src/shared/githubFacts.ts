@@ -52,7 +52,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** `gh --json labels` devolve array de `{name, color, id, description}` (confirmado ao vivo, ver tests/fixtures/github/issue-view-real.json) — aceita também string solta, por tolerância. */
+/** `gh --json labels` devolve array de `{name, color, id, description}` (confirmado ao vivo) — aceita também string solta, por tolerância. */
 function toLabelNames(value: unknown): readonly string[] {
   if (!Array.isArray(value)) return [];
   const names: string[] = [];

@@ -27,7 +27,7 @@ via `CLAUDE_CONFIG_DIR`.
   ato humano") **caiu**, aqui e no baseline do squad.
 - **Merge em `staging` (redefinido pelo dono em 2026-10-08)**: **o Claude
   mergeia** os PRs contra `staging` assim que a verificação automática
-  (vitest, typecheck, build, smokes da camada pertinente) estiver verde, sem
+  (`npm run typecheck` + `npm test`; ver "Testes enxutos" abaixo) estiver verde, sem
   esperar o dono ("mergeie você. Não fica me esperando para mergear nada").
   A bateria manual no alfa passa a ser validação **depois** do merge, não
   pré-requisito. Sempre `gh pr merge --merge`, nunca `--admin`. `main` e o
@@ -132,9 +132,21 @@ sensível.
   **Navegador interno não é exceção** (30/10): login no painel é o dono
   digitando; o Chromium guarda os cookies da partição `persist:donel-browser`
   e o código do app não os lê nem grava (`docs/design/navegador-interno.md`).
-- **TDD com escopo**: CommandBuilder, SessionIndexer e os módulos de
-  `src/main/accounts/` (motor, mods, migração) são puros com vitest; PTY/UI
-  validam por smoke roteirizado (T014).
+- **Testes enxutos (decisão do dono, 03/11 — substitui o "TDD com escopo" e
+  as camadas de teste de 08/10)**: "o mais próximo de zero, focando no que
+  realmente é importante". A suíte tem ~17 arquivos vitest e **um** smoke.
+  Teste só entra para guardar o que quebraria **sem o dono perceber usando o
+  app**: credencial (`src/main/accounts/`), argv de lançamento, dado
+  persistido que um canal pode apagar (config, `mindscape.json`, registro de
+  sessões), apagar/matar coisa (faxina, worktree, kill guard), guard de
+  navegação e mensagem do chat que some ou duplica. Tela, layout, texto,
+  fluxo de UI e "renderiza" **não** ganham teste; se quebrar, o dono vê no
+  alfa. Nada de teste por ID de spec, nem dois testes da mesma coisa.
+  - Verificação padrão: `npm run typecheck` + `npm test` (segundos).
+  - `npm run test:smoke` (abre o app UMA vez, CLI falso) só quando mexer em
+    main/preload/PTY ou em dependência nativa. **Nunca** rodar smokes em
+    lote nem criar smoke novo sem o dono pedir: abrir instâncias do app
+    atrapalha o trabalho dele.
 - UI em pt-BR; código, comentários e identificadores em inglês.
 
 ## Issue tracker (para skills que precisam de um)
