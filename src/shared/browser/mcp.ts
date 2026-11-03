@@ -95,13 +95,13 @@ export const BROWSER_TOOLS: readonly ToolDefinition[] = [
   {
     name: 'navegador_clicar',
     title: 'Clicar',
-    description: 'Clica no elemento [N] da última navegador_ler.',
+    description: 'Clica no elemento [N] da última navegador_ler. Botões de comprar, pagar ou excluir são travados: nesses, chame navegador_pedir_humano.',
     inputSchema: { type: 'object', properties: { n: ELEMENT_NUMBER }, required: ['n'], additionalProperties: false },
   },
   {
     name: 'navegador_digitar',
     title: 'Digitar',
-    description: 'Digita o texto no campo [N] da última navegador_ler, substituindo o que houver nele. Para enviar, use navegador_teclar("Enter") em seguida.',
+    description: 'Digita o texto no campo [N] da última navegador_ler, substituindo o que houver nele. Para enviar, use navegador_teclar("Enter") em seguida. Campos de senha e de cartão são travados: nesses, chame navegador_pedir_humano.',
     inputSchema: {
       type: 'object',
       properties: { n: ELEMENT_NUMBER, texto: { type: 'string', description: 'Texto a digitar.' } },
@@ -394,7 +394,7 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: MCP_SERVER_NAME, title: 'Donel Dev — navegador integrado', version: ctx.serverVersion },
           instructions:
-            'Navegador integrado do Donel Dev, um por sessão, que o dono vê ao lado da conversa. Fluxo: navegador_abrir, navegador_ler (o que está na tela, elementos numerados [N]), navegador_clicar/navegador_digitar/navegador_teclar, e navegador_ler de novo. Para ler o conteúdo todo da página: navegador_extrair. Login, 2FA ou captcha: navegador_pedir_humano.',
+            'Navegador integrado do Donel Dev, um por sessão, que o dono vê ao lado da conversa. Fluxo: navegador_abrir, navegador_ler (o que está na tela, elementos numerados [N]), navegador_clicar/navegador_digitar/navegador_teclar, e navegador_ler de novo. Para ler o conteúdo todo da página: navegador_extrair. Login, 2FA, captcha, campo de senha ou cartão e botão de comprar, pagar ou excluir são do dono: navegador_pedir_humano. O dono também pode limitar os domínios que o agente abre.',
         },
       };
     case 'ping':

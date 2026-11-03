@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron';
 import { buildAxSnapshot, offscreenSummary, type AxFrame, type AxNodeLike, type AxRef } from '../../shared/browser/axTree';
+import type { ElementFacts } from '../../shared/browser/guardrails';
 import { parseKeyCombo } from '../../shared/browser/keys';
 import { domToMarkdown, type DomFrame, type DomNodeLike } from '../../shared/browser/markdown';
 import type { ScrollDirection } from '../../shared/browser/mcp';
@@ -221,6 +222,33 @@ const FIND_TEXT = `function (needle) {
   return false;
 }`;
 
+/** The element that really has the focus, through open shadow roots and same-process frames. */
+const DEEP_ACTIVE_ELEMENT = `(() => {
+  let el = document.activeElement;
+  for (let i = 0; el && i < 32; i += 1) {
+    if (el.shadowRoot && el.shadowRoot.activeElement) {
+      el = el.shadowRoot.activeElement;
+    } else if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+      let inner = null;
+      try {
+        inner = el.contentDocument ? el.contentDocument.activeElement : null;
+      } catch {}
+      if (!inner) return el;
+      el = inner;
+    } else {
+      return el;
+    }
+  }
+  return el;
+})()`;
+
+/** What the button that Enter would press in this element's form says. */
+const FORM_SUBMIT_LABEL = `function () {
+  const button = this.form ? this.form.querySelector('button[type=submit],button:not([type]),input[type=submit],input[type=image]') : null;
+  if (!button) return '';
+  return (button.innerText || button.value || button.getAttribute('aria-label') || button.title || '').trim();
+}`;
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -362,6 +390,41 @@ export class CdpDriver {
     });
     await this.settle();
     return { ref, chosen };
+  }
+
+  /** What the page says about `[n]` right now (the label may have changed since the read). */
+  async facts(n: number): Promise<ElementFacts> {
+    const ref = this.ref(n);
+    return this.onNode(() => this.factsOf(ref.frame, { backendNodeId: ref.backendNodeId }, ref));
+  }
+
+  /** The same about the element that has the focus, in any frame. `null` when nothing specific has it. */
+  async focusedFacts(): Promise<ElementFacts | null> {
+    const inSession = async (session: string): Promise<ElementFacts | null> => {
+      const { result } = await this.send<{ result: { objectId?: string; subtype?: string } }>('Runtime.evaluate', { expression: DEEP_ACTIVE_ELEMENT, silent: true }, session);
+      if (result.subtype !== 'node' || !result.objectId) return null;
+      try {
+        const facts = await this.factsOf(session, { objectId: result.objectId });
+        const label = await this.send<{ result: { value?: unknown } }>(
+          'Runtime.callFunctionOn',
+          { objectId: result.objectId, functionDeclaration: FORM_SUBMIT_LABEL, returnByValue: true, silent: true },
+          session,
+        ).catch(() => null);
+        return typeof label?.result.value === 'string' && label.result.value !== '' ? { ...facts, formSubmitLabel: label.result.value } : facts;
+      } finally {
+        await this.send('Runtime.releaseObject', { objectId: result.objectId }, session).catch(() => undefined);
+      }
+    };
+    const top = await inSession('');
+    if (top === null || (top.tag !== 'iframe' && top.tag !== 'frame')) return top;
+    // The focus is inside a frame of another origin: the one whose document has it answers.
+    for (const session of this.remoteSessions()) {
+      const focused = await this.send<{ result: { value?: unknown } }>('Runtime.evaluate', { expression: 'document.hasFocus()', returnByValue: true }, session).catch(() => null);
+      if (focused?.result.value !== true) continue;
+      const inner = await inSession(session).catch(() => null);
+      if (inner !== null && inner.tag !== 'body') return inner;
+    }
+    return top;
   }
 
   /** Scrolls to the first rendered occurrence of `text`, the page first, then each remote frame. `false` = not found. */
@@ -670,6 +733,24 @@ export class CdpDriver {
     } finally {
       await this.send('Runtime.releaseObject', { objectId: object.objectId }, ref.frame).catch(() => undefined);
     }
+  }
+
+  private async factsOf(session: string, target: { backendNodeId: number } | { objectId: string }, known?: Pick<AxRef, 'role' | 'name'>): Promise<ElementFacts> {
+    const { node } = await this.send<{ node: { localName?: string; nodeName?: string; attributes?: string[] } }>('DOM.describeNode', target, session);
+    const attributes: Record<string, string> = {};
+    const list = node.attributes ?? [];
+    for (let i = 0; i + 1 < list.length; i += 2) attributes[list[i].toLowerCase()] = list[i + 1];
+    let role = known?.role ?? '';
+    let name = known?.name ?? '';
+    try {
+      const { nodes } = await this.send<{ nodes: AxNodeLike[] }>('Accessibility.getPartialAXTree', { ...target, fetchRelatives: false }, session);
+      const own = nodes[0];
+      if (typeof own?.role?.value === 'string' && own.role.value !== '') role = own.role.value;
+      if (typeof own?.name?.value === 'string' && own.name.value !== '') name = own.name.value;
+    } catch {
+      // what the read saw still holds
+    }
+    return { tag: (node.localName || node.nodeName || '').toLowerCase(), attributes, role, name };
   }
 
   /** Runs a page-side function on a node and answers the `backendNodeId` of the element it returns (`null` = none). */

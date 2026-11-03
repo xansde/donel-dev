@@ -65,6 +65,8 @@ export interface BrowserPanelsDeps {
   onDownload?(ptyId: string, fileName: string): void;
   /** `true` while this PTY's browser must not be destroyed (agent tool running, owner in control). */
   isPinned?(ptyId: string): boolean;
+  /** `true` to refuse a top-level navigation or a popup (the vigia de domínio, while an agent tool runs). */
+  blockNavigation?(ptyId: string, url: string): boolean;
   now?: () => number;
 }
 
@@ -111,7 +113,7 @@ export class BrowserPanels {
   /** A popup of this browser: a new tab, active. Past the ceiling, the page of the active tab is replaced. */
   openTab(ptyId: string, url: string): void {
     const entry = this.get(ptyId);
-    if (!entry) return;
+    if (!entry || this.deps.blockNavigation?.(ptyId, url)) return;
     const window = this.deps.getWindow();
     if (!window || entry.tabs.length >= MAX_TABS_PER_BROWSER) {
       void entry.contents.loadURL(url).catch(() => undefined);
@@ -145,6 +147,18 @@ export class BrowserPanels {
     if (wasActive) this.activate(entry, entry.tabs[Math.min(index, entry.tabs.length - 1)].id);
     else this.emitState(ptyId);
     return 'closed';
+  }
+
+  /** The address `navegador_voltar` would land on, or `null` when there is none. */
+  backUrl(ptyId: string): string | null {
+    const nav = this.get(ptyId)?.contents.navigationHistory;
+    if (!nav || !nav.canGoBack()) return null;
+    return nav.getEntryAtIndex(nav.getActiveIndex() - 1)?.url ?? null;
+  }
+
+  /** The address of the active tab (`about:blank` when empty). */
+  currentUrl(ptyId: string): string {
+    return this.get(ptyId)?.contents.getURL() || 'about:blank';
   }
 
   /** The tabs of this browser, in order. */
@@ -298,6 +312,13 @@ export class BrowserPanels {
     guardBrowserPanelNavigation(contents, {
       isAllowed: isAllowedPanelUrl,
       openInPanel: (url) => this.openTab(ptyId, url),
+    });
+    // Links, scripts and redirects: `loadURL` itself is checked before it is called.
+    contents.on('will-navigate', (event, url) => {
+      if (this.deps.blockNavigation?.(ptyId, url)) event.preventDefault();
+    });
+    contents.on('will-redirect', (event, url, _isInPlace, isMainFrame) => {
+      if (isMainFrame && this.deps.blockNavigation?.(ptyId, url)) event.preventDefault();
     });
     const emit = (): void => this.emitState(ptyId);
     contents.on('did-start-loading', emit);
