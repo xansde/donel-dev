@@ -395,19 +395,16 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
     });
   });
 
-  it('launcherDefaults.chrome: true é preservado; ausente, false ou tipo errado some (opcional, só existe ligado)', () => {
+  it('launcherDefaults.chrome legado (Claude in Chrome, removido em 03/11) é aceito sem erro e descartado', () => {
     const defaults = baseDefaults();
     const base = { model: 'opus', effort: 'max', permissionMode: 'auto' };
-    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, chrome: true } }, defaults).launcherDefaults).toEqual({
-      ...base,
-      chrome: true,
-    });
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, chrome: true } }, defaults).launcherDefaults).toEqual(base);
     expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, chrome: false } }, defaults).launcherDefaults).toEqual(base);
     expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, chrome: 'sim' } }, defaults).launcherDefaults).toEqual(base);
     expect(sanitizeAppConfig({ ...defaults, launcherDefaults: base }, defaults).launcherDefaults).toEqual(base);
   });
 
-  it('launcherDefaults.worktree: true é preservado; ausente, false ou tipo errado some (mesma regra do chrome)', () => {
+  it('launcherDefaults.worktree: true é preservado; ausente, false ou tipo errado some (opcional, só existe ligado)', () => {
     const defaults = baseDefaults();
     const base = { model: 'opus', effort: 'max', permissionMode: 'auto' };
     expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, worktree: true } }, defaults).launcherDefaults).toEqual({
@@ -416,7 +413,6 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
     });
     expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, chrome: true, worktree: true } }, defaults).launcherDefaults).toEqual({
       ...base,
-      chrome: true,
       worktree: true,
     });
     expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, worktree: false } }, defaults).launcherDefaults).toEqual(base);

@@ -129,6 +129,9 @@ sensível.
   `src/main/accounts/migration/` já mora dentro de `src/main/accounts/`, é o
   mesmo perímetro — o par migrado do `.credentials.json` de um perfil vai
   direto pro cofre, nunca passa por variável de retorno exposta.
+  **Navegador interno não é exceção** (30/10): login no painel é o dono
+  digitando; o Chromium guarda os cookies da partição `persist:donel-browser`
+  e o código do app não os lê nem grava (`docs/design/navegador-interno.md`).
 - **Testes enxutos (decisão do dono, 03/11 — substitui o "TDD com escopo" e
   as camadas de teste de 08/10)**: "o mais próximo de zero, focando no que
   realmente é importante". A suíte tem ~17 arquivos vitest e **um** smoke.

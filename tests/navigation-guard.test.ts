@@ -1,6 +1,7 @@
 // The navigation guard of the windows that expose `window.donel`: only the page itself passes, new windows never do.
 import { describe, expect, it } from 'vitest';
-import { guardNavigation, isSameDocument } from '../src/main/navigation-guard';
+import { guardBrowserPanelNavigation, guardNavigation, isSameDocument } from '../src/main/navigation-guard';
+import { isAllowedPanelUrl } from '../src/shared/browser/url';
 
 describe('isSameDocument', () => {
   it('the same page, with or without a fragment, is the same document', () => {
@@ -49,5 +50,59 @@ describe('guardNavigation', () => {
     const { contents, open } = fakeContents('file:///app/index.html');
     guardNavigation(contents);
     expect(open()).toEqual({ action: 'deny' });
+  });
+});
+
+describe('guardBrowserPanelNavigation (named exception: the internal browser views)', () => {
+  function fakePanel() {
+    const listeners = new Map<string, (event: { preventDefault(): void }, url: string) => void>();
+    let openHandler: ((details: { url: string }) => { action: string }) | null = null;
+    const contents = {
+      on: (channel: string, listener: (event: { preventDefault(): void }, url: string) => void) => {
+        listeners.set(channel, listener);
+        return contents;
+      },
+      setWindowOpenHandler: (handler: (details: { url: string }) => { action: string }) => {
+        openHandler = handler;
+      },
+    };
+    const opened: string[] = [];
+    const blocked: string[] = [];
+    guardBrowserPanelNavigation(contents as unknown as Parameters<typeof guardBrowserPanelNavigation>[0], {
+      isAllowed: isAllowedPanelUrl,
+      openInPanel: (url) => opened.push(url),
+      onBlocked: (url) => blocked.push(url),
+    });
+    const fire = (channel: string, url: string): boolean => {
+      let prevented = false;
+      listeners.get(channel)?.({ preventDefault: () => (prevented = true) }, url);
+      return prevented;
+    };
+    return { fire, open: (url: string) => openHandler?.({ url }), opened, blocked };
+  }
+
+  it('lets http and https navigations through and blocks file:// and other schemes', () => {
+    const panel = fakePanel();
+    for (const channel of ['will-navigate', 'will-redirect']) {
+      expect(panel.fire(channel, 'https://example.com/login')).toBe(false);
+      expect(panel.fire(channel, 'http://localhost:5173/')).toBe(false);
+      expect(panel.fire(channel, 'file:///C:/Users/x/secret.txt')).toBe(true);
+      expect(panel.fire(channel, 'javascript:alert(1)')).toBe(true);
+      expect(panel.fire(channel, 'chrome://settings')).toBe(true);
+    }
+    expect(panel.blocked).toHaveLength(6);
+  });
+
+  it('sends an allowed popup into the panel and never opens a new window', () => {
+    const panel = fakePanel();
+    expect(panel.open('https://example.com/popup')).toEqual({ action: 'deny' });
+    expect(panel.open('file:///C:/x')).toEqual({ action: 'deny' });
+    expect(panel.opened).toEqual(['https://example.com/popup']);
+    expect(panel.blocked).toEqual(['file:///C:/x']);
+  });
+
+  it('refuses <webview> inside a panel page', () => {
+    const panel = fakePanel();
+    expect(panel.fire('will-attach-webview', '')).toBe(true);
   });
 });
