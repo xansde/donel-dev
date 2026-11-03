@@ -41,6 +41,9 @@ ao alfa.
 
 - **01 — O que vale do OpenRig** → vale: cartão-lugar, cartão rico com estado em 3 eixos, prévia do terminal, molduras de grupo, salvar e reabrir o quadro, ferramentas do quadro por MCP; não vale agora: fila/inbox/chatroom entre agentes, topologia em YAML, tmux/daemon ([pesquisa](../pesquisas/openrig-referencia-mindscape-2026-11.md))
 - **02 — Validar MVP e versionamento com o cliente** → validado por delegação do dono, 03/11; ele revê no alfa diário
+- **03 — Navegador integrado para qualquer motor** → painel por sessão + ferramentas `navegador_*` no MCP `donel`; `--chrome` removido (PRs #155, #158)
+- **11 — Estudo profundo do OpenRig** → seat como lugar, papel reinjetado, ligação que autoriza, mensagem sem atropelar, fluxo por desfecho declarado; CLI/TUI/MCP sobre uma API ([estudo](../pesquisas/openrig-estudo-profundo-2026-11.md))
+- **Pausa do dono (03/11)** → nada da ideia OpenRig (04, 05, 06, 12, 13) é desenvolvido antes de ele avaliar o protótipo do 14
 
 ## Próximo passo depois do protótipo (dono, 03/11)
 
@@ -91,7 +94,7 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 
 - **Tipo**: refinamento
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: concluido
 - **Bloqueado por**: 02
 - **Pergunta**: fechar e entregar o navegador interno de `docs/design/navegador-interno.md`
   (painel `WebContentsView` por sessão, controle por CDP, ferramentas `navegador_*` num
@@ -101,7 +104,7 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
   qualquer CLI que fale MCP (Claude Code hoje; provedores da 011 quando suportarem) e o
   nome e a UI não citam "Claude". Primeira fatia (painel) existe só local, na branch
   `feature/navegador-interno` (commit `2eb5c01`).
-- **Resolução**: —
+- **Resolução**: painel por sessão, controle por MCP `donel` para qualquer motor, Claude in Chrome removido (PRs #155 e #158)
 
 ### 04 — Cartão rico e estado em três eixos
 
@@ -193,14 +196,14 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 
 - **Tipo**: pesquisa
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: concluido
 - **Bloqueado por**: 01
 - **Pergunta**: lendo o código e os docs do OpenRig (não só o README): como um papel de sessão
   é definido e sobrevive à troca de conversa; o que uma conexão (edge) significa de fato
   (roteamento? permissão de mandar? só desenho?); como send/broadcast/chatroom/fila/handoff
   chegam ao terminal sem atropelar; como vários agentes trabalham juntos e o que o humano vê.
   Entrega o mapa conceito → Donel Dev (trazer já · depois · não trazer) e fatias propostas.
-- **Resolução**: —
+- **Resolução**: seat (lugar acima da conversa) é o conceito central; papel reinjetado em todo lançamento; a edge do OpenRig quase só desenha (no Donel ela autoriza); mensagem por envelope com guarda de digitação; fluxo decidido por desfecho/rota declarados ([estudo](../pesquisas/openrig-estudo-profundo-2026-11.md))
 
 ### 12 — Papéis de sessão
 
@@ -229,12 +232,12 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 
 - **Tipo**: prototipo
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: em-andamento
 - **Bloqueado por**: 11
 - **Pergunta**: como o Mindscape mostra e dirige várias sessões trabalhando juntas (papéis,
   conexões, quem espera quem, o que precisa do dono) no layout do Donel Dev? Três variantes
   para o dono escolher.
-- **Resolução**: —
+- **Resolução**: protótipo pronto, esperando a escolha do dono ([protótipo](../prototipos/mindscape-openrig/))
 
 ### 15 — Esteira montada no Mindscape (próximo passo)
 
