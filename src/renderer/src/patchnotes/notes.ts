@@ -25,6 +25,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         title: 'Botão Organizar no Mindscape',
         text: 'Um clique arruma os cartões em colunas: o que precisa de você, o que está trabalhando, o que está em espera e as fechadas, da mais recente para a mais antiga. Favoritas, seus post-its e desenhos não se mexem, e o Ctrl+Z desfaz tudo de uma vez.',
       },
+      {
+        title: 'Navegador dentro do Donel',
+        text: 'Cada sessão ganhou um navegador de verdade, ao lado da conversa: clique em "Navegador" no topo da sessão, digite o endereço e use voltar, avançar e recarregar. Ele tem os próprios cookies, separados do seu Chrome, e um login que você fizer nele fica guardado para as próximas vezes. A opção "Navegador (Chrome/Edge)" do painel de nova sessão saiu: o navegador agora é este, integrado.',
+      },
     ],
   },
   {

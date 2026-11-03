@@ -59,12 +59,11 @@ export interface LauncherDefaultsDto {
   readonly effort: EffortLevel;
   readonly permissionMode: PermissionMode;
   /**
-   * Toggle "Navegador (Chrome/Edge)" → `--chrome`. Opcional e só gravado
-   * quando ligado: configs antigos (e canais mais antigos lendo este) seguem
-   * com a forma de sempre.
+   * "Isolar em worktree" (`--worktree`). Opcional e só gravado quando ligado:
+   * configs antigos (e canais mais antigos lendo este) seguem com a forma de
+   * sempre. (O antigo `chrome` — Claude in Chrome — saiu em 03/11; o sanitize
+   * o descarta.)
    */
-  readonly chrome?: boolean;
-  /** "Isolar em worktree" (`--worktree`). Mesma regra do `chrome`: opcional e só gravado quando ligado. */
   readonly worktree?: boolean;
 }
 

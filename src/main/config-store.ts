@@ -616,7 +616,8 @@ function sanitizeLauncherDefaults(value: unknown, fallback: LauncherDefaultsDto)
     model: isOneOf(candidate.model, KNOWN_MODEL_ALIASES) ? candidate.model : fallback.model,
     effort: isOneOf(candidate.effort, KNOWN_EFFORT_LEVELS) ? candidate.effort : fallback.effort,
     permissionMode: isOneOf(candidate.permissionMode, KNOWN_PERMISSION_MODES) ? candidate.permissionMode : fallback.permissionMode,
-    ...(candidate.chrome === true ? { chrome: true } : {}),
+    // `chrome` (toggle Claude in Chrome, removido em 03/11 pelo navegador integrado) não é mais lido:
+    // um config antigo que o tenha gravado é aceito e o campo simplesmente some aqui.
     ...(candidate.worktree === true ? { worktree: true } : {}),
   };
 }

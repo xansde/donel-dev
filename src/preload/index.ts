@@ -14,6 +14,9 @@ import type { HealthReport } from '../shared/health/types';
 // Sidebar — abrir no editor + branch atual.
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import type { EditorStatus, GitBranchResult, OpenInEditorResult, PullRequestRequestOptions, PullRequestStatusResult, WorktreeKeptPayload } from '../shared/workspace';
+// Navegador interno — the panel of each session tab.
+import { BROWSER_CHANNELS } from '../shared/browser/ipc';
+import type { BrowserHistoryAction, BrowserNavigateResult, BrowserOpenRequest, BrowserPanelState, BrowserRect } from '../shared/browser/ipc';
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
@@ -409,6 +412,28 @@ const donelApi: DonelApi = {
       return subscribeChannel(ipcRenderer, WORKSPACE_CHANNELS.worktreeKept, handler);
     },
     openWorktreeFolder: (path: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.openWorktreeFolder, path) as Promise<boolean>,
+  },
+
+  // Navegador interno — the main owns the views; the renderer only says where the panel is and what to load.
+  browser: {
+    open: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.open, ptyId) as Promise<BrowserPanelState>,
+    get: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.get, ptyId) as Promise<BrowserPanelState | null>,
+    setBounds: (ptyId: string, rect: BrowserRect | null) => {
+      ipcRenderer.send(BROWSER_CHANNELS.setBounds, ptyId, rect);
+    },
+    navigate: (ptyId: string, typed: string) => ipcRenderer.invoke(BROWSER_CHANNELS.navigate, ptyId, typed) as Promise<BrowserNavigateResult>,
+    history: (ptyId: string, action: BrowserHistoryAction) => {
+      ipcRenderer.send(BROWSER_CHANNELS.history, ptyId, action);
+    },
+    snapshot: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.snapshot, ptyId) as Promise<string | null>,
+    onState: (listener: (state: BrowserPanelState) => void) => {
+      const handler = (_event: unknown, state: BrowserPanelState): void => listener(state);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.state, handler);
+    },
+    onOpenRequest: (listener: (request: BrowserOpenRequest) => void) => {
+      const handler = (_event: unknown, request: BrowserOpenRequest): void => listener(request);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.openRequest, handler);
+    },
   },
 
   // Mindscape V1 — the board document (main is the only writer).

@@ -129,6 +129,9 @@ sensível.
   `src/main/accounts/migration/` já mora dentro de `src/main/accounts/`, é o
   mesmo perímetro — o par migrado do `.credentials.json` de um perfil vai
   direto pro cofre, nunca passa por variável de retorno exposta.
+  **Navegador interno não é exceção** (30/10): login no painel é o dono
+  digitando; o Chromium guarda os cookies da partição `persist:donel-browser`
+  e o código do app não os lê nem grava (`docs/design/navegador-interno.md`).
 - **TDD com escopo**: CommandBuilder, SessionIndexer e os módulos de
   `src/main/accounts/` (motor, mods, migração) são puros com vitest; PTY/UI
   validam por smoke roteirizado (T014).
