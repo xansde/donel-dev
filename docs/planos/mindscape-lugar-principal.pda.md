@@ -7,7 +7,7 @@ canal-slack: "não existe — ferramenta pessoal, sem Slack (memória donel-dev-
 taskdex: []  # ferramenta pessoal, sem card
 origem: specs/backlog.md (B34, B35, B31) — pedidos do dono em 31/10
 criado: 2026-10-31
-status: em-execucao
+status: concluido
 aprovado-por: Claude por delegação de Alexandre Lentz, 2026-10-31 ("Pode começar a leva de estudo completa do próximo estágio do donel dev e seguir para desenvolvimento após definir a fatia de hoje!")
 ---
 
