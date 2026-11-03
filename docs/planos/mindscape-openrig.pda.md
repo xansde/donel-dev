@@ -76,8 +76,8 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 ## Fora de escopo
 
 - Adotar o OpenRig (ou tmux) como runtime: sem Windows nativo, e o Donel Dev já é dono dos PTYs.
-- Topologia declarada em YAML antes de rodar: o quadro nasce do uso. (Lido como "nunca escrever
-  YAML à mão": montar o molde no quadro antes de rodar pode — ver item 15.)
+- Arquivo de topologia escrito à mão (YAML). Montar o molde **desenhando no quadro antes de rodar
+  pode** (dono, 03/11) — ver item 15.
 - TUI (`donel tui`): dono, 03/11 — "A TUI não é tão necessária, tendo um modo chat bem
   desenvolvido". Ficam a CLI `donel` e o MCP `donel`; a API local nasce sem depender de TUI.
 - Claude in Chrome (`--chrome`): rejeitado pelo dono em 03/11; sai do app.
@@ -229,6 +229,13 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 - **Pergunta**: uma sessão do quadro tem um papel (ex.: dev, revisor, pesquisa) com orientação
   própria e motor escolhido; o papel sobrevive à renovação em voo (07) e à retomada. Onde o
   papel mora, como o dono cria e troca, e o que o app injeta ao lançar.
+- **Recomendação (03/11), aguardando OK do dono**: o dono perguntou se papel deveria mudar ou se o
+  certo é delegar. **Papel é fixo por lugar.** Trocar o papel de uma sessão viva mistura contexto
+  (um "Revisor" que escreveu o código não revisa com olhos novos), confunde o quadro e as ligações
+  e não tem ganho que delegar não dê. Precisa de outro papel → cria ou acorda a sessão com esse
+  papel e delega pela ligação. Única troca permitida: antes da primeira mensagem (o lugar "ainda
+  não começou"), para corrigir escolha errada. "Continuar este trabalho como Revisor" vira um
+  lugar novo com passagem de bastão, não troca de crachá.
 - **Resolução**: —
 
 ### 13 — Conexões entre sessões com significado
