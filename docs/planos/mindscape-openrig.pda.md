@@ -42,6 +42,13 @@ ao alfa.
 - **01 — O que vale do OpenRig** → vale: cartão-lugar, cartão rico com estado em 3 eixos, prévia do terminal, molduras de grupo, salvar e reabrir o quadro, ferramentas do quadro por MCP; não vale agora: fila/inbox/chatroom entre agentes, topologia em YAML, tmux/daemon ([pesquisa](../pesquisas/openrig-referencia-mindscape-2026-11.md))
 - **02 — Validar MVP e versionamento com o cliente** → validado por delegação do dono, 03/11; ele revê no alfa diário
 
+## Próximo passo depois do protótipo (dono, 03/11)
+
+**Esteira montada no Mindscape** (item 15): "a ideia de configurar as esteiras no mindscape não
+pode morrer. Terminais pré-determinados, com conexões de caminho gerados pelo output de cada
+sessão, similar ao que temos no modo dev, mas mais visual e mais maleável. Isso DEVE CONTINUAR
+PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fechar essa porta.
+
 ## Ainda não especificado
 
 - Vista em tabela e grade de terminais (as outras duas vistas do OpenRig): revisitar quando a
@@ -227,4 +234,19 @@ ao alfa.
 - **Pergunta**: como o Mindscape mostra e dirige várias sessões trabalhando juntas (papéis,
   conexões, quem espera quem, o que precisa do dono) no layout do Donel Dev? Três variantes
   para o dono escolher.
+- **Resolução**: —
+
+### 15 — Esteira montada no Mindscape (próximo passo)
+
+- **Tipo**: refinamento
+- **Prioridade**: alta
+- **Status**: pendente
+- **Bloqueado por**: 11, 14
+- **Pergunta**: o dono monta no Mindscape um molde de fluxo: terminais (sessões com papel,
+  skill e motor) pré-determinados e caminhos entre eles que o output de cada sessão decide
+  (fan-out, fan-in), com um agente geral que acompanha tudo e só leva ao dono as dúvidas que
+  ele não resolve; um bloco por iniciativa, escolhendo o tipo (Desenvolvimento, Bugfix,
+  Homologação...). É o Modo Dev mais visual e maleável. Base: pedido de 24/10 em
+  [`modo-dev-montador-de-fluxo.spec.md`](../produto/modo-dev-montador-de-fluxo.spec.md) e o
+  [contexto medido](../produto/assets/modo-dev-montador-de-fluxo/contexto-atual.md).
 - **Resolução**: —
