@@ -16,6 +16,8 @@ import { esteiraStoreDir } from './esteira-store';
 import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import { LEARNING_CHANNELS, parseRendererGesture, type GestureEvent } from '../shared/learning/gestures';
+import { createGestureDiary, type GestureDiary } from './gesture-diary';
 import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
 import { esteiraOutboxDir } from './esteira-ingest';
@@ -2388,6 +2390,29 @@ function registerMindscapeIpcHandlers(): void {
  * post-it keeps the previous text). The main only forwards: the renderer
  * applies `writeSessionNote` and saves (single writer).
  */
+/** Diário de gestos (B35) — created at boot (needs `app.getPath`); `null` before it. */
+let gestureDiary: GestureDiary | null = null;
+function recordGesture(event: GestureEvent): void {
+  void gestureDiary?.record(event);
+}
+
+/**
+ * Diário de gestos — the single writer of `<userData>/aprendizado/`. The session events come from
+ * the hooks here in the main; the screen gestures come from the renderer, validated, and the main
+ * stamps the time. Only on this machine: nothing is sent anywhere.
+ */
+function registerGestureDiary(): void {
+  gestureDiary = createGestureDiary({ dir: join(app.getPath('userData'), 'aprendizado') });
+  ipcMain.handle(LEARNING_CHANNELS.record, (_event, raw: unknown): void => {
+    const gesture = parseRendererGesture(raw);
+    if (gesture) recordGesture({ ...gesture, at: Date.now() });
+  });
+  semaphoreManager.onPromptSubmitted((ptyId, promptLength) => {
+    const sessionId = activeSessionByPty.get(ptyId);
+    if (sessionId) recordGesture({ type: 'pedido-enviado', sessionId, promptLength, at: Date.now() });
+  });
+}
+
 function registerMindscapeTurnEnded(): void {
   semaphoreManager.onTurnEnded((ptyId, lastAssistantMessage, hookTranscriptPath) => {
     const sessionId = activeSessionByPty.get(ptyId);
@@ -2401,6 +2426,7 @@ function registerMindscapeTurnEnded(): void {
         text = transcriptPath ? await readTranscriptLastAssistantText(transcriptPath) : null;
       }
       if (text === null) return;
+      recordGesture({ type: 'turno-terminou', sessionId, text, at });
       const payload: MindscapeTurnEndedPayload = { sessionId, text, at };
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) window.webContents.send(MINDSCAPE_CHANNELS.turnEnded, payload);
@@ -2992,6 +3018,7 @@ void app.whenReady().then(async () => {
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   registerMindscapeIpcHandlers(); // Mindscape V1
   registerMindscapeTurnEnded(); // Mindscape, fatia 03
+  registerGestureDiary(); // Diário de gestos (B35)
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
   registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)
   registerEsteiraIpcHandlers(); // Spec 010 — esteira nova (store + contrato), ao LADO do mapa atual

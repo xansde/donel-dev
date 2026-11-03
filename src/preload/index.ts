@@ -130,6 +130,7 @@ import {
 } from '../shared/esteira/ipc';
 
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
 
@@ -423,6 +424,13 @@ const donelApi: DonelApi = {
     saveImage: (bytes: ArrayBuffer, mediaType: string) =>
       ipcRenderer.invoke(MINDSCAPE_CHANNELS.saveImage, { bytes, mediaType }) as Promise<MindscapeSaveImageResult>,
     readImage: (imageId: string) => ipcRenderer.invoke(MINDSCAPE_CHANNELS.readImage, imageId) as Promise<MindscapeReadImageResult>,
+  },
+
+  // Diário de gestos — fire and forget; the main validates and stamps the time.
+  learning: {
+    record: (gesture: RendererGesture) => {
+      void ipcRenderer.invoke(LEARNING_CHANNELS.record, gesture).catch(() => undefined);
+    },
   },
 
   devMode: {

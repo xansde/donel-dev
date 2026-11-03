@@ -19,6 +19,7 @@ import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
+import type { DonelLearningApi } from './learning/gestures';
 import type { DonelHealthApi } from './health/ipc';
 import type { DonelWorkspaceApi } from './workspace';
 
@@ -447,6 +448,8 @@ export interface DonelApi {
   chat: DonelChatApi;
   /** Mindscape V1 — one board per project, persisted in `mindscape.json` by the main. */
   mindscape: DonelMindscapeApi;
+  /** Diário de gestos — what the owner does, kept only on this machine as examples for a local model (B35). */
+  learning: DonelLearningApi;
   /** 015-jobu-pet — the Jobu on the desktop. Exposed in both windows (the main one and the pet's); each one uses its own half. */
   pet: DonelPetApi;
   /** Saúde do computador — RAM, disco e processos que estão pesando, com a ação de encerrar um processo. */
