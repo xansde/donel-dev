@@ -1,0 +1,886 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mindscape como time de sessões — protótipo</title>
+<style>
+/* =====================================================================
+   TOKENS — copiados literalmente do repo. Nada aqui foi inventado.
+   (mesmo bloco de docs/prototipos/mindscape/final.html, conferido contra
+   design-system/src/tokens.css em 03/11/2026)
+   ===================================================================== */
+:root {
+  /* Superfícies e texto — design-system/src/tokens.css ("Superfícies e texto") */
+  --bg-app: #0e1116;
+  --bg-panel: #151a21;
+  --bg-raised: #1c232c;
+  --border: #28303b;
+  --text-primary: #d7dde5;
+  --text-muted: #828d9c;
+  --accent: #4c9cf0;
+  /* Estados do semáforo — design-system/src/tokens.css */
+  --state-working: #4c9cf0;
+  --state-waiting: #e8b44c;
+  --state-permission: #f0684c;
+  --state-done: #5e6873;
+  --state-error: #b678f0;
+  /* Smart zone — design-system/src/tokens.css */
+  --zone-ok: #3dce8f;
+  --zone-warn: #e8b44c;
+  --zone-over: #f0684c;
+  /* Identidade do Donel / post-it — design-system/src/tokens.css + design/design-system.md §6 */
+  --donel-accent: #e8b44c;
+  --postit-bg: #3a3526;
+  /* Chips de fase da Esteira — design-system/src/tokens.css */
+  --phase-discovery: #8896b3;
+  --phase-plano: #9b8fd9;
+  --phase-implementar: #5fb0a8;
+  --phase-validar: #d9a05f;
+  --phase-concluir: #7fbf83;
+  --phase-design: #c97fa8;
+  /* Tipografia — design-system/src/tokens.css (§3); fontes self-hosted no app, fallback aqui */
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+  --text-body-size: 13px;
+  --text-body-line-height: 1.5;
+  --text-caption-size: 11px;
+  --text-heading-size: 15px;
+  --text-mono-size: 12.5px;
+  --weight-regular: 400;
+  --weight-semibold: 600;
+  /* Espaçamento, raio, densidade — design-system/src/tokens.css (§4) */
+  --space-half: 4px;
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --list-row-height-min: 30px;
+  --control-height: 30px;
+  --panel-padding: 12px;
+  --sidebar-width: 240px;
+  --statusbar-height: 28px;
+  --hairline: 1px solid var(--border);
+  --shadow-modal: 0 8px 24px rgba(0, 0, 0, 0.4);
+  /* Motion e foco — design-system/src/tokens.css (§7, §9) */
+  --duration-micro: 120ms;
+  --duration-panel: 200ms;
+  --ease-standard: cubic-bezier(0, 0, 0.2, 1);
+  /* Paleta de cor de aba — src/shared/tabAppearance.ts + TerminalTab.module.css */
+  --tabc-none: var(--border);
+  --tabc-accent: var(--accent);
+  --tabc-donel-accent: var(--donel-accent);
+  --tabc-permission: var(--state-permission);
+}
+
+/* ============ Guia do protótipo (NÃO faz parte do design avaliado) ============
+   Papel claro de propósito: tudo que está em fundo creme é explicação, não tela. */
+:root { --g-bg: #f3efe4; --g-ink: #22262c; --g-mute: #5b6470; --g-line: #d8d1bf; --g-hi: #b4521f; }
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { overflow: hidden; background: var(--bg-app); color: var(--text-primary); font-family: var(--font-ui);
+  font-size: var(--text-body-size); line-height: var(--text-body-line-height); }
+button { font: inherit; color: inherit; }
+.page { display: grid; grid-template-columns: 1fr 380px; height: 100vh; }
+.page.noguide { grid-template-columns: 1fr 0; }
+.page.noguide .guide { display: none; }
+
+/* ===================== Casco do app (App.module.css) ===================== */
+.app { display: grid; grid-template-rows: 34px 1fr var(--statusbar-height); height: 100vh; min-width: 0; position: relative; }
+.titlebar { display: flex; align-items: center; gap: var(--space-1); padding: 0 var(--space-1); background: var(--bg-panel); border-bottom: var(--hairline); }
+.brand { font-weight: var(--weight-semibold); padding: 0 6px; }
+.pill { font-family: var(--font-mono); font-size: var(--text-caption-size); color: var(--text-muted); border: var(--hairline); border-radius: var(--radius-sm); padding: 2px 8px; }
+.spacer { flex: 1; }
+.seg { display: inline-flex; gap: 2px; padding: 2px; background: var(--bg-panel); border: var(--hairline); border-radius: var(--radius-sm); }
+.seg button { height: 24px; padding: 0 10px; border: none; border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.seg button.on { background: var(--bg-raised); color: var(--text-primary); font-weight: var(--weight-semibold); }
+.badge { display: inline-flex; gap: 6px; align-items: center; padding: 4px 10px; background: var(--bg-panel); border: var(--hairline); border-radius: 999px; line-height: 1; font-size: var(--text-caption-size); }
+.badge b { color: var(--zone-ok); }
+.body { display: grid; grid-template-columns: 44px 1fr; min-height: 0; }
+.rail { background: var(--bg-panel); border-right: var(--hairline); display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 8px; }
+.rail span { width: 28px; height: 28px; border-radius: var(--radius-sm); display: grid; place-items: center; color: var(--text-muted); font-size: 12px; border: 1px solid transparent; }
+.rail span.on { border-color: var(--border); color: var(--text-primary); background: var(--bg-raised); }
+.center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.tabbar { display: flex; align-items: flex-end; gap: 2px; height: 36px; padding: 0 var(--space-1); border-bottom: var(--hairline); flex: none; overflow: hidden; }
+.tab { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px 0 7px; background: var(--bg-app);
+  border-top: 2px solid var(--stripe, var(--border)); border-right: var(--hairline); border-radius: 6px 6px 0 0; white-space: nowrap; }
+.tab .tn { font-family: var(--font-mono); font-size: var(--text-mono-size); color: var(--text-muted); }
+.tab .tr { font-size: 10px; color: var(--text-muted); border: var(--hairline); border-radius: 4px; padding: 0 4px; }
+.slot { position: relative; flex: 1; min-height: 0; }
+.statusbar { display: flex; align-items: center; gap: 8px; padding: 0 var(--panel-padding); background: var(--bg-panel); border-top: var(--hairline);
+  font-size: var(--text-caption-size); color: var(--text-muted); white-space: nowrap; overflow: hidden; }
+.statusbar .sep { color: var(--border); }
+.mono { font-family: var(--font-mono); }
+
+/* ===================== Vocabulário: estado, sessão, post-it ===================== */
+.st-working { --st: var(--state-working); }
+.st-waiting { --st: var(--state-waiting); }
+.st-permission { --st: var(--state-permission); }
+.st-done { --st: var(--state-done); }
+.st-unknown { --st: var(--text-muted); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+.tb-btn { height: 26px; padding: 0 10px; white-space: nowrap; background: var(--bg-raised); border: var(--hairline); border-radius: var(--radius-sm); cursor: pointer; }
+.tb-btn:hover { border-color: var(--text-muted); }
+.tb-btn.ghost { background: none; color: var(--text-muted); }
+.tb-btn.hot { border-color: color-mix(in srgb, var(--state-permission) 60%, transparent); color: var(--state-permission); }
+.legend { font-size: var(--text-caption-size); color: var(--text-muted); }
+.legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--text-muted); vertical-align: middle; margin: 0 4px 0 8px; }
+.legend i.dash { border-top-style: dashed; }
+.legend i.dbl { border-top: 4px double var(--text-muted); }
+
+/* Quadro */
+.board-wrap { position: relative; flex: 1; overflow: auto; background-color: var(--bg-app);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 22px 22px; }
+.world { position: relative; width: 1080px; height: 640px; margin: 8px; }
+.world svg.links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.links path { fill: none; stroke: var(--text-muted); stroke-width: 1.6; }
+.links path.dash { stroke-dasharray: 5 4; }
+.links path.dbl { stroke-width: 4; stroke: var(--text-muted); }
+.links path.dbl-in { stroke-width: 1.4; stroke: var(--bg-app); }
+.links path.lit { stroke: var(--accent); }
+.links text { fill: var(--text-muted); font-size: 10px; font-family: var(--font-ui); }
+.links .potato { fill: var(--accent); }
+.frame { position: absolute; border: 1px dashed var(--border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg-panel) 55%, transparent); }
+.frame-label { position: absolute; top: 8px; left: 12px; right: 12px; display: flex; gap: 8px; align-items: center; font-weight: var(--weight-semibold); }
+.frame-label .sub { font-weight: var(--weight-regular); color: var(--text-muted); font-size: var(--text-caption-size); }
+
+.sess { position: absolute; width: 250px; background: var(--bg-raised); border: var(--hairline); border-top: 3px solid var(--stripe, var(--border));
+  border-radius: var(--radius-md); padding: 12px 10px 8px; display: flex; flex-direction: column; gap: 5px; cursor: default;
+  transition: box-shadow var(--duration-micro) var(--ease-standard), opacity var(--duration-panel); }
+.sess .seal { position: absolute; top: -10px; left: 8px; font-size: 10px; font-weight: var(--weight-semibold); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-muted); background: var(--bg-app); border: var(--hairline); border-radius: var(--radius-sm); padding: 0 5px; line-height: 16px; }
+.sess .role { position: absolute; top: -10px; right: 8px; font-size: 10px; font-weight: var(--weight-semibold); line-height: 16px; padding: 0 6px; border-radius: var(--radius-sm);
+  color: var(--rc); border: 1px solid color-mix(in srgb, var(--rc) 50%, transparent); background: color-mix(in srgb, var(--rc) 14%, var(--bg-app)); }
+.sess-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.ring { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--st); display: grid; place-items: center; font-size: 8px; color: var(--st); flex: none; }
+.st-working .ring, .st-permission .ring { animation: pulse 2000ms ease-in-out infinite; }
+.st-permission .ring { animation-duration: 1000ms; }
+.st-unknown .ring { border-style: dashed; }
+.sess-name { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: var(--text-mono-size); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess-row { display: flex; align-items: center; gap: 6px; font-size: var(--text-caption-size); color: var(--text-muted); }
+.motor { font-family: var(--font-mono); border: var(--hairline); border-radius: 4px; padding: 0 4px; }
+.ctx { margin-left: auto; font-family: var(--font-mono); color: var(--zc, var(--zone-ok)); }
+.sess-state { color: var(--st); font-weight: var(--weight-semibold); }
+.axes { font-size: 10px; color: var(--text-muted); letter-spacing: .02em; }
+.need { font-size: var(--text-caption-size); font-weight: var(--weight-semibold); color: var(--state-permission); }
+.inbox { font-size: var(--text-caption-size); color: var(--donel-accent); }
+.gen { font-size: 10px; color: var(--accent); }
+.sess.st-permission { box-shadow: 0 0 0 1px var(--state-permission), 0 0 0 4px color-mix(in srgb, var(--state-permission) 30%, transparent); }
+.sess.st-waiting { box-shadow: 0 0 0 1px var(--state-waiting); }
+.sess.dormant { background: var(--bg-panel); opacity: .75; }
+.sess.dormant .sess-name { color: var(--text-muted); }
+.sess.renewing { box-shadow: 0 0 0 1px var(--accent), 0 0 0 5px color-mix(in srgb, var(--accent) 25%, transparent); }
+
+.note { position: absolute; width: 230px; background: var(--postit-bg); border-radius: var(--radius-sm); border-top: 3px solid var(--stripe, var(--border));
+  padding: 9px 11px 10px; display: flex; flex-direction: column; gap: 6px; }
+.note p { margin: 0; }
+.note-author { align-self: flex-start; padding: 1px 6px; border-radius: 4px; background: rgba(0,0,0,.15); font-family: var(--font-mono); font-size: var(--text-caption-size);
+  color: color-mix(in srgb, var(--text-primary) 80%, transparent); }
+.note-meta { font-size: var(--text-caption-size); color: color-mix(in srgb, var(--text-primary) 65%, transparent); }
+.note.by-user { clip-path: polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%); }
+.note .you { font-weight: var(--weight-semibold); color: var(--donel-accent); }
+
+/* Prévia do terminal (hover) */
+.preview { position: absolute; z-index: 40; width: 420px; background: #0a0d11; border: var(--hairline); border-radius: var(--radius-md); box-shadow: var(--shadow-modal);
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.45; display: none; }
+.preview.show { display: block; }
+.preview-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: var(--hairline); font-family: var(--font-ui); font-size: var(--text-caption-size); color: var(--text-muted); }
+.preview-head .live { color: var(--zone-ok); }
+.preview pre { margin: 0; padding: 8px 10px; white-space: pre-wrap; color: #b9c2cd; max-height: 220px; overflow: hidden; }
+.preview pre .env { color: var(--donel-accent); }
+.preview pre .perm { color: var(--state-permission); }
+
+/* Ferramentas do quadro */
+.btools { display: flex; align-items: center; gap: 8px; padding: 6px var(--space-1); border-bottom: var(--hairline); flex: none; background: var(--bg-app); flex-wrap: wrap; }
+
+/* ===================== A — Quadro-mesa ===================== */
+.a-wrap, .b-wrap, .c-wrap { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.needstrip { display: flex; align-items: center; gap: 8px; padding: 5px var(--space-1); border-bottom: var(--hairline); background: var(--bg-panel); flex: none; min-height: 34px; flex-wrap: wrap; }
+.needstrip .lbl { font-size: var(--text-caption-size); font-weight: var(--weight-semibold); text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.nchip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--cc) 55%, transparent);
+  background: color-mix(in srgb, var(--cc) 12%, transparent); font-size: var(--text-caption-size); cursor: pointer; }
+.nchip b { color: var(--cc); }
+.calm { font-size: var(--text-caption-size); color: var(--text-muted); }
+
+/* ===================== B — Quadro + coluna de decisões ===================== */
+.b-main { flex: 1; display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
+.b-left { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.col { border-left: var(--hairline); background: var(--bg-panel); overflow-y: auto; padding: var(--panel-padding); display: flex; flex-direction: column; gap: 10px; }
+.col h4 { margin: 4px 0 0; font-size: var(--text-caption-size); text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); display: flex; gap: 6px; align-items: center; }
+.dcard { background: var(--bg-raised); border: var(--hairline); border-left: 3px solid var(--cc); border-radius: var(--radius-sm); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.dcard .who { font-size: var(--text-caption-size); color: var(--text-muted); }
+.dcard .what { font-weight: var(--weight-semibold); }
+.dcard .acts { display: flex; gap: 4px; flex-wrap: wrap; }
+.dcard .acts button { height: 22px; padding: 0 7px; font-size: var(--text-caption-size); background: var(--bg-app); border: var(--hairline); border-radius: 4px; cursor: pointer; }
+.dcard .acts button.pri { border-color: var(--accent); color: var(--accent); }
+.prog { font-size: var(--text-caption-size); color: var(--text-muted); display: flex; gap: 6px; align-items: baseline; }
+.prog b { color: var(--text-primary); font-weight: var(--weight-regular); }
+
+/* ===================== C — Líder ===================== */
+.c-main { flex: 1; display: grid; grid-template-columns: 360px 1fr; min-height: 0; }
+.chat { border-right: var(--hairline); background: var(--bg-panel); display: flex; flex-direction: column; min-height: 0; }
+.chat-head { padding: 8px var(--panel-padding); border-bottom: var(--hairline); display: flex; gap: 8px; align-items: center; }
+.chat-body { flex: 1; overflow-y: auto; padding: var(--panel-padding); display: flex; flex-direction: column; gap: 10px; }
+.msg { max-width: 92%; padding: 8px 10px; border-radius: var(--radius-md); background: var(--bg-raised); border: var(--hairline); }
+.msg.me { align-self: flex-end; background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised)); }
+.msg .from { font-size: var(--text-caption-size); color: var(--text-muted); margin-bottom: 2px; }
+.msg.alert { border-color: color-mix(in srgb, var(--state-permission) 60%, transparent); }
+.composer { border-top: var(--hairline); padding: 8px; }
+.composer div { border: var(--hairline); border-radius: var(--radius-sm); padding: 8px; color: var(--text-muted); background: var(--bg-app); }
+
+.b-main .world { zoom: .8; }
+.c-main .world { zoom: .72; }
+
+/* Destaque do guia */
+.tour-hi { outline: 2px solid var(--g-hi) !important; outline-offset: 4px; animation: tourpulse 1.2s ease-in-out 3; }
+@keyframes tourpulse { 50% { outline-offset: 9px; } }
+
+/* ===================== Guia (fundo creme) ===================== */
+.guide { background: var(--g-bg); color: var(--g-ink); border-left: 3px solid var(--g-hi); display: flex; flex-direction: column; min-height: 0; font-size: 13px; }
+.g-head { padding: 12px 14px 8px; border-bottom: 1px solid var(--g-line); }
+.g-head h1 { font-size: 15px; margin: 0 0 4px; }
+.g-head p { margin: 0; color: var(--g-mute); font-size: 12px; }
+.g-tabs { display: flex; gap: 4px; padding: 8px 14px; border-bottom: 1px solid var(--g-line); flex-wrap: wrap; }
+.g-tabs button { border: 1px solid var(--g-line); background: #fff; border-radius: 999px; padding: 3px 10px; cursor: pointer; font-size: 12px; color: var(--g-ink); }
+.g-tabs button.on { background: var(--g-ink); color: #fff; border-color: var(--g-ink); }
+.g-body { flex: 1; overflow-y: auto; padding: 12px 14px 80px; }
+.g-body h2 { font-size: 13px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .04em; color: var(--g-mute); }
+.g-body p { margin: 0 0 8px; }
+.scen { display: grid; gap: 6px; }
+.scen button { text-align: left; border: 1px solid var(--g-line); background: #fff; border-radius: 8px; padding: 7px 10px; cursor: pointer; color: var(--g-ink); }
+.scen button:hover { border-color: var(--g-hi); }
+.scen button small { display: block; color: var(--g-mute); }
+.step { border: 1px solid var(--g-line); background: #fff; border-radius: 8px; padding: 9px 11px; margin-bottom: 8px; cursor: pointer; }
+.step:hover { border-color: var(--g-hi); }
+.step .t { font-weight: 600; display: flex; gap: 8px; align-items: baseline; }
+.step .n { color: var(--g-hi); font-family: var(--font-mono); }
+.step .tag { margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 4px; background: #e8e2d1; color: var(--g-mute); font-weight: 600; }
+.step .tag.ja { background: #d8ead9; color: #2f6b38; }
+.step .tag.dep { background: #ece3cf; color: #7a5a1c; }
+.step dl { display: grid; grid-template-columns: 74px 1fr; gap: 3px 8px; margin: 6px 0 0; font-size: 12px; }
+.step dt { color: var(--g-mute); }
+.step dd { margin: 0; }
+.ask { border-left: 3px solid var(--g-hi); background: #fff; padding: 8px 10px; border-radius: 0 8px 8px 0; margin-bottom: 8px; }
+.ask b { display: block; margin-bottom: 2px; }
+.gtable { width: 100%; border-collapse: collapse; font-size: 12px; background: #fff; }
+.gtable th, .gtable td { border: 1px solid var(--g-line); padding: 4px 6px; text-align: left; vertical-align: top; }
+.gtable th { background: #ebe5d5; }
+.g-foot { padding: 8px 14px; border-top: 1px solid var(--g-line); font-size: 11px; color: var(--g-mute); }
+.guide-toggle { position: fixed; top: 6px; right: 392px; z-index: 9998; font: 12px system-ui, sans-serif; background: var(--g-bg); color: var(--g-ink);
+  border: 1px solid var(--g-hi); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.page.noguide + .guide-toggle, .noguide-btn { right: 12px; }
+
+/* Folhas extras (Esteira montada, Portas) — sobre o app, abertas pelo guia */
+.sheet { position: absolute; inset: 0; background: var(--bg-app); z-index: 80; display: none; flex-direction: column; }
+.sheet.show { display: flex; }
+.sheet-head { display: flex; align-items: center; gap: 10px; padding: 8px var(--panel-padding); border-bottom: var(--hairline); background: var(--bg-panel); }
+.sheet-head .x { margin-left: auto; }
+.chip { display: inline-flex; padding: 1px 7px; border-radius: var(--radius-sm); border: 1px solid color-mix(in srgb, var(--phase-color) 45%, transparent);
+  background: color-mix(in srgb, var(--phase-color) 16%, transparent); color: var(--phase-color); font-size: var(--text-caption-size); font-weight: var(--weight-semibold); }
+.station { position: absolute; width: 170px; background: var(--bg-raised); border: var(--hairline); border-top: 3px solid var(--phase-color, var(--border)); border-radius: var(--radius-md); padding: 8px 9px; font-size: var(--text-caption-size); }
+.station.wait { border-style: dashed; border-top-style: solid; opacity: .7; }
+.station.run { box-shadow: 0 0 0 1px var(--state-working); }
+.station.ok { opacity: 1; }
+.station.gate { background: color-mix(in srgb, var(--donel-accent) 10%, var(--bg-raised)); }
+.station .sn { font-weight: var(--weight-semibold); font-size: var(--text-body-size); display: flex; gap: 6px; align-items: center; }
+.station .sx { color: var(--text-muted); }
+.station .out { margin-top: 4px; font-family: var(--font-mono); font-size: 10.5px; }
+.ports { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; padding: 12px; flex: 1; min-height: 0; overflow: auto; }
+.port { background: var(--bg-panel); border: var(--hairline); border-radius: var(--radius-md); display: flex; flex-direction: column; min-height: 0; }
+.port h3 { margin: 0; padding: 8px 10px; border-bottom: var(--hairline); font-size: var(--text-body-size); display: flex; gap: 8px; align-items: baseline; }
+.port h3 small { color: var(--text-muted); font-weight: 400; }
+.port pre { margin: 0; padding: 10px; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: #b9c2cd; white-space: pre; overflow: auto; flex: 1; background: #0a0d11; border-radius: 0 0 var(--radius-md) var(--radius-md); }
+.port pre .k { color: var(--accent); } .port pre .y { color: var(--donel-accent); } .port pre .r { color: var(--state-permission); } .port pre .g { color: var(--zone-ok); } .port pre .m { color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div class="page" id="page">
+<div class="app">
+  <header class="titlebar">
+    <span class="brand">Donel Dev</span>
+    <span class="pill">~/seazone/atlas ▾</span>
+    <span class="spacer"></span>
+    <div class="seg"><button type="button">Uso geral</button><button type="button" class="on">Mindscape</button><button type="button">Modo Dev</button></div>
+    <span class="spacer"></span>
+    <span class="badge">conta 2 · <b>62%</b></span>
+  </header>
+  <div class="body">
+    <nav class="rail" title="Barra lateral recessiva (B34): recolhida, só ícones">
+      <span class="on">◎</span><span>★</span><span>⌕</span><span>⚙</span>
+    </nav>
+    <main class="center">
+      <div class="tabbar" id="tabbar"></div>
+      <div class="slot" id="slot">
+
+        <!-- ============================ A ============================ -->
+        <section class="proto-variant" data-variant="A" data-name="Quadro-mesa">
+          <div class="a-wrap">
+            <div class="needstrip" data-tour="decide-A"><span class="lbl">Precisa de você</span><span class="need-host"></span></div>
+            <div class="btools" data-tour="tools-A"></div>
+            <div class="board-wrap"><div class="world" data-world="A"></div></div>
+          </div>
+        </section>
+
+        <!-- ============================ B ============================ -->
+        <section class="proto-variant" data-variant="B" data-name="Quadro + coluna de decisões">
+          <div class="b-wrap">
+            <div class="b-main">
+              <div class="b-left">
+                <div class="btools" data-tour="tools-B"></div>
+                <div class="board-wrap"><div class="world" data-world="B"></div></div>
+              </div>
+              <aside class="col" data-tour="decide-B">
+                <h4>Decisões <span class="count-host"></span></h4>
+                <div class="dec-host"></div>
+                <h4>Andamento</h4>
+                <div class="prog"><b>Dev</b> editando <span class="mono">src/auth/oauth.ts</span></div>
+                <div class="prog"><b>Pesquisa</b> parou · resumo escrito há 12 min</div>
+                <h4>Entregas</h4>
+                <div class="dcard" style="--cc: var(--zone-ok)"><span class="who">Pesquisa · há 12 min</span><span class="what">Comparativo de provedores OAuth</span>
+                  <div class="acts"><button type="button">Abrir arquivo</button><button type="button">Arquivar</button></div></div>
+              </aside>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============================ C ============================ -->
+        <section class="proto-variant" data-variant="C" data-name="Líder conversa com você">
+          <div class="c-wrap">
+            <div class="c-main">
+              <aside class="chat" data-tour="decide-C">
+                <div class="chat-head"><span class="ring st-working" style="--st: var(--state-working)">▶</span><strong>Líder</strong><span class="motor mono" style="font-size:11px;color:var(--text-muted)">opus 5.5</span>
+                  <span class="spacer"></span><span class="legend">fala com você e reparte</span></div>
+                <div class="chat-body" id="c-chat">
+                  <div class="msg me"><div class="from">Você · 14:02</div>Quero o login com Google no atlas até sexta. O Dev implementa, o Revisor confere, a Pesquisa compara provedores.</div>
+                  <div class="msg"><div class="from">Líder · 14:03</div>Combinado. Mandei ao Dev o objetivo e ao Revisor o critério de aceite. A Pesquisa já está comparando Google, Microsoft e Auth0. Te aviso quando alguém parar num pedido seu.</div>
+                  <div class="msg"><div class="from">Líder · 14:31</div>A Pesquisa terminou: recomenda o Google direto, sem Auth0. Resumo no post-it dela.</div>
+                </div>
+                <div class="composer"><div>Escreva para o Líder…</div></div>
+              </aside>
+              <div class="b-left">
+                <div class="btools" data-tour="tools-C"></div>
+                <div class="board-wrap"><div class="world" data-world="C"></div></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div class="preview" id="preview"><div class="preview-head"><span id="pv-title"></span><span class="spacer"></span><span id="pv-mode">espelho parado · clique para ao vivo</span></div><pre id="pv-body"></pre></div>
+
+        <!-- ===================== Folha: Esteira montada (item 15) ===================== -->
+        <div class="sheet" id="sheet-esteira">
+          <div class="sheet-head"><strong>Iniciativa · Bugfix</strong><span class="legend">molde "Bugfix" aplicado em atlas · moldura no quadro</span>
+            <button type="button" class="tb-btn" id="est-step">▶ Próximo passo da simulação</button><button type="button" class="tb-btn ghost" id="est-reset">Recomeçar</button>
+            <button type="button" class="tb-btn ghost x" data-close>✕ Fechar</button></div>
+          <div class="board-wrap"><div class="world" id="est-world" style="height:600px"></div></div>
+        </div>
+
+        <!-- ===================== Folha: Portas CLI / TUI / MCP ===================== -->
+        <div class="sheet" id="sheet-portas">
+          <div class="sheet-head"><strong>Três portas para o mesmo time</strong><span class="legend">além da janela: um terminal qualquer, a TUI e o agente pelo MCP</span>
+            <button type="button" class="tb-btn ghost x" data-close>✕ Fechar</button></div>
+          <div class="ports">
+            <div class="port"><h3>CLI <small>donel · qualquer terminal ou motor com shell</small></h3><pre id="port-cli"></pre></div>
+            <div class="port"><h3>TUI <small>donel tui · inclusive do outro PC</small></h3><pre id="port-tui"></pre></div>
+            <div class="port"><h3>MCP <small>servidor donel · token por aba</small></h3><pre id="port-mcp"></pre></div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+  <footer class="statusbar">
+    <span>conta 2 · 62%</span><span class="sep">|</span><span class="mono">opus 5.5/high</span><span class="sep">|</span>
+    <span>4 sessões no quadro · 3 vivas</span><span class="sep">|</span><span id="sb-msg">pronto</span>
+  </footer>
+</div>
+
+<!-- ============================ GUIA ============================ -->
+<aside class="guide" id="guide">
+  <div class="g-head">
+    <h1>Mindscape como time de sessões</h1>
+    <p>Protótipo para avaliar a ideia do OpenRig no layout do Donel Dev, antes de qualquer código. O fundo creme é este guia; o escuro à esquerda é a tela proposta. Troque a forma da tela com ← → ou pela barra embaixo.</p>
+  </div>
+  <div class="g-tabs" id="g-tabs">
+    <button type="button" data-g="tour" class="on">Tour</button>
+    <button type="button" data-g="cenarios">Cenários</button>
+    <button type="button" data-g="esteira">Esteira montada</button>
+    <button type="button" data-g="portas">CLI · TUI · MCP</button>
+    <button type="button" data-g="mapa">OpenRig → Donel</button>
+    <button type="button" data-g="decidir">Para você decidir</button>
+  </div>
+  <div class="g-body" id="g-body"></div>
+  <div class="g-foot">Fonte: <span class="mono">docs/pesquisas/openrig-estudo-profundo-2026-11.md</span> (OpenRig no commit c9b1ae48). Nada aqui funciona de verdade: dados de exemplo, sem backend.</div>
+</aside>
+</div>
+<button type="button" class="guide-toggle" id="guide-toggle">Esconder guia</button>
+
+<script>
+/* ============================ Dados do cenário ============================ */
+var ROLE = { Dev: 'var(--phase-implementar)', Revisor: 'var(--phase-validar)', Pesquisa: 'var(--phase-discovery)', 'Líder': 'var(--phase-plano)' };
+var BASE = {
+  dev: { name: 'login-social', role: 'Dev', motor: 'opus 5.5', ctx: 38, tok: '152k', st: 'working', state: 'Trabalhando', ago: 'agora',
+         axes: 'aberta · trabalhando · viva', stripe: 'var(--tabc-accent)', gen: 'conversa 1', x: 40, y: 70 },
+  rev: { name: 'revisao-login', role: 'Revisor', motor: 'codex', ctx: 21, tok: '84k', st: 'waiting', state: 'Parada · esperando o Dev', ago: '3 min',
+         axes: 'aberta · parada · viva', stripe: 'var(--tabc-donel-accent)', gen: 'conversa 1', x: 360, y: 70 },
+  pes: { name: 'provedores-oauth', role: 'Pesquisa', motor: 'sonnet 5.5', ctx: 12, tok: '48k', st: 'waiting', state: 'Parada · terminou', ago: '12 min',
+         axes: 'aberta · parada · viva', stripe: 'var(--tabc-none)', gen: 'conversa 1', x: 760, y: 70 },
+  old: { name: 'spike-sso', role: null, motor: '', ctx: null, tok: '', st: 'done', state: '☾ Fechada · 31/10 18:40', ago: '',
+         axes: 'fechada · parada · retomável', stripe: 'var(--tabc-none)', gen: '', x: 760, y: 430, dormant: true },
+  lid: { name: 'lider-atlas', role: 'Líder', motor: 'opus 5.5', ctx: 9, tok: '36k', st: 'working', state: 'Trabalhando · repartindo', ago: 'agora',
+         axes: 'aberta · trabalhando · viva', stripe: 'var(--tabc-accent)', gen: 'conversa 1', x: 760, y: 470 }
+};
+var NOTES = [
+  { id: 'n-dev', by: 'login-social', x: 40, y: 270, text: 'Callback do Google pronto. Falta o refresh do token e os testes do fluxo de erro.', meta: 'fim do turno · 14:28' },
+  { id: 'n-rev', by: 'revisao-login', x: 360, y: 270, text: 'Critério de aceite: login, logout e conta sem e-mail verificado recusada com mensagem clara.', meta: 'fim do turno · 14:10' },
+  { id: 'n-pes', by: 'provedores-oauth', x: 760, y: 270, text: 'Recomendo Google direto (sem Auth0): menos custo e o SDK cobre o refresh.', meta: 'fim do turno · 14:30' },
+  { id: 'n-you', by: null, x: 40, y: 430, text: '<span class="you">Você</span> · Prioridade: login até sexta. Não mexer no cadastro antigo.', meta: 'hoje 13:55' }
+];
+/* Ligações com tipo: delega a (contínua →), revisa (tracejada ←), conversa com (dupla ↔), escala para (↑ pontilhada) */
+var LINKS = [
+  { id: 'l-del', from: 'dev', to: 'rev', type: 'delega a', cls: '', d: 'M290,105 L360,105' },
+  { id: 'l-rev', from: 'rev', to: 'dev', type: 'revisa', cls: 'dash', d: 'M360,150 C335,175 315,175 290,150' },
+  { id: 'l-con', from: 'dev', to: 'pes', type: 'conversa com', cls: 'dbl', d: 'M165,214 C165,250 885,250 885,214' }
+];
+var LEADER_LINKS = [
+  { id: 'l-l1', from: 'lid', to: 'dev', type: 'delega a', cls: '', d: 'M760,590 C500,640 10,640 10,400 S 20,160 38,150' },
+  { id: 'l-l2', from: 'lid', to: 'rev', type: 'delega a', cls: '', d: 'M760,500 C690,480 700,140 612,140' },
+  { id: 'l-l3', from: 'lid', to: 'pes', type: 'delega a', cls: '', d: 'M1010,520 C1065,520 1065,140 1012,140' }
+];
+var PREVIEW = {
+  dev: ['● Update(src/auth/oauth.ts)', '  ⎿  Updated src/auth/oauth.ts with 14 additions', '', '● Agora o refresh do token. Vou ler o SDK.', '● Read(node_modules/@google/oauth/README.md)', '  ⎿  Read 212 lines', '', '✻ Pensando…'],
+  rev: ['● Critério de aceite gravado em docs/aceite-login.md', '', '● Esperando o Dev pedir revisão.', '', '>'],
+  pes: ['● Write(docs/pesquisas/provedores-oauth.md)', '  ⎿  Wrote 64 lines', '', '● Resumo: Google direto. Auth0 só se houver SSO corporativo.', '', '>'],
+  lid: ['● sessao_enviar("login-social", "Objetivo: login Google até sexta…")', '  ⎿  entregue', '● sessao_enviar("revisao-login", "Critério de aceite…")', '  ⎿  entregue', '', '✻ Acompanhando o time…'],
+  old: ['(sessão fechada — duplo clique retoma a conversa no mesmo lugar)']
+};
+
+/* Estado mutável da simulação */
+var S;
+function resetState() {
+  S = JSON.parse(JSON.stringify(BASE));
+  S.needs = [];        // { id, sess, cc, text }
+  S.inboxDev = null;   // texto da mensagem retida/entregue
+  S.lit = {};          // ligações acesas
+  S.previewExtra = { dev: [] };
+}
+resetState();
+
+/* ============================ Render do quadro ============================ */
+function sessHTML(key, s) {
+  var zc = s.ctx == null ? '' : (s.ctx < 60 ? 'var(--zone-ok)' : s.ctx < 85 ? 'var(--zone-warn)' : 'var(--zone-over)');
+  var ring = { working: '▶', waiting: '◐', permission: '!', done: '☾', unknown: '?' }[s.st];
+  var h = '<div class="sess st-' + s.st + (s.dormant ? ' dormant' : '') + (s.renewing ? ' renewing' : '') + '" data-sess="' + key + '" data-tour="card-' + key + '" style="left:' + s.x + 'px;top:' + s.y + 'px;--stripe:' + s.stripe + '">';
+  h += '<span class="seal">Sessão</span>';
+  if (s.role) h += '<span class="role" data-tour="role-' + key + '" style="--rc:' + ROLE[s.role] + '">' + s.role + '</span>';
+  h += '<div class="sess-head"><span class="ring">' + ring + '</span><span class="sess-name">' + s.name + '</span></div>';
+  if (s.motor) h += '<div class="sess-row" data-tour="meter-' + key + '"><span class="motor">' + s.motor + '</span><span class="ctx" style="--zc:' + zc + '">' + s.ctx + '% · ' + s.tok + '</span></div>';
+  h += '<div class="sess-row"><span class="sess-state">' + s.state + '</span><span class="spacer"></span><span>' + s.ago + '</span></div>';
+  h += '<div class="axes" data-tour="axes-' + key + '">' + s.axes + '</div>';
+  var mine = S.needs.filter(function (n) { return n.sess === key; });
+  if (mine.length) h += '<div class="need">! ' + mine.length + ' · ' + mine.map(function (n) { return n.kind; }).join(', ') + '</div>';
+  if (key === 'dev' && S.inboxDev) h += '<div class="inbox">' + S.inboxDev + '</div>';
+  if (s.gen && s.genNote) h += '<div class="gen">' + s.genNote + '</div>';
+  return h + '</div>';
+}
+function noteHTML(n) {
+  return '<div class="note' + (n.by ? '' : ' by-user') + '" style="left:' + n.x + 'px;top:' + n.y + 'px;--stripe:var(--tabc-' + (n.by ? 'none' : 'donel-accent') + ')">' +
+    (n.by ? '<span class="note-author">' + n.by + '</span>' : '') + '<p>' + n.text + '</p><span class="note-meta">' + n.meta + '</span></div>';
+}
+function linksSVG(list, v) {
+  var s = '<svg class="links" data-tour="links"><defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#828d9c"/></marker>' +
+    '<marker id="arl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4c9cf0"/></marker></defs>';
+  list.forEach(function (l) {
+    var lit = S.lit[l.id] ? ' lit' : '';
+    if (l.cls === 'dbl') {
+      s += '<path class="dbl' + lit + '" d="' + l.d + '"/><path class="dbl-in" d="' + l.d + '"/>';
+    } else {
+      s += '<path id="p-' + l.id + '-' + v + '" class="' + l.cls + lit + '" d="' + l.d + '" marker-end="url(#' + (lit ? 'arl' : 'ar') + ')"/>';
+    }
+    var m = l.d.match(/-?\d+(\.\d+)?/g).map(Number);
+    var tx = (m[0] + m[m.length - 2]) / 2, ty = Math.min(m[1], m[m.length - 1]) - 6;
+    if (l.id === 'l-rev') ty = 186; if (l.id === 'l-con') { ty = 256; tx = 520; }
+    s += '<text x="' + (tx - 22) + '" y="' + ty + '">' + l.type + '</text>';
+  });
+  return s + '</svg>';
+}
+function renderWorld(v) {
+  var w = document.querySelector('[data-world="' + v + '"]');
+  if (!w) return;
+  var leader = v === 'C';
+  var h = '<div class="frame" data-tour="frame" style="left:20px;top:24px;width:640px;height:580px"><div class="frame-label">Time · login social <span class="sub">moldura · Dev + Revisor · regra do time: "nada de mexer no cadastro antigo"</span></div></div>';
+  h += linksSVG(leader ? LINKS.concat(LEADER_LINKS) : LINKS, v);
+  ['dev', 'rev', 'pes'].forEach(function (k) { h += sessHTML(k, S[k]); });
+  h += sessHTML(leader ? 'lid' : 'old', leader ? S.lid : S.old);
+  NOTES.forEach(function (n) { h += noteHTML(n); });
+  w.innerHTML = h;
+}
+function toolsHTML() {
+  return '<button type="button" class="tb-btn">＋ Post-it</button><button type="button" class="tb-btn" data-tour="newrole">＋ Sessão com papel…</button>' +
+    '<button type="button" class="tb-btn ghost">＋ Moldura</button><button type="button" class="tb-btn ghost">Ligar ▾</button><button type="button" class="tb-btn ghost">Organizar</button>' +
+    '<span class="legend" data-tour="legend">ligações: <i></i>delega a <i class="dash"></i>revisa <i class="dbl"></i>conversa com</span><span class="spacer"></span><span class="legend">passe o mouse num cartão vivo: prévia do terminal</span>';
+}
+function renderNeeds() {
+  var host = document.querySelector('.need-host');
+  host.innerHTML = S.needs.length ? S.needs.map(function (n) {
+    return '<span class="nchip" style="--cc:' + n.cc + '" data-go="' + n.sess + '"><b>' + n.kind + '</b> ' + n.text + '</span>';
+  }).join('') : '<span class="calm">Nada precisa de você agora. Duas sessões trabalhando, uma terminou.</span>';
+  var dec = document.querySelector('.dec-host');
+  dec.innerHTML = S.needs.length ? S.needs.map(function (n) {
+    return '<div class="dcard" style="--cc:' + n.cc + '"><span class="who">' + S[n.sess].name + ' · ' + S[n.sess].role + ' · agora</span><span class="what">' + n.text + '</span>' +
+      '<div class="acts">' + n.acts.map(function (a, i) { return '<button type="button"' + (i === 0 ? ' class="pri"' : '') + '>' + a + '</button>'; }).join('') + '</div></div>';
+  }).join('') : '<div class="calm">Nenhuma decisão pendente.</div>';
+  document.querySelector('.count-host').textContent = S.needs.length ? '(' + S.needs.length + ')' : '';
+}
+function renderTabs() {
+  var t = [['dev', 'Dev'], ['rev', 'Revisor'], ['pes', 'Pesquisa']];
+  if (curVariant() === 'C') t.unshift(['lid', 'Líder']);
+  document.getElementById('tabbar').innerHTML = t.map(function (p) {
+    var s = S[p[0]];
+    return '<span class="tab st-' + s.st + '" style="--stripe:' + s.stripe + '"><span class="ring" style="width:12px;height:12px;font-size:7px">' + ({ working: '▶', waiting: '◐', permission: '!' }[s.st] || '') + '</span><span class="tn">' + s.name + '</span><span class="tr">' + p[1] + '</span></span>';
+  }).join('');
+}
+function renderAll() {
+  ['A', 'B', 'C'].forEach(renderWorld);
+  document.querySelectorAll('[data-tour^="tools-"]').forEach(function (e) { e.innerHTML = toolsHTML(); });
+  renderNeeds(); renderTabs();
+}
+
+/* ============================ Prévia do terminal ============================ */
+var live = 0;
+document.getElementById('slot').addEventListener('mouseover', function (e) {
+  var c = e.target.closest('.sess');
+  var pv = document.getElementById('preview');
+  if (!c) { if (!e.target.closest('.preview')) pv.classList.remove('show'); return; }
+  var k = c.dataset.sess, s = S[k];
+  var lines = (PREVIEW[k] || []).concat(k === 'dev' ? S.previewExtra.dev : []);
+  document.getElementById('pv-title').textContent = s.name + (s.role ? ' · ' + s.role : '') + ' — últimas linhas';
+  document.getElementById('pv-mode').innerHTML = s.dormant ? 'sem terminal' : 'espelho parado · clique para ao vivo (' + live + ' de 2 ao vivo)';
+  document.getElementById('pv-body').innerHTML = lines.join('\n');
+  var r = c.getBoundingClientRect(), sr = document.getElementById('slot').getBoundingClientRect();
+  var left = Math.min(r.left - sr.left, sr.width - 430);
+  pv.style.left = Math.max(8, left) + 'px';
+  pv.style.top = (r.bottom - sr.top + 6) + 'px';
+  pv.classList.add('show');
+});
+document.getElementById('slot').addEventListener('click', function (e) {
+  var c = e.target.closest('.sess');
+  if (c && !S[c.dataset.sess].dormant) {
+    live = Math.min(2, live + 1);
+    document.getElementById('pv-mode').innerHTML = '<span class="live">● ao vivo</span> (' + live + ' de 2; o 3º fecha o mais antigo)';
+  }
+  var g = e.target.closest('[data-go]');
+  if (g) highlight('[data-variant="' + curVariant() + '"] [data-tour="card-' + g.dataset.go + '"]');
+});
+
+/* ============================ Cenários ============================ */
+function curVariant() { var a = document.querySelector('.proto-variant.proto-active'); return a ? a.dataset.variant : 'A'; }
+function chat(html, alert) {
+  var b = document.getElementById('c-chat'); var d = document.createElement('div');
+  d.className = 'msg' + (alert ? ' alert' : ''); d.innerHTML = '<div class="from">Líder · agora</div>' + html; b.appendChild(d); b.scrollTop = b.scrollHeight;
+}
+function status(t) { document.getElementById('sb-msg').textContent = t; }
+var SCEN = {
+  permissao: function () {
+    S.dev.st = 'permission'; S.dev.state = 'Precisa de você'; S.dev.axes = 'aberta · parada · viva';
+    S.needs = S.needs.filter(function (n) { return n.id !== 'perm'; });
+    S.needs.unshift({ id: 'perm', sess: 'dev', kind: 'permissão', cc: 'var(--state-permission)', text: 'Dev quer rodar npm test -- auth', acts: ['Ir ao terminal', 'Aprovar uma vez', 'Negar', 'Segurar'] });
+    S.previewExtra.dev = ['', '<span class="perm">Permissão: rodar `npm test -- auth`?  1. Sim  2. Sim, sempre  3. Não</span>'];
+    renderAll(); status('Dev parou num pedido de permissão');
+    chat('O <b>Dev</b> parou num pedido de permissão: rodar <span class="mono">npm test -- auth</span>. Não respondo pedido de outra sessão; é seu. <a href="#" style="color:var(--accent)">Ir ao terminal</a>', true);
+    highlight('[data-variant="' + curVariant() + '"] [data-tour="decide-' + curVariant() + '"]');
+  },
+  achado: function () {
+    S.inboxDev = '✉ 1 mensagem esperando · você está digitando nesta aba';
+    S.lit['l-rev'] = true; renderAll(); status('Revisor mandou um achado ao Dev — retida: você está digitando na aba do Dev');
+    animatePotato('l-rev');
+    setTimeout(function () {
+      S.inboxDev = '✉ entregue · De: Revisor';
+      S.previewExtra.dev = ['', '<span class="env">De: revisao-login (Revisor) · Para: login-social</span>', '<span class="env">— Conta com e-mail não verificado entra. O aceite pede recusa com mensagem. —</span>', '<span class="env">Responder: sessao_enviar("revisao-login", "…")</span>'];
+      S.needs = S.needs.filter(function (n) { return n.id !== 'ach'; });
+      S.needs.push({ id: 'ach', sess: 'rev', kind: 'achado', cc: 'var(--state-waiting)', text: 'Revisor devolveu 1 achado ao Dev (só para você saber)', acts: ['Ver achado', 'Ok', 'Segurar o Dev'] });
+      renderAll(); status('Você parou de digitar: a mensagem entrou na fila do CLI do Dev');
+      chat('O <b>Revisor</b> devolveu 1 achado ao <b>Dev</b> (conta sem e-mail verificado entrava). O Dev já recebeu; não precisa de você.');
+    }, 2200);
+  },
+  renovacao: function () {
+    S.dev.ctx = 92; S.dev.tok = '248k'; S.dev.renewing = true; S.dev.state = 'Renovando em voo · escrevendo a passagem';
+    S.dev.genNote = 'contexto no limite proposto (250k) · Agora não';
+    renderAll(); status('Dev chegou a 248k: renova no fim do turno');
+    setTimeout(function () {
+      S.dev.ctx = 9; S.dev.tok = '34k'; S.dev.renewing = false; S.dev.state = 'Trabalhando'; S.dev.st = 'working'; S.dev.axes = 'aberta · trabalhando · viva';
+      S.dev.genNote = '↻ Renovada em voo · conversa 2 · passagem: handoff-1503.md';
+      renderAll(); status('Mesmo lugar, mesma aba, mesmo papel: conversa nova com a passagem como 1ª leitura');
+      chat('O <b>Dev</b> renovou em voo (contexto cheio). Continua no mesmo lugar e com o mesmo papel; a passagem está anexada.');
+    }, 2400);
+  },
+  reset: function () { resetState(); live = 0; renderAll(); status('pronto'); }
+};
+function animatePotato(linkId) {
+  var v = curVariant();
+  var path = document.getElementById('p-' + linkId + '-' + v);
+  if (!path || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  var svg = path.ownerSVGElement, dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  dot.setAttribute('r', 5); dot.setAttribute('class', 'potato'); svg.appendChild(dot);
+  var len = path.getTotalLength(), t0 = performance.now();
+  (function step(t) {
+    var k = Math.min(1, (t - t0) / 1400), p = path.getPointAtLength(len * k);
+    dot.setAttribute('cx', p.x); dot.setAttribute('cy', p.y);
+    if (k < 1) requestAnimationFrame(step); else dot.remove();
+  })(t0);
+}
+function highlight(sel) {
+  document.querySelectorAll('.tour-hi').forEach(function (e) { e.classList.remove('tour-hi'); });
+  var el = document.querySelector(sel);
+  if (!el) return;
+  el.classList.add('tour-hi');
+  el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  setTimeout(function () { el.classList.remove('tour-hi'); }, 4200);
+}
+
+/* ============================ Esteira montada (item 15) ============================ */
+var EST = [
+  { id: 'rep', name: 'Reproduzir', role: 'Dev', ph: '--phase-discovery', x: 30, y: 200, cmd: '/bugfix-reproduzir', motor: 'sonnet 5.5' },
+  { id: 'cor', name: 'Corrigir', role: 'Dev', ph: '--phase-implementar', x: 250, y: 200, cmd: '/implementacao', motor: 'opus 5.5' },
+  { id: 'val', name: 'Validar', role: 'Revisor', ph: '--phase-validar', x: 470, y: 110, cmd: '/revisao', motor: 'codex' },
+  { id: 'reg', name: 'Teste de regressão', role: 'Dev', ph: '--phase-validar', x: 470, y: 300, cmd: 'npm test', motor: 'sonnet 5.5' },
+  { id: 'dec', name: 'Você decide', role: null, ph: '--phase-design', x: 690, y: 200, gate: true, cmd: 'parada humana', motor: '' },
+  { id: 'con', name: 'Concluir', role: 'Dev', ph: '--phase-concluir', x: 890, y: 200, cmd: '/esteira-concluir', motor: 'sonnet 5.5' },
+  { id: 'coo', name: 'Coordenador', role: 'Líder', ph: '--phase-plano', x: 470, y: 430, cmd: 'acompanha e resume', motor: 'opus 5.5' }
+];
+var EPATHS = [
+  { id: 'e1', d: 'M200,235 L250,235', when: 'concluído', lx: 204, ly: 222 },
+  { id: 'e2', d: 'M420,225 C445,200 450,160 470,150', when: 'concluído', lx: 400, ly: 165 },
+  { id: 'e3', d: 'M420,245 C445,270 450,320 470,335', when: 'concluído', lx: 400, ly: 318 },
+  { id: 'e4', d: 'M640,150 C665,170 670,210 690,225', when: 'concluído · espera todas', lx: 650, ly: 140 },
+  { id: 'e5', d: 'M640,335 C665,310 670,260 690,245', when: 'concluído · espera todas', lx: 650, ly: 352 },
+  { id: 'e6', d: 'M860,235 L890,235', when: 'você aprovou', lx: 830, ly: 185 },
+  { id: 'e7', d: 'M555,110 C555,60 335,60 335,200', when: 'devolvido + rota achou-defeito → volta (teto 3)', dash: true, lx: 330, ly: 56 }
+];
+var ESTEPS = [
+  { set: { rep: 'run' }, out: {}, lit: [], msg: 'A iniciativa nasce com todas as estações esperando. A primeira acorda: abre uma sessão de verdade, com papel Dev, na pasta do atlas e com o comando pronto.' },
+  { set: { rep: 'ok', cor: 'run' }, out: { rep: 'concluído · evidência: repro.md' }, lit: ['e1'], msg: 'Reproduzir declarou "concluído" com a evidência. O caminho acende e Corrigir acorda, recebendo só o ponteiro para repro.md.' },
+  { set: { cor: 'ok', val: 'run', reg: 'run' }, out: { cor: 'concluído · evidência: PR #212' }, lit: ['e2', 'e3'], msg: 'Fan-out: dois caminhos saem de Corrigir com a mesma condição. Validar e Teste de regressão rodam ao mesmo tempo.' },
+  { set: { val: 'run', cor: 'run' }, out: { val: 'devolvido · rota: achou-defeito' }, lit: ['e7'], msg: 'Validar devolve com rota "achou-defeito". O laço volta para Corrigir (1 de 3). Se passar de 3, para e chama você. O motor nunca lê a prosa: só desfecho, rota e evidência.' },
+  { set: { cor: 'ok', val: 'ok', reg: 'ok', dec: 'run' }, out: { cor: 'concluído · PR #212 (v2)', val: 'concluído · aceite ok', reg: 'concluído · 0 falhas' }, lit: ['e4', 'e5'], msg: 'Fan-in: "Você decide" só acorda quando as duas de entrada concluíram. Vira uma pendência sua, com o resumo do Coordenador.' },
+  { set: { dec: 'ok', con: 'run' }, out: { dec: 'você aprovou' }, lit: ['e6'], msg: 'Você aprovou. Concluir acorda. Se uma estação falhar sem caminho, o Coordenador recebe primeiro; só o que ele não resolve chega a você.' }
+];
+var estI = 0, estState = {}, estOut = {}, estLit = {};
+function renderEst() {
+  var h = '<div class="frame" style="left:10px;top:10px;width:1060px;height:570px"><div class="frame-label">Iniciativa · Bugfix · "login trava com conta sem e-mail" <span class="sub">molde: Bugfix · tipo escolhido ao criar · cada estação é uma sessão com papel</span></div></div>';
+  h += '<svg class="links"><defs><marker id="ear" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#828d9c"/></marker></defs>';
+  EPATHS.forEach(function (p) {
+    var m = p.d.match(/-?\d+(\.\d+)?/g).map(Number);
+    h += '<path class="' + (p.dash ? 'dash ' : '') + (estLit[p.id] ? 'lit' : '') + '" d="' + p.d + '" marker-end="url(#ear)"/>';
+    h += '<text x="' + p.lx + '" y="' + p.ly + '">' + p.when + '</text>';
+  });
+  h += '<path class="dash" d="M555,430 L555,400" /><text x="565" y="415">recebe exceções primeiro</text></svg>';
+  EST.forEach(function (s) {
+    var st = estState[s.id] || 'wait';
+    h += '<div class="station ' + st + (s.gate ? ' gate' : '') + '" style="left:' + s.x + 'px;top:' + s.y + 'px;--phase-color:var(' + s.ph + ')">' +
+      '<div class="sn"><span class="ring st-' + (st === 'run' ? 'working' : st === 'ok' ? 'done' : 'unknown') + '" style="--st:' + (st === 'run' ? 'var(--state-working)' : st === 'ok' ? 'var(--zone-ok)' : 'var(--text-muted)') + '">' + (st === 'run' ? '▶' : st === 'ok' ? '✓' : '') + '</span>' + s.name + '</div>' +
+      '<div class="sx">' + (s.role ? 'papel ' + s.role + ' · ' : '') + (s.motor || '') + '</div><div class="sx mono">' + s.cmd + '</div>' +
+      '<div class="out" style="color:' + (estOut[s.id] ? 'var(--zone-ok)' : 'var(--text-muted)') + '">' + (estOut[s.id] || (st === 'wait' ? 'ainda não começou' : st === 'run' ? 'trabalhando…' : '')) + '</div></div>';
+  });
+  document.getElementById('est-world').innerHTML = h;
+}
+function estStep() {
+  if (estI >= ESTEPS.length) return;
+  var s = ESTEPS[estI++];
+  Object.keys(s.set).forEach(function (k) { estState[k] = s.set[k]; });
+  Object.keys(s.out).forEach(function (k) { estOut[k] = s.out[k]; });
+  estLit = {}; s.lit.forEach(function (k) { estLit[k] = true; });
+  renderEst();
+  var m = document.getElementById('est-msg'); if (m) m.innerHTML = '<b>Passo ' + estI + ' de ' + ESTEPS.length + '.</b> ' + s.msg;
+}
+document.getElementById('est-step').onclick = estStep;
+document.getElementById('est-reset').onclick = function () { estI = 0; estState = {}; estOut = {}; estLit = {}; renderEst(); var m = document.getElementById('est-msg'); if (m) m.textContent = 'Clique em "Próximo passo" para ver a trilha andar.'; };
+
+/* ============================ Portas ============================ */
+document.getElementById('port-cli').innerHTML =
+'<span class="m">PS C:\\Users\\voce&gt;</span> donel ps --projeto atlas\n' +
+'SESSÃO            PAPEL     MOTOR       ESTADO                     CONTEXTO  PENDÊNCIA\n' +
+'login-social      Dev       opus 5.5    <span class="r">aberta · parada · viva</span>     38% 152k  <span class="r">permissão</span>\n' +
+'revisao-login     Revisor   codex       aberta · parada · viva     21%  84k  —\n' +
+'provedores-oauth  Pesquisa  sonnet 5.5  aberta · parada · viva     12%  48k  —\n' +
+'spike-sso         —         —           fechada · retomável        —         —\n\n' +
+'<span class="m">PS&gt;</span> donel enviar revisao-login "Pode revisar o PR #212"\n' +
+'<span class="g">✓ entregue</span> (ligação: login-social <span class="k">delega a</span> revisao-login)\n\n' +
+'<span class="m">PS&gt;</span> donel quem-sou        <span class="m"># dentro de uma aba</span>\n' +
+'login-social · papel Dev · quadro atlas · moldura "Time · login social"\n' +
+'  delega a    → revisao-login (Revisor, parada)\n' +
+'  conversa com ↔ provedores-oauth (Pesquisa, parada)\n' +
+'  revisado por ← revisao-login\n\n' +
+'<span class="m">PS&gt;</span> donel ps --json | jq ".[].pendencia"\n' +
+'<span class="m"># todo comando tem --json; escrita estrutural tem --ensaio</span>';
+document.getElementById('port-tui').innerHTML =
+'┌ donel · atlas ─────────────────────────────┐\n' +
+'│ <span class="k">Sessões</span>  Quadro  <span class="r">Precisa de você (1)</span>  Esteiras │\n' +
+'├────────────────────────────────────────────┤\n' +
+'│ <span class="r">!</span> login-social     Dev       38%  permissão │\n' +
+'│ ◐ revisao-login    Revisor   21%           │\n' +
+'│ ◐ provedores-oauth Pesquisa  12%           │\n' +
+'│ ☾ spike-sso        —          —  retomável │\n' +
+'├────────────────────────────────────────────┤\n' +
+'│ <span class="y">Precisa de você</span>                            │\n' +
+'│  Dev quer rodar: npm test -- auth          │\n' +
+'│  [a] aprovar uma vez  [n] negar  [↵] ir    │\n' +
+'├────────────────────────────────────────────┤\n' +
+'│ :enviar revisao-login "…"   /filtro   ?    │\n' +
+'└────────────────────────────────────────────┘\n\n' +
+'<span class="m">Lê a mesma API do app. Remota (outro PC, Tailscale)\nsó com token próprio, desligada por padrão.</span>';
+document.getElementById('port-mcp').innerHTML =
+'<span class="m">// ferramentas do servidor "donel" (hoje: navegador_*)</span>\n' +
+'<span class="k">sessao_quem_sou</span>()            leitura\n' +
+'<span class="k">sessao_listar</span>()              leitura\n' +
+'<span class="k">sessao_ver_tela</span>(sessao, n)   leitura\n' +
+'<span class="k">sessao_enviar</span>(destino, txt)  altera · pela ligação\n' +
+'<span class="k">quadro_ler / quadro_ligar</span>   leitura / acrescenta\n' +
+'<span class="k">esteira_concluir_estacao</span>(desfecho, rota, evidencia)\n' +
+'<span class="k">esteira_perguntar_ao_dono</span>(resumo)\n\n' +
+'<span class="m">→ chamada</span>\n' +
+'{ "name": "sessao_quem_sou" }\n' +
+'<span class="m">← resposta</span>\n' +
+'{ "lugar": "login-social", "papel": "Dev",\n' +
+'  "ligacoes": [\n' +
+'   { "tipo": "delega a", "para": "revisao-login",\n' +
+'     "papel": "Revisor", "atividade": "parada" },\n' +
+'   { "tipo": "conversa com", "com": "provedores-oauth" } ] }\n\n' +
+'<span class="m">Quem chama prova quem é pelo token da própria aba:\nnenhuma sessão fala em nome de outra. Mesmo nome\ne efeito que o comando da CLI. Qualquer motor que\nfale MCP usa; quem não fala usa a CLI.</span>';
+
+/* ============================ Guia ============================ */
+var TOUR = [
+  { t: 'O quadro é o time', tag: 'base', sel: 'frame', o: 'Um "rig": o time declarado, com seats, pods e ligações.', d: 'O Mindscape do projeto. Ele já mostra suas sessões; passa a mostrar quem faz o quê.', g: 'Um lugar só para ver e dirigir várias sessões.' },
+  { t: 'Cartão = lugar, não conversa', tag: 'já', sel: 'card-dev', o: 'Seat: endereço estável (dev-build@starter). A conversa dentro troca; o lugar e o histórico ficam.', d: 'O post-it de sessão ganha id próprio acima da conversa. Retomar, renovar em voo (B36) e fork trocam a conversa, não o cartão. O lugar pode existir antes de ter conversa ("ainda não começou").', g: 'Sessões longuíssimas sem perder o lugar no quadro. É a base da esteira montada.' },
+  { t: 'Papel da sessão', tag: 'já', sel: 'role-rev', o: 'AgentSpec: orientação em Markdown + skills + motor; reinjetado em todo lançamento, retomada e troca.', d: 'Selo no cartão (Dev, Revisor, Pesquisa…). O papel é um arquivo do app; entra como orientação extra no motor que aceita, ou como 1ª mensagem no que não aceita. Sobrevive à renovação em voo.', g: '"Nova sessão com papel…" e a sessão continua agindo como revisor depois de retomar.' },
+  { t: 'Cartão rico e estado honesto', tag: 'já', sel: 'meter-dev', o: 'Card compacto com runtime, contexto %, tokens e anel de atividade. Três eixos que não se misturam. "Unknown beats a confident wrong answer."', d: 'Motor (qualquer um), contexto como no rodapé do chat, anel de estado e a linha "aberta · trabalhando · viva". "Precisa de você" é contagem + motivo (permissão, pergunta, limite, erro), nunca um estado.', g: 'Saber de relance quem trabalha, quem parou e por quê, sem abrir aba.' },
+  { t: 'Moldura de time', tag: 'depois', sel: 'frame', o: 'Pod: grupo de seats com orientação compartilhada (moldura tracejada).', d: 'Moldura com título e "regra do time" curta que todas as sessões dela recebem. Organizar não tira cartão de dentro.', g: 'Vários times no mesmo projeto sem confusão.' },
+  { t: 'Ligações com significado', tag: 'já', sel: 'links', o: 'Edge com tipo (delegates_to, can_observe, collaborates_with, escalates_to). No OpenRig ela quase só desenha: não roteia nem dá permissão.', d: 'Tipos: delega a (contínua), revisa (tracejada), conversa com (dupla), escala para. Divergência proposital: aqui a ligação AUTORIZA mandar mensagem sem pedir seu OK. Fora das ligações, a sessão pede e você aprova.', g: 'Você desenha quem fala com quem; o resto pede licença.' },
+  { t: 'Mensagem sem atropelar você', tag: 'já', sel: 'card-dev', o: 'rig send: cola no terminal com envelope De/Para/Responder; guarda de digitação retém se o humano tem rascunho.', d: 'sessao_enviar pela ligação, entregue pela máquina de envio do chat. Se você está digitando na aba de destino ou há permissão aberta, fica retida ("1 mensagem esperando") e entra sozinha quando a caixa esvazia. Rode o cenário "Revisor devolve achado".', g: 'Nunca uma frase sua misturada com a de outra sessão.' },
+  { t: 'Prévia do terminal', tag: 'já', sel: 'card-pes', o: 'Terminal preview: espelho parado; clique para ao vivo; teto de terminais vivos na página.', d: 'Passe o mouse num cartão: últimas linhas. Clique: ao vivo, no máximo 2 ao mesmo tempo. Usa o buffer de 50 linhas que o app já guarda.', g: 'Ver a sessão sem sair do quadro e sem gastar RAM.' },
+  { t: 'Onde você decide', tag: 'escolha', sel: 'decide', o: 'For You / Mission Control: feed de atenção com verbos (aprovar, negar, rotear, segurar).', d: 'É o que muda entre as formas: A = faixa fina no topo do quadro; B = coluna de decisões com ações no cartão; C = um Líder que conversa com você e avisa. Troque com ← →.', g: 'A escolha principal deste protótipo.' },
+  { t: 'Três portas: CLI, TUI e MCP', tag: 'já', sel: null, sheet: 'portas', o: 'rig (CLI, ~91 comandos, --json), TUI em qualquer terminal e servidor MCP (37 ferramentas) sobre a mesma API.', d: 'O servidor MCP "donel" que já existe (navegador) ganha sessão, quadro e esteira. Uma CLI donel fala com o app aberto. A TUI vem depois, inclusive do outro PC, só com token.', g: 'Qualquer motor, script ou terminal opera o time; nada preso a uma IA.' },
+  { t: 'Esteira montada no quadro (próximo passo)', tag: 'depois', sel: null, sheet: 'esteira', o: 'Workflow spec separado do time: passos com papel, saídas handoff/waiting/done/failed, caminho por saída, depends_on (fan-out/fan-in), gate humano, teto de laço.', d: 'Molde desenhado no Mindscape: estações (sessões com papel e comando) e caminhos condicionados ao desfecho/rota que a sessão declara, nunca à prosa. Um bloco por iniciativa, com tipo (Desenvolvimento, Bugfix, Homologação). Coordenador recebe exceções primeiro.', g: 'O Modo Dev, só que visual e maleável. Abra a folha e simule.' }
+];
+function guideTab(name) {
+  document.querySelectorAll('#g-tabs button').forEach(function (b) { b.classList.toggle('on', b.dataset.g === name); });
+  var b = document.getElementById('g-body'), h = '';
+  closeSheets();
+  if (name === 'tour') {
+    h += '<p>Clique num passo para ver onde ele aparece na tela. Cada um diz o que é no OpenRig, como ficaria no Donel e o que você ganha. Etiqueta: <b>já</b> = proposta para a primeira leva; <b>depois</b> = fica para outra leva; <b>escolha</b> = você decide aqui.</p>';
+    TOUR.forEach(function (s, i) {
+      h += '<div class="step" data-step="' + i + '"><div class="t"><span class="n">' + (i + 1) + '</span>' + s.t + '<span class="tag ' + (s.tag === 'já' ? 'ja' : s.tag === 'depois' ? 'dep' : '') + '">' + s.tag + '</span></div>' +
+        '<dl><dt>OpenRig</dt><dd>' + s.o + '</dd><dt>Donel Dev</dt><dd>' + s.d + '</dd><dt>Você ganha</dt><dd>' + s.g + '</dd></dl></div>';
+    });
+  } else if (name === 'cenarios') {
+    h += '<p>Rode um cenário e veja como cada forma (A, B, C) reage. Troque de forma e rode de novo.</p><div class="scen">' +
+      '<button type="button" data-scen="permissao">▶ O Dev pede permissão<small>Anel vermelho, motivo no cartão e o aviso onde você decide.</small></button>' +
+      '<button type="button" data-scen="achado">▶ O Revisor devolve um achado ao Dev<small>A ligação "revisa" anima; a mensagem fica retida enquanto você digita e entra sozinha depois.</small></button>' +
+      '<button type="button" data-scen="renovacao">▶ O Dev renova em voo (B36)<small>Contexto no limite: passagem escrita, conversa nova, mesmo lugar e mesmo papel.</small></button>' +
+      '<button type="button" data-scen="reset">↺ Recomeçar</button></div>' +
+      '<h2>Repare</h2><p>No <b>A</b> a faixa do topo ganha o aviso. No <b>B</b> a coluna ganha um cartão com ações. No <b>C</b> o Líder escreve no chat e nunca responde pelo Dev.</p>';
+  } else if (name === 'esteira') {
+    h += '<p>O próximo passo depois desta escolha. A folha sobre o app mostra uma iniciativa Bugfix montada a partir de um molde.</p><div class="ask" id="est-msg">Clique em "Próximo passo da simulação" (no topo da folha) para ver a trilha andar.</div>' +
+      '<h2>Como funciona</h2><p><b>Estação</b> = cartão de sessão que ainda não começou, já com papel, motor, pasta e comando.</p><p><b>Caminho</b> = ligação com condição sobre o que a estação declara ao terminar: desfecho (concluído, devolvido, esperando, falhou), rota (ex.: "achou-defeito") e evidência. O app nunca decide lendo o texto da resposta.</p>' +
+      '<p><b>Fan-out</b>: dois caminhos com a mesma condição abrem duas estações. <b>Fan-in</b>: "espera todas". <b>Laço</b> só com teto (3). <b>Você decide</b> vira pendência. <b>Coordenador</b> recebe as exceções primeiro e só te traz o que não resolve.</p>' +
+      '<p>Molde fica no app (exportável para o repo); nunca YAML escrito à mão. Desenvolvimento e Bugfix de fábrica; Homologação como molde seu.</p>';
+    openSheet('esteira'); estI = 0; estState = {}; estOut = {}; estLit = {}; renderEst();
+  } else if (name === 'portas') {
+    h += '<p>Você pediu que CLI, TUI e MCP se mantivessem. No OpenRig as três falam com a mesma API do daemon; aqui o "daemon" é o próprio app.</p>' +
+      '<h2>Quem prova quem é</h2><table class="gtable"><tr><th>Quem chama</th><th>Como prova</th><th>Pode</th></tr>' +
+      '<tr><td>Agente numa aba (qualquer motor)</td><td>token da própria aba</td><td>o que o papel e as ligações dele permitem</td></tr>' +
+      '<tr><td>Você num terminal comum</td><td>token de dono no seu userData</td><td>tudo</td></tr>' +
+      '<tr><td>TUI do outro PC</td><td>token remoto, desligado por padrão</td><td>o que o token disser</td></tr></table>' +
+      '<h2>Ordem</h2><p>MCP e CLI mínima entram com as mensagens entre sessões. A TUI vem depois, mas a API nasce pronta para ela.</p>';
+    openSheet('portas');
+  } else if (name === 'mapa') {
+    h += '<table class="gtable"><tr><th>OpenRig</th><th>Donel Dev</th><th>Quando</th></tr>' +
+      [['Rig', 'Mindscape do projeto', '—'], ['Seat (lugar)', 'Cartão de sessão com id próprio', 'já'], ['Occupant (conversa)', 'sessão do CLI da vez', 'já'],
+       ['AgentSpec (papel)', 'Papel: arquivo do app + motor sugerido', 'já'], ['Pod', 'Moldura', 'depois'], ['Culture', 'Regra do time na moldura', 'depois'],
+       ['Edge', 'Ligação com tipo, que autoriza', 'já'], ['rig send + guarda', 'sessao_enviar + máquina de envio do chat', 'já'],
+       ['Fila / handoff com recibo', 'Passar trabalho com recibo', 'depois'], ['For You / Mission Control', 'Faixa, coluna ou Líder (A/B/C)', 'escolha'],
+       ['Prévia do terminal', 'Hover no cartão, teto 2', 'já'], ['Workflow spec', 'Esteira montada no quadro', 'próximo passo'],
+       ['CLI rig', 'CLI donel', 'já'], ['TUI', 'donel tui', 'depois'], ['MCP rig_*', 'MCP donel', 'já'],
+       ['tmux, daemon, YAML, chatroom', '—', 'não trazer']].map(function (r) { return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td><td>' + r[2] + '</td></tr>'; }).join('') + '</table>' +
+      '<p style="margin-top:8px">Nada roda em tmux nem depende do OpenRig instalado: ele não roda no Windows nativo. É referência de desenho.</p>';
+  } else if (name === 'decidir') {
+    h += '<div class="ask"><b>1. Qual forma (ou composição)?</b>A quadro-mesa, B coluna de decisões, C líder. Composição vale: "coluna da B com o Líder da C opcional".</div>' +
+      '<div class="ask"><b>2. A ligação autoriza mandar mensagem?</b>Proposta: sim, sem pedir seu OK, no sentido da ligação. Fora dela, a sessão pede e você aprova. O OpenRig deixa qualquer um mandar para qualquer um.</div>' +
+      '<div class="ask"><b>3. Mensagem retida enquanto você digita entra sozinha depois?</b>Proposta: sim (o app sabe quando você parou). Alternativa: fica esperando você liberar.</div>' +
+      '<div class="ask"><b>4. Papel trocado numa sessão viva vale quando?</b>Proposta: na próxima retomada ou renovação, com aviso no cartão. Alternativa: reenviar a orientação na hora.</div>' +
+      '<div class="ask"><b>5. Esteira: pré-declarar o molde no quadro está ok?</b>O plano diz "topologia em YAML fora de escopo". Proposta: ler como "nunca escrever YAML à mão"; desenhar o molde no quadro antes de rodar pode.</div>' +
+      '<div class="ask"><b>6. Com o app fechado, CLI/TUI/MCP param?</b>Proposta: sim (o app é o dono das sessões). Alternativa: a CLI lê o estado salvo, só leitura.</div>';
+  }
+  b.innerHTML = h;
+}
+document.getElementById('g-tabs').addEventListener('click', function (e) { var t = e.target.closest('[data-g]'); if (t) guideTab(t.dataset.g); });
+document.getElementById('g-body').addEventListener('click', function (e) {
+  var s = e.target.closest('[data-step]');
+  if (s) {
+    var st = TOUR[+s.dataset.step];
+    if (st.sheet) { openSheet(st.sheet); if (st.sheet === 'esteira') { estI = 0; estState = {}; estOut = {}; estLit = {}; renderEst(); } return; }
+    closeSheets();
+    var v = curVariant(), sel = st.sel === 'decide' ? 'decide-' + v : st.sel;
+    highlight('[data-variant="' + v + '"] [data-tour="' + sel + '"]');
+  }
+  var c = e.target.closest('[data-scen]');
+  if (c) SCEN[c.dataset.scen]();
+});
+function openSheet(n) { closeSheets(); document.getElementById('sheet-' + n).classList.add('show'); }
+function closeSheets() { document.querySelectorAll('.sheet').forEach(function (s) { s.classList.remove('show'); }); }
+document.querySelectorAll('[data-close]').forEach(function (b) { b.onclick = closeSheets; });
+document.getElementById('guide-toggle').onclick = function () {
+  var p = document.getElementById('page'); p.classList.toggle('noguide');
+  this.textContent = p.classList.contains('noguide') ? 'Mostrar guia' : 'Esconder guia';
+  this.style.right = p.classList.contains('noguide') ? '12px' : '392px';
+};
+</script>
+
+<!-- Switcher flutuante — templates/switcher-snippet.html da /prototipo -->
+<style>
+  .proto-variant { display: none; }
+  .proto-variant.proto-active { display: block; }
+  .proto-switcher { position: fixed; bottom: 16px; left: calc(50% - 190px); transform: translateX(-50%); display: flex; align-items: center; gap: 12px;
+    background: #111; color: #fff; padding: 8px 16px; border-radius: 999px; box-shadow: 0 4px 16px rgba(0,0,0,.35); z-index: 9999; font: 13px/1 system-ui, sans-serif; user-select: none; }
+  .proto-switcher button { background: none; border: none; color: inherit; font-size: 16px; cursor: pointer; padding: 4px 8px; }
+  .proto-switcher button:hover { color: #4fc3f7; }
+</style>
+<div class="proto-switcher">
+  <button type="button" data-proto-prev aria-label="Variante anterior">&#8592;</button>
+  <span data-proto-label></span>
+  <button type="button" data-proto-next aria-label="Próxima variante">&#8594;</button>
+</div>
+<script>
+  (function () {
+    var sections = Array.prototype.slice.call(document.querySelectorAll('.proto-variant'));
+    var keys = sections.map(function (s) { return s.dataset.variant; });
+    var label = document.querySelector('[data-proto-label]');
+    var current = 0;
+    function show(i) {
+      current = (i + keys.length) % keys.length;
+      sections.forEach(function (s, j) { s.classList.toggle('proto-active', j === current); });
+      var name = sections[current].dataset.name || '';
+      label.textContent = keys[current] + (name ? ' — ' + name : '');
+      location.hash = keys[current];
+      document.getElementById('preview').classList.remove('show');
+      renderTabs();
+    }
+    document.querySelector('[data-proto-prev]').addEventListener('click', function () { show(current - 1); });
+    document.querySelector('[data-proto-next]').addEventListener('click', function () { show(current + 1); });
+    document.addEventListener('keydown', function (e) {
+      var t = e.target;
+      if (t.matches && t.matches('input, textarea, select') || t.isContentEditable) return;
+      if (e.key === 'ArrowLeft') show(current - 1);
+      if (e.key === 'ArrowRight') show(current + 1);
+    });
+    var fromHash = keys.indexOf(location.hash.replace('#', ''));
+    show(fromHash >= 0 ? fromHash : 0);
+    window.addEventListener('hashchange', function () { var i = keys.indexOf(location.hash.replace('#', '')); if (i >= 0 && i !== current) show(i); });
+    renderAll();
+    guideTab('tour');
+  })();
+</script>
+</body>
+</html>
