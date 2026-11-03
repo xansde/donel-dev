@@ -336,6 +336,31 @@
   color: var(--text-muted);
 }
 
+/* Lugar principal, rule 4 — the tab of the session is closed: dormant, resumed by a double click. */
+.dormant {
+  --st: var(--text-muted);
+  background: var(--bg-panel);
+  opacity: 0.55;
+  border-top-style: dashed;
+}
+
+.dormant:hover,
+.dormant:focus-visible {
+  opacity: 0.85;
+}
+
+.dormant .sessionName {
+  color: var(--text-muted);
+}
+
+/* Rule 6 — favorite (pinned): fixed in place by "Organizar". */
+.favorite {
+  color: var(--donel-accent);
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 .selected {
   outline: 2px solid var(--accent);
   outline-offset: 3px;

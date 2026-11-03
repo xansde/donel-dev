@@ -106,3 +106,25 @@ describe('SessionSemaphoreManager.onTurnEnded — hook bridge', () => {
     }
   });
 });
+
+// Diário de gestos — `onPromptSubmitted` tells the main a prompt was sent (only its length).
+describe('SessionSemaphoreManager.onPromptSubmitted', () => {
+  it('fires on UserPromptSubmit with the prompt length (0 when missing), not on other hooks', async () => {
+    const manager = new SessionSemaphoreManager({ getRecentLines: () => [] });
+    const port = await manager.start();
+    try {
+      const sent: { ptyId: string; length: number }[] = [];
+      manager.onPromptSubmitted((ptyId, length) => sent.push({ ptyId, length }));
+      manager.registerSession('pty-1', 'sess-a');
+      await postLegacy(port, { hook_event_name: 'UserPromptSubmit', session_id: 'sess-a', prompt: 'olá' });
+      await postLegacy(port, { hook_event_name: 'Stop', session_id: 'sess-a', last_assistant_message: 'ok' });
+      await postLegacy(port, { hook_event_name: 'UserPromptSubmit', session_id: 'sess-a' });
+      expect(sent).toEqual([
+        { ptyId: 'pty-1', length: 3 },
+        { ptyId: 'pty-1', length: 0 },
+      ]);
+    } finally {
+      manager.dispose();
+    }
+  });
+});

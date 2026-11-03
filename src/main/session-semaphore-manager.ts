@@ -46,6 +46,8 @@ export type StopFailureListener = (ptyId: string, error: string | null) => void;
 
 /** Mindscape, fatia 03 — see `SessionSemaphoreManager.onTurnEnded`. */
 export type TurnEndedListener = (ptyId: string, lastAssistantMessage: string | null, transcriptPath: string | null) => void;
+/** Diário de gestos — see `SessionSemaphoreManager.onPromptSubmitted`. */
+export type PromptSubmittedListener = (ptyId: string, promptLength: number) => void;
 
 export interface SessionSemaphoreManagerOptions {
   /** Intervalo do tick da heurística de fallback (spike: "a cada ~500ms"). */
@@ -105,6 +107,8 @@ export class SessionSemaphoreManager {
    * (`null` when missing) — the `.jsonl` the CLI itself names, for the tail fallback.
    */
   private readonly turnEndedListeners = new Set<TurnEndedListener>();
+  /** Diário de gestos — `UserPromptSubmit`, with the prompt length only (the text is never kept). */
+  private readonly promptSubmittedListeners = new Set<PromptSubmittedListener>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   private readonly tickIntervalMs: number;
@@ -213,6 +217,12 @@ export class SessionSemaphoreManager {
     return () => this.turnEndedListeners.delete(listener);
   }
 
+  /** Diário de gestos — a prompt was sent in the session of `ptyId`. Same unsubscribe pattern as `onTurnEnded`. */
+  onPromptSubmitted(listener: PromptSubmittedListener): () => void {
+    this.promptSubmittedListeners.add(listener);
+    return () => this.promptSubmittedListeners.delete(listener);
+  }
+
   getSnapshot(ptyId: string): SemaphoreUpdate | undefined {
     const state = this.ptyState.get(ptyId);
     if (!state) return undefined;
@@ -287,6 +297,10 @@ export class SessionSemaphoreManager {
     const next = reduceSemaphoreState(current, event);
     this.ptyState.set(ptyId, next);
     this.emit(ptyId);
+    if (hookEventName === 'UserPromptSubmit') {
+      const length = typeof payload.prompt === 'string' ? payload.prompt.length : 0;
+      for (const listener of this.promptSubmittedListeners) listener(ptyId, length);
+    }
     if (hookEventName === 'Stop' || hookEventName === 'StopFailure') {
       const raw = payload.last_assistant_message;
       const text = typeof raw === 'string' && raw.trim().length > 0 ? raw : null;

@@ -47,6 +47,13 @@ export interface MindscapeToolbarProps {
   readonly onNewCard: () => void;
   readonly canGoToTerminal: boolean;
   readonly onGoToTerminal: () => void;
+  /** Lugar principal, rule 7 — lays the sessions out in columns (one undoable gesture). */
+  readonly canOrganize: boolean;
+  readonly onOrganize: () => void;
+  /** Rule 3 — sessions closed for more than 7 days, folded away; 0 hides the button. */
+  readonly oldCount: number;
+  readonly showOld: boolean;
+  readonly onToggleOld: () => void;
   readonly hint: string;
 }
 
@@ -73,6 +80,11 @@ export function MindscapeToolbar({
   onNewCard,
   canGoToTerminal,
   onGoToTerminal,
+  canOrganize,
+  onOrganize,
+  oldCount,
+  showOld,
+  onToggleOld,
   hint,
 }: MindscapeToolbarProps): React.JSX.Element {
   return (
@@ -150,6 +162,28 @@ export function MindscapeToolbar({
       <button type="button" className={styles.toolButton} disabled={!canGoToTerminal} onClick={onGoToTerminal}>
         Ir ao terminal
       </button>
+      <button
+        type="button"
+        className={styles.toolButton}
+        disabled={!enabled || !canOrganize}
+        title="Arruma as sessões em colunas: precisa de você, trabalhando, em espera e fechadas. Favoritas ficam onde estão (Ctrl+Z desfaz)"
+        onClick={onOrganize}
+        data-testid="mindscape-organize"
+      >
+        Organizar
+      </button>
+      {oldCount > 0 ? (
+        <button
+          type="button"
+          className={styles.toolButton}
+          aria-pressed={showOld}
+          title="Sessões fechadas há mais de 7 dias"
+          onClick={onToggleOld}
+          data-testid="mindscape-old-toggle"
+        >
+          {showOld ? `Recolher antigas (${oldCount})` : `${oldCount} ${oldCount === 1 ? 'antiga' : 'antigas'}`}
+        </button>
+      ) : null}
       <span className={styles.toolHint} data-testid="mindscape-hint">
         {hint}
       </span>
