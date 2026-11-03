@@ -98,6 +98,18 @@ Compilado em [`final.html`](final.html).
   "o que precisa de mim" sem tirar espaço.
 - **C como painel lateral**: a conversa presa à janela do app desperdiça os outros monitores.
 
+## Respostas do dono (03/11)
+
+| # | Pergunta | Resposta |
+|---|---|---|
+| 0 | Falar desenhando é o centro? | **Sim.** "O OpenRig pode ser implementado de diversas formas. A forma que eu preciso é a forma gráfica/visual." |
+| 1 | Forma | A + C com o Jobu em caixa de fala |
+| 2 | A ligação autoriza mandar mensagem sem pedir OK? | **Sim** |
+| 3 | Mensagem retida enquanto ele digita entra sozinha depois? | **Sim** |
+| 4 | Papel trocado numa sessão viva vale quando? | Pediu explicação; reapresentada em linguagem simples |
+| 5 | Montar a esteira no quadro antes de rodar? | Pediu explicação; reapresentada em linguagem simples |
+| 6 | App fechado → CLI e MCP param? | **Sim, por enquanto.** "Vamos evoluir em breve para ser persistente em nuvem." |
+
 ## Limitações do mock
 
 - Desenhar, arrastar, ligar e criar moldura funcionam só na memória da página (recarregar zera).

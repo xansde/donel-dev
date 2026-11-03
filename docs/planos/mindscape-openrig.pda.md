@@ -61,6 +61,11 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 
 ## Ainda não especificado
 
+- **Persistência em nuvem** (dono, 03/11): "por enquanto [com o app fechado tudo para]. Mas vamos
+  evoluir em breve para ser persistente em nuvem." O time de sessões, o quadro e as esteiras
+  continuarem vivos sem o app aberto. Ainda sem formato; não fechar porta: a API local nasce como
+  contrato que um servidor remoto possa servir depois.
+
 - Vista em tabela e grade de terminais (as outras duas vistas do OpenRig): revisitar quando a
   barra lateral nascer recolhida.
 - Papéis, conexões e multitarefa (itens 12–14) graduam em fatias quando o estudo (11) fechar.
