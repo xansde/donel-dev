@@ -17,6 +17,7 @@ import type { EditorStatus, GitBranchResult, OpenInEditorResult, PullRequestRequ
 // Navegador interno — the panel of each session tab.
 import { BROWSER_CHANNELS } from '../shared/browser/ipc';
 import type { BrowserAgentRules, BrowserRulesResult, BrowserTabAction } from '../shared/browser/ipc';
+import type { DomainMode } from '../shared/browser/guardrails';
 import type {
   BrowserControlState,
   BrowserHistoryAction,
@@ -477,6 +478,7 @@ const donelApi: DonelApi = {
     clearUploadDir: (ptyId: string) => {
       ipcRenderer.send(BROWSER_CHANNELS.clearUploadDir, ptyId);
     },
+    setDomains: (ptyId: string, mode: DomainMode, typed: string) => ipcRenderer.invoke(BROWSER_CHANNELS.setDomains, ptyId, mode, typed) as Promise<BrowserRulesResult>,
     onRules: (listener: (rules: BrowserAgentRules) => void) => {
       const handler = (_event: unknown, rules: BrowserAgentRules): void => listener(rules);
       return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.rules, handler);

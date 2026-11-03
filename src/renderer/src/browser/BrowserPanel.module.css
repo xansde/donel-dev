@@ -109,6 +109,27 @@
   color: var(--text-muted);
 }
 
+.rulesInput {
+  height: 24px;
+  min-width: 0;
+  padding: 0 var(--space-half);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: var(--text-caption-size);
+}
+
+.rulesInput:focus {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.rulesDomains {
+  flex: 1;
+  font-family: var(--font-mono);
+}
+
 .rulesValue {
   flex: 1;
   min-width: 0;

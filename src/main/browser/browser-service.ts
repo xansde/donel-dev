@@ -17,6 +17,22 @@ import {
   type BrowserPanelState,
   type BrowserRulesResult,
 } from '../../shared/browser/ipc';
+import {
+  OPEN_DOMAINS,
+  actionLockMessage,
+  agentMayNavigate,
+  displayHost,
+  domainBlockMessage,
+  fieldLockMessage,
+  isLockedLabel,
+  keyEffect,
+  lockedAction,
+  lockedKeyAction,
+  parseDomainList,
+  sensitiveField,
+  type DomainRules,
+} from '../../shared/browser/guardrails';
+import { parseKeyCombo } from '../../shared/browser/keys';
 import { MCP_SERVER_NAME, type BrowserToolCall, type BrowserToolOutcome } from '../../shared/browser/mcp';
 import { refusedUploadFolder } from '../../shared/browser/upload';
 import { normalizeBrowserUrl } from '../../shared/browser/url';
@@ -60,6 +76,21 @@ const STALE_CONFIG_MS = 24 * 60 * 60_000;
 const MAX_LOG_URL = 300;
 /** Budget of one `navegador_extrair` answer (the agent continues with `a_partir`). */
 const EXTRACT_MAX_CHARS = 30_000;
+/** Tools that read or act on the current page: the vigia also holds them on a page outside the rules. */
+const TOOLS_ON_THE_PAGE: ReadonlySet<BrowserToolCall['tool']> = new Set([
+  'navegador_ler',
+  'navegador_extrair',
+  'navegador_clicar',
+  'navegador_digitar',
+  'navegador_opcoes',
+  'navegador_selecionar',
+  'navegador_achar_texto',
+  'navegador_enviar_arquivo',
+  'navegador_teclar',
+  'navegador_rolar',
+  'navegador_print',
+  'navegador_esperar',
+]);
 
 function isPtyId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_PTY_ID_LENGTH && /^[\w-]+$/.test(value);
@@ -99,6 +130,10 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   const drivers = new WeakMap<WebContents, CdpDriver>();
   /** The folder the owner authorized for `navegador_enviar_arquivo`, per session. */
   const uploadDirs = new Map<string, string>();
+  /** Where the agent may navigate, per session (no entry = anywhere). */
+  const domainRules = new Map<string, DomainRules>();
+  /** The address the vigia refused while the current tool ran: the tool answers with it. */
+  const blockedDuringTool = new Map<string, string>();
   /** PTYs with an agent tool running right now (their navigations go to the footer log; their view is pinned). */
   const agentBusy = new Set<string>();
   /** One tool at a time per PTY: the agent may call tools in parallel, the page has one pair of hands. */
@@ -123,6 +158,12 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
       if (agentBusy.has(ptyId) && url !== 'about:blank') log(ptyId, agentOpenedLine(url.length > MAX_LOG_URL ? `${url.slice(0, MAX_LOG_URL)}…` : url));
     },
     onDownload: (ptyId, fileName) => log(ptyId, `Download salvo em browser-downloads: ${fileName}`),
+    blockNavigation: (ptyId, url) => {
+      if (!agentBusy.has(ptyId) || agentMayNavigate(domainRules.get(ptyId) ?? OPEN_DOMAINS, url)) return false;
+      blockedDuringTool.set(ptyId, url);
+      log(ptyId, `Bloqueado: o agente tentou abrir ${displayHost(url)}`);
+      return true;
+    },
     // Not destroyed while the agent works on it or the owner holds it.
     isPinned: (ptyId) => agentBusy.has(ptyId) || controls.get(ptyId)?.snapshot().owner === 'human',
   });
@@ -153,7 +194,10 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     return `Página: ${state.title || '(sem título)'} — ${state.url}`;
   };
 
-  const rulesOf = (ptyId: string): BrowserAgentRules => ({ ptyId, uploadDir: uploadDirs.get(ptyId) ?? null });
+  const rulesOf = (ptyId: string): BrowserAgentRules => {
+    const domains = domainRules.get(ptyId) ?? OPEN_DOMAINS;
+    return { ptyId, uploadDir: uploadDirs.get(ptyId) ?? null, domainMode: domains.mode, domains: domains.domains };
+  };
   const emitRules = (ptyId: string): void => send(BROWSER_CHANNELS.rules, rulesOf(ptyId));
 
   const tabLine = (i: number, tab: { title: string; url: string; active: boolean }): string => `${i}. ${tab.title || '(sem título)'} — ${tab.url}${tab.active ? ' (ativa)' : ''}`;
@@ -169,6 +213,11 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
 
   const text = (value: string): BrowserToolOutcome => ({ kind: 'text', text: value });
   const fail = (value: string): BrowserToolOutcome => ({ kind: 'error', text: value });
+  /** The trava said no: the owner sees it in the footer, the agent gets the way out. */
+  const locked = (ptyId: string, message: string, what: string): BrowserToolOutcome => {
+    log(ptyId, `Trava: o agente parou em ${what}`);
+    return fail(message);
+  };
 
   /** One tool call, already holding the agent's turn. */
   const run = async (ptyId: string, call: BrowserToolCall): Promise<BrowserToolOutcome> => {
@@ -176,6 +225,10 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
       case 'navegador_abrir': {
         const target = normalizeBrowserUrl(call.url);
         if (!target.ok) return fail(target.reason);
+        if (!agentMayNavigate(domainRules.get(ptyId) ?? OPEN_DOMAINS, target.url)) {
+          log(ptyId, `Bloqueado: o agente tentou abrir ${displayHost(target.url)}`);
+          return fail(domainBlockMessage(target.url));
+        }
         const loaded = await panels.load(ptyId, target.url);
         if (!loaded.ok) return fail(`A página não abriu: ${loaded.error}`);
         return text(`${where(ptyId)}\nUse navegador_ler para ver a página.`);
@@ -196,10 +249,14 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
         return text(`${head.join('\n')}\n\n${page.markdown || '(nenhum texto legível nesta página)'}${tail}`);
       }
       case 'navegador_clicar': {
+        const label = lockedAction(await driverFor(ptyId).facts(call.n));
+        if (label) return locked(ptyId, actionLockMessage(label), `"${label.slice(0, 80)}"`);
         const ref = await driverFor(ptyId).click(call.n);
         return text(`Clicou em [${call.n}] ${ref.role} "${ref.name}".\n${where(ptyId)}\nLeia de novo (navegador_ler) para ver o resultado.`);
       }
       case 'navegador_digitar': {
+        const field = sensitiveField(await driverFor(ptyId).facts(call.n));
+        if (field) return locked(ptyId, fieldLockMessage(field), `um campo de ${field}`);
         const ref = await driverFor(ptyId).type(call.n, call.texto);
         return text(`Digitou em [${call.n}] ${ref.role} "${ref.name}".`);
       }
@@ -210,6 +267,9 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
         return text(listText(call.n, ref.name, list));
       }
       case 'navegador_selecionar': {
+        const field = sensitiveField(await driverFor(ptyId).facts(call.n));
+        if (field) return locked(ptyId, fieldLockMessage(field), `um campo de ${field}`);
+        if (isLockedLabel(call.opcao)) return locked(ptyId, actionLockMessage(call.opcao), `"${call.opcao.slice(0, 80)}"`);
         const { chosen } = await driverFor(ptyId).select(call.n, call.opcao);
         return text(`Selecionou "${chosen}" em [${call.n}].\nLeia de novo (navegador_ler) para ver o resultado.`);
       }
@@ -244,14 +304,26 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
         log(ptyId, `Agente enviou o arquivo: ${file.name}`);
         return text(`Colocou "${file.name}" no campo de envio de [${call.n}]. O arquivo só sai da máquina quando a página enviar o formulário.`);
       }
-      case 'navegador_teclar':
+      case 'navegador_teclar': {
+        const parsed = parseKeyCombo(call.tecla);
+        const effect = parsed.ok ? keyEffect(parsed.events) : { types: false, activates: false };
+        if (effect.types || effect.activates) {
+          const focused = await driverFor(ptyId).focusedFacts();
+          const field = focused && effect.types ? sensitiveField(focused) : null;
+          if (field) return locked(ptyId, fieldLockMessage(field), `um campo de ${field}`);
+          const label = focused && effect.activates ? lockedKeyAction(focused) : null;
+          if (label) return locked(ptyId, actionLockMessage(label), `"${label.slice(0, 80)}"`);
+        }
         await driverFor(ptyId).pressKey(call.tecla);
         return text(`Teclou ${call.tecla}.\n${where(ptyId)}`);
+      }
       case 'navegador_rolar':
         await driverFor(ptyId).scroll(call.direcao);
         return text(`Rolou para ${call.direcao}.`);
       case 'navegador_voltar': {
         const driver = driverFor(ptyId);
+        const back = panels.backUrl(ptyId);
+        if (back !== null && !agentMayNavigate(domainRules.get(ptyId) ?? OPEN_DOMAINS, back)) return fail(domainBlockMessage(back));
         if (!panels.history(ptyId, 'back')) return fail('Não há página anterior.');
         await driver.settle();
         return text(where(ptyId));
@@ -298,12 +370,21 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     if (turn === 'disposed') return fail('A sessão deste navegador terminou.');
 
     agentBusy.add(ptyId);
+    blockedDuringTool.delete(ptyId);
     try {
-      return await run(ptyId, call);
+      // A page the agent may not be on (the owner went there, or a script did after the last tool): hands off.
+      if (TOOLS_ON_THE_PAGE.has(call.tool)) {
+        const here = panels.currentUrl(ptyId);
+        if (!agentMayNavigate(domainRules.get(ptyId) ?? OPEN_DOMAINS, here)) return fail(`A página atual está fora do que o dono liberou. ${domainBlockMessage(here)}`);
+      }
+      const outcome = await run(ptyId, call);
+      const blocked = blockedDuringTool.get(ptyId);
+      return blocked ? fail(`${domainBlockMessage(blocked)}\n${where(ptyId)}`) : outcome;
     } catch (error) {
       return fail(errorText(error));
     } finally {
       agentBusy.delete(ptyId);
+      blockedDuringTool.delete(ptyId);
     }
   };
 
@@ -414,9 +495,23 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     emitRules(ptyId);
   });
 
+  deps.ipcMain.handle(BROWSER_CHANNELS.setDomains, (event, ptyId: unknown, mode: unknown, typed: unknown): BrowserRulesResult => {
+    if (!known(event.sender, ptyId)) return { ok: false, reason: 'Sessão desconhecida para o navegador.' };
+    if (mode !== 'all' && mode !== 'only' && mode !== 'except') return { ok: false, reason: 'Opção desconhecida.' };
+    const { domains, invalid } = parseDomainList(typeof typed === 'string' ? typed : '');
+    if (invalid.length > 0) return { ok: false, reason: `Domínio inválido: ${invalid.slice(0, 3).join(', ')}.` };
+    if (mode === 'only' && domains.length === 0) return { ok: false, reason: 'Diga ao menos um domínio.' };
+    if (mode === 'all') domainRules.delete(ptyId);
+    else domainRules.set(ptyId, { mode, domains });
+    emitRules(ptyId);
+    return { ok: true, rules: rulesOf(ptyId) };
+  });
+
   const releasePty = (ptyId: string): void => {
     livePtys.delete(ptyId);
     uploadDirs.delete(ptyId);
+    domainRules.delete(ptyId);
+    blockedDuringTool.delete(ptyId);
     controls.get(ptyId)?.dispose();
     controls.delete(ptyId);
     mcp.unregisterSession(ptyId);

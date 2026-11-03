@@ -4,6 +4,8 @@
 // One browser per PTY: the key everywhere is the `ptyId` of the session tab, the same id that names the MCP
 // token of that session (docs/design/navegador-interno.md).
 
+import type { DomainMode } from './guardrails';
+
 export const BROWSER_CHANNELS = {
   /** invoke(ptyId) -> `BrowserPanelState`. Creates the view if there is none yet. */
   open: 'browser:open',
@@ -39,6 +41,8 @@ export const BROWSER_CHANNELS = {
   chooseUploadDir: 'browser:chooseUploadDir',
   /** send(ptyId). The owner takes the authorization back. */
   clearUploadDir: 'browser:clearUploadDir',
+  /** invoke(ptyId, mode, typedDomains) -> `BrowserRulesResult`. The vigia de domínio of this session (V2). */
+  setDomains: 'browser:setDomains',
   /** main -> renderer: `BrowserAgentRules` every time they change. */
   rules: 'browser:rules',
 } as const;
@@ -66,6 +70,9 @@ export interface BrowserAgentRules {
   readonly ptyId: string;
   /** The only folder `navegador_enviar_arquivo` reads from (`null` = sending files is off). */
   readonly uploadDir: string | null;
+  /** Where the agent may navigate. */
+  readonly domainMode: DomainMode;
+  readonly domains: readonly string[];
 }
 
 /** `reason: null` = the owner cancelled the picker. */
@@ -135,6 +142,7 @@ export interface DonelBrowserApi {
   getRules(ptyId: string): Promise<BrowserAgentRules | null>;
   chooseUploadDir(ptyId: string): Promise<BrowserRulesResult>;
   clearUploadDir(ptyId: string): void;
+  setDomains(ptyId: string, mode: DomainMode, typed: string): Promise<BrowserRulesResult>;
   onRules(listener: (rules: BrowserAgentRules) => void): () => void;
 }
 
