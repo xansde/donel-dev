@@ -140,7 +140,8 @@ export type NoticeIcon =
   | 'informational'
   | 'generated-file'
   // B36 — the divider above which the tab's chat keeps the conversation a renewal replaced.
-  | 'session-renewed';
+  | 'session-renewed'
+  | 'auto-approved';
 
 export interface NoticeContent {
   readonly icon: NoticeIcon;
@@ -189,6 +190,10 @@ export function noticeContent(kind: NoticeKind, params: Readonly<Record<string, 
       const label = asString(params.label);
       const safe = label !== undefined && !label.includes('@') ? label : undefined;
       return { icon: 'account-switch', tone: 'muted', text: safe ? `Conta trocada para ${safe}` : 'Conta trocada' };
+    }
+    case 'auto-approved': {
+      const summary = asString(params.summary);
+      return { icon: 'auto-approved', tone: 'muted', text: summary ? `Permitido automaticamente: ${summary}` : 'Permitido automaticamente' };
     }
     case 'conversation-switch': {
       const lead = params.reason === 'resume' ? 'Conversa retomada' : 'Conversa nova';

@@ -16,6 +16,8 @@ export interface DiagnosticsLog {
   hook(entry: { event: string; ptyId: string; durationMs: number }): void;
   unknownEntry(entry: { ptyId: string; entryType: string }): void;
   sendFailed(entry: { ptyId: string; reason: string; detail?: SendFailureDetail }): void;
+  /** Modo auto: the tool name and the outcome, never its input. */
+  autoApproval(entry: { ptyId: string; tool: string; outcome: 'approved' | 'after-blocks' }): void;
 }
 
 /** `dir` is injected (the app passes `app.getPath('userData')`); `now` is injectable for tests. Writing never throws. */
@@ -33,6 +35,7 @@ export function createDiagnosticsLog(dir: string, now: () => number = Date.now):
 
   return {
     hook: ({ event, ptyId, durationMs }) => write({ kind: 'hook', event, ptyId, durationMs }),
+    autoApproval: ({ ptyId, tool, outcome }) => write({ kind: 'auto-approval', ptyId, tool, outcome }),
     unknownEntry: ({ ptyId, entryType }) => {
       const key = `${ptyId}\u0000${entryType}`;
       if (seenUnknown.has(key)) return;

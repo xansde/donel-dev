@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { autoApprovalVerdict, nextClassifierBlocks, NO_CLASSIFIER_BLOCKS, type ClassifierBlocks } from '../shared/chat/pendingQueue';
 
 // T013 — HTTP hook bridge (contracts/hook-bridge.md). The claude CLI posts
 // hook events to 127.0.0.1:<ephemeral port>/h/<Event> with a per-tab token in
@@ -30,6 +31,8 @@ export interface PendingDecisionHandle {
 export type BridgeEvent =
   | { readonly type: 'hook'; readonly ptyId: string; readonly event: string; readonly payload: HookPayload }
   | { readonly type: 'pending'; readonly ptyId: string; readonly handle: PendingDecisionHandle; readonly payload: HookPayload; readonly toolUseId: string | null }
+  /** Modo auto: the bridge already answered `allow`; nobody decides anything, this is only the trail. */
+  | { readonly type: 'auto-approved'; readonly ptyId: string; readonly payload: HookPayload }
   | { readonly type: 'expired'; readonly ptyId: string; readonly requestId: string }
   | { readonly type: 'resolved-elsewhere'; readonly ptyId: string; readonly requestId: string }
   | { readonly type: 'cancelled'; readonly ptyId: string; readonly requestId: string }
@@ -43,7 +46,14 @@ export type BridgeListener = (event: BridgeEvent) => void;
 export interface HookBridgeOptions {
   readonly now?: () => number;
   /** Receives measurements only: event name, ptyId and duration. */
-  readonly diagnostics?: { hook(entry: { event: string; ptyId: string; durationMs: number }): void };
+  readonly diagnostics?: {
+    hook(entry: { event: string; ptyId: string; durationMs: number }): void;
+    autoApproval?(entry: { ptyId: string; tool: string; outcome: 'approved' | 'after-blocks' }): void;
+  };
+  /** "Modo auto nunca pede permissão" (Preferências); read at each request. Absent = off. */
+  readonly autoNeverAsks?: () => boolean;
+  /** Is there a chat to show a pending? `false` answers `{}` at once and the terminal asks. Absent = yes. */
+  readonly holdsPendings?: () => boolean;
 }
 
 export interface HookBridge {
@@ -81,6 +91,7 @@ interface SessionState {
   readonly preToolUse: PreToolUseRecord[];
   readonly open: Map<string, OpenDecision>;
   sessionId: string | null;
+  classifierBlocks: ClassifierBlocks;
 }
 
 /** Key-order independent serialization, so `tool_input` compares structurally. */
@@ -101,6 +112,10 @@ function tripleKey(payload: HookPayload): string {
 }
 
 const asString = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+function permissionAnswer(decision: PermissionDecision): string {
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } });
+}
 
 export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
   const now = options.now ?? Date.now;
@@ -187,7 +202,7 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
     const handle: PendingDecisionHandle = {
       id,
       ptyId: state.ptyId,
-      respond: (d) => decision.settle(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: d } })),
+      respond: (d) => decision.settle(permissionAnswer(d)),
       release: () => decision.settle('{}'),
     };
     emit({ type: 'pending', ptyId: state.ptyId, handle, payload, toolUseId: recentPreToolUse(state, key) });
@@ -195,6 +210,7 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
 
   function dispatch(state: SessionState, event: string, payload: HookPayload): void {
     const sessionId = asString(payload.session_id);
+    state.classifierBlocks = nextClassifierBlocks(state.classifierBlocks, event, payload);
 
     switch (event) {
       case 'PreToolUse':
@@ -275,6 +291,21 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
     };
 
     if (event === 'PermissionRequest') {
+      const verdict = autoApprovalVerdict({ enabled: options.autoNeverAsks?.() ?? false, payload, blocks: state.classifierBlocks });
+      const tool = asString(payload.tool_name) ?? '';
+      if (verdict === 'approve') {
+        endJson(res, 200, permissionAnswer({ behavior: 'allow' }));
+        measure();
+        options.diagnostics?.autoApproval?.({ ptyId: state.ptyId, tool, outcome: 'approved' });
+        emit({ type: 'auto-approved', ptyId: state.ptyId, payload });
+        return;
+      }
+      if (verdict === 'after-blocks') options.diagnostics?.autoApproval?.({ ptyId: state.ptyId, tool, outcome: 'after-blocks' });
+      if (options.holdsPendings?.() === false) {
+        endJson(res, 200, '{}');
+        measure();
+        return;
+      }
       openDecision(state, payload, res, measure);
       return;
     }
@@ -333,7 +364,7 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
       const previous = byPty.get(ptyId);
       if (previous) byToken.delete(previous.token);
       const token = randomBytes(16).toString('hex');
-      const state: SessionState = previous ?? { ptyId, token, preToolUse: [], open: new Map(), sessionId: null };
+      const state: SessionState = previous ?? { ptyId, token, preToolUse: [], open: new Map(), sessionId: null, classifierBlocks: NO_CLASSIFIER_BLOCKS };
       state.token = token;
       byToken.set(token, state);
       byPty.set(ptyId, state);

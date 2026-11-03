@@ -71,6 +71,7 @@ describe('defaultAppConfig (puro)', () => {
       sweep: { lastSweepAt: null },
       // B36 — sessão renovada em voo: ligada, 250k de contexto.
       sessionRenewal: { enabled: true, limitTokens: 250_000 },
+      autoMode: { neverAsks: true },
       unknownFields: {},
     });
   });
@@ -103,6 +104,7 @@ describe('toAppConfigDto (puro)', () => {
       chat: { enabled: false, focusMode: true },
       pet: { enabled: false, placement: null, size: 140 },
       sessionRenewal: { enabled: true, limitTokens: 250_000 },
+      autoMode: { neverAsks: true },
     });
   });
 
@@ -235,6 +237,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       pet: { enabled: true, placement: { x: 1830, y: 1040 }, size: 200 },
       sweep: { lastSweepAt: null },
       sessionRenewal: { enabled: false, limitTokens: 180_000 },
+      autoMode: { neverAsks: false },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -303,6 +306,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       launcherDefaults: { model: 'sonnet', effort: 'high', permissionMode: 'plan' }, // bom
       notificationPreference: 'not-a-real-value', // corrompido
       theme: 'dark',
+      autoMode: { neverAsks: 'sim' },
     };
     expect(sanitizeAppConfig(partiallyCorrupted, defaults)).toEqual({
       version: 1,
@@ -325,6 +329,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       pet: defaults.pet, // ausente no objeto → default
       sweep: defaults.sweep,
       sessionRenewal: defaults.sessionRenewal,
+      autoMode: defaults.autoMode,
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });

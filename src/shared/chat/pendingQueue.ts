@@ -88,6 +88,63 @@ export function pendingFromRequest(input: {
   };
 }
 
+// --- Modo auto sem pedir permissão (docs/refinamentos/auto-sem-permissao.md) ---
+
+/**
+ * Tools whose `PermissionRequest` is a question for the owner, not leave to run. `AskUserQuestion` and
+ * `ExitPlanMode` have their own cards; the others are CLI cards (requiresUserInteraction in 2.1.317).
+ */
+const OWNER_ONLY_TOOLS: ReadonlySet<string> = new Set([
+  'AskUserQuestion',
+  'ExitPlanMode',
+  'OfferChromeSetup',
+  'PublishPlugin',
+  'ShowOnboardingRolePicker',
+]);
+
+/** Blocks by the auto mode classifier, counted from the `PermissionDenied` hook. */
+export interface ClassifierBlocks {
+  readonly consecutive: number;
+  readonly total: number;
+}
+
+export const NO_CLASSIFIER_BLOCKS: ClassifierBlocks = { consecutive: 0, total: 0 };
+
+/**
+ * The CLI's denial limit (`$q` in 2.1.317): the block that reaches it does not refuse, it falls back to a
+ * dialog, and that dialog is a `PermissionRequest` like any other. Answering `allow` there would undo a block,
+ * so the app stops approving one block before the limit.
+ */
+const CLI_MAX_CONSECUTIVE_BLOCKS = 3;
+const CLI_MAX_TOTAL_BLOCKS = 20;
+
+/** Only these certainly went through the classifier, so only they prove the CLI cleared its streak. */
+const CLASSIFIER_REVIEWED_TOOL = /^(Bash$|PowerShell$|mcp__)/;
+
+export function nextClassifierBlocks(blocks: ClassifierBlocks, event: string, payload: Record<string, unknown>): ClassifierBlocks {
+  if (event === 'PermissionDenied') return { consecutive: blocks.consecutive + 1, total: blocks.total + 1 };
+  if (event === 'PostToolUse' && blocks.consecutive > 0 && CLASSIFIER_REVIEWED_TOOL.test(asString(payload.tool_name))) {
+    return { ...blocks, consecutive: 0 };
+  }
+  return blocks;
+}
+
+/** `approve` = the app answers `allow`; `owner` = goes to the owner; `after-blocks` = the same, because of the limit above. */
+export type AutoApprovalVerdict = 'approve' | 'owner' | 'after-blocks';
+
+/** Only the mode the CLI itself reports for this request counts: it follows Shift+Tab, which the launch argv does not. */
+export function autoApprovalVerdict(input: {
+  enabled: boolean;
+  payload: Record<string, unknown>;
+  blocks: ClassifierBlocks;
+}): AutoApprovalVerdict {
+  const { enabled, payload, blocks } = input;
+  const toolName = asString(payload.tool_name);
+  if (!enabled || payload.permission_mode !== 'auto' || toolName === '' || OWNER_ONLY_TOOLS.has(toolName)) return 'owner';
+  if (blocks.consecutive >= CLI_MAX_CONSECUTIVE_BLOCKS - 1 || blocks.total >= CLI_MAX_TOTAL_BLOCKS - 1) return 'after-blocks';
+  return 'approve';
+}
+
 function allowAlwaysPermissions(toolName: string, suggestions: readonly PermissionSuggestion[] | undefined) {
   const rules = (suggestions ?? [])
     .filter((s) => s.type === 'addRules')

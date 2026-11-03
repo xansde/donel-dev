@@ -151,7 +151,9 @@ export type NoticeKind =
   | 'informational'
   | 'generated-file'
   // B36 — the divider above which the tab's chat keeps the conversation a renewal replaced.
-  | 'session-renewed';
+  | 'session-renewed'
+  // Modo auto: the app answered a permission request by itself.
+  | 'auto-approved';
 
 export type SubagentStatus = 'running' | 'completed' | 'failed' | 'killed' | 'stopped' | 'unknown';
 

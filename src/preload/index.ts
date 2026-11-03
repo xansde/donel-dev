@@ -68,6 +68,7 @@ import type {
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
+  AutoModePrefs,
   ChatPrefs,
   LauncherDefaultsDto,
   LoginStatusDto,
@@ -382,6 +383,8 @@ const donelApi: DonelApi = {
     // B36 — sessão renovada em voo: switch and context limit.
     setSessionRenewalPrefs: (prefs: Partial<SessionRenewalPrefs>) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setSessionRenewalPrefs, prefs) as Promise<AppConfigDto>,
+    setAutoModePrefs: (prefs: Partial<AutoModePrefs>) =>
+      ipcRenderer.invoke(CONFIG_CHANNELS.setAutoModePrefs, prefs) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },

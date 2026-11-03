@@ -58,6 +58,9 @@ export interface PreferencesProps {
   /** B36 — sessão renovada em voo (`sessionRenewal`); applies at once. */
   sessionRenewal: SessionRenewalPrefs;
   onChangeSessionRenewal: (prefs: Partial<SessionRenewalPrefs>) => void;
+  /** "Modo auto nunca pede permissão" (`autoMode.neverAsks`); applies at once. */
+  autoNeverAsks: boolean;
+  onChangeAutoNeverAsks: (neverAsks: boolean) => void;
 }
 
 export function Preferences({
@@ -77,6 +80,8 @@ export function Preferences({
   onChangePetEnabled,
   sessionRenewal,
   onChangeSessionRenewal,
+  autoNeverAsks,
+  onChangeAutoNeverAsks,
 }: PreferencesProps): React.JSX.Element {
   const [newRoot, setNewRoot] = useState('');
 
@@ -176,6 +181,15 @@ export function Preferences({
           onChange={onChangeChatEnabled}
           label="Chat (experimental)"
           description={chatRestartPending ? 'Reinicie o app para aplicar.' : undefined}
+        />
+      </div>
+      <div className={styles.section} data-testid="preferences-auto-section">
+        <h3 className={styles.sectionTitle}>Modo auto</h3>
+        <Toggle
+          checked={autoNeverAsks}
+          onChange={onChangeAutoNeverAsks}
+          label="Modo auto nunca pede permissão"
+          description="O Donel aprova o pedido na hora e deixa uma linha no chat. Perguntas e planos continuam chegando para você."
         />
       </div>
       <div className={styles.section} data-testid="preferences-renewal-section">

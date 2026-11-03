@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
-import type { AppConfigDto, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs } from '../shared/config';
+import type { AppConfigDto, AutoModePrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs } from '../shared/config';
 // T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
 import type {
@@ -149,6 +149,8 @@ export interface AppConfig {
    * `unknownFields` and writes it back intact. Exposed in the DTO.
    */
   readonly sessionRenewal: SessionRenewalPrefs;
+  /** Modo auto — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
+  readonly autoMode: AutoModePrefs;
   /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
@@ -188,6 +190,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     pet: defaultPetPrefs(),
     sweep: defaultSweepPrefs(),
     sessionRenewal: DEFAULT_SESSION_RENEWAL_PREFS,
+    autoMode: defaultAutoModePrefs(),
     unknownFields: {},
   };
 }
@@ -218,6 +221,17 @@ export function sanitizeChatPrefs(value: unknown, fallback: ChatPrefs = defaultC
     enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : fallback.enabled,
     focusMode: typeof candidate.focusMode === 'boolean' ? candidate.focusMode : fallback.focusMode,
   };
+}
+
+export function defaultAutoModePrefs(): AutoModePrefs {
+  return { neverAsks: true };
+}
+
+/** Anything that is not a boolean keeps the fallback: the switch is on unless the owner turned it off. */
+export function sanitizeAutoModePrefs(value: unknown, fallback: AutoModePrefs = defaultAutoModePrefs()): AutoModePrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return fallback;
+  const { neverAsks } = value as Record<string, unknown>;
+  return { neverAsks: typeof neverAsks === 'boolean' ? neverAsks : fallback.neverAsks };
 }
 
 /** T014 (015-jobu-pet) — off, no remembered position (= default corner), Medium size. */
@@ -276,6 +290,7 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     chat: config.chat,
     pet: config.pet,
     sessionRenewal: config.sessionRenewal,
+    autoMode: config.autoMode,
   };
 }
 
@@ -698,6 +713,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     pet: sanitizePetPrefs(candidate.pet, defaults.pet),
     sweep: sanitizeSweepPrefs(candidate.sweep, defaults.sweep),
     sessionRenewal: sanitizeSessionRenewalPrefs(candidate.sessionRenewal, defaults.sessionRenewal),
+    autoMode: sanitizeAutoModePrefs(candidate.autoMode, defaults.autoMode),
     unknownFields,
   };
 }

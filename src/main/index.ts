@@ -65,6 +65,7 @@ import type {
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
+  AutoModePrefs,
   ChatPrefs,
   LauncherDefaultsDto,
   NotificationPreference,
@@ -138,6 +139,7 @@ import {
   LEGACY_ACTIVE_PROFILE_FILE_NAME,
   LEGACY_PROJECT_CONFIG_FILE_NAME,
   readAppConfig,
+  sanitizeAutoModePrefs,
   sanitizeChatPrefs,
   sanitizePhaseDefaultsTable,
   setSessionName,
@@ -1564,6 +1566,7 @@ function registerPtyIpcHandlers(): void {
               port: hookBridge.port,
               token,
               chatEnabled: appConfig.chat.enabled,
+              autoNeverAsks: appConfig.autoMode.neverAsks,
               curlPath,
               // Ponte da statusline — encadeia a do usuário (lida no config dir DESTA sessão
               // e no projeto); sem a dele, só com o chat desligado (hooks-settings.ts).
@@ -1840,6 +1843,14 @@ function registerConfigIpcHandlers(): void {
       ...appConfig,
       chat: sanitizeChatPrefs({ ...appConfig.chat, ...patch }, appConfig.chat),
     };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** Modo auto — atualização parcial; vale já, a ponte lê a preferência a cada pedido. */
+  ipcMain.handle(CONFIG_CHANNELS.setAutoModePrefs, (_event, prefs: Partial<AutoModePrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = { ...appConfig, autoMode: sanitizeAutoModePrefs({ ...appConfig.autoMode, ...patch }, appConfig.autoMode) };
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });
@@ -2954,7 +2965,11 @@ void app.whenReady().then(async () => {
     } else {
       cleanupStaleHookSettings(userDataDir);
       curlPath = detectCurlPath();
-      const bridge = createHookBridge({ diagnostics: createDiagnosticsLog(userDataDir) });
+      const bridge = createHookBridge({
+        diagnostics: createDiagnosticsLog(userDataDir),
+        autoNeverAsks: () => appConfig.autoMode.neverAsks,
+        holdsPendings: () => chatHub !== null,
+      });
       await bridge.start();
       semaphoreManager.attachBridge(bridge);
       bridge.onAny((event) => {
