@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-03',
     items: [
       {
+        title: 'O agente enxerga melhor as páginas',
+        text: 'Quando o agente lê uma página, ele vê só o que está na tela de verdade: o que está escondido atrás de um aviso ou de uma janela fica de fora, e o que está mais abaixo ou mais acima aparece só como contagem ("12 abaixo"). Ele também passa a enxergar e usar o que está dentro de quadros embutidos de outros sites, como formulários e players. E ganhou um jeito de ler a página inteira como texto organizado, com títulos, listas, tabelas e links.',
+      },
+      {
         title: 'Mindscape mostra todas as sessões do projeto',
         text: 'As sessões fechadas voltam ao quadro como cartões adormecidos (☾, apagados, com a data em que fecharam), com o post-it delas logo embaixo. Dê dois cliques num adormecido para retomar a conversa numa aba nova. As fechadas há mais de 7 dias ficam recolhidas em "N antigas", e as favoritas ganham ★ e nunca saem do lugar.',
       },
