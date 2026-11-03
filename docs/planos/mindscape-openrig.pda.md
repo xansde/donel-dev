@@ -282,3 +282,19 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
   as ferramentas `quadro_*` do item 08. Forma no
   [protótipo](../prototipos/mindscape-openrig/), abas "Falar desenhando" e "Desenho = quadro".
 - **Resolução**: —
+
+### 17 — Nó de terminal (não exclusivo de uma sessão)
+
+- **Tipo**: refinamento
+- **Prioridade**: media
+- **Status**: pendente
+- **Bloqueado por**: 13
+- **Pergunta**: dono, 03/11: "seria interessante também um nó de terminal, em vez de ser algo
+  exclusivo de um único seat". Um cartão de terminal comum (shell, dev server, testes, logs),
+  sem agente dentro, que existe por si no quadro e é compartilhado: as sessões ligadas a ele leem
+  a tela (`sessao_ver_tela`) e, se a ligação permitir, mandam comando; o dono vê e digita nele.
+  Na esteira, vira estação sem LLM: roda um comando e o **código de saída** é o desfecho
+  (0 = concluído, ≠0 = falhou), caminho determinístico. Equivale ao "terminal node" do OpenRig.
+  Em aberto: quem pode digitar nele, o que acontece quando duas sessões mandam ao mesmo tempo,
+  e se o processo vive sem nenhuma sessão ligada.
+- **Resolução**: —
