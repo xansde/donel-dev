@@ -83,6 +83,13 @@ adapte à tela. Assim consigo aproveitar melhor meus monitores").
   por cima; ela encosta nas bordas e se ajusta à tela. O selo de pendências fica no próprio Jobu.
   O motor do Jobu é o que o dono escolher (regra "LLM agnóstico").
 
+Ajuste do dono (03/11): "espero algo mais orientado ao lúdico, como se fosse uma caixa de fala
+com ele". A conversa é um **balão de quadrinho saindo do Jobu**: a última fala dele em destaque,
+escrita letra a letra, com a pose mudando conforme o assunto (surpreso no que precisa do dono,
+lendo no andamento, rindo no que deu certo), respostas em botões de um clique, o histórico
+recolhido num ≡, e um campo "você:" para escrever. Jobu e balão andam juntos; clicar no Jobu abre
+e fecha o balão. Urgente deixa a borda vermelha.
+
 Compilado em [`final.html`](final.html).
 
 ## Descartado
