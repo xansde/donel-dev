@@ -39,6 +39,8 @@ export const CONFIG_CHANNELS = {
   setPetPrefs: 'config:setPetPrefs',
   /** Sessão renovada em voo (B36) — `sessionRenewal.enabled` / `sessionRenewal.limitTokens`. */
   setSessionRenewalPrefs: 'config:setSessionRenewalPrefs',
+  /** Modo auto — `autoMode.neverAsks`; applies at once. */
+  setAutoModePrefs: 'config:setAutoModePrefs',
 } as const;
 
 /**
@@ -84,6 +86,11 @@ export type SessionNamesMap = Readonly<Record<string, StoredSessionName>>;
 export interface ChatPrefs {
   readonly enabled: boolean;
   readonly focusMode: boolean;
+}
+
+/** "Modo auto nunca pede permissão" — on by default: it is what the Launcher promises for `auto`. */
+export interface AutoModePrefs {
+  readonly neverAsks: boolean;
 }
 
 /**
@@ -151,6 +158,7 @@ export interface AppConfigDto {
   readonly pet: PetPrefs;
   /** Sessão renovada em voo (B36) — on by default, 250k of context. */
   readonly sessionRenewal: SessionRenewalPrefs;
+  readonly autoMode: AutoModePrefs;
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */
@@ -171,4 +179,6 @@ export interface DonelConfigApi {
   setPetPrefs(prefs: PetPrefsInput): Promise<AppConfigDto>;
   /** Sessão renovada em voo (B36) — partial update; an invalid field is ignored. */
   setSessionRenewalPrefs(prefs: Partial<SessionRenewalPrefs>): Promise<AppConfigDto>;
+  /** Modo auto — partial update; an invalid field is ignored. */
+  setAutoModePrefs(prefs: Partial<AutoModePrefs>): Promise<AppConfigDto>;
 }

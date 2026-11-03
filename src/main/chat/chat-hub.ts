@@ -201,7 +201,7 @@ interface Rec {
   session: Session | null;
   /** `conversation-switch` notice that opens the timeline after a switch. */
   topNotice: NoticeRow | null;
-  /** App-born notices (`account-switch`): memory only, always at the end. */
+  /** App-born notices (`account-switch`, `auto-approved`): memory only, in order of time among the rows. */
   appNotices: NoticeRow[];
   /**
    * B36 — the replaced conversation, once in the view. It only enters after the current
@@ -225,6 +225,20 @@ interface Rec {
   /** Serialises attach / switch / detach for this tab. */
   chain: Promise<unknown>;
 }
+
+/** Both lists come in order of time; a notice goes in right before the first row newer than it. */
+function mergeByTime(rows: readonly ConversationRow[], notices: readonly NoticeRow[]): ConversationRow[] {
+  const out: ConversationRow[] = [];
+  let next = 0;
+  for (const row of rows) {
+    while (next < notices.length && notices[next].at < row.at) out.push(notices[next++]);
+    out.push(row);
+  }
+  return [...out, ...notices.slice(next)];
+}
+
+/** The trail is one line, whatever the tool's summary brings. */
+const AUTO_APPROVED_SUMMARY_MAX = 140;
 
 function toEntries(lines: readonly (FollowedLine | PagedLine)[]): TranscriptEntry[] {
   const out: TranscriptEntry[] = [];
@@ -410,7 +424,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
   }
 
   function withNotices(rec: Rec, rows: readonly ConversationRow[]): ConversationRow[] {
-    return [...preludeView(rec.prelude), ...(rec.topNotice !== null ? [rec.topNotice] : []), ...rows, ...rec.appNotices];
+    return [...preludeView(rec.prelude), ...(rec.topNotice !== null ? [rec.topNotice] : []), ...mergeByTime(rows, rec.appNotices)];
   }
 
   /**
@@ -604,6 +618,20 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     deps.events.pendingOpened?.({ ptyId: rec.ptyId, pending });
   }
 
+  /** The trail of what the app approved alone: a discreet line in the conversation (the bridge wrote the log). */
+  function noteAutoApproval(rec: Rec, payload: Record<string, unknown>): void {
+    if (sourceOf(rec) === null) return;
+    const tool = typeof payload.tool_name === 'string' ? payload.tool_name : '';
+    const { summary } = summarizeTool({ name: tool, input: payload.tool_input, cwd: rec.source?.cwd ?? '' });
+    const line = [summary.verb, summary.target].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim() || tool;
+    noticeSeq += 1;
+    const notice = noticeRow(`app:auto-approved:${noticeSeq}`, 'auto-approved', {
+      summary: line.length > AUTO_APPROVED_SUMMARY_MAX ? `${line.slice(0, AUTO_APPROVED_SUMMARY_MAX)}…` : line,
+    });
+    rec.appNotices.push(notice);
+    if (rec.session !== null) emitRows(rec, [{ op: 'append', rows: [notice] }]);
+  }
+
   function prunePendings(rec: Rec): void {
     const closed = [...rec.pendings.values()].filter((e) => e.pending.state !== 'open');
     for (const e of closed.slice(0, Math.max(0, closed.length - CLOSED_PENDINGS_KEPT))) rec.pendings.delete(e.pending.id);
@@ -750,6 +778,8 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       setBase(rec, 'ended');
     } else if (event.type === 'pending') {
       openPending(rec, event);
+    } else if (event.type === 'auto-approved') {
+      noteAutoApproval(rec, event.payload);
     } else if (event.type === 'expired') {
       // the CLI gave up: nobody is waiting, the terminal must take over (FR-025)
       if (closeOpenPending(rec, event.requestId, 'expired', false)) {

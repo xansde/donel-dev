@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-03',
     items: [
       {
+        title: 'Modo auto não pede mais permissão',
+        text: 'Quando o Claude pediria para você confirmar algo no modo auto, o Donel agora aprova na hora e deixa uma linha discreta no chat, "Permitido automaticamente: ...", para você conferir depois. Perguntas do Claude e aprovação de plano continuam chegando para você. Depois de duas ações seguidas barradas pelo próprio modo auto, o pedido também chega para você: ali o Claude Code quer alguém olhando. Há um interruptor em Preferências, "Modo auto nunca pede permissão", ligado por padrão.',
+      },
+      {
         title: 'Abas no navegador da sessão',
         text: 'Link que abre em nova janela e popup agora viram uma aba nova no navegador da sessão, em vez de trocar a página em que você estava. As abas aparecem no topo do painel, até quatro por sessão, e o agente também sabe trocar e fechar.',
       },

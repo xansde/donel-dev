@@ -3177,6 +3177,10 @@ export function App(): React.JSX.Element {
         onChangeSessionRenewal={(prefs) => {
           void window.donel.config.setSessionRenewalPrefs(prefs).then(setAppConfig).catch(() => undefined);
         }}
+        autoNeverAsks={appConfig?.autoMode.neverAsks ?? true}
+        onChangeAutoNeverAsks={(neverAsks) => {
+          void window.donel.config.setAutoModePrefs({ neverAsks }).then(setAppConfig).catch(() => undefined);
+        }}
       />
 
       {/* Spec 010 / N7→F25 (D1) — o mapa de nós. Renderizado condicionalmente
