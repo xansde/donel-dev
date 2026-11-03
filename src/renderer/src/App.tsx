@@ -13,7 +13,7 @@ import {
   Toggle,
 } from '@donel-dev/design-system';
 import { Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type {
   AccountsViewDto,
   AppConfigDto,
@@ -131,6 +131,9 @@ import type { FavoriteProjectGroup, FavoriteSessionRow, SidebarSession } from '.
 import { ProjectSwitcher } from './ProjectSwitcher';
 import { ChatView, type ChatViewActions } from './chat/ChatView';
 import { getChatStore } from './chat/ChatStore';
+import { BackgroundIndicator, type BackgroundSession } from './chat/BackgroundTasks';
+import { revealRow } from './chat/revealRow';
+import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
 import { disposeTabSend, sendDriverFor, sendToTab } from './chat/composer/tabSend';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
@@ -279,6 +282,12 @@ const PRE_TYPE_POLL_MS = 250;
 // sozinho. O docstring de lá também corrige a explicação: o prazo nunca foi a
 // cura (a varredura 50/150/400/1000/2000 ms reprovou a hipótese) — ele é só
 // higiene de stdin, e o conserto é confirmar no buffer renderizado.
+
+/** Slot curto da aba: marca de worktree e "⟳ 2" (segundo plano visível), lado a lado. */
+function tabMarks(worktreeMark: string | undefined, backgroundRunning: number): string | undefined {
+  const marks = [worktreeMark, backgroundRunning > 0 ? `⟳ ${backgroundRunning}` : undefined].filter(Boolean);
+  return marks.length > 0 ? marks.join(' ') : undefined;
+}
 
 /** Remove uma chave de um record sem mutar o original — usado ao limpar `semaphoreStates`/`aliveTabs` no fechamento de aba. */
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -1901,6 +1910,17 @@ export function App(): React.JSX.Element {
    * decidisse o nome por conta própria, os três divergiriam.
    * Aba `shell` não tem sessão do Claude: seu nome é o `tab.name` e ponto (C4).
    */
+  // Segundo plano visível — what every tab left running in the background (the chat store gathers the live
+  // states the main sends; a tab without the chat view simply has no entry).
+  const backgroundByPty = useSyncExternalStore(
+    useCallback((listener: () => void) => getChatStore().subscribeBackground(listener), []),
+    () => getChatStore().getBackground(),
+  );
+  const backgroundRunningOf = (tabId: string): number => {
+    const ptyId = chatPtyIds[tabId];
+    return ptyId ? runningCount(backgroundByPty[ptyId]) : 0;
+  };
+
   const resolveTabName = (tab: TabState): string => {
     if (tab.sessionType !== 'claude') return tab.name;
     return resolveSessionName({
@@ -1941,12 +1961,13 @@ export function App(): React.JSX.Element {
                 cliColorHex: cliColorNameToHex(tab.cliColorName),
                 state: semaphoreStates[tab.id]?.state ?? 'working',
                 stateEnteredAt: semaphoreStates[tab.id]?.stateEnteredAt ?? 0,
+                background: backgroundRunningOf(tab.id),
               },
             ]
           : [],
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tabs, semaphoreStates, appConfig],
+    [tabs, semaphoreStates, appConfig, backgroundByPty, chatPtyIds],
   );
   // Mindscape, fatia 02 — last visit of the owner to each session, in memory
   // only (not persisted: the app is born without tabs). Stamped when a tab
@@ -2297,6 +2318,20 @@ export function App(): React.JSX.Element {
 
   // T011 — aba em foco, pra decidir se a toolbar de Modelo/Esforço aparece (só sessões 'claude').
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
+
+  // Segundo plano visível — the status bar's overview, one entry per tab with something in the background.
+  const backgroundSessions: BackgroundSession[] = tabs.flatMap((tab) => {
+    const ptyId = chatPtyIds[tab.id];
+    const tasks = ptyId ? backgroundByPty[ptyId] : undefined;
+    return ptyId && tasks && tasks.length > 0 ? [{ tabId: tab.id, ptyId, name: resolveTabName(tab), tasks }] : [];
+  });
+  const handleOpenBackground = (session: BackgroundSession, task: { readonly rowId: string } | null): void => {
+    setAppMode('geral');
+    setActiveTabId(session.tabId);
+    const tab = tabs.find((candidate) => candidate.id === session.tabId);
+    if (tab && hasChatView(tab, chatEnabled)) setTabView(tab.id, 'chat');
+    if (task) revealRow(session.ptyId, task.rowId);
+  };
 
 
   // FIX (T015, FR-009 "statusbar completa") — era hardcoded "fable/high"
@@ -2686,7 +2721,7 @@ export function App(): React.JSX.Element {
                 // T079 (D-C20) — slot próprio, nunca o `model`.
                 statusText={chatEnabled && tab.sessionType === 'claude' && semaphoreStates[tab.id]?.state === 'permission' ? 'esperando você' : undefined}
                 // "Isolar em worktree" — a marca ⎇ no slot curto ao lado do nome (a branch vai no cabeçalho da sessão).
-                model={tabWorktreeBranch(tab) ? WORKTREE_TAB_MARK : undefined}
+                model={tabMarks(tabWorktreeBranch(tab) ? WORKTREE_TAB_MARK : undefined, backgroundRunningOf(tab.id))}
                 active={tab.id === activeTabId}
                 onClick={() => setActiveTabId(tab.id)}
                 onClose={() => handleRequestCloseTab(tab.id)}
@@ -3050,6 +3085,7 @@ export function App(): React.JSX.Element {
           smartZone={activeSmartZone}
           accountTestId="statusbar-account"
         />
+        <BackgroundIndicator sessions={backgroundSessions} onOpen={handleOpenBackground} />
         <PatchNotes />
         <HealthIndicator />
       </div>

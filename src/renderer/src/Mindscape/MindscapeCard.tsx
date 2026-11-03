@@ -1,5 +1,6 @@
 import { SESSION_STATE_LABEL_PT, type SessionState } from '@donel-dev/design-system';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { backgroundCountLabel } from '../../../shared/chat/backgroundTasks';
 import type { SessionHighlight } from '../../../shared/mindscape/highlight';
 import { OWNER_COLORS, type OwnerCardColor } from '../../../shared/mindscape/model';
 import type { TabColorToken } from '../../../shared/tabAppearance';
@@ -43,6 +44,8 @@ export interface MindscapeSessionCardProps {
   readonly closedLabel?: string;
   /** Rule 6 — favorite of the owner (pinned in the 007 registry): ★ and never moved by "Organizar". */
   readonly favorite?: boolean;
+  /** Segundo plano visível — how many tasks the session has running in the background (0 = none). */
+  readonly background?: number;
 }
 
 /** Glyph of a dormant session (tab closed). */
@@ -62,6 +65,7 @@ export function MindscapeSessionCard({
   onOpen,
   closedLabel,
   favorite = false,
+  background = 0,
 }: MindscapeSessionCardProps): React.JSX.Element {
   const dormant = closedLabel !== undefined;
   const style = {
@@ -104,6 +108,7 @@ export function MindscapeSessionCard({
       </div>
       <div className={styles.sessionState} data-testid="mindscape-session-state">
         {dormant ? closedLabel : SESSION_STATE_LABEL_PT[state]}
+        {!dormant && background > 0 ? ` · ⟳ ${backgroundCountLabel(background)}` : ''}
       </div>
     </article>
   );

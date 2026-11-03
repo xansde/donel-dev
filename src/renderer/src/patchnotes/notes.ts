@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-03',
     items: [
       {
+        title: 'Segundo plano à vista, sem abrir o terminal',
+        text: 'Comandos, agentes e monitores que a sessão deixou rodando em segundo plano agora aparecem no chat, logo acima da caixa de texto: "⟳ 2 em segundo plano", mesmo depois que o turno acaba. Clique para ver a lista (o que é, desde quando, se terminou, falhou ou foi parada) e clique num item para ir até onde ele começou na conversa. A aba ganha um "⟳ 2" discreto, o cartão da sessão no Mindscape também, e a barra de status mostra o total de todas as sessões, com uma lista que leva até a aba certa.',
+      },
+      {
         title: 'Mindscape mostra todas as sessões do projeto',
         text: 'As sessões fechadas voltam ao quadro como cartões adormecidos (☾, apagados, com a data em que fecharam), com o post-it delas logo embaixo. Dê dois cliques num adormecido para retomar a conversa numa aba nova. As fechadas há mais de 7 dias ficam recolhidas em "N antigas", e as favoritas ganham ★ e nunca saem do lugar.',
       },
