@@ -46,6 +46,11 @@ ao alfa.
 - **11 — Estudo profundo do OpenRig** → seat como lugar, papel reinjetado, ligação que autoriza, mensagem sem atropelar, fluxo por desfecho declarado; CLI/TUI/MCP sobre uma API ([estudo](../pesquisas/openrig-estudo-profundo-2026-11.md))
 - **Pausa do dono (03/11)** → nada da ideia OpenRig (04, 05, 06, 12, 13) é desenvolvido antes de ele avaliar o protótipo do 14
 
+## O centro do Mindscape (dono, 03/11)
+
+"A ideia desse excalidraw é conseguir me comunicar contigo exatamente como eu funciono:
+graficamente. Palavras não são meu forte." Ver item 16.
+
 ## Próximo passo depois do protótipo (dono, 03/11)
 
 **Esteira montada no Mindscape** (item 15): "a ideia de configurar as esteiras no mindscape não
@@ -253,4 +258,18 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
   Homologação...). É o Modo Dev mais visual e maleável. Base: pedido de 24/10 em
   [`modo-dev-montador-de-fluxo.spec.md`](../produto/modo-dev-montador-de-fluxo.spec.md) e o
   [contexto medido](../produto/assets/modo-dev-montador-de-fluxo/contexto-atual.md).
+- **Resolução**: —
+
+### 16 — Falar desenhando (desenho é o canal com o agente)
+
+- **Tipo**: refinamento
+- **Prioridade**: alta
+- **Status**: pendente
+- **Bloqueado por**: 14
+- **Pergunta**: o dono desenha no quadro, manda um trecho a uma sessão sem digitar, e o agente
+  recebe print + leitura do desenho em texto (serve a motor sem visão) e responde desenhando no
+  quadro, como proposta azul tracejada que o dono aceita ou desfaz. O gesto opera o quadro: seta
+  entre cartões vira ligação, retângulo vira moldura, rabisco gruda no cartão. Puxa para a frente
+  as ferramentas `quadro_*` do item 08. Forma no
+  [protótipo](../prototipos/mindscape-openrig/), abas "Falar desenhando" e "Desenho = quadro".
 - **Resolução**: —
