@@ -41,6 +41,16 @@ ao alfa.
 
 - **01 — O que vale do OpenRig** → vale: cartão-lugar, cartão rico com estado em 3 eixos, prévia do terminal, molduras de grupo, salvar e reabrir o quadro, ferramentas do quadro por MCP; não vale agora: fila/inbox/chatroom entre agentes, topologia em YAML, tmux/daemon ([pesquisa](../pesquisas/openrig-referencia-mindscape-2026-11.md))
 - **02 — Validar MVP e versionamento com o cliente** → validado por delegação do dono, 03/11; ele revê no alfa diário
+- **03 — Navegador integrado para qualquer motor** → painel por sessão + ferramentas `navegador_*` no MCP `donel`; `--chrome` removido (PRs #155, #158)
+- **11 — Estudo profundo do OpenRig** → seat como lugar, papel reinjetado, ligação que autoriza, mensagem sem atropelar, fluxo por desfecho declarado; CLI/TUI/MCP sobre uma API ([estudo](../pesquisas/openrig-estudo-profundo-2026-11.md))
+- **Pausa do dono (03/11)** → nada da ideia OpenRig (04, 05, 06, 12, 13) é desenvolvido antes de ele avaliar o protótipo do 14
+
+## Próximo passo depois do protótipo (dono, 03/11)
+
+**Esteira montada no Mindscape** (item 15): "a ideia de configurar as esteiras no mindscape não
+pode morrer. Terminais pré-determinados, com conexões de caminho gerados pelo output de cada
+sessão, similar ao que temos no modo dev, mas mais visual e mais maleável. Isso DEVE CONTINUAR
+PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fechar essa porta.
 
 ## Ainda não especificado
 
@@ -84,7 +94,7 @@ ao alfa.
 
 - **Tipo**: refinamento
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: concluido
 - **Bloqueado por**: 02
 - **Pergunta**: fechar e entregar o navegador interno de `docs/design/navegador-interno.md`
   (painel `WebContentsView` por sessão, controle por CDP, ferramentas `navegador_*` num
@@ -94,7 +104,7 @@ ao alfa.
   qualquer CLI que fale MCP (Claude Code hoje; provedores da 011 quando suportarem) e o
   nome e a UI não citam "Claude". Primeira fatia (painel) existe só local, na branch
   `feature/navegador-interno` (commit `2eb5c01`).
-- **Resolução**: —
+- **Resolução**: painel por sessão, controle por MCP `donel` para qualquer motor, Claude in Chrome removido (PRs #155 e #158)
 
 ### 04 — Cartão rico e estado em três eixos
 
@@ -186,14 +196,14 @@ ao alfa.
 
 - **Tipo**: pesquisa
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: concluido
 - **Bloqueado por**: 01
 - **Pergunta**: lendo o código e os docs do OpenRig (não só o README): como um papel de sessão
   é definido e sobrevive à troca de conversa; o que uma conexão (edge) significa de fato
   (roteamento? permissão de mandar? só desenho?); como send/broadcast/chatroom/fila/handoff
   chegam ao terminal sem atropelar; como vários agentes trabalham juntos e o que o humano vê.
   Entrega o mapa conceito → Donel Dev (trazer já · depois · não trazer) e fatias propostas.
-- **Resolução**: —
+- **Resolução**: seat (lugar acima da conversa) é o conceito central; papel reinjetado em todo lançamento; a edge do OpenRig quase só desenha (no Donel ela autoriza); mensagem por envelope com guarda de digitação; fluxo decidido por desfecho/rota declarados ([estudo](../pesquisas/openrig-estudo-profundo-2026-11.md))
 
 ### 12 — Papéis de sessão
 
@@ -222,9 +232,24 @@ ao alfa.
 
 - **Tipo**: prototipo
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: em-andamento
 - **Bloqueado por**: 11
 - **Pergunta**: como o Mindscape mostra e dirige várias sessões trabalhando juntas (papéis,
   conexões, quem espera quem, o que precisa do dono) no layout do Donel Dev? Três variantes
   para o dono escolher.
+- **Resolução**: protótipo pronto, esperando a escolha do dono ([protótipo](../prototipos/mindscape-openrig/))
+
+### 15 — Esteira montada no Mindscape (próximo passo)
+
+- **Tipo**: refinamento
+- **Prioridade**: alta
+- **Status**: pendente
+- **Bloqueado por**: 11, 14
+- **Pergunta**: o dono monta no Mindscape um molde de fluxo: terminais (sessões com papel,
+  skill e motor) pré-determinados e caminhos entre eles que o output de cada sessão decide
+  (fan-out, fan-in), com um agente geral que acompanha tudo e só leva ao dono as dúvidas que
+  ele não resolve; um bloco por iniciativa, escolhendo o tipo (Desenvolvimento, Bugfix,
+  Homologação...). É o Modo Dev mais visual e maleável. Base: pedido de 24/10 em
+  [`modo-dev-montador-de-fluxo.spec.md`](../produto/modo-dev-montador-de-fluxo.spec.md) e o
+  [contexto medido](../produto/assets/modo-dev-montador-de-fluxo/contexto-atual.md).
 - **Resolução**: —

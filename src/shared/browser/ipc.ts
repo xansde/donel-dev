@@ -21,6 +21,16 @@ export const BROWSER_CHANNELS = {
   state: 'browser:state',
   /** main -> renderer: the browser of this PTY wants to be seen (`BrowserOpenRequest`). */
   openRequest: 'browser:openRequest',
+  /** invoke(ptyId) -> generation (number) or null. The owner's "Assumir" (D11). */
+  takeOver: 'browser:takeOver',
+  /** send(ptyId, generation). The owner's "Devolver"; ignored unless `generation` is the current one. */
+  handBack: 'browser:handBack',
+  /** invoke(ptyId) -> `BrowserControlState | null`. */
+  getControl: 'browser:getControl',
+  /** main -> renderer: `BrowserControlState` every time the owner changes. */
+  control: 'browser:control',
+  /** main -> renderer: one `BrowserLogEntry` (D13). */
+  log: 'browser:log',
 } as const;
 
 export interface BrowserRect {
@@ -47,6 +57,33 @@ export interface BrowserOpenRequest {
   readonly ptyId: string;
 }
 
+/** Who drives the browser of a PTY (shared/browser/control.ts), as the panel shows it. */
+export interface BrowserControlState {
+  readonly ptyId: string;
+  readonly owner: 'agent' | 'human';
+  readonly generation: number;
+  /** Why the agent asked for the owner; `null` when the owner took over himself. */
+  readonly reason: string | null;
+  readonly requestedByAgent: boolean;
+}
+
+/** One line of the panel's footer (D13): what the agent did in the browser. */
+export interface BrowserLogEntry {
+  readonly ptyId: string;
+  readonly at: number;
+  readonly text: string;
+}
+
+/** Footer line of a page the agent opened. The app's UI names "the agent", never one AI (LLM agnóstico). */
+export function agentOpenedLine(url: string): string {
+  return `Agente abriu: ${url}`;
+}
+
+/** Footer line (and panel banner) of `navegador_pedir_humano`. */
+export function agentAskedHelpLine(reason: string): string {
+  return `O agente pediu sua ajuda: ${reason}`;
+}
+
 /** API exposed by the preload in `window.donel.browser`. Each `onX` has ONE subscriber (the renderer's browser store). */
 export interface DonelBrowserApi {
   open(ptyId: string): Promise<BrowserPanelState>;
@@ -57,6 +94,13 @@ export interface DonelBrowserApi {
   snapshot(ptyId: string): Promise<string | null>;
   onState(listener: (state: BrowserPanelState) => void): () => void;
   onOpenRequest(listener: (request: BrowserOpenRequest) => void): () => void;
+  /** "Assumir": the owner drives; returns the generation his "Devolver" must carry (null = no browser). */
+  takeOver(ptyId: string): Promise<number | null>;
+  /** "Devolver ao agente". */
+  handBack(ptyId: string, generation: number): void;
+  getControl(ptyId: string): Promise<BrowserControlState | null>;
+  onControl(listener: (state: BrowserControlState) => void): () => void;
+  onLog(listener: (entry: BrowserLogEntry) => void): () => void;
 }
 
 /** Validates a rect that came over IPC (finite, non-negative size). */
