@@ -16,7 +16,15 @@ import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import type { EditorStatus, GitBranchResult, OpenInEditorResult, PullRequestRequestOptions, PullRequestStatusResult, WorktreeKeptPayload } from '../shared/workspace';
 // Navegador interno — the panel of each session tab.
 import { BROWSER_CHANNELS } from '../shared/browser/ipc';
-import type { BrowserHistoryAction, BrowserNavigateResult, BrowserOpenRequest, BrowserPanelState, BrowserRect } from '../shared/browser/ipc';
+import type {
+  BrowserControlState,
+  BrowserHistoryAction,
+  BrowserLogEntry,
+  BrowserNavigateResult,
+  BrowserOpenRequest,
+  BrowserPanelState,
+  BrowserRect,
+} from '../shared/browser/ipc';
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
@@ -433,6 +441,19 @@ const donelApi: DonelApi = {
     onOpenRequest: (listener: (request: BrowserOpenRequest) => void) => {
       const handler = (_event: unknown, request: BrowserOpenRequest): void => listener(request);
       return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.openRequest, handler);
+    },
+    takeOver: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.takeOver, ptyId) as Promise<number | null>,
+    handBack: (ptyId: string, generation: number) => {
+      ipcRenderer.send(BROWSER_CHANNELS.handBack, ptyId, generation);
+    },
+    getControl: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.getControl, ptyId) as Promise<BrowserControlState | null>,
+    onControl: (listener: (state: BrowserControlState) => void) => {
+      const handler = (_event: unknown, state: BrowserControlState): void => listener(state);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.control, handler);
+    },
+    onLog: (listener: (entry: BrowserLogEntry) => void) => {
+      const handler = (_event: unknown, entry: BrowserLogEntry): void => listener(entry);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.log, handler);
     },
   },
 

@@ -161,3 +161,61 @@ export function withResolvedPermissionMode(argv: readonly string[], userDefault:
   if (findExplicitPermissionMode(argv)) return [...argv];
   return [...argv, '--permission-mode', resolvePermissionMode(argv, userDefault)];
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Navegador integrado — how the app's own MCP server (`donel`, shared/browser/mcp.ts) reaches the agent of a
+// session (docs/design/navegador-interno.md, D9 + emenda agnóstica de 03/11).
+//
+// The tools are a contract of the APP, not of one CLI. What changes from one agent CLI to another is only how
+// it is told "there is an MCP server here, with this header": a config file, a flag, an env var. That is the
+// one function below, keyed by the CLI that runs in the PTY. Today every session runs Claude Code (with or
+// without a third-party provider: the provider changes the model endpoint, not the CLI), so there is one case.
+// A new CLI that speaks MCP (Codex: `-c mcp_servers.donel.url=…`; Gemini CLI: `mcpServers` in its settings)
+// becomes one more `case` here, with its own test — nothing else in the app changes.
+
+/** The agent CLI that runs in a session's PTY. */
+export type AgentCli = 'claude-code';
+
+/** The app's MCP endpoint for ONE session (the bearer token names the PTY whose browser it drives). */
+export interface AppMcpEndpoint {
+  /** Server name the agent sees (`donel` -> tools `mcp__donel__navegador_*` in Claude Code). */
+  readonly name: string;
+  /** Streamable HTTP URL on the loopback. */
+  readonly url: string;
+  readonly bearerToken: string;
+}
+
+/** What the spawn needs to hand the endpoint to the CLI. */
+export interface McpDelivery {
+  /** Content of the per-session file written at `configPath` (`null` = the CLI needs no file). */
+  readonly configFileContent: string | null;
+  /** Arguments appended to the CLI's argv. */
+  readonly args: readonly string[];
+}
+
+/** Claude Code `--mcp-config` file: one HTTP server with the bearer header. */
+export function buildBrowserMcpConfig(endpoint: AppMcpEndpoint): {
+  mcpServers: Record<string, { type: 'http'; url: string; headers: Record<string, string> }>;
+} {
+  return {
+    mcpServers: {
+      [endpoint.name]: { type: 'http', url: endpoint.url, headers: { Authorization: `Bearer ${endpoint.bearerToken}` } },
+    },
+  };
+}
+
+/**
+ * Claude Code argv for the config file. `--mcp-config` is variadic in the CLI: the spawn appends it after the
+ * other flags, and only options (never a bare value) may follow it.
+ */
+export function browserMcpConfigArgs(configPath: string): string[] {
+  return ['--mcp-config', configPath];
+}
+
+/** The single extension point: how the app's MCP endpoint reaches `cli`. */
+export function mcpDeliveryFor(cli: AgentCli, endpoint: AppMcpEndpoint, configPath: string): McpDelivery {
+  switch (cli) {
+    case 'claude-code':
+      return { configFileContent: `${JSON.stringify(buildBrowserMcpConfig(endpoint), null, 2)}\n`, args: browserMcpConfigArgs(configPath) };
+  }
+}

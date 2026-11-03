@@ -63,3 +63,55 @@
   height: auto;
   opacity: 0.55;
 }
+
+/* Owner in control (D11): orange frame + the bar with "Devolver ao agente". */
+.panelOwner {
+  box-shadow: inset 0 0 0 2px var(--state-permission);
+}
+
+.ownerBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-half) var(--space-1);
+  border-bottom: var(--hairline);
+  background: color-mix(in srgb, var(--state-permission) 14%, var(--bg-panel));
+}
+
+.ownerText {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-caption-size);
+}
+
+/* Footer log (D13): what the agent did, newest last. */
+.log {
+  flex: none;
+  margin: 0;
+  padding: var(--space-half) var(--space-1);
+  list-style: none;
+  border-top: var(--hairline);
+  max-height: 84px;
+  overflow-y: auto;
+}
+
+.logLine {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.badge {
+  margin-left: var(--space-half);
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--bg-app);
+  font-size: var(--text-caption-size);
+  line-height: 16px;
+}
