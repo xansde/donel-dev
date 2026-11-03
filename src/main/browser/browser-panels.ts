@@ -42,6 +42,8 @@ export interface BrowserPanelsDeps {
   /** The main frame of this PTY's page committed a navigation (the service decides whether it is the agent's). */
   onNavigated?(ptyId: string, url: string): void;
   onDownload?(ptyId: string, fileName: string): void;
+  /** The view of this PTY was destroyed (session gone, idle sweep, ceiling): the service drops its CDP driver. */
+  onDestroyed?(ptyId: string): void;
   /** `true` while this PTY's browser must not be destroyed (agent tool running, owner in control). */
   isPinned?(ptyId: string): boolean;
   now?: () => number;
@@ -229,6 +231,7 @@ export class BrowserPanels {
     }
     if (!entry.contents.isDestroyed()) entry.contents.close();
     if (this.entries.size === 0) this.stopSweep();
+    this.deps.onDestroyed?.(ptyId);
   }
 
   destroyAll(): void {

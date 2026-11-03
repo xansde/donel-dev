@@ -29,6 +29,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         title: 'Navegador dentro do Donel',
         text: 'Cada sessão ganhou um navegador de verdade, ao lado da conversa: clique em "Navegador" no topo da sessão, digite o endereço e use voltar, avançar e recarregar. Ele tem os próprios cookies, separados do seu Chrome, e um login que você fizer nele fica guardado para as próximas vezes. A opção "Navegador (Chrome/Edge)" do painel de nova sessão saiu: o navegador agora é este, integrado.',
       },
+      {
+        title: 'O agente usa o navegador',
+        text: 'O agente da sessão agora abre páginas, lê, clica, digita e tira print no navegador da própria sessão, e cada página que ele abre aparece no rodapé do navegador; com o navegador fechado, o botão "Navegador" mostra quantas novidades chegaram. Clique em "Assumir" para usar você mesmo: o agente espera até você clicar em "Devolver ao agente". Quando ele precisar de você (um login, um captcha), o navegador abre com o pedido dele.',
+      },
     ],
   },
   {

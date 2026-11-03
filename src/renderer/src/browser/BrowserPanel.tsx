@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { Button } from '@donel-dev/design-system';
 import { browserStore, usePtyBrowser } from './browserStore';
 import { isViewportCovered } from './coverage';
+import { agentAskedHelpLine } from '../../../shared/browser/ipc';
 import styles from './BrowserPanel.module.css';
 
 // Navegador interno — the panel at the side of a session tab (docs/design/navegador-interno.md).
@@ -13,6 +14,8 @@ import styles from './BrowserPanel.module.css';
 // (`setBounds(null)`) and a print of the page takes its place.
 
 const COVER_CHECK_EVERY_MS = 120;
+/** Footer lines visible at once (the store keeps more; the newest stay). */
+const LOG_LINES_SHOWN = 4;
 
 export interface BrowserPanelProps {
   readonly ptyId: string;
@@ -88,6 +91,7 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
   if (!browser.open) return null;
 
   const state = browser.state;
+  const ownerDriving = browser.control?.owner === 'human';
   const shownAddress = address ?? (state && state.url !== 'about:blank' ? state.url : '');
 
   const submit = (event: FormEvent): void => {
@@ -101,7 +105,12 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
   };
 
   return (
-    <aside className={styles.panel} data-testid="browser-panel" aria-label="Navegador">
+    <aside
+      className={ownerDriving ? `${styles.panel} ${styles.panelOwner}` : styles.panel}
+      data-testid="browser-panel"
+      data-owner={browser.control?.owner ?? 'agent'}
+      aria-label="Navegador"
+    >
       <form className={styles.toolbar} onSubmit={submit}>
         <Button type="button" variant="ghost" aria-label="Voltar" title="Voltar" disabled={!state?.canGoBack} onClick={() => window.donel.browser.history(ptyId, 'back')}>
           ◀
@@ -133,6 +142,17 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
             }
           }}
         />
+        {ownerDriving ? null : (
+          <Button
+            type="button"
+            variant="ghost"
+            title="Assumir o navegador: o agente espera até você devolver"
+            data-testid="browser-take-over"
+            onClick={() => browserStore.takeOver(ptyId)}
+          >
+            Assumir
+          </Button>
+        )}
         <Button type="button" variant="ghost" aria-label="Fechar navegador" title="Fechar navegador" onClick={() => browserStore.setOpen(ptyId, false)}>
           ×
         </Button>
@@ -142,9 +162,28 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
           {error}
         </p>
       ) : null}
+      {ownerDriving ? (
+        <div className={styles.ownerBar} role="status" data-testid="browser-owner-bar">
+          <span className={styles.ownerText}>
+            {browser.control?.requestedByAgent && browser.control.reason ? agentAskedHelpLine(browser.control.reason) : 'Você está no controle'}
+          </span>
+          <Button type="button" variant="secondary" data-testid="browser-hand-back" onClick={() => browserStore.handBack(ptyId)}>
+            Devolver ao agente
+          </Button>
+        </div>
+      ) : null}
       <div ref={viewportRef} className={styles.viewport} data-testid="browser-viewport" data-covered={covered ? 'true' : 'false'}>
         {covered && snapshot ? <img className={styles.snapshot} src={snapshot} alt="" /> : null}
       </div>
+      {browser.log.length > 0 ? (
+        <ol className={styles.log} aria-label="O que o agente fez no navegador" data-testid="browser-log">
+          {browser.log.slice(-LOG_LINES_SHOWN).map((entry) => (
+            <li key={`${entry.at}-${entry.text}`} className={styles.logLine} title={new Date(entry.at).toLocaleTimeString('pt-BR')}>
+              {entry.text}
+            </li>
+          ))}
+        </ol>
+      ) : null}
     </aside>
   );
 }
@@ -157,10 +196,21 @@ export function BrowserToggleButton({ ptyId }: { readonly ptyId: string }) {
       variant={browser.open ? 'secondary' : 'ghost'}
       aria-pressed={browser.open}
       data-testid="browser-toggle"
-      title={browser.open ? 'Fechar o navegador desta sessão' : 'Abrir o navegador desta sessão (o agente também consegue usar)'}
+      title={
+        browser.open
+          ? 'Fechar o navegador desta sessão'
+          : browser.unseen > 0
+            ? `O agente usou o navegador (${browser.unseen} ${browser.unseen === 1 ? 'registro novo' : 'registros novos'})`
+            : 'Abrir o navegador desta sessão (o agente também consegue usar)'
+      }
       onClick={() => browserStore.toggle(ptyId)}
     >
       Navegador
+      {!browser.open && browser.unseen > 0 ? (
+        <span className={styles.badge} data-testid="browser-unseen">
+          {browser.unseen > 99 ? '99+' : browser.unseen}
+        </span>
+      ) : null}
     </Button>
   );
 }

@@ -9,7 +9,14 @@
 // just human-readable shorthand for "the flag followed by the value as one
 // argv token" — adding real quote chars would corrupt the session name.
 import { describe, expect, it } from 'vitest';
-import { buildClaudeArgs, parseModelEffortFromArgs, resolvePermissionMode, withResolvedPermissionMode, type BuildClaudeArgsOptions } from '../src/shared/commandBuilder';
+import {
+  buildClaudeArgs,
+  mcpDeliveryFor,
+  parseModelEffortFromArgs,
+  resolvePermissionMode,
+  withResolvedPermissionMode,
+  type BuildClaudeArgsOptions,
+} from '../src/shared/commandBuilder';
 
 describe('buildClaudeArgs', () => {
   it('returns an empty argv when no option is provided (all flags omitted, CLI uses user default)', () => {
@@ -281,5 +288,18 @@ describe('withResolvedPermissionMode', () => {
   it('não altera o argv quando já tem --permission-mode (nem a forma com =)', () => {
     expect(withResolvedPermissionMode(['--permission-mode', 'auto'], 'plan')).toEqual(['--permission-mode', 'auto']);
     expect(withResolvedPermissionMode(['--permission-mode=auto'], 'plan')).toEqual(['--permission-mode=auto']);
+  });
+});
+
+describe('Navegador integrado — entrega do MCP `donel` ao CLI da sessão', () => {
+  const endpoint = { name: 'donel', url: 'http://127.0.0.1:51234/mcp', bearerToken: 'f'.repeat(32) };
+
+  it('mcpDeliveryFor(claude-code): --mcp-config <path> as two tokens and one HTTP server named donel with the bearer header', () => {
+    const path = 'C:\\Users\\x y\\browser-mcp\\pty-1.json';
+    const delivery = mcpDeliveryFor('claude-code', endpoint, path);
+    expect(delivery.args).toEqual(['--mcp-config', path]);
+    expect(JSON.parse(delivery.configFileContent ?? 'null')).toEqual({
+      mcpServers: { donel: { type: 'http', url: 'http://127.0.0.1:51234/mcp', headers: { Authorization: `Bearer ${'f'.repeat(32)}` } } },
+    });
   });
 });

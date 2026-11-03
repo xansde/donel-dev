@@ -1576,7 +1576,10 @@ function registerPtyIpcHandlers(): void {
         sessionHooksSettingsPath = hooksSettingsPath;
       }
       const semaphoreArgs = sessionHooksSettingsPath ? ['--settings', sessionHooksSettingsPath] : [];
-      const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs];
+      // Navegador integrado — o MCP do app (`donel`) entregue ao CLI da sessão pela função por CLI
+      // (`mcpDeliveryFor`, emenda agnóstica). Por último: `--mcp-config` é variádico e só opções podem vir depois.
+      const browserMcpArgs = browserService?.prepareSession(plannedPtyId, 'claude-code') ?? [];
+      const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs, ...browserMcpArgs];
       // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
 
       let ptyId: string;
@@ -1603,6 +1606,7 @@ function registerPtyIpcHandlers(): void {
         // O spawn falhou: nada de token nem arquivo órfão.
         hookBridge?.unregisterSession(plannedPtyId);
         removeSessionHooksSettings(app.getPath('userData'), plannedPtyId);
+        browserService?.releasePty(plannedPtyId);
         throw error;
       }
 
@@ -3042,7 +3046,11 @@ void app.whenReady().then(async () => {
     getWindow: getMainWindow,
     userDataDir: app.getPath('userData'),
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
-  }); // Navegador interno
+    appVersion: app.getVersion(),
+  }); // Navegador integrado
+  // Servidor MCP `donel` (loopback, porta efêmera) ANTES da janela: a primeira sessão já nasce com as ferramentas
+  // do navegador. Se não subir, as sessões nascem sem elas (nunca sem terminal).
+  await browserService.startMcp().catch((error: unknown) => console.error('[donel-dev] MCP do navegador não subiu:', error));
   createMainWindow();
 
   app.on('activate', () => {
