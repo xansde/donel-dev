@@ -48,6 +48,8 @@ export interface MindscapeLiveSession {
   readonly state: SessionState;
   /** When the session entered `state` (semaphore clock, epoch ms; 0 before the first hook). */
   readonly stateEnteredAt: number;
+  /** Segundo plano visível — tasks running in the background (0 = none). */
+  readonly background?: number;
 }
 
 export interface MindscapeScreenProps {
@@ -650,6 +652,7 @@ export function MindscapeScreen({
                     selected={live.cards.includes(card.id)}
                     onOpen={() => onGoToTerminal(session.tabId)}
                     favorite={isFavorite(session.sessionId)}
+                    background={session.background}
                   />
                 );
               })}

@@ -130,3 +130,11 @@
     animation: none;
   }
 }
+
+/* Segundo plano visível — the row a background task was launched from, after "mostrar na conversa". */
+.revealed {
+  border-radius: 6px;
+  outline: 1px solid var(--accent);
+  outline-offset: 4px;
+  transition: outline-color 1.2s ease;
+}

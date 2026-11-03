@@ -28,7 +28,9 @@ import type {
   RowDetailPart,
   RowPatch,
 } from '../../../shared/chat/ipc';
+import { backgroundKey } from '../../../shared/chat/backgroundTasks';
 import type {
+  BackgroundTask,
   ChatPermissionMode,
   ChatReception,
   ConversationRow,
@@ -120,7 +122,12 @@ interface Entry {
   attachGen: number;
   attaching: boolean;
   held: Held[];
+  /** `backgroundKey` of the last background list published to `getBackground()`. */
+  bgKey: string;
 }
+
+/** Segundo plano visível — background tasks of every attached tab, by `ptyId` (a new object on every change). */
+export type BackgroundByPty = Readonly<Record<string, readonly BackgroundTask[]>>;
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -129,6 +136,8 @@ export class ChatStore {
   private unsubscribers: (() => void)[] = [];
   /** T064: prompt-signal listeners by tab; they are not tied to the timeline attach. */
   private readonly signalListeners = new Map<string, Set<(event: ChatPromptSignalEvent) => void>>();
+  private readonly bgListeners = new Set<Listener>();
+  private bgSnapshot: BackgroundByPty = {};
 
   constructor(private readonly api: DonelChatApi) {}
 
@@ -142,7 +151,7 @@ export class ChatStore {
   subscribe(ptyId: string, listener: Listener): () => void {
     let entry = this.entries.get(ptyId);
     if (entry === undefined) {
-      entry = { state: idleState(ptyId), listeners: new Set(), attachGen: 0, attaching: false, held: [] };
+      entry = { state: idleState(ptyId), listeners: new Set(), attachGen: 0, attaching: false, held: [], bgKey: '' };
       this.entries.set(ptyId, entry);
     }
     entry.listeners.add(listener);
@@ -158,8 +167,34 @@ export class ChatStore {
     if (entry.listeners.size > 0) return;
     entry.attachGen += 1;
     this.entries.delete(ptyId);
+    this.publishBackground(ptyId, null);
     void Promise.resolve(this.api.detach(ptyId)).catch(() => undefined);
     if (this.entries.size === 0 && this.signalListeners.size === 0) this.dropChannels();
+  }
+
+  // ---- segundo plano visível: every tab's background tasks, for the tab bar and the status bar ----
+
+  /** `useSyncExternalStore` shape; the snapshot is a new object only when some tab's list changed. */
+  subscribeBackground(listener: Listener): () => void {
+    this.bgListeners.add(listener);
+    return () => this.bgListeners.delete(listener);
+  }
+
+  getBackground(): BackgroundByPty {
+    return this.bgSnapshot;
+  }
+
+  private publishBackground(ptyId: string, tasks: readonly BackgroundTask[] | null): void {
+    const has = ptyId in this.bgSnapshot;
+    if (tasks === null || tasks.length === 0) {
+      if (!has) return;
+      const next = { ...this.bgSnapshot };
+      delete next[ptyId];
+      this.bgSnapshot = next;
+    } else {
+      this.bgSnapshot = { ...this.bgSnapshot, [ptyId]: tasks };
+    }
+    for (const l of [...this.bgListeners]) l();
   }
 
   dispose(): void {
@@ -400,6 +435,12 @@ export class ChatStore {
   }
 
   private emit(entry: Entry): void {
+    const tasks = entry.state.live?.background ?? [];
+    const key = backgroundKey(tasks);
+    if (key !== entry.bgKey) {
+      entry.bgKey = key;
+      this.publishBackground(entry.state.ptyId, tasks);
+    }
     for (const l of [...entry.listeners]) l();
   }
 }

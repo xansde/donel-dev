@@ -27,6 +27,8 @@ import { unwrapPastedContent } from './promptMatch';
 import type { RowPatch } from './ipc';
 import type {
   ActionRow,
+  BackgroundMark,
+  BackgroundState,
   ConversationRow,
   LineRef,
   NoticeKind,
@@ -88,11 +90,16 @@ interface ResultInfo {
   readonly result: unknown;
   readonly content: string;
   readonly ref: LineRef;
+  readonly at?: string;
 }
 
+/** What an end notification said about a launch whose row may not be loaded yet (older page). */
 interface SubPending {
   readonly status?: SubagentStatus;
   readonly durationMs?: number;
+  /** Only when the notification carried a `<status>`: a Monitor event without one ends nothing. */
+  readonly bg?: BackgroundState;
+  readonly endedAt?: string;
 }
 
 interface TurnMeta {
@@ -477,13 +484,35 @@ function applySub(row: SubagentRow, p: SubPending | undefined): SubagentRow {
     ...row,
     ...(p.status !== undefined ? { status: p.status } : {}),
     ...(p.durationMs !== undefined ? { durationMs: p.durationMs } : {}),
+    ...(p.endedAt !== undefined && p.status !== undefined && p.status !== 'running' ? { endedAt: p.endedAt } : {}),
   };
 }
 
+/** End states of a background task, from the `<status>` of its notification (or a `task_status`). */
+const BG_STATE: Readonly<Record<string, BackgroundState>> = {
+  completed: 'completed', failed: 'failed', error: 'failed', killed: 'stopped', stopped: 'stopped',
+};
+
+function endMark(mark: BackgroundMark, state: BackgroundState, endedAt: string | undefined): BackgroundMark {
+  return { ...mark, state, ...(endedAt !== undefined && endedAt !== '' ? { endedAt } : {}) };
+}
+
+/** A notification read before its launch row (older page, or out of order) is settled when the mark is set. */
+function settleMark(w: Work, toolUseId: string, mark: BackgroundMark): BackgroundMark {
+  const p = w.subPending[toolUseId];
+  if (p?.bg === undefined) return mark;
+  delete w.subPending[toolUseId];
+  return endMark(mark, p.bg, p.endedAt);
+}
+
 function notify(w: Work, toolUseId: string, p: SubPending): void {
-  const row = getRow(w, agentRowId(toolUseId));
+  const memo = w.tools[toolUseId];
+  const row = getRow(w, memo?.rowId ?? agentRowId(toolUseId));
   if (row !== undefined && row.kind === 'subagent') setRow(w, applySub(row, p));
-  else w.subPending[toolUseId] = { ...w.subPending[toolUseId], ...p };
+  else if (row !== undefined && row.kind === 'action') {
+    if (row.background !== undefined && p.bg !== undefined) setRow(w, { ...row, background: endMark(row.background, p.bg, p.endedAt) });
+    else if (p.bg !== undefined) w.subPending[toolUseId] = { ...w.subPending[toolUseId], ...p }; // the launch result may still turn it into one
+  } else w.subPending[toolUseId] = { ...w.subPending[toolUseId], ...p };
 }
 
 function tagText(text: string, tag: string): string | undefined {
@@ -491,7 +520,7 @@ function tagText(text: string, tag: string): string | undefined {
   return m === null ? undefined : m[1]!;
 }
 
-function parseNotification(text: string): { toolUseId: string; pending: SubPending } | null {
+function parseOneNotification(text: string, at: string): { toolUseId: string; pending: SubPending } | null {
   const toolUseId = tagText(text, 'tool-use-id');
   if (toolUseId === undefined) return null;
   const status = tagText(text, 'status');
@@ -501,8 +530,20 @@ function parseNotification(text: string): { toolUseId: string; pending: SubPendi
     pending: {
       status: status === undefined ? 'unknown' : SUB_STATUS[status.trim()] ?? 'unknown',
       ...(Number.isFinite(dur) && tagText(text, 'duration_ms') !== undefined ? { durationMs: dur } : {}),
+      ...(status !== undefined ? { bg: BG_STATE[status.trim()] ?? 'unknown', endedAt: at } : {}),
     },
   };
+}
+
+/** Every `<task-notification>` of a message (the CLI may batch several into one). */
+function parseNotifications(text: string, at: string): { toolUseId: string; pending: SubPending }[] {
+  const parts = text.split('<task-notification>').slice(1);
+  const out: { toolUseId: string; pending: SubPending }[] = [];
+  for (const part of parts.length > 0 ? parts : [text]) {
+    const n = parseOneNotification(part, at);
+    if (n !== null) out.push(n);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -548,9 +589,13 @@ function openTool(w: Work, id: string, name: string, input: Json, at: string): v
     put(w, { kind: 'plan', ...base(w, id, at), markdown: str(input.plan) ?? '', outcome: 'pending' } satisfies PlanRow);
   } else {
     const s = summarizeTool({ name, input, cwd: w.cwd });
-    put(w, {
+    let row: ActionRow = {
       kind: 'action', ...base(w, id, at), toolUseId: id, tool: name, category: s.category, summary: s.summary, status: 'running',
-    } satisfies ActionRow);
+    };
+    if (name === 'Monitor' || (SHELL_TOOLS.has(name) && input.run_in_background === true)) {
+      row = { ...row, background: settleMark(w, id, { state: 'running', ...labelOf(input) }) };
+    }
+    put(w, row);
   }
   w.tools[id] = { rowId, name, input };
   const orphan = w.orphans[id];
@@ -561,6 +606,39 @@ function openTool(w: Work, id: string, name: string, input: Json, at: string): v
 }
 
 const DOC_EXTENSIONS: ReadonlySet<string> = new Set(['html', 'md', 'pdf', 'png', 'jpg', 'svg', 'csv', 'txt']);
+const SHELL_TOOLS: ReadonlySet<string> = new Set(['Bash', 'PowerShell']);
+
+function labelOf(input: Json): { label?: string } {
+  const d = str(input.description)?.replace(/\s+/g, ' ').trim();
+  return d !== undefined && d !== '' ? { label: cut(d, 120) } : {};
+}
+
+/**
+ * The launch result decides whether something really stayed in the background: a task id means yes (also for
+ * a command the CLI moved to the background on its own); an error means it never ran; a shell result without
+ * an id ran in the foreground after all.
+ */
+function launchMark(w: Work, id: string, memo: ToolMemo, row: ActionRow, res: ResultInfo, taskId: string | undefined): BackgroundMark | undefined {
+  if (taskId !== undefined) return settleMark(w, id, { ...(row.background ?? { state: 'running', ...labelOf(memo.input) }), taskId });
+  const mark = row.background;
+  if (mark === undefined || mark.state !== 'running') return mark;
+  if (res.denied || res.interrupted) return undefined;
+  if (res.isError) return endMark(mark, 'failed', res.at);
+  return memo.name === 'Monitor' ? { ...mark, state: 'unknown' } : undefined;
+}
+
+/** `TaskStop` that went through: the task it names is over (its notification, when it comes, says the same). */
+function applyTaskStop(w: Work, taskId: string | undefined, at: string | undefined): void {
+  if (taskId === undefined || taskId === '') return;
+  for (const memo of Object.values(w.tools)) {
+    const row = getRow(w, memo.rowId);
+    if (row?.kind === 'action' && memo.backgroundTaskId === taskId && row.background?.state === 'running') {
+      setRow(w, { ...row, background: endMark(row.background, 'stopped', at) });
+    } else if (row?.kind === 'subagent' && row.agentId === taskId && row.status === 'running') {
+      setRow(w, { ...row, status: 'stopped', ...(at !== undefined ? { endedAt: at } : {}) });
+    }
+  }
+}
 
 function closeTool(w: Work, id: string, res: ResultInfo): void {
   const memo = w.tools[id];
@@ -575,9 +653,13 @@ function closeTool(w: Work, id: string, res: ResultInfo): void {
   if (row.kind === 'action') {
     const s = summarizeTool({ name: memo.name, input: memo.input, result: res.result, cwd: w.cwd });
     const status: ActionRow['status'] = res.denied ? 'denied' : res.interrupted ? 'interrupted' : res.isError ? 'error' : 'ok';
-    setRow(w, { ...row, category: s.category, summary: s.summary, status, detail: res.ref });
-    const bg = str(result.backgroundTaskId);
+    const bg = str(result.backgroundTaskId) ?? (memo.name === 'Monitor' ? str(result.taskId) : undefined);
+    const background = launchMark(w, id, memo, row, res, bg);
+    const next: ActionRow = { ...row, category: s.category, summary: s.summary, status, detail: res.ref, background };
+    if (background === undefined) delete (next as { background?: BackgroundMark }).background;
+    setRow(w, next);
     if (bg !== undefined) w.tools[id] = { ...memo, backgroundTaskId: bg };
+    if (memo.name === 'TaskStop' && status === 'ok') applyTaskStop(w, str(memo.input.task_id) ?? str(memo.input.shell_id), res.at);
     if (memo.name === 'Write' && status === 'ok') {
       const path = str(memo.input.file_path) ?? str(result.filePath);
       const ext = path?.split('.').pop()?.toLowerCase();
@@ -609,7 +691,7 @@ function closeTool(w: Work, id: string, res: ResultInfo): void {
   }
 }
 
-function resultInfoOf(block: Json, data: Json, ref: LineRef): ResultInfo {
+function resultInfoOf(block: Json, data: Json, ref: LineRef, at: string): ResultInfo {
   const result = data.toolUseResult;
   return {
     isError: block.is_error === true,
@@ -618,6 +700,7 @@ function resultInfoOf(block: Json, data: Json, ref: LineRef): ResultInfo {
     result,
     content: str(block.content) ?? '',
     ref,
+    at,
   };
 }
 
@@ -687,15 +770,14 @@ function foldUser(w: Work, line: Extract<ChainLine, { k: 'node' }>): void {
     const block = obj(b);
     if (block.type !== 'tool_result') continue;
     hadResult = true;
-    closeTool(w, str(block.tool_use_id) ?? '', resultInfoOf(block, data, line.raw));
+    closeTool(w, str(block.tool_use_id) ?? '', resultInfoOf(block, data, line.raw, at));
   }
   if (hadResult) return;
 
   // 2. notifications / other origins
   const origin = str(obj(data.origin).kind);
   if (origin === 'task-notification') {
-    const n = parseNotification(text);
-    if (n !== null) notify(w, n.toolUseId, n.pending);
+    for (const n of parseNotifications(text, at)) notify(w, n.toolUseId, n.pending);
     openTurn(w, uuid, 'notification');
     return;
   }
@@ -817,10 +899,10 @@ function foldAttachment(w: Work, line: Extract<ChainLine, { k: 'node' }>): void 
           ? (str(a.prompt) ?? '')
           : promptBlocks.map(obj).filter((b) => b.type === 'text').map((b) => str(b.text) ?? '').join('\n');
       if (a.commandMode === 'task-notification') {
-        const n = parseNotification(prompt);
-        if (n !== null) {
+        const all = parseNotifications(prompt, at);
+        for (const n of all) {
           const usage = obj(a.usage);
-          const fallback = num(usage.durationMs);
+          const fallback = all.length === 1 ? num(usage.durationMs) : undefined;
           const pending: SubPending = n.pending.durationMs === undefined && fallback !== undefined ? { ...n.pending, durationMs: fallback } : n.pending;
           notify(w, n.toolUseId, pending);
         }
@@ -856,7 +938,11 @@ function foldAttachment(w: Work, line: Extract<ChainLine, { k: 'node' }>): void 
       const status = str(a.status);
       const row = id === undefined ? undefined : getRow(w, w.tools[id]!.rowId);
       if (row !== undefined && row.kind === 'action' && status !== undefined && status !== 'running') {
-        setRow(w, { ...row, status: status === 'completed' ? 'ok' : 'error' });
+        setRow(w, {
+          ...row,
+          status: status === 'completed' ? 'ok' : 'error',
+          ...(row.background?.state === 'running' ? { background: endMark(row.background, BG_STATE[status] ?? 'unknown', at) } : {}),
+        });
       }
       return;
     }
