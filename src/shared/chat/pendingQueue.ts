@@ -129,18 +129,28 @@ export function nextClassifierBlocks(blocks: ClassifierBlocks, event: string, pa
   return blocks;
 }
 
-/** `approve` = the app answers `allow`; `owner` = goes to the owner; `after-blocks` = the same, because of the limit above. */
-export type AutoApprovalVerdict = 'approve' | 'owner' | 'after-blocks';
+/**
+ * `approve` = the app answers `allow`; `yolo` = the same, by the project's Modo YOLO; `owner` = goes to the owner;
+ * `after-blocks` = the same, because of the limit above.
+ */
+export type AutoApprovalVerdict = 'approve' | 'yolo' | 'owner' | 'after-blocks';
 
-/** Only the mode the CLI itself reports for this request counts: it follows Shift+Tab, which the launch argv does not. */
+/**
+ * A project in YOLO approves in any mode and after blocks, on purpose: only what is a question stays with the owner.
+ * Otherwise only the mode the CLI itself reports for this request counts: it follows Shift+Tab, which the launch argv
+ * does not.
+ */
 export function autoApprovalVerdict(input: {
   enabled: boolean;
+  yolo: boolean;
   payload: Record<string, unknown>;
   blocks: ClassifierBlocks;
 }): AutoApprovalVerdict {
-  const { enabled, payload, blocks } = input;
+  const { enabled, yolo, payload, blocks } = input;
   const toolName = asString(payload.tool_name);
-  if (!enabled || payload.permission_mode !== 'auto' || toolName === '' || OWNER_ONLY_TOOLS.has(toolName)) return 'owner';
+  if (toolName === '' || OWNER_ONLY_TOOLS.has(toolName)) return 'owner';
+  if (yolo) return 'yolo';
+  if (!enabled || payload.permission_mode !== 'auto') return 'owner';
   if (blocks.consecutive >= CLI_MAX_CONSECUTIVE_BLOCKS - 1 || blocks.total >= CLI_MAX_TOTAL_BLOCKS - 1) return 'after-blocks';
   return 'approve';
 }

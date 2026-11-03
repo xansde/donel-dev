@@ -1,4 +1,4 @@
-import { Button, TextInput } from '@donel-dev/design-system';
+import { Button, TextInput, Toggle } from '@donel-dev/design-system';
 import { Trash2 } from 'lucide-react';
 import { forwardRef, useImperativeHandle, useState } from 'react';
 import { withPendingRepoCommitted } from './repoEntryList';
@@ -39,6 +39,11 @@ export interface ProjectConfigFormProps {
   teamId: string;
   onTeamIdChange: (value: string) => void;
   disabled?: boolean;
+  /**
+   * Modo YOLO — only in the gear (a project that already exists). It applies at the click, outside "Salvar": turning
+   * it off cannot wait for a second gesture.
+   */
+  yolo?: { readonly enabled: boolean; readonly onChange: (enabled: boolean) => void };
 }
 
 /** Imperativo exposto via ref — só o necessário pra quem submete o formulário PAI não perder o texto pendente do campo de repo (FIX #32). */
@@ -48,7 +53,7 @@ export interface ProjectConfigFormHandle {
 }
 
 export const ProjectConfigForm = forwardRef<ProjectConfigFormHandle, ProjectConfigFormProps>(function ProjectConfigForm(
-  { repos, onReposChange, workspaceId, onWorkspaceIdChange, teamId, onTeamIdChange, disabled = false },
+  { repos, onReposChange, workspaceId, onWorkspaceIdChange, teamId, onTeamIdChange, disabled = false, yolo },
   ref,
 ) {
   const [newRepo, setNewRepo] = useState('');
@@ -68,6 +73,18 @@ export const ProjectConfigForm = forwardRef<ProjectConfigFormHandle, ProjectConf
 
   return (
     <>
+      {yolo ? (
+        <div className={styles.section} data-testid="project-config-yolo">
+          <h4 className={styles.sectionTitle}>Modo YOLO</h4>
+          <Toggle
+            checked={yolo.enabled}
+            onChange={yolo.onChange}
+            label="Agir sem perguntar neste projeto"
+            description="Todo pedido de permissão é aprovado na hora, inclusive ações de fora, como abrir PR e publicar. Perguntas e planos continuam chegando para você. Vale na hora, também para sessões abertas."
+          />
+        </div>
+      ) : null}
+
       <div className={styles.section} data-testid="project-config-repos">
         <h4 className={styles.sectionTitle}>Repositório GitHub (issues/PRs)</h4>
         <p className={styles.hint}>

@@ -41,6 +41,8 @@ export const CONFIG_CHANNELS = {
   setSessionRenewalPrefs: 'config:setSessionRenewalPrefs',
   /** Modo auto — `autoMode.neverAsks`; applies at once. */
   setAutoModePrefs: 'config:setAutoModePrefs',
+  /** Modo YOLO — one project on or off; applies at once. */
+  setProjectYolo: 'config:setProjectYolo',
 } as const;
 
 /**
@@ -91,6 +93,11 @@ export interface ChatPrefs {
 /** "Modo auto nunca pede permissão" — on by default: it is what the Launcher promises for `auto`. */
 export interface AutoModePrefs {
   readonly neverAsks: boolean;
+}
+
+/** Modo YOLO — the projects where every permission request is approved alone. A project not listed is off. */
+export interface YoloPrefs {
+  readonly projects: readonly string[];
 }
 
 /**
@@ -159,6 +166,7 @@ export interface AppConfigDto {
   /** Sessão renovada em voo (B36) — on by default, 250k of context. */
   readonly sessionRenewal: SessionRenewalPrefs;
   readonly autoMode: AutoModePrefs;
+  readonly yolo: YoloPrefs;
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */
@@ -181,4 +189,6 @@ export interface DonelConfigApi {
   setSessionRenewalPrefs(prefs: Partial<SessionRenewalPrefs>): Promise<AppConfigDto>;
   /** Modo auto — partial update; an invalid field is ignored. */
   setAutoModePrefs(prefs: Partial<AutoModePrefs>): Promise<AppConfigDto>;
+  /** Modo YOLO — turns one project on or off. Turning on also approves what its tabs have waiting. */
+  setProjectYolo(projectPath: string, enabled: boolean): Promise<AppConfigDto>;
 }

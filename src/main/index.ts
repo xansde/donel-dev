@@ -189,6 +189,7 @@ import {
 } from './hooks-settings';
 import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-bridge';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
+import { resolveMainRepoRootSync } from './session-worktree';
 import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
 import { createChatHub, type ChatHub, type ChatSourceInfo } from './chat/chat-hub';
 import { registerChatIpcHandlers } from './chat/chat-ipc';
@@ -291,6 +292,7 @@ import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import { createSystemWorkspaceToolsDeps, createWorkspaceTools } from './workspace-tools';
 import { createSessionWorktreeService } from './session-worktree-service';
 import { worktreeNameFromArgs } from '../shared/sessionWorktree';
+import { projectOfFolders, tabFolders, withProjectYolo } from '../shared/projectYolo';
 import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
 // Navegador interno — painel com WebContentsView por sessão (docs/design/navegador-interno.md).
@@ -553,6 +555,25 @@ let chatHub: ChatHub | null = null;
 let chatAttachments: AttachmentStore | null = null;
 /** Fonte INICIAL da conversa de cada aba `claude` (a troca de conversa é do hub, não daqui). */
 const initialChatSourceByPty = new Map<string, ChatSourceInfo>();
+/** Modo YOLO — the folder each claude tab was opened on: the CLI's own `cwd` moves, the tab's project does not. */
+const tabCwdByPty = new Map<string, string>();
+/** One `git rev-parse` per folder: the answer does not change while the app runs, and the hooks read it. */
+const tabFoldersCache = new Map<string, readonly string[]>();
+
+function tabFoldersOf(cwd: string): readonly string[] {
+  let folders = tabFoldersCache.get(cwd);
+  if (folders === undefined) {
+    folders = tabFolders(cwd, resolveMainRepoRootSync(cwd));
+    tabFoldersCache.set(cwd, folders);
+  }
+  return folders;
+}
+
+function isTabYolo(ptyId: string): boolean {
+  const cwd = tabCwdByPty.get(ptyId);
+  const { projects } = appConfig.yolo;
+  return cwd !== undefined && projects.length > 0 && projectOfFolders(tabFoldersOf(cwd), projects) !== null;
+}
 /**
  * Sessão renovada em voo (B36) — the handoffs live in `<userData>/handoffs/`, never in the
  * project. Born at boot (needs `app.getPath`); `null` before it.
@@ -1267,6 +1288,7 @@ function createMainWindow(): void {
     removeSessionHooksSettings(app.getPath('userData'), ptyId);
     statusLineStore.remove(ptyId);
     activeSessionByPty.delete(ptyId);
+    tabCwdByPty.delete(ptyId);
     chatHub?.markEnded(ptyId);
     void chatAttachments?.releasePty(ptyId);
     // T1125 (011-contas-e-provedores, etapa 1, C4) — mesma baixa, pro poll de
@@ -1560,13 +1582,12 @@ function registerPtyIpcHandlers(): void {
         if (hookBridge && hookBridge.port !== null) {
           try {
             const token = hookBridge.registerSession(plannedPtyId);
+            if (options.cwd) tabCwdByPty.set(plannedPtyId, options.cwd);
             sessionHooksSettingsPath = writeSessionHooksSettings({
               userDataDir: app.getPath('userData'),
               ptyId: plannedPtyId,
               port: hookBridge.port,
               token,
-              chatEnabled: appConfig.chat.enabled,
-              autoNeverAsks: appConfig.autoMode.neverAsks,
               curlPath,
               // Ponte da statusline — encadeia a do usuário (lida no config dir DESTA sessão
               // e no projeto); sem a dele, só com o chat desligado (hooks-settings.ts).
@@ -1582,6 +1603,7 @@ function registerPtyIpcHandlers(): void {
             // Degrada como o boot sem servidor: a sessão nasce sem semáforo, nunca sem terminal.
             console.error('[donel-dev] --settings da sessão não gravou — sessão sem hooks:', error);
             hookBridge.unregisterSession(plannedPtyId);
+            tabCwdByPty.delete(plannedPtyId);
             sessionHooksSettingsPath = null;
           }
         }
@@ -1620,6 +1642,7 @@ function registerPtyIpcHandlers(): void {
         hookBridge?.unregisterSession(plannedPtyId);
         removeSessionHooksSettings(app.getPath('userData'), plannedPtyId);
         browserService?.releasePty(plannedPtyId);
+        tabCwdByPty.delete(plannedPtyId);
         throw error;
       }
 
@@ -1766,6 +1789,9 @@ function listProjectsWithFavorites(): ProjectInfo[] {
 
 function registerProjectIpcHandlers(): void {
   ipcMain.handle(PROJECT_CHANNELS.list, (): ProjectInfo[] => listProjectsWithFavorites());
+  ipcMain.handle(PROJECT_CHANNELS.tabFolders, (_event, cwd: unknown): readonly string[] =>
+    typeof cwd === 'string' && cwd !== '' ? tabFoldersOf(cwd) : [],
+  );
 
   ipcMain.handle(PROJECT_CHANNELS.favorite, (_event, path: string, favorite: boolean): ProjectInfo[] => {
     appConfig = { ...appConfig, favorites: toggleFavorite(appConfig.favorites, path, favorite) };
@@ -1852,6 +1878,15 @@ function registerConfigIpcHandlers(): void {
     const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
     appConfig = { ...appConfig, autoMode: sanitizeAutoModePrefs({ ...appConfig.autoMode, ...patch }, appConfig.autoMode) };
     persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** Modo YOLO — vale já: a ponte lê a lista a cada pedido, e o que os pedidos abertos do projeto esperavam é aprovado aqui. */
+  ipcMain.handle(CONFIG_CHANNELS.setProjectYolo, (_event, projectPath: unknown, enabled: unknown): AppConfigDto => {
+    if (typeof projectPath !== 'string' || projectPath === '' || typeof enabled !== 'boolean') return toAppConfigDto(appConfig);
+    appConfig = { ...appConfig, yolo: { projects: withProjectYolo(appConfig.yolo.projects, projectPath, enabled) } };
+    persistAppConfig();
+    if (enabled) for (const ptyId of [...tabCwdByPty.keys()].filter(isTabYolo)) chatHub?.approveOpenPermissions(ptyId);
     return toAppConfigDto(appConfig);
   });
 
@@ -2968,6 +3003,7 @@ void app.whenReady().then(async () => {
       const bridge = createHookBridge({
         diagnostics: createDiagnosticsLog(userDataDir),
         autoNeverAsks: () => appConfig.autoMode.neverAsks,
+        projectYolo: isTabYolo,
         holdsPendings: () => chatHub !== null,
       });
       await bridge.start();

@@ -48,7 +48,7 @@ import type {
 } from '../../shared/chat/rows';
 import { classifyLine } from '../../shared/chat/transcriptEntry';
 import type { BridgeEvent, PendingDecisionHandle } from '../hook-bridge';
-import { closePending, pendingFromRequest, toHookDecision } from '../../shared/chat/pendingQueue';
+import { autoApprovalVerdict, closePending, NO_CLASSIFIER_BLOCKS, pendingFromRequest, toHookDecision } from '../../shared/chat/pendingQueue';
 import { summarizeTool } from '../../shared/chat/toolSummary';
 import { createSubmitRing, lookupAck, signalsFromEntries, type PromptSignal } from './prompt-signals';
 import { buildRowDetail } from './row-detail';
@@ -86,7 +86,10 @@ export interface ChatHubDeps {
   /** Where a tab's conversation lives when the hub first hears of it. `null` = not a chat tab. */
   getSource(ptyId: string): ChatSourceInfo | null;
   readonly events: ChatHubEvents;
-  readonly diagnostics?: { unknownEntry(entry: { ptyId: string; entryType: string }): void };
+  readonly diagnostics?: {
+    unknownEntry(entry: { ptyId: string; entryType: string }): void;
+    autoApproval?(entry: { ptyId: string; tool: string; outcome: 'yolo' }): void;
+  };
   readonly now?: () => number;
   /** Activity without a transcript file for this long -> `missing`. Default 10 s. */
   readonly missingMs?: number;
@@ -121,6 +124,8 @@ export interface ChatHub {
   reportScreenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): void;
   /** T076 - the owner's answer to an open pending (chat:answer). */
   answer(ptyId: string, pendingId: string, answer: PendingAnswer): ChatAnswerOutput;
+  /** Modo YOLO was just turned on: the tab's open permission requests stop waiting. Questions and plans stay. */
+  approveOpenPermissions(ptyId: string): void;
   /** Folders the tab's transcript files (and sub-agent files) may be served from. */
   transcriptRoots(ptyId: string): readonly string[];
   /** Id of the conversation the tab is on now (`null` until its first hook). */
@@ -619,7 +624,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
   }
 
   /** The trail of what the app approved alone: a discreet line in the conversation (the bridge wrote the log). */
-  function noteAutoApproval(rec: Rec, payload: Record<string, unknown>): void {
+  function noteAutoApproval(rec: Rec, payload: Record<string, unknown>, yolo: boolean): void {
     if (sourceOf(rec) === null) return;
     const tool = typeof payload.tool_name === 'string' ? payload.tool_name : '';
     const { summary } = summarizeTool({ name: tool, input: payload.tool_input, cwd: rec.source?.cwd ?? '' });
@@ -627,6 +632,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     noticeSeq += 1;
     const notice = noticeRow(`app:auto-approved:${noticeSeq}`, 'auto-approved', {
       summary: line.length > AUTO_APPROVED_SUMMARY_MAX ? `${line.slice(0, AUTO_APPROVED_SUMMARY_MAX)}…` : line,
+      yolo,
     });
     rec.appNotices.push(notice);
     if (rec.session !== null) emitRows(rec, [{ op: 'append', rows: [notice] }]);
@@ -779,7 +785,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     } else if (event.type === 'pending') {
       openPending(rec, event);
     } else if (event.type === 'auto-approved') {
-      noteAutoApproval(rec, event.payload);
+      noteAutoApproval(rec, event.payload, event.yolo);
     } else if (event.type === 'expired') {
       // the CLI gave up: nobody is waiting, the terminal must take over (FR-025)
       if (closeOpenPending(rec, event.requestId, 'expired', false)) {
@@ -964,6 +970,21 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       closeOpenPending(rec, pendingId, 'answered', false);
       emitLiveIfChanged(rec);
       return { ok: true };
+    },
+
+    approveOpenPermissions(ptyId) {
+      const rec = recs.get(ptyId);
+      if (rec === undefined) return;
+      for (const { pending, handle } of [...rec.pendings.values()]) {
+        if (pending.state !== 'open') continue;
+        const payload = { tool_name: pending.match.toolName, tool_input: pending.match.toolInput };
+        if (autoApprovalVerdict({ enabled: false, yolo: true, payload, blocks: NO_CLASSIFIER_BLOCKS }) !== 'yolo') continue;
+        if (!handle.respond({ behavior: 'allow' })) continue;
+        closeOpenPending(rec, pending.id, 'answered', false);
+        deps.diagnostics?.autoApproval?.({ ptyId, tool: pending.match.toolName, outcome: 'yolo' });
+        noteAutoApproval(rec, payload, true);
+      }
+      emitLiveIfChanged(rec);
     },
 
     transcriptRoots(ptyId) {

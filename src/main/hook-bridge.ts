@@ -31,8 +31,8 @@ export interface PendingDecisionHandle {
 export type BridgeEvent =
   | { readonly type: 'hook'; readonly ptyId: string; readonly event: string; readonly payload: HookPayload }
   | { readonly type: 'pending'; readonly ptyId: string; readonly handle: PendingDecisionHandle; readonly payload: HookPayload; readonly toolUseId: string | null }
-  /** Modo auto: the bridge already answered `allow`; nobody decides anything, this is only the trail. */
-  | { readonly type: 'auto-approved'; readonly ptyId: string; readonly payload: HookPayload }
+  /** Modo auto or Modo YOLO: the bridge already answered `allow`; nobody decides anything, this is only the trail. */
+  | { readonly type: 'auto-approved'; readonly ptyId: string; readonly payload: HookPayload; readonly yolo: boolean }
   | { readonly type: 'expired'; readonly ptyId: string; readonly requestId: string }
   | { readonly type: 'resolved-elsewhere'; readonly ptyId: string; readonly requestId: string }
   | { readonly type: 'cancelled'; readonly ptyId: string; readonly requestId: string }
@@ -48,10 +48,12 @@ export interface HookBridgeOptions {
   /** Receives measurements only: event name, ptyId and duration. */
   readonly diagnostics?: {
     hook(entry: { event: string; ptyId: string; durationMs: number }): void;
-    autoApproval?(entry: { ptyId: string; tool: string; outcome: 'approved' | 'after-blocks' }): void;
+    autoApproval?(entry: { ptyId: string; tool: string; outcome: 'approved' | 'yolo' | 'after-blocks' }): void;
   };
   /** "Modo auto nunca pede permissão" (Preferências); read at each request. Absent = off. */
   readonly autoNeverAsks?: () => boolean;
+  /** Is this tab's project in Modo YOLO? Read at each request, so it reaches sessions already open. Absent = no. */
+  readonly projectYolo?: (ptyId: string) => boolean;
   /** Is there a chat to show a pending? `false` answers `{}` at once and the terminal asks. Absent = yes. */
   readonly holdsPendings?: () => boolean;
 }
@@ -291,13 +293,18 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
     };
 
     if (event === 'PermissionRequest') {
-      const verdict = autoApprovalVerdict({ enabled: options.autoNeverAsks?.() ?? false, payload, blocks: state.classifierBlocks });
+      const verdict = autoApprovalVerdict({
+        enabled: options.autoNeverAsks?.() ?? false,
+        yolo: options.projectYolo?.(state.ptyId) ?? false,
+        payload,
+        blocks: state.classifierBlocks,
+      });
       const tool = asString(payload.tool_name) ?? '';
-      if (verdict === 'approve') {
+      if (verdict === 'approve' || verdict === 'yolo') {
         endJson(res, 200, permissionAnswer({ behavior: 'allow' }));
         measure();
-        options.diagnostics?.autoApproval?.({ ptyId: state.ptyId, tool, outcome: 'approved' });
-        emit({ type: 'auto-approved', ptyId: state.ptyId, payload });
+        options.diagnostics?.autoApproval?.({ ptyId: state.ptyId, tool, outcome: verdict === 'yolo' ? 'yolo' : 'approved' });
+        emit({ type: 'auto-approved', ptyId: state.ptyId, payload, yolo: verdict === 'yolo' });
         return;
       }
       if (verdict === 'after-blocks') options.diagnostics?.autoApproval?.({ ptyId: state.ptyId, tool, outcome: 'after-blocks' });

@@ -71,13 +71,62 @@ Shift+Tab. `plan` com auto ligado chega como `plan` e não é aprovado.
 ## Não muda
 
 Regras `deny`, hooks `PreToolUse` do dono e recusas do classificador rodam antes e não viram pedido.
-Os modos `default`, `acceptEdits`, `plan` e `bypassPermissions` seguem iguais.
+Os modos `default`, `acceptEdits`, `plan` e `bypassPermissions` seguem iguais, fora de projeto em YOLO
+(seção abaixo).
+
+## Modo YOLO por projeto (03/11, mesmo dia)
+
+Dono, com print de um cartão "O Claude quer rodar ... Permitir / Permitir sempre neste projeto / Negar"
+numa sessão do BizOps abrindo um PR: "É isso que eu quero que pare de acontecer. Se o projeto for
+configurado permitindo isso, que ele seja respondido de maneira autônoma. YOLO!"
+
+1. Por projeto, desligado por padrão, chave de topo `yolo.projects` no `config.json` (canal antigo
+   preserva em `unknownFields`; valor inválido cai fora, nunca vira "ligado"). Nada vai para os
+   `settings.json` do dono ou dos projetos.
+2. Com YOLO, **todo** `PermissionRequest` é `allow`, em qualquer modo, inclusive o que a decisão 3
+   devolve ao dono por bloqueios repetidos. Sem YOLO, nada acima muda. A decisão é a mesma função pura:
+   `autoApprovalVerdict`, veredito `yolo`.
+3. Continuam com o dono as mesmas ferramentas da decisão 2 (`AskUserQuestion`, `ExitPlanMode` e os
+   cartões do CLI): são perguntas, não licença. Regras `deny` e hooks `PreToolUse` nem viram pedido.
+4. **Vale pelo projeto da aba, não pelo `cwd` do CLI.** A ponte olha a pasta em que a aba foi aberta,
+   lida a cada pedido, então ligar ou desligar pega sessões abertas. Subpasta e `.claude/worktrees/*`
+   ficam dentro do projeto; uma worktree em outra pasta chega a ele pelo repo principal
+   (`git rev-parse --git-common-dir`, uma vez por pasta). A aba aberta na pasta home não tem projeto.
+   O main e o renderer usam as mesmas funções (`src/shared/projectYolo.ts`), então marca, botão e ponte
+   não discordam. Pasta dentro de um projeto em YOLO está em YOLO, mesmo que também apareça como
+   projeto na lista; desligar nela desliga o de cima.
+5. Dois lugares ligam: o interruptor na engrenagem do projeto (fora do "Salvar", vale no clique) e o
+   botão **"YOLO neste projeto"** no cartão de permissão, que só aparece quando a aba tem projeto e ele
+   ainda não está em YOLO.
+6. Ligar também aprova o que já estava esperando, nas abas de chat do projeto: pendência aberta de
+   permissão não faz sentido num projeto que não pede mais. Perguntas e planos abertos ficam.
+7. Marca: "YOLO" no cabeçalho da sessão (chat e terminal) e ao lado da engrenagem.
+8. Rastro: "Permitido automaticamente (YOLO): ‹resumo›" no chat e `outcome: 'yolo'` no
+   `chat-diagnostics.log`, só com o nome da ferramenta.
+9. Sem chat: o `PermissionRequest` agora entra **sempre** no `--settings` da sessão (substitui a condição
+   da decisão 6). O arquivo é fixo no spawn, e ligar YOLO tem de pegar sessão aberta. Sem ninguém para
+   responder, a ponte devolve `{}` na hora e o terminal pede como sempre. Sem chat o rastro é só o log.
+
+### O que ainda pode pedir ou parar com YOLO
+
+- `personOnly` e ferramenta MCP com `anthropic/requiresUserInteraction` ou recusada pela política de
+  servidores: o CLI não chama o hook ou ignora o `allow`, e pede no terminal. Não há o que fazer do app.
+- Elicitação de MCP: formulário de um servidor, não é permissão.
+- **Recusa do classificador do modo `auto`**: os dois primeiros bloqueios não viram pedido, viram
+  recusa ao agente, sem cartão. YOLO só alcança o terceiro, o que chega como `PermissionRequest`. Em
+  aba `auto` num projeto YOLO o agente ainda pode ouvir "não" do classificador; em outro modo de
+  permissão esse classificador não roda.
+- Transporte legado (`DONEL_HOOKS_TRANSPORT=legacy`): não há ponte, então não há YOLO.
 
 ## Risco aceito
 
 O `allow` também passa por cima de regra `ask` do dono e de verificação de segurança que o CLI
 pediria para confirmar. É o que o pedido quer ("abolir"), e fica no rastro. Quem quiser manter uma
 ação sob confirmação usa regra `deny`, ou desliga o interruptor.
+
+Com YOLO o risco é maior e é o pedido: no projeto ligado, nada de fora do `deny` segura o agente,
+inclusive ações que saem da máquina (abrir PR, publicar). Por isso é por projeto, desligado por
+padrão, com marca na sessão e rastro de cada aprovação.
 
 Os limites 3 e 20 são constantes do CLI 2.1.317 copiadas para o app. Se o CLI mudar, o app pode
 aprovar um bloqueio no limite novo; conferir ao subir de versão.

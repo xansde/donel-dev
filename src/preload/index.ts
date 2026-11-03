@@ -204,6 +204,7 @@ const donelApi: DonelApi = {
 
     // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
     create: (input: CreateProjectIpcInput) => ipcRenderer.invoke(PROJECT_CHANNELS.create, input) as Promise<CreateProjectResponse>,
+    tabFolders: (cwd: string) => ipcRenderer.invoke(PROJECT_CHANNELS.tabFolders, cwd) as Promise<string[]>,
   },
 
   statusLine: {
@@ -385,6 +386,8 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(CONFIG_CHANNELS.setSessionRenewalPrefs, prefs) as Promise<AppConfigDto>,
     setAutoModePrefs: (prefs: Partial<AutoModePrefs>) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setAutoModePrefs, prefs) as Promise<AppConfigDto>,
+    setProjectYolo: (projectPath: string, enabled: boolean) =>
+      ipcRenderer.invoke(CONFIG_CHANNELS.setProjectYolo, projectPath, enabled) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },

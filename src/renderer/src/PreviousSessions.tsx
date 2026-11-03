@@ -78,6 +78,9 @@ export interface PreviousSessionsProps {
    * lista genérica de entradas que atrapalham achar a sessão certa.
    */
   esteiraPhaseSessionIds: ReadonlySet<string>;
+  /** Modo YOLO deste projeto: a marca ao lado da engrenagem e o interruptor dentro dela. */
+  yolo: boolean;
+  onChangeYolo: (enabled: boolean) => void;
 }
 
 const EMPTY_BINDING: ProjectBindingDto = { workspaceId: '', teamId: '', github: '', githubExtra: [], hasOwnBoard: false };
@@ -105,6 +108,8 @@ export function PreviousSessions({
   sessionNames,
   contextLabelBySessionId,
   esteiraPhaseSessionIds,
+  yolo,
+  onChangeYolo,
 }: PreviousSessionsProps): React.JSX.Element | null {
   // Query de busca reseta implicitamente a cada abertura (o componente some
   // do DOM quando `open` é false — o React descarta o state local junto).
@@ -229,6 +234,11 @@ export function PreviousSessions({
             >
               <Settings size={14} strokeWidth={1.5} aria-hidden="true" />
             </button>
+            {yolo ? (
+              <span className={styles.yoloMark} data-testid="project-yolo-mark" title="Modo YOLO: neste projeto o agente age sem perguntar. Desliga na engrenagem.">
+                YOLO
+              </span>
+            ) : null}
             <div className={styles.headerSpacer} />
             <span className={styles.headerNote}>só as sessões deste projeto</span>
             <button type="button" className={styles.closeButton} onClick={onClose} aria-label="Fechar sessões anteriores" title="Fechar (Esc)">
@@ -365,6 +375,7 @@ export function PreviousSessions({
               teamId={teamId}
               onTeamIdChange={setTeamId}
               disabled={bindingLoading || saving}
+              yolo={{ enabled: yolo, onChange: onChangeYolo }}
             />
 
             {saveError ? (
