@@ -295,6 +295,11 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
   a tela (`sessao_ver_tela`) e, se a ligação permitir, mandam comando; o dono vê e digita nele.
   Na esteira, vira estação sem LLM: roda um comando e o **código de saída** é o desfecho
   (0 = concluído, ≠0 = falhou), caminho determinístico. Equivale ao "terminal node" do OpenRig.
-  Em aberto: quem pode digitar nele, o que acontece quando duas sessões mandam ao mesmo tempo,
-  e se o processo vive sem nenhuma sessão ligada.
+  **Regra do dono (03/11):** "definir um terminal principal para controlar o terminal. Os outros
+  podem mandar comando, mas só será acatado pelo terminal principal se ele aceitar." O nó tem uma
+  sessão **principal** (dona); só ela (e o dono, sempre) digita direto. Comando de outra sessão
+  ligada vira **pedido** na fila do nó, que a principal aceita ou recusa — o que também resolve
+  dois mandando ao mesmo tempo (fila, um por vez). Sem principal definida, o pedido vai ao dono.
+  Em aberto: trocar a principal (gesto no quadro), se a principal pode aceitar sozinha por regra
+  (ex.: "testes sempre") e se o processo vive sem nenhuma sessão ligada.
 - **Resolução**: —
