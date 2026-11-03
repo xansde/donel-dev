@@ -1,6 +1,0 @@
-{
-  "_captured": "gh pr list --repo xansde/donel-dev --head feat/009-lote-01-aba-v3 --state all --json number,url,state,mergedAt,baseRefName,labels --limit 1 (2026-07-30, real, read-only)",
-  "items": [
-    { "baseRefName": "feature/spec-009-modo-dev-v3", "labels": [], "mergedAt": null, "number": 5, "state": "OPEN", "url": "https://github.com/xansde/donel-dev/pull/5" }
-  ]
-}
