@@ -18,6 +18,14 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-03',
     items: [
       {
+        title: 'Você decide onde o agente navega',
+        text: 'Em "Regras", no navegador da sessão, escolha se o agente pode abrir qualquer site, só alguns domínios ou qualquer site menos alguns. Vale para aquela sessão e só para o agente: você continua navegando livre. Quando ele tenta sair do combinado, a página não muda e o rodapé do navegador mostra o bloqueio.',
+      },
+      {
+        title: 'Senha, cartão e pagamento são com você',
+        text: 'O agente não digita mais em campos de senha ou de cartão e não clica em botões de comprar, pagar ou excluir: ele para e chama você para fazer na própria página. O reconhecimento é pelo que a página diz sobre o campo ou o botão, então um site muito fora do padrão pode escapar: continue de olho quando houver dinheiro envolvido.',
+      },
+      {
         title: 'Abas no navegador da sessão',
         text: 'Link que abre em nova janela e popup agora viram uma aba nova no navegador da sessão, em vez de trocar a página em que você estava. As abas aparecem no topo do painel, até quatro por sessão, e o agente também sabe trocar e fechar.',
       },

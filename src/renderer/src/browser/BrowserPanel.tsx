@@ -4,6 +4,7 @@ import { Button } from '@donel-dev/design-system';
 import { browserStore, usePtyBrowser } from './browserStore';
 import { isViewportCovered } from './coverage';
 import { agentAskedHelpLine } from '../../../shared/browser/ipc';
+import type { DomainMode } from '../../../shared/browser/guardrails';
 import styles from './BrowserPanel.module.css';
 
 // Navegador interno — the panel at the side of a session tab (docs/design/navegador-interno.md).
@@ -31,6 +32,8 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
   const [address, setAddress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rulesOpen, setRulesOpen] = useState(false);
+  /** The domain rule being edited; `null` = showing what is in force. */
+  const [domainDraft, setDomainDraft] = useState<{ readonly mode: DomainMode; readonly typed: string } | null>(null);
   const showing = browser.open && active;
 
   // Pins the view on the viewport box, following resize, scroll, DPI/zoom and layout shifts: one rect read per
@@ -97,6 +100,17 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
 
   const tabs = state?.tabs ?? [];
   const uploadDir = browser.rules?.uploadDir ?? null;
+
+  const domainMode = domainDraft?.mode ?? browser.rules?.domainMode ?? 'all';
+  const domainsTyped = domainDraft?.typed ?? (browser.rules?.domains ?? []).join(', ');
+
+  const applyDomains = (): void => {
+    setError(null);
+    void window.donel.browser.setDomains(ptyId, domainMode, domainMode === 'all' ? '' : domainsTyped).then((result) => {
+      if (result.ok) setDomainDraft(null);
+      else if (result.reason) setError(result.reason);
+    });
+  };
 
   const chooseUploadDir = (): void => {
     setError(null);
@@ -194,6 +208,36 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
       ) : null}
       {rulesOpen ? (
         <div className={styles.rules} data-testid="browser-rules">
+          <div className={styles.rulesRow}>
+            <span className={styles.rulesLabel}>O agente navega em</span>
+            <select
+              className={styles.rulesInput}
+              aria-label="Onde o agente pode navegar"
+              data-testid="browser-domain-mode"
+              value={domainMode}
+              onChange={(event) => setDomainDraft({ mode: event.target.value as DomainMode, typed: domainsTyped })}
+            >
+              <option value="all">qualquer site</option>
+              <option value="only">só nestes domínios</option>
+              <option value="except">qualquer site, menos estes</option>
+            </select>
+            {domainMode === 'all' ? null : (
+              <input
+                className={`${styles.rulesInput} ${styles.rulesDomains}`}
+                aria-label="Domínios, separados por vírgula"
+                placeholder="exemplo.com, outro.com.br"
+                spellCheck={false}
+                data-testid="browser-domain-list"
+                value={domainsTyped}
+                onChange={(event) => setDomainDraft({ mode: domainMode, typed: event.target.value })}
+              />
+            )}
+            {domainDraft ? (
+              <Button type="button" variant="secondary" data-testid="browser-domain-apply" onClick={applyDomains}>
+                Aplicar
+              </Button>
+            ) : null}
+          </div>
           <div className={styles.rulesRow}>
             <span className={styles.rulesLabel}>Envio de arquivos</span>
             <span className={styles.rulesValue} title={uploadDir ?? undefined}>
