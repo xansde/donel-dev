@@ -44,10 +44,12 @@ ao alfa.
 
 ## Ainda não especificado
 
-- Orquestração entre sessões (fila de trabalho, uma sessão entregando para outra): depende do
-  B32 (hibernar) e do agente do B34. Volta quando houver um caso real de passagem de trabalho.
 - Vista em tabela e grade de terminais (as outras duas vistas do OpenRig): revisitar quando a
   barra lateral nascer recolhida.
+- Papéis, conexões e multitarefa (itens 12–14) graduam em fatias quando o estudo (11) fechar.
+  Dono, 03/11: "as conexões de sessões, o multitasking, os papéis de sessões, etc. É um material
+  de OURO para nos basearmos, com o layout do donel dev". Isso promove o que antes era névoa
+  ("orquestração entre sessões") a centro do plano.
 
 ## Fora de escopo
 
@@ -126,7 +128,7 @@ ao alfa.
 - **Tipo**: refinamento
 - **Prioridade**: media
 - **Status**: pendente
-- **Bloqueado por**: 05
+- **Bloqueado por**: 05, 11
 - **Pergunta**: o dono desenha uma moldura com título que agrupa cartões e post-its; mover a
   moldura move o que está dentro; o Organizar respeita molduras (não tira cartão de dentro
   delas). É a forma que o agente do B34 vai preencher com temas. Sobe o `schemaVersion`.
@@ -173,9 +175,56 @@ ao alfa.
 
 - **Tipo**: refinamento
 - **Prioridade**: baixa
-- **Status**: pendente
+- **Status**: descartado (absorvido pelo 13, conexões com significado, 03/11)
 - **Bloqueado por**: 07
 - **Pergunta**: ligações ganham tipo ("continuou em", "veio de fork", "delegou") e se animam
   quando o fato acontece. A primeira fonte real é a renovação em voo (07) e o fork; vale
   desenhar tipo que nenhum evento do app produz?
+- **Resolução**: —
+
+### 11 — Estudo profundo do OpenRig: papéis, conexões e multitarefa
+
+- **Tipo**: pesquisa
+- **Prioridade**: alta
+- **Status**: pendente
+- **Bloqueado por**: 01
+- **Pergunta**: lendo o código e os docs do OpenRig (não só o README): como um papel de sessão
+  é definido e sobrevive à troca de conversa; o que uma conexão (edge) significa de fato
+  (roteamento? permissão de mandar? só desenho?); como send/broadcast/chatroom/fila/handoff
+  chegam ao terminal sem atropelar; como vários agentes trabalham juntos e o que o humano vê.
+  Entrega o mapa conceito → Donel Dev (trazer já · depois · não trazer) e fatias propostas.
+- **Resolução**: —
+
+### 12 — Papéis de sessão
+
+- **Tipo**: refinamento
+- **Prioridade**: alta
+- **Status**: pendente
+- **Bloqueado por**: 11
+- **Pergunta**: uma sessão do quadro tem um papel (ex.: dev, revisor, pesquisa) com orientação
+  própria e motor escolhido; o papel sobrevive à renovação em voo (07) e à retomada. Onde o
+  papel mora, como o dono cria e troca, e o que o app injeta ao lançar.
+- **Resolução**: —
+
+### 13 — Conexões entre sessões com significado
+
+- **Tipo**: refinamento
+- **Prioridade**: alta
+- **Status**: pendente
+- **Bloqueado por**: 11
+- **Pergunta**: a ligação entre dois cartões passa a dizer quem pode mandar trabalho ou
+  mensagem para quem; mandar pelo quadro (ou pela própria sessão, via MCP do app) entrega no
+  terminal da outra sem atropelar o que o dono digita; a ligação se anima quando algo passa.
+  Absorve o item 10.
+- **Resolução**: —
+
+### 14 — Multitarefa: um time de sessões no quadro
+
+- **Tipo**: prototipo
+- **Prioridade**: alta
+- **Status**: pendente
+- **Bloqueado por**: 11
+- **Pergunta**: como o Mindscape mostra e dirige várias sessões trabalhando juntas (papéis,
+  conexões, quem espera quem, o que precisa do dono) no layout do Donel Dev? Três variantes
+  para o dono escolher.
 - **Resolução**: —
