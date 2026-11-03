@@ -15,6 +15,15 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
+    date: '2026-11-03',
+    items: [
+      {
+        title: 'Navegador dentro do Donel',
+        text: 'Cada sessão ganhou um navegador de verdade, ao lado da conversa: clique em "Navegador" no topo da sessão, digite o endereço e use voltar, avançar e recarregar. Ele tem os próprios cookies, separados do seu Chrome, e um login que você fizer nele fica guardado para as próximas vezes. A opção "Navegador (Chrome/Edge)" do painel de nova sessão saiu: o navegador agora é este, integrado.',
+      },
+    ],
+  },
+  {
     date: '2026-10-31',
     items: [
       {

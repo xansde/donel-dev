@@ -454,6 +454,6 @@ export interface DonelApi {
   health: DonelHealthApi;
   /** Sidebar — "Abrir no editor" (VS Code/Cursor) e branch atual da pasta da sessão/projeto. */
   workspace: DonelWorkspaceApi;
-  /** Navegador interno — o painel de navegador de cada aba de sessão, que o Claude da sessão controla e o dono assume. */
+  /** Navegador integrado — o painel de navegador de cada aba de sessão, que o agente da sessão controla e o dono assume. */
   browser: DonelBrowserApi;
 }

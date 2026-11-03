@@ -908,7 +908,6 @@ export function App(): React.JSX.Element {
       effort: options.effort,
       permissionMode: options.permissionMode,
       sessionName: options.sessionName,
-      chrome: options.chrome,
       worktree,
     });
     const name = options.sessionName || options.projectName;
@@ -932,7 +931,6 @@ export function App(): React.JSX.Element {
         model: options.model,
         effort: options.effort,
         permissionMode: options.permissionMode,
-        ...(options.chrome ? { chrome: true } : {}),
         ...(options.worktree ? { worktree: true } : {}),
       })
       .then(setAppConfig)

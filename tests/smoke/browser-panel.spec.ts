@@ -87,7 +87,7 @@ test('painel abre na aba, navega pela barra de endereço e some sob um modal @na
   await expect(appWindow.getByTestId('browser-viewport')).toHaveAttribute('data-covered', 'false');
   await expect.poll(() => childViewsVisible(electronApp)).toEqual([true]);
 
-  // Fechar o painel esconde a view; a página continua viva para o Claude.
+  // Fechar o painel esconde a view; a página continua viva para o agente.
   await panel.getByRole('button', { name: 'Fechar navegador' }).click();
   await expect(panel).toBeHidden();
   await expect.poll(() => childViewsVisible(electronApp)).toEqual([false]);

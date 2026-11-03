@@ -157,7 +157,7 @@ export function BrowserToggleButton({ ptyId }: { readonly ptyId: string }) {
       variant={browser.open ? 'secondary' : 'ghost'}
       aria-pressed={browser.open}
       data-testid="browser-toggle"
-      title={browser.open ? 'Fechar o navegador desta sessão' : 'Abrir o navegador desta sessão (o Claude também consegue usar)'}
+      title={browser.open ? 'Fechar o navegador desta sessão' : 'Abrir o navegador desta sessão (o agente também consegue usar)'}
       onClick={() => browserStore.toggle(ptyId)}
     >
       Navegador
