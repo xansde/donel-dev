@@ -70,7 +70,10 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 ## Fora de escopo
 
 - Adotar o OpenRig (ou tmux) como runtime: sem Windows nativo, e o Donel Dev já é dono dos PTYs.
-- Topologia declarada em YAML antes de rodar: o quadro nasce do uso.
+- Topologia declarada em YAML antes de rodar: o quadro nasce do uso. (Lido como "nunca escrever
+  YAML à mão": montar o molde no quadro antes de rodar pode — ver item 15.)
+- TUI (`donel tui`): dono, 03/11 — "A TUI não é tão necessária, tendo um modo chat bem
+  desenvolvido". Ficam a CLI `donel` e o MCP `donel`; a API local nasce sem depender de TUI.
 - Claude in Chrome (`--chrome`): rejeitado pelo dono em 03/11; sai do app.
 
 ---
@@ -258,6 +261,12 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
   Homologação...). É o Modo Dev mais visual e maleável. Base: pedido de 24/10 em
   [`modo-dev-montador-de-fluxo.spec.md`](../produto/modo-dev-montador-de-fluxo.spec.md) e o
   [contexto medido](../produto/assets/modo-dev-montador-de-fluxo/contexto-atual.md).
+- **Requisito do dono (03/11)**: fan-out **dinâmico** é padrão de esteira e deve ser esperado:
+  "após a etapa de discovery, pode-se abrir n novas branches". A estação declara na saída N partes
+  independentes (enum + lista, nunca leitura da prosa); o caminho marcado "uma por parte" abre N
+  estações, cada uma na sua branch/worktree, com teto de paralelismo; "espera todas" faz o
+  fan-in. Sem o caminho marcado, o agente propõe o fan-out no quadro (azul tracejado) e o dono
+  aceita num gesto. Base no Modo Dev de hoje e no fan-out de fatias da `/implementacao`.
 - **Resolução**: —
 
 ### 16 — Falar desenhando (desenho é o canal com o agente)
@@ -272,4 +281,20 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
   entre cartões vira ligação, retângulo vira moldura, rabisco gruda no cartão. Puxa para a frente
   as ferramentas `quadro_*` do item 08. Forma no
   [protótipo](../prototipos/mindscape-openrig/), abas "Falar desenhando" e "Desenho = quadro".
+- **Resolução**: —
+
+### 17 — Nó de terminal (não exclusivo de uma sessão)
+
+- **Tipo**: refinamento
+- **Prioridade**: media
+- **Status**: pendente
+- **Bloqueado por**: 13
+- **Pergunta**: dono, 03/11: "seria interessante também um nó de terminal, em vez de ser algo
+  exclusivo de um único seat". Um cartão de terminal comum (shell, dev server, testes, logs),
+  sem agente dentro, que existe por si no quadro e é compartilhado: as sessões ligadas a ele leem
+  a tela (`sessao_ver_tela`) e, se a ligação permitir, mandam comando; o dono vê e digita nele.
+  Na esteira, vira estação sem LLM: roda um comando e o **código de saída** é o desfecho
+  (0 = concluído, ≠0 = falhou), caminho determinístico. Equivale ao "terminal node" do OpenRig.
+  Em aberto: quem pode digitar nele, o que acontece quando duas sessões mandam ao mesmo tempo,
+  e se o processo vive sem nenhuma sessão ligada.
 - **Resolução**: —
