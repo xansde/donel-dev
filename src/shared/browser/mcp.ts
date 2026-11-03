@@ -22,6 +22,7 @@ export type ScrollDirection = 'baixo' | 'cima' | 'esquerda' | 'direita';
 export type BrowserToolCall =
   | { readonly tool: 'navegador_abrir'; readonly url: string }
   | { readonly tool: 'navegador_ler' }
+  | { readonly tool: 'navegador_extrair'; readonly pergunta?: string; readonly aPartir?: number }
   | { readonly tool: 'navegador_clicar'; readonly n: number }
   | { readonly tool: 'navegador_digitar'; readonly n: number; readonly texto: string }
   | { readonly tool: 'navegador_teclar'; readonly tecla: string }
@@ -65,8 +66,22 @@ export const BROWSER_TOOLS: readonly ToolDefinition[] = [
     name: 'navegador_ler',
     title: 'Ler a página',
     description:
-      'Lê a página atual como árvore de acessibilidade resumida. Cada elemento em que se pode agir vem numerado [N]; os números valem até a próxima leitura (navegar ou mudar a página os vence).',
+      'Lê o que está na tela (todos os frames, inclusive iframes de outra origem e shadow DOM) como árvore de acessibilidade resumida. Cada elemento visível em que se pode agir vem numerado [N]; o que está fora da tela é só contado ("N acima / N abaixo") e o que está coberto por outro elemento fica de fora. Os números valem até a próxima leitura (navegar ou mudar a página os vence).',
     inputSchema: NO_ARGS,
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'navegador_extrair',
+    title: 'Extrair o conteúdo',
+    description: `Devolve a página inteira (não só a tela) como Markdown legível: títulos, listas, tabelas e links. Use para ler conteúdo; para agir, use navegador_ler. Saída longa vem cortada com aviso; continue com "a_partir". A "pergunta" é só uma anotação sua: o navegador não responde, quem lê é você.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pergunta: { type: 'string', description: 'O que você procura na página (opcional, só para registro).' },
+        a_partir: { type: 'integer', minimum: 0, description: 'Posição (em caracteres) de onde continuar, dada no aviso de corte da extração anterior.' },
+      },
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: true },
   },
   {
@@ -164,6 +179,17 @@ export function parseToolCall(name: string, rawArgs: unknown): ParsedToolCall {
       const url = boundedText(args.url, 'url');
       if (typeof url !== 'string') return { ok: false, reason: url.error };
       return { ok: true, call: { tool: name, url } };
+    }
+    case 'navegador_extrair': {
+      let pergunta: string | undefined;
+      if (args.pergunta !== undefined) {
+        const text = boundedText(args.pergunta, 'pergunta');
+        if (typeof text !== 'string') return { ok: false, reason: text.error };
+        pergunta = text.trim().slice(0, 500) || undefined;
+      }
+      const aPartir = args.a_partir;
+      if (aPartir !== undefined && (typeof aPartir !== 'number' || !Number.isInteger(aPartir) || aPartir < 0)) return { ok: false, reason: '"a_partir" tem de ser um inteiro a partir de 0.' };
+      return { ok: true, call: { tool: name, ...(pergunta ? { pergunta } : {}), ...(aPartir ? { aPartir } : {}) } };
     }
     case 'navegador_ler':
     case 'navegador_voltar':
@@ -277,7 +303,7 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: MCP_SERVER_NAME, title: 'Donel Dev — navegador integrado', version: ctx.serverVersion },
           instructions:
-            'Navegador integrado do Donel Dev, um por sessão, que o dono vê ao lado da conversa. Fluxo: navegador_abrir, navegador_ler (elementos numerados [N]), navegador_clicar/navegador_digitar/navegador_teclar, e navegador_ler de novo. Login, 2FA ou captcha: navegador_pedir_humano.',
+            'Navegador integrado do Donel Dev, um por sessão, que o dono vê ao lado da conversa. Fluxo: navegador_abrir, navegador_ler (o que está na tela, elementos numerados [N]), navegador_clicar/navegador_digitar/navegador_teclar, e navegador_ler de novo. Para ler o conteúdo todo da página: navegador_extrair. Login, 2FA ou captcha: navegador_pedir_humano.',
         },
       };
     case 'ping':

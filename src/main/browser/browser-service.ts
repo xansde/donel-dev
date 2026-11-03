@@ -53,6 +53,8 @@ const MAX_PTY_ID_LENGTH = 128;
 const MCP_CONFIG_DIR = 'browser-mcp';
 const STALE_CONFIG_MS = 24 * 60 * 60_000;
 const MAX_LOG_URL = 300;
+/** Budget of one `navegador_extrair` answer (the agent continues with `a_partir`). */
+const EXTRACT_MAX_CHARS = 30_000;
 
 function isPtyId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_PTY_ID_LENGTH && /^[\w-]+$/.test(value);
@@ -163,7 +165,18 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
       }
       case 'navegador_ler': {
         const page = await driverFor(ptyId).read();
-        return text(`Página: ${page.title || '(sem título)'}\nEndereço: ${page.url}\n\n${page.text || '(nada legível nesta página)'}`);
+        return text(`Página: ${page.title || '(sem título)'}\nEndereço: ${page.url}\n\n${page.text || '(nada legível na tela)'}`);
+      }
+      case 'navegador_extrair': {
+        const page = await driverFor(ptyId).extract(EXTRACT_MAX_CHARS, call.aPartir ?? 0);
+        const head = [`Página: ${page.title || '(sem título)'}`, `Endereço: ${page.url}`];
+        if (call.pergunta) head.push(`Pergunta (sua, o navegador não responde): ${call.pergunta}`);
+        if ((call.aPartir ?? 0) > 0) head.push(`Continuando do caractere ${call.aPartir} de ${page.total}.`);
+        const tail =
+          page.nextStart !== null
+            ? `\n\n… (cortado: mostrei até o caractere ${page.nextStart} de ${page.total}. Para continuar: navegador_extrair com a_partir=${page.nextStart}.)`
+            : '';
+        return text(`${head.join('\n')}\n\n${page.markdown || '(nenhum texto legível nesta página)'}${tail}`);
       }
       case 'navegador_clicar': {
         const ref = await driverFor(ptyId).click(call.n);

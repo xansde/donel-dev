@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-03',
     items: [
       {
+        title: 'O agente enxerga melhor as páginas',
+        text: 'Quando o agente lê uma página, ele vê só o que está na tela de verdade: o que está escondido atrás de um aviso ou de uma janela fica de fora, e o que está mais abaixo ou mais acima aparece só como contagem ("12 abaixo"). Ele também passa a enxergar e usar o que está dentro de quadros embutidos de outros sites, como formulários e players. E ganhou um jeito de ler a página inteira como texto organizado, com títulos, listas, tabelas e links.',
+      },
+      {
         title: 'Segundo plano à vista, sem abrir o terminal',
         text: 'Comandos, agentes e monitores que a sessão deixou rodando em segundo plano agora aparecem no chat, logo acima da caixa de texto: "⟳ 2 em segundo plano", mesmo depois que o turno acaba. Clique para ver a lista (o que é, desde quando, se terminou, falhou ou foi parada) e clique num item para ir até onde ele começou na conversa. A aba ganha um "⟳ 2" discreto, o cartão da sessão no Mindscape também, e a barra de status mostra o total de todas as sessões, com uma lista que leva até a aba certa.',
       },
