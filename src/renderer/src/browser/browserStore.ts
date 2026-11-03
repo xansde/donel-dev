@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { BrowserControlState, BrowserLogEntry, BrowserPanelState } from '../../../shared/browser/ipc';
+import type { BrowserAgentRules, BrowserControlState, BrowserLogEntry, BrowserPanelState } from '../../../shared/browser/ipc';
 
 // Navegador integrado — renderer-side state of each session's browser, keyed by `ptyId` (the same key the main
 // uses for the view and for the MCP token). One store for the whole window: the preload channels accept a
@@ -18,9 +18,11 @@ export interface PtyBrowserView {
   readonly log: readonly BrowserLogEntry[];
   /** Log lines that arrived while the panel was closed (badge of the "Navegador" button). */
   readonly unseen: number;
+  /** What the owner allows the agent here; `null` until the panel first asks. */
+  readonly rules: BrowserAgentRules | null;
 }
 
-const EMPTY: PtyBrowserView = { open: false, state: null, control: null, log: [], unseen: 0 };
+const EMPTY: PtyBrowserView = { open: false, state: null, control: null, log: [], unseen: 0, rules: null };
 
 class BrowserStore {
   private readonly byPty = new Map<string, PtyBrowserView>();
@@ -44,6 +46,9 @@ class BrowserStore {
       .open(ptyId)
       .then((state) => this.patch(ptyId, { state }))
       .catch(() => this.patch(ptyId, { open: false }));
+    void window.donel.browser.getRules(ptyId).then((rules) => {
+      if (rules) this.patch(ptyId, { rules });
+    });
   }
 
   toggle(ptyId: string): void {
@@ -79,6 +84,7 @@ class BrowserStore {
     window.donel.browser.onOpenRequest((request) => this.setOpen(request.ptyId, true));
     window.donel.browser.onControl((control) => this.patch(control.ptyId, { control }));
     window.donel.browser.onLog((entry) => this.appendLog(entry));
+    window.donel.browser.onRules((rules) => this.patch(rules.ptyId, { rules }));
   }
 }
 

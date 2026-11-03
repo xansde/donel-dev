@@ -25,6 +25,13 @@ export type BrowserToolCall =
   | { readonly tool: 'navegador_extrair'; readonly pergunta?: string; readonly aPartir?: number }
   | { readonly tool: 'navegador_clicar'; readonly n: number }
   | { readonly tool: 'navegador_digitar'; readonly n: number; readonly texto: string }
+  | { readonly tool: 'navegador_opcoes'; readonly n: number }
+  | { readonly tool: 'navegador_selecionar'; readonly n: number; readonly opcao: string }
+  | { readonly tool: 'navegador_achar_texto'; readonly texto: string }
+  | { readonly tool: 'navegador_abas' }
+  | { readonly tool: 'navegador_trocar_aba'; readonly i: number }
+  | { readonly tool: 'navegador_fechar_aba'; readonly i: number }
+  | { readonly tool: 'navegador_enviar_arquivo'; readonly n: number; readonly caminho: string }
   | { readonly tool: 'navegador_teclar'; readonly tecla: string }
   | { readonly tool: 'navegador_rolar'; readonly direcao: ScrollDirection }
   | { readonly tool: 'navegador_voltar' }
@@ -53,6 +60,7 @@ interface ToolDefinition {
 
 const NO_ARGS = { type: 'object', properties: {}, additionalProperties: false };
 const ELEMENT_NUMBER = { type: 'integer', minimum: 1, description: 'Número [N] do elemento, da última navegador_ler.' };
+const TAB_NUMBER = { type: 'integer', minimum: 1, description: 'Número da aba em navegador_abas (a primeira é 1).' };
 
 export const BROWSER_TOOLS: readonly ToolDefinition[] = [
   {
@@ -98,6 +106,60 @@ export const BROWSER_TOOLS: readonly ToolDefinition[] = [
       type: 'object',
       properties: { n: ELEMENT_NUMBER, texto: { type: 'string', description: 'Texto a digitar.' } },
       required: ['n', 'texto'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'navegador_opcoes',
+    title: 'Ver as opções de uma lista',
+    description: 'Lista as opções da lista [N] (<select> ou lista acessível, como combobox e listbox). Uma lista fechada é aberta para ler. Depois, use navegador_selecionar.',
+    inputSchema: { type: 'object', properties: { n: ELEMENT_NUMBER }, required: ['n'], additionalProperties: false },
+  },
+  {
+    name: 'navegador_selecionar',
+    title: 'Selecionar uma opção',
+    description: 'Escolhe uma opção da lista [N] pelo texto (ou pelo valor) que navegador_opcoes mostrou.',
+    inputSchema: {
+      type: 'object',
+      properties: { n: ELEMENT_NUMBER, opcao: { type: 'string', description: 'Texto da opção.' } },
+      required: ['n', 'opcao'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'navegador_achar_texto',
+    title: 'Rolar até um texto',
+    description: 'Rola a página até o primeiro lugar visível com este texto (sem diferenciar maiúsculas), em qualquer frame. Depois, use navegador_ler.',
+    inputSchema: { type: 'object', properties: { texto: { type: 'string' } }, required: ['texto'], additionalProperties: false },
+  },
+  {
+    name: 'navegador_abas',
+    title: 'Ver as abas',
+    description: 'Lista as abas do navegador desta sessão. Popup e link que abre em nova janela viram aba nova, que passa a ser a ativa.',
+    inputSchema: NO_ARGS,
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'navegador_trocar_aba',
+    title: 'Trocar de aba',
+    description: 'Passa para a aba i de navegador_abas (o dono vê a troca no painel). Leia a página de novo depois.',
+    inputSchema: { type: 'object', properties: { i: TAB_NUMBER }, required: ['i'], additionalProperties: false },
+  },
+  {
+    name: 'navegador_fechar_aba',
+    title: 'Fechar uma aba',
+    description: 'Fecha a aba i de navegador_abas. A última aba não fecha.',
+    inputSchema: { type: 'object', properties: { i: TAB_NUMBER }, required: ['i'], additionalProperties: false },
+  },
+  {
+    name: 'navegador_enviar_arquivo',
+    title: 'Enviar um arquivo',
+    description:
+      'Coloca um arquivo no campo de envio [N] (ou no campo de arquivo ligado a esse botão). Só aceita arquivo de dentro da pasta que o dono autorizou no painel do navegador; sem pasta autorizada, peça a ele com navegador_pedir_humano. Caminho relativo vale a partir dessa pasta.',
+    inputSchema: {
+      type: 'object',
+      properties: { n: ELEMENT_NUMBER, caminho: { type: 'string', description: 'Arquivo dentro da pasta autorizada.' } },
+      required: ['n', 'caminho'],
       additionalProperties: false,
     },
   },
@@ -203,6 +265,35 @@ export function parseToolCall(name: string, rawArgs: unknown): ParsedToolCall {
       const texto = boundedText(args.texto, 'texto');
       if (typeof texto !== 'string') return { ok: false, reason: texto.error };
       return { ok: true, call: { tool: name, n: args.n, texto } };
+    }
+    case 'navegador_opcoes':
+      if (!isElementNumber(args.n)) return { ok: false, reason: '"n" tem de ser o número [N] de um elemento (inteiro a partir de 1).' };
+      return { ok: true, call: { tool: name, n: args.n } };
+    case 'navegador_selecionar': {
+      if (!isElementNumber(args.n)) return { ok: false, reason: '"n" tem de ser o número [N] de um elemento (inteiro a partir de 1).' };
+      const opcao = boundedText(args.opcao, 'opcao');
+      if (typeof opcao !== 'string') return { ok: false, reason: opcao.error };
+      if (opcao.trim() === '') return { ok: false, reason: '"opcao" vazia.' };
+      return { ok: true, call: { tool: name, n: args.n, opcao } };
+    }
+    case 'navegador_achar_texto': {
+      const texto = boundedText(args.texto, 'texto');
+      if (typeof texto !== 'string') return { ok: false, reason: texto.error };
+      if (texto.trim() === '') return { ok: false, reason: '"texto" vazio.' };
+      return { ok: true, call: { tool: name, texto } };
+    }
+    case 'navegador_abas':
+      return { ok: true, call: { tool: name } };
+    case 'navegador_trocar_aba':
+    case 'navegador_fechar_aba':
+      if (!isElementNumber(args.i)) return { ok: false, reason: '"i" tem de ser o número da aba em navegador_abas (inteiro a partir de 1).' };
+      return { ok: true, call: { tool: name, i: args.i } };
+    case 'navegador_enviar_arquivo': {
+      if (!isElementNumber(args.n)) return { ok: false, reason: '"n" tem de ser o número [N] de um elemento (inteiro a partir de 1).' };
+      const caminho = boundedText(args.caminho, 'caminho');
+      if (typeof caminho !== 'string') return { ok: false, reason: caminho.error };
+      if (caminho.trim() === '') return { ok: false, reason: '"caminho" vazio.' };
+      return { ok: true, call: { tool: name, n: args.n, caminho: caminho.trim() } };
     }
     case 'navegador_teclar': {
       if (typeof args.tecla !== 'string' || args.tecla.trim() === '' || args.tecla.length > 64) return { ok: false, reason: '"tecla" tem de ser uma tecla, como "Enter" ou "Ctrl+A".' };

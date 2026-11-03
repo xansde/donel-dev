@@ -40,6 +40,84 @@
   box-shadow: var(--focus-ring);
 }
 
+/* Tab strip: only with two tabs or more. */
+.tabs {
+  flex: none;
+  display: flex;
+  gap: 1px;
+  overflow: hidden;
+  border-bottom: var(--hairline);
+}
+
+.tab {
+  flex: 0 1 180px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.tabActive {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.tabTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: var(--space-half) var(--space-1);
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: var(--text-caption-size);
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.tabClose {
+  flex: none;
+  padding: 0 var(--space-half);
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* What the owner allows the agent here. */
+.rules {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: var(--space-half) var(--space-1);
+  border-bottom: var(--hairline);
+  font-size: var(--text-caption-size);
+}
+
+.rulesRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.rulesLabel {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.rulesValue {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .error {
   flex: none;
   margin: 0;

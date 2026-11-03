@@ -1,6 +1,7 @@
-import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { BrowserWindow, IpcMain, WebContents } from 'electron';
+import { dialog, type BrowserWindow, type IpcMain, type WebContents } from 'electron';
 import { mcpDeliveryFor, type AgentCli } from '../../shared/commandBuilder';
 import { BrowserControl, HELP_WAIT_MS, OWNER_WAIT_MS } from '../../shared/browser/control';
 import {
@@ -10,15 +11,19 @@ import {
   parseBrowserRect,
   type BrowserControlState,
   type BrowserHistoryAction,
+  type BrowserAgentRules,
   type BrowserLogEntry,
   type BrowserNavigateResult,
   type BrowserPanelState,
+  type BrowserRulesResult,
 } from '../../shared/browser/ipc';
 import { MCP_SERVER_NAME, type BrowserToolCall, type BrowserToolOutcome } from '../../shared/browser/mcp';
+import { refusedUploadFolder } from '../../shared/browser/upload';
 import { normalizeBrowserUrl } from '../../shared/browser/url';
 import { BrowserPanels } from './browser-panels';
 import { browserMcpUrl, createBrowserMcpServer } from './browser-mcp-server';
-import { CdpDriver } from './cdp-driver';
+import { CdpDriver, type ListRead } from './cdp-driver';
+import { resolveUploadFile } from './panel-helpers';
 
 // Navegador integrado — the main-side service: the views (browser-panels.ts), the IPC of the panel, and the
 // agent's side: one MCP token per PTY, the control (agent x owner, with generation), the CDP driver of each
@@ -90,7 +95,10 @@ function sweepStaleConfigs(dir: string, now = Date.now()): void {
 export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   const livePtys = new Set<string>();
   const controls = new Map<string, BrowserControl>();
-  const drivers = new Map<string, CdpDriver>();
+  /** One driver per tab, for as long as the tab lives: its `[N]` numbers survive a trip to another tab. */
+  const drivers = new WeakMap<WebContents, CdpDriver>();
+  /** The folder the owner authorized for `navegador_enviar_arquivo`, per session. */
+  const uploadDirs = new Map<string, string>();
   /** PTYs with an agent tool running right now (their navigations go to the footer log; their view is pinned). */
   const agentBusy = new Set<string>();
   /** One tool at a time per PTY: the agent may call tools in parallel, the page has one pair of hands. */
@@ -115,10 +123,6 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
       if (agentBusy.has(ptyId) && url !== 'about:blank') log(ptyId, agentOpenedLine(url.length > MAX_LOG_URL ? `${url.slice(0, MAX_LOG_URL)}…` : url));
     },
     onDownload: (ptyId, fileName) => log(ptyId, `Download salvo em browser-downloads: ${fileName}`),
-    onDestroyed: (ptyId) => {
-      drivers.get(ptyId)?.detach();
-      drivers.delete(ptyId);
-    },
     // Not destroyed while the agent works on it or the owner holds it.
     isPinned: (ptyId) => agentBusy.has(ptyId) || controls.get(ptyId)?.snapshot().owner === 'human',
   });
@@ -134,12 +138,11 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   };
 
   const driverFor = (ptyId: string): CdpDriver => {
-    const entry = panels.ensure(ptyId);
-    let driver = drivers.get(ptyId);
-    if (!driver || driver.contents !== entry.contents) {
-      driver?.detach();
-      driver = new CdpDriver(entry.contents);
-      drivers.set(ptyId, driver);
+    const { contents } = panels.ensure(ptyId);
+    let driver = drivers.get(contents);
+    if (!driver) {
+      driver = new CdpDriver(contents);
+      drivers.set(contents, driver);
     }
     return driver;
   };
@@ -148,6 +151,20 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     const state = panels.state(ptyId);
     if (!state) return '';
     return `Página: ${state.title || '(sem título)'} — ${state.url}`;
+  };
+
+  const rulesOf = (ptyId: string): BrowserAgentRules => ({ ptyId, uploadDir: uploadDirs.get(ptyId) ?? null });
+  const emitRules = (ptyId: string): void => send(BROWSER_CHANNELS.rules, rulesOf(ptyId));
+
+  const tabLine = (i: number, tab: { title: string; url: string; active: boolean }): string => `${i}. ${tab.title || '(sem título)'} — ${tab.url}${tab.active ? ' (ativa)' : ''}`;
+
+  const listText = (n: number, name: string, list: ListRead): string => {
+    const lines = list.options.map((option, i) => {
+      const marks = [option.selected ? 'selecionada' : '', option.disabled ? 'desativada' : ''].filter((mark) => mark !== '');
+      return `${i + 1}. "${option.text}"${option.value && option.value !== option.text ? ` (valor: ${option.value})` : ''}${marks.length > 0 ? ` (${marks.join(', ')})` : ''}`;
+    });
+    const cut = list.total > list.options.length ? `\n… (mostrando ${list.options.length} de ${list.total})` : '';
+    return `Opções de [${n}]${name ? ` "${name}"` : ''}:\n${lines.join('\n')}${cut}`;
   };
 
   const text = (value: string): BrowserToolOutcome => ({ kind: 'text', text: value });
@@ -185,6 +202,47 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
       case 'navegador_digitar': {
         const ref = await driverFor(ptyId).type(call.n, call.texto);
         return text(`Digitou em [${call.n}] ${ref.role} "${ref.name}".`);
+      }
+      case 'navegador_opcoes': {
+        const { ref, list } = await driverFor(ptyId).options(call.n);
+        if (list.kind === 'none') return fail(`[${call.n}] não é uma lista. Para um botão ou menu, use navegador_clicar e navegador_ler.`);
+        if (list.options.length === 0) return fail(`A lista [${call.n}] não mostrou opções. Clique nela e leia a página de novo.`);
+        return text(listText(call.n, ref.name, list));
+      }
+      case 'navegador_selecionar': {
+        const { chosen } = await driverFor(ptyId).select(call.n, call.opcao);
+        return text(`Selecionou "${chosen}" em [${call.n}].\nLeia de novo (navegador_ler) para ver o resultado.`);
+      }
+      case 'navegador_achar_texto':
+        return (await driverFor(ptyId).findText(call.texto))
+          ? text(`Rolou até "${call.texto}".\nUse navegador_ler para ver o que há ali.`)
+          : fail(`Não achei "${call.texto}" visível nesta página.`);
+      case 'navegador_abas': {
+        panels.ensure(ptyId);
+        return text(panels.tabs(ptyId).map((tab, i) => tabLine(i + 1, tab)).join('\n'));
+      }
+      case 'navegador_trocar_aba': {
+        panels.ensure(ptyId);
+        const tab = panels.tabs(ptyId)[call.i - 1];
+        if (!tab) return fail(`Não há aba ${call.i}. Veja a lista com navegador_abas.`);
+        panels.switchTab(ptyId, tab.id);
+        return text(`${where(ptyId)}\nUse navegador_ler para ver a página.`);
+      }
+      case 'navegador_fechar_aba': {
+        panels.ensure(ptyId);
+        const tab = panels.tabs(ptyId)[call.i - 1];
+        if (!tab) return fail(`Não há aba ${call.i}. Veja a lista com navegador_abas.`);
+        if (panels.closeTab(ptyId, tab.id) === 'last') return fail('Esta é a última aba: ela não fecha.');
+        return text(`Fechou a aba ${call.i}.\n${where(ptyId)}`);
+      }
+      case 'navegador_enviar_arquivo': {
+        const folder = uploadDirs.get(ptyId);
+        if (!folder) return fail('O dono ainda não autorizou uma pasta de envio neste navegador. Peça com navegador_pedir_humano; ele escolhe a pasta em Regras, no painel do navegador.');
+        const file = resolveUploadFile(folder, call.caminho);
+        if (!file.ok) return fail(file.reason);
+        await driverFor(ptyId).upload(call.n, file.path);
+        log(ptyId, `Agente enviou o arquivo: ${file.name}`);
+        return text(`Colocou "${file.name}" no campo de envio de [${call.n}]. O arquivo só sai da máquina quando a página enviar o formulário.`);
       }
       case 'navegador_teclar':
         await driverFor(ptyId).pressKey(call.tecla);
@@ -320,8 +378,45 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     return control ? { ptyId, ...control.snapshot() } : null;
   });
 
+  deps.ipcMain.on(BROWSER_CHANNELS.tab, (event, ptyId: unknown, action: unknown, tabId: unknown) => {
+    if (!known(event.sender, ptyId) || typeof tabId !== 'number' || !Number.isInteger(tabId)) return;
+    if (action === 'switch') panels.switchTab(ptyId, tabId);
+    else if (action === 'close') panels.closeTab(ptyId, tabId);
+  });
+
+  deps.ipcMain.handle(BROWSER_CHANNELS.getRules, (event, ptyId: unknown): BrowserAgentRules | null => (known(event.sender, ptyId) ? rulesOf(ptyId) : null));
+
+  // The upload folder comes from a native picker, a gesture of the owner: no path travels from the renderer, and
+  // no tool of the agent reaches this.
+  deps.ipcMain.handle(BROWSER_CHANNELS.chooseUploadDir, async (event, ptyId: unknown): Promise<BrowserRulesResult> => {
+    if (!known(event.sender, ptyId)) return { ok: false, reason: 'Sessão desconhecida para o navegador.' };
+    const window = deps.getWindow();
+    if (!window) return { ok: false, reason: null };
+    const picked = await dialog.showOpenDialog(window, { title: 'Pasta de onde o agente pode enviar arquivos', properties: ['openDirectory'] });
+    const chosen = picked.filePaths[0];
+    if (picked.canceled || !chosen) return { ok: false, reason: null };
+    let folder: string;
+    try {
+      folder = realpathSync.native(chosen);
+    } catch {
+      return { ok: false, reason: 'Não consegui abrir essa pasta.' };
+    }
+    const refused = refusedUploadFolder(folder, { home: homedir(), userData: deps.userDataDir });
+    if (refused) return { ok: false, reason: refused };
+    uploadDirs.set(ptyId, folder);
+    emitRules(ptyId);
+    return { ok: true, rules: rulesOf(ptyId) };
+  });
+
+  deps.ipcMain.on(BROWSER_CHANNELS.clearUploadDir, (event, ptyId: unknown) => {
+    if (!known(event.sender, ptyId)) return;
+    uploadDirs.delete(ptyId);
+    emitRules(ptyId);
+  });
+
   const releasePty = (ptyId: string): void => {
     livePtys.delete(ptyId);
+    uploadDirs.delete(ptyId);
     controls.get(ptyId)?.dispose();
     controls.delete(ptyId);
     mcp.unregisterSession(ptyId);

@@ -30,8 +30,12 @@ const COMMAND_TIMEOUT_MS = 20_000;
 const AUTO_ATTACH_SETTLE_MS = 200;
 /** Frames of another origin read per page (an ad-heavy page can have dozens). */
 const MAX_REMOTE_FRAMES = 12;
+/** Options listed by `navegador_opcoes`. */
+const MAX_OPTIONS = 200;
+/** Time a custom list takes to open after the click. */
+const LIST_OPEN_MS = 300;
 /** CDP errors that mean "this node is not in the page any more". */
-const GONE_NODE = /No node with given id|Could not find node|Node is detached|Cannot find context|does not belong to the document|Could not compute (content )?(box model|quads)|Session with given id not found|No session with given id/i;
+const GONE_NODE = /No node with given id|Could not find node|Node is detached|Cannot find context|does not belong to the document|Could not compute (content )?(box model|quads)|does not have a layout object|Session with given id not found|No session with given id/i;
 
 interface Quad {
   readonly quads: number[][];
@@ -57,6 +61,22 @@ interface RemoteFrame {
   readonly parent: string;
 }
 
+/** One option of a list, as the page shows it. */
+export interface ListOption {
+  readonly text: string;
+  readonly value: string;
+  readonly selected: boolean;
+  readonly disabled: boolean;
+}
+
+/** `closed`: a list that opens on click and is still closed; `none`: the element is not a list. */
+export interface ListRead {
+  readonly kind: 'select' | 'aria' | 'closed' | 'none';
+  readonly options: readonly ListOption[];
+  /** How many options the list really has (`options` stops at `MAX_OPTIONS`). */
+  readonly total: number;
+}
+
 export interface PageRead {
   readonly url: string;
   readonly title: string;
@@ -71,6 +91,135 @@ export interface PageExtract {
   readonly total: number;
   readonly nextStart: number | null;
 }
+
+// Page-side helpers. They run in the page with `Runtime.callFunctionOn`, with arguments passed as values, never
+// spliced into the source. Options read from a real `<select>` or from an accessible list; the list of options of
+// browser-use (`default_action_watchdog.py`, MIT) follows `aria-controls` the same way.
+
+const LIST_SOURCE = `
+  const clean = (text) => (text || '').replace(/\\s+/g, ' ').trim();
+  const ariaBox = (el) => {
+    const root = el.getRootNode();
+    const owned = (el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '').split(/\\s+/)[0];
+    const byId = owned ? (root.getElementById ? root.getElementById(owned) : null) || document.getElementById(owned) : null;
+    if (byId) return byId;
+    if (el.getAttribute('role') === 'listbox') return el;
+    return el.querySelector('[role=listbox]');
+  };
+  const ariaItems = (el) => {
+    const box = ariaBox(el);
+    return box ? Array.from(box.querySelectorAll('[role=option],[role=menuitem],[role=menuitemradio]')) : [];
+  };
+  const opensOnClick = (el) => el.getAttribute('role') === 'combobox' || el.hasAttribute('aria-haspopup') || el.getAttribute('aria-expanded') === 'false';
+  const rendered = (el) => el.getClientRects().length > 0;
+  const pick = (items, wanted) => {
+    const norm = (text) => clean(text).toLowerCase();
+    const target = norm(wanted);
+    const exact = items.find((item) => norm(item.text) === target || (item.value && norm(item.value) === target));
+    if (exact) return exact;
+    const partial = items.filter((item) => norm(item.text).includes(target));
+    return partial.length === 1 ? partial[0] : null;
+  };
+`;
+
+const READ_LIST = `function (limit) {${LIST_SOURCE}
+  if (this.tagName === 'SELECT') {
+    const all = Array.from(this.options);
+    return { kind: 'select', total: all.length, options: all.slice(0, limit).map((o) => ({ text: clean(o.text), value: o.value, selected: o.selected, disabled: o.disabled })) };
+  }
+  const items = ariaItems(this);
+  if (items.length === 0) return { kind: opensOnClick(this) ? 'closed' : 'none', total: 0, options: [] };
+  return {
+    // The options of a closed list are often in the DOM already, hidden: readable, but not clickable yet.
+    kind: rendered(items[0]) || !opensOnClick(this) ? 'aria' : 'closed',
+    total: items.length,
+    options: items.slice(0, limit).map((o) => ({
+      text: clean(o.textContent),
+      value: o.getAttribute('data-value') || '',
+      selected: o.getAttribute('aria-selected') === 'true' || o.getAttribute('aria-checked') === 'true',
+      disabled: o.getAttribute('aria-disabled') === 'true',
+    })),
+  };
+}`;
+
+const SELECT_NATIVE = `function (wanted) {${LIST_SOURCE}
+  if (this.tagName !== 'SELECT') return { handled: false };
+  const items = Array.from(this.options).map((o, index) => ({ text: o.text, value: o.value, index, disabled: o.disabled }));
+  const choice = pick(items, wanted);
+  if (!choice) return { handled: true, ok: false };
+  if (choice.disabled) return { handled: true, ok: false, disabled: clean(choice.text) };
+  this.selectedIndex = choice.index;
+  this.dispatchEvent(new Event('input', { bubbles: true }));
+  this.dispatchEvent(new Event('change', { bubbles: true }));
+  return { handled: true, ok: true, chosen: clean(choice.text) };
+}`;
+
+const FIND_ARIA_OPTION = `function (wanted) {${LIST_SOURCE}
+  const items = ariaItems(this).filter(rendered).map((el) => ({ el, text: el.textContent, value: el.getAttribute('data-value') || '' }));
+  const choice = pick(items, wanted);
+  return choice ? choice.el : null;
+}`;
+
+const FIND_FILE_INPUT = `function () {
+  const isFile = (el) => el && el.tagName === 'INPUT' && el.type === 'file';
+  if (isFile(this)) return this;
+  if (this.tagName === 'LABEL' && isFile(this.control)) return this.control;
+  const inner = this.querySelector ? this.querySelector('input[type=file]') : null;
+  if (inner) return inner;
+  for (let up = this.parentElement, i = 0; up && i < 6; up = up.parentElement, i += 1) {
+    const near = up.querySelector('input[type=file]');
+    if (near) return near;
+  }
+  const all = this.ownerDocument.querySelectorAll('input[type=file]');
+  return all.length === 1 ? all[0] : null;
+}`;
+
+/** Scrolls to the first rendered occurrence of the text, in this document, its open shadow roots and same-process frames. */
+const FIND_TEXT = `function (needle) {
+  const norm = (text) => (text || '').replace(/\\s+/g, ' ').toLowerCase();
+  const wanted = norm(needle).trim();
+  const shown = (el) => {
+    if (!el || el.getClientRects().length === 0) return false;
+    const style = getComputedStyle(el);
+    return style.visibility !== 'hidden' && style.display !== 'none';
+  };
+  const roots = [];
+  const collect = (root) => {
+    roots.push(root);
+    root.querySelectorAll('*').forEach((el) => {
+      if (el.shadowRoot) collect(el.shadowRoot);
+      if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+        try {
+          if (el.contentDocument) collect(el.contentDocument);
+        } catch {}
+      }
+    });
+  };
+  collect(document);
+  const go = (el) => {
+    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    return true;
+  };
+  for (const root of roots) {
+    const walker = (root.ownerDocument || root).createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (norm(node.nodeValue).includes(wanted) && shown(node.parentElement)) return go(node.parentElement);
+    }
+  }
+  // The text may be split among inline elements: the deepest element of the first occurrence.
+  for (const root of roots) {
+    const body = root.body || root;
+    if (root.body && !norm(root.body.innerText).includes(wanted)) continue;
+    let best = null;
+    for (const el of body.querySelectorAll('*')) {
+      if (!norm(el.textContent).includes(wanted) || !shown(el)) continue;
+      if (best && !best.contains(el)) break;
+      best = el;
+    }
+    if (best) return go(best);
+  }
+  return false;
+}`;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -173,18 +322,78 @@ export class CdpDriver {
   /** Clicks the center of element `[n]` (scrolled into view first) with a real mouse event. */
   async click(n: number): Promise<AxRef> {
     const ref = this.ref(n);
-    await this.onNode(async () => {
-      await this.send('DOM.scrollIntoViewIfNeeded', { backendNodeId: ref.backendNodeId }, ref.frame);
-      const point = await this.centerOf(ref);
-      if (!point) {
-        // No box (zero-size or display: contents): a DOM click is the next best thing.
-        await this.callOnNode(ref, 'function () { this.click(); }');
-        return;
+    await this.onNode(() => this.clickNode(ref));
+    await this.settle();
+    return ref;
+  }
+
+  /** The options of list `[n]`. A list that opens on click and is closed gets one click to open. */
+  async options(n: number): Promise<{ ref: AxRef; list: ListRead }> {
+    const ref = this.ref(n);
+    const list = await this.onNode(async () => {
+      const first = await this.callOnNode<ListRead>(ref, READ_LIST, [MAX_OPTIONS]);
+      if (first.kind !== 'closed') return first;
+      await this.clickNode(ref);
+      await delay(LIST_OPEN_MS);
+      return this.callOnNode<ListRead>(ref, READ_LIST, [MAX_OPTIONS]);
+    });
+    return { ref, list };
+  }
+
+  /** Chooses `wanted` (text or value) in list `[n]`: a real `<select>` by its index, an accessible list by a click. */
+  async select(n: number, wanted: string): Promise<{ ref: AxRef; chosen: string }> {
+    const ref = this.ref(n);
+    const chosen = await this.onNode(async () => {
+      const native = await this.callOnNode<{ handled: boolean; ok?: boolean; chosen?: string; disabled?: string }>(ref, SELECT_NATIVE, [wanted]);
+      if (native.handled) {
+        if (native.disabled) throw new Error(`A opção "${native.disabled}" está desativada.`);
+        if (!native.ok) throw new Error(`Não achei a opção "${wanted}" em [${n}]. Veja as opções com navegador_opcoes.`);
+        return native.chosen ?? wanted;
       }
-      const { x, y } = point;
-      await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
-      await this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
-      await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 });
+      let option = await this.elementFrom(ref, FIND_ARIA_OPTION, [wanted]);
+      if (option === null) {
+        await this.clickNode(ref);
+        await delay(LIST_OPEN_MS);
+        option = await this.elementFrom(ref, FIND_ARIA_OPTION, [wanted]);
+      }
+      if (option === null) throw new Error(`Não achei a opção "${wanted}" em [${n}]. Veja as opções com navegador_opcoes.`);
+      await this.clickNode({ frame: ref.frame, backendNodeId: option });
+      return wanted;
+    });
+    await this.settle();
+    return { ref, chosen };
+  }
+
+  /** Scrolls to the first rendered occurrence of `text`, the page first, then each remote frame. `false` = not found. */
+  async findText(text: string): Promise<boolean> {
+    for (const session of ['', ...this.remoteSessions()]) {
+      try {
+        const { result: document } = await this.send<{ result: { objectId?: string } }>('Runtime.evaluate', { expression: 'document' }, session);
+        if (!document.objectId) continue;
+        const { result } = await this.send<{ result: { value?: unknown } }>(
+          'Runtime.callFunctionOn',
+          { objectId: document.objectId, functionDeclaration: FIND_TEXT, arguments: [{ value: text }], returnByValue: true, silent: true },
+          session,
+        );
+        await this.send('Runtime.releaseObject', { objectId: document.objectId }, session).catch(() => undefined);
+        if (result.value !== true) continue;
+        await this.revealFrame(session);
+        await delay(SETTLE_AFTER_ACTION_MS);
+        return true;
+      } catch {
+        // this frame left meanwhile: look at the others
+      }
+    }
+    return false;
+  }
+
+  /** Puts `filePath` (already checked by the caller) in the file field of `[n]`, or in the one tied to it. */
+  async upload(n: number, filePath: string): Promise<AxRef> {
+    const ref = this.ref(n);
+    await this.onNode(async () => {
+      const input = await this.elementFrom(ref, FIND_FILE_INPUT);
+      if (input === null) throw new Error(`[${n}] não é um campo de arquivo e não achei um ligado a ele.`);
+      await this.send('DOM.setFileInputFiles', { files: [filePath], backendNodeId: input }, ref.frame);
     });
     await this.settle();
     return ref;
@@ -380,8 +589,32 @@ export class CdpDriver {
   // -------------------------------------------------------------------------------------------------------------
   // Acting
 
+  private async clickNode(ref: Pick<AxRef, 'frame' | 'backendNodeId'>): Promise<void> {
+    await this.send('DOM.scrollIntoViewIfNeeded', { backendNodeId: ref.backendNodeId }, ref.frame);
+    const point = await this.centerOf(ref);
+    if (!point) {
+      // No box (zero-size or display: contents): a DOM click is the next best thing.
+      await this.callOnNode(ref, 'function () { this.click(); }');
+      return;
+    }
+    const { x, y } = point;
+    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
+    await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 });
+  }
+
+  /** Scrolls the frame elements of a remote frame into view, innermost first. */
+  private async revealFrame(session: string): Promise<void> {
+    let current = this.remote.get(session);
+    for (let depth = 0; current && depth < 8; depth += 1) {
+      const owner = await this.send<{ backendNodeId: number }>('DOM.getFrameOwner', { frameId: current.targetId }, current.parent);
+      await this.send('DOM.scrollIntoViewIfNeeded', { backendNodeId: owner.backendNodeId }, current.parent);
+      current = current.parent === '' ? undefined : this.remote.get(current.parent);
+    }
+  }
+
   /** Center of the element in CSS pixels of the page's viewport (a remote frame adds its frame element's offset). */
-  private async centerOf(ref: AxRef): Promise<{ x: number; y: number } | null> {
+  private async centerOf(ref: Pick<AxRef, 'frame' | 'backendNodeId'>): Promise<{ x: number; y: number } | null> {
     const { quads } = await this.send<Quad>('DOM.getContentQuads', { backendNodeId: ref.backendNodeId }, ref.frame);
     const quad = quads.find((candidate) => candidate.length >= 8);
     if (!quad) return null;
@@ -436,6 +669,27 @@ export class CdpDriver {
       return result.value as T;
     } finally {
       await this.send('Runtime.releaseObject', { objectId: object.objectId }, ref.frame).catch(() => undefined);
+    }
+  }
+
+  /** Runs a page-side function on a node and answers the `backendNodeId` of the element it returns (`null` = none). */
+  private async elementFrom(ref: Pick<AxRef, 'frame' | 'backendNodeId'>, functionDeclaration: string, args: readonly unknown[] = []): Promise<number | null> {
+    const { object } = await this.send<{ object: { objectId?: string } }>('DOM.resolveNode', { backendNodeId: ref.backendNodeId }, ref.frame);
+    if (!object.objectId) throw new Error(STALE_REFS_MESSAGE);
+    let found: string | undefined;
+    try {
+      const { result } = await this.send<{ result: { objectId?: string; subtype?: string } }>(
+        'Runtime.callFunctionOn',
+        { objectId: object.objectId, functionDeclaration, arguments: args.map((value) => ({ value })), silent: true },
+        ref.frame,
+      );
+      if (result.subtype !== 'node' || !result.objectId) return null;
+      found = result.objectId;
+      const { node } = await this.send<{ node: { backendNodeId: number } }>('DOM.describeNode', { objectId: found }, ref.frame);
+      return node.backendNodeId;
+    } finally {
+      await this.send('Runtime.releaseObject', { objectId: object.objectId }, ref.frame).catch(() => undefined);
+      if (found) await this.send('Runtime.releaseObject', { objectId: found }, ref.frame).catch(() => undefined);
     }
   }
 
