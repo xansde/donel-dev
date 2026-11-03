@@ -192,6 +192,15 @@
   color: var(--accent);
 }
 
+.sessionHeaderYolo {
+  flex: none;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: var(--weight-semibold);
+  color: var(--zone-warn);
+}
+
 .sessionHeaderFase {
   flex: none;
   white-space: nowrap;

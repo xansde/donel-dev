@@ -77,30 +77,28 @@ const HOOK_SETTINGS_DIR_NAME = 'hook-settings';
 const STALE_HOOK_SETTINGS_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Events delivered as `http` hooks, with their `timeout` in seconds. `PermissionRequest` goes in when someone
- * in the app answers it: the chat, or "Modo auto nunca pede permissão". `PermissionDenied` counts the auto mode
- * classifier's blocks (`autoApprovalVerdict`).
+ * Events delivered as `http` hooks, with their `timeout` in seconds. `PermissionRequest` goes in even with the chat
+ * off: the settings of a live session are fixed at spawn, and Modo YOLO must reach it. With nobody to answer, the
+ * bridge says `{}` at once and the terminal asks as usual. `PermissionDenied` counts the auto mode classifier's blocks
+ * (`autoApprovalVerdict`).
  */
-export const BRIDGE_HTTP_EVENTS: ReadonlyArray<{ readonly event: string; readonly timeout: number; readonly chatOnly: boolean }> = [
-  { event: 'PermissionRequest', timeout: 86400, chatOnly: true },
-  { event: 'PermissionDenied', timeout: 10, chatOnly: false },
-  { event: 'PreToolUse', timeout: 10, chatOnly: false },
-  { event: 'PostToolUse', timeout: 10, chatOnly: false },
-  { event: 'UserPromptSubmit', timeout: 10, chatOnly: false },
-  { event: 'Stop', timeout: 10, chatOnly: false },
-  { event: 'StopFailure', timeout: 10, chatOnly: false },
-  { event: 'Notification', timeout: 10, chatOnly: false },
-  { event: 'SubagentStart', timeout: 10, chatOnly: false },
-  { event: 'SubagentStop', timeout: 10, chatOnly: false },
-  { event: 'SessionEnd', timeout: 2, chatOnly: false },
+export const BRIDGE_HTTP_EVENTS: ReadonlyArray<{ readonly event: string; readonly timeout: number }> = [
+  { event: 'PermissionRequest', timeout: 86400 },
+  { event: 'PermissionDenied', timeout: 10 },
+  { event: 'PreToolUse', timeout: 10 },
+  { event: 'PostToolUse', timeout: 10 },
+  { event: 'UserPromptSubmit', timeout: 10 },
+  { event: 'Stop', timeout: 10 },
+  { event: 'StopFailure', timeout: 10 },
+  { event: 'Notification', timeout: 10 },
+  { event: 'SubagentStart', timeout: 10 },
+  { event: 'SubagentStop', timeout: 10 },
+  { event: 'SessionEnd', timeout: 2 },
 ];
 
 export interface SessionHooksSettingsInput {
   readonly port: number;
   readonly token: string;
-  readonly chatEnabled: boolean;
-  /** "Modo auto nunca pede permissão": keeps `PermissionRequest` even with the chat off, for the bridge to answer it. */
-  readonly autoNeverAsks?: boolean;
   /** Path (or bare name) of `curl.exe`; `null` when the boot did not find it — falls back to the PowerShell forwarder. */
   readonly curlPath: string | null;
   /** Required when `curlPath` is null: the `.ps1` written by `writeSessionHooksSettings`. */
@@ -131,11 +129,10 @@ function bridgeUrl(port: number, event: string): string {
 
 /** Pure — the per-session `--settings` content. No `matcher` anywhere: every tool is observed. */
 export function buildSessionHooksSettings(input: SessionHooksSettingsInput): SessionHooksSettingsContent {
-  const { port, token, chatEnabled, curlPath, forwarderScriptPath } = input;
+  const { port, token, curlPath, forwarderScriptPath } = input;
   const hooks: Record<string, ReadonlyArray<{ hooks: ReadonlyArray<Record<string, unknown>> }>> = {};
 
-  for (const { event, timeout, chatOnly } of BRIDGE_HTTP_EVENTS) {
-    if (chatOnly && !chatEnabled && input.autoNeverAsks !== true) continue;
+  for (const { event, timeout } of BRIDGE_HTTP_EVENTS) {
     hooks[event] = [{ hooks: [{ type: 'http', url: bridgeUrl(port, event), headers: { 'X-Donel-Token': token }, timeout }] }];
   }
 

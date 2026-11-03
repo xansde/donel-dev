@@ -72,6 +72,7 @@ describe('defaultAppConfig (puro)', () => {
       // B36 — sessão renovada em voo: ligada, 250k de contexto.
       sessionRenewal: { enabled: true, limitTokens: 250_000 },
       autoMode: { neverAsks: true },
+      yolo: { projects: [] },
       unknownFields: {},
     });
   });
@@ -105,6 +106,7 @@ describe('toAppConfigDto (puro)', () => {
       pet: { enabled: false, placement: null, size: 140 },
       sessionRenewal: { enabled: true, limitTokens: 250_000 },
       autoMode: { neverAsks: true },
+      yolo: { projects: [] },
     });
   });
 
@@ -238,6 +240,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       sweep: { lastSweepAt: null },
       sessionRenewal: { enabled: false, limitTokens: 180_000 },
       autoMode: { neverAsks: false },
+      yolo: { projects: ['C:\\repos\\app'] },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -307,6 +310,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       notificationPreference: 'not-a-real-value', // corrompido
       theme: 'dark',
       autoMode: { neverAsks: 'sim' },
+      yolo: { projects: ['C:\\ok', 42, ''] },
     };
     expect(sanitizeAppConfig(partiallyCorrupted, defaults)).toEqual({
       version: 1,
@@ -330,6 +334,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       sweep: defaults.sweep,
       sessionRenewal: defaults.sessionRenewal,
       autoMode: defaults.autoMode,
+      yolo: { projects: ['C:\\ok'] },
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });

@@ -1,5 +1,10 @@
 # Glossário — Donel Dev
 
+**Modo YOLO**:
+Configuração por projeto, desligada por padrão, em que todo pedido de permissão é aprovado na hora, em
+qualquer modo de permissão. Perguntas e aprovação de plano continuam chegando ao dono.
+_Evitar_: bypass, auto (`auto` é um modo de permissão do CLI)
+
 **Mindscape**:
 Quadro visual livre onde o dono acompanha sessões e anotações de um projeto; o app tem um
 mindscape por projeto, trocado por abas.

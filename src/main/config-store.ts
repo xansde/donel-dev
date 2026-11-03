@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
-import type { AppConfigDto, AutoModePrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs } from '../shared/config';
+import type { AppConfigDto, AutoModePrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs, YoloPrefs } from '../shared/config';
 // T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
 import type {
@@ -151,6 +151,8 @@ export interface AppConfig {
   readonly sessionRenewal: SessionRenewalPrefs;
   /** Modo auto — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
   readonly autoMode: AutoModePrefs;
+  /** Modo YOLO — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
+  readonly yolo: YoloPrefs;
   /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
@@ -191,6 +193,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     sweep: defaultSweepPrefs(),
     sessionRenewal: DEFAULT_SESSION_RENEWAL_PREFS,
     autoMode: defaultAutoModePrefs(),
+    yolo: defaultYoloPrefs(),
     unknownFields: {},
   };
 }
@@ -232,6 +235,18 @@ export function sanitizeAutoModePrefs(value: unknown, fallback: AutoModePrefs = 
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return fallback;
   const { neverAsks } = value as Record<string, unknown>;
   return { neverAsks: typeof neverAsks === 'boolean' ? neverAsks : fallback.neverAsks };
+}
+
+export function defaultYoloPrefs(): YoloPrefs {
+  return { projects: [] };
+}
+
+/** Errs towards asking: anything that is not a project path is dropped, never kept as "on". */
+export function sanitizeYoloPrefs(value: unknown): YoloPrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return defaultYoloPrefs();
+  const { projects } = value as Record<string, unknown>;
+  if (!Array.isArray(projects)) return defaultYoloPrefs();
+  return { projects: [...new Set(projects.filter((path): path is string => typeof path === 'string' && path.trim() !== ''))] };
 }
 
 /** T014 (015-jobu-pet) — off, no remembered position (= default corner), Medium size. */
@@ -291,6 +306,7 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     pet: config.pet,
     sessionRenewal: config.sessionRenewal,
     autoMode: config.autoMode,
+    yolo: config.yolo,
   };
 }
 
@@ -714,6 +730,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     sweep: sanitizeSweepPrefs(candidate.sweep, defaults.sweep),
     sessionRenewal: sanitizeSessionRenewalPrefs(candidate.sessionRenewal, defaults.sessionRenewal),
     autoMode: sanitizeAutoModePrefs(candidate.autoMode, defaults.autoMode),
+    yolo: sanitizeYoloPrefs(candidate.yolo),
     unknownFields,
   };
 }

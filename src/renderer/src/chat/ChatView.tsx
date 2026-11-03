@@ -44,6 +44,8 @@ export interface ChatViewActions {
   closeTab(tabId: string): void;
   /** "abrir" on the new-conversation notice. */
   openPreviousSessions(tabId: string): void;
+  /** "YOLO neste projeto": turns on Modo YOLO for the tab's project. */
+  turnOnYolo(tabId: string): Promise<void>;
   /** Hidden terminal of the tab: the send driver writes to it and reads its screen (T065); screen detectors and Parar use it too (T068/T070). `null` before it mounts. */
   terminal(tabId: string): TerminalPaneHandle | null;
 }
@@ -62,6 +64,8 @@ export interface ChatViewProps {
   footer?: ReactNode;
   /** Folder of the tab (a file picked inside it is mentioned as `@relative`). */
   cwd?: string;
+  /** The tab has a project and it is not in Modo YOLO yet: the permission card offers it. */
+  offerYolo: boolean;
 }
 
 /**
@@ -100,6 +104,7 @@ export const ChatView = memo(function ChatView({
   ended,
   footer,
   cwd,
+  offerYolo,
 }: ChatViewProps): React.JSX.Element {
   const session = useChatSession(ptyId);
   const onOpenTerminal = useCallback(() => actions.openTerminal(tabId), [actions, tabId]);
@@ -140,6 +145,14 @@ export const ChatView = memo(function ChatView({
       void session.answer(pendingId, answer).catch(() => undefined);
     },
     [session.answer],
+  );
+  // Turning it on approves what the tab has waiting; the `allow` after it only matters for a card that YOLO leaves
+  // to the owner, which he has just answered here, and it is a harmless "not-open" for the rest.
+  const onYolo = useCallback(
+    (pendingId: string) => {
+      void actions.turnOnYolo(tabId).then(() => onAnswer(pendingId, { kind: 'allow' })).catch(() => undefined);
+    },
+    [actions, tabId, onAnswer],
   );
   const onAdjustSubmit = useCallback(
     (text: string) => {
@@ -303,6 +316,7 @@ export const ChatView = memo(function ChatView({
             onAnswer={onAnswer}
             onAdjustStart={setAdjustingPlanId}
             onOpenExternal={ctx.onOpenExternal}
+            onYolo={offerYolo ? onYolo : undefined}
           />
           <WorkingFooter live={session.live} rows={session.rows} terminal={terminal}
             onInterruptPending={onInterruptPending}

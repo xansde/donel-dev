@@ -12,6 +12,8 @@ export const PROJECT_CHANNELS = {
   // Tipos do payload/resposta em ./newProject.ts (módulo puro, sem node:fs);
   // o encanamento de disco vive em src/main/project-creator.ts.
   create: 'projects:create',
+  // Modo YOLO — the folders that stand for a tab (src/shared/projectYolo.ts).
+  tabFolders: 'projects:tabFolders',
 } as const;
 
 export interface ProjectInfo {
@@ -38,6 +40,8 @@ export interface DonelProjectsApi {
   setFavorite(path: string, favorite: boolean): Promise<ProjectInfo[]>;
   /** CA-30 (009-modo-dev-v3, lote 9) — cria a pasta do projeto (+ marcador CLAUDE.md + `git init` best-effort) dentro de um root já configurado; devolve o resultado E a lista já re-escaneada. */
   create(input: CreateProjectIpcInput): Promise<CreateProjectResponse>;
+  /** Modo YOLO — the folders that stand for a tab opened in `cwd`, the same ones the main looks at. */
+  tabFolders(cwd: string): Promise<string[]>;
 }
 
 /**

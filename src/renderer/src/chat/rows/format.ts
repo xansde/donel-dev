@@ -193,7 +193,8 @@ export function noticeContent(kind: NoticeKind, params: Readonly<Record<string, 
     }
     case 'auto-approved': {
       const summary = asString(params.summary);
-      return { icon: 'auto-approved', tone: 'muted', text: summary ? `Permitido automaticamente: ${summary}` : 'Permitido automaticamente' };
+      const lead = params.yolo === true ? 'Permitido automaticamente (YOLO)' : 'Permitido automaticamente';
+      return { icon: 'auto-approved', tone: 'muted', text: summary ? `${lead}: ${summary}` : lead };
     }
     case 'conversation-switch': {
       const lead = params.reason === 'resume' ? 'Conversa retomada' : 'Conversa nova';

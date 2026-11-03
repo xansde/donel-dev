@@ -41,6 +41,7 @@ import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
 // (buildClaudeArgs acima) continua intocado.
 import { buildLauncherArgs } from './launchArgsForProvider';
 import { cliWorktreeBranch, WORKTREE_TAB_MARK, worktreeNameFor, worktreeNameFromArgs } from '../../shared/sessionWorktree';
+import { projectOfFolders } from '../../shared/projectYolo';
 import type { WorktreeKeptPayload } from '../../shared/workspace';
 import { useWorkspaceInfo } from './useWorkspaceInfo';
 // CA-22 (009) — só o DENOMINADOR do `%` de contexto vem daqui (`min(300k,
@@ -1208,6 +1209,25 @@ export function App(): React.JSX.Element {
   const toggleActiveTabViewRef = useRef(toggleActiveTabView);
   toggleActiveTabViewRef.current = toggleActiveTabView;
 
+  // Modo YOLO — a aba responde pelas pastas que o main olha (`projects:tabFolders`): assim a marca, o botão e a
+  // ponte nunca discordam, inclusive numa worktree fora da pasta do projeto.
+  const [tabFoldersByCwd, setTabFoldersByCwd] = useState<Readonly<Record<string, readonly string[]>>>({});
+  useEffect(() => {
+    for (const tab of tabs) {
+      const { cwd } = tab;
+      if (tab.sessionType !== 'claude' || !cwd || tabFoldersByCwd[cwd]) continue;
+      void window.donel.projects
+        .tabFolders(cwd)
+        .then((folders) => setTabFoldersByCwd((prev) => ({ ...prev, [cwd]: folders })))
+        .catch(() => undefined);
+    }
+  }, [tabs, tabFoldersByCwd]);
+  const yoloProjects = appConfig?.yolo.projects ?? [];
+  const projectPaths = useMemo(() => projects.map((project) => project.path), [projects]);
+  const foldersOfTab = (tab: TabState): readonly string[] => (tab.cwd ? (tabFoldersByCwd[tab.cwd] ?? [tab.cwd]) : []);
+  const isTabYolo = (tab: TabState): boolean => projectOfFolders(foldersOfTab(tab), yoloProjects) !== null;
+  const projectOfTab = (tab: TabState): string | null => projectOfFolders(foldersOfTab(tab), projectPaths);
+
   // O objeto é ESTÁVEL (ChatView é memoizado: o App re-renderiza a cada tique do semáforo);
   // o que muda a cada render fica atrás de `chatActionsRef`.
   const chatActionsRef = useRef<ChatViewActions>({
@@ -1215,6 +1235,7 @@ export function App(): React.JSX.Element {
     resume: () => undefined,
     closeTab: () => undefined,
     openPreviousSessions: () => undefined,
+    turnOnYolo: () => Promise.resolve(),
     terminal: () => null,
   });
   chatActionsRef.current = {
@@ -1231,6 +1252,12 @@ export function App(): React.JSX.Element {
       const project = projects.find((candidate) => candidate.path === cwd);
       if (project) handleShowPreviousSessions(project);
     },
+    turnOnYolo: (tabId) => {
+      const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+      const project = tab ? projectOfTab(tab) : null;
+      if (project === null) return Promise.resolve();
+      return window.donel.config.setProjectYolo(project, true).then(setAppConfig);
+    },
   };
   const chatActions = useMemo<ChatViewActions>(
     () => ({
@@ -1238,6 +1265,7 @@ export function App(): React.JSX.Element {
       resume: (tabId) => chatActionsRef.current.resume(tabId),
       closeTab: (tabId) => chatActionsRef.current.closeTab(tabId),
       openPreviousSessions: (tabId) => chatActionsRef.current.openPreviousSessions(tabId),
+      turnOnYolo: (tabId) => chatActionsRef.current.turnOnYolo(tabId),
       terminal: (tabId) => chatActionsRef.current.terminal(tabId),
     }),
     [],
@@ -2795,6 +2823,15 @@ export function App(): React.JSX.Element {
                       {WORKTREE_TAB_MARK} {tabWorktreeBranch(activeTab)}
                     </span>
                   ) : null}
+                  {activeClaudeTab && isTabYolo(activeClaudeTab) ? (
+                    <span
+                      className={styles.sessionHeaderYolo}
+                      data-testid="session-header-yolo"
+                      title="Modo YOLO: neste projeto o agente age sem perguntar. Desliga na engrenagem do projeto."
+                    >
+                      YOLO
+                    </span>
+                  ) : null}
                 </>
               )}
               <div className={styles.sessionHeaderSpacer} />
@@ -2898,6 +2935,7 @@ export function App(): React.JSX.Element {
                       focusMode={appConfig?.chat.focusMode ?? true}
                       ended={tabExits[tab.id] ?? null}
                       cwd={tab.cwd}
+                      offerYolo={!isTabYolo(tab) && projectOfTab(tab) !== null}
                     />
                   </div>
                 ) : null}
@@ -3129,6 +3167,11 @@ export function App(): React.JSX.Element {
             sessionNames={appConfig?.sessionNames ?? {}}
             contextLabelBySessionId={previousSessionsContextLabel}
             esteiraPhaseSessionIds={esteiraPhaseSessionIds}
+            yolo={previousSessionsProject !== null && projectOfFolders([previousSessionsProject.path], yoloProjects) !== null}
+            onChangeYolo={(enabled) => {
+              if (!previousSessionsProject) return;
+              void window.donel.config.setProjectYolo(previousSessionsProject.path, enabled).then(setAppConfig).catch(() => undefined);
+            }}
           />
         </div>
       ) : null}
