@@ -10,7 +10,7 @@
 // `chat:row-detail` (part `content` on the group id -> `RowDetail.rows`).
 
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { adapt, expandGroup, initAdapterState, viewOf, type AdapterState } from '../../shared/chat/adapter';
 import type {
   ChatAckLookupOutput,
@@ -61,6 +61,12 @@ export interface ChatSourceInfo {
   readonly sessionId: string;
   readonly transcriptPath: string;
   readonly cwd: string;
+  /**
+   * Sessão renovada em voo (B36) — the conversation this one replaced in the same tab. Its
+   * history is shown above a "Sessão renovada em voo" divider, read-only, paged backward
+   * after the new conversation's own start. One level: older renewals stay in Sessões anteriores.
+   */
+  readonly predecessor?: { readonly sessionId: string; readonly transcriptPath: string; readonly handoffPath: string };
 }
 
 export interface ChatHubEvents {
@@ -90,6 +96,8 @@ export interface ChatHubDeps {
   readonly receptionPollMs?: number;
   /** Folder of `chat:save-image` attachments; allowed for `chat:open-generated`. */
   readonly attachmentsRoot?: string;
+  /** B36 — folder of the renewal handoffs; allowed for `chat:open-generated` (the divider's "abrir"). */
+  readonly handoffsRoot?: string;
   readonly follower?: { readonly debounceMs?: number; readonly pollMs?: number; readonly retryMs?: number };
 }
 
@@ -165,6 +173,15 @@ interface PendingEntry {
   handle: PendingDecisionHandle;
 }
 
+/** B36 — the conversation a renewal replaced (`ChatSourceInfo.predecessor`), read-only, above the divider. */
+interface Prelude {
+  readonly path: string;
+  readonly divider: NoticeRow;
+  state: AdapterState;
+  /** Start offset of its oldest loaded page; `null` = its start is loaded. */
+  olderOffset: number | null;
+}
+
 /** Closed pendings kept per tab so a late `chat:answer` gets `not-open`, not `unknown`. */
 const CLOSED_PENDINGS_KEPT = 30;
 
@@ -184,6 +201,11 @@ interface Rec {
   topNotice: NoticeRow | null;
   /** App-born notices (`account-switch`): memory only, always at the end. */
   appNotices: NoticeRow[];
+  /**
+   * B36 — the replaced conversation, once in the view. It only enters after the current
+   * conversation is loaded back to its start, so it is always on top. `null` = none (or not yet).
+   */
+  prelude: Prelude | null;
   /** Ultimos UserPromptSubmit (contrato de envio §5: 20). */
   readonly submits: ReturnType<typeof createSubmitRing>;
   /** Sinais recentes lidos do transcript (para o aceite tardio). */
@@ -247,6 +269,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         session: null,
         topNotice: null,
         appNotices: [],
+        prelude: null,
         submits: createSubmitRing(SUBMIT_RING),
         signals: [],
         pendings: new Map(),
@@ -362,8 +385,47 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
 
   // ---- rows ----------------------------------------------------------------
 
+  function preludeView(prelude: Prelude | null): ConversationRow[] {
+    return prelude === null ? [] : [...viewOf(prelude.state), prelude.divider];
+  }
+
   function withNotices(rec: Rec, rows: readonly ConversationRow[]): ConversationRow[] {
-    return [...(rec.topNotice !== null ? [rec.topNotice] : []), ...rows, ...rec.appNotices];
+    return [...preludeView(rec.prelude), ...(rec.topNotice !== null ? [rec.topNotice] : []), ...rows, ...rec.appNotices];
+  }
+
+  /**
+   * B36 — once the current conversation is loaded back to its start, the replaced one enters on
+   * top: its newest page and the "Sessão renovada em voo" divider. Returns the rows that just
+   * entered (empty when there is no predecessor or it is already in). An unreadable old transcript
+   * still gets the divider.
+   */
+  async function enterPrelude(rec: Rec): Promise<ConversationRow[]> {
+    const source = sourceOf(rec);
+    const predecessor = source?.predecessor;
+    if (source === null || predecessor === undefined || rec.prelude !== null) return [];
+    const prelude: Prelude = {
+      path: predecessor.transcriptPath,
+      divider: noticeRow(`app:session-renewed:${source.sessionId}`, 'session-renewed', {
+        path: predecessor.handoffPath,
+        name: basename(predecessor.handoffPath),
+      }),
+      state: initAdapterState({ cwd: source.cwd }),
+      olderOffset: null,
+    };
+    try {
+      const page = await readPageBackward(prelude.path);
+      if (page.lines.length > 0) prelude.state = adapt(prelude.state, toEntries(page.lines), { direction: 'backward' }).state;
+      prelude.olderOffset = page.done || prelude.state.backward.rootReached ? null : page.startOffset;
+    } catch {
+      // the old transcript is gone: the divider alone still says what happened
+    }
+    rec.prelude = prelude;
+    return preludeView(prelude);
+  }
+
+  function cursorOf(rec: Rec, session: Session): string | null {
+    if (session.olderOffset !== null) return String(session.olderOffset);
+    return rec.prelude !== null && rec.prelude.olderOffset !== null ? `p${rec.prelude.olderOffset}` : null;
   }
 
   /** `reset` patches carry the whole view: the app-born notices must ride along. */
@@ -441,6 +503,9 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     } catch {
       rec.fileSeen = false; // not born yet: the follower waits for it
     }
+    // B36 — a fresh view: the replaced conversation enters again only on top of a complete current one
+    rec.prelude = null;
+    if (session.olderOffset === null) await enterPrelude(rec);
     rec.session = session;
     startFollower(rec, session, source.transcriptPath, followFrom);
     return session;
@@ -476,7 +541,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     return {
       source: conv,
       rows: withNotices(rec, viewOf(session.state)),
-      cursor: session.olderOffset === null ? null : String(session.olderOffset),
+      cursor: cursorOf(rec, session),
       live: liveOf(rec),
       permissionMode,
       reception: rec.reception,
@@ -591,6 +656,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       const reason: ConversationSwitchReason = event.source === 'resume' || event.source === 'fork' ? event.source : 'clear';
       rec.topNotice = noticeRow(`app:conversation-switch:${event.sessionId}`, 'conversation-switch', { source: reason });
       rec.appNotices = [];
+      rec.prelude = null; // B36 — a /clear after a renewal leaves the replaced conversation in Sessões anteriores
       rec.fileSeen = false;
       rec.lastActivityAt = 0;
       rec.lastGrowthAt = 0;
@@ -714,9 +780,29 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       if (rec === undefined || session === null || scope !== 'main') return Promise.resolve({ rows: [], cursor: null });
       const run = session.olderQueue.then(async (): Promise<ChatLoadOlderOutput> => {
         const gen = session.gen;
+        // B36 — `p<offset>`: a page of the conversation a renewal replaced (above the divider).
+        const prelude = rec.prelude;
+        if (cursor.startsWith('p') && prelude !== null) {
+          const beforePrelude = Number(cursor.slice(1));
+          if (!Number.isSafeInteger(beforePrelude) || beforePrelude < 0 || prelude.olderOffset === null) return { rows: [], cursor: cursorOf(rec, session) };
+          let older;
+          try {
+            older = await readPageBackward(prelude.path, { beforeOffset: beforePrelude });
+          } catch {
+            return { rows: [], cursor: cursorOf(rec, session) };
+          }
+          if (rec.session !== session || session.gen !== gen || rec.prelude !== prelude) return { rows: [], cursor: null };
+          const result = adapt(prelude.state, toEntries(older.lines), { direction: 'backward' });
+          prelude.state = result.state;
+          prelude.olderOffset = older.done || prelude.state.backward.rootReached ? null : older.startOffset;
+          // a reset of the old conversation must never replace the view: only rows that changed travel
+          emitRows(rec, result.patches.filter((p) => p.op === 'replace'));
+          const rows = result.patches.filter((p) => p.op === 'prepend' || p.op === 'append').flatMap((p) => [...p.rows]);
+          return { rows, cursor: cursorOf(rec, session) };
+        }
         const before = Number(cursor);
         if (!Number.isSafeInteger(before) || before < 0 || session.olderOffset === null) {
-          return { rows: [], cursor: session.olderOffset === null ? null : String(session.olderOffset) };
+          return { rows: [], cursor: cursorOf(rec, session) };
         }
         const path = sourceOf(rec)?.transcriptPath;
         if (path === undefined) return { rows: [], cursor: null };
@@ -734,7 +820,9 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         // `prepend` rows answer this call; anything else (a rewind, a row that changed) goes as an event.
         const rows = result.patches.filter((p) => p.op === 'prepend' || p.op === 'append').flatMap((p) => [...p.rows]);
         emitRows(rec, decoratePatches(rec, result.patches.filter((p) => p.op !== 'prepend' && p.op !== 'append')));
-        return { rows, cursor: session.olderOffset === null ? null : String(session.olderOffset) };
+        // B36 — the current conversation reached its start: the replaced one comes in on top of it
+        const entered = session.olderOffset === null ? await enterPrelude(rec) : [];
+        return { rows: [...entered, ...rows], cursor: cursorOf(rec, session) };
       });
       session.olderQueue = run.catch(() => undefined);
       return run;
@@ -743,9 +831,14 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     async rowDetail(input) {
       const session = recs.get(input.ptyId)?.session ?? null;
       if (session === null || input.scope !== 'main') return { part: input.part, text: '', truncated: false };
-      const flat = session.state.rows.find((r) => r.id === input.rowId);
-      const row = flat ?? viewOf(session.state).find((r) => r.id === input.rowId);
-      const children = row?.kind === 'action-group' ? expandGroup(session.state, row.id) : [];
+      // B36 — a row above the "Sessão renovada em voo" divider belongs to the replaced conversation
+      const prelude = recs.get(input.ptyId)?.prelude ?? null;
+      const holds = (state: AdapterState): boolean =>
+        state.rows.some((r) => r.id === input.rowId) || viewOf(state).some((r) => r.id === input.rowId);
+      const owner = prelude !== null && !holds(session.state) && holds(prelude.state) ? prelude.state : session.state;
+      const flat = owner.rows.find((r) => r.id === input.rowId);
+      const row = flat ?? viewOf(owner).find((r) => r.id === input.rowId);
+      const children = row?.kind === 'action-group' ? expandGroup(owner, row.id) : [];
       return buildRowDetail(row, children, input.part, readLineRef);
     },
 
@@ -843,7 +936,11 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
 
     generatedFileRoots(ptyId) {
       const cwd = recs.get(ptyId)?.source?.cwd ?? deps.getSource(ptyId)?.cwd;
-      return [...(cwd !== undefined && cwd !== '' ? [cwd] : []), ...(deps.attachmentsRoot !== undefined ? [deps.attachmentsRoot] : [])];
+      return [
+        ...(cwd !== undefined && cwd !== '' ? [cwd] : []),
+        ...(deps.attachmentsRoot !== undefined ? [deps.attachmentsRoot] : []),
+        ...(deps.handoffsRoot !== undefined ? [deps.handoffsRoot] : []),
+      ];
     },
 
     dispose() {

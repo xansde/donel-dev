@@ -1371,6 +1371,9 @@ Hoje isso é manual e o dono precisa pedir, esperar e abrir a sessão nova à m�
 memória?); se o limite é por sessão ou por custo; se o dono pode vetar a troca
 ("agora não") e quanto tempo o app espera.
 
+**Status (03/11):** entregue no alfa (item 07 do PDA `mindscape-openrig`). Regras fechadas e
+os "em aberto" respondidos em `docs/refinamentos/sessao-renovada-em-voo.md`.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo

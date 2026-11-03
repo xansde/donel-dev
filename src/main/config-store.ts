@@ -18,6 +18,7 @@ import type {
   PhaseDefaultsTable,
 } from '../shared/devMode';
 import { DEFAULT_PHASE_DEFAULTS } from '../shared/devModeDefaults';
+import { DEFAULT_SESSION_RENEWAL_PREFS, sanitizeSessionRenewalPrefs, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { defaultMigrationState, sanitizeMigrationState, type MigrationState } from './accounts/migration/migration-state';
 import { sanitizeProvidersConfig } from './providers/providers-config';
@@ -144,6 +145,11 @@ export interface AppConfig {
    */
   readonly sweep: SweepPrefs;
   /**
+   * Sessão renovada em voo (B36) — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in
+   * `unknownFields` and writes it back intact. Exposed in the DTO.
+   */
+  readonly sessionRenewal: SessionRenewalPrefs;
+  /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
    * `sanitizeAppConfig` NUNCA as descarta — guarda aqui em vez de jogar fora
@@ -181,6 +187,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     chat: defaultChatPrefs(),
     pet: defaultPetPrefs(),
     sweep: defaultSweepPrefs(),
+    sessionRenewal: DEFAULT_SESSION_RENEWAL_PREFS,
     unknownFields: {},
   };
 }
@@ -268,6 +275,7 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     tabAppearance: config.tabAppearance,
     chat: config.chat,
     pet: config.pet,
+    sessionRenewal: config.sessionRenewal,
   };
 }
 
@@ -689,6 +697,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     chat: sanitizeChatPrefs(candidate.chat, defaults.chat),
     pet: sanitizePetPrefs(candidate.pet, defaults.pet),
     sweep: sanitizeSweepPrefs(candidate.sweep, defaults.sweep),
+    sessionRenewal: sanitizeSessionRenewalPrefs(candidate.sessionRenewal, defaults.sessionRenewal),
     unknownFields,
   };
 }

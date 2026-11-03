@@ -19,6 +19,7 @@ import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
+import type { DonelRenewalApi } from './sessionRenewal';
 import type { DonelLearningApi } from './learning/gestures';
 import type { DonelHealthApi } from './health/ipc';
 import type { DonelWorkspaceApi } from './workspace';
@@ -286,6 +287,13 @@ export interface PtyCreateOptions {
    * cru dentro de um diretório vazio, pro operador fazer `/login`.
    */
   accountLoginId?: string;
+  /**
+   * Sessão renovada em voo (B36) — this spawn replaces the session of a
+   * renewal (`renewal:prepare`). The main links the new conversation to the
+   * old one, so the tab's chat keeps showing the old history above a divider.
+   * It changes nothing in the argv (the renderer already sent the args).
+   */
+  renewalId?: string;
 }
 
 /**
@@ -384,12 +392,16 @@ export interface SemaphoreUpdate {
   readonly state: SemaphoreState;
   /** Epoch ms de quando `state` passou a valer (ui-spec §3 "há Xmin"; FR-010/CA-6 desempate por idade em `permission`). */
   readonly stateEnteredAt: number;
+  /** #109 — see `SemaphoreStateInfo.awaitingBackgroundAgents`. */
+  readonly awaitingBackgroundAgents?: true;
 }
 
 /** Payload do listener FILTRADO por ptyId (mesmo padrão de `PtyExitInfo`/`pty.onExit` — o `ptyId` já é conhecido pelo chamador, não precisa vir de novo dentro do payload). */
 export interface SemaphoreStateInfo {
   readonly state: SemaphoreState;
   readonly stateEnteredAt: number;
+  /** #109 — `waiting` with background agents still alive (the CLI will wake the session). Read by the renewal (B36): never swap then. */
+  readonly awaitingBackgroundAgents?: boolean;
 }
 
 /** API tipada exposta pelo preload em `window.donel.semaphore` (contextBridge). */
@@ -459,4 +471,6 @@ export interface DonelApi {
   workspace: DonelWorkspaceApi;
   /** Navegador integrado — o painel de navegador de cada aba de sessão, que o agente da sessão controla e o dono assume. */
   browser: DonelBrowserApi;
+  /** Sessão renovada em voo (B36) — handoff instructions and reading the handoff header back. */
+  renewal: DonelRenewalApi;
 }

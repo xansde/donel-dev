@@ -263,6 +263,12 @@ export interface TerminalPaneHandle {
   onScreenUpdate: (listener: () => void) => () => void;
   /** T039 — mata a PTY e sobe outra com os mesmos flags; `resume` acrescenta `-r <id>`. */
   respawn: (options?: { resume?: string }) => void;
+  /**
+   * B36 — sessão renovada em voo: ends the process and opens a NEW conversation in this same pane,
+   * with `args` (the launch flags minus the old conversation, see `renewalLaunchArgs`). `renewalId`
+   * goes to `pty:create` once, so the main links the new conversation to the old one.
+   */
+  renew: (options: { args: string[]; renewalId: string }) => void;
   /** T056 — devolve o foco do teclado ao terminal (ao alternar do chat para a vista Terminal). */
   focus: () => void;
   /** T039 — id da PTY viva (null sem processo). */
@@ -317,6 +323,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   /** T039 — argv efetivo do próximo spawn (respawn com `-r` o substitui); `undefined` = prop `args`. */
   const spawnArgsRef = useRef<string[] | undefined>(undefined);
   const respawnRef = useRef<(options?: { resume?: string }) => void>(() => undefined);
+  /** B36 — the renewal of the NEXT spawn only (consumed by `spawnSession`). */
+  const renewalIdRef = useRef<string | null>(null);
   const [status, setStatus] = useState<PaneStatus>({ kind: 'connecting' });
 
   // Ref pra sempre chamar a versão mais recente do callback sem precisar
@@ -431,6 +439,11 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         };
       },
       respawn: (options?: { resume?: string }): void => respawnRef.current(options),
+      renew: (options: { args: string[]; renewalId: string }): void => {
+        spawnArgsRef.current = options.args;
+        renewalIdRef.current = options.renewalId;
+        respawnRef.current();
+      },
       focus: (): void => termRef.current?.focus(),
       get ptyId(): string | null {
         return ptyIdRef.current;
@@ -459,9 +472,11 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     // Snapshot da geração vigente NO MOMENTO da chamada — não lido de novo
     // depois (ver comentário de `mountEpochRef` acima).
     const requestEpoch = mountEpochRef.current;
+    const renewalId = renewalIdRef.current ?? undefined;
+    renewalIdRef.current = null;
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId })
+      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId })
       .then((result) => {
         if (requestEpoch !== mountEpochRef.current) {
           // Geração já descartada (StrictMode double-invoke em dev, ou a aba

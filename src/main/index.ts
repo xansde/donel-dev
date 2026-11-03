@@ -16,6 +16,9 @@ import { esteiraStoreDir } from './esteira-store';
 import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+// Sessão renovada em voo (B36).
+import { createSessionRenewalService, type SessionRenewalService } from './session-renewal';
+import { SESSION_RENEWAL_CHANNELS, sanitizeSessionRenewalPrefs, type HandoffStatus, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 import { LEARNING_CHANNELS, parseRendererGesture, type GestureEvent } from '../shared/learning/gestures';
 import { createGestureDiary, type GestureDiary } from './gesture-diary';
 import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
@@ -548,6 +551,11 @@ let chatHub: ChatHub | null = null;
 let chatAttachments: AttachmentStore | null = null;
 /** Fonte INICIAL da conversa de cada aba `claude` (a troca de conversa é do hub, não daqui). */
 const initialChatSourceByPty = new Map<string, ChatSourceInfo>();
+/**
+ * Sessão renovada em voo (B36) — the handoffs live in `<userData>/handoffs/`, never in the
+ * project. Born at boot (needs `app.getPath`); `null` before it.
+ */
+let sessionRenewal: SessionRenewalService | null = null;
 /** Conta ativa vista no último `accounts:changed` — a troca vira aviso `account-switch` no chat. */
 let lastBroadcastActiveAccountId: string | null | undefined;
 
@@ -1413,6 +1421,8 @@ function registerChatDomain(): void {
     },
     diagnostics: chatDiagnostics,
     attachmentsRoot,
+    // B36 — the "abrir" of the "Sessão renovada em voo" divider opens the handoff.
+    handoffsRoot: join(app.getPath('userData'), 'handoffs'),
   });
   chatHub = hub;
   chatAttachments = new AttachmentStore({ root: attachmentsRoot });
@@ -1643,7 +1653,22 @@ function registerPtyIpcHandlers(): void {
       // `forgetIfOrphan` vai conferir se esta retomada morrer (ver comentário de
       // `spawnedTranscriptPaths`).
       spawnedTranscriptPaths.set(correlationId, transcriptPath);
-      initialChatSourceByPty.set(ptyId, { sessionId: correlationId, transcriptPath, cwd: sessionCwd ?? homedir() });
+      // B36 — a renewed session carries the conversation it replaces: the tab's chat keeps it above a divider.
+      const renewed = options.renewalId ? sessionRenewal?.get(options.renewalId) : undefined;
+      initialChatSourceByPty.set(ptyId, {
+        sessionId: correlationId,
+        transcriptPath,
+        cwd: sessionCwd ?? homedir(),
+        ...(renewed && renewed.previousTranscriptPath
+          ? {
+              predecessor: {
+                sessionId: renewed.previousSessionId,
+                transcriptPath: renewed.previousTranscriptPath,
+                handoffPath: renewed.handoffPath,
+              },
+            }
+          : {}),
+      });
       startTranscriptWatcher(ptyId, transcriptPath, correlationId);
 
       // T404 (004) — `correlationId` é o id da sessão do Claude (imposto no
@@ -1826,6 +1851,14 @@ function registerConfigIpcHandlers(): void {
    */
   ipcMain.handle(CONFIG_CHANNELS.setPetPrefs, (_event, input: unknown): AppConfigDto => {
     if (isValidPetPrefsInput(input) && input.enabled !== undefined) setPetEnabled(input.enabled);
+    return toAppConfigDto(appConfig);
+  });
+
+  /** B36 — sessão renovada em voo: partial update; an invalid field keeps its value. */
+  ipcMain.handle(CONFIG_CHANNELS.setSessionRenewalPrefs, (_event, prefs: Partial<SessionRenewalPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = { ...appConfig, sessionRenewal: sanitizeSessionRenewalPrefs({ ...appConfig.sessionRenewal, ...patch }, appConfig.sessionRenewal) };
+    persistAppConfig();
     return toAppConfigDto(appConfig);
   });
 
@@ -2392,6 +2425,42 @@ function registerMindscapeIpcHandlers(): void {
   ipcMain.handle(MINDSCAPE_CHANNELS.readImage, (_event, imageId: unknown): Promise<MindscapeReadImageResult> => images.read(imageId));
   // After the handlers: the sweep reads the raw file and never runs on a missing, invalid or newer one.
   void images.sweepOrphans(configIoDeps.readFileText(filePath)).catch(() => undefined);
+}
+
+/**
+ * Sessão renovada em voo (B36) — `renewal:prepare` writes the handoff instructions for the session
+ * running in `ptyId` (its CURRENT conversation: `/clear` and `/resume` move it) and names the
+ * handoff file; `renewal:status` reads the handoff header back. The turn, the context and the swap
+ * are followed by the renderer; the decisions are pure (`shared/sessionRenewal.ts`).
+ */
+function registerSessionRenewalIpcHandlers(): void {
+  const service = createSessionRenewalService({ handoffsDir: join(app.getPath('userData'), 'handoffs'), randomId: randomUUID });
+  sessionRenewal = service;
+  ipcMain.handle(SESSION_RENEWAL_CHANNELS.prepare, (_event, input: unknown): RenewalPrepared | null => {
+    if (typeof input !== 'object' || input === null) return null;
+    const { ptyId, contextTokens, limitTokens } = input as Record<string, unknown>;
+    if (typeof ptyId !== 'string' || typeof contextTokens !== 'number' || typeof limitTokens !== 'number') return null;
+    const sessionId = activeSessionByPty.get(ptyId);
+    const initial = initialChatSourceByPty.get(ptyId);
+    if (!sessionId || !initial) return null;
+    const transcriptPath = chatHub?.transcriptPathOf(ptyId) ?? spawnedTranscriptPaths.get(sessionId) ?? null;
+    try {
+      const record = service.prepare({ sessionId, transcriptPath, cwd: chatHub?.cwdOf(ptyId) ?? initial.cwd, contextTokens, limitTokens });
+      return {
+        renewalId: record.id,
+        previousSessionId: record.previousSessionId,
+        handoffPath: record.handoffPath,
+        requestPrompt: record.requestPrompt,
+        firstPrompt: record.firstPrompt,
+      };
+    } catch (error) {
+      console.error('[donel-dev] renovação: as instruções da passagem não gravaram:', error);
+      return null;
+    }
+  });
+  ipcMain.handle(SESSION_RENEWAL_CHANNELS.status, (_event, renewalId: unknown): HandoffStatus =>
+    typeof renewalId === 'string' ? service.status(renewalId) : { kind: 'missing' },
+  );
 }
 
 /**
@@ -3030,6 +3099,7 @@ void app.whenReady().then(async () => {
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   registerMindscapeIpcHandlers(); // Mindscape V1
   registerMindscapeTurnEnded(); // Mindscape, fatia 03
+  registerSessionRenewalIpcHandlers(); // Sessão renovada em voo (B36)
   registerGestureDiary(); // Diário de gestos (B35)
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
   registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)

@@ -214,6 +214,12 @@
   flex: none;
 }
 
+/* B36 — sessão renovada em voo: the strip between the session header and the session. */
+.renewalStrip {
+  flex: none;
+  margin: var(--panel-padding) var(--panel-padding) 0;
+}
+
 .terminal {
   flex: 1;
   display: flex;

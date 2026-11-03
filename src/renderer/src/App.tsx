@@ -90,7 +90,11 @@ import { EsteiraScreen } from './Esteira/EsteiraScreen';
 // Mindscape V1 — third mode of the shell (docs/design/mindscape.md).
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
-import { findSessionBoard, placeSessionCard, setBoardView, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
+import { carrySessionCard, findSessionBoard, placeSessionCard, setBoardView, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
+// Sessão renovada em voo (B36) — limit crossed at the end of a turn → handoff → new session in the same tab.
+import { DEFAULT_SESSION_RENEWAL_PREFS, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
+import { useSessionRenewal, type RenewalTabInput } from './sessionRenewal/useSessionRenewal';
+import { RenewalStrip } from './sessionRenewal/RenewalStrip';
 import type { BoardView } from '../../shared/mindscape/view';
 import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
 import {
@@ -667,6 +671,7 @@ export function App(): React.JSX.Element {
     setTabExits((prev) => omitKey(prev, tabId));
     delete terminalRefs.current[tabId];
     disposeTabSend(tabId); // 014/T065 — driver de envio e rascunho do chat morrem com a aba
+    sessionRenewal.forget(tabId); // B36 — a renewal in flight dies with the tab
     // 003-modo-dev/T312 — nenhum watcher de prontidão sobrevive à aba que ele
     // vigiava (senão tentaria escrever num PTY que já não existe).
     armWatchersRef.current[tabId]?.();
@@ -1661,6 +1666,55 @@ export function App(): React.JSX.Element {
     });
   }, []);
 
+  // =========================================================================
+  // Sessão renovada em voo (B36, docs/refinamentos/sessao-renovada-em-voo.md).
+  // The decisions are pure (`shared/sessionRenewal.ts`); the per-tab machine is
+  // `useSessionRenewal`; here only what it reads from the tabs and the doors it
+  // uses: sending one line to the session and swapping the process of the pane.
+  // =========================================================================
+  const renewalPrefs: SessionRenewalPrefs = appConfig?.sessionRenewal ?? DEFAULT_SESSION_RENEWAL_PREFS;
+  const renewalInputs: RenewalTabInput[] = tabs.map((tab) => {
+    const semaphore = semaphoreStates[tab.id];
+    return {
+      tabId: tab.id,
+      ptyId: chatPtyIds[tab.id] ?? null,
+      sessionId: tab.claudeSessionId ?? null,
+      // An isolated worktree is released when its process ends: renewing it would race the cleanup.
+      eligible:
+        tab.sessionType === 'claude' &&
+        !tab.accountLoginId &&
+        !!tab.claudeSessionId &&
+        tabExits[tab.id] === undefined &&
+        worktreeNameFromArgs(tab.launchArgs) === null,
+      contextTokens: tab.claudeSessionId ? (contextTokens[tab.claudeSessionId] ?? null) : null,
+      turn: semaphore?.state ?? null,
+      stateEnteredAt: semaphore?.stateEnteredAt ?? 0,
+      backgroundAgents: semaphore?.awaitingBackgroundAgents === true,
+    };
+  });
+  /** One line to the session of `tabId` — same doors as the Esteira auto-start: the chat's send driver, or typed into the terminal. */
+  const sendRenewalLine = (tabId: string, text: string): void => {
+    const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+    if (tab === undefined) return;
+    if (hasChatView(tab, chatEnabled)) sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text });
+    else armEsteiraAutoStart(tabId, text);
+  };
+  const sessionRenewal = useSessionRenewal(renewalInputs, renewalPrefs, {
+    send: sendRenewalLine,
+    renew: (tabId, renewalId) => {
+      const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+      const handle = terminalRefs.current[tabId];
+      if (tab === undefined || !handle) return false;
+      // A permission mode switched with Shift+Tab lives only in the old process: the new one starts in it.
+      const ptyId = handle.ptyId;
+      const chat = ptyId ? getChatStore().getState(ptyId) : null;
+      const mode = chat !== null && chat.status === 'ready' ? chat.permissionMode : null;
+      handle.renew({ args: renewalLaunchArgs(tab.launchArgs, mode), renewalId });
+      return true;
+    },
+    toast: (message) => setDevModeToast(message),
+  });
+
   /**
    * Spec 010 / batch B1 — o "Preparar" da esteira nova abre a sessão de
    * verdade. Mesma divisão do Modo Dev: a DECISÃO (onde abrir, com que comando)
@@ -1943,6 +1997,31 @@ export function App(): React.JSX.Element {
   const mindscapeStoredNameOf = (sessionId: string): string | null => appConfig?.sessionNames[sessionId]?.name ?? null;
   const mindscapeProjectNames = useMemo(() => Object.fromEntries(projects.map((project) => [project.path, project.name])), [projects]);
   const { loaded: mindscapeLoaded, apply: applyMindscape, applySession: applyMindscapeSession, undo: undoMindscape, redo: redoMindscape } = mindscape;
+
+  /**
+   * B36 — the pane of `tab` opened the new session of a renewal. What the owner sees as THIS tab
+   * follows it, like after a `/clear` (`onSessionSwitched`): the effective name and the color are
+   * stored under the new id, the model observed carries until the first answer, and the Mindscape
+   * card (with its post-it and links) moves to the new session in the same place — BEFORE the tab
+   * gets the new id, so the board never places a second card. Then the first message: read the handoff.
+   */
+  const handleRenewedSession = (tab: TabState, previousSessionId: string, sessionId: string, firstPrompt: string): void => {
+    const stored = appConfigRef.current?.sessionNames[previousSessionId] ?? null;
+    const effectiveName = resolveSessionName({ fallback: tab.name, customTitle: tab.customTitle ?? null, stored });
+    if (mindscapeLoaded) applyMindscapeSession((doc) => carrySessionCard(doc, previousSessionId, sessionId));
+    updateTab(tab.id, { customTitle: null, cliColorName: null });
+    setSessionModels((prev) => {
+      const carried = prev[previousSessionId];
+      return carried && !prev[sessionId] ? { ...prev, [sessionId]: carried } : prev;
+    });
+    if (effectiveName !== tab.name && !appConfigRef.current?.sessionNames[sessionId]) {
+      void window.donel.sessions.setName(sessionId, effectiveName, null).then(setAppConfig).catch(() => undefined);
+    }
+    if (tab.color && tab.color !== 'none') {
+      void window.donel.tabs.setColor(sessionId, tab.color).then(setAppConfig).catch(() => undefined);
+    }
+    sendRenewalLine(tab.id, firstPrompt);
+  };
   // Desenho, fatia 02 — what the sessions do goes through `applySession`: it
   // never enters the history (an undo does not take a session post-it away).
   useEffect(() => {
@@ -2719,6 +2798,12 @@ export function App(): React.JSX.Element {
               ) : null}
             </div>
           ) : null}
+          {/* B36 — sessão renovada em voo: the discreet strip of the active session (close, due, in progress). */}
+          {activeTab && sessionRenewal.banners[activeTab.id] ? (
+            <div className={styles.renewalStrip} data-testid="renewal-strip">
+              <RenewalStrip banner={sessionRenewal.banners[activeTab.id]!} onSnooze={() => sessionRenewal.snooze(activeTab.id)} />
+            </div>
+          ) : null}
           <div className={styles.terminal}>
             {/* FIX (decisão A, 2026-07-23) — mesmo empty state pros dois
                 caminhos que levam a "zero abas": boot do app (INITIAL_TABS
@@ -2797,6 +2882,12 @@ export function App(): React.JSX.Element {
                   // T404/T408 — o id da sessão chega aqui e vira a chave de
                   // persistência do nome desta aba (CA-6).
                   onClaudeSessionIdResolved={(claudeSessionId) => {
+                    // B36 — the new session of a renewal: the tab keeps its name, its color and its card on
+                    // the Mindscape, and the new session reads the handoff first.
+                    const renewal = sessionRenewal.takeCompletion(tab.id, claudeSessionId);
+                    if (renewal && claudeSessionId) {
+                      handleRenewedSession(tab, renewal.previousSessionId, claudeSessionId, renewal.firstPrompt);
+                    }
                     // CA-27 (009-modo-dev-v3) — retomada de uma sessão colorida
                     // antes: hidrata a cor persistida assim que o `claudeSessionId`
                     // chega (é o mesmo id de antes numa retomada, `pty:create`
@@ -2950,7 +3041,10 @@ export function App(): React.JSX.Element {
       <div className={styles.statusRow}>
         <StatusBar
           className={styles.statusBarFill}
-          accountLabel={activeSessionAccountLabel}
+          // B36 — same pattern as "trocou em voo (era a …)": the statusbar says the session was renewed.
+          accountLabel={
+            activeTab && sessionRenewal.renewed[activeTab.id] ? `${activeSessionAccountLabel} · sessão renovada em voo` : activeSessionAccountLabel
+          }
           modelEffort={activeModelEffort}
           sessionCount={tabs.length}
           smartZone={activeSmartZone}
@@ -3043,6 +3137,10 @@ export function App(): React.JSX.Element {
         onChangeChatEnabled={handleChangeChatEnabled}
         petEnabled={appConfig?.pet.enabled ?? false}
         onChangePetEnabled={handleChangePetEnabled}
+        sessionRenewal={renewalPrefs}
+        onChangeSessionRenewal={(prefs) => {
+          void window.donel.config.setSessionRenewalPrefs(prefs).then(setAppConfig).catch(() => undefined);
+        }}
       />
 
       {/* Spec 010 / N7→F25 (D1) — o mapa de nós. Renderizado condicionalmente

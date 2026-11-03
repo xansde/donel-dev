@@ -33,6 +33,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         title: 'O agente usa o navegador',
         text: 'O agente da sessão agora abre páginas, lê, clica, digita e tira print no navegador da própria sessão, e cada página que ele abre aparece no rodapé do navegador; com o navegador fechado, o botão "Navegador" mostra quantas novidades chegaram. Clique em "Assumir" para usar você mesmo: o agente espera até você clicar em "Devolver ao agente". Quando ele precisar de você (um login, um captcha), o navegador abre com o pedido dele.',
       },
+      {
+        title: 'Sessão renovada em voo',
+        text: 'Quando o contexto de uma sessão passa de 250k, no fim de um turno ela escreve uma passagem de bastão e o Donel abre uma sessão nova na mesma aba, mesma pasta e mesma conta, que começa lendo essa passagem. O chat continua mostrando a conversa anterior acima de um divisor "Sessão renovada em voo", com o link da passagem, e o cartão do Mindscape fica no mesmo lugar. Um aviso discreto aparece antes, com "Agora não" para adiar; a troca nunca acontece no meio de uma tarefa nem com trabalho em segundo plano rodando. O limite e o interruptor ficam em Preferências.',
+      },
     ],
   },
   {

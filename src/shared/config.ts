@@ -17,6 +17,8 @@ import type { StoredSessionName } from './sessionName';
 import type { SessionRegistry } from './sessionRegistry';
 // 015-jobu-pet — the anchor point of the pet's remembered position (src/shared/pet/types.ts).
 import type { PetPoint } from './pet/types';
+// Sessão renovada em voo (B36) — `sessionRenewal`, top-level key like `pet`.
+import type { SessionRenewalPrefs } from './sessionRenewal';
 // CA-26/CA-27 (009-modo-dev-v3) — cor+ordem da aba v3 por sessão claude, ver
 // src/shared/tabAppearance.ts (lógica pura) e src/shared/tabChannels.ts
 // (canais `tabs:*`).
@@ -35,6 +37,8 @@ export const CONFIG_CHANNELS = {
   setChatPrefs: 'config:setChatPrefs',
   /** T014 (015-jobu-pet) — `pet.enabled`; position and size are only written by the main, from the pet's gestures. */
   setPetPrefs: 'config:setPetPrefs',
+  /** Sessão renovada em voo (B36) — `sessionRenewal.enabled` / `sessionRenewal.limitTokens`. */
+  setSessionRenewalPrefs: 'config:setSessionRenewalPrefs',
 } as const;
 
 /**
@@ -145,6 +149,8 @@ export interface AppConfigDto {
   readonly chat: ChatPrefs;
   /** T014 (015-jobu-pet) — the Jobu's preferences on the desktop. */
   readonly pet: PetPrefs;
+  /** Sessão renovada em voo (B36) — on by default, 250k of context. */
+  readonly sessionRenewal: SessionRenewalPrefs;
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */
@@ -163,4 +169,6 @@ export interface DonelConfigApi {
   setChatPrefs(prefs: Partial<ChatPrefs>): Promise<AppConfigDto>;
   /** T014 (015-jobu-pet) — turns the Jobu on/off; applies at once, without a restart. */
   setPetPrefs(prefs: PetPrefsInput): Promise<AppConfigDto>;
+  /** Sessão renovada em voo (B36) — partial update; an invalid field is ignored. */
+  setSessionRenewalPrefs(prefs: Partial<SessionRenewalPrefs>): Promise<AppConfigDto>;
 }

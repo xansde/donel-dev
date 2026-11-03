@@ -69,6 +69,8 @@ describe('defaultAppConfig (puro)', () => {
       // T014 (015-jobu-pet) — desligado, sem posição lembrada, tamanho Médio.
       pet: { enabled: false, placement: null, size: 140 },
       sweep: { lastSweepAt: null },
+      // B36 — sessão renovada em voo: ligada, 250k de contexto.
+      sessionRenewal: { enabled: true, limitTokens: 250_000 },
       unknownFields: {},
     });
   });
@@ -100,6 +102,7 @@ describe('toAppConfigDto (puro)', () => {
       tabAppearance: {},
       chat: { enabled: false, focusMode: true },
       pet: { enabled: false, placement: null, size: 140 },
+      sessionRenewal: { enabled: true, limitTokens: 250_000 },
     });
   });
 
@@ -231,6 +234,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       chat: { enabled: true, focusMode: false },
       pet: { enabled: true, placement: { x: 1830, y: 1040 }, size: 200 },
       sweep: { lastSweepAt: null },
+      sessionRenewal: { enabled: false, limitTokens: 180_000 },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -320,6 +324,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       chat: defaults.chat, // ausente no objeto → default
       pet: defaults.pet, // ausente no objeto → default
       sweep: defaults.sweep,
+      sessionRenewal: defaults.sessionRenewal,
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });

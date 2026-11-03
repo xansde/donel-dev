@@ -5,6 +5,7 @@ import {
   Gauge,
   Info,
   MessageSquarePlus,
+  RefreshCw,
   Shrink,
   Square,
   TriangleAlert,
@@ -25,6 +26,7 @@ const ICON: Readonly<Record<NoticeIcon, ReactNode>> = {
   'conversation-switch': <MessageSquarePlus size={14} strokeWidth={1.75} />,
   informational: <Info size={14} strokeWidth={1.75} />,
   'generated-file': <FileText size={14} strokeWidth={1.75} />,
+  'session-renewed': <RefreshCw size={14} strokeWidth={1.75} />,
 };
 
 export interface NoticeProps {
