@@ -4,6 +4,10 @@ import { addDrawing, bringToFront, moveItems, removeItems, sendToBack, setDrawin
 import { eraseDoc } from '../../../shared/mindscape/eraser';
 import type { CardRect, ItemIds } from '../../../shared/mindscape/geometry';
 import { sessionHighlight } from '../../../shared/mindscape/highlight';
+import { classifyBoardSessions, closedLabel, dormantSessionName, type DormantSession } from '../../../shared/mindscape/dormant';
+import { organizeBoard, organizeColumnOf, type OrganizeEntry } from '../../../shared/mindscape/organize';
+import type { RendererGesture } from '../../../shared/learning/gestures';
+import type { SessionRegistry } from '../../../shared/sessionRegistry';
 import { fitImage, imageBoxAt, isPrintInputType, MAX_PRINT_BYTES } from '../../../shared/mindscape/images';
 import {
   addLink,
@@ -77,7 +81,19 @@ export interface MindscapeScreenProps {
   readonly alert?: MindscapeAlert | null;
   /** "Tentar de novo" of the alert. */
   readonly onRetry?: () => void;
+  /** Lugar principal — the 007 registry: last activity and favorites (`pinned`). */
+  readonly registry?: SessionRegistry;
+  /** The name a session's tab had (`sessionNames` of the config), for a dormant card. */
+  readonly storedNameOf?: (sessionId: string) => string | null;
+  /** Rule 5 — resume a dormant session (`-r <id>`), or focus its tab when one is already open. */
+  readonly onResume?: (sessionId: string, projectPath: string, name: string) => void;
+  /** Diário de gestos — what the owner does on the board (kept only on this machine). */
+  readonly onGesture?: (gesture: RendererGesture) => void;
+  /** Clock of the "antigas" rule (tests pin it). */
+  readonly now?: () => number;
 }
+
+const NO_REGISTRY: SessionRegistry = {};
 
 /** Margin of the new owner post-it from the visible top-left corner of the board. */
 const NEW_CARD_MARGIN = 40;
@@ -158,6 +174,11 @@ export function MindscapeScreen({
   onRedo,
   alert,
   onRetry,
+  registry = NO_REGISTRY,
+  storedNameOf,
+  onResume,
+  onGesture,
+  now = Date.now,
 }: MindscapeScreenProps): React.JSX.Element {
   const boardPaths = Object.keys(doc.boards);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(initialProjectPath);
@@ -219,16 +240,42 @@ export function MindscapeScreen({
     return () => window.removeEventListener('blur', release);
   }, []);
 
-  // Cards on screen: a session card only with its tab open (rule 11); notes and the owner's always.
+  // Lugar principal (rules 1–3) — every session of the board is drawn: live with its tab open,
+  // dormant with it closed. The ones closed for more than 7 days fold away with their note,
+  // until the owner unfolds them ("N antigas"). Favorites (pinned) never fold.
+  const [showOld, setShowOld] = useState(false);
   const liveSessionIds = new Set(boardSessions.map((session) => session.sessionId));
-  const visibleCards = board ? Object.values(board.cards).filter((card) => card.kind !== 'session' || liveSessionIds.has(card.sessionId)) : [];
+  const sessionsView = board ? classifyBoardSessions({ board, liveSessionIds, registry, now: now() }) : undefined;
+  const dormantDrawn: readonly DormantSession[] = sessionsView ? (showOld ? [...sessionsView.dormant, ...sessionsView.old] : sessionsView.dormant) : [];
+  const dormantIds = new Set(dormantDrawn.map((entry) => entry.sessionId));
+  const foldedIds: ReadonlySet<string> = showOld || !sessionsView ? new Set() : sessionsView.oldSessionIds;
+  const isFavorite = (sessionId: string): boolean => registry[sessionId]?.pinned === true;
+  const dormantName = (sessionId: string): string => {
+    const note = board?.cards[`note:${sessionId}`];
+    return dormantSessionName({
+      stored: storedNameOf?.(sessionId),
+      noteName: note?.kind === 'session-note' ? note.sessionName : undefined,
+      registryLabel: registry[sessionId]?.label,
+    });
+  };
+  const resume = (sessionId: string): void => {
+    if (board) onResume?.(sessionId, board.projectPath, dormantName(sessionId));
+  };
+  const visibleCards = board
+    ? Object.values(board.cards).filter((card) => {
+        if (card.kind === 'session') return liveSessionIds.has(card.sessionId) || dormantIds.has(card.sessionId);
+        if (card.kind === 'session-note') return !foldedIds.has(card.sessionId);
+        return true;
+      })
+    : [];
   const visibleIds = new Set(visibleCards.map((card) => card.id));
   /** Measured rects in drawing order (session cards first, then the others) — the hit-test of A/L and the lasso. */
   const cardRects: CardRect[] = [];
   if (board) {
     const ordered = [
       ...boardSessions.map((session) => board.cards[sessionCardId(session.sessionId)]).filter((card): card is Card => card !== undefined),
-      ...Object.values(board.cards).filter((card) => card.kind !== 'session'),
+      ...dormantDrawn.map((entry) => board.cards[sessionCardId(entry.sessionId)]).filter((card): card is Card => card !== undefined),
+      ...Object.values(board.cards).filter((card) => card.kind !== 'session' && visibleIds.has(card.id)),
     ];
     for (const card of ordered) {
       const size = sizes[card.id];
@@ -252,6 +299,26 @@ export function MindscapeScreen({
   // "Ir ao terminal" and the hint: exactly one session post-it selected, nothing else.
   const onlyCard = live.cards.length === 1 && live.drawings.length === 0 ? board?.cards[live.cards[0]!] : undefined;
   const selectedSession = onlyCard?.kind === 'session' ? boardSessions.find((session) => session.sessionId === onlyCard.sessionId) : undefined;
+  const selectedDormantId = onlyCard?.kind === 'session' && dormantIds.has(onlyCard.sessionId) ? onlyCard.sessionId : undefined;
+
+  /** Rule 7 — one undoable gesture; favorites (and their notes) stay where they are. */
+  const organize = (): void => {
+    if (!board) return;
+    const { projectPath } = board;
+    const entries: OrganizeEntry[] = [
+      ...boardSessions
+        .filter((session) => !isFavorite(session.sessionId))
+        .map((session) => ({
+          sessionId: session.sessionId,
+          column: organizeColumnOf(session.state, sessionHighlight(session.state, session.stateEnteredAt, seenAt[session.sessionId])),
+        })),
+      ...dormantDrawn.filter((entry) => !entry.pinned).map((entry) => ({ sessionId: entry.sessionId, column: 'closed' as const })),
+    ];
+    if (entries.length === 0) return;
+    const measured = { ...sizes };
+    onAction(projectPath, (current) => organizeBoard(current, projectPath, entries, measured));
+    onGesture?.({ type: 'mindscape', acao: 'organizar', projectPath });
+  };
 
   const changeTool = (next: MindscapeTool): void => {
     // A drawing tool (and the eraser) starts with nothing selected: the color of the bar must not repaint what was selected.
@@ -402,7 +469,15 @@ export function MindscapeScreen({
     }
   };
 
-  const hint = notice ?? (tool !== 'select' ? TOOL_HINT[tool] : selectedSession ? selectedSession.name : SELECT_HINT);
+  const hint =
+    notice ??
+    (tool !== 'select'
+      ? TOOL_HINT[tool]
+      : selectedSession
+        ? selectedSession.name
+        : selectedDormantId
+          ? `${dormantName(selectedDormantId)}: fechada. "Ir ao terminal" ou duplo clique retoma`
+          : SELECT_HINT);
   const selectedDrawings = board ? board.drawings.filter((drawing) => live.drawings.includes(drawing.id)) : [];
 
   return (
@@ -482,9 +557,18 @@ export function MindscapeScreen({
           setCreatedCardId(id);
           onAction(projectPath, (current) => addOwnerCard(current, projectPath, { id, createdAt, origin }));
         }}
-        canGoToTerminal={Boolean(selectedSession)}
+        canGoToTerminal={Boolean(selectedSession) || (Boolean(selectedDormantId) && Boolean(onResume))}
         onGoToTerminal={() => {
           if (selectedSession) onGoToTerminal(selectedSession.tabId);
+          else if (selectedDormantId) resume(selectedDormantId);
+        }}
+        canOrganize={boardSessions.length + dormantDrawn.length > 0}
+        onOrganize={organize}
+        oldCount={sessionsView?.oldSessionIds.size ?? 0}
+        showOld={showOld}
+        onToggleOld={() => {
+          if (!showOld && board) onGesture?.({ type: 'mindscape', acao: 'mostrar-antigas', projectPath: board.projectPath });
+          setShowOld((current) => !current);
         }}
         hint={hint}
       />
@@ -565,10 +649,33 @@ export function MindscapeScreen({
                     highlight={sessionHighlight(session.state, session.stateEnteredAt, seenAt[session.sessionId])}
                     selected={live.cards.includes(card.id)}
                     onOpen={() => onGoToTerminal(session.tabId)}
+                    favorite={isFavorite(session.sessionId)}
+                  />
+                );
+              })}
+              {dormantDrawn.map((entry) => {
+                const card = board.cards[sessionCardId(entry.sessionId)];
+                if (!card) return null;
+                const position = positionOf(card);
+                return (
+                  <MindscapeSessionCard
+                    key={card.id}
+                    sessionId={entry.sessionId}
+                    name={dormantName(entry.sessionId)}
+                    state="done"
+                    color="none"
+                    x={position.x}
+                    y={position.y}
+                    highlight="dimmed"
+                    selected={live.cards.includes(card.id)}
+                    onOpen={() => resume(entry.sessionId)}
+                    closedLabel={closedLabel(entry.lastActivityAt)}
+                    favorite={entry.pinned}
                   />
                 );
               })}
               {Object.values(board.cards).map((card) => {
+                if (!visibleIds.has(card.id)) return null;
                 const position = positionOf(card);
                 if (card.kind === 'owner') {
                   return (
@@ -587,7 +694,10 @@ export function MindscapeScreen({
                         onAction(board.projectPath, (current) => editOwnerCard(current, board.projectPath, card.id, text));
                       }}
                       onColor={(color) => onAction(board.projectPath, (current) => setOwnerColor(current, board.projectPath, card.id, color))}
-                      onArchive={() => onAction(board.projectPath, (current) => archiveCard(current, board.projectPath, card.id))}
+                      onArchive={() => {
+                        onAction(board.projectPath, (current) => archiveCard(current, board.projectPath, card.id));
+                        onGesture?.({ type: 'mindscape', acao: 'arquivar', projectPath: board.projectPath, cardKind: 'owner' });
+                      }}
                     />
                   );
                 }
@@ -603,11 +713,14 @@ export function MindscapeScreen({
                     stripe={liveSession ? (liveSession.cliColorHex ?? STRIPE_BY_TOKEN[liveSession.color]) : undefined}
                     x={position.x}
                     y={position.y}
-                    onArchive={() => onAction(board.projectPath, (current) => archiveCard(current, board.projectPath, card.id))}
+                    onArchive={() => {
+                      onAction(board.projectPath, (current) => archiveCard(current, board.projectPath, card.id));
+                      onGesture?.({ type: 'mindscape', acao: 'arquivar', projectPath: board.projectPath, cardKind: 'session-note', sessionId: card.sessionId });
+                    }}
                   />
                 );
               })}
-              {boardSessions.length === 0 && !Object.values(board.cards).some((card) => card.kind !== 'session') ? (
+              {visibleCards.length === 0 ? (
                 <p className={styles.empty}>Nenhuma sessão aberta neste projeto.</p>
               ) : null}
               <MindscapeOutlineLayer cardIds={visibleCards.map((card) => card.id)} rectOf={rectOf} />

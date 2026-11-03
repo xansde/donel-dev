@@ -34,9 +34,19 @@ export interface MindscapeSessionCardProps {
   readonly highlight: SessionHighlight;
   /** In the board selection (desenho, fatia 03: the board selects on pressing, with V). */
   readonly selected: boolean;
-  /** Double click (or Enter) — go to the terminal of the session in the Uso geral. */
+  /** Double click (or Enter) — go to the terminal of the session in the Uso geral (a dormant one is resumed). */
   readonly onOpen: () => void;
+  /**
+   * Lugar principal, rule 4 — the tab of the session is closed: the card is dormant and this is
+   * its state line ("Fechada · 31/10 13:06"). `state` and `highlight` are ignored then.
+   */
+  readonly closedLabel?: string;
+  /** Rule 6 — favorite of the owner (pinned in the 007 registry): ★ and never moved by "Organizar". */
+  readonly favorite?: boolean;
 }
+
+/** Glyph of a dormant session (tab closed). */
+const DORMANT_GLYPH = '☾';
 
 /** Mindscape V1 — the post-it of a live session: "SESSÃO" seal, state glyph, mono name, tab color stripe. */
 export function MindscapeSessionCard({
@@ -50,7 +60,10 @@ export function MindscapeSessionCard({
   highlight,
   selected,
   onOpen,
+  closedLabel,
+  favorite = false,
 }: MindscapeSessionCardProps): React.JSX.Element {
+  const dormant = closedLabel !== undefined;
   const style = {
     left: x,
     top: y,
@@ -58,16 +71,18 @@ export function MindscapeSessionCard({
   } as CSSProperties;
   return (
     <article
-      className={[styles.sessionCard, styles[`st-${state}`], styles[highlight], selected ? styles.selected : ''].filter(Boolean).join(' ')}
+      className={[styles.sessionCard, dormant ? styles.dormant : styles[`st-${state}`], dormant ? '' : styles[highlight], selected ? styles.selected : ''].filter(Boolean).join(' ')}
       style={style}
       tabIndex={0}
       data-testid="mindscape-session-card"
       data-card-id={`session:${sessionId}`}
       data-session-id={sessionId}
-      data-state={state}
-      data-highlight={highlight}
+      data-state={dormant ? 'closed' : state}
+      data-highlight={dormant ? 'dimmed' : highlight}
+      data-favorite={favorite ? 'true' : 'false'}
       data-selected={selected ? 'true' : 'false'}
-      aria-label={`Sessão ${name}: ${SESSION_STATE_LABEL_PT[state]}`}
+      aria-label={`Sessão ${name}${favorite ? ' (favorita)' : ''}: ${dormant ? closedLabel : SESSION_STATE_LABEL_PT[state]}`}
+      title={dormant ? 'Duplo clique retoma a sessão' : undefined}
       onDoubleClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === 'Enter') onOpen();
@@ -76,14 +91,19 @@ export function MindscapeSessionCard({
       <span className={styles.seal}>Sessão</span>
       <div className={styles.sessionHead}>
         <span className={styles.glyph} aria-hidden="true">
-          {STATE_GLYPH[state]}
+          {dormant ? DORMANT_GLYPH : STATE_GLYPH[state]}
         </span>
         <span className={styles.sessionName} title={name} data-testid="mindscape-session-name">
           {name}
         </span>
+        {favorite ? (
+          <span className={styles.favorite} aria-hidden="true" data-testid="mindscape-session-favorite">
+            ★
+          </span>
+        ) : null}
       </div>
       <div className={styles.sessionState} data-testid="mindscape-session-state">
-        {SESSION_STATE_LABEL_PT[state]}
+        {dormant ? closedLabel : SESSION_STATE_LABEL_PT[state]}
       </div>
     </article>
   );

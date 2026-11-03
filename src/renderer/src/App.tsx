@@ -1901,18 +1901,46 @@ export function App(): React.JSX.Element {
   const [mindscapeSeenAt, setMindscapeSeenAt] = useState<Record<string, number>>({});
   const previousAppModeRef = useRef(appMode);
   useEffect(() => {
-    const leftGeral = previousAppModeRef.current === 'geral' && appMode !== 'geral';
+    const wasGeral = previousAppModeRef.current === 'geral';
+    const leftGeral = wasGeral && appMode !== 'geral';
     previousAppModeRef.current = appMode;
     if (appMode !== 'geral' && !leftGeral) return;
     const sessionId = tabsRef.current.find((tab) => tab.id === activeTabId)?.claudeSessionId;
     if (!sessionId) return;
     setMindscapeSeenAt((previous) => ({ ...previous, [sessionId]: Date.now() }));
+    // Diário de gestos — a tab focused inside the Uso geral (coming from the Mindscape is recorded there).
+    if (wasGeral && appMode === 'geral') window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'aba' });
   }, [appMode, activeTabId]);
   // "Ir ao terminal" (rule 10) — the focus change above stamps `seenAt`.
   const handleMindscapeGoToTerminal = useCallback((tabId: string): void => {
+    const sessionId = tabsRef.current.find((tab) => tab.id === tabId)?.claudeSessionId;
+    if (sessionId) window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'mindscape' });
     setAppMode('geral');
     setActiveTabId(tabId);
   }, []);
+  // Lugar principal, rule 5 — a dormant session is resumed (`-r <id>`) in a new tab of the
+  // board's project; a session already open in a tab is only focused (never opened twice).
+  const handleMindscapeResume = (sessionId: string, projectPath: string, name: string): void => {
+    const existingTab = tabs.find((tab) => tab.claudeSessionId === sessionId);
+    if (existingTab) {
+      handleMindscapeGoToTerminal(existingTab.id);
+      return;
+    }
+    const project = projects.find((candidate) => candidate.path === projectPath);
+    window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'retomar' });
+    addTab({
+      name,
+      cwd: projectPath,
+      projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
+      pinned: false,
+      launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId } }),
+      sessionType: 'claude',
+      customTitle: null,
+    });
+    setSelectedProjectPath(projectPath);
+    setAppMode('geral');
+  };
+  const mindscapeStoredNameOf = (sessionId: string): string | null => appConfig?.sessionNames[sessionId]?.name ?? null;
   const mindscapeProjectNames = useMemo(() => Object.fromEntries(projects.map((project) => [project.path, project.name])), [projects]);
   const { loaded: mindscapeLoaded, apply: applyMindscape, applySession: applyMindscapeSession, undo: undoMindscape, redo: redoMindscape } = mindscape;
   // Desenho, fatia 02 — what the sessions do goes through `applySession`: it
@@ -2515,6 +2543,10 @@ export function App(): React.JSX.Element {
             onRedo={redoMindscape}
             alert={mindscape.alert}
             onRetry={mindscape.retry}
+            registry={appConfig?.sessionRegistry}
+            storedNameOf={mindscapeStoredNameOf}
+            onResume={handleMindscapeResume}
+            onGesture={(gesture) => window.donel.learning?.record(gesture)}
           />
         ) : null}
         {devModeOn && esteiraOpen ? (
