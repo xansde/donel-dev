@@ -1329,6 +1329,48 @@ não uma dependência do app.
 treinar: sem volume, não vale a pena); se o primeiro modelo parte do checkpoint
 do BizOps ou do zero.
 
+### B36. Sessão nova em voo ao chegar no limite de contexto (pedido do dono, 03/11)
+
+**Pedido:** "Quando chegar no limite de contexto proposto, abrir uma sessão nova no
+background e fazer todo esse processo que acabou de fazer, de maneira que se o
+usuário estiver na versão 'chat' nem perceba o que aconteceu (claro, pode deixar
+avisado, como fica o 'Trocou em voo (era a {nome da conta})')."
+
+**De onde veio:** sessão longa de homologação (03/11) que passou do orçamento de
+contexto (~250k por sessão, ver memória "Sessões por orçamento de 250k"). O dono
+pediu para "organizar tudo no vault" e recriar a sessão; o Claude então:
+1. escreveu a passagem de bastão no vault (`Projects/<projeto>/handoff-<data>.md`):
+   prioridade, estado de cada frente, comandos prontos, decisões do dia,
+   rascunhos esperando OK, o que está agendado;
+2. atualizou `context.md`, `todo.md` e o `log.md` do vault, e a memória do projeto;
+3. transformou em pendência tudo que dependia da sessão viva (agendamentos de
+   cron da sessão, agentes em background), porque a sessão nova não herda nada disso.
+Hoje isso é manual e o dono precisa pedir, esperar e abrir a sessão nova à mão.
+
+**Como deveria ser no Donel Dev:**
+- **Gatilho:** o app mede o contexto da sessão (já mostra uso/limite na statusbar)
+  e, ao cruzar o limite proposto (configurável; padrão ~250k), dispara a troca no
+  fim do turno corrente — nunca no meio de uma ferramenta.
+- **Passagem de bastão automática:** a sessão que sai roda o mesmo processo acima
+  (handoff no vault + memória + pendências), num formato fixo que a sessão nova lê
+  primeiro.
+- **Sessão nova em background**, mesma pasta e mesma conta, aberta já com o handoff
+  como primeira leitura; a aba/conversa do chat continua a mesma para o dono — o
+  histórico visível não some, só o motor por trás muda.
+- **Aviso discreto**, no mesmo padrão do "Trocou em voo (era a {conta})" da
+  statusbar: ex. "Sessão renovada em voo (contexto cheio) — passagem de bastão:
+  {link do handoff}".
+- **O que NÃO pode se perder:** agendamentos (cron/loop) e agentes em background da
+  sessão velha. Ou a troca espera eles terminarem, ou o handoff os lista e a sessão
+  nova os recria/acompanha. Nunca matar o `claude.exe` velho com trabalho vivo.
+- **Escrita a terceiros e produção:** a sessão nova herda as aprovações só pelo
+  que está escrito no handoff (rascunhos aprovados × esperando OK), nunca por
+  suposição.
+
+**Em aberto:** onde fica o handoff quando o projeto não tem vault (pasta do projeto?
+memória?); se o limite é por sessão ou por custo; se o dono pode vetar a troca
+("agora não") e quanto tempo o app espera.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
