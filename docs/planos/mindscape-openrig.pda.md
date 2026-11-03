@@ -42,6 +42,7 @@ ao alfa.
 - **01 — O que vale do OpenRig** → vale: cartão-lugar, cartão rico com estado em 3 eixos, prévia do terminal, molduras de grupo, salvar e reabrir o quadro, ferramentas do quadro por MCP; não vale agora: fila/inbox/chatroom entre agentes, topologia em YAML, tmux/daemon ([pesquisa](../pesquisas/openrig-referencia-mindscape-2026-11.md))
 - **02 — Validar MVP e versionamento com o cliente** → validado por delegação do dono, 03/11; ele revê no alfa diário
 - **03 — Navegador integrado para qualquer motor** → painel por sessão + ferramentas `navegador_*` no MCP `donel`; `--chrome` removido (PRs #155, #158)
+- **07 — Sessão renovada em voo (B36)** → no alfa, aguardando validação do dono ([refinamento](../refinamentos/sessao-renovada-em-voo.md), PR #161)
 - **11 — Estudo profundo do OpenRig** → seat como lugar, papel reinjetado, ligação que autoriza, mensagem sem atropelar, fluxo por desfecho declarado; CLI/TUI/MCP sobre uma API ([estudo](../pesquisas/openrig-estudo-profundo-2026-11.md))
 - **Pausa do dono (03/11)** → nada da ideia OpenRig (04, 05, 06, 12, 13) é desenvolvido antes de ele avaliar o protótipo do 14
 
@@ -148,7 +149,7 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 
 - **Tipo**: refinamento
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: concluido
 - **Bloqueado por**: 02
 - **Pergunta**: ao cruzar o limite de contexto proposto, no fim do turno, a sessão escreve a
   passagem de bastão, o app encerra o processo e abre uma sessão nova na mesma aba, mesma
@@ -157,7 +158,7 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
   do OpenRig). Fechar os "em aberto" do B36 (`specs/backlog.md`): onde fica a passagem sem
   vault, limite por tokens ou custo, veto "agora não", e nunca matar com trabalho vivo
   (agentes em background, cron, loop).
-- **Resolução**: —
+- **Resolução**: renova no fim do turno ao cruzar o limite (padrão 250k, 150k–500k), passagem em `<userData>/handoffs/`, mesma aba/conta/flags, espera trabalho vivo, "Agora não" adia 50k; chat mantém a conversa anterior acima de um divisor; cartão do Mindscape fica no lugar ([refinamento](../refinamentos/sessao-renovada-em-voo.md), PR #161). Falta a validação do dono no alfa.
 
 ### 08 — Ferramentas do quadro por MCP
 
