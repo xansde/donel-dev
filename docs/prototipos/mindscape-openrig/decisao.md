@@ -2,9 +2,9 @@
 demanda: mindscape-openrig
 plano: docs/planos/mindscape-openrig.pda.md · item 14
 taskdex: []  # ferramenta pessoal, sem card
-status: pendente-de-escolha
-decidido-por: —
-decidido-em: —
+status: decidido
+decidido-por: Alexandre Lentz
+decidido-em: 2026-11-03
 ---
 
 # Decisão de UI — Mindscape como time de sessões (ideia do OpenRig)
@@ -71,11 +71,25 @@ Também no protótipo (não são variantes, são explicação do que vem):
 
 ## Escolha
 
-—
+**A + C, com o Jobu no papel de Líder** (dono, 03/11: "Gostei do protótipo C + A. Mas o chat
+poderia ser direto com o Jobu, né? Ele abrir um chat direto com ele, que eu possa mover e se
+adapte à tela. Assim consigo aproveitar melhor meus monitores").
+
+- Do **A**: o quadro inteiro na tela, com a faixa "Precisa de você" no topo.
+- Do **C**: um Líder que conversa com o dono e reparte o trabalho, sem responder pedido de outra
+  sessão.
+- **Novo**: o Líder é o **Jobu**. A conversa sai do painel lateral e vira uma janela própria,
+  aberta pelo Jobu, que o dono arrasta, redimensiona, leva a outro monitor e deixa (ou não) sempre
+  por cima; ela encosta nas bordas e se ajusta à tela. O selo de pendências fica no próprio Jobu.
+  O motor do Jobu é o que o dono escolher (regra "LLM agnóstico").
+
+Compilado em [`final.html`](final.html).
 
 ## Descartado
 
-—
+- **B — coluna de decisões**: ocupa largura fixa do quadro; a faixa do A + o Jobu cobrem o
+  "o que precisa de mim" sem tirar espaço.
+- **C como painel lateral**: a conversa presa à janela do app desperdiça os outros monitores.
 
 ## Limitações do mock
 

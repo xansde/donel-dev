@@ -45,6 +45,7 @@ ao alfa.
 - **07 — Sessão renovada em voo (B36)** → no alfa, aguardando validação do dono ([refinamento](../refinamentos/sessao-renovada-em-voo.md), PR #161)
 - **11 — Estudo profundo do OpenRig** → seat como lugar, papel reinjetado, ligação que autoriza, mensagem sem atropelar, fluxo por desfecho declarado; CLI/TUI/MCP sobre uma API ([estudo](../pesquisas/openrig-estudo-profundo-2026-11.md))
 - **Pausa do dono (03/11)** → nada da ideia OpenRig (04, 05, 06, 12, 13) é desenvolvido antes de ele avaliar o protótipo do 14
+- **14 — Multitarefa: forma escolhida** → A + C, com o Jobu como Líder numa janela de conversa flutuante, móvel entre monitores ([decisão](../prototipos/mindscape-openrig/decisao.md))
 
 ## O centro do Mindscape (dono, 03/11)
 
@@ -241,12 +242,12 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 
 - **Tipo**: prototipo
 - **Prioridade**: alta
-- **Status**: em-andamento
+- **Status**: concluido
 - **Bloqueado por**: 11
 - **Pergunta**: como o Mindscape mostra e dirige várias sessões trabalhando juntas (papéis,
   conexões, quem espera quem, o que precisa do dono) no layout do Donel Dev? Três variantes
   para o dono escolher.
-- **Resolução**: protótipo pronto, esperando a escolha do dono ([protótipo](../prototipos/mindscape-openrig/))
+- **Resolução**: A + C com o Jobu como Líder, conversa em janela flutuante própria ([decisão](../prototipos/mindscape-openrig/decisao.md), [final](../prototipos/mindscape-openrig/final.html))
 
 ### 15 — Esteira montada no Mindscape (próximo passo)
 
@@ -302,4 +303,21 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
   dois mandando ao mesmo tempo (fila, um por vez). Sem principal definida, o pedido vai ao dono.
   Em aberto: trocar a principal (gesto no quadro), se a principal pode aceitar sozinha por regra
   (ex.: "testes sempre") e se o processo vive sem nenhuma sessão ligada.
+- **Resolução**: —
+
+### 18 — Conversa com o Jobu (Líder) em janela flutuante
+
+- **Tipo**: refinamento
+- **Prioridade**: alta
+- **Status**: pendente
+- **Bloqueado por**: 14
+- **Pergunta**: o Jobu (015) vira o rosto do Líder: clicar nele abre uma janela de conversa
+  própria (`BrowserWindow`), que o dono arrasta, redimensiona, leva a outro monitor e fixa por cima
+  ou não; lembra posição e tamanho por monitor e se ajusta quando a tela muda. Por trás, uma
+  sessão com papel Líder, no motor que o dono escolher, que reparte pelas ligações e avisa quando
+  alguém para. **Emenda a 015** (decisão do dono, 03/11): "conversa com o Jobu" estava fora de
+  escopo e D6 vetava fala em personagem; agora a conversa existe, como janela de chat, e o balão
+  continua seco. Em aberto: Jobu tem um Líder por projeto ou um só para todos os quadros; o que
+  acontece com a janela quando o Jobu está desligado; se a conversa reaproveita o chat da 014
+  inteiro.
 - **Resolução**: —
