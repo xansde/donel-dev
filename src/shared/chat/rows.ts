@@ -206,6 +206,23 @@ export interface ThinkingRow extends RowBase {
   readonly hasText: boolean;
 }
 
+/** Where a background task stands, as far as the transcript tells. `unknown` = it cannot be told (never guessed). */
+export type BackgroundState = 'running' | 'completed' | 'failed' | 'stopped' | 'unknown';
+
+/**
+ * Set on an action that left something running in the background (a shell with `run_in_background`, a
+ * `Monitor`, a command the CLI moved to the background). The action itself closes at once; this mark
+ * follows the task until its `<task-notification>` (or `TaskStop`) says it ended.
+ */
+export interface BackgroundMark {
+  readonly state: BackgroundState;
+  /** The CLI's task id (`backgroundTaskId` / `taskId`), once the launch result is read. */
+  readonly taskId?: string;
+  /** The `description` the model gave the task, when it gave one (the CLI's footer shows the same). */
+  readonly label?: string;
+  readonly endedAt?: string;
+}
+
 export interface ActionRow extends RowBase {
   readonly kind: 'action';
   readonly toolUseId: string;
@@ -214,6 +231,7 @@ export interface ActionRow extends RowBase {
   readonly summary: ActionSummary;
   readonly status: ActionStatus;
   readonly detail?: LineRef;
+  readonly background?: BackgroundMark;
 }
 
 export interface ActionGroupRow extends RowBase {
@@ -244,6 +262,8 @@ export interface SubagentRow extends RowBase {
   readonly lastAction?: ActionSummary;
   readonly background: boolean;
   readonly depth: number;
+  /** When the end notification of a background sub-agent was written. */
+  readonly endedAt?: string;
 }
 
 export interface QuestionRow extends RowBase {
@@ -495,6 +515,27 @@ export interface LiveState {
   /** agentIds `running`. */
   readonly activeSubagents: readonly string[];
   readonly terminalNeeded: { readonly reason: TerminalNeededReason } | null;
+  /** What the session left running in the background (running first), plus the last few that ended. */
+  readonly background: readonly BackgroundTask[];
+}
+
+// ---------------------------------------------------------------------------
+// tarefas em segundo plano (refinamento "segundo plano visível", 03/11)
+// ---------------------------------------------------------------------------
+
+export type BackgroundTaskKind = 'command' | 'agent' | 'monitor';
+
+export interface BackgroundTask {
+  /** `toolUseId` of the launch. */
+  readonly id: string;
+  /** Flat row of the launch (it may sit inside an `action-group` of the view). */
+  readonly rowId: string;
+  readonly kind: BackgroundTaskKind;
+  /** The command, the agent's description or the monitor's description; short. */
+  readonly label: string;
+  readonly startedAt: string;
+  readonly state: BackgroundState;
+  readonly endedAt?: string;
 }
 
 // ---------------------------------------------------------------------------

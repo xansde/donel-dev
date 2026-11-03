@@ -38,6 +38,17 @@ export interface TimelineProps {
   ctx: RowRenderContext;
   /** Ctrl+O in the box: each increment toggles ALL folds (open every one, or close them all). */
   foldToggleTick?: number;
+  /** Segundo plano visível — scroll to this (flat) row; a new `seq` asks again. Held until the tab has layout. */
+  reveal?: { readonly rowId: string; readonly seq: number } | null;
+}
+
+/** The row of the VIEW that shows a flat row: itself, or the action group that folded it. */
+function viewRowIdOf(rows: readonly ConversationRow[], rowId: string): string | null {
+  for (const r of rows) {
+    if (r.id === rowId) return r.id;
+    if (r.kind === 'action-group' && r.children.includes(rowId)) return r.id;
+  }
+  return null;
 }
 
 type FoldItem = Extract<TimelineItem, { kind: 'fold' }>;
@@ -79,7 +90,7 @@ function FoldBar({
       {item.expanded ? (
         <div className={styles.foldRows}>
           {item.rows.map((row) => (
-            <div key={row.id} className={styles.row}>
+            <div key={row.id} className={styles.row} data-row-id={row.id}>
               {renderRow(row, ctx)}
             </div>
           ))}
@@ -125,7 +136,7 @@ const realign = (el: HTMLElement, anchor: ScrollAnchor): boolean => {
   return true;
 };
 
-export function Timeline({ rows, session, focusMode, active, ctx, foldToggleTick = 0 }: TimelineProps): React.JSX.Element {
+export function Timeline({ rows, session, focusMode, active, ctx, foldToggleTick = 0, reveal = null }: TimelineProps): React.JSX.Element {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const scrollState = useRef<ScrollState>(INITIAL_SCROLL_STATE);
@@ -168,6 +179,35 @@ export function Timeline({ rows, session, focusMode, active, ctx, foldToggleTick
     if (foldToggleTick === 0) return;
     setExpanded((prev) => toggleAllFolds(roundsRef.current, prev));
   }, [foldToggleTick]);
+
+  // Segundo plano visível: open the fold that hides the row, then scroll to it and flash it once.
+  const revealedSeq = useRef(0);
+  useEffect(() => {
+    if (reveal === null || reveal.seq === revealedSeq.current || !active) return undefined;
+    const el = scrollerRef.current;
+    if (!el || el.clientHeight === 0) return undefined; // no layout yet: try again when the tab shows
+    const target = viewRowIdOf(rows, reveal.rowId);
+    if (target === null) {
+      revealedSeq.current = reveal.seq; // not in the loaded conversation: nothing to show
+      return undefined;
+    }
+    for (const round of rounds) {
+      const fold = round.items.find((item) => item.kind === 'fold' && item.rows.some((r) => r.id === target));
+      if (fold !== undefined && fold.kind === 'fold' && !fold.expanded) {
+        setExpanded((prev) => new Set(prev).add(fold.key));
+        return undefined; // the next render has the row in the DOM
+      }
+    }
+    revealedSeq.current = reveal.seq;
+    const node = el.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(target)}"]`);
+    if (!node) return undefined;
+    anchorLock.current = null;
+    node.scrollIntoView({ block: 'center' });
+    const flash = styles.revealed!;
+    node.classList.add(flash);
+    setTimeout(() => node.classList.remove(flash), 1600);
+    return undefined;
+  }, [reveal, active, rows, rounds]);
 
   // The DOM still shows the previous rows while this render runs: this is the last moment the reader's
   // round and its offset can be read before a prepend is committed (a scroll-time snapshot goes stale).
@@ -313,7 +353,7 @@ export function Timeline({ rows, session, focusMode, active, ctx, foldToggleTick
             >
               {round.items.map((item) =>
                 item.kind === 'row' ? (
-                  <div key={item.key} className={styles.row}>
+                  <div key={item.key} className={styles.row} data-row-id={item.row.id}>
                     {renderRow(item.row, ctx)}
                   </div>
                 ) : (

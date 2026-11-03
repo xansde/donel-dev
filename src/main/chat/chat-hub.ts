@@ -28,7 +28,9 @@ import type {
   RowDetail,
   RowPatch,
 } from '../../shared/chat/ipc';
+import { backgroundKey, deriveBackgroundTasks } from '../../shared/chat/backgroundTasks';
 import type {
+  BackgroundTask,
   ChatPermissionMode,
   ChatReception,
   ConversationRow,
@@ -216,6 +218,10 @@ interface Rec {
   screenTerminalNeeded: TerminalNeededReason | null;
   currentAction: LiveAction | null;
   readonly activeSubagents: Set<string>;
+  /** When the hub first heard of this PTY (~ its CLI process start): background launches older than this belong to a dead process. */
+  readonly bornAt: number;
+  /** Last derivation of the background tasks, reused while the adapter state and the process state are the same. */
+  bgCache: { readonly state: AdapterState | null; readonly alive: boolean; readonly tasks: readonly BackgroundTask[] } | null;
   /** Serialises attach / switch / detach for this tab. */
   chain: Promise<unknown>;
 }
@@ -277,6 +283,8 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         screenTerminalNeeded: null,
         currentAction: null,
         activeSubagents: new Set(),
+        bornAt: now(),
+        bgCache: null,
         chain: Promise.resolve(),
       };
       recs.set(ptyId, rec);
@@ -303,6 +311,17 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     return out;
   }
 
+  /** Segundo plano visível — derived from the followed conversation; cached by adapter state + process state. */
+  function backgroundOf(rec: Rec): readonly BackgroundTask[] {
+    const state = rec.session?.state ?? null;
+    const alive = rec.base !== 'ended';
+    const cache = rec.bgCache;
+    if (cache !== null && cache.state === state && cache.alive === alive) return cache.tasks;
+    const tasks = state === null ? [] : deriveBackgroundTasks(state.rows, { processAlive: alive, processSince: rec.bornAt });
+    rec.bgCache = { state, alive, tasks };
+    return tasks;
+  }
+
   function liveOf(rec: Rec): LiveState {
     const reason = rec.hookTerminalNeeded ?? rec.screenTerminalNeeded;
     const pendings = openPendingsOf(rec);
@@ -323,12 +342,13 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       sends: [],
       activeSubagents: [...rec.activeSubagents],
       terminalNeeded: reason === null ? null : { reason },
+      background: backgroundOf(rec),
     };
   }
 
   function emitLiveIfChanged(rec: Rec): void {
     const live = liveOf(rec);
-    const key = `${live.status}|${live.currentAction?.toolUseId ?? ''}|${live.activeSubagents.join(',')}|${live.terminalNeeded?.reason ?? ''}|${live.pendings.map((p) => p.id).join(',')}`;
+    const key = `${live.status}|${live.currentAction?.toolUseId ?? ''}|${live.activeSubagents.join(',')}|${live.terminalNeeded?.reason ?? ''}|${live.pendings.map((p) => p.id).join(',')}|${backgroundKey(live.background)}`;
     if (key === rec.lastLiveKey) return;
     rec.lastLiveKey = key;
     deps.events.live({ ptyId: rec.ptyId, live });
@@ -463,6 +483,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       setReception(rec, 'ok');
     }
     emitRows(rec, batch.reset ? [{ op: 'reset', rows: withNotices(rec, viewOf(session.state)) }] : decoratePatches(rec, result.patches));
+    emitLiveIfChanged(rec); // a launch or an end notification changes what runs in the background
   }
 
   // ---- session (heavy part) --------------------------------------------------
@@ -820,6 +841,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         // `prepend` rows answer this call; anything else (a rewind, a row that changed) goes as an event.
         const rows = result.patches.filter((p) => p.op === 'prepend' || p.op === 'append').flatMap((p) => [...p.rows]);
         emitRows(rec, decoratePatches(rec, result.patches.filter((p) => p.op !== 'prepend' && p.op !== 'append')));
+        emitLiveIfChanged(rec); // an older page may hold a launch still running
         // B36 — the current conversation reached its start: the replaced one comes in on top of it
         const entered = session.olderOffset === null ? await enterPrelude(rec) : [];
         return { rows: [...entered, ...rows], cursor: cursorOf(rec, session) };
