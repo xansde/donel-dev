@@ -29,6 +29,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         title: 'Navegador dentro do Donel',
         text: 'Cada sessão ganhou um navegador de verdade, ao lado da conversa: clique em "Navegador" no topo da sessão, digite o endereço e use voltar, avançar e recarregar. Ele tem os próprios cookies, separados do seu Chrome, e um login que você fizer nele fica guardado para as próximas vezes. A opção "Navegador (Chrome/Edge)" do painel de nova sessão saiu: o navegador agora é este, integrado.',
       },
+      {
+        title: 'Sessão renovada em voo',
+        text: 'Quando o contexto de uma sessão passa de 250k, no fim de um turno ela escreve uma passagem de bastão e o Donel abre uma sessão nova na mesma aba, mesma pasta e mesma conta, que começa lendo essa passagem. O chat continua mostrando a conversa anterior acima de um divisor "Sessão renovada em voo", com o link da passagem, e o cartão do Mindscape fica no mesmo lugar. Um aviso discreto aparece antes, com "Agora não" para adiar; a troca nunca acontece no meio de uma tarefa nem com trabalho em segundo plano rodando. O limite e o interruptor ficam em Preferências.',
+      },
     ],
   },
   {

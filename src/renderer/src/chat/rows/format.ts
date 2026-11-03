@@ -138,7 +138,9 @@ export type NoticeIcon =
   | 'account-switch'
   | 'conversation-switch'
   | 'informational'
-  | 'generated-file';
+  | 'generated-file'
+  // B36 — the divider above which the tab's chat keeps the conversation a renewal replaced.
+  | 'session-renewed';
 
 export interface NoticeContent {
   readonly icon: NoticeIcon;
@@ -203,6 +205,15 @@ export function noticeContent(kind: NoticeKind, params: Readonly<Record<string, 
         icon: 'generated-file',
         tone: 'muted',
         text: 'Gerou',
+        ...(asString(params.name) ? { fileName: asString(params.name) } : {}),
+        ...(asString(params.path) ? { filePath: asString(params.path) } : {}),
+      };
+    case 'session-renewed':
+      // B36 — the conversation above is the one the renewal replaced; "abrir" opens the handoff.
+      return {
+        icon: 'session-renewed',
+        tone: 'muted',
+        text: 'Sessão renovada em voo (contexto cheio) · passagem:',
         ...(asString(params.name) ? { fileName: asString(params.name) } : {}),
         ...(asString(params.path) ? { filePath: asString(params.path) } : {}),
       };

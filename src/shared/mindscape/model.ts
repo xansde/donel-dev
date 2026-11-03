@@ -231,6 +231,48 @@ export function archiveCard(doc: MindscapeDoc, projectPath: string, cardId: stri
   return { ...doc, boards: { ...doc.boards, [projectPath]: { ...board, cards, links } } };
 }
 
+/**
+ * Sessão renovada em voo (B36) — the card is a PLACE, not a process: when a
+ * tab's session is renewed, its card and its post-it pass to the new session
+ * keeping position, and the links that touched them follow (the "seat" of the
+ * OpenRig). Every board that holds the old session's card is migrated. A card
+ * the new session already got (placed before the migration) gives way to the
+ * old one. Links that would end up joining a card to itself, or duplicating
+ * another link, are dropped. Nothing to carry → same document.
+ */
+export function carrySessionCard(doc: MindscapeDoc, fromSessionId: string, toSessionId: string): MindscapeDoc {
+  if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return doc;
+  const renames: ReadonlyArray<readonly [string, string]> = [
+    [sessionCardId(fromSessionId), sessionCardId(toSessionId)],
+    [noteCardId(fromSessionId), noteCardId(toSessionId)],
+  ];
+  let boards: Record<string, MindscapeBoard> | null = null;
+  for (const board of Object.values(doc.boards)) {
+    if (!renames.some(([from]) => board.cards[from])) continue;
+    const cards = { ...board.cards };
+    const renamed = new Map<string, string>();
+    for (const [from, to] of renames) {
+      const card = cards[from];
+      if (!card) continue;
+      delete cards[from];
+      if (card.kind === 'session') cards[to] = { ...card, id: to as `session:${string}`, sessionId: toSessionId };
+      else if (card.kind === 'session-note') cards[to] = { ...card, id: to as `note:${string}`, sessionId: toSessionId };
+      renamed.set(from, to);
+    }
+    const links: MindscapeLink[] = [];
+    for (const link of board.links) {
+      const from = renamed.get(link.from) ?? link.from;
+      const to = renamed.get(link.to) ?? link.to;
+      if (from === to) continue;
+      const duplicate = links.some((other) => (other.from === from && other.to === to) || (other.from === to && other.to === from));
+      if (duplicate) continue;
+      links.push(from === link.from && to === link.to ? link : { ...link, from, to });
+    }
+    boards = { ...(boards ?? doc.boards), [board.projectPath]: { ...board, cards, links } };
+  }
+  return boards === null ? doc : { ...doc, boards };
+}
+
 // ---------------------------------------------------------------------------
 // Fatia 04 — free canvas: move cards, move the view, the owner's post-its.
 // ---------------------------------------------------------------------------

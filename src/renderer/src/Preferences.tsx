@@ -3,6 +3,7 @@ import type { SelectOption } from '@donel-dev/design-system';
 import { Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import type { NotificationPreference, ProjectScanMode } from '../../shared/config';
+import type { SessionRenewalPrefs } from '../../shared/sessionRenewal';
 import styles from './Preferences.module.css';
 
 // T015 — UI de Preferências (FR-007, feedback E2E rodada 3 "roots de
@@ -22,6 +23,13 @@ const SCAN_MODE_OPTIONS: SelectOption[] = [
   { value: 'markers', label: 'Só pastas de projeto', description: 'padrão — pastas com .git/ ou CLAUDE.md, até 2 níveis abaixo das raízes' },
   { value: 'all', label: 'Todas as pastas', description: 'toda pasta no 1º nível das raízes, com ou sem marcador de projeto' },
 ];
+
+// B36 — sessão renovada em voo: the context budget of a session (the owner works with 250k).
+const RENEWAL_LIMIT_OPTIONS: SelectOption[] = [150_000, 200_000, 250_000, 300_000, 400_000, 500_000].map((tokens) => ({
+  value: String(tokens),
+  label: `${tokens / 1000}k de contexto`,
+  ...(tokens === 250_000 ? { description: 'padrão' } : {}),
+}));
 
 const NOTIFICATION_OPTIONS: SelectOption[] = [
   { value: 'all', label: 'Todas as transições', description: 'avisa quando uma sessão termina, precisa de você, para com erro ou encerra sozinha' },
@@ -47,6 +55,9 @@ export interface PreferencesProps {
   /** T022 (015-jobu-pet) — "Jobu na área de trabalho" switch (`pet.enabled`); applies at once. */
   petEnabled: boolean;
   onChangePetEnabled: (enabled: boolean) => void;
+  /** B36 — sessão renovada em voo (`sessionRenewal`); applies at once. */
+  sessionRenewal: SessionRenewalPrefs;
+  onChangeSessionRenewal: (prefs: Partial<SessionRenewalPrefs>) => void;
 }
 
 export function Preferences({
@@ -64,6 +75,8 @@ export function Preferences({
   onChangeChatEnabled,
   petEnabled,
   onChangePetEnabled,
+  sessionRenewal,
+  onChangeSessionRenewal,
 }: PreferencesProps): React.JSX.Element {
   const [newRoot, setNewRoot] = useState('');
 
@@ -164,6 +177,30 @@ export function Preferences({
           label="Chat (experimental)"
           description={chatRestartPending ? 'Reinicie o app para aplicar.' : undefined}
         />
+      </div>
+      <div className={styles.section} data-testid="preferences-renewal-section">
+        <h3 className={styles.sectionTitle}>Sessão renovada em voo</h3>
+        <p className={styles.sectionHint}>
+          Quando o contexto de uma sessão passa do limite, no fim de um turno ela escreve uma passagem de bastão e o Donel abre
+          uma sessão nova na mesma aba, que começa lendo essa passagem. Nunca no meio de uma tarefa nem com trabalho em segundo
+          plano rodando.
+        </p>
+        <Toggle
+          checked={sessionRenewal.enabled}
+          onChange={(enabled) => onChangeSessionRenewal({ enabled })}
+          label="Renovar a sessão ao chegar no limite"
+        />
+        <div data-testid="renewal-limit-select">
+          <Select
+            value={
+              RENEWAL_LIMIT_OPTIONS.some((option) => option.value === String(sessionRenewal.limitTokens))
+                ? String(sessionRenewal.limitTokens)
+                : '250000'
+            }
+            options={RENEWAL_LIMIT_OPTIONS}
+            onChange={(value) => onChangeSessionRenewal({ limitTokens: Number(value) })}
+          />
+        </div>
       </div>
       <div className={styles.section} data-testid="preferences-pet-section">
         <h3 className={styles.sectionTitle}>Jobu Donel</h3>

@@ -149,7 +149,9 @@ export type NoticeKind =
   | 'interrupted'
   | 'conversation-switch'
   | 'informational'
-  | 'generated-file';
+  | 'generated-file'
+  // B36 — the divider above which the tab's chat keeps the conversation a renewal replaced.
+  | 'session-renewed';
 
 export type SubagentStatus = 'running' | 'completed' | 'failed' | 'killed' | 'stopped' | 'unknown';
 

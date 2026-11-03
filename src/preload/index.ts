@@ -136,6 +136,7 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
+import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
 // arquivo é o único ponto por onde o renderer alcança o main process, via
@@ -210,7 +211,13 @@ const donelApi: DonelApi = {
     // aqui, mesmo padrão de pty.onData/pty.onExit acima.
     onUpdate: (ptyId: string, listener: (info: SemaphoreStateInfo) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, update: SemaphoreUpdate): void => {
-        if (update.ptyId === ptyId) listener({ state: update.state, stateEnteredAt: update.stateEnteredAt });
+        if (update.ptyId !== ptyId) return;
+        // B36 — the renewal must know when a `waiting` still has background agents alive.
+        listener({
+          state: update.state,
+          stateEnteredAt: update.stateEnteredAt,
+          ...(update.awaitingBackgroundAgents === true ? { awaitingBackgroundAgents: true } : {}),
+        });
       };
       ipcRenderer.on(SEMAPHORE_CHANNELS.update, handler);
       return () => ipcRenderer.removeListener(SEMAPHORE_CHANNELS.update, handler);
@@ -362,6 +369,9 @@ const donelApi: DonelApi = {
 
     // T014 (015-jobu-pet) — the Jobu switch; the main applies it at once (creates/destroys the pet window).
     setPetPrefs: (prefs: PetPrefsInput) => ipcRenderer.invoke(CONFIG_CHANNELS.setPetPrefs, prefs) as Promise<AppConfigDto>,
+    // B36 — sessão renovada em voo: switch and context limit.
+    setSessionRenewalPrefs: (prefs: Partial<SessionRenewalPrefs>) =>
+      ipcRenderer.invoke(CONFIG_CHANNELS.setSessionRenewalPrefs, prefs) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },
@@ -456,6 +466,12 @@ const donelApi: DonelApi = {
     record: (gesture: RendererGesture) => {
       void ipcRenderer.invoke(LEARNING_CHANNELS.record, gesture).catch(() => undefined);
     },
+  },
+
+  // Sessão renovada em voo (B36) — the main writes the instructions and reads the handoff header.
+  renewal: {
+    prepare: (input: RenewalPrepareInput) => ipcRenderer.invoke(SESSION_RENEWAL_CHANNELS.prepare, input) as Promise<RenewalPrepared | null>,
+    status: (renewalId: string) => ipcRenderer.invoke(SESSION_RENEWAL_CHANNELS.status, renewalId) as Promise<HandoffStatus>,
   },
 
   devMode: {
