@@ -73,6 +73,7 @@ describe('defaultAppConfig (puro)', () => {
       sessionRenewal: { enabled: true, limitTokens: 250_000 },
       autoMode: { neverAsks: true },
       yolo: { projects: [] },
+      appUpdate: { installersDir: null },
       unknownFields: {},
     });
   });
@@ -241,6 +242,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       sessionRenewal: { enabled: false, limitTokens: 180_000 },
       autoMode: { neverAsks: false },
       yolo: { projects: ['C:\\repos\\app'] },
+      appUpdate: { installersDir: 'D:\\instaladores' },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -335,6 +337,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       sessionRenewal: defaults.sessionRenewal,
       autoMode: defaults.autoMode,
       yolo: { projects: ['C:\\ok'] },
+      appUpdate: { installersDir: null },
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });

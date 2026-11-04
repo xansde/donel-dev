@@ -1,0 +1,65 @@
+/* B33 — the update notice beside the status bar. Same shape as the Saúde do computador button; colors only
+   from design-system tokens. */
+
+.indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+  height: 100%;
+  max-width: 420px;
+  padding: 0 var(--panel-padding);
+  border: none;
+  border-top: var(--hairline);
+  border-left: var(--hairline);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-caption-size);
+  white-space: nowrap;
+}
+
+button.indicator {
+  cursor: pointer;
+}
+
+button.indicator:hover {
+  color: var(--text-primary);
+}
+
+.indicator:focus-visible,
+.link:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.available {
+  color: var(--accent);
+}
+
+.error {
+  color: var(--zone-over);
+}
+
+.text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.link {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

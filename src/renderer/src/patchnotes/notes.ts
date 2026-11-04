@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-03',
     items: [
       {
+        title: 'Atualizar o alfa sem sair do app',
+        text: 'Quando a versão nova da manhã fica pronta, aparece "Versão nova · Atualizar" na barra de baixo. O clique espera as sessões pararem (nada é cortado no meio de uma resposta ou de uma pergunta para você; dá para cancelar), fecha o app, instala e abre de novo com as mesmas abas, cada conversa retomada no mesmo lugar do Mindscape. Se a instalação falhar, a versão de antes volta e a barra diz o que houve. Se a build da manhã falhar, a barra avisa e abre o log.',
+      },
+      {
         title: 'Cartão da sessão mais completo no Mindscape',
         text: 'Cada cartão mostra o motor (por exemplo "opus 5.5") e quanto do contexto já foi usado ("38% · 152k", na mesma cor do rodapé do chat). Um anel em volta do ícone diz o estado num relance: vermelho quando precisa de você, azul trabalhando, tracejado quando o app ainda não sabe. Embaixo, "aberta · trabalhando · viva" separa o processo, a atividade e se dá para retomar, e "! 2 · permissão, pergunta" conta o que espera você e por quê. O Organizar ganhou a coluna "parada com pendência", primeiro à esquerda.',
       },

@@ -23,6 +23,7 @@ import type { DonelRolesApi } from './roles';
 import type { DonelRenewalApi } from './sessionRenewal';
 import type { DonelLearningApi } from './learning/gestures';
 import type { DonelHealthApi } from './health/ipc';
+import type { DonelAppUpdateApi } from './appUpdate';
 import type { DonelWorkspaceApi } from './workspace';
 import type { DonelBrowserApi } from './browser/ipc';
 
@@ -488,6 +489,8 @@ export interface DonelApi {
   pet: DonelPetApi;
   /** Saúde do computador — RAM, disco e processos que estão pesando, com a ação de encerrar um processo. */
   health: DonelHealthApi;
+  /** B33 — versão nova do alfa: atualizar de dentro do app e reabrir as abas depois. */
+  appUpdate: DonelAppUpdateApi;
   /** Sidebar — "Abrir no editor" (VS Code/Cursor) e branch atual da pasta da sessão/projeto. */
   workspace: DonelWorkspaceApi;
   /** Navegador integrado — o painel de navegador de cada aba de sessão, que o agente da sessão controla e o dono assume. */

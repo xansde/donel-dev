@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
-import type { AppConfigDto, AutoModePrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs, YoloPrefs } from '../shared/config';
+import type { AppConfigDto, AppUpdatePrefs, AutoModePrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs, YoloPrefs } from '../shared/config';
 // T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
 import type {
@@ -153,6 +153,8 @@ export interface AppConfig {
   readonly autoMode: AutoModePrefs;
   /** Modo YOLO — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
   readonly yolo: YoloPrefs;
+  /** B33 — the installers folder of the in-app update. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
+  readonly appUpdate: AppUpdatePrefs;
   /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
@@ -194,6 +196,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     sessionRenewal: DEFAULT_SESSION_RENEWAL_PREFS,
     autoMode: defaultAutoModePrefs(),
     yolo: defaultYoloPrefs(),
+    appUpdate: { installersDir: null },
     unknownFields: {},
   };
 }
@@ -247,6 +250,13 @@ export function sanitizeYoloPrefs(value: unknown): YoloPrefs {
   const { projects } = value as Record<string, unknown>;
   if (!Array.isArray(projects)) return defaultYoloPrefs();
   return { projects: [...new Set(projects.filter((path): path is string => typeof path === 'string' && path.trim() !== ''))] };
+}
+
+/** B33 — a non-empty path, or `null` (the default folder of the alpha). */
+export function sanitizeAppUpdatePrefs(value: unknown): AppUpdatePrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { installersDir: null };
+  const { installersDir } = value as Record<string, unknown>;
+  return { installersDir: typeof installersDir === 'string' && installersDir.trim() !== '' ? installersDir.trim() : null };
 }
 
 /** T014 (015-jobu-pet) — off, no remembered position (= default corner), Medium size. */
@@ -731,6 +741,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     sessionRenewal: sanitizeSessionRenewalPrefs(candidate.sessionRenewal, defaults.sessionRenewal),
     autoMode: sanitizeAutoModePrefs(candidate.autoMode, defaults.autoMode),
     yolo: sanitizeYoloPrefs(candidate.yolo),
+    appUpdate: sanitizeAppUpdatePrefs(candidate.appUpdate),
     unknownFields,
   };
 }

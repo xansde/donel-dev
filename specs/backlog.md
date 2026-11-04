@@ -1202,6 +1202,10 @@ spike curto quando precisar. Ver também `docs/produto/pesquisa-mercado-2026-10-
 
 ### B33. Botão "Atualizar versão" dentro do Donel Dev (pedido do dono, 31/10)
 
+**Status (03/11):** V1 entregue no alfa (`feature/atualizar-versao`): só o canal alfa, espera as
+sessões pararem e reabre as abas com `-r`. Regras em `docs/refinamentos/atualizar-versao.md`. Falta a
+validação do dono na primeira atualização de verdade.
+
 **Pedido:** um botão dentro do app para atualizar para a versão nova, sem sair
 procurando o instalador.
 
