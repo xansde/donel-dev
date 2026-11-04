@@ -81,6 +81,7 @@ import type {
   PtyCreateResult,
   PhaseArchivedPayload,
   PtyExitInfo,
+  RemoteSwitchOutcome,
   RemoveAccountOutcome,
   ResolveCardRepoIpcInput,
   ResolveCardReposIpcInput,
@@ -231,6 +232,7 @@ import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
+import { createRemoteClaudeState } from './accounts/remote-claude-state';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
 import { createLocalWithPoolMod } from './accounts/mods/local-with-pool-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1 (F2) — valida o par colado à mão (fallback do "conectar conta"; login isolado é a Fase 1.2).
@@ -851,6 +853,8 @@ function resolveAccountMod(modId: ModId): AccountMod {
     // fix/renovacao-credencial — a falha também vai pro log (antes só o
     // sucesso ia, e uma conta caída em "Reconectar" não deixava rastro).
     onPairRefreshFailed: (id, trigger, reason) => appendAccountsMaintenanceLog({ event: 'account-pair-refresh-failed', account: id, trigger, reason }),
+    // Lugares remotos — conta ativa numa VPS nunca é renovada por esta máquina (o CLI de lá renova).
+    isHeldRemotely: (id) => (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes.some((place) => place.activeAccountId === id),
   });
   // Pool Seazone AO LADO das locais (sem trocar o mod): com o switcher
   // configurado, as contas dele entram no fim da lista como `seazone:<label>`
@@ -936,6 +940,9 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
  */
 const accountsReconnectRegistry = createReconnectRegistry();
 
+/** Lugares remotos — `ssh` do sistema, sem senha (a rede da pessoa autentica: Tailscale, chave). */
+const accountsRemoteClaudeState = createRemoteClaudeState();
+
 /**
  * Dono do ciclo de vida do motor (F6, 011-contas-e-provedores etapa 3 Fase 1)
  * — substitui o antigo `rebuildAccountEngine()`, que reconstruía (dispose +
@@ -976,6 +983,14 @@ const accountEngineHost = new AccountEngineHost({
       writeRefreshedActivePair: (expected, next) =>
         adoptRefreshedActivePair({ io: accountsClaudeStateIo, claudeHome: appConfig.accounts.claudeHome ?? claudeHomeDirFor(homedir()) }, expected, next),
       onPoolHeartbeatEvent: (event) => appendAccountsMaintenanceLog({ ...event }),
+      // Lugares remotos (VPS) — o `~/.claude` de cada lugar por ssh; a conta de
+      // cada lugar vai para o `config.json` assim que muda (como a ativa daqui).
+      remoteState: accountsRemoteClaudeState,
+      onRemotesChanged: (remotes) => {
+        appConfig = { ...appConfig, accounts: { ...appConfig.accounts, remotes } };
+        persistAppConfig();
+      },
+      onRemoteEvent: (event) => appendAccountsMaintenanceLog({ ...event }),
     });
     engine.onChanged(broadcastAccountsChanged);
     engine.start();
@@ -2749,6 +2764,7 @@ function registerAccountsIpcHandlers(): void {
         autoSwitchState: 'idle',
         lastAutoSwitch: null,
         lastSwitchOverwritten: null,
+        remotes: [],
       };
     }
     // 011-contas-e-provedores, etapa 3, Fase 2 (D5, item 3 do Bloco 3) —
@@ -2790,9 +2806,30 @@ function registerAccountsIpcHandlers(): void {
 
   ipcMain.handle(ACCOUNT_CHANNELS.getConfig, (): AccountsConfigDto => appConfig.accounts);
 
+  // Lugares remotos (VPS) — troca a conta de um lugar; `null` libera. Só ids no log.
+  ipcMain.handle(ACCOUNT_CHANNELS.switchRemote, async (_event, placeId: unknown, accountId: unknown): Promise<RemoteSwitchOutcome> => {
+    if (typeof placeId !== 'string' || !placeId) return { kind: 'failed', reason: 'unknown-place' };
+    if (accountId !== null && (typeof accountId !== 'string' || !accountId)) return { kind: 'failed', reason: 'unknown-account' };
+    const engine = accountEngineHost.current();
+    if (!engine) return { kind: 'failed', reason: 'io' };
+    return engine.switchRemote(placeId, accountId, 'manual');
+  });
+
   ipcMain.handle(ACCOUNT_CHANNELS.setConfig, (_event, patch: unknown): AccountsConfigDto => {
     const merged = typeof patch === 'object' && patch !== null ? { ...appConfig.accounts, ...(patch as Partial<AccountsConfigDto>) } : appConfig.accounts;
-    appConfig = { ...appConfig, accounts: sanitizeAccountsConfig(merged, appConfig.accounts) };
+    // Lugares remotos — o renderer adiciona, renomeia e remove lugares, mas a
+    // conta de cada um só o motor muda (`switchRemote`). Um lugar com conta não
+    // sai da lista: sumir com ele deixaria a conta livre para esta máquina
+    // enquanto o CLI de lá ainda a renova.
+    const currentRemotes = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+    const requestedRemotes = Array.isArray(merged.remotes) ? merged.remotes : currentRemotes;
+    const keptRemotes = requestedRemotes.map((place) => {
+      const current = typeof place === 'object' && place !== null ? currentRemotes.find((candidate) => candidate.id === place.id) : undefined;
+      return { ...place, activeAccountId: current?.activeAccountId ?? null };
+    });
+    const missingHeld = currentRemotes.filter((place) => place.activeAccountId !== null && !keptRemotes.some((candidate) => candidate.id === place.id));
+    const mergedWithRemotes = { ...merged, remotes: [...keptRemotes, ...missingHeld] };
+    appConfig = { ...appConfig, accounts: sanitizeAccountsConfig(mergedWithRemotes, appConfig.accounts) };
     persistAppConfig();
     applyAccountsEngineConfig(); // F6 — decide construir/reconstruir/atualizar, nunca mais "na mão" aqui.
     return appConfig.accounts;
@@ -2869,6 +2906,8 @@ function registerAccountsIpcHandlers(): void {
   ipcMain.handle(ACCOUNT_CHANNELS.removeAccount, (_event, id: unknown): RemoveAccountOutcome => {
     if (typeof id !== 'string' || !id) return { kind: 'failed', reason: 'unknown-account' };
 
+    // Conta ativa num lugar remoto: o par vivo dela está lá. Remover aqui perderia a conta igual à ativa desta máquina.
+    if (appConfig.accounts.remotes.some((place) => place.activeAccountId === id)) return { kind: 'blocked', reason: 'active-account' };
     const plan = planRemoveAccount(appConfig.accounts, id);
     if (plan.kind === 'blocked') return { kind: 'blocked', reason: 'active-account' };
     if (plan.kind === 'unknown-account') return { kind: 'failed', reason: 'unknown-account' };

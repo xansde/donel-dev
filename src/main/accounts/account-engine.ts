@@ -64,6 +64,7 @@ import { createReconnectRegistry, type ReconnectRegistry } from './reconnect-reg
 import type { AccountMod, CredentialPair } from './account-mod';
 import type { AdoptRefreshedPairResult } from './claude-state';
 import { isPoolAccountId } from './pool-account-id';
+import type { RemoteClaudeState } from './remote-claude-state';
 import {
   overallLoad,
   type AccountId,
@@ -72,9 +73,21 @@ import {
   type AccountSummary,
   type AutoSwitchEvent,
   type ModId,
+  type RemotePlace,
+  type RemotePlaceView,
+  type RemoteSwitchOutcome,
   type SwitchOutcome,
   type SwitchOverwrittenWarning,
 } from '../../shared/accounts';
+
+/**
+ * Lugares remotos — o que o motor registra em `accounts-maintenance.log` sobre
+ * eles. Só ids e motivos, nunca o par.
+ */
+export type RemotePlaceLogEvent =
+  | { readonly event: 'remote-switch'; readonly place: string; readonly origin: 'manual' | 'auto'; readonly outcome: RemoteSwitchOutcome['kind']; readonly from: AccountId | null; readonly to: AccountId | null; readonly reason?: string }
+  | { readonly event: 'remote-pair-captured'; readonly place: string; readonly account: AccountId; readonly trigger: 'switch' | 'sync' }
+  | { readonly event: 'remote-write-uncertain'; readonly place: string; readonly account: AccountId | null };
 
 const KEEP_ALIVE_INTERVAL_MS = 15 * 60 * 1000;
 /**
@@ -189,6 +202,17 @@ export interface AccountEngineDeps {
   readonly writeRefreshedActivePair?: (expected: CredentialPair, next: CredentialPair) => AdoptRefreshedPairResult;
   /** Pool Seazone (patch local v3) — index.ts grava em `accounts-maintenance.log`. Nunca recebe o par. */
   readonly onPoolHeartbeatEvent?: (event: PoolHeartbeatLogEvent) => void;
+  /**
+   * Lugares remotos — leitura e escrita do `~/.claude` de cada lugar por ssh
+   * (remote-claude-state.ts). Ausente = lugares remotos desligados: o motor
+   * ignora `config.remotes` para ler e trocar (mas uma conta marcada como
+   * ativa num lugar continua fora do alcance desta máquina).
+   */
+  readonly remoteState?: RemoteClaudeState;
+  /** Chamado com a lista nova sempre que a conta de um lugar muda — index.ts persiste em `config.json`. */
+  readonly onRemotesChanged?: (remotes: readonly RemotePlace[]) => void;
+  /** index.ts grava em `accounts-maintenance.log`. Nunca recebe o par. */
+  readonly onRemoteEvent?: (event: RemotePlaceLogEvent) => void;
 }
 
 /**
@@ -217,6 +241,21 @@ export class AccountEngine {
   private readonly onLivePairCaptured: AccountEngineDeps['onLivePairCaptured'];
   private readonly writeRefreshedActivePair: AccountEngineDeps['writeRefreshedActivePair'];
   private readonly onPoolHeartbeatEvent: AccountEngineDeps['onPoolHeartbeatEvent'];
+  private readonly remoteState: RemoteClaudeState | null;
+  private readonly onRemotesChanged: AccountEngineDeps['onRemotesChanged'];
+  private readonly onRemoteEvent: AccountEngineDeps['onRemoteEvent'];
+  /** Último resultado de ssh por lugar, para o painel. Em memória. */
+  private readonly remoteReach = new Map<string, 'ok' | 'unreachable'>();
+  /** Último refresh token guardado no cofre a partir de cada lugar, por conta (mesma régua de `lastCapturedRefreshToken`). */
+  private readonly lastRemoteCapturedRefreshToken = new Map<AccountId, string>();
+  /**
+   * Escrita remota cujo desfecho não se sabe (o ssh caiu depois de mandar o
+   * par). Enquanto existir, um par sem prova de identidade igual a este
+   * refresh token é da conta que ia entrar, não da que estava.
+   */
+  private readonly uncertainRemoteWrites = new Map<string, { readonly account: AccountId | null; readonly refreshToken: string | null }>();
+  /** Uma troca de cada vez, desta máquina ou de lugar remoto: as duas olham "quem está onde" antes de agir. */
+  private switchQueue: Promise<unknown> = Promise.resolve();
   private poolHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   /** Último motivo de falha do heartbeat já registrado; a mesma falha repetida não enche o log. `null` depois de um ciclo bom. */
   private lastPoolHeartbeatFailure: string | null = null;
@@ -266,6 +305,9 @@ export class AccountEngine {
     this.onLivePairCaptured = deps.onLivePairCaptured;
     this.writeRefreshedActivePair = deps.writeRefreshedActivePair;
     this.onPoolHeartbeatEvent = deps.onPoolHeartbeatEvent;
+    this.remoteState = deps.remoteState ?? null;
+    this.onRemotesChanged = deps.onRemotesChanged;
+    this.onRemoteEvent = deps.onRemoteEvent;
 
     // Estado inicial segue o diagrama do data-model.md §3: `mod === null` é
     // SEMPRE `inert`; qualquer mod configurado nasce `ready` até prova em
@@ -395,7 +437,7 @@ export class AccountEngine {
 
     const accounts = this.decoratedAccounts();
     const locals = accounts
-      .filter((account) => !isPoolAccountId(account.id) && account.available && !account.needsReconnect)
+      .filter((account) => !isPoolAccountId(account.id) && account.available && !account.needsReconnect && account.heldBy === undefined)
       .map((account) => ({ id: account.id, load: overallLoad(account.load) }))
       .sort((a, b) => (a.load ?? Number.POSITIVE_INFINITY) - (b.load ?? Number.POSITIVE_INFINITY));
     const roomyLocal = locals.find((account) => account.load !== null && account.load < this.config.autoSwitch.switchAtLoad);
@@ -437,7 +479,8 @@ export class AccountEngine {
       if (this.disposed) return;
       const activeLoad = overallLoad(this.accounts.find((a) => a.id === this.config.activeAccountId)?.load ?? null);
       this.pollTimer = this.setTimeoutFn(async () => {
-        if (hasLiveSession()) {
+        // Um lugar remoto com conta trabalha sem sessão nesta máquina: a carga dele também precisa ser lida.
+        if (hasLiveSession() || this.hasRemoteWithAccount()) {
           await this.listAccounts();
           await this.evaluateAutoSwitch();
         }
@@ -485,6 +528,10 @@ export class AccountEngine {
     // par que o CLI rotacionou desde a última vez, e a leitura (R5 do mod
     // local) já enxerga cofre e disco iguais.
     await this.captureLivePairNow('sync');
+    // Lugares remotos — mesma captura, do `~/.claude` de cada lugar: o cofre
+    // da conta que está lá acompanha o que o CLI remoto renova, e a carga dela
+    // é lida com esse par (o mod local nunca renova conta que está num lugar).
+    await this.syncRemotePlaces();
 
     const result = await this.mod.listAccounts();
     if (result.kind === 'unavailable') {
@@ -575,6 +622,234 @@ export class AccountEngine {
     return this.performSwitch(id, 'manual');
   }
 
+  /** Roda `task` depois de toda troca já enfileirada (desta máquina ou de lugar remoto). */
+  private exclusive<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.switchQueue.then(task, task);
+    this.switchQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private remotes(): readonly RemotePlace[] {
+    return this.config.remotes ?? [];
+  }
+
+  private hasRemoteWithAccount(): boolean {
+    return this.remoteState !== null && this.remotes().some((place) => place.activeAccountId !== null);
+  }
+
+  /** Lugar remoto onde `id` está ativa agora, ou `null`. */
+  private remoteHolding(id: AccountId): RemotePlace | null {
+    return this.remotes().find((place) => place.activeAccountId === id) ?? null;
+  }
+
+  /**
+   * De quem é o par que está no `~/.claude` de um lugar. Mesma régua de
+   * `resolveLivePairOwner`: a identidade em disco vence a crença; sem prova,
+   * `requireProof` decide entre não capturar e confiar na crença. Uma escrita
+   * de desfecho incerto conta como prova quando o refresh token bate.
+   */
+  private resolveRemotePairOwner(place: RemotePlace, pair: CredentialPair, fingerprint: string | null, requireProof: boolean): AccountId | null {
+    const believed = place.activeAccountId;
+    if (fingerprint) {
+      const owner = this.config.localAccounts.find((account) => account.fingerprint === fingerprint)?.id;
+      if (owner) return owner;
+      const believedFingerprint = believed ? this.config.localAccounts.find((account) => account.id === believed)?.fingerprint : undefined;
+      if (believedFingerprint) return null;
+    }
+    const uncertain = this.uncertainRemoteWrites.get(place.id);
+    if (uncertain && uncertain.refreshToken !== null && uncertain.refreshToken === pair.refreshToken) return uncertain.account;
+    if (uncertain) return null;
+    return requireProof ? null : believed;
+  }
+
+  /**
+   * Guarda no cofre o par que está agora em cada lugar remoto com conta. Só
+   * com prova de identidade (fingerprint do `oauthAccount` de lá batendo com a
+   * conta que o motor pôs no lugar): sem ela não grava nada — logo depois de
+   * uma troca, a captura da própria troca já cobriu. Nunca lança.
+   */
+  private async syncRemotePlaces(): Promise<void> {
+    const remoteState = this.remoteState;
+    if (!remoteState || !this.mod) return;
+    const mod = this.mod;
+    let reachChanged = false;
+    await Promise.all(
+      this.remotes()
+        .filter((place) => place.activeAccountId !== null)
+        .map(async (place) => {
+          const read = await remoteState.read(place.sshTarget);
+          if (this.disposed) return;
+          const reach = read.kind === 'unreachable' ? 'unreachable' : 'ok';
+          if (this.remoteReach.get(place.id) !== reach) reachChanged = true;
+          this.remoteReach.set(place.id, reach);
+          if (read.kind !== 'ok' || !read.pair) return;
+          // A conta do lugar pode ter mudado enquanto o ssh estava em voo.
+          const current = this.remotes().find((candidate) => candidate.id === place.id);
+          if (!current || current.activeAccountId !== place.activeAccountId) return;
+          const owner = this.resolveRemotePairOwner(current, read.pair, read.fingerprint, true);
+          if (!owner || owner !== current.activeAccountId) return;
+          if (this.lastRemoteCapturedRefreshToken.get(owner) === read.pair.refreshToken) return;
+          try {
+            await mod.captureRotatedPair(owner, read.pair);
+          } catch {
+            return;
+          }
+          this.lastRemoteCapturedRefreshToken.set(owner, read.pair.refreshToken);
+          this.onRemoteEvent?.({ event: 'remote-pair-captured', place: place.id, account: owner, trigger: 'sync' });
+        }),
+    );
+    if (reachChanged) this.emit();
+  }
+
+  /**
+   * Troca a conta de um lugar remoto. `target: null` libera o lugar (tira a
+   * credencial de lá). Mesma ordem invariante de `claude-state.ts`, do outro
+   * lado do ssh: lê o par que está lá → guarda no cofre da conta dona dele →
+   * grava o par novo (só se o de lá não mudou desde a leitura) → apaga
+   * `oauthAccount`. Uma conta nunca entra num lugar se estiver ativa nesta
+   * máquina ou em outro lugar.
+   */
+  switchRemote(placeId: string, target: AccountId | null, origin: 'manual' | 'auto' = 'manual'): Promise<RemoteSwitchOutcome> {
+    return this.exclusive(async () => {
+      const place = this.remotes().find((candidate) => candidate.id === placeId);
+      const from = place?.activeAccountId ?? null;
+      const outcome = await this.performRemoteSwitch(placeId, target);
+      if (outcome.kind !== 'already-active') {
+        this.onRemoteEvent?.({
+          event: 'remote-switch',
+          place: placeId,
+          origin,
+          outcome: outcome.kind,
+          from,
+          to: outcome.kind === 'switched' ? outcome.to : target,
+          ...(outcome.kind === 'failed' ? { reason: outcome.reason } : {}),
+        });
+      }
+      return outcome;
+    });
+  }
+
+  private async performRemoteSwitch(placeId: string, target: AccountId | null): Promise<RemoteSwitchOutcome> {
+    if (this.disposed || !this.mod || !this.remoteState) return { kind: 'failed', reason: 'io' };
+    const place = this.remotes().find((candidate) => candidate.id === placeId);
+    if (!place) return { kind: 'failed', reason: 'unknown-place' };
+    if (target === place.activeAccountId) return { kind: 'already-active' };
+    if (target !== null) {
+      // Só conta do pool próprio: a do pool Seazone tem posse e heartbeat por máquina.
+      if (isPoolAccountId(target) || !this.config.localAccounts.some((account) => account.id === target)) return { kind: 'failed', reason: 'unknown-account' };
+      if (target === this.config.activeAccountId) return { kind: 'failed', reason: 'in-use' };
+      const holder = this.remoteHolding(target);
+      if (holder && holder.id !== place.id) return { kind: 'failed', reason: 'in-use' };
+    }
+
+    const mod = this.mod;
+    const remoteState = this.remoteState;
+    let nextPair: CredentialPair | null = null;
+    if (target !== null) {
+      const switchResult = await mod.switchTo(target, { origin: 'manual', from: null });
+      if (this.disposed) return { kind: 'failed', reason: 'io' };
+      if (switchResult.kind !== 'ok') {
+        if (switchResult.reason === 'expired-credentials' && !this.reconnectRegistry.has(target)) {
+          this.reconnectRegistry.mark(target);
+          this.emit();
+        }
+        if (switchResult.reason === 'expired-credentials' || switchResult.reason === 'offline') return { kind: 'failed', reason: switchResult.reason };
+        if (switchResult.reason === 'unknown-account') return { kind: 'failed', reason: 'unknown-account' };
+        return { kind: 'failed', reason: 'io' };
+      }
+      nextPair = switchResult.pair;
+    }
+
+    // Duas voltas: se o CLI de lá renovou entre a leitura e a escrita, a
+    // escrita recusa (`changed`), e a segunda volta captura o par novo dele.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const read = await remoteState.read(place.sshTarget);
+      if (this.disposed) return { kind: 'failed', reason: 'io' };
+      this.remoteReach.set(place.id, read.kind === 'unreachable' ? 'unreachable' : 'ok');
+      if (read.kind === 'unreachable') {
+        this.emit();
+        return { kind: 'failed', reason: 'unreachable' };
+      }
+      if (read.kind !== 'ok') return { kind: 'failed', reason: 'io' };
+
+      if (read.pair) {
+        const owner = this.resolveRemotePairOwner(place, read.pair, read.fingerprint, false);
+        // Nunca grava no cofre de uma conta que está viva em outro lugar: o par dela lá é o que vale.
+        const ownerLiveElsewhere = owner !== null && (owner === this.config.activeAccountId || (this.remoteHolding(owner)?.id ?? place.id) !== place.id);
+        if (owner && !ownerLiveElsewhere) {
+          try {
+            await mod.captureRotatedPair(owner, read.pair);
+          } catch {
+            return { kind: 'failed', reason: 'io' }; // nada foi escrito lá: o par segue vivo no lugar.
+          }
+          this.lastRemoteCapturedRefreshToken.set(owner, read.pair.refreshToken);
+          this.onRemoteEvent?.({ event: 'remote-pair-captured', place: place.id, account: owner, trigger: 'switch' });
+          // A conta que entra já está lá (escrita anterior de desfecho incerto que chegou): o par de lá é o mais novo, fica ele.
+          if (owner === target) nextPair = read.pair;
+        }
+      }
+      if (this.disposed) return { kind: 'failed', reason: 'io' };
+
+      const write = await remoteState.write(place.sshTarget, read.pair?.refreshToken ?? null, nextPair);
+      if (write.kind === 'changed') continue;
+      if (write.kind === 'unreachable' || write.kind === 'io') {
+        // O par pode ter chegado lá ou não. Confere uma vez; sem resposta, fica a marca de incerteza.
+        const check = await remoteState.read(place.sshTarget);
+        const landed = check.kind === 'ok' && (check.pair?.refreshToken ?? null) === (nextPair?.refreshToken ?? null);
+        const kept = check.kind === 'ok' && (check.pair?.refreshToken ?? null) === (read.pair?.refreshToken ?? null);
+        if (!landed) {
+          if (!kept) {
+            this.uncertainRemoteWrites.set(place.id, { account: target, refreshToken: nextPair?.refreshToken ?? null });
+            this.onRemoteEvent?.({ event: 'remote-write-uncertain', place: place.id, account: target });
+          }
+          return { kind: 'failed', reason: write.kind === 'unreachable' ? 'unreachable' : 'io' };
+        }
+      }
+
+      this.uncertainRemoteWrites.delete(place.id);
+      if (target !== null && nextPair) {
+        this.lastRemoteCapturedRefreshToken.set(target, nextPair.refreshToken);
+        this.reconnectRegistry.clear(target);
+      }
+      this.config = {
+        ...this.config,
+        remotes: this.remotes().map((candidate) => (candidate.id === place.id ? { ...candidate, activeAccountId: target } : candidate)),
+      };
+      this.onRemotesChanged?.(this.remotes());
+      this.emit();
+      return { kind: 'switched', from: place.activeAccountId, to: target };
+    }
+    return { kind: 'failed', reason: 'io' };
+  }
+
+  /**
+   * Troca automática de cada lugar remoto, com a mesma política desta
+   * máquina. Candidatas: contas do pool próprio que não estão ativas aqui nem
+   * em outro lugar.
+   */
+  private async evaluateRemoteAutoSwitch(): Promise<void> {
+    if (!this.remoteState || this.disposed || !this.config.autoSwitch.enabled) return;
+    for (const place of this.remotes()) {
+      if (!place.activeAccountId || this.disposed) continue;
+      const accounts = this.decoratedAccounts()
+        .filter((account) => !isPoolAccountId(account.id))
+        .map((account) => (account.id !== place.activeAccountId && this.isHeld(account) ? { ...account, available: false } : account));
+      const target = selectAutoSwitchTarget(accounts, place.activeAccountId, this.config.autoSwitch);
+      if (!target) continue;
+      await this.switchRemote(place.id, target, 'auto');
+    }
+  }
+
+  /** A conta está ativa nesta máquina ou em algum lugar remoto. */
+  private isHeld(account: AccountSummary): boolean {
+    return account.id === this.config.activeAccountId || account.heldBy !== undefined;
+  }
+
+  /** Para a escolha automática DESTA máquina: conta que está num lugar remoto não é destino. */
+  private withRemoteHeldUnavailable(accounts: readonly AccountSummary[]): readonly AccountSummary[] {
+    return accounts.map((account) => (account.heldBy !== undefined ? { ...account, available: false } : account));
+  }
+
   /**
    * Avaliado nos momentos de leitura de carga (sob demanda + poll
    * adaptativo) e no gatilho imediato de `StopFailure` (item 4, index.ts).
@@ -592,7 +867,14 @@ export class AccountEngine {
     if (this.disposed) return null;
     if (!this.mod || this.state !== 'ready' || !this.config.autoSwitch.enabled) return null;
 
-    const accounts = restrictPoolToPreferred(this.decoratedAccounts(), this.config.activeAccountId, this.config.seazone?.preferredLabels);
+    const outcome = await this.evaluateLocalAutoSwitch();
+    // Lugares remotos — depois desta máquina, cada lugar com conta.
+    await this.evaluateRemoteAutoSwitch();
+    return outcome;
+  }
+
+  private async evaluateLocalAutoSwitch(): Promise<SwitchOutcome | null> {
+    const accounts = restrictPoolToPreferred(this.withRemoteHeldUnavailable(this.decoratedAccounts()), this.config.activeAccountId, this.config.seazone?.preferredLabels);
     // Pool Seazone ao lado das locais — `selectAutoSwitchTarget` deixa o pool
     // como última opção e traz de volta para uma local livre; sem conta
     // `seazone:*` na lista decide igual ao `selectSwitchTarget` de antes.
@@ -626,13 +908,20 @@ export class AccountEngine {
    * switch bem-sucedido, de QUALQUER origem, arma a checagem de corrida
    * (`scheduleRaceCheck`).
    */
-  private async performSwitch(id: AccountId, origin: 'manual' | 'auto', lostAccount: AccountId | null = null): Promise<SwitchOutcome> {
+  private performSwitch(id: AccountId, origin: 'manual' | 'auto', lostAccount: AccountId | null = null): Promise<SwitchOutcome> {
+    return this.exclusive(() => this.performSwitchNow(id, origin, lostAccount));
+  }
+
+  private async performSwitchNow(id: AccountId, origin: 'manual' | 'auto', lostAccount: AccountId | null): Promise<SwitchOutcome> {
     // R3 (revisão) — descartado na entrada: falha sem tocar o mod nem a
     // config em memória (cobre um `switchTo` manual chamado depois do
     // `dispose()`; o caminho auto já é barrado antes, em `evaluateAutoSwitch`).
     if (this.disposed) return { kind: 'failed', reason: 'io' };
     if (!this.mod) return { kind: 'failed', reason: 'io' };
     if (id === this.config.activeAccountId) return { kind: 'already-active', account: id };
+    // Lugares remotos — a conta está ativa num lugar remoto: o CLI de lá renova
+    // o par dela. Usar aqui também faria os dois renovarem o mesmo refresh token.
+    if (this.remoteHolding(id)) return { kind: 'failed', reason: 'account-unavailable' };
 
     const fromId = this.config.activeAccountId;
     const switchResult = await this.mod.switchTo(id, { origin, from: fromId });
@@ -795,16 +1084,21 @@ export class AccountEngine {
    * com `toEqual` já existiam antes desta fase.
    */
   private decoratedAccounts(): readonly AccountSummary[] {
-    return this.accounts.map((account) => ({
-      ...account,
-      active: account.id === this.config.activeAccountId,
-      ...(this.reconnectRegistry.has(account.id) ? { needsReconnect: true as const } : {}),
-    }));
+    return this.accounts.map((account) => {
+      const holder = this.remoteHolding(account.id);
+      return {
+        ...account,
+        active: account.id === this.config.activeAccountId,
+        ...(this.reconnectRegistry.has(account.id) ? { needsReconnect: true as const } : {}),
+        ...(holder ? { heldBy: holder.id } : {}),
+      };
+    });
   }
 
   private buildView(): AccountsViewDto {
     const decorated = this.decoratedAccounts();
-    const autoSwitchState = !this.mod || this.state !== 'ready' ? 'idle' : classifyAutoSwitch(restrictPoolToPreferred(decorated, this.config.activeAccountId, this.config.seazone?.preferredLabels), this.config.activeAccountId, this.config.autoSwitch);
+    const autoSwitchState = !this.mod || this.state !== 'ready' ? 'idle' : classifyAutoSwitch(restrictPoolToPreferred(this.withRemoteHeldUnavailable(decorated), this.config.activeAccountId, this.config.seazone?.preferredLabels), this.config.activeAccountId, this.config.autoSwitch);
+    const remotes: RemotePlaceView[] = this.remotes().map((place) => ({ ...place, reach: this.remoteReach.get(place.id) ?? 'unknown' }));
     return {
       mod: this.config.mod,
       state: this.state,
@@ -816,6 +1110,7 @@ export class AccountEngine {
       autoSwitchState,
       lastAutoSwitch: this.lastAutoSwitch,
       lastSwitchOverwritten: this.lastSwitchOverwritten,
+      remotes,
     };
   }
 

@@ -15,6 +15,15 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
+    date: '2026-11-04',
+    items: [
+      {
+        title: 'Suas contas também numa VPS',
+        text: 'No painel Contas, "Adicionar lugar remoto" cadastra uma máquina que você acessa por ssh sem senha (por exemplo a VPS pelo Tailscale). Cada lugar escolhe a sua conta numa lista, e o Claude Code de lá passa a usá-la na próxima mensagem, sem login nenhum lá. Uma conta nunca fica em dois lugares ao mesmo tempo: a que está na VPS aparece como "em uso em VPS" e não dá para escolher aqui, e vice-versa. A troca automática vale para a VPS também, enquanto o app estiver aberto. "Nenhuma" tira a conta do lugar.',
+      },
+    ],
+  },
+  {
     date: '2026-11-03',
     items: [
       {
