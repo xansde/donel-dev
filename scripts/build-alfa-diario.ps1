@@ -1,5 +1,7 @@
-﻿# Build diário do canal alfa — roda de manhã pela tarefa agendada
-# "Donel Dev Alfa diario" (registrada por scripts/registrar-alfa-diario.ps1).
+﻿# Build contínuo do canal alfa — a tarefa agendada "Donel Dev Alfa diario"
+# (registrada por scripts/registrar-alfa-diario.ps1) roda a cada 10 minutos:
+# entrou commit novo em staging, sai instalador novo (pedido do dono, 03/11:
+# "pra que esperar até as 06h30 se pode fazer agora").
 # Gera o instalador a partir de origin/staging numa worktree só dele e deixa
 # o .exe com a data no nome em "%USERPROFILE%\Donel Dev Alfa - diario".
 # Sem commit novo em staging desde o último build, não faz nada.
@@ -13,11 +15,17 @@ $worktree = Join-Path $repo '.claude\worktrees\alfa-diario'
 $outDir = Join-Path $env:USERPROFILE 'Donel Dev Alfa - diario'
 $log = Join-Path $outDir 'build.log'
 $lastCommitFile = Join-Path $outDir 'ultimo-commit.txt'
-$keep = 5
+$keep = 8
 
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 try {
+  # PC apertado de memória: adia para a próxima rodada, sem marcar falha.
+  $freeGb = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB
+  if ($freeGb -lt 1.5) {
+    Write-Output ("Pouca memória livre ({0:N1} GB). Adiado para a próxima rodada." -f $freeGb)
+    return
+  }
   git -C $repo fetch --quiet origin staging
   $commit = (git -C $repo rev-parse origin/staging).Trim()
   if ((Test-Path $lastCommitFile) -and ((Get-Content $lastCommitFile -Raw).Trim() -eq $commit)) {
@@ -53,7 +61,8 @@ try {
 
   $exe = Get-ChildItem (Join-Path $worktree 'release') -Filter 'Donel Dev Alfa-Setup-*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
   if (-not $exe) { throw 'instalador não encontrado em release\' }
-  $dest = Join-Path $outDir ("Donel Dev Alfa-Setup-{0}.exe" -f (Get-Date -Format 'yyyy-MM-dd'))
+  # Data e hora no nome: vários builds por dia não se sobrescrevem (o app pega o mais novo).
+  $dest = Join-Path $outDir ("Donel Dev Alfa-Setup-{0}.exe" -f (Get-Date -Format 'yyyy-MM-dd-HHmm'))
   Copy-Item -LiteralPath $exe.FullName -Destination $dest -Force
   Set-Content -Path $lastCommitFile -Value $commit -Encoding utf8
   Remove-Item -Path (Join-Path $outDir 'FALHOU.txt') -ErrorAction SilentlyContinue

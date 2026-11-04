@@ -53,11 +53,14 @@ via `CLAUDE_CONFIG_DIR`.
 - **Todo PR mergeado em `staging` que muda algo visível acrescenta um item em
   `src/renderer/src/patchnotes/notes.ts`**, no dia do merge (cria o dia se não
   existir). Texto de usuário: o que muda para ele, sem arquivo, PR ou jargão.
-- Build: tarefa agendada do Windows "Donel Dev Alfa diario" (06:30), registrada
-  por `scripts/registrar-alfa-diario.ps1`. Ela roda uma cópia de
+- Build **contínuo** (dono, 03/11: "pra que esperar até as 06h30 se pode fazer
+  agora"): tarefa agendada do Windows "Donel Dev Alfa diario", **a cada 10
+  minutos**, registrada por `scripts/registrar-alfa-diario.ps1`. Sem commit novo
+  não faz nada; com pouca memória livre adia. O app mostra "Versão nova ·
+  Atualizar" (B33) assim que o instalador aparece. Ela roda uma cópia de
   `scripts/build-alfa-diario.ps1` guardada em `%USERPROFILE%\Donel Dev Alfa -
   diario\`, builda `origin/staging` na worktree `.claude/worktrees/alfa-diario`
-  e deixa lá o `Donel Dev Alfa-Setup-AAAA-MM-DD.exe` (guarda os 5 últimos).
+  e deixa lá o `Donel Dev Alfa-Setup-AAAA-MM-DD-HHMM.exe` (guarda os 8 últimos).
   Falha deixa `FALHOU.txt` e o `build.log` na mesma pasta. Mudou o script?
   Rode o registrar de novo para atualizar a cópia.
 
