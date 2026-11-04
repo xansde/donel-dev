@@ -127,6 +127,8 @@
   flex: 1;
   min-height: 60px;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
   padding-right: 4px;
   font-size: 14.5px;
   scrollbar-width: thin;
@@ -177,6 +179,8 @@
   gap: 2px;
   max-height: 120px;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
   padding: 6px;
   border-radius: 10px;
   background: color-mix(in srgb, var(--state-error) 10%, transparent);
@@ -242,6 +246,8 @@
 .pendings {
   max-height: 160px;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
 
 .quick {
