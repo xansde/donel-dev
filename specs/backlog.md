@@ -1421,13 +1421,15 @@ recebeu `HTTP 403 — Host not allowed`. Sem ele, a sessão:
   `http.server` no IP do Tailscale, e o dono perguntou, com razão, por que
   precisava de servidor para abrir uma página.
 
-**Causa provável (medida na VPS):** a sessão recebe
-`~/.donel/s/<sessão>/mcp.json` com `url: http://127.0.0.1:30364/mcp`, e na VPS
-há algo escutando em `127.0.0.1:30364` que repassa para o app no PC. O app
-recusa porque o `checkMcpHttpRequest` (`src/shared/browser/mcp.ts`) só aceita
-`Host` igual a `127.0.0.1:<porta do app>` ou `localhost:<porta do app>`. A porta
-do lado da VPS é outra, então o `Host` nunca bate. A trava existe contra DNS
-rebinding e deve continuar; o que falta é o túnel e a trava concordarem.
+**Causa (confirmada no código, 04/11):** a aba remota abre o `ssh` com
+`-R 127.0.0.1:<porta remota>:127.0.0.1:<porta do app>` (`buildAttachSshArgs` em
+`src/main/remote-session.ts`). A porta remota é sorteada (`pickRemotePort`) e o
+`mcp.json` da sessão aponta para ela (na VPS, `127.0.0.1:30364`). O CLI manda
+`Host: 127.0.0.1:<porta remota>`, mas o `checkMcpHttpRequest`
+(`src/shared/browser/mcp.ts`) só aceita `127.0.0.1:<porta do app>` ou
+`localhost:<porta do app>`. As duas portas nunca coincidem, então **toda**
+sessão remota leva 403. A trava existe contra DNS rebinding e deve continuar; o
+que falta é ela conhecer as portas dos túneis que o próprio app abriu.
 
 **Como deveria ser:**
 - **MCP `donel` funciona em lugar remoto.** Ou o túnel usa na VPS a mesma porta
@@ -1442,9 +1444,9 @@ rebinding e deve continuar; o que falta é o túnel e a trava concordarem.
 **Pronto quando:** numa sessão aberta na VPS, `sessao_quem_sou` responde e um
 HTML gerado lá abre no painel do Donel Dev no PC, sem passo manual.
 
-**Observação:** o código que lança a sessão remota e escreve `~/.donel/s/` não
-está no `staging` clonado na VPS em 04/11; olhar a versão que roda no PC antes
-de corrigir.
+**Teste:** entra na regra de testes enxutos (guard de rede do MCP): a trava
+aceita a porta de um túnel registrado e continua recusando qualquer outro
+`Host`.
 
 ## Decidido, aguardando spec
 
