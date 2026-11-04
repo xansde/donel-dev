@@ -2302,6 +2302,14 @@ export function App(): React.JSX.Element {
     const providerId = role?.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
     const defaults = appConfig?.launcherDefaults;
     const project = projects.find((candidate) => candidate.path === projectPath);
+    // "Onde roda" — same default as the Launcher (owner, 04/11): the last choice; without one, the first remote place with an account.
+    const savedWhere = defaults?.where;
+    const remoteId =
+      savedWhere === 'local'
+        ? undefined
+        : accountsView.remotes.some((remote) => remote.id === savedWhere)
+          ? savedWhere
+          : accountsView.remotes.find((remote) => remote.activeAccountId)?.id;
     addTab({
       name: role?.name ?? 'Sessão',
       cwd: projectPath,
@@ -2316,6 +2324,7 @@ export function App(): React.JSX.Element {
       }),
       sessionType: 'claude',
       providerId,
+      ...(remoteId ? { remoteId } : {}),
       ...(place.roleId ? { roleId: place.roleId } : {}),
       placeId,
     });

@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'Lugar do Mindscape abre na VPS',
+        text: 'Dois cliques num lugar com papel (○) abrem a sessão onde as sessões novas rodam por padrão, a VPS quando ela tem conta, igual ao Launcher. Antes ela abria sempre neste computador.',
+      },
+      {
         title: 'O app se atualiza sozinho, em qualquer PC',
         text: 'A versão nova baixa em segundo plano (a barra de baixo mostra o progresso). Quando termina, aparece "Versão nova pronta · Reiniciar": o clique espera as sessões pararem, reinicia já na versão nova e reabre as mesmas abas. Não tem instalador para procurar. Vale em qualquer computador com o gh logado no GitHub. Esta é a última vez que você instala na mão.',
       },
