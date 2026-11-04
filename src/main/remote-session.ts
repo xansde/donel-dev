@@ -128,7 +128,9 @@ const TMUX_CONF = [
   'set -g mouse on',
   'set -g history-limit 50000',
   'set -g default-terminal "tmux-256color"',
-  'set -sg escape-time 0',
+  // Not 0: over ssh an escape sequence (the terminal's answer to tmux's queries) arrives split, and with 0 its
+  // tail leaks into the CLI's input box as text (';23;24;28;32;42c'), which blocks the chat's send.
+  'set -sg escape-time 50',
   'set -g set-clipboard on',
   'setw -g aggressive-resize on',
   '',
@@ -142,6 +144,7 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     `S="$HOME/${REMOTE_SESSIONS_DIR}/${input.sid}"`,
     `cd "$HOME"/${shQuote(input.homeRelativeDir)} || exit 1`,
     'export CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1',
+    'export LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}"',
     'export COLORTERM=truecolor',
     `exec claude ${input.claudeArgs.map(renderArg).join(' ')}`,
     '',
@@ -149,7 +152,10 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
   const runScript = [
     '#!/usr/bin/env bash',
     `S="$HOME/${REMOTE_SESSIONS_DIR}/${input.sid}"`,
-    `exec tmux -L ${REMOTE_TMUX_SOCKET} -f "$HOME/.donel/tmux.conf" new-session -A -s ${shQuote(`donel-${input.sid}`)} "bash $S/claude.sh"`,
+    // `-u`: the client is UTF-8 even when ssh brings no locale (without it tmux draws the CLI's box and `❯` as `_`,
+    // and the chat never finds the input box). LANG for the same reason, for the CLI.
+    'export LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}"',
+    `exec tmux -u -L ${REMOTE_TMUX_SOCKET} -f "$HOME/.donel/tmux.conf" new-session -A -s ${shQuote(`donel-${input.sid}`)} "bash $S/claude.sh"`,
     '',
   ].join('\n');
   const files: RemoteFile[] = [
