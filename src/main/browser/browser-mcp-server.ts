@@ -30,7 +30,7 @@ export interface BrowserMcpServer {
   readonly port: number | null;
   start(): Promise<number>;
   /** A new 128-bit token for this PTY (replaces any previous one). */
-  registerSession(ptyId: string): string;
+  registerSession(ptyId: string, token?: string): string;
   unregisterSession(ptyId: string): void;
   stop(): Promise<void>;
 }
@@ -111,10 +111,10 @@ export function createBrowserMcpServer(deps: BrowserMcpServerDeps): BrowserMcpSe
           resolve(port);
         });
       }),
-    registerSession: (ptyId) => {
+    registerSession: (ptyId, knownToken) => {
       const previous = tokenByPty.get(ptyId);
       if (previous) ptyByToken.delete(previous);
-      const token = randomBytes(16).toString('hex');
+      const token = knownToken ?? randomBytes(16).toString('hex');
       ptyByToken.set(token, ptyId);
       tokenByPty.set(ptyId, token);
       return token;

@@ -103,6 +103,8 @@ export interface ChatHubDeps {
   readonly attachmentsRoot?: string;
   /** B36 — folder of the renewal handoffs; allowed for `chat:open-generated` (the divider's "abrir"). */
   readonly handoffsRoot?: string;
+  /** Sessões remotas — the CLI of a remote tab names a path on the remote; this gives the local mirror of it. */
+  readonly mapTranscriptPath?: (ptyId: string, sessionId: string, transcriptPath: string) => string;
   readonly follower?: { readonly debounceMs?: number; readonly pollMs?: number; readonly retryMs?: number };
 }
 
@@ -704,7 +706,8 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       if (event.transcriptPath === null) return;
       const previous = sourceOf(rec);
       if (previous?.sessionId === event.sessionId) return;
-      const next: ChatSourceInfo = { sessionId: event.sessionId, transcriptPath: event.transcriptPath, cwd: previous?.cwd ?? '' };
+      const transcriptPath = deps.mapTranscriptPath?.(event.ptyId, event.sessionId, event.transcriptPath) ?? event.transcriptPath;
+      const next: ChatSourceInfo = { sessionId: event.sessionId, transcriptPath, cwd: previous?.cwd ?? '' };
       const hadSession = rec.session !== null;
       closeSession(rec);
       rec.source = next;

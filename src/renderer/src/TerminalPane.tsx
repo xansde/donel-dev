@@ -125,6 +125,11 @@ export interface TerminalPaneProps {
    * (comportamento de hoje). Fixo por aba, mesmo espírito de `args`/`cwd`.
    */
   providerId?: string;
+  /** Sessões remotas — remote place where the CLI runs (fixed per tab, read only at spawn). */
+  remoteId?: string;
+  /** Sessões remotas — kept on the remote so the next boot reopens the tab with its names. */
+  tabName?: string;
+  projectName?: string;
   /**
    * 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado em andamento
    * nesta aba (`accounts:beginLogin`); `undefined` = aba normal (comportamento
@@ -283,6 +288,9 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     cwd,
     args,
     providerId,
+    remoteId,
+    tabName,
+    projectName,
     accountLoginId,
     roleId,
     onCloseTab,
@@ -482,7 +490,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     renewalIdRef.current = null;
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current })
+      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(remoteId ? { remoteId, tabName, projectName } : {}) })
       .then((result) => {
         if (requestEpoch !== mountEpochRef.current) {
           // Geração já descartada (StrictMode double-invoke em dev, ou a aba
@@ -592,7 +600,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         term.write(`\r\n\x1b[31mFalha ao iniciar o terminal: ${message}\x1b[0m\r\n`);
         setStatus({ kind: 'ended', info: { exitCode: -1 } });
       });
-  }, [cwd, sessionType, args, providerId, accountLoginId]);
+  }, [cwd, sessionType, args, providerId, remoteId, accountLoginId]);
 
   useEffect(() => {
     const container = containerRef.current;

@@ -84,6 +84,7 @@ import type {
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
+  RemoteAliveSession,
   PtyExitInfo,
   RemoteSwitchOutcome,
   RemoveAccountOutcome,
@@ -178,6 +179,8 @@ const donelApi: DonelApi = {
     },
 
     getPreview: (ptyId: string) => ipcRenderer.invoke(PTY_CHANNELS.preview, ptyId) as Promise<string[]>,
+
+    remoteAlive: () => ipcRenderer.invoke(PTY_CHANNELS.remoteAlive) as Promise<RemoteAliveSession[]>,
 
     // NÃO passa por `subscribeChannel` (G5): este canal é broadcast DE
     // PROPÓSITO — uma aba, um `TerminalPane`, um listener, todos no MESMO

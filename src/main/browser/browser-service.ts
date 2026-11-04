@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync }
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { dialog, type BrowserWindow, type IpcMain, type WebContents } from 'electron';
-import { mcpDeliveryFor, type AgentCli } from '../../shared/commandBuilder';
+import { buildBrowserMcpConfig, mcpDeliveryFor, type AgentCli } from '../../shared/commandBuilder';
 import { BrowserControl, HELP_WAIT_MS, OWNER_WAIT_MS } from '../../shared/browser/control';
 import {
   BROWSER_CHANNELS,
@@ -63,6 +63,10 @@ export interface BrowserService {
    * hands the app's MCP server to that CLI. `[]` when the server is not up (the session starts without it).
    */
   prepareSession(ptyId: string, cli: AgentCli): string[];
+  /**
+   * Sessões remotas — the same MCP for a CLI on a remote place: it reaches the app through a reverse tunnel on`n   * `remotePort`. Returns the local port to tunnel to, the token and the config file content (written remotely),`n   * or `null` when the server is not up. `token` reuses the one a reattached session already holds.
+   */
+  prepareRemoteSession(ptyId: string, remotePort: number, token?: string): { localPort: number; token: string; configFileContent: string } | null;
   /** A session was spawned: its browser may exist from now on. */
   registerPty(ptyId: string): void;
   /** The session's process left (or its spawn failed): browser, token, config file and control are gone. */
@@ -541,6 +545,13 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
         mcp.unregisterSession(ptyId);
         return [];
       }
+    },
+    prepareRemoteSession: (ptyId, remotePort, knownToken) => {
+      const port = mcp.port;
+      if (port === null || !isPtyId(ptyId)) return null;
+      const token = mcp.registerSession(ptyId, knownToken);
+      const endpoint = { name: MCP_SERVER_NAME, url: browserMcpUrl(remotePort), bearerToken: token };
+      return { localPort: port, token, configFileContent: `${JSON.stringify(buildBrowserMcpConfig(endpoint), null, 2)}\n` };
     },
     registerPty: (ptyId) => {
       livePtys.add(ptyId);
