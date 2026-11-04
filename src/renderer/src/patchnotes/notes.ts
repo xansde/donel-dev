@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'Régua de contexto vai até 500k',
+        text: 'A barra de contexto da sessão agora mede até 500k (antes 300k): 250k usados aparecem como 50%. No Haiku a régua continua sendo a janela dele, 200k.',
+      },
+      {
         title: 'Chat das sessões na VPS volta a enviar',
         text: 'Na VPS, o chat não conseguia mandar mensagem: a sessão abria, mas o texto nunca chegava ao Claude de lá, e às vezes aparecia lixo como ";23;24;28c" na caixa. As sessões novas na VPS agora recebem as mensagens normalmente.',
       },
