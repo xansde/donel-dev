@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'Sessão na VPS abre direto, sem tela de primeiro uso',
+        text: 'Numa VPS nova, a sessão parava na escolha de tema e de login do Claude, mesmo com a conta já posta lá. Agora ela abre direto na conversa, e a pasta do projeto já vem marcada como confiável.',
+      },
+      {
         title: 'Lugar do Mindscape abre na VPS',
         text: 'Dois cliques num lugar com papel (○) abrem a sessão onde as sessões novas rodam por padrão, a VPS quando ela tem conta, igual ao Launcher. Antes ela abria sempre neste computador.',
       },
