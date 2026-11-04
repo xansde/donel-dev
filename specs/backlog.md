@@ -1405,6 +1405,47 @@ sessão a partir do que está desenhado. O desenho é o canal do dono com o agen
 **Em aberto:** quantas sessões uma sessão pode abrir sem o dono confirmar; se o
 desenho da sessão ganha marca visual (autor) para o dono distinguir do dele.
 
+### B38. Sessão em lugar remoto (VPS) fica sem o MCP `donel` e não mostra nada ao dono (achado 04/11)
+
+**Pedido:** "Salva esse problema como algo a ser corrigido nas próximas versões
+do donel."
+
+**O que aconteceu (04/11):** uma sessão Líder aberta pelo Donel Dev na VPS
+(`vps-alexandrelentz`, via Tailscale SSH) subiu sem o servidor `donel`. O CLI
+recebeu `HTTP 403 — Host not allowed`. Sem ele, a sessão:
+- não leu o quadro nem abriu sessões (`sessao_*`, `quadro_*`), então o papel de
+  Líder ficou inútil;
+- não conseguiu mostrar um HTML que ela mesma gerou: o arquivo ficou no disco da
+  VPS, o navegador do dono está no PC, e o painel do navegador integrado
+  (`navegador_*`) era justamente o caminho que faltava. O contorno foi subir um
+  `http.server` no IP do Tailscale, e o dono perguntou, com razão, por que
+  precisava de servidor para abrir uma página.
+
+**Causa provável (medida na VPS):** a sessão recebe
+`~/.donel/s/<sessão>/mcp.json` com `url: http://127.0.0.1:30364/mcp`, e na VPS
+há algo escutando em `127.0.0.1:30364` que repassa para o app no PC. O app
+recusa porque o `checkMcpHttpRequest` (`src/shared/browser/mcp.ts`) só aceita
+`Host` igual a `127.0.0.1:<porta do app>` ou `localhost:<porta do app>`. A porta
+do lado da VPS é outra, então o `Host` nunca bate. A trava existe contra DNS
+rebinding e deve continuar; o que falta é o túnel e a trava concordarem.
+
+**Como deveria ser:**
+- **MCP `donel` funciona em lugar remoto.** Ou o túnel usa na VPS a mesma porta
+  do app, ou o app aceita o `Host` da porta do túnel que ele mesmo abriu (lista
+  explícita, nunca qualquer host). O token por sessão continua obrigatório.
+- **Falha visível.** Se o `donel` não conectar, o cartão da sessão mostra isso
+  (hoje só a própria sessão descobre, no meio da conversa).
+- **Abrir arquivo do lugar remoto no painel.** Quando a sessão remota pede para
+  mostrar um arquivo local dela (HTML, imagem, PDF), o app busca o arquivo pelo
+  mesmo `ssh` e abre no navegador integrado. Nada de servidor improvisado na VPS.
+
+**Pronto quando:** numa sessão aberta na VPS, `sessao_quem_sou` responde e um
+HTML gerado lá abre no painel do Donel Dev no PC, sem passo manual.
+
+**Observação:** o código que lança a sessão remota e escreve `~/.donel/s/` não
+está no `staging` clonado na VPS em 04/11; olhar a versão que roda no PC antes
+de corrigir.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
