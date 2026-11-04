@@ -1,0 +1,176 @@
+// Papéis de sessão (item 12 of docs/planos/mindscape-openrig.pda.md, docs/refinamentos/mindscape-lugar-papel.md).
+//
+// A role is a file of the app, `<userData>/papeis/<id>.md`: a short header (name, color and the
+// suggested engine, model, effort and permission) and the guidance as the body. The text is
+// neutral on purpose — no AI is named — so the same role runs on any engine. The app hands the
+// guidance to the CLI at every launch, resume and renewal (`roleDeliveryFor` in commandBuilder.ts).
+//
+// The role is FIXED per place (dono, 03/11): another role is another session, and the work is
+// delegated. Pure: no I/O here; the store is `src/main/roles-store.ts`.
+
+import type { EffortLevel, ModelAlias, PermissionMode } from './commandBuilder';
+
+/** File name without `.md`: lowercase letters, digits and dashes. */
+const ROLE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
+
+export function isRoleId(value: unknown): value is string {
+  return typeof value === 'string' && ROLE_ID_PATTERN.test(value);
+}
+
+/** The seal color: the Esteira phase chips of the design system (`--phase-<color>`). */
+export type RoleColor = 'discovery' | 'plano' | 'implementar' | 'validar' | 'concluir' | 'design' | 'documentar';
+
+export const ROLE_COLORS: readonly RoleColor[] = ['implementar', 'validar', 'discovery', 'plano', 'design', 'concluir', 'documentar'];
+
+export function roleColorVar(color: RoleColor): string {
+  return `var(--phase-${color})`;
+}
+
+const MODELS: readonly ModelAlias[] = ['fable', 'opus', 'sonnet', 'haiku'];
+const EFFORTS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+const PERMISSIONS: readonly PermissionMode[] = ['manual', 'acceptEdits', 'auto', 'plan', 'dontAsk', 'bypassPermissions'];
+
+export interface SessionRole {
+  readonly id: string;
+  readonly name: string;
+  readonly color: RoleColor;
+  /** Suggested engine: the id of a provider; absent = the active account. */
+  readonly engine?: string;
+  readonly model?: ModelAlias;
+  readonly effort?: EffortLevel;
+  readonly permissionMode?: PermissionMode;
+  /** The guidance, Markdown. */
+  readonly guidance: string;
+}
+
+export const MAX_ROLE_NAME_CHARS = 40;
+export const MAX_ROLE_GUIDANCE_CHARS = 20_000;
+
+/** Header keys, in Portuguese: the owner may open the file by hand. */
+const KEYS = { name: 'nome', color: 'cor', engine: 'motor', model: 'modelo', effort: 'esforco', permissionMode: 'permissao' } as const;
+
+function oneOf<T extends string>(value: string | undefined, options: readonly T[]): T | undefined {
+  return value && (options as readonly string[]).includes(value) ? (value as T) : undefined;
+}
+
+/**
+ * Reads a role file. No header, no name or a bad id → `null` (the file is skipped, never
+ * guessed). An unknown color falls back to the first one; an unknown suggestion is dropped.
+ */
+export function parseRoleFile(id: string, text: string): SessionRole | null {
+  if (!isRoleId(id)) return null;
+  const match = /^﻿?---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
+  if (!match) return null;
+  const header: Record<string, string> = {};
+  for (const line of match[1]!.split(/\r?\n/)) {
+    const colon = line.indexOf(':');
+    if (colon <= 0) continue;
+    header[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
+  }
+  const name = (header[KEYS.name] ?? '').slice(0, MAX_ROLE_NAME_CHARS).trim();
+  if (!name) return null;
+  const engine = header[KEYS.engine]?.trim();
+  const model = oneOf(header[KEYS.model], MODELS);
+  const effort = oneOf(header[KEYS.effort], EFFORTS);
+  const permissionMode = oneOf(header[KEYS.permissionMode], PERMISSIONS);
+  return {
+    id,
+    name,
+    color: oneOf(header[KEYS.color], ROLE_COLORS) ?? ROLE_COLORS[0]!,
+    ...(engine ? { engine } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+    ...(permissionMode ? { permissionMode } : {}),
+    guidance: match[2]!.trim().slice(0, MAX_ROLE_GUIDANCE_CHARS),
+  };
+}
+
+/** The file of a role (header + guidance). A value with a line break is flattened: the header is one line per key. */
+export function serializeRole(role: SessionRole): string {
+  const flat = (value: string): string => value.replace(/[\r\n]+/g, ' ').trim();
+  const lines = [
+    '---',
+    `${KEYS.name}: ${flat(role.name).slice(0, MAX_ROLE_NAME_CHARS)}`,
+    `${KEYS.color}: ${role.color}`,
+    ...(role.engine ? [`${KEYS.engine}: ${flat(role.engine)}`] : []),
+    ...(role.model ? [`${KEYS.model}: ${role.model}`] : []),
+    ...(role.effort ? [`${KEYS.effort}: ${role.effort}`] : []),
+    ...(role.permissionMode ? [`${KEYS.permissionMode}: ${role.permissionMode}`] : []),
+    '---',
+    '',
+  ];
+  return `${lines.join('\n')}${role.guidance.trim().slice(0, MAX_ROLE_GUIDANCE_CHARS)}\n`;
+}
+
+/**
+ * What the agent reads: a short identity, the rule of the fixed role, and the guidance.
+ * Neutral text (no AI named), so it works on any engine.
+ */
+export function rolePromptText(role: SessionRole): string {
+  const identity = [
+    `Você é ${role.name} nesta sessão, aberta pelo Donel Dev num lugar do quadro do projeto.`,
+    'O papel é fixo neste lugar. Se o trabalho pedir outro papel, diga isso ao dono e sugira passar a parte a uma sessão com esse papel, em vez de mudar o seu.',
+  ].join('\n');
+  return role.guidance ? `${identity}\n\n${role.guidance}\n` : `${identity}\n`;
+}
+
+/** A role id from a name the owner typed ("Revisor de UI" → "revisor-de-ui"), not in `taken`. */
+export function roleIdFromName(name: string, taken: ReadonlySet<string>): string {
+  const base =
+    name
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'papel';
+  const start = /^[a-z0-9]/.test(base) ? base : `p-${base}`;
+  if (!taken.has(start)) return start;
+  for (let n = 2; ; n += 1) {
+    const id = `${start}-${n}`;
+    if (!taken.has(id)) return id;
+  }
+}
+
+/** Guard of a role that comes from the renderer: the same rules as the file (written and read back). */
+export function sanitizeRole(raw: unknown): SessionRole | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const value = raw as Record<string, unknown>;
+  if (!isRoleId(value.id) || typeof value.name !== 'string' || typeof value.guidance !== 'string') return null;
+  const text = (key: string): string | undefined => (typeof value[key] === 'string' ? (value[key] as string) : undefined);
+  const engine = text('engine')?.trim();
+  const model = oneOf(text('model'), MODELS);
+  const effort = oneOf(text('effort'), EFFORTS);
+  const permissionMode = oneOf(text('permissionMode'), PERMISSIONS);
+  return parseRoleFile(
+    value.id,
+    serializeRole({
+      id: value.id,
+      name: value.name,
+      color: oneOf(text('color'), ROLE_COLORS) ?? ROLE_COLORS[0]!,
+      ...(engine ? { engine } : {}),
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(permissionMode ? { permissionMode } : {}),
+      guidance: value.guidance,
+    }),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// IPC of `window.donel.roles` — the main is the only writer of `<userData>/papeis/`.
+// ---------------------------------------------------------------------------
+
+export const ROLES_CHANNELS = {
+  list: 'roles:list',
+  save: 'roles:save',
+} as const;
+
+export type RoleSaveResult = { ok: true; roles: SessionRole[] } | { ok: false; reason: 'invalid' | 'write-failed' };
+
+export interface DonelRolesApi {
+  /** Every role, sorted by name. A file that cannot be read is skipped. */
+  list(): Promise<SessionRole[]>;
+  /** Creates or overwrites `<id>.md`; answers with the new list. */
+  save(role: SessionRole): Promise<RoleSaveResult>;
+}

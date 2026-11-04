@@ -2,11 +2,13 @@
 // (`projectPath` = the tab `cwd`), persisted whole in `<userData>/mindscape.json`
 // by the main (`src/main/mindscape-store.ts`). Design: docs/design/mindscape.md.
 //
-// Session cards only persist their position: state, name and color come live
-// from the open tabs. Reducers never mutate; "nothing changed" returns the
+// Session cards are PLACES (v3, item 12a of the OpenRig plan): a stable id with
+// the conversation of the moment, the previous ones and the role of the place.
+// State, name and color still come live from the open tabs. Reducers never mutate; "nothing changed" returns the
 // same object, so the renderer can skip a save by identity.
 
 import type { TabColorToken } from '../tabAppearance';
+import { isRoleId } from '../roles';
 import { isImageId } from './images';
 import { clampZoom } from './view';
 
@@ -14,15 +16,37 @@ import { clampZoom } from './view';
  * 2 since mindscape-desenho (drawings + zoom). Not an additive-safe change: the
  * V1 parse drops unknown fields, so a V1 channel would write over the drawings
  * — with 2 it falls into the store guard (reads, never writes).
+ * 3 since the place (item 12a): a session card has its own id, the conversation
+ * of the moment, the previous ones and a role. A v2 channel would drop a place
+ * that has not started yet and every conversation after a renewal.
  */
-export const MINDSCAPE_SCHEMA_VERSION = 2;
+export const MINDSCAPE_SCHEMA_VERSION = 3;
 
 export type OwnerCardColor = Exclude<TabColorToken, 'permission'>;
 
 export const OWNER_COLORS: readonly OwnerCardColor[] = ['none', 'accent', 'donel-accent'];
 
+/**
+ * The session card is a PLACE (item 12a). Its `id` is stable and is not a
+ * conversation: a migrated card keeps its old `session:<first conversation>`
+ * id, a place made on the board is `place:<uuid>`. `sessionId` is the
+ * conversation of the moment, absent while the place "has not started yet";
+ * `previous` holds the ones it had before (renewal in flight, `/clear`, fork in
+ * the same tab), oldest first. `roleId` names `<userData>/papeis/<id>.md` and
+ * only changes while the place has not started (`setPlaceRole`).
+ */
+export interface SessionPlaceCard {
+  kind: 'session';
+  id: string;
+  sessionId?: string;
+  previous: string[];
+  roleId?: string;
+  x: number;
+  y: number;
+}
+
 export type MindscapeCard =
-  | { kind: 'session'; id: `session:${string}`; sessionId: string; x: number; y: number }
+  | SessionPlaceCard
   | {
       kind: 'session-note';
       id: `note:${string}`;
@@ -77,7 +101,7 @@ export interface MindscapeBoard {
 }
 
 export interface MindscapeDoc {
-  schemaVersion: 2;
+  schemaVersion: 3;
   boards: Record<string, MindscapeBoard>;
 }
 
@@ -147,31 +171,211 @@ function freeGridSlot(
   }
 }
 
-/**
- * Gives the session a card on its project board (creating the board on the
- * first session — rule 9). A card that already exists keeps its position and
- * the same document comes back.
- */
-export function placeSessionCard(doc: MindscapeDoc, projectPath: string, sessionId: string): MindscapeDoc {
-  const id = sessionCardId(sessionId);
-  const withBoard = ensureBoard(doc, projectPath);
-  const board = withBoard.boards[projectPath]!;
-  if (board.cards[id]) return withBoard;
-  const slot = freeGridSlot(Object.values(board.cards));
-  return {
-    ...withBoard,
-    boards: {
-      ...withBoard.boards,
-      [projectPath]: { ...board, cards: { ...board.cards, [id]: { kind: 'session', id, sessionId, ...slot } } },
-    },
-  };
+// ---------------------------------------------------------------------------
+// Item 12a — the session card is a place; the conversation changes, the card stays.
+// ---------------------------------------------------------------------------
+
+/** Id of a place made on the board ("＋ Sessão com papel…"), from a uuid of the caller. */
+export function placeCardId(uuid: string): `place:${string}` {
+  return `place:${uuid}`;
 }
 
-/** The project of the board that holds the session card (or the note) of `sessionId`. */
+/** The place had a conversation (now or before): its role is fixed from then on. */
+export function placeHasStarted(card: SessionPlaceCard): boolean {
+  return card.sessionId !== undefined || card.previous.length > 0;
+}
+
+function placesOf(board: MindscapeBoard): SessionPlaceCard[] {
+  return Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session');
+}
+
+/** The place whose conversation of the moment is `sessionId`. */
+export function placeOfSession(board: MindscapeBoard, sessionId: string): SessionPlaceCard | undefined {
+  return placesOf(board).find((card) => card.sessionId === sessionId);
+}
+
+/** The place that has `sessionId` now or had it before. */
+export function placeHolding(board: MindscapeBoard, sessionId: string): SessionPlaceCard | undefined {
+  return placeOfSession(board, sessionId) ?? placesOf(board).find((card) => card.previous.includes(sessionId));
+}
+
+/** Id of a place born from a conversation: `session:<id>` (what v2 used), suffixed when an older place already took it. */
+function freePlaceId(board: MindscapeBoard, sessionId: string): string {
+  const base = sessionCardId(sessionId);
+  if (!board.cards[base]) return base;
+  for (let n = 2; ; n += 1) {
+    const id = `${base}~${n}`;
+    if (!board.cards[id]) return id;
+  }
+}
+
+/** Links after cards were renamed (or merged into another): no link to itself, no duplicate pair. */
+function rewireLinks(links: readonly MindscapeLink[], renamed: ReadonlyMap<string, string>): MindscapeLink[] {
+  if (renamed.size === 0) return [...links];
+  const out: MindscapeLink[] = [];
+  for (const link of links) {
+    const from = renamed.get(link.from) ?? link.from;
+    const to = renamed.get(link.to) ?? link.to;
+    if (from === to) continue;
+    const duplicate = out.some((other) => (other.from === from && other.to === to) || (other.from === to && other.to === from));
+    if (duplicate) continue;
+    out.push(from === link.from && to === link.to ? link : { ...link, from, to });
+  }
+  return out;
+}
+
+/**
+ * The place `placeId` takes the conversation `to`: the one it had goes to `previous` and its
+ * post-it (`note:<old>`) passes to the new conversation in the same spot. A card that `to`
+ * already got elsewhere on the board (placed before this move) gives way to the place, its
+ * links passing to it. Same conversation, or not a place → same board.
+ */
+function moveConversation(board: MindscapeBoard, placeId: string, to: string): MindscapeBoard {
+  const place = board.cards[placeId];
+  if (place?.kind !== 'session' || place.sessionId === to) return board;
+  const cards = { ...board.cards };
+  const renamed = new Map<string, string>();
+  for (const other of placesOf(board)) {
+    if (other.id !== placeId && other.sessionId === to) {
+      delete cards[other.id];
+      renamed.set(other.id, placeId);
+    }
+  }
+  const from = place.sessionId;
+  const previous = [...place.previous.filter((id) => id !== to && id !== from), ...(from ? [from] : [])];
+  cards[placeId] = { ...place, sessionId: to, previous };
+  if (from) {
+    const note = cards[noteCardId(from)];
+    if (note?.kind === 'session-note') {
+      delete cards[noteCardId(from)];
+      cards[noteCardId(to)] = { ...note, id: noteCardId(to), sessionId: to };
+      renamed.set(noteCardId(from), noteCardId(to));
+    }
+  }
+  return { ...board, cards, links: rewireLinks(board.links, renamed) };
+}
+
+function withBoardReplaced(doc: MindscapeDoc, board: MindscapeBoard): MindscapeDoc {
+  return { ...doc, boards: { ...doc.boards, [board.projectPath]: board } };
+}
+
+/** A live conversation of a tab, as the placement sees it. */
+export interface LiveConversation {
+  readonly projectPath: string;
+  readonly sessionId: string;
+  /** Role the tab was launched with (Launcher): only used when the conversation gets a new place. */
+  readonly roleId?: string;
+}
+
+function placeOne(doc: MindscapeDoc, session: LiveConversation, liveIds: ReadonlySet<string>): MindscapeDoc {
+  const withBoard = ensureBoard(doc, session.projectPath);
+  const board = withBoard.boards[session.projectPath]!;
+  if (placeOfSession(board, session.sessionId)) return withBoard;
+  // An older conversation of a place came back (resumed from the list): the place takes it back,
+  // unless the conversation it has now is open in another tab.
+  const holder = placeHolding(board, session.sessionId);
+  if (holder && !(holder.sessionId && liveIds.has(holder.sessionId))) {
+    return withBoardReplaced(withBoard, moveConversation(board, holder.id, session.sessionId));
+  }
+  const id = freePlaceId(board, session.sessionId);
+  const slot = freeGridSlot(Object.values(board.cards));
+  const card: SessionPlaceCard = { kind: 'session', id, sessionId: session.sessionId, previous: [], ...(session.roleId ? { roleId: session.roleId } : {}), ...slot };
+  return withBoardReplaced(withBoard, { ...board, cards: { ...board.cards, [id]: card } });
+}
+
+/**
+ * Gives every live conversation a place on its project board (creating the board on the first
+ * session — rule 9). A conversation that is already the one of a place keeps it, in its
+ * position; nothing to do → same document.
+ */
+export function placeSessionCards(doc: MindscapeDoc, live: readonly LiveConversation[]): MindscapeDoc {
+  const liveIds = new Set(live.map((session) => session.sessionId));
+  return live.reduce((acc, session) => placeOne(acc, session, liveIds), doc);
+}
+
+/** One conversation: `placeSessionCards` with only it live. */
+export function placeSessionCard(doc: MindscapeDoc, projectPath: string, sessionId: string, roleId?: string): MindscapeDoc {
+  return placeSessionCards(doc, [{ projectPath, sessionId, ...(roleId ? { roleId } : {}) }]);
+}
+
+/** The project of the board that holds the place (or the note) of `sessionId`. */
 export function findSessionBoard(doc: MindscapeDoc, sessionId: string): string | undefined {
-  const sessionKey = sessionCardId(sessionId);
   const noteKey = noteCardId(sessionId);
-  return Object.values(doc.boards).find((board) => board.cards[sessionKey] || board.cards[noteKey])?.projectPath;
+  return Object.values(doc.boards).find((board) => placeOfSession(board, sessionId) || board.cards[noteKey])?.projectPath;
+}
+
+/** Role of the place that has (or had) `sessionId`, on any board. */
+export function roleOfSession(doc: MindscapeDoc, sessionId: string): string | undefined {
+  for (const board of Object.values(doc.boards)) {
+    const place = placeHolding(board, sessionId);
+    if (place) return place.roleId;
+  }
+  return undefined;
+}
+
+/**
+ * Sessão renovada em voo (B36), `/clear` and fork in the same tab: the conversation `to` is
+ * added to the place of `from` — same card, same spot, same role, same links; the post-it
+ * follows. Replaces `carrySessionCard` (before the place, the card itself was renamed).
+ * Nothing to carry → same document.
+ */
+export function appendConversation(doc: MindscapeDoc, fromSessionId: string, toSessionId: string): MindscapeDoc {
+  if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return doc;
+  let next = doc;
+  for (const board of Object.values(doc.boards)) {
+    const place = placeOfSession(board, fromSessionId);
+    if (!place) continue;
+    // `/resume` of a conversation that already has its own place: that place wakes up with the
+    // tab, and this one goes dormant — a place is never emptied to make room for another.
+    const holder = placeHolding(board, toSessionId);
+    if (holder && holder.id !== place.id) continue;
+    next = withBoardReplaced(next, moveConversation(board, place.id, toSessionId));
+  }
+  return next;
+}
+
+/**
+ * The place `placeId` starts (or continues) with `sessionId` — the tab opened from a place
+ * that had not started yet. Applied BEFORE the tab gets the id, like the renewal, so the board
+ * never makes a second card. Missing place or same conversation → same document.
+ */
+export function setPlaceConversation(doc: MindscapeDoc, projectPath: string, placeId: string, sessionId: string): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  if (!board || !sessionId || board.cards[placeId]?.kind !== 'session') return doc;
+  const next = moveConversation(board, placeId, sessionId);
+  return next === board ? doc : withBoardReplaced(doc, next);
+}
+
+export interface PlaceInput {
+  /** `place:<uuid>`, made by the caller so the reducer stays pure. */
+  readonly id: string;
+  readonly roleId?: string;
+  /** Top-left of the grid to search for a free spot (the visible corner of the view). */
+  readonly origin?: { x: number; y: number };
+}
+
+/** "＋ Sessão com papel…" — a place that has not started yet, with its role. An id in use → same document. */
+export function addPlace(doc: MindscapeDoc, projectPath: string, input: PlaceInput): MindscapeDoc {
+  const withBoard = ensureBoard(doc, projectPath);
+  const board = withBoard.boards[projectPath]!;
+  if (!input.id || board.cards[input.id]) return doc;
+  const slot = freeGridSlot(Object.values(board.cards), SESSION_FOOTPRINT, input.origin ?? GRID_ORIGIN);
+  const card: SessionPlaceCard = { kind: 'session', id: input.id, previous: [], ...(input.roleId ? { roleId: input.roleId } : {}), ...slot };
+  return withBoardReplaced(withBoard, { ...board, cards: { ...board.cards, [input.id]: card } });
+}
+
+/**
+ * Role of a place — only while it has not started (item 12: the role is fixed per place; another
+ * role is another session, and the work is delegated). Started, missing or same role → same document.
+ */
+export function setPlaceRole(doc: MindscapeDoc, projectPath: string, placeId: string, roleId: string | undefined): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  const card = board?.cards[placeId];
+  if (!board || card?.kind !== 'session' || placeHasStarted(card) || card.roleId === roleId) return doc;
+  const next: SessionPlaceCard = { ...card };
+  if (roleId) next.roleId = roleId;
+  else delete next.roleId;
+  return withBoardReplaced(doc, { ...board, cards: { ...board.cards, [placeId]: next } });
 }
 
 export interface SessionNoteInput {
@@ -208,7 +412,7 @@ export function writeSessionNote(doc: MindscapeDoc, projectPath: string, note: S
   const board = withBoard.boards[projectPath]!;
   const text = note.text.slice(0, MAX_SESSION_NOTE_CHARS);
   const existing = board.cards[id];
-  const position = existing ? { x: existing.x, y: existing.y } : noteSlot(Object.values(board.cards), board.cards[sessionCardId(note.sessionId)]);
+  const position = existing ? { x: existing.x, y: existing.y } : noteSlot(Object.values(board.cards), placeOfSession(board, note.sessionId));
   const card: MindscapeCard = {
     kind: 'session-note',
     id,
@@ -229,48 +433,6 @@ export function archiveCard(doc: MindscapeDoc, projectPath: string, cardId: stri
   delete cards[cardId];
   const links = board.links.filter((link) => link.from !== cardId && link.to !== cardId);
   return { ...doc, boards: { ...doc.boards, [projectPath]: { ...board, cards, links } } };
-}
-
-/**
- * Sessão renovada em voo (B36) — the card is a PLACE, not a process: when a
- * tab's session is renewed, its card and its post-it pass to the new session
- * keeping position, and the links that touched them follow (the "seat" of the
- * OpenRig). Every board that holds the old session's card is migrated. A card
- * the new session already got (placed before the migration) gives way to the
- * old one. Links that would end up joining a card to itself, or duplicating
- * another link, are dropped. Nothing to carry → same document.
- */
-export function carrySessionCard(doc: MindscapeDoc, fromSessionId: string, toSessionId: string): MindscapeDoc {
-  if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return doc;
-  const renames: ReadonlyArray<readonly [string, string]> = [
-    [sessionCardId(fromSessionId), sessionCardId(toSessionId)],
-    [noteCardId(fromSessionId), noteCardId(toSessionId)],
-  ];
-  let boards: Record<string, MindscapeBoard> | null = null;
-  for (const board of Object.values(doc.boards)) {
-    if (!renames.some(([from]) => board.cards[from])) continue;
-    const cards = { ...board.cards };
-    const renamed = new Map<string, string>();
-    for (const [from, to] of renames) {
-      const card = cards[from];
-      if (!card) continue;
-      delete cards[from];
-      if (card.kind === 'session') cards[to] = { ...card, id: to as `session:${string}`, sessionId: toSessionId };
-      else if (card.kind === 'session-note') cards[to] = { ...card, id: to as `note:${string}`, sessionId: toSessionId };
-      renamed.set(from, to);
-    }
-    const links: MindscapeLink[] = [];
-    for (const link of board.links) {
-      const from = renamed.get(link.from) ?? link.from;
-      const to = renamed.get(link.to) ?? link.to;
-      if (from === to) continue;
-      const duplicate = links.some((other) => (other.from === from && other.to === to) || (other.from === to && other.to === from));
-      if (duplicate) continue;
-      links.push(from === link.from && to === link.to ? link : { ...link, from, to });
-    }
-    boards = { ...(boards ?? doc.boards), [board.projectPath]: { ...board, cards, links } };
-  }
-  return boards === null ? doc : { ...doc, boards };
 }
 
 // ---------------------------------------------------------------------------
@@ -423,9 +585,19 @@ function parseCard(key: string, raw: unknown): MindscapeCard | null {
   if (!isRecord(raw) || raw.id !== key || !isFiniteNumber(raw.x) || !isFiniteNumber(raw.y)) return null;
   const { x, y } = raw;
   switch (raw.kind) {
-    case 'session':
-      if (!isNonEmptyString(raw.sessionId) || key !== sessionCardId(raw.sessionId)) return null;
-      return { kind: 'session', id: sessionCardId(raw.sessionId), sessionId: raw.sessionId, x, y };
+    case 'session': {
+      // v1/v2: `session:<sessionId>`, always with the conversation. v3: the place's own id; no
+      // conversation = "ainda não começou". A v2 card becomes a place with the same id, so its
+      // position, its post-it and its links stay as they were.
+      const sessionId = isNonEmptyString(raw.sessionId) ? raw.sessionId : undefined;
+      if (raw.sessionId !== undefined && sessionId === undefined) return null;
+      const previous = Array.isArray(raw.previous)
+        ? [...new Set(raw.previous.filter(isNonEmptyString))].filter((id) => id !== sessionId)
+        : [];
+      const card: SessionPlaceCard = { kind: 'session', id: key, ...(sessionId ? { sessionId } : {}), previous, x, y };
+      if (isRoleId(raw.roleId)) card.roleId = raw.roleId;
+      return card;
+    }
     case 'session-note':
       if (!isNonEmptyString(raw.sessionId) || key !== `note:${raw.sessionId}`) return null;
       if (typeof raw.sessionName !== 'string' || typeof raw.text !== 'string' || !isFiniteNumber(raw.writtenAt)) return null;
@@ -510,7 +682,7 @@ function parseBoard(key: string, raw: unknown): MindscapeBoard | null {
 }
 
 /**
- * Sanitizes an untrusted document, v1 or v2; always comes out as v2. Garbage
+ * Sanitizes an untrusted document, v1, v2 or v3; always comes out as v3. Garbage
  * or absence → empty document; bad boards, cards, links and drawings are
  * dropped one by one (an owner card colored `permission` is not accepted — rule 6).
  */

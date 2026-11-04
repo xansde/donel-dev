@@ -22,8 +22,18 @@ export const STRIPE_BY_TOKEN: Record<TabColorToken, string> = {
   permission: 'var(--state-permission)',
 };
 
+/** The seal of the role of the place (item 12a): its name in its color. */
+export interface PlaceRoleSeal {
+  readonly name: string;
+  /** A CSS color (`roleColorVar`). */
+  readonly color: string;
+}
+
 export interface MindscapeSessionCardProps {
-  readonly sessionId: string;
+  /** The place (`data-card-id`). */
+  readonly cardId: string;
+  /** Its conversation of the moment; absent while the place has not started. */
+  readonly sessionId?: string;
   readonly name: string;
   readonly state: SessionState;
   readonly color: TabColorToken;
@@ -46,13 +56,23 @@ export interface MindscapeSessionCardProps {
   readonly favorite?: boolean;
   /** Segundo plano visível — how many tasks the session has running in the background (0 = none). */
   readonly background?: number;
+  /** Item 12a — the role of the place, as a seal at the top right. */
+  readonly role?: PlaceRoleSeal;
+  /** Item 12a — the place has no conversation yet: a double click opens the session with its role. */
+  readonly notStarted?: boolean;
+  /** Item 12b — click on the seal of a place that has not started: choose another role. */
+  readonly onRoleClick?: () => void;
 }
 
 /** Glyph of a dormant session (tab closed). */
 const DORMANT_GLYPH = '☾';
+/** Glyph of a place that has not started yet. */
+const NOT_STARTED_GLYPH = '○';
+const NOT_STARTED_LABEL = 'Ainda não começou';
 
 /** Mindscape V1 — the post-it of a live session: "SESSÃO" seal, state glyph, mono name, tab color stripe. */
 export function MindscapeSessionCard({
+  cardId,
   sessionId,
   name,
   state,
@@ -63,39 +83,85 @@ export function MindscapeSessionCard({
   highlight,
   selected,
   onOpen,
-  closedLabel,
+  closedLabel: closedLabelText,
   favorite = false,
   background = 0,
+  role,
+  notStarted = false,
+  onRoleClick,
 }: MindscapeSessionCardProps): React.JSX.Element {
+  // A place that has not started reads like a dormant one, with its own glyph and words.
+  const closedLabel = notStarted ? `${NOT_STARTED_LABEL} · duplo clique abre` : closedLabelText;
   const dormant = closedLabel !== undefined;
   const style = {
     left: x,
     top: y,
     '--stripe': cliColorHex ?? STRIPE_BY_TOKEN[color],
+    ...(role ? { '--role': role.color } : {}),
   } as CSSProperties;
+  const stateText = dormant ? closedLabel : SESSION_STATE_LABEL_PT[state];
   return (
     <article
-      className={[styles.sessionCard, dormant ? styles.dormant : styles[`st-${state}`], dormant ? '' : styles[highlight], selected ? styles.selected : ''].filter(Boolean).join(' ')}
+      className={[
+        styles.sessionCard,
+        dormant ? styles.dormant : styles[`st-${state}`],
+        notStarted ? styles.notStarted : '',
+        dormant ? '' : styles[highlight],
+        selected ? styles.selected : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       style={style}
       tabIndex={0}
       data-testid="mindscape-session-card"
-      data-card-id={`session:${sessionId}`}
+      data-card-id={cardId}
       data-session-id={sessionId}
-      data-state={dormant ? 'closed' : state}
+      data-state={notStarted ? 'not-started' : dormant ? 'closed' : state}
       data-highlight={dormant ? 'dimmed' : highlight}
       data-favorite={favorite ? 'true' : 'false'}
       data-selected={selected ? 'true' : 'false'}
-      aria-label={`Sessão ${name}${favorite ? ' (favorita)' : ''}: ${dormant ? closedLabel : SESSION_STATE_LABEL_PT[state]}`}
-      title={dormant ? 'Duplo clique retoma a sessão' : undefined}
-      onDoubleClick={onOpen}
+      aria-label={`Sessão ${name}${role ? `, papel ${role.name}` : ''}${favorite ? ' (favorita)' : ''}: ${stateText}`}
+      title={notStarted ? 'Duplo clique abre a sessão com o papel' : dormant ? 'Duplo clique retoma a sessão' : undefined}
+      onDoubleClick={(event) => {
+        if (!(event.target as HTMLElement).closest('button')) onOpen();
+      }}
       onKeyDown={(event) => {
-        if (event.key === 'Enter') onOpen();
+        if (event.key === 'Enter' && event.target === event.currentTarget) onOpen();
       }}
     >
       <span className={styles.seal}>Sessão</span>
+      {role ? (
+        onRoleClick ? (
+          <button
+            type="button"
+            className={`${styles.roleSeal} ${styles.roleSealButton}`}
+            title="Trocar o papel (só antes de começar)"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={onRoleClick}
+            data-testid="mindscape-role-seal"
+          >
+            {role.name}
+          </button>
+        ) : (
+          <span className={styles.roleSeal} data-testid="mindscape-role-seal">
+            {role.name}
+          </span>
+        )
+      ) : notStarted && onRoleClick ? (
+        <button
+          type="button"
+          className={`${styles.roleSeal} ${styles.roleSealButton} ${styles.roleSealEmpty}`}
+          title="Escolher um papel (só antes de começar)"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={onRoleClick}
+          data-testid="mindscape-role-seal"
+        >
+          ＋ papel
+        </button>
+      ) : null}
       <div className={styles.sessionHead}>
         <span className={styles.glyph} aria-hidden="true">
-          {dormant ? DORMANT_GLYPH : STATE_GLYPH[state]}
+          {notStarted ? NOT_STARTED_GLYPH : dormant ? DORMANT_GLYPH : STATE_GLYPH[state]}
         </span>
         <span className={styles.sessionName} title={name} data-testid="mindscape-session-name">
           {name}

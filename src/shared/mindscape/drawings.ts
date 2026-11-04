@@ -10,6 +10,7 @@ import {
   DRAWING_STROKES,
   OWNER_COLORS,
   parseDrawing,
+  placeHasStarted,
   type DrawingColor,
   type DrawingStroke,
   type MindscapeBoard,
@@ -118,7 +119,8 @@ export function removeItems(doc: MindscapeDoc, projectPath: string, ids: ItemIds
   let next = doc;
   for (const id of ids.cards) {
     const card = board.cards[id];
-    if (card && card.kind !== 'session') next = archiveCard(next, projectPath, id);
+    // A session place never goes, except one the owner made that has not started yet (item 12a).
+    if (card && (card.kind !== 'session' || !placeHasStarted(card))) next = archiveCard(next, projectPath, id);
   }
   const drawingIds = new Set(ids.drawings);
   const current = next.boards[projectPath]!;

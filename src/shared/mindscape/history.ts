@@ -6,7 +6,7 @@
 // the session did meanwhile: a session event never "goes back".
 // Design: docs/design/mindscape-desenho.md, "Ctrl+Z / Ctrl+Shift+Z".
 
-import type { MindscapeBoard, MindscapeCard } from './model';
+import { placeHasStarted, type MindscapeBoard, type MindscapeCard } from './model';
 
 /** Entries kept per board; the oldest goes first. */
 export const HISTORY_LIMIT = 100;
@@ -77,7 +77,22 @@ export function mergeSessionFacts(snapshot: MindscapeBoard, current: MindscapeBo
     if (card.kind === 'owner') continue;
     const before = snapshot.cards[card.id];
     if (card.kind === 'session') {
-      if (!before) cards[card.id] = card;
+      // Item 12a — the place: its conversations are a session fact (renewal, `/clear`, the place
+      // starting), its spot is the owner's. A place that has not started yet is the owner's own
+      // ("＋ Sessão com papel…"): undoing its creation takes it away; once started, it stays. The
+      // role follows the snapshot only while the place has not started (fixed after that).
+      if (!before) {
+        if (placeHasStarted(card)) cards[card.id] = card;
+        continue;
+      }
+      if (before.kind === 'session') {
+        const started = placeHasStarted(card);
+        const merged = { ...before, previous: card.previous, roleId: started ? card.roleId : before.roleId };
+        if (card.sessionId) merged.sessionId = card.sessionId;
+        else delete merged.sessionId;
+        if (!merged.roleId) delete merged.roleId;
+        cards[card.id] = merged;
+      }
       continue;
     }
     if (before?.kind === 'session-note') {
@@ -87,6 +102,20 @@ export function mergeSessionFacts(snapshot: MindscapeBoard, current: MindscapeBo
     const removedByAction = counterpart?.cards[card.id];
     if (removedByAction?.kind === 'session-note' && removedByAction.writtenAt === card.writtenAt) continue;
     cards[card.id] = card;
+  }
+  // A conversation that moved on in the meantime (renewal, a card that gave way to its place):
+  // the snapshot's old card or note for it never comes back beside the place that has it now.
+  const movedOn = new Set<string>();
+  const currentOf = new Map<string, string>();
+  for (const card of Object.values(current.cards)) {
+    if (card.kind !== 'session') continue;
+    for (const id of card.previous) movedOn.add(id);
+    if (card.sessionId) currentOf.set(card.sessionId, card.id);
+  }
+  for (const card of Object.values(snapshot.cards)) {
+    if (current.cards[card.id]) continue;
+    if (card.kind === 'session-note' && movedOn.has(card.sessionId)) delete cards[card.id];
+    if (card.kind === 'session' && card.sessionId && currentOf.has(card.sessionId) && currentOf.get(card.sessionId) !== card.id) delete cards[card.id];
   }
   const links = snapshot.links.filter((link) => cards[link.from] && cards[link.to]);
   return { ...snapshot, pan: current.pan, zoom: current.zoom, cards, links: links.length === snapshot.links.length ? snapshot.links : links };

@@ -8,12 +8,15 @@ import { basename, dirname, join } from 'node:path';
 import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-settings';
 import { createStatusLineStore } from './statusline-store';
 import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
-import { withResolvedPermissionMode } from '../shared/commandBuilder';
+import { roleDeliveryFor, withResolvedPermissionMode } from '../shared/commandBuilder';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
 import { createEsteiraService, type EsteiraService } from './esteira-service';
 import { esteiraStoreDir } from './esteira-store';
 import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
+import { createRolesStore, type RolesStore } from './roles-store';
+import { roleOfSession } from '../shared/mindscape/model';
+import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 // Sessão renovada em voo (B36).
@@ -579,6 +582,8 @@ function isTabYolo(ptyId: string): boolean {
  * project. Born at boot (needs `app.getPath`); `null` before it.
  */
 let sessionRenewal: SessionRenewalService | null = null;
+/** Papéis de sessão (item 12a) — `<userData>/papeis/`. Born at boot (needs `app.getPath`); `null` before it. */
+let rolesStore: RolesStore | null = null;
 /** Conta ativa vista no último `accounts:changed` — a troca vira aviso `account-switch` no chat. */
 let lastBroadcastActiveAccountId: string | null | undefined;
 
@@ -1614,7 +1619,12 @@ function registerPtyIpcHandlers(): void {
       // Navegador integrado — o MCP do app (`donel`) entregue ao CLI da sessão pela função por CLI
       // (`mcpDeliveryFor`, emenda agnóstica). Por último: `--mcp-config` é variádico e só opções podem vir depois.
       const browserMcpArgs = browserService?.prepareSession(plannedPtyId, 'claude-code') ?? [];
-      const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs, ...browserMcpArgs];
+      // Papéis de sessão (item 12a) — the guidance of the role at every launch, resume and renewal
+      // (`roleDeliveryFor`, one case per CLI). A missing role or file → the session opens without it.
+      const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
+      const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId) ?? null) : null;
+      const roleArgs = rolePromptPath ? roleDeliveryFor('claude-code', rolePromptPath).args : [];
+      const finalArgs = [...launcherArgs, ...extraArgs, ...roleArgs, ...semaphoreArgs, ...browserMcpArgs];
       // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
 
       let ptyId: string;
@@ -2473,6 +2483,35 @@ function registerMindscapeIpcHandlers(): void {
   void images.sweepOrphans(configIoDeps.readFileText(filePath)).catch(() => undefined);
 }
 
+/** Papéis de sessão (item 12a) — list and save of `<userData>/papeis/<id>.md`. */
+function registerRolesIpcHandlers(): void {
+  const store = createRolesStore(app.getPath('userData'));
+  rolesStore = store;
+  ipcMain.handle(ROLES_CHANNELS.list, (): SessionRole[] => store.list());
+  ipcMain.handle(ROLES_CHANNELS.save, (_event, role: unknown): RoleSaveResult => store.save(role));
+}
+
+/**
+ * Papéis de sessão (item 12a) — the role a `claude` spawn carries. Explicit from the renderer (a
+ * place that had not started, the Launcher, a fork); else the role of the place that holds the
+ * resumed conversation, or the conversation a renewal replaces. Read from `mindscape.json`, which
+ * the renderer keeps saved; any failure → no role (the session still opens).
+ */
+function roleIdForSpawn(explicit: string | undefined, launcherArgs: readonly string[], renewalId: string | undefined): string | undefined {
+  if (explicit) return explicit;
+  const resumeIndex = launcherArgs.indexOf('-r');
+  const resumed = resumeIndex !== -1 && !launcherArgs.includes('--fork-session') ? launcherArgs[resumeIndex + 1] : undefined;
+  const predecessor = renewalId ? sessionRenewal?.get(renewalId)?.previousSessionId : undefined;
+  const sessionId = resumed ?? predecessor;
+  if (!sessionId) return undefined;
+  try {
+    const doc = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load();
+    return roleOfSession(doc, sessionId);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Sessão renovada em voo (B36) — `renewal:prepare` writes the handoff instructions for the session
  * running in `ptyId` (its CURRENT conversation: `/clear` and `/resume` move it) and names the
@@ -3149,6 +3188,7 @@ void app.whenReady().then(async () => {
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   registerMindscapeIpcHandlers(); // Mindscape V1
+  registerRolesIpcHandlers(); // Papéis de sessão (item 12a)
   registerMindscapeTurnEnded(); // Mindscape, fatia 03
   registerSessionRenewalIpcHandlers(); // Sessão renovada em voo (B36)
   registerGestureDiary(); // Diário de gestos (B35)

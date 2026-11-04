@@ -19,6 +19,7 @@ import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
+import type { DonelRolesApi } from './roles';
 import type { DonelRenewalApi } from './sessionRenewal';
 import type { DonelLearningApi } from './learning/gestures';
 import type { DonelHealthApi } from './health/ipc';
@@ -294,6 +295,12 @@ export interface PtyCreateOptions {
    * It changes nothing in the argv (the renderer already sent the args).
    */
   renewalId?: string;
+  /**
+   * Papéis de sessão (item 12a) — role of this session (`<userData>/papeis/<id>.md`), sent when the
+   * renderer knows it (a place that had not started, the Launcher, a fork). Absent on a resume or a
+   * renewal: the main reads the role of the place that holds the conversation in `mindscape.json`.
+   */
+  roleId?: string;
 }
 
 /**
@@ -461,6 +468,8 @@ export interface DonelApi {
   chat: DonelChatApi;
   /** Mindscape V1 — one board per project, persisted in `mindscape.json` by the main. */
   mindscape: DonelMindscapeApi;
+  /** Papéis de sessão (item 12a) — the roles in `<userData>/papeis/` (the main is the only writer). */
+  roles: DonelRolesApi;
   /** Diário de gestos — what the owner does, kept only on this machine as examples for a local model (B35). */
   learning: DonelLearningApi;
   /** 015-jobu-pet — the Jobu on the desktop. Exposed in both windows (the main one and the pet's); each one uses its own half. */

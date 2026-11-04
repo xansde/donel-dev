@@ -9,17 +9,22 @@ import { organizeBoard, organizeColumnOf, type OrganizeEntry } from '../../../sh
 import type { RendererGesture } from '../../../shared/learning/gestures';
 import type { SessionRegistry } from '../../../shared/sessionRegistry';
 import { fitImage, imageBoxAt, isPrintInputType, MAX_PRINT_BYTES } from '../../../shared/mindscape/images';
+import { roleColorVar, type SessionRole } from '../../../shared/roles';
 import {
   addLink,
   addOwnerCard,
+  addPlace,
   archiveCard,
   editOwnerCard,
+  placeCardId,
+  placeOfSession,
   removeLink,
-  sessionCardId,
   setOwnerColor,
+  setPlaceRole,
   toggleLinkArrow,
   visibleLinks,
   type MindscapeCard as Card,
+  type SessionPlaceCard,
   type InkDrawing,
   type MindscapeDoc,
   type MindscapeDrawing,
@@ -31,7 +36,8 @@ import type { TabColorToken } from '../../../shared/tabAppearance';
 import { EMPTY_ITEMS, ERASER_RADIUS_PX, isDrawTool, MindscapeBoard, sizesOf, type DrawGesture } from './MindscapeBoard';
 import { MindscapeDrawingLayer } from './MindscapeDrawingLayer';
 import { MindscapeLinkLayer, MindscapeOutlineLayer, useCardSizes } from './MindscapeLinks';
-import { MindscapeNoteCard, MindscapeOwnerCard, MindscapeSessionCard, STRIPE_BY_TOKEN } from './MindscapeCard';
+import { MindscapeNoteCard, MindscapeOwnerCard, MindscapeSessionCard, STRIPE_BY_TOKEN, type PlaceRoleSeal } from './MindscapeCard';
+import { RoleMenu } from './RoleMenu';
 import { MindscapeSelectionLayer } from './MindscapeSelectionLayer';
 import { MindscapeToolbar, type DrawStyle } from './MindscapeToolbar';
 import { preparePrint, useMindscapeImages } from './useMindscapeImage';
@@ -50,6 +56,8 @@ export interface MindscapeLiveSession {
   readonly stateEnteredAt: number;
   /** Segundo plano visível — tasks running in the background (0 = none). */
   readonly background?: number;
+  /** Item 12a — role the tab was launched with (gives the role to a place born from this conversation). */
+  readonly roleId?: string;
 }
 
 export interface MindscapeScreenProps {
@@ -91,11 +99,18 @@ export interface MindscapeScreenProps {
   readonly onResume?: (sessionId: string, projectPath: string, name: string) => void;
   /** Diário de gestos — what the owner does on the board (kept only on this machine). */
   readonly onGesture?: (gesture: RendererGesture) => void;
+  /** Item 12a — the roles of `<userData>/papeis/` (seal of the places, "＋ Sessão com papel…"). */
+  readonly roles?: readonly SessionRole[];
+  /** Item 12a — double click on a place that has not started: open its session with its role. */
+  readonly onStartPlace?: (placeId: string, projectPath: string) => void;
+  /** Item 12b — "Papéis…": the screen to create and edit roles. */
+  readonly onManageRoles?: () => void;
   /** Clock of the "antigas" rule (tests pin it). */
   readonly now?: () => number;
 }
 
 const NO_REGISTRY: SessionRegistry = {};
+const NO_ROLES: readonly SessionRole[] = [];
 
 /** Margin of the new owner post-it from the visible top-left corner of the board. */
 const NEW_CARD_MARGIN = 40;
@@ -181,6 +196,9 @@ export function MindscapeScreen({
   onResume,
   onGesture,
   now = Date.now,
+  roles = NO_ROLES,
+  onStartPlace,
+  onManageRoles,
 }: MindscapeScreenProps): React.JSX.Element {
   const boardPaths = Object.keys(doc.boards);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(initialProjectPath);
@@ -263,9 +281,25 @@ export function MindscapeScreen({
   const resume = (sessionId: string): void => {
     if (board) onResume?.(sessionId, board.projectPath, dormantName(sessionId));
   };
+  // Item 12a — places that have not started yet: always drawn, a double click opens their session.
+  const pendingPlaces: readonly SessionPlaceCard[] = board
+    ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session' && card.sessionId === undefined)
+    : [];
+  const startPlace = (placeId: string): void => {
+    if (board) onStartPlace?.(placeId, board.projectPath);
+  };
+  const roleSealOf = (roleId: string | undefined): PlaceRoleSeal | undefined => {
+    if (!roleId) return undefined;
+    const role = roles.find((candidate) => candidate.id === roleId);
+    // A role whose file is gone still shows on its place, by its id, in a neutral color.
+    return role ? { name: role.name, color: roleColorVar(role.color) } : { name: roleId, color: 'var(--text-muted)' };
+  };
+  /** Item 12a — the place whose seal menu is open (only a place that has not started). */
+  const [roleMenuPlaceId, setRoleMenuPlaceId] = useState<string | undefined>(undefined);
+  const closeRoleMenu = (): void => setRoleMenuPlaceId(undefined);
   const visibleCards = board
     ? Object.values(board.cards).filter((card) => {
-        if (card.kind === 'session') return liveSessionIds.has(card.sessionId) || dormantIds.has(card.sessionId);
+        if (card.kind === 'session') return card.sessionId === undefined || liveSessionIds.has(card.sessionId) || dormantIds.has(card.sessionId);
         if (card.kind === 'session-note') return !foldedIds.has(card.sessionId);
         return true;
       })
@@ -275,8 +309,9 @@ export function MindscapeScreen({
   const cardRects: CardRect[] = [];
   if (board) {
     const ordered = [
-      ...boardSessions.map((session) => board.cards[sessionCardId(session.sessionId)]).filter((card): card is Card => card !== undefined),
-      ...dormantDrawn.map((entry) => board.cards[sessionCardId(entry.sessionId)]).filter((card): card is Card => card !== undefined),
+      ...boardSessions.map((session) => placeOfSession(board, session.sessionId)).filter((card): card is SessionPlaceCard => card !== undefined),
+      ...dormantDrawn.map((entry) => board.cards[entry.cardId]).filter((card): card is Card => card !== undefined),
+      ...pendingPlaces,
       ...Object.values(board.cards).filter((card) => card.kind !== 'session' && visibleIds.has(card.id)),
     ];
     for (const card of ordered) {
@@ -300,8 +335,10 @@ export function MindscapeScreen({
   const clearSelection = (): void => setSelection(EMPTY_ITEMS);
   // "Ir ao terminal" and the hint: exactly one session post-it selected, nothing else.
   const onlyCard = live.cards.length === 1 && live.drawings.length === 0 ? board?.cards[live.cards[0]!] : undefined;
-  const selectedSession = onlyCard?.kind === 'session' ? boardSessions.find((session) => session.sessionId === onlyCard.sessionId) : undefined;
-  const selectedDormantId = onlyCard?.kind === 'session' && dormantIds.has(onlyCard.sessionId) ? onlyCard.sessionId : undefined;
+  const onlySessionId = onlyCard?.kind === 'session' ? onlyCard.sessionId : undefined;
+  const selectedSession = onlySessionId ? boardSessions.find((session) => session.sessionId === onlySessionId) : undefined;
+  const selectedDormantId = onlySessionId && dormantIds.has(onlySessionId) ? onlySessionId : undefined;
+  const selectedPendingId = onlyCard?.kind === 'session' && onlyCard.sessionId === undefined ? onlyCard.id : undefined;
 
   /** Rule 7 — one undoable gesture; favorites (and their notes) stay where they are. */
   const organize = (): void => {
@@ -310,11 +347,20 @@ export function MindscapeScreen({
     const entries: OrganizeEntry[] = [
       ...boardSessions
         .filter((session) => !isFavorite(session.sessionId))
-        .map((session) => ({
-          sessionId: session.sessionId,
-          column: organizeColumnOf(session.state, sessionHighlight(session.state, session.stateEnteredAt, seenAt[session.sessionId])),
-        })),
-      ...dormantDrawn.filter((entry) => !entry.pinned).map((entry) => ({ sessionId: entry.sessionId, column: 'closed' as const })),
+        .flatMap((session) => {
+          const place = placeOfSession(board, session.sessionId);
+          if (!place) return [];
+          return [
+            {
+              cardId: place.id,
+              sessionId: session.sessionId,
+              column: organizeColumnOf(session.state, sessionHighlight(session.state, session.stateEnteredAt, seenAt[session.sessionId])),
+            },
+          ];
+        }),
+      // A place that has not started waits for the owner's double click.
+      ...pendingPlaces.map((place) => ({ cardId: place.id, column: 'waiting' as const })),
+      ...dormantDrawn.filter((entry) => !entry.pinned).map((entry) => ({ cardId: entry.cardId, sessionId: entry.sessionId, column: 'closed' as const })),
     ];
     if (entries.length === 0) return;
     const measured = { ...sizes };
@@ -479,7 +525,9 @@ export function MindscapeScreen({
         ? selectedSession.name
         : selectedDormantId
           ? `${dormantName(selectedDormantId)}: fechada. "Ir ao terminal" ou duplo clique retoma`
-          : SELECT_HINT);
+          : selectedPendingId
+            ? 'Ainda não começou. "Ir ao terminal" ou duplo clique abre a sessão com o papel; Delete tira o lugar'
+            : SELECT_HINT);
   const selectedDrawings = board ? board.drawings.filter((drawing) => live.drawings.includes(drawing.id)) : [];
 
   return (
@@ -559,12 +607,24 @@ export function MindscapeScreen({
           setCreatedCardId(id);
           onAction(projectPath, (current) => addOwnerCard(current, projectPath, { id, createdAt, origin }));
         }}
-        canGoToTerminal={Boolean(selectedSession) || (Boolean(selectedDormantId) && Boolean(onResume))}
+        roles={roles}
+        onNewPlace={(roleId) => {
+          if (!board) return;
+          const { projectPath } = board;
+          const id = placeCardId(crypto.randomUUID());
+          const origin = screenToWorld({ x: NEW_CARD_MARGIN, y: NEW_CARD_MARGIN }, { pan: board.pan, zoom: board.zoom });
+          onAction(projectPath, (current) => addPlace(current, projectPath, { id, origin, ...(roleId ? { roleId } : {}) }));
+          setTool('select');
+          select({ cards: [id], drawings: [] });
+        }}
+        onManageRoles={onManageRoles}
+        canGoToTerminal={Boolean(selectedSession) || (Boolean(selectedDormantId) && Boolean(onResume)) || (Boolean(selectedPendingId) && Boolean(onStartPlace))}
         onGoToTerminal={() => {
           if (selectedSession) onGoToTerminal(selectedSession.tabId);
           else if (selectedDormantId) resume(selectedDormantId);
+          else if (selectedPendingId) startPlace(selectedPendingId);
         }}
-        canOrganize={boardSessions.length + dormantDrawn.length > 0}
+        canOrganize={boardSessions.length + dormantDrawn.length + pendingPlaces.length > 0}
         onOrganize={organize}
         oldCount={sessionsView?.oldSessionIds.size ?? 0}
         showOld={showOld}
@@ -635,13 +695,15 @@ export function MindscapeScreen({
                 }}
               />
               {boardSessions.map((session) => {
-                const card = board.cards[sessionCardId(session.sessionId)];
+                const card = placeOfSession(board, session.sessionId);
                 if (!card) return null;
                 const position = positionOf(card);
                 return (
                   <MindscapeSessionCard
                     key={session.tabId}
+                    cardId={card.id}
                     sessionId={session.sessionId}
+                    role={roleSealOf(card.roleId)}
                     name={session.name}
                     state={session.state}
                     color={session.color}
@@ -657,13 +719,15 @@ export function MindscapeScreen({
                 );
               })}
               {dormantDrawn.map((entry) => {
-                const card = board.cards[sessionCardId(entry.sessionId)];
-                if (!card) return null;
+                const card = board.cards[entry.cardId];
+                if (card?.kind !== 'session') return null;
                 const position = positionOf(card);
                 return (
                   <MindscapeSessionCard
                     key={card.id}
+                    cardId={card.id}
                     sessionId={entry.sessionId}
+                    role={roleSealOf(card.roleId)}
                     name={dormantName(entry.sessionId)}
                     state="done"
                     color="none"
@@ -677,6 +741,49 @@ export function MindscapeScreen({
                   />
                 );
               })}
+              {pendingPlaces.map((card) => {
+                const position = positionOf(card);
+                const role = roles.find((candidate) => candidate.id === card.roleId);
+                return (
+                  <MindscapeSessionCard
+                    key={card.id}
+                    cardId={card.id}
+                    name={role?.name ?? 'Sessão nova'}
+                    state="done"
+                    color="none"
+                    x={position.x}
+                    y={position.y}
+                    highlight="dimmed"
+                    selected={live.cards.includes(card.id)}
+                    onOpen={() => startPlace(card.id)}
+                    notStarted
+                    role={roleSealOf(card.roleId)}
+                    onRoleClick={() => setRoleMenuPlaceId((open) => (open === card.id ? undefined : card.id))}
+                  />
+                );
+              })}
+              {(() => {
+                // Item 12a — the seal menu of a place that has not started: another role, only now.
+                const place = roleMenuPlaceId ? board.cards[roleMenuPlaceId] : undefined;
+                if (place?.kind !== 'session' || place.sessionId !== undefined) return null;
+                const position = positionOf(place);
+                return (
+                  <div className={styles.placeRoleMenu} style={{ left: position.x + 110, top: position.y + 6 }}>
+                    <RoleMenu
+                      label="Papel deste lugar"
+                      roles={roles}
+                      current={place.roleId}
+                      onClose={closeRoleMenu}
+                      onManage={onManageRoles}
+                      onPick={(roleId) => {
+                        closeRoleMenu();
+                        const { projectPath } = board;
+                        onAction(projectPath, (current) => setPlaceRole(current, projectPath, place.id, roleId));
+                      }}
+                    />
+                  </div>
+                );
+              })()}
               {Object.values(board.cards).map((card) => {
                 if (!visibleIds.has(card.id)) return null;
                 const position = positionOf(card);

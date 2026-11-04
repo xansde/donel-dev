@@ -3,6 +3,7 @@ import type { SegmentedControlOption, SelectOption } from '@donel-dev/design-sys
 import { useEffect, useState } from 'react';
 import type { ProjectInfo, ProviderSummaryDto } from '../../shared';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../../shared/commandBuilder';
+import type { SessionRole } from '../../shared/roles';
 import { ProviderPicker } from './ProviderPicker';
 import styles from './Launcher.module.css';
 
@@ -66,6 +67,8 @@ export interface LauncherLaunchOptions {
   providerId: string | null;
   /** "Isolar em worktree" → `--worktree <nome>` (o nome é escolhido por quem lança, no App). */
   worktree: boolean;
+  /** Papéis de sessão (item 12a) — role of the session; `null` = no role. */
+  roleId: string | null;
 }
 
 export interface LauncherProps {
@@ -77,10 +80,15 @@ export interface LauncherProps {
   launcherDefaults?: { model: ModelAlias; effort: EffortLevel; permissionMode: PermissionMode; worktree?: boolean };
   /** T1320 — registry de providers classe A; `[]` = campo "Provedor" nem aparece (C14/D6). */
   providers?: readonly ProviderSummaryDto[];
+  /** Papéis de sessão (item 12a) — `[]` = the "Papel" field does not show. */
+  roles?: readonly SessionRole[];
   onLaunch: (options: LauncherLaunchOptions) => void;
 }
 
-export function Launcher({ projects, defaultProjectPath, launcherDefaults, providers = [], onLaunch }: LauncherProps): React.JSX.Element {
+const NO_ROLE = '';
+
+export function Launcher({ projects, defaultProjectPath, launcherDefaults, providers = [], roles = [], onLaunch }: LauncherProps): React.JSX.Element {
+  const [roleId, setRoleId] = useState<string>(NO_ROLE);
   const [model, setModel] = useState<ModelAlias>(launcherDefaults?.model ?? DEFAULT_MODEL);
   const [effort, setEffort] = useState<EffortLevel>(launcherDefaults?.effort ?? DEFAULT_EFFORT);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(launcherDefaults?.permissionMode ?? DEFAULT_PERMISSION);
@@ -117,12 +125,30 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, provi
       projectName: selectedProject?.name ?? projectPath,
       providerId,
       worktree,
+      roleId: roleId === NO_ROLE ? null : roleId,
     });
   };
+
+  // Item 12a — picking a role fills its suggestions in; every field stays editable afterwards.
+  const pickRole = (next: string): void => {
+    setRoleId(next);
+    const role = roles.find((candidate) => candidate.id === next);
+    if (!role) return;
+    if (role.model) setModel(role.model);
+    if (role.effort) setEffort(role.effort);
+    if (role.permissionMode) setPermissionMode(role.permissionMode);
+    setProviderId(role.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : null);
+  };
+  const roleOptions: SelectOption[] = [
+    { value: NO_ROLE, label: 'Sem papel' },
+    ...roles.map((role) => ({ value: role.id, label: role.name })),
+  ];
 
   return (
     <div className={styles.launcher} data-testid="launcher">
       <h2 className={styles.sectionTitle}>Lançar sessão</h2>
+
+      {roles.length > 0 ? <Select label="Papel" value={roleId} options={roleOptions} onChange={pickRole} /> : null}
 
       <ProviderPicker providers={providers} value={providerId} onChange={setProviderId} />
 

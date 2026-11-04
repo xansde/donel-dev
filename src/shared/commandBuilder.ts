@@ -212,6 +212,30 @@ export function browserMcpConfigArgs(configPath: string): string[] {
   return ['--mcp-config', configPath];
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Papéis de sessão (item 12a) — how the guidance of a role reaches the agent, at EVERY launch, resume and renewal
+// (the app re-injects it; the model does not "remember"). Same shape as `mcpDeliveryFor`: one case per CLI.
+// Claude Code reads it from a file appended to its system prompt (`--append-system-prompt-file`, a hidden option
+// of the CLI, checked in 2.1.317). The CLI records the system prompt once per conversation and reuses it until the
+// conversation is compacted, so passing it on a resume is harmless, and after a compaction it is what comes back.
+// A CLI without such a flag gets the same text as its first message (`firstMessage`).
+
+/** What the spawn needs to hand a role to the CLI. */
+export interface RoleDelivery {
+  /** Arguments appended to the CLI's argv (an option with its value; safe after `--mcp-config`). */
+  readonly args: readonly string[];
+  /** Text to send as the first message, for a CLI without a system-prompt flag (`null` = none). */
+  readonly firstMessage: string | null;
+}
+
+/** The single extension point: how the guidance of a role (written at `promptPath`) reaches `cli`. */
+export function roleDeliveryFor(cli: AgentCli, promptPath: string): RoleDelivery {
+  switch (cli) {
+    case 'claude-code':
+      return { args: ['--append-system-prompt-file', promptPath], firstMessage: null };
+  }
+}
+
 /** The single extension point: how the app's MCP endpoint reaches `cli`. */
 export function mcpDeliveryFor(cli: AgentCli, endpoint: AppMcpEndpoint, configPath: string): McpDelivery {
   switch (cli) {
