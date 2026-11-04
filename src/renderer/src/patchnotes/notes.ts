@@ -22,6 +22,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Uma sessão agora monta o quadro ao vivo, sem reabrir o app: põe lugares com papel, post-its, retângulos, setas e ligações, e cada leva entra como um gesto só, que o Ctrl+Z desfaz. Ela mexe só no que uma sessão criou, nunca no que é seu. Ela também abre outras sessões com papel (nascem ligadas a ela por uma seta, no mesmo lugar onde ela roda), manda mensagem pelas setas do quadro e é avisada quando cada uma termina. A mensagem entra direto no chat da outra, sem pedir aprovação, e só espera enquanto você digita lá ou há uma permissão aberta. Até 4 sessões abertas por uma mesma sessão; a partir da 5ª, aparece "Precisa de você" para permitir ou negar. Novo papel pronto: Líder, que reparte o trabalho e só traz a você o que o time não resolve.',
       },
       {
+        title: 'Sessão na VPS abre direto, sem tela de primeiro uso',
+        text: 'Numa VPS nova, a sessão parava na escolha de tema e de login do Claude, mesmo com a conta já posta lá. Agora ela abre direto na conversa, e a pasta do projeto já vem marcada como confiável.',
+      },
+      {
         title: 'Lugar do Mindscape abre na VPS',
         text: 'Dois cliques num lugar com papel (○) abrem a sessão onde as sessões novas rodam por padrão, a VPS quando ela tem conta, igual ao Launcher. Antes ela abria sempre neste computador.',
       },
