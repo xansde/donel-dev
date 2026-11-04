@@ -209,7 +209,29 @@ export function buildBrowserMcpConfig(endpoint: AppMcpEndpoint): {
  * other flags, and only options (never a bare value) may follow it.
  */
 export function browserMcpConfigArgs(configPath: string): string[] {
-  return ['--mcp-config', configPath];
+  return [...appMcpAllowArgs(), '--mcp-config', configPath];
+}
+
+/**
+ * Quadro por MCP (owner, 04/11) — the board and session tools of the app's server never ask the owner for
+ * permission in any mode: one session talking to another, or building the board, must not stop on a prompt
+ * (the board batch is undoable and the session tools only reach sessions through the owner's links).
+ * Visible in the argv, one comma-separated token so the variadic `--allowedTools` stops at the next option.
+ * The browser tools (`navegador_*`) keep the CLI's normal permission flow.
+ */
+export const APP_MCP_PREAUTHORIZED_TOOLS: readonly string[] = [
+  'quadro_ler',
+  'quadro_aplicar',
+  'papeis_listar',
+  'sessao_quem_sou',
+  'sessao_listar',
+  'sessao_abrir',
+  'sessao_enviar',
+  'sessao_ver_tela',
+].map((tool) => `mcp__donel__${tool}`);
+
+export function appMcpAllowArgs(): string[] {
+  return ['--allowedTools', APP_MCP_PREAUTHORIZED_TOOLS.join(',')];
 }
 
 // ---------------------------------------------------------------------------------------------------------------

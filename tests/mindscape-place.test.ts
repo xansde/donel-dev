@@ -4,6 +4,7 @@ import {
   addPlace,
   appendConversation,
   emptyMindscapeDoc,
+  MINDSCAPE_SCHEMA_VERSION,
   parseMindscapeDoc,
   placeSessionCard,
   placeSessionCards,
@@ -39,7 +40,7 @@ describe('migration of mindscape.json to v3 — nothing is lost', () => {
       },
     };
     const doc = parseMindscapeDoc(v2);
-    expect(doc.schemaVersion).toBe(3);
+    expect(doc.schemaVersion).toBe(MINDSCAPE_SCHEMA_VERSION);
     const board = doc.boards[ATLAS]!;
     expect(board.cards['session:s1']).toEqual({ kind: 'session', id: 'session:s1', sessionId: 's1', previous: [], x: 40, y: 50 });
     expect(board.cards['note:s1']).toMatchObject({ text: 'feito', x: 300, y: 50 });

@@ -34,6 +34,7 @@ import {
 } from '../../shared/browser/guardrails';
 import { parseKeyCombo } from '../../shared/browser/keys';
 import { MCP_SERVER_NAME, type BrowserToolCall, type BrowserToolOutcome } from '../../shared/browser/mcp';
+import type { BoardToolCall } from '../../shared/mindscape/agent-tools';
 import { refusedUploadFolder } from '../../shared/browser/upload';
 import { normalizeBrowserUrl } from '../../shared/browser/url';
 import { BrowserPanels } from './browser-panels';
@@ -53,6 +54,8 @@ export interface BrowserServiceDeps {
   isMainSender(sender: WebContents): boolean;
   /** App version, announced by the MCP server. */
   readonly appVersion: string;
+  /** Quadro por MCP — the Mindscape tools of the same server (main/board-bridge.ts). */
+  executeBoard?(ptyId: string, call: BoardToolCall): Promise<BrowserToolOutcome>;
 }
 
 export interface BrowserService {
@@ -406,7 +409,11 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     return next;
   };
 
-  const mcp = createBrowserMcpServer({ execute: enqueue, serverVersion: deps.appVersion });
+  const mcp = createBrowserMcpServer({
+    execute: enqueue,
+    ...(deps.executeBoard ? { executeBoard: deps.executeBoard } : {}),
+    serverVersion: deps.appVersion,
+  });
 
   const known = (sender: WebContents, ptyId: unknown): ptyId is string => deps.isMainSender(sender) && isPtyId(ptyId) && livePtys.has(ptyId);
 
