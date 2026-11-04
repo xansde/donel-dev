@@ -82,12 +82,14 @@ export interface LauncherProps {
   providers?: readonly ProviderSummaryDto[];
   /** Papéis de sessão (item 12a) — `[]` = the "Papel" field does not show. */
   roles?: readonly SessionRole[];
+  /** Item 12b — "Papéis…": the screen to create and edit roles. */
+  onManageRoles?: () => void;
   onLaunch: (options: LauncherLaunchOptions) => void;
 }
 
 const NO_ROLE = '';
 
-export function Launcher({ projects, defaultProjectPath, launcherDefaults, providers = [], roles = [], onLaunch }: LauncherProps): React.JSX.Element {
+export function Launcher({ projects, defaultProjectPath, launcherDefaults, providers = [], roles = [], onManageRoles, onLaunch }: LauncherProps): React.JSX.Element {
   const [roleId, setRoleId] = useState<string>(NO_ROLE);
   const [model, setModel] = useState<ModelAlias>(launcherDefaults?.model ?? DEFAULT_MODEL);
   const [effort, setEffort] = useState<EffortLevel>(launcherDefaults?.effort ?? DEFAULT_EFFORT);
@@ -148,7 +150,16 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, provi
     <div className={styles.launcher} data-testid="launcher">
       <h2 className={styles.sectionTitle}>Lançar sessão</h2>
 
-      {roles.length > 0 ? <Select label="Papel" value={roleId} options={roleOptions} onChange={pickRole} /> : null}
+      {roles.length > 0 ? (
+        <div className={styles.field}>
+          <Select label="Papel" value={roleId} options={roleOptions} onChange={pickRole} />
+          {onManageRoles ? (
+            <Button variant="ghost" onClick={onManageRoles}>
+              Papéis…
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       <ProviderPicker providers={providers} value={providerId} onChange={setProviderId} />
 

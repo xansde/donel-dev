@@ -1,0 +1,124 @@
+/* Item 12b — the screen of the roles: seals at the top, the form below. */
+.dialog {
+  --modal-max-height: calc(100vh - var(--titlebar-height, 34px) - 2 * var(--space-3));
+}
+
+.list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--space-1);
+}
+
+.chip {
+  height: 22px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  border-radius: var(--radius-sm);
+  color: var(--role, var(--text-muted));
+  border: 1px solid color-mix(in srgb, var(--role, var(--text-muted)) 50%, transparent);
+  background: color-mix(in srgb, var(--role, var(--text-muted)) 14%, var(--bg-app));
+  cursor: pointer;
+}
+
+.chip[aria-selected='true'] {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.chipNew {
+  border-style: dashed;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: var(--space-1);
+}
+
+.label {
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.swatches {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--role);
+  cursor: pointer;
+}
+
+.swatch[aria-checked='true'] {
+  border-color: var(--text-primary);
+}
+
+.swatch:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.preview {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  color: var(--role);
+  border: 1px solid color-mix(in srgb, var(--role) 50%, transparent);
+  background: color-mix(in srgb, var(--role) 14%, var(--bg-app));
+}
+
+.suggestions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.guidance {
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+  padding: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+  line-height: 1.45;
+  color: var(--text-primary);
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+}
+
+.guidance:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.note {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.error {
+  margin: 4px 0 0;
+  font-size: var(--text-caption-size);
+  color: var(--state-error);
+}
