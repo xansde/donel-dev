@@ -151,6 +151,7 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
+import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 
@@ -788,6 +789,36 @@ const donelApi: DonelApi = {
     },
     resizeStep: (direction: 1 | -1) => {
       ipcRenderer.send(PET_CHANNELS.resizeStep, { direction });
+    },
+  },
+
+  // Item 18 (PDA mindscape-openrig) — the conversation with the Jobu as Líder in its own window. Each window uses its half.
+  lider: {
+    // --- main window ---
+    report: (report: LiderReport) => {
+      ipcRenderer.send(LIDER_CHANNELS.report, report);
+    },
+    onDeliver: (listener: (payload: LiderSendPayload, reply: (result: LiderSendResult) => void) => void) => {
+      const handler = (_event: unknown, payload: { id: string; text: string }): void =>
+        listener({ text: payload.text }, (result) => ipcRenderer.send(LIDER_CHANNELS.delivered, { id: payload.id, result }));
+      return subscribeChannel(ipcRenderer, LIDER_CHANNELS.deliver, handler);
+    },
+    onActivateTab: (listener: (payload: { readonly tabId: string }) => void) => {
+      const handler = (_event: unknown, payload: { readonly tabId: string }): void => listener(payload);
+      return subscribeChannel(ipcRenderer, LIDER_CHANNELS.activateTab, handler);
+    },
+    // --- floating window ---
+    getState: () => ipcRenderer.invoke(LIDER_CHANNELS.getState) as Promise<LiderState>,
+    onState: (listener: (state: LiderState) => void) => {
+      const handler = (_event: unknown, state: LiderState): void => listener(state);
+      return subscribeChannel(ipcRenderer, LIDER_CHANNELS.state, handler);
+    },
+    send: (payload: LiderSendPayload) => ipcRenderer.invoke(LIDER_CHANNELS.send, payload) as Promise<LiderSendResult>,
+    setOnTop: (onTop: boolean) => {
+      ipcRenderer.send(LIDER_CHANNELS.setOnTop, onTop);
+    },
+    showTab: () => {
+      ipcRenderer.send(LIDER_CHANNELS.showTab);
     },
   },
 };

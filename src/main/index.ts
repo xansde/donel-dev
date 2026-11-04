@@ -280,6 +280,7 @@ import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
 // 015-jobu-pet — the Jobu on the desktop: service (core + window + tick), the window and the `pet:*` handlers.
 import { guardNavigation } from './navigation-guard';
 import { registerPetIpcHandlers } from './pet/pet-ipc';
+import { createLiderService, type LiderService } from './lider/lider-service';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
 import { createFullscreenWatcher } from './pet/fullscreen-watcher';
@@ -1179,6 +1180,8 @@ function startPetService(): void {
       persistAppConfig();
     },
     createWindow: (options) => createPetWindow(options, seams),
+    // Item 18 — a click on the Jobu with nobody waiting (and the item of his menu) opens the conversation with the Líder.
+    toggleLider: () => ensureLiderService().toggle(),
     // 016-jobu-faxina — the sweep of the menu "Fazer faxina", and the click of its bubble (the Explorer opens the folder).
     runSweep: createSweepRunner({
       git: createGitRunner(),
@@ -1236,6 +1239,29 @@ function startPetService(): void {
 function onMainWindowClosed(): void {
   petService?.dispose();
   petService = null;
+  // Item 18 — the floating window of the Líder dies with the main one too.
+  liderService?.dispose();
+  liderService = null;
+}
+
+/** Item 18 (PDA mindscape-openrig) — the floating window of the conversation with the Jobu as Líder. */
+let liderService: LiderService | null = null;
+
+function ensureLiderService(): LiderService {
+  if (liderService !== null) return liderService;
+  liderService = createLiderService({
+    getMainWindow,
+    config: () => appConfig.liderWindow,
+    persist: (next) => {
+      appConfig = { ...appConfig, liderWindow: next };
+      persistAppConfig();
+    },
+    petBounds: () => {
+      const pet = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed() && window.getTitle() === 'Jobu Donel');
+      return pet ? pet.getBounds() : null;
+    },
+  });
+  return liderService;
 }
 
 /**
@@ -1272,6 +1298,7 @@ function createMainWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();
+    ensureLiderService(); // item 18 — the IPC of the Líder exists as soon as the main window reports
     startPetService(); // 015 (R21): the Jobu is only born after the main window appears
   });
 

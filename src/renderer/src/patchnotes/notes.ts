@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'Converse com o Jobu, o Líder do time, numa janela própria',
+        text: 'Clique no Jobu (ou em "Conversar com o Líder" no menu dele) e abre uma janela de conversa que você arrasta, redimensiona e leva para outro monitor; o 📌 deixa ela sempre por cima, e ela lembra onde estava. Quem responde é o Líder do projeto selecionado: a primeira mensagem abre a sessão dele, onde as sessões novas rodam por padrão (a VPS, quando tem conta). A última fala aparece em destaque no balão, o ≡ mostra a conversa toda, e permissões e perguntas dele se respondem ali mesmo. Quando alguém está esperando você, o clique no Jobu continua levando até essa sessão.',
+      },
+      {
         title: 'Lugar do Mindscape abre na VPS',
         text: 'Dois cliques num lugar com papel (○) abrem a sessão onde as sessões novas rodam por padrão, a VPS quando ela tem conta, igual ao Launcher. Antes ela abria sempre neste computador.',
       },

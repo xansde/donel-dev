@@ -96,13 +96,40 @@ export function registerChatIpcHandlers(deps: ChatIpcDeps): ChatIpcRegistration 
   if (!deps.enabled) return { registered: false, dispose: () => undefined };
   const { ipcMain, hub } = deps;
 
-  ipcMain.handle(CHAT_CHANNELS.attach, (_e, input: ChatAttachInput): Promise<ChatAttachOutput> => {
+  // Item 18 — more than one window may follow the same conversation (the main window and the floating window of
+  // the Líder). The hub has one session per tab, so it is detached only when the LAST window lets go of it.
+  const holders = new Map<string, Set<number>>();
+  const release = (ptyId: string, senderId: number): void => {
+    const set = holders.get(ptyId);
+    if (set === undefined || !set.delete(senderId)) return;
+    if (set.size > 0) return;
+    holders.delete(ptyId);
+    hub.detach(ptyId);
+  };
+  const watched = new Set<number>();
+
+  ipcMain.handle(CHAT_CHANNELS.attach, (e, input: ChatAttachInput): Promise<ChatAttachOutput> => {
     if (!isString(input?.ptyId)) throw new Error('chat:attach: ptyId inválido');
+    const senderId = e.sender.id;
+    let set = holders.get(input.ptyId);
+    if (set === undefined) {
+      set = new Set();
+      holders.set(input.ptyId, set);
+    }
+    set.add(senderId);
+    if (!watched.has(senderId)) {
+      watched.add(senderId);
+      // A window that goes away lets go of everything it held.
+      e.sender.once('destroyed', () => {
+        watched.delete(senderId);
+        for (const ptyId of [...holders.keys()]) release(ptyId, senderId);
+      });
+    }
     return hub.attach(input.ptyId);
   });
 
-  ipcMain.handle(CHAT_CHANNELS.detach, (_e, input: ChatDetachInput): void => {
-    if (isString(input?.ptyId)) hub.detach(input.ptyId);
+  ipcMain.handle(CHAT_CHANNELS.detach, (e, input: ChatDetachInput): void => {
+    if (isString(input?.ptyId)) release(input.ptyId, e.sender.id);
   });
 
   ipcMain.handle(CHAT_CHANNELS.loadOlder, (_e, input: ChatLoadOlderInput): Promise<ChatLoadOlderOutput> => {
