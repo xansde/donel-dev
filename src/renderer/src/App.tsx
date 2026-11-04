@@ -2336,10 +2336,16 @@ export function App(): React.JSX.Element {
     setAppMode('geral');
   };
 
-  // Item 18 (PDA mindscape-openrig) — the Jobu as Líder, in a floating window. This window owns the tabs, so it
-  // says which one is the Líder of the selected project (`lider:report`) and delivers what the owner writes there
+  // Item 18 (PDA mindscape-openrig) — the Jobu as Líder, in a bubble that comes out of him. This window owns the tabs,
+  // so it says which one is the Líder of the current project (`lider:report`) and delivers what the owner writes there
   // (`lider:deliver`) through the tab's own send machine; with no live Líder, the first message opens one.
   const liderTabsRef = useRef<Record<string, string>>({});
+  // The project of the Líder: the one selected in the sidebar; with none (the selector often says "Selecionar
+  // projeto" while a tab is open), the project of the active tab; with no tab, the last project something was opened in.
+  const lastLiderProjectRef = useRef<string | undefined>(undefined);
+  const activeTabCwd = tabs.find((tab) => tab.id === activeTabId)?.cwd;
+  const liderProjectPath = selectedProjectPath ?? activeTabCwd ?? lastLaunch?.cwd ?? lastLiderProjectRef.current;
+  if (liderProjectPath !== undefined) lastLiderProjectRef.current = liderProjectPath;
   const findLiderTab = (projectPath: string | undefined): TabState | undefined => {
     if (!projectPath) return undefined;
     const alive = (tab: TabState): boolean => tab.sessionType === 'claude' && tab.cwd === projectPath && tabExits[tab.id] === undefined;
@@ -2355,14 +2361,14 @@ export function App(): React.JSX.Element {
       return Object.values(board.cards).some((card) => card.kind === 'session' && card.roleId === LIDER_ROLE_ID && card.sessionId === tab.claudeSessionId);
     });
   };
-  const liderTab = findLiderTab(selectedProjectPath);
+  const liderTab = findLiderTab(liderProjectPath);
   const liderRoleAvailable = roles.some((role) => role.id === LIDER_ROLE_ID);
   const lastLiderReportRef = useRef<string | null>(null);
   useEffect(() => {
-    const project = projects.find((candidate) => candidate.path === selectedProjectPath);
+    const project = projects.find((candidate) => candidate.path === liderProjectPath);
     const report: LiderReport = {
-      projectPath: selectedProjectPath ?? null,
-      projectName: project?.name ?? (selectedProjectPath ? (selectedProjectPath.split(/[\\/]/).filter(Boolean).pop() ?? null) : null),
+      projectPath: liderProjectPath ?? null,
+      projectName: project?.name ?? (liderProjectPath ? (liderProjectPath.split(/[\\/]/).filter(Boolean).pop() ?? null) : null),
       tabId: liderTab?.id ?? null,
       ptyId: liderTab ? (chatPtyIds[liderTab.id] ?? null) : null,
       name: liderTab ? resolveTabName(liderTab) : null,
@@ -2375,8 +2381,8 @@ export function App(): React.JSX.Element {
   });
   const liderDeliverRef = useRef<(text: string) => LiderSendResult>(() => ({ ok: false, reason: 'O Donel ainda está abrindo.' }));
   liderDeliverRef.current = (text: string): LiderSendResult => {
-    const projectPath = selectedProjectPath;
-    if (!projectPath) return { ok: false, reason: 'Escolha um projeto na barra lateral do Donel.' };
+    const projectPath = liderProjectPath;
+    if (!projectPath) return { ok: false, reason: 'Abra um projeto no Donel.' };
     let tabId = findLiderTab(projectPath)?.id;
     if (tabId === undefined) {
       const role = roles.find((candidate) => candidate.id === LIDER_ROLE_ID);

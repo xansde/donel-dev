@@ -789,6 +789,9 @@ const donelApi: DonelApi = {
     setListOpen: (open: boolean) => {
       ipcRenderer.send(PET_CHANNELS.listOpen, { open });
     },
+    setTalk: (open: boolean) => {
+      ipcRenderer.send(PET_CHANNELS.talk, { open });
+    },
     openContextMenu: (point?: PetDragPayload) => {
       ipcRenderer.send(PET_CHANNELS.contextMenu, point);
     },
@@ -806,7 +809,7 @@ const donelApi: DonelApi = {
     },
   },
 
-  // Item 18 (PDA mindscape-openrig) — the conversation with the Jobu as Líder in its own window. Each window uses its half.
+  // Item 18 (PDA mindscape-openrig) — the conversation with the Jobu as Líder, in a bubble of the Jobu. Each window uses its half.
   lider: {
     // --- main window ---
     report: (report: LiderReport) => {
@@ -821,16 +824,13 @@ const donelApi: DonelApi = {
       const handler = (_event: unknown, payload: { readonly tabId: string }): void => listener(payload);
       return subscribeChannel(ipcRenderer, LIDER_CHANNELS.activateTab, handler);
     },
-    // --- floating window ---
+    // --- pet window (the bubble of the Líder) ---
     getState: () => ipcRenderer.invoke(LIDER_CHANNELS.getState) as Promise<LiderState>,
     onState: (listener: (state: LiderState) => void) => {
       const handler = (_event: unknown, state: LiderState): void => listener(state);
       return subscribeChannel(ipcRenderer, LIDER_CHANNELS.state, handler);
     },
     send: (payload: LiderSendPayload) => ipcRenderer.invoke(LIDER_CHANNELS.send, payload) as Promise<LiderSendResult>,
-    setOnTop: (onTop: boolean) => {
-      ipcRenderer.send(LIDER_CHANNELS.setOnTop, onTop);
-    },
     showTab: () => {
       ipcRenderer.send(LIDER_CHANNELS.showTab);
     },

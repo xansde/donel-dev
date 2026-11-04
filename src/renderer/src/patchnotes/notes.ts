@@ -26,8 +26,8 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Uma sessão que roda neste computador agora pode abrir uma sessão com papel na VPS (ou o contrário), em vez de só no mesmo lugar onde ela roda. Ela vê os lugares disponíveis e escolhe pelo nome.',
       },
       {
-        title: 'Converse com o Jobu, o Líder do time, numa janela própria',
-        text: 'Clique no Jobu (ou em "Conversar com o Líder" no menu dele) e abre uma janela de conversa que você arrasta, redimensiona e leva para outro monitor; o 📌 deixa ela sempre por cima, e ela lembra onde estava. Quem responde é o Líder do projeto selecionado: a primeira mensagem abre a sessão dele, onde as sessões novas rodam por padrão (a VPS, quando tem conta). A última fala aparece em destaque no balão, o ≡ mostra a conversa toda, e permissões e perguntas dele se respondem ali mesmo. Quando alguém está esperando você, o clique no Jobu continua levando até essa sessão.',
+        title: 'Converse com o Jobu, o Líder do time, num balão de fala',
+        text: 'Clique no Jobu e sobe dele um balão de conversa, que vai junto quando você o arrasta. Quem responde é o Líder do projeto aberto: a primeira mensagem abre a sessão dele, onde as sessões novas rodam por padrão (a VPS, quando tem conta). A última fala dele aparece em destaque, o ≡ mostra a conversa toda, e você escreve em "você:" (Enter envia). Quem está esperando você aparece dentro do balão, com um clique para ir até a sessão, e a borda fica vermelha. Esc ou outro clique no Jobu fecha.',
       },
       {
         title: 'Sessões montam o Mindscape e trabalham em time',

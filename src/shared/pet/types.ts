@@ -331,6 +331,8 @@ export interface PetView {
   readonly silenced: boolean;
   /** Height of the drawing in DIP (FR-033). */
   readonly size: number;
+  /** Item 18: how tall the bubble of the conversation with the Líder is, in DIP; `0` = closed. */
+  readonly talk: number;
 }
 
 /** The window-side facts that complete a view: size, docking and alignment come from placement. */
@@ -338,4 +340,6 @@ export interface PetUi {
   readonly size: number;
   readonly docked: boolean;
   readonly align: PetAlign;
+  /** Item 18: the height of the open bubble of the Líder; `0` (or absent) = closed. */
+  readonly talk?: number;
 }

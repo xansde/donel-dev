@@ -43,6 +43,7 @@ import {
   isDocked,
   isPlacementVisible,
   stepSize,
+  talkHeightFor,
   windowBoundsFor,
 } from '../../shared/pet/placement';
 import type {
@@ -108,8 +109,11 @@ export interface PetWindowHandle {
   hide(): void;
   /** `true` = the pet receives the mouse; `false` = every click goes through the transparent void (R9). */
   setInteractive(interactive: boolean): void;
-  /** The window is focusable only while the list is open (R12). */
-  setListOpen(open: boolean): void;
+  /**
+   * The window is focusable only while the list or the bubble of the Líder is open (R12). `takeFocus` = it also takes
+   * the keyboard now (the gesture that opened them); turning it off hands the focus back first.
+   */
+  setFocusable(focusable: boolean, takeFocus: boolean): void;
   /** Tells the screen to close the list: the window lost the focus, and the page itself never hears about it. */
   requestCloseList(): void;
   /** Sets the whole rectangle of the window, in DIP: every move goes through here (see the note at the top about `setPosition`). */
@@ -186,12 +190,6 @@ export interface PetServiceDeps {
   readonly onNotices?: (events: readonly BubbleEvent[]) => void;
   /** notificacoes-completas: the number of sessions waiting for the owner, unseen, every time it changes (the taskbar badge). */
   readonly onWaitingCountChanged?: (count: number) => void;
-  /**
-   * Item 18 (PDA mindscape-openrig): opens or closes the floating window of the conversation with the Líder. A click on
-   * the Jobu with nobody waiting does this instead of bringing the Donel to the front; the menu has an item for it.
-   * Absent = the click keeps the 015 behaviour.
-   */
-  readonly toggleLider?: () => void;
 }
 
 export interface PetService {
@@ -261,6 +259,13 @@ export interface PetService {
   handleOpen(target: PetOpenTarget): void;
   /** `pet:list-open`: the window can take the focus while the list is open, so that Esc reaches it and its `blur` (a click elsewhere) closes the list (R12). */
   handleListOpen(open: boolean): void;
+  /**
+   * `pet:talk` (item 18): the bubble of the conversation with the Líder opens or closes. The window grows upwards to hold
+   * it (the base of the drawing stays put) and can take the keyboard while it is open, for the "você:" field.
+   */
+  handleTalk(open: boolean): void;
+  /** The web contents id of the pet window, or `null` with no Jobu: the bubble of the Líder lives there. */
+  petWebContentsId(): number | null;
   /** `pet:context-menu`: the owner right-clicked. `at` is the click in screen DIP, or `null` for "where the pointer is". */
   handleContextMenu(at: PetPoint | null): void;
   /** What an item of the right-click menu does; the window calls it with the action of the item that was clicked. */
@@ -299,6 +304,8 @@ export function createPetService(deps: PetServiceDeps): PetService {
   let lastSentJson: string | null = null;
   /** The list is open on the screen (what `pet:list-open` last said): only then does losing the focus mean "close it". */
   let listOpen = false;
+  /** Item 18: the bubble of the Líder is open. It does not close when the window loses the focus: Esc or a click on the Jobu does. */
+  let talkOpen = false;
   /** The last rectangle the window was asked to have, to leave it alone when nothing about it changed. */
   let appliedBounds: PetRect | null = null;
   let drag: DragGrab | null = null;
@@ -318,7 +325,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
   // process keeps the signal after this, from the focus, blur, minimize, restore, show and hide of the window.
   const mainAtBirth = deps.getMainWindow();
   let donelFocused = mainAtBirth !== null && mainAtBirth.isFocused() && !mainAtBirth.isMinimized();
-  let ui: PetUi = { size: clampSize(deps.config().size), docked: false, align: 'center' };
+  let ui: PetUi = { size: clampSize(deps.config().size), docked: false, align: 'center', talk: 0 };
 
   /**
    * What the semaphore last said of each tab. A ptyId that is not here is `idle` (R2: registered,
@@ -401,6 +408,15 @@ export function createPetService(deps: PetServiceDeps): PetService {
     return reported.length > 0 ? reported : [deps.getPrimaryDisplay()];
   }
 
+  /** The window and the ui for the Jobu at `anchor` on `display`: with the bubble of the Líder open, room for it above his head. */
+  function layoutAt(anchor: PetPoint, size: number, display: PetDisplay): { bounds: PetRect; ui: PetUi } {
+    const talk = talkOpen ? talkHeightFor(anchor, size, display) : 0;
+    return {
+      bounds: windowBoundsFor(anchor, size, talk),
+      ui: { size, docked: isDocked(anchor, display), align: alignFor(anchor, display), talk },
+    };
+  }
+
   /** Where the pet sits and how it looks around there: the remembered anchor if it is still on a screen, else the corner. */
   function resolvePlacement(prefs: PetPrefs): { anchor: PetPoint; bounds: PetRect; ui: PetUi } {
     const primary = deps.getPrimaryDisplay();
@@ -409,11 +425,24 @@ export function createPetService(deps: PetServiceDeps): PetService {
     const remembered = prefs.placement !== null && isPlacementVisible(prefs.placement, size, displays) ? prefs.placement : null;
     const anchor = remembered ?? defaultPlacement(primary, size);
     const display = displayNearestPoint(displays, anchor) ?? primary;
-    return {
-      anchor,
-      bounds: windowBoundsFor(anchor, size),
-      ui: { size, docked: isDocked(anchor, display), align: alignFor(anchor, display) },
-    };
+    return { anchor, ...layoutAt(anchor, size, display) };
+  }
+
+  /** What the window can do with the keyboard: it takes it while the list or the bubble is open, and only then. */
+  function syncFocusable(takeFocus: boolean): void {
+    const current = liveWindow();
+    if (current === null) return;
+    current.setFocusable(listOpen || talkOpen, takeFocus);
+  }
+
+  /** Item 18: opens or closes the bubble of the Líder; the window grows or shrinks around the base of the drawing. */
+  function setTalk(open: boolean): void {
+    if (liveWindow() === null || open === talkOpen) return;
+    talkOpen = open;
+    // The bubble of the Líder says everything the little bubble would: that one goes.
+    if (open) feed({ type: 'bubbleDismissed' });
+    syncFocusable(open);
+    if (drag === null) relayout();
   }
 
   /** What the screen would draw right now. */
@@ -514,6 +543,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
     petReady = false;
     lastSentJson = null;
     listOpen = false;
+    talkOpen = false;
     appliedBounds = null;
     drag = null;
     captureApplied = null;
@@ -583,7 +613,8 @@ export function createPetService(deps: PetServiceDeps): PetService {
     if (!listOpen || window === null || window.isDestroyed()) return;
     listOpen = false;
     window.requestCloseList();
-    window.setListOpen(false);
+    // The bubble of the Líder, if open, stays: the window stays focusable for it, without grabbing the keyboard back.
+    window.setFocusable(talkOpen, false);
   }
 
   /**
@@ -706,7 +737,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
         goHome();
         break;
       case 'lider':
-        deps.toggleLider?.();
+        setTalk(!talkOpen);
         break;
       case 'hide':
         // The same road as the toggle of the Preferences: it saves `pet.enabled = false`, destroys the window and tells the main window.
@@ -821,12 +852,6 @@ export function createPetService(deps: PetServiceDeps): PetService {
     handleClick() {
       if (liveWindow() === null) return;
       const decision = decideClick(currentView());
-      // Item 18: nobody waiting -> the conversation with the Líder (someone waiting still leads to that tab).
-      if (decision.kind === 'donel' && deps.toggleLider !== undefined) {
-        feed({ type: 'bubbleDismissed' });
-        deps.toggleLider();
-        return;
-      }
       if (decision.kind !== 'list') openTarget(decision);
     },
 
@@ -843,9 +868,17 @@ export function createPetService(deps: PetServiceDeps): PetService {
       const current = liveWindow();
       if (current === null) return;
       listOpen = open;
-      current.setListOpen(open);
+      syncFocusable(open);
       // The click that opens the list also serves the bubble (Q17); nothing else reaches the main for it.
       if (open) feed({ type: 'bubbleDismissed' });
+    },
+
+    handleTalk(open) {
+      setTalk(open);
+    },
+
+    petWebContentsId() {
+      return liveWindow()?.webContentsId ?? null;
     },
 
     handleContextMenu(at) {
@@ -866,9 +899,11 @@ export function createPetService(deps: PetServiceDeps): PetService {
       if (liveWindow() === null || drag === null) return;
       const anchor = dragAnchor(drag.anchor, drag.pointer, point);
       const display = displayNearestPoint(drag.displays, anchor) ?? deps.getPrimaryDisplay();
-      // The base fades the moment it leaves the taskbar edge, and the bubble re-anchors as he crosses the screen.
-      ui = { size: ui.size, docked: isDocked(anchor, display), align: alignFor(anchor, display) };
-      place(windowBoundsFor(anchor, ui.size));
+      // The base fades the moment it leaves the taskbar edge, and the bubble re-anchors as he crosses the screen (with
+      // the bubble of the Líder open, it goes along and fits what is above his head there).
+      const laid = layoutAt(anchor, ui.size, display);
+      ui = laid.ui;
+      place(laid.bounds);
       pushView(false);
     },
 
@@ -877,8 +912,10 @@ export function createPetService(deps: PetServiceDeps): PetService {
       const grab = drag;
       drag = null;
       const outcome = settleDrop(dragAnchor(grab.anchor, grab.pointer, point), grab.anchor, ui.size, grab.displays);
-      ui = { size: ui.size, docked: outcome.docked, align: outcome.align };
-      place(windowBoundsFor(outcome.anchor, ui.size));
+      const display = displayNearestPoint(grab.displays, outcome.anchor) ?? deps.getPrimaryDisplay();
+      const talk = talkOpen ? talkHeightFor(outcome.anchor, ui.size, display) : 0;
+      ui = { size: ui.size, docked: outcome.docked, align: outcome.align, talk };
+      place(windowBoundsFor(outcome.anchor, ui.size, talk));
       // A drop that left less than half of the drawing on a screen was refused: he is back where he was and nothing is saved.
       if (outcome.accepted) deps.persist({ ...deps.config(), placement: outcome.anchor });
       pushView(false);
