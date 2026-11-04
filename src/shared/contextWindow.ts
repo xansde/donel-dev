@@ -36,14 +36,14 @@ export const MODEL_CONTEXT_WINDOWS: Record<ModelAlias, number> = {
  * sessão nova". Se ele recalibrar, é esta linha (constante no código, não
  * configuração — decisão de 24/07 para não inflar o escopo).
  */
-export const SMART_ZONE_TOKENS = 300_000;
+export const SMART_ZONE_TOKENS = 500_000; // 300k até 04/11/2026, quando o dono subiu para 500k
 
 const KNOWN_ALIASES = Object.keys(MODEL_CONTEXT_WINDOWS) as ModelAlias[];
 
 /**
  * `min(smart zone, janela do modelo)`.
  *
- * O `min` não é decoração: uma zona de 300k num modelo de janela 200k seria
+ * O `min` não é decoração: uma zona de 500k num modelo de janela 200k seria
  * mentira — a sessão morre na janela antes de chegar ao fim da zona. Em `haiku`
  * a régua é a janela real (200k).
  */

@@ -48,7 +48,7 @@ import { cliWorktreeBranch, WORKTREE_TAB_MARK, worktreeNameFor, worktreeNameFrom
 import { projectOfFolders } from '../../shared/projectYolo';
 import type { WorktreeKeptPayload } from '../../shared/workspace';
 import { useWorkspaceInfo } from './useWorkspaceInfo';
-// CA-22 (009) — só o DENOMINADOR do `%` de contexto vem daqui (`min(300k,
+// CA-22 (009) — só o DENOMINADOR do `%` de contexto vem daqui (`min(500k,
 // janela do modelo)`, decisão de 24/07); a formatação e as faixas de cor são do
 // `SmartZoneMeter` do design-system. Issue #21 — e o rótulo do modelo do rodapé,
 // ambos pelo modelo REAL da sessão (transcript), não só pelo do launch.
@@ -2803,9 +2803,9 @@ export function App(): React.JSX.Element {
   // denominador, 135k não responde "dá pra continuar nesta sessão?". Volta o
   // `%` da smart zone, na forma que o design já previa para o rodapé (o
   // `SmartZoneMeter` compacto do slot `smartZone` da StatusBar, que a app nunca
-  // tinha ligado), com a régua real da 006: `min(300k, janela do modelo)`.
+  // tinha ligado), com a régua real da 006: `min(500k, janela do modelo)`.
   //
-  // O denominador segue sendo `min(300k, janela)` — a decisão de 24/07 dele —
+  // O denominador segue sendo `min(500k, janela)` — a decisão de 24/07 dele —
   // e NÃO o default de 400k do design-system. Desde a issue #21 a janela é a do
   // modelo REAL da sessão (`resolveSessionModel`), não a do alias do launch.
   const activeContextTokens = activeTab?.claudeSessionId ? (contextTokens[activeTab.claudeSessionId] ?? null) : null;
