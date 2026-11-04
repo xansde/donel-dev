@@ -202,6 +202,9 @@ export type {
   LocalAccountMeta,
   LoginStatusDto,
   ModId,
+  RemotePlace,
+  RemotePlaceView,
+  RemoteSwitchOutcome,
   RemoveAccountOutcome,
   SwitchOutcome,
 } from './accounts';

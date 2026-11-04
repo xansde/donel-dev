@@ -62,6 +62,7 @@ describe('defaultAppConfig (puro)', () => {
         seazone: null,
         localAccounts: [],
         activeAccountId: null,
+        remotes: [],
       },
       migration: { startedAt: null, completedAt: null, profiles: {}, archivedTo: null },
       providers: { version: 1, entries: [] },
@@ -223,6 +224,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
         seazone: { baseUrl: 'https://switcher.seazone.dev' },
         localAccounts: [{ id: 'acc-1', label: 'Conta 1', plan: 'pro' }],
         activeAccountId: 'acc-1',
+        remotes: [{ id: 'vps', label: 'VPS', sshTarget: 'dev@vps-atlas', activeAccountId: null }],
       },
       migration: {
         startedAt: 1000,

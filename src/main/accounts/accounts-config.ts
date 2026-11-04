@@ -5,7 +5,7 @@
 // `readAppConfig`/`writeAppConfig` (config-store.ts), esta chave só entra no
 // objeto `AppConfig` maior.
 
-import type { AccountId, AccountsConfig, AutoSwitchPolicy, LocalAccountMeta, ModId, SeazonePoolConfig } from '../../shared/accounts';
+import type { AccountId, AccountsConfig, AutoSwitchPolicy, LocalAccountMeta, ModId, RemotePlace, SeazonePoolConfig } from '../../shared/accounts';
 
 const KNOWN_MOD_IDS: readonly ModId[] = ['seazone', 'local'];
 
@@ -73,6 +73,42 @@ function sanitizeAccountId(value: unknown): AccountId | null {
 }
 
 /**
+ * Destino de `ssh` aceito: `usuario@host` ou `host`, sem espaço e sem começar
+ * com `-` (o valor vira argumento do `ssh`; um `-o...` seria opção, não host).
+ */
+const SSH_TARGET_PATTERN = /^(?:[A-Za-z0-9._][A-Za-z0-9._-]*@)?[A-Za-z0-9._][A-Za-z0-9._:-]*$/;
+
+export function isValidSshTarget(value: unknown): value is string {
+  return typeof value === 'string' && SSH_TARGET_PATTERN.test(value);
+}
+
+/**
+ * Lugares remotos: entrada malformada é descartada isolada; id repetido fica
+ * só o primeiro; uma conta ativa em dois lugares (config editada à mão) fica
+ * só no primeiro — nunca dois lugares com a mesma conta.
+ */
+function sanitizeRemotes(value: unknown): readonly RemotePlace[] {
+  if (!Array.isArray(value)) return [];
+  const sanitized: RemotePlace[] = [];
+  const seenIds = new Set<string>();
+  const heldAccounts = new Set<AccountId>();
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const candidate = entry as Partial<RemotePlace>;
+    if (typeof candidate.id !== 'string' || !candidate.id.trim() || seenIds.has(candidate.id)) continue;
+    if (typeof candidate.label !== 'string' || !candidate.label.trim()) continue;
+    const sshTarget = typeof candidate.sshTarget === 'string' ? candidate.sshTarget.trim() : '';
+    if (!isValidSshTarget(sshTarget)) continue;
+    let activeAccountId = sanitizeAccountId(candidate.activeAccountId);
+    if (activeAccountId && heldAccounts.has(activeAccountId)) activeAccountId = null;
+    if (activeAccountId) heldAccounts.add(activeAccountId);
+    seenIds.add(candidate.id);
+    sanitized.push({ id: candidate.id, label: candidate.label.trim(), sshTarget, activeAccountId });
+  }
+  return sanitized;
+}
+
+/**
  * Nunca lança para config ausente/corrompida/tipos errados — campo a campo
  * cai no default correspondente (mesmo padrão de `sanitizeAppConfig`,
  * config-store.ts). `parsed` não-objeto (ou array) devolve `defaults` inteiro.
@@ -88,6 +124,7 @@ export function sanitizeAccountsConfig(parsed: unknown, defaults: AccountsConfig
     seazone: sanitizeSeazoneConfig(candidate.seazone),
     localAccounts: sanitizeLocalAccounts(candidate.localAccounts),
     activeAccountId: sanitizeAccountId(candidate.activeAccountId),
+    remotes: sanitizeRemotes(candidate.remotes),
   };
 }
 

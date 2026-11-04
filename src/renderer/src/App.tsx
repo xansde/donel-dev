@@ -382,6 +382,7 @@ export function App(): React.JSX.Element {
     autoSwitchState: 'idle',
     lastAutoSwitch: null,
     lastSwitchOverwritten: null,
+    remotes: [],
   });
   // T009 — estado do semáforo por aba (chave = tab.id), alimentado pelo
   // callback que cada TerminalPane levanta via onStateChange.

@@ -131,6 +131,14 @@ sensível.
   `src/main/accounts/migration/` já mora dentro de `src/main/accounts/`, é o
   mesmo perímetro — o par migrado do `.credentials.json` de um perfil vai
   direto pro cofre, nunca passa por variável de retorno exposta.
+  **Lugares remotos — emenda do dono (04/11, "manda bala para controlar as
+  contas da VPS também")**: o mesmo perímetro grava o par da conta escolhida no
+  `~/.claude` de um lugar remoto (VPS) por `ssh`, em
+  `src/main/accounts/remote-claude-state.ts`. O par só viaja pelo stdin do ssh
+  (nunca argv, log ou erro); a escrita é compare-and-swap; uma conta nunca fica
+  ativa em dois lugares (refresh token de uso único). Desenho no
+  [ADR 0005](docs/adr/0005-contas-em-lugares-remotos.md). Continua proibido
+  qualquer outro módulo tocar credencial.
   **Navegador interno não é exceção** (30/10): login no painel é o dono
   digitando; o Chromium guarda os cookies da partição `persist:donel-browser`
   e o código do app não os lê nem grava (`docs/design/navegador-interno.md`).

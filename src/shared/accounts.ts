@@ -48,6 +48,8 @@ export interface AccountSummary {
    * nos testes que já existiam antes desta fase.
    */
   readonly needsReconnect?: boolean;
+  /** Só o motor preenche: id do lugar remoto onde esta conta está ativa agora. Ausente = não está em lugar remoto nenhum. */
+  readonly heldBy?: string;
 }
 
 /**
@@ -130,7 +132,45 @@ export interface AccountsConfig {
   readonly seazone: SeazonePoolConfig | null;
   readonly localAccounts: readonly LocalAccountMeta[];
   readonly activeAccountId: AccountId | null;
+  /**
+   * Lugares remotos (VPS por ssh/Tailscale) cujo `~/.claude` o motor também
+   * controla. Cada lugar tem a SUA conta ativa, e uma conta nunca fica ativa
+   * em dois lugares ao mesmo tempo (refresh token de uso único). Vazio = só
+   * esta máquina, comportamento de antes.
+   */
+  readonly remotes: readonly RemotePlace[];
 }
+
+/**
+ * Um lugar remoto: nada sensível. `sshTarget` é o destino do `ssh`
+ * (`usuario@host`, resolvido pela rede da pessoa — Tailscale, ~/.ssh/config).
+ * `activeAccountId` só o motor muda (troca remota); o renderer não escreve.
+ */
+export interface RemotePlace {
+  readonly id: string;
+  readonly label: string;
+  readonly sshTarget: string;
+  readonly activeAccountId: AccountId | null;
+}
+
+/** Estado de um lugar remoto no painel. `unreachable` = o último ssh falhou. */
+export interface RemotePlaceView {
+  readonly id: string;
+  readonly label: string;
+  readonly sshTarget: string;
+  readonly activeAccountId: AccountId | null;
+  readonly reach: 'unknown' | 'ok' | 'unreachable';
+}
+
+/** Resultado da troca da conta de um lugar remoto. `to: null` = o lugar ficou sem conta (liberada). */
+export type RemoteSwitchOutcome =
+  | { readonly kind: 'switched'; readonly from: AccountId | null; readonly to: AccountId | null }
+  | { readonly kind: 'already-active' }
+  | {
+      readonly kind: 'failed';
+      /** `in-use` = a conta está ativa nesta máquina ou em outro lugar. `unreachable` = o ssh não respondeu. */
+      readonly reason: 'unreachable' | 'in-use' | 'unknown-place' | 'unknown-account' | 'offline' | 'expired-credentials' | 'io';
+    };
 
 /**
  * B25 — pool Seazone opcional. `preferredLabels` (e-mails, o id da conta no
@@ -150,6 +190,7 @@ export function defaultAccountsConfig(): AccountsConfig {
     seazone: null,
     localAccounts: [],
     activeAccountId: null,
+    remotes: [],
   };
 }
 
@@ -171,6 +212,8 @@ export interface AccountsViewDto {
   readonly lastAutoSwitch: AutoSwitchEvent | null;
   /** 22/09 (emenda da D5) — corrida detectada depois do último switch; `null` = nenhuma (caso comum). Em memória, mesma régua de `lastAutoSwitch`. */
   readonly lastSwitchOverwritten: SwitchOverwrittenWarning | null;
+  /** Lugares remotos e a conta de cada um. Vazio = só esta máquina. */
+  readonly remotes: readonly RemotePlaceView[];
 }
 
 /**
@@ -290,6 +333,8 @@ export const ACCOUNT_CHANNELS = {
   loginChanged: 'accounts:loginChanged',
   /** 011-contas-e-provedores, etapa 3, Fase 2 (D3) — login isolado direcionado a UMA conta já cadastrada (`beginReconnect`, isolated-login.ts). */
   beginReconnect: 'accounts:beginReconnect',
+  /** Troca a conta de um lugar remoto (VPS). */
+  switchRemote: 'accounts:switchRemote',
 } as const;
 
 /** API tipada exposta pelo preload em `window.donel.accounts` (contextBridge). */
@@ -321,4 +366,6 @@ export interface DonelAccountsApi {
    * alvo). O rótulo vem da conta cadastrada — nunca digitado de novo.
    */
   beginReconnect(id: AccountId): Promise<BeginLoginOutcome>;
+  /** Troca a conta do lugar remoto `placeId`; `accountId: null` libera o lugar (tira a conta dele). */
+  switchRemote(placeId: string, accountId: AccountId | null): Promise<RemoteSwitchOutcome>;
 }

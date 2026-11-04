@@ -108,6 +108,13 @@ export interface LocalModDeps {
    * nenhum de quando nem por quê. Nunca recebe o par — só id, origem e motivo.
    */
   readonly onPairRefreshFailed?: (id: AccountId, trigger: 'read' | 'switch', reason: 'rejected' | 'unavailable' | 'vault-write-failed') => void;
+  /**
+   * Lugares remotos — a conta está ativa num lugar remoto (VPS): o CLI de lá
+   * é quem renova o par dela, e o motor copia esse par para o cofre a cada
+   * leitura. Aqui ela NUNCA é renovada (seria o segundo refresh do mesmo
+   * token); a carga é lida com o access token do cofre enquanto ele valer.
+   */
+  readonly isHeldRemotely?: (id: AccountId) => boolean;
 }
 
 function parsePairFromVault(raw: string | null): CredentialPair | null {
@@ -256,6 +263,12 @@ export function createLocalMod(deps: LocalModDeps): AccountMod {
           const tokenPair = livePair ?? vaultPair;
           if (tokenPair) {
             const usage = await readAccountUsage(tokenPair.accessToken, { fetchImpl: deps.fetchImpl });
+            if (usage) load = loadFromUsage(usage, now());
+          }
+        } else if (deps.isHeldRemotely?.(meta.id)) {
+          // Lugar remoto — nunca renova; par vencido = carga desconhecida até a próxima cópia de lá.
+          if (vaultPair && vaultPair.expiresAt > now()) {
+            const usage = await readAccountUsage(vaultPair.accessToken, { fetchImpl: deps.fetchImpl });
             if (usage) load = loadFromUsage(usage, now());
           }
         } else if (livePair && vaultPair && vaultPair.refreshToken === livePair.refreshToken) {

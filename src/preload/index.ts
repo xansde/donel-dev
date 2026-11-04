@@ -85,6 +85,7 @@ import type {
   PtyCreateOptions,
   PtyCreateResult,
   PtyExitInfo,
+  RemoteSwitchOutcome,
   RemoveAccountOutcome,
   ResolveCardRepoIpcInput,
   ResolveCardReposIpcInput,
@@ -333,6 +334,10 @@ const donelApi: DonelApi = {
     // pra uma conta já cadastrada ("Reconectar"). O rótulo vem da conta, não
     // é digitado de novo.
     beginReconnect: (id: AccountId) => ipcRenderer.invoke(ACCOUNT_CHANNELS.beginReconnect, id) as Promise<BeginLoginOutcome>,
+
+    // Lugares remotos (VPS) — troca a conta de um lugar; `null` libera o lugar.
+    switchRemote: (placeId: string, accountId: AccountId | null) =>
+      ipcRenderer.invoke(ACCOUNT_CHANNELS.switchRemote, placeId, accountId) as Promise<RemoteSwitchOutcome>,
   },
 
   // T1214 (011-contas-e-provedores, etapa 2) — assistente de migração

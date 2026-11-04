@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AccountsConfigDto, AccountsViewDto, ConnectModInput, LoginStatusDto, RemoveAccountOutcome, SeazonePoolConfig } from '../../shared';
 import { formatAccountLoad, formatAutoSwitchEvent, formatBlindWarning, formatSaturatedWarning, formatSwitchFailure, formatSwitchOverwrittenWarning } from './accountsFormat';
 import { MigrationWizard } from './MigrationWizard';
+import { RemotePlacesSection } from './RemotePlacesSection';
 import styles from './AccountsPanel.module.css';
 
 // T1123/T1124 (011-contas-e-provedores, etapa 1) — ADAPTAÇÃO do
@@ -59,6 +60,7 @@ function emptyView(): AccountsViewDto {
     autoSwitchState: 'idle',
     lastAutoSwitch: null,
     lastSwitchOverwritten: null,
+    remotes: [],
   };
 }
 
@@ -562,11 +564,12 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
                         className={styles.plainRow}
                         data-testid="account-switch"
                         onClick={() => handleSwitch(account.id)}
-                        disabled={switchingId === account.id || account.active}
+                        disabled={switchingId === account.id || account.active || account.heldBy !== undefined}
                       >
                         <span className={styles.label}>
                           {account.label}
                           {account.active ? ' · ativa' : ''}
+                          {account.heldBy !== undefined ? ` · em uso em ${view.remotes.find((place) => place.id === account.heldBy)?.label ?? account.heldBy}` : ''}
                         </span>
                         <span className={styles.load} data-testid="account-load">
                           {formatAccountLoad(account.load)}
@@ -656,6 +659,8 @@ export function AccountsPanel({ onViewChange, onStartLogin, onLoginEnded }: Acco
                 ))}
                 {view.accounts.length === 0 && view.state === 'ready' ? <li className={styles.hint}>Nenhuma conta cadastrada ainda.</li> : null}
               </ul>
+
+              <RemotePlacesSection view={view} />
             </>
           ) : null}
 
