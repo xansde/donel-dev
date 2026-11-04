@@ -449,7 +449,7 @@ const donelApi: DonelApi = {
     },
     apply: (tabs: readonly ResumeTab[]) => ipcRenderer.invoke(APP_UPDATE_CHANNELS.apply, tabs) as Promise<AppUpdateApplyResult>,
     takeBoot: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.takeBoot) as Promise<AppUpdateBoot>,
-    openLog: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.openLog) as Promise<void>,
+    check: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.check) as Promise<void>,
   },
 
   // Sidebar — abrir a pasta no VS Code/Cursor e ler a branch atual (cache curto no main).

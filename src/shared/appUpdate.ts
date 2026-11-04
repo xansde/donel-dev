@@ -1,6 +1,6 @@
-// B33 — update to the new alpha from inside the app. Pure: what the installers folder says (is there a new
-// version? did the morning build fail?), whether the open sessions let the app close now, and the file that
-// carries the open tabs across the restart. The main does the I/O; the renderer only asks and shows.
+// B33 — update to the new alpha from inside the app (feed of GitHub releases, electron-updater). Pure: the IPC
+// contract, whether the open sessions let the app close now, and the file that carries the open tabs across the
+// restart. The main does the I/O; the renderer only asks and shows.
 
 import type { SemaphoreState } from './index';
 
@@ -9,35 +9,33 @@ import type { SemaphoreState } from './index';
 // ---------------------------------------------------------------------------
 
 export const APP_UPDATE_CHANNELS = {
-  /** invoke -> `AppUpdateStatus` (reads the folder again). */
+  /** invoke -> `AppUpdateStatus`. */
   get: 'appUpdate:get',
-  /** main -> renderer, when the status changes (periodic read of the folder). */
+  /** main -> renderer, when the status changes (check, download progress, ready, error). */
   changed: 'appUpdate:changed',
-  /** invoke(tabs: ResumeTab[]) -> `AppUpdateApplyResult`. On `ok` the app closes right after answering. */
+  /** invoke(tabs: ResumeTab[]) -> `AppUpdateApplyResult`. On `ok` the app restarts into the new version. */
   apply: 'appUpdate:apply',
   /** invoke -> `AppUpdateBoot`: the tabs to reopen and the error of a failed update, once (the file is deleted). */
   takeBoot: 'appUpdate:takeBoot',
-  /** invoke -> opens the build log of the failed morning build. */
-  openLog: 'appUpdate:openLog',
+  /** invoke -> looks for a new version now. */
+  check: 'appUpdate:check',
 } as const;
 
+/** A newer version on the release feed: downloading in the background, or downloaded and ready to restart into. */
 export interface AppUpdateAvailable {
-  readonly installerPath: string;
-  readonly installerName: string;
-  readonly commit: string;
+  readonly version: string;
+  /** 0–100 while downloading; `null` before the first progress event. */
+  readonly percent: number | null;
+  readonly ready: boolean;
 }
 
-export interface AppUpdateFailure {
-  /** First line of `FALHOU.txt` (date and error). */
-  readonly message: string;
-  readonly failedAtMs: number;
-}
-
-/** `enabled: false` = no installers folder (or not the alpha): the feature does not show at all. */
+/** `enabled: false` = not the packaged alpha, or no feed: the feature does not show at all. */
 export interface AppUpdateStatus {
   readonly enabled: boolean;
+  readonly currentVersion: string;
   readonly available: AppUpdateAvailable | null;
-  readonly failure: AppUpdateFailure | null;
+  /** The last check or download failed (e.g. `gh` not logged in): shown quietly, with "tentar de novo". */
+  readonly failure: string | null;
 }
 
 export type AppUpdateApplyResult = { readonly ok: true } | { readonly ok: false; readonly message: string };
@@ -53,72 +51,8 @@ export interface DonelAppUpdateApi {
   onChanged(listener: (status: AppUpdateStatus) => void): () => void;
   apply(tabs: readonly ResumeTab[]): Promise<AppUpdateApplyResult>;
   takeBoot(): Promise<AppUpdateBoot>;
-  openLog(): Promise<void>;
+  check(): Promise<void>;
 }
-
-// ---------------------------------------------------------------------------
-// "Is there a new version?"
-// ---------------------------------------------------------------------------
-
-export interface InstallerFile {
-  readonly name: string;
-  readonly path: string;
-  readonly mtimeMs: number;
-}
-
-/** What the installers folder holds right now. */
-export interface UpdateFolderSnapshot {
-  /** Content of `ultimo-commit.txt` (the commit of the last good build), raw. */
-  readonly lastCommitText: string | null;
-  /** When that file was written: the last good build. */
-  readonly lastCommitAtMs: number | null;
-  readonly installers: readonly InstallerFile[];
-  /** Content of `FALHOU.txt`, raw, and when it was written. */
-  readonly failedText: string | null;
-  readonly failedAtMs: number | null;
-}
-
-export interface OwnBuild {
-  /** The commit this app was built from; `null` when the build could not read it. */
-  readonly commit: string | null;
-  /** When this app was built (epoch ms); `null` when unknown. */
-  readonly builtAtMs: number | null;
-}
-
-/** `Set-Content -Encoding utf8` of Windows PowerShell writes a BOM: trimmed and lowercased here. */
-export function cleanCommit(text: string | null): string | null {
-  if (text === null) return null;
-  const commit = text.replace(/^﻿/, '').trim().toLowerCase();
-  return /^[0-9a-f]{7,40}$/.test(commit) ? commit : null;
-}
-
-function newestInstaller(installers: readonly InstallerFile[]): InstallerFile | null {
-  // The date is in the name (`…-Setup-AAAA-MM-DD.exe`); the time of the file breaks ties.
-  const sorted = [...installers].sort((a, b) => b.name.localeCompare(a.name) || b.mtimeMs - a.mtimeMs);
-  return sorted[0] ?? null;
-}
-
-/**
- * A new version exists when the last good build came from another commit than this app, its installer is
- * there, and that installer is newer than this app (a build made by hand from a later commit is not
- * "updated" to an older one). The morning build failing after the last good one is reported apart.
- */
-export function evaluateUpdate(own: OwnBuild, folder: UpdateFolderSnapshot | null): AppUpdateStatus {
-  if (!folder) return { enabled: false, available: null, failure: null };
-  const lastCommit = cleanCommit(folder.lastCommitText);
-  const installer = newestInstaller(folder.installers);
-  const ownCommit = cleanCommit(own.commit);
-  const differs = lastCommit !== null && ownCommit !== null && !lastCommit.startsWith(ownCommit) && !ownCommit.startsWith(lastCommit);
-  const newer = installer !== null && (own.builtAtMs === null || installer.mtimeMs > own.builtAtMs);
-  const available = differs && newer && installer ? { installerPath: installer.path, installerName: installer.name, commit: lastCommit } : null;
-
-  const failedAfterSuccess =
-    folder.failedAtMs !== null && (folder.lastCommitAtMs === null || folder.failedAtMs > folder.lastCommitAtMs);
-  const message = (folder.failedText ?? '').replace(/^﻿/, '').split(/\r?\n/).find((line) => line.trim() !== '')?.trim() ?? '';
-  const failure = failedAfterSuccess && folder.failedAtMs !== null ? { message, failedAtMs: folder.failedAtMs } : null;
-  return { enabled: true, available, failure };
-}
-
 // ---------------------------------------------------------------------------
 // "Can it update now?"
 // ---------------------------------------------------------------------------
