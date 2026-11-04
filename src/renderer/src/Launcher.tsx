@@ -89,7 +89,7 @@ export interface LauncherProps {
   /** Herdado da seleção da sidebar (ui-spec §4); o campo abaixo continua editável depois. */
   defaultProjectPath?: string;
   /** T015 (FR-007 "defaults do launcher") — última escolha persistida no ConfigStore; `undefined` até `config:get` resolver (cai nos `DEFAULT_*` locais). */
-  launcherDefaults?: { model: ModelAlias; effort: EffortLevel; permissionMode: PermissionMode; worktree?: boolean };
+  launcherDefaults?: { model: ModelAlias; effort: EffortLevel; permissionMode: PermissionMode; worktree?: boolean; where?: string };
   /** T1320 — registry de providers classe A; `[]` = campo "Provedor" nem aparece (C14/D6). */
   providers?: readonly ProviderSummaryDto[];
   /** Papéis de sessão (item 12a) — `[]` = the "Papel" field does not show. */
@@ -106,6 +106,17 @@ const NO_ROLE = '';
 export function Launcher({ projects, defaultProjectPath, launcherDefaults, providers = [], roles = [], onManageRoles, remotes = [], onLaunch }: LauncherProps): React.JSX.Element {
   const [roleId, setRoleId] = useState<string>(NO_ROLE);
   const [remoteId, setRemoteId] = useState<string>(HERE);
+  // "Onde roda" — the last choice; without one, the first remote place that holds an account (owner, 04/11).
+  const savedWhere = launcherDefaults?.where;
+  const defaultWhere =
+    savedWhere === 'local'
+      ? HERE
+      : remotes.some((place) => place.id === savedWhere)
+        ? (savedWhere as string)
+        : (remotes.find((place) => place.accountLabel !== null)?.id ?? HERE);
+  useEffect(() => {
+    setRemoteId(defaultWhere);
+  }, [defaultWhere]);
   const [model, setModel] = useState<ModelAlias>(launcherDefaults?.model ?? DEFAULT_MODEL);
   const [effort, setEffort] = useState<EffortLevel>(launcherDefaults?.effort ?? DEFAULT_EFFORT);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(launcherDefaults?.permissionMode ?? DEFAULT_PERMISSION);

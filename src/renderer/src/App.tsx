@@ -967,6 +967,7 @@ export function App(): React.JSX.Element {
         effort: options.effort,
         permissionMode: options.permissionMode,
         ...(options.worktree ? { worktree: true } : {}),
+        where: options.remoteId ?? 'local',
       })
       .then(setAppConfig)
       .catch(() => undefined);

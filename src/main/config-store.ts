@@ -668,6 +668,7 @@ function sanitizeLauncherDefaults(value: unknown, fallback: LauncherDefaultsDto)
     // `chrome` (toggle Claude in Chrome, removido em 03/11 pelo navegador integrado) não é mais lido:
     // um config antigo que o tenha gravado é aceito e o campo simplesmente some aqui.
     ...(candidate.worktree === true ? { worktree: true } : {}),
+    ...(typeof candidate.where === 'string' && candidate.where.length > 0 && candidate.where.length <= 128 ? { where: candidate.where } : {}),
   };
 }
 

@@ -73,6 +73,11 @@ export interface LauncherDefaultsDto {
    * o descarta.)
    */
   readonly worktree?: boolean;
+  /**
+   * Sessões remotas — last "Onde roda": `'local'` = this computer, otherwise the id of a remote place.
+   * Absent = the first remote place that holds an account (owner, 04/11: VPS by default).
+   */
+  readonly where?: string;
 }
 
 /**
