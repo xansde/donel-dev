@@ -50,7 +50,7 @@ function buildCommit(): string | null {
 // única instalação de vite, gerando dois tipos `Plugin` incompatíveis).
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater'] })],
     define: {
       __DONEL_BUILD_COMMIT__: JSON.stringify(buildCommit()),
       __DONEL_BUILT_AT__: JSON.stringify(Date.now()),
