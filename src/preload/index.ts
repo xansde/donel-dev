@@ -11,6 +11,8 @@ import type { PetView } from '../shared/pet/types';
 import { HEALTH_CHANNELS } from '../shared/health/ipc';
 import type { KillProcessOutcome } from '../shared/health/ipc';
 import type { HealthReport } from '../shared/health/types';
+// B33 — atualizar de dentro do app.
+import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus, type ResumeTab } from '../shared/appUpdate';
 // Sidebar — abrir no editor + branch atual.
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import type { EditorStatus, GitBranchResult, OpenInEditorResult, PullRequestRequestOptions, PullRequestStatusResult, WorktreeKeptPayload } from '../shared/workspace';
@@ -428,6 +430,18 @@ const donelApi: DonelApi = {
     },
     killProcess: (pid: number) => ipcRenderer.invoke(HEALTH_CHANNELS.killProcess, pid) as Promise<KillProcessOutcome>,
     openTemp: () => ipcRenderer.invoke(HEALTH_CHANNELS.openTemp) as Promise<string>,
+  },
+
+  // B33 — versão nova do alfa: o estado da pasta dos instaladores, a troca e as abas a reabrir depois.
+  appUpdate: {
+    get: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.get) as Promise<AppUpdateStatus>,
+    onChanged: (listener: (status: AppUpdateStatus) => void) => {
+      const handler = (_event: unknown, status: AppUpdateStatus): void => listener(status);
+      return subscribeChannel(ipcRenderer, APP_UPDATE_CHANNELS.changed, handler);
+    },
+    apply: (tabs: readonly ResumeTab[]) => ipcRenderer.invoke(APP_UPDATE_CHANNELS.apply, tabs) as Promise<AppUpdateApplyResult>,
+    takeBoot: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.takeBoot) as Promise<AppUpdateBoot>,
+    openLog: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.openLog) as Promise<void>,
   },
 
   // Sidebar — abrir a pasta no VS Code/Cursor e ler a branch atual (cache curto no main).

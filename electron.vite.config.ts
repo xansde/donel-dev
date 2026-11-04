@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
@@ -24,6 +25,20 @@ function inlinePetArt(): Plugin {
   };
 }
 
+/**
+ * B33 — the commit this build came from, so the app can tell whether the installers folder holds a newer one.
+ * `DONEL_BUILD_COMMIT` wins (a build outside git); without git or env it is `null` and the update stays quiet.
+ */
+function buildCommit(): string | null {
+  const fromEnv = process.env.DONEL_BUILD_COMMIT?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: __dirname, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 // Sem `build.rollupOptions.input` explícito: electron-vite resolve por
 // convenção `src/main/index.ts`, `src/preload/index.ts` e
 // `src/renderer/index.html` — exatamente a estrutura alvo do plan.md
@@ -36,6 +51,10 @@ function inlinePetArt(): Plugin {
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
+    define: {
+      __DONEL_BUILD_COMMIT__: JSON.stringify(buildCommit()),
+      __DONEL_BUILT_AT__: JSON.stringify(Date.now()),
+    },
   },
   preload: {
     plugins: [externalizeDepsPlugin()],

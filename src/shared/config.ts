@@ -116,6 +116,14 @@ export interface SweepPrefs {
   readonly lastSweepAt: number | null;
 }
 
+/**
+ * B33 — where the alpha installers are built (`Donel Dev Alfa-Setup-AAAA-MM-DD.exe`, `ultimo-commit.txt`,
+ * `FALHOU.txt`). `null` = the default folder of the alpha channel. Main only; not in the DTO.
+ */
+export interface AppUpdatePrefs {
+  readonly installersDir: string | null;
+}
+
 /** What the renderer may ask of the main: only the switch. */
 export interface PetPrefsInput {
   readonly enabled?: boolean;

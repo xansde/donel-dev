@@ -28,7 +28,11 @@ import type {
 // Fix #19 — mapa nome de cor do CLI → CSS (módulo puro, ver src/shared/cliColor.ts).
 import { cliColorNameToHex } from '../../shared/cliColor';
 // CA-26 (009-modo-dev-v3, lote 1) — reordenação pura da lista de abas por arraste.
-import { reorderTabs } from '../../shared/tabAppearance';
+import { isTabColorToken, reorderTabs } from '../../shared/tabAppearance';
+// B33 — atualizar de dentro do app: esperar as sessões pararem e reabrir as abas depois.
+import { updateReadiness, type ResumeTab } from '../../shared/appUpdate';
+import { withResumeArgs } from '../../shared/terminalScreen';
+import { UpdateIndicator } from './appUpdate/UpdateIndicator';
 import {
   buildClaudeArgs,
   DEFAULT_EFFORT_LEVEL,
@@ -1975,6 +1979,111 @@ export function App(): React.JSX.Element {
     });
   };
 
+  // B33 — "Atualizar": the click only asks; the switch happens when no session is in the middle of a turn
+  // or waiting on the owner (never ends a turn). The open tabs go to the main to be reopened after the update.
+  const [updateRequested, setUpdateRequested] = useState(false);
+  const [updateApplying, setUpdateApplying] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const updateSessions = useMemo(
+    () =>
+      updateReadiness(
+        tabs
+          .filter((tab) => tab.sessionType === 'claude')
+          .map((tab) => {
+            const info = semaphoreStates[tab.id];
+            return {
+              alive: aliveTabs[tab.id] === true,
+              state: info?.state,
+              unconfirmed: info?.unconfirmed,
+              pendingKinds: info?.pendingKinds,
+              awaitingBackgroundAgents: info?.awaitingBackgroundAgents,
+            };
+          }),
+      ),
+    [tabs, semaphoreStates, aliveTabs],
+  );
+  const toResumeTab = (tab: TabState): ResumeTab[] => {
+    if (tab.accountLoginId) return []; // a login in progress is not a session to come back to
+    const common = {
+      name: resolveTabName(tab),
+      ...(tab.cwd ? { cwd: tab.cwd } : {}),
+      ...(tab.projectName ? { projectName: tab.projectName } : {}),
+      ...(tab.color && tab.color !== 'none' ? { color: tab.color } : {}),
+      ...(tab.pinned ? { pinned: true } : {}),
+      ...(tab.id === activeTabId ? { active: true } : {}),
+    };
+    if (tab.sessionType === 'shell') return [{ sessionType: 'shell', ...common }];
+    const sessionId = tab.claudeSessionId;
+    const launchArgs = sessionId ? withResumeArgs(tab.launchArgs, sessionId) : tab.launchArgs;
+    return [
+      {
+        sessionType: 'claude',
+        ...common,
+        ...(sessionId ? { sessionId } : {}),
+        ...(launchArgs ? { launchArgs } : {}),
+        ...(tab.providerId ? { providerId: tab.providerId } : {}),
+        ...(tab.roleId ? { roleId: tab.roleId } : {}),
+        // A place binds to its conversation; only a session that never started still needs it.
+        ...(tab.placeId && !sessionId ? { placeId: tab.placeId } : {}),
+        ...(tab.customTitle !== undefined ? { customTitle: tab.customTitle } : {}),
+        ...(tab.view ? { view: tab.view } : {}),
+      },
+    ];
+  };
+  const toResumeTabRef = useRef(toResumeTab);
+  toResumeTabRef.current = toResumeTab;
+  useEffect(() => {
+    if (!updateRequested || updateApplying || !updateSessions.ready) return;
+    setUpdateApplying(true);
+    const resumeTabs = tabsRef.current.flatMap((tab) => toResumeTabRef.current(tab));
+    const fail = (message: string): void => {
+      setUpdateApplying(false);
+      setUpdateRequested(false);
+      setUpdateError(message);
+    };
+    window.donel.appUpdate
+      .apply(resumeTabs)
+      .then((result) => {
+        if (!result.ok) fail(result.message);
+      })
+      .catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));
+  }, [updateRequested, updateApplying, updateSessions.ready]);
+  // B33 — the first boot after an update: reopen the tabs that were open, in the same order, resuming each
+  // conversation (`-r`), so its card stays where it was on the Mindscape. Only after an update: the general
+  // restore on boot stays cancelled (the main hands the list once and deletes it).
+  const updateBootTakenRef = useRef(false);
+  useEffect(() => {
+    if (!appConfig || updateBootTakenRef.current || !window.donel.appUpdate) return;
+    updateBootTakenRef.current = true;
+    void window.donel.appUpdate
+      .takeBoot()
+      .then((boot) => {
+        if (boot.failure) setUpdateError(`${boot.failure}. Esta é a versão de antes.`);
+        let activeId: string | null = null;
+        for (const entry of boot.tabs) {
+          const id = addTab({
+            name: entry.name,
+            cwd: entry.cwd,
+            projectName: entry.projectName,
+            pinned: entry.pinned === true,
+            sessionType: entry.sessionType,
+            ...(entry.sessionType === 'claude' && entry.launchArgs ? { launchArgs: [...entry.launchArgs] } : {}),
+            ...(entry.providerId ? { providerId: entry.providerId } : {}),
+            ...(entry.roleId ? { roleId: entry.roleId } : {}),
+            ...(entry.placeId ? { placeId: entry.placeId } : {}),
+            ...(entry.color && isTabColorToken(entry.color) ? { color: entry.color } : {}),
+            ...(entry.customTitle !== undefined ? { customTitle: entry.customTitle } : {}),
+            ...(entry.view ? { view: entry.view } : {}),
+          });
+          if (entry.active) activeId = id;
+        }
+        if (activeId) setActiveTabId(activeId);
+      })
+      .catch(() => undefined);
+    // `addTab` is recreated every render; this runs once, when the config (model defaults) is in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appConfig]);
+
   // T709/CA-3 (007) — dedupe: sessões exibidas sob um projeto FAVORITADO saem
   // da lista geral. Escopado só aos favoritados (D6) — sessão de projeto
   // comum nunca é afetada. Vem DEPOIS do cabeçalho (favoriteGroups, abaixo)
@@ -3237,6 +3346,17 @@ export function App(): React.JSX.Element {
           accountTestId="statusbar-account"
         />
         <BackgroundIndicator sessions={backgroundSessions} onOpen={handleOpenBackground} />
+        <UpdateIndicator
+          waiting={updateRequested && !updateApplying && !updateSessions.ready ? updateSessions : null}
+          applying={updateApplying}
+          error={updateError}
+          onUpdate={() => {
+            setUpdateError(null);
+            setUpdateRequested(true);
+          }}
+          onCancel={() => setUpdateRequested(false)}
+          onDismissError={() => setUpdateError(null)}
+        />
         <PatchNotes />
         <HealthIndicator />
       </div>
