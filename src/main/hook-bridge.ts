@@ -63,7 +63,8 @@ export interface HookBridge {
   close(): Promise<void>;
   readonly port: number | null;
   /** Returns the new 128-bit token for this tab (re-registering replaces the old one). */
-  registerSession(ptyId: string): string;
+  /** `token` = reuse a known token (a remote session reattached after a restart keeps the one its CLI holds). */
+  registerSession(ptyId: string, token?: string): string;
   /** Forgets the token and cancels the tab's open decisions (each is answered `{}`). */
   unregisterSession(ptyId: string): void;
   /** Subscribes to a tab's events. Returns the unsubscribe function. */
@@ -367,10 +368,10 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
       });
     },
 
-    registerSession(ptyId) {
+    registerSession(ptyId, knownToken) {
       const previous = byPty.get(ptyId);
       if (previous) byToken.delete(previous.token);
-      const token = randomBytes(16).toString('hex');
+      const token = knownToken ?? randomBytes(16).toString('hex');
       const state: SessionState = previous ?? { ptyId, token, preToolUse: [], open: new Map(), sessionId: null, classifierBlocks: NO_CLASSIFIER_BLOCKS };
       state.token = token;
       byToken.set(token, state);

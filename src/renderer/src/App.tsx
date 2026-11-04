@@ -215,6 +215,8 @@ interface TabState {
   roleId?: string;
   /** Item 12a — the place of the Mindscape this tab was opened from, until its conversation binds to it. */
   placeId?: string;
+  /** Sessões remotas — remote place (`accounts.remotes`) where this tab's CLI runs; `undefined` = this computer. */
+  remoteId?: string;
   /**
    * T404/T408 — id da sessão do Claude desta aba (o mesmo que nomeia o
    * `.jsonl`), devolvido por `pty.create` e levantado pelo TerminalPane. É a
@@ -949,6 +951,7 @@ export function App(): React.JSX.Element {
       launchArgs: args,
       sessionType: 'claude',
       providerId: options.providerId ?? undefined,
+      ...(options.remoteId ? { remoteId: options.remoteId } : {}),
       // Item 12a — the role goes with the spawn; the place born from this conversation keeps it.
       ...(options.roleId ? { roleId: options.roleId } : {}),
     });
@@ -2014,6 +2017,8 @@ export function App(): React.JSX.Element {
       ...(tab.id === activeTabId ? { active: true } : {}),
     };
     if (tab.sessionType === 'shell') return [{ sessionType: 'shell', ...common }];
+    // Sessões remotas — they keep running on the remote place; the next boot finds and reattaches them.
+    if (tab.remoteId) return [];
     const sessionId = tab.claudeSessionId;
     const launchArgs = sessionId ? withResumeArgs(tab.launchArgs, sessionId) : tab.launchArgs;
     return [
@@ -2082,6 +2087,32 @@ export function App(): React.JSX.Element {
       })
       .catch(() => undefined);
     // `addTab` is recreated every render; this runs once, when the config (model defaults) is in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appConfig]);
+
+  // Sessões remotas — sessions that kept running on a remote place while the app was closed come back as
+  // tabs, attached to the same tmux session (`-r` only matters if it ended in the meantime).
+  const remoteBootTakenRef = useRef(false);
+  useEffect(() => {
+    if (!appConfig || remoteBootTakenRef.current || !window.donel.pty.remoteAlive) return;
+    remoteBootTakenRef.current = true;
+    void window.donel.pty
+      .remoteAlive()
+      .then((alive) => {
+        for (const entry of alive) {
+          if (tabsRef.current.some((tab) => tab.claudeSessionId === entry.sessionId)) continue;
+          addTab({
+            name: entry.name,
+            cwd: entry.cwd,
+            projectName: entry.projectName,
+            pinned: false,
+            sessionType: 'claude',
+            launchArgs: withResumeArgs(entry.launchArgs, entry.sessionId),
+            remoteId: entry.remoteId,
+          });
+        }
+      })
+      .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appConfig]);
 
@@ -3163,6 +3194,9 @@ export function App(): React.JSX.Element {
                   cwd={tab.cwd}
                   args={tab.launchArgs}
                   providerId={tab.providerId}
+                  remoteId={tab.remoteId}
+                  tabName={tab.name}
+                  projectName={tab.projectName}
                   accountLoginId={tab.accountLoginId}
                   roleId={tab.roleId}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
@@ -3311,6 +3345,13 @@ export function App(): React.JSX.Element {
               providers={providers}
               roles={roles}
               onManageRoles={() => setRolesEditorOpen(true)}
+              remotes={accountsView.remotes.map((place) => ({
+                id: place.id,
+                label: place.label,
+                accountLabel: place.activeAccountId
+                  ? (accountsView.accounts.find((account) => account.id === place.activeAccountId)?.label ?? place.activeAccountId)
+                  : null,
+              }))}
               onLaunch={handleLaunch}
             />
           </aside>

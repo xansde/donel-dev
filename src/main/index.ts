@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, screen, shell } from 'electron';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
@@ -79,6 +79,7 @@ import type {
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
+  RemoteAliveSession,
   PhaseArchivedPayload,
   PtyExitInfo,
   RemoteSwitchOutcome,
@@ -184,6 +185,7 @@ import {
 } from './taskdex-board-client';
 import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
 import {
+  buildSessionHooksSettings,
   cleanupStaleHookSettings,
   planStatusLineBridge,
   removeSessionHooksSettings,
@@ -192,6 +194,18 @@ import {
   writeSessionHooksSettings,
 } from './hooks-settings';
 import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-bridge';
+import {
+  buildAttachSshArgs,
+  buildRemoteSetupScript,
+  discoverRemoteSessions,
+  parseRemoteSetupOutput,
+  pickRemotePort,
+  remoteDirFor,
+  RemoteSessionRegistry,
+  runRemoteScript,
+  type RemoteFile,
+  type RemoteSessionMeta,
+} from './remote-session';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { resolveMainRepoRootSync } from './session-worktree';
 import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
@@ -525,6 +539,8 @@ const hooksTransport: 'bridge' | 'legacy' = process.env.DONEL_HOOKS_TRANSPORT ==
 let hooksSettingsPath: string | null = null;
 /** Ponte de hooks (transporte novo). `null` até o boot — ou se ela não subiu: sessões nascem sem semáforo, como no legado. */
 let hookBridge: HookBridge | null = null;
+/** Sessões remotas — live remote tabs of this run (transcript mirrors, end of the remote session). */
+let remoteSessions: RemoteSessionRegistry | null = null;
 /** `curl.exe` achado no boot (`where.exe curl`); `null` = fallback no encaminhador PowerShell que lê bytes. */
 let curlPath: string | null = null;
 /**
@@ -1290,6 +1306,9 @@ function createMainWindow(): void {
     const closedByOwner = consumeKillRequested(ptyId);
     petService?.onSessionExited(ptyId, closedByOwner);
     void sessionWorktrees.onExit(ptyId, closedByOwner); // "Isolar em worktree": a aba fechou -> worktree sem trabalho sai
+    // Sessões remotas — the owner closed the tab: the remote session ends too. App quitting or ssh dropping leaves it alive.
+    if (closedByOwner) remoteSessions?.endRemote(ptyId);
+    remoteSessions?.onPtyExit(ptyId);
 
     // T009 — onExit do node-pty (evento do SO) é a fonte de verdade pra
     // "encerrada"/"falha" (spike: kill forçado nunca dispara SessionEnd).
@@ -1407,7 +1426,9 @@ function startTranscriptWatcher(ptyId: string, filePath: string, sessionId: stri
  * `claudeSessionId` da aba. O semáforo é por aba e não precisa de nada.
  */
 function handleConversationSwitched(event: Extract<BridgeEvent, { type: 'conversation-switched' }>): void {
-  const { ptyId, sessionId, transcriptPath, source } = event;
+  const { ptyId, sessionId, source } = event;
+  // Sessões remotas — the CLI names a path on the remote; the tab follows its local mirror.
+  const transcriptPath = event.transcriptPath && remoteSessions?.has(ptyId) ? remoteSessions.repoint(ptyId, sessionId, event.transcriptPath) : event.transcriptPath;
   if (!transcriptPath) return; // sem caminho não há o que seguir; o payload do CLI sempre o traz.
   const previousSessionId = activeSessionByPty.get(ptyId) ?? null;
   if (previousSessionId === sessionId) return;
@@ -1474,6 +1495,7 @@ function registerChatDomain(): void {
     attachmentsRoot,
     // B36 — the "abrir" of the "Sessão renovada em voo" divider opens the handoff.
     handoffsRoot: join(app.getPath('userData'), 'handoffs'),
+    mapTranscriptPath: (ptyId, sessionId, transcriptPath) => (remoteSessions?.has(ptyId) ? (remoteSessions.repoint(ptyId, sessionId, transcriptPath) ?? transcriptPath) : transcriptPath),
   });
   chatHub = hub;
   chatAttachments = new AttachmentStore({ root: attachmentsRoot });
@@ -1495,8 +1517,177 @@ function registerChatDomain(): void {
   registerAssetsProtocol(protocol, { transcriptRoots: (ptyId) => hub.transcriptRoots(ptyId), attachmentsRoot });
 }
 
+/** Sessões remotas — origin URL and branch of the local project, so the remote clones the same repo. */
+function localGitInfo(cwd: string): { repoUrl: string | null; branch: string | null } {
+  const read = (args: string[]): string | null => {
+    try {
+      const out = execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 5_000, windowsHide: true }).trim();
+      return out.length > 0 ? out : null;
+    } catch {
+      return null;
+    }
+  };
+  return { repoUrl: read(['remote', 'get-url', 'origin']), branch: read(['branch', '--show-current']) };
+}
+
+/** Drops `--worktree <name>` (the remote session runs in the project folder; the mirror follows that transcript). */
+function withoutWorktreeArgs(args: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--worktree' || args[i] === '-w') {
+      if (args[i + 1] !== undefined && !args[i + 1].startsWith('-')) i++;
+      continue;
+    }
+    out.push(args[i]);
+  }
+  return out;
+}
+
+/**
+ * Sessões remotas — `pty:create` of a `claude` tab that runs on a remote place (docs/adr/0006). The CLI runs in
+ * a tmux session there; the PTY here is the ssh that shows it. Hooks and the browser MCP come back through
+ * reverse tunnels; the transcript is mirrored into a local file the chat reads.
+ */
+async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<PtyCreateResult> {
+  const accountsConfig = accountEngineHost.current()?.getConfig() ?? appConfig.accounts;
+  const place = accountsConfig.remotes.find((candidate) => candidate.id === options.remoteId);
+  if (!place) throw new Error('Lugar remoto não encontrado — pode ter sido removido no painel Contas.');
+  if (options.providerId) throw new Error('Provedor de terceiro ainda não roda em lugar remoto.');
+  if (!remoteSessions) throw new Error('Sessões remotas ainda não estão prontas.');
+  const localCwd = options.cwd ?? homedir();
+
+  const launcherArgs = withoutWorktreeArgs(options.args ?? []);
+  const { correlationId, extraArgs } = resolveClaudeCorrelation(launcherArgs, randomUUID);
+  const ptyId = randomUUID();
+
+  // Fresh tokens and ports; a live remote session answers with the ones its CLI already holds.
+  const fresh: RemoteSessionMeta = {
+    sid: correlationId,
+    hookToken: randomBytes(16).toString('hex'),
+    hookPort: pickRemotePort(),
+    mcpToken: null,
+    mcpPort: pickRemotePort(),
+    localCwd,
+    projectName: options.projectName ?? localCwd,
+    name: options.tabName ?? options.projectName ?? localCwd,
+    launchArgs: options.args ?? [],
+    createdAt: new Date().toISOString(),
+  };
+  const files: RemoteFile[] = [];
+  const claudeArgs: string[] = [...launcherArgs, ...extraArgs];
+
+  const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
+  const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId) ?? null) : null;
+  if (rolePromptPath) {
+    try {
+      files.push({ name: 'role.md', content: readFileSync(rolePromptPath, 'utf8') });
+      claudeArgs.push(...roleDeliveryFor('claude-code', '@S/role.md').args);
+    } catch {
+      // the session opens without the role, as a local one would
+    }
+  }
+
+  const hooksOn = hookBridge !== null && hookBridge.port !== null;
+  if (hooksOn) {
+    const settings = buildSessionHooksSettings({
+      port: fresh.hookPort,
+      token: fresh.hookToken,
+      curlPath: 'curl',
+      statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
+    });
+    files.push({ name: 'settings.json', content: `${JSON.stringify(settings, null, 2)}\n` });
+    claudeArgs.push('--settings', '@S/settings.json');
+  }
+  const mcp = fresh.mcpPort !== null ? (browserService?.prepareRemoteSession(ptyId, fresh.mcpPort) ?? null) : null;
+  const meta: RemoteSessionMeta = { ...fresh, mcpToken: mcp?.token ?? null, mcpPort: mcp ? fresh.mcpPort : null };
+  if (mcp) {
+    files.push({ name: 'mcp.json', content: mcp.configFileContent });
+    claudeArgs.push('--mcp-config', '@S/mcp.json');
+  }
+  const finalClaudeArgs = withResolvedPermissionMode(claudeArgs, readUserDefaultPermissionMode(undefined));
+
+  await remoteSessions.waitEnded(correlationId);
+  const git = localGitInfo(localCwd);
+  const script = buildRemoteSetupScript({
+    sid: correlationId,
+    homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
+    repoUrl: git.repoUrl,
+    branch: git.branch,
+    files,
+    claudeArgs: finalClaudeArgs,
+    meta,
+  });
+  const setup = await runRemoteScript(place.sshTarget, script);
+  const answer = parseRemoteSetupOutput(setup.stdout, setup.code);
+  if (answer.kind === 'error') {
+    browserService?.releasePty(ptyId);
+    throw new Error(`${place.label}: ${answer.message}`);
+  }
+  const live = answer.kind === 'alive' ? answer.meta : meta;
+
+  // The bridge and the MCP know this tab by the tokens the remote CLI holds.
+  if (hooksOn && hookBridge) hookBridge.registerSession(ptyId, live.hookToken);
+  if (answer.kind === 'alive') {
+    browserService?.releasePty(ptyId);
+    if (live.mcpPort !== null && live.mcpToken !== null) browserService?.prepareRemoteSession(ptyId, live.mcpPort, live.mcpToken);
+  }
+  const tunnels = [
+    ...(hooksOn && hookBridge?.port ? [{ remotePort: live.hookPort, localPort: hookBridge.port }] : []),
+    ...(live.mcpPort !== null && mcp ? [{ remotePort: live.mcpPort, localPort: mcp.localPort }] : []),
+  ];
+
+  try {
+    ptyManager.create({
+      id: ptyId,
+      cols: options.cols,
+      rows: options.rows,
+      cwd: localCwd,
+      command: process.platform === 'win32' ? 'ssh.exe' : 'ssh',
+      args: buildAttachSshArgs({ sshTarget: place.sshTarget, sid: correlationId, tunnels }),
+    });
+  } catch (error) {
+    hookBridge?.unregisterSession(ptyId);
+    browserService?.releasePty(ptyId);
+    throw error;
+  }
+
+  tabCwdByPty.set(ptyId, localCwd);
+  activeSessionByPty.set(ptyId, correlationId);
+  if (hooksOn) {
+    semaphoreManager.registerSession(ptyId, correlationId);
+    petService?.onSessionRegistered(ptyId);
+    accountsBusyPtyIds.delete(ptyId);
+  }
+  accountsLiveSessionPtyIds.add(ptyId);
+  browserService?.registerPty(ptyId);
+
+  const mirror = remoteSessions.attach(ptyId, place.sshTarget, correlationId, answer.remoteDir);
+  spawnedTranscriptPaths.set(correlationId, mirror);
+  initialChatSourceByPty.set(ptyId, { sessionId: correlationId, transcriptPath: mirror, cwd: localCwd });
+  startTranscriptWatcher(ptyId, mirror, correlationId);
+
+  const accountId = place.activeAccountId;
+  const accountLabel = accountId ? (accountEngineHost.current()?.getSnapshot().accounts.find((account) => account.id === accountId)?.label ?? accountId) : null;
+  return { ptyId, claudeSessionId: correlationId, ...(accountId && accountLabel ? { account: { id: accountId, label: accountLabel } } : {}) };
+}
+
 function registerPtyIpcHandlers(): void {
-  ipcMain.handle(PTY_CHANNELS.create, (_event, options: PtyCreateOptions): PtyCreateResult => {
+  remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'));
+  ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
+    const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+    const found = await discoverRemoteSessions(places);
+    return found.map(({ remoteId, meta }) => ({
+      remoteId,
+      sessionId: meta.sid,
+      cwd: meta.localCwd,
+      projectName: meta.projectName,
+      name: meta.name,
+      launchArgs: meta.launchArgs,
+    }));
+  });
+
+  ipcMain.handle(PTY_CHANNELS.create, (_event, options: PtyCreateOptions): PtyCreateResult | Promise<PtyCreateResult> => {
+    if (options.sessionType === 'claude' && options.remoteId && !options.accountLoginId) return createRemoteClaudeSession(options);
     if (options.sessionType === 'claude') {
       // T005 — spawna o `claude` CLI direto no PTY (plan.md ponto 1), não
       // dentro de um shell. Sem resolução → CA-5: o renderer reconhece o

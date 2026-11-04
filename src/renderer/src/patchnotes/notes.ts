@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'Sessões rodando na VPS, controladas daqui',
+        text: 'No Launcher, o campo "Onde roda" escolhe a VPS. A sessão roda lá, com a memória e a conta de lá, e aparece aqui como qualquer outra aba: chat, terminal, Mindscape, "Precisa de você" e o navegador integrado. Se o projeto ainda não existe na VPS, ele é clonado na hora (o que não foi enviado ao GitHub não vai junto). Fechar a aba encerra a sessão lá; fechar o app não: ela continua trabalhando, e ao abrir o app de novo a aba volta sozinha.',
+      },
+      {
         title: 'Suas contas também numa VPS',
         text: 'No painel Contas, "Adicionar lugar remoto" cadastra uma máquina que você acessa por ssh sem senha (por exemplo a VPS pelo Tailscale). Cada lugar escolhe a sua conta numa lista, e o Claude Code de lá passa a usá-la na próxima mensagem, sem login nenhum lá. Uma conta nunca fica em dois lugares ao mesmo tempo: a que está na VPS aparece como "em uso em VPS" e não dá para escolher aqui, e vice-versa. A troca automática vale para a VPS também, enquanto o app estiver aberto. "Nenhuma" tira a conta do lugar.',
       },

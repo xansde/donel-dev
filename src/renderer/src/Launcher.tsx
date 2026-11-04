@@ -69,7 +69,19 @@ export interface LauncherLaunchOptions {
   worktree: boolean;
   /** Papéis de sessão (item 12a) — role of the session; `null` = no role. */
   roleId: string | null;
+  /** Sessões remotas — remote place where the session runs; `null` = this computer. */
+  remoteId: string | null;
 }
+
+/** Sessões remotas — a place the Launcher can run a session on. */
+export interface LauncherRemotePlace {
+  readonly id: string;
+  readonly label: string;
+  /** Label of the account the place holds; `null` = no account (the CLI there is not logged in). */
+  readonly accountLabel: string | null;
+}
+
+const HERE = '';
 
 export interface LauncherProps {
   /** Lista de projetos conhecidos (sidebar) — alimenta o seletor "Projeto-alvo". */
@@ -84,13 +96,16 @@ export interface LauncherProps {
   roles?: readonly SessionRole[];
   /** Item 12b — "Papéis…": the screen to create and edit roles. */
   onManageRoles?: () => void;
+  /** Sessões remotas — `[]` = the "Onde roda" field does not show. */
+  remotes?: readonly LauncherRemotePlace[];
   onLaunch: (options: LauncherLaunchOptions) => void;
 }
 
 const NO_ROLE = '';
 
-export function Launcher({ projects, defaultProjectPath, launcherDefaults, providers = [], roles = [], onManageRoles, onLaunch }: LauncherProps): React.JSX.Element {
+export function Launcher({ projects, defaultProjectPath, launcherDefaults, providers = [], roles = [], onManageRoles, remotes = [], onLaunch }: LauncherProps): React.JSX.Element {
   const [roleId, setRoleId] = useState<string>(NO_ROLE);
+  const [remoteId, setRemoteId] = useState<string>(HERE);
   const [model, setModel] = useState<ModelAlias>(launcherDefaults?.model ?? DEFAULT_MODEL);
   const [effort, setEffort] = useState<EffortLevel>(launcherDefaults?.effort ?? DEFAULT_EFFORT);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(launcherDefaults?.permissionMode ?? DEFAULT_PERMISSION);
@@ -128,8 +143,17 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, provi
       providerId,
       worktree,
       roleId: roleId === NO_ROLE ? null : roleId,
+      remoteId: remoteId === HERE || !remotes.some((place) => place.id === remoteId) ? null : remoteId,
     });
   };
+  const whereOptions: SelectOption[] = [
+    { value: HERE, label: 'Este computador' },
+    ...remotes.map((place) => ({
+      value: place.id,
+      label: place.label,
+      description: place.accountLabel ? `conta ${place.accountLabel} · continua rodando com o app fechado` : 'sem conta — escolha uma no painel Contas',
+    })),
+  ];
 
   // Item 12a — picking a role fills its suggestions in; every field stays editable afterwards.
   const pickRole = (next: string): void => {
@@ -158,6 +182,12 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, provi
               Papéis…
             </Button>
           ) : null}
+        </div>
+      ) : null}
+
+      {remotes.length > 0 ? (
+        <div className={styles.field}>
+          <Select label="Onde roda" value={remoteId} options={whereOptions} onChange={setRemoteId} />
         </div>
       ) : null}
 

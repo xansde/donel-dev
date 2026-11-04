@@ -252,6 +252,8 @@ export const PTY_CHANNELS = {
   data: 'pty:data',
   exit: 'pty:exit',
   preview: 'pty:preview',
+  /** Sessões remotas — sessions still alive on the remote places (boot reattach). */
+  remoteAlive: 'pty:remoteAlive',
 } as const;
 
 export interface PtyCreateOptions {
@@ -305,6 +307,24 @@ export interface PtyCreateOptions {
    * renewal: the main reads the role of the place that holds the conversation in `mindscape.json`.
    */
   roleId?: string;
+  /**
+   * Sessões remotas — id of a remote place (`accounts.remotes`) where this session runs, inside a tmux
+   * session that outlives the app. Absent = this computer. Only with `sessionType === 'claude'`.
+   */
+  remoteId?: string;
+  /** Sessões remotas — names kept on the remote, so the next boot reopens the tab as it was. */
+  tabName?: string;
+  projectName?: string;
+}
+
+/** Sessões remotas — a session still alive on a remote place, found at boot. */
+export interface RemoteAliveSession {
+  readonly remoteId: string;
+  readonly sessionId: string;
+  readonly cwd: string;
+  readonly projectName: string;
+  readonly name: string;
+  readonly launchArgs: readonly string[];
 }
 
 /**
@@ -377,6 +397,8 @@ export interface DonelPtyApi {
   kill(ptyId: string): void;
   /** Ring buffer de ~50 linhas (ANSI stripado) — plan.md ponto 8, hover-preview futuro. */
   getPreview(ptyId: string): Promise<string[]>;
+  /** Sessões remotas — sessions still alive on the remote places, to reopen at boot. */
+  remoteAlive(): Promise<RemoteAliveSession[]>;
   /** Retorna função de unsubscribe. */
   onData(ptyId: string, listener: (data: string) => void): () => void;
   /** Retorna função de unsubscribe. */
