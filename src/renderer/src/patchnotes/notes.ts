@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-03',
     items: [
       {
+        title: 'Cartão da sessão mais completo no Mindscape',
+        text: 'Cada cartão mostra o motor (por exemplo "opus 5.5") e quanto do contexto já foi usado ("38% · 152k", na mesma cor do rodapé do chat). Um anel em volta do ícone diz o estado num relance: vermelho quando precisa de você, azul trabalhando, tracejado quando o app ainda não sabe. Embaixo, "aberta · trabalhando · viva" separa o processo, a atividade e se dá para retomar, e "! 2 · permissão, pergunta" conta o que espera você e por quê. O Organizar ganhou a coluna "parada com pendência", primeiro à esquerda.',
+      },
+      {
         title: 'Papéis prontos: Dev, Revisor e Pesquisa',
         text: 'Três papéis já vêm prontos. Dev faz a mudança e pede revisão; Revisor confere se o prometido aconteceu, sem ser o autor, e devolve o que achou; Pesquisa lê e resume, sem mexer no código. Em "Papéis…" (no menu de "＋ Sessão com papel…" ou ao lado do campo Papel do Launcher) você muda o texto, a cor e as sugestões de modelo, esforço e permissão, ou cria um papel novo. A mudança vale na próxima vez que uma sessão com aquele papel abrir ou for retomada.',
       },

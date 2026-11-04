@@ -1,17 +1,19 @@
 // Mindscape, lugar principal — "Organizar" (docs/refinamentos/mindscape-lugar-principal.md, rule 7).
 // One gesture lays the session cards out in columns, each with the note it wrote right below:
-// precisa de você · trabalhando · em espera · fechadas. Only what the caller lists moves (it leaves
-// the favorites out, rule 6); the owner's post-its, drawings and prints never move, and the links
-// follow the cards by themselves. Pure: the screen applies it as one history entry (Ctrl+Z undoes).
+// parada com pendência · terminou e você não viu · trabalhando · em espera · fechadas (item 04 added
+// the first one). Only what the caller lists moves (it leaves the favorites out, rule 6); the owner's
+// post-its, drawings and prints never move, and the links follow the cards by themselves. Pure: the
+// screen applies it as one history entry (Ctrl+Z undoes).
 
-import type { SemaphoreState } from '../index';
 import type { SessionHighlight } from './highlight';
 import { NOTE_CARD_HEIGHT, SESSION_CARD_HEIGHT, SESSION_CARD_WIDTH, noteCardId, type MindscapeDoc } from './model';
+import { isStalledWithNeed, type SessionAxes } from './sessionAxes';
 
-export type OrganizeColumn = 'attention' | 'working' | 'waiting' | 'closed';
+/** `stalled` = parada com pendência; `attention` = terminou e você não viu. */
+export type OrganizeColumn = 'stalled' | 'attention' | 'working' | 'waiting' | 'closed';
 
 /** Left to right. */
-export const ORGANIZE_COLUMNS: readonly OrganizeColumn[] = ['attention', 'working', 'waiting', 'closed'];
+export const ORGANIZE_COLUMNS: readonly OrganizeColumn[] = ['stalled', 'attention', 'working', 'waiting', 'closed'];
 
 export const ORGANIZE_COLUMN_GAP = 48;
 /** Between a session card and its note. */
@@ -27,10 +29,15 @@ export interface OrganizeEntry {
   readonly column: OrganizeColumn;
 }
 
-/** The column of a session with an open tab (a closed one is always `closed`). */
-export function organizeColumnOf(state: SemaphoreState, highlight: SessionHighlight): OrganizeColumn {
-  if (state === 'permission' || state === 'error') return 'attention';
-  if (state === 'working') return 'working';
+/**
+ * The column of a session with an open tab (a dormant one is always `closed`). Item 04: from its three
+ * axes — stopped with something open → `stalled`; the process gone with nothing open → `closed`;
+ * "desconhecido" waits with the stopped ones (never counted as working).
+ */
+export function organizeColumnOf(axes: SessionAxes, highlight: SessionHighlight): OrganizeColumn {
+  if (isStalledWithNeed(axes)) return 'stalled';
+  if (axes.process === 'fechada') return 'closed';
+  if (axes.activity === 'trabalhando') return 'working';
   return highlight === 'highlighted' ? 'attention' : 'waiting';
 }
 

@@ -1,7 +1,8 @@
-import { SESSION_STATE_LABEL_PT, type SessionState } from '@donel-dev/design-system';
+import { formatTokenCount, getSmartZone, SESSION_STATE_LABEL_PT, SMART_ZONE_COLOR_VAR, type SessionState } from '@donel-dev/design-system';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { backgroundCountLabel } from '../../../shared/chat/backgroundTasks';
 import type { SessionHighlight } from '../../../shared/mindscape/highlight';
+import { axesLabel, needsLabel, type SessionAxes } from '../../../shared/mindscape/sessionAxes';
 import { OWNER_COLORS, type OwnerCardColor } from '../../../shared/mindscape/model';
 import type { TabColorToken } from '../../../shared/tabAppearance';
 import styles from './Mindscape.module.css';
@@ -62,6 +63,26 @@ export interface MindscapeSessionCardProps {
   readonly notStarted?: boolean;
   /** Item 12b — click on the seal of a place that has not started: choose another role. */
   readonly onRoleClick?: () => void;
+  /** Item 04 — engine seal ("opus 5.5", "· provedor"); absent = no reading. */
+  readonly engine?: string;
+  /** Item 04 — context, same reading as the footer; absent = no reading. */
+  readonly meter?: { readonly usedTokens: number; readonly maxTokens: number };
+  /** Item 04 — the three axes and "precisa de você". */
+  readonly axes?: SessionAxes;
+}
+
+/** Item 04 — the ring around the glyph: what the session asks of the owner at a glance. */
+function ringOf(axes: SessionAxes | undefined): 'need' | 'working' | 'stopped' | 'unknown' | undefined {
+  if (!axes) return undefined;
+  if (axes.needs.length > 0) return 'need';
+  if (axes.activity === 'trabalhando') return 'working';
+  if (axes.activity === 'desconhecido') return 'unknown';
+  return 'stopped';
+}
+
+/** Same count as the footer's meter (`smartZonePercent` of the design system): whole, never capped at 100. */
+function contextPercent(usedTokens: number, maxTokens: number): number {
+  return maxTokens > 0 ? Math.max(0, Math.round((usedTokens / maxTokens) * 100)) : 0;
 }
 
 /** Glyph of a dormant session (tab closed). */
@@ -89,17 +110,23 @@ export function MindscapeSessionCard({
   role,
   notStarted = false,
   onRoleClick,
+  engine,
+  meter,
+  axes,
 }: MindscapeSessionCardProps): React.JSX.Element {
   // A place that has not started reads like a dormant one, with its own glyph and words.
   const closedLabel = notStarted ? `${NOT_STARTED_LABEL} · duplo clique abre` : closedLabelText;
   const dormant = closedLabel !== undefined;
+  const ring = notStarted ? undefined : ringOf(axes);
+  const unknownActivity = !dormant && axes?.activity === 'desconhecido';
+  const need = axes ? needsLabel(axes.needs) : null;
   const style = {
     left: x,
     top: y,
     '--stripe': cliColorHex ?? STRIPE_BY_TOKEN[color],
     ...(role ? { '--role': role.color } : {}),
   } as CSSProperties;
-  const stateText = dormant ? closedLabel : SESSION_STATE_LABEL_PT[state];
+  const stateText = `${dormant ? closedLabel : unknownActivity ? 'Estado desconhecido' : SESSION_STATE_LABEL_PT[state]}${need ? `, precisa de você: ${need}` : ''}`;
   return (
     <article
       className={[
@@ -160,8 +187,8 @@ export function MindscapeSessionCard({
         </button>
       ) : null}
       <div className={styles.sessionHead}>
-        <span className={styles.glyph} aria-hidden="true">
-          {notStarted ? NOT_STARTED_GLYPH : dormant ? DORMANT_GLYPH : STATE_GLYPH[state]}
+        <span className={[styles.glyph, ring ? styles.ring : '', ring ? styles[`ring-${ring}`] : ''].filter(Boolean).join(' ')} aria-hidden="true" data-ring={ring}>
+          {notStarted ? NOT_STARTED_GLYPH : dormant ? DORMANT_GLYPH : unknownActivity ? '?' : STATE_GLYPH[state]}
         </span>
         <span className={styles.sessionName} title={name} data-testid="mindscape-session-name">
           {name}
@@ -172,10 +199,38 @@ export function MindscapeSessionCard({
           </span>
         ) : null}
       </div>
+      {!dormant && (engine || meter) ? (
+        <div className={styles.sessionMeterRow} data-testid="mindscape-session-meter">
+          {engine ? (
+            <span className={styles.engineSeal} title="Motor desta sessão">
+              {engine}
+            </span>
+          ) : null}
+          {meter ? (
+            <span
+              className={styles.contextMeter}
+              style={{ '--zc': SMART_ZONE_COLOR_VAR[getSmartZone(meter.usedTokens, meter.maxTokens)] } as CSSProperties}
+              title={`Contexto: ${formatTokenCount(meter.usedTokens)} de ${formatTokenCount(meter.maxTokens)}`}
+            >
+              {contextPercent(meter.usedTokens, meter.maxTokens)}% · {formatTokenCount(meter.usedTokens)}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       <div className={styles.sessionState} data-testid="mindscape-session-state">
-        {dormant ? closedLabel : SESSION_STATE_LABEL_PT[state]}
+        {dormant ? closedLabel : unknownActivity ? 'Estado desconhecido' : SESSION_STATE_LABEL_PT[state]}
         {!dormant && background > 0 ? ` · ⟳ ${backgroundCountLabel(background)}` : ''}
       </div>
+      {axes && !notStarted ? (
+        <div className={styles.axesLine} data-testid="mindscape-session-axes" title="processo · atividade · retomada">
+          {axesLabel(axes)}
+        </div>
+      ) : null}
+      {need ? (
+        <div className={styles.needLine} data-testid="mindscape-session-need">
+          {need}
+        </div>
+      ) : null}
     </article>
   );
 }

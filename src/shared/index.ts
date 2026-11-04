@@ -401,6 +401,12 @@ export interface SemaphoreUpdate {
   readonly stateEnteredAt: number;
   /** #109 — see `SemaphoreStateInfo.awaitingBackgroundAgents`. */
   readonly awaitingBackgroundAgents?: true;
+  /** Item 04 — see `SemaphoreStateInfo.unconfirmed`. */
+  readonly unconfirmed?: true;
+  /** Item 04 — see `SemaphoreStateInfo.pendingKinds`. */
+  readonly pendingKinds?: readonly string[];
+  /** Item 04 — see `SemaphoreStateInfo.turnFailure`. */
+  readonly turnFailure?: string;
 }
 
 /** Payload do listener FILTRADO por ptyId (mesmo padrão de `PtyExitInfo`/`pty.onExit` — o `ptyId` já é conhecido pelo chamador, não precisa vir de novo dentro do payload). */
@@ -409,6 +415,12 @@ export interface SemaphoreStateInfo {
   readonly stateEnteredAt: number;
   /** #109 — `waiting` with background agents still alive (the CLI will wake the session). Read by the renewal (B36): never swap then. */
   readonly awaitingBackgroundAgents?: boolean;
+  /** Item 04 (cartão rico) — no hook heard yet: the `working` of the birth is a guess ("desconhecido"). */
+  readonly unconfirmed?: boolean;
+  /** Item 04 — kinds of the open pendings (`question`, `permission`, `plan`), with `permission`. */
+  readonly pendingKinds?: readonly string[];
+  /** Item 04 — the last turn ended in `StopFailure` with this code (`rate_limit`…, or `unknown`). */
+  readonly turnFailure?: string;
 }
 
 /** API tipada exposta pelo preload em `window.donel.semaphore` (contextBridge). */

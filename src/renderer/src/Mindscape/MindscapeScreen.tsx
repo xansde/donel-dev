@@ -6,6 +6,7 @@ import type { CardRect, ItemIds } from '../../../shared/mindscape/geometry';
 import { sessionHighlight } from '../../../shared/mindscape/highlight';
 import { classifyBoardSessions, closedLabel, dormantSessionName, type DormantSession } from '../../../shared/mindscape/dormant';
 import { organizeBoard, organizeColumnOf, type OrganizeEntry } from '../../../shared/mindscape/organize';
+import { deriveSessionAxes, type SessionAxes } from '../../../shared/mindscape/sessionAxes';
 import type { RendererGesture } from '../../../shared/learning/gestures';
 import type { SessionRegistry } from '../../../shared/sessionRegistry';
 import { fitImage, imageBoxAt, isPrintInputType, MAX_PRINT_BYTES } from '../../../shared/mindscape/images';
@@ -58,6 +59,16 @@ export interface MindscapeLiveSession {
   readonly background?: number;
   /** Item 12a — role the tab was launched with (gives the role to a place born from this conversation). */
   readonly roleId?: string;
+  /** Item 04 — no hook heard yet (the `working` of the birth is a guess). */
+  readonly unconfirmed?: boolean;
+  /** Item 04 — kinds of the open pendings (`question`, `permission`, `plan`). */
+  readonly pendingKinds?: readonly string[];
+  /** Item 04 — `StopFailure` code of the last turn. */
+  readonly turnFailure?: string;
+  /** Item 04 — engine seal: the short model label read from the session (and the provider); absent = no reading. */
+  readonly engine?: string;
+  /** Item 04 — the context, same reading as the footer of the chat; absent = no reading (never a made-up 0%). */
+  readonly meter?: { readonly usedTokens: number; readonly maxTokens: number };
 }
 
 export interface MindscapeScreenProps {
@@ -269,6 +280,35 @@ export function MindscapeScreen({
   const dormantDrawn: readonly DormantSession[] = sessionsView ? (showOld ? [...sessionsView.dormant, ...sessionsView.old] : sessionsView.dormant) : [];
   const dormantIds = new Set(dormantDrawn.map((entry) => entry.sessionId));
   const foldedIds: ReadonlySet<string> = showOld || !sessionsView ? new Set() : sessionsView.oldSessionIds;
+  // Item 04 — retomabilidade: the conversations found in the project folder (where `-r <id>` looks),
+  // read when the board has a session whose process is gone. Not read yet → "desconhecido".
+  const [transcripts, setTranscripts] = useState<{ readonly path: string; readonly ids: ReadonlySet<string> } | undefined>(undefined);
+  const transcriptsPath = board?.projectPath;
+  const needsTranscripts = dormantDrawn.length > 0 || boardSessions.some((session) => session.state === 'done' || session.state === 'error');
+  useEffect(() => {
+    if (!transcriptsPath || !needsTranscripts) return undefined;
+    let cancelled = false;
+    void window.donel.sessions
+      .list(transcriptsPath)
+      .then((list) => {
+        if (!cancelled) setTranscripts({ path: transcriptsPath, ids: new Set(list.map((summary) => summary.id)) });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [transcriptsPath, needsTranscripts, dormantDrawn.length]);
+  const transcriptFound = (sessionId: string): boolean | undefined =>
+    transcripts && transcripts.path === transcriptsPath ? transcripts.ids.has(sessionId) : undefined;
+  const axesOfLive = (session: MindscapeLiveSession): SessionAxes =>
+    deriveSessionAxes({
+      tabOpen: true,
+      state: session.state,
+      unconfirmed: session.unconfirmed,
+      pendingKinds: session.pendingKinds,
+      turnFailure: session.turnFailure,
+      transcriptFound: transcriptFound(session.sessionId),
+    });
   const isFavorite = (sessionId: string): boolean => registry[sessionId]?.pinned === true;
   const dormantName = (sessionId: string): string => {
     const note = board?.cards[`note:${sessionId}`];
@@ -354,7 +394,7 @@ export function MindscapeScreen({
             {
               cardId: place.id,
               sessionId: session.sessionId,
-              column: organizeColumnOf(session.state, sessionHighlight(session.state, session.stateEnteredAt, seenAt[session.sessionId])),
+              column: organizeColumnOf(axesOfLive(session), sessionHighlight(session.state, session.stateEnteredAt, seenAt[session.sessionId])),
             },
           ];
         }),
@@ -715,6 +755,9 @@ export function MindscapeScreen({
                     onOpen={() => onGoToTerminal(session.tabId)}
                     favorite={isFavorite(session.sessionId)}
                     background={session.background}
+                    engine={session.engine}
+                    meter={session.meter}
+                    axes={axesOfLive(session)}
                   />
                 );
               })}
@@ -738,6 +781,7 @@ export function MindscapeScreen({
                     onOpen={() => resume(entry.sessionId)}
                     closedLabel={closedLabel(entry.lastActivityAt)}
                     favorite={entry.pinned}
+                    axes={deriveSessionAxes({ tabOpen: false, transcriptFound: transcriptFound(entry.sessionId) })}
                   />
                 );
               })}
