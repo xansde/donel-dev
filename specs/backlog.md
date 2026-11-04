@@ -1491,7 +1491,7 @@ Efeito colateral: como o retomar sai com código 1 em segundos, o CA-11
 (`sessions:forgetIfOrphan`) conferia o `.jsonl` no PC, não achava e **apagava a
 sessão do registro** (some dos Favoritos).
 
-**Corrigido (PR `fix/retomar-sessao-remota`):** retomar abre a sessão onde ela
+**Corrigido (PR #205, `fix/retomar-sessao-remota`):** retomar abre a sessão onde ela
 vive, sem o dono escolher nada.
 - Novo canal `sessions:whereLives`: se o `.jsonl` está neste computador (na
   pasta do projeto ou em qualquer outra de `~/.claude/projects`, caso de
