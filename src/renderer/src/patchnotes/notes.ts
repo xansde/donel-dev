@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'Chat das sessões na VPS volta a enviar',
+        text: 'Na VPS, o chat não conseguia mandar mensagem: a sessão abria, mas o texto nunca chegava ao Claude de lá, e às vezes aparecia lixo como ";23;24;28c" na caixa. As sessões novas na VPS agora recebem as mensagens normalmente.',
+      },
+      {
         title: 'Uma sessão daqui abre sessões na VPS',
         text: 'Uma sessão que roda neste computador agora pode abrir uma sessão com papel na VPS (ou o contrário), em vez de só no mesmo lugar onde ela roda. Ela vê os lugares disponíveis e escolhe pelo nome.',
       },
