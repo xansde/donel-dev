@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'Retomar abre a sessão onde ela vive',
+        text: 'Uma sessão que nasceu na VPS agora retoma na VPS, mesmo que você esteja retomando deste computador: dois cliques no lugar dela no Mindscape ou um clique nos Favoritos. Antes ela abria aqui e falhava, porque a conversa está gravada lá. Se a VPS não responder, o app avisa em vez de abrir uma sessão vazia.',
+      },
+      {
         title: 'Régua de contexto vai até 500k',
         text: 'A barra de contexto da sessão agora mede até 500k (antes 300k): 250k usados aparecem como 50%. No Haiku a régua continua sendo a janela dele, 200k.',
       },

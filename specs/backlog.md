@@ -1472,6 +1472,53 @@ na VPS tem que ser tão capaz quanto uma no PC, ou dizer na cara o que não tem.
 aceita a porta de um túnel registrado e continua recusando qualquer outro
 `Host`.
 
+### B39. Retomar uma sessão que vive num lugar remoto (achado 04/11)
+
+**Feedback do dono:** "Não consegui retomar a outra sessão Líder. Talvez por
+ela ser na VPS e aqui ser no meu PC."
+
+**Causa (confirmada no código, 04/11):** todo Retomar montava a aba sem
+`remoteId` — `handleMindscapeResume` (dois cliques no lugar fechado),
+`handleFocusOrResumeFavoriteSession` (Favoritos), `handleResumeSession` e
+`handleForkSession` (Sessões anteriores) e `handleMapResume` (mapa da
+Esteira), em `src/renderer/src/App.tsx`. Sem `remoteId`, o `pty:create` cai no
+`claude -r <id>` local (`src/main/index.ts`, handler de `PTY_CHANNELS.create`),
+e o CLI do PC não acha a conversa, que está no `~/.claude/projects` da VPS. O
+app não guarda em lugar nenhum onde uma sessão rodou: o `~/.donel/s/<sid>` da
+VPS é apagado quando o dono fecha a aba (`buildEndScript`), e o espelho local
+(`<userData>/remote-transcripts/<sid>.jsonl`) não diz de qual lugar veio.
+Efeito colateral: como o retomar sai com código 1 em segundos, o CA-11
+(`sessions:forgetIfOrphan`) conferia o `.jsonl` no PC, não achava e **apagava a
+sessão do registro** (some dos Favoritos).
+
+**Corrigido (PR `fix/retomar-sessao-remota`):** retomar abre a sessão onde ela
+vive, sem o dono escolher nada.
+- Novo canal `sessions:whereLives`: se o `.jsonl` está neste computador (na
+  pasta do projeto ou em qualquer outra de `~/.claude/projects`, caso de
+  worktree), retoma aqui. Senão pergunta a cada lugar remoto, por `ssh`, se a
+  conversa está na pasta do projeto lá (`findRemoteTranscript` em
+  `src/main/remote-session.ts`, só leitura). O que tem a conversa retoma
+  (`ssh` + `claude -r <id>` no tmux, pelo caminho normal da sessão remota).
+- Lugar que não responde nunca conta como "não tem": se a conversa não está
+  aqui e algum lugar ficou calado, o app avisa ("a conversa não está neste
+  computador, e o lugar remoto «VPS» não respondeu") e não abre nada.
+- `forgetIfOrphan` não apaga a entrada de uma sessão que tem espelho remoto.
+
+**Fica de fora (próximo passo):**
+- **Trazer a conversa para este computador.** Copiar o JSONL do lugar remoto
+  para o `~/.claude/projects` do PC, para retomar aqui. **Cuidado:** o
+  transcript pode carregar dado sensível (o que foi colado, lido ou respondido
+  na sessão); copiar é decisão do dono, por sessão, nunca automática.
+- **Sessões anteriores não listam as conversas remotas.** O índice lê só o
+  `~/.claude/projects` do PC. Hoje a sessão remota fechada se retoma pelo
+  Mindscape e pelos Favoritos.
+- **Fork de sessão remota com o tmux da original vivo** reataria a original
+  (o setup acha `donel-<sid>` vivo). Raro: a original viva já tem aba.
+
+**Pronto quando:** estando no PC, dois cliques na Líder fechada da VPS abrem a
+conversa dela na VPS, com o histórico; com a VPS desligada, aparece o aviso e
+nenhuma aba vazia.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
