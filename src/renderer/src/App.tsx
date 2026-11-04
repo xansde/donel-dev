@@ -96,6 +96,8 @@ import { EsteiraScreen } from './Esteira/EsteiraScreen';
 // Mindscape V1 — third mode of the shell (docs/design/mindscape.md).
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
+import { AgentBridge, type AgentBridgePorts } from './Mindscape/agentBridge';
+import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
 import { appendConversation, findSessionBoard, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
 import type { SessionRole } from '../../shared/roles';
 // Sessão renovada em voo (B36) — limit crossed at the end of a turn → handoff → new session in the same tab.
@@ -142,7 +144,7 @@ import { BackgroundIndicator, type BackgroundSession } from './chat/BackgroundTa
 import { revealRow } from './chat/revealRow';
 import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
-import { disposeTabSend, sendDriverFor, sendToTab } from './chat/composer/tabSend';
+import { disposeTabSend, getDraft, sendDriverFor, sendToTab } from './chat/composer/tabSend';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
@@ -644,11 +646,12 @@ export function App(): React.JSX.Element {
   }, [projects, appConfig, maybeSeedFavoriteProject]);
 
   /** Cria uma aba nova, foca ela e devolve o id — usado por todo caminho de criação (sidebar, Launcher, "＋ Nova sessão", Terminal). */
-  const addTab = (partial: Omit<TabState, 'id'>): string => {
+  const addTab = (partial: Omit<TabState, 'id'>, focus = true): string => {
     tabIdCounter.current += 1;
     const id = `tab-${tabIdCounter.current}`;
     setTabs((prev) => [...prev, { id, ...partial }]);
-    setActiveTabId(id);
+    // Quadro por MCP — a session opened by another session does not take the owner's focus.
+    if (focus) setActiveTabId(id);
     // T011 — semeia o valor inicial da toolbar de Modelo/Esforço só pra
     // abas claude (terminal livre não tem os dois campos): lê de volta
     // `launchArgs` (Launcher, T008) quando a aba nasceu configurada; sem
@@ -2437,8 +2440,88 @@ export function App(): React.JSX.Element {
         const sessionName = live?.name ?? (previous?.kind === 'session-note' ? previous.sessionName : sessionId);
         return writeSessionNote(doc, projectPath, { sessionId, sessionName, text, writtenAt: at });
       });
+      // Quadro por MCP (D) — the sessions with an arrow to this one (or that opened it) hear that it ended.
+      agentBridgeRef.current.turnEnded(sessionId, text);
     });
   }, [mindscapeLoaded, applyMindscapeSession]);
+
+  // Quadro por MCP (items 08/13 + B37) — the board and session tools of the MCP server `donel`. The main relays
+  // each call here (main/board-bridge.ts); the bridge reads and changes the document through the same doors as
+  // the owner (one undoable gesture per batch) and opens tabs like a place of the board does.
+  const [spawnAsks, setSpawnAsks] = useState<readonly SpawnAsk[]>([]);
+  const pendingFirstMessagesRef = useRef<Record<string, string>>({});
+  const agentPorts: AgentBridgePorts = {
+    loaded: mindscapeLoaded,
+    doc: () => mindscape.doc,
+    applyGesture: (projectPath, reducer) => applyMindscape(projectPath, reducer),
+    tabs: () => tabsRef.current,
+    tabOfPty: (ptyId) => tabsRef.current.find((tab) => chatPtyIds[tab.id] === ptyId),
+    stateOf: (tabId) => (tabExits[tabId] !== undefined || !tabsRef.current.some((tab) => tab.id === tabId) ? undefined : (semaphoreStates[tabId]?.state ?? 'working')),
+    roles: () => roles,
+    openSession: (request) => {
+      const defaults = appConfig?.launcherDefaults;
+      const providerId = request.role.engine && providers.some((provider) => provider.id === request.role.engine) ? request.role.engine : undefined;
+      const tabId = addTab(
+        {
+          name: request.name,
+          cwd: request.projectPath,
+          projectName: request.projectName ?? request.projectPath.split(/[\\/]/).filter(Boolean).pop(),
+          pinned: false,
+          launchArgs: buildLauncherArgs({
+            providerId,
+            model: request.role.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
+            effort: request.role.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
+            permissionMode: request.role.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
+            sessionName: request.name,
+          }),
+          sessionType: 'claude',
+          providerId,
+          ...(request.remoteId ? { remoteId: request.remoteId } : {}),
+          roleId: request.role.id,
+          placeId: request.placeId,
+        },
+        false,
+      );
+      pendingFirstMessagesRef.current[tabId] = request.firstMessage;
+      return tabId;
+    },
+    sendLine: (tabId, text) => sendRenewalLine(tabId, text),
+    ownerTyping: (tabId) => getDraft(tabId).trim().length > 0,
+    askOwner: (question) =>
+      new Promise<boolean>((resolve) => {
+        const id = crypto.randomUUID();
+        setSpawnAsks((prev) => [...prev, { id, ...question, resolve }]);
+      }),
+    remoteLabel: (remoteId) => accountsView.remotes.find((remote) => remote.id === remoteId)?.label ?? remoteId,
+  };
+  const agentBridgeRef = useRef<AgentBridge>(null as unknown as AgentBridge);
+  if (agentBridgeRef.current === null) agentBridgeRef.current = new AgentBridge(agentPorts);
+  agentBridgeRef.current.setPorts(agentPorts);
+  useEffect(() => {
+    const bridge = agentBridgeRef.current;
+    const off = window.donel.mindscape.onBoardRequest(({ requestId, ptyId, call }) => {
+      void bridge.handle(ptyId, call).then((answer) => window.donel.mindscape.respondBoard({ requestId, ...answer }));
+    });
+    return () => {
+      off();
+      bridge.dispose();
+    };
+  }, []);
+  // The first message of a session opened by `sessao_abrir`: as soon as its tab is in the list.
+  useEffect(() => {
+    for (const [tabId, text] of Object.entries(pendingFirstMessagesRef.current)) {
+      if (!tabs.some((tab) => tab.id === tabId)) continue;
+      delete pendingFirstMessagesRef.current[tabId];
+      sendRenewalLine(tabId, text);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs]);
+  const answerSpawnAsk = (id: string, allowed: boolean): void => {
+    setSpawnAsks((prev) => {
+      prev.find((ask) => ask.id === id)?.resolve(allowed);
+      return prev.filter((ask) => ask.id !== id);
+    });
+  };
   // Mindscape, fatia 04 — moving the view is not an action on the board: out of the history.
   // Desenho, fatia 05 — pan and zoom together (setBoardView), each change computed
   // from the board as it is NOW (several wheel events in a row compose).
@@ -2840,6 +2923,7 @@ export function App(): React.JSX.Element {
 
   return (
     <div className={styles.shell}>
+      <SpawnAskPanel asks={spawnAsks} onAnswer={answerSpawnAsk} />
       <header className={styles.titlebar}>
         <div className={styles.brand}>
           <span aria-hidden="true">◆</span>

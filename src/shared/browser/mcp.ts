@@ -6,7 +6,12 @@
 // Streamable HTTP done by hand (D9): POST with one JSON-RPC message (or a batch), answer `application/json`,
 // no SSE, no session id. Notifications get `202` with no body.
 
+import { BOARD_TOOLS, isBoardToolName, parseBoardToolCall, type BoardToolCall } from '../mindscape/agent-tools';
+
 export const MCP_SERVER_NAME = 'donel';
+
+const BOARD_INSTRUCTIONS =
+  'Quadro (Mindscape) do projeto desta sessão, que o dono vê e usa para falar com você desenhando: quadro_ler mostra lugares (sessões com papel), post-its, desenhos e ligações; quadro_aplicar monta o quadro ao vivo num gesto que o dono desfaz com Ctrl+Z (lugares com papel e pedido, post-its, ligações, retângulos, elipses, linhas, mover); papeis_listar dá os papéis. Mover, editar e apagar só no que uma sessão criou; nunca no que o dono fez (a ferramenta recusa). Prefira mostrar um fluxo no quadro a um texto longo. Time de sessões: sessao_quem_sou, sessao_listar, sessao_abrir (papel + pedido; nasce ligada a você por uma seta), sessao_enviar (só pelas setas do quadro) e sessao_ver_tela. Para falar com outra sessão do Donel use sessao_enviar, nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação. ';
 export const MCP_ENDPOINT_PATH = '/mcp';
 /** Protocol versions this server answers with; a client asking for another one gets the newest of these. */
 export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const;
@@ -350,6 +355,8 @@ export const JSON_RPC_ERRORS = {
 
 export interface McpHandlerContext {
   readonly executor: BrowserToolExecutor;
+  /** Quadro por MCP — the Mindscape tools; absent = the server offers only the browser. */
+  readonly boardExecutor?: (call: BoardToolCall) => Promise<BrowserToolOutcome>;
   readonly serverVersion: string;
 }
 
@@ -392,17 +399,29 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
         result: {
           protocolVersion: negotiateVersion(p.protocolVersion),
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: MCP_SERVER_NAME, title: 'Donel Dev — navegador integrado', version: ctx.serverVersion },
+          serverInfo: { name: MCP_SERVER_NAME, title: 'Donel Dev — navegador integrado e quadro', version: ctx.serverVersion },
           instructions:
+            (ctx.boardExecutor ? BOARD_INSTRUCTIONS : '') +
             'Navegador integrado do Donel Dev, um por sessão, que o dono vê ao lado da conversa. Fluxo: navegador_abrir, navegador_ler (o que está na tela, elementos numerados [N]), navegador_clicar/navegador_digitar/navegador_teclar, e navegador_ler de novo. Para ler o conteúdo todo da página: navegador_extrair. Login, 2FA, captcha, campo de senha ou cartão e botão de comprar, pagar ou excluir são do dono: navegador_pedir_humano. O dono também pode limitar os domínios que o agente abre.',
         },
       };
     case 'ping':
       return { jsonrpc: '2.0', id, result: {} };
     case 'tools/list':
-      return { jsonrpc: '2.0', id, result: { tools: BROWSER_TOOLS } };
+      return { jsonrpc: '2.0', id, result: { tools: ctx.boardExecutor ? [...BOARD_TOOLS, ...BROWSER_TOOLS] : BROWSER_TOOLS } };
     case 'tools/call': {
       const name = p.name;
+      if (typeof name === 'string' && ctx.boardExecutor && isBoardToolName(name)) {
+        const board = parseBoardToolCall(name, p.arguments);
+        if (!board.ok) return { jsonrpc: '2.0', id, result: toolResult({ kind: 'error', text: board.reason }) };
+        let boardOutcome: BrowserToolOutcome;
+        try {
+          boardOutcome = await ctx.boardExecutor(board.call);
+        } catch (error) {
+          boardOutcome = { kind: 'error', text: error instanceof Error ? error.message : String(error) };
+        }
+        return { jsonrpc: '2.0', id, result: toolResult(boardOutcome) };
+      }
       if (typeof name !== 'string' || !TOOL_NAMES.has(name)) return errorResponse(id, JSON_RPC_ERRORS.invalidParams, `Unknown tool: ${String(name)}`);
       const parsed = parseToolCall(name, p.arguments);
       // Bad arguments go back as a tool error, so the model reads the reason and fixes the call.

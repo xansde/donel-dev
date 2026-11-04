@@ -8,7 +8,7 @@ import { basename, dirname, join } from 'node:path';
 import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-settings';
 import { createStatusLineStore } from './statusline-store';
 import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
-import { roleDeliveryFor, withResolvedPermissionMode } from '../shared/commandBuilder';
+import { appMcpAllowArgs, roleDeliveryFor, withResolvedPermissionMode } from '../shared/commandBuilder';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
 import { createEsteiraService, type EsteiraService } from './esteira-service';
@@ -321,6 +321,7 @@ import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
 // Navegador interno — painel com WebContentsView por sessão (docs/design/navegador-interno.md).
 import { createBrowserService, type BrowserService } from './browser/browser-service';
+import { createBoardBridge } from './board-bridge';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
 // PtyManager chega em T004 (este arquivo). ProjectScanner chega no T007
@@ -1630,7 +1631,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   const meta: RemoteSessionMeta = { ...fresh, mcpToken: mcp?.token ?? null, mcpPort: mcp ? fresh.mcpPort : null };
   if (mcp) {
     files.push({ name: 'mcp.json', content: mcp.configFileContent });
-    claudeArgs.push('--mcp-config', '@S/mcp.json');
+    claudeArgs.push(...appMcpAllowArgs(), '--mcp-config', '@S/mcp.json');
   }
   const finalClaudeArgs = withResolvedPermissionMode(claudeArgs, readUserDefaultPermissionMode(undefined));
 
@@ -3500,12 +3501,19 @@ void app.whenReady().then(async () => {
   registerHealthIpcHandlers(); // Saúde do computador
   registerAppUpdateIpcHandlers(); // B33 — atualizar de dentro do app
   registerWorkspaceIpcHandlers(); // Sidebar — abrir no editor + branch
+  // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).
+  const boardBridge = createBoardBridge({
+    ipcMain,
+    getWindow: getMainWindow,
+    isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
+  });
   browserService = createBrowserService({
     ipcMain,
     getWindow: getMainWindow,
     userDataDir: app.getPath('userData'),
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
     appVersion: app.getVersion(),
+    executeBoard: (ptyId, call) => boardBridge.execute(ptyId, call),
   }); // Navegador integrado
   // Servidor MCP `donel` (loopback, porta efêmera) ANTES da janela: a primeira sessão já nasce com as ferramentas
   // do navegador. Se não subir, as sessões nascem sem elas (nunca sem terminal).

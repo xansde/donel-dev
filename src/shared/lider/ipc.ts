@@ -22,8 +22,8 @@ export const LIDER_CHANNELS = {
   state: 'lider:state',
 } as const;
 
-/** Id of the ready role of the Líder (created with the session tools of the MCP `donel`). */
-export const LIDER_ROLE_ID = 'lider';
+/** Id of the ready role of the Líder (the ready role of src/shared/roles.ts). */
+export { LEADER_ROLE_ID as LIDER_ROLE_ID } from '../roles';
 
 /** What the main window says about the Líder of the selected project. */
 export interface LiderReport {

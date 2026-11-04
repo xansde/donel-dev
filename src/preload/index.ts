@@ -149,7 +149,14 @@ import {
 
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
-import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
+import type {
+  MindscapeBoardRequest,
+  MindscapeBoardResponse,
+  MindscapeReadImageResult,
+  MindscapeSaveImageResult,
+  MindscapeSaveResult,
+  MindscapeTurnEndedPayload,
+} from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
 import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
@@ -529,6 +536,13 @@ const donelApi: DonelApi = {
     saveImage: (bytes: ArrayBuffer, mediaType: string) =>
       ipcRenderer.invoke(MINDSCAPE_CHANNELS.saveImage, { bytes, mediaType }) as Promise<MindscapeSaveImageResult>,
     readImage: (imageId: string) => ipcRenderer.invoke(MINDSCAPE_CHANNELS.readImage, imageId) as Promise<MindscapeReadImageResult>,
+    // Quadro por MCP — a session's board tool call comes in; the renderer (owner of the document) answers.
+    onBoardRequest: (listener: (request: MindscapeBoardRequest) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, request: MindscapeBoardRequest): void => listener(request);
+      ipcRenderer.on(MINDSCAPE_CHANNELS.boardRequest, handler);
+      return () => ipcRenderer.removeListener(MINDSCAPE_CHANNELS.boardRequest, handler);
+    },
+    respondBoard: (response: MindscapeBoardResponse) => ipcRenderer.send(MINDSCAPE_CHANNELS.boardRespond, response),
   },
 
   // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).

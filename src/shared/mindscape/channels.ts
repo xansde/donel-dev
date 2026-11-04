@@ -2,6 +2,7 @@
 // of `mindscape.json`; the renderer owns the state in memory and sends the whole
 // document (debounced). Design: docs/design/mindscape.md, "Contratos IPC".
 
+import type { BoardToolCall } from './agent-tools';
 import type { MindscapeDoc } from './model';
 
 export const MINDSCAPE_CHANNELS = {
@@ -13,7 +14,25 @@ export const MINDSCAPE_CHANNELS = {
   saveImage: 'mindscape:save-image',
   /** Desenho, fatia 06 — renderer → main: the bytes of a print, by imageId. */
   readImage: 'mindscape:read-image',
+  /** Quadro por MCP — main → renderer: a session called a board tool (`MindscapeBoardRequest`). */
+  boardRequest: 'mindscape:board-request',
+  /** Quadro por MCP — renderer → main: the answer to `boardRequest` (`MindscapeBoardResponse`). */
+  boardRespond: 'mindscape:board-respond',
 } as const;
+
+/** A board tool call of the session of `ptyId`; the renderer answers with the same `requestId`. */
+export interface MindscapeBoardRequest {
+  readonly requestId: string;
+  readonly ptyId: string;
+  readonly call: BoardToolCall;
+}
+
+export interface MindscapeBoardResponse {
+  readonly requestId: string;
+  readonly ok: boolean;
+  /** JSON text for the agent (ok) or the reason, in Portuguese (not ok). */
+  readonly text: string;
+}
 
 /** Payload of `mindscape:turn-ended`: `sessionId` is the `claudeSessionId` of the tab. */
 export interface MindscapeTurnEndedPayload {
@@ -44,4 +63,8 @@ export interface DonelMindscapeApi {
   saveImage(bytes: ArrayBuffer, mediaType: string): Promise<MindscapeSaveImageResult>;
   /** Desenho, fatia 06 — the bytes of a print (the renderer makes a `blob:` URL of them). */
   readImage(imageId: string): Promise<MindscapeReadImageResult>;
+  /** Quadro por MCP — subscribes to the board tool calls of the sessions; returns the unsubscribe function. */
+  onBoardRequest(listener: (request: MindscapeBoardRequest) => void): () => void;
+  /** Quadro por MCP — the answer to one `onBoardRequest`. */
+  respondBoard(response: MindscapeBoardResponse): void;
 }

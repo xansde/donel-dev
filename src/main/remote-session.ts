@@ -20,6 +20,22 @@ import { basename, join, relative, sep, isAbsolute } from 'node:path';
 export const REMOTE_TMUX_SOCKET = 'donel';
 export const REMOTE_SESSIONS_DIR = '.donel/s';
 
+/**
+ * Marks `~/.claude.json` of the remote place as onboarded (theme chosen) and the project folder (argv[1]) as
+ * trusted. Only non-secret flags; `oauthAccount` and credentials are never read or touched here.
+ */
+const MARK_ONBOARDED_PY = [
+  'import json,os,sys',
+  'p=os.path.expanduser("~/.claude.json")',
+  'd=json.load(open(p)) if os.path.exists(p) else {}',
+  'd["hasCompletedOnboarding"]=True',
+  'd.setdefault("theme","dark")',
+  'pr=d.setdefault("projects",{}).setdefault(sys.argv[1],{})',
+  'pr["hasTrustDialogAccepted"]=True',
+  't=p+".donel-tmp"',
+  'f=open(t,"w");json.dump(d,f,indent=2);f.close();os.chmod(t,0o600);os.replace(t,p)',
+].join('\n');
+
 const SSH_OPTIONS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4'];
 const SETUP_TIMEOUT_MS = 180_000; // a clone can take a while
 const SESSION_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
@@ -168,6 +184,9 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     `printf '%s' ${shQuote(b64(TMUX_CONF))} | base64 -d > "$HOME/.donel/tmux.conf"`,
     ...files.map((file) => `printf '%s' ${shQuote(b64(file.content))} | base64 -d > "$S"/${shQuote(file.name)} && chmod 600 "$S"/${shQuote(file.name)}`),
     '(cd "$D" && pwd) > "$S/dir"',
+    // The CLI on a fresh machine opens on onboarding (theme + login method) and asks to trust the folder,
+    // even with the account already written there by the accounts engine. Mark both as done, atomically.
+    `command -v python3 >/dev/null 2>&1 && python3 -c ${shQuote(MARK_ONBOARDED_PY)} "$(cat "$S/dir")" >/dev/null 2>&1 || true`,
     'printf "DONEL_NEW\\n"; cat "$S/dir"',
     '',
   ].join('\n');
