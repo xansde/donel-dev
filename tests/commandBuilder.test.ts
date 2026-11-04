@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildClaudeArgs,
   mcpDeliveryFor,
+  APP_MCP_PREAUTHORIZED_TOOLS,
   parseModelEffortFromArgs,
   resolvePermissionMode,
   withResolvedPermissionMode,
@@ -297,7 +298,9 @@ describe('Navegador integrado — entrega do MCP `donel` ao CLI da sessão', () 
   it('mcpDeliveryFor(claude-code): --mcp-config <path> as two tokens and one HTTP server named donel with the bearer header', () => {
     const path = 'C:\\Users\\x y\\browser-mcp\\pty-1.json';
     const delivery = mcpDeliveryFor('claude-code', endpoint, path);
-    expect(delivery.args).toEqual(['--mcp-config', path]);
+    expect(delivery.args).toEqual(['--allowedTools', APP_MCP_PREAUTHORIZED_TOOLS.join(','), '--mcp-config', path]);
+    // Only the board and session tools are pre-authorized; the browser keeps the CLI's permission flow.
+    expect(APP_MCP_PREAUTHORIZED_TOOLS.some((tool) => tool.includes('navegador'))).toBe(false);
     expect(JSON.parse(delivery.configFileContent ?? 'null')).toEqual({
       mcpServers: { donel: { type: 'http', url: 'http://127.0.0.1:51234/mcp', headers: { Authorization: `Bearer ${'f'.repeat(32)}` } } },
     });

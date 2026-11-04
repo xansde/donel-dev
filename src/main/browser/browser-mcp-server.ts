@@ -9,6 +9,7 @@ import {
   type BrowserToolCall,
   type BrowserToolOutcome,
 } from '../../shared/browser/mcp';
+import type { BoardToolCall } from '../../shared/mindscape/agent-tools';
 
 // Navegador integrado — the app's local MCP server `donel` (docs/design/navegador-interno.md, D9).
 //
@@ -22,6 +23,8 @@ const MAX_BODY_BYTES = 1024 * 1024;
 export interface BrowserMcpServerDeps {
   /** Runs one validated tool call on the browser of `ptyId`. */
   execute(ptyId: string, call: BrowserToolCall): Promise<BrowserToolOutcome>;
+  /** Quadro por MCP — runs one Mindscape tool for the tab of `ptyId`; absent = no board tools. */
+  executeBoard?(ptyId: string, call: BoardToolCall): Promise<BrowserToolOutcome>;
   readonly serverVersion: string;
 }
 
@@ -77,7 +80,11 @@ export function createBrowserMcpServer(deps: BrowserMcpServerDeps): BrowserMcpSe
     if (body === null) return reply(res, 413, 'Payload too large');
     const parsed = parseMcpBody(body);
     const answer = parsed.ok
-      ? await handleMcpPayload(parsed.payload, { executor: (call) => deps.execute(gate.ptyId, call), serverVersion: deps.serverVersion })
+      ? await handleMcpPayload(parsed.payload, {
+          executor: (call) => deps.execute(gate.ptyId, call),
+          ...(deps.executeBoard ? { boardExecutor: (call: BoardToolCall) => deps.executeBoard!(gate.ptyId, call) } : {}),
+          serverVersion: deps.serverVersion,
+        })
       : parsed.response;
     if (answer === null) {
       res.writeHead(202, { 'Cache-Control': 'no-store' });

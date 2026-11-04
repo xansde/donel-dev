@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ConfigIoDeps } from '../src/main/config-store';
 import { createMindscapeStore, MINDSCAPE_FILE_ENV_VAR, mindscapeFilePath } from '../src/main/mindscape-store';
-import { emptyMindscapeDoc, placeSessionCard } from '../src/shared/mindscape/model';
+import { emptyMindscapeDoc, MINDSCAPE_SCHEMA_VERSION, placeSessionCard } from '../src/shared/mindscape/model';
 
 // Mindscape, fatia 01 — the store: the main is the only writer of
 // `<userData>/mindscape.json`; temp → rename; a newer schema is read and never written.
@@ -69,7 +69,7 @@ describe('createMindscapeStore', () => {
   });
 
   it('still loads a newer schemaVersion (read-only, never written)', () => {
-    const newer = JSON.stringify({ schemaVersion: 4, boards: {}, future: true });
+    const newer = JSON.stringify({ schemaVersion: MINDSCAPE_SCHEMA_VERSION + 1, boards: {}, future: true });
     expect(createMindscapeStore(FILE, memoryIo({ [FILE]: newer }).io).load()).toEqual(emptyMindscapeDoc());
   });
 
@@ -94,7 +94,7 @@ describe('createMindscapeStore', () => {
   });
 
   it('refuses to write over a newer schemaVersion and leaves the file as it was', () => {
-    const newer = JSON.stringify({ schemaVersion: 4, boards: {}, future: true });
+    const newer = JSON.stringify({ schemaVersion: MINDSCAPE_SCHEMA_VERSION + 1, boards: {}, future: true });
     const { io, files, calls } = memoryIo({ [FILE]: newer });
     const store = createMindscapeStore(FILE, io);
     store.load();
@@ -108,11 +108,11 @@ describe('createMindscapeStore', () => {
     const { io, files } = memoryIo({ [FILE]: v1 });
     const store = createMindscapeStore(FILE, io);
     const doc = store.load();
-    expect(doc.schemaVersion).toBe(3);
+    expect(doc.schemaVersion).toBe(MINDSCAPE_SCHEMA_VERSION);
     expect(doc.boards['C:/work/atlas']!.drawings).toEqual([]);
     expect(store.save(doc)).toEqual({ ok: true });
     const written = JSON.parse(files[FILE]!) as { schemaVersion: number; boards: Record<string, { zoom: number; drawings: unknown[] }> };
-    expect(written.schemaVersion).toBe(3);
+    expect(written.schemaVersion).toBe(MINDSCAPE_SCHEMA_VERSION);
     expect(written.boards['C:/work/atlas']).toMatchObject({ zoom: 1, drawings: [] });
   });
 

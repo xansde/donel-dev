@@ -20,7 +20,14 @@ import { clampZoom } from './view';
  * of the moment, the previous ones and a role. A v2 channel would drop a place
  * that has not started yet and every conversation after a renewal.
  */
-export const MINDSCAPE_SCHEMA_VERSION = 3;
+export const MINDSCAPE_SCHEMA_VERSION = 4;
+
+/**
+ * 4 since the board by MCP (item 08 + B37): what a session made on the board carries `by: 'session'`
+ * (owner-kind post-it, place, drawing, link), so the session may later move, edit or remove ONLY that.
+ * A v3 channel would drop the mark and hand the session's items to the owner.
+ */
+export type MadeBy = 'session';
 
 export type OwnerCardColor = Exclude<TabColorToken, 'permission'>;
 
@@ -41,6 +48,8 @@ export interface SessionPlaceCard {
   sessionId?: string;
   previous: string[];
   roleId?: string;
+  /** v4 — made by a session through the MCP (not by the owner). */
+  by?: MadeBy;
   x: number;
   y: number;
 }
@@ -57,13 +66,14 @@ export type MindscapeCard =
       x: number;
       y: number;
     }
-  | { kind: 'owner'; id: string; text: string; color: OwnerCardColor; createdAt: number; x: number; y: number };
+  | { kind: 'owner'; id: string; text: string; color: OwnerCardColor; createdAt: number; x: number; y: number; by?: MadeBy };
 
 export interface MindscapeLink {
   id: string;
   from: string;
   to: string;
   arrow: boolean;
+  by?: MadeBy;
 }
 
 /** Drawings use the owner's post-it palette (Sem cor / Azul / Dourado). */
@@ -80,10 +90,10 @@ export const DRAWING_STROKES: readonly DrawingStroke[] = ['thin', 'medium', 'thi
  * color nor stroke: only the `imageId` of its file in `mindscape-images/` and its box.
  */
 export type MindscapeDrawing =
-  | { kind: 'pencil'; id: string; color: DrawingColor; stroke: DrawingStroke; points: number[] }
-  | { kind: 'line'; id: string; color: DrawingColor; stroke: DrawingStroke; arrow: boolean; x1: number; y1: number; x2: number; y2: number }
-  | { kind: 'rect'; id: string; color: DrawingColor; stroke: DrawingStroke; x: number; y: number; w: number; h: number }
-  | { kind: 'ellipse'; id: string; color: DrawingColor; stroke: DrawingStroke; x: number; y: number; w: number; h: number }
+  | { kind: 'pencil'; id: string; color: DrawingColor; stroke: DrawingStroke; points: number[]; by?: MadeBy }
+  | { kind: 'line'; id: string; color: DrawingColor; stroke: DrawingStroke; arrow: boolean; x1: number; y1: number; x2: number; y2: number; by?: MadeBy }
+  | { kind: 'rect'; id: string; color: DrawingColor; stroke: DrawingStroke; x: number; y: number; w: number; h: number; by?: MadeBy }
+  | { kind: 'ellipse'; id: string; color: DrawingColor; stroke: DrawingStroke; x: number; y: number; w: number; h: number; by?: MadeBy }
   | { kind: 'image'; id: string; imageId: string; x: number; y: number; w: number; h: number };
 
 /** The drawings with ink (everything but the print): what the bar's color and stroke apply to. */
@@ -101,7 +111,7 @@ export interface MindscapeBoard {
 }
 
 export interface MindscapeDoc {
-  schemaVersion: 3;
+  schemaVersion: 4;
   boards: Record<string, MindscapeBoard>;
 }
 
@@ -352,6 +362,8 @@ export interface PlaceInput {
   readonly roleId?: string;
   /** Top-left of the grid to search for a free spot (the visible corner of the view). */
   readonly origin?: { x: number; y: number };
+  /** v4 — made by a session through the MCP. */
+  readonly by?: MadeBy;
 }
 
 /** "＋ Sessão com papel…" — a place that has not started yet, with its role. An id in use → same document. */
@@ -360,7 +372,7 @@ export function addPlace(doc: MindscapeDoc, projectPath: string, input: PlaceInp
   const board = withBoard.boards[projectPath]!;
   if (!input.id || board.cards[input.id]) return doc;
   const slot = freeGridSlot(Object.values(board.cards), SESSION_FOOTPRINT, input.origin ?? GRID_ORIGIN);
-  const card: SessionPlaceCard = { kind: 'session', id: input.id, previous: [], ...(input.roleId ? { roleId: input.roleId } : {}), ...slot };
+  const card: SessionPlaceCard = { kind: 'session', id: input.id, previous: [], ...(input.roleId ? { roleId: input.roleId } : {}), ...(input.by ? { by: input.by } : {}), ...slot };
   return withBoardReplaced(withBoard, { ...board, cards: { ...board.cards, [input.id]: card } });
 }
 
@@ -473,6 +485,8 @@ export interface OwnerCardInput {
   readonly createdAt: number;
   /** Top-left of the grid to search for a free spot (the visible corner of the view); default: the board grid. */
   readonly origin?: { x: number; y: number };
+  /** v4 — made by a session through the MCP. */
+  readonly by?: MadeBy;
 }
 
 /** "Novo post-it" — an owner card, empty text and no color, on the first free spot from `origin`. An id in use → same document. */
@@ -481,7 +495,7 @@ export function addOwnerCard(doc: MindscapeDoc, projectPath: string, input: Owne
   const board = withBoard.boards[projectPath]!;
   if (!input.id || board.cards[input.id]) return doc;
   const slot = freeGridSlot(Object.values(board.cards), NOTE_FOOTPRINT, input.origin ?? GRID_ORIGIN);
-  return replaceCard(withBoard, board, { kind: 'owner', id: input.id, text: '', color: 'none', createdAt: input.createdAt, ...slot });
+  return replaceCard(withBoard, board, { kind: 'owner', id: input.id, text: '', color: 'none', createdAt: input.createdAt, ...(input.by ? { by: input.by } : {}), ...slot });
 }
 
 /** Inline edit of the owner's post-it. Same text, or a card that is not the owner's → same document. */
@@ -515,6 +529,8 @@ export interface LinkInput {
   readonly to: string;
   /** Arrow head at `to`; default `true` (V1). Drawing with `L` passes `false`. */
   readonly arrow?: boolean;
+  /** v4 — made by a session through the MCP. */
+  readonly by?: MadeBy;
 }
 
 /**
@@ -532,7 +548,7 @@ export function addLink(doc: MindscapeDoc, projectPath: string, input: LinkInput
       (link.from === input.to && link.to === input.from),
   );
   if (taken) return doc;
-  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow: input.arrow ?? true }]);
+  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow: input.arrow ?? true, ...(input.by ? { by: input.by } : {}) }]);
 }
 
 /** Switches the arrow of the link on/off. Missing link → same document. */
@@ -596,6 +612,7 @@ function parseCard(key: string, raw: unknown): MindscapeCard | null {
         : [];
       const card: SessionPlaceCard = { kind: 'session', id: key, ...(sessionId ? { sessionId } : {}), previous, x, y };
       if (isRoleId(raw.roleId)) card.roleId = raw.roleId;
+      if (raw.by === 'session') card.by = 'session';
       return card;
     }
     case 'session-note':
@@ -614,7 +631,7 @@ function parseCard(key: string, raw: unknown): MindscapeCard | null {
     case 'owner':
       if (typeof raw.text !== 'string' || !isFiniteNumber(raw.createdAt)) return null;
       if (!OWNER_COLORS.includes(raw.color as OwnerCardColor)) return null;
-      return { kind: 'owner', id: key, text: raw.text, color: raw.color as OwnerCardColor, createdAt: raw.createdAt, x, y };
+      return { kind: 'owner', id: key, text: raw.text, color: raw.color as OwnerCardColor, createdAt: raw.createdAt, x, y, ...(raw.by === 'session' ? { by: 'session' as const } : {}) };
     default:
       return null;
   }
@@ -623,7 +640,7 @@ function parseCard(key: string, raw: unknown): MindscapeCard | null {
 function parseLink(raw: unknown): MindscapeLink | null {
   if (!isRecord(raw) || !isNonEmptyString(raw.id) || !isNonEmptyString(raw.from) || !isNonEmptyString(raw.to)) return null;
   if (typeof raw.arrow !== 'boolean') return null;
-  return { id: raw.id, from: raw.from, to: raw.to, arrow: raw.arrow };
+  return { id: raw.id, from: raw.from, to: raw.to, arrow: raw.arrow, ...(raw.by === 'session' ? { by: 'session' as const } : {}) };
 }
 
 /**
@@ -641,7 +658,7 @@ export function parseDrawing(raw: unknown): MindscapeDrawing | null {
     return { kind: 'image', id: raw.id, imageId, x, y, w, h };
   }
   if (!OWNER_COLORS.includes(raw.color as DrawingColor) || !DRAWING_STROKES.includes(raw.stroke as DrawingStroke)) return null;
-  const base = { id: raw.id, color: raw.color as DrawingColor, stroke: raw.stroke as DrawingStroke };
+  const base = { id: raw.id, color: raw.color as DrawingColor, stroke: raw.stroke as DrawingStroke, ...(raw.by === 'session' ? { by: 'session' as const } : {}) };
   switch (raw.kind) {
     case 'pencil': {
       const { points } = raw;
@@ -682,7 +699,7 @@ function parseBoard(key: string, raw: unknown): MindscapeBoard | null {
 }
 
 /**
- * Sanitizes an untrusted document, v1, v2 or v3; always comes out as v3. Garbage
+ * Sanitizes an untrusted document, v1 to v4; always comes out as v4. Garbage
  * or absence → empty document; bad boards, cards, links and drawings are
  * dropped one by one (an owner card colored `permission` is not accepted — rule 6).
  */
