@@ -51,15 +51,34 @@ try {
   if ($item -and -not $item.LinkType) { Remove-Item -LiteralPath $modules -Recurse -Force }
   if (-not (Test-Path $modules)) { New-Item -ItemType Junction -Path $modules -Target (Join-Path $repo 'node_modules') | Out-Null }
 
+  # Versão crescente por data e hora (AA.MMDD.HHmm, sem zero à esquerda): o app compara versões para saber se há
+  # uma nova. Cada parte cabe nos 16 bits da versão de arquivo do Windows.
+  $now = Get-Date
+  $version = '{0}.{1}.{2}' -f [int]$now.ToString('yy'), [int]$now.ToString('MMdd'), [int]$now.ToString('HHmm')
+  # O repositório do feed vem do origin (nada fixo no código): https://github.com/<dono>/<repo>(.git)
+  $origin = (git -C $repo remote get-url origin).Trim()
+  if ($origin -notmatch 'github\.com[:/]([^/]+)/([^/]+?)(\.git)?$') { throw "origin não é do GitHub: $origin" }
+  $owner = $Matches[1]; $repoName = $Matches[2]
+
   Push-Location $worktree
   try {
-    npm run dist:alfa -- --config.npmRebuild=false
+    npm run dist:alfa -- --config.npmRebuild=false "--config.extraMetadata.version=$version" '--config.nsis.artifactName=DonelDevAlfa-Setup-${version}.${ext}' --config.publish.provider=github "--config.publish.owner=$owner" "--config.publish.repo=$repoName" --config.publish.private=true --publish never
     if ($LASTEXITCODE -ne 0) { throw "dist:alfa falhou ($LASTEXITCODE)" }
   } finally {
     Pop-Location
   }
 
-  $exe = Get-ChildItem (Join-Path $worktree 'release') -Filter 'Donel Dev Alfa-Setup-*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  # Publica a versão como release do repositório: é dela que o "Atualizar" de qualquer PC baixa.
+  $release = Join-Path $worktree 'release'
+  $assets = @("DonelDevAlfa-Setup-$version.exe", "DonelDevAlfa-Setup-$version.exe.blockmap", 'latest.yml') | ForEach-Object { Join-Path $release $_ }
+  foreach ($asset in $assets) { if (-not (Test-Path -LiteralPath $asset)) { throw "faltou no build: $asset" } }
+  gh release create "alfa-$version" @assets --repo "$owner/$repoName" --title "Alfa $version" --notes "staging $commit" --latest
+  if ($LASTEXITCODE -ne 0) { throw "não consegui publicar a release alfa-$version" }
+  # Guarda as 6 últimas versões no GitHub.
+  $old = gh release list --repo "$owner/$repoName" --limit 100 --json tagName --jq '.[].tagName' | Where-Object { $_ -like 'alfa-*' } | Sort-Object { [version]($_ -replace '^alfa-', '') } -Descending | Select-Object -Skip 6
+  foreach ($tag in $old) { gh release delete $tag --repo "$owner/$repoName" --cleanup-tag --yes | Out-Null }
+
+  $exe = Get-ChildItem (Join-Path $worktree 'release') -Filter 'DonelDevAlfa-Setup-*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
   if (-not $exe) { throw 'instalador não encontrado em release\' }
   # Data e hora no nome: vários builds por dia não se sobrescrevem (o app pega o mais novo).
   $dest = Join-Path $outDir ("Donel Dev Alfa-Setup-{0}.exe" -f (Get-Date -Format 'yyyy-MM-dd-HHmm'))

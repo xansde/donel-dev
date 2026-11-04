@@ -292,7 +292,8 @@ import { collectHealthSnapshot, lookupProcessName } from './health/collector';
 import { createHealthService, type HealthService } from './health/health-service';
 import { HEALTH_CHANNELS, type KillProcessOutcome } from '../shared/health/ipc';
 // B33 — atualizar para a versão nova de dentro do app.
-import { createAppUpdateService, defaultInstallersDir, type AppUpdateService } from './app-update';
+import { autoUpdater } from 'electron-updater';
+import { createAppUpdateService, type AppUpdateService } from './app-update';
 import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus } from '../shared/appUpdate';
 import type { HealthReport } from '../shared/health/types';
 import { isValidPetPrefsInput } from '../shared/pet/ipc';
@@ -2667,41 +2668,34 @@ function registerHealthIpcHandlers(): void {
 let appUpdateService: AppUpdateService | null = null;
 
 /**
- * B33 — the in-app update. Only the packaged alpha: the installers folder is the one of the daily build
- * (`appUpdate.installersDir` in the config, or `<home>/<exe name> - diario`); without the folder nothing shows.
+ * B33 — the in-app update. Only the packaged alpha: electron-updater on the GitHub releases feed the alpha build
+ * publishes (`app-update.yml`, written by the build), token from the `gh` of this PC.
  */
 function registerAppUpdateIpcHandlers(): void {
   const channel = appChannelName();
   const applies = app.isPackaged && channel === 'alfa';
   appUpdateService = createAppUpdateService({
-    installersDir: () => (applies ? (appConfig.appUpdate.installersDir ?? defaultInstallersDir(homedir(), process.execPath)) : null),
-    own: {
-      commit: typeof __DONEL_BUILD_COMMIT__ === 'undefined' ? null : __DONEL_BUILD_COMMIT__,
-      builtAtMs: typeof __DONEL_BUILT_AT__ === 'undefined' ? null : __DONEL_BUILT_AT__,
-    },
+    enabled: applies,
+    currentVersion: app.getVersion(),
+    updater: () => autoUpdater,
     stateDir: join(app.getPath('userData'), 'app-update', channel),
     channel,
-    execPath: process.execPath,
-    pid: process.pid,
     onChanged: (status) => {
       const window = getMainWindow();
       if (window && !window.isDestroyed()) window.webContents.send(APP_UPDATE_CHANNELS.changed, status);
     },
-    quit: () => app.quit(),
   });
   appUpdateService.start();
-  const disabled: AppUpdateStatus = { enabled: false, available: null, failure: null };
+  const disabled: AppUpdateStatus = { enabled: false, currentVersion: app.getVersion(), available: null, failure: null };
   ipcMain.handle(APP_UPDATE_CHANNELS.get, (): AppUpdateStatus => appUpdateService?.status() ?? disabled);
   ipcMain.handle(APP_UPDATE_CHANNELS.apply, (_event, tabs: unknown): AppUpdateApplyResult =>
     appUpdateService ? appUpdateService.apply(tabs) : { ok: false, message: 'Atualização indisponível.' },
   );
   ipcMain.handle(APP_UPDATE_CHANNELS.takeBoot, (): AppUpdateBoot => appUpdateService?.takeBoot() ?? { tabs: [], failure: null });
-  ipcMain.handle(APP_UPDATE_CHANNELS.openLog, async (): Promise<void> => {
-    const log = appUpdateService?.buildLogPath();
-    if (log && existsSync(log)) await shell.openPath(log);
+  ipcMain.handle(APP_UPDATE_CHANNELS.check, async (): Promise<void> => {
+    await appUpdateService?.check();
   });
 }
-
 /** Sidebar — "Abrir no editor" + branch atual. Spawn sem shell, argumentos em array (workspace-tools.ts). */
 function registerWorkspaceIpcHandlers(): void {
   const tools = createWorkspaceTools(createSystemWorkspaceToolsDeps());

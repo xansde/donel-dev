@@ -1,5 +1,5 @@
-// B33 — "Versão nova · Atualizar" beside the status bar. Reads the installers folder through the main (again
-// whenever the window gets focus); the waiting for the sessions and the switch itself belong to App.
+// B33 — the update beside the status bar: download progress, then "Versão nova pronta · Reiniciar". The waiting
+// for the sessions and the restart itself belong to App.
 
 import { useEffect, useState } from 'react';
 import type { AppUpdateStatus, UpdateReadiness } from '../../../shared/appUpdate';
@@ -74,32 +74,44 @@ export function UpdateIndicator({ waiting, applying, error, onUpdate, onCancel, 
     );
   }
   if (!status?.enabled) return null;
-  if (status.available) {
+  const available = status.available;
+  if (available?.ready) {
     return (
       <button
         type="button"
         className={`${styles.indicator} ${styles.available}`}
         onClick={onUpdate}
-        title={`Instala ${status.available.installerName} e reabre as abas abertas`}
+        title={`Versão ${available.version} baixada. Reinicia quando as sessões pararem e reabre as mesmas abas.`}
         data-testid="app-update-available"
       >
-        <span className={styles.dot} aria-hidden="true" />
-        Versão nova · Atualizar
+        <span className={`${styles.dot} ${styles.pulse}`} aria-hidden="true" />
+        Versão nova pronta · Reiniciar
       </button>
+    );
+  }
+  if (available) {
+    const percent = available.percent ?? 0;
+    return (
+      <span className={styles.indicator} title={`Baixando a versão ${available.version} em segundo plano`} data-testid="app-update-downloading">
+        <span className={styles.text}>Baixando versão nova</span>
+        <span className={styles.bar} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+          <span className={styles.barFill} style={{ width: `${percent}%` }} />
+        </span>
+        <span className={styles.percent}>{percent}%</span>
+      </span>
     );
   }
   if (status.failure) {
     return (
       <button
         type="button"
-        className={`${styles.indicator} ${styles.error}`}
-        onClick={() => void window.donel.appUpdate.openLog()}
-        title={status.failure.message || 'A build do alfa falhou'}
-        data-testid="app-update-build-failed"
+        className={styles.indicator}
+        onClick={() => void window.donel.appUpdate.check()}
+        title={`Atualização: ${status.failure}. Clique para tentar de novo.`}
+        data-testid="app-update-failure"
       >
-        Build do alfa falhou · ver log
+        <span className={styles.text}>Atualização indisponível · tentar de novo</span>
       </button>
     );
-  }
-  return null;
+  }  return null;
 }

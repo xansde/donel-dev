@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'O app se atualiza sozinho, em qualquer PC',
+        text: 'A versão nova baixa em segundo plano (a barra de baixo mostra o progresso). Quando termina, aparece "Versão nova pronta · Reiniciar": o clique espera as sessões pararem, reinicia já na versão nova e reabre as mesmas abas. Não tem instalador para procurar. Vale em qualquer computador com o gh logado no GitHub. Esta é a última vez que você instala na mão.',
+      },
+      {
         title: 'Preferências em tela cheia, com menu lateral',
         text: 'A engrenagem abre as Preferências na janela inteira, separadas por Projetos, Sessões, Chat, Avisos e Jobu e Papéis, com uma busca que acha qualquer ajuste pelo nome. Em Sessões dá para escolher onde a sessão nova roda por padrão. A VPS já vem escolhida quando tem conta; o Launcher lembra a última escolha. Esc fecha.',
       },
