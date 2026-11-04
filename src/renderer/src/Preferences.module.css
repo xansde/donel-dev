@@ -1,12 +1,184 @@
-.section {
+/* Preferências — tela cheia com menu lateral (04/11). */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.nav {
   display: flex;
   flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-2);
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+  min-height: 0;
+}
+
+.navHeader {
+  font-size: var(--text-body-size);
+  font-weight: var(--weight-semibold);
+  padding: 0 var(--space-1);
+}
+
+.search {
+  display: flex;
+  align-items: center;
   gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+}
+
+.search:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-caption-size);
+}
+
+.navList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.navItem,
+.navItemActive {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-body-size);
+  text-align: left;
+  cursor: pointer;
+}
+
+.navItem:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+.navItemActive {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.navItem:focus-visible,
+.navItemActive:focus-visible,
+.closeButton:focus-visible,
+.removeRootButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.navFoot {
+  margin: auto 0 0;
+  padding: 0 var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.content {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+}
+
+.contentHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 760px;
   margin-bottom: var(--space-3);
 }
 
-.section:last-child {
-  margin-bottom: 0;
+.contentTitle {
+  margin: 0;
+  font-size: calc(var(--text-body-size) * 1.4);
+  font-weight: var(--weight-semibold);
+}
+
+.closeButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.closeButton:hover {
+  color: var(--text-primary);
+  background: var(--bg-panel);
+}
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 760px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, var(--radius-sm));
+  background: var(--bg-panel);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-half);
+}
+
+.badge {
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 var(--space-1);
 }
 
 .sectionTitle {
@@ -17,7 +189,7 @@
 }
 
 .sectionHint {
-  margin: 0 0 var(--space-1);
+  margin: 0;
   color: var(--text-muted);
   font-size: var(--text-caption-size);
 }
@@ -40,7 +212,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  padding: var(--space-half);
+  padding: var(--space-1);
   border-radius: var(--radius-sm);
   background: var(--bg-raised);
 }
@@ -61,10 +233,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   background: none;
   border: none;
+  border-radius: var(--radius-sm);
   padding: 0;
   color: var(--text-muted);
   cursor: pointer;
@@ -72,12 +245,6 @@
 
 .removeRootButton:hover {
   color: var(--state-error, #f0684c);
-}
-
-.removeRootButton:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-  border-radius: var(--radius-sm);
 }
 
 .addRootRow {

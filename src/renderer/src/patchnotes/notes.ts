@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'Preferências em tela cheia, com menu lateral',
+        text: 'A engrenagem abre as Preferências na janela inteira, separadas por Projetos, Sessões, Chat, Avisos e Jobu e Papéis, com uma busca que acha qualquer ajuste pelo nome. Em Sessões dá para escolher onde a sessão nova roda por padrão. A VPS já vem escolhida quando tem conta; o Launcher lembra a última escolha. Esc fecha.',
+      },
+      {
         title: 'Sessões rodando na VPS, controladas daqui',
         text: 'No Launcher, o campo "Onde roda" escolhe a VPS. A sessão roda lá, com a memória e a conta de lá, e aparece aqui como qualquer outra aba: chat, terminal, Mindscape, "Precisa de você" e o navegador integrado. Se o projeto ainda não existe na VPS, ele é clonado na hora (o que não foi enviado ao GitHub não vai junto). Fechar a aba encerra a sessão lá; fechar o app não: ela continua trabalhando, e ao abrir o app de novo a aba volta sozinha.',
       },
