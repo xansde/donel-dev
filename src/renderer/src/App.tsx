@@ -3499,6 +3499,20 @@ export function App(): React.JSX.Element {
         onChangeSessionRenewal={(prefs) => {
           void window.donel.config.setSessionRenewalPrefs(prefs).then(setAppConfig).catch(() => undefined);
         }}
+        remotes={accountsView.remotes.map((place) => ({ id: place.id, label: place.label }))}
+        launcherWhere={appConfig?.launcherDefaults.where}
+        onChangeLauncherWhere={(where) => {
+          if (!appConfig) return;
+          const { where: _previous, ...rest } = appConfig.launcherDefaults;
+          void window.donel.config
+            .setLauncherDefaults({ ...rest, ...(where ? { where } : {}) })
+            .then(setAppConfig)
+            .catch(() => undefined);
+        }}
+        onManageRoles={() => {
+          setPreferencesOpen(false);
+          setRolesEditorOpen(true);
+        }}
         autoNeverAsks={appConfig?.autoMode.neverAsks ?? true}
         onChangeAutoNeverAsks={(neverAsks) => {
           void window.donel.config.setAutoModePrefs({ neverAsks }).then(setAppConfig).catch(() => undefined);
