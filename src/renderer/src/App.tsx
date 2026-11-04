@@ -2493,6 +2493,7 @@ export function App(): React.JSX.Element {
         setSpawnAsks((prev) => [...prev, { id, ...question, resolve }]);
       }),
     remoteLabel: (remoteId) => accountsView.remotes.find((remote) => remote.id === remoteId)?.label ?? remoteId,
+    remotes: () => accountsView.remotes.map((remote) => ({ id: remote.id, label: remote.label })),
   };
   const agentBridgeRef = useRef<AgentBridge>(null as unknown as AgentBridge);
   if (agentBridgeRef.current === null) agentBridgeRef.current = new AgentBridge(agentPorts);

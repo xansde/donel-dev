@@ -68,6 +68,8 @@ export interface AgentBridgePorts {
   /** The owner allows (true) or denies a session over the cap. */
   askOwner(question: { readonly caller: string; readonly role: string; readonly request: string; readonly open: number }): Promise<boolean>;
   remoteLabel(remoteId: string): string;
+  /** The remote places the app knows (id + label), for `onde` of `sessao_abrir`. */
+  remotes(): readonly { readonly id: string; readonly label: string }[];
 }
 
 const STATE_NAMES: Readonly<Record<SemaphoreState, string>> = {
@@ -292,6 +294,7 @@ export class AgentBridge {
             ...(self ? { lugar: self.id } : { lugar: null, aviso: 'Seu lugar ainda não está no quadro (a sessão acabou de abrir).' }),
             ...(self?.roleId ?? caller.roleId ? { papel: self?.roleId ?? caller.roleId, papelNome: this.roleName(self?.roleId ?? caller.roleId) } : {}),
             roda: caller.remoteId ? this.ports.remoteLabel(caller.remoteId) : 'este computador',
+            lugaresRemotos: this.ports.remotes().map((remote) => remote.label),
           }),
         };
 
@@ -353,6 +356,18 @@ export class AgentBridge {
         if (!self) return fail('Seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
         const role = this.ports.roles().find((candidate) => candidate.id === call.papel);
         if (!role) return fail(`Papel "${call.papel}" não existe (veja papeis_listar).`);
+        // `onde` — absent or "aqui": where the caller runs; "este computador": local; else a remote place by label or id.
+        let remoteId = caller.remoteId;
+        const where = call.onde?.trim().toLowerCase();
+        if (where && where !== 'aqui') {
+          if (where === 'este computador' || where === 'local') remoteId = undefined;
+          else {
+            const remotes = this.ports.remotes();
+            const found = remotes.find((remote) => remote.id.toLowerCase() === where || remote.label.toLowerCase() === where);
+            if (!found) return fail(`Lugar "${call.onde}" não existe. Use "aqui", "este computador" ou um destes: ${remotes.map((remote) => remote.label).join(', ') || '(nenhum lugar remoto)'}.`);
+            remoteId = found.id;
+          }
+        }
         const open = this.liveOpenedBy(self.id);
         if (open >= OPEN_CAP) {
           const allowed = await this.ports.askOwner({ caller: caller.name, role: role.name, request: call.pedido, open });
@@ -374,7 +389,7 @@ export class AgentBridge {
           placeId,
           role,
           name,
-          ...(caller.remoteId ? { remoteId: caller.remoteId } : {}),
+          ...(remoteId ? { remoteId } : {}),
           firstMessage: call.pedido,
         });
         this.openedBy.set(tabId, self.id);
@@ -384,7 +399,7 @@ export class AgentBridge {
             lugar: placeId,
             nome: name,
             papel: role.id,
-            roda: caller.remoteId ? this.ports.remoteLabel(caller.remoteId) : 'este computador',
+            roda: remoteId ? this.ports.remoteLabel(remoteId) : 'este computador',
             aviso: 'Você recebe um aviso a cada turno que ela terminar. Para mandar mais trabalho: sessao_enviar.',
           }),
         };

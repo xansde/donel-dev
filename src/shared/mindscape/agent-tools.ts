@@ -35,7 +35,7 @@ export type BoardToolCall =
   | { readonly tool: 'quadro_aplicar'; readonly ops: readonly BoardOp[] }
   | { readonly tool: 'sessao_quem_sou' }
   | { readonly tool: 'sessao_listar' }
-  | { readonly tool: 'sessao_abrir'; readonly papel: string; readonly pedido: string; readonly nome?: string }
+  | { readonly tool: 'sessao_abrir'; readonly papel: string; readonly pedido: string; readonly nome?: string; readonly onde?: string }
   | { readonly tool: 'sessao_enviar'; readonly para: string; readonly texto: string }
   | { readonly tool: 'sessao_ver_tela'; readonly quem: string };
 
@@ -158,13 +158,14 @@ export const BOARD_TOOLS = [
     name: 'sessao_abrir',
     title: 'Abrir uma sessão com papel',
     description:
-      'Abre uma sessão nova com papel, no mesmo projeto e no mesmo lugar onde você roda, com o pedido como primeira mensagem. Ela nasce no quadro ligada por uma seta sua → dela (então você pode mandar mensagens com sessao_enviar), e você é avisado quando ela terminar cada turno. Até 4 abertas por você ao mesmo tempo; a partir da 5ª o dono precisa permitir, e esta ferramenta espera a resposta dele.',
+      'Abre uma sessão nova com papel, no mesmo projeto e (salvo `onde`) no mesmo lugar onde você roda, com o pedido como primeira mensagem. Ela nasce no quadro ligada por uma seta sua → dela (então você pode mandar mensagens com sessao_enviar), e você é avisado quando ela terminar cada turno. Até 4 abertas por você ao mesmo tempo; a partir da 5ª o dono precisa permitir, e esta ferramenta espera a resposta dele.',
     inputSchema: {
       type: 'object',
       properties: {
         papel: { type: 'string', description: 'Id do papel (papeis_listar).' },
         pedido: { type: 'string', description: 'A primeira mensagem: o trabalho, completo e autossuficiente.' },
         nome: { type: 'string', description: 'Nome curto da aba (opcional).' },
+        onde: { type: 'string', description: 'Onde ela roda (opcional): "aqui" (padrão, onde você roda), "este computador" ou o nome de um lugar remoto (ex.: a VPS; veja sessao_quem_sou).' },
       },
       required: ['papel', 'pedido'],
       additionalProperties: false,
@@ -310,7 +311,9 @@ export function parseBoardToolCall(name: string, rawArgs: unknown): ParsedBoardC
       if (typeof pedido === 'object') return { ok: false, reason: pedido.error };
       const nome = optionalText(args.nome, 'nome', 60);
       if (typeof nome === 'object') return { ok: false, reason: nome.error };
-      return { ok: true, call: { tool: 'sessao_abrir', papel, pedido, ...(nome?.trim() ? { nome: nome.trim() } : {}) } };
+      const onde = optionalText(args.onde, 'onde', 80);
+      if (typeof onde === 'object') return { ok: false, reason: onde.error };
+      return { ok: true, call: { tool: 'sessao_abrir', papel, pedido, ...(nome?.trim() ? { nome: nome.trim() } : {}), ...(onde?.trim() ? { onde: onde.trim() } : {}) } };
     }
     case 'sessao_enviar': {
       const para = requiredText(args.para, 'para', 120);
