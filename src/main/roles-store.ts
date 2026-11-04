@@ -8,7 +8,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isRoleId, parseRoleFile, rolePromptText, sanitizeRole, serializeRole, type RoleSaveResult, type SessionRole } from '../shared/roles';
+import { factoryRole, FACTORY_ROLES, isRoleId, parseRoleFile, rolePromptText, sanitizeRole, serializeRole, type RoleSaveResult, type SessionRole } from '../shared/roles';
 
 export interface RolesStore {
   list(): SessionRole[];
@@ -33,13 +33,16 @@ export function createRolesStore(userDataDir: string): RolesStore {
   const dir = join(userDataDir, 'papeis');
   const promptDir = join(userDataDir, 'papeis-prompt');
 
+  /** The file of `id`, else the factory role of that id (12b): an edited factory role is just a file. */
   const readOne = (id: string): SessionRole | undefined => {
     if (!isRoleId(id)) return undefined;
     try {
-      return parseRoleFile(id, readFileSync(join(dir, `${id}.md`), 'utf8')) ?? undefined;
+      const fromFile = parseRoleFile(id, readFileSync(join(dir, `${id}.md`), 'utf8'));
+      if (fromFile) return fromFile;
     } catch {
-      return undefined;
+      // no file (or unreadable): the factory one, if any
     }
+    return factoryRole(id);
   };
 
   const list = (): SessionRole[] => {
@@ -49,9 +52,9 @@ export function createRolesStore(userDataDir: string): RolesStore {
     } catch {
       names = [];
     }
-    return names
-      .filter((name) => name.endsWith('.md'))
-      .map((name) => readOne(name.slice(0, -3)))
+    const ids = new Set([...FACTORY_ROLES.map((role) => role.id), ...names.filter((name) => name.endsWith('.md')).map((name) => name.slice(0, -3))]);
+    return [...ids]
+      .map((id) => readOne(id))
       .filter((role): role is SessionRole => role !== undefined)
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
   };

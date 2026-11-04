@@ -83,6 +83,7 @@ import { buildMapView, parseEntityKey, tabToFocusFor, tasksArtifactFor, type Map
 import type { TasksRunningTogetherView } from './DevMode/PhaseDetailsPanel';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
+import { RolesEditor } from './RolesEditor';
 import type { LauncherLaunchOptions } from './Launcher';
 // Spec 010 — a esteira nova, AO LADO do mapa atual (`[P-5]`): nada aqui
 // desmonta ou altera o Modo Dev de hoje; a tela entra por cima, atrás de um
@@ -2106,6 +2107,8 @@ export function App(): React.JSX.Element {
   mindscapeSessionPortRef.current = { loaded: mindscapeLoaded, applySession: applyMindscapeSession };
   // Papéis de sessão (item 12a) — the roles of `<userData>/papeis/`, read once (and after an edit).
   const [roles, setRoles] = useState<SessionRole[]>([]);
+  // Item 12b — the screen to create and edit roles ("Papéis…" in the Mindscape and in the Launcher).
+  const [rolesEditorOpen, setRolesEditorOpen] = useState(false);
   useEffect(() => {
     void window.donel.roles
       ?.list()
@@ -2771,6 +2774,7 @@ export function App(): React.JSX.Element {
             onGesture={(gesture) => window.donel.learning?.record(gesture)}
             roles={roles}
             onStartPlace={handleMindscapeStartPlace}
+            onManageRoles={() => setRolesEditorOpen(true)}
           />
         ) : null}
         {devModeOn && esteiraOpen ? (
@@ -3177,6 +3181,7 @@ export function App(): React.JSX.Element {
               launcherDefaults={appConfig?.launcherDefaults}
               providers={providers}
               roles={roles}
+              onManageRoles={() => setRolesEditorOpen(true)}
               onLaunch={handleLaunch}
             />
           </aside>
@@ -3216,6 +3221,9 @@ export function App(): React.JSX.Element {
         <PatchNotes />
         <HealthIndicator />
       </div>
+
+      {/* Item 12b — the roles: create and edit (text + suggestions). */}
+      <RolesEditor open={rolesEditorOpen} roles={roles} providers={providers} onClose={() => setRolesEditorOpen(false)} onSaved={setRoles} />
 
       {/* T010 — FR-006, ui-spec §2 "fechar aba com sessão ativa": confirmação destrutiva antes de matar um PTY vivo. */}
       <Modal

@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-03',
     items: [
       {
+        title: 'Papéis prontos: Dev, Revisor e Pesquisa',
+        text: 'Três papéis já vêm prontos. Dev faz a mudança e pede revisão; Revisor confere se o prometido aconteceu, sem ser o autor, e devolve o que achou; Pesquisa lê e resume, sem mexer no código. Em "Papéis…" (no menu de "＋ Sessão com papel…" ou ao lado do campo Papel do Launcher) você muda o texto, a cor e as sugestões de modelo, esforço e permissão, ou cria um papel novo. A mudança vale na próxima vez que uma sessão com aquele papel abrir ou for retomada.',
+      },
+      {
         title: 'O cartão da sessão vira um lugar, com papel',
         text: 'No Mindscape, "＋ Sessão com papel…" põe no quadro um lugar que ainda não começou (○), com um papel como Revisor ou Pesquisa no selo do canto. Dois cliques nele abrem a sessão já com esse papel. O papel acompanha o lugar quando a sessão é retomada ou renovada, e o cartão continua no mesmo ponto do quadro, com o post-it e as ligações. O papel só troca antes de começar: precisa de outro, abra outro lugar e passe o trabalho. No Launcher também dá para escolher o papel, e a aba mostra "◆ Revisor".',
       },
