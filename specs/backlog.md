@@ -1378,6 +1378,33 @@ memória?); se o limite é por sessão ou por custo; se o dono pode vetar a troc
 **Status (03/11):** entregue no alfa (item 07 do PDA `mindscape-openrig`). Regras fechadas e
 os "em aberto" respondidos em `docs/refinamentos/sessao-renovada-em-voo.md`.
 
+### B37. Sessões desenham no Mindscape e abrem sessões a partir do desenho (pedido do dono, 04/11)
+
+**Pedido:** "O que precisa pôr no backlog é as sessões poderem desenhar no
+mindscape e gerar as sessões. Esperava que isso funcionasse."
+
+**Hoje:** a sessão só escreve o post-it dela; o MCP `donel` que ela enxerga só
+tem o navegador. Ela não cria forma, seta nem texto no quadro, e não abre outra
+sessão a partir do que está desenhado. O desenho é o canal do dono com o agente
+(ele pensa graficamente), então hoje o canal só anda num sentido.
+
+**Como deveria ser:**
+- **Desenhar:** ferramentas no MCP `donel` para a sessão ler o quadro do projeto
+  e criar ou editar formas, setas, textos e grupos (ex.: devolver um fluxo
+  desenhado em vez de um texto longo). O renderer continua dono do estado e só
+  `mindscape-store.ts` grava (ADR 0004); a sessão pede, o app aplica, e o gesto
+  é desfazível pelo dono como qualquer outro.
+- **Gerar sessões:** a partir de um desenho (um cartão, um grupo, um fluxo), a
+  sessão, ou o dono num gesto, abre sessões novas com o pedido tirado do desenho,
+  e cada uma aparece no quadro ligada à forma de onde veio. Casa com o molde de
+  fluxo da Esteira no Mindscape (terminais pré-definidos, caminhos pelo output).
+- **Limites:** a sessão não apaga o que o dono desenhou, nem as favoritas (B34);
+  abrir sessão segue o launcher (conta, modelo, permissões), sem argv novo
+  escondido. Nada preso ao Claude: o contrato é do app (B34, LLM agnóstico).
+
+**Em aberto:** quantas sessões uma sessão pode abrir sem o dono confirmar; se o
+desenho da sessão ganha marca visual (autor) para o dono distinguir do dele.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo
