@@ -1405,7 +1405,7 @@ sessão a partir do que está desenhado. O desenho é o canal do dono com o agen
 **Em aberto:** quantas sessões uma sessão pode abrir sem o dono confirmar; se o
 desenho da sessão ganha marca visual (autor) para o dono distinguir do dele.
 
-### B38. Sessão em lugar remoto (VPS) fica sem o MCP `donel` e não mostra nada ao dono (achado 04/11)
+### B38. Sessão em lugar remoto (VPS) fica capada: sem o MCP `donel`, sem anexos, sem as ferramentas do PC (achado 04/11)
 
 **Pedido:** "Salva esse problema como algo a ser corrigido nas próximas versões
 do donel."
@@ -1443,6 +1443,30 @@ que falta é ela conhecer as portas dos túneis que o próprio app abriu.
 
 **Pronto quando:** numa sessão aberta na VPS, `sessao_quem_sou` responde e um
 HTML gerado lá abre no painel do Donel Dev no PC, sem passo manual.
+
+**Mais furos do lugar remoto, achados na mesma sessão (04/11).** O dono resumiu:
+"Porcaria hein, vou te ligar como este computador. To muito capado." Uma sessão
+na VPS tem que ser tão capaz quanto uma no PC, ou dizer na cara o que não tem.
+1. **Anexo do chat não chega.** O print colado no chat virou só o caminho
+   `C:\Users\compu\AppData\Roaming\donel-dev\chat-attachments\…`, que não existe
+   na VPS. O dono teve que mandar por `scp` à mão (e errou o usuário na primeira
+   tentativa: `compu` em vez de `alexandrelentz`). O app tem que copiar o anexo
+   para o lugar remoto pelo mesmo `ssh` e passar o caminho remoto à sessão.
+2. **Ferramentas do PC não vão junto.** A sessão remota não tinha o Slack, então
+   não leu um post do canal das lideranças. O lançamento num lugar remoto deve
+   mostrar antes quais MCPs e skills a sessão vai ter lá, comparado com o PC, e
+   oferecer levar a configuração. **Cuidado:** config de MCP pode carregar token;
+   levar segredo para outra máquina é tocar credencial, que só
+   `src/main/accounts/` pode. Sem decidir isso, a sessão só avisa o que falta.
+3. **Não fica claro onde a sessão roda.** O dono colou no chat um comando que era
+   para o terminal do PC. O cartão e a aba de uma sessão remota precisam dizer
+   "rodando na VPS" sem ambiguidade, e o que a sessão manda o dono rodar deve
+   dizer em qual máquina.
+4. **Lugar remoto sem preparo.** Na VPS faltava identidade do git (o commit
+   falhou até passar `-c user.name/-c user.email`) e o clone estava atrasado 15
+   PRs (a sessão concluiu errado que um código não existia). Ao registrar um
+   lugar, e a cada lançamento, o app confere identidade do git, `gh` logado e
+   `git fetch` do projeto, e avisa o que falta.
 
 **Teste:** entra na regra de testes enxutos (guard de rede do MCP): a trava
 aceita a porta de um túnel registrado e continua recusando qualquer outro
