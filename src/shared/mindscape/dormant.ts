@@ -12,7 +12,10 @@ import type { MindscapeBoard } from './model';
 export const OLD_SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface DormantSession {
+  /** The conversation of the moment of the place. */
   readonly sessionId: string;
+  /** The place (session card) that has it. */
+  readonly cardId: string;
   /** Newest of the note it wrote and the registry's last activity (rule 2); `null` = unknown. */
   readonly lastActivityAt: number | null;
   /** Favorite of the owner (rule 6): `pinned` in the registry. */
@@ -44,12 +47,14 @@ function newest(a: number | null, b: number | null): number | null {
 
 export function classifyBoardSessions({ board, liveSessionIds, registry, now }: BoardSessionsInput): BoardSessionsView {
   const sessionIds = new Set<string>();
-  const withCard = new Set<string>();
+  /** Conversation of the moment → its place. A place that has not started yet is never dormant. */
+  const withCard = new Map<string, string>();
   const noteAt = new Map<string, number>();
   for (const card of Object.values(board.cards)) {
     if (card.kind === 'session') {
+      if (!card.sessionId) continue;
       sessionIds.add(card.sessionId);
-      withCard.add(card.sessionId);
+      withCard.set(card.sessionId, card.id);
     } else if (card.kind === 'session-note') {
       sessionIds.add(card.sessionId);
       noteAt.set(card.sessionId, card.writtenAt);
@@ -64,10 +69,11 @@ export function classifyBoardSessions({ board, liveSessionIds, registry, now }: 
     const lastActivityAt = newest(noteAt.get(sessionId) ?? null, entry ? entry.lastActivityAt : null);
     const pinned = entry?.pinned === true;
     const isOld = !pinned && (lastActivityAt === null || now - lastActivityAt > OLD_SESSION_MS);
+    const cardId = withCard.get(sessionId);
     if (isOld) {
       oldSessionIds.add(sessionId);
-      if (withCard.has(sessionId)) old.push({ sessionId, lastActivityAt, pinned });
-    } else if (withCard.has(sessionId)) dormant.push({ sessionId, lastActivityAt, pinned });
+      if (cardId) old.push({ sessionId, cardId, lastActivityAt, pinned });
+    } else if (cardId) dormant.push({ sessionId, cardId, lastActivityAt, pinned });
   }
   const newestFirst = (a: DormantSession, b: DormantSession): number => (b.lastActivityAt ?? -Infinity) - (a.lastActivityAt ?? -Infinity);
   dormant.sort(newestFirst);

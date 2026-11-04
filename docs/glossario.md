@@ -15,6 +15,19 @@ Cartão do Mindscape que representa uma sessão viva, com selo "SESSÃO", glifo 
 em mono. Não mostra texto de terminal.
 _Evitar_: card de sessão, nó, terminal
 
+**Lugar**:
+O post-it de sessão visto como posição estável no quadro, acima da conversa: guarda a conversa do
+momento e as anteriores, e o papel. Renovar em voo, `/clear`, fork na mesma aba e retomar mudam a
+conversa, nunca o lugar. Pode existir "ainda não começou" (sem conversa); dois cliques abre a sessão.
+_Evitar_: seat, slot, cartão novo (quando é a mesma posição)
+
+**Papel**:
+Orientação fixa de um lugar (Dev, Revisor, Pesquisa…), arquivo do app em `<userData>/papeis/<id>.md`
+com nome, cor e motor/modelo/esforço/permissão sugeridos. O app reentrega a orientação em todo
+lançamento, retomada e renovação. Só troca enquanto o lugar ainda não começou; outro papel = outra
+sessão, e o trabalho é delegado.
+_Evitar_: persona, agente (para o papel), perfil
+
 **Post-it escrito pela sessão**:
 Cartão ao lado do post-it de sessão com a última resposta do assistente, gravado pelo app no
 fim de cada turno, sem modelo.

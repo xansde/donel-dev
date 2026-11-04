@@ -147,6 +147,7 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
+import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
@@ -501,6 +502,12 @@ const donelApi: DonelApi = {
     saveImage: (bytes: ArrayBuffer, mediaType: string) =>
       ipcRenderer.invoke(MINDSCAPE_CHANNELS.saveImage, { bytes, mediaType }) as Promise<MindscapeSaveImageResult>,
     readImage: (imageId: string) => ipcRenderer.invoke(MINDSCAPE_CHANNELS.readImage, imageId) as Promise<MindscapeReadImageResult>,
+  },
+
+  // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).
+  roles: {
+    list: () => ipcRenderer.invoke(ROLES_CHANNELS.list) as Promise<SessionRole[]>,
+    save: (role: SessionRole) => ipcRenderer.invoke(ROLES_CHANNELS.save, role) as Promise<RoleSaveResult>,
   },
 
   // Diário de gestos — fire and forget; the main validates and stamps the time.

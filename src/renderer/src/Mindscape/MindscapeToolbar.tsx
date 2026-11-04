@@ -1,4 +1,6 @@
-import type { CSSProperties } from 'react';
+import { useCallback, useState, type CSSProperties } from 'react';
+import type { SessionRole } from '../../../shared/roles';
+import { RoleMenu } from './RoleMenu';
 import { DRAWING_STROKES, OWNER_COLORS, type DrawingColor, type DrawingStroke, type MindscapeLink } from '../../../shared/mindscape/model';
 import { TOOL_KEYS, type MindscapeTool } from '../../../shared/mindscape/shortcuts';
 import { drawingInk } from './MindscapeDrawingLayer';
@@ -45,6 +47,12 @@ export interface MindscapeToolbarProps {
   readonly onToggleLinkArrow: () => void;
   readonly onRemoveLink: () => void;
   readonly onNewCard: () => void;
+  /** Item 12a — the roles for "＋ Sessão com papel…". */
+  readonly roles: readonly SessionRole[];
+  /** Item 12a — a place that has not started yet, with the role picked (`undefined` = no role). */
+  readonly onNewPlace: (roleId: string | undefined) => void;
+  /** Item 12b — "Papéis…" opens the screen to create and edit roles. */
+  readonly onManageRoles?: () => void;
   readonly canGoToTerminal: boolean;
   readonly onGoToTerminal: () => void;
   /** Lugar principal, rule 7 — lays the sessions out in columns (one undoable gesture). */
@@ -78,6 +86,9 @@ export function MindscapeToolbar({
   onToggleLinkArrow,
   onRemoveLink,
   onNewCard,
+  roles,
+  onNewPlace,
+  onManageRoles,
   canGoToTerminal,
   onGoToTerminal,
   canOrganize,
@@ -87,6 +98,8 @@ export function MindscapeToolbar({
   onToggleOld,
   hint,
 }: MindscapeToolbarProps): React.JSX.Element {
+  const [placeMenuOpen, setPlaceMenuOpen] = useState(false);
+  const closePlaceMenu = useCallback(() => setPlaceMenuOpen(false), []);
   return (
     <div className={styles.tools} role="toolbar" aria-label="Quadro">
       <div className={styles.toolGroup} role="group" aria-label="Ferramentas">
@@ -159,6 +172,39 @@ export function MindscapeToolbar({
       <button type="button" className={styles.toolButton} disabled={!enabled} onClick={onNewCard}>
         Novo post-it
       </button>
+      <span className={styles.roleMenuAnchor}>
+        <button
+          type="button"
+          className={styles.toolButton}
+          disabled={!enabled}
+          aria-haspopup="menu"
+          aria-expanded={placeMenuOpen}
+          title="Um lugar com papel, que ainda não começou: duplo clique nele abre a sessão"
+          onClick={() => setPlaceMenuOpen((open) => !open)}
+          data-testid="mindscape-new-place"
+        >
+          ＋ Sessão com papel…
+        </button>
+        {placeMenuOpen ? (
+          <RoleMenu
+            label="Papel do lugar novo"
+            roles={roles}
+            onClose={closePlaceMenu}
+            onPick={(roleId) => {
+              setPlaceMenuOpen(false);
+              onNewPlace(roleId);
+            }}
+            onManage={
+              onManageRoles
+                ? () => {
+                    setPlaceMenuOpen(false);
+                    onManageRoles();
+                  }
+                : undefined
+            }
+          />
+        ) : null}
+      </span>
       <button type="button" className={styles.toolButton} disabled={!canGoToTerminal} onClick={onGoToTerminal}>
         Ir ao terminal
       </button>

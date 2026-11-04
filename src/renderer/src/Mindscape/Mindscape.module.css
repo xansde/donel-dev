@@ -263,6 +263,117 @@
   line-height: 16px;
 }
 
+/* Item 12a — the role of the place, top right, in the color of the role (Esteira phase chips). */
+.roleSeal {
+  position: absolute;
+  top: -10px;
+  right: 8px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  color: var(--role, var(--text-muted));
+  border: 1px solid color-mix(in srgb, var(--role, var(--text-muted)) 50%, transparent);
+  background: color-mix(in srgb, var(--role, var(--text-muted)) 14%, var(--bg-app));
+}
+
+.roleSealButton {
+  cursor: pointer;
+}
+
+.roleSealButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.roleSealEmpty {
+  border-style: dashed;
+}
+
+/* Item 12a — the list of roles under "＋ Sessão com papel…" and under the seal of a place. */
+.roleMenuAnchor {
+  position: relative;
+  flex: none;
+}
+
+.roleMenu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 180px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-modal);
+}
+
+.roleMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.roleMenuItem:hover,
+.roleMenuItem:focus-visible {
+  outline: none;
+  background: var(--bg-panel);
+}
+
+.roleMenuItem[aria-checked='true'] {
+  color: var(--accent);
+}
+
+.roleMenuManage {
+  border-top: var(--hairline);
+  border-radius: 0;
+  color: var(--text-muted);
+}
+
+.roleDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--role);
+  flex: none;
+}
+
+.roleDotEmpty {
+  background: transparent;
+  border: 1px dashed var(--text-muted);
+}
+
+/* The menu of a place's seal opens from the card, at its top right. */
+.placeRoleMenu {
+  position: absolute;
+  z-index: 30;
+}
+
+/* Item 12a — a place that has not started yet: dotted stripe, its own glyph. */
+.notStarted {
+  border-top-style: dotted;
+}
+
 .sessionHead {
   display: flex;
   align-items: center;

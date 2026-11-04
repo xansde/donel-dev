@@ -6,7 +6,7 @@
 
 import type { SemaphoreState } from '../index';
 import type { SessionHighlight } from './highlight';
-import { NOTE_CARD_HEIGHT, SESSION_CARD_HEIGHT, SESSION_CARD_WIDTH, noteCardId, sessionCardId, type MindscapeDoc } from './model';
+import { NOTE_CARD_HEIGHT, SESSION_CARD_HEIGHT, SESSION_CARD_WIDTH, noteCardId, type MindscapeDoc } from './model';
 
 export type OrganizeColumn = 'attention' | 'working' | 'waiting' | 'closed';
 
@@ -20,7 +20,10 @@ export const ORGANIZE_NOTE_GAP = 12;
 export const ORGANIZE_PAIR_GAP = 32;
 
 export interface OrganizeEntry {
-  readonly sessionId: string;
+  /** The place (session card). */
+  readonly cardId: string;
+  /** Its conversation of the moment, whose note goes right below; absent while it has not started. */
+  readonly sessionId?: string;
   readonly column: OrganizeColumn;
 }
 
@@ -40,10 +43,11 @@ type Sizes = Readonly<Record<string, { readonly w: number; readonly h: number }>
 export function organizeBoard(doc: MindscapeDoc, projectPath: string, entries: readonly OrganizeEntry[], sizes: Sizes = {}): MindscapeDoc {
   const board = doc.boards[projectPath];
   if (!board) return doc;
-  const present = entries.filter((entry) => board.cards[sessionCardId(entry.sessionId)]);
+  const present = entries.filter((entry) => board.cards[entry.cardId]);
   if (present.length === 0) return doc;
 
-  const moved = present.flatMap((entry) => [board.cards[sessionCardId(entry.sessionId)], board.cards[noteCardId(entry.sessionId)]]).filter((card) => card !== undefined);
+  const noteOf = (entry: OrganizeEntry): string | undefined => (entry.sessionId ? noteCardId(entry.sessionId) : undefined);
+  const moved = present.flatMap((entry) => [board.cards[entry.cardId], board.cards[noteOf(entry) ?? '']]).filter((card) => card !== undefined);
   const originX = Math.min(...moved.map((card) => card.x));
   const originY = Math.min(...moved.map((card) => card.y));
 
@@ -54,12 +58,12 @@ export function organizeBoard(doc: MindscapeDoc, projectPath: string, entries: r
     if (inColumn.length === 0) continue;
     let y = originY;
     for (const entry of inColumn) {
-      const sessionId = sessionCardId(entry.sessionId);
-      cards[sessionId] = { ...cards[sessionId]!, x, y };
-      y += (sizes[sessionId]?.h ?? SESSION_CARD_HEIGHT) + ORGANIZE_NOTE_GAP;
-      const noteId = noteCardId(entry.sessionId);
-      const note = cards[noteId];
-      if (note) {
+      const placeId = entry.cardId;
+      cards[placeId] = { ...cards[placeId]!, x, y };
+      y += (sizes[placeId]?.h ?? SESSION_CARD_HEIGHT) + ORGANIZE_NOTE_GAP;
+      const noteId = noteOf(entry);
+      const note = noteId ? cards[noteId] : undefined;
+      if (noteId && note) {
         cards[noteId] = { ...note, x, y };
         y += (sizes[noteId]?.h ?? NOTE_CARD_HEIGHT) + ORGANIZE_PAIR_GAP;
       } else {

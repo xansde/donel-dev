@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-03',
     items: [
       {
+        title: 'O cartão da sessão vira um lugar, com papel',
+        text: 'No Mindscape, "＋ Sessão com papel…" põe no quadro um lugar que ainda não começou (○), com um papel como Revisor ou Pesquisa no selo do canto. Dois cliques nele abrem a sessão já com esse papel. O papel acompanha o lugar quando a sessão é retomada ou renovada, e o cartão continua no mesmo ponto do quadro, com o post-it e as ligações. O papel só troca antes de começar: precisa de outro, abra outro lugar e passe o trabalho. No Launcher também dá para escolher o papel, e a aba mostra "◆ Revisor".',
+      },
+      {
         title: 'Modo YOLO, projeto por projeto',
         text: 'Ligue na engrenagem do projeto, ou no botão "YOLO neste projeto" do próprio pedido: nesse projeto o agente age sem perguntar, inclusive em ações de fora, como abrir PR e publicar. Vale na hora, também para as sessões abertas. Perguntas e aprovação de plano continuam chegando para você, a sessão mostra a marca YOLO e a engrenagem desliga em um clique.',
       },

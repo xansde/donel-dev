@@ -91,7 +91,8 @@ import { EsteiraScreen } from './Esteira/EsteiraScreen';
 // Mindscape V1 — third mode of the shell (docs/design/mindscape.md).
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
-import { carrySessionCard, findSessionBoard, placeSessionCard, setBoardView, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
+import { appendConversation, findSessionBoard, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
+import type { SessionRole } from '../../shared/roles';
 // Sessão renovada em voo (B36) — limit crossed at the end of a turn → handoff → new session in the same tab.
 import { DEFAULT_SESSION_RENEWAL_PREFS, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
 import { useSessionRenewal, type RenewalTabInput } from './sessionRenewal/useSessionRenewal';
@@ -202,6 +203,14 @@ interface TabState {
    */
   accountLoginId?: string;
   /**
+   * Papéis de sessão (item 12a) — role this tab was opened with (Launcher, or a place of the
+   * Mindscape that had not started). Memory only: on a resume the main reads the role of the
+   * place that holds the conversation.
+   */
+  roleId?: string;
+  /** Item 12a — the place of the Mindscape this tab was opened from, until its conversation binds to it. */
+  placeId?: string;
+  /**
    * T404/T408 — id da sessão do Claude desta aba (o mesmo que nomeia o
    * `.jsonl`), devolvido por `pty.create` e levantado pelo TerminalPane. É a
    * chave de persistência do nome (CA-6). `undefined` em aba `shell` e antes
@@ -283,10 +292,10 @@ const PRE_TYPE_POLL_MS = 250;
 // sozinho. O docstring de lá também corrige a explicação: o prazo nunca foi a
 // cura (a varredura 50/150/400/1000/2000 ms reprovou a hipótese) — ele é só
 // higiene de stdin, e o conserto é confirmar no buffer renderizado.
-
+/** Slot curto da aba: papel (item 12a), marca de worktree e "⟳ 2" (segundo plano visível), lado a lado. */
 /** Slot curto da aba: marca de worktree e "⟳ 2" (segundo plano visível), lado a lado. */
-function tabMarks(worktreeMark: string | undefined, backgroundRunning: number): string | undefined {
-  const marks = [worktreeMark, backgroundRunning > 0 ? `⟳ ${backgroundRunning}` : undefined].filter(Boolean);
+function tabMarks(roleName: string | undefined, worktreeMark: string | undefined, backgroundRunning: number): string | undefined {
+  const marks = [roleName ? `◆ ${roleName}` : undefined, worktreeMark, backgroundRunning > 0 ? `⟳ ${backgroundRunning}` : undefined].filter(Boolean);
   return marks.length > 0 ? marks.join(' ') : undefined;
 }
 
@@ -934,6 +943,8 @@ export function App(): React.JSX.Element {
       launchArgs: args,
       sessionType: 'claude',
       providerId: options.providerId ?? undefined,
+      // Item 12a — the role goes with the spawn; the place born from this conversation keeps it.
+      ...(options.roleId ? { roleId: options.roleId } : {}),
     });
     setSelectedProjectPath(options.projectPath);
     setLastLaunch({ args, cwd: options.projectPath, name });
@@ -1475,6 +1486,11 @@ export function App(): React.JSX.Element {
       const stored = appConfigRef.current?.sessionNames[previousSessionId] ?? null;
       const effectiveName = resolveSessionName({ fallback: tab.name, customTitle: tab.customTitle ?? null, stored });
 
+      // Item 12a — the tab is the place: the new conversation joins the same card (role, post-it,
+      // links), BEFORE the tab gets the new id so the board never places a second card.
+      const mindscapePort = mindscapeSessionPortRef.current;
+      if (mindscapePort.loaded) mindscapePort.applySession((doc) => appendConversation(doc, previousSessionId, sessionId));
+
       setTabs((prev) =>
         prev.map((candidate) =>
           candidate.claudeSessionId === previousSessionId
@@ -1990,6 +2006,7 @@ export function App(): React.JSX.Element {
                 state: semaphoreStates[tab.id]?.state ?? 'working',
                 stateEnteredAt: semaphoreStates[tab.id]?.stateEnteredAt ?? 0,
                 background: backgroundRunningOf(tab.id),
+                ...(tab.roleId ? { roleId: tab.roleId } : {}),
               },
             ]
           : [],
@@ -2057,7 +2074,8 @@ export function App(): React.JSX.Element {
   const handleRenewedSession = (tab: TabState, previousSessionId: string, sessionId: string, firstPrompt: string): void => {
     const stored = appConfigRef.current?.sessionNames[previousSessionId] ?? null;
     const effectiveName = resolveSessionName({ fallback: tab.name, customTitle: tab.customTitle ?? null, stored });
-    if (mindscapeLoaded) applyMindscapeSession((doc) => carrySessionCard(doc, previousSessionId, sessionId));
+    // Item 12a — the new conversation is added to the same place (card, role, post-it, links).
+    if (mindscapeLoaded) applyMindscapeSession((doc) => appendConversation(doc, previousSessionId, sessionId));
     updateTab(tab.id, { customTitle: null, cliColorName: null });
     setSessionModels((prev) => {
       const carried = prev[previousSessionId];
@@ -2076,8 +2094,70 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     // Only after the boot load: writing before it would overwrite the file with an empty document.
     if (!mindscapeLoaded) return;
-    applyMindscapeSession((doc) => mindscapeSessions.reduce((acc, session) => placeSessionCard(acc, session.projectPath, session.sessionId), doc));
+    applyMindscapeSession((doc) =>
+      placeSessionCards(
+        doc,
+        mindscapeSessions.map((session) => ({ projectPath: session.projectPath, sessionId: session.sessionId, ...(session.roleId ? { roleId: session.roleId } : {}) })),
+      ),
+    );
   }, [mindscapeLoaded, applyMindscapeSession, mindscapeSessions]);
+  // Item 12a — what the "`/clear`, `/resume` and fork" handler (registered once, at mount) needs from this render.
+  const mindscapeSessionPortRef = useRef({ loaded: mindscapeLoaded, applySession: applyMindscapeSession });
+  mindscapeSessionPortRef.current = { loaded: mindscapeLoaded, applySession: applyMindscapeSession };
+  // Papéis de sessão (item 12a) — the roles of `<userData>/papeis/`, read once (and after an edit).
+  const [roles, setRoles] = useState<SessionRole[]>([]);
+  useEffect(() => {
+    void window.donel.roles
+      ?.list()
+      .then(setRoles)
+      .catch(() => undefined);
+  }, []);
+  /**
+   * Item 12a — the role a tab shows: the one it was opened with, else the role of the place that
+   * holds its conversation.
+   */
+  const roleOfTab = (tab: TabState): SessionRole | undefined => {
+    const roleId = tab.roleId ?? (tab.claudeSessionId ? roleOfSession(mindscape.doc, tab.claudeSessionId) : undefined);
+    return roleId ? roles.find((role) => role.id === roleId) : undefined;
+  };
+  /**
+   * Item 12a — double click on a place that has not started: a new tab in the board's project with
+   * the role's suggestions (model, effort, permission, engine) and the role itself. A tab already
+   * opening for that place is only focused. The place binds to the conversation when its id comes.
+   */
+  const handleMindscapeStartPlace = (placeId: string, projectPath: string): void => {
+    const existingTab = tabs.find((tab) => tab.placeId === placeId);
+    if (existingTab) {
+      handleMindscapeGoToTerminal(existingTab.id);
+      return;
+    }
+    const place = mindscape.doc.boards[projectPath]?.cards[placeId];
+    if (place?.kind !== 'session') return;
+    const role = place.roleId ? roles.find((candidate) => candidate.id === place.roleId) : undefined;
+    // A suggested engine that is not registered here is ignored: the session opens on the active account.
+    const providerId = role?.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
+    const defaults = appConfig?.launcherDefaults;
+    const project = projects.find((candidate) => candidate.path === projectPath);
+    addTab({
+      name: role?.name ?? 'Sessão',
+      cwd: projectPath,
+      projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
+      pinned: false,
+      launchArgs: buildLauncherArgs({
+        providerId,
+        model: role?.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
+        effort: role?.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
+        permissionMode: role?.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
+        sessionName: '',
+      }),
+      sessionType: 'claude',
+      providerId,
+      ...(place.roleId ? { roleId: place.roleId } : {}),
+      placeId,
+    });
+    setSelectedProjectPath(projectPath);
+    setAppMode('geral');
+  };
   // Mindscape, fatia 03 — post-it written by the session at each end of turn.
   // The project and the name come from the live tab; a session that is no
   // longer open falls back to the board that already holds its card.
@@ -2689,6 +2769,8 @@ export function App(): React.JSX.Element {
             storedNameOf={mindscapeStoredNameOf}
             onResume={handleMindscapeResume}
             onGesture={(gesture) => window.donel.learning?.record(gesture)}
+            roles={roles}
+            onStartPlace={handleMindscapeStartPlace}
           />
         ) : null}
         {devModeOn && esteiraOpen ? (
@@ -2749,7 +2831,7 @@ export function App(): React.JSX.Element {
                 // T079 (D-C20) — slot próprio, nunca o `model`.
                 statusText={chatEnabled && tab.sessionType === 'claude' && semaphoreStates[tab.id]?.state === 'permission' ? 'esperando você' : undefined}
                 // "Isolar em worktree" — a marca ⎇ no slot curto ao lado do nome (a branch vai no cabeçalho da sessão).
-                model={tabMarks(tabWorktreeBranch(tab) ? WORKTREE_TAB_MARK : undefined, backgroundRunningOf(tab.id))}
+                model={tabMarks(roleOfTab(tab)?.name, tabWorktreeBranch(tab) ? WORKTREE_TAB_MARK : undefined, backgroundRunningOf(tab.id))}
                 active={tab.id === activeTabId}
                 onClick={() => setActiveTabId(tab.id)}
                 onClose={() => handleRequestCloseTab(tab.id)}
@@ -2949,6 +3031,7 @@ export function App(): React.JSX.Element {
                   args={tab.launchArgs}
                   providerId={tab.providerId}
                   accountLoginId={tab.accountLoginId}
+                  roleId={tab.roleId}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}
                   onAccountResolved={(account) => handleAccountResolved(tab.id, account)}
@@ -2960,6 +3043,11 @@ export function App(): React.JSX.Element {
                     const renewal = sessionRenewal.takeCompletion(tab.id, claudeSessionId);
                     if (renewal && claudeSessionId) {
                       handleRenewedSession(tab, renewal.previousSessionId, claudeSessionId, renewal.firstPrompt);
+                    } else if (tab.placeId && tab.cwd && claudeSessionId && mindscapeLoaded) {
+                      // Item 12a — the tab opened from a place that had not started: the place starts
+                      // with this conversation, BEFORE the tab gets the id (no second card).
+                      const { placeId, cwd } = tab;
+                      applyMindscapeSession((doc) => setPlaceConversation(doc, cwd, placeId, claudeSessionId));
                     }
                     // CA-27 (009-modo-dev-v3) — retomada de uma sessão colorida
                     // antes: hidrata a cor persistida assim que o `claudeSessionId`
@@ -3088,6 +3176,7 @@ export function App(): React.JSX.Element {
               defaultProjectPath={selectedProjectPath}
               launcherDefaults={appConfig?.launcherDefaults}
               providers={providers}
+              roles={roles}
               onLaunch={handleLaunch}
             />
           </aside>
