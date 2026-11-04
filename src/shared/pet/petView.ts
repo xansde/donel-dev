@@ -73,5 +73,6 @@ export function toPetView(state: PetState, now: number, ui: PetUi): PetView {
     align: ui.align,
     silenced: isSilenced(state, now),
     size: ui.size,
+    talk: ui.talk ?? 0,
   };
 }

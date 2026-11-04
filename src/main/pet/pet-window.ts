@@ -41,7 +41,7 @@ export function createPetWindow(options: CreatePetWindowOptions, seams: PetSeams
     backgroundColor: '#00000000',
     alwaysOnTop: true,
     // Never steals the focus on a click: the owner is typing somewhere else (R9). The list turns
-    // this on while it is open (`setListOpen`).
+    // this on while it is open, and so does the bubble of the Líder (`setFocusable`).
     focusable: false,
     // Shown only after the screen says it is ready (`pet:ready` -> `showInactive`).
     show: false,
@@ -116,14 +116,14 @@ export function createPetWindow(options: CreatePetWindowOptions, seams: PetSeams
     requestCloseList: () => {
       if (!win.isDestroyed()) win.webContents.send(PET_CHANNELS.closeList);
     },
-    setListOpen: (open: boolean) => {
+    setFocusable: (focusable: boolean, takeFocus: boolean) => {
       if (win.isDestroyed()) return;
       // A ghost never takes the focus: an invisible window with the keyboard would swallow the typing of whoever is
       // using the machine. The smokes close the list by emitting the `blur` of the window themselves.
       if (seams.ghost) return;
-      if (open) {
+      if (focusable) {
         win.setFocusable(true);
-        win.focus();
+        if (takeFocus) win.focus();
         return;
       }
       // Closing. A window that is still the active one when it turns non-focusable would keep the keyboard

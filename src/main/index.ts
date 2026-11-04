@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, screen, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, screen, shell, webContents } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -1181,8 +1181,6 @@ function startPetService(): void {
       persistAppConfig();
     },
     createWindow: (options) => createPetWindow(options, seams),
-    // Item 18 — a click on the Jobu with nobody waiting (and the item of his menu) opens the conversation with the Líder.
-    toggleLider: () => ensureLiderService().toggle(),
     // 016-jobu-faxina — the sweep of the menu "Fazer faxina", and the click of its bubble (the Explorer opens the folder).
     runSweep: createSweepRunner({
       git: createGitRunner(),
@@ -1240,26 +1238,21 @@ function startPetService(): void {
 function onMainWindowClosed(): void {
   petService?.dispose();
   petService = null;
-  // Item 18 — the floating window of the Líder dies with the main one too.
+  // Item 18 — the link of the bubble of the Líder goes with the main window too.
   liderService?.dispose();
   liderService = null;
 }
 
-/** Item 18 (PDA mindscape-openrig) — the floating window of the conversation with the Jobu as Líder. */
+/** Item 18 (PDA mindscape-openrig) — the link between the main window and the bubble of the Líder on the Jobu. */
 let liderService: LiderService | null = null;
 
 function ensureLiderService(): LiderService {
   if (liderService !== null) return liderService;
   liderService = createLiderService({
     getMainWindow,
-    config: () => appConfig.liderWindow,
-    persist: (next) => {
-      appConfig = { ...appConfig, liderWindow: next };
-      persistAppConfig();
-    },
-    petBounds: () => {
-      const pet = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed() && window.getTitle() === 'Jobu Donel');
-      return pet ? pet.getBounds() : null;
+    petWebContents: () => {
+      const id = petService?.petWebContentsId() ?? null;
+      return id === null ? null : (webContents.fromId(id) ?? null);
     },
   });
   return liderService;

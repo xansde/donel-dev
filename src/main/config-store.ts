@@ -18,7 +18,6 @@ import type {
   PhaseDefaultsTable,
 } from '../shared/devMode';
 import { DEFAULT_PHASE_DEFAULTS } from '../shared/devModeDefaults';
-import { defaultLiderWindowPrefs, sanitizeLiderWindowPrefs, type LiderWindowPrefs } from '../shared/lider/ipc';
 import { DEFAULT_SESSION_RENEWAL_PREFS, sanitizeSessionRenewalPrefs, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { defaultMigrationState, sanitizeMigrationState, type MigrationState } from './accounts/migration/migration-state';
@@ -156,8 +155,6 @@ export interface AppConfig {
   readonly yolo: YoloPrefs;
   /** B33 — the installers folder of the in-app update. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
   readonly appUpdate: AppUpdatePrefs;
-  /** Item 18 — place, size and "sempre por cima" of the floating window of the Líder. TOP-LEVEL (like `pet`, R20). Not in the DTO. */
-  readonly liderWindow: LiderWindowPrefs;
   /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
@@ -200,7 +197,6 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     autoMode: defaultAutoModePrefs(),
     yolo: defaultYoloPrefs(),
     appUpdate: { installersDir: null },
-    liderWindow: defaultLiderWindowPrefs(),
     unknownFields: {},
   };
 }
@@ -747,7 +743,6 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     autoMode: sanitizeAutoModePrefs(candidate.autoMode, defaults.autoMode),
     yolo: sanitizeYoloPrefs(candidate.yolo),
     appUpdate: sanitizeAppUpdatePrefs(candidate.appUpdate),
-    liderWindow: sanitizeLiderWindowPrefs(candidate.liderWindow, defaults.liderWindow),
     unknownFields,
   };
 }

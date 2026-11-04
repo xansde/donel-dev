@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { drawingMetrics } from '../../../shared/pet/art';
 import { blinkFrameFor, createBlinkScheduler } from '../../../shared/pet/blink';
 import { splitSessionBubbleText } from '../../../shared/pet/bubble';
-import { decideBubbleClick, decideClick } from '../../../shared/pet/click';
+import { decideBubbleClick } from '../../../shared/pet/click';
 import { normalizeWheelDelta, wheelSteps } from '../../../shared/pet/gestures';
 import { PET_SIZE_DEFAULT } from '../../../shared/pet/placement';
 import { resolvePose } from '../../../shared/pet/poses';
 import type { PetView, PetViewBubble } from '../../../shared/pet/types';
+import { LiderTalk, type TalkPose } from './LiderTalk';
 import styles from './PetApp.module.css';
 import { usePetDrag } from './usePetDrag';
 import { usePetHitTest } from './usePetHitTest';
@@ -106,6 +107,8 @@ export function PetApp(): React.JSX.Element {
   const [listOpen, setListOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [blinking, setBlinking] = useState(false);
+  /** Item 18: the pose the Jobu takes while he talks as the Líder (the bubble decides it from what is being said). */
+  const [talkPose, setTalkPose] = useState<TalkPose | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const figureRef = useRef<HTMLDivElement>(null);
 
@@ -117,13 +120,17 @@ export function PetApp(): React.JSX.Element {
     return unsubscribe;
   }, []);
 
-  const art = view === null ? null : resolvePose(view.pose, AVAILABLE_ART);
-  const bubble = view?.bubble ?? null;
+  // Item 18: the bubble of the Líder is open (the main grew the window for it: `view.talk` is its height).
+  const talking = view !== null && view.talk > 0;
+  const talkArt = talking && talkPose !== null && AVAILABLE_ART.has(talkPose) ? talkPose : null;
+  const art = view === null ? null : (talkArt ?? resolvePose(view.pose, AVAILABLE_ART));
+  // While the Líder talks, his bubble says everything: the little bubble and the list stay out of the way.
+  const bubble = talking ? null : (view?.bubble ?? null);
   const waiting = view?.waiting ?? [];
   // A list of one is no list: it needs two or more to be worth opening (FR-023), and it goes when they drop to one.
-  const listVisible = listOpen && waiting.length >= 2;
+  const listVisible = !talking && listOpen && waiting.length >= 2;
   // What is under a pointer that does not move changes when the badge, the bubble or the list comes or goes (or says something else).
-  const refreshKey = `${view?.badge ?? ''}|${bubble?.id ?? ''}:${bubble?.text ?? ''}|${listVisible ? `list${waiting.length}` : ''}`;
+  const refreshKey = `${view?.badge ?? ''}|${bubble?.id ?? ''}:${bubble?.text ?? ''}|${listVisible ? `list${waiting.length}` : ''}|talk${view?.talk ?? 0}`;
   const { interactive, isHit } = usePetHitTest({ figure: figureRef, arts: POSE_ART, art, size: view?.size ?? null, refreshKey, locked: dragging });
 
   // FR-030: one hop per bubble, keyed by its id: a bubble that grew into an aggregate keeps its id and does not hop twice.
@@ -139,7 +146,7 @@ export function PetApp(): React.JSX.Element {
 
   // T053 (FR-030): the blink. It exists only for a pose whose own picture is on screen AND has a blink frame in the folder
   // of the poses: with no frame there is no blink, and the day the PNG arrives it starts with no change here.
-  const blinkFrame = view === null ? null : blinkFrameFor(view.pose, art, AVAILABLE_ART);
+  const blinkFrame = view === null || talkArt !== null ? null : blinkFrameFor(view.pose, art, AVAILABLE_ART);
   useEffect(() => {
     if (blinkFrame === null || prefersReducedMotion()) return undefined;
     const scheduler = createBlinkScheduler({
@@ -206,20 +213,23 @@ export function PetApp(): React.JSX.Element {
   }, []);
   const drag = usePetDrag(isHit, onDraggingChange);
 
-  /** A click on the drawing or on the badge (the badge is part of the Jobu): the one waiting, the Donel, or the list. */
+  /**
+   * Item 18: a click on the drawing or on the badge (the badge is part of the Jobu) opens the bubble of the conversation with
+   * the Líder, or closes it. Always: who waits for the owner shows inside the bubble, each with a way to its tab.
+   */
   const onJobuClick = useCallback(
     (event: React.MouseEvent): void => {
       if (view === null || !isHit(event.clientX, event.clientY)) return; // the transparent corner of the box is not the Jobu
-      const decision = decideClick(view);
-      if (decision.kind === 'list') {
-        setListOpen((open) => !open);
-        return;
-      }
       setListOpen(false);
-      window.donel.pet.click(); // the main answers with ITS state of who waits
+      window.donel.pet.setTalk(!(view.talk > 0));
     },
     [view, isHit],
   );
+  const closeTalk = useCallback((): void => window.donel.pet.setTalk(false), []);
+  // The pose of the conversation is forgotten when the bubble closes: the Jobu goes back to what the sessions ask for.
+  useEffect(() => {
+    if (!talking) setTalkPose(null);
+  }, [talking]);
 
   /** The click that ends a drag is not a click on the Jobu: it is swallowed before the drawing, the badge, the bubble or the list see it. */
   const onClickCapture = (event: React.MouseEvent): void => {
@@ -240,7 +250,8 @@ export function PetApp(): React.JSX.Element {
   const onBubbleClick = (): void => {
     if (view === null || bubble === null) return;
     const decision = decideBubbleClick(bubble, view.waiting);
-    if (decision.kind === 'list') setListOpen(true);
+    // Several waiting: the bubble of the Líder lists them, each with a way to its tab.
+    if (decision.kind === 'list') window.donel.pet.setTalk(true);
     else window.donel.pet.open(decision);
   };
 
@@ -265,6 +276,7 @@ export function PetApp(): React.JSX.Element {
       data-badge={view?.badge ?? undefined}
       data-bubble={bubble?.text ?? undefined}
       data-list={listVisible ? 'open' : 'closed'}
+      data-talk={talking ? 'open' : 'closed'}
       data-docked={view === null ? undefined : String(view.docked)}
       data-align={view?.align}
       data-size={view === null ? undefined : String(view.size)}
@@ -313,6 +325,7 @@ export function PetApp(): React.JSX.Element {
               {view.badge}
             </span>
           )}
+          {talking && <LiderTalk view={view} onClose={closeTalk} onPose={setTalkPose} />}
           {(bubble !== null || listVisible) && (
             // Above the head, anchored to the drawing like an alignment (`right` near the right edge of the screen, the default corner).
             <div className={styles.popups} data-align={view.align} data-testid="pet-popups" data-both={bubble !== null && listVisible ? '' : undefined}>
