@@ -1436,7 +1436,11 @@ function registerChatDomain(): void {
       rows: (event) => broadcastChat(CHAT_CHANNELS.rows, event),
       live: (event) => {
         // o semaforo da aba fica em `permission` ("esperando voce") enquanto houver pendencia aberta
-        semaphoreManager.setPendingOpen(event.ptyId, event.live.pendings.length > 0);
+        semaphoreManager.setPendingOpen(
+          event.ptyId,
+          event.live.pendings.length > 0,
+          event.live.pendings.map((pending) => pending.kind),
+        );
         broadcastChat(CHAT_CHANNELS.live, event);
       },
       pendingOpened: ({ ptyId, pending }) => {

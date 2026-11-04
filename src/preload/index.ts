@@ -230,6 +230,10 @@ const donelApi: DonelApi = {
           state: update.state,
           stateEnteredAt: update.stateEnteredAt,
           ...(update.awaitingBackgroundAgents === true ? { awaitingBackgroundAgents: true } : {}),
+          // Item 04 — the facts of the rich card on the Mindscape.
+          ...(update.unconfirmed === true ? { unconfirmed: true } : {}),
+          ...(update.pendingKinds && update.pendingKinds.length > 0 ? { pendingKinds: update.pendingKinds } : {}),
+          ...(update.turnFailure ? { turnFailure: update.turnFailure } : {}),
         });
       };
       ipcRenderer.on(SEMAPHORE_CHANNELS.update, handler);

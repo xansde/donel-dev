@@ -1994,26 +1994,45 @@ export function App(): React.JSX.Element {
   // without project — shell or home — does not enter, rule 11).
   const mindscapeSessions: MindscapeLiveSession[] = useMemo(
     () =>
-      tabs.flatMap((tab) =>
-        tab.sessionType === 'claude' && tab.claudeSessionId && tab.cwd && tab.projectName
-          ? [
-              {
-                tabId: tab.id,
-                sessionId: tab.claudeSessionId,
-                name: resolveTabName(tab),
-                projectPath: tab.cwd,
-                color: tab.color ?? 'none',
-                cliColorHex: cliColorNameToHex(tab.cliColorName),
-                state: semaphoreStates[tab.id]?.state ?? 'working',
-                stateEnteredAt: semaphoreStates[tab.id]?.stateEnteredAt ?? 0,
-                background: backgroundRunningOf(tab.id),
-                ...(tab.roleId ? { roleId: tab.roleId } : {}),
-              },
-            ]
-          : [],
-      ),
+      tabs.flatMap((tab) => {
+        if (!(tab.sessionType === 'claude' && tab.claudeSessionId && tab.cwd && tab.projectName)) return [];
+        const sessionId = tab.claudeSessionId;
+        const semaphore = semaphoreStates[tab.id];
+        // Item 04 — the engine and the context, read exactly like the footer (`resolveSessionMeter`):
+        // the statusline of the CLI first, then the transcript. No reading → no seal, no meter.
+        const ptyId = tabExits[tab.id] === undefined ? (chatPtyIds[tab.id] ?? null) : null;
+        const statusLine = statusLineForSession(ptyId ? statusLines[ptyId] : null, sessionId);
+        const meter = resolveSessionMeter({
+          transcriptModelId: sessionModels[sessionId],
+          transcriptTokens: contextTokens[sessionId],
+          launchAlias: sessionModelEffort[tab.id]?.model ?? DEFAULT_MODEL_ALIAS,
+          statusLine,
+        });
+        const modelRead = Boolean(statusLine?.model?.id || sessionModels[sessionId]);
+        const providerLabel = tab.providerId ? (providers.find((provider) => provider.id === tab.providerId)?.label ?? tab.providerId) : null;
+        const engine = [modelRead ? meter.label : null, providerLabel].filter(Boolean).join(' · ');
+        return [
+          {
+            tabId: tab.id,
+            sessionId,
+            name: resolveTabName(tab),
+            projectPath: tab.cwd,
+            color: tab.color ?? 'none',
+            cliColorHex: cliColorNameToHex(tab.cliColorName),
+            state: semaphore?.state ?? 'working',
+            stateEnteredAt: semaphore?.stateEnteredAt ?? 0,
+            background: backgroundRunningOf(tab.id),
+            ...(tab.roleId ? { roleId: tab.roleId } : {}),
+            ...(!semaphore || semaphore.unconfirmed ? { unconfirmed: true } : {}),
+            ...(semaphore?.pendingKinds ? { pendingKinds: semaphore.pendingKinds } : {}),
+            ...(semaphore?.turnFailure ? { turnFailure: semaphore.turnFailure } : {}),
+            ...(engine ? { engine } : {}),
+            ...(meter.usedTokens !== null ? { meter: { usedTokens: meter.usedTokens, maxTokens: meter.contextZone } } : {}),
+          },
+        ];
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tabs, semaphoreStates, appConfig, backgroundByPty, chatPtyIds],
+    [tabs, semaphoreStates, appConfig, backgroundByPty, chatPtyIds, tabExits, statusLines, sessionModels, contextTokens, sessionModelEffort, providers],
   );
   // Mindscape, fatia 02 — last visit of the owner to each session, in memory
   // only (not persisted: the app is born without tabs). Stamped when a tab

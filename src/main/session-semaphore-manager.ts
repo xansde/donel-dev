@@ -36,6 +36,18 @@ export interface SemaphoreUpdate {
    * igual; o Jobu não anuncia "terminou" por isso. Ver `SemaphoreMachineState.awaitingBackgroundAgents`.
    */
   readonly awaitingBackgroundAgents?: true;
+  /**
+   * Item 04 (cartão rico) — no hook heard from this session yet: the `working` it was born with is a
+   * guess, and the card says "desconhecido" instead of "trabalhando".
+   */
+  readonly unconfirmed?: true;
+  /** Item 04 — what the open pendings of the chat are (`question`, `permission`, `plan`); only with `permission`. */
+  readonly pendingKinds?: readonly string[];
+  /**
+   * Item 04 — the last turn ended in `StopFailure`: its code (`rate_limit`, `overloaded`…), or
+   * `unknown`. Cleared by the next prompt or tool call.
+   */
+  readonly turnFailure?: string;
 }
 
 /**
@@ -90,6 +102,12 @@ export class SessionSemaphoreManager {
   private readonly erroredPtyIds = new Set<string>();
   /** T079 (014-chat) - abas com pendencia aberta (PermissionRequest): o estado publico e `permission` enquanto durar. */
   private readonly pendingOpenPtyIds = new Set<string>();
+  /** Item 04 — kinds of the open pendings, by pty (see `SemaphoreUpdate.pendingKinds`). */
+  private readonly pendingKindsByPty = new Map<string, readonly string[]>();
+  /** Item 04 — ptys from which at least one hook arrived (see `SemaphoreUpdate.unconfirmed`). */
+  private readonly heardPtyIds = new Set<string>();
+  /** Item 04 — `StopFailure` code of the last turn, by pty (see `SemaphoreUpdate.turnFailure`). */
+  private readonly turnFailureByPty = new Map<string, string>();
   private readonly listeners = new Set<(update: SemaphoreUpdate) => void>();
   /**
    * Emenda 22/09 (011-contas-e-provedores, etapa 3, Fase 2, item 4) —
@@ -178,6 +196,9 @@ export class SessionSemaphoreManager {
     this.ptyState.delete(ptyId);
     this.erroredPtyIds.delete(ptyId);
     this.pendingOpenPtyIds.delete(ptyId);
+    this.pendingKindsByPty.delete(ptyId);
+    this.heardPtyIds.delete(ptyId);
+    this.turnFailureByPty.delete(ptyId);
     for (const [claudeSessionId, mappedPtyId] of this.sessionToPty) {
       if (mappedPtyId === ptyId) this.sessionToPty.delete(claudeSessionId);
     }
@@ -193,10 +214,16 @@ export class SessionSemaphoreManager {
   }
 
   /** T079 (014-chat) - o hub do chat avisa quando a aba ganha/perde pendencia aberta. */
-  setPendingOpen(ptyId: string, open: boolean): void {
-    if (this.pendingOpenPtyIds.has(ptyId) === open) return;
+  setPendingOpen(ptyId: string, open: boolean, kinds: readonly string[] = []): void {
+    // Item 04 — the kinds too (the card's "precisa de você" says why), in a stable order.
+    const nextKinds = open ? [...new Set(kinds)].sort() : [];
+    const prevKinds = this.pendingKindsByPty.get(ptyId) ?? [];
+    const kindsChanged = nextKinds.join(',') !== prevKinds.join(',');
+    if (this.pendingOpenPtyIds.has(ptyId) === open && !kindsChanged) return;
     if (open) this.pendingOpenPtyIds.add(ptyId);
     else this.pendingOpenPtyIds.delete(ptyId);
+    if (nextKinds.length > 0) this.pendingKindsByPty.set(ptyId, nextKinds);
+    else this.pendingKindsByPty.delete(ptyId);
     this.emit(ptyId);
   }
 
@@ -287,6 +314,14 @@ export class SessionSemaphoreManager {
     }
     const eventType = mapHookEventName(hookEventName);
     if (!eventType) return;
+    // Item 04 — from now on the state is a fact, not the guess of the birth; and the failure of the
+    // last turn lasts until the session moves again.
+    this.heardPtyIds.add(ptyId);
+    if (hookEventName === 'StopFailure') {
+      this.turnFailureByPty.set(ptyId, typeof payload.error === 'string' && payload.error.length > 0 ? payload.error : 'unknown');
+    } else if (eventType === 'userPromptSubmit' || eventType === 'preToolUse') {
+      this.turnFailureByPty.delete(ptyId);
+    }
     const current = this.ptyState.get(ptyId) ?? INITIAL_SEMAPHORE_STATE;
     const event: SemaphoreEvent =
       eventType === 'sessionEnd'
@@ -330,9 +365,19 @@ export class SessionSemaphoreManager {
 
   private updateFor(ptyId: string, state: SemaphoreMachineState): SemaphoreUpdate {
     const publicState = this.publicStateFor(ptyId, state);
-    const update: SemaphoreUpdate = { ptyId, state: publicState, stateEnteredAt: state.stateEnteredAt };
-    // #109 — a marca só vale sobre `waiting`: com pendência aberta o estado público é `permission`, e isso precisa do dono.
-    return publicState === 'waiting' && state.awaitingBackgroundAgents === true ? { ...update, awaitingBackgroundAgents: true } : update;
+    const kinds = this.pendingKindsByPty.get(ptyId);
+    const failure = this.turnFailureByPty.get(ptyId);
+    return {
+      ptyId,
+      state: publicState,
+      stateEnteredAt: state.stateEnteredAt,
+      // #109 — a marca só vale sobre `waiting`: com pendência aberta o estado público é `permission`, e isso precisa do dono.
+      ...(publicState === 'waiting' && state.awaitingBackgroundAgents === true ? { awaitingBackgroundAgents: true as const } : {}),
+      // Item 04 — the extra facts of the rich card; whoever does not read them sees the same update.
+      ...(publicState === 'working' && !this.heardPtyIds.has(ptyId) ? { unconfirmed: true as const } : {}),
+      ...(publicState === 'permission' && kinds && kinds.length > 0 ? { pendingKinds: kinds } : {}),
+      ...(failure && publicState !== 'working' ? { turnFailure: failure } : {}),
+    };
   }
 
   private emit(ptyId: string): void {

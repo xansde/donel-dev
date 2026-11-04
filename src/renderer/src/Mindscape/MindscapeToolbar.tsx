@@ -212,7 +212,7 @@ export function MindscapeToolbar({
         type="button"
         className={styles.toolButton}
         disabled={!enabled || !canOrganize}
-        title="Arruma as sessões em colunas: precisa de você, trabalhando, em espera e fechadas. Favoritas ficam onde estão (Ctrl+Z desfaz)"
+        title="Arruma as sessões em colunas: parada com pendência, terminou e você não viu, trabalhando, em espera e fechadas. Favoritas ficam onde estão (Ctrl+Z desfaz)"
         onClick={onOrganize}
         data-testid="mindscape-organize"
       >

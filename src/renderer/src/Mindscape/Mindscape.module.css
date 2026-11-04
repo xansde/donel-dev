@@ -227,14 +227,14 @@
 .st-error {
   --st: var(--state-error);
 }
-
+/* Session post-it: 230 x 140 at most (SESSION_CARD_WIDTH/HEIGHT in model.ts; item 04 made it taller). */
 /* Session post-it: 230 x 96 at most (SESSION_CARD_WIDTH/HEIGHT in model.ts). */
 .sessionCard {
   position: absolute;
   box-sizing: border-box;
   width: 230px;
   min-height: 72px;
-  max-height: 96px;
+  max-height: 140px;
   background: var(--bg-raised);
   /* Fatia 05 — the side borders come from the hand-made outline (roughjs); the stripe stays. */
   border: 1px solid transparent;
@@ -388,6 +388,83 @@
   line-height: 1;
   color: var(--st);
   flex-shrink: 0;
+}
+
+/* Item 04 — the ring around the glyph: precisa de você · trabalhando · parada · desconhecido. */
+.ring {
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--ring-color);
+  display: grid;
+  place-items: center;
+  font-size: 8px;
+}
+
+.ring-need {
+  --ring-color: var(--state-permission);
+  color: var(--state-permission);
+}
+
+.ring-working {
+  --ring-color: var(--state-working);
+}
+
+.ring-stopped {
+  --ring-color: var(--border);
+}
+
+.ring-unknown {
+  --ring-color: var(--text-muted);
+  border-style: dashed;
+  color: var(--text-muted);
+}
+
+/* Item 04 — engine seal and context, same reading as the footer. */
+.sessionMeterRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+}
+
+.engineSeal {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  border: var(--hairline);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.contextMeter {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--font-mono);
+  color: var(--zc, var(--zone-ok));
+}
+
+.axesLine {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.needLine {
+  font-size: var(--text-caption-size);
+  font-weight: var(--weight-semibold);
+  color: var(--state-permission);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sessionName {

@@ -107,7 +107,7 @@ export interface MindscapeDoc {
 
 /** Card footprint used by the automatic grid (matches the CSS of `MindscapeCard`). */
 export const SESSION_CARD_WIDTH = 230;
-export const SESSION_CARD_HEIGHT = 96;
+export const SESSION_CARD_HEIGHT = 140;
 /** Footprint of the post-it written by the session (8 clamped lines + author chip + meta + "Arquivar"). */
 export const NOTE_CARD_WIDTH = 230;
 export const NOTE_CARD_HEIGHT = 270;
