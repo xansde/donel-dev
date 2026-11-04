@@ -31,6 +31,17 @@ async function boot(root: HTMLElement): Promise<void> {
     mountPet(root);
     return;
   }
+  // Item 18 (PDA mindscape-openrig) — the floating window of the conversation with the Jobu as Líder.
+  if (window.location.hash === '#lider') {
+    document.title = 'Jobu · Líder';
+    const { LiderApp } = await import('./lider/LiderApp');
+    createRoot(root).render(
+      <StrictMode>
+        <LiderApp />
+      </StrictMode>,
+    );
+    return;
+  }
   const { App } = await import('./App');
   createRoot(root).render(
     <StrictMode>

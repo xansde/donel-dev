@@ -145,6 +145,7 @@ import { revealRow } from './chat/revealRow';
 import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
 import { disposeTabSend, getDraft, sendDriverFor, sendToTab } from './chat/composer/tabSend';
+import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
@@ -2334,6 +2335,95 @@ export function App(): React.JSX.Element {
     setSelectedProjectPath(projectPath);
     setAppMode('geral');
   };
+
+  // Item 18 (PDA mindscape-openrig) — the Jobu as Líder, in a floating window. This window owns the tabs, so it
+  // says which one is the Líder of the selected project (`lider:report`) and delivers what the owner writes there
+  // (`lider:deliver`) through the tab's own send machine; with no live Líder, the first message opens one.
+  const liderTabsRef = useRef<Record<string, string>>({});
+  const findLiderTab = (projectPath: string | undefined): TabState | undefined => {
+    if (!projectPath) return undefined;
+    const alive = (tab: TabState): boolean => tab.sessionType === 'claude' && tab.cwd === projectPath && tabExits[tab.id] === undefined;
+    const remembered = liderTabsRef.current[projectPath];
+    const byRef = remembered ? tabs.find((tab) => tab.id === remembered && alive(tab)) : undefined;
+    if (byRef) return byRef;
+    const board = mindscape.doc.boards[projectPath];
+    return tabs.find((tab) => {
+      if (!alive(tab)) return false;
+      if (tab.roleId === LIDER_ROLE_ID) return true;
+      // After a restart the role lives on the place of the Mindscape that holds the conversation.
+      if (!board || !tab.claudeSessionId) return false;
+      return Object.values(board.cards).some((card) => card.kind === 'session' && card.roleId === LIDER_ROLE_ID && card.sessionId === tab.claudeSessionId);
+    });
+  };
+  const liderTab = findLiderTab(selectedProjectPath);
+  const liderRoleAvailable = roles.some((role) => role.id === LIDER_ROLE_ID);
+  const lastLiderReportRef = useRef<string | null>(null);
+  useEffect(() => {
+    const project = projects.find((candidate) => candidate.path === selectedProjectPath);
+    const report: LiderReport = {
+      projectPath: selectedProjectPath ?? null,
+      projectName: project?.name ?? (selectedProjectPath ? (selectedProjectPath.split(/[\\/]/).filter(Boolean).pop() ?? null) : null),
+      tabId: liderTab?.id ?? null,
+      ptyId: liderTab ? (chatPtyIds[liderTab.id] ?? null) : null,
+      name: liderTab ? resolveTabName(liderTab) : null,
+      roleAvailable: liderRoleAvailable,
+    };
+    const json = JSON.stringify(report);
+    if (json === lastLiderReportRef.current) return;
+    lastLiderReportRef.current = json;
+    window.donel.lider.report(report);
+  });
+  const liderDeliverRef = useRef<(text: string) => LiderSendResult>(() => ({ ok: false, reason: 'O Donel ainda está abrindo.' }));
+  liderDeliverRef.current = (text: string): LiderSendResult => {
+    const projectPath = selectedProjectPath;
+    if (!projectPath) return { ok: false, reason: 'Escolha um projeto na barra lateral do Donel.' };
+    let tabId = findLiderTab(projectPath)?.id;
+    if (tabId === undefined) {
+      const role = roles.find((candidate) => candidate.id === LIDER_ROLE_ID);
+      const providerId = role?.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
+      const defaults = appConfig?.launcherDefaults;
+      const project = projects.find((candidate) => candidate.path === projectPath);
+      // "Onde roda" — the same default as the Launcher and the places of the Mindscape.
+      const savedWhere = defaults?.where;
+      const remoteId =
+        savedWhere === 'local'
+          ? undefined
+          : accountsView.remotes.some((remote) => remote.id === savedWhere)
+            ? savedWhere
+            : accountsView.remotes.find((remote) => remote.activeAccountId)?.id;
+      tabId = addTab({
+        name: role?.name ?? 'Líder',
+        cwd: projectPath,
+        projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
+        pinned: false,
+        launchArgs: buildLauncherArgs({
+          providerId,
+          model: role?.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
+          effort: role?.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
+          permissionMode: role?.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
+          sessionName: '',
+        }),
+        sessionType: 'claude',
+        providerId,
+        ...(remoteId ? { remoteId } : {}),
+        ...(role ? { roleId: role.id } : {}),
+      });
+      liderTabsRef.current = { ...liderTabsRef.current, [projectPath]: tabId };
+    }
+    const target = tabId;
+    sendToTab(target, { terminal: () => terminalRefs.current[target] ?? null }, { text });
+    return { ok: true };
+  };
+  useEffect(() => window.donel.lider.onDeliver(({ text }, reply) => reply(liderDeliverRef.current(text))), []);
+  useEffect(
+    () =>
+      window.donel.lider.onActivateTab(({ tabId }) => {
+        setActiveTabId(tabId);
+        setAppMode('geral');
+      }),
+    [],
+  );
+
   // Mindscape, fatia 03 — post-it written by the session at each end of turn.
   // The project and the name come from the live tab; a session that is no
   // longer open falls back to the board that already holds its card.

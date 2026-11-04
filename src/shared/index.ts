@@ -10,6 +10,7 @@ import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
 import type { DonelChatApi } from './chat/api';
 import type { DonelPetApi } from './pet/ipc';
+import type { DonelLiderApi } from './lider/ipc';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProjectBindingApi } from './projectBinding';
@@ -512,6 +513,8 @@ export interface DonelApi {
   learning: DonelLearningApi;
   /** 015-jobu-pet — the Jobu on the desktop. Exposed in both windows (the main one and the pet's); each one uses its own half. */
   pet: DonelPetApi;
+  /** Item 18 — the conversation with the Jobu as Líder, in its own window. */
+  lider: DonelLiderApi;
   /** Saúde do computador — RAM, disco e processos que estão pesando, com a ação de encerrar um processo. */
   health: DonelHealthApi;
   /** B33 — versão nova do alfa: atualizar de dentro do app e reabrir as abas depois. */

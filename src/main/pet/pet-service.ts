@@ -186,6 +186,12 @@ export interface PetServiceDeps {
   readonly onNotices?: (events: readonly BubbleEvent[]) => void;
   /** notificacoes-completas: the number of sessions waiting for the owner, unseen, every time it changes (the taskbar badge). */
   readonly onWaitingCountChanged?: (count: number) => void;
+  /**
+   * Item 18 (PDA mindscape-openrig): opens or closes the floating window of the conversation with the Líder. A click on
+   * the Jobu with nobody waiting does this instead of bringing the Donel to the front; the menu has an item for it.
+   * Absent = the click keeps the 015 behaviour.
+   */
+  readonly toggleLider?: () => void;
 }
 
 export interface PetService {
@@ -699,6 +705,9 @@ export function createPetService(deps: PetServiceDeps): PetService {
       case 'home':
         goHome();
         break;
+      case 'lider':
+        deps.toggleLider?.();
+        break;
       case 'hide':
         // The same road as the toggle of the Preferences: it saves `pet.enabled = false`, destroys the window and tells the main window.
         applyEnabled(false);
@@ -812,6 +821,12 @@ export function createPetService(deps: PetServiceDeps): PetService {
     handleClick() {
       if (liveWindow() === null) return;
       const decision = decideClick(currentView());
+      // Item 18: nobody waiting -> the conversation with the Líder (someone waiting still leads to that tab).
+      if (decision.kind === 'donel' && deps.toggleLider !== undefined) {
+        feed({ type: 'bubbleDismissed' });
+        deps.toggleLider();
+        return;
+      }
       if (decision.kind !== 'list') openTarget(decision);
     },
 
