@@ -39,6 +39,41 @@ status: insumo — base das próximas semanas, por pedido do dono (03/11)
   inferiores); "provas em vídeo para rolar" (Roberto) e "aprovar/reprovar estilo Tinder" (Bruno).
 - **Quinta, 05/11**: treinamento só de OpenRig e do setup dele.
 
+## O painel do Bill, visto no vídeo (≈ 00:55–00:58 da gravação)
+
+Frames em `reunioes/2026-11-03-treinamento-liderancas-tech/frames/` no vault.
+
+- **Lema na home do billverso.com: "Os agentes mudam. As cadeiras ficam."** Cada agente ocupa uma cadeira,
+  cada tarefa tem dono e critério de aceite, e um único registro diz o que é verdade. É o nosso "lugar" (seat).
+- **Abas**: Mapa · Pulso · Tarefas · Saldos · Ideias · Entregas · Pessoal · Excalidraw ↗. No topo: "daemon ok ·
+  ledger ok · relido há 1 s".
+- **Faixa de números**: realizadas hoje · pendentes (quantas paradas há mais de 8 h) · **geradas sem você**
+  (% das suas, quantas vieram de rotina) · **validadas sem você** (% dos aceites) · **esperando você** (e a mais
+  velha) · menor saldo de conta · energia (tokens; quem mais gasta) · cadeiras por estado (problema · atenção ·
+  bem · sem sinal).
+- **Mapa**: grupos (rigs) **comando** (orquestradora, triagem, supervisor, clérigo, infra, eficiência, curador),
+  **fábrica** (orquestrador-tech → arquiteto → dev-1…dev-6 → qa → revisor → sre → "entregas hoje"),
+  governança, assistentes, nautilus. Legenda de ligações: delega · escala · colabora · rotinas; camadas ligáveis
+  "quem observa" e "tráfego 24 h".
+- **Coluna esquerda**: prioridades do dono (adicionar, subir/descer) e a lista de grupos com contagem.
+- **Coluna direita**: fila (abertas, em execução, **entregues sem aceite**, retrabalho hoje, entregas hoje),
+  saldos por provedor (Claude: "22 de 24 contas", Codex, AI Hub, Supabase) e um feed "Aconteceu".
+- **Alçada no próprio painel**: "Só leitura aqui · ações só em Entregas e nas Prioridades, com login".
+- **Excalidraw**: um desenho por entrega, nomeado pelo ID da tarefa (ex.: "T-000804 Nautilus · topologia-alvo
+  no OpenRig"). É ali que ele aprova, reprova e rabisca.
+
+Quase tudo isso tem par no Donel Dev: Mapa ↔ Mindscape; esperando você ↔ "Precisa de você"; saldos ↔ pool de
+contas (011) e folga de cota (002); cadeiras por estado ↔ estado em três eixos; Excalidraw por entrega ↔ desenho
+do Mindscape. O que não tem par: **ledger** (fila, entregues sem aceite, retrabalho), **"sem você"** como
+métrica e o **daemon** que mantém tudo vivo.
+
+## Depois da reunião
+
+- SeaNotes registrou como **decisão**: adoção do OpenRig como camada de orquestração, e proxy de contas de IA
+  (MVP com o Márcio).
+- O Bill subiu uma VPS para o dono (`vps-alexandrelentz`, 8 GB, Linux, acesso só por Tailscale, sem porta
+  aberta; já vem com git, tmux, docker, node, uv, gh, Claude Code e Codex, sem login).
+
 ## Onde o Donel Dev está, camada por camada
 
 | Camada | Hoje no Donel Dev | Falta |
@@ -65,9 +100,9 @@ status: insumo — base das próximas semanas, por pedido do dono (03/11)
    o primeiro gargalo a cair. A API local que nasceu "como contrato que um servidor remoto possa servir" é a
    costura.
 3. **OpenRig volta à mesa como camada, não só referência.** Ele foi descartado como runtime por não rodar no
-   Windows nativo. Numa VPS Linux esse motivo some, e ele é o padrão que a empresa vai adotar. Proposta: decidir
-   **depois do treinamento de quinta (05/11)** entre (a) orquestração própria do Donel e (b) Donel como
-   interface sobre OpenRig, via adaptador (mesma régua do LLM agnóstico: nada fixo).
+   Windows nativo. Na VPS Linux esse motivo some, e a empresa decidiu adotá-lo. Proposta: o Donel Dev vira a
+   interface humana sobre o OpenRig rodando na VPS, por adaptador (mesma régua do LLM agnóstico: nada fixo),
+   confirmada **depois do treinamento de quinta (05/11)**.
 4. **Ledger com prova entra no centro do Mindscape.** Cartão de entrega com print/vídeo, aprovar ou reprovar num
    gesto (o "Tinder" do Bruno), filtro por risco. É a "daily com os agentes" desenhada.
 5. **Rotinas e gatilhos acordam postos.** Sem isso o sistema só trabalha quando o dono está no PC.
