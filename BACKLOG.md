@@ -390,7 +390,8 @@ com a demanda `cartas-forma-a` (outro Dev, mesmas áreas: `src/shared/ledger/con
 
 ### 02 — Mensagem ao Slack só sai com carta aceita
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feat/slack-so-com-carta-02` (empilhada sobre a 01, mesma worktree)
 - **Depende de**: 01
 - **Conflita com**: `cartas-forma-a` 01 (contract.ts, tools.ts)
 - **Propósito**: toda mensagem que uma sessão do Donel mandaria ao Slack em nome do dono vira antes

@@ -115,7 +115,7 @@ describe('ledger com prova', () => {
     expect(existsSync(ledgerProofsDir(join(dir, 'ledger.json')))).toBe(false);
   });
 
-  it('opens a v2 ledger without losing anything and writes it back as v3', async () => {
+  it('opens a v2 ledger without losing anything and writes it back with the current version', async () => {
     const { file, service } = setup();
     const v2 = {
       schemaVersion: 2,
@@ -137,7 +137,7 @@ describe('ledger com prova', () => {
     expect(service().load()).toEqual({ doc: { ...v2, schemaVersion: LEDGER_SCHEMA_VERSION, tasks: { 't-0000aaaa': task } }, readOnly: false });
     await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto', titulo: 'Outra tarefa' }));
     const written = JSON.parse(readFileSync(file, 'utf8')) as { schemaVersion: number; tasks: Record<string, unknown> };
-    expect(written.schemaVersion).toBe(3);
+    expect(written.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
     expect(written.tasks['t-0000aaaa']).toEqual(task);
   });
 
