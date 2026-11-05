@@ -34,6 +34,8 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
   const [rulesOpen, setRulesOpen] = useState(false);
   /** The domain rule being edited; `null` = showing what is in force. */
   const [domainDraft, setDomainDraft] = useState<{ readonly mode: DomainMode; readonly typed: string } | null>(null);
+  /** The folder whose wide-folder warning he already clicked Permitir on once (the second click confirms). */
+  const [wideArmed, setWideArmed] = useState<string | null>(null);
   const showing = browser.open && active;
 
   // Pins the view on the viewport box, following resize, scroll, DPI/zoom and layout shifts: one rect read per
@@ -266,13 +268,46 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
       ) : null}
       {uploadRequest ? (
         <div className={styles.ownerBar} role="alert" data-testid="browser-upload-request">
-          <span className={styles.ownerText} title={uploadRequest}>
-            O agente quer enviar arquivos da pasta {uploadRequest}. Permitindo, ela fica autorizada para as próximas vezes (dá para remover em Regras).
+          <span className={styles.ownerText} title={uploadRequest.folder}>
+            O agente quer enviar <strong>{uploadRequest.file}</strong>, da pasta {uploadRequest.folder}. Permitindo, a pasta inteira fica autorizada para as próximas vezes, em todas as sessões (dá para remover em Regras).
+            {uploadRequest.wide ? (
+              <>
+                {' '}
+                <strong data-testid="browser-upload-wide">{uploadRequest.wide}</strong>
+              </>
+            ) : null}
           </span>
-          <Button type="button" variant="secondary" data-testid="browser-upload-allow" onClick={() => window.donel.browser.answerUploadRequest(ptyId, true)}>
-            Permitir
-          </Button>
-          <Button type="button" variant="ghost" data-testid="browser-upload-deny" onClick={() => window.donel.browser.answerUploadRequest(ptyId, false)}>
+          {uploadRequest.wide && wideArmed === uploadRequest.folder ? (
+            <Button
+              type="button"
+              variant="secondary"
+              data-testid="browser-upload-allow-wide"
+              onClick={() => {
+                setWideArmed(null);
+                window.donel.browser.answerUploadRequest(ptyId, true, true);
+              }}
+            >
+              Sim, liberar a pasta inteira
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="secondary"
+              data-testid="browser-upload-allow"
+              onClick={() => (uploadRequest.wide ? setWideArmed(uploadRequest.folder) : window.donel.browser.answerUploadRequest(ptyId, true))}
+            >
+              Permitir
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            data-testid="browser-upload-deny"
+            onClick={() => {
+              setWideArmed(null);
+              window.donel.browser.answerUploadRequest(ptyId, false);
+            }}
+          >
             Negar
           </Button>
         </div>

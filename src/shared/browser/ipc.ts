@@ -75,8 +75,11 @@ export interface BrowserAgentRules {
   readonly ptyId: string;
   /** The only folders `navegador_enviar_arquivo` reads from (empty = sending files is off until he allows one). */
   readonly uploadDirs: readonly string[];
-  /** The folder `navegador_enviar_arquivo` of this session is waiting for him to allow (Permitir / Negar). */
-  readonly uploadRequest: string | null;
+  /**
+   * The folder `navegador_enviar_arquivo` of this session is waiting for him to allow (Permitir / Negar), the file
+   * the agent asked for, and the warning when the folder is wide (Permitir then needs a second, explicit click).
+   */
+  readonly uploadRequest: { readonly folder: string; readonly file: string; readonly wide: string | null } | null;
   /** Where the agent may navigate. */
   readonly domainMode: DomainMode;
   readonly domains: readonly string[];
@@ -149,7 +152,8 @@ export interface DonelBrowserApi {
   getRules(ptyId: string): Promise<BrowserAgentRules | null>;
   chooseUploadDir(ptyId: string): Promise<BrowserRulesResult>;
   removeUploadDir(ptyId: string, folder: string): void;
-  answerUploadRequest(ptyId: string, allow: boolean): void;
+  /** `wideConfirmed`: he confirmed the warning of a wide folder (without it, Permitir on a wide folder is ignored). */
+  answerUploadRequest(ptyId: string, allow: boolean, wideConfirmed?: boolean): void;
   setDomains(ptyId: string, mode: DomainMode, typed: string): Promise<BrowserRulesResult>;
   onRules(listener: (rules: BrowserAgentRules) => void): () => void;
 }

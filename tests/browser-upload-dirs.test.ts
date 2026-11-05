@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps, defaultAppConfig, readAppConfig, sanitizeAppConfig, writeAppConfig, type AppConfig } from '../src/main/config-store';
-import { withUploadFolder, withoutUploadFolder } from '../src/shared/browser/upload';
+import { wideUploadFolder, withUploadFolder, withoutUploadFolder } from '../src/shared/browser/upload';
 
 describe('pastas de envio na config', () => {
   const dirs: string[] = [];
@@ -50,5 +50,15 @@ describe('pastas de envio na config', () => {
     expect(read({ folders: ['D:\\envios', 'd:/envios', '', 3, null, ' E:\\docs '] })).toEqual(['D:\\envios', 'E:\\docs']);
     expect(read('D:\\envios')).toEqual([]);
     expect(read({ folders: 'D:\\envios' })).toEqual([]);
+  });
+
+  it('pasta larga do usuário pede confirmação; uma subpasta dela não', () => {
+    const context = { home: 'C:\\Users\\ana', userData: 'C:\\Users\\ana\\AppData\\Roaming\\donel-dev', known: ['E:\\Docs'] };
+    for (const wide of ['C:\\Users\\ana\\Documents', 'C:\\Users\\ana\\Downloads\\', 'C:\\Users\\ana\\OneDrive - Empresa', 'c:/users/ana/onedrive/Área de Trabalho', 'E:\\Docs', 'E:\\']) {
+      expect(wideUploadFolder(wide, context), wide).not.toBeNull();
+    }
+    for (const narrow of ['C:\\Users\\ana\\Documents\\envios', 'C:\\Users\\ana\\OneDrive\\Desktop\\prints', 'D:\\envios']) {
+      expect(wideUploadFolder(narrow, context), narrow).toBeNull();
+    }
   });
 });

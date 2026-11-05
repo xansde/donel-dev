@@ -34,6 +34,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Quando a sessão quer enviar um arquivo por uma página e a pasta dele ainda não está autorizada, o navegador abre mostrando qual é a pasta, com os botões Permitir e Negar. Antes ela não sabia como pedir e o aviso não dizia o que fazer. A pasta permitida fica guardada: vale para todas as sessões e não some mais quando o app reinicia. Para ver e remover as pastas, abra Regras no navegador, em Envio de arquivos.',
       },
       {
+        title: 'Pasta larga no envio de arquivos pede confirmação',
+        text: 'O pedido de pasta agora mostra também o nome do arquivo que a sessão quer enviar. Se a pasta for larga, como Documentos, Área de Trabalho ou Downloads (também dentro do OneDrive), aparece um aviso e o Permitir pede um segundo clique, "Sim, liberar a pasta inteira"; pelo seletor em Regras, uma caixa de confirmação. E uma sessão só pede uma pasta de cada vez.',
+      },
+      {
         title: 'Tarefas com prova no topo do Mindscape',
         text: 'As sessões agora registram as tarefas que passam entre elas: a frase de quem pediu, quando está pronto, o prazo, quem faz e o risco. Ninguém marca uma tarefa como entregue sem anexar prova (print, vídeo, a saída de um comando ou o link do CI), e quem entregou não pode aceitar a própria entrega. Um Revisor aceita as de risco baixo; as de risco alto esperam você. No topo de cada quadro aparece uma faixa com os números: abertas, em execução, entregues sem aceite, esperando você (com a mais velha) e quantas foram validadas sem você. Clique em "esperando você" para ver cada entrega com a prova e aceitar ou rejeitar com um motivo. Na primeira semana, até três aceites do Revisor por dia também aparecem ali, para você conferir.',
       },

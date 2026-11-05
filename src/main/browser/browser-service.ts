@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
-import { dialog, type BrowserWindow, type IpcMain, type WebContents } from 'electron';
+import { app, dialog, type BrowserWindow, type IpcMain, type WebContents } from 'electron';
 import { buildBrowserMcpConfig, mcpDeliveryFor, type AgentCli } from '../../shared/commandBuilder';
 import { BrowserControl, HELP_WAIT_MS, OWNER_WAIT_MS } from '../../shared/browser/control';
 import {
@@ -36,7 +36,7 @@ import { parseKeyCombo } from '../../shared/browser/keys';
 import { MCP_SERVER_NAME, type BrowserToolCall, type BrowserToolOutcome } from '../../shared/browser/mcp';
 import type { BoardToolCall } from '../../shared/mindscape/agent-tools';
 import type { LedgerToolCall } from '../../shared/ledger/tools';
-import { refusedUploadFile, refusedUploadFolder, withUploadFolder, withoutUploadFolder } from '../../shared/browser/upload';
+import { refusedUploadFile, refusedUploadFolder, wideUploadFolder, withUploadFolder, withoutUploadFolder } from '../../shared/browser/upload';
 import { normalizeBrowserUrl } from '../../shared/browser/url';
 import { BrowserPanels } from './browser-panels';
 import { browserMcpUrl, createBrowserMcpServer } from './browser-mcp-server';
@@ -141,7 +141,7 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   /** One driver per tab, for as long as the tab lives: its `[N]` numbers survive a trip to another tab. */
   const drivers = new WeakMap<WebContents, CdpDriver>();
   /** `navegador_enviar_arquivo` waiting for Permitir / Negar on the folder of its file, per session. */
-  const uploadRequests = new Map<string, { readonly folder: string; readonly answer: (allow: boolean) => void }>();
+  const uploadRequests = new Map<string, { readonly folder: string; readonly file: string; readonly wide: string | null; readonly answer: (allow: boolean) => void }>();
   /** Where the agent may navigate, per session (no entry = anywhere). */
   const domainRules = new Map<string, DomainRules>();
   /** The address the vigia refused while the current tool ran: the tool answers with it. */
@@ -207,6 +207,15 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   };
 
   const uploadContext = { home: homedir(), userData: deps.userDataDir };
+  /** Documentos, Área de Trabalho, Downloads as the system names them (redirected to OneDrive or not). */
+  const knownWide = (['desktop', 'documents', 'downloads'] as const).flatMap((name) => {
+    try {
+      return [app.getPath(name)];
+    } catch {
+      return [];
+    }
+  });
+  const wideWarning = (folder: string): string | null => wideUploadFolder(folder, { ...uploadContext, known: knownWide });
   /** The saved folders that still pass the rules of a fresh gesture (a hand-edited config gains nothing). */
   const uploadFolders = (): readonly string[] => deps.uploadFolders.get().filter((folder) => refusedUploadFolder(folder, uploadContext) === null);
 
@@ -215,7 +224,10 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     return {
       ptyId,
       uploadDirs: uploadFolders(),
-      uploadRequest: uploadRequests.get(ptyId)?.folder ?? null,
+      uploadRequest: (() => {
+        const request = uploadRequests.get(ptyId);
+        return request ? { folder: request.folder, file: request.file, wide: request.wide } : null;
+      })(),
       domainMode: domains.mode,
       domains: domains.domains,
     };
@@ -294,6 +306,10 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   const askUploadFolder = async (ptyId: string, file: string, wanted: string): Promise<BrowserToolOutcome | null> => {
     const secret = refusedUploadFile(basename(file));
     if (secret) return fail(secret);
+    // One request at a time per session: a second one would take the place of the first on the bar.
+    if (uploadRequests.has(ptyId)) {
+      return fail(`Já há um pedido de pasta (${uploadRequests.get(ptyId)!.folder}) esperando o dono nesta sessão. Espere a resposta dele antes de pedir outro arquivo.`);
+    }
     const checked = checkedUploadDir(wanted);
     if (!checked.ok) {
       return fail(
@@ -309,19 +325,22 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     log(ptyId, `O agente pediu para enviar arquivos da pasta ${folder}`);
     send(BROWSER_CHANNELS.openRequest, { ptyId });
     const answer = await new Promise<'allow' | 'deny' | 'timeout'>((resolve) => {
+      const request = {
+        folder,
+        file: basename(file),
+        wide: wideWarning(folder),
+        answer: (allow: boolean) => {
+          clearTimeout(timer);
+          if (uploadRequests.get(ptyId) === request) uploadRequests.delete(ptyId);
+          resolve(allow ? 'allow' : 'deny');
+        },
+      };
       const timer = setTimeout(() => {
-        uploadRequests.delete(ptyId);
+        if (uploadRequests.get(ptyId) === request) uploadRequests.delete(ptyId);
         emitRules(ptyId);
         resolve('timeout');
       }, HELP_WAIT_MS);
-      uploadRequests.set(ptyId, {
-        folder,
-        answer: (allow) => {
-          clearTimeout(timer);
-          uploadRequests.delete(ptyId);
-          resolve(allow ? 'allow' : 'deny');
-        },
-      });
+      uploadRequests.set(ptyId, request);
       emitRules(ptyId);
     });
     if (!livePtys.has(ptyId)) return fail('A sessão deste navegador terminou.');
@@ -627,6 +646,20 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     if (picked.canceled || !chosen) return { ok: false, reason: null };
     const checked = checkedUploadDir(chosen);
     if (!checked.ok) return { ok: false, reason: checked.reason };
+    const wide = wideWarning(checked.folder);
+    if (wide) {
+      const confirm = await dialog.showMessageBox(window, {
+        type: 'warning',
+        title: 'Pasta larga',
+        message: `Liberar ${checked.folder} para envio de arquivos?`,
+        detail: wide,
+        buttons: ['Liberar a pasta inteira', 'Cancelar'],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+      });
+      if (confirm.response !== 0) return { ok: false, reason: null };
+    }
     addUploadFolder(checked.folder);
     return { ok: true, rules: rulesOf(ptyId) };
   });
@@ -637,9 +670,12 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     removeUploadFolder(folder);
   });
 
-  deps.ipcMain.on(BROWSER_CHANNELS.answerUploadRequest, (event, ptyId: unknown, allow: unknown) => {
+  deps.ipcMain.on(BROWSER_CHANNELS.answerUploadRequest, (event, ptyId: unknown, allow: unknown, wideConfirmed: unknown) => {
     if (!known(event.sender, ptyId)) return;
-    uploadRequests.get(ptyId)?.answer(allow === true);
+    const request = uploadRequests.get(ptyId);
+    // A wide folder is allowed only with the warning confirmed; a bare Permitir is ignored (the bar stays).
+    if (request && allow === true && request.wide && wideConfirmed !== true) return;
+    request?.answer(allow === true);
   });
 
   deps.ipcMain.handle(BROWSER_CHANNELS.setDomains, (event, ptyId: unknown, mode: unknown, typed: unknown): BrowserRulesResult => {
