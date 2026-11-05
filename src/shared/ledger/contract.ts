@@ -157,6 +157,8 @@ export function maxProofBytes(mediaType: string): number {
 export const MAX_TITLE_CHARS = 60;
 /** The limits of the "para o dono" block: the owner reads the front in 5 seconds. */
 export const FOR_OWNER_LIMITS = { question: 160, summary: 280, label: 40, effect: 200, optionRisk: 160, why: 200, risk: 200, checkName: 40, checkSentence: 200 } as const;
+/** What the owner writes on a card (dictation included). */
+export const MAX_COMMENT_CHARS = 2000;
 export const MIN_OPTIONS = 2;
 export const MAX_OPTIONS = 4;
 export const MAX_CHECKS = 10;
@@ -229,8 +231,10 @@ export type LedgerOp =
     }
   | { readonly op: 'assumir'; readonly id: string }
   | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string; readonly forOwner?: LedgerForOwner }
-  /** `option`: the label of an option of the current delivery's block, closing as `aceita`. */
-  | { readonly op: 'aceitar'; readonly id: string; readonly requestId?: string; readonly option?: string }
+  /** `option`: the label of an option of the current delivery's block, closing as `aceita`; `text`: the owner's words with it. */
+  | { readonly op: 'aceitar'; readonly id: string; readonly requestId?: string; readonly option?: string; readonly text?: string }
+  /** The owner writes on the card (forma A, Parte B): recorded, and sent by the main to whoever reads it (`deliveredTo`). */
+  | { readonly op: 'comentar'; readonly id: string; readonly text: string; readonly requestId?: string; readonly deliveredTo: LedgerDeliveredTo }
   /** `option`: the label of an option closing as `rejeitada`; then `reason` may be empty (the option is a reason). */
   | { readonly op: 'rejeitar'; readonly id: string; readonly reason: string; readonly requestId?: string; readonly option?: string };
 
@@ -308,7 +312,13 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       return done(step(task, 'em-execucao', { kind: 'assumida', at: ctx.now, by: actor }));
 
     case 'entregar':
-      if (task.state !== 'em-execucao') return fail(`A tarefa está "${task.state}"; assuma antes de entregar.`);
+      // Answering what the owner wrote on the card is a new delivery (a new card), without taking the task again.
+      if (task.state !== 'em-execucao' && !(task.state === 'entregue' && ownerWroteSinceDelivery(task)))
+        return fail(
+          task.state === 'entregue'
+            ? 'A tarefa já está entregue; só se entrega de novo para responder ao que o dono escreveu na carta.'
+            : `A tarefa está "${task.state}"; assuma antes de entregar.`,
+        );
       if (!isOwnerPlace) return fail(`Só o lugar dono (${task.ownerPlaceId}) entrega esta tarefa.`);
       if (op.proofs.length === 0) return fail('Entrega sem prova é recusada: anexe um print, a saída de um comando ou o link do CI.');
       if (op.proofs.length > MAX_PROOFS) return fail(`No máximo ${MAX_PROOFS} provas por entrega.`);
@@ -339,7 +349,17 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (task.state !== 'entregue') return fail(`A tarefa está "${task.state}"; só se aceita uma entregue.`);
       const why = cannotDecide(task, actor) ?? optionRefusal(task, op.option, 'aceita');
       if (why) return fail(`Não aceitei: ${why}`);
-      return done(step(task, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, ...requestOf(op), ...(op.option ? { option: op.option } : {}) }));
+      return done(
+        step(task, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, ...requestOf(op), ...(op.option ? { option: op.option } : {}), ...(op.text?.trim() ? { text: op.text.trim() } : {}) }),
+      );
+    }
+
+    case 'comentar': {
+      const why = commentRefusal(task, actor, op.text);
+      if (why) return fail(why);
+      // A retry of the same request (the phone resent it) records nothing new.
+      if (op.requestId && task.events.some((event) => event.kind === 'comentada' && event.requestId === op.requestId)) return { ok: true, doc, task };
+      return done(step(task, task.state, { kind: 'comentada', at: ctx.now, by: actor, text: op.text.trim(), ...requestOf(op), deliveredTo: op.deliveredTo }));
     }
 
     case 'rejeitar': {
@@ -354,6 +374,26 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: reason, ...requestOf(op), ...(op.option ? { option: op.option } : {}) }));
     }
   }
+}
+
+/** The owner wrote on the card after the current delivery: the owner place may deliver again (its answer). */
+export function ownerWroteSinceDelivery(task: LedgerTask): boolean {
+  const deliveredAt = lastDelivery(task)?.at ?? -Infinity;
+  return task.events.some((event) => event.kind === 'comentada' && event.by.kind === 'dono' && event.at >= deliveredAt);
+}
+
+/** Why `actor` may not write `text` on the card of `task`; `null` = may. Only the owner, and not on a closed task. */
+export function commentRefusal(task: LedgerTask, actor: LedgerActor, text: string): string | null {
+  if (actor.kind !== 'dono') return 'só o dono escreve na carta.';
+  if (!text.trim()) return 'escreva alguma coisa antes de enviar.';
+  if (text.length > MAX_COMMENT_CHARS) return `texto longo demais (máximo ${MAX_COMMENT_CHARS} caracteres).`;
+  if (task.state === 'aceita' && !(acceptedWithoutOwner(task) && !ownerChecked(task))) return 'a tarefa já foi aceita e fechada.';
+  return null;
+}
+
+/** The note the owner wrote on the card with a given request id (a retry), if any. */
+export function commentOfRequest(task: LedgerTask, requestId: string): LedgerEvent | undefined {
+  return task.events.find((event) => event.kind === 'comentada' && event.requestId === requestId);
 }
 
 /** Why the owner may not pick `option` (closing as `closes`) on the current delivery; `null` = may (or no option). */

@@ -86,7 +86,8 @@ export const LEDGER_TOOLS = [
       `Marca a tarefa como entregue. Sem prova é recusada. Provas (1 a ${MAX_PROOFS}): {"tipo":"arquivo","caminho":"C:/…/print.png"} (print, vídeo ou protótipo .html neste computador; o app copia para o Oráculo Harrow), {"tipo":"texto","texto":"saída do comando"} ou {"tipo":"link","url":"https://… (o CI)"}. Quem entrega não aceita a própria entrega. ` +
       'Protótipo: um .html AUTOCONTIDO (CSS, JS e imagens dentro dele, até 2 MB), que roda isolado dentro da carta, sem rede; aponte-o como visual ({"prova": n}) quando a decisão muda algo que o dono vê. ' +
       `"paraODono" é a carta que o dono lê para decidir em 5 segundos, sem abrir link; obrigatório no risco alto. Traz a pergunta, um resumo, de ${MIN_OPTIONS} a ${MAX_OPTIONS} opções com nome e efeito (exatamente uma recomendada), o porquê dela, o risco e o visual (qual print mostrar). ` +
-      'Escreva para um humano: o texto é recusado se tiver id de tarefa ou de lugar, branch, hash, número de PR, caminho, link ou crases. O técnico vai nas provas.',
+      'Escreva para um humano: o texto é recusado se tiver id de tarefa ou de lugar, branch, hash, número de PR, caminho, link ou crases. O técnico vai nas provas. ' +
+      'Quando o dono escreve na carta ("◆ Do dono, na carta…"), responda entregando a mesma tarefa de novo, com a carta atualizada: ela continua esperando o dono.',
     inputSchema: {
       type: 'object',
       properties: {

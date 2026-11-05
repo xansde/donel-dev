@@ -4,7 +4,7 @@
 // como validação humana, e as regras (quem entregou não decide, risco, amostra do Revisor) são as do contrato.
 
 import { basename } from 'node:path';
-import type { CartaCelular, DecisaoCelular, EntregaCelular, ProvaCelular, VisualCelular } from '../../shared/celular';
+import type { CartaCelular, ComentarCelular, DecisaoCelular, EntregaCelular, FalaCelular, ProvaCelular, VisualCelular } from '../../shared/celular';
 import {
   decisionOfRequest,
   HTML_MEDIA_TYPE,
@@ -17,7 +17,8 @@ import {
   type LedgerTask,
   type LedgerVisual,
 } from '../../shared/ledger/contract';
-import { actorLabel, naipeDoPapel, type PlaceNameOf } from '../../shared/ledger/labels';
+import { actorLabel, naipeDoPapel, reciboDe, type PlaceNameOf } from '../../shared/ledger/labels';
+import type { CardWriter } from '../ledger-card-writer';
 import type { LedgerService } from '../ledger-store';
 import { maskSecrets, summarize } from './mask';
 
@@ -30,6 +31,14 @@ export interface DecisaoInput {
   readonly motivo: string | null;
   /** Forma A: o rótulo da opção escolhida (ela já diz como a tarefa fecha). */
   readonly opcao?: string;
+  /** Forma A: o que o dono escreveu junto da opção (vai com a decisão e para quem fez). */
+  readonly texto?: string;
+}
+
+export interface ComentarInput {
+  readonly pedidoId: string;
+  readonly itemId: string;
+  readonly texto: string;
 }
 
 export type DecisaoOutcome =
@@ -51,6 +60,8 @@ export interface MobileLedgerPort {
   decidir(input: DecisaoInput): DecisaoOutcome;
   /** Print ou vídeo (o arquivo) ou a saída de comando inteira, mascarada (bytes de texto). */
   prova(itemId: string, provaId: string): ProvaFonte | null;
+  /** O dono escreve na carta: grava e manda na hora a quem fez (ou ao Líder); um reenvio não manda de novo. */
+  comentar(input: ComentarInput): Promise<ComentarCelular>;
 }
 
 function visualCelular(visual: LedgerVisual | undefined): VisualCelular | undefined {
@@ -99,6 +110,21 @@ function provaCelular(proof: LedgerProof, index: number): ProvaCelular {
   }
 }
 
+function conversaDe(task: LedgerTask, quem: string): FalaCelular[] {
+  const firstDelivery = task.events.find((event) => event.kind === 'entregue');
+  return task.events.flatMap((event): FalaCelular[] => {
+    if (event.kind === 'comentada' && event.text) {
+      return [{ de: 'voce', texto: event.text, em: new Date(event.at).toISOString(), recibo: reciboDe(event.deliveredTo, quem, event.at) }];
+    }
+    // A reentrega (depois do que o dono escreveu) é a resposta de quem fez.
+    if (event.kind === 'entregue' && event !== firstDelivery && task.events.some((other) => other.kind === 'comentada' && other.at <= event.at)) {
+      const texto = event.forOwner?.summary ?? event.text;
+      return texto ? [{ de: 'entrega', texto, em: new Date(event.at).toISOString() }] : [];
+    }
+    return [];
+  });
+}
+
 function entregaCelular(task: LedgerTask, placeName: PlaceNameOf | undefined): EntregaCelular {
   const delivery = lastDelivery(task);
   const decision = lastDecision(task);
@@ -125,11 +151,12 @@ function entregaCelular(task: LedgerTask, placeName: PlaceNameOf | undefined): E
     prazo,
     ids: [`tarefa ${task.id}`, ...(deliveredBy?.kind === 'lugar' ? [`lugar ${deliveredBy.placeId}`] : [])],
     ...(forOwner ? { carta: cartaCelular(forOwner) } : {}),
+    conversa: conversaDe(task, actorLabel(deliveredBy, task.projectPath, placeName)),
   };
 }
 
 /** O adaptador sobre o ledger V1. `getService` é `null` enquanto o ledger não abriu. */
-export function createLedgerMobilePort(getService: () => LedgerService | null, placeName?: PlaceNameOf): MobileLedgerPort {
+export function createLedgerMobilePort(getService: () => LedgerService | null, placeName?: PlaceNameOf, getWriter?: () => CardWriter | null): MobileLedgerPort {
   const doc = () => {
     try {
       return getService()?.load().doc ?? null;
@@ -159,12 +186,25 @@ export function createLedgerMobilePort(getService: () => LedgerService | null, p
       // Pelo celular só se decide o que está na fila do dono (o mesmo que a faixa do Mindscape mostra).
       if (!waitsForOwner(current, task)) return { ok: false, reason: 'recusada', message: 'Esta entrega já não espera você.' };
       const option = input.opcao ? { option: input.opcao } : {};
+      const texto = input.texto?.trim() ?? '';
       const result =
         input.decisao === 'aceitar'
-          ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: task.id, requestId: input.pedidoId, ...option })
-          : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: task.id, reason: input.motivo ?? '', requestId: input.pedidoId, ...option });
+          ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: task.id, requestId: input.pedidoId, ...option, ...(texto ? { text: texto } : {}) })
+          : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: task.id, reason: [input.motivo ?? '', texto].filter((part) => part.trim()).join('\n'), requestId: input.pedidoId, ...option });
       if (!result.ok) return { ok: false, reason: 'recusada', message: result.reason };
+      // Só na primeira gravação (o reenvio voltou acima): as palavras do dono vão também a quem fez.
+      if (texto) void getWriter?.()?.tell(result.task, texto);
       return { ok: true, estado: result.task.state === 'rejeitada' ? 'rejeitada' : 'aceita' };
+    },
+    async comentar(input) {
+      const writer = getWriter?.();
+      if (!writer) return { ok: false, mensagem: 'O app ainda está abrindo; tente de novo em instantes.' };
+      const result = await writer.write({ id: input.itemId, text: input.texto, requestId: input.pedidoId });
+      if (!result.ok) return { ok: false, mensagem: result.reason };
+      const current = doc();
+      const task = current?.tasks[input.itemId];
+      const quem = actorLabel(task ? lastDelivery(task)?.by : undefined, task?.projectPath ?? '', placeName);
+      return { ok: true, recibo: reciboDe(result.deliveredTo, quem, result.at) };
     },
     prova(itemId, provaId) {
       const service = getService();

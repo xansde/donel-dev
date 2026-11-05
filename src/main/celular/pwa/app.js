@@ -447,6 +447,7 @@
       opcoes.appendChild(b);
     });
     rolagem.appendChild(opcoes);
+    rolagem.appendChild(montarEscrever(ctx));
     frente.interna.appendChild(rolagem);
     var pe = el('footer', 'A-pe');
     var selo = el('span', 'A-selo ' + item.risco);
@@ -480,6 +481,16 @@
     corpo.appendChild(dl);
     corpo.appendChild(el('h4', null, 'Risco ' + item.risco));
     corpo.appendChild(el('p', null, c.risco));
+    if (Array.isArray(item.conversa) && item.conversa.length > 0) {
+      corpo.appendChild(el('h4', null, 'A conversa'));
+      item.conversa.forEach(function (fala) {
+        var linha = el('div', 'fala fala-' + fala.de);
+        linha.appendChild(el('b', null, fala.de === 'voce' ? 'Você' : item.quemEntregou));
+        linha.appendChild(el('p', null, fala.texto));
+        if (fala.recibo) linha.appendChild(el('small', null, fala.recibo));
+        corpo.appendChild(linha);
+      });
+    }
     corpo.appendChild(el('h4', null, 'Quem fez'));
     corpo.appendChild(el('p', null, item.quemEntregou + ', no quadro ' + item.quadro + ' · ' + haQuanto(item.entregueEm) + ' · prazo ' + item.prazo));
     corpo.appendChild(recolhido('O que você pediu, nas suas palavras', [el('blockquote', null, '“' + item.pedido + '”')]));
@@ -505,6 +516,68 @@
     return slot;
   }
 
+  /**
+   * "✎ Escrever para <quem fez>": texto livre (o ditado do teclado funciona). Enviar sem escolher opção manda na hora
+   * para quem fez (ou ao Líder) e a carta continua esperando; escolher uma opção com o texto escrito leva o texto junto.
+   */
+  function montarEscrever(ctx) {
+    var bloco = el('div', 'escrever');
+    var abrir = el('button', 'A-escrever', '✎ Escrever para ' + ctx.item.quemEntregou + ' (pergunta, ajuste, outra opção)');
+    abrir.type = 'button';
+    var caixa = el('div', 'A-caixa');
+    caixa.hidden = true;
+    var texto = el('textarea');
+    texto.maxLength = 2000;
+    texto.rows = 3;
+    texto.placeholder = 'Escreva ou dite pelo microfone do teclado.';
+    var dica = el('small', null, 'Enviar manda agora. Se você escolher um caminho com isto escrito, vai junto da decisão.');
+    var enviar = el('button', null, 'Enviar');
+    enviar.type = 'button';
+    caixa.appendChild(texto);
+    caixa.appendChild(dica);
+    caixa.appendChild(enviar);
+    var recibos = el('div');
+    bloco.appendChild(abrir);
+    bloco.appendChild(caixa);
+    bloco.appendChild(recibos);
+    ctx.texto = texto;
+    // O mesmo pedidoId enquanto o texto não muda: um reenvio (rede caiu, dois toques) não manda duas vezes.
+    var pedido = null;
+    texto.addEventListener('input', function () { pedido = null; });
+    abrir.addEventListener('click', function () {
+      caixa.hidden = !caixa.hidden;
+      if (!caixa.hidden) setTimeout(function () { texto.focus(); }, 50);
+    });
+    enviar.addEventListener('click', function () {
+      var valor = texto.value.trim();
+      if (!valor) { texto.focus(); return; }
+      if (!pedido) pedido = idAleatorio();
+      enviar.disabled = true;
+      enviar.textContent = 'Enviando…';
+      api('/api/comentar', { method: 'POST', body: JSON.stringify({ pedidoId: pedido, itemId: ctx.item.id, texto: valor }) })
+        .then(function (resposta) { return resposta.json().then(function (dados) { return { ok: resposta.ok, dados: dados }; }); })
+        .then(function (r) {
+          if (!r.ok) { avisar('Não enviou: ' + ((r.dados && r.dados.mensagem) || 'tente de novo.')); return; }
+          var recibo = el('div', 'A-enviado');
+          recibo.appendChild(el('p', null, '“' + valor + '”'));
+          recibo.appendChild(el('small', null, r.dados.recibo));
+          recibos.appendChild(recibo);
+          texto.value = '';
+          pedido = null;
+          caixa.hidden = true;
+        })
+        .catch(function (erro) {
+          if (erro && erro.message === 'nao-pareado') return;
+          avisar('Não enviou: sem conexão com o PC. Tente de novo (não sai duas vezes).');
+        })
+        .then(function () {
+          enviar.disabled = false;
+          enviar.textContent = 'Enviar';
+        });
+    });
+    return bloco;
+  }
+
   /** Um toque marca a opção; o segundo, na mesma, decide (um esbarrão não fecha tarefa). */
   function escolher(ctx, opcao, botao) {
     if (ctx.ocupado) return;
@@ -515,7 +588,7 @@
       avisar('Toque de novo em "' + opcao.rotulo + '" para confirmar.');
       return;
     }
-    decidir(ctx, opcao.fecha === 'rejeitada' ? 'rejeitar' : 'aceitar', null, opcao.rotulo);
+    decidir(ctx, opcao.fecha === 'rejeitada' ? 'rejeitar' : 'aceitar', null, opcao.rotulo, ctx.texto ? ctx.texto.value.trim() : '');
   }
 
   function montarSlot(item, posicao, quantas) {
@@ -689,12 +762,13 @@
     });
   }
 
-  function decidir(ctx, decisao, textoMotivo, opcao) {
+  function decidir(ctx, decisao, textoMotivo, opcao, textoJunto) {
     travar(ctx, true);
     voar(ctx.carta, decisao === 'aceitar' ? 1 : -1);
     var corpo = { pedidoId: idAleatorio(), itemId: ctx.item.id, decisao: decisao };
     if (textoMotivo) corpo.motivo = textoMotivo;
     if (opcao) corpo.opcao = opcao;
+    if (textoJunto) corpo.texto = textoJunto;
     enviarDecisao(corpo, 0)
       .then(function (resposta) {
         if (resposta.ok || resposta.status === 404) {

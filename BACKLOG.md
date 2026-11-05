@@ -82,7 +82,8 @@ verde; um PR por fatia contra `staging`; patch note em toda fatia visível.
 
 ### 05 — Escrever na carta (Parte B)
 
-- **Status**: pronta
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-05-escrever` (empilhada na 04)
 - **Depende de**: 01 (depois da 02 e da 03)
 - **Propósito**: op `comentar`; mensagem à sessão dona, ou ao Líder, ou guardada; recibo e conversa
   no verso; reentrega depois de `comentada`.

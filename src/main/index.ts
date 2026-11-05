@@ -22,8 +22,8 @@ import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createLedgerService, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
-import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
-import { isHttpUrl, isProofFileName, lastDelivery, type LedgerProof } from '../shared/ledger/contract';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
+import { isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import type { BrowserToolOutcome } from '../shared/browser/mcp';
@@ -229,6 +229,7 @@ import { createTaskbarAttention, type AttentionSmokeSnapshot } from './attention
 import { failureReasonText } from '../shared/attention/rule';
 import { registerAssetScheme, registerAssetsProtocol } from './chat/assets-protocol';
 import { proofSchemePrivileges, registerProofProtocol } from './ledger-proof-protocol';
+import { createCardWriter, type CardWriter } from './ledger-card-writer';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
@@ -2861,6 +2862,8 @@ function registerMindscapeIpcHandlers(): void {
  * IPC decides as `{ kind: 'dono' }`; every write is pushed to the renderer (the strip on top of the Mindscape).
  */
 let ledgerService: LedgerService | null = null;
+/** Cartas forma A — what the owner writes on a card; born with the board bridge (it delivers through it). */
+let cardWriter: CardWriter | null = null;
 
 function registerLedgerIpcHandlers(): void {
   const service = createLedgerService({
@@ -2886,9 +2889,22 @@ function registerLedgerIpcHandlers(): void {
     const decision = raw as Partial<LedgerOwnerDecision> | null;
     if (!decision || typeof decision.id !== 'string') return { ok: false, reason: 'Pedido inválido.' };
     const option = typeof decision.option === 'string' && decision.option.trim() ? { option: decision.option } : {};
-    if (decision.accept === true) return service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option });
+    // The owner's words with a named option go with the decision (its text) AND to whoever did it (Parte B).
+    const text = typeof decision.text === 'string' ? decision.text.trim().slice(0, MAX_COMMENT_CHARS) : '';
     const reason = (decision as { reason?: unknown }).reason;
-    return service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: typeof reason === 'string' ? reason : '', ...option });
+    const result =
+      decision.accept === true
+        ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option, ...(text ? { text } : {}) })
+        : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: [typeof reason === 'string' ? reason.trim() : '', text].filter(Boolean).join('\n'), ...option });
+    if (result.ok && text) void cardWriter?.tell(result.task, text);
+    return result;
+  });
+  ipcMain.handle(LEDGER_CHANNELS.comment, async (event, raw: unknown): Promise<LedgerCommentResult> => {
+    if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app escreve na carta.' };
+    const comment = raw as Partial<LedgerComment> | null;
+    if (!comment || typeof comment.id !== 'string' || typeof comment.text !== 'string' || !isRequestId(comment.requestId)) return { ok: false, reason: 'Pedido inválido.' };
+    if (!cardWriter) return { ok: false, reason: 'O app ainda está abrindo; tente de novo em instantes.' };
+    return cardWriter.write({ id: comment.id, text: comment.text, requestId: comment.requestId });
   });
   ipcMain.handle(LEDGER_CHANNELS.proofImage, async (event, taskId: unknown, proofIndex: unknown): Promise<string | null> => {
     if (!fromMain(event.sender) || typeof taskId !== 'string' || typeof proofIndex !== 'number') return null;
@@ -3744,6 +3760,7 @@ void app.whenReady().then(async () => {
     provasRoot: ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))),
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
     placeName: placeNameOf,
+    cardWriter: () => cardWriter,
   }); // Ledger no celular (PWA só na Tailscale)
   // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).
   const boardBridge = createBoardBridge({
@@ -3751,6 +3768,7 @@ void app.whenReady().then(async () => {
     getWindow: getMainWindow,
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   });
+  cardWriter = createCardWriter({ service: () => ledgerService, deliver: (message) => boardBridge.deliverOwnerMessage(message), placeName: placeNameOf });
   browserService = createBrowserService({
     ipcMain,
     getWindow: getMainWindow,

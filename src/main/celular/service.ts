@@ -16,6 +16,7 @@ import type { ConfigIoDeps } from '../config-store';
 import { PWA_ASSETS } from './assets';
 import { createCelularAuth, type CelularAuth } from './auth';
 import { allowFirewallRule, readFirewallRule, readTailnet } from './firewall';
+import type { CardWriter } from '../ledger-card-writer';
 import type { LedgerService } from '../ledger-store';
 import { createLedgerMobilePort, type MobileLedgerPort, type PlaceNameOf } from './ledger-port';
 import { qrSvg } from './qr';
@@ -33,6 +34,8 @@ export interface CelularServiceDeps {
   readonly isMainSender: (sender: Electron.WebContents) => boolean;
   /** O nome de um lugar no quadro, para a carta dizer quem fez (nunca o id). */
   readonly placeName?: PlaceNameOf;
+  /** Escrever na carta (nasce com a ponte do quadro; `null` antes). */
+  readonly cardWriter?: () => CardWriter | null;
 }
 
 export interface CelularService {
@@ -41,7 +44,7 @@ export interface CelularService {
 
 export function createCelularService(deps: CelularServiceDeps): CelularService {
   const auth: CelularAuth = createCelularAuth({ filePath: join(deps.userDataDir, 'celular.json'), io: deps.io });
-  const ledger: MobileLedgerPort = createLedgerMobilePort(deps.ledger, deps.placeName);
+  const ledger: MobileLedgerPort = createLedgerMobilePort(deps.ledger, deps.placeName, deps.cardWriter);
   const handler = createMobileHandler({
     auth,
     ledger: () => ledger,

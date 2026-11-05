@@ -184,6 +184,22 @@ export interface EntregaCelular {
   readonly ids: readonly string[];
   /** Forma A: frente decide, verso explica. Ausente = entrega sem o bloco (a carta antiga). */
   readonly carta?: CartaCelular;
+  /** O que o dono escreveu na carta e as reentregas de quem fez, em ordem (o verso mostra). */
+  readonly conversa: readonly FalaCelular[];
 }
+
+/** Uma fala da conversa da carta. */
+export interface FalaCelular {
+  /** `voce` = o dono escreveu; `entrega` = quem fez entregou de novo. */
+  readonly de: 'voce' | 'entrega';
+  readonly texto: string;
+  /** ISO. */
+  readonly em: string;
+  /** Só do dono: para onde foi ("Enviado a Dev · painel", "Foi ao Líder", "Ninguém aberto…"). */
+  readonly recibo?: string;
+}
+
+/** O resultado de escrever na carta, com o recibo para mostrar. */
+export type ComentarCelular = { readonly ok: true; readonly recibo: string } | { readonly ok: false; readonly mensagem: string };
 
 export type DecisaoCelular = 'aceitar' | 'rejeitar';

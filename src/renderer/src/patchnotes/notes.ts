@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Escreva na carta para quem fez',
+        text: 'Na frente da carta, "✎ Escrever para…" abre uma caixa de texto (no celular, dá para ditar). "Enviar" manda na hora para a sessão que fez a tarefa; se ela estiver fechada, vai para o Líder; se ninguém estiver aberto, fica guardado na carta. A carta mostra para onde foi e continua esperando você, e a resposta chega como uma carta nova. Se você escolher um caminho com algo escrito, o texto vai junto da decisão. O verso mostra a conversa em ordem.',
+      },
+      {
         title: 'Protótipos dentro da carta',
         text: 'Quando quem fez a tarefa anexa um protótipo, ele roda dentro da carta, no celular e no Mindscape: dá para clicar nos botões dele ali mesmo, sem abrir link nenhum. "⤢ Tela cheia" amplia. O protótipo roda isolado: não acessa a internet, não vê os seus dados do app nem abre outra janela. Vídeos agora tocam dentro da carta também no Mindscape.',
       },
