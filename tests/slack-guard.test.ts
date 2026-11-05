@@ -64,23 +64,40 @@ describe('Slack só com carta', () => {
     expect(guardSlackSend(ledger, 'Bash', { command: 'git status' })).toBeNull();
   });
 
-  it('an accepted letter frees exactly one send of the same text to the same destination and thread', async () => {
-    const ways: ReadonlyArray<(text: string) => readonly [string, unknown]> = [slackMcp, curl, script];
+  it('an accepted letter frees exactly one structured send of the same text to the same destination and thread', async () => {
+    const ways: ReadonlyArray<(text: string) => readonly [string, unknown]> = [slackMcp, composio];
     for (const send of ways) {
       const ledger = service();
-      await letter(ledger, 'aceitar');
+      if (send === composio) {
+        const created = await runLedgerTool(ledger, dev, call('carta_slack', { destino: '#produto', thread: '1730.42', texto: TEXT, motivo: 'avisar' }));
+        ledger.apply({ kind: 'dono' }, { op: 'aceitar', id: (JSON.parse(created.text) as { id: string }).id });
+      } else await letter(ledger, 'aceitar');
       expect(guardSlackSend(ledger, ...send(`${TEXT} `)), 'different text').toMatch(/bloqueado/);
-      if (send === slackMcp) expect(guardSlackSend(ledger, ...slackMcp(TEXT, 'C9999')), 'other channel').toMatch(/bloqueado/);
       expect(guardSlackSend(ledger, ...send(TEXT)), 'same text').toBeNull();
       expect(guardSlackSend(ledger, ...send(TEXT)), 'second send').toMatch(/bloqueado/);
       const seen = await runLedgerTool(ledger, dev, call('tarefa_listar', {}));
       expect(seen.text).toContain('"enviada": true');
     }
-    // `#produto` in the letter of the destination label is not the destination: Composio names the channel itself.
     const ledger = service();
-    const created = await runLedgerTool(ledger, dev, call('carta_slack', { destino: '#produto', thread: '1730.42', texto: TEXT, motivo: 'avisar' }));
-    ledger.apply({ kind: 'dono' }, { op: 'aceitar', id: (JSON.parse(created.text) as { id: string }).id });
-    expect(guardSlackSend(ledger, ...composio(TEXT))).toBeNull();
+    await letter(ledger, 'aceitar');
+    expect(guardSlackSend(ledger, ...slackMcp(TEXT, 'C9999')), 'other channel').toMatch(/bloqueado/);
+    // The terminal never approves a post, even with the accepted text in it: it cannot be read field by field.
+    expect(guardSlackSend(ledger, ...curl(TEXT))).toMatch(/terminal/);
+    expect(guardSlackSend(ledger, ...script(TEXT))).toMatch(/canal-produto/);
+    expect(guardSlackSend(ledger, ...slackMcp(TEXT)), 'the letter is still unused').toBeNull();
+  });
+
+  it('the letter of a Slack message is a card A the owner sends or not', async () => {
+    const ledger = service();
+    const id = await letter(ledger, null);
+    const task = ledger.load().doc.tasks[id]!;
+    expect(task.title).toBe('Mensagem no Slack para #produto');
+    expect(task.events.at(-1)?.forOwner?.options.map((option) => [option.label, option.closes])).toEqual([
+      ['Enviar', 'aceita'],
+      ['Não enviar', 'rejeitada'],
+    ]);
+    expect(ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: '', option: 'Não enviar' }).ok).toBe(true);
+    expect(guardSlackSend(ledger, ...slackMcp(TEXT))).toMatch(/bloqueado/);
   });
 
   it('the hook bridge answers deny to a refused PreToolUse and never dispatches it', async () => {
