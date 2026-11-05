@@ -53,6 +53,7 @@ import type {
   AccountsConfigDto,
   AccountsViewDto,
   AppConfigDto,
+  SessionWhereLives,
   ArchiveOutcome,
   BeginLoginOutcome,
   ConnectModInput,
@@ -297,6 +298,10 @@ const donelApi: DonelApi = {
 
     // T706/CA-8 — a única leitura de disco da feature, guardada no main.
     seedProject: (projectPath: string) => ipcRenderer.invoke(SESSION_CHANNELS.seedProject, projectPath) as Promise<AppConfigDto>,
+
+    // B39 — where a conversation to resume lives (this computer or a remote place).
+    whereLives: (sessionId: string, projectPath: string) =>
+      ipcRenderer.invoke(SESSION_CHANNELS.whereLives, sessionId, projectPath) as Promise<SessionWhereLives>,
   },
 
   // 011-contas-e-provedores (etapa 1) — motor de contas + mods (nasce inerte,

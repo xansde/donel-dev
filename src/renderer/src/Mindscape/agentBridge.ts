@@ -2,9 +2,11 @@
 // B37). The main relays each call of the MCP server `donel` here (main/board-bridge.ts) because the renderer
 // owns the Mindscape document (ADR 0004) and the tabs. What lives here, in memory:
 // - who opened whom (`sessao_abrir`), for the cap of 4 live sessions per caller;
-// - the messages held while the owner types in the destination or a permission is open;
 // - the end-of-turn notices to the sessions that hold an arrow to the one that ended (with a guard against
-//   two sessions pinging each other forever).
+//   two sessions pinging each other forever, and against the same notice twice).
+// A message between sessions is never held here (B40, owner 04/11): it goes at once to the destination's send
+// driver, which writes it into the CLI's own queue even mid-turn. The only wait is a real dialog drawn on that
+// screen (permission, question): the driver waits it out by itself and then sends, nobody clicks.
 // Decisions of the owner (04/11): docs/refinamentos/time-de-sessoes-v1.md.
 
 import {
@@ -15,6 +17,7 @@ import {
   type BoardToolCall,
 } from '../../../shared/mindscape/agent-tools';
 import type { MindscapeBoardResponse } from '../../../shared/mindscape/channels';
+import { canReach, findPlace } from '../../../shared/mindscape/reach';
 import { addLink, addPlace, placeCardId, placeOfSession, type MindscapeBoard, type MindscapeDoc, type SessionPlaceCard } from '../../../shared/mindscape/model';
 import type { SemaphoreState } from '../../../shared';
 import type { SessionRole } from '../../../shared/roles';
@@ -23,8 +26,9 @@ import type { SessionRole } from '../../../shared/roles';
 export const OPEN_CAP = 4;
 /** The end-of-turn notice carries at most this much of the summary. */
 const NOTICE_CHARS = 600;
-/** A held message is tried again on this beat. */
-const RETRY_MS = 1500;
+/** `sessao_fechar` waits at most this long for the destination's turn to end, then closes anyway. */
+export const CLOSE_WAIT_MS = 20_000;
+const CLOSE_POLL_MS = 500;
 
 export interface BridgeTab {
   readonly id: string;
@@ -61,10 +65,12 @@ export interface AgentBridgePorts {
   roles(): readonly SessionRole[];
   /** Opens the tab of a place without stealing the focus and sends its first message; returns the tab id. */
   openSession(request: OpenSessionRequest): string;
+  /** Closes the tab the way the app does (kills the process through `pty:kill`); the place stays, "fechada". */
+  closeTab(tabId: string): void;
   /** One line to the session of `tabId` through the chat's send driver (or typed into the terminal). */
   sendLine(tabId: string, text: string): void;
-  /** The owner is typing in that tab's composer. */
-  ownerTyping(tabId: string): boolean;
+  /** A permission prompt is drawn on that tab's screen right now (read from the screen, never from a mark). */
+  permissionOnScreen(tabId: string): boolean;
   /** The owner allows (true) or denies a session over the cap. */
   askOwner(question: { readonly caller: string; readonly role: string; readonly request: string; readonly open: number }): Promise<boolean>;
   remoteLabel(remoteId: string): string;
@@ -80,11 +86,6 @@ const STATE_NAMES: Readonly<Record<SemaphoreState, string>> = {
   error: 'parou com erro',
 };
 
-interface Held {
-  readonly tabId: string;
-  readonly text: string;
-}
-
 function json(value: unknown): string {
   return JSON.stringify(value, null, 1);
 }
@@ -93,10 +94,10 @@ export class AgentBridge {
   private ports: AgentBridgePorts;
   /** Tab opened by `sessao_abrir` → the caller's place. */
   private readonly openedBy = new Map<string, string>();
-  private readonly held: Held[] = [];
-  private timer: ReturnType<typeof setInterval> | null = null;
   /** Tab that last got an end-of-turn notice → the place that ended (the loop guard). */
   private readonly lastNoticeFrom = new Map<string, string>();
+  /** Session → text of the last turn it was announced for: the same end of turn is announced once. */
+  private readonly lastNoticeText = new Map<string, string>();
 
   constructor(ports: AgentBridgePorts) {
     this.ports = ports;
@@ -107,9 +108,8 @@ export class AgentBridge {
   }
 
   dispose(): void {
-    if (this.timer !== null) clearInterval(this.timer);
-    this.timer = null;
-    this.held.length = 0;
+    this.lastNoticeFrom.clear();
+    this.lastNoticeText.clear();
   }
 
   // ---- helpers ------------------------------------------------------------------------------------------------
@@ -156,57 +156,15 @@ export class AgentBridge {
     return count;
   }
 
-  // ---- delivery with retention -------------------------------------------------------------------------------
-
-  /** Delivers now, or holds it while the owner types there or a permission is open. Order per tab is kept. */
-  deliver(tabId: string, text: string): 'entregue' | 'retida' {
-    const blocked = this.held.some((item) => item.tabId === tabId) || this.isBlocked(tabId);
-    if (!blocked) {
-      this.ports.sendLine(tabId, text);
-      return 'entregue';
-    }
-    this.held.push({ tabId, text });
-    if (this.timer === null) this.timer = setInterval(() => this.flush(), RETRY_MS);
-    return 'retida';
-  }
-
-  private isBlocked(tabId: string): boolean {
-    return this.ports.ownerTyping(tabId) || this.ports.stateOf(tabId) === 'permission';
-  }
-
-  private flush(): void {
-    const done = new Set<string>();
-    for (let index = 0; index < this.held.length; ) {
-      const item = this.held[index]!;
-      if (this.ports.stateOf(item.tabId) === undefined) {
-        this.held.splice(index, 1); // the session left: nothing to deliver to
-        continue;
-      }
-      if (done.has(item.tabId) || this.isBlocked(item.tabId)) {
-        done.add(item.tabId);
-        index += 1;
-        continue;
-      }
-      this.ports.sendLine(item.tabId, item.text);
-      this.held.splice(index, 1);
-    }
-    if (this.held.length === 0 && this.timer !== null) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
-  }
-
-  /** How many messages wait for that tab (the place shows "1 mensagem esperando"). */
-  heldFor(tabId: string): number {
-    return this.held.filter((item) => item.tabId === tabId).length;
-  }
-
   // ---- end-of-turn notice (D) --------------------------------------------------------------------------------
 
   /** A session ended a turn: each open session with an arrow to it (or that opened it) hears a short notice. */
   turnEnded(sessionId: string, text: string): void {
     const ended = this.ports.tabs().find((tab) => tab.claudeSessionId === sessionId);
     if (!ended?.cwd) return;
+    // B40 — the same end of turn arriving twice (a repeated or late hook) is announced once.
+    if (this.lastNoticeText.get(sessionId) === text) return;
+    this.lastNoticeText.set(sessionId, text);
     const place = this.placeOfTab(ended);
     const board = this.board(ended.cwd);
     if (!place || !board) return;
@@ -225,7 +183,7 @@ export class AgentBridge {
       const target = this.tabOfPlace(ended.cwd, listenerPlace);
       if (!target) continue;
       this.lastNoticeFrom.set(target.id, place.id);
-      this.deliver(target.id, line);
+      this.ports.sendLine(target.id, line);
     }
   }
 
@@ -315,7 +273,6 @@ export class AgentBridge {
                 ...(self && place.id === self.id ? { voce: true } : {}),
                 podeMandar: self ? hasArrowLink(board, self.id, place.id) : false,
                 ...(opener ? { abertaPor: opener } : {}),
-                ...(tab && this.heldFor(tab.id) > 0 ? { mensagensEsperando: this.heldFor(tab.id) } : {}),
               };
             }),
           ),
@@ -348,8 +305,46 @@ export class AgentBridge {
         const target = this.tabOfPlace(projectPath, place.id);
         if (!target) return fail(`"${place.id}" não está aberta agora.`);
         const from = this.roleName(self.roleId) ?? caller.name;
-        const status = this.deliver(target.id, `◆ De ${from} (${self.id}): ${call.texto}`);
-        return { ok: true, text: status === 'entregue' ? 'Entregue.' : 'Retida: o dono está digitando lá ou há uma permissão aberta; entra sozinha depois.' };
+        this.ports.sendLine(target.id, `◆ De ${from} (${self.id}): ${call.texto}`);
+        return {
+          ok: true,
+          text: this.ports.permissionOnScreen(target.id)
+            ? 'Entregue à fila de lá. Há uma permissão aberta na tela dela: a mensagem entra sozinha assim que ela fechar.'
+            : 'Entregue: foi para a caixa do CLI de lá (se ela estiver trabalhando, o próprio CLI enfileira).',
+        };
+      }
+
+      case 'sessao_fechar': {
+        const no = (why: string): Omit<MindscapeBoardResponse, 'requestId'> => fail(`Não fechei: ${why}`);
+        if (!self) return no('seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
+        // Hierarchy (owner 04/11): below me by arrows on this board, or any board when I am the Líder of a
+        // board with reach "all" — the rule lives in shared/mindscape/reach.ts.
+        const doc = this.ports.doc();
+        const where = findPlace(doc, call.quem, projectPath);
+        if (!where) return no(`"${call.quem}" não é um lugar de nenhum quadro (veja sessao_listar).`);
+        const reach = canReach(doc, { projectPath, placeId: self.id }, where);
+        if (!reach.ok) return no(reach.reason);
+        const target = this.tabOfPlace(where.projectPath, where.placeId);
+        if (!target) return no(`"${where.placeId}" não está aberta agora.`);
+        if (target.id === caller.id) return no('esta é a sua própria sessão.');
+        const permission = 'ela tem um pedido de permissão aberto na tela; o dono responde antes.';
+        if (this.ports.permissionOnScreen(target.id)) return no(permission);
+        let cut = false;
+        if (this.ports.stateOf(target.id) === 'working') {
+          const from = this.roleName(self.roleId) ?? caller.name;
+          this.ports.sendLine(target.id, `◆ De ${from} (${self.id}): pause agora e não comece nada novo. Esta sessão vai ser fechada em instantes (o dono pode retomá-la depois).`);
+          const deadline = Date.now() + CLOSE_WAIT_MS;
+          while (this.ports.stateOf(target.id) === 'working' && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, CLOSE_POLL_MS));
+          }
+          cut = this.ports.stateOf(target.id) === 'working';
+        }
+        const state = this.ports.stateOf(target.id);
+        if (state === undefined) return { ok: true, text: 'Fechada.' }; // it left on its own meanwhile
+        if (this.ports.permissionOnScreen(target.id)) return no(permission);
+        this.ports.closeTab(target.id);
+        this.openedBy.delete(target.id);
+        return { ok: true, text: cut ? `Fechada (o turno não acabou em ${CLOSE_WAIT_MS / 1000} s; cortei).` : 'Fechada.' };
       }
 
       case 'sessao_abrir': {
@@ -379,7 +374,7 @@ export class AgentBridge {
           const withPlace = addPlace(doc, projectPath, { id: placeId, roleId: role.id, by: 'session', origin: { x: self.x + 260, y: self.y } });
           if (withPlace === doc) return doc;
           made = true;
-          return addLink(withPlace, projectPath, { id: crypto.randomUUID(), from: self.id, to: placeId, arrow: true, by: 'session' });
+          return addLink(withPlace, projectPath, { id: crypto.randomUUID(), from: self.id, to: placeId, arrow: true, by: 'session', opened: true });
         });
         if (!made) return fail('O quadro não aceitou o lugar novo.');
         const name = call.nome ?? role.name;

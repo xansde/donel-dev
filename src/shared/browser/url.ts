@@ -41,6 +41,44 @@ export function isAllowedLocalFileUrl(raw: string): boolean {
   }
 }
 
+/** What a page opened on purpose may pull from its own folder (and below): static assets, never data files. */
+const LOCAL_ASSET_EXTENSIONS = new Set(['css', 'js', 'mjs', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'bmp', 'ico', 'woff', 'woff2', 'ttf', 'otf']);
+
+/** Decoded path of a `file:` URL, compared case-insensitively on a Windows drive. `null` when it is not one. */
+function localPathKey(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'file:' || url.hostname !== '') return null;
+    const path = decodeURIComponent(url.pathname);
+    return /^\/[a-z]:\//i.test(path) ? path.toLowerCase() : path;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The panel's `file:` handler (#211 review): a local page runs script, and Chromium would let it `fetch` any file
+ * of the disk (`.credentials.json` included) and send it away. So the partition serves ONLY a file opened on purpose
+ * (`load`), plus static assets (`LOCAL_ASSET_EXTENSIONS`) under the folder of an HTML page opened on purpose, so a
+ * generated report still shows its images and styles. Everything else is refused.
+ */
+export function canServeLocalFile(requestUrl: string, openedUrls: Iterable<string>): boolean {
+  const wanted = localPathKey(requestUrl);
+  if (wanted === null) return false;
+  const name = wanted.split('/').pop() ?? '';
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot + 1) : '';
+  for (const opened of openedUrls) {
+    const key = localPathKey(opened);
+    if (key === null) continue;
+    if (key === wanted) return true;
+    if (!/\.html?$/i.test(key) || !LOCAL_ASSET_EXTENSIONS.has(ext.toLowerCase())) continue;
+    const folder = key.slice(0, key.lastIndexOf('/') + 1);
+    if (wanted.startsWith(folder)) return true;
+  }
+  return false;
+}
+
 /**
  * A local path or `file:` URL typed by the owner or passed by the agent, as the URL the panel loads.
  * `null` when the text is not a local path at all (the caller tries it as a web address).

@@ -144,7 +144,8 @@ import { BackgroundIndicator, type BackgroundSession } from './chat/BackgroundTa
 import { revealRow } from './chat/revealRow';
 import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
-import { disposeTabSend, getDraft, sendDriverFor, sendToTab } from './chat/composer/tabSend';
+import { disposeTabSend, sendDriverFor, sendToTab } from './chat/composer/tabSend';
+import { blockingScreen } from '../../shared/chat/screen';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
@@ -906,6 +907,34 @@ export function App(): React.JSX.Element {
     };
   }, [previousSessionsProject]);
 
+  /**
+   * B39 — Retomar (and fork) opens the conversation where it lives: a session born on a remote place resumes
+   * there, without the owner choosing anything. When it is not here and a place does not answer, the app says
+   * so and opens nothing (an empty session on this computer would hide where the conversation is).
+   */
+  const resumingRef = useRef(new Set<string>());
+  const openWhereItLives = (sessionId: string, projectPath: string, open: (remote: { remoteId?: string }) => void): void => {
+    if (resumingRef.current.has(sessionId)) return;
+    resumingRef.current.add(sessionId);
+    void window.donel.sessions
+      .whereLives(sessionId, projectPath)
+      .then(
+        (where) => {
+          if (where.kind === 'unreachable') {
+            const many = where.labels.length > 1;
+            const names = where.labels.map((label) => `«${label}»`).join(' e ');
+            setDevModeToast(
+              `Não consegui retomar: a conversa não está neste computador, e ${many ? 'os lugares remotos' : 'o lugar remoto'} ${names} não ${many ? 'responderam' : 'respondeu'}. Confira se está ligado e tente de novo.`,
+            );
+            return;
+          }
+          open(where.kind === 'remote' ? { remoteId: where.remoteId } : {});
+        },
+        () => open({}),
+      )
+      .finally(() => resumingRef.current.delete(sessionId));
+  };
+
   // T013 — Retomar (ui-spec §5, primário): `-r <session-id>` via
   // CommandBuilder (já testado no T006/CommandBuilder.test.ts, tabela
   // FR-003) — CONTINUA a mesma sessão (mesmo id). Nome da aba vem do
@@ -913,20 +942,24 @@ export function App(): React.JSX.Element {
   // o uuid do arquivo.
   const handleResumeSession = (session: SessionSummaryDto): void => {
     if (!previousSessionsProject) return;
+    const project = previousSessionsProject;
     const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId: session.id } });
-    addTab({
-      name: sessionTabName(session),
-      cwd: previousSessionsProject.path,
-      projectName: previousSessionsProject.name,
-      pinned: false,
-      launchArgs: args,
-      sessionType: 'claude',
-      // T403/T408 (004) — o `/rename` que esta sessão levou no CLI já veio no
-      // índice; semeado aqui, `resolveSessionName` prefere ele ao preview (CA-1).
-      customTitle: session.customTitle,
-    });
-    setSelectedProjectPath(previousSessionsProject.path);
     setPreviousSessionsProject(null);
+    openWhereItLives(session.id, project.path, (remote) => {
+      addTab({
+        name: sessionTabName(session),
+        cwd: project.path,
+        projectName: project.name,
+        pinned: false,
+        launchArgs: args,
+        sessionType: 'claude',
+        ...remote,
+        // T403/T408 (004) — o `/rename` que esta sessão levou no CLI já veio no
+        // índice; semeado aqui, `resolveSessionName` prefere ele ao preview (CA-1).
+        customTitle: session.customTitle,
+      });
+      setSelectedProjectPath(project.path);
+    });
   };
 
   // T013 — Fork (ui-spec §5, secundário, "nova sessão a partir desta"):
@@ -936,20 +969,24 @@ export function App(): React.JSX.Element {
   // NOVO a partir do histórico da original, que continua intacta.
   const handleForkSession = (session: SessionSummaryDto): void => {
     if (!previousSessionsProject) return;
+    const project = previousSessionsProject;
     const args = buildClaudeArgs({ continuation: { type: 'fork', sessionId: session.id } });
-    addTab({
-      name: sessionTabName(session),
-      cwd: previousSessionsProject.path,
-      projectName: previousSessionsProject.name,
-      pinned: false,
-      launchArgs: args,
-      sessionType: 'claude',
-      // T403/T408 (004) — o `/rename` que esta sessão levou no CLI já veio no
-      // índice; semeado aqui, `resolveSessionName` prefere ele ao preview (CA-1).
-      customTitle: session.customTitle,
-    });
-    setSelectedProjectPath(previousSessionsProject.path);
     setPreviousSessionsProject(null);
+    openWhereItLives(session.id, project.path, (remote) => {
+      addTab({
+        name: sessionTabName(session),
+        cwd: project.path,
+        projectName: project.name,
+        pinned: false,
+        launchArgs: args,
+        sessionType: 'claude',
+        ...remote,
+        // T403/T408 (004) — o `/rename` que esta sessão levou no CLI já veio no
+        // índice; semeado aqui, `resolveSessionName` prefere ele ao preview (CA-1).
+        customTitle: session.customTitle,
+      });
+      setSelectedProjectPath(project.path);
+    });
   };
 
   // T008 — Launcher (ui-spec §4, FR-003, CA-1): monta o argv via
@@ -1127,16 +1164,19 @@ export function App(): React.JSX.Element {
 
     const project = projects.find((candidate) => candidate.path === entry.projectPath);
     const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId } });
-    addTab({
-      name: entry.label,
-      cwd: entry.projectPath,
-      projectName: project?.name,
-      pinned: false,
-      launchArgs: args,
-      sessionType: 'claude',
-      customTitle: null,
+    openWhereItLives(sessionId, entry.projectPath, (remote) => {
+      addTab({
+        name: entry.label,
+        cwd: entry.projectPath,
+        projectName: project?.name,
+        pinned: false,
+        launchArgs: args,
+        sessionType: 'claude',
+        ...remote,
+        customTitle: null,
+      });
+      setSelectedProjectPath(entry.projectPath);
     });
-    setSelectedProjectPath(entry.projectPath);
   };
 
   /**
@@ -1887,13 +1927,16 @@ export function App(): React.JSX.Element {
       return;
     }
     const discoveryTitle = mapView.breadcrumb[0] ?? step.phase;
-    addTab({
-      name: esteiraTabName(step.phase, discoveryTitle),
-      cwd,
-      projectName: projects.find((project) => project.path === cwd)?.name,
-      pinned: false,
-      launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId: cliSessionId } }),
-      sessionType: 'claude',
+    openWhereItLives(cliSessionId, cwd, (remote) => {
+      addTab({
+        name: esteiraTabName(step.phase, discoveryTitle),
+        cwd,
+        projectName: projects.find((project) => project.path === cwd)?.name,
+        pinned: false,
+        launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId: cliSessionId } }),
+        sessionType: 'claude',
+        ...remote,
+      });
     });
   };
 
@@ -2249,18 +2292,21 @@ export function App(): React.JSX.Element {
       return;
     }
     const project = projects.find((candidate) => candidate.path === projectPath);
-    window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'retomar' });
-    addTab({
-      name,
-      cwd: projectPath,
-      projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
-      pinned: false,
-      launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId } }),
-      sessionType: 'claude',
-      customTitle: null,
+    openWhereItLives(sessionId, projectPath, (remote) => {
+      window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'retomar' });
+      addTab({
+        name,
+        cwd: projectPath,
+        projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
+        pinned: false,
+        launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId } }),
+        sessionType: 'claude',
+        ...remote,
+        customTitle: null,
+      });
+      setSelectedProjectPath(projectPath);
+      setAppMode('geral');
     });
-    setSelectedProjectPath(projectPath);
-    setAppMode('geral');
   };
   const mindscapeStoredNameOf = (sessionId: string): string | null => appConfig?.sessionNames[sessionId]?.name ?? null;
   const mindscapeProjectNames = useMemo(() => Object.fromEntries(projects.map((project) => [project.path, project.name])), [projects]);
@@ -2528,8 +2574,12 @@ export function App(): React.JSX.Element {
       pendingFirstMessagesRef.current[tabId] = request.firstMessage;
       return tabId;
     },
+    closeTab: (tabId) => closeTabImmediatelyRef.current(tabId),
     sendLine: (tabId, text) => sendRenewalLine(tabId, text),
-    ownerTyping: (tabId) => getDraft(tabId).trim().length > 0,
+    permissionOnScreen: (tabId) => {
+      const lines = terminalRefs.current[tabId]?.readScreen().lines;
+      return lines !== undefined && blockingScreen(lines)?.kind === 'permission';
+    },
     askOwner: (question) =>
       new Promise<boolean>((resolve) => {
         const id = crypto.randomUUID();

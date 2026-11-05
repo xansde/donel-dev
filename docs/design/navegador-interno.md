@@ -36,9 +36,13 @@ Agora o painel abre **um arquivo deste computador** que seja página (HTML), ima
 - **De dentro, a página não sai do lugar.** O guard do painel continua sem deixar passar `file:`: link,
   redirecionamento e popup para outro arquivo ou pasta são bloqueados. Como o `will-navigate` só vê o quadro
   principal, o guard também escuta `will-frame-navigate` e bloqueia todo quadro (`<iframe>`, `<object>`) que aponte
-  para `file:`; sem isso, uma página local listaria a pasta ou abriria o arquivo ao lado num quadro. Imagem, estilo e
-  script que a página carrega ao lado dela seguem a regra do Chromium (sem `fetch` de outro arquivo, porque a origem
-  `file:` é opaca).
+  para `file:`; sem isso, uma página local listaria a pasta ou abriria o arquivo ao lado num quadro.
+- **De dentro, a página não lê o disco (revisão do #211).** A regra do Chromium **não** basta: com o fuse
+  `GrantFileProtocolExtraPrivileges` ligado (padrão do Electron), uma página `file:` faz `fetch` de qualquer arquivo
+  (o Revisor leu `C:\Windows\win.ini`) e o manda para a internet. Por isso a partição do painel trata o protocolo
+  `file` (`session.protocol.handle`) e só serve o que `canServeLocalFile` libera: o arquivo aberto de propósito por
+  `load` e, abaixo da pasta de um HTML aberto de propósito, só recurso estático (imagem, CSS, JS, fonte), para o
+  relatório gerado mostrar as imagens dele. JSON, texto, outro HTML e tudo fora da pasta: 403.
 - **Vigia de domínio:** arquivo local não é site, então a lista de domínios do dono não o cobre.
 - **Fora daqui:** arquivo que está na VPS. A sessão remota hoje nem tem o MCP `donel` (B38 do `specs/backlog.md`).
 

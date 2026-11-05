@@ -655,6 +655,22 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     return true;
   }
 
+  /**
+   * B40 — a turn that ended cannot still be asking: the main `Stop` closes the main pendings, a `SubagentStop` the
+   * ones of that sub-agent. Without it a pending the transcript never answered (no `tool_use_id` to match) stayed
+   * open, and the tab stayed "precisa do dono" after a clean end.
+   */
+  function closeEndedPendings(rec: Rec, scope: 'main' | string): void {
+    let changed = false;
+    for (const entry of [...rec.pendings.values()]) {
+      const p = entry.pending;
+      if (p.state !== 'open') continue;
+      const mine = scope === 'main' ? p.scope === 'main' : p.scope !== 'main' && p.scope.agentId === scope;
+      if (mine) changed = closeOpenPending(rec, p.id, 'resolved-elsewhere', true) || changed;
+    }
+    if (changed) emitLiveIfChanged(rec);
+  }
+
   function closeAllPendings(rec: Rec, state: Exclude<PendingState, 'open'>): void {
     let changed = false;
     for (const id of [...rec.pendings.keys()]) changed = closeOpenPending(rec, id, state, true) || changed;
@@ -805,7 +821,8 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         if (ACTIVITY_EVENTS.has(event.event)) rec.lastActivityAt = now();
         if (WORKING_EVENTS.has(event.event)) setBase(rec, 'working');
         else if (IDLE_EVENTS.has(event.event) || rec.base === 'starting') setBase(rec, 'idle');
-      }
+        if (event.event === 'Stop' || event.event === 'StopFailure') closeEndedPendings(rec, 'main');
+      } else if (event.event === 'SubagentStop') closeEndedPendings(rec, event.payload.agent_id as string);
       onHook(rec, event.event, event.payload);
     }
   }

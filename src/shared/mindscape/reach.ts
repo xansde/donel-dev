@@ -1,0 +1,69 @@
+// Alcance — the hierarchy that lets a session direct another one (today: `sessao_fechar`). The ONE place
+// for this concept (owner 04/11: "fechar sessões só com a hierarquia adequada … tanto pelas setas, quanto
+// entre mindscapes"); the single Líder that talks to every board reuses it. Pure.
+//
+// - Inside a board: a session reaches the places below it by arrows (mine → hers, directly or down a
+//   chain). Never up, never sideways, never itself. Only the owner's arrows and the ones `sessao_abrir`
+//   makes (mother → daughter) count: an arrow a session draws itself would let it climb above anyone.
+// - Across boards: only the Líder the owner placed (not one a session opened or drew) on a board the
+//   owner marked `reach: 'all'` (the "Alcance" toggle of the
+//   board) reaches the sessions of the other boards. Without that mark, each board reaches only itself.
+
+import { LEADER_ROLE_ID } from '../roles';
+import type { BoardReach, MindscapeBoard, MindscapeDoc, MindscapeLink } from './model';
+
+export function boardReach(board: MindscapeBoard | undefined): BoardReach {
+  return board?.reach === 'all' ? 'all' : 'own';
+}
+
+/** An arrow that puts `from` above `to`: drawn by the owner, or made by `sessao_abrir`. */
+function isHierarchyArrow(link: MindscapeLink): boolean {
+  return link.arrow && (link.by !== 'session' || link.opened === true);
+}
+
+/** `to` is below `from`: a path of hierarchy arrows `from → … → to` on the board. */
+export function isBelow(board: MindscapeBoard | undefined, from: string, to: string): boolean {
+  if (!board || from === to) return false;
+  const seen = new Set([from]);
+  const queue = [from];
+  while (queue.length > 0) {
+    const at = queue.shift()!;
+    for (const link of board.links) {
+      if (!isHierarchyArrow(link) || link.from !== at || seen.has(link.to)) continue;
+      if (link.to === to) return true;
+      seen.add(link.to);
+      queue.push(link.to);
+    }
+  }
+  return false;
+}
+
+export interface ReachEnd {
+  readonly projectPath: string;
+  readonly placeId: string;
+}
+
+export type ReachVerdict = { readonly ok: true } | { readonly ok: false; readonly reason: string };
+
+/** May the session at `from` direct the one at `to`? The reason is a pt-BR clause for the agent. */
+export function canReach(doc: MindscapeDoc, from: ReachEnd, to: ReachEnd): ReachVerdict {
+  if (from.projectPath === to.projectPath && from.placeId === to.placeId) return { ok: false, reason: 'esta é a sua própria sessão.' };
+  const fromBoard = doc.boards[from.projectPath];
+  if (from.projectPath === to.projectPath) {
+    return isBelow(fromBoard, from.placeId, to.placeId)
+      ? { ok: true }
+      : { ok: false, reason: `"${to.placeId}" não está abaixo de você: falta seta (direta ou em cadeia) do seu lugar (${from.placeId}) para ela.` };
+  }
+  const self = fromBoard?.cards[from.placeId];
+  if (self?.kind !== 'session' || self.roleId !== LEADER_ROLE_ID) return { ok: false, reason: 'ela está em outro quadro, e só o Líder alcança outros quadros.' };
+  if (self.by === 'session') return { ok: false, reason: 'ela está em outro quadro, e só o Líder que o dono pôs no quadro alcança outros quadros (você foi aberta por uma sessão).' };
+  if (boardReach(fromBoard) !== 'all') return { ok: false, reason: 'ela está em outro quadro, e o alcance do seu quadro é só ele mesmo (o dono muda em "Alcance", no quadro).' };
+  return { ok: true };
+}
+
+/** The board and place of a place id: the caller's board first, then every other one. */
+export function findPlace(doc: MindscapeDoc, placeId: string, preferredPath: string): ReachEnd | undefined {
+  const paths = [preferredPath, ...Object.keys(doc.boards).filter((path) => path !== preferredPath)];
+  const projectPath = paths.find((path) => doc.boards[path]?.cards[placeId]?.kind === 'session');
+  return projectPath ? { projectPath, placeId } : undefined;
+}
