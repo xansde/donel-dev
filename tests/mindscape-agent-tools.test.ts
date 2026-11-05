@@ -62,6 +62,17 @@ describe('quadro_aplicar — o que é do dono', () => {
     expect(removed.doc.boards[P]!.cards[made.ids.$nota!]).toBeUndefined();
     expect(removed.doc.boards[P]!.cards['owner-1']).toBeDefined();
   });
+
+  it('a seta de abertura (sessao_abrir) só sai pela mãe: outra sessão não tira o alcance dela', () => {
+    let doc = addPlace(addPlace(addPlace(emptyMindscapeDoc(), P, { id: 'place:mae' }), P, { id: 'place:filha' }), P, { id: 'place:outra' });
+    doc = addLink(doc, P, { id: 'aberta', from: 'place:mae', to: 'place:filha', by: 'session', opened: true });
+    for (const self of ['place:outra', 'place:filha', undefined]) {
+      const result = applyBoardOps(doc, P, [{ op: 'apagar', id: 'aberta' }], { ...ctx(), ...(self ? { selfPlaceId: self } : {}) });
+      expect(result.ok, String(self)).toBe(false);
+    }
+    const byMother = applyBoardOps(doc, P, [{ op: 'apagar', id: 'aberta' }], { ...ctx(), selfPlaceId: 'place:mae' });
+    expect(byMother.ok && byMother.doc.boards[P]!.links).toEqual([]);
+  });
 });
 
 describe('sessao_fechar — a hierarquia', () => {

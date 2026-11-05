@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AgentBridge, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
 import { addLink, addPlace, emptyMindscapeDoc, setPlaceConversation, type MindscapeDoc } from '../src/shared/mindscape/model';
-import { FACTORY_ROLES } from '../src/shared/roles';
+import { FACTORY_ROLES, leaderOfAllPromptText, LEADER_ROLE_ID, rolePromptText } from '../src/shared/roles';
 
 // Líder único (ADR 0007) — a message from the Líder to another board, and the "terminou" of that board back to the
 // Líder, must arrive: if either is lost, the team stalls and the owner only notices when nothing happens.
@@ -68,5 +68,12 @@ describe('Líder único', () => {
     const across = await bridge.handle('dalton', { tool: 'sessao_enviar', quadro: 'outro', para: OLD_LEADER, texto: 'oi' });
     expect(across.ok).toBe(false);
     expect(sent).toHaveLength(2);
+  });
+
+  it('only the tab with the Jobu mark reads "Líder único"; a Líder of a board reads the board guidance', () => {
+    const lider = FACTORY_ROLES.find((role) => role.id === LEADER_ROLE_ID)!;
+    expect(rolePromptText(lider)).not.toContain('Líder único');
+    expect(leaderOfAllPromptText(lider)).toContain('Você é o Líder único');
+    expect(leaderOfAllPromptText({ ...lider, guidance: 'Fale curto.' })).toContain('Fale curto.');
   });
 });

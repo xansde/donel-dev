@@ -141,6 +141,8 @@ export interface TerminalPaneProps {
   accountLoginId?: string;
   /** Papéis de sessão (item 12a) — role the spawn carries when the renderer knows it (see `PtyCreateOptions.roleId`). */
   roleId?: string;
+  /** Líder único — the Jobu's mark on the tab (see `PtyCreateOptions.leaderOfAll`). */
+  leaderOfAll?: boolean;
   /** Ação real de fechar a aba na barra de abas (T010): App.tsx remove a aba do array (unmount cuida do teardown do PTY). */
   onCloseTab?: () => void;
   /**
@@ -296,6 +298,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     openedBy,
     accountLoginId,
     roleId,
+    leaderOfAll,
     onCloseTab,
     onStateChange,
     onAliveChange,
@@ -342,6 +345,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   // Papéis de sessão (item 12a) — read at each spawn (launch and renewal), never a reason to respawn.
   const roleIdRef = useRef(roleId);
   roleIdRef.current = roleId;
+  const leaderOfAllRef = useRef(leaderOfAll);
+  leaderOfAllRef.current = leaderOfAll;
   const [status, setStatus] = useState<PaneStatus>({ kind: 'connecting' });
 
   // Ref pra sempre chamar a versão mais recente do callback sem precisar
@@ -493,7 +498,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     renewalIdRef.current = null;
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(remoteId ? { remoteId, tabName, projectName, ...(openedBy ? { openedBy } : {}) } : {}) })
+      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(leaderOfAllRef.current ? { leaderOfAll: true } : {}), ...(remoteId ? { remoteId, tabName, projectName, ...(openedBy ? { openedBy } : {}) } : {}) })
       .then((result) => {
         if (requestEpoch !== mountEpochRef.current) {
           // Geração já descartada (StrictMode double-invoke em dev, ou a aba

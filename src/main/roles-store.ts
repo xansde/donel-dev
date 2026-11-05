@@ -8,14 +8,17 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { factoryRole, FACTORY_ROLES, isRoleId, parseRoleFile, rolePromptText, sanitizeRole, serializeRole, type RoleSaveResult, type SessionRole } from '../shared/roles';
+import { factoryRole, FACTORY_ROLES, isRoleId, LEADER_ROLE_ID, leaderOfAllPromptText, parseRoleFile, rolePromptText, sanitizeRole, serializeRole, type RoleSaveResult, type SessionRole } from '../shared/roles';
 
 export interface RolesStore {
   list(): SessionRole[];
   get(id: string): SessionRole | undefined;
   save(raw: unknown): RoleSaveResult;
-  /** Writes the text the agent reads for `id`; `null` when the role does not exist or the write fails. */
-  promptFileFor(id: string): string | null;
+  /**
+   * Writes the text the agent reads for `id`; `null` when the role does not exist or the write fails. `leaderOfAll`
+   * (only with the `lider` role): the Líder único's text, in its own file (`_lider-unico.md`, no role id starts with `_`).
+   */
+  promptFileFor(id: string, options?: { readonly leaderOfAll?: boolean }): string | null;
 }
 
 function writeAtomic(path: string, text: string): void {
@@ -73,13 +76,14 @@ export function createRolesStore(userDataDir: string): RolesStore {
         return { ok: false, reason: 'write-failed' };
       }
     },
-    promptFileFor: (id) => {
+    promptFileFor: (id, options) => {
       const role = readOne(id);
       if (!role) return null;
-      const path = join(promptDir, `${role.id}.md`);
+      const leaderOfAll = options?.leaderOfAll === true && role.id === LEADER_ROLE_ID;
+      const path = join(promptDir, leaderOfAll ? '_lider-unico.md' : `${role.id}.md`);
       try {
         if (!existsSync(promptDir)) mkdirSync(promptDir, { recursive: true });
-        writeAtomic(path, rolePromptText(role));
+        writeAtomic(path, leaderOfAll ? leaderOfAllPromptText(role) : rolePromptText(role));
         return path;
       } catch {
         // Another session may be reading it right now (Windows locks): the last text written still serves.

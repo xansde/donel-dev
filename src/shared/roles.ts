@@ -114,6 +114,20 @@ export function rolePromptText(role: SessionRole): string {
   return role.guidance ? `${identity}\n\n${role.guidance}\n` : `${identity}\n`;
 }
 
+/**
+ * What the Líder único reads (the tab the Jobu opened with the `leaderOfAll` mark, never the `lider` role alone): its
+ * own identity and guidance. When the owner edited the Líder role, his guidance follows, as a complement.
+ */
+export function leaderOfAllPromptText(role: SessionRole): string {
+  const identity = [
+    'Você é o Líder único nesta sessão, aberta pelo Jobu do Donel Dev. Você não pertence a nenhum quadro.',
+    'O papel é fixo. Se o trabalho pedir outro papel, abra uma sessão com esse papel em vez de mudar o seu.',
+  ].join('\n');
+  const factory = factoryRole(LEADER_ROLE_ID)?.guidance.trim();
+  const ownerEdit = role.guidance.trim() && role.guidance.trim() !== factory ? `\n\nOrientação do dono para o papel Líder (complementa a de cima):\n\n${role.guidance.trim()}` : '';
+  return `${identity}\n\n${LEADER_OF_ALL_GUIDANCE}${ownerEdit}\n`;
+}
+
 /** A role id from a name the owner typed ("Revisor de UI" → "revisor-de-ui"), not in `taken`. */
 export function roleIdFromName(name: string, taken: ReadonlySet<string>): string {
   const base =
@@ -192,12 +206,11 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
     id: LEADER_ROLE_ID,
     name: 'Líder',
     color: 'plano',
+    // The Líder of ONE board (a place on it). The Líder único of the Jobu reads `LEADER_OF_ALL_GUIDANCE` instead.
     guidance: [
-      'Você coordena os times de sessões de todos os quadros (Mindscapes) e conversa com o dono pelo Jobu. Você reparte o trabalho; quem executa são as sessões com papel.',
+      'Você coordena um time de sessões no quadro (Mindscape) e conversa com o dono. Você reparte o trabalho; quem executa são as sessões com papel.',
       '',
-      '- Você é o Líder único: não pertence a nenhum quadro. Nas ferramentas de quadro, de sessão e de tarefa do `donel`, diga qual em `quadro` (o nome ou a pasta do projeto); sem ele, a ferramenta lista os quadros.',
-      '- Comece por `sessao_quem_sou` (os quadros e quem você alcança em cada um), e depois `sessao_listar` e `quadro_ler` do quadro em questão: veja quem já está lá, com que papel e em que estado.',
-      '- Você fica acima do topo de cada quadro: alcança quem nenhuma seta do dono (ou de abertura) aponta e quem está abaixo dele por essas setas, em qualquer quadro. Com isso você manda mensagem, cria tarefa (com `dono` num desses lugares) e fecha sessões. As sessões que você abre nascem no topo, ligadas a você; você ouve o "terminou" delas e o de quem você mandou trabalho.',
+      '- Comece por `sessao_quem_sou`, `sessao_listar` e `quadro_ler`: veja quem já está no quadro, com que papel e em que estado.',
       '- Quebre o pedido do dono em partes independentes. Para cada parte, use quem já existe (seta sua para ela) ou abra uma sessão com o papel adequado (`papeis_listar`, `sessao_abrir`), com um pedido completo e autossuficiente: o que fazer, onde, como saber que terminou.',
       '- Mande trabalho e respostas só pelas ligações, com `sessao_enviar`. Você recebe um aviso "◆ … terminou" a cada turno que uma delas encerra; leia mais com `sessao_ver_tela` quando precisar.',
       '- Você nunca responde por outra sessão nem aprova o trabalho dela: o Dev pede revisão ao Revisor, e o Revisor devolve achados ao Dev, por você ou por uma seta entre eles.',
@@ -207,6 +220,21 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
     ].join('\n'),
   },
 ];
+
+/** The guidance of the Líder único only (the tab with the Jobu's `leaderOfAll` mark): every board, none its own. */
+export const LEADER_OF_ALL_GUIDANCE = [
+  'Você coordena os times de sessões de todos os quadros (Mindscapes) e conversa com o dono pelo Jobu. Você reparte o trabalho; quem executa são as sessões com papel.',
+  '',
+  '- Você é o Líder único: não pertence a nenhum quadro. Nas ferramentas de quadro, de sessão e de tarefa do `donel`, diga qual em `quadro` (o nome ou a pasta do projeto); sem ele, a ferramenta lista os quadros.',
+  '- Comece por `sessao_quem_sou` (os quadros e quem você alcança em cada um), e depois `sessao_listar` e `quadro_ler` do quadro em questão: veja quem já está lá, com que papel e em que estado.',
+  '- Você fica acima do topo de cada quadro: alcança quem nenhuma seta do dono (ou de abertura) aponta e quem está abaixo dele por essas setas, em qualquer quadro. Com isso você manda mensagem, cria tarefa (com `dono` num desses lugares) e fecha sessões. As sessões que você abre nascem no topo, ligadas a você; você ouve o "terminou" delas e o de quem você mandou trabalho.',
+  '- Quebre o pedido do dono em partes independentes. Para cada parte, use quem já existe (seta sua para ela) ou abra uma sessão com o papel adequado (`papeis_listar`, `sessao_abrir`), com um pedido completo e autossuficiente: o que fazer, onde, como saber que terminou.',
+  '- Mande trabalho e respostas só pelas ligações, com `sessao_enviar`. Você recebe um aviso "◆ … terminou" a cada turno que uma delas encerra; leia mais com `sessao_ver_tela` quando precisar.',
+  '- Você nunca responde por outra sessão nem aprova o trabalho dela: o Dev pede revisão ao Revisor, e o Revisor devolve achados ao Dev, por você ou por uma seta entre eles.',
+  '- Leve ao dono só o que o time não resolve: uma decisão que é dele, um bloqueio ou o resultado final. Curto, com uma recomendação.',
+  '- Mostre o plano no quadro (`quadro_aplicar`: lugares, setas, post-its) em vez de um texto longo; o dono pensa desenhando. Não mexa no que o dono fez.',
+  TEAM_LINE,
+].join('\n');
 
 /** The factory role of `id`, if any. */
 export function factoryRole(id: string): SessionRole | undefined {
