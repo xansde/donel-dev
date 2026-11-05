@@ -140,6 +140,30 @@
 }
 
 /*
+ * The progress of the tasks changed since the owner last looked (painel de progresso, 05/11): a small quiet dot at the
+ * top-left of the drawing, the mirror of the badge. No color of a state: it says only "there is news", and a click opens
+ * the panel. Never a sound, never a notification.
+ */
+.progressDot {
+  position: absolute;
+  top: 8px;
+  left: -4px;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--bg-app);
+  cursor: pointer;
+}
+
+.progressDot:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
  * The bubble (FR-014 to FR-017) sits above the head, anchored to the drawing like a CSS alignment: `right` =
  * its right edge on the right edge of the drawing, growing to the left (the default corner is at the right
  * edge of the screen, where the window sticks out); `left` is the mirror, `center` is centered. It lives
