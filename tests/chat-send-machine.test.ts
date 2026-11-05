@@ -331,11 +331,22 @@ describe('sequência de bytes (§4)', () => {
     expect(sim.phase).toBe('confirming');
   });
 
-  it('placeholder com contagem de linhas errada não vale', () => {
+  it('mensagem a sessão parada: a caixa lida com um glifo a menos ainda é a nossa e leva o Enter; texto alheio não (05/11)', () => {
+    const sim = new Sim({ text: '◆ De Líder (place:abc): Revise o #211 de novo' });
+    sim.screen(idleEmpty(), 0);
+    sim.screen(screen('De Líder (place:abc): Revise o #211 de novo'), 100);
+    expect(sim.phase).toBe('confirming');
+    const other = new Sim({ text: '◆ De Líder (place:abc): Revise o #211 de novo' });
+    other.screen(idleEmpty(), 0);
+    other.screen(screen('rodar os testes agora mesmo, por favor, sem demora'), 100);
+    expect(other.phase).toBe('typing');
+  });
+
+  it('placeholder com outra contagem de linhas ainda é a nossa colagem quando a caixa estava vazia (05/11)', () => {
     const sim = new Sim({ text: 'l1\nl2\nl3\nl4\nl5' });
     sim.screen(idleEmpty(), 0);
     sim.screen(screen('[Pasted text #1 +9 lines]'), 100);
-    expect(sim.phase).toBe('typing');
+    expect(sim.phase).toBe('confirming');
   });
 
   it('imagens: uma colagem por imagem, esperando [Image #N], e só depois o texto', () => {
@@ -484,30 +495,44 @@ describe('prazos (§6)', () => {
     expect(sim.status?.reason).toBe('a imagem não entrou');
   });
 
-  it('texto: 3 s', () => {
+  it('texto: 3 s, e com o Claude parado e a caixa vazia espera mais 12 s antes de desistir', () => {
     const sim = new Sim({ text: 'oi' });
     sim.screen(idleEmpty(), 0);
-    sim.tick(2999);
-    expect(sim.phase).toBe('typing');
     sim.tick(3000);
+    expect(sim.phase).toBe('typing');
+    sim.tick(14_999);
+    expect(sim.phase).toBe('typing');
+    sim.tick(15_000);
     expect(sim.phase).toBe('failed');
   });
 
   it('texto: +1 s a cada 15 KB', () => {
     const sim = new Sim({ text: 'a'.repeat(30_000) });
     sim.screen(idleEmpty(), 0);
-    sim.tick(4999);
+    sim.tick(16_999);
     expect(sim.phase).toBe('typing');
-    sim.tick(5000);
+    sim.tick(17_000);
     expect(sim.phase).toBe('failed');
   });
 
-  it('texto: 12 s na primeira colagem da sessão', () => {
+  it('primeira colagem que aparece tarde (PC sem RAM, 05/11): ainda leva o Enter, sem colar de novo', () => {
+    const sim = new Sim({ text: 'l1\nl2', firstPaste: true });
+    sim.screen(idleEmpty(), 0);
+    sim.tick(44_999);
+    expect(sim.phase).toBe('typing');
+    sim.screen(screen('[Pasted text #1 +1 lines]'), 44_999);
+    expect(sim.phase).toBe('confirming');
+    sim.tick(45_100);
+    expect(sim.allWrites().filter((w) => w === '\r')).toHaveLength(1);
+    expect(sim.allWrites().filter((w) => w.includes('l1'))).toHaveLength(1);
+  });
+
+  it('primeira colagem que nunca aparece: desiste aos 45 s', () => {
     const sim = new Sim({ text: 'oi', firstPaste: true });
     sim.screen(idleEmpty(), 0);
-    sim.tick(11_999);
+    sim.tick(44_999);
     expect(sim.phase).toBe('typing');
-    sim.tick(12_000);
+    sim.tick(45_000);
     expect(sim.phase).toBe('failed');
   });
 
@@ -761,15 +786,18 @@ describe('acompanhar se o CLI coletou a mensagem da fila (30/10)', () => {
 });
 
 describe('reenvio e anti-duplicidade (§7)', () => {
-  it('texto ainda na caixa 3 s depois do Enter: reenvia só \\r, uma vez', () => {
+  it('texto ainda na caixa depois do Enter: reenvia só \\r, de 3 em 3 s, até 3 vezes; o texto nunca de novo', () => {
     const sim = sendUntilEnter('oi tudo bem');
     sim.screen(screen('oi tudo bem'), 3179);
     expect(sim.writes()).toEqual([]);
     sim.screen(screen('oi tudo bem'), 3180);
     expect(sim.writes()).toEqual(['\r']);
-    sim.screen(screen('oi tudo bem'), 6500);
+    sim.screen(screen('oi tudo bem'), 6000);
     expect(sim.writes()).toEqual([]);
-    expect(sim.allWrites().filter((w) => w === '\r')).toHaveLength(2);
+    sim.screen(screen('oi tudo bem'), 6180);
+    sim.screen(screen('oi tudo bem'), 9180);
+    sim.screen(screen('oi tudo bem'), 12_500);
+    expect(sim.allWrites().filter((w) => w === '\r')).toHaveLength(4);
     expect(sim.allWrites().filter((w) => w.includes('oi tudo bem'))).toHaveLength(1);
   });
 

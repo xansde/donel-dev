@@ -15,6 +15,15 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
+    date: '2026-11-05',
+    items: [
+      {
+        title: 'Mensagens entre sessões não ficam mais paradas na caixa',
+        text: 'Com o PC carregado, o pedido de uma sessão recém-aberta, e às vezes a mensagem para uma sessão parada, ficava na caixa do terminal (como "[Pasted text #1 …]" ou o próprio texto) e nunca era enviado, até você apertar Enter. Agora o app espera o Claude de lá mostrar a mensagem, aperta o Enter e confere se ela saiu, repetindo só o Enter se precisar (o texto nunca vai duas vezes). Quem mandou só ouve "Entregue" depois que entrou de verdade. E o estado fala a verdade: "começando" enquanto a sessão não pegou o pedido e, depois de um minuto e meio, "não começou" com o motivo, avisado também a quem a abriu.',
+      },
+    ],
+  },
+  {
     date: '2026-11-04',
     items: [
       {
