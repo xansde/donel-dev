@@ -79,6 +79,7 @@ export function mapHookEventName(name: unknown): SemaphoreEvent['type'] | null {
     case 'PreToolUse':
       return 'preToolUse';
     case 'PostToolUse':
+    case 'PostToolUseFailure': // the call ended in error: it is not running any more either.
       return 'postToolUse';
     case 'Stop':
     case 'StopFailure': // turno encerrado por erro de API (ex. limite da conta) — fim de turno do mesmo jeito.
@@ -351,7 +352,12 @@ export class SessionSemaphoreManager {
         : eventType === 'stop'
           ? { type: 'stop', at: this.now(), backgroundAgents: countBackgroundSubagents(payload) }
           : eventType === 'preToolUse' || eventType === 'postToolUse'
-            ? { type: eventType, at: this.now(), fromSubagent: typeof payload.agent_id === 'string' && payload.agent_id !== '' }
+            ? {
+                type: eventType,
+                at: this.now(),
+                ...(typeof payload.agent_id === 'string' && payload.agent_id !== '' ? { agentId: payload.agent_id } : {}),
+                ...(typeof payload.tool_name === 'string' ? { toolName: payload.tool_name } : {}),
+              }
             : ({ type: eventType, at: this.now() } as SemaphoreEvent);
     const next = reduceSemaphoreState(current, event);
     this.ptyState.set(ptyId, next);

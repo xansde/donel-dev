@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { INITIAL_SEMAPHORE_STATE, reduceSemaphoreState, type SemaphoreEvent, type SemaphoreMachineState } from '../src/main/semaphore-state-machine';
-import { notificationNeedsOwner } from '../src/main/session-semaphore-manager';
+import { mapHookEventName, notificationNeedsOwner } from '../src/main/session-semaphore-manager';
 import { createPetState, reducePet, waitingCount, waitingSessions } from '../src/shared/pet/petState';
 import type { WatchedSession } from '../src/shared/pet/types';
 
@@ -17,9 +17,42 @@ describe('semaphore: "esperando você" follows the dialog on the screen', () => 
   });
 
   it("a sub-agent's tool calls do not end the main thread's dialog", () => {
-    const asked = run([{ type: 'preToolUse', at: 1 }, { type: 'notification', at: 2 }]);
-    const after = [{ type: 'preToolUse', at: 3, fromSubagent: true }, { type: 'postToolUse', at: 4, fromSubagent: true }] as const;
+    const asked = run([{ type: 'preToolUse', at: 1, toolName: 'Agent' }, { type: 'preToolUse', at: 2, toolName: 'Bash' }, { type: 'notification', at: 3 }]);
+    const after: SemaphoreEvent[] = [
+      { type: 'preToolUse', at: 4, agentId: 'bg', toolName: 'Read' },
+      { type: 'postToolUse', at: 5, agentId: 'bg', toolName: 'Read' },
+    ];
     expect(after.reduce(reduceSemaphoreState, asked).state).toBe('permission');
+  });
+
+  it('the owner answering a sub-agent ends the wait as soon as its tool runs (Revisor, #225 item 1)', () => {
+    const state = run([
+      { type: 'preToolUse', at: 1, toolName: 'Agent' },
+      { type: 'preToolUse', at: 2, agentId: 'sub', toolName: 'Bash' },
+      { type: 'notification', at: 3 },
+      { type: 'postToolUse', at: 10, agentId: 'sub', toolName: 'Bash' },
+    ]);
+    expect(state.state).toBe('working');
+    const next: SemaphoreEvent[] = [
+      { type: 'preToolUse', at: 11, agentId: 'sub', toolName: 'Read' },
+      { type: 'postToolUse', at: 12, agentId: 'sub', toolName: 'Read' },
+    ];
+    expect(next.reduce(reduceSemaphoreState, state).state).toBe('working');
+  });
+
+  it('a parallel sibling finishing does not erase the ask still on screen (Revisor, #225 item 2)', () => {
+    const sibling = run([
+      { type: 'preToolUse', at: 1, toolName: 'Read' },
+      { type: 'preToolUse', at: 2, toolName: 'Read' },
+      { type: 'notification', at: 3 },
+      { type: 'postToolUse', at: 4, toolName: 'Read' },
+    ]);
+    expect(sibling.state).toBe('permission');
+    expect(reduceSemaphoreState(sibling, { type: 'postToolUse', at: 9, toolName: 'Read' }).state).toBe('working');
+  });
+
+  it('a call that ended in error also stops counting as running', () => {
+    expect(mapHookEventName('PostToolUseFailure')).toBe('postToolUse');
   });
 
   it('only a dialog on this screen asks the owner: idle, a background job or a missing type do not', () => {
